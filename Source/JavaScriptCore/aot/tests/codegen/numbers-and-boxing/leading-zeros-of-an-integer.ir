@@ -49,15 +49,15 @@ function f1 name="leadingZeros" module=m0 flags=[IsChecked, HasExplicitName] len
     ReturnCall v3 casts=[{declared={type=number site=w3}}, {declared={type=number site=w1}}]
 }
 
-# Math.clz32 of a 32-bit integer is one instruction. The function hands its result back as a double: one conversion.
+# Math.clz32 of a 32-bit integer is one instruction. The function hands its result back as that integer.
 # CHECK-LABEL: name="leadingZeros" role=Source
 # CHECK: Int32 b@[[zeros]] = Clz(b@{{*}}, {{*}}:CallInline)
-# CHECK-NEXT: Double b@[[number]] = IToD(b@[[zeros]])
-# CHECK-NEXT: Return(b@[[number]], Terminal)
+# CHECK-NEXT: Return(b@[[zeros]], Terminal)
 # CHECK-LABEL: end of function
 # NONE-LABEL: name="leadingZeros" role=Source
+# NONE-NOT: IToD
 # NONE-NOT: Patchpoint(
 # NONE-NOT: Branch(
 # NONE-LABEL: end of function
-# X64: instructions: 3, patchpoints: 0
-# ARM64: instructions: 3, patchpoints: 0
+# X64: instructions: 2, patchpoints: 0
+# ARM64: instructions: 2, patchpoints: 0

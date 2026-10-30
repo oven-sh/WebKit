@@ -60,6 +60,7 @@ public:
     LValue callDirectFunction(const OperationContext&, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive, std::optional<HostFrameOfDirectCall> = std::nullopt, BuiltinID calledBuiltin = { });
     // The function takes no realm, so it neither throws, allocates nor calls back, whatever the operation does around the call.
     StubCallResult callDirectFunctionReturningFields(const OperationContext&, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive);
+    LValue callDirectFunctionReturningNumber(const OperationContext&, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive);
 
     StubCallResult callStub(const OperationContext&, StubKey, std::span<const LValue> operands, const CallOptions& = { });
     StubCallResult callStubWithoutSite(StubKey, std::span<const LValue> operands, const CallOptions& = { });
@@ -127,6 +128,7 @@ private:
 
     B3::Air::StackSlot* m_transientBuffer { nullptr };
     Vector<B3::PatchpointValue*, 16> m_callsThatMayChangeSlotsOfSites;
+    Vector<B3::PatchpointValue*, 4> m_callsThatLookForPrivateNames;
     B3::Air::StackSlot* m_keptRegisterStorage { nullptr };
     B3::Air::StackSlot* m_landingPadRegisterStorage { nullptr };
 };

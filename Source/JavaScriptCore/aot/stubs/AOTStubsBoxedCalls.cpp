@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinOperationSupport.h"
 #include "AOTCellFormat.h"
 #include "AOTCompactTable.h"
 #include "AOTConvention.h"
@@ -520,6 +521,25 @@ static void emitArraySlice(StubAssembler& jit, GPRReg scratch, JumpList& callsHo
     jit.jumpToStub(arraySlice());
 }
 
+// Without a comparator, a short array that starts with a string is most often an array of strings, which the operation sorts without the set-up of the host function.
+static void emitArraySort(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
+{
+    if (jit.key().count() == 1)
+        callsHostFunction.append(jit.branch64(CCallHelpers::NotEqual, argumentGPR(0), TrustedImm64(JSValue::ValueUndefined)));
+    jit.load8(Address(thisGPR, JSCell::indexingTypeAndMiscOffset()), scratch);
+    jit.and32(TrustedImm32(IndexingShapeMask), scratch);
+    callsHostFunction.append(jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(ContiguousShape)));
+    jit.loadPtr(Address(thisGPR, JSObject::butterflyOffset()), scratch);
+    callsHostFunction.append(jit.branch32(CCallHelpers::Above, Address(scratch, Butterfly::offsetOfPublicLength()), TrustedImm32(maxLengthOfInsertionSortedArray)));
+    callsHostFunction.append(jit.branchTest32(CCallHelpers::Zero, Address(scratch, Butterfly::offsetOfPublicLength())));
+    jit.load64(Address(scratch), scratch);
+    callsHostFunction.append(jit.branchTest64(CCallHelpers::Zero, scratch));
+    callsHostFunction.append(jit.branchIfNotCell(scratch));
+    callsHostFunction.append(jit.branchIfNotType(scratch, StringType));
+    checkCalleeRealm(jit, scratch, callsHostFunction);
+    jit.callOperationAndReturn(Entry::operationAOTArraySortInDefaultOrder, { .secondArgumentIn = thisGPR });
+}
+
 // What FunctionBuiltinEmitter::generateFunctionBind() emits where the callee is known.
 static void emitFunctionBind(StubAssembler& jit, GPRReg allocator, JumpList& callsHostFunction)
 {
@@ -603,6 +623,7 @@ static constexpr BoxedCallHandler boxedCallHandlers[] = {
     { BoxedCallForm::ArrayIsArray, 1, 1, std::nullopt, emitArrayIsArray },
     { BoxedCallForm::ArrayPush, 1, 1, arrayTypes, emitArrayPush },
     { BoxedCallForm::ArraySlice, 0, 2, arrayTypes, emitArraySlice },
+    { BoxedCallForm::ArraySort, 0, 1, arrayTypes, emitArraySort },
     { BoxedCallForm::FunctionBind, 0, std::numeric_limits<unsigned>::max(), std::nullopt, emitFunctionBind },
     { BoxedCallForm::IsNaN, 1, 1, std::nullopt, emitIsNaN },
     { BoxedCallForm::JSONStringify, 1, 2, std::nullopt, emitJSONStringify },

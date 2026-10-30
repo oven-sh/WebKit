@@ -84,26 +84,6 @@ HintEmitter::HintEmitter(CodeGenerator& generator)
 {
 }
 
-// In a function without handlers an allocation that finds no room throws by itself.
-bool HintEmitter::allocatesWhereErrorsAreCaught(BlockID block)
-{
-    if (!analyses().cfg().hasHandlers())
-        return false;
-    const NaturalLoop* loop = analyses().naturalLoops().innerMostLoopOf(block);
-    if (!loop)
-        return false;
-    for (unsigned index = 0; index < loop->size(); ++index) {
-        BlockID member = loop->at(index);
-        for (ValueID id : m_function.at(member).values) {
-            if (m_function.at(id).opcode != Opcode::LoopHint && analyses().effectsOf(id).onAnyEdge().mayCollect)
-                return true;
-        }
-        if (analyses().effectsOfTerminator(member).onAnyEdge().mayCollect)
-            return true;
-    }
-    return false;
-}
-
 void HintEmitter::generateLoopHint(const ValueContext& value)
 {
     if (generator().validates())
@@ -128,9 +108,8 @@ void HintEmitter::emitPoll(const ValueContext& value)
 {
     B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Void);
     patchpoint->isLoopPoll = !emitter<ExceptionEmitter>().unwindsWithinFunction(value);
-    patchpoint->throwsWhatIsOwed = allocatesWhereErrorsAreCaught(value.block());
     const NaturalLoop* loop = analyses().naturalLoops().innerMostLoopOf(value.block());
-    patchpoint->turnsAreShort = loop && likelyPathsAlwaysComplete(analyses(), *loop).predicted();
+    patchpoint->iterationsAreShort = loop && likelyPathsAlwaysComplete(analyses(), *loop).predicted();
     Effects effects = value.effects().onAnyEdge();
     RELEASE_ASSERT(effects.mayBeTerminated && effects.mayThrow && !effects.mayThrowByRule());
     // Handling a trap stops the thread for the collector or ends it. It looks at no object of the program, runs none of its code and looks no name up:

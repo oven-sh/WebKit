@@ -349,7 +349,7 @@ export default b.declarations(
           throws: true,
           readsStateBeforeConversions: true,
           uses: { this: changesElements, source: [readsElements] },
-          implementation: b.hostCall,
+          implementation: b.inline("TypedArraySet", { otherwise: b.hostCall }),
         },
         {
           ...operandCodeEffects,

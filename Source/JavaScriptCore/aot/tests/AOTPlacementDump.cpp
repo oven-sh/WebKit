@@ -499,6 +499,8 @@ private:
         if (!closureFunctions.first)
             return;
         m_out.print("closureFunctions first="_s, closureFunctions.first.index(), " end="_s, closureFunctions.end.index(), " omittedWords="_s, closureFunctions.omittedWordCount, "\n"_s);
+        for (FunctionID form : m_placement.closureFormsBySource())
+            m_out.print("closureForm f"_s, form.index(), "\n"_s);
     }
 
     void dumpConstants()

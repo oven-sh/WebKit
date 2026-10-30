@@ -1,7 +1,7 @@
 # A descriptor literal passed to a built-in and a run of accessor definitions each become one operation
 # FORM: Prepared
 # RUN: pass Select
-# STATISTIC: DescriptorLiteralGroups = 7
+# STATISTIC: DescriptorLiteralGroups = 9
 # STATISTIC: AccessorGroupGroups = 6
 
 module m0 path="main.js" displayPath="main.js"
@@ -368,6 +368,30 @@ function f33 name="defined-on-anything-and-handed-on" parameters=[{type=anything
     v6 = FinishObject v5
     v7 = CallBuiltin v3, v0, v1, v6 overload=ObjectDefineProperty/0 builtinCallForm=AnyReceiver
     Return v7
+# CHECK-NOT: NewObject
+# CHECK-NOT: overload=
+# CHECK: [[defined]]: object = DefineOwnProperty v0, v1, v2 descriptorFlags=[HasValue, HasWritable, IsWritable]
+# CHECK-NEXT: Return [[defined]]
+}
+function f34 name="key-is-no-object" parameters=[{type=object}, {type=undefined|number|string|symbol}, {type=anything}, {type=anything}] results=[{type=undefined}] {
+    v4 = Boolean boolean=true
+    v5 = NewObject -, v2, v4 layout=L0 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = CallBuiltin v3, v0, v1, v6 overload=ObjectDefineProperty/0 builtinCallForm=AnyReceiver
+    v8 = Undefined
+    Return v8
+# CHECK-NOT: NewObject
+# CHECK-NOT: overload=
+# CHECK: [[key]]:{{*}}= ToPropertyKey v1
+# CHECK-NEXT: DefineOwnProperty v0, [[key]], v2 descriptorFlags=[HasValue, HasWritable, IsWritable]
+}
+function f35 name="key-may-be-an-object" parameters=[{type=object}, {type=anything}, {type=anything}, {type=anything}] results=[{type=undefined}] {
+    v4 = Boolean boolean=true
+    v5 = NewObject -, v2, v4 layout=L0 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = CallBuiltin v3, v0, v1, v6 overload=ObjectDefineProperty/0 builtinCallForm=AnyReceiver
+    v8 = Undefined
+    Return v8
 # CHECK-NOT: DefineOwnProperty
 # CHECK: v5:{{*}}= NewObject -, v2, v4 layout=L0 fields=[0, 1]
 # CHECK-NOT: DefineOwnProperty

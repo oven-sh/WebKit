@@ -90,6 +90,24 @@ CellPointer ConstantEmitter::singletonClosure(const OperationContext& context, F
     });
 }
 
+std::optional<CellPointer> ConstantEmitter::tryMakeClosureOfField(const OperationContext& context, FunctionID function, CellPointer object, uint32_t offsetOfSlot, bool capturesObject)
+{
+    const Function& callee = m_program.at(function);
+    FunctionID entrypoint = inputs().derivedFunctions.find(derivedFunctionKey(FunctionRole::GenericEntrypoint, function));
+    if (!entrypoint || callee.captures.size() != capturesObject || m_placement.closureCellNumber(entrypoint))
+        return std::nullopt;
+    FunctionKindData kind = m_placement.functionKind(entrypoint);
+    if (!kind.isSlim)
+        return std::nullopt;
+    if (capturesObject) {
+        Representation representation = declaredRepresentationOf(m_program, callee.captures[0]);
+        if (representation != Representation::Cell && representation != Representation::JSValue)
+            return std::nullopt;
+    }
+    Integer request = integer(static_cast<int64_t>(static_cast<uint64_t>(offsetOfSlot) << 32 | entrypoint.index()));
+    return CellPointer(callStub(context, makeClosureOfField(kind.slimClosureKind(), capturesObject), { request.value(), object.value() }, { .isOnRarePath = true, .accessesCollectorState = true }).first);
+}
+
 bool ConstantEmitter::canUseClosureStub(const NewClosureRequest& request) const
 {
     if (request.kind.closureStructure || request.captures.size() > ClosureRequest::maxNumberOfCaptures)
@@ -109,7 +127,7 @@ CellPointer ConstantEmitter::newSlimClosure(const ValueContext& value, const New
     if (value.shape() != CodeShape::Fast || request.storage != AllocationStorage::Frame)
         return callClosureStub(value, request, requestWord, SlimClosure::allocationSize(count));
 
-    CellPointer cell = emitter<CellAllocationEmitter>().allocateInFrame(SlimClosure::allocationSize(count));
+    CellPointer cell = emitter<CellAllocationEmitter>().allocateInFrame(value, SlimClosure::allocationSize(count));
     CodeGenerator::InitializationScope scope(generator());
     emitter<CellAllocationEmitter>().storeHeader(cell, loadImmutable64(AOT_INSTANCE_OFFSET(slimClosureHeaders) + request.kind.slimClosureKind() * sizeof(uint64_t)));
     storeCaptures(cell, request, m_heaps.AOTSlimClosure_captures);
@@ -142,7 +160,7 @@ CellPointer ConstantEmitter::callClosureStub(const ValueContext& value, const Ne
         }
         return CellPointer(callStub(value, newClosure(count), operands.span()).first);
     case AllocationStorage::Frame:
-        operands.append(emitter<CellAllocationEmitter>().allocateInFrame(cellSize).value());
+        operands.append(emitter<CellAllocationEmitter>().allocateInFrame(value, cellSize).value());
         return CellPointer(callStub(value, initializeClosure(count), operands.span()).first);
     case AllocationStorage::FrameUntilMaterialized:
         return failWithoutCell(value, InternalErrorKind::OpcodeWithoutCode);
@@ -163,7 +181,7 @@ CellPointer ConstantEmitter::newFullClosure(const ValueContext& value, const New
         isOnHeap = true;
         break;
     case AllocationStorage::Frame:
-        cell = cellAllocation.allocateInFrame(Closure::allocationSize(request.captures.size()));
+        cell = cellAllocation.allocateInFrame(value, Closure::allocationSize(request.captures.size()));
         break;
     case AllocationStorage::FrameUntilMaterialized:
         return failWithoutCell(value, InternalErrorKind::OpcodeWithoutCode);
@@ -173,7 +191,7 @@ CellPointer ConstantEmitter::newFullClosure(const ValueContext& value, const New
         CodeGenerator::InitializationScope scope(generator());
         if (!isOnHeap || structure)
             cellAllocation.storeHeader(cell, loadImmutable64(AOT_INSTANCE_OFFSET(closures.closureHeaders) + structure * sizeof(uint64_t)));
-        storeField(cell, m_heaps.JSObject_butterfly, integer(0));
+        storeField(cell, m_heaps.JSNonArray_butterfly, integer(0));
         storeField(cell, m_heaps.JSCallee_scope, loadImmutablePointer(AOT_INSTANCE_OFFSET(globalObject)));
         storeField(cell, m_heaps.JSFunction_executableOrRareData, loadImmutablePointer(AOT_INSTANCE_OFFSET(closures.executables) + executable * sizeof(JSCell*)));
         storeCaptures(cell, request, m_heaps.AOTClosure_captures);

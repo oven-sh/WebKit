@@ -91,7 +91,7 @@ static_assert(!(sizeof(ReturnAddressTrace) % sizeof(uint32_t)));
 JS_EXPORT_PRIVATE ReturnAddressTrace* tryCaptureStackTrace(VM&, JSCell* owner, size_t maxStackSize, std::unique_ptr<WTF::Vector<StackFrame>>& otherFrames, JSCell* lastConstructorToSkip = nullptr);
 JS_EXPORT_PRIVATE bool beginsAt(const ReturnAddressTrace&, const void* returnAddress);
 JS_EXPORT_PRIVATE void forEachShownFrame(const ReturnAddressTrace&, const ScopedLambda<void(const TraceFrame&)>&);
-JS_EXPORT_PRIVATE void forEachShownFrame(CompiledFunctionID, const CallSiteRecord&, ShownFrameFilter&, const ScopedLambda<void(const TraceFrame&)>&);
+JS_EXPORT_PRIVATE void forEachShownFrame(CompiledFunctionID, const CallSiteRecord&, ShownFrameFilter&, const ScopedLambda<void(const TraceFrame&)>&, bool calleeWasEntered = false);
 // What Interpreter::appendStackTrace wants of a run of compiled code, and what became of it.
 struct RunListing {
     JSCell* owner;

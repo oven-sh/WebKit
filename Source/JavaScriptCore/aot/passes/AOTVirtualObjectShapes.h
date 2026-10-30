@@ -160,6 +160,7 @@ bool creationMayBeOrderedWithGuards(const VirtualObjectContext&, const VirtualOb
 // Whether the function above may name one for a shape of this description.
 KnownBoolean evaluateTestOfTwoShapes(const ShapeContext&, const VirtualShape& left, const VirtualShape& right, bool areSameObject, const Value& test);
 CastOutcome evaluateCast(const ShapeContext&, const VirtualShape&, const Value& cast);
+KnownBoolean evaluateTypeTestOfShape(const ShapeContext&, const VirtualShape&, const Type& tested);
 std::optional<uint32_t> findShapeCase(const ShapeContext&, const VirtualShape&, const Terminator& switchOnShape);
 
 inline constexpr OpcodeSet evaluatedTests {

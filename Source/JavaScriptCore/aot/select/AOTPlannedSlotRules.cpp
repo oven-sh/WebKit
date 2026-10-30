@@ -15,6 +15,7 @@
 #include "AOTSelectionContext.h"
 #include "AOTSlotPlan.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -29,7 +30,8 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-using ArmsOfAgreements = HashMap<const SlotAgreement*, Vector<LayoutSetID, 4>>;
+// Depends on whether the operations find a slot's offset from the object's shape.
+using ArmsOfAgreements = std::array<HashMap<const SlotAgreement*, Vector<LayoutSetID, 4>>, 2>;
 
 struct PlannedSlotMatch {
     SelectionGroup group;
@@ -72,16 +74,51 @@ static bool belongsTo(const Program& program, const Heat& heat, LayoutID layout,
     return heat.isAllocatedIn(layout, module).predicted();
 }
 
+static bool canFindOffsetByShape(Opcode opcode, const SlotAgreement& agreement)
+{
+    return operationsWithOffsetByShape.contains(opcode) && (!storedOf(opcode).has_value() || agreement.coversEveryMember());
+}
+
+// When the operation finds the offset from the shape, the groups that keep the field inline in the same representation share one arm.
+// The offset lookup grows with the number of layouts it distinguishes, so with many layouts each slot position keeps its own arm.
+static Vector<Vector<LayoutID, 8>, 4> membersOfArms(const SlotAgreement& agreement, bool findsOffsetsByShape)
+{
+    AOT_THRESHOLD(size_t, maxLayoutsOfSharedArm, 16);
+    Vector<Vector<LayoutID, 8>, 4> arms;
+    Vector<const PlacedSlot*, 4> slots;
+    for (const SlotGroup& group : agreement.groups) {
+        bool mayShareArm = findsOffsetsByShape && group.slot.storage == SlotStorage::Inline && group.slot.representation != SlotRepresentation::DeferredClosure;
+        size_t index = !mayShareArm ? notFound : slots.findIf([&](const PlacedSlot* slot) {
+            return slot && slot->representation == group.slot.representation;
+        });
+        if (index != notFound) {
+            arms[index].append(group.members.span());
+            continue;
+        }
+        arms.append(Vector<LayoutID, 8>(group.members.span()));
+        slots.append(mayShareArm ? &group.slot : nullptr);
+    }
+    bool sharedArmHasManyLayouts = arms.size() < agreement.groups.size() && std::ranges::any_of(arms, [&](const Vector<LayoutID, 8>& members) {
+        return members.size() > maxLayoutsOfSharedArm && std::ranges::none_of(agreement.groups, [&](const SlotGroup& group) {
+            return group.members.size() == members.size() && group.members[0] == members[0];
+        });
+    });
+    if (sharedArmHasManyLayouts)
+        return membersOfArms(agreement, false);
+    return arms;
+}
+
 // The arms are tested in this order: first the groups with a layout of the module that the function is written in, for a library handles the objects that it makes.
-static Vector<LayoutSetID, 4> createArms(SelectionContext& context, const SlotAgreement& agreement)
+static Vector<LayoutSetID, 4> createArms(SelectionContext& context, const SlotAgreement& agreement, bool findsOffsetsByShape)
 {
     const Program& program = context.program();
     const Heat& heat = context.pass().inputs.heat;
     TypeArena& types = context.pass().types;
     ModuleID module = context.function().module;
 
-    Vector<std::tuple<bool, double, size_t>, 4> likelihoods(agreement.groups.size(), [&](size_t index) {
-        std::span<const LayoutID> members = agreement.groups[index].members.span();
+    Vector<Vector<LayoutID, 8>, 4> membersByArm = membersOfArms(agreement, findsOffsetsByShape);
+    Vector<std::tuple<bool, double, size_t>, 4> likelihoods(membersByArm.size(), [&](size_t index) {
+        std::span<const LayoutID> members = membersByArm[index].span();
         bool hasLayoutOfModule = module && std::ranges::any_of(members, [&](LayoutID layout) {
             return belongsTo(program, heat, layout, module);
         });
@@ -90,7 +127,7 @@ static Vector<LayoutSetID, 4> createArms(SelectionContext& context, const SlotAg
             allocations += heat.allocationsOf(layout).predicted();
         return std::tuple { hasLayoutOfModule, allocations, members.size() };
     });
-    Vector<size_t, 4> likeliestFirst(agreement.groups.size(), [](size_t index) {
+    Vector<size_t, 4> likeliestFirst(membersByArm.size(), [](size_t index) {
         return index;
     });
     AOT::stableSort(likeliestFirst, std::ranges::greater { }, [&](size_t index) {
@@ -98,9 +135,9 @@ static Vector<LayoutSetID, 4> createArms(SelectionContext& context, const SlotAg
     });
 
     Vector<LayoutSetID, 4> arms;
-    arms.reserveInitialCapacity(agreement.groups.size());
+    arms.reserveInitialCapacity(membersByArm.size());
     for (size_t index : likeliestFirst) {
-        Vector<LayoutID, 8> members(agreement.groups[index].members.span());
+        Vector<LayoutID, 8>& members = membersByArm[index];
         if (arms.isEmpty())
             members.append(agreement.membersWithoutSlot.span());
         arms.append(types.completeLayoutSet(members.span()));
@@ -333,8 +370,11 @@ static void collectMatches(SelectionContext& context, Opcode opcode, ArmsOfAgree
             follower = { };
         if (!follower && context.tryClaim(SelectionRuleID::PlannedSlots, group) != ClaimResult::Claimed)
             continue;
-        const Vector<LayoutSetID, 4>& arms = armsOfAgreements.ensure(&agreement, [&] {
-            return createArms(context, agreement);
+        // In cold code each slot position keeps its own arm.
+        bool findsOffsetsByShape = !isCold(heatClassOf(context.pass(), context.analyses().useLists().blockOf(id))).predicted()
+            && canFindOffsetByShape(opcode, agreement) && (!follower || canFindOffsetByShape(function.at(follower).opcode, agreement));
+        const Vector<LayoutSetID, 4>& arms = armsOfAgreements[findsOffsetsByShape].ensure(&agreement, [&] {
+            return createArms(context, agreement, findsOffsetsByShape);
         }).iterator->value;
         matches.append(PlannedSlotMatch { WTF::move(group), arms, typeListsReceivers(context, access), follower, follower && context.isOnlyReturned(follower) });
     }

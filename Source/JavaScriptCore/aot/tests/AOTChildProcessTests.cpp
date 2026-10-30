@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTNativeTest.h"
+#include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
 #include "AOTTestRunner.h"
 #include "AOTTestSubcommands.h"
@@ -99,6 +100,12 @@ static void testCrash()
     ChildProcessResult result = runWith(createLauncher(), { String(runSubcommandName), file.path() });
     AOT_TEST_CHECK(result.outcome == ChildProcessOutcome::Crashed);
     AOT_TEST_CHECK(result.description().startsWith("crashed with "_s));
+}
+
+static void testShellCrash()
+{
+    ChildProcessResult result = runWith(ChildProcessLauncher(shellPath(), { }), { "--useDollarVM=1"_s, "-e"_s, "$vm.crash()"_s });
+    AOT_TEST_CHECK(result.outcome == ChildProcessOutcome::Crashed);
 }
 
 static void testNotStarted()
@@ -270,6 +277,7 @@ std::span<const NativeTest> childProcessTests()
         { "child-process/exit-codes"_s, testExitCodes },
         { "child-process/shared-arguments"_s, testSharedArguments },
         { "child-process/crash"_s, testCrash },
+        { "child-process/shell-crash"_s, testShellCrash },
         { "child-process/not-started"_s, testNotStarted },
         { "runner/files-after-crash"_s, testFilesAfterCrashStillRun },
         { "runner/shows-output-of-children"_s, testOutputOfPassingFileIsShown },

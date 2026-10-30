@@ -142,6 +142,7 @@ public:
     JSString* makeIntegerKey(VM&, uint32_t integer, std::span<const Latin1Character>);
 
     size_t maxCachedKeyLength() const { return m_maxCachedKeyLength; }
+    // Null where there is no memory for the text.
     JSString* findOrAdd(VM&, std::span<const Latin1Character>);
     enum class EqualHashes : uint8_t { AreToldApart, LeaveUndecided };
     // Calls nothing where equal hashes or a 16-bit key leave it undecided, which is then no answer.
@@ -170,10 +171,14 @@ public:
         return matchingKey(entry, characters);
     }
     ALWAYS_INLINE JSString* tryFindCachedKey(std::span<const Latin1Character> characters, unsigned hash) const { return *lookUpCachedKey<EqualHashes::AreToldApart>(characters, hash); }
+    // Null where there is no memory for the text.
     JSString* makeKey(VM&, std::span<const Latin1Character>, unsigned hash);
     ALWAYS_INLINE JSString* makeKey(VM& vm, std::span<const Latin1Character> characters, unsigned hash, const KeyByParts& parts, bool isName = false)
     {
-        JSString* key = jsNontrivialString(vm, isName ? nameWith(characters, hash) : String(StringImpl::create(characters, hash)));
+        String text = isName ? nameWith(characters, hash) : String(StringImpl::tryCreate(characters, hash));
+        if (text.isNull()) [[unlikely]]
+            return nullptr;
+        JSString* key = jsNontrivialString(vm, WTF::move(text));
         if (!canEncode(key)) [[unlikely]]
             return key;
         addCachedKey(key, hash);
@@ -265,8 +270,8 @@ private:
     uint32_t encode(const JSCell* cell) const { return static_cast<uint32_t>(std::bit_cast<uintptr_t>(cell) >> MarkedBlockCage::shift); }
     ALWAYS_INLINE void addCachedKey(JSString* key, unsigned hash)
     {
-        if (m_cachedKeys.isEmpty()) [[unlikely]]
-            m_cachedKeys.fill(0, minTableSize);
+        if (m_cachedKeys.isEmpty() && !tryResize(m_cachedKeys, minTableSize)) [[unlikely]]
+            return;
         size_t tableSize = m_cachedKeys.size();
         uint64_t* entry = m_cachedKeys.mutableSpan().data() + firstIndex(hash, tableSize);
         bool evicts = false;
@@ -280,8 +285,8 @@ private:
     }
     ALWAYS_INLINE void addKeyByParts(const KeyByParts& parts, JSString* key)
     {
-        if (m_keysByParts.isEmpty()) [[unlikely]]
-            m_keysByParts.fill({ }, minTableSize);
+        if (m_keysByParts.isEmpty() && !tryResize(m_keysByParts, minTableSize)) [[unlikely]]
+            return;
         size_t tableSize = m_keysByParts.size();
         KeyByParts* entry = m_keysByParts.mutableSpan().data() + firstIndex(parts.hash, tableSize);
         bool evicts = false;
@@ -310,6 +315,16 @@ private:
     size_t removeDeadCaseConversions(VM&);
     size_t removeDeadIntegerKeys(VM&);
     void resizeIntegerKeys(size_t tableSize);
+    // The table becomes an empty one of that size and its former entries are handed back. Where there is no memory for it, the table stays as it is: what it does not hold is made again.
+    template<typename T>
+    static std::optional<Vector<T>> tryResize(Vector<T>& table, size_t size)
+    {
+        Vector<T> resized;
+        if (!resized.tryReserveCapacity(size))
+            return std::nullopt;
+        resized.fill({ }, size);
+        return std::exchange(table, WTF::move(resized));
+    }
     void growCachedKeys();
     void growKeysByParts();
     void publishIntegerKeys();

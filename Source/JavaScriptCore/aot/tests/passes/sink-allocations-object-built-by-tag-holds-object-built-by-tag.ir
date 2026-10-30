@@ -16,8 +16,8 @@ function f0 name="mayThrow" parameters=[{type=boolean}] results=[{type=boolean}]
 
 function f1 name="twoLevels" parameters=[{type=int}, {type=boolean}, {type=boolean}] results=[{type=undefined|L0}] {
     v3 = Undefined
-    Jump -> next b1()
-  b1() handler=b2():
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
     v4 = CallDirect v2 function=f0
     v5 = NewObject layout=L0
     v6 = Integer integer=1
@@ -25,11 +25,11 @@ function f1 name="twoLevels" parameters=[{type=int}, {type=boolean}, {type=boole
     PutSlotOrAdd v5, -, v7 key="rest" receivers=[L0] level=Proven
     PutSlotOrAdd v5, -, v0 key="head" receivers=[L0] level=Proven
     Jump -> next b3(v5)
-  b2() role=CatchHandler:
+  b2():
     Jump -> next b3(v3)
   b3(v10: undefined|L0):
-    Jump -> next b4()
-  b4() handler=b5():
+    Branch v2 -> taken b4(), notTaken b5()
+  b4():
     v11 = CallDirect v2 function=f0
     v12 = NewObject layout=L0
     v13 = Integer integer=2
@@ -37,7 +37,7 @@ function f1 name="twoLevels" parameters=[{type=int}, {type=boolean}, {type=boole
     PutSlotOrAdd v12, -, v14 key="rest" receivers=[L0] level=Proven
     PutSlotOrAdd v12, -, v10 key="head" receivers=[L0] level=Proven
     Jump -> next b6(v12)
-  b5() role=CatchHandler:
+  b5():
     Jump -> next b6(v3)
   b6(v17: undefined|L0):
     Branch v1 -> taken b7(), notTaken b8()
@@ -70,8 +70,8 @@ function f1 name="twoLevels" parameters=[{type=int}, {type=boolean}, {type=boole
 
 function f2 name="threeLevels" parameters=[{type=int}, {type=boolean}, {type=boolean}] results=[{type=undefined|L0}] {
     v3 = Undefined
-    Jump -> next b1()
-  b1() handler=b2():
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
     v4 = CallDirect v2 function=f0
     v5 = NewObject layout=L0
     v6 = Integer integer=1
@@ -79,11 +79,11 @@ function f2 name="threeLevels" parameters=[{type=int}, {type=boolean}, {type=boo
     PutSlotOrAdd v5, -, v7 key="rest" receivers=[L0] level=Proven
     PutSlotOrAdd v5, -, v0 key="head" receivers=[L0] level=Proven
     Jump -> next b3(v5)
-  b2() role=CatchHandler:
+  b2():
     Jump -> next b3(v3)
   b3(v10: undefined|L0):
-    Jump -> next b4()
-  b4() handler=b5():
+    Branch v2 -> taken b4(), notTaken b5()
+  b4():
     v11 = CallDirect v2 function=f0
     v12 = NewObject layout=L0
     v13 = Integer integer=2
@@ -91,11 +91,11 @@ function f2 name="threeLevels" parameters=[{type=int}, {type=boolean}, {type=boo
     PutSlotOrAdd v12, -, v14 key="rest" receivers=[L0] level=Proven
     PutSlotOrAdd v12, -, v10 key="head" receivers=[L0] level=Proven
     Jump -> next b6(v12)
-  b5() role=CatchHandler:
+  b5():
     Jump -> next b6(v3)
   b6(v17: undefined|L0):
-    Jump -> next b7()
-  b7() handler=b8():
+    Branch v2 -> taken b7(), notTaken b8()
+  b7():
     v18 = CallDirect v2 function=f0
     v19 = NewObject layout=L0
     v20 = Integer integer=3
@@ -103,7 +103,7 @@ function f2 name="threeLevels" parameters=[{type=int}, {type=boolean}, {type=boo
     PutSlotOrAdd v19, -, v21 key="rest" receivers=[L0] level=Proven
     PutSlotOrAdd v19, -, v17 key="head" receivers=[L0] level=Proven
     Jump -> next b9(v19)
-  b8() role=CatchHandler:
+  b8():
     Jump -> next b9(v3)
   b9(v24: undefined|L0):
     Branch v1 -> taken b10(), notTaken b11()

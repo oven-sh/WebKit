@@ -39,6 +39,8 @@ struct CallOptions {
     BuiltinID calledBuiltin { };
     // The callee of a direct construct that may leave its frame by a tail call.
     FunctionID constructedCallee { };
+    // RecordedSite::keptCalleePlusOne.
+    uint32_t keptCalleePlusOne { 0 };
     bool constructs { false };
     bool isTailCall { false };
     bool callsOwnFunctionObject { false };

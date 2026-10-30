@@ -84,26 +84,26 @@ function f1 name="sumOfNeighbors" module=m0 flags=[IsChecked, HasExplicitName] l
     Return v23
 }
 
-# for (k = 0; k + 1 < list.length; k++) list[k] * list[k + 1]: k + 1 is a 64-bit addition without a test for overflow, and both elements are loaded off one address.
-# HOT-LABEL: loop #
+# for (k = 0; k + 1 < list.length; k++) list[k] * list[k + 1] is the loop that `k < list.length - 1` is: the counter is bounded by the test, so it is not asked whether it is still a 32-bit integer,
+# eight turns are written out, and each element is loaded off one address.
+# HOT-LABEL: steps by 8
 # HOT: Int64 b@[[k]] = Phi(
-# HOT: Int64 b@[[next]] = Add(b@[[k]], $1(b@{{*}}), {{*}}:Add)
-# HOT-NEXT: Int32 b@[[goesOn]] = Above(b@{{*}}, b@[[next]], {{*}}:Less)
-# HOT-NEXT: Branch(b@[[goesOn]], Terminal, {{*}}:Less)
-# HOT: Int64 b@[[address]] = Add(b@{{*}}, b@{{*}}, {{*}}:GetTypedArrayElement)
-# HOT-NEXT: Double b@[[here]] = Load(b@[[address]], ControlDependent|Reads:TypedArrayElements, {{*}}:GetTypedArrayElement)
-# HOT: Double b@[[there]] = Load(b@[[address]], offset = 8, ControlDependent|Reads:TypedArrayElements, {{*}}:GetTypedArrayElement)
+# HOT: Double b@[[here]] = Load(b@[[address]], ControlDependent|Reads:TypedArrayElements, {{*}}:GetTypedArrayElement)
+# HOT: Double b@[[there]] = Load(b@{{*}}, offset = 8, ControlDependent|Reads:TypedArrayElements, {{*}}:GetTypedArrayElement)
 # HOT: Double b@{{*}} = Mul(b@[[here]], b@[[there]], {{*}}:Mul)
+# HOT: Load(b@{{*}}, offset = 64, ControlDependent|Reads:TypedArrayElements, {{*}}:GetTypedArrayElement)
 # HOT-LABEL: end of loop
-# An iteration has two branches: whether k is still a 32-bit integer, and the loop condition. Neither element has a bounds check in the loop.
-# BRANCHES-LABEL: loop #
-# BRANCHES-COUNT-2: Branch(
+# The eight turns have one branch: the loop condition. Neither element has a bounds check in the loop.
+# BRANCHES-LABEL: steps by 8
+# BRANCHES-COUNT-1: Branch(
 # BRANCHES-NOT: Branch(
 # BRANCHES-LABEL: end of loop
-# NONE-LABEL: loop #
+# NONE-LABEL: steps by 8
 # NONE-NOT: CheckAdd
 # NONE-NOT: IToD
 # NONE-NOT: Reads:JSArrayBufferView
+# NONE-NOT: TypeTest
+# NONE-NOT: LoopHint
 # NONE-LABEL: end of loop
-# X64: instructions: 8, patchpoints: 2
-# ARM64: instructions: 10, patchpoints: 2
+# X64: instructions: 27, patchpoints: 16, {{*}} steps by 8
+# ARM64: instructions: 29, patchpoints: 16, {{*}} steps by 8

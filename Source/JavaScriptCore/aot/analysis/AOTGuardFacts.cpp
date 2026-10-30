@@ -544,6 +544,8 @@ ProofSet proofsNeededFromGuard(const Program& program, const Function& function,
             continue;
         if (proof == Proof::Pristine && readsPresentElement(user))
             continue;
+        if (proof == Proof::Pristine && user.opcode == Opcode::PutArrayElement && namesArrayStorage(user) && subject && program.typeOf(function, subject).hasOnlyLayouts())
+            continue;
         if (subject && isProvenByType(program, user, proof, program.typeOf(function, subject)))
             continue;
         needed.add(proof);
@@ -619,6 +621,13 @@ static bool provesInBoundsForUser(FunctionAnalyses& analyses, const GuardFact& f
     return isPositionTestForUser(analyses.function(), origin, user) && fact.position && isSamePosition(analyses, fact.position, user.positionOperand());
 }
 
+// A field that defers its closure has a narrow slot, and a store of any other value moves the field to the extra properties. That sets the per-cell bit of the object.
+static bool staysFilledUnlessMovedFromNarrowSlot(const Program& program, FieldReference field)
+{
+    const FieldFlow& flow = flowOf(program, field);
+    return flow.location.deferral != ClosureDeferral::Unknown && flow.occupancy == Occupancy::AlwaysFilled && isNeverDeleted(program, field) && isNeverRedefined(program, field);
+}
+
 static bool isAnsweredByTestOfCell(const Program& program, const Value& slotOperation)
 {
     bool needsRawValue = holdsDeclaredType(slotOperation);
@@ -628,7 +637,7 @@ static bool isAnsweredByTestOfCell(const Program& program, const Value& slotOper
             return false;
         if (needsRawValue)
             return holdsRawValueFromBirth(program, *field) || (staysFilled(program, *field) && !slotHoldsUndefinedAndNull(program, *field));
-        return staysFilled(program, *field) || isFilledAtBirth(program, *field);
+        return staysFilled(program, *field) || isFilledAtBirth(program, *field) || staysFilledUnlessMovedFromNarrowSlot(program, *field);
     });
 }
 

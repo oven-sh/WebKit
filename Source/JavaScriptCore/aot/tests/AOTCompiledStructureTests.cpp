@@ -446,7 +446,6 @@ static void testVariantNobodyHoldsLivesAsLongAsItsPrototype(LoadedProgram& progr
 
     AOT_TEST_CHECK(!prototypes.hasOverflowed());
     prototypes.clear();
-    sanitizeStackForVM(vm);
     vm.heap.collectSync(CollectionScope::Full);
     vm.heap.collectSync(CollectionScope::Full);
     unsigned numberCollected = 0;
@@ -481,7 +480,6 @@ static void testUsualStructureWithoutObjectsOutlastsCollections(LoadedProgram& p
     Weak<Structure> dropped;
     allocateAndDropObject(program, dropped);
     AOT_TEST_CHECK(dropped);
-    sanitizeStackForVM(vm);
     vm.heap.collectSync(CollectionScope::Eden);
     AOT_TEST_CHECK(dropped);
     vm.heap.collectSync(CollectionScope::Full);

@@ -73,6 +73,12 @@ struct AccessorDefinitionPlan {
     bool definesGettersOfEmptySlots { false };
 };
 
+// The fields of a layout that ToPropertyDescriptor reads: enumerable, configurable, value, writable, get, set. Null where the layout has no such field.
+struct DescriptorFields {
+    const LayoutData* layout { nullptr };
+    std::array<const FieldData*, 6> fields { };
+};
+
 struct ObjectModelCaches {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ObjectModelCaches);
     WTF_MAKE_NONCOPYABLE(ObjectModelCaches);
@@ -81,9 +87,11 @@ struct ObjectModelCaches {
     ~ObjectModelCaches();
 
     static constexpr unsigned numberOfAccessorDefinitionPlans = 64;
+    static constexpr unsigned numberOfDescriptorFields = 16;
 
     FieldMovePlanCache movePlans;
     std::array<AccessorDefinitionPlan, numberOfAccessorDefinitionPlans> accessorDefinitionPlans;
+    std::array<DescriptorFields, numberOfDescriptorFields> descriptorFields;
     AssignmentPlanCache assignmentPlans;
     PropertyListCache propertyLists;
     ClassStructureCache classStructures;

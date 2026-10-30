@@ -20,7 +20,7 @@ public:
     explicit ArrayAllocationEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     const ArrayStorageForm& formAtAllocation(const Type& array) const;
-    const ArrayStorageForm& formOfLiteral(const OperationContext&, std::span<const ValueID> elements, const Type& array);
+    const ArrayStorageForm& formOfLiteral(const OperationContext&, std::span<const ValueID> elements, const Type& array, bool hasHoles = false);
 
     CellPointer newLiteral(const ValueContext&);
     CellPointer newArrayOf(const OperationContext&, std::span<const ValueID> elements, const Type& array);
@@ -38,7 +38,7 @@ private:
     CellPointer newLiteralWithHoles(const ValueContext&);
     CellPointer newLiteralWithCapacity(const ValueContext&);
     CellPointer newLiteralAtSite(const ValueContext&, StaticsOffset);
-    const ArrayStorageForm& formOfEmptyLiteral(ValueID literal);
+    const ArrayStorageForm& formOfEmptyLiteral(ValueID literal, const Type& array);
     CellPointer newArrayOutOfLine(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&);
     CellPointer newDoubleLiteral(const OperationContext&, std::span<const Number> numbersOrMarkers, uint32_t isNumberMask);
     CellPointer callNewEmptyArray(const OperationContext&, EmptyArray);

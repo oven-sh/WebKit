@@ -209,7 +209,7 @@ static void reportCalleesWithoutCode(const CompiledCode& code, const Vector<Reso
 
 ResolvedCallees resolveCallees(const LinkedFunctions& functions, const CodeIndex& index, std::span<const EntryAlias> aliases, BuildContext& context)
 {
-    AliasIndex aliasIndex(aliases);
+    AliasIndex aliasIndex(aliases, &context.parallelLoops());
     for (auto& alias : aliases)
         RELEASE_ASSERT(alias.function && !index.indexOf(alias.function) && index.indexOf(alias.body));
     ResolvedCallees result;
@@ -372,7 +372,7 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Ve
             .frame = frameTable->frameOf[position],
             .frameMapRange = frameMapRange,
             .handlers = handlers.span(),
-            .callsOfOwnFunctionObjects = sites.callsOfOwnFunctionObjects.span(),
+            .calleesOfSites = sites.calleesOfSites.span(),
             .constructedCallees = constructedCallees.span(),
             .callSites = callSites[position].span(),
         };
@@ -411,10 +411,18 @@ static Vector<uint8_t> encodeStubAddresses(const StubBlob& blob)
 {
     Vector<StubAddressInImage> addresses;
     for (auto& placement : blob.placements) {
-        if (AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE || hasAddressInImage(descriptorOf(placement.key.family()).linkage))
-            addresses.append({ placement.key.bits(), placement.offset, 0 });
+        StubLinkage linkage = descriptorOf(placement.key.family()).linkage;
+        // Only needed where a call pushes its return address: there, walking a stopped thread's stack has to look up the target of a call.
+        bool usesCallConvention = isX86_64() && linkage == StubLinkage::CalledByCode && signatureOf(placement.key).usesCallConvention;
+        if (AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE || usesCallConvention || hasAddressInImage(linkage))
+            addresses.append({ placement.key.bits(), placement.offset, usesCallConvention });
     }
-    AOT::sort(addresses, { }, &StubAddressInImage::key);
+    AOT::sort(addresses, [](const StubAddressInImage& a, const StubAddressInImage& b) {
+        bool isFirstPart = isFoundByKey(StubKey::fromBits(a.key).family());
+        if (isFirstPart != isFoundByKey(StubKey::fromBits(b.key).family()))
+            return isFirstPart;
+        return a.key < b.key;
+    });
     return bytesOf(addresses);
 }
 
@@ -429,11 +437,16 @@ static Vector<uint8_t> encodeSlotHandlers(const StubBlob& blob)
     return bytesOf(offsets);
 }
 
-OptionSet<ImageFlag> flagsForUnseenCode(const Typed::PipelineOutput& pipeline)
+OptionSet<ImageFlag> flagsForUnseenCode(const Typed::PipelineOutput& pipeline, const CompileOptions& options)
 {
     const Typed::FlowResults& flow = *pipeline.flow;
-    if (!flow.hasResults())
-        return { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::FindsDataFilesByName };
+    if (!flow.hasResults()) {
+        OptionSet<ImageFlag> flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::FindsDataFilesByName };
+        // Any load may name a file outside the image, so only the options say whether one is loaded.
+        if (!options.excludesCodeOutsideImage())
+            flags.add(ImageFlag::LoadsCodeOutsideImage);
+        return flags;
+    }
 
     OptionSet<ImageFlag> flags;
     if (flow.findsFilesOfProgramByName())
@@ -504,6 +517,7 @@ struct ImageWriterInputs {
     const ImageSections& sections;
     const WTF::BitSet<numberOfEntries>& entriesUsed;
     ImageCounts counts;
+    std::span<const StubReturnSite> stubReturnSites;
 };
 
 } // anonymous namespace
@@ -677,7 +691,7 @@ static void writeHeader(ImageHeader& header, const ImageWriterInputs& parts, con
         .constantsOffset = layout.constantsOffset,
         .constantsSize = safeCast<uint32_t>(parts.linker.constants.bytes.size()),
     };
-    OptionSet<ImageFlag> flags = flagsForUnseenCode(parts.inputs.pipeline);
+    OptionSet<ImageFlag> flags = flagsForUnseenCode(parts.inputs.pipeline, context.options());
     if (context.options().obfuscates())
         flags.add(ImageFlag::IsObfuscated);
     if (Typed::namesWaysToModuleObjects(*parts.inputs.pipeline.program))
@@ -685,6 +699,16 @@ static void writeHeader(ImageHeader& header, const ImageWriterInputs& parts, con
     header.flags = flags.toRaw();
     for (size_t entry : parts.entriesUsed)
         header.entriesUsed[entry / 32] |= 1u << entry % 32;
+    for (const StubReturnSite& site : parts.stubReturnSites) {
+        if (!hasSingleReturnSite(site.kind))
+            continue;
+        uint32_t& offset = header.singleReturnSites[static_cast<unsigned>(site.kind)];
+        RELEASE_ASSERT(!offset && site.offset);
+        offset = site.offset;
+    }
+    header.numberOfStubsFoundByKey = static_cast<uint32_t>(std::ranges::count_if(spanReinterpretCast<const StubAddressInImage>(parts.sections[ImageSection::StubAddresses].span()), [](const StubAddressInImage& address) {
+        return isFoundByKey(StubKey::fromBits(address.key).family());
+    }));
 }
 
 static void copySections(std::span<uint8_t> image, const ImageWriterInputs& parts, const ImageExtent& extent, const ParallelLoops& loops)
@@ -874,7 +898,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     times.didFinish("remove jump-only functions"_s);
     result.foldedFunctions = foldIdenticalFunctions(result.functions, result.aliases, *inputs.pipeline.program, context);
     times.didFinish("fold identical functions"_s);
-    CodeIndex index(functions.span());
+    CodeIndex index(functions.span(), &loops);
     ResolvedCallees callees = resolveCallees(functions, index, result.aliases.span(), context);
     times.didFinish("resolve callees"_s);
     if (diagnostics.hasErrors())
@@ -985,7 +1009,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     times.didFinish("collect sections"_s);
 
     CodeLinkerInputs linker { layoutInputs, result.layout, result.outlining, result.constants, inputs.instanceSizes };
-    result.image = writeImage({ inputs, linker, sections, result.entriesUsed, { static_cast<uint32_t>(functions.size()), regExps.maxOutputSize } }, context);
+    result.image = writeImage({ inputs, linker, sections, result.entriesUsed, { static_cast<uint32_t>(functions.size()), regExps.maxOutputSize }, stubs.returnSites.span() }, context);
     if (diagnostics.hasErrors())
         result.image.clear();
     times.didFinish("write image"_s);

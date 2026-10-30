@@ -133,10 +133,12 @@ struct VirtualObjectContext {
     const Program& program;
     const Function& function;
     const FlowResults* flow { nullptr };
+    // The arena of a pass that rewrites the function. An analysis has none and can only name types that the whole program shares.
+    TypeArena* types { nullptr };
 };
 
 enum class ListedValues : bool { HaveTypesOfFields, MayAlsoBeUndefinedOrNull };
-DescribedObject describeVirtualObject(FunctionAnalyses&, ValueID allocation, ListedValues = ListedValues::HaveTypesOfFields);
+DescribedObject describeVirtualObject(FunctionAnalyses&, ValueID allocation, ListedValues = ListedValues::HaveTypesOfFields, TypeArena* = nullptr);
 
 using InitialFieldFunctor = ScopedLambda<void(const VirtualField&, ValueID)>;
 void forEachInitialField(const VirtualObjectContext&, const VirtualObjectDescription&, NOESCAPE const InitialFieldFunctor&);

@@ -535,6 +535,47 @@ static BitVector findHeadBlocks(const Function& function, FunctionAnalyses& anal
     return blocks;
 }
 
+// A short function without a loop whose rest parameter is only spread into its calls. If the caller created the rest parameter for the call,
+// both lists are eliminated in the caller, and the arguments reach the callee in registers.
+static bool onlyForwardsRestParameter(const Program& program, const Function& function, FunctionAnalyses& analyses, uint32_t codeBytes)
+{
+    AOT_THRESHOLD(uint32_t, maxCodeBytes, 160);
+    if (!function.has(FunctionFlags::HasRestParameter) || function.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest }) || codeBytes > maxCodeBytes || analyses.cfg().hasCycle())
+        return false;
+    const Block& entry = function.at(entryBlock);
+    unsigned restIndex = function.firstParameterIndex() + function.numberOfPositionalParameters();
+    if (restIndex >= entry.parameters.size())
+        return false;
+
+    static_assert(OperandIndex::CallList::list == OperandIndex::ConstructList::list && OperandIndex::CallList::list == OperandIndex::SuperConstructList::list);
+    constexpr OpcodeSet callsWithList { Opcode::CallList, Opcode::ConstructList, Opcode::SuperConstructList };
+    const UseLists& useLists = analyses.useLists();
+    bool isHandedOn = false;
+    Vector<ValueID, 4> names { entry.parameters[restIndex] };
+    for (size_t index = 0; index < names.size(); ++index) {
+        for (const Use& use : useLists.usesOf(names[index])) {
+            if (use.kind == Use::Kind::BlockSubject)
+                continue;
+            if (use.kind != Use::Kind::Operand)
+                return false;
+            const Value& user = function.at(use.user);
+            if (isCast(user.opcode) && user.opcode != Opcode::Check) {
+                names.append(use.user);
+                continue;
+            }
+            bool isAppendedToList = (user.opcode == Opcode::AppendSpread && use.operandIndex == OperandIndex::AppendSpread::iterable)
+                || (user.opcode == Opcode::AppendElements && use.operandIndex == OperandIndex::AppendElements::source)
+                || (callsWithList.contains(user.opcode) && use.operandIndex == OperandIndex::CallList::list);
+            isHandedOn |= isAppendedToList;
+            bool onlyInspects = user.operandKind(use.operandIndex) == OperandKind::Guard || user.opcode == Opcode::AllGuards || user.opcode == Opcode::IsPristine || user.opcode == Opcode::HasArrayStorage
+                || user.opcode == Opcode::ValidateType || user.opcode == Opcode::GetArrayLength || (user.opcode == Opcode::PropGet && user.key() == program.keyOf(BuiltinNames::length));
+            if (!isAppendedToList && !onlyInspects)
+                return false;
+        }
+    }
+    return isHandedOn;
+}
+
 InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, const Function& function, Expected<HeatClass> heat)
 {
     RELEASE_ASSERT(context.flow);
@@ -1001,6 +1042,7 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
     summary.likelyCodeBytes = computeLikelyBytes();
     summary.hasCycle = cfg.hasCycle();
     summary.isWrapper = isWrapperCreatedByEngine(function);
+    summary.onlyForwardsRestParameter = onlyForwardsRestParameter(program, function, analyses, summary.codeBytes);
     // A loop of the library runs once for each element, however seldom the function is entered: a caller asks what it does with a function that it is handed.
     if (isCold(heat).predicted() && !(function.role == FunctionRole::Library && cfg.hasCycle()))
         return summary;
@@ -1412,12 +1454,27 @@ static bool isSiteOfChain(const Program& program, const Function& caller, const 
     return call.inlineFrame && caller.inlineFrames[call.inlineFrame].callee == call.function() && program.at(call.function()).role == FunctionRole::ChainStep;
 }
 
+static FunctionID namingWorkerOf(const FunctionPassContext& context, FunctionID wrapper)
+{
+    const Function& function = context.program.at(wrapper);
+    if (function.creator.kind() != CreatorRecord::Kind::ResultWrapper)
+        return { };
+    FunctionID worker = function.creator.as<CreatorRecord::ResultWrapper>().worker;
+    return std::ranges::contains(context.inputs.callGraph.calleesOf(worker), wrapper) ? worker : FunctionID();
+}
+
 // A function that calls what it is given does something else with each function it is given: a traversal in the callback of the same traversal repeats nothing.
 static bool closesCycle(const FunctionPassContext& context, const InliningSummary& summary, const Value& call)
 {
     FunctionID callee = call.function();
     if (callee == context.id)
         return true;
+    // A worker that calls its function recursively names the wrapper. With the worker inlined, the wrapper would be the whole function, and every level would allocate the object.
+    if (namingWorkerOf(context, context.id) == callee)
+        return true;
+    // So that wrapper only calls the worker and assembles the parts: the call to the worker is what closes the cycle.
+    if (namingWorkerOf(context, callee))
+        return false;
     bool differsByCall = passesArgumentThat(call, summary.calledParameters, [&](ValueID argument, uint32_t) {
         return !!context.program.typeOf(context.function, argument).singleFunction();
     });
@@ -1499,7 +1556,8 @@ static void placeCallsOfLinks(const Program& program, Function& caller, const Fu
             uint32_t& frame = frames[position / 2];
             if (!frame) {
                 uint32_t frameOfLink = frameOfFirstLink + static_cast<uint32_t>(position / 2);
-                caller.inlineFrames.append(InlineFrame { .callee = call.function(), .callPosition = program.at(caller.inlineFrames[frameOfLink].callee).position, .parent = frameOfLink, .module = traversal.module });
+                const InlineFrame link = caller.inlineFrames[frameOfLink];
+                caller.inlineFrames.append(InlineFrame { .callee = call.function(), .callPosition = link.calledBuiltin ? link.callPosition : program.at(link.callee).position, .parent = frameOfLink, .module = traversal.module });
                 frame = caller.inlineFrames.size() - 1;
             }
             caller.edit(cloner.cloneOf(id), ValueEdit::Definition).inlineFrame = frame;
@@ -1539,6 +1597,7 @@ static void copyBodyIn(IRBuilder& builder, ProgramPoint point, const Function* b
         .isConstruction = call.isConstruction(),
         .callIsPartOfConstruction = !!call.isPartOfConstruction,
         .callsOwnFunctionObject = call.callsOwnFunctionObject(),
+        .calleeIsKeptInFrame = call.calleeIsKeptInFrame(),
         .calleeIsPredicted = call.calleeIsPredicted(),
         .module = callee.module,
     }, callee);
@@ -2230,7 +2289,7 @@ static FunctionID functionAsWritten(const Program& program, FunctionID id)
 // The caller's own function object is called without the test.
 static bool standsBesideCallByValue(const FunctionPassContext& context, const Value& call)
 {
-    return !call.callsOwnFunctionObject() && context.program.at(call.function()).capabilities.containsAll({ FunctionCapabilities::RecordsCallee, FunctionCapabilities::RecordsCalleeOnceRenamed }) && functionAsWritten(context.program, context.id) != functionAsWritten(context.program, call.function());
+    return !call.callsOwnFunctionObject() && !call.calleeIsKeptInFrame() && context.program.at(call.function()).capabilities.containsAll({ FunctionCapabilities::RecordsCallee, FunctionCapabilities::RecordsCalleeOnceRenamed }) && functionAsWritten(context.program, context.id) != functionAsWritten(context.program, call.function());
 }
 
 InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningSummary& summary, BlockID block, ValueID call)
@@ -2293,7 +2352,8 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     // In a loop of the caller the tests run at every turn wherever they stand. Beside the call they are the same tests, and the typed body behind them can be copied in.
     bool isExpectedToPassInLoop = isEntryChecks && !isCold(heat).predicted() && context.analyses.isInCycle(block) && passesEveryEntryCheck(program, caller, value, ArgumentTypes::Expected);
     bool opensTypedBody = isEntryChecks && (callerIsEntrypoint || passesEveryEntryCheck(program, caller, value) || isExpectedToPassInLoop || (!isCold(heat).predicted() && knowsMoreThanEntryChecksPassOn(context, call)));
-    bool isAlwaysWorthInlining = summary.isWrapper && !leavesEntryChecksOutside && (!isEntryChecks || opensTypedBody) && !wouldOnlyMoveAllocationIntoCodeThatRunsOnce(context, summary, block, call, heat);
+    bool forwardsListCreatedForCall = summary.onlyForwardsRestParameter && value.numberOfVariadicOperands() && lengthOfListMadeForCall(context, value.variadicOperands().back(), call);
+    bool isAlwaysWorthInlining = (summary.isWrapper || forwardsListCreatedForCall) && !leavesEntryChecksOutside && (!isEntryChecks || opensTypedBody) && !wouldOnlyMoveAllocationIntoCodeThatRunsOnce(context, summary, block, call, heat);
     if (canInlineWholeBody && (value.isAlwaysInlined() || isAlwaysWorthInlining)) {
         addBenefit(value.isAlwaysInlined() ? InlineBenefit::CallOverhead : InlineBenefit::Wrapper, cost);
         verdict.decision = InlineDecision::Inline;
@@ -2343,7 +2403,7 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
         // The limit bounds what each level adds to the caller. A body that costs no more than its call adds nothing to the code, but each level is one more look at all of the caller.
         isTooDeep = (cost > callOverheadBytes && context.exceeds(LimitID::MaxInlineDepth, depth + 1, call)) || context.exceeds(LimitID::MaxInlineNesting, inlineDepthOf(program, caller, value.inlineFrame) + 1, call);
         // Where code runs seldom, an allocation that goes is worth its own bytes and no more.
-        if (!isTooDeep && !isWithinBudget() && (!isCold(heat).predicted() || callerIsEntrypoint)) {
+        if (!isTooDeep && !isWithinBudget()) {
             uint64_t bytesOfAllocation = isCold(heat).predicted() ? InlineModel::allocationCallBytes : context.limit(LimitID::InlineSunkAllocationBytes);
             unsigned allocations = sinkableAllocationsAfterInlining(context, block, call, [&] {
                 return calleeReturnsFreshAggregate(context, summary, value.function());
@@ -2472,6 +2532,20 @@ static bool handsObjectToFrequentCode(FunctionPassContext& context, ValueID call
     return false;
 }
 
+// The wrapper reads the object's parts and passes them to the body. If the caller has just created the object, the inlined copy is smaller than the allocation it removes, however rarely it runs.
+static bool takesNewObjectApart(FunctionPassContext& context, ValueID call)
+{
+    const Function& caller = context.function;
+    const Function& callee = context.program.at(caller.at(call).function());
+    if (callee.creator.kind() != CreatorRecord::Kind::ParameterWrapper)
+        return false;
+    uint32_t operandIndex = callee.firstParameterIndex() + callee.creator.as<CreatorRecord::ParameterWrapper>().parameter;
+    if (operandIndex >= caller.at(call).numberOfOperands())
+        return false;
+    ValueID object = caller.at(call).operand(operandIndex);
+    return object && interpretedOf(caller.at(sameObjectThroughCasts(caller, object).valueInFrontOfFacts()).opcode) == Interpretation::Allocation;
+}
+
 static Vector<InlineSite> findInlineSites(FunctionPassContext& context, uint32_t firstFrame)
 {
     const Function& caller = context.function;
@@ -2487,7 +2561,7 @@ static Vector<InlineSite> findInlineSites(FunctionPassContext& context, uint32_t
             ValueID id = block.values[index];
             const Value& value = caller.at(id);
             bool isCandidate = value.opcode == Opcode::CallDirect && !value.isNeverInlined() && !value.isAfterInlinedHead();
-            if (value.inlineFrame >= firstFrame && isCandidate && (!isRare || handsObjectToFrequentCode(context, id)))
+            if (value.inlineFrame >= firstFrame && isCandidate && (!isRare || handsObjectToFrequentCode(context, id) || takesNewObjectApart(context, id)))
                 sites.append(InlineSite { .block = blockID, .index = index, .call = id });
         }
     }
@@ -2520,7 +2594,7 @@ static Vector<InlineSite> findInlineSites(FunctionPassContext& context, uint32_t
 
     const BlockFrequencies& frequencies = context.analyses.blockFrequencies();
     sites.removeAllMatching([&](const InlineSite& site) {
-        return frequencies.classOf(site.block).predicted() == BlockFrequency::Rare && !handsObjectToFrequentCode(context, site.call);
+        return frequencies.classOf(site.block).predicted() == BlockFrequency::Rare && !handsObjectToFrequentCode(context, site.call) && !takesNewObjectApart(context, site.call);
     });
     return sites;
 }
@@ -2870,7 +2944,8 @@ static Vector<ValueSite> findCallsOfHeads(const AnalysisContext& context, const 
         for (uint32_t valueIndex = 0; valueIndex < block.values.size(); ++valueIndex) {
             ValueID call = block.values[valueIndex];
             const Value& value = caller.at(call);
-            if (value.opcode != Opcode::CallDirect || call == tailCall || value.isAfterInlinedHead() || value.function() == context.id || !headOf[value.function().index()])
+            // InlineCalls copies the tests that it can read before accesses are resolved. Here the head also holds the fields that the function reads, so a call that stands behind such a copy is looked at again.
+            if (value.opcode != Opcode::CallDirect || call == tailCall || value.function() == context.id || !headOf[value.function().index()])
                 continue;
             const Function& callee = program.at(value.function());
             if (value.numberOfOperands() != callee.numberOfEntryParameters() || !program.at(program.provenTypeOf(callee.result())).isSubsetOf(program.at(value.type), program))

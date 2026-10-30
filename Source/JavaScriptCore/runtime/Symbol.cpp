@@ -28,6 +28,7 @@
 #include "Symbol.h"
 
 #include "JSCJSValueInlines.h"
+#include "MarkedBlockCage.h"
 #include "SymbolObject.h"
 #include <wtf/text/MakeString.h>
 
@@ -65,6 +66,8 @@ void Symbol::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
+    if (MarkedBlockCage::isRequired()) [[unlikely]]
+        MarkedBlockCage::willAddSymbol(vm);
     vm.symbolImplToSymbolMap.set(&m_privateName.uid(), this);
 }
 

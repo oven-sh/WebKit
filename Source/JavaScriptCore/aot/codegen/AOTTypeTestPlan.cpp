@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTIRProgram.h"
+#include "AOTLayout.h"
 #include "AOTSort.h"
 #include "AOTTypeRelations.h"
 #include "AOTTypeTable.h"
@@ -148,7 +149,9 @@ static void appendObjectTests(TypeTestPlan& plan, const Program& program, const 
     bool mayHaveShapes = false;
     for (LayoutID member : program.at(to.layouts).completeMembers()) {
         const Layout& layout = program.at(member);
-        if (layout.kind != LayoutKind::ModuleNamespace)
+        if (carriesBrandOfClass(program, member))
+            append({ .kind = CellTestKind::CarriesBrandOfClass, .classLayout = member });
+        else if (layout.kind != LayoutKind::ModuleNamespace)
             mayHaveShapes = true;
         else if (fromObjects.anyObject || (known && std::ranges::binary_search(known->completeMembers(), member)))
             append({ .kind = CellTestKind::IsNamespaceOf, .module = layout.namespaceOf });
@@ -160,7 +163,7 @@ static void appendObjectTests(TypeTestPlan& plan, const Program& program, const 
 static constexpr auto planOrder = [] {
     std::array<uint8_t, numberOfEnumerators<CellTestKind>> order { };
     uint8_t next = 0;
-    for (CellTestKind kind : { CellTestKind::CellTypeIs, CellTestKind::IsObject, CellTestKind::ShapeIn, CellTestKind::IsPristine, CellTestKind::IsBuiltinCell, CellTestKind::IsSymbol, CellTestKind::IsClosureOf, CellTestKind::SharingModeIs, CellTestKind::IsCallable, CellTestKind::InheritsClassInfo, CellTestKind::IsNamespaceOf })
+    for (CellTestKind kind : { CellTestKind::CellTypeIs, CellTestKind::IsObject, CellTestKind::ShapeIn, CellTestKind::IsPristine, CellTestKind::IsBuiltinCell, CellTestKind::IsSymbol, CellTestKind::IsClosureOf, CellTestKind::SharingModeIs, CellTestKind::IsCallable, CellTestKind::InheritsClassInfo, CellTestKind::IsNamespaceOf, CellTestKind::CarriesBrandOfClass })
         order[static_cast<size_t>(kind)] = next++;
     return order;
 }();
@@ -184,6 +187,8 @@ static uint32_t subjectOf(const CellTest& test)
         return static_cast<uint32_t>(test.sharingMode);
     case CellTestKind::IsNamespaceOf:
         return test.module.index();
+    case CellTestKind::CarriesBrandOfClass:
+        return test.classLayout.index();
     case CellTestKind::IsObject:
     case CellTestKind::IsCallable:
     case CellTestKind::IsPristine:

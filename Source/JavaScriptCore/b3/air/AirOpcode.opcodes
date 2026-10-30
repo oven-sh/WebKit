@@ -1153,6 +1153,31 @@ arm64: OrRightShift64 U:G:64, U:G:64, U:G:64, D:G:64
 arm64: OrUnsignedRightShift64 U:G:64, U:G:64, U:G:64, D:G:64
     Tmp, Tmp, Imm, Tmp
 
+# minsd and maxsd: the first operand if it is less than (Min) or greater than (Max) the second, otherwise the second. A NaN operand or two zeros also give the second.
+x86_64: MinOrSecondDouble U:F:64, U:F:64, D:F:64 /preservesFlags
+    x86_64_avx: Tmp, Tmp, Tmp
+
+x86_64: MinOrSecondDouble U:F:64, UD:F:64
+    Tmp, Tmp
+
+x86_64: MinOrSecondFloat U:F:32, U:F:32, D:F:32 /preservesFlags
+    x86_64_avx: Tmp, Tmp, Tmp
+
+x86_64: MinOrSecondFloat U:F:32, UD:F:32
+    Tmp, Tmp
+
+x86_64: MaxOrSecondDouble U:F:64, U:F:64, D:F:64 /preservesFlags
+    x86_64_avx: Tmp, Tmp, Tmp
+
+x86_64: MaxOrSecondDouble U:F:64, UD:F:64
+    Tmp, Tmp
+
+x86_64: MaxOrSecondFloat U:F:32, U:F:32, D:F:32 /preservesFlags
+    x86_64_avx: Tmp, Tmp, Tmp
+
+x86_64: MaxOrSecondFloat U:F:32, UD:F:32
+    Tmp, Tmp
+
 arm64: FloatMax U:F:32, U:F:32, D:F:32
     Tmp, Tmp, Tmp
 

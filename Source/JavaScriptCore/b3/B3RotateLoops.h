@@ -14,7 +14,8 @@ namespace JSC { namespace B3 {
 class BasicBlock;
 class Procedure;
 
-JS_EXPORT_PRIVATE bool rotateLoops(Procedure&, const Vector<BasicBlock*>* allowedHeaders = nullptr);
+// Sets didMergeBackEdges when several latches of a loop now share one bottom test. fixSSA() adds Phis there, so run eliminateRedundantPhiCycles() after it.
+JS_EXPORT_PRIVATE bool rotateLoops(Procedure&, const Vector<BasicBlock*>* allowedHeaders = nullptr, bool* didMergeBackEdges = nullptr);
 
 } } // namespace JSC::B3
 

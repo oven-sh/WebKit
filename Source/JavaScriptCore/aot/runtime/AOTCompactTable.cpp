@@ -614,6 +614,29 @@ ALWAYS_INLINE bool CompactTable::tryAddQuickly(JSGlobalObject* globalObject, JSV
     return true;
 }
 
+// One hash serves the search for an equal key, whose StringImpl the substring then shares, and the StringImpl that is created otherwise.
+ALWAYS_INLINE void CompactTable::resolveSubstringKey(JSRopeString* key) const
+{
+    StringImpl& base = *key->substringBase()->tryGetValueImpl();
+    unsigned offset = key->substringOffset();
+    unsigned length = key->length();
+    auto resolve = [&]<typename CharacterType>(std::span<const CharacterType> characters) ALWAYS_INLINE_LAMBDA {
+        unsigned hash = StringHasher::computeHashAndMaskTop8Bits(characters);
+        if (Lookup lookup = tryFindCharactersQuickly(characters, hash); lookup.result == QuickLookup::Found) {
+            StringImpl& equal = *asString(heapKeyAt(lookup.entry))->tryGetValueImpl();
+            if (equal.is8Bit() || !key->is8Bit()) {
+                key->resolveSubstringBySharing(equal);
+                return;
+            }
+        }
+        key->resolveSubstringBySharing(length == base.length() ? base : StringImpl::createSubstringSharingImpl(base, offset, length, hash).get());
+    };
+    if (base.is8Bit())
+        resolve(base.span8().subspan(offset, length));
+    else
+        resolve(base.span16().subspan(offset, length));
+}
+
 bool CompactTable::add(JSGlobalObject* globalObject, JSObject* owner, JSValue key, JSValue value)
 {
     VM& vm = globalObject->vm();
@@ -629,6 +652,15 @@ bool CompactTable::add(JSGlobalObject* globalObject, JSObject* owner, JSValue ke
         }
         table = tryMoveToHeap(globalObject, owner);
         RETURN_IF_EXCEPTION(scope, false);
+    }
+    // A stored key is resolved, so a rope is resolved before the first search instead of between two.
+    if (key.isString() && asString(key)->isRope()) {
+        if (asString(key)->isSubstring())
+            table->resolveSubstringKey(uncheckedDowncast<JSRopeString>(asString(key)));
+        else {
+            asString(key)->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
     }
     auto replaceWith = [&](CompactTable* replacement) {
         table->becomeObsolete(vm, Status::Replaced, replacement);
@@ -678,12 +710,6 @@ bool CompactTable::add(JSGlobalObject* globalObject, JSObject* owner, JSValue ke
         return true;
     }
 
-    if (key.isString() && asString(key)->isRope()) {
-        asString(key)->value(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (tryAddWithoutSearch())
-            return true;
-    }
     unsigned hash = hashOfStoredKey(key);
     Width keyWidth = canHold(vm, table->keyWidth(), key) ? table->keyWidth() : Width::Wide;
     Width valueWidth = canHold(vm, table->m_valueWidth, value) ? table->m_valueWidth : Width::Wide;

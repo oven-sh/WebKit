@@ -11,8 +11,11 @@
 #include "AOTID.h"
 #include "AOTVector.h"
 #include "JSExportMacros.h"
+#include <memory>
 #include <span>
 #include <wtf/BitVector.h>
+#include <wtf/HashMap.h>
+#include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 
 namespace JSC { namespace AOT {
@@ -71,10 +74,43 @@ struct HandedOnReferences {
     friend bool operator==(const HandedOnReferences&, const HandedOnReferences&) = default;
 };
 
+struct HandedOnTarget {
+    FunctionID callee;
+    uint32_t entryParameter { 0 };
+
+    friend bool operator==(const HandedOnTarget&, const HandedOnTarget&) = default;
+};
+
+// One operand of a call with many callees. The callees, each with the parameter that takes the operand, are a list that all such calls share:
+// n calls that each may enter n functions keep n lists' worth of entries otherwise.
+struct HandedOnToManyCallees {
+    uint32_t targetList { 0 };
+    uint64_t bits { 0 };
+
+    friend bool operator==(const HandedOnToManyCallees&, const HandedOnToManyCallees&) = default;
+};
+
+class HandedOnTargetLists {
+    WTF_MAKE_NONCOPYABLE(HandedOnTargetLists);
+public:
+    HandedOnTargetLists() = default;
+
+    uint32_t intern(Vector<HandedOnTarget>&&);
+    unsigned size() const { return m_lists.size(); }
+    std::span<const HandedOnTarget> at(uint32_t list) const LIFETIME_BOUND { return m_lists[list]->span(); }
+
+private:
+    Lock m_lock;
+    Vector<std::unique_ptr<Vector<HandedOnTarget>>> m_lists;
+    UncheckedKeyHashMap<unsigned, Vector<uint32_t, 1>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_listsByHash;
+};
+
 struct BorrowingBody {
     uint64_t word { 0 };
     Vector<HandedOnReferences> handedOn;
+    Vector<HandedOnToManyCallees> handedOnToManyCallees;
     Vector<FunctionID> calleesWhoseRecordsWereRead;
+    Vector<uint32_t> targetListsRead;
 
     friend bool operator==(const BorrowingBody&, const BorrowingBody&) = default;
 };
@@ -92,6 +128,7 @@ private:
     friend BorrowedParameters computeBorrowedParameters(const Program&, BuildContext&, BorrowingBodies&, std::span<const uint8_t>, std::span<const uint8_t>);
 
     Vector<BorrowingBody> m_bodies;
+    HandedOnTargetLists m_targetLists;
     Vector<uint8_t> m_wasLoweredSinceScanned;
     Vector<uint64_t> m_wordsOfLatestTable;
 };

@@ -4,6 +4,7 @@ runtime AllocateStorage : void* (uint64_t size) ; RuntimeAllocates
 runtime ArrayUnshift : EncodedJSValue (JSCell* array, EncodedJSValue item) ; unknownCode
 runtime ArrayJoin : JSCell* (JSCell* array, JSCell* separator) ; RuntimeCreatesString
 runtime ArrayJoinOfAnyReceiver : EncodedJSValue (EncodedJSValue receiver, EncodedJSValue separator, JSCell* function) ; unknownCode
+runtime ArraySortInDefaultOrder : EncodedJSValue (JSCell* array) ; unknownCode
 runtime ArrayOfLengthOrElement : JSCell* (EncodedJSValue lengthOrElement) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NumberOfAnyValue : EncodedJSValue (EncodedJSValue value) ; unknownCode
 runtime StringOfAnyValue : EncodedJSValue (EncodedJSValue value) ; unknownCode
@@ -18,6 +19,7 @@ runtime CodeURIOfAnyValue : EncodedJSValue (EncodedJSValue value, uint32_t codin
 runtime ArraySearchOfAnyValue : EncodedJSValue (EncodedJSValue receiver, EncodedJSValue searched, EncodedJSValue fromIndex, uint32_t answersIndex) ; unknownCode
 runtime ByteLengthOfAnyValue : EncodedJSValue (EncodedJSValue value, EncodedJSValue encoding) ; unknownCode
 runtime ArrayFromTypedArray : JSCell* (JSCell* view, uint32_t indexingType) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
+runtime MoveBytes : void (uint8_t* target, const uint8_t* source, uint64_t count) ; reads(TypedArrayElements) writes(TypedArrayElements) ; leaf
 runtime ArrayIndexOfDouble : size_t (JSCell* array, double searched) ; reads(all)
 runtime ArrayIndexOfInt32 : size_t (JSCell* array, EncodedJSValue searched) ; reads(all)
 runtime ArrayIndexOfString : size_t (JSCell* array, JSCell* searched, uint64_t start) ; RuntimeCreatesString
@@ -139,6 +141,8 @@ runtime JSONObjectKey : uint64_t (uint64_t order, uint32_t shape, uint32_t field
 runtime JSONObjectFinish : size_t (JSCell* object, EncodedJSValue extra, uint64_t order) ; reads(all) writes(OrderWords, NamedProperties, AllocatorState, RuntimeState) collects
 runtime JSONParseExtraMembers : const uint8_t* (uint32_t shape, const uint8_t* cursor, uint64_t* extraAndOrder) ; reads(all) writes(NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) collects
 
+runtime KeyOrderEntries : const uint8_t* (uint32_t shape, uint32_t orderWord) ; reads(all) writes(RuntimeState)
+runtime KeyNamesInOrder : EncodedJSValue (uint32_t shape, uint32_t orderWord, uint32_t position) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime JSONAppendString : uint8_t* (JSCell* builder, uint8_t* cursor, JSCell* string) ; reads(all) writes(StringBuilderContents, StringStorage, AllocatorState, RuntimeState) throws collects
 runtime JSONAppendInteger : uint8_t* (uint8_t* cursor, int64_t integer) ; writes(StringBuilderContents) ; leaf
 runtime JSONAppendNumber : uint8_t* (uint8_t* cursor, double number) ; writes(StringBuilderContents) ; leaf

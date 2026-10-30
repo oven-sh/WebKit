@@ -103,8 +103,9 @@ public:
                         VALIDATE(&arg <= &inst.args().back(), ("At ", arg, " in ", inst, " in ", *block));
 
                         // FIXME: replace with a check for wasm simd instructions.
-                        // Bun: a pair of 64-bit registers is loaded from 128 bits of memory, with or without SIMD.
-                        VALIDATE(Options::useWasmSIMD()
+                        // Bun: the procedure's policy says whether SIMD is allowed, not Options::useWasmSIMD().
+                        // A pair of 64-bit registers is loaded from 128 bits of memory, with or without SIMD.
+                        VALIDATE(m_code.proc().policy().upstream.allowsSIMD
                             || !Arg::isAnyUse(role)
                             || width <= Width64
                             || inst.kind.opcode == LoadPair64, ("At ", inst, " in ", *block, " arg ", arg));

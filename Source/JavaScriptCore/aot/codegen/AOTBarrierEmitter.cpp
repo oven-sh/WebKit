@@ -224,7 +224,7 @@ void BarrierEmitter::elementBarrierAfterStore(const ValueContext& store, CellPoi
             m_out.branch(m_out.load8ZeroExt32(instanceField(m_heaps.collectorState, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced))), rareEdge(remembers), normalEdge(nothingMarks));
             m_out.appendTo(nothingMarks);
             // Read anew, as the stub reads it: a read that the store shared with this side would no longer be part of the store's own comparison.
-            Word32 vectorLength = loadField<Word32>(loadField<Pointer>(CellPointer(m_out.opaque(array.value())), m_heaps.JSObject_butterfly), m_heaps.Butterfly_vectorLength);
+            Word32 vectorLength = loadField<Word32>(loadField<Pointer>(CellPointer(m_out.opaque(array.value())), m_heaps.JSArray_butterfly), m_heaps.Butterfly_vectorLength);
             m_out.branch(m_out.below(vectorLength.value(), m_out.constInt32(StoredCellLog::minVectorLengthOfOwner)), normalEdge(remembers), normalEdge(isLong));
             m_out.appendTo(isLong);
             m_out.branch(isCell(value).value(), normalEdge(isStoredCell), normalEdge(next));

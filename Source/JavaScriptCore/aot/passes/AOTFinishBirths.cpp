@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <optional>
 #include <wtf/BitVector.h>
+#include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -129,10 +130,12 @@ private:
 
     std::optional<uint32_t> numberOf(PropertyKeyID key) const
     {
-        size_t number = key ? m_keys.find(key) : notFound;
-        if (number == notFound)
+        if (!key)
             return std::nullopt;
-        return static_cast<uint32_t>(number);
+        auto found = m_numberOfKey.find(key);
+        if (found == m_numberOfKey.end())
+            return std::nullopt;
+        return found->value;
     }
 
     bool isFilled(LayoutID layout, const BitVector& stored) const
@@ -200,6 +203,25 @@ private:
         return state;
     }
 
+    // What isFilled() says of stateAtBirth(), without sets over the keys of all objects of the function.
+    bool isFilledWhenBorn(const Value& allocation) const
+    {
+        LayoutID layout = allocation.layout();
+        const Layout& fields = m_program.at(layout);
+        std::span<const uint32_t> listed = allocation.fields();
+        std::span<const ValueID> values = allocation.variadicOperands();
+        BitVector stored(fields.fields.size());
+        for (size_t index = 0; index < listed.size(); ++index) {
+            if (!holdsRawValueFromBirth(m_program, { layout, listed[index] }) || (index < values.size() && !mayBeMarker(values[index])))
+                stored.quickSet(listed[index]);
+        }
+        for (uint32_t field = 0; field < fields.fields.size(); ++field) {
+            if (isFilledAtBirth(m_program, { layout, field }) && (!fields.fields[field].key || !stored.quickGet(field)))
+                return false;
+        }
+        return true;
+    }
+
     bool mayStoreMarkerInPlaceOfRawValue(const Value& storeBySlot) const
     {
         if (!mayBeMarker(storeBySlot.operand(OperandIndex::PutSlot::value)))
@@ -243,7 +265,7 @@ private:
         const Layout& fields = m_program.at(layout);
         for (uint32_t field = 0; field < fields.fields.size(); ++field) {
             PropertyKeyID key = fields.fields[field].key;
-            if (key && isFilledAtBirth(m_program, { layout, field }) && !m_keys.contains(key))
+            if (key && isFilledAtBirth(m_program, { layout, field }) && m_numberOfKey.add(key, m_keys.size()).isNewEntry)
                 m_keys.append(key);
         }
     }
@@ -332,7 +354,7 @@ private:
             addObject(m_allocatedThis, WTF::move(layoutsOfThis));
         }
         forEachAllocationWithSuchFields([&](ValueID id, const Value& allocation) {
-            if (!isFilled(allocation.layout(), stateAtBirth(allocation).stored))
+            if (!isFilledWhenBorn(allocation))
                 addObject(id, { allocation.layout() });
         });
         if (m_objects.isEmpty())
@@ -607,6 +629,7 @@ private:
     Vector<ValueID, 4> m_objects;
     Vector<Layouts, 4> m_layouts;
     Vector<PropertyKeyID, 16> m_keys;
+    HashMap<PropertyKeyID, uint32_t> m_numberOfKey;
     Vector<Insertion, 4> m_insertions;
     Vector<ValueID, 4> m_testsOfUnfinishedObjects;
     ValueID m_allocatedThis;

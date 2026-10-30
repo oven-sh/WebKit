@@ -510,8 +510,12 @@ JSValue Modules::evaluateForCapture(ModuleID module)
 
     std::optional<ModuleID> file = m_table.fileBehindFace(module);
     RELEASE_ASSERT(file);
-    evaluateSynchronously(module, SynchronousEvaluationReason::Require);
-    RETURN_IF_EXCEPTION(scope, { });
+    // A require() started the file, which is still running, and its face has not begun: there is nothing to evaluate.
+    bool isFileRunningWithoutFace = status(*file) == ModuleStatus::Evaluating && (status(module) == ModuleStatus::Unlinked || status(module) == ModuleStatus::Linked);
+    if (!isFileRunningWithoutFace) {
+        evaluateSynchronously(module, SynchronousEvaluationReason::Require);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     RELEASE_AND_RETURN(scope, exportsSeenByLoader(*file));
 }
 
@@ -591,6 +595,27 @@ void Modules::captureExports(ModuleID module)
     RELEASE_AND_RETURN(scope, fillCapturedExports(module));
 }
 
+// The body of the face ran the file, which required an ES module that imports it back, and that link captured the exports. The load that started the body copies them
+// once more now that the body has returned. `bun run` keeps the first namespace, so only the getters that the copy runs can be observed.
+void Modules::copyExportsOfFinishedFile(ModuleID face)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    std::optional<ModuleID> file = m_table.fileBehindFace(face);
+    // Captured fields hold no accessor.
+    if (!file || !ensureLoaded(face).capturedExports)
+        return;
+    // A synchronous load that makes the record of the file replaces the one in the registry, and captureExportsAgain() copies for it.
+    if (loader()->isMakingRecordInline(moduleKey(face)) || loader()->isMakingRecordInline(moduleKey(*file)))
+        return;
+    JSValue value = exportsSeenByLoader(*file);
+    RETURN_IF_EXCEPTION(scope, void());
+    WTF::Vector<Identifier, 4> names;
+    MarkedArgumentBuffer values;
+    KeyListingThatShowsNoOrder listing(value.getObject());
+    scope.release();
+    host().captureSyntheticExports(m_instance.globalObject, captureRuleOf(data(face)), value, names, values);
+}
+
 // `bun run` makes a record of a file each time its loader comes to the file, with what the file exports at that moment, and the registry has the last one. The modules that are linked keep the bindings they have.
 void Modules::captureExportsAgain(ModuleID fileOrFace)
 {
@@ -598,6 +623,9 @@ void Modules::captureExportsAgain(ModuleID fileOrFace)
     if (!isCommonJSFileOrFace(module) || !didCaptureExports(module))
         return;
     LoadedModule& loaded = ensureLoaded(module);
+    // The body threw, so the load that started it made no record of its own. The loader of `bun run` keeps the one of the link that came while the file ran.
+    if (loaded.didDropError)
+        return;
     loaded.capturedExports.set(*this, nullptr);
     loaded.deferredExportsSource.set(*this, nullptr);
     loaded.capturedFields.set(*this, nullptr);

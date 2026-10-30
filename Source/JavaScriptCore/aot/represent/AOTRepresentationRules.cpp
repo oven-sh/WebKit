@@ -28,7 +28,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OpcodeSet operationsIndexedByNumber {
     Opcode::GetArrayElement, Opcode::PutArrayElement, Opcode::HasArrayElement, Opcode::IsElementPresent,
-    Opcode::GetTypedArrayElement, Opcode::PutTypedArrayElement, Opcode::IsInsideView,
+    Opcode::GetTypedArrayElement, Opcode::PutTypedArrayElement, Opcode::IsInsideView, Opcode::IsElementInStorage, Opcode::ToEnumeratorPosition,
     Opcode::StringRangeCodeUnitOrNaN, Opcode::StringRangeCodeUnitOrMinusOne, Opcode::StringRangeCodePointOrUndefined, Opcode::StringRangeCharacterOrEmpty, Opcode::StringRangeCharacterOrUndefined
 };
 static constexpr OpcodeSet numberTruncations { Opcode::ToInt32, Opcode::ToUint32 };
@@ -201,11 +201,25 @@ static Representation wantedByBits(const RepresentationInputs& inputs, const Val
     return everyOperandHasDefault(inputs, operation, Representation::Cell) ? Representation::Cell : Representation::JSValue;
 }
 
+// A property name from for-in: its literal-string word is looked up once, by the address of its characters, and every comparison of the key reuses it.
+static bool isEnumeratedKey(const Function& function, ValueID id)
+{
+    const Value& definition = function.at(definitionThroughUpcasts(function, id));
+    return definition.opcode == Opcode::ResultAt && definition.index() == static_cast<uint32_t>(ForInStepResult::Key) && function.at(definition.resultsOperand()).opcode == Opcode::ForInStep;
+}
+
 static bool comparesLiteralStringWords(const RepresentationInputs& inputs, const Value& operation)
 {
-    return isEquality(operation.opcode) && everyOperandHasDefault(inputs, operation, Representation::LiteralString) && std::ranges::none_of(operation.operands(), [&](ValueID operand) {
-        return operand && isSameWord(inputs.function.at(operand).representation, Representation::JSValue);
-    });
+    if (!isEquality(operation.opcode))
+        return false;
+    auto isHeldAsWord = [&](ValueID operand) {
+        return defaultRepresentationOf(inputs.typeOf(operand)) == Representation::LiteralString && !isSameWord(inputs.function.at(operand).representation, Representation::JSValue);
+    };
+    ValueID left = operation.leftOperand();
+    ValueID right = operation.rightOperand();
+    if (isHeldAsWord(left) && isHeldAsWord(right))
+        return true;
+    return (isHeldAsWord(left) && isEnumeratedKey(inputs.function, right)) || (isHeldAsWord(right) && isEnumeratedKey(inputs.function, left));
 }
 
 static Representation wantedByConcatenation(const Type& part)
@@ -329,6 +343,7 @@ static Representation resultOfOperator(const RepresentationInputs& inputs, const
     case OperatorForm::BigInts:
     case OperatorForm::Strings:
     case OperatorForm::StringAndPrimitive:
+    case OperatorForm::MayBeString:
         return Representation::Cell;
     case OperatorForm::NullableStrings:
     case OperatorForm::NullableStringAndPrimitive:
@@ -343,7 +358,6 @@ static Representation resultOfOperator(const RepresentationInputs& inputs, const
     case OperatorForm::Number:
     case OperatorForm::NumberByOperation:
     case OperatorForm::NullableString:
-    case OperatorForm::MayBeString:
     case OperatorForm::MayBeStringOrNumber:
     case OperatorForm::Unselected:
         break;
@@ -554,6 +568,8 @@ static Representation wantedByOperation(const RepresentationInputs& inputs, cons
         return integerRepresentationOf(type);
     if (opcode == Opcode::GetMyArgumentByVal)
         return unboxedNumberOrJSValue(type);
+    if (opcode == Opcode::GetStringLength && defaultRepresentationOf(type) == Representation::LiteralString && type.stringLiterals.size() <= maxLiteralsDistinguishedByLength)
+        return Representation::Unchosen;
     if (isNewArrayElement(user, operandIndex))
         return wantedByNewArrayElement(inputs, operand);
     if (opcode == Opcode::Strcat && !user.isLikelyKey())
@@ -618,6 +634,7 @@ static constexpr EnumeratorBitSet<InlineBuiltin, numberOfEnumerators<InlineBuilt
     InlineBuiltin::MathImul, InlineBuiltin::MathClz32, InlineBuiltin::MathSign, InlineBuiltin::IsNaN, InlineBuiltin::IsFinite,
     InlineBuiltin::NumberIsNaN, InlineBuiltin::NumberIsFinite, InlineBuiltin::NumberIsInteger, InlineBuiltin::NumberIsSafeInteger,
 };
+static constexpr EnumeratorBitSet<InlineBuiltin, numberOfEnumerators<InlineBuiltin>> builtinsReturningElement { InlineBuiltin::ArrayAt, InlineBuiltin::ArrayPop, InlineBuiltin::ArrayShift };
 static constexpr EnumeratorBitSet<InlineBuiltin, numberOfEnumerators<InlineBuiltin>> builtinsThatMoveBytes { InlineBuiltin::DataViewGet, InlineBuiltin::DataViewSet, InlineBuiltin::BufferAccess };
 
 static std::optional<InlineBuiltin> inlineBuiltinOf(const Value& value)
@@ -638,6 +655,14 @@ static bool computesWithNumbers(const Value& value)
 static bool computesWithNumbers(const Terminator&)
 {
     return false;
+}
+
+// An array holds a string as a JSString. Converting it to its literal number needs a lookup among the literals, which costs more than the comparison saves, so the value stays the loaded word, like the result of an element read.
+template<typename Operation>
+static Representation withoutElementLookup(const Operation& operation, Representation byType)
+{
+    std::optional<InlineBuiltin> builtin = byType == Representation::LiteralString ? inlineBuiltinOf(operation) : std::nullopt;
+    return builtin && builtinsReturningElement.contains(*builtin) ? Representation::JSValue : byType;
 }
 
 bool readsDoubleOutOfBytes(const Value& value)
@@ -887,11 +912,13 @@ Representation resultRepresentationOf(const RepresentationInputs& inputs, const 
         return naturalOrDefaultRepresentation(type, elementRepresentationOf(value.arrayStorage()));
     if (value.opcode == Opcode::GetTypedArrayElement)
         return inFormOfDouble(Representation::ImpureDouble, naturalOrDefaultRepresentation(type, defaultRepresentationOf(elementTypeOf(value.typedArrayType()))));
+    if (returnsUnboxedNumber(value))
+        return Representation::Double;
     if (operationsReturningBoxedValue.contains(value.opcode) || (value.opcode == Opcode::CallBuiltin && !isCompiledInline(value.builtinCallForm())))
         return Representation::JSValue;
 
     ResultRepresentationRules rules { inputs, std::nullopt };
-    return inFormOfDouble(formOfDoubleMadeBy(inputs, value), applyResultRule(rules, value, 0, ResultSide::Unproven));
+    return withoutElementLookup(value, inFormOfDouble(formOfDoubleMadeBy(inputs, value), applyResultRule(rules, value, 0, ResultSide::Unproven)));
 }
 
 Representation resultRepresentationOf(const RepresentationInputs& inputs, const Value& producer, uint32_t resultIndex)
@@ -914,7 +941,7 @@ Representation edgeResultRepresentationOf(const RepresentationInputs& inputs, Ed
     case EdgeResultKind::DeclaredResult: {
         ScratchTypeArena types(inputs.program.types);
         Representation representation = defaultRepresentationOf(computeTypeOnEdge({ inputs.program, inputs.function, types.arena() }, position));
-        return representation == Representation::Double ? formOfDoubleMadeBy(inputs, inputs.function.at(position.from).terminator) : representation;
+        return representation == Representation::Double ? formOfDoubleMadeBy(inputs, inputs.function.at(position.from).terminator) : withoutElementLookup(inputs.function.at(position.from).terminator, representation);
     }
     }
     RELEASE_ASSERT_NOT_REACHED();

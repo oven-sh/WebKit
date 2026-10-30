@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCallSiteTable.h"
+#include "AOTCheckedFrameCells.h"
 #include "AOTGenerator.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
@@ -58,6 +59,7 @@ static bool letsThrowPass(StubFrameKind kind)
 {
     switch (kind) {
     case StubFrameKind::Plain:
+    case StubFrameKind::ReturnsAfterOperation:
     case StubFrameKind::EngineCallee:
     case StubFrameKind::HostCall:
     case StubFrameKind::GeneratorBody:
@@ -104,15 +106,23 @@ static void copyStubSavedRegisters(VMEntryRecord& record, const int8_t* bufferSl
     }
 }
 
+static ALWAYS_INLINE void didLeaveFramesOfCheckedCellsBelow(Instance& instance, const void* address)
+{
+    if (!CheckedFrameCells::isInUse()) [[likely]]
+        return;
+    if (CheckedFrameCells* cells = CheckedFrameCells::find(*instance.vm))
+        cells->didLeaveFramesBelow(address);
+}
+
 static ALWAYS_INLINE void finishAtHandler(CompiledUnwindResult& result, Instance& instance, const CompiledHandler& handler, unsigned frameSize)
 {
     char* stackPointer = reinterpret_cast<char*>(handler.callFrame) - frameSize;
     // A parse is one call of the program, so a handler of the frame that opened a source lies behind that parse.
     instance.json.didLeaveFramesUpTo(handler.callFrame);
+    didLeaveFramesOfCheckedCellsBelow(instance, stackPointer);
     instance.runtime.exceptions.stackPointerOfHandler = stackPointer;
     result.status = CompiledUnwindStatus::FoundHandler;
     result.handler = handler;
-    result.instance = &instance;
 }
 
 // The stub takes the thrown value, hands it to whoever waits for the coroutine and returns from the frame.
@@ -123,6 +133,8 @@ static void finishInRejectingStub(CompiledUnwindResult& result, Instance& instan
         return addressOfStubInCurrentImage(rejectInFrame(liesBelowSpilledArguments));
     });
     finishAtHandler(result, instance, { callFrame, code, CompiledHandlerKind::RejectPromise, callFrame }, frame.frameSizeInBytes());
+    // The stub reads nothing that the function has kept in the frame.
+    didLeaveFramesOfCheckedCellsBelow(instance, callFrame);
 }
 
 static CompiledFrameExit leaveRunAt(CallFrame* outermostFrame, EntryFrame* entryFrame)
@@ -155,8 +167,10 @@ static void finishAtEndOfRun(CompiledUnwindResult& result, Instance* instance, C
         if (leftFrame)
             instance->coroutines.frameThatMayContinue = nullptr;
     }
-    if (leftFrame)
+    if (leftFrame) {
         instance->json.didLeaveFramesUpTo(leftFrame);
+        didLeaveFramesOfCheckedCellsBelow(*instance, leftFrame);
+    }
 
     result.hasLeftRun = true;
     result.status = result.exit.crossedEntryFrame ? CompiledUnwindStatus::ReachedEntryFrame : CompiledUnwindStatus::LeftCompiledCode;
@@ -220,6 +234,7 @@ CompiledUnwindResult unwindRun(VM& vm, const ReturnSiteInRun& start, EntryFrame*
             case StubFrameKind::InHostCallFrame:
                 RELEASE_ASSERT_NOT_REACHED();
             case StubFrameKind::Plain:
+            case StubFrameKind::ReturnsAfterOperation:
             case StubFrameKind::ArgumentList:
             case StubFrameKind::HostCall:
             case StubFrameKind::FirstOfTwoReads:
@@ -398,8 +413,8 @@ void JIT_OPERATION_ATTRIBUTES checkThatThrowingCallHasSite(Instance* instance, C
         if (!site)
             return;
         if (!site->isStubReturnSite()) {
-            // findReturnIntoFunctionWithoutHandlers().
-            if (isForLackOfMemory && !catchesExceptions(*state.image, site->code.index()))
+            // throwOwedOutOfMemoryErrorAtReturnOfOperation().
+            if (isForLackOfMemory)
                 return;
             if (std::optional<MarkOfCallWithoutSite> mark = MarkOfCallWithoutSite::read(pc))
                 crashOnValidationFailure(vm, { ValidationFailureKind::CallThrew, state.image->rootFunctionOf(site->code.index()), mark->value, jsNumber(mark->callee) });
@@ -434,6 +449,19 @@ bool beginsInTopCompiledFrame(VM& vm, const ReturnAddressTrace& trace)
         return true;
     std::optional<CompiledFrameIterator> frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, vm.topCallFrame, vm.topEntryFrame);
     return !frames || frames->isAtEnd() || beginsAt(trace, frames->callSite().address);
+}
+
+const void* returnAddressOfInnermostCompiledCall(VM& vm)
+{
+    EntryFrame* entryFrame = vm.topEntryFrame;
+    for (CallFrame* frame = vm.topCallFrame; frame && entryFrame; frame = frame->callerFrame(entryFrame)) {
+        if (frame->callerFrameOrEntryFrame() == entryFrame)
+            continue;
+        std::optional<CompiledFrameIterator> frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, frame, entryFrame);
+        if (frames && !frames->isAtEnd())
+            return frames->callSite().address;
+    }
+    return nullptr;
 }
 
 // Native code has called the run that the throw leaves, and hands the exception on to its own caller unless it reports it.
@@ -493,68 +521,6 @@ NEVER_INLINE Exception::StackCaptureAction stackCaptureActionOfThrow(VM& vm, con
     if (!error || !error->returnAddresses())
         return Action::CaptureStackOfThrow;
     return isCaughtByCallersOfNativeCode(vm, runWithoutHandler->exit) ? Action::CaptureStack : Action::CaptureStackOfThrow;
-}
-
-// A caller that has handlers, and none at its call, plans no error there: the call may stand in a try. Then the error waits for the next poll.
-static bool callersPlanErrors(VM& vm, const Image& image, CallFrame* frameThatReturns)
-{
-    if (frameThatReturns->callerFrameOrEntryFrame() == vm.topEntryFrame)
-        return true;
-    std::optional<CompiledFrameIterator> frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, frameThatReturns, vm.topEntryFrame);
-    if (!frames)
-        return true;
-    for (; !frames->isAtEnd(); frames->advanceToCallerMachineFrame()) {
-        if (frames->asyncGeneratorStubFrameLeft())
-            return true;
-        const auto& site = frames->callSite();
-        if (site.exceptionHandler() || site.rejectsOnThrow)
-            return true;
-        if (catchesExceptions(image, site.code.index()))
-            return false;
-    }
-    return true;
-}
-
-CallFrame* findReturnIntoFunctionWithoutHandlers(VM& vm, CallFrame* operationFrame)
-{
-    const Image& image = *vm.aotState().image;
-    if (vm.exceptionForInspection() || vm.heap.cage().errorWaitsForPoll() || !image.stubAddress(handleException(false)))
-        return nullptr;
-    CallFrame* frame = operationFrame;
-    CodeLocation location = image.locate(removeCodePtrTag(frame->rawReturnPC()));
-    if (location.kind == CodeKind::Stub) {
-        if (location.stubFrameKind != StubFrameKind::Plain)
-            return nullptr;
-        frame = static_cast<CallFrame*>(frame->callerFrameOrEntryFrame());
-        location = image.locate(removeCodePtrTag(frame->rawReturnPC()));
-    }
-    if (location.kind != CodeKind::Function || catchesExceptions(image, location.function) || !callersPlanErrors(vm, image, frame))
-        return nullptr;
-    return frame;
-}
-
-void throwOwedOutOfMemoryErrorAtReturnOfOperation(Instance& instance, CallerFrameAndPC* frameRecordOfOperation)
-{
-    if (CallFrame* frameThatReturns = findReturnIntoFunctionWithoutHandlers(*instance.vm, std::bit_cast<CallFrame*>(frameRecordOfOperation)))
-        throwOutOfMemoryErrorAtReturnOf(instance, frameThatReturns);
-}
-
-void throwOutOfMemoryErrorAtReturnOf(Instance& instance, CallFrame* frameThatReturns)
-{
-    VM& vm = *instance.vm;
-    {
-        DeferGCForAWhile deferGC(vm);
-        auto topScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        {
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            bool hasThrown = throwOutOfMemoryErrorIfOwed(vm, instance.globalObject, scope);
-            RELEASE_ASSERT(hasThrown);
-            scope.release();
-        }
-        EXCEPTION_ASSERT_UNUSED(topScope, topScope.exception());
-    }
-    instance.runtime.exceptions.stackPointerOfHandler = removeCodePtrTag(frameThatReturns->rawReturnPC());
-    frameThatReturns->setReturnPC(reinterpret_cast<char*>(&instance) + InstanceLayout::offsetOfLoopPollPage() + offsetOfDivertedReturnInLoopPollPage);
 }
 
 } // namespace JSC::AOT

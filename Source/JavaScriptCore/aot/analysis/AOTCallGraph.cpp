@@ -16,8 +16,10 @@
 #include "AOTEffectsOfOperands.h"
 #include "AOTExactBuffer.h"
 #include "AOTFlowResults.h"
+#include "AOTGrouping.h"
 #include "AOTLargeVectors.h"
 #include "AOTPhaseTimes.h"
+#include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
 #include <atomic>
@@ -28,6 +30,8 @@
 #include <wtf/DataLog.h>
 #include <wtf/Atomics.h>
 #include <wtf/EnumTraits.h>
+#include <wtf/HashMap.h>
+#include <wtf/Hasher.h>
 #include <wtf/PrintStream.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -527,8 +531,10 @@ CallGraph::Adjacency CallGraph::Adjacency::inverse(const ParallelLoops& loops) c
 
     Adjacency result;
     result.offsets.fill(0, offsets.size());
-    if (targets.isEmpty())
+    if (targets.isEmpty()) {
+        addInverseOfLongLists(result);
         return result;
+    }
 
     unsigned count = offsets.size() - 1;
     size_t numberOfEdges = targets.size();
@@ -565,7 +571,7 @@ CallGraph::Adjacency CallGraph::Adjacency::inverse(const ParallelLoops& loops) c
     forEachIndexInParallel(loops, numberOfChunks, [&](unsigned chunk) {
         std::span<uint32_t> cursors = cursorsForChunk(chunk);
         for (uint32_t source = chunkStarts[chunk]; source < chunkStarts[chunk + 1]; ++source) {
-            for (FunctionID target : of(FunctionID(source)))
+            for (FunctionID target : targets.subspan(offsets[source], offsets[source + 1] - offsets[source]))
                 edges[cursors[target.index() >> bucketShift]++] = CallEdge { target.index(), source };
         }
     });
@@ -585,7 +591,76 @@ CallGraph::Adjacency CallGraph::Adjacency::inverse(const ParallelLoops& loops) c
             result.targets[cursors[edge.target - firstTarget]++] = FunctionID(edge.source);
     });
     result.offsets[count] = static_cast<uint32_t>(numberOfEdges);
+    addInverseOfLongLists(result);
     return result;
+}
+
+uint32_t CallGraph::Adjacency::addLongList(std::span<const FunctionID> list)
+{
+    if (longListOffsets.isEmpty())
+        longListOffsets.append(0);
+    longLists.append(list);
+    longListOffsets.append(longLists.size());
+    return longListOffsets.size() - 1;
+}
+
+// The sources of a target are those that list it themselves and the users of each long list that holds it. Targets held by the same long lists, and listed by nobody else, share one list of sources.
+void CallGraph::Adjacency::addInverseOfLongLists(Adjacency& result) const
+{
+    if (longListOf.isEmpty())
+        return;
+    unsigned count = offsets.size() - 1;
+    unsigned numberOfLists = longListOffsets.size() - 1;
+    Vector<uint32_t> firstUser;
+    Vector<FunctionID> users;
+    groupByIndex(numberOfLists, firstUser, users, [&](const auto& add) {
+        for (unsigned source = 0; source < longListOf.size(); ++source) {
+            if (longListOf[source])
+                add(longListOf[source] - 1, FunctionID(source));
+        }
+    });
+    Vector<uint32_t> firstListOfTarget;
+    Vector<uint32_t> listsOfTargets;
+    groupByIndex(count, firstListOfTarget, listsOfTargets, [&](const auto& add) {
+        for (uint32_t list = 0; list < numberOfLists; ++list) {
+            for (FunctionID target : longLists.subspan(longListOffsets[list], longListOffsets[list + 1] - longListOffsets[list]))
+                add(target.index(), list);
+        }
+    });
+
+    result.longListOf.fill(0, count);
+    UncheckedKeyHashMap<unsigned, Vector<std::pair<uint32_t, uint32_t>, 1>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> sourcesOfSameLists;
+    Vector<FunctionID> sources;
+    for (unsigned target = 0; target < count; ++target) {
+        std::span<const uint32_t> lists = entriesOfGroup(firstListOfTarget, listsOfTargets, target);
+        if (lists.empty())
+            continue;
+        std::span<const FunctionID> ownSources = result.targets.subspan(result.offsets[target], result.offsets[target + 1] - result.offsets[target]);
+        auto collectSources = [&] {
+            sources.shrink(0);
+            sources.append(ownSources);
+            for (uint32_t list : lists)
+                sources.append(entriesOfGroup(firstUser, users, list));
+            AOT::sort(sources);
+            return result.addLongList(sources.span());
+        };
+        if (!ownSources.empty()) {
+            result.longListOf[target] = collectSources();
+            continue;
+        }
+        Hasher hasher;
+        for (uint32_t list : lists)
+            add(hasher, list);
+        auto& known = sourcesOfSameLists.add(hasher.hash(), Vector<std::pair<uint32_t, uint32_t>, 1> { }).iterator->value;
+        for (auto [earlierTarget, longList] : known) {
+            if (std::ranges::equal(entriesOfGroup(firstListOfTarget, listsOfTargets, earlierTarget), lists))
+                result.longListOf[target] = longList;
+        }
+        if (!result.longListOf[target]) {
+            result.longListOf[target] = collectSources();
+            known.append({ target, result.longListOf[target] });
+        }
+    }
 }
 
 CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildContext& build, BodyReferences* kept)
@@ -687,6 +762,10 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
     auto isCalleeWithBody = [&](FunctionID id) {
         return !!hasBodyByFunction[id.index()];
     };
+    AOT_THRESHOLD(uint32_t, minCalleesOfLongList, 16);
+    Vector<unsigned> hashOfLongList(FillWith { }, count, 0u);
+    Vector<uint8_t> hasLongList(FillWith { }, count, static_cast<uint8_t>(0));
+    std::atomic<bool> someFunctionHasLongList { false };
     constexpr unsigned prefetchDistance = 4;
     forEachIndexInParallel(loops, count, [&](unsigned index) {
         if (index + prefetchDistance < count) {
@@ -698,6 +777,15 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
         }
         const ReferencesOfBody& body = bodies.m_bodies[index];
         calleeOffsets[index + 1] = static_cast<uint32_t>(std::ranges::count_if(body.callees, isCalleeWithBody));
+        if (calleeOffsets[index + 1] >= minCalleesOfLongList) {
+            Hasher hasher;
+            for (FunctionID callee : body.callees)
+                add(hasher, callee.index());
+            hashOfLongList[index] = hasher.hash();
+            calleeOffsets[index + 1] = 0;
+            hasLongList[index] = 1;
+            someFunctionHasLongList.store(true, std::memory_order_relaxed);
+        }
         callsUnknownCode[index] = body.callsUnknownCode;
         for (FunctionID target : body.directCallees)
             WTF::atomicExchangeAdd(&directCallSites[target.index()], 1u, std::memory_order_relaxed);
@@ -713,12 +801,38 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
     forEachIndexInParallel(loops, count, [&](unsigned index) {
         if (index + prefetchDistance < count)
             __builtin_prefetch(bodies.m_bodies[index + prefetchDistance].callees.span().data());
+        if (hasLongList[index])
+            return;
         uint32_t next = calleeOffsets[index];
         for (FunctionID callee : bodies.m_bodies[index].callees) {
             if (isCalleeWithBody(callee))
                 callees[next++] = callee;
         }
     });
+    CallGraph graph;
+    if (someFunctionHasLongList.load(std::memory_order_relaxed)) {
+        graph.m_callees.longListOf.fill(0, count);
+        UncheckedKeyHashMap<unsigned, Vector<uint32_t, 1>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> functionsWithList;
+        Vector<FunctionID> list;
+        for (unsigned index = 0; index < count; ++index) {
+            if (!hasLongList[index])
+                continue;
+            auto& known = functionsWithList.add(hashOfLongList[index], Vector<uint32_t, 1> { }).iterator->value;
+            for (uint32_t earlier : known) {
+                if (bodies.m_bodies[earlier].callees == bodies.m_bodies[index].callees)
+                    graph.m_callees.longListOf[index] = graph.m_callees.longListOf[earlier];
+            }
+            if (graph.m_callees.longListOf[index])
+                continue;
+            list.shrink(0);
+            for (FunctionID callee : bodies.m_bodies[index].callees) {
+                if (isCalleeWithBody(callee))
+                    list.append(callee);
+            }
+            graph.m_callees.longListOf[index] = graph.m_callees.addLongList(list.span());
+            known.append(index);
+        }
+    }
     forEachIndexInParallel(loops, calleeSetCallSites.size(), [&](unsigned index) {
         uint32_t numberOfSites = calleeSetCallSites[index];
         if (!numberOfSites)
@@ -765,7 +879,6 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
             || (!isEnteredFromOutside.get(index) && functionFlow.callers == CallerState::AllKnown && functionFlow.closureUse == ClosureUse::CalledOnly);
     });
 
-    CallGraph graph;
     graph.m_callees.offsets = WTF::move(calleeOffsets);
     graph.m_callees.targets = WTF::move(callees);
     graph.m_calledByUnknownCode = collectInParallel<FunctionID>(loops, count, [&](unsigned index, Vector<FunctionID>& called) {

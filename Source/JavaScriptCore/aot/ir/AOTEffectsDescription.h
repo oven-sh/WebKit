@@ -69,6 +69,7 @@ void describeOperator(const Program&, Opcode, std::span<const Type> operandTypes
 void describeAccess(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&);
 void describeCall(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&);
 void describeBuiltinCall(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&);
+EffectDescription describeUnmatchedCallByOperandTypes(const Program&, const Function&, const Value&);
 void describeInlineBuiltin(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&);
 void describeInlineBuiltin(const Program&, const Function&, const Terminator&, const Effects& declared, EffectDescription&);
 

@@ -1,7 +1,7 @@
-# Nothing is computed in front of a loop whose header has another handler than the block that enters it
+# In front of a loop whose header has another handler than the block that enters it, the bound is computed in a block of its own. Nothing is left that may throw, so the handler goes
 # FORM: Prepared
 # RUN: pass Select
-# STATISTIC: IntegerBoundGroups = 1
+# STATISTIC: IntegerBoundGroups = 2
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="loop-in-try-entered-from-outside" parameters=[{type=int}, {type=number}] results=[{type=anything}] {
@@ -21,8 +21,11 @@ function f0 name="loop-in-try-entered-from-outside" parameters=[{type=int}, {typ
   b4() role=CatchHandler:
     v9 = CatchValue
     Return v9
-# CHECK-NOT: IntegerBound
-# CHECK: boolean = Less v4, v1
+# CHECK: Jump -> next [[entry]]()
+# CHECK: boolean = Less v4, [[bound]]
+# CHECK: [[entry]]():
+# CHECK-NEXT: [[bound]]: int = IntegerBound v1 comparison=Less
+# CHECK-NEXT: Jump -> next b1(v0)
 }
 
 function f1 name="loop-and-entry-in-one-try" parameters=[{type=int}, {type=number}] results=[{type=anything}] {

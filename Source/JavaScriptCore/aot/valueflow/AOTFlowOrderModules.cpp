@@ -208,11 +208,11 @@ FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
             if (ModuleID evaluatedModule = moduleWithBody[index])
                 addEdge(evaluatedModule.index(), nodeOf(FunctionID(index)));
         }
-        for (const FlowCall& call : inputs.calls) {
+        inputs.forEachCall([&](const FlowCall& call) {
             bool isEvaluationByLoader = call.caller == inputs.host() && moduleWithBody[call.callee.index()];
             if (!isEvaluationByLoader)
                 addEdge(nodeOf(call.caller), nodeOf(call.callee));
-        }
+        });
         for (size_t module : modulesThatLetTheHostRun)
             addEdge(static_cast<uint32_t>(module), anyTime);
     });

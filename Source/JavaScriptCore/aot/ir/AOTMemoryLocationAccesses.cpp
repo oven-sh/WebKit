@@ -128,7 +128,7 @@ MemoryAccess memoryAccessOf(const Function&, const Value& value)
             return { };
     }
 
-    return { isRead ? MemoryAccess::Kind::Read : MemoryAccess::Kind::Write, location, base, stored };
+    return { isRead ? MemoryAccess::Kind::Read : MemoryAccess::Kind::Write, location, base, stored, storedOperand.value_or(0) };
 }
 
 static LocationStability stabilityOfFlow(const LocationFlow& flow, CreationStore creationStore)
@@ -277,6 +277,7 @@ LocationStability stabilityOf(const Program& program, const Value& access, const
     case AbstractHeap::AllocatorState:
     case AbstractHeap::RuntimeState:
     case AbstractHeap::ValidationState:
+    case AbstractHeap::CalleesInFrames:
         return LocationStability::Unknown;
     }
     RELEASE_ASSERT_NOT_REACHED();

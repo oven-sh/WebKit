@@ -13,6 +13,7 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfAccesses.h"
 #include "AOTIR.h"
+#include "AOTTypedArrayKinds.h"
 #include "AOTVector.h"
 #include <algorithm>
 
@@ -254,6 +255,12 @@ static bool joinsTextsThatFitInString(const Program& program, const Function& fu
     return texts.fitInString();
 }
 
+// Only a BigInt is allocated, and only an out-of-range position, or a view whose length may change, calls the runtime operation.
+static bool readsNumberInsideView(const Value& value)
+{
+    return value.opcode == Opcode::GetTypedArrayElement && value.isInsideView() && hasInlineElementAccess(value.typedArrayType());
+}
+
 static Effects refinedEffectsOf(const Program& program, const Function& function, const Value& value, const Effects& declared)
 {
     if (createsNamespaceFromTables(program, value))
@@ -268,6 +275,11 @@ static Effects refinedEffectsOf(const Program& program, const Function& function
     if (resolvesNoRope(program, function, value, declared)) {
         effects = Effects::none();
         effects.reads = declared.reads;
+    }
+    if (readsNumberInsideView(value)) {
+        effects = Effects::none();
+        effects.reads = declared.reads;
+        effects.reads.remove(AbstractHeapSet { AbstractHeap::AllocatorState });
     }
     if (std::optional<unsigned> position = OperandPosition::position(value.opcode)) {
         bool isInsideLength = (Value::opcodesWithIsInBounds.contains(value.opcode) && value.isInBounds()) || (Value::opcodesWithIsPresent.contains(value.opcode) && value.isPresent());

@@ -95,6 +95,8 @@ void StubAssembler::callAndReturnPreservingRegisters(const PreservingCall& prese
     Jump threw = branchTestPtr(NonZero, Address(scratch, VM::exceptionOffset()));
     if (preservingCall.emitBeforeReturn)
         (*preservingCall.emitBeforeReturn)();
+    if (preservingCall.callee == StubCallee::HostFunction)
+        pollBeforeReturningFromNativeCode();
     ret();
     threw.link(this);
     if (key().callerFrame() == CallerFrame::StubFrame)

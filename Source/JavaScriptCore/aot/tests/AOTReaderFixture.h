@@ -49,8 +49,8 @@ function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget] capture
 function f2 name="m" module=m0 kind=Method flags=[HasThis] captures=[{type=env L1}] thisType={type=anything} results=[{type=anything}]
 function f3 name="D" module=m0 kind=DerivedConstructor flags=[HasNewTarget] captures=[{type=env L1}] thisType={type=anything} results=[{type=anything}]
 function f4 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}]
-function f5 name="r0" module=m0 role=Library enclosingRuntimeFunction=0 thisType={type=anything} results=[{type=anything}]
-function f6 name="r1" module=m0 role=Library enclosingRuntimeFunction=1 thisType={type=anything} results=[{type=anything}]
+function f5 name="r0" module=m0 role=Library enclosingRuntimeFunction=PromiseConstructorPromise thisType={type=anything} results=[{type=anything}]
+function f6 name="r1" module=m0 role=Library enclosingRuntimeFunction=DisposableStackPrototypeAddDisposableResource thisType={type=anything} results=[{type=anything}]
 function f7 name="stream" module=m0 position=9 text={end=6} length=2 thisType={type=anything} parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: boolean):
     v2 = Integer integer=-5 @1002
@@ -90,8 +90,8 @@ function f8 name="handled" module=m0 thisType={type=anything} parameters=[{type=
 }
 data d0 root=Object{layout=L0 members=[{key="x" value=Number{value=1}}, {key="y" value=Array{contents=number elements=[Number{value=2}, Hole]}}]} module=m0
 entry module=m0 hostReads=[{exportName="a"}]
-runtimefunction id=0 function=f5
-runtimefunction id=1 function=f6
+runtimefunction id=PromiseConstructorPromise function=f5
+runtimefunction id=DisposableStackPrototypeAddDisposableResource function=f6
 webassemblymodule module=m0 bytes="\x00asm"
 )IR"_s;
 

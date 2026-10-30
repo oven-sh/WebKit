@@ -28,6 +28,9 @@ public:
 
     uint32_t count() const { return m_identifiers.size(); }
     uint32_t countWithLookupTableColumn() const { return m_countWithLookupTableColumn; }
+    // The table of fields goes on past the columns of the front table, up to the last name that code looks up.
+    uint32_t countWithFieldTableColumn() const { return m_countWithFieldTableColumn; }
+    bool hasFieldTableColumn(uint32_t number) const { return number && number < m_countWithFieldTableColumn; }
 
 private:
     friend IdentifierNumbering numberIdentifiers(const Typed::Program&, const KeyUses&, const BitVector& keysWithColumn, BuildContext&);
@@ -36,6 +39,7 @@ private:
     Vector<uint32_t> m_numbersByText;
     Vector<NumberedIdentifier> m_identifiers { NumberedIdentifier { } };
     uint32_t m_countWithLookupTableColumn { 1 };
+    uint32_t m_countWithFieldTableColumn { 1 };
 };
 
 IdentifierNumbering numberIdentifiers(const Typed::Program&, const KeyUses&, const BitVector& keysWithColumn, BuildContext&);

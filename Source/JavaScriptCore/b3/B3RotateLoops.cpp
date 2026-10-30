@@ -9,11 +9,13 @@
 #if ENABLE(B3_JIT)
 
 #include "B3BasicBlockInlines.h"
+#include "B3InsertionSetInlines.h"
 #include "B3LoopUtilities.h"
 #include "B3NaturalLoops.h"
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
 #include "B3RegionCloner.h"
+#include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
 #include "B3VariableValue.h"
 
@@ -41,6 +43,11 @@ public:
             return false;
 
         std::ranges::stable_sort(m_rotations, { }, &Rotation::depth);
+        m_proc.resetValueOwners();
+        for (auto& rotation : m_rotations) {
+            m_didMergeBackEdges |= rotation.latches.size() > 1;
+            hoistCommonIncrements(rotation);
+        }
         RegionCloner cloner(m_proc);
         for (auto& rotation : m_rotations) {
             for (BasicBlock* block : rotation.testBlocks)
@@ -53,6 +60,8 @@ public:
         return cloner.finish();
     }
 
+    bool didMergeBackEdges() const { return m_didMergeBackEdges; }
+
 private:
     struct EdgesBack {
         BasicBlock* top { nullptr };
@@ -61,9 +70,15 @@ private:
         bool hasLikelyWithoutPoll { false };
     };
 
+    struct FoldedTest {
+        BasicBlock* block;
+        unsigned successorIndex;
+    };
+
     struct Rotation {
         unsigned depth { 0 };
         Vector<BasicBlock*, 4> testBlocks;
+        Vector<FoldedTest, 1> testsFoldedOnBackEdges;
         Vector<BasicBlock*, 2> latches;
         BasicBlock* body { nullptr };
         std::optional<InductionRecord> induction;
@@ -114,13 +129,30 @@ private:
         return false;
     }
 
-    static bool hasLikelyEdgeTo(BasicBlock* from, BasicBlock* to)
+    static bool hasNonRareEdgeTo(BasicBlock* from, BasicBlock* to)
     {
         for (const FrequentedBlock& successor : from->successors()) {
-            if (successor.block() == to && isLikelySuccessor(from, successor))
+            if (successor.block() == to && !successor.isRare())
                 return true;
         }
         return false;
+    }
+
+    static IndexSet<BasicBlock*> findBlocksReachableWithoutRareEdges(NaturalLoops& loops, const NaturalLoop& loop)
+    {
+        IndexSet<BasicBlock*> result;
+        Vector<BasicBlock*, 16> worklist { loop.header() };
+        result.add(loop.header());
+        while (!worklist.isEmpty()) {
+            BasicBlock* block = worklist.takeLast();
+            for (const FrequentedBlock& successor : block->successors()) {
+                if (successor.isRare() || !loops.belongsTo(successor.block(), loop))
+                    continue;
+                if (result.add(successor.block()))
+                    worklist.append(successor.block());
+            }
+        }
+        return result;
     }
 
     std::optional<InductionRecord> findInduction(BasicBlock* header) const
@@ -132,6 +164,93 @@ private:
                 return record;
         }
         return std::nullopt;
+    }
+
+    static std::optional<int64_t> evaluateOnBackEdge(BasicBlock* latch, BasicBlock* header, Value* value, unsigned depth)
+    {
+        if (value->hasInt())
+            return value->asInt();
+        if (value->opcode() == Phi) {
+            if (!header->values().contains(value))
+                return std::nullopt;
+            for (unsigned index = latch->size(); index--;) {
+                auto* upsilon = latch->at(index)->as<UpsilonValue>();
+                if (upsilon && upsilon->phi() == value)
+                    return upsilon->child(0)->hasInt() ? std::optional<int64_t>(upsilon->child(0)->asInt()) : std::nullopt;
+            }
+            return std::nullopt;
+        }
+        if (!depth || !value->numChildren() || value->numChildren() > 2 || !value->child(0)->type().isInt())
+            return std::nullopt;
+        std::optional<int64_t> left = evaluateOnBackEdge(latch, header, value->child(0), depth - 1);
+        std::optional<int64_t> right = value->numChildren() == 2 ? evaluateOnBackEdge(latch, header, value->child(1), depth - 1) : std::optional<int64_t>(0);
+        if (!left || !right)
+            return std::nullopt;
+        bool is32Bit = value->child(0)->type() == Int32;
+        uint64_t unsignedLeft = is32Bit ? static_cast<uint32_t>(*left) : static_cast<uint64_t>(*left);
+        uint64_t unsignedRight = is32Bit ? static_cast<uint32_t>(*right) : static_cast<uint64_t>(*right);
+        switch (value->opcode()) {
+        case BitAnd:
+            return *left & *right;
+        case BitOr:
+            return *left | *right;
+        case BitXor:
+            return *left ^ *right;
+        case Equal:
+            return *left == *right;
+        case NotEqual:
+            return *left != *right;
+        case LessThan:
+            return *left < *right;
+        case GreaterThan:
+            return *left > *right;
+        case LessEqual:
+            return *left <= *right;
+        case GreaterEqual:
+            return *left >= *right;
+        case Below:
+            return unsignedLeft < unsignedRight;
+        case Above:
+            return unsignedLeft > unsignedRight;
+        case BelowEqual:
+            return unsignedLeft <= unsignedRight;
+        case AboveEqual:
+            return unsignedLeft >= unsignedRight;
+        default:
+            return std::nullopt;
+        }
+    }
+
+    void addTestsFoldedOnBackEdges(NaturalLoops& loops, const NaturalLoop& loop, Rotation& rotation, unsigned numberOfCopiedValues)
+    {
+        while (true) {
+            BasicBlock* block = rotation.body;
+            if (block->last()->opcode() != Branch || block->numPredecessors() != 1 || loops.innerMostLoopOf(block) != &loop || rotation.latches.contains(block))
+                return;
+            std::optional<unsigned> successorIndex;
+            for (BasicBlock* latch : rotation.latches) {
+                std::optional<int64_t> condition = evaluateOnBackEdge(latch, loop.header(), block->last()->child(0), 3);
+                if (!condition || (successorIndex && *successorIndex != !*condition))
+                    return;
+                successorIndex = !*condition;
+            }
+            const FrequentedBlock& staying = block->successor(*successorIndex);
+            const FrequentedBlock& other = block->successor(1 - *successorIndex);
+            if (staying.isRare() || staying.block() == loop.header() || !loops.belongsTo(staying.block(), loop) || loops.headerOf(staying.block()))
+                return;
+            if (loops.belongsTo(other.block(), loop) && !(other.isRare() && leadsBackToHeaderOnly(loops, loop, other.block(), staying.block())))
+                return;
+            for (Value* value : *block) {
+                if (!canCloneForLoop(value))
+                    return;
+                numberOfCopiedValues += emitsInstructions(value);
+            }
+            if (numberOfCopiedValues > m_proc.limit(Limit::MaxCopiedValuesPerRotatedLoop))
+                return;
+            rotation.testBlocks.append(block);
+            rotation.testsFoldedOnBackEdges.append({ block, *successorIndex });
+            rotation.body = staying.block();
+        }
     }
 
     void considerLoop(NaturalLoops& loops, const NaturalLoop& loop)
@@ -200,6 +319,7 @@ private:
                     if (staying.block() == loop.header() || loops.headerOf(staying.block()) || rotation.latches.contains(block))
                         return;
                     rotation.body = staying.block();
+                    addTestsFoldedOnBackEdges(loops, loop, rotation, numberOfCopiedValues);
                     rotation.induction = findInduction(loop.header());
                     m_rotations.append(WTF::move(rotation));
                     return;
@@ -211,6 +331,50 @@ private:
         }
     }
 
+    // `i++; continue;` and the `i++` at the end of the body are two Adds. When every latch passes the same phi + constant to the header, compute it once at the top of the body.
+    // The bottom test then compares an Add instead of a Phi of Adds, which is the shape that induction variable analysis recognizes.
+    void hoistCommonIncrements(const Rotation& rotation)
+    {
+        if (rotation.latches.size() < 2)
+            return;
+        BasicBlock* header = rotation.testBlocks[0];
+        InsertionSet insertionSet(m_proc);
+        size_t index = 0;
+        while (index < rotation.body->size() && rotation.body->at(index)->opcode() == Phi)
+            ++index;
+        for (Value* phi : *header) {
+            if (phi->opcode() != Phi || !phi->type().isInt())
+                continue;
+            Vector<Value*, 2> increments;
+            std::optional<int64_t> step;
+            bool allMatch = true;
+            for (BasicBlock* latch : rotation.latches) {
+                Value* incoming = nullptr;
+                for (Value* value : *latch) {
+                    auto* upsilon = value->as<UpsilonValue>();
+                    if (upsilon && upsilon->phi() == phi)
+                        incoming = upsilon->child(0)->foldIdentity();
+                }
+                if (!incoming || incoming->opcode() != Add || incoming->child(0)->foldIdentity() != phi || !incoming->child(1)->hasInt() || (step && *step != incoming->child(1)->asInt())) {
+                    allMatch = false;
+                    break;
+                }
+                step = incoming->child(1)->asInt();
+                if (!increments.contains(incoming))
+                    increments.append(incoming);
+            }
+            if (!allMatch || increments.size() < 2)
+                continue;
+            // An Add in the header or in a test block is computed before the body runs.
+            if (!std::ranges::all_of(increments, [&](Value* value) { return m_proc.dominators().dominates(rotation.body, value->owner); }))
+                continue;
+            Value* increment = insertionSet.insert<Value>(index, Add, increments[0]->origin(), phi, insertionSet.insertIntConstant(index, increments[0]->origin(), phi->type(), *step));
+            for (Value* duplicate : increments)
+                duplicate->replaceWithIdentity(increment);
+        }
+        insertionSet.execute(rotation.body);
+    }
+
     void rotate(RegionCloner& cloner, const Rotation& rotation)
     {
         RegionCloner::BlockMap copies = cloner.cloneBlocks(rotation.testBlocks.span());
@@ -218,6 +382,10 @@ private:
             transferInduction(rotation, copies);
         for (BasicBlock* latch : rotation.latches)
             latch->replaceSuccessor(rotation.testBlocks[0], copies.get(rotation.testBlocks[0]));
+        for (const FoldedTest& test : rotation.testsFoldedOnBackEdges) {
+            BasicBlock* copy = copies.get(test.block);
+            copy->last()->replaceWithJump(copy, copy->successor(test.successorIndex));
+        }
         if (!rotation.guardKeepsPoll) {
             for (const EdgesBack* edgesBack : rotation.cyclesThroughGuardWithoutPoll)
                 pollOnWayBack(*edgesBack, rotation.testBlocks.span());
@@ -260,9 +428,10 @@ private:
             return *result;
         result.emplace();
         result->top = loop.header();
-        IndexSet<BasicBlock*> likelyBlocks = findLikelyBlocks(loops, loop);
+        // A path that is only less likely, such as one that ends in `continue`, still runs every few iterations, so its back edge goes to the bottom test too. A rare back edge goes through the guard.
+        IndexSet<BasicBlock*> nonRareBlocks = findBlocksReachableWithoutRareEdges(loops, loop);
         for (BasicBlock* predecessor : loop.header()->predecessors()) {
-            if (likelyBlocks.contains(predecessor) && hasLikelyEdgeTo(predecessor, loop.header())) {
+            if (nonRareBlocks.contains(predecessor) && hasNonRareEdgeTo(predecessor, loop.header())) {
                 result->likely.append(predecessor);
                 result->hasLikelyWithoutPoll |= !pollsOnWayTo(loops, loop, predecessor);
             } else if (loops.belongsTo(predecessor, loop) && !hasPoll(predecessor))
@@ -333,6 +502,7 @@ private:
     }
 
     Procedure& m_proc;
+    bool m_didMergeBackEdges { false };
     const Vector<BasicBlock*>* m_allowedHeaders;
     Vector<Rotation> m_rotations;
     Vector<std::optional<EdgesBack>> m_edgesBack;
@@ -341,11 +511,14 @@ private:
 
 } // anonymous namespace
 
-bool rotateLoops(Procedure& proc, const Vector<BasicBlock*>* allowedHeaders)
+bool rotateLoops(Procedure& proc, const Vector<BasicBlock*>* allowedHeaders, bool* didMergeBackEdges)
 {
     PhaseScope phaseScope(proc, "rotateLoops"_s);
     RotateLoops rotateLoops(proc, allowedHeaders);
-    return rotateLoops.run();
+    bool changed = rotateLoops.run();
+    if (didMergeBackEdges)
+        *didMergeBackEdges = rotateLoops.didMergeBackEdges();
+    return changed;
 }
 
 } } // namespace JSC::B3

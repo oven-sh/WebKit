@@ -182,8 +182,6 @@ set(WebKit_BINDINGS_IN_FILES
     WebProcess/Extensions/Interfaces/WebExtensionAPIScripting
     WebProcess/Extensions/Interfaces/WebExtensionAPISidePanel
     WebProcess/Extensions/Interfaces/WebExtensionAPISidebarAction
-    WebProcess/Extensions/Interfaces/WebExtensionAPIStorage
-    WebProcess/Extensions/Interfaces/WebExtensionAPIStorageArea
     WebProcess/Extensions/Interfaces/WebExtensionAPITabs
     WebProcess/Extensions/Interfaces/WebExtensionAPIWebNavigation
     WebProcess/Extensions/Interfaces/WebExtensionAPIWebNavigationEvent
@@ -197,6 +195,8 @@ set(WebKit_CPP_BINDINGS_IN_FILES
     WebProcess/Extensions/Interfaces/WebExtensionAPIAlarms
     WebProcess/Extensions/Interfaces/WebExtensionAPINamespace
     WebProcess/Extensions/Interfaces/WebExtensionAPIRuntime
+    WebProcess/Extensions/Interfaces/WebExtensionAPIStorage
+    WebProcess/Extensions/Interfaces/WebExtensionAPIStorageArea
     WebProcess/Extensions/Interfaces/WebExtensionAPITest
     WebProcess/Extensions/Interfaces/WebExtensionAPIWebPageNamespace
     WebProcess/Extensions/Interfaces/WebExtensionAPIWebPageRuntime
@@ -683,12 +683,10 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/WebGPU/WebGPUImageCopyTexture.serialization.in
     Shared/WebGPU/WebGPUImageCopyTextureTagged.serialization.in
     Shared/WebGPU/WebGPUImageDataLayout.serialization.in
-    Shared/WebGPU/WebGPUInternalError.serialization.in
     Shared/WebGPU/WebGPUMultisampleState.serialization.in
     Shared/WebGPU/WebGPUObjectDescriptorBase.serialization.in
     Shared/WebGPU/WebGPUOrigin2D.serialization.in
     Shared/WebGPU/WebGPUOrigin3D.serialization.in
-    Shared/WebGPU/WebGPUOutOfMemoryError.serialization.in
     Shared/WebGPU/WebGPUPipelineDescriptorBase.serialization.in
     Shared/WebGPU/WebGPUPipelineLayoutDescriptor.serialization.in
     Shared/WebGPU/WebGPUPresentationContextDescriptor.serialization.in
@@ -710,12 +708,10 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/WebGPU/WebGPUShaderModuleDescriptor.serialization.in
     Shared/WebGPU/WebGPUStencilFaceState.serialization.in
     Shared/WebGPU/WebGPUStorageTextureBindingLayout.serialization.in
-    Shared/WebGPU/WebGPUSupportedFeatures.serialization.in
     Shared/WebGPU/WebGPUSupportedLimits.serialization.in
     Shared/WebGPU/WebGPUTextureBindingLayout.serialization.in
     Shared/WebGPU/WebGPUTextureDescriptor.serialization.in
     Shared/WebGPU/WebGPUTextureViewDescriptor.serialization.in
-    Shared/WebGPU/WebGPUValidationError.serialization.in
     Shared/WebGPU/WebGPUVertexAttribute.serialization.in
     Shared/WebGPU/WebGPUVertexBufferLayout.serialization.in
     Shared/WebGPU/WebGPUVertexState.serialization.in
@@ -729,6 +725,7 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/XR/PlatformXR.serialization.in
     Shared/XR/XRSystem.serialization.in
 
+    Shared/graphics/DisplayListData.serialization.in
     Shared/graphics/RemoteImageBufferSetConfiguration.serialization.in
 
     UIProcess/Extensions/WebExtension.serialization.in
@@ -1493,6 +1490,7 @@ if (ENABLE_BACK_FORWARD_LIST_SWIFT)
         PROPERTIES GENERATED TRUE)
     list(APPEND WebKit_SOURCES
         ${WebKit_DERIVED_SOURCES_DIR}/WebBackForwardListMessageReceiver.swift
+        ${WEBKIT_DIR}/Platform/Logging.swift
         ${WEBKIT_DIR}/Shared/API/APIArray.swift
         ${WEBKIT_DIR}/UIProcess/StdlibExtras.swift
         ${WEBKIT_DIR}/UIProcess/WebBackForwardList.swift

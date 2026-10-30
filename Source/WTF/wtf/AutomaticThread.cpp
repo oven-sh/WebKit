@@ -29,6 +29,7 @@
 #include <wtf/DataLog.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/PageBlock.h>
+#include <wtf/ParkingLot.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Threading.h>
 
@@ -190,6 +191,12 @@ bool AutomaticThread::tryEnsureUnderlyingThread(const AbstractLocker& locker)
     return m_hasUnderlyingThread;
 }
 
+void AutomaticThread::waitUntilIsUp(const AbstractLocker&)
+{
+    while (m_hasUnderlyingThread && !m_isUp)
+        m_isUpCondition.wait(*m_lock);
+}
+
 void AutomaticThread::start(const AbstractLocker&, FailedCreation failedCreation)
 #else
 void AutomaticThread::start(const AbstractLocker&)
@@ -200,6 +207,9 @@ void AutomaticThread::start(const AbstractLocker&)
     RefPtr<AutomaticThread> preserveThisForThread = this;
     
     m_hasUnderlyingThread = true;
+#if ENABLE(AOT)
+    m_isUp = false;
+#endif
 
     auto stackSpec = stackSpecification();
     switch (stackSpec.kind()) {
@@ -225,7 +235,18 @@ void AutomaticThread::start(const AbstractLocker&)
             
             RefPtr<AutomaticThread> thread = preserveThisForThread;
             thread->threadDidStart();
-            
+
+#if ENABLE(AOT)
+            // A park whose validation fails allocates this thread's ParkingLot data and the address's bucket, and does not park.
+            for (const void* address : { static_cast<const void*>(m_lock.get()), static_cast<const void*>(&m_waitCondition) })
+                ParkingLot::parkConditionally(address, [] { return false; }, [] { }, TimeWithDynamicClockType(MonotonicTime::infinity()));
+            {
+                Locker locker { *m_lock };
+                m_isUp = true;
+                m_isUpCondition.notifyAll();
+            }
+#endif
+
             if (ASSERT_ENABLED) {
                 Locker locker { *m_lock };
                 ASSERT(m_condition->contains(locker, this));
@@ -234,6 +255,9 @@ void AutomaticThread::start(const AbstractLocker&)
             auto stopImpl = [&] (const AbstractLocker& locker) {
                 thread->threadIsStopping(locker);
                 thread->m_hasUnderlyingThread = false;
+#if ENABLE(AOT)
+                m_isUpCondition.notifyAll();
+#endif
             };
             
             auto stopPermanently = [&] (const AbstractLocker& locker) {

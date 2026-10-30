@@ -31,13 +31,21 @@
 #include "AOTVector.h"
 #include "HeapIterationScope.h"
 #include "JSCInlines.h"
+#include "JSMicrotask.h"
 #include "MarkedSpaceInlines.h"
+#include "MicrotaskQueue.h"
 #include "ObjectConstructor.h"
 #include "TopExceptionScope.h"
 #include <stdlib.h>
 #include <wtf/DataLog.h>
+#include <wtf/HexNumber.h>
+#include <wtf/NoTailCalls.h>
 #include <wtf/SetForScope.h>
 #include <wtf/text/MakeString.h>
+
+#if OS(UNIX)
+#include <dlfcn.h>
+#endif
 
 namespace JSC { namespace AOT {
 
@@ -83,6 +91,23 @@ function f1 name="waitTwice" flags=[IsAsync] parameters=[{type=anything}, {type=
     v9 = Await v1
     v10 = NewArray v6, v9 contents=anything
     Return v10
+}
+)IR"_s;
+
+static constexpr ASCIILiteral programWithAsyncGeneratorText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+function f1 name="waitOnce" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=anything}] results=[{type=AsyncGenerator}] {
+    InitialYield
+    v4 = Await v2
+    v5 = Call v1, -, v4
+    Return v5
 }
 )IR"_s;
 
@@ -959,6 +984,135 @@ static void checkAdapterAboveResumedFrameWritesItsSaveArea(LoadedProgram& progra
     AOT_TEST_CHECK(!scope.exception() && numberOfSaveAreasRead == 1);
 }
 
+static const uint64_t* frameOfJobCaller;
+static unsigned numberOfJobEntriesRead;
+
+static String describeCodeAddress(const void* address)
+{
+#if OS(UNIX)
+    Dl_info info;
+    if (dladdr(address, &info) && info.dli_fbase) {
+        size_t offset = static_cast<const uint8_t*>(address) - static_cast<const uint8_t*>(info.dli_fbase);
+        return makeString(String::fromUTF8(info.dli_sname ? info.dli_sname : "a function without an exported name"), ", at "_s, hex(offset), " in "_s, String::fromUTF8(info.dli_fname));
+    }
+#endif
+    return makeString("code at "_s, hex(std::bit_cast<uintptr_t>(address)));
+}
+
+static JSC_DECLARE_HOST_FUNCTION(readFramesBelowJobCaller);
+JSC_DEFINE_HOST_FUNCTION(readFramesBelowJobCaller, (JSGlobalObject*, CallFrame* callFrame))
+{
+    if (!callFrame->argumentCount())
+        return JSValue::encode(jsNumber(1));
+    auto* frame = reinterpret_cast<const uint64_t*>(callFrame);
+    unsigned numberOfFrames = 0;
+    unsigned numberOfUnwrittenWords = 0;
+    while (*reinterpret_cast<const uint64_t* const*>(frame) != frameOfJobCaller) {
+        // The words between two frame records belong to the caller, and the callee returns into it.
+        auto* frameOfCaller = *reinterpret_cast<const uint64_t* const*>(frame);
+        for (auto* word = frame + 2; word < frameOfCaller; ++word) {
+            if (*word != wordOfDeadStack)
+                continue;
+            ++numberOfUnwrittenWords;
+            dataLogLn("unwritten word ", (frameOfCaller - word) * sizeof(uint64_t), " bytes below frame record ", numberOfFrames + 1, " of ", (frameOfCaller - frame - 2) * sizeof(uint64_t), " bytes, in ", describeCodeAddress(removeCodePtrTag(std::bit_cast<const void*>(frame[1]))));
+        }
+        frame = frameOfCaller;
+        AOT_TEST_CHECK(++numberOfFrames < 12);
+    }
+    if (numberOfUnwrittenWords)
+        dataLogLn(numberOfUnwrittenWords, " unwritten words in ", numberOfFrames, " frames");
+#if CPU(ARM64)
+    // Registers are saved in pairs: a frame that saves an odd number of them has a word of padding.
+    AOT_TEST_CHECK(numberOfUnwrittenWords <= numberOfFrames);
+#else
+    AOT_TEST_CHECK(!numberOfUnwrittenWords);
+#endif
+    ++numberOfJobEntriesRead;
+    return JSValue::encode(jsNumber(2));
+}
+
+static NEVER_INLINE void runJobOverFilledStack(JSGlobalObject* realm, VM& vm, const QueuedTask& job)
+{
+    NO_TAIL_CALLS();
+    frameOfJobCaller = static_cast<const uint64_t*>(__builtin_frame_address(0));
+    fillDeadStack();
+    auto arguments = job.arguments();
+    runInternalMicrotask(realm, vm, job.job(), job.payload(), arguments[0], arguments[1], arguments[2], arguments[3]);
+}
+
+// A garbage collection reads every word of every frame. The job's own frame is gone when compiled code runs, and the frames on the way in write all of their words.
+static void checkFramesBetweenJobAndCompiledCodeAreWritten(LoadedProgram& program)
+{
+#if HAVE(MUST_TAIL_CALL) && !ENABLE(EXCEPTION_SCOPE_VERIFICATION) && !ASAN_ENABLED
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    program.realms().evaluate(realm, "globalThis.register = waitTwice => { globalThis.waitTwice = waitTwice; };"_s);
+    std::optional<ModuleID> module = findModule("main.js"_s);
+    AOT_TEST_CHECK(module);
+    evaluateModuleSynchronously(realm, *module);
+    AOT_TEST_CHECK(!scope.exception());
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(JSFunction::create(vm, realm, 0, "readFrames"_s, readFramesBelowJobCaller, ImplementationVisibility::Public));
+    arguments.append(program.realms().evaluate(realm, "Promise.resolve(3)"_s));
+    numberOfJobEntriesRead = 0;
+    call(realm, program.realms().evaluate(realm, "waitTwice"_s), arguments, "waitTwice is a function"_s);
+    AOT_TEST_CHECK(!scope.exception() && !numberOfJobEntriesRead);
+
+    MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
+    AOT_TEST_CHECK(queue.size() == 1);
+    std::optional<QueuedTask> job;
+    queue.allOf([&](const QueuedTask& queued) {
+        job = queued;
+        return true;
+    });
+    AOT_TEST_CHECK(job->job() == InternalMicrotask::CompiledAsyncFunctionResume);
+    queue.clear();
+    runJobOverFilledStack(realm, vm, *job);
+    AOT_TEST_CHECK(!scope.exception() && numberOfJobEntriesRead == 1);
+    vm.drainMicrotasks();
+#else
+    UNUSED_PARAM(program);
+#endif
+}
+
+static void checkFramesBetweenJobAndAsyncGeneratorBodyAreWritten(LoadedProgram& program)
+{
+#if HAVE(MUST_TAIL_CALL) && !ENABLE(EXCEPTION_SCOPE_VERIFICATION) && !ASAN_ENABLED
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    program.realms().evaluate(realm, "globalThis.register = waitOnce => { globalThis.start = (readFrames, promise) => { waitOnce(readFrames, promise).next(); }; };"_s);
+    std::optional<ModuleID> module = findModule("main.js"_s);
+    AOT_TEST_CHECK(module);
+    evaluateModuleSynchronously(realm, *module);
+    AOT_TEST_CHECK(!scope.exception());
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(JSFunction::create(vm, realm, 0, "readFrames"_s, readFramesBelowJobCaller, ImplementationVisibility::Public));
+    arguments.append(program.realms().evaluate(realm, "Promise.resolve(3)"_s));
+    numberOfJobEntriesRead = 0;
+    call(realm, program.realms().evaluate(realm, "start"_s), arguments, "start is a function"_s);
+    AOT_TEST_CHECK(!scope.exception() && !numberOfJobEntriesRead);
+
+    MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
+    AOT_TEST_CHECK(queue.size() == 1);
+    std::optional<QueuedTask> job;
+    queue.allOf([&](const QueuedTask& queued) {
+        job = queued;
+        return true;
+    });
+    AOT_TEST_CHECK(job->job() == InternalMicrotask::AsyncGeneratorBodyCallNormal);
+    queue.clear();
+    runJobOverFilledStack(realm, vm, *job);
+    AOT_TEST_CHECK(!scope.exception() && numberOfJobEntriesRead == 1);
+    vm.drainMicrotasks();
+#else
+    UNUSED_PARAM(program);
+#endif
+}
+
 std::span<const NativeTest> savedFrameTests()
 {
     static constexpr NativeTest tests[] = {
@@ -982,6 +1136,8 @@ std::span<const NativeTest> savedFrameTests()
         { "saved-frame/lowest-words-are-cleared-at-the-first-save"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkLowestWordsAreClearedAtTheFirstSave> },
         { "saved-frame/dead-words-are-overwritten-at-a-collection"_s, runNativeTestWithLoadedProgram<savedFrameTests, programWithTwoAwaitsText, checkDeadWordsAreOverwrittenAtACollection> },
         { "saved-frame/adapter-above-a-resumed-frame-writes-its-save-area"_s, runNativeTestWithLoadedProgram<savedFrameTests, programWithTwoAwaitsText, checkAdapterAboveResumedFrameWritesItsSaveArea> },
+        { "saved-frame/frames-between-job-and-compiled-code-are-written"_s, runNativeTestWithLoadedProgram<savedFrameTests, programWithTwoAwaitsText, checkFramesBetweenJobAndCompiledCodeAreWritten> },
+        { "saved-frame/frames-between-job-and-async-generator-body-are-written"_s, runNativeTestWithLoadedProgram<savedFrameTests, programWithAsyncGeneratorText, checkFramesBetweenJobAndAsyncGeneratorBodyAreWritten> },
         { "saved-frame/listed-words-survive-a-collection"_s, testListedWordsSurviveACollection },
     };
     return tests;

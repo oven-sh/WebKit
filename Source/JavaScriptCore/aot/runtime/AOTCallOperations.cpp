@@ -255,10 +255,31 @@ static bool appendArrayLike(JSGlobalObject* globalObject, VM& vm, MarkedArgument
 static StringView nameOfCalleeAtCallSite(VM&);
 static StringView nameOfForwardedCallee(VM&);
 
+class SuperCallScope {
+    WTF_MAKE_NONCOPYABLE(SuperCallScope);
+public:
+    SuperCallScope(VM& vm, JSValue parent, JSValue newTarget)
+        : m_state(vm.aotState())
+    {
+        if (!parent.isCell() || !newTarget.isCell())
+            return;
+        m_state.parentOfSuperCall = parent.asCell();
+        m_state.newTargetOfSuperCall = newTarget.asCell();
+    }
+
+    ~SuperCallScope() { m_state.newTargetOfSuperCall = nullptr; }
+
+private:
+    VMState& m_state;
+};
+
 template<bool isParent>
 static JSValue constructValue(JSGlobalObject* globalObject, VM& vm, JSValue callee, JSValue newTarget, const ArgList& arguments)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    std::optional<SuperCallScope> superCall;
+    if constexpr (isParent)
+        superCall.emplace(vm, callee, newTarget);
     auto constructData = JSC::getConstructData(callee);
     if (constructData.type == CallData::Type::None) {
         StringView name = isParent ? StringView() : nameOfCalleeAtCallSite(vm);
@@ -677,20 +698,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
             exceptions.thrownValue = JSValue::encode(rethrownException->value());
         return handlerCodeAndFrame;
     }
-    bool clearsDeadStack = false;
-    if (isHandled && vm.heap.cage().hasDeadStackToClear()) [[unlikely]] {
-        clearsDeadStack = true;
-        ExceptionWords& wordsOfHandler = found.instance->runtime.exceptions;
-        uintptr_t bytes = std::bit_cast<uintptr_t>(wordsOfHandler.stackPointerOfHandler) - std::bit_cast<uintptr_t>(vm.heap.cage().takeLowestAddressOfDeadStack(vm));
-        wordsOfHandler.bytesOfDeadStackBelowHandler = static_cast<uint32_t>(std::min<uintptr_t>(bytes, std::numeric_limits<uint32_t>::max()) & ~static_cast<uintptr_t>(sizeof(void*) - 1));
-        // The landing pad finds the value without a call, which would leave its frame behind on the cleared stack.
-        if (exception && !needsExceptionForEveryThrow(*instance) && (found.handler.kind == CompiledHandlerKind::Catch || takesException)) {
-            auto topScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            wordsOfHandler.thrownValue = JSValue::encode(takesException ? JSValue(exception) : exception->value());
-            topScope.clearException();
-            return handlerCodeAndFrame;
-        }
-    }
     if (isHandled && (exception || !(takesException || needsException))) [[likely]]
         return handlerCodeAndFrame;
     bool stackIsUnobserved = false;
@@ -706,7 +713,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
                 return handlerCodeAndFrame;
             stackIsUnobserved = isCaughtAboveCleanup(vm, found.siteOfHandler);
             // The handler takes the value, and makes an Exception of it if it wants one. That is a call.
-            if (stackIsUnobserved && !clearsDeadStack)
+            if (stackIsUnobserved)
                 return handlerCodeAndFrame;
         }
     }

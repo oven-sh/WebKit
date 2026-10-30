@@ -28,13 +28,16 @@ namespace {
 using PrototypeLinks = LedgerOfClassesAndClosures;
 
 struct ObjectsOfLayouts {
-    void add(LayoutID layout, OptionSet<ObjectMutation> mutations)
+    void add(LayoutID layout, OptionSet<ObjectMutation> mutations, bool escapes)
     {
         isAllocated.quickSet(layout.index());
         possibleMutations[layout.index()].add(mutations);
+        if (escapes)
+            mayEscape.quickSet(layout.index());
     }
 
     BitVector isAllocated;
+    BitVector mayEscape;
     Vector<OptionSet<ObjectMutation>> possibleMutations;
 };
 
@@ -220,29 +223,32 @@ static ObjectsOfLayouts collectObjectsOfLayouts(const ValueFlowResultInputs& inp
         LayoutID layout;
         uint32_t placeholder;
         OptionSet<ObjectMutation> possibleMutations;
+        bool escapes;
     };
     constexpr ValueFlowObjectID placeholders[] { ValueFlowUniverse::unknownObject(), ValueFlowUniverse::untrackedObject() };
 
     const Program& program = inputs.program;
     const ValueFlowUniverse& universe = inputs.universe();
     const ValueSets& sets = inputs.sets();
-    ObjectsOfLayouts objects { BitVector(program.layouts.size()), Vector<OptionSet<ObjectMutation>>(program.layouts.size()) };
+    ObjectsOfLayouts objects { BitVector(program.layouts.size()), BitVector(program.layouts.size()), Vector<OptionSet<ObjectMutation>>(program.layouts.size()) };
 
     for (Allocation allocation : findAllocations(inputs, tables, Opcode::CreateIteratorResult, ValueFlowNotedOperation::CreateIteratorResult)) {
         const Value& value = program.at(allocation.function).at(allocation.value);
         LayoutID layout = value.opcode == Opcode::NewObject ? value.layout() : program.layoutOf(BuiltinLayouts::IteratorResult);
-        objects.add(layout, isUnsolvedCode(inputs, tables, allocation.function) ? allObjectMutations : OptionSet<ObjectMutation> { });
+        bool isUnsolved = isUnsolvedCode(inputs, tables, allocation.function);
+        objects.add(layout, isUnsolved ? allObjectMutations : OptionSet<ObjectMutation> { }, isUnsolved);
     }
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         FunctionID constructor = program.layouts[index].constructor;
         bool isUnsolved = constructor && isUnsolvedCode(inputs, tables, constructor);
         if (!constructor || (!isUnsolved && !inputs.isReached(constructor)))
             continue;
-        objects.isAllocated.quickSet(index);
         if (isUnsolved)
-            objects.possibleMutations[index] = allObjectMutations;
+            objects.add(LayoutID(index), allObjectMutations, true);
         else if (program.layouts[index].has(LayoutFlags::IsConstructorFunction) && (!layoutsWithInstances.quickGet(index) || inputs.hasEscaped(universe.closureOf(constructor))))
-            objects.possibleMutations[index] = escapedObjectMutations(inputs) | mutationsWithoutMark;
+            objects.add(LayoutID(index), escapedObjectMutations(inputs) | mutationsWithoutMark, true);
+        else
+            objects.isAllocated.quickSet(index);
     }
 
     ValueSetMakers makers(inputs);
@@ -253,24 +259,25 @@ static ObjectsOfLayouts collectObjectsOfLayouts(const ValueFlowResultInputs& inp
             return;
         LayoutID layout = universe.layoutOf(object);
         OptionSet<ObjectMutation> possible = possibleMutationsOf(inputs, links, object, links.classesAbove(heap, maker, object));
+        bool escapes = possible == allObjectMutations || inputs.hasEscaped(object) || inputs.isLost(object);
         ObjectCreation creation = describeCreation(inputs, links, maker, object, layout);
-        found.append({ layout, 0, creation.mayHaveOtherPrototype ? possible | ObjectMutation::ChangePrototype : possible });
+        found.append({ layout, 0, creation.mayHaveOtherPrototype ? possible | ObjectMutation::ChangePrototype : possible, escapes });
         if (creation.layoutSelectors == ValueSets::nothing)
             return;
         LayoutID ownClass = declaredLayoutOf(program, layout);
         sets.forEachMember(maker.intersect(creation.layoutSelectors, links.classPrototypes()), [&](ValueFlowObjectID prototype) {
             if (universe.classLayoutOf(prototype) != ownClass)
-                found.append({ universe.classLayoutOf(prototype), 0, possible });
+                found.append({ universe.classLayoutOf(prototype), 0, possible, escapes });
         });
         for (uint32_t placeholder = 0; placeholder < std::size(placeholders); ++placeholder) {
             if (sets.contains(creation.layoutSelectors, placeholders[placeholder]))
-                found.append({ { }, placeholder, possible });
+                found.append({ { }, placeholder, possible, escapes });
         }
     });
     OptionSet<ObjectMutation> possibleUnderPlaceholder[std::size(placeholders)];
     for (const Found& found : allFound) {
         if (found.layout)
-            objects.add(found.layout, found.possibleMutations);
+            objects.add(found.layout, found.possibleMutations, found.escapes);
         else
             possibleUnderPlaceholder[found.placeholder].add(found.possibleMutations);
     }
@@ -279,7 +286,7 @@ static ObjectsOfLayouts collectObjectsOfLayouts(const ValueFlowResultInputs& inp
         for (uint32_t index = 0; index < program.layouts.size() && !possibleUnderPlaceholder[placeholder].isEmpty(); ++index) {
             const Layout& layout = program.layouts[index];
             if (isClassLayout(layout) && (sets.contains(covered, universe.prototypeOf(LayoutID(index))) || sets.contains(covered, universe.closureOf(layout.constructor))))
-                objects.add(LayoutID(index), possibleUnderPlaceholder[placeholder]);
+                objects.add(LayoutID(index), possibleUnderPlaceholder[placeholder], true);
         }
     }
     return objects;
@@ -316,6 +323,7 @@ static Vector<AllocationClassID> createAllocationClasses(const ValueFlowResultIn
         classOfLayout[index] = AllocationClassID(tables.sites.allocationClasses.size());
         flow.allocationClasses = { classOfLayout[index] };
         flow.impossibleMutations = allocationClass.impossibleMutations;
+        flow.neverEscapes = !objects.mayEscape.quickGet(index);
         flow.cause = allocationClass.cause;
         tables.sites.allocationClasses.append(WTF::move(allocationClass));
     }
@@ -452,12 +460,15 @@ static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed
     }
 
     // A displayName that is written through an object nobody follows is filed under that object alone, which stands for every closure that has gone the same way. A copy into such an object writes the names that its sources hold.
+    ValueSetID givenDisplayName = inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ObjectsNobodyFollowsThatStatementsGiveDisplayName));
     auto isDisplayNameWrittenThrough = [&](ValueFlowObjectID placeholder, ValueFlowHostNode sourcesOfCopies) {
+        if (inputs.sets().contains(givenDisplayName, placeholder))
+            return true;
         ValueSetID sources = inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(sourcesOfCopies));
         return keys.size() > 1 && std::ranges::any_of(std::array { ValueFlowNameKind::Property, ValueFlowNameKind::Getter, ValueFlowNameKind::Setter }, [&](ValueFlowNameKind kind) {
             const ValueFlowHeapIndex::NodesWrittenUnderName* written = inputs.heapIndex->findNodesWrittenUnder({ kind, keys[1].index() });
             return written && std::ranges::any_of(written->nodes, [&](const ValueFlowHeapIndex::WrittenNode& node) {
-                return inputs.sets().contains(node.objects, placeholder) || inputs.sets().meet(node.objects, sources);
+                return inputs.sets().meet(node.objects, sources);
             });
         });
     };

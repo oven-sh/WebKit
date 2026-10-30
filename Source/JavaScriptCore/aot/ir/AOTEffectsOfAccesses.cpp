@@ -72,6 +72,7 @@ private:
         case AbstractHeap::AllocatorState:
         case AbstractHeap::RuntimeState:
         case AbstractHeap::ValidationState:
+        case AbstractHeap::CalleesInFrames:
             return heap;
         }
         RELEASE_ASSERT_NOT_REACHED();

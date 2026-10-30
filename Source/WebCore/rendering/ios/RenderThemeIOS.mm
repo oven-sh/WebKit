@@ -1350,7 +1350,7 @@ static void paintAttachmentIcon(GraphicsContext& context, AttachmentLayout& info
     else if (info.icon)
         iconImage = info.icon;
     
-    context.drawBitmapImage(*iconImage, info.iconRect, FloatRect { { }, iconImage->size() });
+    iconImage->draw(context, info.iconRect, FloatRect { { }, iconImage->size() });
 }
 
 static void paintAttachmentProgress(GraphicsContext& context, AttachmentLayout& info)
@@ -1441,9 +1441,9 @@ String RenderThemeIOS::extraDefaultStyleSheet()
 #endif
 
 #if USE(SYSTEM_PREVIEW)
-void RenderThemeIOS::paintSystemPreviewBadge(Image& image, const PaintInfo& paintInfo, const FloatRect& rect)
+void RenderThemeIOS::paintSystemPreviewBadge(RefPtr<NativeImage>&& image, const PaintInfo& paintInfo, const FloatRect& rect)
 {
-    paintInfo.context().drawSystemImage(ARKitBadgeSystemImage::create(image), rect);
+    paintInfo.context().drawSystemImage(ARKitBadgeSystemImage::create(WTF::move(image)), rect);
 }
 
 void RenderThemeIOS::paintSystemPreviewBadge(const PaintInfo& paintInfo, const FloatRect& rect)

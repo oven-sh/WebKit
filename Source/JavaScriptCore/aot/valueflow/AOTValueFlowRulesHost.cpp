@@ -113,6 +113,11 @@ void enterFromNativeCode(ValueFlowRuleContext& context, FunctionID function, Nat
         else if (callee.entryParameterKind(index) != EntryParameter::Capture)
             passFromNativeCode(context, function, callee, index, caller, unknown);
     }
+    if (callee.kind == FunctionKind::Plain && callee.constructedClass && callee.constructorForm() != ConstructorForm::NotConstructor && callee.thisParameterIndex()) {
+        ClimbingSet instance = only(context, universe.instanceOf(callee.constructedClass));
+        context.connect(context.lookup(only(context, universe.closureOf(function)), ValueFlowName::property(context.program().keyOf(BuiltinNames::prototype))), context.written(instance, prototypeLinkName));
+        context.add(nodes.entryParameter(function, *callee.thisParameterIndex()), instance);
+    }
     if (const auto* summary = nodes.resultSummaryOf(function))
         handOutOfFunction(context, callee, summary->ownResult);
     else {
@@ -631,13 +636,23 @@ static bool loadsOnlyLibraryModules(BuiltinID loader)
     return loader == Builtins::ProcessGetBuiltinModule;
 }
 
+bool refusesAllSourceText(const BuiltinTable& builtins, BuiltinID builtin, RefusedCode refused)
+{
+    const Builtin& entry = builtins.at(builtin);
+    if (entry.origin == BuiltinOrigin::Engine)
+        return refused.evaluatedText && entry.flags.contains(BuiltinFlag::EvaluatesText);
+    return refused.hostEvaluatedText && (entry.flags.contains(BuiltinFlag::EvaluatesText) || builtins.has(BuiltinMark::EvaluatesTextInGlobalScope, builtin));
+}
+
 std::optional<UnseenCodeCause> eventOfCalling(const BuiltinTable& builtins, BuiltinID builtin, RefusedCode refused)
 {
     const Builtin& entry = builtins.at(builtin);
     if (entry.flags.contains(BuiltinFlag::LoadsModuleByName))
         return refused.codeOutsideImage || loadsOnlyLibraryModules(builtin) ? UnseenCodeCause::LoadsModuleByName : UnseenCodeCause::LoadsCodeByName;
+    if (refusesAllSourceText(builtins, builtin, refused))
+        return std::nullopt;
     if (entry.flags.contains(BuiltinFlag::EvaluatesText))
-        return refused.evaluatedText ? std::nullopt : std::optional(UnseenCodeCause::EvaluatesText);
+        return UnseenCodeCause::EvaluatesText;
     const BuiltinUnseenCode* unseenCode = builtins.unseenCodeOf(builtin);
     if (unseenCode && unseenCode->condition && unseenCode->condition->hasProperty)
         return std::nullopt;
@@ -983,8 +998,10 @@ static void exposeModuleObjectOf(ValueFlowRuleContext& context, ModuleID id)
 static bool mayMachineCodeRun(ValueFlowRuleContext& context)
 {
     Vector<ValueFlowObjectID, 32> loaders;
-    for (const BuiltinLoaderOfMachineCode& loader : context.program().builtins().loadersOfMachineCode())
-        context.universe().appendObjectsOf(loader.callee, loaders);
+    for (const BuiltinLoaderOfMachineCode& loader : context.program().builtins().loadersOfMachineCode()) {
+        if (!context.program().builtins().has(BuiltinMark::LoadsCodeWithoutJSAccess, loader.callee))
+            context.universe().appendObjectsOf(loader.callee, loaders);
+    }
     return context.holdsAnyOf(ClimbingSet(context.maker().of(loaders.span())), context.nodes().ofHost(ValueFlowHostNode::RunBuiltins));
 }
 

@@ -106,10 +106,10 @@ function f1 name="build" module=m0 position=50 flags=[IsChecked, HasExplicitName
 # CALLS: stub AllocateCell.HeaderAndWords.n2 x1
 # CALLS-NOT: stub
 # CALLS: f{{*}}: size=
-# The back edge is a block of its own, with a move and a jump.
+# The cell is handed to the next turn ahead of the test, and the branch itself leads back.
 # X64-NOT: , instructions:
-# X64: loop #{{*}}, instructions: 10, patchpoints: 2
+# X64: loop #{{*}}, instructions: 9, patchpoints: 2
 # X64-NOT: , instructions:
 # ARM64-NOT: , instructions:
-# ARM64: loop #{{*}}, instructions: 10, patchpoints: 2, rare instructions: 2
+# ARM64: loop #{{*}}, instructions: 9, patchpoints: 2, rare instructions: 2
 # ARM64-NOT: , instructions:

@@ -51,6 +51,7 @@ function f4 name="yieldsOnce" text={start=127 end=161} flags=[IsGenerator, Takes
 # CHECK-NEXT: functionRecords
 # CHECK-NEXT: functionRecordsByFunction
 # CHECK-NEXT: functionSources
+# CHECK-NEXT: closureFormsBySource
 # CHECK-NEXT: implementedBuiltins
 # CHECK-NEXT: closureFunctionKinds [[closureFunctions]]
 # CHECK-NEXT: functionLengths [[closureFunctions]]

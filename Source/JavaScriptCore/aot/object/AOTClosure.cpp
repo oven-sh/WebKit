@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCheckedFrameCells.h"
 #include "AOTClassTable.h"
 #include "AOTClosureTable.h"
 #include "AOTCompiledCall.h"
@@ -58,7 +59,7 @@ const ClassInfo ReifiedSlimClosure::s_info = { "Function"_s, &Base::s_info, null
 
 static ALWAYS_INLINE void validateIsNotInFrame(VM& vm, const JSCell* closure)
 {
-    if (validatesRuntime(vm)) [[unlikely]]
+    if (validatesRuntime(vm) || CheckedFrameCells::isInUse()) [[unlikely]]
         validateFunctionCellIsNotInFrame(vm, closure);
 }
 
@@ -915,6 +916,8 @@ ReifiedSlimClosure* SlimClosure::becomeReified(VM& vm, Structure* structure, std
     static_assert(offsetOfWord() == butterflyOffset());
     RELEASE_ASSERT(structure->outOfLineCapacity() == values.size() && getPrototypeDirect() == structure->storedPrototype());
     bool takesName = nameWasLookedFor();
+    // ReifiedSlimClosure::markRenamed().
+    setPerCellBit(false);
     Butterfly* butterfly = Butterfly::createUninitialized(vm, this, 0, values.size(), false, 0);
     for (unsigned i = 0; i < values.size(); ++i)
         butterfly->propertyStorage()[offsetInOutOfLineStorage(firstOutOfLineOffset + i)].setWithoutWriteBarrier(values[i]);

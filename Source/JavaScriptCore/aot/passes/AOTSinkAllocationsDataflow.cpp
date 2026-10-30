@@ -291,7 +291,7 @@ static void holdCellsInFamilyOf(AllocationSinking& sinking, VirtualObjectID obje
     }
 }
 
-static void mergeHeldObjects(AllocationSinking& sinking, VirtualObjectID object, ObjectState& target, const ObjectState& source)
+static void mergeHeldObjects(AllocationSinking& sinking, const SinkingState& into, const SinkingState& from, VirtualObjectID object, ObjectState& target, const ObjectState& source)
 {
     if (target.heldObjects.isEmpty() && source.heldObjects.isEmpty())
         return;
@@ -325,13 +325,17 @@ static void mergeHeldObjects(AllocationSinking& sinking, VirtualObjectID object,
             target.hold(field, objectInSource);
             continue;
         }
-        holdCellsInFamilyOf(sinking, object, field);
+        bool isBuiltBeforePathsDiverge = objectInTarget && objectInSource ? false
+            : objectInTarget ? sinking.buildCycleBeforeBranches(into, object, objectInTarget)
+            : sinking.buildCycleBeforeBranches(from, object, objectInSource);
+        if (!isBuiltBeforePathsDiverge)
+            holdCellsInFamilyOf(sinking, object, field);
         if (objectInTarget)
             target.release(field);
     }
 }
 
-static bool mergeObject(AllocationSinking& sinking, SinkingState& into, VirtualObjectID object, ObjectState& target, const ObjectState& source)
+static bool mergeObject(AllocationSinking& sinking, SinkingState& into, const SinkingState& from, VirtualObjectID object, ObjectState& target, const ObjectState& source)
 {
     bool becomesCell = into.isAtHead && willSolveAgainWithCell(sinking, into.block, object);
     if (!becomesCell && target.variants.size() == 1 && target == source)
@@ -353,7 +357,7 @@ static bool mergeObject(AllocationSinking& sinking, SinkingState& into, VirtualO
         else
             target.fieldsValidInCell = source.fieldsValidInCell;
     }
-    mergeHeldObjects(sinking, object, target, source);
+    mergeHeldObjects(sinking, into, from, object, target, source);
     for (const ObjectVariant& variant : source.variants)
         target.addVariant(variant);
 
@@ -380,7 +384,7 @@ static bool mergeObjects(AllocationSinking& sinking, SinkingState& into, const S
         for (; index < into.objects.size() && into.objects[index].object < source.object; ++index)
             markAsMissingOnSomeWay(into.objects[index].state);
         if (index < into.objects.size() && into.objects[index].object == source.object) {
-            changed |= mergeObject(sinking, into, source.object, into.objects[index].state, source.state);
+            changed |= mergeObject(sinking, into, from, source.object, into.objects[index].state, source.state);
             ++index;
             continue;
         }
@@ -461,6 +465,11 @@ public:
         BlockID root = m_cfg.root();
         m_blocksEnteredWithNothing.quickSet(root.index());
         m_isPending.quickSet(m_cfg.reversePostOrderIndex(root));
+        return solvePendingBlocks();
+    }
+
+    AllocationSinking::Heads solvePendingBlocks()
+    {
         std::span<const BlockID> order = m_cfg.reversePostOrder();
         for (bool shouldRepeat = true; shouldRepeat;) {
             shouldRepeat = false;
@@ -473,11 +482,37 @@ public:
         return WTF::move(m_heads);
     }
 
+    // Solves the trial range again from the heads of the blocks that enter it, and keeps all heads outside it.
+    AllocationSinking::Heads runIn(std::span<const BlockID> range, AllocationSinking::Heads&& heads, BitVector&& blocksEnteredWithNothing)
+    {
+        m_heads = WTF::move(heads);
+        m_blocksEnteredWithNothing = WTF::move(blocksEnteredWithNothing);
+        for (BlockID block : range) {
+            m_heads[block.index()] = std::nullopt;
+            m_blocksEnteredWithNothing.quickClear(block.index());
+        }
+        for (BlockID block : range) {
+            for (Edge edge : m_cfg.incomingEdges(block)) {
+                bool isReached = m_heads[edge.from.index()] || m_blocksEnteredWithNothing.quickGet(edge.from.index());
+                if (isReached && m_sinking.isOutsideTrialRange(edge.from))
+                    m_isPending.quickSet(m_cfg.reversePostOrderIndex(edge.from));
+            }
+        }
+        return solvePendingBlocks();
+    }
+
 private:
     struct HandlerEntry {
         SinkingState state;
         bool includesCurrentState { true };
     };
+
+    static bool holdsObjectToBuild(const SinkingState& state)
+    {
+        return std::ranges::any_of(state.objects, [](const ObjectEntry& entry) {
+            return !entry.state.isCell();
+        });
+    }
 
     void meetCurrentState(HandlerEntry& entry, const SinkingState& state)
     {
@@ -514,6 +549,8 @@ private:
 
     bool propagate(Edge edge, SinkingState&& state, uint32_t fromOrder)
     {
+        if (m_sinking.isOutsideTrialRange(targetOf(m_function, edge).block))
+            return false;
         if (state.holdsNothing())
             return propagateNothing(edge, state.isReachable, fromOrder);
         m_sinking.didWork(1 + state.weight() + m_function.at(targetOf(m_function, edge).block).parameters.size());
@@ -524,6 +561,8 @@ private:
     bool propagateNothing(Edge edge, bool isReachable, uint32_t fromOrder)
     {
         BlockID target = targetOf(m_function, edge).block;
+        if (m_sinking.isOutsideTrialRange(target))
+            return false;
         bool isEnteredWithNothing = m_blocksEnteredWithNothing.quickGet(target.index());
         const std::optional<SinkingState>& head = m_heads[target.index()];
         if (!isReachable) {
@@ -591,7 +630,9 @@ private:
                 handlerEntry->includesCurrentState = false;
             numberOfValuesPassed = index + 1;
             bool mayThrowToHandler = handlerEntry && m_inputs.throwingValues.get(value.index());
-            if (mayThrowToHandler)
+            // Anything that names an object may force it to be built, and building may fail to allocate.
+            bool mayBuild = handlerEntry && !(entry & AllocationSinking::onlyWritesOrThrows) && holdsObjectToBuild(state);
+            if (mayThrowToHandler || mayBuild)
                 meetCurrentState(*handlerEntry, state);
             interpreter.executeRelevantValue(block.values, entry);
             if (!handlerEntry)
@@ -606,12 +647,13 @@ private:
             interpreter.checkThatOtherValuesChangeNothing(id);
 
         bool mayThrowToHandler = handlerEntry && m_inputs.throwingTerminators.get(id.index());
-        if (mayThrowToHandler)
+        if (mayThrowToHandler || (handlerEntry && holdsObjectToBuild(state)))
             meetCurrentState(*handlerEntry, state);
         interpreter.executeTerminatorOf(id);
         if (handlerEntry) {
             handlerEntry->includesCurrentState = false;
-            if (mayThrowToHandler)
+            // The successor paths may build the rest.
+            if (mayThrowToHandler || holdsObjectToBuild(state))
                 meetCurrentState(*handlerEntry, state);
         }
 
@@ -641,6 +683,10 @@ void AllocationSinking::solve()
 {
     for (uint64_t round = 1;; ++round) {
         m_mustSolveAgain = false;
+        for (Candidate& candidate : m_candidates) {
+            candidate.isBuiltBeforeBranchesOnceCyclic = candidate.willBeBuiltBeforeBranchesOnceCyclic;
+            candidate.isBuiltUnderHandler = candidate.willBeBuiltUnderHandler;
+        }
         findWhetherObjectsAreBuiltBeforeBranches();
         m_decisions.forgetNewDecisions();
         for (VirtualFamily& family : m_families)
@@ -670,6 +716,14 @@ void AllocationSinking::solve()
         }
         setAsideJoinsThatCarryOnlyCells();
     }
+}
+
+void AllocationSinking::solveAgainIn(std::span<const BlockID> range)
+{
+    ++m_numberOfSweeps;
+    SinkingSolver solver(*this);
+    m_heads = solver.runIn(range, WTF::move(m_heads), WTF::move(m_blocksEnteredWithNothing));
+    m_blocksEnteredWithNothing = solver.takeBlocksEnteredWithNothing();
 }
 
 void AllocationSinking::giveUpOnEveryCandidate()
@@ -1356,12 +1410,13 @@ void ObjectInterpreter::dropDeadEntries(BlockID target, const SinkingState* head
         if (!entry.state.isCell() && !headOfTarget->find(entry.object))
             deadObjects.append(entry.object);
     }
+    // Thousands may die on one edge, so they are removed in one step.
+    removeEntries(m_state.objects, &ObjectEntry::object, deadObjects.span());
+    if (isRewriting())
+        values().remove(deadObjects.span());
     for (VirtualObjectID object : deadObjects) {
-        m_state.remove(object);
-        if (isRewriting()) {
-            values().remove(object);
-            continue;
-        }
+        if (isRewriting())
+            break;
         Candidate& candidate = m_sinking.at(object);
         candidate.diesVirtual = true;
         candidate.diesOutsideJoins |= !std::ranges::contains(m_enteredEdge.consumedSources, object, &ConsumedSource::source);

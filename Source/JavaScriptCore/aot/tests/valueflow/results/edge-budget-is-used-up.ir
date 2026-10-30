@@ -1,13 +1,8 @@
-# Past the budget of logged edges every set of objects that still moves is given up: its members are no longer followed. The solve ends with a result all the same, the build records the loss,
-# and what the results say still holds: the program with the results applied is valid
+# Past the budget of logged edges flow stops. The solver says so, the build reports the limit, and nothing is claimed about the program.
 # OPTIONS: limit=MaxValueFlowEdgesLogged:1
 # LOSS: MaxValueFlowEdgesLogged
 # RUN: valueflow-solve
-# CHECK-NOT: stopped at a limit
-# CHECK: functions
-# RUN(APPLY): valueflow-apply
-# APPLY: function f0 name="main"
-# APPLY: function f1 name="large"
+# CHECK: stopped at a limit
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

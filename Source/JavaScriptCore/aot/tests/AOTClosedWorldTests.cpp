@@ -533,13 +533,14 @@ static void testFrontEndAloneSaysWhetherWaysBetweenModuleObjectsAreShown()
 {
     AOT_TEST_CHECK(flagsOf(takesMainModuleAsFrontEndSays) == showsWaysBetweenModuleObjects);
     AOT_TEST_CHECK(flagsOf(takesMainModuleBehindFrontEnd) == closed);
-    AOT_TEST_CHECK(flagsOf(takesMainModuleAsFrontEndSays, { "disable=flow-results"_s }) == (open | showsWaysBetweenModuleObjects));
+    AOT_TEST_CHECK(flagsOf(takesMainModuleAsFrontEndSays, { "disable=flow-results"_s, "exclude=CodeOutsideImage"_s }) == (open | showsWaysBetweenModuleObjects));
 }
 
 static void testExcludedTextLeavesTheProgramClosed()
 {
     AOT_TEST_CHECK(flagsOf(evaluatesUnknownText, { "exclude=EvaluatedText"_s }) == closed);
     AOT_TEST_CHECK(flagsOf(installsPlugin, { "exclude=EvaluatedText"_s }) == runsText);
+    AOT_TEST_CHECK(flagsOf(evaluatesUnknownText, { "exclude=HostEvaluatedText"_s }) == runsText);
 }
 
 static void testLossesOfTheAnalysisAdmitNothing()
@@ -550,7 +551,9 @@ static void testLossesOfTheAnalysisAdmitNothing()
 
 static void testProgramThatWasNotAnalyzedIsOpen()
 {
-    AOT_TEST_CHECK(flagsOf(printsSum, { "disable=flow-results"_s }) == open);
+    AOT_TEST_CHECK(flagsOf(printsSum, { "disable=flow-results"_s, "exclude=CodeOutsideImage"_s }) == open);
+    // Any load may name a file outside the image, so only the options say whether one is loaded.
+    AOT_TEST_CHECK(flagsOf(printsSum, { "disable=flow-results"_s }) == (runsOnlyCodeOfImage ? open : loadsCodeFromOutside));
 }
 
 static void testObfuscationIsAnotherFlag()

@@ -512,10 +512,21 @@ KnownValue evaluateOperation(const Program& program, const Function& function, c
     case Opcode::ToNumeric:
         return left.isNumber() ? left : KnownValue();
     case Opcode::GetStringLength: {
-        if (left.kind() != KnownValue::Kind::String)
-            return { };
         Vector<char16_t> buffer;
-        return KnownValue::integer(program.strings.viewOf(left.asString(), buffer).length());
+        if (left.kind() == KnownValue::Kind::String)
+            return KnownValue::integer(program.strings.viewOf(left.asString(), buffer).length());
+        // Strings that all have the same length have that length, whichever one it is.
+        const Type& type = program.typeOf(function, value.operand(0));
+        if (!type.hasLiteralStrings() || !type.hasOnlyPrimitives(Primitive::LiteralString))
+            return { };
+        std::optional<unsigned> length;
+        for (StringID literal : type.stringLiterals) {
+            unsigned lengthOfLiteral = program.strings.viewOf(literal, buffer).length();
+            if (length && *length != lengthOfLiteral)
+                return { };
+            length = lengthOfLiteral;
+        }
+        return length ? KnownValue::integer(*length) : KnownValue();
     }
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -693,6 +704,197 @@ struct BitOfEachValue {
     Vector<uint64_t, 16> words;
 };
 
+// No stack walk starts where control only falls through.
+static bool runsToItsEnd(TerminatorKind kind)
+{
+    switch (kind) {
+    case TerminatorKind::Jump:
+    case TerminatorKind::Branch:
+    case TerminatorKind::TestAndBranch:
+    case TerminatorKind::Switch:
+    case TerminatorKind::SwitchOnShape:
+    case TerminatorKind::Return:
+    case TerminatorKind::Unreachable:
+        return true;
+    case TerminatorKind::SwitchString:
+    case TerminatorKind::ReturnCall:
+    case TerminatorKind::Throw:
+    case TerminatorKind::Rethrow:
+    case TerminatorKind::TryCallInline:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static bool keepsCalleeInFrame(Opcode opcode) { return opcode == Opcode::KeepCalleeInFrame || opcode == Opcode::KeepEnvironmentOfCalleeInFrame; }
+
+// A call and the operation that keeps its callee share one position in one inline frame.
+static uint64_t keyOfCall(uint32_t position, uint32_t inlineFrame) { return static_cast<uint64_t>(position) << 32 | inlineFrame; }
+
+// Only a stack walk needs to know which function object a call entered, and inside an inlined callee that can only happen where something may exit sideways.
+// If those places are expected to run less often than the head of the inlined body, the function object is kept right before them.
+struct KeptCalleeMover {
+    struct Keep {
+        ValueID id;
+        ProgramPoint point;
+        uint64_t key { 0 };
+        bool stays { false };
+        // In walk order.
+        Vector<ProgramPoint, 2> queryPoints { };
+    };
+    struct Question {
+        uint64_t key { 0 };
+        ProgramPoint point;
+    };
+    struct StateOfKey {
+        BlockID closedIn;
+        bool stays { false };
+    };
+
+    FunctionPassContext& context;
+    Function& function { context.function };
+    FunctionAnalyses& analyses { context.analyses };
+    Vector<Keep, 8> keeps { };
+    Vector<Question, 16> questions { };
+    UncheckedKeyHashMap<uint64_t, StateOfKey, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> stateOfKey { };
+    Vector<uint64_t, 4> lastKeyOfWord { };
+
+    uint32_t wordOf(uint64_t key) const
+    {
+        uint32_t depth = 0;
+        for (uint32_t frame = static_cast<uint32_t>(key); frame; frame = function.inlineFrames[frame].parent)
+            ++depth;
+        return depth;
+    }
+
+    // Calls at the same inline depth share a word. A call whose places in a block surround those of another call keeps its callee where it is.
+    void didMeet(uint64_t key, BlockID block)
+    {
+        uint32_t word = wordOf(key);
+        while (lastKeyOfWord.size() <= word)
+            lastKeyOfWord.append(std::numeric_limits<uint64_t>::max() - 1);
+        if (lastKeyOfWord[word] == key)
+            return;
+        if (auto last = stateOfKey.find(lastKeyOfWord[word]); last != stateOfKey.end())
+            last->value.closedIn = block;
+        StateOfKey& state = stateOfKey.add(key, StateOfKey { }).iterator->value;
+        state.stays |= state.closedIn == block;
+        lastKeyOfWord[word] = key;
+    }
+
+    void collect()
+    {
+        for (BlockID blockID : analyses.cfg().reversePostOrder()) {
+            const Block& block = function.at(blockID);
+            lastKeyOfWord.shrink(0);
+            auto ask = [&](uint32_t frame, uint32_t index) {
+                for (; frame; frame = function.inlineFrames[frame].parent) {
+                    const InlineFrame& record = function.inlineFrames[frame];
+                    if (!record.calleeIsKeptInFrame)
+                        continue;
+                    uint64_t key = keyOfCall(record.callPosition, record.parent);
+                    didMeet(key, blockID);
+                    questions.append({ key, { blockID, index } });
+                }
+            };
+            for (uint32_t index = 0; index < block.values.size(); ++index) {
+                ValueID id = block.values[index];
+                const Value& value = function.at(id);
+                if (keepsCalleeInFrame(value.opcode)) {
+                    uint64_t key = keyOfCall(value.position, value.inlineFrame);
+                    didMeet(key, blockID);
+                    keeps.append({ id, { blockID, index }, key });
+                    continue;
+                }
+                // The call itself needs it, right after the operation that keeps its callee.
+                if (value.opcode == Opcode::CallDirect && value.calleeIsKeptInFrame())
+                    stateOfKey.add(keyOfCall(value.position, value.inlineFrame), StateOfKey { }).iterator->value.stays = true;
+                if (value.inlineFrame && analyses.mayExitSidewaysOnAnyEdge(id))
+                    ask(value.inlineFrame, index);
+            }
+            if (block.terminator.inlineFrame && !runsToItsEnd(block.terminator.kind))
+                ask(block.terminator.inlineFrame, block.values.size());
+        }
+    }
+
+    bool standsInFrontOf(const Keep& keep, ProgramPoint point)
+    {
+        return keep.point.block == point.block ? keep.point.index < point.index : analyses.dominators().strictlyDominates(keep.point.block, point.block);
+    }
+
+    void assignQuestions()
+    {
+        AOT::stableSort(keeps, [](const Keep& a, const Keep& b) { return a.key < b.key; });
+        for (const Question& question : questions) {
+            auto [first, last] = std::ranges::equal_range(keeps, question.key, { }, &Keep::key);
+            Keep* nearest = nullptr;
+            for (Keep& keep : std::ranges::subrange(first, last)) {
+                if (standsInFrontOf(keep, question.point) && (!nearest || standsInFrontOf(*nearest, keep.point)))
+                    nearest = &keep;
+            }
+            // Paths from several of them meet before the place.
+            if (!nearest) {
+                stateOfKey.add(question.key, StateOfKey { }).iterator->value.stays = true;
+                continue;
+            }
+            nearest->queryPoints.append(question.point);
+        }
+    }
+
+    bool run()
+    {
+        if (std::ranges::none_of(function.inlineFrames, &InlineFrame::calleeIsKeptInFrame))
+            return false;
+        collect();
+        if (keeps.isEmpty())
+            return false;
+        assignQuestions();
+
+        IRBuilder builder(analyses.context(), function, context.types, &analyses);
+        Vector<const Keep*, 8> moved;
+        for (Keep& keep : keeps) {
+            if (keep.stays || stateOfKey.get(keep.key).stays)
+                continue;
+            double frequencyAtQueries = 0;
+            BlockID lastBlock;
+            for (ProgramPoint point : keep.queryPoints) {
+                if (point.block != std::exchange(lastBlock, point.block))
+                    frequencyAtQueries += analyses.blockFrequencies().frequencyOf(point.block).predicted();
+            }
+            if (!keep.queryPoints.isEmpty() && frequencyAtQueries >= analyses.blockFrequencies().frequencyOf(keep.point.block).predicted())
+                continue;
+            moved.append(&keep);
+        }
+        if (moved.isEmpty())
+            return false;
+
+        for (const Keep* keep : moved) {
+            const Value original = function.at(keep->id);
+            builder.setOrigin(original.origin());
+            BlockID lastBlock;
+            for (ProgramPoint point : keep->queryPoints) {
+                if (point.block != std::exchange(lastBlock, point.block))
+                    builder.insertBefore(point, Value(original));
+            }
+        }
+        builder.applyInsertions();
+
+        AOT::sort(moved, { }, [](const Keep* keep) { return keep->point.block; });
+        for (size_t first = 0; first < moved.size();) {
+            BlockID block = moved[first]->point.block;
+            BitVector erased;
+            const auto& values = function.at(block).values;
+            for (; first < moved.size() && moved[first]->point.block == block; ++first) {
+                size_t index = values.find(moved[first]->id);
+                RELEASE_ASSERT(index != notFound);
+                erased.set(index);
+            }
+            builder.eraseValues(block, erased);
+        }
+        return true;
+    }
+};
+
 // ONE WALK BACKWARD, block by block against the reverse post order and value by value against the order in the block.
 struct DeadCodeEliminator {
     static constexpr uint32_t noWaitingStore = UINT32_MAX;
@@ -717,6 +919,8 @@ struct DeadCodeEliminator {
     Vector<WaitingStore, 16> waitingStores { };
     UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> lastWaitingStoreInto { };
     std::optional<Position> firstFreshAllocation { };
+    // The position and inline frame of each, in ascending order.
+    std::optional<Vector<uint64_t, 8>> callsWithQueriedCallee { };
     Vector<ValueLocation> parameterLocations { };
     Vector<Vector<ValueID, 2>> storesInto { };
     BitVector isActive { };
@@ -788,6 +992,8 @@ struct DeadCodeEliminator {
         case UnusedValueRule::IsRemoved:
             return false;
         case UnusedValueRule::Stays:
+            if (keepsCalleeInFrame(value.opcode))
+                return isCalleeQueried(value);
             // All that the look at a heritage does is throw, or run a getter. The type of the heritage may rule out both.
             return value.opcode != Opcode::ResolveHeritage || !observable.neitherThrowsNorRunsCode(id);
         case UnusedValueRule::StaysWithWrittenObject:
@@ -803,6 +1009,36 @@ struct DeadCodeEliminator {
             return true;
         const EffectsOnEdges& effects = analyses.effectsOf(id);
         return !writesOnlyObjects(effects.normal) || !writesOnlyObjects(effects.handler) || !waitsForWrittenObject(id, value, position);
+    }
+
+    // A stack walk needs to know which function object a call entered. No stack walk starts inside an inlined callee in which nothing exits sideways.
+    bool isCalleeQueried(const Value& keep)
+    {
+        if (!callsWithQueriedCallee) {
+            callsWithQueriedCallee.emplace();
+            BitVector hasExit(function.inlineFrames.size());
+            auto didFindExitFrom = [&](uint32_t frame) {
+                for (; frame && !hasExit.quickSet(frame); frame = function.inlineFrames[frame].parent) { }
+            };
+            for (BlockID blockID : cfg.reversePostOrder()) {
+                const Block& block = function.at(blockID);
+                for (ValueID id : block.values) {
+                    const Value& value = function.at(id);
+                    if (value.opcode == Opcode::CallDirect && value.calleeIsKeptInFrame())
+                        callsWithQueriedCallee->append(keyOfCall(value.position, value.inlineFrame));
+                    if (value.inlineFrame && !hasExit.quickGet(value.inlineFrame) && analyses.mayExitSidewaysOnAnyEdge(id))
+                        didFindExitFrom(value.inlineFrame);
+                }
+                if (!runsToItsEnd(block.terminator.kind))
+                    didFindExitFrom(block.terminator.inlineFrame);
+            }
+            for (uint32_t frame = 1; frame < function.inlineFrames.size(); ++frame) {
+                if (function.inlineFrames[frame].calleeIsKeptInFrame && hasExit.quickGet(frame))
+                    callsWithQueriedCallee->append(keyOfCall(function.inlineFrames[frame].callPosition, function.inlineFrames[frame].parent));
+            }
+            std::ranges::sort(*callsWithQueriedCallee);
+        }
+        return std::ranges::binary_search(*callsWithQueriedCallee, keyOfCall(keep.position, keep.inlineFrame));
     }
 
     void checkRules(ValueID id, const OpcodeRules& rules)
@@ -1021,6 +1257,7 @@ PassOutcome eliminateDeadCode(FunctionPassContext& context)
 {
     if (context.build.recordedOptions().sabotage) [[unlikely]]
         stopWhereSabotaged(context.build, context.program, context.function, PassID::EliminateDeadCode);
+    bool movedKeptCallees = KeptCalleeMover { context }.run();
     DeadCodeEliminator eliminator { context };
     eliminator.walkBackward();
     // A store into an object that does not escape is live once a live value may be the object.
@@ -1028,11 +1265,13 @@ PassOutcome eliminateDeadCode(FunctionPassContext& context)
     if (usedEscapeAnalysis)
         eliminator.propagate();
     if (!eliminator.sweep())
-        return PassOutcome::Unchanged;
+        return movedKeptCallees ? PassOutcome::Changed : PassOutcome::Unchanged;
 
     context.keptAnalyses = allAnalyses;
     // With fewer objects left, the escape analysis may prove more on a second run.
-    context.reachedFixpoint = !usedEscapeAnalysis;
+    // isCalleeQueried() looks at the function before the sweep, which may remove the call or the last exit that asks for a kept callee.
+    bool hasKeptCallees = eliminator.callsWithQueriedCallee.has_value();
+    context.reachedFixpoint = !usedEscapeAnalysis && !hasKeptCallees;
     bool mayHaveGivenControlFlowWork = eliminator.madeEdgesAlikeOrBlocksEmpty || eliminator.tookArgumentsFromEmptyBlocks || eliminator.cfg.hasHandlers();
     context.passesLeftIdle = { };
     if (!eliminator.tookProofsFromEdges) {
@@ -1050,6 +1289,8 @@ PassOutcome eliminateDeadCode(FunctionPassContext& context)
 // FoldConstants.
 
 AOT_THRESHOLD(uint64_t, maxPrimitiveTextBytes, 24);
+AOT_THRESHOLD(uint64_t, foldedStringBytesPerValue, 64);
+AOT_THRESHOLD(uint64_t, maxFullLengthFoldedStringsPerBody, 16);
 AOT_THRESHOLD(unsigned, maxOperationsBetweenTextAndPattern, 8);
 
 static std::optional<TypeofType> typeofTypeNamed(std::span<const uint8_t> text)
@@ -1260,6 +1501,16 @@ struct ConstantFolder {
         FoldingRules rules = foldingRulesOfOpcodes[static_cast<unsigned>(value.opcode)];
         if (rules.isEmpty())
             return false;
+        if (stringJoins.contains(value.opcode)) {
+            switch (letJoinWait(id, value)) {
+            case KnownStringJoin::Waits:
+                return false;
+            case KnownStringJoin::IsExpanded:
+                return true;
+            case KnownStringJoin::IsFoldedAsAnyOperation:
+                break;
+            }
+        }
         if (rules.contains(FoldingRule::MayHaveSeveralResults) && numberOfResultsOf(program, function, value))
             return false;
         if (rules.contains(FoldingRule::MayPassProof)) {
@@ -1401,6 +1652,105 @@ struct ConstantFolder {
         return hasNarrowPart && hasWidePart;
     }
 
+    // `s = s + n + a;` line after line, all constant: each concatenation is only used by the next, and nothing reads its characters. Such a concatenation waits, and the first one with
+    // another use gathers the pieces, so that n concatenations leave one string instead of n strings of up to n pieces.
+    static constexpr OpcodeSet stringJoins { Opcode::Add, Opcode::Strcat };
+    enum class KnownStringJoin : uint8_t { Waits, IsExpanded, IsFoldedAsAnyOperation };
+    // Indexed by value: the byte size of its string.
+    UncheckedKeyHashMap<uint32_t, uint64_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> waitingJoins { };
+    Vector<ValueID, 4> expandedJoins { };
+
+    bool isReadByOnlyOneJoin(ValueID id)
+    {
+        std::optional<Use> use = useLists().singleUse(id);
+        return use && use->kind == Use::Kind::Operand && stringJoins.contains(function.at(use->user).opcode);
+    }
+
+    bool expandJoin(ValueID id, uint64_t bytes)
+    {
+        if (exceedsLimitOfFoldedString(id, bytes))
+            return false;
+        StringBuilder result(OverflowPolicy::RecordOverflow);
+        Vector<ValueID, 16> left { id };
+        Vector<ValueID, 16> gathered;
+        while (!left.isEmpty()) {
+            ValueID next = left.takeLast();
+            if (next != id && !waitingJoins.contains(next.index())) {
+                result.append(*textOf(program, knownValueOf(next)));
+                continue;
+            }
+            if (next != id)
+                gathered.append(next);
+            const Value& join = function.at(next);
+            for (uint32_t index = join.numberOfOperands(); index--;)
+                left.append(join.operand(index));
+        }
+        if (result.hasOverflowed() || !becomeConstant(id, KnownValue::string(context.strings.intern(StringView(result)))))
+            return false;
+        context.bytesOfFoldedStrings += bytes;
+        waitingJoins.remove(id.index());
+        // Each was only read by the concatenation above it, and produced a shorter string than this one.
+        for (ValueID join : gathered) {
+            waitingJoins.remove(join.index());
+            explainOperationThatGoes(function, join, InPlaceOfOperation::NothingByProofOfThePass);
+            becomeUndefined(function, join);
+            expandedJoins.append(join);
+        }
+        context.analyses.invalidate(FunctionAnalysis::Effects);
+        return true;
+    }
+
+    KnownStringJoin letJoinWait(ValueID id, const Value& value)
+    {
+        // The representation of a string that the program creates, and of a string with narrow and wide parts, is decided by the rules below.
+        bool canWait = textsMadeByProgram.isEmpty();
+        bool hasWaitingOperand = false;
+        bool hasText = false;
+        uint64_t bytes = 0;
+        uint64_t mostBytes = 0;
+        for (uint32_t index = 0; index < value.numberOfOperands(); ++index) {
+            ValueID operand = value.operand(index);
+            if (auto waiting = operand ? waitingJoins.find(operand.index()) : waitingJoins.end(); waiting != waitingJoins.end()) {
+                hasWaitingOperand = true;
+                hasText = true;
+                bytes += waiting->value;
+                mostBytes += waiting->value;
+                continue;
+            }
+            KnownValue known = canWait && operand ? knownValueOf(operand) : KnownValue();
+            if (!isPrimitive(known)) {
+                canWait = false;
+                continue;
+            }
+            if (known.kind() != KnownValue::Kind::String) {
+                bytes += textOf(program, known)->length();
+                mostBytes += maxPrimitiveTextBytes;
+                continue;
+            }
+            std::span<const uint8_t> text = program.string(known.asString());
+            canWait = !std::ranges::any_of(text, [](uint8_t byte) { return byte > 0xc3; });
+            hasText = true;
+            bytes += text.size();
+            mostBytes += text.size();
+        }
+        canWait = canWait && hasText && mostBytes <= context.limit(LimitID::MaxFoldedStringBytes);
+        if (canWait && isReadByOnlyOneJoin(id)) {
+            waitingJoins.add(id.index(), bytes);
+            return KnownStringJoin::Waits;
+        }
+        if (!hasWaitingOperand)
+            return KnownStringJoin::IsFoldedAsAnyOperation;
+        if (canWait && expandJoin(id, bytes))
+            return KnownStringJoin::IsExpanded;
+        for (uint32_t index = 0; index < value.numberOfOperands(); ++index) {
+            ValueID operand = value.operand(index);
+            auto waiting = operand ? waitingJoins.find(operand.index()) : waitingJoins.end();
+            if (waiting != waitingJoins.end() && expandJoin(operand, waiting->value))
+                expandedJoins.append(operand);
+        }
+        return KnownStringJoin::IsFoldedAsAnyOperation;
+    }
+
     KnownValue joinKnownStrings(ValueID id, const Value& value)
     {
         if (!opcodesCreatingKnownStrings.contains(value.opcode))
@@ -1415,7 +1765,10 @@ struct ConstantFolder {
         }
         if (exceedsLimitOfFoldedString(id, bytes))
             return { };
-        return evaluateStringOperation(program, context.strings, function, value, [&](ValueID operand) { return knownCharactersOf(operand); });
+        KnownValue joined = evaluateStringOperation(program, context.strings, function, value, [&](ValueID operand) { return knownCharactersOf(operand); });
+        if (joined.kind() == KnownValue::Kind::String)
+            context.bytesOfFoldedStrings += bytes;
+        return joined;
     }
 
     bool foldKnownString(ValueID id, const Value& value)
@@ -1478,11 +1831,15 @@ struct ConstantFolder {
         });
     }
 
+    // `s = s + n + a; use(s);` line after line: each string is as long as all the lines before it, and the program keeps every one. So the strings of one body are limited in total to a few times the limit, plus an allowance that grows with the body.
     bool exceedsLimitOfFoldedString(ValueID id, uint64_t bytes)
     {
         if (bytes > context.limit(LimitID::MaxFoldedStringBytes) && feedsOnlyRegExpPatterns(id))
             return context.exceeds(LimitID::RegExpCandidateTextLength, bytes, id);
-        return context.exceeds(LimitID::MaxFoldedStringBytes, bytes, id);
+        uint64_t together = context.bytesOfFoldedStrings + bytes;
+        uint64_t shareOfBody = foldedStringBytesPerValue * function.values.size();
+        uint64_t beyondShare = together > shareOfBody ? together - shareOfBody : 0;
+        return context.exceeds(LimitID::MaxFoldedStringBytes, std::max(bytes, beyondShare / maxFullLengthFoldedStringsPerBody), id);
     }
 
     // A literal that nothing but the call uses is as created when the call begins, and nobody sees what the call leaves in it.
@@ -1590,6 +1947,7 @@ struct ConstantFolder {
             return becomeAnswer(answer->primitive);
         if (exceedsLimitOfFoldedString(id, answer->text.sizeInBytes()))
             return false;
+        context.bytesOfFoldedStrings += answer->text.sizeInBytes();
         StringID characters = context.strings.intern(StringView(answer->text));
         // How the answer is held follows how the operands are, and the realm was handed literals.
         if (answer->isStoredLikeLiteral && !hasOperandMadeByProgram(value))
@@ -1678,6 +2036,7 @@ PassOutcome foldConstants(FunctionPassContext& context)
             didChangeCasts |= isCastOrConversion(opcode) || isCastOrConversion(function.at(id).opcode);
         }
     }
+    foldedValues.appendVector(folder.expandedJoins);
     if (!folder.textsMadeByProgram.isEmpty()) {
         if (!foldedValues.isEmpty()) {
             context.analyses.invalidate(FunctionAnalysis::UseLists);
@@ -2197,6 +2556,22 @@ struct ControlFlowSimplifier {
     }
 
     template<typename Case>
+    static std::optional<uint64_t> numberOfValuesOf(const Type& subject)
+    {
+        if (subject.isNever())
+            return std::nullopt;
+        if constexpr (std::is_same_v<Case, int64_t>) {
+            if (!subject.isInteger())
+                return std::nullopt;
+            return static_cast<uint64_t>(subject.integers.maximum - subject.integers.minimum) + 1;
+        } else {
+            if (!subject.hasOnlyPrimitives(Primitive::LiteralString))
+                return std::nullopt;
+            return subject.stringLiterals.size();
+        }
+    }
+
+    template<typename Case>
     bool simplifyCases(BlockID block, const Terminator& terminator, const auto& cases)
     {
         ValueID subject = terminator.subjectOperand();
@@ -2224,34 +2599,41 @@ struct ControlFlowSimplifier {
             decideTerminator(builder, block, static_cast<uint32_t>(cases.size()));
             return true;
         }
-        // A subject that by its type is one of the listed integers leaves nothing for the rest. The way that most cases take is asked for no more: whatever the other cases let pass goes there.
+        // A subject whose type is one of the listed integers or strings leaves nothing for the default case. The target that most cases share is no longer tested for: whatever the other cases do not match goes there.
         // Where several of many integers go one way, the bits of a window or the rows of a table tell them apart, and those want each of them listed.
         std::optional<uint32_t> caseThatTakesRest;
-        if constexpr (std::is_same_v<Case, int64_t>) {
-            if (!sharesWayOfRest && subjectType.isInteger() && numberOfListedSubjects == static_cast<uint64_t>(subjectType.integers.maximum - subjectType.integers.minimum) + 1) {
-                size_t greatestNumberOfCases = 0;
-                for (uint32_t index : remainingIndexes) {
-                    size_t numberOfCases = std::ranges::count_if(remainingIndexes, [&](uint32_t other) { return terminator.targets[other] == terminator.targets[index]; });
-                    if (numberOfCases >= greatestNumberOfCases) {
-                        greatestNumberOfCases = numberOfCases;
-                        caseThatTakesRest = index;
-                    }
+        if (!sharesWayOfRest && numberOfListedSubjects == numberOfValuesOf<Case>(subjectType)) {
+            size_t greatestNumberOfCases = 0;
+            for (uint32_t index : remainingIndexes) {
+                size_t numberOfCases = std::ranges::count_if(remainingIndexes, [&](uint32_t other) { return terminator.targets[other] == terminator.targets[index]; });
+                if (numberOfCases >= greatestNumberOfCases) {
+                    greatestNumberOfCases = numberOfCases;
+                    caseThatTakesRest = index;
                 }
-                if (hasEdgeResults(function, Edge { block, *caseThatTakesRest }) || (greatestNumberOfCases > 1 && numberOfListedSubjects >= SwitchWindow::minCases))
-                    caseThatTakesRest = std::nullopt;
             }
+            bool isDistinguishedByWindow = std::is_same_v<Case, int64_t> && greatestNumberOfCases > 1 && numberOfListedSubjects >= SwitchWindow::minCases;
+            if (isDistinguishedByWindow || !canDecide(Edge { block, *caseThatTakesRest }))
+                caseThatTakesRest = std::nullopt;
         }
+        bool restIsNarrowed = caseThatTakesRest && hasEdgeResults(function, Edge { block, *caseThatTakesRest });
         if (caseThatTakesRest) {
             remainingIndexes.removeAllMatching([&](uint32_t index) { return terminator.targets[index] == terminator.targets[*caseThatTakesRest]; });
             if (remainingIndexes.isEmpty()) {
                 decideTerminator(builder, block, *caseThatTakesRest);
+                castArgumentsToParameters(builder, block, context.build.validates());
+                builder.applyInsertions();
                 return true;
             }
         } else if (remainingIndexes.size() == cases.size())
             return false;
 
+        Arguments argumentsOfRest;
+        if (restIsNarrowed)
+            argumentsOfRest = argumentsWithoutTest(function, Edge { block, *caseThatTakesRest });
         Terminator& edited = function.edit(block, terminatorAndEdges).terminator;
-        if (caseThatTakesRest)
+        if (restIsNarrowed)
+            edited.otherwise() = Target { edited.targets[*caseThatTakesRest].block, WTF::move(argumentsOfRest), { } };
+        else if (caseThatTakesRest)
             edited.otherwise() = WTF::move(edited.targets[*caseThatTakesRest]);
         Vector<Case, 8> remainingCases;
         Vector<Target, 2> remainingTargets;
@@ -2265,7 +2647,29 @@ struct ControlFlowSimplifier {
         else
             edited.setStrings(remainingCases.span());
         edited.targets = WTF::move(remainingTargets);
+        if (restIsNarrowed)
+            narrowArgumentsOfRest(block);
         return true;
+    }
+
+    // The default path narrows nothing by itself: a block on it passes the subject on as the case narrowed it.
+    void narrowArgumentsOfRest(BlockID block)
+    {
+        BlockID stub = builder.addBlock(function.at(function.at(block).terminator.otherwise().block).frequency);
+        Terminator& terminator = function.edit(block, terminatorAndEdges).terminator;
+        Target rest = std::exchange(terminator.otherwise(), Target { stub, { }, { } });
+        Origin previousOrigin = builder.origin();
+        BlockID previousBlock = builder.currentBlock();
+
+        builder.setOrigin(terminator.origin());
+        builder.moveToEndOf(stub);
+        builder.emitJump(rest.block, WTF::move(rest.arguments));
+        castArgumentsToParameters(builder, stub, context.build.validates());
+        builder.applyInsertions();
+
+        builder.setOrigin(previousOrigin);
+        if (previousBlock)
+            builder.moveToEndOf(previousBlock);
     }
 
     void bypassHandlers()
@@ -3245,9 +3649,14 @@ PassOutcome hoistTestsIntoPredecessors(FunctionPassContext& context)
 
 // RemoveRedundantHandlers.
 
+// An operation whose allocation fails throws when it returns. A poll throws the out-of-memory error that an operation has left owed because it could not throw it:
+// a store that adds a field, a catch, or a call whose callee caught what it threw. So a loop poll keeps its handler, also where nothing in the loop allocates.
 static void removeUnusedHandler(Rewrite& rewrite, BlockID id, const Block& block)
 {
-    if (std::ranges::any_of(block.values, [&](ValueID value) { return rewrite.analyses.mayThrow(value); }) || rewrite.analyses.effectsOfTerminator(id).mayThrow())
+    auto needsHandler = [](const EffectsOnEdges& effects) {
+        return effects.mayThrow() || effects.onAnyEdge().mayCollect;
+    };
+    if (std::ranges::any_of(block.values, [&](ValueID value) { return needsHandler(rewrite.analyses.effectsOf(value)); }) || needsHandler(rewrite.analyses.effectsOfTerminator(id)))
         return;
     rewrite.later([&rewrite, id] { rewrite.builder().removeHandler(id); });
 }
@@ -3302,12 +3711,57 @@ static constexpr Rule redundantHandlerRules[] {
     { TerminatorKindSet { TerminatorKind::Throw, TerminatorKind::Rethrow }, skipRethrowingHandler },
 };
 
-PassOutcome removeRedundantHandlers(FunctionPassContext& context)
+// A store that adds a field allocates and may not collect, so it does not throw when its allocation fails. Under a handler, a poll after the last such store of a block throws for them.
+static bool pollAfterFieldAddingStores(FunctionPassContext& context)
 {
-    if (!context.analyses.cfg().hasHandlers() || runRules<redundantHandlerRules, Rounds::UntilUnchanged>(context) == PassOutcome::Unchanged)
-        return PassOutcome::Unchanged;
+    Function& function = context.function;
+    if (!context.analyses.opcodesOfValues().contains(Opcode::PutSlotOrAdd))
+        return false;
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    bool hasChanged = false;
+    for (BlockID id : context.analyses.cfg().reversePostOrder()) {
+        const Block& block = function.at(id);
+        if (!block.handler)
+            continue;
+        size_t last = block.values.reverseFindIf([&](ValueID value) { return function.at(value).opcode == Opcode::PutSlotOrAdd; });
+        if (last == notFound)
+            continue;
+        if (std::ranges::any_of(block.values.span().subspan(last + 1), [&](ValueID value) { return function.at(value).opcode == Opcode::LoopHint; }))
+            continue;
+        Value poll = IRBuilder::make(Opcode::LoopHint);
+        poll.setFollowsStores(true);
+        builder.setOrigin(function.at(block.values[last]).origin());
+        builder.insertBefore({ id, static_cast<uint32_t>(last + 1) }, WTF::move(poll));
+        hasChanged = true;
+    }
+    builder.applyInsertions();
+    return hasChanged;
+}
+
+static PassOutcome removeRedundantHandlers(FunctionPassContext& context, bool hasAddedPolls)
+{
+    if (runRules<redundantHandlerRules, Rounds::UntilUnchanged>(context) == PassOutcome::Unchanged)
+        return hasAddedPolls ? PassOutcome::Changed : PassOutcome::Unchanged;
     Rewrite(context).builder().emptyUnreachableBlocks();
     return PassOutcome::Changed;
+}
+
+PassOutcome removeRedundantHandlers(FunctionPassContext& context)
+{
+    if (!context.analyses.cfg().hasHandlers())
+        return PassOutcome::Unchanged;
+    bool hasAddedPolls = pollAfterFieldAddingStores(context);
+    return removeRedundantHandlers(context, hasAddedPolls);
+}
+
+PassOutcome removeRedundantHandlersAfterSelection(FunctionPassContext& context, bool removedAllocationUnderHandler)
+{
+    if (!context.analyses.cfg().hasHandlers())
+        return PassOutcome::Unchanged;
+    bool hasAddedPolls = pollAfterFieldAddingStores(context);
+    if (!hasAddedPolls && !removedAllocationUnderHandler)
+        return PassOutcome::Unchanged;
+    return removeRedundantHandlers(context, hasAddedPolls);
 }
 
 // TestNarrowerTypesFirst.
@@ -3396,6 +3850,7 @@ static bool handOnWhatComparisonsWithTextsDoNotNarrow(FunctionPassContext& conte
             Target& edited = function.edit(id, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator.targets[targetIndex];
             edited.arguments.appendVector(handedOn);
             edited.proofs.clear();
+            context.analyses.didChangeBlock(id);
             changed = true;
         }
     }

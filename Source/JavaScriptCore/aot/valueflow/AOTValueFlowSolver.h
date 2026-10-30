@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBackgroundTask.h"
+#include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTValueFlowGraph.h"
 #include "AOTValueFlowLog.h"
@@ -57,6 +58,7 @@ struct ValueFlowSolverInput {
     uint64_t mostSetMembers { UINT64_MAX };
     uint64_t mostMembersToldApart { UINT64_MAX };
     uint64_t mostEdgesLogged { UINT64_MAX };
+    uint64_t mostObjectsListedByMember { UINT64_MAX };
     bool remembersWhoLoggedEachEdge { false };
     bool isAskedHowValuesCame { true };
     bool leavesOutWhatIsCovered { false };
@@ -152,7 +154,8 @@ class ListThatStaysInPlace {
     WTF_MAKE_NONCOPYABLE(ListThatStaysInPlace);
     static_assert(std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T>);
 public:
-    static constexpr size_t mostElements = 1u << 27;
+    // Records are named by 32-bit indexes, and the highest indexes have meanings of their own.
+    static constexpr size_t mostElements = (static_cast<size_t>(1) << 32) - (1u << 16);
 
     ListThatStaysInPlace() = default;
     ~ListThatStaysInPlace();
@@ -287,6 +290,7 @@ public:
         uint32_t madeNodesAtRest { 0 };
         uint32_t nodesSaturated { 0 };
         uint32_t nodesHoldingObjectsOutsideFamily { 0 };
+        uint32_t namesWithSeveralCells { 0 };
         bool isPastEdgeBudget { false };
         Seconds rules;
         Seconds merge;
@@ -340,6 +344,8 @@ public:
         }
         return m_graph.valueOf(node);
     }
+    // The escaped objects that the library passes to callbacks, according to its declared function types.
+    ValueSetID declaredCallbackArguments() const { return m_declaredCallbackArguments; }
     // The functions of the engine that came to the node before the unknown object covered them. Which they are hangs on the order of the rules: only the report reads this, for a place to name.
     ValueSetID functionsOfEngineListedAt(ValueFlowNodeID node) const
     {
@@ -360,8 +366,9 @@ public:
     // The part of it that hangs on no order: the objects of the program written under the name of the read that the node has its value from.
     ValueSetID writtenUnderNameOfReadSeenAt(ValueFlowNodeID node) const
     {
-        auto found = m_writtenUnderNamesOfReads.find(node.index());
-        return found == m_writtenUnderNamesOfReads.end() ? ValueSets::nothing : found->value;
+        std::span<const ValueFlowNodeSet> all = m_writtenUnderNamesOfReads.span();
+        auto found = std::ranges::lower_bound(all, node.index(), { }, [](const ValueFlowNodeSet& entry) { return entry.node.index(); });
+        return found == all.end() || found->node != node ? ValueSets::nothing : found->set;
     }
     bool isReached(FunctionID function) const { return m_isReached.get(function.index()); }
     bool lacksLibraryFunction(RuntimeFunctionID function) const { return m_libraryFunctionsLacked.get(function.index()); }
@@ -405,6 +412,9 @@ public:
         uint32_t round { 0 };
     };
     std::span<const LoggedEdge> edgesInOrderLogged() const LIFETIME_BOUND { return m_edgesInOrderLogged.span(); }
+    const LoggedEdge* findLoggedEdge(ValueFlowEdge) const LIFETIME_BOUND;
+    // For a statement created by a rule: the statement whose run first requested it.
+    ValueFlowStatementID firstRequesterOf(ValueFlowStatementID) const;
     std::optional<ValueFlowUnknownSource> unknownSourceOf(ValueFlowEdge) const;
     std::optional<ValueFlowUnknownSource> unknownSourceOf(ValueFlowNodeID) const;
     std::optional<ValueFlowNodeID> findMadeNode(const ValueFlowNodeKey&) const;
@@ -825,9 +835,12 @@ private:
         HashMap<uint64_t, LatestNodes, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> latest;
         HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> latestWithBlock;
         HashMap<uint32_t, std::array<uint64_t, 4>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> sampleOfSet;
+        HashMap<uint64_t, Vector<ValueSetID>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> cells;
     };
     static constexpr unsigned numberOfNodeMakers = 64;
     std::array<NodesOfManyObjects, numberOfNodeMakers> m_nodesOfManyObjects;
+    uint64_t mostObjectsListedByMember() const;
+    bool isListedByMember(ValueSetID) const;
     Vector<uint32_t> m_madeNodesOfStatement;
     ListWithRoomToFill<uint32_t> m_firstUseOfStatement;
     ListThatStaysInPlace<Use> m_uses;
@@ -873,8 +886,9 @@ private:
     bool m_usesGeneralRulesOnly { false };
     AddedByGeneralRules m_addedByGeneralRules;
     Vector<ValueFlowStatementID> m_firstStatementsThatWereNotDueAndAdded;
-    HashMap<uint64_t, ValueFlowStatementID, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_statementOfEdge;
+    HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_positionOfLoggedEdge;
     Vector<LoggedEdge> m_edgesInOrderLogged;
+    HashMap<uint32_t, ValueFlowStatementID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_firstRequesterOfMadeNodes;
     Vector<uint32_t> m_bodiesReachedInRound;
     size_t m_paddingThatKeepsSharedListsOnTheirOwnCacheLines { 0 };
 
@@ -1000,16 +1014,12 @@ private:
 
     Vector<Covering, 2> m_coverings;
     ValueSetID m_takenByRetiredNodes { ValueSets::nothing };
-    HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_writtenUnderNamesOfReads;
-    HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_seenBehindTheRounds;
-    ValueSetID seenBehindTheRoundsAt(ValueFlowNodeID node) const
-    {
-        auto found = m_seenBehindTheRounds.find(node.index());
-        return found == m_seenBehindTheRounds.end() ? ValueSets::nothing : found->value;
-    }
+    // Sorted by node.
+    ParallelArray<ValueFlowNodeSet> m_writtenUnderNamesOfReads;
     ValueSetID m_keptOutOfNodesMadeForUnknownObject { ValueSets::nothing };
     static constexpr uint32_t nodesPerShareOfListed = 1 << 12;
     Vector<Vector<ValueFlowNodeSet>> m_listedWithCoveredMembers;
+    ValueSetID m_declaredCallbackArguments { ValueSets::nothing };
     Vector<Vector<ValueFlowNodeSet>> m_functionsOfEngineListed;
     bool m_haveLostObjectsEscaped { false };
     ValueSetID m_objectsThatPlaceholdersMayCover { ValueSets::nothing };
@@ -1116,6 +1126,9 @@ private:
     BitVector m_libraryFunctionsLacked;
     ValueSetID followedProxiesThatMoreMayBeDoneTo();
     bool wakeReadersOfNodesThatShowSomethingElse();
+    Vector<ValueSetID> m_uncoveredAtLastReaderWake;
+    uint16_t m_stateOfCoverings { 0 };
+    mutable ListWithRoomToFill<uint16_t> m_coveringStateOfShownView;
     Vector<ObjectOutsideFamily> m_objectsOutsideFamilies;
     HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_closuresFollowedToConstruction;
     BitVector m_holdsObjectOutsideFamily;

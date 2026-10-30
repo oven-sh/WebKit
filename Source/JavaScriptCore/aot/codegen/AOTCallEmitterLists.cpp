@@ -19,7 +19,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 Boxed CallEmitter::callWithList(const OperationContext& context, Boxed callee, Boxed thisValue, Word32 count, Pointer list, const CallOptions& options)
 {
-    return Boxed(callStub(context, AOT::callWithList(), { callee.value(), thisValue.value(), zeroExtended(count).value(), list.value() }, options).first);
+    return Boxed(callStub(context, AOT::callWithList(positionOf(context, options)), { callee.value(), thisValue.value(), zeroExtended(count).value(), list.value() }, options).first);
 }
 
 void CallEmitter::generateCallList(const ValueContext& value)
@@ -29,12 +29,14 @@ void CallEmitter::generateCallList(const ValueContext& value)
     Boxed thisValue = thisOrUndefined(value->thisValueOperand());
     LValue list = in<CellPointer>(value->listOperand()).value();
     ConventionCall call {
-        .stub = callWithArray(),
+        .stub = callWithArray(positionOf(value)),
         .stubOperands = singleElementSpan(list),
         .callee = callee.value(),
         .thisValue = thisValue.value(),
     };
     if (!value.returnCall()) {
+        if (value->isTailCall && mayForwardCallToReceiver(value))
+            requireCallableBeforeTailCall(value, callee, thisValue);
         define(value, callByConvention(value, call, { .throwSite = siteThatNamesCallee(value) }));
         return;
     }

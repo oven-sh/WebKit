@@ -1545,11 +1545,14 @@ static void expandAwaitOfWorker(FunctionPassContext& context, IRBuilder& builder
     builder.moveToEndOf(calling);
     ValueID result = builder.append(WTF::move(call));
     TypeID resultType = function.at(result).type;
-    ValueID awaited = builder.addParameter(awaiting, types.unionOf(resultType, types.intern(Type::builtinClass(BuiltinClasses::Promise))));
+    TypeID promiseType = types.intern(Type::builtinClass(BuiltinClasses::Promise));
+    // A result that is never a thenable meets a promise only where the worker throws. That promise has an await of its own, so the common await knows that it takes none.
+    bool rejectionHasOwnAwait = resultType != TypeTable::never && !protocolMayFindMember(context.program, types.at(resultType), Protocol::Thenable);
+    ValueID awaited = builder.addParameter(awaiting, rejectionHasOwnAwait ? resultType : types.unionOf(resultType, promiseType));
 
     if (resultType == TypeTable::never)
         builder.emitUnreachable();
-    else if (!protocolMayFindMember(context.program, types.at(resultType), Protocol::Thenable))
+    else if (rejectionHasOwnAwait)
         builder.emitJump(awaiting, { result });
     else {
         BlockID resolving = builder.addBlock(rarerOf(frequency, BlockFrequency::Unlikely));
@@ -1560,12 +1563,28 @@ static void expandAwaitOfWorker(FunctionPassContext& context, IRBuilder& builder
         builder.emitJump(awaiting, { appendSettledPromise(builder, Opcode::ResolvePromise, result) });
     }
 
+    auto appendAwait = [&](ValueID value) {
+        builder.setOrigin(awaitOrigin);
+        return convertTo(builder, builder.append(makeAwaitLike(context, await, value, await.heldOperands())), DeclaredType(Proven::byPosition(await.type)));
+    };
     builder.moveToEndOf(rejection);
-    builder.emitJump(awaiting, { appendSettledPromise(builder, Opcode::RejectPromise, builder.append(Opcode::CatchValue, { })) });
+    ValueID rejected = appendSettledPromise(builder, Opcode::RejectPromise, builder.append(Opcode::CatchValue, { }));
+    if (!rejectionHasOwnAwait) {
+        builder.emitJump(awaiting, { rejected });
+        builder.moveToEndOf(awaiting);
+        builder.endExpansion(expansion, appendAwait(awaited));
+        return;
+    }
 
-    builder.setOrigin(awaitOrigin);
+    ValueID awaitedRejection = appendAwait(rejected);
+    BlockID resumed = builder.addBlock(frequency);
+    ValueID outcome = builder.addParameter(resumed, await.type);
+    builder.moveToEndOf(rejection);
+    builder.emitJump(resumed, { awaitedRejection });
     builder.moveToEndOf(awaiting);
-    builder.endExpansion(expansion, convertTo(builder, builder.append(makeAwaitLike(context, await, awaited, await.heldOperands())), DeclaredType(Proven::byPosition(await.type))));
+    builder.emitJump(resumed, { appendAwait(awaited) });
+    builder.moveToEndOf(resumed);
+    builder.endExpansion(expansion, outcome);
 }
 
 // `for await` is Await(Call(next)) as well, so the step that serves it takes as many turns of the job queue as the call and the await.

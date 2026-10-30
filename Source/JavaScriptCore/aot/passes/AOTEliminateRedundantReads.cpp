@@ -25,6 +25,7 @@
 #include "AOTProgramPasses.h"
 #include "AOTRegionCloner.h"
 #include "AOTRepresentation.h"
+#include "AOTResultRules.h"
 #include "AOTSSARepair.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
@@ -63,6 +64,15 @@ static constexpr OpcodeSet opcodesOfAccesses = [] {
             continue;
         Effects bound = declaredBoundOf(opcode);
         if (bound.reads.containsAny(accessedHeapSet) || bound.writes.containsAny(accessedHeapSet))
+            result.add(opcode);
+    }
+    return result;
+}();
+
+static constexpr OpcodeSet opcodesThatMaySuspend = [] {
+    OpcodeSet result;
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        if (maySuspend(opcode))
             result.add(opcode);
     }
     return result;
@@ -196,6 +206,8 @@ struct RedundantReadElimination {
     // A read that was replaced by a value looks no more and defines no more: whatever its bit would reach, the bit of that value reaches, it comes first, and its type is as narrow.
     BitVector m_isReplacedByValue { };
     BitVector m_isReplacedByUndefined { };
+    // A new read of the location is as informative as the value that the bit stands for. Empty if nothing suspends.
+    BitVector m_isAsWellReadAgain { };
     Vector<uint32_t> m_bitsReplacedByValue { };
     // By the bit of a read of the class that is solved in parts: the value found for each edge into its block so far.
     UncheckedKeyHashMap<uint32_t, Vector<ValueID, 4>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_valuesOnEdges { };
@@ -419,6 +431,26 @@ struct RedundantReadElimination {
         }
     }
 
+    void findBitsAsWellReadAgain()
+    {
+        if (!m_analyses.opcodesOfValues().intersects(opcodesThatMaySuspend))
+            return;
+        m_isAsWellReadAgain.ensureSize(m_bits.size());
+        for (const AccessClass& accessClass : m_classes) {
+            const Type* typeOfRead = nullptr;
+            for (uint32_t bit = accessClass.bits.first; bit < accessClass.bits.end; ++bit) {
+                const Access& access = accessOf(bit);
+                if (access.isRead() && (!typeOfRead || !typeOf(access.id).isSubsetOf(*typeOfRead, m_program)))
+                    typeOfRead = &typeOf(access.id);
+            }
+            for (uint32_t bit = accessClass.bits.first; bit < accessClass.bits.end; ++bit) {
+                const Access& access = accessOf(bit);
+                if (!access.isAbsent && typeOfRead->isSubsetOf(typeOf(access.valueAfter()), m_program))
+                    m_isAsWellReadAgain.quickSet(bit);
+            }
+        }
+    }
+
     IndexRange bitsOfClassesAt(bool isFixed, const MemoryLocation& location) const
     {
         auto found = std::ranges::equal_range(m_classes, std::pair { !isFixed, location }, { }, [](const AccessClass& accessClass) {
@@ -632,10 +664,22 @@ struct RedundantReadElimination {
         }
     }
 
+    // A value kept across a suspension lives in the frame, which is saved and restored. Reading the location again is cheaper, unless more is known about the value than a read shows.
+    void appendClearsOfSuspension(std::span<const Word> row, ActionList& actions)
+    {
+        for (size_t bit = findBit(row, 0); bit < m_group.size(); bit = findBit(row, bit + 1)) {
+            uint32_t bitInAll = m_group.first + static_cast<uint32_t>(bit);
+            if (m_isAsWellReadAgain.quickGet(bitInAll))
+                appendClear(actions, { bitInAll, bitInAll + 1 });
+        }
+    }
+
     void appendClearsOfEffects(ProgramPoint point, std::span<const Word> row, ActionList& actions)
     {
         ValueID id = m_function.at(point.block).values[point.index];
         const Value& value = m_function.at(id);
+        if (maySuspend(value.opcode))
+            appendClearsOfSuspension(row, actions);
         if (!m_opcodesThatMayWrite.contains(value.opcode)) {
             if (m_checksScreens) [[unlikely]]
                 RELEASE_ASSERT(!m_analyses.effectsOf(id).onAnyEdge().writes.containsAny(accessedHeapSet));
@@ -1206,6 +1250,7 @@ struct RedundantReadElimination {
         assignBits();
         if (m_classes.isEmpty())
             return PassOutcome::Unchanged;
+        findBitsAsWellReadAgain();
         prepareToSolve();
 
         m_isReplacedByValue.ensureSize(m_bits.size());
@@ -1453,7 +1498,9 @@ PassOutcome eliminateRedundantReads(FunctionPassContext& context)
 
 namespace {
 
-constexpr AbstractHeapSet carriedHeaps = heapsOfVariables;
+constexpr AbstractHeapSet carriedHeaps = heapsOfVariables | AbstractHeapSet { AbstractHeap::ObjectFields };
+// The results of these tests hold until something writes what they read.
+constexpr OpcodeSet objectTestsHoistedBeforeLoops { Opcode::HasBirthFieldsFilled };
 AOT_THRESHOLD(unsigned, maxCarriedVariablesPerLoop, 8);
 AOT_THRESHOLD(unsigned, maxRoundsPerStep, 4);
 
@@ -1558,6 +1605,7 @@ struct VariableCarrier : LoopEditor {
         Vector<VariableAccess, 2> stores { };
         Vector<BlockID, 2> blocksOfOtherWrites { };
         Expected<bool> isReadInEveryTurn { false };
+        Expected<bool> isReadInEveryFullIteration { false };
         bool isWrittenOnLeavingPath { false };
         // Whoever gets to the end of the block ahead of the loop has read the variable or is about to, whichever way the tests turn out.
         bool isReadWheneverLoopIsEntered { false };
@@ -1587,6 +1635,19 @@ struct VariableCarrier : LoopEditor {
     // In every loop that no path has to leave for it: the variables that the first turn reads before the loop can end. What is read ahead of an inner loop is a read of the loop around it.
     PassOutcome run()
     {
+        bool hoistedObjectTests = false;
+        if (m_analyses.opcodesOfValues().intersects(objectTestsHoistedBeforeLoops)) {
+            for (BlockID header : headersFromInnermost()) {
+                const NaturalLoop* loop = m_analyses.naturalLoops().headerOf(header);
+                if (loop && isHeaderOfLoopOfProgram(header) && moveLeadingTestsAheadOf(*loop, LeadingTests::OfObjects))
+                    hoistedObjectTests = true;
+            }
+            // The loop's accesses name the value proven before the loop, not a parameter that is only ever passed that value. Nothing is remembered by number from here on.
+            if (hoistedObjectTests) {
+                removeTrivialParameters(m_context);
+                retype();
+            }
+        }
         BitVector isHeaderOfChangedLoop;
         for (BlockID header : headersFromInnermost()) {
             BitVector leaves;
@@ -1594,7 +1655,7 @@ struct VariableCarrier : LoopEditor {
                 isHeaderOfChangedLoop.set(header.index());
         }
         if (isHeaderOfChangedLoop.isEmpty())
-            return PassOutcome::Unchanged;
+            return hoistedObjectTests ? PassOutcome::Changed : PassOutcome::Unchanged;
 
         for (unsigned round = 0; round < maxRoundsPerStep && retype(); ++round) {
             bool moved = false;
@@ -1628,6 +1689,19 @@ struct VariableCarrier : LoopEditor {
         });
     }
 
+    // An object's slot is a variable if what the access relies on is established before the loop.
+    bool isCarriedAccess(const NaturalLoop& loop, const MemoryAccess& access, const Value& value)
+    {
+        if (access.location.heap() != AbstractHeap::ObjectFields)
+            return true;
+        if (value.opcode != Opcode::GetSlot && value.opcode != Opcode::PutSlot)
+            return false;
+        ValueID guard = value.guardOperand();
+        if (!guard)
+            return value.level() == KnowledgeLevel::Proven;
+        return !m_analyses.naturalLoops().belongsTo(m_analyses.useLists().locationOf(guard).block, loop);
+    }
+
     // Two environments of one layout may be one object: a store through another one counts as a write by something else.
     void findVariables(const NaturalLoop& loop, const BitVector& leaves)
     {
@@ -1651,7 +1725,7 @@ struct VariableCarrier : LoopEditor {
             for (uint32_t index = 0; index < values.size(); ++index) {
                 ValueID id = values[index];
                 MemoryAccess access = memoryAccessOf(m_function, m_function.at(id));
-                if (stays && access && carriedHeaps.contains(access.location.heap()) && !access.location.isEntireHeap()) {
+                if (stays && access && carriedHeaps.contains(access.location.heap()) && !access.location.isEntireHeap() && isCarriedAccess(loop, access, m_function.at(id))) {
                     // A cast that names a fact says from where on the word may be looked at: what stands in front of it is another base.
                     ValueID base = access.base ? sameObjectBehindFacts(m_function, access.base) : ValueID();
                     accesses.append(VariableAccess { access.location, base, id, access.stored, { block, index } });
@@ -1682,10 +1756,15 @@ struct VariableCarrier : LoopEditor {
             return;
         // The read ahead of the loop stands for the read of the first turn, so the first turn has to get as far: a loop may well end at its first test.
         BitVector runsInFirstTurn(m_function.blocks.size());
+        // The same if the loop does not exit at one of its own tests. A loop that exits immediately has read the variable for nothing, which costs a load.
+        BitVector runsInFirstFullIteration(m_function.blocks.size());
+        bool mayHaveEnded = false;
         // A path that is seldom taken does not count above. That a variable has been stored may hang on the very test that such a path begins with.
         std::optional<ProgramPoint> firstWayOut;
         BitVector beginsBeforeAnyWayOut(m_function.blocks.size());
-        for (BlockID block = loop.header(); m_firstTurnRunsHere && !runsInFirstTurn.set(block.index());) {
+        for (BlockID block = loop.header(); m_firstTurnRunsHere && !runsInFirstFullIteration.set(block.index());) {
+            if (!mayHaveEnded)
+                runsInFirstTurn.set(block.index());
             const BlockValues& values = m_function.at(block).values;
             if (!firstWayOut)
                 beginsBeforeAnyWayOut.set(block.index());
@@ -1694,19 +1773,19 @@ struct VariableCarrier : LoopEditor {
                     firstWayOut = ProgramPoint { block, index };
             }
             BlockID next;
-            bool mayEndHere = false;
+            bool forks = false;
             for (const Target& target : m_function.at(block).terminator.targets) {
                 if (m_stays.get(target.block.index())) {
-                    mayEndHere |= !!next;
+                    forks |= !!next;
                     next = target.block;
                     continue;
                 }
                 if (!firstWayOut)
                     firstWayOut = pointBeforeTerminatorOf(m_function, block);
                 if (!loops.belongsTo(target.block, loop))
-                    mayEndHere |= (m_function.at(target.block).frequency <= m_function.at(loop.header()).frequency).predicted();
+                    mayHaveEnded |= (m_function.at(target.block).frequency <= m_function.at(loop.header()).frequency).predicted();
             }
-            if (mayEndHere || !next)
+            if (forks || !next)
                 break;
             block = next;
         }
@@ -1739,6 +1818,7 @@ struct VariableCarrier : LoopEditor {
             if (ValueID namedBase = memoryAccessOf(m_function, m_function.at(access.id)).base)
                 variable->isReadThroughCastInLoop |= loops.belongsTo(useLists.locationOf(namedBase).block, loop);
             variable->isReadInEveryTurn = variable->isReadInEveryTurn.predicted() || ((!m_firstTurnRunsHere || runsInFirstTurn.get(access.point.block.index())) && dominatesAll(access.point.block, latches.span()));
+            variable->isReadInEveryFullIteration = variable->isReadInEveryFullIteration.predicted() || (runsInFirstFullIteration.get(access.point.block.index()) && dominatesAll(access.point.block, latches.span()));
             variable->isReadWheneverLoopIsEntered |= isReachedWheneverLoopIsEntered(access);
         }
 
@@ -1794,8 +1874,23 @@ struct VariableCarrier : LoopEditor {
             });
         };
         // HoistLoopInvariantReads moves a read that is all there is to a variable.
+        // A variable that is carried in a register but still stored in every iteration gains little, and storing a string means creating it. So after a test that may exit the loop it is only carried if its stores leave the loop too.
+        std::optional<bool> storesCanLeave;
+        auto isWorthPreloading = [&](const CarriedVariable& variable) {
+            if (variable.isReadInEveryTurn.predicted())
+                return true;
+            if (!variable.isReadInEveryFullIteration.predicted() || variable.stores.isEmpty() || !variable.blocksOfOtherWrites.isEmpty() || variable.isWrittenOnLeavingPath)
+                return false;
+            if (!storesCanLeave)
+                storesCanLeave = leaves.isEmpty() && noCodeObservesVariablesIn(loop);
+            return *storesCanLeave;
+        };
+        // A slot that the loop only reads is hoisted by other code. An integer in a slot is incremented in place, in one instruction with its test.
+        auto doesNotBenefitFromRegister = [&](const CarriedVariable& variable) {
+            return variable.location.heap() == AbstractHeap::ObjectFields && (variable.stores.isEmpty() || typeOf(variable.reads.first()).isInteger());
+        };
         m_variables.removeAllMatching([&](const CarriedVariable& variable) {
-            if (variable.isReadThroughCastInLoop || !variable.isReadInEveryTurn.predicted() || !hasTypesOfReads(variable) || std::ranges::any_of(variable.blocksOfOtherWrites, hasToStay))
+            if (variable.isReadThroughCastInLoop || doesNotBenefitFromRegister(variable) || !isWorthPreloading(variable) || !hasTypesOfReads(variable) || std::ranges::any_of(variable.blocksOfOtherWrites, hasToStay))
                 return true;
             return variable.stores.isEmpty() && !variable.isWrittenOnLeavingPath && !isReadBy(variable, Opcode::TypeTest) && !isReadBy(variable, Opcode::GetCapture);
         });
@@ -2047,10 +2142,34 @@ struct VariableCarrier : LoopEditor {
     struct LeadingTest {
         BlockID block;
         std::optional<size_t> parameterOfHeader;
+        // The block only computes and decides whether the loop continues. It is also evaluated before the loop, and again in the first iteration with the same result.
+        bool staysInLoop { false };
     };
+    enum class LeadingTests : uint8_t { OfTypes, OfObjects };
+
+    bool noWriteClobbersReadsOf(const NaturalLoop& loop, ValueID test)
+    {
+        LocationMasks reads = m_analyses.effectsOf(test).onAnyEdge().reads;
+        auto preservesIt = [&](const Effects& effects) {
+            return !effects.mayRunOtherCode() && !effects.writes.overlaps(reads);
+        };
+        for (unsigned position = 0; position < loop.size(); ++position) {
+            BlockID block = loop.at(position);
+            if (!preservesIt(m_analyses.effectsOfTerminator(block).onAnyEdge()))
+                return false;
+            for (ValueID value : m_function.at(block).values) {
+                Effects effects = m_analyses.effectsOf(value).onAnyEdge();
+                // A store to a slot leaves the field in its slot. Any other store to a field may give it a value that the slot cannot hold.
+                bool mayTakeFieldOutOfSlot = m_function.at(value).opcode != Opcode::PutSlot && !effects.writes.restrictedTo({ AbstractHeap::ObjectFields }).isEmpty();
+                if (mayTakeFieldOutOfSlot || !preservesIt(effects))
+                    return false;
+            }
+        }
+        return true;
+    }
 
     // A test of what an earlier one of these tests has proven tests the same value.
-    Vector<LeadingTest, 4> findLeadingTests(const NaturalLoop& loop)
+    Vector<LeadingTest, 4> findLeadingTests(const NaturalLoop& loop, LeadingTests wanted)
     {
         const CFG& cfg = m_analyses.cfg();
         const NaturalLoops& loops = m_analyses.naturalLoops();
@@ -2082,12 +2201,40 @@ struct VariableCarrier : LoopEditor {
                 Opcode opcode = m_function.at(value).opcode;
                 return opcode == Opcode::LoopHint || makesFact(opcode) || isCastBehindFact(value);
             });
-            if (test.opcode != Opcode::TypeTest || !holdsNothingElse || useLists.useCount(block.values.last()) != 1)
+            if (wanted == LeadingTests::OfObjects && !objectTestsHoistedBeforeLoops.contains(test.opcode)) {
+                bool onlyComputes = std::ranges::all_of(block.values, [&](ValueID value) {
+                    return m_function.at(value).opcode == Opcode::LoopHint || m_analyses.effectsOf(value).onAnyEdge().isPure();
+                });
+                const Target& first = block.terminator.targets[0];
+                const Target& second = block.terminator.targets[1];
+                if (!onlyComputes || loops.belongsTo(first.block, loop) == loops.belongsTo(second.block, loop))
+                    break;
+                BlockID next = loops.belongsTo(first.block, loop) ? first.block : second.block;
+                if (next == loop.header() || !cfg.singleIncomingEdge(next))
+                    break;
+                tests.append({ id, std::nullopt, true });
+                proven.append(ValueID());
+                id = next;
+                continue;
+            }
+            if (test.opcode != (wanted == LeadingTests::OfTypes ? Opcode::TypeTest : test.opcode) || !holdsNothingElse || useLists.useCount(block.values.last()) != 1)
                 break;
             const Target& taken = block.terminator.targets[0];
             const Target& notTaken = block.terminator.targets[1];
             if (!loops.belongsTo(taken.block, loop) || taken.block == loop.header() || !cfg.singleIncomingEdge(taken.block) || loops.belongsTo(notTaken.block, loop))
                 break;
+            if (wanted == LeadingTests::OfObjects) {
+                bool testsOnlyLoopInvariantValues = true;
+                test.forEachOperand([&](ValueID operand, uint32_t) {
+                    testsOnlyLoopInvariantValues &= !loops.belongsTo(useLists.locationOf(operand).block, loop);
+                });
+                if (!testsOnlyLoopInvariantValues || taken.proofs.isEmpty() || !noWriteClobbersReadsOf(loop, block.values.last()))
+                    break;
+                tests.append({ id, std::nullopt });
+                proven.append(m_function.at(taken.block).parameters.last());
+                id = taken.block;
+                continue;
+            }
 
             ValueID tested = test.valueOperand();
             if (isCastBehindFact(tested))
@@ -2105,16 +2252,18 @@ struct VariableCarrier : LoopEditor {
             proven.append(taken.proofs.isEmpty() ? ValueID() : m_function.at(taken.block).parameters.last());
             id = taken.block;
         }
+        while (!tests.isEmpty() && tests.last().staysInLoop)
+            tests.removeLast();
         return tests;
     }
 
-    bool moveLeadingTestsAheadOf(const NaturalLoop& loop)
+    bool moveLeadingTestsAheadOf(const NaturalLoop& loop, LeadingTests wanted = LeadingTests::OfTypes)
     {
         BlockID header = loop.header();
         std::optional<Edge> entry = m_analyses.naturalLoops().findSingleEntry(loop);
         if (!entry || hasEdgeResults(m_function, *entry))
             return false;
-        Vector<LeadingTest, 4> tests = findLeadingTests(loop);
+        Vector<LeadingTest, 4> tests = findLeadingTests(loop, wanted);
         if (tests.isEmpty())
             return false;
         Vector<BlockID, 4> region;
@@ -2132,7 +2281,7 @@ struct VariableCarrier : LoopEditor {
         Vector<ValueID, 4> provenAheadOfLoop;
         for (size_t position = 0; position < tests.size(); ++position) {
             const Target& taken = m_function.at(tests[position].block).terminator.targets[0];
-            if (taken.proofs.isEmpty())
+            if (taken.proofs.isEmpty() || tests[position].staysInLoop)
                 provenAheadOfLoop.append(ValueID());
             else if (position + 1 == tests.size())
                 provenAheadOfLoop.append(m_function.at(landing).parameters.last());
@@ -2152,6 +2301,8 @@ struct VariableCarrier : LoopEditor {
 
         for (size_t position = 0; position < tests.size(); ++position) {
             BlockID block = tests[position].block;
+            if (tests[position].staysInLoop)
+                continue;
             if (tests[position].parameterOfHeader || !provenAheadOfLoop[position]) {
                 builder.convertBranchToJump(block, 0);
                 continue;
@@ -2188,6 +2339,36 @@ struct VariableCarrier : LoopEditor {
         return changed;
     }
 
+    // An operation that only throws when out of memory need not see the variables' current values.
+    Effects effectsOnDelayedStores(ValueID value)
+    {
+        Effects effects = m_analyses.effectsOf(value).onAnyEdge();
+        if (opcodesThrowingOnlyForLackOfMemory.contains(m_function.at(value).opcode) && !effects.mayThrowByRule())
+            effects.mayThrow = false;
+        return effects;
+    }
+
+    bool letsStoresWait(const Effects& effects) const
+    {
+        return (!effects.mayThrow && !effects.mayRunOtherCode()) || m_context.build.isSabotaged(Sabotage::DelayedStoresPassWhatMayThrow);
+    }
+
+    // The loop is only left through its edges, and nothing in it runs code.
+    bool noCodeObservesVariablesIn(const NaturalLoop& loop)
+    {
+        for (unsigned position = 0; position < loop.size(); ++position) {
+            BlockID id = loop.at(position);
+            const Block& block = m_function.at(id);
+            if (block.handler || block.isHandlerBlock() || !letsStoresWait(m_analyses.effectsOfTerminator(id).onAnyEdge()))
+                return false;
+            for (ValueID value : block.values) {
+                if (!letsStoresWait(effectsOnDelayedStores(value)))
+                    return false;
+            }
+        }
+        return true;
+    }
+
     // At the head of a turn the parameter is what the variable should hold, behind a store it is what was stored.
     bool delayStoresIn(const NaturalLoop& loop, std::span<const VariableOfLoop> variables)
     {
@@ -2195,6 +2376,7 @@ struct VariableCarrier : LoopEditor {
             VariableOfLoop variable;
             Vector<ProgramPoint, 2> stores { };
             bool isSeenByOthers { false };
+            TypeID typeOfField { };
         };
         const NaturalLoops& loops = m_analyses.naturalLoops();
         BlockID header = loop.header();
@@ -2211,7 +2393,7 @@ struct VariableCarrier : LoopEditor {
             if (block.handler || block.isHandlerBlock())
                 return false;
             auto look = [&](Effects effects) {
-                if ((effects.mayThrow || effects.mayRunOtherCode()) && !m_context.build.isSabotaged(Sabotage::DelayedStoresPassWhatMayThrow))
+                if (!letsStoresWait(effects))
                     return false;
                 for (DelayedVariable& candidate : delayed)
                     candidate.isSeenByOthers |= effects.reads.overlaps(m_program, candidate.variable.location) || effects.writes.overlaps(m_program, candidate.variable.location);
@@ -2232,10 +2414,7 @@ struct VariableCarrier : LoopEditor {
                     stored->stores.append({ id, index });
                     continue;
                 }
-                Effects effects = m_analyses.effectsOf(value).onAnyEdge();
-                if (opcodesThrowingOnlyForLackOfMemory.contains(m_function.at(value).opcode) && !effects.mayThrowByRule())
-                    effects.mayThrow = false;
-                if (!look(effects))
+                if (!look(effectsOnDelayedStores(value)))
                     return false;
             }
             if (!look(m_analyses.effectsOfTerminator(id).onAnyEdge()))
@@ -2247,6 +2426,31 @@ struct VariableCarrier : LoopEditor {
         }
         delayed.removeAllMatching([](const DelayedVariable& candidate) {
             return candidate.isSeenByOthers || candidate.stores.isEmpty();
+        });
+
+        // The store on a leaving edge is a copy of the first store, and it stores any definition of the variable. Each definition needs the type that the first store requires.
+        // Only accesses by slot can differ in that type: each names its own set of layouts.
+        TypingContext typing { m_program, m_function, m_context.types };
+        auto storeAt = [&](ProgramPoint point) -> const Value& {
+            return m_function.at(m_function.at(point.block).values[point.index]);
+        };
+        delayed.removeAllMatching([&](DelayedVariable& candidate) {
+            const Value& first = storeAt(candidate.stores.first());
+            if (!Value::opcodesWithReceivers.contains(first.opcode))
+                return false;
+            MemoryAccess access = memoryAccessOf(m_function, first);
+            TypeID required = requiredTypeOfOperand(typing, first, access.storedOperandIndex);
+            bool otherStoreIsWider = std::ranges::any_of(candidate.stores, [&](ProgramPoint point) {
+                return !hasType(memoryAccessOf(m_function, storeAt(point)).stored, required);
+            });
+            if (otherStoreIsWider)
+                return true;
+            if (hasType(candidate.variable.parameter, required))
+                return false;
+            // The read that fills the variable allows more layouts than the store. What it finds has the type of the one field that the store names if the object is proven to have that layout in the whole loop.
+            bool namesOneField = first.level() == KnowledgeLevel::Proven && m_program.at(first.receivers()).completeMembers().value().size() == 1;
+            candidate.typeOfField = required;
+            return !namesOneField || !hasType(candidate.variable.base, m_function.at(access.base).type);
         });
         if (delayed.isEmpty() || leavingEdges.isEmpty())
             return false;
@@ -2261,10 +2465,15 @@ struct VariableCarrier : LoopEditor {
         for (size_t index = 0; index < delayed.size(); ++index) {
             const DelayedVariable& candidate = delayed[index];
             Vector<ValueID, 4>& definitions = definitionsOfVariables[index];
-            Value store = m_function.at(m_function.at(candidate.stores.first().block).values[candidate.stores.first().index]);
-            ValueID storedBySample = memoryAccessOf(m_function, store).stored;
+            Value store = storeAt(candidate.stores.first());
+            uint32_t storedOperandIndex = memoryAccessOf(m_function, store).storedOperandIndex;
             builder.setOrigin(store.origin());
-            definitions.append(insertCopy(builder, { header, 0 }, candidate.variable.parameter));
+            if (candidate.typeOfField) {
+                Value cast = IRBuilder::make(Opcode::AssumeType, { candidate.variable.parameter });
+                cast.setProvenType(Proven::byPosition(candidate.typeOfField));
+                definitions.append(builder.insertBefore({ header, 0 }, WTF::move(cast)));
+            } else
+                definitions.append(insertCopy(builder, { header, 0 }, candidate.variable.parameter));
             for (ProgramPoint point : candidate.stores) {
                 ValueID delayedStore = m_function.at(point.block).values[point.index];
                 definitions.append(insertCopy(builder, { point.block, point.index + 1 }, memoryAccessOf(m_function, m_function.at(delayedStore)).stored));
@@ -2274,10 +2483,7 @@ struct VariableCarrier : LoopEditor {
                 if (m_context.build.isSabotaged(Sabotage::DelayedStoresAreLeftOut))
                     break;
                 Value storeOnEdge = store;
-                for (uint32_t operand = 0; operand < storeOnEdge.numberOfOperands(); ++operand) {
-                    if (storeOnEdge.operand(operand) == storedBySample)
-                        storeOnEdge.setOperand(operand, definitions.first());
-                }
+                storeOnEdge.setOperand(storedOperandIndex, definitions.first());
                 builder.insertBefore({ block, 0 }, WTF::move(storeOnEdge));
             }
         }

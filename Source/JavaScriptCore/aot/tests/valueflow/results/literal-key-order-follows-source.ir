@@ -1,0 +1,46 @@
+# function make(port, host) { return { port, host } }             the allocation lists nothing: two definitions behind it create the fields, before anybody else sees the object
+# function makeEither(port, host, from) { return { port, ...from, host } }     a copy between the definitions brings its names in the order of its source
+# The definitions of a literal run one after the other, each once. So every finished object of the first layout has its keys in the order of the text, and flow says that no field
+# is created once an object is finished. Of the second it says nothing.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Made" {{*}} constructorOrders=[{}, {fields=[1, 0]}] fieldCreation=OnlyBeforeObjectIsFinished
+# CHECK: layout L1 name="MadeWithCopy"
+# CHECK-NOT: fieldCreation=
+# CHECK: layout L2 name="Source"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Record name="Made" fields=[{key="host" declared={type=anything} flags=[IsRequired]}, {key="port" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Record name="MadeWithCopy" fields=[{key="host" declared={type=anything} flags=[IsRequired]}, {key="more" declared={type=anything}}, {key="port" declared={type=anything} flags=[IsRequired]}]
+layout L2 kind=Record name="Source" fields=[{key="more" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=80
+    v1 = String string="localhost"
+    v2 = NewClosure function=f1
+    v3 = Call v2, -, v0, v1
+    v4 = NewObject -, v0 layout=L2 fields=[0]
+    v5 = FinishObject v4
+    v6 = NewClosure function=f2
+    v7 = Call v6, -, v0, v1, v5
+    v8 = PropGet v3 key="port"
+    v9 = PropGet v7 key="port"
+    v10 = Add v8, v9
+    Return v10
+}
+function f1 name="make" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject layout=L0
+    PropDefine v2, v0 key="port"
+    PropDefine v2, v1 key="host"
+    v5 = FinishObject v2
+    Return v5
+}
+function f2 name="makeEither" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = NewObject layout=L1
+    PropDefine v3, v0 key="port"
+    CopyDataProperties v3, v2
+    PropDefine v3, v1 key="host"
+    v7 = FinishObject v3
+    Return v7
+}

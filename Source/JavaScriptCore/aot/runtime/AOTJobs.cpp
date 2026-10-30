@@ -36,7 +36,9 @@
 #include "JSSentinel.h"
 #include "LinkTimeConstant.h"
 #include "Microtask.h"
+#include "MicrotaskCall.h"
 #include "MicrotaskQueueInlines.h"
+#include "OwedOutOfMemoryError.h"
 #include "TopExceptionScope.h"
 #include "VMInlines.h"
 #include <array>
@@ -255,16 +257,6 @@ bool tryFinishStepInProgress(JSValue settlementTarget, JSValue value, bool isDon
     step->value = value;
     step->isDone = isDone;
     return true;
-}
-
-// Room for the frames from the function that enters a body down to the frame of the body.
-AOT_THRESHOLD(size_t, bytesOfStackClearedBelowCaller, 1024);
-
-SUPPRESS_ASAN NEVER_INLINE void clearStackBelowCaller()
-{
-    std::array<uintptr_t, bytesOfStackClearedBelowCaller / sizeof(uintptr_t)> words;
-    words.fill(0);
-    ensureStillAliveHere(words.data());
 }
 
 AsyncGeneratorBodyEntry willEnterAsyncGeneratorBody(JSAsyncGenerator* generator, bool isEnteredByJobLoop)
@@ -513,13 +505,10 @@ static void finishAdapterEntry(VM& vm, const AsyncGeneratorBodyEntry& entry, Top
     }
 }
 
-static bool tryEnterFunctionOfJob(JSGlobalObject* globalObject, VM& vm, JSValue promise, JSValue function, JSValue argument, bool endsJob, bool asyncContextIsPutBack)
+static ALWAYS_INLINE void enterFunctionOfJob(JSGlobalObject* globalObject, VM& vm, JSValue promise, JSValue function, JSValue argument, bool endsJob, bool asyncContextIsPutBack)
 {
-    if (!function.isCell() || !isCompiledCalleeType(function.asCell()->type()) || function.asCell()->structure()->realm() != globalObject)
-        return false;
+    ASSERT(canEnterFunctionOfJob(globalObject, vm, function));
     Instance* instance = Instance::of(globalObject);
-    if (!instance || !vm.isSafeToRecurseSoft()) [[unlikely]]
-        return false;
 
     static_assert(static_cast<int32_t>(JSGenerator::Argument::Generator) == 1 && static_cast<int32_t>(JSGenerator::Argument::State) == 2 && static_cast<int32_t>(JSGenerator::Argument::Value) == 3);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -530,19 +519,29 @@ static bool tryEnterFunctionOfJob(JSGlobalObject* globalObject, VM& vm, JSValue 
     finishAdapterEntry(vm, entry, scope, returned);
     if (instance->coroutines.waiterToResume)
         resumeRemainingWaiters(*instance);
-    return true;
 }
 
-bool tryRunHandlerOfJob(JSGlobalObject* globalObject, VM& vm, JSValue promiseOrCapability, JSValue handler, JSValue argument, bool endsJob)
+static NEVER_INLINE void enterFunctionOfJobInAsyncContext(JSGlobalObject* globalObject, VM& vm, JSValue promise, JSValue function, JSValue argument, bool endsJob, bool asyncContextIsPutBack, JSValue asyncContext)
 {
-    if (!promiseOrCapability.isCell() || promiseOrCapability.asCell()->structureID() != globalObject->promiseStructure()->id())
-        return false;
-    return tryEnterFunctionOfJob(globalObject, vm, promiseOrCapability, handler, argument, endsJob, endsJob && vm.isAsyncContextTrackingEnabled());
+    AsyncContextSwapScope asyncContextScope(vm, globalObject, asyncContext);
+    enterFunctionOfJob(globalObject, vm, promise, function, argument, endsJob, asyncContextIsPutBack);
 }
 
-bool tryRunFunctionOfJob(JSGlobalObject* globalObject, VM& vm, JSValue function, bool endsJob)
+// runInternalMicrotask() leaves by a tail call to a job function. Link-time optimization would inline the job function there, and the frame it was to leave would stay.
+NEVER_INLINE void runHandlerJob(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t, JSValue promise, JSValue handler, JSValue argument, JSValue asyncContext, MicrotaskCallCache* microtaskCallCache)
 {
-    return tryEnterFunctionOfJob(globalObject, vm, jsUndefined(), function, jsUndefined(), endsJob, false);
+    bool endsJob = microtaskCallCache && microtaskCallCache->isOwnedByJobLoop();
+    if (vm.isAsyncContextTrackingEnabled()) [[unlikely]]
+        return enterFunctionOfJobInAsyncContext(globalObject, vm, promise, handler, argument, endsJob, endsJob, asyncContext);
+    enterFunctionOfJob(globalObject, vm, promise, handler, argument, endsJob, false);
+}
+
+NEVER_INLINE void runFunctionJob(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t, JSValue function, JSValue, JSValue, JSValue, MicrotaskCallCache* microtaskCallCache)
+{
+    bool endsJob = microtaskCallCache && microtaskCallCache->isOwnedByJobLoop();
+    if (vm.isAsyncContextTrackingEnabled()) [[unlikely]]
+        return enterFunctionOfJobInAsyncContext(globalObject, vm, jsUndefined(), function, jsUndefined(), endsJob, false, jsUndefined());
+    enterFunctionOfJob(globalObject, vm, jsUndefined(), function, jsUndefined(), endsJob, false);
 }
 
 void resumeSavedAsyncFunction(JSGlobalObject* globalObject, VM& vm, Instance& instance, SavedFrame* saved, ResumeMode mode, JSValue resolution)
@@ -572,6 +571,78 @@ void resumeAsyncFunction(JSGlobalObject* globalObject, VM& vm, JSValue context, 
         resumeRemainingWaiters(instance);
 }
 
+static NEVER_INLINE void resumeAsyncFunctionInAsyncContext(JSGlobalObject* globalObject, VM& vm, JSValue context, JSValue resolution, bool isRejected, bool isEnteredByJobLoop, JSValue asyncContext)
+{
+    AsyncContextSwapScope asyncContextScope(vm, globalObject, asyncContext);
+    resumeAsyncFunction(globalObject, vm, context, resolution, isRejected, isEnteredByJobLoop);
+}
+
+NEVER_INLINE void runAsyncFunctionResumeJob(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t status, JSValue, JSValue resolution, JSValue context, JSValue asyncContext, MicrotaskCallCache* microtaskCallCache)
+{
+    bool isRejected = static_cast<JSPromise::Status>(status) == JSPromise::Status::Rejected;
+    bool isEnteredByJobLoop = microtaskCallCache && microtaskCallCache->isOwnedByJobLoop();
+    if (vm.isAsyncContextTrackingEnabled()) [[unlikely]]
+        return resumeAsyncFunctionInAsyncContext(globalObject, vm, context, resolution, isRejected, isEnteredByJobLoop, asyncContext);
+    resumeAsyncFunction(globalObject, vm, context, resolution, isRejected, isEnteredByJobLoop);
+}
+
+bool hasCompiledBody(JSAsyncGenerator* generator)
+{
+    return savedFrameIn(generator->frame());
+}
+
+static NEVER_INLINE JSValue stackOverflowErrorOfAsyncGeneratorBody(JSGlobalObject* realm)
+{
+    return createStackOverflowError(realm);
+}
+
+// asyncGeneratorBodyCall() in JSMicrotask.cpp, for a compiled body.
+static ALWAYS_INLINE void resumeAsyncGeneratorBody(VM& vm, JSAsyncGenerator* generator, JSValue resumeValue, JSGenerator::ResumeMode resumeMode, MicrotaskCallCache* microtaskCallCache)
+{
+    SavedFrame* saved = savedFrameIn(generator->frame());
+    int32_t state = generator->state();
+    generator->setState(static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Executing));
+    AsyncGeneratorBodyEntry entry = willEnterAsyncGeneratorBody(generator, microtaskCallCache && microtaskCallCache->isOwnedByJobLoop());
+
+    JSValue value;
+    JSValue error;
+    bool isTerminated = false;
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]]
+        error = stackOverflowErrorOfAsyncGeneratorBody(saved->realm());
+    else {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        // Built here, so that it takes no words of this frame: SavedFrame::getCallData() would return it in memory and write part of it.
+        CallData callData = CallData::forCompiledCode(entry.instance->state->coroutines->savedFrameEntrypoint(), entry.instance->globalObject);
+        // The entry finds the frame in its callee and reads no JSGenerator::Argument::Frame. An odd number of arguments would also leave a word of padding unwritten on x86-64.
+        value = enterCompiledCode(vm, callData, saved, generator->thisValue(), generator,
+            generator, jsNumber(state >> JSAsyncGenerator::reasonShift), resumeValue, jsNumber(static_cast<int32_t>(resumeMode)));
+        if (scope.exception()) [[unlikely]] {
+            error = scope.exception()->value();
+            isTerminated = !scope.clearExceptionExceptTermination();
+        }
+    }
+    generator = didReturnFromAsyncGeneratorBody(entry, generator, value, error, isTerminated);
+    if (!generator || isTerminated)
+        return;
+    finishAsyncGeneratorBodyCall(generator->realm(), generator, value, error, microtaskCallCache);
+}
+
+static NEVER_INLINE void resumeAsyncGeneratorBodyInAsyncContext(JSGlobalObject* globalObject, VM& vm, JSAsyncGenerator* generator, JSValue resumeValue, JSGenerator::ResumeMode resumeMode, MicrotaskCallCache* microtaskCallCache, JSValue asyncContext)
+{
+    AsyncContextSwapScope asyncContextScope(vm, globalObject, asyncContext);
+    resumeAsyncGeneratorBody(vm, generator, resumeValue, resumeMode, microtaskCallCache);
+}
+
+NEVER_INLINE void runAsyncGeneratorBodyJob(JSGlobalObject* globalObject, VM& vm, InternalMicrotask task, uint8_t status, JSValue, JSValue resolution, JSValue context, JSValue asyncContext, MicrotaskCallCache* microtaskCallCache)
+{
+    auto* generator = uncheckedDowncast<JSAsyncGenerator>(context);
+    JSGenerator::ResumeMode resumeMode = static_cast<JSPromise::Status>(status) == JSPromise::Status::Rejected ? JSGenerator::ResumeMode::ThrowMode
+        : task == InternalMicrotask::AsyncGeneratorBodyCallReturn ? JSGenerator::ResumeMode::ReturnMode : JSGenerator::ResumeMode::NormalMode;
+    if (vm.isAsyncContextTrackingEnabled()) [[unlikely]]
+        return resumeAsyncGeneratorBodyInAsyncContext(globalObject, vm, generator, resolution, resumeMode, microtaskCallCache, asyncContext);
+    resumeAsyncGeneratorBody(vm, generator, resolution, resumeMode, microtaskCallCache);
+}
+
 void resumeDriver(VM& vm, JSObject* driver, JSValue resolution, bool isRejected, bool isEnteredByJobLoop)
 {
     RELEASE_ASSERT(driver->classInfo() == SavedFrame::info());
@@ -582,7 +653,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewPromise, JSCell*, (Instance* in
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewPromise);
     DeferTerminationForAWhile deferTermination(vm);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     RELEASE_AND_RETURN(scope, JSPromise::create(vm, globalObject->promiseStructure()));
 }
 
@@ -829,6 +899,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSaveFrameAndYield, JSCell*, (Instance* inst
     RELEASE_ASSERT(!savedFrameOfGenerator(object));
     SuspendedMachineFrame machineFrame { frame, bottom, resumeAddress, reinterpret_cast<const SuspensionWords*>(suspensionWords) };
     SavedFrame* saved = SavedFrame::create(vm, *instance, kind, machineFrame);
+    // Nothing is suspended yet, and the stub does not return to the function.
+    if (vm.traps().needsOutOfMemoryError()) [[unlikely]] {
+        DeferGCForAWhile deferGC(vm);
+        if (throwOutOfMemoryErrorIfOwed(vm, globalObject, scope))
+            OPERATION_RETURN(scope, nullptr);
+    }
     saved->save(vm, machineFrame, SuspensionKind::Yield);
     setSavedFrameOfGenerator(vm, object, saved);
     OPERATION_RETURN(scope, saved);

@@ -605,7 +605,7 @@ static void testCopiesWithoutFrameFillEmptyObjectsAndAreForgottenAtEachCollectio
     for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full }) {
         Object* source = createPoint(program, 1, 2);
         Object* first = allocate(program, "Pair"_s);
-        const MappedCopy*& place = instance.allocation.copiesWithoutFrame[AllocationWords::placeOfCopyWithoutFrame(first->orderAndShapeWords(), source->orderAndShapeWords(), 0)];
+        const MappedCopy*& place = instance.copiesWithoutFrame()[AllocationWords::placeOfCopyWithoutFrame(first->orderAndShapeWords(), source->orderAndShapeWords(), 0)];
         AOT_TEST_CHECK(!place && !tryCopy(first, source) && enumerableKeysOf(program, first).isEmpty());
         RepeatedCopy way = tryRepeatAssignment(vm, program.state(), first, source, 0);
         AOT_TEST_CHECK(way == RepeatedCopy::ByMap || way == RepeatedCopy::ByMapForTheFirstTime);

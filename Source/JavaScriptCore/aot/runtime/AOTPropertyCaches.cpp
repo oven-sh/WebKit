@@ -90,18 +90,9 @@ struct PagesOfPlanes {
 };
 static_assert(!(RowDisplacementTable::numberOfColumns % 64) && !(RowDisplacementTable::initialNumberOfBases % 64));
 
-static void* tryReservePagesOfTable(size_t size)
+static void* reservePagesOfTable(VM& vm, size_t size)
 {
-    void* result = tryReserveGuardedPages(size);
-#if OS(LINUX)
-    while (result && madvise(result, size, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
-#endif
-    return result;
-}
-
-static void* reservePagesOfTable(size_t size)
-{
-    void* result = tryReservePagesOfTable(size);
+    void* result = vm.aotState().pages->tryAllocate(size);
     RELEASE_ASSERT(result, size);
     return result;
 }
@@ -110,15 +101,24 @@ static void* reservePagesOfTable(size_t size)
 static constexpr bool pagesOfTablesCanGrow = true;
 
 // What the pages held stays, what is added is zero. A refusal changes nothing.
-static void* tryGrowPagesOfTable(void* pages, size_t size, size_t newSize)
+static void* tryGrowPagesOfTable(VM& vm, void* pages, size_t size, size_t newSize)
 {
     void* result = mremap(pages, size, newSize, MREMAP_MAYMOVE);
-    return result == MAP_FAILED ? nullptr : result;
+    if (result == MAP_FAILED)
+        return nullptr;
+    if (result != pages)
+        vm.aotState().pages->didMoveAway(pages, size);
+    return result;
 }
 #else
 static constexpr bool pagesOfTablesCanGrow = false;
-static void* tryGrowPagesOfTable(void*, size_t, size_t) { return nullptr; }
+static void* tryGrowPagesOfTable(VM&, void*, size_t, size_t) { return nullptr; }
 #endif
+
+static uint32_t numberOfBasesAtStart(uint32_t limitOfBases)
+{
+    return pagesOfTablesCanGrow ? std::min(RowDisplacementTable::initialNumberOfBases, limitOfBases) : limitOfBases;
+}
 
 StructureRows& StructureRows::singleton()
 {
@@ -136,9 +136,18 @@ StructureRows::StructureRows()
     size_t size = g_jscConfig.sizeOfStructureHeap;
     RELEASE_ASSERT(start && size);
     RELEASE_ASSERT((start & StructureID::structureIDMask) + (size - 1) <= StructureID::structureIDMask);
-    void* words = reservePagesOfTable((size >> StructureRowWords::granuleShift) << StructureRowWords::wordShift);
+    size_t sizeOfWords = (size >> StructureRowWords::granuleShift) << StructureRowWords::wordShift;
+    void* words = reserveGuardedPages(sizeOfWords);
+#if OS(LINUX)
+    while (madvise(words, sizeOfWords, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
+#endif
     // SAFETY: The pointer lies outside the allocation. It is only indexed with the bits of a StructureID shifted by granuleShift: the low 32 bits of an address in the structure heap, which does not cross a 4 GB boundary.
     m_rowsForStructureIDZero = static_cast<uint32_t*>(words) - (static_cast<uint32_t>(start) >> StructureRowWords::granuleShift);
+}
+
+size_t RowDisplacementTable::sizeOfPagesAtStart(uint64_t valueOfLimitOfBases)
+{
+    return PagesOfPlanes(numberOfBasesAtStart(static_cast<uint32_t>(std::clamp<uint64_t>(valueOfLimitOfBases, firstBase + 1, maxNumberOfBases)))).size;
 }
 
 RowDisplacementTable::RowDisplacementTable(VM& vm, CacheRegistry& registry, const CustomAccessorTable& customAccessors)
@@ -148,9 +157,9 @@ RowDisplacementTable::RowDisplacementTable(VM& vm, CacheRegistry& registry, cons
     , m_cageBase(vm.heap.cage().base())
 {
     m_limitOfBases = static_cast<uint32_t>(std::clamp<uint64_t>(runtimeLimitValue(vm, LimitID::LookupTableBases), firstBase + 1, maxNumberOfBases));
-    m_capacityOfBases = pagesOfTablesCanGrow ? std::min(initialNumberOfBases, m_limitOfBases) : m_limitOfBases;
+    m_capacityOfBases = numberOfBasesAtStart(m_limitOfBases);
     PagesOfPlanes layout(m_capacityOfBases);
-    auto* pages = static_cast<uint8_t*>(reservePagesOfTable(layout.size));
+    auto* pages = static_cast<uint8_t*>(reservePagesOfTable(vm, layout.size));
     for (unsigned i = 0; i < numberOfSlotAccesses; ++i) {
         uint8_t* plane = pages + i * layout.sizeOfPlane;
         m_planes[i] = reinterpret_cast<RememberedSlot<PackedSlot>*>(plane);
@@ -164,13 +173,14 @@ RowDisplacementTable::RowDisplacementTable(VM& vm, CacheRegistry& registry, cons
 RowDisplacementTable::~RowDisplacementTable()
 {
     clear();
+    PagesOfVM& pages = *m_vm.aotState().pages;
     if (!pagesOfTablesCanGrow) {
-        releaseGuardedPages(m_planes[0], PagesOfPlanes(m_capacityOfBases).size);
+        pages.release(m_planes[0], PagesOfPlanes(m_capacityOfBases).size);
         return;
     }
     for (unsigned i = 0; i < numberOfSlotAccesses; ++i)
-        releaseGuardedPages(m_planes[i], PagesOfPlanes(m_numbersOfBasesWithPages[i]).sizeOfPlane);
-    releaseGuardedPages(m_occupied, PagesOfPlanes(m_numbersOfBasesWithPages[numberOfSlotAccesses]).sizeOfOccupied);
+        pages.release(m_planes[i], PagesOfPlanes(m_numbersOfBasesWithPages[i]).sizeOfPlane);
+    pages.release(m_occupied, PagesOfPlanes(m_numbersOfBasesWithPages[numberOfSlotAccesses]).sizeOfOccupied);
 }
 
 // Where there is no room for more pages the table stays as large as it is, and rows give way to rows as they do at the limit.
@@ -183,7 +193,7 @@ bool RowDisplacementTable::tryGrow()
     auto tryGrowPart = [&](unsigned part, void* pages, size_t PagesOfPlanes::* size) -> void* {
         if (m_numbersOfBasesWithPages[part] == numberOfBases)
             return pages;
-        void* result = tryGrowPagesOfTable(pages, PagesOfPlanes(m_numbersOfBasesWithPages[part]).*size, to.*size);
+        void* result = tryGrowPagesOfTable(m_vm, pages, PagesOfPlanes(m_numbersOfBasesWithPages[part]).*size, to.*size);
         if (result)
             m_numbersOfBasesWithPages[part] = numberOfBases;
         return result;
@@ -619,13 +629,13 @@ CustomAccessorTable::CustomAccessorTable(VM& vm, CacheRegistry& registry)
     : m_vm(vm)
     , m_capacity(safeCast<uint32_t>(runtimeLimitValue(vm, LimitID::CustomAccessorRecords)))
 {
-    m_records = static_cast<CustomAccessorRecord*>(reserveGuardedPages(sizeOfRecords(m_capacity)));
+    m_records = static_cast<CustomAccessorRecord*>(vm.aotState().pages->allocate(sizeOfRecords(m_capacity)));
     registry.add(CacheKind::WeakByKey, "CustomAccessorTable"_s, *this);
 }
 
 CustomAccessorTable::~CustomAccessorTable()
 {
-    releaseGuardedPages(m_records, sizeOfRecords(m_capacity));
+    m_vm.aotState().pages->release(m_records, sizeOfRecords(m_capacity));
 }
 
 std::optional<uint32_t> CustomAccessorTable::find(const CustomAccessorRecord& record) const
@@ -689,7 +699,7 @@ HashedSlotTable::HashedSlotTable(VM& vm, CacheRegistry& registry, const CustomAc
     , m_customAccessors(customAccessors)
     , m_maxNumberOfEntries(static_cast<uint32_t>(std::bit_floor(std::clamp<uint64_t>(runtimeLimitValue(vm, LimitID::HashedTableEntries), initialNumberOfEntries, maxAddressableEntries))))
     , m_numberOfEntries(initialNumberOfEntries)
-    , m_entries(static_cast<Entry*>(reservePagesOfTable(sizeOfReservation(m_maxNumberOfEntries))))
+    , m_entries(static_cast<Entry*>(reservePagesOfTable(vm, sizeOfReservation(m_maxNumberOfEntries))))
     , m_writtenRegions(asByteSpan(allEntries()), regionShift)
 {
     registry.add(CacheKind::WeakByKey, "HashedSlotTable"_s, *this);
@@ -698,7 +708,7 @@ HashedSlotTable::HashedSlotTable(VM& vm, CacheRegistry& registry, const CustomAc
 HashedSlotTable::~HashedSlotTable()
 {
     clear();
-    releaseGuardedPages(m_entries, sizeOfReservation(m_maxNumberOfEntries));
+    m_vm.aotState().pages->release(m_entries, sizeOfReservation(m_maxNumberOfEntries));
 }
 
 auto HashedSlotTable::findEntry(StructureID structureID, UniquedStringImpl* uid, uintptr_t key) const -> Entry*
@@ -862,6 +872,7 @@ VMPropertyCaches::VMPropertyCaches(VM& vm)
     , m_customAccessors(vm, *vm.aotState().caches)
     , m_front(vm, *vm.aotState().caches, m_customAccessors)
     , m_hashedTable(vm, *vm.aotState().caches, m_customAccessors)
+    , m_tables(*static_cast<Tables*>(vm.aotState().pages->allocate(sizeof(Tables))))
 {
     vm.aotState().caches->add(CacheKind::WeakByKey, "absence filters"_s, *this);
 }
@@ -887,6 +898,7 @@ VMPropertyCaches::~VMPropertyCaches()
         if (entry.uid)
             entry.uid->deref();
     }
+    m_vm.aotState().pages->release(&m_tables, sizeof(Tables));
 }
 
 void VMPropertyCaches::rememberNameOfText(UniquedStringImpl* uid)
@@ -928,8 +940,10 @@ void VMPropertyCaches::didCreateInstance(Instance& instance)
             zeroSpan(earlier->keyedValuePlaces());
     }
     m_hasInstance = true;
-    if (instance.globalObject)
+    if (instance.globalObject) {
+        m_filteredObjects.add(instance.globalObject->objectPrototype());
         didChangeObjectPrototype(instance.globalObject->objectPrototype(), nullptr);
+    }
     publishWords(instance);
 }
 
@@ -958,8 +972,9 @@ void VMPropertyCaches::didChangeObjectPrototype(JSObject* prototype, UniquedStri
 
 size_t VMPropertyCaches::maxSizeOfPagesAtStart(const Image& image)
 {
-    return sizeOfRecords(safeCast<uint32_t>(runtimeLimitValue(&image, LimitID::CustomAccessorRecords)))
-        + PagesOfPlanes(RowDisplacementTable::initialNumberOfBases).size
+    return roundUpToMultipleOf(pageSize(), sizeof(Tables))
+        + sizeOfRecords(safeCast<uint32_t>(runtimeLimitValue(&image, LimitID::CustomAccessorRecords)))
+        + RowDisplacementTable::sizeOfPagesAtStart(runtimeLimitValue(&image, LimitID::LookupTableBases))
         + sizeOfReservation(static_cast<uint32_t>(std::bit_floor(std::clamp<uint64_t>(runtimeLimitValue(&image, LimitID::HashedTableEntries), HashedSlotTable::initialNumberOfEntries, maxAddressableEntries))));
 }
 
@@ -974,6 +989,7 @@ void VMPropertyCaches::publishWords(Instance& instance) const
     words.customAccessors = m_customAccessors.records();
     words.absenceFilters = const_cast<AbsenceFilter*>(m_absenceFilters.data());
     words.absenceFilterGenerationForStores = m_absenceFilterGenerationForStores;
+    words.changesUnderNamesOnChains = m_changesUnderNamesOnChains;
     words.namesChangedOnChains = m_namesChangedOnChains.data();
     words.namesOfObjectPrototypes = m_namesOfObjectPrototypes.data();
     words.missesOfPairs = const_cast<uint8_t*>(m_missesOfPairs.data());
@@ -1030,24 +1046,58 @@ void VMPropertyCaches::fileAbsenceFilterForStores(JSGlobalObject* globalObject, 
     Structure* structure = object->structure();
     if (structure->hasPolyProto() || structure->typeInfo().overridesGetPrototype())
         return;
-    for (JSObject* holder = structure->storedPrototypeObject(); holder; holder = holder->getPrototypeDirect().getObject())
-        Object::ensureStructureForExtraPropertiesIfNeeded(m_vm, holder);
     AOT_THRESHOLD(unsigned, maxObjectsAbove, 8);
     AbsenceFilter& filter = m_absenceFilters[AbsenceFilter::indexFor(structure->id().bits())];
-    if (filter.structureID == structure->id().bits() && filter.generationForStores == m_absenceFilterGenerationForStores)
+    if (filter.structureID == structure->id().bits() && filter.generationForStores == m_absenceFilterGenerationForStores && filter.changesUnderNames == m_changesUnderNamesOnChains)
         return;
+    for (JSObject* holder = structure->storedPrototypeObject(); holder; holder = holder->getPrototypeDirect().getObject())
+        Object::ensureStructureForExtraPropertiesIfNeeded(m_vm, holder);
     const ProgramIdentifiers* identifiers = m_vm.aotState().identifiers.get();
     if (!identifiers || structure->realm() != globalObject)
         return;
-    AbsenceFilter filled { structure->id().bits(), m_absenceFilterGenerationForStores, { }, 0 };
+    AbsenceFilter filled { structure->id().bits(), m_absenceFilterGenerationForStores, { }, m_changesUnderNamesOnChains, 0 };
     unsigned numberOfObjects = 0;
     for (JSObject* holder = object->getPrototypeDirect().getObject(); holder; holder = holder->getPrototypeDirect().getObject()) {
         if (++numberOfObjects > maxObjectsAbove || !addOwnNamesThatStopStores(m_vm, *identifiers, holder, filled))
             return;
+        m_filteredObjects.add(holder);
+    }
+    // A compiled object's filter is only queried for the names of its own fields, and many names share a bit. A field whose bit is set is looked up directly, so that it does not pay for another name: the accessor
+    // `__proto__` of Object.prototype alone is above nearly every object.
+    if (const Object* receiver = compiledObjectOrNull(object)) {
+        AbsenceFilter ofAllNames = std::exchange(filled, AbsenceFilter { filled.structureID, filled.generationForStores, { }, filled.changesUnderNames, 0 });
+        for (const FieldData& field : receiver->layout().fields()) {
+            if (ofAllNames.letsStoresPass(field.name) || !FieldTableEntry::hasColumn(field.name))
+                continue;
+            ChainWalk walk = walkChain({ globalObject, structure, object, ChainWalkMode::AllocatesNothing, ChainWalkUse::UsedAtOnce }, m_vm.aotState().identifiers->identifier(field.name).impl());
+            if (storeThroughChain(walk) != StoreThroughChain::CreatesOwnProperty)
+                filled.addNameThatStopsStores(field.name);
+        }
     }
     filter = filled;
 }
 
+bool VMPropertyCaches::storeCreatesOwnField(const Object& object, uint32_t name) const
+{
+    if (!FieldTableEntry::hasColumn(name))
+        return false;
+    if (object.compiledStructure().flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype))
+        return !mayBeNameOfObjectPrototype(name);
+    const AbsenceFilter& filter = absenceFilterFor(object.structureID());
+    return filter.structureID == object.structureID().bits() && filter.generationForStores == m_absenceFilterGenerationForStores && filter.letsStoresPass(name)
+        && (filter.changesUnderNames == m_changesUnderNamesOnChains || !wasChangedOnSomeChain(name));
+}
+
+bool VMPropertyCaches::addFilterAndCheckStoreCreatesOwnField(JSGlobalObject* globalObject, Object& object, uint32_t name)
+{
+    if (!FieldTableEntry::hasColumn(name))
+        return false;
+    if (!object.compiledStructure().flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype))
+        fileAbsenceFilterForStores(globalObject, &object);
+    return storeCreatesOwnField(object, name);
+}
+
+// A filter lets a field's name pass where a plain property lower on the chain hides an accessor, so a name that is gone from `changed` may stop stores as well.
 static bool mayStopStores(JSObject* changed, UniquedStringImpl* uid)
 {
     Structure* structure = changed->structure();
@@ -1059,7 +1109,7 @@ static bool mayStopStores(JSObject* changed, UniquedStringImpl* uid)
         isField = field;
         JSObject* extra = extraPropertiesIfMade(*object);
         if (!extra)
-            return hasPendingStars(*object);
+            return true;
         structure = extra->structure();
         if (structure->isUncacheableDictionary())
             return true;
@@ -1069,22 +1119,35 @@ static bool mayStopStores(JSObject* changed, UniquedStringImpl* uid)
     std::optional<PropertyOffset> offset = structure->getWithoutMaterializing(uid, attributes);
     if (!offset)
         return true;
-    return isValidOffset(*offset) && (isField || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue);
+    return !isValidOffset(*offset) || isField || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue;
 }
 
-void VMPropertyCaches::didChangeObjectOnSomeChain(JSObject* changed, UniquedStringImpl* uidOrNull)
+void VMPropertyCaches::didChangeFilteredObject(JSObject* changed, UniquedStringImpl* uidOrNull)
 {
     const ProgramIdentifiers* identifiers = m_vm.aotState().identifiers.get();
     if (uidOrNull && identifiers) {
         std::optional<uint32_t> number = identifiers->numberOf(uidOrNull);
-        if (number && FieldTableEntry::hasColumn(*number) && mayStopStores(changed, uidOrNull))
-            setBitOfName(m_namesChangedOnChains, *number);
+        if (!number || !FieldTableEntry::hasColumn(*number) || !mayStopStores(changed, uidOrNull))
+            return;
+        setBitOfName(m_namesChangedOnChains, *number);
+        if (!++m_changesUnderNamesOnChains) [[unlikely]]
+            m_absenceFilters.fill(AbsenceFilter { });
     } else if (!++m_absenceFilterGenerationForStores) [[unlikely]] {
         m_absenceFilters.fill(AbsenceFilter { });
         m_absenceFilterGenerationForStores = 1;
     }
     for (Instance* instance : m_vm.aotState().instances) {
         instance->propertyCaches.absenceFilterGenerationForStores = m_absenceFilterGenerationForStores;
+        instance->propertyCaches.changesUnderNamesOnChains = m_changesUnderNamesOnChains;
+    }
+}
+
+void VMPropertyCaches::didChangeObjectOnSomeChain(JSObject* changed, UniquedStringImpl* uidOrNull)
+{
+    // Most objects that report a change are still being filled, and no filter has been built from them yet.
+    if (!changed || m_filteredObjects.mayContain(changed))
+        didChangeFilteredObject(changed, uidOrNull);
+    for (Instance* instance : m_vm.aotState().instances) {
         if (std::exchange(instance->propertyCaches.placesSayAbsence, 0))
             zeroSpan(instance->keyedValuePlaces().first<KeyedValuePlace::numberOfPlacesPerAccess>());
     }
@@ -1203,6 +1266,7 @@ void initializePropertyCacheWords(Instance& instance)
 template<typename T>
 CreatedAtFirstUse<T>::CreatedAtFirstUse(State& state)
     : m_state(state)
+    , m_value(state.tableArena)
 {
 }
 
@@ -1212,8 +1276,7 @@ CreatedAtFirstUse<T>::~CreatedAtFirstUse() = default;
 template<typename T>
 NEVER_INLINE T& CreatedAtFirstUse<T>::create()
 {
-    m_value = makeUnique<T>(m_state);
-    return *m_value;
+    return m_value.make(m_state);
 }
 
 template class CreatedAtFirstUse<PropertyCaches>;
@@ -1479,7 +1542,7 @@ static ASCIILiteral whyObjectsDidNotAnswer(VM& vm, JSValue receiver, UniquedStri
             if (type == CompiledObjectType) {
                 Object& compiled = *uncheckedDowncast<Object>(object);
                 std::optional<uint32_t> number = vm.aotState().identifiers->numberOf(uid);
-                if (number && *number > FieldTableEntry::maxName)
+                if (number && !compiled.state().tables.hasFieldTableColumn(*number))
                     return at("the name has no column, and the receiver is a compiled object"_s, "the name has no column, and an object above is a compiled object"_s);
                 if (const FieldData* field = number ? compiled.fieldNamed(compiled.state(), uid) : nullptr) {
                     if (field->isPrivate())
@@ -2484,9 +2547,11 @@ JSString* StringKeyCache::makeKey(VM& vm, std::span<const Latin1Character> chara
 
 void StringKeyCache::growCachedKeys()
 {
-    Vector<uint64_t> former = std::exchange(m_cachedKeys, { });
-    m_cachedKeys.fill(0, former.size() * 2);
-    for (uint64_t formerEntry : former) {
+    m_cachedKeyEvictionCount = 0;
+    std::optional former = tryResize(m_cachedKeys, m_cachedKeys.size() * 2);
+    if (!former)
+        return;
+    for (uint64_t formerEntry : *former) {
         if (!formerEntry)
             continue;
         unsigned hash = formerEntry >> 32;
@@ -2495,7 +2560,6 @@ void StringKeyCache::growCachedKeys()
             index += m_cachedKeys[index + 1] ? hash >> 23 & 1 : 1;
         m_cachedKeys[index] = formerEntry;
     }
-    m_cachedKeyEvictionCount = 0;
 }
 
 void StringKeyCache::cacheKeyByParts(const KeyByParts& parts, JSString* key)
@@ -2509,9 +2573,10 @@ void StringKeyCache::cacheKeyByParts(const KeyByParts& parts, JSString* key)
 void StringKeyCache::resizeIntegerKeys(size_t tableSize)
 {
     m_integerKeyEvictionCount = 0;
-    Vector<uint64_t> former = std::exchange(m_integerKeys, { });
-    m_integerKeys.fill(0, tableSize);
-    for (uint64_t formerEntry : former) {
+    std::optional former = tryResize(m_integerKeys, tableSize);
+    if (!former)
+        return;
+    for (uint64_t formerEntry : *former) {
         if (formerEntry)
             m_integerKeys[formerEntry >> 32 & (tableSize - 1)] = formerEntry;
     }
@@ -2523,7 +2588,8 @@ void StringKeyCache::cacheIntegerKey(VM& vm, uint32_t integer, JSString* keyOrNu
     if (keyOrNull && !vm.heap.cage().contains(keyOrNull))
         return;
     if (m_integerKeys.isEmpty()) [[unlikely]] {
-        m_integerKeys.fill(0, minIntegerKeyTableSize);
+        if (!tryResize(m_integerKeys, minIntegerKeyTableSize))
+            return;
         publishIntegerKeys();
     }
     size_t tableSize = m_integerKeys.size();
@@ -2554,9 +2620,10 @@ void StringKeyCache::growKeysByParts()
     m_keysByPartsEvictionCount = 0;
     if (m_keysByParts.size() >= maxKeysByPartsTableSize)
         return;
-    Vector<KeyByParts> former = std::exchange(m_keysByParts, { });
-    m_keysByParts.fill({ }, former.size() * 2);
-    for (const KeyByParts& entry : former) {
+    std::optional former = tryResize(m_keysByParts, m_keysByParts.size() * 2);
+    if (!former)
+        return;
+    for (const KeyByParts& entry : *former) {
         if (!entry.countAndKinds)
             continue;
         uint32_t count = entry.countAndKinds & 0xff;

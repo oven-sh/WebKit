@@ -1,4 +1,4 @@
-# A subject that by its type is one of the listed integers leaves nothing for the rest: the last case is asked for no more and takes the place of the rest
+# A subject that by its type is one of the listed integers or strings leaves nothing for the rest: the last case is asked for no more and takes the place of the rest
 # FORM: Prepared
 # RUN: pass SimplifyControlFlow
 # CHECK: outcome: Changed
@@ -103,7 +103,12 @@ function f7 name="theLastCasePassesWhatItProves" parameters=[{type=int[0, 1]}, {
     Return v3
   b3():
     Return v2
-# CHECK: Switch v0 cases=[0, 1] -> case b1(), case b2(| 0), otherwise b3()
+# CHECK: Switch v0 cases=[0] -> case b1(), otherwise [[rest]]()
+# CHECK: [[rest]]():
+# CHECK-NEXT: [[stoodHere]]: fact = Specified
+# CHECK-NEXT: [[one]]: 1 = AssumeType v0, [[stoodHere]] provenType=1
+# CHECK-NEXT: Return [[one]]
+# CHECK-NOT: Return v2
 }
 
 function f8 name="theWayThatMostCasesTake" parameters=[{type=int[0, 2]}, {type=number}, {type=number}, {type=number}] results=[{type=number}] {
@@ -158,4 +163,71 @@ function f11 name="eachOfManyGoesItsOwnWay" parameters=[{type=int[0, 3]}, {type=
     Return v5
 # CHECK: Switch v0 cases=[0, 1, 2] -> case b1(), case b2(), case b3(), otherwise b4()
 # CHECK-NOT: Return v5
+}
+
+function f12 name="everyStringIsListed" parameters=[{type="a"|"b"|"c"}, {type=number}, {type=number}, {type=number}, {type=number}] results=[{type=number}] {
+    SwitchString v0 strings=["a", "b", "c"] -> case b1(), case b2(), case b3(), otherwise b4()
+  b1():
+    Return v1
+  b2():
+    Return v2
+  b3():
+    Return v3
+  b4():
+    Return v4
+# CHECK: SwitchString v0 strings=["a", "b"] -> case b1(), case b2(), otherwise b3()
+# CHECK: Return v3
+# CHECK-NOT: Return v4
+}
+
+function f13 name="theLastStringPassesWhatItProves" parameters=[{type="a"|"b"}, {type=string}] results=[{type=string}] {
+    SwitchString v0 strings=["a", "b"] -> case b1(| 0), case b2(| 0), otherwise b3()
+  b1(v2):
+    Return v2
+  b2(v3):
+    Return v3
+  b3():
+    Return v1
+# CHECK: SwitchString v0 strings=["a"] -> case b1(| 0), otherwise [[rest]]()
+# CHECK: [[rest]]():
+# CHECK-NEXT: [[stoodHere]]: fact = Specified
+# CHECK-NEXT: [[b]]: "b" = AssumeType v0, [[stoodHere]] provenType="b"
+# CHECK-NEXT: Return [[b]]
+# CHECK-NOT: Return v1
+}
+
+function f14 name="oneStringIsNotListed" parameters=[{type="a"|"b"|"c"}, {type=number}, {type=number}, {type=number}] results=[{type=number}] {
+    SwitchString v0 strings=["a", "b"] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Return v1
+  b2():
+    Return v2
+  b3():
+    Return v3
+# CHECK: SwitchString v0 strings=["a", "b"] -> case b1(), case b2(), otherwise b3()
+# CHECK: Return v3
+}
+
+function f15 name="mayBeAnyString" parameters=[{type=string}, {type=number}, {type=number}, {type=number}] results=[{type=number}] {
+    SwitchString v0 strings=["a", "b"] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Return v1
+  b2():
+    Return v2
+  b3():
+    Return v3
+# CHECK: SwitchString v0 strings=["a", "b"] -> case b1(), case b2(), otherwise b3()
+# CHECK: Return v3
+}
+
+function f16 name="mayBeNoString" parameters=[{type=undefined|"a"|"b"}, {type=number}, {type=number}, {type=number}] results=[{type=number}] {
+    SwitchString v0 strings=["a", "b"] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Return v1
+  b2():
+    Return v2
+  b3():
+    Return v3
+# CHECK: SwitchString v0 strings=["a", "b"] -> case b1(), case b2(), otherwise b3()
+# CHECK: Return v3
 }

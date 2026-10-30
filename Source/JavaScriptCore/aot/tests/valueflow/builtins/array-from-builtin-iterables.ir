@@ -2,7 +2,7 @@
 # f3: Array.from({ length: 2, 0: { c: 1 } })
 # RUN: valueflow-apply
 # CHECK: function f1 name="listOfSet" {{*}}results=[{type=Array<L0, proven
-# CHECK: function f2 name="listOfKeys" {{*}}results=[{type=Array<string, proven
+# CHECK: function f2 name="listOfKeys" {{*}}results=[{type=Array<"k", proven
 # CHECK: function f3 name="listOfLike" {{*}}results=[{type=Array<undefined|
 
 module m0 path="main.js" displayPath="main.js" body=f0

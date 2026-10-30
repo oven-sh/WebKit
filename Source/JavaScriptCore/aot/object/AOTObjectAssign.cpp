@@ -169,7 +169,7 @@ Object* Object::tryCreateCopyOfFields(VM& vm, const Object& source)
 
 static void validateCopyOfExtraProperties(VM& vm, const Object& target, JSObject* extraProperties)
 {
-    if (!vm.aotState().validatesRuntime)
+    if (!checksClaimsAboutObjects(vm))
         return;
     RuntimeLayoutTable& layouts = target.state().objects->layouts;
     bool addsName = false;
@@ -358,6 +358,7 @@ static bool isDecidedByStructure(const RuntimeCellTest& test, JSObject* object)
     case CellTestKind::IsSymbol:
     case CellTestKind::SharingModeIs:
     case CellTestKind::IsNamespaceOf:
+    case CellTestKind::CarriesBrandOfClass:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -384,11 +385,20 @@ ALWAYS_INLINE bool FieldStoreRun::isAccepted(AssignmentPlan::FieldStore& store, 
         return true;
     if (store.sourceFitsUnlessUndefinedOrNull && !value.isUndefinedOrNull())
         return true;
+    if (value.isInt32() && value.asInt32() >= store.leastInt32 && value.asInt32() <= store.greatestInt32)
+        return true;
     if (value.isObject())
         return value.asCell()->structureID() == store.lastAcceptedStructure || acceptsObject(store, asObject(value));
     bool isKindAccepted = store.acceptedKinds.containsAny(valueKindOf(value));
     ASSERT(!isKindAccepted || m_state.objects->layouts.fieldAccepts(*store.to, value));
     return isKindAccepted;
+}
+
+static NEVER_INLINE bool hasEveryExtraPropertyOfPlan(const AssignmentPlan& plan, const AssignmentSource& source)
+{
+    return std::ranges::all_of(plan.extraPropertyStores, [&](auto& store) {
+        return !!source.read(store);
+    });
 }
 
 static bool storeExtraProperties(VM& vm, Object& target, const AssignmentPlan& plan, JSObject* extra, const AssignmentSource& source)
@@ -403,12 +413,8 @@ static bool storeExtraProperties(VM& vm, Object& target, const AssignmentPlan& p
         Butterfly* butterfly = after->outOfLineCapacity() ? Butterfly::create(vm, nullptr, 0, after->outOfLineCapacity(), false, IndexingHeader(), 0) : nullptr;
         extra = JSFinalObject::createWithButterfly(vm, after, butterfly);
     } else if (before->outOfLineCapacity() != after->outOfLineCapacity()) {
-        if (source.compiledObject) {
-            for (auto& store : plan.extraPropertyStores) {
-                if (!source.read(store))
-                    return false;
-            }
-        }
+        if (source.compiledObject && !hasEveryExtraPropertyOfPlan(plan, source))
+            return false;
         extra->nukeStructureAndSetButterfly(vm, before->id(), extra->allocateMoreOutOfLineStorage(vm, before->outOfLineCapacity(), after->outOfLineCapacity()));
     }
     for (auto& store : plan.extraPropertyStores) {
@@ -504,6 +510,10 @@ ALWAYS_INLINE bool FieldStoreRun::tryStoreEveryProperty(const AssignmentSource& 
             continue;
         }
         JSValue value = source.read(store);
+        if (store.writesInt32AsItIs && value.isInt32() && value.asInt32() >= store.leastInt32 && value.asInt32() <= store.greatestInt32) {
+            *bits++ = static_cast<uint64_t>(static_cast<int64_t>(value.asInt32()));
+            continue;
+        }
         if (store.leavesUndefinedAndNullToOtherWay && value && value.isUndefinedOrNull())
             return false;
         if (value && !isAccepted(store, value)) {
@@ -782,7 +792,7 @@ MappedCopy::MoveKind moveKindFor(SlotRepresentation from, SlotRepresentation to,
 
 static const MappedCopy*& placeOfCopyWithoutFrame(State& state, const MappedCopy& copy)
 {
-    return state.instance.allocation.copiesWithoutFrame[AllocationWords::placeOfCopyWithoutFrame(copy.targetWords, copy.sourceWords, copy.excludedRunNumberPlusOne)];
+    return state.instance.copiesWithoutFrame()[AllocationWords::placeOfCopyWithoutFrame(copy.targetWords, copy.sourceWords, copy.excludedRunNumberPlusOne)];
 }
 
 static bool tryDescribeForStub(MappedCopy::Move& move)

@@ -63,6 +63,7 @@ struct CreationOrders {
     KeyOrderList allocationOrders;
     KeyOrderList constructorOrders;
     KeyOrderList ordersContinuedByStores;
+    KeyOrderList sourceStoreOrders;
     KeyOrderList declaredOrders;
     // An object may have this many of the first keys of the order of the declarations, and no other key.
     BitVector countsReachedAmongDeclarations;
@@ -186,14 +187,20 @@ enum class PlaceInOrder : uint8_t { Inside, Behind };
 static void forEachPlace(const CreationOrders& orders, FieldList created, const Invocable<bool()> auto& isFull, const Invocable<void(FieldList, FieldList, PlaceInOrder)> auto& add)
 {
     auto addPlacesInside = [&](const KeyOrderList& list) {
+        bool hasPlace = false;
         for (auto& order : list) {
             if (isFull())
-                return;
-            if (std::optional<size_t> position = findPlaceInside(order.span(), created))
+                break;
+            if (std::optional<size_t> position = findPlaceInside(order.span(), created)) {
                 add(order.span().first(*position), order.span().first(*position + created.size()), PlaceInOrder::Inside);
+                hasPlace = true;
+            }
         }
+        return hasPlace;
     };
     addPlacesInside(orders.constructorOrders);
+    // A separate order for the field stored right after the allocation would share its first keys with the source order, and an object gets the number of the first order that starts with its keys.
+    bool hasPlaceInSourceStoreOrders = addPlacesInside(orders.sourceStoreOrders);
     bool isFilledInDeclaredOrder = !orders.hasConstructor && std::ranges::any_of(orders.declaredOrders, [&](const Vector<FieldIndex>& order) {
         std::optional<size_t> position = findPlaceInside(order.span(), created);
         return position && orders.countsReachedAmongDeclarations.get(*position);
@@ -202,7 +209,7 @@ static void forEachPlace(const CreationOrders& orders, FieldList created, const 
         addPlacesInside(orders.declaredOrders);
     // What an object has when the stores outside its constructor begin. The orders of a constructor start at the allocation.
     for (auto& order : orders.hasConstructor ? orders.constructorOrders : orders.allocationOrders) {
-        if (isFull())
+        if (isFull() || hasPlaceInSourceStoreOrders)
             break;
         bool haveCommonField = std::ranges::any_of(order, [&](FieldIndex field) {
             return std::ranges::contains(created, field);
@@ -236,7 +243,7 @@ static BitVector findCountsReachedAmongDeclarations(const PlacementContext& cont
     return counts;
 }
 
-static CreationOrders collectCreationOrders(const PlacementContext& context, const AllocationTable& table, LayoutID layout, std::span<const PlacedFieldCreation> creations)
+static CreationOrders collectCreationOrders(const PlacementContext& context, const AllocationTable& table, LayoutID layout, std::span<const PlacedFieldCreation> creations, std::span<const FieldCreationUse> sourceCreations)
 {
     auto allocations = table.ofLayout(layout);
     CreationOrders orders;
@@ -253,10 +260,53 @@ static CreationOrders collectCreationOrders(const PlacementContext& context, con
     // Flow names no order where somebody else may get hold of the object before the first store. Then the declarations say what the constructor creates, in its sequence, as for an object without one.
     orders.hasConstructor = context.program.at(declaredLayoutOf(context.program, layout)).constructor && !std::ranges::all_of(orders.constructorOrders, &Vector<FieldIndex>::isEmpty);
 
-    // Whatever fills an object that starts without keys, compiled or not, is expected to go by the declarations.
+    // `exports.first = ..; exports.second = ..`: an object is expected to get its later keys in the order in which the source stores them.
+    // If there is a constructor and flow analysis found no order for it, the declarations are a better guide than the order of the functions.
+    Vector<FieldIndex> created;
+    if (orders.hasConstructor || !context.program.at(declaredLayoutOf(context.program, layout)).constructor) {
+        for (const FieldCreationUse& use : sourceCreations)
+            created.appendVector(use.fields);
+        created = concatenate(created.span(), { });
+        // Fields that the constructor creates are placed by the constructor's orders.
+        BitVector isCreatedByConstructor;
+        for (auto& order : orders.constructorOrders) {
+            for (FieldIndex field : order)
+                isCreatedByConstructor.set(field);
+        }
+        created.removeAllMatching([&](FieldIndex field) {
+            return isCreatedByConstructor.get(field);
+        });
+    }
+    if (!created.isEmpty()) {
+        for (auto& order : orders.hasConstructor ? orders.constructorOrders : orders.allocationOrders) {
+            if (orders.sourceStoreOrders.size() == context.build.limit(LimitID::KeyOrdersPerLayout))
+                break;
+            Vector<FieldIndex> continued = concatenate(order.span(), created.span());
+            if (continued.size() <= context.build.limit(LimitID::FieldsInKeyOrder) && !orders.sourceStoreOrders.contains(continued))
+                orders.sourceStoreOrders.append(WTF::move(continued));
+        }
+    }
+
+    // Whatever fills an object that starts without keys, compiled or not, is expected to follow the declarations. Fields that stores create are placed among them in store order.
     bool canStartWithoutKeys = allocations.empty() || std::ranges::any_of(orders.allocationOrders, &Vector<FieldIndex>::isEmpty);
     if (canStartWithoutKeys || !creations.empty()) {
         Vector<FieldIndex> declaredOrder = chain.declaredOrder();
+        BitVector isDeclared;
+        for (FieldIndex field : declaredOrder)
+            isDeclared.set(field);
+        BitVector isCreatedByStore;
+        Vector<FieldIndex> createdAmongDeclarations;
+        for (FieldIndex field : created) {
+            if (isDeclared.get(field)) {
+                isCreatedByStore.set(field);
+                createdAmongDeclarations.append(field);
+            }
+        }
+        size_t numberOfFieldsPlaced = 0;
+        for (FieldIndex& field : declaredOrder) {
+            if (isCreatedByStore.get(field))
+                field = createdAmongDeclarations[numberOfFieldsPlaced++];
+        }
         if (!creations.empty())
             orders.countsReachedAmongDeclarations = findCountsReachedAmongDeclarations(context, layout, declaredOrder.span(), orders.allocationOrders, creations);
         if (!canStartWithoutKeys) {
@@ -323,8 +373,8 @@ static std::optional<KeyOrderList> chooseKeyOrders(const PlacementContext& conte
 {
     BuildContext& build = context.build;
     Subject subject { .layout = layout };
-    const KeyOrderList* lists[] = { &creationOrders.allocationOrders, &creationOrders.constructorOrders, &creationOrders.declaredOrders, &creationOrders.ordersContinuedByStores };
-    for (auto [numberOfLists, includesTests] : { std::pair { 4, true }, std::pair { 3, true }, std::pair { 3, false } }) {
+    const KeyOrderList* lists[] = { &creationOrders.allocationOrders, &creationOrders.constructorOrders, &creationOrders.declaredOrders, &creationOrders.ordersContinuedByStores, &creationOrders.sourceStoreOrders };
+    for (auto [numberOfLists, includesTests] : { std::pair { 5, true }, std::pair { 4, true }, std::pair { 3, true }, std::pair { 3, false } }) {
         KeyOrderList orders = computeKeyOrders(context, std::span(lists).first(numberOfLists), includesTests ? tests : std::span<const KeyOrderTestUse> { });
         if (!build.exceeds(LimitID::KeyOrdersPerLayout, orders.size(), subject))
             return orders;
@@ -336,9 +386,9 @@ static std::optional<KeyOrderList> chooseKeyOrders(const PlacementContext& conte
     return std::nullopt;
 }
 
-static void collectLayoutKeyOrders(const PlacementContext& context, const AllocationTable& table, LayoutID layout, std::span<PlacedFieldCreation> creations, std::span<const KeyOrderTestUse> tests, KeyOrders& keyOrders, PlacedOrderWords& orderWords)
+static void collectLayoutKeyOrders(const PlacementContext& context, const AllocationTable& table, LayoutID layout, std::span<PlacedFieldCreation> creations, std::span<const FieldCreationUse> sourceCreations, std::span<const KeyOrderTestUse> tests, KeyOrders& keyOrders, PlacedOrderWords& orderWords)
 {
-    CreationOrders creationOrders = collectCreationOrders(context, table, layout, creations);
+    CreationOrders creationOrders = collectCreationOrders(context, table, layout, creations, sourceCreations);
     std::optional<KeyOrderList> orders = chooseKeyOrders(context, layout, creationOrders, tests);
     if (!orders)
         return;
@@ -384,7 +434,7 @@ std::pair<KeyOrders, PlacedOrderWords> collectKeyOrders(const PlacementContext& 
         std::span<const KeyOrderTestUse> layoutTests = std::ranges::equal_range(tests, layout, { }, &KeyOrderTestUse::layout);
         std::span<PlacedFieldCreation> creations = std::ranges::equal_range(keyOrders.fieldCreations, layout, { }, &PlacedFieldCreation::layout);
         if (context.isCompiledObject(layout) && !context.slots().layout(layout).keysAreNeverEnumerated)
-            collectLayoutKeyOrders(context, table, layout, creations, layoutTests, keyOrders, orderWords);
+            collectLayoutKeyOrders(context, table, layout, creations, std::ranges::equal_range(sites.sourceFieldCreations, layout, { }, &FieldCreationUse::layout), layoutTests, keyOrders, orderWords);
         for (auto& test : layoutTests)
             orderWords.ofTest[&test - tests.begin()] = keyOrders.findOrderWord(layout, test.fields.span());
     });

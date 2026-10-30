@@ -1,6 +1,8 @@
 # const text: string = "a" + "b"; const base: number = 3 + 4; function work(i) { return text + (base + i) }
 # The form that NarrowConstantVariables is for, as a front end writes it: the whole build gets to it
+# Flow leaves the constants to the pass.
 # FORM: AsRead
+# OPTIONS: disable=flow:LiteralValues
 # RUN: compile
 # STATISTIC: NarrowConstantVariablesChanges >= 1
 # CHECK: image not empty

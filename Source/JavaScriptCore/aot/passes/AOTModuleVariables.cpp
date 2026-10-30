@@ -1102,10 +1102,22 @@ struct MovableCode {
     MembersFirstRead membersFirstRead { };
     // Of what is being looked at: whether every run of the item comes by it.
     bool isPassedByEveryRun { true };
+    // Object.defineProperty makes a function's property read-only unless the descriptor says otherwise, and a store to it throws in strict code.
+    // The function moves from body to body, so the two are communicated by name: the names on either side of everything that was judged movable, and those whose stores do not move.
+    Vector<StringID, 4> namesMadeReadOnly { };
+    Vector<StringID, 4> namesStoredOnFunctions { };
+    Vector<StringID, 4> namesRejectingStores { };
 
     const Type& typeOf(const Function& function, ValueID id) const { return arenas.types.at(function.at(id).type); }
     bool isText(StringID string, ASCIILiteral text) const { return equalSpans(program.string(string), text.span8()); }
     bool isText(PropertyKeyID key, ASCIILiteral text) const { return program.at(key).text && isText(program.at(key).text, text); }
+    bool lists(const Vector<StringID, 4>& names, StringID name) const { return std::ranges::any_of(names, [&](StringID listed) { return equalSpans(program.string(listed), program.string(name)); }); }
+    void addTo(Vector<StringID, 4>& names, StringID name) const
+    {
+        if (!lists(names, name))
+            names.append(name);
+    }
+    bool hasStoreToReadOnlyName() const { return std::ranges::any_of(namesStoredOnFunctions, [&](StringID name) { return lists(namesMadeReadOnly, name); }); }
     bool isMadeOrNoReference(const Function& function, const Knowledge& known, ValueID id) const { return known.made.get(id.index()) || !mayBeReference(typeOf(function, id)); }
     // To make a key of it runs no code.
     bool isPrimitiveKey(const Function& function, ValueID id) const { return !typeOf(function, id).hasObjects() && typeOf(function, id).isJavaScriptValue(); }
@@ -1543,25 +1555,6 @@ struct MovableCode {
         return answer;
     }
 
-    // What Object.defineProperty makes of a property may refuse a store.
-    bool isDefinedByDescriptor(FunctionAnalyses& analyses, ValueID object) const
-    {
-        const Function& function = analyses.function();
-        Vector<ValueID, 4> names { allocationOf(function, object) };
-        for (size_t index = 0; index < names.size(); ++index) {
-            for (const Use& use : analyses.useLists().usesOf(names[index])) {
-                if (use.kind != Use::Kind::Operand)
-                    continue;
-                const Value& user = function.at(use.user);
-                if (isOtherNameOfFirstOperand(function, user) && user.operand(0) == names[index])
-                    names.append(use.user);
-                else if (user.opcode == Opcode::CallBuiltin && isObjectDefineProperty(builtinCallOf(program, user)))
-                    return true;
-            }
-        }
-        return false;
-    }
-
     // A store to an object that the initializer has made and that no accessor, no lock and no other prototype stands in the way of.
     bool storeMayMove(FunctionAnalyses& analyses, const Knowledge& known, const Value& value)
     {
@@ -1578,12 +1571,19 @@ struct MovableCode {
             bool setsName = hasName && !defines;
             bool isRefusedAbove = setsName && (program.at(value.key()).kind == PropertyKeyKind::WellKnownSymbol
                 || (isText(value.key(), "constructor"_s) && std::ranges::any_of(type.functions, [&](FunctionID id) { return isCoroutine(id); })));
-            if (isRefusedAbove || isDefinedByDescriptor(analyses, object))
+            if (isRefusedAbove)
                 return false;
             if (setsName && isText(value.key(), "prototype"_s) && std::ranges::all_of(type.functions, [&](FunctionID id) { return program.at(id).kind == FunctionKind::Plain && !isCoroutine(id); }))
                 return true;
-            return hasName && (defines || std::ranges::none_of(type.functions, [&](FunctionID id) { return isClassConstructorFunction(program.at(id)); }))
+            bool isLikeAnyOtherName = hasName && (defines || std::ranges::none_of(type.functions, [&](FunctionID id) { return isClassConstructorFunction(program.at(id)); }))
                 && std::ranges::none_of(namesWithRules, [&](ASCIILiteral name) { return isText(value.key(), name); });
+            StringID name = isLikeAnyOtherName ? program.at(value.key()).text : StringID();
+            if (!name)
+                return isLikeAnyOtherName;
+            if (lists(namesRejectingStores, name))
+                return false;
+            addTo(namesStoredOnFunctions, name);
+            return true;
         }
         // No index of a pristine array is an accessor, and nobody can add one to the prototypes above it.
         // All that was done to an array since the initializer made it has passed these rules, and none of them lets an index become an accessor or the prototype change.
@@ -1648,7 +1648,11 @@ struct MovableCode {
                 break;
         }
         std::optional<DescriptorLiteral> described = readDescriptorLiteral(program, function, function.at(descriptor));
-        return described && !described->isAccessor() && !described->closureEnvironment;
+        if (!described || described->isAccessor() || described->closureEnvironment)
+            return false;
+        if (key.opcode == Opcode::String && !described->flags.contains(PropertyDescriptorFlags::IsWritable))
+            addTo(namesMadeReadOnly, key.string());
+        return true;
     }
 
     bool mayMoveByEffects(FunctionAnalyses& analyses, const Knowledge& known, ValueID id)
@@ -1772,7 +1776,7 @@ struct InitializerPlan {
 } // anonymous namespace
 
 // Of a body that runs at most once and stores to a variable that may stay empty.
-static void findInitializerUnits(const InitializerScanContext& context, FunctionID id, TaskArenas& arenas, Vector<InitializerUnit>& found)
+static void findInitializerUnits(const InitializerScanContext& context, FunctionID id, TaskArenas& arenas, Vector<InitializerUnit>& found, Vector<StringID, 4>&& namesRejectingStores = { })
 {
     constexpr uint32_t noItem = UINT32_MAX;
     enum class State : uint8_t { Stays, IsRepeated, Moves };
@@ -1781,6 +1785,7 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
     const Function& function = program.at(id);
     FunctionAnalyses analyses(context.analysisContextOf(id), function);
     MovableCode code { context, arenas };
+    code.namesRejectingStores = WTF::move(namesRejectingStores);
     CFG& cfg = analyses.cfg();
 
     Vector<BlockID, 16> spine = findBlocksThatEveryRunPasses(analyses);
@@ -2043,6 +2048,11 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
     };
     for (uint32_t index = 0; index < items.size(); ++index)
         classify(index);
+    // Stores to such a name stay, with everything they keep alive. Other decisions relied on them, so the scan restarts.
+    if (code.hasStoreToReadOnlyName()) {
+        code.namesRejectingStores.appendVector(code.namesMadeReadOnly);
+        return findInitializerUnits(context, id, arenas, found, WTF::move(code.namesRejectingStores));
+    }
 
     auto estimatedCostOf = [&](const Item& item) -> unsigned {
         constexpr unsigned costOfCode = 1000;

@@ -759,6 +759,12 @@ static void testDeferredClosures()
     StubRun run = reads.read(objectWithClosure.address());
     AOT_TEST_CHECK(!run.calledOperation && run.result == closure.address());
 
+    // The stub looks up the field's record in the object's layout. This layout lists no field, so the read falls back to the operation, with every operand unchanged.
+    FakeObject<sizeof(CompiledStructure)> structure;
+    LayoutData layout { };
+    structure.at<const LayoutData*>(CompiledStructure::offsetOfLayout()) = &layout;
+    reads.runner.instance().prefix().structureIDBase = structure.address() - PropertyReads::structureID;
+
     FakeTypedObject objectBeforeFirstRead;
     objectBeforeFirstRead.at<uint32_t>(FakeTypedObject::offsetOfField) = uncreatedDeferredClosure;
     reads.runner.recordCallsOf(Entry::operationAOTReadField);
@@ -813,6 +819,12 @@ static void testTypedArrayLengths()
     }
     for (TypedArrayMode mode : { GrowableSharedWastefulTypedArray, GrowableSharedAutoLengthWastefulTypedArray, ResizableNonSharedWastefulTypedArray, ResizableNonSharedAutoLengthWastefulTypedArray })
         AOT_TEST_CHECK(isLeftToOperation(mode, 7));
+
+    reads.file(Slot::createWithoutPayload(std::bit_cast<StructureID>(PropertyReads::structureID), Slot::Kind::TypedArrayLength, Slot::readsByteOffset));
+    view.at<uint64_t>(JSArrayBufferView::offsetOfByteOffset()) = 24;
+    StubRun run = readLength(WastefulTypedArray, 7);
+    AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(24)));
+    AOT_TEST_CHECK(isLeftToOperation(ResizableNonSharedWastefulTypedArray, 7));
 }
 
 namespace {

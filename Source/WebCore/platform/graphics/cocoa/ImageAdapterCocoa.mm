@@ -29,6 +29,7 @@
 #import "BitmapImage.h"
 #import "FloatRect.h"
 #import "GraphicsContext.h"
+#import "NativeImageCocoa.h"
 #import "SharedBuffer.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <wtf/PointerComparison.h>
@@ -37,7 +38,11 @@
 #import <wtf/text/WTFString.h>
 
 #if ENABLE(MULTI_REPRESENTATION_HEIC)
+#import "Font.h"
+#import "ImageBuffer.h"
+#import "MultiRepresentationHEICMetrics.h"
 #import "PlatformNSAdaptiveImageGlyph.h"
+#import <CoreText/CoreText.h>
 #endif
 
 #if PLATFORM(IOS_FAMILY)
@@ -73,27 +78,6 @@ Ref<BitmapImage> ImageAdapter::loadPlatformResource(const char *name)
     return BitmapImage::nullImage();
 }
 
-RetainPtr<CFDataRef> ImageAdapter::tiffRepresentation(const Vector<Ref<NativeImage>>& nativeImages)
-{
-    // If nativeImages.size() is zero, we know for certain this image doesn't have valid data
-    // Even though the call to CGImageDestinationCreateWithData will fail and we'll handle it gracefully,
-    // in certain circumstances that call will spam the console with an error message
-    if (!nativeImages.size())
-        return nullptr;
-
-    RetainPtr<CFMutableDataRef> data = adoptCF(CFDataCreateMutable(0, 0));
-
-    RetainPtr<CGImageDestinationRef> destination = adoptCF(CGImageDestinationCreateWithData(data.get(), bridge_cast(UTTypeTIFF.identifier), nativeImages.size(), 0));
-    if (!destination)
-        return nullptr;
-
-    for (const auto& nativeImage : nativeImages)
-        CGImageDestinationAddImage(destination.get(), nativeImage->platformImage().get(), 0);
-
-    CGImageDestinationFinalize(destination.get());
-    return data;
-}
-
 #if ENABLE(MULTI_REPRESENTATION_HEIC)
 NSAdaptiveImageGlyph *ImageAdapter::multiRepresentationHEIC()
 {
@@ -110,6 +94,36 @@ NSAdaptiveImageGlyph *ImageAdapter::multiRepresentationHEIC()
     m_multiRepHEIC = adoptNS([[PlatformNSAdaptiveImageGlyph alloc] initWithImageContent:nsData.get()]);
 
     return m_multiRepHEIC.get();
+}
+
+ImageDrawResult ImageAdapter::drawMultiRepresentationHEIC(GraphicsContext& context, const Font& font, const FloatRect& destination, ImageDrawingOptions options)
+{
+    RetainPtr multiRepresentationHEIC = this->multiRepresentationHEIC();
+    if (!multiRepresentationHEIC)
+        return ImageDrawResult::DidNothing;
+
+    RefPtr imageBuffer = context.createScaledImageBuffer(destination.size(), context.scaleFactor(), ColorSpace::SRGB(), RenderingMode::Unaccelerated, RenderingMethod::Local);
+    if (!imageBuffer)
+        return ImageDrawResult::DidNothing;
+
+    RetainPtr cgContext = imageBuffer->context().platformContext();
+
+    CGContextScaleCTM(cgContext, 1, -1);
+    CGContextTranslateCTM(cgContext, 0, -destination.height());
+
+    // FIXME (rdar://123044459): This needs to account for vertical writing modes.
+    CGContextSetTextMatrix(cgContext, CGAffineTransformIdentity);
+    CGContextSetTextPosition(cgContext, 0, font.metricsForMultiRepresentationHEIC().descent);
+
+    CTFontDrawImageFromAdaptiveImageProviderAtPoint(protect(font.ctFont()), multiRepresentationHEIC.get(), CGContextGetTextPosition(cgContext), cgContext);
+
+    auto orientation = options.orientation();
+    if (orientation == ImageOrientation::Orientation::FromImage)
+        orientation = image().orientation();
+
+    context.drawImageBuffer(*imageBuffer, destination, { options, orientation });
+
+    return ImageDrawResult::DidDraw;
 }
 #endif
 
@@ -148,7 +162,7 @@ CFDataRef ImageAdapter::tiffRepresentation(ConcreteObjectSize concreteObjectSize
     if (m_tiffRep && m_tiffRepKey && m_tiffRepKey->matches(concreteObjectSize, extras))
         return m_tiffRep.get();
 
-    auto data = tiffRepresentation(allNativeImages(concreteObjectSize, extras));
+    auto data = WebCore::tiffRepresentation(allNativeImages(concreteObjectSize, extras));
     if (!data)
         return nullptr;
 
@@ -188,7 +202,7 @@ RetainPtr<NSImage> ImageAdapter::snapshotNSImage(ConcreteObjectSize concreteObje
     if (!nativeImage)
         return nullptr;
 
-    auto data = tiffRepresentation({ nativeImage.releaseNonNull() });
+    auto data = WebCore::tiffRepresentation(*nativeImage);
     if (!data)
         return nullptr;
 

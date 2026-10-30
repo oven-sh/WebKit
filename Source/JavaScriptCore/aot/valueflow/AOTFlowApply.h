@@ -59,6 +59,7 @@ struct FlowBodyCounts {
 FlowBodyCounts applyBodyUpdate(const FlowBodyApplication&);
 void demoteTailCallsWithChecks(const Program&, FunctionID, Function&, TypeArena&, BuildContext&);
 void initializeMembersOfListedHolders(const Program&, const FlowResults&, FunctionID, Function&, TypeArena&, BuildContext&);
+void nameSymbolsCreatedByLibraryModule(const Program&, FunctionID, Function&, TypeArena&, BuildContext&);
 
 Value makeAssumeType(ValueID operand, ProvenType);
 // What is true of the value from a place on, and not wherever the value is at hand: behind a test that is gone, where a call stood, where another name of the value was narrower.

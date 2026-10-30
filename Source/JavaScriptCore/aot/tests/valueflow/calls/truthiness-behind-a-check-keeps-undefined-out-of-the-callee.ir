@@ -1,7 +1,7 @@
 # function use(s: string | undefined) { return s ? links(s) : 0 }   use("s"); use(undefined)
 # RUN: valueflow-why values=f2:v1
 # CHECK: values=f2:v1
-# CHECK: operand 0 {{*}} 1 members: primitive7
+# CHECK: operand 0 {{*}} 1 members: key{{*}}
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

@@ -188,16 +188,24 @@ static bool isOptionalFieldOfBuiltinLayout(const Program& program, LayoutID layo
     return fields[field].isOptional;
 }
 
-static TypeID prefixElementTypeOf(const Program& program, const ClassPart& array)
+// TypeTable::find() does not see a type that an earlier pass interned for this function alone, though a read may have that type.
+static TypeID internOrFind(const Program& program, TypeArena* types, Type&& type, TypeID fallback)
+{
+    if (types)
+        return types->intern(WTF::move(type));
+    return program.types.find(type).value_or(fallback);
+}
+
+static TypeID prefixElementTypeOf(const Program& program, const ClassPart& array, TypeArena* types)
 {
     TypeID contents = array.writtenContentsAt(program.builtins(), ContentsSlot::Element);
     const Type& element = program.at(contents);
     if (element.primitives & Primitive::Undefined)
         return contents;
-    return program.types.find(element.withPrimitives(Primitive::Undefined)).value_or(TypeTable::anything);
+    return internOrFind(program, types, element.withPrimitives(Primitive::Undefined), TypeTable::anything);
 }
 
-static DescribedObject describeBuiltinResult(FunctionAnalyses& analyses, const Value& call, VirtualObjectDescription description)
+static DescribedObject describeBuiltinResult(FunctionAnalyses& analyses, const Value& call, VirtualObjectDescription description, TypeArena* types)
 {
     const Program& program = analyses.program();
     const Function& function = analyses.function();
@@ -248,11 +256,11 @@ static DescribedObject describeBuiltinResult(FunctionAnalyses& analyses, const V
         return unsupported(VirtualObjectSupport::HasNoPartsForm);
     description.kind = VirtualObjectKind::BuiltinPrefix;
     description.canBeBuilt = false;
-    description.elementType = prefixElementTypeOf(program, *array);
+    description.elementType = prefixElementTypeOf(program, *array, types);
     return supported(description);
 }
 
-static DescribedObject describeAllocation(FunctionAnalyses& analyses, const Value& value, VirtualObjectDescription description, ListedValues listedValues)
+static DescribedObject describeAllocation(FunctionAnalyses& analyses, const Value& value, VirtualObjectDescription description, ListedValues listedValues, TypeArena* types)
 {
     switch (value.opcode) {
     case Opcode::NewObject:
@@ -282,7 +290,7 @@ static DescribedObject describeAllocation(FunctionAnalyses& analyses, const Valu
         description.kind = VirtualObjectKind::ViewRange;
         return supported(description);
     case Opcode::CallBuiltin:
-        return describeBuiltinResult(analyses, value, description);
+        return describeBuiltinResult(analyses, value, description, types);
     case Opcode::NewRegExp:
     case Opcode::NewPromise:
     case Opcode::Data:
@@ -294,14 +302,14 @@ static DescribedObject describeAllocation(FunctionAnalyses& analyses, const Valu
     }
 }
 
-DescribedObject describeVirtualObject(FunctionAnalyses& analyses, ValueID allocation, ListedValues listedValues)
+DescribedObject describeVirtualObject(FunctionAnalyses& analyses, ValueID allocation, ListedValues listedValues, TypeArena* types)
 {
     const Function& function = analyses.function();
     const Value& value = function.at(allocation);
     if (interpretedOf(value.opcode) != Interpretation::Allocation)
         return unsupported(VirtualObjectSupport::NotAnAllocation);
 
-    DescribedObject described = describeAllocation(analyses, value, { .allocation = allocation, .type = value.type }, listedValues);
+    DescribedObject described = describeAllocation(analyses, value, { .allocation = allocation, .type = value.type }, listedValues, types);
     if (described.support != VirtualObjectSupport::Supported || described.description.staysInPlace)
         return described;
 
@@ -454,9 +462,13 @@ std::optional<uint32_t> prefixPropertyOf(const VirtualObjectContext& context, co
 static TypeID typeOfPrefixProperty(const VirtualObjectContext& context, const VirtualObjectDescription& description, uint32_t property)
 {
     const Program& program = context.program;
+    BuiltinTypeID type = program.builtins().at(context.function.at(description.allocation).overload()).code.prefixProperties[property].type;
+    if (context.types) {
+        TypingContext typing { program, context.function, *context.types };
+        return context.types->intern(typeOfBuiltinType({ typing }, type));
+    }
     ScratchTypeArena scratch(program.types);
     TypingContext typing { program, context.function, scratch.arena() };
-    BuiltinTypeID type = program.builtins().at(context.function.at(description.allocation).overload()).code.prefixProperties[property].type;
     return program.types.find(typeOfBuiltinType({ typing }, type)).value_or(TypeTable::anything);
 }
 
@@ -487,7 +499,7 @@ TypeID typeOfField(const VirtualObjectContext& context, const VirtualObjectDescr
         if (description.kind != VirtualObjectKind::BuiltinFields || !isOptionalFieldOfBuiltinLayout(program, description.layout, *layoutField) || program.at(slotType).primitives & Primitive::Undefined)
             return slotType;
         // What the call delivers for a field that the object would lack.
-        return program.types.find(program.at(slotType).withPrimitives(Primitive::Undefined)).value_or(TypeTable::anything);
+        return internOrFind(program, context.types, program.at(slotType).withPrimitives(Primitive::Undefined), TypeTable::anything);
     }
     case VirtualFieldKind::Element:
         if (description.kind == VirtualObjectKind::Arguments)
@@ -502,8 +514,8 @@ TypeID typeOfField(const VirtualObjectContext& context, const VirtualObjectDescr
         return program.provenTypeOf(captures[field.index]);
     }
     case VirtualFieldKind::Length:
-        // The type of every read of an array's length. Where the program has none, no read asks whether a carried length fits.
-        return program.types.find(Type::integer(Range::uint32())).value_or(TypeTable::integer);
+        // The type of every read of an array's length.
+        return internOrFind(program, context.types, Type::integer(Range::uint32()), TypeTable::integer);
     case VirtualFieldKind::Capacity:
     case VirtualFieldKind::ArgumentCount:
         return TypeTable::integer;
@@ -836,7 +848,11 @@ static bool definesPlainDataField(const Program& program, const VirtualObjectDes
     if (access.opcode != Opcode::PropDefine || keyLookupOf(program, access.key()) != KeyLookup::Ordinary)
         return false;
     std::optional<uint32_t> field = layoutFieldOf(program, description, VirtualField::named(access.key()));
-    return field && !fieldAt(program, { description.layout, *field }).flags.containsAny({ FieldFlags::IsMethod, FieldFlags::IsHidden });
+    if (!field)
+        return false;
+    // A slot gives its property the attributes of the field's form.
+    const auto& declaration = fieldAt(program, { description.layout, *field });
+    return declaration.form.isEmpty() && !declaration.flags.containsAny({ FieldFlags::IsMethod, FieldFlags::IsHidden });
 }
 
 static bool hasLayoutPrototype(const VirtualObjectContext& context, const VirtualObjectDescription& description)
@@ -1238,6 +1254,15 @@ void setExactReceivers(Value& slotOperation, LayoutID layout, TypeArena& types)
     slotOperation.setReceivers(types.completeLayoutSet(singleElementSpan(layout)));
 }
 
+static bool isListedByAllocation(const VirtualObjectContext& context, const VirtualObjectDescription& description, const VirtualField& field)
+{
+    bool isListed = false;
+    forEachInitialField(context, description, [&](const VirtualField& initialField, ValueID) {
+        isListed |= initialField == field;
+    });
+    return isListed;
+}
+
 SpeculativeLoad canLoadSpeculatively(const VirtualObjectContext& context, const VirtualObjectDescription& description, const VirtualField& field)
 {
     const Program& program = context.program;
@@ -1255,8 +1280,10 @@ SpeculativeLoad canLoadSpeculatively(const VirtualObjectContext& context, const 
     case VirtualObjectKind::Object: {
         std::optional<uint32_t> layoutField = field.kind == VirtualFieldKind::Named ? layoutFieldOf(program, description, field) : std::nullopt;
         // The read of a slot that defers its closure creates the closure and stores it.
+        // A field that is always filled is filled once the object is finished. The load may stand earlier, so the allocation itself has to fill the field.
         isSafe = layoutField && canReadSlotWithoutGuard(program, description, *layoutField)
-            && flowOf(program, { description.layout, *layoutField }).location.deferral == ClosureDeferral::Unknown;
+            && flowOf(program, { description.layout, *layoutField }).location.deferral == ClosureDeferral::Unknown
+            && isListedByAllocation(context, description, field);
         break;
     }
     case VirtualObjectKind::Opaque:
@@ -1270,15 +1297,6 @@ SpeculativeLoad canLoadSpeculatively(const VirtualObjectContext& context, const 
         break;
     }
     return isSafe ? SpeculativeLoad::Safe : SpeculativeLoad::Unknown;
-}
-
-static bool isListedByAllocation(const VirtualObjectContext& context, const VirtualObjectDescription& description, const VirtualField& field)
-{
-    bool isListed = false;
-    forEachInitialField(context, description, [&](const VirtualField& initialField, ValueID) {
-        isListed |= initialField == field;
-    });
-    return isListed;
 }
 
 LateStore canStoreLate(const VirtualObjectContext& context, const VirtualObjectDescription& description, const VirtualField& field)

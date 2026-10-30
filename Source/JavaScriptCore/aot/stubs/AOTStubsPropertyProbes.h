@@ -170,6 +170,8 @@ struct FieldTableProbe {
     bool answersAbsent { false };
     // For a probe that returns what it reads.
     std::optional<CallerFrame> answersMissingFields { };
+    // With boundName: the entry that is expected, of the form InlineValue or OutOfLineValue. One comparison with the whole entry then stands for the name and the form.
+    std::optional<uint32_t> expectedEntry { };
 };
 
 // Reads a field of a compiled object that is in its slot in the cell into result, which may be any of the probe's registers, and goes on with finish, which leaves the stub.

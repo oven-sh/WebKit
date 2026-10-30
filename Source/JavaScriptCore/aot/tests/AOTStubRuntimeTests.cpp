@@ -746,6 +746,7 @@ public:
         , m_runner(StubPolicy { }, std::array { head })
     {
         Instance& instance = m_runner.instance();
+        zeroSpan(instance.copiesWithoutFrame());
         instance.prefix().structureIDBase = m_structures[0].address() & ~static_cast<uint64_t>(UINT32_MAX);
         instance.cellCageBase = cageBase();
         instance.barrierThreshold = blackThreshold;
@@ -790,12 +791,12 @@ public:
         place() = &m_copy;
     }
 
-    const MappedCopy*& place() { return m_runner.instance().allocation.copiesWithoutFrame[AllocationWords::placeOfCopyWithoutFrame(m_copy.targetWords, m_copy.sourceWords, excludedRun)]; }
+    const MappedCopy*& place() { return m_runner.instance().copiesWithoutFrame()[AllocationWords::placeOfCopyWithoutFrame(m_copy.targetWords, m_copy.sourceWords, excludedRun)]; }
 
     // True where the stub has made the copy. Else it has handed what it was handed to the operation that is named: the one that looks for the copy again, or the one that takes a frame at once.
     bool run(uint32_t run = excludedRun, uint32_t count = 0, Entry operationWhereCopyIsKept = operationByFieldMap)
     {
-        bool isKept = !count && m_runner.instance().allocation.copiesWithoutFrame[AllocationWords::placeOfCopyWithoutFrame(wordsOf(m_target), wordsOf(m_source), run)];
+        bool isKept = !count && m_runner.instance().copiesWithoutFrame()[AllocationWords::placeOfCopyWithoutFrame(wordsOf(m_target), wordsOf(m_source), run)];
         m_runner.recordCallsOf(isKept ? operationWhereCopyIsKept : operation);
         m_lastRun = m_runner.runOperationCall(m_head, { m_target.address(), m_source.address(), run, count });
         m_runner.countCallsOf(operation);
@@ -989,6 +990,7 @@ static void testCopiesOfPropertiesByChunks()
         structure.at<const LayoutData*>(CompiledStructure::offsetOfLayout()) = &layout;
     }
     Instance& instance = runner.instance();
+    zeroSpan(instance.copiesWithoutFrame());
     instance.prefix().structureIDBase = structures[0].address() & ~static_cast<uint64_t>(UINT32_MAX);
     instance.barrierThreshold = blackThreshold;
 
@@ -1051,7 +1053,7 @@ static void testCopiesOfPropertiesByChunks()
 
         // Where a copy that takes no frame is kept at the place of this one for sources of this Structure, the operation is called that looks for it. A copy that is kept for others is passed over.
         MappedCopy kept;
-        const MappedCopy*& place = instance.allocation.copiesWithoutFrame[AllocationWords::placeOfCopyWithoutFrame(target.at<uint64_t>(offsetOfOrderWord), source.at<uint64_t>(offsetOfOrderWord), 0)];
+        const MappedCopy*& place = instance.copiesWithoutFrame()[AllocationWords::placeOfCopyWithoutFrame(target.at<uint64_t>(offsetOfOrderWord), source.at<uint64_t>(offsetOfOrderWord), 0)];
         place = &kept;
         AOT_TEST_CHECK(!isCopiedByStub(head));
         kept.structureOfSource = std::bit_cast<StructureID>(source.at<uint32_t>(JSCell::structureIDOffset()));

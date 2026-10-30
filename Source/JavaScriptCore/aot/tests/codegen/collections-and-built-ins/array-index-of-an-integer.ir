@@ -94,18 +94,16 @@ function f1 name="find" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
     ReturnCall v3 casts=[{declared={type=number site=w7}}, {declared={type=number site=w3}}]
 }
 
-# indexOf looks at the kind of storage once, integers first. A list of at most sixteen elements is searched in place; a longer one goes, by a rare edge, to a search in the run time.
+# Every list that arrives holds integers in storage for integers, which its type says: indexOf does not look at the kind of storage. A list of at most sixteen elements is searched in place; a longer one goes, by a rare edge, to a search in the run time.
 # CHECK-LABEL: name="find" role=Source
-# CHECK: Int32 b@[[byte]] = Load8Z(b@[[list]], offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc)
-# CHECK: Int32 b@[[kind]] = BitAnd(b@[[byte]], $14(b@{{*}}))
-# CHECK: Int32 b@[[isIntegers]] = Equal(b@[[kind]], $4(b@{{*}}))
-# CHECK: Branch(b@[[isIntegers]], Terminal)
-# CHECK: Int64 b@[[storage]] = Load(b@[[list]], offset = 8, ControlDependent|Reads:JSObject_butterfly)
+# CHECK-NOT: Reads:JSCell_indexingTypeAndMisc
+# CHECK: Int64 b@[[storage]] = Load(b@[[list]], offset = 8, ControlDependent|Reads:JSArray_butterfly)
 # CHECK-NEXT: Int32 b@[[length]] = Load(b@[[storage]], offset = -8, ControlDependent|Reads:Butterfly_publicLength)
 # CHECK-NEXT: Int64 b@[[wide]] = ZExt32(b@[[length]])
 # CHECK: Int32 b@[[isShort]] = BelowEqual(b@[[wide]], $16(b@{{*}}))
 # CHECK-NEXT: Branch(b@[[isShort]], Terminal)
 # CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#
+# CHECK-NOT: Reads:JSCell_indexingTypeAndMisc
 # CHECK-LABEL: end of function
 # A turn of the search among integers: one load of the boxed element, one comparison with the boxed value, the counter, its test. Nothing is unboxed, called or loaded again.
 # LOOP-LABEL: loop #
@@ -116,24 +114,16 @@ function f1 name="find" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
 # LOOP-NOT: Reads:
 # LOOP-NOT: Patchpoint(
 # LOOP-LABEL: end of loop
-# The search among doubles compares doubles.
-# LOOP-LABEL: loop #
-# LOOP: Double b@[[number]] = Load(b@{{*}}, ControlDependent|Reads:indexedDoubleProperties)
-# LOOP-NEXT: Int32 b@[[isSame]] = Equal(b@{{*}}, b@[[number]])
-# LOOP-NEXT: Branch(b@[[isSame]], Terminal)
-# LOOP-NOT: Reads:
-# LOOP-NOT: Patchpoint(
-# LOOP-LABEL: end of loop
+# There is no search among doubles.
+# LOOP-NOT: loop #
+# LOOP-LABEL: end of function
 # X64: loop #{{*}}, instructions: 3, patchpoints: 0
 # ARM64: loop #{{*}}, instructions: 4, patchpoints: 0
-# Only a list in another kind of storage calls Array.prototype.indexOf itself, the one call that can throw. Nothing reads the member by name or tests which function it holds.
+# Nothing calls Array.prototype.indexOf itself, reads the member by name or tests which function it holds.
 # CALLS-LABEL: name="find" role=Source
 # CALLS-NOT: :PropGet
 # CALLS-NOT: ExitsSideways
-# CALLS: ExitsSideways{{*}}:CallBuiltin)
-# CALLS-NOT: ExitsSideways
-# CALLS-NOT: :PropGet
 # CALLS-LABEL: end of function
 # The counts of the whole function hold calls, whose moves follow the calling convention: not for Windows.
-# X64SIZE: instructions: 46, patchpoints: 2, rare instructions: 14
-# ARM64SIZE: instructions: 43, patchpoints: 2, rare instructions: 14
+# X64SIZE: instructions: 14, patchpoints: 0, rare instructions: 5
+# ARM64SIZE: instructions: 14, patchpoints: 0, rare instructions: 5

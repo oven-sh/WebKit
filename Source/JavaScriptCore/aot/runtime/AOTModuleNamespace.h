@@ -36,7 +36,7 @@ public:
         JSObject* liveSources { nullptr };
     };
 
-    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
+    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype, bool shouldPreventExtensions);
     static ModuleNamespace* create(VM&, Structure*, ModuleID, ModulePhase, const DynamicExports&);
 
     DECLARE_INFO;
@@ -73,6 +73,7 @@ private:
     std::span<const ModuleExportData> exports() const;
     bool isAmbiguousExport(unsigned index) const;
     bool isSymbolLikeKey(UniquedStringImpl*) const;
+    bool isOrdinaryKey(PropertyName) const;
     bool isDynamicExport(UniquedStringImpl*) const;
     JSValue readDynamicExport(JSGlobalObject*, PropertyName);
     bool evaluateIfNeeded(JSGlobalObject*);

@@ -769,6 +769,32 @@ JSObject* findExistingObject(JSObject* holder, UniquedStringImpl* key)
     return isValidOffset(offset) ? objectAt(holder, offset) : nullptr;
 }
 
+JSObject* findExistingBuiltin(JSGlobalObject* realm, BuiltinID id)
+{
+    const BuiltinTable& table = BuiltinTable::singleton();
+    if (!table.contains(id) || table.at(id).scope == BuiltinScope::Module)
+        return nullptr;
+    if (id == Builtins::GlobalThis)
+        return realm;
+    VM& vm = realm->vm();
+    const Builtin& builtin = table.at(id);
+    if (builtin.holder) {
+        if (table.isSymbolName(builtin.name) && !table.wellKnownSymbolOf(builtin.name))
+            return nullptr;
+        JSObject* holder = findExistingBuiltin(realm, builtin.holder);
+        return holder ? findExistingObject(holder, table.identifierOf(vm, builtin.name).impl()) : nullptr;
+    }
+    if (BuiltinID subclassConstructor = findSubclassConstructor(table, id)) {
+        JSObject* constructor = findExistingBuiltin(realm, subclassConstructor);
+        return constructor ? constructor->getPrototypeDirect().getObject() : nullptr;
+    }
+    BuiltinID prototypeID = findClassPrototype(table, id);
+    JSObject* prototype = prototypeID ? findExistingHiddenPrototype(realm, builtin.instanceClass) : nullptr;
+    if (!prototype || id == prototypeID)
+        return prototype;
+    return findExistingObject(prototype, vm.propertyNames->constructor.impl());
+}
+
 class ExistingBuiltins {
 public:
     explicit ExistingBuiltins(JSGlobalObject* realm)

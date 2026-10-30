@@ -102,7 +102,7 @@ private:
     std::optional<Aliases> findAliases(ValueID parameter);
     std::optional<EarlyBlocks> findEarlyBlocks(const Aliases&, const Subject&);
     std::optional<Promotion> tryPromote(uint32_t parameter);
-    std::optional<Promotion> trySplitBehindEarlyReturn(uint32_t parameter);
+    std::optional<Promotion> trySplitBehindEarlyReturn(ValueID argument, uint32_t parameter);
 
     const AnalysisContext m_context;
     const Function& m_function;
@@ -647,8 +647,8 @@ std::optional<Promotion> ParameterPromoter::tryPromote(uint32_t parameter)
     return promotion;
 }
 
-// What the start allocates for the body alone, the body allocates.
-static void moveAllocationsToBody(FunctionAnalyses& analyses, const BitVector& startBlocks, BlockID head, Function& split)
+// What the start allocates only for the body is allocated by the body instead. Returns false if it cannot be placed there: a value in a block with a handler is not available on the handler's path.
+static bool moveAllocationsToBody(FunctionAnalyses& analyses, const BitVector& startBlocks, BlockID head, Function& split)
 {
     const Function& function = analyses.function();
     auto isUsedByBodyAlone = [&](ValueID id) {
@@ -676,24 +676,45 @@ static void moveAllocationsToBody(FunctionAnalyses& analyses, const BitVector& s
             values.removeAt(index);
         }
     }
-    if (!moved.isEmpty())
-        split.edit(head, BlockEdit::Values).values.insertVector(0, moved);
+    if (moved.isEmpty())
+        return true;
+    if (function.at(head).handler)
+        return false;
+    split.edit(head, BlockEdit::Values).values.insertVector(0, moved);
+    return true;
 }
 
 // The caller allocates the argument for the call. Once the wrapper is copied into the caller, the allocation sinks to the call of the body.
-std::optional<Promotion> ParameterPromoter::trySplitBehindEarlyReturn(uint32_t parameter)
+std::optional<Promotion> ParameterPromoter::trySplitBehindEarlyReturn(ValueID argument, uint32_t parameter)
 {
-    ValueID argument = m_function.at(entryBlock).parameters[m_function.firstParameterIndex() + parameter];
+    constexpr OpcodeSet argumentsObjects { Opcode::CreateUnmappedArguments, Opcode::CreateMappedArguments };
     Subject subject = m_analyses.subject(argument);
-    std::span<const Use> uses = m_analyses.useLists().usesOf(argument);
-    if (uses.empty())
-        return std::nullopt;
-
+    const UseLists& useLists = m_analyses.useLists();
     const CFG& cfg = m_analyses.cfg();
     Dominators& dominators = m_analyses.dominators();
-    BlockID firstUse = uses.front().block;
-    for (const Use& use : uses)
-        firstUse = dominators.nearestCommonDominator(firstUse, use.block);
+
+    BlockID firstUse;
+    auto addUse = [&](const Use& use) {
+        firstUse = firstUse ? dominators.nearestCommonDominator(firstUse, use.block) : use.block;
+    };
+    // An arguments object that captures the list does not count by itself: where it is created is not observable. Its uses count, except a read of its length: as long as nothing else was done to the object, that is the number of arguments the function was passed.
+    Vector<std::pair<ValueID, ValueID>, 2> resolvedReads;
+    for (const Use& use : useLists.usesOf(argument)) {
+        bool isTakenInByArgumentsObject = use.kind == Use::Kind::Operand && argumentsObjects.contains(m_function.at(use.user).opcode) && m_function.at(use.user).restOperand() == argument;
+        if (!isTakenInByArgumentsObject) {
+            addUse(use);
+            continue;
+        }
+        for (const Use& useOfObject : useLists.usesOf(use.user)) {
+            bool readsLength = useOfObject.kind == Use::Kind::Operand && m_function.at(useOfObject.user).opcode == Opcode::PropGet && m_function.at(useOfObject.user).key() == m_context.program.keyOf(BuiltinNames::length);
+            if (readsLength)
+                resolvedReads.append({ useOfObject.user, m_function.at(use.user).countOperand() });
+            else
+                addUse(useOfObject);
+        }
+    }
+    if (!firstUse)
+        return std::nullopt;
 
     // Each of these blocks lies on every way to a use. The further down the function is cut, the more the start holds.
     Vector<BlockID, 8> cuts;
@@ -755,7 +776,30 @@ std::optional<Promotion> ParameterPromoter::trySplitBehindEarlyReturn(uint32_t p
     promotion.split = m_function;
     promotion.callOrigin = { m_function.position, 0 };
     promotion.head = head;
-    moveAllocationsToBody(m_analyses, startBlocks, head, promotion.split);
+
+    bool resolvesReads = false;
+    for (auto [read, answer] : resolvedReads) {
+        BlockID block = useLists.blockOf(read);
+        if (dominators.dominates(head, block))
+            continue;
+        // In a block that both parts reach, the body's read may come after a store.
+        if (isInBody.get(block.index()))
+            return std::nullopt;
+        Value& answered = promotion.split.edit(read, ValueEdit::Definition);
+        answered.become(Opcode::Upcast);
+        answered.setValueOperand(answer);
+        answered.setCastType(TypeTable::anything);
+        resolvesReads = true;
+    }
+    bool didMove = false;
+    if (resolvesReads) {
+        Function answered = promotion.split;
+        FunctionAnalyses analysesOfAnswered(m_context, answered);
+        didMove = moveAllocationsToBody(analysesOfAnswered, startBlocks, head, promotion.split);
+    } else
+        didMove = moveAllocationsToBody(m_analyses, startBlocks, head, promotion.split);
+    if (!didMove)
+        return std::nullopt;
 
     FunctionAnalyses analyses(m_context, promotion.split);
     auto promoted = findPromotedValues(analyses, region, { }, subject);
@@ -774,11 +818,14 @@ std::optional<Promotion> ParameterPromoter::run(const BitVector& freshParameters
                 return promotion;
         }
     }
+    auto& entryParameters = m_function.at(entryBlock).parameters;
     for (size_t parameter : freshParameters) {
-        if (auto promotion = trySplitBehindEarlyReturn(parameter))
+        if (auto promotion = trySplitBehindEarlyReturn(entryParameters[m_function.firstParameterIndex() + parameter], parameter))
             return promotion;
     }
-    return std::nullopt;
+    // Every call creates a list of the arguments that have no parameter.
+    std::optional<unsigned> hiddenRest = m_function.hiddenRestParameterIndex();
+    return hiddenRest && !m_function.parameters.isEmpty() ? trySplitBehindEarlyReturn(entryParameters[*hiddenRest], 0) : std::nullopt;
 }
 
 static Vector<Promotion> findPromotions(ProgramEditor& editor, const OptimizationInputs& inputs, BuildContext& build, std::span<const FunctionID> candidates, const Vector<BitVector>& freshParameters)
@@ -939,7 +986,8 @@ void promoteAggregateParameters(ProgramEditor& editor, const OptimizationInputs&
     Vector<BitVector> freshParameters = findFreshParameters(program, inputs, build);
     Vector<FunctionID> candidates = collectInParallel<FunctionID>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<FunctionID>& found) {
         FunctionID id(index);
-        if (!freshParameters[index].isEmpty() && mayPromoteParameters(program.at(id)) && build.isEnabled(PassID::PromoteAggregateParameters, id))
+        bool isPassedNewObject = !freshParameters[index].isEmpty() || program.at(id).has(FunctionFlags::HasHiddenRest);
+        if (isPassedNewObject && mayPromoteParameters(program.at(id)) && build.isEnabled(PassID::PromoteAggregateParameters, id))
             found.append(id);
     });
     if (candidates.isEmpty())

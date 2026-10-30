@@ -5,9 +5,9 @@
 # CHECK: outcome: Unchanged
 
 module m0 path="main.js" displayPath="main.js"
-runtimefunction id=31 function=f0
-runtimefunction id=44 function=f1
-function f0 name="every" role=Library flags=[HasThis] enclosingRuntimeFunction=31 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+runtimefunction id=ArrayPrototypeEvery function=f0
+runtimefunction id=ArrayPrototypeForEach function=f1
+function f0 name="every" role=Library flags=[HasThis] enclosingRuntimeFunction=ArrayPrototypeEvery thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v3 = ToObject v0
     Return v3
 }
@@ -15,14 +15,14 @@ function f0 name="every" role=Library flags=[HasThis] enclosingRuntimeFunction=3
 # CHECK: b0(v0: anything ~ Array, v1: anything ~ function, v2: anything):
 # CHECK-NEXT: v3: object ~ Array = ToObject v0
 
-function f1 name="forEach" role=Library flags=[HasThis] enclosingRuntimeFunction=44 thisType={type=string flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f1 name="forEach" role=Library flags=[HasThis] enclosingRuntimeFunction=ArrayPrototypeForEach thisType={type=string flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything ~ string, v1: anything, v2: anything):
     Return v0
 }
 # CHECK-LABEL: function f1 name="forEach"{{*}}thisType={type=string flags=[IsExpected]} parameters=[{type=function flags=[IsExpected]}, {type=anything}]
 # CHECK: b0(v0: anything ~ string, v1: anything ~ function, v2: anything):
 
-function f2 name="nestedInLibraryFunction" role=Library flags=[HasThis] enclosingRuntimeFunction=31 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f2 name="nestedInLibraryFunction" role=Library flags=[HasThis] enclosingRuntimeFunction=ArrayPrototypeEvery thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
     Return v0
 # CHECK: b0(v0: anything, v1: anything):
 }

@@ -82,18 +82,18 @@ function f1 name="digitSum" module=m0 flags=[IsChecked, HasExplicitName] length=
     Return v23
 }
 
-# value % 10 and (value / 10) >>> 0 in one turn, on an integer in 0..4294967295. Neither divides: each takes the high half of a product with a constant of its own, the remainder in 64 bits and the quotient in 32.
+# value % 10 and (value / 10) >>> 0 in one turn, on an integer in 0..4294967295. Nothing divides: the quotient is the high half of one product with a constant, and the remainder is the value less ten times the quotient.
 # HOT-LABEL: loop #
-# HOT: Int64 b@[[value]] = Phi(
-# HOT: Int64 b@[[high]] = MulHigh(b@[[value]], $7378697629483820647(b@{{*}}), {{*}}:Mod)
-# HOT: Int32 b@[[whole]] = Mul(b@{{*}}, $10(b@{{*}}), {{*}}:Mod)
-# HOT: Int32 b@[[low]] = Trunc(b@[[value]], {{*}}:Mod)
-# HOT-NEXT: Int32 b@[[digit]] = Sub(b@[[low]], b@[[whole]], {{*}}:Mod)
-# HOT-NEXT: Int32 b@{{*}} = Add(b@[[digit]], b@{{*}}, {{*}}:Add)
-# HOT: Int32 b@[[highOfQuotient]] = UMulHigh(b@[[low]], $-858993459(b@{{*}}), {{*}}:DivideIntegers)
-# HOT: Int32 b@[[quotient]] = ZShr(b@[[highOfQuotient]], $3(b@{{*}}), {{*}}:DivideIntegers)
-# HOT-NEXT: Int64 b@[[rest]] = ZExt32(b@[[quotient]], {{*}}:DivideIntegers)
-# HOT: Branch(b@[[rest]], Terminal, {{*}}:Greater)
+# HOT: Int32 b@[[value]] = Phi(
+# HOT-NOT: MulHigh(
+# HOT: Int32 b@[[high]] = UMulHigh(b@[[value]], $-858993459(b@{{*}})
+# HOT-NOT: MulHigh(
+# HOT: Int32 b@[[quotient]] = ZShr(b@[[high]], $3(b@{{*}})
+# HOT-NEXT: Int32 b@[[whole]] = Mul(b@[[quotient]], $10(b@{{*}}), {{*}}:Mod)
+# HOT-NEXT: Int32 b@[[digit]] = Sub(b@[[value]], b@[[whole]], {{*}}:Mod)
+# HOT-NEXT: Int32 b@{{*}} = Add(b@{{*}}, b@{{*}}, {{*}}:Add)
+# HOT-NOT: MulHigh(
+# HOT: Branch(b@{{*}}, Terminal, {{*}}:Greater)
 # HOT-LABEL: end of loop
 # NONE-LABEL: loop #
 # NONE-NOT: Div(
@@ -101,5 +101,5 @@ function f1 name="digitSum" module=m0 flags=[IsChecked, HasExplicitName] length=
 # NONE-NOT: Double
 # NONE-NOT: IToD
 # NONE-LABEL: end of loop
-# X64: instructions: 12, patchpoints: 1
-# ARM64: instructions: 8, patchpoints: 1
+# X64: instructions: 8, patchpoints: 1
+# ARM64: instructions: 6, patchpoints: 1

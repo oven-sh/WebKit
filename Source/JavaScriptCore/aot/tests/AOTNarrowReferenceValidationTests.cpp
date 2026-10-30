@@ -155,7 +155,6 @@ public:
         NarrowReferenceOrigins origins;
         origins.references.set(referenceOrigin);
         origins.references.set(otherReferenceOrigin);
-        origins.suspensions.set(suspensionOrigin);
         return origins;
     }
 
@@ -491,6 +490,25 @@ static void testCompressedPointer()
     checkFindsNothing(bare);
 }
 
+// A store of a reference is forwarded to a load of it after a safepoint. The guards replace the sum with the pointer, and the select between it and the word is still a pointer.
+static void testCompressedPointerDecodedAfterSafepoint()
+{
+    Graph graph;
+    B3::Value* pointer = graph.loadThrough(graph.object);
+    B3::Value* reference = graph.compress(pointer);
+    graph.store(reference, 40);
+    graph.safepoint();
+    B3::Value* namesCell = graph.binary(B3::Above, reference, graph.int32(10));
+    B3::Value* decoded = graph.block->appendNew<B3::Value>(graph.proc, B3::Select, Graph::originOf(otherOrigin), namesCell, graph.decode(reference), graph.unary(B3::ZExt32, reference));
+    graph.safepoint();
+    graph.keepAlive(decoded);
+    graph.finish();
+
+    checkFindsOne(graph);
+    AOT_TEST_CHECK(graph.insertGuards() == 1);
+    checkFindsNothing(graph);
+}
+
 // What is emitted has no dead code, so a use by a dead value keeps no pointer alive and displaces no reference.
 static void testPointerHeldOnlyByDeadCode()
 {
@@ -689,7 +707,10 @@ static void testSuspension()
     auto build = [](Graph& graph, Lists lists) {
         B3::Value* reference = graph.loadReference();
         B3::Value* pointer = graph.unary(B3::Opaque, graph.decode(reference));
+        // An operation that suspends may call first. The frame is saved after the call.
+        graph.safepoint(suspensionOrigin);
         B3::PatchpointValue* suspension = graph.safepoint(suspensionOrigin);
+        suspension->setIsSuspension(true);
         if (lists == Lists::Reference)
             suspension->append(reference, B3::ValueRep::LateColdAny);
         if (lists == Lists::Pointer)
@@ -849,6 +870,7 @@ std::span<const NativeTest> narrowReferenceValidationTests()
         { "narrow-reference-safepoint-in-inner-loop-and-use-in-outer-loop"_s, testSafepointInInnerLoopAndUseInOuterLoop },
         { "narrow-reference-cycle-with-two-entries"_s, testCycleWithTwoEntries },
         { "narrow-reference-compressed-pointer"_s, testCompressedPointer },
+        { "narrow-reference-compressed-pointer-decoded-behind-safepoint"_s, testCompressedPointerDecodedAfterSafepoint },
         { "narrow-reference-pointer-held-only-by-dead-code"_s, testPointerHeldOnlyByDeadCode },
         { "narrow-reference-displaced-only-by-dead-code"_s, testReferenceDisplacedOnlyByDeadCode },
         { "narrow-reference-in-argument-register"_s, testReferenceInArgumentRegister },

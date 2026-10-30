@@ -177,7 +177,7 @@ static std::optional<ImageParts> createImageParts(const Typed::PipelineOutput& p
     if (diagnostics.hasErrors())
         return std::nullopt;
 
-    if (mayUseFFI(pipeline))
+    if (mayUseFFI(pipeline, context.options()))
         parts.ffiStubs = generateFFIStubs(context);
     times.didFinish("generate FFI stubs"_s);
     if (diagnostics.hasErrors())
@@ -269,7 +269,7 @@ static Vector<SiteCounts> countSitesByFunctionAsRead(const Typed::Program& progr
 
 static Vector<FunctionReport> collectFunctionReports(const Typed::Program& program, const BuiltImage& built, std::span<OperationCounts> operationCountsByFunction, std::span<const SiteCounts> sitesByFunctionAsRead, BuildContext& context)
 {
-    CodeIndex index(built.functions.span());
+    CodeIndex index(built.functions.span(), &context.parallelLoops());
     return collectInParallel<FunctionReport>(context.parallelLoops(), program.functions.size(), [&](unsigned functionIndex, Vector<FunctionReport>& reports) {
         const Typed::Function& function = program.functions[functionIndex];
         SiteCounts sites = functionIndex < sitesByFunctionAsRead.size() ? sitesByFunctionAsRead[functionIndex] : SiteCounts { };

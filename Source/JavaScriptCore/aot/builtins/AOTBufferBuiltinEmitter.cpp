@@ -90,6 +90,50 @@ void BufferBuiltinEmitter::generateDataViewSet(const InlineCall& call)
     finishWithUndefined(call);
 }
 
+// `source.copy(target, targetStart, sourceStart, sourceEnd)` copies as many bytes as are available and fit. A position that is negative, fractional or past the end of the source falls back to the function.
+void BufferBuiltinEmitter::generateBufferCopy(const InlineCall& call)
+{
+    ArrayBufferViewBuiltinEmitter& views = emitter<ArrayBufferViewBuiltinEmitter>();
+    LBasicBlock miss = missBlockOf(call);
+    CellPointer source = cellOperand(call.receiver());
+    CellPointer target = cellOperand(call.argument(0));
+    auto positionOr = [&](unsigned argumentIndex, Integer otherwise) {
+        ValueID id = call.argumentOrNull(argumentIndex);
+        if (!id)
+            return otherwise;
+        Integer position = offsetOrElse(id, miss);
+        if (mayBeNegative(id))
+            branchUnless(greaterThanOrEqual(position, 0), miss);
+        return position;
+    };
+    auto byteLengthOf = [&](CellPointer view, ValueID id) {
+        return Integer(m_out.shl(views.lengthOf(view).value(), logElementSize(typedArrayTypeOf(m_builtins, typeOf(id)))));
+    };
+    Integer targetStart = positionOr(1, integer(0));
+    Integer sourceStart = positionOr(2, integer(0));
+    missUnless(call, views.haveFixedLength(source, target));
+    Integer sourceLength = byteLengthOf(source, call.receiver());
+    Integer sourceEnd = positionOr(3, sourceLength);
+    if (call.numberOfArguments() > 2)
+        branchUnless(lessThanOrEqual(sourceStart, sourceLength), miss);
+    if (call.numberOfArguments() > 3)
+        sourceEnd = select(lessThan(sourceEnd, sourceLength), sourceEnd, sourceLength);
+    Integer available = sub(sourceEnd, sourceStart);
+    Integer room = sub(byteLengthOf(target, call.argument(0)), targetStart);
+    Integer least = select(lessThan(available, room), available, room);
+    Integer count = select(greaterThan(least, 0), least, 0);
+    LBasicBlock move = newBlock();
+    LBasicBlock done = newBlock();
+    m_out.branch(isNotZero(count).value(), normalEdge(move), unlikelyEdge(done));
+
+    m_out.appendTo(move);
+    views.moveBytes(call.context(), target, targetStart, source, sourceStart, count);
+    m_out.jump(done);
+
+    m_out.appendTo(done);
+    finish(call, count, Range { 0, static_cast<int64_t>(MAX_ARRAY_BUFFER_SIZE) });
+}
+
 BufferBuiltinEmitter::ByteOrder BufferBuiltinEmitter::byteOrderOf(const InlineCall& call, unsigned argumentIndex, unsigned size)
 {
     ValueID argument = call.argumentOrNull(argumentIndex);

@@ -75,7 +75,7 @@ function f1 name="put" module=m0 flags=[IsChecked, HasExplicitName] length=3 thi
 # CHECK-LABEL: name="put" role=Source
 # CHECK-NOT: collectorState
 # CHECK-NOT: Patchpoint(
-# CHECK: Int64 b@[[storage]] = Load(b@[[list]], offset = 8, ControlDependent|Reads:JSObject_butterfly, {{*}}:PutArrayElement)
+# CHECK: Int64 b@[[storage]] = Load(b@[[list]], offset = 8, ControlDependent|Reads:JSArray_butterfly, {{*}}:PutArrayElement)
 # CHECK-NOT: collectorState
 # CHECK-NOT: Patchpoint(
 # CHECK: Store(b@[[value]], b@{{*}}, ControlDependent|Writes:indexedDoubleProperties, {{*}}:PutArrayElement)

@@ -13,6 +13,7 @@
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinPristine.h"
 #include "AOTCFG.h"
+#include "AOTChooseCallingConventions.h"
 #include "AOTCreateBoundFunctions.h"
 #include "AOTDominators.h"
 #include "AOTEffectsDeclared.h"
@@ -95,11 +96,22 @@ CalleeCandidates calleeCandidates(const Program& program, const Function& functi
 static CalleeCandidates calleeCandidatesOf(const Program& program, const Function& function, const Value& operation, ValueID callee)
 {
     CalleeCandidates result = calleeCandidates(program, function, callee);
-    if (result.proof() != CalleeProof::Unknown || !admitsUnlistedFunctions(program.typeOf(function, result.value)))
+    if (result.isProven() || !admitsUnlistedFunctions(program.typeOf(function, result.value)))
+        return result;
+    if (!Value::opcodesWithCallees.contains(operation.opcode) || !operation.callees())
         return result;
     // An incomplete stamp lists the functions that flow saw arrive at the operation, among whatever else arrives there.
-    if (Value::opcodesWithCallees.contains(operation.opcode) && operation.callees())
-        result.expect(FunctionList(program.at(operation.callees()).seen().predicted().functions));
+    FunctionList seen(program.at(operation.callees()).seen().predicted().functions);
+    if (result.proof() == CalleeProof::Unknown) {
+        result.expect(WTF::move(seen));
+        return result;
+    }
+    // The declared type of a variable names its initializer. A constructor that is swapped later (`Object.assign(allocator, other)`) is only in flow's list.
+    if (operation.opcode == Opcode::Construct) {
+        for (FunctionID expected : result.expected().predicted())
+            seen.add(expected);
+        result.expect(WTF::move(seen));
+    }
     return result;
 }
 
@@ -258,7 +270,7 @@ Value makeDirectCall(const ValueInsertion& insertion, const DirectCallRequest& r
     const Function& callee = program.at(request.callee);
     RELEASE_ASSERT(request.captures.size() == callee.captures.size());
     RELEASE_ASSERT(request.calleeValue || !callee.has(FunctionFlags::TakesCallee));
-    RELEASE_ASSERT(!callee.capabilities.contains(FunctionCapabilities::RecordsCallee) || callee.capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed) || insertion.function.role == FunctionRole::GenericEntrypoint || request.callsOwnFunctionObject);
+    RELEASE_ASSERT(request.calleeKeptInFrame || !callee.capabilities.contains(FunctionCapabilities::RecordsCallee) || callee.capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed) || insertion.function.role == FunctionRole::GenericEntrypoint || request.callsOwnFunctionObject);
     RELEASE_ASSERT(!request.restArray || callee.has(FunctionFlags::HasRestParameter));
 
     auto insert = [&](Value&& value) { return insertWithOrigin(insertion, WTF::move(value)); };
@@ -341,6 +353,8 @@ Value makeDirectCall(const ValueInsertion& insertion, const DirectCallRequest& r
         }
     }
 
+    if (request.calleeKeptInFrame)
+        insert(IRBuilder::make(Opcode::KeepCalleeInFrame, { request.calleeKeptInFrame }));
     Value call = IRBuilder::make(Opcode::CallDirect);
     call.setFunction(request.callee);
     call.setArgumentsOperands(all.span());
@@ -351,6 +365,7 @@ Value makeDirectCall(const ValueInsertion& insertion, const DirectCallRequest& r
     call.setIsNeverInlined(request.isNeverInlined);
     call.setIsAlwaysInlined(request.isAlwaysInlined);
     call.setCallsOwnFunctionObject(request.callsOwnFunctionObject);
+    call.setCalleeIsKeptInFrame(!!request.calleeKeptInFrame);
     call.setCalleeIsPredicted(request.calleeIsPredicted);
     call.setOrigin(insertion.origin);
     call.isTailCall |= request.isTailCall;
@@ -430,6 +445,11 @@ static bool recordsCalleeOnlyOnceRenamed(const Program& program, FunctionID call
     return program.at(source).has(FunctionCapabilities::RecordsCalleeOnceRenamed) && !program.at(source).has(FunctionCapabilities::RecordsCallee);
 }
 
+bool keepsCalleeOfAccessor(const Program& program, FunctionID accessor)
+{
+    return !mayBeCalledDirectly(program, accessor) || recordsCalleeOnlyOnceRenamed(program, accessor);
+}
+
 bool mayBeCalledDirectly(const Program& program, FunctionID id)
 {
     return !program.at(id).capabilities.contains(FunctionCapabilities::RecordsCallee) && mayBeCalledDirectlyOrThroughEntrypoint(program, id);
@@ -444,6 +464,17 @@ bool mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(const Program& program, F
     return callee.capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed) && callee.role != FunctionRole::EntryChecks && mayBeCalledDirectlyOrThroughEntrypoint(program, id);
 }
 
+// A function that can leave by a tail call may have another of its function objects run above the call.
+bool mayBeCalledDirectlyWhereCalleeIsKept(const Program& program, FunctionID id)
+{
+    if (mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(program, id))
+        return true;
+    FunctionID source = id;
+    while (FunctionID next = program.at(source).derivation.source)
+        source = next;
+    return program.at(source).has(FunctionCapabilities::MakesNoTailCall) && program.at(id).role != FunctionRole::EntryChecks && mayBeCalledDirectlyOrThroughEntrypoint(program, id);
+}
+
 bool mayBeCalledDirectlyOrThroughEntrypoint(const Program& program, FunctionID id)
 {
     const Function& callee = program.at(id);
@@ -456,6 +487,9 @@ bool mayBeCalledDirectlyOrThroughEntrypoint(const Program& program, FunctionID i
 bool canCallWithoutClosure(const Program& program, FunctionID id)
 {
     const Function& callee = program.at(id);
+    // Its frames are named by its function object.
+    if (isAccessor(callee) && recordsCalleeOnlyOnceRenamed(program, id))
+        return false;
     return callee.captures.isEmpty() && !callee.has(FunctionFlags::TakesCallee) && mayBeCalledDirectly(program, id);
 }
 
@@ -1250,6 +1284,7 @@ struct CallArm {
     FunctionID callee;
     ValueID closureCreation;
     bool capturesReceiver { false };
+    bool keepsCalleeInFrame { false };
     LayoutSetID receivers;
     MemberConditions conditions;
 };
@@ -1387,6 +1422,8 @@ struct CallResolver {
             addAccess(value);
         else if (value.opcode == Opcode::Call) {
             content.add(value.callees());
+            // A tail call gives up the frame that would keep the callee, so it is planned another way.
+            content.add(static_cast<uint32_t>(isTailCall(function, site.position) || value.isTailCall));
             if (value.accessSite() && flow.hasResults()) {
                 std::span<const FlowBoundFunctionAtSite> seen = flow.boundFunctionsSeenAt(value.accessSite(), FlowBoundFunctionUseAtSite::Called).predicted();
                 content.add(static_cast<uint32_t>(seen.size()));
@@ -1625,12 +1662,17 @@ struct CallResolver {
         builder.moveToEndOf(branch.taken);
     }
 
-    // The test costs bytes. Code that seldom runs keeps the one call of the value. A name that was changed stays changed, so the call behind a failed test stays as it is.
-    bool paysToTestFunctionNames(const CallSite& site)
+    bool seldomRuns(const CallSite& site)
     {
         context.planAsksAboutPlace = true;
         BlockID block = site.position.block;
-        if (function.at(block).frequency.predicted() != BlockFrequency::Normal || function.runsOnlyBehindFailedTest() || isCold(heatClassOf(context, block)).predicted())
+        return function.at(block).frequency.predicted() != BlockFrequency::Normal || function.runsOnlyBehindFailedTest() || isCold(heatClassOf(context, block)).predicted();
+    }
+
+    // The test costs code size, so rarely run code keeps the single indirect call. A renamed function stays renamed, so the call after a failed test is left as is.
+    bool paysToTestFunctionNames(const CallSite& site)
+    {
+        if (seldomRuns(site))
             return false;
         // What a function of the library is handed is mostly the caller's own function object. Where the body is copied into the caller, that one is called without a test.
         if (isLibraryCode(program, function) && function.at(sameObjectThroughCasts(function, function.at(site.position.value).calleeOperand())).opcode == Opcode::Parameter)
@@ -1678,6 +1720,7 @@ struct CallResolver {
             .isNeverInlined = original.opcode == Opcode::Call && original.isNeverInlined(),
             .isAlwaysInlined = original.opcode == Opcode::Call && original.isAlwaysInlined(),
             .isTailCall = !newTarget && expansion.isTailCall(),
+            .calleeKeptInFrame = arm.keepsCalleeInFrame ? closure : ValueID(),
             .calleeIsPredicted = !isFollowedTo(program, original, arm.closureFunction),
         });
     }
@@ -2018,7 +2061,17 @@ struct CallResolver {
         };
     }
 
-    std::expected<Vector<FunctionID, 4>, CallDeclineReason> chooseDispatchedCallees(const CallSite& site, const CalleeCandidates& candidates, bool (*canEnter)(const Program&, FunctionID))
+    bool passesNumbersInRegisters(FunctionID id) const
+    {
+        auto isNumberInRegister = [&](const DeclaredType& declared) {
+            Representation representation = declaredRepresentationOf(program, declared);
+            return representation == Representation::Int32 || isInt64OrMarker(representation) || isDoubleOrMarker(representation);
+        };
+        const Function& callee = program.at(id);
+        return std::ranges::any_of(callee.results, isNumberInRegister) || std::ranges::any_of(callee.parameters, isNumberInRegister);
+    }
+
+    std::expected<Vector<FunctionID, 4>, CallDeclineReason> chooseDispatchedCallees(const CallSite& site, const CalleeCandidates& candidates, bool (*canEnter)(const Program&, FunctionID), uint64_t maxExpectedCallees = 1)
     {
         if (!candidates.isDispatchedAtOperation())
             return std::unexpected(candidates.hasOneExpectedCallee() ? CallDeclineReason::NeedsTest : CallDeclineReason::UnknownCallee);
@@ -2044,7 +2097,10 @@ struct CallResolver {
         // What exceeds a limit is reported, site by site.
         context.planAsksAboutPlace |= listsEveryCallee || members.size() <= 1;
         // Callees get an arm each or none: arms for some of them would be chosen by id, and the next run would take as many from the rest.
-        if ((!listsEveryCallee && members.size() > 1) || context.exceeds(LimitID::MaxDispatchCases, members.size(), site.position.value))
+        // An indirect call boxes each number it passes, the callee's entry unboxes it, and the same happens for the result. A few more comparisons cost less than that.
+        AOT_THRESHOLD(uint64_t, armFactorWhenNumbersStayInRegisters, 2);
+        bool isWithinWiderLimit = listsEveryCallee && members.size() <= context.limit(LimitID::MaxDispatchCases) * armFactorWhenNumbersStayInRegisters && std::ranges::all_of(members, [&](FunctionID member) { return passesNumbersInRegisters(member); });
+        if ((!listsEveryCallee && members.size() > maxExpectedCallees) || (!isWithinWiderLimit && context.exceeds(LimitID::MaxDispatchCases, members.size(), site.position.value)))
             return std::unexpected(CallDeclineReason::TooManyCallees);
         // The value of a provisional id depends on which thread asked for the function first.
         AOT::sort(members, [&](FunctionID a, FunctionID b) { return context.inputs.derivedFunctions->compare(a, b) < 0; });
@@ -2085,7 +2141,28 @@ struct CallResolver {
         RELEASE_ASSERT(site.opcode == Opcode::Call);
         const Value& call = function.at(site.position.value);
         CalleeCandidates candidates = calleeCandidatesOf(context, call, call.calleeOperand(), site.position.block);
-        // From the first name on that a function object gets where nobody sees, a frame is named by the function object that a call by value has recorded. Until then nobody can tell how a function was entered.
+        // Once a function object gets a name where the compiler cannot see it, a frame is named by the function object that was called. The caller keeps it in its own frame, which a tail call gives up.
+        if (!isTailCall(function, site.position) && !call.isTailCall) {
+            auto members = chooseDispatchedCallees(site, candidates, mayBeCalledDirectlyWhereCalleeIsKept);
+            if (!members)
+                return std::unexpected(members.error());
+            auto arms = members->map<Vector<CallArm, 4>>([&](FunctionID member) {
+                CallArm arm = directCallArm(member, { }, candidates.value);
+                arm.keepsCalleeInFrame = isNamedByCallee(site, candidates.value, member);
+                return arm;
+            });
+            // Reading the captures and keeping the callee takes more bytes than the call of the value.
+            if (std::ranges::any_of(arms, &CallArm::keepsCalleeInFrame) && seldomRuns(site))
+                return std::unexpected(CallDeclineReason::CalleeNeedsClosure);
+            return [this, &site, proof = candidates.proof(), arms = WTF::move(arms), split = createCalleeSplit(site, candidates, members->span())] {
+                expansion.begin(site.position);
+                const Value& original = expansion.original();
+                emitCalleeDispatch(proof, split, OperandIndex::Call::callee, [&](uint32_t armIndex, ValueID narrowed) {
+                    expansion.finishArm(appendCall(arms[armIndex], original.thisValueOperand(), narrowed, original.variadicOperands()));
+                });
+            };
+        }
+        // Until then, how a function was entered is not observable.
         bool calleeEscapes = false;
         bool calleeMayHaveRenamedSibling = false;
         if (std::ranges::any_of(candidates.listed().predicted(), [&](FunctionID member) { return recordsCalleeOnlyOnceRenamed(member); })) {
@@ -2234,6 +2311,16 @@ struct CallResolver {
 
     bool haveFunctionNamesChanged(const CallSite& site) { return hasFailedEarlier(IRBuilder::make(Opcode::AreFunctionNamesUnchanged), site); }
 
+    bool isNamedByCallee(const CallSite& site, ValueID closure, FunctionID callee)
+    {
+        if (!mayBeCalledDirectly(program, callee))
+            return true;
+        if (!recordsCalleeOnlyOnceRenamed(callee))
+            return false;
+        context.planAsksAboutPlace = true;
+        return isAccessor(program.at(callee)) || flow.closuresMayBeNamedOutOfSight(callee) || callsOwnClosureThatEscapes(site, closure, callee);
+    }
+
     bool callsOwnClosureThatEscapes(const CallSite& site, ValueID closure, FunctionID callee)
     {
         ValueID closureCreation = findClosureCreation(function, closure, callee);
@@ -2252,11 +2339,22 @@ struct CallResolver {
         FunctionID only = typeOf(closure).singleFunction();
         if (!only || typeOf(closure).mayBeUndefinedOrNull() || !mayBeCalledDirectlyOrThroughEntrypoint(program, only) || context.limit(LimitID::MaxDispatchCases) < 1 || isTailCall(function, site.position))
             return nullptr;
-        // A frame without a record shows the name that was last given to a function object of the function, unless the call says that it enters the caller's own.
-        bool callsOwnFunctionObject = !mayBeCalledDirectly(program, only) || (recordsCalleeOnlyOnceRenamed(only) && flow.closuresMayBeNamedOutOfSight(only));
-        if (callsOwnFunctionObject && (call.isTailCall || call.calledBuiltin() || !isHandedToNobodyAround(site, findClosureCreation(function, closure, only))))
-            return nullptr;
-        if (recordsCalleeOnlyOnceRenamed(only) && (haveFunctionNamesChanged(site) || callsOwnClosureThatEscapes(site, closure, only)))
+        // A frame without a record shows the last name given to any function object of the function, unless the call records that it enters the caller's own, or keeps the function object where the caller's frame shows it.
+        bool callsOwnFunctionObject = !mayBeCalledDirectly(program, only) || (recordsCalleeOnlyOnceRenamed(only) && (isAccessor(program.at(only)) || flow.closuresMayBeNamedOutOfSight(only)));
+        bool keepsCalleeInFrame = false;
+        if (callsOwnFunctionObject && (call.isTailCall || call.calledBuiltin() || !isHandedToNobodyAround(site, findClosureCreation(function, closure, only)))) {
+            if (call.isTailCall || !mayBeCalledDirectlyWhereCalleeIsKept(program, only))
+                return nullptr;
+            callsOwnFunctionObject = false;
+            keepsCalleeInFrame = true;
+        }
+        if (!callsOwnFunctionObject && !keepsCalleeInFrame && recordsCalleeOnlyOnceRenamed(only) && callsOwnClosureThatEscapes(site, closure, only)) {
+            if (call.isTailCall)
+                return nullptr;
+            keepsCalleeInFrame = true;
+        }
+        // A small accessor is inlined, and nothing is left of the call.
+        if (keepsCalleeInFrame && !isAccessor(program.at(only)) && seldomRuns(site))
             return nullptr;
         // appendCall() puts no call where the receiver cannot be what the callee takes.
         if (cannotBeThisOf(program.at(only), call.thisValueOperand()))
@@ -2265,7 +2363,7 @@ struct CallResolver {
         if (TypeTable::isProvisional(result) || result == TypeTable::never || !program.at(result).isSubsetOf(typeOf(site.position.value), program))
             return nullptr;
 
-        return [this, &site, only, closure, callsOwnFunctionObject, closureCreation = findClosureCreation(function, closure, only)] {
+        return [this, &site, only, closure, callsOwnFunctionObject, keepsCalleeInFrame, closureCreation = findClosureCreation(function, closure, only)] {
             const Value original = function.at(site.position.value);
             const Function& callee = program.at(only);
             builder.setOrigin(original.origin());
@@ -2291,6 +2389,7 @@ struct CallResolver {
                 .isAlwaysInlined = original.isAlwaysInlined(),
                 .isTailCall = !!original.isTailCall,
                 .callsOwnFunctionObject = callsOwnFunctionObject,
+                .calleeKeptInFrame = keepsCalleeInFrame ? closure : ValueID(),
                 .calleeIsPredicted = !isFollowedTo(program, original, only),
             }));
             RELEASE_ASSERT(typeOf(result).isSubsetOf(program.at(original.type), program) && !typeOf(result).isNever());
@@ -2365,7 +2464,8 @@ struct CallResolver {
             return declined;
 
         CalleeCandidates candidates = calleeCandidatesOf(program, function, construct, construct.operand(constructorOperandIndexOf(site.opcode)));
-        auto members = chooseDispatchedCallees(site, candidates, canConstructDirectly);
+        // The class of a new object decides every access that follows, so each constructor that flow saw gets an arm.
+        auto members = chooseDispatchedCallees(site, candidates, canConstructDirectly, context.limit(LimitID::MaxDispatchCases));
         if (!members)
             return std::unexpected(members.error());
 
@@ -3280,11 +3380,22 @@ static bool canRecreateMethodClosure(const Program& program, const PropertyAcces
     return !method.has(FunctionFlags::TakesCallee) && method.captures.size() == (plan.capturesReceiver ? 1u : 0u);
 }
 
+// The caller's frame, which keeps the function object it calls, exists for as long as the callee runs.
+static bool keepsFrameOfCaller(TestSiteReporter& reporter)
+{
+    return !reporter.useValue().isTailCall && !isTailCall(reporter.function(), ValueSite { reporter.point().block, reporter.point().index, reporter.use() });
+}
+
+static bool mayBeCalledDirectlyAt(TestSiteReporter& reporter, FunctionID function)
+{
+    return keepsFrameOfCaller(reporter) ? mayBeCalledDirectlyWhereCalleeIsKept(reporter.program(), function) : mayBeCalledDirectly(reporter.program(), function);
+}
+
 static void reportClosureTest(TestSiteReporter& reporter, ValueID callee, FunctionID function)
 {
     bool isCall = reporter.useValue().opcode == Opcode::Call;
     Vector<Value, 2> tests { makeClosureTest(callee, function) };
-    if (isCall && recordsCalleeOnlyOnceRenamed(reporter.program(), function) && reporter.context().inputs.flow.closuresMayBeNamedOutOfSight(function))
+    if (isCall && !keepsFrameOfCaller(reporter) && recordsCalleeOnlyOnceRenamed(reporter.program(), function) && reporter.context().inputs.flow.closuresMayBeNamedOutOfSight(function))
         tests.append(IRBuilder::make(Opcode::AreFunctionNamesUnchanged));
     reporter.report(tests.span(), isCall ? effectsOfDirectCall(reporter.context(), function) : reporter.analyses().effectsOf(reporter.use()).normal);
 }
@@ -3324,7 +3435,7 @@ static bool reportMemberCallTests(TestSiteReporter& reporter, const ValueSite& s
     const PropertyAccessPlan& plan = use->site.plan;
     if ((plan.requiredProofs | monotoneObjectProofs) != monotoneObjectProofs) {
         refused.willReport();
-        if (!mayBeCalledDirectly(context.program, plan.member.method))
+        if (!mayBeCalledDirectlyAt(reporter, plan.member.method))
             return false;
         // What may come back says nothing about the time of the read, so the function that was read is tested itself: a closure kept in a field whose slot may be emptied and filled again.
         reportClosureTest(reporter, call.calleeOperand(), plan.member.method);
@@ -3476,7 +3587,7 @@ static void reportCalleeTest(TestSiteReporter& reporter)
     if (!candidates.hasOneExpectedCallee())
         return;
     FunctionID member = candidates.expected().predicted()[0];
-    if (call.opcode != Opcode::Call ? canConstructDirectly(program, member) : mayBeCalledDirectly(program, member))
+    if (call.opcode != Opcode::Call ? canConstructDirectly(program, member) : mayBeCalledDirectlyAt(reporter, member))
         reportClosureTest(reporter, callee, member);
 }
 
@@ -3531,7 +3642,11 @@ static void reportInstanceOfTests(TestSiteReporter& reporter)
 
 void reportCallTests(TestSiteReporter& reporter)
 {
-    reporter.forEachCandidate([&](const Value& value) {
+    static constexpr OpcodeSet operations {
+        Opcode::Call, Opcode::Construct, Opcode::SuperConstruct, Opcode::PropGet, Opcode::PropSet, Opcode::SuperGet, Opcode::SuperSet,
+        Opcode::CallBuiltin, Opcode::GetConstructPrototype, Opcode::InstanceOf, Opcode::NewObject,
+    };
+    reporter.forEachCandidate(operations, [&](const Value& value) {
         ValueSite site { reporter.point().block, reporter.point().index, reporter.use() };
         switch (value.opcode) {
         case Opcode::Call:
@@ -3631,6 +3746,9 @@ void rewriteTestedCall(TestSiteRewriter& rewriter)
         bool isNeverInlined = call.isNeverInlined();
         bool isTailCall = call.isTailCall;
         bool calleeIsPredicted = !isFollowedTo(context.program, call, function);
+        // reportClosureTest() only checks the names where the caller's frame is given up.
+        bool isNamedByCallee = !mayBeCalledDirectly(context.program, function) || (recordsCalleeOnlyOnceRenamed(context.program, function) && context.inputs.flow.closuresMayBeNamedOutOfSight(function));
+        bool testsNames = std::ranges::any_of(rewriter.tests(), [](const Value& test) { return test.opcode == Opcode::AreFunctionNamesUnchanged; });
         Vector<ValueID, 8> arguments(call.variadicOperands());
 
         Vector<ValueID, 8> captures;
@@ -3648,6 +3766,7 @@ void rewriteTestedCall(TestSiteRewriter& rewriter)
             .calledBuiltin = calledBuiltin,
             .isNeverInlined = isNeverInlined,
             .isTailCall = isTailCall,
+            .calleeKeptInFrame = testsCallee && isNamedByCallee && !testsNames ? callee : ValueID(),
             .calleeIsPredicted = calleeIsPredicted,
         });
         break;

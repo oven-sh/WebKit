@@ -58,8 +58,6 @@ struct CompiledUnwindResult {
     // False where compiled code has not called the frame that the walk began at.
     bool hasLeftRun { false };
     CompiledHandler handler;
-    // Of the frame of the handler.
-    Instance* instance { nullptr };
     ReturnSiteInRun siteOfHandler;
     // Of a run that has no handler.
     CompiledFrameIterator::RunEnd runEnd;
@@ -91,31 +89,9 @@ bool isCaughtAboveCleanup(VM&, const ReturnSiteInRun& siteOfCleanup);
 // Whether the trace was taken where native code now stands. True where compiled code has not called it.
 bool beginsInTopCompiledFrame(VM&, const ReturnAddressTrace&);
 
-inline constexpr ptrdiff_t offsetOfDivertedReturnInLoopPollPage = 8;
-CallFrame* findReturnIntoFunctionWithoutHandlers(VM&, CallFrame* operationFrame);
-void throwOutOfMemoryErrorAtReturnOf(Instance&, CallFrame* frameThatReturns);
-void throwOwedOutOfMemoryErrorAtReturnOfOperation(Instance&, CallerFrameAndPC* frameRecordOfOperation);
-
-class ThrowsOwedOutOfMemoryErrorAtReturn {
-    WTF_FORBID_HEAP_ALLOCATION;
-    WTF_MAKE_NONCOPYABLE(ThrowsOwedOutOfMemoryErrorAtReturn);
-public:
-    ALWAYS_INLINE ThrowsOwedOutOfMemoryErrorAtReturn(Instance* instance, CallerFrameAndPC* frameRecordOfOperation)
-        : m_instance(*instance)
-        , m_frameRecordOfOperation(frameRecordOfOperation)
-    {
-    }
-
-    ALWAYS_INLINE ~ThrowsOwedOutOfMemoryErrorAtReturn()
-    {
-        if (m_instance.vm->traps().needsOutOfMemoryError()) [[unlikely]]
-            throwOwedOutOfMemoryErrorAtReturnOfOperation(m_instance, m_frameRecordOfOperation);
-    }
-
-private:
-    Instance& m_instance;
-    CallerFrameAndPC* m_frameRecordOfOperation;
-};
+// Of the innermost call in compiled code on the stack. Native and interpreter frames may lie above it. Null if no compiled code is running.
+// Only where a collection may run: vm.topCallFrame is stale in an operation that records no frame.
+const void* returnAddressOfInnermostCompiledCall(VM&);
 
 } // namespace AOT
 } // namespace JSC

@@ -38,6 +38,7 @@ public:
     void runReadStage();
     void runPlacementStage();
     void runRepresentationStage();
+    void checkNumberOfFunctions();
 
     PassOutcome runProgramPass(PassID);
     PassOutcome verify(IRForm);

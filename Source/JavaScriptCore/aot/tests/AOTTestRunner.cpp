@@ -18,11 +18,16 @@
 #include "AOTTestSubcommands.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
+#include "JSCConfig.h"
+#include "Options.h"
 #include <algorithm>
 #include <wtf/FileSystem.h>
 #include <wtf/NumberOfCores.h>
+#include <wtf/Scope.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
+#include <wtf/text/StringToIntegerConversion.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -297,6 +302,14 @@ Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs, const
         if (std::optional<String> sentence = applyOptionWord(options, word))
             failures.append(TestFailure { 1, WTF::move(*sentence) });
     }
+    OptionsStorage optionsOfProcess = g_jscConfig.options;
+    auto restoreOptionsOfProcess = makeScopeExit([&] {
+        g_jscConfig.options = optionsOfProcess;
+    });
+    for (const OptionWord& option : file.jscOptions) {
+        if (!Options::setOption(byteCast<char>(option.word.utf8().span().subspan(2).data()), /* verify = */ false))
+            failures.append(TestFailure { option.line, makeString("unknown JSC option "_s, option.word) });
+    }
     if (!failures.isEmpty())
         return failures;
 
@@ -384,16 +397,42 @@ static size_t startOfLastLines(StringView text, size_t lineCount)
     return start;
 }
 
-static FileResult runOneFileInChildProcess(const ChildProcessLauncher& launcher, const String& path, const TestRunRequest& request)
+static Vector<String> childArguments(std::span<const String> paths, const TestRunRequest& request)
 {
-    Vector<String, 3> arguments { String(runSubcommandName), path };
+    Vector<String> arguments { String(runSubcommandName), String(singleProcessRunFlag) };
+    arguments.append(paths);
     if (request.showsOutput)
         arguments.append(String(showOutputFlag));
     for (const String& word : request.variant.optionWords)
         arguments.append(makeString(optionFlag, '=', word));
     if (request.variant.onlyDiagnostic)
         arguments.append(makeString(onlyDiagnosticFlag, '=', nameOf(*request.variant.onlyDiagnostic)));
-    ChildProcessResult result = launcher.run(arguments.span());
+    return arguments;
+}
+
+struct BatchResult {
+    TestRunSummary summary;
+    String report;
+};
+
+static void count(TestRunSummary& summary, FileOutcome outcome)
+{
+    switch (outcome) {
+    case FileOutcome::Passed:
+        ++summary.passed;
+        break;
+    case FileOutcome::Failed:
+        ++summary.failed;
+        break;
+    case FileOutcome::Todo:
+        ++summary.todo;
+        break;
+    }
+}
+
+static FileResult runOneFileInChildProcess(const ChildProcessLauncher& launcher, const String& path, const TestRunRequest& request)
+{
+    ChildProcessResult result = launcher.run(childArguments(singleElementSpan(path), request).span());
 
     StringView output = result.output;
     if (result.exitedWith(exitCodeForFailure))
@@ -406,39 +445,86 @@ static FileResult runOneFileInChildProcess(const ChildProcessLauncher& launcher,
     return { FileOutcome::Failed, makeString(lastLines, lineEnd, "FAIL "_s, path, ":1: "_s, result.description(), '\n') };
 }
 
+// "<passed> passed, <failed> failed, <todo> todo": the last line of a run.
+static std::optional<TestRunSummary> parseSummaryLine(StringView line)
+{
+    TestRunSummary summary;
+    unsigned* counts[] { &summary.passed, &summary.failed, &summary.todo };
+    ASCIILiteral words[] { " passed"_s, " failed"_s, " todo"_s };
+    unsigned index = 0;
+    for (StringView part : line.trim(isASCIIWhitespace<char16_t>).splitAllowingEmptyEntries(',')) {
+        part = part.trim(isASCIIWhitespace<char16_t>);
+        if (index == std::size(words) || !part.endsWith(words[index]))
+            return std::nullopt;
+        std::optional<unsigned> number = parseInteger<unsigned>(part.left(part.length() - words[index].length()));
+        if (!number)
+            return std::nullopt;
+        *counts[index++] = *number;
+    }
+    return index == std::size(words) ? std::optional(summary) : std::nullopt;
+}
+
+// Starting a process costs more than most tests, so a child runs several files. A child that crashes or hangs says nothing about
+// the files it did not reach: each file of its batch then runs in a process of its own.
+static constexpr unsigned filesPerChildProcess = 16;
+
+static BatchResult runFilesInChildProcesses(const ChildProcessLauncher& launcher, std::span<const String> paths, const TestRunRequest& request)
+{
+    if (paths.size() > 1) {
+        ChildProcessResult result = launcher.run(childArguments(paths, request).span());
+        if (result.exitedWith(exitCodeForSuccess) || result.exitedWith(exitCodeForFailure)) {
+            StringView output = result.output;
+            size_t summaryStart = startOfLastLines(output, 1);
+            std::optional<TestRunSummary> summary = parseSummaryLine(output.substring(summaryStart));
+            if (summary && summary->passed + summary->failed + summary->todo == paths.size())
+                return { *summary, output.left(summaryStart).toString() };
+        }
+    }
+
+    BatchResult batch;
+    StringBuilder report;
+    for (const String& path : paths) {
+        FileResult result = runOneFileInChildProcess(launcher, path, request);
+        count(batch.summary, result.outcome);
+        report.append(result.report);
+    }
+    batch.report = report.toString();
+    return batch;
+}
+
 TestRunSummary runTestFiles(const TestRunRequest& request, PrintStream& out)
 {
     Vector<String> files = collectTestFiles(request);
-    Vector<FileResult> results(files.size());
-    const ChildProcessLauncher* launcher = files.size() > 1 ? request.launcher : nullptr;
-
-    ParallelLoops loops(std::clamp<unsigned>(files.size(), 1, request.jobs ? request.jobs : WTF::numberOfProcessorCores()));
-    bool printsPaths = request.jobs == 1;
-    forEachIndexInParallel(loops, files.size(), [&](unsigned index) {
-        if (printsPaths) {
-            out.println(files[index]);
+    TestRunSummary summary;
+    if (!request.launcher || files.size() <= 1) {
+        for (const String& file : files) {
+            FileResult result = runOneFileInThisProcess(file, request);
+            count(summary, result.outcome);
+            out.print(result.report);
             out.flush();
         }
-        if (launcher)
-            results[index] = runOneFileInChildProcess(*launcher, files[index], request);
-        else
-            results[index] = runOneFileInThisProcess(files[index], request);
+        return summary;
+    }
+
+    bool printsPaths = request.jobs == 1;
+    unsigned batchSize = printsPaths ? 1 : filesPerChildProcess;
+    unsigned batchCount = (files.size() + batchSize - 1) / batchSize;
+    Vector<BatchResult> results(batchCount);
+    ParallelLoops loops(std::clamp<unsigned>(batchCount, 1, request.jobs ? request.jobs : WTF::numberOfProcessorCores()));
+    forEachIndexInParallel(loops, batchCount, [&](unsigned index) {
+        std::span<const String> batch = files.span().subspan(index * batchSize, std::min<size_t>(batchSize, files.size() - index * batchSize));
+        if (printsPaths) {
+            out.println(batch[0]);
+            out.flush();
+        }
+        results[index] = runFilesInChildProcesses(*request.launcher, batch, request);
     });
 
-    TestRunSummary summary;
-    for (const FileResult& result : results) {
+    for (const BatchResult& result : results) {
         out.print(result.report);
-        switch (result.outcome) {
-        case FileOutcome::Passed:
-            ++summary.passed;
-            break;
-        case FileOutcome::Failed:
-            ++summary.failed;
-            break;
-        case FileOutcome::Todo:
-            ++summary.todo;
-            break;
-        }
+        summary.passed += result.summary.passed;
+        summary.failed += result.summary.failed;
+        summary.todo += result.summary.todo;
     }
     return summary;
 }

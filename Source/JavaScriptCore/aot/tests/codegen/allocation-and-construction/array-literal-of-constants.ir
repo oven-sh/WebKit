@@ -81,7 +81,7 @@ function f1 name="primes" module=m0 flags=[IsChecked, HasExplicitName] thisType=
 # CHECK-NEXT: Successors: #[[fill]], Rare:#[[slow]]
 # CHECK-NEXT: BB#[[fill]]:
 # CHECK: Store(b@[[header]], b@[[list]], ControlDependent|Writes:JSCell_header,
-# CHECK-NEXT: Store(b@[[storage]], b@[[list]], offset = 8, ControlDependent|Writes:JSObject_butterfly,
+# CHECK-NEXT: Store(b@[[storage]], b@[[list]], offset = 8, ControlDependent|Writes:JSArray_butterfly,
 # CHECK: Return(
 # CHECK: BB#[[slow]]:
 # CHECK: Patchpoint($4(b@{{*}}):ColdAny, resultConstraints = Register({{*}}), {{*}}:Data)

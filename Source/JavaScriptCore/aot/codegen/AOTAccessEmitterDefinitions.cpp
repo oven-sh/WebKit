@@ -9,13 +9,16 @@
 #if ENABLE(AOT)
 
 #include "AOTBarrierEmitter.h"
+#include "AOTBuiltinIDs.h"
 #include "AOTCellAllocationEmitter.h"
+#include "AOTChooseCallingConventions.h"
 #include "AOTCodeSizeEstimate.h"
 #include "AOTConstantEmitter.h"
 #include "AOTDerivedFunctions.h"
 #include "AOTFunctionKinds.h"
 #include "AOTObjectCreationEmitter.h"
 #include "AOTObjectWords.h"
+#include "AOTPendingStars.h"
 #include "AOTPlacement.h"
 #include "AOTPropertyAccessMembers.h"
 #include "AOTPropertyCachesFront.h"
@@ -104,7 +107,10 @@ void AccessEmitter::generateTryReExportFields(const ValueContext& value)
         defineTest(value, boolean(false));
         return;
     }
-    uint32_t rule = closureCaptureSlotOf(m_program, getter, value->keyIsFirstCapture() ? 0 : 1) | static_cast<uint32_t>(value->reusesDescriptors()) << 1;
+    unsigned keyCapture = value->keyIsFirstCapture() ? 0 : 1;
+    uint32_t rule = closureCaptureSlotOf(m_program, getter, keyCapture) | (value->reusesDescriptors() ? starRuleReusesDescriptors : 0);
+    if (declaredRepresentationOf(m_program, getter.captures[keyCapture]) == Representation::LiteralString && !build().isSabotaged(Sabotage::KeysOfStarsAreHeldAsStrings))
+        rule |= starRuleKeyIsLiteralStringWord;
     defineTest(value, callOperation<Condition>(value, RuntimeOperation::TryReExportFields, { target, source, word32(static_cast<int32_t>(entrypoint.index())), word32(static_cast<int32_t>(rule)) }));
 }
 
@@ -156,7 +162,8 @@ void AccessEmitter::generateSetLiteralPrototype(const ValueContext& value)
     m_out.jump(continuation);
 
     m_out.appendTo(isUnknown);
-    callVoidOperation(value, RuntimeOperation::SetLiteralPrototype, { object, prototype, word32(value->refusesOtherValues()) }, { .isOnRarePath = true });
+    // What refuses a value stands for a call of Object.create, which a trace of the refusal names.
+    callVoidOperation(value, RuntimeOperation::SetLiteralPrototype, { object, prototype, word32(value->refusesOtherValues()) }, { .calledBuiltin = value->refusesOtherValues() ? Builtins::ObjectCreate : BuiltinID(), .isOnRarePath = true });
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -260,7 +267,7 @@ std::optional<CellPointer> AccessEmitter::tryAllocateCopyOfFields(const ValueCon
     const PlannedLayout& planned = m_placement.layout(layout);
     const ShapeTable& shapes = m_placement.shapes();
     ShapeRange shapesOfLayout = shapes.shapesOf(layout);
-    if (planned.storage != LayoutStorage::CompiledObject || planned.isEscapedOffset || shapesOfLayout.count != 1 || shapes.shape(shapesOfLayout.first).keysAreNeverEnumerated)
+    if (!planned.holdsCompiledObjects() || planned.isEscapedOffset || shapesOfLayout.count != 1 || shapes.shape(shapesOfLayout.first).keysAreNeverEnumerated)
         return std::nullopt;
     if (m_placement.allocation(allocation->allocation()).layout != layout || m_placement.freeCellOffset(layout) || m_placement.slots().extensionWord(layout).hasStorage())
         return std::nullopt;
@@ -313,7 +320,7 @@ void AccessEmitter::generateTryCopyFields(const ValueContext& value)
     const PlannedLayout& planned = m_placement.layout(layout);
     const ShapeTable& shapes = m_placement.shapes();
     ShapeRange shapesOfLayout = shapes.shapesOf(layout);
-    if (planned.storage != LayoutStorage::CompiledObject || planned.isEscapedOffset || shapesOfLayout.isEmpty() || shapes.shape(shapesOfLayout.first).keysAreNeverEnumerated) {
+    if (!planned.holdsCompiledObjects() || planned.isEscapedOffset || shapesOfLayout.isEmpty() || shapes.shape(shapesOfLayout.first).keysAreNeverEnumerated) {
         defineTest(value, boolean(false));
         return;
     }

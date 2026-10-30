@@ -65,7 +65,7 @@ operation HasByKeyParts (collection: Object/inspects+readsContents, parts...: An
 
 family ResolvedCall Selected..Placed
 operation ResolveCallTarget (callee: Any/inspects, argumentCount: UInt32) -> natural(CodeAddress) ; none
-operation CallResolved (callee: Any/calls, target: CodeAddress/inspects, thisValue?: Any/retains, arguments...: Any/retains, calleeName?: String, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; replaces = Call ; runsBeforeCallee = true
+operation CallResolved (callee: Any/calls, target: CodeAddress/inspects, thisValue?: Any/retains, arguments...: Any/retains, calleeName?: String, calledBuiltin?: Builtin, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; replaces = Call ; runsBeforeCallee = true
 operation RegExpMatchLiteral (overload: BuiltinOverload, string: String/inspects, regExp?: Object/inspects, guard?: Guard/inspects, pattern: String, regExpFlags: RegExpFlags, matchForm: RegExpMatchForm, from Placed regExpRecord?: RegExpRecord) -> declared(overload) ; CreatesString reads(RegExpState) writes(RegExpState) ; relies = Pristine ; guarded = regExp ; replaces = CallBuiltin
 
 family InlineBuiltin Selected..Placed ; replaces = CallBuiltin

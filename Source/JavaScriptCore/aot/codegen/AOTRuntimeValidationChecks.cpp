@@ -12,6 +12,7 @@
 #include "AOTBuiltinPristine.h"
 #include "AOTBuiltinTable.h"
 #include "AOTCellFormat.h"
+#include "AOTCheckedFrameCells.h"
 #include "AOTClosureTestEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
@@ -61,8 +62,12 @@ Condition RuntimeValidationEmitter::hasType(Operand operand, const TypeTestPlan&
 
 void RuntimeValidationEmitter::checkValue(ValueID id, Operand operand)
 {
-    if (generator().isValidatedWhereLookedAt(id) || operand.representation == Representation::Void || operand.representation == Representation::LiteralString)
+    if (generator().isValidatedWhereLookedAt(id) || operand.representation == Representation::Void)
         return;
+    if (operand.is<LiteralStringWord>()) {
+        checkLiteralStringWord(id, operand.as<LiteralStringWord>());
+        return;
+    }
     const Type& type = typeOf(id);
     if (type.isNever() || type.opaque)
         return;
@@ -70,11 +75,25 @@ void RuntimeValidationEmitter::checkValue(ValueID id, Operand operand)
         // A deleted member leaves its variable empty, and a read may stand in front of the test that the member is unchanged.
         const Value& definition = m_function.at(id);
         bool readsMemberKeptInVariable = definition.opcode == Opcode::GetModuleVariable && m_program.at(definition.variable()).owner;
-        checkHasType(id, operand, readsMemberKeptInVariable ? type.withPrimitives(Primitive::Absent) : type, ValidationFailureKind::ValueType);
+        // So is the word of a built-in that the realm lacks.
+        bool mayBeEmpty = readsMemberKeptInVariable || definition.opcode == Opcode::Builtin;
+        checkHasType(id, operand, mayBeEmpty ? type.withPrimitives(Primitive::Absent) : type, ValidationFailureKind::ValueType);
         return;
     }
     if (operand.is<CellPointer>())
         checkEnvironmentShape(operand.as<CellPointer>(), type.environment, id);
+}
+
+// Comparisons, switches and type tests compare words, so a string that has a literal number is never held as its cell.
+void RuntimeValidationEmitter::checkLiteralStringWord(ValueID id, LiteralStringWord word)
+{
+    ConversionEmitter& conversions = emitter<ConversionEmitter>();
+    Condition isShortest = either<Condition>(logicalNot(conversions.isStringCell(word)), [&] {
+        return boolean(true);
+    }, [&] {
+        return equal(conversions.toLiteralString(CellPointer(word.value())), word);
+    });
+    failUnless(isShortest, ValidationFailureKind::ValueType, { }, id);
 }
 
 // A cell of a frame may have no header. In a validating build only environments live in frames (staysOnHeapForValidation()), so the header of an object or a closure is there to be read.
@@ -179,7 +198,7 @@ void RuntimeValidationEmitter::checkShapeBehindGuard(const OperationContext& con
     const SlotPlan& slots = m_placement.slots();
     Vector<uint32_t, 8> shapes;
     for (LayoutID layout : layoutsProvenBy(m_program, m_function, *fact)) {
-        if (slots.storageOf(layout) != LayoutStorage::CompiledObject && m_program.at(layout).flow.allocation != AllocationState::NeverAllocated)
+        if (!slots.holdsCompiledObjects(layout) && m_program.at(layout).flow.allocation != AllocationState::NeverAllocated)
             return;
         ShapeRange range = m_placement.shapes().shapesOf(layout);
         for (uint32_t shape = range.first; shape < range.end(); ++shape)
@@ -202,7 +221,7 @@ void RuntimeValidationEmitter::checkReceiverOfSlotAccess(const OperationContext&
         return;
     const SlotPlan& slots = m_placement.slots();
     bool hasOnlyCompiledObjects = std::ranges::all_of(m_program.at(access.receivers()).completeMembers(), [&](LayoutID member) {
-        return slots.storageOf(member) == LayoutStorage::CompiledObject || m_program.at(member).flow.allocation == AllocationState::NeverAllocated;
+        return slots.holdsCompiledObjects(member) || m_program.at(member).flow.allocation == AllocationState::NeverAllocated;
     });
     std::span<const uint32_t> shapes = m_placement.shapes().memberShapes(access.receivers());
     if (!hasOnlyCompiledObjects || shapes.empty())
@@ -352,7 +371,7 @@ void RuntimeValidationEmitter::generateValidateSameValue(const ValueContext& val
         return;
     // A view of a buffer that can be resized has a Structure of its own, which start-up does not mark: the test says no of a view that is pristine.
     const Value& keptOperation = m_function.at(kept);
-    if (keptOperation.opcode == Opcode::IsPristine && m_builtins.typedArrayTypeOf(keptOperation.builtinClass()) != NotTypedArray)
+    if (keptOperation.opcode == Opcode::IsPristine && isTypedArrayTypeIncludingDataView(m_builtins.at(keptOperation.builtinClass()).type))
         return;
     // The test for storage that a store may write says no while another thread holds the lock of the cell. Code relies on its yes alone.
     if (keptOperation.opcode == Opcode::HasArrayStorage && keptOperation.isWritable() && hasArrayStorageForm(keptOperation.arrayStorage()) && get(replacement).is<Condition>()) {
@@ -370,11 +389,17 @@ void RuntimeValidationEmitter::generateValidateSameValue(const ValueContext& val
     ValidationFailureKind kind = provesOf(m_function.at(kept).opcode) == Proof::None ? ValidationFailureKind::ReadsDiffer : ValidationFailureKind::GuardNoLongerHolds;
 
     LBasicBlock differ = newBlock();
+    LBasicBlock differAsLiteralStrings = newBlock();
     LBasicBlock areNumbers = newBlock();
     LBasicBlock continuation = newBlock();
     m_out.branch(m_out.equal(keptValue.value(), replacingValue.value()), normalEdge(continuation), rareEdge(differ));
 
+    // A string converted to LiteralString and back is the cell of the literal, which may not be the cell it started as.
     m_out.appendTo(differ);
+    const Type& anything = m_program.at(TypeTable::anything);
+    m_out.branch(equal(conversions.toLiteralString(keptValue, anything), conversions.toLiteralString(replacingValue, anything)).value(), normalEdge(continuation), rareEdge(differAsLiteralStrings));
+
+    m_out.appendTo(differAsLiteralStrings);
     Condition keptIsNumber = hasType(keptValue, isNumber);
     failUnless(logicalAnd(keptIsNumber, hasType(replacingValue, isNumber)), kind, keptValue, value.id());
     m_out.jump(areNumbers);
@@ -422,7 +447,7 @@ static Type kindsRejectedDespiteWidening(const Type& listed, const BuiltinTable&
 void RuntimeValidationEmitter::generateValidateCallee(const ValueContext& value)
 {
     ValueID callee = value->calleeOperand();
-    if (!hasTestableBits(callee))
+    if (!hasTestableBits(callee) || m_function.at(callee).opcode == Opcode::Builtin)
         return;
 
     Operand operand = get(callee);
@@ -527,14 +552,28 @@ void RuntimeValidationEmitter::checkIsNotReleased(const OperationContext& contex
     failUnless(notEqual(freeCell, environment), ValidationFailureKind::ValueType, { }, context.valueID());
 }
 
-void RuntimeValidationEmitter::checkIsNotFrameCell(const OperationContext& context, Operand operand, std::optional<Operand> retainer)
+void RuntimeValidationEmitter::checkIsNotFrameCell(const OperationContext& context, Operand operand, std::optional<Operand> retainer, FrameCellFilter asked)
 {
     if (!mayHoldPointer(operand))
         return;
     Condition escapes = isInStack(Pointer(operand.value));
     if (retainer && mayHoldPointer(*retainer))
         escapes = logicalAnd(escapes, logicalNot(isInStack(Pointer(retainer->value))));
-    failUnless(logicalNot(escapes), ValidationFailureKind::FrameCellEscaped, { }, context.valueID());
+    if (asked == FrameCellFilter::All) {
+        failUnless(logicalNot(escapes), ValidationFailureKind::FrameCellEscaped, { }, context.valueID());
+        return;
+    }
+
+    // A value of such a type that lives in a frame is a cell with a header.
+    LBasicBlock liesInFrame = newBlock();
+    LBasicBlock continuation = newBlock();
+    m_out.branch(escapes.value(), rareEdge(liesInFrame), normalEdge(continuation));
+    m_out.appendTo(liesInFrame);
+    Word32 type(m_out.load8ZeroExt32(m_out.address(m_heaps.JSCell_header, operand.value, JSCell::typeInfoTypeOffset())));
+    Condition isArray = equal(type, word32(ArrayType));
+    failUnless(asked == FrameCellFilter::Arrays ? logicalNot(isArray) : isArray, ValidationFailureKind::FrameCellEscaped, { }, context.valueID());
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
 }
 
 bool RuntimeValidationEmitter::isSuspensionPoint(ValueID id)
@@ -583,6 +622,9 @@ void RuntimeValidationEmitter::poisonFrameCells(ProgramPoint point)
             poisonFields(cell, layout, m_program.at(layout).isEnvironment() ? AbstractHeap::EnvironmentFields : AbstractHeap::ObjectFields);
             continue;
         }
+        // A tail call takes borrowed values with it.
+        if (value.isLent())
+            continue;
         switch (value.closureForm()) {
         case ClosureForm::Full:
             storeField(cell, m_heaps.AOTClosure_entry, integer(-1));
@@ -606,7 +648,7 @@ void RuntimeValidationEmitter::poisonFrameArray(CellPointer array)
     LValue state = m_out.load8ZeroExt32(m_out.address(m_heaps.collectorState, array.value(), JSCell::cellStateOffset()));
     m_out.branch(m_out.equal(state, m_out.constInt32(frameCellState)), normalEdge(isInFrame), normalEdge(continuation));
     m_out.appendTo(isInFrame);
-    m_out.storePtr(m_out.constIntPtr(-1), array.value(), m_heaps.JSObject_butterfly);
+    m_out.storePtr(m_out.constIntPtr(-1), array.value(), m_heaps.JSArray_butterfly);
     m_out.jump(continuation);
     m_out.appendTo(continuation);
 }
@@ -633,7 +675,9 @@ Condition RuntimeValidationEmitter::isInStack(Pointer pointer)
 {
     Pointer top(m_out.loadPtr(m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), vm().value(), VM::topEntryFrameOffset())));
     Condition isAboveStackPointer = aboveOrEqual(pointer, stackPointer());
-    return logicalAnd(isAboveStackPointer, below(pointer, top));
+    // AOTCheckedFrameCells.h
+    Condition isInRangeOfFrameCells(m_out.equal(m_out.lShr(pointer.value(), m_out.constInt32(CheckedFrameCells::bitsOfOffsetInRange)), m_out.constInt64(CheckedFrameCells::startOfRange >> CheckedFrameCells::bitsOfOffsetInRange)));
+    return logicalOr(isInRangeOfFrameCells, logicalAnd(isAboveStackPointer, below(pointer, top)));
 }
 
 Pointer RuntimeValidationEmitter::stackPointer()

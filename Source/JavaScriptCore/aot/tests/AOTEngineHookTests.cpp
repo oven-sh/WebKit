@@ -15,6 +15,8 @@
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTProgramIdentifiers.h"
+#include "AOTPropertyCaches.h"
+#include "AOTPropertyCachesStringKeys.h"
 #include "AOTRealmTestSupport.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTRuntimeTable.h"
@@ -418,6 +420,18 @@ static void testOnlyRealmWithModuleHostHasInstance(LoadedProgram& program)
     AOT_TEST_CHECK(vm.aotState().instances.size() == 1);
 }
 
+static void testCachesMadeAtFirstUseLieInPagesOfInstance(LoadedProgram& program)
+{
+    State& state = program.state();
+    auto liesInPagesOfInstance = [&](const void* address) {
+        return std::ranges::any_of(state.pages.ranges(), [&](const auto& range) {
+            return std::bit_cast<uintptr_t>(address) - std::bit_cast<uintptr_t>(range.first) < range.second;
+        });
+    };
+    AOT_TEST_CHECK(liesInPagesOfInstance(&*state.propertyCaches));
+    AOT_TEST_CHECK(liesInPagesOfInstance(&*state.stringKeys));
+}
+
 static void testImageIsAttachedToVM(LoadedProgram& program)
 {
     VMState& state = program.vm().aotState();
@@ -598,6 +612,7 @@ std::span<const NativeTest> engineHookTests()
         { "engine-hooks/function-types"_s, testFunctionTypes },
         { "engine-hooks/proxies-hand-private-names-to-their-target"_s, testProxiesHandPrivateNamesToTheirTarget },
         { "engine-hooks/only-realm-with-module-host-has-instance"_s, withProgram<testOnlyRealmWithModuleHostHasInstance> },
+        { "engine-hooks/caches-made-at-first-use-lie-in-pages-of-instance"_s, withProgram<testCachesMadeAtFirstUseLieInPagesOfInstance> },
         { "engine-hooks/image-is-attached-to-vm"_s, withProgram<testImageIsAttachedToVM> },
         { "engine-hooks/deliver-step-to-driver"_s, withProgram<testDeliverStepToDriver> },
         { "engine-hooks/instance-class-infos"_s, withProgram<testInstanceClassInfos> },

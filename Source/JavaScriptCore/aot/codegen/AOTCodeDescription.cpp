@@ -353,7 +353,7 @@ static Vector<RecordedSite> renumberSites(const DescribedFunction& described, co
             }
         }
         const SiteLandingPad* landingPad = landingPads.takeNext(recordedNumber);
-        bool saysOnlyWhereItIs = !reference.firstRead && !std::exchange(rowHoldsFirstRead, false) && record.kind == CallSiteKind::Plain && !record.callsOwnFunctionObject;
+        bool saysOnlyWhereItIs = !reference.firstRead && !std::exchange(rowHoldsFirstRead, false) && record.kind == CallSiteKind::Plain && !record.callsOwnFunctionObject && !record.keptCalleePlusOne;
         if (saysOnlyWhereItIs && last.record && *last.record == record && leadToSameHandler(last.landingPad, landingPad)) {
             *reference.site = result.size();
             continue;
@@ -393,12 +393,29 @@ static Vector<FlaggedSite> collectFlaggedSites(const Vector<RecordedSite>& renum
     return flaggedSites;
 }
 
-static Vector<uint32_t> collectCallsOfOwnFunctionObjects(const Vector<RecordedSite>& renumbered)
+static Vector<std::pair<uint32_t, CalleeOfSite>> collectCalleesOfSites(const Vector<RecordedSite>& renumbered, const SiteRecords& records)
 {
-    Vector<uint32_t> sites;
+    Vector<std::pair<uint32_t, CalleeOfSite>> sites;
     for (uint32_t i = 0; i < renumbered.size(); ++i) {
-        if (renumbered[i].callsOwnFunctionObject)
-            sites.append(i + 1);
+        if (renumbered[i].callsOwnFunctionObject) {
+            sites.append({ i + 1, CalleeOfSite::ownFunctionObject() });
+            continue;
+        }
+        if (!renumbered[i].keptCalleePlusOne)
+            continue;
+        const KeptCallee& kept = records.keptCallees[renumbered[i].keptCalleePlusOne - 1];
+        auto field = records.fieldsOfCallees.find(kept.call);
+        if (field != records.fieldsOfCallees.end() && !field->value) {
+            sites.append({ i + 1, CalleeOfSite::ownFunctionObject() });
+            continue;
+        }
+        // Nothing writes the word of an unreachable call.
+        if (kept.word >= records.wordsOfCallees.size() || !records.wordsOfCallees[kept.word])
+            continue;
+        intptr_t offset = records.wordsOfCallees[kept.word]->offsetFromFP();
+        RELEASE_ASSERT(!(offset % static_cast<intptr_t>(sizeof(uint64_t))));
+        int32_t word = safeCast<int32_t>(offset / static_cast<intptr_t>(sizeof(uint64_t)));
+        sites.append({ i + 1, field != records.fieldsOfCallees.end() ? CalleeOfSite::inEnvironmentInFrame(word, *field->value) : CalleeOfSite::inFrame(word) });
     }
     return sites;
 }
@@ -462,7 +479,7 @@ static SiteDescription describeSites(const DescribedFunction& described, CodeRec
         return sites;
     }
     sites.inlineFrames = describeInlineFrames(described.function, records.sites, body);
-    sites.callsOfOwnFunctionObjects = collectCallsOfOwnFunctionObjects(renumbered);
+    sites.calleesOfSites = collectCalleesOfSites(renumbered, records.sites);
     return sites;
 }
 

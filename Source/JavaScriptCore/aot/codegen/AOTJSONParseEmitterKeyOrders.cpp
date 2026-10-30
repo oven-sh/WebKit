@@ -9,12 +9,14 @@
 #if ENABLE(AOT)
 
 #include "AOTCellFormat.h"
+#include "AOTExpandOwnKeysOrders.h"
 #include "AOTFlowResults.h"
 #include "AOTJSONKeyOrder.h"
 #include "AOTJSONWords.h"
 #include "AOTObjectWords.h"
 #include "AOTPlacement.h"
 #include "AOTRuntimeCallEmitter.h"
+#include "AOTShapeTestEmitter.h"
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"
 #include "CCallHelpers.h"
@@ -233,6 +235,115 @@ void JSONParseEmitter::generateJSONParseExtraMembers(const ValueContext& value)
     Condition isParsed(m_out.notNull(next.value()));
     Word32 outcome = select(isParsed, select<Word32>(equal(next, cursor), rejectedOutcome, parsedOutcome), unknownOutcome);
     defineResults(value, { outcome, state.extra, cursorOrSourceEnd(isParsed, next.value()), state.order });
+}
+
+// No shape: objects of the layout do not track key order.
+uint32_t JSONParseEmitter::shapeWithKeyOrderOf(LayoutID layout) const
+{
+    const ShapeTable& shapes = m_placement.shapes();
+    ShapeRange range = shapes.shapesOf(layout);
+    return range.isEmpty() || shapes.shape(range.first).keysAreNeverEnumerated ? 0 : range.first;
+}
+
+void JSONParseEmitter::generateGetOrderWord(const ValueContext& value)
+{
+    ShapeTestEmitter& shapeTests = emitter<ShapeTestEmitter>();
+    CellPointer object = in<CellPointer>(value->objectOperand());
+    Word32 orderWord = shapeTests.orderWordOf(object);
+    // The word of an object with the layout's other shape, which tracks no order, says nothing about its keys.
+    uint32_t shape = shapeWithKeyOrderOf(value->layout());
+    if (shape && m_placement.shapes().shapesOf(value->layout()).count > 1)
+        orderWord = select(equal(shapeTests.shapeWordOf(object), word32(static_cast<int32_t>(shapeWordOf(shape)))), orderWord, word32(static_cast<int32_t>(outOfLineOrderWord)));
+    define(value, zeroExtended(orderWord));
+}
+
+void JSONParseEmitter::generateGetFieldInKeyOrder(const ValueContext& value)
+{
+    static constexpr int32_t orderHasEnded = -1;
+    static constexpr int32_t orderIsNotListed = -2;
+    static constexpr size_t maxFieldsWithoutRecord = 4;
+    static_assert(sizeof(KeyOrderEntriesCacheEntry) == 16);
+
+    // An order lists fields by their index among the fields that have a record, which are in field order.
+    LayoutID layout = value->layout();
+    uint32_t shape = shapeWithKeyOrderOf(layout);
+    const Vector<Field>& fields = m_program.at(layout).fields;
+    Vector<uint32_t, maxFieldsWithoutRecord> firstRecordsAfterGaps;
+    bool listsEveryKey = !!shape;
+    uint32_t numberOfRecords = 0;
+    for (FieldIndex field = 0; field < fields.size() && listsEveryKey; ++field) {
+        if (m_placement.slot(layout, field).indexInLayoutRecord) {
+            ++numberOfRecords;
+            continue;
+        }
+        listsEveryKey = !isEnumerableStringField(m_program, fields[field]) && firstRecordsAfterGaps.size() < maxFieldsWithoutRecord;
+        firstRecordsAfterGaps.append(numberOfRecords);
+    }
+    if (!listsEveryKey) {
+        define(value, word32(orderIsNotListed));
+        return;
+    }
+
+    Word32 orderWord = low32(integerOf(value->orderOperand()));
+    Word32 position = low32(integerOf(value->positionOperand()));
+    Word32 shapeWord = word32(static_cast<int32_t>(shapeWordOf(shape)));
+    const B3::AbstractHeap& heap = m_heaps.entire(AbstractHeap::RuntimeState);
+    LBasicBlock hasShape = newBlock();
+    LBasicBlock isCached = newBlock();
+    LBasicBlock isNotCached = newBlock();
+    LBasicBlock isListed = newBlock();
+    LBasicBlock isNotListed = newBlock();
+    LBasicBlock hasKey = newBlock();
+    LBasicBlock hasEnded = newBlock();
+    Join<Pointer> entries(m_out);
+    Join<Word32> result(m_out);
+
+    Word32 hash = add(add(shapeWord, orderWord), shiftRightUnsigned(orderWord, keyOrderEntriesHashShift));
+    static_assert(indexOfKeyOrderEntries(3, (5u << orderWordCountShift) + 4) == 3 + 4 + (5 << 5));
+    LValue cached = offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(objects.keyOrderEntries)), zeroExtended(bitAnd(hash, numberOfCachedKeyOrderEntries - 1)), 4).value();
+    branch(equal(Word32(m_out.load32(m_out.address(heap, cached, OBJECT_OFFSETOF(KeyOrderEntriesCacheEntry, shapeWord)))), shapeWord), { normalEdge(hasShape), rareEdge(isNotCached) });
+
+    m_out.appendTo(hasShape);
+    branch(equal(Word32(m_out.load32(m_out.address(heap, cached, OBJECT_OFFSETOF(KeyOrderEntriesCacheEntry, orderWord)))), orderWord), { normalEdge(isCached), rareEdge(isNotCached) });
+
+    m_out.appendTo(isCached);
+    entries.add(Pointer(m_out.loadPtr(m_out.address(heap, cached, OBJECT_OFFSETOF(KeyOrderEntriesCacheEntry, entries)))));
+
+    m_out.appendTo(isNotCached);
+    entries.add(callOperation<Pointer>(value, RuntimeOperation::KeyOrderEntries, { word32(static_cast<int32_t>(shape)), orderWord }, { .isOnRarePath = true }));
+
+    Pointer list = entries.finish();
+    branch(Condition(m_out.notNull(list.value())), { normalEdge(isListed), rareEdge(isNotListed) });
+
+    m_out.appendTo(isListed);
+    Word32 count = bitAnd(shiftRightUnsigned(orderWord, orderWordCountShift), maxFieldsInOrder);
+    branch(below(position, count), { normalEdge(hasKey), normalEdge(hasEnded) });
+
+    m_out.appendTo(hasKey);
+    Word32 record(m_out.load16ZeroExt32(m_out.address(heap, offsetBy(list, zeroExtended(position), 1).value(), 0)));
+    Word32 field = record;
+    for (uint32_t firstRecord : firstRecordsAfterGaps)
+        field = add(field, low32(zeroExtended(aboveOrEqual(record, word32(static_cast<int32_t>(firstRecord))))));
+    result.add(field);
+
+    m_out.appendTo(hasEnded);
+    result.add(word32(orderHasEnded));
+
+    m_out.appendTo(isNotListed);
+    result.add(word32(orderIsNotListed));
+
+    define(value, result.finish());
+}
+
+void JSONParseEmitter::generateGetKeyNamesInOrder(const ValueContext& value)
+{
+    // If the objects track no order, no position in an order is ever found.
+    uint32_t shape = shapeWithKeyOrderOf(value->layout());
+    if (!shape) {
+        define(value, undefined());
+        return;
+    }
+    define(value, callOperation<Boxed>(value, RuntimeOperation::KeyNamesInOrder, { word32(static_cast<int32_t>(shape)), low32(integerOf(value->orderOperand())), low32(integerOf(value->positionOperand())) }, { .isOnRarePath = true }));
 }
 
 } } } // namespace JSC::AOT::Typed

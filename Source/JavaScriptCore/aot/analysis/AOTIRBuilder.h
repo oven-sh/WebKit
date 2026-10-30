@@ -112,7 +112,7 @@ public:
     void emitUnreachable();
     void emitTerminator(Terminator&&);
 
-    BlockID splitEdge(Edge);
+    BlockID splitEdge(Edge, std::optional<Target> newBlockHandler = std::nullopt);
     BlockID splitBlock(ProgramPoint point) { return splitBlock(point.block, singleElementSpan(point.index)).first(); }
     Vector<BlockID> splitBlock(BlockID, std::span<const uint32_t> ascendingIndexes);
     void redirectEdge(Edge, BlockID target, Arguments&&);
@@ -190,6 +190,9 @@ private:
     };
     Vector<QueuedInsertion, 8> m_insertions;
 };
+
+// The expected type of a value is a strict subset of its type. Returns nothing if no such subset remains.
+TypeID partInside(const Program&, TypeArena&, TypeID narrower, TypeID);
 
 } } } // namespace JSC::AOT::Typed
 

@@ -1,0 +1,16 @@
+# A tail call that passes more arguments on the stack than its caller was given moves them to an argument list frame. The callee returns to the stub that drops that frame, so the stub calls it: a return is predicted by the call it is paired with.
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="passesOn" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 function=f1 [isNeverInlined]
+    ReturnCall v1
+}
+function f1 name="takesTwelve" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v11
+}
+# CHECK: f0: size=
+# CHECK: stub CallFromArgumentListFrame x1
+# CHECK: f1: size=

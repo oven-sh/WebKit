@@ -103,6 +103,7 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
     bool printsLibraryFunctionsLacked = false;
     bool printsProtocols = false;
     bool printsNodesGivenMore = false;
+    bool printsCells = false;
     ValueFlowSolution::CoveredMembers coveredMembers = ValueFlowSolution::CoveredMembers::StayListed;
     for (const String& word : context.arguments) {
         if (word == "calls"_s)
@@ -121,6 +122,8 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
             printsProtocols = true;
         else if (word == "given-more"_s)
             printsNodesGivenMore = true;
+        else if (word == "cells"_s)
+            printsCells = true;
         else if (word == "proofs"_s)
             coveredMembers = ValueFlowSolution::CoveredMembers::AreLeftOut;
         else
@@ -239,7 +242,9 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
             }
         }
     }
-    if (printsCalls || printsUnreachedFunctions || printsUnseenCode || printsUsedBuiltins || printsLibraryFunctionsLacked || printsProtocols || printsNodesGivenMore)
+    if (printsCells)
+        context.out.println("names-with-several-cells ", counters.namesWithSeveralCells);
+    if (printsCalls || printsUnreachedFunctions || printsUnseenCode || printsUsedBuiltins || printsLibraryFunctionsLacked || printsProtocols || printsNodesGivenMore || printsCells)
         return;
 
     context.out.println("functions ", functionsWithBody, " reached ", functionsReached);

@@ -649,6 +649,7 @@ public:
     WriteBarrier<NativeExecutable> m_promiseAllSettledSlowRejectFunctionExecutable;
     WriteBarrier<NativeExecutable> m_promiseAnyRejectFunctionExecutable;
     WriteBarrier<NativeExecutable> m_promiseAnySlowRejectFunctionExecutable;
+    WriteBarrier<NativeExecutable> m_proxyRevokeExecutable;
 
     WriteBarrier<JSCell> m_orderedHashTableDeletedValue;
     WriteBarrier<JSCell> m_orderedHashTableSentinel;
@@ -773,6 +774,7 @@ public:
     inline NativeExecutable* promiseAllSettledSlowRejectFunctionExecutable();
     inline NativeExecutable* promiseAnyRejectFunctionExecutable();
     inline NativeExecutable* promiseAnySlowRejectFunctionExecutable();
+    inline NativeExecutable* proxyRevokeExecutable();
 
     WeakGCMap<WTF::SymbolImpl*, Symbol, PtrHash<WTF::SymbolImpl*>> symbolImplToSymbolMap;
     WeakGCMap<StringImpl*, JSString, PtrHash<StringImpl*>> atomStringToJSStringMap;
@@ -956,7 +958,6 @@ public:
     }
 
     void* lastStackTop() { return m_lastStackTop; }
-    void lowerLastStackTop(void* lowestAddress) { m_lastStackTop = std::min(m_lastStackTop, lowestAddress); }
     void LEGACY_NODELETE setLastStackTop(const Thread&);
     
 #if ENABLE(C_LOOP)
@@ -1248,7 +1249,13 @@ public:
     void setShouldBuildPCToCodeOriginMapping() { m_shouldBuildPCToCodeOriginMapping = true; }
     bool shouldBuilderPCToCodeOriginMapping() const { return m_shouldBuildPCToCodeOriginMapping; }
 
-    BytecodeIntrinsicRegistry& bytecodeIntrinsicRegistry() { return *m_bytecodeIntrinsicRegistry; }
+    BytecodeIntrinsicRegistry& bytecodeIntrinsicRegistry()
+    {
+        if (!m_bytecodeIntrinsicRegistry) [[unlikely]]
+            createBytecodeIntrinsicRegistry();
+        return *m_bytecodeIntrinsicRegistry;
+    }
+    bool hasBytecodeIntrinsicRegistry() const { return !!m_bytecodeIntrinsicRegistry; }
     
     ShadowChicken* shadowChicken() { return m_shadowChicken.getIfExists(); }
     ShadowChicken& ensureShadowChicken() { return m_shadowChicken.get(*this); }
@@ -1398,6 +1405,7 @@ private:
     NativeExecutable* promiseAllSettledSlowRejectFunctionExecutableSlow();
     NativeExecutable* promiseAnyRejectFunctionExecutableSlow();
     NativeExecutable* promiseAnySlowRejectFunctionExecutableSlow();
+    NativeExecutable* proxyRevokeExecutableSlow();
 
     void updateStackLimits();
 
@@ -1653,8 +1661,6 @@ extern "C" void SYSV_ABI sanitizeStackForVMImpl(VM*);
 #endif
 
 JS_EXPORT_PRIVATE void sanitizeStackForVM(VM&);
-// sanitizeStackForVM() clears from where its last call stood. What ran since then may have gone deeper.
-JS_EXPORT_PRIVATE void sanitizeStackForVMFrom(VM&, void* lowestAddress);
 JS_EXPORT_PRIVATE void sanitizeStackForVMInCallSlowPath(VM&);
 
 // While one of these is alive, properties can be put directly on an object whose Structure says hasImmutableProperties(); it changes

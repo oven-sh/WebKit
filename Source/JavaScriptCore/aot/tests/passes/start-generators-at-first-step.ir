@@ -1,10 +1,11 @@
 # A generator that no loop is fused with, and that nobody looks at between its creation and its first step, is not started at its creation: the first step marks it as running and calls the body,
 # which then does not suspend at its start. Behind a failed test for an unmodified generator anything may look at it, so there it is started as at its creation.
 # A step that stands behind another step is never the first and stays as it is.
+# A step at the head of a loop is the first one when the loop is entered: the entering edges start the body, so its arguments are not live in the loop. A loop that may be entered again asks in the loop, or, where the function saves its frame, leaves the generator started at its creation.
 # It stays as it is where the head of the body has an effect, where something reads the generator in front of the first step, and where a handler could see it after the body has thrown
 # FORM: Prepared
 # RUN: pass StartGeneratorsAtFirstStep
-# STATISTIC: GeneratorsStartedAtFirstStep = 4
+# STATISTIC: GeneratorsStartedAtFirstStep = 6
 
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="stored" module=m0 declared={type=anything} initialization=Undefined
@@ -81,15 +82,14 @@ function f1 name="loop" parameters=[{type=anything}, {type=function}] results=[{
     Return v14
 # CHECK: b0(v0: anything, v1: function):
 # CHECK-NOT: CallDirect
+# CHECK: Jump -> next [[first1]]()
 # CHECK: b1():
-# CHECK: [[unstarted1]]: boolean = IsGeneratorUnstarted v3
-# CHECK-NEXT: Branch [[unstarted1]] -> taken [[first1]](), notTaken [[resumed1]]()
+# CHECK-NOT: IsGeneratorUnstarted
+# CHECK: = StepGenerator v3, v7 check=None
 # CHECK: [[first1]]():
 # CHECK-NEXT: MarkGeneratorRunning v3
 # CHECK-NEXT: = CallDirect v2, v0, v3 function=f8
 # CHECK-NEXT: = TakeGeneratorStepStatus v3
-# CHECK: [[resumed1]]():
-# CHECK-NEXT: = StepGenerator v3, v7 check=None
 }
 
 function f2 name="readBeforeTheFirstStep" parameters=[{type=anything}] results=[{type=anything}] {
@@ -253,4 +253,117 @@ function f11 name="stepsTwice" parameters=[{type=anything}] results=[{type=anyth
 # CHECK-NEXT: = CallDirect v1, v0, v2 function=f8
 # CHECK-NOT: CallDirect
 # CHECK: = StepGenerator v2, v4 check=None
+}
+
+function f12 name="delegates" position=30 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f12 body=f13 promiseParameter=2} {
+    v2 = NewGenerator v0 function=f12 @30
+    v3 = CallDirect v0, v1, v2 function=f13 @30
+    Return v2 @30
+}
+function f13 name="delegates" position=30 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f12} creator=Coroutine{ramp=f12 body=f13 promiseParameter=2} {
+    v3 = NewClosure function=f6
+    v4 = NewGenerator v3 function=f6 @101
+    v5 = CallDirect v3, v1, v4 function=f8 @101
+    v6 = Undefined
+    Jump -> next b1(v6)
+  b1(v7: anything):
+    v8 = StepGenerator v4, v7 check=None @90
+    v9 = ResultAt v8 index=0
+    v10 = ResultAt v8 index=1
+    v11 = Integer integer=0
+    v12 = StrictEq v10, v11
+    Branch v12 -> taken b2(), notTaken b3()
+  b2():
+    LoopHint
+    v14 = YieldBySavingFrame v2, v9 @31
+    v15 = ResultAt v14 index=0
+    Jump -> next b1(v15)
+  b3():
+    PutModuleVariable v7 variable=g0
+    Return v9
+# CHECK: b0(v0: function, v1: anything, v2: Generator):
+# CHECK-NOT: CallDirect
+# CHECK: Jump -> next [[first13]](v6)
+# CHECK: b1(v7: anything):
+# CHECK-NEXT: = StepGenerator v4, v7 check=None
+# CHECK: Jump -> next [[stepped13]]({{*}}, {{*}}, v7)
+# CHECK: PutModuleVariable [[sent13]] variable=g0
+# CHECK: [[stepped13]]({{*}}, {{*}}, [[sent13]]: anything):
+# CHECK: [[first13]]([[sentFirst13]]: anything):
+# CHECK-NEXT: MarkGeneratorRunning v4
+# CHECK-NEXT: = CallDirect v3, v1, v4 function=f8
+# CHECK-NEXT: = TakeGeneratorStepStatus v4
+# CHECK-NEXT: Jump -> next [[stepped13]]({{*}}, {{*}}, [[sentFirst13]])
+}
+
+function f14 name="enteredAgain" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+    v2 = NewClosure function=f6
+    v3 = NewGenerator v2 function=f6 @101
+    v4 = CallDirect v2, v0, v3 function=f8 @101
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v7 = Undefined
+    v8 = StepGenerator v3, v7 check=None @90
+    v9 = ResultAt v8 index=0
+    v10 = ResultAt v8 index=1
+    v11 = Integer integer=0
+    v12 = StrictEq v10, v11
+    Branch v12 -> taken b2(), notTaken b3()
+  b3():
+    v13 = Call v1, -, v9
+    v14 = StrictEq v13, v11
+    Branch v14 -> taken b1(), notTaken b4()
+  b4():
+    Return v9
+# CHECK: b0(v0: anything, v1: function):
+# CHECK-NOT: CallDirect
+# CHECK: b2():
+# CHECK: [[unstarted14]]: boolean = IsGeneratorUnstarted v3
+# CHECK-NEXT: Branch [[unstarted14]] -> taken [[first14]](), notTaken [[resumed14]]()
+# CHECK: [[first14]]():
+# CHECK-NEXT: MarkGeneratorRunning v3
+# CHECK-NEXT: = CallDirect v2, v0, v3 function=f8
+# CHECK-NEXT: = TakeGeneratorStepStatus v3
+# CHECK: [[resumed14]]():
+# CHECK-NEXT: = StepGenerator v3, v7 check=None
+}
+
+function f15 name="delegatesAgain" position=40 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f15 body=f16 promiseParameter=2} {
+    v2 = NewGenerator v0 function=f15 @40
+    v3 = CallDirect v0, v1, v2 function=f16 @40
+    Return v2 @40
+}
+function f16 name="delegatesAgain" position=40 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f15} creator=Coroutine{ramp=f15 body=f16 promiseParameter=2} {
+    v3 = NewClosure function=f6
+    v4 = NewGenerator v3 function=f6 @101
+    v5 = CallDirect v3, v1, v4 function=f8 @101
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = Undefined
+    Jump -> next b2(v7)
+  b2(v8: anything):
+    v9 = StepGenerator v4, v8 check=None @90
+    v10 = ResultAt v9 index=0
+    v11 = ResultAt v9 index=1
+    v12 = Integer integer=0
+    v13 = StrictEq v11, v12
+    Branch v13 -> taken b3(), notTaken b4()
+  b3():
+    LoopHint
+    v15 = YieldBySavingFrame v2, v10 @41
+    v16 = ResultAt v15 index=0
+    Jump -> next b2(v16)
+  b4():
+    v17 = StrictEq v10, v12
+    Branch v17 -> taken b1(), notTaken b5()
+  b5():
+    Return v10
+# CHECK: = CallDirect v3, v1, v4 function=f8
+# CHECK: = StepGenerator v4, v8 check=None
+# CHECK-NOT: MarkGeneratorRunning
 }

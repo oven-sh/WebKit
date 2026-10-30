@@ -79,18 +79,15 @@ function f1 name="halves" module=m0 flags=[IsChecked, HasExplicitName] length=1 
     Return v2
 }
 
-# A push of a double is inline: the test of the capacity, a test that the number is not NaN (which marks a hole in this storage), the two stores.
+# A push of a double is inline: the test of the capacity and the two stores. The number is an integer times a half: it is finite, so it is no NaN (which marks a hole in this storage), and nothing asks it.
 # CHECK-LABEL: steps by 1
 # CHECK: Double b@[[element]] = Mul(
 # CHECK: Int32 b@[[length]] = Load(b@[[storage]], offset = -8, ControlDependent|Reads:Butterfly_publicLength, {{*}}:HasSpareArrayCapacity)
 # CHECK: Int32 b@[[fits]] = Below(b@[[length]], b@[[capacity]], {{*}}:HasSpareArrayCapacity)
 # CHECK-NEXT: Branch(b@[[fits]], Terminal, {{*}}:HasSpareArrayCapacity)
-# CHECK-NEXT: Successors: Then:#[[test]], Else:Rare:#
-# CHECK-NEXT: BB#[[test]]:
-# CHECK: Int32 b@[[isNumber]] = Equal(b@[[element]], b@[[element]],
-# CHECK-NEXT: Branch(b@[[isNumber]], Terminal,
 # CHECK-NEXT: Successors: Then:#[[push]], Else:Rare:#
 # CHECK-NEXT: BB#[[push]]:
+# CHECK-NOT: Equal(b@[[element]], b@[[element]]
 # CHECK: Store(b@[[element]], b@{{*}}, ControlDependent|Writes:indexedDoubleProperties,
 # CHECK-NEXT: Int32 b@[[longer]] = Add(b@[[length]], $1(
 # CHECK-NEXT: Store(b@[[longer]], b@[[storage]], offset = -8, ControlDependent|Writes:Butterfly_publicLength,
@@ -107,10 +104,10 @@ function f1 name="halves" module=m0 flags=[IsChecked, HasExplicitName] length=1 
 # CALLS: f1: size=
 # CALLS: stub NewArrayWithLength.Double x1
 # X64-NOT: , instructions:
-# X64: loop #{{*}}, instructions: 11, patchpoints: 0
-# X64: loop #{{*}}, instructions: 11, patchpoints: 1, {{*}}entered rarely
+# X64: loop #{{*}}, instructions: 10, patchpoints: 0
+# X64: loop #{{*}}, instructions: 10, patchpoints: 1, {{*}}entered rarely
 # X64-NOT: , instructions:
 # ARM64-NOT: , instructions:
-# ARM64: loop #{{*}}, instructions: 10, patchpoints: 0
-# ARM64: loop #{{*}}, instructions: 10, patchpoints: 1, {{*}}entered rarely
+# ARM64: loop #{{*}}, instructions: 9, patchpoints: 0
+# ARM64: loop #{{*}}, instructions: 9, patchpoints: 1, {{*}}entered rarely
 # ARM64-NOT: , instructions:

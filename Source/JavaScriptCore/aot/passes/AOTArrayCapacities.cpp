@@ -1461,23 +1461,36 @@ static bool collectReadsRelyingOn(FunctionPassContext& context, ValueID testID, 
     return joinsTheseAlone && !found.reads.isEmpty();
 }
 
-// A validating build asks again each test that the proof stands for, and names the proof in no operand.
-static void collectTestsRepeatedForValidation(FunctionPassContext& context, const Value& test, ReadsBehindStorageTest& found)
+// A validating build repeats each test that the proof stands for, and names the proof in no operand. Returns whether the proof that each such test repeats is known.
+static bool collectTestsRepeatedForValidation(FunctionPassContext& context, const Value& test, ReadsBehindStorageTest& found)
 {
     if (!context.build.validates())
-        return;
+        return true;
     const Function& function = context.function;
     FunctionAnalyses& analyses = context.analyses;
     ValueID array = analyses.identityOf(test.arrayOperand());
+    bool isKnownOfEach = true;
     findReadsKeptForValidation(function).forEachSetBit([&](size_t index) {
         ValueID id(index);
         const Value& kept = function.at(id);
         if (kept.opcode != Opcode::HasArrayStorage || kept.arrayStorage() != test.arrayStorage() || analyses.identityOf(kept.arrayOperand()) != array || analyses.useLists().useCount(id) != 1)
             return;
         ValueLocation location = analyses.useLists().locationOf(id);
-        if (analyses.dominators().dominates(found.passed, location.block) && analyses.guards().stateAt(found.guard, ProgramPoint { location.block, location.index }) == GuardState::Available)
+        if (!analyses.dominators().dominates(found.passed, location.block))
+            return;
+        switch (analyses.guards().stateAt(found.guard, ProgramPoint { location.block, location.index })) {
+        case GuardState::Available:
             found.repeatedTests.append(id);
+            return;
+        case GuardState::Unavailable:
+            return;
+        case GuardState::Unknown:
+            isKnownOfEach = false;
+            return;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
     });
+    return isKnownOfEach;
 }
 
 // An element that is no number leaves where an absent one does: nothing has happened since that test. Answers the test.
@@ -1495,6 +1508,9 @@ static ValueID findPositionTestInFrontOf(FunctionPassContext& context, const Rea
         return { };
     const Value& test = function.at(terminator.conditionOperand());
     if (test.opcode == Opcode::IsElementPresent ? !found.reads.contains(terminator.conditionOperand()) : test.opcode != Opcode::IsInBounds || test.arrayOperand() != read.arrayOperand())
+        return { };
+    // `index in list`: if that fails, the program continues as it does without an element, and a present element does not take that path.
+    if (test.isFromProgram())
         return { };
     if (context.analyses.identityOf(test.positionOperand()) != context.analyses.identityOf(read.positionOperand()))
         return { };
@@ -1532,6 +1548,9 @@ static std::optional<Vector<ValueID, 4>> findPresenceTestsThatLostTheirRead(Func
     for (ValueID read : found.reads) {
         if (context.function.at(read).opcode != Opcode::IsElementPresent || testsInFrontOfReads.contains(read))
             continue;
+        // After `index in list` a read may have been removed too, and a value that is not a number has no arm to leave by.
+        if (context.function.at(read).isFromProgram())
+            return std::nullopt;
         for (const Use& use : useLists.usesOf(read)) {
             if (use.kind != Use::Kind::TerminatorOperand)
                 continue;
@@ -1655,7 +1674,8 @@ static BlockID addReadsOfOtherStorage(FunctionPassContext& context, IRBuilder& b
     found.guard = function.at(found.passed).parameters.last();
     if (!collectReadsRelyingOn(context, function.at(tested).terminator.conditionOperand(), found))
         return { };
-    collectTestsRepeatedForValidation(context, test, found);
+    if (!collectTestsRepeatedForValidation(context, test, found))
+        return { };
     Vector<ValueID, 8> testsInFrontOfReads;
     // Double storage is asked for where numbers are expected.
     auto fitsOtherStorage = [&](ValueID read) {

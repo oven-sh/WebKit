@@ -81,7 +81,7 @@ function f5 name="requireAttachedTypedArray" parameters=[{type=Uint8Array<number
 }
 # CHECK-NEXT: f5: size=
 # CHECK-NEXT: operation operationAOTThrowIfTypedArrayIsDetached x1
-# CHECK-NEXT: stub PollAtPrologue x1
+# CHECK-NEXT: stub PollAtPrologueWithoutCollecting x1
 
 function f6 name="createAsyncFromSyncIterator" parameters=[{type=object}, {type=anything}] results=[{type=object}] {
     v2 = CreateAsyncFromSyncIterator v0, v1
@@ -124,7 +124,7 @@ function f10 name="mapNext" parameters=[{type=Map<anything, anything>}, {type=an
 }
 # CHECK-NEXT: f10: size=
 # CHECK-NEXT: operation operationAOTMapNext x1
-# CHECK-NEXT: stub PollAtPrologue x1
+# CHECK-NEXT: stub PollAtPrologueWithoutCollecting x1
 
 function f11 name="setNext" parameters=[{type=Set<anything>}, {type=anything}, {type=i32}] results=[{type=anything}] {
     v3 = SetNext v0, v1, v2
@@ -135,7 +135,7 @@ function f11 name="setNext" parameters=[{type=Set<anything>}, {type=anything}, {
 }
 # CHECK-NEXT: f11: size=
 # CHECK-NEXT: operation operationAOTSetNext x1
-# CHECK-NEXT: stub PollAtPrologue x1
+# CHECK-NEXT: stub PollAtPrologueWithoutCollecting x1
 
 function f12 name="enumeratorGetByValInRareCode" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = ForInOpen v0

@@ -414,6 +414,17 @@ bool storedFieldTakesAnyValue(const Program& program, const Placement& placement
     });
 }
 
+bool storedFieldAcceptsAnyNumber(const Program& program, const Placement& placement, const Function& function, const Value& store)
+{
+    return std::ranges::all_of(membersOf(program, program.typeOf(function, store.objectOperand())), [&](LayoutID member) {
+        uint32_t field = *program.at(member).findField(store.key());
+        const PlacedSlot& slot = placement.layout(member).slots[field];
+        const Type& held = program.at(slotTypeOf(program, fieldAt(program, declarationOf(program, { member, field }))));
+        bool holdsDouble = slot.representation == SlotRepresentation::Double || slot.representation == SlotRepresentation::OptionalDouble;
+        return holdsDouble && !slot.isOutOfLine() && (held.primitives & Primitive::Number) == Primitive::Number && held.integers == Range::full();
+    });
+}
+
 std::optional<uint32_t> findRecordOfStoredField(const Program& program, const Placement& placement, const Function& function, const Value& store, NameHasColumn nameHasColumn)
 {
     if ((store.opcode != Opcode::PropSet || store.isFreeName()) && store.opcode != Opcode::PropDefine)
@@ -425,7 +436,7 @@ std::optional<uint32_t> findRecordOfStoredField(const Program& program, const Pl
     for (LayoutID member : membersOf(program, receiver)) {
         const PlannedLayout& planned = placement.layout(member);
         std::optional<uint32_t> field = program.at(member).findField(store.key());
-        if (planned.storage != LayoutStorage::CompiledObject || !field)
+        if (!planned.holdsCompiledObjects() || !field)
             return std::nullopt;
         const Field& declaration = fieldAt(program, declarationOf(program, { member, *field }));
         const PlacedSlot& slot = planned.slots[*field];

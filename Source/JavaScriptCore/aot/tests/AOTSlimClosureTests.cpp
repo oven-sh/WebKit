@@ -428,6 +428,34 @@ static void testDisplayNameInFrames(LoadedProgram& program)
     ensureStillAliveHere(closure);
 }
 
+static void testDisplayNameGoesWithItsRealm(LoadedProgram& program)
+{
+    FunctionID function = findClosureFunction(program, "callAll"_s);
+    RefPtr<VM> vm = VM::create();
+    auto giveDisplayNameInNewRealm = [&](ASCIILiteral displayName) {
+        JSGlobalObject* realm = JSGlobalObject::createWithCustomMethodTable(*vm, JSGlobalObject::createStructure(*vm, jsNull()), program.realm()->globalObjectMethodTable());
+        AOT_TEST_CHECK(Instance::of(realm));
+        JSObject* closure = State::of(realm).objects->closures.createClosure(*vm, function, { }, 0);
+        PutPropertySlot slot(closure, true);
+        AOT_TEST_CHECK(closure->methodTable()->put(closure, realm, vm->propertyNames->displayName, jsNontrivialString(*vm, displayName), slot));
+    };
+    auto nameInFrames = [&] {
+        return functionName(*vm, FunctionDescription(function), NameForm::InFrames);
+    };
+    Thread::create("AOT realm test"_s, [&] {
+        JSLockHolder locker(*vm);
+        giveDisplayNameInNewRealm("first"_s);
+        AOT_TEST_CHECK(nameInFrames() == "first"_s);
+    })->waitForCompletion();
+
+    JSLockHolder locker(*vm);
+    vm->heap.collectNow(Sync, CollectionScope::Full);
+    AOT_TEST_CHECK(nameInFrames() == "callAll"_s);
+    giveDisplayNameInNewRealm("second"_s);
+    AOT_TEST_CHECK(nameInFrames() == "second"_s);
+    vm = nullptr;
+}
+
 static void testStoreToPrototypeIsNeverCached(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -761,6 +789,7 @@ std::span<const NativeTest> slimClosureTests()
         { "slim-closure/own-property-names"_s, withProgram<testOwnPropertyNames> },
         { "slim-closure/put"_s, withProgram<testPut> },
         { "slim-closure/display-name-in-frames"_s, withProgram<testDisplayNameInFrames> },
+        { "slim-closure/display-name-goes-with-its-realm"_s, withProgram<testDisplayNameGoesWithItsRealm> },
         { "slim-closure/store-to-prototype-is-never-cached"_s, withProgram<testStoreToPrototypeIsNeverCached> },
         { "slim-closure/define-own-property"_s, withProgram<testDefineOwnProperty> },
         { "slim-closure/delete-property"_s, withProgram<testDeleteProperty> },

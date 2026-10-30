@@ -156,6 +156,7 @@
 #if OS(WINDOWS)
 #include <mmsystem.h>
 #include <windows.h>
+#include "AOTCrashExitCode.h"
 #if !USE(BUN_JSC_ADDITIONS)
 #include <wtf/win/WTFCRTDebug.h>
 #endif
@@ -3248,7 +3249,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDollarAgentStart, (JSGlobalObject* globalObject
         return JSValue::encode(throwException(globalObject, scope, createError(globalObject, "Too many live agents"_s)));
     }
 
-    Thread::create(
+    RefPtr thread = Thread::tryCreate(
         "JSC Agent"_s,
         [sourceCode = WTF::move(sourceCode).isolatedCopy(), workerPath = WTF::move(workerPath).isolatedCopy(), &didStartLock, &didStartCondition, &didStart] () {
             CommandLine commandLine(CommandLine::CommandLineForWorkers);
@@ -3273,8 +3274,13 @@ JSC_DEFINE_HOST_FUNCTION(functionDollarAgentStart, (JSGlobalObject* globalObject
                         exitProcess(EXIT_FAILURE);
                 });
             numLiveAgents.fetch_sub(1);
-        })->detach();
-    
+        });
+    if (!thread) [[unlikely]] {
+        numLiveAgents.fetch_sub(1);
+        return JSValue::encode(throwOutOfMemoryError(globalObject, scope, "Failed to create agent thread"_s));
+    }
+    thread->detach();
+
     {
         Locker locker { didStartLock };
         while (!didStart)
@@ -4229,6 +4235,9 @@ int main(int argc, char** argv)
     // testing/debugging, as it causes the post-mortem debugger not to be invoked. We reset the
     // error mode here to work around Cygwin's behavior. See <http://webkit.org/b/55222>.
     ::SetErrorMode(0);
+#if ENABLE(AOT)
+    AOT::terminateWithExceptionCodeOnCrash();
+#endif
 
     _setmode(_fileno(stdout), _O_BINARY);
     _setmode(_fileno(stderr), _O_BINARY);

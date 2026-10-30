@@ -989,7 +989,7 @@ static WKBridgeUpdateMesh *convert(const WebModel::UpdateMeshDescriptor& input)
 }
 #endif
 
-void WebMesh::update(Vector<WebModel::UpdateMeshDescriptor>&& inputArray)
+void WebMesh::updateMesh(WebCore::NodeIdentifier nodeIdentifier, Vector<WebModel::UpdateMeshDescriptor>&& inputArray)
 {
 #if ENABLE(GPU_PROCESS_MODEL)
     if (!inputArray.size())
@@ -998,10 +998,20 @@ void WebMesh::update(Vector<WebModel::UpdateMeshDescriptor>&& inputArray)
     RELEASE_ASSERT(m_receiver);
     [m_receiver updateMesh:createNSArray(inputArray, [](const WebModel::UpdateMeshDescriptor& desc) {
         return convert(desc);
-    })];
+    }) forNode:nodeIdentifier.toUInt64()];
     m_meshDataExists = true;
 #else
+    UNUSED_PARAM(nodeIdentifier);
     UNUSED_PARAM(inputArray);
+#endif
+}
+
+void WebMesh::removeNode(WebCore::NodeIdentifier nodeIdentifier)
+{
+#if ENABLE(GPU_PROCESS_MODEL)
+    [m_receiver removeNode:nodeIdentifier.toUInt64()];
+#else
+    UNUSED_PARAM(nodeIdentifier);
 #endif
 }
 
@@ -1055,6 +1065,16 @@ void WebMesh::setTransform(const simd_float4x4& transform)
 #endif
 }
 
+void WebMesh::setTransform(WebCore::NodeIdentifier nodeIdentifier, const simd_float4x4& transform)
+{
+#if ENABLE(GPU_PROCESS_MODEL)
+    [m_receiver setTransform:transform forNode:nodeIdentifier.toUInt64()];
+#else
+    UNUSED_PARAM(nodeIdentifier);
+    UNUSED_PARAM(transform);
+#endif
+}
+
 void WebMesh::setFOV(float fovY)
 {
 #if ENABLE(GPU_PROCESS_MODEL)
@@ -1070,6 +1090,20 @@ void WebMesh::setEnvironmentMap(WebModel::UpdateTextureDescriptor&& imageAsset)
     [m_receiver setEnvironmentMap:convert(imageAsset)];
 #else
     UNUSED_PARAM(imageAsset);
+#endif
+}
+
+void WebMesh::setDefaultEnvironmentMap()
+{
+#if ENABLE(GPU_PROCESS_MODEL)
+    [m_receiver setDefaultEnvironmentMap];
+#endif
+}
+
+void WebMesh::removeEnvironmentMap()
+{
+#if ENABLE(GPU_PROCESS_MODEL)
+    [m_receiver removeEnvironmentMap];
 #endif
 }
 

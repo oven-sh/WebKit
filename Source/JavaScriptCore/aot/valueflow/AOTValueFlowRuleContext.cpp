@@ -154,6 +154,7 @@ void ValueFlowRuleContext::leaveOutWhatIsKnown()
 
 void ValueFlowRuleContext::end()
 {
+    m_narrowedOperandsOfRun.shrink(0);
     leaveOutWhatIsKnown();
     if (m_keyOfStatementOfThisTurn) {
         if (m_rememberedByStatementOfThisTurn)
@@ -177,7 +178,32 @@ void ValueFlowRuleContext::end()
 }
 
 FunctionID ValueFlowRuleContext::functionOfStatement() const { return m_keyOfStatementOfThisTurn ? FunctionID() : m_solver.statementAt(m_statement).function; }
-std::span<const ValueFlowOperand> ValueFlowRuleContext::operandsOf(const ValueFlowStatement& statement) const { return m_operandsInPlace.empty() ? m_solver.operandsOf(statement) : m_operandsInPlace; }
+// `if (!$isProxyObject(x)) use(x);`: the rules see x as the test lets it through. What the results read stays as it is: a mask there is a claim about the value, not about one use of it.
+std::span<const ValueFlowOperand> ValueFlowRuleContext::operandsOf(const ValueFlowStatement& statement)
+{
+    if (!m_operandsInPlace.empty())
+        return m_operandsInPlace;
+    std::span<const ValueFlowOperand> operands = m_solver.operandsOf(statement);
+    if (!statement.guardsOfOperands) [[likely]]
+        return operands;
+    std::span<const ValueFlowOperand> guards = m_solver.guardsOf(statement);
+    m_narrowedOperandsOfRun.append(makeUnique<Vector<ValueFlowOperand, 8>>(operands));
+    Vector<ValueFlowOperand, 8>& narrowed = *m_narrowedOperandsOfRun.last();
+    for (size_t index = 0; index < std::min<size_t>(narrowed.size(), 8); ++index) {
+        for (size_t position = 0; position < std::min<size_t>(guards.size(), 4); ++position) {
+            if (!(statement.guardsOfOperands >> (index * 4 + position) & 1) || !guards[position].mask)
+                continue;
+            ValueFlowOperand& operand = narrowed[index];
+            // A mask of another kind lets through more than the members of its set: the operand is what it lets through, cut by the test.
+            if (operand.maskKind != ValueFlowMaskKind::Plain) {
+                operand = ValueFlowOperand { { }, m_maker.intersect(valueOf(operand).m_set, guards[position].mask), { } };
+                continue;
+            }
+            operand.mask = operand.mask ? m_maker.intersect(operand.mask, guards[position].mask) : guards[position].mask;
+        }
+    }
+    return narrowed.span();
+}
 ValueFlowNodeID ValueFlowRuleContext::markersOf(FunctionID function) { return nodeFor(ValueFlowNodeKey::markersOf(function)); }
 
 bool ValueFlowRuleContext::canBeReached(const ValueFlowStatement& statement)

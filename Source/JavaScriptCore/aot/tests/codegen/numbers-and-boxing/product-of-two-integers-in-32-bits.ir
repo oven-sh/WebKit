@@ -55,17 +55,17 @@ function f1 name="product" module=m0 flags=[IsChecked, HasExplicitName] length=2
     ReturnCall v4 casts=[{declared={type=number site=w4}}, {declared={type=number site=w2}}]
 }
 
-# Math.imul of two 32-bit integers is one 32-bit multiplication that wraps. The function hands its result back as a double: one conversion.
+# Math.imul of two 32-bit integers is one 32-bit multiplication that wraps. The function hands its result back as that integer.
 # CHECK-LABEL: name="product" role=Source
 # CHECK: Int32 b@[[product]] = Mul(b@{{*}}, b@{{*}}, {{*}}:CallInline)
-# CHECK-NEXT: Double b@[[number]] = IToD(b@[[product]])
-# CHECK-NEXT: Return(b@[[number]], Terminal)
+# CHECK-NEXT: Return(b@[[product]], Terminal)
 # CHECK-LABEL: end of function
 # NONE-LABEL: name="product" role=Source
 # NONE-NOT: CheckMul
 # NONE-NOT: SExt32
+# NONE-NOT: IToD
 # NONE-NOT: Patchpoint(
 # NONE-NOT: Branch(
 # NONE-LABEL: end of function
-# X64: instructions: 3, patchpoints: 0
-# ARM64: instructions: 3, patchpoints: 0
+# X64: instructions: 2, patchpoints: 0
+# ARM64: instructions: 2, patchpoints: 0

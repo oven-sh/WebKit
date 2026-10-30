@@ -8,7 +8,7 @@
 layout L0 fields=[{key="length" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=131110 function=f1
+runtimefunction id=WrittenListsArrayFromLength function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Integer integer=2
     v1 = NewClosure function=f2
@@ -16,7 +16,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v3 = Call v2, -, v0, v1
     Return
 }
-function f1 name="from" role=Library enclosingRuntimeFunction=131110 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f1 name="from" role=Library enclosingRuntimeFunction=WrittenListsArrayFromLength parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v2 = NewObject -, v0 layout=L0 fields=[0]
     v3 = Builtin builtin=Array
     v4 = Builtin builtin=ArrayFrom

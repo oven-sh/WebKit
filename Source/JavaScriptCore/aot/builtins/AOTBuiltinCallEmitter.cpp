@@ -142,6 +142,11 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             }
             number = std::nullopt;
         }
+        if (number && BuiltinBindings::directFunctionAt(*number).returnsNumber) {
+            DirectOperands operands = directOperandsOf(value, BuiltinBindings::directFunctionAt(*number));
+            defineAs(value, Number(emitter<RuntimeCallEmitter>().callDirectFunctionReturningNumber(value, *number, operands.words.span(), operands.keptAlive.span())), typeOf(value.id()));
+            return;
+        }
         // A validating build makes no host frame for a direct call, so what needs one goes through the host function there.
         bool needsHostFrame = number && (BuiltinBindings::directFunctionAt(*number).takesFrame() || (receiver && overload.throws() && !overload.onlyPropagatesErrors() && BuiltinCellKey::object(overload.builtin).hasCell(m_builtins)));
         if (number && !BuiltinBindings::directFunctionAt(*number).entersHostFunction() && !(generator().validates() && needsHostFrame)) {
@@ -258,6 +263,11 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
         if (m_builtins.canonicalID(overload.builtin) == Builtins::ArrayPrototypeJoin && overload.code.implementation.kind == BuiltinImplementationKind::Inline && overload.code.implementation.inlineBuiltin == InlineBuiltin::ArrayJoin && overload.mode == BuiltinCallMode::Call && receiver && arguments.size() <= 1) {
             Boxed separator = arguments.empty() ? undefined() : boxedOperand(value, arguments[0]);
             defineResult(callOperation<Boxed>(value, RuntimeOperation::ArrayJoinOfAnyReceiver, { boxedOperand(value, receiver), separator, calleeOf(value, overload) }));
+            return;
+        }
+        // A member that is a slot of the object itself, a number or a cell has no accessor function to call.
+        if (overload.mode == BuiltinCallMode::Get && receiver && !BuiltinCellKey::getter(overload.builtin).hasCell(m_builtins)) {
+            defineResult(emitter<AccessEmitter>().getById(value, boxedOperand(value, receiver), keyOf(overload), SiteCacheID()));
             return;
         }
         callFunction();

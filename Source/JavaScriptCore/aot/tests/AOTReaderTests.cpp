@@ -9,6 +9,7 @@
 
 #include "AOTHostEntriesTestSupport.h"
 #include "AOTIRParser.h"
+#include "AOTIRPrinter.h"
 #include "AOTReaderTestSupport.h"
 #include "AOTVector.h"
 #include <array>
@@ -40,8 +41,10 @@ void testAcceptsFixture()
     AOT_TEST_CHECK(program->at(f8).blocks[3].role == BlockRole::CatchHandler);
     AOT_TEST_CHECK(hasElements(program->at(f8).blocks[0].terminator.taken().proofs, { 0u }));
     AOT_TEST_CHECK(program->at(f1).constructedClass == L2 && !program->at(f7).constructedClass);
-    AOT_TEST_CHECK(program->at(f5).role == FunctionRole::Library && program->at(f5).enclosingRuntimeFunction == RuntimeFunctionID(0u));
-    AOT_TEST_CHECK(findRuntimeFunction(*program, RuntimeFunctionID(0u))->function == f5 && !findRuntimeFunction(*program, RuntimeFunctionID(2u)));
+    auto functionNamed = [](ASCIILiteral token) { return Typed::runtimeFunctionFromToken(BuiltinTable::singleton(), token); };
+    RuntimeFunctionID listed = functionNamed("PromiseConstructorPromise"_s);
+    AOT_TEST_CHECK(program->at(f5).role == FunctionRole::Library && program->at(f5).enclosingRuntimeFunction == listed);
+    AOT_TEST_CHECK(findRuntimeFunction(*program, listed)->function == f5 && !findRuntimeFunction(*program, functionNamed("AsyncDisposableStackPrototypeAdopt"_s)));
     const Typed::Function& stream = program->at(f7);
     AOT_TEST_CHECK(stream.at(ValueID(0u)).type == TypeTable::anything && stream.at(ValueID(1u)).type == TypeTable::boolean);
     AOT_TEST_CHECK(!stream.at(ValueID(2u)).type && !stream.at(ValueID(15u)).type);

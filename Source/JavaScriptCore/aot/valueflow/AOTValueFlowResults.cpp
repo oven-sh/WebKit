@@ -348,7 +348,16 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     auto solution = makeUnique<ValueFlowSolution>(program, build, runsEveryRuleOnceMore ? ValueFlowSolver::Rounds::Due : ValueFlowSolver::Rounds::DueWithoutCheck, ValueFlowSolution::Witnesses::None, UINT32_MAX, EnumSet<ValueFlowUnknownSource> { },
         showsCauses ? ValueFlowSolution::WaysOfValues::AreAskedFor : ValueFlowSolution::WaysOfValues::AreNotAskedFor, ValueFlowSolution::CoveredMembers::AreLeftOut);
     times.didFinish("solve"_s);
-    RELEASE_ASSERT(solution->hasResult());
+    if (!solution->hasResult()) {
+        build.destroyLater(WTF::move(solution));
+        build.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::ProgramTooLargeToAnalyze });
+        FlowResults results;
+        results.setReasonForNoResults(UnseenCodeCause::LimitReached);
+        build.continueWithoutFlowResults();
+        if (goesOn)
+            (*goesOn)(reportUsesOfLibraryCode(results));
+        return results;
+    }
     if (build.options().checksFlowFixpoint)
         reportRulesThatWereNotDue(solution->solver(), build);
 
@@ -360,6 +369,12 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         return FlowResults(createUnknownResultTables(program, build));
     }
     times.didFinish("uses of library code"_s);
+    std::unique_ptr<ValueFlowBirthsOfUnknownObject> birthsOfUnknownObject;
+    if (solution->solver().input().remembersWhoLoggedEachEdge) {
+        birthsOfUnknownObject = makeUnique<ValueFlowBirthsOfUnknownObject>(inputs);
+        inputs.birthsOfUnknownObject = birthsOfUnknownObject.get();
+        times.didFinish("where values of unknown type begin"_s);
+    }
     ValueFlowLayoutsOfSites layoutsOfSites;
     ValueFlowClassesOfBuiltinResults classesOfBuiltinResults;
     std::unique_ptr<ValueFlowHeapIndex> heapIndex;
@@ -535,6 +550,8 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     });
     steps->run();
     tables.application->accessSites.valueOfSite = { };
+    if (birthsOfUnknownObject)
+        tables.sites.otherOrigins = birthsOfUnknownObject->takeOtherOrigins();
     inputs.heapIndex = nullptr;
     build.destroyLater(WTF::move(heapIndex));
     inputs.nodesAskedFor = nullptr;

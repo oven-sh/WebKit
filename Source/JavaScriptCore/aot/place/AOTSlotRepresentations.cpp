@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <array>
 #include <utility>
+#include <wtf/DataLog.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -251,7 +252,8 @@ static SlotClaim claimFor(const SlotPlanContext& context, const FieldInputs& fie
         return claim;
     }
 
-    claim.needsWideReference = field.members.needsWideReference || (context.isMadeSeldom(field.reference.layout) && !holdsEnvironmentOfDeferredClosures(field));
+    claim.isWideByChoice = !field.members.needsWideReference && context.isMadeSeldom(field.reference.layout) && !holdsEnvironmentOfDeferredClosures(field);
+    claim.needsWideReference = field.members.needsWideReference || claim.isWideByChoice;
     claim.representation = representationOfField(context, field.type, claim.needsAbsentState, {
         .prefersInt32 = typeFitsInt32Slot(field.type),
         .holdsWideReferences = claim.needsWideReference,
@@ -428,6 +430,7 @@ struct SharedClaim {
     SlotRepresentation outOfLineRepresentation { SlotRepresentation::JSValue };
     bool needsAbsentState { false };
     bool needsWideReference { false };
+    bool isWideByChoice { false };
 };
 
 std::optional<SharedValueKind> sharedValueKindOf(SlotRepresentation representation)
@@ -472,8 +475,28 @@ public:
     void run()
     {
         computeSpareBytes();
-        for (const JoinedRows::Set& joined : m_joinedRows.sets())
-            share(joined);
+        std::span<const JoinedRows::Set> sets = m_joinedRows.sets();
+        m_timeRoomLastChangedIn.fill(0, m_context.program.layouts.size());
+        m_timeClaimLastChanged.fill(0, m_claims.size());
+        Vector<uint32_t> lastVisitTime(sets.size());
+        for (size_t index = 0; index < sets.size(); ++index) {
+            share(sets[index]);
+            lastVisitTime[index] = m_time;
+        }
+        // A slot that became narrower for one set frees room in its cell for a slot of another set, which may have been processed earlier.
+        // The decision for a set depends only on the claims of its rows and the room in their cells, so if neither has changed the decision stands.
+        size_t numberOfSetsRevisited = 0;
+        for (size_t index = 0; index < sets.size(); ++index) {
+            bool hasChanged = std::ranges::any_of(m_joinedRows.rowsOf(sets[index]), [&](SlotRow row) {
+                return m_timeClaimLastChanged[row] > lastVisitTime[index] || m_timeRoomLastChangedIn[m_context.rows.layoutOf(row).index()] > lastVisitTime[index];
+            });
+            if (!hasChanged)
+                continue;
+            ++numberOfSetsRevisited;
+            share(sets[index]);
+        }
+        if (m_context.build.options().logging.logsPhaseTimes) [[unlikely]]
+            dataLogLn("AOT shared slot claims: sets of joined rows ", sets.size(), " | looked at again ", numberOfSetsRevisited);
     }
 
 private:
@@ -526,12 +549,15 @@ private:
     {
         SharedClaim shared;
         Type contents;
+        shared.isWideByChoice = true;
         for (const ClaimUnit& unit : units) {
             const SlotClaim& claim = claimOf(unit);
             contents = contentsOfSharedSlot(contents, *unit.type);
             shared.needsAbsentState |= claim.needsAbsentState;
-            shared.needsWideReference |= claim.needsWideReference;
+            shared.needsWideReference |= claim.needsWideReference && !claim.isWideByChoice;
+            shared.isWideByChoice &= claim.isWideByChoice;
         }
+        shared.needsWideReference |= shared.isWideByChoice;
         shared.representation = representationOfField(m_context, contents, shared.needsAbsentState, {
             .prefersInt32 = typeFitsInt32Slot(contents),
             .holdsWideReferences = shared.needsWideReference,
@@ -585,19 +611,29 @@ private:
     {
         uint32_t ownWidth = widthOf(claimOf(unit).representation);
         uint32_t width = widthOf(shared.representation);
-        auto applyTo = [&](SlotClaim& claim) {
+        ++m_time;
+        auto applyTo = [&](SlotRow row) {
+            SlotClaim& claim = m_claims[row];
+            bool isAsBefore = claim.representation == shared.representation && claim.needsAbsentState == shared.needsAbsentState && claim.needsWideReference == shared.needsWideReference && claim.isWideByChoice == shared.isWideByChoice
+                && (!claim.mayBeOutOfLine || claim.outOfLineRepresentation == shared.outOfLineRepresentation);
+            if (isAsBefore)
+                return;
+            m_timeClaimLastChanged[row] = m_time;
             claim.representation = shared.representation;
             claim.needsAbsentState = shared.needsAbsentState;
             claim.needsWideReference = shared.needsWideReference;
+            claim.isWideByChoice = shared.isWideByChoice;
             if (claim.mayBeOutOfLine)
                 claim.outOfLineRepresentation = shared.outOfLineRepresentation;
         };
         for (SlotRow row : unit.rows) {
-            if (width > ownWidth)
-                m_spareBytes[m_context.rows.layoutOf(row).index()] -= width - ownWidth;
-            applyTo(m_claims[row]);
+            if (ownWidth != width) {
+                m_spareBytes[m_context.rows.layoutOf(row).index()] += ownWidth - width;
+                m_timeRoomLastChangedIn[m_context.rows.layoutOf(row).index()] = m_time;
+            }
+            applyTo(row);
         }
-        applyTo(m_claims[m_context.inheritedRows.declaringRowOf(unit.rows[0])]);
+        applyTo(m_context.inheritedRows.declaringRowOf(unit.rows[0]));
     }
 
     bool tryShare(const JoinedRows::Set& joined, Vector<ClaimUnit, 8>&& units)
@@ -646,6 +682,10 @@ private:
     const JoinedRows& m_joinedRows;
     std::span<SlotClaim> m_claims;
     Vector<uint32_t> m_spareBytes;
+    // The time advances with every unit that takes a shared claim.
+    Vector<uint32_t> m_timeRoomLastChangedIn;
+    Vector<uint32_t> m_timeClaimLastChanged;
+    uint32_t m_time { 0 };
     Vector<SlotRow, 16> m_rowsByFamily;
     Vector<ClaimUnit, 8> m_units;
 };

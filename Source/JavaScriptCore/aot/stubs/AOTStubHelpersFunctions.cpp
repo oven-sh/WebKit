@@ -27,7 +27,7 @@ void toCodeAddress(StubAssembler& jit, GPRReg word, GPRReg scratch, StackIsTeste
     jit.m_assembler.add<64>(word, scratch, word, ARM64Assembler::UXTW, 2);
 #else
     static_assert(ClosureWord::offsetUnit == 4 || ClosureWord::offsetUnit == 1);
-    jit.zeroExtend32ToWord(word, word);
+    jit.and32(TrustedImm32(static_cast<int32_t>(~(1u << ClosureWord::isRenamedBit))), word);
     jit.getEffectiveAddress(BaseIndex(scratch, word, ClosureWord::offsetUnit == 4 ? CCallHelpers::TimesFour : CCallHelpers::TimesOne), word);
 #endif
 }

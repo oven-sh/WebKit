@@ -37,6 +37,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-NEXT: functionRecords
 # CHECK-NEXT: functionRecordsByFunction 0 0
 # CHECK-NEXT: functionSources 1 3
+# CHECK-NEXT: closureFormsBySource 0 0
 # CHECK-NEXT: implementedBuiltins 0 0
 # CHECK-NEXT: closureFunctionKinds 1 2
 # CHECK-NEXT: functionLengths 1 1

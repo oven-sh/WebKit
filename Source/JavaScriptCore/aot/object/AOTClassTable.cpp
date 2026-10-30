@@ -29,9 +29,11 @@
 #include "AOTProgramStatics.h"
 #include "AOTPropertyCaches.h"
 #include "AOTRuntimeCounters.h"
+#include "AOTRuntimeHooks.h"
 #include "AOTSlotAccess.h"
 #include "AOTState.h"
 #include "AOTStaticFields.h"
+#include "BrandedStructure.h"
 #include "CustomGetterSetter.h"
 #include "DeferTermination.h"
 #include "FunctionPrototype.h"
@@ -79,10 +81,14 @@ ClassTable::ClassTable(State& state)
     state.instance.classes.placesOfPrototypeProperties = m_placesOfPrototypeProperties.data();
     state.instance.classes.prototypesOfClassObjects = m_prototypesOfClassObjects.data();
     state.instance.classes.instancesOfClassesBelow = m_instancesOfClassesBelow.data();
+    state.instance.classes.brandsOfInstances = state.tableArena.allocate<UniquedStringImpl*>(m_tables.numberOfClasses());
     state.caches->add(CacheKind::WeakByKey, "class sides by holder"_s, *this);
     state.caches->addClearedEachCollection("places of prototype properties"_s, asWritableBytes(std::span { m_placesOfPrototypeProperties }));
     state.caches->addClearedEachCollection("prototypes of class objects"_s, asWritableBytes(std::span { m_prototypesOfClassObjects }));
     state.caches->addClearedEachCollection("instances of classes below"_s, asWritableBytes(std::span { m_instancesOfClassesBelow }));
+    state.caches->addClearedEachCollection("structures with brands"_s, asWritableBytes(std::span { m_structuresWithBrands }));
+    state.instance.classes.structureNameCache = m_structureNameCache.data();
+    state.caches->addClearedEachCollection("structures whose names are known"_s, asWritableBytes(std::span { m_structureNameCache }));
 }
 
 ClassTable::~ClassTable() = default;
@@ -91,6 +97,16 @@ const LayoutData* ClassTable::classWithIndex(uint32_t index) const
 {
     uint32_t offset = m_tables.offsetOfClass(index);
     return offset ? m_tables.at<LayoutData>(offset) : nullptr;
+}
+
+// Anything may ask a class for its prototype before the program evaluates the class, but few programs do.
+// A validating run asks every class at the start, so a class that cannot take the question fails in every program that has one.
+void ClassTable::askEveryClassForItsPrototype(VM& vm)
+{
+    for (uint32_t index = 0; index < m_tables.numberOfLayoutIndices; ++index) {
+        if (const LayoutData* classLayout = classWithIndex(index))
+            classPrototype(vm, *classLayout);
+    }
 }
 
 const LayoutData* ClassTable::classConstructedBy(FunctionID function) const
@@ -176,8 +192,7 @@ Closure* ClassTable::createClassObject(VM& vm, const LayoutData& classLayout)
     RELEASE_ASSERT(!closures.closureIfCreated(constructor));
     Closure* created = Closure::create(vm, structure, constructor);
     closures.registerClassObject(created);
-    bool recordNamesParent = !classLayout.hasUntypedBase || classLayout.classData().builtinBase != LayoutData::noBase;
-    if (!recordNamesParent || hasComputedMemberNames(classLayout))
+    if (!canBeDefinedFromRecord(classLayout))
         return created;
     ASSERT(hasOneClassObject(classLayout));
     count(m_state.instance, RuntimeCounterID::ClassesMadeWhenFirstTouched);
@@ -266,6 +281,9 @@ JSObject* ClassTable::classPrototype(VM& vm, const LayoutData& classLayout)
             didCreatePrototypeLeftToRecord(classLayout);
         return prototype;
     }
+    // The evaluation of such a class brings its own class object, and until then the class has no prototype.
+    if (isDefinedByClass(classLayout) && !canBeDefinedFromRecord(classLayout))
+        return nullptr;
     if (hasOneClassObject(classLayout))
         m_state.objects->closures.closure(vm, FunctionID(classLayout.classData().classConstructor));
     if (!isDefinedByClass(classLayout))
@@ -378,6 +396,107 @@ void ClassTable::registerClassPrototype(const LayoutData& classLayout, JSObject*
         MemberGuardWatchpoints::MethodTableUpdate update(m_state);
         m_state.objects->caches->memberGuardWatchpoints.didCreateHolder(classLayout, ClassSide::Prototype);
     }
+}
+
+Symbol* ClassTable::instanceBrandFor(VM& vm, JSCell* parent, JSCell* newTarget)
+{
+    auto* classObject = dynamicDowncast<Closure>(newTarget);
+    const LayoutData* classLayout = classObject ? classObject->classData() : nullptr;
+    if (!classLayout || !classLayout->classData().instancesCarryBrand)
+        return nullptr;
+    const LayoutData* highest = classLayout;
+    while (const LayoutData* base = baseOf(*highest))
+        highest = base;
+    uint32_t builtinBase = highest->classData().builtinBase;
+    if (builtinBase == LayoutData::noBase || m_state.builtinCells->findObject(BuiltinID(builtinBase)) != parent)
+        return nullptr;
+
+    uint32_t rank = m_tables.rankOfClass(classLayout->index);
+    auto found = m_brandsOfInstances.find(rank + 1);
+    if (found != m_brandsOfInstances.end())
+        return found->value;
+    Symbol* brand = Symbol::create(vm, PrivateSymbolImpl::create(*StringImpl::empty()).get());
+    m_state.immortalCells->add(brand);
+    m_brandsOfInstances.add(rank + 1, brand);
+    m_classesByBrand.add(&brand->uid(), classLayout);
+    m_state.instance.classes.brandsOfInstances[rank] = &brand->uid();
+    return brand;
+}
+
+Structure* ClassTable::structureWithInstanceBrand(VM& vm, JSCell* parent, JSCell* newTarget, Structure* structure)
+{
+    StructureWithBrand& last = m_structuresWithBrands[indexOfStructureWithBrand(newTarget)];
+    if (last.withoutBrand == structure && last.newTarget == newTarget && last.parent == parent) [[likely]]
+        return last.withBrand;
+    Symbol* brand = instanceBrandFor(vm, parent, newTarget);
+    last = { parent, newTarget, structure, brand ? Structure::setBrandTransition(vm, structure, brand) : structure };
+    return last.withBrand;
+}
+
+static bool isDefinedOnNewInstancesBy(const BuiltinTable& table, BuiltinClassID builtinClass, UniquedStringImpl* uid)
+{
+    if (uid->isSymbol())
+        return false;
+    for (BuiltinClassID current = builtinClass; current; current = table.at(current).parent) {
+        for (BuiltinName name : table.at(current).namesDefinedOnNewInstances) {
+            if (equal(uid, byteCast<Latin1Character>(table.textOf(name))))
+                return true;
+        }
+    }
+    return false;
+}
+
+bool ClassTable::computeHasOnlyClassFieldNames(Structure* structure)
+{
+    // A dictionary Structure stays the same while properties are added and removed.
+    if (!structure->isBrandedStructure() || structure->isDictionary())
+        return false;
+    const LayoutData* classLayout = nullptr;
+    for (auto& [brand, layoutOfBrand] : m_classesByBrand) {
+        if (carriesBrandOfClass(structure, m_tables.rankOfClass(layoutOfBrand->index)))
+            classLayout = layoutOfBrand;
+    }
+    uint32_t id = structure->id().bits();
+    uint32_t& known = m_structureNameCache[id >> structureNameCacheShift & (structureNameCacheSize - 1)];
+    uint32_t namesOffset = classLayout ? classLayout->classData().namesOfFieldsOffset : 0;
+    if (!namesOffset) {
+        known = id | structureHasOtherNames;
+        return false;
+    }
+    const uint32_t* counted = m_tables.at<uint32_t>(namesOffset);
+    std::span<const uint32_t> namesOfFields = unsafeMakeSpan(counted + 1, *counted);
+
+    const LayoutData* highest = classLayout;
+    while (const LayoutData* base = baseOf(*highest))
+        highest = base;
+    const BuiltinTable& table = BuiltinTable::singleton();
+    BuiltinClassID builtinClass = table.at(BuiltinID(highest->classData().builtinBase)).instanceClass;
+
+    const ProgramIdentifiers& identifiers = *m_state.instance.vm->aotState().identifiers;
+    bool hasOnlyClassFieldNames = true;
+    structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
+        UniquedStringImpl* uid = entry.key();
+        std::optional<uint32_t> number = identifiers.numberOf(uid);
+        hasOnlyClassFieldNames = (number && std::ranges::binary_search(namesOfFields, *number)) || isDefinedOnNewInstancesBy(table, builtinClass, uid);
+        return hasOnlyClassFieldNames;
+    });
+    known = hasOnlyClassFieldNames ? id : id | structureHasOtherNames;
+    return hasOnlyClassFieldNames;
+}
+
+bool ClassTable::carriesBrandOfClass(Structure* structure, uint32_t rankOfClass) const
+{
+    auto found = m_brandsOfInstances.find(rankOfClass + 1);
+    return found != m_brandsOfInstances.end() && structure->isBrandedStructure() && uncheckedDowncast<BrandedStructure>(structure)->checkBrand(found->value);
+}
+
+Structure* RuntimeHooks::addBrandForSuperCall(VM& vm, JSFunction* newTarget, Structure* structure)
+{
+    VMState& vmState = vm.aotState();
+    vmState.newTargetOfSuperCall = nullptr;
+    Instance* instance = Instance::of(newTarget->realm());
+    State* state = instance ? instance->state : nullptr;
+    return state && state->objects ? state->objects->classes.structureWithInstanceBrand(vm, vmState.parentOfSuperCall, newTarget, structure) : structure;
 }
 
 bool ClassTable::keepsStructuresForNextEvaluation(const Closure& classObject, const LayoutData& classLayout) const
@@ -1100,6 +1219,15 @@ bool ClassTable::tryDefineAgainWithKeptStructures(JSGlobalObject* globalObject, 
     armMemberGuards(vm, classLayout, ClassSide::Prototype, prototype);
     armMemberGuards(vm, classLayout, ClassSide::Static, classObject);
     return true;
+}
+
+// The run time may make the one class object of a class before the program evaluates the class. The evaluation then continues with that object, not with the one it allocated.
+Closure* ClassTable::classObjectForEvaluation(Closure* allocated, const LayoutData& classLayout) const
+{
+    if (!hasOneClassObject(classLayout))
+        return allocated;
+    auto* registered = dynamicDowncast<Closure>(m_state.objects->closures.closureIfCreated(allocated->function()));
+    return registered ? registered : allocated;
 }
 
 void ClassTable::defineClass(JSGlobalObject* globalObject, Closure* classObject, const LayoutData& classLayout, JSValue parent, JSValue prototypeParent)

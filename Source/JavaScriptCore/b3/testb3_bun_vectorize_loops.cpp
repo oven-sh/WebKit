@@ -536,7 +536,7 @@ static void testVectorizeLoopsPollsBetweenStretches()
             static int64_t numberOfPolls;
             PatchpointValue* poll = loop.graph.emptyPatchpoint(loop.loop.body);
             poll->isLoopPoll = true;
-            poll->turnsAreShort = true;
+            poll->iterationsAreShort = true;
             poll->effects = Effects::none();
             poll->effects.writesLocalState = true;
             poll->effects.exitsSideways = true;
@@ -804,7 +804,7 @@ static void testVectorizeLoopsPollsBetweenStretchesOfCountersThatMeet()
     static int64_t numberOfPolls;
     PatchpointValue* poll = loop.graph.emptyPatchpoint(loop.body);
     poll->isLoopPoll = true;
-    poll->turnsAreShort = true;
+    poll->iterationsAreShort = true;
     poll->effects = Effects::none();
     poll->effects.writesLocalState = true;
     poll->effects.exitsSideways = true;
@@ -1844,8 +1844,74 @@ static void testPipelineVectorizesNothingUnlessAsked()
     CHECK(!loop.proc.usesSIMD());
 }
 
+// A C function that keeps the lower 64 bits of every vector register and clears the rest, unless the calling convention has it keep all 128.
+static MacroAssemblerCodeRef<OperationPtrTag> compileFunctionThatClearsUpperHalves()
+{
+    CCallHelpers jit;
+    jit.emitFunctionPrologue();
+    RegisterSet calleeSaves = RegisterSet::calleeSaveRegisters();
+    RegisterSet::allFPRs().forEach([&](Reg reg) {
+        if (calleeSaves.contains(reg, Width128))
+            return;
+        jit.moveDoubleTo64(reg.fpr(), GPRInfo::returnValueGPR);
+        jit.move64ToDouble(GPRInfo::returnValueGPR, reg.fpr());
+    });
+    jit.emitFunctionEpilogue();
+    jit.ret();
+    LinkBuffer linkBuffer(jit, nullptr);
+    return FINALIZE_CODE(linkBuffer, OperationPtrTag, nullptr, "clears upper halves of vector registers");
+}
+
+// to[i] = from[i] + from[i + 1], for more vectors than there are registers, all of them loaded before a call and added after it.
+static void checkVectorsOutliveCallAndSpills(bool spillsEverything)
+{
+    constexpr unsigned numberOfSums = 40;
+    auto callee = compileFunctionThatClearsUpperHalves();
+
+    Policy policy = vectorPolicy();
+    policy.air.registers.spillsEverything = spillsEverything;
+    Procedure proc { policy, nullptr, /* usesSIMD = */ true };
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<v128_t*, v128_t*>(proc, root).eager();
+    Vector<Value*> loaded;
+    for (unsigned index = 0; index <= numberOfSums; ++index)
+        loaded.append(graph.load(root, V128, arguments[1], index * sizeof(v128_t), firstHeap));
+    root->appendNew<CCallValue>(proc, Void, Origin(), root->appendNew<ConstPtrValue>(proc, Origin(), callee.code().taggedPtr()));
+    for (unsigned index = 0; index < numberOfSums; ++index) {
+        Value* sum = root->appendNew<SIMDValue>(proc, Origin(), VectorAdd, B3::V128, SIMDLane::i64x2, SIMDSignMode::None, loaded[index], loaded[index + 1]);
+        graph.store(root, sum, arguments[0], index * sizeof(v128_t), secondHeap);
+    }
+    root->appendNew<Value>(proc, Return, Origin());
+    auto code = compileForTarget(proc);
+
+    alignas(16) v128_t from[numberOfSums + 1];
+    alignas(16) v128_t to[numberOfSums];
+    fillWithBytes(asMutableByteSpan(from), 1);
+    invoke<void>(*code, to, from);
+    for (unsigned index = 0; index < numberOfSums; ++index) {
+        CHECK_EQ(to[index].u64x2[0], from[index].u64x2[0] + from[index + 1].u64x2[0]);
+        CHECK_EQ(to[index].u64x2[1], from[index].u64x2[1] + from[index + 1].u64x2[1]);
+    }
+}
+
+// Policy::upstream.allowsSIMD says whether a procedure may use vectors. Options::useWasmSIMD() is about WebAssembly.
+static void testVectorsDoNotDependOnWasmSIMDOption()
+{
+    bool usesWasmSIMD = Options::useWasmSIMD();
+    for (bool option : { false, true }) {
+        Options::useWasmSIMD() = option;
+        testVectorizeLoopsFillsElements();
+        testPipelineVectorizesLoopOverElements();
+        checkVectorsOutliveCallAndSpills(false);
+        checkVectorsOutliveCallAndSpills(true);
+    }
+    Options::useWasmSIMD() = usesWasmSIMD;
+}
+
 void addBunLoopVectorizingTests(const TestConfig* config, BunTestTasks& tasks)
 {
+    RUN_NOW(testVectorsDoNotDependOnWasmSIMDOption());
     RUN(testVectorizeLoopsCopiesElementsOfEveryKind());
     RUN(testVectorizeLoopsLeavesLoopThatOnlyMovesTwoElementsToVectorInShortArrays());
     RUN(testVectorizeLoopsFillsElements());

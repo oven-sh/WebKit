@@ -245,7 +245,6 @@
 #include "ProfilerSupport.h"
 #include "ProxyConstructorInlines.h"
 #include "ProxyObjectInlines.h"
-#include "ProxyRevokeInlines.h"
 #include "ReflectObjectInlines.h"
 #include "RegExpConstructorInlines.h"
 #include "RegExpGlobalDataInlines.h"
@@ -1422,9 +1421,9 @@ void JSGlobalObject::init(VM& vm)
             bool isCallable = true;
             init.set(ProxyObject::createStructure(init.vm, init.owner, jsNull(), isCallable));
         });
-    m_proxyRevokeStructure.initLater(
+    m_proxyRevocableResultStructure.initLater(
         [] (const Initializer<Structure>& init) {
-            init.set(ProxyRevoke::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()));
+            init.set(createProxyRevocableResultStructure(init.vm, *init.owner));
         });
 
     m_parseIntFunction.initLater(
@@ -2304,14 +2303,16 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         });
 #endif
 
-    m_performProxyObjectHasFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectHas)));
-    m_performProxyObjectHasByValFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectHasByVal)));
-    m_performProxyObjectGetFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectGet)));
-    m_performProxyObjectGetByValFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectGetByVal)));
-    m_performProxyObjectSetStrictFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetStrict)));
-    m_performProxyObjectSetSloppyFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetSloppy)));
-    m_performProxyObjectSetByValStrictFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetByValStrict)));
-    m_performProxyObjectSetByValSloppyFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetByValSloppy)));
+    if (!vm.hasCompiledCode()) {
+        m_performProxyObjectHasFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectHas)));
+        m_performProxyObjectHasByValFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectHasByVal)));
+        m_performProxyObjectGetFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectGet)));
+        m_performProxyObjectGetByValFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectGetByVal)));
+        m_performProxyObjectSetStrictFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetStrict)));
+        m_performProxyObjectSetSloppyFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetSloppy)));
+        m_performProxyObjectSetByValStrictFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetByValStrict)));
+        m_performProxyObjectSetByValSloppyFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetByValSloppy)));
+    }
 
     if (Options::exposeProfilersOnGlobalObject()) {
 #if ENABLE(SAMPLING_PROFILER)
@@ -3425,7 +3426,7 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_moduleNamespaceObjectStructure.visit(visitor);
     thisObject->m_proxyObjectStructure.visit(visitor);
     thisObject->m_callableProxyObjectStructure.visit(visitor);
-    thisObject->m_proxyRevokeStructure.visit(visitor);
+    thisObject->m_proxyRevocableResultStructure.visit(visitor);
     thisObject->m_sharedArrayBufferStructure.visit(visitor);
     thisObject->m_disposableStackStructure.visit(visitor);
     thisObject->m_asyncDisposableStackStructure.visit(visitor);

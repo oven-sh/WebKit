@@ -135,12 +135,14 @@ struct VectorLayout {
     uint8_t inlineBufferOffset; // Zero without an inline buffer: no vector is its own buffer.
 };
 
+// AOTSystemResources.h
+[[noreturn]] void exitProgramTooLarge();
+
 template<typename Malloc>
 ALWAYS_INLINE void allocateVectorBufferInline(VectorWords& vector, size_t newCapacity, size_t elementSize)
 {
-    constexpr size_t maxCapacity = std::numeric_limits<unsigned>::max();
-    if (newCapacity > maxCapacity || newCapacity * elementSize > maxCapacity >> 1)
-        CRASH();
+    if (newCapacity > std::numeric_limits<unsigned>::max()) [[unlikely]]
+        exitProgramTooLarge();
     vector.buffer = Malloc::malloc(newCapacity * elementSize);
     vector.capacity = newCapacity;
 }

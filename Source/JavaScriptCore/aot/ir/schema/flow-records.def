@@ -8,7 +8,7 @@ enum PrototypeNameState { | engine Unknown AbsentOnPrototypes }
 enum ExecutionCount { | engine Unknown AtMostOnce }
 enum AllocationState { | engine Unknown NeverAllocated }
 enum KeyEnumeration { | engine Unknown NeverEnumerated }
-enum FieldCreation { | engine Unknown OnlyAtConstruction }
+enum FieldCreation { | engine Unknown OnlyAtConstruction OnlyBeforeObjectIsFinished }
 enum MemberMutability { | engine Unknown Fixed }
 enum BaseState { | engine Unknown None Layout BuiltinClass }
 enum FrameLocality { | engine Unknown FrameLocal }
@@ -37,10 +37,11 @@ record LayoutFlow engine {
     constructorOrders: List<FieldOrder> fieldCreation: FieldCreation observedUses: ObservedUse cause: UnprovenCause witness: Witness
     impossibleMutations: ObjectMutation keys: KeyEnumeration addedKeys: List<PropertyKey> addedKeysAreComplete: Bool
     isReachedThroughUnknownReceivers: Bool ownAccessors: List<ClassMember> ownAccessorsAreComplete: Bool closureEnvironmentField: UInt32?
+    neverEscapes: Bool
 }
 record ClassMember engine {
     key: PropertyKey? side: ClassSide kind: MethodKind function: Function(Dispatch)? mutability: MemberMutability closureUse: ClosureUse
-    isWritableData: Bool
+    isWritableData: Bool isAssignedByProgram: Bool
 }
 record ClassFlow engine {
     evaluations: ExecutionCount prototypeLink: MemberMutability staticLink: MemberMutability constructorProperty: MemberMutability

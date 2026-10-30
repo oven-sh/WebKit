@@ -243,7 +243,7 @@ ALWAYS_INLINE static JSObject* buildObjectFromBody(Builder& builder, const uint6
         }
     }
     Object* object = reinterpret_cast<Object*>(words);
-    if (validatesRuntime(vm)) [[unlikely]]
+    if (checksClaimsAboutObjects(vm)) [[unlikely]]
         validateSlotTypes(vm, *object);
     return object;
 }
@@ -378,7 +378,7 @@ static NEVER_INLINE JSObject* buildObject(Builder& builder, uint32_t first)
         bool isStored = object->store(vm, fields[fieldIndices[index]], AcceptedValue::provenAtBuildTime(builder.roots.at(firstRoot + index)));
         RELEASE_ASSERT(isStored);
     }
-    if (validatesRuntime(vm)) [[unlikely]]
+    if (checksClaimsAboutObjects(vm)) [[unlikely]]
         validateSlotTypes(vm, *object);
     if (!otherMembers.values.empty()) {
         defineOtherMembers(builder, *object, otherMembers.identifierNumbers, firstRoot + count);
@@ -551,7 +551,6 @@ JSMap* tryBuildMap(JSGlobalObject* realm, State& state, const CollectionDataRequ
 JSC_DEFINE_JIT_OPERATION(operationAOTNewFromData, JSCell*, (Instance* instance, uint32_t request))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewFromData);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     OPERATION_RETURN(scope, tryBuildData(globalObject, *instance->state, requestAt<DataRequest>(instance, request)));
 }
 

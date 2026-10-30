@@ -91,17 +91,26 @@ function f1 name="step" module=m0 position=41 flags=[IsChecked, HasExplicitName]
 }
 
 # Four cases are too few for a table: the value is compared in a tree, at most three tests deep. The type says that the four cases are all there is, and a number that is none of them still has to fall out of the switch.
-# So the function may answer undefined: the block behind the last failed test returns it, and every arm returns its number as a boxed value in an integer register.
+# So the function may answer undefined: the block behind the last failed test returns the pattern of bits that stands for it in a floating-point register, and every arm returns its number there as it is. Nothing is boxed.
+# The written result type excludes what that block returns, so both edges to it are rare.
 # CHECK-LABEL: name="step" role=Source
 # CHECK-NEXT: BB#0:
+# CHECK-NOT: pureFunction
+# CHECK-NOT: BitwiseCast(
 # CHECK: Int32 b@[[isUpOrDown]] = LessThan(b@[[direction]], $2(
 # CHECK: Branch(b@[[isUpOrDown]], Terminal)
 # CHECK: Branch(b@[[direction]], Terminal)
 # CHECK: Equal(b@[[direction]], $1(
+# CHECK: Successors: Then:#{{*}}, Else:Rare:#[[fallsOut]]
 # CHECK: Double b@[[down]] = Add(b@[[position]], b@[[width]], {{*}}:Add)
-# CHECK-NOT: Return(b@[[down]]
-# CHECK: Return(b@{{*}}, Terminal)
-# CHECK: Return($10(b@{{*}}), Terminal)
+# CHECK-NEXT: Return(b@[[down]], Terminal)
+# CHECK-NOT: pureFunction
+# CHECK-NOT: BitwiseCast(
+# CHECK: Double b@[[undefined]] = Load(b@
+# CHECK-NEXT: Return(b@[[undefined]], Terminal)
+# CHECK-NOT: pureFunction
+# CHECK-NOT: BitwiseCast(
 # CHECK: Equal(b@[[direction]], $2(
 # CHECK: Equal(b@[[direction]], $3(
+# CHECK: Successors: Then:#{{*}}, Else:Rare:#[[fallsOut]]
 # CHECK-LABEL: end of function

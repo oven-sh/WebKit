@@ -210,7 +210,7 @@ constexpr std::array rows {
     functionPass(PlaceTypeTests, placeTypeTests, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
     derivingFunctions(functionPass(ExpandIteration, expandIteration, Required, Prepared, { Flow, EffectSummaries }, everything)),
     functionPass(ExpandProvenIterations, expandProvenIterations, Optional, Prepared, { Flow, EffectSummaries }, everything),
-    derivingFunctions(functionPass(ExpandOwnKeys, expandOwnKeys, Optional, Prepared, { Flow, EffectSummaries }, everything)),
+    derivingFunctions(functionPass(ExpandOwnKeys, expandOwnKeys, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything)),
     derivingFunctions(readingOtherBodies(functionPass(SelectTypedResults, selectTypedResults, Required, Prepared, { Flow, Heat, EffectSummaries }, everything))),
     functionPass(RetypeValues, retypeValues, Required, Prepared, { }, nothing),
     derivingFunctions(readingOtherBodies(functionPass(InlineCalls, inlineCalls, Optional, Prepared, { Flow, CallGraph, Heat, InliningSummaries, EffectSummaries }, everything))),
@@ -219,7 +219,7 @@ constexpr std::array rows {
     functionPass(EliminateRedundantReads, eliminateRedundantReads, Optional, Prepared, { Flow, EffectSummaries }, everything),
     functionPass(EliminateGuards, eliminateGuards, Optional, Prepared, { Flow, EffectSummaries }, everything),
     functionPass(SeparateUnlikelyLoopPaths, separateUnlikelyLoopPaths, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
-    functionPass(ConvertCountersToIntegers, convertCountersToIntegers, Optional, Prepared, { }, everything),
+    functionPass(ConvertCountersToIntegers, convertCountersToIntegers, Optional, Prepared, { Heat }, everything),
     functionPass(RemoveDeadCountedLoops, removeDeadCountedLoops, Optional, Prepared, { EffectSummaries }, everything),
     functionPass(UnrollShortLoops, unrollShortLoops, Optional, Prepared, { Heat }, everything),
     derivingFunctions(functionPass(FuseArrayChains, fuseArrayChains, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything)),
@@ -238,7 +238,7 @@ constexpr std::array rows {
     functionPass(EliminateDeadCode, eliminateDeadCode, Optional, Prepared, { Flow, EffectSummaries }, values),
     functionPass(CompactBlocks, compactBlocks, Required, Prepared, { }, everything),
     functionPass(RemoveRedundantHandlers, removeRedundantHandlers, Optional, Prepared, { EffectSummaries }, everything),
-    functionPass(HoistLoopInvariantReads, hoistLoopInvariantReads, Optional, Prepared, { Flow, EffectSummaries }, everything),
+    functionPass(HoistLoopInvariantReads, hoistLoopInvariantReads, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
     functionPass(SimplifyBuiltinCalls, simplifyBuiltinCalls, Optional, Prepared, { EffectSummaries }, everything),
     functionPass(ReduceIntegerDivisions, reduceIntegerDivisions, Optional, Prepared, { }, values),
     functionPass(PlanArrayCapacities, planArrayCapacities, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
@@ -311,6 +311,8 @@ constexpr std::array optimizeSteps {
         ScheduleStep::run(ResolveAccesses),
         ScheduleStep::run(HoistLoopInvariantReads),
         ScheduleStep::run(SplitUnions),
+        // A counter that is known to be an integer before type tests are placed gets no test.
+        ScheduleStep::run(ConvertCountersToIntegers),
         ScheduleStep::run(PlaceTypeTests),
         ScheduleStep::run(ExpandIteration),
         ScheduleStep::run(ExpandOwnKeys),
@@ -339,7 +341,7 @@ constexpr std::array optimizeSteps {
     ScheduleStep::run(RestartInGenericVersion),
     ScheduleStep::run(StartGeneratorsAtFirstStep),
     ScheduleStep::run(SeparateUnlikelyLoopPaths),
-    ScheduleStep::run(ConvertCountersToIntegers),
+    ScheduleStep::runBehindRounds(ConvertCountersToIntegers),
     ScheduleStep::run(SimplifyCasts),
     ScheduleStep::run(SimplifyBuiltinCalls),
     ScheduleStep::run(ReduceIntegerDivisions),
@@ -1136,10 +1138,15 @@ void Pipeline::runSchedule(FunctionSchedule schedule, const StepsAroundSchedule&
     const PassDescriptor& summarizer = descriptorOf(PassID::ComputeEffectSummaries);
     bool canSummarize = verifierInputs.flow && summarizer.accepts(m_program.form()) && m_build.isEnabled(summarizer.id, FunctionID());
     EffectSummaries effectsForVerifier;
-    if (m_build.options().verifiesAfterEveryPass && !readsEffectSummaries(schedule) && canSummarize) {
-        effectsForVerifier = computeEffectSummaries(m_program, *verifierInputs.flow, m_build);
+    EffectSummaries effectsByOperandTypes;
+    if (m_build.options().verifiesAfterEveryPass && canSummarize) {
         VerifierInputs withEffects = verifierInputs;
-        withEffects.effects = &effectsForVerifier;
+        if (!readsEffectSummaries(schedule)) {
+            effectsForVerifier = computeEffectSummaries(m_program, *verifierInputs.flow, m_build);
+            withEffects.effects = &effectsForVerifier;
+        }
+        effectsByOperandTypes = computeEffectSummariesByOperandTypes(m_program, *verifierInputs.flow, m_build);
+        withEffects.effectsByOperandTypes = &effectsByOperandTypes;
         m_runner.setVerifierInputs(withEffects);
     }
     runOnFunctions(schedule, m_program, inputs, m_runner, m_analyses, steps);
@@ -1191,9 +1198,10 @@ PassOutcome Pipeline::inlineHeads(const ReaderOfScheduledFunction* readEditedFun
 
 void Pipeline::countGenericVersions()
 {
-    m_build.statistics().count(StatisticID::GenericVersionsBehindEntryChecksCompiled, std::ranges::count_if(m_program.functions, [](const Function& function) {
+    m_build.statistics().count(StatisticID::GenericVersionsBehindEntryChecksCompiled, findIndicesInParallel(m_build.parallelLoops(), m_program.functions.size(), [&](unsigned index) {
+        const Function& function = m_program.functions[index];
         return function.hasBody() && function.role == FunctionRole::GenericVersion;
-    }));
+    }).size());
 }
 
 void Pipeline::didPlace()
@@ -1576,6 +1584,7 @@ void Pipeline::runReadStage()
     shuffleRecordedFrequencies(m_program, m_build);
     forgetLongExpectations(m_program, m_build);
     stage.run(PassID::CopyClosureFactories);
+    noteSubclassesOfBuiltinClasses(m_program, m_build.parallelLoops());
     stage.run(PassID::AllocateTaggedLayouts);
     stage.run(PassID::CheckTypesAtEntry);
     shuffleExpectedTypes(m_program, m_build);
@@ -1672,6 +1681,7 @@ void Pipeline::runSlotStage()
     inputsFor(PassID::NumberLiteralStrings);
     {
         ProgramCachesWithScratchTypes caches(m_program, m_build);
+        // The plan reads all bodies on all threads, then places the slots of layouts on one thread for about as long. The concurrent task yields the threads during the first step and uses them during the second.
         *m_output->slots = m_runner.runAnalysisBeside(PassID::PlanSlots, m_program, [&] {
             return planSlots(m_program, inputs, m_build);
         }, [&] {
@@ -1680,7 +1690,7 @@ void Pipeline::runSlotStage()
             }, [&] {
                 m_analyses.effects(flow());
             });
-        });
+        }, TaskPriority::Background);
     }
     stage.didFinish(nameOf(PassID::PlanSlots));
 }
@@ -1775,6 +1785,18 @@ void Pipeline::runPlacementStage()
     stage.run(PassID::PlaceSiteCaches);
     if (stage.verifiesProgram())
         stage.run(PassID::CheckPlacement);
+}
+
+// Code generation writes function numbers into closure words, which have no room for a larger one. The image builder checks the same limit, but only after the code is generated.
+void Pipeline::checkNumberOfFunctions()
+{
+    if (m_runner.isStopped())
+        return;
+    uint64_t count = m_program.functions.size();
+    while (count && !m_program.functions[count - 1].hasBody())
+        --count;
+    if (m_build.exceeds(LimitID::ImageFunctions, count))
+        m_build.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::TooManyFunctions, .limit = LimitID::ImageFunctions, .count = clampTo<uint32_t>(count) });
 }
 
 void Pipeline::runRepresentationStage()
@@ -1875,6 +1897,7 @@ void Pipeline::runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLas
         runPlacementStage();
         runRepresentationStage();
     }
+    checkNumberOfFunctions();
     {
         // A run that was stopped after a pass hands out what its passes used. What it never computed stays the default result.
         PhaseTimes times(m_build, Stage::GenerateCode);

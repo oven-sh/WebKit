@@ -74,7 +74,7 @@ public:
     bool didLock(BuiltinID, JSObject*);
     // A validating build asks each of these behind every collection, and to lock an object allocates. So an object is listed once it is locked.
     void didLockEveryPropertyOf(JSObject* object) { m_objectsWithEveryPropertyLocked.append(object); }
-    bool hasLocked(BuiltinID id) const { return m_lockedObjects.contains(id.index()); }
+    bool hasLocked(BuiltinID id) const { return m_lockedBuiltins.get(id.index()); }
     BuiltinID builtinOfLockedObject(JSObject*) const;
     std::span<JSObject* const> objectsWithEveryPropertyLocked() const { return m_objectsWithEveryPropertyLocked.span(); }
 
@@ -86,6 +86,12 @@ public:
     {
         m_builtinsToLock = WTF::move(builtins);
         m_holdersThatTellOfWrites = WTF::move(holdersThatTellOfWrites);
+        m_lockedBuiltins.ensureSize(m_builtinsToLock.size());
+        if (m_lockedObjects.isEmpty()) {
+            size_t capacity = m_builtinsToLock.bitCount();
+            m_lockedObjects.reserveInitialCapacity(capacity);
+            m_builtinsOfLockedObjects.reserveInitialCapacity(capacity);
+        }
     }
 
     using ObjectsByBuiltin = UncheckedKeyHashMap<uint32_t, JSObject*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
@@ -127,6 +133,7 @@ private:
     };
     Vector<CellAwaitingModule> m_cellsAwaitingModules;
     ObjectsByBuiltin m_lockedObjects;
+    BitVector m_lockedBuiltins;
     UncheckedKeyHashMap<JSObject*, uint32_t> m_builtinsOfLockedObjects;
     BitVector m_builtinsToLock;
     BitVector m_holdersThatTellOfWrites;

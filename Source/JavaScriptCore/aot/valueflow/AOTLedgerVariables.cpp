@@ -277,6 +277,8 @@ static void reportOperationsOf(const Program& program, FunctionID id, ExecutionC
                 reads.append(site);
             if (VariableID exports = exportsVariableReadBy(program, value))
                 locations.note(locations.of(exports), ReadNoted::ByLoader);
+            if (value.opcode == Opcode::ModuleNamespace || value.opcode == Opcode::ImportModule)
+                locations.noteOperationNamingNamespaceOf(value.module());
             bool isCreation = value.opcode == Opcode::NewObject;
             forEachLocationStoredBy(program, locations, value, [&](uint32_t location) {
                 writes.append({ location, { isCreation ? Actor::Creation : Actor::Statements, isCreation ? WriteForm::AtCreation : WriteForm::Store, { }, { }, id, site, traitsOfOperationThatNamesPlace } });
@@ -1058,8 +1060,11 @@ void computeLocationResults(const ValueFlowResultInputs& inputs, Ledger& ledger,
     FlowApplication& application = *tables.application;
 
     reportScopesOfEvaluatedText(program, locations);
-    for (uint32_t index = 0; index < program.modules.size(); ++index)
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
         tables.wholeProgram.modules[index].namespaceUse = namespaceUseOf(locations.reachersOfNamespace(ModuleID(index)), locations.readersOfNamespaceUnderNamesNobodyLists(ModuleID(index))).state;
+        if (locations.isNamespaceNamedByOperation(ModuleID(index)))
+            tables.wholeProgram.modulesWithNamespaceNamedByOperations.set(index);
+    }
     reportModules(inputs, tables.wholeProgram.modules.span(), locations);
     locations.close();
     ledger.install(LedgerPartKind::Variables, locations);

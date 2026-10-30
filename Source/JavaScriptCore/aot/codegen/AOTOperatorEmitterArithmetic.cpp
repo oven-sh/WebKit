@@ -108,7 +108,7 @@ public:
         case ArithmeticOperator::Mul:
             return mul(left, right);
         case ArithmeticOperator::Mod:
-            return remainderOfNonNegative(left, right);
+            return remainderOfNonNegative(left, right, typeOf(value->leftOperand()).integers.isSubsetOf(Range::uint32()));
         case ArithmeticOperator::Div:
         case ArithmeticOperator::Pow:
             break;
@@ -241,7 +241,7 @@ private:
     Integer widened(Integer value) { return value; }
 
     template<typename T>
-    T remainderOfNonNegative(T dividend, T divisor)
+    T remainderOfNonNegative(T dividend, T divisor, bool isDividendUint32 = false)
     {
         std::optional<int64_t> constantDivisor = constantIntegerOf(divisor.value());
         if (constantDivisor && *constantDivisor > 0) {
@@ -250,8 +250,11 @@ private:
             if constexpr (std::is_same_v<T, Word32>) {
                 Word32 quotient(m_out.m_block->appendNew<B3::Value>(m_proc, B3::UDiv, m_out.origin(), dividend.value(), divisor.value()));
                 return sub(dividend, mul(quotient, divisor));
-            } else
+            } else {
+                if (isDividendUint32 && *constantDivisor <= std::numeric_limits<int32_t>::max())
+                    return zeroExtended(remainderOfNonNegative(low32(dividend), word32(static_cast<int32_t>(*constantDivisor))));
                 return remainderByConstant(dividend, *constantDivisor, DividendSign::NonNegative);
+            }
         }
         return binary<T>(&FTL::Output::mod, dividend, divisor);
     }

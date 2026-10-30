@@ -14,6 +14,7 @@
 #include "AOTCirclesOfModuleLoads.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
+#include "AOTPhaseTimes.h"
 #include "AOTRegionCloner.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
@@ -21,6 +22,8 @@
 #include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
+#include <algorithm>
+#include <atomic>
 #include <ranges>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
@@ -349,6 +352,7 @@ struct Copier {
     BitVector makers;
     // The constants of modules that somebody hands to Object.create.
     BitVector constantsHandedToObjectCreate;
+    bool isAnyConstantPassedToObjectCreate { false };
     // The bodies of the modules of the program, and what they call at one place outside loops.
     Vector<FunctionID> callersThatRunOnce;
     BitVector isCallerThatRunsOnce;
@@ -433,8 +437,10 @@ struct Copier {
                     return;
                 }
                 const Value& definition = function.at(handed);
-                if (definition.opcode == Opcode::GetModuleVariable && isConstantOfModule(definition.variable()))
+                if (definition.opcode == Opcode::GetModuleVariable && isConstantOfModule(definition.variable())) {
                     constantsHandedToObjectCreate.set(definition.variable().index());
+                    isAnyConstantPassedToObjectCreate = true;
+                }
             });
         }
         if (creators.isEmpty())
@@ -487,12 +493,15 @@ struct Copier {
                         modulesThatRequireMayLoad->quickSet(request.target.index());
                 }
             }
-            for (const Function& function : program.functions) {
-                if (!isCodeOfProgram(function) || requiresByNameNobodyKnows)
-                    continue;
-                for (const Value& value : function.values)
-                    requiresByNameNobodyKnows |= value.opcode == Opcode::RequireDynamic;
-            }
+            std::atomic<bool> isFound { false };
+            forEachIndexInParallel(build.parallelLoops(), program.functions.size(), [&](unsigned index) {
+                const Function& function = program.functions[index];
+                if (!isCodeOfProgram(function) || isFound.load(std::memory_order_relaxed))
+                    return;
+                if (std::ranges::any_of(function.values, [](const Value& value) { return value.opcode == Opcode::RequireDynamic; }))
+                    isFound.store(true, std::memory_order_relaxed);
+            });
+            requiresByNameNobodyKnows = isFound.load(std::memory_order_relaxed);
         }
         return requiresByNameNobodyKnows || modulesThatRequireMayLoad->quickGet(asked.index());
     }
@@ -1082,7 +1091,7 @@ struct Copier {
                     resultsHandedToObjectCreate.set(definitionBehindDeadZoneChecks(caller, value.valueOperand()).index());
             });
         };
-        if (!depth && !constantsHandedToObjectCreate.isEmpty())
+        if (!depth && isAnyConstantPassedToObjectCreate)
             findStores();
         // `class A extends Mixin(Other(B)) { .. }`   `const Stamped = Mixin(Plain);`   A class that is only handed on, `list.push(Mixin(B))`, is one of many wherever it arrives: a copy of its own buys it little.
         std::optional<BitVector> classesWithName;
@@ -1947,6 +1956,7 @@ struct Copier {
 
     BitVector run()
     {
+        PhaseTimes times(build, PassID::CopyClosureFactories);
         // The reader notes which functions name Object.create only where nothing asks for the program as it was read. A build that verifies the program makes the same copies: there every function is looked at.
         Vector<FunctionID> found;
         const Program::BodiesAsRead* bodiesAsRead = program.bodiesAsRead();
@@ -1961,6 +1971,7 @@ struct Copier {
         }
         findBodies();
         findMakers(bodiesAsRead ? bodiesAsRead->functionsThatNameObjectCreate.span() : found.span());
+        times.didFinish("findMakers"_s);
 
         Vector<Vector<CallToCopyFor>> callsByCaller;
         // The list grows while it is walked.
@@ -1968,6 +1979,7 @@ struct Copier {
             copyCodeForWrittenNamesIn(callersThatRunOnce[index]);
             callsByCaller.append(findCallsIn(callersThatRunOnce[index], 0));
         }
+        times.didFinish("findCalls"_s);
         dropCallsThroughFieldsStoredElsewhere(callsByCaller);
         for (const Vector<CallToCopyFor>& calls : callsByCaller) {
             for (const CallToCopyFor& call : calls) {
@@ -1979,8 +1991,10 @@ struct Copier {
             if (!callsByCaller[index].isEmpty())
                 copyForCalls(callersThatRunOnce[index], WTF::move(callsByCaller[index]), 0);
         }
+        times.didFinish("copyForCalls"_s);
         for (FunctionID caller : callersThatRunOnce)
             copyForExpectedCallsIn({ caller, { }, { }, true }, 0);
+        times.didFinish("copyForExpectedCalls"_s);
         if (didCopyClasses) {
             nameClassesWhereClassesAboveAreNamed();
             editor.indexClassesAndNames(build.parallelLoops());

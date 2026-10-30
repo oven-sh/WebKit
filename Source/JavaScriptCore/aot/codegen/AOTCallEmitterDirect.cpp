@@ -101,7 +101,7 @@ void CallEmitter::generateCallDirect(const ValueContext& value)
     }
 
     PlacedArguments placed = placeArguments(function, locations, arguments.span(), OmittedArguments::MayBeOmitted);
-    CallOptions options { .constructs = value->isConstruction(), .callsOwnFunctionObject = value->callsOwnFunctionObject(), .hasLandingOfMisfit = generator().calleeTestsResultOf(value) };
+    CallOptions options { .keptCalleePlusOne = value->calleeIsKeptInFrame() ? m_records.sites.addKeptCallee(m_function, value->position, value->inlineFrame) : 0, .constructs = value->isConstruction(), .callsOwnFunctionObject = value->callsOwnFunctionObject(), .hasLandingOfMisfit = generator().calleeTestsResultOf(value) };
     if (const Function& callee = m_program.at(function); options.constructs && callee.kind == FunctionKind::Plain && callee.role != FunctionRole::ConstructBody)
         options.constructedCallee = function;
     B3::PatchpointValue* call = emitCall(value, CallTarget::function(function, placed.entry), placed, locations.results.span(), options);

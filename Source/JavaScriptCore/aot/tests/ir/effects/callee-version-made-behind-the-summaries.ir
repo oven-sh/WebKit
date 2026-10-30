@@ -38,10 +38,10 @@ function f5 name="apply" role=CalleeVersion parameters=[{type=f1}, {type=Array<n
     v4 = Call v0, -, v3 callees=[f1]
     Return v4
 }
-# CHECK: f3 return: none throw: none p0: [Calls] p1: [Inspects]
-# CHECK: v2 CallDirect: none
-# CHECK-NEXT: v3 CallDirect: none
-# CHECK-NEXT: v4 CallDirect: none
+# CHECK: f3 return: throwsForLackOfStack throw: throwsForLackOfStack p0: [Calls] p1: [Inspects]
+# CHECK: v2 CallDirect: throwsForLackOfStack
+# CHECK-NEXT: v3 CallDirect: throwsForLackOfStack
+# CHECK-NEXT: v4 CallDirect: throwsForLackOfStack
 # OPERANDS: v2 CallDirect 0: [Inspects, Calls]
 # OPERANDS-NEXT: v2 CallDirect 1: [Inspects]
 # OPERANDS-NEXT: v3 CallDirect 0: [Inspects, Calls]

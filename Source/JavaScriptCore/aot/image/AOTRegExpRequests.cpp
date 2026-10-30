@@ -16,6 +16,7 @@
 #include "AOTFlowResults.h"
 #include "AOTIR.h"
 #include "AOTKnownValue.h"
+#include "AOTLargeVectors.h"
 #include "AOTPhaseTimes.h"
 #include "AOTRegExpFlags.h"
 #include "AOTRegExpRecord.h"
@@ -29,6 +30,7 @@
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
+#include <functional>
 #include <map>
 #include <optional>
 #include <tuple>
@@ -113,16 +115,18 @@ public:
                     found.append(CollectedOperation { value.opcode, value.function().index(), FunctionID(index), id });
             });
         });
-        runTasksInParallel(context.parallelLoops(), {
-            [&] { m_directCalls = groupByCallee(operations.span(), Typed::Opcode::CallDirect, numberOfFunctions); },
-            [&] { m_closures = groupByCallee(operations.span(), Typed::Opcode::NewClosure, numberOfFunctions); },
+        const ParallelLoops& loops = context.parallelLoops();
+        runTasksInParallel(loops, {
+            [&] { m_directCalls = groupByCallee(loops, operations.span(), Typed::Opcode::CallDirect); },
+            [&] { m_closures = groupByCallee(loops, operations.span(), Typed::Opcode::NewClosure); },
             [&] {
-                for (const CollectedOperation& operation : operations) {
+                m_stores = collectInParallel<Store>(loops, operations.size(), [&](unsigned index, Vector<Store>& stores) {
+                    const CollectedOperation& operation = operations[index];
                     if (operation.opcode == Typed::Opcode::PutModuleVariable)
-                        m_stores.append(Store { Typed::VariableID(operation.targetIndex), operation.function, operation.value });
-                }
-                AOT::sort(m_stores, { }, [](const Store& store) {
-                    return std::tuple { store.variable, store.function, store.stored };
+                        stores.append(Store { Typed::VariableID(operation.targetIndex), operation.function, operation.value });
+                });
+                parallelSort(loops, m_stores.mutableSpan(), [](const Store& a, const Store& b) {
+                    return std::tuple { a.variable, a.function, a.stored } < std::tuple { b.variable, b.function, b.stored };
                 });
             },
         });
@@ -177,21 +181,23 @@ private:
         ValueID value;
     };
 
-    // A stable counting sort: the input is ordered by (function, value).
-    static Vector<DirectCall> groupByCallee(std::span<const CollectedOperation> operations, Typed::Opcode opcode, uint32_t numberOfFunctions)
+    // The operations of one callee keep the input order, which is sorted by (function, value).
+    static Vector<DirectCall> groupByCallee(const ParallelLoops& loops, std::span<const CollectedOperation> operations, Typed::Opcode opcode)
     {
-        Vector<uint32_t> positions(FillWith { }, numberOfFunctions + 1, 0);
-        for (const CollectedOperation& operation : operations) {
-            if (operation.opcode == opcode)
-                ++positions[operation.targetIndex + 1];
-        }
-        for (uint32_t index = 0; index < numberOfFunctions; ++index)
-            positions[index + 1] += positions[index];
-        Vector<DirectCall> result(positions.last());
-        for (const CollectedOperation& operation : operations) {
-            if (operation.opcode == opcode)
-                result[positions[operation.targetIndex]++] = DirectCall { FunctionID(operation.targetIndex), operation.function, operation.value };
-        }
+        RELEASE_ASSERT(operations.size() <= UINT32_MAX);
+        Vector<uint64_t> order = collectInParallel<uint64_t>(loops, operations.size(), [&](unsigned index, Vector<uint64_t>& found) {
+            if (operations[index].opcode == opcode)
+                found.append(static_cast<uint64_t>(operations[index].targetIndex) << 32 | index);
+        });
+        parallelSort(loops, order.mutableSpan(), std::less<uint64_t> { });
+        Vector<DirectCall> result = createVectorInParallel<DirectCall>(loops, order.size());
+        constexpr size_t callsInShare = 4096;
+        forEachIndexInParallel(loops, static_cast<unsigned>((order.size() + callsInShare - 1) / callsInShare), [&](unsigned share) {
+            for (size_t position = share * callsInShare; position < std::min(order.size(), (share + 1) * callsInShare); ++position) {
+                const CollectedOperation& operation = operations[static_cast<uint32_t>(order[position])];
+                result[position] = DirectCall { FunctionID(operation.targetIndex), operation.function, operation.value };
+            }
+        });
         return result;
     }
 

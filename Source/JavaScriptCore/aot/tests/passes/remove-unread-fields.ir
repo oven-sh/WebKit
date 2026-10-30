@@ -1,7 +1,7 @@
 # A field that is stored and never read loses its stores, the values computed for them and its slot
 # FORM: Prepared
 # RUN: pass RemoveUnreadFields
-# STATISTIC: UnreadFieldsRemoved = 6
+# STATISTIC: UnreadFieldsRemoved = 5
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="NeverRead" fields=[{key="run" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
@@ -9,7 +9,7 @@ layout L1 name="OnlyCalled" fields=[{key="run" declared={type=anything} flags=[I
 layout L2 name="OnlyCalledReadRemains" fields=[{key="run" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled} occupancy=AlwaysFilled}}, {key="n" declared={type=anything} flags=[IsRequired]}]
 layout L3 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}, {key="unused" declared={type=anything} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
 layout L4 kind=Environment name="lateScope" fields=[{key="x" declared={type=anything}}, {key="late" declared={type=anything} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
-layout L5 name="SameKeyOnUntypedValue" fields=[{key="runLoose" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L5 name="OnlyCalledAndReadByNameFromAnyValue" fields=[{key="runLoose" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
 layout L6 name="UnknownReads" fields=[{key="run" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
 layout L7 name="UnknownWriters" fields=[{key="run" declared={type=anything} flags=[IsRequired] flow={location={reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
 layout L8 name="FirstOfTwo" fields=[{key="run" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
@@ -21,7 +21,7 @@ layout L11 name="StoredAfterCreation" fields=[{key="run" declared={type=anything
 # CHECK: layout L2 name="OnlyCalledReadRemains" fields=[{key="run"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled}
 # CHECK: layout L3 kind=Environment name="scope"{{*}}{key="unused"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}
 # CHECK: layout L4 kind=Environment name="lateScope"{{*}}{key="late"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}
-# CHECK: layout L5 name="SameKeyOnUntypedValue" fields=[{key="runLoose"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+# CHECK: layout L5 name="OnlyCalledAndReadByNameFromAnyValue" fields=[{key="runLoose"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled}}}, {key="n"
 # CHECK: layout L6 name="UnknownReads" fields=[{key="run"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation}}}, {key="n"
 # CHECK: layout L7 name="UnknownWriters" fields=[{key="run"{{*}}flow={location={reads=NeverRead}}}, {key="n"
 # CHECK: layout L8 name="FirstOfTwo" fields=[{key="run"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
@@ -71,14 +71,15 @@ function f4 name="lateEnvironmentStore" parameters=[{type=number}] results=[{typ
 # CHECK-NOT: PutEnvironmentField
 }
 
-function f5 name="sameKeyOnUntypedValue" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+# The value may be the object.
+function f5 name="onlyCalledAndReadByNameFromAnyValue" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
     v2 = NewClosure function=f13
     v3 = NewObject -, v2, v0 layout=L5 fields=[0, 1]
     v4 = PropGet v1 key="runLoose"
     v5 = Call v4, v1
     Return v3
-# CHECK-NOT: NewClosure
-# CHECK: = NewObject -, v0 layout=L5 fields=[1]
+# CHECK: = NewClosure function=f13
+# CHECK: layout=L5 fields=[0, 1]
 # CHECK: = PropGet v1 key="runLoose"
 }
 

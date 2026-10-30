@@ -78,8 +78,11 @@ CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput& pipeline, 
 
             IdentifierNumbering numbering = numberIdentifiers(program, plan.uses.keys, pipeline.slots->keysWithColumn(), context);
             StubPolicy policy = chooseStubPolicy(plan.uses.keys, numbering, context);
+            addExpectedFieldTableEntries(policy, program, *pipeline.slots, numbering);
             addRegExpLiterals(policy, *pipeline.regExpRequests, pipeline.flow->mayReadLegacyRegExpStatics(), context);
-            plan.stubCatalog = makeUniqueWithoutFastMallocCheck<const StubCatalog>(StubOptions::from(context.recordedOptions(), program, *pipeline.flow), WTF::move(policy));
+            StubOptions stubOptions = StubOptions::from(context.recordedOptions(), program, *pipeline.flow);
+            stubOptions.maxNameInFieldTable = numbering.countWithFieldTableColumn() - 1;
+            plan.stubCatalog = makeUniqueWithoutFastMallocCheck<const StubCatalog>(stubOptions, WTF::move(policy));
             context.setIdentifierNumbering(WTF::move(numbering));
 
             plan.stringConstants = numberStringConstants(program, plan.uses.strings, context);

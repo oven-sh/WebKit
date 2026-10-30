@@ -1,0 +1,32 @@
+# Past the budget of logged edges flow stops, and the build goes on without its results. The build says so once, and the program that comes out of the pass that applies results is valid
+# OPTIONS: limit=MaxValueFlowEdgesLogged:1
+# LOSS: MaxValueFlowEdgesLogged
+# DIAGNOSTIC: ProgramTooLargeToAnalyze
+# RUN: valueflow-apply
+# CHECK: function f0 name="main"
+# CHECK: function f1 name="large"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Argument" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Allocated" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="stored" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = String string="a"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = CallDirect v1 function=f1
+    Return
+}
+function f1 name="large" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="x"
+    v3 = PropGet v0 key="x"
+    v4 = NewObject -, v3 layout=L1 fields=[0]
+    PutModuleVariable v4 variable=g0
+    v6 = CallDirect v4 function=f2
+    Return v6
+}
+function f2 name="callee" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="y"
+    Return v1
+}

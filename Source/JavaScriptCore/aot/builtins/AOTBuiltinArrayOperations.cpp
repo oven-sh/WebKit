@@ -179,7 +179,7 @@ static JSString* tryJoin(JSGlobalObject* globalObject, JSArray* array, JSString*
     JSString* between = separatorOrNull ? separatorOrNull : vm.smallStrings.singleCharacterString(',');
     auto view = between->view(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    JSOnlyStringsAndInt32sJoiner joiner(view);
+    JSExactLengthJoiner joiner(view);
     if (!hasInt32(array->indexingType()) && !hasDouble(array->indexingType()) && !hasContiguous(array->indexingType()))
         return nullptr;
     Butterfly& butterfly = *array->butterfly();
@@ -256,6 +256,74 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayJoinOfAnyReceiver, EncodedJSValue, (In
     arguments.append(separator);
     ASSERT(!arguments.hasOverflowed());
     OPERATION_RETURN(scope, JSValue::encode(call(globalObject, function, JSC::getCallData(function), receiver, arguments)));
+}
+
+static ALWAYS_INLINE bool precedesInDefaultOrder(const StringImpl& first, const StringImpl& second)
+{
+    if (first.is8Bit() && second.is8Bit()) [[likely]]
+        return is_lt(codePointCompare(first.span8(), second.span8()));
+    return is_lt(codePointCompare(StringView { first }, StringView { second }));
+}
+
+// Comparing strings runs no code, so every stable sort finds the order that sortImpl() in ArrayPrototype.cpp finds. False, and nothing that the program can see is done, for any other array.
+static bool trySortStrings(JSGlobalObject* globalObject, JSArray* array)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // The host function throws when it stores into a frozen array, also where the order stays the same.
+    if (!hasContiguous(array->indexingType()) || array->structure()->hasImmutableProperties())
+        return false;
+    Butterfly& butterfly = *array->butterfly();
+    unsigned length = butterfly.publicLength();
+    if (length > maxLengthOfInsertionSortedArray)
+        return false;
+
+    const WriteBarrier<Unknown>* elements = butterfly.contiguous().data();
+    std::array<EncodedJSValue, maxLengthOfInsertionSortedArray> sorted;
+    std::array<const StringImpl*, maxLengthOfInsertionSortedArray> impls;
+    bool isSorted = true;
+    for (unsigned i = 0; i < length; ++i) {
+        JSValue element = elements[i].get();
+        if (!element || !element.isString())
+            return false;
+        const StringImpl* impl = asString(element)->tryGetValueImpl();
+        if (!impl) [[unlikely]] {
+            asString(element)->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            impl = asString(element)->tryGetValueImpl();
+        }
+        unsigned position = i;
+        if (i && precedesInDefaultOrder(*impl, *impls[i - 1])) {
+            unsigned end = i - 1;
+            position = 0;
+            while (position < end) {
+                unsigned middle = position + (end - position) / 2;
+                if (precedesInDefaultOrder(*impl, *impls[middle]))
+                    end = middle;
+                else
+                    position = middle + 1;
+            }
+            std::copy_backward(sorted.begin() + position, sorted.begin() + i, sorted.begin() + i + 1);
+            std::copy_backward(impls.begin() + position, impls.begin() + i, impls.begin() + i + 1);
+            isSorted = false;
+        }
+        sorted[position] = JSValue::encode(element);
+        impls[position] = impl;
+    }
+    if (isSorted)
+        return true;
+    RELEASE_AND_RETURN(scope, array->appendMemcpy(globalObject, vm, 0, ArrayWithContiguous, std::span<const EncodedJSValue> { sorted }.first(length)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTArraySortInDefaultOrder, EncodedJSValue, (Instance* instance, JSCell* cell))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTArraySortInDefaultOrder);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArraySortInDefaultOrder);
+    bool isSorted = trySortStrings(globalObject, array);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (isSorted)
+        OPERATION_RETURN(scope, JSValue::encode(array));
+    OPERATION_RETURN(scope, JSValue::encode(callMethodInEngine(instance, Builtins::ArrayPrototypeSort, array)));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTArrayIndexOfDouble, size_t, (Instance*, JSCell* array, double searched))

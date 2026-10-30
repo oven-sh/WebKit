@@ -209,6 +209,18 @@ function findFieldsProblems({ result, code: { directEntry } }: ModelOverload): s
   return problems;
 }
 
+// Returns a number. The function has no way to report failure, and compiled code sets up no frame for the call.
+function findNumberProblems({ result, effects, flags, code: { directEntry } }: ModelOverload): string[] {
+  const { symbol, returnsFields = false, returnsNumber = false } = directEntry!;
+  if (!returnsNumber) return [];
+  const problems: string[] = [];
+  if (returnsFields) problems.push(`${symbol} returns a number or fields, not both`);
+  if (!holdsOnlyPrimitive({ ...result.type, integers: null }, "Number")) problems.push(`${symbol} returns a number, so the row returns nothing else`);
+  if (effects.capability !== "none" || flags.includes("Throws"))
+    problems.push(`${symbol} returns a number, so it neither throws nor allocates nor calls`);
+  return problems;
+}
+
 function findProblems(overload: ModelOverload): string[] {
   const {
     builtin,
@@ -229,7 +241,7 @@ function findProblems(overload: ModelOverload): string[] {
   }
   if (implementation.how !== "HostCall")
     problems.push(`${symbol} stands in for native code of the host, so the overload is a call of the host`);
-  problems.push(...findFieldsProblems(overload));
+  problems.push(...findFieldsProblems(overload), ...findNumberProblems(overload));
   const taken = directEntry.parameters.filter(takesArgument);
   if (taken.length === 1 && taken[0].value === "FrameOfValues") return problems;
   // The bounds of each part of a view come last, and go into the address and the count of that view.

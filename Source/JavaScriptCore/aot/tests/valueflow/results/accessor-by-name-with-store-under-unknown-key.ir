@@ -1,0 +1,66 @@
+# function Duplex() {}; const key = Object.keys(source)[0]; Duplex.prototype[key] = source[key]; Object.defineProperties(Duplex.prototype, { ended: { get, set }, size: { get } }); new Duplex().ended
+# The store under a key that nobody knows arrives under every name that somebody asks for, so nobody can say what `ended` holds: the name is listed without a function.
+# What the program defines under the name is one getter and one setter. They are listed among the members as they were defined: a read of the name tests the bit of the class,
+# which the run time sets where the prototype object holds that accessor.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Duplex" {{*}}members=[{key="ended" kind=Getter function=f2}, {key="ended" kind=Setter function=f3}, {key="size" kind=Getter function=f4}, {key="undefined" function=f5}] namedMembers=[{key="ended"}, {key="size"}, {key="undefined" function=f5}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Duplex" constructor=f1 flags=[IsConstructorFunction]
+layout L1 name="PropertyDescriptor" fields=[{key="get" declared={type=anything}}, {key="set" declared={type=anything}}]
+variable g0 name="Duplex" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="prototype"
+    v2 = NewDictionary
+    v3 = NewClosure function=f5
+    PropDefine v2, v3 key="ended"
+    PropDefine v2, v3 key="size"
+    v6 = Builtin builtin=ObjectKeys
+    v7 = Call v6, -, v2
+    v8 = Integer integer=0
+    v9 = ElemGet v7, v8
+    v10 = ElemGet v2, v9
+    ElemSet v1, v9, v10 mode=Strict
+    v12 = NewDictionary
+    v13 = NewClosure function=f2
+    v14 = NewObject layout=L1
+    PropDefine v14, v13 key="get"
+    v16 = NewClosure function=f3
+    PropDefine v14, v16 key="set"
+    v18 = FinishObject v14
+    PropDefine v12, v18 key="ended"
+    v20 = NewClosure function=f4
+    v21 = NewObject layout=L1
+    PropDefine v21, v20 key="get"
+    v23 = FinishObject v21
+    PropDefine v12, v23 key="size"
+    v25 = Builtin builtin=Object
+    v26 = Builtin builtin=ObjectDefineProperties
+    v27 = Call v26, v25, v1, v12
+    v28 = Construct v0
+    v29 = PropGet v28 key="ended"
+    v30 = PropGet v28 key="size"
+    Return v29
+}
+function f1 name="Duplex" module=m0 flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="get" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Undefined
+    Return v1
+}
+function f3 name="set" module=m0 kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = Undefined
+    Return v2
+}
+function f4 name="get" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Undefined
+    Return v1
+}
+function f5 name="copied" module=m0 results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+}

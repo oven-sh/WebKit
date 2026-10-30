@@ -38,9 +38,9 @@ function f0 name="third-comparison-under-handler" parameters=[{type=anything}] r
 }
 
 # CHECK-LABEL: function f1 name="every-comparison-under-one-handler"
-# CHECK-NEXT: b0(v0: anything) handler=b5():
-# CHECK: SwitchString v0 strings=["a", "b", "c"] -> case b1(), case b2(), case b3(), otherwise b4()
-# CHECK: b5() role=CatchHandler:
+# CHECK-NEXT: b0(v0: anything) handler=[[handler]]():
+# CHECK-NEXT: SwitchString v0 strings=["a", "b", "c"] -> case
+# CHECK: [[handler]]() role=CatchHandler:
 function f1 name="every-comparison-under-one-handler" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything) handler=b7():
     v1 = String string="a"

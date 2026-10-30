@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinCells.h"
+#include "AOTCheckedFrameCells.h"
 #include "AOTClassTable.h"
 #include "AOTClassToken.h"
 #include "AOTClosure.h"
@@ -48,7 +49,7 @@ static const LayoutData& classLayoutAt(const ClassTable& classes, uint32_t class
 // What these operations make on demand stays on the heap and names the function: the prototype object as its constructor, the remembered allocation as its owner.
 static ALWAYS_INLINE void validateFunctionIsNotInFrame(VM& vm, const JSCell* functionCell)
 {
-    if (validatesRuntime(vm)) [[unlikely]]
+    if (validatesRuntime(vm) || CheckedFrameCells::isInUse()) [[unlikely]]
         validateFunctionCellIsNotInFrame(vm, functionCell);
 }
 
@@ -67,6 +68,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewClass, JSCell*, (Instance* instance, uin
     validateFunctionIsNotInFrame(vm, closure);
     const LayoutData& classLayout = classLayoutAt(classes, requestAt<NewClassRequest>(instance, request).classIndex);
     RELEASE_ASSERT(closure->function() == FunctionID(classLayout.classData().classConstructor));
+    closure = classes.classObjectForEvaluation(closure, classLayout);
     classes.defineClass(globalObject, closure, classLayout, JSValue::decode(heritage), JSValue::decode(prototypeParent));
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     OPERATION_RETURN(scope, closure);
@@ -132,7 +134,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetConstructPrototype, JSCell*, (I
 {
     constexpr Entry entry = Entry::operationAOTSetConstructPrototype;
     AOT_OPERATION_BEGIN(instance, entry);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     DeferGC deferGC(vm);
     ObjectModel& objects = *instance->state->objects;
     // The stub that looks at the prototype first has allocated nothing.
@@ -348,6 +349,7 @@ struct PrivateLocation {
     const FieldData* declared;
     UniquedStringImpl* declaredName;
     bool hasBrand;
+    bool isOfOnlyEvaluation;
     bool belongsToEvaluation { false };
     PrivateProperty underDeclaredName { };
     PrivateProperty brand { };
@@ -380,7 +382,7 @@ static PrivateLocation locatePrivateName(VM& vm, State& state, JSObject* object,
     const FieldData& declared = declaredFieldOf(declaringLayout, fieldIndex);
     const FieldData* brand = brandOf(state, declaringLayout, token);
     RuntimeLayoutTable& layouts = state.objects->layouts;
-    PrivateLocation location { compiledObjectOrNull(object), &declared, layouts.nameOf(vm, declared), !!brand };
+    PrivateLocation location { compiledObjectOrNull(object), &declared, layouts.nameOf(vm, declared), !!brand, declaringLayout.evaluation() == EvaluationState::ProvenOnce };
     bool hasDeclaringLayout = location.compiledObject && &location.compiledObject->layout() == &declaringLayout;
     auto find = [&](UniquedStringImpl* uid, const FieldData* fieldOfDeclaringLayout) {
         return findPrivateProperty(vm, state, object, location.compiledObject, uid, hasDeclaringLayout ? fieldOfDeclaringLayout : nullptr);
@@ -407,10 +409,14 @@ static void rememberLocation(VM& vm, JSObject* object, JSCellButterfly* token, u
 {
     if (found.compiledObject || !found.name || found.property.attributes || !isValidOffset(found.property.offset) || object->structure()->isDictionary())
         return;
-    // The declared name is shared by all evaluations of the class, and the brand tells them apart. A name that this evaluation has made for itself needs no brand.
-    bool needsBrand = found.name == found.declaredName && found.hasBrand;
+    // The declared name is shared by all evaluations of the class, and the brand tells them apart. A name that this evaluation has made for itself needs no brand, nor does a class that is evaluated once.
+    bool needsBrand = found.name == found.declaredName && found.hasBrand && !found.isOfOnlyEvaluation;
     if (needsBrand && !isValidOffset(found.brand.offset))
         return;
+    // Compiled code stores at a remembered location and tells the Structure nothing.
+    if (object->structure()->mayHaveImmutableProperties())
+        return;
+    object->structure()->didReplaceProperty(found.property.offset);
     addKnownStructure(vm, token, fieldIndex, object->structure(), found.property.offset, needsBrand ? std::optional(found.brand.offset) : std::nullopt);
 }
 

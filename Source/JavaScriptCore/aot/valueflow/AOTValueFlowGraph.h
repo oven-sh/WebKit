@@ -81,6 +81,8 @@ public:
     // A retired node lists no more of what arrives at it. `taking` gets what is carried to it whether that arrives before a node on the way is retired or after: all but what comes out of a covered node or a node made for a placeholder.
     void handOnWhatArrivesAtRetiredNodesTo(ValueFlowNodeID taking, IsMadeForPlaceholder, const void* context);
     void keepOutOfNodesMadeForPlaceholders(ValueSetID keptOut, ValueFlowNodeID covered, IsMadeForPlaceholder, const void* context);
+    // Among the nodes that `keptOut` stays out of, one that holds what was stored through the placeholder lists a stand-in, so that the store leaves a trace.
+    void listInsteadOfWhatIsKeptOut(ValueSetID objects, ValueFlowObjectID insteadOfObjects, ValueSetID strings, ValueFlowObjectID insteadOfStrings, IsMadeForPlaceholder holdsWhatWasStored);
     bool isRetired(ValueFlowNodeID node) const { return node.index() < m_numberOfNodes && (m_gates[node.index()].flags & IsRetired); }
     struct StoppedPlaceholder {
         ValueFlowNodeID node;
@@ -446,6 +448,13 @@ private:
     ValueSetID m_allButKeptOutOfNodesMadeForPlaceholders { ValueSets::anything };
     uint64_t m_lowMembersKeptOutOfNodesMadeForPlaceholders { 0 };
     uint32_t m_coveredNodeThatTakesWhatIsKeptOut { 0 };
+    IsMadeForPlaceholder m_holdsWhatWasStoredThroughPlaceholder { nullptr };
+    ValueSetID m_objectsWithStandIn { ValueSets::nothing };
+    ValueSetID m_stringsWithStandIn { ValueSets::nothing };
+    uint64_t m_lowObjectsWithStandIn { 0 };
+    uint64_t m_lowStringsWithStandIn { 0 };
+    uint64_t m_standInForObjects { 0 };
+    uint64_t m_standInForStrings { 0 };
     // A byte a node: the 64 nodes that stand side by side in one shard fill a cache line, so no two shards write to one line.
     ArrayByNode<uint8_t> m_hasMoved;
     static_assert(numberOfShards <= 64);

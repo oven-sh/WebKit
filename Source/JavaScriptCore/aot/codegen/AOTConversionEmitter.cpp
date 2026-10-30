@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCheckedFrameCells.h"
 #include "AOTConstantEmitter.h"
 #include "AOTNumberLiteralStrings.h"
 #include "AOTPureOperations.h"
@@ -728,16 +729,34 @@ Operand ConversionEmitter::decode(NarrowReference word, const Type& type, Repres
 
 NarrowReference ConversionEmitter::compress(Operand operand, const Type& type)
 {
+    // A narrow reference never refers to a cell kept in a frame. No other value has the upper half of the addresses used by AOTCheckedFrameCells.h.
+    auto checkIsNotInFrame = [&](LValue bits) {
+        if (!generator().validatesOrChecksProofs())
+            return;
+        LBasicBlock liesInFrame = newBlock();
+        LBasicBlock continuation = newBlock();
+        LValue upperHalf = m_out.lShr(bits, m_out.constInt32(CheckedFrameCells::bitsOfOffsetInRange));
+        m_out.branch(m_out.equal(upperHalf, m_out.constInt64(CheckedFrameCells::startOfRange >> CheckedFrameCells::bitsOfOffsetInRange)), rareEdge(liesInFrame), normalEdge(continuation));
+        m_out.appendTo(liesInFrame);
+        Operand arguments[] { Pointer(bits) };
+        callWithoutSite(RuntimeOperation::ReportEscapedFrameCell, arguments, Representation::Void, { .isOnRarePath = true });
+        m_out.unreachable();
+        m_out.appendTo(continuation);
+    };
+
     switch (operand.representation) {
     case Representation::Void:
         RELEASE_ASSERT(isValueWithoutBits(type));
         return convertMarkers(operand, type, Representation::Cell32).as<NarrowReference>();
     case Representation::Cell:
+        checkIsNotInFrame(operand.value);
         return compress(operand.as<CellPointer>());
     case Representation::Cell32:
         return operand.as<NarrowReference>();
     case Representation::JSValue: {
         Boxed value = operand.as<Boxed>();
+        if (type.hasCells())
+            checkIsNotInFrame(operand.value);
         if (!(type.primitives & markerPrimitives))
             return compress(unboxCell(value));
         NarrowReference marker(low32(value).value());
@@ -911,7 +930,7 @@ LiteralStringWord ConversionEmitter::toLiteralString(Operand operand, const Type
         CallOptions options { .pureFunction = pureFunction(PureOperation::ToLiteralString, 0, true) };
         // The stub takes every cell for a string.
         if (type.hasOnlyPrimitives(Primitive::AnyString | markerPrimitives))
-            return LiteralStringWord(emitter<RuntimeCallEmitter>().callStubWithoutSite(AOT::toLiteralString(), singleElementSpan(operand.value), options).first);
+            return LiteralStringWord(emitter<RuntimeCallEmitter>().callStubWithoutSite(AOT::toLiteralString(type.isAnyString() ? ComparedOperand::String : ComparedOperand::Value), singleElementSpan(operand.value), options).first);
         return LiteralStringWord(callWithoutSite<Boxed>(RuntimeOperation::ToLiteralString, { Boxed(operand.value) }, options).value());
     }
     case Representation::LiteralString:
@@ -974,6 +993,11 @@ Boxed ConversionEmitter::boxLiteralString(const OperationContext& context, Liter
 
     static_assert(1 << literalStringShift == sizeof(uint32_t) && 2 << literalStringShift == sizeof(JSCell*));
     Integer scaledNumber = sub(Integer(word.value()), integer(emptyLiteralStringWord));
+    bool isAlwaysNumber = type.hasOnlyPrimitives(Primitive::LiteralString) && std::ranges::all_of(type.stringLiterals, [&](StringID literal) {
+        return inputs().literalStrings.indexOf(literal).has_value();
+    });
+    if (isAlwaysNumber)
+        return loadOrCreateCell(word, m_out.baseIndex(m_heaps.AOTInstance_stringCells, loadImmutablePointer(offsetOfCells).value(), scaledNumber.value(), isNarrow ? FTL::ScaleOne : FTL::ScaleTwo));
     LBasicBlock literalCase = newBlock();
     LBasicBlock boxedCase = newBlock();
     Join<Boxed> join(m_out);

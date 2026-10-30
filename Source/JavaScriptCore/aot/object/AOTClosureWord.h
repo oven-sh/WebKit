@@ -19,6 +19,9 @@ struct ClosureWord {
 #else
     static constexpr unsigned offsetUnit = 1;
 #endif
+    // No code is so large that an offset has its top bit set: AOTImageFormat.h. The run time sets the bit in the word of one closure, which has properties by then, when that closure gets another name
+    // and its function is named in frames by its closures. Calls by value enter such a closure through the adapter, whose frame holds it. A slim closure with properties has no word of its own: its per-cell bit says the same.
+    static constexpr unsigned isRenamedBit = numberOfOffsetBits - 1;
     static constexpr unsigned functionShift = numberOfOffsetBits;
     static constexpr unsigned numberOfFunctionBits = 22;
     // Bit i from here on: nobody holds argument i, or what is read through it, any more when a call through this word returns. Whoever calls may pass a closure that lies in his own frame there.
@@ -39,7 +42,9 @@ struct ClosureWord {
 
     static constexpr uint64_t offsetMask = (1ULL << numberOfOffsetBits) - 1;
     static constexpr uint32_t functionMask = (1u << numberOfFunctionBits) - 1;
-    static constexpr uint32_t firstReservedFunction = (functionMask >> 1) + 1 - 16;
+    // The upper half of a slim closure's word lies where other cells have their shape word. It passes no shape test while bits 16 to 23 are not all set (shapeBlockMarker).
+    // Bits 16 to 21 belong to the function's number, so no function has a number in which all six are set.
+    static constexpr uint32_t firstReservedFunction = (functionMask & shapeBlockMarker) - 16;
     static constexpr uint64_t maxSizeOfCode = (offsetMask + 1) * offsetUnit;
     static constexpr unsigned maxNumberOfParameters = (1u << numberOfParametersBits) - 1;
 
@@ -83,7 +88,7 @@ struct ClosureWord {
     }
 
     static constexpr uint32_t functionOf(uint64_t word) { return word >> functionShift & functionMask; }
-    static constexpr uintptr_t addressOf(uint64_t word, uintptr_t code) { return code + (word & offsetMask) * offsetUnit; }
+    static constexpr uintptr_t addressOf(uint64_t word, uintptr_t code) { return code + (word & offsetMask & ~(1ULL << isRenamedBit)) * offsetUnit; }
     static constexpr unsigned numberOfParametersOf(uint64_t word) { return maxNumberOfParameters - (word >> numberOfParametersShift & maxNumberOfParameters); }
     // Read as a signed number, the top byte of a word is at least this where the function may be called and declares no more parameters than the call passes arguments.
     static constexpr int8_t minTopByteOfCalleeTaking(unsigned numberOfArguments)
@@ -97,9 +102,11 @@ struct ClosureWord {
     static constexpr uint8_t borrowedArgumentsOf(uint64_t word) { return word >> borrowsArgumentShift & ((1u << numberOfBorrowedArguments) - 1); }
 };
 
-static_assert(ClosureWord::functionShift == 32 && ClosureWord::firstReservedFunction <= 1u << (ClosureWord::numberOfFunctionBits - 1));
-static constexpr uint32_t closureWordUpperHalfBits = ~(1u << (ClosureWord::isNotCallableBit - 32) | 1u << (ClosureWord::numberOfFunctionBits - 1));
-static_assert(!canPassShapeTest(closureWordUpperHalfBits));
+static_assert(ClosureWord::functionShift == 32 && ClosureWord::firstReservedFunction <= (ClosureWord::functionMask & shapeBlockMarker));
+// With every other bit set that a callable closure's word can have.
+static constexpr uint32_t upperHalfOfClosureWordWithAllFlags(uint32_t function) { return function | (~ClosureWord::functionMask & ~(1u << (ClosureWord::isNotCallableBit - 32))); }
+static_assert(!canPassShapeTest(upperHalfOfClosureWordWithAllFlags(ClosureWord::firstReservedFunction - 1)) && !canPassShapeTest(upperHalfOfClosureWordWithAllFlags((ClosureWord::functionMask & shapeBlockMarker) - 1)));
+static_assert(canPassShapeTest(upperHalfOfClosureWordWithAllFlags(ClosureWord::functionMask & shapeBlockMarker)));
 static_assert(closureWordMarker == 1u << (ClosureWord::isClosureWordBit - 32) && compiledObjectShapeBit == 1u << (ClosureWord::isNotCallableBit - 32));
 static_assert(ClosureWord::numberOfParametersOf(ClosureWord::encode({ 16, 3 }, 7, { })) == 3 && mayBeUpperHalfOfSlimClosureWord(ClosureWord::encodeUpperHalf(3, 7, { })));
 static_assert(static_cast<int64_t>(ClosureWord::encode({ 16, 3 }, 7, { })) >= ClosureWord::minWordOfCalleeTaking(3) && static_cast<int64_t>(ClosureWord::encode({ 16, 3 }, 7, { .takesNewTarget = true })) < ClosureWord::minWordOfCalleeTaking(2));

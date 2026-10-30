@@ -52,6 +52,9 @@ struct FlowAppendedField {
     FlowPositionUpdate position;
     FieldFlow flow;
     FlowAccessorField accessor;
+    bool isFilledByCreators { false };
+    // For a field that holds a value: the form in which every definition creates the property.
+    OptionSet<FieldForm> formOfValue;
 };
 
 struct FlowLayoutUpdate {
@@ -64,6 +67,7 @@ struct FlowLayoutUpdate {
     bool objectsAreDictionaries { false };
     bool objectsArePrototypesOfCreatedObjects { false };
     bool isHandedToObjectCreateAlone { false };
+    bool createsFieldsOnlyInLiterals { false };
 };
 
 struct FlowVariableUpdate {

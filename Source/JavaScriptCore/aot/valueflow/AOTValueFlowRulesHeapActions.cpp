@@ -13,6 +13,18 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+// The `callee` accessor of strict arguments is not enumerable. Any other native accessor on an arguments object was copied there, and a copy is written under the unknown key.
+ClimbingSet HeapRule::gettersOfEnumerableProperties(ClimbingSet holders)
+{
+    ValueFlowName everyGetter = foundName(unknownHeapKey, HeapPropertyPart::Getter);
+    ClimbingSet argumentsObjects = m_context.restrict(holders, m_tables.argumentsObjects());
+    if (!holdsAnything(argumentsObjects) || m_context.contains(m_context.valueOf(m_context.readWhatWasWritten(argumentsObjects, writtenName(unknownHeapKey, HeapPropertyPart::Getter))), m_tables.undescribedNativeCode()))
+        return m_context.valueOf(m_context.readWhatWasWritten(holders, everyGetter));
+    ClimbingSet gettersOfArguments = m_context.restrict(m_context.valueOf(m_context.readWhatWasWritten(argumentsObjects, everyGetter)), ValueSets::complement(only(m_tables.undescribedNativeCode())));
+    ClimbingSet others = m_context.restrict(holders, ValueSets::complement(m_tables.argumentsObjects()));
+    return m_context.unite(gettersOfArguments, m_context.valueOf(m_context.readWhatWasWritten(others, everyGetter)));
+}
+
 void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOperand& everySource, CopiedProperties copiedProperties)
 {
     bool storesThroughSetters = copiedProperties == CopiedProperties::AreAssigned;
@@ -123,7 +135,7 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
             connect(exports, node);
     }
 
-    ClimbingSet getters = m_context.valueOf(m_context.readWhatWasWritten(withSourcesOfCopies(m_context, known(sources)), everyGetter));
+    ClimbingSet getters = keepsAccessors ? m_context.valueOf(m_context.readWhatWasWritten(withSourcesOfCopies(m_context, known(sources)), everyGetter)) : gettersOfEnumerableProperties(withSourcesOfCopies(m_context, known(sources)));
     if (mayBeUntrackedObject(sources)) {
         for (ClimbingSet holders : { ClimbingSet(m_universe.knownObjects()), untrackedObjectAlone(), unknownObjectAlone() }) {
             for (ValueFlowNodeID node : nodesTakingCopies)
@@ -141,7 +153,7 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
         ValueFlowObjectsToldApart toldApart = tellObjectsApart(m_context, m_context.membersMissingFrom(ValueFlowProgramNodes::escaped(), known(sources)));
         ClimbingSet holdingSuchGetter(toldApart.rest);
         for (ValueSetID group : toldApart.groups) {
-            if (mayBeAccessorNobodyKnows(m_context.valueOf(m_context.readWhatWasWritten(withSourcesOfCopies(m_context, ClimbingSet(group)), everyGetter))))
+            if (mayBeAccessorNobodyKnows(gettersOfEnumerableProperties(withSourcesOfCopies(m_context, ClimbingSet(group)))))
                 holdingSuchGetter = m_context.unite(holdingSuchGetter, ClimbingSet(group));
         }
         readSources.belowAccessorNobodyKnows = holdingSuchGetter;
@@ -158,6 +170,11 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
     bool copiesArguments = m_context.meet(withSourcesOfCopies(m_context, known(sources)), m_tables.argumentsObjects());
     if (keepsAccessors && (mayBeUnknownObject(sources) || holdsAnything(hostObjects) || copiesArguments || m_context.meet(sources, m_universe.builtinObjects())))
         connect(target, ValueFlowProgramNodes::escaped());
+    // An unknown object may implement a property with a native accessor, and the copy takes its getter and setter.
+    if (keepsAccessors && mayBeUnknownObject(sources)) {
+        for (HeapPropertyPart part : { HeapPropertyPart::Getter, HeapPropertyPart::Setter })
+            add(m_context.written(known(targets), writtenName(unknownHeapKey, part)), only(m_tables.undescribedNativeCode()));
+    }
 
     if (storesThroughSetters) {
         ValueFlowOperand held = operandOf(m_context.readWhatWasWritten(withSourcesOfCopies(m_context, known(sources)), everyValue));
@@ -244,7 +261,14 @@ void HeapRule::readAccessorFunctions(const ValueFlowOperand& object, const HeapK
     ValueFlowNodeID found = m_context.lookup(receivers, foundName(key, part));
     connect(m_context.masked(found, m_universe.callables()), m_statement.result);
     bool mayFindAccessorOfTable = m_context.meet(accessorsFoundFrom(receivers, key, part), m_universe.builtinObjects());
-    if (mayFindAccessorOfArguments || mayFindAccessorOfTable)
+    // The table describes the result of reading a property. Whether native code implements the property as a value or as its own accessor is only recorded for the realm's objects, whose own properties it lists,
+    // not for the exports of a native module, nor for an object that a built-in creates.
+    ValueSetMaker& maker = m_context.maker();
+    ValueSetID objectsOfRealmInTable = maker.intersect(m_universe.builtinObjects(), ValueSets::complement(maker.unite(m_tables.objectsOfNativeModules(), m_tables.objectsOfPublicModules())));
+    ValueSetID createdByNativeCode = maker.intersect(m_universe.knownObjects(), ValueSets::complement(maker.unite(objectsOfRealmInTable, m_tables.objectsWithoutPropertiesOfNativeCode())));
+    // A search of the whole chain starts at the receiver's own properties.
+    bool mayFindAccessorOfNativeCode = m_context.meet(m_context.unite(receivers, withSourcesOfCopies(m_context, known(receivers))), createdByNativeCode);
+    if (mayFindAccessorOfArguments || mayFindAccessorOfTable || mayFindAccessorOfNativeCode)
         addFunctionNobodyFollows();
     if (mayFindAccessorOfTable && part == HeapPropertyPart::Getter && key.mayNameNonEnumerable(m_program.keyOf(BuiltinNames::__proto__)))
         connect(m_context.nodes().ofHost(ValueFlowHostNode::ObjectsAboveEscapedInstances), ValueFlowProgramNodes::escaped());

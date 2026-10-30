@@ -14,6 +14,7 @@
 #include "AOTProgramIdentifiers.h"
 #include "AOTRuntimeTable.h"
 #include "AOTRuntimeValidation.h"
+#include "AOTUnwinding.h"
 #include "DeferGC.h"
 #include "DeferTermination.h"
 #include "FrameTracers.h"
@@ -40,26 +41,33 @@ public:
             m_assertNoGC.emplace();
 #endif
         if (validatesRuntime(vm)) [[unlikely]]
-            open(entry);
+            open(m_record, vm, entry);
     }
 
+    // Whether the run time validates is settled before the first operation runs.
     ALWAYS_INLINE ~OperationValidationScope()
     {
-        if (m_isOpen) [[unlikely]]
-            close();
+        if (validatesRuntime(m_vm)) [[unlikely]]
+            close(m_record);
     }
 
 private:
-    void open(Entry);
-    void close();
+    // Written and read only where the run time validates. Only its address is handed on, so an operation keeps nothing of the scope in memory otherwise.
+    struct Record {
+        VM& vm;
+        CollectionVersions collectionVersions;
+        Entry entry;
+        bool mayNotEnterVM;
+        bool mayNotCollect;
+        bool didEnterVMBefore;
+    };
+    static void open(Record&, VM&, Entry);
+    static void close(Record&);
 
     VM& m_vm;
-    CollectionVersions m_collectionVersions;
-    Entry m_entry;
-    bool m_mayNotEnterVM { false };
-    bool m_mayNotCollect { false };
-    bool m_didEnterVMBefore { false };
-    bool m_isOpen { false };
+    union {
+        Record m_record;
+    };
 #if ASSERT_ENABLED
     std::optional<AssertNoGC> m_assertNoGC;
 #endif
@@ -134,19 +142,25 @@ struct CallWithoutCollection<operation, Result(Arguments...) noexcept(isNoexcept
 };
 #endif
 
-#define AOT_OPERATION_BEGIN_IN_FRAME(instance, frameRecordOfOperation, entry) \
+#define AOT_OPERATION_BEGIN_WITH_SCOPE(instance, frameRecordOfOperation, entry, declaredScope) \
     JSGlobalObject* globalObject = (instance)->globalObject; \
     UNUSED_VARIABLE(globalObject); \
     VM& vm = *(instance)->vm; \
     AOTOperationPrologueCallFrameTracer tracer(vm, frameRecordOfOperation); \
     JSC::AOT::OperationValidationScope validationScope(vm, entry); \
-    auto scope = DECLARE_THROW_SCOPE(vm); \
+    auto scope = declaredScope; \
     UNUSED_VARIABLE(scope)
 
-#define AOT_OPERATION_BEGIN_IN_OWN_FRAME(instance, entry) \
+#define AOT_OPERATION_BEGIN_IN_FRAME(instance, frameRecordOfOperation, entry) \
+    AOT_OPERATION_BEGIN_WITH_SCOPE(instance, frameRecordOfOperation, entry, DECLARE_THROW_SCOPE(vm))
+
+#define AOT_OPERATION_FIND_OWN_FRAME() \
     JSC::CallerFrameAndPC* frameRecord = AOT_OPERATION_FRAME_RECORD(); \
     CallFrame* callFrame = frameRecord->callerFrame; \
-    UNUSED_VARIABLE(callFrame); \
+    UNUSED_VARIABLE(callFrame)
+
+#define AOT_OPERATION_BEGIN_IN_OWN_FRAME(instance, entry) \
+    AOT_OPERATION_FIND_OWN_FRAME(); \
     AOT_OPERATION_BEGIN_IN_FRAME(instance, frameRecord, entry)
 
 #define AOT_OPERATION_BEGIN(instance, entry) \

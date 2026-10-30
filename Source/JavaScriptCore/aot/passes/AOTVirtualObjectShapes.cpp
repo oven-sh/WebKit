@@ -322,7 +322,7 @@ static KnownBoolean evaluateTypeTestOfFields(const Program& program, const Virtu
     return evaluateTypeTest(program, knownValueOf(description), tested);
 }
 
-static KnownBoolean evaluateTypeTestOfShape(const ShapeContext& context, const VirtualShape& shape, const Type& tested)
+KnownBoolean evaluateTypeTestOfShape(const ShapeContext& context, const VirtualShape& shape, const Type& tested)
 {
     switch (shape.kind) {
     case VirtualShapeKind::Cell:

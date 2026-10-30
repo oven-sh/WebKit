@@ -10,6 +10,7 @@
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSCell.h>
 #include <JavaScriptCore/PropertyName.h>
+#include <array>
 #include <wtf/IterationStatus.h>
 #include <wtf/ScopedLambda.h>
 
@@ -66,6 +67,9 @@ JS_EXPORT_PRIVATE JSValue getDirect(VM&, const JSObject*, PropertyName, unsigned
 JS_EXPORT_PRIVATE bool ordinaryGetOwnPropertySlot(JSGlobalObject*, JSObject*, PropertyName, PropertySlot&);
 // What a read by name finds on the compiled object itself.
 JS_EXPORT_PRIVATE Presence tryGetOwnValue(JSObject* compiledObject, UniquedStringImpl*, JSValue&);
+// The results of reading enumerable, configurable, value, writable, get and set on the compiled object itself, in that order. An absent property leaves its value empty. Returns false if any result is unknown.
+using DescriptorMembers = std::array<JSValue, 6>;
+JS_EXPORT_PRIVATE bool tryReadDescriptorMembers(JSObject* compiledObject, DescriptorMembers&);
 JS_EXPORT_PRIVATE void putDirect(VM&, JSObject*, PropertyName, JSValue, unsigned attributes);
 // May run code and throw. Object.freeze() calls it before setIntegrity(), which does neither.
 void prepareForFreeze(JSObject* compiledObject);

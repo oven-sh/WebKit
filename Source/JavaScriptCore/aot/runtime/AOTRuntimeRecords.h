@@ -147,6 +147,8 @@ struct alignas(16) Slot {
     static constexpr uint8_t emptySlotMayBeUndefined = growsStorage;
     // Of FieldRemoval, whose location is the offset of the slot of the field in the cell: the field is filled at birth, and the AbsentPattern of the slot.
     static constexpr uint8_t leavesStateOfBirth = absentIsUndefined;
+    // For TypedArrayLength: the value read is the view's byte offset in its buffer.
+    static constexpr uint8_t readsByteOffset = isOutOfLine;
     static constexpr unsigned absentPatternShift = 4;
     static constexpr uint8_t absentPatternMask = 7;
     static constexpr uint8_t allFlags = UINT8_MAX;

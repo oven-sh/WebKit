@@ -1,0 +1,109 @@
+# A function that reads no more than arguments.length before it can return is split like one that does not touch its arguments: the count answers the read, and the object and the list of surplus arguments are the body's
+# FORM: Prepared
+# RUN: pass PromoteAggregateParameters
+# STATISTIC: AggregateParametersPromoted = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="readsOrStores" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = PropGet v3 key="length"
+    v5 = Integer integer=1
+    v6 = StrictEq v4, v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="sink" [isFreeName]
+    v9 = PropGet v3 key="length"
+    v10 = Call v8, -, v3, v9
+    Return v10
+}
+# CHECK-LABEL: function f0 name="readsOrStores"
+# CHECK: role=ParameterWrapper
+# CHECK-NOT: CreateUnmappedArguments
+# CHECK: [[length]]: anything = Upcast v0 castType=anything
+# CHECK: = StrictEq [[length]]
+# CHECK-NOT: CreateUnmappedArguments
+# CHECK: = CallDirect v0, v1, v2 function=[[body]]
+
+function f1 name="storesLengthFirst" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = Integer integer=1
+    PropSet v3, v4 key="length" mode=Sloppy
+    v6 = PropGet v3 key="length"
+    v7 = StrictEq v6, v4
+    Branch v7 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="sink" [isFreeName]
+    v10 = Call v9, -, v3
+    Return v10
+}
+# CHECK-LABEL: function f1 name="storesLengthFirst"
+# CHECK-NOT: role=ParameterWrapper
+
+function f2 name="readsElementFirst" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = Integer integer=1
+    v5 = ElemGet v3, v4
+    v6 = ToBoolean v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="sink" [isFreeName]
+    v9 = Call v8, -, v3
+    Return v9
+}
+# CHECK-LABEL: function f2 name="readsElementFirst"
+# CHECK-NOT: role=ParameterWrapper
+
+function f3 name="readsLengthWhereBothPartsMeet" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = ToBoolean v1
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer integer=9
+    PropSet v3, v5 key="length" mode=Sloppy
+    Jump -> next b2()
+  b2():
+    v7 = PropGet v3 key="length"
+    Return v7
+}
+# CHECK-LABEL: function f3 name="readsLengthWhereBothPartsMeet"
+# CHECK-NOT: role=ParameterWrapper
+
+function f4 name="bodyBeginsInATry" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = ToBoolean v1
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2() handler=b3():
+    v5 = ToNumber v1
+    Jump -> next b4()
+  b3() role=CatchHandler:
+    Jump -> next b4()
+  b4():
+    v6 = Integer integer=1
+    v7 = ElemGet v3, v6
+    Return v7
+}
+# The object would stand in a block with a handler, and whoever comes by the handler reads it.
+# CHECK-LABEL: function f4 name="bodyBeginsInATry"
+# CHECK-NOT: role=ParameterWrapper
+
+# CHECK: function [[body]] name="readsOrStores"
+# CHECK: [[arguments]]: Arguments = CreateUnmappedArguments v0, v2, v1
+# CHECK: = PropGet [[arguments]] key="length"

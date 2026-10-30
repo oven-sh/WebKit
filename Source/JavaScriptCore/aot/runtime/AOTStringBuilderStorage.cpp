@@ -887,9 +887,11 @@ ALWAYS_INLINE std::optional<StringKeyCache::Lookup> StringBuilderStorage::tryFin
     return lookup;
 }
 
-ALWAYS_INLINE JSString* StringBuilderStorage::finishWithNewKey(Instance& instance, unsigned hash)
+ALWAYS_INLINE JSString* StringBuilderStorage::finishWithNewKey(JSGlobalObject* globalObject, Instance& instance, unsigned hash)
 {
     JSString* key = instance.state->stringKeys->makeKey(*instance.vm, std::span<const Latin1Character> { m_characters, m_position }, hash);
+    if (!key) [[unlikely]]
+        throwOutOfMemory(globalObject);
     m_position = 0;
     returnToPool(instance);
     return key;
@@ -1027,6 +1029,8 @@ static JSString* tryConcatenateShortKey(VM& vm, Instance& instance, std::span<co
     if (JSString* index = tryCreateIndexKey(vm, instance, key.span()))
         return index;
     JSString* string = keys.findOrAdd(vm, key.span());
+    if (!string) [[unlikely]]
+        return nullptr;
     StringKeyCache::KeyByParts parts;
     if (parts.tryTake(keys.cageBase(), primitives))
         keys.cacheKeyByParts(parts, string);
@@ -1084,7 +1088,7 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finish
 static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishStringBuilderWithNewKey(Instance* instance, JSCell* builder, uint32_t hash)
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringBuilderFinish);
-    OPERATION_RETURN(scope, uncheckedDowncast<StringBuilderStorage>(builder)->finishWithNewKey(*instance, hash));
+    OPERATION_RETURN(scope, uncheckedDowncast<StringBuilderStorage>(builder)->finishWithNewKey(globalObject, *instance, hash));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderFinish, JSCell*, (Instance* instance, JSCell* builder, uint32_t isLikelyKey))
@@ -1114,7 +1118,10 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finish
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStackStringBuilderFinish);
     std::span<const Latin1Character> characters = reinterpret_cast<StackStringBuilder*>(builder)->charactersOnStack(byteCast<Latin1Character>(cursor));
-    OPERATION_RETURN(scope, instance->state->stringKeys->makeKey(vm, characters, hash, { }));
+    JSString* key = instance->state->stringKeys->makeKey(vm, characters, hash, { });
+    if (!key) [[unlikely]]
+        throwOutOfMemoryError(globalObject, scope);
+    OPERATION_RETURN(scope, key);
 }
 
 static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishTextOnStackWithCalls(Instance*, uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey);
@@ -1199,7 +1206,10 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concat
             return { key, nullptr };
         case StringKeyCache::Lookup::Absent: {
             AOT_OPERATION_BEGIN(instance, Entry::operationAOTConcatenate);
-            return { keys.makeKey(vm, characters.span(), hash, keys.lastLookupByParts(), stringUse(isLikelyKey) == StringBuilderStorage::StringUse::LikelyName), nullptr };
+            if (JSString* made = keys.makeKey(vm, characters.span(), hash, keys.lastLookupByParts(), stringUse(isLikelyKey) == StringBuilderStorage::StringUse::LikelyName)) [[likely]]
+                return { made, nullptr };
+            throwOutOfMemoryError(globalObject, scope);
+            OPERATION_RETURN(scope, static_cast<JSCell*>(nullptr));
         }
         case StringKeyCache::Lookup::AbsentIndex:
             break;

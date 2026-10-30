@@ -304,7 +304,6 @@ class Heap;
     v(moduleNamespaceObjectSpace, moduleNamespaceObjectHeapCellType, JSModuleNamespaceObject) \
     v(nativeStdFunctionSpace, nativeStdFunctionHeapCellType, JSNativeStdFunction) \
     v(proxyObjectSpace, cellHeapCellType, ProxyObject) \
-    v(proxyRevokeSpace, cellHeapCellType, ProxyRevoke) \
     v(rawJSONObjectSpace, cellHeapCellType, JSRawJSONObject) \
     v(remoteFunctionSpace, cellHeapCellType, JSRemoteFunction) \
     v(scopedArgumentsTableSpace, destructibleCellHeapCellType, ScopedArgumentsTable) \
@@ -393,7 +392,9 @@ public:
     MarkedSpace& objectSpace() LIFETIME_BOUND { return m_objectSpace; }
     JS_EXPORT_PRIVATE MarkedBlockCage& cage();
     JS_EXPORT_PRIVATE AlignedMemoryAllocator* cellAllocator();
-    bool tryCollectForExhaustedCage(GCDeferralContext*);
+    // The allocator that found no memory, or null for a table of the VM.
+    bool tryCollectForExhaustedCage(GCDeferralContext*, AlignedMemoryAllocator*);
+    bool isOutsideCage(AlignedMemoryAllocator*) const;
     void collectForExhaustedCage();
     bool tryUseReserveOfExhaustedCage(AlignedMemoryAllocator*);
 
@@ -437,6 +438,7 @@ public:
     size_t allocationBudgetThisCycle() { return effectiveMaxEdenSize(); }
 #endif
     bool hasHeapAccess() const { return m_worldState.load() & hasAccessBit; }
+    bool needCollectionEpilogue() const { return m_worldState.load() & needCollectionEpilogueBit; }
     bool worldIsStopped() const { return m_worldIsStopped; }
     bool worldIsRunning() const { return !worldIsStopped(); }
 #if ASSERT_ENABLED

@@ -1108,6 +1108,9 @@ struct ClosureWebs {
                 const Value& value = function.at(id);
                 if (value.opcode == Opcode::GetCapture || (value.opcode == Opcode::PutEnvironmentField && storeOf(value.valueOperand()) == id))
                     continue;
+                // A stack walk finds the closure in its field of the environment, if it was created.
+                if (value.opcode == Opcode::KeepCalleeInFrame && candidateOf(value.operand(0)) < closureParameters.firstCandidateWithoutField)
+                    continue;
                 if ((value.opcode == Opcode::ToBoolean || value.opcode == Opcode::TypeTest) && candidateOf(value.operand(0)) != noCandidate && asksForClosure(program, function, value))
                     continue;
                 if ((value.opcode == Opcode::CallDirect || value.opcode == Opcode::NewClosure) && closureParameters.functions.get(value.function().index())) {
@@ -1801,7 +1804,8 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
                     wanted.declared.changeType(Proven::byPosition(typeInPlaceOf(plan.closures[capturedClosure], program.at(wanted.declared.written()))));
                 bool isEnvironmentItself = true;
                 for (uint32_t run : runs) {
-                    const FoundCaptures& store = *std::ranges::find(runsOfLayout[run], member.candidate, &FoundCaptures::candidate);
+                    const FoundCaptures& store = *std::ranges::lower_bound(runsOfLayout[run], member.candidate, { }, &FoundCaptures::candidate);
+                    ASSERT(store.candidate == member.candidate);
                     std::span<const ValueID> captured = program.at(store.function).at(store.closure).variadicOperands();
                     RELEASE_ASSERT(index < captured.size());
                     wanted.operands.append(capturedClosure != noCandidate ? environmentInPlaceOf(store.function, captured[index]) : captured[index]);
@@ -1855,7 +1859,7 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
     auto forEachLayout = [&](NOESCAPE const Invocable<void(LayoutID, Stores, std::span<const Stores>, Vector<Member, 16>&)> auto& functor) {
         for (Stores stores : found.span() | std::views::chunk_by(haveSameLayout)) {
             LayoutID layout = layoutOf(stores[0]);
-            // The stores of one block into one environment.
+            // The stores of one block into one environment, by candidate.
             Vector<Stores, 2> runs;
             for (auto run : stores | std::views::chunk_by([](const FoundCaptures& a, const FoundCaptures& b) { return a.function == b.function && a.environment == b.environment && a.block == b.block; }))
                 runs.append(Stores(run));
@@ -1866,7 +1870,7 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
                     return;
                 Member member { { }, candidate };
                 for (uint32_t index = 0; index < runs.size(); ++index) {
-                    size_t numberOfStores = std::ranges::count(runs[index], candidate, &FoundCaptures::candidate);
+                    size_t numberOfStores = std::ranges::equal_range(runs[index], candidate, { }, &FoundCaptures::candidate).size();
                     if (numberOfStores > 1) {
                         reject(candidate, Obstacle::IsFilledTwiceInOneBlock);
                         return;
@@ -2095,6 +2099,15 @@ static void readCaptures(const Program& program, const CaptureCandidateTable& ca
             }
             if (value.opcode == Opcode::PutEnvironmentField && webs.storeOf(value.valueOperand()) == id && webs.standsForCapturesOnly(value.valueOperand())) {
                 erasedIndexes.set(index);
+                continue;
+            }
+            if (value.opcode == Opcode::KeepCalleeInFrame && webs.standsForCapturesOnly(value.operand(0))) {
+                ValueID closure = value.operand(0);
+                FieldReference field = candidates.fields[webs.candidateOf(closure)];
+                value.become(Opcode::KeepEnvironmentOfCalleeInFrame);
+                value.setOperand(0, closure);
+                value.setLayout(field.layout);
+                value.setField(field.field);
                 continue;
             }
             if (value.opcode != Opcode::GetCapture)

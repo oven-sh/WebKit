@@ -144,6 +144,7 @@ void ArgumentsEmitter::emitTailCallWithList(Boxed callee, Boxed thisValue, Word3
     LValue operands[] = { callee.value(), thisValue.value(), zeroExtended(count).value(), list.value(), m_out.constInt64(sizeOfSpilledArgumentRegisters) };
     RELEASE_ASSERT(!signature.usesCallConvention && signature.numberOfOperands == std::size(operands));
 
+    emitter<CellAllocationEmitter>().leaveFrameOfCheckedCells();
     B3::PatchpointValue* jump = m_out.patchpoint(B3::Void);
     for (size_t i = 0; i < std::size(operands); ++i)
         jump->append(B3::ConstrainedValue(operands[i], B3::ValueRep::reg(signature.operands[i])));

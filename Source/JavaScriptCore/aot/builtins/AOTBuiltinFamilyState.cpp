@@ -22,7 +22,7 @@ namespace JSC { namespace AOT {
 
 BuiltinFamilyState::BuiltinFamilyState(State& state)
     : instance(state.instance)
-    , json(makeUnique<JSONRuntime>(state.instance, *state.caches))
+    , json(makeUnique<JSONRuntime>(state.instance, *state.caches, state.tableArena))
     , locationWatch(makeUnique<BuiltinLocationWatch>(state))
 {
     state.caches->addClearedEachCollection("Object.create"_s, asMutableByteSpan(instance.builtins.objects.objectCreate));

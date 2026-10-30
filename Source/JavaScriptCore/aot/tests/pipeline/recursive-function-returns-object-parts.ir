@@ -1,0 +1,284 @@
+# function walk(depth: number, n: number): { sum: number; count: number } {
+#   if (depth === 0) return { sum: n, count: 1 };
+#   const { sum, count } = walk(depth - 1, n + 1);
+#   return { sum: sum + n, count: count + 1 };
+# }
+# function pairs(depth: number, n: number): [number, number] {
+#   if (depth === 0) return [n, 1];
+#   const [sum, count] = pairs(depth - 1, n + 1);
+#   return [sum + n, count + 1];
+# }
+# function total(depth: number): number {
+#   const { sum, count } = walk(depth, 1);
+#   const [otherSum, otherCount] = pairs(depth, 2);
+#   return sum + count + otherSum + otherCount;
+# }
+# declare const input: any;
+# let answer = 0;
+# for (let i = 0; i < +input; i++) answer += total(i & 7);
+# (globalThis as any).answer = answer;
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=14 kind=Parameter function=f1
+typesite w1 module=m0 position=29 kind=Parameter function=f1
+typesite w2 module=m0 kind=Result
+typesite w3 module=m0 position=233 kind=Parameter function=f2
+typesite w4 module=m0 position=248 kind=Parameter function=f2
+typesite w5 module=m0 position=218 kind=Result
+typesite w6 module=m0 position=603 kind=Variable
+typesite w7 module=m0 position=409 kind=Parameter function=f3
+typesite w8 module=m0 position=394 kind=Result
+typesite w9 module=m0 position=624 kind=Variable
+typesite w10 module=m0 position=658 kind=CallResult
+typesite w11 module=m0 position=147 kind=CallResult
+typesite w12 module=m0 position=336 kind=CallResult
+typesite w13 module=m0 position=459 kind=CallResult
+typesite w14 module=m0 position=508 kind=CallResult
+layout L0 module=m0 position=41 fields=[{key="count" declared={type=number} flags=[IsRequired]}, {key="sum" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+variable g0 name="walk" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="pairs" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f3
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w6}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number site=w9}
+    Jump -> next b2(v3, v5)
+  b2(v6: number, v7: number):
+    LoopHint
+    v9 = Convert v7 declared={type=i32 flags=[IsExpected]}
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="input" [isFreeName]
+    v12 = Convert v11 declared={type=number flags=[IsExpected]}
+    v13 = ToNumber v12
+    v14 = Less v9, v13
+    Branch v14 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v15):
+    Jump -> next b4()
+  b4():
+    v16 = Convert v15 declared={type=i32 flags=[IsExpected]}
+    v17 = Integer integer=7
+    v18 = BitAnd v16, v17
+    v19 = Call v1, -, v18 calleeName="total"
+    v20 = Convert v19 declared={type=number site=w10}
+    v21 = Add v6, v20
+    v22 = Convert v21 declared={type=number site=w6}
+    Jump -> next b5()
+  b5():
+    v23 = Increment v16
+    v24 = Convert v23 declared={type=number site=w9}
+    Jump -> next b2(v22, v24)
+  b6(v25):
+    Jump -> next b7()
+  b7():
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="globalThis" [isFreeName]
+    v28 = Convert v27 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v29 = Convert v28 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    PropSet v29, v6 key="answer"
+    v31 = Undefined
+    Return v31
+}
+function f1 name="walk" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w0}, {type=number site=w1}] results=[{type=undefined|null|L0 site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = StrictEq v0, v2
+    Branch v3 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v4):
+    Jump -> next b3()
+  b3():
+    v5 = Convert v1 declared={type=number}
+    v6 = Integer integer=1
+    v7 = Convert v6 declared={type=number}
+    v8 = NewObject -, v5, v7 layout=L0 fields=[1, 0]
+    v9 = FinishObject v8
+    v10 = Convert v9 declared={type=undefined|null|L0 site=w2 flags=[OmitsNull, OmitsUndefined]}
+    Return v10
+  b4(v11):
+    Jump -> next b5()
+  b5():
+    v12 = GetModuleVariable variable=g0
+    v13 = Integer integer=1
+    v14 = Sub v11, v13
+    v15 = Integer integer=1
+    v16 = Add v1, v15
+    v17 = Call v12, -, v14, v16 calleeName="walk"
+    v18 = Convert v17 declared={type=undefined|null|L0 site=w11 flags=[OmitsNull, OmitsUndefined]}
+    v19 = TypeTest v18 testedType=undefined|null
+    Branch v19 -> taken b6(| 0), notTaken b8(| 0)
+  b6(v20):
+    Jump -> next b7()
+  b7() frequency=Unlikely:
+    v21 = NewRuntimeError runtimeError=NotDestructurable name="sum"
+    Throw v21
+  b8(v22):
+    v23 = PropGet v22 key="sum"
+    v24 = Convert v23 declared={type=number} illTypedCause=Assertion
+    v25 = PropGet v22 key="count"
+    v26 = Convert v25 declared={type=number} illTypedCause=Assertion
+    v27 = Add v24, v1
+    v28 = Convert v27 declared={type=number}
+    v29 = Integer integer=1
+    v30 = Add v26, v29
+    v31 = Convert v30 declared={type=number}
+    v32 = NewObject -, v28, v31 layout=L0 fields=[1, 0]
+    v33 = FinishObject v32
+    v34 = Convert v33 declared={type=undefined|null|L0 site=w2 flags=[OmitsNull, OmitsUndefined]}
+    Return v34
+}
+function f2 name="pairs" module=m0 position=218 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w3}, {type=number site=w4}] results=[{type=undefined|null|Array<number> site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = StrictEq v0, v2
+    Branch v3 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v4):
+    Jump -> next b3()
+  b3():
+    v5 = Integer integer=1
+    v6 = NewArray v1, v5 contents=number
+    v7 = Convert v6 declared={type=undefined|null|Array<number> site=w5 flags=[OmitsNull, OmitsUndefined]}
+    Return v7
+  b4(v8):
+    Jump -> next b5()
+  b5():
+    v9 = GetModuleVariable variable=g1
+    v10 = Integer integer=1
+    v11 = Sub v8, v10
+    v12 = Integer integer=1
+    v13 = Add v1, v12
+    v14 = Call v9, -, v11, v13 calleeName="pairs"
+    v15 = Convert v14 declared={type=undefined|null|Array<number> site=w12 flags=[OmitsNull, OmitsUndefined]}
+    v16 = IteratorOpen v15 elementCount=2 [isDestructuring]
+    Jump -> next b6()
+  b6() handler=b11():
+    v17 = IteratorResume v16 stepIndex=0
+    v18 = ResultAt v17
+    v19 = ResultAt v17 index=1
+    v20 = Convert v19 declared={type=number} illTypedCause=Assertion
+    Jump -> next b7()
+  b7() handler=b11():
+    v21 = IteratorResume v16 stepIndex=1
+    v22 = ResultAt v21
+    v23 = ResultAt v21 index=1
+    v24 = Convert v23 declared={type=number} illTypedCause=Assertion
+    Jump -> next b8()
+  b8() handler=b11():
+    Jump -> next b9()
+  b9():
+    IteratorClose v16
+    Jump -> next b10()
+  b10():
+    v26 = Add v20, v1
+    v27 = Integer integer=1
+    v28 = Add v24, v27
+    v29 = NewArray v26, v28 contents=number
+    v30 = Convert v29 declared={type=undefined|null|Array<number> site=w5 flags=[OmitsNull, OmitsUndefined]}
+    Return v30
+  b11() role=IterationCleanup subject=v16:
+    v31 = CatchException
+    IteratorClose v16 completion=Throw
+    Rethrow v31
+}
+function f3 name="total" module=m0 position=394 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w7}] results=[{type=number site=w8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g0
+    v2 = Integer integer=1
+    v3 = Call v1, -, v0, v2 calleeName="walk"
+    v4 = Convert v3 declared={type=undefined|null|L0 site=w13 flags=[OmitsNull, OmitsUndefined]}
+    v5 = TypeTest v4 testedType=undefined|null
+    Branch v5 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v6):
+    Jump -> next b3()
+  b3() frequency=Unlikely:
+    v7 = NewRuntimeError runtimeError=NotDestructurable name="sum"
+    Throw v7
+  b4(v8):
+    v9 = PropGet v8 key="sum"
+    v10 = Convert v9 declared={type=number} illTypedCause=Assertion
+    v11 = PropGet v8 key="count"
+    v12 = Convert v11 declared={type=number} illTypedCause=Assertion
+    v13 = GetModuleVariable variable=g1
+    v14 = Integer integer=2
+    v15 = Call v13, -, v0, v14 calleeName="pairs"
+    v16 = Convert v15 declared={type=undefined|null|Array<number> site=w14 flags=[OmitsNull, OmitsUndefined]}
+    v17 = IteratorOpen v16 elementCount=2 [isDestructuring]
+    Jump -> next b5()
+  b5() handler=b10():
+    v18 = IteratorResume v17 stepIndex=0
+    v19 = ResultAt v18
+    v20 = ResultAt v18 index=1
+    v21 = Convert v20 declared={type=number} illTypedCause=Assertion
+    Jump -> next b6()
+  b6() handler=b10():
+    v22 = IteratorResume v17 stepIndex=1
+    v23 = ResultAt v22
+    v24 = ResultAt v22 index=1
+    v25 = Convert v24 declared={type=number} illTypedCause=Assertion
+    Jump -> next b7()
+  b7() handler=b10():
+    Jump -> next b8()
+  b8():
+    IteratorClose v17
+    Jump -> next b9()
+  b9():
+    v27 = Add v10, v12
+    v28 = Add v27, v21
+    v29 = Add v28, v25
+    v30 = Convert v29 declared={type=number site=w8}
+    Return v30
+  b10() role=IterationCleanup subject=v17:
+    v31 = CatchException
+    IteratorClose v17 completion=Throw
+    Rethrow v31
+}
+
+# The wrapper of a function that calls itself stays what it was made as: it calls the worker and puts the parts together.
+# CHECK-LABEL: function f1 name="walk" module=m0 role=ResultWrapper
+# CHECK: creator=ResultWrapper{worker=[[walk]] layout=L0} {
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[parts]]:{{*}}= CallDirect v0, v1 function=[[walk]]
+# CHECK-NEXT: = ResultAt [[parts]]
+# CHECK-NEXT: = ResultAt [[parts]] index=1
+# CHECK-NEXT: = NewObject
+# CHECK-NEXT: Return
+# CHECK-LABEL: function f2 name="pairs" module=m0 position=218 role=ResultWrapper
+# CHECK: creator=ResultWrapper{worker=[[pairs]]} {
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[parts]]:{{*}}= CallDirect v0, v1 function=[[pairs]]
+# CHECK-NEXT: = ResultAt [[parts]]
+# CHECK-NEXT: = ResultAt [[parts]] index=1
+# CHECK-NEXT: = NewArray
+# Whoever takes the result apart calls the workers, also behind a level that was copied in.
+# CHECK-LABEL: function f3 name="total"
+# CHECK-NOT: function=f1
+# CHECK-NOT: function=f2
+# CHECK-NOT: = NewObject
+# CHECK-NOT: = NewArray
+# CHECK-LABEL: function f4
+# Each worker calls itself and makes nothing.
+# CHECK-LABEL: name="walk" module=m0 role=ResultWorker
+# CHECK-NOT: function=f1
+# CHECK-NOT: = NewObject
+# CHECK: = CallDirect {{*}} function=[[walk]]
+# CHECK-NOT: function=f1
+# CHECK-NOT: = NewObject
+# CHECK-LABEL: name="pairs" module=m0 position=218 role=ResultWorker
+# CHECK-NOT: function=f2
+# CHECK-NOT: = NewArray
+# CHECK: = CallDirect {{*}} function=[[pairs]]
+# CHECK-NOT: function=f2
+# CHECK-NOT: = NewArray
+# CHECK-LABEL: role=GenericEntrypoint

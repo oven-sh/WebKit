@@ -304,7 +304,7 @@ void RemoteLayerTreeEventDispatcher::scrollingThreadHandleWheelEvent(const WebWh
 void RemoteLayerTreeEventDispatcher::continueWheelEventHandling(WheelEventHandlingResult handlingResult)
 {
     ASSERT(isMainRunLoop());
-    CheckedPtr scrollingCoordinator = m_scrollingCoordinator.get();
+    RefPtr scrollingCoordinator = m_scrollingCoordinator;
     if (!scrollingCoordinator)
         return;
 
@@ -358,7 +358,7 @@ void RemoteLayerTreeEventDispatcher::wheelEventHandlingCompleted(const PlatformW
 
         auto result = scrollingTree->handleWheelEventAfterDefaultHandling(wheelEvent, scrollingNodeID, gestureState);
         RunLoop::mainSingleton().dispatch([protectedThis, wasHandled, result]() {
-            if (CheckedPtr scrollingCoordinator = protectedThis->m_scrollingCoordinator.get())
+            if (RefPtr scrollingCoordinator = protectedThis->m_scrollingCoordinator)
                 protect(scrollingCoordinator->webPageProxy())->wheelEventHandlingCompleted(wasHandled || result.wasHandled);
         });
 
@@ -541,13 +541,15 @@ void RemoteLayerTreeEventDispatcher::updateLayerPositionsAndAnimations()
     if (auto scrollingTree = this->scrollingTree())
         scrollingTree->tryToApplyLayerPositions();
 
-    // Commit scroll position changes before updating animation effects, so the
-    // render server sees a consistent scroll position + presentation modifier values.
-    [CATransaction flush];
-
 #if ENABLE(THREADED_ANIMATIONS)
     updateAnimations();
 #endif
+
+    // Because we call -[CAPresentationModifier setUpdatesAsynchronously:NO] on the
+    // presentation modifier groups used for animations, they need to be explicitly
+    // flushed with the current transaction, so we must commit here to let the render
+    // server see scroll position changes and animated values together.
+    [CATransaction flush];
 }
 
 void RemoteLayerTreeEventDispatcher::scheduleDelayedRenderingUpdateDetectionTimer(Seconds delay)
@@ -920,7 +922,7 @@ void RemoteLayerTreeEventDispatcher::stopDisplayDidRefreshCallbacks(PlatformDisp
 void RemoteLayerTreeEventDispatcher::didEndSyntheticMomentumScrolling()
 {
     RunLoop::mainSingleton().dispatch([protectedThis = Ref { *this }] {
-        if (CheckedPtr scrollingCoordinator = protectedThis->m_scrollingCoordinator.get())
+        if (RefPtr scrollingCoordinator = protectedThis->m_scrollingCoordinator)
             protect(scrollingCoordinator->webPageProxy())->didEndSyntheticMomentumScrolling();
     });
 }

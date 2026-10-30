@@ -1,4 +1,4 @@
-# The code of a store names at most two places where its field comes next, so the image has the orders that the store makes of the first two orders it can continue, and no more: nine allocation orders and eight created fields make 16 orders, not 72. The other seven allocation orders stay as they are, and what a store makes of one is numbered at run time
+# What stores create is expected behind the keys of an allocation in the sequence in which the text holds the stores: nine allocation orders and eight created fields make nine orders, not 72. The code of a store names at most two places where its field comes next, and what a store makes of any other place is numbered at run time
 # FORM: AsRead
 # OPTIONS: only-passes=ResolveAccesses
 # RUN: place key-orders key-order-continuations
@@ -34,5 +34,6 @@ function f%(i+1) name="add%(i)" parameters=[{type=L0}, {type=number}] results=[{
     Return
 }
 # END REPEAT
-# CHECK: L0 orders=23: [0 9] [0 10] {{*}} [1 15] [1 16] [2] [3] [4] [5] [6] [7] [8]
-# CHECK: L0 creating [9]: order=0 count=1 -> order=0 count=2; order=8 count=1 -> order=8 count=2;
+# CHECK: L0 orders=9: [0 9 10 11 12 13 14 15 16] [1 9 10 11 12 13 14 15 16] {{*}} [8 9 10 11 12 13 14 15 16]
+# CHECK: L0 creating [9]: order=0 count=1 -> order=0 count=2; order=1 count=1 -> order=1 count=2;
+# CHECK-NEXT: L0 creating [10]: order=0 count=2 -> order=0 count=3; order=1 count=2 -> order=1 count=3;

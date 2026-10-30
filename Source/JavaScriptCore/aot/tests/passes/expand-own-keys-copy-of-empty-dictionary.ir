@@ -1,0 +1,46 @@
+# `let all = {}; all = { ...all, [key]: value }`: a dictionary that never gets a property has none to copy, so the copy is a new dictionary and the first one is dead.
+# FORM: Prepared optimizing
+# RUN: pass ExpandOwnKeys EliminateDeadCode
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="neverFilled" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewDictionary
+    v2 = CopyObject v1
+    PropDefine v2, v0 key="a"
+    Return v2
+# CHECK: b0(
+# CHECK-NEXT: v2: object = NewDictionary
+# CHECK-NEXT: PropDefine v2, v0 key="a"
+# CHECK-NOT: CopyObject
+}
+
+function f1 name="filledBeforeTheCopy" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewDictionary
+    PropDefine v1, v0 key="a"
+    v3 = CopyObject v1
+    Return v3
+# CHECK: v3: object = CopyObject v1
+}
+
+function f2 name="filledAfterTheCopy" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewDictionary
+    v2 = CopyObject v1
+    PropDefine v1, v0 key="a"
+    v4 = CopyObject v1
+    Return v4
+# CHECK: v2: object = CopyObject v1
+# CHECK: v4: object = CopyObject v1
+}
+
+function f3 name="handedToACall" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewDictionary
+    v2 = Call v0, -, v1
+    v3 = CopyObject v1
+    Return v3
+# CHECK: v3: object = CopyObject v1
+}

@@ -42,7 +42,6 @@
 #include "HWndDC.h"
 #include "HitTestResult.h"
 #include "Image.h"
-#include "ImageAdapter.h"
 #include "LocalFrameInlines.h"
 #include "NotImplemented.h"
 #include "PasteboardStrategy.h"
@@ -485,7 +484,7 @@ void Pasteboard::writeString(const String& type, const String& data)
 }
 
 #if ENABLE(DRAG_SUPPORT)
-void Pasteboard::setDragImage(DragImage, const IntPoint&)
+void Pasteboard::setDragImage(DragImage&&, const IntPoint&)
 {
     // Do nothing in Windows.
 }

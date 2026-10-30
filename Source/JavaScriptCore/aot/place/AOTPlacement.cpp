@@ -685,9 +685,16 @@ Placement PlacementInSteps::numberWhatRepresentationsAsk(ProgramEditor& editor, 
                 },
                 [&] {
                     state.run("computeTypesNeededAtRunTime"_s, [&] {
-                        placement.m_typesNeededAtRunTime = computeTypesNeededAtRunTime(context, sites, TypesTestedByCode::Exclude);
-                        placement.m_typesWithCells = computeTypesNeededAtRunTime(context, sites, TypesTestedByCode::Include);
-                        state.typesThatOrderShapes = sites.layoutsOutOfUse.isEmpty() ? placement.m_typesNeededAtRunTime : computeTypesNeededAtRunTime(context, sites, TypesTestedByCode::Exclude, LayoutsOutOfUse::Include);
+                        runTasksInParallel(loops, {
+                            [&] { placement.m_typesNeededAtRunTime = computeTypesNeededAtRunTime(context, sites, TypesTestedByCode::Exclude); },
+                            [&] { placement.m_typesWithCells = computeTypesNeededAtRunTime(context, sites, TypesTestedByCode::Include); },
+                            [&] {
+                                if (!sites.layoutsOutOfUse.isEmpty())
+                                    state.typesThatOrderShapes = computeTypesNeededAtRunTime(context, sites, TypesTestedByCode::Exclude, LayoutsOutOfUse::Include);
+                            },
+                        });
+                        if (sites.layoutsOutOfUse.isEmpty())
+                            state.typesThatOrderShapes = placement.m_typesNeededAtRunTime;
                     });
                 },
                 [&] { state.run("chooseShapeVariants"_s, [&] { state.variants = chooseShapeVariants(context, sites); }); },

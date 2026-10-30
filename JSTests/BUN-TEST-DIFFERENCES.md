@@ -1,6 +1,6 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 127 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 129 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
@@ -48,9 +48,10 @@ Rules for an edit to an upstream test:
 
 - Upstream prints three lines (`function f() {\n    [native code]\n}`).
 - Fork code: `runtime/JSFunction.cpp:251`, `runtime/FunctionExecutable.cpp:206` (commit 3ad19d9e49d5).
-- Files (10): `ChakraCore/test/` `Array/protoLookup`, `Error/ErrorCtorProps_v3`, `Function/prototype`,
+- Files (11): `ChakraCore/test/` `Array/protoLookup`, `Error/ErrorCtorProps_v3`, `Function/prototype`,
   `Function/toString`, `Lib/toString` (163 functions), `es6/letconst_global_shadow_builtins`, `strict/05.arguments_sm`,
-  `typedarray/set` (baselines); `LayoutTests/js/basic-strict-mode` (script and expected text).
+  `typedarray/set` (baselines); `LayoutTests/js/basic-strict-mode` (script and expected text);
+  `stress/proxy-revocable-result-and-revoke-function.js` (the revoke function).
 
 ### A3. Module link errors are worded differently
 
@@ -136,6 +137,7 @@ Rules for an edit to an upstream test:
 | `stress/sampling-profiler-line-column.js` | `$skipModes` for `ftl-eager`; the lines it waits for are 13 to 18 (upstream: 11 to 16), because the two lines added at the top move `test()` down by two | it waits for a sample of `test()` with a line inside `test()`. A frame of FTL code is sampled with no line (4294967295), so a sample has to fall into the few milliseconds before `test()` is compiled by the FTL; a process that misses them waits its 50 s in vain. 35 of 600 runs on a busy machine with `main`'s own shell (87ee10da), each over in under 5 s or never |
 | `stress/buffer-accessor-jit-byteoffset.js`, `-fractional-value.js`, `-large.js` | `$skipModes << :lockdown` | they check `numberOfDFGCompiles()`; lockdown runs with the JIT off |
 | `stress/regress-174463162.js` | `$skipModes` for `dfg-eager`, `dfg-eager-no-cjit-validate`, `ftl-eager`, `ftl-eager-no-cjit`, `no-cjit-collect-continuously` | its `$vm` helper scribbles a live cell's header; a collection before the script ends marks a cell with no Structure. Only the `--collectContinuously=true` modes collect that early. Upstream's bots hit it too |
+| `stress/regexp-legacy-static-properties-rematch-failure.js` | `$skipModes` for `regexp-flat-program`, `regexp-image-mode` | after a `test()` that matched, it expects the second match, which `RegExp.lastMatch` and the other legacy properties start for the captures, to run out of stack and throw a `RangeError` (upstream 191803bb23). A flat program and the code of an image make that match within `--maxRegExpStackSize=65536`: the properties have their values and `exec()` returns the 1601 entries |
 | `wasm/regress/298930.js` | `skip if $asan` | ASan's fake stack moves `ConstExprInterpreter`'s `MarkedArgumentBuffer` off the stack the collector scans |
 | `LayoutTests/.../wasm/core/js/simd/simd_f32x4_cmp.wast.js` | `skip if $asan` | `RunLoopGeneric`: the collector thread starts a timer while it is in `fired()` without the lock; `ASSERTION FAILED: !isScheduled()`. Only assertion builds see it, and of our lanes those are the asan ones |
 | `wasm/stress/memory64-overflow.js` | `slow!` | past the 300 s hard timeout under ASan in `wasm-collect-continuously` |
@@ -192,6 +194,7 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 | `stress/bun-arrays-become-prototypes-below-immutable-prototypes.js` | with `Object.prototype` and `Array.prototype` immutable and a setter under an index on a class prototype, an array or an object with elements that becomes a prototype keeps the storage it has; reads, stores and changes of length on it and through its heirs answer as the language says |
 | `stress/regexp-bytecode-of-deeply-nested-fixed-count-groups.js` | the bytecode compiler of regular expressions takes a time in proportion to the depth of a nest of groups with a fixed count: no more than three times what it takes for lazy groups, at two depths |
 | `stress/regexp-flat-program-counts-turns-of-alternatives-tried-once.js` | a pattern with a `^` in one alternative and none in another: the flat program that counts turns (`yarr/YarrFlatProgram*`) walks the alternatives that are tried once and their copies in the bytecode's order, and counts the same turns |
+| `stress/regexp-flat-program-many-groups-and-surrogates.js` | in unicode mode the flat program skips positions where the first characters cannot match, counting a surrogate pair as one character, and after a failed attempt resets only the captures the attempt can have written: results match the bytecode interpreter |
 | `stress/regexp-flat-program-memoizes-unbounded-runs.js` | the flat program memoizes where the rest of an unbounded run has failed, keys entries only by the capture bounds a backreference can still read, and records a failed search under the bounds it started with: results and turn counts match the bytecode interpreter |
 | `stress/regexp-flat-program-remembers-failed-searches-beside-references.js` | beside references the flat program's table of failed searches has an entry for each set of the referenced groups' bounds: results and turns are the bytecode's |
 | `stress/regexp-image-code-hands-long-searches-over.js` | with `--useRegExpImageMode=1`, in a `jsc` that has the ahead-of-time compiler: the code of a pattern stops after nine turns a unit and 65,537, and the match is made again by the flat programs, which give it up where the JIT does. In a `jsc` without the compiler the option changes nothing, and both runs hold the JIT to the same answers |

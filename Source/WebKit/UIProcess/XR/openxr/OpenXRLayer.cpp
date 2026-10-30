@@ -31,7 +31,6 @@
 
 #include "OpenXRGraphicsBinding.h"
 #include <openxr/openxr.h>
-#include <wtf/Scope.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
@@ -73,25 +72,25 @@ std::optional<PlatformXR::FrameData::LayerData> OpenXRLayerProjection::startFram
     if (!texture)
         return std::nullopt;
 
-    auto addResult = m_exportedTextures.add(*texture, m_nextReusableTextureIndex);
-    bool needsExport = addResult.isNewEntry;
+    auto existingIndex = m_exportedTextures.getOptional(*texture);
+    bool needsExport = !existingIndex;
 
     PlatformXR::FrameData::LayerData layerData;
     layerData.renderingFrameIndex = m_renderingFrameIndex++;
     layerData.textureData = {
-        .reusableTextureIndex = addResult.iterator->value,
+        .reusableTextureIndex = existingIndex.value_or(m_nextReusableTextureIndex),
         .colorTexture = { },
         .depthStencilBuffer = { },
     };
 
     if (!needsExport)
         return layerData;
-    m_nextReusableTextureIndex++;
 
     auto externalTexture = graphicsBinding.exportTexture(*texture, m_swapchain, OpenXRGraphicsBinding::TextureType::Texture2D, m_swapchain->width(), m_swapchain->height());
     if (!externalTexture)
         return std::nullopt;
 
+    m_exportedTextures.add(*texture, m_nextReusableTextureIndex++);
     layerData.textureData->colorTexture = WTF::move(externalTexture.value());
 
     auto halfWidth = m_swapchain->width() / 2;
@@ -109,6 +108,11 @@ std::optional<PlatformXR::FrameData::LayerData> OpenXRLayerProjection::startFram
 Vector<XrCompositionLayerBaseHeader*> OpenXRLayerProjection::endFrame(OpenXRGraphicsBinding& graphicsBinding, const PlatformXR::DeviceLayer& layer, XrSpace space, const Vector<XrView>& frameViews)
 {
     ASSERT(m_swapchain->acquiredTexture());
+
+    if (!m_exportedTextures.contains(m_swapchain->acquiredTexture())) {
+        m_swapchain->releaseImage();
+        return { };
+    }
 
     graphicsBinding.commitFrame(m_swapchain->acquiredTexture(), m_swapchain, OpenXRGraphicsBinding::TextureType::Texture2D, { m_swapchain->acquiredTexture() });
     auto viewCount = frameViews.size();
@@ -174,25 +178,25 @@ std::optional<PlatformXR::FrameData::LayerData> OpenXRQuadLayer::startFrame(Open
     if (!texture)
         return std::nullopt;
 
-    auto addResult = m_exportedTextures.add(*texture, m_nextReusableTextureIndex);
-    bool needsExport = addResult.isNewEntry;
+    auto existingIndex = m_exportedTextures.getOptional(*texture);
+    bool needsExport = !existingIndex;
 
     PlatformXR::FrameData::LayerData layerData;
     layerData.renderingFrameIndex = m_renderingFrameIndex++;
     layerData.textureData = {
-        .reusableTextureIndex = addResult.iterator->value,
+        .reusableTextureIndex = existingIndex.value_or(m_nextReusableTextureIndex),
         .colorTexture = { },
         .depthStencilBuffer = { },
     };
 
     if (!needsExport)
         return layerData;
-    m_nextReusableTextureIndex++;
 
     auto externalTexture = graphicsBinding.exportTexture(*texture, m_swapchain, OpenXRGraphicsBinding::TextureType::Texture2D, m_swapchain->width(), m_swapchain->height());
     if (!externalTexture)
         return std::nullopt;
 
+    m_exportedTextures.add(*texture, m_nextReusableTextureIndex++);
     layerData.textureData->colorTexture = WTF::move(externalTexture.value());
 
     layerData.layerSetup = {
@@ -207,6 +211,11 @@ std::optional<PlatformXR::FrameData::LayerData> OpenXRQuadLayer::startFrame(Open
 Vector<XrCompositionLayerBaseHeader*> OpenXRQuadLayer::endFrame(OpenXRGraphicsBinding& graphicsBinding, const PlatformXR::DeviceLayer& layer, XrSpace space, const Vector<XrView>& frameViews)
 {
     ASSERT(m_swapchain->acquiredTexture());
+
+    if (!m_exportedTextures.contains(m_swapchain->acquiredTexture())) {
+        m_swapchain->releaseImage();
+        return { };
+    }
 
     graphicsBinding.commitFrame(m_swapchain->acquiredTexture(), m_swapchain, OpenXRGraphicsBinding::TextureType::Texture2D, { m_swapchain->acquiredTexture() });
 
@@ -299,25 +308,25 @@ std::optional<PlatformXR::FrameData::LayerData> OpenXREquirectLayer::startFrame(
     if (!texture)
         return std::nullopt;
 
-    auto addResult = m_exportedTextures.add(*texture, m_nextReusableTextureIndex);
-    bool needsExport = addResult.isNewEntry;
+    auto existingIndex = m_exportedTextures.getOptional(*texture);
+    bool needsExport = !existingIndex;
 
     PlatformXR::FrameData::LayerData layerData;
     layerData.renderingFrameIndex = m_renderingFrameIndex++;
     layerData.textureData = {
-        .reusableTextureIndex = addResult.iterator->value,
+        .reusableTextureIndex = existingIndex.value_or(m_nextReusableTextureIndex),
         .colorTexture = { },
         .depthStencilBuffer = { },
     };
 
     if (!needsExport)
         return layerData;
-    m_nextReusableTextureIndex++;
 
     auto externalTexture = graphicsBinding.exportTexture(*texture, m_swapchain, OpenXRGraphicsBinding::TextureType::Texture2D, m_swapchain->width(), m_swapchain->height());
     if (!externalTexture)
         return std::nullopt;
 
+    m_exportedTextures.add(*texture, m_nextReusableTextureIndex++);
     layerData.textureData->colorTexture = WTF::move(externalTexture.value());
 
     layerData.layerSetup = {
@@ -332,6 +341,11 @@ std::optional<PlatformXR::FrameData::LayerData> OpenXREquirectLayer::startFrame(
 Vector<XrCompositionLayerBaseHeader*> OpenXREquirectLayer::endFrame(OpenXRGraphicsBinding& graphicsBinding, const PlatformXR::DeviceLayer& layer, XrSpace space, const Vector<XrView>& frameViews)
 {
     ASSERT(m_swapchain->acquiredTexture());
+
+    if (!m_exportedTextures.contains(m_swapchain->acquiredTexture())) {
+        m_swapchain->releaseImage();
+        return { };
+    }
 
     graphicsBinding.commitFrame(m_swapchain->acquiredTexture(), m_swapchain, OpenXRGraphicsBinding::TextureType::Texture2D, { m_swapchain->acquiredTexture() });
 
@@ -426,25 +440,25 @@ std::optional<PlatformXR::FrameData::LayerData> OpenXRCylinderLayer::startFrame(
     if (!texture)
         return std::nullopt;
 
-    auto addResult = m_exportedTextures.add(*texture, m_nextReusableTextureIndex);
-    bool needsExport = addResult.isNewEntry;
+    auto existingIndex = m_exportedTextures.getOptional(*texture);
+    bool needsExport = !existingIndex;
 
     PlatformXR::FrameData::LayerData layerData;
     layerData.renderingFrameIndex = m_renderingFrameIndex++;
     layerData.textureData = {
-        .reusableTextureIndex = addResult.iterator->value,
+        .reusableTextureIndex = existingIndex.value_or(m_nextReusableTextureIndex),
         .colorTexture = { },
         .depthStencilBuffer = { },
     };
 
     if (!needsExport)
         return layerData;
-    m_nextReusableTextureIndex++;
 
     auto externalTexture = graphicsBinding.exportTexture(*texture, m_swapchain, OpenXRGraphicsBinding::TextureType::Texture2D, m_swapchain->width(), m_swapchain->height());
     if (!externalTexture)
         return std::nullopt;
 
+    m_exportedTextures.add(*texture, m_nextReusableTextureIndex++);
     layerData.textureData->colorTexture = WTF::move(externalTexture.value());
 
     layerData.layerSetup = {
@@ -459,6 +473,11 @@ std::optional<PlatformXR::FrameData::LayerData> OpenXRCylinderLayer::startFrame(
 Vector<XrCompositionLayerBaseHeader*> OpenXRCylinderLayer::endFrame(OpenXRGraphicsBinding& graphicsBinding, const PlatformXR::DeviceLayer& layer, XrSpace space, const Vector<XrView>& frameViews)
 {
     ASSERT(m_swapchain->acquiredTexture());
+
+    if (!m_exportedTextures.contains(m_swapchain->acquiredTexture())) {
+        m_swapchain->releaseImage();
+        return { };
+    }
 
     graphicsBinding.commitFrame(m_swapchain->acquiredTexture(), m_swapchain, OpenXRGraphicsBinding::TextureType::Texture2D, { m_swapchain->acquiredTexture() });
 
@@ -544,31 +563,22 @@ std::optional<PlatformXR::FrameData::LayerData> OpenXRCubeLayer::startFrame(Open
     if (!texture)
         return std::nullopt;
 
-    auto releaseSwapchainImagesOnError = makeScopeExit([&] {
-        m_swapchain->releaseImage();
-        if (m_rightSwapchain)
-            m_rightSwapchain->releaseImage();
-    });
-
     if (m_rightSwapchain && !m_rightSwapchain->acquireImage())
         return std::nullopt;
 
-    auto addResult = m_exportedTextures.add(*texture, m_nextReusableTextureIndex);
-    bool needsExport = addResult.isNewEntry;
+    auto existingIndex = m_exportedTextures.getOptional(*texture);
+    bool needsExport = !existingIndex;
 
     PlatformXR::FrameData::LayerData layerData;
     layerData.renderingFrameIndex = m_renderingFrameIndex++;
     layerData.textureData = {
-        .reusableTextureIndex = addResult.iterator->value,
+        .reusableTextureIndex = existingIndex.value_or(m_nextReusableTextureIndex),
         .colorTexture = { },
         .depthStencilBuffer = { },
     };
 
-    if (!needsExport) {
-        releaseSwapchainImagesOnError.release();
+    if (!needsExport)
         return layerData;
-    }
-    m_nextReusableTextureIndex++;
 
     // The cube faces are laid out side by side (cubeCount * faceCount squares) in a single 2D buffer.
     uint32_t faceSize = m_swapchain->width();
@@ -578,6 +588,7 @@ std::optional<PlatformXR::FrameData::LayerData> OpenXRCubeLayer::startFrame(Open
     if (!externalTexture)
         return std::nullopt;
 
+    m_exportedTextures.add(*texture, m_nextReusableTextureIndex++);
     layerData.textureData->colorTexture = WTF::move(externalTexture.value());
     layerData.layerSetup = {
         .physicalSize = { { { static_cast<uint16_t>(sideBySideWidth), static_cast<uint16_t>(faceSize) } } },
@@ -585,13 +596,19 @@ std::optional<PlatformXR::FrameData::LayerData> OpenXRCubeLayer::startFrame(Open
         .foveationRateMapDesc = { }
     };
 
-    releaseSwapchainImagesOnError.release();
     return layerData;
 }
 
 Vector<XrCompositionLayerBaseHeader*> OpenXRCubeLayer::endFrame(OpenXRGraphicsBinding& graphicsBinding, const PlatformXR::DeviceLayer& layer, XrSpace space, const Vector<XrView>&)
 {
     ASSERT(m_swapchain->acquiredTexture());
+
+    if (!m_exportedTextures.contains(m_swapchain->acquiredTexture())) {
+        m_swapchain->releaseImage();
+        if (m_rightSwapchain)
+            m_rightSwapchain->releaseImage();
+        return { };
+    }
 
     Vector<uint64_t> cubeImages;
     cubeImages.reserveCapacity(cubeCount());

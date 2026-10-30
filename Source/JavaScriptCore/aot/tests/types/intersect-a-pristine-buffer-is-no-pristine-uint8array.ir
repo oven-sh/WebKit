@@ -1,6 +1,9 @@
 # One test tells a Buffer and a Uint8Array from everything else and not from each other. Only what finds the names of its class is known to be of that class and of no other
+# What fails the test for a Uint8Array is no Buffer either.
 # RUN: intersect
+# CHECK: t0 - t1 = never
 # CHECK: t0 & t3 = Buffer
+# CHECK: t1 - t0 = Uint8Array
 # CHECK: t2 & t3 = never
 # CHECK: t3 & t0 = Buffer
 # CHECK: t3 & t2 = never

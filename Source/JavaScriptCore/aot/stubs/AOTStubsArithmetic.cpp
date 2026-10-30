@@ -44,7 +44,7 @@ static_assert([] {
     return true;
 }());
 static_assert(binaryOperationForm(BinaryOperator::GreaterEq, true) + 1 == descriptorOf(StubFamily::BinaryOperation).numberOfForms);
-static_assert(static_cast<uint8_t>(UnaryOperationForm::ToNumeric) + 1 == descriptorOf(StubFamily::UnaryOperation).numberOfForms);
+static_assert(static_cast<uint8_t>(UnaryOperationForm::ToString) + 1 == descriptorOf(StubFamily::UnaryOperation).numberOfForms);
 
 static constexpr Entry binaryOperations[numberOfBinaryOperators] = {
     Entry::operationAOTValueAdd, Entry::operationAOTValueSub, Entry::operationAOTValueMul, Entry::operationAOTValueDiv,
@@ -456,6 +456,8 @@ static void emitUnaryOnInt32(StubAssembler& jit, UnaryOperationForm form, GPRReg
         jit.not32(value);
         break;
     case UnaryOperationForm::ToNumeric:
+    case UnaryOperationForm::AddToEmptyString:
+    case UnaryOperationForm::ToString:
         RELEASE_ASSERT_NOT_REACHED();
     }
     boxInt32AndReturn(jit, value, value);
@@ -503,6 +505,20 @@ void generateUnaryOperation(StubAssembler& jit)
     RELEASE_ASSERT(value == jit.result());
     JumpList slow;
 
+    if (form == UnaryOperationForm::AddToEmptyString || form == UnaryOperationForm::ToString) {
+        slow.append(jit.branchIfNotCell(value));
+        slow.append(jit.branchIfNotString(value));
+        jit.returnToCaller();
+        slow.link(&jit);
+        if (form == UnaryOperationForm::ToString) {
+            jit.callOperationAndReturn(Entry::operationAOTToString, { .saves = OperationCall::Saves::CallerSavedRegisters, .secondArgumentIn = value });
+            return;
+        }
+        const GPRReg emptyString = jit.allocateScratch(StubRegister::T9);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(emptyString)), emptyString);
+        jit.callOperationAndReturn(Entry::operationAOTValueAdd, { .saves = OperationCall::Saves::CallerSavedRegisters, .secondArgumentIn = emptyString, .thirdArgumentIn = value });
+        return;
+    }
     if (form == UnaryOperationForm::ToNumeric) {
         slow.append(jit.branchTest64(CCallHelpers::Zero, value, numberTag));
         jit.returnToCaller();

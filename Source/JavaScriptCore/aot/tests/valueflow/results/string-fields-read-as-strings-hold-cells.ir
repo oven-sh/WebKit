@@ -1,0 +1,137 @@
+# The slot of a field that holds only written strings holds their numbers. It holds cells where the program only uses what it reads
+# from the field as a string, some store brings a cell, and the stores of written strings are no more than the accesses that want cells.
+#   const texts = ["plain", "wider", "again", "more"];
+#   const input = (globalThis as any).input | 0;
+#   const readAsString = { text: "plain" };
+#   readAsString.text = texts[input & 3]!;
+#   const compared = { tag: "plain" };
+#   compared.tag = texts[input & 3]!;
+#   const mostlyWritten = { label: "a" };
+#   mostlyWritten.label = "b";
+#   mostlyWritten.label = "c";
+#   mostlyWritten.label = "d";
+#   mostlyWritten.label = texts[input & 3]!;
+#   const onlyWritten = { note: "a" };
+#   onlyWritten.note = input ? "b" : "c";
+#   (globalThis as any).answer = [readAsString.text.length, compared.tag === "again", mostlyWritten.label.length, onlyWritten.note.length];
+# FORM: AsRead
+# RUN: valueflow-apply
+# CHECK: fields=[{key="text" declared={type=undefined|"again"|"more"|"plain"|"wider"{{*}} slotType=undefined|string}]
+# CHECK-NOT: slotType
+# CHECK: fields=[{key="tag" declared={type=undefined|"again"|"more"|"plain"|"wider"
+# CHECK: fields=[{key="label" declared={type=undefined|"a"|"again"|"b"|"c"|"d"|"more"|"plain"|"wider"
+# CHECK: fields=[{key="note" declared={type="a"|"b"|"c"
+
+typesite w0 module=m0 position=6 kind=Variable
+typesite w1 module=m0 position=57 kind=Variable
+typesite w2 module=m0 position=102 kind=Variable
+typesite w3 module=m0 position=181 kind=Variable
+typesite w4 module=m0 position=250 kind=Variable
+typesite w5 module=m0 position=410 kind=Variable
+typesite w6 module=m0 position=156 kind=Element
+typesite w7 module=m0 position=225 kind=Element
+typesite w8 module=m0 position=282 kind=Field
+typesite w9 module=m0 position=309 kind=Field
+typesite w10 module=m0 position=336 kind=Field
+typesite w11 module=m0 position=385 kind=Element
+typesite w12 module=m0 position=439 kind=Field
+typesite w13 module=m0 position=507 kind=PropertyRead
+typesite w14 module=m0 position=559 kind=PropertyRead
+typesite w15 module=m0 position=587 kind=PropertyRead
+layout L0 module=m0 position=117 fields=[{key="text" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 position=192 fields=[{key="tag" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
+layout L2 module=m0 position=266 fields=[{key="label" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
+layout L3 module=m0 position=424 fields=[{key="note" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
+layout L4 fields=[{key="input" declared={type=anything} flags=[IsNeverWritten]}] flags=[IsNeverAllocated] ownFieldCount=1 flow={allocation=NeverAllocated}
+layout L5 fields=[{key="answer" declared={type=anything}}] flags=[IsNeverAllocated] ownFieldCount=1 flow={allocation=NeverAllocated}
+module m0 path="/$bunfs/root/slots.ts" displayPath="slots.ts" flags=[KeepsError] body=f0 positions={lineStarts=[0, 51, 96, 136, 175, 210, 244, 282, 309, 336, 363, 404, 439, 477, 613]} functionText="const texts = [\x22plain\x22, \x22wider\x22, \x22again\x22, \x22more\x22];\x0aconst input = (globalThis).input | 0;\x0aconst readAsString = { text: \x22plain\x22 };\x0areadAsString.text = texts[input & 3];\x0aconst compared = { tag: \x22plain\x22 };\x0acompared.tag = texts[input & 3];\x0aconst mostlyWritten = { label: \x22a\x22 };\x0amostlyWritten.label = \x22b\x22;\x0amostlyWritten.label = \x22c\x22;\x0amostlyWritten.label = \x22d\x22;\x0amostlyWritten.label = texts[input & 3];\x0aconst onlyWritten = { note: \x22a\x22 };\x0aonlyWritten.note = input ? \x22b\x22 : \x22c\x22;\x0a(globalThis).answer = [readAsString.text.length, compared.tag === \x22again\x22, mostlyWritten.label.length, onlyWritten.note.length];\x0a" namespaceLayout=L(m0)
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = Data data=d0 @14
+    v1 = Convert v0 declared={type=undefined|null|Array<undefined|null|string> site=w0 flags=[OmitsNull, OmitsUndefined]} @14
+    v2 = Builtin builtin=GlobalThis @66
+    v3 = PropGet v2 key="globalThis" [isFreeName] @66
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]} @66
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @66
+    v6 = PropGet v5 key="input" @66
+    v7 = Convert v6 declared={type=i32 flags=[IsExpected]} @65
+    v8 = Integer @93
+    v9 = BitOr v7, v8 @66
+    v10 = Convert v9 declared={type=number site=w1} @65
+    v11 = Data data=d1 @117
+    v12 = Convert v11 declared={type=undefined|null|L0 site=w2 flags=[OmitsNull, OmitsUndefined]} @117
+    v13 = Convert v10 declared={type=i32 flags=[IsExpected]} @162
+    v14 = Integer integer=3 @170
+    v15 = BitAnd v13, v14 @162
+    v16 = ElemGet v1, v15 @156
+    v17 = Convert v16 declared={type=undefined|null|string site=w6 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @156
+    PropSet v12, v17 key="text" @136
+    v19 = Data data=d2 @192
+    v20 = Convert v19 declared={type=undefined|null|L1 site=w3 flags=[OmitsNull, OmitsUndefined]} @192
+    v21 = Integer integer=3 @239
+    v22 = BitAnd v13, v21 @231
+    v23 = ElemGet v1, v22 @225
+    v24 = Convert v23 declared={type=undefined|null|string site=w7 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @225
+    PropSet v20, v24 key="tag" @210
+    v26 = Data data=d3 @266
+    v27 = Convert v26 declared={type=undefined|null|L2 site=w4 flags=[OmitsNull, OmitsUndefined]} @266
+    v28 = String string="b" @304
+    v29 = Convert v28 declared={type=undefined|null|string site=w8 flags=[OmitsNull, OmitsUndefined]} @282
+    PropSet v27, v29 key="label" @282
+    v31 = String string="c" @331
+    v32 = Convert v31 declared={type=undefined|null|string site=w9 flags=[OmitsNull, OmitsUndefined]} @309
+    PropSet v27, v32 key="label" @309
+    v34 = String string="d" @358
+    v35 = Convert v34 declared={type=undefined|null|string site=w10 flags=[OmitsNull, OmitsUndefined]} @336
+    PropSet v27, v35 key="label" @336
+    v37 = Integer integer=3 @399
+    v38 = BitAnd v13, v37 @391
+    v39 = ElemGet v1, v38 @385
+    v40 = Convert v39 declared={type=undefined|null|string site=w11 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @385
+    PropSet v27, v40 key="label" @363
+    v42 = Data data=d4 @424
+    v43 = Convert v42 declared={type=undefined|null|L3 site=w5 flags=[OmitsNull, OmitsUndefined]} @424
+    v44 = ToBoolean v13 @458
+    Branch v44 -> taken b2(| 0), notTaken b4(| 0) @458
+  b2(v45):
+    Jump -> next b3() @458
+  b3():
+    v46 = String string="b" @466
+    Jump -> next b6(v46) @466
+  b4(v47):
+    Jump -> next b5() @458
+  b5():
+    v48 = String string="c" @472
+    Jump -> next b6(v48) @472
+  b6(v49):
+    v50 = Convert v49 declared={type=undefined|null|string site=w12 flags=[OmitsNull, OmitsUndefined]} @439
+    PropSet v43, v50 key="note" @439
+    v52 = Builtin builtin=GlobalThis @478
+    v53 = PropGet v52 key="globalThis" [isFreeName] @478
+    v54 = Convert v53 declared={type=builtin(GlobalThis) flags=[IsExpected]} @478
+    v55 = Convert v54 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @478
+    v56 = PropGet v12 key="text" @507
+    v57 = PropGet v56 key="length" @520
+    v58 = Convert v57 declared={type=number site=w13} illTypedCause=Assertion @507
+    v59 = PropGet v20 key="tag" @533
+    v60 = String string="again" @550
+    v61 = StrictEq v59, v60 @533
+    v62 = PropGet v27 key="label" @559
+    v63 = PropGet v62 key="length" @573
+    v64 = Convert v63 declared={type=number site=w14} illTypedCause=Assertion @559
+    v65 = PropGet v43 key="note" @587
+    v66 = PropGet v65 key="length" @599
+    v67 = Convert v66 declared={type=number site=w15} illTypedCause=Assertion @587
+    v68 = NewArray v58, v61, v64, v67 contents=anything @506
+    PropSet v55, v68 key="answer" @478
+    v70 = Undefined @478
+    Return v70 @478
+}
+data d0 root=Array{contents=undefined|null|string elements=[String{value="plain"}, String{value="wider"}, String{value="again"}, String{value="more"}]} module=m0
+data d1 root=Object{layout=L0 members=[{key="text" value=String{value="plain"}}]} module=m0
+data d2 root=Object{layout=L1 members=[{key="tag" value=String{value="plain"}}]} module=m0
+data d3 root=Object{layout=L2 members=[{key="label" value=String{value="a"}}]} module=m0
+data d4 root=Object{layout=L3 members=[{key="note" value=String{value="a"}}]} module=m0
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe}, {exportName="then"}]

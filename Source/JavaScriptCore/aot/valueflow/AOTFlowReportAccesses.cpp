@@ -688,6 +688,7 @@ static void fillLoss(Wire::AccessRecord& record, const FlowSiteLoss& loss)
     record.witness = loss.witness;
     record.illTypedCause = illTypedCauseOf(loss.cause);
     record.hasOtherRoots = loss.hasOtherRoots;
+    record.otherOrigins = loss.otherOrigins;
 }
 
 static FlowSiteLoss lossOfGeneralOperation(const Program& program, const FlowResults& flow, const BuildContext& build, std::span<const FlowSiteLevel> levels, const GeneralOperation& operation)
@@ -695,10 +696,8 @@ static FlowSiteLoss lossOfGeneralOperation(const Program& program, const FlowRes
     FlowSiteLoss loss;
     if (operation.madeBy && operation.madeBy.index() < levels.size())
         loss = lossBelowProven(program, flow, build, operation.madeBy, levels[operation.madeBy.index()]);
-    else if (operation.isParameter) {
-        const FunctionFlow& function = flow.function(operation.function);
-        loss = { function.cause, LimitID::None, function.witness };
-    }
+    else if (operation.isParameter)
+        loss = flow.lossOfParameters(operation.function);
     if (loss.cause == UnprovenCause::Unknown || loss.cause == UnprovenCause::LeftByPasses)
         loss = { UnprovenCause::Untracked, LimitID::None, noWitness };
     if (!hasFunction(loss.witness) || !hasModule(loss.witness.location))

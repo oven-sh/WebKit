@@ -156,7 +156,7 @@ function f1 name="sum" module=m0 position=39 flags=[IsChecked, HasExplicitName] 
 # The loop walks the list without an iterator. Each turn loads a pair and takes it apart: its storage, its length, two tests of the length, the name and the value.
 # LOOP-LABEL: loop #
 # LOOP: Int64 b@[[pair]] = Load(b@{{*}}, ControlDependent|Reads:indexedContiguousProperties, {{*}}:GetArrayElement)
-# LOOP: Int64 b@[[storage]] = Load(b@[[pair]], offset = 8, ControlDependent|Reads:JSObject_butterfly, {{*}}:IsInBounds)
+# LOOP: Int64 b@[[storage]] = Load(b@[[pair]], offset = 8, ControlDependent|Reads:JSArray_butterfly, {{*}}:IsInBounds)
 # LOOP-NEXT: Int32 b@[[length]] = Load(b@[[storage]], offset = -8, ControlDependent|Reads:Butterfly_publicLength, {{*}}:IsInBounds)
 # LOOP: Branch(b@[[length]], Terminal, {{*}}:IsInBounds)
 # LOOP: Int64 b@{{*}} = Load(b@[[storage]], ControlDependent|Reads:indexedContiguousProperties{{*}}:GetArrayElement)

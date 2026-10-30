@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTHostEntriesTestSupport.h"
+#include "AOTIRPrinter.h"
 #include "AOTRuntimeTable.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTShellProgramTestSupport.h"
@@ -609,10 +610,9 @@ function f2 name="getter" results=[{type=anything}] {
 runtimefunction id=$toLocaleString function=f1
 )IR"_s;
 
-// The numbers of the models move with the table of built-ins.
 static UTF8CString withNumbersOfModels(ASCIILiteral programText)
 {
-    String text = makeStringByReplacingAll(String(programText), "$toLocaleString"_s, String::number(modelOf(Builtins::ObjectPrototypeToLocaleString).index()));
+    String text = makeStringByReplacingAll(String(programText), "$toLocaleString"_s, Typed::tokenOf(BuiltinTable::singleton(), modelOf(Builtins::ObjectPrototypeToLocaleString)).toString());
     return text.utf8();
 }
 
@@ -813,6 +813,50 @@ static void testStorageOfArray()
     checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "number\n"_s, { "validate"_s }, "globalThis.sink = function () { this.k[0] = 7; };"_s);
 }
 
+// The same array, read by Array.prototype.at, which is expanded for the storage kind that the array's type names.
+static constexpr ASCIILiteral leakedIntegerArrayQueriedByBuiltin = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}, {key="toString" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=7
+    v1 = NewArray v0, v0, v0 contents=anything holes=[]
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = NewObject -, v1, v3 layout=L0 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = PropGet v5 key="toLocaleString"
+    v7 = Call v6, v5 calleeKey="toLocaleString"
+    v8 = Integer integer=0
+    v9 = PropGet v1 key="at"
+    v10 = Call v9, v1, v8 calleeKey="at"
+    v11 = TypeOf v10
+    v12 = PropGet v2 key="print" [isFreeName]
+    v13 = Call v12, -, v11
+    Return
+}
+function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="toString"
+    v2 = TypeOf v1
+    v3 = PropGet v0 key="k"
+    v4 = TypeOf v3
+    Return
+}
+runtimefunction id=$toLocaleString function=f1
+)IR"_s;
+
+// The built-in does not test the storage kind. A build that checks its proofs at run time does, and reports an array of another kind.
+static void testArrayStorageQueriedByBuiltin()
+{
+    for (ASCIILiteral statements : { "globalThis.sink = function () { this.k[0] = 0.5; };"_s, "globalThis.sink = function () { this.k[0] = 'text'; };"_s }) {
+        checkValidationFails(leakedIntegerArrayQueriedByBuiltin, ValidationFailureKind::ArrayStorageKind, statements, { "validate"_s, "heat=EverythingIsHot"_s });
+        checkValidationFails(leakedIntegerArrayQueriedByBuiltin, ValidationFailureKind::ValueType, statements, { "testing=CheckProofsAtRunTime"_s, "heat=EverythingIsHot"_s });
+    }
+
+    UTF8CString numberedText = withNumbersOfModels(leakedIntegerArrayQueriedByBuiltin);
+    checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "number\n"_s, { "testing=CheckProofsAtRunTime"_s, "heat=EverythingIsHot"_s }, "globalThis.sink = function () { this.k[0] = 7; };"_s);
+}
+
 // Nothing in the program does any of this to the object, and the object never escapes: each is a mutation that flow calls impossible for its layout.
 static void testEveryKindOfMutation()
 {
@@ -834,8 +878,10 @@ static void testEveryKindOfMutation()
         "globalThis.sink = function () { Object.freeze(this.k); };"_s,
         "globalThis.sink = function () { Object.preventExtensions(this.k); };"_s,
         "globalThis.sink = function () { globalThis.child = Object.create(this.k); };"_s,
-    })
+    }) {
         checkValidationFails(objectWithEveryFieldRead, ValidationFailureKind::ImpossibleMutation, statements);
+        checkValidationFails(objectWithEveryFieldRead, ValidationFailureKind::ImpossibleMutation, statements, { "testing=CheckProofsAtRunTime"_s });
+    }
     // A store of a value of the field's type is found where the program reads the field again.
     checkValidationFails(objectWithEveryFieldRead, ValidationFailureKind::ReadsDiffer, "globalThis.sink = function () { this.k.x = 0.5; };"_s);
 }
@@ -936,6 +982,7 @@ static void testStableFieldOfLayoutThatLosesAnotherField()
     UTF8CString text = makeStringByReplacingAll(String(leakedObject), "    v15 = Call v14, -, v13\n"_s, "    v15 = Call v14, -, v13\n    v16 = PropGet v5 key=\"unread\"\n    v17 = Call v14, -, v16\n    v18 = PropDelete v5 key=\"unread\" mode=Sloppy\n"_s).utf8();
     ASCIILiteral objectThatLosesField = ASCIILiteral::fromLiteralUnsafe(byteCast<char>(text.data()));
     checkValidationFails(objectThatLosesField, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = function () { delete this.k.x; };"_s);
+    checkValidationFails(objectThatLosesField, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = function () { delete this.k.x; };"_s, { "testing=CheckProofsAtRunTime"_s });
 
     UTF8CString numberedText = withNumbersOfModels(objectThatLosesField);
     checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "true\n5\n"_s, { "validate"_s }, "globalThis.sink = function () { };"_s);
@@ -948,6 +995,7 @@ static void testNameOutsideCompleteListOfAddedNames()
     ASCIILiteral objectWithAddedProperty = ASCIILiteral::fromLiteralUnsafe(byteCast<char>(text.data()));
     OptionWords optionWords { "validate"_s, "disable=flow:AppendedFields"_s };
     checkValidationFails(objectWithAddedProperty, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = function () { this.k.toString = () => 'own'; };"_s, optionWords);
+    checkValidationFails(objectWithAddedProperty, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = function () { this.k.toString = () => 'own'; };"_s, { "testing=CheckProofsAtRunTime"_s, "disable=flow:AppendedFields"_s });
 
     UTF8CString numberedText = withNumbersOfModels(objectWithAddedProperty);
     checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "true\n"_s, optionWords, "globalThis.sink = function () { this.k.p = 1; };"_s);
@@ -958,6 +1006,8 @@ static void testMembersOfClassChange()
     checkValidationFails(leakedInstance, ValidationFailureKind::LookupDiffers, "globalThis.sink = function () { Object.getPrototypeOf(this.k).method = () => 'replaced'; };"_s);
     checkValidationFails(leakedInstance, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = function () { Object.getPrototypeOf(this.k).other = 5; };"_s);
     checkValidationFails(leakedInstance, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = function () { Object.getPrototypeOf(this.k).toString = () => 'of the class'; };"_s);
+    checkValidationFails(leakedInstance, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = function () { Object.getPrototypeOf(this.k).other = 5; };"_s, { "testing=CheckProofsAtRunTime"_s });
+    checkValidationFails(leakedInstance, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = function () { Object.getPrototypeOf(this.k).toString = () => 'of the class'; };"_s, { "testing=CheckProofsAtRunTime"_s });
 
     UTF8CString numberedText = withNumbersOfModels(leakedInstance);
     checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "as defined\nundefined\n[object Object]\n"_s, { "validate"_s }, "globalThis.sink = function () { };"_s);
@@ -1032,6 +1082,7 @@ std::span<const NativeTest> proofValidationTests()
         { "proof-validation/contents-of-long-array"_s, testContentsOfLongArray },
         { "proof-validation/contents-of-map"_s, testContentsOfMap },
         { "proof-validation/storage-of-array"_s, testStorageOfArray },
+        { "proof-validation/storage-of-array-asked-by-built-in"_s, testArrayStorageQueriedByBuiltin },
         { "proof-validation/every-kind-of-mutation"_s, testEveryKindOfMutation },
         { "proof-validation/pristine-array"_s, testPristineArray },
         { "proof-validation/pristine-array-with-many-names"_s, testPristineArrayWithManyNames },

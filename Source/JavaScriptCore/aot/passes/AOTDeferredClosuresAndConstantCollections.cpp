@@ -24,6 +24,7 @@
 #include "AOTIR.h"
 #include "AOTIRBuilder.h"
 #include "AOTNarrowFieldTypes.h"
+#include "AOTPhaseTimes.h"
 #include "AOTRemoveUnreadFields.h"
 #include "AOTResultRules.h"
 #include "AOTSort.h"
@@ -663,7 +664,7 @@ struct WindowScanner {
 };
 
 struct DeferralAnalysis {
-    enum AccessKind : uint8_t { SlotRead, SlotStore, PresenceTest, NamedAccess, KeyOrderTest, FunctionEntry, Allocation };
+    enum AccessKind : uint8_t { SlotRead, SlotStore, PresenceTest, NamedAccess, KeyOrderTest, FunctionEntry, Allocation, NamedReadExpectedToRun };
 
     struct CandidateWithKey {
         auto operator<=>(const CandidateWithKey&) const = default;
@@ -948,9 +949,14 @@ struct DeferralAnalysis {
                 }
                 RELEASE_ASSERT_NOT_REACHED();
             };
-            forEachListedValueNaming(program, FunctionID(index), classifiedOpcodes, mayBeClassified, [&](BlockID, ValueID id, const Value&) {
-                if (std::optional<AccessKind> kind = classifyAccess({ FunctionID(index), id }))
-                    found.append({ { FunctionID(index), id }, *kind });
+            forEachListedValueNaming(program, FunctionID(index), classifiedOpcodes, mayBeClassified, [&](BlockID block, ValueID id, const Value& value) {
+                std::optional<AccessKind> kind = classifyAccess({ FunctionID(index), id });
+                if (!kind)
+                    return;
+                found.append({ { FunctionID(index), id }, *kind });
+                // The arm that a tested read by slot falls back to is a read by name on an unlikely path.
+                if (*kind == NamedAccess && !storedOf(value.opcode) && program.functions[index].at(block).frequency.predicted() == BlockFrequency::Normal)
+                    found.append({ { FunctionID(index), id }, NamedReadExpectedToRun });
             });
         });
         for (const FoundAccess& access : foundAccesses)
@@ -1238,18 +1244,16 @@ struct DeferralAnalysis {
     }
 
     // A read takes an empty slot for an absent property behind a test that no field of the object lies outside its slot, or without one where the property stays in its slot.
-    // The first read makes the closure in the run time, which costs as much as forty closures made beside the allocation. Where the layout is proven the reads are few. Code that only expects it makes an object for whoever comes, so the closure waits only where no code that is expected to run often asks for it.
-    void rejectFieldsOfExpectedLayoutsReadByWarmCode()
+    // The first read by slot creates the closure as the allocation would have. The first read by name creates it in the runtime, which costs as much as forty closures created with the allocation. With a proven layout such reads are rare. With a layout that is only expected, any code may receive the object, so the closure is only deferred if no warm code reads it by name.
+    void rejectWarmFieldsReadByName()
     {
-        for (AccessKind kind : { SlotRead, NamedAccess }) {
-            for (ValueReference reference : accesses[kind]) {
-                if (storedOf(valueAt(reference).opcode) || isCold(heat.of(program, reference.function)).predicted())
-                    continue;
-                forEachCandidateOf(reference, [&](FieldReference, uint32_t row) {
-                    if (states[row].isGivenWhereLayoutIsExpected)
-                        reject(row);
-                });
-            }
+        for (ValueReference reference : accesses[NamedReadExpectedToRun]) {
+            if (isCold(heat.of(program, reference.function)).predicted())
+                continue;
+            forEachCandidateOf(reference, [&](FieldReference, uint32_t row) {
+                if (states[row].isGivenWhereLayoutIsExpected)
+                    reject(row);
+            });
         }
     }
 
@@ -1410,26 +1414,34 @@ struct DeferralAnalysis {
 
     void run()
     {
+        PhaseTimes times(build, PassID::DeferClosuresInFields);
         firstRows.reserveInitialCapacity(program.layouts.size() + 1);
         firstRows.append(0);
         for (const Layout& layout : program.layouts)
             firstRows.append(firstRows.last() + layout.fields.size());
         findObjects();
+        times.didFinish("findObjects"_s);
         if (objects.isEmpty() && closureStores.isEmpty())
             return;
         findCandidates();
         findEnteredCalls();
+        times.didFinish("findCandidates"_s);
         findAccesses();
+        times.didFinish("findAccesses"_s);
         findCalleeStores();
         rejectFieldsByWhatComesIntoThem();
-        rejectFieldsOfExpectedLayoutsReadByWarmCode();
+        times.didFinish("rejectFieldsByWhatComesIntoThem"_s);
+        rejectWarmFieldsReadByName();
+        times.didFinish("rejectWarmFieldsReadByName"_s);
         for (uint64_t numberOfChangesBefore = numberOfChanges + 1; numberOfChangesBefore != numberOfChanges;) {
             numberOfChangesBefore = numberOfChanges;
             countFolds();
             rejectFieldsWithUnguardedSlotAccesses();
             rejectFieldsOverSeveralEnvironments();
         }
+        times.didFinish("countFolds"_s);
         finish();
+        times.didFinish("finish"_s);
     }
 
     const Program& program;
@@ -1454,7 +1466,7 @@ struct DeferralAnalysis {
     Vector<EnteredCall> callSites { };
     Vector<CalleeState> calleesByFunction { };
     Vector<CalleeStoreState> calleeStores { };
-    std::array<Vector<ValueReference>, 7> accesses { };
+    std::array<Vector<ValueReference>, 8> accesses { };
     Vector<ValueReference> removedStores { };
     Vector<ClosureEnvironmentField> environmentFields { };
     uint64_t numberOfChanges { 0 };
@@ -2186,7 +2198,7 @@ static std::optional<ObjectID> findPrivateLiteral(FunctionAnalyses& analyses, Va
     const Value& literal = analyses.function().at(escape.at(*object).definition);
     if (literal.opcode != Opcode::NewArray || !literal.holes().empty() || literal.capacityOperand())
         return std::nullopt;
-    std::span<const ObjectUse> uses = escape.usesOf(*object);
+    ObjectUses uses = escape.usesOf(*object);
     if (uses.size() != 1 || uses.front().use.kind != Use::Kind::Operand || uses.front().use.user != user)
         return std::nullopt;
     bool canEraseWhenUnused = std::ranges::all_of(escape.aliasesOf(*object), [&](ValueID alias) {

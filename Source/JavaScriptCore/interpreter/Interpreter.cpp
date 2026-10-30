@@ -105,6 +105,7 @@
 #include <stdio.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Scope.h>
+#include <wtf/SmallSet.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
@@ -724,7 +725,8 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
         return context;
     };
 
-    auto getParentGenerator = [&](JSAsyncFunctionGenerator* gen) -> JSAsyncFunctionGenerator* {
+    SmallSet<JSCell*> visitedCombinators;
+    auto getParentGenerator = [&](JSAsyncFunctionGenerator* gen) ALWAYS_INLINE_LAMBDA -> JSAsyncFunctionGenerator* {
         JSValue generatorContext = gen->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::Context)).get();
         ASSERT(generatorContext);
         JSPromise* awaitedPromise = dynamicDowncast<JSPromise>(generatorContext);
@@ -736,6 +738,9 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
         // handle simple `await`
         if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(promiseContext))
             return generator;
+
+        if (!promiseContext.isCell() || !visitedCombinators.add(promiseContext.asCell()).isNewEntry)
+            return nullptr;
 
         // handle `Promise.all`, `Promise.allSettled`, and `Promise.any`
         if (auto* globalContext = dynamicDowncast<JSPromiseCombinatorsGlobalContext>(promiseContext)) {
@@ -1064,7 +1069,9 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
                 if (visitor->isOfConstructedFunctionThatLeft())
                     appendIfWanted(StackFrame(*visitor.compiledFrames().constructedFunctionThatLeft()));
                 else if (visitor->isOfBuiltinCalledByCompiledFrame())
-                    appendIfWanted(StackFrame(AOT::TraceFrame { frame.code, AOT::functionInFramesOf(frame.calledBuiltin), frame.callSite, !!frame.inlineFrame, false }));
+                    appendIfWanted(StackFrame(AOT::TraceFrame { frame.code, AOT::functionInFramesOf(frame.calledBuiltin), frame.callSite, !!frame.inlineFrame, false, false, false, false, false, AOT::leavesByTailCall(frame.calledBuiltin) }));
+                else if (visitor.compiledFrames().isAtFailedTailCall())
+                    appendIfWanted(StackFrame(AOT::TraceFrame { frame.code, frame.function, frame.callSite, !!frame.inlineFrame, visitor->isConstructCall(), false, false, false, false, true }));
                 else {
                     std::optional<JSObject*> callee = visitor.compiledFrames().recordedCallee();
                     appendIfWanted(StackFrame(vm, owner, AOT::TraceFrame { frame.code, frame.function, frame.callSite, !!frame.inlineFrame, visitor->isConstructCall(), false, false, visitor.compiledFrames().calleeWasEntered(), callee && !*callee }, callee.value_or(nullptr)));

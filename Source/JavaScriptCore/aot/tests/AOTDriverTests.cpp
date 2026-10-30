@@ -27,6 +27,7 @@
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include "AOTWire.h"
+#include "Options.h"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -384,7 +385,7 @@ static void testTestFileWellFormed()
 {
     TestFile file = parseTestFile(
         "# CHECK: Add\r\n"
-        "#RUN: print a b\r\n"
+        "# RUN: print a b\r\n"
         "# RUN(SECOND): verify\r\n"
         "# SECOND-NOT: x\r\n"
         "# FORM: AsRead\r\n"
@@ -397,8 +398,12 @@ static void testTestFileWellFormed()
         "# LOSS: MaxOptimizationRounds x2 f1 v3 L0\r\n"
         "# LOSS: MaxSinkingRounds\r\n"
         "# A comment\r\n"
+        "# JSC-OPTIONS: --useWasmSIMD=0 --validateGraph=1\r\n"
         "v1 = Add v0, v0   # CHECK: no\r\n"_s);
     AOT_TEST_CHECK(file.errors.isEmpty());
+    AOT_TEST_CHECK(file.jscOptions.size() == 2);
+    AOT_TEST_CHECK(file.jscOptions[0].word == "--useWasmSIMD=0"_s && file.jscOptions[0].line == 15);
+    AOT_TEST_CHECK(file.jscOptions[1].word == "--validateGraph=1"_s && file.jscOptions[1].line == 15);
     checkWellFormedRuns(file);
     checkWellFormedCheckGroups(file);
     checkWellFormedExpectations(file);
@@ -450,6 +455,9 @@ static constexpr MalformedCase malformedDirectiveCases[] = {
     { "# FORM: AsRead\n# FORM: AsRead\n"_s, 3 },
     { "# FORM: Prepared optimizing optimizing\n"_s, 2 },
     { "# OPTIONS:\n"_s, 2 },
+    { "# JSC-OPTIONS:\n"_s, 2 },
+    { "# JSC-OPTIONS: useWasmSIMD=0\n"_s, 2 },
+    { "# JSC-OPTIONS: --useWasmSIMD\n"_s, 2 },
     { "# DIAGNOSTIC: Nothing\n"_s, 2 },
     { "# DIAGNOSTIC: IRTextError 0\n"_s, 2 },
     { "# DIAGNOSTIC: IRTextError\n# DIAGNOSTIC: IRTextError\n"_s, 3 },
@@ -549,6 +557,14 @@ static void testRunnerOptions()
 {
     expectFailures(withDirectives("# RUN: print\n# OPTIONS: threads=1 no-such-word\n"_s), { 2 });
     expectFailures(withDirectives("# RUN: print\n# OPTIONS: threads=1\n"_s), { });
+}
+
+static void testRunnerJSCOptions()
+{
+    bool usesWasmSIMD = Options::useWasmSIMD();
+    expectFailures(withDirectives("# RUN: print\n# JSC-OPTIONS: --noSuchOption=1\n"_s), { 2 });
+    expectFailures(withDirectives(usesWasmSIMD ? "# RUN: print\n# JSC-OPTIONS: --useWasmSIMD=0\n"_s : "# RUN: print\n# JSC-OPTIONS: --useWasmSIMD=1\n"_s), { });
+    AOT_TEST_CHECK(Options::useWasmSIMD() == usesWasmSIMD);
 }
 
 static void testRunnerDiagnostics()
@@ -971,6 +987,7 @@ std::span<const NativeTest> driverTests()
         { "runner/check-lines"_s, testRunnerCheckLines },
         { "runner/commands"_s, testRunnerCommands },
         { "runner/options"_s, testRunnerOptions },
+        { "runner/jsc-options"_s, testRunnerJSCOptions },
         { "runner/diagnostics"_s, testRunnerDiagnostics },
         { "runner/only-diagnostic"_s, testRunnerOnlyDiagnostic },
         { "runner/diagnostics-of-both-lists"_s, testRunnerDiagnosticsOfBothLists },

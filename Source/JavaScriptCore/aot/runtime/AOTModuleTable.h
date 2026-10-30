@@ -15,7 +15,9 @@
 #include <ranges>
 #include <span>
 #include <wtf/BitVector.h>
+#include <wtf/IterationStatus.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/ScopedLambda.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/UniquedStringImpl.h>
 #include <wtf/text/WTFString.h>
@@ -63,6 +65,8 @@ public:
     std::optional<ModuleID> findByPath(StringView publicPath) const;
     // A file that only an attribute asks for stands under its path, a question mark and what the host calls the form.
     bool holdsFormThatAttributeAsksFor(StringView publicPath) const;
+    Vector<ModuleID, 2> formsThatAttributesAskFor(StringView publicPath) const;
+    bool holdsPathStartingWith(StringView start) const;
     // The next search for the path of the module finds it at once.
     void willBeAskedForPath(ModuleID, unsigned hashOfPath) const;
     std::span<const uint32_t> modulesOfUncompiledCode() const { return m_tables->modulesOfUncompiledCode(); }
@@ -81,6 +85,8 @@ public:
     String pathTextForLineColumns(ModuleID) const;
     bool hasFilePath(ModuleID module) const { return data(module).hasExportTable() || data(module).kind == ModuleKind::CommonJs; }
     bool hasFileWithExtension(StringView) const;
+    // The path of each program file with code that starts with `start`, in sorted order.
+    IterationStatus forEachFilePathStartingWith(StringView start, const ScopedLambda<IterationStatus(const String&)>&) const;
 
 private:
     using PiecesOfPath = Vector<StringView, 16>;

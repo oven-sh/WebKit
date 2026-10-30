@@ -61,15 +61,17 @@ function f1 name="movedTo" module=m0 position=108 flags=[IsChecked, HasExplicitN
     Return v7
 }
 
-# `{ ...point, x }` allocates the new object with the layout of the literal, copies the own properties of `point` by one operation, and then stores `x` into its slot.
-# The store first asks whether the copy has filled that slot.
+# `{ ...point, x }` allocates the new object with the layout of the literal, copies the slots and the order word of `point` inline where it has that layout, and then stores `x` into its slot.
+# The store first asks whether the copy has filled that slot. Any other `point` is copied by one operation on the rare path.
 # CHECK-LABEL: name="movedTo" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK: Int64 b@[[copy]] = Patchpoint({{*}}:NewObject)
-# CHECK: Patchpoint(b@[[copy]]:ColdAny, b@{{*}}:ColdAny, {{*}}:CopyDataProperties)
-# CHECK-NOT: :CopyDataProperties)
+# CHECK: Load({{*}}AOTObject_shapeWord{{*}}:TryCopyFields)
+# CHECK: Store(b@{{*}}, b@[[copy]], offset = 8, ControlDependent|Writes:OrderWords{{*}}:TryCopyFields)
 # CHECK: Int64 b@[[old]] = Load(b@[[copy]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:PutSlotOrAdd)
 # CHECK: Branch(b@{{*}}, Terminal, {{*}}:PutSlotOrAdd)
 # CHECK: Store(b@{{*}}, b@[[copy]], offset = 16, ControlDependent|Writes:ObjectFields{{*}}:PutSlotOrAdd)
 # CHECK-NEXT: Return(b@[[copy]], Terminal)
+# CHECK: Patchpoint(b@[[copy]]:ColdAny, b@{{*}}:ColdAny, {{*}}:CopyDataProperties)
+# CHECK-NOT: :CopyDataProperties)
 # CHECK-LABEL: end of function

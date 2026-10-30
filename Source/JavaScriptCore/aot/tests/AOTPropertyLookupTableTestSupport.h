@@ -12,6 +12,7 @@
 #include "AOTNativeTest.h"
 #include "AOTPropertyCaches.h"
 #include "AOTRuntimeCounters.h"
+#include "AOTState.h"
 #include "AOTVMState.h"
 #include "DeferGC.h"
 #include "JSCInlines.h"
@@ -74,6 +75,7 @@ inline TableFixture::TableFixture()
     m_deferGC.emplace(vm);
     m_globalObject.set(vm, JSGlobalObject::create(vm, JSGlobalObject::createStructure(vm, jsNull())));
     AOT_TEST_CHECK(!vm.hasCompiledCode() && !vm.aotState().caches);
+    vm.aotState().pages = makeUnique<PagesOfVM>(8 * MB);
     vm.aotState().caches = makeUnique<CacheRegistry>();
     vm.aotState().counters = makeUniqueWithoutFastMallocCheck<RuntimeCounters>();
     vm.aotState().propertyCaches = makeUnique<VMPropertyCaches>(vm);

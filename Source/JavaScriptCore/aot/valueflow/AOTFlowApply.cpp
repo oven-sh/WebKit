@@ -15,9 +15,11 @@
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPhaseTimes.h"
 #include "AOTProgramCaches.h"
+#include "AOTRepresentation.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTThreads.h"
 #include "AOTTypeClosure.h"
+#include "AOTValueIdentity.h"
 #include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -309,7 +311,10 @@ static void appendFlowFields(const Program& program, TypeArena& arena, std::span
         if (!appended.accessor.isAccessor())
             applyPosition(field.declared, appended.position);
         field.flags = { FieldFlags::IsAddedLate };
+        if (appended.isFilledByCreators)
+            field.flags.add(FieldFlags::IsFilledByCreator);
         field.flow = appended.flow;
+        field.form = appended.formOfValue;
         if (appended.accessor.isAccessor())
             becomeAccessor(arena, field, appended.accessor);
         else if (!mustKeepTypes)
@@ -648,7 +653,8 @@ static BitVector findFunctionsThatAreOnlyConstructed(const FlowApplyContext& con
             for (const FlowCallStamp& stamp : bodies[index].calls) {
                 if (!!OperandPosition::newTarget(program.functions[index].at(stamp.value).opcode) != ofConstructions)
                     continue;
-                for (FunctionID callee : program.at(stamp.callees).followed().value())
+                ProvenValue<std::span<const FunctionID>> followed = program.at(stamp.callees).followed();
+                for (FunctionID callee : followed.value())
                     functor(callee);
             }
         }
@@ -720,6 +726,7 @@ static void applyUnknownResults(Program& program, const FlowResults& results, Bu
     editFunctionsInParallel(editor, build, BehindEdit::Nothing, functions.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
         demoteTailCallsWithChecks(program, id, function, arenas.types, build);
         initializeMembersOfListedHolders(program, results, id, function, arenas.types, build);
+        nameSymbolsCreatedByLibraryModule(program, id, function, arenas.types, build);
     });
 }
 
@@ -806,6 +813,195 @@ static BitVector findWidenedVariables(const Program& program, const FlowApplicat
     return variables;
 }
 
+// These are no faster on the number of a string than on its cell.
+static constexpr OpcodeSet opcodesThatTakeStringCells { Opcode::Add, Opcode::Strcat, Opcode::ToString, Opcode::ToNumber, Opcode::ToNumeric, Opcode::ToBoolean, Opcode::LogicalNot, Opcode::TypeOf };
+// A string that one of these answers with is a cell, whatever its type.
+static constexpr OpcodeSet opcodesThatAnswerWithCells { Opcode::ElemGet, Opcode::Call, Opcode::CallList, Opcode::ResultAt };
+
+static bool holdsNumbersOfStrings(const Program& program, const Field& field)
+{
+    if (field.form.contains(FieldForm::IsAccessor) || field.flags.contains(FieldFlags::IsInherited) || field.slotType || field.declared.isExpected())
+        return false;
+    return defaultRepresentationOf(program.at(program.provenTypeOf(field.declared))) == Representation::LiteralString;
+}
+
+// A slot whose type lists only written strings holds their numbers, so that a comparison with a written string compares two integers and a store of one stores a constant.
+// Every other use needs the cell: a store of a string that is a cell, as every array element is, searches for its number, and a read loads the cell of the number.
+// So the slot holds cells where the program only uses what it reads from the field as a string, some store brings a cell, and the stores of written strings are no more than the accesses that want cells.
+// This is settled before the bodies are typed: the type of a read follows the type of the slot.
+static void keepCellsInFieldsReadAsStrings(const FlowApplyContext& context)
+{
+    Program& program = context.program;
+    const ParallelLoops& loops = context.build.parallelLoops();
+    Vector<uint32_t> firstField(FillWith { }, program.layouts.size() + 1, 0u);
+    for (size_t index = 0; index < program.layouts.size(); ++index)
+        firstField[index + 1] = firstField[index] + static_cast<uint32_t>(program.layouts[index].fields.size());
+    auto numberOf = [&](FieldReference field) {
+        return firstField[field.layout.index()] + field.field;
+    };
+
+    BitVector candidates(firstField.last());
+    BitVector keys(program.types.numberOfPropertyKeys());
+    for (size_t index = 0; index < program.layouts.size(); ++index) {
+        const Vector<Field>& fields = program.layouts[index].fields;
+        for (uint32_t field = 0; field < fields.size(); ++field) {
+            if (!holdsNumbersOfStrings(program, fields[field]))
+                continue;
+            candidates.quickSet(firstField[index] + field);
+            keys.quickSet(fields[field].key.index());
+        }
+    }
+    if (candidates.isEmpty())
+        return;
+
+    struct Uses {
+        Vector<uint32_t> storedCells;
+        Vector<uint32_t> storedWrittenStrings;
+        Vector<uint32_t> readAsCells;
+        Vector<uint32_t> usedOtherwise;
+        Vector<std::pair<uint32_t, uint32_t>> accessedTogether;
+    };
+    Vector<Uses> usesOfWorkers(loops.width());
+    forEachIndexInParallel(loops, context.application.bodies.size(), [&](unsigned index, unsigned worker) {
+        const Function& function = program.functions[index];
+        const FlowBodyUpdate& update = context.application.bodies[index];
+        Uses& uses = usesOfWorkers[worker];
+        auto definitionOf = [&](ValueID value) -> const Value& {
+            while (isCast(function.at(value).opcode))
+                value = function.at(value).operand(0);
+            return function.at(value);
+        };
+        auto noteStore = [&](uint32_t field, ValueID stored) {
+            Opcode opcode = definitionOf(stored).opcode;
+            if (opcodesThatAnswerWithCells.contains(opcode))
+                uses.storedCells.append(field);
+            else if (opcode == Opcode::String)
+                uses.storedWrittenStrings.append(field);
+        };
+
+        // By the index of a read: where its fields begin in the list.
+        UncheckedKeyHashMap<uint32_t, std::pair<uint32_t, uint32_t>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> reads;
+        Vector<uint32_t, 16> fieldsOfReads;
+        for (const FlowAccessStamp& stamp : update.accesses) {
+            const Value& access = function.at(stamp.value);
+            if (!stamp.receivers || !Value::opcodesWithKey.contains(access.opcode) || !access.key() || !keys.get(access.key().index()))
+                continue;
+            uint32_t first = fieldsOfReads.size();
+            for (LayoutID layout : program.at(stamp.receivers).written()) {
+                for (; layout; layout = provenBaseOfLayout(program.at(layout).flow)) {
+                    std::optional<uint32_t> field = program.at(layout).findField(access.key());
+                    if (!field)
+                        continue;
+                    uint32_t number = numberOf(declarationOf(program, { layout, *field }));
+                    if (candidates.quickGet(number))
+                        fieldsOfReads.append(number);
+                    break;
+                }
+            }
+            std::span<const uint32_t> fields = fieldsOfReads.span().subspan(first);
+            // One access loads or stores one kind of slot.
+            for (size_t other = 1; other < fields.size(); ++other)
+                uses.accessedTogether.append({ fields[0], fields[other] });
+            if (access.opcode == Opcode::PropGet && !fields.empty()) {
+                reads.add(stamp.value.index(), std::pair { first, static_cast<uint32_t>(fieldsOfReads.size()) });
+                continue;
+            }
+            if (access.opcode == Opcode::PropSet || access.opcode == Opcode::PropDefine) {
+                for (uint32_t field : fields)
+                    noteStore(field, access.operand(access.opcode == Opcode::PropSet ? OperandIndex::PropSet::value : OperandIndex::PropDefine::value));
+            }
+            fieldsOfReads.shrink(first);
+        }
+        for (const Value& value : function.values) {
+            if (value.opcode != Opcode::NewObject || value.fields().size() != value.numberOfVariadicOperands())
+                continue;
+            for (uint32_t position = 0; position < value.fields().size(); ++position) {
+                uint32_t number = numberOf(declarationOf(program, { value.layout(), value.fields()[position] }));
+                if (candidates.quickGet(number))
+                    noteStore(number, value.variadicOperands()[position]);
+            }
+        }
+        if (reads.isEmpty())
+            return;
+
+        BitVector callsOfBuiltins(function.values.size());
+        for (const FlowCallStamp& stamp : update.calls) {
+            const CalleeSet& callees = program.at(stamp.callees);
+            if (callees.listsEveryCallee() && callees.written().functions.empty())
+                callsOfBuiltins.quickSet(stamp.value.index());
+        }
+        auto noteUse = [&](ValueID operand, bool takesCell) {
+            while (isCast(function.at(operand).opcode))
+                operand = function.at(operand).operand(0);
+            auto read = reads.find(operand.index());
+            if (read != reads.end())
+                (takesCell ? uses.readAsCells : uses.usedOtherwise).append(fieldsOfReads.span().subspan(read->value.first, read->value.second - read->value.first));
+        };
+        for (const Block& block : function.blocks) {
+            for (ValueID id : block.values) {
+                const Value& user = function.at(id);
+                user.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                    if (isCast(user.opcode) && !operandIndex)
+                        return;
+                    bool takesCell = opcodesThatTakeStringCells.contains(user.opcode);
+                    if (user.opcode == Opcode::PropGet || user.opcode == Opcode::ElemGet)
+                        takesCell = !operandIndex;
+                    if (user.opcode == Opcode::Call)
+                        takesCell = operandIndex != OperandIndex::Call::callee && callsOfBuiltins.quickGet(id.index());
+                    noteUse(operand, takesCell);
+                });
+            }
+            block.terminator.forEachOperand([&](ValueID operand, uint32_t) {
+                noteUse(operand, block.terminator.kind == TerminatorKind::Branch);
+            });
+        }
+    });
+
+    Vector<uint32_t> parents(firstField.last());
+    for (uint32_t number = 0; number < parents.size(); ++number)
+        parents[number] = number;
+    auto find = [&](uint32_t number) {
+        while (parents[number] != number)
+            number = parents[number] = parents[parents[number]];
+        return number;
+    };
+    for (const Uses& uses : usesOfWorkers) {
+        for (auto [first, second] : uses.accessedTogether) {
+            uint32_t firstRoot = find(first);
+            uint32_t secondRoot = find(second);
+            parents[std::max(firstRoot, secondRoot)] = std::min(firstRoot, secondRoot);
+        }
+    }
+    auto countByRoot = [&](Vector<uint32_t> Uses::* list) {
+        Vector<uint32_t> counts(FillWith { }, parents.size(), 0u);
+        for (const Uses& uses : usesOfWorkers) {
+            for (uint32_t number : uses.*list)
+                ++counts[find(number)];
+        }
+        return counts;
+    };
+    Vector<uint32_t> storedCells = countByRoot(&Uses::storedCells);
+    Vector<uint32_t> storedWrittenStrings = countByRoot(&Uses::storedWrittenStrings);
+    Vector<uint32_t> readAsCells = countByRoot(&Uses::readAsCells);
+    Vector<uint32_t> usedOtherwise = countByRoot(&Uses::usedOtherwise);
+
+    TypeArena arena(program.types);
+    for (size_t number : candidates) {
+        uint32_t root = find(static_cast<uint32_t>(number));
+        if (!storedCells[root] || !readAsCells[root] || usedOtherwise[root] || storedCells[root] + readAsCells[root] < storedWrittenStrings[root])
+            continue;
+        size_t layout = std::ranges::upper_bound(firstField, static_cast<uint32_t>(number)) - firstField.begin() - 1;
+        Field& field = program.layouts[layout].fields[number - firstField[layout]];
+        field.slotType = arena.intern(program.at(program.provenTypeOf(field.declared)).withLiteralStringsWidened());
+    }
+    forEachIndexInParallel(loops, program.layouts.size(), [&](unsigned index) {
+        for (Field& field : program.layouts[index].fields) {
+            if (field.flags.contains(FieldFlags::IsInherited) && field.originLayout && field.originField && candidates.quickGet(numberOf({ field.originLayout, *field.originField })))
+                field.slotType = fieldAt(program, { field.originLayout, *field.originField }).slotType;
+        }
+    });
+}
+
 void applyFlowResults(Program& program, FlowResults& results, BuildContext& build)
 {
     RELEASE_ASSERT(program.form() == IRForm::AsRead);
@@ -843,6 +1039,8 @@ void applyFlowResults(Program& program, FlowResults& results, BuildContext& buil
     dropDataOfUnreachedCode(context);
     narrowContentsOfData(context);
     times.didFinish("removeUnreachedBodies"_s);
+    keepCellsInFieldsReadAsStrings(context);
+    times.didFinish("keepCellsInFieldsReadAsStrings"_s);
     applyBodyUpdates(context, editor, fieldsExpectedAsRead, keysOfWidenedFields, widenedVariables);
     times.didFinish("applyBodyUpdates"_s);
     ProgramCaches caches(program, build);

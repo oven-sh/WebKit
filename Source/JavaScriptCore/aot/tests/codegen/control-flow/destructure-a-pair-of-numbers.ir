@@ -88,12 +88,13 @@ function f1 name="squaredLength" module=m0 flags=[IsChecked, HasExplicitName] le
 }
 
 # `const [x, y] = pair` makes no iterator: each name is a load from the storage of the array. One test asks for double storage.
-# In front of each load the index is compared with the length twice: once as the step of the iteration, on the length widened to 64 bits, and once as the bounds check of the read, on the 32 bits.
+# In front of each load the index is compared with the length once, on its 32 bits: the step of the iteration and the bounds check of the read are one test.
 # CHECK-LABEL: name="squaredLength" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK: Branch(b@{{*}}, Terminal, {{*}}:HasArrayStorage)
-# CHECK: Int64 b@[[storage]] = Load(b@[[pair]], offset = 8, ControlDependent|Reads:JSObject_butterfly
+# CHECK: Int64 b@[[storage]] = Load(b@[[pair]], offset = 8, ControlDependent|Reads:JSArray_butterfly
 # CHECK-NEXT: Int32 b@[[length]] = Load(b@[[storage]], offset = -8, ControlDependent|Reads:Butterfly_publicLength
+# CHECK-NOT: ZExt32(b@[[length]]
 # CHECK: Branch(b@[[length]], Terminal, {{*}}:IsInBounds)
 # CHECK: Double b@[[x]] = Load(b@[[storage]], ControlDependent|Reads:indexedDoubleProperties_0, {{*}}:GetArrayElement)
 # CHECK: Above(b@[[length]], $1({{*}}:IsInBounds)

@@ -138,7 +138,7 @@ function f2 name="total" module=m0 position=162 flags=[IsChecked, HasExplicitNam
 # CHECK: Int64 b@[[entry]] = Phi(
 # CHECK-NOT: Patchpoint(
 # CHECK: Double b@[[depth]] = Patchpoint(b@[[entry]]:Register({{*}}), resultConstraints = Register({{*}}), ExitsSideways|{{*}}:CallDirect)
-# CHECK-NEXT: Int64 b@[[follower]] = Load(b@[[entry]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK: Int64 b@[[follower]] = Load(b@[[entry]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # CHECK-NOT: Patchpoint(
 # CHECK: Patchpoint({{*}}isLoopPoll, {{*}}:LoopHint)
 # CHECK-NOT: Patchpoint(

@@ -147,6 +147,7 @@
 #import "_WKHitTestResultInternal.h"
 #import "_WKInputDelegate.h"
 #import "_WKInspectorInternal.h"
+#import "_WKMediaCapturePermissionPromptConfigurationInternal.h"
 #import "_WKPageLoadTimingInternal.h"
 #import "_WKRemoteObjectRegistryInternal.h"
 #import "_WKSessionStateInternal.h"
@@ -3103,14 +3104,7 @@ std::optional<WebCore::JSHandleIdentifier> WebKit::jsHandleIdentifierInFrame(con
             return;
         }
 
-        RefPtr contentImage = textIndicator->contentImage();
-        if (!contentImage) {
-            ASSERT_NOT_REACHED();
-            completion(@[ ]);
-            return;
-        }
-
-        RefPtr nativeImage = contentImage->nativeImage();
+        RefPtr nativeImage = textIndicator->contentImage();
         if (!nativeImage) {
             ASSERT_NOT_REACHED();
             completion(@[ ]);
@@ -3150,14 +3144,7 @@ std::optional<WebCore::JSHandleIdentifier> WebKit::jsHandleIdentifierInFrame(con
             return;
         }
 
-        RefPtr contentImage = textIndicator->contentImage();
-        if (!contentImage) {
-            ASSERT_NOT_REACHED();
-            completion(nil);
-            return;
-        }
-
-        RefPtr nativeImage = contentImage->nativeImage();
+        RefPtr nativeImage = textIndicator->contentImage();
         if (!nativeImage) {
             ASSERT_NOT_REACHED();
             completion(nil);
@@ -5909,6 +5896,22 @@ static void convertAndAddHighlight(Vector<Ref<WebCore::SharedMemory>>& buffers, 
     [self _showWarningViewWithURL:url title:title warning:warning detailsWithLinks:details completionHandler:completionHandler];
 }
 
+- (void)_showMediaCapturePermissionPromptWithConfiguration:(_WKMediaCapturePermissionPromptConfiguration *)configuration completionHandler:(void (^)(_WKMediaCapturePermissionPromptResult *))completionHandler
+{
+    THROW_IF_SUSPENDED;
+#if ENABLE(MEDIA_STREAM)
+    protect(*_page)->showMediaCapturePermissionPrompt(WebKit::customizationFromConfiguration(configuration), [completionHandler = makeBlockPtr(completionHandler)](WebKit::MediaPermissionPromptResult&& promptResult) {
+        auto outcome = !promptResult.wasAnswered ? _WKMediaCapturePermissionPromptOutcomeDismissed : promptResult.granted ? _WKMediaCapturePermissionPromptOutcomeAllowed : _WKMediaCapturePermissionPromptOutcomeDenied;
+        RetainPtr chosenAction = WTF::move(promptResult.chosenAction);
+        RetainPtr result = adoptNS([[_WKMediaCapturePermissionPromptResult alloc] _initWithOutcome:outcome chosenAction:chosenAction.get()]);
+        completionHandler(result.get());
+    });
+#else
+    UNUSED_PARAM(configuration);
+    completionHandler(adoptNS([[_WKMediaCapturePermissionPromptResult alloc] _initWithOutcome:_WKMediaCapturePermissionPromptOutcomeDismissed chosenAction:nil]).get());
+#endif
+}
+
 + (NSURL *)_confirmMalwareSentinel
 {
     return WebKit::BrowsingWarning::confirmMalwareSentinel().autorelease();
@@ -7153,14 +7156,7 @@ static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKT
             return;
         }
 
-        RefPtr contentImage = textIndicator->contentImage();
-        if (!contentImage) {
-            ASSERT_NOT_REACHED();
-            completionHandler(@[ ]);
-            return;
-        }
-
-        RefPtr nativeImage = contentImage->nativeImage();
+        RefPtr nativeImage = textIndicator->contentImage();
         if (!nativeImage) {
             ASSERT_NOT_REACHED();
             completionHandler(@[ ]);

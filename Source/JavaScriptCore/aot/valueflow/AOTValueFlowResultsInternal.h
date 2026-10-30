@@ -163,6 +163,8 @@ constexpr ValueFlowKindsOfMadeNodes kindsOfMadeNodes(std::initializer_list<Value
     return bits;
 }
 
+class ValueFlowBirthsOfUnknownObject;
+
 struct ValueFlowResultInputs {
     const Program& program;
     ValueFlowSolution& solution;
@@ -181,6 +183,7 @@ struct ValueFlowResultInputs {
     const ValueFlowHeapIndex* heapIndex { nullptr };
     const ValueFlowNodesAskedFor* nodesAskedFor { nullptr };
     const LedgerOfClassesAndClosures* classesAndClosures { nullptr };
+    const ValueFlowBirthsOfUnknownObject* birthsOfUnknownObject { nullptr };
 
     const ValueFlowBodies& bodies() const { return solution.bodies(); }
     const ValueFlowUniverse& universe() const { return solution.bodies().universe(); }
@@ -385,6 +388,28 @@ constexpr UnprovenCause unprovenCauseOf(ValueFlowUnknownSource source)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
+// How each object held by code outside the program escaped: at a statement that passes it on, or through another object:
+// contents through their holder, a prototype and its constructor through an instance, an instance through its constructor.
+class ValueFlowEscapeOrigins {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowEscapeOrigins);
+public:
+    explicit ValueFlowEscapeOrigins(const ValueFlowResultInputs&);
+
+    // The objects in `escaping` escape at `statement`, or once an object in `through` has escaped.
+    struct EscapePath {
+        ValueFlowStatementID statement;
+        ValueSetID through;
+        ValueSetID escaping;
+    };
+
+    std::span<const EscapePath> paths() const LIFETIME_BOUND { return m_paths.span(); }
+    ValueSetID objectsWithPaths() const { return m_objectsWithPaths; }
+
+private:
+    Vector<EscapePath> m_paths;
+    ValueSetID m_objectsWithPaths { ValueSets::nothing };
+};
+
 class ValueFlowBirthsOfUnknownObject {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowBirthsOfUnknownObject);
 public:
@@ -393,6 +418,14 @@ public:
     Witness witnessOf(ValueFlowNodeID) const;
     std::optional<ValueFlowUnknownSource> sourceOf(ValueFlowNodeID) const;
     bool hasSeveralRoots(ValueFlowNodeID node) const { return node && m_hasSeveralRoots.get(node.index()); }
+    // The next independent roots in source order, as FlowSiteLoss::otherOrigins names them.
+    uint16_t otherOriginsOf(ValueFlowNodeID node) const { return node && node.index() < m_otherOriginsOfNode.size() ? m_otherOriginsOfNode[node.index()] : 0; }
+    // The statement where an object held by code outside the program escaped, or where the first object that led to it did.
+    Witness escapeOriginOf(ValueFlowObjectID object) const { return object.index() < m_originOfObject.size() ? m_originOfObject[object.index()] : noWitness; }
+    // Without that statement the object still escapes, by a path that starts elsewhere.
+    bool hasOtherEscapeOrigins(ValueFlowObjectID object) const { return m_hasOtherOrigins.get(object.index()); }
+    uint16_t otherEscapeOriginsOf(ValueFlowObjectID object) const { return object.index() < m_otherOriginsOfObject.size() ? m_otherOriginsOfObject[object.index()] : 0; }
+    Vector<Wire::OtherOriginsRecord> takeOtherOrigins() { return std::exchange(m_otherOrigins, { }); }
 
 private:
     static constexpr uint32_t none = UINT32_MAX;
@@ -410,6 +443,11 @@ private:
     Vector<uint32_t> m_rootOfNode;
     Vector<Root> m_roots;
     BitVector m_hasSeveralRoots;
+    Vector<Witness> m_originOfObject;
+    BitVector m_hasOtherOrigins;
+    Vector<uint16_t> m_otherOriginsOfNode;
+    Vector<uint16_t> m_otherOriginsOfObject;
+    Vector<Wire::OtherOriginsRecord> m_otherOrigins;
 };
 
 Witness witnessOfAllocation(const ValueFlowResultInputs&, ValueFlowObjectID);
@@ -427,6 +465,7 @@ struct ValueFlowFieldContents {
     Vector<Vector<ValueFlowNumbers>> storedNumbers;
     Vector<Vector<ValueSetID>> storedInAppendedFields;
     Vector<Vector<ValueFlowNumbers>> numbersStoredInAppendedFields;
+    Vector<BitVector> appendedFieldsWithUnknownValues;
 };
 
 class ValueFlowNodesAskedFor {

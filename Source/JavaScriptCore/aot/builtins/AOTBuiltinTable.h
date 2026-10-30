@@ -652,6 +652,8 @@ struct BuiltinHostObject {
     std::span<const BuiltinHostObjectField> fields { };
     std::span<const BuiltinHostObjectInternalField> internalFields { };
     bool keepsStringsOfStoredValues { false };
+    // For each of these names the object has an accessor whose getter and setter are native code.
+    std::span<const BuiltinName> nativeAccessors { };
 };
 
 struct BuiltinNamedMemberCall {
@@ -744,6 +746,7 @@ enum class BuiltinMark : uint8_t {
     RunsWaitingJobs,
     IsCalledWithoutStartupLoads,
     InstancesHaveMethodCalledWithStartupLoads,
+    LoadsCodeWithoutJSAccess,
 };
 
 struct BuiltinMarkedEntry {
@@ -900,6 +903,8 @@ extern const BuiltinHostMethodCall builtinTableHostMethodCalls[];
 extern const BuiltinForms builtinTableForms[];
 extern const BuiltinNameClasses builtinTableClassesByMemberName[];
 extern const BuiltinClassTokenStorage builtinTableClassTokens;
+// One per entry of runtimeFunctions(), in the same order. Runtime functions are only named in IR text.
+extern const BuiltinTexts builtinTableRuntimeFunctionTokens;
 
 struct BuiltinMemberLookup {
     enum class Outcome : uint8_t {
@@ -961,6 +966,7 @@ public:
     const BuiltinParameter* parameterFor(const BuiltinOverload&, BuiltinOperand position) const;
 
     JS_EXPORT_PRIVATE BuiltinTableIDRange<BuiltinID> membersOf(BuiltinID holder) const;
+    JS_EXPORT_PRIVATE std::span<const Builtin> memberEntriesOf(BuiltinID holder) const;
     BuiltinID findGlobal(BuiltinName name) const { return findOwnMember(Builtins::GlobalThis, name); }
     BuiltinID findOwnMember(BuiltinID holder, BuiltinName) const;
     BuiltinMemberLookup findMember(BuiltinID holder, BuiltinName) const;

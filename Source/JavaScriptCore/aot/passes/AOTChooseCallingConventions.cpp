@@ -20,6 +20,7 @@
 #include "AOTElideStackChecks.h"
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
+#include "AOTMethodTableEntrypoints.h"
 #include "AOTPassRunner.h"
 #include "AOTPhaseTimes.h"
 #include "AOTRelocation.h"
@@ -30,8 +31,10 @@
 #include "AOTVector.h"
 #include <algorithm>
 #include <compare>
+#include <functional>
 #include <limits>
 #include <numeric>
+#include <optional>
 #include <ranges>
 #include <utility>
 #include <wtf/Atomics.h>
@@ -444,6 +447,7 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
     BuildContext& build = runner.build();
     const ParallelLoops& loops = build.parallelLoops();
     unsigned count = program.functions.size();
+    PhaseTimes times(build, PassID::ChooseCallingConventions);
 
     CallingConventionTables tables { };
     tables.registers = { static_cast<unsigned>(std::min<uint64_t>(build.limit(LimitID::MaxArgumentRegisters), numberOfDirectArgumentGPRs)), numberOfDirectArgumentFPRs };
@@ -457,6 +461,11 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
     uint64_t numberOfBoxedResults = 0;
     auto isEnabledFor = [&](FunctionID id) { return build.isEnabled(PassID::ChooseCallingConventions, findFunctionAsRead(&program, id)); };
     auto locationsOf = [&](FunctionID id) { return computeArgumentLocations(program, program.at(id), tables.conventions[id.index()], tables.registers); };
+    auto locationOfOnlyResult = [&](FunctionID id) {
+        const Function& function = program.at(id);
+        RELEASE_ASSERT(function.results.size() == 1);
+        return singleResultLocation(program, function, tables.conventions[id.index()], entryConventionOf(function));
+    };
     auto returnsNothing = [&](FunctionID id) { return results[id.index()].kind == ArgumentLocation::Kind::None; };
     auto resultOf = [&](FunctionID id) { return results[id.index()].representation; };
 
@@ -482,6 +491,8 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
         if (tailCalled[index])
             isTailCalled.quickSet(index);
     }
+
+    times.didFinish("collectCalls"_s);
 
     for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {
         const RuntimeFunctionData& data = program.builtins().at(entry.id);
@@ -531,16 +542,86 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
     auto box = [&](FunctionID id) {
         if (std::exchange(tables.conventions[id.index()].resultIsBoxed, true))
             return;
-        results[id.index()] = locationsOf(id).results[0];
+        results[id.index()] = locationOfOnlyResult(id);
         ++numberOfBoxedResults;
     };
 
+    // If the callee's tail calls terminate, a caller that calls it in tail position may keep its frame until the callee returns.
+    auto isNumberInRegister = [](Representation representation) {
+        return representation == Representation::Int32 || isInt64OrMarker(representation) || isDoubleOrMarker(representation);
+    };
+    std::optional<BitVector> functionsEndingTailCalls;
+    auto endsItsTailCalls = [&](FunctionID id) {
+        if (!functionsEndingTailCalls) {
+            BitVector ends(count);
+            for (unsigned index = 0; index < count; ++index) {
+                if (recordFactsOf(program, FunctionID(index)).hasBody)
+                    ends.quickSet(index);
+            }
+            // A caller's tail calls terminate once those of each callee do. Each site is visited once, when its callee is known to terminate.
+            constexpr uint32_t neverEnds = UINT32_MAX;
+            Vector<uint32_t> numberOfSitesToWaitFor(FillWith { }, count, 0u);
+            Vector<TailCallEdge> edges;
+            edges.reserveInitialCapacity(sites.size());
+            for (const TailCallSite& site : sites) {
+                ends.quickClear(site.caller.index());
+                uint32_t& numberOfSites = numberOfSitesToWaitFor[site.caller.index()];
+                if (site.calleeKind != TailCalleeKind::Direct)
+                    numberOfSites = neverEnds;
+                else if (numberOfSites != neverEnds) {
+                    ++numberOfSites;
+                    edges.append({ site.callee, site.caller });
+                }
+            }
+            parallelSort(loops, edges.mutableSpan(), std::less<TailCallEdge> { });
+            Vector<FunctionID> worklist;
+            for (size_t first = 0; first < edges.size();) {
+                FunctionID callee = edges[first].callee;
+                if (ends.quickGet(callee.index()))
+                    worklist.append(callee);
+                while (first < edges.size() && edges[first].callee == callee)
+                    ++first;
+            }
+            while (!worklist.isEmpty()) {
+                FunctionID callee = worklist.takeLast();
+                for (const TailCallEdge& edge : std::ranges::equal_range(edges, callee, { }, &TailCallEdge::callee)) {
+                    uint32_t& numberOfSites = numberOfSitesToWaitFor[edge.caller.index()];
+                    if (numberOfSites == neverEnds || --numberOfSites)
+                        continue;
+                    ends.quickSet(edge.caller.index());
+                    worklist.append(edge.caller);
+                }
+            }
+            functionsEndingTailCalls = WTF::move(ends);
+        }
+        return functionsEndingTailCalls->quickGet(id.index());
+    };
+    auto mayKeepFrameToConvertNumber = [&](const TailCallSite& site) {
+        return site.calleeKind == TailCalleeKind::Direct && !site.hasCheckedCast
+            && isNumberInRegister(resultOf(site.caller)) && isNumberInRegister(resultOf(site.callee)) && !haveSameRegisterRepresentation(resultOf(site.callee), resultOf(site.caller))
+            && program.at(site.caller).hasOrdinaryFrame() && isEnabledFor(site.caller) && endsItsTailCalls(site.callee);
+    };
+    // A cell next to a boxed value is boxed with it.
+    auto returnSameBits = [](Representation first, Representation second) {
+        return first == second || (!isCellOrBoxedValue(first) && haveSameRegisterRepresentation(first, second));
+    };
     auto boxMixedClasses = [&] {
         unsigned callByValue = count;
         Vector<ConventionResultNode> nodes(count + 1);
-        for (const TailCallSite& site : sites) {
-            if (site.requirement == TailCallRequirement::Required)
-                nodes[site.caller.index()].unify(&nodes[site.calleeKind == TailCalleeKind::Unknown ? callByValue : site.callee.index()]);
+        for (TailCallSite& site : sites) {
+            if (site.requirement != TailCallRequirement::Required)
+                continue;
+            // An integer where the caller returns a double: a common form would box both, and everything else they jump to. The caller calls, converts and returns instead.
+            if (mayKeepFrameToConvertNumber(site)) {
+                site.requirement = TailCallRequirement::Allowed;
+                continue;
+            }
+            nodes[site.caller.index()].unify(&nodes[site.calleeKind == TailCalleeKind::Unknown ? callByValue : site.callee.index()]);
+        }
+        // A call through the method table enters the lookup or any entrypoint of its selector, and reads the result from where the lookup returns it.
+        for (uint32_t index : findIndicesInParallel(loops, count, [&](unsigned index) { return program.functions[index].hasBody() && program.functions[index].role == FunctionRole::TableEntrypoint; })) {
+            if (FunctionID lookup = inputs.derivedFunctions->find(tableLookupKey(selectorOfTableFunction(program.functions[index]))))
+                nodes[index].unify(&nodes[lookup.index()]);
         }
 
         Vector<uint32_t> roots(count + 1);
@@ -552,7 +633,7 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
         for (unsigned index = 0; index < count; ++index) {
             FunctionID id(index);
             FunctionID root(roots[index]);
-            if (root != id && root.index() != callByValue && (resultOf(id) != resultOf(root) || returnsNothing(id) != returnsNothing(root)))
+            if (root != id && root.index() != callByValue && (!returnSameBits(resultOf(id), resultOf(root)) || returnsNothing(id) != returnsNothing(root)))
                 isMixed.quickSet(root.index());
         }
         for (unsigned index = 0; index < count; ++index) {
@@ -615,10 +696,13 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
         if (!isEnabledFor(id) && canBoxResult(program.functions[index]))
             tables.conventions[index].resultIsBoxed = true;
         if (recordFactsOf(program, id).numberOfResults == 1)
-            results[index] = locationsOf(id).results[0];
+            results[index] = locationOfOnlyResult(id);
     });
+    times.didFinish("locateResults"_s);
     boxMixedClasses();
+    times.didFinish("boxMixedClasses"_s);
     boxTailCallees();
+    times.didFinish("boxTailCallees"_s);
     build.statistics().count(StatisticID::ResultsBoxedForTailCalls, numberOfBoxedResults);
 
     auto canRemainTailCall = [&](const TailCallSite& site) {
@@ -674,11 +758,13 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
             return isEdited.quickGet(site.caller.index());
         });
         size_t numberOfUneditedSites = sites.size();
-        for (FunctionID caller : editedCallers)
-            collectTailCallSitesOf(program, caller, sites);
+        sites.appendVector(collectInParallel<TailCallSite>(loops, editedCallers.size(), [&](unsigned position, Vector<TailCallSite>& found) {
+            collectTailCallSitesOf(program, editedCallers[position], found);
+        }));
         std::ranges::inplace_merge(sites, sites.begin() + numberOfUneditedSites, { }, &TailCallSite::caller);
     };
     demoteMismatchedTailCalls();
+    times.didFinish("demoteMismatchedTailCalls"_s);
 
     auto reserveStackWords = [&] {
         auto mayReserve = [&](FunctionID id) {
@@ -701,21 +787,32 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
             worklist.append(id);
         };
 
+        // All threads read the callers. Their findings are recorded here, in site order.
+        struct ReservingSite {
+            TailCallEdge edge;
+            std::optional<uint32_t> numberOfWords;
+        };
         Vector<TailCallEdge> edges;
-        for (const TailCallSite& site : sites) {
+        for (const ReservingSite& found : collectInParallel<ReservingSite>(loops, sites.size(), [&](unsigned index, Vector<ReservingSite>& found) {
+            const TailCallSite& site = sites[index];
             if (!mayReserve(site.caller))
-                continue;
+                return;
             if (site.calleeKind != TailCalleeKind::Unknown) {
-                edges.append({ site.callee, site.caller });
-                continue;
+                found.append({ { site.callee, site.caller }, std::nullopt });
+                return;
             }
             const Function& caller = program.at(site.caller);
             const Value& call = caller.at(caller.at(site.block).terminator.callOperand());
             if (call.opcode != Opcode::Call)
-                continue;
+                return;
             size_t numberOfArguments = call.argumentsOperands().size();
             if (numberOfArguments > numberOfArgumentGPRs)
-                raise(site.caller, static_cast<uint32_t>(numberOfArguments - numberOfArgumentGPRs));
+                found.append({ { site.callee, site.caller }, static_cast<uint32_t>(numberOfArguments - numberOfArgumentGPRs) });
+        })) {
+            if (found.numberOfWords)
+                raise(found.edge.caller, *found.numberOfWords);
+            else
+                edges.append(found.edge);
         }
         if (worklist.isEmpty())
             return;
@@ -737,6 +834,7 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
         }
     };
     reserveStackWords();
+    times.didFinish("reserveStackWords"_s);
 
     Vector<EntryRequest> requests = collectInParallel<EntryRequest>(loops, count, [&](unsigned callerIndex, Vector<EntryRequest>& collected) {
         FunctionID callerID(callerIndex);
@@ -812,6 +910,7 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
     }).size();
     build.statistics().count(StatisticID::ClosuresNeverCreated, numberOfClosuresNeverCreated);
     build.statistics().countChanges(PassID::ChooseCallingConventions, editedCallers.size());
+    times.didFinish("chooseSecondaryEntries"_s);
     return CallingConventions(WTF::move(tables));
 }
 

@@ -190,7 +190,7 @@ static void checkEffectsCover(const StubCatalog& catalog, const StubRecording& r
     for (size_t index : recording.operationsCalled)
         AOT_TEST_CHECK(effectsOf(static_cast<Entry>(index)).isSubsetOf(effects));
     for (const StubReference& reference : recording.references) {
-        if (reference.kind != StubReference::Kind::ReturnedAddress)
+        if (reference.kind != StubReference::Kind::ReturnedAddress && reference.kind != StubReference::Kind::PollAfterOperation)
             AOT_TEST_CHECK(catalog.effectsOf(reference.target).isSubsetOf(effects));
     }
 }

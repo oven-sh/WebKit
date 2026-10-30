@@ -39,7 +39,8 @@ struct ScratchRegisterConflict {
 };
 
 // Follows the macro assembler's two scratch registers through straight-line code: an entry, a branch target and whatever may leave the line start over.
-// A test of a register against itself is no conflict. A pair loaded off the stack pointer restores what a call would have lost, and need not be read.
+// A test of a register against itself is no conflict. A pair loaded off the stack pointer restores what a call would have lost, and need not be read;
+// neither does a single register loaded off it right after such a pair.
 Vector<ScratchRegisterConflict> findScratchRegisterConflicts(std::span<const uint8_t> code, std::span<const uint32_t> entryOffsets);
 
 struct UnreadValue {

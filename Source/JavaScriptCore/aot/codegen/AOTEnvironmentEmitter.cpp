@@ -15,6 +15,8 @@
 #include "AOTRuntimeValidationEmitter.h"
 #include "AOTStaticsEmitter.h"
 #include "AOTStubsClosures.h"
+#include "AirStackSlot.h"
+#include "B3SlotBaseValue.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -115,6 +117,29 @@ void EnvironmentEmitter::generateRecordCallee(const ValueContext& value)
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
+}
+
+void EnvironmentEmitter::generateKeepEnvironmentOfCalleeInFrame(const ValueContext& value)
+{
+    const PlacedSlot& slot = m_placement.slot(value->layout(), value->field());
+    bool isStored = slot.hasStorage() && !slot.needsExtension();
+    m_records.sites.fieldsOfCallees.set(SiteRecords::keyOfCall(value->position, value->inlineFrame), isStored ? std::optional(slot.data().encoded()) : std::nullopt);
+    if (isStored)
+        keepInFrame(value, in<CellPointer>(value->environmentOperand()));
+}
+
+void EnvironmentEmitter::keepInFrame(const ValueContext& value, CellPointer kept)
+{
+    uint32_t depth = SiteRecords::wordOfCalleeCalledFrom(m_function, value->inlineFrame);
+    auto& words = m_records.sites.wordsOfCallees;
+    while (words.size() <= depth)
+        words.append(nullptr);
+    if (!words[depth]) {
+        words[depth] = m_proc.addStackSlot(sizeof(uint64_t));
+        words[depth]->setIsDeadAtSuspensions(true);
+    }
+    LValue word = m_out.m_block->appendNew<B3::SlotBaseValue>(m_proc, m_out.origin(), words[depth]);
+    m_out.store64(kept.value(), m_out.address(m_heaps.frameSlots, word, 0));
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -39,7 +39,7 @@ struct PaddingUnit {
 
 class PaddingWidener {
 public:
-    PaddingWidener(const SlotPlanContext&, const SlotUses&, std::span<const SlotClaim>, WidenedRepresentations, PackedLayouts&);
+    PaddingWidener(const SlotPlanContext&, const SlotUses&, const JoinedRows&, std::span<const SlotClaim>, WidenedRepresentations, PackedLayouts&);
 
     void run();
 
@@ -63,6 +63,7 @@ private:
     void createUnits();
     bool isCandidate(const PaddingUnit&) const;
     void findCandidates();
+    void findUnitGroups();
     void recordOccupiedBytes();
     void orderCandidates();
     std::optional<uint32_t> roomFor(const PaddingUnit&);
@@ -70,10 +71,21 @@ private:
     std::optional<uint32_t> findFreeHalfOutside(LayoutID, uint32_t word) const;
     std::optional<uint32_t> makeRoomInOwnWord(const PaddingUnit&);
     void move(const PaddingUnit&, uint32_t offset);
+    std::optional<uint32_t> findRoomFor(const PaddingUnit&, bool mayMoveOtherSlots);
+    void widenAt(uint32_t unit, uint32_t offset, SlotRepresentation);
     bool widen(uint32_t unit, bool mayMoveOtherSlots);
+
+    // Units that some access reaches together. The access uses one load as long as they share a representation, so they are widened together or not at all.
+    struct UnitGroup {
+        Vector<uint32_t, 4> units;
+        SlotRepresentation widened { SlotRepresentation::JSValue };
+        bool staysNarrow { false };
+    };
+    static constexpr uint32_t noUnitGroup = UINT32_MAX;
 
     const SlotPlanContext& m_context;
     const SlotUses& m_uses;
+    const JoinedRows& m_joinedRows;
     std::span<const SlotClaim> m_claims;
     WidenedRepresentations m_kind;
     PackedLayouts& m_packed;
@@ -82,14 +94,17 @@ private:
     Vector<SlotRow> m_unsharedRows;
     Vector<PaddingUnit> m_units;
     Vector<uint32_t> m_candidates;
+    Vector<UnitGroup> m_unitGroups;
+    Vector<uint32_t> m_groupOfUnit;
     Vector<OccupiedBytes> m_occupied;
     Vector<uint32_t> m_firstPossiblyFreeOffset;
     BitVector m_isWidened;
 };
 
-PaddingWidener::PaddingWidener(const SlotPlanContext& context, const SlotUses& uses, std::span<const SlotClaim> claims, WidenedRepresentations kind, PackedLayouts& packed)
+PaddingWidener::PaddingWidener(const SlotPlanContext& context, const SlotUses& uses, const JoinedRows& joinedRows, std::span<const SlotClaim> claims, WidenedRepresentations kind, PackedLayouts& packed)
     : m_context(context)
     , m_uses(uses)
+    , m_joinedRows(joinedRows)
     , m_claims(claims)
     , m_kind(kind)
     , m_packed(packed)
@@ -206,6 +221,41 @@ void PaddingWidener::findCandidates()
     m_candidates = findIndicesInParallel(m_context.build.parallelLoops(), m_units.size(), [&](unsigned unit) {
         return isCandidate(m_units[unit]);
     });
+}
+
+void PaddingWidener::findUnitGroups()
+{
+    constexpr uint32_t noUnit = UINT32_MAX;
+    Vector<uint32_t> candidateOfRow(FillWith { }, m_context.rows.count(), noUnit);
+    for (uint32_t unit : m_candidates) {
+        for (SlotRow row : m_units[unit].rows)
+            candidateOfRow[row] = unit;
+    }
+    m_groupOfUnit.fill(noUnitGroup, m_units.size());
+    Vector<SlotRow, 16> rows;
+    for (const JoinedRows::Set& joined : m_joinedRows.sets()) {
+        UnitGroup group;
+        rows.shrink(0);
+        for (SlotRow row : m_joinedRows.rowsOf(joined)) {
+            const PlacedSlot& slot = m_packed.slots[row];
+            if (uint32_t unit = candidateOfRow[row]; unit != noUnit) {
+                rows.append(row);
+                if (!group.units.contains(unit))
+                    group.units.append(unit);
+            } else if (slot.storage == SlotStorage::Inline && isNarrow(slot.representation))
+                group.staysNarrow = true;
+        }
+        if (group.units.isEmpty() || (group.units.size() == 1 && !group.staysNarrow))
+            continue;
+        auto widened = widenedRepresentationOf({ rows.span(), 0 });
+        if (widened && widthOf(*widened) == wide)
+            group.widened = *widened;
+        else
+            group.staysNarrow = true;
+        for (uint32_t unit : group.units)
+            m_groupOfUnit[unit] = m_unitGroups.size();
+        m_unitGroups.append(WTF::move(group));
+    }
 }
 
 void PaddingWidener::recordOccupiedBytes()
@@ -339,22 +389,49 @@ std::optional<uint32_t> PaddingWidener::makeRoomInOwnWord(const PaddingUnit& uni
     return word;
 }
 
-bool PaddingWidener::widen(uint32_t index, bool mayMoveOtherSlots)
+std::optional<uint32_t> PaddingWidener::findRoomFor(const PaddingUnit& unit, bool mayMoveOtherSlots)
 {
-    const PaddingUnit& unit = m_units[index];
     auto offset = roomFor(unit);
     if (!offset && mayMoveOtherSlots)
         offset = makeRoomInOwnWord(unit);
-    if (!offset)
-        return false;
-    move(unit, *offset);
-    SlotRepresentation widened = *widenedRepresentationOf(unit);
+    return offset;
+}
+
+void PaddingWidener::widenAt(uint32_t index, uint32_t offset, SlotRepresentation widened)
+{
+    const PaddingUnit& unit = m_units[index];
+    move(unit, offset);
     for (SlotRow row : unit.rows) {
         PlacedSlot& slot = m_packed.slots[row];
         slot.representation = widened;
         RELEASE_ASSERT(slot.width() == wide);
     }
     m_isWidened.set(index);
+}
+
+bool PaddingWidener::widen(uint32_t index, bool mayMoveOtherSlots)
+{
+    if (m_groupOfUnit[index] == noUnitGroup) {
+        auto offset = findRoomFor(m_units[index], mayMoveOtherSlots);
+        if (!offset)
+            return false;
+        widenAt(index, *offset, *widenedRepresentationOf(m_units[index]));
+        return true;
+    }
+
+    const UnitGroup& group = m_unitGroups[m_groupOfUnit[index]];
+    if (group.staysNarrow)
+        return false;
+    // No two units of a group are in the same layout, so the room found for one is still free when all have been placed.
+    Vector<uint32_t, 4> offsets;
+    for (uint32_t unit : group.units) {
+        auto offset = findRoomFor(m_units[unit], mayMoveOtherSlots);
+        if (!offset)
+            return false;
+        offsets.append(*offset);
+    }
+    for (size_t i = 0; i < group.units.size(); ++i)
+        widenAt(group.units[i], offsets[i], group.widened);
     return true;
 }
 
@@ -364,6 +441,7 @@ void PaddingWidener::run()
     findCandidates();
     if (m_candidates.isEmpty())
         return;
+    findUnitGroups();
     recordOccupiedBytes();
     orderCandidates();
     for (bool mayMoveOtherSlots : { false, true }) {
@@ -526,11 +604,11 @@ void EmptySlotReserver::run()
 
 } // anonymous namespace
 
-void widenSlotsIntoPadding(const SlotPlanContext& context, const SlotUses& uses, std::span<const SlotClaim> claims, WidenedRepresentations kind, PackedLayouts& packed)
+void widenSlotsIntoPadding(const SlotPlanContext& context, const SlotUses& uses, const JoinedRows& joinedRows, std::span<const SlotClaim> claims, WidenedRepresentations kind, PackedLayouts& packed)
 {
     if (kind == WidenedRepresentations::References && context.usesWideReferences)
         return;
-    PaddingWidener(context, uses, claims, kind, packed).run();
+    PaddingWidener(context, uses, joinedRows, claims, kind, packed).run();
 }
 
 void reserveEmptySlots(const SlotPlanContext& context, const SlotUses& uses, PackedLayouts& packed, const EmptySlotRoom& room)

@@ -142,7 +142,7 @@ static void testRotateLoopsSkipsRareBackEdge()
     checkSumsIntegersBelowBound(proc);
 }
 
-static void testRotateLoopsKeepsUnlikelyBackEdge()
+static void testRotateLoopsSendsUnlikelyBackEdgeToBottomTest()
 {
     Procedure proc;
     Graph graph { proc };
@@ -173,15 +173,15 @@ static void testRotateLoopsKeepsUnlikelyBackEdge()
     CHECK(bottomTest != header);
     CHECK(bottomTest->last()->opcode() == Branch);
     CHECK(bottomTest->successorBlock(0) == body);
-    CHECK(body->successor(0) == unlikely(header));
+    CHECK(body->successor(0) == unlikely(bottomTest));
     fixSSA(proc);
     validate(proc);
 
     B3::NaturalLoops& loops = proc.naturalLoops();
-    CHECK_EQ(loops.numLoops(), 2u);
-    CHECK(loops.headerOf(header));
+    CHECK_EQ(loops.numLoops(), 1u);
+    CHECK(!loops.headerOf(header));
     CHECK(loops.headerOf(body));
-    CHECK(!loops.belongsTo(header, *loops.headerOf(body)));
+    CHECK(loops.belongsTo(bottomTest, *loops.headerOf(body)));
     auto code = compileProc(proc);
     for (int64_t argument : { -1, 0, 1, 2, 5, 10 }) {
         int64_t numberOfEvenIntegers = argument > 0 ? argument / 2 : 0;
@@ -245,7 +245,7 @@ static unsigned numberOfPollsIn(BasicBlock* block)
 
 static void testRotateLoopsMovesPollInHeaderToBottomTest()
 {
-    for (bool hasUnlikelyBackEdge : { false, true }) {
+    for (bool hasRareBackEdge : { false, true }) {
         Procedure proc(remarkPolicy());
         Graph graph { proc };
         PollState state;
@@ -261,8 +261,8 @@ static void testRotateLoopsMovesPollInHeaderToBottomTest()
         appendPoll(graph, header, state);
         graph.branch(header, graph.make(header, LessThan, graph.get(header, index), bound), body, exit);
         graph.increase(body, index, 1);
-        if (hasUnlikelyBackEdge)
-            graph.branch(body, graph.make(body, Equal, graph.get(body, index), graph.int64(body, 2)), unlikely(header), FrequentedBlock(latch));
+        if (hasRareBackEdge)
+            graph.branch(body, graph.make(body, Equal, graph.get(body, index), graph.int64(body, 2)), rarely(header), FrequentedBlock(latch));
         else
             graph.jump(body, latch);
         graph.jump(latch, header);
@@ -273,8 +273,8 @@ static void testRotateLoopsMovesPollInHeaderToBottomTest()
         CHECK(rotateLoops(proc));
         fixSSA(proc);
         validate(proc);
-        CHECK_EQ(numberOfValues(proc, Patchpoint), hasUnlikelyBackEdge ? 2u : 1u);
-        CHECK_EQ(valueCountInLoops(proc, Patchpoint), hasUnlikelyBackEdge ? 2u : 1u);
+        CHECK_EQ(numberOfValues(proc, Patchpoint), hasRareBackEdge ? 2u : 1u);
+        CHECK_EQ(valueCountInLoops(proc, Patchpoint), hasRareBackEdge ? 2u : 1u);
         CHECK_EQ(numberOfPollsIn(header), 0u);
         CHECK_EQ(compileAndRun<int64_t>(proc, static_cast<int64_t>(5)), 5);
         CHECK_EQ(state.numberOfPolls, 5);
@@ -474,6 +474,103 @@ static void testRotateLoopsSkipsGuardWhoseRarePathRejoinsBody()
     CHECK_EQ(compileAndRun<int64_t>(proc, static_cast<int64_t>(20)), 190 + 2 * 100);
 }
 
+// for (index = 0, flag = 1; index < bound; ) { if (!flag) return sum + 1000; sum += ++index; flag = ..; }
+// The latch has two Upsilons for flag. The next iteration sees the last one.
+static void testRotateLoopsUsesLastUpsilonInLatch()
+{
+    enum class Written : uint8_t { OneThenZero, OneThenLowestBitOfIndex, ZeroThenOne };
+    for (Written written : { Written::OneThenZero, Written::OneThenLowestBitOfIndex, Written::ZeroThenOne }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* header = proc.addBlock();
+        BasicBlock* test = proc.addBlock();
+        BasicBlock* body = proc.addBlock();
+        BasicBlock* earlyReturn = proc.addBlock();
+        BasicBlock* exit = proc.addBlock();
+        Value* bound = cCallArgumentValues<int64_t>(proc, root)[0];
+        Value* index = graph.phi(header, Int64);
+        Value* sum = graph.phi(header, Int64);
+        Value* flag = graph.phi(header, Int64);
+        graph.upsilon(root, graph.int64(root, 0), index);
+        graph.upsilon(root, graph.int64(root, 0), sum);
+        graph.upsilon(root, graph.int64(root, 1), flag);
+        graph.jump(root, header);
+        graph.branch(header, graph.make(header, LessThan, index, bound), test, exit);
+        graph.branch(test, flag, body, earlyReturn);
+        Value* next = graph.make(body, Add, index, graph.int64(body, 1));
+        graph.upsilon(body, next, index);
+        graph.upsilon(body, graph.make(body, Add, sum, next), sum);
+        graph.upsilon(body, graph.int64(body, written == Written::ZeroThenOne ? 0 : 1), flag);
+        graph.upsilon(body, written == Written::OneThenLowestBitOfIndex ? graph.make(body, BitAnd, next, graph.int64(body, 1)) : graph.int64(body, written == Written::ZeroThenOne ? 1 : 0), flag);
+        graph.jump(body, header);
+        graph.ret(earlyReturn, graph.make(earlyReturn, Add, sum, graph.int64(earlyReturn, 1000)));
+        graph.ret(exit, sum);
+        resetAndValidate(proc);
+
+        CHECK(rotateLoops(proc));
+        fixSSA(proc);
+        validate(proc);
+        auto code = compileProc(proc);
+        CHECK_EQ(invoke<int64_t>(*code, 0), 0);
+        CHECK_EQ(invoke<int64_t>(*code, 1), 1);
+        switch (written) {
+        case Written::OneThenZero:
+            CHECK_EQ(invoke<int64_t>(*code, 2), 1001);
+            CHECK_EQ(invoke<int64_t>(*code, 5), 1001);
+            break;
+        case Written::OneThenLowestBitOfIndex:
+            CHECK_EQ(invoke<int64_t>(*code, 2), 3);
+            CHECK_EQ(invoke<int64_t>(*code, 5), 1003);
+            break;
+        case Written::ZeroThenOne:
+            CHECK_EQ(invoke<int64_t>(*code, 2), 3);
+            CHECK_EQ(invoke<int64_t>(*code, 5), 15);
+            break;
+        }
+    }
+}
+
+// One latch passes back the index + 1 that the header computes and tests, the other an index + 1 of its own.
+static void testRotateLoopsKeepsIncrementComputedInHeader()
+{
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* header = proc.addBlock();
+    BasicBlock* body = proc.addBlock();
+    BasicBlock* odd = proc.addBlock();
+    BasicBlock* even = proc.addBlock();
+    BasicBlock* exit = proc.addBlock();
+    Value* bound = cCallArgumentValues<int64_t>(proc, root)[0];
+    Value* index = graph.phi(header, Int64);
+    Value* sum = graph.phi(header, Int64);
+    graph.upsilon(root, graph.int64(root, 0), index);
+    graph.upsilon(root, graph.int64(root, 0), sum);
+    graph.jump(root, header);
+    Value* nextInHeader = graph.make(header, Add, index, graph.int64(header, 1));
+    graph.branch(header, graph.make(header, LessEqual, nextInHeader, bound), body, exit);
+    graph.branch(body, graph.make(body, BitAnd, index, graph.int64(body, 1)), odd, even);
+    graph.upsilon(odd, nextInHeader, index);
+    graph.upsilon(odd, graph.make(odd, Add, sum, graph.int64(odd, 1)), sum);
+    graph.jump(odd, header);
+    graph.upsilon(even, graph.make(even, Add, index, graph.int64(even, 1)), index);
+    graph.upsilon(even, graph.make(even, Add, sum, graph.int64(even, 10)), sum);
+    graph.jump(even, header);
+    graph.ret(exit, sum);
+    resetAndValidate(proc);
+
+    CHECK(rotateLoops(proc));
+    CHECK(nextInHeader->opcode() == Add);
+    fixSSA(proc);
+    validate(proc);
+    auto code = compileProc(proc);
+    CHECK_EQ(invoke<int64_t>(*code, 0), 0);
+    CHECK_EQ(invoke<int64_t>(*code, 1), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 2), 11);
+    CHECK_EQ(invoke<int64_t>(*code, 5), 32);
+}
+
 static void testSimplifyTerminals()
 {
     for (int32_t constant : { 0, 1 }) {
@@ -656,7 +753,7 @@ void addBunLoopTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testRotateLoopsSkipsLargeTest());
     RUN(testRotateLoopsSkipsUncloneableTest());
     RUN(testRotateLoopsSkipsRareBackEdge());
-    RUN(testRotateLoopsKeepsUnlikelyBackEdge());
+    RUN(testRotateLoopsSendsUnlikelyBackEdgeToBottomTest());
     RUN(testRotateLoopsHonorsHeaderFilter());
     RUN(testRotateLoopsNestedLoops());
     RUN(testRotateLoopsMovesPollInHeaderToBottomTest());
@@ -665,6 +762,8 @@ void addBunLoopTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testRotateLoopsWritesRemark());
     RUN(testRotateLoopsCountsRareBlockLimit());
     RUN(testRotateLoopsSkipsGuardWhoseRarePathRejoinsBody());
+    RUN(testRotateLoopsUsesLastUpsilonInLatch());
+    RUN(testRotateLoopsKeepsIncrementComputedInHeader());
     RUN(testSimplifyTerminals());
     RUN(testSimplifyTerminalsKeepsNonConstantBranch());
     RUN(testSimplifyTerminalsLooksThroughIdentity());

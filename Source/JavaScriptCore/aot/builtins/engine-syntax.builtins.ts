@@ -205,15 +205,15 @@ export default b.declarations(
     "getIteratorSync",
     "getOptionsObject",
     "iteratorCloseAllNormal",
-    "iteratorGenericClose",
-    "iteratorGenericNext",
     "iteratorZip",
     "removeFirstFromList",
   ]),
+  // The engine emits these two in line, and so does the front end: the call then belongs to the built-in that makes it.
+  b.intrinsic("iteratorGenericClose", "Call", { intrinsic: "LinkedFunction", expansion: "IteratorGenericClose" }),
+  b.intrinsic("iteratorGenericNext", "Call", { intrinsic: "LinkedFunction", expansion: "IteratorGenericNext" }),
   intrinsics("Value", { intrinsic: "LinkedFunction" }, [
     "defaultAsyncFromAsyncArrayLike",
     "defaultAsyncFromAsyncIterator",
-    "defaultAsyncFromAsyncIteratorWithNext",
   ]),
 
   operation("CollectionTable", "collectionTable"),

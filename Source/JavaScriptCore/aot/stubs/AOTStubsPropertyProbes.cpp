@@ -14,6 +14,7 @@
 #include "AOTLayoutData.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
+#include "AOTPropertyCachesFront.h"
 #include "AOTRuntimeTable.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsConstants.h"
@@ -180,7 +181,7 @@ static void locateFieldTableEntry(StubAssembler& jit, const FieldTableProbe& pro
     RELEASE_ASSERT(!probe.boundName || FieldTableEntry::hasColumn(*probe.boundName));
 
     if (!probe.nameHasColumn)
-        isNotCompiledObject.append(jit.branch32(CCallHelpers::Above, probe.name, TrustedImm32(FieldTableEntry::maxName)));
+        isNotCompiledObject.append(jit.branch32(CCallHelpers::Above, probe.name, TrustedImm32(jit.options().maxNameInFieldTable)));
     if (!probe.receiverIsCell)
         isNotCompiledObject.append(jit.branchIfNotCell(probe.receiver));
     jit.load32SignedExtendTo64(Address(probe.receiver, offsetOfShapeWord), probe.index);
@@ -225,8 +226,8 @@ static Jump branchUnlessForm(StubAssembler& jit, GPRReg operand, FieldTableEntry
     return jit.branch32(CCallHelpers::Above, operand, TrustedImm32(FieldTableEntry::maxOperand));
 }
 
-// Takes the operand. Leaves the address of the Extension in extension and the offset of the slot in operand.
-static void locateOutOfLineValue(StubAssembler& jit, GPRReg receiver, GPRReg operand, GPRReg extension, JumpList& hasNoStorage)
+// Takes the operand, in its register or as knownOperand. Leaves the address of the Extension in extension and the offset of the slot in operand.
+static void locateOutOfLineValue(StubAssembler& jit, GPRReg receiver, GPRReg operand, GPRReg extension, JumpList& hasNoStorage, std::optional<uint32_t> knownOperand = std::nullopt)
 {
     // The operand is the number of the granule and one more.
     static_assert(offsetOfFirstExtensionSlot == extensionGranuleSize && extensionGranuleSize == sizeof(EncodedJSValue) && maxExtensionGranules == 64);
@@ -236,9 +237,13 @@ static void locateOutOfLineValue(StubAssembler& jit, GPRReg receiver, GPRReg ope
     hasNoStorage.append(jit.branchTest32(CCallHelpers::Zero, extension));
     decodeCell32(jit, extension, extension);
     jit.addPtr(TrustedImm32(offsetOfEmptyExtensionInCage), extension);
-    jit.neg32(operand);
     jit.load64(Address(extension, offsetOfExtensionGranuleBits), granuleBits);
-    jit.lshift64(operand, granuleBits);
+    if (knownOperand)
+        jit.lshift64(TrustedImm32(static_cast<int32_t>(-*knownOperand & 63)), granuleBits);
+    else {
+        jit.neg32(operand);
+        jit.lshift64(operand, granuleBits);
+    }
     hasNoStorage.append(jit.branchTest64(CCallHelpers::PositiveOrZero, granuleBits));
     jit.countPopulation64(granuleBits, operand, CCallHelpers::fpTempRegister);
     jit.lshift32(TrustedImm32(WTF::fastLog2(static_cast<unsigned>(sizeof(EncodedJSValue)))), operand);
@@ -272,7 +277,7 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
     // The slot lies in the cell. Empty: it holds what only an empty slot of the form holds. Silent: it does not hold the value, and the record of the field says what it does hold.
     JumpList slotIsEmpty;
     JumpList slotIsSilent;
-    auto readValue = [&](BaseIndex slot, JumpList& isEmpty) {
+    auto readValue = [&](auto slot, JumpList& isEmpty) {
 #if CPU(X86_64)
         isEmpty.append(jit.branchTest64(CCallHelpers::Zero, slot));
         jit.load64(slot, result);
@@ -285,6 +290,21 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
     };
 
     locateFieldTableEntry(jit, probe, otherwise);
+    if (probe.expectedEntry) {
+        const uint32_t expectedOperand = *probe.expectedEntry & FieldTableEntry::maxOperand;
+        const bool isInCell = *probe.expectedEntry == FieldTableEntry::create(*probe.boundName, Form::InlineValue, expectedOperand).bits;
+        RELEASE_ASSERT(isInCell || *probe.expectedEntry == FieldTableEntry::create(*probe.boundName, Form::OutOfLineValue, expectedOperand).bits);
+        if (isInCell || !jit.options().useWideReferences) {
+            Jump isOtherEntry = jit.branch32(CCallHelpers::NotEqual, fieldTableEntry(probe), TrustedImm32(static_cast<int32_t>(*probe.expectedEntry)));
+            if (isInCell)
+                readValue(Address(probe.receiver, static_cast<int32_t>(expectedOperand * sizeof(EncodedJSValue))), slotIsEmpty);
+            else {
+                locateOutOfLineValue(jit, probe.receiver, operand, word, slotIsEmpty, expectedOperand);
+                readValue(BaseIndex(word, operand, CCallHelpers::TimesOne), slotIsEmpty);
+            }
+            isOtherEntry.link(&jit);
+        }
+    }
     Jump isNoField = branchUnlessEntryHasName(jit, probe);
     Jump isNotInlineValue = branchUnlessForm(jit, operand, Form::InlineValue);
     readValue(BaseIndex(probe.receiver, operand, CCallHelpers::TimesEight), slotIsEmpty);
@@ -759,7 +779,13 @@ void generatePutValueThatSlotRefuses(StubAssembler& jit)
     bumpRuntimeCounter(jit, RuntimeCounterID::FieldsLeftSlotByStoreOfOtherType, scratch);
     jit.returnToCaller();
 
-    jit.linkToStub(cannot, isAtSite ? putByIdAtSiteBehindFieldTable(mode) : putByIdBehindFieldTable(mode));
+    if (isAtSite) {
+        jit.linkToStub(cannot, putByIdAtSiteBehindFieldTable(mode));
+        return;
+    }
+    cannot.link(&jit);
+    jit.linkToStub(jit.branch32(CCallHelpers::Above, name, TrustedImm32(RowDisplacementTable::maxColumn)), putByIdHashed(mode));
+    jit.jumpToStub(putByIdBehindFieldTable(mode));
 }
 
 // A boolean goes into the slot of a boolean and a number into the slot of a double.
@@ -794,7 +820,9 @@ void generatePutBooleanOrDoubleField(StubAssembler& jit)
         jit.lshift32(TrustedImm32(4), scratch);
         jit.add32(TrustedImm32(sizeof(LayoutData)), scratch, name);
         jit.jumpToStub(stub);
-        jit.linkToStub(isNotCompiledObject, putByIdBehindFieldTable(mode));
+        isNotCompiledObject.link(&jit);
+        jit.linkToStub(jit.branch32(CCallHelpers::Above, name, TrustedImm32(RowDisplacementTable::maxColumn)), putByIdHashed(mode));
+        jit.jumpToStub(putByIdBehindFieldTable(mode));
     };
 
     isStoredByItsRecord.append(jit.branch32(CCallHelpers::Below, operand, TrustedImm32(first(FieldTableEntry::firstEncodedByte))));

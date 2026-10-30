@@ -54,6 +54,13 @@ static bool isUntypedMethodRead(SelectionContext& context, ValueID id, PropertyK
     return context.typeOf(id).isAnything() && hasEffectsOfUnknownCode(context, id);
 }
 
+// The tail call of an inlined function is a call of the machine. It gives up the inlined frame, whose caller may keep in a word which closure ran there. Only the stubs that call a value pass that word on.
+static bool givesUpFrameWithKeptCallee(const Program& program, const Function& function, const Value& call)
+{
+    Origin origin = call.origin();
+    return origin.isTailCall && origin.inlineFrame && program.sourceFunctionOf(function, origin).has(FunctionCapabilities::RecordsCalleeOnceRenamed);
+}
+
 static std::optional<SelectedMethodCall> matchMethodCall(SelectionContext& context, ValueID id)
 {
     const Function& function = context.function();
@@ -69,7 +76,7 @@ static std::optional<SelectedMethodCall> matchMethodCall(SelectionContext& conte
 
     if (!isOrdinaryKey(context.program(), key) || !context.slots().hasColumn(key))
         return std::nullopt;
-    if (isOwnedByReturnCall(context, id))
+    if (isOwnedByReturnCall(context, id) || givesUpFrameWithKeptCallee(context.program(), function, call))
         return std::nullopt;
     FunctionAnalyses& analyses = context.analyses();
     ValueID object = function.at(read).objectOperand();
@@ -148,6 +155,8 @@ static Vector<ResolvedCalls> findCallsOfInvariantCallees(SelectionContext& conte
         if (!canCallResolvedTarget(context, id))
             continue;
         const Value& call = function.at(id);
+        if (givesUpFrameWithKeptCallee(context.program(), function, call))
+            continue;
         ValueID callee = call.calleeOperand();
         std::optional<InvariantOperand> invariant = findOutermostInvariantLoop(context, analyses.useLists().blockOf(id), callee);
         // The code in front of the loop pays for itself in the turns, and a loop that is not expected to be entered has none.
@@ -188,6 +197,7 @@ static void convertToCallResolved(Value& value, ValueID target)
     value.setThisValueOperand(call.thisValueOperand());
     value.setArgumentsOperands(call.argumentsOperands());
     value.setCalleeName(call.calleeName());
+    value.setCalledBuiltin(call.calledBuiltin());
     value.setAccessSite(call.accessSite());
     value.setCallees(call.callees());
 }

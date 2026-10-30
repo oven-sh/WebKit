@@ -44,7 +44,7 @@ inline Air::Opcode moveForType(Type type)
     case Double:
         return MoveDouble;
     case V128:
-        ASSERT(Options::useWasmSIMD());
+        // Bun: no ASSERT(Options::useWasmSIMD()). The procedure's policy says whether SIMD is allowed, and Air::validate() checks that.
         return MoveVector;
     case Void:
     case Tuple:

@@ -1,0 +1,60 @@
+# function Readable() {}; const other = publish(Readable); other[other.key] = 1; Object.defineProperties(Readable.prototype, { ended: { get, set }, size: { get } })
+# The function has escaped, and a store under a key that nobody knows to an object that nobody knows may have replaced its `prototype`: what the read of `Readable.prototype` answers holds the unknown object,
+# which stands for every object that has escaped, the prototype object among them. The call names the property of the function itself, so the object that the function was born with is one of the receivers
+# whichever of the two comes to stand there first, and the accessors are listed under their names. Their guards ask the object.
+# OPTIONS: testing=DelayOtherFlowRules
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Readable" {{*}}members=[{key="ended" kind=Getter function=f2}, {key="ended" kind=Setter function=f3}, {key="size" kind=Getter function=f4}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Readable" constructor=f1 flags=[IsConstructorFunction]
+layout L1 name="PropertyDescriptor" fields=[{key="get" declared={type=anything}}, {key="set" declared={type=anything}}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="publish" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = PropGet v3 key="key"
+    v5 = Integer integer=1
+    ElemSet v3, v4, v5 mode=Strict
+    v7 = Undefined
+    v8 = Undefined
+    v9 = PropGet v0 key="prototype"
+    v10 = NewDictionary
+    v11 = NewClosure function=f2
+    v12 = NewObject layout=L1
+    PropDefine v12, v11 key="get"
+    v14 = NewClosure function=f3
+    PropDefine v12, v14 key="set"
+    v16 = FinishObject v12
+    PropDefine v10, v16 key="ended"
+    v18 = NewClosure function=f4
+    v19 = NewObject layout=L1
+    PropDefine v19, v18 key="get"
+    v21 = FinishObject v19
+    PropDefine v10, v21 key="size"
+    v23 = Builtin builtin=Object
+    v24 = Builtin builtin=ObjectDefineProperties
+    v25 = Call v24, v23, v9, v10
+    v26 = Construct v0
+    v27 = PropGet v26 key="ended"
+    v28 = PropGet v26 key="size"
+    Return v27
+}
+function f1 name="Readable" module=m0 flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="get" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Undefined
+    Return v1
+}
+function f3 name="set" module=m0 kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = Undefined
+    Return v2
+}
+function f4 name="get" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Undefined
+    Return v1
+}

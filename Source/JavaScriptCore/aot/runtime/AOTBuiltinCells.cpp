@@ -28,6 +28,7 @@
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTState.h"
 #include "AOTVector.h"
+#include "BuiltinNames.h"
 #include "DeferTermination.h"
 #include "GetterSetter.h"
 #include "GlobalObjectMethodTable.h"
@@ -276,6 +277,7 @@ bool BuiltinCells::didLock(BuiltinID id, JSObject* object)
 {
     if (!m_lockedObjects.add(id.index(), object).isNewEntry)
         return false;
+    m_lockedBuiltins.set(id.index());
     m_builtinsOfLockedObjects.add(object, id.index());
     m_state.immortalCells->add(object);
     return true;
@@ -408,14 +410,17 @@ JSValue BuiltinCells::fillValue(JSGlobalObject* realm, BuiltinCellKey key)
 
     const BuiltinTable& table = BuiltinTable::singleton();
     const Builtin& member = table.at(key.builtin());
-    JSCell* holder = findObject(member.holder);
+    // The host keeps its private globals on the global object, each under the private name of the engine that is spelled as the member is.
+    bool isPrivateGlobal = member.holder == Builtins::PrivateGlobals;
+    PrivateSymbolImpl* privateName = isPrivateGlobal ? vm.propertyNames->builtinNames().lookUpPrivateName(table.identifierOf(vm, member.name)) : nullptr;
+    JSCell* holder = isPrivateGlobal ? (privateName ? realm : nullptr) : findObject(member.holder);
     if (!holder) {
         if (!BuiltinBindings::provides(member.origin))
             exitForWantOfHost(table, key.builtin());
         dataLogLn("AOT: the holder of the built-in value ", table.textOf(key.builtin()), " (key ", key.encoded(), ") is not in this realm");
         CRASH();
     }
-    JSValue value = asObject(holder)->get(realm, table.identifierOf(vm, member.name));
+    JSValue value = asObject(holder)->get(realm, privateName ? Identifier::fromUid(*privateName) : table.identifierOf(vm, member.name));
     RETURN_IF_EXCEPTION(scope, { });
     // What the host ran may have read the member too.
     if (JSValue filledDuringRead = JSValue::decode(*word))
@@ -883,15 +888,17 @@ public:
             return;
         makeImmutable(table, id, object);
 
-        for (BuiltinID member : table.membersOf(id)) {
-            const Builtin& entry = table.at(member);
-            BuiltinID target = entry.sameObjectAs ? entry.sameObjectAs : member;
+        const Builtin& holder = table.at(id);
+        uint32_t memberIndex = holder.firstMember.index();
+        for (const Builtin& entry : table.memberEntriesOf(id)) {
+            BuiltinID target = entry.sameObjectAs ? entry.sameObjectAs : BuiltinID(memberIndex);
+            ++memberIndex;
             if (!m_builtinsToLock.quickGet(target.index()) || hasLocked(target))
                 continue;
             if (JSObject* existing = findOrCreateMember(table, object, entry.name, target))
                 lock(target, existing);
         }
-        if (BuiltinID inherited = table.at(id).inheritsFrom) {
+        if (BuiltinID inherited = holder.inheritsFrom) {
             if (JSObject* prototype = object->getPrototypeDirect().getObject())
                 lock(inherited, prototype);
         }
@@ -960,7 +967,6 @@ static void lockPrototypeOfClass(BuiltinLocker& locker, BuiltinClassID builtinCl
 
 static void lockExistingBuiltins(BuiltinLocker& locker, JSGlobalObject* realm)
 {
-    locker.lock(Builtins::GlobalThis, realm);
     // No name need lead from the global object to a prototype whose instances exist: the name of the class is created at its first read.
     forEachHiddenPrototype(realm, [&](BuiltinClassID builtinClass, JSObject* prototype) {
         lockPrototypeOfClass(locker, builtinClass, prototype);
@@ -971,6 +977,7 @@ static void lockExistingBuiltins(BuiltinLocker& locker, JSGlobalObject* realm)
     forEachCreatedClassOfGlobal(realm, [&](BuiltinID member, JSObject* constructor) {
         locker.lock(member, constructor);
     });
+    locker.lock(Builtins::GlobalThis, realm);
 }
 
 // Whoever makes the Structure of the instances of a class that names it reports it: the engine a LazyClassStructure, the host any other. The prototype object and the constructor are there by then.
@@ -989,7 +996,7 @@ static void lockHoldersOfProgram(BuiltinLocker& locker, JSGlobalObject* realm, c
 {
     const BuiltinTable& table = BuiltinTable::singleton();
     auto lockCreated = [&](BuiltinID holder) {
-        if (locker.hasLocked(holder) || isLockedByTable(table, holder) || table.isUnder(holder, Builtins::GlobalThis) || isCreatedWithReportedStructure(table, holder))
+        if (locker.hasLocked(holder) || table.isUnder(holder, Builtins::GlobalThis) || isLockedByTable(table, holder) || isCreatedWithReportedStructure(table, holder))
             return;
         if (JSObject* object = findOrCreateObject(realm, holder)) {
             locker.lock(holder, object);

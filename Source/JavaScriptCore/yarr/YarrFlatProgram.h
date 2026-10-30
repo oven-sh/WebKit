@@ -220,11 +220,19 @@ public:
     // No attempt is made where these rule a match out.
     RequiredTexts requiredTexts;
     Latin1Character onlyStartCharacter { 0 };
+    // The first character of every match, if there is only one. Unlike onlyStartCharacter it can be wide, and the table may be deeper than one place.
+    std::optional<char32_t> onlyStart;
     unsigned numSubpatterns { 0 };
     unsigned numRegisters { 0 };
     unsigned framesOfRegisters { 0 }; // The registers lie below the frames, in as many frames' room.
     std::optional<unsigned> endAnchoredFixedSize;
     bool triesOnlyOnce { false };
+    // For each op, the capture slots [begin, end) that an attempt can have written by the time it gets there. The full machine resets only those after a failed attempt.
+    struct SlotRange {
+        uint32_t begin { 0 };
+        uint32_t end { 0 };
+    };
+    Vector<SlotRange> dirtyCaptureRanges;
     // FlatProgramForm::CountsTurns: the op that every attempt but the first begins at. In front of it stand the alternatives that are tried at the first place alone.
     unsigned laterAttemptsBeginAt { 0 };
     // Of a pattern in unicode mode with a step that can consume a surrogate. There a lead surrogate and the trail surrogate behind it are one character, and that trail surrogate alone is none.

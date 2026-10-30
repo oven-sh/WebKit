@@ -4191,9 +4191,9 @@ public:
         m_assembler.str<32>(src, address.base, memoryTempRegister);
     }
 
+    // Bun: the three forms of storeVector() have no ASSERT(Options::useWasmSIMD()). A compile may use SIMD where WebAssembly may not: B3::UpstreamPolicy::allowsSIMD.
     void storeVector(FPRegisterID src, Address address)
     {
-        ASSERT(Options::useWasmSIMD());
         if (tryStoreWithOffset<128>(src, address.base, address.offset))
             return;
 
@@ -4203,14 +4203,12 @@ public:
 
     void storeVector(FPRegisterID src, TrustedImmPtr address)
     {
-        ASSERT(Options::useWasmSIMD());
         moveToCachedReg(address, cachedMemoryTempRegister());
         m_assembler.str<128>(src, memoryTempRegister, ARM64Registers::zr);
     }
 
     void storeVector(FPRegisterID src, BaseIndex address)
     {
-        ASSERT(Options::useWasmSIMD());
         if (address.scale == TimesOne || address.scale == TimesEight) {
             if (auto baseGPR = tryFoldBaseAndOffsetPart(address)) {
                 m_assembler.str<128>(src, baseGPR.value(), address.index, indexExtendType(address), address.scale);

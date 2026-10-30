@@ -9,6 +9,7 @@
 #if ENABLE(B3_JIT)
 
 #include "B3EliminateDeadCode.h"
+#include "B3EliminateRedundantPhiCycles.h"
 #include "B3LoopUtilities.h"
 #include "B3UnrollLoops.h"
 
@@ -288,8 +289,10 @@ static void checkLoopWithSidePath(TestPlace place, bool isRare, SidePath sidePat
     loop.endBody(last);
     if (counterHasRoom)
         proc.setKnownRange(loop.counter(), IntRange(0, 1 << 20));
-    if (place == TestPlace::Bottom)
+    if (place == TestPlace::Bottom) {
         loop.rotate();
+        eliminateRedundantPhiCycles(proc);
+    }
 
     CHECK(unrollLoopsAndValidate(proc));
     auto code = compileProc(proc);
@@ -540,7 +543,7 @@ static Policy policyThatPollsBetweenStretches()
 static PatchpointValue* appendPollOfShortTurns(Graph& graph, BasicBlock* block, PollState& state)
 {
     PatchpointValue* poll = appendPoll(graph, block, state);
-    poll->turnsAreShort = true;
+    poll->iterationsAreShort = true;
     return poll;
 }
 
@@ -653,17 +656,16 @@ static void testUnrollLoopsDropsPollOfLoopWhoseTurnsAreKnownToBeFew()
     }
 }
 
-// A poll that has more to do than to poll, a loop whose turns may be long, and a policy that says nothing: the loop polls as it always did.
+// The loop keeps polling on every iteration when its iterations may be long or the policy does not allow polling between stretches.
 static void testUnrollLoopsKeepsPollThatMustRunOnEveryTurn()
 {
-    enum class Reason : uint8_t { ThrowsWhatIsOwed, TurnsMayBeLong, Policy };
-    for (Reason reason : { Reason::ThrowsWhatIsOwed, Reason::TurnsMayBeLong, Reason::Policy }) {
+    enum class Reason : uint8_t { IterationsMayBeLong, Policy };
+    for (Reason reason : { Reason::IterationsMayBeLong, Reason::Policy }) {
         for (Walks walks : { Walks::Nothing, Walks::Data }) {
             CountedSum sum(LessThan, 1, 0, reason == Reason::Policy ? loopPolicy() : policyThatPollsBetweenStretches(), walks);
             PollState state;
             PatchpointValue* poll = appendPoll(sum.graph, sum.loop.body, state);
-            poll->turnsAreShort = reason != Reason::TurnsMayBeLong;
-            poll->throwsWhatIsOwed = reason == Reason::ThrowsWhatIsOwed;
+            poll->iterationsAreShort = reason != Reason::IterationsMayBeLong;
             sum.graph.increase(sum.loop.body, sum.loop.sum, sum.graph.get(sum.loop.body, sum.loop.index));
             sum.finish(sum.loop.body, TestPlace::Bottom);
 

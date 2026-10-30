@@ -35,7 +35,6 @@
 #include <WebCore/GlyphBuffer.h>
 #include <WebCore/Gradient.h>
 #include <WebCore/GraphicsContext.h>
-#include <WebCore/Image.h>
 #include <WebCore/NativeImage.h>
 #include <WebCore/SharedBuffer.h>
 #include <WebCore/SystemImage.h>
@@ -568,10 +567,10 @@ class DrawDisplayList {
 public:
     static constexpr char name[] = "draw-display-list";
 
-    DrawDisplayList(Ref<const DisplayList>&&);
-    ~DrawDisplayList();
+    WEBCORE_EXPORT DrawDisplayList(Ref<const DisplayList>&&);
+    WEBCORE_EXPORT ~DrawDisplayList();
 
-    Ref<const DisplayList> LEGACY_NODELETE displayList() const;
+    WEBCORE_EXPORT Ref<const DisplayList> LEGACY_NODELETE displayList() const;
 
     void apply(GraphicsContext&, ControlFactory&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -584,10 +583,10 @@ class DrawPlaceholder {
 public:
     static constexpr char name[] = "draw-placeholder";
 
-    DrawPlaceholder(Function<void(GraphicsContext&)>&&);
-    ~DrawPlaceholder();
+    WEBCORE_EXPORT DrawPlaceholder(Function<void(GraphicsContext&)>&&);
+    WEBCORE_EXPORT ~DrawPlaceholder();
 
-    void apply(GraphicsContext&) const;
+    WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void LEGACY_NODELETE dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:

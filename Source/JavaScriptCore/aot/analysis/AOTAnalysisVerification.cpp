@@ -610,8 +610,13 @@ static bool checkEscapeAnalysis(Comparison& comparison, const Function& function
             && (!comparison.isSame(cached.liveInstancesOf(object), fresh.liveInstancesOf(object), "the number of live instances of {}, {}"_s, object, definition)
                 || !comparison.isSame(cached.objectsRenewedAtMakersOf(object), fresh.objectsRenewedAtMakersOf(object), "the objects renewed where {}, {}, is made"_s, object, definition)))
             return false;
+        auto listOf = [](ObjectUses uses) {
+            return Vector<ObjectUse>(uses.size(), [&](size_t index) {
+                return uses[index];
+            });
+        };
         if (!comparison.isSameList(cached.aliasesOf(object), fresh.aliasesOf(object), "the aliases of {}, {}"_s, object, definition)
-            || !comparison.isSameList(cached.usesOf(object), fresh.usesOf(object), "the uses of {}, {}"_s, object, definition)
+            || !comparison.isSameList(listOf(cached.usesOf(object)).span(), listOf(fresh.usesOf(object)).span(), "the uses of {}, {}"_s, object, definition)
             || !comparison.isSameList(cached.contentsOf(object), fresh.contentsOf(object), "the contents of {}, {}"_s, object, definition)
             || !comparison.isSameList(cached.containersOf(object), fresh.containersOf(object), "the containers of {}, {}"_s, object, definition))
             return false;

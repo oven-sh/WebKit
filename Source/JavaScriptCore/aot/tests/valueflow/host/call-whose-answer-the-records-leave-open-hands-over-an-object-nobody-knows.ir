@@ -1,5 +1,5 @@
 # Array.prototype.find.call(handedIn, take)
-# The receiver is an object nobody knows, so the call enters the library's function (runtimefunction 35) with it. The body reads members of it, and they may be accessors: code that nobody compiles may write.
+# The receiver is an object nobody knows, so the call enters the library's function (runtimefunction 34) with it. The body reads members of it, and they may be accessors: code that nobody compiles may write.
 # LIBRARY: own
 # RUN: valueflow-why flag=h6
 # CHECK: flag=h6
@@ -9,7 +9,7 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=35 function=f1
+runtimefunction id=ArrayPrototypeFind function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="handedIn" [isFreeName]
@@ -18,7 +18,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v4 = Call v3, v1, v2
     Return v4
 }
-function f1 name="find" role=Library flags=[HasThis] enclosingRuntimeFunction=35 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f1 name="find" role=Library flags=[HasThis] enclosingRuntimeFunction=ArrayPrototypeFind parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v3 = PropGet v0 key="length"
     v4 = Integer integer=0
     v5 = ElemGet v0, v4

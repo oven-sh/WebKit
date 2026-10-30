@@ -31,7 +31,7 @@ minutes where a round of CI takes 35. `node .github/scripts/lanes.mjs build <lab
 | `-DENABLE_AOT=0` among the compiler's flags, `-O0` | Every lane without `-aot` in its label. What the rest of JavaScriptCore calls outside `ENABLE(AOT)` has to be in `JavaScriptCore_AOT_SOURCES_WITHOUT_AOT` (`AOT.cmake`), or twenty lanes fail at the link | three minutes from nothing |
 | x64 glibc with ThinLTO, then the checks behind the link | `Tools/Scripts/check-classinfo-uniqueness.py`, `Tools/Scripts/aot/find-structures-decoded-behind-calls.py`, symbols newer than `GLIBC_2.31` | four minutes with a warm ThinLTO cache |
 
-Without any build, in seconds: `Tools/Scripts/aot/check-unified-sources.py` (names that two sources of one bundle declare) and `check-includes.py`.
+Without a whole build, in about a minute: `Tools/Scripts/aot/check-includes.py`.
 
 ## Things that have bitten
 

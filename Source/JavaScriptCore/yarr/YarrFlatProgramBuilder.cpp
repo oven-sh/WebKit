@@ -110,6 +110,7 @@ public:
             program->stepsPerCharacterBeforeStopping = program->stepsPerCharacterBeforeStoppingOnFullMachine;
         if (!m_countsTurns)
             computeStartScan(alternatives.span().first(count));
+        computeDirtyCaptureRanges();
 
         if (!program->text.isEmpty()) {
             for (unsigned i = 0; i < sizeof(uint64_t); ++i)
@@ -404,6 +405,83 @@ private:
         return result;
     }
 
+    template<typename Functor>
+    void forEachSuccessor(unsigned i, const Functor& functor) const
+    {
+        const FlatOp& op = m_program->ops[i];
+        switch (op.kind) {
+        case Kind::Choice:
+        case Kind::ChoiceByFirst:
+        case Kind::ChoiceByTable:
+        case Kind::GreedyLoopChoice:
+        case Kind::NegativeLookaheadBegin:
+        case Kind::JumpIfBelow:
+        case Kind::JumpIfNotBelow:
+        case Kind::NeedsInputElseJump:
+            functor(i + 1);
+            functor(op.target);
+            break;
+        case Kind::Jump:
+        case Kind::LoopBack:
+        case Kind::LoopBackUnlessEmpty:
+            functor(op.target);
+            break;
+        default:
+            functor(i + 1);
+            break;
+        }
+    }
+
+    static constexpr unsigned minGroupsForDirtyRanges = 8;
+
+    // Backtracking into a choice undoes what its earlier alternatives wrote, so a write only reaches the ops after it on a path through the ops.
+    void computeDirtyCaptureRanges()
+    {
+        bool mayRunOnFullMachine = m_program->needsFullMachine || m_program->decodesSurrogatePairs || m_program->captureKeyedMemoRows;
+        if (!mayRunOnFullMachine || m_program->triesOnlyOnce || m_program->numSubpatterns < minGroupsForDirtyRanges)
+            return;
+        auto& ops = m_program->ops;
+        using SlotRange = FlatProgram::SlotRange;
+        auto include = [](SlotRange& range, SlotRange other) {
+            if (other.begin == other.end)
+                return false;
+            SlotRange joined = range.begin == range.end ? other : SlotRange { std::min(range.begin, other.begin), std::max(range.end, other.end) };
+            bool changed = joined.begin != range.begin || joined.end != range.end;
+            range = joined;
+            return changed;
+        };
+        auto writtenBy = [](const FlatOp& op) -> SlotRange {
+            switch (op.kind) {
+            case Kind::CaptureStart:
+            case Kind::CaptureEnd:
+            case Kind::LoggedCaptureStart:
+            case Kind::LoggedCaptureEnd:
+                return { op.argument, op.argument + 1 };
+            case Kind::CaptureEmpty:
+            case Kind::CapturedRun:
+            case Kind::LoggedCaptureEmpty:
+            case Kind::LoggedCapturedRun:
+                return { op.argument, op.argument + 2 };
+            default:
+                return { };
+            }
+        };
+        Vector<SlotRange> ranges(ops.size() + 1);
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (unsigned i = 0; i < ops.size(); ++i) {
+                SlotRange after = ranges[i];
+                include(after, writtenBy(ops[i]));
+                forEachSuccessor(i, [&](unsigned successor) {
+                    changed |= include(ranges[successor], after) && successor <= i;
+                });
+            }
+        }
+        ranges.shrink(ops.size());
+        m_program->dirtyCaptureRanges = WTF::move(ranges);
+    }
+
     // An op with a single fixed-width path from the start of an attempt runs once per attempt, at a position where no other attempt runs it.
     struct SinglePathOp {
         bool hasSinglePath { false };
@@ -432,27 +510,9 @@ private:
         if (m_program->laterAttemptsBeginAt)
             ++predecessorCounts[m_program->laterAttemptsBeginAt];
         for (unsigned i = 0; i < ops.size(); ++i) {
-            switch (ops[i].kind) {
-            case Kind::Choice:
-            case Kind::ChoiceByFirst:
-            case Kind::ChoiceByTable:
-            case Kind::GreedyLoopChoice:
-            case Kind::NegativeLookaheadBegin:
-            case Kind::JumpIfBelow:
-            case Kind::JumpIfNotBelow:
-            case Kind::NeedsInputElseJump:
-                ++predecessorCounts[i + 1];
-                ++predecessorCounts[ops[i].target];
-                break;
-            case Kind::Jump:
-            case Kind::LoopBack:
-            case Kind::LoopBackUnlessEmpty:
-                ++predecessorCounts[ops[i].target];
-                break;
-            default:
-                ++predecessorCounts[i + 1];
-                break;
-            }
+            forEachSuccessor(i, [&](unsigned successor) {
+                ++predecessorCounts[successor];
+            });
         }
         Vector<std::pair<unsigned, uint64_t>, 8> worklist { { 0, 0 } };
         while (!worklist.isEmpty()) {
@@ -857,9 +917,18 @@ private:
         unsigned leastSizeOfMatch { 0 };
         unsigned termsLeftToVisit { maxTermsVisitedForStartTable };
         bool mayMatchOnlyAtInputStart { false };
+        std::optional<char32_t> onlyWideStart;
+        bool hasSeveralWideStarts { false };
+
+        void addWideStarts(char32_t begin, char32_t end)
+        {
+            hasSeveralWideStarts |= begin != end || (onlyWideStart && *onlyWideStart != begin);
+            onlyWideStart = begin;
+        }
 
         void allowAnythingFrom(unsigned place)
         {
+            hasSeveralWideStarts |= !place;
             depth = std::min(depth, std::max(place, leastSizeOfMatch));
             for (; place < depth; ++place) {
                 at[place].bits.fill(~0ull);
@@ -920,6 +989,12 @@ private:
                         collectStartOfMatch(start, alternative, i + 1, place, after);
                     addAll(start.at[place], *set);
                     start.mayBeWide[place] |= hasWideMembers;
+                    if (!place && hasWideMembers) {
+                        for (auto [begin, end] : m_pattern.m_firstFollowSets.set(term.m_matchedSet).ranges) {
+                            if (end > 0xff)
+                                start.addWideStarts(std::max<char32_t>(begin, 0x100), end);
+                        }
+                    }
                 }
                 break;
             }
@@ -994,6 +1069,10 @@ private:
         }
         if (firstCount == 1 && !start.mayBeWide[0] && start.depth == 1)
             m_program->startScan = FlatStartScan::OneCharacter;
+        if (firstCount == 1 && !start.mayBeWide[0])
+            m_program->onlyStart = m_program->onlyStartCharacter;
+        else if (!firstCount && start.mayBeWide[0] && !start.hasSeveralWideStarts)
+            m_program->onlyStart = start.onlyWideStart;
     }
 
     unsigned internSet(const CharacterClass* characterClass, bool invert, char32_t first, char32_t second)

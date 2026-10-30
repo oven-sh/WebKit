@@ -729,8 +729,21 @@ StringBuilderPlan StringBuilderStep::findWebs()
         bool wouldReadUnspecifiedFirstState = std::ranges::any_of(web.entries, [&](const StringWebEntry& entry) {
             return entry.edge && mayBeUnfilled(entry.value);
         });
+        // A builder copies the characters at once. Where each iteration of a loop makes a new string and none reads it, that is a copy per iteration for nothing.
+        auto isBegunInLoopThatDoesNotRead = [&](const StringWebEntry& entry) {
+            BlockID block = entry.edge ? entry.edge->from : useLists.blockOf(entry.concatenation);
+            return cycles.isInCycle(block) && std::ranges::none_of(web.reads, [&](const StringStateRead& read) {
+                return read.kind == StringStateUse::Read && cycles.areInSameCycle(read.use.block, block);
+            });
+        };
+        bool beginsInLoopThatDoesNotRead = false;
+        if (std::ranges::any_of(web.entries, isBegunInLoopThatDoesNotRead) && !isPartOfOtherWeb(static_cast<uint32_t>(&web - webs.span().data()))) {
+            if (!textCycles)
+                findTextCycles();
+            beginsInLoopThatDoesNotRead = std::ranges::none_of(web.members, [&](ValueID member) { return textCycles->isInCycle.get(member.index()); });
+        }
         if (!wouldReadUnspecifiedFirstState)
-            web.decision = web.hasTooFewAppends ? StringBuilderDeclineReason::TooFewAppends : StringBuilderDeclineReason::Created;
+            web.decision = web.hasTooFewAppends || beginsInLoopThatDoesNotRead ? StringBuilderDeclineReason::TooFewAppends : StringBuilderDeclineReason::Created;
         if (web.decision != StringBuilderDeclineReason::Created)
             web.decidedAt = web.members.first();
     }

@@ -17,6 +17,7 @@
 #include "AOTGenerator.h"
 #include "AOTImageFormat.h"
 #include "AOTInstance.h"
+#include "AOTLoadedObject.h"
 #include "AOTModules.h"
 #include "AOTOperationData.h"
 #include "AOTProgramTables.h"
@@ -33,10 +34,6 @@
 #include <bit>
 #include <utility>
 #include <wtf/TZoneMallocInlines.h>
-
-#if defined(BUN_HARDENED)
-#include <link.h>
-#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -86,32 +83,6 @@ static bool isOperationReturnSite(const CodeLocation& location)
     return location.kind == CodeKind::Function || (location.kind == CodeKind::Stub && !entersCallee(location.stubFrameKind));
 }
 
-#if defined(BUN_HARDENED)
-
-static bool isInCodeOfEngine(const void* address)
-{
-    struct Segments {
-        std::array<std::pair<uintptr_t, uintptr_t>, 4> startAndSize { };
-    };
-    static const Segments segments = [] {
-        Segments result;
-        // The program itself comes first.
-        dl_iterate_phdr([](dl_phdr_info* info, size_t, void* data) {
-            size_t count = 0;
-            auto& found = static_cast<Segments*>(data)->startAndSize;
-            for (const auto& header : std::span { info->dlpi_phdr, info->dlpi_phnum }) {
-                if (header.p_type == PT_LOAD && (header.p_flags & PF_X) && count < found.size())
-                    found[count++] = { info->dlpi_addr + header.p_vaddr, header.p_memsz };
-            }
-            return 1;
-        }, &result);
-        return result;
-    }();
-    return std::ranges::any_of(segments.startAndSize, [&](auto segment) {
-        return std::bit_cast<uintptr_t>(address) - segment.first < segment.second;
-    });
-}
-
 static bool callEndsAt(std::span<const uint8_t> code, const void* address)
 {
     size_t offset = static_cast<const uint8_t*>(address) - code.data();
@@ -136,6 +107,28 @@ static bool callEndsAt(std::span<const uint8_t> code, const void* address)
 #else
 #error "Not implemented on this CPU"
 #endif
+}
+
+#if defined(BUN_HARDENED)
+
+static bool isInCodeOfEngine(const void* address)
+{
+    struct Segments {
+        std::array<std::pair<uintptr_t, uintptr_t>, 4> startAndSize { };
+    };
+    static const Segments segments = [] {
+        Segments result;
+        size_t count = 0;
+        const LoadedObject& executable = loadedExecutable();
+        for (const ProgramHeader& header : executable.programHeaders) {
+            if (header.p_type == PT_LOAD && (header.p_flags & PF_X) && count < result.startAndSize.size())
+                result.startAndSize[count++] = { executable.loadBias + header.p_vaddr, header.p_memsz };
+        }
+        return result;
+    }();
+    return std::ranges::any_of(segments.startAndSize, [&](auto segment) {
+        return std::bit_cast<uintptr_t>(address) - segment.first < segment.second;
+    });
 }
 
 // The fault handler enters a stub as if the instruction that faulted had called it.
@@ -225,10 +218,15 @@ Instance* CompiledFrameIterator::tryFindInstance() const
     return state.instances.first();
 }
 
+bool leavesByTailCall(BuiltinID builtin)
+{
+    return builtin == Builtins::FunctionPrototypeCall || builtin == Builtins::FunctionPrototypeApply;
+}
+
 LogicalFrame innermostLogicalFrame(const Image& image, InlineFrameReader& reader, const LogicalFrameSite& site)
 {
     if (site.calledBuiltin)
-        return { functionInFramesOf(site.calledBuiltin), site.callSite, site.inlineFrame, false, false, true, site.isTailDeleted };
+        return { functionInFramesOf(site.calledBuiltin), site.callSite, site.inlineFrame, false, site.calleeWasEntered && leavesByTailCall(site.calledBuiltin), true, site.isTailDeleted };
     if (!site.inlineFrame)
         return { image.rootFunctionOf(site.code.index()), site.callSite, 0, false, site.isTailDeleted };
     const InlineFrameRecord& record = reader.at(image, site.code.index(), site.inlineFrame);
@@ -264,20 +262,20 @@ static bool isFormThatLeftByTailCall(FunctionID candidate, FunctionID sourceFunc
     return leftByTailCall && FunctionDescription(candidate).sourceFunction() == sourceFunction;
 }
 
-bool isCopiedForOwnFunctionObject(const Image& image, InlineFrameReader& reader, CompiledFunctionID code, LogicalFrame frame)
+std::optional<CalleeOfSite> calleeOfCopiedFrame(const Image& image, InlineFrameReader& reader, CompiledFunctionID code, LogicalFrame frame)
 {
     if (frame.isOfCalledBuiltin || !frame.inlineFrame)
-        return false;
+        return std::nullopt;
     FunctionID source = FunctionDescription(frame.function).sourceFunction();
     while (frame.inlineFrame) {
         InlineFrameRecord record = reader.at(image, code.index(), frame.inlineFrame);
-        if (image.callsOwnFunctionObjectAt(code.index(), record.callSite))
-            return true;
+        if (std::optional<CalleeOfSite> callee = image.calleeOfSiteAt(code.index(), record.callSite))
+            return callee;
         frame = callerOfInlinedFrame(image, reader, code, frame);
         if (!isEntrypointOf(frame.function, source) && !isFormThatLeftByTailCall(frame.function, source, record.isTailCall))
-            return false;
+            return std::nullopt;
     }
-    return false;
+    return std::nullopt;
 }
 
 bool hasOnlyEntrypointsBelow(const Image& image, InlineFrameReader& reader, CompiledFunctionID code, LogicalFrame frame, FunctionID source)
@@ -484,6 +482,7 @@ const CallSiteCache::Entry* CompiledFrameIterator::findFunctionFrame(Cursor& cur
         case StubFrameKind::InHostCallFrame:
             RELEASE_ASSERT_NOT_REACHED();
         case StubFrameKind::Plain:
+        case StubFrameKind::ReturnsAfterOperation:
         case StubFrameKind::ArgumentList:
         case StubFrameKind::HostCall:
         case StubFrameKind::BelowSpilledArguments:
@@ -535,6 +534,8 @@ void CompiledFrameIterator::enterMachineFrame(const CallSiteCache::Entry* entry)
         return;
     }
     m_callSite = *entry;
+    if (!m_codeAbove || !entry->isOfEntrypointAtTailCall())
+        m_codeAbove = entry->code;
     m_hasReadFrame = false;
     if (!m_instance) [[unlikely]] {
         m_instance = tryFindInstance();
@@ -548,6 +549,8 @@ void CompiledFrameIterator::readFrame() const
     CallSiteIndex site = m_cursor.isAtFirstReadSite && entry.site.firstReadSite ? *entry.site.firstReadSite : entry.site.callSite;
     m_frame = { m_instance, m_cursor.callFrame, removeCodePtrTag(m_cursor.rawPC), entry.code, entry.innermostFunction, site, entry.site.inlineFrame, entry.innermostVisibility, entry.site.isTailDeleted(m_calleeWasEntered) };
     m_frame.calledBuiltin = entry.site.calledBuiltin;
+    if (m_calleeWasEntered && m_frame.calledBuiltin && leavesByTailCall(m_frame.calledBuiltin))
+        m_frame.calledBuiltin = { };
     if (m_cursor.isAmongFramesThatWait) {
         m_frame.visibility = TraceVisibility::Hidden;
         m_frame.calledBuiltin = { };
@@ -568,9 +571,9 @@ std::optional<TraceFrame> CompiledFrameIterator::findConstructedFunctionThatLeft
         constructed = runEnd.constructedFunction();
     else if (caller->site.isConstruct())
         constructed = functionConstructedAt(*m_image, *caller, cursor.plainFunctionConstructFrame);
-    if (!constructed || isCodeOf(*m_image, m_callSite.code, constructed))
+    if (!constructed || isCodeOf(*m_image, m_codeAbove, constructed))
         return std::nullopt;
-    return frameOfConstructedFunctionThatLeft(*m_image, constructed, m_callSite.code);
+    return frameOfConstructedFunctionThatLeft(*m_image, constructed, m_codeAbove);
 }
 
 void CompiledFrameIterator::listConstructedFunctionsThatLeft()
@@ -690,14 +693,17 @@ bool CompiledFrameIterator::isConstructCall()
 std::optional<JSObject*> CompiledFrameIterator::recordedCallee()
 {
     FunctionTables& tables = FunctionTables::of(*m_vm);
-    if (!tables.hasRecordedCallees() && !tables.recordsCalleesOfCallsByValue()) [[likely]]
+    if (!tables.framesMayBeNamedByCallee()) [[likely]]
         return std::nullopt;
 
     // The entrypoint records the callee. Its frame, or the one that took its place in a tail call, is the outermost of the hidden frames of the function.
     FunctionID source = FunctionDescription(frame().function).sourceFunction();
     LogicalFrame logical { m_frame.function, m_frame.callSite, m_frame.inlineFrame, m_isInlinedConstructCall, m_frame.isTailDeleted };
-    if (isCopiedForOwnFunctionObject(*m_image, m_inlineFrames, m_frame.code, logical))
-        return nullptr;
+    auto calleeSaidBy = [&](CalleeOfSite callee, const CallFrame* machineFrame) -> std::optional<JSObject*> {
+        return callee.isOwnFunctionObject() ? nullptr : tables.calleeKeptInFrame(*m_vm, machineFrame, callee, source);
+    };
+    if (std::optional<CalleeOfSite> callee = calleeOfCopiedFrame(*m_image, m_inlineFrames, m_frame.code, logical))
+        return calleeSaidBy(*callee, m_cursor.callFrame);
     if (!hasOnlyEntrypointsBelow(*m_image, m_inlineFrames, m_frame.code, logical, source))
         return std::nullopt;
 
@@ -706,14 +712,14 @@ std::optional<JSObject*> CompiledFrameIterator::recordedCallee()
     RunEnd runEnd;
     const void* stackPointer = callerStackPointer();
     while (const CallSiteCache::Entry* entry = findCallerFunctionFrame(cursor, exit, runEnd)) {
-        if (entry->callsOwnFunctionObject)
-            return nullptr;
+        if (entry->hasRecordedCallee)
+            return calleeSaidBy(*m_image->calleeOfSiteAt(entry->code.index(), entry->site.callSite), cursor.callFrame);
         // A function object of the same function that is called by value in tail position has a record of its own.
         if (!isEntrypointOf(entry->innermostFunction, source) && (!isFormThatLeftByTailCall(entry->innermostFunction, source, entry->site.isTailCall()) || tables.recordedCalleeOfCallFrom(stackPointer, source)))
             break;
         LogicalFrame caller { entry->innermostFunction, entry->site.callSite, entry->site.inlineFrame, entry->innermostIsInlinedConstructCall, false };
-        if (isCopiedForOwnFunctionObject(*m_image, m_inlineFrames, entry->code, caller))
-            return nullptr;
+        if (std::optional<CalleeOfSite> callee = calleeOfCopiedFrame(*m_image, m_inlineFrames, entry->code, caller))
+            return calleeSaidBy(*callee, cursor.callFrame);
         if (!hasOnlyEntrypointsBelow(*m_image, m_inlineFrames, entry->code, caller, source))
             break;
         stackPointer = AOT::stackPointerOfCaller(cursor.callFrame, cursor.bytesAboveReturnAddress);
@@ -805,25 +811,164 @@ static SUPPRESS_ASAN SampledTop findTopInCompiledCode(const Image& image, const 
     return result;
 }
 
+// Native code may sign the return addresses that it holds.
+static ALWAYS_INLINE const void* removeSignature(const void* returnAddress)
+{
+#if CPU(ARM64) && !OS(DARWIN)
+    return std::bit_cast<const void*>(std::bit_cast<uintptr_t>(returnAddress) & ((1ULL << OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH)) - 1));
+#else
+    return removeCodePtrTag(returnAddress);
+#endif
+}
+
+// The function that a call entered, if the call records it.
+struct CalleeOfCall {
+    bool names(const CodeLocation& site) const { return function && site.kind == CodeKind::Function && site.function == *function; }
+
+    bool mayBeFunction { false };
+    // For a call that names its callee.
+    std::optional<uint32_t> function { };
+};
+
+static bool callsFunction(StubFrameKind kind)
+{
+    switch (kind) {
+    case StubFrameKind::Adapter:
+    case StubFrameKind::ConstructAdapter:
+    case StubFrameKind::SavedFrameAdapter:
+    case StubFrameKind::HandlerOfJob:
+    case StubFrameKind::GeneratorBody:
+    case StubFrameKind::AsyncGeneratorBody:
+    case StubFrameKind::ArgumentList:
+    case StubFrameKind::PlainFunctionConstruct:
+        return true;
+    case StubFrameKind::Plain:
+    case StubFrameKind::ReturnsAfterOperation:
+    case StubFrameKind::EngineCallee:
+    case StubFrameKind::HostCall:
+    case StubFrameKind::FirstOfTwoReads:
+    case StubFrameKind::MethodRead:
+    case StubFrameKind::BelowSpilledArguments:
+    case StubFrameKind::AtStubEntry:
+    case StubFrameKind::InHostCallFrame:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// x86-64 only. A function calls another by address, through a register, or through a stub that receives the callee the way a function does.
+// Any other stub does the work itself or continues into native code.
+static CalleeOfCall findCalleeOfCallEndingAt(const Image& image, const CodeLocation& returnSite, const void* returnAddress)
+{
+    if (returnSite.kind != CodeKind::Function)
+        return { callsFunction(returnSite.stubFrameKind) };
+    constexpr uint8_t opcodeOfNearCall = 0xe8;
+    constexpr uint8_t opcodeOfGroup5 = 0xff;
+    auto* end = static_cast<const uint8_t*>(returnAddress);
+    if (returnSite.offset >= sizeOfNearCall && end[-static_cast<ptrdiff_t>(sizeOfNearCall)] == opcodeOfNearCall) {
+        int32_t distance;
+        memcpy(&distance, end - sizeof(distance), sizeof(distance));
+        CodeLocation target = image.locate(std::bit_cast<const void*>(std::bit_cast<uintptr_t>(end) + distance));
+        if (target.kind == CodeKind::Function)
+            return { true, target.function };
+        if (target.kind != CodeKind::NotInImage)
+            return { target.kind == CodeKind::Stub && image.usesCallConvention(target.offset) };
+    }
+    return { returnSite.offset >= 2 && end[-2] == opcodeOfGroup5 && end[-1] >> 3 == 0x1a };
+}
+
+// stackPointer is the register's value at the site.
+struct FrameAtSite {
+    CodeLocation site;
+    const void* stackPointer;
+};
+
+// The frame whose record is at that address: the given frame, or the first one above it that has a record. nullopt if that frame's record is elsewhere.
+static SUPPRESS_ASAN std::optional<FrameAtSite> findFrameWithRecordAt(const Image& image, FrameAtSite frameAtSite, const CallFrame* frameRecord)
+{
+    while (true) {
+        auto [site, stackPointer] = frameAtSite;
+        bool isFunction = site.kind == CodeKind::Function;
+        ImageFrame frame = isFunction ? image.frameAtReturnOffset(site.function, site.offset) : frameAtStubReturnSite(site.stubFrameKind);
+        if (frame.hasFrameRecord()) {
+            if (std::bit_cast<uintptr_t>(stackPointer) + frame.frameSizeInBytes() - frame.bytesAboveFrameRecord() != std::bit_cast<uintptr_t>(frameRecord))
+                return std::nullopt;
+            return frameAtSite;
+        }
+        CallFrame* callFrame = frameAtReturnSite(frame, stackPointer, nullptr);
+        if (callFrame >= frameRecord)
+            return std::nullopt;
+        const void* returnAddress = removeCodePtrTag(reinterpret_cast<const CallerFrameAndPC*>(callFrame)->returnPC);
+        CodeLocation caller = image.locate(returnAddress);
+        if (!caller.runsCompiledCode() || !callEndsAt(image.code(), returnAddress))
+            return std::nullopt;
+        if (isFunction) {
+            CalleeOfCall callee = findCalleeOfCallEndingAt(image, caller, returnAddress);
+            if (!callee.mayBeFunction || (callee.function && !callee.names(site)))
+                return std::nullopt;
+        }
+        frameAtSite = { caller, stackPointerOfCaller(callFrame, isFunction ? bytesAboveReturnAddressOf(frame) : bytesAboveReturnAddressOf(site.stubFrameKind)) };
+    }
+}
+
+// Native code need not keep frame records. The first record above such code belongs to the compiled function that called it, or to one of that function's callers.
+// Only where a call pushes its return address: the caller's frame ends right above that word, so the frame size tells whether the record is the caller's own.
+// A function that has returned leaves stale return addresses behind, and the next callee puts its record where that function's was, so the call sites decide. The word follows a call
+// into native code. If the call that the record returns to also goes to native code, the record belongs to the native code; if it names its callee, that function's word
+// is the right one. A word of a function that it does not name is accepted only if no other frame size fits: the function there pushed one, and frames of one size end at one word.
+static SUPPRESS_ASAN std::optional<SampledTop> findCallerOfCodeWithoutFrameRecord(const Image& image, const SuspendedThreadStack& stack, const void* stackPointer, CallFrame* frameRecord, const CodeLocation& returnSite, const void* returnAddress)
+{
+    if (!isX86_64() || !stack.contains(stackPointer))
+        return std::nullopt;
+    CalleeOfCall callee = findCalleeOfCallEndingAt(image, returnSite, returnAddress);
+    if (!callee.mayBeFunction)
+        return std::nullopt;
+    std::optional<SampledTop> caller;
+    const void* endOfFrameWithRecord = nullptr;
+    bool framesOfSeveralSizesFit = false;
+    for (auto* word = static_cast<void* const*>(stackPointer); std::bit_cast<uintptr_t>(word) < std::bit_cast<uintptr_t>(frameRecord); ++word) {
+        CodeLocation site = image.locate(*word);
+        if (site.kind != CodeKind::Function || !callEndsAt(image.code(), *word) || findCalleeOfCallEndingAt(image, site, *word).mayBeFunction)
+            continue;
+        std::optional<FrameAtSite> frameWithRecord = findFrameWithRecordAt(image, { site, word + 1 }, frameRecord);
+        if (!frameWithRecord)
+            continue;
+        if (callee.names(frameWithRecord->site))
+            return sampledTopAtReturnSite(image, site, *word, word + 1, frameRecord);
+        if (!caller) {
+            caller = sampledTopAtReturnSite(image, site, *word, word + 1, frameRecord);
+            endOfFrameWithRecord = frameWithRecord->stackPointer;
+        } else if (frameWithRecord->stackPointer != endOfFrameWithRecord)
+            framesOfSeveralSizesFit = true;
+    }
+    return framesOfSeveralSizesFit ? std::nullopt : caller;
+}
+
 static SUPPRESS_ASAN std::optional<SampledTop> findTopBelowNativeCode(const Image& image, const SampledRegisters& registers, CallFrame* topCallFrame, const SuspendedThreadStack& stack)
 {
     auto* frame = static_cast<CallFrame*>(registers.framePointer);
-    if (registers.linkRegister && stack.contains(frame)
-        && removeCodePtrTag(reinterpret_cast<const CallerFrameAndPC*>(frame)->returnPC) != registers.linkRegister
-        && image.locate(registers.linkRegister).runsCompiledCode())
-        return SampledTop { frame, registers.linkRegister, nullptr };
+    const void* linkRegister = removeSignature(registers.linkRegister);
+    if (linkRegister && stack.contains(frame)
+        && removeSignature(reinterpret_cast<const CallerFrameAndPC*>(frame)->returnPC) != linkRegister
+        && image.locate(linkRegister).runsCompiledCode())
+        return SampledTop { frame, linkRegister, nullptr };
     const void* pc = registers.pc;
+    const void* endOfFrameBelow = registers.stackPointer;
     while (stack.contains(frame)) {
         auto* record = reinterpret_cast<const CallerFrameAndPC*>(frame);
-        const void* returnAddress = removeCodePtrTag(record->returnPC);
+        const void* returnAddress = removeSignature(record->returnPC);
         CodeLocation returnSite = image.locate(returnAddress);
         if (frame == topCallFrame && !isOperationReturnSite(returnSite))
             return SampledTop { topCallFrame, pc, nullptr };
-        if (returnSite.runsCompiledCode())
+        if (returnSite.runsCompiledCode()) {
+            if (auto caller = findCallerOfCodeWithoutFrameRecord(image, stack, endOfFrameBelow, frame, returnSite, returnAddress))
+                return caller;
             return sampledTopAtReturnSite(image, returnSite, returnAddress, stackPointerOfCaller(frame), record->callerFrame);
+        }
         if (record->callerFrame <= frame)
             break;
         pc = returnAddress;
+        endOfFrameBelow = stackPointerOfCaller(frame);
         frame = record->callerFrame;
     }
     return std::nullopt;
@@ -861,11 +1006,24 @@ OutermostVisibleFunction findOutermostVisibleFunction(const Image& image, Inline
     if (!site.isTailCall() && !site.inlineFrame && entry.innermostVisibility == TraceVisibility::Visible) [[likely]]
         return OutermostVisibleFunction::Listed;
     auto outermost = OutermostVisibleFunction::None;
-    for (LogicalFrame frame = innermostLogicalFrame(image, reader, { entry.code, site.callSite, site.inlineFrame, site.isTailDeleted(calleeWasEntered), site.calledBuiltin });; frame = callerOfInlinedFrame(image, reader, entry.code, frame)) {
+    for (LogicalFrame frame = innermostLogicalFrame(image, reader, { entry.code, site.callSite, site.inlineFrame, site.isTailDeleted(calleeWasEntered), site.calledBuiltin, calleeWasEntered });; frame = callerOfInlinedFrame(image, reader, entry.code, frame)) {
         if (FunctionDescription(frame.function).visibility() == TraceVisibility::Visible)
             outermost = frame.isTailDeleted ? OutermostVisibleFunction::HiddenBehindTailCall : OutermostVisibleFunction::Listed;
         if (!frame.hasCallerInMachineFrame())
             return outermost;
+    }
+}
+
+static void noteInlinedFramesWithRecordedCallees(const Image& image, InlineFrameReader& reader, CallSiteCache::Entry& entry, LogicalFrame frame)
+{
+    if (!image.hasCalleesOfSites(entry.code.index()))
+        return;
+    for (; frame.inlineFrame; frame = callerOfInlinedFrame(image, reader, entry.code, frame)) {
+        if (!image.calleeOfSiteAt(entry.code.index(), reader.at(image, entry.code.index(), frame.inlineFrame).callSite))
+            continue;
+        FunctionDescription description(frame.function);
+        entry.hasInlinedFrameRecordingCallee |= description.recordsCallee();
+        entry.hasInlinedFrameRecordingCalleeOnceRenamed |= description.recordsCalleeOnceRenamed();
     }
 }
 
@@ -889,8 +1047,10 @@ static CallSiteCache::Entry createFunctionEntry(const Image& image, InlineFrameR
     FunctionDescription innermostDescription(innermost.function);
     entry.innermostVisibility = innermostDescription.visibility();
     entry.innermostIsAsync = innermostDescription.isAsync();
-    entry.callsOwnFunctionObject = image.callsOwnFunctionObjectAt(location.function, entry.site.callSite);
+    entry.hasRecordedCallee = image.calleeOfSiteAt(location.function, entry.site.callSite).has_value();
     entry.namesConstructedCallee = image.constructedCalleeAt(location.function, entry.site.callSite).has_value();
+    noteInlinedFramesWithRecordedCallees(image, reader, entry, innermost);
+    entry.namesTailCallingBuiltin = entry.site.calledBuiltin && leavesByTailCall(entry.site.calledBuiltin);
     entry.outermostVisibleFunction = findOutermostVisibleFunction(image, reader, entry, true);
     entry.shownFrameCount = countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(true), entry.site.isTailCall());
     entry.shownFrameCountOnTop = std::min<uint16_t>(countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(false), false), CallSiteCache::Entry::tooManyFramesToCount);

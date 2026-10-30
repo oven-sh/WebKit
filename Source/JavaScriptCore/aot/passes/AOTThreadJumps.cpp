@@ -466,11 +466,16 @@ struct EdgeThreader : Rewrite {
         });
 
         // A constant that stands beside the test is no reason to pass through the block: it is made again where it is used.
+        // So is what a decided test left there, a cast of a value from above the block behind a fact. It has no code.
+        auto isCastLeftByTest = [&](const Block& block, const Value& cast) {
+            return cast.opcode == Opcode::AssumeType && cast.factOperand() && at(cast.factOperand()).opcode == Opcode::Specified
+                && !block.parameters.contains(cast.valueOperand()) && !block.values.contains(cast.valueOperand());
+        };
         const UseLists& useListsBeforeCopies = analyses.useLists();
         Vector<std::tuple<Use, ValueID, ProgramPoint>, 8> usesOutsideBlocks;
         for (BlockID candidate : candidates) {
             for (ValueID id : at(candidate).values) {
-                if (!isRematerializable(at(id)))
+                if (!isRematerializable(at(id)) && !isCastLeftByTest(at(candidate), at(id)))
                     continue;
                 for (const Use& use : useListsBeforeCopies.usesOf(id)) {
                     bool hasPointInBlock = use.kind == Use::Kind::Operand || use.kind == Use::Kind::TerminatorOperand || use.kind == Use::Kind::EdgeArgument;
@@ -480,8 +485,12 @@ struct EdgeThreader : Rewrite {
             }
         }
         // The first insertion ends the life of the use lists.
-        for (const auto& [use, constant, point] : usesOutsideBlocks)
-            replaceUse(use, insertBefore(point, at(constant).origin(), Value(at(constant))));
+        for (const auto& [use, original, point] : usesOutsideBlocks) {
+            Value copy(at(original));
+            if (copy.opcode == Opcode::AssumeType)
+                copy.setFactOperand(insertBefore(point, copy.origin(), Value(Opcode::Specified)));
+            replaceUse(use, insertBefore(point, copy.origin(), WTF::move(copy)));
+        }
         if (!usesOutsideBlocks.isEmpty()) {
             builder().applyInsertions();
             // The builder reports the copies, not the uses that now name them.
@@ -668,23 +677,32 @@ struct EdgeThreader : Rewrite {
             const Block& block = at(id);
             if (leadsToOneBlock(block.terminator))
                 joinsThatLeadToOneBlock.append(id);
-            if (isLoopHeader(cfg, id) || block.terminator.kind != TerminatorKind::Branch || block.isHandlerBlock() || hasEdgeTo(block.terminator, id) || block.frequency.predicted() != BlockFrequency::Normal)
+            if (isLoopHeader(cfg, id) || block.isHandlerBlock() || hasEdgeTo(block.terminator, id) || block.frequency.predicted() != BlockFrequency::Normal)
                 return false;
-            ValueID condition = block.terminator.conditionOperand();
+            ValueID condition = valueTestedBy(block.terminator);
+            if (!condition)
+                return false;
+            // A finally block's statements come before the dispatch on how to continue, and every predecessor determines which way that goes.
+            // What such a block creates for later code would be merged again there, and nothing is known about a closure or object that comes out of a merge.
+            bool choosesByParameter = block.parameters.contains(condition)
+                && !std::ranges::all_of(block.values, [&](ValueID value) { return analyses.isRemovableWhenUnused(value); })
+                && std::ranges::all_of(block.values, [&](ValueID value) { return std::ranges::all_of(analyses.useLists().usesOf(value), [&](const Use& use) { return use.block == id; }); });
             const Value& test = at(condition);
-            if (test.opcode != Opcode::TypeTest || !block.values.contains(condition) || !block.parameters.contains(test.valueOperand()))
+            bool testsParameter = block.terminator.kind == TerminatorKind::Branch && test.opcode == Opcode::TypeTest && block.values.contains(condition) && block.parameters.contains(test.valueOperand());
+            if (!choosesByParameter && !testsParameter)
                 return false;
             size_t numberOfCopies = cfg.incomingEdges(id).size() - 1;
             if (context.exceeds(LimitID::MaxThreadedBlockValues, block.values.size() * numberOfCopies, condition))
                 return false;
             if (RegionCloner::checkCanDuplicate(analyses, singleElementSpan(id)) != CloneCheck::CanClone)
                 return false;
-            const Type& tested = context.types.at(test.testedType());
             return std::ranges::all_of(cfg.incomingEdges(id), [&](Edge edge) {
                 if (!canRedirect(edge))
                     return false;
-                const Type& passed = typeOf(substituteParameter(block, test.valueOperand(), targetOf(function, edge).arguments));
-                return evaluateTypeTest(program, passed, tested) != KnownBoolean::Unknown;
+                const Arguments& passed = targetOf(function, edge).arguments;
+                if (choosesByParameter)
+                    return decidedTargetOf(block.terminator, knownValueOf(program, function, substituteParameter(block, condition, passed))).has_value();
+                return evaluateTypeTest(program, typeOf(substituteParameter(block, test.valueOperand(), passed)), context.types.at(test.testedType())) != KnownBoolean::Unknown;
             });
         });
         if (!hasCandidates)

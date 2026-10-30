@@ -103,7 +103,7 @@ struct ImageSymbolInputs {
 
 void reportLinkFailure(LinkFailure, FunctionID, BuildContext&);
 BuiltImage buildImage(ImageInputs&&, BuildContext&);
-OptionSet<ImageFlag> flagsForUnseenCode(const Typed::PipelineOutput&);
+OptionSet<ImageFlag> flagsForUnseenCode(const Typed::PipelineOutput&, const CompileOptions&);
 void orderFunctions(LinkedFunctions&, const Typed::PipelineOutput&, BuildContext&);
 ResolvedCallees resolveCallees(const LinkedFunctions&, const CodeIndex&, std::span<const EntryAlias>, BuildContext&);
 SideTables encodeSideTables(const LinkedFunctions&, std::span<const Vector<uint8_t>> callSites, BuildContext&);

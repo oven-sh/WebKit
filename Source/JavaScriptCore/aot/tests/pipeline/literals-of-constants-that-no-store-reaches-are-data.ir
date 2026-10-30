@@ -99,5 +99,5 @@ function f6 name="readWhereItIsMade" module=m0 parameters=[{type=anything}] resu
 # CHECK-NEXT: = Data data=d2
 # CHECK: = GetArrayElement {{*}}level=Proven
 # CHECK: data d0 root=Array{contents=int[1, 3] elements=[Number{value=1}, Number{value=2}, Number{value=3}]}
-# CHECK-NEXT: data d1 root=Array{contents=string elements=[String{value="first"}, String{value="second"}]}
+# CHECK-NEXT: data d1 root=Array{contents="first"|"second" elements=[String{value="first"}, String{value="second"}]}
 # CHECK-NEXT: data d2 root=Array{contents=int[10, 11] elements=[Number{value=10}, Number{value=11}]}

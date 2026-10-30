@@ -3,16 +3,18 @@
 # OPTIONS: report=Declines heat=OnlyLoopsAreHot
 # RUN: pass FuseArrayChains
 # RUN(DECLINES): pass FuseArrayChains
-# STATISTIC: ArrayChainsFused = 14
+# STATISTIC: ArrayChainsFused = 12
 # CHECK: outcome: Changed
 # DECLINES: outcome: Changed
 # DECLINES: decline ArrayChainNotFused f17 v7 None [0] reason=SourceIsNotPristine
 # DECLINES: decline ArrayChainNotFused f19 v7 None [0] reason=CallbackIsNotAFunction
 # DECLINES: decline ArrayChainNotFused f20 v7 None [0] reason=CalleeIsUnknown
+# DECLINES: decline ArrayChainNotFused f21 v7 None [0] reason=CallbacksInterfere
 # DECLINES: decline ArrayChainNotFused f22 v7 None [0] reason=CallbackSeesIntermediateArray
 # DECLINES: decline ArrayChainNotFused f25 v7 None [0] reason=CallbackSeesIntermediateArray
 # DECLINES: decline ArrayChainNotFused f26 v7 None [0] reason=CallbacksInterfere
 # DECLINES: decline ArrayChainNotFused f28 v7 None [0] reason=CallbacksInterfere
+# DECLINES: decline ArrayChainNotFused f29 v8 None [0] reason=CallbacksInterfere
 # DECLINES: decline ArrayChainNotFused f30 v7 None [0] reason=SkippedCallIsObservable
 # DECLINES: decline ArrayChainNotFused f31 v7 None [0] reason=SkippedCallIsObservable
 # DECLINES: decline ArrayChainNotFused f33 v7 None [0] reason=CallbackWritesSource
@@ -20,44 +22,47 @@
 # DECLINES: decline ArrayChainNotFused f37 v9 None [0] reason=ValueBetweenLinksInterferes
 # DECLINES: decline ArrayChainNotFused f38 v10 None [0] reason=ValueBetweenLinksInterferes
 # DECLINES: decline ArrayChainNotFused f43 v6 None [0] reason=CallbackWritesSource
+# DECLINES: decline ArrayChainNotFused f45 v7 None [0] reason=CallbacksInterfere
 # DECLINES: decline ArrayChainNotFused f46 v11 None [0] reason=CallbackWritesSource
+# DECLINES: decline ArrayChainNotFused f47 v8 None [0] reason=SkippedCallIsObservable
+# DECLINES: decline ArrayChainNotFused f50 v8 None [0] reason=CallbacksInterfere
 # DECLINES-NOT: decline
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Row" fields=[{key="id" declared={type=number}}]
 variable g0 name="stored" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="callback" module=m0 declared={type=anything} initialization=Undefined
-runtimefunction id=33 function=f1
-runtimefunction id=35 function=f2
-runtimefunction id=44 function=f3
-runtimefunction id=65 function=f4
-runtimefunction id=131091 function=f0
-function f0 name="traverseArray" role=Library enclosingRuntimeFunction=131091 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+runtimefunction id=ArrayPrototypeFilter function=f1
+runtimefunction id=ArrayPrototypeFind function=f2
+runtimefunction id=ArrayPrototypeForEach function=f3
+runtimefunction id=ArrayPrototypeMap function=f4
+runtimefunction id=ArrayTraversalTraverseArray function=f0
+function f0 name="traverseArray" role=Library enclosingRuntimeFunction=ArrayTraversalTraverseArray parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
     v6 = Undefined
     Return v6
 }
-function f1 name="filter" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=33 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="filter" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeFilter thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f2 name="find" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=35 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f2 name="find" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeFind thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f3 name="forEach" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=44 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f3 name="forEach" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeForEach thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f4 name="map" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f4 name="map" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
@@ -184,6 +189,7 @@ function f20 name="unknownSecondCallee" parameters=[{type=Array<number, proven, 
 # CHECK: v7: anything = CallDirect v5, v1, {{*}} function=f4
 }
 
+# The frame of the second callback may find no room at the first element. By then the first callback has run for every element, whatever it does there.
 function f21 name="unknownFirstCallee" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=function}] results=[{type=anything}] {
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
@@ -193,13 +199,8 @@ function f21 name="unknownFirstCallee" parameters=[{type=Array<number, proven, p
     v7 = CallDirect v4, v5, v6 function=f4
     v8 = AssumeType v7 provenType=Array<number>
     Return v8
-# CHECK-NOT: = CallDirect v0, v1, v2 function=
-# CHECK-NOT: = CallDirect v4, v5, v6 function=
-# CHECK: [[zero21]]: 0 = Integer
-# CHECK-NEXT: [[none21]]: undefined = Undefined
-# CHECK-NEXT: [[fused21]]: anything = CallDirect v0, [[zero21]], [[none21]], v1, [[none21]], v5, [[none21]] function=[[mapMapToArray]]
-# CHECK-NOT: = CallDirect v0, v1, v2 function=
-# CHECK-NOT: = CallDirect v4, v5, v6 function=
+# CHECK: = CallDirect v0, v1, {{*}} function=f4
+# CHECK: = CallDirect v4, v5, {{*}} function=f4
 }
 
 function f22 name="secondCallbackReadsArray" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
@@ -326,13 +327,8 @@ function f29 name="firstMayThrowSecondPure" parameters=[{type=Array<number, prov
     v8 = CallDirect v5, v6, v7 function=f4
     v9 = AssumeType v8 provenType=Array<number>
     Return v9
-# CHECK-NOT: = CallDirect v0, v1, v2 function=
-# CHECK-NOT: = CallDirect v5, v6, v7 function=
-# CHECK: [[zero29]]: 0 = Integer
-# CHECK-NEXT: [[none29]]: undefined = Undefined
-# CHECK-NEXT: [[fused29]]: anything = CallDirect v0, [[zero29]], [[none29]], v1, [[none29]], v6, [[none29]] function=[[mapMapToArray]]
-# CHECK-NOT: = CallDirect v0, v1, v2 function=
-# CHECK-NOT: = CallDirect v5, v6, v7 function=
+# CHECK: = CallDirect v0, v1, {{*}} function=f4
+# CHECK: = CallDirect v5, v6, {{*}} function=f4
 }
 
 function f30 name="secondMayThrowFirstWrites" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
@@ -475,14 +471,14 @@ function f37 name="callBetweenLinks" parameters=[{type=Array<number, proven, pri
 }
 
 function f38 name="variableReadBetweenLinks" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-    v1 = NewClosure function=f10
+    v1 = NewClosure function=f6
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
     v4 = AssumeType v3 provenType=Array<number>
     v5 = AssumeType v4 provenType=Array<number, proven>
     v6 = GetModuleVariable variable=g0
     PutModuleVariable v6 variable=g1
-    v8 = NewClosure function=f6
+    v8 = NewClosure function=f10
     v9 = NewArray contents=anything
     v10 = CallDirect v5, v8, v9 function=f4
     v11 = AssumeType v10 provenType=Array<number>
@@ -592,13 +588,8 @@ function f45 name="unknownFirstCalleeSecondTakesNumbers" parameters=[{type=Array
     v7 = CallDirect v4, v5, v6 function=f4
     v8 = AssumeType v7 provenType=Array<number>
     Return v8
-# CHECK-NOT: = CallDirect v0, v1, v2 function=
-# CHECK-NOT: = CallDirect v4, v5, v6 function=
-# CHECK: [[zero45]]: 0 = Integer
-# CHECK-NEXT: [[none45]]: undefined = Undefined
-# CHECK-NEXT: [[fused45]]: anything = CallDirect v0, [[zero45]], [[none45]], v1, [[none45]], v5, [[none45]] function=[[mapMapToArray]]
-# CHECK-NOT: = CallDirect v0, v1, v2 function=
-# CHECK-NOT: = CallDirect v4, v5, v6 function=
+# CHECK: = CallDirect v0, v1, {{*}} function=f4
+# CHECK: = CallDirect v4, v5, {{*}} function=f4
 }
 
 function f46 name="copyOfLocalArrayThatSecondCallbackHoldsAndPushesTo" parameters=[{type=number}] results=[{type=anything}] {
@@ -617,6 +608,61 @@ function f46 name="copyOfLocalArrayThatSecondCallbackHoldsAndPushesTo" parameter
 # CHECK: v2: {{*}} = CallBuiltin v1 overload=ArrayPrototypeSlice/0
 # CHECK: v6: anything = CallDirect v3, v4, {{*}} function=f4
 # CHECK: v11: anything = CallDirect v8, v9, {{*}} function=f3
+}
+
+# The frame of the second callback may find no room at the first element, and whoever catches that sees how often the first one has run.
+function f47 name="firstWritesSecondOnlyComputes" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f10
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 provenType=Array<number>
+    v5 = AssumeType v4 provenType=Array<number, proven>
+    v6 = NewClosure function=f6
+    v7 = NewArray contents=anything
+    v8 = CallDirect v5, v6, v7 function=f4
+    v9 = AssumeType v8 provenType=Array<number>
+    Return v9
+# CHECK: = CallDirect v0, v1, {{*}} function=f4
+# CHECK: = CallDirect v5, v6, {{*}} function=f4
+}
+
+# A first callback that calls nothing finds room at the first element or at none, so nothing of the second one has run where it finds none.
+function f48 name="firstOnlyComputesSecondWrites" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f6
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 provenType=Array<number>
+    v5 = AssumeType v4 provenType=Array<number, proven>
+    v6 = NewClosure function=f10
+    v7 = NewArray contents=anything
+    v8 = CallDirect v5, v6, v7 function=f4
+    v9 = AssumeType v8 provenType=Array<number>
+    Return v9
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v5, v6, v7 function=
+# CHECK: [[zero48]]: 0 = Integer
+# CHECK-NEXT: [[none48]]: undefined = Undefined
+# CHECK-NEXT: [[fused48]]: anything = CallDirect v0, [[zero48]], [[none48]], v1, [[none48]], v6, [[none48]] function=[[mapMapToArray]]
+}
+
+# One that calls on may find no room at a later element.
+function f49 name="callsDouble" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f6
+    Return v1
+}
+function f50 name="firstCallsOnSecondWrites" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f49
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 provenType=Array<number>
+    v5 = AssumeType v4 provenType=Array<number, proven>
+    v6 = NewClosure function=f10
+    v7 = NewArray contents=anything
+    v8 = CallDirect v5, v6, v7 function=f4
+    v9 = AssumeType v8 provenType=Array<number>
+    Return v9
+# CHECK: = CallDirect v0, v1, {{*}} function=f4
+# CHECK: = CallDirect v5, v6, {{*}} function=f4
 }
 
 # CHECK: function [[mapToLength]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=17}
