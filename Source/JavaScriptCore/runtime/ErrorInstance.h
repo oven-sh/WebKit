@@ -120,14 +120,21 @@ public:
     // and that accessor's getter calls composeStackForAccessor(): unlike a read of an untouched error it composes a stack
     // with no frames too, which is the header alone. The result is the stack, or the empty value if none was composed:
     // the hook threw, or it is running for this error now.
+    // A program can define or delete "stack" before it is composed, and keep the getter. As in V8, the property is the
+    // program's then and the getter still composes the stack of the error it is called on: at each call, because the
+    // value has no property to stay in.
     JS_EXPORT_PRIVATE JSValue composeStackForAccessor(VM&);
     // The hook is running for ErrorInfoRequest::Stack: the frames are in use, and what it returns becomes "stack".
     bool isComposingStack() const { return m_isComposingStack; }
     // There are frames, or what a collection made of them, that "stack" has not been composed from yet.
     bool hasStackToCompose() const { return (m_stackTrace && !m_stackTrace->isEmpty()) || m_returnAddresses || m_stackStringIsFramesOnly; }
+    // The program defined or deleted "stack" while it was still to compose. The property is the program's and says what
+    // the stack is. What was to compose is reached through the getter of the host's accessor alone.
+    bool hasDetachedStackToCompose() const { return m_stackToComposeIsDetached; }
     // "stack" is given this value, as an assignment gives it, so none is composed: the host's accessor calls this from
-    // its setter. While the hook runs, what the hook returns still takes the place of the value.
-    JS_EXPORT_PRIVATE void setStack(VM&, JSValue);
+    // its setter. While the hook runs, what the hook returns still takes the place of the value. It changes nothing, and
+    // says so, where an assignment changes nothing: a read-only value, a property the program defined or deleted.
+    JS_EXPORT_PRIVATE bool setStack(VM&, JSValue);
 
 #endif
 
@@ -217,12 +224,13 @@ protected:
     bool m_stackStringIsFramesOnly : 1;
     bool m_isComposingStack : 1;
     bool m_stackReplacedWhileComposing : 1;
-    JSValue composeStack(VM&);
+    bool m_stackToComposeIsDetached : 1;
+    JSValue composeStack(VM&, bool& stored);
     void discardStackToCompose();
     void discardStackToComposeIfReplaced(VM&);
     void putStack(VM&, JSValue);
     void putStackAccessorIfAbsent(VM&, JSValue stackAccessor);
-    bool stackIsHostAccessor(VM&);
+    bool stackIsHostAccessor(VM&, bool setterToo = false);
 #endif
 };
 

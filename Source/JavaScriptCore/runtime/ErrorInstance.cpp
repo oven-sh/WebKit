@@ -33,6 +33,7 @@
 #include "Interpreter.h"
 #include "JSCInlines.h"
 #include "JSCustomGetterFunction.h"
+#include "JSCustomSetterFunction.h"
 #include "ParseInt.h"
 #include "PropertyNameArray.h"
 #include "StackFrame.h"
@@ -70,6 +71,7 @@ ErrorInstance::ErrorInstance(VM& vm, Structure* structure, ErrorType errorType)
     , m_stackStringIsFramesOnly(false)
     , m_isComposingStack(false)
     , m_stackReplacedWhileComposing(false)
+    , m_stackToComposeIsDetached(false)
 #endif
 {
 }
@@ -158,6 +160,8 @@ void ErrorInstance::setStackFrames(VM& vm, WTF::Vector<StackFrame>&& stackFrames
     m_hasErrorInfo = false;
 #if USE(BUN_JSC_ADDITIONS)
     m_stackStringIsFramesOnly = false;
+    // The host puts its accessor for these frames.
+    m_stackToComposeIsDetached = false;
 #endif
     vm.writeBarrier(this);
 }
@@ -528,7 +532,8 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
 {
 #if USE(BUN_JSC_ADDITIONS)
     // The frames outlive the materialization of the other properties: "stack" is composed from them when it is read.
-    ASSERT(!m_isComposingStack);
+    // While the hook composes it, the hook reads them, and only an error that has none comes here.
+    ASSERT(!m_isComposingStack || !m_stackTrace || m_stackTrace->isEmpty());
 #else
     ASSERT(!m_errorInfoMaterialized);
 #endif
@@ -569,7 +574,7 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
 #if USE(BUN_JSC_ADDITIONS)
 // The own "stack" is the accessor that the host's hook gave for it: as it was put, or as defineOwnProperty() rebuilds an
 // accessor whose attributes change (Object.freeze(), Object.seal()), which is a GetterSetter around the same getter.
-bool ErrorInstance::stackIsHostAccessor(VM& vm)
+bool ErrorInstance::stackIsHostAccessor(VM& vm, bool setterToo)
 {
     unsigned attributes;
     PropertyOffset offset = structure()->get(vm, vm.propertyNames->stack, attributes);
@@ -579,8 +584,17 @@ bool ErrorInstance::stackIsHostAccessor(VM& vm)
         return true;
     if (!(attributes & PropertyAttribute::Accessor))
         return false;
+    // A program can define the getter of another object's accessor here. That one has another name.
     auto* getterSetter = dynamicDowncast<GetterSetter>(getDirect(offset));
-    return getterSetter && !getterSetter->isGetterNull() && getterSetter->getter()->inherits<JSCustomGetterFunction>();
+    if (!getterSetter)
+        return false;
+    auto* getter = dynamicDowncast<JSCustomGetterFunction>(getterSetter->getter());
+    if (!getter || getter->propertyName() != vm.propertyNames->stack)
+        return false;
+    if (!setterToo)
+        return true;
+    auto* setter = dynamicDowncast<JSCustomSetterFunction>(getterSetter->setter());
+    return setter && setter->propertyName() == vm.propertyNames->stack;
 }
 
 void ErrorInstance::discardStackToCompose()
@@ -594,6 +608,7 @@ void ErrorInstance::discardStackToCompose()
     Locker locker { cellLock() };
     m_stackTrace = nullptr;
     m_returnAddresses = nullptr;
+    m_stackToComposeIsDetached = false;
     if (m_stackStringIsFramesOnly) {
         m_stackString = String();
         m_stackStringIsFramesOnly = false;
@@ -607,7 +622,7 @@ void ErrorInstance::putStack(VM& vm, JSValue value)
     auto attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
     unsigned currentAttributes;
     if (isValidOffset(structure()->get(vm, vm.propertyNames->stack, currentAttributes))) {
-        attributes = currentAttributes & (PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
+        attributes = currentAttributes & (PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
         if (structure()->isFrozen(vm))
             attributes |= PropertyAttribute::ReadOnly;
     }
@@ -616,27 +631,43 @@ void ErrorInstance::putStack(VM& vm, JSValue value)
     putDirect(vm, vm.propertyNames->stack, value, attributes);
 }
 
-void ErrorInstance::setStack(VM& vm, JSValue value)
+bool ErrorInstance::setStack(VM& vm, JSValue value)
 {
     // This is an assignment. An error whose properties are immutable refuses it.
     if (structure()->isImmutableProperty(vm.propertyNames->stack.impl())) [[unlikely]]
-        return;
-    // The setter of the host's accessor outlives a getter that the program defined in the place of the host's. That getter stays.
+        return false;
+    // The setter of the host's accessor outlives the accessor, and a program can call it on any error. What the program
+    // made of the property stays: that it deleted it, the value or the getter that it defined in the place of the host's.
+    if (m_stackToComposeIsDetached) [[unlikely]]
+        return false;
     unsigned attributes;
-    if (isValidOffset(structure()->get(vm, vm.propertyNames->stack, attributes)) && (attributes & PropertyAttribute::Accessor) && !stackIsHostAccessor(vm)) [[unlikely]]
-        return;
+    if (isValidOffset(structure()->get(vm, vm.propertyNames->stack, attributes))) {
+        if (attributes & PropertyAttribute::Accessor) {
+            if (!stackIsHostAccessor(vm)) [[unlikely]]
+                return false;
+        } else if (!(attributes & PropertyAttribute::CustomAccessor) && (attributes & PropertyAttribute::ReadOnly) && !m_isComposingStack) [[unlikely]] {
+            // A value that an assignment cannot change. (While the hook runs, the value is one the host put for the hook to read.)
+            return false;
+        }
+    } else if (m_errorInfoMaterialized && !isStructureExtensible()) [[unlikely]] {
+        // The program deleted "stack", and the error takes no new property.
+        return false;
+    }
     discardStackToCompose();
     putStack(vm, value);
+    return true;
 }
 
 // The one place "stack" is composed from the frames, or from what a collection made of them. Only a [[Get]] of "stack"
-// comes here, as in V8, because the hook can run JavaScript for it: the error's name and message, Error.prepareStackTrace.
-// If the hook throws, nothing has changed and the next read composes again. Returns what the hook composed, or the empty
-// value if it threw.
-JSValue ErrorInstance::composeStack(VM& vm)
+// and the getter of the host's accessor come here, as in V8, because the hook can run JavaScript for it: the error's name
+// and message, Error.prepareStackTrace. If the hook throws, nothing has changed and the next read composes again. Returns
+// what the hook composed, or the empty value if it threw. `stored` says that the value is the own "stack" now. It is not
+// if the property is the program's, which can have become so inside the hook: the frames stay for the next call then.
+JSValue ErrorInstance::composeStack(VM& vm, bool& stored)
 {
     ASSERT(!m_isComposingStack);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    stored = false;
 
     if (m_returnAddresses) [[unlikely]]
         materializeStackTrace();
@@ -666,10 +697,13 @@ JSValue ErrorInstance::composeStack(VM& vm)
             discardStackToCompose();
         return { };
     }
-    discardStackToCompose();
     if (!stack)
         stack = jsUndefined();
 
+    if (m_stackToComposeIsDetached) [[unlikely]]
+        return stack;
+
+    discardStackToCompose();
     if (hasPosition && !m_errorInfoMaterialized) {
         m_errorInfoMaterialized = true;
         // An error has these from the start, so one with immutable properties still gets them. No JavaScript runs inside.
@@ -683,11 +717,9 @@ JSValue ErrorInstance::composeStack(VM& vm)
     if (hasPosition)
         m_sourceURL = String();
 
-    // The hook's JavaScript deleted "stack": the read gets what the hook composed, and the error stays without it, as in
-    // V8. (A value it assigned gives way to what the hook composed.)
-    if (replaced && !isValidOffset(getDirectOffset(vm, vm.propertyNames->stack)))
-        return stack;
+    // (A value that the hook's JavaScript assigned gives way to what the hook composed, as in V8.)
     putStack(vm, stack);
+    stored = true;
     return stack;
 }
 
@@ -696,8 +728,10 @@ JSValue ErrorInstance::composeStackForAccessor(VM& vm)
     if (m_isComposingStack || !vm.onComputeErrorInfoJSValue())
         return { };
     // With no frames the accessor is all that says a stack is wanted: Error.captureStackTrace() that found none, an error made by native code.
-    if (hasStackToCompose() || stackIsHostAccessor(vm))
-        return composeStack(vm);
+    if (hasStackToCompose() || stackIsHostAccessor(vm)) {
+        bool stored;
+        return composeStack(vm, stored);
+    }
     return { };
 }
 #endif
@@ -874,12 +908,13 @@ bool ErrorInstance::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalO
         // Where that accessor is there already it composes the stack for a read on the error itself, so that an inline
         // cache of the read holds. It is given the receiver, so a read through another one (a Proxy) is composed here.
         if (propertyName == vm.propertyNames->stack && slot.internalMethodType() == PropertySlot::InternalMethodType::Get
-            && thisObject->hasStackToCompose() && !thisObject->m_isComposingStack && !thisObject->m_stackPropertyProvidedByCapturedStackTrace && vm.onComputeErrorInfoJSValue()
+            && thisObject->hasStackToCompose() && !thisObject->m_stackToComposeIsDetached && !thisObject->m_isComposingStack && !thisObject->m_stackPropertyProvidedByCapturedStackTrace && vm.onComputeErrorInfoJSValue()
             && (!thisObject->m_errorInfoMaterialized || slot.thisValue() != JSValue(thisObject) || !thisObject->stackIsHostAccessor(vm))) {
-            JSValue stack = thisObject->composeStack(vm);
+            bool stored;
+            JSValue stack = thisObject->composeStack(vm, stored);
             RETURN_IF_EXCEPTION(scope, false);
-            // The hook's JavaScript deleted "stack" while it composed it.
-            if (!isValidOffset(thisObject->getDirectOffset(vm, propertyName))) [[unlikely]] {
+            if (!stored) [[unlikely]] {
+                // The hook's JavaScript defined or deleted "stack" while it composed it. The read gets what was composed.
                 slot.setValue(thisObject, static_cast<unsigned>(PropertyAttribute::DontEnum), stack);
                 return true;
             }
@@ -912,7 +947,10 @@ bool ErrorInstance::defineOwnProperty(JSObject* object, JSGlobalObject* globalOb
         if (propertyName == vm.propertyNames->stack) {
             bool result = Base::defineOwnProperty(thisObject, globalObject, propertyName, descriptor, shouldThrow);
             RETURN_IF_EXCEPTION(scope, {});
-            thisObject->discardStackToComposeIfReplaced(vm);
+            // The property is the program's now, unless the descriptor left it what it was: one of attributes alone
+            // (Object.freeze(), Object.seal()), the host's own getter and setter (a copy of another error's descriptor).
+            if (result && thisObject->hasStackToCompose() && (descriptor.value() || descriptor.getterPresent() || descriptor.setterPresent()) && !thisObject->stackIsHostAccessor(vm, true))
+                thisObject->m_stackToComposeIsDetached = true;
             return result;
         }
 #endif
@@ -953,7 +991,8 @@ bool ErrorInstance::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, P
 #if USE(BUN_JSC_ADDITIONS)
         if (propertyName == vm.propertyNames->stack) {
             bool result = Base::deleteProperty(thisObject, globalObject, propertyName, slot);
-            thisObject->discardStackToComposeIfReplaced(vm);
+            if (result && thisObject->hasStackToCompose())
+                thisObject->m_stackToComposeIsDetached = true;
             return result;
         }
 #endif
@@ -962,10 +1001,11 @@ bool ErrorInstance::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, P
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-// After "stack" was assigned, defined or deleted: if the host's accessor is no longer what "stack" is, nothing composes it.
+// After "stack" was assigned: if the host's accessor is no longer what "stack" is, the property has its value and nothing
+// composes it. (An assignment to a property that is the program's is the program's business.)
 void ErrorInstance::discardStackToComposeIfReplaced(VM& vm)
 {
-    if (hasStackToCompose() && !stackIsHostAccessor(vm))
+    if (hasStackToCompose() && !m_stackToComposeIsDetached && !stackIsHostAccessor(vm))
         discardStackToCompose();
 }
 #endif
