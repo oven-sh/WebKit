@@ -53,7 +53,8 @@ JS_EXPORT_PRIVATE Result forEachOwnProperty(VM&, JSObject*, Filter, const Scoped
 // Every own property but the private names, strings and symbols alike, enumerable or not, in the order of their creation: what the Structure of the ordinary object that would stand in the place of this compiled one lists.
 JS_EXPORT_PRIVATE Result forEachOwnPropertyAsCreated(VM&, JSObject*, const ScopedLambda<IterationStatus(const OwnProperty&)>&, Elements = Elements::NeedGenericPath);
 // All enumerable own properties of a compiled object without elements, in order, getters called. NeedsGenericPath before anything has run; Stopped if a getter threw.
-Result readOwnPropertiesCallingGetters(JSGlobalObject*, JSObject*, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values);
+// A getter may delete a name and collect, and the object may be all that holds the name. heldNames keeps what names points to.
+Result readOwnPropertiesCallingGetters(JSGlobalObject*, JSObject*, Vector<RefPtr<UniquedStringImpl>, 32>& heldNames, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values);
 JS_EXPORT_PRIVATE void materializeLazyProperties(VM&, JSObject*);
 // The library keeps a field under the symbol in a form of its own. Whoever looks under the symbol with a key that is a value first calls the function on the compiled object that has the field.
 JS_EXPORT_PRIVATE void prepareHoldersBeforeLookupsUnder(JSGlobalObject*, Symbol*, JSObject* function);

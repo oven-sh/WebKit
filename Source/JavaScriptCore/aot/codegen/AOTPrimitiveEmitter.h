@@ -162,6 +162,8 @@ protected:
     Word32 low32(Integer value) { return Word32(m_out.castToInt32(value.value())); }
     Word32 low32(Boxed value) { return Word32(m_out.castToInt32(value.value())); }
     Word32 asWord32(Condition value) { return Word32(value.value()); }
+    // For zero the count is any number.
+    LValue countTrailingZerosOfNonZero(LValue bits);
 
     Condition isInt32(Boxed value) { return Condition(m_out.aboveOrEqual(value.value(), m_numberTag)); }
     Condition isNumber(Boxed value) { return Condition(m_out.testNonZero64(value.value(), m_numberTag)); }

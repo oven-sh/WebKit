@@ -178,6 +178,20 @@ CellPointer PrimitiveEmitter::singleCharacterString(Word32 character)
     return CellPointer(m_out.loadPtr(m_out.baseIndex(m_heaps.singleCharacterStrings, strings.value(), m_out.zeroExtPtr(character.value()))));
 }
 
+LValue PrimitiveEmitter::countTrailingZerosOfNonZero(LValue bits)
+{
+    B3::PatchpointValue* count = m_out.patchpoint(B3::Int64);
+    count->appendSomeRegister(bits);
+    count->effects = B3::Effects::none();
+    // B3 may count ahead of the branch that rules zero out, where nothing reads the count. With assertions the count of zero traps, so it stays behind the branch.
+    count->effects.controlDependent = ASSERT_ENABLED;
+    count->setRunsWithoutFrame(true);
+    count->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        jit.countTrailingZeros64WithoutNullCheck(params[1].gpr(), params[0].gpr());
+    });
+    return count;
+}
+
 void PrimitiveEmitter::mutatorFence()
 {
 #if CPU(X86_64)

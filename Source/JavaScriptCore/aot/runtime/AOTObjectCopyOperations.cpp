@@ -354,9 +354,10 @@ static NEVER_INLINE std::optional<ASCIILiteral> tryCopyCallingGetters(JSGlobalOb
     if (!std::ranges::any_of(compiled->layout().fields(), &FieldData::isAccessor))
         return std::nullopt;
     auto scope = DECLARE_THROW_SCOPE(vm);
+    Vector<RefPtr<UniquedStringImpl>, 32> heldNames;
     Vector<UniquedStringImpl*, 8> names;
     MarkedArgumentBuffer values;
-    PropertyWalk::Result result = PropertyWalk::readOwnPropertiesCallingGetters(globalObject, from, names, values);
+    PropertyWalk::Result result = PropertyWalk::readOwnPropertiesCallingGetters(globalObject, from, heldNames, names, values);
     RETURN_IF_EXCEPTION(scope, "threw"_s);
     if (result != PropertyWalk::Result::Completed)
         return std::nullopt;

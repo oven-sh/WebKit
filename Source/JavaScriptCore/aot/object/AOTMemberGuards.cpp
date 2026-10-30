@@ -760,6 +760,20 @@ static void setGuardOfStores(State& state, const LayoutData& layout, const Membe
     noteSets(state, layout.aggregatesOf(guard));
 }
 
+// The guard of the class that stores is set, and the store came by name all the same: a set that holds the guard is clear. A class that has stored nothing yet, an abstract base for one, may be all that stands in its way.
+static void completeSetsOfGuardOfStores(VM& vm, State& state, const LayoutData& layout, UniquedStringImpl* uid)
+{
+    if (!layout.classData().guardWordsOffsetFor(ClassSide::Prototype))
+        return;
+    std::optional<uint32_t> key = vm.aotState().identifiers->numberOf(uid);
+    const MemberGuardData* guard = key ? findGuard(layout, ClassSide::Prototype, MemberGuardKind::PassedByStores, *key) : nullptr;
+    if (!guard || !isSet(state, layout, *guard))
+        return;
+    SetForScope aStoreByNameHasAsked(watchpointsOf(state).aStoreByNameHasAsked(), true);
+    MemberGuardWatchpoints::MethodTableUpdate update(state);
+    noteSets(state, layout.aggregatesOf(*guard));
+}
+
 void ClassTable::didStoreByName(VM& vm, const LayoutData& instanceLayout, UniquedStringImpl* uid)
 {
     if (!instanceLayout.isClass())
@@ -781,8 +795,10 @@ void ClassTable::didFindThatStoresPass(VM& vm, const LayoutData& instanceLayout,
         return;
     const LayoutData& layout = classOfInstances(instanceLayout);
     const MemberGuardData* guard = findClearGuardOfStoresUnder(vm, m_state, layout, uid);
-    if (!guard)
+    if (!guard) {
+        completeSetsOfGuardOfStores(vm, m_state, layout, uid);
         return;
+    }
     watchpointsOf(m_state).watchOtherObjects(changeableObjects, layout, *guard, uid);
     setGuardOfStores(m_state, layout, *guard);
 }

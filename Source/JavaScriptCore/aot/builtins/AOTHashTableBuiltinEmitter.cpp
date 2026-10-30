@@ -211,13 +211,7 @@ Boxed HashTableBuiltinEmitter::lookUpAmongTags(const InlineCall& call, CellPoint
     m_out.branch(m_out.isZero64(matches), normalEdge(absent), normalEdge(hasMatch));
 
     m_out.appendTo(hasMatch);
-    B3::PatchpointValue* firstMatch = m_out.patchpoint(B3::Int64);
-    firstMatch->appendSomeRegister(matches);
-    firstMatch->effects = B3::Effects::none();
-    firstMatch->setRunsWithoutFrame(true);
-    firstMatch->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-        jit.countTrailingZeros64WithoutNullCheck(params[1].gpr(), params[0].gpr());
-    });
+    LValue firstMatch = countTrailingZerosOfNonZero(matches);
     // The bit is the highest of the tag of the entry: 8 * entry + 7. Half of that, less 3, is the offset in a narrow column, and the whole, less 7, the one in a wide column.
     m_out.branch(m_out.below(firstMatch, bitsOfUsedTags), normalEdge(isUsed), unlikelyEdge(absent));
 
@@ -440,17 +434,6 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
         return m_out.equal(decode(word).value(), key.value());
     };
 
-    auto firstBitOf = [&](LValue bits) {
-        B3::PatchpointValue* firstBit = m_out.patchpoint(B3::Int64);
-        firstBit->appendSomeRegister(bits);
-        firstBit->effects = B3::Effects::none();
-        firstBit->setRunsWithoutFrame(true);
-        firstBit->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-            jit.countTrailingZeros64WithoutNullCheck(params[1].gpr(), params[0].gpr());
-        });
-        return firstBit;
-    };
-
     m_out.appendTo(hasHash);
     if (keysAreWide) {
         LBasicBlock noSlots = newBlock();
@@ -468,7 +451,7 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
     m_out.branch(m_out.isZero64(matchesAmongTags), normalEdge(absent), normalEdge(matchAmongTags));
 
     m_out.appendTo(matchAmongTags);
-    LValue bitOfMatch = firstBitOf(matchesAmongTags);
+    LValue bitOfMatch = countTrailingZerosOfNonZero(matchesAmongTags);
     LBasicBlock isUsed = newBlock();
     if (keysAreWide)
         bitsOfUsedTags = loadBitsOfUsedTags();
@@ -503,7 +486,7 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
     m_out.branch(m_out.isZero64(matches), normalEdge(noMatchAmongEight), normalEdge(matchAmongEight));
 
     m_out.appendTo(matchAmongEight);
-    LValue firstMatch = firstBitOf(matches);
+    LValue firstMatch = countTrailingZerosOfNonZero(matches);
     LValue numberAmongEight = loadNumber(m_out.add(first, m_out.lShr(firstMatch, m_out.constInt32(3))));
     ValueFromBlock numberOfEight = m_out.anchor(numberAmongEight);
     m_out.branch(keyIsAt(numberAmongEight), normalEdge(found), unlikelyEdge(byStub));

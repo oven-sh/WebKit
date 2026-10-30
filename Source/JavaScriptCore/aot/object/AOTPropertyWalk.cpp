@@ -350,7 +350,7 @@ Result forEachOwnPropertyAsCreated(VM& vm, JSObject* object, const Visitor& visi
     return visitKeysInOrder(vm, *typed, extra, std::nullopt, visitor);
 }
 
-Result readOwnPropertiesCallingGetters(JSGlobalObject* globalObject, JSObject* object, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values)
+Result readOwnPropertiesCallingGetters(JSGlobalObject* globalObject, JSObject* object, Vector<RefPtr<UniquedStringImpl>, 32>& heldNames, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -373,6 +373,8 @@ Result readOwnPropertiesCallingGetters(JSGlobalObject* globalObject, JSObject* o
                 ordered.append(OrderedKey { layouts.nameOf(vm, field), &field, invalidOffset, typed->attributesOf(field) });
         });
     }
+    for (const OrderedKey& key : ordered)
+        heldNames.append(key.name);
     // A getter may change the object in any way: what follows it is asked for by name.
     bool isAsListed = true;
     for (bool wantsSymbols : { false, true }) {
