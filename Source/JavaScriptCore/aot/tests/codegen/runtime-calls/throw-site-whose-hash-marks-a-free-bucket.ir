@@ -1,0 +1,37 @@
+# The throw sites of a function are found again by a 32-bit hash of their kind, name and position. At position 3842459728 that hash is 0xFFFFFFFF and at 2781583317 it is 0xFFFFFFFE. Each is the sixth site of its function, where a table of eight grows.
+# FORM: AsRead
+# RUN: generate-code
+# OPTIONS: heat=everything-is-cold disable=pass:InlineCalls check=validate-back-end
+# STATISTIC: ThrowSites = 12
+# CHECK: f1: size={{*}} frame=none entries=1 sites=6 handlers=0
+# CHECK: f2: size={{*}} frame=none entries=1 sites=6 handlers=0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="register" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return v4
+}
+function f1 name="allOnes" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v6 = RequireObjectCoercible v0 @10
+    v7 = RequireObjectCoercible v1 @20
+    v8 = RequireObjectCoercible v2 @30
+    v9 = RequireObjectCoercible v3 @40
+    v10 = RequireObjectCoercible v4 @50
+    v11 = RequireObjectCoercible v5 @3842459728
+    Return v11
+}
+function f2 name="allOnesButTheLast" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v6 = RequireObjectCoercible v0 @10
+    v7 = RequireObjectCoercible v1 @20
+    v8 = RequireObjectCoercible v2 @30
+    v9 = RequireObjectCoercible v3 @40
+    v10 = RequireObjectCoercible v4 @50
+    v11 = RequireObjectCoercible v5 @2781583317
+    Return v11
+}

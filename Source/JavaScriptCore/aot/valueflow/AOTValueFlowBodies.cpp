@@ -167,7 +167,7 @@ public:
 private:
     Vector<Record>& m_records;
     Vector<unsigned, 25> m_hashes;
-    HashMap<unsigned, Vector<uint32_t, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_byHash;
+    HashMap<uint64_t, Vector<uint32_t, 1>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_byHash;
 };
 
 class BodyReducer {

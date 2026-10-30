@@ -715,7 +715,7 @@ public:
     Vector<Vector<FunctionID>> lists;
 
 private:
-    UncheckedKeyHashMap<unsigned, Vector<uint32_t, 1>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_listsByHash;
+    UncheckedKeyHashMap<uint64_t, Vector<uint32_t, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_listsByHash;
     HashMap<const FunctionID*, uint32_t> m_listsByAddress;
 };
 

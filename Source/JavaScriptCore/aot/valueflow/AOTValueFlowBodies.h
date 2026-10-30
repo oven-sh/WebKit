@@ -89,6 +89,8 @@ class ValueFlowUniverse {
 public:
     static constexpr ValueFlowObjectID primitive(PrimitiveSet kind) { return ValueFlowObjectID(static_cast<uint32_t>(std::countr_zero(static_cast<uint16_t>(kind)))); }
     static constexpr uint32_t numberOfPrimitiveKinds = 16;
+    // ValueFlowGraph keys a table by the mask of the first 64 objects. A number that names nothing keeps every mask off the markers of that table.
+    static_assert(numberOfEnumerators<PrimitiveSet> < numberOfPrimitiveKinds);
 
     static constexpr ValueFlowObjectID unknownObject() { return ValueFlowObjectID(numberOfPrimitiveKinds); }
     static constexpr ValueFlowObjectID untrackedObject() { return ValueFlowObjectID(numberOfPrimitiveKinds + 1); }

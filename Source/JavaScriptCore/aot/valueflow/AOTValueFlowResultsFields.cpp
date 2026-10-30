@@ -295,7 +295,7 @@ struct FieldResults {
     // For the layouts that have objects.
     Vector<OptionSet<Actor>> actorsOpenOnObjectsOfLayouts { };
     // By layout and key, where the receiver of a definition is only observed to be an object of the layout: ValueForms. A store by name counts as the plain form.
-    mutable UncheckedKeyHashMap<uint64_t, uint8_t> formsOfValuesSeenDefined { };
+    mutable UncheckedKeyHashMap<uint64_t, uint8_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> formsOfValuesSeenDefined { };
 
     ValueSetID chainBuiltByProgram(ValueSetID objects) const
     {
