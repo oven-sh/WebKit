@@ -377,7 +377,8 @@ static void applyLayoutUpdates(const FlowApplyContext& context)
     BitVector done(program.layouts.size());
     Vector<LayoutID, 8> incompleteChain;
     for (size_t index = 0; index < program.layouts.size(); ++index) {
-        for (LayoutID current(index); current && !done.quickSet(current.index()); current = provenBaseOfLayout(program.at(current).flow))
+        // A layout takes the fields of the layout that always lies above it, so that one has all of its own first.
+        for (LayoutID current(index); current && !done.quickSet(current.index()); current = nearestLayoutAlwaysAbove(program.at(current).flow))
             incompleteChain.append(current);
         while (!incompleteChain.isEmpty()) {
             LayoutID current = incompleteChain.takeLast();
