@@ -30,8 +30,8 @@ unsigned_by_nature = re.compile('|'.join([
     r'__do_global_dtors_aux', r'__libc_csu_init', r'init_have_lse_atomics', r'_init', r'_fini', r'\.plt', r'.*@plt.*',
 ]))
 head = re.compile(r'^[0-9a-f]+ <(.*)>:$')
-# Either operand of an STP: without a frame pointer the compiler saves it as `stp x30, x19, [sp, #-16]!`.
-saves = re.compile(r'\t(?:stp|str)\t(?:x\d+, )?x30, (?:x\d+, )?\[sp')
+# Any store, though the compiler saves it with STP and STR alone. Either operand of an STP: without a frame pointer that is `stp x30, x19, [sp, #-16]!`.
+saves = re.compile(r'\tst\w+\t(?:[wx]\d+, )?x30, (?:x\d+, )?\[sp')
 signs = re.compile(r'\tpaciasp$')
 pointer_authentication = re.compile(r'\t((?:pac|aut|xpac|e?reta|bl?ra[ab]|ldra[ab])\w*)')
 # All there are. Whatever else the pattern above finds is taken for undefined before ARMv8.3, also what is newer than this list.
