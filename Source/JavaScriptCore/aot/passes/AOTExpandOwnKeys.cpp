@@ -641,9 +641,10 @@ std::optional<OwnKeyWalkPlan> planOwnKeyWalk(FunctionPassContext& context, const
         bool assigns = context.function.at(site.value).assigns();
         const BuiltinTable& builtins = context.program.builtins();
         return !std::ranges::all_of(arm.order, [&](uint32_t field) {
-            if (assigns && builtins.findOwnMember(Builtins::ObjectPrototype, context.program.strings.builtinName(context.program.at(layout.fields[field].key).text)))
+            // A symbol has no text.
+            if (!isEnumerableStringField(context.program, layout.fields[field]) || !isOrdinaryDataField(context.program, { arm.layout, field }))
                 return false;
-            return isEnumerableStringField(context.program, layout.fields[field]) && isOrdinaryDataField(context.program, { arm.layout, field });
+            return !assigns || !builtins.findOwnMember(Builtins::ObjectPrototype, context.program.strings.builtinName(context.program.at(layout.fields[field].key).text));
         });
     });
     if (plan->arms.isEmpty())
