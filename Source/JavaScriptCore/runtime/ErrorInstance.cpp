@@ -25,6 +25,7 @@
 #include "AOTStackTrace.h"
 #include "CodeBlock.h"
 #include "CustomGetterSetter.h"
+#include "DisallowVMEntry.h"
 #include "ErrorInstanceInlines.h"
 #include "GetterSetter.h"
 #include "InlineCallFrame.h"
@@ -143,8 +144,7 @@ String appendSourceToErrorMessage(CodeBlock* codeBlock, BytecodeIndex bytecodeIn
 
 void ErrorInstance::setStackFrames(VM& vm, WTF::Vector<StackFrame>&& stackFrames)
 {
-    // The hook is reading the frames these would replace.
-    ASSERT(!m_isComposingStack);
+    // The hook is reading the frames these would replace, and its result becomes "stack".
     if (m_isComposingStack) [[unlikely]]
         return;
 
@@ -585,19 +585,53 @@ void ErrorInstance::discardStackToCompose()
 
     Locker locker { cellLock() };
     m_stackTrace = nullptr;
+    m_returnAddresses = nullptr;
     if (m_stackStringIsFramesOnly) {
         m_stackString = String();
         m_stackStringIsFramesOnly = false;
     }
 }
 
+// A value takes the place of what "stack" is. What was made of the property before stays: Object.defineProperty(),
+// Object.seal(), Object.freeze(), whose accessor the value of a frozen error replaces as a read-only one.
+void ErrorInstance::putStack(VM& vm, JSValue value)
+{
+    auto attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
+    unsigned currentAttributes;
+    if (isValidOffset(structure()->get(vm, vm.propertyNames->stack, currentAttributes))) {
+        attributes = currentAttributes & (PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
+        if (structure()->isFrozen(vm))
+            attributes |= PropertyAttribute::ReadOnly;
+    }
+    // An error has "stack" from the start, so one with immutable properties still gets it. No JavaScript runs inside.
+    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+    putDirect(vm, vm.propertyNames->stack, value, attributes);
+}
+
+void ErrorInstance::setStack(VM& vm, JSValue value)
+{
+    // This is an assignment. An error whose properties are immutable refuses it.
+    if (structure()->isImmutableProperty(vm.propertyNames->stack.impl())) [[unlikely]]
+        return;
+    // The setter of the host's accessor outlives a getter that the program defined in the place of the host's. That getter stays.
+    unsigned attributes;
+    if (isValidOffset(structure()->get(vm, vm.propertyNames->stack, attributes)) && (attributes & PropertyAttribute::Accessor) && !stackIsHostAccessor(vm)) [[unlikely]]
+        return;
+    discardStackToCompose();
+    putStack(vm, value);
+}
+
 // The one place "stack" is composed from the frames, or from what a collection made of them. Only a [[Get]] of "stack"
 // comes here, as in V8, because the hook can run JavaScript for it: the error's name and message, Error.prepareStackTrace.
-// If the hook throws, nothing has changed and the next read composes again.
-void ErrorInstance::composeStack(VM& vm)
+// If the hook throws, nothing has changed and the next read composes again. Returns what the hook composed, or the empty
+// value if it threw.
+JSValue ErrorInstance::composeStack(VM& vm)
 {
     ASSERT(!m_isComposingStack);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (m_returnAddresses) [[unlikely]]
+        materializeStackTrace();
 
     bool hasFrames = m_stackTrace && !m_stackTrace->isEmpty();
     bool hasPosition = hasFrames || m_stackStringIsFramesOnly;
@@ -619,17 +653,20 @@ void ErrorInstance::composeStack(VM& vm)
     bool replaced = m_stackReplacedWhileComposing;
     m_stackReplacedWhileComposing = false;
     if (scope.exception()) [[unlikely]] {
+        // What the hook's JavaScript made of "stack" before it threw stays, and nothing is composed over it.
         if (replaced)
             discardStackToCompose();
-        return;
+        return { };
     }
     discardStackToCompose();
+    if (!stack)
+        stack = jsUndefined();
 
-    // An error has these from the start, so one with immutable properties still gets them. No JavaScript runs from here on.
-    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-    auto attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
     if (hasPosition && !m_errorInfoMaterialized) {
         m_errorInfoMaterialized = true;
+        // An error has these from the start, so one with immutable properties still gets them. No JavaScript runs inside.
+        AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+        auto attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
         putDirect(vm, vm.propertyNames->line, jsNumber(lineColumn.line), attributes);
         putDirect(vm, vm.propertyNames->column, jsNumber(lineColumn.column), attributes);
         if (!sourceURL.isEmpty())
@@ -638,26 +675,22 @@ void ErrorInstance::composeStack(VM& vm)
     if (hasPosition)
         m_sourceURL = String();
 
-    // What was made of the accessor before this read stays: Object.defineProperty(), Object.seal(), Object.freeze().
-    unsigned accessorAttributes;
-    if (isValidOffset(structure()->get(vm, vm.propertyNames->stack, accessorAttributes))) {
-        attributes = accessorAttributes & (PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
-        if (structure()->isFrozen(vm))
-            attributes |= PropertyAttribute::ReadOnly;
-    } else if (replaced) {
-        // What the hook ran deleted "stack". (A value it assigned gives way to the stack the hook returned, as in V8.)
-        return;
-    }
-    putDirect(vm, vm.propertyNames->stack, stack ? stack : jsUndefined(), attributes);
+    // The hook's JavaScript deleted "stack": the read gets what the hook composed, and the error stays without it, as in
+    // V8. (A value it assigned gives way to what the hook composed.)
+    if (replaced && !isValidOffset(getDirectOffset(vm, vm.propertyNames->stack)))
+        return stack;
+    putStack(vm, stack);
+    return stack;
 }
 
-void ErrorInstance::composeStackForAccessor(VM& vm)
+JSValue ErrorInstance::composeStackForAccessor(VM& vm)
 {
     if (m_isComposingStack || !vm.onComputeErrorInfoJSValue())
-        return;
+        return { };
     // With no frames the accessor is all that says a stack is wanted: Error.captureStackTrace() that found none, an error made by native code.
     if (hasStackToCompose() || stackIsHostAccessor(vm))
-        composeStack(vm);
+        return composeStack(vm);
+    return { };
 }
 #endif
 
@@ -681,9 +714,10 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
         LineColumn lineColumn = m_lineColumn;
         String sourceURL = m_sourceURL;
         JSValue stackAccessor;
-        if (!m_stackPropertyProvidedByCapturedStackTrace)
+        if (!m_stackPropertyProvidedByCapturedStackTrace) {
+            DisallowVMEntry disallowVMEntry(vm);
             stackAccessor = fn(vm, *m_stackTrace.get(), String(), lineColumn.line, lineColumn.column, sourceURL, this, ErrorInfoRequest::Position);
-        else {
+        } else {
             // "stack" is the one Error.captureStackTrace() made. Nothing is composed from these frames.
             Locker locker { cellLock() };
             m_stackTrace = nullptr;
@@ -726,6 +760,7 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
                 JSValue stackAccessor;
                 if (fn) {
                     DeferGCForAWhile deferGC(vm);
+                    DisallowVMEntry disallowVMEntry(vm);
                     Vector<StackFrame> noFrames;
                     LineColumn lineColumn = m_lineColumn;
                     String sourceURL;
@@ -832,9 +867,15 @@ bool ErrorInstance::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalO
         // cache of the read holds. It is given the receiver, so a read through another one (a Proxy) is composed here.
         if (propertyName == vm.propertyNames->stack && slot.internalMethodType() == PropertySlot::InternalMethodType::Get
             && thisObject->hasStackToCompose() && !thisObject->m_isComposingStack && !thisObject->m_stackPropertyProvidedByCapturedStackTrace && vm.onComputeErrorInfoJSValue()
-            && (!thisObject->m_errorInfoMaterialized || slot.thisValue() != JSValue(thisObject) || !thisObject->stackIsHostAccessor(vm)))
-            thisObject->composeStack(vm);
-        else
+            && (!thisObject->m_errorInfoMaterialized || slot.thisValue() != JSValue(thisObject) || !thisObject->stackIsHostAccessor(vm))) {
+            JSValue stack = thisObject->composeStack(vm);
+            RETURN_IF_EXCEPTION(scope, false);
+            // The hook's JavaScript deleted "stack" while it composed it.
+            if (!isValidOffset(thisObject->getDirectOffset(vm, propertyName))) [[unlikely]] {
+                slot.setValue(thisObject, static_cast<unsigned>(PropertyAttribute::DontEnum), stack);
+                return true;
+            }
+        } else
 #endif
             thisObject->materializeErrorInfoIfNeeded(vm);
         RETURN_IF_EXCEPTION(scope, false);
@@ -922,7 +963,7 @@ void ErrorInstance::discardStackToComposeIfReplaced(VM& vm)
 #endif
 
 #if USE(BUN_JSC_ADDITIONS) && CPU(ADDRESS64)
-static_assert(sizeof(ErrorInstance) == 72, "The state of a lazy stack is bits beside the others: an error stays the size it was");
+static_assert(sizeof(ErrorInstance) == 80, "The state of a lazy stack is bits beside the others: an error stays the size it was");
 #endif
 
 } // namespace JSC

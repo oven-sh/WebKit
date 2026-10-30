@@ -118,14 +118,16 @@ public:
     // "stack" is composed (VM::onComputeErrorInfoJSValue() is asked for ErrorInfoRequest::Stack, which can run JavaScript)
     // only in a [[Get]] of it. Anything else that needs the error's own properties puts the host's accessor in its place,
     // and that accessor's getter calls composeStackForAccessor(): unlike a read of an untouched error it composes a stack
-    // with no frames too, which is the header alone.
-    JS_EXPORT_PRIVATE void composeStackForAccessor(VM&);
+    // with no frames too, which is the header alone. The result is the stack, or the empty value if none was composed:
+    // the hook threw, or it is running for this error now.
+    JS_EXPORT_PRIVATE JSValue composeStackForAccessor(VM&);
     // The hook is running for ErrorInfoRequest::Stack: the frames are in use, and what it returns becomes "stack".
     bool isComposingStack() const { return m_isComposingStack; }
     // There are frames, or what a collection made of them, that "stack" has not been composed from yet.
-    bool hasStackToCompose() const { return (m_stackTrace && !m_stackTrace->isEmpty()) || m_stackStringIsFramesOnly; }
-    // "stack" was given another value, so it is not composed. The host's accessor calls this from its setter.
-    JS_EXPORT_PRIVATE void discardStackToCompose();
+    bool hasStackToCompose() const { return (m_stackTrace && !m_stackTrace->isEmpty()) || m_returnAddresses || m_stackStringIsFramesOnly; }
+    // "stack" is given this value, as an assignment gives it, so none is composed: the host's accessor calls this from
+    // its setter. While the hook runs, what the hook returns still takes the place of the value.
+    JS_EXPORT_PRIVATE void setStack(VM&, JSValue);
 
 #endif
 
@@ -213,10 +215,12 @@ protected:
     bool m_stackStringIsFramesOnly : 1;
     bool m_isComposingStack : 1;
     bool m_stackReplacedWhileComposing : 1;
-    void composeStack(VM&);
-    bool stackIsHostAccessor(VM&);
-    void putStackAccessorIfAbsent(VM&, JSValue stackAccessor);
+    JSValue composeStack(VM&);
+    void discardStackToCompose();
     void discardStackToComposeIfReplaced(VM&);
+    void putStack(VM&, JSValue);
+    void putStackAccessorIfAbsent(VM&, JSValue stackAccessor);
+    bool stackIsHostAccessor(VM&);
 #endif
 };
 
