@@ -239,10 +239,7 @@ String JSFunction::name(VM& vm)
         NativeExecutable* executable = uncheckedDowncast<NativeExecutable>(this->executable());
         return executable->name();
     }
-    const Identifier identifier = jsExecutable()->name();
-    if (identifier == vm.propertyNames->starDefaultPrivateName)
-        return emptyString();
-    return identifier.string();
+    return jsExecutable()->name().string();
 }
 
 String JSFunction::nameWithoutGC(VM& vm)
@@ -258,10 +255,7 @@ String JSFunction::nameWithoutGC(VM& vm)
         NativeExecutable* executable = uncheckedDowncast<NativeExecutable>(this->executable());
         return executable->name();
     }
-    String name = jsExecutable()->nameWithoutGC();
-    if (name.impl() == vm.propertyNames->starDefaultPrivateName.impl())
-        return emptyString();
-    return name;
+    return jsExecutable()->nameWithoutGC();
 }
 
 String JSFunction::displayName(VM& vm)
@@ -615,16 +609,7 @@ void JSFunction::reifyLength(VM& vm)
 
 JSFunction::PropertyStatus JSFunction::reifyName(VM& vm, JSGlobalObject* globalObject)
 {
-    const Identifier& ecmaName = jsExecutable()->ecmaName();
-    String name;
-    // https://tc39.github.io/ecma262/#sec-exports-runtime-semantics-evaluation
-    // When the ident is "*default*", we need to set "default" for the ecma name.
-    // This "*default*" name is never shown to users.
-    if (ecmaName == vm.propertyNames->starDefaultPrivateName)
-        name = vm.propertyNames->defaultKeyword.string();
-    else
-        name = ecmaName.string();
-    return reifyName(vm, globalObject, name);
+    return reifyName(vm, globalObject, jsExecutable()->ecmaName().string());
 }
 
 JSFunction::PropertyStatus JSFunction::reifyName(VM& vm, JSGlobalObject* globalObject, String name)
