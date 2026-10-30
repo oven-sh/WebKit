@@ -390,7 +390,7 @@ void ErrorInstance::setErrorInfoForEmbedderError(LineColumn lineColumn, String&&
 // Based on ErrorPrototype's errorProtoFuncToString(), but is modified to
 // have no observable side effects to the user (i.e. does not call proxies,
 // and getters).
-String ErrorInstance::sanitizedMessageString(JSGlobalObject* globalObject)
+String ErrorInstance::sanitizedMessageString(JSGlobalObject* globalObject, Symbol** symbol)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -413,10 +413,14 @@ String ErrorInstance::sanitizedMessageString(JSGlobalObject* globalObject)
     if (!messageValue || !messageValue.isPrimitive())
         return {};
 
+    if (symbol && messageValue.isSymbol()) {
+        *symbol = asSymbol(messageValue);
+        return { };
+    }
     RELEASE_AND_RETURN(scope, messageValue.toWTFString(globalObject));
 }
 
-String ErrorInstance::sanitizedNameString(JSGlobalObject* globalObject)
+String ErrorInstance::sanitizedNameString(JSGlobalObject* globalObject, Symbol** symbol)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -445,6 +449,10 @@ String ErrorInstance::sanitizedNameString(JSGlobalObject* globalObject)
 
     if (!nameValue || !nameValue.isPrimitive() || nameValue.isUndefined())
         return "Error"_s;
+    if (symbol && nameValue.isSymbol()) {
+        *symbol = asSymbol(nameValue);
+        return { };
+    }
     RELEASE_AND_RETURN(scope, nameValue.toWTFString(globalObject));
 }
 

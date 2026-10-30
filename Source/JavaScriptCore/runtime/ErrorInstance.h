@@ -132,8 +132,10 @@ public:
 #endif
 
     JS_EXPORT_PRIVATE String sanitizedToString(JSGlobalObject*);
-    JS_EXPORT_PRIVATE String sanitizedMessageString(JSGlobalObject*);
-    JS_EXPORT_PRIVATE String sanitizedNameString(JSGlobalObject*);
+    // A message or a name that is a Symbol has no string, and the conversion throws a TypeError. A caller that compares
+    // errors gives `symbol`: it gets the Symbol there and the null string, and nothing is thrown.
+    JS_EXPORT_PRIVATE String sanitizedMessageString(JSGlobalObject*, Symbol** symbol = nullptr);
+    JS_EXPORT_PRIVATE String sanitizedNameString(JSGlobalObject*, Symbol** symbol = nullptr);
     
     JS_EXPORT_PRIVATE String tryGetMessageForDebugging();
 
