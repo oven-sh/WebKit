@@ -608,6 +608,8 @@ private:
 };
 
 JS_EXPORT_PRIVATE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern&, BumpPointerAllocator*, ErrorCode&, ConcurrentJSLock* = nullptr, const String& source = { });
-JS_EXPORT_PRIVATE unsigned interpret(BytecodePattern*, StringView input, unsigned start, unsigned* output);
+// Returns offsetNoMatch for a search that finds no match and for one that it gives up. The result tells them apart: it is
+// Match or NoMatch for an answer, and another value for a search that was given up.
+JS_EXPORT_PRIVATE unsigned interpret(BytecodePattern*, StringView input, unsigned start, unsigned* output, JSRegExpResult* = nullptr);
 
 } } // namespace JSC::Yarr
