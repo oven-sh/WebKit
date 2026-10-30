@@ -2613,7 +2613,7 @@ static ModuleLists collectModuleLists(TableEncoder& encoder)
             lists.requiredNames.append({ requiredName.module.index(), requiredName.mayBeAbsent, encoder.identifierNumberOfText(requiredName.name, "what another module must export for"_s, id) });
         }
     }
-    for (size_t index : modulesThatHostAsksFor(program, encoder.flow.findsFilesOfProgramByName(), encoder.flow.hostRunsFilesOutsideImage()))
+    for (size_t index : modulesThatHostAsksFor(program, encoder.flow.findsFilesOfProgramByName(), encoder.flow.hostRunsFilesOutsideImage() || encoder.build.options().sharesRealms()))
         lists.modules[index].add(ModuleData::Flag::IsEntryPoint);
     ModuleData endEntry { };
     lists.setListStarts(endEntry);

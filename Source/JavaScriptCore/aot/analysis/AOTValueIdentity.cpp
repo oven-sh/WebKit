@@ -92,6 +92,17 @@ std::optional<int64_t> integerConstantThroughCasts(const Program& program, const
     return function.at(*constant).integer();
 }
 
+bool areSameNumberConstantThroughCasts(const Program& program, const Function& function, ValueID a, ValueID b)
+{
+    std::optional<ValueID> first = constantThroughCasts(program, function, a);
+    std::optional<ValueID> second = first ? constantThroughCasts(program, function, b) : std::nullopt;
+    if (!second || function.at(*first).opcode != function.at(*second).opcode)
+        return false;
+    if (function.at(*first).opcode == Opcode::Integer)
+        return function.at(*first).integer() == function.at(*second).integer();
+    return function.at(*first).opcode == Opcode::Double && std::bit_cast<uint64_t>(function.at(*first).number()) == std::bit_cast<uint64_t>(function.at(*second).number());
+}
+
 struct ValueIdentities::PassedValues {
     ValueID parameterAt(uint32_t parameterIndex) const { return parameters[parameterIndex]; }
     ValueID valuePassedOn(size_t edgeIndex, uint32_t parameterIndex) const { return valuesByEdge[edgeIndex * parameters.size() + parameterIndex]; }

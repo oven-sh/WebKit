@@ -333,10 +333,10 @@ void generateTryGetSuperById(StubAssembler& jit)
     Jump isNotVariable = branchIfSlotKindDiffers(jit, slot, Slot::Kind::Variable, scratch);
     {
         const CachedSlot variable(SlotForm::PackedSlot, Slot::Kind::Variable, cell, InvalidGPRReg);
-        const FieldReadRegisters registers = fieldReadRegisters(cell, scratch);
+        FieldReadRegisters registers = fieldReadRegisters(cell, scratch);
         FieldReadExits exits;
         variable.loadFirstPayloadWord(jit, registers.field.slotData);
-        loadStaticsBaseOfVariable(jit, variable, cell, structureID);
+        loadStaticsBaseOfVariable(jit, variable, cell, structureID, registers);
         computeFieldAddress(jit, registers.field, false, exits.isAbsent);
         readFieldAndReturn(jit, registers, exits);
         needsGenericRead.append(exits.isAbsent);

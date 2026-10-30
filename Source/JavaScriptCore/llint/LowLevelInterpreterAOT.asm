@@ -46,6 +46,7 @@ const InstanceClosureEntrypoint = constexpr (AOT_INSTANCE_OFFSET(stubs.closureEn
 const InstanceSlimClosureEntrypoint = constexpr (AOT_INSTANCE_OFFSET(stubs.slimClosureEntrypoint))
 const InstanceAbove = constexpr (AOT_INSTANCE_OFFSET(above))
 const InstanceEndOfClosureNumbers = constexpr (AOT_INSTANCE_OFFSET(endOfClosureNumbers))
+const InstanceLastShape = constexpr (AOT_INSTANCE_OFFSET(lastShape))
 
 const ObjectLiteralPlanTag = constexpr AOT::Interpreter::ObjectLiteralPlan::allocatorTag
 const ObjectLiteralPlanSlowPathTag = constexpr AOT::Interpreter::ObjectLiteralPlan::slowPathTag
@@ -143,6 +144,31 @@ macro loadInstanceOfRealm(instance, hasNone)
     btpz instance, hasNone
     # The tables of one image say nothing about the cells of another.
     btpnz InstanceAbove[instance], hasNone
+end
+
+# For what is the same in every instance of a VM: the base of the cage of cells.
+macro loadAnyInstanceOfRealm(instance, hasNone)
+    loadp CodeBlock[cfr], instance
+    loadp CodeBlock::m_globalObject[instance], instance
+    loadp JSGlobalObject::m_aotInstance[instance], instance
+    btpz instance, hasNone
+end
+
+# The tables of the image of a compiled object say of it all that they say where there is one image. The shapes of the images ascend with the instances.
+macro loadInstanceOfCompiledObject(object, instance, scratch, hasNone)
+    loadp CodeBlock[cfr], instance
+    loadp CodeBlock::m_globalObject[instance], instance
+    loadp JSGlobalObject::m_aotInstance[instance], instance
+    btpz instance, hasNone
+    btpz InstanceAbove[instance], .isFound
+    loadi (constexpr AOT::offsetOfShapeWord)[object], scratch
+    negi scratch
+.next:
+    bibeq scratch, InstanceLastShape[instance], .isFound
+    loadp InstanceAbove[instance], instance
+    btpnz instance, .next
+    jmp hasNone
+.isFound:
 end
 
 macro loadIdentifier(size, opcodeStruct, fieldName, uid, scratch)
@@ -492,7 +518,7 @@ end
 
 # t3: the compiled object, t1: the uid. Leaves the value in t0.
 macro getFromCompiledObject(slow, done)
-    loadInstanceOfRealm(t5, slow)
+    loadInstanceOfCompiledObject(t3, t5, t2, slow)
     loadi JSCell::m_structureID[t3], t2
     findHashedSlot(t5, t2, t1, makeKeyOfRead, t6, t0, slow)
     loadb SlotKind[t6], t0
@@ -540,7 +566,12 @@ end
 
 # t3: the object, t1: the uid.
 macro testPresenceInObject(slow, isPresent, isAbsent)
+    bbeq JSCell::m_type[t3], CompiledObjectType, .isCompiledObject
     loadInstanceOfRealm(t5, slow)
+    jmp .hasInstance
+.isCompiledObject:
+    loadInstanceOfCompiledObject(t3, t5, t2, slow)
+.hasInstance:
     loadi JSCell::m_structureID[t3], t2
     findHashedSlot(t5, t2, t1, makeKeyOfRead, t6, t0, slow)
     loadb SlotKind[t6], t0
@@ -591,7 +622,7 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
     andi constexpr AOT::Interpreter::maxHiddenWordOffsetInSiteCache, t0
     loadi [t3, t0], t0
     btiz t0, .compiledObject
-    loadInstanceOfRealm(t5, .slow)
+    loadAnyInstanceOfRealm(t5, .slow)
     lshiftp constexpr AOT::cell32Shift, t0
     addp InstanceCellCageBase[t5], t0
     loadhsq OpGetById::Metadata::m_modeMetadata.defaultMode.cachedOffset[t2], t1
@@ -603,7 +634,7 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
     subi NarrowReferenceInSiteCache, t1
     loadi [t3, t1], t0
     bib t0, constexpr AOT::minCell32, .compiledObject
-    loadInstanceOfRealm(t5, .slow)
+    loadAnyInstanceOfRealm(t5, .slow)
     lshiftp constexpr AOT::cell32Shift, t0
     addp InstanceCellCageBase[t5], t0
     return(t0)
@@ -1009,7 +1040,7 @@ aotOp(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
 .compiledObject:
     getu(size, OpPutById, m_flags, t1)
     btinz t1, constexpr PutByIdFlagsFits::s_isDirectBit, .slow
-    loadInstanceOfRealm(t5, .slow)
+    loadInstanceOfCompiledObject(t0, t5, t2, .slow)
     loadIdentifier(size, OpPutById, m_property, t1, t2)
     loadi JSCell::m_structureID[t0], t2
     findHashedSlot(t5, t2, t1, makeKeyOfStore, t6, t3, .slow)

@@ -337,10 +337,10 @@ void generateReadSlot(StubAssembler& jit)
         }
         case Slot::Kind::Variable: {
             const GPRReg statics = jit.clobberOperand(headerOperand);
-            const FieldReadRegisters registers = allocateFieldReadRegisters(statics, T10);
+            FieldReadRegisters registers = allocateFieldReadRegisters(statics, T10);
             FieldReadExits exits;
             slot.loadFirstPayloadWord(jit, registers.field.slotData);
-            loadStaticsBaseOfVariable(jit, slot, statics, T11);
+            loadStaticsBaseOfVariable(jit, slot, statics, T11, registers);
             computeFieldAddress(jit, registers.field, false, exits.isAbsent);
             readFieldAndReturn(jit, registers, exits);
 

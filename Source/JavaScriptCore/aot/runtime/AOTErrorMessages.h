@@ -12,6 +12,7 @@
 #include "JSCJSValue.h"
 #include <span>
 #include <wtf/text/WTFString.h>
+#include <wtf/ScopedLambda.h>
 
 namespace JSC {
 
@@ -76,6 +77,9 @@ struct PlaceInFunctionText {
     LineColumn position;
 };
 std::optional<PlaceInFunctionText> placeOnTopInFunctionText(VM&);
+// Where the place on top says nothing: `f.call(receiver)` and `f.apply(receiver, list)` fail in the function of the library that forwards the call, and are written at the place that
+// called it. Where images share realms, that place may be of another image, with nothing but hidden frames of the library above it. Its image runs while the functor does.
+void withPlaceThatCalledLibraryOnTop(VM&, const ScopedLambda<void(const PlaceInFunctionText&)>&);
 JSObject* createNotAFunctionError(JSGlobalObject*, JSValue callee, StringView name);
 JSObject* createNotAFunctionError(JSGlobalObject*, JSValue callee, const Identifier& name);
 JSObject* createNotAConstructorError(JSGlobalObject*, JSValue callee, StringView name);

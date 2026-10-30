@@ -16,6 +16,8 @@
 
 namespace JSC { namespace AOT {
 
+struct FieldReadRegisters;
+
 inline constexpr StubRegister slotHeaderRegister = StubRegister::T12;
 inline constexpr StubRegister slotPayloadRegister = StubRegister::T13;
 inline constexpr StubRegister slotNameRegister = stubImmediateRegister;
@@ -285,7 +287,8 @@ void returnPresenceBySlot(StubAssembler&, PresenceQuestion, const ProbedSlot&, G
 
 void loadStaticsBase(StubAssembler&, GPRReg staticsBase, GPRReg roundedSizeOfStatics, GPRReg instance = instanceGPR);
 // Of the instance that holds the variable of a slot. The registers may hold the slot: it is read first.
-void loadStaticsBaseOfVariable(StubAssembler&, const CachedSlot&, GPRReg staticsBase, GPRReg scratch);
+// Where realms are shared the variable may be of another image: the read that follows finds literal text through the instance of that image, which is kept in the scratch register for numbers.
+void loadStaticsBaseOfVariable(StubAssembler&, const CachedSlot&, GPRReg staticsBase, GPRReg scratch, FieldReadRegisters&);
 void markStaticsCard(StubAssembler&, GPRReg staticsBase, GPRReg roundedSizeOfStatics, GPRReg offsetInStatics);
 
 // What filled a site was not in the field table: an access that the table answers never gets as far as a fill.

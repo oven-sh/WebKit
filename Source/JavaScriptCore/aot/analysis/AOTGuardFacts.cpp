@@ -649,8 +649,7 @@ static bool isSamePosition(FunctionAnalyses& analyses, ValueID a, ValueID b)
 {
     if (analyses.identityOf(a) == analyses.identityOf(b))
         return true;
-    std::optional<int64_t> constant = integerConstantThroughCasts(analyses.program(), analyses.function(), a);
-    return constant && constant == integerConstantThroughCasts(analyses.program(), analyses.function(), b);
+    return areSameNumberConstantThroughCasts(analyses.program(), analyses.function(), a, b);
 }
 
 static bool isPositionTestForUser(const Function& function, const GuardOrigin& origin, const Value& user)

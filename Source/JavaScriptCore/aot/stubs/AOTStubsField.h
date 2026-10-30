@@ -149,6 +149,8 @@ struct FieldReadRegisters {
     GPRReg result;
     FPRReg number;
     FPRReg numberScratch;
+    // Holds the instance through whose table a word of literal text is read: that of the image of a variable. None: the instance of the stub.
+    FPRReg instanceOfLiteralStrings { InvalidFPRReg };
 };
 
 struct FieldReadExits {

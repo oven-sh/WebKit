@@ -199,18 +199,18 @@ void appendGranule(StubAssembler& jit, GPRReg extension, GPRReg granuleBits, GPR
     jit.store64(scratch, heldBits);
 }
 
-void loadLiteralString(StubAssembler& jit, GPRReg wordAndResult, GPRReg scratch, JumpList& isNotCreated)
+void loadLiteralString(StubAssembler& jit, GPRReg wordAndResult, GPRReg scratch, JumpList& isNotCreated, GPRReg instance)
 {
-    RELEASE_ASSERT(noOverlap(wordAndResult, scratch));
+    RELEASE_ASSERT(noOverlap(wordAndResult, scratch) && instance != wordAndResult);
     if (jit.options().useWideReferences) {
         static_assert(2 << literalStringShift == sizeof(JSCell*));
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.constants.wideLiteralStrings)), scratch);
+        jit.loadPtr(Address(instance, AOT_INSTANCE_OFFSET(runtime.constants.wideLiteralStrings)), scratch);
         jit.load64(BaseIndex(scratch, wordAndResult, CCallHelpers::TimesTwo, -2 * static_cast<int32_t>(emptyLiteralStringWord)), wordAndResult);
         isNotCreated.append(jit.branchTest64(CCallHelpers::Zero, wordAndResult));
         return;
     }
     static_assert(1 << literalStringShift == sizeof(uint32_t));
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.constants.literalStrings)), scratch);
+    jit.loadPtr(Address(instance, AOT_INSTANCE_OFFSET(runtime.constants.literalStrings)), scratch);
     jit.load32(BaseIndex(scratch, wordAndResult, CCallHelpers::TimesOne, -static_cast<int32_t>(emptyLiteralStringWord)), wordAndResult);
     isNotCreated.append(jit.branchTest32(CCallHelpers::Zero, wordAndResult));
     decodeCell32(jit, wordAndResult, wordAndResult);

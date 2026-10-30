@@ -83,6 +83,9 @@ public:
     void setNameProperty(VM&, JSString*, unsigned attributes);
 
 private:
+    bool isSeenAtOnceToBeNoConstructor() const;
+    const LayoutData* classDataInOwnImage() const;
+    bool isLazyClassObjectInOwnImage() const;
     Closure(VM& vm, Structure* structure, NativeExecutable* executable, uint64_t entry)
         : Base(vm, executable, structure->realm(), structure)
         , m_entry(entry)

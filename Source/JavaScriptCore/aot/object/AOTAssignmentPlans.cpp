@@ -548,10 +548,8 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
     auto properties = listAssignedProperties(vm, source, plan.excludedList);
     if (!properties)
         return notePlanWithoutUse("the source has no list of its properties"_s);
-    // A source of another image is listed and read by its own image. Its values are tested like those of an ordinary object.
+    // A source of another image is listed and read by its own image, which also makes the closures that its fields defer. Its values are tested like those of an ordinary object.
     bool sharesTypes = source.compiledObject && &source.compiledObject->state() == &m_state;
-    if (source.compiledObject && !sharesTypes && std::ranges::any_of(*properties, [](const AssignedProperty& property) { return property.field && property.field->slot.representation() == SlotRepresentation::DeferredClosure; }))
-        return notePlanWithoutUse("a field of a source of another image defers its closure"_s);
     const LayoutData* layout = record ? &record->layout() : nullptr;
     JSGlobalObject* realm = target->structure()->realm();
     Structure* extraPropertiesBefore = extraProperties ? extraProperties->structure() : Instance::of(realm)->realm.emptyExtraPropertiesStructure;

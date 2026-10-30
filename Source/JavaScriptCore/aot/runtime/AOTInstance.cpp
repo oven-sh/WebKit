@@ -540,6 +540,13 @@ Instance* Instance::owning(const JSCell* cell)
     Instance* first = cell->structure()->realm()->aotInstance();
     if (!first || !first->above) [[likely]]
         return first;
+    return first->findInstanceOwning(cell);
+}
+
+// Apart, so that a realm with one instance saves no registers for it.
+NEVER_INLINE Instance* Instance::findInstanceOwning(const JSCell* cell)
+{
+    Instance* first = this;
     if (cell->type() == CompiledObjectType)
         return &first->instanceWithShape(uncheckedDowncast<Object>(cell)->shape());
     if (std::optional<uint32_t> closureNumber = closureNumberOfCell(cell))
@@ -1796,8 +1803,13 @@ JSValue ProgramStatics::readVariable(Instance& instance, SlotData slot)
     statics.ensureVariableIsFilled(offset);
     if (JSValue value = readSlot(slot.representation(), instance.statics() + offset, statics.m_strings))
         return value;
-    if (std::optional<FunctionID> function = findFunctionVariable(statics.m_tables, offset))
-        return closures.closure(vm, *function);
+    if (std::optional<FunctionID> function = findFunctionVariable(statics.m_tables, offset)) {
+        // Every reader takes an empty word for the one closure of the function, so the word may as well hold it.
+        // A stub that answers for the variable reads the word alone: code of another image of the realm comes by one for each function that it imports.
+        JSCell* closure = closures.closure(vm, *function);
+        writeVariable(instance, slot, closure);
+        return closure;
+    }
     return { };
 }
 

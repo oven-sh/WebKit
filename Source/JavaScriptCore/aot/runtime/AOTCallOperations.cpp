@@ -4,6 +4,7 @@
  */
 
 #include "config.h"
+#include "AOTImageOfCellScope.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTShownFrameFilter.h"
 
@@ -526,18 +527,42 @@ static StringView nameOfCalleeAt(const CallSiteCache::Entry& callSite, CalleeAtS
     return Image::current()->text().view(StringID(word.hasWideA ? site->throwSite[1] : word.narrowA()));
 }
 
-static StringView nameOfCalleeAtCallSite(VM& vm)
+// Where images share realms, the functions of the library are those of the lowest image, and the place that called one may be of another image: the run has ended at the adapter that
+// the place entered. While the answer lives, the image of that place is the one that runs.
+static NEVER_INLINE std::optional<CompiledFrameIterator> tryContinueInImageThatCalled(VM& vm, const CompiledFrameIterator& ended)
+{
+    CallFrame* adapterFrame = g_imagesShareRealms ? ended.runEnd().adapterFrame : nullptr;
+    if (!adapterFrame)
+        return std::nullopt;
+    return CompiledFrameIterator::tryCreateAtCallerOf(vm, adapterFrame, vm.topEntryFrame);
+}
+
+// The functor gets the frames from the caller of the frame on top on. A function of the library that has left by its tail call leaves nothing of its run but the adapter.
+// Both walks live until the functor is done: each puts back the image that ran before it.
+static ALWAYS_INLINE StringView withFramesFromCallerOfTop(VM& vm, const Invocable<StringView(std::optional<CompiledFrameIterator>&)> auto& functor)
 {
     auto frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, vm.topCallFrame, vm.topEntryFrame);
-    if (!frames || frames->isAtEnd())
+    if (!frames)
         return { };
-    return nameOfCalleeAt(frames->callSite());
+    if (!frames->isAtEnd()) [[likely]]
+        return functor(frames);
+    auto callers = tryContinueInImageThatCalled(vm, *frames);
+    if (!callers || callers->isAtEnd())
+        return { };
+    return functor(callers);
+}
+
+static StringView nameOfCalleeAtCallSite(VM& vm)
+{
+    return withFramesFromCallerOfTop(vm, [](auto& frames) {
+        return nameOfCalleeAt(frames->callSite());
+    });
 }
 
 // `f.apply(receiver, list)` and `f.call(receiver)` name `f.apply` and `f.call` where `f` refuses the call, as bytecode does, which calls `f` at that place.
 // The built-in function is a function of the library. Its frame stands above the place unless it has left by its tail call, and entered in any other way it names nothing.
 // Where the compiler has taken `.call` out of the place, the name there is that of the function that was entered, not of its receiver.
-static StringView nameOfCalleeForwardedBy(auto& frames)
+static StringView nameOfCalleeForwardedBy(VM& vm, auto& frames)
 {
     FunctionID function = frames->frame().function;
     std::optional<uint32_t> builtin = builtinOfFunctionInFrames(function) ? std::nullopt : Image::current()->programTables().builtinImplementedBy(function.index());
@@ -545,17 +570,20 @@ static StringView nameOfCalleeForwardedBy(auto& frames)
         return { };
     ASCIILiteral member = BuiltinID(*builtin) == Builtins::FunctionPrototypeApply ? ".apply"_s : BuiltinID(*builtin) == Builtins::FunctionPrototypeCall ? ".call"_s : ""_s;
     frames->advanceToCallerMachineFrame();
-    StringView name = frames->isAtEnd() ? StringView() : nameOfCalleeAt(frames->callSite(), CalleeAtSite::ReadFromReceiver);
+    StringView name;
+    if (!frames->isAtEnd())
+        name = nameOfCalleeAt(frames->callSite(), CalleeAtSite::ReadFromReceiver);
+    else if (auto callers = tryContinueInImageThatCalled(vm, *frames); callers && !callers->isAtEnd())
+        name = nameOfCalleeAt(callers->callSite(), CalleeAtSite::ReadFromReceiver);
     return !member.isEmpty() && name.endsWith(member) ? name : StringView();
 }
 
 static StringView nameOfForwardedCallee(VM& vm)
 {
-    auto frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, vm.topCallFrame, vm.topEntryFrame);
-    if (!frames || frames->isAtEnd())
-        return { };
-    StringView name = nameOfCalleeAt(frames->callSite());
-    return name.isEmpty() ? nameOfCalleeForwardedBy(frames) : name;
+    return withFramesFromCallerOfTop(vm, [&](auto& frames) {
+        StringView name = nameOfCalleeAt(frames->callSite());
+        return name.isEmpty() ? nameOfCalleeForwardedBy(vm, frames) : name;
+    });
 }
 
 StringView nameOfCalleeForwardedOnTop(VM& vm)
@@ -563,7 +591,7 @@ StringView nameOfCalleeForwardedOnTop(VM& vm)
     auto frames = CompiledFrameIterator::tryCreateAtTop(vm);
     if (!frames || frames->isAtEnd())
         return { };
-    return nameOfCalleeForwardedBy(frames);
+    return nameOfCalleeForwardedBy(vm, frames);
 }
 
 StringView instanceofExpressionOnTop(VM& vm)
@@ -584,18 +612,57 @@ bool readOnTopTestsObjectOfUpdate(VM& vm)
     return position && position->startIsForCallers;
 }
 
+// The frame that a stack trace lists first. Code that several functions share runs in a frame that is hidden: it returns to one address whoever called it, and the place is that of the call.
+static ALWAYS_INLINE void advanceToShownFrame(CompiledFrameIterator& frames)
+{
+    ShownFrameFilter filter;
+    while (!frames.isAtEnd() && !filter.shows(frames.frame().visibility, frames.frame().isTailDeleted))
+        frames.advance();
+}
+
+static ALWAYS_INLINE PlaceInFunctionText placeInFunctionTextOf(const CompiledFrame&);
+
 std::optional<PlaceInFunctionText> placeOnTopInFunctionText(VM& vm)
 {
     auto frames = CompiledFrameIterator::tryCreateAtTop(vm);
     if (!frames)
         return std::nullopt;
-    // The frame that a stack trace lists first. Code that several functions share runs in a frame that is hidden: it returns to one address whoever called it, and the place is that of the call.
-    ShownFrameFilter filter;
-    while (!frames->isAtEnd() && !filter.shows(frames->frame().visibility, frames->frame().isTailDeleted))
-        frames->advance();
+    advanceToShownFrame(*frames);
     if (frames->isAtEnd())
         return std::nullopt;
-    const CompiledFrame& frame = frames->frame();
+    return placeInFunctionTextOf(frames->frame());
+}
+
+void withPlaceThatCalledLibraryOnTop(VM& vm, const ScopedLambda<void(const PlaceInFunctionText&)>& functor)
+{
+    auto frames = CompiledFrameIterator::tryCreateAtTop(vm);
+    if (!frames)
+        return;
+    // As in nameOfCalleeForwardedBy(): the frame of `call` or `apply` is listed like any other, and what failed is written at the place that called it.
+    bool forwards = false;
+    if (!frames->isAtEnd()) {
+        FunctionID function = frames->frame().function;
+        std::optional<uint32_t> builtin = builtinOfFunctionInFrames(function) ? std::nullopt : Image::current()->programTables().builtinImplementedBy(function.index());
+        forwards = builtin && leavesByTailCall(BuiltinID(*builtin));
+        if (forwards)
+            frames->advanceToCallerMachineFrame();
+    }
+    advanceToShownFrame(*frames);
+    if (!frames->isAtEnd()) {
+        if (forwards)
+            functor(placeInFunctionTextOf(frames->frame()));
+        return;
+    }
+    auto callers = tryContinueInImageThatCalled(vm, *frames);
+    if (!callers)
+        return;
+    advanceToShownFrame(*callers);
+    if (!callers->isAtEnd())
+        functor(placeInFunctionTextOf(callers->frame()));
+}
+
+static ALWAYS_INLINE PlaceInFunctionText placeInFunctionTextOf(const CompiledFrame& frame)
+{
     FunctionDescription description(frame.function);
     const Image* image = Image::current();
     std::optional<SourcePosition> place = image->positionOf(frame.code.index(), frame.callSite);
@@ -656,11 +723,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowUnlessCallableNamed, void, (Instance* 
 
 static bool forwardsCallToReceiver(JSValue callee)
 {
-    std::optional<FunctionID> function = functionOf(callee.asCell());
-    if (!function)
-        return false;
-    std::optional<uint32_t> builtin = Image::current()->programTables().builtinImplementedBy(sourceFunctionOf(*function).index());
-    return builtin && (BuiltinID(*builtin) == Builtins::FunctionPrototypeCall || BuiltinID(*builtin) == Builtins::FunctionPrototypeApply);
+    // The functions of the library are those of the lowest image, whichever image asks.
+    return runInImageOfCell(callee.asCell(), [&] {
+        std::optional<FunctionID> function = functionOf(callee.asCell());
+        if (!function)
+            return false;
+        std::optional<uint32_t> builtin = Image::current()->programTables().builtinImplementedBy(sourceFunctionOf(*function).index());
+        return builtin && (BuiltinID(*builtin) == Builtins::FunctionPrototypeCall || BuiltinID(*builtin) == Builtins::FunctionPrototypeApply);
+    });
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowUnlessForwardedCalleeIsCallable, void, (Instance* instance, EncodedJSValue callee, EncodedJSValue receiver))

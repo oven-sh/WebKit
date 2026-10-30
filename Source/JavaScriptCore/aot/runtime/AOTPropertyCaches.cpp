@@ -2086,7 +2086,7 @@ static bool mayStandUnderStructureOfOtherImage(const Slot& slot, SlotAccess acce
     case Slot::Kind::FieldOrInherited:
         return access == SlotAccess::Read && !slot.has(Slot::inheritsGetter);
     case Slot::Kind::ExtraProperty:
-        return access == SlotAccess::Read;
+        return access == SlotAccess::Read || access == SlotAccess::Store;
     case Slot::Kind::FieldGetter:
     case Slot::Kind::FieldCreation:
     case Slot::Kind::FieldRemoval:

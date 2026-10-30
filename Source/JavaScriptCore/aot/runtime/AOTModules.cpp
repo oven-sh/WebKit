@@ -543,12 +543,20 @@ JSValue Modules::readExportIfInitialized(ModuleID module, unsigned index) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// Compiled code reads an export off the object too, where the build did not bind the read: `require("./list.js").LIST`. So does a built-in function that it calls: `Object.values(list)`.
+static bool isReadForCompiledCode(VM& vm)
+{
+    if (isTopFrameCompiled(vm))
+        return true;
+    CallFrame* top = vm.topCallFrame;
+    return top && !top->isNativeCalleeFrame() && !top->codeBlock() && isCallerCompiled(vm, top, vm.topEntryFrame);
+}
+
 // For whoever is not compiled code of the image: a binding of a file from disk, a read off the namespace object.
 JSValue Modules::readExportFromOutside(ModuleID module, unsigned index)
 {
     const ModuleExportData& moduleExport = m_table.exports(module)[index];
-    // Compiled code reads an export off the object too, where the build did not bind the read: `require("./list.js").LIST`.
-    if (moduleExport.isClosedToOutside && (moduleExport.variable == ModuleExportData::noSlot || !isTopFrameCompiled(*m_instance.vm))) [[unlikely]] {
+    if (moduleExport.isClosedToOutside && (moduleExport.variable == ModuleExportData::noSlot || !isReadForCompiledCode(*m_instance.vm))) [[unlikely]] {
         JSGlobalObject* realm = m_instance.globalObject;
         auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
         throwException(realm, scope, createExportClosedToOutsideError(realm, identifier(moduleExport.name).string(), modulePath(module), askerOfModule()));
@@ -587,6 +595,15 @@ JSValue Modules::readExport(ModuleID module, unsigned index)
     }
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+// The body of a module that is mocked before it has run never runs. What the mock does not give reads as undefined, as a name does that the mock's own module lacks in plain Bun.
+void Modules::fillExportsOfBodyThatNeverRuns(ModuleID module)
+{
+    for (const ModuleExportData& moduleExport : m_table.exports(module)) {
+        if (moduleExport.kind() == ModuleExportKind::Variable && moduleExport.isReplaceable && !ProgramStatics::readVariableWithoutAllocating(m_instance, moduleExport.variable))
+            ProgramStatics::writeVariable(m_instance, moduleExport.variable, jsUndefined());
+    }
 }
 
 bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue value)
@@ -647,11 +664,13 @@ std::optional<bool> Modules::tryReplaceExportInImageBelow(ModuleID external, Uni
 {
     String path = m_table.pathText(external);
     for (Instance* below = m_instance.globalObject->aotInstance(); below != &m_instance; below = below->above) {
-        std::optional<ModuleID> file = ModuleTable(below->tables()).findByPath(path);
+        ModuleTable table(below->tables());
+        std::optional<ModuleID> file = table.findByPath(path);
         if (!file)
             continue;
         RunningImageScope imageOfFile(m_instance.vm->aotState(), below->program);
-        return below->state->modules->tryReplaceExport(*file, name, value);
+        // Whoever imports a CommonJS file that has a face reads what the face has captured.
+        return below->state->modules->tryReplaceExport(table.faceOfFile(*file).value_or(*file), name, value);
     }
     return std::nullopt;
 }
@@ -709,6 +728,28 @@ void Modules::willMockLibraryModule(ModuleID module)
         return;
     m_libraryModulesWithMock.set(module.index());
     m_libraryModulesThatMockReplaces.set(module.index(), !isHeldForImport(module));
+}
+
+// In plain Bun an ES module that was required has a module object in require.cache, and a mock stores there what its factory gave: the next require() answers that very object.
+// One that was only imported has none, and require() goes on answering the namespace object.
+void Modules::leaveOutWhatMockLacks(ModuleID module, JSObject* exportsOfMock)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    std::span<const ModuleExportData> entries = m_table.exports(module);
+    BitVector leftOut(entries.size());
+    for (unsigned index = 0; index < entries.size(); ++index) {
+        bool isAnswered = exportsOfMock->hasOwnProperty(m_instance.globalObject, identifier(entries[index].name));
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!isAnswered)
+            leftOut.quickSet(index);
+    }
+    m_exportsLeftOutByMocks.set(module, WTF::move(leftOut));
+}
+
+void Modules::mockWhatRequireAnswered(ModuleID module, JSObject* exports)
+{
+    if (LoadedModule* loaded = loadedIfExists(module); loaded && loaded->requiredValue)
+        loaded->requiredValue.set(*this, exports);
 }
 
 void Modules::deferMock(ModuleID module)
@@ -3313,8 +3354,14 @@ void willMockModule(JSGlobalObject* realm, ModuleID moduleOfHost, JSObject* expo
         return;
     }
     modules.willMock(module);
-    if (modules.data(module).kind != ModuleKind::CommonJs)
+    if (modules.data(module).kind != ModuleKind::CommonJs) {
+        if (ModuleStatus status = modules.status(module); status == ModuleStatus::Unlinked || status == ModuleStatus::Linked) {
+            modules.fillExportsOfBodyThatNeverRuns(module);
+            modules.leaveOutWhatMockLacks(module, exports);
+        }
+        modules.mockWhatRequireAnswered(module, exports);
         return;
+    }
     // Compiled code calls the body of a CommonJS file itself, and asks for the status first.
     if (ModuleStatus status = modules.status(module); status == ModuleStatus::Unlinked || status == ModuleStatus::Linked)
         modules.markEvaluated(module);
@@ -3819,9 +3866,9 @@ std::span<const ModuleExportData> ModuleNamespace::exports() const
     return modules().table().exports(m_module);
 }
 
-bool ModuleNamespace::isAmbiguousExport(unsigned index) const
+bool ModuleNamespace::isHiddenExport(unsigned index) const
 {
-    return exports()[index].isFromStarExport && modules().isExportAmbiguous(m_module, index);
+    return (exports()[index].isFromStarExport && modules().isExportAmbiguous(m_module, index)) || modules().isLeftOutByMock(m_module, index);
 }
 
 void ModuleNamespace::ensureOwnStructure(VM& vm)
@@ -3850,7 +3897,7 @@ std::optional<unsigned> ModuleNamespace::find(UniquedStringImpl* name) const
     if (isSymbolLikeKey(name))
         return std::nullopt;
     std::optional<unsigned> index = modules().table().findExport(m_module, name);
-    return index && !isAmbiguousExport(*index) ? index : std::nullopt;
+    return index && !isHiddenExport(*index) ? index : std::nullopt;
 }
 
 bool ModuleNamespace::tryReadExports(JSGlobalObject* globalObject, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values)
@@ -3862,7 +3909,7 @@ bool ModuleNamespace::tryReadExports(JSGlobalObject* globalObject, Vector<Unique
     Modules& modules = this->modules();
     std::span<const ModuleExportData> entries = exports();
     for (unsigned index = 0; index < entries.size(); ++index) {
-        if (isAmbiguousExport(index))
+        if (isHiddenExport(index))
             continue;
         JSValue value = modules.readExportFromOutside(m_module, index);
         RETURN_IF_EXCEPTION(scope, true);
@@ -4025,7 +4072,7 @@ void ModuleNamespace::getOwnPropertyNames(JSObject* object, JSGlobalObject* glob
     JSCellButterfly* dynamicNames = thisObject->m_dynamicExportNames.get();
     unsigned dynamicNameCount = dynamicNames ? dynamicNames->length() : 0;
     for (unsigned ownIndex = 0, dynamicIndex = 0; ownIndex < entries.size() || dynamicIndex < dynamicNameCount;) {
-        if (ownIndex < entries.size() && thisObject->isAmbiguousExport(ownIndex)) {
+        if (ownIndex < entries.size() && thisObject->isHiddenExport(ownIndex)) {
             ++ownIndex;
             continue;
         }

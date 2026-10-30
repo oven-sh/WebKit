@@ -132,8 +132,9 @@ uint32_t closureNumberOf(FunctionID function)
 FunctionID closureFunctionWithNumber(uint32_t number)
 {
     // The number of a function says something in the image that runs.
-    RELEASE_ASSERT(programTables().hasClosureNumber(number));
-    return FunctionID(programTables().closureFunctionWithNumber(number));
+    const ProgramTables& tables = programTables();
+    RELEASE_ASSERT(tables.hasClosureNumber(number));
+    return FunctionID(tables.closureFunctionWithNumber(number));
 }
 
 unsigned functionLengthOf(FunctionID function)
@@ -180,16 +181,20 @@ NativeExecutable* FunctionTables::executableOf(FunctionID function) const
     return uncheckedDowncast<NativeExecutable>(executables[static_cast<unsigned>(executableKind(functionKindData(function)))].get());
 }
 
+NEVER_INLINE FunctionTables& FunctionTables::createFor(VM& vm)
+{
+    auto& owner = vm.aotState().partsOfRunningImage().functionTables;
+    owner = makeUnique<FunctionTables>(vm);
+    vm.aotState().functionTables = owner.get();
+    return *owner;
+}
+
 FunctionTables& FunctionTables::of(VM& vm)
 {
     RELEASE_ASSERT(vm.hasCompiledCode());
-    auto& tables = vm.aotState().functionTables;
-    if (!tables) {
-        auto& owner = vm.aotState().partsOfRunningImage().functionTables;
-        owner = makeUnique<FunctionTables>(vm);
-        tables = owner.get();
-    }
-    return *tables;
+    if (auto& tables = vm.aotState().functionTables) [[likely]]
+        return *tables;
+    return createFor(vm);
 }
 
 static ClosureTable& closureTableOf(JSObject* callee)
@@ -410,7 +415,11 @@ std::optional<JSObject*> FunctionTables::recordedCalleeOfCallFrom(const void* st
     const RecordedCallee& entry = entryOfCallFrom(recordedCalleeStorage.mutableSpan(), stackPointerOfCaller);
     if (entry.stackPointerOfCaller != stackPointerOfCaller || sourceFunctionOf(entry) != sourceFunction)
         return std::nullopt;
-    return closureOnHeapOf(entry);
+    JSObject* closure = closureOnHeapOf(entry);
+    // What bind makes of a closure is a closure too, of a function that is written where the target is. No frame is listed for it: the frames are the target's, whatever it was renamed to.
+    if (closure && functionKindData(*functionOf(closure)).isBound())
+        return std::nullopt;
+    return closure;
 }
 
 SUPPRESS_ASAN std::optional<JSObject*> FunctionTables::calleeKeptInFrame(VM& vm, const void* frameRecordOfCaller, CalleeOfSite site, FunctionID sourceFunction)
@@ -419,7 +428,8 @@ SUPPRESS_ASAN std::optional<JSObject*> FunctionTables::calleeKeptInFrame(VM& vm,
         return std::nullopt;
     auto isFunctionObjectOfFunction = [&](JSCell* cell) {
         std::optional<FunctionID> function = functionOf(cell);
-        return function && sourceFunctionOf(*function) == sourceFunction;
+        // As in recordedCalleeOfCallFrom().
+        return function && sourceFunctionOf(*function) == sourceFunction && !functionKindData(*function).isBound();
     };
     auto isCellOnHeap = [&](JSCell* cell) {
         return cell && !cell->isPreciseAllocation() && HeapUtil::isJSCellStorage(vm.heap, vm.heap.objectSpace().blocks().filter(), cell);
@@ -873,11 +883,14 @@ std::optional<uint32_t> closureNumberOf(const JSCell* cell)
 
 std::optional<FunctionID> functionOf(const JSCell* cell)
 {
-    // A closure of another image of the realm is like a function that no build has seen.
     std::optional<uint32_t> number = closureNumberOf(cell);
-    if (!number || !programTables().hasClosureNumber(*number)) [[unlikely]]
+    if (!number)
         return std::nullopt;
-    return closureFunctionWithNumber(*number);
+    // A closure of another image of the realm is like a function that no build has seen.
+    const ProgramTables& tables = programTables();
+    if (!tables.hasClosureNumber(*number)) [[unlikely]]
+        return std::nullopt;
+    return FunctionID(tables.closureFunctionWithNumber(*number));
 }
 
 static FunctionID checkedFunctionOf(const JSCell* callee)
@@ -891,7 +904,6 @@ namespace CompiledCallee {
 
 bool isCompiledCallee(const JSCell* cell)
 {
-    ImageOfCellScope imageOfCell(cell);
     return isCompiledCalleeType(cell->type());
 }
 
@@ -903,8 +915,9 @@ String name(JSObject* callee)
 
 unsigned length(JSObject* callee)
 {
-    ImageOfCellScope imageOfCell(callee);
-    return functionLengthOf(checkedFunctionOf(callee));
+    return runInImageOfCell(callee, [&]() ALWAYS_INLINE_LAMBDA {
+        return functionLengthOf(checkedFunctionOf(callee));
+    });
 }
 
 bool canAssumeNameAndLengthAreOriginal(VM& vm, JSObject* callee)

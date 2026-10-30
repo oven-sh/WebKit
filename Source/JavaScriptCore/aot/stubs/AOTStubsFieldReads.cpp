@@ -215,7 +215,11 @@ void readFieldAndReturn(StubAssembler& jit, const FieldReadRegisters& r, FieldRe
         if (!mayBeLiteralString)
             return;
         isLiteralString.link(&jit);
-        loadLiteralString(jit, r.value, r.field.address, exits.cannot);
+        if (r.instanceOfLiteralStrings != InvalidFPRReg) {
+            jit.moveDoubleTo64(r.instanceOfLiteralStrings, r.field.address);
+            loadLiteralString(jit, r.value, r.field.address, exits.cannot, r.field.address);
+        } else
+            loadLiteralString(jit, r.value, r.field.address, exits.cannot);
         returnValue();
     };
     auto readNarrowInteger = [&](const SlotTraits& traits) {

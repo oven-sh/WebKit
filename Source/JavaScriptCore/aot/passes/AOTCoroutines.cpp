@@ -809,24 +809,29 @@ static PassOutcome dropReleaseHintsBehindSuspensions(FunctionPassContext& contex
     }
     if (dropped.isEmpty())
         return PassOutcome::Unchanged;
-    IRBuilder builder(analyses.context(), function, context.types, &analyses);
-    eraseEverywhere(builder, dropped);
-    for (BlockID id : cfg.reversePostOrder()) {
-        if (id == entryBlock)
-            continue;
-        // What an edge itself answers stands behind the arguments.
-        size_t numberOfArguments = std::numeric_limits<size_t>::max();
-        for (const Edge& edge : cfg.incomingEdges(id))
-            numberOfArguments = std::min<size_t>(numberOfArguments, targetOf(function, edge).arguments.size());
-        const CompactList<ValueID>& parameters = function.at(id).parameters;
-        BitVector unread;
-        for (uint32_t index = 0; index < parameters.size() && index < numberOfArguments; ++index) {
-            if (!isRead.get(parameters[index].index()))
-                unread.set(index);
+    {
+        IRBuilder builder(analyses.context(), function, context.types, &analyses);
+        eraseEverywhere(builder, dropped);
+        for (BlockID id : cfg.reversePostOrder()) {
+            if (id == entryBlock)
+                continue;
+            // What an edge itself answers stands behind the arguments.
+            size_t numberOfArguments = std::numeric_limits<size_t>::max();
+            for (const Edge& edge : cfg.incomingEdges(id))
+                numberOfArguments = std::min<size_t>(numberOfArguments, targetOf(function, edge).arguments.size());
+            const CompactList<ValueID>& parameters = function.at(id).parameters;
+            BitVector unread;
+            for (uint32_t index = 0; index < parameters.size() && index < numberOfArguments; ++index) {
+                if (!isRead.get(parameters[index].index()))
+                    unread.set(index);
+            }
+            if (!unread.isEmpty())
+                builder.removeParameters(id, unread);
         }
-        if (!unread.isEmpty())
-            builder.removeParameters(id, unread);
     }
+    // In the form in which it is read a function has no value that no block lists.
+    compactFunction(function);
+    analyses.didChangeControlFlow();
     return PassOutcome::Changed;
 }
 
@@ -2037,7 +2042,14 @@ static bool isTestThatMakesGuards(FunctionAnalyses& analyses, ValueID id)
     });
 }
 
-static void assignWords(HeapFramePlan& plan, unsigned numberOfValues)
+// Two names of one value, `const b = a` or a cast of it, share a word. Read back from two words they would be two values, and what a test behind the yield proves of the one would not hold of the other.
+static ValueID valueInWord(const HeapFramePlan& plan, FunctionAnalyses& analyses, ValueID id)
+{
+    ValueID identity = analyses.identityOf(id);
+    return identity == plan.generator ? id : identity;
+}
+
+static void assignWords(HeapFramePlan& plan, FunctionAnalyses& analyses, unsigned numberOfValues)
 {
     plan.wordOf.fill(noWord, numberOfValues);
     plan.wordOf[plan.generator.index()] = wordOfGenerator;
@@ -2045,7 +2057,8 @@ static void assignWords(HeapFramePlan& plan, unsigned numberOfValues)
     Vector<ValueID, 16> values;
     for (uint32_t index = 0; index < plan.yields.size(); ++index) {
         for (auto list : { plan.yields[index].stored.span(), plan.yields[index].heldOnly.span() }) {
-            for (ValueID id : list) {
+            for (ValueID name : list) {
+                ValueID id = valueInWord(plan, analyses, name);
                 if (yieldsOfValue[id.index()].isEmpty())
                     values.append(id);
                 yieldsOfValue[id.index()].append(index);
@@ -2067,6 +2080,12 @@ static void assignWords(HeapFramePlan& plan, unsigned numberOfValues)
         for (uint32_t yield : yields)
             yieldsOfWord[word].quickSet(yield);
         plan.wordOf[id.index()] = word;
+    }
+    for (const YieldInFrame& yield : plan.yields) {
+        for (auto list : { yield.stored.span(), yield.heldOnly.span() }) {
+            for (ValueID name : list)
+                plan.wordOf[name.index()] = plan.wordOf[valueInWord(plan, analyses, name).index()];
+        }
     }
     plan.numberOfWords = yieldsOfWord.size();
 }
@@ -2269,7 +2288,7 @@ static std::optional<HeapFramePlan> planHeapFrame(const AnalysisContext& context
     if (plan.yields.isEmpty())
         return std::nullopt;
 
-    assignWords(plan, function.values.size());
+    assignWords(plan, analyses, function.values.size());
     if (plan.numberOfWords > maxWordsOfHeapFrame)
         return std::nullopt;
     findWordsToClear(plan, function, analyses);
@@ -2302,9 +2321,15 @@ static void appendPut(IRBuilder& builder, ValueID frame, uint32_t word, ValueID 
 // The generator's own word is written once, by the body.
 static void appendPutsOfYield(IRBuilder& builder, const HeapFramePlan& plan, const YieldInFrame& yield, ValueID frame)
 {
+    Vector<uint32_t, 8> written;
     for (auto list : { yield.stored.span(), yield.heldOnly.span() }) {
-        for (ValueID id : list)
-            appendPut(builder, frame, plan.wordOf[id.index()], id);
+        for (ValueID id : list) {
+            uint32_t word = plan.wordOf[id.index()];
+            if (written.contains(word))
+                continue;
+            written.append(word);
+            appendPut(builder, frame, word, id);
+        }
     }
 }
 
@@ -2544,14 +2569,34 @@ static void buildResumeFunction(const AnalysisContext& context, TaskArenas& aren
             }
             defineLive(id, builder.append(Value(function.at(id))));
         }
+        struct WordRead {
+            uint32_t index;
+            TypeID type;
+            ValueID word;
+            bool definesName { false };
+        };
+        Vector<WordRead, 8> wordsRead;
         for (ValueID id : yield.stored) {
             TypeID type = function.at(id).type;
             // Where the value is not made yet the word is empty, and only what has a fact behind it reads the value.
-            Value read = IRBuilder::make(Opcode::GetHeapFrameWord, { frame });
-            read.setIndex(plan.wordOf[id.index()]);
-            read.setValueType(types.at(type).mayBeUnspecified() ? anythingOrUnspecified : TypeTable::anything);
-            ValueID word = builder.append(WTF::move(read));
+            uint32_t index = plan.wordOf[id.index()];
+            TypeID typeOfWord = types.at(type).mayBeUnspecified() ? anythingOrUnspecified : TypeTable::anything;
+            size_t earlier = wordsRead.findIf([&](const WordRead& read) { return read.index == index && read.type == typeOfWord; });
+            if (earlier == notFound) {
+                Value read = IRBuilder::make(Opcode::GetHeapFrameWord, { frame });
+                read.setIndex(index);
+                read.setValueType(typeOfWord);
+                earlier = wordsRead.size();
+                wordsRead.append({ index, typeOfWord, builder.append(WTF::move(read)), false });
+            }
+            ValueID word = wordsRead[earlier].word;
             if (type == TypeTable::anything) {
+                // A value defines one name. A further name of the word is a cast of what was read, which is still the one value.
+                if (std::exchange(wordsRead[earlier].definesName, true)) {
+                    Value further = IRBuilder::make(Opcode::Upcast, { word });
+                    further.setCastType(TypeTable::anything);
+                    word = builder.append(WTF::move(further));
+                }
                 defineLive(id, word);
                 continue;
             }

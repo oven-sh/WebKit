@@ -92,6 +92,10 @@ InstanceCount instanceCountOf(const PropertyAccessContext& context)
 {
     if (context.flow && context.flow->programInstances() == ProgramInstances::AtMostOne)
         return InstanceCount::AtMostOne;
+    // Such a host is a test run, which ends a realm before it makes the next. The number of a layout is of one image, so an object that has it is of the realm that runs.
+    // ProgramInstances stays unknown where images share a realm: a closure is told from another image's by its Structure.
+    if (context.flow && context.flow->hostRunsFilesOutsideImage())
+        return InstanceCount::AtMostOne;
     return InstanceCount::Unknown;
 }
 

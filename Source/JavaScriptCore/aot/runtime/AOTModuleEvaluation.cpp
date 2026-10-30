@@ -2691,10 +2691,39 @@ bool Modules::isHeldForImport(ModuleID target) const
 {
     if (namespaceIfCreated(target, ModulePhase::Evaluation))
         return true;
+    // A module of another image imports the file: the loader has asked for its record.
+    if (m_instance.program->sharesRealms() && recordIfExists(target))
+        return true;
     return std::ranges::any_of(m_table.importsOfHeldFile(target), [&](const ImportOfHeldFileData& import) {
         ModuleID importer(import.importer);
-        return status(importer) > ModuleStatus::Linked || (m_entryPointIsLinked && data(importer).isLinkedWithEntryPoint());
+        if (status(importer) > ModuleStatus::Linked || (m_entryPointIsLinked && data(importer).isLinkedWithEntryPoint()))
+            return true;
+        // The loader has loaded the importer for a module of another image.
+        if (ModuleRecord* record = recordIfExists(importer); record && record->status() != CyclicModuleRecord::Status::New)
+            return true;
+        // A module that runs ahead of the importer, and a CommonJS file that runs while the graph of the importer is loaded.
+        return data(importer).isESModuleOfProgram() && (wasLoadedWithGraph(importer) || isBelowRootWhoseFilesRun(importer));
     });
+}
+
+bool Modules::isBelowRootWhoseFilesRun(ModuleID wanted) const
+{
+    for (const FilesBeingRun* files = m_innermostFilesBeingRun; files; files = files->outer) {
+        BitVector seen(m_table.size());
+        Vector<uint32_t, 32> found { files->root.index() };
+        while (!found.isEmpty()) {
+            ModuleID module(found.takeLast());
+            if (module == wanted)
+                return true;
+            if (!data(module).isESModuleOfProgram() || seen.set(module.index()))
+                continue;
+            for (const ModuleRequestData& request : m_table.requests(module)) {
+                if (!request.isRequire && !request.isHoisted)
+                    found.append(request.target());
+            }
+        }
+    }
+    return false;
 }
 
 JSValue Modules::loadEvictedFile(ModuleID file)

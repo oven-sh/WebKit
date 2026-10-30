@@ -28,6 +28,7 @@
 #include "AOTRealmStartup.h"
 #include "AOTRuntimeType.h"
 #include "AOTState.h"
+#include "AOTTraceFrame.h"
 #include "AOTVector.h"
 #include "ArgList.h"
 #include "ConstructData.h"
@@ -1308,16 +1309,30 @@ static String findOnTop(VM& vm, StringView name, FindInText find)
 {
     if (name.isEmpty() || !name.containsOnlyASCII())
         return { };
+    auto findOnce = [&](const PlaceInFunctionText& place) -> String {
+        if (!place.address)
+            return { };
+        QuotesOfPlaces::Answer& answer = quotesOfPlaces(vm).answers.add(place.address, QuotesOfPlaces::Answer { }).iterator->value;
+        if (answer.find != find || (!answer.holdsForEveryName && StringView(answer.name) != name)) {
+            bool holdsForEveryName = find == findWrittenElements;
+            String quote = findAt(vm, &place, name, find, holdsForEveryName);
+            answer = { find, name.toString(), WTF::move(quote), holdsForEveryName };
+        }
+        return answer.quote;
+    };
     std::optional<PlaceInFunctionText> place = placeOnTopInFunctionText(vm);
-    if (!place || !place->address)
-        return { };
-    QuotesOfPlaces::Answer& answer = quotesOfPlaces(vm).answers.add(place->address, QuotesOfPlaces::Answer { }).iterator->value;
-    if (answer.find != find || (!answer.holdsForEveryName && StringView(answer.name) != name)) {
-        bool holdsForEveryName = find == findWrittenElements;
-        String quote = findAt(vm, &*place, name, find, holdsForEveryName);
-        answer = { find, name.toString(), WTF::move(quote), holdsForEveryName };
+    String quote;
+    if (place) [[likely]] {
+        quote = findOnce(*place);
+        if (!quote.isNull()) [[likely]]
+            return quote;
     }
-    return answer.quote;
+    if (place ? find == findWrittenCalls && (name.endsWith(".call"_s) || name.endsWith(".apply"_s)) : g_imagesShareRealms) {
+        withPlaceThatCalledLibraryOnTop(vm, [&](const PlaceInFunctionText& placeThatCalled) {
+            quote = findOnce(placeThatCalled);
+        });
+    }
+    return quote;
 }
 
 JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, StringView member)

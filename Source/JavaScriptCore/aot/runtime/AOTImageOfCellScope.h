@@ -41,6 +41,23 @@ private:
     std::optional<RunningImageScope> m_scope;
 };
 
+template<typename Functor>
+NEVER_INLINE auto runInImageOfCellAmongSeveral(const JSCell* cell, const Functor& functor) -> decltype(functor())
+{
+    ImageOfCellScope imageOfCell(cell);
+    return functor();
+}
+
+// For a short function that is asked often. A scope has something to restore at the end of the function, for which the function keeps a frame and saves registers
+// whether or not there is a second image. Here a process with one image asks one word and runs the functor as if it stood there alone.
+template<typename Functor>
+ALWAYS_INLINE auto runInImageOfCell(const JSCell* cell, const Functor& functor) -> decltype(functor())
+{
+    if (Image::sharedByAllThreads()) [[likely]]
+        return functor();
+    return runInImageOfCellAmongSeveral(cell, functor);
+}
+
 // The tables of an instance create what they hand out under their own image, whichever image runs when they are asked.
 class ImageOfInstanceScope {
     WTF_MAKE_NONCOPYABLE(ImageOfInstanceScope);

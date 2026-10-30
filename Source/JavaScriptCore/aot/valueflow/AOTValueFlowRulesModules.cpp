@@ -909,10 +909,17 @@ void runModuleEvaluation(const ValueFlowStatement& statement, ValueFlowRuleConte
             continue;
         context.add(variable, context.universe().undefinedValue());
         std::optional<PropertyKeyID> key = program.types.find({ .kind = PropertyKeyKind::Text, .text = entry.name });
-        connect(context, ownPropertyOf(context, values, key), variable);
+        ValueFlowSources taken = ownPropertyOf(context, values, key);
+        connect(context, taken, variable);
         listOwnPropertiesNobodyWrote(context, values, key, variable);
-        if (context.sets().meet(context.universe().holdersOfExportsOf(id), context.universe().eventRaisingLibraryExportHolders()))
+        if (context.sets().meet(context.universe().holdersOfExportsOf(id), context.universe().eventRaisingLibraryExportHolders())) {
             letSeenCodeCallEscapedFunctionsAmong(context, variable);
+            // The variable of an export that tests may replace holds a value nobody knows from the start, and lists nothing that has escaped. Where the export comes from does.
+            if (entry.isReplaceable) {
+                for (ValueFlowNodeID node : taken.nodes)
+                    letSeenCodeCallEscapedFunctionsAmong(context, node);
+            }
+        }
     }
 }
 
@@ -943,6 +950,9 @@ void requireModule(const ValueFlowStatement& statement, ValueFlowRuleContext& co
     connect(context, requiredValueOf(context, module), statement.result);
     if (statement.result && context.program().at(module).flags.contains(ModuleFlags::MayBeEvicted))
         context.add(statement.result, unknownValue(context, ValueFlowUnknownSource::UnseenCode));
+    // Modules::mockWhatRequireAnswered(): what the factory of a mock gave.
+    if (const Module& required = context.program().at(module); statement.result && required.kind == ModuleKind::SourceText && !required.runtimeModule && required.flags.contains(ModuleFlags::MayBeMocked))
+        context.add(statement.result, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
     if (requireMayAnswerWithMock(context.program(), context.program().at(module)) && isWrittenInProgram(context.program().at(statement.function))) {
         enterLoaderOfHost(context);
         if (statement.result) {

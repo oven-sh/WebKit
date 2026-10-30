@@ -1641,7 +1641,7 @@ void loadStaticsBase(StubAssembler& jit, GPRReg staticsBase, GPRReg roundedSizeO
     jit.sub64(TrustedImm32(static_cast<int32_t>(InstanceLayout::bytesReservedForPrefixAndPollPage)), staticsBase);
 }
 
-void loadStaticsBaseOfVariable(StubAssembler& jit, const CachedSlot& slot, GPRReg staticsBase, GPRReg scratch)
+void loadStaticsBaseOfVariable(StubAssembler& jit, const CachedSlot& slot, GPRReg staticsBase, GPRReg scratch, FieldReadRegisters& read)
 {
     if (!jit.options().sharesRealms) {
         loadStaticsBase(jit, staticsBase, scratch);
@@ -1660,6 +1660,8 @@ void loadStaticsBaseOfVariable(StubAssembler& jit, const CachedSlot& slot, GPRRe
     jit.jump().linkTo(next, &jit);
     isFound.link(&jit);
     isOfThisInstance.link(&jit);
+    read.instanceOfLiteralStrings = read.numberScratch;
+    jit.move64ToDouble(staticsBase, read.instanceOfLiteralStrings);
     loadStaticsBase(jit, staticsBase, scratch, staticsBase);
 }
 

@@ -228,13 +228,34 @@ GetValueFunc closurePrototypePropertyGetter()
     return closurePrototypeProperty;
 }
 
+// Most closures that are asked are no constructors. Where all threads share one image its tables say so without a call, so nothing is saved and nothing restored.
+ALWAYS_INLINE bool Closure::isSeenAtOnceToBeNoConstructor() const
+{
+    const Image* image = Image::sharedByAllThreads();
+    return image && !image->programTables().kindOfClosureNumber(closureNumber()).isConstructor;
+}
+
 const LayoutData* Closure::classData() const
+{
+    if (isSeenAtOnceToBeNoConstructor())
+        return nullptr;
+    return classDataInOwnImage();
+}
+
+NEVER_INLINE const LayoutData* Closure::classDataInOwnImage() const
 {
     ImageOfCellScope imageOfCell(this);
     return kind().isConstructor ? state().objects->classes.classConstructedByClosureWithNumber(closureNumber()) : nullptr;
 }
 
 bool Closure::isLazyClassObject() const
+{
+    if (isSeenAtOnceToBeNoConstructor())
+        return false;
+    return isLazyClassObjectInOwnImage();
+}
+
+NEVER_INLINE bool Closure::isLazyClassObjectInOwnImage() const
 {
     ImageOfCellScope imageOfCell(this);
     if (!kind().isConstructor || getDirect(vm(), vm().propertyNames->prototype))
@@ -273,9 +294,10 @@ void Closure::adoptBoundFunctionStructure(VM& vm)
 
 void Closure::ensureClassObject(VM&)
 {
-    ImageOfCellScope imageOfCell(this);
-    if (isLazyClassObject())
-        createClassObject(this);
+    runInImageOfCell(this, [&]() ALWAYS_INLINE_LAMBDA {
+        if (isLazyClassObject())
+            createClassObject(this);
+    });
 }
 
 // A cache answers for a static field by the Structure of the class object alone, so a class with static members shares its Structure with no other class.
@@ -316,11 +338,12 @@ void Closure::initializeClassObject(VM& vm, JSObject* parent, JSObject* prototyp
 
 void Closure::prepareForGenericAccess(VM& vm)
 {
-    ImageOfCellScope imageOfCell(this);
-    if (kind().isBound()) [[unlikely]]
-        adoptBoundFunctionStructure(vm);
-    else
-        ensureClassObject(vm);
+    runInImageOfCell(this, [&]() ALWAYS_INLINE_LAMBDA {
+        if (kind().isBound()) [[unlikely]]
+            adoptBoundFunctionStructure(vm);
+        else
+            ensureClassObject(vm);
+    });
 }
 
 JSValue Closure::prototypeProperty(VM& vm)
@@ -631,14 +654,14 @@ bool Closure::isNameThatBuiltinFunctionsRefuse(VM& vm, UniquedStringImpl* uid)
 
 bool Closure::refusesOwnProperty(VM& vm, PropertyName name) const
 {
-    ImageOfCellScope imageOfCell(this);
     return !name.isPrivateName() && isNameThatBuiltinFunctionsRefuse(vm, name.uid()) && isBuiltinFunction();
 }
 
 bool Closure::isBuiltinFunction() const
 {
-    ImageOfCellScope imageOfCell(this);
-    return ModuleTable(state().instance.tables()).isRuntimeFunction(function());
+    return runInImageOfCell(this, [&]() ALWAYS_INLINE_LAMBDA {
+        return ModuleTable(state().instance.tables()).isRuntimeFunction(function());
+    });
 }
 
 bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
@@ -690,8 +713,9 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
 
 bool Closure::hasOrdinaryDefineOwnProperty(VM& vm, PropertyName name) const
 {
-    ImageOfCellScope imageOfCell(this);
-    return !classData() && !kind().isBound() && !refusesOwnProperty(vm, name) && ReifiedSlimClosure::hasOrdinaryDefineOwnProperty(vm, name);
+    return runInImageOfCell(this, [&]() ALWAYS_INLINE_LAMBDA {
+        return !classData() && !kind().isBound() && !refusesOwnProperty(vm, name) && ReifiedSlimClosure::hasOrdinaryDefineOwnProperty(vm, name);
+    });
 }
 
 bool Closure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)

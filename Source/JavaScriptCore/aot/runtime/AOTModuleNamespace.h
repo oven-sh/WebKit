@@ -80,7 +80,8 @@ private:
 
     Modules& modules() const;
     std::span<const ModuleExportData> exports() const;
-    bool isAmbiguousExport(unsigned index) const;
+    // Listed in the table of the module, and no export of it.
+    bool isHiddenExport(unsigned index) const;
     bool isSymbolLikeKey(UniquedStringImpl*) const;
     bool isOrdinaryKey(PropertyName) const;
     bool isDynamicExport(UniquedStringImpl*) const;

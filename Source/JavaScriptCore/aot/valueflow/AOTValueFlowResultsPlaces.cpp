@@ -1000,6 +1000,28 @@ Vector<VariableID> collectExportsThatSpiesReplace(const ValueFlowResultInputs& i
         spies.quickSet(index);
         isUsed |= !inputs.solver().usesOf(BuiltinID(index)).isEmpty();
     }
+    // `import { spyOn, jest } from "bun:test"`: the variables that stand for a spy, and for an object that has one.
+    BitVector variablesOfSpies(program.variables.size());
+    Vector<std::pair<VariableID, BuiltinID>, 4> variablesOfHoldersOfSpies;
+    for (const Module& module : program.modules) {
+        BuiltinID object = module.kind == ModuleKind::Runtime && module.runtimeModule ? builtins.namespaceOf(module.runtimeModule) : BuiltinID();
+        if (!object)
+            continue;
+        for (const SyntheticExport& entry : module.syntheticExports) {
+            std::optional<PropertyKeyID> key = entry.variable ? program.types.find({ .kind = PropertyKeyKind::Text, .text = entry.name }) : std::nullopt;
+            BuiltinName name = key ? program.builtinNameOf(*key) : BuiltinName();
+            BuiltinID member = name ? builtins.findOwnMember(object, name) : BuiltinID();
+            if (!member)
+                continue;
+            if (spies.quickGet(member.index())) {
+                variablesOfSpies.quickSet(entry.variable.index());
+                isUsed = true;
+            } else if (std::ranges::any_of(builtins.membersOf(member), [&](BuiltinID inner) { return spies.quickGet(inner.index()); })) {
+                variablesOfHoldersOfSpies.append({ entry.variable, member });
+                isUsed = true;
+            }
+        }
+    }
     if (!isUsed)
         return { };
 
@@ -1022,19 +1044,57 @@ Vector<VariableID> collectExportsThatSpiesReplace(const ValueFlowResultInputs& i
     };
     Vector<SpiedHolders> spiedHolders;
     UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> positionOfHolders;
-    forEachBuiltinApplication(inputs, heap, spies, [&](const ValueFlowBuiltinApplication& application) {
-        // Once code runs that nobody has seen the spies are out of sight, and every call of a value that nobody knows might be a spy on any export of any namespace
-        // object that has escaped. The run time refuses by name a spy on an export that the build has closed, so only the spies in sight count.
-        if (!application.isCalleeListed)
-            return;
-        ValueSetID holders = application.valueAt(BuiltinOperand::argument(0), maker);
-        ValueSetID keys = application.valueAt(BuiltinOperand::argument(1), maker);
+    auto noteSpy = [&](ValueSetID holders, ValueSetID keys) {
         bool mayBeAnyKey = holdsPlaceholder(keys) || inputs.sets().contains(keys, ValueFlowUniverse::primitive(PrimitiveSet::String));
         auto position = positionOfHolders.add(holders.index(), spiedHolders.size());
         if (position.isNewEntry)
             spiedHolders.append({ holders, { } });
         spiedHolders[position.iterator->value].keys.add(maker, keys, mayBeAnyKey);
+    };
+    forEachBuiltinApplication(inputs, heap, spies, [&](const ValueFlowBuiltinApplication& application) {
+        // Once code runs that nobody has seen the spies are out of sight, and every call of a value that nobody knows might be a spy on any export of any namespace
+        // object that has escaped. The run time refuses by name a spy on an export that the build has closed, so only the spies in sight count.
+        if (!application.isCalleeListed)
+            return;
+        noteSpy(application.valueAt(BuiltinOperand::argument(0), maker), application.valueAt(BuiltinOperand::argument(1), maker));
     });
+
+    // Such a variable holds the unknown value too where somebody may have laid something else on the object of the module, and the unknown value covers a spy that has
+    // escaped: the call then goes with the calls of values that nobody knows. What the text calls is still in sight, and so are the operands of the call.
+    auto variableReadBy = [&](const Function& function, ValueID value) {
+        const Value& definition = function.at(definitionThroughSameValues(function, value));
+        return definition.opcode == Opcode::GetModuleVariable ? definition.variable() : VariableID();
+    };
+    auto callsImportOfSpy = [&](const Function& function, const Value& call) {
+        if (VariableID variable = variableReadBy(function, call.calleeOperand()))
+            return variablesOfSpies.quickGet(variable.index());
+        const Value& read = function.at(definitionThroughSameValues(function, call.calleeOperand()));
+        if (read.opcode != Opcode::PropGet || variablesOfHoldersOfSpies.isEmpty())
+            return false;
+        VariableID variable = variableReadBy(function, read.objectOperand());
+        BuiltinName name = variable ? program.builtinNameOf(read.key()) : BuiltinName();
+        return name && std::ranges::any_of(variablesOfHoldersOfSpies, [&](const auto& holder) {
+            BuiltinID member = holder.first == variable ? builtins.findOwnMember(holder.second, name) : BuiltinID();
+            return member && spies.quickGet(member.index());
+        });
+    };
+    if (!variablesOfSpies.isEmpty() || !variablesOfHoldersOfSpies.isEmpty()) {
+        std::span<const ValueFlowBodyRange> ranges = inputs.bodies().ranges();
+        std::span<const ValueFlowStatement> statements = inputs.bodies().statements();
+        for (uint32_t index = 0; index < program.functions.size(); ++index) {
+            if (!inputs.isReached(FunctionID(index)))
+                continue;
+            const Function& function = program.functions[index];
+            for (uint32_t position = ranges[index].statement; position < ranges[index + 1].statement; ++position) {
+                const ValueFlowStatement& statement = statements[position];
+                if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::Call || !callsImportOfSpy(function, function.at(statement.site)))
+                    continue;
+                std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
+                if (operands.size() >= 4)
+                    noteSpy(heap.possibleValuesOf(operands[2]), heap.possibleValuesOf(operands[3]));
+            }
+        }
+    }
 
     Vector<KeysOfSpies> keysOfModule(program.modules.size());
     KeysOfSpies keysOutOfSight;

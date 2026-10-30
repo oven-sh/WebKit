@@ -155,8 +155,14 @@ namespace Typed {
 void Program::unlockReplaceableBuiltins()
 {
     Vector<BuiltinID> members;
-    for (const ReplaceableBuiltin& entry : replaceableBuiltins)
+    // A member that is constant unless written never had a lock of the table, and no row for a pristine operand rests on it: flow answers for it, as it does in a program that holds the write.
+    // It is listed so that this image does not lock it. An image over others takes over hundreds of them, and `constructor`, `toString` and `toJSON` are among their names.
+    BitVector losesLockOfTable(m_builtins.builtinCount());
+    for (const ReplaceableBuiltin& entry : replaceableBuiltins) {
         members.append(entry.member);
+        if (m_builtins.contains(entry.member) && m_builtins.canBeReplacedInTestRuns(entry.member))
+            losesLockOfTable.quickSet(entry.member.index());
+    }
     openedNames.removeAllMatching([&](OpenedName& opened) {
         opened.holder = m_builtins.canonicalID(opened.holder);
         return !m_builtins.canTakeNameInTestRuns(opened.holder, m_builtins.nameOf(strings[opened.name]));
@@ -171,8 +177,10 @@ void Program::unlockReplaceableBuiltins()
         return;
 
     BitVector unlockedNames(m_builtins.nameCount());
-    for (BuiltinID member : unlockedBuiltins())
-        unlockedNames.quickSet(m_builtins.at(member).name.index());
+    for (BuiltinID member : unlockedBuiltins()) {
+        if (losesLockOfTable.quickGet(member.index()))
+            unlockedNames.quickSet(m_builtins.at(member).name.index());
+    }
     // `Object.prototype.toJSON = f`: every object has the member from then on.
     for (const OpenedName& opened : openedNames) {
         if (BuiltinName name = m_builtins.nameOf(strings[opened.name]))
@@ -203,7 +211,7 @@ void Program::unlockReplaceableBuiltins()
         for (BuiltinClassID current = instanceClass; current; current = m_builtins.at(current).parent) {
             BuiltinID prototype = m_builtins.at(current).prototype;
             bool isHolder = prototype && std::ranges::any_of(unlockedBuiltins(), [&](BuiltinID member) {
-                return m_builtins.canonicalID(m_builtins.at(member).holder) == m_builtins.canonicalID(prototype);
+                return losesLockOfTable.quickGet(member.index()) && m_builtins.canonicalID(m_builtins.at(member).holder) == m_builtins.canonicalID(prototype);
             });
             if (isHolder)
                 return true;

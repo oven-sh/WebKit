@@ -1653,7 +1653,10 @@ bool tryDefinePropertiesOnOrdinaryObject(VM& vm, State& state, JSObject* target,
     if (source == target || hasIndexedProperties(target->indexingType()))
         return false;
     std::optional<AssignmentSource> assignmentSource = assignmentSourceFor(source, excludedNames, true);
-    if (!assignmentSource || (assignmentSource->compiledObject && &assignmentSource->compiledObject->state() != &state))
+    if (!assignmentSource)
+        return false;
+    // A source of another image of the realm is listed and read by its own image. One of another realm is not served.
+    if (assignmentSource->compiledObject && &assignmentSource->compiledObject->state() != &state && assignmentSource->compiledObject->structure()->realm() != state.instance.globalObject)
         return false;
     DeferGC deferGC(vm);
     AssignmentPlan* plan = state.objects->caches->assignmentPlans.planFor(vm, target, nullptr, *assignmentSource);

@@ -398,6 +398,7 @@ struct Instance : InstanceHeader {
     JS_EXPORT_PRIVATE static void destroyAll(VM&);
 
     JS_EXPORT_PRIVATE Instance* findInstanceOfRunningImage();
+    Instance* findInstanceOwning(const JSCell*);
 
     InstancePrefix& prefix() { return reinterpret_cast<InstancePrefix*>(this)[-1]; }
     const InstancePrefix& prefix() const { return reinterpret_cast<const InstancePrefix*>(this)[-1]; }

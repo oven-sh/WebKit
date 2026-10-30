@@ -11,6 +11,7 @@
 #include "AOTChainDependents.h"
 #include "AOTClosure.h"
 #include "AOTHeapCacheRegistry.h"
+#include "AOTImageOfCellScope.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTObjectBuilder.h"
@@ -66,6 +67,18 @@ static Instance* runningInstanceOf(JSGlobalObject* realm)
     Instance* instance = realm->aotInstance();
     // The caches of one image say nothing about the cells of another: where a realm runs several, the interpreter asks the cells.
     return instance && instance->state && !instance->above ? instance : nullptr;
+}
+
+// The tables of the image of a compiled object say of it all that they say where there is one image. Whoever asks them runs that image meanwhile.
+static Instance* instanceOfCompiledObject(JSGlobalObject* realm, JSCell* object)
+{
+    ASSERT(object->type() == CompiledObjectType);
+    Instance* instance = realm->aotInstance();
+    if (!instance || !instance->state)
+        return nullptr;
+    if (!instance->above) [[likely]]
+        return instance;
+    return object->structure()->realm() == realm ? Instance::owning(object) : nullptr;
 }
 
 // Null where the field lies outside the cell and has no storage yet.
@@ -249,12 +262,14 @@ JSValue callCustomGetter(const CustomAccessorRecord& record, JSCell* base, const
 
 static std::optional<JSValue> tryGetByName(JSGlobalObject* globalObject, JSCell* base, const Identifier& ident, CacheOfOperation cache)
 {
-    Instance* instance = runningInstanceOf(globalObject);
+    bool isCompiledObject = base->type() == CompiledObjectType;
+    Instance* instance = isCompiledObject ? instanceOfCompiledObject(globalObject, base) : runningInstanceOf(globalObject);
     if (!instance)
         return std::nullopt;
     count(*instance, RuntimeCounterID::InterpreterReadSlowPaths);
-    if (base->type() != CompiledObjectType)
+    if (!isCompiledObject)
         return tryGetFromOrdinaryObject(*instance, base, ident, cache);
+    ImageOfCellScope imageOfBase(*instance->vm, base);
     return getById(*instance, base, ident);
 }
 
@@ -269,9 +284,9 @@ bool sharesStructureWithClassesThatLackTheirMembers(VM& vm, JSCell* cell)
     return closure->kind().isConstructor && closure->classData() && !closure->getDirect(vm, vm.propertyNames->prototype);
 }
 
-std::optional<PropertyOffset> placeOfFieldInSiteCache(JSGlobalObject* globalObject, Structure* structure, const Identifier& ident)
+std::optional<PropertyOffset> placeOfFieldInSiteCache(JSGlobalObject* globalObject, JSCell* object, Structure* structure, const Identifier& ident)
 {
-    Instance* instance = runningInstanceOf(globalObject);
+    Instance* instance = instanceOfCompiledObject(globalObject, object);
     if (!instance)
         return std::nullopt;
     const Slot* slot = instance->state->propertyCaches->findByKey(structure, ident.impl(), SlotAccess::Read);
@@ -343,10 +358,12 @@ std::optional<JSValue> tryGetByVal(JSGlobalObject* globalObject, JSCell* base, J
 
 std::optional<bool> tryInById(JSGlobalObject* globalObject, JSObject* base, const Identifier& ident)
 {
-    Instance* instance = runningInstanceOf(globalObject);
+    bool isCompiledObject = base->type() == CompiledObjectType;
+    Instance* instance = isCompiledObject ? instanceOfCompiledObject(globalObject, base) : runningInstanceOf(globalObject);
     if (!instance)
         return std::nullopt;
     count(*instance, RuntimeCounterID::InterpreterPresenceSlowPaths);
+    ImageOfCellScope imageOfBase(*instance->vm, base);
     if (!instance->state->propertyCaches->findByKey(base->structure(), ident.impl(), SlotAccess::Read))
         return hasPropertyAndCache(instance, base, { ident.impl(), std::nullopt });
     return base->hasProperty(instance->globalObject, ident);
@@ -362,10 +379,12 @@ std::optional<bool> tryInByVal(JSGlobalObject* globalObject, JSObject* base, JSV
 
 bool tryPutById(JSGlobalObject* globalObject, JSCell* base, const Identifier& ident, JSValue value, bool isStrict)
 {
-    Instance* instance = runningInstanceOf(globalObject);
+    bool isCompiledObject = base->type() == CompiledObjectType;
+    Instance* instance = isCompiledObject ? instanceOfCompiledObject(globalObject, base) : runningInstanceOf(globalObject);
     if (!instance)
         return false;
     count(*instance, RuntimeCounterID::InterpreterStoreSlowPaths);
+    ImageOfCellScope imageOfBase(*instance->vm, base);
     putById(*instance, base, ident, value, isStrict);
     return true;
 }

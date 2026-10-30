@@ -13,6 +13,7 @@
 #include "AOTClassTable.h"
 #include "AOTClosure.h"
 #include "AOTCompiledStructure.h"
+#include "AOTImageOfCellScope.h"
 #include "AOTInstance.h"
 #include "AOTModuleHost.h"
 #include "AOTModuleNamespace.h"
@@ -383,6 +384,13 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
     State& state = vm.aotState().hasSeveralImages ? *Instance::owning(moduleNamespace)->state : stateOfReader;
     bool isOfOtherImage = &state != &stateOfReader;
     const ModuleExportData& moduleExport = state.modules->table().exports(moduleNamespace->module())[*index];
+    if (moduleExport.kind() == ModuleExportKind::Namespace) {
+        // `export * as inner from "./inner"`: the one namespace object that the realm has for that module. What a spy or a mock replaces is replaced inside it.
+        JSValue inner = state.modules->readExportIfInitialized(moduleNamespace->module(), *index);
+        if (!inner)
+            return uncacheableOnce(SlotAccess::Read);
+        return { .kind = PropertyAnswerKind::Constant, .isOwn = true, .constant = inner };
+    }
     if (moduleExport.kind() != ModuleExportKind::Variable)
         return PropertyAnswer::uncacheable(SlotAccess::Read);
     SlotValueKind valueKind = traitsOf(moduleExport.variable.representation()).valueKind;
@@ -395,9 +403,6 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
             return uncacheableOnce(SlotAccess::Read);
         return { .kind = PropertyAnswerKind::Constant, .isOwn = true, .constant = closure };
     }
-    // The text of a literal string is found through the tables of its image.
-    if (isOfOtherImage && valueKind == SlotValueKind::LiteralString)
-        return PropertyAnswer::uncacheable(SlotAccess::Read);
     if (!ProgramStatics::readVariableWithoutAllocating(state.instance, moduleExport.variable))
         return uncacheableOnce(SlotAccess::Read);
     return { .kind = PropertyAnswerKind::Variable, .isOwn = true, .variable = moduleExport.variable, .imageOfVariable = static_cast<uint16_t>(isOfOtherImage ? (state.instance.program->position() + 1) << PackedSlot::hiddenWordOffsetShift : 0) };
@@ -530,6 +535,22 @@ PropertyAnswer classifyRead(const ReadQuery& query)
                         return classifyReadAboveReceiver(query);
                 } else if (PropertyAnswer answer = classifyExtraPropertyRead(query, object); answer.kind == PropertyAnswerKind::ExtraProperty || !answer.isCacheable())
                     return answer;
+            }
+        }
+        // `TheirClass.field`: a static field lies in a variable of the image of its class. A class object with static fields shares its Structure with no other class,
+        // and a field that leaves its variable leaves an empty word behind.
+        if (isCompiledClosure(receiver) && mayAllocate && receiver->structure() == structure) {
+            ImageOfCellScope imageOfClass(vm, receiver);
+            const FieldData* field = StaticFields::findFieldForCache(vm, receiver, uid);
+            if (receiver->structure() != structure)
+                return uncacheableOnce(access);
+            // Under a dictionary nothing is filed but a value of its own. The properties that stand for the fields have made the class object one: it is made flat once, like any object that is read by name.
+            if (field && structure->isDictionary())
+                return PropertyAnswer::uncacheable(access, flattenOnce(vm, receiver));
+            SlotValueKind valueKind = field ? traitsOf(field->slot.representation()).valueKind : SlotValueKind::DeferredClosure;
+            if (field && valueKind != SlotValueKind::DeferredClosure && valueKind != SlotValueKind::LiteralString) {
+                unsigned position = Instance::owning(receiver)->program->position();
+                return { .kind = PropertyAnswerKind::Variable, .isOwn = true, .field = field, .variable = field->slot, .imageOfVariable = static_cast<uint16_t>((position + 1) << PackedSlot::hiddenWordOffsetShift) };
             }
         }
         return PropertyAnswer::uncacheable(access);
@@ -1055,6 +1076,14 @@ static PropertyAnswer classifyStoreToObjectOfOtherImage(const StoreQuery& query)
         return PropertyAnswer::uncacheable(access);
     Object& object = *uncheckedDowncast<Object>(query.base);
     const FieldData* field = object.fieldNamed(object.state(), query.uid);
+    // Where an extra property lies and that it takes a store says the Structure of the object, which fixes that of its extra properties. A field that has left its slot is one of them.
+    if (!field || field->canLeaveSlot()) {
+        ExtraPropertyLookup lookup = lookUpExtraProperty(query.globalObject->vm(), object.compiledStructure(), query.uid, ChainWalkMode::MayAllocate);
+        if (lookup.result == ExtraPropertyLookupResult::Found) {
+            PropertyAnswer answer = classifyExtraPropertyReplacement(access, lookup);
+            return answer.kind == PropertyAnswerKind::ExtraProperty ? answer : PropertyAnswer::uncacheable(access);
+        }
+    }
     if (!field || field->isAccessor() || field->isPrivate() || field->flags & (fieldIsStoredOnce | fieldAttributeFlags))
         return PropertyAnswer::uncacheable(access);
     SlotValueKind valueKind = traitsOf(field->slot.representation()).valueKind;

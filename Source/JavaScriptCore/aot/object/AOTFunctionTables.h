@@ -105,6 +105,7 @@ struct FunctionTables {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(FunctionTables);
 
     static FunctionTables& of(VM&);
+    static FunctionTables& createFor(VM&);
     explicit FunctionTables(VM&);
 
     enum class ExecutableKind : uint8_t { NotConstructible, Constructible, Class, BoundClosure };

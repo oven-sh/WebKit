@@ -1639,7 +1639,12 @@ static ValueID findValueTypedWider(const TypePropagationInputs& inputs, const Fu
     forEachListedValue(function, inputs.analyses.cfg(), [&](ValueID id) {
         TypeID type = function.at(id).type;
         TypeID fromNever = typedFromNever.at(id).type;
-        if (!found && type != fromNever && !inputs.types.at(type).isSubsetOf(inputs.types.at(fromNever), inputs.program))
+        if (found || type == fromNever || inputs.types.at(type).isSubsetOf(inputs.types.at(fromNever), inputs.program))
+            return;
+        // How far the range of a variable of a loop is widened depends on the steps by which it grew, and they are other steps from never than from what changed.
+        Type withRangeFromNever = inputs.types.at(type);
+        withRangeFromNever.integers = inputs.types.at(fromNever).integers;
+        if (!withRangeFromNever.isSubsetOf(inputs.types.at(fromNever), inputs.program))
             found = id;
     });
     return found;

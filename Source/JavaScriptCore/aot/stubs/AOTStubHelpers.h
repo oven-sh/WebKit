@@ -95,7 +95,8 @@ void appendGranule(StubAssembler&, GPRReg extension, GPRReg granuleBits, GPRReg 
 constexpr unsigned maxGranulesOfExtensionFromStub = 13;
 void loadUnitsOfExtensionWith(StubAssembler&, GPRReg granuleBits, GPRReg units, GPRReg scratch);
 // The caller has proven that the word is a literal string word.
-void loadLiteralString(StubAssembler&, GPRReg wordAndResult, GPRReg scratch, JumpList& isNotCreated);
+// The instance may lie in the scratch register.
+void loadLiteralString(StubAssembler&, GPRReg wordAndResult, GPRReg scratch, JumpList& isNotCreated, GPRReg instance = instanceGPR);
 void decodeStructureID(CCallHelpers&, GPRReg idAndResult);
 void loadStructure(StubAssembler&, GPRReg cell, GPRReg result);
 void extractBits(StubAssembler&, GPRReg source, unsigned shift, unsigned width, GPRReg result);

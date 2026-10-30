@@ -789,7 +789,7 @@ std::optional<JSObject*> CompiledFrameIterator::recordedCallee()
     if (runEnd.adapterFrame && tables.recordsCalleesOf(source)) {
         JSObject* callee = runEnd.adapterFrame->jsCallee();
         std::optional<FunctionID> function = functionOf(callee);
-        return function && sourceFunctionOf(*function) == source ? std::optional(callee) : std::nullopt;
+        return function && sourceFunctionOf(*function) == source && !functionKindData(*function).isBound() ? std::optional(callee) : std::nullopt;
     }
     return tables.recordedCalleeOfCallFrom(stackPointer, source);
 }

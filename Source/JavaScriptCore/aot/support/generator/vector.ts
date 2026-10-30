@@ -125,6 +125,12 @@ inline constexpr bool movesAsBytes = (std::is_trivially_move_constructible_v<T> 
 template<typename First, typename Second>
 inline constexpr bool movesAsBytes<std::pair<First, Second>> = movesAsBytes<First> && movesAsBytes<Second>;
 
+#if COMPILER(CLANG) && !OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
+#define AOT_KEEPS_CALLERS_REGISTERS __attribute__((preserve_most))
+#else
+#define AOT_KEEPS_CALLERS_REGISTERS
+#endif
+
 struct VectorWords {
     void* buffer;
     unsigned capacity;
@@ -150,7 +156,7 @@ ALWAYS_INLINE void allocateVectorBufferInline(VectorWords& vector, size_t newCap
 }
 
 template<typename Malloc>
-NEVER_INLINE void allocateVectorBuffer(VectorWords& vector, size_t newCapacity, size_t elementSize)
+NEVER_INLINE AOT_KEEPS_CALLERS_REGISTERS void allocateVectorBuffer(VectorWords& vector, size_t newCapacity, size_t elementSize)
 {
     allocateVectorBufferInline<Malloc>(vector, newCapacity, elementSize);
 }
@@ -362,6 +368,19 @@ ${specifiers}Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>::${
 
 ${member("NEVER_INLINE bool ", "reserveCapacitySlowCase(size_t newCapacity)")}${asBytes("reserveVectorCapacity<Malloc>(Base::words(), newCapacity, layout())", "true")}`,
   );
+
+  for (const declaration of [
+    "bool expandCapacity(size_t newMinCapacity);",
+    "T* expandCapacity(size_t newMinCapacity, T*);",
+    "bool appendSlowCase(U&&);",
+    "bool appendSlowCaseByValue(T);",
+    "bool constructAndAppendSlowCaseOutOfLine(SlowArgs...);",
+    "bool reserveCapacitySlowCase(size_t newCapacity);",
+  ]) {
+    text = replaceExactly(text, `> ${declaration}`, `> AOT_KEEPS_CALLERS_REGISTERS ${declaration}`);
+  }
+  text = replaceExactly(text, "\nNEVER_INLINE bool Vector<", Array(5).fill("\nNEVER_INLINE AOT_KEEPS_CALLERS_REGISTERS bool Vector<"));
+  text = replaceExactly(text, "\nNEVER_INLINE T* Vector<", "\nNEVER_INLINE AOT_KEEPS_CALLERS_REGISTERS T* Vector<");
 
   return license + head + text.replace(/\n+$/, "") + tail;
 }

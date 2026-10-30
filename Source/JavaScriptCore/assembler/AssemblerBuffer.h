@@ -514,7 +514,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
         }
 
+#if COMPILER(CLANG) && !OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
+        NEVER_INLINE __attribute__((preserve_most)) void outOfLineGrow()
+#else
         NEVER_INLINE void outOfLineGrow()
+#endif
         {
             m_storage.grow();
 #if ENABLE(JIT_SIGN_ASSEMBLER_BUFFER)

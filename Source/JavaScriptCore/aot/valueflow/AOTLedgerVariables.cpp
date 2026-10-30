@@ -1070,8 +1070,6 @@ static void listExportsClosedToOutside(const ValueFlowResultInputs& inputs, std:
     BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
     ValueSetID objectsInKnownHands = borrowedMaker.get().intersect(inputs.universe().knownObjects(), ValueSets::complement(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::escaped())));
     for (uint32_t index = 0; index < program.modules.size(); ++index) {
-        if (modules[index].namespaceUse == NamespaceUse::Unknown)
-            continue;
         Vector<VariableID> listed;
         for (const ModuleExport& entry : program.modules[index].exports) {
             if (entry.kind != ModuleExportKind::Variable || !entry.variable || program.at(entry.variable).flags.contains(VariableFlags::IsReplaceable))

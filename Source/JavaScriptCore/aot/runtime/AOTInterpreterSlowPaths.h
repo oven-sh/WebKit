@@ -109,7 +109,7 @@ std::optional<bool> tryInstanceOf(JSGlobalObject*, JSValue, JSValue constructor)
 inline constexpr PropertyOffset narrowReferenceInSiteCache = 1 << 30;
 inline constexpr PropertyOffset extraPropertyInSiteCache = 1 << 29;
 inline constexpr uint32_t maxHiddenWordOffsetInSiteCache = (extraPropertyInSiteCache >> 16) - 1;
-std::optional<PropertyOffset> placeOfFieldInSiteCache(JSGlobalObject*, Structure* ofCompiledObject, const Identifier&);
+std::optional<PropertyOffset> placeOfFieldInSiteCache(JSGlobalObject*, JSCell* compiledObject, Structure* before, const Identifier&);
 
 // After the interpreter's lookup in an object that is not compiled. Files what the interpreter's own cache cannot hold: an absent name, an accessor, a property of a compiled object above the base.
 void didGetById(JSGlobalObject*, JSObject* base, Structure* structureBefore, const Identifier&, const PropertySlot&);

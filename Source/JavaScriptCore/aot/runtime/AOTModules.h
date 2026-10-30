@@ -133,6 +133,7 @@ public:
     JSValue readExportIfInitialized(ModuleID, unsigned index) const;
     bool isExportAmbiguous(ModuleID, unsigned index) const;
     bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue);
+    void fillExportsOfBodyThatNeverRuns(ModuleID);
     bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars);
     bool tryReplaceExportBehindStars(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars);
     std::optional<bool> tryReplaceExportInImageBelow(ModuleID external, UniquedStringImpl* name, JSValue);
@@ -143,6 +144,16 @@ public:
     void willMock(ModuleID);
     void markEvaluated(ModuleID module) { setStatus(module, ModuleStatus::Evaluated); }
     bool isMocked(ModuleID module) const { return m_mocks && m_mocks->modules.get(module.index()); }
+    // A mock that comes before the body of an ES module has run stands for the whole module: the loader of `bun run` takes what the factory answers for the module itself.
+    // So a name that the factory leaves out is no export: no key of the namespace object. See fillExportsOfBodyThatNeverRuns() for whoever reads the variable.
+    void leaveOutWhatMockLacks(ModuleID, JSObject* exportsOfMock);
+    bool isLeftOutByMock(ModuleID module, unsigned exportIndex) const
+    {
+        if (m_exportsLeftOutByMocks.isEmpty()) [[likely]]
+            return false;
+        auto found = m_exportsLeftOutByMocks.find(module);
+        return found != m_exportsLeftOutByMocks.end() && found->value.get(exportIndex);
+    }
     // What the graph of the root reaches without going through a mocked module. Nothing if no module is mocked.
     // Asked about the modules of the graph below a root.
     class MocksBelowRoot {
@@ -336,6 +347,7 @@ public:
     JSValue commonJSExports(ModuleID) const;
     JSValue exportsSeenByLoader(ModuleID);
     void setCommonJSExports(ModuleID module, JSValue exports) { setValue(module, exports); }
+    void mockWhatRequireAnswered(ModuleID, JSObject* exports);
     void recordRequire(ModuleID, ModuleID referrer);
     JSObject* moduleObject(ModuleID);
     JSObject* mainModuleObject();
@@ -524,6 +536,7 @@ private:
     Identifier keyWithoutForm(ModuleID file);
     std::optional<ModuleID> findFormThatStatementLoaded(const Identifier& key, const ScriptFetchParameters&, std::optional<ModuleID> asked) const;
     bool isHeldForImport(ModuleID) const;
+    bool isBelowRootWhoseFilesRun(ModuleID) const;
     void noteFormAnsweredFirst(const Identifier& key, const ScriptFetchParameters&, ModuleID file);
     bool loaderOnlyHandsOverNamespace(ModuleID) const;
     JSPromise* askLoaderForImport(ModuleID, std::optional<int64_t> referrerAsyncOrder);
@@ -618,6 +631,7 @@ private:
     BitVector m_modulesEvaluatedUnderAnotherEvaluation;
     Box<MockedModules> m_mocks;
     unsigned m_numberOfMockedSets { 0 };
+    UncheckedKeyHashMap<ModuleID, BitVector> m_exportsLeftOutByMocks;
     BitVector m_evictedFiles;
     // Of the realm. A module of this image may import the file.
     bool m_otherImageHasEvictedFiles { false };

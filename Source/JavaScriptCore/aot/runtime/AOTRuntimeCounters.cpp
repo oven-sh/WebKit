@@ -316,11 +316,18 @@ static std::optional<CompiledFrame> findAllocatingFrame(VM& vm, FunctionID const
     return frames->isAtEnd() ? innermost : frames->frame();
 }
 
+static const Image& imageOf(VM& vm, const std::optional<CompiledFrame>& frame)
+{
+    return frame && frame->instance ? *frame->instance->program : *vm.aotState().image;
+}
+
 static String describePlace(VM& vm, const std::optional<CompiledFrame>& frame)
 {
     if (!frame)
         return "- -"_str;
-    const Image& image = *vm.aotState().image;
+    // The numbers of a frame are those of its image. Another one may run: native code that goes through the instances of a realm allocates under each of them.
+    const Image& image = imageOf(vm, frame);
+    RunningImageScope imageOfFrame(vm.aotState(), &image);
     FunctionDescription description(frame->function);
     String function = description.codeType() == ModuleCode ? "module"_str : countedAsWord(description.name(vm));
     if (image.isObfuscated()) {
@@ -336,7 +343,7 @@ static String describePlace(VM& vm, const std::optional<CompiledFrame>& frame)
 
 static String describeLayoutOfAllocation(const Instance& instance, uint32_t allocation)
 {
-    const Image& image = *instance.vm->aotState().image;
+    const Image& image = *instance.program;
     const ProgramTables& tables = instance.tables();
     uint32_t shape = tables.allocations()[allocation].shape;
     if (shape < tables.firstEnvironmentShape) {
@@ -358,7 +365,7 @@ const String& AllocationCounts::wordsAtAllocatingFrame(VM& vm, FunctionID constr
     // A call site lies in one function, inlined or not.
     uint64_t site = frame ? (static_cast<uint64_t>(frame->code.index()) + 1) << 32 | frame->callSite.bits() : 0;
     ASSERT(!(detail >> 48));
-    uint64_t counted = static_cast<uint64_t>(kind) << 56 | static_cast<uint64_t>(vm.aotState().image->position()) << 48 | detail;
+    uint64_t counted = static_cast<uint64_t>(kind) << 56 | static_cast<uint64_t>(imageOf(vm, frame).position()) << 48 | detail;
     return m_wordsOfLines.ensure({ site, counted }, [&] {
         return makeString(describePlace(vm, frame), ' ', describeCounted());
     }).iterator->value;
