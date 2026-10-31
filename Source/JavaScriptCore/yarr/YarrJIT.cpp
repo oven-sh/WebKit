@@ -406,7 +406,13 @@ struct FirstCharacterSet {
     // Whether analysis reached a term that must consume a character. If false
     // the alternative can match the empty string, which for dispatch is `any`.
     bool consumed { false };
+    // Whether the alternative may begin a turn of a repeated group before it has tested its first
+    // character. The JIT takes one off matchLimit for such a turn (allocateParenContext).
+    bool mayBeginTurnFirst { false };
 #endif
+    // Whether a class or a non-ASCII character of a case-insensitive pattern contributed. The
+    // set is exact all the same (but see computeFirstCharacterSetForDispatch).
+    bool hasCaseInsensitiveMembers { false };
 
     void addWide(char32_t begin, char32_t end)
     {
@@ -439,6 +445,10 @@ struct FirstCharacterSet {
         latin1.merge(other.latin1);
         any |= other.any;
         wideAny |= other.wideAny;
+        hasCaseInsensitiveMembers |= other.hasCaseInsensitiveMembers;
+#if !defined(YARR_FOR_IMAGE)
+        mayBeginTurnFirst |= other.mayBeginTurnFirst;
+#endif
         for (auto& range : other.wideRanges)
             addWide(range.first, range.second);
     }
@@ -511,6 +521,37 @@ public:
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(DispatchInfo);
 
+#if !defined(YARR_FOR_IMAGE)
+// First-character guard for a run of consecutive nested alternatives.
+//
+// In /(?!ab|cd|e+f|[gh]i)./ no alternative can match unless the next character
+// is one of [aceg-h]. Trying them in turn costs an input check, a read, a compare
+// and a backtrack each. The guard reads that character once, on entry to the first
+// alternative of the run, and continues after the run when the character is outside
+// the union of the run's first-character sets. It keeps no state, so it serves the
+// groups DispatchInfo does not: assertions, quantified groups, and groups in which
+// only some of the alternatives have a known first character.
+//
+// A guard that passes is pure overhead, so one is planted only where failing is the
+// expected outcome: in a negative lookahead, and in what a search tries first at
+// every position of the subject.
+//
+// What a failed guard leaves out takes nothing off matchLimit, so a match is given up
+// exactly where it is without guards: see FirstCharacterSet::mayBeginTurnFirst.
+struct AlternativeGuard {
+private:
+    WTF_MAKE_TZONE_ALLOCATED(AlternativeGuard);
+public:
+    FirstCharacterSet characters; // union over the run
+    unsigned firstAlternative { 0 }; // index in the disjunction of the run's first alternative
+    unsigned alternativeCount { 0 }; // length of the run
+    Checked<unsigned> claimedPastGroup; // input the enclosing alternative claimed for what follows the group
+    MacroAssembler::JumpList failures;
+};
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(AlternativeGuard);
+
+#endif
 // First-character dispatch across the body's repeated alternatives, with no
 // group and no frame. It applies only when the alternatives' first-character
 // sets are pairwise disjoint, so the character at the match start names at most
@@ -3319,6 +3360,12 @@ class YarrGenerator final : public YarrJITInfo {
         // disjunction.
         unsigned m_dispatchAlternativeIndex { 0 };
 
+#if !defined(YARR_FOR_IMAGE)
+        // Set on the Begin/Next op of the first of a run of nested alternatives that
+        // a test of the next character can reject together (see AlternativeGuard).
+        struct AlternativeGuard* m_guard { nullptr };
+
+#endif
         // Set on the repeated body's Begin/Next/End ops when the body alternation
         // is dispatched on its first character (see BodyDispatchInfo).
         struct BodyDispatchInfo* m_bodyDispatch { nullptr };
@@ -6808,6 +6855,7 @@ class YarrGenerator final : public YarrJITInfo {
                     }
                 } else if (op.m_checkAdjust)
                     op.m_jumps.append(jumpIfNoAvailableInput(op.m_checkAdjust));
+                generateAlternativeGuard(op);
                 break;
             }
             case YarrOpCode::SimpleNestedAlternativeNext:
@@ -6923,6 +6971,7 @@ class YarrGenerator final : public YarrJITInfo {
 #endif
                 } else if (op.m_checkAdjust)
                     op.m_jumps.append(jumpIfNoAvailableInput(op.m_checkAdjust));
+                generateAlternativeGuard(op);
                 break;
             }
             case YarrOpCode::SimpleNestedAlternativeEnd:
@@ -7916,6 +7965,8 @@ class YarrGenerator final : public YarrJITInfo {
                     // In the case of a single alternative on its own do nothing - it can fall through.
                 }
 
+                backtrackAlternativeGuard(op);
+
                 // If there is a backtrack jump from a zero length match link it here.
                 if (op.m_zeroLengthMatch.isSet())
                     m_backtrackingState.append(op.m_zeroLengthMatch);
@@ -8522,7 +8573,7 @@ class YarrGenerator final : public YarrJITInfo {
     // Alternatives will use the 'Simple' set of ops if either the
     // subpattern is terminal (in which case we will never need to
     // backtrack), or if the subpattern only contains one alternative.
-    void opCompileParenthesesSubpattern(Checked<unsigned> checkedOffset, PatternTerm* term)
+    void opCompileParenthesesSubpattern(Checked<unsigned> checkedOffset, PatternTerm* term, bool failureIsExpected)
     {
         YarrOpCode parenthesesBeginOpCode;
         YarrOpCode parenthesesEndOpCode;
@@ -8645,6 +8696,17 @@ class YarrGenerator final : public YarrJITInfo {
             dataLogLn(dispatch ? "First-character dispatch enabled" : "First-character dispatch not used");
         }
 
+        // A dispatched alternative is only entered on a character it can start with (or on any
+        // character, if dispatch takes its set as `any`: the few of those go without guards).
+        failureIsExpected &= !dispatch;
+        AlternativeGuards guards;
+        if (failureIsExpected && !term->parentheses.isStringList) {
+            // setupAlternativeOffsets puts the term past the group's minimum size exactly where
+            // m_checkAdjust below leaves that size out.
+            ASSERT((parenthesesBeginOpCode == YarrOpCode::ParenthesesSubpatternOnceBegin && term->quantityType == QuantifierType::FixedCount) == (term->quantityType == QuantifierType::FixedCount && term->quantityMaxCount == 1));
+            guards = prepareAlternativeGuards(*term->parentheses.disjunction, checkedOffset - term->inputPosition);
+        }
+
         size_t parenBegin = m_ops.size();
         appendOp(parenthesesBeginOpCode);
 #if defined(YARR_FOR_IMAGE)
@@ -8695,11 +8757,12 @@ class YarrGenerator final : public YarrJITInfo {
                 }
 
                 lastOp.m_checkedOffset = checkedOffsetResult;
+                plantAlternativeGuard(guards, lastOp, i);
             }
 #if defined(YARR_FOR_IMAGE)
             const PatternTerm* termSettledByDispatch = dispatch && !nestedAlternative->m_terms.isEmpty() && isSettledByDispatch(nestedAlternative->m_terms[0]) ? &nestedAlternative->m_terms[0] : nullptr;
 #endif
-            opCompileAlternative(m_ops[lastOpIndex].m_checkedOffset, nestedAlternative);
+            opCompileAlternative(m_ops[lastOpIndex].m_checkedOffset, nestedAlternative, failureIsExpected);
 #if defined(YARR_FOR_IMAGE)
             for (size_t opIndex = lastOpIndex + 1; termSettledByDispatch && opIndex < m_ops.size() && m_ops[opIndex].m_op == YarrOpCode::Term; ++opIndex) {
                 if (m_ops[opIndex].m_term == termSettledByDispatch) {
@@ -9109,7 +9172,7 @@ class YarrGenerator final : public YarrJITInfo {
     // We can always use the OpSimpleNestedAlternative nodes in the
     // case of parenthetical assertions since these only ever match
     // once, and will never backtrack back into the assertion.
-    void opCompileParentheticalAssertion(Checked<unsigned> checkedOffset, PatternTerm* term)
+    void opCompileParentheticalAssertion(Checked<unsigned> checkedOffset, PatternTerm* term, bool failureIsExpected)
     {
         if (!isSafeToRecurse()) [[unlikely]] {
             m_failureReason = JITFailureReason::ParenthesisNestedTooDeep;
@@ -9150,6 +9213,11 @@ class YarrGenerator final : public YarrJITInfo {
         if (bodyDirection == Backward || enclosingDirection == Backward)
             checkedOffset = 0;
 
+        failureIsExpected |= term->invert();
+        AlternativeGuards guards;
+        if (failureIsExpected)
+            guards = prepareAlternativeGuards(*disjunction, 0);
+
         appendOp(YarrOpCode::SimpleNestedAlternativeBegin);
         m_ops.last().m_previousOp = notFound;
         m_ops.last().m_term = term;
@@ -9165,8 +9233,9 @@ class YarrGenerator final : public YarrJITInfo {
                 if ((term->quantityType == QuantifierType::FixedCount) && (term->type != PatternTerm::Type::ParentheticalAssertion))
                     lastOp.m_checkAdjust -= disjunction->m_minimumSize;
                 lastOp.m_checkedOffset = checkedOffset + lastOp.m_checkAdjust;
+                plantAlternativeGuard(guards, lastOp, i);
             }
-            opCompileAlternative(m_ops[lastOpIndex].m_checkedOffset, nestedAlternative);
+            opCompileAlternative(m_ops[lastOpIndex].m_checkedOffset, nestedAlternative, failureIsExpected);
 
             size_t thisOpIndex = m_ops.size();
             appendOp(YarrOp(YarrOpCode::SimpleNestedAlternativeNext));
@@ -9230,7 +9299,9 @@ class YarrGenerator final : public YarrJITInfo {
 #endif
     // opCompileAlternative
     // Called to emit nodes for all terms in an alternative.
-    void opCompileAlternative(Checked<unsigned> checkedOffset, PatternAlternative* alternative)
+    // failureIsExpected says that the alternative is tried where it usually does not match (see
+    // AlternativeGuard). That holds for its terms up to the first one that consumes input.
+    void opCompileAlternative(Checked<unsigned> checkedOffset, PatternAlternative* alternative, bool failureIsExpected)
     {
         // No string has this many characters, so the input check on entry always fails and the terms
         // are never reached. Skipping them keeps every checked offset that is added to within INT_MAX.
@@ -9249,11 +9320,12 @@ class YarrGenerator final : public YarrJITInfo {
 
             switch (term->type) {
             case PatternTerm::Type::ParenthesesSubpattern:
-                opCompileParenthesesSubpattern(checkedOffset, term);
+                opCompileParenthesesSubpattern(checkedOffset, term, failureIsExpected);
+                failureIsExpected = false;
                 break;
 
             case PatternTerm::Type::ParentheticalAssertion:
-                opCompileParentheticalAssertion(checkedOffset, term);
+                opCompileParentheticalAssertion(checkedOffset, term, failureIsExpected);
                 break;
 
 #if !defined(YARR_FOR_IMAGE)
@@ -9274,6 +9346,8 @@ class YarrGenerator final : public YarrJITInfo {
 #endif
                 appendOp(term);
                 m_ops.last().m_checkedOffset = checkedOffset;
+                if (term->type != PatternTerm::Type::AssertionBOL && term->type != PatternTerm::Type::AssertionEOL && term->type != PatternTerm::Type::AssertionWordBoundary)
+                    failureIsExpected = false;
                 break;
             }
         }
@@ -9312,7 +9386,7 @@ class YarrGenerator final : public YarrJITInfo {
 
                 PatternAlternative* alternative = alternatives[currentAlternativeIndex].get();
                 m_ops[lastOpIndex].m_checkedOffset = alternative->m_minimumSize;
-                opCompileAlternative(alternative->m_minimumSize, alternative);
+                opCompileAlternative(alternative->m_minimumSize, alternative, false);
 
                 size_t thisOpIndex = m_ops.size();
                 appendOp(YarrOp(YarrOpCode::BodyAlternativeNext));
@@ -9424,7 +9498,7 @@ class YarrGenerator final : public YarrJITInfo {
             PatternAlternative* alternative = alternatives[currentAlternativeIndex].get();
             ASSERT(!alternative->onceThrough());
             m_ops[lastOpIndex].m_checkedOffset = alternative->m_minimumSize;
-            opCompileAlternative(alternative->m_minimumSize, alternative);
+            opCompileAlternative(alternative->m_minimumSize, alternative, !m_pattern.sticky() && !bodyDispatch);
 
             size_t thisOpIndex = m_ops.size();
             appendOp(YarrOp(YarrOpCode::BodyAlternativeNext));
@@ -9532,25 +9606,37 @@ class YarrGenerator final : public YarrJITInfo {
         case PatternTerm::Type::ParentheticalAssertion:
             // An assertion consumes no input; a positive lookahead could narrow the
             // set but ignoring it keeps the set a valid over-approximation.
+            // All of it runs, so a repeated group anywhere in it counts. Taking whatever it has in
+            // parentheses for one saves a walk through what is nested in them.
+            for (auto& alternative : term.parentheses.disjunction->m_alternatives) {
+                for (auto& nestedTerm : alternative->m_terms)
+                    set.mayBeginTurnFirst |= nestedTerm.type == PatternTerm::Type::ParenthesesSubpattern || nestedTerm.type == PatternTerm::Type::ParentheticalAssertion;
+            }
             return false;
 
         case PatternTerm::Type::PatternCharacter: {
             char32_t ch = term.patternCharacter;
+            // In a case-insensitive pattern, a non-ASCII character that has case variants is
+            // already a character class.
+            ASSERT(!term.ignoreCase() || isASCIIAlpha(ch) || isCanonicallyUnique(ch, m_canonicalMode));
             if (term.ignoreCase() && isASCIIAlpha(ch)) {
                 set.add(toASCIIUpper(ch));
                 set.add(toASCIILower(ch));
-            } else if (term.ignoreCase() && !isASCII(ch))
-                set.any = true; // Non-ASCII case folding: don't try to be clever.
-            else
+            } else {
                 set.add(ch);
+                set.hasCaseInsensitiveMembers |= term.ignoreCase() && !isASCII(ch);
+            }
             return !!term.quantityMinCount;
         }
 
         case PatternTerm::Type::CharacterClass: {
+            // A class is matched by plain membership: in a case-insensitive pattern it
+            // already holds every case variant of its members.
             const CharacterClass* characterClass = term.characterClass;
-            if (term.invert() || characterClass->m_anyCharacter || characterClass->m_table || term.ignoreCase())
+            if (term.invert() || characterClass->m_anyCharacter || characterClass->m_table)
                 set.any = true;
             else {
+                set.hasCaseInsensitiveMembers |= term.ignoreCase();
                 for (char32_t ch : characterClass->m_matches8)
                     set.add(ch);
                 for (auto& range : characterClass->m_ranges8)
@@ -9569,6 +9655,8 @@ class YarrGenerator final : public YarrJITInfo {
 
         case PatternTerm::Type::ParenthesesSubpattern: {
             PatternDisjunction* disjunction = term.parentheses.disjunction;
+            // Not every group that fails this test keeps a context for each turn: see opCompileParenthesesSubpattern.
+            set.mayBeginTurnFirst |= term.quantityMaxCount != 1 || term.parentheses.isCopy;
             bool allConsumed = true;
             for (auto& alternative : disjunction->m_alternatives) {
                 FirstCharacterSet nested = computeFirstCharacterSet(*alternative);
@@ -9727,10 +9815,10 @@ class YarrGenerator final : public YarrJITInfo {
             emitBodyDispatchRangeTree(character, ranges, 0, ranges.size() - 1, leaf);
     }
 
-    YarrOp& bodyDispatchAlternativeOp(YarrOp& beginOp, unsigned target)
+    YarrOp& alternativeOpAfter(YarrOp& op, unsigned count)
     {
-        YarrOp* targetOp = &beginOp;
-        for (unsigned i = 0; i < target; ++i)
+        YarrOp* targetOp = &op;
+        for (unsigned i = 0; i < count; ++i)
             targetOp = &m_ops[targetOp->m_nextOp];
         return *targetOp;
     }
@@ -9768,7 +9856,7 @@ class YarrGenerator final : public YarrJITInfo {
             }
             // Move the claim from the first alternative's to the target's, then
             // enter the target where its own op's delta would have left the index.
-            YarrOp& targetOp = bodyDispatchAlternativeOp(beginOp, target);
+            YarrOp& targetOp = alternativeOpAfter(beginOp, target);
             unsigned targetMinimumSize = targetOp.m_alternative->m_minimumSize;
             if (targetMinimumSize > firstMinimumSize) {
                 m_jit.add32(MacroAssembler::Imm32(targetMinimumSize - firstMinimumSize), m_regs.index);
@@ -9822,7 +9910,7 @@ class YarrGenerator final : public YarrJITInfo {
                 return;
             }
             // Enter the sole candidate only if its minimum fits the input left.
-            YarrOp& targetOp = bodyDispatchAlternativeOp(beginOp, target);
+            YarrOp& targetOp = alternativeOpAfter(beginOp, target);
             unsigned targetMinimumSize = targetOp.m_alternative->m_minimumSize;
             if (targetMinimumSize > firstMinimumSize)
                 m_jit.add32(MacroAssembler::Imm32(targetMinimumSize - firstMinimumSize), m_regs.index);
@@ -10201,7 +10289,7 @@ class YarrGenerator final : public YarrJITInfo {
         Vector<FirstCharacterSet, 8> sets; // per alternative; only needed to build the routing
         unsigned anyCount = 0;
         for (auto& alternative : alternatives) {
-            FirstCharacterSet set = computeFirstCharacterSet(*alternative);
+            FirstCharacterSet set = computeFirstCharacterSetForDispatch(*alternative);
             set.normalize();
 #if !defined(YARR_FOR_IMAGE)
             if (set.any)
@@ -10372,7 +10460,7 @@ class YarrGenerator final : public YarrJITInfo {
     {
         dataLogLn("First-character sets for ", disjunction.m_alternatives.size(), " alternatives:");
         for (size_t i = 0; i < disjunction.m_alternatives.size(); ++i) {
-            FirstCharacterSet set = computeFirstCharacterSet(*disjunction.m_alternatives[i]);
+            FirstCharacterSet set = computeFirstCharacterSetForDispatch(*disjunction.m_alternatives[i]);
             dataLog("  alt ", i, ": ");
             if (set.any)
                 dataLog("ANY");
@@ -10412,6 +10500,10 @@ class YarrGenerator final : public YarrJITInfo {
     {
         FirstCharacterSet set;
 #if !defined(YARR_FOR_IMAGE)
+        // Every enclosing group that is analyzed asks again for the alternatives nested in it, and
+        // all of them ask before opCompileAlternative reorders the alternative's terms.
+        if (auto iterator = m_firstCharacterSetsOfNestingAlternatives.find(&alternative); iterator != m_firstCharacterSetsOfNestingAlternatives.end())
+            return iterator->value;
         if (!isSafeToRecurse()) [[unlikely]] {
 #else
         const CharacterSet* firstCharacters = tryGetFirstCharacters(alternative);
@@ -10421,7 +10513,9 @@ class YarrGenerator final : public YarrJITInfo {
             return set;
         }
 #if !defined(YARR_FOR_IMAGE)
+        bool hasNestedAlternatives = false;
         for (auto& term : alternative.m_terms) {
+            hasNestedAlternatives |= term.type == PatternTerm::Type::ParenthesesSubpattern;
             if (addFirstCharactersOfTerm(term, set)) {
                 set.consumed = true;
                 break;
@@ -10435,12 +10529,214 @@ class YarrGenerator final : public YarrJITInfo {
         // at any character (its "first character" is whatever follows).
         if (!set.consumed)
             set.any = true;
+        if (hasNestedAlternatives)
+            m_firstCharacterSetsOfNestingAlternatives.add(&alternative, set);
 #else
         for (auto [begin, end] : firstCharacters->ranges)
             set.addRange(begin, end);
 #endif
         return set;
     }
+
+    // The dispatches were tuned taking what is case-insensitive as `any`.
+    FirstCharacterSet computeFirstCharacterSetForDispatch(const PatternAlternative& alternative)
+    {
+        FirstCharacterSet set = computeFirstCharacterSet(alternative);
+        set.any |= set.hasCaseInsensitiveMembers;
+        return set;
+    }
+
+#if !defined(YARR_FOR_IMAGE)
+    // For a run of two, a guard that fails saves about what a guard that passes costs.
+    static constexpr unsigned alternativeGuardMinAlternatives = 3;
+
+    // The guards of one disjunction that are yet to be planted: a range of m_alternativeGuards, in
+    // the order of the alternatives they belong at.
+    struct AlternativeGuards {
+        unsigned next { 0 };
+        unsigned end { 0 };
+    };
+
+    // Finds the runs of alternatives worth a guard. Like tryPrepareDispatch, this is called before
+    // the alternatives' ops are emitted, while their terms are still in position order.
+    AlternativeGuards prepareAlternativeGuards(PatternDisjunction& disjunction, Checked<unsigned> claimedPastGroup)
+    {
+        AlternativeGuards result;
+        result.next = result.end = m_alternativeGuards.size();
+        auto& alternatives = disjunction.m_alternatives;
+        if (!Options::useRegExpAlternativeGuard() || alternatives.size() < alternativeGuardMinAlternatives)
+            return result;
+        // The guard tests one code unit.
+        if (m_direction != Forward || m_decodeSurrogatePairs)
+            return result;
+
+        Vector<FirstCharacterSet, 8> sets;
+        sets.reserveInitialCapacity(alternatives.size());
+        for (auto& alternative : alternatives) {
+            sets.append(computeFirstCharacterSet(*alternative));
+            // The character is read from the input that the run's first alternative claimed.
+            sets.last().any |= !alternative->m_minimumSize;
+            // A match is given up where it was without guards: no guard skips a turn that counts.
+            sets.last().any |= sets.last().mayBeginTurnFirst;
+        }
+
+        auto guardAlternatives = [&](unsigned begin, unsigned end) {
+            if (end - begin < alternativeGuardMinAlternatives)
+                return;
+            if (m_alternativeGuards.size() > result.next && m_alternativeGuards.last()->firstAlternative == begin)
+                return;
+            FirstCharacterSet characters;
+            for (unsigned i = begin; i < end; ++i)
+                characters.merge(sets[i]);
+            if (characters.latin1.isFull() && (m_charSize == CharSize::Char8 || characters.wideAny))
+                return;
+            dataLogLnIf(Options::verboseRegExpCompilation(), "First-character guard for alternatives ", begin, "..", end - 1);
+            characters.normalize();
+            auto guard = makeUniqueRef<AlternativeGuard>();
+            guard->characters = WTF::move(characters);
+            guard->firstAlternative = begin;
+            guard->alternativeCount = end - begin;
+            guard->claimedPastGroup = claimedPastGroup;
+            m_alternativeGuards.append(WTF::move(guard));
+        };
+
+        // Calls functor(runBegin, runEnd) for each maximal run of members in [begin, end).
+        auto forEachRun = [](unsigned begin, unsigned end, auto&& isMember, auto&& functor) {
+            while (begin < end) {
+                if (!isMember(begin)) {
+                    ++begin;
+                    continue;
+                }
+                unsigned runEnd = begin + 1;
+                while (runEnd < end && isMember(runEnd))
+                    ++runEnd;
+                functor(begin, runEnd);
+                begin = runEnd;
+            }
+        };
+
+        forEachRun(0, alternatives.size(), [&](unsigned i) { return !sets[i].any; }, [&](unsigned begin, unsigned end) {
+            guardAlternatives(begin, end);
+            // Past the run's guard, and when backtracking into the group, the rest of the run is
+            // still tried in turn. An alternative of a single term fails as fast as a guard does,
+            // but a stretch of longer ones is worth a guard of its own.
+            forEachRun(begin, end, [&](unsigned i) { return alternatives[i]->m_terms.size() >= 2; }, guardAlternatives);
+        });
+        result.end = m_alternativeGuards.size();
+        return result;
+    }
+
+    void plantAlternativeGuard(AlternativeGuards& guards, YarrOp& op, unsigned alternativeIndex)
+    {
+        if (guards.next == guards.end || m_alternativeGuards[guards.next]->firstAlternative != alternativeIndex)
+            return;
+        AlternativeGuard& guard = m_alternativeGuards[guards.next++].get();
+        // opCompileAlternative emits no terms past this, and nothing gets past the input check.
+        if (op.m_checkedOffset > INT_MAX) [[unlikely]]
+            return;
+        op.m_guard = &guard;
+    }
+
+    const uint8_t* latin1TableForGuard(const WTF::BitSet<256>& characters)
+    {
+        // A pattern assembled from pieces tends to repeat the same group many times. Only the guards'
+        // own tables are searched: m_boyerMooreData also holds one for every use of a character class.
+        for (auto& [existingCharacters, table] : m_alternativeGuardTables) {
+            if (existingCharacters == characters)
+                return table;
+        }
+        CharacterClass::ByteTable table;
+        for (size_t ch : characters)
+            table.data[ch] = 1;
+        m_alternativeGuardTables.append({ characters, m_boyerMooreData->addLatin1Table(table) });
+        return m_alternativeGuardTables.last().second;
+    }
+
+    void generateAlternativeGuard(YarrOp& op)
+    {
+        if (!op.m_guard)
+            return;
+
+        AlternativeGuard& guard = *op.m_guard;
+        const MacroAssembler::RegisterID character = m_regs.regT0;
+        const MacroAssembler::RegisterID scratch = m_regs.regT1;
+        const FirstCharacterSet& characters = guard.characters;
+        ASSERT(!characters.any);
+
+        // The index register is past what the alternative has just claimed for itself.
+        JIT_COMMENT(m_jit, "first-character guard (", guard.alternativeCount, " alternatives)");
+        readCharacter(guard.claimedPastGroup + op.m_alternative->m_minimumSize, character);
+
+        size_t latin1Count = characters.latin1.count();
+        size_t firstLatin1 = characters.latin1.findBit(0, true);
+        MacroAssembler::JumpList passed;
+        if (m_charSize == CharSize::Char16 && characters.wideAny)
+            passed.append(m_jit.branch32(MacroAssembler::AboveOrEqual, character, MacroAssembler::TrustedImm32(0x100)));
+        else if (m_charSize == CharSize::Char16 && !characters.wideRanges.isEmpty()) {
+            MacroAssembler::Jump isLatin1 = m_jit.branch32(MacroAssembler::Below, character, MacroAssembler::TrustedImm32(0x100));
+            Vector<CharacterRange, 16> ranges;
+            Vector<char32_t, 16> matches;
+            for (auto& [begin, end] : characters.wideRanges) {
+                if (begin == end)
+                    matches.append(begin);
+                else
+                    ranges.append(CharacterRange(begin, end));
+            }
+            matchCharacterClassRangeOrSet(character, scratch, passed, ranges.span(), matches.span());
+            guard.failures.append(m_jit.jump());
+            isLatin1.link(&m_jit);
+        } else if (latin1Count && characters.latin1.findBit(firstLatin1, false) - firstLatin1 == latin1Count) {
+            // A single range, which also rejects what is above Latin-1.
+            matchCharacterClassOnlyOneRange(character, scratch, guard.failures, CharacterRange(firstLatin1, firstLatin1 + latin1Count - 1));
+            return;
+        } else if (m_charSize == CharSize::Char16)
+            guard.failures.append(m_jit.branch32(MacroAssembler::AboveOrEqual, character, MacroAssembler::TrustedImm32(0x100)));
+
+        if (latin1Count)
+            matchCharacterClassTable(character, guard.failures, std::bit_cast<const char*>(latin1TableForGuard(characters.latin1)));
+        else
+            guard.failures.append(m_jit.jump());
+        passed.link(&m_jit);
+    }
+
+    // A failed guard gives back the input its alternative claimed, as the alternative's own failure
+    // does, and continues with whatever follows the run. This comes after the code for that failure,
+    // which ends in a jump to the next alternative: nothing falls through to here.
+    void backtrackAlternativeGuard(YarrOp& op)
+    {
+        static_assert(alternativeGuardMinAlternatives >= 2);
+        if (!op.m_guard)
+            return;
+
+        MacroAssembler::JumpList& failures = op.m_guard->failures;
+        YarrOp& opAfterRun = alternativeOpAfter(op, op.m_guard->alternativeCount);
+        bool runEndsGroup = opAfterRun.m_nextOp == notFound;
+        if (!op.m_checkAdjust) {
+            if (runEndsGroup)
+                opAfterRun.m_jumps.append(failures);
+            else
+                failures.linkTo(opAfterRun.m_reentry, &m_jit);
+            return;
+        }
+
+        failures.link(&m_jit);
+        m_jit.sub32(MacroAssembler::Imm32(op.m_checkAdjust), m_regs.index);
+        if (!runEndsGroup)
+            m_jit.jump(opAfterRun.m_reentry);
+        else if (op.m_previousOp == notFound)
+            m_backtrackingState.fallthrough(); // The Begin op is where the End op's jumps go.
+        else
+            opAfterRun.m_jumps.append(m_jit.jump());
+    }
+#else
+    // Guards spend code size on speed and have only been measured in JIT code.
+    struct AlternativeGuards { };
+
+    AlternativeGuards prepareAlternativeGuards(PatternDisjunction&, Checked<unsigned>) { return { }; }
+    void plantAlternativeGuard(AlternativeGuards&, YarrOp&, unsigned) { }
+    void generateAlternativeGuard(YarrOp&) { }
+    void backtrackAlternativeGuard(YarrOp&) { }
+#endif
 
     // Decide whether the body's repeated alternatives can be dispatched on the
     // first character, and if so build the routing (character -> the SOLE
@@ -10488,7 +10784,7 @@ class YarrGenerator final : public YarrJITInfo {
         Vector<FirstCharacterSet, 8> sets;
         unsigned wideCount = 0;
         for (size_t i = firstRepeated; i < alternatives.size(); ++i) {
-            FirstCharacterSet set = computeFirstCharacterSet(*alternatives[i]);
+            FirstCharacterSet set = computeFirstCharacterSetForDispatch(*alternatives[i]);
             // An `any` set overlaps every other alternative: no sole candidate.
             if (set.any)
                 return nullptr;
@@ -13083,6 +13379,13 @@ private:
 
     // First-character dispatch state for nested disjunctions (see DispatchInfo).
     Vector<UniqueRef<DispatchInfo>, 2> m_dispatchInfos;
+#if !defined(YARR_FOR_IMAGE)
+    // See computeFirstCharacterSet.
+    UncheckedKeyHashMap<const PatternAlternative*, FirstCharacterSet> m_firstCharacterSetsOfNestingAlternatives;
+    // First-character guards of runs of nested alternatives (see AlternativeGuard), and their tables.
+    Vector<UniqueRef<AlternativeGuard>, 2> m_alternativeGuards;
+    Vector<std::pair<WTF::BitSet<256>, const uint8_t*>, 2> m_alternativeGuardTables;
+#endif
     // First-character dispatch state for the body alternation (see BodyDispatchInfo).
     Vector<UniqueRef<BodyDispatchInfo>, 2> m_bodyDispatchInfos;
 
