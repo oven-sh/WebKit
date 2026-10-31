@@ -989,7 +989,7 @@ private:
         }
         if (m_call.operation)
             allocateTypedResult(overload, *m_call.operation, m_call, m_resultObject, m_plainDataOfResult, m_context);
-        if (const BuiltinType& answer = m_builtins.at(overload.result.type); isConstruction(m_call.kind) && (answer.isAnything() || answer.flags.containsAny({ BuiltinTypeFlag::HasAnyObject, BuiltinTypeFlag::HasAnyFunction })))
+        if (isConstruction(m_call.kind) && mayReturnUnknownObject(m_builtins.at(overload.result.type)))
             m_context.connect(m_context.lookup(m_context.restrict(m_context.valueOf(m_call.thisValue), ValueSets::complement(m_universe.builtinObjects())), property(m_context, BuiltinNames::prototype)), escaped());
 
         if (overload.effects.capability == BuiltinCapability::JS || runsOperandCode(overload))
