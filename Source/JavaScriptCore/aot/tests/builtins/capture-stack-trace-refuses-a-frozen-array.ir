@@ -1,8 +1,9 @@
 # const list = Object.freeze([1, 2]); Error.captureStackTrace(list); report(list)
-# Native code defines `stack` without asking whether the object takes new properties. The elements stay read-only.
-# RUN: run-in-shell globalThis.report = list => { list[0] = 9; print(Reflect.ownKeys(list).join(), typeof list.stack, list.join(), Object.isExtensible(list)); };
-# CHECK: 0,1,length,stack string 1,2 false
-# CHECK-NEXT: exited with 0
+# Error.captureStackTrace() defines nothing on an object that takes no new properties: it throws, and report() is not reached.
+# RUN: run-in-shell globalThis.report = list => { print("reached", Reflect.ownKeys(list).join()); };
+# CHECK: Exception: TypeError: Cannot define property stack, object is not extensible
+# CHECK-NOT: reached
+# CHECK: exited with 3
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
