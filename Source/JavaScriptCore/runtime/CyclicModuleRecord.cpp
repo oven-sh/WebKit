@@ -105,6 +105,23 @@ static bool validatePrelinkedResolution(JSGlobalObject* globalObject, PrelinkedM
     }
     return false;
 }
+
+// Without a host the error is left as it is.
+extern "C" __attribute__((weak)) void Bun__locateModuleLinkError(JSGlobalObject*, AbstractModuleRecord*, ErrorInstance*, ModuleLinkErrorSite, const Identifier&)
+{
+}
+
+static NEVER_INLINE void throwModuleLinkError(JSGlobalObject* globalObject, ThrowScope& scope, AbstractModuleRecord* importer, ModuleLinkErrorSite site, const Identifier& name, JSObject* error)
+{
+    if (auto* errorInstance = dynamicDowncast<ErrorInstance>(error))
+        Bun__locateModuleLinkError(globalObject, importer, errorInstance, site, name);
+    throwException(globalObject, scope, error);
+}
+
+static NEVER_INLINE void throwModuleLinkError(JSGlobalObject* globalObject, ThrowScope& scope, AbstractModuleRecord* importer, ModuleLinkErrorSite site, const Identifier& name, const String& message)
+{
+    throwModuleLinkError(globalObject, scope, importer, site, name, createSyntaxError(globalObject, message));
+}
 #endif
 
 void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, RefPtr<ScriptFetcher> scriptFetcher)
@@ -154,13 +171,13 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
             case Resolution::Type::NotFound:
                 if (m_isTypeScript)
                     break;
-                throwSyntaxError(globalObject, scope, makeString("export '"_s, StringView(exportName.impl()), "' not found in '"_s, StringView(requestedModules()[e.request()].m_specifier.impl()), "'"_s));
+                throwModuleLinkError(globalObject, scope, this, ModuleLinkErrorSite::IndirectExport, exportName, makeString("export '"_s, StringView(exportName.impl()), "' not found in '"_s, StringView(requestedModules()[e.request()].m_specifier.impl()), "'"_s));
                 return;
             case Resolution::Type::Ambiguous:
-                throwSyntaxError(globalObject, scope, makeString("Cannot export '"_s, StringView(exportName.impl()), "' multiple times in '"_s, StringView(requestedModules()[e.request()].m_specifier.impl()), "'"_s));
+                throwModuleLinkError(globalObject, scope, this, ModuleLinkErrorSite::IndirectExport, exportName, makeString("Cannot export '"_s, StringView(exportName.impl()), "' multiple times in '"_s, StringView(requestedModules()[e.request()].m_specifier.impl()), "'"_s));
                 return;
             case Resolution::Type::Error:
-                throwSyntaxError(globalObject, scope, "export default cannot be used with export *"_s);
+                throwModuleLinkError(globalObject, scope, this, ModuleLinkErrorSite::IndirectExport, exportName, "export default cannot be used with export *"_s);
                 return;
             case Resolution::Type::Resolved:
                 if (Options::validatePrelinkedModuleInfo()) [[unlikely]]
@@ -184,7 +201,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         case Resolution::Type::NotFound:
 #if USE(BUN_JSC_ADDITIONS)
             if (m_isTypeScript) break;
-            throwSyntaxError(globalObject, scope, makeString("export '"_s, StringView(e.exportName.impl()), "' not found in '"_s, StringView(e.moduleName.impl()), "'"_s));
+            throwModuleLinkError(globalObject, scope, this, ModuleLinkErrorSite::IndirectExport, e.exportName, makeString("export '"_s, StringView(e.exportName.impl()), "' not found in '"_s, StringView(e.moduleName.impl()), "'"_s));
 #else
             throwSyntaxError(globalObject, scope, makeString("Indirectly exported binding name '"_s, StringView(e.exportName.impl()), "' is not found."_s));
 #endif
@@ -192,7 +209,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 
         case Resolution::Type::Ambiguous:
 #if USE(BUN_JSC_ADDITIONS)
-            throwSyntaxError(globalObject, scope, makeString("Cannot export '"_s, StringView(e.exportName.impl()), "' multiple times in '"_s, StringView(e.moduleName.impl()), "'"_s));
+            throwModuleLinkError(globalObject, scope, this, ModuleLinkErrorSite::IndirectExport, e.exportName, makeString("Cannot export '"_s, StringView(e.exportName.impl()), "' multiple times in '"_s, StringView(e.moduleName.impl()), "'"_s));
 #else
             throwSyntaxError(globalObject, scope, makeString("Indirectly exported binding name '"_s, StringView(e.exportName.impl()), "' cannot be resolved due to ambiguous multiple bindings."_s));
 #endif
@@ -200,7 +217,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 
         case Resolution::Type::Error:
 #if USE(BUN_JSC_ADDITIONS)
-            throwSyntaxError(globalObject, scope, "export default cannot be used with export *"_s);
+            throwModuleLinkError(globalObject, scope, this, ModuleLinkErrorSite::IndirectExport, e.exportName, "export default cannot be used with export *"_s);
 #else
             throwSyntaxError(globalObject, scope, "Indirectly exported binding name 'default' cannot be resolved by star export entries."_s);
 #endif
@@ -276,11 +293,11 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                     Resolution otherResolution = importedModule->resolveExport(globalObject, vm.propertyNames->defaultKeyword);
                     RETURN_IF_EXCEPTION(scope, void());
                     if (otherResolution.type == Resolution::Type::Resolved && otherResolution.localName == in.localName) {
-                        throwSyntaxError(globalObject, scope, makeString("Export named '"_s, in.importName.string(), "' not found in module '"_s, importedModule->moduleKey().string(), "'. Did you mean to import default?"_s));
+                        throwModuleLinkError(globalObject, scope, env->moduleRecord(), ModuleLinkErrorSite::Import, in.localName, makeString("Export named '"_s, in.importName.string(), "' not found in module '"_s, importedModule->moduleKey().string(), "'. Did you mean to import default?"_s));
                         return;
                     }
                 }
-                throwException(globalObject, scope, createExportNotFoundError(globalObject, in.importName.string(), importedModule->moduleKey().string()));
+                throwModuleLinkError(globalObject, scope, env->moduleRecord(), ModuleLinkErrorSite::Import, in.localName, createExportNotFoundError(globalObject, in.importName.string(), importedModule->moduleKey().string()));
 #else
                 throwSyntaxError(globalObject, scope, makeString("Importing binding name '"_s, StringView(in.importName.impl()), "' is not found."_s));
 #endif
@@ -288,7 +305,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 
             case Resolution::Type::Ambiguous:
 #if USE(BUN_JSC_ADDITIONS)
-                throwException(globalObject, scope, createAmbiguousExportError(globalObject, in.importName.string(), importedModule->moduleKey().string()));
+                throwModuleLinkError(globalObject, scope, env->moduleRecord(), ModuleLinkErrorSite::Import, in.localName, createAmbiguousExportError(globalObject, in.importName.string(), importedModule->moduleKey().string()));
 #else
                 throwSyntaxError(globalObject, scope, makeString("Importing binding name '"_s, StringView(in.importName.impl()), "' cannot be resolved due to ambiguous multiple bindings."_s));
 #endif
@@ -300,11 +317,11 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                     Resolution otherResolution = importedModule->resolveExport(globalObject, in.localName);
                     RETURN_IF_EXCEPTION(scope, void());
                     if (otherResolution.type == Resolution::Type::Resolved) {
-                        throwSyntaxError(globalObject, scope, makeString("module '"_s, importedModule->moduleKey().string(), "' does not have an export named 'default'. Did you mean '"_s, String(in.localName.impl()), "'?"_s));
+                        throwModuleLinkError(globalObject, scope, env->moduleRecord(), ModuleLinkErrorSite::Import, in.localName, makeString("module '"_s, importedModule->moduleKey().string(), "' does not have an export named 'default'. Did you mean '"_s, String(in.localName.impl()), "'?"_s));
                         return;
                     }
                 }
-                throwException(globalObject, scope, createMissingDefaultExportError(globalObject, importedModule->moduleKey().string()));
+                throwModuleLinkError(globalObject, scope, env->moduleRecord(), ModuleLinkErrorSite::Import, in.localName, createMissingDefaultExportError(globalObject, importedModule->moduleKey().string()));
 #else
                 throwSyntaxError(globalObject, scope, "Importing binding name 'default' cannot be resolved by star export entries."_s);
 #endif
