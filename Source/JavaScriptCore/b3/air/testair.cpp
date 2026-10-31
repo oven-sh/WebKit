@@ -142,11 +142,20 @@ Lock crashLock;
         CRASH();                                                        \
     } while (false)
 
+// Bun: what lets Air emit the frame does not sign return addresses, like the code of an image.
+static void generateFollowingFramePolicy(Code& code, CCallHelpers& jit)
+{
+    AssemblerPolicy policy = jit.policy();
+    policy.signsReturnAddresses = !code.policy().frame.emitsFrame;
+    jit.setPolicy(policy);
+    generate(code, jit);
+}
+
 std::unique_ptr<Compilation> compile(B3::Procedure& proc)
 {
     prepareForGeneration(proc.code());
     CCallHelpers jit;
-    generate(proc.code(), jit);
+    generateFollowingFramePolicy(proc.code(), jit);
     LinkBuffer linkBuffer(jit, nullptr);
 
     return makeUnique<Compilation>(
@@ -2712,7 +2721,7 @@ void testStackSlotSharingWithNonInterferingSlots()
     uint64_t expectedResult = static_cast<uint64_t>(total) * (total - 1) / 2;
 
     CCallHelpers jit;
-    generate(code, jit);
+    generateFollowingFramePolicy(code, jit);
     LinkBuffer linkBuffer(jit, nullptr);
     auto compilation = makeUnique<Compilation>(
         FINALIZE_CODE(linkBuffer, JITCompilationPtrTag, nullptr, "testair compilation"), proc.releaseByproducts());
