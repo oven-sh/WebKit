@@ -119,6 +119,25 @@ Ref<RunLoop> RunLoop::create(ASCIILiteral threadName, ThreadType threadType, Thr
     return runLoop.releaseNonNull();
 }
 
+#if ENABLE(AOT)
+RefPtr<RunLoop> RunLoop::tryCreate(ASCIILiteral threadName, ThreadType threadType, ThreadQOS qos)
+{
+    RefPtr<RunLoop> runLoop;
+    BinarySemaphore semaphore;
+    RefPtr<Thread> thread = Thread::tryCreate(threadName, [&] SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE {
+        auto& current = RunLoop::currentSingleton();
+        runLoop = &current;
+        semaphore.signal();
+        current.run();
+    }, threadType, qos);
+    if (!thread)
+        return nullptr;
+    thread->detach();
+    semaphore.wait();
+    return runLoop;
+}
+#endif
+
 bool RunLoop::isCurrent() const
 {
     // Avoid constructing the RunLoop for the current thread if it has not been created yet.
