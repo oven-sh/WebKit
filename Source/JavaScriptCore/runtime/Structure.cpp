@@ -2211,7 +2211,7 @@ void Structure::getPropertyNamesFromStructure(VM& vm, PropertyNameArrayBuilder& 
         return IterationStatus::Continue;
     });
 
-    if (foundSymbol && propertyNames.propertyNameMode() == PropertyNameMode::StringsAndSymbols) {
+    if (foundSymbol && propertyNames.includeSymbolProperties() && propertyNames.includeStringProperties()) {
         // To ensure the order defined in the spec, we append symbols at the last elements of keys.
         // https://tc39.es/ecma262/#sec-ordinaryownpropertykeys
         table->forEachProperty([&](const auto& entry) {

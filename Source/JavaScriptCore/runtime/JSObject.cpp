@@ -2904,7 +2904,7 @@ void JSObject::getOwnIndexedPropertyNames(JSGlobalObject*, PropertyNameArrayBuil
 {
     JSObject* object = this;
 
-    if (propertyNames.includeStringProperties()) {
+    if (propertyNames.includeIndexedProperties()) {
         // Add numeric properties first per step 2 of https://tc39.es/ecma262/#sec-ordinaryownpropertykeys
         // FIXME: Filling PropertyNameArray with an identifier for every integer
         // is incredibly inefficient for large arrays. We need a different approach,
