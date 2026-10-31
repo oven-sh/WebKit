@@ -890,6 +890,15 @@ pas_segregated_heap_ensure_allocator_index(
     if (verbose)
         pas_log("allocator_index = %u\n", allocator_index);
 
+    /* Bun: Publish only for the directory that the heap maps this index to now. The caller looked up the
+       directory without the heap lock (pas_heap_ensure_size_directory_for_size). Since then another thread
+       can have taken the directory away from this index, for example by evicting it for a request with a
+       greater alignment. The caller still allocates from its directory. Upstream has no such check. There,
+       the publish either fails one of the assertions below or leaves a stale allocator index for another
+       thread to find. */
+    if (pas_segregated_heap_size_directory_for_index(heap, index, cached_index, config, pas_lock_is_held) != directory)
+        return allocator_index;
+
     did_cache_allocator_index = false;
 
     if (pas_segregated_heap_index_is_cached_index_and_cached_index_is_set(heap, cached_index, index, config)
