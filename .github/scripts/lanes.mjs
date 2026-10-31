@@ -81,6 +81,8 @@ const SIGNED_RETURN_ADDRESSES = " -mbranch-protection=pac-ret -DENABLE_RETURN_AD
 // them. The objects here say so, because the flag makes them, but it is not yet true of them: the functions that are written in
 // assembly in a C++ source (ctiMasmProbeTrampoline, the thunks of defineUnaryDoubleOpWrapper, currentStackPointer) have none.
 //
+// Not with the ahead-of-time compiler, where nobody has tried it: whether an image has landing pads is yet to be decided.
+//
 // Not "standard": that also says that the code works with a shadow stack (GCS), and what unwinds or replaces frames here does not.
 const LANDING_PADS = " -mbranch-protection=pac-ret+bti -DENABLE_BRANCH_TARGET_IDENTIFICATION=1";
 
@@ -125,7 +127,7 @@ const variants = {
   // -mtune (see MARCH_FLAG of Linux). Only what ships has a twin without the compiler, and on arm64 that twin also has
   // SIGNED_RETURN_ADDRESSES, which the run time of compiled programs is not ready for.
   "hardened-aot": { buildType: "Release", mimalloc: true, hardened: true },
-  "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true, signedReturnAddresses: true, aot: false },
+  "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true, signedReturnAddresses: true, landingPads: true, aot: false },
   "lto-hardened-aot": { buildType: "Release", mimalloc: true, lto: true, hardened: true },
   // "lto-hardened-aot" with ENABLE_WEBASSEMBLY=0: there is no global of that name, and JavaScriptCore's code for it is not
   // in the libraries.
@@ -186,7 +188,7 @@ const platforms = [
       ENABLE_SANITIZERS: v.sanitizers ?? "",
       ENABLE_ASSERTS: v.assertions ? "ON" : "AUTO",
       ENABLE_FUZZILLI: v.coverage ? "ON" : "OFF",
-      HARDENING_FLAGS: v.hardened ? HARDENING + (arch === "arm64" && v.signedReturnAddresses ? SIGNED_RETURN_ADDRESSES + LANDING_PADS : "") : "",
+      HARDENING_FLAGS: v.hardened ? HARDENING + (arch === "arm64" && v.signedReturnAddresses ? SIGNED_RETURN_ADDRESSES : "") + (arch === "arm64" && v.landingPads ? LANDING_PADS : "") : "",
       ENABLE_WEBASSEMBLY: v.webAssembly === false ? "OFF" : "ON",
       // Explicit --target: Ubuntu's clang defaults to x86_64-pc-linux-gnu, while bun's own objects and its Rust code
       // are <arch>-unknown-linux-gnu; with LTO, lld warns about the vendor mismatch once per JavaScriptCore object.

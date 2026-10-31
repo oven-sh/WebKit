@@ -1128,6 +1128,15 @@
 #error "ENABLE(BRANCH_TARGET_IDENTIFICATION) needs ENABLE(RETURN_ADDRESS_SIGNING)"
 #endif
 
+/* What guards the pages is a part of the JIT's allocator, and the C loop has no labels to put a landing pad behind. */
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION) && !ENABLE(JIT)
+#error "ENABLE(BRANCH_TARGET_IDENTIFICATION) needs ENABLE(JIT)"
+#endif
+
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION) && ENABLE(AOT)
+#error "Nobody has tried ENABLE(BRANCH_TARGET_IDENTIFICATION) with the ahead-of-time compiler"
+#endif
+
 #if !defined(ENABLE_JIT_SCAN_ASSEMBLER_BUFFER_FOR_ZEROES) && CPU(X86_64) && PLATFORM(MAC)
 #define ENABLE_JIT_SCAN_ASSEMBLER_BUFFER_FOR_ZEROES 1
 #endif
