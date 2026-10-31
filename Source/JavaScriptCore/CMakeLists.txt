@@ -2447,6 +2447,15 @@ endif()
 
 WEBKIT_FRAMEWORK(JavaScriptCore)
 
+# A static JavaScriptCore leaves the table of built-ins to the program that links it. Compiled once, for all of them.
+if (ENABLE_STATIC_JSC)
+    add_library(aot-builtin-table-obj OBJECT EXCLUDE_FROM_ALL ${JavaScriptCore_AOT_BUILTIN_TABLE_DATA_SOURCES})
+    target_include_directories(aot-builtin-table-obj PRIVATE $<TARGET_PROPERTY:JavaScriptCore,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(aot-builtin-table-obj PRIVATE $<TARGET_PROPERTY:JavaScriptCore,COMPILE_DEFINITIONS>)
+    target_compile_options(aot-builtin-table-obj PRIVATE $<TARGET_PROPERTY:JavaScriptCore,COMPILE_OPTIONS>)
+    add_dependencies(aot-builtin-table-obj JavaScriptCore)
+endif ()
+
 if (USE_APPLE_INTERNAL_SDK)
     WEBKIT_TARGET_USE_PGO(JavaScriptCore PROFILE JavaScriptCore)
 endif ()
