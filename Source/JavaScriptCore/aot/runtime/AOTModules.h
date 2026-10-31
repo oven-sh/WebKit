@@ -171,7 +171,8 @@ public:
     // Says whether the start that asks goes on to run the module.
     bool beginModuleInRecord(ModuleID);
     // Says whether a file ran.
-    bool evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles = JobsOfImportedFiles::StayQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown, ModuleGraphLoadingState* = nullptr);
+    // asyncContextOfImport: of the import() that the files run for, where no load of the loader is given. A file that the loader would run in a job of its own runs under the async context of its load: ModuleLoaderAsyncContextScope.
+    bool evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles = JobsOfImportedFiles::StayQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown, ModuleGraphLoadingState* = nullptr, JSValue asyncContextOfImport = { });
     void queueJobsThatWaitForLoader();
     void handGraphsToLoader();
     void didLoadGraph(ModuleID root);
@@ -247,7 +248,7 @@ public:
     enum class ImportCaller : bool { CompiledCode, Host };
     JSPromise* startImport(ModuleID, std::optional<int64_t> referrerAsyncOrder, ImportCaller = ImportCaller::CompiledCode);
     JSPromise* importDynamic(JSValue specifier, JSValue options, ModuleID referrer);
-    void continueImport(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder);
+    void continueImport(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder, JSValue asyncContext);
     void resolveWithNamespace(JSPromise* importPromise, ModuleID);
     void finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID, JSValue error);
     // Says whether the jobs of that import() are counted.
@@ -482,6 +483,8 @@ private:
         std::optional<ModuleID> fileHandedToLoader { };
         // By a CommonJS file: how many modules stand between the root and the nearest one that imports it. Made when something asks.
         Vector<uint32_t> distanceOfFiles { };
+        // The async context that was current before the files ran. A step of the loader that was due by then, of a load that keeps no async context, runs under it: handGraphToLoader().
+        JSValue asyncContext { };
     };
     void handGraphToLoader(FilesBeingRun&, std::optional<ModuleID> finishedFile = std::nullopt);
     static void runJobsThatAreDue(VM&, MicrotaskQueue&);
@@ -567,8 +570,13 @@ private:
         std::span<Found> level(size_t depth) { return found.mutableSpan().subspan(levels[depth].first, (depth + 1 == levels.size() ? found.size() : levels[depth + 1].first) - levels[depth].first); }
     };
     bool isLeftToLoad(PlanOfLoad&, PlanOfLoad::Found&);
+    // What an import() that is called now keeps of the async context of its caller: JSModuleLoader::asyncContextForLoad().
+    JSValue asyncContextForImport() const;
+    // For an import() that is kept outside the queue of jobs: the async context of its call, which the jobs that take it up again are queued with. Empty where there is none.
+    Strong<Unknown> currentAsyncContext() const;
     struct CountedImport {
         Strong<JSPromise> promise;
+        Strong<Unknown> asyncContext;
         ModuleID module;
         std::optional<int64_t> referrerAsyncOrder;
         uint32_t serial;
@@ -656,6 +664,7 @@ private:
     struct DeferredImport {
         ModuleID file;
         Strong<JSPromise> promise;
+        Strong<Unknown> asyncContext;
     };
     Vector<DeferredImport> m_deferredImports;
     ModuleID fileOf(ModuleID fileOrFace) const { return m_table.fileBehindFace(fileOrFace).value_or(fileOrFace); }

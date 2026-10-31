@@ -36,6 +36,11 @@ namespace JSC {
 
 const ClassInfo ModuleRegistryEntry::s_info = { "ModuleRegistryEntry"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(ModuleRegistryEntry) };
 
+#if USE(BUN_JSC_ADDITIONS)
+// m_asyncContext does not grow the cell: an entry takes 96 bytes with it and without it.
+static_assert(sizeof(ModuleRegistryEntry) <= 96);
+#endif
+
 ModuleRegistryEntry::ModuleRegistryEntry(VM& vm, Structure* structure, JSModuleLoader* loader, Identifier key, ScriptFetchParameters::Type type, RefPtr<ScriptFetcher> scriptFetcher)
     : Base(vm, structure)
     , m_key(WTF::move(key))
@@ -69,6 +74,9 @@ void ModuleRegistryEntry::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_modulePromise);
     visitor.append(thisObject->m_loadPromise);
     visitor.append(thisObject->m_error);
+#if USE(BUN_JSC_ADDITIONS)
+    visitor.append(thisObject->m_asyncContext);
+#endif
 }
 
 DEFINE_VISIT_CHILDREN(ModuleRegistryEntry);
@@ -121,7 +129,7 @@ JSPromise* ModuleRegistryEntry::ensureFetchPromise(JSGlobalObject* globalObject)
     return promise;
 }
 
-JSPromise* ModuleRegistryEntry::ensureModulePromise(JSGlobalObject* globalObject)
+JSPromise* ModuleRegistryEntry::ensureModulePromise(JSGlobalObject* globalObject, JSValue asyncContext)
 {
     if (m_modulePromise)
         return m_modulePromise.get();
@@ -141,6 +149,13 @@ JSPromise* ModuleRegistryEntry::ensureModulePromise(JSGlobalObject* globalObject
 #endif
 
     JSPromise* fetchPromise = ensureFetchPromise(globalObject);
+#if USE(BUN_JSC_ADDITIONS)
+    // Not for a loader that has an async context of its own: the host runs the body of its modules in that one.
+    if (asyncContext && !asyncContext.isUndefined() && !m_loader->asyncContext())
+        m_asyncContext.set(vm, this, asyncContext);
+#else
+    UNUSED_PARAM(asyncContext);
+#endif
     fetchPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleRegistryFetchSettled, modulePromise, this);
 
     return modulePromise;
@@ -231,14 +246,14 @@ void ModuleRegistryEntry::provideFetch(JSGlobalObject* globalObject, SourceCode&
     provideFetch(globalObject, JSSourceCode::create(globalObject->vm(), WTF::move(sourceCode)));
 }
 
-void ModuleRegistryEntry::provideFetch(JSGlobalObject* globalObject, JSValue moduleData)
+void ModuleRegistryEntry::provideFetch(JSGlobalObject* globalObject, JSValue moduleData, JSValue asyncContext)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     ASSERT(m_status == Status::New);
 
-    ensureModulePromise(globalObject);
+    ensureModulePromise(globalObject, asyncContext);
     RETURN_IF_EXCEPTION(scope, void());
 
     scope.release();

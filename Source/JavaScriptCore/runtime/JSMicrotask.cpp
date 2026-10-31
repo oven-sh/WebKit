@@ -1192,7 +1192,11 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
             if (auto* compiled = context->payload()->inherits<ModuleGraphLoadingState>() ? nullptr : dynamicDowncast<AOT::ModuleRecord>(module))
                 compiled->willBeLoadedByImport();
 #endif
+#if USE(BUN_JSC_ADDITIONS)
+            JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher(), context->asyncContext());
+#else
             JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher());
+#endif
             if (scope.exception()) {
                 loadPromise->rejectWithCaughtException(vm, scope);
                 return;
@@ -1309,7 +1313,11 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
         if (!moduleData.inherits<AbstractModuleRecord>()) {
 #endif
 #endif
+#if USE(BUN_JSC_ADDITIONS)
+        context->loader()->provideFetch(globalObject, specifier, type, moduleData, context->asyncContext());
+#else
         context->loader()->provideFetch(globalObject, specifier, type, moduleData);
+#endif
         if (scope.exception()) {
             intermediatePromise->rejectWithCaughtException(vm, scope);
             return;
@@ -1331,13 +1339,17 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
             innerLoadFlags.add(ModuleLoadFlag::UseImportMap);
         if (context->dynamic()) {
 #if USE(BUN_JSC_ADDITIONS)
-            combinedCell = ModuleLoaderPayload::create(vm, statePromise, context->deferred(), context->referrerAsyncOrder());
+            combinedCell = ModuleLoaderPayload::create(vm, statePromise, context->deferred(), context->referrerAsyncOrder(), context->asyncContext());
 #else
             combinedCell = ModuleLoaderPayload::create(vm, statePromise, context->deferred());
 #endif
             loadPromise = context->loader()->loadModule(globalObject, globalObject, request, combinedCell, scriptFetcher, innerLoadFlags);
         } else {
+#if USE(BUN_JSC_ADDITIONS)
+            combinedCell = ModuleGraphLoadingState::create(vm, statePromise, scriptFetcher, context->asyncContext());
+#else
             combinedCell = ModuleGraphLoadingState::create(vm, statePromise, scriptFetcher);
+#endif
             if (context->evaluate())
                 innerLoadFlags.add(ModuleLoadFlag::Evaluate);
             loadPromise = context->loader()->loadModule(globalObject, globalObject, request, combinedCell, scriptFetcher, innerLoadFlags);
@@ -1767,7 +1779,7 @@ static void importModuleNamespace(JSGlobalObject* globalObject, VM& vm, ThrowSco
     // requestImportModule: namespace getter
     // arguments[0] = resultPromise
     // arguments[1] = module namespace (from dynamic import pipeline) or error
-    // arguments[2] = unused
+    // arguments[2] = the async context of the import(), which runInternalMicrotask() has installed
     auto* resultPromise = uncheckedDowncast<JSPromise>(arguments[0]);
     auto status = static_cast<JSPromise::Status>(payload);
     if (status == JSPromise::Status::Fulfilled) {
@@ -2439,6 +2451,9 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 #endif
 
     case InternalMicrotask::AsyncModuleExecutionDone: {
+#if USE(BUN_JSC_ADDITIONS)
+        ModuleEvaluationAsyncContextScope asyncContextScope(vm, globalObject, argument3);
+#endif
         auto* module = uncheckedDowncast<CyclicModuleRecord>(argument2);
         JSGlobalObject* realm = nullptr;
 #if ENABLE(AOT)
@@ -2451,14 +2466,23 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
 #if ENABLE(AOT)
-    case InternalMicrotask::CompiledModuleImport:
-        RELEASE_AND_RETURN(scope, AOT::runCompiledModuleImport(globalObject, argument0, argument1, argument2));
+    case InternalMicrotask::CompiledModuleImport: {
+        ModuleEvaluationAsyncContextScope asyncContextScope(vm, globalObject, argument3);
+        RELEASE_AND_RETURN(scope, AOT::runCompiledModuleImport(globalObject, argument0, argument1, argument2, argument3));
+    }
 
-    case InternalMicrotask::CompiledModuleImportSettled:
-        RELEASE_AND_RETURN(scope, AOT::runCompiledModuleImportSettled(globalObject, argument0, argument1, argument2, static_cast<JSPromise::Status>(payload)));
+    case InternalMicrotask::CompiledModuleImportSettled: {
+        // argument2 is the module, paired with the async context of the import() where there is one.
+        JSValue module = argument2;
+        JSValue asyncContext = AsyncContextSwapScope::unwrapContextTuple(module);
+        ModuleEvaluationAsyncContextScope asyncContextScope(vm, globalObject, asyncContext);
+        RELEASE_AND_RETURN(scope, AOT::runCompiledModuleImportSettled(globalObject, argument0, argument1, module, static_cast<JSPromise::Status>(payload), asyncContext));
+    }
 
-    case InternalMicrotask::CompiledModuleImportStep:
-        RELEASE_AND_RETURN(scope, AOT::runCompiledModuleImportStep(argument0, argument1, argument2, payload));
+    case InternalMicrotask::CompiledModuleImportStep: {
+        ModuleEvaluationAsyncContextScope asyncContextScope(vm, globalObject, argument3);
+        RELEASE_AND_RETURN(scope, AOT::runCompiledModuleImportStep(argument0, argument1, argument2, payload, argument3));
+    }
 #endif
 
     case InternalMicrotask::AsyncModuleExecutionResume: {
@@ -2474,6 +2498,9 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
     case InternalMicrotask::ModuleRegistryFetchSettled: {
+#if USE(BUN_JSC_ADDITIONS)
+        ModuleLoaderAsyncContextScope asyncContextScope(vm, globalObject, uncheckedDowncast<ModuleRegistryEntry>(argument2)->takeAsyncContext());
+#endif
         moduleRegistryFetchSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
         return;
     }
@@ -2489,11 +2516,17 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
     case InternalMicrotask::ModuleLoadStep: {
+#if USE(BUN_JSC_ADDITIONS)
+        ModuleLoaderAsyncContextScope asyncContextScope(vm, globalObject, uncheckedDowncast<ModuleLoadingContext>(argument2)->asyncContext());
+#endif
         moduleLoadStep(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
         return;
     }
 
     case InternalMicrotask::ModuleLoadTopSettled: {
+#if USE(BUN_JSC_ADDITIONS)
+        ModuleLoaderAsyncContextScope asyncContextScope(vm, globalObject, uncheckedDowncast<ModuleLoadingContext>(argument2)->asyncContext());
+#endif
         moduleLoadTopSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
         return;
     }
@@ -2519,6 +2552,9 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
     case InternalMicrotask::ModuleLoadLinkEvaluateSettled: {
+#if USE(BUN_JSC_ADDITIONS)
+        ModuleEvaluationAsyncContextScope asyncContextScope(vm, globalObject, uncheckedDowncast<ModuleLoadingContext>(argument2)->asyncContext());
+#endif
         moduleLoadLinkEvaluateSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
         return;
     }
@@ -2549,11 +2585,17 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
     case InternalMicrotask::DynamicImportLoadSettled: {
+#if USE(BUN_JSC_ADDITIONS)
+        ModuleEvaluationAsyncContextScope asyncContextScope(vm, globalObject, uncheckedDowncast<ModuleLoaderPayload>(argument2)->asyncContext());
+#endif
         dynamicImportLoadSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload, /* deferred */ false);
         return;
     }
 
     case InternalMicrotask::DynamicImportDeferLoadSettled: {
+#if USE(BUN_JSC_ADDITIONS)
+        ModuleEvaluationAsyncContextScope asyncContextScope(vm, globalObject, uncheckedDowncast<ModuleLoaderPayload>(argument2)->asyncContext());
+#endif
         dynamicImportLoadSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload, /* deferred */ true);
         return;
     }
@@ -2569,6 +2611,9 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
     case InternalMicrotask::ImportModuleNamespace: {
+#if USE(BUN_JSC_ADDITIONS)
+        ModuleLoaderAsyncContextScope asyncContextScope(vm, globalObject, argument2);
+#endif
         importModuleNamespace(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
         return;
     }

@@ -174,3 +174,124 @@ let log = [];
     shouldBe(seen, undefined, "residue from a sibling microtask");
     shouldBe(get(), undefined, "residue after a microtask that captured nothing");
 }
+
+// The module loader loads, links and evaluates an import() in jobs of its own. Where a context was current at the
+// import(), they run under it, and what a module puts in the slot ends with the job that ran the module.
+{
+    log = [];
+    const entered = ["entered"];
+    globalThis.entered = entered;
+    const settled = [];
+    const settle = name => [() => settled.push([name, get()]), error => settled.push([name, get(), error])];
+    const resources = "./resources/bun-async-context-propagation/";
+    inContext(A, () => {
+        import(resources + "graph.js").then(...settle("graph"));
+        import(resources + "tla-importer.js").then(...settle("tla importer"));
+        import(resources + "thenable.js").then(...settle("thenable"));
+        import(resources + "enters.js").then(...settle("enters"));
+    });
+    inContext(B, () => {
+        import(resources + "other-graph.js").then(...settle("other graph"));
+    });
+    import(resources + "plain.js").then(...settle("plain"));
+    drainMicrotasks();
+    shouldBe(get(), undefined, "residue after the jobs of the module loader");
+    const expected = {
+        // Module bodies, a static dependency first, and an import() that a body starts.
+        "graph dependency": A, "graph": A, "graph nested": A,
+        "other graph dependency": B, "other graph": B,
+        // A body behind its own await, and the module that waits for it.
+        "tla before await": A, "tla after await": A, "tla importer": A,
+        // The `then` of a module namespace.
+        "namespace then": A,
+        // A module that enters a context keeps it to the end of its job, and no longer.
+        "enters dependency": A, "enters": entered,
+        // An import() under no context.
+        "plain dependency": undefined, "plain": undefined,
+    };
+    for (const [name, ctx] of log)
+        shouldBe(ctx, expected[name], name);
+    shouldBe(log.length, Object.keys(expected).length, "all module bodies ran");
+    const expectedSettled = { "graph": A, "tla importer": A, "thenable": A, "enters": A, "other graph": B, "plain": undefined };
+    for (const [name, ctx, error] of settled) {
+        shouldBe(error, undefined, "import() of " + name + " rejected with " + error + ":");
+        shouldBe(ctx, expectedSettled[name], "import() of " + name);
+    }
+    shouldBe(settled.length, Object.keys(expectedSettled).length, "all imports settled");
+}
+
+// A module that waits for a dependency with a top-level await runs when the body of the dependency ends, in the job of
+// whoever began to evaluate the dependency. So a module that B imports runs under A where A's import() began the
+// dependency, as in Node.js. Each import() settles under its own context.
+{
+    log = [];
+    let open;
+    globalThis.gate = new Promise(resolve => { open = resolve; });
+    const settled = [];
+    const settle = name => [() => settled.push([name, get()]), error => settled.push([name, get(), error])];
+    const resources = "./resources/bun-async-context-propagation/";
+    inContext(A, () => {
+        import(resources + "waits-first.js").then(...settle("waits first"));
+    });
+    drainMicrotasks();
+    inContext(B, () => {
+        import(resources + "waits-second.js").then(...settle("waits second"));
+    });
+    drainMicrotasks();
+    shouldBe(log.length, 1, "the dependency waits");
+    open();
+    drainMicrotasks();
+    shouldBe(get(), undefined, "residue after the modules that waited");
+    const expected = { "waits before its await": A, "waits behind its await": A, "waits first": A, "waits second": A };
+    for (const [name, ctx] of log)
+        shouldBe(ctx, expected[name], name);
+    shouldBe(log.length, Object.keys(expected).length, "all modules that waited ran");
+    const expectedSettled = { "waits first": A, "waits second": B };
+    for (const [name, ctx, error] of settled) {
+        shouldBe(error, undefined, "import() of " + name + " rejected with " + error + ":");
+        shouldBe(ctx, expectedSettled[name], "import() of " + name);
+    }
+    shouldBe(settled.length, Object.keys(expectedSettled).length, "both imports settled");
+}
+
+// The job that runs the modules behind a top-level await gets the context of the load, not what the slot holds where
+// the load begins to evaluate. Here an import() under no context is loaded by a drain that something calls under A:
+// the awaiting module runs under A as far as its await, and behind it. The module that waits for it runs later, under
+// no context.
+{
+    log = [];
+    let open;
+    globalThis.laterGate = new Promise(resolve => { open = resolve; });
+    let settledUnder = "not settled";
+    const resources = "./resources/bun-async-context-propagation/";
+    import(resources + "later-importer.js").then(() => { settledUnder = get(); });
+    inContext(A, () => drainMicrotasks());
+    shouldBe(log.length, 1, "the dependency waits");
+    open();
+    drainMicrotasks();
+    shouldBe(get(), undefined, "residue after the module that waited");
+    const expected = { "later before its await": A, "later behind its await": A, "later importer": undefined };
+    for (const [name, ctx] of log)
+        shouldBe(ctx, expected[name], name);
+    shouldBe(log.length, Object.keys(expected).length, "the module that waited ran");
+    shouldBe(settledUnder, undefined, "import() of later importer");
+}
+
+// Where the job of a load entered the context of the load, the job behind an await gets what is current where the
+// awaiting module begins, as any continuation does. Here that is what a module before it has put in the slot.
+{
+    log = [];
+    let open;
+    globalThis.enteredGate = new Promise(resolve => { open = resolve; });
+    const resources = "./resources/bun-async-context-propagation/";
+    inContext(A, () => {
+        import(resources + "sets-then-awaits.js");
+    });
+    drainMicrotasks();
+    shouldBe(log.length, 0, "the module waits");
+    open();
+    drainMicrotasks();
+    shouldBe(get(), undefined, "residue after the module that waited");
+    shouldBe(log.length, 1, "the module that waited ran");
+    shouldBe(log[0][1], globalThis.entered, "behind sets and awaits");
+}

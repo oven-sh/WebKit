@@ -711,6 +711,7 @@ static void didOpenOrCloseSynchronousModuleQueue(VM& vm)
 
 VM::SynchronousModuleQueueScope::SynchronousModuleQueueScope(VM& vm)
     : m_vm(vm)
+    , m_moduleEvaluationAsyncContextScope(std::exchange(vm.m_moduleEvaluationAsyncContextScope, nullptr))
 {
     m_queue.prev = std::exchange(vm.m_synchronousModuleQueue, &m_queue);
     if (!m_queue.prev)
@@ -719,6 +720,7 @@ VM::SynchronousModuleQueueScope::SynchronousModuleQueueScope(VM& vm)
 
 VM::SynchronousModuleQueueScope::~SynchronousModuleQueueScope()
 {
+    m_vm.m_moduleEvaluationAsyncContextScope = m_moduleEvaluationAsyncContextScope;
     m_vm.m_synchronousModuleQueue = m_queue.prev;
     if (!m_queue.prev)
         didOpenOrCloseSynchronousModuleQueue(m_vm);
