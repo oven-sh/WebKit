@@ -3,13 +3,7 @@ list(TRANSFORM JavaScriptCore_AOT_SHELL_SOURCES PREPEND ../ OUTPUT_VARIABLE aotS
 list(TRANSFORM JavaScriptCore_AOT_TEST_SOURCES PREPEND ../ OUTPUT_VARIABLE aotTestSources)
 list(APPEND aotTestSources ${JavaScriptCore_AOT_SCHEMA_GENERATED_TEST_SOURCES})
 
-# A static JavaScriptCore leaves the table of built-ins to the program that links it. Compiled once, for all of them.
 if (ENABLE_STATIC_JSC)
-    add_library(aot-builtin-table-obj OBJECT ${JavaScriptCore_AOT_BUILTIN_TABLE_DATA_SOURCES})
-    target_include_directories(aot-builtin-table-obj PRIVATE $<TARGET_PROPERTY:JavaScriptCore,INCLUDE_DIRECTORIES>)
-    target_compile_definitions(aot-builtin-table-obj PRIVATE $<TARGET_PROPERTY:JavaScriptCore,COMPILE_DEFINITIONS>)
-    target_compile_options(aot-builtin-table-obj PRIVATE $<TARGET_PROPERTY:JavaScriptCore,COMPILE_OPTIONS>)
-    add_dependencies(aot-builtin-table-obj JavaScriptCore)
     set(aotBuiltinTableObjects $<TARGET_OBJECTS:aot-builtin-table-obj>)
     list(APPEND aotProgramSources ${aotBuiltinTableObjects})
 endif ()
