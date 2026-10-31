@@ -1,0 +1,19 @@
+# The program of a-tag-is-compared-without-the-string-cell-of-its-text.ir, for a run time that makes the atom of a name when the text first becomes an atom.
+# Where the atom lies is a word that is zero until then and stays afterwards. While it is zero an atom says nothing about the text, whenever the word was read: the characters answer.
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls image-form=position-independent
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# CHECK-LABEL: name="radii" role=Source
+# CHECK: = Load8Z({{*}}offset = 6, {{*}}Reads:JSCell_typeInfoFlags, {{*}}:StrictEq)
+# CHECK-NEXT: = BitAnd(
+# CHECK-NEXT: = Branch(
+# CHECK: = Load({{*}}Reads:AOTInstance_fieldsFilledOnce, {{*}}:StrictEq)
+# CHECK-NEXT: = Load(
+# CHECK-NEXT: = Branch(
+# CHECK: = Load({{*}}offset = 8, {{*}}Reads:JSRopeString_fiber0, {{*}}:StrictEq)
+# CHECK: = Equal(
+# CHECK-NEXT: = Branch(
+# CHECK: Reads:StringImpl_length
+# CHECK-LABEL: end of function
+# PROGRAM-OF: a-tag-is-compared-without-the-string-cell-of-its-text.ir

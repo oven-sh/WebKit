@@ -87,6 +87,5 @@ function f1 name="put" module=m0 flags=[IsChecked, HasExplicitName] length=3 thi
 # CHECK-LABEL: end of function
 # The test of the storage kind, the test for NaN, the bounds check and the store. The count includes the six instructions of the unlikely arm that appends at the end of the array.
 # The index stays in the register it arrived in: the call that converts the storage, which seldom runs, takes the array in the register of its result and writes no other.
-# On ARM64 that register is also the one the array arrived in, so the array is copied at the entry.
 # X64: instructions: 15, patchpoints: 0
-# ARM64: instructions: 16, patchpoints: 0
+# ARM64: instructions: 15, patchpoints: 0

@@ -471,13 +471,19 @@ void ValueFlowBuiltinTables::makeSets(const Program& program, const ValueFlowUni
         BuiltinID prototype = builtins.at(BuiltinClassID(static_cast<uint32_t>(index))).prototype;
         return prototype && classesWithPrototype.get(builtins.canonicalID(prototype).index()) == 1 ? universe.objectOf(prototype) : ValueFlowObjectID();
     });
+    // Many types name one class, so what follows from the class alone is worked out once for the class.
+    Vector<std::optional<ValueSetID>> setStandingForClassAndThoseBelow(builtins.classCount());
     auto standingForClassAndThoseBelow = [&](BuiltinClassID builtinClass) {
+        std::optional<ValueSetID>& known = setStandingForClassAndThoseBelow[builtinClass.index()];
+        if (known)
+            return *known;
         Vector<ValueFlowObjectID, 8> standing;
         for (BuiltinClassID other : classesAtOrBelow(builtinClass)) {
             if (m_objectStandingForClass[other.index()])
                 standing.append(m_objectStandingForClass[other.index()]);
         }
-        return maker.of(standing.span());
+        known = maker.of(standing.span());
+        return *known;
     };
     Vector<ValueFlowObjectID, 64> standingForClasses;
     for (ValueFlowObjectID standing : m_objectStandingForClass) {
@@ -485,6 +491,19 @@ void ValueFlowBuiltinTables::makeSets(const Program& program, const ValueFlowUni
             standingForClasses.append(standing);
     }
     m_objectsStandingForClasses = maker.of(standingForClasses.span());
+    Vector<std::optional<BitVector>> classesThatMayPassTestFor(builtins.classCount());
+    auto madeAsThatMayPassTestFor = [&](BuiltinClassID tested) -> const BitVector& {
+        std::optional<BitVector>& known = classesThatMayPassTestFor[tested.index()];
+        if (!known) {
+            known.emplace(builtins.classCount());
+            for (uint32_t madeAs = 0; madeAs < builtins.classCount(); ++madeAs) {
+                if (m_objectStandingForClass[madeAs] && mayBeInstanceOf(builtins, BuiltinClassID(madeAs), tested))
+                    known->quickSet(madeAs);
+            }
+        }
+        return *known;
+    };
+    BitVector madeAsThatMayPass(builtins.classCount());
     auto classesThatMayBeOf = [&](const BuiltinType& type) {
         if (type.isAnything() || type.flags.containsAny({ BuiltinTypeFlag::HasAnyObject, BuiltinTypeFlag::HasAnyFunction, BuiltinTypeFlag::HasPlainData }))
             return ValueSets::anything;
@@ -493,14 +512,14 @@ void ValueFlowBuiltinTables::makeSets(const Program& program, const ValueFlowUni
         });
         if (!classDecides || !std::ranges::contains(type.parts, BuiltinTypePartKind::Instance, &BuiltinTypePart::kind))
             return ValueSets::anything;
-        standingForClasses.shrink(0);
-        for (uint32_t madeAs = 0; madeAs < builtins.classCount(); ++madeAs) {
-            bool mayPass = m_objectStandingForClass[madeAs] && std::ranges::any_of(type.parts, [&](const BuiltinTypePart& part) {
-                return part.kind == BuiltinTypePartKind::Instance && mayBeInstanceOf(builtins, BuiltinClassID(madeAs), part.builtinClass);
-            });
-            if (mayPass)
-                standingForClasses.append(m_objectStandingForClass[madeAs]);
+        madeAsThatMayPass.clearAll();
+        for (const BuiltinTypePart& part : type.parts) {
+            if (part.kind == BuiltinTypePartKind::Instance)
+                madeAsThatMayPass.merge(madeAsThatMayPassTestFor(part.builtinClass));
         }
+        standingForClasses.shrink(0);
+        for (size_t madeAs : madeAsThatMayPass)
+            standingForClasses.append(m_objectStandingForClass[madeAs]);
         return maker.of(standingForClasses.span());
     };
 

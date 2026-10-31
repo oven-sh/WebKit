@@ -186,6 +186,7 @@ public:
     ValueSetID eventRaisingLibraryExportHolders() const { return m_eventRaisingLibraryExportHolders; }
     ValueSetID eventRaisingLibraryClosures() const { return m_eventRaisingLibraryClosures; }
     ValueSetID prototypeObjectsOfLibraryClasses() const { return m_prototypeObjectsOfLibraryClasses; }
+    ValueSetID prototypeObjectsOfClasses() const { return m_prototypeObjectsOfClasses; }
     ValueSetID instancesBelowLibraryClasses() const { return m_instancesBelowLibraryClasses; }
     ValueSetID instancesBelowBuiltinClasses() const { return m_instancesBelowBuiltinClasses; }
     ValueSetID objectsOfLibraryFoundByNameAlone() const { return m_objectsOfLibraryFoundByNameAlone; }
@@ -335,6 +336,7 @@ private:
     ValueSetID m_eventRaisingLibraryExportHolders;
     ValueSetID m_eventRaisingLibraryClosures;
     ValueSetID m_prototypeObjectsOfLibraryClasses;
+    ValueSetID m_prototypeObjectsOfClasses;
     ValueSetID m_objectsOfLibraryFoundByNameAlone;
     ValueSetID m_instancesBelowLibraryClasses;
     ValueSetID m_instancesBelowBuiltinClasses;

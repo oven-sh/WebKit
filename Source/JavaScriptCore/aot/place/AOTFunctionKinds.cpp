@@ -19,6 +19,7 @@
 #include "AOTImagesBelow.h"
 #include "AOTPlacementSteps.h"
 #include "AOTRepresentation.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -90,6 +91,7 @@ ClosureForm closureFormOf(const Program& program, const FlowResults& flow, Funct
     case FunctionRole::ResultWrapper:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
+    case FunctionRole::ChecksThatGiveUp:
         break;
     case FunctionRole::CoroutineRamp:
         if (kindOfCoroutine(function) != CoroutineKind::AsyncFunction)
@@ -328,7 +330,7 @@ static Vector<FunctionID> closureFormsBySourceOf(const Program& program)
         if (program.at(source).has(FunctionCapabilities::RecordsCalleeOnceRenamed))
             forms.append({ source, FunctionID(index) });
     }
-    std::ranges::stable_sort(forms, { }, [](const Form& form) { return form.source.index(); });
+    AOT::stableSort(forms, { }, [](const Form& form) { return form.source.index(); });
     Vector<FunctionID> result;
     for (size_t index = 0; index < forms.size(); ++index) {
         bool isOneOfSeveral = (index && forms[index - 1].source == forms[index].source) || (index + 1 < forms.size() && forms[index + 1].source == forms[index].source);
@@ -439,6 +441,7 @@ static TraceVisibility visibilityOf(const Function& function, bool implementsBui
     case FunctionRole::ResultWorker:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
+    case FunctionRole::ChecksThatGiveUp:
         // What the front end hides is a function of its own that no trace lists, unless it is a built-in that programs can call. What its role hides is a part of a function that traces list.
         if (function.has(FunctionFlags::IsHiddenInStackTraces) && !implementsBuiltin)
             return TraceVisibility::Hidden;

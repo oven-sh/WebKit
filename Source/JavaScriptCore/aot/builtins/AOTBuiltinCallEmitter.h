@@ -30,10 +30,6 @@ public:
     void generateToIntegerOrInfinity(const ValueContext&);
     void generateNewSetFromData(const ValueContext&);
     void generateNewMapFromData(const ValueContext&);
-    void generateNewFormatterWithPattern(const ValueContext&);
-    void generateSetUpFormatterWithoutPattern(const ValueContext&);
-    void generateFormatDateWithPattern(const ValueContext&);
-    void generateFormatNumberWithPattern(const ValueContext&);
     void generateNewArgumentList(const ValueContext&);
     void generateSharedRegExpLiteral(const ValueContext&);
     void generateIsBuiltinLocationUnchanged(const ValueContext&);

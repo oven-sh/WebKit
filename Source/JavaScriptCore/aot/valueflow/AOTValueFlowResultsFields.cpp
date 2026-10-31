@@ -1487,8 +1487,17 @@ struct FieldResults {
             return false;
         ValueSetID objects = inputs.universe().objectsWith(id);
         ValueSetID above = maker.intersect(chainBuiltByProgram(objects), ValueSets::complement(objects));
+        // Object.defineProperty(Object.prototype, key, ..) throws where the built-in object takes no such name, so no accessor comes to stand there.
+        const ValueFlowUniverse& universe = inputs.universe();
+        auto canHoldDefinition = [&](ValueFlowObjectID object) {
+            return universe.kindOf(object) != ValueFlowObjectKind::Builtin || !isLockedLocation(program, program.builtins().canonicalID(universe.builtinOf(object)), key);
+        };
         return std::ranges::any_of(receiversOfDefinitions, [&](ValueSetID writtenThrough) {
-            return !sets.isEmpty(maker.intersect(writtenThrough, above));
+            bool canHold = false;
+            sets.forEachMember(maker.intersect(writtenThrough, above), [&](ValueFlowObjectID object) {
+                canHold = canHold || canHoldDefinition(object);
+            });
+            return canHold;
         });
     }
 

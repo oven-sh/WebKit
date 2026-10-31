@@ -33,6 +33,7 @@ struct PropertyAccessQuery {
     bool expectsEmptySlot { false };
     bool storesWhatWasMadeOfField { false };
     bool mayTestSlotFirst { false };
+    bool testsThatDefinedNameIsNotTaken { false };
     LayoutID declaringLayout;
     FunctionID expectedClassObject;
     AccessSiteID site;

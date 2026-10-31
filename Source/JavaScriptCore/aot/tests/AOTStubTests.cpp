@@ -228,7 +228,8 @@ static void testDumpedNames()
     AOT_TEST_CHECK(dumpedNameOf(callValue(2)) == "CallValue.Ordinary.n2"_s && dumpedNameOf(callValue(2, CallPosition::Tail)) == "CallValue.InTailPosition.n2"_s);
     AOT_TEST_CHECK(dumpedNameOf(getById().withCallerFrame(CallerFrame::StubFrame)) == "GetById.StubFrame"_s);
     AOT_TEST_CHECK(dumpedNameOf(throwAtSite(ThrowSiteSource::FaultSite, CallerFrame::Frameless)) == "ThrowAtFault.Frameless"_s);
-    AOT_TEST_CHECK(dumpedNameOf(StubKey(StubFamily::ArraySlice).withForm(4)) == "ArraySlice.<no form 4>"_s);
+    AOT_TEST_CHECK(dumpedNameOf(arrayCopyAsDoubles()) == "ArraySlice.WholeAsDoubles"_s);
+    AOT_TEST_CHECK(dumpedNameOf(StubKey(StubFamily::ArraySlice).withForm(6)) == "ArraySlice.<no form 6>"_s);
 }
 
 static void testPackedWords()

@@ -129,6 +129,7 @@ protected:
 
     Representation resultRepresentationOf(const InlineCall&) const;
     const Type& resultTypeOf(const InlineCall&) const;
+    ValueID resultOf(const InlineCall&) const;
     LBasicBlock missBlockOf(const InlineCall&);
     void finishInlineCall(const InlineCall&, Operand result);
 

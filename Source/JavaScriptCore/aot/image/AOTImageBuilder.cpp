@@ -125,6 +125,7 @@ static FunctionID bodyBehind(const Typed::Program& program, FunctionID id)
     case FunctionRole::AllocatedThisVersion:
     case FunctionRole::ConstructBody:
     case FunctionRole::CalleeVersion:
+    case FunctionRole::ChecksThatGiveUp:
     case FunctionRole::CoroutineBody:
     case FunctionRole::AsyncWorker:
     case FunctionRole::BoundFunction:

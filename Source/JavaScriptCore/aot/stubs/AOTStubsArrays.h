@@ -26,7 +26,8 @@ static_assert(Butterfly::offsetOfPublicLength() == -static_cast<ptrdiff_t>(sizeo
 enum class ArrayElementKind : uint8_t { Int32, Double, Contiguous };
 // OwnStorage: the capacity is how many elements the function that makes the array appends itself.
 enum class EmptyArray : uint8_t { ContiguousCapacity1, ContiguousCapacity3, DoubleCapacity1, DoubleCapacity3, DoubleDefaultCapacity, Int32DefaultCapacity, ContiguousCapacity1OwnStorage, ContiguousCapacity3OwnStorage };
-enum class ArraySliceRange : uint8_t { Bounded, Whole, BoundedWithPropertyRoom, WholeWithPropertyRoom };
+// AsDoubles: an array of int32 is copied into an array of doubles.
+enum class ArraySliceRange : uint8_t { Bounded, Whole, BoundedWithPropertyRoom, WholeWithPropertyRoom, BoundedAsDoubles, WholeAsDoubles };
 // Number: an array of int32 that takes a number which may be none becomes an array of doubles.
 enum class ArrayStoredValue : uint8_t { Value, Number };
 // Strings: every element below the length is a JSString.
@@ -93,6 +94,8 @@ constexpr StubKey newArrayOfHolesSlow() { return StubKey(StubFamily::NewArrayOfH
 constexpr StubKey newEmptyArrayAtSite(ArrayElementKind seed) { return StubKey(StubFamily::NewEmptyArrayAtSite).withForm(static_cast<uint8_t>(seed)); }
 constexpr StubKey arraySlice(bool withPropertyRoom = false) { return StubKey(StubFamily::ArraySlice).withForm(static_cast<uint8_t>(withPropertyRoom ? ArraySliceRange::BoundedWithPropertyRoom : ArraySliceRange::Bounded)); }
 constexpr StubKey arrayCopy(bool withPropertyRoom = false) { return StubKey(StubFamily::ArraySlice).withForm(static_cast<uint8_t>(withPropertyRoom ? ArraySliceRange::WholeWithPropertyRoom : ArraySliceRange::Whole)); }
+constexpr StubKey arraySliceAsDoubles() { return StubKey(StubFamily::ArraySlice).withForm(static_cast<uint8_t>(ArraySliceRange::BoundedAsDoubles)); }
+constexpr StubKey arrayCopyAsDoubles() { return StubKey(StubFamily::ArraySlice).withForm(static_cast<uint8_t>(ArraySliceRange::WholeAsDoubles)); }
 // The `arguments` object of strict code. The operands are those of the operation: the number of arguments, the list of those behind the parameters, and where the values of the parameters are.
 constexpr StubKey createArguments() { return StubKey(StubFamily::CreateArguments); }
 // The `arguments` object of sloppy code. The operands are those of the operation, the function first, and behind them the number of parameters.
@@ -140,7 +143,7 @@ static_assert(exists(arrayLiteralWithDouble(1)) && !exists(arrayLiteralWithDoubl
 static_assert(exists(newEmptyArray(EmptyArray::ContiguousCapacity3OwnStorage)) && !exists(newEmptyArray(EmptyArray::Int32DefaultCapacity).withForm(8)));
 static_assert(exists(newArrayOfLength(ArrayElementKind::Contiguous, maxArrayLengthInStubKey)) && !exists(newArrayOfLength(ArrayElementKind::Contiguous, maxArrayLengthInStubKey + 1)) && !exists(newArrayOfLength(ArrayElementKind::Int32, 0)));
 static_assert(exists(newArrayWithLength(ArrayElementKind::Contiguous)) && exists(newEmptyArrayAtSite(ArrayElementKind::Contiguous)) && exists(newEmptyArrayWithCapacity()) && exists(newArrayOfHolesSlow()));
-static_assert(exists(arraySlice()) && exists(arrayCopy()) && exists(createArguments()) && exists(createMappedArguments()) && exists(arrayPush()) && exists(arrayPushOfKnownKind()) && exists(arrayPushDouble()) && exists(appendElements()));
+static_assert(exists(arraySlice()) && exists(arrayCopy()) && exists(arraySliceAsDoubles()) && exists(arrayCopyAsDoubles()) && exists(createArguments()) && exists(createMappedArguments()) && exists(arrayPush()) && exists(arrayPushOfKnownKind()) && exists(arrayPushDouble()) && exists(appendElements()));
 static_assert(bodyOf(arrayPushOfKnownKind()) == arrayPush());
 static_assert(exists(arrayPutAtIndex(ArrayStoredValue::Number)) && exists(arrayPutAtNumber(ArrayStoredValue::Number)) && exists(arrayGetAtIndex()) && exists(arrayGetAtNumber()) && exists(arrayHasAtIndex()) && exists(arrayHasAtNumber()));
 static_assert(exists(arrayIndexOfString(SearchedElements::Strings)) && exists(arrayIndexOfString(SearchedElements::StringsFromStart)) && !exists(arrayIndexOfString(SearchedElements::Strings).withForm(4)));

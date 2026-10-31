@@ -162,6 +162,8 @@ class BuiltinBindings {
 public:
     JS_EXPORT_PRIVATE static void registerHost(const BuiltinBindingSet&);
     JS_EXPORT_PRIVATE static bool hasHost();
+    // A host lists the native helpers of the engine among its direct functions. A program without a host calls this before it compiles or runs anything.
+    JS_EXPORT_PRIVATE static void bindNativeHelpersOfEngine();
     static bool provides(BuiltinOrigin);
 
     static const ClassInfo* instanceClassInfoOf(BuiltinClassID);

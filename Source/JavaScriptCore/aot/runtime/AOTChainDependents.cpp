@@ -166,6 +166,7 @@ void ChainDependents::didCreateMembers(const CreatedMembers& created)
     if (iterator == m_dependentsByObject.end())
         return;
     VM& vm = *m_state.instance.vm;
+    DeferGC deferGC(vm);
     ObjectDependents& all = iterator->value;
     Vector<ChainDependent, 8> dropped;
     all.set.removeIf([&](const ChainDependent& dependent) {

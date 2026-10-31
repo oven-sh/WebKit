@@ -499,6 +499,41 @@ static size_t endOfCodeInFrontOf(std::span<const Latin1Character> text, size_t l
     return end;
 }
 
+// Where the code in front of `at` ends: in front of blanks, of line breaks and of lines that are comments.
+static size_t endOfCodeBefore(std::span<const Latin1Character> text, size_t at)
+{
+    while (at && (text[at - 1] == ' ' || text[at - 1] == '\t'))
+        --at;
+    while (at && text[at - 1] == '\n')
+        at = endOfCodeInFrontOf(text, at - 1);
+    return at;
+}
+
+static bool isFirstInLine(std::span<const Latin1Character> text, size_t at)
+{
+    while (at && (text[at - 1] == ' ' || text[at - 1] == '\t'))
+        --at;
+    return at && text[at - 1] == '\n';
+}
+
+// Where the code goes on in a later line, if blanks and a `//` comment are all that the line has behind `at`. Lines that are comments may stand between. Otherwise `at`.
+static size_t startOfCodeInLaterLine(std::span<const Latin1Character> text, size_t at)
+{
+    bool hasLineBreak = false;
+    size_t next = at;
+    while (next < text.size()) {
+        Latin1Character character = text[next];
+        if (character == '/' && next + 1 < text.size() && text[next + 1] == '/')
+            next = std::min(WTF::find(text, static_cast<Latin1Character>('\n'), next), text.size());
+        else if (character == ' ' || character == '\t' || character == '\r' || character == '\n') {
+            hasLineBreak |= character == '\n';
+            ++next;
+        } else
+            break;
+    }
+    return hasLineBreak && next < text.size() ? next : at;
+}
+
 // The place of the bracket that `text[close]` closes. Knows texts in quotes, `//` comments and nothing else of the language, much as the engine's functionCallBase():
 // where that is not enough the brackets do not pair up, or the answer is quoted as it stands in the source.
 static std::optional<size_t> findOpeningBracket(std::span<const Latin1Character> text, size_t close)
@@ -570,13 +605,9 @@ static std::optional<size_t> startOfPathInFrontOf(std::span<const Latin1Characte
 {
     size_t start = end;
     while (true) {
-        // A chain: the dot is the first thing in its line, and lines that are comments may stand between.
-        size_t code = start;
-        while (code && (text[code - 1] == ' ' || text[code - 1] == '\t'))
-            --code;
-        while (code && text[code - 1] == '\n')
-            code = endOfCodeInFrontOf(text, code - 1);
-        if (code != start && code && text[code - 1] != '\n' && start < text.size() && (text[start] == '.' || text[start] == '?'))
+        // A chain: the dot or the `[` is the first thing in its line, and lines that are comments may stand between.
+        size_t code = endOfCodeBefore(text, start);
+        if (code != start && code && text[code - 1] != '\n' && start < text.size() && (text[start] == '.' || text[start] == '?' || (text[start] == '[' && isFirstInLine(text, start))))
             start = code;
         // `a!.b`, in a file that still has its types.
         size_t part = start - (start && text[start - 1] == '!');
@@ -600,9 +631,11 @@ static std::optional<size_t> startOfPathInFrontOf(std::span<const Latin1Characte
         if (name && text[name - 1] == '#')
             --name;
         start = name;
-        if (!start || text[start - 1] != '.')
+        // The dot may be the last thing in the line in front.
+        size_t behindDot = isFirstInLine(text, start) ? endOfCodeBefore(text, start) : start;
+        if (!behindDot || text[behindDot - 1] != '.')
             return start;
-        size_t before = start - 1;
+        size_t before = behindDot - 1;
         // `...a.b`
         if (before && text[before - 1] == '.')
             return start;
@@ -620,6 +653,7 @@ static size_t startWithNew(std::span<const Latin1Character> text, size_t start, 
 }
 
 // Where the path that begins at `start` ends: names, dots, and what stands in brackets behind them. `start` where there is no path.
+// A chain goes on in a later line that begins with a dot or a bracket, and behind a dot that ends a line.
 static size_t endOfPathFrom(std::span<const Latin1Character> text, size_t start)
 {
     size_t at = start;
@@ -635,8 +669,19 @@ static size_t endOfPathFrom(std::span<const Latin1Character> text, size_t start)
             if (!close)
                 return start;
             at = *close + 1;
-        } else
-            break;
+        } else {
+            // `a!` may end a line, in a file that still has its types.
+            size_t endOfLine = at + (character == '!' && at > start);
+            size_t later = startOfCodeInLaterLine(text, endOfLine);
+            if (later == endOfLine)
+                break;
+            Latin1Character first = text[later];
+            Latin1Character second = later + 1 < text.size() ? text[later + 1] : Latin1Character(0);
+            bool goesOn = (first == '.' && second != '.') || (first == '?' && second == '.') || first == '[' || first == '(' || (endOfLine == at && at && text[at - 1] == '.' && isPartOfName(first));
+            if (!goesOn)
+                break;
+            at = later;
+        }
     }
     return at;
 }
@@ -687,23 +732,35 @@ static size_t endWithStoredValue(std::span<const Latin1Character> text, size_t e
 }
 
 // Each place in `text[from, to)` that reads `member` behind a dot. Same: all spell what they read it from alike, and `found` holds that with the member.
+// The place of a read that failed lies in what it reads from. Of `a.x.b.x` both reads of `x` hold the place `a`, and the second reads from the first: the first is meant.
 static WrittenReads findWrittenReads(std::span<const Latin1Character> text, size_t from, size_t to, StringView member, std::optional<size_t> within, std::span<const Latin1Character>& found)
 {
     for (size_t at = from + 1; at + member.length() <= to; ++at) {
-        if (text[at - 1] != '.' || (at + member.length() < text.size() && isPartOfName(text[at + member.length()])))
+        if (isPartOfName(text[at - 1]) || (at + member.length() < text.size() && isPartOfName(text[at + member.length()])))
             continue;
         if (!equal(member, text.subspan(at, member.length())))
             continue;
-        size_t dot = at - 1;
+        // The dot may be the last thing in the line in front.
+        size_t behindDot = text[at - 1] != '.' && isFirstInLine(text, at) ? endOfCodeBefore(text, at) : at;
+        if (!behindDot || text[behindDot - 1] != '.')
+            continue;
+        size_t dot = behindDot - 1;
         if (dot && text[dot - 1] == '?')
             --dot;
         std::optional<size_t> start = startOfPathInFrontOf(text, dot);
-        if (!start)
+        if (!start) {
+            if (within)
+                continue;
             return WrittenReads::Differ;
+        }
         start = startWithNew(text, *start, dot);
-        if (within && (*within < *start || *within >= at + member.length()))
+        if (within && (*within < *start || *within >= at))
             continue;
         std::span<const Latin1Character> read = text.subspan(*start, endWithStoredValue(text, at + member.length()) - *start);
+        if (within) {
+            found = read;
+            return WrittenReads::Same;
+        }
         if (found.data() && !equalSpans(found, read))
             return WrittenReads::Differ;
         found = read;
@@ -727,7 +784,10 @@ static WrittenReads findWrittenElements(std::span<const Latin1Character> text, s
                 at += text[at] == '\\';
             continue;
         }
-        if (text[at] != '[' || !(isPartOfName(text[at - 1]) || text[at - 1] == ')' || text[at - 1] == ']' || text[at - 1] == '!'))
+        if (text[at] != '[')
+            continue;
+        size_t inFront = isFirstInLine(text, at) ? endOfCodeBefore(text, at) : at;
+        if (!inFront || !(isPartOfName(text[inFront - 1]) || text[inFront - 1] == ')' || text[inFront - 1] == ']' || text[inFront - 1] == '!'))
             continue;
         std::optional<size_t> start = startOfPathInFrontOf(text, at);
         std::optional<size_t> close = findClosingBracket(text, at);
@@ -764,11 +824,19 @@ static WrittenReads findWrittenPrivateNames(std::span<const Latin1Character> tex
         if (dot && text[dot - 1] == '?')
             --dot;
         std::optional<size_t> start = startOfPathInFrontOf(text, dot);
-        if (!start)
+        if (!start) {
+            if (within)
+                continue;
             return WrittenReads::Differ;
-        if (within && (*within < *start || *within >= end))
+        }
+        if (within && (*within < *start || *within >= at))
             continue;
         std::span<const Latin1Character> read = text.subspan(*start, endWithStoredValue(text, end) - *start);
+        // As in findWrittenReads().
+        if (within) {
+            found = read;
+            return WrittenReads::Same;
+        }
         if (found.data() && !equalSpans(found, read))
             return WrittenReads::Differ;
         found = read;
@@ -1194,6 +1262,15 @@ static Vector<Latin1Character> withoutTypes(std::span<const Latin1Character> tex
     return kept;
 }
 
+static bool isWordInFrontOfValue(std::span<const Latin1Character> word)
+{
+    for (ASCIILiteral keyword : { "new"_s, "return"_s, "typeof"_s, "await"_s, "void"_s, "delete"_s, "yield"_s, "throw"_s, "case"_s, "in"_s, "instanceof"_s, "of"_s }) {
+        if (equalSpans(word, byteCast<Latin1Character>(keyword.span())))
+            return true;
+    }
+    return false;
+}
+
 // Whether `text[open, close]` are brackets around a value: not those of a call, of parameters, or of `if` and its like.
 static bool areAroundValue(std::span<const Latin1Character> text, size_t open, size_t close)
 {
@@ -1217,12 +1294,7 @@ static bool areAroundValue(std::span<const Latin1Character> text, size_t open, s
     size_t start = end;
     while (start && isPartOfName(text[start - 1]))
         --start;
-    std::span word = text.subspan(start, end - start);
-    for (ASCIILiteral keyword : { "new"_s, "return"_s, "typeof"_s, "await"_s, "void"_s, "delete"_s, "yield"_s, "throw"_s, "case"_s, "in"_s, "instanceof"_s, "of"_s }) {
-        if (equalSpans(word, byteCast<Latin1Character>(keyword.span())))
-            return true;
-    }
-    return false;
+    return isWordInFrontOfValue(text.subspan(start, end - start));
 }
 
 static bool isObjectLiteral(std::span<const Latin1Character> text)
@@ -1336,6 +1408,19 @@ static void appendWithoutIdleBrackets(Vector<Latin1Character>& printed, std::spa
     }
 }
 
+// `a.b` and `f()`, which a `[` in the next line reads an element of. Not `k in`.
+static bool endsInValue(std::span<const Latin1Character> text)
+{
+    if (text.empty())
+        return false;
+    if (text.back() == ')' || text.back() == ']')
+        return true;
+    size_t start = text.size();
+    while (start && isPartOfName(text[start - 1]))
+        --start;
+    return start != text.size() && !isWordInFrontOfValue(text.subspan(start));
+}
+
 // A chain and the arguments of a call are printed on one line, without the comma behind the last. What stands in curly brackets keeps its lines.
 static Vector<Latin1Character> onOneLine(std::span<const Latin1Character> text)
 {
@@ -1378,7 +1463,7 @@ static Vector<Latin1Character> onOneLine(std::span<const Latin1Character> text)
             Latin1Character inFront = kept.isEmpty() ? Latin1Character(0) : kept.last();
             if (!open.isEmpty() && open.last() == '{')
                 kept.append(text.subspan(lineBreak, next - lineBreak));
-            else if (behind != '.' && !(behind == '?' && next + 1 < text.size() && text[next + 1] == '.') && !closes && inFront != '(' && inFront != '[')
+            else if (behind != '.' && !(behind == '?' && next + 1 < text.size() && text[next + 1] == '.') && !closes && inFront != '(' && inFront != '[' && inFront != '.' && !(behind == '[' && endsInValue(kept.span())))
                 kept.append(' ');
             at = next - 1;
             continue;
@@ -1987,6 +2072,37 @@ static Vector<Latin1Character> withBlanksForTextFromPrinter(std::span<const Lati
     return blanked;
 }
 
+// The lines of the path around `place`. A chain may take several, and the place of what failed in it is a name further up: that of `.c` in `a` / `.b` / `.c` is `b`.
+static std::pair<size_t, size_t> linesOfPathAround(std::span<const Latin1Character> text, size_t place)
+{
+    size_t endOfName = place;
+    while (endOfName < text.size() && isPartOfName(text[endOfName]))
+        ++endOfName;
+    size_t start = std::min(startOfPathInFrontOf(text, endOfName).value_or(place), place);
+    while (start && text[start - 1] != '\n')
+        --start;
+    // The place may be the last thing in brackets of the path: that of `.b` in `a[k]` / `.b` is `k`.
+    size_t end = place;
+    while (true) {
+        end = std::max(endOfPathFrom(text, end), end);
+        size_t close = end;
+        while (close < text.size() && (text[close] == ' ' || text[close] == '\t'))
+            ++close;
+        close = startOfCodeInLaterLine(text, close);
+        // `f(a, )`
+        if (close < text.size() && text[close] == ',') {
+            size_t behindComma = close + 1;
+            while (behindComma < text.size() && (text[behindComma] == ' ' || text[behindComma] == '\t'))
+                ++behindComma;
+            close = startOfCodeInLaterLine(text, behindComma);
+        }
+        if (close >= text.size() || (text[close] != ')' && text[close] != ']'))
+            break;
+        end = close + 1;
+    }
+    return { start, std::min(WTF::find(text, static_cast<Latin1Character>('\n'), end), text.size()) };
+}
+
 // What `text[startOfSearched, endOfSearched)` spells around `place`, which counts from the start of `text` as the pieces do.
 // The place of an error lies in what `bun run` has. Of `const r = f(x); return r.y` that is `return f(x).y`, so the place lies in the initializer, and what failed is written around the name.
 static String findSpelledAround(std::span<const Latin1Character> text, size_t startOfSearched, size_t endOfSearched, size_t place, std::span<const TextPrintedInPlace> pieces, StringView name, FindInText find)
@@ -2006,6 +2122,10 @@ static String findSpelledAround(std::span<const Latin1Character> text, size_t st
         std::span<const Latin1Character> read = hasTextFromPrinter ? blanked.span() : searched;
         std::span<const Latin1Character> found;
         if (lineStart < lineEnd && find(read, lineStart, lineEnd, name, within, found) == WrittenReads::Same)
+            return asPrinted(text, searched.subspan(found.data() - read.data(), found.size()), pieces, find);
+        auto [firstLineStart, lastLineEnd] = linesOfPathAround(read, within);
+        found = { };
+        if ((firstLineStart < lineStart || lastLineEnd > lineEnd) && find(read, firstLineStart, lastLineEnd, name, within, found) == WrittenReads::Same)
             return asPrinted(text, searched.subspan(found.data() - read.data(), found.size()), pieces, find);
         for (const TextPrintedInPlace& piece : pieces) {
             bool printsPlace = piece.isCopy && piece.startOfCopied <= places[index] && places[index] <= piece.endOfCopied;

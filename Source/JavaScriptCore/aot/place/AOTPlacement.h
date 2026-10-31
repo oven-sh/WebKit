@@ -461,6 +461,7 @@ bool storedFieldAcceptsAnyNumber(const Program&, const Placement&, const Functio
 JS_EXPORT_PRIVATE unsigned numberOfSiteCachesUsedBy(const Program&, const Placement&, const Function&, const Value&);
 // Nothing reads what a site that runs at most once would remember, so it has no cache.
 JS_EXPORT_PRIVATE bool mayReadSiteCachesAgain(FunctionAnalyses&, BlockID);
+bool usesItsSiteCaches(FunctionAnalyses&, const Value&, BlockID);
 // Caches and their states are numbered in the order of the program's text: module, function as written, the form of it that holds the site.
 struct SiteCachePosition {
     uint32_t module { 0 };

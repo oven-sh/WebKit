@@ -43,6 +43,8 @@ struct KeyUses {
     Vector<KeyUse> byKey;
     BitVector keysNamedByTables;
     BitVector stringsNamedAsKeysByTables;
+    // `kind === "circle"` in code that runs more than once. As a name of the image the text has one atom, at a place that the image fixes.
+    BitVector textsComparedRepeatedly;
 };
 
 struct ProgramUses {

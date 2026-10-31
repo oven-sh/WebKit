@@ -42,9 +42,6 @@ uint32_t sizeInBytesOf(const Program& program, const RequestRecord& request)
         },
         [](const CollectionDataRecord&) -> size_t {
             return sizeof(CollectionDataRequest);
-        },
-        [](const FormatPatternRecord& record) -> size_t {
-            return record.words.sizeInBytes();
         });
     RELEASE_ASSERT(size <= UINT32_MAX);
     return static_cast<uint32_t>(size);
@@ -111,8 +108,7 @@ void collectStringConstantsOf(const Program& program, const RequestRecord& reque
         },
         [&](const CollectionDataRecord& record) {
             collectStringConstantsOf(program, program.at(record.data).root, stringConstants);
-        },
-        [](const FormatPatternRecord&) { });
+        });
 }
 
 void collectStringConstantsOf(const Program&, const DataNode& root, BitVector& stringConstants)
@@ -256,11 +252,6 @@ static void encodeRequest(TableEncoder& encoder, const DataRecord& record, std::
     auto& request = consumeAndReinterpretCastTo<DataRequest>(bytes);
     request.root = encoder.dataNodeOf(record.data);
     request.sharedStorageOffset = record.sharedStorageOffset.value_or(DataRequest::noSharedStorage);
-}
-
-static void encodeRequest(TableEncoder&, const FormatPatternRecord& record, std::span<uint8_t>& bytes)
-{
-    memcpySpan(consumeSpan(bytes, record.words.sizeInBytes()), asBytes(record.words.span()));
 }
 
 void encodeRequestTable(TableEncoder& encoder)

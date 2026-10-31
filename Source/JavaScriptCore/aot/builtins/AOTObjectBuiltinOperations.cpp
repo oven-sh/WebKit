@@ -12,6 +12,7 @@
 #include "AOTBuiltinFamilyState.h"
 #include "AOTBuiltinOperationSupport.h"
 #include "AOTInstance.h"
+#include "AOTNativeHelpers.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"

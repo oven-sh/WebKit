@@ -64,6 +64,7 @@ static void checkTableOrder(const FlowResultTables& tables)
     RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.receiversThatMayHaveDecidedStorage, tables.sites.accessSites));
     RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.receiversSeenAtSites, tables.sites.accessSites));
     RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.sitesThatHandOverOnlyDataFromOutside, tables.sites.accessSites));
+    RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.callsHandedOnlyDataFromOutside, tables.sites.accessSites));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.sinkOperands));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.typedResultCalls));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.boundFunctionsAtSites));
@@ -204,6 +205,11 @@ bool FlowResults::mayChangeStorageOfReceiver(AccessSiteID access) const
 bool FlowResults::handsOverOnlyDataFromOutside(AccessSiteID access) const
 {
     return access && recordAt(m_tables.sites.sitesThatHandOverOnlyDataFromOutside, access, false);
+}
+
+bool FlowResults::isHandedOnlyDataFromOutside(AccessSiteID call) const
+{
+    return call && recordAt(m_tables.sites.callsHandedOnlyDataFromOutside, call, false);
 }
 
 std::optional<LayoutSetID> FlowResults::receiversSeenAt(AccessSiteID access) const

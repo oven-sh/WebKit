@@ -90,15 +90,8 @@ const readByFormatting = [hostSettings, "InternalFields", "Elements", "ArrayStor
 // A receiver that has the prototype object above it and is no formatter may hold one, under a symbol: what `Intl.DateTimeFormat.call(object)` has put there.
 const mayHoldFormatter = b.runs("PrototypeChain", b.named());
 
-const boundFormat = (inlineBuiltin: string, parameter: string, objectsFormattedInLine: readonly b.FunctionField[] = []) => [
-  // The formatter makes the function at the first read and keeps it. The function holds the formatter.
-  {
-    getter: b.callable,
-    capability: "heap",
-    uses: { this: [b.retained] },
-    implementation: b.hostCall,
-  },
-  {
+const boundFormat = (inlineBuiltin: string, parameter: string) =>
+  ({
     this: b.any,
     getter: b.callable,
     capability: "js",
@@ -117,7 +110,6 @@ const boundFormat = (inlineBuiltin: string, parameter: string, objectsFormattedI
         reads: [hostSettings],
         implementation: b.inline(inlineBuiltin, { otherwise: b.hostCall }),
       },
-      ...objectsFormattedInLine,
       {
         args: { [parameter]: b.any.optional },
         returns: b.string,
@@ -141,26 +133,14 @@ const boundFormat = (inlineBuiltin: string, parameter: string, objectsFormattedI
         implementation: b.generic,
       },
     ],
-  },
-] satisfies readonly b.GetterField[];
-
-// A pristine date finds the built-in @@toPrimitive and valueOf, which answer its time.
-const pristineDateFormatted = {
-  args: { date: b.instance("Date").pristine("Names") },
-  returns: b.string,
-  capability: "heap",
-  throws: true,
-  uses: { this: b.inspected, date: [b.readsContents("time")] },
-  reads: [hostSettings],
-  implementation: b.inline("FormatDateTime", { otherwise: b.hostCall }),
-} satisfies b.FunctionField;
+  }) satisfies b.GetterField;
 
 const formatterClass = (
   name: string,
   tablePrefix: string,
   usesFeature: readonly b.FeatureUseSpec[],
   optionNames: readonly string[],
-  format: readonly b.GetterField[],
+  format: b.GetterField,
 ) => {
   // An operand is converted to a primitive. An object of Temporal among the dates is only looked at.
   const method = (operands: readonly string[], returns: b.TableType) =>
@@ -194,7 +174,6 @@ const formatterClass = (
     prototypeUsesFeature: true,
     nativeSymbols: [`callIntl${name}`, `constructIntl${name}`],
     requiresHolderAsThis: true,
-    lockedMembers: ["prototype"],
     constructorTable: b.staticTable(`runtime/Intl${name}Constructor.cpp`, `${tablePrefix}ConstructorTable`),
     prototypeTable: b.staticTable(`runtime/Intl${name}Prototype.cpp`, `${tablePrefix}PrototypeTable`),
     call: [
@@ -294,7 +273,7 @@ export default b.declarations(
     "dateTimeFormat",
     ["IntlDateTimeFormat"],
     dateTimeFormatOptions,
-    boundFormat("FormatDateTime", "date", [pristineDateFormatted]),
+    boundFormat("FormatDateTime", "date"),
   ),
   formatterClass(
     "NumberFormat",

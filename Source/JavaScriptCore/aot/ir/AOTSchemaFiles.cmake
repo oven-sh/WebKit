@@ -60,7 +60,6 @@ set(JavaScriptCore_AOT_SCHEMA_GENERATED_HEADERS
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRuntimeOperations.h"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaTerminatorAccessors.inc"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaTerminatorDispatch.inc"
-    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaTerminatorEffects.h"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaTypeRecords.h"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaValueAccessors.inc"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaValueEffects.h"

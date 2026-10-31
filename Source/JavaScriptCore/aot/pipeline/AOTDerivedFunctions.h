@@ -39,6 +39,7 @@
     v(BoundFunction, buildBoundFunction, Function, BoundFunctions) \
     v(ResultWorker, buildResultWorker, Function, FreshResultsSplit) \
     v(ChainStep, buildChainStep, Function, None) \
+    v(ChecksThatGiveUp, buildChecksThatGiveUp, Function, None) \
     v(OutlinedBody, buildOutlinedIteration, Selector, None) \
     v(Serializer, buildSerializer, Layout, SerializersCreated) \
     v(Parser, buildParser, Type, ParsersCreated)

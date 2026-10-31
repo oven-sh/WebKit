@@ -21,6 +21,7 @@
 #include "AOTFunctionKinds.h"
 #include "AOTIDPrefix.h"
 #include "AOTIdentifierTable.h"
+#include "AOTImagesBelow.h"
 #include "AOTLayoutData.h"
 #include "AOTLiteralStringDigest.h"
 #include "AOTModuleGraph.h"
@@ -908,8 +909,7 @@ void encodeDataTable(TableEncoder& encoder)
             },
             [](const NewClassRecord&) { },
             [](const TemplateObjectRecord&) { },
-            [](const DirectEvalRecord&) { },
-            [](const FormatPatternRecord&) { });
+            [](const DirectEvalRecord&) { });
     }
     AOT::sort(placedNodes, { }, &std::pair<uint32_t, DataID>::first);
     placedNodes.shrink(std::ranges::unique(placedNodes).begin() - placedNodes.begin());
@@ -3165,7 +3165,7 @@ static void encodeNamedVariables(TableEncoder& encoder)
         RELEASE_ASSERT(!(placed.offset % sizeof(uint32_t)));
         named.append({ variable.module.index(), NamedVariableData::inStatics(encoder.shownStringNumber(variable.name), placed.offset, traits.isNarrowReference) });
     }
-    std::ranges::sort(named, { }, [](const NamedVariable& variable) { return std::tuple(variable.module, variable.data.name, variable.data.placeAndNumber); });
+    AOT::sortInLine(named, { }, [](const NamedVariable& variable) { return std::tuple(variable.module, variable.data.name, variable.data.placeAndNumber); });
     NamedVariablesWriter writer;
     for (size_t index = 0; index < named.size(); ++index) {
         if (!index || named[index - 1].module != named[index].module) {
@@ -3418,6 +3418,11 @@ static void encodeBuiltinAndBigIntTables(TableEncoder& encoder)
     if (!encoder.build.options().holdsLibraryAlone()) {
         for (BuiltinID member : encoder.program.unlockedBuiltins())
             unlocked.set(member.index());
+    } else if (const ImagesBelow* library = encoder.build.referenceLibraryImage()) {
+        unlocked.clearAll();
+        library->forEachUnlockedBuiltinMember([&](BuiltinID member) {
+            unlocked.set(member.index());
+        });
     }
     for (size_t member : unlocked)
         members.append(static_cast<uint32_t>(member) | ProgramTables::unlockedBuiltinMember);

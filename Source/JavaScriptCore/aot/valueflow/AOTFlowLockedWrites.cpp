@@ -281,16 +281,31 @@ static bool mayLeaveMemberAsItIs(const Program& program, const Function& functio
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool keepsPrototype(const Program& program, const Function& function, const Value& write, BuiltinID callee, BuiltinID holder)
+static bool keepsPrototype(const Program& program, const FlowResults& results, const Function& function, const Value& write, BuiltinID callee, const BuiltinLocationFlow& location)
 {
-    if (write.opcode != Opcode::Call || (callee != Builtins::ObjectSetPrototypeOf && callee != Builtins::ReflectSetPrototypeOf))
-        return false;
     const BuiltinTable& table = program.builtins();
-    std::span<const ValueID> arguments = write.argumentsOperands();
-    if (arguments.size() < 2 || table.at(holder).prototypeLink != BuiltinPrototypeLink::Builtin)
+    const Builtin& holder = table.at(location.holder);
+    auto isWhatLiesAbove = [&](const Type& prototype) {
+        bool holdsOnlyBuiltins = !prototype.anyObject && !prototype.anyFunction && !prototype.layouts && prototype.classes.isEmpty() && prototype.functions.isEmpty();
+        return holder.prototypeLink == BuiltinPrototypeLink::Builtin && holdsOnlyBuiltins && prototype.builtins.size() == 1 && prototype.builtins[0] == table.canonicalID(holder.inheritsFrom);
+    };
+    if (write.opcode == Opcode::Call) {
+        std::span<const ValueID> arguments = write.argumentsOperands();
+        if ((callee != Builtins::ObjectSetPrototypeOf && callee != Builtins::ReflectSetPrototypeOf) || arguments.size() < 2)
+            return false;
+        const Type& prototype = program.typeOf(function, arguments[1]);
+        return !prototype.primitives && isWhatLiesAbove(prototype);
+    }
+
+    std::optional<uint8_t> stored = storedOf(write.opcode);
+    if (!stored || results.at(write.accessSite()).kind != AccessKind::Store || location.key != program.keyOf(BuiltinNames::__proto__))
         return false;
-    const Type& prototype = program.typeOf(function, arguments[1]);
-    return !prototype.primitives && prototype.singleBuiltin() == table.canonicalID(table.at(holder).inheritsFrom);
+    constexpr uint16_t ignoredBySetter = Primitive::Undefined | Primitive::Boolean | Primitive::Number | Primitive::AnyString | Primitive::AnySymbol | Primitive::BigInt;
+    uint16_t changesNothing = holder.prototypeLink == BuiltinPrototypeLink::Null ? ignoredBySetter | Primitive::Null : ignoredBySetter;
+    const Type& prototype = program.typeOf(function, write.operand(*stored));
+    if (prototype.isNever() || !prototype.isJavaScriptValue() || prototype.primitives & ~changesNothing)
+        return false;
+    return !prototype.hasObjects() || isWhatLiesAbove(prototype);
 }
 
 static void reportWrite(const Program& program, const FlowResults& results, BuildContext& build, const BitVector& alwaysEvaluatedModules, const BuiltinLocationFlow& location)
@@ -318,7 +333,7 @@ static void reportWrite(const Program& program, const FlowResults& results, Buil
     const Type* stored = member && value.opcode == Opcode::PropSet ? &program.typeOf(function, value.operand(*storedOf(value.opcode))) : nullptr;
     if (stored && !stored->primitives && stored->singleBuiltin() == member)
         return;
-    if (mayLeaveMemberAsItIs(program, function, analyses.cfg(), write->value, callee, member) || keepsPrototype(program, function, value, callee, location.holder))
+    if (mayLeaveMemberAsItIs(program, function, analyses.cfg(), write->value, callee, member) || keepsPrototype(program, results, function, value, callee, location))
         return;
 
     bool isInSloppyCode = Value::opcodesWithMode.contains(value.opcode) && value.mode() == ECMAMode::Sloppy;

@@ -58,6 +58,10 @@ static constexpr Typed::TerminatorKindSet keyOrComparisonTerminators { Typed::Te
 
 static constexpr bool usesOperandsAsKeys(Typed::Opcode opcode) { return keyOrComparisonOpcodes.contains(opcode); }
 static constexpr bool usesOperandsAsKeys(Typed::TerminatorKind kind) { return keyOrComparisonTerminators.contains(kind); }
+static constexpr bool comparesWithWrittenText(Typed::Opcode opcode) { return opcode == Typed::Opcode::StringEqualsLiteral || opcode == Typed::Opcode::ValueEqualsLiteral; }
+static constexpr bool comparesWithWrittenText(Typed::TerminatorKind) { return false; }
+static constexpr bool comparesOperands(Typed::Opcode opcode) { return opcode == Typed::Opcode::StrictEq || opcode == Typed::Opcode::Eq; }
+static constexpr bool comparesOperands(Typed::TerminatorKind) { return false; }
 
 // The value of `list[i] = "text"` is only stored: nothing compares it or looks it up.
 static constexpr bool isOnlyKept(Typed::OperandUses uses) { return !uses.isEmpty() && uses.containsOnly({ Typed::OperandUse::Retains, Typed::OperandUse::Returns }); }
@@ -151,6 +155,7 @@ struct SharedUses {
     FastBitVector isConstant { numberOfStrings };
     FastBitVector isCreatedRepeatedly { numberOfStrings };
     FastBitVector isAtom { numberOfStrings };
+    FastBitVector isComparedRepeatedly { numberOfStrings };
 };
 
 struct FunctionWalk {
@@ -199,9 +204,12 @@ struct FunctionWalk {
         bool createsStringConstant = runtimeOf(operation) == Typed::RuntimeOperation::StringConstant;
         bool looksUpByName = looksUpKeysByName(operation);
         bool looksUpInTables = !runsAtMostOnce && looksUpByName;
+        bool isComparedRepeatedly = !runsAtMostOnce && hasCode;
         forEachReference(instruction, [&]<typename Reference>(const Reference& reference) {
             if constexpr (std::same_as<Reference, StringID>) {
                 nameString(reference);
+                if (reference && isComparedRepeatedly && comparesWithWrittenText(operation))
+                    shared.isComparedRepeatedly.atomicSetAndCheck(reference.index(), true);
                 if (createsStringConstant)
                     countCreationSite(reference, runsAtMostOnce);
                 else if (reference && !hasStringsForMessagesOnly(operation))
@@ -216,8 +224,11 @@ struct FunctionWalk {
             if (isOnlyKept(instruction.operandUses(operandIndex)))
                 return;
             const Typed::Value& definition = function.at(sameObjectThroughCasts(function, operand));
-            if (definition.opcode == Typed::Opcode::String)
-                shared.isAtom.atomicSetAndCheck(definition.string().index(), true);
+            if (definition.opcode != Typed::Opcode::String)
+                return;
+            shared.isAtom.atomicSetAndCheck(definition.string().index(), true);
+            if (isComparedRepeatedly && comparesOperands(operation))
+                shared.isComparedRepeatedly.atomicSetAndCheck(definition.string().index(), true);
         });
     }
 
@@ -327,6 +338,7 @@ ProgramUses collectProgramUses(const Typed::PipelineOutput& pipeline, const BitV
     strings.functionsInSourceOrder = sortFunctionsBySourcePosition(program, loops);
 
     uses.keys.byKey = WTF::move(shared.keys);
+    uses.keys.textsComparedRepeatedly = toBitVector(shared.isComparedRepeatedly);
     return uses;
 }
 
@@ -341,6 +353,8 @@ struct NameCandidate {
     NumberedIdentifier identifier;
     bool hasPromisedColumn { false };
     bool isEngineSymbol { false };
+    // Nothing looks it up, so it takes no column and comes behind every other name.
+    bool isOnlyCompared { false };
     uint32_t uses { 0 };
     uint32_t tableLookupUses { 0 };
     uint32_t lookupsByName { 0 };
@@ -400,12 +414,18 @@ static Vector<NameCandidate> collectNumberedNames(const Typed::Program& program,
         if (!isTextOfNumberedKey.get(index))
             names.append(NameCandidate { .identifier = { PropertyKeyID(), StringID(index) } });
     }
+    for (size_t index : uses.textsComparedRepeatedly) {
+        if (!isTextOfNumberedKey.get(index) && !uses.stringsNamedAsKeysByTables.get(index) && !program.strings[StringID(index)].empty())
+            names.append(NameCandidate { .identifier = { PropertyKeyID(), StringID(index) }, .isOnlyCompared = true });
+    }
     return names;
 }
 
 static void sortByUse(const ParallelLoops& loops, std::span<NameCandidate> names)
 {
     parallelSort(loops, names, [](const NameCandidate& a, const NameCandidate& b) {
+        if (a.isOnlyCompared != b.isOnlyCompared)
+            return b.isOnlyCompared;
         if (a.hasPromisedColumn != b.hasPromisedColumn)
             return a.hasPromisedColumn;
         if (a.tableLookupUses != b.tableLookupUses)
@@ -448,6 +468,8 @@ static void sortByFirstMention(const ParallelLoops& loops, std::span<NameCandida
         // The table of fields takes more names than the front table. The names that code looks up get the low numbers, which are the ones it takes.
         if (!a.lookupsByName != !b.lookupsByName)
             return !!a.lookupsByName;
+        if (a.isOnlyCompared != b.isOnlyCompared)
+            return b.isOnlyCompared;
         if (a.isEngineSymbol != b.isEngineSymbol)
             return a.isEngineSymbol;
         if (a.identifier.text != b.identifier.text)
@@ -615,7 +637,8 @@ IdentifierNumbering numberIdentifiers(const Typed::Program& program, const KeyUs
         return numbering;
     }
     sortByUse(context.parallelLoops(), names.mutableSpan());
-    auto columnCount = static_cast<uint32_t>(std::min<uint64_t>(names.size(), context.limit(LimitID::LookupTableNames)));
+    auto numberOfNamesLookedUp = static_cast<uint64_t>(std::ranges::count_if(names, [](const NameCandidate& name) { return !name.isOnlyCompared; }));
+    auto columnCount = static_cast<uint32_t>(std::min<uint64_t>(numberOfNamesLookedUp, context.limit(LimitID::LookupTableNames)));
     groupColumnsByFunction(names.mutableSpan().first(columnCount));
     reportNamesWithoutColumn(names.span().subspan(columnCount), context);
     sortByFirstMention(context.parallelLoops(), names.mutableSpan().subspan(columnCount));

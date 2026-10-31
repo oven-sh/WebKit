@@ -1011,7 +1011,6 @@ PassOutcome simplifyBuiltinCalls(FunctionPassContext& context)
     didRewrite(simplifyPromiseAllOfLiterals(context, calls));
     didRewrite(simplifyPromiseResolve(context, calls));
     didRewrite(leaveURLsUnbuilt(context));
-    didRewrite(formatFromPatterns(context));
     didRewrite(leavePairsOfOwnEntriesUnmade(context, calls.span()));
     didRewrite(expandRangesOfViews(context, calls));
     didRewrite(definePlainPropertiesByName(context, calls));

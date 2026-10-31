@@ -123,8 +123,13 @@ void StubAssembler::jumpToOperationCallOf(Entry entry)
     recordCall(entry);
     move(TrustedImm32(offsetInRuntimeTable(entry)), *m_signature.immediate);
     // argumentGPROfPreservingCall() has the other half.
-    if (key().family() == StubFamily::CallOperationPreservingRegisters && hasPrelude(entry) && takesArgumentInResultRegister(preservingCallShapes[key().form()]))
-        move(operationArgumentGPR(1), GPRInfo::returnValueGPR);
+    if (key().family() == StubFamily::CallOperationPreservingRegisters && preservingCallShapes[key().form()].firstArgument == OperationCall::FirstArgument::Instance && hasPrelude(entryAtOffset(*key().immediate()))) {
+        unsigned index = 1;
+        for (GPRReg reg : registersThatPreservingCallsTakeArgumentsIn()) {
+            recordClobber(reg);
+            move(operationArgumentGPR(index++), reg);
+        }
+    }
     jumpToStub(key().withoutImmediate());
 }
 

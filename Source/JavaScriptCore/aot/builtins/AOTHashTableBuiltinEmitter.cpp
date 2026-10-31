@@ -404,21 +404,19 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
     LValue capacity = m_out.zeroExtPtr(m_out.castToInt32(kinds));
     LValue indexBits = m_out.bitAnd(m_out.lShr(kinds, m_out.constInt32(32)), m_out.constInt64(0xff));
     LValue slots = m_out.shl(m_out.constInt64(1), m_out.castToInt32(indexBits));
-    // Slots are counted from the end: the last is -1. The tags end where the keys begin and the numbers where the tags begin, so two addresses reach all three, and one word makes a slot of a hash and wraps around.
+    // Slots are counted from the end: the last is -1. The tags end where the numbers begin and the numbers where the keys begin, so two addresses reach all three, and one word makes a slot of a hash and wraps around.
     LValue bitsAboveSlots = m_out.neg(slots);
     LValue hasLongSlots = m_out.above(capacity, m_out.constInt64(CompactTable::maxCapacityWithShortSlots));
-    LValue bytesOfNumber = m_out.select(hasLongSlots, m_out.constInt64(3), m_out.constInt64(1));
-    LValue numbers = m_out.add(table, m_out.constIntPtr(index));
-    LValue tags = m_out.add(numbers, m_out.mul(slots, bytesOfNumber));
+    LValue start = m_out.add(table, m_out.constIntPtr(index));
+    LValue numbers = m_out.add(start, slots);
     LValue hasNoSlots = m_out.testIsZero64(kinds, m_out.constInt64(indexBitsMask));
-    LValue keys = m_out.select(hasNoSlots, m_out.add(numbers, m_out.constIntPtr(CompactTable::maxCapacityWithTags)), m_out.add(tags, slots));
+    LValue keys = nullptr;
     // A map of number keys is rarely small enough for tags: their reads stay out of the way of the slots' registers, and go by the address of the keys, which lie behind the eight tags.
     constexpr ptrdiff_t tableFromKeysBehindTags = -(index + static_cast<ptrdiff_t>(CompactTable::maxCapacityWithTags));
-    auto loadWordOfTags = [&] { return m_out.load64(inColumns(keysAreWide ? m_out.add(keys, m_out.constIntPtr(tableFromKeysBehindTags + index)) : numbers)); };
+    auto loadWordOfTags = [&] { return m_out.load64(inColumns(keysAreWide ? m_out.add(keys, m_out.constIntPtr(tableFromKeysBehindTags + index)) : start)); };
     auto loadBitsOfUsedTags = [&] { return m_out.shl(m_out.zeroExtPtr(m_out.load32(keysAreWide ? inHeader(keys, tableFromKeysBehindTags + CompactTable::offsetOfUsed()) : inHeader(table, CompactTable::offsetOfUsed()))), m_out.constInt32(3)); };
     LValue wordOfTags = keysAreWide ? nullptr : loadWordOfTags();
     LValue bitsOfUsedTags = keysAreWide ? nullptr : loadBitsOfUsedTags();
-    LValue values = returnsValue ? m_out.add(keys, m_out.shl(capacity, m_out.constInt32(keysAreWide ? 3 : 2))) : nullptr;
     LValue valuesAreNarrow = returnsValue ? m_out.equal(m_out.bitAnd(m_out.lShr(kinds, m_out.constInt32(48)), m_out.constInt64(0xff)), m_out.constInt64(static_cast<int64_t>(CompactTable::Width::Narrow))) : nullptr;
     LValue isOfKind = m_out.equal(m_out.bitAnd(kinds, m_out.constInt64(imageFlag | wideFlag)), m_out.constInt64(keysAreWide ? wideFlag : 0));
     LValue isNotHuge = m_out.belowOrEqual(capacity, m_out.constInt64(CompactTable::maxCapacityWithLongSlots));
@@ -432,7 +430,7 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
     LValue form = m_out.select(m_out.bitAnd(isOfKind, isNotHuge), searchableForm, m_out.constInt32(OtherTable));
     // For string keys one word stands for the form in the loop. It holds the bits that no cell has. For a table that this code cannot search it holds all bits, and no key is zero:
     // so one test sends to the stub a key that is no cell and every key for such a table. Three more of the bits that no cell has say what the table is like.
-    // A table has eight tags or slots, so one word is the tags or where the tags of the slots begin, and another the number of tags in use or the bits above a slot.
+    // A table has eight tags or slots, so one word is the tags or where the numbers of the slots begin, and another the number of tags in use or the bits above a slot.
     constexpr int64_t slotsAreLong = 1;
     constexpr int64_t narrowValues = 4;
     constexpr int64_t noSlots = 8;
@@ -444,9 +442,12 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
         if (returnsValue)
             bits = m_out.bitOr(bits, bitIf(valuesAreNarrow, narrowValues));
         bitsOfNoCell = m_out.select(m_out.equal(form, m_out.constInt32(OtherTable)), m_out.constInt64(-1), bits);
-        wordOfTags = tags = m_out.select(hasNoSlots, wordOfTags, tags);
+        wordOfTags = numbers = m_out.select(hasNoSlots, wordOfTags, numbers);
         bitsOfUsedTags = bitsAboveSlots = m_out.select(hasNoSlots, bitsOfUsedTags, bitsAboveSlots);
     }
+    // The addresses that the loop reads through come last. Ahead of the words above, they would be alive while those are worked out, where more values are alive than there are registers, and would stay on the stack in the loop too.
+    keys = m_out.select(hasNoSlots, m_out.add(start, m_out.constIntPtr(CompactTable::maxCapacityWithTags)), m_out.add(start, m_out.mul(slots, m_out.select(hasLongSlots, m_out.constInt64(4), m_out.constInt64(2)))));
+    LValue values = returnsValue ? m_out.add(keys, m_out.shl(capacity, m_out.constInt32(keysAreWide ? 3 : 2))) : nullptr;
     m_out.jump(isOfKindAndSize);
 
     m_out.appendTo(isOfKindAndSize);
@@ -478,13 +479,12 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
         LBasicBlock loaded = newBlock();
         m_out.branch(keysAreWide ? m_out.equal(form, m_out.constInt32(LongSlots)) : m_out.testNonZero64(bitsOfNoCell, m_out.constInt64(slotsAreLong)), unlikelyEdge(isLong), normalEdge(isShort));
         m_out.appendTo(isLong);
-        // The byte ahead of the first number is the last of the header.
-        static_assert(index);
-        LValue threeBytes = m_out.lShr(m_out.load32(inColumns(m_out.add(m_out.add(tags, m_out.mul(slot, m_out.constInt64(3))), m_out.constIntPtr(-1)))), m_out.constInt32(8));
+        // The byte ahead of the first number is the last tag.
+        LValue threeBytes = m_out.lShr(m_out.load32(inColumns(m_out.add(m_out.add(keys, m_out.mul(slot, m_out.constInt64(3))), m_out.constIntPtr(-1)))), m_out.constInt32(8));
         ValueFromBlock fromLong = m_out.anchor(threeBytes);
         m_out.jump(loaded);
         m_out.appendTo(isShort);
-        ValueFromBlock fromShort = m_out.anchor(m_out.load8ZeroExt32(inColumns(m_out.add(tags, slot))));
+        ValueFromBlock fromShort = m_out.anchor(m_out.load8ZeroExt32(inColumns(m_out.add(keys, slot))));
         m_out.jump(loaded);
         m_out.appendTo(loaded);
         return m_out.zeroExtPtr(m_out.phi(B3::Int32, fromLong, fromShort));
@@ -527,14 +527,14 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
     LValue slot = m_out.bitOr(m_out.zeroExtPtr(hash), bitsAboveSlots);
     // The lowest bit of the tag in a slot says that a key has left the slot. The tag that is looked for has it set, so the difference has it where no key has left.
     LValue tag = m_out.bitOr(m_out.lShr(hash, m_out.constInt32(CompactTable::tagShiftOfSlots - 1)), m_out.constInt32(CompactTable::takenSlot | CompactTable::keyLeftHomeSlot));
-    LValue differenceAtHome = m_out.bitXor(tag, m_out.load8ZeroExt32(inColumns(m_out.add(keys, slot))));
+    LValue differenceAtHome = m_out.bitXor(tag, m_out.load8ZeroExt32(inColumns(m_out.add(numbers, slot))));
     m_out.branch(m_out.testIsZero32(differenceAtHome, m_out.constInt32(0xff & ~CompactTable::keyLeftHomeSlot)), normalEdge(atHome), unlikelyEdge(notAtHome));
 
     auto firstOfEight = [&](LValue slot) { return m_out.bitAnd(slot, m_out.constInt64(~static_cast<int64_t>(CompactTable::slotsPerGroup - 1))); };
-    auto loadEightTags = [&](LValue first) { return m_out.load64(inColumns(m_out.add(keys, first))); };
+    auto loadEightTags = [&](LValue first) { return m_out.load64(inColumns(m_out.add(numbers, first))); };
     auto matchesIn = [&](LValue eightTags, LValue tag) { return tagsNearTag(eightTags, tag, CompactTable::keyLeftHomeSlot + 1); };
     // Where the key in the home slot is another one, the tag in that slot is read again, and it is the tag to go on with. Kept from the first read it would hold a register, or cost a store, on the way of every key.
-    auto loadTagAtHomeAgain = [&] { return m_out.load8ZeroExt32(inColumns(m_out.add(keys, m_out.opaque(slot)))); };
+    auto loadTagAtHomeAgain = [&] { return m_out.load8ZeroExt32(inColumns(m_out.add(numbers, m_out.opaque(slot)))); };
     auto slotOfFirstMatch = [&](LValue first, LValue matches) { return m_out.add(first, m_out.lShr(countTrailingZerosOfNonZero(matches), m_out.constInt32(3))); };
     // A taken slot has the top bit of its tag set.
     auto hasFreeSlot = [&](LValue eightTags) { return m_out.notEqual(m_out.bitAnd(eightTags, m_out.constInt64(ones << 7)), m_out.constInt64(ones << 7)); };

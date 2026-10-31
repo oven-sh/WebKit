@@ -1041,6 +1041,77 @@ static void expandStoresUnderPrototypesThatMayBeReplaced(FunctionPassContext& co
     context.analyses.didChangeValues();
 }
 
+// `#name = value` in a class with a parent: what super() answered may have the name already. A field of the object's layout holds the name, so an empty slot says that it has not, and the definition is a store.
+// A slot that is filled is left to the run time, which throws, and so is any other object. That arm is the only one that keeps the operation, and it is not likely: nothing expands it again.
+static bool expandDefinitionsBehindEmptySlots(FunctionPassContext& context, IRBuilder& builder)
+{
+    const Function& function = context.function;
+    Vector<NamedAccessSite> definitions;
+    context.forEachSiteIn(SiteList::Accesses, [&](const ValueSite& site) {
+        const Value& access = function.at(site.value);
+        if (access.opcode != Opcode::PrivateDefine || function.at(site.block).frequency.predicted() != BlockFrequency::Normal)
+            return;
+        std::optional<PropertyAccessQuery> query = namedAccessQueryOf(context, access);
+        if (!query)
+            return;
+        PropertyAccessContext accessContext { context.program, &context.inputs.flow };
+        if (planPropertyAccess(accessContext, *query).isResolved())
+            return;
+        query->testsThatDefinedNameIsNotTaken = true;
+        PropertyAccessPlan plan = planPropertyAccess(accessContext, *query);
+        if (plan.isResolved() && plan.form == AccessForm::Slot && plan.stores() && plan.storedValueFits)
+            definitions.append({ site, WTF::move(*query), WTF::move(plan) });
+    });
+    if (definitions.isEmpty())
+        return false;
+
+    sortFromLastToFirst(context, definitions);
+    SiteExpansion expansion(context, builder);
+    for (const NamedAccessSite& definition : definitions) {
+        SlotStamp stamp = createSlotStamp(context, context.function.at(definition.site.value), definition.plan);
+        expansion.begin(definition.site);
+        AccessOperands operands = operandsOfNamedAccess(expansion.original());
+        Expected<BlockFrequency> frequency = expansion.frequency();
+        Expected<BlockFrequency> unlikely = rarerOf(frequency, BlockFrequency::Unlikely);
+        BlockID byName = builder.addBlock(unlikely);
+        ValueID guard;
+        Vector<ValueID, 4> guards;
+        ValueID proven = operands.receiver;
+        for (Value& test : createAccessTests(context, definition.plan, { operands.receiver, operands.stored, stamp }).tests) {
+            bool asksObject = test.numberOfOperands() && test.operand(testedOperandIndex) == operands.receiver;
+            bool provesType = asksObject && !provesForStretch(provesOf(test.opcode));
+            if (asksObject)
+                test.setOperand(testedOperandIndex, proven);
+            IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.append(WTF::move(test)), testedOperandIndex, frequency, unlikely);
+            builder.moveToEndOf(branch.notTaken);
+            builder.emitJump(byName);
+            builder.moveToEndOf(branch.taken);
+            if (provesType)
+                proven = branch.provenOnTaken;
+            else
+                guards.append(branch.provenOnTaken);
+        }
+        if (!guards.isEmpty())
+            guard = guards.size() == 1 ? guards[0] : builder.appendAllGuards(guards.span());
+
+        IRBuilder::ProvenBranch isFilled = builder.emitBranchWithProof(builder.append(makeObjectTest(Proof::SlotFilled, proven, stamp)), testedOperandIndex, unlikely, frequency);
+        builder.moveToEndOf(isFilled.taken);
+        builder.emitJump(byName);
+        builder.moveToEndOf(isFilled.notTaken);
+        Value store = IRBuilder::make(definition.plan.operation, { proven, guard, operands.stored });
+        setSlotStamp(store, stamp);
+        expansion.append(WTF::move(store));
+        expansion.finishArmWithoutResult();
+
+        builder.moveToEndOf(byName);
+        expansion.appendOriginal();
+        expansion.finishArmWithoutResult();
+        expansion.end();
+    }
+    context.analyses.didChangeValues();
+    return true;
+}
+
 static FunctionID findOnlyGetterCalledAt(FunctionPassContext& context, AccessSiteID site)
 {
     if (!site)
@@ -1874,6 +1945,7 @@ PassOutcome resolveAccesses(FunctionPassContext& context)
     bool didExpand = holds(Opcode::GetByValWithThis) && readByNameWhereReceiverIsTheObject(context);
     didExpand |= holds(Opcode::ToPropertyKey) && askUnderIntegersThemselves(context);
     didExpand |= makesProxies && holds(Opcode::GetInternalField) && forwardReadsOutOfProxiesInSight(context);
+    didExpand |= holds(Opcode::PrivateDefine) && expandDefinitionsBehindEmptySlots(context, builder);
     while ((makesProxies && expandAccessesThroughProxies(context, builder)) || expandReadForAnotherReceiver(context, builder))
         didExpand = true;
     if (didExpand)
@@ -3827,6 +3899,17 @@ static void moveToMemberCall(FunctionPassContext& context, PlannedSplit& plan)
 // Counted anew at each access, a function that reads n names off one object counted n x n accesses.
 using EvidenceOfReceivers = UncheckedKeyHashMap<uint32_t, AccessesResolvedOnParts, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
+// `a.value`, where `a` is an instance of a class without that name or an object that the program filled by computed names: code reads a name to find something, so a test for the class would fail at every read and send the loop around it to its copy.
+static bool findsNothingWhereOthersMayAnswer(const FunctionPassContext& context, const Value& read, std::span<const UnionPart> parts, const UnionPart& part)
+{
+    if (read.opcode != Opcode::PropGet || part.kind != UnionPartKind::Layouts || planOnLayouts(context, read, part).member.kind != MemberKind::Absent)
+        return false;
+    return std::ranges::any_of(parts, [&](const UnionPart& other) {
+        bool holdsAnyName = (other.kind == UnionPartKind::OtherObjects && other.type.anyObject) || (other.kind == UnionPartKind::BuiltinClass && other.type.classes[0].builtinClass == BuiltinClasses::Object);
+        return holdsAnyName && !resolvesOnPart(context, read, other);
+    });
+}
+
 static std::optional<PlannedSplit> planSplitByParts(FunctionPassContext& context, const ValueSite& site, uint32_t operandIndex, EvidenceOfReceivers& evidenceOfReceivers)
 {
     struct ChosenPart {
@@ -3855,7 +3938,7 @@ static std::optional<PlannedSplit> planSplitByParts(FunctionPassContext& context
             continue;
         // A class without an instance test overlaps every class, so a class is expected where the expected type names it.
         bool isLikely = part.kind == UnionPartKind::BuiltinClass ? !!expected.findClassPart(part.type.classes[0].builtinClass) : part.type.overlaps(expected, program);
-        if (!canSeparateByTest(program, context.types, whole, parts, part)) {
+        if (findsNothingWhereOthersMayAnswer(context, value, parts, part) || !canSeparateByTest(program, context.types, whole, parts, part)) {
             restResolvesOnLikelyPart |= isLikely;
             continue;
         }

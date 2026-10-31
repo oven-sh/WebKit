@@ -385,6 +385,7 @@ struct RewriteTables {
     BitVector enteredBlocks;
     Vector<BlockID, 2> blocksWithDecidedBranches;
     Vector<std::pair<ValueID, ValueID>> replacedReads;
+    Vector<ValueID> claimsAssumedOfContents;
     Vector<ValueID> entryConstants;
     Vector<BlockID> order;
     // No object is there, none is made and none is entered into a block behind: to rewrite such a block is to put it together again as it was.

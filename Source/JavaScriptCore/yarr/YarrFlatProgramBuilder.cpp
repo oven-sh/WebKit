@@ -1982,6 +1982,39 @@ private:
         return run;
     }
 
+    struct AtomicRun {
+        unsigned set;
+        unsigned slot;
+        unsigned min;
+    };
+
+    // (?=([a-z]*))\1 and (?=([a-z]*))(?:\1): a run that gives nothing back, by other means. A lookahead is not gone back into, and the reference reads again, at the same place, what the group has just taken.
+    std::optional<AtomicRun> atomicRunAt(const PatternAlternative& alternative, unsigned i)
+    {
+        auto& terms = alternative.m_terms;
+        if (m_countsTurns || i + 1 >= terms.size())
+            return std::nullopt;
+        const PatternTerm& lookahead = terms[i];
+        if (lookahead.matchDirection() != Forward || lookahead.invert() || !isTakenOnce(lookahead))
+            return std::nullopt;
+        auto& inside = lookahead.parentheses.disjunction->m_alternatives[0]->m_terms;
+        if (inside.size() != 1 || inside[0].type != PatternTerm::Type::ParenthesesSubpattern || !inside[0].capture() || inside[0].matchDirection() != Forward || !isTakenOnce(inside[0]))
+            return std::nullopt;
+        const PatternTerm* reference = &terms[i + 1];
+        while (reference->type == PatternTerm::Type::ParenthesesSubpattern && !reference->capture() && reference->matchDirection() == Forward && isTakenOnce(*reference) && reference->parentheses.disjunction->m_alternatives[0]->m_terms.size() == 1)
+            reference = &reference->parentheses.disjunction->m_alternatives[0]->m_terms[0];
+        if (reference->type != PatternTerm::Type::NumberedBackReference || reference->matchDirection() != Forward || reference->quantityType != QuantifierType::FixedCount || reference->quantityMaxCount != 1
+            || reference->backReferenceSubpatternId != inside[0].parentheses.subpatternId)
+            return std::nullopt;
+        const PatternAlternative& group = *inside[0].parentheses.disjunction->m_alternatives[0];
+        if (group.m_terms.isEmpty() || group.matchDirection() != Forward || group.m_terms.last().quantityType != QuantifierType::Greedy)
+            return std::nullopt;
+        auto run = runAt(group, 0);
+        if (!run || run->terms != group.m_terms.size() || run->max != quantifyInfinite)
+            return std::nullopt;
+        return AtomicRun { run->set, inside[0].parentheses.subpatternId << 1, run->min };
+    }
+
     struct ReferenceAfterRun {
         unsigned group;
         unsigned distance;
@@ -2332,6 +2365,11 @@ private:
                 break;
             }
             case PatternTerm::Type::ParentheticalAssertion:
+                if (auto run = atomicRunAt(alternative, i)) {
+                    accountThrough(++i);
+                    emitWithSet(Kind::LoggedCapturedRun, run->set, run->slot, run->min);
+                    break;
+                }
                 if (!emitLookahead(term, { 0, context.nestingDepth, context.sharedPrefixDepth, 0, 0 }))
                     return false;
                 break;

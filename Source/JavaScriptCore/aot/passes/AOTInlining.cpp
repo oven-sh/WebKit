@@ -739,6 +739,51 @@ static void findDifferenceOfParameters(const Function& function, InliningSummary
     summary.differenceCalls = WTF::move(calls);
 }
 
+// Each value of the body writes nothing that anybody reads, runs no other code, throws at most for lack of stack and reads no list: the list that is sorted may be in any state meanwhile.
+// A parameter may be tested for being an object: a list that holds no undefined, by a type without null, never fails that.
+static void findWhetherNobodySeesItRun(const Program& program, FunctionAnalyses& analyses, const Function& function, InliningSummary& summary)
+{
+    constexpr OptionSet<FunctionFlags> otherForms { FunctionFlags::IsAsync, FunctionFlags::IsGenerator, FunctionFlags::HasRestParameter, FunctionFlags::HasArgumentCount };
+    constexpr AbstractHeapSet heapsOutsideLists = heapsMatching([](AbstractHeap heap) { return heap != AbstractHeap::Elements && heap != AbstractHeap::ArrayStorage; });
+    if (!function.hasBody() || function.flags.containsAny(otherForms) || function.isModuleBody())
+        return;
+    auto isQuiet = [&](const Effects& effects) {
+        return effects.writes.containsOnly(bookkeepingHeaps) && effects.reads.containsOnly(heapsOutsideLists) && !effects.mayRunOtherCode() && !effects.mayThrowOtherThanStackOverflow();
+    };
+    const Block& entry = function.at(entryBlock);
+    auto isCheckedValueOfList = [&](const Value& value) {
+        if (value.opcode != Opcode::RequireObjectCoercible || !entry.parameters.contains(value.operand(0)))
+            return false;
+        return !(program.typeOf(function, value.operand(0)).primitives & Primitive::Null);
+    };
+    for (BlockID id : analyses.cfg().reversePostOrder()) {
+        const Block& block = function.at(id);
+        for (ValueID value : block.values) {
+            if (!isCheckedValueOfList(function.at(value)) && !isQuiet(analyses.effectsOf(value).normal))
+                return;
+        }
+        switch (block.terminator.kind) {
+        case TerminatorKind::Jump:
+        case TerminatorKind::Branch:
+        case TerminatorKind::TestAndBranch:
+        case TerminatorKind::Unreachable:
+            break;
+        case TerminatorKind::Return: {
+            ValueID returned = block.terminator.valueOperand();
+            // Any other answer is turned into a number, and that may run its valueOf().
+            if (!returned || !program.typeOf(function, returned).isNumberLike())
+                return;
+            break;
+        }
+        default:
+            return;
+        }
+        if (!isQuiet(analyses.effectsOfTerminator(id).normal))
+            return;
+    }
+    summary.nobodySeesItRun = true;
+}
+
 // But for a way out that is not expected to be taken.
 static bool isMadeWheneverFunctionRuns(FunctionAnalyses& analyses, BlockID blockOfCall)
 {
@@ -1217,6 +1262,7 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
         }
     }
     findDifferenceOfParameters(function, summary);
+    findWhetherNobodySeesItRun(program, analyses, function, summary);
 
     const CFG& cfg = analyses.cfg();
     for (BlockID id : cfg.reversePostOrder()) {
@@ -1883,6 +1929,28 @@ static void placeCallsOfLinks(const Program& program, Function& caller, const Fu
     }
 }
 
+// `size(parsed[i])`, where size is also handed literals: flow saw their layouts at the reads of the function. In this copy only data from outside arrives, and a test for those layouts would turn away every element.
+static void forgetLayoutsSeenAtReadsOfParameters(Function& caller, const Function& callee, const RegionCloner& cloner, std::span<const BlockID> region)
+{
+    BitVector isParameter(callee.values.size());
+    for (ValueID parameter : callee.at(entryBlock).parameters)
+        isParameter.quickSet(parameter.index());
+    for (BlockID block : region) {
+        for (ValueID id : callee.at(block).values) {
+            const Value& value = callee.at(id);
+            if (isCast(value.opcode) || value.opcode == Opcode::NarrowByField) {
+                if (isParameter.quickGet(value.operand(0).index()))
+                    isParameter.quickSet(id.index());
+                continue;
+            }
+            if (!isNamedAccess(value.opcode) || !PayloadWord::receivers(value.opcode) || !value.receivers() || !isParameter.quickGet(value.operand(*receiverOf(value.opcode)).index()))
+                continue;
+            if (ValueID clone = cloner.cloneOf(id))
+                caller.edit(clone, ValueEdit::Definition).setReceivers(LayoutSetID());
+        }
+    }
+}
+
 // Copies the body that is given, or else the body of the function that the call names: the head blocks that are given, or else all of it.
 static void copyBodyIn(IRBuilder& builder, ProgramPoint point, const Function* body, const BitVector* headBlocks, const BitVector& noReturnBlocks, IRBuilder::DeferredResultReads* resultReads)
 {
@@ -1944,6 +2012,15 @@ static void copyBodyIn(IRBuilder& builder, ProgramPoint point, const Function* b
         }
     }
     cloneBlocksIntoInlineFrame(builder, cloner, region.span(), firstFrame);
+    if (const FlowResults* flow = builder.context().flow; flow && flow->isHandedOnlyDataFromOutside(call.accessSite())) {
+        forgetLayoutsSeenAtReadsOfParameters(caller, callee, cloner, region.span());
+        for (uint32_t index = 0; index < parameters.size(); ++index) {
+            for (ValueID argument : { call.operand(index), cloner.cloneOf(parameters[index]) }) {
+                if (TypeID expected = caller.at(argument).expected().predicted(); expected && builder.types().at(expected).layouts)
+                    caller.edit(argument).setExpected({ });
+            }
+        }
+    }
     placeCallsOfLinks(program, caller, callee, region.span(), cloner, call);
     // No stack trace lists the callee, so the built-in function that the call names stands right below what the callee calls.
     if (BuiltinID calledBuiltin = call.calledBuiltin(); calledBuiltin && callee.isHiddenInStackTraces()) {
@@ -3136,6 +3213,7 @@ static FunctionID libraryFunctionFor(const Program& program, BuiltinID builtin)
 }
 
 // `list.sort((a, b) => a - b)`: what sorts a short list of numbers in place without a call. It takes the operands of sort() and leaves every other list to it.
+// `list.sort((a, b) => a.rank - b.rank)`: what sorts a short list where it lies, likewise.
 static FunctionID sortWithoutCallsFor(FunctionPassContext& context, const Value& call)
 {
     const Program& program = context.program;
@@ -3146,9 +3224,10 @@ static FunctionID sortWithoutCallsFor(FunctionPassContext& context, const Value&
     FunctionID comparator = passed.singleFunction();
     if (!comparator || passed.mayBeUndefinedOrNull() || ProvisionalFunctions::contains(comparator))
         return { };
-    switch (inliningSummaryOf(context, comparator).difference) {
+    const InliningSummary& summary = inliningSummaryOf(context, comparator);
+    switch (summary.difference) {
     case InliningSummary::Difference::None:
-        return { };
+        return summary.nobodySeesItRun ? libraryFunctionFor(program, Builtins::CompilerHelpersSortWhereNobodySeesTheComparator) : FunctionID();
     case InliningSummary::Difference::FirstMinusSecond:
         return libraryFunctionFor(program, Builtins::CompilerHelpersSortByDifference);
     case InliningSummary::Difference::SecondMinusFirst:

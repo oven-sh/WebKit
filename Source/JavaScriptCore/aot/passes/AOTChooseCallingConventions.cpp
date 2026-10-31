@@ -186,6 +186,7 @@ EntryConvention entryConventionOf(const Function& callee)
     case FunctionRole::ResultWorker:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
+    case FunctionRole::ChecksThatGiveUp:
     case FunctionRole::OutlinedBody:
     case FunctionRole::Serializer:
     case FunctionRole::Parser:
@@ -593,7 +594,7 @@ static Vector<ParameterLetGo> findParametersLetGo(const Program& program, const 
         }
         callers.shrink(0);
     }
-    std::ranges::sort(all);
+    AOT::sortInLine(all);
     return all;
 }
 
@@ -1639,6 +1640,7 @@ static bool isEnteredBehindStackCheck(const Function& function, EntrySet entrySe
     case FunctionRole::Library:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
+    case FunctionRole::ChecksThatGiveUp:
     case FunctionRole::ResultWrapper:
     case FunctionRole::GenericEntrypoint:
         return true;

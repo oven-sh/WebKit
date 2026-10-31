@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTFunctionAnalyses.h"
+#include "AOTIdentifierNumbering.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStubsStrings.h"
 #include "AOTVector.h"
@@ -162,6 +163,17 @@ bool StringEmitter::isSubjectComparedAgain(const ValueContext& value)
     return m_comparisonsOfSharedSubjects->contains(value.id());
 }
 
+// ProgramIdentifiers::uid().
+StringEmitter::AtomOfName StringEmitter::atomOfName(uint32_t name)
+{
+    if (build().recordedOptions().form() != ImageForm::PositionIndependent)
+        return { offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(image.programIdentifiers)), static_cast<ptrdiff_t>(name) * sizeof(UniquedStringImpl)), std::nullopt };
+    // The header of the atom is made when the text first becomes an atom. Until then its offset is zero, where no header lies.
+    Pointer offsets = loadImmutablePointer(AOT_INSTANCE_OFFSET(image.lazyStringHeaderOffsets));
+    Word32 offset(m_out.load32(m_out.address(m_heaps.AOTInstance_fieldsFilledOnce, offsets.value(), static_cast<ptrdiff_t>(name) * sizeof(uint32_t))));
+    return { offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(lazyStrings.headers)), zeroExtended(offset), 0), isNotZero(offset) };
+}
+
 void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, BranchTargets targets, bool subjectIsFlat, bool everyCellIsString, bool subjectIsComparedAgain)
 {
     String text = textOf(literal);
@@ -182,6 +194,21 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
         string = unboxCell(boxed);
         if (!everyCellIsString)
             continueIf(hasCellType(string, StringType), targets.notTaken);
+    }
+
+    // A short string out of JSON.parse, a key and a text of the program are atoms. A text that is a name of the image has one atom (ProgramIdentifiers::findAtom()),
+    // so an atom is that text if and only if it is that pointer. A cell whose bit is clear may still hold an atom: the characters answer for it.
+    // Three comparisons of one subject share what they read of its characters, and each one behind the first is a branch or two as it is.
+    if (std::optional<uint32_t> name = subjectIsFlat || subjectIsComparedAgain ? std::nullopt : build().identifierNumbering().numberOfText(literal)) {
+        LBasicBlock isAtom = newBlock();
+        LBasicBlock byCharacters = newBlock();
+        branch(hasBits(loadByte(string, m_heaps.JSCell_typeInfoFlags), TypeInfoPerCellBit), { normalEdge(isAtom), normalEdge(byCharacters) });
+        m_out.appendTo(isAtom);
+        AtomOfName atom = atomOfName(*name);
+        if (atom.exists)
+            continueIf(*atom.exists, normalEdge(byCharacters));
+        branch(equal(loadField<Pointer>(string, m_heaps.JSString_value), atom.address), targets);
+        m_out.appendTo(byCharacters);
     }
 
     // A rope of the same length and a 16-bit string without a unit above 0xFF may equal the text: the stub answers for them without flattening.

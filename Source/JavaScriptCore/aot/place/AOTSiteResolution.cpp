@@ -40,7 +40,7 @@ static_assert(Value::opcodesWithStaticsOffset == OpcodeSet { Opcode::NewArray, O
 static_assert(Value::opcodesWithGuardBit == OpcodeSet { Opcode::AreMembersUnchanged });
 static_assert(Value::opcodesWithRequest == OpcodeSet {
     Opcode::TryPutByIds, Opcode::NewClass, Opcode::NewTemplateObject, Opcode::DirectEval, Opcode::Data, Opcode::NewSetFromData,
-    Opcode::NewMapFromData, Opcode::NewFormatterWithPattern, Opcode::FormatDateWithPattern, Opcode::FormatNumberWithPattern, Opcode::CopyDataProperties, Opcode::CopyObject
+    Opcode::NewMapFromData, Opcode::CopyDataProperties, Opcode::CopyObject
 });
 
 static constexpr OpcodeSet opcodesWithOtherWords = Value::opcodesWithAllocation | Value::opcodesWithRegExpRecord | Value::opcodesWithRequest | Value::opcodesWithStaticsOffset | Value::opcodesWithOrderWord | Value::opcodesWithGuardBit;
@@ -235,10 +235,6 @@ struct WordResolver {
         case Opcode::NewSetFromData:
         case Opcode::NewMapFromData:
             return RequestRecord { CollectionDataRecord { value.data(), value.opcode == Opcode::NewMapFromData } };
-        case Opcode::NewFormatterWithPattern:
-        case Opcode::FormatDateWithPattern:
-        case Opcode::FormatNumberWithPattern:
-            return RequestRecord { FormatPatternRecord { Vector<uint32_t>(value.formatPattern()) } };
         default:
             RELEASE_ASSERT_NOT_REACHED();
         }
@@ -380,6 +376,12 @@ bool mayReadSiteCachesAgain(FunctionAnalyses& analyses, BlockID block)
     return !context.program.at(context.id).isModuleBody() || analyses.isInCycle(block);
 }
 
+// The question ahead of a loop speaks for all its turns, however seldom it is asked.
+bool usesItsSiteCaches(FunctionAnalyses& analyses, const Value& value, BlockID block)
+{
+    return value.opcode == Opcode::GetCachedValue || mayReadSiteCachesAgain(analyses, block);
+}
+
 // FieldRecordIndex::isStoredWithoutTypeTest: the stubs by name store into such a slot in fewer instructions than PutKnownField, and file nothing either.
 static bool isStoredThroughTableOfFields(const Program& program, const Field& declaration, SlotRepresentation representation)
 {
@@ -509,7 +511,7 @@ void collectSiteCacheRequests(const Program& program, const Placement& placement
                 continue;
             if (!analyses)
                 analyses.emplace(AnalysisContext { build, program, &flow, nullptr, id }, function);
-            if (!mayReadSiteCachesAgain(*analyses, block)) {
+            if (!usesItsSiteCaches(*analyses, value, block)) {
                 requests.append(SiteCacheRequest { 0, id, valueID, true });
                 continue;
             }

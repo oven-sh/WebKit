@@ -161,19 +161,30 @@ constexpr StubKey callOperationPreservingRegisters(const OperationCall& call)
     return *key;
 }
 
-// The stub writes the register of its result anyway. The argument behind the instance arrives there and goes to its place once the registers of the caller are saved,
-// so a call with one argument writes no register that a parameter of the caller may live in.
-constexpr bool takesArgumentInResultRegister(const OperationCallShape& shape)
+// What compiled code moves in front of the call is moved before the stub saves the registers of the caller. So the arguments behind the instance arrive in registers that no parameter of a function arrives in,
+// and go to their places once the registers are saved: a parameter that lives across a rare call keeps its register.
+constexpr std::span<const GPRReg> registersThatPreservingCallsTakeArgumentsIn()
 {
-    return shape.returns == OperationCall::Returns::Value && shape.firstArgument == OperationCall::FirstArgument::Instance;
+#if CPU(X86_64)
+    static constexpr GPRReg registers[] = { X86Registers::eax, X86Registers::r10 };
+#elif CPU(ARM64)
+    static constexpr GPRReg registers[] = { ARM64Registers::x10, ARM64Registers::x11, ARM64Registers::x13, ARM64Registers::x14 };
+#endif
+    return registers;
 }
 
-// Where compiled code leaves the argument that the operation gets in operationArgumentGPR(index). A prelude reads the registers of the operation and uses that of the result.
+// Where compiled code leaves the argument that the operation gets in operationArgumentGPR(index). A prelude reads the registers of the operation, and the head of its stub moves them over.
 inline GPRReg argumentGPROfPreservingCall(const OperationCall& call, Entry entry, unsigned index)
 {
-    if (index == 1 && !hasPrelude(entry) && takesArgumentInResultRegister(preservingCallShapes[callOperationPreservingRegisters(call).form()]))
-        return GPRInfo::returnValueGPR;
+    std::span<const GPRReg> registers = registersThatPreservingCallsTakeArgumentsIn();
+    if (call.firstArgument == OperationCall::FirstArgument::Instance && !hasPrelude(entry) && index - 1 < registers.size())
+        return registers[index - 1];
     return operationArgumentGPR(index);
+}
+
+constexpr GPRReg resultGPROfPreservingCall()
+{
+    return registersThatPreservingCallsTakeArgumentsIn()[0];
 }
 
 // Over every variant a site may pick once it knows which registers are live. OperationCall::saves is ignored.

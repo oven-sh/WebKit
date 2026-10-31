@@ -215,7 +215,6 @@ private:
     std::unique_ptr<VariantMaps> m_variants;
     // In a run with --aotCountsPath.
     std::unique_ptr<MadeStructures> m_made;
-    Vector<StructureID> m_variantsMadeSinceCollection;
     RememberedSlotSet m_writtenStructures;
     RememberedSlotSet m_writtenRecords;
 };

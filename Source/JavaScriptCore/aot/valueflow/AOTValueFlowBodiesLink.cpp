@@ -1212,6 +1212,12 @@ private:
                 list.append(universe.prototypeOf(LayoutID(index)));
         }
         universe.m_prototypeObjectsOfLibraryClasses = take();
+        for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
+            const Layout& layout = m_program.layouts[index];
+            if (layout.kind == LayoutKind::Instance && layout.constructor)
+                list.append(universe.prototypeOf(LayoutID(index)));
+        }
+        universe.m_prototypeObjectsOfClasses = take();
         universe.m_holdersOfExportsOfModule.fill(ValueSets::nothing, m_program.modules.size());
         universe.m_holdersOfLibraryExports = ValueSets::nothing;
         universe.m_holdersOfPublicLibraryExports = ValueSets::nothing;
@@ -1651,9 +1657,9 @@ private:
         });
         // Statements are written in the order of their blocks. Whoever looks one up goes by its site.
         std::ranges::copy(body.copiesOfOperations, m_result.m_copiesOfOperations.mutableSpan().subspan(first.copiesOfOperations).begin());
-        std::ranges::sort(m_result.m_copiesOfOperations.mutableSpan().subspan(first.copiesOfOperations, body.copiesOfOperations.size()), { }, [](const ValueFlowCopyOfOperation& copy) { return copy.site.index(); });
+        AOT::sortInLine(m_result.m_copiesOfOperations.mutableSpan().subspan(first.copiesOfOperations, body.copiesOfOperations.size()), { }, [](const ValueFlowCopyOfOperation& copy) { return copy.site.index(); });
         std::ranges::copy(body.rareFactsOfText, m_result.m_rareFactsOfText.mutableSpan().subspan(first.rareFactsOfText).begin());
-        std::ranges::sort(m_result.m_rareFactsOfText.mutableSpan().subspan(first.rareFactsOfText, body.rareFactsOfText.size()), { }, [](const ValueFlowRareFactsOfText& facts) { return facts.site.index(); });
+        AOT::sortInLine(m_result.m_rareFactsOfText.mutableSpan().subspan(first.rareFactsOfText, body.rareFactsOfText.size()), { }, [](const ValueFlowRareFactsOfText& facts) { return facts.site.index(); });
         std::ranges::transform(body.observedValues, m_result.m_observedValues.mutableSpan().subspan(first.observedValue).begin(), [&](const Body::ObservedValue& observed) {
             return ValueFlowObservedValue { body.function, observed.test, link(observed.operand) };
         });

@@ -41,6 +41,7 @@
 #include "JSCustomGetterFunction.h"
 #include "JSCustomSetterFunction.h"
 #include "JSFunction.h"
+#include "JSGlobalObjectFunctions.h"
 #include "JSGlobalProxy.h"
 #include "JSObjectVisitInlines.h"
 #include "Lookup.h"
@@ -619,29 +620,42 @@ static bool holdsInWritableProperty(JSGlobalObject* globalObject, JSObject* obje
     return sameValue(globalObject, object->getDirect(offset), value);
 }
 
-// `object.__proto__ = value` where the put finds the accessor of a locked Object.prototype, which is the original one. Its setter leaves the object as it is
-// where the value is neither an object nor null, or is what lies above the object already.
-static bool changesNothingThroughSetterOfPrototype(VM& vm, JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, JSValue value)
+static bool isSetterOfPrototype(JSObject* setter)
+{
+    auto* function = dynamicDowncast<JSFunction>(setter);
+    return function && function->isHostFunction() && function->nativeFunction() == toTagged(NativeFunction(globalFuncProtoSetter));
+}
+
+// An array has a put of its own for `length` alone, a native constructor for stores it is the receiver of.
+static bool putsAsOrdinaryObjectAboveReceiver(JSObject* object)
+{
+    if (!object->structure()->typeInfo().overridesPut())
+        return true;
+    auto put = object->methodTable()->put;
+    return put == JSArray::info()->methodTable.put || put == InternalFunction::info()->methodTable.put;
+}
+
+static bool changesNothingThroughSetterOfPrototype(VM& vm, JSObject* object, PropertyName propertyName, JSValue value)
 {
     if (propertyName.uid() != vm.propertyNames->underscoreProto.impl())
         return false;
     if ((value.isObject() || value.isNull()) && object->getPrototypeDirect() != value)
         return false;
-    JSObject* holderOfAccessor = globalObject->objectPrototype();
-    if (!holderOfAccessor->structure()->isImmutableProperty(propertyName.uid()))
-        return false;
-    for (JSObject* current = object; current != holderOfAccessor;) {
+    for (JSObject* current = object;;) {
         Structure* structure = current->structure();
+        if ((current != object && !putsAsOrdinaryObjectAboveReceiver(current)) || structure->typeInfo().overridesGetPrototype())
+            return false;
         unsigned attributes;
-        // An array has a put of its own for `length` alone.
-        if ((current != object && structure->typeInfo().overridesPut() && !current->inherits<JSArray>()) || structure->typeInfo().overridesGetPrototype() || structure->hasNonReifiedStaticProperties() || isValidOffset(structure->get(vm, propertyName, attributes)))
+        PropertyOffset offset = structure->get(vm, propertyName, attributes);
+        if (isValidOffset(offset))
+            return attributes & PropertyAttribute::Accessor && isSetterOfPrototype(uncheckedDowncast<GetterSetter>(current->getDirect(offset))->setter());
+        if (structure->hasNonReifiedStaticProperties() && structure->findPropertyHashEntry(propertyName))
             return false;
         JSValue above = current->getPrototypeDirect();
         if (!above.isObject())
             return false;
         current = asObject(above);
     }
-    return true;
 }
 
 bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
@@ -660,7 +674,7 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
     if (structure()->isImmutableProperty(propertyName.uid()) && !isThisValueAltered(slot, this)) [[unlikely]] {
         bool holdsValue = holdsInWritableProperty(globalObject, this, propertyName, value);
         RETURN_IF_EXCEPTION(scope, false);
-        if (holdsValue || changesNothingThroughSetterOfPrototype(vm, globalObject, this, propertyName, value))
+        if (holdsValue || changesNothingThroughSetterOfPrototype(vm, this, propertyName, value))
             return true;
         WriteOrigin origin = slot.context() == PutPropertySlot::ReflectSet ? WriteOrigin::Reflect : WriteOrigin::Operator;
         if (specRejectsStore(globalObject, this, propertyName))

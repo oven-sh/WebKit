@@ -1048,6 +1048,13 @@ void Modules::fillDeferredExports(ModuleID importer)
 
     for (const RequiredNameData& requiredName : m_table.requiredNames(importer)) {
         ModuleID exporter = requiredName.exporterModule();
+        if (data(exporter).kind == ModuleKind::External) {
+            if (auto* inImageBelow = dynamicDowncast<ModuleNamespace>(value(exporter))) {
+                inImageBelow->readDeferredExport(m_instance.globalObject, identifier(requiredName.name));
+                RETURN_IF_EXCEPTION(scope, void());
+            }
+            continue;
+        }
         if (data(exporter).exportRule != SyntheticExportRule::RuntimeModule)
             continue;
         for (const SyntheticExportData& syntheticExport : m_table.syntheticExports(exporter)) {

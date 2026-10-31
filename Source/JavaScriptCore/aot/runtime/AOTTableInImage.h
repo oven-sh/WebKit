@@ -32,7 +32,7 @@ struct TableInImage {
 
     template<typename Matches> ALWAYS_INLINE std::optional<uint32_t> findWithHash(unsigned hash, NOESCAPE const Matches& matches) const
     {
-        return CompactTable::probeIndex(CompactTable::slotKindFor(capacity), index(), indexBits, count, hash, matches);
+        return CompactTable::probeIndex(CompactTable::slotKindFor(capacity), index(), indexBits & CompactTable::numberOfIndexBits, count, hash, matches);
     }
     ALWAYS_INLINE std::optional<uint32_t> find(const Image& image, StringView key, unsigned hash) const
     {

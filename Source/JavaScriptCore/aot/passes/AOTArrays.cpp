@@ -646,7 +646,25 @@ static bool mayAccessSameMemory(const Effects& a, const Effects& b)
         || (b.mayRunOtherCode() && !a.reads.restrictedTo(orderedHeaps).isEmpty());
 }
 
-ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const ArrayChain& chain, ChainOperandProofs proofs, bool* startsOverAfterThrow)
+// Each callback made here for this call, with tests at its head whose fallback is the only way to code that nobody can see through.
+static uint8_t callbacksBehindEntryChecks(FunctionPassContext& context, const ArrayChain& chain)
+{
+    uint8_t found = 0;
+    for (size_t index = 0; index < chain.callbacks.size(); ++index) {
+        const ChainCallback& callback = chain.callbacks[index];
+        if (!callback.callee)
+            continue;
+        const Function& callee = context.program.at(callback.callee);
+        if (callee.role != FunctionRole::EntryChecks || callee.capabilities.contains(FunctionCapabilities::RecordsCallee) || !hasEntranceThatCanGiveUp(callee))
+            continue;
+        const Value& closure = context.function.at(context.analyses.sameObjectThroughCasts(callback.function).valueInFrontOfFacts());
+        if (closure.opcode == Opcode::NewClosure && closure.function() == callback.callee)
+            found |= 1u << index;
+    }
+    return found;
+}
+
+ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const ArrayChain& chain, ChainOperandProofs proofs, bool* startsOverAfterThrow, uint8_t* callbacksThatGiveUp)
 {
     const Program& program = context.program;
     FunctionAnalyses& analyses = context.analyses;
@@ -685,52 +703,80 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
     EffectContext effectContext { program, context.inputs.effects };
     Vector<Effects, ChainShape::maxNumberOfLinks + 2> effects;
     Vector<bool, ChainShape::maxNumberOfLinks + 2> mayStopAfterFirstCall;
-    for (const ChainCallback& callback : chain.callbacks) {
-        CalleeList callees = callback.callee ? CalleeList::none() : CalleeList::unknown();
-        if (callback.callee)
-            callees.add(callback.callee);
-        effects.append(effectsOfCallees(effectContext, callees, BuiltinCallMode::Call).onAnyEdge());
-        mayStopAfterFirstCall.append(mayStopOtherThanStackOverflow(effects.last()) || (mayStop(effects.last()) && !(callback.callee && entersNoFurtherFrame(program, callback.callee))));
-    }
-    if (chain.shape.end == ChainEndKind::Join) {
-        const ClassPart* part = program.typeOf(context.function, last->receiver).findClassPart(BuiltinClasses::Array);
-        std::optional<ProvenValue<TypeID>> elements = part ? part->provenContentsAt(program.builtins(), ContentsSlot::Element) : std::nullopt;
-        bool runsNoUserCode = elements && program.at(*elements).hasOnlyPrimitives(primitivesJoinedWithoutUserCode);
-        effects.append(runsNoUserCode ? Effects::none() : context.inputs.effects.unknownCode());
-    }
-    if (chain.shape.end == ChainEndKind::FlatMap) {
-        FunctionID mapper = chain.callbacks.last().callee;
-        bool hasProvenResult = mapper && program.at(mapper).results.size() == 1 && !program.at(mapper).result().isExpected();
-        const Type* parts = hasProvenResult ? &program.at(*program.at(mapper).result().established()) : nullptr;
-        if (!parts || (parts->hasObjects() && !pristineAspectsProvenBy(*parts, BuiltinClasses::Array).contains(PristineAspects::Storage)))
-            effects.last().merge(context.inputs.effects.unknownCode());
-    }
-
-    bool mayRunAgain = std::ranges::all_of(effects, [](const Effects& step) {
-        return !canBeObserved(step) && step.alwaysCompletes();
-    });
+    uint8_t givesUp = 0;
     bool differsOnlyInWhatIsThrown = false;
-    for (size_t earlier = 0; earlier < effects.size(); ++earlier) {
-        for (size_t later = earlier + 1; later < effects.size(); ++later) {
-            const Effects& a = effects[earlier];
-            const Effects& b = effects[later];
-            bool earlierStopsAmongLaterCalls = earlier < mayStopAfterFirstCall.size() ? mayStopAfterFirstCall[earlier] : mayStop(a);
-            bool stopsDiffer = (mayStopOtherThanStackOverflow(a) && mayStop(b)) || (earlierStopsAmongLaterCalls && mayStopOtherThanStackOverflow(b));
-            if (stopsDiffer && mayRunAgain) {
-                differsOnlyInWhatIsThrown = true;
-                stopsDiffer = false;
-            }
-            if ((mayAccessSameMemory(a, b) && !context.build.isSabotaged(Sabotage::CallbacksOfOneChainShareNoMemory)) || (earlierStopsAmongLaterCalls && canBeObserved(b)) || stopsDiffer)
+    auto judge = [&]() -> ArrayChainDeclineReason {
+        effects.shrink(0);
+        mayStopAfterFirstCall.shrink(0);
+        for (size_t index = 0; index < chain.callbacks.size(); ++index) {
+            const ChainCallback& callback = chain.callbacks[index];
+            FunctionID callee = callback.callee && (givesUp & 1u << index) ? program.at(callback.callee).creator.as<CreatorRecord::EntryChecks>().body : callback.callee;
+            CalleeList callees = callee ? CalleeList::none() : CalleeList::unknown();
+            if (callee)
+                callees.add(callee);
+            effects.append(effectsOfCallees(effectContext, callees, BuiltinCallMode::Call).onAnyEdge());
+            mayStopAfterFirstCall.append(mayStopOtherThanStackOverflow(effects.last()) || (mayStop(effects.last()) && !(callee && entersNoFurtherFrame(program, callee))));
+        }
+        if (chain.shape.end == ChainEndKind::Join) {
+            const ClassPart* part = program.typeOf(context.function, last->receiver).findClassPart(BuiltinClasses::Array);
+            std::optional<ProvenValue<TypeID>> elements = part ? part->provenContentsAt(program.builtins(), ContentsSlot::Element) : std::nullopt;
+            bool runsNoUserCode = elements && program.at(*elements).hasOnlyPrimitives(primitivesJoinedWithoutUserCode);
+            effects.append(runsNoUserCode ? Effects::none() : context.inputs.effects.unknownCode());
+        }
+        if (chain.shape.end == ChainEndKind::FlatMap) {
+            FunctionID mapper = chain.callbacks.last().callee;
+            bool hasProvenResult = mapper && program.at(mapper).results.size() == 1 && !program.at(mapper).result().isExpected();
+            const Type* parts = hasProvenResult ? &program.at(*program.at(mapper).result().established()) : nullptr;
+            if (!parts || (parts->hasObjects() && !pristineAspectsProvenBy(*parts, BuiltinClasses::Array).contains(PristineAspects::Storage)))
+                effects.last().merge(context.inputs.effects.unknownCode());
+        }
+
+        bool mayRunAgain = std::ranges::all_of(effects, [](const Effects& step) {
+            return !canBeObserved(step) && step.alwaysCompletes();
+        });
+        differsOnlyInWhatIsThrown = false;
+        if (givesUp) {
+            if (!mayRunAgain)
                 return ArrayChainDeclineReason::CallbacksInterfere;
-            if (mayStop(b) && canBeObserved(a))
+            // What stops early does not reach the tests that a later element would fail, and behind those tests may be whatever the program can see.
+            if (last->method->stopsEarly && (givesUp & ((1u << chain.shape.numberOfLinks()) - 1)))
                 return ArrayChainDeclineReason::SkippedCallIsObservable;
+            differsOnlyInWhatIsThrown = true;
+        }
+        for (size_t earlier = 0; earlier < effects.size(); ++earlier) {
+            for (size_t later = earlier + 1; later < effects.size(); ++later) {
+                const Effects& a = effects[earlier];
+                const Effects& b = effects[later];
+                bool earlierStopsAmongLaterCalls = earlier < mayStopAfterFirstCall.size() ? mayStopAfterFirstCall[earlier] : mayStop(a);
+                bool stopsDiffer = (mayStopOtherThanStackOverflow(a) && mayStop(b)) || (earlierStopsAmongLaterCalls && mayStopOtherThanStackOverflow(b));
+                if (stopsDiffer && mayRunAgain) {
+                    differsOnlyInWhatIsThrown = true;
+                    stopsDiffer = false;
+                }
+                if ((mayAccessSameMemory(a, b) && !context.build.isSabotaged(Sabotage::CallbacksOfOneChainShareNoMemory)) || (earlierStopsAmongLaterCalls && canBeObserved(b)) || stopsDiffer)
+                    return ArrayChainDeclineReason::CallbacksInterfere;
+                if (mayStop(b) && canBeObserved(a))
+                    return ArrayChainDeclineReason::SkippedCallIsObservable;
+            }
+        }
+        bool skipsCallThatShows = last->method->stopsEarly && std::ranges::any_of(effects.span().first(chain.shape.numberOfLinks()), [](const Effects& step) {
+            return canBeObserved(step) || mayStopOtherThanStackOverflow(step);
+        });
+        if (skipsCallThatShows)
+            return ArrayChainDeclineReason::SkippedCallIsObservable;
+        return ArrayChainDeclineReason::None;
+    };
+    ArrayChainDeclineReason verdict = judge();
+    if (verdict == ArrayChainDeclineReason::CallbacksInterfere || verdict == ArrayChainDeclineReason::SkippedCallIsObservable) {
+        givesUp = callbacksBehindEntryChecks(context, chain);
+        if (givesUp) {
+            ArrayChainDeclineReason behindChecks = judge();
+            if (behindChecks == ArrayChainDeclineReason::None)
+                verdict = behindChecks;
         }
     }
-    bool skipsCallThatShows = last->method->stopsEarly && std::ranges::any_of(effects.span().first(chain.shape.numberOfLinks()), [](const Effects& step) {
-        return canBeObserved(step) || mayStopOtherThanStackOverflow(step);
-    });
-    if (skipsCallThatShows)
-        return ArrayChainDeclineReason::SkippedCallIsObservable;
+    if (verdict != ArrayChainDeclineReason::None)
+        return verdict;
 
     bool mayWriteArrays = std::ranges::any_of(effects.span().subspan(std::min<size_t>(chain.rangeCall ? 0 : 1, effects.size())), [](const Effects& step) {
         return step.writes.containsAny(arrayHeaps);
@@ -759,6 +805,8 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
     }
     if (startsOverAfterThrow)
         *startsOverAfterThrow = differsOnlyInWhatIsThrown;
+    if (callbacksThatGiveUp)
+        *callbacksThatGiveUp = givesUp;
     return ArrayChainDeclineReason::None;
 }
 
@@ -894,8 +942,15 @@ static void rewriteArrayChain(FunctionPassContext& context, IRBuilder& builder, 
     arguments.append(chain.source);
     arguments.append(chain.from ? chain.from : insert(makeInteger(0)));
     arguments.append(valueOrUndefined(chain.to));
+    auto closureThatGivesUp = [&](const ChainCallback& callback) {
+        Value closure = function.at(context.analyses.sameObjectThroughCasts(callback.function).valueInFrontOfFacts());
+        FunctionID checks = context.derivedFunction(derivedFunctionKey(FunctionRole::ChecksThatGiveUp, callback.callee));
+        closure.setFunction(checks);
+        closure.type = context.types.intern(Type::forFunction(checks));
+        return insert(WTF::move(closure));
+    };
     for (unsigned index = 0; index < chain.callbacks.size(); ++index) {
-        arguments.append(chain.callbacks[index].function);
+        arguments.append(chain.callbacksThatGiveUp & 1u << index ? closureThatGivesUp(chain.callbacks[index]) : chain.callbacks[index].function);
         if (index < numberOfLinks || endTakesThisArgument(shape.end))
             arguments.append(valueOrUndefined(chain.callbacks[index].thisArgument));
     }
@@ -1038,11 +1093,11 @@ PassOutcome fuseArrayMethodsTakenAlone(FunctionPassContext& context, const BitVe
     Vector<ArrayChain> accepted;
     PassOutcome outcomeWithoutChain = PassOutcome::Unchanged;
     for (ArrayChain& chain : findArrayChains(context, &calls)) {
-        ArrayChainDeclineReason obstacle = checkInterleaving(context, chain, ChainOperandProofs::Required, &chain.startsOverAfterThrow);
+        ArrayChainDeclineReason obstacle = checkInterleaving(context, chain, ChainOperandProofs::Required, &chain.startsOverAfterThrow, &chain.callbacksThatGiveUp);
         bool takesProofs = obstacle == ArrayChainDeclineReason::SourceIsNotPristine && (calls.get(chain.lastCall.index()) || wouldFuseWithProofsOfPristineTests(context, chain));
         if (takesProofs && takeProofsOfPristineTests(context, chain.source)) {
             outcomeWithoutChain = PassOutcome::Changed;
-            obstacle = checkInterleaving(context, chain, ChainOperandProofs::Required, &chain.startsOverAfterThrow);
+            obstacle = checkInterleaving(context, chain, ChainOperandProofs::Required, &chain.startsOverAfterThrow, &chain.callbacksThatGiveUp);
         }
         if (obstacle == ArrayChainDeclineReason::None)
             accepted.append(WTF::move(chain));
@@ -1097,8 +1152,6 @@ static bool hasMethodCallBehindTestOfLastResult(FunctionPassContext& context)
 {
     const Function& function = context.function;
     FunctionAnalyses& analyses = context.analyses;
-    if (!analyses.hasPristineTest())
-        return false;
     const UseLists& useLists = analyses.useLists();
     for (BlockID block : analyses.cfg().reversePostOrder()) {
         for (ValueID value : function.at(block).values) {
@@ -1107,7 +1160,7 @@ static bool hasMethodCallBehindTestOfLastResult(FunctionPassContext& context)
             std::optional<ArrayMethodCall> call = arrayMethodCallOf(context.program, function, value);
             if (!call || call->method->role == ChainMethodRole::Range)
                 continue;
-            ValueID producer = analyses.sameObjectThroughCasts(call->receiver).valueInFrontOfFacts();
+            ValueID producer = analyses.identityOf(call->receiver);
             std::optional<ArrayMethodCall> link = arrayMethodCallOf(context.program, function, producer);
             if (link && link->method->role != ChainMethodRole::End && useLists.blockOf(producer) != block)
                 return true;
@@ -1116,11 +1169,35 @@ static bool hasMethodCallBehindTestOfLastResult(FunctionPassContext& context)
     return false;
 }
 
+// InlineCalls comes behind this pass and would copy in each method of a chain that was split only by such tests, so they go now.
+static bool removeTestsBetweenCallsOfChains(FunctionPassContext& context)
+{
+    bool changed = false;
+    auto run = [&](PassOutcome (*pass)(FunctionPassContext&)) {
+        context.keptAnalyses = { };
+        if (pass(context) == PassOutcome::Changed) {
+            changed = true;
+            context.analyses.invalidate(allAnalyses - context.keptAnalyses);
+        }
+    };
+    run(foldConstants);
+    run(simplifyControlFlow);
+    run(eliminateGuards);
+    run(foldConstants);
+    run(simplifyControlFlow);
+    context.keptAnalyses = { };
+    context.passesLeftIdle = { };
+    context.passesThatCanWait = { };
+    context.reachedFixpoint = false;
+    return changed;
+}
+
 PassOutcome fuseArrayChains(FunctionPassContext& context)
 {
-    if (hasMethodCallBehindTestOfLastResult(context) && eliminateGuards(context) == PassOutcome::Changed)
-        return PassOutcome::Changed;
-    return fuseArrayMethodsTakenAlone(context, { });
+    bool mayHaveSplitChains = context.function.role != FunctionRole::ChainStep && !context.function.enclosingRuntimeFunction && findChainTraversal(context.program) && hasMethodCallBehindTestOfLastResult(context);
+    bool removedTests = mayHaveSplitChains && removeTestsBetweenCallsOfChains(context);
+    PassOutcome outcome = fuseArrayMethodsTakenAlone(context, { });
+    return removedTests ? PassOutcome::Changed : outcome;
 }
 
 namespace {

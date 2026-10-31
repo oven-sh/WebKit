@@ -753,6 +753,8 @@ void HeapRule::define(const ValueFlowOperand& object, const HeapKey& key, HeapPr
         write(holders, writtenName(key, part), value);
         noteWrittenMembers(holders, key, true);
     }
+    if (ClimbingSet prototypes = prototypeObjectsListedBesideUnknownObject(object, receivers, key); holdsAnything(prototypes))
+        write(prototypes, writtenName(key, part), value);
     notePrototypeObjectsThatWriteMayReach(object, receivers, key);
     noteClosuresThatMayBeRenamed(object, key, receivers);
     markDefinition(receivers, key, part);
@@ -927,6 +929,14 @@ ClimbingSet HeapRule::unlockedObjectsListedBesideUnknownObject(const ValueFlowOp
     return holdsAnything(listed) ? m_context.valueWithin(listed, m_context.nodes().ofHost(ValueFlowHostNode::BuiltinObjectsThatStatementsWrite)) : ClimbingSet();
 }
 
+// `Point.prototype.norm = ..` where Point has escaped: the receiver is the prototype object beside the unknown object. A receiver shows that object only until it has escaped itself, and the members of a class are read off what is written on it, so whether the rule ran before or after must not decide.
+ClimbingSet HeapRule::prototypeObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey& key)
+{
+    if (!object.node || key.keyClass != HeapKeyClass::Name || !mayBeUnknownObject(receivers))
+        return { };
+    return m_context.valueWithin(ClimbingSet(m_universe.prototypeObjectsOfClasses()), object.node);
+}
+
 ClimbingSet HeapRule::holdersOfReplaceableMemberThatUnknownObjectMayBe(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey& key)
 {
     if (key.keyClass != HeapKeyClass::Name)
@@ -1008,6 +1018,8 @@ void HeapRule::store(const ValueFlowOperand& object, const HeapKey& key, const V
         write(holders, writtenName(key, HeapPropertyPart::Value), value);
         noteWrittenMembers(holders, key, true);
     }
+    if (ClimbingSet prototypes = prototypeObjectsListedBesideUnknownObject(object, receivers, key); holdsAnything(prototypes))
+        write(prototypes, writtenName(key, HeapPropertyPart::Value), value);
     notePrototypeObjectsThatWriteMayReach(object, receivers, key);
     noteClosuresThatMayBeRenamed(object, key, receivers);
     markStore(receivers, key);

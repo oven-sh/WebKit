@@ -566,8 +566,13 @@ static void planFieldDefinition(const PropertyAccessContext& context, const Prop
         setSlotOperation(plan, Opcode::PutSlot);
         return;
     }
-    if (query.isPrivate && !state.createdOnlyAtConstruction && context.program.at(query.declaringLayout).has(LayoutFlags::HasHeritage))
-        return;
+    // super() may have answered an object that has the name already: `#name` throws there. Unless flow knows better, an empty slot has to say so, and a name that left its slot lies elsewhere.
+    if (query.isPrivate && !state.createdOnlyAtConstruction && context.program.at(query.declaringLayout).has(LayoutFlags::HasHeritage)) {
+        if (!query.testsThatDefinedNameIsNotTaken)
+            return;
+        if (!state.cannotMoveOut)
+            plan.requiredProofs.add(Proof::NoFieldOutsideSlot);
+    }
     if (!query.isPrivate && !state.cannotMoveOut)
         plan.requiredProofs.add(Proof::NoFieldOutsideSlot);
     setSlotOperation(plan, creatingStoreFor(state));

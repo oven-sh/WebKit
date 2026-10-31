@@ -236,7 +236,8 @@ void ValueSets::InternedRuns::freeRunsOfShard(unsigned numberOfShard)
     uint32_t sizeWithoutSlot = shard.size && !numberOfShard ? 1 : 0;
     if (numberKept + sizeWithoutSlot == shard.size)
         return;
-    Table next = createTable(std::max<unsigned>(6, std::bit_width(static_cast<size_t>(numberKept) * 2)));
+    // Under two thirds full, or it would grow at the next run made.
+    Table next = createTable(std::max<unsigned>(6, std::bit_width(static_cast<size_t>(numberKept) * 3 / 2)));
     Slot* slots = next.slots();
     size_t mask = next.mask();
     for (size_t index = 0; index <= previous.mask(); ++index) {

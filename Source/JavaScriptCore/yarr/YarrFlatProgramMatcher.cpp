@@ -1430,26 +1430,23 @@ struct Machine {
         if constexpr (isFull) {
             constexpr unsigned leastLengthToKnow = 32;
             const CharacterSetBits& set = characterSets[op->set];
-            auto consume = [&] {
-                while (position < end) {
-                    unsigned width = widthOfMember(set, position, end);
-                    if (!width)
-                        break;
-                    position += width;
-                }
-            };
-            if constexpr (!remembers)
-                return consume();
-            if (isFull && !memo)
-                return consume();
+            bool knowsRuns = remembers && memo;
             unsigned begin = position;
             // An attempt may begin inside a surrogate pair.
-            bool isInKnownRun = op->set == knownRunSet && begin - knownRunBegin <= knownRunEnd - knownRunBegin && !isInsidePair(begin);
+            bool isInKnownRun = knowsRuns && op->set == knownRunSet && begin - knownRunBegin <= knownRunEnd - knownRunBegin && !isInsidePair(begin);
             if (isInKnownRun) {
                 position = std::min(knownRunEnd, end);
                 position -= isInsidePair(position);
             }
-            consume();
+            // The loop stands here once and is no function of its own: one that is called takes the machine's address. See FrameStorage.
+            while (position < end) {
+                unsigned width = widthOfMember(set, position, end);
+                if (!width)
+                    break;
+                position += width;
+            }
+            if (!knowsRuns)
+                return;
             if (isInKnownRun)
                 knownRunEnd = std::max(knownRunEnd, position);
             else if (position - begin >= leastLengthToKnow) {

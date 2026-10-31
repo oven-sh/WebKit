@@ -1321,6 +1321,7 @@ static bool belongsToOneObject(Structure*);
 bool VMPropertyCaches::keepChainDependent(VM& vm, uint32_t structureIDBits, UniquedStringImpl* uid, const CreatedMembers& created)
 {
     ASSERT(uid);
+    ASSERT(vm.heap.isDeferred());
     std::optional<CreatedMember> member = CreatedMember::find(vm, created, uid);
     if (!member)
         return true;
@@ -1432,6 +1433,8 @@ PropertyCaches::~PropertyCaches() = default;
 void PropertyCaches::didAddProperty(Structure* before, Structure* after)
 {
     if (before == after || after->isDictionary())
+        return;
+    if (const CompiledStructure* compiled = compiledObjectStructureOrNull(after); compiled && compiled->hasOutOfLineKeyOrder())
         return;
     Locker locker { m_state.caches->lock() };
     m_additionsSinceCollection.append({ before->id(), after->id() });
@@ -2023,6 +2026,39 @@ JSValue PropertyCaches::findGetterAndFillSiteCache(SiteCache site, JSCell* base,
     return jsUndefined();
 }
 
+// A read for whoever may not run code or change the object: nothing is made, and what needs that is left for a read by name.
+void PropertyCaches::fileValueWithoutChangingObject(JSCell* base, uint32_t identifierNumber)
+{
+    VM& vm = *m_state.instance.vm;
+    Structure* structure = base->structure();
+    CachedName name = nameOf(identifierNumber);
+    JSGlobalObject* globalObject = m_state.instance.globalObject;
+    PropertySlot slot(base, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    if (Object* object = compiledObjectOrNull(base); object ? !Object::structureGuaranteesAbsence(structure, name.uid) || hasPendingStars(*object) : base->type() != FinalObjectType || structure->isDictionary())
+        return;
+    unsigned attributes = 0;
+    PropertyOffset ownOffset = isCompiledObject(base) ? invalidOffset : structure->getConcurrently(name.uid, attributes);
+    if (isValidOffset(ownOffset)) {
+        if (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
+            return;
+        slot.setValue(asObject(base), attributes, jsUndefined(), ownOffset);
+    } else {
+        ChainWalk walk = walkChain({ globalObject, structure, asObject(base), ChainWalkMode::AllocatesNothing }, name.uid);
+        if (walk.result == ChainWalkResult::Found) {
+            if (walk.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
+                return;
+            if (isValidOffset(walk.offset))
+                slot.setValue(walk.holder, walk.attributes, jsUndefined(), walk.offset);
+            else
+                slot.setValue(walk.holder, walk.attributes, jsUndefined());
+        } else if (walk.result != ChainWalkResult::Absent)
+            return;
+    }
+    PropertyAnswer answer = classifyRead({ globalObject, base, structure, name.uid, slot, ChainWalkMode::AllocatesNothing });
+    if (answer.kind == PropertyAnswerKind::Value || answer.kind == PropertyAnswerKind::InheritedField || answer.kind == PropertyAnswerKind::Absent)
+        cache({ structure, name, SlotAccess::Read, nullptr }, answer);
+}
+
 void PropertyCaches::cacheFreeName(SiteCache site, UniquedStringImpl* uid, SlotAccess access, const PropertyAnswer& answer)
 {
     if (answer.didFlatten)
@@ -2562,6 +2598,7 @@ void SiteCaches::dropChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl*)
 
 bool SiteCaches::keepChainDependent(VM& vm, uint32_t siteIndex, UniquedStringImpl* uid, const CreatedMembers& created)
 {
+    ASSERT(vm.heap.isDeferred());
     if (!uid)
         return false;
     std::optional<CreatedMember> member = CreatedMember::find(vm, created, uid);

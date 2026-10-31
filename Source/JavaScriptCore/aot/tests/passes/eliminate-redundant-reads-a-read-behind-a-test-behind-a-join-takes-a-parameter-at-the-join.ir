@@ -1,0 +1,74 @@
+# `if (size < 16) size++; else other(); if (ready) use(size)`: each way into the join brings the value, and nothing between the join and the read writes it, so the parameter stands at the join, though the read
+# stands behind a test. Where the way from the join to the read holds a store, or a second way into it, the read stays where it is or merges there.
+# FORM: Prepared
+# RUN: pass EliminateRedundantReads
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="n" module=m0 declared={type=undefined|number} initialization=Undefined
+
+function f0 name="readBehindATestBehindAJoin" parameters=[{type=number}, {type=number}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    PutModuleVariable v0 variable=g0
+    Jump -> next b3()
+  b2():
+    PutModuleVariable v1 variable=g0
+    Jump -> next b3()
+  b3():
+    Branch v3 -> taken b4(), notTaken b5()
+  b4():
+    v6 = GetModuleVariable variable=g0
+    Return v6
+  b5():
+    Return v0
+# CHECK: Jump -> next b3(v0)
+# CHECK: Jump -> next b3(v1)
+# CHECK: b3([[merged]]:
+# CHECK: b4():
+# CHECK-NEXT: v6:{{*}}= Upcast [[merged]]
+}
+
+function f1 name="aStoreOnTheWayToTheRead" parameters=[{type=number}, {type=number}, {type=number}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    PutModuleVariable v0 variable=g0
+    Jump -> next b3()
+  b2():
+    PutModuleVariable v1 variable=g0
+    Jump -> next b3()
+  b3():
+    Branch v4 -> taken b4(), notTaken b5()
+  b4():
+    PutModuleVariable v2 variable=g0
+    Jump -> next b6()
+  b5():
+    Return v0
+  b6():
+    v8 = GetModuleVariable variable=g0
+    Return v8
+# CHECK: Jump -> next b3()
+# CHECK: Jump -> next b3()
+# CHECK: b3():
+# CHECK: b6():
+# CHECK-NEXT: v8:{{*}}= Upcast v2
+}
+
+function f2 name="oneWayBringsNothing" parameters=[{type=number}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    PutModuleVariable v0 variable=g0
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b5()
+  b4():
+    v4 = GetModuleVariable variable=g0
+    Return v4
+  b5():
+    Return v0
+# CHECK: Jump -> next b3()
+# CHECK: Jump -> next b3()
+# CHECK: b3():
+# CHECK: GetModuleVariable variable=g0
+}

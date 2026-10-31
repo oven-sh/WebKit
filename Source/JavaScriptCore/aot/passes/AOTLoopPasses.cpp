@@ -2102,10 +2102,20 @@ static bool isCountedAndEnds(FunctionPassContext& context, const NaturalLoop& lo
     auto isInteger = [&](ValueID id) {
         return context.program.typeOf(context.function, id).isInteger();
     };
-    return std::ranges::any_of(context.analyses.inductionVariables().of(loop).variables, [&](const InductionVariable& variable) {
-        const InductionTest* test = variable.boundingTest();
-        return test && test->boundKind != LoopBoundKind::Unknown && isInteger(variable.parameter) && isInteger(test->bound);
-    });
+    auto hasBoundedInteger = [&](const LoopInduction& induction) {
+        return std::ranges::any_of(induction.variables, [&](const InductionVariable& variable) {
+            const InductionTest* test = variable.boundingTest();
+            return test && test->boundKind != LoopBoundKind::Unknown && isInteger(variable.parameter) && isInteger(test->bound);
+        });
+    };
+    if (hasBoundedInteger(context.analyses.inductionVariables().of(loop)))
+        return true;
+    // The copy of the failed tests of a loop counts on by itself and hands the loop what it has counted.
+    const NaturalLoops& loops = context.analyses.naturalLoops();
+    bool holdsLoop = false;
+    for (unsigned index = 0; index < loop.size() && !holdsLoop; ++index)
+        holdsLoop = loops.innerMostLoopOf(loop.at(index)) != &loop;
+    return holdsLoop && hasBoundedInteger(findInductionThroughLoopsInside(context.analyses, loop));
 }
 
 static bool alwaysTerminates(FunctionPassContext& context, const BitVector& body)
@@ -2127,7 +2137,165 @@ static bool alwaysTerminates(FunctionPassContext& context, const BitVector& body
     return true;
 }
 
-// The one block that the loop leaves for, if the loop does nothing but turn and end.
+namespace {
+
+// Whether a run goes on at one block or at another makes no difference where both hold the same operations on the same values and leave for blocks of which that is true again.
+// A test gives its failing path a copy of the code in which the tested value is alive. Once nobody reads that value, nothing tells the copy from the original.
+class CodeComparison {
+public:
+    CodeComparison(FunctionPassContext& context, BlockID first, BlockID second)
+        : m_function(context.function)
+        , m_analyses(context.analyses)
+        , m_first(first)
+        , m_second(second)
+    {
+    }
+
+    bool findsSameCode()
+    {
+        if (!pair(m_first, m_second))
+            return false;
+        while (!m_pairsToCompare.isEmpty()) {
+            BlockID block = m_pairsToCompare.takeLast();
+            if (!holdSameCode(m_function.at(block), m_function.at(m_partnerOfBlock.get(block.index()))))
+                return false;
+        }
+        return isReadOnlyOnItsSide(m_isOnFirstSide) && isReadOnlyOnItsSide(m_isOnSecondSide);
+    }
+
+private:
+    ValueID valueInFrontOfCasts(ValueID id) const
+    {
+        while (id && isCastThatProvesNothing(m_function.at(id).opcode))
+            id = m_function.at(id).operand(0);
+        return id;
+    }
+
+    bool isSameValue(ValueID onFirstSide, ValueID onSecondSide) const
+    {
+        onFirstSide = valueInFrontOfCasts(onFirstSide);
+        onSecondSide = valueInFrontOfCasts(onSecondSide);
+        if (!onFirstSide || !onSecondSide)
+            return onFirstSide == onSecondSide;
+        auto partner = m_partnerOfValue.find(onFirstSide);
+        return partner != m_partnerOfValue.end() ? partner->value == onSecondSide : onFirstSide == onSecondSide;
+    }
+
+    // A block that its side's first block dominates runs behind it, so whatever it reads of its side has been made since the sides parted.
+    bool pair(BlockID onFirstSide, BlockID onSecondSide)
+    {
+        auto isOnSide = [&](BlockID block) {
+            return m_isOnFirstSide.get(block.index()) || m_isOnSecondSide.get(block.index());
+        };
+        if (onFirstSide == onSecondSide) {
+            m_isWhereSidesMeet.set(onFirstSide.index());
+            return !isOnSide(onFirstSide);
+        }
+        if (auto partner = m_partnerOfBlock.find(onFirstSide.index()); partner != m_partnerOfBlock.end())
+            return partner->value == onSecondSide;
+        if (isOnSide(onFirstSide) || isOnSide(onSecondSide) || m_isWhereSidesMeet.get(onFirstSide.index()) || m_isWhereSidesMeet.get(onSecondSide.index()))
+            return false;
+        const Dominators& dominators = m_analyses.dominators();
+        if (!dominators.dominates(m_first, onFirstSide) || !dominators.dominates(m_second, onSecondSide))
+            return false;
+        const CompactList<ValueID>& parameters = m_function.at(onFirstSide).parameters;
+        const CompactList<ValueID>& partners = m_function.at(onSecondSide).parameters;
+        if (parameters.size() != partners.size())
+            return false;
+        for (size_t index = 0; index < parameters.size(); ++index) {
+            if (m_function.at(parameters[index]).type != m_function.at(partners[index]).type)
+                return false;
+            m_partnerOfValue.set(parameters[index], partners[index]);
+        }
+        m_partnerOfBlock.set(onFirstSide.index(), onSecondSide);
+        m_isOnFirstSide.set(onFirstSide.index());
+        m_isOnSecondSide.set(onSecondSide.index());
+        m_pairsToCompare.append(onFirstSide);
+        return true;
+    }
+
+    bool haveSameOperands(const Instruction& a, const Instruction& b) const
+    {
+        return a.hasSamePayloadAs(b) && a.numberOfNamedOperands() == b.numberOfNamedOperands() && std::ranges::equal(a.operands(), b.operands(), [&](ValueID inFirst, ValueID inSecond) {
+            return isSameValue(inFirst, inSecond);
+        });
+    }
+
+    bool leaveForSameCode(const Target& a, const Target& b)
+    {
+        bool passSameValues = a.proofs == b.proofs && std::ranges::equal(a.arguments, b.arguments, [&](ValueID inFirst, ValueID inSecond) {
+            return isSameValue(inFirst, inSecond);
+        });
+        return passSameValues && pair(a.block, b.block);
+    }
+
+    bool holdSameCode(const Block& a, const Block& b)
+    {
+        if (a.isHandlerBlock() || b.isHandlerBlock() || a.shape != b.shape || !isSameValue(a.subject, b.subject) || !a.handler != !b.handler)
+            return false;
+        auto skipCasts = [&](const Block& block, size_t& position) {
+            while (position < block.values.size() && isCastThatProvesNothing(m_function.at(block.values[position]).opcode))
+                ++position;
+        };
+        for (size_t inFirst = 0, inSecond = 0;; ++inFirst, ++inSecond) {
+            skipCasts(a, inFirst);
+            skipCasts(b, inSecond);
+            if (inFirst == a.values.size() || inSecond == b.values.size()) {
+                if (inFirst != a.values.size() || inSecond != b.values.size())
+                    return false;
+                break;
+            }
+            const Value& value = m_function.at(a.values[inFirst]);
+            const Value& partner = m_function.at(b.values[inSecond]);
+            if (value.opcode != partner.opcode || value.type != partner.type || value.representation != partner.representation || value.origin() != partner.origin() || !haveSameOperands(value, partner))
+                return false;
+            m_partnerOfValue.set(a.values[inFirst], b.values[inSecond]);
+        }
+        const Terminator& terminator = a.terminator;
+        const Terminator& partner = b.terminator;
+        if (terminator.kind != partner.kind || terminator.targets.size() != partner.targets.size() || !haveSameOperands(terminator, partner))
+            return false;
+        if (terminator.kind != TerminatorKind::Jump && terminator.origin() != partner.origin())
+            return false;
+        for (size_t index = 0; index < terminator.targets.size(); ++index) {
+            if (!leaveForSameCode(terminator.targets[index], partner.targets[index]))
+                return false;
+        }
+        return !a.handler || leaveForSameCode(*a.handler, *b.handler);
+    }
+
+    // Where the sides meet again, or one comes round to the other, both find what stood there before they parted.
+    bool isReadOnlyOnItsSide(const BitVector& side) const
+    {
+        const UseLists& useLists = m_analyses.useLists();
+        auto isReadOnSide = [&](ValueID id) {
+            return std::ranges::all_of(useLists.usesOf(id), [&](const Use& use) {
+                return side.get(use.block.index());
+            });
+        };
+        for (size_t index : side) {
+            const Block& block = m_function.at(BlockID(index));
+            if (!std::ranges::all_of(block.parameters, isReadOnSide) || !std::ranges::all_of(block.values, isReadOnSide))
+                return false;
+        }
+        return true;
+    }
+
+    const Function& m_function;
+    FunctionAnalyses& m_analyses;
+    BlockID m_first;
+    BlockID m_second;
+    UncheckedKeyHashMap<uint32_t, BlockID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_partnerOfBlock;
+    UncheckedKeyHashMap<ValueID, ValueID> m_partnerOfValue;
+    BitVector m_isOnFirstSide;
+    BitVector m_isOnSecondSide;
+    BitVector m_isWhereSidesMeet;
+    Vector<BlockID, 16> m_pairsToCompare;
+};
+
+} // anonymous namespace
+
+// The block that the loop leaves for, if the loop does nothing but turn and end. Where it leaves for several, all it decides is which, so they have to do the same.
 static std::optional<BlockID> findExitOfDeadLoop(FunctionPassContext& context, const BitVector& body)
 {
     const Function& function = context.function;
@@ -2141,17 +2309,18 @@ static std::optional<BlockID> findExitOfDeadLoop(FunctionPassContext& context, c
             return std::nullopt;
     }
 
-    BlockID exit;
+    Vector<BlockID, 2> exits;
     for (size_t index : body) {
         for (const Target& target : function.at(BlockID(index)).terminator.targets) {
             if (body.get(target.block.index()))
                 continue;
-            if (!target.arguments.isEmpty() || !target.proofs.isEmpty() || (exit && exit != target.block))
+            if (!target.arguments.isEmpty() || !target.proofs.isEmpty())
                 return std::nullopt;
-            exit = target.block;
+            if (!exits.contains(target.block))
+                exits.append(target.block);
         }
     }
-    if (!exit)
+    if (exits.isEmpty())
         return std::nullopt;
 
     const UseLists& useLists = context.analyses.useLists();
@@ -2165,6 +2334,17 @@ static std::optional<BlockID> findExitOfDeadLoop(FunctionPassContext& context, c
         if (std::ranges::any_of(block.parameters, isUsedOutside) || std::ranges::any_of(block.values, isUsedOutside))
             return std::nullopt;
     }
+
+    BlockID exit = exits.first();
+    for (BlockID other : exits) {
+        if (isRarerThan(function.at(exit).frequency, function.at(other).frequency).predicted())
+            exit = other;
+    }
+    bool doTheSame = std::ranges::all_of(exits, [&](BlockID other) {
+        return other == exit || CodeComparison(context, exit, other).findsSameCode();
+    });
+    if (!doTheSame)
+        return std::nullopt;
     if (!alwaysTerminates(context, body) && !context.build.isSabotaged(Sabotage::RemovedLoopsMayNotEnd))
         return std::nullopt;
     return exit;

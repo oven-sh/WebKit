@@ -23,6 +23,8 @@
 #include "AOTThreshold.h"
 #include "JSArrayBufferView.h"
 #include "JSCJSValue.h"
+#include "JSGlobalObject.h"
+#include "JSGlobalProxy.h"
 #include "JSObject.h"
 #include "StackAlignment.h"
 #include <array>
@@ -425,6 +427,26 @@ static void storeOwnValueAtAndReturn(StubAssembler& jit, GPRReg base, GPRReg wor
     jit.loadPtr(Address(base, JSObject::butterflyOffset()), storage);
     jit.store64(value, BaseIndex(storage, wordIndex, CCallHelpers::TimesEight));
     jit.jump().linkTo(isStored, &jit);
+}
+
+static void storeAtPlaceInGlobalObjectAndReturn(StubAssembler& jit, const KeyedProbeRegisters& registers, GPRReg value)
+{
+    const GPRReg globalObject = registers.header;
+    const GPRReg structureIDOfGlobalObject = registers.payload;
+    const GPRReg wordIndex = registers.uid;
+    const GPRReg place = registers.entry;
+    JumpList doesNotSay;
+    doesNotSay.append(jit.branch8(CCallHelpers::NotEqual, Address(registers.base, JSCell::typeInfoTypeOffset()), TrustedImm32(GlobalProxyType)));
+    jit.loadPtr(Address(registers.base, JSGlobalProxy::targetOffset()), globalObject);
+    doesNotSay.append(jit.branchPtr(CCallHelpers::NotEqual, globalObject, Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject))));
+    doesNotSay.append(jit.branchPtr(CCallHelpers::NotEqual, Address(globalObject, JSGlobalObject::offsetOfGlobalThis()), registers.base));
+    jit.load32(Address(globalObject, JSCell::structureIDOffset()), structureIDOfGlobalObject);
+    jit.add32(TrustedImm32(KeyedValuePlace::globalObjectBit), structureIDOfGlobalObject);
+    doesNotSay.append(jit.branch32(CCallHelpers::NotEqual, inKeyedValuePlace(place, SlotAccess::Store, OBJECT_OFFSETOF(KeyedValuePlace, structureID)), structureIDOfGlobalObject));
+    jit.load32SignedExtendTo64(inKeyedValuePlace(place, SlotAccess::Store, OBJECT_OFFSETOF(KeyedValuePlace, wordIndex)), wordIndex);
+    storeOwnValueAtAndReturn(jit, globalObject, wordIndex, place, value);
+
+    doesNotSay.link(&jit);
 }
 
 enum class StructureIDOfBase : bool { IsNotLoaded, IsLoaded };
@@ -1512,10 +1534,12 @@ static void storeByKeyedSlot(StubAssembler& jit, SlotOperation operation, const 
     Label storeAtWordIndex;
     if (hasPlaces) {
         JumpList hasNoPlace;
-        hasNoPlace.append(findKeyedValuePlace(jit, SlotAccess::Store, registers, wordIndex, hasNoPlace));
+        Jump placeIsOfNoValue = findKeyedValuePlace(jit, SlotAccess::Store, registers, wordIndex, hasNoPlace);
         storeAtWordIndex = jit.label();
         storeOwnValueAtAndReturn(jit, base, wordIndex, storage, value);
 
+        placeIsOfNoValue.link(&jit);
+        storeAtPlaceInGlobalObjectAndReturn(jit, registers, value);
         hasNoPlace.link(&jit);
         structureIDOfBase = StructureIDOfBase::IsLoaded;
     }

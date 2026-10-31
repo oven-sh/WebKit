@@ -55,9 +55,6 @@ runtime PrepareBoundFunctionAllocation : void () ; RuntimeAllocates
 runtime NewError : JSCell* (uint32_t errorKind, EncodedJSValue message, EncodedJSValue options) ; unknownCode
 runtime FormatDateTime : JSCell* (EncodedJSValue formatter, double timeValue) ; RuntimeAllocates
 runtime FormatNumber : JSCell* (EncodedJSValue formatter, double number) ; RuntimeAllocates
-runtime FormatWithPattern : EncodedJSValue (uint32_t request, EncodedJSValue value) ; RuntimeAllocates
-runtime NewFormatterWithPattern : JSCell* (uint32_t request) ; RuntimeAllocates
-runtime SetUpFormatterWithoutPattern : void (JSCell* formatter) ; unknownCode
 
 runtime NumberToStringWithRadix : JSCell* (double value, int32_t radix) ; RuntimeAllocates
 runtime Int32ToStringWithRadix : JSCell* (int32_t value, int32_t radix) ; RuntimeAllocates

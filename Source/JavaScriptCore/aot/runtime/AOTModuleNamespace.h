@@ -59,6 +59,8 @@ public:
     // The value of an export that was captured when its file had run, as every export of a CommonJS file is, or nothing. It stays until replaceCapturedValue(), which gives the object another Structure.
     // Nothing is allocated.
     JSValue capturedValueWithoutAllocating(UniquedStringImpl*) const;
+    // Of a module of the library: the export is read now if nobody has read it yet, and stays what it is then.
+    void readDeferredExport(JSGlobalObject*, const Identifier& name);
 
     bool hasESModuleMarker() const { return m_hasESModuleMarker; }
     void setESModuleMarker(bool hasMarker) { m_hasESModuleMarker = hasMarker; }

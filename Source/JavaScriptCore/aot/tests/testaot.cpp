@@ -16,6 +16,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinTableBindings.h"
 #include "AOTChildProcess.h"
 #include "AOTCompileOptionWords.h"
 #include "AOTCrashExitCode.h"
@@ -413,6 +414,7 @@ int main(int argc, char** argv)
         JSC::Options::notifyOptionsChanged();
     }
     JSC::initialize();
+    BuiltinBindings::bindNativeHelpersOfEngine();
     installTrapReporter();
 
     checkTestCommandNames();

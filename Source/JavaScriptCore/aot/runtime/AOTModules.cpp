@@ -1517,7 +1517,30 @@ const SourceOrigin& Modules::sourceOrigin(ModuleID module)
     return *loaded.sourceOrigin;
 }
 
+// The loader of `bun run` keeps what an import statement threw. Every load that comes to the statement gets that object: of the module, of one above it, by import() or by require().
+// A call of require() or import() that finds nothing throws anew each time.
 void Modules::throwFailure(ModuleFailureID id, bool isForRequire)
+{
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const ModuleFailureData& failure = m_table.failure(id);
+    if (failure.isAbsentExport())
+        RELEASE_AND_RETURN(scope, throwNewFailure(id, isForRequire));
+    // The table has the statement once for the code that throws in the module, and once for each module whose load it ends. The module that holds a call loads.
+    ModuleID importer = failure.importerModule();
+    std::optional<ModuleFailureID> endOfLoad = m_table.loadFailure(importer);
+    if (!endOfLoad || m_table.failure(*endOfLoad).importer != failure.importer || m_table.failure(*endOfLoad).specifier != failure.specifier)
+        RELEASE_AND_RETURN(scope, throwNewFailure(id, isForRequire));
+    if (JSValue error = ensureLoaded(importer).errorKeptByLoader) {
+        throwException(m_instance.globalObject, scope, error);
+        return;
+    }
+    throwNewFailure(id, isForRequire);
+    if (Exception* exception = scope.exception(); exception && !vm.isTerminationException(exception))
+        ensureLoaded(importer).errorKeptByLoader.set(*this, exception->value());
+}
+
+void Modules::throwNewFailure(ModuleFailureID id, bool isForRequire)
 {
     VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
@@ -3284,6 +3307,21 @@ struct ModulesFoundInSeveralImages {
 };
 }
 
+// The module of this image that moduleKey() spells so.
+std::optional<ModuleID> Modules::findByKey(const Identifier& key) const
+{
+    StringView text = key.string();
+    if (!m_instance.program->sharesRealms() || !text.startsWith('#')) [[likely]]
+        return m_table.findByPath(text);
+    std::optional<uint32_t> number = parseInteger<uint32_t>(text.substring(1));
+    if (!number || !namesImage(ModuleID(*number)))
+        return std::nullopt;
+    std::optional<ModuleID> module = moduleOfImage(*m_instance.program, ModuleID(*number));
+    if (!module || !isNamedByNumber(m_table.pathText(*module), *module))
+        return std::nullopt;
+    return module;
+}
+
 // As Modules::moduleKey() spells it where images share realms.
 static std::optional<ModuleID> findModuleNamedByNumber(const Image& running, StringView publicPath)
 {
@@ -3868,6 +3906,11 @@ AbstractModuleRecord* moduleRecord(JSGlobalObject* realm, ModuleID moduleOfHost)
     if (!modules)
         return nullptr;
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    // An import() of an image above has asked the loader, which asks for the module inside that call. What this runs of the library `bun run` runs from a job, as in askLoaderForImport().
+    // A mark further in than the import() is the one that was set here for it.
+    VMState& state = realm->vm().aotState();
+    bool isFirstAskedForByImport = state.frameOfImportThatAsksLoader && (!state.stackPointerOfImport || state.stackPointerOfImport > static_cast<void*>(state.frameOfImportThatAsksLoader));
+    SetForScope stackPointerOfImport(state.stackPointerOfImport, isFirstAskedForByImport ? currentStackPointer() : state.stackPointerOfImport);
     // The loader asks for a module when it loads it. Where it goes on to what the module imports, each file runs when the loader comes to it.
     if (!modules->isAskingHost()) {
         modules->handCountedImportsToLoader();
@@ -4801,6 +4844,14 @@ bool ModuleNamespace::isDynamicExport(UniquedStringImpl* name) const
             to = middle;
     }
     return false;
+}
+
+void ModuleNamespace::readDeferredExport(JSGlobalObject* globalObject, const Identifier& name)
+{
+    if (modules().data(m_module).exportRule != SyntheticExportRule::RuntimeModule || !isDynamicExport(name.impl()))
+        return;
+    ImageOfCellScope imageOfCell(globalObject->vm(), this);
+    readDynamicExport(globalObject, name);
 }
 
 JSValue ModuleNamespace::readDynamicExport(JSGlobalObject* globalObject, PropertyName name)

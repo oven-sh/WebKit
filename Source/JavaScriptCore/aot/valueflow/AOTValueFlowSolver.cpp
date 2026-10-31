@@ -357,27 +357,7 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
         m_coverings.append({ placeholders.untracked, m_input.lost, m_objectsThatPlaceholdersMayCover });
         m_graph.retireNodesCoveredBy(placeholders.untracked, m_input.lost, m_untrackedObjectAlone, maker.intersect(m_objectsThatPlaceholdersMayCover, ValueSets::complement(m_objectsAlwaysFollowed)));
         if (m_input.program && m_input.universe && m_input.nodes) {
-            const ValueFlowUniverse& universe = *m_input.universe;
             m_saturates = true;
-            uint32_t numberOfLayouts = m_input.program->layouts.size();
-            uint32_t numberOfClasses = m_input.program->builtins().classCount();
-            m_layoutOrCalleeOfMember.makeRoomToFill(universe.numberOfObjects());
-            constexpr uint32_t membersInStretch = 1 << 14;
-            forEachIndexInParallel(m_loops, (universe.numberOfObjects() + membersInStretch - 1) / membersInStretch, [&](unsigned stretch) {
-                uint32_t end = std::min(universe.numberOfObjects(), (stretch + 1) * membersInStretch);
-                for (uint32_t index = stretch * membersInStretch; index < end; ++index) {
-                    ValueFlowObjectID member(index);
-                    if (!universe.isObject(member) || member == m_input.placeholders.unknown || member == m_input.placeholders.untracked)
-                        m_layoutOrCalleeOfMember[index] = 0;
-                    else if (LayoutID layout = universe.layoutOf(member))
-                        m_layoutOrCalleeOfMember[index] = 1 + layout.index();
-                    else if (BuiltinClassID builtinClass = universe.closureFunction(member) ? BuiltinClassID() : universe.classOf(member))
-                        m_layoutOrCalleeOfMember[index] = 1 + numberOfLayouts + builtinClass.index();
-                    else
-                        m_layoutOrCalleeOfMember[index] = 1 + numberOfLayouts + numberOfClasses + index;
-                }
-            });
-            growAndFill(m_lastCountThatSaw, 1 + numberOfLayouts + numberOfClasses + universe.numberOfObjects(), 0u);
         }
     }
     if (m_input.nodes && m_input.universe) {
@@ -6452,18 +6432,29 @@ bool ValueFlowSolver::maySaturate(ValueFlowNodeID node) const
     return traits.contains(TraitOfMadeNodes::MaySaturate);
 }
 
+uint32_t ValueFlowSolver::layoutOrCalleeOf(ValueFlowObjectID member) const
+{
+    const ValueFlowUniverse& universe = *m_input.universe;
+    if (!universe.isObject(member) || member == m_input.placeholders.unknown || member == m_input.placeholders.untracked)
+        return 0;
+    if (LayoutID layout = universe.layoutOf(member))
+        return 1 + layout.index();
+    uint32_t numberOfLayouts = m_input.program->layouts.size();
+    if (BuiltinClassID builtinClass = universe.closureFunction(member) ? BuiltinClassID() : universe.classOf(member))
+        return 1 + numberOfLayouts + builtinClass.index();
+    return 1 + numberOfLayouts + m_input.program->builtins().classCount() + member.index();
+}
+
 bool ValueFlowSolver::hasTooManyLayoutsAndCallees(ValueSetID set)
 {
     if (ValueSets::isComplement(set) || m_sets.size(set) <= m_input.mostSetMembers)
         return false;
     return m_isTooLarge.ensure(set.index(), [&] {
-        uint32_t count = 0;
-        ++m_numberOfCounts;
+        HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> seen;
         return m_sets.anyMember(set, [&](ValueFlowObjectID member) {
-            uint32_t layoutOrCallee = m_layoutOrCalleeOfMember[member.index()];
-            if (layoutOrCallee && std::exchange(m_lastCountThatSaw[layoutOrCallee], m_numberOfCounts) != m_numberOfCounts)
-                ++count;
-            return count > m_input.mostSetMembers;
+            if (uint32_t layoutOrCallee = layoutOrCalleeOf(member))
+                seen.add(layoutOrCallee);
+            return seen.size() > m_input.mostSetMembers;
         });
     }).iterator->value;
 }
@@ -7109,7 +7100,7 @@ void ValueFlowSolver::solve()
             (release(states), ...);
         };
         releaseInOrder(m_threads, m_readerShards, m_watchShards, m_hasSetWatchedForCoverOfMember, m_firstSetWatchedForCoverOfMember, m_setsWatchedForCoverOfMembers, m_isWatched, m_listenersOfNode, m_readersOfFunction, m_valuesShownToStatement, m_readersOfWorker, m_newMembersOfWorker, m_watchesToTestOfWorker, m_newMembers, m_nodesOfManyObjects, m_rememberedByStatement, m_linkShards, m_edgesOfRound, m_edgesInFrontOfLinks, m_readToLink, m_writtenToLink,
-            m_readersOfNode, m_coveringStateOfShownView, m_names, m_numberOfName, m_kindsOfNames, m_partsOfMadeNodes, m_layoutOrCalleeOfMember, m_lastCountThatSaw, m_isTooLarge,
+            m_readersOfNode, m_coveringStateOfShownView, m_names, m_numberOfName, m_kindsOfNames, m_partsOfMadeNodes, m_isTooLarge,
             m_statementsWaitingForNodes, m_nextStatementWaiting, m_timesRunOfStatement, m_roundOfNextRun, m_isDue, m_isDueLast, m_hasRunInTurn, m_hasLongRowBehindIt, m_isDear, m_usesOfThreads, m_uncoveredAtLastReaderWake, m_readToInsert);
     }
     m_stepTimes.didFinish("behind the rounds: what only the rounds read let go of"_s);
@@ -7210,7 +7201,7 @@ void ValueFlowSolver::dumpEdgesByEnds() const
     Vector<uint64_t> byName;
     for (uint64_t count : edgesOfName.values())
         byName.append(count);
-    std::ranges::sort(byName, std::greater { });
+    AOT::sort(byName, std::greater { });
     dataLog("AOT flow edges | largest fan-out ", largestFanOut, " | names written ", byName.size(), " | edges out of what is written under the names with the most");
     for (uint64_t count : byName.span().first(std::min<size_t>(byName.size(), 16)))
         dataLog(" ", count);
@@ -7261,7 +7252,7 @@ void ValueFlowSolver::dumpReadersByStatement() const
         auto kind = static_cast<ValueFlowStatementKind>(entry.key >> 16);
         dataLogLn("AOT flow readers | ", kind == ValueFlowStatementKind::Operation ? nameOf(static_cast<Opcode>(entry.key & 0xffff)) : "kind"_s, " ", static_cast<unsigned>(kind), " | statements ", entry.value.statements, " | readers ", entry.value.readers);
     }
-    std::sort(byReaders.begin(), byReaders.end(), [&](uint32_t left, uint32_t right) { return readersOfStatement[left] > readersOfStatement[right]; });
+    AOT::sort(byReaders, [&](uint32_t left, uint32_t right) { return readersOfStatement[left] > readersOfStatement[right]; });
     for (uint32_t index : byReaders.span().first(std::min<size_t>(byReaders.size(), 24))) {
         ValueFlowStatement statement = copyOfStatementAt(ValueFlowStatementID(index));
         dataLogLn("AOT flow readers of one statement | ", readersOfStatement[index], " | kind ", static_cast<unsigned>(statement.kind), " | opcode ", nameOf(statement.opcode), " | function ", statement.function.index());
@@ -7481,7 +7472,7 @@ void ValueFlowSolver::dumpReadersByStatement() const
         Vector<std::pair<uint64_t, uint32_t>> setsByCalls;
         for (const auto& entry : callsOfSet)
             setsByCalls.append({ entry.value, entry.key });
-        std::sort(setsByCalls.begin(), setsByCalls.end(), std::greater { });
+        AOT::sort(setsByCalls, std::greater { });
         dataLog("AOT flow large receivers | the sets with the most calls, calls x members:");
         for (auto [calls, set] : setsByCalls.span().first(std::min<size_t>(setsByCalls.size(), 16)))
             dataLog(" ", calls, " x ", m_sets.size(ValueSetID(set)));
@@ -7490,7 +7481,7 @@ void ValueFlowSolver::dumpReadersByStatement() const
     Vector<uint32_t> keysByUses;
     for (uint32_t key : callsUnderKey.keys())
         keysByUses.append(key);
-    std::sort(keysByUses.begin(), keysByUses.end(), [&](uint32_t left, uint32_t right) {
+    AOT::sort(keysByUses, [&](uint32_t left, uint32_t right) {
         return std::tuple(callsUnderKey.get(left).uses, left) > std::tuple(callsUnderKey.get(right).uses, right);
     });
     for (uint32_t key : keysByUses.span().first(std::min<size_t>(keysByUses.size(), 32))) {
@@ -7528,7 +7519,7 @@ void ValueFlowSolver::dumpReadersByStatement() const
         Vector<std::pair<uint64_t, uint64_t>> forms;
         for (const auto& entry : recordsOfForm)
             forms.append({ entry.value, entry.key });
-        std::sort(forms.begin(), forms.end(), std::greater { });
+        AOT::sort(forms, std::greater { });
         for (auto [count, form] : forms.span().first(std::min<size_t>(forms.size(), 14)))
             dataLog(" ", count, " x (", namesOfNodes[form >> 48], ", ", (form >> 40) & 0xff, ", ", (form >> 32) & 0xff, ", ", form & 0xffffff, ")");
         dataLogLn();
@@ -7567,7 +7558,7 @@ void ValueFlowSolver::dumpReadersByStatement() const
     };
     for (uint32_t index = 0; index < m_names.size(); ++index)
         byNodes.append(index);
-    std::sort(byNodes.begin(), byNodes.end(), [&](uint32_t left, uint32_t right) { return nodesRead(left) > nodesRead(right); });
+    AOT::sort(byNodes, [&](uint32_t left, uint32_t right) { return nodesRead(left) > nodesRead(right); });
     uint64_t allNodesRead = 0;
     for (uint32_t index : byNodes)
         allNodesRead += nodesRead(index);
@@ -7693,8 +7684,6 @@ void ValueFlowSolver::dumpBytesByTable() const
     }
 
     constexpr ASCIILiteral members = "members: layout or callee, counts, marks"_s;
-    bytes.addList(members, m_layoutOrCalleeOfMember);
-    bytes.addList(members, m_lastCountThatSaw);
     bytes.addList(members, m_marksOfObject);
     bytes.addMap(members, m_isTooLarge);
     bytes.addBits(members, m_isSaturated);

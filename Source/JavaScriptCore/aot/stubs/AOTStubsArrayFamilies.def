@@ -24,7 +24,7 @@ AOT_STUB_FRONT_END(NewArray, NewArrayFrontEnd)
 v(NewEmptyArrayAtSite, CalledByCode, (Int32, Double, Contiguous), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState, RuntimeState) | writes(AllocatorState, RuntimeState), NewEmptyArrayAtSite)
 
 // AOTStubsArraySlice.cpp
-v(ArraySlice, CalledByCode, (Bounded, Whole, BoundedWithPropertyRoom, WholeWithPropertyRoom), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArraySlice)
+v(ArraySlice, CalledByCode, (Bounded, Whole, BoundedWithPropertyRoom, WholeWithPropertyRoom, BoundedAsDoubles, WholeAsDoubles), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArraySlice)
 v(CreateArguments, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, CreateArguments)
 v(CreateMappedArguments, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, CreateMappedArguments)
 

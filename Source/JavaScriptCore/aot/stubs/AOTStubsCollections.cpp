@@ -199,35 +199,33 @@ static void emitStoreInIndex(StubAssembler& jit, const HashTableRegisters& regis
     }
     constexpr int32_t index = CompactTable::offsetOfIndex();
     const GPRReg slot = registers.cursor;
-    const GPRReg tags = registers.candidate;
+    const GPRReg slots = registers.candidate;
     const GPRReg scratch = registers.hash;
-    // The tags end where the keys begin, and there are as many as slots.
-    jit.sub64(registers.keys, registers.table, tags);
-    jit.sub64(TrustedImm32(index), tags);
+    jit.store8(registers.hash, BaseIndex(registers.table, slot, CCallHelpers::TimesOne, index));
+    // The tags and the numbers lie between the header and the keys, and there are as many of each as slots.
+    jit.sub64(registers.keys, registers.table, slots);
+    jit.sub64(TrustedImm32(index), slots);
     Jump hasLongSlots = jit.branch32(CCallHelpers::Above, Address(registers.table, CompactTable::offsetOfCapacity()), TrustedImm32(CompactTable::maxCapacityWithShortSlots));
-    jit.urshift64(TrustedImm32(1), tags);
-    jit.sub64(registers.keys, tags, tags);
-    jit.store8(registers.hash, BaseIndex(tags, slot, CCallHelpers::TimesOne));
-    jit.store8(registers.entry, BaseIndex(registers.table, slot, CCallHelpers::TimesOne, index));
+    jit.urshift64(TrustedImm32(1), slots);
+    jit.add64(slot, slots);
+    jit.store8(registers.entry, BaseIndex(registers.table, slots, CCallHelpers::TimesOne, index));
     Jump isStored = jit.jump();
 
     hasLongSlots.link(&jit);
     Jump hasHugeSlots = jit.branch32(CCallHelpers::Above, Address(registers.table, CompactTable::offsetOfCapacity()), TrustedImm32(CompactTable::maxCapacityWithLongSlots));
-    jit.urshift64(TrustedImm32(2), tags);
-    jit.sub64(registers.keys, tags, tags);
-    jit.store8(registers.hash, BaseIndex(tags, slot, CCallHelpers::TimesOne));
+    jit.urshift64(TrustedImm32(2), slots);
     jit.getEffectiveAddress(BaseIndex(slot, slot, CCallHelpers::TimesTwo), scratch);
+    jit.add64(slots, scratch);
     jit.store16(registers.entry, BaseIndex(registers.table, scratch, CCallHelpers::TimesOne, index));
-    jit.urshift32(registers.entry, TrustedImm32(16), tags);
-    jit.store8(tags, BaseIndex(registers.table, scratch, CCallHelpers::TimesOne, index + 2));
+    jit.urshift32(registers.entry, TrustedImm32(16), slots);
+    jit.store8(slots, BaseIndex(registers.table, scratch, CCallHelpers::TimesOne, index + 2));
     Jump isStoredAmongLong = jit.jump();
 
     hasHugeSlots.link(&jit);
-    jit.urshift64(TrustedImm32(3), tags);
-    jit.sub64(registers.keys, tags, tags);
-    jit.store8(registers.hash, BaseIndex(tags, slot, CCallHelpers::TimesOne));
+    jit.urshift64(TrustedImm32(3), slots);
     jit.lshift64(slot, TrustedImm32(3), scratch);
     jit.sub64(slot, scratch);
+    jit.add64(slots, scratch);
     jit.store32(registers.entry, BaseIndex(registers.table, scratch, CCallHelpers::TimesOne, index));
     isStored.link(&jit);
     isStoredAmongLong.link(&jit);
@@ -747,14 +745,11 @@ void generateGrowCompactTable(StubAssembler& jit)
             jit.urshift32(TrustedImm32(StringImpl::s_flagCount), hash);
             Label hasHash = jit.label();
             jit.and32(hash, mask, position);
-            // The tags begin behind the entry numbers: mask + 1 bytes.
-            jit.getEffectiveAddress(BaseIndex(larger, mask, CCallHelpers::TimesOne, index + 1), slot);
-            Jump homeIsFree = jit.branchTest8(CCallHelpers::Zero, BaseIndex(slot, position, CCallHelpers::TimesOne));
-            emitMarkThatKeyLeftHomeSlot(jit, BaseIndex(slot, position, CCallHelpers::TimesOne));
+            Jump homeIsFree = jit.branchTest8(CCallHelpers::Zero, BaseIndex(larger, position, CCallHelpers::TimesOne, index));
+            emitMarkThatKeyLeftHomeSlot(jit, BaseIndex(larger, position, CCallHelpers::TimesOne, index));
             jit.and32(TrustedImm32(~static_cast<int32_t>(CompactTable::slotsPerGroup - 1)), position);
             Label probe = jit.label();
-            jit.getEffectiveAddress(BaseIndex(larger, mask, CCallHelpers::TimesOne, index + 1), slot);
-            jit.load64(BaseIndex(slot, position, CCallHelpers::TimesOne), slot);
+            jit.load64(BaseIndex(larger, position, CCallHelpers::TimesOne, index), slot);
             jit.not64(slot);
             jit.and64(TrustedImm64(CompactTable::onesOfTags << 7), slot);
             Jump hasFreeSlot = jit.branchTest64(CCallHelpers::NonZero, slot);
@@ -768,9 +763,10 @@ void generateGrowCompactTable(StubAssembler& jit)
             jit.add32(slot, position);
             homeIsFree.link(&jit);
             emitLoadTagOfSlot(jit, hash);
+            jit.store8(hash, BaseIndex(larger, position, CCallHelpers::TimesOne, index));
+            // The numbers begin behind the tags: mask + 1 bytes.
             jit.getEffectiveAddress(BaseIndex(larger, mask, CCallHelpers::TimesOne, index + 1), slot);
-            jit.store8(hash, BaseIndex(slot, position, CCallHelpers::TimesOne));
-            jit.store8(entry, BaseIndex(larger, position, CCallHelpers::TimesOne, index));
+            jit.store8(entry, BaseIndex(slot, position, CCallHelpers::TimesOne));
             jit.add32(TrustedImm32(1), entry);
             jit.branch32(CCallHelpers::BelowOrEqual, entry, count).linkTo(nextEntry, &jit);
             Jump isIndexed = jit.jump();

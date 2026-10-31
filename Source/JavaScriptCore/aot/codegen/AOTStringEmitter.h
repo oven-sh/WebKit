@@ -108,6 +108,12 @@ public:
     Word32 orderToCharacter(const CharacterView&, char16_t codeUnit);
     Condition equalsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, bool subjectIsFlat = false, bool everyCellIsString = false, bool subjectIsComparedAgain = false);
     void branchOnEqualsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, BranchTargets, bool subjectIsFlat = false, bool everyCellIsString = false, bool subjectIsComparedAgain = false);
+    // Where the atom of a name of the image lies. In an image that may lie anywhere the atom is made on demand: `exists` says whether it has been.
+    struct AtomOfName {
+        Pointer address;
+        std::optional<Condition> exists;
+    };
+    AtomOfName atomOfName(uint32_t identifierNumber);
     // For a subject that the comparison in place cannot answer: a rope, a 16-bit string.
     void branchOnEqualsLiteralByStub(const OperationContext&, ComparedOperand, LValue subject, StringID, BranchTargets);
     Condition hasTextAt(const CharacterView&, Word32 offset, StringID);

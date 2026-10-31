@@ -133,5 +133,4 @@ function f2 name="pick" module=m0 position=188 flags=[IsChecked, HasExplicitName
 # X64-NEXT: Jump
 # X64-LABEL: end of function
 # X64SIZE: instructions: 15, patchpoints: 1, rare instructions: 2
-# On ARM64 the register of the result is the one the first parameter arrived in: that one is copied.
-# ARM64SIZE: instructions: 17, patchpoints: 1, rare instructions: 3
+# ARM64SIZE: instructions: 17, patchpoints: 1, rare instructions: 2

@@ -429,7 +429,6 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
                     const Vector<AllocationClassID>& classes = application.layouts[site.layout.index()].flow.allocationClasses;
                     if (!classes.isEmpty())
                         node.classOfLayout = classes[0];
-                    node.neverChanges = neverChangesOnceMade(inputs, object);
                 } else {
                     node.markedMutations = markedMutationsOf(inputs, object);
                     node.neverChanges = neverChangesOnceMade(inputs, object);
@@ -473,11 +472,8 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
         firstSiteOfFunction.append(numberOfSites);
         for (const Node& node : nodes) {
             uint32_t site = numberOfSites++;
-            if (node.layout) {
-                if (node.neverChanges && inputs.build.isEnabled(FlowResultKind::HolderMutations, site))
-                    tables.sites.sitesOfObjectsThatNeverChange.set(site);
+            if (node.layout)
                 continue;
-            }
             AllocationClassID& classOfArrays = classOfArray(node);
             if (!classOfArrays) {
                 classOfArrays = AllocationClassID(tables.sites.allocationClasses.size());

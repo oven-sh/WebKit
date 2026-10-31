@@ -74,6 +74,9 @@ public:
     static constexpr uint8_t wasWalked = 0x20;
     static constexpr uint8_t keysShiftMask = 0x1f;
     static constexpr uint8_t indexIsInImage = 0x80;
+    // A table with more slots than the hash has values. So a stub knows from one read of the byte that the mask of the slots makes the home slot, and that a slot is short or long.
+    static constexpr uint8_t indexIsHuge = 0x40;
+    static constexpr uint8_t numberOfIndexBits = 0x3f;
     static constexpr uint32_t capacityIsInImage = 1u << 31;
     static constexpr uint8_t keysShiftWithTags = 2;
     static_assert(2u << keysShiftWithTags == maxCapacityWithTags);
@@ -85,7 +88,7 @@ public:
     static constexpr unsigned hashMask = (1u << hashBits) - 1;
     static constexpr unsigned tagShiftOfTags = 16;
 
-    // The index of a table with more than eight entries: the number of the entry in each slot, and behind all the numbers a tag byte for each slot.
+    // The index of a table with more than eight entries: a tag byte for each slot, and behind all the tags the number of the entry in each slot. A key that the table lacks is mostly known from its tag, without asking how wide the numbers are.
     // A tag is six bits of the hash under a set bit, and 0 in a free slot. A key goes into its home slot if that is free, else into the first free slot of the eight that the home slot lies among,
     // else of the following eight, and so on. No slot is ever freed. So a free slot among eight that were searched says that the key is absent: one word compare looks at all eight tags.
     // The lowest bit of a tag belongs to the slot, not to the key in it: it is set once a key that has this slot for its home went elsewhere. While it is clear, a key that is not in its home slot is absent,
@@ -102,21 +105,19 @@ public:
         static_assert(kind != SlotKind::Tag);
         static constexpr unsigned entryBytes = kind == SlotKind::Short ? 1 : kind == SlotKind::Long ? 3 : 7;
 
-        template<typename Byte> static ALWAYS_INLINE Byte* tagsOf(Byte* index, unsigned indexBits) { return index + (static_cast<size_t>(entryBytes) << indexBits); }
-
-        static ALWAYS_INLINE uint32_t entryAt(const uint8_t* index, uint32_t slot)
+        static ALWAYS_INLINE uint32_t entryAt(const uint8_t* index, unsigned indexBits, uint32_t slot)
         {
-            const uint8_t* entry = index + static_cast<size_t>(slot) * entryBytes;
+            const uint8_t* entry = index + (static_cast<size_t>(1) << indexBits) + static_cast<size_t>(slot) * entryBytes;
             if constexpr (kind == SlotKind::Short)
                 return *entry;
-            // The fourth byte belongs to the next slot, or is the first tag.
+            // The fourth byte belongs to the next slot, or to the first key.
             uint32_t word = WTF::unalignedLoad<uint32_t>(entry);
             return kind == SlotKind::Long ? word & 0xffffff : word;
         }
 
-        static ALWAYS_INLINE void setEntryAt(uint8_t* index, uint32_t slot, uint32_t number)
+        static ALWAYS_INLINE void setEntryAt(uint8_t* index, unsigned indexBits, uint32_t slot, uint32_t number)
         {
-            uint8_t* entry = index + static_cast<size_t>(slot) * entryBytes;
+            uint8_t* entry = index + (static_cast<size_t>(1) << indexBits) + static_cast<size_t>(slot) * entryBytes;
             for (unsigned byte = 0; byte < std::min(entryBytes, 4u); ++byte)
                 entry[byte] = static_cast<uint8_t>(number >> (8 * byte));
         }
@@ -382,19 +383,19 @@ public:
             }
             return std::nullopt;
         } else {
-            const uint8_t* tags = SlotFormat<kind>::tagsOf(index, indexBits);
+            const uint8_t* tags = index;
             uint32_t homeSlot = probeStartFor(indexBits, hash);
             uint8_t tag = tagOfSlot(hash);
             uint8_t tagAtHome = tags[homeSlot];
             if (hasTag(tagAtHome, tag)) {
-                uint32_t entry = SlotFormat<kind>::entryAt(index, homeSlot);
+                uint32_t entry = SlotFormat<kind>::entryAt(index, indexBits, homeSlot);
                 if (matches(entry))
                     return entry;
             }
             if (!(tagAtHome & keyLeftHomeSlot))
                 return std::nullopt;
             for (uint32_t slot = nextSlotWithTag(tags, indexBits, tag, homeSlot, noSlot); slot != noSlot; slot = nextSlotWithTag(tags, indexBits, tag, homeSlot, slot)) {
-                uint32_t entry = SlotFormat<kind>::entryAt(index, slot);
+                uint32_t entry = SlotFormat<kind>::entryAt(index, indexBits, slot);
                 if (matches(entry))
                     return entry;
             }
@@ -402,19 +403,14 @@ public:
         }
     }
 
-    static ALWAYS_INLINE uint32_t entryAt(SlotKind kind, const uint8_t* index, uint32_t slot)
+    static ALWAYS_INLINE uint32_t entryAt(SlotKind kind, const uint8_t* index, unsigned indexBits, uint32_t slot)
     {
         return withSlotKind(kind, [&](auto constantKind) ALWAYS_INLINE_LAMBDA -> uint32_t {
             if constexpr (constantKind() == SlotKind::Tag)
                 return slot;
             else
-                return SlotFormat<constantKind()>::entryAt(index, slot);
+                return SlotFormat<constantKind()>::entryAt(index, indexBits, slot);
         });
-    }
-
-    static ALWAYS_INLINE const uint8_t* tagsOf(SlotKind kind, const uint8_t* index, unsigned indexBits)
-    {
-        return index + ((kind == SlotKind::Short ? 1ull : kind == SlotKind::Long ? 3ull : 7ull) << indexBits);
     }
 
     template<typename Matches>
@@ -423,19 +419,19 @@ public:
         // One body for the kinds of slots: this is the way of the run time's own lookups, where the size of the code counts for more.
         if (kind == SlotKind::Tag)
             return probeIndex<SlotKind::Tag>(index, indexBits, used, hash, matches);
-        const uint8_t* tags = tagsOf(kind, index, indexBits);
+        const uint8_t* tags = index;
         uint32_t homeSlot = probeStartFor(indexBits, hash);
         uint8_t tag = tagOfSlot(hash);
         uint8_t tagAtHome = tags[homeSlot];
         if (hasTag(tagAtHome, tag)) {
-            uint32_t entry = entryAt(kind, index, homeSlot);
+            uint32_t entry = entryAt(kind, index, indexBits, homeSlot);
             if (matches(entry))
                 return entry;
         }
         if (!(tagAtHome & keyLeftHomeSlot))
             return std::nullopt;
         for (uint32_t slot = nextSlotWithTag(tags, indexBits, tag, homeSlot, noSlot); slot != noSlot; slot = nextSlotWithTag(tags, indexBits, tag, homeSlot, slot)) {
-            uint32_t entry = entryAt(kind, index, slot);
+            uint32_t entry = entryAt(kind, index, indexBits, slot);
             if (matches(entry))
                 return entry;
         }
@@ -448,13 +444,13 @@ public:
         if constexpr (kind == SlotKind::Tag)
             index[entry] = static_cast<uint8_t>(hash >> tagShiftOfTags);
         else {
-            uint8_t* tags = SlotFormat<kind>::tagsOf(index, indexBits);
+            uint8_t* tags = index;
             uint32_t slot = probeStartFor(indexBits, hash);
             if (tags[slot]) {
                 tags[slot] |= keyLeftHomeSlot;
                 slot = findFreeSlotBehindHome(tags, indexBits, slot);
             }
-            SlotFormat<kind>::setEntryAt(index, slot, entry);
+            SlotFormat<kind>::setEntryAt(index, indexBits, slot, entry);
             tags[slot] = tagOfSlot(hash);
         }
     }
@@ -462,6 +458,8 @@ public:
     static void insertIntoIndex(SlotKind, uint8_t* index, unsigned indexBits, uint32_t entry, unsigned hash);
 
     static unsigned indexBitsFor(uint32_t capacity);
+    // What a table holds in the byte of its index bits.
+    static constexpr uint8_t markedIndexBits(unsigned indexBits) { return static_cast<uint8_t>(indexBits > hashBits ? indexBits | indexIsInImage | indexIsHuge : indexBits); }
     static constexpr uint8_t keysShiftFor(unsigned indexBits, uint32_t capacity)
     {
         if (!indexBits)
@@ -543,6 +541,7 @@ private:
     static void setStorage(VM&, JSObject* owner, JSCell* storage);
 
     template<typename T> T* at(size_t offset) const { return reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(const_cast<CompactTable*>(this)) + offset); }
+    unsigned indexBits() const { return m_indexBits & numberOfIndexBits; }
     size_t offsetOfKeys() const { return offsetOfIndex() + (static_cast<size_t>(2) << (m_keysShiftAndFlags & keysShiftMask)); }
     size_t offsetOfValues() const { return offsetOfKeys() + static_cast<size_t>(m_capacity) * static_cast<size_t>(m_keysShiftAndFlags & keysAreWide ? Width::Wide : Width::Narrow); }
     SlotKind slotKind() const { return slotKindFor(m_capacity); }
@@ -561,7 +560,7 @@ private:
     ALWAYS_INLINE std::optional<uint32_t> findWithHash(unsigned hash, NOESCAPE const Matches& matches) const
     {
         ASSERT(isHeapTable());
-        return probeIndex(slotKind(), at<uint8_t>(offsetOfIndex()), m_indexBits, m_used, hash, matches);
+        return probeIndex(slotKind(), at<uint8_t>(offsetOfIndex()), indexBits(), m_used, hash, matches);
     }
     template<typename CharacterType> std::optional<uint32_t> findCharacters(std::span<const CharacterType>) const;
     std::optional<uint32_t> findString(JSGlobalObject*, JSString*) const;

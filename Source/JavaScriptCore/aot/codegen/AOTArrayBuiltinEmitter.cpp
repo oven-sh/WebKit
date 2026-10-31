@@ -276,38 +276,17 @@ void ArrayBuiltinEmitter::generateArraySlice(const InlineCall& call)
         return;
     CellPointer array = receiverOf(call);
     bool withPropertyRoom = resultGetsNamedProperties(call);
+    const ArrayStorageForm& wholeNumbers = arrayStorageFormOf(ArrayStorage::Int32);
+    bool makesDoubles = !withPropertyRoom && formOfCopy(call, wholeNumbers).kind != wholeNumbers.kind;
     Integer start = call.numberOfArguments() ? wholeNumberOrElse(call.argument(0), missBlockOf(call)) : Integer();
     Integer end = call.numberOfArguments() > 1 ? wholeNumberOrElse(call.argument(1), missBlockOf(call)) : Integer();
-    Join<CellPointer> join(m_out);
-    const ArrayStorageForm& wholeNumbers = arrayStorageFormOf(ArrayStorage::Int32);
-    if (!withPropertyRoom && call.context().shape() != CodeShape::Compact && formOfCopy(call, wholeNumbers).kind != wholeNumbers.kind) {
-        LBasicBlock holdsWholeNumbers = newBlock();
-        LBasicBlock holdsOtherElements = newBlock();
-        branch(elements().hasShape(elements().indexingMode(array, arrayStorageTestMask), wholeNumbers), { normalEdge(holdsWholeNumbers), normalEdge(holdsOtherElements) });
-
-        m_out.appendTo(holdsWholeNumbers);
-        missUnless(call, elements().isPristineArray(array, { PristineAspects::Storage, PristineAspects::Names }));
-        Integer from = integer(0);
-        Integer count;
-        join.add(copyIntoNewArray(call, wholeNumbers, [&](Integer length) {
-            if (start)
-                from = clampToLength(start, length);
-            Integer left = sub(end ? clampToLength(end, length) : length, from);
-            return count = select(lessThan(left, 0), 0, left);
-        }, [&](const ArrayStorageForm& made, ArrayElements source, ArrayElements target) {
-            copyElements(wholeNumbers, made, { source, from }, { target, integer(0) }, count, CopyDirection::Forward);
-        }));
-
-        m_out.appendTo(holdsOtherElements);
-    }
     StubCallResult copy;
     if (!start)
-        copy = callStub(call.context(), arrayCopy(withPropertyRoom), { array.value() });
+        copy = callStub(call.context(), makesDoubles ? arrayCopyAsDoubles() : arrayCopy(withPropertyRoom), { array.value() });
     else
-        copy = callStub(call.context(), arraySlice(withPropertyRoom), { array.value(), start.value(), (end ? end : integer(arraySliceToEnd)).value() });
+        copy = callStub(call.context(), makesDoubles ? arraySliceAsDoubles() : arraySlice(withPropertyRoom), { array.value(), start.value(), (end ? end : integer(arraySliceToEnd)).value() });
     missUnless(call, isNotEmpty(Boxed(copy.first)));
-    join.add(CellPointer(copy.first));
-    finish(call, join.finish());
+    finish(call, CellPointer(copy.first));
 }
 
 void ArrayBuiltinEmitter::generateArrayUnshift(const InlineCall& call)

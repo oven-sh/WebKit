@@ -64,7 +64,7 @@ operation TryCopyFields (object: Object/inspects, source: Object/inspects+retain
 operation GetGlobalBinding (key: PropertyKey, level: KnowledgeLevel, accessSite?: AccessSite, from Placed binding?: GlobalBinding) [seesScriptBindings isForTypeOf] -> unknown ; unknownCode ; accessClass = Slot ; replaces = PropGet ; runtime = GetGlobalBinding
 operation SetGlobalBinding (key: PropertyKey, mode: ECMAMode, value: Any/retains, level: KnowledgeLevel, accessSite?: AccessSite, from Placed binding?: GlobalBinding) [seesScriptBindings] -> none ; unknownCode ; accessClass = Slot ; replaces = PropSet ; runtime = SetGlobalBinding
 operation GetCachedGetter (object: Object/inspects, key: PropertyKey, from Placed siteCache?: SiteCache) -> unknown ; reads(ShapeWords, NamedProperties, ObjectFields, PrototypeLinks, RuntimeState) writes(RuntimeState) ; replaces = PropGet ; runtime = FindGetterAndFillSiteCache ; siteCaches = 1
-operation GetCachedValue (object: Any/inspects, key: PropertyKey, valueType: Type, from Placed siteCache?: SiteCache) -> declared(valueType) ; reads(ShapeWords, NamedProperties, ObjectFields, PrototypeLinks, RuntimeState) writes(RuntimeState) ; replaces = PropGet ; runtime = FillSiteCacheWithValue ; siteCaches = 1
+operation GetCachedValue (object: Any/inspects, key: PropertyKey, valueType: Type, from Placed siteCache?: SiteCache) -> declared(valueType) ; reads(ShapeWords, NamedProperties, ObjectFields, PrototypeLinks, RuntimeState) writes(RuntimeState) ; replaces = PropGet ; runtime = ReadValueAndFillSiteCache ; siteCaches = 1
 
 family ElementAccess Prepared..Placed
 operation GetArrayLength (array: Array/inspects, guard?: Guard/inspects) -> natural(uint32) ; reads(ArrayStorage) ; relies = Pristine, ArrayStorage ; guarded = array ; interpreted = Read
@@ -113,13 +113,6 @@ operation ToUint32 (value: Number/inspects) -> natural(uint32) ; none ; runtime 
 operation ToIntegerOrInfinity (value: Number/inspects) -> natural(number) ; none
 operation NewSetFromData (data: Data, allocationSite?: AllocationSite, from Placed request?: Request) -> allocation(Set) ; Allocates throws ; runtime = NewSetFromData ; replaces = CallBuiltin
 operation NewMapFromData (data: Data, allocationSite?: AllocationSite, from Placed request?: Request) -> allocation(Map) ; Allocates throws ; runtime = NewMapFromData ; replaces = CallBuiltin
-# formatPattern: a FormatPatternHeader and what follows it, in words.
-operation NewFormatterWithPattern (valueType: Type, formatPattern: List<UInt32>, from Placed request?: Request) -> declared(valueType) ; Allocates UsesRuntime reads(ExternalState) ; runtime = NewFormatterWithPattern ; replaces = CallBuiltin
-# Behind NewFormatterWithPattern where the formatter has options. Where the pattern may not be used, ICU reads them here, and refuses what it refuses. A getter that Object.prototype has under the name of an option runs here.
-operation SetUpFormatterWithoutPattern (formatter: Object/inspects) -> none ; unknownCode ; runtime = SetUpFormatterWithoutPattern ; replaces = CallBuiltin
-# Null: the pattern does not cover the date or the number, and the function is called.
-operation FormatDateWithPattern (date: Object/inspects, formatPattern: List<UInt32>, from Placed request?: Request) -> natural(string | null) ; Allocates UsesRuntime reads(InternalFields, ExternalState) ; runtime = FormatWithPattern ; replaces = CallBuiltin
-operation FormatNumberWithPattern (number: Number/inspects, formatPattern: List<UInt32>, from Placed request?: Request) -> natural(string | null) ; Allocates UsesRuntime reads(ExternalState) ; runtime = FormatWithPattern ; replaces = CallBuiltin
 operation NewArgumentList (callee: Any/inspects, arrayLike: Any/retains) -> allocation(Array) ; unknownCode ; runtime = NewArgumentList
 operation SharedRegExpLiteral (pattern: String, regExpFlags: RegExpFlags, from Placed regExpRecord?: RegExpRecord, from Placed staticsOffset?: StaticsOffset) -> natural(RegExp) ; CreatesConstant ; runtime = SharedRegExpLiteral ; boundTo = Site
 operation IsBuiltinLocationUnchanged (member: Builtin) -> natural(boolean) ; reads(NamedProperties) ; proves = MemberUnchanged ; branches = May ; interpreted = Test ; runtime = ArmBuiltinLocation

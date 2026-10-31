@@ -587,20 +587,22 @@ function f39 name="intermediateUsedTwice" parameters=[{type=Array<number, proven
 # CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f7
 }
 
-function f40 name="otherBlock" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-    v1 = NewClosure function=f10
-    v2 = NewArray contents=anything
-    v3 = CallDirect v0, v1, v2 function=f2
-    v4 = AssumeType v3 provenType=Array<number>
-    Jump -> next b1()
+function f40 name="otherBlock" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewClosure function=f10
+    v3 = NewArray contents=anything
+    v4 = CallDirect v0, v2, v3 function=f2
+    v5 = AssumeType v4 provenType=Array<number>
+    Branch v1 -> taken b1(), notTaken b2()
   b1():
-    v5 = NewClosure function=f11
-    v6 = NewArray contents=anything
-    v7 = CallDirect v4, v5, v6 function=f7
-    v8 = AssumeType v7 provenType=Array<number>
-    Return v8
-# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f2
-# CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f7
+    v6 = NewClosure function=f11
+    v7 = NewArray contents=anything
+    v8 = CallDirect v5, v6, v7 function=f7
+    v9 = AssumeType v8 provenType=Array<number>
+    Return v9
+  b2():
+    Return v5
+# CHECK: v4: anything = CallDirect v0, v2, {{*}} function=f2
+# CHECK: v8: anything = CallDirect v5, v6, {{*}} function=f7
 }
 
 function f41 name="rareBlock" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=boolean}] results=[{type=anything}] {

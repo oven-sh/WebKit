@@ -882,10 +882,22 @@ static TypeID typeOfCell(const AllocationSinking& sinking, VirtualObjectID objec
     return candidate.isJoin ? sinking.function().at(candidate.definition).type : sinking.descriptionOf(object).type;
 }
 
-static bool fieldValueFits(const AllocationSinking& sinking, VirtualObjectID object, const ObjectState& state, uint32_t field, TypeID type)
+static bool areElementsAssumedWithin(const Program& program, const ObjectState& state, TypeID type)
+{
+    return state.assumedTypes.containsIf([&](TypeID assumedType) {
+        const ClassPart* part = program.at(assumedType).findClassPart(BuiltinClasses::Array);
+        std::optional<ProvenValue<TypeID>> elements = part ? part->provenContentsAt(program.builtins(), ContentsSlot::Element) : std::nullopt;
+        return elements && isWithin(program, elements->value(), type);
+    });
+}
+
+static bool fieldValueFits(const AllocationSinking& sinking, VirtualObjectID object, const ObjectState& state, uint32_t field, TypeID type, FieldTypeProof admittedProof = FieldTypeProof::AssumedOfContents)
 {
     const VirtualFamily& family = sinking.familyOf(object);
+    bool isAssumedOfElements = admittedProof == FieldTypeProof::AssumedOfContents && family.fieldAt(field).kind == VirtualFieldKind::Element && areElementsAssumedWithin(sinking.program(), state, type);
     auto fitsIn = [&](const VirtualObjectDescription& description) {
+        if (isAssumedOfElements && description.kind == VirtualObjectKind::Array)
+            return true;
         return isWithin(sinking.program(), contentsOf(sinking.shapeContext(object), description, field), type);
     };
     return std::ranges::all_of(state.variants, [&](const ObjectVariant& variant) {
@@ -998,7 +1010,7 @@ static ValueID emitValueOrUndefined(AllocationSinking& sinking, ObjectInterprete
 {
     std::optional<uint32_t> carriedBits = tagBitsWhenCarried(sinking.familyOf(object), *interpreter.state().find(object), field);
     RELEASE_ASSERT(carriedBits);
-    ValueID carried = interpreter.valueOfField(object, field, type);
+    ValueID carried = interpreter.valueOfFieldRead(object, field, type);
     ValueID none = sinking.cursor().builder().appendUndefined();
     return sinking.cursor().emitSelection(interpreter.emitTagTest(object, *carriedBits), carried, none, type);
 }
@@ -1103,7 +1115,7 @@ void ObjectInterpreter::finishRead(ValueID id, VirtualObjectID object, std::opti
         return;
     case FieldRead::Value:
         if (isRewriting())
-            replaceRead(id, valueOfField(object, *field, function().at(id).type));
+            replaceRead(id, valueOfFieldRead(object, *field, function().at(id).type));
         return;
     case FieldRead::ValueOrUndefined:
         if (isRewriting())
@@ -1270,6 +1282,7 @@ void ObjectInterpreter::executeDynamicElementRead(ValueID read, VirtualObjectID 
         return true;
     };
     bool findsElement = false;
+    bool fitsAsDeclared = false;
     auto takesEveryElement = [&] {
         if (!hasListedElements(object))
             return false;
@@ -1279,7 +1292,8 @@ void ObjectInterpreter::executeDynamicElementRead(ValueID read, VirtualObjectID 
         if (!findsElement && !mayBeUndefined(program().at(type)))
             return false;
         const VirtualShape& shape = shapeOf(object, stateOf(object)->variants[0]);
-        return isWithin(program(), m_sinking.familyOf(object).descriptionOf(shape).elementType, type);
+        fitsAsDeclared = isWithin(program(), m_sinking.familyOf(object).descriptionOf(shape).elementType, type);
+        return fitsAsDeclared || areElementsAssumedWithin(program(), *stateOf(object), type);
     };
     if (!takesEveryElement())
         return executeOnCell(read, 0);
@@ -1289,7 +1303,7 @@ void ObjectInterpreter::executeDynamicElementRead(ValueID read, VirtualObjectID 
         return;
 
     ValueID none = findsElement ? ValueID() : emitUndefined();
-    Vector<ValueID, 8> elements = listedElementsOf(object);
+    Vector<ValueID, 8> elements = fitsAsDeclared ? listedElementsOf(object) : listedElementsOf(object, type, FieldTypeProof::AssumedOfContents);
     ValueID otherwise = findsElement ? elements.takeLast() : none;
     if (elements.isEmpty()) {
         replaceRead(read, otherwise);
@@ -1550,12 +1564,22 @@ ValueID ObjectInterpreter::valueOfField(VirtualObjectID object, uint32_t field)
     return cellOf(held);
 }
 
-ValueID ObjectInterpreter::valueOfField(VirtualObjectID object, uint32_t field, TypeID typeInVariants)
+ValueID ObjectInterpreter::valueOfField(VirtualObjectID object, uint32_t field, TypeID typeInVariants, FieldTypeProof proof)
 {
     ValueID value = valueOfField(object, field);
     if (isWithin(program(), function().at(value).type, typeInVariants))
         return value;
-    return cursor().emit(makeAssumeType(value, Proven::byConstruction(typeInVariants)));
+    if (proof == FieldTypeProof::Declared)
+        return cursor().emit(makeAssumeType(value, Proven::byConstruction(typeInVariants)));
+    ValueID claim = cursor().emit(makeAssumeType(value, Proven::byFlow(typeInVariants, ProofScope::BehindChecks)));
+    m_sinking.tables().claimsAssumedOfContents.append(claim);
+    return claim;
+}
+
+ValueID ObjectInterpreter::valueOfFieldRead(VirtualObjectID object, uint32_t field, TypeID typeOfRead)
+{
+    bool fitsAsDeclared = fieldValueFits(m_sinking, object, *stateOf(object), field, typeOfRead, FieldTypeProof::Declared);
+    return valueOfField(object, field, typeOfRead, fitsAsDeclared ? FieldTypeProof::Declared : FieldTypeProof::AssumedOfContents);
 }
 
 ValueID ObjectInterpreter::emitUndefined()
@@ -2209,13 +2233,19 @@ std::optional<uint32_t> ObjectInterpreter::findListedElement(VirtualObjectID obj
 Vector<ValueID, 8> ObjectInterpreter::listedElementsOf(VirtualObjectID object)
 {
     RELEASE_ASSERT(isRewriting() && hasListedElements(object));
+    return listedElementsOf(object, singleDescriptionOf(object)->elementType, FieldTypeProof::Declared);
+}
+
+Vector<ValueID, 8> ObjectInterpreter::listedElementsOf(VirtualObjectID object, TypeID typeOfElements, FieldTypeProof proof)
+{
+    RELEASE_ASSERT(isRewriting() && hasListedElements(object));
     uint32_t length = singleShapeOf(object).length;
     Vector<ValueID, 8> elements;
     elements.reserveInitialCapacity(length);
     ValueID valueOfHoles;
     for (uint32_t position = 0; position < length; ++position) {
         if (std::optional<uint32_t> field = findListedElement(object, position)) {
-            elements.append(valueOfField(object, *field, singleDescriptionOf(object)->elementType));
+            elements.append(valueOfField(object, *field, typeOfElements, proof));
             continue;
         }
         if (!valueOfHoles)

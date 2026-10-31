@@ -89,6 +89,8 @@ private:
         Value* start { nullptr };
         Value* sum { nullptr };
         Value* summand { nullptr };
+        // Set where the summand does not change from turn to turn and has been moved out of the loop.
+        Value* integerInFront { nullptr };
     };
 
     struct Plan {
@@ -158,8 +160,11 @@ private:
         };
         name(plan.start);
         name(plan.bound);
-        for (SumOfIntegers& sum : plan.sums)
+        for (SumOfIntegers& sum : plan.sums) {
             name(sum.start);
+            if (sum.integerInFront)
+                name(sum.integerInFront);
+        }
     }
 
     // A word of 64 bits in memory is a pointer or a value of any type. Lists of those are mostly short, and most loops that store them copy or fill one.
@@ -496,8 +501,13 @@ private:
             if (!isSum || !sum.start || !sum.sum || !plan.blocks.contains(sum.sum->owner))
                 continue;
             sum.summand = summandOf(sum.sum, phi);
-            if (!sum.summand || !plan.blocks.contains(sum.summand->owner))
+            if (!sum.summand)
                 continue;
+            if (!plan.blocks.contains(sum.summand->owner)) {
+                if (!m_proc.dominators().dominates(sum.summand->owner, plan.preHeader))
+                    continue;
+                sum.integerInFront = sum.summand->child(0);
+            }
             plan.sums.append(sum);
         }
         if (plan.sums.isEmpty())
@@ -647,6 +657,7 @@ private:
         if (!hasLikelyBackEdge(loop, likelyBlocks))
             return;
         unsigned numberOfValues = 0;
+        bool storesWords = false;
         for (unsigned i = loop.size(); i--;) {
             BasicBlock* block = loop.at(i);
             if (!likelyBlocks.contains(block))
@@ -654,8 +665,9 @@ private:
             if (block->last()->type() != Void)
                 return;
             for (Value* value : *block) {
-                if (!canCloneForLoop(value) || (isCall(value) && !isLoopPoll(value)) || storesWord(value))
+                if (!canCloneForLoop(value) || (isCall(value) && !isLoopPoll(value)))
                     return;
+                storesWords |= storesWord(value);
                 numberOfValues += countsTowardsSize(value);
             }
             plan.blocks.append(block);
@@ -664,6 +676,8 @@ private:
             m_proc.didReachLimit(Limit::MaxValuesPerUnrolledLoop, plan.header->at(0)->origin());
             return;
         }
+        if (storesWords && !std::ranges::any_of(*plan.header, [](Value* value) { return value->opcode() == Phi && value->type() == Double; }))
+            return;
         PhiChildren& phiChildren = prepareToReadCounters();
         if (plan.header->frequency() < m_proc.policy().loops.minFrequencyOfUnrolledLoop)
             return;
@@ -689,8 +703,8 @@ private:
             if (!chooseFactor(plan, numberOfValues))
                 return;
             findSumsOfIntegers(phiChildren, plan);
-            // A loop that walks nothing and sums nothing up would only test less often.
-            if (plan.sums.isEmpty() && !walksData(plan))
+            // A loop that walks nothing and sums nothing up would only test less often. One that stores words is written out only for its sums.
+            if (plan.sums.isEmpty() && (storesWords || !walksData(plan)))
                 return;
             if (plan.sums.isEmpty()) {
                 Plan withSidePaths = plan;
@@ -1779,27 +1793,38 @@ private:
 
         // A copy has its values in the order of the block it was made of. All the copies are found before anything is put between them.
         Vector<Variable*, 1> integers;
-        Vector<Vector<Value*, 8>, 1> summandsOfTurns;
+        Vector<Vector<Value*, 8>, 1> placesInTurns;
+        Vector<Value*, 1> widenedInFront;
         for (const SumOfIntegers& sum : plan.sums) {
             m_proc.count(B3::Counter::SumsKeptAsIntegers);
             integers.append(m_proc.addVariable(Int64));
-            size_t index = sum.summand->owner->values().find(sum.summand);
+            Value* place = sum.integerInFront ? sum.sum : sum.summand;
+            size_t index = place->owner->values().find(place);
             RELEASE_ASSERT(index != notFound);
-            Vector<Value*, 8> summands;
+            Vector<Value*, 8> places;
             for (unsigned turn = 0; turn < plan.factor; ++turn) {
-                BasicBlock* copy = turns[turn].get(sum.summand->owner);
-                Value* summand = copy->at(index);
-                RELEASE_ASSERT(summand->opcode() == IToD);
-                summand->owner = copy;
-                summands.append(summand);
+                BasicBlock* copy = turns[turn].get(place->owner);
+                Value* placeInTurn = copy->at(index);
+                RELEASE_ASSERT(placeInTurn->opcode() == place->opcode());
+                placeInTurn->owner = copy;
+                places.append(placeInTurn);
             }
-            summandsOfTurns.append(WTF::move(summands));
+            placesInTurns.append(WTF::move(places));
+            Value* widened = nullptr;
+            if (sum.integerInFront) {
+                widened = m_proc.add<Value>(SExt32, origin, sum.integerInFront);
+                plan.preHeader->appendNonTerminal(widened);
+            }
+            widenedInFront.append(widened);
         }
         for (unsigned index = 0; index < plan.sums.size(); ++index) {
-            for (Value* summand : summandsOfTurns[index]) {
-                Value* before = insertBehind(summand, m_proc.add<VariableValue>(Get, origin, integers[index]));
-                Value* wide = insertBehind(before, m_proc.add<Value>(SExt32, origin, summand->child(0)));
-                Value* after = insertBehind(wide, m_proc.add<Value>(plan.sums[index].sum->opcode(), origin, before, wide));
+            for (Value* place : placesInTurns[index]) {
+                Value* before = insertBehind(place, m_proc.add<VariableValue>(Get, origin, integers[index]));
+                Value* wide = widenedInFront[index];
+                Value* last = before;
+                if (!wide)
+                    last = wide = insertBehind(before, m_proc.add<Value>(SExt32, origin, place->child(0)));
+                Value* after = insertBehind(last, m_proc.add<Value>(plan.sums[index].sum->opcode(), origin, before, wide));
                 insertBehind(after, m_proc.add<VariableValue>(Set, origin, integers[index], after));
             }
         }

@@ -811,7 +811,7 @@ static void recordFitsRoleForEveryRole()
         { CreatorRecord::None { }, { FunctionRole::Source, FunctionRole::Library, FunctionRole::Model, FunctionRole::Signature, FunctionRole::OutlinedBody } },
         { CreatorRecord::Entrypoint { }, { FunctionRole::GenericEntrypoint, FunctionRole::TableEntrypoint } },
         { CreatorRecord::TableLookup { }, { FunctionRole::TableLookup } },
-        { CreatorRecord::Version { }, { FunctionRole::GenericVersion, FunctionRole::AllocatedThisVersion, FunctionRole::ConstructBody, FunctionRole::CallSiteVersion, FunctionRole::CalleeVersion } },
+        { CreatorRecord::Version { }, { FunctionRole::GenericVersion, FunctionRole::AllocatedThisVersion, FunctionRole::ConstructBody, FunctionRole::CallSiteVersion, FunctionRole::CalleeVersion, FunctionRole::ChecksThatGiveUp } },
         { CreatorRecord::Coroutine { }, { FunctionRole::CoroutineRamp, FunctionRole::CoroutineBody, FunctionRole::AsyncWorker } },
         { CreatorRecord::BoundFunction { }, { FunctionRole::BoundFunction } },
         { CreatorRecord::ResultWrapper { }, { FunctionRole::ResultWrapper } },

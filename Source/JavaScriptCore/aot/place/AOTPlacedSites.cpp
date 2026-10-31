@@ -1105,7 +1105,7 @@ PlacedSites BodyScansForPlacement::takeSites(const PlacementContext& context)
             unsigned sourceFieldCreations = KeptSites::numberOf(&PlacedFunctionSites::sourceFieldCreations);
             for (KeptSites* function : functions)
                 sites.sourceFieldCreations.appendVector(WTF::move(function->list<FieldCreationUse>(sourceFieldCreations)));
-            std::ranges::stable_sort(sites.sourceFieldCreations, { }, &FieldCreationUse::layout);
+            AOT::stableSortInLine(sites.sourceFieldCreations, { }, &FieldCreationUse::layout);
             mergeEach(&SiteLists::allocations, &SiteLists::keyOrderTests, &SiteLists::fieldCreations, &SiteLists::guards);
             sites.guards.removeAllMatching([&](const GuardUse& guard) {
                 return speaksOfNameOrLengthMadeOnDemand(program, guard) || isLookedForAboveRecords(context, guard);

@@ -1,12 +1,10 @@
 # function applyAll(node, props) { for (const [key, value] of Object.entries(props)) apply(node, key, value) }   props comes out of JSON.parse
-# The loop alone has the list, so the run time is asked for the keys and values in one list. The pattern takes each pair apart again: a pair lies in the frame, and nothing walks it
+# The loop alone has the list, so the run time is asked for the keys and values in one list. The pattern takes each pair apart again: none is made, and nothing walks one
 # FORM: AsRead
 # RUN: pipeline Select
 # CHECK-LABEL: function f2 name="applyAll"
 # CHECK-NOT: = NewArray
 # CHECK: = CallBuiltin -, v1 overload=CompilerHelpersOwnEntriesFlat/0
-# CHECK-NOT: = NewArray
-# CHECK: = NewArray {{*}} storage=Frame
 # CHECK-NOT: = NewArray
 # CHECK-LABEL: function f3
 # RUN(GONE): pipeline Select

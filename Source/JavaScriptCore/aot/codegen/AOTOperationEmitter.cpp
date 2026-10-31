@@ -121,6 +121,13 @@ Representation OperationEmitter::resultRepresentationOf(const InlineCall& call) 
     return parameter ? representationOf(parameter) : Representation::Void;
 }
 
+ValueID OperationEmitter::resultOf(const InlineCall& call) const
+{
+    if (const ValueContext* value = call.value())
+        return value->id();
+    return resultParameterOf(m_function, *call.terminator());
+}
+
 const Type& OperationEmitter::resultTypeOf(const InlineCall& call) const
 {
     if (const ValueContext* value = call.value())

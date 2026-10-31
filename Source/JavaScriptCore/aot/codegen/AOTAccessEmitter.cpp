@@ -582,6 +582,7 @@ void AccessEmitter::generateGetCachedValue(const ValueContext& value)
     LBasicBlock isNoValue = newBlock();
     LBasicBlock isThere = newBlock();
     LBasicBlock holdsReference = newBlock();
+    LBasicBlock asksRunTime = newBlock();
     LBasicBlock hasOtherStructure = newBlock();
     LBasicBlock findsNothing = newBlock();
     Join<Boxed> join(m_out);
@@ -599,7 +600,7 @@ void AccessEmitter::generateGetCachedValue(const ValueContext& value)
     branchUnless(equal(kind, static_cast<int32_t>(Slot::Kind::Absent)), isThere);
     join.add(undefined());
 
-    // A field of a compiled object above this one: the slot names the word that holds the integer, or with a negative number the reference. A word that says something else is for the lookup.
+    // A field of a compiled object above this one: the slot names the word that holds the integer, or with a negative number the reference. Any other word, and any other form of field, is read by the run time.
     m_out.appendTo(isThere);
     branchUnless(equal(kind, static_cast<int32_t>(Slot::Kind::InheritedField)), findsNothing);
     Word32 word(m_out.load16SignExt32(partOfSlot(Slot::offsetOfLocation())));
@@ -609,19 +610,21 @@ void AccessEmitter::generateGetCachedValue(const ValueContext& value)
     };
     branchUnless(greaterThan(word, 0), holdsReference);
     Word32 integer(loadWord(word));
-    branchUnless(greaterThanOrEqual(integer, minInlineInt32), findsNothing);
+    branchUnless(greaterThanOrEqual(integer, minInlineInt32), asksRunTime);
     join.add(boxInt32(integer));
 
     m_out.appendTo(holdsReference);
-    branchUnless(lessThan(word, word32(0)), findsNothing);
+    branchUnless(lessThan(word, word32(0)), asksRunTime);
     NarrowReference reference(loadWord(Word32(m_out.neg(word.value()))));
-    branchUnless(isCellReferenceAmongAllWords(reference), findsNothing);
+    branchUnless(isCellReferenceAmongAllWords(reference), asksRunTime);
     join.add(boxCell(decode(reference)));
 
     m_out.appendTo(hasOtherStructure);
     branchUnless(countMissAtSite(site), findsNothing);
-    callVoidOperation(value, RuntimeOperation::FillSiteCacheWithValue, { object, word32(static_cast<int32_t>(*identifier)), site }, { .isOnRarePath = true });
-    join.add(loadBySlotAtSite(object, site, Slot::Kind::Value, findsNothing, findsNothing));
+    m_out.jump(asksRunTime);
+
+    m_out.appendTo(asksRunTime);
+    join.add(callOperation<Boxed>(value, RuntimeOperation::ReadValueAndFillSiteCache, { object, word32(static_cast<int32_t>(*identifier)), site }, { .isOnRarePath = true }));
 
     m_out.appendTo(findsNothing);
     join.add(absent);

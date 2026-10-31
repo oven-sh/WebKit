@@ -1037,7 +1037,7 @@ struct DeadCodeEliminator {
                 if (function.inlineFrames[frame].calleeIsKeptInFrame && hasExit.quickGet(frame))
                     callsWithQueriedCallee->append(keyOfCall(function.inlineFrames[frame].callPosition, function.inlineFrames[frame].parent));
             }
-            std::ranges::sort(*callsWithQueriedCallee);
+            AOT::sort(*callsWithQueriedCallee);
         }
         return std::ranges::binary_search(*callsWithQueriedCallee, keyOfCall(keep.position, keep.inlineFrame));
     }
@@ -2453,6 +2453,60 @@ struct TrivialParameterRemover {
         }
     }
 
+    // A join takes one value twice, as it comes and as a test has narrowed it: a copy above a test leaves that behind, where what the failing side still reads comes along beside what a slow path brings back. The wider parameter is the narrower one seen from further away.
+    bool findParametersThatTakeWhatAnotherTakes()
+    {
+        bool found = false;
+        Vector<uint32_t> firstPositionWithIdentity(FillWith { }, function.values.size(), noPosition);
+        Vector<ValueID, 8> identities;
+        for (uint32_t start = 0, end = 0; start < parameters.size(); start = end) {
+            BlockID block = parameters[start].block;
+            for (end = start; end < parameters.size() && parameters[end].block == block; ++end) { }
+            std::span<const Edge> edges = cfg.incomingEdges(block);
+            if (end - start < 2 || edges.size() < 2 || function.at(block).handler)
+                continue;
+            auto takesSameValue = [&](const ParameterPosition& a, const ParameterPosition& b) {
+                return std::ranges::all_of(edges, [&](Edge edge) {
+                    ValueID passedToA = valuePassedOn(function, edge, a.index);
+                    ValueID passedToB = valuePassedOn(function, edge, b.index);
+                    return passedToA && passedToB && analyses.identityOf(passedToA) == analyses.identityOf(passedToB);
+                });
+            };
+            identities.shrink(0);
+            for (uint32_t index = start; index < end; ++index) {
+                ValueID parameter = parameters[index].parameter;
+                ValueID passed = valuePassedOn(function, edges[0], parameters[index].index);
+                if (!passed || candidates.resolve(parameter) != parameter || parameter == function.at(block).subject)
+                    continue;
+                ValueID identity = analyses.identityOf(passed);
+                uint32_t& first = firstPositionWithIdentity[identity.index()];
+                if (first == noPosition) {
+                    first = index;
+                    identities.append(identity);
+                    continue;
+                }
+                const ParameterPosition& other = parameters[first];
+                if (!takesSameValue(other, parameters[index]))
+                    continue;
+                const Type& type = context.types.at(function.at(parameter).type);
+                const Type& otherType = context.types.at(function.at(other.parameter).type);
+                if (!type.isJavaScriptValue() || !otherType.isJavaScriptValue())
+                    continue;
+                if (type.isSubsetOf(otherType, context.program)) {
+                    candidates.replace(other.parameter, parameter);
+                    first = index;
+                    found = true;
+                } else if (otherType.isSubsetOf(type, context.program)) {
+                    candidates.replace(parameter, other.parameter);
+                    found = true;
+                }
+            }
+            for (ValueID identity : identities)
+                firstPositionWithIdentity[identity.index()] = noPosition;
+        }
+        return found;
+    }
+
     size_t replaceParametersOf(BlockID id, IRBuilder& builder, ValueSubstitution& replacements)
     {
         struct PendingUpcast {
@@ -2530,7 +2584,10 @@ PassOutcome removeTrivialParameters(FunctionPassContext& context)
     TrivialParameterRemover remover { context, WTF::move(parameters) };
     for (uint32_t index = 0; index < remover.parameters.size(); ++index)
         remover.positionOfParameter[remover.parameters[index].parameter.index()] = index;
-    bool hasWork = remover.findCandidates() || std::ranges::any_of(remover.parameters, [&](const ParameterPosition& position) {
+    bool hasWork = remover.findCandidates();
+    if (context.hasCopiedJoinsAboveTests)
+        hasWork |= remover.findParametersThatTakeWhatAnotherTakes();
+    hasWork = hasWork || std::ranges::any_of(remover.parameters, [&](const ParameterPosition& position) {
         return remover.onlyValueOf(function.at(position.block), position.parameter).isKnown();
     });
     if (!hasWork)

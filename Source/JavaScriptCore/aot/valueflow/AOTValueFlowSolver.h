@@ -1301,9 +1301,8 @@ private:
     bool m_saturates { false };
     ValueSetID m_untrackedObjectAlone;
     bool m_hasSaidThatAllElseIsAtRest { false };
-    ListWithRoomToFill<uint32_t> m_layoutOrCalleeOfMember;
-    ListWithRoomToFill<uint32_t> m_lastCountThatSaw;
-    uint32_t m_numberOfCounts { 0 };
+    // 0 for what is no object.
+    uint32_t layoutOrCalleeOf(ValueFlowObjectID) const;
     HashMap<uint32_t, bool, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_isTooLarge;
     BitVector m_isSaturated;
 

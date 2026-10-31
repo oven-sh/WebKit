@@ -297,6 +297,7 @@ private:
     ClimbingSet builtinObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     void writeToListedObjects(ClimbingSet listed, ValueFlowName, const ValueFlowOperand& value);
     ClimbingSet unlockedObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
+    ClimbingSet prototypeObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     ClimbingSet holdersOfReplaceableMemberThatUnknownObjectMayBe(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     // Bun stays listed beside the unknown object wherever it goes, so that a name read on it or on a copy of it is found. Anything else counts as done to Bun only where Bun is followed from a read under its name.
     ClimbingSet findListedBun(const ValueFlowOperand& object, ClimbingSet receivers) { return object.node && mayBeUnknownObject(receivers) ? m_context.valueWithin(ClimbingSet(only(m_universe.objectOf(Builtins::Bun))), object.node) : ClimbingSet(); }

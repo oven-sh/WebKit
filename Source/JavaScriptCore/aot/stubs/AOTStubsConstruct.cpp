@@ -283,7 +283,7 @@ PreludeExit emitGetSuperBasePrelude(StubAssembler& jit)
     constexpr GPRReg home = operationArgumentGPR(1);
     constexpr GPRReg homeKind = operationArgumentGPR(2);
     const GPRReg homeObject = isTailCall ? jit.allocateScratch(StubRegister::R0) : jit.result();
-    RELEASE_ASSERT(homeObject == GPRInfo::returnValueGPR && noOverlap(home, homeKind, homeObject));
+    RELEASE_ASSERT(noOverlap(home, homeKind, homeObject));
     static_assert(!static_cast<uint32_t>(Typed::HomeObjectKind::Object) && static_cast<uint32_t>(Typed::HomeObjectKind::ClassPrototype) == 1);
 
     JumpList callsOperation;

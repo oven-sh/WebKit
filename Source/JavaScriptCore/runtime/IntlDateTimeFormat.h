@@ -54,13 +54,6 @@ using UDateFormatDeleter = ICUDeleter<udat_close>;
 
 class IntlDateTimeFormatImpl;
 
-#if ENABLE(AOT)
-namespace AOT {
-struct FormatPatternHeader;
-enum class FormatPatternUse : uint8_t;
-}
-#endif
-
 class IntlDateTimeFormat final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
@@ -138,22 +131,6 @@ public:
 
     const IntlDateTimeFormatImpl& impl() const LIFETIME_BOUND { return *m_impl; }
     void setImpl(Ref<const IntlDateTimeFormatImpl>&& impl) { m_impl = WTF::move(impl); }
-
-#if ENABLE(AOT)
-    // A formatter that compiled code made from constants. It writes from a pattern of the build, and ICU is set up for it when something else is asked of it.
-    const AOT::FormatPatternHeader* compiledPattern() const { return m_compiledPattern; }
-    AOT::FormatPatternUse compiledPatternUse() const { return m_compiledPatternUse; }
-    void setCompiledPattern(const AOT::FormatPatternHeader*, AOT::FormatPatternUse);
-    uint32_t timeZoneIDAtCreation() const { return m_timeZoneIDAtCreation; }
-    // The stretch of time around the time value that was formatted last in which a named time zone keeps one offset.
-    struct UTCOffsetOfStretch {
-        double start { 1 };
-        double end { 0 };
-        double offset { 0 };
-    };
-    UTCOffsetOfStretch& utcOffsetOfStretch() LIFETIME_BOUND { return m_utcOffsetOfStretch; }
-    void initializeIfDeferred(JSGlobalObject*);
-#endif
 
     enum class TimeZoneName : uint8_t { None, Short, Long, ShortOffset, LongOffset, ShortGeneric, LongGeneric };
     enum class DateTimeStyle : uint8_t { None, Full, Long, Medium, Short };
@@ -235,12 +212,6 @@ private:
     WriteBarrier<JSBoundFunction> m_boundFormat;
     std::unique_ptr<UDateIntervalFormat, UDateIntervalFormatDeleter> m_dateIntervalFormat;
     RefPtr<const IntlDateTimeFormatImpl> m_impl;
-#if ENABLE(AOT)
-    const AOT::FormatPatternHeader* m_compiledPattern { nullptr };
-    uint32_t m_timeZoneIDAtCreation { 0 };
-    AOT::FormatPatternUse m_compiledPatternUse { };
-    UTCOffsetOfStretch m_utcOffsetOfStretch;
-#endif
 };
 
 class IntlDateTimeFormatTemporalFormatterCache {

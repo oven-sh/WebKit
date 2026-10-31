@@ -166,7 +166,6 @@ struct ConstantVariableStore {
     VariableID variable;
     KnownValue value;
     std::optional<Vector<KnownValue, 8>> list;
-    std::optional<Vector<ConstantMember, 8>> members;
 };
 
 } // anonymous namespace
@@ -184,13 +183,11 @@ static Vector<ConstantVariableStore> collectConstantStores(const Program& progra
             // The type of what a store stores has to lie inside the type of the variable, so the type has to say the constant.
             KnownValue stored;
             std::optional<Vector<KnownValue, 8>> list;
-            std::optional<Vector<ConstantMember, 8>> members;
             if (value.opcode == Opcode::PutModuleVariable) {
                 stored = knownValueOfType(program.typeOf(program.functions[index], value.valueOperand()));
                 list = findConstantsOfWholeLiteral(program, flow, program.functions[index], value.valueOperand());
-                members = findMembersOfWholeObject(program, flow, program.functions[index], value.valueOperand());
             }
-            stores.append(ConstantVariableStore { value.variable(), stored.isObject() ? KnownValue() : stored, WTF::move(list), WTF::move(members) });
+            stores.append(ConstantVariableStore { value.variable(), stored.isObject() ? KnownValue() : stored, WTF::move(list) });
         });
     });
 }
@@ -206,11 +203,8 @@ static ConstantLists collectListsStoredAlone(const Program& program, const Vecto
     for (const ConstantVariableStore& store : stores) {
         if (store.list && numberOfStores[store.variable.index()] == 1)
             lists.entries.append({ store.variable, Vector<KnownValue>(store.list->span()) });
-        if (store.members && numberOfStores[store.variable.index()] == 1)
-            lists.objects.append({ store.variable, Vector<ConstantMember>(store.members->span()) });
     }
     AOT::sort(lists.entries, { }, &ConstantLists::Entry::variable);
-    AOT::sort(lists.objects, { }, &ConstantLists::ObjectEntry::variable);
     return lists;
 }
 

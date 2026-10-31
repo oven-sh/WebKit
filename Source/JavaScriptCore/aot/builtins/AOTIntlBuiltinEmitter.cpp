@@ -8,8 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTDateBuiltinEmitter.h"
-
 namespace JSC { namespace AOT { namespace Typed {
 
 IntlBuiltinEmitter::IntlBuiltinEmitter(CodeGenerator& generator)
@@ -34,7 +32,7 @@ void IntlBuiltinEmitter::generateFormatDateTime(const InlineCall& call)
 {
     RELEASE_ASSERT(call.numberOfArguments());
     Boxed formatter = boxedOperand(call.context(), call.receiver());
-    Number timeValue = typeOf(call.argument(0)).isNumber() ? numberOperand(call.argument(0)) : emitter<DateBuiltinEmitter>().timeValueOf(cellOperand(call.argument(0)));
+    Number timeValue = numberOperand(call.argument(0));
     finishWithTextOrMiss(call, callOperation<CellPointer>(call.context(), RuntimeOperation::FormatDateTime, { formatter, timeValue }));
 }
 

@@ -395,7 +395,7 @@ private:
         TypeFit fit = fitOfLayout(layout);
         m_isInside &= fit == TypeFit::Inside;
         m_isOutside &= fit == TypeFit::Outside;
-        m_fitsIfPristine &= fit == TypeFit::Inside || isNeverPristineInstance(layout);
+        m_fitsIfPristine &= fit == TypeFit::Inside || isInstanceIfPristine(layout);
     }
 
     TypeFit fitOfMember(BuiltinPrimitive member) const { return has(member) ? TypeFit::Inside : TypeFit::Outside; }
@@ -405,7 +405,7 @@ private:
     TypeFit fitOfFunctions() const;
     TypeFit fitOfBuiltin(BuiltinID) const;
     TypeFit fitOfLayout(LayoutID) const;
-    bool isNeverPristineInstance(LayoutID) const;
+    bool isInstanceIfPristine(LayoutID) const;
     TypeFit fitOfClassPart(const ClassPart&);
     TypeFit fitOfContents(const ClassPart&, const BuiltinTypePart& admitting) const;
 
@@ -589,11 +589,12 @@ TypeFit FitWalk::fitOfLayout(LayoutID layout) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool FitWalk::isNeverPristineInstance(LayoutID layout) const
+// The test of a class that is pristine looks at the object, whatever flow could prove of the layout: `Reflect.construct(A, [], Other)` where Other is a plain function that may also make objects of its own.
+bool FitWalk::isInstanceIfPristine(LayoutID layout) const
 {
     BuiltinClassID builtinClass = m_program.at(layout).writtenBuiltinBase;
     const BuiltinTypePart* admitting = builtinClass ? findPartAdmitting(m_table, m_tested, builtinClass) : nullptr;
-    return admitting && !admitting->pristine.isEmpty() && admitting->contents.empty();
+    return admitting && admitting->contents.empty();
 }
 
 TypeFit FitWalk::fitOfContents(const ClassPart& part, const BuiltinTypePart& admitting) const

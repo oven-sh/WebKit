@@ -136,14 +136,15 @@ function f1 name="sum" module=m0 position=39 flags=[IsChecked, HasExplicitName] 
     Rethrow v32
 }
 
-# Object.entries of a proven layout is written out as the list of names and values one behind the other. A short list leaves no loop, and a pair lives in the frame.
+# Object.entries of a proven layout is written out as the list of names and values one behind the other. A short list leaves no loop, and the pattern takes each pair apart: none is made.
 # CHECK-LABEL: name="sum" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NOT: :CallBuiltin
+# CHECK-NOT: :NewArray
 # CHECK: Double b@{{*}} = Load(b@[[point]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NOT: :NewArray
 # CHECK: Double b@{{*}} = Load(b@[[point]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
-# CHECK: SlotBase(stack{{*}}:NewArray)
-# CHECK: SlotBase(stack{{*}}:NewArray)
 # CHECK-NOT: :CallBuiltin
+# CHECK-NOT: :NewArray
 # CHECK-LABEL: end of function
 # NONE-NOT: loop #

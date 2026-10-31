@@ -134,6 +134,8 @@ struct ArrayChain {
     ValueID endOperand;
     ValueID lastCall;
     bool startsOverAfterThrow { false };
+    // By position among the callbacks: the tests at the head of the callback throw instead of running its fallback.
+    uint8_t callbacksThatGiveUp { 0 };
 
     ValueID firstCall() const { return rangeCall ? rangeCall : callbacks.isEmpty() ? lastCall : callbacks[0].call; }
 };
@@ -141,7 +143,8 @@ struct ArrayChain {
 // The body of its callee is about to take the place of a call that is taken alone, so no longer chain will come of it.
 Vector<ArrayChain> findArrayChains(FunctionPassContext&, const BitVector* callsTakenAlone = nullptr, BlockID onlyBlock = { }, ChainOperandProofs = ChainOperandProofs::Required);
 PassOutcome fuseArrayMethodsTakenAlone(FunctionPassContext&, const BitVector& calls);
-ArrayChainDeclineReason checkInterleaving(FunctionPassContext&, const ArrayChain&, ChainOperandProofs = ChainOperandProofs::Required, bool* startsOverAfterThrow = nullptr);
+ArrayChainDeclineReason checkInterleaving(FunctionPassContext&, const ArrayChain&, ChainOperandProofs = ChainOperandProofs::Required, bool* startsOverAfterThrow = nullptr, uint8_t* callbacksThatGiveUp = nullptr);
+bool hasEntranceThatCanGiveUp(const Function&);
 FunctionID findChainTraversal(const Program&);
 
 static_assert(ChainShape::decode(ChainShape { { ChainLinkKind::Filter, ChainLinkKind::Map, ChainLinkKind::None }, ChainEndKind::Reduce, true }.encode()).numberOfLinks() == 2);

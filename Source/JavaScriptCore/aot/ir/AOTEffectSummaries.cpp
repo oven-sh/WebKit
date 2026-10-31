@@ -557,6 +557,7 @@ bool describeByRole(const Program& program, const Function& function, EffectDesc
     case FunctionRole::ResultWorker:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
+    case FunctionRole::ChecksThatGiveUp:
     case FunctionRole::StubBody:
         return false;
     }
@@ -593,8 +594,8 @@ CalleeSummary::CalleeSummary(const EffectContext& context, FunctionID id)
 {
     if (context.summaries.contains(id)) [[likely]]
         return;
-    // A callee version is the body of its source with the same parameters, given fewer values.
-    while (id && !context.summaries.contains(id) && context.program.at(id).role == FunctionRole::CalleeVersion) {
+    // A callee version is the body of its source with the same parameters, given fewer values. Tests that give up do what the tests they stand for do, or throw, as a function that may run unknown code may.
+    while (id && !context.summaries.contains(id) && (context.program.at(id).role == FunctionRole::CalleeVersion || context.program.at(id).role == FunctionRole::ChecksThatGiveUp)) {
         id = context.program.at(id).derivation.source;
         m_computed = context.summaries.of(id);
     }

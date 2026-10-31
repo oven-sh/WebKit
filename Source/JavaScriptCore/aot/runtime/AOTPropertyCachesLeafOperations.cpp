@@ -498,15 +498,21 @@ static LeafAnswer putToFinalObject(Instance* instance, JSObject* object, Uniqued
 }
 
 // A property of the global object that a store through globalThis has filed: filing it fired what watched its replacement, as for any store that a stub makes.
-static LeafAnswer putToGlobalObjectThroughItsProxy(Instance* instance, JSObject* proxy, UniquedStringImpl* uid, JSValue value)
+static LeafAnswer putToGlobalObjectThroughItsProxy(Instance* instance, JSObject* proxy, JSCell* key, UniquedStringImpl* uid, JSValue value)
 {
     JSGlobalObject* target = instance->globalObject;
     if (proxy != target->globalThis())
         return LeafAnswer::TakeSlowPath;
-    const Slot* filed = instance->state->propertyCaches->findByKey(target->structure(), uid, SlotAccess::Store);
+    Structure* structure = target->structure();
+    const Slot* filed = instance->state->propertyCaches->findByKey(structure, uid, SlotAccess::Store);
     if (!filed || !filed->has(Slot::isOwn) || (filed->kind != Slot::Kind::Value && filed->kind != Slot::Kind::FarValue))
         return LeafAnswer::TakeSlowPath;
-    target->putDirectOffset(*instance->vm, filed->offsetInStorage(), value);
+    PropertyOffset offset = filed->offsetInStorage();
+    target->putDirectOffset(*instance->vm, offset, value);
+    if (proxy->classInfo() == JSGlobalProxy::info() && uncheckedDowncast<JSGlobalProxy>(proxy)->target() == target) {
+        auto placesForStores = instance->keyedValuePlaces().last<KeyedValuePlace::numberOfPlacesPerAccess>();
+        placesForStores[KeyedValuePlace::offsetFor(key, proxy->structureID()) >> KeyedValuePlace::sizeShift] = { key, structure->id().bits() + KeyedValuePlace::globalObjectBit, { Slot::wordIndexFor(offset) } };
+    }
     return LeafAnswer::Yes;
 }
 
@@ -521,7 +527,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPutByValGeneric, size_t, (Instance
     else if (name.kind == KeyNameKind::Name && base->type() == FinalObjectType)
         answer = putToFinalObject(instance, asObject(base), name.uid, value);
     else if (name.kind == KeyNameKind::Name && base->type() == GlobalProxyType)
-        answer = putToGlobalObjectThroughItsProxy(instance, asObject(base), name.uid, value);
+        answer = putToGlobalObjectThroughItsProxy(instance, asObject(base), key, name.uid, value);
     else if (Object* object = name.kind == KeyNameKind::Name ? compiledObjectOrNull(base) : nullptr)
         answer = putToCompiledObject(instance, object, name.uid, value);
     return static_cast<size_t>(answer);

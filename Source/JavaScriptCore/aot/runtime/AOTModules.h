@@ -233,6 +233,7 @@ public:
     JSString* resolve(ModuleID, ResolvedSpecifierForm);
     const SourceOrigin& sourceOrigin(ModuleID);
     void throwFailure(ModuleFailureID, bool isForRequire);
+    void throwNewFailure(ModuleFailureID, bool isForRequire);
     std::optional<ModuleFailureID> loadFailure(ModuleID module) const { return m_table.loadFailure(module); }
     void throwExportNotFound(const RequiredNameData&);
     void throwExportAmbiguous(const RequiredNameData&);
@@ -414,6 +415,7 @@ public:
     bool wasLoadedWithGraph(ModuleID) const;
     bool setIsAskingHost(bool isAskingHost) { return std::exchange(m_isAskingHost, isAskingHost); }
     bool wasImportedWhileItRan(ModuleID file) const;
+    bool loaderHasFileThatThrew(ModuleID file);
     void dropErrorOfFile(ModuleID fileOrFace);
     void didLoseErrorOfModule(const Identifier& key);
     void evaluateCommonJSForLoader(ModuleID file);
@@ -502,6 +504,7 @@ private:
         bool capturedFieldsAreOfRuntimeModule { false };
         Identifier resolvedKey;
         bool wasLoadedWhileItRan { false };
+        bool wasLoadedSynchronouslyWhileItRan { false };
         bool isAnsweredWithNamespace { false };
         bool bindsEarlierCapture { false };
         bool didDropError { false };
@@ -542,6 +545,7 @@ private:
     void throwEvaluationError(ModuleID);
     static JSPromise* rejectedPromiseWithPendingException(JSGlobalObject*, ThrowScope&);
     Identifier moduleKey(ModuleID);
+    std::optional<ModuleID> findByKey(const Identifier&) const;
     Identifier keyOfRequest(ModuleID target);
     JSObject* namespaceIfCreated(ModuleID, ModulePhase) const;
     void setNamespace(ModuleID, ModulePhase, JSObject*);

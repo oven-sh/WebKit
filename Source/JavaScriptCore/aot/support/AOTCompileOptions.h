@@ -182,6 +182,7 @@ struct CompileOptions {
     OutputOptions output { };
     // The images that were built before this one for the same realms, the first of them first, as their builds wrote them. They outlive the build.
     Vector<std::span<const uint8_t>, 2> imagesBelow;
+    std::span<const uint8_t> referenceLibraryImage;
     LoggingOptions logging;
 
     bool isVerifyOnly() const { return action == CompileAction::VerifyOnly; }

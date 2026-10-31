@@ -85,4 +85,4 @@ function f1 name="eight" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 # X64: name="eight" role=Source
 # X64-NEXT: instructions: 40, patchpoints: 1, rare instructions: 2
 # ARM64: name="eight" role=Source
-# ARM64-NEXT: instructions: 34, patchpoints: 1, rare instructions: 2
+# ARM64-NEXT: instructions: 32, patchpoints: 1, rare instructions: 2

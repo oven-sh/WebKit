@@ -17,6 +17,7 @@
 #include "AOTIRProgram.h"
 #include "AOTResultRulesInternal.h"
 #include "AOTTypeRelations.h"
+#include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <concepts>
@@ -458,12 +459,54 @@ Type ResultRules::sameAs(const Value& value, uint32_t operandIndex)
     return typeOfConvert(context, source, context.types.at(context.function.at(operand).type), value.declared());
 }
 
+// The prototype of `new.target` selects the layout, whichever class above it the allocation is written in.
+static ValueID newTargetThatSelectsLayout(const Function& function, const Value& allocation)
+{
+    const Value& prototype = function.at(sameObjectThroughCasts(function, allocation.prototypeOperand()));
+    return prototype.opcode == Opcode::GetConstructPrototype ? prototype.newTargetOperand() : ValueID();
+}
+
+// For a class that is not below the class of the allocation the run time makes an ordinary object.
+static bool mayLieAtOrBelow(const Program& program, LayoutID id, LayoutID above)
+{
+    for (size_t steps = 0; id && steps < program.layouts.size(); ++steps) {
+        if (id == above)
+            return true;
+        const LayoutFlow& flow = program.at(id).flow;
+        if (flow.baseState == BaseState::Unknown)
+            return true;
+        id = flow.baseState == BaseState::Layout ? flow.base : LayoutID();
+    }
+    return false;
+}
+
+static Vector<LayoutID, 8> layoutsSelectedByNewTarget(const TypingContext& context, const Value& allocation)
+{
+    ValueID operand = newTargetThatSelectsLayout(context.function, allocation);
+    if (!operand)
+        return { };
+    const Type& newTarget = context.types.at(context.function.at(operand).type);
+    if (!newTarget.isObject() || !newTarget.hasOnlyKnownCallees() || newTarget.layouts || newTarget.functions.isEmpty() || !newTarget.builtins.isEmpty())
+        return { };
+    Vector<LayoutID, 8> layouts;
+    for (FunctionID constructor : newTarget.functions) {
+        LayoutID constructed = context.program.at(constructor).constructedClass;
+        if (!constructed)
+            return { };
+        if (mayLieAtOrBelow(context.program, constructed, allocation.layout()))
+            layouts.append(constructed);
+    }
+    return layouts;
+}
+
 Type ResultRules::allocation(const Value& value, LayoutID layout)
 {
     if (!mayAllocateOtherLayout(context.program, value))
         return typeOfAllocatedLayout(context, layout);
     if (context.level == TypeLevel::Proven)
         return Type::object();
+    if (Vector<LayoutID, 8> selected = layoutsSelectedByNewTarget(context, value); !selected.isEmpty())
+        return Type::forLayouts(selected.span(), context.types);
     Vector<LayoutID, 8> layouts { layout };
     layouts.append(context.program.layoutsExpectedBelow(layout));
     return Type::forLayouts(layouts.span(), context.types);
@@ -1119,6 +1162,10 @@ static void addKeyOfResult(auto& hasher, const TypingContext& context, const Val
     });
     if (value.opcode == Opcode::Convert)
         hasher.add(context.function.at(value.valueOperand()).type);
+    if (isExpected && mayAllocateOtherLayout(context.program, value)) {
+        ValueID newTarget = newTargetThatSelectsLayout(context.function, value);
+        hasher.add(newTarget ? context.function.at(newTarget).type : TypeID());
+    }
 }
 
 TypeID computeResultTypeID(const TypingContext& context, const Value& value)

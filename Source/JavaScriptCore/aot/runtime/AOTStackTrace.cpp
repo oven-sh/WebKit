@@ -994,6 +994,9 @@ static NEVER_INLINE ReturnAddressTrace* tryCaptureRunsOfImages(VM& vm, JSCell* o
             runs.append({ static_cast<uint32_t>(run.returnAddresses.size()), walk->image().position() });
         }
     }
+    // `text => JSON.parse(text)`, called by a job of a promise: the run on top is empty and no compiled code has called it. A trace in such a VM has a run.
+    if (runs.isEmpty())
+        return nullptr;
     return tryMakeTrace(vm, owner, maxStackSize, otherFrames, lastConstructorToSkip, allocate, instance, run, &callees, runs.span(), *walk, framesAbove, start.calleeWasEntered, entryFrameOfLastRun);
 }
 

@@ -75,23 +75,7 @@ static consteval bool shapesCoverPreservingCalls()
     return true;
 }
 
-// A site picks what the stub saves when it knows which registers are live, after its arguments were placed.
-static consteval bool variantsTakeArgumentsInSameRegisters()
-{
-    for (const OperationCallShape& shape : preservingCallShapes) {
-        OperationCall call = operationCallOf(shape);
-        for (auto saves : { OperationCall::Saves::CallerSavedGPRs, OperationCall::Saves::CallerSavedRegisters }) {
-            call.saves = saves;
-            std::optional<StubKey> variant = tryCallOperationPreservingRegisters(call);
-            if (variant && takesArgumentInResultRegister(preservingCallShapes[variant->form()]) != takesArgumentInResultRegister(shape))
-                return false;
-        }
-    }
-    return true;
-}
-
 static_assert(factoriesRoundTrip());
-static_assert(variantsTakeArgumentsInSameRegisters());
 static_assert(shapesCoverPreservingCalls());
 static_assert(!tryCallOperationPreservingRegisters({ .saves = OperationCall::Saves::CallerSavedRegisters, .fourthArgumentIn = GPRInfo::returnValueGPR }));
 static_assert(!tryCallOperationPreservingRegisters({ .saves = OperationCall::Saves::CallerSavedRegisters, .valueDestination = GPRInfo::returnValueGPR }));
@@ -176,15 +160,26 @@ void generateTailCallOperation(StubAssembler& jit)
 
 StubSignature signatureOfCallOperationPreservingRegisters(StubKey key)
 {
-    return operationCallSignature(preservingCallShapes[key.form()].returns, preservingCallImmediateGPR);
+    StubSignature signature = operationCallSignature(preservingCallShapes[key.form()].returns, preservingCallImmediateGPR);
+    if (signature.result == StubResult::GPR)
+        signature.firstResult = resultGPROfPreservingCall();
+    return signature;
 }
 
 void generateCallOperationPreservingRegisters(StubAssembler& jit)
 {
-    const OperationCallShape& shape = preservingCallShapes[jit.key().form()];
-    OperationCall call = operationCallOf(shape);
-    if (takesArgumentInResultRegister(shape))
-        call.secondArgumentIn = GPRInfo::returnValueGPR;
+    OperationCall call = operationCallOf(preservingCallShapes[jit.key().form()]);
+    if (call.returns == OperationCall::Returns::Value && resultGPROfPreservingCall() != GPRInfo::returnValueGPR)
+        call.valueDestination = resultGPROfPreservingCall();
+    if (call.firstArgument == OperationCall::FirstArgument::Instance) {
+        std::span<const GPRReg> registers = registersThatPreservingCallsTakeArgumentsIn();
+        call.secondArgumentIn = registers[0];
+        call.thirdArgumentIn = registers[1];
+        if (registers.size() > 2) {
+            call.fourthArgumentIn = registers[2];
+            call.fifthArgumentIn = registers[3];
+        }
+    }
     jit.callOperationAndReturn(jit.immediate(), call);
 }
 
@@ -300,6 +295,11 @@ void generateThrowAtFault(StubAssembler& jit)
     dumpRegistersAndThrow(jit, ThrowSiteSource::FaultSite);
 }
 
+static GPRReg registerOfPreludeAnswer(StubAssembler& jit)
+{
+    return jit.key().family() == StubFamily::CallOperationPreservingRegisters ? jit.result() : jit.reuseScratch(StubRegister::R0);
+}
+
 enum class CaughtWord : uint8_t { Value, Exception, ValueAndException };
 
 // The word holds what compiled code threw: the value, or the Exception that a cleanup throws on.
@@ -307,7 +307,7 @@ static PreludeExit emitCatchPrelude(StubAssembler& jit, CaughtWord wanted)
 {
     if (jit.key().family() != StubFamily::TailCallOperation && jit.signature().result != StubResult::GPR)
         return PreludeExit::CallsOperation;
-    const GPRReg value = jit.reuseScratch(StubRegister::R0);
+    const GPRReg value = registerOfPreludeAnswer(jit);
     Address thrownValue(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.thrownValue));
     jit.load64(thrownValue, value);
     JumpList callsOperation;
@@ -361,7 +361,7 @@ PreludeExit emitAddressOfThrowPrelude(StubAssembler& jit)
 {
     if (jit.key().family() != StubFamily::TailCallOperation && jit.signature().result != StubResult::GPR)
         return PreludeExit::CallsOperation;
-    jit.loadCallerReturnAddress(0, jit.reuseScratch(StubRegister::R0));
+    jit.loadCallerReturnAddress(0, registerOfPreludeAnswer(jit));
     jit.returnToCaller();
     // Like every head of an operation this one ends in the call, so that what is known of the call holds for the head.
     return PreludeExit::CallsOperation;

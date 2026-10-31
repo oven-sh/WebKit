@@ -143,7 +143,7 @@ public:
         cell->type = CellType;
         cell->cellState = static_cast<uint8_t>(CellState::DefinitelyWhite);
         at<uint32_t>(CompactTable::offsetOfCapacity()) = capacity;
-        at<uint8_t>(CompactTable::offsetOfIndexBits()) = static_cast<uint8_t>(m_indexBits);
+        at<uint8_t>(CompactTable::offsetOfIndexBits()) = CompactTable::markedIndexBits(m_indexBits);
         at<uint8_t>(CompactTable::offsetOfKeysShift()) = keysShift | (keyWidth == Width::Wide ? CompactTable::keysAreWide : 0);
         at<uint8_t>(CompactTable::offsetOfValueWidth()) = static_cast<uint8_t>(valueWidth);
         at<uint8_t>(CompactTable::offsetOfStatus()) = static_cast<uint8_t>(CompactTable::Status::Live);
@@ -173,7 +173,7 @@ public:
     {
         Vector<uint8_t> bytes = copyOfBytes();
         if (m_indexBits) {
-            size_t offsetOfTags = CompactTable::tagsOf(slotKind(), index(), m_indexBits) - m_bytes;
+            size_t offsetOfTags = index() - m_bytes;
             for (uint8_t& tag : bytes.mutableSpan().subspan(offsetOfTags, static_cast<size_t>(1) << m_indexBits))
                 tag &= ~CompactTable::keyLeftHomeSlot;
         }
@@ -1186,7 +1186,7 @@ static uint64_t createTableInImage(FakeHeap& heap, const TableInImage& entries)
     at(CompactTable::offsetOfUsed(), entries.count);
     at(CompactTable::offsetOfAliveCount(), entries.count);
     at(CompactTable::offsetOfCapacity(), entries.capacity | CompactTable::capacityIsInImage);
-    at(CompactTable::offsetOfIndexBits(), static_cast<uint8_t>(entries.indexBits | CompactTable::indexIsInImage));
+    at(CompactTable::offsetOfIndexBits(), static_cast<uint8_t>((entries.indexBits & CompactTable::numberOfIndexBits) | CompactTable::indexIsInImage));
     at(CompactTable::offsetOfKeysShift(), static_cast<uint8_t>(entries.keysShift | CompactTable::keysAreInImage));
     at(CompactTable::offsetOfValueWidth(), static_cast<uint8_t>(entries.hasValues ? Width::InImage : Width::None));
     at(CompactTable::offsetOfIndex(), &entries);

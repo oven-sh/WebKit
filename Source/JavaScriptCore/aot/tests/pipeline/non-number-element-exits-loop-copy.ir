@@ -1,7 +1,9 @@
 # function sum(x) { const list = [1.5, x]; let s = 0; for (let i = 0; i < list.length; i++) s += list[i]; return s }  report(sum())
 # PlaceTypeTests puts the test of the position in front of the read. PlanArrayCapacities copies the loop for storage that holds any value, and there an element that is no number leaves along the failing arm of that test.
 # So the arm is entered though the index stays below the length: the second element is there, and it is undefined.
+# The list is kept for it: SinkAllocations would take it apart, and no loop would be left to copy.
 # FORM: AsRead
+# OPTIONS: disable=pass:SinkAllocations
 # RUN: run-in-shell globalThis.report = value => { print(String(value)); };
 # CHECK: NaN
 # CHECK-NEXT: exited with 0

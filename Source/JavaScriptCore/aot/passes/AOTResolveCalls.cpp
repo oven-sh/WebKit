@@ -4215,10 +4215,11 @@ static Effects effectsOfDirectCall(FunctionPassContext& context, FunctionID call
     return effectsOfCalling({ context.program, context.inputs.effects }, callee).normal;
 }
 
+// A frame of a method that records its callee shows the name of the object that was called, so a closure made at the call would hide a new name.
 static bool canRecreateMethodClosure(const Program& program, const PropertyAccessPlan& plan)
 {
     const Function& method = program.at(plan.member.method);
-    return !method.has(FunctionFlags::TakesCallee) && method.captures.size() == (plan.capturesReceiver ? 1u : 0u);
+    return !method.has(FunctionFlags::TakesCallee) && !method.capabilities.contains(FunctionCapabilities::RecordsCallee) && method.captures.size() == (plan.capturesReceiver ? 1u : 0u);
 }
 
 // The caller's frame, which keeps the function object it calls, exists for as long as the callee runs.

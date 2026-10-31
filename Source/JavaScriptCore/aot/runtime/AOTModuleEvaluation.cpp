@@ -580,7 +580,7 @@ void Modules::didThrowInBody(ModuleID module, JSValue error)
 {
     // `bun run` takes a CommonJS file whose body throws out of require.cache, and the next require() runs it again. A test run loads it again from disk where its build
     // has compiled the code that asks for the file for a file that may load twice.
-    if (data(module).kind == ModuleKind::CommonJs && mayBeEvicted(module) && status(module) == ModuleStatus::Evaluating) [[unlikely]] {
+    if (data(module).kind == ModuleKind::CommonJs && mayBeEvicted(module) && status(module) == ModuleStatus::Evaluating && !loaderHasFileThatThrew(module)) [[unlikely]] {
         evict(module);
         return;
     }
@@ -2294,6 +2294,7 @@ void Modules::noteLoadOfFile(ModuleID module, LoadOfFile load)
     if ((status(file) != ModuleStatus::Evaluating && status(module) != ModuleStatus::Evaluating) || asyncLoadMustWaitFor(file) || file == m_fileBeingHandedToLoader)
         return;
     ensureLoaded(file).wasLoadedWhileItRan = true;
+    ensureLoaded(file).wasLoadedSynchronouslyWhileItRan |= !!m_instance.vm->synchronousModuleQueue();
     if (!data(file).mayBeImportedWhileItRuns() || load == LoadOfFile::IsRequested)
         return;
     // The loader takes the names of the file as they are now. Where no importer asks for one of them, only a later require() can show them.
@@ -2373,7 +2374,7 @@ void Modules::evaluateLoadedCommonJSFile(ModuleID module)
 
 void Modules::didLoseErrorOfModule(const Identifier& key)
 {
-    std::optional<ModuleID> module = m_table.findByPath(key.string());
+    std::optional<ModuleID> module = findByKey(key);
     if (!module || !isCommonJSFileOrFace(*module))
         return;
     ModuleID file = fileOf(*module);
@@ -2424,6 +2425,17 @@ bool Modules::wasImportedWhileItRan(ModuleID file) const
     return std::ranges::any_of(m_table.importsOfHeldFile(file), [&](const ImportOfHeldFileData& import) {
         return status(ModuleID(import.importer)) > ModuleStatus::Linked;
     });
+}
+
+// The throw takes the file out of require.cache and leaves the loader of ES modules as it is. A require() that finds nothing in the cache looks there before it reads the file,
+// and answers with what the loader has: the error of the file, or its namespace object.
+bool Modules::loaderHasFileThatThrew(ModuleID file)
+{
+    if (isEvaluatedByLoader(file) || wasLoadedByImport(file))
+        return true;
+    // A require() runs the file. An import() that the file calls comes to the file in a later job, when the file has thrown, unless a require() of an ES module is under way: the loader takes its steps inside the call then.
+    LoadedModule* loaded = loadedIfExists(file);
+    return loaded && (loaded->wasLoadedSynchronouslyWhileItRan || loaded->wasReachedBySecondLoad);
 }
 
 // For an entry point, as for an imported file: see evaluateImportedCommonJSFiles().

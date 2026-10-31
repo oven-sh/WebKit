@@ -973,9 +973,6 @@ static void printRequest(const TablesContext& context, const RequestRecord& reco
         },
         [&](const CollectionDataRecord&) {
             printCollectionDataRequest(context, offset);
-        },
-        [&](const FormatPatternRecord& pattern) {
-            RecordLine(context, "request"_s, offset).word("FormatPattern"_s).field("words"_s, static_cast<uint32_t>(pattern.words.size()));
         });
 }
 

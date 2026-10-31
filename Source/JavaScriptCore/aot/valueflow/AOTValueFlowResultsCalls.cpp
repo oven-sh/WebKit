@@ -126,19 +126,16 @@ static void stampOperands(const ValueFlowResultInputs& inputs, TypeTable& types,
 // n statements that hand over the same set ask about it once.
 using SetsOfOnlyDataFromOutside = UncheckedKeyHashMap<uint32_t, bool, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
-static void noteWhetherOnlyDataFromOutsideComesOut(const ValueFlowResultInputs& inputs, FlowResultTables& tables, const StampedOperand& stamped, SetsOfOnlyDataFromOutside& answers)
+// Nothing but primitives is no answer. A set of everything, or one that holds what nobody knows, is not such data.
+static bool holdsOnlyDataFromOutside(const ValueFlowResultInputs& inputs, const StampedOperand& stamped, ValueSetID held, SetsOfOnlyDataFromOutside& answers)
 {
-    if (!stamped.statement.result)
-        return;
-    ValueSetID result = inputs.solver().possibleValuesOf(stamped.statement.result);
-    if (ValueSets::isComplement(result) || result == ValueSets::nothing)
-        return;
-    auto answer = answers.ensure(result.index(), [&] {
-        const ValueFlowUniverse& universe = inputs.universe();
+    if (ValueSets::isComplement(held) || held == ValueSets::nothing)
+        return false;
+    return answers.ensure(held.index(), [&] {
         const ValueSets& sets = inputs.sets();
-        if (sets.contains(result, ValueFlowUniverse::unknownObject()))
+        if (sets.contains(held, ValueFlowUniverse::unknownObject()))
             return false;
-        ValueSetID objects = stamped.maker.intersect(result, universe.knownObjects());
+        ValueSetID objects = stamped.maker.intersect(held, inputs.universe().knownObjects());
         if (objects == ValueSets::nothing)
             return false;
         bool isOnlyDataFromOutside = true;
@@ -146,9 +143,30 @@ static void noteWhetherOnlyDataFromOutsideComesOut(const ValueFlowResultInputs& 
             isOnlyDataFromOutside = isOnlyDataFromOutside && stamped.positions.isDataFromOutside(object);
         });
         return isOnlyDataFromOutside;
-    });
-    if (answer.iterator->value)
+    }).iterator->value;
+}
+
+static void noteWhetherOnlyDataFromOutsideComesOut(const ValueFlowResultInputs& inputs, FlowResultTables& tables, const StampedOperand& stamped, SetsOfOnlyDataFromOutside& answers)
+{
+    if (stamped.statement.result && holdsOnlyDataFromOutside(inputs, stamped, inputs.solver().possibleValuesOf(stamped.statement.result), answers))
         tables.sites.sitesThatHandOverOnlyDataFromOutside[tables.application->accessSites.siteOfValue(stamped.id, stamped.statement.site).index()] = true;
+}
+
+static void noteWhetherCallIsHandedOnlyDataFromOutside(const ValueFlowResultInputs& inputs, FlowResultTables& tables, const StampedOperand& callee, SetsOfOnlyDataFromOutside& answers)
+{
+    bool isHandedSuchData = false;
+    for (const ValueFlowOperand& operand : inputs.bodies().operandsOf(callee.statement).subspan(1)) {
+        ValueSetID held = inputs.possibleValuesOf(callee.maker, operand);
+        if (held == ValueSets::nothing)
+            continue;
+        if (!ValueSets::isComplement(held) && !inputs.sets().contains(held, ValueFlowUniverse::unknownObject()) && callee.maker.intersect(held, inputs.universe().knownObjects()) == ValueSets::nothing)
+            continue;
+        if (!holdsOnlyDataFromOutside(inputs, callee, held, answers))
+            return;
+        isHandedSuchData = true;
+    }
+    if (isHandedSuchData)
+        tables.sites.callsHandedOnlyDataFromOutside[tables.application->accessSites.siteOfValue(callee.id, callee.statement.site).index()] = true;
 }
 
 static Vector<uint64_t> findLayoutsWithFieldOfKey(const ValueFlowResultInputs& inputs, const FlowApplication& application)
@@ -449,7 +467,8 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
         findOpensOfUndecidedStorage(inputs, *tables.application, arraysThatMustNotBeConverted);
     }
     tables.sites.receiversSeenAtSites.fill(0, tables.application->accessSites.numberOfSites());
-    tables.sites.sitesThatHandOverOnlyDataFromOutside.fill(false, tables.application->accessSites.numberOfSites());
+    if (tables.sites.sitesThatHandOverOnlyDataFromOutside.isEmpty())
+        tables.sites.sitesThatHandOverOnlyDataFromOutside.fill(false, tables.application->accessSites.numberOfSites());
     Vector<SetsOfOnlyDataFromOutside> answersOfWorker(inputs.loops().width());
     Vector<ProxyMadeAtSite> proxiesMade = findProxiesMadeAtSites(inputs);
     ValueSetID objectsOfProxiesMade = ValueSets::nothing;
@@ -599,6 +618,9 @@ ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, Ty
 {
     FlowApplication& application = *tables.application;
     unsigned numberOfFunctions = inputs.program.functions.size();
+    tables.sites.sitesThatHandOverOnlyDataFromOutside.fill(false, application.accessSites.numberOfSites());
+    tables.sites.callsHandedOnlyDataFromOutside.fill(false, application.accessSites.numberOfSites());
+    Vector<SetsOfOnlyDataFromOutside> answersOfWorker(inputs.loops().width());
     // Where nothing is constructed the callees follow from the two sets of values. n calls of a value that may be any of n functions name the same two sets:
     // the set of callees is made, hashed and interned once for a worker, and each task takes it again from the storage that its arena holds.
     AOT_THRESHOLD(uint32_t, fewestMembersToRemember, 32);
@@ -621,6 +643,9 @@ ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, Ty
     };
     auto stampCall = [&](const StampedOperand& callee) {
         bool isConstruction = !!OperandPosition::newTarget(callee.statement.opcode);
+        noteWhetherOnlyDataFromOutsideComesOut(inputs, tables, callee, answersOfWorker[callee.worker]);
+        if (!isConstruction)
+            noteWhetherCallIsHandedOnlyDataFromOutside(inputs, tables, callee, answersOfWorker[callee.worker]);
         CalleesOfValues found;
         if (isConstruction || ValueSets::isComplement(callee.held) || ValueSets::isComplement(callee.seen) || inputs.sets().size(callee.held) < fewestMembersToRemember)
             found = findCallees(callee, isConstruction);

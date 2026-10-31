@@ -112,6 +112,8 @@ struct InliningSummary {
     // `(a, b) => a - b`: handed two numbers, the function answers with their difference and does nothing else.
     enum class Difference : uint8_t { None, FirstMinusSecond, SecondMinusFirst };
     Difference difference { Difference::None };
+    // `(a, b) => a.rank - b.rank`: handed two values of a list that holds no undefined, the function answers with a number or a boolean, and nobody can see that it ran or what the list held meanwhile.
+    bool nobodySeesItRun { false };
     enum class Answer : uint8_t { NotAsked, No, Yes };
     // The answer of returnsFreshAggregate() for the function, once it is made. Threads that share the summary read and write it as an atomic: each that finds none makes it, and all make the same.
     mutable Answer returnsFreshAggregate { Answer::NotAsked };

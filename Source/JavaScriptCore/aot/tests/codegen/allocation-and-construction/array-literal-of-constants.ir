@@ -111,4 +111,4 @@ function f1 name="primes" module=m0 flags=[IsChecked, HasExplicitName] thisType=
 # AIR: Patch &Patchpoint
 # AIR-LABEL: end of function
 # X64: instructions: 10, patchpoints: 1, rare instructions: 4
-# ARM64: instructions: 9, patchpoints: 1, rare instructions: 6
+# ARM64: instructions: 9, patchpoints: 1, rare instructions: 7

@@ -11,6 +11,7 @@
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinNameSlots.h"
 #include "AOTIRProgram.h"
+#include "AOTSort.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
@@ -135,7 +136,7 @@ void BuiltinTableOfBuild::openToNames(BuiltinID holder)
         if (name && !m_table.isSymbolName(name) && !m_table.findOwnMember(holder, name) && !m_table.canTakeNameInTestRuns(holder, name) && !std::ranges::binary_search(m_table.openNamesOf(holder), name))
             closed.append(name);
     }
-    std::ranges::sort(closed);
+    AOT::sort(closed);
     closed.shrink(closed.size() - std::ranges::unique(closed).size());
     m_closedSymbols.append(WTF::move(closed));
     if (hasRecord)

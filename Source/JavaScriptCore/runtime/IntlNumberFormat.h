@@ -140,13 +140,6 @@ private:
     bool m_sign { false };
 };
 
-#if ENABLE(AOT)
-namespace AOT {
-struct FormatPatternHeader;
-enum class FormatPatternUse : uint8_t;
-}
-#endif
-
 class IntlNumberFormat final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
@@ -182,18 +175,6 @@ public:
     JSValue formatRangeToParts(JSGlobalObject*, IntlMathematicalValue&&, IntlMathematicalValue&&);
 
     JSBoundFunction* boundFormat() const LIFETIME_BOUND { return m_boundFormat.get(); }
-
-#if ENABLE(AOT)
-    // A formatter that compiled code made from constants. It writes from a pattern of the build, and ICU is set up for it when something else is asked of it.
-    const AOT::FormatPatternHeader* compiledPattern() const { return m_compiledPattern; }
-    AOT::FormatPatternUse compiledPatternUse() const { return m_compiledPatternUse; }
-    void setCompiledPattern(const AOT::FormatPatternHeader* pattern, AOT::FormatPatternUse use)
-    {
-        m_compiledPattern = pattern;
-        m_compiledPatternUse = use;
-    }
-    void initializeIfDeferred(JSGlobalObject*);
-#endif
     void setBoundFormat(VM&, JSBoundFunction*);
 
     enum class Style : uint8_t { Decimal, Percent, Currency, Unit };
@@ -240,10 +221,6 @@ private:
 
     WriteBarrier<JSBoundFunction> m_boundFormat;
     std::unique_ptr<UNumberFormatter, UNumberFormatterDeleter> m_numberFormatter;
-#if ENABLE(AOT)
-    const AOT::FormatPatternHeader* m_compiledPattern { nullptr };
-    AOT::FormatPatternUse m_compiledPatternUse { };
-#endif
     std::unique_ptr<UNumberRangeFormatter, UNumberRangeFormatterDeleter> m_numberRangeFormatter;
     String m_numberFormatterSkeleton;
     ASCIICString m_dataLocaleWithExtensions;

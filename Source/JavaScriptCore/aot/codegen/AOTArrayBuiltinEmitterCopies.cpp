@@ -84,6 +84,15 @@ void ArrayBuiltinEmitter::generateArrayConcat(const InlineCall& call)
     LBasicBlock miss = missBlockOf(call);
     Join<CellPointer> join(m_out);
     bool isDeclaredDouble = arrayStorageDeclaredBy(m_program, resultTypeOf(call)).predicted() == ArrayStorage::Double;
+    // The readers go by the type that the cast behind the call gives the list: what flow says of its contents, where the call itself knows better what this one holds. They and the creator take the same storage.
+    const UseLists& useLists = analyses().useLists();
+    for (ValueID list = resultOf(call); !isDeclaredDouble && list;) {
+        std::optional<Use> use = useLists.singleUse(list);
+        if (!use || use->kind != Use::Kind::Operand || (m_function.at(use->user).opcode != Opcode::AssumeType && m_function.at(use->user).opcode != Opcode::Upcast))
+            break;
+        list = use->user;
+        isDeclaredDouble = arrayStorageDeclaredBy(m_program, typeOf(list)).predicted() == ArrayStorage::Double;
+    }
     forEachFormOrMiss(call, receiverOf(call), arrayStorageTestMask, [&](const ArrayStorageForm& form) {
         const ArrayStorageForm& made = isDeclaredDouble && form.kind == ArrayStorage::Int32 ? *findArrayStorageForm(ArrayStorage::Double) : form;
         // No array stands for an argument that is an element itself.

@@ -27,7 +27,6 @@
 #include "config.h"
 #include "IntlDateTimeFormatPrototype.h"
 
-#include "AOTFormatPatterns.h"
 #include "BuiltinNames.h"
 #include "DateConstructor.h"
 #include "IntlDateTimeFormatInlines.h"
@@ -251,11 +250,6 @@ JSC_DEFINE_HOST_FUNCTION(intlDateTimeFormatFuncFormatDateTime, (JSGlobalObject* 
     if (!format) [[unlikely]]
         return JSValue::encode(throwTypeError(globalObject, scope, "Intl.DateTimeFormat.prototype.format called on value that's not a DateTimeFormat"_s));
 
-#if ENABLE(AOT)
-    if (format->compiledPattern())
-        RELEASE_AND_RETURN(scope, JSValue::encode(AOT::formatWithCompiledPattern(globalObject, *format, callFrame->argument(0))));
-#endif
-
     // Steps 3-5: undefined->Date.now() / ToDateTimeFormattable / FormatDateTime (#sec-formatdatetime).
     RELEASE_AND_RETURN(scope, JSValue::encode(format->format(globalObject, callFrame->argument(0))));
 }
@@ -303,10 +297,6 @@ JSC_DEFINE_HOST_FUNCTION(intlDateTimeFormatPrototypeFuncFormatToParts, (JSGlobal
     auto* dateTimeFormat = dynamicDowncast<IntlDateTimeFormat>(callFrame->thisValue());
     if (!dateTimeFormat) [[unlikely]]
         return JSValue::encode(throwTypeError(globalObject, scope, "Intl.DateTimeFormat.prototype.formatToParts called on value that's not a DateTimeFormat"_s));
-#if ENABLE(AOT)
-    dateTimeFormat->initializeIfDeferred(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-#endif
 
     // Steps 3-5: undefined->Date.now() / ToDateTimeFormattable / FormatDateTimeToParts (#sec-formatdatetimetoparts).
     RELEASE_AND_RETURN(scope, JSValue::encode(dateTimeFormat->formatToParts(globalObject, callFrame->argument(0))));
@@ -322,10 +312,6 @@ JSC_DEFINE_HOST_FUNCTION(intlDateTimeFormatPrototypeFuncFormatRange, (JSGlobalOb
     auto* dateTimeFormat = dynamicDowncast<IntlDateTimeFormat>(callFrame->thisValue());
     if (!dateTimeFormat) [[unlikely]]
         return JSValue::encode(throwTypeError(globalObject, scope, "Intl.DateTimeFormat.prototype.formatRange called on value that's not a DateTimeFormat"_s));
-#if ENABLE(AOT)
-    dateTimeFormat->initializeIfDeferred(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-#endif
 
     // Step 3: If startDate or endDate is undefined, throw TypeError.
     JSValue startDate = callFrame->argument(0);
@@ -357,10 +343,6 @@ JSC_DEFINE_HOST_FUNCTION(intlDateTimeFormatPrototypeFuncFormatRangeToParts, (JSG
     auto* dateTimeFormat = dynamicDowncast<IntlDateTimeFormat>(callFrame->thisValue());
     if (!dateTimeFormat) [[unlikely]]
         return JSValue::encode(throwTypeError(globalObject, scope, "Intl.DateTimeFormat.prototype.formatRangeToParts called on value that's not a DateTimeFormat"_s));
-#if ENABLE(AOT)
-    dateTimeFormat->initializeIfDeferred(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-#endif
 
     // Step 3: If startDate or endDate is undefined, throw TypeError.
     JSValue startDate = callFrame->argument(0);
@@ -392,10 +374,6 @@ JSC_DEFINE_HOST_FUNCTION(intlDateTimeFormatPrototypeFuncResolvedOptions, (JSGlob
     RETURN_IF_EXCEPTION(scope, { });
     if (!dateTimeFormat) [[unlikely]]
         return JSValue::encode(throwTypeError(globalObject, scope, "Intl.DateTimeFormat.prototype.resolvedOptions called on value that's not a DateTimeFormat"_s));
-#if ENABLE(AOT)
-    dateTimeFormat->initializeIfDeferred(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-#endif
 
     RELEASE_AND_RETURN(scope, JSValue::encode(dateTimeFormat->resolvedOptions(globalObject)));
 }

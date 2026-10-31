@@ -522,21 +522,40 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillSiteCache, void, (Instance* in
     instance->state->propertyCaches->fillSiteCacheFromTables(cache, base, key, static_cast<SlotAccess>(access));
 }
 
-// The question stands ahead of a loop, which may be the first to read the name. A property of a plain object's own is filed by a look that changes nothing.
-// What lies above the object waits for a read by name, which the loop that is entered at a miss makes.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillSiteCacheWithValue, void, (Instance* instance, JSCell* base, uint32_t key, SiteCache cache))
+// The question stands ahead of a loop, which may be the first to read the name and may be entered only once: what is there is filed by a look that changes nothing, and answered at once.
+// A value that would have to be made is left for a read by name.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReadValueAndFillSiteCache, EncodedJSValue, (Instance* instance, JSCell* base, uint32_t key, SiteCache cache))
 {
     LeafOperationScope leaf(*instance->vm);
     PropertyCaches& caches = *instance->state->propertyCaches;
-    Structure* structure = base->structure();
-    if (base->type() == FinalObjectType && !structure->isDictionary()) {
-        Identifier name = identifierAt(instance, key);
-        unsigned attributes;
-        if (!caches.tables().find(structure->id(), { name.impl(), key }, SlotAccess::Read) && isValidOffset(structure->getConcurrently(name.impl(), attributes)))
-            fileReadWithoutCode(instance, asObject(base), name);
+    if (cache->get().structureID != base->structureID()) {
+        if (!caches.tables().find(base->structureID(), caches.nameOf(key), SlotAccess::Read))
+            caches.fileValueWithoutChangingObject(base, key);
+        instance->state->siteCaches->didMissRepeatedly(cache);
+        caches.fillSiteCacheFromTables(cache, base, key, SlotAccess::Read);
     }
-    instance->state->siteCaches->didMissRepeatedly(cache);
-    caches.fillSiteCacheFromTables(cache, base, key, SlotAccess::Read);
+    Slot slot = cache->get();
+    if (slot.structureID != base->structureID())
+        return encodedJSValue();
+    switch (slot.kind) {
+    case Slot::Kind::Value:
+        return JSValue::encode(valueAtOffset(asObject(slot.has(Slot::isOwn) ? base : slot.holder), slot.offsetInStorage()));
+    case Slot::Kind::Absent:
+        return JSValue::encode(jsUndefined());
+    case Slot::Kind::InheritedField: {
+        Object* holder = compiledObjectOrNull(slot.holder);
+        Identifier name = identifierAt(instance, key);
+        const FieldData* field = holder ? holder->fieldNamed(holder->state(), name.impl()) : nullptr;
+        if (!field || field->isAccessor())
+            return encodedJSValue();
+        SlotValueKind valueKind = traitsOf(field->slot.representation()).valueKind;
+        if (valueKind == SlotValueKind::DeferredClosure || valueKind == SlotValueKind::LiteralString)
+            return encodedJSValue();
+        return JSValue::encode(holder->read(*field));
+    }
+    default:
+        return encodedJSValue();
+    }
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindGetterAndFillSiteCache, EncodedJSValue, (Instance* instance, JSCell* base, uint32_t key, SiteCache cache))

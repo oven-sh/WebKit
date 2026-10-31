@@ -204,14 +204,15 @@ function f1 name="write" parameters=[{type=anything}, {type=anything}, {type=any
 #define STATEMENTS_WITH_STORES_BY_KEY R"JS(
 const operations = ["PutByVal", "PutByValAndCache"];
 const calls = () => operations.reduce((sum, name) => sum + Number(aotOperationCount("operationAOT" + name)), 0);
+const leafCalls = () => Number(aotOperationCount("operationAOTPutByValGeneric"));
 const measure = (what, write, key) => {
-    const callsBefore = calls();
+    const callsBefore = calls(), leafCallsBefore = leafCalls();
     let threw = false;
     for (let i = 0; i < 100; i++) {
         try { write(globalThis, key, i); } catch { threw = true; }
     }
-    const callsMade = calls() - callsBefore;
-    print(what + ": " + globalThis[key] + (threw ? ", threw" : "") + (globalThis.printsCalls ? ", " + (callsMade <= 3 ? "cached" : callsMade >= 100 ? "not cached" : callsMade + " calls") : ""));
+    const callsMade = calls() - callsBefore, leafCallsMade = leafCalls() - leafCallsBefore;
+    print(what + ": " + globalThis[key] + (threw ? ", threw" : "") + (globalThis.printsCalls ? ", " + (callsMade <= 3 && leafCallsMade <= callsMade + 1 ? "cached" : callsMade >= 100 ? "not cached" : callsMade + " calls, " + leafCallsMade + " of the leaf operation") : ""));
 };
 globalThis.publish = (write) => {
     measure("first store adds it", write, "shared");
@@ -235,6 +236,14 @@ globalThis.publish = (write) => {
     measure("variable of a script", write, "ofScript");
     print("read by name: " + loadString("ofScript"));
     measure("inherited", write, "isPrototypeOf");
+    const text = ["sha", "red"].join("");
+    measure("a key that is another string of the same text", write, text);
+    Object.defineProperty(globalThis, "shared", { value: -2, writable: false, configurable: true });
+    measure("read only under that string", write, text);
+    Object.defineProperty(globalThis, "shared", { value: -3, writable: true, configurable: true });
+    measure("writable again under that string", write, text);
+    gc();
+    measure("behind a collection", write, text);
     const other = createGlobalObject();
     other.shared = 3;
     const callsBefore = calls();
@@ -256,6 +265,10 @@ globalThis.publish = (write) => {
     OUTPUT_LINE("variable of a script: 99", notCached) \
     "read by name: 99\n" \
     OUTPUT_LINE("inherited: 99", cached) \
+    OUTPUT_LINE("a key that is another string of the same text: 99", cached) \
+    OUTPUT_LINE("read only under that string: -2, threw", notCached) \
+    OUTPUT_LINE("writable again under that string: 99", cached) \
+    OUTPUT_LINE("behind a collection: 99", cached) \
     OUTPUT_LINE("other realm: 99", notCached)
 
 static void testStoresByKeyFollowTheGlobalObject()

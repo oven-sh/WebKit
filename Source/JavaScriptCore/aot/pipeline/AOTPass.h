@@ -127,6 +127,8 @@ struct FunctionPassContext {
     // ConvertCountersToIntegers tries counters whose comparison names no variable in one round only: what it passes on for a counter that stays a number is taken away again, and the next round would pass it on anew.
     bool hasTriedCountersThatCompareNoVariable { false };
     bool hasBoundsTestedBehindRounds { false };
+    // Whoever cleans up behind it finds joins that take one value twice.
+    bool hasCopiedJoinsAboveTests { false };
     // The opcodes of the values in the blocks where the run of a pass begins, for a pass that the runner starts by what the body holds.
     const OpcodeSet* opcodesWhereRunBegins { nullptr };
     // Set by a pass in a run that changes the function: the analyses that describe the function as it is behind the run. The runner empties it in front of every run and drops what the row of the pass names, less these.

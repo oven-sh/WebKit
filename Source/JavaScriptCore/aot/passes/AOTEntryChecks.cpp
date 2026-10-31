@@ -625,7 +625,11 @@ static void emitEntrance(const AnalysisContext& context, TypeArena& types, Funct
     emitCall(body, entrance.operandsOfBody, testedArguments);
     if (failed) {
         builder.moveToEndOf(failed);
-        emitCall(fallback, entrance.operandsOfFallback, arguments);
+        // Without a fallback whoever called this has a handler that starts over.
+        if (fallback)
+            emitCall(fallback, entrance.operandsOfFallback, arguments);
+        else
+            builder.emitTerminator(IRBuilder::makeTerminator(TerminatorKind::Throw, { builder.appendUndefined() }));
     }
     compactFunction(function);
 }
@@ -814,6 +818,41 @@ static std::optional<Entrance> readEntrance(const Function& function)
     if (!readCallOfEntrance(function, block, record->body, entryParameterOf.span(), entrance.operandsOfBody) || !readCallOfEntrance(function, failed, record->fallback, entryParameterOf.span(), entrance.operandsOfFallback))
         return std::nullopt;
     return entrance;
+}
+
+bool hasEntranceThatCanGiveUp(const Function& function)
+{
+    return !!readEntrance(function);
+}
+
+// The tests of an entrance, and what passes them enters the body. What does not pass them is thrown out to the caller, whose handler runs the program as it is written.
+Function buildChecksThatGiveUp(const DerivedFunctionKey& key, DerivedFunctionInputs& inputs)
+{
+    const Function& checks = inputs.program.at(key.target);
+    const auto& record = checks.creator.as<CreatorRecord::EntryChecks>();
+    Function version;
+    static_cast<FunctionRecord&>(version) = checks;
+    version.inlineFrames.clear();
+    version.role = FunctionRole::ChecksThatGiveUp;
+    version.flags.add(FunctionFlags::IsHiddenInStackTraces);
+    version.creator = CreatorRecord::Version { .provenVersion = key.target };
+    version.derivation = derivationWithSameParameters(key.target, version);
+    version.capabilities = initialCapabilitiesOf(version) | (checks.capabilities & FunctionCapabilities::RecordsCalleeOnceRenamed);
+    AnalysisContext context { inputs.build, inputs.program, &inputs.flow, nullptr };
+    if (std::optional<Entrance> entrance = readEntrance(checks)) {
+        emitEntrance(context, inputs.types, version, *entrance, record.body, FunctionID());
+        return version;
+    }
+    // Its tests have gone into what it holds since the chain was looked at. Failing them is what is always allowed.
+    IRBuilder builder(context, version, inputs.types);
+    builder.setOrigin({ version.position, 0 });
+    BlockID entry = builder.addBlock();
+    builder.moveToEndOf(entry);
+    TypingContext typing { inputs.program, version, inputs.types };
+    for (unsigned index = 0; index < version.numberOfEntryParameters(); ++index)
+        builder.addParameter(entry, declaredEntryTypeOf(typing, version, index));
+    builder.emitTerminator(IRBuilder::makeTerminator(TerminatorKind::Throw, { builder.appendUndefined() }));
+    return version;
 }
 
 static uint32_t testsAnsweredBy(const Program& program, const Function& caller, const Value& call, const Entrance& entrance)

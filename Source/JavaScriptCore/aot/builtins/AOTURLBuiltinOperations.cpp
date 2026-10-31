@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTNativeHelpers.h"
 #include "AOTPlainURL.h"
 #include "IterationKind.h"
 #include "JSArrayInlines.h"

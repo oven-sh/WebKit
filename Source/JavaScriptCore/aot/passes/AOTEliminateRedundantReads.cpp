@@ -174,6 +174,8 @@ struct RedundantReadElimination {
     struct Merge {
         ValueID read;
         ProgramPoint point;
+        // The block whose edges bring the value: the read's own, or one above it on a way without joins.
+        BlockID join;
         Vector<std::pair<Edge, ValueID>, 4> incoming;
     };
 
@@ -244,6 +246,7 @@ struct RedundantReadElimination {
     bool m_isFirstSweep { false };
     Vector<Replacement> m_replacements { };
     Vector<Merge> m_merges { };
+    Vector<BlockID> m_joinsAbove { };
 
     const Type& typeOf(ValueID id) const { return m_program.typeOf(m_function, id); }
     const Access& accessOf(size_t bit) const { return m_accesses[m_bits[bit].access]; }
@@ -1156,9 +1159,10 @@ struct RedundantReadElimination {
         AOT::sort(readsToMerge);
         for (uint32_t bit : readsToMerge) {
             const Access& read = accessOf(bit);
-            std::span<const Edge> edges = m_cfg.incomingEdges(read.point.block);
+            BlockID join = joinAbove(read.point.block);
+            std::span<const Edge> edges = m_cfg.incomingEdges(join);
             const Vector<ValueID, 4>& values = m_valuesOnEdges.find(bit)->value;
-            Merge merge { read.id, read.point, { } };
+            Merge merge { read.id, read.point, join, { } };
             for (size_t index = 0; index < edges.size(); ++index)
                 merge.incoming.append({ edges[index], values[index] });
             m_merges.append(WTF::move(merge));
@@ -1248,9 +1252,25 @@ struct RedundantReadElimination {
         return nullptr;
     }
 
-    // What is available on one way into the block need not be so at its head, and the actions of the block were made for the row at its head. So the block is gone through anew.
-    void findMerges(BlockID block, std::span<const uint32_t> bitsOfReads)
+    // By block: the block itself where it is a join or has no way in that comes first, else what its one predecessor has.
+    BlockID joinAbove(BlockID block)
     {
+        if (m_joinsAbove.isEmpty()) {
+            m_joinsAbove.grow(m_function.blocks.size());
+            for (BlockID id : m_cfg.reversePostOrder()) {
+                std::span<const Edge> edges = m_cfg.incomingEdges(id);
+                bool hasOneWayIn = id != m_cfg.root() && edges.size() == 1 && !edges[0].isHandlerEdge() && !m_function.at(id).isHandlerBlock();
+                m_joinsAbove[id.index()] = hasOneWayIn ? m_joinsAbove[edges[0].from.index()] : id;
+            }
+        }
+        return m_joinsAbove[block.index()];
+    }
+
+    // What is available on one way into the block need not be so at its head, and the actions of the block were made for the row at its head. So the block is gone through anew.
+    // `if (size < 16) size++; else head++;`, a test or two, and then a read of `size`: each way into the join brings the value, and nothing between the join and the read writes it. So the parameter stands at the join.
+    void findMerges(BlockID readBlock, std::span<const uint32_t> bitsOfReads)
+    {
+        BlockID block = joinAbove(readBlock);
         std::span<const Edge> edges = m_cfg.incomingEdges(block);
         if (edges.size() < 2 || block == m_cfg.root() || m_function.at(block).isHandlerBlock() || m_analyses.isEnteredFromUnreachableBlock(block))
             return;
@@ -1270,10 +1290,28 @@ struct RedundantReadElimination {
             if (source.isVisited)
                 std::ranges::copy(tailOf(source), available.last().begin());
         }
+        if (block != readBlock) {
+            bool isBroughtByEveryEdge = std::ranges::any_of(bitsOfReads, [&](uint32_t bit) {
+                const Type& readType = typeOf(accessOf(bit).id);
+                auto bringsIt = [&](const Row& row) {
+                    return findAvailableAccess(bit, row.span(), [&](const Access& access) {
+                        return !access.isAbsent && canForward(access, readType);
+                    });
+                };
+                // What one part does not hold on an edge, another part may.
+                return isPartOfClass() ? std::ranges::any_of(available, bringsIt) : std::ranges::all_of(available, bringsIt);
+            });
+            if (!isBroughtByEveryEdge)
+                return;
+        }
+        Vector<BlockID, 4> way;
+        for (BlockID next = readBlock; next != block; next = m_cfg.incomingEdges(next)[0].from)
+            way.append(next);
+        way.append(block);
         Vector<Row*, 4> rows;
         for (Row& row : available)
             rows.append(&row);
-        walk(block, rows.span(), false, [&](const Action& action) {
+        for (BlockID blockOfWay : way | std::views::reverse) walk(blockOfWay, rows.span(), false, [&](const Action& action) {
             if (bitsOfReads.empty() || !action.standsAtAccess() || action.bits.first != bitsOfReads.front())
                 return;
             bitsOfReads = bitsOfReads.subspan(1);
@@ -1296,7 +1334,7 @@ struct RedundantReadElimination {
                 }
                 return;
             }
-            Merge merge { read.id, read.point, { } };
+            Merge merge { read.id, read.point, block, { } };
             for (size_t index = 0; index < edges.size(); ++index) {
                 const Access* source = findSourceOn(index);
                 if (!source)
@@ -1366,7 +1404,7 @@ struct RedundantReadElimination {
         };
         for (const Merge& merge : m_merges) {
             builder.setOrigin(m_function.at(merge.read).origin());
-            ValueID parameter = builder.addParameter(merge.point.block, m_function.at(merge.read).type);
+            ValueID parameter = builder.addParameter(merge.join, m_function.at(merge.read).type);
             m_function.edit(parameter, ValueEdit::Type).setExpected(m_function.at(merge.read).expected());
             for (auto [edge, value] : merge.incoming)
                 builder.appendArgument(edge, value);

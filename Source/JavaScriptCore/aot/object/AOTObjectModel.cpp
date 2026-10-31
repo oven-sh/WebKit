@@ -581,9 +581,15 @@ struct StructureTable::VariantMaps {
         }
     }
 
+    struct FiledVariant {
+        Key key;
+        StructureID id;
+    };
+
     WeakGCMap<Key, CompiledStructure> structures;
     // The values of `structures`. Written under the lock of the caches.
     Vector<StructureID> listed;
+    Vector<FiledVariant> filedSinceCollection;
     std::array<StructureID, 1u << recentIndexBits> recentByExtraProperties { };
     WTF::BitSet<1u << requestedIndexBits> requestedExtraPropertiesStructures;
 };
@@ -758,8 +764,10 @@ void StructureTable::visitRoots(Visitor& visitor)
     }
     if (visitor.collectionScope() != CollectionScope::Eden)
         return;
-    for (StructureID id : m_variantsMadeSinceCollection) {
-        CompiledStructure* variant = VariantMaps::decode(id);
+    for (const VariantMaps::FiledVariant& filed : m_variants->filedSinceCollection) {
+        CompiledStructure* variant = VariantMaps::decode(filed.id);
+        if (variant->hasOutOfLineKeyOrder())
+            continue;
         JSObject* prototype = variant->storedPrototype().getObject();
         if (!variant->hasOtherPrototype() || !prototype || visitor.isMarked(prototype))
             visitor.appendUnbarriered(variant);
@@ -773,7 +781,11 @@ size_t StructureTable::removeDeadEntries(VM& vm, CollectionScope scope)
 {
     {
         Locker locker { m_state.caches->lock() };
-        m_variantsMadeSinceCollection.shrink(0);
+        for (const VariantMaps::FiledVariant& filed : m_variants->filedSinceCollection) {
+            if (!vm.heap.isMarked(filed.id.decode()) && !m_variants->structures.get(filed.key))
+                m_variants->structures.remove(filed.key);
+        }
+        m_variants->filedSinceCollection.shrink(0);
         m_variants->listed.removeAllMatching([&](StructureID id) {
             return !vm.heap.isMarked(id.decode());
         });
@@ -985,9 +997,10 @@ CompiledStructure* StructureTable::findOrCreate(VM& vm, const Variant& requested
         return createUsual(vm, layout, usual);
     CompiledStructure* created = create(vm, layout, variant);
     if (!belongsToOneObject(variant)) {
-        m_variants->structures.set(VariantMaps::keyOf(variant), created);
+        VariantMaps::Key key = VariantMaps::keyOf(variant);
+        m_variants->structures.set(key, created);
         Locker locker { m_state.caches->lock() };
-        m_variantsMadeSinceCollection.append(created->id());
+        m_variants->filedSinceCollection.append({ key, created->id() });
         m_variants->listed.append(created->id());
     }
     if (variant.hasOtherPrototype)

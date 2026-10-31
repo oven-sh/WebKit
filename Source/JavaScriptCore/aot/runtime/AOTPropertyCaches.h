@@ -367,6 +367,7 @@ public:
     void fillSiteCacheFromTables(SiteCache, JSCell* base, uint32_t identifierNumber, SlotAccess);
     // The getter that a read of the name calls on every object with the Structure of this one. Runs no code of the program and allocates no cell.
     JSValue findGetterAndFillSiteCache(SiteCache, JSCell* base, uint32_t identifierNumber);
+    void fileValueWithoutChangingObject(JSCell* base, uint32_t identifierNumber);
     void cacheFreeName(SiteCache, UniquedStringImpl*, SlotAccess, const PropertyAnswer&);
     // The cell that a trap of a proxy is handed for the name. A slot names it and does not hold it. For a name of the program there is one, which is kept, so such a slot lasts as long as its Structure.
     JSCell* keyForTraps(UniquedStringImpl*);

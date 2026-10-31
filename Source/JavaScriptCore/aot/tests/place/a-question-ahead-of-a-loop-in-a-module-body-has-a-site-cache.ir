@@ -1,0 +1,15 @@
+# A module body runs once, so a read by name there remembers nothing and gets no site cache. The question ahead of a loop speaks for all the turns of that loop, which may be many: it has to find its answer the first time it is asked.
+# FORM: Prepared
+# RUN: pass Select NumberAndEncode PlaceSiteCaches CheckPlacement
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module parameters=[{type=object}] results=[{type=anything}] {
+    v1 = PropGet v0 key="once"
+    v2 = GetCachedValue v0 key="step" valueType=anything|absent
+    Return v1
+# CHECK: = PropGet v0 key="once"
+# CHECK-NOT: siteCache=
+# CHECK: = GetCachedValue v0 key="step" valueType=anything|absent siteCache=
+}
