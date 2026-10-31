@@ -33,6 +33,7 @@
 #include "JSPIContext.h"
 #include "NativeCallee.h"
 #include "WasmCallee.h"
+#include "WasmCodeInImage.h"
 
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
@@ -40,6 +41,21 @@
 extern "C" void* SYSV_ABI getSentinelFrameReturnPC(const void* signatureSP);
 
 namespace JSC {
+
+// Bun: the code of an image does not sign (AssemblerPolicy::signsReturnAddresses). What it has saved in its frame record stays as it
+// is wherever the frame goes. The word does not tell: a signature may be all zeros.
+static bool signsReturnAddress(const CallerFrameAndPC* frameRecord)
+{
+#if ENABLE(RETURN_ADDRESS_SIGNING) && ENABLE(AOT) && ENABLE(WEBASSEMBLY_OMGJIT)
+    CalleeBits callee = static_cast<const CallFrame*>(static_cast<const void*>(frameRecord))->callee();
+    if (!callee.isNativeCallee() || callee.asNativeCallee()->category() != NativeCallee::Category::Wasm)
+        return true;
+    return !Wasm::CodeInImage::contains(std::get<0>(static_cast<Wasm::Callee*>(callee.asNativeCallee())->range()));
+#else
+    UNUSED_PARAM(frameRecord);
+    return true;
+#endif
+}
 
 std::unique_ptr<EvacuatedStackSlice> EvacuatedStackSlice::create(std::span<Register> stackSpan, Vector<unsigned>&& frameOffsets, const CallFrame* frameToReturnFromForEntry)
 {
@@ -66,7 +82,8 @@ EvacuatedStackSlice::EvacuatedStackSlice(std::span<Register> stackSpan, Vector<u
         auto* frameRecord = reinterpret_cast<CallerFrameAndPC*>(slots().data() + offset);
         SUPPRESS_MEMORY_UNSAFE_CAST
         auto* originalDiscriminator = reinterpret_cast<const void*>(reinterpret_cast<const CallerFrameAndPC*>(stackSpan.data() + offset) + 1);
-        frameRecord->returnPC = relocateReturnPC(frameRecord->returnPC, originalDiscriminator, saltedDiscriminator(frameRecord));
+        if (signsReturnAddress(frameRecord))
+            frameRecord->returnPC = relocateReturnPC(frameRecord->returnPC, originalDiscriminator, saltedDiscriminator(frameRecord));
     }
 
     SUPPRESS_MEMORY_UNSAFE_CAST
@@ -92,9 +109,11 @@ CallFrame* EvacuatedStackSlice::implant(Register* base, CallFrame* lastFrame)
 
         // Link this frame to the one above and re-sign the returnPC for the new location
         frameRecord->callerFrame = lastFrame;
-        if (isReturnToSentinelFrame)
+        if (isReturnToSentinelFrame) {
             frameRecord->returnPC = getSentinelFrameReturnPC(frameRecord + 1);
-        else {
+            if (!signsReturnAddress(frameRecord))
+                frameRecord->returnPC = removeReturnAddressSignature(frameRecord->returnPC);
+        } else if (signsReturnAddress(frameRecord)) {
             auto* originalDiscriminator = saltedDiscriminator(reinterpret_cast<const void*>(slots().data() + offset));
             auto* newDiscriminator = reinterpret_cast<const void*>(frameRecord + 1);
             frameRecord->returnPC = relocateReturnPC(frameRecord->returnPC, originalDiscriminator, newDiscriminator);

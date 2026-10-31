@@ -64,6 +64,24 @@ constexpr uint8_t moduleWithGCTypes[] = {
     0x0a, 0x09, 0x01, 0x07, 0x00, 0x20, 0x00, 0xfb, 0x07, 0x00, 0x0b,
 };
 
+// (import "env" "suspend" (func $suspend (result i32)))
+// (func $inner (param i32) (result i32) call $suspend local.get 0 i32.add)
+// (func (export "run") (param i32) (result i32) local.get 0 call $inner i32.const 0 i32.add)
+constexpr uint8_t moduleThatCallsImport[] = {
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+    0x01, 0x0a, 0x02, 0x60, 0x00, 0x01, 0x7f, 0x60, 0x01, 0x7f, 0x01, 0x7f,
+    0x02, 0x0f, 0x01, 0x03, 0x65, 0x6e, 0x76, 0x07, 0x73, 0x75, 0x73, 0x70, 0x65, 0x6e, 0x64, 0x00, 0x00,
+    0x03, 0x03, 0x02, 0x01, 0x01,
+    0x07, 0x07, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x02,
+    0x0a, 0x13, 0x02, 0x07, 0x00, 0x10, 0x00, 0x20, 0x00, 0x6a, 0x0b, 0x09, 0x00, 0x20, 0x00, 0x10, 0x01, 0x41, 0x00, 0x6a, 0x0b,
+};
+
+constexpr ASCIILiteral suspendsModuleThatCallsImport =
+    "const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 10, 2, 96, 0, 1, 127, 96, 1, 127, 1, 127, 2, 15, 1, 3, 101, 110, 118, 7, 115, 117, 115, 112, 101, 110, 100, 0, 0, 3, 3, 2, 1, 1, 7, 7, 1, 3, 114, 117, 110, 0, 2, 10, 19, 2, 7, 0, 16, 0, 32, 0, 106, 11, 9, 0, 32, 0, 16, 1, 65, 0, 106, 11]);\n"
+    "const suspend = new WebAssembly.Suspending(() => Promise.resolve(40));\n"
+    "const run = WebAssembly.promising(new WebAssembly.Instance(new WebAssembly.Module(bytes), { env: { suspend } }).exports.run);\n"
+    "run(2).then(print);\n"_s;
+
 // (func (export "add") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add)
 constexpr ASCIILiteral callsModuleFromOtherBytes =
     "const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 7, 1, 96, 2, 127, 127, 1, 127, 3, 2, 1, 0, 7, 7, 1, 3, 97, 100, 100, 0, 0, 10, 9, 1, 7, 0, 32, 0, 32, 1, 106, 11]);\n"
@@ -164,6 +182,17 @@ static void testTripwireReportsDeclinedModule()
     ChildProcessResult result = runInShellWithTripwire(moduleWithGCTypes, 0, callsModuleWithGCTypes);
     AOT_TEST_CHECK(!result.exitedWith(EXIT_SUCCESS));
     AOT_TEST_CHECK(result.output.contains("crashIfInterpreterIsUsed: a WebAssembly function without code in the image"_s));
+}
+
+// The frames of the image's code are taken off the stack and put back. With ENABLE(RETURN_ADDRESS_SIGNING) that signs the return
+// addresses of frames anew, but those of an image have no signature.
+static void testSuspendsAndGoesOn()
+{
+    ChildProcessResult result = runInShellWithTripwire(moduleThatCallsImport, 1, suspendsModuleThatCallsImport);
+    if (!result.exitedWith(EXIT_SUCCESS))
+        dataLogLn(shellPath(), " ", result.description(), "\n", result.output);
+    AOT_TEST_CHECK(result.exitedWith(EXIT_SUCCESS));
+    AOT_TEST_CHECK(makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s) == "42\n"_s);
 }
 
 static void testImportedMemoryInShell()
@@ -305,6 +334,7 @@ std::span<const NativeTest> webAssemblyInstanceTests()
 #if ENABLE(WEBASSEMBLY_OMGJIT)
     static constexpr NativeTest tests[] = {
         { "webassembly-instance/imported-memory-in-shell"_s, testImportedMemoryInShell },
+        { "webassembly-instance/suspends-and-goes-on"_s, testSuspendsAndGoesOn },
         { "webassembly-instance/tripwire-accepts-bytes-the-build-never-saw"_s, testTripwireAcceptsBytesTheBuildNeverSaw },
         { "webassembly-instance/tripwire-reports-declined-module"_s, testTripwireReportsDeclinedModule },
         { moduleLoaderOrderTestName, testImportedMemoryInModuleLoaderOrder },
