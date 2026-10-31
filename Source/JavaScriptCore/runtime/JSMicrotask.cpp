@@ -1115,7 +1115,12 @@ static void moduleRegistryFetchSettled(JSGlobalObject* globalObject, VM& vm, Thr
         auto moduleData = arguments[1];
         JSPromise* makeModulePromise = entry->loader()->makeModule(globalObject, entry->key(), moduleData);
         if (scope.exception()) {
+#if USE(BUN_JSC_ADDITIONS)
+            if (!modulePromise->rejectWithCaughtException(vm, scope)) [[unlikely]]
+                entry->loader()->makeModuleWasCutShort(entry, modulePromise);
+#else
             modulePromise->rejectWithCaughtException(vm, scope);
+#endif
             return;
         }
         makeModulePromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleRegistryModuleSettled, modulePromise, entry);
@@ -1218,7 +1223,12 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
 #endif
             JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher());
             if (scope.exception()) {
+#if USE(BUN_JSC_ADDITIONS)
+                if (!loadPromise->rejectWithCaughtException(vm, scope)) [[unlikely]]
+                    context->loader()->loadRequestedModulesWasCutShort(context->entry(), loadPromise);
+#else
                 loadPromise->rejectWithCaughtException(vm, scope);
+#endif
                 return;
             }
             context->setStep(ModuleLoadingContext::Step::Requested);
@@ -1262,8 +1272,14 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
 #endif
             context->loader()->finishLoadingImportedModule(globalObject, context->referrer(), context->moduleRequest(), context->payload(), module, context->scriptFetcher());
             if (scope.exception()) {
+#if USE(BUN_JSC_ADDITIONS)
+                // After a termination the step still settles its own promise below: the module is loaded.
+                if (loadPromise->rejectWithCaughtException(vm, scope) || !context->loader()->finishLoadingWasCutShort(context->payload()))
+                    return;
+#else
                 loadPromise->rejectWithCaughtException(vm, scope);
                 return;
+#endif
             }
 
             // setEntryRecord logic
@@ -1291,8 +1307,14 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
             auto* module = downcast<AbstractModuleRecord>(arguments[1]);
             context->loader()->finishLoadingImportedModule(globalObject, context->referrer(), context->moduleRequest(), context->payload(), module, context->scriptFetcher());
             if (scope.exception()) {
+#if USE(BUN_JSC_ADDITIONS)
+                // As in the Requested step.
+                if (loadPromise->rejectWithCaughtException(vm, scope) || !context->loader()->finishLoadingWasCutShort(context->payload()))
+                    return;
+#else
                 loadPromise->rejectWithCaughtException(vm, scope);
                 return;
+#endif
             }
             loadPromise->fulfill(vm, module);
         } else {

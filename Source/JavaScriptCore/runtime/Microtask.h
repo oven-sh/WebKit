@@ -126,6 +126,22 @@ constexpr bool isModuleLoaderInternalMicrotask(InternalMicrotask task)
     return static_cast<uint8_t>(task) >= static_cast<uint8_t>(InternalMicrotask::AsyncModuleExecutionResume)
         && static_cast<uint8_t>(task) <= static_cast<uint8_t>(InternalMicrotask::ImportModuleNamespace);
 }
+
+// The jobs of a module load, from the settled fetch of a module to the answer of import(), with the pipe job that the
+// loader uses. A registry entry or a graph loading state waits for each of them. The AsyncModuleExecution kinds (and
+// CompiledModuleBodyResume) are not among them: they resume a module body, which is script.
+constexpr bool isModuleLoadInternalMicrotask(InternalMicrotask task)
+{
+    if (task == InternalMicrotask::PromiseFulfillWithoutHandlerJob)
+        return true;
+#if ENABLE(AOT)
+    constexpr auto first = InternalMicrotask::CompiledModuleImport;
+#else
+    constexpr auto first = InternalMicrotask::ModuleRegistryFetchSettled;
+#endif
+    return static_cast<uint8_t>(task) >= static_cast<uint8_t>(first)
+        && static_cast<uint8_t>(task) <= static_cast<uint8_t>(InternalMicrotask::ImportModuleNamespace);
+}
 #else
 constexpr unsigned maxMicrotaskArguments = 3;
 #endif

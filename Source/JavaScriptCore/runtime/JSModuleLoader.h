@@ -183,6 +183,15 @@ public:
     JSPromise* makeModule(JSGlobalObject*, const Identifier& moduleKey, JSValue moduleData);
 #if USE(BUN_JSC_ADDITIONS)
     void fetchSynchronously(JSGlobalObject*, JSPromise* fetchPromise, const Identifier& key, const String& referrer, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&);
+
+    // A termination ended a load step. JSPromise::rejectWithCaughtException() leaves the termination pending and the
+    // promise of the step pending, and an embedder can withdraw the termination (VM::cancelTermination()), after which
+    // this loader loads again. Each of these ends the load at the step that was cut, so that a later load of the same
+    // modules starts its own steps and does not wait for a promise that nothing settles. The termination stays pending,
+    // and so does the result of the import() or require() that the load was for.
+    void makeModuleWasCutShort(ModuleRegistryEntry*, JSPromise* modulePromise);
+    void loadRequestedModulesWasCutShort(ModuleRegistryEntry*, JSPromise* loadPromise);
+    bool finishLoadingWasCutShort(JSCell* payload);
 #endif
 
     static ErrorInstance* duplicateTypeError(JSGlobalObject*, ErrorInstance*);
@@ -286,6 +295,11 @@ private:
     void finishCreation(JSGlobalObject*, VM&);
 
 #if USE(BUN_JSC_ADDITIONS)
+    void removeEntryIfRegistered(ModuleRegistryEntry*);
+    JSPromise* didNotStartFetch(ModuleRegistryEntry*);
+    void abandonLoadsWaitingFor(JSPromise*);
+    void forgetLoadPromise(ModuleRegistryEntry*, JSPromise* loadPromise);
+    static void handBackSynchronousModuleQueue(JSGlobalObject*, size_t first = 0);
     void forgetPrelinkedRecordsWithKey(UniquedStringImpl* keyOrNullForAll);
     void pinPrelinkedEdgesOf(AbstractModuleRecord* importer, uint32_t onlyTarget);
 
