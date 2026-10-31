@@ -1407,9 +1407,9 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
             }
         }
 #if USE(BUN_JSC_ADDITIONS)
-        // loadModule() registered the key when this fetch started, and no source has come for the entry from this load or
-        // another. The key is free again: the next load of it fetches, and moduleLoadTopRejected finds no entry for this error.
-        if (ModuleRegistryEntry* registeredEntry = context->entry(); registeredEntry && registeredEntry->status() == ModuleRegistryEntry::Status::New) {
+        // The entry stood for this fetch in the registry. Where no source has come for it and no other load by name fetches
+        // for it, the key is free again: the next load of it fetches, and moduleLoadTopRejected finds no entry for this error.
+        if (ModuleRegistryEntry* registeredEntry = context->entry(); registeredEntry && registeredEntry->status() == ModuleRegistryEntry::Status::New && registeredEntry->removeFetchOfLoadByName()) {
             registeredEntry->setFetchError(globalObject, errorValue);
             context->loader()->removeFailedFetchEntry(registeredEntry);
         }

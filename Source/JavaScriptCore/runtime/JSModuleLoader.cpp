@@ -443,7 +443,8 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
         RETURN_IF_EXCEPTION(scope, nullptr);
 #if USE(BUN_JSC_ADDITIONS)
         // From here on the registry says that the key is being loaded. The entry stays New until a source comes for it:
-        // nothing waits on it, and another load that comes to it meanwhile fetches for itself.
+        // nothing waits on it, and another load that comes to it meanwhile fetches for itself. It stands for every load by
+        // name that has started its fetch and has no source yet.
         registeredEntry = registerLoadByName(vm, specifier, type);
 #endif
     }
@@ -1414,23 +1415,26 @@ ModuleRegistryEntry* JSModuleLoader::getRegisteredMayBeNull(const Identifier& ke
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-// The entry of a load by name whose fetch has just started. Null where the key is registered already: the fetch hook
-// can register it, and so can another load whose fetch is still out.
+// The entry that stands for a load by name whose fetch has just started: a new one, or the one of another load by name
+// that has no source yet either. Null where the key is registered otherwise, which the fetch hook can do.
 ModuleRegistryEntry* JSModuleLoader::registerLoadByName(VM& vm, const Identifier& key, ScriptFetchParameters::Type type)
 {
-    ModuleRegistryEntry* entry = nullptr;
+    ModuleRegistryEntry* entry;
     {
         // One lookup finds that the key is free and takes it, so the entry is allocated under the lock that a collection
         // visits the map under. The collection must not start before the lock is released.
         DeferGC deferGC(vm);
         Locker locker { cellLock() };
-        m_moduleMap.ensure(ModuleMapKey { key.impl(), type }, [&] {
-            entry = ModuleRegistryEntry::create(vm, this, key, type, nullptr);
-            return WriteBarrier<ModuleRegistryEntry>(vm, this, entry);
+        auto result = m_moduleMap.ensure(ModuleMapKey { key.impl(), type }, [&] {
+            return WriteBarrier<ModuleRegistryEntry>(vm, this, ModuleRegistryEntry::create(vm, this, key, type, nullptr));
         });
+        entry = result.iterator->value.get();
+        if (result.isNewEntry)
+            didAddModuleMapEntry(type);
+        else if (entry->status() != ModuleRegistryEntry::Status::New || !entry->standsForLoadsByName())
+            return nullptr;
     }
-    if (entry)
-        didAddModuleMapEntry(type);
+    entry->addFetchOfLoadByName();
     return entry;
 }
 

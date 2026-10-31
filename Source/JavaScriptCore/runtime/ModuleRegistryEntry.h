@@ -103,6 +103,12 @@ public:
     // loadPromise(), materializing it first for an entry that was markLoaded().
     JSPromise* loadedPromise(JSGlobalObject*);
     void replaceRecord(JSGlobalObject*, AbstractModuleRecord*);
+    // The loads by name whose fetch is out and that this entry stands for in the registry while it is New
+    // (JSModuleLoader::registerLoadByName()).
+    bool standsForLoadsByName() const { return m_fetchesOfLoadsByName; }
+    void addFetchOfLoadByName() { ++m_fetchesOfLoadsByName; }
+    // True when the fetch was the last one.
+    bool removeFetchOfLoadByName() { ASSERT(m_fetchesOfLoadsByName); return !--m_fetchesOfLoadsByName; }
 #endif
 
 private:
@@ -124,6 +130,7 @@ private:
     Status m_status { Status::New };
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isLoaded { false };
+    unsigned m_fetchesOfLoadsByName { 0 };
 #endif
 };
 

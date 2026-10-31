@@ -61,7 +61,7 @@ public:
     };
 
     static ModuleLoadingContext* create(VM&, JSModuleLoader*, Step, const JSModuleLoader::ModuleReferrer&, const AbstractModuleRecord::ModuleRequest&, JSCell* payload, ModuleRegistryEntry*, RefPtr<ScriptFetcher>);
-    // entry: the one that a loadModule() by name registered when its fetch started, if it registered one.
+    // entry: the one that stands for a loadModule() by name in the registry from the start of its fetch (JSModuleLoader::registerLoadByName()).
     static ModuleLoadingContext* create(VM&, JSModuleLoader*, const AbstractModuleRecord::ModuleRequest&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1, ModuleRegistryEntry* = nullptr);
 
     Step step() const { return m_step; }

@@ -1,6 +1,7 @@
 // Bun: this fork's test. A load by name (an import()) has its registry entry from the start of its fetch. Until the
 // fetched source arrives the entry is New and nothing waits on it: another load by name and a static import that come
-// to it fetch for themselves, and all of them get one module. A fetch that fails leaves the key free.
+// to it fetch for themselves, and all of them get one module. A fetch that fails leaves the key free, once no other
+// load by name fetches for it.
 
 function shouldBe(actual, expected, what)
 {
@@ -36,6 +37,16 @@ let outcome = "did not finish";
     shouldBe(await earlier, "rejected", "the load whose failure is reported");
     shouldBe(await startedMeanwhile, "rejected", "the load that started meanwhile");
     shouldBe($vm.moduleRegistryStatus(missing), undefined, "after the load that started meanwhile failed");
+
+    // Two loads of that name overlap. The job between theirs runs when the fetch of the first has failed.
+    let statusBetween = "not read";
+    const failedFirst = import(missing).then(() => "loaded", () => "rejected");
+    Promise.resolve().then(() => { statusBetween = $vm.moduleRegistryStatus(missing); });
+    const failedSecond = import(missing).then(() => "loaded", () => "rejected");
+    shouldBe(await failedFirst, "rejected", "the first of two loads of a file that is not there");
+    shouldBe(await failedSecond, "rejected", "the second of two loads of a file that is not there");
+    shouldBe(statusBetween, "New", "after the first of two fetches failed");
+    shouldBe($vm.moduleRegistryStatus(missing), undefined, "after both fetches failed");
 
     // A static import comes to the key at each distance from the load by name, in a loader of its own each time. At one
     // of them the entry is still New when the static import comes to it.
