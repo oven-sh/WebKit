@@ -37,12 +37,31 @@ static bool hasSortedLists(const BuiltinBindingSet& set)
         && std::ranges::is_sorted(set.nativeFunctions, { }, &BuiltinNativeFunctionBinding::builtin)
         && std::ranges::is_sorted(set.hostNumbers, { }, &BuiltinHostNumberBinding::builtin);
 }
+
+// hostDidCreateStructure() knows a class that names no Structure by the C++ class of its instances. Two such classes with one C++ class: nothing says whose prototype a reported Structure has.
+static bool hasOneClassForEachCppClassWithoutStructure(const BuiltinBindingSet& set)
+{
+    auto isKnownByCppClassAlone = [](const BuiltinClassBinding& binding) {
+        return binding.instanceClassInfo && !binding.namesInstanceStructure;
+    };
+    for (size_t index = 0; index < set.classes.size(); ++index) {
+        const BuiltinClassBinding& binding = set.classes[index];
+        if (!isKnownByCppClassAlone(binding))
+            continue;
+        for (const BuiltinClassBinding& later : set.classes.subspan(index + 1)) {
+            if (isKnownByCppClassAlone(later) && later.instanceClassInfo == binding.instanceClassInfo)
+                return false;
+        }
+    }
+    return true;
+}
 #endif
 
 void BuiltinBindings::registerHost(const BuiltinBindingSet& set)
 {
     RELEASE_ASSERT(!hasHost());
     ASSERT(hasSortedLists(set));
+    ASSERT(hasOneClassForEachCppClassWithoutStructure(set));
     s_host.store(&set, std::memory_order_release);
 }
 

@@ -1305,6 +1305,16 @@ JSObject* takeStaticPropertyMadeAhead(JSObject* holder, UniquedStringImpl* key)
     return taken;
 }
 
+// A class whose row names no Structure is known by the C++ class of its instances. By that very class alone: the instances of a C++ class below it have a prototype of their own.
+static BuiltinClassID findHostClassWithInstancesOf(const ClassInfo* info)
+{
+    for (const BuiltinClassBinding& binding : BuiltinBindings::classesOfHost()) {
+        if (binding.instanceClassInfo == info && !binding.namesInstanceStructure)
+            return binding.builtinClass;
+    }
+    return { };
+}
+
 void hostDidCreateStructure(JSGlobalObject* realm, Structure* structure)
 {
     if (!realm->aotInstance())
@@ -1315,14 +1325,18 @@ void hostDidCreateStructure(JSGlobalObject* realm, Structure* structure)
             instance.didCreateInstanceStructure(builtinClass, structure);
         });
     }
+    // The prototype object is there from the first instance on. The global object adds the constructor at the first read of its name, which a program that has an instance need never read.
+    BuiltinClassID classOfPrototype = builtinClass ? builtinClass : findHostClassWithInstancesOf(structure->classInfoForCells());
     forEachInstanceThatLocks(realm, [&](Instance& instance) {
         if (validatesRuntime(realm->vm())) [[unlikely]]
             validateClassWithInstanceStructure(realm, structure, builtinClass);
-        if (!builtinClass)
+        if (!classOfPrototype)
             return;
         BuiltinLocker locker(instance);
-        lockPrototypeOfClass(locker, builtinClass, structure->storedPrototypeObject());
-        markPristine(realm->vm(), builtinClass, structure);
+        lockPrototypeOfClass(locker, classOfPrototype, structure->storedPrototypeObject());
+        // Nothing says of a class that names no Structure that this one is that of every new instance.
+        if (builtinClass)
+            markPristine(realm->vm(), builtinClass, structure);
     });
 }
 
