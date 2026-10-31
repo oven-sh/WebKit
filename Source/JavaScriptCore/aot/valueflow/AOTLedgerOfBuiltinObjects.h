@@ -113,6 +113,7 @@ private:
     Account accountOfProperty(BuiltinID holder, PropertyKeyID) const;
     Account accountOfEveryOwnProperty(BuiltinID holder) const;
     Account accountOfPrototypeLink(BuiltinID holder) const;
+    void addWritersOfLinkToMembers(Account&, BuiltinID holder) const;
     Writers keep(PlaceKind, const Account&) const;
 
     const ValueFlowResultInputs& m_inputs;

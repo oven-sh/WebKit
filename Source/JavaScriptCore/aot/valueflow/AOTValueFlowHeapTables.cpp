@@ -215,6 +215,7 @@ void ValueFlowHeapTables::describeKey(PropertyKeyID key) const
     holders.thatAnswer = m_maker.unite(members.holders, created);
     ValueSetID holdersOfOpenLocations = m_maker.intersect(members.holders, ValueSets::complement(members.holdersWithLockedLocation));
     holders.thatMayLoseMember = m_maker.unite(m_maker.unite(holdersOfOpenLocations, created), holders.storedToAtCreation);
+    holders.withMemberOnHiddenPrototype = m_maker.intersect(members.holders, m_holdersWithMembersOnHiddenPrototype);
     holders.isDescribed.store(true, std::memory_order_release);
 }
 
@@ -855,6 +856,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         Objects lockedObjects;
         Objects holdersWithLockedIndexes;
         Objects holdersWithLockedPrototypeLink;
+        Objects holdersWithMembersOnHiddenPrototype;
         Objects holdersClosedToOtherNames;
         Objects functionsOfEngine;
         Objects prototypesOfInstancesWithNames;
@@ -899,6 +901,8 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 holdersWithLockedIndexes.appendVector(objects);
             if (builtins.hasLockedPrototypeLink(holder))
                 holdersWithLockedPrototypeLink.appendVector(objects);
+            else if (holder == builtins.canonicalID(Builtins::ImportMeta))
+                holdersWithMembersOnHiddenPrototype.appendVector(objects);
             if (entry.flags.contains(BuiltinFlag::IsClosedToOtherNames))
                 holdersClosedToOtherNames.appendVector(objects);
             bool hasClosedKeys = entry.flags.contains(BuiltinFlag::IsClosedToOtherNames) || !builtins.closedKeysOf(holder).empty();
@@ -1041,6 +1045,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_lockedObjects = maker.of(lockedObjects.span());
         m_holdersWithLockedIndexes = maker.of(holdersWithLockedIndexes.span());
         m_holdersWithLockedPrototypeLink = maker.of(holdersWithLockedPrototypeLink.span());
+        m_holdersWithMembersOnHiddenPrototype = maker.of(holdersWithMembersOnHiddenPrototype.span());
         m_functionsOfEngine = maker.of(functionsOfEngine.span());
         m_prototypeObjectsOfEntries = maker.of(prototypeObjectsOfEntries.span());
 

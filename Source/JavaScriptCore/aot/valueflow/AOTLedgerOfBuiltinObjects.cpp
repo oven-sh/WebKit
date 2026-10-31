@@ -250,7 +250,18 @@ auto LedgerOfBuiltinObjects::accountOfProperty(BuiltinID holder, PropertyKeyID k
         if (m_mayBeHeldWithoutBeingListed.get(receiver) || m_escaped.get(receiver))
             account.open.add(Actor::ReceiversNobodyKnows);
     }
+    addWritersOfLinkToMembers(account, holder);
     return account;
+}
+
+// Whoever gives such a holder another prototype takes away what the table lists on it.
+void LedgerOfBuiltinObjects::addWritersOfLinkToMembers(Account& account, BuiltinID holder) const
+{
+    if (holder != m_builtins.canonicalID(Builtins::ImportMeta) || m_builtins.hasLockedPrototypeLink(holder))
+        return;
+    Account ofLink = accountOfPrototypeLink(holder);
+    account.seen.appendVector(ofLink.seen);
+    account.open.add(ofLink.open);
 }
 
 auto LedgerOfBuiltinObjects::accountOfEveryOwnProperty(BuiltinID holder) const -> Account
@@ -262,6 +273,7 @@ auto LedgerOfBuiltinObjects::accountOfEveryOwnProperty(BuiltinID holder) const -
         account.open.add(Actor::KeysNobodyKnows);
     if ((m_lost.get(receiver) && writesPropertiesThrough(m_untrackedObject)) || (m_escaped.get(receiver) && writesPropertiesThrough(m_unknownObject)))
         account.open.add(Actor::ReceiversNobodyKnows);
+    addWritersOfLinkToMembers(account, holder);
     return account;
 }
 

@@ -264,6 +264,15 @@ HeapChain HeapRule::chainFrom(ClimbingSet receivers, const HeapKey& key)
         if (isStoredThroughPlaceholdersInto(holdersThatMayLoseMember, deleted) || mayBeDeleted)
             answering = ValueSets::nothing;
     }
+    // `Object.setPrototypeOf(import.meta, other)` takes away all that the table lists on the object.
+    if (ValueSetID belowMember = m_tables.holdersWithMemberOnHiddenPrototypeUnder(key.name); belowMember != ValueSets::nothing) {
+        ClimbingSet holdersBelowMember = m_context.restrict(receivers, belowMember);
+        if (holdsAnything(holdersBelowMember)) {
+            bool mayGetAnotherLink = holdsAnything(readWhereWritten(holdersBelowMember, prototypeLinkName));
+            if (isStoredThroughPlaceholdersInto(holdersBelowMember, prototypeLinkName) || mayGetAnotherLink)
+                answering = ValueSets::nothing;
+        }
+    }
     if (key.name == m_tables.prototypeKey())
         answering = m_context.maker().unite(answering, m_tables.closuresWithPrototypeProperty());
 
