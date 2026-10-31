@@ -90,10 +90,7 @@ static Effects effectsOfContentsRead(OperandKind kind)
 
 static bool mayEnterTableLookup(const Program& program, LayoutSetID receivers, PropertyKeyID key)
 {
-    MemberPartition partition = partitionMembers({ program, nullptr }, program.at(receivers).completeMembers(), key, Access::Read);
-    return !partition.rest.isEmpty() || std::ranges::any_of(partition.arms, [](const MemberArm& arm) {
-        return arm.answer.kind != MemberKind::Method || !arm.answer.receiverProofs.isEmpty() || !arm.answer.conditions.isEmpty();
-    });
+    return !readsMethodOfEachWithoutTests({ program, nullptr }, program.at(receivers).completeMembers(), key);
 }
 
 // Every table call of one name on one family asks the same, and the answer looks at every class of the family.
@@ -256,7 +253,7 @@ static void describeCreationOfThis(const Program& program, FunctionID callee, co
     if (operands.newTarget || !constructed)
         description.addOwn(declaredBoundOf(Opcode::NewObject));
     else
-        description.addOwn(hasOnePrototypeObject(program, constructed) ? declaredBoundOf(NamedEffectSet::Allocates) : effectsOfAllocatingWithPrototype(program, constructed));
+        description.addOwn(hasOnePrototypeObject(program, constructed) ? effectsOfAllocatingWithPrototypeOfLayout(program, constructed) : effectsOfAllocatingWithPrototype(program, constructed));
 }
 
 static NEVER_INLINE bool describeEntrypointsOfLongList(const Program& program, std::span<const FunctionID> callees, BuiltinCallMode mode, EffectDescription& description, const EffectSummaries& summaries)

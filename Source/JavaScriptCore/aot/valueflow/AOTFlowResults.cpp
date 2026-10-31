@@ -350,6 +350,8 @@ bool builtinHolderNeverGains(const FlowBuiltinTables& tables, BuiltinID holder, 
 {
     if (!tables.intactHolders.get(holder.index()))
         return false;
+    if (tables.holdersReachedThroughUnknownObject.get(holder.index()) && (tables.isEveryKeyWrittenThroughUnknownObject || tables.keysWrittenThroughUnknownObject.get(key.index())))
+        return false;
     const BuiltinUseRecord* uses = findRecord(tables.uses, holder.index());
     if (uses && OptionSet<BuiltinUse>::fromRaw(static_cast<uint32_t>(uses->uses)).contains(BuiltinUse::Escaped))
         return false;

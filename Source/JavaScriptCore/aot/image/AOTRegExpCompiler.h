@@ -70,6 +70,7 @@ struct RegExpCode {
     PCRelativeReach reach { PCRelativeReach::Near };
     unsigned analysisLimitHits { 0 };
     bool hasElidedFrame { false };
+    bool handsLongSearchesOver { false };
 };
 
 using RegExpCodeOrFailureReason = std::expected<std::unique_ptr<RegExpCode>, Yarr::JITFailureReason>;

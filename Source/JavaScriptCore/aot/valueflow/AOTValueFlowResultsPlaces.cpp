@@ -1138,15 +1138,22 @@ Vector<VariableID> collectExportsThatSpiesReplace(const ValueFlowResultInputs& i
     bool runsTextNobodyHasSeen = std::ranges::any_of(unseenCode, [](const UnseenCodeRecord& record) {
         return record.cause == UnseenCodeCause::EvaluatesText || (record.cause == UnseenCodeCause::RunsUnseenCode && record.builtin != Wire::none);
     });
-    if (isSpyOutOfSight && runsTextNobodyHasSeen)
-        keysOutOfSight.add(maker, ValueSets::nothing, true);
-
-    if (keysOutOfSight.isSpiedOn) {
+    if (isSpyOutOfSight && runsTextNobodyHasSeen) {
         for (ValueFlowNodeID node : { ValueFlowProgramNodes::escaped(), ValueFlowProgramNodes::lost() }) {
             forEachNamespaceIn(inputs.solver().possibleValuesOf(node), [&](ModuleID id) {
-                keysOfModule[id.index()].add(maker, keysOutOfSight);
+                keysOfModule[id.index()].add(maker, ValueSets::nothing, true);
             });
         }
+    }
+
+    // An object that flow does not know, which most spies of a large suite are handed, is a namespace object only where flow itself has lost one. One that seen code carries to the spy
+    // is listed there beside the unknown object, and of one that goes into a call the front end opens the names that such spies spell. That a namespace object has escaped says little: the
+    // loader hands every file of a test run to code from disk, the run time reads names off the objects, require.cache shows them. Nor that a call of a value nobody knows lists it: it is the
+    // `this` of every call of an export that may be replaced. With either, one such spy would open an export in every file of the program.
+    if (keysOutOfSight.isSpiedOn) {
+        forEachNamespaceIn(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::lost()), [&](ModuleID id) {
+            keysOfModule[id.index()].add(maker, keysOutOfSight);
+        });
     }
 
     ExportedVariables exported(program);

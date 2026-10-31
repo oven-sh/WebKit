@@ -1,0 +1,39 @@
+# const defaults = { locations: false, ranges: false }; const options = { version: true }; for (const key in maybe ? give() : defaults) options[key] = ..
+# The defaults have not escaped, so the value nobody knows does not stand for them: every node they reach lists them, whichever came first. Their names are fields of the literal.
+# RUN: valueflow-apply
+# CHECK: layout L1 fields=[{key="version" {{*}}, {key="locations" {{*}} flags=[IsAddedLate{{*}}, {key="ranges" {{*}} flags=[IsAddedLate
+
+layout L0 fields=[{key="locations" declared={type=anything} flags=[IsRequired]}, {key="ranges" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L1 fields=[{key="version" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="give" [isFreeName]
+    v2 = Call v1, -
+    v3 = Boolean
+    v4 = NewObject -, v3, v3 layout=L0 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = NewObject -, v3 layout=L1 fields=[0]
+    v7 = FinishObject v6
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v5)
+  b3(v8: anything):
+    v9 = ForInOpen v8
+    Jump -> next b4()
+  b4():
+    LoopHint
+    v11 = ForInStep v9, v8
+    v12 = ResultAt v11
+    v13 = ResultAt v11 index=1
+    Branch v12 -> taken b6(), notTaken b5()
+  b5():
+    v14 = ElemGet v8, v13
+    ElemSet v7, v13, v14
+    Jump -> next b4()
+  b6():
+    Return v7
+}

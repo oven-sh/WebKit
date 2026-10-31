@@ -25,6 +25,7 @@
 #include "AOTPassID.h"
 #include "AOTPersistentSortedSet.h"
 #include "AOTPhaseTimes.h"
+#include "AOTPropertyAccessMembers.h"
 #include "AOTSchemaEnums.h"
 #include "AOTSharedPrefixList.h"
 #include "AOTSort.h"
@@ -783,6 +784,38 @@ static void testPersistentSetsHoldWhatSortedSetsHold()
     }
 }
 
+static void testPackedPartitionUnpacksToWhatWasPacked()
+{
+    auto isSame = [](const MemberPartition& a, const MemberPartition& b) {
+        return a.rest == b.rest && std::ranges::equal(a.arms, b.arms, [](const MemberArm& a, const MemberArm& b) {
+            return a.answer == b.answer && a.layouts == b.layouts;
+        });
+    };
+    AOT_TEST_CHECK(isSame(PackedMemberPartition(MemberPartition { }).unpack(), MemberPartition { }));
+
+    MemberCondition unchanged { MemberCondition::Kind::MemberUnchanged, LayoutID(4u), ClassSide::Prototype, PropertyKeyID(9u) };
+    MemberCondition evaluatedOnce { MemberCondition::Kind::ClassEvaluatedOnce, LayoutID(70000u), ClassSide::Static, { } };
+    MemberPartition partition;
+    partition.rest = { LayoutID(3u), LayoutID(900u) };
+    partition.arms.append({ { .kind = MemberKind::Method, .level = KnowledgeLevel::Proven, .holder = LayoutID(7u), .method = FunctionID(0u) }, { LayoutID(7u) } });
+    partition.arms.append({ { .kind = MemberKind::Accessor, .level = KnowledgeLevel::Expected, .holder = LayoutID(8u), .getter = FunctionID(12u), .setter = FunctionID(13u), .receiverProofs = { Proof::PrototypeLinkUnchanged, Proof::NoExtraProperties }, .conditions = { unchanged, evaluatedOnce }, .cause = UnprovenCause::PropertyRedefined }, { LayoutID(8u), LayoutID(9u) } });
+    partition.arms.append({ { .kind = MemberKind::Field, .level = KnowledgeLevel::Proven, .holder = LayoutID(0u), .field = 5 }, { LayoutID(10u), LayoutID(11u), LayoutID(12u), LayoutID(13u), LayoutID(14u), LayoutID(15u) } });
+    partition.arms.append({ { .kind = MemberKind::Field, .level = KnowledgeLevel::Proven }, { LayoutID(16u) } });
+    partition.arms.append({ { .kind = MemberKind::Variable, .level = KnowledgeLevel::Proven, .variable = VariableID(2u) }, { LayoutID(17u) } });
+    partition.arms.append({ { .kind = MemberKind::Namespace, .level = KnowledgeLevel::Proven, .module = ModuleID(1u) }, { LayoutID(18u) } });
+    partition.arms.append({ { .kind = MemberKind::Builtin, .level = KnowledgeLevel::Expected, .builtin = BuiltinID(21u), .conditions = { unchanged } }, { LayoutID(19u) } });
+    partition.arms.append({ { .kind = MemberKind::Absent, .level = KnowledgeLevel::Proven }, { LayoutID(20u) } });
+    AOT_TEST_CHECK(isSame(PackedMemberPartition(partition).unpack(), partition));
+
+    // A thousand classes with a method each.
+    MemberPartition methods;
+    for (uint32_t index = 0; index < 1000; ++index)
+        methods.arms.append({ { .kind = MemberKind::Method, .level = KnowledgeLevel::Proven, .holder = LayoutID(index), .method = FunctionID(index) }, { LayoutID(index) } });
+    PackedMemberPartition packed(methods);
+    AOT_TEST_CHECK(isSame(packed.unpack(), methods));
+    AOT_TEST_CHECK(packed.sizeInBytes() * 4 <= methods.arms.size() * sizeof(MemberArm));
+}
+
 static void testListsShareWhatTheyHeldWhenTheyWereCopied()
 {
     WeakRandom random(1);
@@ -793,6 +826,15 @@ static void testListsShareWhatTheyHeldWhenTheyWereCopied()
             uint32_t value = random.getUint32(3);
             list.append(value);
             expected.append(value);
+        }
+        if (!random.getUint32(3)) {
+            const auto& [appended, expectedAppended] = lists[random.getUint32(lists.size())];
+            list.appendList(appended);
+            expected.appendVector(expectedAppended);
+            if (random.getUint32(2)) {
+                list.append(1);
+                expected.append(1);
+            }
         }
         AOT_TEST_CHECK(list.size() == expected.size() && list.isEmpty() == expected.isEmpty());
         size_t first = random.getUint32(expected.size() + 2);
@@ -814,6 +856,23 @@ static void testListsShareWhatTheyHeldWhenTheyWereCopied()
         longest.append(index);
     }
     AOT_TEST_CHECK(longest.size() == 1000000);
+
+    SharedPrefixList<uint32_t> deepest;
+    for (uint32_t index = 0; index < 1000000; ++index) {
+        SharedPrefixList<uint32_t> outer;
+        outer.append(index);
+        outer.appendList(deepest);
+        deepest = WTF::move(outer);
+    }
+    uint32_t next = 1000000;
+    AOT_TEST_CHECK(deepest.size() == next && deepest.allOf([&](uint32_t value) { return value == --next; }));
+    SharedPrefixList<uint32_t> sameValues;
+    sameValues.append(999999);
+    deepest.allOfFrom(1, [&](uint32_t value) {
+        sameValues.append(value);
+        return true;
+    });
+    AOT_TEST_CHECK(deepest == sameValues);
 }
 
 static void testHeapSortBehindTooManyPartitions()
@@ -1183,6 +1242,23 @@ void checkGrowthOfVector(const Invocable<T(unsigned)> auto& create)
         AOT_TEST_CHECK(copy == vector && copy.capacity() == vector.size());
         VectorUnderTest moved = WTF::move(copy);
         AOT_TEST_CHECK(moved == vector && copy.isEmpty());
+        auto shiftAndHandOver = [&](auto& list) {
+            list.insert(0, T(create(3)));
+            list.insert(list.size() / 2, T(create(4)));
+            list.insert(list.size(), T(create(5)));
+            list.removeAt(list.size() / 2);
+            list.removeAt(0);
+            list.insertFill(0, T(create(6)), 3);
+            list.removeAt(1, 2);
+            std::remove_reference_t<decltype(list)> taken = WTF::move(list);
+            std::remove_reference_t<decltype(list)> copied = taken;
+            list = WTF::move(copied);
+            copied = taken;
+            list.swap(copied);
+            list.appendVector(taken);
+            list.removeAt(list.size() - taken.size(), taken.size());
+        };
+        onBoth(vector, expected, shiftAndHandOver);
         onBoth(vector, expected, [&](auto& list) {
             list.reserveCapacity(list.capacity() + 1);
         });
@@ -1193,6 +1269,7 @@ void checkGrowthOfVector(const Invocable<T(unsigned)> auto& create)
             list.shrink(inlineCapacity / 2 + 1);
             list.shrinkToFit();
         });
+        onBoth(vector, expected, shiftAndHandOver);
         onBoth(vector, expected, [&](auto& list) {
             list.fill(T(create(7)), 3 * inlineCapacity + 40);
         });
@@ -1328,6 +1405,7 @@ std::span<const NativeTest> supportTests()
         { "sorted-lists/short-list-is-looked-for-by-halving"_s, testShortSortedListIsLookedForByHalving },
         { "shared-collections/persistent-sets-hold-what-sorted-sets-hold"_s, testPersistentSetsHoldWhatSortedSetsHold },
         { "shared-collections/lists-share-what-they-held-when-they-were-copied"_s, testListsShareWhatTheyHeldWhenTheyWereCopied },
+        { "property-access/packed-partition-unpacks-to-what-was-packed"_s, testPackedPartitionUnpacksToWhatWasPacked },
         { "vector/holds-what-that-of-wtf-holds"_s, testVectorsHoldWhatThoseOfWTFHold },
         { "enum-names/end-at-the-last-enumerator"_s, testNamesOfEnumeratorsEndAtTheLastOne },
     };

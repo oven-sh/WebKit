@@ -1229,6 +1229,11 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
                     appendLiveExports(source, m_table.exports(source) | std::views::transform([&](const ModuleExportData& entry) {
                         return identifier(entry.name);
                     }));
+                    RETURN_IF_EXCEPTION(scope, { });
+                    WTF::Vector<Identifier> addedByMock;
+                    appendNamesAddedByMock(source, addedByMock);
+                    RETURN_IF_EXCEPTION(scope, { });
+                    appendLiveExports(source, addedByMock);
                     pending.append(source);
                 }
                 RETURN_IF_EXCEPTION(scope, { });

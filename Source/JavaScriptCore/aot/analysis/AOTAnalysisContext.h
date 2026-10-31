@@ -22,6 +22,9 @@ class FlowResults;
 enum class CallResults : uint8_t { MayAliasOperands, NotFollowed };
 // The verifier judges code that the passes have finished, so a limit that the build lowers stays as usual for it.
 enum class WorkLimits : bool { OfBuild, NeverLowered };
+// A saved frame is out of the program's reach, so what a suspension holds has gone nowhere. Only the verifier judges by that: a pass that kept a guard by it would keep it for a stage that
+// reads the object out of a frame in the heap, where it comes from outside.
+enum class SavedFrames : bool { AreUnknownMemory, AreOutOfReach };
 
 struct AnalysisContext {
     BuildContext& build;
@@ -31,6 +34,7 @@ struct AnalysisContext {
     FunctionID id { };
     CallResults callResults { CallResults::MayAliasOperands };
     WorkLimits workLimits { WorkLimits::OfBuild };
+    SavedFrames savedFrames { SavedFrames::AreUnknownMemory };
 
     uint64_t limit(LimitID) const;
 };

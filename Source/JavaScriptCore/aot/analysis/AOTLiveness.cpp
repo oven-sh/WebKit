@@ -60,6 +60,7 @@ Liveness::Liveness(const Function& function, const CFG& cfg, const UseLists& use
 {
     AOT_THRESHOLD(size_t, maxWordsForPerBlockSolver, 1 << 18);
     AOT_THRESHOLD(size_t, maxVisitsOfPerValueSolver, 1 << 22);
+    AOT_THRESHOLD(size_t, maxVisitsOfEachBlockByPerValueSolver, 8);
     RELEASE_ASSERT(m_function.blocks.size() == m_cfg.numNodes());
     RELEASE_ASSERT(m_function.values.size() == m_useLists.numberOfValues());
     if (options.trackedValues)
@@ -104,9 +105,12 @@ Liveness::Liveness(const Function& function, const CFG& cfg, const UseLists& use
     size_t numberOfReachableBlocks = m_cfg.reversePostOrder().size();
     bool isDenseEnough = numberOfValues * 64 >= numberOfReachableBlocks;
     bool isSmallEnough = numberOfReachableBlocks * ((numberOfValues + 63) / 64) <= maxWordsForPerBlockSolver;
+    size_t maxVisits = maxVisitsOfPerValueSolver;
+    if (options.solver == LivenessOptions::Solver::ChosenBySize)
+        maxVisits = std::min(maxVisits, maxVisitsOfEachBlockByPerValueSolver * numberOfReachableBlocks);
     if (options.solver == LivenessOptions::Solver::ChosenBySize && isDenseEnough && isSmallEnough)
         solvePerBlock(crossBlockValues, additionalPredecessors);
-    else if (options.solver == LivenessOptions::Solver::SharedSets || !solvePerValue(crossBlockValues, additionalPredecessors, maxVisitsOfPerValueSolver))
+    else if (options.solver == LivenessOptions::Solver::SharedSets || !solvePerValue(crossBlockValues, additionalPredecessors, maxVisits))
         solveWithSharedSets(crossBlockValues, additionalPredecessors);
 }
 

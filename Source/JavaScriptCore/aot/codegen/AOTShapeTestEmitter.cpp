@@ -112,10 +112,10 @@ bool ShapeTestEmitter::hasOnlyCellsWithBrands(const Type& type) const
     });
 }
 
-bool ShapeTestEmitter::mayBeCellWithBrand(const Type& type) const
+bool ShapeTestEmitter::mayBeOtherThanCompiledObject(const Type& type) const
 {
     return type.layouts && std::ranges::any_of(membersOf(m_program, type), [&](LayoutID member) {
-        return Typed::carriesBrandOfClass(m_program, member);
+        return Typed::carriesBrandOfClass(m_program, member) || m_program.at(member).kind == LayoutKind::ModuleNamespace;
     });
 }
 

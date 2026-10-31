@@ -42,8 +42,8 @@ struct InstanceLayout {
     static constexpr size_t bytesReservedForBoxedCalls = 16 * KB;
 #endif
     // KeyedValuePlace. A stub reaches a place by its distance from the instance.
-    static constexpr ptrdiff_t offsetOfKeyedValuePlaces = -static_cast<ptrdiff_t>(64 * KB);
-    static constexpr size_t bytesReservedForKeyedValuePlaces = 16 * KB;
+    static constexpr ptrdiff_t offsetOfKeyedValuePlaces = -static_cast<ptrdiff_t>(80 * KB);
+    static constexpr size_t bytesReservedForKeyedValuePlaces = 32 * KB;
     // AllocationWords::numberOfCopiesWithoutFrame pointers, reached the same way.
     static constexpr ptrdiff_t offsetOfCopiesWithoutFrame = -static_cast<ptrdiff_t>(48 * KB);
     static constexpr size_t bytesReservedForCopiesWithoutFrame = 16 * KB;

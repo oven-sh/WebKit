@@ -1,7 +1,7 @@
 # class Point { constructor(x) {} static origin(label) { return label } }; back = input(new Point(1)); new back.constructor("s"); back.constructor.origin("s")
 # The unknown object stands for the instance, and above the instance lies the prototype object that names the class. So the read of `constructor` answers the class itself beside the unknown object:
 # the construction enters the constructor with a string, and the static method, which nothing else names, is reached.
-# RUN: valueflow-solve unreached calls
+# RUN: valueflow-solve unreached calls seen
 # CHECK: f0 v12 -> unknown {{*}}f1
 # CHECK-NEXT: f0 v14 -> unknown {{*}}f2
 # CHECK-NOT: unreached f2

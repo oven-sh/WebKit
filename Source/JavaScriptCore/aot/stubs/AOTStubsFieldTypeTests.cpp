@@ -88,6 +88,13 @@ void branchUnlessTypeAccepts(StubAssembler& jit, const TypeTestRegisters& r, Jum
         jit.load32(Address(r.test, RuntimeCellTest::offsetOfOperand()), result);
         jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), result);
     };
+    // RuntimeLayoutTable::isOfThisRealm().
+    auto leaveCellOfOtherRealmToRunTime = [&] {
+        if (jit.options().hasOneInstance)
+            return;
+        loadStructure(jit, r.value, r.scratch);
+        cannot.append(branchIfNotOfThisRealm(jit, r.scratch));
+    };
     auto testShape = [&] {
         const GPRReg shapeTest = r.scratch;
         const GPRReg location = r.scratch;
@@ -97,6 +104,7 @@ void branchUnlessTypeAccepts(StubAssembler& jit, const TypeTestRegisters& r, Jum
         const GPRReg page = r.secondScratch;
         const GPRReg word = r.secondScratch;
 
+        leaveCellOfOtherRealmToRunTime();
         loadShapeTest(shapeTest);
         loadShapeWord(jit, r.value, indexFromLast);
         jit.add32(Address(shapeTest, ShapeTestData::offsetOfLast()), indexFromLast);
@@ -185,6 +193,7 @@ void branchUnlessTypeAccepts(StubAssembler& jit, const TypeTestRegisters& r, Jum
             static_assert(ClosureWord::functionShift == 32);
             const GPRReg function = r.scratch;
             Jump hasOtherKind = branchOnKind(CCallHelpers::NotEqual);
+            leaveCellOfOtherRealmToRunTime();
             jit.load8(Address(r.value, JSCell::typeInfoTypeOffset()), cellType);
             Jump isSlimClosure = jit.branch32(CCallHelpers::Equal, cellType, TrustedImm32(SlimClosureType));
             // A slim closure that has got properties keeps the number of its function elsewhere.

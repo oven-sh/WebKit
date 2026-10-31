@@ -1365,6 +1365,23 @@ static void testVectorizeLoopsSkipsSumThatTurnLooksAt()
     CHECK(!vectorizeLoopsAndValidate(numbers.proc));
 }
 
+static void testVectorizeLoopsSkipsLeastAndGreatestOfWhatIsNotRead()
+{
+    // Nothing is read or stored, so there is no element, and no number of lanes.
+    for (B3::Opcode relation : { GreaterThan, GreaterEqual, LessThan, LessEqual, Above, Below }) {
+        for (bool comparesCounter : { false, true }) {
+            LoopThatAddsUp loop { vectorPolicy(), Int32 };
+            Graph& graph = loop.graph;
+            BasicBlock* body = loop.loop.body;
+            Value* candidate = comparesCounter ? graph.make(body, Trunc, graph.get(body, loop.loop.index)) : graph.int32(body, 0);
+            Value* found = graph.get(body, loop.total);
+            graph.set(body, loop.total, graph.select(body, graph.make(body, relation, candidate, found), candidate, found));
+            loop.loop.endBody(body);
+            CHECK(!vectorizeLoopsAndValidate(loop.proc));
+        }
+    }
+}
+
 static void testVectorizeLoopsSkipsLoopsWhoseTurnsAreNotAlike()
 {
     const ElementKind& bytes = elementKinds[0];
@@ -1973,6 +1990,7 @@ void addBunLoopVectorizingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVectorizeLoopsTakesBranchWhoseWaysOnlyChoose());
     RUN(testVectorizeLoopsSkipsBranchWhoseWayStores());
     RUN(testVectorizeLoopsSkipsSumThatTurnLooksAt());
+    RUN(testVectorizeLoopsSkipsLeastAndGreatestOfWhatIsNotRead());
     RUN(testVectorizeLoopsSkipsLoopsWhoseTurnsAreNotAlike());
     RUN(testVectorizeLoopsSkipsLoopWithSecondWayOut());
     RUN(testVectorizeLoopsTakesBranchOnConstantForJump());

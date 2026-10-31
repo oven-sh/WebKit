@@ -1,0 +1,67 @@
+# The typed body begins again in the generic version by a call in tail position. Where the two were given different calling conventions the call is no ReturnCall any more:
+# IRBuilder::demoteReturnCall() leaves the call, marked as one in tail position, and a Return of its result. The typed body still says what it said before.
+# FORM: Prepared
+# RUN: effects summaries-by-types-of-operands f1 f2 f4 f5
+# RUN(ASREAD): effects summaries f1 f4
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="scaled" role=EntryChecks parameters=[{type=number flags=[IsExpected]}, {type=undefined|number}] results=[{type=number}] creator=EntryChecks{body=f1 fallback=f2} {
+  b0(v0: anything, v1: undefined|number):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: number):
+    v4 = CallDirect v3, v1 function=f1
+    Return v4
+  b2() frequency=Rare:
+    v5 = CallDirect v0, v1 function=f2
+    Return v5
+}
+
+function f1 name="scaled" parameters=[{type=number}, {type=undefined|number}] results=[{type=number}] derivation={source=f0 parameterMap=[{original=0}, {original=1}]} {
+  b0(v0: number, v1: undefined|number):
+    v2 = TypeTest v1 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: number):
+    v4 = Mul v0, v3
+    Return v4
+  b2() frequency=Rare:
+    v5 = CallDirect v0, v1 function=f2 [isNeverInlined] @0 tail
+    Return v5
+}
+# CHECK: f1 return: throwsForLackOfStack throw: throwsForLackOfStack p0: [Inspects] p1: [Inspects]
+# ASREAD: f1 return: {{*}}callsUnknownCode
+
+function f2 name="scaled" role=GenericVersion parameters=[{type=number flags=[IsExpected]}, {type=undefined|number}] results=[{type=number}] derivation={source=f0 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f1} {
+  b0(v0: anything, v1: undefined|number):
+    v2 = Integer integer=0
+    v3 = BitOr v0, v2
+    v4 = CallDirect v0 function=f3
+    v5 = Add v3, v4
+    Return v5
+}
+# CHECK: f2 return: {{*}}callsUnknownCode
+
+function f3 name="" role=OutlinedBody parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    v2 = URShift v0, v1
+    Return v2
+}
+
+function f4 name="callsTheTypedBody" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Undefined
+    v2 = CallDirect v0, v1 function=f1
+    Return v2
+}
+# CHECK: f4 return: throwsForLackOfStack throw: throwsForLackOfStack p0: [Inspects]
+# ASREAD: f4 return: {{*}}callsUnknownCode
+
+function f5 name="callsTheGenericVersion" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Undefined
+    v2 = CallDirect v0, v1 function=f2
+    Return v2
+}
+# CHECK: f5 return: {{*}}callsUnknownCode

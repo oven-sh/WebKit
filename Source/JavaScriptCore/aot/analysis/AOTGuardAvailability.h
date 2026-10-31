@@ -293,6 +293,7 @@ private:
     void addGuardsBehind(ValueID guard, BitVector& guardIndexes) const;
     void solve(const BitVector& guardIndexes) const;
     void collectKills(const BitVector& killClasses) const;
+    uint32_t ensureKillSet(BitVector&& killClasses) const;
     void addKill(BlockID, uint32_t index, BitVector&& killClasses) const;
 
     void applyDefinitions(BitVector& available, const BitVector& guardIndexes, BlockID, uint32_t index) const;

@@ -17,7 +17,7 @@ enum UserDiagnosticKind (severity: DiagnosticSeverity, stage: Stage, code: UInt3
     TooManyShapes(Error, NumberAndEncode, 100057, "the program has too many object shapes: {limit}, needed {count}")
     TooManyIdentifiers(Error, NumberAndEncode, 100057, "the program has too many property names: {limit}, needed {count}")
     TooManyFunctions(Error, BuildImage, 100057, "the program has too many functions: {limit}, needed {count}")
-    RegExpWithoutCode(Warning, BuildImage, 100058, "this regular expression runs in the interpreter (reason {count})")
+    RegExpWithoutCode(Warning, BuildImage, 100058, "this regular expression runs in the interpreter (reason {count}){text}")
     WasmUnsupportedCPU(Warning, BuildImage, 100058, "the WebAssembly module runs in the interpreter: the target CPU is not supported")
     WasmInvalidModule(Warning, BuildImage, 100058, "the WebAssembly module runs in the interpreter: it is not valid")
     WasmNoFunctions(Warning, BuildImage, 100058, "the WebAssembly module has no functions to compile")

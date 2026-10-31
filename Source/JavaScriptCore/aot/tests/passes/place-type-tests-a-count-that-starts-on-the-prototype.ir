@@ -23,6 +23,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v10 = PropGet v9 key="register" [isFreeName]
     v11 = Call v10, -, v5, v6, v8
     v12 = Call v8, -, v5, v11
+    v13 = NewClosure function=f4
+    v14 = Call v10, -, v13
+    v15 = Call v13, -, v5
     Return v12
 }
 function f1 name="Counter" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
@@ -64,3 +67,17 @@ function f3 name="add" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}
 # CHECK-NOT: PutSlotOrAdd
 # CHECK: PropSet v0, {{*}} key="count" {{*}}
 }
+
+# The name is read again behind the increment, under the test that stands in front of it. A getter of `count` may have deleted the name, so nothing that has read `count` by name comes back in between.
+function f4 name="hitBetweenReads" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+    v1 = PropGet v0 key="name"
+    v2 = PropGet v0 key="count"
+    v3 = Increment v2
+    PropSet v0, v3 key="count"
+    v5 = PropGet v0 key="name"
+    Return v5
+}
+# CHECK-LABEL: function {{*}}name="hitBetweenReads"
+# CHECK: [[hasName]]: guard
+# CHECK: IsSlotFilled {{*}} key="count" {{*}}
+# CHECK-NOT: PutSlotOrAdd

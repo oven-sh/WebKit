@@ -466,6 +466,9 @@ struct Instance : InstanceHeader {
     static constexpr ptrdiff_t offsetOfBoxedCalls();
     std::span<const MappedCopy*, AllocationWords::numberOfCopiesWithoutFrame> copiesWithoutFrame() { return std::span<const MappedCopy*, AllocationWords::numberOfCopiesWithoutFrame> { reinterpret_cast<const MappedCopy**>(reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfCopiesWithoutFrame), AllocationWords::numberOfCopiesWithoutFrame }; }
     std::span<KeyedValuePlace, KeyedValuePlace::numberOfPlaces> keyedValuePlaces() { return std::span<KeyedValuePlace, KeyedValuePlace::numberOfPlaces> { reinterpret_cast<KeyedValuePlace*>(reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfKeyedValuePlaces), KeyedValuePlace::numberOfPlaces }; }
+    // Behind the places and what is left of the places for stores.
+    static constexpr ptrdiff_t offsetOfAcceptedKindsOfValues = InstanceLayout::offsetOfKeyedValuePlaces + static_cast<ptrdiff_t>(KeyedValuePlace::numberOfPlaces * sizeof(KeyedValuePlace) + KeyedValuePlace::numberOfPlacesPerAccess * sizeof(RestOfPlaceForStores));
+    std::span<AcceptedKindOfValue, AcceptedKindOfValue::numberOfEntries> acceptedKindsOfValues() { return std::span<AcceptedKindOfValue, AcceptedKindOfValue::numberOfEntries> { reinterpret_cast<AcceptedKindOfValue*>(reinterpret_cast<uint8_t*>(this) + offsetOfAcceptedKindsOfValues), AcceptedKindOfValue::numberOfEntries }; }
 
     template<typename Visitor>
     void visitRoots(Visitor& visitor)
@@ -535,7 +538,7 @@ static_assert(AOT_INSTANCE_OFFSET(propertyCaches.hashedSlots) <= 504, "On ARM64,
 static_assert(sizeof(Instance) <= InstanceLayout::offsetOfKeyOrderSteps);
 static_assert(InstanceLayout::offsetOfKeyOrderSteps + numberOfKeyOrderStepCaches * sizeof(KeyOrderStepCache) <= InstanceLayout::offsetOfBuiltinLocationStates);
 static_assert(sizeof(InstancePrefix) + InstanceLayout::bytesReservedForLoopPollPage <= InstanceLayout::bytesReservedForPrefixAndPollPage);
-static_assert(KeyedValuePlace::numberOfPlaces * sizeof(KeyedValuePlace) <= InstanceLayout::bytesReservedForKeyedValuePlaces && sizeof(InstancePrefix) <= 32 * KB);
+static_assert(Instance::offsetOfAcceptedKindsOfValues - InstanceLayout::offsetOfKeyedValuePlaces + AcceptedKindOfValue::numberOfEntries * sizeof(AcceptedKindOfValue) <= InstanceLayout::bytesReservedForKeyedValuePlaces && sizeof(InstancePrefix) <= 32 * KB);
 static_assert(sizeof(RememberedSlot<Slot>) == InstanceLayout::sizeOfSiteCache && sizeof(RememberedSlot<uint32_t>) == InstanceLayout::sizeOfStringCell);
 static_assert(sizeof(TypedArrayAllocation) == 32);
 static_assert(sizeof(UniquedStringImpl) == 24, "The image holds a header of this size per identifier, and a stub scales an identifier number by it.");

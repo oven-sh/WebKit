@@ -465,6 +465,8 @@ public:
         BlockID root = m_cfg.root();
         m_blocksEnteredWithNothing.quickSet(root.index());
         m_isPending.quickSet(m_cfg.reversePostOrderIndex(root));
+        // Whoever solves the whole function drops the heads of a sweep that has spent the work, so such a sweep need not end.
+        m_leavesSweepThatTakesTooMuch = true;
         return solvePendingBlocks(0, m_cfg.reversePostOrder().size());
     }
 
@@ -509,8 +511,11 @@ private:
         for (bool shouldRepeat = true; shouldRepeat;) {
             shouldRepeat = false;
             for (uint32_t blockOrder = first; blockOrder < end; ++blockOrder) {
-                if (m_isPending.quickClear(blockOrder))
-                    shouldRepeat |= visit(order[blockOrder], blockOrder);
+                if (!m_isPending.quickClear(blockOrder))
+                    continue;
+                shouldRepeat |= visit(order[blockOrder], blockOrder);
+                if (m_leavesSweepThatTakesTooMuch && m_sinking.hasSpentMoreThanOneSweepMayTake())
+                    return WTF::move(m_heads);
             }
             shouldRepeat = shouldRepeat && !m_sinking.hasSpentItsWork();
         }
@@ -685,6 +690,7 @@ private:
     AllocationSinking::Heads m_heads;
     BitVector m_blocksEnteredWithNothing;
     BitVector m_isPending;
+    bool m_leavesSweepThatTakesTooMuch { false };
 };
 
 } // anonymous namespace
@@ -783,27 +789,24 @@ bool AllocationSinking::startOverWithFewerCandidates()
     return true;
 }
 
-// The work is looked at when a sweep has ended, and a sweep carries each object through every block between its allocation and its last use.
+// A sweep carries each object through every block between its allocation and its last use.
 // In a function of n blocks that keeps n objects alive that is n * n, many times the work allowed, only to find out how many objects fit.
 // There the distance in blocks stands for the sweep: the objects that fit are chosen by it, the most frequent first, and a short-lived one still fits behind a long-lived one that does not.
+// An object that goes into a join is carried on under the name of the join, so the distance is to the last use of its family.
 void AllocationSinking::giveUpOnCandidatesCarriedTooFar()
 {
-    AOT_THRESHOLD(uint64_t, timesTheWorkThatOneSweepMayTake, 4);
     if (!m_inputs.isLargeForItsWork)
         return;
 
     const CFG& cfg = m_analyses.cfg();
     const UseLists& useLists = m_analyses.useLists();
-    Vector<uint32_t> mostFrequentFirst;
-    Vector<uint64_t> blocksCarrying(FillWith { }, numberOfCandidates(), uint64_t { 0 });
-    uint64_t blocksInAll = 0;
+    Vector<uint32_t> lastOfFamily(FillWith { }, m_families.size(), 0u);
     Vector<ValueID, 8> names;
-    for (uint32_t index = 0; index < numberOfCandidates(); ++index) {
-        const Candidate& candidate = m_candidates[index];
-        if (candidate.isJoin || candidate.isAbandoned || !cfg.isReachable(candidate.block))
+    for (const Candidate& candidate : m_candidates) {
+        if (candidate.isAbandoned || !cfg.isReachable(candidate.block))
             continue;
-        uint32_t first = cfg.reversePostOrderIndex(candidate.block);
-        uint32_t last = first;
+        uint32_t& last = lastOfFamily[candidate.family.index()];
+        last = std::max(last, cfg.reversePostOrderIndex(candidate.block));
         names.append(candidate.definition);
         while (!names.isEmpty()) {
             for (const Use& use : useLists.usesOf(names.takeLast())) {
@@ -814,7 +817,16 @@ void AllocationSinking::giveUpOnCandidatesCarriedTooFar()
                     names.append(use.user);
             }
         }
-        blocksCarrying[index] = last - first + 1;
+    }
+
+    Vector<uint32_t> mostFrequentFirst;
+    Vector<uint64_t> blocksCarrying(FillWith { }, numberOfCandidates(), uint64_t { 0 });
+    uint64_t blocksInAll = 0;
+    for (uint32_t index = 0; index < numberOfCandidates(); ++index) {
+        const Candidate& candidate = m_candidates[index];
+        if (candidate.isJoin || candidate.isAbandoned || !cfg.isReachable(candidate.block))
+            continue;
+        blocksCarrying[index] = lastOfFamily[candidate.family.index()] - cfg.reversePostOrderIndex(candidate.block) + 1;
         blocksInAll += blocksCarrying[index];
         mostFrequentFirst.append(index);
     }
@@ -1363,16 +1375,8 @@ void ObjectInterpreter::enterJoin(VirtualObjectID join, const IncomingBinding& b
 
     VirtualShapeID shape = cellShape;
     if (!entersAsCell) {
-        if (std::optional<VirtualConstant> constant = virtualConstantOf(program(), function(), binding.value))
+        if (std::optional<VirtualConstant> constant = virtualConstantOf(m_sinking.objectContext(), binding.value))
             shape = m_sinking.familyOf(join).intern(VirtualShape::ofConstant(*constant));
-    }
-    if (isRewriting() && shape != cellShape) {
-        const ObjectState* atHead = m_sinking.headOf(outgoing.target)->find(join);
-        bool isKnownAtHead = atHead && atHead->variants.containsIf([&](const ObjectVariant& variant) {
-            return variant.shape == shape;
-        });
-        if (!isKnownAtHead)
-            shape = cellShape;
     }
     m_enteredEdge.newJoinStates.append(ObjectEntry { join, ObjectState::withShape(shape) });
 }

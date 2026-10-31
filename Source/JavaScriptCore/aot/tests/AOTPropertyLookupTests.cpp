@@ -1389,11 +1389,13 @@ static void testPairsThatMissInTurnAreAllFiled(LoadedProgram& program)
     StructureID structure = program.realm()->nullPrototypeObjectStructure()->id();
     constexpr unsigned numberOfPairs = 1024;
     constexpr unsigned maxTurns = 32;
+    Vector<Identifier> names(numberOfPairs, [&](size_t pair) {
+        return Identifier::fromString(program.vm(), makeString("name"_s, pair));
+    });
     BitVector isFiled(numberOfPairs);
     for (unsigned turn = 0; turn < maxTurns; ++turn) {
         for (unsigned pair = 0; pair < numberOfPairs; ++pair) {
-            auto* uid = std::bit_cast<UniquedStringImpl*>(static_cast<uintptr_t>(0x10000 + 32 * pair));
-            if (!isFiled.get(pair) && caches.shouldFile(structure, uid, SlotAccess::Read))
+            if (!isFiled.get(pair) && caches.shouldFile(structure, names[pair].impl(), SlotAccess::Read))
                 isFiled.set(pair);
         }
     }

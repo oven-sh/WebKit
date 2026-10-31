@@ -68,6 +68,7 @@ public:
     void didMoveAway(void* pages, size_t bytes);
     // From here on, a released piece stays mapped until the whole mapping is released, if the mapping is still whole.
     void willReleaseEverything() { m_releasesEverything = true; }
+    std::span<const uint8_t> handedOut() const { return unsafeMakeSpan(m_start, m_used); }
 
 private:
     bool contains(const void* pages) const { return std::bit_cast<uintptr_t>(pages) - std::bit_cast<uintptr_t>(m_start) < m_size; }
@@ -107,6 +108,7 @@ public:
     ZeroedTableArena(ZeroedPages&, size_t capacity);
 
     template<typename T> T* allocate(size_t count);
+    std::span<const char> handedOut() const { return unsafeMakeSpan(m_start, m_used); }
 
 private:
     ZeroedPages& m_pages;

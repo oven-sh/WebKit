@@ -521,47 +521,117 @@ struct NamedCaptureData {
     StringID nameString() const { return StringID(name); }
 };
 
-// The table namedCaptures, for each function whose closures hold such copies, in the order of the functions: the function less the one before,
-// how many, then the slot and the name of each. Only a heap snapshot reads it.
+// The slots and names of one function, the slots rising.
+using NamedCaptureList = Vector<std::pair<uint32_t, uint32_t>, 8>;
+
+// The lists that were written or read last, each once, the latest first. Closures made side by side hold the same variables.
+class RecentNamedCaptureLists {
+public:
+    size_t size() const { return m_lists.size(); }
+    size_t find(const NamedCaptureList& list) const { return m_lists.find(list); }
+    const NamedCaptureList& moveToFront(size_t index)
+    {
+        NamedCaptureList list = WTF::move(m_lists[index]);
+        m_lists.removeAt(index);
+        m_lists.insert(0, WTF::move(list));
+        return m_lists[0];
+    }
+    void add(const NamedCaptureList& list)
+    {
+        if (m_lists.size() == 64)
+            m_lists.removeLast();
+        m_lists.insert(0, list);
+    }
+
+private:
+    Vector<NamedCaptureList> m_lists;
+};
+
+// The table namedCaptures, for each function whose closures hold such copies, in the order of the functions: the function less the one before, then a word.
+// Odd: above the bit, which of the recent lists is the list of this function too. Even: above the bit, the slots as bits, then a name for each;
+// zero: how many, then the slot and the name of each. Only a heap snapshot reads it.
 class NamedCapturesWriter {
 public:
-    void beginFunction(uint32_t function, size_t numberOfCaptures)
+    void append(uint32_t function, const NamedCaptureList& list)
     {
         appendVarint(m_bytes, function - m_lastFunction);
-        appendVarint(m_bytes, numberOfCaptures);
         m_lastFunction = function;
-    }
-    void append(uint32_t slot, uint32_t name)
-    {
-        appendVarint(m_bytes, slot);
-        appendVarint(m_bytes, name);
+        if (size_t index = m_recent.find(list); index != notFound) {
+            appendVarint(m_bytes, index << 1 | 1);
+            m_recent.moveToFront(index);
+            return;
+        }
+        m_recent.add(list);
+        if (list.last().first < 62) {
+            uint64_t slots = 0;
+            for (auto [slot, name] : list)
+                slots |= 1ull << slot;
+            appendVarint(m_bytes, slots << 1);
+            for (auto [slot, name] : list)
+                appendVarint(m_bytes, name);
+            return;
+        }
+        appendVarint(m_bytes, 0);
+        appendVarint(m_bytes, list.size());
+        for (auto [slot, name] : list) {
+            appendVarint(m_bytes, slot);
+            appendVarint(m_bytes, name);
+        }
     }
     const Vector<uint8_t>& bytes() const { return m_bytes; }
 
 private:
     Vector<uint8_t> m_bytes;
+    RecentNamedCaptureLists m_recent;
     uint32_t m_lastFunction { 0 };
 };
 
-// False if the bytes do not end where a function ends.
+// False if the bytes do not end where a function ends, or name a list that is not there.
 bool forEachNamedCapture(std::span<const uint8_t> bytes, NOESCAPE const auto& visit)
 {
     const uint8_t* cursor = bytes.data();
     const uint8_t* end = cursor + bytes.size();
+    RecentNamedCaptureLists recent;
     uint32_t function = 0;
+    auto visitAll = [&](const NamedCaptureList& list) {
+        for (auto [slot, name] : list)
+            visit(NamedCaptureData { function, slot, name });
+    };
     while (cursor < end) {
         function += static_cast<uint32_t>(readVarint(cursor));
         if (cursor >= end)
             return false;
-        size_t numberOfCaptures = readVarint(cursor);
-        for (size_t index = 0; index < numberOfCaptures; ++index) {
-            if (cursor >= end)
+        uint64_t word = readVarint(cursor);
+        if (word & 1) {
+            if (word >> 1 >= recent.size())
                 return false;
-            uint32_t slot = static_cast<uint32_t>(readVarint(cursor));
-            if (cursor >= end)
-                return false;
-            visit(NamedCaptureData { function, slot, static_cast<uint32_t>(readVarint(cursor)) });
+            visitAll(recent.moveToFront(word >> 1));
+            continue;
         }
+        NamedCaptureList list;
+        if (uint64_t slots = word >> 1) {
+            for (uint32_t slot = 0; slots; ++slot, slots >>= 1) {
+                if (!(slots & 1))
+                    continue;
+                if (cursor >= end)
+                    return false;
+                list.append({ slot, static_cast<uint32_t>(readVarint(cursor)) });
+            }
+        } else {
+            if (cursor >= end)
+                return false;
+            size_t numberOfCaptures = readVarint(cursor);
+            for (size_t index = 0; index < numberOfCaptures; ++index) {
+                if (cursor >= end)
+                    return false;
+                uint32_t slot = static_cast<uint32_t>(readVarint(cursor));
+                if (cursor >= end)
+                    return false;
+                list.append({ slot, static_cast<uint32_t>(readVarint(cursor)) });
+            }
+        }
+        visitAll(list);
+        recent.add(list);
     }
     return cursor == end;
 }
@@ -622,6 +692,32 @@ struct HashOfDirectory {
     static constexpr size_t bit(uint32_t hash, size_t numberOfBits) { return (hash ^ hash >> 15) & (numberOfBits - 1); }
 };
 
+// ProgramTables::modulesByHashOfPath() lists the modules in modulesByPath() by StringView::hash() of their paths, multiplied so that every bit of it counts: no place is empty.
+// The high bits choose one of the buckets, of which there is one for two modules. ProgramTables::firstModulesByHashOfPath() says where each bucket begins, and behind the last where it ends.
+// An entry holds the number of its module, in as many bits as the largest number takes, and the low bits of the hash in the rest. So a path is compared with a module that has another only where the hashes are as good as equal.
+class ModuleByHashOfPath {
+public:
+    constexpr ModuleByHashOfPath(size_t numberOfModuleRecords, unsigned hashOfPath)
+        : m_bitsOfModule(std::bit_width(numberOfModuleRecords))
+        , m_hash(hashOfPath * 0x9e3779b1u)
+        , m_hashInEntry(m_hash << m_bitsOfModule)
+    {
+    }
+
+    static constexpr size_t numberOfBuckets(size_t numberOfModules) { return (numberOfModules + 1) / 2; }
+    constexpr size_t bucket(size_t numberOfBuckets) const { return static_cast<uint64_t>(m_hash) * numberOfBuckets >> 32; }
+    constexpr uint32_t hash() const { return m_hash; }
+    constexpr uint32_t entryFor(uint32_t module) const { return m_hashInEntry | module; }
+    // The number of the module, if the entry has the hash. A larger number otherwise.
+    constexpr uint32_t moduleOrMore(uint32_t entry) const { return entry ^ m_hashInEntry; }
+    constexpr bool isModule(uint32_t moduleOrMore) const { return !(moduleOrMore >> m_bitsOfModule); }
+
+private:
+    unsigned m_bitsOfModule;
+    uint32_t m_hash;
+    uint32_t m_hashInEntry;
+};
+
 #define FOR_EACH_AOT_MODULE_PROGRAM_TABLE(v) \
     v(modules, ModuleData) \
     v(moduleDirectories, ModuleDirectoryData) \
@@ -642,8 +738,11 @@ struct HashOfDirectory {
     v(sourceStamps, SourceStampData) \
     v(moduleFailures, ModuleFailureData) \
     v(modulesByPath, uint16_t) \
+    v(modulesByHashOfPath, uint32_t) \
+    v(firstModulesByHashOfPath, uint16_t) \
     v(directoriesOfModulesByPath, uint32_t) \
     v(modulesOfUncompiledCode, UncompiledModuleData) \
+    v(modulesThatLoadCompiledFilesAlone, uint32_t) \
     v(importsOfHeldFiles, ImportOfHeldFileData) \
     v(namedVariables, uint8_t) \
     v(namedCaptures, uint8_t) \

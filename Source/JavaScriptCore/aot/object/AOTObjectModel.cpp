@@ -161,12 +161,11 @@ static bool stringHasType(const State& state, const RuntimeType& type, JSString*
         return primitives.contains(PrimitiveSet::String);
     if (!primitives.containsAny({ PrimitiveSet::String, PrimitiveSet::LiteralString }))
         return false;
-    if (type.flags & RuntimeType::hasLiteralStringWithoutText) {
-        if (std::optional<uint32_t> number = state.strings->findLiteralString(value))
-            return std::ranges::contains(literals, state.tables.literalStrings()[*number]);
-        if (!(type.flags & RuntimeType::hasLiteralStringWithoutWord))
-            return false;
-    }
+    // The program's table finds a text in a few steps, however many strings the type lists.
+    if (std::optional<uint32_t> number = state.strings->findLiteralString(value))
+        return std::ranges::contains(literals, state.tables.literalStrings()[*number]);
+    if (!(type.flags & RuntimeType::hasLiteralStringWithoutWord))
+        return false;
     if (StringImpl* impl = value->tryGetValueImpl())
         return matchesAnyLiteral(textOf(state), literals, StringView(*impl));
     return ropeMatchesAnyLiteral(globalObject, textOf(state), literals, value);
@@ -240,7 +239,7 @@ const FieldData* RuntimeLayoutTable::field(VM& vm, const LayoutData& layout, Uni
 
 const FieldData* RuntimeLayoutTable::findField(VM& vm, const LayoutData& layout, UniquedStringImpl* name)
 {
-    std::optional<uint32_t> number = vm.aotState().identifiers->numberOf(name);
+    std::optional<uint32_t> number = identifiersOf(m_state.instance).numberOf(name);
     if (!number)
         return nullptr;
     if (m_tables.hasFieldTableColumn(*number) && layout.shape && layout.shape <= m_tables.numberOfFieldTableRows) {
@@ -315,7 +314,7 @@ HeapHooks::LookForConstructorBySnapshot::~LookForConstructorBySnapshot()
 // A store under the name of a removed field creates an ordinary property, which breaks no proof: the proof is that nothing reads the field.
 void RuntimeLayoutTable::failIfFieldWasRemoved(VM& vm, const LayoutData& layout, UniquedStringImpl* name) const
 {
-    std::optional<uint32_t> number = vm.aotState().identifiers->numberOf(name);
+    std::optional<uint32_t> number = identifiersOf(m_state.instance).numberOf(name);
     if (!number || !std::ranges::binary_search(m_tables.removedFields(), RemovedFieldData { layout.index, *number }))
         return;
     if (heapSnapshotLooksForConstructor && name == vm.propertyNames->constructor.impl())
@@ -330,7 +329,7 @@ void RuntimeLayoutTable::failIfNameIsNotListed(VM& vm, const LayoutData& layout,
     std::span<const AddedNameData> listed = m_tables.addedNames();
     if (!std::ranges::binary_search(listed, AddedNameData { layout.index, AddedNameData::listIsComplete }) || parseIndex(*name) || PropertyName(name).isPrivateName())
         return;
-    std::optional<uint32_t> number = vm.aotState().identifiers->numberOf(name);
+    std::optional<uint32_t> number = identifiersOf(m_state.instance).numberOf(name);
     if (number && std::ranges::binary_search(listed, AddedNameData { layout.index, *number }))
         return;
     if (number && std::ranges::binary_search(listed, AddedNameData { layout.index, AddedNameData::getsSharedNames }) && std::ranges::binary_search(listed, AddedNameData { AddedNameData::layoutOfSharedNames, *number }))
@@ -346,7 +345,7 @@ bool RuntimeLayoutTable::everyObjectHadRemovedField(const LayoutData& layout) co
 
 UniquedStringImpl* RuntimeLayoutTable::nameOf(VM& vm, const FieldData& field)
 {
-    return vm.aotState().identifiers->uid(field.name);
+    return identifiersOf(m_state.instance).uid(field.name);
 }
 
 bool RuntimeLayoutTable::hasSymbolKey(const FieldData& field) const
@@ -368,6 +367,11 @@ Object* RuntimeLayoutTable::compiledObject(JSValue value) const
 {
     Object* object = compiledObjectOrNull(value);
     return object && &object->state().tables == &m_tables ? object : nullptr;
+}
+
+bool RuntimeLayoutTable::isOfThisRealm(const JSCell* cell) const
+{
+    return cell->structure()->realm() == m_state.instance.globalObject;
 }
 
 bool RuntimeLayoutTable::valueHasType(const RuntimeType& type, JSValue value) const
@@ -408,7 +412,7 @@ bool RuntimeLayoutTable::objectHasType(const RuntimeType& type, JSCell* cell) co
     if (tests.size() == type.numberOfCellTests)
         return false;
     std::optional<uint32_t> closureNumber = closureNumberOf(cell);
-    return closureNumber && type.listsClosureNumber(*closureNumber);
+    return closureNumber && isOfThisRealm(cell) && type.listsClosureNumber(*closureNumber);
 }
 
 std::optional<AcceptedValue> RuntimeLayoutTable::accept(const FieldData& field, JSValue value) const
@@ -437,7 +441,7 @@ bool RuntimeLayoutTable::cellPassesTest(const RuntimeCellTest& test, JSCell* cel
         return test.cellTypes().contains(cell->type());
     case CellTestKind::ShapeIn: {
         Object* object = compiledObject(cell);
-        return object && passes(m_tables.shapeTestAt(test.shapeTestOffset()), object->shape());
+        return object && isOfThisRealm(cell) && passes(m_tables.shapeTestAt(test.shapeTestOffset()), object->shape());
     }
     case CellTestKind::InheritsClassInfo:
         return inheritsBuiltinClass(cell, test.builtinClass());
@@ -449,10 +453,10 @@ bool RuntimeLayoutTable::cellPassesTest(const RuntimeCellTest& test, JSCell* cel
         return cell == m_state.builtinCells->cell(test.builtinCellNumber());
     }
     case CellTestKind::IsClosureOf:
-        return closureNumberOf(cell) == test.closureNumber();
+        return closureNumberOf(cell) == test.closureNumber() && isOfThisRealm(cell);
     case CellTestKind::IsSymbol:
         // A symbol that nothing has made yet is the uid of no cell.
-        return cell->isSymbol() && &asSymbol(cell)->uid() == m_state.instance.vm->aotState().identifiers->tryGetIdentifierConcurrently(test.symbolKeyNumber());
+        return cell->isSymbol() && &asSymbol(cell)->uid() == identifiersOf(m_state.instance).tryGetIdentifierConcurrently(test.symbolKeyNumber());
     case CellTestKind::SharingModeIs:
         return hasSharingMode(cell, test.sharingMode());
     case CellTestKind::IsNamespaceOf: {
@@ -968,12 +972,16 @@ StructureTable::Variant StructureTable::variantWithKeyOrderOf(const CompiledStru
 
 CompiledStructure* StructureTable::find(const Variant& variant) const
 {
-    if (belongsToOneObject(variant))
+    if (!isListed(variant))
         return nullptr;
     if (CompiledStructure* usual = usualStructureIfExists(variant.layout->shape); usual && VariantMaps::describes(variant, *usual))
         return usual;
     CompiledStructure* found = m_variants->structures.get(VariantMaps::keyOf(variant));
-    return found && VariantMaps::describes(variant, *found) ? found : nullptr;
+    if (!found || !VariantMaps::describes(variant, *found))
+        return nullptr;
+    if (variant.outOfLineKeyOrder)
+        found->didFindKeyOrderAgain();
+    return found;
 }
 
 CompiledStructure* StructureTable::findOrCreate(VM& vm, const Variant& requested)
@@ -996,7 +1004,7 @@ CompiledStructure* StructureTable::findOrCreate(VM& vm, const Variant& requested
     if (!variant.mayBePrototype && !variant.hasExtraProperties && !variant.outOfLineKeyOrder && variant.prototype == usual.prototype && variant.hasOtherPrototype == usual.hasOtherPrototype)
         return createUsual(vm, layout, usual);
     CompiledStructure* created = create(vm, layout, variant);
-    if (!belongsToOneObject(variant)) {
+    if (isListed(variant)) {
         VariantMaps::Key key = VariantMaps::keyOf(variant);
         m_variants->structures.set(key, created);
         Locker locker { m_state.caches->lock() };
@@ -1085,11 +1093,12 @@ CompiledStructure* StructureTable::holdingExtraProperties(VM& vm, const Compiled
     return findOrCreate(vm, variant);
 }
 
-CompiledStructure* StructureTable::withOutOfLineKeyOrder(VM& vm, const CompiledStructure& current, std::span<const uint16_t> entries)
+CompiledStructure* StructureTable::withOutOfLineKeyOrder(VM& vm, const CompiledStructure& current, std::span<const uint16_t> entries, HeldKeyOrder heldKeyOrder)
 {
     Variant variant = variantOf(current);
     variant.outOfLineKeyOrder = entries;
     variant.keysNamedByOrder = std::nullopt;
+    variant.isFoundByKeyOrder = heldKeyOrder == HeldKeyOrder::IsFoundByOthers;
     return findOrCreate(vm, variant);
 }
 

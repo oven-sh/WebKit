@@ -2188,6 +2188,10 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
 #endif
         ImmutablePropertyNames* names = this->structure()->listedImmutablePropertyNames();
         String message = names && shouldThrowIfCantSet ? names->setPrototypeErrorMessage() : String();
+#if ENABLE(AOT)
+        if (!names && shouldThrowIfCantSet)
+            message = AOT::RuntimeHooks::lockedObjectErrorMessage(globalObject, this, nullptr, AOT::RejectedWrite::Prototype);
+#endif
         if (!message.isNull())
             return typeError(globalObject, scope, true, message);
         return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of object with immutable properties"_s);

@@ -16,6 +16,7 @@
 namespace JSC { namespace AOT {
 
 // A list that only grows at its end. A copy shares what the list held when it was copied, and holds for itself what is appended to it later.
+// A whole list that is appended is shared too.
 template<typename T>
 class SharedPrefixList {
 public:
@@ -25,19 +26,41 @@ public:
     void append(const T& value)
     {
         if (!m_last || !m_last->hasOneRef())
-            m_last = adoptRef(*new Segment(RefPtr { m_last }));
+            m_last = adoptRef(*new Segment(RefPtr { m_last }, nullptr));
         m_last->values.append(value);
+    }
+
+    void appendList(const SharedPrefixList& other)
+    {
+        if (!m_last)
+            m_last = other.m_last;
+        else if (other.m_last)
+            m_last = adoptRef(*new Segment(RefPtr { m_last }, RefPtr { other.m_last }));
     }
 
     template<typename Predicate>
     bool allOfFrom(size_t first, const Predicate& predicate) const
     {
-        Vector<const Segment*, 8> segments;
-        for (const Segment* segment = m_last.get(); segment && segment->end() > first; segment = segment->before.get())
-            segments.append(segment);
-        while (!segments.isEmpty()) {
-            const Segment* segment = segments.takeLast();
-            for (const T& value : segment->values.span().subspan(first > segment->sizeBefore ? first - segment->sizeBefore : 0)) {
+        struct Rest {
+            const Segment* segment;
+            size_t first;
+            bool isPastListAppended;
+        };
+        Vector<Rest, 8> rests;
+        auto addList = [&](const Segment* last, size_t first) {
+            for (const Segment* segment = last; segment && segment->end() > first; segment = segment->before.get())
+                rests.append({ segment, first > segment->sizeBefore ? first - segment->sizeBefore : 0, false });
+        };
+        addList(m_last.get(), first);
+        while (!rests.isEmpty()) {
+            Rest rest = rests.takeLast();
+            size_t sizeOfListAppended = rest.segment->sizeOfListAppended;
+            if (!rest.isPastListAppended && rest.first < sizeOfListAppended) {
+                rests.append({ rest.segment, sizeOfListAppended, true });
+                addList(rest.segment->listAppended.get(), rest.first);
+                continue;
+            }
+            for (const T& value : rest.segment->values.span().subspan(rest.first - sizeOfListAppended)) {
                 if (!predicate(value))
                     return false;
             }
@@ -61,42 +84,109 @@ public:
     {
         if (a.size() != b.size())
             return false;
-        const Segment* segmentOfA = a.m_last.get();
-        const Segment* segmentOfB = b.m_last.get();
-        for (size_t index = a.size(); index-- && segmentOfA != segmentOfB;) {
-            if (segmentOfA->values[index - segmentOfA->sizeBefore] != segmentOfB->values[index - segmentOfB->sizeBefore])
+        FromTheEnd restOfA(a.m_last.get());
+        FromTheEnd restOfB(b.m_last.get());
+        while (!restOfA.isAtEnd()) {
+            if (restOfA.skipWhatIsSharedWith(restOfB))
+                continue;
+            if (restOfA.takeValue() != restOfB.takeValue())
                 return false;
-            if (index == segmentOfA->sizeBefore)
-                segmentOfA = segmentOfA->before.get();
-            if (index == segmentOfB->sizeBefore)
-                segmentOfB = segmentOfB->before.get();
         }
         return true;
     }
 
 private:
+    // What stands in front of it, then a whole list, then values of its own.
     struct Segment : ThreadSafeRefCounted<Segment> {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Segment);
 
-        explicit Segment(RefPtr<Segment>&& before)
+        Segment(RefPtr<Segment>&& before, RefPtr<Segment>&& listAppended)
             : before(WTF::move(before))
+            , listAppended(WTF::move(listAppended))
             , sizeBefore(this->before ? this->before->end() : 0)
+            , sizeOfListAppended(this->listAppended ? this->listAppended->end() : 0)
         {
         }
 
         ~Segment()
         {
             // One after another: a row of segments may be longer than the stack is deep.
-            RefPtr<Segment> rest = WTF::move(before);
-            while (rest && rest->hasOneRef())
-                rest = std::exchange(rest->before, nullptr);
+            Vector<RefPtr<Segment>, 4> rest;
+            auto take = [&](RefPtr<Segment>& segment) {
+                if (segment)
+                    rest.append(std::exchange(segment, nullptr));
+            };
+            take(before);
+            take(listAppended);
+            while (!rest.isEmpty()) {
+                RefPtr<Segment> segment = rest.takeLast();
+                if (segment->hasOneRef()) {
+                    take(segment->before);
+                    take(segment->listAppended);
+                }
+            }
         }
 
-        size_t end() const { return sizeBefore + values.size(); }
+        size_t end() const { return sizeBefore + sizeOfListAppended + values.size(); }
 
         RefPtr<Segment> before;
+        RefPtr<Segment> listAppended;
         size_t sizeBefore;
+        size_t sizeOfListAppended;
         Vector<T> values;
+    };
+
+    class FromTheEnd {
+    public:
+        explicit FromTheEnd(const Segment* last)
+        {
+            add(last);
+            findValue();
+        }
+
+        bool isAtEnd() const { return m_rests.isEmpty(); }
+
+        const T& takeValue()
+        {
+            const T& value = m_rests.last().segment->values[--m_rests.last().numberOfValues];
+            findValue();
+            return value;
+        }
+
+        bool skipWhatIsSharedWith(FromTheEnd& other)
+        {
+            if (m_rests.last().segment != other.m_rests.last().segment || m_rests.last().numberOfValues != other.m_rests.last().numberOfValues)
+                return false;
+            m_rests.removeLast();
+            other.m_rests.removeLast();
+            findValue();
+            other.findValue();
+            return true;
+        }
+
+    private:
+        // All that stands in front of the values of a segment, and the first of these.
+        struct Rest {
+            const Segment* segment;
+            size_t numberOfValues;
+        };
+
+        void add(const Segment* last)
+        {
+            if (last)
+                m_rests.append({ last, last->values.size() });
+        }
+
+        void findValue()
+        {
+            while (!m_rests.isEmpty() && !m_rests.last().numberOfValues) {
+                const Segment* segment = m_rests.takeLast().segment;
+                add(segment->before.get());
+                add(segment->listAppended.get());
+            }
+        }
+
+        Vector<Rest, 8> m_rests;
     };
 
     RefPtr<Segment> m_last;

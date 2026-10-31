@@ -59,6 +59,9 @@ struct FreshResultShape {
 FreshResultShape computeFreshResults(FunctionAnalyses&);
 // Also for a function that cannot return parts: a caller that holds a copy of the body can leave the aggregate unbuilt.
 bool returnsFreshAggregate(FunctionAnalyses&);
+// What a caller that holds a copy of the body and only reads the result can leave unbuilt: the aggregate, the closures that only aggregates hold or that are parts of the result themselves,
+// and the environments that only those closures capture. None where the function returns nothing fresh.
+unsigned countFreshAllocationsReturned(FunctionAnalyses&);
 FreshResultVariant variantOfShape(const AllocationSinking&, VirtualObjectID, const VirtualShape&);
 
 void splitFreshResults(ProgramEditor&, const OptimizationInputs&, const PassRunner&);

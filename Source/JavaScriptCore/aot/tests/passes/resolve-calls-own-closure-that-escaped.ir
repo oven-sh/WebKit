@@ -5,7 +5,7 @@
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="escapes" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, RecordsCalleeOnceRenamed] {
+function f0 name="escapes" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, RecordsCalleeOnceRenamed, MakesNoTailCall] {
     Return v0
 }
 
@@ -101,4 +101,20 @@ function f7 name="callsBehindAFailedTest" parameters=[{type=boolean}, {type=anyt
     Return v8
 # CHECK: b5([[eitherClosure]]: f0)
 # CHECK-NEXT: = Call [[eitherClosure]], -, v2
+}
+
+# A function that can leave by a tail call may have another of its closures run above the call. A stack that is taken before the first closure is renamed and read behind it would name that frame after the closure in the caller's frame: the call stays a call of the value.
+function f8 name="leavesByATailCall" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, RecordsCalleeOnceRenamed] {
+    v1 = Call v0
+    ReturnCall v1
+}
+
+function f9 name="callsWhatCanLeaveByATailCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure function=f8
+    v3 = Call v0, -, v2
+    v4 = Call v2, -, v1
+    Return v4
+# CHECK: [[leaves]]: f8 = NewClosure function=f8
+# CHECK-NOT: KeepCalleeInFrame
+# CHECK: = Call [[leaves]], -, v1
 }

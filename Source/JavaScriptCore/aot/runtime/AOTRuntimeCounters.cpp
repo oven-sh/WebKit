@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTAllocationCounts.h"
+#include "AOTBuiltinCells.h"
+#include "AOTChainDependents.h"
 #include "AOTObjectWords.h"
 #include "AOTCompiledCallee.h"
 #include "AOTCompiledFrame.h"
@@ -25,6 +27,7 @@
 #include "AOTObjectModelCaches.h"
 #include "AOTProgramTables.h"
 #include "AOTPropertyCaches.h"
+#include "AOTPropertyWalk.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTSlimClosure.h"
@@ -52,6 +55,11 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringView.h>
+
+#if OS(LINUX)
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 #if COMPILER(CLANG)
 #pragma clang attribute push(__attribute__((minsize)), apply_to = function)
@@ -123,6 +131,24 @@ void countNativeTextHashed(VM& vm)
 {
     if (RuntimeCounters* counters = vm.aotState().counters.get())
         ++counters->nativeTextsHashed;
+}
+
+void countModulesSoughtForRequireCache(VM& vm, size_t modules)
+{
+    if (RuntimeCounters* counters = vm.aotState().counters.get())
+        counters->modulesSoughtForRequireCache += modules;
+}
+
+void countModulesSoughtForWhatHasRun(VM& vm, size_t modules)
+{
+    if (RuntimeCounters* counters = vm.aotState().counters.get())
+        counters->modulesSoughtForWhatHasRun += modules;
+}
+
+void countTextPrintedInPlaceDecoded(VM& vm, size_t pieces)
+{
+    if (RuntimeCounters* counters = vm.aotState().counters.get())
+        counters->textPrintedInPlaceDecoded += pieces;
 }
 
 uint64_t valueOf(VM& vm, RuntimeCounterID counter)
@@ -208,6 +234,129 @@ static String describeArrival(JSValue value)
     return makeString("class:"_s, cell->classInfo()->className);
 }
 
+static ASCIILiteral describeStorageOfElements(JSValue receiver)
+{
+    if (!receiver.isObject())
+        return "-"_s;
+    switch (asObject(receiver)->indexingType() & IndexingShapeMask) {
+    case NoIndexingShape:
+        return "none"_s;
+    case UndecidedShape:
+        return "undecided"_s;
+    case Int32Shape:
+        return "int32"_s;
+    case DoubleShape:
+        return "double"_s;
+    case ContiguousShape:
+        return "contiguous"_s;
+    case ArrayStorageShape:
+        return "array storage"_s;
+    case SlowPutArrayStorageShape:
+        return "slow put array storage"_s;
+    }
+    return "?"_s;
+}
+
+static ASCIILiteral findElement(JSValue receiver, uint32_t index)
+{
+    if (receiver.isString())
+        return index < asString(receiver)->length() ? "own"_s : "absent"_s;
+    if (!receiver.isObject())
+        return "?"_s;
+    JSObject* object = asObject(receiver);
+    if (object->canGetIndexQuickly(index))
+        return "own"_s;
+    if (isTypedArrayType(object->type()))
+        return "absent"_s;
+    if (auto* array = dynamicDowncast<JSArray>(object); array && index >= array->length())
+        return "past the end"_s;
+    return "?"_s;
+}
+
+using PropertyWalk::Presence;
+
+static Presence hasOwnName(VM& vm, JSObject* object, UniquedStringImpl* uid)
+{
+    if (Presence presence = PropertyWalk::hasOwnProperty(object, uid); presence != Presence::Unknown)
+        return presence;
+    bool isArray = object->type() == ArrayType;
+    if (object->structure()->typeInfo().overridesGetOwnPropertySlot() && !isArray)
+        return Presence::Unknown;
+    // Structure::get() may build the table of properties, which is a cell.
+    if (isValidOffset(object->structure()->getConcurrently(uid)) || (isArray && uid == vm.propertyNames->length.impl()))
+        return Presence::Present;
+    return Presence::Absent;
+}
+
+static ASCIILiteral findName(JSGlobalObject* globalObject, JSValue receiver, UniquedStringImpl* uid)
+{
+    if (!receiver.isObject())
+        return "?"_s;
+    JSObject* object = asObject(receiver);
+    switch (hasOwnName(globalObject->vm(), object, uid)) {
+    case Presence::Present:
+        return "own"_s;
+    case Presence::Unknown:
+        return "?"_s;
+    case Presence::Absent:
+        break;
+    }
+    // The walk begins above the receiver.
+    switch (walkChain({ globalObject, object->structure(), object, ChainWalkMode::AllocatesNothing, ChainWalkUse::UsedAtOnce }, uid).result) {
+    case ChainWalkResult::Unknown:
+        return "?"_s;
+    case ChainWalkResult::Absent:
+        return "absent"_s;
+    case ChainWalkResult::Found:
+        return "inherited"_s;
+    }
+    return "?"_s;
+}
+
+static String describeKeyedArrival(JSGlobalObject* globalObject, JSValue receiver, JSValue key)
+{
+    ASCIILiteral kind = "other"_s;
+    ASCIILiteral found = "?"_s;
+    uint32_t mark = 0;
+    auto isIndex = [&](uint32_t index, ASCIILiteral name) {
+        kind = name;
+        found = findElement(receiver, index);
+        mark = index;
+    };
+    if (key.isInt32()) {
+        if (key.asInt32() >= 0)
+            isIndex(key.asInt32(), "index"_s);
+        else {
+            kind = "negative integer"_s;
+            mark = key.asInt32();
+        }
+    } else if (key.isDouble()) {
+        double number = key.asDouble();
+        if (number >= 0 && number < MAX_ARRAY_INDEX && number == static_cast<uint32_t>(number))
+            isIndex(static_cast<uint32_t>(number), "index as a double"_s);
+        else
+            kind = "number that is no index"_s;
+    } else if (key.isSymbol()) {
+        UniquedStringImpl* uid = &asSymbol(key)->uid();
+        kind = "symbol"_s;
+        found = findName(globalObject, receiver, uid);
+        mark = static_cast<uint32_t>(std::bit_cast<uintptr_t>(uid) >> 4);
+    } else if (key.isString()) {
+        const StringImpl* text = asString(key)->tryGetValueImpl();
+        if (!text)
+            kind = "rope"_s;
+        else if (std::optional<uint32_t> index = parseIndex(*const_cast<StringImpl*>(text)))
+            isIndex(*index, "text of an index"_s);
+        else {
+            mark = text->is8Bit() ? StringHasher::computeHashAndMaskTop8Bits(text->span8()) : StringHasher::computeHashAndMaskTop8Bits(text->span16());
+            kind = text->isAtom() ? "name"_s : "text made anew"_s;
+            RefPtr<AtomStringImpl> name = text->is8Bit() ? AtomStringImpl::lookUp(text->span8()) : AtomStringImpl::lookUp(text->span16());
+            found = name ? findName(globalObject, receiver, name.get()) : receiver.isObject() ? "absent"_s : "?"_s;
+        }
+    }
+    return makeString(describeArrival(receiver), "; "_s, describeStorageOfElements(receiver), "; key:"_s, kind, "; "_s, found, "; #"_s, hex(mark & 0xffff, 4, Lowercase));
+}
+
 static void dumpArrivalLines(PrintStream& out, ASCIILiteral prefix, const ArrivalCounts::Counts& counts)
 {
     Vector<const ArrivalCounts::Counts::KeyValuePairType*> lines;
@@ -233,6 +382,14 @@ void ArrivalCounts::record(JSValue receiver, uint32_t site)
     m_hasCalledNothingSinceArrival = true;
 }
 
+void ArrivalCounts::record(JSGlobalObject* globalObject, JSValue receiver, JSValue key, uint32_t site)
+{
+    ASSERT(receiver && key);
+    ++m_arrivals.add({ site, describeKeyedArrival(globalObject, receiver, key) }, 0).iterator->value;
+    m_lastSite = site;
+    m_hasCalledNothingSinceArrival = true;
+}
+
 NEVER_INLINE void ArrivalCounts::didCallOperation(Entry entry)
 {
     if (!m_hasCalledNothingSinceArrival || entry == Entry::operationAOTRecordArrival)
@@ -247,12 +404,15 @@ void ArrivalCounts::dump(PrintStream& out) const
     dumpArrivalLines(out, "left:"_s, m_operationsBehindArrivals);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRecordArrival, void, (Instance* instance, EncodedJSValue receiver, uint32_t site))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRecordArrival, void, (Instance* instance, EncodedJSValue receiver, EncodedJSValue keyOrEmpty, uint32_t site))
 {
     State& state = *instance->state;
     if (!state.arrivalCounts) [[unlikely]]
         state.arrivalCounts = makeUnique<ArrivalCounts>();
-    state.arrivalCounts->record(JSValue::decode(receiver), site);
+    if (JSValue key = JSValue::decode(keyOrEmpty))
+        state.arrivalCounts->record(instance->globalObject, JSValue::decode(receiver), key, site);
+    else
+        state.arrivalCounts->record(JSValue::decode(receiver), site);
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -602,6 +762,100 @@ static void dumpOperationCalls(VM& vm, PrintStream& out)
     }
 }
 
+
+namespace {
+
+// The pages of a range that are the process's own: present, not of a file, and mapped by nobody else. A page that was only ever read is
+// the kernel's page of zeros: it makes a page fault and takes no memory.
+class PagesHeld {
+public:
+#if OS(LINUX)
+    PagesHeld()
+        : m_pagemap(open("/proc/self/pagemap", O_RDONLY | O_CLOEXEC))
+    {
+    }
+    ~PagesHeld()
+    {
+        if (m_pagemap >= 0)
+            close(m_pagemap);
+    }
+
+    size_t kilobytesIn(const void* start, size_t bytes) const
+    {
+        constexpr uint64_t isPresent = 1ull << 63;
+        constexpr uint64_t isOfFileOrShared = 1ull << 61;
+        constexpr uint64_t isMappedExclusively = 1ull << 56;
+        if (m_pagemap < 0)
+            return 0;
+        size_t page = std::bit_cast<uintptr_t>(start) / pageSize();
+        size_t end = (std::bit_cast<uintptr_t>(start) + bytes + pageSize() - 1) / pageSize();
+        size_t held = 0;
+        std::array<uint64_t, 512> entries;
+        while (page < end) {
+            size_t wanted = std::min(entries.size(), end - page);
+            ssize_t got = pread(m_pagemap, entries.data(), wanted * sizeof(uint64_t), page * sizeof(uint64_t));
+            if (got <= 0)
+                break;
+            size_t count = static_cast<size_t>(got) / sizeof(uint64_t);
+            for (uint64_t entry : std::span(entries).first(count))
+                held += (entry & (isPresent | isOfFileOrShared | isMappedExclusively)) == (isPresent | isMappedExclusively);
+            page += count;
+        }
+        return held * pageSize() / KB;
+    }
+
+private:
+    int m_pagemap;
+#else
+    size_t kilobytesIn(const void*, size_t) const { return 0; }
+#endif
+};
+
+} // anonymous namespace
+
+// In KB: what each part of the run time's own pages holds, and the room it has.
+static void dumpPagesHeld(VM& vm, PrintStream& out)
+{
+    struct Part {
+        ASCIILiteral name;
+        size_t held { 0 };
+        size_t room { 0 };
+    };
+    enum : size_t { Cards, Statics, PrefixAndPollPage, FixedTables, StringCells, SiteCaches, MethodTable, TableArena, numberOfParts };
+    std::array<Part, numberOfParts> parts { { { "Cards"_s }, { "Statics"_s }, { "PrefixAndPollPage"_s }, { "FixedTables"_s }, { "StringCells"_s }, { "SiteCaches"_s }, { "MethodTable"_s }, { "TableArena"_s } } };
+    PagesHeld pages;
+    auto add = [&](size_t part, const void* start, size_t bytes) {
+        parts[part].held += pages.kilobytesIn(start, bytes);
+        parts[part].room += bytes / KB;
+    };
+    forEachInstance(vm, [&](const Instance& instance) {
+        InstanceSizes sizes = instance.tables().instanceSizes;
+        auto* base = reinterpret_cast<const char*>(&instance);
+        auto between = [&](size_t part, ptrdiff_t from, ptrdiff_t to) { add(part, base + from, static_cast<size_t>(to - from)); };
+        between(Cards, -static_cast<ptrdiff_t>(InstanceLayout::bytesReservedBelowInstance(sizes)), InstanceLayout::offsetOfStatics(sizes));
+        between(Statics, InstanceLayout::offsetOfStatics(sizes), InstanceLayout::offsetOfLoopPollPage());
+        between(PrefixAndPollPage, InstanceLayout::offsetOfLoopPollPage(), 0);
+        between(FixedTables, 0, InstanceLayout::offsetOfStringCells);
+        between(StringCells, InstanceLayout::offsetOfStringCells, InstanceLayout::offsetOfSiteCaches(sizes));
+        between(SiteCaches, InstanceLayout::offsetOfSiteCaches(sizes), InstanceLayout::offsetOfMethodTable(sizes));
+        between(MethodTable, InstanceLayout::offsetOfMethodTable(sizes), InstanceLayout::bytesReservedFromInstance(sizes));
+        if (instance.state)
+            add(TableArena, instance.state->tableArena.handedOut().data(), instance.state->tableArena.handedOut().size());
+    });
+    Part all { "AllPages"_s };
+    if (vm.aotState().pages) {
+        std::span<const uint8_t> handedOut = vm.aotState().pages->handedOut();
+        all.held = pages.kilobytesIn(handedOut.data(), handedOut.size());
+        all.room = handedOut.size() / KB;
+    }
+    out.println(all.held, "\theld:", all.name);
+    for (const Part& part : parts)
+        out.println(part.held, "\theld:", part.name);
+    out.println(all.room, "\troom:", all.name);
+    for (const Part& part : parts)
+        out.println(part.room, "\troom:", part.name);
+}
+
 void dumpCounts(VM& vm, PrintStream& out)
 {
     for (bool isStubExit : { false, true }) {
@@ -628,6 +882,17 @@ void dumpCounts(VM& vm, PrintStream& out)
             inlineFramesDecoded += parts.callSiteCache->numberOfInlineFramesDecoded();
     }
     out.println(inlineFramesDecoded, "\tdecoded:InlineFrames");
+    out.println(counters ? counters->textPrintedInPlaceDecoded : 0, "\tdecoded:TextPrintedInPlace");
+    uint64_t builtinsSoughtNotMade = 0;
+    forEachInstance(vm, [&](const Instance& instance) {
+        if (instance.state)
+            builtinsSoughtNotMade += instance.state->builtinCells->numberOfBuiltinsSoughtNotMade();
+    });
+    out.println(builtinsSoughtNotMade, "\tsought:BuiltinsNotMade");
+    out.println(counters ? counters->modulesSoughtForRequireCache : 0, "\tsought:ModulesForRequireCache");
+    out.println(counters ? counters->modulesSoughtForWhatHasRun : 0, "\tsought:ModulesForWhatHasRun");
+    out.println(ModuleTable::modulesComparedWithPath(), "\tsought:ModulesByPath");
+    dumpPagesHeld(vm, out);
 
     forEachInstance(vm, [&](const Instance& instance) {
         if (!instance.runtime.counters.branchCounts)

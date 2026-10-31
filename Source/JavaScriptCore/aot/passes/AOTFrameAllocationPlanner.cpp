@@ -116,6 +116,8 @@ private:
     bool leaksContents(ObjectID cell) const;
     void checkUsesOfArrays();
     void checkSuspensions();
+    bool mayHoldCells(ObjectID) const;
+    void findCellsMadeForOneUse();
     void checkReturnCalls();
     void checkHolders();
     std::optional<ObjectID> findHolder(const Use&) const;
@@ -336,6 +338,7 @@ FramePlan FramePlanner::run()
         checkReturnCalls();
         checkHolders();
         checkMaterialization();
+        findCellsMadeForOneUse();
         for (ObjectID object : candidates()) {
             if (!mayBeInFrame(object) && (isOnlyCalled(object) || isLikeEveryClosureOfItsFunction(m_program, m_flow, m_function, definitionOf(object))))
                 m_decisions[object.index()].isHeldByClosureTable = true;
@@ -1024,6 +1027,47 @@ void FramePlanner::checkSuspensions()
     }
 }
 
+bool FramePlanner::mayHoldCells(ObjectID object) const
+{
+    auto isCellPutIntoCell = [&](const Value& user, ValueID operand, uint32_t index) {
+        return user.operandKind(index) != OperandKind::Guard && m_program.typeOf(m_function, operand).hasCells();
+    };
+    const Value& allocation = definitionOf(object);
+    bool result = false;
+    allocation.forEachOperand([&](ValueID operand, uint32_t index) {
+        result |= isCellPutIntoCell(allocation, operand, index);
+    });
+    return result;
+}
+
+// The words of a dead cell go on naming what it held for as long as the frame lives, and the collector reads them. A cell with a name keeps what it holds alive while the name is in scope.
+void FramePlanner::findCellsMadeForOneUse()
+{
+    for (ObjectID object : candidates()) {
+        if (!isInFrame(object) || !allocationsThatMayBeMadeForOneUse.contains(definitionOf(object).opcode) || !m_decisions[object.index()].madeAgainAt.isEmpty() || !mayHoldCells(object))
+            continue;
+        unsigned numberOfUses = 0;
+        bool isTakenByCall = false;
+        for (const ObjectUse& entry : m_escape.usesOf(object)) {
+            if (entry.use.kind == Use::Kind::Operand && m_function.at(entry.use.user).operandKind(entry.use.operandIndex) == OperandKind::Guard)
+                continue;
+            ++numberOfUses;
+            isTakenByCall = entry.use.kind == Use::Kind::Operand && !entry.retainedBy && effectRuleOf(m_function.at(entry.use.user).opcode) == EffectRule::Call;
+            if (!isTakenByCall)
+                continue;
+            // Not where the callee puts it into its result or into another cell of this frame. Nobody does that to an array of a frame: mayBeGivenFrameArray().
+            isTakenByCall = isArray(object) || !summarizeUse(entry.use.user, entry.use.operandIndex).uses.contains(OperandUse::Retains);
+            // Each time the call runs, the cell has been made anew in front of it.
+            isTakenByCall &= m_analyses.useLists().pointOf(allocationOf(object)).block == entry.use.block;
+            // The frame ends with the function.
+            const Block& block = m_function.at(entry.use.block);
+            bool endsFunction = block.terminator.kind == TerminatorKind::Return || block.terminator.kind == TerminatorKind::ReturnCall;
+            isTakenByCall &= !endsFunction || block.values.last() != entry.use.user;
+        }
+        m_decisions[object.index()].isMadeForOneUse = numberOfUses == 1 && isTakenByCall;
+    }
+}
+
 void FramePlanner::checkReturnCalls()
 {
     for (BlockID block : m_analyses.cfg().reversePostOrder()) {
@@ -1124,23 +1168,37 @@ void FramePlanner::checkHolders()
                 readsOfFrameCells.append(id);
         }
     }
-    for (bool changed = !readsOfFrameCells.isEmpty(); changed;) {
+    // By place, and under one place in the order of the holders: a read asks for its own place alone.
+    struct ObjectAtPlace {
+        CellPlace place;
+        ObjectID holder;
+        const RetainedObject* retained;
+    };
+    auto keyOf = [](const CellPlace& place) { return std::tuple { place.kind, place.owner, place.index }; };
+    Vector<ObjectAtPlace, 8> objectsByPlace;
+    if (!readsOfFrameCells.isEmpty()) {
+        for (ObjectID holder : candidates()) {
+            for (const RetainedObject& retained : retainedObjects[holder.index()])
+                objectsByPlace.append(ObjectAtPlace { placeStoredBy(retained.use), holder, &retained });
+        }
+        AOT::stableSort(objectsByPlace, { }, [&](const ObjectAtPlace& entry) { return keyOf(entry.place); });
+    }
+    uint64_t numberOfObjectsHeldAgainstReads = 0;
+    for (bool changed = !objectsByPlace.isEmpty(); changed;) {
         for (ValueID read : readsOfFrameCells) {
             if (mayGiveFrameCell(read))
                 continue;
-            CellPlace place = placeReadBy(m_function.at(read));
-            for (ObjectID holder : candidates()) {
-                if (!isInFrame(holder))
-                    continue;
-                for (const RetainedObject& retained : retainedObjects[holder.index()]) {
-                    if (isInFrame(retained.object) && placeStoredBy(retained.use) == place)
-                        worklist.append(PendingMove { retained.object, AllocationHeapCause::HasUntrackedAlias, retained.use });
-                }
+            auto atPlace = std::ranges::equal_range(objectsByPlace, keyOf(placeReadBy(m_function.at(read))), { }, [&](const ObjectAtPlace& entry) { return keyOf(entry.place); });
+            numberOfObjectsHeldAgainstReads += atPlace.size();
+            for (const ObjectAtPlace& entry : atPlace) {
+                if (isInFrame(entry.holder) && isInFrame(entry.retained->object))
+                    worklist.append(PendingMove { entry.retained->object, AllocationHeapCause::HasUntrackedAlias, entry.retained->use });
             }
         }
         changed = !worklist.isEmpty();
         moveToHeapWithRetainedObjects();
     }
+    m_build.statistics().count(StatisticID::ObjectsInFrameCellsHeldAgainstReads, numberOfObjectsHeldAgainstReads);
 
     for (ObjectID holder : candidates()) {
         if (!isInFrame(holder))

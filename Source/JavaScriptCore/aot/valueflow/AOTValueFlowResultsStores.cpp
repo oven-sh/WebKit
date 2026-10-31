@@ -896,6 +896,7 @@ void StoresByLayout::note(ValueSetMaker& maker, StoresIntoObjects& stores, Value
     case ValueFlowNameKind::AddedNames:
     case ValueFlowNameKind::FoundThroughEscapedInstances:
     case ValueFlowNameKind::NamesOfMethods:
+    case ValueFlowNameKind::ReceiversOfCalls:
     case ValueFlowNameKind::NamespaceExports:
         return;
     }
@@ -1317,6 +1318,7 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, StoresIntoObjects& sto
             StoredUnderKey& stored = stores.underKey.add(name.payload, StoredUnderKey { }).iterator->value;
             stored.isGivenValueByOperation = true;
             stored.isGivenValueByDefinition = true;
+            stored.formsOfDefinedValues = ValueForms::unknown;
         }
         return;
     }
@@ -1328,6 +1330,7 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, StoresIntoObjects& sto
         StoredUnderKey& stored = stores.underKey.add(name.payload, StoredUnderKey { }).iterator->value;
         stored.isAssigned |= writes.isAssignment;
         stored.isWrittenOtherThanByAssignment |= writes.isOtherThanAssignment;
+        stored.formsOfDefinedValues |= writes.formsOfDefinedValues;
     }
     stores.getsCopyWithoutComputedKey |= writes.leavesOutComputedKey;
     if (name.kind == ValueFlowNameKind::CopiedFrom) {
@@ -1356,7 +1359,6 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, StoresIntoObjects& sto
         stored.valueFromOperations = maker.unite(stored.valueFromOperations, writes.value);
         stored.isGivenValueByOperation |= writes.givesValueItself;
         stored.isGivenValueByDefinition |= writes.definesValue;
-        stored.formsOfDefinedValues |= writes.formsOfDefinedValues;
     }
     if (name.kind == ValueFlowNameKind::UnknownKey) {
         stores.valueFromOperationsUnderUnknownKey = maker.unite(stores.valueFromOperationsUnderUnknownKey, writes.value);

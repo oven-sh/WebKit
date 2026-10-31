@@ -395,7 +395,7 @@ private:
         TypeFit fit = fitOfLayout(layout);
         m_isInside &= fit == TypeFit::Inside;
         m_isOutside &= fit == TypeFit::Outside;
-        m_fitsIfPristine &= fit == TypeFit::Inside || isNeverPristineInstance(layout);
+        m_fitsIfPristine &= fit == TypeFit::Inside || isNeverPristineInstance(layout) || isInstanceByWhatIsWritten(layout);
     }
 
     TypeFit fitOfMember(BuiltinPrimitive member) const { return has(member) ? TypeFit::Inside : TypeFit::Outside; }
@@ -406,6 +406,7 @@ private:
     TypeFit fitOfBuiltin(BuiltinID) const;
     TypeFit fitOfLayout(LayoutID) const;
     bool isNeverPristineInstance(LayoutID) const;
+    bool isInstanceByWhatIsWritten(LayoutID) const;
     TypeFit fitOfClassPart(const ClassPart&);
     TypeFit fitOfContents(const ClassPart&, const BuiltinTypePart& admitting) const;
 
@@ -594,6 +595,14 @@ bool FitWalk::isNeverPristineInstance(LayoutID layout) const
     BuiltinClassID builtinClass = m_program.at(layout).writtenBuiltinBase;
     const BuiltinTypePart* admitting = builtinClass ? findPartAdmitting(m_table, m_tested, builtinClass) : nullptr;
     return admitting && !admitting->pristine.isEmpty() && admitting->contents.empty();
+}
+
+// As isInsideSomeClassPart() has it: a type that is narrowed from a class to a layout written below the class is a subset of it, so the operand lies where it lay, whatever flow knows of the base.
+bool FitWalk::isInstanceByWhatIsWritten(LayoutID layout) const
+{
+    const Layout& record = m_program.at(layout);
+    const BuiltinTypePart* admitting = record.writtenBuiltinBase && !record.mayBeOrdinaryObject ? findPartAdmitting(m_table, m_tested, record.writtenBuiltinBase) : nullptr;
+    return admitting && admitting->pristine.isEmpty() && admitting->contents.empty();
 }
 
 TypeFit FitWalk::fitOfContents(const ClassPart& part, const BuiltinTypePart& admitting) const

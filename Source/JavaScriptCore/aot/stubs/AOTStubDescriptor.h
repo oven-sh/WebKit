@@ -38,6 +38,9 @@ enum class StubAxis : uint8_t {
     Immediate = 16,
     StubFrame = 32,
     NeverReturns = 64,
+    // However long the program runs, its slow path comes again: a block of cells runs out, a number has no text yet. In the other families it ends once a cache holds the answer or the site has run once.
+    // So what the stub saves around the operation is felt, and it has a form for callers that keep no floating-point register. A stub that is needed in two forms has its fast path twice.
+    SlowPathRecurs = 128,
 };
 
 enum class StubISA : uint8_t { X86_64 = 1, ARM64 = 2 };
@@ -53,7 +56,8 @@ constexpr StubISA currentStubISA = StubISA::X86_64;
 enum class OperandRegisterChoice : uint8_t { NoChoice, AlternateReceivers };
 enum class ImmediateBinding : uint8_t { Never, ByPolicy, OperationOffset };
 enum class StubResult : uint8_t { None, GPR, FPR, TwoGPRs, Flags };
-enum class StubLeafness : uint8_t { MayCall, Leaf };
+// CallsOnlyBookkeeping: what it calls allocates no cell, throws nothing and walks no stack, so nobody asks who called the stub.
+enum class StubLeafness : uint8_t { MayCall, Leaf, CallsOnlyBookkeeping };
 enum class StubClobbers : uint8_t { ClobbersLikeCall, ClobbersOnlyScratch };
 enum class StubBoundImmediates : uint8_t { None, Every, NamesRead, NamesStored, NamesDefined };
 
@@ -187,6 +191,7 @@ inline constexpr OptionSet<StubAxis> OperandRegisterAxis { StubAxis::OperandRegi
 inline constexpr OptionSet<StubAxis> ImmediateAxis { StubAxis::Immediate };
 inline constexpr OptionSet<StubAxis> StubFrameAxis { StubAxis::StubFrame };
 inline constexpr OptionSet<StubAxis> NeverReturns { StubAxis::NeverReturns };
+inline constexpr OptionSet<StubAxis> SlowPathRecurs { StubAxis::SlowPathRecurs };
 
 inline constexpr OptionSet<StubISA> AllISAs { StubISA::X86_64, StubISA::ARM64 };
 inline constexpr OptionSet<StubISA> ARM64Only { StubISA::ARM64 };
@@ -317,6 +322,19 @@ constexpr std::span<const GPRReg> operandRegistersOf(OperandRegisterChoice choic
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
+// Asked at every call of a stub that the compiler emits.
+inline constexpr std::array<bool, numberOfStubFamilies> familiesThatAreOnlyEntryOfTheirBody = [] {
+    std::array<unsigned, numberOfStubFamilies> entries { };
+    for (const StubDescriptor& descriptor : StubFamilyTokens::descriptors)
+        ++entries[static_cast<size_t>(descriptor.body)];
+    std::array<bool, numberOfStubFamilies> result { };
+    for (const StubDescriptor& descriptor : StubFamilyTokens::descriptors)
+        result[static_cast<size_t>(descriptor.family)] = descriptor.body == descriptor.family && entries[static_cast<size_t>(descriptor.family)] == 1;
+    return result;
+}();
+
+constexpr bool isOnlyEntryOfItsBody(const StubDescriptor& descriptor) { return familiesThatAreOnlyEntryOfTheirBody[static_cast<size_t>(descriptor.family)]; }
+
 constexpr bool hasCallerFrameVariant(const StubDescriptor& descriptor, StubKey key)
 {
     switch (key.callerFrame()) {
@@ -326,6 +344,12 @@ constexpr bool hasCallerFrameVariant(const StubDescriptor& descriptor, StubKey k
         return descriptor.framelessISAs.contains(currentStubISA);
     case CallerFrame::StubFrame:
         return descriptor.axes.contains(StubAxis::StubFrame) && !key.operandRegister();
+    case CallerFrame::KeepsNoFPRs:
+        if (!descriptor.axes.contains(StubAxis::SlowPathRecurs))
+            return false;
+        [[fallthrough]];
+    case CallerFrame::KeepsNoRegisters:
+        return descriptor.linkage == StubLinkage::CalledByCode && descriptor.leafness != StubLeafness::Leaf && descriptor.clobbers == StubClobbers::ClobbersOnlyScratch && !key.operandRegister() && isOnlyEntryOfItsBody(descriptor);
     }
     return false;
 }
@@ -399,7 +423,7 @@ void forEachRegisterVariant(StubKey key, const Functor& functor)
 template<typename Functor>
 void forEachKeyWithoutImmediate(const Functor& functor)
 {
-    constexpr std::array callerFrames { CallerFrame::HasFrame, CallerFrame::Frameless, CallerFrame::StubFrame };
+    constexpr std::array callerFrames { CallerFrame::HasFrame, CallerFrame::Frameless, CallerFrame::StubFrame, CallerFrame::KeepsNoRegisters, CallerFrame::KeepsNoFPRs };
     for (const StubDescriptor& descriptor : StubFamilyTokens::descriptors) {
         for (uint8_t form = 0; form < descriptor.numberOfForms; ++form) {
             for (unsigned count = descriptor.minCount; count <= descriptor.maxCount; ++count) {

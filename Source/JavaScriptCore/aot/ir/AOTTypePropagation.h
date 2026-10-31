@@ -55,6 +55,7 @@ struct TypePropagationOutcome {
     bool gaveUpOnRounds { false };
     bool keptRangesOfNarrowedParameters { false };
     bool leftTypesAboveTheirRules { false };
+    bool foundParametersLeftAtNever { false };
 
     bool didChange() const { return retypedValues || changedExpectedTypes || cutBlocks; }
     bool didChangeControlFlow() const { return cutBlocks; }
@@ -205,6 +206,7 @@ private:
     void dropExpectedTypesThatSayNothing();
     bool mayHaveCodeToCut() const;
     void cutAfterNeverValues();
+    Vector<ValueID> findParametersLeftAtNever();
 
     TypePropagationInputs m_inputs;
     TypePropagationOutcome m_outcome;

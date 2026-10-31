@@ -46,6 +46,9 @@ struct AccessTestInputs {
 Type testableStoredTypeOf(const PropertyAccessContext&, const Type& stored, const Type& fieldType, TypeArena&);
 
 AccessTests createAccessTests(FunctionPassContext&, const PropertyAccessPlan&, const AccessTestInputs&);
+bool mayBelongToOtherInstance(FunctionPassContext&, ValueID subject, const ReceiverCandidates&);
+bool hasFailedInstanceTest(FunctionPassContext&, ValueID subject, BlockID);
+void noteWhetherTypeProvesInstance(FunctionPassContext&, ReceiverCandidates&, ValueID receiver, BlockID);
 std::optional<ReceiverCandidates> receiversEstablishedBy(const Program&, std::span<const Value> tests);
 
 struct DispatchPlan {

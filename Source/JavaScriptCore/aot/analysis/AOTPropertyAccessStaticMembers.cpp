@@ -12,6 +12,10 @@
 #include "AOTFlowNamespaces.h"
 #include "AOTFlowResults.h"
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
@@ -214,5 +218,9 @@ MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const Mem
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

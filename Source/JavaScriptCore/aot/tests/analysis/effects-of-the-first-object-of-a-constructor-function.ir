@@ -1,0 +1,39 @@
+# The class of a constructor function begins with its first object. That ends a set of guards which held while it spoke of no object of the class: the allocation writes a place that a test of several classes reads.
+# A class by `class` is there from its evaluation on. A test of one class, or one that asks about the function itself, passes only once the class is there.
+# FORM: Prepared
+# RUN: effects summaries f2 f3 f4 f5 f6
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Function" constructor=f0 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L1 kind=Instance name="Class" constructor=f1 fields=[{key="x" declared={type=anything}}] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+function f0 name="Function" flags=[HasThis] thisType={type=L0} results=[{type=undefined}] {
+    Return
+}
+function f1 name="Class" flags=[HasThis] thisType={type=L1} results=[{type=undefined}] {
+    Return
+}
+function f2 name="of-a-function" results=[{type=L0}] {
+    v0 = NewObject layout=L0
+    Return v0
+}
+function f3 name="of-a-class" results=[{type=L1}] {
+    v0 = NewObject layout=L1
+    Return v0
+}
+function f4 name="a-test-of-two-classes" results=[{type=boolean}] {
+    v0 = AreMembersUnchanged conditions=[{layout=L0 key="twice"}, {layout=L1 key="twice"}]
+    Return v0
+}
+function f5 name="a-test-of-one-class" results=[{type=boolean}] {
+    v0 = AreMembersUnchanged conditions=[{layout=L0 key="twice"}, {layout=L0 key="thrice"}]
+    Return v0
+}
+function f6 name="a-test-that-waits-for-the-function" results=[{type=boolean}] {
+    v0 = AreMembersUnchanged conditions=[{layout=L0 key="twice"}, {layout=L0 side=Static key="prototype"}, {layout=L1 key="twice"}, {layout=L1 side=Static key="prototype"}]
+    Return v0
+}
+# CHECK: f2 return: reads(AllocatorState) writes(MemberGuards/1, AllocatorState)
+# CHECK: f3 return: reads(AllocatorState) writes(AllocatorState)
+# CHECK: f4 return: reads(MemberGuards/4)
+# CHECK: f5 return: reads(MemberGuards/1)
+# CHECK: f6 return: reads(MemberGuards/2)

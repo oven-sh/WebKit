@@ -87,7 +87,7 @@ function f3 name="integersStoredDirectly" parameters=[{type=int[0, 100]}, {type=
 }
 # CHECK-LABEL: function f3
 # CHECK: v3: {{*}} = NewArrayLike v0, v1 arrayStorage=Double
-# CHECK: v5: {{*}} = TryPutByValDirect v3, v4, v2 arrayStorage=Double
+# CHECK: v5: {{*}} = TryPutByValDirect v3, v4, v2 length=v0 arrayStorage=Double
 
 function f4 name="integersStoredDirectlyInArraysMadeInTwoPlaces" parameters=[{type=boolean}, {type=int[0, 100]}, {type=Array<anything>}, {type=i32}] results=[{type=anything}] {
     Branch v0 -> taken b1(), notTaken b2()
@@ -121,4 +121,4 @@ function f5 name="integersStoredDirectlyThatNobodyReadsAsDoubles" parameters=[{t
 }
 # CHECK-LABEL: function f5
 # CHECK: v3: {{*}} = NewArrayLike v0, v1 arrayStorage=Int32
-# CHECK: v5: {{*}} = TryPutByValDirect v3, v4, v2 arrayStorage=Int32
+# CHECK: v5: {{*}} = TryPutByValDirect v3, v4, v2 length=v0 arrayStorage=Int32

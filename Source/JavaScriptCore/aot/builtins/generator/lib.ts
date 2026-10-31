@@ -1184,6 +1184,7 @@ const classColumnKeys = [
   "namesMadeByStaticMembers",
   "namesReadToDescribeInstances",
   "constructorOnlyReadsPrototypeOfNewTarget",
+  "constructorAdder",
   "instanceCppClass",
   "prototypeCppExpression",
   "instanceStructureCppExpression",

@@ -776,6 +776,10 @@ static Vector<ValueFlowWriteUnderNewName> computeBuiltinLocations(const ValueFlo
     const BuiltinTable& builtins = program.builtins();
     tables.constantMembers = BitVector(builtins.builtinCount());
     tables.intactHolders = BitVector(builtins.builtinCount());
+    tables.holdersReachedThroughUnknownObject = BitVector(builtins.builtinCount());
+    ValueSetID answersThatNoReadLists = inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::AnswersThatNoReadLists));
+    tables.keysWrittenThroughUnknownObject = holders.keysWrittenThroughUnknownObject();
+    tables.isEveryKeyWrittenThroughUnknownObject = holders.isEveryKeyWrittenThroughUnknownObject();
     tables.membersLockedAtStartUp = BitVector(builtins.builtinCount());
     tables.membersWrittenInSharedRealm = BitVector(builtins.builtinCount());
     ValueSetID storedByName = inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::MembersStoredByNameThroughPlaceholders));
@@ -785,6 +789,8 @@ static Vector<ValueFlowWriteUnderNewName> computeBuiltinLocations(const ValueFlo
         BuiltinID canonical = builtins.canonicalID(member);
         bool takesNameFromTests = std::ranges::contains(program.openedNames, canonical, &OpenedName::holder);
         bool hasNamesOfImagesBelow = !builtins.at(canonical).flags.contains(BuiltinFlag::IsLockedObject) && inputs.solver().input().refusedCode.hasImagesBelow;
+        if (builtins.at(member).kind == BuiltinKind::Constructor || (isObjectKind(builtins.at(member).kind) && inputs.sets().contains(answersThatNoReadLists, inputs.universe().objectOf(canonical))))
+            tables.holdersReachedThroughUnknownObject.quickSet(index);
         if (isEnabled && !takesNameFromTests && !hasNamesOfImagesBelow && isIntact(holders.writersOfEveryOwnProperty(canonical), holders.writersOfPrototypeLink(canonical)))
             tables.intactHolders.quickSet(index);
         const Builtin& entry = builtins.at(member);
@@ -876,18 +882,56 @@ void findHoldersWithListedKeys(const ValueFlowResultInputs& inputs, const ValueF
             functor(builtins.canonicalID(inputs.universe().builtinOf(object)));
         });
     };
+    // Whoever holds an object that went out of sight finds what hangs below it.
+    std::optional<BitVector> holdersOutOfSight;
+    auto findHoldersOutOfSight = [&] {
+        BitVector found(builtins.builtinCount());
+        auto noteFound = [&](BuiltinID holder) {
+            found.quickSet(holder.index());
+        };
+        forEachHolderIn(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::escaped()), noteFound);
+        forEachHolderIn(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::lost()), noteFound);
+        for (ValueFlowHostNode node : { ValueFlowHostNode::HeldByNativeCode, ValueFlowHostNode::ValuesCarriedOut })
+            forEachHolderIn(inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(node)), noteFound);
+        for (bool findsMore = !found.isEmpty(); findsMore;) {
+            findsMore = false;
+            for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+                BuiltinID hanging = builtins.canonicalID(BuiltinID(index));
+                if (found.quickGet(hanging.index()))
+                    continue;
+                for (BuiltinID above = builtins.at(BuiltinID(index)).holder; above; above = builtins.at(above).holder) {
+                    if (!found.quickGet(builtins.canonicalID(above).index()))
+                        continue;
+                    found.quickSet(hanging.index());
+                    findsMore = true;
+                    break;
+                }
+            }
+        }
+        return found;
+    };
+    // Without code that nobody saw, an object that nobody knows is one that went out of sight and has come back, or one that was made where nobody looked: no holder.
+    auto forEachHolderShownIn = [&](ValueSetID objects, NOESCAPE const Invocable<void(BuiltinID)> auto& functor) {
+        forEachHolderIn(objects, functor);
+        if (!inputs.sets().meet(objects, inputs.universe().placeholdersAlone()))
+            return;
+        if (!holdersOutOfSight)
+            holdersOutOfSight = findHoldersOutOfSight();
+        for (size_t holder : *holdersOutOfSight)
+            functor(BuiltinID(static_cast<uint32_t>(holder)));
+    };
     auto noteHolder = [&](BuiltinID holder) {
         tables.holdersWithListedKeys.set(holder.index());
     };
-    forEachHolderIn(objectsWithAllKeysShown(usesOfHeap), noteHolder);
-    forEachHolderIn(objectsWithEnumerableKeysShown(usesOfHeap), [&](BuiltinID holder) {
+    forEachHolderShownIn(objectsWithAllKeysShown(usesOfHeap), noteHolder);
+    forEachHolderShownIn(objectsWithEnumerableKeysShown(usesOfHeap), [&](BuiltinID holder) {
         bool showsOrder = std::ranges::any_of(builtins.membersOf(holder), [&](BuiltinID member) {
             return builtins.at(member).isAddedAsEnumerable;
         });
         if (showsOrder)
             noteHolder(holder);
     });
-    // Code that nobody saw finds every object of the realm. Without such code an object that went out of sight is listed only where it comes back, and there it is an operand that nobody knows.
+    // Code that nobody saw finds every object of the realm.
     if (unseenCodeCanRun(inputs.solution))
         forEachHolderIn(inputs.universe().builtinObjects(), noteHolder);
 }
@@ -1218,7 +1262,7 @@ static void collectWhatTestsReplace(const ValueFlowResultInputs& inputs, ValueFl
         return std::ranges::any_of(overload.flow.propertyActions, writesUnderKeyOfOperand);
     });
     forEachBuiltinApplication(inputs, heap, writers, holders, [&](const ValueFlowBuiltinApplication& application) {
-        if (application.function && isLibraryCode(program, program.at(application.function)))
+        if (!application.isCalleeListed || (application.function && isLibraryCode(program, program.at(application.function))))
             return;
         for (const BuiltinOverload& overload : builtins.overloadsOf(application.builtin)) {
             if (overload.mode != application.mode())

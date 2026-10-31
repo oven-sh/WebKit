@@ -37,6 +37,8 @@ struct FlowFieldUpdate {
     FlowPositionUpdate position;
     FieldFlow flow;
     FlowAccessorField accessor;
+    // As FlowAppendedField::formOfValue, for a field that a type declares and nothing but definitions fills.
+    OptionSet<FieldForm> formOfValue;
     bool undefinedAtStartIsNeverRead { false };
 };
 

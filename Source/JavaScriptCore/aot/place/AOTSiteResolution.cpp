@@ -477,7 +477,7 @@ static unsigned numberOfSiteCachesUsedByOperationWithRequest(const Program& prog
     // A name that none of the layouts has is found above the object, and the table has nothing to say.
     if (value.opcode == Opcode::PropGet && !value.isFreeName() && value.receivers() && program.nameClassOf(value.key()) != NameClass::Length) {
         bool isFieldOfReceiver = std::ranges::any_of(program.at(value.receivers()).seen().predicted(), [&](LayoutID member) {
-            return !!findField(program, member, value.key(), BaseChain::Proven);
+            return !builtinBaseClassOf(program, member) && findField(program, member, value.key(), BaseChain::Proven);
         });
         if (isFieldOfReceiver)
             return 0;

@@ -61,6 +61,7 @@ struct FlowSiteLevel {
     Wire::AccessCost cost : 8 { Wire::AccessCost::Free };
     uint8_t distance { UINT8_MAX };
     uint8_t distanceForCost { UINT8_MAX };
+    bool receiverOfLeftOperationIsClassObject { false };
     uint32_t copies { 0 };
     LayoutID layout;
     PropertyKeyID key;

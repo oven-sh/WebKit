@@ -11,8 +11,8 @@
 # CHECK: name="method" {{*}}thisType={type=L0|L2} {{*}}results=[{type=undefined}]
 # CHECK: name="boundThenCalledAsMethod" {{*}}thisType={type=L0|L1} {{*}}results=[{type=undefined}]
 # CHECK: name="getterReadForANumber" {{*}}thisType={type=fractional|L0|L3} {{*}}results=[{type=undefined}]
-# CHECK: name="constructed" {{*}}thisType={type=object} {{*}}results=[{type=undefined|f10}]
-# CHECK: name="constructedForAnother" {{*}}thisType={type=object} {{*}}results=[{type=undefined|f12}]
+# CHECK: name="constructed" {{*}}thisType={type=L0|Object} {{*}}results=[{type=undefined|f10}]
+# CHECK: name="constructedForAnother" {{*}}thisType={type=L0|Object} {{*}}results=[{type=undefined|f12}]
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

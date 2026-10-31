@@ -30,6 +30,8 @@ namespace Typed {
 class StringInterningPhase;
 
 Vector<char16_t> decodeProgramString(std::span<const uint8_t>);
+// The empty string and a string of one Latin-1 character: the VM has their cells from its start to its end.
+bool hasCellOfVM(std::span<const uint8_t>);
 Vector<uint8_t> encodeProgramString(std::span<const char16_t>);
 Vector<uint8_t> encodeProgramString(StringView);
 bool isCanonicalProgramString(std::span<const uint8_t>);

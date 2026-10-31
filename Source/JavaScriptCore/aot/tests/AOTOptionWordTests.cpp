@@ -286,6 +286,8 @@ static constexpr OptionWordCase optionWordCases[] = {
         options.bisection.predictionFailure = { .period = 100, .seed = 3 };
     } },
     { "testing=DelayFlowRules"_s, [](WireOptions& options) { options.testing = Wire::TestingSwitch::DelayFlowRules; } },
+    { "testing=ShuffleObjects"_s, [](WireOptions& options) { options.bisection.flowSchedule.seedOfObjectNumbers = 1; } },
+    { "testing=shuffle-objects:4"_s, [](WireOptions& options) { options.bisection.flowSchedule.seedOfObjectNumbers = 5; } },
     { "testing=delay-flow-rules:17"_s, [](WireOptions& options) {
         options.testing = Wire::TestingSwitch::DelayFlowRules;
         options.bisection.flowSchedule.number = 17;
@@ -650,7 +652,6 @@ static constexpr InvalidMemberCase invalidMemberCases[] = {
         wire.bisection.predictionFailure = { .period = 1, .seed = UINT16_MAX + 1 };
     } },
     { offsetof(WireOptions, bisection.flowSchedule.number), [](WireOptions& wire) { wire.bisection.flowSchedule.number = 1; } },
-    { offsetof(WireOptions, bisection.flowSchedule.reserved), [](WireOptions& wire) { wire.bisection.flowSchedule.reserved = 1; } },
     { offsetof(WireOptions, bisection.flowSchedule.number), [](WireOptions& wire) {
         wire.testing = Wire::TestingSwitch::DelayFlowRules;
         wire.bisection.flowSchedule.number = UINT8_MAX + 1;
@@ -864,6 +865,8 @@ static void testInstrumentationAndTestingSwitchesAreRecorded()
     RecordedOptions failing = readWords({ "testing=FailPredictions:7:3"_s }).recorded;
     AOT_TEST_CHECK(failing.has(Wire::TestingSwitch::FailPredictions) && failing.predictionFailurePeriod == 7 && failing.predictionFailureSeed == 3);
     AOT_TEST_CHECK(!readWords({ "testing=DelayFlowRules"_s }).recorded.numberOfFlowSchedule && readWords({ "testing=DelayFlowRules:200"_s }).recorded.numberOfFlowSchedule == 200);
+    AOT_TEST_CHECK(!readWords({ }).seedOfObjectNumbers && readWords({ "testing=ShuffleObjects:200"_s }).seedOfObjectNumbers == 201);
+    AOT_TEST_CHECK(readWords({ "testing=ShuffleObjects:200"_s }).recorded == readWords({ }).recorded);
 }
 
 std::span<const NativeTest> optionWordTests()

@@ -1298,11 +1298,21 @@ private:
             return false;
         ClimbingSet entries = m_context.restrict(valueAt(BuiltinPlace { .kind = BuiltinPlaceKind::IteratedValues, .operand = BuiltinOperand::argument(0) }), m_universe.objects());
         constexpr OptionSet<ObjectMutation> mutationsOfContents { ObjectMutation::StoreAfterCreation, ObjectMutation::AddProperty, ObjectMutation::RedefineProperty, ObjectMutation::DeleteField, ObjectMutation::ChangePrototype };
-        bool someEntryIsOtherwise = holdsAnything(m_context.membersMissingFrom(m_context.nodes().ofHost(ValueFlowHostNode::PairsOfEntries), entries))
+        // A pair that the program writes says what it holds until something changes it, and any change counts: `pair.pop()` takes a value away.
+        ClimbingSet pairLiterals = m_context.restrict(entries, m_universe.pairLiterals());
+        ClimbingSet otherEntries = m_context.restrict(entries, ValueSets::complement(m_universe.pairLiterals()));
+        bool someEntryIsOtherwise = holdsAnything(m_context.membersMissingFrom(m_context.nodes().ofHost(ValueFlowHostNode::PairsOfEntries), otherEntries))
+            || holdsAnything(m_context.markedAmong(pairLiterals, OptionSet<ObjectMutation>::all()))
+            || m_context.holdsAnyOf(pairLiterals, m_context.nodes().ofHost(ValueFlowHostNode::ArraysThatMayHaveHoles))
             || m_context.holdsAnyOf(entries, escaped()) || m_context.holdsAnyOf(entries, ValueFlowProgramNodes::lost()) || holdsAnything(m_context.markedAmong(entries, mutationsOfContents));
         if (someEntryIsOtherwise) {
             m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::MapsFilledAsRecordsSay), only(m_context, m_resultObject));
             return false;
+        }
+        // The numbers in a Map are followed from the objects that Object.entries() is given. A pair that the program writes is not one of them.
+        if (holdsAnything(pairLiterals)) {
+            m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::MapsFilledAsRecordsSay), only(m_context, m_resultObject));
+            m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::WrittenPairsThatAreRead), pairLiterals);
         }
         m_context.add(m_context.written(only(m_context, m_resultObject), entriesPairsOfMap), entries);
         for (const BuiltinTransfer& transfer : m_overload->flow.transfers) {
@@ -2061,8 +2071,10 @@ private:
             if (mayBeUnknownObject(objects))
                 functor(m_context.nodes().ofHost(ValueFlowHostNode::ObjectsAboveEscapedInstances));
             // The prototype objects of library classes above escaped instances are held apart. The modules of the run time list the keys of none.
-            if (mayBeUnknownObject(objects) && isCalledByProgramCode())
+            if (mayBeUnknownObject(objects) && isCalledByProgramCode()) {
                 functor(heldPrototypeObjectsOfLibraryClasses(m_context));
+                notePrototypeObjectsAboveUnknownObject(m_context);
+            }
             bool mayBeEndOfChain = m_context.meet(objects, m_universe.placeholdersAlone());
             bool mayBeNamespace = false;
             // Where the table does not say what stands above an object, one stand-in is listed there. It ends the walk, but the object it stands for may have any object above it.
@@ -2708,6 +2720,26 @@ private:
         }
     }
 
+    bool callConstructorAdder(const BuiltinClass& builtinClass, ClimbingSet newObject)
+    {
+        if (!builtinClass.constructorAdder)
+            return false;
+        ClimbingSet adders = m_context.valueOf(m_context.lookup(newObject, property(m_context, builtinClass.constructorAdder)));
+        if (m_context.meet(adders, m_universe.placeholdersAlone()))
+            return false;
+        if (m_context.meet(adders, ValueSets::complement(m_context.maker().unite(m_universe.builtinFunctions(), m_universe.anyPrimitive()))))
+            m_context.mark(newObject, { ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript });
+        forEachPartOfCallees(m_context, m_context.restrict(adders, m_universe.callables()), [&](ClimbingSet callees) {
+            ValueFlowCallGroup group = m_context.group(callees, ValueFlowCallKind::CallByNativeCode);
+            m_context.add(group.thisValue, newObject);
+            for (BuiltinSlotID slot : builtinClass.slots)
+                m_context.connect(m_context.written(newObject, nameOf(slot)), group.otherArguments);
+            if (m_call.thrown)
+                m_context.connect(group.thrown, m_call.thrown);
+        });
+        return true;
+    }
+
     void allocate(const BuiltinTypePart& part, ValueFlowObjectID fresh, BuiltinFreshness freshness)
     {
         ClimbingSet object = only(m_context, fresh);
@@ -2737,7 +2769,7 @@ private:
                 m_context.connect(m_context.lookup(m_context.valueOf(m_call.thisValue), property(m_context, BuiltinNames::prototype)), prototype);
                 ClimbingSet classesOfProgram = m_context.restrict(m_context.valueOf(m_call.thisValue), ValueSets::complement(m_universe.builtinObjects()));
                 bool mayCallMembersOfNewObject = m_overload->effects.capability == BuiltinCapability::JS && !m_builtins.at(part.builtinClass).constructorOnlyReadsPrototypeOfNewTarget;
-                if (holdsAnything(classesOfProgram) && mayCallMembersOfNewObject) {
+                if (holdsAnything(classesOfProgram) && mayCallMembersOfNewObject && !callConstructorAdder(m_builtins.at(part.builtinClass), object)) {
                     m_context.add(escaped(), object);
                     m_context.add(escaped(), classesOfProgram);
                 }
@@ -3019,6 +3051,15 @@ private:
         return applied.isEmpty() ? callees : m_context.restrict(callees, ValueSets::complement(m_context.maker().of(applied.span())));
     }
 
+    bool namesHolderOfReplaceableMembers(const BuiltinPlace& place)
+    {
+        bool namesHolder = false;
+        forEachOperandAt(place, [&](const ValueFlowOperand& operand) {
+            namesHolder |= !operand.node && m_context.meet(ClimbingSet(operand.constant), m_universe.builtinTables().heap().holdersOfReplaceableMembers());
+        });
+        return namesHolder;
+    }
+
     void applyCallback(const BuiltinCallback& callback)
     {
         describeObjectsRefusedAsFunctions(m_context, valueAt(callback.callee));
@@ -3034,7 +3075,8 @@ private:
             } else if (callback.thisValue.kind == BuiltinPlaceKind::None)
                 m_context.add(group.thisValue, m_universe.undefinedValue());
             else {
-                connectFrom(callback.thisValue, group.thisValue);
+                if (!namesHolderOfReplaceableMembers(callback.thisValue) || mayBeUnknownObject(callees) || isHostFlagRaised(m_context, ValueFlowHostNode::AllElseIsAtRest))
+                    connectFrom(callback.thisValue, group.thisValue);
                 if (mayBeUnknownObject(callees) && isCalledByProgramCode())
                     connectFrom(callback.thisValue, valuesCarriedOut());
             }

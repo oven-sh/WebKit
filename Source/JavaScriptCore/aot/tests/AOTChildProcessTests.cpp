@@ -221,6 +221,9 @@ static NEVER_INLINE void trapWithMarkerOnStack()
 {
     volatile uint64_t marker = 0x5afe5afe5afe5afeull;
     UNUSED_VARIABLE(marker);
+    static uint64_t markerOffStack = 0x0ff50ff50ff50ff5ull;
+    uint64_t* volatile pointerOffStack = &markerOffStack;
+    UNUSED_VARIABLE(pointerOffStack);
     __builtin_trap();
 }
 
@@ -243,6 +246,9 @@ static void testTrapIsReported()
     AOT_TEST_CHECK(result.output.contains(" in thread \"AOT build\" at 0x"_s));
     AOT_TEST_CHECK(result.output.contains("registers:"_s) && result.output.contains("return addresses: 0x"_s));
     AOT_TEST_CHECK(result.output.contains("5afe5afe5afe5afe"_s));
+    AOT_TEST_CHECK(result.output.contains(": 0ff50ff50ff50ff5 "_s));
+    size_t mappings = result.output.find("\nmappings:\n"_s);
+    AOT_TEST_CHECK(mappings != notFound && result.output.find("testaot"_s, mappings) != notFound);
 }
 
 #endif

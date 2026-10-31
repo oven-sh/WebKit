@@ -531,16 +531,18 @@ static bool spellsGlobalObject(const Program& program, const Function& function,
     return member && builtins.canonicalID(member) == Builtins::GlobalThis;
 }
 
-static BitVector findKeysStoredUnderOnGlobalObject(const Program& program, const ParallelLoops& loops)
+static BitVector findKeysStoredUnderOrAskedAboutOnGlobalObject(const Program& program, const ParallelLoops& loops)
 {
     Vector<PropertyKeyID> stored = collectInParallel<PropertyKeyID>(loops, program.functions.size(), [&](unsigned index, Vector<PropertyKeyID>& found) {
         const Function& function = program.functions[index];
-        if (!function.hasBody() || !mayHoldValueWith(program, FunctionID(index), { Opcode::PropSet }))
+        if (!function.hasBody() || !mayHoldValueWith(program, FunctionID(index), { Opcode::PropSet, Opcode::PropGet }))
             return;
         for (const Block& block : function.blocks) {
             for (ValueID id : block.values) {
                 const Value& operation = function.at(id);
                 if (operation.opcode == Opcode::PropSet && spellsGlobalObject(program, function, operation.operand(OperandIndex::PropSet::object)))
+                    found.append(operation.key());
+                else if (operation.opcode == Opcode::PropGet && operation.isFreeName() && operation.isForTypeOf())
                     found.append(operation.key());
             }
         }
@@ -703,33 +705,6 @@ std::optional<Vector<ModuleID, 2>> ValueFlowHeapTables::filesThatPathFinds(Modul
     if (std::span<const uint8_t> shorter = withoutExtension(joined.span()); shorter.size() != joined.size())
         add(shorter);
     return found;
-}
-
-std::span<const PropertyKeyID> ValueFlowHeapTables::namesThatBeginWith(StringID beginning) const
-{
-    auto textOf = [&](PropertyKeyID key) {
-        return m_program.string(m_program.at(key).text);
-    };
-    auto isBefore = [](std::span<const uint8_t> left, std::span<const uint8_t> right) {
-        return std::ranges::lexicographical_compare(left, right);
-    };
-    std::call_once(m_didSortNames, [&] {
-        for (uint32_t index = 0; index < m_program.types.numberOfPropertyKeys(); ++index) {
-            if (m_program.at(PropertyKeyID(index)).kind == PropertyKeyKind::Text)
-                m_namesInOrderOfText.append(PropertyKeyID(index));
-        }
-        AOT::sort(m_namesInOrderOfText, [&](PropertyKeyID left, PropertyKeyID right) {
-            return isBefore(textOf(left), textOf(right));
-        });
-    });
-    std::span<const uint8_t> text = m_program.string(beginning);
-    std::span<const PropertyKeyID> names = m_namesInOrderOfText.span();
-    auto first = std::ranges::lower_bound(names, text, isBefore, textOf);
-    auto last = std::ranges::find_if_not(first, names.end(), [&](PropertyKeyID key) {
-        std::span<const uint8_t> name = textOf(key);
-        return name.size() >= text.size() && equalSpans(name.first(text.size()), text);
-    });
-    return { first, last };
 }
 
 ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlowUniverse& universe, ValueSets& allSets, ValueSetMaker& maker, const ParallelLoops& loops, NOESCAPE const ScopedLambda<void()>& runBesideTables)
@@ -902,6 +877,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         Objects namespacesWhoseHoldersListThem;
         Objects holdersThatListAllMembers;
         Objects lockedObjects;
+        Objects classes;
         Objects holdersWithLockedIndexes;
         Objects holdersWithLockedPrototypeLink;
         Objects holdersWithMembersOnHiddenPrototype;
@@ -963,6 +939,8 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             }
             if (entry.flags.contains(BuiltinFlag::IsLockedObject))
                 lockedObjects.appendVector(objects);
+            if (entry.kind == BuiltinKind::Constructor)
+                classes.appendVector(objects);
             if (builtins.closesIndexKeys(holder))
                 holdersWithLockedIndexes.appendVector(objects);
             if (builtins.hasLockedPrototypeLink(holder))
@@ -1109,6 +1087,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_holdersOfUndeclaredPropertiesUnderAnyKey = maker.unite(m_holdersOfUndeclaredPropertiesUnderAnyKey, maker.of(holdersOfOpenedNames.span()));
 
         m_lockedObjects = maker.of(lockedObjects.span());
+        m_classes = maker.of(classes.span());
         m_holdersWithLockedIndexes = maker.of(holdersWithLockedIndexes.span());
         m_holdersWithLockedPrototypeLink = maker.of(holdersWithLockedPrototypeLink.span());
         m_holdersWithMembersOnHiddenPrototype = maker.of(holdersWithMembersOnHiddenPrototype.span());
@@ -1134,13 +1113,21 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
     };
     auto listObjectsCreatedWithKeys = [&] {
         const ValueSets& sets = maker.sets();
+        auto classAllocatedAt = [&](ValueFlowObjectID site) {
+            return universe.siteOf(site) ? declaredLayoutOf(program, universe.siteOf(site)->layout) : LayoutID();
+        };
+        BitVector isAllocatedAtSomeSite(program.layouts.size());
+        sets.forEachMember(universe.objectsThatPickTheirLayout(), [&](ValueFlowObjectID site) {
+            if (LayoutID ownClass = classAllocatedAt(site))
+                isAllocatedAtSomeSite.quickSet(ownClass.index());
+        });
         Vector<Vector<ValueFlowObjectID>> instancesOfClassesBelow(program.layouts.size());
         sets.forEachMember(universe.instancesOfClasses(), [&](ValueFlowObjectID instance) {
             LayoutID classOfInstance = universe.layoutOf(instance);
             LayoutID current = classOfInstance;
             for (size_t steps = 0; steps < program.layouts.size() && current && program.at(current).has(LayoutFlags::HasHeritage); ++steps) {
                 current = predictedHeritageOf(program.at(current));
-                if (!current || current == classOfInstance)
+                if (!current || current == classOfInstance || !isAllocatedAtSomeSite.quickGet(current.index()))
                     continue;
                 Vector<ValueFlowObjectID>& instancesBelow = instancesOfClassesBelow[current.index()];
                 if (instancesBelow.isEmpty() || instancesBelow.last() != instance)
@@ -1151,7 +1138,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             if (!universe.siteOf(site) || !sets.contains(universe.objectsThatPickTheirLayout(), site))
                 return;
             LayoutID allocated = universe.siteOf(site)->layout;
-            LayoutID ownClass = declaredLayoutOf(program, allocated);
+            LayoutID ownClass = classAllocatedAt(site);
             if (allocated == ownClass && sets.contains(universe.instancesOfClasses(), universe.instanceOf(ownClass)))
                 functor(universe.instanceOf(ownClass));
             for (ValueFlowObjectID instance : instancesOfClassesBelow[ownClass.index()])
@@ -1389,7 +1376,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             m_functionsNamedAtOneOperation = findFunctionsNamedAtOneOperation(program, loops);
         },
         [&] {
-            m_keysStoredUnderOnGlobalObject = findKeysStoredUnderOnGlobalObject(program, loops);
+            m_keysStoredUnderOrAskedAboutOnGlobalObject = findKeysStoredUnderOrAskedAboutOnGlobalObject(program, loops);
         },
         [&] {
             m_constantsHoldingModules = ConstantsHoldingModules(program);

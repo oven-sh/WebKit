@@ -579,6 +579,20 @@ std::optional<uint32_t> ImagesBelow::numberOfName(const DecodedString& name) con
     return std::nullopt;
 }
 
+StringView ImagesBelow::textOfName(uint32_t number) const
+{
+    for (size_t position = 0; position < m_images.size(); ++position) {
+        const ImageNumberRanges& numbers = m_images[position]->header().numbers;
+        if (number < numbers.firstStringHeader || number >= numbers.endOfStringHeaders)
+            continue;
+        const ImageIdentifierWord& identifier = m_images[position]->text().identifier(number);
+        if (identifier.kind() != PropertyKeyKind::Text || !identifier.text())
+            return { };
+        return viewOf(position, identifier.text());
+    }
+    return { };
+}
+
 std::optional<uint32_t> ImagesBelow::numberOfEngineSymbol(PropertyKeyKind kind, uint32_t wellKnownSymbol, const String& text) const
 {
     if (!isSameSymbolInEveryImage(kind))

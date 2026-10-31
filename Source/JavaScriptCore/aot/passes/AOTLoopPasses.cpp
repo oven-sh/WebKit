@@ -29,10 +29,14 @@
 #include "AOTOperatorForms.h"
 #include "AOTProgramPasses.h"
 #include "AOTRegionCloner.h"
+#include "AOTResolveCallsCallees.h"
+#include "AOTResolveCallsDirectCall.h"
 #include "AOTSSARepair.h"
 #include "AOTSort.h"
 #include "AOTStringBuilderAnalysis.h"
+#include "AOTSummarizeForInlining.h"
 #include "AOTThreshold.h"
+#include "AOTTypeTestSite.h"
 #include "AOTUseEffectHistory.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
@@ -1238,13 +1242,14 @@ static bool testFirstValuesInFrontOfLoops(FunctionPassContext& context)
 
 // `for (let i = 0; i < n; i++) { for (..) .. }` with `n: number`. Below an int32 the counter is one. PlaceTypeTests tests such a bound in front of a loop that holds no other loop: its copies hold none.
 // So the bound of a loop that holds one is tested here, once in front of the loop, and the loop gets a copy whose bound is an int32.
-static bool copyLoopWhoseBoundIsTheOnlyNumber(FunctionPassContext& context, IRBuilder& builder)
+enum class LoopNesting : bool { Outer, Innermost };
+static bool copyLoopWhoseBoundIsTheOnlyNumber(FunctionPassContext& context, IRBuilder& builder, LoopNesting nesting)
 {
     const Program& program = context.program;
     Function& function = context.function;
     FunctionAnalyses& analyses = context.analyses;
     const NaturalLoops& loops = analyses.naturalLoops();
-    if (loops.numLoops() < 2)
+    if (nesting == LoopNesting::Outer && loops.numLoops() < 2)
         return false;
     auto typeOf = [&](ValueID id) -> const Type& {
         return program.typeOf(function, id);
@@ -1263,6 +1268,9 @@ static bool copyLoopWhoseBoundIsTheOnlyNumber(FunctionPassContext& context, IRBu
                 if (user.opcode == Opcode::TypeTest && context.types.at(user.testedType()).isInteger())
                     return true;
                 bool isFollowed = isCastWithoutTest(user.opcode);
+                // What flow knows to be an integer however far it counts is reckoned with as one.
+                if (isFollowed && typeOf(use.user).isInteger() && !typeOf(reckoned[index]).isInteger())
+                    return true;
                 if (hasOperatorForm(user.opcode) && isLegalOperatorForm(user.opcode, OperatorForm::Integers) && (user.numberOfOperands() != 2 || !(typeOf(user.operand(1 - use.operandIndex)).primitives & Primitive::FractionalNumber))) {
                     if (mayCallRuntime(user.opcode, OperatorForm::Numbers))
                         return true;
@@ -1270,6 +1278,46 @@ static bool copyLoopWhoseBoundIsTheOnlyNumber(FunctionPassContext& context, IRBu
                 }
                 if (isFollowed && !reckoned.contains(use.user) && reckoned.size() < mostValuesReckonedFromCounter)
                     reckoned.append(use.user);
+            }
+        }
+        return false;
+    };
+    // The loop-carried add has three to four times the latency on doubles.
+    auto isBoundByCounterLatency = [&](const NaturalLoop& loop, const InductionVariable& counter, ValueID comparisonWithBound) {
+        for (unsigned index = 0; index < loop.size(); ++index) {
+            const Block& block = function.at(loop.at(index));
+            if (block.frequency.predicted() == BlockFrequency::Normal && std::ranges::any_of(block.values, [&](ValueID id) { return analyses.mayRunOtherCodeOnAnyEdge(id); }))
+                return false;
+        }
+        Vector<ValueID, 4> names { counter.parameter };
+        for (size_t index = 0; index < names.size(); ++index) {
+            for (const Use& use : analyses.useLists().usesOf(names[index])) {
+                if (use.kind != Use::Kind::Operand || function.at(use.block).frequency.predicted() != BlockFrequency::Normal || !loops.belongsTo(use.block, loop) || counter.steppedValues.contains(use.user))
+                    continue;
+                const Value& user = function.at(use.user);
+                if (use.user == comparisonWithBound || (relationalOperators.contains(user.opcode) && !(typeOf(user.operand(1 - use.operandIndex)).primitives & Primitive::FractionalNumber)))
+                    continue;
+                if (!isCastWithoutTest(user.opcode))
+                    return false;
+                if (!names.contains(use.user))
+                    names.append(use.user);
+            }
+        }
+        return true;
+    };
+    // Every reentry repeats the tests in front of the loop.
+    auto isReenteredAfterSideExit = [&](const NaturalLoop& loop, BlockID testBlock) {
+        for (unsigned index = 0; index < loop.size(); ++index) {
+            if (loop.at(index) == testBlock)
+                continue;
+            for (BlockID successor : analyses.cfg().successors(loop.at(index))) {
+                if (loops.belongsTo(successor, loop))
+                    continue;
+                for (unsigned outerIndex = 0; outerIndex < loops.numLoops(); ++outerIndex) {
+                    const NaturalLoop& outer = loops.loop(outerIndex);
+                    if (&outer != &loop && loops.belongsTo(successor, outer) && loops.belongsTo(loop.header(), outer))
+                        return true;
+                }
             }
         }
         return false;
@@ -1285,15 +1333,19 @@ static bool copyLoopWhoseBoundIsTheOnlyNumber(FunctionPassContext& context, IRBu
         bool holdsLoop = false;
         for (unsigned index = 0; index < loop.size() && !holdsLoop; ++index)
             holdsLoop = loops.innerMostLoopOf(loop.at(index)) != &loop;
-        if (!holdsLoop)
+        if (holdsLoop != (nesting == LoopNesting::Outer))
             continue;
         std::optional<Edge> entry = loops.findSingleEntry(loop);
         if (!entry || entry->isHandlerEdge())
             continue;
         ValueID bound;
+        std::optional<uint32_t> testedStartIndex;
         const LoopInduction& induction = analyses.inductionVariables().of(loop);
         for (const InductionVariable& variable : induction.variables) {
-            if (!isNumberThatMayBeCounter(variable.parameter) || variable.step.kind != InductionStepKind::Constant || !variable.step.constant || !variable.start || !typeOf(variable.start).isInt32())
+            if (!isNumberThatMayBeCounter(variable.parameter) || variable.step.kind != InductionStepKind::Constant || !variable.step.constant || !variable.start)
+                continue;
+            bool isStartInt32 = typeOf(variable.start).isInt32();
+            if (!isStartInt32 && (holdsLoop || !typeOf(variable.start).isNumberWithoutFraction()))
                 continue;
             int64_t step = variable.step.constant;
             if ((step < 0 ? 0 - static_cast<uint64_t>(step) : static_cast<uint64_t>(step)) > context.limit(LimitID::MaxCounterStep))
@@ -1309,8 +1361,12 @@ static bool copyLoopWhoseBoundIsTheOnlyNumber(FunctionPassContext& context, IRBu
                 ValueID compared = comparison.operand(isLeftBound ? 0 : 1);
                 if (!typeOf(compared).isNumber() || typeOf(compared).isInteger() || loops.belongsTo(analyses.useLists().blockOf(compared), loop))
                     continue;
-                if (dominatesEveryStepOrItsWayOn(context, induction, test.stayingEdge, variable, comparison.operand(isLeftBound ? 1 : 0)) && isCheaperAsInteger(loop, variable))
+                bool isWorthCopy = holdsLoop ? isCheaperAsInteger(loop, variable) : isBoundByCounterLatency(loop, variable, test.comparison) && !isReenteredAfterSideExit(loop, test.stayingEdge.from);
+                if (isWorthCopy && dominatesEveryStepOrItsWayOn(context, induction, test.stayingEdge, variable, comparison.operand(isLeftBound ? 1 : 0))) {
                     bound = compared;
+                    if (!isStartInt32)
+                        testedStartIndex = variable.parameterIndex;
+                }
                 break;
             }
             if (bound)
@@ -1339,6 +1395,13 @@ static bool copyLoopWhoseBoundIsTheOnlyNumber(FunctionPassContext& context, IRBu
         builder.moveToEndOf(branch.notTaken);
         builder.emitJump(header, Arguments(arguments));
         builder.moveToEndOf(branch.taken);
+        if (testedStartIndex) {
+            IRBuilder::ProvenBranch startBranch = builder.emitBranchWithProof(builder.appendTypeTest(arguments[*testedStartIndex], TypeTable::int32), OperandIndex::TypeTest::value, frequency, BlockFrequency::Rare);
+            builder.moveToEndOf(startBranch.notTaken);
+            builder.emitJump(header, Arguments(arguments));
+            arguments[*testedStartIndex] = startBranch.provenOnTaken;
+            builder.moveToEndOf(startBranch.taken);
+        }
         builder.emitJump(cloner.cloneOf(header), WTF::move(arguments));
         analyses.didChangeControlFlow();
         cloner.repairSSA(analyses);
@@ -1395,10 +1458,21 @@ static bool comparesNoVariableInCycle(FunctionPassContext& context)
     });
 }
 
+static bool specializeLoopsForInt32Bounds(FunctionPassContext& context, IRBuilder& builder, LoopNesting nesting)
+{
+    // All the copies together may not outgrow the function, or what a few small loops come to.
+    AOT_THRESHOLD(size_t, valuesThatCopiesOfLoopsMayAlwaysAdd, 4096);
+    const size_t mostValuesWithCopies = context.function.values.size() + std::max(context.function.values.size(), valuesThatCopiesOfLoopsMayAlwaysAdd);
+    bool hasCopy = false;
+    while (context.function.values.size() <= mostValuesWithCopies && copyLoopWhoseBoundIsTheOnlyNumber(context, builder, nesting))
+        hasCopy = true;
+    return hasCopy;
+}
+
 PassOutcome convertCountersToIntegers(FunctionPassContext& context)
 {
-    if (context.isBehindRounds && std::exchange(context.hasConvertedCountersBehindRounds, true) && !std::exchange(context.hasBoundsTestedBehindRounds, false))
-        return PassOutcome::Unchanged;
+    bool isFinalRun = context.isBehindRounds && std::exchange(context.hasConvertedCountersBehindRounds, true);
+    bool hasNewlyTestedBounds = !isFinalRun || std::exchange(context.hasBoundsTestedBehindRounds, false);
     if (!context.analyses.cfg().hasCycle() || (!hasNumberParameter(context.program, context.function) && !hasIntegerBeyondInt32(context.program, context.function)))
         return PassOutcome::Unchanged;
 
@@ -1406,6 +1480,10 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
     uint64_t numberOfConvertedCounters = 0;
     BitVector parametersOverStepLimit;
     IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
+    if (isFinalRun && specializeLoopsForInt32Bounds(context, builder, LoopNesting::Innermost))
+        outcome = PassOutcome::Changed;
+    else if (!hasNewlyTestedBounds)
+        return outcome;
     if (testsSumInCycle(context) && testCountersInsteadOfSums(context, builder))
         outcome = PassOutcome::Changed;
     if (compareCountersTestedForTruthWithZero(context, builder))
@@ -1498,11 +1576,7 @@ PassOutcome testNumbersThatBoundLoopsAroundLoops(FunctionPassContext& context)
     bool hasCopy = false;
     {
         IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
-        // All the copies together may not outgrow the function, or what a few small loops come to.
-        AOT_THRESHOLD(size_t, valuesThatCopiesOfLoopsMayAlwaysAdd, 4096);
-        const size_t mostValuesWithCopies = context.function.values.size() + std::max(context.function.values.size(), valuesThatCopiesOfLoopsMayAlwaysAdd);
-        while (context.function.values.size() <= mostValuesWithCopies && copyLoopWhoseBoundIsTheOnlyNumber(context, builder))
-            hasCopy = true;
+        hasCopy = specializeLoopsForInt32Bounds(context, builder, LoopNesting::Outer);
     }
     if (!hasCopy)
         return PassOutcome::Unchanged;
@@ -3013,9 +3087,168 @@ static PassOutcome takeFirstTurnsThatInitializeOutOfLoops(FunctionPassContext& c
     return PassOutcome::Changed;
 }
 
+namespace {
+
+struct LoopThatCallsOneValue {
+    ShortLoop loop;
+    ValueID callee;
+    Vector<FunctionID, 4> functions;
+    bool everyListedFunctionHasCopy { true };
+};
+
+} // anonymous namespace
+
+// The functions that the type of the value lists, where the loop calls a value that it was handed. Those that a test in front of the loop has ruled out are not asked for again.
+static std::optional<LoopThatCallsOneValue> findLoopThatCallsOneValue(FunctionPassContext& context, const NaturalLoop& loop)
+{
+    const Program& program = context.program;
+    const Function& function = context.function;
+    NaturalLoops& loops = context.analyses.naturalLoops();
+    if (function.at(loop.header()).frequency.predicted() != BlockFrequency::Normal || function.runsOnlyBehindFailedTest())
+        return std::nullopt;
+    // A cold function of a very large program gets its type tests behind the rounds, and nothing is put in line there. The copies would call as the loop did, and the one bound that they all read
+    // would get no version for an int32: each turn of each copy would compare a counter of any size with a number.
+    if (context.inputs.heat.isOfVeryLargeProgram() && isCold(context.inputs.heat.of(program, context.id)).predicted())
+        return std::nullopt;
+    for (unsigned index = 0; index < loop.size(); ++index) {
+        const Block& block = function.at(loop.at(index));
+        if (block.frequency.predicted() != BlockFrequency::Normal)
+            continue;
+        for (ValueID id : block.values) {
+            const Value& call = function.at(id);
+            if (call.opcode != Opcode::Call || call.isTailCall)
+                continue;
+            CalleeCandidates candidates = calleeCandidates(program, function, call.calleeOperand());
+            if (!candidates.isProven() || candidates.only() || loops.belongsTo(context.analyses.useLists().blockOf(candidates.value), loop))
+                continue;
+            if (!isExpectedToRun(context, loop).predicted())
+                return std::nullopt;
+            // A copy pays where the function stands in line in it: what InlineCalls takes at a call as hot as this one.
+            uint64_t mostBytesInLine = context.build.limit(isHot(heatClassOf(context, loop.at(index))).predicted() ? LimitID::InlineBudgetHotBytes : LimitID::InlineBudgetWarmBytes);
+            LoopThatCallsOneValue found { { }, candidates.value, { }, true };
+            unsigned numberOfListedFunctions = 0;
+            uint64_t bytesInLine = 0;
+            for (FunctionID listed : candidates.listed().predicted()) {
+                // A function without a body is one that nothing enters.
+                if (!program.at(listed).hasBody())
+                    continue;
+                if (context.analyses.findEarlierTest(makeTypeTest(candidates.value, context.types.intern(Type::forFunction(listed))), loop.header()) == EarlierTest::Failed)
+                    continue;
+                ++numberOfListedFunctions;
+                const InliningSummary& summary = context.inputs.inlining.of(program, listed);
+                if (mayBeCalledDirectlyWhereCalleeIsKept(program, listed) && summary.canInlineWholeBody() && summary.codeBytes <= mostBytesInLine) {
+                    found.functions.append(listed);
+                    bytesInLine += summary.codeBytes;
+                } else
+                    found.everyListedFunctionHasCopy = false;
+            }
+            // One function gets its test from ResolveCalls or PlaceTypeTests, where the call stands.
+            if (found.functions.isEmpty() || numberOfListedFunctions < 2 || found.functions.size() > context.build.limit(LimitID::MaxTurnsOfUnrolledLoop) || bytesInLine > context.build.limit(LimitID::MaxBytesOfUnrolledLoop))
+                continue;
+            std::optional<ShortLoop> plan = planTurnsInFrontOf(context, loop, found.functions.size());
+            if (!plan || plan->entries.size() != 1)
+                return std::nullopt;
+            found.loop = WTF::move(*plan);
+            return found;
+        }
+    }
+    return std::nullopt;
+}
+
+// The value, and the casts of it in front of the loop that say no more of it: the loop may use any of them.
+static Vector<ValueID, 2> findLinksInFrontOf(FunctionPassContext& context, const ShortLoop& loop, ValueID value)
+{
+    const Function& function = context.function;
+    const Type& type = context.program.typeOf(function, value);
+    Vector<ValueID, 2> links { value };
+    for (size_t index = 0; index < links.size(); ++index) {
+        ValueID link = links[index];
+        for (const Use& use : context.analyses.useLists().usesOf(link)) {
+            if (use.kind != Use::Kind::Operand || use.operandIndex || loop.region.contains(use.block) || !type.isSubsetOf(context.program.typeOf(function, use.user), context.program))
+                continue;
+            for (ValueID below : CastChain(function, use.user)) {
+                if (below == link)
+                    links.append(use.user);
+            }
+        }
+    }
+    return links;
+}
+
+// `for (const item of items) total += priceOf(item)` with `priceOf` handed in: every turn calls the same function, and the type of the value lists the few that it may be.
+// A call of a value boxes what it passes and what it returns, lays a rest list into the frame, and the loop tests what comes back, in every turn. So the loop asks once, in front of its first turn,
+// which function it was handed, and stands in the function once more for each of them. In its copy the function is known: it is called directly or stands in line.
+// Whatever else the value is goes through the loop as it was.
+static PassOutcome copyLoopsForFunctionsTheyCall(FunctionPassContext& context)
+{
+    if (!context.analyses.cfg().hasCycle() || !context.analyses.opcodesOfValues().contains(Opcode::Call))
+        return PassOutcome::Unchanged;
+
+    Function& function = context.function;
+    PassOutcome outcome = PassOutcome::Unchanged;
+    // A copy renumbers nothing, yet it changes the loops: each search asks the function as it stands.
+    for (;;) {
+        std::optional<LoopThatCallsOneValue> found;
+        NaturalLoops& loops = context.analyses.naturalLoops();
+        for (unsigned index = 0; index < loops.numLoops() && !found; ++index)
+            found = findLoopThatCallsOneValue(context, loops.loop(index));
+        if (!found)
+            return outcome;
+
+        Vector<ValueID, 2> links = findLinksInFrontOf(context, found->loop, found->callee);
+        IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+        Edge entry = found->loop.entries[0];
+        builder.setOrigin(function.at(entry.from).terminator.origin());
+        BlockID front = builder.splitEdge(entry);
+        Expected<BlockFrequency> frequency = function.at(front).frequency;
+        Arguments arguments(function.at(front).terminator.next().arguments);
+        function.edit(front, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
+        builder.moveToEndOf(front);
+        Vector<std::unique_ptr<RegionCloner>, 8> copies;
+        ValueID whatIsLeft = found->callee;
+        for (FunctionID callee : found->functions) {
+            ValueID test = builder.appendTypeTest(whatIsLeft, Type::forFunction(callee));
+            // Behind the last test the value is none of the functions that the program was seen to put there.
+            bool leavesNoListedFunction = callee == found->functions.last() && found->everyListedFunctionHasCopy;
+            IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, OperandIndex::TypeTest::value, frequency, leavesNoListedFunction ? rarerOf(frequency, BlockFrequency::Unlikely) : frequency);
+            copies.append(makeUniqueWithoutFastMallocCheck<RegionCloner>(builder, function));
+            for (ValueID link : links)
+                copies.last()->mapValue(link, branch.provenOnTaken);
+            copies.last()->cloneBlocks(found->loop.region.span(), [](ValueID, Value&) { });
+            builder.moveToEndOf(branch.taken);
+            builder.emitJump(copies.last()->cloneOf(found->loop.header), Arguments(arguments));
+            builder.moveToEndOf(branch.notTaken);
+            whatIsLeft = branch.provenOnNotTaken;
+        }
+        builder.emitJump(found->loop.header, WTF::move(arguments));
+        context.analyses.didChangeControlFlow();
+        RegionCloner::repairSSA(context.analyses, copies.span());
+        context.analyses.didChangeControlFlow();
+        // The loop as it was is entered behind the last test alone: in it the value is what the tests have left.
+        Vector<Use, 4> usesInLoop;
+        for (ValueID link : links) {
+            for (const Use& use : context.analyses.useLists().usesOf(link)) {
+                if (found->loop.region.contains(use.block))
+                    usesInLoop.append(use);
+            }
+        }
+        for (const Use& use : usesInLoop)
+            replaceUse(function, use, whatIsLeft);
+        context.analyses.didChangeValues();
+        if (found->everyListedFunctionHasCopy) {
+            for (BlockID block : found->loop.region)
+                function.edit(block, BlockEdit::Rest).frequency = rarerOf(function.at(block).frequency, BlockFrequency::Unlikely);
+            context.analyses.didChangeControlFlow();
+        }
+        outcome = PassOutcome::Changed;
+    }
+}
+
 PassOutcome unrollShortLoops(FunctionPassContext& context)
 {
     PassOutcome outcome = takeFirstTurnsThatInitializeOutOfLoops(context);
+    if (copyLoopsForFunctionsTheyCall(context) == PassOutcome::Changed)
+        outcome = PassOutcome::Changed;
     const CFG& cfg = context.analyses.cfg();
     bool mayHaveShortLoop = std::ranges::any_of(cfg.reversePostOrder(), [&](BlockID block) {
         return mayBeHeaderOfShortLoop(context.program, context.function, context.function.at(block)) && std::ranges::any_of(cfg.incomingEdges(block), [&](Edge edge) {

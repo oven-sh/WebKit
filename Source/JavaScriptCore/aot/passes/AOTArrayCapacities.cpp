@@ -25,6 +25,7 @@
 #include "AOTHeat.h"
 #include "AOTIRBuilder.h"
 #include "AOTInlineBuiltinForms.h"
+#include "AOTIntegerRelations.h"
 #include "AOTKnownValue.h"
 #include "AOTPlaceTypeTestsPlan.h"
 #include "AOTRegionCloner.h"
@@ -278,6 +279,9 @@ struct CapacityPlanner {
         Vector<AppendSite, 4> sites = object ? collectSites(*object) : Vector<AppendSite, 4> { };
         if (sites.isEmpty() || appendsAlsoToArraysFromElsewhere(*object))
             return std::nullopt;
+        // `[...set]` and nothing more: the list is made with the members in it, as long as they are.
+        if (sites.size() == 1 && function.at(sites.first().value).opcode == Opcode::AppendMembers && function.at(id).elementsOperands().empty())
+            return std::nullopt;
 
         const UseLists& useLists = analyses.useLists();
         const NaturalLoops& loops = analyses.naturalLoops();
@@ -321,7 +325,9 @@ struct CapacityPlanner {
                     return std::nullopt;
                 if (site.kind == AppendKind::List) {
                     const Value& append = function.at(site.value);
-                    RELEASE_ASSERT(append.opcode == Opcode::AppendElements);
+                    RELEASE_ASSERT(append.opcode == Opcode::AppendElements || append.opcode == Opcode::AppendMembers);
+                    if (append.opcode == Opcode::AppendMembers && !makeSizeRead(context, append.sourceOperand(), false))
+                        return std::nullopt;
                     if (!analyses.dominates(append.sourceOperand(), point) || !holdsAt(append.guardOperand(), point) || !result.tryAdd({ CapacityTermKind::Integer, site.value }))
                         return std::nullopt;
                 }
@@ -376,7 +382,7 @@ struct CapacityPlanner {
             return AppendKind::Elements;
         if (value.opcode == Opcode::CallBuiltin && inlineImplementationOf(context.program, value) == InlineBuiltin::ArrayPush)
             return AppendKind::Elements;
-        if (value.opcode == Opcode::AppendElements)
+        if (value.opcode == Opcode::AppendElements || value.opcode == Opcode::AppendMembers)
             return AppendKind::List;
         if (value.opcode == Opcode::ElemSet || value.opcode == Opcode::PutArrayElement)
             return AppendKind::StoreAtIndex;
@@ -789,6 +795,8 @@ struct CapacityPlanner {
         const Value& append = function.at(id);
         if (appendKindOf(append) != AppendKind::Elements || (append.opcode == Opcode::CallBuiltin ? builtinCallOf(program, append).arguments.size() != 1 : append.opcode != Opcode::AppendElement))
             return std::nullopt;
+        if (append.opcode == Opcode::AppendElement && !append.lengthOperands().empty())
+            return std::nullopt;
         ValueID array = appendedArrayOf(append);
         if (analyses.blockFrequencies().classOf(point.block).predicted() == BlockFrequency::Rare || !program.typeOf(function, array).isSubsetOf(Type::builtinClass(BuiltinClasses::Array), program))
             return std::nullopt;
@@ -934,6 +942,8 @@ static unsigned applyCapacityPlans(FunctionPassContext& context, Vector<Capacity
             const Value& value = function.at(term);
             if (value.opcode == Opcode::AppendElements)
                 term = insert(IRBuilder::make(Opcode::GetArrayLength, { value.sourceOperand(), value.guardOperand() }));
+            else if (value.opcode == Opcode::AppendMembers)
+                term = insert(makeSizeRead(context, value.sourceOperand(), false).value());
             else if (std::optional<Value> sizeRead = makeSizeReadOfWalkedCollection(context, value))
                 term = insert(WTF::move(*sizeRead));
             else if (plan.repeatedLengthReads.contains(term)) {
@@ -2254,8 +2264,8 @@ static PassOutcome copyListsInOnePiece(FunctionPassContext& context, bool& reads
     return outcome;
 }
 
-// `[...set]`: the empty literal comes to stand right in front of the append, behind what makes the set, so that the list is made with the members in it.
-// Nobody can tell when an empty list that nobody has was made.
+// `[...set]`: the literal comes to stand right in front of the append, behind what makes the set, so that an empty one is made with the members in it and `[x, ...set]` with room for them.
+// Nobody can tell when a list that nobody has was made.
 static PassOutcome bringLiteralsToAppendsOfMembers(FunctionPassContext& context)
 {
     Function& function = context.function;
@@ -2278,7 +2288,7 @@ static PassOutcome bringLiteralsToAppendsOfMembers(FunctionPassContext& context)
             ValueID cast = function.at(list).opcode == Opcode::AssumeType ? list : ValueID();
             ValueID id = cast ? function.at(cast).valueOperand() : list;
             const Value& literal = function.at(id);
-            if (literal.opcode != Opcode::NewArray || literal.capacityOperand() || !literal.elementsOperands().empty() || !literal.holes().empty() || literal.storage() != AllocationStorage::Heap)
+            if (literal.opcode != Opcode::NewArray || literal.capacityOperand() || !literal.holes().empty() || literal.storage() != AllocationStorage::Heap)
                 continue;
             ValueLocation appendAt = useLists.locationOf(append);
             ValueLocation literalAt = useLists.locationOf(id);
@@ -2350,6 +2360,486 @@ static void makeListsThatMayReadUndefinedForAnyValue(FunctionPassContext& contex
     }
 }
 
+namespace {
+
+struct ListFilledByLoop {
+    ValueID literal;
+    const NaturalLoop* loop { nullptr };
+    ValueID counter;
+    int64_t difference { 0 };
+    ValueID bound;
+    bool isInLoopThatRunsOtherCode { false };
+    bool isInLoopThatMayThrow { false };
+    Vector<ValueID, 2> appends;
+};
+
+} // anonymous namespace
+
+static bool appendsOneElementTo(const Program& program, FunctionAnalyses& analyses, ValueID id, const Value& user, uint32_t operandIndex)
+{
+    if (user.opcode == Opcode::AppendElement)
+        return operandIndex == OperandIndex::AppendElement::array && user.lengthOperands().empty();
+    if (user.opcode != Opcode::CallBuiltin || user.needsPristineReceiver() || inlineImplementationOf(program, user) != InlineBuiltin::ArrayPush)
+        return false;
+    if (!builtinOperandAt(user, operandIndex).isReceiver() || builtinCallOf(program, user).arguments.size() != 1)
+        return false;
+    return !analyses.effectsOf(id).onAnyEdge().mayRunOtherCode();
+}
+
+static const InductionVariable* findCounterOfTurns(FunctionPassContext& context, const NaturalLoop& loop)
+{
+    const LoopInduction& induction = context.analyses.inductionVariables().of(loop);
+    auto countsTurns = [&](const InductionVariable& variable) {
+        if (variable.step.kind != InductionStepKind::Constant || variable.step.constant != 1 || !variable.start)
+            return false;
+        return context.program.typeOf(context.function, variable.parameter).isInteger() && integerConstantThroughCasts(context.program, context.function, variable.start);
+    };
+    const InductionVariable* counter = induction.counter();
+    return counter && countsTurns(*counter) ? counter : nullptr;
+}
+
+static bool holdsAtLeast(FunctionPassContext& context, ValueID capacity, ValueID bound, unsigned remainingDepth = 8)
+{
+    FunctionAnalyses& analyses = context.analyses;
+    if (analyses.identityOf(capacity) == analyses.identityOf(bound))
+        return true;
+    if (std::optional<int64_t> written = integerConstantThroughCasts(context.program, context.function, capacity))
+        return integerConstantThroughCasts(context.program, context.function, bound) <= written && integerConstantThroughCasts(context.program, context.function, bound);
+    const Value& sum = context.function.at(capacity);
+    if (sum.opcode != Opcode::Add || !remainingDepth)
+        return false;
+    auto isNeverNegative = [&](ValueID id) {
+        const Type& type = context.program.typeOf(context.function, id);
+        return type.isInteger() && type.integers.minimum >= 0;
+    };
+    return (isNeverNegative(sum.operand(0)) && holdsAtLeast(context, sum.operand(1), bound, remainingDepth - 1)) || (isNeverNegative(sum.operand(1)) && holdsAtLeast(context, sum.operand(0), bound, remainingDepth - 1));
+}
+
+static std::optional<ListFilledByLoop> findLoopThatFills(FunctionPassContext& context, BlockID block, ValueID literal)
+{
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    const UseLists& useLists = analyses.useLists();
+    const NaturalLoops& loops = analyses.naturalLoops();
+
+    Vector<ValueID, 4> names { literal };
+    Vector<Use, 4> appends;
+    Vector<Use, 8> otherUses;
+    for (size_t next = 0; next < names.size(); ++next) {
+        for (const Use& use : useLists.usesOf(names[next])) {
+            if (use.kind == Use::Kind::Operand) {
+                const Value& user = function.at(use.user);
+                if (isCast(user.opcode) && !use.operandIndex) {
+                    names.append(use.user);
+                    continue;
+                }
+                if (appendsOneElementTo(context.program, analyses, use.user, user, use.operandIndex)) {
+                    appends.append(use);
+                    continue;
+                }
+            }
+            otherUses.append(use);
+        }
+    }
+
+    ListFilledByLoop result { literal };
+    for (const Use& use : appends) {
+        if (const NaturalLoop* loop = loops.innerMostLoopOf(use.block); loop && !loops.belongsTo(block, *loop)) {
+            result.loop = loop;
+            break;
+        }
+    }
+    if (!result.loop)
+        return std::nullopt;
+    const NaturalLoop& loop = *result.loop;
+    for (const NaturalLoop* outer = loops.innerMostOuterLoop(loop); outer; outer = loops.innerMostOuterLoop(*outer)) {
+        if (!loops.belongsTo(block, *outer))
+            return std::nullopt;
+    }
+
+    auto standsBehindLoop = [&](BlockID user) {
+        return !loops.belongsTo(user, loop) && analyses.dominators().dominates(loop.header(), user);
+    };
+    for (const Use& use : appends) {
+        if (loops.belongsTo(use.block, loop))
+            result.appends.append(use.user);
+        else if (!standsBehindLoop(use.block))
+            return std::nullopt;
+    }
+    constexpr OperandUses looks { OperandUse::Inspects, OperandUse::ReadsContents };
+    for (const Use& use : otherUses) {
+        if (standsBehindLoop(use.block))
+            continue;
+        if (use.kind != Use::Kind::Operand)
+            return std::nullopt;
+        const Value& user = function.at(use.user);
+        if (looks.containsAll(user.operandUses(use.operandIndex)))
+            continue;
+        std::optional<MeasuredStorage> measured = storageMeasuredBy(context.program, user);
+        if (!measured || measured->owner != user.operand(use.operandIndex) || analyses.effectsOf(use.user).onAnyEdge().mayRunOtherCode())
+            return std::nullopt;
+    }
+    const EscapeAnalysis& escape = analyses.escape();
+    std::optional<ObjectID> object = escape.objectDefinedBy(literal);
+    if (!object)
+        return std::nullopt;
+    for (ValueID alias : escape.aliasesOf(*object)) {
+        if (analyses.sameObjectThroughCasts(alias) != literal && !standsBehindLoop(useLists.blockOf(alias)))
+            return std::nullopt;
+    }
+
+    const InductionVariable* counter = findCounterOfTurns(context, loop);
+    if (!counter)
+        return std::nullopt;
+    result.counter = counter->parameter;
+    result.difference = static_cast<int64_t>(function.at(literal).elementsOperands().size()) - *integerConstantThroughCasts(context.program, function, counter->start);
+    const InductionTest* test = counter->controllingTest();
+    if (!test || test->relation != Opcode::Less || test->tested != TestedValue::BeforeStep || test->boundKind != LoopBoundKind::Invariant)
+        return std::nullopt;
+    auto isWord = [&](ValueID id, int64_t added) {
+        const Type& type = context.program.typeOf(function, id);
+        return type.isInteger() && Range { type.integers.minimum + added, type.integers.maximum + added }.isSubsetOf(Range::int32());
+    };
+    if (result.difference || !isWord(result.counter, 0) || !isWord(test->bound, 0))
+        return std::nullopt;
+    if (ValueID capacity = function.at(literal).capacityOperand(); !capacity || !holdsAtLeast(context, capacity, test->bound))
+        return std::nullopt;
+    result.bound = test->bound;
+    return result;
+}
+
+static void keepListsThatGrowByOneInEveryTurn(FunctionPassContext& context, const NaturalLoop& loop, std::span<ListFilledByLoop> lists, Vector<uint64_t>& appendedIn, Vector<uint64_t>& appendedAtHead)
+{
+    RELEASE_ASSERT(lists.size() <= 64);
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    const CFG& cfg = analyses.cfg();
+    const NaturalLoops& loops = analyses.naturalLoops();
+
+    Vector<BlockID, 16> blocks;
+    for (unsigned i = 0; i < loop.size(); ++i) {
+        blocks.append(loop.at(i));
+        appendedIn[loop.at(i).index()] = 0;
+    }
+    AOT::sort(blocks, { }, [&](BlockID block) { return cfg.reversePostOrderIndex(block); });
+
+    uint64_t refuted = 0;
+    for (size_t i = 0; i < lists.size(); ++i) {
+        uint64_t bit = uint64_t { 1 } << i;
+        for (ValueID append : lists[i].appends) {
+            uint64_t& inBlock = appendedIn[analyses.useLists().blockOf(append).index()];
+            refuted |= inBlock & bit;
+            inBlock |= bit;
+        }
+    }
+
+    BitVector isReached;
+    isReached.set(loop.header().index());
+    appendedAtHead[loop.header().index()] = 0;
+    for (BlockID block : blocks) {
+        if (!isReached.get(block.index())) {
+            refuted = ~uint64_t { 0 };
+            break;
+        }
+        uint64_t before = appendedAtHead[block.index()];
+        uint64_t here = appendedIn[block.index()];
+        refuted |= before & here;
+        forEachOutgoingEdge(function, block, [&](Edge edge, const Target& target) {
+            if (!loops.belongsTo(target.block, loop))
+                return;
+            uint64_t passedOn = before | here;
+            if (edge.isHandlerEdge()) {
+                refuted |= here;
+                passedOn = before;
+            }
+            if (target.block == loop.header())
+                refuted |= ~passedOn;
+            else if (isReached.set(target.block.index()))
+                refuted |= appendedAtHead[target.block.index()] ^ passedOn;
+            else
+                appendedAtHead[target.block.index()] = passedOn;
+        });
+    }
+    for (size_t i = 0; i < lists.size(); ++i) {
+        if (refuted >> i & 1)
+            lists[i].appends.clear();
+    }
+}
+
+static unsigned nameLengthsThatCountersCount(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    if (!analyses.cfg().hasCycle() || !analyses.opcodesOfValues().contains(Opcode::NewArray) || analyses.blockCycles().hasCycleWithSeveralEntries() || analyses.escape().gaveUp())
+        return 0;
+
+    Vector<ListFilledByLoop, 4> lists;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            const Value& literal = function.at(id);
+            if (literal.opcode != Opcode::NewArray || !literal.holes().empty())
+                continue;
+            if (std::optional<ListFilledByLoop> list = findLoopThatFills(context, block, id))
+                lists.append(WTF::move(*list));
+        }
+    }
+    if (lists.isEmpty())
+        return 0;
+
+    AOT::sort(lists, { }, [](const ListFilledByLoop& list) { return list.loop->index(); });
+    auto runsOtherCode = [&](const NaturalLoop& loop) {
+        for (unsigned i = 0; i < loop.size(); ++i) {
+            if (analyses.effectsOfTerminator(loop.at(i)).onAnyEdge().mayRunOtherCode())
+                return true;
+            for (ValueID id : function.at(loop.at(i)).values) {
+                if (analyses.effectsOf(id).onAnyEdge().mayRunOtherCode())
+                    return true;
+            }
+        }
+        return false;
+    };
+    Vector<uint64_t> appendedIn(FillWith { }, function.blocks.size(), uint64_t { 0 });
+    Vector<uint64_t> appendedAtHead(FillWith { }, function.blocks.size(), uint64_t { 0 });
+    for (size_t first = 0, end; first < lists.size(); first = end) {
+        for (end = first + 1; end < lists.size() && end - first < 64 && lists[end].loop == lists[first].loop; ++end) { }
+        bool isFirstOfLoop = !first || lists[first - 1].loop != lists[first].loop;
+        if (isFirstOfLoop ? runsOtherCode(*lists[first].loop) : lists[first - 1].appends.isEmpty() && lists[first - 1].isInLoopThatRunsOtherCode) {
+            for (ListFilledByLoop& list : lists.mutableSpan().subspan(first, end - first)) {
+                list.appends.clear();
+                list.isInLoopThatRunsOtherCode = true;
+            }
+            continue;
+        }
+        keepListsThatGrowByOneInEveryTurn(context, *lists[first].loop, lists.mutableSpan().subspan(first, end - first), appendedIn, appendedAtHead);
+    }
+    // A loop that a throw may end leaves room that was made for all its turns unused.
+    auto mayThrowBesideAppends = [&](const NaturalLoop& loop) {
+        BitVector isAppend;
+        for (const ListFilledByLoop& list : lists) {
+            for (ValueID id : list.appends)
+                isAppend.set(id.index());
+        }
+        for (unsigned i = 0; i < loop.size(); ++i) {
+            if (analyses.effectsOfTerminator(loop.at(i)).onAnyEdge().mayThrowByRule())
+                return true;
+            for (ValueID id : function.at(loop.at(i)).values) {
+                if (!isAppend.get(id.index()) && analyses.effectsOf(id).onAnyEdge().mayThrowByRule())
+                    return true;
+            }
+        }
+        return false;
+    };
+    for (size_t index = 0; index < lists.size(); ++index) {
+        if (lists[index].appends.isEmpty())
+            continue;
+        bool isFirstOfLoop = !index || lists[index - 1].loop != lists[index].loop || lists[index - 1].appends.isEmpty();
+        lists[index].isInLoopThatMayThrow = isFirstOfLoop ? mayThrowBesideAppends(*lists[index].loop) : lists[index - 1].isInLoopThatMayThrow;
+    }
+
+    const UseLists& useLists = analyses.useLists();
+    IRBuilder builder(analyses.context(), function, context.types, &analyses);
+    ValueSubstitution substitution(function);
+    BitVector replaced(function.values.size());
+    BitVector changedBlocks(function.blocks.size());
+    unsigned numberOfAppendsTold = 0;
+    for (const ListFilledByLoop& list : lists) {
+        bool boundStandsInFront = std::ranges::all_of(list.appends, [&](ValueID id) {
+            return analyses.dominates(list.bound, useLists.pointOf(id));
+        });
+        if (!boundStandsInFront)
+            continue;
+        for (ValueID id : list.appends) {
+            ProgramPoint point = useLists.pointOf(id);
+            builder.setOrigin(function.at(id).origin());
+            ValueID length = list.counter;
+            if (list.difference)
+                length = builder.insertBefore(point, IRBuilder::make(Opcode::Add, { length, builder.insertBefore(point, makeInteger(list.difference)) }));
+            ++numberOfAppendsTold;
+            Vector<ValueID, 3> named { length, list.counter, list.bound };
+            if (!list.isInLoopThatMayThrow)
+                function.edit(list.literal, ValueEdit::Definition).setIsFilledToCapacity(true);
+            if (function.at(id).opcode == Opcode::AppendElement) {
+                function.edit(id, ValueEdit::Definition).setLengthOperands(named.span());
+                continue;
+            }
+            ValueID array = function.at(id).receiverOperand();
+            ValueID element = builtinCallOf(context.program, function.at(id)).arguments[0];
+            Value append = IRBuilder::make(Opcode::AppendElement, { array, element });
+            append.setLengthOperands(named.span());
+            builder.insertBefore(point, WTF::move(append));
+            if (useLists.useCount(id))
+                substitution.replace(id, builder.insertBefore(point, IRBuilder::make(Opcode::Add, { length, builder.insertBefore(point, makeInteger(1)) })));
+            replaced.quickSet(id.index());
+            changedBlocks.quickSet(point.block.index());
+        }
+    }
+    if (!numberOfAppendsTold)
+        return 0;
+
+    builder.applyInsertions();
+    for (size_t blockIndex : changedBlocks) {
+        const BlockValues& values = function.blocks[blockIndex].values;
+        BitVector indexes(values.size());
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            if (values[index].index() < replaced.size() && replaced.quickGet(values[index].index()))
+                indexes.quickSet(index);
+        }
+        builder.eraseValues(BlockID(blockIndex), indexes);
+    }
+    substitution.apply(function, &analyses);
+    analyses.didChangeValues();
+    return numberOfAppendsTold;
+}
+
+static constexpr OpcodeSet allocationsWithLength { Opcode::NewArrayLike, Opcode::NewContiguousArray, Opcode::NewDoubleArray };
+static constexpr OpcodeSet testsOfPositions = readsNamingArrayStorage | OpcodeSet { Opcode::IsInBounds };
+static constexpr OperandUses usesThatHandArrayToNobody { OperandUse::Inspects, OperandUse::ReadsContents, OperandUse::WritesContents };
+
+static bool liesInsideLength(FunctionAnalyses& analyses, IntegerRelations& relations, ValueID position, ValueID length, BlockID at, unsigned depth = 0)
+{
+    using Answer = IntegerRelations::Answer;
+    if (relations.isAtLeast(position, 0, at) == Answer::Proven && relations.isAtMost(position, length, -1, at) == Answer::Proven)
+        return true;
+    const Function& function = analyses.function();
+    if (function.at(position).opcode != Opcode::Parameter || depth == 3)
+        return false;
+    BlockID block = analyses.useLists().blockOf(position);
+    uint32_t parameter = static_cast<uint32_t>(function.at(block).parameters.find(position));
+    bool isEmpty = true;
+    for (Edge edge : analyses.cfg().incomingEdges(block)) {
+        ValueID passed = valuePassedOn(function, edge, parameter);
+        if (!passed || !liesInsideLength(analyses, relations, passed, length, edge.from, depth + 1))
+            return false;
+        isEmpty = false;
+    }
+    return !isEmpty;
+}
+
+static bool keepsLengthOfArray(FunctionAnalyses& analyses, std::optional<IntegerRelations>& relations, const ObjectUse& objectUse, ValueID length)
+{
+    const Use& use = objectUse.use;
+    if (use.kind != Use::Kind::Operand)
+        return false;
+    const Function& function = analyses.function();
+    const Value& user = function.at(use.user);
+    if (isCast(user.opcode) || user.opcode == Opcode::ConvertToDoubleStorage)
+        return true;
+    // Nothing above an array has elements, so filling a hole below the length runs no code.
+    if (user.opcode == Opcode::ElemSet && use.operandIndex == OperandIndex::ElemSet::object && user.keyIsIntegral()) {
+        if (!relations)
+            relations.emplace(analyses);
+        return liesInsideLength(analyses, *relations, user.propertyOperand(), length, use.block);
+    }
+    if (!objectUse.uses.containsOnly(usesThatHandArrayToNobody))
+        return false;
+    return !memoryAccessedThrough(analyses.effectContext(), function, user, use.operandIndex, analyses.effectsOf(use.user)).writes.contains(AbstractHeap::ArrayStorage);
+}
+
+static unsigned tellLengthsOfNewArrays(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    if (!analyses.opcodesOfValues().intersects(allocationsWithLength))
+        return 0;
+    const EscapeAnalysis& escape = analyses.escape();
+    if (escape.gaveUp())
+        return 0;
+    const CFG& cfg = analyses.cfg();
+
+    const UseLists& useLists = analyses.useLists();
+
+    struct Told {
+        ValueID asker;
+        ValueID length;
+    };
+    Vector<Told, 8> told;
+    BitVector isTold;
+    std::optional<IntegerRelations> relations;
+    Vector<ValueID, 8> askers;
+    Vector<BlockID, 16> worklist;
+    for (BlockID blockOfCreation : cfg.reversePostOrder()) {
+        for (ValueID creation : function.at(blockOfCreation).values) {
+            if (!allocationsWithLength.contains(function.at(creation).opcode))
+                continue;
+            ValueID length = function.at(creation).lengthOperand();
+            std::optional<ObjectID> object = escape.objectDefinedBy(creation);
+            if (!object || !context.program.typeOf(function, length).isInteger())
+                continue;
+
+            BitVector hasUnknownLengthAtHead;
+            HashMap<BlockID, uint32_t> firstUseThatMayChangeLength;
+            auto spreadFrom = [&](BlockID block) {
+                for (BlockID successor : cfg.successors(block)) {
+                    if (successor != blockOfCreation && !hasUnknownLengthAtHead.set(successor.index()))
+                        worklist.append(successor);
+                }
+            };
+            askers.shrink(0);
+            for (const ObjectUse& objectUse : escape.usesOf(*object)) {
+                const Use& use = objectUse.use;
+                if (use.isEdgeUse())
+                    continue;
+                if (keepsLengthOfArray(analyses, relations, objectUse, length)) {
+                    askers.append(use.user);
+                    continue;
+                }
+                uint32_t index = use.kind == Use::Kind::Operand ? useLists.locationOf(use.user).index : std::numeric_limits<uint32_t>::max();
+                auto entry = firstUseThatMayChangeLength.add(use.block, index);
+                entry.iterator->value = std::min(entry.iterator->value, index);
+                if (entry.isNewEntry)
+                    spreadFrom(use.block);
+            }
+            while (!worklist.isEmpty())
+                spreadFrom(worklist.takeLast());
+            auto hasLengthItWasMadeWithAt = [&](ValueLocation location) {
+                if (hasUnknownLengthAtHead.get(location.block.index()))
+                    return false;
+                auto entry = firstUseThatMayChangeLength.find(location.block);
+                return entry == firstUseThatMayChangeLength.end() || location.index < entry->value;
+            };
+
+            for (ValueID id : askers) {
+                const Value& asker = function.at(id);
+                if (isCast(asker.opcode) || isTold.get(id.index()) || !hasLengthItWasMadeWithAt(useLists.locationOf(id)))
+                    continue;
+                std::optional<MeasuredStorage> measured = storageMeasuredBy(context.program, asker);
+                bool comparesPosition = asker.opcode == Opcode::TryPutByValDirect ? !asker.lengthOperand() : testsOfPositions.contains(asker.opcode) && asker.lengthOperands().empty();
+                if (!measured && !comparesPosition)
+                    continue;
+                if (analyses.sameObjectThroughCasts(measured ? measured->owner : asker.arrayOperand()).valueInFrontOfFacts() != creation)
+                    continue;
+                if (measured) {
+                    const Type& read = context.program.typeOf(function, id);
+                    if (measured->heap != AbstractHeap::ArrayStorage || !read.isInteger() || !context.program.typeOf(function, length).integers.isSubsetOf(read.integers))
+                        continue;
+                } else if ((Value::opcodesWithIsInBounds.contains(asker.opcode) && asker.isInBounds()) || (Value::opcodesWithIsPresent.contains(asker.opcode) && asker.isPresent()))
+                    continue;
+                isTold.set(id.index());
+                told.append({ id, length });
+            }
+        }
+    }
+    if (told.isEmpty())
+        return 0;
+
+    IRBuilder builder(analyses.context(), function, context.types, &analyses);
+    for (auto [id, length] : told) {
+        const Value& asker = function.at(id);
+        if (asker.opcode == Opcode::TryPutByValDirect)
+            function.edit(id).setLengthOperand(length);
+        else if (testsOfPositions.contains(asker.opcode))
+            function.edit(id).setLengthOperands(std::span(&length, 1));
+        else {
+            ValueLocation location = useLists.locationOf(id);
+            keepReadForValidation(builder, { location.block, location.index }, length);
+            becomeUpcast(function, id, length);
+        }
+    }
+    builder.applyInsertions();
+    analyses.didChangeValues();
+    return told.size();
+}
+
 PassOutcome planArrayCapacities(FunctionPassContext& context)
 {
     if (!context.analyses.opcodesOfValues().intersects(arrayCapacityOpcodes))
@@ -2373,17 +2863,23 @@ PassOutcome planArrayCapacities(FunctionPassContext& context)
     Vector<CapacityPlan, 4> plans = CapacityPlanner { context }.collectPlans();
     if (unsigned planned = applyCapacityPlans(context, plans))
         context.build.statistics().count(StatisticID::ArrayCapacitiesPlanned, planned);
+    unsigned appendsTold = nameLengthsThatCountersCount(context);
+    if (appendsTold)
+        converted = PassOutcome::Changed;
     unsigned grown = applyGrowthPlans(context, CapacityPlanner { context }.collectGrowthPlans(Opcode::ReserveArrayCapacity, &CapacityPlanner::planGrowth));
     if (grown)
         context.build.statistics().count(StatisticID::ArrayGrowthsPlanned, grown);
+    unsigned lengthsTold = tellLengthsOfNewArrays(context);
+    if (lengthsTold)
+        converted = PassOutcome::Changed;
     if (converted == PassOutcome::Unchanged && !constructed && plans.isEmpty() && !grown)
         return PassOutcome::Unchanged;
 
     if (constructed)
         context.analyses.invalidate(valueAnalyses - analysesThatReadNoTypes);
     context.keptAnalyses = allAnalyses - FunctionAnalysis::Effects;
-    // The length that stands in place of an append has another type than the call had, and so has what uses it.
-    if (!literalsWithAppends && !readsHaveOtherTypes)
+    // The length that stands in place of an append, or of a read of the length, has another type than the call had, and so has what uses it.
+    if (!literalsWithAppends && !readsHaveOtherTypes && !appendsTold && !lengthsTold)
         context.passesThatCanWait.add(PassID::RetypeValues);
     return PassOutcome::Changed;
 }

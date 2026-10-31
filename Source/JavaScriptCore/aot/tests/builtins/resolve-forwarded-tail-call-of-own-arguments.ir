@@ -9,7 +9,7 @@ function f0 name="oneParameter" flags=[HasThis, HasArgumentCount, HasHiddenRest]
   b0(v0: function, v1: anything, v2: int[0, 4294967295], v3: anything, v4: Array):
     v5 = CreateUnmappedArguments v2, v4, v3
     v6 = Builtin builtin=FunctionPrototypeApply
-    v7 = Call v6, v0, v1, v5
+    v7 = Call v6, v0, v1, v5 calleeKey="apply" calleeName="f.apply"
     ReturnCall v7
 # CHECK: Switch v2 cases=[0, 1] -> case [[none0]](), case [[one0]](), otherwise [[more0]]()
 # CHECK: [[none0]]():
@@ -37,7 +37,7 @@ function f1 name="readsDoNotChangeTheObject" flags=[HasThis, HasArgumentCount, H
     v8 = Integer integer=5
     v9 = ElemGet v6, v8
     v10 = Builtin builtin=FunctionPrototypeApply
-    v11 = Call v10, v0, v1, v6
+    v11 = Call v10, v0, v1, v6 calleeKey="apply" calleeName="f.apply"
     ReturnCall v11
 # CHECK: Switch v2 cases=[0, 1, 2] -> case [[none1]](), case [[one1]](), case [[two1]](), otherwise [[more1]]()
 # CHECK: [[two1]]():
@@ -52,7 +52,7 @@ function f2 name="elementIsStored" flags=[HasThis, HasArgumentCount, HasHiddenRe
     v6 = Integer integer=0
     ElemSet v5, v6, v1
     v8 = Builtin builtin=FunctionPrototypeApply
-    v9 = Call v8, v0, v1, v5
+    v9 = Call v8, v0, v1, v5 calleeKey="apply" calleeName="f.apply"
     ReturnCall v9
 # CHECK-NOT: Switch
 # CHECK: [[list2]]: {{*}} = NewArgumentList v0, v5
@@ -66,7 +66,7 @@ function f3 name="objectIsPassed" flags=[HasThis, HasArgumentCount, HasHiddenRes
     v5 = CreateUnmappedArguments v2, v4, v3
     v6 = Call v0, v1, v5
     v7 = Builtin builtin=FunctionPrototypeApply
-    v8 = Call v7, v0, v1, v5
+    v8 = Call v7, v0, v1, v5 calleeKey="apply" calleeName="f.apply"
     ReturnCall v8
 # CHECK-NOT: Switch
 # CHECK: [[list3]]: {{*}} = NewArgumentList v0, v5
@@ -79,7 +79,7 @@ function f4 name="objectIsAlsoTheReceiver" flags=[HasThis, HasArgumentCount, Has
   b0(v0: function, v1: anything, v2: int[0, 4294967295], v3: anything, v4: Array):
     v5 = CreateUnmappedArguments v2, v4, v3
     v6 = Builtin builtin=FunctionPrototypeApply
-    v7 = Call v6, v0, v5, v5
+    v7 = Call v6, v0, v5, v5 calleeKey="apply" calleeName="f.apply"
     ReturnCall v7
 # CHECK-NOT: Switch
 # CHECK: [[list4]]: {{*}} = NewArgumentList v0, v5
@@ -92,7 +92,7 @@ function f5 name="mappedArguments" flags=[IsSloppy, TakesCallee, HasArgumentCoun
   b0(v0: function, v1: int[0, 4294967295], v2: function, v3: anything, v4: Array):
     v5 = CreateMappedArguments v0, v1, v4, v2, v3
     v6 = Builtin builtin=FunctionPrototypeApply
-    v7 = Call v6, v2, v3, v5
+    v7 = Call v6, v2, v3, v5 calleeKey="apply" calleeName="f.apply"
     ReturnCall v7
 # CHECK-NOT: Switch
 # CHECK: [[list5]]: {{*}} = NewArgumentList v2, v5
@@ -107,7 +107,7 @@ function f6 name="objectIsPassedOnAnotherPath" flags=[HasThis, HasArgumentCount,
     Branch v3 -> taken b1(), notTaken b2(v5)
   b1():
     v6 = Builtin builtin=FunctionPrototypeApply
-    v7 = Call v6, v0, v1, v5
+    v7 = Call v6, v0, v1, v5 calleeKey="apply" calleeName="f.apply"
     ReturnCall v7
   b2(v8: Arguments):
     v9 = Call v0, v1, v8
@@ -133,7 +133,7 @@ function f7 name="objectIsPassedInALoop" flags=[HasThis, HasArgumentCount, HasHi
     Jump -> next b1()
   b3():
     v10 = Builtin builtin=FunctionPrototypeApply
-    v11 = Call v10, v0, v1, v5
+    v11 = Call v10, v0, v1, v5 calleeKey="apply" calleeName="f.apply"
     ReturnCall v11
 # CHECK-NOT: Switch
 # CHECK: [[list7]]: {{*}} = NewArgumentList v0, v5
@@ -183,7 +183,7 @@ function f10 name="seldomRuns" flags=[HasThis, HasArgumentCount, HasHiddenRest] 
     Return v1
   b2() frequency=Unlikely:
     v6 = Builtin builtin=FunctionPrototypeApply
-    v7 = Call v6, v0, v1, v5
+    v7 = Call v6, v0, v1, v5 calleeKey="apply" calleeName="f.apply"
     ReturnCall v7
 # CHECK-NOT: Switch
 # CHECK: [[list10]]: {{*}} = NewArgumentList v0, v5
@@ -196,7 +196,7 @@ function f11 name="noParameter" flags=[HasThis, HasArgumentCount, HasHiddenRest]
   b0(v0: function, v1: anything, v2: int[0, 4294967295], v3: Array):
     v4 = CreateUnmappedArguments v2, v3
     v5 = Builtin builtin=FunctionPrototypeApply
-    v6 = Call v5, v0, v1, v4
+    v6 = Call v5, v0, v1, v4 calleeKey="apply" calleeName="f.apply"
     ReturnCall v6
 # CHECK-NOT: Switch
 # CHECK: [[list11]]: {{*}} = NewArgumentList v0, v4

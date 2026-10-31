@@ -140,7 +140,7 @@ void RuntimeValidationEmitter::checkAssumedType(const ValueContext& value)
 {
     ValueID source = value->valueOperand();
     const Type& type = m_program.at(value->provenType());
-    if (type.isNever() || !hasTestableBits(source) || type.opaque || type.environment || !type.functions.isEmpty())
+    if (type.isNever() || !hasTestableBits(source) || type.opaque || type.environment)
         return;
     checkHasType(value.id(), get(source), value->provenType(), ValidationFailureKind::AssumedType, source);
 }
@@ -164,11 +164,11 @@ void RuntimeValidationEmitter::checkGuardIsAvailable(const OperationContext& con
     if (context.valueID() && findReadsKeptForValidation(m_function).get(context.valueID().index()))
         return;
     // The passes removed a test based on the summaries of the time. Since then a call may have replaced operations in a callee's own body, and its summary may cover more than they did.
-    if (inputs().effectsByOperandTypes) {
-        FunctionAnalyses finer(AnalysisContext { build(), m_program, &inputs().flow, inputs().effectsByOperandTypes, m_id }, m_function);
-        if (finer.guardStateAt(guard, use) != GuardState::Unavailable)
-            return;
-    }
+    // These analyses only judge, as the verifier's do.
+    const EffectSummaries* effects = inputs().effectsByOperandTypes ? inputs().effectsByOperandTypes : analyses().context().effects;
+    FunctionAnalyses finer(AnalysisContext { build(), m_program, &inputs().flow, effects, m_id, CallResults::MayAliasOperands, WorkLimits::OfBuild, SavedFrames::AreOutOfReach }, m_function);
+    if (finer.guardStateAt(guard, use) != GuardState::Unavailable)
+        return;
     fail(context, InternalErrorKind::GuardNotAvailable);
 }
 
@@ -235,9 +235,11 @@ bool RuntimeValidationEmitter::refusesFrameArray(const Value& user, ValueID oper
     return mayBeArray(typeOf(operand)) && !mayBeGivenFrameArray(m_program, &inputs().flow, m_function, user, operandIndex);
 }
 
-bool RuntimeValidationEmitter::refusesFrameArray(const Terminator& user, ValueID operand, uint32_t)
+// A branch or a switch looks at the value and hands it to nobody.
+bool RuntimeValidationEmitter::refusesFrameArray(const Terminator& user, ValueID operand, uint32_t operandIndex)
 {
-    return m_function.role != FunctionRole::OutlinedBody && mayBeArray(typeOf(operand)) && !numberOfResultsOf(m_program, m_function, m_function.at(operand)) && user.kind != TerminatorKind::ReturnCall;
+    return m_function.role != FunctionRole::OutlinedBody && mayBeArray(typeOf(operand)) && !numberOfResultsOf(m_program, m_function, m_function.at(operand)) && user.kind != TerminatorKind::ReturnCall
+        && mayLeakFramePointer(m_program, &inputs().flow, m_function, user, operandIndex);
 }
 
 void RuntimeValidationEmitter::validateResult(const ValueContext& value)

@@ -132,9 +132,6 @@ const OpcodeEffectFacts& effectFactsOf(Opcode opcode)
 
 const OpcodeEffectFacts& effectFactsOf(const Value& value)
 {
-    static const OpcodeEffectFacts factsOfObjectWithPrototypeOfLayout = computeEffectFactsOf(Opcode::NewObject, OptionalOperands::AreOmitted);
-    if (value.opcode == Opcode::NewObject && !value.prototypeOperand())
-        return factsOfObjectWithPrototypeOfLayout;
     return effectFactsOf(value.opcode);
 }
 

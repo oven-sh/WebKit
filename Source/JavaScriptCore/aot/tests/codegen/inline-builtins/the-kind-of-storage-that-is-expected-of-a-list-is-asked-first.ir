@@ -1,0 +1,32 @@
+# stack.pop(), where stack is expected to hold numbers    the same of a list of anything
+# A list of numbers is expected to have Double storage (7) and may have Int32 storage (5); a list of anything is expected to have Contiguous storage (9). The kind that is expected is asked first, by a branch of its own:
+# the other kinds stand behind a rare edge, so the back end makes no switch of the tests, which would ask for the kinds in the order of their numbers.
+# FORM: Selected
+# OPTIONS: heat=EverythingIsHot check=validate-back-end
+# RUN(NUMBERS): lower-to-b3 optimized f0
+# RUN(ANYTHING): lower-to-b3 optimized f1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="popOfNumbers" parameters=[{type=Array<number>}] results=[{type=anything}] {
+    TryCallInline v0 inlineBuiltin=ArrayPop overload=ArrayPrototypePop/0 -> done b1(), miss b2()
+  b1(v1):
+    Return v1
+  b2() frequency=Rare:
+    v2 = CallBuiltin v0 overload=ArrayPrototypePop/0
+    Jump -> next b1(v2)
+}
+# NUMBERS: = Equal(b@[[kind]], $7(
+# NUMBERS: Successors: Then:#{{*}}, Else:Rare:#
+# NUMBERS: = Equal(b@[[kind]], $5(
+
+function f1 name="popOfAnything" parameters=[{type=Array<anything>}] results=[{type=anything}] {
+    TryCallInline v0 inlineBuiltin=ArrayPop overload=ArrayPrototypePop/0 -> done b1(), miss b2()
+  b1(v1):
+    Return v1
+  b2() frequency=Rare:
+    v2 = CallBuiltin v0 overload=ArrayPrototypePop/0
+    Jump -> next b1(v2)
+}
+# ANYTHING: = Equal(b@[[kind]], $9(
+# ANYTHING: Successors: Then:#{{*}}, Else:Rare:#
+# ANYTHING: = Equal(b@[[kind]], $5(

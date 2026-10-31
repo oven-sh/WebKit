@@ -179,16 +179,11 @@ static ValueFlowObjectsToldApart tellManyObjectsApart(ValueFlowRuleContext& cont
     }
     Vector<ValueFlowObjectID, 64> objects;
     for (size_t first = 0; first < members.size();) {
-        bool isRest = result.groups.size() >= mostGroups;
         size_t end = first;
         objects.shrink(0);
-        while (end < members.size() && (isRest || members[end].group == members[first].group))
+        while (end < members.size() && members[end].group == members[first].group)
             objects.append(members[end++].object);
-        ValueSetID set = context.maker().of(objects.span());
-        if (isRest)
-            result.rest = set;
-        else
-            result.groups.append(set);
+        result.groups.append(context.maker().of(objects.span()));
         first = end;
     }
     return result;
@@ -503,6 +498,41 @@ static ValueSetID objectsShowingOnlyWhatLibraryExports(ValueFlowRuleContext& con
     return context.withMembersOf(ValueSets::nothing, context.membersMissingFrom(context.nodes().ofHost(ValueFlowHostNode::HoldersOfLibraryExportsThatProgramWrites), ClimbingSet(context.universe().builtinTables().heap().objectsShowingLibraryExports())));
 }
 
+// Asked of the objects at hand alone. A statement with no such holder among its objects is not woken when the program writes to one more of them.
+static ClimbingSet withoutObjectsShowingOnlyWhatLibraryExports(ValueFlowRuleContext& context, ClimbingSet objects)
+{
+    ClimbingSet showing = context.restrict(objects, context.universe().builtinTables().heap().objectsShowingLibraryExports());
+    ClimbingSet unwritten = context.membersMissingFrom(context.nodes().ofHost(ValueFlowHostNode::HoldersOfLibraryExportsThatProgramWrites), showing);
+    return context.restrict(objects, ValueSets::complement(context.withMembersOf(ValueSets::nothing, unwritten)));
+}
+
+void passKnownReceiversToWhatTheyFind(ValueFlowRuleContext& context, ClimbingSet receivers, ValueFlowName name, ValueFlowNodeID receiversAnswered)
+{
+    const Program& program = context.program();
+    const ValueFlowUniverse& universe = context.universe();
+    const ValueFlowInstancedFunctions* instanced = context.instancedFunctions();
+    ValueSetID entered = context.maker().intersect(universe.closures(), ValueSets::complement(context.maker().unite(universe.builtinTables().closuresThatEntriesDescribe(), instanced ? instanced->closures() : ValueSets::nothing)));
+    ValueFlowObjectsToldApart toldApart = tellObjectsApart(context, context.restrict(receivers, universe.knownObjects()));
+    for (ValueSetID group : toldApart.groups) {
+        ClimbingSet answered = context.valueOf(context.lookup(ClimbingSet(group), name, ValueFlowRuleContext::LookupUse::OnlyCalledOnReceiver));
+        std::span<const ValueFlowObjectID> takingReceiver = context.closuresTakingReceiverRememberedOf(context.restrict(answered, entered), [&](ValueFlowObjectID closure) {
+            FunctionID function = universe.closureFunction(closure);
+            return thisParameterOf(context, function) && !throwsInsteadOfRunning(program.at(function), false);
+        });
+        for (ValueFlowObjectID closure : takingReceiver) {
+            FunctionID function = universe.closureFunction(closure);
+            context.add(thisParameterOf(context, function), group);
+            const auto* summary = context.nodes().resultSummaryOf(function);
+            if (!summary || program.at(function).isUnsplitCoroutine())
+                continue;
+            for (const auto& passed : summary->passedParameters) {
+                if (program.at(function).entryParameterKind(passed.entryParameter) == EntryParameter::This)
+                    context.connect(context.masked(context.holding(ClimbingSet(group)), passed.mask, passed.maskKind), receiversAnswered);
+            }
+        }
+    }
+}
+
 static ReceiversOfEveryCallee passKnownReceiversToTheirCallees(ValueFlowRuleContext& context, const ValueFlowStatement& statement, ClimbingSet closures)
 {
     const Program& program = context.program();
@@ -515,25 +545,30 @@ static ReceiversOfEveryCallee passKnownReceiversToTheirCallees(ValueFlowRuleCont
     ValueSetID neverReceivers = context.maker().of(undefinedAndNull);
     const ValueFlowOperand& receiver = context.operandsOf(statement)[1];
     ClimbingSet all = context.valueOf(receiver);
-    ValueFlowObjectsToldApart receivers = tellObjectsApart(context, context.restrict(all, universe.knownObjects()));
-    for (ValueSetID group : receivers.groups) {
-        ClimbingSet answered = context.valueOf(context.lookup(ClimbingSet(group), ValueFlowName::property(context.program(), key), ValueFlowRuleContext::LookupUse::OnlyCalledOnReceiver));
-        std::span<const ValueFlowObjectID> takingReceiver = context.closuresTakingReceiverRememberedOf(context.restrict(answered, universe.closures()), [&](ValueFlowObjectID closure) {
-            FunctionID function = universe.closureFunction(closure);
-            return thisParameterOf(context, function) && !throwsInsteadOfRunning(program.at(function), false);
-        });
-        for (ValueFlowObjectID closure : takingReceiver) {
-            if (!context.contains(closures, closure))
-                continue;
-            FunctionID function = universe.closureFunction(closure);
-            context.add(thisParameterOf(context, function), group);
-            const auto* summary = statement.result ? context.nodes().resultSummaryOf(function) : nullptr;
-            if (!summary || program.at(function).isUnsplitCoroutine())
-                continue;
-            for (const auto& passed : summary->passedParameters) {
-                if (program.at(function).entryParameterKind(passed.entryParameter) == EntryParameter::This)
-                    context.connect(context.masked(context.holding(ClimbingSet(group)), passed.mask, passed.maskKind), statement.result);
-            }
+    ClimbingSet known = context.restrict(all, universe.knownObjects());
+    if (context.meet(known, ValueSets::anything)) {
+        ValueFlowNodeID receiversAnswered = context.lookup(known, ValueFlowName { ValueFlowNameKind::ReceiversOfCalls, key.index() });
+        if (statement.result)
+            context.connect(receiversAnswered, statement.result);
+    }
+    if (const ValueFlowInstancedFunctions* instanced = context.instancedFunctions(); instanced && context.meet(closures, instanced->closures())) {
+        ClimbingSet enteredAsTheyAre = context.restrict(closures, instanced->closures());
+        ValueFlowObjectsToldApart receivers = tellObjectsApart(context, known);
+        for (ValueSetID group : receivers.groups) {
+            ClimbingSet answered = context.valueOf(context.lookup(ClimbingSet(group), ValueFlowName::property(program, key), ValueFlowRuleContext::LookupUse::OnlyCalledOnReceiver));
+            context.forEachMember(context.restrict(answered, instanced->closures()), [&](ValueFlowObjectID closure) {
+                FunctionID function = universe.closureFunction(closure);
+                if (!context.contains(enteredAsTheyAre, closure) || !thisParameterOf(context, function) || throwsInsteadOfRunning(program.at(function), false))
+                    return;
+                context.add(thisParameterOf(context, function), group);
+                const auto* summary = statement.result ? context.nodes().resultSummaryOf(function) : nullptr;
+                if (!summary || program.at(function).isUnsplitCoroutine())
+                    return;
+                for (const auto& passed : summary->passedParameters) {
+                    if (program.at(function).entryParameterKind(passed.entryParameter) == EntryParameter::This)
+                        context.connect(context.masked(context.holding(ClimbingSet(group)), passed.mask, passed.maskKind), statement.result);
+                }
+            });
         }
     }
 
@@ -558,7 +593,7 @@ static ReceiversOfEveryCallee passKnownReceiversToTheirCallees(ValueFlowRuleCont
         if (!found.isEmpty())
             passThis(context, statement, receiver, { others, ValueSets::nothing }, context.group(ClimbingSet(context.maker().of(found.span())), ValueFlowCallKind::Call).thisValue);
     }
-    return { ValueSets::nothing, receivers.rest };
+    return { ValueSets::nothing, ValueSets::nothing };
 }
 
 static void callOperandOfDescribedCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context, PropertyKeyID keyReadFromReceiver = { }, bool isCalledOnItsHolder = false)
@@ -568,7 +603,7 @@ static void callOperandOfDescribedCall(const ValueFlowStatement& statement, Valu
         const ValueFlowUniverse& universe = context.universe();
         const ValueFlowOperand& receiver = context.operandsOf(statement)[1];
         ValueSetID objectsOfProgram = context.maker().intersect(universe.knownObjects(), ValueSets::complement(universe.builtinObjects()));
-        ValueFlowObjectsToldApart receivers = tellObjectsApart(context, context.membersMissingFrom(ValueFlowProgramNodes::escaped(), context.restrict(context.valueOf(receiver), context.maker().intersect(objectsOfProgram, ValueSets::complement(objectsShowingOnlyWhatLibraryExports(context))))));
+        ValueFlowObjectsToldApart receivers = tellObjectsApart(context, context.membersMissingFrom(ValueFlowProgramNodes::escaped(), withoutObjectsShowingOnlyWhatLibraryExports(context, context.restrict(context.valueOf(receiver), objectsOfProgram))));
         for (ValueSetID group : receivers.groups) {
             ClimbingSet answered = context.valueOf(context.lookup(ClimbingSet(group), ValueFlowName::property(context.program(), keyReadFromReceiver), ValueFlowRuleContext::LookupUse::OnlyCalledOnReceiver));
             if (context.meet(answered, universe.placeholdersAlone()) || context.holdsAnyOf(context.restrict(answered, universe.callables()), ValueFlowProgramNodes::escaped()))
@@ -611,11 +646,11 @@ ClimbingSet escapedMembersUnder(ValueFlowRuleContext& context, PropertyKeyID key
 static bool findsValueNobodyKnowsThatProgramHasStored(ValueFlowRuleContext& context, ClimbingSet receivers, PropertyKeyID key)
 {
     const ValueFlowUniverse& universe = context.universe();
-    ValueSetID objectsOfProgram = context.maker().intersect(universe.knownObjects(), ValueSets::complement(context.maker().unite(context.maker().unite(universe.builtinObjects(), universe.objectsThatMayBeAnything()), objectsShowingOnlyWhatLibraryExports(context))));
-    ClimbingSet start = context.restrict(receivers, objectsOfProgram);
+    ValueSetID objectsOfProgram = context.maker().intersect(universe.knownObjects(), ValueSets::complement(context.maker().unite(universe.builtinObjects(), universe.objectsThatMayBeAnything())));
+    ClimbingSet start = withoutObjectsShowingOnlyWhatLibraryExports(context, context.restrict(receivers, objectsOfProgram));
     if (!context.meet(start, ValueSets::anything))
         return false;
-    ClimbingSet chain = context.unite(start, context.restrict(context.valueOf(context.lookup(start, prototypeLinkName)), objectsOfProgram));
+    ClimbingSet chain = context.unite(start, withoutObjectsShowingOnlyWhatLibraryExports(context, context.restrict(context.valueOf(context.lookup(start, prototypeLinkName)), objectsOfProgram)));
     ClimbingSet inHandsOfProgram = context.membersMissingFrom(ValueFlowProgramNodes::escaped(), chain);
     return context.contains(context.valueOf(context.readWhatWasWritten(inHandsOfProgram, ValueFlowName::property(context.program(), key))), ValueFlowUniverse::unknownObject());
 }

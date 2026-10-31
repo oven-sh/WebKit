@@ -52,15 +52,16 @@ bool BuiltinTable::canBeReplacedInTestRuns(BuiltinID id) const
     case BuiltinKind::Function:
     case BuiltinKind::Method:
     case BuiltinKind::Accessor:
+    // `process.versions`, `process.release`, `process.isBun`: the front end folds no read of them in a test run. The others have names that are read without a lookup.
+    case BuiltinKind::DataProperty:
         break;
     case BuiltinKind::Constructor:
-        // `globalThis.Set = Fake`. Under any other holder it is the `constructor` of a prototype object.
+    case BuiltinKind::Namespace:
+        // `globalThis.Set = Fake`, `globalThis.Math = Object.create(Math)`. Under any other holder a constructor is the `constructor` of a prototype object.
         if (!at(member.holder).flags.contains(BuiltinFlag::IsGlobalObject))
             return false;
         break;
-    case BuiltinKind::Namespace:
     case BuiltinKind::Prototype:
-    case BuiltinKind::DataProperty:
     case BuiltinKind::Constant:
     case BuiltinKind::NativeBinding:
         return false;

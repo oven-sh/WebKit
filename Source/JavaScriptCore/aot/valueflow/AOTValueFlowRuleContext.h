@@ -79,6 +79,7 @@ public:
     const Value& operationAt(FunctionID, ValueID) const;
     std::span<const ValueFlowOperand> operandsOf(const ValueFlowStatement&) LIFETIME_BOUND;
     std::span<const ValueFlowOperand> objectsReadUnderKeyOfStore(const ValueFlowStatement&) const LIFETIME_BOUND;
+    bool isAskedForByName(PropertyKeyID) const;
     bool canBeReached(const ValueFlowStatement&);
     ClimbingSet setOfKey() const;
     uint32_t numberOfMembersOfKey() const;
@@ -200,6 +201,7 @@ public:
     void noteSourcesOfCopiesSeenFrom(ClimbingSet objects, ClimbingSet seen);
     ValueFlowNodeID written(ClimbingSet objects, ValueFlowName);
     bool mayFindSomethingWritten(ClimbingSet objects, ValueFlowNameKind);
+    ClimbingSet membersThatMayFindSomethingWritten(ClimbingSet objects, ValueFlowNameKind);
     std::optional<ClimbingSet> holdersUnder(ValueFlowName, ClimbingSet within);
     ClimbingSet holdersOfLibraryExportsWrittenUnder(PropertyKeyID);
     bool mayFindWhatIsWrittenUnderUnknownKey(ValueFlowName) const;

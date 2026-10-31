@@ -272,6 +272,8 @@ struct EmptySlotRoom {
 enum class WidenedRepresentations : uint8_t {
     Numbers,
     References,
+    // The table of fields, which answers a read by name, has a form for 32 bits and none for 8 or 16.
+    SmallIntegers,
 };
 
 using OccupiedBytes = Vector<uint64_t, 4>;

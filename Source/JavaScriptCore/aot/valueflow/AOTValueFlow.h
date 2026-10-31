@@ -60,6 +60,7 @@ enum class ValueFlowNameKind : uint8_t {
     FoundThroughEscapedInstances,
     NamesOfMethods,
     NamespaceExports,
+    ReceiversOfCalls,
 };
 
 enum class ValueFlowNameSort : uint8_t { Value, Getter, Setter, Deletion, Redefinition, PrototypeLink, Copy, Other };
@@ -133,6 +134,7 @@ constexpr ValueFlowNameShape shapeOf(ValueFlowNameKind kind)
     case ValueFlowNameKind::AddedNames:
     case ValueFlowNameKind::FoundThroughEscapedInstances:
     case ValueFlowNameKind::NamesOfMethods:
+    case ValueFlowNameKind::ReceiversOfCalls:
     case ValueFlowNameKind::NamespaceExports:
         return { Sort::Other, Reach::NoKey };
     }
@@ -191,6 +193,7 @@ constexpr bool mayBeTheSameName(ValueFlowNameKind written, ValueFlowNameKind rea
     case ValueFlowNameKind::AddedNames:
     case ValueFlowNameKind::FoundThroughEscapedInstances:
     case ValueFlowNameKind::NamesOfMethods:
+    case ValueFlowNameKind::ReceiversOfCalls:
     case ValueFlowNameKind::NamespaceExports:
         return false;
     }

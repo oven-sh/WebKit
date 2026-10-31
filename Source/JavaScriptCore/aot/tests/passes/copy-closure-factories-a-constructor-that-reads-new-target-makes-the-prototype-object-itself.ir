@@ -1,0 +1,26 @@
+# function Base() { this.target = new.target }   function Derived() {}   Derived.prototype = new Base()
+# A copy of the function does what the function does unless the function can tell which closure was called.
+# FORM: AsRead
+# RUN: pass CopyClosureFactories
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="target" declared={type=anything}}] flags=[IsConstructorFunction]
+variable g0 name="Base" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Derived" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = Construct v0
+    PropSet v1, v2 key="prototype" mode=Strict
+    Return
+}
+function f1 name="Base" module=m0 flags=[HasThis, HasNewTarget] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="target" mode=Strict
+    Return
+}
+function f2 name="Derived" module=m0 results=[{type=anything}] {
+    Return
+}

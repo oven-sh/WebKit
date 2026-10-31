@@ -1,7 +1,7 @@
 # main.cjs: require("./child.cjs"); !module.parent; process[globalThis.name].children[0].exports()        child.cjs: module.exports = exportedByChild
 # In a program that names a way between module objects the host answers `process.mainModule` under whatever key. A read of `process` under a key nobody knows may be that read: it answers the module object
 # of the entry point, and that is followed to what the required file exports.
-# RUN: valueflow-solve calls
+# RUN: valueflow-solve calls seen
 # CHECK: f0 v13 -> {{*}}f2
 
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined

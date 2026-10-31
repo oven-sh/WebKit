@@ -10,6 +10,7 @@
 
 #include "AOTArrayChains.h"
 #include "AOTBuildContext.h"
+#include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
 #include "AOTCallGraph.h"
 #include "AOTCalleeVersions.h"
@@ -158,6 +159,20 @@ static bool isConstantExpression(const Function& function, const Value& value, u
     return isConstantExpression(function, function.at(value.leftOperand()), remainingDepth - 1) && isConstantExpression(function, function.at(value.rightOperand()), remainingDepth - 1);
 }
 
+static unsigned estimatedBytesOfAccessByName(const Program& program, LayoutSetID layouts, PropertyKeyID key, Access kind)
+{
+    unsigned operandsOfAccessor = kind == Access::Store ? 2 : 1;
+    unsigned bytes = CodeSize::slotAccess;
+    for (LayoutID layout : program.at(layouts).completeMembers()) {
+        MemberAnswer member = findMember({ program }, { MemberStart::Instance, layout, key, kind });
+        if (member.kind == MemberKind::Accessor && member.accessorFor(kind))
+            bytes = std::max(bytes, estimatedDirectCallBytes(operandsOfAccessor));
+        else if (member.kind == MemberKind::Field && fieldAt(program, { member.holder, member.field }).form.contains(FieldForm::IsAccessor))
+            bytes = std::max(bytes, CodeSize::slotAccess + CodeSize::indirectCall + CodeSize::perOperand * (1 + operandsOfAccessor));
+    }
+    return bytes;
+}
+
 // A body is measured before its accesses are resolved. Where the type of the receiver names its layouts the access ends as what the name finds on them: a slot operation for a field, a call for an accessor.
 static unsigned estimatedBytesOfAccessByName(const Program& program, const Function& function, const Value& access)
 {
@@ -170,17 +185,23 @@ static unsigned estimatedBytesOfAccessByName(const Program& program, const Funct
     if (kind != Access::Read && kind != Access::Store)
         return CodeSize::slotAccess;
 
-    unsigned operandsOfAccessor = kind == Access::Store ? 2 : 1;
+    // Every access under one name to one family asks the same, and the answer looks at every class of the family.
     PropertyKeyID key = keyOfNamedAccess(program, access);
-    unsigned bytes = CodeSize::slotAccess;
-    for (LayoutID layout : program.at(layouts).completeMembers()) {
-        MemberAnswer member = findMember({ program }, { MemberStart::Instance, layout, key, kind });
-        if (member.kind == MemberKind::Accessor && member.accessorFor(kind))
-            bytes = std::max(bytes, estimatedDirectCallBytes(operandsOfAccessor));
-        else if (member.kind == MemberKind::Field && fieldAt(program, { member.holder, member.field }).form.contains(FieldForm::IsAccessor))
-            bytes = std::max(bytes, CodeSize::slotAccess + CodeSize::indirectCall + CodeSize::perOperand * (1 + operandsOfAccessor));
-    }
-    return bytes;
+    PropertyAccessCache* cache = program.propertyAccessCache();
+    if (!cache || TypeTable::isProvisional(key))
+        return estimatedBytesOfAccessByName(program, layouts, key, kind);
+
+    using Entry = PropertyAccessCache::BytesOfAccessByName;
+    PropertyAccessCache::ListID receivers = cache->lists.idOf(program.types, layouts);
+    uint32_t hash = computeHash(receivers, key.index(), static_cast<unsigned>(kind));
+    auto isWanted = [&](const Entry& entry) {
+        return entry.receivers == receivers && entry.key == key && entry.access == kind;
+    };
+    const Entry* known = cache->bytesOfAccessesByName.find(hash, isWanted);
+    if (!known)
+        known = &cache->bytesOfAccessesByName.add(hash, Entry { receivers, key, kind, estimatedBytesOfAccessByName(program, layouts, key, kind) }, isWanted);
+    RELEASE_ASSERT(!cache->checksAnswers || known->bytes == estimatedBytesOfAccessByName(program, layouts, key, kind));
+    return known->bytes;
 }
 
 unsigned estimatedCodeBytes(const Program& program, const Function& function, const Value& value)
@@ -1471,33 +1492,31 @@ InliningSummaries summarizeForInlining(const Program& program, const CallGraph& 
     return result;
 }
 
-static bool returnsFreshAggregateAskedOnce(const InliningSummary& summary, const AnalysisContext& context)
+static unsigned freshAllocationsReturnedAskedOnce(const InliningSummary& summary, const AnalysisContext& context)
 {
-    using Answer = InliningSummary::Answer;
-    AtomicRef answer(summary.returnsFreshAggregate);
-    Answer known = answer.load(std::memory_order_relaxed);
-    if (known == Answer::NotAsked) {
+    AtomicRef answer(summary.freshAllocationsReturned);
+    uint8_t known = answer.load(std::memory_order_relaxed);
+    if (known == InliningSummary::notAsked) {
         FunctionAnalyses analyses(context, context.program.at(context.id));
-        known = returnsFreshAggregate(analyses) ? Answer::Yes : Answer::No;
+        known = std::min<unsigned>(countFreshAllocationsReturned(analyses), InliningSummary::notAsked - 1);
         answer.store(known, std::memory_order_relaxed);
     }
-    return known == Answer::Yes;
+    return known;
 }
 
-bool InliningSummaries::returnsFreshAggregate(const Program& program, FunctionID id) const
+unsigned InliningSummaries::freshAllocationsReturned(const Program& program, FunctionID id) const
 {
-    using Answer = InliningSummary::Answer;
     RELEASE_ASSERT(contains(id));
     const InliningSummary& summary = of(program, id);
     if (summary.barrier != InlineBarrier::None)
-        return false;
+        return 0;
 
-    Answer known = AtomicRef(summary.returnsFreshAggregate).load(std::memory_order_relaxed);
-    if (known != Answer::NotAsked)
-        return known == Answer::Yes;
+    uint8_t known = AtomicRef(summary.freshAllocationsReturned).load(std::memory_order_relaxed);
+    if (known != InliningSummary::notAsked)
+        return known;
 
     Locker locker { (*m_locksOfAnswers)[id.index() % numberOfLocks] };
-    return returnsFreshAggregateAskedOnce(summary, AnalysisContext { *m_build, program, m_flow, nullptr, id });
+    return freshAllocationsReturnedAskedOnce(summary, AnalysisContext { *m_build, program, m_flow, nullptr, id });
 }
 
 static void dumpIndices(PrintStream& out, ASCIILiteral opening, ASCIILiteral prefix, const BitVector& indices)
@@ -1524,6 +1543,8 @@ void InliningSummaries::dump(PrintStream& out, const Program& program) const
         out.print(summary.neverReturns ? " neverReturns" : "");
         dumpIndices(out, " boundToFrame=["_s, "b"_s, summary.blocksBoundToFrame);
         out.print(summary.hasBareReturn ? " bareReturn" : "", summary.isWrapper ? " wrapper" : "", contains(id) && returnsFreshAggregate(program, id) ? " returnsFreshAggregate" : "");
+        if (unsigned allocations = contains(id) ? freshAllocationsReturned(program, id) : 0; allocations > 1 || (allocations && !returnsFreshAggregate(program, id)))
+            out.print(" freshAllocationsReturned=", allocations);
         dumpIndices(out, " called=["_s, ""_s, summary.calledParameters);
         dumpIndices(out, " calledInCycles=["_s, ""_s, summary.parametersCalledInCycles);
         dumpIndices(out, " calledInNestedLoops=["_s, ""_s, summary.parametersCalledInNestedLoops);
@@ -2662,12 +2683,12 @@ static uint32_t budgetAt(const FunctionPassContext& context, const InliningSumma
 }
 
 // The inliner makes a summary of its own for a callee that was derived in this loop, against the effect summaries of the loop.
-static bool calleeReturnsFreshAggregate(FunctionPassContext& context, const InliningSummary& summary, FunctionID callee)
+static unsigned freshAllocationsReturnedBy(FunctionPassContext& context, const InliningSummary& summary, FunctionID callee)
 {
     const InliningSummaries& inlining = context.inputs.inlining;
     if (inlining.contains(callee))
-        return inlining.returnsFreshAggregate(context.program, callee);
-    return returnsFreshAggregateAskedOnce(summary, AnalysisContext { context.build, context.program, &context.inputs.flow, &context.inputs.effects, callee });
+        return inlining.freshAllocationsReturned(context.program, callee);
+    return freshAllocationsReturnedAskedOnce(summary, AnalysisContext { context.build, context.program, &context.inputs.flow, &context.inputs.effects, callee });
 }
 
 // A field that nothing reads goes in the end, and an allocation that is stored nowhere else goes with it. A call would stay.
@@ -2707,7 +2728,7 @@ static bool wouldOnlyMoveAllocationIntoCodeThatRunsOnce(FunctionPassContext& con
     if (isStoredOnlyInFieldsThatNothingReads(context, call))
         return false;
     return !sinkableAllocationsAfterInlining(context, block, call, [&] {
-        return calleeReturnsFreshAggregate(context, summary, callee);
+        return freshAllocationsReturnedBy(context, summary, callee);
     }).predicted();
 }
 
@@ -2883,7 +2904,7 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
         if (!isTooDeep && !isWithinBudget()) {
             uint64_t bytesOfAllocation = isCold(heat).predicted() ? InlineModel::allocationCallBytes : context.limit(LimitID::InlineSunkAllocationBytes);
             unsigned allocations = sinkableAllocationsAfterInlining(context, block, call, [&] {
-                return calleeReturnsFreshAggregate(context, summary, value.function());
+                return freshAllocationsReturnedBy(context, summary, value.function());
             }).predicted();
             // The list of the surplus arguments is counted above.
             if (bytesOfListThatGoes && allocations)
@@ -3526,6 +3547,10 @@ static std::optional<Head> findHead(const AnalysisContext& context)
         const Effects& normal = effects.normal;
         return !normal.mayCollect && !normal.mayRunOtherCode() && !normal.mayBeTerminated && (normal.writes.containsOnly(bookkeepingHeaps) || context.build.isSabotaged(Sabotage::HeadsThatAreCopiedLeaveNoTrace));
     };
+    // The call behind the copy runs the head once more. The member has been added to its holder by then.
+    auto doesNothingSecondTime = [&](const Value& value) {
+        return value.opcode == Opcode::InitializeBuiltin && onlyAddsMemberToHolder(context.program.builtins(), value.builtin());
+    };
     BitVector blocks = findHeadBlocks(function, analyses, [&](BlockID id) {
         const Block& block = function.at(id);
         if (block.handler || !canEndBlockOfHeadOf(block.terminator.kind) || boundToOf(block.terminator.kind) != BoundTo::Nothing)
@@ -3540,7 +3565,7 @@ static std::optional<Head> findHead(const AnalysisContext& context)
         if (!onlyReads(analyses.effectsOfTerminator(id)))
             return false;
         for (ValueID value : block.values) {
-            if (!onlyReads(analyses.effectsOf(value)))
+            if (!onlyReads(analyses.effectsOf(value)) && !doesNothingSecondTime(function.at(value)))
                 return false;
         }
         // Most functions are turned down by their entry block, and the graph of none of those is made.

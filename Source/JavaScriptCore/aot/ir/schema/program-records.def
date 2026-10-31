@@ -2,7 +2,7 @@ enum LayoutKind (| engine isEnvironmentKind: Bool, canHaveExtraKeys: Bool, isObj
     Record(false, true, true, true, true, true) Instance(false, false, true, true, true, true) Container(false, false, true, false, false, true) Environment(true, false, false, false, true, false)
     | engine Closure(true, false, false, false, false, false) CoroutineFrame(true, false, false, false, false, false) BuiltinResult(false, false, true, false, false, false) ModuleNamespace(false, false, false, false, false, false)
 }
-flags LayoutFlags { HasHeritage IsConstructorFunction HasMembersWithoutLayout IsTypeParameter IsNeverAllocated IsWrittenUnderDictionaryType | engine IsDerived IsOfCreatedObject }
+flags LayoutFlags { HasHeritage IsConstructorFunction HasMembersWithoutLayout IsTypeParameter IsNeverAllocated IsWrittenUnderDictionaryType | engine IsDerived IsOfCreatedObject IsOfImageBelow }
 flags FieldFlags { IsRequired IsMethod IsPrivate IsImmutable IsBrand IsHidden IsNeverWritten IsAlsoInPrototype IsBrandOfMethods | engine IsInherited IsAddedLate IsRemovedAsUnread IsEnforced IsRequiredUntilDeleted IsFilledByCreator IsCountedWith }
 flags FieldForm { IsReadOnly IsNotEnumerable IsNotConfigurable IsAccessor }
 enum MethodKind { Method Getter Setter }
@@ -73,11 +73,11 @@ enum ImportPhase { Evaluation Defer }
 enum ModuleRequestKind { Import Require }
 enum ModuleExportKind { Variable Namespace Indirect }
 flags ModuleFlags {
-    HasTopLevelAwait IsLibrary IsLoadedByImportOnly HasNoSideEffects KeepsError IsBundlerHelper NamesWayToModuleObjects HasInstalledPositions IsLoadedByLoader IsRequiredDuringLoad MayBeImportedWhileItRuns IsImportedAsNamespace IsFoundByName MayBeMocked MayBeEvicted IsListedInCache RunsAgain AnswersLoaderWithNamespace IsHeldUnderNameWithoutPrefix IsChangedOnDiskByRun
+    HasTopLevelAwait IsLibrary IsLoadedByImportOnly HasNoSideEffects KeepsError IsBundlerHelper NamesWayToModuleObjects HasInstalledPositions IsLoadedByLoader IsRequiredDuringLoad MayBeImportedWhileItRuns IsImportedAsNamespace IsFoundByName MayBeMocked MayBeEvicted IsListedInCache RunsAgain AnswersLoaderWithNamespace IsHeldUnderNameWithoutPrefix IsChangedOnDiskByRun IsShownByEntryOfCache LoadsCompiledFilesAlone
     | engine EvaluatesItself IsEvaluatedByRequire
 }
 record ColumnAdjustment wire { offset: UInt32 line: UInt32 column: UInt32 }
-record SourcePositions wire { lineStarts: Span<Word> columnAdjustments: Span<ColumnAdjustment> textPrintedInPlace: Span<Byte> textOfBody: Span<Byte> whereThisIsMade: Span<Word> }
+record SourcePositions wire { lineStarts: Span<Word> columnAdjustments: Span<ColumnAdjustment> textPrintedInPlace: Span<Byte> textOfBody: Span<Byte> startsOfStatementsInLongLines: Span<Byte> whereThisIsMade: Span<Word> }
 record ModuleRequest wire { target: Module(Target) phase: ImportPhase isDynamicStarExport: Bool kind: ModuleRequestKind completes: Bool isHoisted: Bool }
 record ModuleExport wire {
     name: String kind: ModuleExportKind variable: Variable? module: Module(Target)? importName: String? phase: ImportPhase isFromStarExport: Bool

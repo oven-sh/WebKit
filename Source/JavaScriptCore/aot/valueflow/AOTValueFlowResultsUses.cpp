@@ -412,6 +412,7 @@ void UsesOfObjects::noteRead(Noter noter, const ValueFlowNodeKey& key, Reader re
     case ValueFlowNameKind::AddedNames:
     case ValueFlowNameKind::FoundThroughEscapedInstances:
     case ValueFlowNameKind::NamesOfMethods:
+    case ValueFlowNameKind::ReceiversOfCalls:
     case ValueFlowNameKind::NamespaceExports:
         break;
     }
@@ -476,6 +477,8 @@ void UsesOfObjects::noteReads(ValueSetMakers& makers)
             if (!made)
                 return;
             Reader readerOfMade = key.kind == ValueFlowMadeNodeKind::Lookup ? readerThatLeavesNoValue : Reader::TakesValue;
+            if (key.kind == ValueFlowMadeNodeKind::Lookup && key.name().kind == ValueFlowNameKind::ReceiversOfCalls)
+                readerOfMade = Reader::OnlyCalls;
             if (addReader(made, readerOfMade))
                 visitsListedBy[worker].append({ made, readerOfMade });
         });
@@ -538,17 +541,24 @@ bool UsesOfObjects::isFullyKnown(ValueSetID objects) const
     return !ValueSets::isComplement(objects) && !m_inputs.sets().meet(objects, m_inputs.universe().placeholdersAlone());
 }
 
-// An object that nobody knows may be any built-in object.
+// A value that may be almost anything may be any built-in object, and so may what stands above an object that nobody knows. Which built-in objects such an object may be itself is for
+// findHoldersWithListedKeys() to say: it stays in the set.
 void UsesOfObjects::noteShownKeys(Noter noter, ValueSetID objects, ShownKeys shown, bool goesOnToPrototypes) const
 {
     if (shown == ShownKeys::None)
         return;
-    if (!isFullyKnown(objects))
-        objects = m_inputs.universe().builtinObjects();
-    if (goesOnToPrototypes)
-        noter.notes.walkedForEnumerableKeys.add(objects);
-    else
-        (shown == ShownKeys::All ? noter.notes.withAllKeysShown : noter.notes.withEnumerableKeysShown).add(noter.maker.intersect(objects, m_inputs.universe().builtinObjects()));
+    const ValueFlowUniverse& universe = m_inputs.universe();
+    if (goesOnToPrototypes) {
+        noter.notes.walkedForEnumerableKeys.add(isFullyKnown(objects) ? objects : universe.builtinObjects());
+        return;
+    }
+    UnionOfSets& shownObjects = shown == ShownKeys::All ? noter.notes.withAllKeysShown : noter.notes.withEnumerableKeysShown;
+    if (ValueSets::isComplement(objects)) {
+        shownObjects.add(universe.builtinObjects());
+        return;
+    }
+    shownObjects.add(noter.maker.intersect(objects, universe.builtinObjects()));
+    shownObjects.add(noter.maker.intersect(objects, universe.placeholdersAlone()));
 }
 
 void UsesOfObjects::noteShownKeys(Noter noter, const ValueFlowBuiltinApplication& application, BuiltinOperand operand, ShownKeys shown) const

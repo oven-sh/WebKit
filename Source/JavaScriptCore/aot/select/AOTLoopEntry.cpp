@@ -15,6 +15,10 @@
 #include <utility>
 #include <wtf/BitVector.h>
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT { namespace Typed {
 
 static std::optional<ValueID> findValueOutsideLoop(SelectionContext& context, const NaturalLoop& loop, ValueID operand, const ScopedLambda<bool(ValueID)>& isUsable)
@@ -254,5 +258,9 @@ LoopEntryResult emitOnLoopEntry(SelectionContext& context, IRBuilder& builder, B
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

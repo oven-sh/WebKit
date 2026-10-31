@@ -591,7 +591,7 @@ PropertyAnswer classifyRead(const ReadQuery& query)
         return classifyGlobalProxyRead(query);
     if (type == ProxyObjectType && mayAllocate && !PropertyName(uid).isPrivateName()) {
         PropertyAnswer answer = PropertyAnswer::handlerOfProxyAnswers(access, State::of(query.globalObject).propertyCaches->keyForTraps(uid));
-        std::optional<uint32_t> number = vm.aotState().identifiers->numberOf(uid);
+        std::optional<uint32_t> number = identifiersOfRealm(vm, query.globalObject)->numberOf(uid);
         if (number && RowDisplacementTable::hasColumn(*number) && *number <= UINT16_MAX)
             answer.columnOfNameForTrap = static_cast<uint16_t>(*number);
         return answer;

@@ -227,11 +227,18 @@ CellPointer ArrayAllocationEmitter::allocateArrayCell(Integer header, Pointer bu
     return array;
 }
 
-CellPointer ArrayAllocationEmitter::allocateArrayOfHoles(const OperationContext& context, Integer length, const ArrayStorageForm& form, LBasicBlock slowPath, ElementsBelowLength elementsBelowLength)
+void ArrayAllocationEmitter::setLengthOfNewArray(CellPointer array, Integer length)
 {
+    CodeGenerator::InitializationScope scope(generator());
+    m_out.store32(low32(length).value(), m_out.loadPtr(array.value(), m_heaps.JSArray_butterfly), m_heaps.Butterfly_publicLength);
+}
+
+CellPointer ArrayAllocationEmitter::allocateArrayOfHoles(const OperationContext& context, Integer length, const ArrayStorageForm& form, LBasicBlock slowPath, ElementsBelowLength elementsBelowLength, LengthIsSetBy lengthIsSetBy)
+{
+    RELEASE_ASSERT(elementsBelowLength == ElementsBelowLength::Cleared || lengthIsSetBy == LengthIsSetBy::Allocation);
     auto setLength = [&](CellPointer array) {
-        CodeGenerator::InitializationScope scope(generator());
-        m_out.store32(low32(length).value(), m_out.loadPtr(array.value(), m_heaps.JSArray_butterfly), m_heaps.Butterfly_publicLength);
+        if (lengthIsSetBy == LengthIsSetBy::Allocation)
+            setLengthOfNewArray(array, length);
         return array;
     };
     // `new Array(3)`: the stub for an empty array with that room knows its size and its allocator.
@@ -259,11 +266,13 @@ CellPointer ArrayAllocationEmitter::newArrayOfHoles(const OperationContext& cont
 {
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);
-    join.add(allocateArrayOfHoles(context, length, form, slowPath));
+    join.add(allocateArrayOfHoles(context, length, form, slowPath, ElementsBelowLength::Cleared, LengthIsSetBy::Caller));
 
     m_out.appendTo(slowPath);
     join.add(callOperation<CellPointer>(context, RuntimeOperation::NewArrayWithHoles, { CellPointer(m_out.int64Zero), length, word32(form.indexingType), word32(0) }, { .calledBuiltin = calledBuiltin, .isOnRarePath = true }));
-    return join.finish();
+    CellPointer array = join.finish();
+    setLengthOfNewArray(array, length);
+    return array;
 }
 
 CellPointer ArrayAllocationEmitter::callNewEmptyArray(const OperationContext& context, EmptyArray emptyArray)
@@ -660,7 +669,19 @@ CellPointer ArrayAllocationEmitter::newLiteralWithCapacity(const ValueContext& v
     join.add(newArray);
 
     m_out.appendTo(fallback);
-    join.add(newArrayOf(value, elements, array));
+    CellPointer withoutRoom = newArrayOf(value, elements, array);
+    if (value->isFilledToCapacity()) {
+        LBasicBlock reserves = newBlock();
+        LBasicBlock isMade = newBlock();
+        m_out.branch(lessThan(integer(length), capacity).value(), normalEdge(reserves), normalEdge(isMade));
+
+        m_out.appendTo(reserves);
+        callVoidOperation(value, RuntimeOperation::ReserveWholeArrayCapacity, { withoutRoom, sub(capacity, integer(length)) }, { .isOnRarePath = true });
+        m_out.jump(isMade);
+
+        m_out.appendTo(isMade);
+    }
+    join.add(withoutRoom);
     return join.finish();
 }
 
@@ -675,6 +696,10 @@ const ArrayStorageForm& ArrayAllocationEmitter::formOfEmptyLiteral(ValueID liter
         if (use.kind != Use::Kind::Operand)
             continue;
         const Value& user = m_function.at(use.user);
+        if (user.opcode == Opcode::AppendElement && !user.lengthOperands().empty() && user.arrayOperand() == literal) {
+            pushed = std::max(pushed.value_or(ArrayStorage::Int32), arrayStorageAtAllocation(typeOf(user.valueOperand())));
+            continue;
+        }
         if (user.opcode != Opcode::CallInline || user.inlineBuiltin() != InlineBuiltin::ArrayPush || user.receiverOperand() != literal)
             continue;
         for (ValueID argument : user.argumentsOperands())

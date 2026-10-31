@@ -1243,6 +1243,24 @@ Vector<ValueID, 8> StringBuilderStep::rewriteWebs(const StringBuilderPlan& plan)
         }
     }
 
+    auto widenParametersGiven = [&](const Use& edgeUse, ValueID string) {
+        auto parameterGivenBy = [&](const Use& use) { return function.at(targetOnEdge(use.edge()).block).parameters[use.operandIndex]; };
+        Vector<ValueID, 4> given { parameterGivenBy(edgeUse) };
+        TypeID typeOfString = function.at(string).type;
+        while (!given.isEmpty()) {
+            ValueID parameter = given.takeLast();
+            if (handleOf[parameter.index()])
+                continue;
+            TypeID wider = context.types.unionOf(function.at(parameter).type, typeOfString);
+            if (wider == function.at(parameter).type)
+                continue;
+            function.edit(parameter, ValueEdit::Type).type = wider;
+            for (const Use& use : useLists.usesOf(parameter)) {
+                if (use.isEdgeUse())
+                    given.append(parameterGivenBy(use));
+            }
+        }
+    };
     auto rewriteRead = [&](const StringStateRead& read) {
         const Use& use = read.use;
         ValueID handle = handleOf[read.member.index()];
@@ -1267,6 +1285,8 @@ Vector<ValueID, 8> StringBuilderStep::rewriteWebs(const StringBuilderPlan& plan)
             if (lastMaterialization.member != read.member || lastMaterialization.point != site.point)
                 lastMaterialization = { read.member, site.point, insert(site, IRBuilder::make(read.endsWeb ? Opcode::StringBuilderFinish : Opcode::StringBuilderToString, { handle })) };
             replace(use, lastMaterialization.string);
+            if (use.isEdgeUse())
+                widenParametersGiven(use, lastMaterialization.string);
             return;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -3218,7 +3238,7 @@ LiteralStringTable numberLiteralStrings(const Program& program, const FlowResult
 {
     enum class Source : uint8_t { Program, Anywhere, Parser };
     // A validating build and the report of a mismatch hold every value against its type, also a text that the engine made and no code reads: Object.keys(). They read the texts of the members.
-    bool everyWordHasText = build.validates() || build.recordedOptions().policy() == MismatchPolicy::Report;
+    bool everyWordHasText = build.checksClaimsOfFlow() || build.recordedOptions().policy() == MismatchPolicy::Report;
     size_t numberOfStrings = program.strings.size();
     FastBitVector strings(numberOfStrings);
     // Each gets a word, and its text only if the program spells it.

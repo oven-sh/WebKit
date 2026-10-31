@@ -134,6 +134,17 @@ private:
     ClimbingSet escapedAmong(ClimbingSet objects) { return m_context.valueWithin(objects, ValueFlowProgramNodes::escaped()); }
     ClimbingSet lostAmong(ClimbingSet objects) { return m_context.valueWithin(objects, ValueFlowProgramNodes::lost()); }
     bool hasEscaped(ClimbingSet objects) { return m_context.holdsAnyOf(objects, ValueFlowProgramNodes::escaped()); }
+    bool isAnswerThatNoReadLists(ClimbingSet objects) { return m_context.holdsAnyOf(objects, m_context.nodes().ofHost(ValueFlowHostNode::AnswersThatNoReadLists)); }
+    void noteAnswersThatNoReadLists(const Members&);
+    void noteAnswersOfReadUnderUnknownKey(ValueFlowObjectID holder);
+    bool answersUnknownObjectUnderUnknownKeys(ValueFlowObjectID holder) { return isNativeModuleThatNobodyNames(holder) || m_builtins.canonicalID(m_universe.builtinOf(holder)) == Builtins::Bun; }
+    bool mayBeAnsweredWithoutBeingListed(BuiltinID member) const { return isObjectKind(m_builtins.at(member).kind) && m_builtins.at(member).kind != BuiltinKind::Prototype; }
+    bool mayBeReachedThroughUnknownObject(ClimbingSet objects)
+    {
+        if (hasEscaped(objects))
+            return true;
+        return isHostFlagRaised(m_context, ValueFlowHostNode::ObjectNobodyKnowsIsWritten) && (m_context.meet(objects, m_tables.classes()) || isAnswerThatNoReadLists(objects));
+    }
     bool hasBeenLost(ClimbingSet objects) { return m_context.holdsAnyOf(objects, ValueFlowProgramNodes::lost()); }
     bool hostNodeHoldsUnknownObject(ValueFlowHostNode node, std::optional<bool>& answer)
     {
@@ -227,6 +238,7 @@ private:
     void forEachNodeReadByName(ValueFlowName, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto&);
     void letPrototypeObjectsOfLanguageEscape() { add(ValueFlowProgramNodes::escaped(), m_tables.prototypeObjectsOfLanguage()); }
     void appendPrototypeAtCreation(ValueFlowObjectID, Members&) const;
+    uint64_t prototypesAtCreationInOneWord(ValueFlowObjectID) const;
     ValueSetID prototypesAtCreationOf(ClimbingSet);
     ValueSetID findPrototypesAtCreationOf(ClimbingSet);
 
@@ -282,6 +294,7 @@ private:
     bool endsAtPropertyOfCreation(ValueFlowObjectID receiver, const HeapKey&);
     ClimbingSet receiversThatLookPastPropertiesOfCreation(ClimbingSet receivers, const HeapKey&);
     ClimbingSet receiversBelowAccessorNobodyKnows(ClimbingSet start, const HeapKey&, HeapPropertyPart);
+    ClimbingSet objectsBelowWhatTheyWereCreatedBelow(ClimbingSet objects);
 
     void read(const ValueFlowOperand& object, const HeapKey&);
     void readOwn(ClimbingSet holders, ValueFlowName, ValueFlowNodeID result);
@@ -337,12 +350,15 @@ private:
     void copyProperties(const ValueFlowOperand& target, const ValueFlowOperand& source, CopiedProperties);
     bool readsRestArgumentOfInstance();
     bool readsKeyOrValueOfPair();
+    std::optional<ClimbingSet> objectsAndAllThatTheyInheritFrom(ClimbingSet);
     bool listsNamesOfEnumeration();
+    bool forEachNameHeldThatBeginsWith(StringID beginning, ClimbingSet receivers, const ScopedLambda<void(PropertyKeyID)>&);
     bool findsNoPropertyOfEngineUnderKeyBeginningWith(StringID beginning, ClimbingSet receivers);
     void readWhatNamesOfProgramMayHaveHidden(const HeapChain&, ValueFlowNodeID result, Members& getters);
     void readOwnPropertiesListedAbove(ClimbingSet objects, ValueFlowNodeID result, Members& getters);
     bool hasMemberOfHost(ValueFlowObjectID holder) const;
     enum class DefinedObject : bool { IsNew, MayHoldProperty };
+    bool saysOnlyWhetherPrototypeOfFunctionIsWritable(const ValueFlowOperand& object, const HeapKey&, ClimbingSet descriptors);
     void defineAsDescribed(const ValueFlowOperand& object, const HeapKey&, ClimbingSet descriptors, DefinedObject);
     void compareWithPropertyThatIsThere(const ValueFlowOperand& defined);
     void noteNameDefinedThroughObjectsNobodyFollows(const ValueFlowOperand& object, const HeapKey&);

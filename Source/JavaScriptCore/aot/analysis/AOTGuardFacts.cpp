@@ -123,7 +123,7 @@ static bool isDefinedOutside(FunctionAnalyses& analyses, ValueID definition)
     case ValuePlacement::InBlock: {
         const Value& value = analyses.function().at(definition);
         if (value.opcode == Opcode::GetHeapFrameWord)
-            return !isFrameWordWithAllocationGroup(analyses.function(), value);
+            return !isFrameWordWithAllocationGroup(analyses.function(), value) && !accessesLocalHeapWords(analyses.function(), value);
         return !opcodesThatMayGiveOwnObject.contains(value.opcode);
     }
     }
@@ -1053,6 +1053,11 @@ Vector<MemoryLocation, 2> locationsReadBy(const Value& test)
     Vector<MemoryLocation, 2> locations = declaredReadsOf(test, provesOf(test.opcode));
     if (provesOf(test.opcode) == Proof::NotFrozen)
         locations.removeAll(MemoryLocation(AbstractHeap::OrderWords));
+    if (test.opcode == Opcode::AreMembersUnchanged) {
+        for (LayoutID classLayout : classesWhoseBeginningMayEnd(test))
+            locations.append(beginningOfClass(classLayout));
+        AOT::sortInLine(locations);
+    }
     return locations;
 }
 

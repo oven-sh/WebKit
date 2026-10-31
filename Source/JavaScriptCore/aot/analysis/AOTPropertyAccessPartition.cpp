@@ -78,6 +78,9 @@ void mergeArmsWithSameMember(MemberPartition& partition, ArmsToMerge armsToMerge
 
 static bool mayAnswerLikeOtherLayouts(const Layout& layout)
 {
+    // It answers for reads of its fields alone, whatever a layout of this program with the same fields answers.
+    if (layout.has(LayoutFlags::IsOfImageBelow))
+        return false;
     switch (layout.kind) {
     case LayoutKind::Record:
     case LayoutKind::Container:
@@ -168,11 +171,12 @@ static MemberPartition partitionByAnswer(std::span<const LayoutID> candidates, N
     return result;
 }
 
-static MemberPartition computePartition(const PropertyAccessContext& context, std::span<const LayoutID> candidates, MemberQuery query)
+// `use` is handed what answers for one candidate after the other.
+static auto withAnswersFor(const PropertyAccessContext& context, std::span<const LayoutID> candidates, MemberQuery query, NOESCAPE const auto& use)
 {
     const Program& program = context.program;
     if (candidates.size() < PropertyAccessCache::fewestLayouts) {
-        return partitionByAnswer(candidates, [&](LayoutID layout) {
+        return use([&](LayoutID layout) {
             query.layout = layout;
             return findMember(context, query);
         });
@@ -245,7 +249,7 @@ static MemberPartition computePartition(const PropertyAccessContext& context, st
         oldestAnswerPastFields = (oldestAnswerPastFields + 1) % maxAnswersPastFields;
         return answer;
     };
-    return partitionByAnswer(candidates, [&](LayoutID layout) {
+    return use([&](LayoutID layout) {
         query.layout = layout;
         if (!layout || !query.key || !mayAnswerLikeOtherLayouts(program.at(layout)))
             return findMember(context, query);
@@ -255,6 +259,117 @@ static MemberPartition computePartition(const PropertyAccessContext& context, st
     });
 }
 
+static MemberPartition computePartition(const PropertyAccessContext& context, std::span<const LayoutID> candidates, const MemberQuery& query)
+{
+    return withAnswersFor(context, candidates, query, [&](const auto& answerFor) {
+        return partitionByAnswer(candidates, answerFor);
+    });
+}
+
+// The numbers of an answer. Most are those of no record: an answer names what its kind has.
+static void forEachNumberOf(auto& answer, NOESCAPE const auto& functor)
+{
+    functor(answer.holder);
+    functor(answer.field);
+    functor(answer.method);
+    functor(answer.getter);
+    functor(answer.setter);
+    functor(answer.variable);
+    functor(answer.module);
+    functor(answer.builtin);
+}
+
+static uint32_t wordOf(uint32_t number) { return number; }
+static uint32_t wordOf(const auto& id) { return id.index(); }
+
+// How many arms; how many layouts are the rest; those layouts. Then each arm: kind, level, cause and which numbers follow; how many layouts, and whether proofs follow; how many conditions;
+// the proofs; the numbers; the layouts; the conditions.
+PackedMemberPartition::PackedMemberPartition(const MemberPartition& partition)
+{
+    static_assert(sizeof(ProofSet) == sizeof(uint64_t));
+    constexpr size_t mostWordsOfArmWithoutLists = 3 + 2 + 8;
+    size_t mostWords = 2 + partition.rest.size() + mostWordsOfArmWithoutLists * partition.arms.size();
+    for (const MemberArm& arm : partition.arms)
+        mostWords += arm.layouts.size() + 3 * arm.answer.conditions.size();
+    Vector<uint32_t, 256> words;
+    words.reserveInitialCapacity(mostWords);
+
+    words.append(static_cast<uint32_t>(partition.arms.size()));
+    words.append(static_cast<uint32_t>(partition.rest.size()));
+    words.append(spanReinterpretCast<const uint32_t>(partition.rest.span()));
+    for (const MemberArm& arm : partition.arms) {
+        const MemberAnswer& answer = arm.answer;
+        bool hasProofs = !answer.receiverProofs.isEmpty();
+        RELEASE_ASSERT(arm.layouts.size() <= UINT32_MAX >> 1);
+        size_t first = words.size();
+        words.append(static_cast<uint32_t>(answer.kind) | static_cast<uint32_t>(answer.level) << 8 | static_cast<uint32_t>(answer.cause) << 16);
+        words.append(static_cast<uint32_t>(arm.layouts.size()) << 1 | static_cast<uint32_t>(hasProofs));
+        words.append(static_cast<uint32_t>(answer.conditions.size()));
+        if (hasProofs) {
+            uint64_t proofs = std::bit_cast<uint64_t>(answer.receiverProofs);
+            words.append(static_cast<uint32_t>(proofs));
+            words.append(static_cast<uint32_t>(proofs >> 32));
+        }
+        uint32_t bit = 1u << 24;
+        forEachNumberOf(answer, [&](const auto& number) {
+            if (number != std::remove_cvref_t<decltype(number)>()) {
+                words[first] |= bit;
+                words.append(wordOf(number));
+            }
+            bit <<= 1;
+        });
+        words.append(spanReinterpretCast<const uint32_t>(arm.layouts.span()));
+        for (const MemberCondition& condition : answer.conditions) {
+            words.append(static_cast<uint32_t>(condition.kind) | static_cast<uint32_t>(condition.side) << 8);
+            words.append(condition.layout.index());
+            words.append(condition.key.index());
+        }
+    }
+    m_words = Vector<uint32_t>(words.span());
+}
+
+MemberPartition PackedMemberPartition::unpack() const
+{
+    std::span<const uint32_t> words = m_words.span();
+    size_t next = 0;
+    auto takeLayouts = [&](LayoutList& layouts, uint32_t count) {
+        for (uint32_t layout : words.subspan(next, count))
+            layouts.add(LayoutID(layout));
+        next += count;
+    };
+    MemberPartition partition;
+    uint32_t numberOfArms = words[next++];
+    uint32_t sizeOfRest = words[next++];
+    takeLayouts(partition.rest, sizeOfRest);
+    partition.arms.grow(numberOfArms);
+    for (MemberArm& arm : partition.arms) {
+        MemberAnswer& answer = arm.answer;
+        uint32_t first = words[next++];
+        uint32_t second = words[next++];
+        uint32_t numberOfConditions = words[next++];
+        answer.kind = static_cast<MemberKind>(first & 0xff);
+        answer.level = static_cast<KnowledgeLevel>(first >> 8 & 0xff);
+        answer.cause = static_cast<UnprovenCause>(first >> 16 & 0xff);
+        if (second & 1) {
+            answer.receiverProofs = std::bit_cast<ProofSet>(static_cast<uint64_t>(words[next]) | static_cast<uint64_t>(words[next + 1]) << 32);
+            next += 2;
+        }
+        uint32_t bit = 1u << 24;
+        forEachNumberOf(answer, [&](auto& number) {
+            if (first & bit)
+                number = std::remove_cvref_t<decltype(number)>(words[next++]);
+            bit <<= 1;
+        });
+        takeLayouts(arm.layouts, second >> 1);
+        for (; numberOfConditions; --numberOfConditions) {
+            answer.conditions.append(MemberCondition { static_cast<MemberCondition::Kind>(words[next] & 0xff), LayoutID(words[next + 1]), static_cast<ClassSide>(words[next] >> 8 & 0xff), PropertyKeyID(words[next + 2]) });
+            next += 3;
+        }
+    }
+    RELEASE_ASSERT(next == words.size());
+    return partition;
+}
+
 static MemberPartition partition(const PropertyAccessContext& context, std::span<const LayoutID> candidates, const MemberQuery& query)
 {
     PropertyAccessCache* cache = context.program.propertyAccessCache();
@@ -262,9 +377,21 @@ static MemberPartition partition(const PropertyAccessContext& context, std::span
         return computePartition(context, candidates, query);
 
     PropertyAccessCache::PartitionKey key { cache->lists.idOf(candidates), query.key, query.access, query.isOwnLookup, context.flow };
-    return findOrCompute(cache->partitions, key, computeHash(key.candidates, key.key, key.access, key.isOwnLookup, key.flow), [&] {
-        return PropertyAccessCache::Partition { key, computePartition(context, candidates, query) };
-    }).value;
+    uint32_t hash = computeHash(key.candidates, key.key, key.access, key.isOwnLookup, key.flow);
+    auto isWanted = [&](const PropertyAccessCache::Partition& entry) {
+        return entry.key == key;
+    };
+    if (const PropertyAccessCache::Partition* known = cache->partitions.find(hash, isWanted))
+        return known->value.unpack();
+    MemberPartition computed = computePartition(context, candidates, query);
+    const PropertyAccessCache::Partition& kept = cache->partitions.add(hash, { key, PackedMemberPartition(computed) }, isWanted);
+    if (cache->checksAnswers) [[unlikely]] {
+        MemberPartition unpacked = kept.value.unpack();
+        RELEASE_ASSERT(unpacked.rest == computed.rest && std::ranges::equal(unpacked.arms, computed.arms, [](const MemberArm& a, const MemberArm& b) {
+            return a.answer == b.answer && a.layouts == b.layouts;
+        }));
+    }
+    return computed;
 }
 
 MemberPartition partitionMembers(const PropertyAccessContext& context, std::span<const LayoutID> candidates, PropertyKeyID key, Access access)
@@ -275,6 +402,24 @@ MemberPartition partitionMembers(const PropertyAccessContext& context, std::span
 MemberPartition partitionOwnMembers(const PropertyAccessContext& context, std::span<const LayoutID> candidates, PropertyKeyID key)
 {
     return partition(context, candidates, { MemberStart::Instance, { }, key, Access::Has, true });
+}
+
+bool readsMethodOfEachWithoutTests(const PropertyAccessContext& context, std::span<const LayoutID> candidates, PropertyKeyID key)
+{
+    auto isMethodWithoutTests = [](const MemberAnswer& answer) {
+        return answer.kind == MemberKind::Method && answer.receiverProofs.isEmpty() && answer.conditions.isEmpty();
+    };
+    MemberQuery query { MemberStart::Instance, { }, key, Access::Read, false };
+    bool result = withAnswersFor(context, candidates, query, [&](const auto& answerFor) {
+        return std::ranges::all_of(candidates, [&](LayoutID layout) {
+            return isMethodWithoutTests(answerFor(layout));
+        });
+    });
+    if (PropertyAccessCache* cache = context.program.propertyAccessCache(); cache && cache->checksAnswers) [[unlikely]] {
+        MemberPartition partition = computePartition(context, candidates, query);
+        RELEASE_ASSERT(result == (partition.rest.isEmpty() && std::ranges::all_of(partition.arms, isMethodWithoutTests, &MemberArm::answer)));
+    }
+    return result;
 }
 
 const MemberArm* MemberPartition::findArm(MemberKind kind) const

@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinIDs.h"
 #include "AOTFlowRecords.h"
+#include "AOTPhaseTimes.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTSort.h"
 #include "AOTValueFlowRulesHeap.h"
@@ -123,6 +124,7 @@ LedgerOfClassesAndClosures::LedgerOfClassesAndClosures(const ValueFlowResultInpu
 
 void LedgerOfClassesAndClosures::findPrototypeObjectsThatProgramStores(ValueSetMaker& maker)
 {
+    PhaseTimes times(m_inputs.build, PassID::AnalyzeFlow);
     const Program& program = m_inputs.program;
     const ValueFlowUniverse& universe = m_inputs.universe();
     const ValueSets& sets = m_inputs.sets();
@@ -190,6 +192,7 @@ void LedgerOfClassesAndClosures::findPrototypeObjectsThatProgramStores(ValueSetM
         return m_storedPrototypeObjectsByClass[index].second;
     });
     m_otherHolders = maker.of(holders.span());
+    times.didFinish("ledger: classes and closures: prototype objects that the program stores"_s);
 }
 
 std::span<const ValueFlowObjectID> LedgerOfClassesAndClosures::prototypeObjectsStoredFor(LayoutID classLayout) const
@@ -225,6 +228,7 @@ bool LedgerOfClassesAndClosures::isHolder(ValueFlowObjectID object) const
 
 void LedgerOfClassesAndClosures::fileWrites(ValueSetMaker& maker)
 {
+    PhaseTimes times(m_inputs.build, PassID::AnalyzeFlow);
     const Program& program = m_inputs.program;
     const ValueFlowUniverse& universe = m_inputs.universe();
     const ValueSets& sets = m_inputs.sets();
@@ -241,7 +245,8 @@ void LedgerOfClassesAndClosures::fileWrites(ValueSetMaker& maker)
     Vector<SetsMeetingOneSet> setsWithHolders(loops.width(), [&](size_t) {
         return SetsMeetingOneSet(sets, holders);
     });
-    Vector<Vector<FiledWrite>> filedOfStretch(stretches.size());
+    times.didFinish("ledger: classes and closures: writes: holders, stretches"_s);
+    Vector<Vector<FiledWrite>> filedOfStretch(stretches.size() + 1);
     forEachIndexInParallel(loops, stretches.size(), [&](unsigned position, unsigned worker) {
         ValueFlowName name = stretches[position].name;
         Group group = *groupOf(name);
@@ -261,26 +266,33 @@ void LedgerOfClassesAndClosures::fileWrites(ValueSetMaker& maker)
         }
     });
 
-    Vector<FiledWrite> filed;
-    for (Vector<FiledWrite>& ofStretch : filedOfStretch)
-        filed.appendVector(WTF::move(ofStretch));
+    times.didFinish("ledger: classes and closures: writes: found"_s);
+    Vector<FiledWrite>& filedForMarks = filedOfStretch.last();
     auto fileWhatIsMarked = [&](ValueFlowObjectID holder) {
         OptionSet<ObjectMutation> marked = markedMutationsOf(m_inputs, holder);
         auto file = [&](ObjectMutation mutation, WriteForm form, ValueFlowName under) {
             if (marked.contains(mutation))
-                filed.append({ holder.index(), Group::WholeObject, 0, Write { .actor = Actor::Statements, .form = form, .arrives = ValueSets::nothing, .under = under, .through = ValueSets::nothing, .seenToArrive = ValueSets::nothing } });
+                filedForMarks.append({ holder.index(), Group::WholeObject, 0, Write { .actor = Actor::Statements, .form = form, .arrives = ValueSets::nothing, .under = under, .through = ValueSets::nothing, .seenToArrive = ValueSets::nothing } });
         };
         file(ObjectMutation::DeleteField, WriteForm::Delete, ValueFlowName::of(ValueFlowNameKind::DeletedMemberUnderUnknownKey));
         file(ObjectMutation::RedefineProperty, WriteForm::Define, ValueFlowName::of(ValueFlowNameKind::RedefinedMemberUnderUnknownKey));
         file(ObjectMutation::ChangeIntegrity, WriteForm::Freeze, everyOwnPropertyName);
     };
     sets.forEachMember(holders, fileWhatIsMarked);
-    for (uint32_t index = 0; index < filed.size(); ++index)
-        filed[index].sequence = index;
+    times.didFinish("ledger: classes and closures: writes: marks"_s);
+    Vector<FiledWrite> filed = joinChunks<FiledWrite>(loops, WTF::move(filedOfStretch));
+    constexpr size_t writesPerTask = 1 << 16;
+    forEachIndexInParallel(loops, static_cast<unsigned>((filed.size() + writesPerTask - 1) / writesPerTask), [&](unsigned task) {
+        size_t end = std::min(filed.size(), (task + 1) * writesPerTask);
+        for (size_t index = task * writesPerTask; index < end; ++index)
+            filed[index].sequence = static_cast<uint32_t>(index);
+    });
+    times.didFinish("ledger: classes and closures: writes: joined"_s);
     parallelSort(loops, filed.mutableSpan(), [](const FiledWrite& a, const FiledWrite& b) {
         return a.order() < b.order();
     });
 
+    times.didFinish("ledger: classes and closures: writes: sorted"_s);
     m_writes.reserveInitialCapacity(filed.size());
     for (size_t first = 0, end = 0; first < filed.size(); first = end) {
         uint32_t holder = filed[first].holder;
@@ -321,10 +333,12 @@ void LedgerOfClassesAndClosures::fileWrites(ValueSetMaker& maker)
         }
         m_writesOfHolders.append(writes);
     }
+    times.didFinish("ledger: classes and closures: writes: filed by holder"_s);
 }
 
 void LedgerOfClassesAndClosures::findLinks(ValueSetMaker& maker)
 {
+    PhaseTimes times(m_inputs.build, PassID::AnalyzeFlow);
     const Program& program = m_inputs.program;
     const ValueFlowUniverse& universe = m_inputs.universe();
     const ValueFlowHeapIndex& heapIndex = *m_inputs.heapIndex;
@@ -344,6 +358,7 @@ void LedgerOfClassesAndClosures::findLinks(ValueSetMaker& maker)
             m_nodesOfMarks.add(m_inputs.solver().keyOfMadeNode(node)->payload, node);
     }
 
+    times.didFinish("ledger: classes and closures: links: prototypes of classes, nodes of marks"_s);
     Vector<WrittenNode> storesToPrototypePropertyOfOtherObjects;
     Vector<WrittenNode> copies;
     ValueFlowName prototypeProperty = ValueFlowName::property(program.keyOf(BuiltinNames::prototype));
@@ -376,6 +391,7 @@ void LedgerOfClassesAndClosures::findLinks(ValueSetMaker& maker)
         }
     }
 
+    times.didFinish("ledger: classes and closures: links: written nodes"_s);
     auto standsForMemberOf = [&](ValueSetID holdingPlaceholder, ValueSetID other) {
         return (sets.contains(holdingPlaceholder, ValueFlowUniverse::unknownObject()) && sets.meet(other, m_inputs.solver().possibleValuesOf(ValueFlowProgramNodes::escaped())))
             || (sets.contains(holdingPlaceholder, ValueFlowUniverse::untrackedObject()) && sets.meet(other, m_inputs.solver().possibleValuesOf(ValueFlowProgramNodes::lost())));
@@ -393,58 +409,12 @@ void LedgerOfClassesAndClosures::findLinks(ValueSetMaker& maker)
             hasGrown = true;
         }
     }
+    times.didFinish("ledger: classes and closures: links: sources of copies"_s);
     for (const WrittenNode& store : storesToPrototypePropertyOfOtherObjects) {
         if (mayShareObject(store.objects, sources))
             unite(m_objectsLinkedAbove, store.value);
     }
-}
-
-static constexpr bool looksIntoObject(ValueFlowNameKind kind)
-{
-    switch (kind) {
-    case ValueFlowNameKind::Property:
-    case ValueFlowNameKind::Getter:
-    case ValueFlowNameKind::Setter:
-    case ValueFlowNameKind::Elements:
-    case ValueFlowNameKind::UnknownKey:
-    case ValueFlowNameKind::GetterUnderUnknownKey:
-    case ValueFlowNameKind::SetterUnderUnknownKey:
-    case ValueFlowNameKind::EveryProperty:
-    case ValueFlowNameKind::EveryGetter:
-    case ValueFlowNameKind::EverySetter:
-    case ValueFlowNameKind::PrototypeLink:
-    case ValueFlowNameKind::CopiedFrom:
-    case ValueFlowNameKind::DeletedMember:
-    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
-    case ValueFlowNameKind::RedefinedMember:
-    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
-    case ValueFlowNameKind::PrivateField:
-    case ValueFlowNameKind::OpenedIterators:
-    case ValueFlowNameKind::IteratedValues:
-    case ValueFlowNameKind::IteratorResults:
-    case ValueFlowNameKind::AwaitedValue:
-    case ValueFlowNameKind::MemberWritten:
-    case ValueFlowNameKind::EveryMemberWritten:
-    case ValueFlowNameKind::EveryMemberRead:
-    case ValueFlowNameKind::AddedNames:
-        return true;
-    case ValueFlowNameKind::Slot:
-    case ValueFlowNameKind::HiddenSlot:
-    case ValueFlowNameKind::InternalFields:
-    case ValueFlowNameKind::SteppedValues:
-    case ValueFlowNameKind::ReturnedValue:
-    case ValueFlowNameKind::SentValues:
-    case ValueFlowNameKind::OpenedBy:
-    case ValueFlowNameKind::ResolvedPromises:
-    case ValueFlowNameKind::RejectedPromises:
-    case ValueFlowNameKind::AllocatedAs:
-    case ValueFlowNameKind::RestArgument:
-    case ValueFlowNameKind::FoundThroughEscapedInstances:
-    case ValueFlowNameKind::NamesOfMethods:
-    case ValueFlowNameKind::NamespaceExports:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+    times.didFinish("ledger: classes and closures: links: stores to other objects"_s);
 }
 
 void LedgerOfClassesAndClosures::findCallablesLookedInto(ValueSetMaker& maker)
@@ -455,6 +425,7 @@ void LedgerOfClassesAndClosures::findCallablesLookedInto(ValueSetMaker& maker)
     };
     constexpr uint32_t nodesPerTask = 4096;
 
+    PhaseTimes times(m_inputs.build, PassID::AnalyzeFlow);
     const ValueFlowSolver& solver = m_inputs.solver();
     ValueSetID callables = m_inputs.universe().callables();
     uint32_t firstMadeNode = solver.input().numberOfNodes;
@@ -487,11 +458,13 @@ void LedgerOfClassesAndClosures::findCallablesLookedInto(ValueSetMaker& maker)
                 ofWorker.callablesInSets.append(makers.of(worker).intersect(key.set, callables));
         }
     });
+    times.didFinish("ledger: classes and closures: callables looked into: found"_s);
     Vector<ValueSetID> callablesInSets;
     for (FoundByWorker& ofWorker : foundByWorker)
         callablesInSets.appendVector(WTF::move(ofWorker.callablesInSets));
     sortAndRemoveDuplicates(m_inputs.loops(), callablesInSets);
     m_callablesLookedInto = maker.uniteAll(callablesInSets.span());
+    times.didFinish("ledger: classes and closures: callables looked into: united"_s);
 }
 
 std::array<ValueFlowObjectID, 3> LedgerOfClassesAndClosures::standInsOf(ValueFlowObjectID object) const
@@ -556,6 +529,7 @@ bool LedgerOfClassesAndClosures::forEachClassRightAbove(LayoutID classLayout, NO
 // Each class is looked at once. A walk up from every object takes the square of the length of a chain of classes, for each object.
 void LedgerOfClassesAndClosures::findClassesBelowUnknownMakers()
 {
+    PhaseTimes times(m_inputs.build, PassID::AnalyzeFlow);
     const Program& program = m_inputs.program;
     Vector<std::pair<uint32_t, uint32_t>> classesRightBelow;
     Vector<uint32_t> classesToVisit;
@@ -574,6 +548,7 @@ void LedgerOfClassesAndClosures::findClassesBelowUnknownMakers()
                 classesToVisit.append(below);
         }
     }
+    times.didFinish("ledger: classes and closures: classes below unknown makers"_s);
 }
 
 bool LedgerOfClassesAndClosures::everyMakerListsOwnNames(LayoutID layout) const

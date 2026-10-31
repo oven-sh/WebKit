@@ -470,7 +470,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTObjectAssignWithoutCode, size_t, (Instance*
         OPERATION_RETURN(scope, true);
     if (!source.isObject())
         OPERATION_RETURN(scope, false);
-    if (Object* compiled = compiledObjectOrNull(source); compiled && compiled->layout().kind() == LayoutKind::Record && !compiled->hasFlagsInOrderWord() && !countOf(compiled->orderWord()))
+    if (Object* compiled = compiledObjectOrNull(source); compiled && compiled->layout().kind() == LayoutKind::Record && !compiled->hasFlagsInOrderWord() && !compiled->hasOutOfLineKeyOrder() && !countOf(compiled->orderWord()))
         OPERATION_RETURN(scope, true);
     JSObject* object = cellArgument<JSObject>(target, Entry::operationAOTObjectAssignWithoutCode);
     JSObject* from = asObject(source);
@@ -499,7 +499,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTObjectAssignToUnseenObject, size_t, (Instan
         OPERATION_RETURN(scope, true);
     if (!source.isObject())
         OPERATION_RETURN(scope, false);
-    if (Object* compiled = compiledObjectOrNull(source); compiled && compiled->layout().kind() == LayoutKind::Record && !compiled->hasFlagsInOrderWord() && !countOf(compiled->orderWord()))
+    if (Object* compiled = compiledObjectOrNull(source); compiled && compiled->layout().kind() == LayoutKind::Record && !compiled->hasFlagsInOrderWord() && !compiled->hasOutOfLineKeyOrder() && !countOf(compiled->orderWord()))
         OPERATION_RETURN(scope, true);
     JSObject* object = cellArgument<JSObject>(target, Entry::operationAOTObjectAssignToUnseenObject);
     JSObject* from = asObject(source);

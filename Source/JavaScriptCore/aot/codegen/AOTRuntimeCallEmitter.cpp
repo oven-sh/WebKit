@@ -53,6 +53,9 @@ struct CallGenerator {
     std::optional<ThrowSite> throwSite;
     std::optional<OperationCall> preservingCall;
     std::optional<MarkOfCallWithoutSite> mark;
+    std::optional<StubKey> keyWhereNoRegisterIsKept;
+    std::optional<StubKey> keyWhereNoFPRIsKept;
+    bool overlooksKeptFPRs { false };
 };
 
 struct ReturnTraits {
@@ -183,6 +186,17 @@ void CallGenerator::generate(CCallHelpers& jit, const B3::StackmapGenerationPara
         called = callOperationPreservingRegisters(call);
         moves = moveArguments(jit, params);
     }
+    if (keyWhereNoRegisterIsKept || keyWhereNoFPRIsKept) {
+        RegisterSet kept = RegisterSet::registersToSaveForCCall(params.usedRegisters());
+        if (signature.firstResult)
+            kept.remove(signature.firstResult);
+        if (signature.secondResult)
+            kept.remove(signature.secondResult);
+        if (keyWhereNoRegisterIsKept && kept.isEmpty())
+            called = *keyWhereNoRegisterIsKept;
+        else if (keyWhereNoFPRIsKept && (!kept.numberOfSetFPRs() || overlooksKeptFPRs))
+            called = *keyWhereNoFPRIsKept;
+    }
     if (receiverIsInAnyRegister) {
         GPRReg receiver = params[signature.result == StubResult::None ? 0 : 1].gpr();
         if (std::optional<StubKey> variant = tryWithOperandRegister(called, receiver))
@@ -218,10 +232,10 @@ static bool acceptsAnyReceiverRegister(StubKey key, const StubSignature& signatu
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A leaf calls nothing and leaves the stack as it found it. On x86-64 the call itself stores the return address, so the caller needs no frame for it.
+// A leaf calls nothing and leaves the stack as it found it. On x86-64 the call itself stores the return address, so the caller needs no frame for it. Nor for a stub below which nobody walks the stack.
 bool leavesCallerWithoutFrame(StubKey key)
 {
-    return isX86_64() && descriptorOf(key.family()).leafness == StubLeafness::Leaf;
+    return isX86_64() && descriptorOf(key.family()).leafness != StubLeafness::MayCall;
 }
 
 static RegisterSet lateClobbersOf(const StubCatalog& catalog, StubKey key, bool receiverIsInAnyRegister, const StubSignature& signature, const RegisterSet& additionalClobbers)
@@ -696,7 +710,17 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     std::optional<MarkOfCallWithoutSite> mark;
     if (generator().validates() && !hasSite)
         mark = MarkOfCallWithoutSite { context ? context->valueID() : ValueID(), CalledCode::encode(request.entry ? CalledCode::Kind::Operation : CalledCode::Kind::Stub, calleeNumber) };
-    CallGenerator callGenerator { &m_records, key, signature, receiverIsInAnyRegister, branchesOnFlags, neverReturns, options.immediate, site, firstRead, options.throwSite, request.preservingCall, mark };
+    // Only where that form differs: most stubs have none, or read what they saved themselves.
+    auto formThatDiffers = [&](CallerFrame callerFrame) -> std::optional<StubKey> {
+        StubKey form = key.withCallerFrame(callerFrame);
+        if (key.callerFrame() == CallerFrame::HasFrame && exists(form) && !neverReturns && !receiverIsInAnyRegister && !request.firstRead && !options.throwSite && !request.preservingCall
+            && catalog.summaryOf(boundKeyOf(catalog, form, options.immediate)).clobbered != catalog.summaryOf(boundKey).clobbered)
+            return form;
+        return std::nullopt;
+    };
+    std::optional<StubKey> keyWhereNoRegisterIsKept = formThatDiffers(CallerFrame::KeepsNoRegisters);
+    std::optional<StubKey> keyWhereNoFPRIsKept = formThatDiffers(CallerFrame::KeepsNoFPRs);
+    CallGenerator callGenerator { &m_records, key, signature, receiverIsInAnyRegister, branchesOnFlags, neverReturns, options.immediate, site, firstRead, options.throwSite, request.preservingCall, mark, keyWhereNoRegisterIsKept, keyWhereNoFPRIsKept, build().recordedOptions().isSabotaged(Sabotage::CallersKeepNoFPRs) };
     patchpoint->setGenerator([callGenerator = WTF::move(callGenerator)](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         callGenerator.generate(jit, params);
     });

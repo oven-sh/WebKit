@@ -67,6 +67,8 @@ struct FieldArmState {
     bool holdsRawNumberOrBoolean { true };
     bool holdsRawValuesWhileCellIsUnmarked { true };
     bool holdsRawValueFromBirthInSomeMember { false };
+    // The image holds its slots to types of its own, which may be narrower than what this program knows of them, and whoever stores keeps the marks of its cells: a store goes by name.
+    bool isOfImageBelowInSomeMember { false };
     bool holdsOnlyListedFunctions { true };
     bool slotsHoldUndefinedAndNull { true };
     bool createdOnlyAtConstruction { true };

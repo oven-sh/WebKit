@@ -34,7 +34,9 @@ public:
     std::optional<ValueID> membersThatFillLiteral(BlockID, ValueID literal);
     // Cleared: every element is a hole. Not cleared: whoever asks fills all of them before anything else runs, so nobody sees what lies there.
     enum class ElementsBelowLength : bool { Cleared, NotCleared };
-    CellPointer allocateArrayOfHoles(const OperationContext&, Integer length, const ArrayStorageForm&, LBasicBlock slowPath, ElementsBelowLength = ElementsBelowLength::Cleared);
+    enum class LengthIsSetBy : bool { Allocation, Caller };
+    CellPointer allocateArrayOfHoles(const OperationContext&, Integer length, const ArrayStorageForm&, LBasicBlock slowPath, ElementsBelowLength = ElementsBelowLength::Cleared, LengthIsSetBy = LengthIsSetBy::Allocation);
+    void setLengthOfNewArray(CellPointer, Integer length);
 
     CellPointer allocateEmptyArrayWithStorage(const OperationContext&, Integer header, Integer capacity, LBasicBlock slowPath);
     CellPointer allocateArrayCell(Integer header, Pointer butterfly, LBasicBlock slowPath);

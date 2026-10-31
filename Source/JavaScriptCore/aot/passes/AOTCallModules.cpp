@@ -29,15 +29,20 @@
 #include <wtf/BitVector.h>
 #include <wtf/HashSet.h>
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
 using ModuleList = Vector<uint32_t, 4>;
-// A function to call, or a module that keeps no status itself and has run by then.
+// A function to call, or a module that keeps no status itself and has run by then, or one that begins there.
 struct ModuleStep {
     FunctionID callee;
     ModuleID moduleThatHasRun;
+    ModuleID moduleThatBegins;
 };
 using ModuleCallees = Vector<ModuleStep, 1>;
 
@@ -439,14 +444,19 @@ static void walkFrom(EvaluationPlan& plan, ModuleID first)
         const Vector<ModuleCallSite>& bareSites = plan.bareSites[index];
         uint32_t edge = frame.nextEdge++;
         if (edge == imports.size() + bareSites.size()) {
+            bool isListed = index != first.index() && program.modules[index].flags.contains(ModuleFlags::IsListedInCache);
             if (index != first.index() && plan.hasNoState.quickGet(index) && plan.startsItself.quickGet(index)) {
                 FunctionID body = program.modules[index].body;
-                if (!onlyReturns(program.at(body)))
-                    frame.callees->append(ModuleStep { body, { } });
+                if (!onlyReturns(program.at(body))) {
+                    // A CommonJS file finds its own module in require.cache while it runs.
+                    if (isListed && program.modules[index].kind == ModuleKind::CommonJs)
+                        frame.callees->append(ModuleStep { { }, { }, ModuleID(index) });
+                    frame.callees->append(ModuleStep { body, { }, { } });
+                }
             }
             // require.cache of a test run lists the files that have run.
-            if (index != first.index() && program.modules[index].flags.contains(ModuleFlags::IsListedInCache))
-                frame.callees->append(ModuleStep { { }, ModuleID(index) });
+            if (isListed)
+                frame.callees->append(ModuleStep { { }, ModuleID(index), { } });
             stack.removeLast();
             continue;
         }
@@ -465,7 +475,7 @@ static void walkFrom(EvaluationPlan& plan, ModuleID first)
         if (plan.hasNoState.quickGet(target) || (plan.isWalkedByCode.quickGet(target) && !plan.startsItself.quickGet(target)))
             stack.append(Frame { target, 0, callees });
         else if (plan.startsItself.quickGet(target))
-            callees->append(ModuleStep { program.modules[target].body, { } });
+            callees->append(ModuleStep { program.modules[target].body, { }, { } });
     }
 }
 
@@ -499,6 +509,10 @@ static void addStep(const Program& program, const ModuleStep& step, BuiltinID ca
 {
     if (step.callee) {
         addCallOfModule(program, step.callee, calledBuiltin, add);
+        return;
+    }
+    if (step.moduleThatBegins) {
+        add(makeModuleOperation(Opcode::BeginModuleEvaluation, step.moduleThatBegins));
         return;
     }
     // The loader may hold the status in a record, and the run time takes it from there.
@@ -636,6 +650,9 @@ static bool asksWhoRequiredWhom(const Program& program, const FlowResults& flow)
     if (!namesWaysToModuleObjects(program))
         return false;
     if (!flow.hasResults() || !flow.unseenCode().empty() || flow.storesPathOfMainModule())
+        return true;
+    // `require.cache[path].children`: nobody follows an entry of the table to the module object that it is.
+    if (std::ranges::any_of(program.modules, [](const Module& module) { return module.flags.contains(ModuleFlags::IsShownByEntryOfCache); }))
         return true;
     // `if (!module.parent)` asks whether somebody has required the file. `children` is a list whoever has required what.
     if (!flow.usesOf(Builtins::ModuleObjectParent).isEmpty() || !(flow.usesOf(Builtins::ModuleObjectChildren) - BuiltinUse::Tested).isEmpty())
@@ -816,9 +833,9 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
         }
         isStart.quickSet(target);
     }
-    // A mock marks a CommonJS file as evaluated before anything has run it, and require.cache lists what has run, so the file has a status.
+    // A mock marks a CommonJS file as evaluated before anything has run it, so the file has a status.
     for (size_t index = 0; index < modules.size(); ++index) {
-        if (modules[index].kind == ModuleKind::CommonJs && (modules[index].flags.contains(ModuleFlags::MayBeMocked) || modules[index].flags.contains(ModuleFlags::IsListedInCache)))
+        if (modules[index].kind == ModuleKind::CommonJs && modules[index].flags.contains(ModuleFlags::MayBeMocked))
             isStart.quickSet(index);
     }
     // A program of another image of the realm imports or requires a file of data of this one by its path, whether or not the module of this image that imports it has run.
@@ -943,8 +960,8 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
     for (uint32_t index : modulesWithState) {
         const Module& module = modules[index];
         const ModuleCallees& steps = plan.steps[index];
-        bool callsNothing = std::ranges::none_of(steps, [](const ModuleStep& step) { return !!step.callee; });
-        if (!plan.startsItself.quickGet(index) || (callsNothing && !isCalled.quickGet(module.body.index())))
+        // A step that marks a file of a test run as one that has run is work too: the loader marks nothing that has no state.
+        if (!plan.startsItself.quickGet(index) || (steps.isEmpty() && !isCalled.quickGet(module.body.index())))
             continue;
         // An ES module that failed throws the same error at everybody who asks for it later. What a CommonJS module does is written in its record: a wrapper of a bundler counts as done once it has begun.
         bool keepsError = module.kind != ModuleKind::CommonJs || module.flags.contains(ModuleFlags::KeepsError);
@@ -1064,5 +1081,9 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

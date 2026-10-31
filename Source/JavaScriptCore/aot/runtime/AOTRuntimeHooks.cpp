@@ -191,6 +191,8 @@ void didChangeMicrotaskQueueing(VM& vm)
         if (instance->awaitMustSuspend)
             instance->coroutines.frameThatMayContinue = nullptr;
     }
+    if (vm.hostObservesMicrotaskBoundaries() && vm.aotState().modulesWhoseFilesRunAheadOfLoader) [[unlikely]]
+        runFilesThatWaitInLoader(vm);
 }
 
 CONCURRENT_SAFE void setLoopPollsEnabled(VM& vm, bool enabled)

@@ -652,10 +652,37 @@ static void followFunctionsOfSeenCode(ValueFlowRuleContext& context)
 }
 
 // The first statement runs again each time seen code calls one more function of the library. The entry points are left to the others.
+// The code of the images below makes its records out of sight and keeps them: whatever holds a value that nobody knows may hold one.
+static void letImagesBelowMakeRecords(ValueFlowRuleContext& context)
+{
+    const Program& program = context.program();
+    if (program.recordsOfImagesBelow.isEmpty())
+        return;
+    Vector<ValueFlowObjectID, 16> records(program.recordsOfImagesBelow.size(), [&](size_t index) {
+        return context.universe().instanceOf(program.recordsOfImagesBelow[index].layout);
+    });
+    ValueSetID made = context.maker().of(records.span());
+    context.add(context.written(ClimbingSet(made), prototypeLinkName), only(context, context.universe().objectOf(Builtins::ObjectPrototype)));
+    ValueSetID unknown = unknownValue(context, ValueFlowUnknownSource::ContentsOfEscapedObject);
+    context.add(context.written(ClimbingSet(made), unknownKeyName), unknown);
+    // The prototype object of a class of another image is an object that nobody knows.
+    if (std::ranges::any_of(program.recordsOfImagesBelow, &Program::RecordOfImageBelow::isInstanceOfClass))
+        context.add(context.written(ClimbingSet(made), prototypeLinkName), unknown);
+    context.add(ValueFlowProgramNodes::escaped(), made);
+}
+
 void runHostRoots(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     const Program& program = context.program();
     const ValueFlowUniverse& universe = context.universe();
+    if (!partOf(statement)) {
+        letImagesBelowMakeRecords(context);
+        // `Object.values(require.cache)[0].exports`: whoever gets at an entry of the table has all that its file exports, whether or not a `require` of the program keeps its answer.
+        for (uint32_t index = 0; index < program.modules.size(); ++index) {
+            if (program.modules[index].flags.contains(ModuleFlags::IsShownByEntryOfCache))
+                connect(context, requiredValueOf(context, ModuleID(index)), ValueFlowProgramNodes::escaped());
+        }
+    }
     std::span<const Entry> entries = program.entries.span();
     if (!numberOfPartsOfEntries(program))
         followFunctionsOfSeenCode(context);
@@ -708,12 +735,15 @@ bool refusesAllSourceText(const BuiltinTable& builtins, BuiltinID builtin, Refus
 std::optional<UnseenCodeCause> eventOfCalling(const BuiltinTable& builtins, BuiltinID builtin, RefusedCode refused)
 {
     const Builtin& entry = builtins.at(builtin);
-    if (entry.flags.contains(BuiltinFlag::LoadsModuleByName))
-        return refused.codeOutsideImage || loadsOnlyLibraryModules(builtin) ? UnseenCodeCause::LoadsModuleByName : UnseenCodeCause::LoadsCodeByName;
+    // `module._compile(text)` hands the text a require, so it loads what the text names: nothing where the text is refused.
     if (refusesAllSourceText(builtins, builtin, refused))
         return std::nullopt;
-    if (entry.flags.contains(BuiltinFlag::EvaluatesText))
+    bool loadsFromImageAlone = refused.codeOutsideImage || loadsOnlyLibraryModules(builtin);
+    // A load of a module of the image runs no code that nobody has read. The text does.
+    if (entry.flags.contains(BuiltinFlag::EvaluatesText) && (loadsFromImageAlone || !entry.flags.contains(BuiltinFlag::LoadsModuleByName)))
         return UnseenCodeCause::EvaluatesText;
+    if (entry.flags.contains(BuiltinFlag::LoadsModuleByName))
+        return loadsFromImageAlone ? UnseenCodeCause::LoadsModuleByName : UnseenCodeCause::LoadsCodeByName;
     const BuiltinUnseenCode* unseenCode = builtins.unseenCodeOf(builtin);
     if (unseenCode && unseenCode->condition && unseenCode->condition->hasProperty)
         return std::nullopt;
@@ -1582,6 +1612,8 @@ static void handOnWhatCopiesOfFilesReach(ValueFlowRuleContext& context)
             if (program.modules[index].flags.contains(ModuleFlags::IsListedInCache))
                 connect(context, requiredValueOf(context, ModuleID(index)), ValueFlowProgramNodes::escaped());
         }
+        for (ModuleID listed : libraryModulesListedInRequireCacheForStatements(program))
+            connect(context, namespaceOf(context, listed), ValueFlowProgramNodes::escaped());
     } else {
         ClimbingSet linkedTo = context.restrict(context.valueOf(reached), namespaceObjects);
         context.connect(context.masked(reached, ValueSets::complement(namespaceObjects)), ValueFlowProgramNodes::escaped());

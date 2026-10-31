@@ -1,0 +1,33 @@
+# RUN: valueflow-why values=f71:v2 values=f0:v3 values=f1:v1 values=f0:v6 values=f2:v1 values=f0:v9 values=f3:v1 values=f0:v12 values=f4:v1 values=f0:v15 values=f5:v1 values=f0:v18 values=f6:v1 values=f0:v21 values=f7:v1 values=f0:v24 values=f8:v1 values=f0:v27 values=f9:v1 values=f0:v30 values=f10:v1 values=f0:v33 values=f11:v1 values=f0:v36 values=f12:v1 values=f0:v39 values=f13:v1 values=f0:v42 values=f14:v1 values=f0:v45 values=f15:v1 values=f0:v48 values=f16:v1 values=f0:v51 values=f17:v1 values=f0:v54 values=f18:v1 values=f0:v57 values=f19:v1 values=f0:v60 values=f20:v1 values=f0:v63 values=f21:v1 values=f0:v66 values=f22:v1 values=f0:v69 values=f23:v1 values=f0:v72 values=f24:v1 values=f0:v75 values=f25:v1 values=f0:v78 values=f26:v1 values=f0:v81 values=f27:v1 values=f0:v84 values=f28:v1 values=f0:v87 values=f29:v1 values=f0:v90 values=f30:v1 values=f0:v93 values=f31:v1 values=f0:v96 values=f32:v1 values=f0:v99 values=f33:v1 values=f0:v102 values=f34:v1 values=f0:v105 values=f35:v1 values=f0:v108 values=f36:v1 values=f0:v111 values=f37:v1 values=f0:v114 values=f38:v1 values=f0:v117 values=f39:v1 values=f0:v120 values=f40:v1 values=f0:v123 values=f41:v1 values=f0:v126 values=f42:v1 values=f0:v129 values=f43:v1 values=f0:v132 values=f44:v1 values=f0:v135 values=f45:v1 values=f0:v138 values=f46:v1 values=f0:v141 values=f47:v1 values=f0:v144 values=f48:v1 values=f0:v147 values=f49:v1 values=f0:v150 values=f50:v1 values=f0:v153 values=f51:v1 values=f0:v156 values=f52:v1 values=f0:v159 values=f53:v1 values=f0:v162 values=f54:v1 values=f0:v165 values=f55:v1 values=f0:v168 values=f56:v1 values=f0:v171 values=f57:v1 values=f0:v174 values=f58:v1 values=f0:v177 values=f59:v1 values=f0:v180 values=f60:v1 values=f0:v183 values=f61:v1 values=f0:v186 values=f62:v1 values=f0:v189 values=f63:v1 values=f0:v192 values=f64:v1 values=f0:v195 values=f65:v1 values=f0:v198 values=f66:v1 values=f0:v201 values=f67:v1 values=f0:v204 values=f68:v1 values=f0:v207 values=f69:v1 values=f0:v210 values=f70:v1
+# CHECK: values=f71:v2
+# CHECK: operand 1 {{*}} 70 members:
+# REPEAT: i = 0..69
+# CHECK: values=f0:v%(i*3+3)
+# CHECK: operand 2 1 members: [[o%(i)]]
+# CHECK: values=f%(i+1):v1
+# CHECK: operand 0 {{*}} 1 members: [[o%(i)]]
+# END REPEAT
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Holder" fields=[{key="m" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f71
+# REPEAT: i = 0..69
+    v%(i*3+1) = NewClosure function=f%(i+1)
+    v%(i*3+2) = NewObject -, v%(i*3+1) layout=L0 fields=[0]
+    v%(i*3+3) = Call v0, -, v%(i*3+2)
+# END REPEAT
+    Return
+}
+# REPEAT: i = 0..69
+function f%(i+1) name="m%(i)" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return
+}
+# END REPEAT
+function f71 name="run" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, v0 calleeKey="m"
+    Return
+}

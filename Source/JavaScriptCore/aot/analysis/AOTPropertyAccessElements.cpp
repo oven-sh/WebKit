@@ -377,8 +377,10 @@ static KnowledgeLevel storedFitOf(const Program& program, const ElementAccessQue
         return KnowledgeLevel::Unknown;
     if (fitsContentType(*query.stored, contentType))
         return KnowledgeLevel::Proven;
-    if (!query.storedExpected)
-        return KnowledgeLevel::Unknown;
+    if (!query.storedExpected) {
+        Type present = query.stored->withoutNullish();
+        return !present.isNever() && fitsContentType(present, contentType) ? KnowledgeLevel::Expected : KnowledgeLevel::Unknown;
+    }
 
     Type expected = query.storedExpected->withoutNullish();
     if (!fitsContentType(expected, contentType) || !query.stored->overlaps(expected, program))

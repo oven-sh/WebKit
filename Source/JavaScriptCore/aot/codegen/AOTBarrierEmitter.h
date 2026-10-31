@@ -26,6 +26,7 @@ public:
     OwnerBarrier barrierOfExtension(const ValueContext& store) const;
     void markCardOfStatics(uint32_t offsetInStatics);
     Condition isBeyondBarrierThreshold(CellPointer);
+    bool needsBarrierAfterStore(const ValueContext& store) { return shouldEmitBarrier(store, true); }
     void fenceAfterInitialization();
 
     void validateAfterStore(const ValueContext& store);
@@ -41,6 +42,7 @@ private:
     bool isOnlyInFrames(ValueID owner) const;
     template<typename Functor> void forEachStoredOperand(const Value& store, const Functor&) const;
     bool hasSingleStoredCell(const Value& store) const;
+    bool storesOnlyStringsOfVM(const Value& store) const;
     const Type* storedTypeOf(const Value& store) const;
     void callBarrierStub(const OperationContext&, StubKey, std::initializer_list<LValue> operands, CallOptions = { });
 

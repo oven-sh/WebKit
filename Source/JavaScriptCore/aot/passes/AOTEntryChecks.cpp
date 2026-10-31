@@ -297,6 +297,7 @@ static bool narrowsWithoutTest(Opcode opcode)
 
 static Vector<EntryCheck, 4> findEntryChecksThatMayFail(const Program& program, const Function& function)
 {
+    ParametersLeftToBody leftToBody(program, function);
     Vector<EntryCheck, 4> checks;
     const Block& entry = function.at(entryBlock);
     if (entry.handler)
@@ -322,7 +323,7 @@ static Vector<EntryCheck, 4> findEntryChecksThatMayFail(const Program& program, 
             continue;
         if (!given.overlaps(checked, program))
             return { };
-        if (!changesCodeWhereProven(checked))
+        if (!changesCodeWhereProven(checked) || leftToBody.contains(entryParameter, checked))
             continue;
         checks.append(EntryCheck { id, static_cast<unsigned>(entryParameter), value.expectedType().predicted(), value.site() });
     }
@@ -339,6 +340,7 @@ static Vector<EntryCheck, 4> findEntryChecksThatMayFail(const Program& program, 
 // The declared type of a parameter belongs to the variable, which the body may assign to.
 static Vector<CheckedEntryValue, 2> findCheckedEntryValues(const Program& program, const Function& function, std::span<const EntryCheck> entryChecks)
 {
+    ParametersLeftToBody leftToBody(program, function);
     Vector<CheckedEntryValue, 8> entryValues;
     // Each name of the value of a parameter, with the position of the parameter in the list above.
     Vector<std::pair<ValueID, unsigned>, 8> sameValues;
@@ -422,7 +424,7 @@ static Vector<CheckedEntryValue, 2> findCheckedEntryValues(const Program& progra
             continue;
         const Type& given = program.typeOf(function, entry.parameters[entryValue.entryParameter]);
         const Type& checked = program.at(entryValue.type);
-        if (given.isSubsetOf(checked, program) || !given.overlaps(checked, program) || !changesCodeWhereProven(checked))
+        if (given.isSubsetOf(checked, program) || !given.overlaps(checked, program) || !changesCodeWhereProven(checked) || leftToBody.contains(entryValue.entryParameter, checked))
             continue;
         if (entryValue.entryCheck && !checked.isSubsetOf(program.at(entryChecks[*entryValue.entryCheck].type), program))
             continue;

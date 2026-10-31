@@ -952,7 +952,7 @@ std::optional<PlaceInKeptText> findInKeptText(FunctionID source, ModuleID module
         at = advanceTo(place, wanted, text, at, limit);
         if (at < limit) {
             if (place.line == wanted.line && place.column == wanted.column && at >= startOfSearched)
-                return PlaceInKeptText { startOfSearched, endOfSearched, at, piece.startOfWhole, piece.endOfWhole };
+                return PlaceInKeptText { startOfSearched, endOfSearched, at, piece.startOfWhole, piece.endOfWhole, !entry };
             return std::nullopt;
         }
         if (!hasCut)
@@ -960,6 +960,20 @@ std::optional<PlaceInKeptText> findInKeptText(FunctionID source, ModuleID module
         uint64_t columns = readVarint(cursor);
         place.advanceOverCut(columns & 1 ? static_cast<uint32_t>(readVarint(cursor)) : 0, static_cast<uint32_t>(columns >> 1));
     }
+}
+
+std::pair<size_t, size_t> findStatementsAround(const PlaceInKeptText& place, size_t at)
+{
+    std::span starts = programTables().startsOfStatementsInLongLines();
+    uint32_t function = place.isInBody ? StartOfStatementData::isOfBody : static_cast<uint32_t>(place.startOfSearched);
+    auto behind = std::ranges::upper_bound(starts, StartOfStatementData { function, static_cast<uint32_t>(at) });
+    size_t start = place.startOfSearched;
+    size_t end = place.endOfSearched;
+    if (behind != starts.begin() && std::prev(behind)->startOfFunction == function)
+        start = std::max<size_t>(start, std::prev(behind)->start);
+    if (behind != starts.end() && behind->startOfFunction == function)
+        end = std::min<size_t>(end, behind->start);
+    return { start, end };
 }
 
 std::span<const Latin1Character> sourceBytesOfAllFunctions()

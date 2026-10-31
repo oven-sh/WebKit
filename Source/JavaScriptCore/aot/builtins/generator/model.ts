@@ -608,6 +608,7 @@ export interface ModelClass {
   namesMadeByStaticMembers: readonly { name: ModelName; member: ModelName }[];
   namesReadToDescribeInstances: readonly ModelName[];
   constructorOnlyReadsPrototypeOfNewTarget: boolean;
+  constructorAdder: ModelName | null;
   slots: readonly ModelSlot[];
   stateHeap: Heap | null;
   types: readonly ModelTypeName[];

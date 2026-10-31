@@ -410,6 +410,7 @@ public:
     // Everything that may reach the node. A proof reads this. A member that another member covers is left out.
     ValueSetID possibleValuesOf(ValueFlowNodeID node) const { return m_graph.valueOf(node); }
     // What the program itself brings to the node. A prediction reads this: it may name too few, so nothing is proven from it.
+    ValueSetID membersThatOtherMembersCover(ValueSetID value, ValueSetMaker& maker) const { return maker.intersect(value, ValueSets::complement(withoutWhatOtherMembersCover(value, maker))); }
     ValueSetID seenValuesOf(ValueFlowNodeID node) const
     {
         if (size_t share = node.index() / nodesPerShareOfListed; share < m_listedWithCoveredMembers.size()) {
@@ -745,6 +746,8 @@ private:
     std::optional<ValueFlowNodeID> findNodeMadeBeforeThisTurn(const ValueFlowNodeKey&) const;
     std::optional<uint32_t> findOrMakeNodesWhereAskedFor(const ValueFlowNodeKey&, uint32_t hash, ValueFlowRoundLog&, ValueSetMaker&) const;
     std::span<const ValueFlowOperand> guardsOf(const ValueFlowStatement& statement) const LIFETIME_BOUND { return m_input.operands.subspan(statement.firstGuard, statement.guardCount); }
+    // Whether an operation of the program names the key, be it a read or a store, or native code asks for it by name. Any other name stands in literals alone, and what lies under it is found under keys alone.
+    bool isAskedForByName(PropertyKeyID key) const { return m_namesAskedFor.get(key.index()); }
     std::span<const ValueFlowOperand> objectsReadUnderKeyOfStore(const ValueFlowStatement& statement) const LIFETIME_BOUND
     {
         size_t number = statement.factsOfText.contains(ValueFlowFactOfText::StoresWhatOneObjectHoldsUnderSameKey) ? 1 : statement.factsOfText.contains(ValueFlowFactOfText::StoresWhatTwoObjectsHoldUnderSameKey) ? 2 : 0;
@@ -1282,6 +1285,7 @@ private:
     mutable ListWithRoomToFill<ValueSetID> m_rememberedByStatement;
     // By object: the object and what a walk up its chain of prototypes has seen above it. The chain of the object begins with that.
     ZeroFilledPages<std::atomic<uint32_t>> m_seenFromObjectUp;
+    BitVector m_namesAskedFor;
 
     Vector<Covering, 2> m_coverings;
     ValueSetID m_takenByRetiredNodes { ValueSets::nothing };

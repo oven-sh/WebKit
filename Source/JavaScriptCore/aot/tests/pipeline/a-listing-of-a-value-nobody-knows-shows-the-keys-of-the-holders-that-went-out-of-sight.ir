@@ -1,0 +1,45 @@
+# The first read of a member stays an operation where the program gets to see the keys of its holder. Object.getOwnPropertyNames() of a value that nobody knows shows the keys of whatever that value is,
+# and it is a built-in object only if that object went out of sight. JSON is stored into what the handler caught, which nobody knows, so JSON may be what is read there. Reflect and Object are named and go nowhere.
+# FORM: AsRead
+# RUN: pipeline ResolveAccesses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    Jump -> next b1()
+  b1() handler=b3():
+    v1 = Call v0, -
+    Jump -> next b2()
+  b2():
+    Return v1
+  b3() role=CatchHandler:
+    v2 = CatchValue
+    v3 = Builtin builtin=JSON
+    PropSet v2, v3 key="held"
+    v5 = Integer integer=3
+    v6 = PropGet v3 key="stringify"
+    v7 = Call v6, v3, v5
+    v8 = Builtin builtin=Reflect
+    v9 = String string="held"
+    v10 = PropGet v8 key="has"
+    v11 = Call v10, v8, v2, v9
+    v12 = PropGet v2 key="held"
+    v13 = Builtin builtin=Object
+    v14 = PropGet v13 key="getOwnPropertyNames"
+    v15 = Call v14, v13, v12
+    Return v15
+}
+function f1 name="fail" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RangeError
+    v1 = String string="no"
+    v2 = Construct v0, -, v1
+    Throw v2
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: InitializeBuiltin builtin=JSONStringify
+# CHECK-NOT: InitializeBuiltin builtin=Reflect
+# CHECK-NOT: InitializeBuiltin builtin=Object

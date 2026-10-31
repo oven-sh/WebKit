@@ -22,6 +22,12 @@ struct Type;
 
 Effects effectsOfCreatingPrototypeProperty(const Program&, const Type& functions);
 Effects effectsOfAllocatingWithPrototype(const Program&, LayoutID allocated);
+Effects effectsOfAllocatingWithPrototypeOfLayout(const Program&, LayoutID allocated);
+
+// The class of a constructor function begins with its first object. Until then a set of guards takes what it says of that class to speak of no object, so the first object may end the set.
+// A test of one class, or one that asks about the function itself, passes only once the class is there.
+constexpr MemoryLocation beginningOfClass(LayoutID classLayout) { return MemoryLocation::at(AbstractHeap::MemberGuards, classLayout.index(), 1); }
+Vector<LayoutID, 2> classesWhoseBeginningMayEnd(const Value& testOfMembers);
 
 enum class OperandDeclarer : uint8_t { Operation, Builtin };
 

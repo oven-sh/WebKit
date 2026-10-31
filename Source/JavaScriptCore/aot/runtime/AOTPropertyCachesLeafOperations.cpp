@@ -392,6 +392,28 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTInByValGeneric, size_t, (Instance*
     return static_cast<size_t>(readByKey(instance, base, key, LeafQuestion::Presence).presence);
 }
 
+static bool hasCompiledStructureAtHand(VM& vm)
+{
+    Allocator allocator = vm.compiledStructureSpace<SubspaceAccess::OnMainThread>()->allocatorFor(sizeof(CompiledStructure), AllocatorForMode::AllocatorIfExists);
+    return allocator && !std::bit_cast<FreeList*>(std::bit_cast<char*>(allocator.localAllocator()) + LocalAllocator::offsetOfFreeList())->allocationWillFail();
+}
+
+static LeafAnswer createFieldOfCompiledObject(Instance* instance, Object& object, const FieldData& field, UniquedStringImpl* uid, JSValue value)
+{
+    VM& vm = *instance->vm;
+    const CompiledStructure& structure = object.compiledStructure();
+    if (vm.aotState().validatesRuntime || uid->isSymbol() || structure.mayBePrototype() || !structure.flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype))
+        return LeafAnswer::TakeSlowPath;
+    if (vm.aotState().hasSeveralImages && belongsToOtherImageSlow(vm, &object)) [[unlikely]]
+        return LeafAnswer::TakeSlowPath;
+    PropertyCaches& caches = *instance->state->propertyCaches;
+    if (!hasCompiledStructureAtHand(vm) || !canCreateFieldInSlot(vm, object, field) || !caches.tables().addFilterAndCheckStoreCreatesOwnField(instance->globalObject, object, field.name))
+        return LeafAnswer::TakeSlowPath;
+    if (caches.shouldFile(structure.id(), uid, SlotAccess::Store))
+        return LeafAnswer::TakeSlowPath;
+    return tryCreateField(vm, object.state(), object, field, value) ? LeafAnswer::Yes : LeafAnswer::TakeSlowPath;
+}
+
 static LeafAnswer putToCompiledObject(Instance* instance, Object* object, UniquedStringImpl* uid, JSValue value)
 {
     VM& vm = *instance->vm;
@@ -402,7 +424,7 @@ static LeafAnswer putToCompiledObject(Instance* instance, Object* object, Unique
     PropertyCaches& caches = *instance->state->propertyCaches;
     Structure* structure = object->structure();
     // Every field has a name that the program spells.
-    bool isSpelledByProgram = vm.aotState().identifiers->numberOf(uid).has_value();
+    bool isSpelledByProgram = identifiersOf(*instance).numberOf(uid).has_value();
     const FieldData* field = isSpelledByProgram ? object->fieldNamed(object->state(), uid) : nullptr;
     if (!field) {
         using Flag = Object::ExtraPropertyStoreFlag;
@@ -426,7 +448,11 @@ static LeafAnswer putToCompiledObject(Instance* instance, Object* object, Unique
         auto stored = object->tryStoreExtraProperty(vm, uid, value, flags);
         return stored.kind == Object::ExtraPropertyStore::NotHandled ? LeafAnswer::TakeSlowPath : LeafAnswer::Yes;
     }
-    if (field->flags & (fieldIsReadOnly | fieldIsAccessor) || field->slot.representation() == SlotRepresentation::DeferredClosure || value.isObject() || object->hasFlagsInOrderWord() || !object->readInline(*field) || !object->tryStore(vm, *field, value))
+    if (field->flags & (fieldIsReadOnly | fieldIsAccessor) || field->slot.representation() == SlotRepresentation::DeferredClosure || value.isObject() || object->hasFlagsInOrderWord())
+        return LeafAnswer::TakeSlowPath;
+    if (!object->readInline(*field))
+        return createFieldOfCompiledObject(instance, *object, *field, uid, value);
+    if (!object->tryStore(vm, *field, value))
         return LeafAnswer::TakeSlowPath;
     if (!caches.findByKey(structure, uid, SlotAccess::Store) && caches.shouldFile(structure->id(), uid, SlotAccess::Store)) {
         PutPropertySlot slot(object, true);

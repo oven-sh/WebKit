@@ -13,6 +13,8 @@
 #include "AOTBarrierEmitter.h"
 #include "AOTCellFormat.h"
 #include "AOTConvention.h"
+#include "AOTFrameAllocationPlanner.h"
+#include "AOTFunctionAnalyses.h"
 #include "AOTInstance.h"
 #include "AOTObjectWords.h"
 #include "AOTPlacement.h"
@@ -272,6 +274,10 @@ CellPointer CellAllocationEmitter::allocateInFrame(const OperationContext& conte
     birth->effects = B3::Effects::none();
     m_heaps.decoratePatchpointWrite(&m_heaps.frameSlots, birth);
     generator().records().hasBirthsOfFrameCells = true;
+    if (const Value* allocation = context.valueID() ? &m_function.at(context.valueID()) : nullptr; allocation && allocationsThatMayBeMadeForOneUse.contains(allocation->opcode) && allocation->isMadeForOneUse()) {
+        size_t begin = allocation->opcode == Opcode::NewArray ? sizeof(JSArray) + sizeof(IndexingHeader) : layout && layout->storage == LayoutStorage::CompiledObject ? 2 * sizeof(EncodedJSValue) : sizeof(JSCell);
+        m_cellsMadeForOneUse.set(context.valueID(), CellMadeForOneUse { slot->slot(), static_cast<unsigned>(begin), static_cast<unsigned>(size) });
+    }
     if constexpr (MutatorFenceRecords::isUsed)
         m_records.mutatorFences.allocations.set(birth->index());
     if (!generator().validatesOrChecksProofs())
@@ -285,6 +291,26 @@ CellPointer CellAllocationEmitter::allocateInFrame(const OperationContext& conte
     ModuleID module(location.module);
     LineColumn lineColumn = module ? m_program.lineColumnFor(module, location.position) : LineColumn { };
     return CellPointer(callWithoutSite<Pointer>(RuntimeOperation::MakeCheckedFrameCell, { Pointer(birth), wordOfFrame(), pair(static_cast<uint32_t>(size), m_id.index()), pair(context.valueID().index(), module.index()), pair(lineColumn.line, lineColumn.column) }).value());
+}
+
+void CellAllocationEmitter::clearCellsMadeFor(const Value& call)
+{
+    if (m_cellsMadeForOneUse.isEmpty())
+        return;
+    call.forEachOperand([&](ValueID operand, uint32_t) {
+        auto found = m_cellsMadeForOneUse.find(analyses().sameObjectThroughCasts(operand).valueInFrontOfFacts());
+        if (found == m_cellsMadeForOneUse.end())
+            return;
+        const CellMadeForOneUse& cell = found->value;
+        // As in allocateInFrame(). The birth of the cell need not dominate the call: later passes copy code.
+        LValue slot = m_out.m_block->appendNew<B3::SlotBaseValue>(m_proc, m_out.origin(), cell.slot);
+        B3::PatchpointValue* address = m_out.patchpoint(B3::pointerType());
+        address->append(slot, B3::ValueRep::SomeRegister);
+        address->effects = B3::Effects::none();
+        m_heaps.decoratePatchpointWrite(&m_heaps.frameSlots, address);
+        for (unsigned offset = cell.begin; offset < cell.end; offset += sizeof(EncodedJSValue))
+            m_out.store64(m_out.constInt64(JSValue::encode(jsUndefined())), m_out.address(m_heaps.frameSlots, address, offset));
+    });
 }
 
 bool CellAllocationEmitter::keepsCellsInFrame()

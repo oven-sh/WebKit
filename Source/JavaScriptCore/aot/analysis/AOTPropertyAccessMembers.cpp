@@ -253,6 +253,9 @@ static MemberMutability linkMutabilityOf(const ClassFlow& classFlow, ClassSide s
 NextHolder nextHolderOf(const Program& program, LayoutID classLayout, ClassSide side, MemberConditions& conditions)
 {
     const Layout& layout = program.at(classLayout);
+    // What stands above an object of another image, a prototype object of a class of that image for one, is known there alone.
+    if (layout.has(LayoutFlags::IsOfImageBelow))
+        return { };
     bool hasHeritage = layout.has(LayoutFlags::HasHeritage);
     MemberMutability link = linkMutabilityOf(layout.classFlow, side);
 
@@ -605,6 +608,9 @@ static bool isTupleLayout(const Program& program, LayoutID id)
 
 static MemberAnswer findInheritedMember(const PropertyAccessContext& context, const MemberQuery& query)
 {
+    // The prototype object of a class of another image, and what stands above it, are known there alone.
+    if (const Program::RecordOfImageBelow* record = context.program.findRecordOfImageBelow(query.layout); record && record->isInstanceOfClass)
+        return MemberAnswer::unknown(UnprovenCause::UnknownBase);
     switch (context.program.at(query.layout).kind) {
     case LayoutKind::Instance: {
         LayoutID declaredClass = declaredLayoutOf(context.program, query.layout);
@@ -717,8 +723,15 @@ MemberAnswer findInstanceMember(const PropertyAccessContext& context, const Memb
         bool storesValue = query.access == Access::Store || query.access == Access::Define;
         if (storesValue && !isPrivateName(program, key) && isNeverStored(program, *found))
             return MemberAnswer::unknown(UnprovenCause::Unknown);
+        // The image that made the object holds the slot to a type of its own and keeps the marks of its cells: a store goes by name.
+        if (storesValue && program.at(query.layout).has(LayoutFlags::IsOfImageBelow))
+            return MemberAnswer::unknown(UnprovenCause::Unknown);
         return { .kind = MemberKind::Field, .level = KnowledgeLevel::Proven, .holder = found->layout, .field = found->field };
     }
+
+    // What an object of another image has beside its fields, and what stands above it, that image alone can say.
+    if (program.at(query.layout).has(LayoutFlags::IsOfImageBelow))
+        return MemberAnswer::unknown(UnprovenCause::UnknownBase);
 
     PropertyKeyKind keyKind = program.at(key).kind;
     if (builtinBase && keyKind == PropertyKeyKind::EnginePrivateName)

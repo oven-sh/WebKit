@@ -444,6 +444,9 @@ struct PlannedLayoutCheck : PlacementCheckContext {
 
 static void checkPlannedLayout(const PlacementCheckContext& context, LayoutID id)
 {
+    // The build of the image that makes the objects has checked how they lie.
+    if (context.program.at(id).has(LayoutFlags::IsOfImageBelow))
+        return;
     PlannedLayoutCheck { context, id }.run();
 }
 
@@ -563,6 +566,8 @@ static uint32_t maxShapesOf(const PlacementCheckContext& context, LayoutID id)
 static bool tryMarkShapeRange(const PlacementCheckContext& context, LayoutID id, BitVector& numbersInRanges)
 {
     ShapeRange range = context.shapes.shapesOf(id);
+    if (context.program.at(id).has(LayoutFlags::IsOfImageBelow))
+        return range.isEmpty() || (range.first && range.end() <= context.shapes.shapesBelow() + 1);
     bool isCompiledObject = context.slots.storageOf(id) == LayoutStorage::CompiledObject;
     uint32_t maxShapes = maxShapesOf(context, id);
     if (range.isEmpty())
@@ -594,7 +599,7 @@ static bool checkShapeNumbers(const PlacementCheckContext& context)
 static void checkShapeVariants(const PlacementCheckContext& context, LayoutID id)
 {
     ShapeRange range = context.shapes.shapesOf(id);
-    if (range.isEmpty())
+    if (range.isEmpty() || context.program.at(id).has(LayoutFlags::IsOfImageBelow))
         return;
     auto expect = [&](bool holds) {
         return context.expect(holds, PlacementRule::ShapeVariantWrong, id);
@@ -662,7 +667,7 @@ static std::optional<size_t> numberOfPassingShapes(const ShapeTable& shapes, con
     case ShapeTestForm::ImmediateBits: {
         size_t numberPassing = 0;
         for (uint32_t distanceFromLast = 0; distanceFromLast < test.count; ++distanceFromLast)
-            numberPassing += (test.bits >> distanceFromLast & 1) && shapes.isAssigned(test.last() - distanceFromLast);
+            numberPassing += (test.bits >> distanceFromLast & 1) && shapes.shapeCountInRange(test.last() - distanceFromLast, test.last() - distanceFromLast);
         return numberPassing;
     }
     case ShapeTestForm::BitSet:

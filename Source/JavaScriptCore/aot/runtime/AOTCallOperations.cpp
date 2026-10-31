@@ -783,10 +783,14 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindLandingOfMisfit, void*, (Insta
     const CallSiteCache::Entry* site = state.callSiteCache->find(returnAddress);
     if (!site)
         site = state.callSiteCache->resolve(*state.image, returnAddress);
-    if (!site || site->isStubReturnSite() || !site->handler || site->handler->catchesExceptions())
-        return returnAddress;
-    instance->scratch.misfit = misfit;
-    return const_cast<uint8_t*>(state.image->codeOf(site->code.index())) + site->handler->codeOffset;
+    void* landing = returnAddress;
+    if (site && !site->isStubReturnSite() && site->handler && !site->handler->catchesExceptions()) {
+        instance->scratch.misfit = misfit;
+        landing = const_cast<uint8_t*>(state.image->codeOf(site->code.index())) + site->handler->codeOffset;
+    }
+    // The stub asks here first the next time.
+    instance->scratch.landingsOfMisfits[LandingOfMisfit::indexOf(returnAddress)] = { returnAddress, landing };
+    return landing;
 }
 
 // `amongImages`: in a VM that runs several images, where the handler may be in a frame of another image than the throw. A program of one image pays nothing for that.

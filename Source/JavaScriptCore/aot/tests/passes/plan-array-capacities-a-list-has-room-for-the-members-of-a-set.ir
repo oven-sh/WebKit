@@ -1,0 +1,52 @@
+# `[x, ...set]`, `[...set, x]`: the list is made with room for what it is written with and for the members, so the append finds room. `[...set]` alone has no capacity:
+# the code generator makes that list with the members in it.
+# FORM: Prepared optimizing
+# RUN: pass PlanArrayCapacities
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="behindAnElement" parameters=[{type=Set<number, pristine[Storage, Names]>}, {type=number}] results=[{type=anything}] {
+    v2 = NewArray v1 contents=anything
+    AppendMembers v2, v0
+    Return v2
+}
+# CHECK-LABEL: function f0 name="behindAnElement"
+# CHECK: [[size]]: {{*}} = CallBuiltin v0 overload=SetPrototypeSize
+# CHECK: [[room]]: {{*}} = Add {{*}}, [[size]]
+# CHECK: = NewArray v1 contents=anything capacity=[[room]]
+# CHECK-NEXT: AppendMembers v2, v0
+
+function f1 name="theSetIsMadeBehindTheLiteral" parameters=[{type=function}, {type=number}] results=[{type=anything}] {
+    v2 = NewArray v1 contents=anything
+    v3 = Call v0
+    v4 = AssumeType v3 provenType=Set<number, pristine[Storage, Names]>
+    AppendMembers v2, v4
+    Return v2
+}
+# CHECK-LABEL: function f1 name="theSetIsMadeBehindTheLiteral"
+# CHECK: Call v0
+# CHECK-NEXT: AssumeType
+# CHECK: CallBuiltin v4 overload=SetPrototypeSize
+# CHECK: = NewArray v1 contents=anything capacity=
+# CHECK-NEXT: AppendMembers v2, v4
+
+function f2 name="inFrontOfAnElement" parameters=[{type=Set<number, pristine[Storage, Names]>}, {type=number}] results=[{type=anything}] {
+    v2 = NewArray contents=anything
+    AppendMembers v2, v0
+    AppendElement v2, v1
+    Return v2
+}
+# CHECK-LABEL: function f2 name="inFrontOfAnElement"
+# CHECK: CallBuiltin v0 overload=SetPrototypeSize
+# CHECK: = NewArray contents=anything capacity=
+# CHECK-NEXT: AppendMembers v2, v0
+
+function f3 name="nothingElse" parameters=[{type=Set<number, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewArray contents=anything
+    AppendMembers v1, v0
+    Return v1
+}
+# CHECK-LABEL: function f3 name="nothingElse"
+# CHECK-NOT: SetPrototypeSize
+# CHECK: NewArray contents=anything
+# CHECK-NEXT: AppendMembers v1, v0

@@ -1742,7 +1742,7 @@ bool Modules::needsLoaderForRequire(ModuleID module)
 {
     if (!isLoadedWithRequests(module))
         return false;
-    if (data(module).isLoadedByLoader())
+    if (data(module).isLoadedByLoader() || statementThatEndsLoad(module))
         return true;
     // The loader itself runs the file that asks, in a step of a load: evaluateLoadedCommonJSFile() lists such a file as its own root. It has the graph of that load in its hands,
     // and the steps of this require() may settle what that graph waits for: then the graph runs before the require() returns.
@@ -1816,16 +1816,67 @@ ALWAYS_INLINE bool Modules::isNeitherOfProgramNorData(const ModuleData& moduleDa
     return stored != StoredModuleStatus::InRecord && !moduleData.hasExportTable() && moduleData.kind != ModuleKind::CommonJs;
 }
 
-// Of what a plan has found.
-bool Modules::isStillToBeLoaded(ModuleID module)
+ALWAYS_INLINE bool Modules::isStillToBeLoaded(ModuleID module, const ModuleData& moduleData)
 {
-    const ModuleData& moduleData = data(module);
     StoredModuleStatus stored = storedStatus(module);
     if (isModuleWithoutRecord(moduleData, stored))
         return isFoundWithoutRecord(module, moduleData, stored);
     if (isNeitherOfProgramNorData(moduleData, stored))
         return isBuiltinModuleNewToLoader(module);
     return !wasLoadedWithEarlierGraph(module) && !isLeftAsLoaded(module);
+}
+
+// Of what a plan has found.
+bool Modules::isStillToBeLoaded(ModuleID module)
+{
+    return isStillToBeLoaded(module, data(module));
+}
+
+// What an earlier call that waits has come to comes with that call.
+uint32_t Modules::countLevelsBelowRoot(ModuleID root, bool& comesToEarlierCall)
+{
+    if (std::ranges::none_of(textsThatWait(), &TextThatWaits::waitsApart))
+        m_modulesBelowCallsThatWait.clearAll();
+    m_modulesBelowCallsThatWait.ensureSize(m_table.size());
+    m_modulesBelowCallsThatWait.quickSet(root.index());
+    const uint32_t isSeen = takeMarkOfSearch();
+    std::span<uint32_t> placesSeen = m_placesSeenByPlans.mutableSpan();
+    placesSeen[root.index()] = isSeen;
+    const BitVector* mocked = m_mocks ? &m_mocks->modules : nullptr;
+    auto hasRequestsToFollow = [&](ModuleID importer, const ModuleData& importerData) ALWAYS_INLINE_LAMBDA {
+        return importerData.kind == ModuleKind::SourceText && !importerData.isFaceOfFile() && !(mocked && mocked->get(importer.index()));
+    };
+    // Of a level, those whose requests are followed.
+    Vector<ModuleID, 64> level;
+    Vector<ModuleID, 64> next;
+    if (hasRequestsToFollow(root, data(root)))
+        level.append(root);
+    for (uint32_t levels = 0;; ++levels) {
+        bool nextLevelHasMembers = false;
+        for (ModuleID importer : level) {
+            for (const ModuleRequestData& request : m_table.requests(importer)) {
+                if (request.isHoisted || request.isRequire)
+                    continue;
+                ModuleID target = request.targetModule();
+                if (std::exchange(placesSeen[target.index()], isSeen) == isSeen)
+                    continue;
+                const ModuleData& targetData = data(target);
+                if (!isStillToBeLoaded(target, targetData))
+                    continue;
+                if (m_modulesBelowCallsThatWait.quickSet(target.index())) {
+                    comesToEarlierCall = true;
+                    continue;
+                }
+                nextLevelHasMembers = true;
+                if (hasRequestsToFollow(target, targetData))
+                    next.append(target);
+            }
+        }
+        if (!nextLevelHasMembers)
+            return levels;
+        level.swap(next);
+        next.shrink(0);
+    }
 }
 
 // The loader of `bun run` takes four jobs from a request for a module to the job in which it asks that module for its requests. That job opens a count of its own: of the requests of the module and of
@@ -2839,6 +2890,8 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
         if (runsStepsOfLoader)
             JSModuleLoader::drainSynchronousModuleQueue(realm);
     }
+    // The end of the queue may run files that wait in the loader.
+    RETURN_IF_EXCEPTION(scope, void());
     leaveLoad();
     RETURN_IF_EXCEPTION(scope, void());
     retireRecordsOfSettledLoads();
@@ -2998,8 +3051,8 @@ bool Modules::isHeldForImport(ModuleID target) const
 {
     if (namespaceIfCreated(target, ModulePhase::Evaluation))
         return true;
-    // A module of another image imports the file: the loader has asked for its record.
-    if (m_instance.program->sharesRealms() && recordIfExists(target))
+    // A module of another image imports the file: the loader has asked for its record. An import() there asks inside the call, and has settled when the namespace object is there.
+    if (m_instance.program->sharesRealms() && recordIfExists(target) && !m_dataFilesAskedForByImportCallAlone.get(target.index()))
         return true;
     if (m_dataFilesImportedByUncompiledCode.get(target.index()))
         return true;
@@ -3015,22 +3068,46 @@ bool Modules::isHeldForImport(ModuleID target) const
     });
 }
 
+// The loader of `bun run` takes a graph level by level, and a CommonJS file runs where the loader comes to it. Where the texts are read as they are asked for, it has loaded what the levels above the one that imports the file import.
+// Where a thread reads the text of the file, that comes in a later turn: the loader has gone on meanwhile from every module whose text came before.
 bool Modules::isBelowRootWhoseFilesRun(ModuleID wanted) const
 {
+    Vector<ModuleID, 4> running;
+    forEachFileEvaluatedByLoader([&](ModuleID file) {
+        running.append(file);
+    });
     for (const FilesBeingRun* files = m_innermostFilesBeingRun; files; files = files->outer) {
         BitVector seen(m_table.size());
+        seen.quickSet(files->root.index());
         Vector<uint32_t, 32> found { files->root.index() };
-        while (!found.isEmpty()) {
-            ModuleID module(found.takeLast());
+        size_t endOfLevel = 1;
+        unsigned level = 0;
+        std::optional<unsigned> levelOfWanted;
+        bool hasComeToFile = false;
+        for (size_t index = 0; index < found.size() && !hasComeToFile; ++index) {
+            if (index == endOfLevel) {
+                ++level;
+                endOfLevel = found.size();
+            }
+            ModuleID module(found[index]);
             if (module == wanted)
-                return true;
-            if (!data(module).isESModuleOfProgram() || seen.set(module.index()))
+                levelOfWanted = level;
+            if (running.contains(fileOf(module))) {
+                hasComeToFile = true;
+                bool readsTextsAsAskedFor = m_instance.vm->synchronousModuleQueue() || hostLoadsSynchronously(fileOf(module));
+                if (levelOfWanted && (!readsTextsAsAskedFor || *levelOfWanted + 1 < level))
+                    return true;
+                continue;
+            }
+            if (!data(module).isESModuleOfProgram())
                 continue;
             for (const ModuleRequestData& request : m_table.requests(module)) {
-                if (!request.isRequire && !request.isHoisted)
+                if (!request.isRequire && !request.isHoisted && !seen.quickSet(request.target()))
                     found.append(request.target());
             }
         }
+        if (levelOfWanted && !hasComeToFile)
+            return true;
     }
     return false;
 }
@@ -3651,7 +3728,7 @@ bool Modules::wasFirstLoadedSynchronously(ModuleID file)
     return parts.filesFirstLoadedSynchronously.get(file.index());
 }
 
-bool Modules::hostLoadsSynchronously(ModuleID file)
+bool Modules::hostLoadsSynchronously(ModuleID file) const
 {
     return host().loadsSynchronously && host().loadsSynchronously(m_instance.globalObject, moduleIDForHost(*m_instance.program, file));
 }
@@ -3821,6 +3898,7 @@ JSValue Modules::requireSpecifier(JSValue specifier, ModuleID referrer, bool isN
     JSObject* requirer = moduleObject(referrer);
     RETURN_IF_EXCEPTION(scope, { });
     SetForScope isAskingHost(m_isAskingHost, m_isAskingHost || isNamedByBuild);
+    SetForScope askerLoadsCompiledFilesAlone(m_instance.vm->aotState().askerLoadsCompiledFilesAlone, !isNamedByBuild && loadsCompiledFilesAlone(referrer));
     RELEASE_AND_RETURN(scope, host().requireSpecifier(realm, requirer, specifier));
 }
 

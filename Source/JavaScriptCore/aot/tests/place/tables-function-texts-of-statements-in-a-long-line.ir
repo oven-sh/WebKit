@@ -1,0 +1,42 @@
+# What failed is looked for in the line of the place, and a minifier leaves a whole function in one line:
+#   // note
+#   run(function live(){a.b;c.d;e.f},function dead(){a.b;c.d});{g.h;i.j}
+# In a long line the front end says now and then where a statement begins and whose it is: here `c.d;` of `live`, `c.d` of `dead`, and `i.j` of the body of the file.
+# The image lists them where the text is kept: the start of the text of the function, and the start of the statement. Nobody enters `dead`, so its text is not kept, and nothing is listed for it.
+# A file with the same text shares it. It may list other statements: `e.f` of `live`, and `i.j` again, which is listed once.
+# RUN: tables function-texts
+# CHECK: 4..32 "function live(){a.b;c.d;e.f}"
+# CHECK-NOT: dead
+# CHECK: statement of the function at 4 at 24
+# CHECK-NEXT: statement of the function at 4 at 28
+# CHECK-NEXT: statement of the body at 40
+# CHECK-NOT: statement
+
+module m0 path="/a.js" displayPath="a.js" body=f0 positions={lineStarts=[0, 8] textOfBody="\x08\x04\x1c\x01\x18\x0b" startsOfStatementsInLongLines="\x20\x14\x1d\x14\x0b\x00"} functionText="// note\x0arun(function live(){a.b;c.d;e.f},function dead(){a.b;c.d});{g.h;i.j}"
+module m1 path="/b.js" displayPath="b.js" body=f3 positions={lineStarts=[0, 8] textOfBody="\x08\x04\x1c\x01\x18\x0b" startsOfStatementsInLongLines="\x24\x18\x24\x00"} functionText="// note\x0arun(function live(){a.b;c.d;e.f},function dead(){a.b;c.d});{g.h;i.j}"
+entry module=m0
+entry module=m1
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="run" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="live" module=m0 text={start=12 end=40} results=[{type=anything}] {
+    Return
+}
+function f2 name="dead" module=m0 text={start=41 end=65} results=[{type=anything}] {
+    Return
+}
+function f3 name="main" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="run" [isFreeName]
+    v2 = NewClosure function=f4
+    v3 = Call v1, -, v2
+    Return
+}
+function f4 name="live" module=m1 text={start=12 end=40} results=[{type=anything}] {
+    Return
+}

@@ -115,6 +115,7 @@ HeapChain HeapRule::chainFrom(ClimbingSet receivers, ValueFlowName nameOfChain)
     ClimbingSet objects = known(chain);
     if (mayBeUnknownObject(chain) && m_context.holdsAnyOf(ClimbingSet(only(ValueFlowUniverse::markOfNamedBun())), wholeChain))
         objects = m_context.unite(objects, m_context.valueWithin(ClimbingSet(only(m_universe.objectOf(Builtins::Bun))), wholeChain));
+    objects = m_context.unite(objects, m_context.valueWithin(ClimbingSet(m_universe.prototypeObjectsOfLibraryClasses()), wholeChain));
     if (m_keepsHoldersOfExportsItStartsFrom) {
         ClimbingSet holdersOfExports(m_universe.holdersOfLibraryExports());
         objects = m_context.unite(objects, m_context.unite(m_context.restrict(start, m_universe.holdersOfLibraryExports()), m_context.valueWithin(holdersOfExports, wholeChain)));
@@ -151,7 +152,7 @@ ValueSetID HeapRule::holdersOfUndeclaredPropertiesUnder(const HeapKey& key)
     m_nameOfHoldersOfUndeclaredProperties = key.name;
     ValueSetID& holders = m_holdersOfUndeclaredPropertiesUnderName;
     PropertyKeyKind kind = m_program.at(key.name).kind;
-    if ((kind == PropertyKeyKind::CreatedSymbol || kind == PropertyKeyKind::RegisteredSymbol) && m_tables.under(key.name).holders == ValueSets::nothing && !doesUnseenCodeRun())
+    if (kind == PropertyKeyKind::CreatedSymbol && m_tables.under(key.name).holders == ValueSets::nothing && !doesUnseenCodeRun())
         return holders = ValueSets::nothing;
     if (kind == PropertyKeyKind::ModulePrivateName)
         return holders = ValueSets::nothing;
@@ -303,7 +304,7 @@ HeapChain HeapRule::chainFrom(ClimbingSet receivers, const HeapKey& key)
 ValueFlowNodeID HeapRule::storedThroughUnknownObjectInto(ClimbingSet objects, ValueFlowName name)
 {
     ValueFlowNodeID stored = m_context.readWhatWasWritten(unknownObjectAlone(), name);
-    if (!m_context.meet(objects, m_universe.builtinObjects()) && !hasEscaped(objects))
+    if (!m_context.meet(objects, m_universe.builtinObjects()) && !mayBeReachedThroughUnknownObject(objects))
         return { };
     if (!holdsAnything(stored))
         return { };
@@ -318,7 +319,7 @@ ValueFlowNodeID HeapRule::storedThroughUnknownObjectInto(ClimbingSet objects, Va
             HeapKey key { HeapKeyClass::Name, PropertyKeyID(name.payload) };
             ValueSetID takingNoNewNames = m_context.maker().unite(holdersWithLockedLocationUnder(key), holdersWithMemberUnder(key));
             ClimbingSet takingTheName = m_context.restrict(objects, m_context.maker().intersect(m_tables.objectsOfRealm(), ValueSets::complement(takingNoNewNames)));
-            if (holdsAnything(takingTheName) && hasEscaped(takingTheName))
+            if (holdsAnything(takingTheName) && mayBeReachedThroughUnknownObject(takingTheName))
                 return stored;
             // No lock refuses a store that names a member which the program may replace.
             bool mayBeReplaced = false;
@@ -330,18 +331,21 @@ ValueFlowNodeID HeapRule::storedThroughUnknownObjectInto(ClimbingSet objects, Va
                 return stored;
             // Start-up locks no member that a statement writes, so a store through a receiver that lists no holder reaches that member too.
             ClimbingSet holders = m_context.restrict(withoutLock, holdersWithMemberUnder(key));
-            if (holdsAnything(holders) && isHostFlagRaised(m_context, ValueFlowHostNode::ObjectNobodyKnowsIsWritten) && hasEscaped(holders) && holdsAnything(m_context.readWhatWasWritten(holders, name)))
+            if (holdsAnything(holders) && isHostFlagRaised(m_context, ValueFlowHostNode::ObjectNobodyKnowsIsWritten) && mayBeReachedThroughUnknownObject(holders) && holdsAnything(m_context.readWhatWasWritten(holders, name)))
                 return stored;
         }
+        if (name.kind == ValueFlowNameKind::PrototypeLink && isHostFlagRaised(m_context, ValueFlowHostNode::ObjectNobodyKnowsIsWritten)
+            && isAnswerThatNoReadLists(m_context.restrict(objects, m_context.maker().intersect(m_tables.prototypeObjectsOfHost(), ValueSets::complement(m_tables.holdersWithLockedPrototypeLink())))))
+            return stored;
         bool findsEveryName = name.kind == ValueFlowNameKind::EveryProperty || name.kind == ValueFlowNameKind::EveryGetter || name.kind == ValueFlowNameKind::EverySetter;
         if (findsEveryName) {
             ClimbingSet takingNewNames = m_context.restrict(objects, m_context.maker().intersect(m_tables.objectsOfRealm(), ValueSets::complement(m_tables.lockedObjects())));
-            if (holdsAnything(takingNewNames) && hasEscaped(takingNewNames))
+            if (holdsAnything(takingNewNames) && mayBeReachedThroughUnknownObject(takingNewNames))
                 return stored;
         }
         objects = m_context.restrict(objects, ValueSets::complement(m_tables.objectsOfRealm()));
     }
-    return hasEscaped(objects) ? stored : ValueFlowNodeID();
+    return hasEscaped(objects) || mayBeReachedThroughUnknownObject(m_context.restrict(objects, ValueSets::complement(m_universe.builtinObjects()))) ? stored : ValueFlowNodeID();
 }
 
 ValueFlowNodeID HeapRule::storedThroughUntrackedObjectInto(ClimbingSet objects, ValueFlowName name)
@@ -362,6 +366,24 @@ void HeapRule::appendPrototypeAtCreation(ValueFlowObjectID object, Members& prot
     });
 }
 
+// At most two, each as its number and one in 31 bits. Objects with the same word were created below the same objects.
+uint64_t HeapRule::prototypesAtCreationInOneWord(ValueFlowObjectID object) const
+{
+    constexpr uint64_t isKnown = 1ull << 63;
+    std::atomic<uint64_t>& known = m_tables.prototypesAtCreationOf(object);
+    uint64_t packed = known.load(std::memory_order_relaxed);
+    if (!packed) [[unlikely]] {
+        Members own;
+        appendPrototypeAtCreation(object, own);
+        RELEASE_ASSERT(own.size() <= 2);
+        packed = isKnown;
+        for (size_t index = 0; index < own.size(); ++index)
+            packed |= static_cast<uint64_t>(own[index].index() + 1) << (31 * index);
+        known.store(packed, std::memory_order_relaxed);
+    }
+    return packed;
+}
+
 ValueSetID HeapRule::prototypesAtCreationOf(ClimbingSet objects)
 {
     AOT_THRESHOLD(uint32_t, mostMembersWalkedEachTime, 64);
@@ -374,7 +396,6 @@ ValueSetID HeapRule::prototypesAtCreationOf(ClimbingSet objects)
 
 ValueSetID HeapRule::findPrototypesAtCreationOf(ClimbingSet objects)
 {
-    constexpr uint64_t isKnown = 1ull << 63;
     constexpr uint32_t mask = (1u << 31) - 1;
     Members prototypes;
     Vector<uint32_t, 64> appendedLately;
@@ -394,17 +415,7 @@ ValueSetID HeapRule::findPrototypesAtCreationOf(ClimbingSet objects)
             appendedLately[(earlier.index() * 0x9e3779b1u) >> shift] = earlier.index();
     };
     auto keepPrototypesOf = [&](ValueFlowObjectID object, NOESCAPE const Invocable<void(uint32_t)> auto& keep) {
-        std::atomic<uint64_t>& known = m_tables.prototypesAtCreationOf(object);
-        uint64_t packed = known.load(std::memory_order_relaxed);
-        if (!packed) [[unlikely]] {
-            Members own;
-            appendPrototypeAtCreation(object, own);
-            RELEASE_ASSERT(own.size() <= 2);
-            packed = isKnown;
-            for (size_t index = 0; index < own.size(); ++index)
-                packed |= static_cast<uint64_t>(own[index].index() + 1) << (31 * index);
-            known.store(packed, std::memory_order_relaxed);
-        }
+        uint64_t packed = prototypesAtCreationInOneWord(object);
         for (unsigned index = 0; index < 2; ++index) {
             if (uint32_t prototype = (packed >> (31 * index)) & mask)
                 keep(prototype - 1);
@@ -480,7 +491,10 @@ ValueFlowObjectID HeapRule::objectOfMember(BuiltinID member, ModuleID module) co
 
 bool HeapRule::isNameThatTableDoesNotListOnGlobalObject(const HeapKey& key) const
 {
-    if (key.keyClass != HeapKeyClass::Name || m_program.at(key.name).kind != PropertyKeyKind::Text || key.name == m_program.keyOf(m_builtins.at(Builtins::GlobalThis).name))
+    if (key.keyClass != HeapKeyClass::Name || key.name == m_program.keyOf(m_builtins.at(Builtins::GlobalThis).name))
+        return false;
+    PropertyKeyKind kind = m_program.at(key.name).kind;
+    if (kind != PropertyKeyKind::Text && kind != PropertyKeyKind::RegisteredSymbol)
         return false;
     return !m_context.sets().contains(m_tables.under(key.name).holders, m_universe.objectOf(Builtins::GlobalThis));
 }
@@ -493,12 +507,13 @@ bool HeapRule::namesObjectOfAccess() const
     return !mayBeFreeName || !m_statement.factsOfText.contains(ValueFlowFactOfText::IsFreeName);
 }
 
-// A bare name that the program stores under is a property of the global object like `globalThis.name`. One that it only reads is left to whoever defines it.
+// A bare name that the program stores under is a property of the global object like `globalThis.name`. So is one that it asks `typeof` of: `typeof define === "function" && define.amd`.
+// One that it only reads is left to whoever defines it.
 bool HeapRule::findsOnGlobalObjectWhatStatementsStore(const HeapKey& key) const
 {
     if (!isNameThatTableDoesNotListOnGlobalObject(key))
         return false;
-    return namesObjectOfAccess() || (m_statement.kind == ValueFlowStatementKind::Operation && m_tables.isStoredUnderOnGlobalObject(key.name));
+    return namesObjectOfAccess() || (m_statement.kind == ValueFlowStatementKind::Operation && m_tables.isStoredUnderOrAskedAboutOnGlobalObject(key.name));
 }
 
 bool HeapRule::mayHoldUndeclaredProperty(ClimbingSet objects, const HeapKey& key)
@@ -879,6 +894,20 @@ ClimbingSet HeapRule::receiversThatLookPastPropertiesOfCreation(ClimbingSet rece
     return ending.isEmpty() ? receivers : m_context.restrict(receivers, ValueSets::complement(m_context.maker().of(ending.span())));
 }
 
+// The objects of the program among these that nobody has given another prototype or copied anything onto, and that have neither escaped nor been lost:
+// objectsAbove() of such an object by itself is what it was created below. Four questions for all of them, where each by itself would leave its own watches.
+ClimbingSet HeapRule::objectsBelowWhatTheyWereCreatedBelow(ClimbingSet objects)
+{
+    if (!m_asksWithoutNodes)
+        return { };
+    ClimbingSet ofProgram = m_context.restrict(objects, m_context.maker().intersect(m_universe.knownObjects(), ValueSets::complement(m_universe.builtinObjects())));
+    if (!holdsAnything(ofProgram))
+        return { };
+    ClimbingSet written = m_context.unite(m_context.membersThatMayFindSomethingWritten(ofProgram, prototypeLinkName.kind), m_context.membersThatMayFindSomethingWritten(ofProgram, copiedFromName.kind));
+    ClimbingSet outOfSight = m_context.unite(escapedAmong(ofProgram), lostAmong(ofProgram));
+    return m_context.restrict(ofProgram, ValueSets::complement(m_context.withMembersOf(ValueSets::nothing, m_context.unite(written, outOfSight))));
+}
+
 ClimbingSet HeapRule::receiversBelowAccessorNobodyKnows(ClimbingSet start, const HeapKey& key, HeapPropertyPart part)
 {
     auto mayLieAbove = [&](ClimbingSet receivers) {
@@ -900,9 +929,32 @@ ClimbingSet HeapRule::receiversBelowAccessorNobodyKnows(ClimbingSet start, const
         return { };
 
     bool isOneReceiver = m_context.holdsOneMember(start);
+    // The answer hangs on a receiver only through what lies above it. Files by the thousand export objects that all lie below one prototype: the first of them answers for the others.
+    struct Answer {
+        uint64_t prototypesAtCreation;
+        bool mayLieAbove;
+    };
+    Vector<Answer, 4> answers;
+    ClimbingSet asCreated = isOneReceiver ? ClimbingSet() : objectsBelowWhatTheyWereCreatedBelow(start);
     Members receivers;
     m_context.forEachMember(start, [&](ValueFlowObjectID receiver) {
-        if (!endsAtPropertyOfCreation(receiver, key) && (isOneReceiver || mayLieAbove(ClimbingSet(only(receiver)))))
+        if (endsAtPropertyOfCreation(receiver, key))
+            return;
+        ClimbingSet alone(only(receiver));
+        if (isOneReceiver || !m_context.contains(asCreated, receiver)) {
+            if (isOneReceiver || mayLieAbove(alone))
+                receivers.append(receiver);
+            return;
+        }
+        uint64_t prototypesAtCreation = prototypesAtCreationInOneWord(receiver);
+        size_t index = answers.findIf([&](const Answer& answer) {
+            return answer.prototypesAtCreation == prototypesAtCreation;
+        });
+        if (index == notFound) {
+            index = answers.size();
+            answers.append(Answer { prototypesAtCreation, mayLieAbove(alone) });
+        }
+        if (answers[index].mayLieAbove)
             receivers.append(receiver);
     });
     return ClimbingSet(m_context.maker().of(receivers.span()));
@@ -1114,11 +1166,39 @@ void HeapRule::readWhatNamesOfProgramMayHaveHidden(const HeapChain& chain, Value
     });
 }
 
+void HeapRule::noteAnswersThatNoReadLists(const Members& answers)
+{
+    if (answers.isEmpty())
+        return;
+    ValueFlowNodeID node = m_context.nodes().ofHost(ValueFlowHostNode::AnswersThatNoReadLists);
+    ValueSetID set = m_context.maker().of(answers.span());
+    if (holdsAnything(m_context.membersMissingFrom(node, ClimbingSet(set))))
+        add(node, set);
+}
+
+void HeapRule::noteAnswersOfReadUnderUnknownKey(ValueFlowObjectID holder)
+{
+    Members answers;
+    if (answersUnknownObjectUnderUnknownKeys(holder))
+        answers.append(holder);
+    ModuleID module = m_universe.moduleOf(holder);
+    for (BuiltinID member : m_builtins.membersOf(m_universe.builtinOf(holder))) {
+        if (mayBeAnsweredWithoutBeingListed(member) && m_builtins.at(member).origin == BuiltinOrigin::Host)
+            answers.append(objectOfMember(member, module));
+    }
+    noteAnswersThatNoReadLists(answers);
+}
+
 void HeapRule::readMembers(ClimbingSet objects, ClimbingSet start, const HeapKey& key, ValueFlowNodeID result, Members& getters)
 {
     if (key.keyClass != HeapKeyClass::Unknown) {
         forEachMemberUnder(objects, key, [&](BuiltinID member, ModuleID module) {
             readMember(member, module, result, getters);
+            if (BuiltinID holder = m_builtins.at(member).holder; result && holder && !isObjectKind(m_builtins.at(member).kind)) {
+                ValueFlowObjectID holderObject = m_universe.objectOf(m_builtins.canonicalID(holder));
+                if (answersUnknownObjectUnderUnknownKeys(holderObject) && isAnswerThatNoReadLists(ClimbingSet(only(holderObject))))
+                    connect(m_context.masked(result, m_universe.objects()), m_context.nodes().ofHost(ValueFlowHostNode::AnswersThatNoReadLists));
+            }
             ValueFlowObjectID function = objectOfMember(member, module);
             if (m_builtins.at(member).origin == BuiltinOrigin::Host && m_context.sets().contains(m_universe.builtinFunctions(), function))
                 add(m_context.nodes().ofHost(ValueFlowHostNode::FunctionsOfHostTakenFromKnownHolders), only(function));
@@ -1141,6 +1221,7 @@ void HeapRule::readMembers(ClimbingSet objects, ClimbingSet start, const HeapKey
     m_context.forEachMember(holders, [&](ValueFlowObjectID holder) {
         if (key.namesEnumerableProperty && !hasMemberOfHost(holder))
             return;
+        noteAnswersOfReadUnderUnknownKey(holder);
         bool isReceiver = m_context.contains(start, holder);
         if (m_builtins.at(m_universe.builtinOf(holder)).scope == BuiltinScope::Module || (isReceiver && m_tables.standsRightAboveObjectOfModule(m_universe.builtinOf(holder)))) {
             for (BuiltinID member : m_builtins.membersOf(m_universe.builtinOf(holder))) {
@@ -1150,7 +1231,7 @@ void HeapRule::readMembers(ClimbingSet objects, ClimbingSet start, const HeapKey
             return;
         }
         bool isBun = m_builtins.canonicalID(m_universe.builtinOf(holder)) == Builtins::Bun;
-        if (isNativeModuleThatNobodyNames(holder) || isBun) {
+        if (answersUnknownObjectUnderUnknownKeys(holder)) {
             add(result, unknownValue(ValueFlowUnknownSource::UndescribedNativeResult));
             for (BuiltinID member : m_builtins.membersOf(m_universe.builtinOf(holder))) {
                 openProxiesThatMemberAnswers(m_context, member);
@@ -1703,10 +1784,14 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
         }
         bool mayBeCalled = mayCallWhateverHasEscaped(m_context);
         Members handedOutAsUnknownObject;
+        Members answersThatNoReadLists;
         bool handsOutMembers = !m_context.isNativeWalk();
         forEachMemberUnder(handsOutMembers ? holdersFoundThroughUnknownObject(key) : ClimbingSet(), key, [&](BuiltinID member, ModuleID module) {
-            if (!isHandedOutThroughPlaceholder(member, key))
+            if (!isHandedOutThroughPlaceholder(member, key)) {
+                if (key.keyClass == HeapKeyClass::Unknown && mayBeAnsweredWithoutBeingListed(member))
+                    answersThatNoReadLists.append(objectOfMember(member, module));
                 return;
+            }
             BuiltinKind kind = m_builtins.at(member).kind;
             bool holdsMembers = kind == BuiltinKind::Constructor || kind == BuiltinKind::Prototype || kind == BuiltinKind::Namespace;
             if (key.keyClass == HeapKeyClass::Name && !holdsMembers) {
@@ -1721,6 +1806,11 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
             handedOutAsUnknownObject.append(objectOfMember(member, module));
         });
         add(ValueFlowProgramNodes::escaped(), m_context.maker().of(handedOutAsUnknownObject.span()));
+        forEachMemberUnder(m_context.unite(ClimbingSet(m_tables.classes()), m_context.valueOf(m_context.nodes().ofHost(ValueFlowHostNode::AnswersThatNoReadLists))), key, [&](BuiltinID member, ModuleID module) {
+            if (mayBeAnsweredWithoutBeingListed(member))
+                answersThatNoReadLists.append(objectOfMember(member, module));
+        });
+        noteAnswersThatNoReadLists(answersThatNoReadLists);
         if (handsOutMembers)
             runGettersFoundThroughUnknownObject(key, GettersAreRunBy::Read);
     } else if (chain.holdsUnknownObject) {
@@ -2014,6 +2104,9 @@ void HeapRule::runLookup()
             }
             readThroughChain(start, keyOfFoundName(name), { nullptr, start }, m_statement.result);
         }
+        return;
+    case ValueFlowNameKind::ReceiversOfCalls:
+        passKnownReceiversToWhatTheyFind(m_context, m_context.setOfKey(), ValueFlowName::property(m_context.program(), PropertyKeyID(name.payload)), m_statement.result);
         return;
     case ValueFlowNameKind::Setter:
     case ValueFlowNameKind::SetterUnderUnknownKey:

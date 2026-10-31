@@ -108,6 +108,8 @@ public:
     // Answers what it was.
     static bool setIsAskingHost(JSGlobalObject*, bool);
     void didAskHostForRequest(uint8_t flagsBefore);
+    // The host threw in place of an answer.
+    void didFailToFetchRequest(const Identifier& key, Exception*);
     // What the host answers when it is asked to fetch the module under a key that this record requests. Null where the host has to be asked.
     AbstractModuleRecord* recordOfRequest(JSGlobalObject*, const Identifier& key);
     // True: the promise of the fetch is fulfilled with the record in a later turn of the event loop.

@@ -1,0 +1,31 @@
+# Making a list or a dictionary may run out of memory and throw, so the writes before it are among the effects of the path that throws; behind the last such operation they are not
+# FORM: Prepared
+# RUN: effects summaries
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="stored" declared={type=anything} initialization=Undefined
+function f0 name="makesAList" parameters=[{type=number}] results=[{type=undefined}] {
+    PutModuleVariable v0 variable=g0
+    v2 = NewArray v0 contents=number
+    Return
+}
+# CHECK: f0 return:{{*}}writes(ModuleVariables/1, AllocatorState) throwsForLackOfMemory{{*}} throw: reads(AllocatorState) writes(ModuleVariables/1, AllocatorState) throwsForLackOfMemory
+function f1 name="makesADictionary" parameters=[{type=number}] results=[{type=undefined}] {
+    PutModuleVariable v0 variable=g0
+    v2 = NewDictionary
+    Return
+}
+# CHECK-NEXT: f1 return:{{*}}writes(ModuleVariables/1, AllocatorState) throwsForLackOfMemory{{*}} throw: reads(AllocatorState) writes(ModuleVariables/1, AllocatorState) throwsForLackOfMemory
+function f2 name="storesBehindTheList" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = NewArray v0 contents=number
+    Jump -> next b1()
+  b1():
+    PutModuleVariable v0 variable=g0
+    Return
+}
+# CHECK-NEXT: f2 return:{{*}}writes(ModuleVariables/1, AllocatorState) throwsForLackOfMemory{{*}} throw: reads(AllocatorState) writes(AllocatorState) throwsForLackOfMemory
+function f3 name="onlyStores" parameters=[{type=number}] results=[{type=undefined}] {
+    PutModuleVariable v0 variable=g0
+    Return
+}
+# CHECK-NEXT: f3 return: writes(ModuleVariables/1) throwsForLackOfStack throw: throwsForLackOfStack

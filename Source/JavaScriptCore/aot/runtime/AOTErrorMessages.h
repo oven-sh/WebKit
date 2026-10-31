@@ -124,7 +124,7 @@ String memberOfLockedBuiltin(BuiltinID holder, UniquedStringImpl* key);
 String assignmentToLockedBuiltinMessage(const String& property);
 String deletionFromLockedBuiltinMessage(const String& property);
 // `property` may be assigned to where the build sees the assignment.
-String assignmentThatBuildDidNotSeeMessage(ASCIILiteral property);
+String assignmentThatBuildDidNotSeeMessage(const String& property);
 // A test run opens what the build sees a test replace. So there the words say what to write, or that nothing will do.
 enum class LockedIn : bool { Executable, TestRun };
 String assignmentToLockedBuiltinMessage(VM&, BuiltinID holder, UniquedStringImpl* key, LockedIn);

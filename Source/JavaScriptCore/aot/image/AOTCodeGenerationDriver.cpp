@@ -160,7 +160,7 @@ void LinkedFunctions::reorder(std::span<const uint32_t> order, BuildContext& con
     context.destroyLater(std::exchange(*this, WTF::move(reordered)));
 }
 
-static Candidates collectCandidates(const Typed::Program& program, const BuildContext& context, const BitVector* bodiesWithoutCode)
+static Candidates collectCandidates(const Typed::Program& program, BuildContext& context, const BitVector* bodiesWithoutCode)
 {
     const ParallelLoops& loops = context.parallelLoops();
     BitVector hasNoCode = bodiesWithoutCode ? *bodiesWithoutCode : Typed::findBodiesWithoutCode(program, context);
@@ -169,6 +169,7 @@ static Candidates collectCandidates(const Typed::Program& program, const BuildCo
         return program.functions[index].hasBody() && !hasNoCode.get(index);
     });
     Vector<Candidate> largestFirst(functionsWithCode.size());
+    Typed::ProgramCaches caches(program, context);
     forEachIndexInParallel(loops, largestFirst.size(), [&](unsigned index) {
         uint32_t function = functionsWithCode[index];
         largestFirst[index] = { Typed::estimatedCodeSize(program, FunctionID(function)), function };

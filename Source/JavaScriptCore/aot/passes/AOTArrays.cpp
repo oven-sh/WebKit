@@ -2156,6 +2156,16 @@ static TypeID testedTypeOfKey(const TestSiteReporter& reporter, ValueID key)
     return mayBeIndex ? TypeTable::int32 : TypeID();
 }
 
+static TypeID testedTypeOfStoredValue(const TestSiteReporter& reporter, ValueID value, const ElementAccessPlan& plan)
+{
+    if (TypeID tested = testedTypeOfPrimitive(reporter, value))
+        return tested;
+    if (plan.form != ElementAccessForm::TypedArray || reporter.function().at(value).expected().predicted())
+        return { };
+    Type number = reporter.typeOf(value).withoutPrimitives(Primitive::UndefinedOrNull);
+    return number.isNumber() ? testedNumberTypeContaining(number) : TypeID();
+}
+
 static std::optional<ElementAccessTests> createTests(const TestSiteReporter& reporter, ArrayUses& arrays, const Value& use, const ElementAccessPlan& plan)
 {
     ValueID receiver = use.objectOperand();
@@ -2185,7 +2195,7 @@ static std::optional<ElementAccessTests> createTests(const TestSiteReporter& rep
     };
     if (plan.testsKeyIsNumber && !appendTestOfPrimitive(key, testedTypeOfKey(reporter, key)))
         return std::nullopt;
-    if (plan.testsStoredValue && !appendTestOfPrimitive(use.valueOperand(), testedTypeOfPrimitive(reporter, use.valueOperand())))
+    if (plan.testsStoredValue && !appendTestOfPrimitive(use.valueOperand(), testedTypeOfStoredValue(reporter, use.valueOperand(), plan)))
         return std::nullopt;
     if (plan.testsInBounds)
         tests.append(makeBoundsTest(receiver, key));

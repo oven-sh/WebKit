@@ -1953,7 +1953,7 @@ struct ConstantFolder {
     bool exceedsLimitOfFoldedString(ValueID id, uint64_t bytes)
     {
         if (bytes > context.limit(LimitID::MaxFoldedStringBytes) && feedsOnlyRegExpPatterns(id))
-            return context.exceeds(LimitID::RegExpCandidateTextLength, bytes, id);
+            return context.exceeds(LimitID::RegExpPatternLengthWithCode, bytes, id);
         uint64_t together = context.bytesOfFoldedStrings + bytes;
         uint64_t shareOfBody = foldedStringBytesPerValue * function.values.size();
         uint64_t beyondShare = together > shareOfBody ? together - shareOfBody : 0;
@@ -2064,7 +2064,7 @@ struct ConstantFolder {
             return false;
 
         uint64_t bytes = takesNumber ? maxPrimitiveTextBytes : program.string(receiver.asString()).size();
-        double largestNumber = 1;
+        double firstArgument = 1;
         Vector<ScratchRealm::Operand, 2> arguments;
         Vector<TypeID, 2> argumentTypes;
         for (ValueID argument : value.argumentsOperands()) {
@@ -2072,8 +2072,8 @@ struct ConstantFolder {
             if (isPrimitive(primitive)) {
                 if (primitive.kind() == KnownValue::Kind::String)
                     bytes += program.string(primitive.asString()).size();
-                if (primitive.isNumber() && primitive.asNumber() > largestNumber)
-                    largestNumber = primitive.asNumber();
+                if (primitive.isNumber() && arguments.isEmpty())
+                    firstArgument = primitive.asNumber();
                 arguments.append(ScratchRealm::Operand { primitive, std::nullopt });
                 argumentTypes.append(function.at(argument).type);
                 continue;
@@ -2099,13 +2099,9 @@ struct ConstantFolder {
             return false;
         if (exceedsLimitOfFoldedString(id, bytes))
             return false;
-        // An entry with an error of its own may fail for the length of its answer, which a number among its operands sets: a count, a length.
-        bool pads = callee == Builtins::StringPrototypePadStart || callee == Builtins::StringPrototypePadEnd;
-        if (pads || !program.builtins().at(value.overload()).onlyPropagatesErrors()) {
-            double bytesOfAnswer = static_cast<double>(bytes) * largestNumber;
-            if (bytesOfAnswer >= static_cast<double>(std::numeric_limits<uint32_t>::max()) || exceedsLimitOfFoldedString(id, static_cast<uint64_t>(bytesOfAnswer)))
-                return false;
-        }
+        double bytesOfAnswer = ScratchRealm::bytesOfAnswerSetByNumber(callee, bytes, firstArgument);
+        if (bytesOfAnswer >= static_cast<double>(std::numeric_limits<uint32_t>::max()) || (bytesOfAnswer > bytes && exceedsLimitOfFoldedString(id, static_cast<uint64_t>(bytesOfAnswer))))
+            return false;
 
         std::optional<ScratchRealm::Answer> answer = context.build.scratchRealms().ofCurrentThread().call(program, callee, receiver, arguments.span());
         if (!answer)
@@ -2680,11 +2676,7 @@ struct ControlFlowSimplifier {
         }
     }
 
-    bool canDecide(Edge edge)
-    {
-        return canFollowWithoutTest(function, edge) && (!hasEdgeResults(function, edge)
-            || argumentsFitParametersAfterCasts(program, function, builder.types(), Target { targetOf(function, edge).block, argumentsWithoutTest(function, edge), { } }));
-    }
+    bool canDecide(Edge edge) { return canDecideTerminator(program, function, builder.types(), edge); }
 
     void decideBranches(const Vector<BlockID>& reachableBlocks)
     {

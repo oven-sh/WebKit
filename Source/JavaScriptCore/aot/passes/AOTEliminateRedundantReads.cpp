@@ -4847,12 +4847,18 @@ struct LoopVersioner : LoopEditor {
     bool isReadOffObjectWithoutLayout(ValueID id)
     {
         const Value& value = m_function.at(id);
-        if (value.opcode != Opcode::PropGet || value.isFreeName() || !value.key() || value.receivers() || m_program.nameClassOf(value.key()) == NameClass::Length)
+        if (value.opcode != Opcode::PropGet || value.isFreeName() || !value.key() || m_program.nameClassOf(value.key()) == NameClass::Length)
             return false;
         if (!m_analyses.effectsOf(id).onAnyEdge().mayRunOtherCode())
             return false;
         const Type& object = typeOf(value.objectOperand());
-        return object.isJavaScriptValue() && object.hasObjects() && !object.layouts;
+        if (!object.isJavaScriptValue() || !object.hasObjects())
+            return false;
+        if (!object.layouts)
+            return !value.receivers();
+        return object.hasOnlyLayouts() && std::ranges::all_of(m_program.at(object.layouts).completeMembers(), [&](LayoutID layout) {
+            return !!builtinBaseClassOf(m_program, layout);
+        });
     }
 
     static bool staysQuiet(const Effects& effects)
@@ -5293,6 +5299,12 @@ struct LoopVersioner : LoopEditor {
                     otherAnswers.append(knows.notTaken);
                     current = knows.taken;
                     found = knows.provenOnTaken;
+                    if (m_function.at(step.value).type != TypeTable::anything) {
+                        builder.moveToEndOf(current);
+                        Value cast = IRBuilder::make(Opcode::AssumeType, { found });
+                        cast.setProvenType(Proven::byPosition(m_function.at(step.value).type));
+                        found = builder.append(WTF::move(cast));
+                    }
                     answers.append({ object, key, found });
                 }
                 askedAhead.set(step.value, found);

@@ -95,6 +95,9 @@ struct PreservingCall {
 void readTagsFromInstance(CCallHelpers&);
 RegisterSet floatingPointRegistersLostToAccessors(StubCallee);
 
+// Who reads the registers that a stub saves around an operation that it returns behind.
+enum class SavedRegistersAreRead : bool { ByCallerAlone, BeforeReturnToo };
+
 class StubAssembler final : public CCallHelpers {
     WTF_FORBID_HEAP_ALLOCATION;
 public:
@@ -103,7 +106,10 @@ public:
     StubRecording generate(StubKey body);
     StubRecording generateForTesting(StubKey body, const ScopedLambda<void(StubAssembler&)>& generator) { return generateBody(body, generator); }
 
+    // As a generator sees it: that the caller keeps no registers changes how an operation is called, and nothing else.
     StubKey key() const;
+    bool callerKeepsNoRegisters() const { return m_key.callerFrame() == CallerFrame::KeepsNoRegisters; }
+    bool callerKeepsNoFPRs() const { return m_key.callerFrame() == CallerFrame::KeepsNoFPRs; }
     const StubSignature& signature() const { return m_signature; }
     const StubOptions& options() const { return m_options; }
     const StubPolicy& bindingPolicy() const { return m_catalog.policy(); }
@@ -144,9 +150,9 @@ public:
     void loadOperation(Entry, GPRReg);
     void callOperation(Entry, GPRReg scratch);
     void loadRuntimePointer(Entry, GPRReg);
-    void callOperationAndReturn(Entry entry, const OperationCall& operationCall) { callOperationAndReturn(entry, operationCall, [] { }); }
-    void callOperationAndReturn(Entry, const OperationCall&, const ScopedLambda<void()>& beforeReturn);
-    void callOperationAndReturn(GPRReg offsetInRuntimeTable, const OperationCall& operationCall) { emitOperationCallAndReturn(offsetInRuntimeTable, operationCall, [] { }); }
+    void callOperationAndReturn(Entry entry, const OperationCall& operationCall) { callOperationAndReturn(entry, operationCall, [] { }, SavedRegistersAreRead::ByCallerAlone); }
+    void callOperationAndReturn(Entry, const OperationCall&, const ScopedLambda<void()>& beforeReturn, SavedRegistersAreRead = SavedRegistersAreRead::BeforeReturnToo);
+    void callOperationAndReturn(GPRReg offsetInRuntimeTable, const OperationCall& operationCall) { emitOperationCallAndReturn(offsetInRuntimeTable, operationCall, [] { }, SavedRegistersAreRead::ByCallerAlone); }
     void tailCallOperation(Entry entry, OperationCall::FirstArgument firstArgument) { emitOperationTailCall(entry, firstArgument); }
     void tailCallOperation(GPRReg offsetInRuntimeTable, OperationCall::FirstArgument firstArgument) { emitOperationTailCall(offsetInRuntimeTable, firstArgument); }
     void callLeaf(Entry, unsigned bytesPushed = 0);
@@ -348,7 +354,9 @@ private:
 #endif
     OperationToCall setUpOperationCall(const CalledOperation&, const OperationCall&);
     void prepareCallOperation();
-    void emitOperationCallAndReturn(const CalledOperation&, const OperationCall&, const ScopedLambda<void()>& beforeReturn);
+    void emitOperationCallAndReturn(const CalledOperation&, const OperationCall&, const ScopedLambda<void()>& beforeReturn, SavedRegistersAreRead);
+    bool resultsComeFromOperation(const OperationCall&) const;
+    bool resultsInFPRsComeFromOperation(const OperationCall&) const;
     void emitOperationCallSavingNothing(const CalledOperation&, const OperationCall&, const ScopedLambda<void()>& beforeReturn);
     void emitOperationCallSavingRegisters(const CalledOperation&, const OperationCall&, const ScopedLambda<void()>& beforeReturn);
     void emitOperationTailCall(const CalledOperation&, OperationCall::FirstArgument);
@@ -389,7 +397,7 @@ private:
 inline StubKey StubAssembler::key() const
 {
     ASSERT(m_key.hasFamily());
-    return m_key;
+    return hasFrameAndKeepsFewerRegisters(m_key.callerFrame()) ? m_key.withCallerFrame(CallerFrame::HasFrame) : m_key;
 }
 
 inline GPRReg StubAssembler::operand(unsigned index) const

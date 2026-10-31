@@ -79,22 +79,18 @@ function f1 name="halves" module=m0 flags=[IsChecked, HasExplicitName] length=1 
     Return v2
 }
 
-# A push of a double is inline: the test of the capacity and the store. The number is an integer times a half: it is finite, so it is no NaN (which marks a hole in this storage), and nothing asks it.
+# A push of a double stores at the counter, which is how long the list is. The number is an integer times a half: it is finite, so it is no NaN (which marks a hole in this storage), and nothing asks it.
 # CHECK-LABEL: steps by 1
+# CHECK-NOT: Below(
 # CHECK: Double b@[[element]] = Mul(
-# CHECK: Int32 b@[[fits]] = Below(b@[[length]], b@[[capacity]], {{*}}:HasSpareArrayCapacity)
-# CHECK-NEXT: Branch(b@[[fits]], Terminal, {{*}}:HasSpareArrayCapacity)
-# CHECK-NEXT: Successors: Then:#[[push]], Else:Rare:#
-# CHECK-NEXT: BB#[[push]]:
 # CHECK-NOT: Equal(b@[[element]], b@[[element]]
 # CHECK: Store(b@[[element]], b@{{*}}, ControlDependent|Writes:indexedDoubleProperties,
-# CHECK-NEXT: Int32 b@[[longer]] = Add(b@[[length]], $1(
 # CHECK: Branch(b@{{*}}, Terminal, {{*}}:Less)
 # CHECK-LABEL: end of loop
 # NONE-LABEL: steps by 1
 # NONE-NOT: Reads:JSObject_butterfly
-# NONE-NOT: Reads:Butterfly_vectorLength
-# The length is a variable of the loop. The storage gets it where the loop is left.
+# Nothing in the loop asks for the capacity or the length. The storage gets the length where the loop is left.
+# NONE-NOT: Butterfly_vectorLength
 # NONE-NOT: Butterfly_publicLength
 # NONE-NOT: Reads:JSCell
 # NONE-NOT: BitwiseCast(
@@ -104,10 +100,12 @@ function f1 name="halves" module=m0 flags=[IsChecked, HasExplicitName] length=1 
 # CALLS: f1: size=
 # CALLS: stub NewArrayWithLength.Double x1
 # X64-NOT: , instructions:
-# X64: loop #{{*}}, instructions: 8, patchpoints: 0
-# X64: loop #{{*}}, instructions: 8, patchpoints: 0, rare instructions: 9, {{*}}entered rarely
+# X64: loop #{{*}}, instructions: 6, patchpoints: 0
+# X64: loop #{{*}}, instructions: 43, patchpoints: 0, rare instructions: 14
+# X64: loop #{{*}}, instructions: 13, patchpoints: 1, rare instructions: 8, {{*}}entered rarely
 # X64-NOT: , instructions:
 # ARM64-NOT: , instructions:
-# ARM64: loop #{{*}}, instructions: 7, patchpoints: 0
-# ARM64: loop #{{*}}, instructions: {{*}}, patchpoints: 0, rare instructions: {{*}}entered rarely
+# ARM64: loop #{{*}}, instructions: 5, patchpoints: 0
+# ARM64: loop #{{*}}, instructions: 35, patchpoints: 0
+# ARM64: loop #{{*}}, instructions: 13, patchpoints: 1, rare instructions: 4, {{*}}entered rarely
 # ARM64-NOT: , instructions:

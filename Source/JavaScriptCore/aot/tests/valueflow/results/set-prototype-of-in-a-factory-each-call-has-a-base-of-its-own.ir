@@ -1,0 +1,60 @@
+# function Above() {}; function make(R) { function Below() {}; Object.setPrototypeOf(Below.prototype, R.prototype); return Below }; const first = make(Above); make(first)
+# Each call of the factory has a Below of its own. The first lies below Above and the second below the first, and each is evaluated once.
+# RUN: valueflow-apply
+# CHECK: layout L4 kind=Instance name="Below" constructor=f7 {{*}}classFlow={evaluations=AtMostOnce {{*}}prototypeBase=L0}
+# CHECK: layout L5 kind=Instance name="Below" constructor=f9 {{*}}classFlow={evaluations=AtMostOnce {{*}}prototypeBase=L4}
+# CHECK: function f8 name="make" {{*}}parameters=[{type=f1}] results=[{type=f7}]
+# CHECK: function f10 name="make" {{*}}parameters=[{type=f7}] results=[{type=f9}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Above" constructor=f1 flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Below" constructor=f3 flags=[IsConstructorFunction]
+layout L2 kind=Instance name="Other" constructor=f4 flags=[IsConstructorFunction]
+layout L3 kind=Instance name="BelowTwo" constructor=f5 flags=[IsConstructorFunction]
+variable g0 name="Above" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = NewClosure function=f2
+    v2 = Call v1, -, v0
+    v3 = Call v1, -, v2
+    v4 = Construct v2
+    v5 = Construct v3
+    v6 = NewClosure function=f4
+    v7 = NewClosure function=f5
+    v8 = PropGet v7 key="prototype"
+    v9 = PropGet v6 key="prototype"
+    v10 = PropGet v0 key="prototype"
+    v11 = Builtin builtin=ObjectSetPrototypeOf
+    v12 = Call v11, -, v8, v9
+    v13 = Call v11, -, v8, v10
+    v14 = Construct v7
+    v15 = Construct v6
+    Return
+}
+function f1 name="Above" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="make" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f3
+    v2 = PropGet v1 key="prototype"
+    v3 = PropGet v0 key="prototype"
+    v4 = Builtin builtin=ObjectSetPrototypeOf
+    v5 = Call v4, -, v2, v3
+    Return v1
+}
+function f3 name="Below" flags=[HasThis] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f4 name="Other" flags=[HasThis] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f5 name="BelowTwo" flags=[HasThis] thisType={type=L3 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

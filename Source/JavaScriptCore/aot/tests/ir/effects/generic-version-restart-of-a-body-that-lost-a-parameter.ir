@@ -1,0 +1,64 @@
+# Every caller passes the same second value, so a copy of the typed body makes it itself and takes one parameter where the generic version takes two.
+# The copy stands at every call, and the record of the tests at the entrance keeps the name of the body that it was copied from, which has no code any more.
+# The copy begins again in the generic version all the same, and given a number the generic version runs no code of the program.
+# FORM: Prepared
+# RUN: effects summaries-by-types-of-operands f2 f4 f5
+# RUN(ASREAD): effects summaries f4 f5
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="factor" module=m0 declared={type=undefined|number}
+
+function f0 name="scaled" role=EntryChecks parameters=[{type=number flags=[IsExpected]}, {type=undefined|number}] results=[{type=number}] creator=EntryChecks{body=f1 fallback=f2} {
+  b0(v0: anything, v1: undefined|number):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: number):
+    v4 = CallDirect v3 function=f5
+    Return v4
+  b2() frequency=Rare:
+    v5 = CallDirect v0, v1 function=f2
+    Return v5
+}
+
+function f1 name="scaled" parameters=[{type=number}, {type=undefined|number}] results=[{type=number}] derivation={source=f0 parameterMap=[{original=0}, {original=1}]}
+
+function f2 name="scaled" role=GenericVersion parameters=[{type=number flags=[IsExpected]}, {type=undefined|number}] results=[{type=number}] derivation={source=f0 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f1} {
+  b0(v0: anything, v1: undefined|number):
+    v2 = Integer integer=0
+    v3 = BitOr v0, v2
+    v4 = CallDirect v0 function=f3
+    v5 = Add v3, v4
+    Return v5
+}
+# CHECK: f2 return: {{*}}callsUnknownCode
+
+function f3 name="" role=OutlinedBody parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    v2 = URShift v0, v1
+    Return v2
+}
+
+function f4 name="callsTheTypedBody" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f5
+    Return v1
+}
+# CHECK: f4 return: reads({{*}}) throwsForLackOfStack throw: reads({{*}}) throwsForLackOfStack p0: [Inspects]
+# ASREAD: f4 return: {{*}}callsUnknownCode
+
+function f5 name="scaled" parameters=[{type=number}] results=[{type=number}] derivation={source=f0 parameterMap=[{original=0}]} {
+  b0(v0: number):
+    v1 = Undefined
+    v2 = GetModuleVariable variable=g0
+    v3 = TypeTest v2 testedType=number
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4: number):
+    v5 = Mul v0, v4
+    Return v5
+  b2() frequency=Rare:
+    v6 = CallDirect v0, v1 function=f2 [isNeverInlined]
+    ReturnCall v6 requirement=Allowed
+}
+# CHECK: f5 return: reads({{*}}) throwsForLackOfStack throw: reads({{*}}) throwsForLackOfStack p0: [Inspects]
+# ASREAD: f5 return: {{*}}callsUnknownCode

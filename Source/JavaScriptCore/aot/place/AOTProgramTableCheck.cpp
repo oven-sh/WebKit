@@ -220,6 +220,21 @@ static void checkModuleTables(const TableCheck& check)
     for (size_t index = 1; pathsAscend && index < modulesByPath.size(); ++index)
         pathsAscend = pathAt(index - 1) < pathAt(index);
     check.expect(pathsAscend, ProgramTableRule::TableNotSorted);
+    std::span<const uint32_t> entries = check.tables.modulesByHashOfPath();
+    ModuleNumbers first(check.tables.firstModulesByHashOfPath(), modules.size());
+    size_t numberOfBuckets = ModuleByHashOfPath::numberOfBuckets(modulesByPath.size());
+    bool everyBucketExists = entries.size() == modulesByPath.size() && first.size() == (numberOfBuckets ? numberOfBuckets + 1 : 0);
+    for (size_t bucket = 0; everyBucketExists && bucket < numberOfBuckets; ++bucket)
+        everyBucketExists = first[bucket] <= first[bucket + 1] && first[bucket + 1] <= entries.size();
+    if (!check.expect(everyBucketExists, ProgramTableRule::TableOutOfBounds))
+        return;
+    bool everyModuleIsFound = true;
+    for (uint32_t module : modulesByPath) {
+        ModuleByHashOfPath sought(modules.size(), StringView(String::fromUTF8(strings[check.program.modules[module].path])).hash());
+        size_t bucket = sought.bucket(numberOfBuckets);
+        everyModuleIsFound = everyModuleIsFound && std::ranges::contains(entries.subspan(first[bucket], first[bucket + 1] - first[bucket]), sought.entryFor(module));
+    }
+    check.expect(everyModuleIsFound, ProgramTableRule::TableNotSorted);
 }
 
 static void checkSortedTables(const TableCheck& check)

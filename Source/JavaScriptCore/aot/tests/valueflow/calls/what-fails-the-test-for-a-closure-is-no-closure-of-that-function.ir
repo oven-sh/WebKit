@@ -1,0 +1,35 @@
+# function helper(o) { o() }  function kept() {}  function run(callee, operand) { if (callee is helper) { .. } else callee(operand) }  run(helper, kept)
+# The front end writes a call of a helper out behind `IsClosureOf` and leaves the call itself on the other side. What arrives there is anything but a closure of the helper, whatever the type
+# of the tested value says: where the helper alone can arrive, nothing is called, and the operands go nowhere.
+# RUN: valueflow-why reached=f1 reached=f2
+# CHECK: reached=f1
+# CHECK-NEXT: f1 is not reached
+# CHECK-NEXT: reached=f2
+# CHECK-NEXT: f2 is not reached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Call v2, -, v0, v1
+    Return
+}
+function f1 name="helper" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    Return
+}
+function f2 name="kept" module=m0 results=[{type=anything}] {
+    Return
+}
+function f3 name="run" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0, v1):
+    v2 = IsClosureOf v0 function=f1
+    Branch v2 -> taken b1(), notTaken b2(| 0)
+  b1():
+    Return
+  b2(v3):
+    v4 = Call v3, -, v1
+    Return
+}

@@ -335,12 +335,40 @@ static RegExpCodeOrFailureReason generate(const RegExpCompilerInputs& inputs, co
     RegExpCodeOrFailureReason code = static_cast<ImageCodeAddressing&>(generated->addressing()).takeCode();
     if (code) {
         (*code)->hasElidedFrame = generated->hasElidedFrame();
+        (*code)->handsLongSearchesOver = generated->handsLongSearchesOver();
         (*code)->analysisLimitHits = pattern.m_firstFollowSets.limitHits() + generated->classTableLimitHits();
     }
     return code;
 }
 
-static bool consumesOnly8BitCharacters(const Yarr::PatternDisjunction& disjunction)
+static bool hasReferenceToGroup(const Yarr::PatternDisjunction& disjunction)
+{
+    for (auto& alternative : disjunction.m_alternatives) {
+        for (const Yarr::PatternTerm& term : alternative->m_terms) {
+            switch (term.type) {
+            case Yarr::PatternTerm::Type::NumberedBackReference:
+            case Yarr::PatternTerm::Type::NamedBackReference:
+            case Yarr::PatternTerm::Type::NumberedForwardReference:
+            case Yarr::PatternTerm::Type::NamedForwardReference:
+                return true;
+            case Yarr::PatternTerm::Type::ParenthesesSubpattern:
+            case Yarr::PatternTerm::Type::ParentheticalAssertion:
+                if (hasReferenceToGroup(*term.parentheses.disjunction))
+                    return true;
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    return false;
+}
+
+// An assertion consumes nothing, but a group in it keeps what it has looked at, and a reference to that group consumes it: `^(?=(.*))\1$` matches any subject of one line. So where the pattern
+// has a reference, what is looked at counts as well.
+enum class WhatIsLookedAt : bool { DoesNotCount, Counts };
+
+static bool consumesOnly8BitCharacters(const Yarr::PatternDisjunction& disjunction, WhatIsLookedAt whatIsLookedAt)
 {
     for (auto& alternative : disjunction.m_alternatives) {
         for (const Yarr::PatternTerm& term : alternative->m_terms) {
@@ -348,11 +376,14 @@ static bool consumesOnly8BitCharacters(const Yarr::PatternDisjunction& disjuncti
             case Yarr::PatternTerm::Type::AssertionBOL:
             case Yarr::PatternTerm::Type::AssertionEOL:
             case Yarr::PatternTerm::Type::AssertionWordBoundary:
-            case Yarr::PatternTerm::Type::ParentheticalAssertion:
             case Yarr::PatternTerm::Type::NumberedBackReference:
             case Yarr::PatternTerm::Type::NamedBackReference:
             case Yarr::PatternTerm::Type::NumberedForwardReference:
             case Yarr::PatternTerm::Type::NamedForwardReference:
+                break;
+            case Yarr::PatternTerm::Type::ParentheticalAssertion:
+                if (whatIsLookedAt == WhatIsLookedAt::Counts && !consumesOnly8BitCharacters(*term.parentheses.disjunction, whatIsLookedAt))
+                    return false;
                 break;
             case Yarr::PatternTerm::Type::PatternCharacter:
                 if (term.patternCharacter > 0xff)
@@ -368,7 +399,7 @@ static bool consumesOnly8BitCharacters(const Yarr::PatternDisjunction& disjuncti
                 break;
             }
             case Yarr::PatternTerm::Type::ParenthesesSubpattern:
-                if (!consumesOnly8BitCharacters(*term.parentheses.disjunction))
+                if (!consumesOnly8BitCharacters(*term.parentheses.disjunction, whatIsLookedAt))
                     return false;
                 break;
             case Yarr::PatternTerm::Type::DotStarEnclosure:
@@ -389,7 +420,7 @@ static bool matchesOnlyWhole8BitSubjects(const Yarr::YarrPattern& pattern)
         if (terms.size() < 2 || terms.first().type != Yarr::PatternTerm::Type::AssertionBOL || terms.last().type != Yarr::PatternTerm::Type::AssertionEOL)
             return false;
     }
-    return consumesOnly8BitCharacters(*pattern.m_body);
+    return consumesOnly8BitCharacters(*pattern.m_body, hasReferenceToGroup(*pattern.m_body) ? WhatIsLookedAt::Counts : WhatIsLookedAt::DoesNotCount);
 }
 
 NEVER_INLINE CompiledRegExp compileRegExp(const RegExpCompilerInputs& inputs)
@@ -440,8 +471,6 @@ static LimitID limitOf(RegExpDeclineReason reason)
         return LimitID::RegExpNestingDepthWithCode;
     case RegExpDeclineReason::PatternTooLong:
         return LimitID::RegExpPatternLengthWithCode;
-    case RegExpDeclineReason::CandidateBudgetExhausted:
-        return LimitID::RegExpCandidateCodeBytesPerSite;
     case RegExpDeclineReason::SectionFull:
         return LimitID::RegExpSectionSize;
     case RegExpDeclineReason::NotSupportedByCodeGenerator:
@@ -450,25 +479,6 @@ static LimitID limitOf(RegExpDeclineReason reason)
         return LimitID::None;
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void applyCandidateBudget(const RegExpRequests& requests, CompiledRegExps& compiled, BuildContext& context)
-{
-    uint64_t budget = context.limit(LimitID::RegExpCandidateCodeBytesPerSite);
-    std::span<const RegExpRequest> candidates = requests.candidates();
-    std::span<CompiledRegExp> results = compiled.results.mutableSpan().subspan(requests.literals().size());
-    UncheckedKeyHashMap<std::pair<FunctionID, ValueID>, uint64_t> bytesBySite;
-    for (size_t index = 0; index < candidates.size(); ++index) {
-        uint64_t size = results[index].codeSize();
-        if (!size || candidates[index].origin == RegExpRequestOrigin::Evaluated)
-            continue;
-        const RegExpSite& site = candidates[index].sites.first();
-        uint64_t& chargedBytes = bytesBySite.add(std::pair { site.function, site.value }, 0).iterator->value;
-        if (chargedBytes + size > budget)
-            results[index] = { .form = RegExpRecordForm::NoCode, .reason = RegExpDeclineReason::CandidateBudgetExhausted };
-        else
-            chargedBytes += size;
-    }
 }
 
 static void applySectionSizeLimit(CompiledRegExps& compiled, BuildContext& context)
@@ -520,6 +530,14 @@ static void countResult(Statistics& statistics, const RegExpRequest& request, co
         statistics.count(StatisticID::RegExpAnalysisLimitHits, analysisLimitHits);
         statistics.count(StatisticID::RegExpFramesElided, elidedFrames);
         statistics.count(StatisticID::RegExpCandidatesCompiled, isCandidate);
+        uint64_t bytesFor8BitSubjects = result.code[0] ? result.code[0]->body.bytes.size() : 0;
+        uint64_t bytesFor16BitSubjects = result.code[1] ? result.code[1]->body.bytes.size() : 0;
+        statistics.count(StatisticID::RegExpCodeBytesFor16BitSubjects, bytesFor16BitSubjects);
+        statistics.count(StatisticID::RegExpsWithoutCodeFor16BitSubjects, !result.code[1]);
+        if (isCandidate) {
+            statistics.count(StatisticID::RegExpCodeBytesOfPredictedTexts, bytesFor8BitSubjects + bytesFor16BitSubjects);
+            statistics.count(StatisticID::RegExpCodeBytesOfPredictedTextsFor16BitSubjects, bytesFor16BitSubjects);
+        }
         return;
     }
     case RegExpRecordForm::NoCode:
@@ -550,7 +568,6 @@ CompiledRegExps compileRegExps(const Typed::Program& program, const RegExpReques
         compiled.results[index] = compileRegExp({ pattern, request.flags, summary, context.assemblerPolicy(), &context, codeFor16BitSubjects });
     });
 
-    applyCandidateBudget(requests, compiled, context);
     applySectionSizeLimit(compiled, context);
 
     for (size_t index = 0; index < allRequests.size(); ++index) {

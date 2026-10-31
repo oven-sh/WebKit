@@ -1,12 +1,11 @@
 # unknown = somethingNoTableLists; unknown.constructor.extra = one; Array.extra(); Math.extra()
-# The unknown object stands for what has escaped, and nothing has handed `Array` or `Math` to anybody: as long as no code runs that the build has not seen,
-# what the program stores through the unknown object is not found on one of them.
-# The function that was stored has escaped with the store. name-added-through-constructor-of-unknown-object-once-unseen-code-runs.ir has the same program with such code
+# The engine and the host make instances that nobody follows: an error that is caught, a clone, what an event carries. Each leads to its class under `constructor`, nobody has to hand `Array` out
+# for that, and the run time refuses nobody a new name there: what the program stores through the unknown object is found on `Array`.
+# No instance leads to `Math`, and nothing has handed it to anybody: as long as no code runs that the build has not seen, the store is not found there.
 # RUN: valueflow-solve calls
-# CHECK: f0 v7 ->
+# CHECK: f0 v7 -> {{*}}f1
 # CHECK-NEXT: f0 v10 ->
 # RUN(NOTHING): valueflow-solve calls
-# NOTHING-NOT: f0 v7 -> {{*}}
 # NOTHING-NOT: f0 v10 -> {{*}}
 # RUN(ESCAPED): valueflow-why escaped=f1
 # ESCAPED: escaped=f1

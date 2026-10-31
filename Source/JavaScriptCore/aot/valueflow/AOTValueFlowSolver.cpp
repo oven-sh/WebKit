@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTCFG.h"
+#include "AOTEffectsOfOperands.h"
 #include "AOTIRProgram.h"
 #include "AOTPhaseTimes.h"
 #include "AOTPrototypesAtCreation.h"
@@ -271,6 +272,16 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
 {
     if (m_input.universe)
         m_seenFromObjectUp = ZeroFilledPages<std::atomic<uint32_t>>(m_input.universe->numberOfObjects());
+    for (const ValueFlowStatement& statement : m_input.statements) {
+        if (statement.key)
+            m_namesAskedFor.set(statement.key.index());
+    }
+    if (m_input.program) {
+        for (BuiltinName name : namesReadFromOperands(m_input.program->builtins())) {
+            if (PropertyKeyID key = m_input.program->keyOf(name))
+                m_namesAskedFor.set(key.index());
+        }
+    }
     m_numberOfUsers.reserveCapacity(2 * static_cast<size_t>(m_input.numberOfNodes));
     m_partsOfMadeNodes.reserveCapacity(2 * static_cast<size_t>(m_input.numberOfNodes));
     m_madeNodesOfNode.reserveCapacity(5 * static_cast<size_t>(m_input.numberOfNodes) / 2);
@@ -366,6 +377,10 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
                 return static_cast<const ValueFlowSolver*>(solver)->isMadeForUnknownObject(node);
             }, this);
         }
+        // The operands come through the nodes of the call group of the unknown object.
+        m_graph.handOnWhatArrivesAtRetiredNodesTo(m_input.nodes->ofHost(ValueFlowHostNode::OperandsHandedToUnseenCode), [](const void* solver, ValueFlowNodeID node) {
+            return static_cast<const ValueFlowSolver*>(solver)->isMadeForUnknownObject(node) && !static_cast<const ValueFlowSolver*>(solver)->takesArgumentsOfCallGroup(node);
+        }, this);
     }
     constexpr size_t operandsInStretch = 1 << 16;
     Vector<Vector<uint32_t>> masksInStretches((m_input.operands.size() + operandsInStretch - 1) / operandsInStretch);
@@ -1099,6 +1114,8 @@ void ValueFlowSolver::takeBackStatementsThatRunOften()
 
 // A set that grows by a member a round runs its readers each round, and each run leaves nodes and edges behind for a set that the next run makes useless:
 // sites times rounds of them. A statement that has run often waits, longer each time, until the set has grown more or nothing else is due.
+// Whoever is let go because nothing else is due has seen all there is, and its waits begin again at one round. What it makes wakes others that have run often; if each of
+// them sat out the long wait that it had come to, nothing else would be due once more: a row of such statements would take as many of those times as it is long.
 // Where functions find one another one by one, the call that finds the next is such a statement, and nothing else is due at every step. A statement that stands for
 // the whole program goes on waiting there while any other can run: it sees in one look what they find in many rounds.
 void ValueFlowSolver::letStatementsThatRunOftenWait()
@@ -1124,6 +1141,8 @@ void ValueFlowSolver::letStatementsThatRunOftenWait()
             (standsForWholeProgram(copyOfStatementAt(statement).kind) ? m_statementsThatRunOften : m_due).append(statement);
         if (m_due.isEmpty())
             m_due = std::exchange(m_statementsThatRunOften, { });
+        for (ValueFlowStatementID statement : m_due)
+            m_timesRunOfStatement[statement.index()] = timesRunWithoutWaiting;
     }
     m_waitsForLaterRound.ensureSize(statements);
     for (ValueFlowStatementID statement : m_statementsThatRunOften)
@@ -1362,7 +1381,7 @@ private:
             break;
         case ValueFlowMadeNodeKind::Lookup:
             m_setsOfParts.shrink(0);
-            if (key.name().kind == ValueFlowNameKind::PrototypeLink)
+            if (key.name().kind == ValueFlowNameKind::PrototypeLink || key.name().kind == ValueFlowNameKind::ReceiversOfCalls)
                 m_maker->appendCoarseParts(key.set, m_setsOfParts);
             for (ValueSetID part : m_setsOfParts)
                 wishes.append(Wish { number, ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Lookup, part, key.name()) });
@@ -2035,7 +2054,7 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
                 bool isLink = shapeOf(name.kind).sort == ValueFlowNameSort::PrototypeLink;
                 isOfModel |= isLink && key.kind == ValueFlowMadeNodeKind::Written;
                 // A lookup by name that starts at a proxy goes through its trap.
-                bool asksWhereItStarts = key.kind == ValueFlowMadeNodeKind::Lookup && (name.kind == ValueFlowNameKind::Property || name.kind == ValueFlowNameKind::Elements || name == everyPropertyName);
+                bool asksWhereItStarts = key.kind == ValueFlowMadeNodeKind::Lookup && (name.kind == ValueFlowNameKind::Property || name.kind == ValueFlowNameKind::Elements || name.kind == ValueFlowNameKind::ReceiversOfCalls || name == everyPropertyName);
                 if (!isOfModel && !asksWhereItStarts && maker.meet(everyObjectThatBuiltinsMake, ValueSets::complement(key.set)))
                     note(isLink ? maker.intersect(key.set, stopWalks) : key.set);
                 // A bound function's target is read to be called or to be tested against, and either goes through a proxy's trap.
@@ -2321,7 +2340,7 @@ std::optional<uint32_t> ValueFlowSolver::makeNodesWhereAskedFor(const ValueFlowN
     MadeNodes made { key, { } };
     made.setTo(MadeNodes::StaysAtRest, key.set == ValueSets::nothing && (key.kind == ValueFlowMadeNodeKind::Written || key.kind == ValueFlowMadeNodeKind::CallGroup));
     Vector<ValueSetID> setsOfParts;
-    bool mayHaveParts = key.kind == ValueFlowMadeNodeKind::CallGroup || (key.kind == ValueFlowMadeNodeKind::Lookup && key.name().kind == ValueFlowNameKind::PrototypeLink);
+    bool mayHaveParts = key.kind == ValueFlowMadeNodeKind::CallGroup || (key.kind == ValueFlowMadeNodeKind::Lookup && (key.name().kind == ValueFlowNameKind::PrototypeLink || key.name().kind == ValueFlowNameKind::ReceiversOfCalls));
     if (mayHaveParts && !made.has(MadeNodes::StaysAtRest)) {
         if (key.kind == ValueFlowMadeNodeKind::Lookup)
             maker.appendCoarseParts(key.set, setsOfParts);
@@ -6786,6 +6805,8 @@ void ValueFlowSolver::report()
     build.statistics().count(StatisticID::LayoutsOutsideFamily, m_counters.nodesHoldingObjectsOutsideFamily);
     build.statistics().count(StatisticID::FlowEdgesLogged, m_counters.edgesLogged);
     build.statistics().count(StatisticID::FlowReaders, m_counters.readers);
+    build.statistics().count(StatisticID::FlowRounds, m_counters.rounds);
+    build.statistics().count(StatisticID::FlowStatementRuns, m_counters.statementRuns);
     forEachKindOfStatementRun([&](ValueFlowStatementKind kind, Opcode, const RunsAndEdges& row) {
         if (standsForWholeProgram(kind))
             build.statistics().count(StatisticID::FlowRunsForWholeProgram, row.runs);
@@ -7160,9 +7181,10 @@ void ValueFlowSolver::solve()
 // Edges by the kinds of their two ends, and how many of them the names with the most take.
 void ValueFlowSolver::dumpEdgesByEnds() const
 {
-    constexpr unsigned kinds = 11;
+    constexpr unsigned kinds = numberOfValueFlowMadeNodeKinds;
     constexpr unsigned ends = kinds + 1;
-    static constexpr std::array<ASCIILiteral, ends> names { "Constant"_s, "Read"_s, "Written"_s, "Lookup"_s, "CallGroup"_s, "Hub"_s, "Masked"_s, "Marked"_s, "WrittenUnderKind"_s, "ReadUnderKind"_s, "Instance"_s, "Body"_s };
+    static constexpr std::array names { "Constant"_s, "Read"_s, "Written"_s, "Lookup"_s, "CallGroup"_s, "Hub"_s, "Masked"_s, "Marked"_s, "WrittenUnderKind"_s, "ReadUnderKind"_s, "Instance"_s, "Body"_s };
+    static_assert(names.size() == ends);
     auto recordOf = [&](ValueFlowNodeID node) {
         return node.index() < m_input.numberOfNodes ? noSolverIndex : m_madeNodesOfNode[node.index() - m_input.numberOfNodes];
     };
@@ -7256,8 +7278,9 @@ void ValueFlowSolver::dumpReadersByStatement() const
         dataLogLn("AOT flow readers of one statement | ", readersOfStatement[index], " | kind ", static_cast<unsigned>(statement.kind), " | opcode ", nameOf(statement.opcode), " | function ", statement.function.index());
     }
     // Which kinds of nodes the statements read, and for a lookup under which kind of name and of how many receivers.
-    constexpr unsigned kindsOfNodes = 12;
-    static constexpr std::array<ASCIILiteral, kindsOfNodes> namesOfNodes { "Constant"_s, "Read"_s, "Written"_s, "Lookup"_s, "CallGroup"_s, "Hub"_s, "Masked"_s, "Marked"_s, "WrittenUnderKind"_s, "ReadUnderKind"_s, "Instance"_s, "Body"_s };
+    constexpr unsigned kindsOfNodes = numberOfValueFlowMadeNodeKinds + 1;
+    static constexpr std::array namesOfNodes { "Constant"_s, "Read"_s, "Written"_s, "Lookup"_s, "CallGroup"_s, "Hub"_s, "Masked"_s, "Marked"_s, "WrittenUnderKind"_s, "ReadUnderKind"_s, "Instance"_s, "Body"_s };
+    static_assert(namesOfNodes.size() == kindsOfNodes);
     auto kindOfNode = [&](ValueFlowNodeID node) -> unsigned {
         if (node.index() < m_input.numberOfNodes)
             return kindsOfNodes - 1;

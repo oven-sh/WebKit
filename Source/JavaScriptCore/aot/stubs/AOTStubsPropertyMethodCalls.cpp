@@ -137,6 +137,11 @@ static void emitCallOfUncreatedClosure(StubAssembler& jit, unsigned count)
     jit.and32(TrustedImm32(FieldRecordIndex::indexMask), index);
     jit.lshift32(TrustedImm32(fieldSizeShift), index);
     loadStructure(jit, thisGPR, layout);
+    // The closure in the frame would be of this instance. The closure of a field is of the instance of its object.
+    if (!jit.options().hasOneInstance) {
+        jit.move(layout, word);
+        otherwise.append(branchIfNotOfThisRealm(jit, word));
+    }
     jit.loadPtr(Address(layout, CompiledStructure::offsetOfLayout()), layout);
     jit.addPtr(layout, field);
     jit.load32(inField(OBJECT_OFFSETOF(FieldData, slot)), word);

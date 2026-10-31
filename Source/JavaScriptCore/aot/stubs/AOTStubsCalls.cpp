@@ -1120,6 +1120,32 @@ void generateCallResolvedValue(StubAssembler& jit)
 // The frame of the function is gone and everything is as at its return. The return goes to the landing that the caller has for such a value, if it has one.
 void generateReturnMisfit(StubAssembler& jit)
 {
+    // A function whose values do not fit returns them to the same few callers again and again.
+    const GPRReg returnAddress = jit.allocateScratch(StubRegister::T10);
+    const GPRReg entry = jit.allocateScratch(StubRegister::T11);
+    constexpr int32_t offsetOfEntries = AOT_INSTANCE_OFFSET(scratch.landingsOfMisfits);
+    static_assert(sizeof(LandingOfMisfit) == 2 * sizeof(void*) && !OBJECT_OFFSETOF(LandingOfMisfit, returnAddress) && OBJECT_OFFSETOF(LandingOfMisfit, landing) == sizeof(void*));
+    RELEASE_ASSERT(noOverlap(returnAddress, entry, GPRInfo::returnValueGPR, instanceGPR));
+    jit.loadCallerReturnAddress(0, returnAddress);
+    jit.move(returnAddress, entry);
+    // Twice the index: an entry is two words.
+    jit.urshift64(TrustedImm32(LandingOfMisfit::shiftOfAddress - 1), entry);
+    jit.and32(TrustedImm32(((1 << LandingOfMisfit::numberOfEntriesLog2) - 1) << 1), entry);
+    Jump isNotListed = jit.branchPtr(CCallHelpers::NotEqual, BaseIndex(instanceGPR, entry, CCallHelpers::TimesEight, offsetOfEntries), returnAddress);
+    jit.loadPtr(BaseIndex(instanceGPR, entry, CCallHelpers::TimesEight, offsetOfEntries + static_cast<int32_t>(sizeof(void*))), entry);
+    Jump hasLanding = jit.branchPtr(CCallHelpers::NotEqual, entry, returnAddress);
+    jit.ret();
+
+    hasLanding.link(&jit);
+    jit.store64(GPRInfo::returnValueGPR, Address(instanceGPR, AOT_INSTANCE_OFFSET(scratch.misfit)));
+#if CPU(X86_64)
+    jit.storePtr(entry, Address(sp));
+#else
+    jit.move(entry, CCallHelpers::linkRegister);
+#endif
+    jit.ret();
+
+    isNotListed.link(&jit);
     jit.preservingCallerSavedRegisters(false, [&](unsigned bytes) {
         jit.move(GPRInfo::returnValueGPR, gprOf(StubRegister::A2));
         jit.loadCallerReturnAddress(bytes, A1);

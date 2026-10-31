@@ -242,10 +242,28 @@ void HeapRule::noteNameDefinedThroughObjectsNobodyFollows(const ValueFlowOperand
         add(m_context.nodes().ofHost(ValueFlowHostNode::ObjectsNobodyFollowsThatDefinitionsName), placeholders);
 }
 
+// `Object.defineProperty(F, "prototype", { writable: false })`: a descriptor that names neither a value nor an accessor, nor whether the property is listed or can be redefined, leaves all of that as it is.
+// A function has the property from birth, or finds none above it.
+bool HeapRule::saysOnlyWhetherPrototypeOfFunctionIsWritable(const ValueFlowOperand& object, const HeapKey& key, ClimbingSet descriptors)
+{
+    if (key.keyClass != HeapKeyClass::Name || key.name != m_tables.prototypeKey())
+        return false;
+    if (m_context.meet(m_context.valueOf(object), ValueSets::complement(m_universe.closures())) || !holdsOnlyWhatWasWritten(descriptors))
+        return false;
+    for (BuiltinName member : { BuiltinNames::value, BuiltinNames::get, BuiltinNames::set, BuiltinNames::enumerable, BuiltinNames::configurable }) {
+        ValueFlowName name = ValueFlowName::property(m_program, m_program.keyOf(member));
+        if (m_context.meet(m_context.valueOf(m_context.lookup(descriptors, name)), ValueSets::complement(m_universe.undefinedValue())) || holdsAnything(m_context.readWhatWasWritten(known(descriptors), name)))
+            return false;
+    }
+    return true;
+}
+
 void HeapRule::defineAsDescribed(const ValueFlowOperand& object, const HeapKey& key, ClimbingSet descriptors, DefinedObject definedObject)
 {
     if (definedObject == DefinedObject::MayHoldProperty)
         noteNameDefinedThroughObjectsNobodyFollows(object, key);
+    if (saysOnlyWhetherPrototypeOfFunctionIsWritable(object, key, descriptors))
+        return;
     auto define = [&](HeapPropertyPart part, BuiltinName member) {
         ValueFlowNodeID described = m_context.lookup(descriptors, ValueFlowName::property(m_program, m_program.keyOf(member)));
         if (part != HeapPropertyPart::Value && !m_context.meet(m_context.valueOf(described), ValueSets::complement(m_universe.undefinedValue())))
@@ -263,6 +281,15 @@ void HeapRule::defineAsDescribed(const ValueFlowOperand& object, const HeapKey& 
 void HeapRule::changePrototype(ClimbingSet objects, const ValueFlowOperand& prototype)
 {
     write(objects, prototypeLinkName, prototype);
+    ValueFlowNodeID belowInstances = m_context.nodes().ofHost(ValueFlowHostNode::ObjectsPutBelowInstances);
+    ClimbingSet putAbove = m_context.valueOf(prototype);
+    bool standsBelowInstance = mayBeUnknownObject(putAbove) || m_context.holdsAnyOf(known(putAbove), belowInstances);
+    m_context.forEachMember(known(putAbove), [&](ValueFlowObjectID object) {
+        LayoutID layout = m_universe.layoutOf(object);
+        standsBelowInstance |= m_universe.kindOf(object) == ValueFlowObjectKind::ConstructedObject || (layout && m_program.at(layout).kind == LayoutKind::Instance);
+    });
+    if (standsBelowInstance)
+        add(belowInstances, known(objects));
     m_context.mark(m_context.restrict(objects, m_universe.objects()), ObjectMutation::ChangePrototype);
     m_context.mark(m_context.withoutProxiesThatWalksPass(m_context.restrict(m_context.valueOf(prototype), m_universe.objects())), ObjectMutation::BecomePrototype);
 }

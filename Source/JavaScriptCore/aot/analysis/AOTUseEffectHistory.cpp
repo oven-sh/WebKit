@@ -4,6 +4,7 @@
  */
 
 #include "config.h"
+#include "AOTHeldOperands.h"
 #include "AOTUseEffectHistory.h"
 
 #if ENABLE(AOT)
@@ -130,6 +131,44 @@ UseEffectHistory::UseEffectHistory(FunctionAnalyses& analyses, const UseEffectHi
     if (!options.uses.isEmpty())
         eventUses.add(OperandUse::Retains);
 
+    // A saved frame is out of the program's reach. So is what lies in a list or an object that has gone nowhere but into saved frames.
+    auto isHeldBySuspension = [&](const Use& use) {
+        return use.kind == Use::Kind::Operand && isHeldOperand(m_function.at(use.user), use.operandIndex);
+    };
+    BitVector leavesOnlyIntoSavedFrames(m_numberOfObjects);
+    auto goesIntoSavedFramesAlone = [&](const ObjectUse& objectUse) {
+        if (isHeldBySuspension(objectUse.use))
+            return true;
+        if (!objectUse.retainedBy)
+            return false;
+        PointsToSet containers = escape.pointsTo(objectUse.retainedBy);
+        if (containers.mayBeUntracked)
+            return false;
+        for (ObjectID container : containers.objects) {
+            if (!leavesOnlyIntoSavedFrames.quickGet(container.index()))
+                return false;
+        }
+        return true;
+    };
+    bool savedFramesAreOutOfReach = options.uses.isEmpty() && analyses.context().savedFrames == SavedFrames::AreOutOfReach;
+    if (savedFramesAreOutOfReach) {
+        for (unsigned objectIndex = 0; objectIndex < m_numberOfObjects; ++objectIndex) {
+            if (escape.at(ObjectID(objectIndex)).kind == ObjectKind::Allocation && !m_isUnknown.quickGet(objectIndex))
+                leavesOnlyIntoSavedFrames.quickSet(objectIndex);
+        }
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (size_t objectIndex : BitVector(leavesOnlyIntoSavedFrames)) {
+                for (auto& objectUse : escape.usesOf(ObjectID(objectIndex))) {
+                    if (!objectUse.isEscape || goesIntoSavedFramesAlone(objectUse))
+                        continue;
+                    leavesOnlyIntoSavedFrames.quickClear(objectIndex);
+                    changed = true;
+                    break;
+                }
+            }
+        }
+    }
     Vector<PendingAction> pendingActions;
     auto addAction = [&](BlockID block, uint32_t index, ObjectID object, ActionKind kind) {
         pendingActions.append(PendingAction { m_cfg.reversePostOrderIndex(block), Action { index, object, kind } });
@@ -164,6 +203,8 @@ UseEffectHistory::UseEffectHistory(FunctionAnalyses& analyses, const UseEffectHi
         for (auto& objectUse : escape.usesOf(object)) {
             auto& use = objectUse.use;
             if ((!objectUse.isEscape && !objectUse.uses.containsAny(eventUses)) || isSkipped(use.block))
+                continue;
+            if (savedFramesAreOutOfReach && goesIntoSavedFramesAlone(objectUse))
                 continue;
             if (std::optional<uint32_t> index = actionIndexOf(m_function, useLists, use))
                 addAction(use.block, *index, object, ActionKind::Event);

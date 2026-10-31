@@ -76,6 +76,7 @@ runtime NewArrayOfElements : JSCell* (JSCell* source, uint64_t capacity) ; reads
 runtime NewArrayOfMembers : JSCell* (JSCell* source, uint64_t indexingType) ; reads(all) writes(CollectionStorage, AllocatorState, RuntimeState) throws collects
 runtime AppendHole : JSCell* (JSCell* array) ; RuntimeGrowsArray
 runtime ReserveArrayCapacity : void (JSCell* array, uint64_t additional) ; reads(all) writes(Elements, ArrayStorage, AllocatorState, RuntimeState) collects
+runtime ReserveWholeArrayCapacity : void (JSCell* array, uint64_t additional) ; reads(all) writes(Elements, ArrayStorage, AllocatorState, RuntimeState) collects
 runtime ReserveCollectionCapacity : void (JSCell* collection, uint64_t remaining, uint64_t finished, uint64_t sizeAtEntry) ; reads(all) writes(CollectionStorage, CollectionEntries, AllocatorState, RuntimeState) collects
 runtime TryFinishBirth : void (JSCell* object) ; reads(all) writes(RuntimeState)
 runtime RecordCallee : void (JSCell* closure, void* stackPointerOfCaller) ; reads(all) writes(ExternalState, RuntimeState)

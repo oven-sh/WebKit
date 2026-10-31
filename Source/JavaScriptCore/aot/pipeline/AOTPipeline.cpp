@@ -226,7 +226,7 @@ constexpr std::array rows {
     functionPass(SeparateUnlikelyLoopPaths, separateUnlikelyLoopPaths, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
     functionPass(ConvertCountersToIntegers, convertCountersToIntegers, Optional, Prepared, { Heat }, everything),
     functionPass(RemoveDeadCountedLoops, removeDeadCountedLoops, Optional, Prepared, { EffectSummaries }, everything),
-    functionPass(UnrollShortLoops, unrollShortLoops, Optional, Prepared, { Heat }, everything),
+    functionPass(UnrollShortLoops, unrollShortLoops, Optional, Prepared, { Heat, InliningSummaries }, everything),
     derivingFunctions(functionPass(FuseArrayChains, fuseArrayChains, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything)),
     readingOtherBodies(functionPass(FuseGeneratorLoops, fuseGeneratorLoops, Optional, Prepared, { Flow, EffectSummaries }, everything)),
     readingOtherBodies(functionPass(StartGeneratorsAtFirstStep, startGeneratorsAtFirstStep, Optional, Prepared, { Flow, EffectSummaries }, everything)),

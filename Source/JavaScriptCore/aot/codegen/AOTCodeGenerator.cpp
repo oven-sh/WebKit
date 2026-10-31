@@ -318,6 +318,8 @@ void CodeGenerator::generateValue(BlockID blockID, const Block& block, ValueID i
     ValueContext context(blockID, block, id, function().at(id), analyses());
     context.m_isAwaitedAtOnce = isAwaitedAtOnce;
     generate(context);
+    if (effectRuleOf(function().at(id).opcode) == EffectRule::Call)
+        emitter<CellAllocationEmitter>().clearCellsMadeFor(function().at(id));
 }
 
 void CodeGenerator::generateValueLeftToUser(const OperationContext& user, ValueID id)

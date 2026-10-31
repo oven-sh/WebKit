@@ -43,6 +43,12 @@ void FusedAccessEmitter::generateCallMethod(const ValueContext& value)
     };
     // A cache of its own pays for a site in fast code. Elsewhere the tables find the method, and the site is one call in place of two.
     SiteCacheID siteCache = value->siteCache();
+    if (AccessEmitter& accesses = emitter<AccessEmitter>(); accesses.isSymbolOfRealm(value->key())) {
+        call.callee = accesses.getByVal(value, receiver, accesses.cellOfKey(value, value->key())).value();
+        call.stub = callValue(count, CallEmitter::positionOf(value));
+        define(value, calls.callByConvention(value, call, { .throwSite = siteThatNamesCallee, .callerSuspendsAtReturn = value.isAwaitedAtOnce() }));
+        return;
+    }
     if (!siteCache || value.shape() != CodeShape::Fast) {
         // One return address stands for the read and the call. The stub says which of the two it is at.
         define(value, calls.callByConvention(value, call, { .immediate = *number, .readBeforeCall = value->readOrigin(), .throwSite = siteThatNamesCallee, .callerSuspendsAtReturn = value.isAwaitedAtOnce() }));

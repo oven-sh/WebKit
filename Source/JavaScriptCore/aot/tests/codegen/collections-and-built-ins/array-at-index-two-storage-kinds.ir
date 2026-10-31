@@ -140,15 +140,18 @@ function f1 name="pick" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
 # CHECK-NEXT: Int32 b@[[inside]] = Above(b@[[wide]], b@[[place]])
 # CHECK: Branch(b@[[inside]], Terminal)
 # CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#
-# The kind of storage is compared with integers first, and that arm is one load of the element.
+# A list of numbers is expected to have storage for doubles: that kind is asked first, the other kinds stand behind a rare edge, and its arm is one load of the element.
 # CHECK: Int32 b@[[byte]] = Load8Z(b@[[list]], offset = 4, ControlDependent|Reads:JSArray_indexingTypeAndMisc)
 # CHECK: Int32 b@[[kind]] = BitAnd(b@[[byte]], $14(b@{{*}}))
-# CHECK: Int32 b@[[isIntegers]] = Equal(b@[[kind]], $4(b@{{*}}))
-# CHECK: Branch(b@[[isIntegers]], Terminal)
+# CHECK: Int32 b@[[isDoubles]] = Equal(b@[[kind]], $6(b@{{*}}))
+# CHECK: Branch(b@[[isDoubles]], Terminal)
+# CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#
 # CHECK: Int64 b@[[offset]] = Shl(b@[[place]], $3(b@{{*}}))
 # CHECK-NEXT: Int64 b@[[address]] = Add(b@[[offset]], b@[[storage]])
-# CHECK-NEXT: Int64 b@{{*}} = Load(b@[[address]], ControlDependent|Reads:indexedInt32Properties)
+# CHECK-NEXT: Double b@{{*}} = Load(b@[[address]], ControlDependent|Reads:indexedDoubleProperties)
+# CHECK: Int32 b@{{*}} = Equal(b@[[kind]], $4(b@{{*}}))
+# CHECK: Int64 b@{{*}} = Load(b@{{*}}, ControlDependent|Reads:indexedInt32Properties)
 # CHECK-LABEL: end of function
 # The counts hold a call, whose moves follow the calling convention: not for Windows.
-# X64: instructions: 31, patchpoints: 1, rare instructions: 19
-# ARM64: instructions: 33, patchpoints: 2, rare instructions: 21
+# X64: instructions: 16, patchpoints: 0, rare instructions: 35
+# ARM64: instructions: 18, patchpoints: 0, rare instructions: 38

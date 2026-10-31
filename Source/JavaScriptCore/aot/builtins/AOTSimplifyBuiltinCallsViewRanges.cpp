@@ -15,6 +15,10 @@
 #include "AOTVector.h"
 #include <ranges>
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT { namespace Typed {
 
 // The row says rangeOf: the call makes a view of the class of its receiver over a part of the same memory.
@@ -91,5 +95,9 @@ unsigned expandRangesOfViews(FunctionPassContext& context, const BuiltinCallSite
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)
