@@ -177,7 +177,7 @@ public:
     {
         amortizedCleanupIfNeeded();
         auto result = m_map.ensure(key, functor);
-        return AddResult { WeakHashMapIterator(*this, result.iterator), result.isNewEntry };
+        return AddResult { WeakHashMapIterator(*this, m_map.iteratorAt(result.iterator)), result.isNewEntry };
     }
 
     template<typename Functor>
@@ -191,7 +191,7 @@ public:
     {
         amortizedCleanupIfNeeded();
         auto addResult = m_map.add(key, std::forward<T>(value));
-        return AddResult { WeakHashMapIterator(*this, addResult.iterator), addResult.isNewEntry };
+        return AddResult { WeakHashMapIterator(*this, m_map.iteratorAt(addResult.iterator)), addResult.isNewEntry };
     }
 
     template<typename T>
@@ -205,7 +205,7 @@ public:
     {
         amortizedCleanupIfNeeded();
         auto addResult = m_map.set(key, std::forward<V>(value));
-        return AddResult { WeakHashMapIterator(*this, addResult.iterator), addResult.isNewEntry };
+        return AddResult { WeakHashMapIterator(*this, m_map.iteratorAt(addResult.iterator)), addResult.isNewEntry };
     }
 
     template<typename V>

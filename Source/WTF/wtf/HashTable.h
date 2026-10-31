@@ -313,6 +313,26 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(HashTable);
         }
     };
 
+#if USE(BUN_JSC_ADDITIONS)
+    // The entry that add() found or made. An iterator also knows where the table ends: with it the result of add() is three words and comes back through memory.
+    // HashTable::iteratorAt() makes the iterator.
+    template<typename ValueType> class HashTableAddedEntry {
+    public:
+        HashTableAddedEntry() = default;
+        template<typename IteratorType> HashTableAddedEntry(const IteratorType& iterator)
+            : m_position(iterator.get())
+        {
+        }
+
+        ValueType* get() const { return m_position; }
+        ValueType& operator*() const { return *m_position; }
+        ValueType* operator->() const { return m_position; }
+
+    private:
+        ValueType* m_position { nullptr };
+    };
+#endif
+
     template<typename IteratorType> struct HashTableAddResult {
         HashTableAddResult() : isNewEntry(false) { }
         HashTableAddResult(IteratorType iter, bool isNewEntry) : iterator(iter), isNewEntry(isNewEntry) { }
@@ -374,7 +394,13 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(HashTable);
         typedef Value ValueType;
         using TakeType = typename ValueTraits::TakeType;
         typedef IdentityHashTranslator<ValueTraits, HashFunctions> IdentityTranslatorType;
+#if USE(BUN_JSC_ADDITIONS)
+        typedef HashTableAddResult<HashTableAddedEntry<ValueType>> AddResult;
+        iterator iteratorAt(HashTableAddedEntry<ValueType> entry) LIFETIME_BOUND { return makeKnownGoodIterator(entry.get()); }
+#else
         typedef HashTableAddResult<iterator> AddResult;
+        iterator iteratorAt(iterator entry) { return entry; }
+#endif
 
         using HashTableSizePolicy = HashTableCapacityForSize<1>;
 

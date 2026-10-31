@@ -181,6 +181,8 @@ public:
     AddResult ensure(const KeyType&, NOESCAPE const Invocable<MappedType()> auto&) LIFETIME_BOUND;
     AddResult ensure(KeyType&&, NOESCAPE const Invocable<MappedType()> auto&) LIFETIME_BOUND;
 
+    iterator iteratorAt(decltype(AddResult::iterator) entry) LIFETIME_BOUND { return m_impl.iteratorAt(entry); }
+
     bool remove(const KeyType&);
     bool remove(iterator);
     // FIXME: This feels like it should be Invocable<bool(const KeyValuePairType&)>

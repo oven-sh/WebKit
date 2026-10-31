@@ -151,6 +151,8 @@ public:
     template<typename ContainerType>
     bool removeAll(const ContainerType&);
 
+    iterator iteratorAt(decltype(AddResult::iterator) entry) LIFETIME_BOUND { return iterator(m_impl.iteratorAt(entry)); }
+
     bool remove(const ValueType&);
     bool remove(iterator);
     bool removeIf(NOESCAPE const Invocable<bool(const ValueType&)> auto&);

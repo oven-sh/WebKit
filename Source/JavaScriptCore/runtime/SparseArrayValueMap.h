@@ -194,6 +194,7 @@ public:
     bool putDirect(JSGlobalObject*, JSObject*, unsigned, JSValue, unsigned attributes, PutDirectIndexMode);
     AddResult add(JSObject*, unsigned);
     iterator find(unsigned i) { return m_set.find<SparseArrayEntryTranslator>(i); }
+    iterator iteratorAt(decltype(AddResult::iterator) entry) { return m_set.iteratorAt(entry); }
     // This should ASSERT the remove is valid (check the result of the find).
     void remove(iterator);
     void remove(unsigned i);
