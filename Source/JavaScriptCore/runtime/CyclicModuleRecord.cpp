@@ -106,9 +106,7 @@ static bool validatePrelinkedResolution(JSGlobalObject* globalObject, PrelinkedM
     return false;
 }
 
-// A link error is about one statement of the importing module, and no code of that module is running, so the error has
-// no frame there. The host finds the statement in the source the user wrote, which the text it handed to JavaScriptCore
-// is not when the host transpiles, and gives the error its location. Without a host the error is left as it is.
+// Without a host the error is left as it is.
 extern "C" __attribute__((weak)) void Bun__locateModuleLinkError(JSGlobalObject*, AbstractModuleRecord*, ErrorInstance*, ModuleLinkErrorSite, const Identifier&)
 {
 }
