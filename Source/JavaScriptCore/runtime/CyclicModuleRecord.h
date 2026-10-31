@@ -31,6 +31,14 @@ namespace JSC {
 
 class ErrorInstance;
 
+#if USE(BUN_JSC_ADDITIONS)
+// The statement of the importing module that a link error is about, and what the name handed to the host with it names.
+enum class ModuleLinkErrorSite : uint8_t {
+    Import, // an import; the name is the local binding
+    IndirectExport, // `export { x } from`, or an import that is exported; the name is the exported one
+};
+#endif
+
 class CyclicModuleRecord : public AbstractModuleRecord {
     friend class LLIntOffsetsExtractor;
 public:
