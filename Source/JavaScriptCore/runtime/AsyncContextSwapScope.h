@@ -93,6 +93,14 @@ public:
         }
     }
 
+    // Make the async context that the scope entered current again, where the job has since
+    // replaced it. `asyncContext` is the value the scope was constructed with.
+    ALWAYS_INLINE void reenter(JSValue asyncContext)
+    {
+        if (m_asyncContextData)
+            m_asyncContextData->putInternalField(m_vm, 0, asyncContext.isEmpty() ? jsUndefined() : asyncContext);
+    }
+
     static ALWAYS_INLINE bool isContextTuple(JSValue contextArg)
     {
         // JSType test first: rejects the usual non-tuple cells (generators,
