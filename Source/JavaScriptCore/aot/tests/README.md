@@ -68,7 +68,8 @@ diagnostic itself is left out. Together they run a folder in another way than it
 A test that crashes fails alone, because tests run in child processes. `run` starts one child per file. `native` starts one
 child for all its tests, and after a crash another one for the tests that are left. The failure is
 `FAIL <file>:1: crashed with <signal>` or `FAIL <name>: crashed with <signal>`, below the last lines the child printed. A child that
-prints nothing for 100 seconds (300 with ASan or assertions) is killed, and its test fails.
+prints nothing for 100 seconds (300 with ASan or assertions) is killed, and its test fails. On Linux and Windows a child ends with
+the process that started it, however that ends. Elsewhere a child that is killed takes what it has started with it.
 
 Under a debugger, run the test in `testaot` itself: `run` with a single file starts no child, and neither does
 `native --single-process`. `--after=<name>` runs only the native tests listed after that one.
@@ -409,8 +410,8 @@ A command is registered by the owner of the code it runs, in `aot/**/AOT*TestCom
 - `function-passes <PassID> { <PassID> }` runs the named function passes on one function after the other, all of them with one
   `FunctionPassContext` per function, as a schedule does: what a pass remembers in the context about a function is there for the next.
   It prints `f<n> <PassID>: Changed` or `Unchanged` per run, then the program. Passes that derive functions are refused.
-- `pipeline <PassID>` runs the pipeline from `AsRead` through the first run of that pass, then prints that pass's results, under
-  `OPTIONS: report=Declines` the `decline` lines of all passes that ran, and the program.
+- `pipeline <PassID> [heat]` runs the pipeline from `AsRead` through the first run of that pass, then prints that pass's results, with
+  `heat` the heat as it is then, under `OPTIONS: report=Declines` the `decline` lines of all passes that ran, and the program.
 - `compile` runs the whole build and prints `diagnostic <kind>`, `loss <limit> x<count>`, `image <empty|not empty>` and
   `statistic <name> <value>` lines.
 - `run-in-shell { --<option> } { word }` runs the whole build, then the entry module in `jsc` from the folder of `testaot`. The leading words

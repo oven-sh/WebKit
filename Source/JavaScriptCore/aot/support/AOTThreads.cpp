@@ -32,6 +32,35 @@
 
 namespace JSC { namespace AOT {
 
+void joinChunksAsBytes(const ParallelLoops& loops, VectorWords& result, std::span<VectorWords> chunks, size_t elementSize)
+{
+    size_t size = 0;
+    for (auto& chunk : chunks)
+        size += chunk.size;
+    if (size) {
+        allocateVectorBuffer<VectorBufferMalloc>(result, size, elementSize);
+        auto bytes = unsafeMakeSpan(static_cast<uint8_t*>(result.buffer), size * elementSize);
+        takePageFaultsInParallel(loops, bytes);
+        for (auto& chunk : chunks) {
+            if (!chunk.size)
+                continue;
+            memcpySpan(bytes, unsafeMakeSpan(static_cast<const uint8_t*>(chunk.buffer), chunk.size * elementSize));
+            bytes = bytes.subspan(chunk.size * elementSize);
+            chunk.size = 0;
+        }
+        result.size = static_cast<unsigned>(size);
+    }
+    AOT_THRESHOLD(size_t, fewestChunksFreedOnPool, 64);
+    if (chunks.size() >= fewestChunksFreedOnPool) {
+        forEachIndexInParallel(loops, static_cast<unsigned>(chunks.size()), [&](unsigned index) {
+            VectorWords& chunk = chunks[index];
+            if (chunk.buffer)
+                VectorBufferMalloc::free(chunk.buffer);
+            chunk = { };
+        });
+    }
+}
+
 static thread_local TaskPriority t_currentPriority = TaskPriority::Foreground;
 static thread_local bool t_isInsideLoop = false;
 static thread_local unsigned t_parallelRegionDepth = 0;
@@ -119,6 +148,22 @@ BusyThreads::WaitScope::~WaitScope()
 }
 
 // A pool wakes its threads one after the other, each when the one before has found work.
+static std::atomic<bool (*)(bool)> s_giveFreeMemoryOfCurrentThreadBack { nullptr };
+static std::atomic<uint32_t> s_timesAskedForFreeMemory { 0 };
+static thread_local uint32_t t_timesGaveFreeMemoryBack { 0 };
+
+enum class TurnToGiveBack : bool { IsTakenIfFree, IsWaitedFor };
+
+// A thread with work in hand does not wait: it asks again behind its next step.
+static void giveFreeMemoryOfCurrentThreadBackIfAsked(TurnToGiveBack turn)
+{
+    uint32_t timesAsked = s_timesAskedForFreeMemory.load(std::memory_order_seq_cst);
+    if (t_timesGaveFreeMemoryBack == timesAsked) [[likely]]
+        return;
+    if (s_giveFreeMemoryOfCurrentThreadBack.load(std::memory_order_relaxed)(turn == TurnToGiveBack::IsWaitedFor))
+        t_timesGaveFreeMemoryBack = timesAsked;
+}
+
 class ParallelLoops::RestingThreads final : public ThreadSafeRefCounted<RestingThreads> {
 public:
     struct Task {
@@ -141,6 +186,18 @@ public:
     bool tryHandOver(Task task)
     {
         return !hasPendingTaskAbove(task.priority) && wakeOne(HasTask, task);
+    }
+
+    // Every seat leaves the list before the first thread is woken. A thread that has run the task and rests again would otherwise get it a second time, and another thread never.
+    bool handOverToAll(Task task)
+    {
+        Vector<uint32_t, 64> seats;
+        while (std::optional<uint32_t> index = m_restingSeats.pop(m_seats.get()))
+            seats.append(*index);
+        bool hasWokenThread = false;
+        for (uint32_t index : seats)
+            hasWokenThread |= wake(index, HasTask, task);
+        return hasWokenThread;
     }
 
     void addPendingTask(Task task)
@@ -257,6 +314,7 @@ private:
 
     static void run(Task task)
     {
+        giveFreeMemoryOfCurrentThreadBackIfAsked(TurnToGiveBack::IsTakenIfFree);
         TaskPriority previousPriority = std::exchange(t_currentPriority, task.priority);
         CurrentWorkScope workScope(task.work);
         bool isCounted = InstructionCounts::hasBegun() && !t_isCountedAsBusy;
@@ -289,6 +347,8 @@ private:
             seat.isInRestingList.store(false, std::memory_order_relaxed);
             seat.state.store(IsResting);
             m_restingSeats.push(m_seats.get(), *index);
+            // Either this thread sees that it was asked, or whoever asked sees this thread in the list.
+            giveFreeMemoryOfCurrentThreadBackIfAsked(TurnToGiveBack::IsWaitedFor);
             seat.isInRestingList.store(true, std::memory_order_release);
             switch (rest(seat)) {
             case HasTask:
@@ -304,16 +364,24 @@ private:
         }
     }
 
+    // Of a seat that was taken out of the list of resting seats.
+    bool wake(uint32_t index, State newState, Task task)
+    {
+        Seat& seat = m_seats[index];
+        seat.task = task;
+        if (seat.state.compareExchangeStrong(IsResting, newState) == IsResting) {
+            ParkingLot::unparkOne(&seat.state);
+            return true;
+        }
+        m_freeSeats.push(m_seats.get(), index);
+        return false;
+    }
+
     bool wakeOne(State newState, Task task)
     {
         while (std::optional<uint32_t> index = m_restingSeats.pop(m_seats.get())) {
-            Seat& seat = m_seats[*index];
-            seat.task = task;
-            if (seat.state.compareExchangeStrong(IsResting, newState) == IsResting) {
-                ParkingLot::unparkOne(&seat.state);
+            if (wake(*index, newState, task))
                 return true;
-            }
-            m_freeSeats.push(m_seats.get(), *index);
         }
         return false;
     }
@@ -370,6 +438,25 @@ ParallelLoops::~ParallelLoops()
 void ParallelLoops::sendRestingThreadsBack() const
 {
     m_restingThreads->close();
+}
+
+void ParallelLoops::askThreadsAtWorkForFreeMemory() const
+{
+    if (!m_hostPool || !m_hostPool->giveFreeMemoryOfCurrentThreadBack)
+        return;
+    s_giveFreeMemoryOfCurrentThreadBack.store(m_hostPool->giveFreeMemoryOfCurrentThreadBack, std::memory_order_relaxed);
+    s_timesAskedForFreeMemory.fetch_add(1, std::memory_order_seq_cst);
+}
+
+void ParallelLoops::giveFreeMemoryBack() const
+{
+    askThreadsAtWorkForFreeMemory();
+    if (!m_hostPool || !m_hostPool->giveFreeMemoryOfCurrentThreadBack)
+        return;
+    // They are woken for nothing else.
+    RestingThreads::Task task { [](void*) { giveFreeMemoryOfCurrentThreadBackIfAsked(TurnToGiveBack::IsWaitedFor); }, nullptr, TaskPriority::Foreground, InheritedWork::ofCurrentThread() };
+    if (!m_restingThreads->handOverToAll(task))
+        giveFreeMemoryOfCurrentThreadBackIfAsked(TurnToGiveBack::IsWaitedFor);
 }
 
 unsigned ParallelLoops::numberOfRestingThreads() const
@@ -528,7 +615,7 @@ void runOnBuildThread(NOESCAPE const ScopedLambda<void()>& functor)
     })->waitForCompletion();
 }
 
-void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, NOESCAPE const ScopedLambda<void(unsigned index, unsigned worker)>& functor)
+NEVER_INLINE void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, NOESCAPE const ScopedLambda<void(unsigned index, unsigned worker)>& functor)
 {
     if (count < 2 || loops.width() == 1) {
         SetForScope isInsideLoop(t_isInsideLoop, t_isInsideLoop || count > 1);
@@ -563,6 +650,7 @@ void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, NOESCAPE
                 continue;
             for (unsigned index = first; index < end; ++index)
                 functor(index, worker);
+            giveFreeMemoryOfCurrentThreadBackIfAsked(TurnToGiveBack::IsTakenIfFree);
             run = std::min(run * 2, longestRun);
             first = next.load(std::memory_order_relaxed);
         }
@@ -572,14 +660,14 @@ void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, NOESCAPE
     });
 }
 
-void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, NOESCAPE const ScopedLambda<void(unsigned index)>& functor)
+NEVER_INLINE void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, NOESCAPE const ScopedLambda<void(unsigned index)>& functor)
 {
     forEachIndexInParallel(loops, count, [&](unsigned index, unsigned) {
         functor(index);
     });
 }
 
-void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, std::span<const uint32_t> longestFirst, NOESCAPE const ScopedLambda<void(unsigned index)>& functor)
+NEVER_INLINE void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, std::span<const uint32_t> longestFirst, NOESCAPE const ScopedLambda<void(unsigned index)>& functor)
 {
     if (longestFirst.empty()) {
         forEachIndexInParallel(loops, count, functor);

@@ -148,5 +148,5 @@ function f1 name="distinct" module=m0 flags=[IsChecked, HasExplicitName] length=
 # WHOLE-NOT: :IsPristine
 # WHOLE-LABEL: end of function
 # The counts hold a call, whose moves follow the calling convention: not for Windows.
-# X64: loop #{{*}}, instructions: 5, patchpoints: 3
+# X64: loop #{{*}}, instructions: 4, patchpoints: 3
 # ARM64: loop #{{*}}, instructions: 4, patchpoints: 3

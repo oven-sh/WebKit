@@ -541,6 +541,8 @@ static void testBackEndReportFailure()
         { B3::FailureKind::AbsoluteAddress, InternalErrorKind::AbsoluteAddressInProcedure },
         { B3::FailureKind::RelocationNotLowered, InternalErrorKind::RelocationNotLowered },
         { B3::FailureKind::VariableReadBeforeSet, InternalErrorKind::VariableReadBeforeSet },
+        { B3::FailureKind::SpillSlotLacksItsValue, InternalErrorKind::SpillSlotLacksItsValue },
+        { B3::FailureKind::RegisterLacksItsValue, InternalErrorKind::RegisterLacksItsValue },
     };
 
     for (const FailureCase& failureCase : cases) {
@@ -721,6 +723,8 @@ static void testBackEndReportStatistics()
     raw.counters[static_cast<size_t>(B3::Counter::TrapsFoldedIntoAccesses)] = 10;
     raw.counters[static_cast<size_t>(B3::Counter::LoopPollsRemoved)] = 11;
     raw.counters[static_cast<size_t>(B3::Counter::SumsKeptAsIntegers)] = 12;
+    raw.counters[static_cast<size_t>(B3::Counter::ColdUsesKeptThroughSecondSplit)] = 13;
+    raw.counters[static_cast<size_t>(B3::Counter::ColdUsesKeptThroughSecondSplitBetweenDefs)] = 14;
     AOT_TEST_CHECK(!program.report(build, program.functionAsRead(), raw));
 
     expected.count(StatisticID::LoopsVersioned, 4);
@@ -732,6 +736,10 @@ static void testBackEndReportStatistics()
     expected.count(StatisticID::NullChecksFoldedIntoAccesses, 10);
     expected.count(StatisticID::LoopPollsRemoved, 11);
     expected.count(StatisticID::SumsKeptAsIntegers, 12);
+    expected.count(StatisticID::ColdUsesKeptThroughSecondSplit, 13);
+    expected.count(StatisticID::FunctionsWithColdUsesKeptThroughSecondSplit, 1);
+    expected.count(StatisticID::ColdUsesKeptThroughSecondSplitBetweenDefs, 14);
+    expected.count(StatisticID::FunctionsWithColdUsesKeptThroughSecondSplitBetweenDefs, 1);
     AOT_TEST_CHECK(build.statistics().values() == expected.values());
     AOT_TEST_CHECK(build.takeLosses(&program.program()).isEmpty());
 }

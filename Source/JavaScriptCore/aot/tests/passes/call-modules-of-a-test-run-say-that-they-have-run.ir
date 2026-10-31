@@ -1,0 +1,85 @@
+# require.cache of a test run lists the files that have run. A module that runs as a part of another keeps no status, and neither does one that has nothing to run:
+# whoever evaluates such a module stores the status behind it. A module with a start stores its own.
+# FORM: Prepared
+# RUN: pass CallModules
+# STATISTIC: ModulesWithState = 1
+# CHECK: outcome: Changed
+
+variable g0 name="later" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="counted" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="countedLater" module=m4 declared={type=anything} initialization=Undefined
+variable g3 name="countedBelow" module=m5 declared={type=anything} initialization=Undefined
+module m0 path="/one.test.ts" displayPath="one.test.ts" flags=[IsListedInCache] body=f0 requests=[{target=m1 kind=Require completes=true}, {target=m2 kind=Require completes=true}, {target=m3 kind=Require completes=true}, {target=m4 kind=Require completes=true}]
+module m1 path="/counts.ts" displayPath="counts.ts" flags=[IsListedInCache] body=f1 requests=[{target=m5 completes=true}, {target=m6 completes=true}] exports=[{name="counted" variable=g1}]
+module m2 path="/empty.ts" displayPath="empty.ts" flags=[IsListedInCache] body=f2
+module m3 path="/empty-later.ts" displayPath="empty-later.ts" flags=[IsListedInCache] body=f3 requests=[{target=m7 completes=true}]
+module m4 path="/counts-later.ts" displayPath="counts-later.ts" flags=[IsListedInCache] body=f4 requests=[{target=m8 completes=true}] exports=[{name="countedLater" variable=g2}]
+module m5 path="/counts-below.ts" displayPath="counts-below.ts" flags=[IsListedInCache] body=f6 exports=[{name="countedBelow" variable=g3}]
+module m6 path="/empty-below.ts" displayPath="empty-below.ts" flags=[IsListedInCache] body=f7
+module m7 path="/empty-below-empty.ts" displayPath="empty-below-empty.ts" flags=[IsListedInCache] body=f8
+module m8 path="/empty-below-later.ts" displayPath="empty-below-later.ts" flags=[IsListedInCache] body=f9
+entry module=m0
+
+function f0 name="test" module=m0 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    EvaluateModule module=m2 referrer=m0 [isBare]
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    v3 = NewClosure function=f5
+    PutModuleVariable v3 variable=g0
+    Return
+# CHECK-NEXT: b0():
+# CHECK-NEXT: EvaluateRequiredModule module=m1
+# CHECK-NEXT: EvaluateRequiredModule module=m2
+# CHECK-NEXT: EvaluateRequiredModule module=m1
+# CHECK-NEXT: = NewClosure function=f5
+}
+# What counts.ts imports has run in front of it.
+function f1 name="counts" module=m1 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g3
+    PutModuleVariable v0 variable=g1
+    Return
+# CHECK-NEXT: b0():
+# CHECK-NEXT: [[begins]]: boolean = BeginModuleEvaluation module=m1
+# CHECK: = CallDirect function=f6
+# CHECK-NEXT: = BeginModuleEvaluation module=m5
+# CHECK-NEXT: FinishModuleEvaluation module=m5
+# CHECK-NEXT: = BeginModuleEvaluation module=m6
+# CHECK-NEXT: FinishModuleEvaluation module=m6
+# CHECK-NEXT: = CallDirect function=f10
+# CHECK-NEXT: FinishModuleEvaluation module=m1
+}
+function f2 name="empty" module=m2 kind=Module results=[{type=anything}] {
+    Return
+}
+function f3 name="emptyLater" module=m3 kind=Module results=[{type=anything}] {
+    Return
+}
+function f4 name="countsLater" module=m4 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=2
+    PutModuleVariable v0 variable=g2
+    Return
+}
+function f5 name="later" module=m0 results=[{type=anything}] {
+    EvaluateModule module=m3 referrer=m0
+    EvaluateModule module=m4 referrer=m0
+    v2 = GetModuleVariable variable=g2
+    Return v2
+# CHECK-NEXT: b0():
+# CHECK-NEXT: EvaluateRequiredModule module=m3
+# CHECK-NEXT: EvaluateRequiredModule module=m4
+# CHECK-NEXT: = GetModuleVariable variable=g2
+}
+function f6 name="countsBelow" module=m5 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g3
+    Return
+}
+function f7 name="emptyBelow" module=m6 kind=Module results=[{type=anything}] {
+    Return
+}
+function f8 name="emptyBelowEmpty" module=m7 kind=Module results=[{type=anything}] {
+    Return
+}
+function f9 name="emptyBelowLater" module=m8 kind=Module results=[{type=anything}] {
+    Return
+}

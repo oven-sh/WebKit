@@ -407,7 +407,7 @@ void IRBuilder::applyInsertions()
         didChangeValues();
         return;
     }
-    AOT::stableSort(m_insertions, [](const QueuedInsertion& a, const QueuedInsertion& b) {
+    AOT::stableSortInLine(m_insertions, [](const QueuedInsertion& a, const QueuedInsertion& b) {
         return std::tie(a.point.block, a.point.index) < std::tie(b.point.block, b.point.index);
     });
 

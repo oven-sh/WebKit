@@ -32,7 +32,8 @@ ValueSetID objectsThatTheirOwnSitesNoLongerMake(const ValueFlowSolver& solver, c
     const ValueFlowUniverse& universe = bodies.universe();
     HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> seen;
     Vector<ValueSetID> held;
-    for (ValueSetID value : solver.graph().values()) {
+    for (uint32_t node = 0; node < solver.graph().numberOfNodes(); ++node) {
+        ValueSetID value = solver.graph().valueOf(ValueFlowNodeID(node));
         if (value && seen.add(value.index()).isNewEntry)
             held.append(value);
     }

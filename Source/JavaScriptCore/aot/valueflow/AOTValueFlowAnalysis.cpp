@@ -40,7 +40,7 @@ static std::optional<unsigned> positionOfParameter(const Function& function, Val
     return position < function.numberOfPositionalParameters() ? std::optional(position) : std::nullopt;
 }
 
-Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Program& program, const ParallelLoops& loops, Vector<TextPassed>& textsPassed, Vector<ValueFlowNotedOperations>& notedOperations)
+Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Program& program, const ParallelLoops& loops, Vector<TextPassed>& textsPassed, Vector<StringID>& relativePaths, Vector<ValueFlowNotedOperations>& notedOperations)
 {
     notedOperations.fill(0, program.functions.size());
     struct Argument {
@@ -59,6 +59,8 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
         Vector<CallPassingParameters> calls;
         Vector<Argument> arguments;
         Vector<TextPassed> textsPassed;
+        Vector<StringID> relativePaths;
+        Vector<uint32_t> getTraps;
     };
 
     auto functionBoundTo = [&](const Function& function, ValueID id) -> FunctionID {
@@ -77,13 +79,19 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
         const Function& function = program.functions[index];
         notedOperations[index] = notedOperationsOf(function);
         bool hasInstances = mayHaveInstances(function);
+        bool isOfProgram = isWrittenInProgram(function);
         auto note = [&](unsigned position) {
             positionOfKey[index] = std::min<uint32_t>(positionOfKey[index], position);
         };
+        Vector<std::pair<ValueID, FunctionID>, 2> definedAsGet;
         for (const Block& block : function.blocks) {
             for (ValueID id : block.values) {
                 const Value& value = function.at(id);
                 switch (value.opcode) {
+                case Opcode::String:
+                    if (std::span<const uint8_t> text = program.string(value.string()); isOfProgram && (spanHasPrefix(text, byteCast<uint8_t>("./"_span)) || spanHasPrefix(text, byteCast<uint8_t>("../"_span))))
+                        body.relativePaths.append(value.string());
+                    break;
                 case Opcode::ElemSet:
                 case Opcode::ElemDefine:
                     static_assert(OperandIndex::ElemSet::property == 1 && OperandIndex::ElemDefine::property == 1);
@@ -100,14 +108,28 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
                             note(*position);
                     }
                     break;
+                case Opcode::NewObject: {
+                    std::span<const ValueID> values = value.variadicOperands();
+                    std::span<const uint32_t> fields = value.fields();
+                    for (uint32_t position = 0; position < fields.size() && position < values.size(); ++position) {
+                        if (program.at(value.layout()).fields[fields[position]].key != program.keyOf(BuiltinNames::get))
+                            continue;
+                        if (FunctionID stored = functionBoundTo(function, values[position]))
+                            definedAsGet.append({ id, stored });
+                    }
+                    break;
+                }
                 case Opcode::PropSet:
                 case Opcode::PropDefine:
                 case Opcode::DefineMethod: {
                     static_assert(OperandIndex::PropSet::value == 1 && OperandIndex::PropDefine::value == 1 && OperandIndex::DefineMethod::function == 1);
                     if (!value.key())
                         break;
-                    if (FunctionID stored = functionBoundTo(function, value.operand(1)))
+                    if (FunctionID stored = functionBoundTo(function, value.operand(1))) {
                         body.functionsStoredUnderNames.append({ value.key().index(), stored.index() });
+                        if (value.key() == program.keyOf(BuiltinNames::get))
+                            definedAsGet.append({ definitionThroughSameValues(function, value.operand(0)), stored });
+                    }
                     else if (const Value& read = function.at(definitionThroughSameValues(function, value.operand(1))); read.opcode == Opcode::PropGet && read.key())
                         body.namesStoredAgain.append({ read.key().index(), value.key().index() });
                     break;
@@ -117,6 +139,16 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
                 }
                 if (value.opcode != Opcode::Call && value.opcode != Opcode::Construct)
                     continue;
+                // new Proxy(target, { get(target, key) { .. } })
+                if (const Value& callee = function.at(definitionThroughSameValues(function, value.calleeOperand())); value.opcode == Opcode::Construct && value.numberOfOperands() > 3 && value.operand(3) && callee.opcode == Opcode::Builtin && program.builtins().canonicalID(callee.builtin()) == Builtins::Proxy) {
+                    ValueID handler = definitionThroughSameValues(function, value.operand(3));
+                    if (function.at(handler).opcode == Opcode::FinishObject)
+                        handler = definitionThroughSameValues(function, function.at(handler).objectOperand());
+                    for (auto [object, trap] : definedAsGet) {
+                        if (object == handler)
+                            body.getTraps.append(trap.index());
+                    }
+                }
                 for (uint32_t operand = 2; operand < value.numberOfOperands() && operand < 2 + mostArgumentsLookedAtForTexts; ++operand) {
                     if (!value.operand(operand))
                         continue;
@@ -149,8 +181,10 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
             scan(index, found);
         return found;
     });
-    for (size_t chunk = 0; chunk < bodies.size(); ++chunk)
+    for (size_t chunk = 0; chunk < bodies.size(); ++chunk) {
         textsPassed.appendVector(std::exchange(bodies[chunk].textsPassed, { }));
+        relativePaths.appendVector(std::exchange(bodies[chunk].relativePaths, { }));
+    }
 
     // `a.to = b.from` stores again under `to` what lies under `from`. The lists of functions under names are not closed over that: n names, each stored into the next, would hold n * n / 2 members.
     // Names that are stored into each other in a circle form a group. A group keeps what is stored under its names directly and knows the groups that are stored into it.
@@ -172,7 +206,7 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
         Vector<uint32_t> entries;
     };
     auto layOutRows = [](uint32_t numberOfRows, Pairs&& pairs) {
-        AOT::sort(pairs);
+        AOT::sortInLine(pairs);
         removeRepeatedElements(pairs);
         Rows rows;
         rows.first.fill(0, numberOfRows + 1);
@@ -423,6 +457,14 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
             }
         }
     }
+    // A read of a name on the proxy asks the trap for that name alone: `get(target, key) { if (key === "write") return write; if (key === "fd") return fd; .. }`.
+    // Behind the rounds above: who calls something under the name `get` is no such read.
+    for (const Found& body : bodies.span()) {
+        for (uint32_t trap : body.getTraps) {
+            if (mayHaveInstances(program.functions[trap]) && program.functions[trap].numberOfPositionalParameters() > positionOfKeyInGetTrap)
+                positionOfKey[trap] = std::min(positionOfKey[trap], positionOfKeyInGetTrap);
+        }
+    }
     return positionOfKey;
 }
 
@@ -506,15 +548,35 @@ static void internEmbeddedFilePaths(Program& program)
     });
 }
 
+// `for (const name of new Set(["os", "./plugin.ts"])) await import(name)`: a text is followed to a load only as a key.
+static void internNamesOfModules(Program& program, std::span<const StringID> relativePaths)
+{
+    auto intern = [&](StringID text) {
+        program.types.intern(PropertyKey { .kind = PropertyKeyKind::Text, .text = text });
+    };
+    std::ranges::for_each(relativePaths, intern);
+    for (const Module& module : program.modules) {
+        if (!module.runtimeModule || !isAskedOfHostByName(module))
+            continue;
+        intern(module.path);
+        std::ranges::for_each(module.otherNames, intern);
+        std::span<const uint8_t> path = program.string(module.path);
+        if (StringID name = spanHasPrefix(path, byteCast<uint8_t>("node:"_span)) ? program.strings.find(path.subspan(5)) : StringID())
+            intern(name);
+    }
+}
+
 static ValueFlowBodies reduceBodiesBehindKeys(Program& program, BuildContext& build, Vector<uint32_t>& positionOfKey)
 {
     PhaseTimes times(build, PassID::AnalyzeFlow);
     Vector<ValueFlowInstancedFunctions::TextPassed> textsPassed;
+    Vector<StringID> relativePaths;
     Vector<ValueFlowNotedOperations> notedOperations;
-    positionOfKey = ValueFlowInstancedFunctions::findParametersThatAreKeys(program, build.parallelLoops(), textsPassed, notedOperations);
+    positionOfKey = ValueFlowInstancedFunctions::findParametersThatAreKeys(program, build.parallelLoops(), textsPassed, relativePaths, notedOperations);
     makeKeysOfTextsThatCallsPass(program, positionOfKey.span(), textsPassed.span());
     internKeysOfDeclaredStringLiterals(program, build.parallelLoops());
     internEmbeddedFilePaths(program);
+    internNamesOfModules(program, relativePaths.span());
     times.didFinish("solve: keys"_s);
     ValueFlowBodies bodies = reduceBodies(program, build, WTF::move(notedOperations));
     times.didFinish("solve: bodies"_s);
@@ -562,7 +624,7 @@ ValueFlowInstancedFunctions::ValueFlowInstancedFunctions(const Program& program,
     }
 }
 
-ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, ValueFlowSolver::Rounds rounds, Witnesses witnesses, uint32_t mostRounds, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut, WaysOfValues waysOfValues, CoveredMembers coveredMembers)
+ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, ValueFlowSolver::Rounds rounds, Witnesses witnesses, uint32_t mostRounds, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut, WaysOfValues waysOfValues, CoveredMembers coveredMembers, Reports reports)
     : m_program(program)
     , m_bodies(reduceBodiesBehindKeys(program, build, m_positionOfKey))
     , m_maker(m_bodies.sets())
@@ -581,20 +643,22 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         .masks = m_bodies.masks(),
         .statements = m_bodies.statements(),
         .operands = m_bodies.operands(),
+        .rareFactsOfText = m_bodies.rareFactsOfText(),
+        .copiesOfOperations = m_bodies.copiesOfOperations(),
         .edgesOnceReached = m_bodies.edgesOnceReached(),
         .seedsOnceReached = m_bodies.seedsOnceReached(),
         .functionsEnteredOnceReached = m_bodies.functionsEnteredOnceReached(),
         .ranges = m_bodies.ranges(),
         .mostSetMembers = build.limit(LimitID::MaxValueFlowSetMembers),
         .mostMembersToldApart = build.limit(LimitID::MaxValueFlowMembersToldApart),
-        .mostEdgesLogged = build.limit(LimitID::MaxValueFlowEdgesLogged),
         .mostObjectsListedByMember = build.limit(LimitID::MaxValueFlowObjectsListedByMember),
         .remembersWhoLoggedEachEdge = witnesses == Witnesses::ForEveryEdge || hasFlag(build.options().reports, ReportSet::Flow),
         .isAskedHowValuesCame = waysOfValues == WaysOfValues::AreAskedFor,
         .leavesOutWhatIsCovered = coveredMembers == CoveredMembers::AreLeftOut,
+        .reportsToBuild = reports == Reports::GoToBuild,
         .mostRounds = mostRounds,
         .unknownSourcesLeftOut = unknownSourcesLeftOut,
-        .refusedCode = { .evaluatedText = build.options().excludesEvaluatedText(), .hostEvaluatedText = build.options().excludesHostEvaluatedText(), .codeOutsideImage = build.options().excludesCodeOutsideImage() },
+        .refusedCode = { .evaluatedText = build.options().excludesEvaluatedText(), .hostEvaluatedText = build.options().excludesHostEvaluatedText(), .codeOutsideImage = build.options().excludesCodeOutsideImage(), .hostRunsFilesOutsideImage = build.options().admitsFilesRunByHost(), .hasImagesBelow = !!build.imagesBelow() },
         .removedFeatures = build.options().removedFeatures,
     };
     PhaseTimes times(build, PassID::AnalyzeFlow);
@@ -609,25 +673,40 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         m_inputAsItIs.isAskedHowValuesCame = true;
         m_inputAsItIs.leavesOutWhatIsCovered = false;
         m_solver = makeUnique<ValueFlowSolver>(m_inputAsItIs, m_bodies.sets(), runValueFlowRule, build.parallelLoops(), rounds);
-        if (m_solver->solve()) {
-            unseenCodeOfProgramAsItIs = unseenCodeRecordsOf(*this);
-            m_solverOfProgramAsItIs = WTF::move(m_solver);
-            m_input.seedOfWidening = build.recordedOptions().layoutSeed;
-        }
+        m_solver->solve();
+        unseenCodeOfProgramAsItIs = unseenCodeRecordsOf(*this);
+        m_solverOfProgramAsItIs = WTF::move(m_solver);
+        m_input.seedOfWidening = build.recordedOptions().layoutSeed;
         times.didFinish("solve: the program as it is"_s);
     }
+    m_input.ownerOfEdgesAndMasks = &m_bodies;
+    size_t bytesOfListsToPutAway = m_bodies.bytesOfWhatOnlyResultsRead();
+    m_bodies.putAwayWhatOnlyResultsRead(build.parallelLoops());
+    if (build.options().logging.logsPhaseTimes)
+        dataLogLn("AOT flow bytes | bodies: what only the results read | ", bytesOfListsToPutAway / KB, " KB | put away in ", m_bodies.bytesOfWhatIsPutAway() / KB, " KB");
     m_solver = makeUnique<ValueFlowSolver>(m_input, m_bodies.sets(), runValueFlowRule, build.parallelLoops(), rounds);
     times.didFinish("solve: the solver made"_s);
-    m_hasResult = m_solver->solve();
+    {
+        ParkedBodies parked(program.functions.mutableSpan(), build.parallelLoops());
+        build.giveFreedMemoryBack();
+        times.didFinish("solve: bodies parked"_s);
+        m_solver->readBodiesThrough(parked);
+        m_solver->solve();
+        build.statistics().count(StatisticID::FlowBodiesParked, parked.numberOfParkedFunctions());
+        build.statistics().count(StatisticID::FlowBodiesTakenBack, parked.numberTakenBackAtRead());
+        if (Options::logAOTPhaseTimes())
+            dataLogLn("AOT flow bodies | parked ", parked.numberOfParkedFunctions(), " | taken back at a read ", parked.numberTakenBackAtRead());
+    }
+    m_bodies.takeOutWhatWasPutAway(build.parallelLoops());
     times.didFinish("solve: rounds"_s);
-    if (build.options().logging.logsPhaseTimes) {
+    if (build.options().logging.logsPhaseTimes && m_input.reportsToBuild) {
         ValueFlowBytesByTable bytes;
         m_bodies.addBytesTo(bytes);
         bytes.dump("all of the bodies"_s);
     }
     for (const std::unique_ptr<ValueSetMaker>& maker : m_solver->makersIdleAfterSolve())
         m_makerPool.giveBack(*maker);
-    if (m_solverOfProgramAsItIs && m_hasResult) [[unlikely]] {
+    if (m_solverOfProgramAsItIs) [[unlikely]] {
         reportWhatIsFoundOnlyFromLess(*this, unseenCodeOfProgramAsItIs.span(), build);
         times.didFinish("solve: the two solves compared"_s);
     }

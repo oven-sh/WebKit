@@ -9,6 +9,7 @@
 
 #include "AOTPass.h"
 #include "AOTSummarizeForInlining.h"
+#include <wtf/BitVector.h>
 #include <wtf/OptionSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -41,6 +42,8 @@ struct InlineVerdict {
     uint32_t costBytes { 0 };
     uint32_t benefitBytes { 0 };
     uint32_t budgetBytes { 0 };
+    // Of InlineHead, for a call that a loop of the caller repeats: the head without MaxInlineHeadBytes, where it fits the budget of the place.
+    BitVector longHeadBlocks;
 };
 
 InlineVerdict computeInlineVerdict(FunctionPassContext&, const InliningSummary& callee, BlockID blockOfCall, ValueID call);

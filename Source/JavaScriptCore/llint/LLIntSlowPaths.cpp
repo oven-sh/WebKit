@@ -1090,11 +1090,11 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
 
 #if ENABLE(AOT)
 // llint_aot_op_get_by_id takes an empty slot for a miss, which no other reader of such a cache does. It comes here for a compiled object as long as the site is in the default mode and holds nothing.
-static void cacheFieldOfCompiledObject(VM& vm, CodeBlock* codeBlock, JSGlobalObject* globalObject, Structure* structure, const Identifier& ident, GetByIdModeMetadata& metadata)
+static void cacheFieldOfCompiledObject(VM& vm, CodeBlock* codeBlock, JSGlobalObject* globalObject, JSCell* object, Structure* structure, const Identifier& ident, GetByIdModeMetadata& metadata)
 {
     if (!Options::useLLIntICs() || metadata.mode != GetByIdMode::Default || metadata.defaultMode.structureID)
         return;
-    std::optional<PropertyOffset> offset = AOT::Interpreter::placeOfFieldInSiteCache(globalObject, structure, ident);
+    std::optional<PropertyOffset> offset = AOT::Interpreter::placeOfFieldInSiteCache(globalObject, object, structure, ident);
     if (!offset)
         return;
     ConcurrentJSLocker locker(codeBlock->m_lock);
@@ -1121,7 +1121,7 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id)
         Structure* structure = WTF::opaque(baseValue.asCell()->structure());
         JSValue result = performLLIntGetByID(codeBlock->bytecodeIndex(pc), codeBlock, globalObject, baseValue, ident, metadata.m_modeMetadata);
         if (!throwScope.exception())
-            cacheFieldOfCompiledObject(vm, codeBlock, globalObject, structure, ident, metadata.m_modeMetadata);
+            cacheFieldOfCompiledObject(vm, codeBlock, globalObject, baseValue.asCell(), structure, ident, metadata.m_modeMetadata);
         LLINT_RETURN_PROFILED(result);
     }
 #endif
@@ -1902,6 +1902,14 @@ LLINT_SLOW_PATH_DECL(slow_path_aot_jfalse)
 {
     AOT::Interpreter::didLeaveInlineBranch(callFrame->codeBlock()->vm());
     return llint_slow_path_jfalse(callFrame, pc);
+}
+
+// llint_aot_op_get_by_id has found the accessor, so nothing is looked up again.
+extern "C" UGPRPair SYSV_ABI llint_slow_path_aot_call_custom_getter(CallFrame* callFrame, const JSInstruction* pc, const AOT::CustomAccessorRecord* record, JSCell* base)
+{
+    LLINT_BEGIN();
+    auto bytecode = pc->as<OpGetById>();
+    LLINT_RETURN(AOT::Interpreter::callCustomGetter(*record, base, codeBlock->identifier(bytecode.m_property)));
 }
 #endif
 

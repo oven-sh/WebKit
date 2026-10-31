@@ -1,12 +1,13 @@
 # The text of a pattern that the program puts together from constants counts like a literal: what the only store to a variable stores, concatenations of such texts, and the result of a function called with them.
-# A text and a warning too, because the walk left something out: a variable that is stored twice, once with a text nobody knows; a parameter of the function that creates the expression, with the
-# arguments of its direct callers. Several texts are candidates. No text, and a warning: a parameter whose only caller passes what nobody knows; two parameters with two callers each, put together:
+# So does a parameter of the function that creates the expression, with the arguments of its direct callers, where nothing but direct calls names the function: the walk has seen every text.
+# A text and a warning too, because the walk left something out: a variable that is stored twice, once with a text nobody knows; such a parameter of a function that is handed out as a value
+# too, which whoever holds it may call with anything. Several texts are candidates. No text, and a warning: a parameter whose only caller passes what nobody knows; two parameters with two callers each, put together:
 # alternatives of one operand are an enumeration, alternatives of two, multiplied, are mostly texts that nobody makes. An arm of a condition that the known value never takes gives no text.
 # FORM: AsRead
 # RUN: pipeline CollectRegExpLiterals
 # OPTIONS: only-passes=AnalyzeFlow
 # DIAGNOSTIC: RegExpWithoutCode 4
-# CHECK: regexp requests: 13
+# CHECK: regexp requests: 15
 # CHECK-NEXT: literal "[0-9]+" flags=- sites=f11:v0
 # CHECK-NEXT: literal "_" flags=- sites=f10:v1
 # CHECK-NEXT: evaluated "a+" flags=- sites=f6:v2
@@ -16,10 +17,12 @@
 # CHECK-NEXT: evaluated "(?:[a-z]+)?" flags=i sites=f3:v4
 # CHECK-NEXT: evaluated "(?:(?:[a-z]+)?)?x" flags=- sites=f4:v2
 # CHECK-NEXT: evaluated "(?:[0-9]+)?" flags=- sites=f8:v3
-# CHECK-NEXT: candidate "c+[0-9]+" flags=- sites=f9:v4
-# CHECK-NEXT: candidate "c+[a-z]+" flags=- sites=f9:v4
+# CHECK-NEXT: evaluated "c+[0-9]+" flags=- sites=f9:v4
+# CHECK-NEXT: evaluated "c+[a-z]+" flags=- sites=f9:v4
 # CHECK-NEXT: evaluated "[a-z]+-[0-9]+" flags=- sites=f10:v8
 # CHECK-NEXT: evaluated "[0-9]+|d" flags=- sites=f11:v7
+# CHECK-NEXT: candidate "h+[0-9]+" flags=- sites=f15:v4
+# CHECK-NEXT: candidate "h+[a-z]+" flags=- sites=f15:v4
 # CHECK-NEXT: variable g0
 
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -67,6 +70,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v33 = CallDirect v28, v11 function=f12
     v34 = CallDirect v11, v28 function=f12
     v35 = CallDirect function=f14
+    v36 = CallDirect v28 function=f15
+    v37 = CallDirect v11 function=f15
+    v38 = NewClosure function=f15
+    PropSet v0, v38 key="handedOut" mode=Strict
     Return
 }
 
@@ -191,4 +198,12 @@ function f14 name="armThatTheKnownValueNeverTakes" results=[{type=anything}] {
     v2 = Builtin builtin=RegExp
     v3 = Construct v2, -, v1 @130
     Return v3
+}
+
+function f15 name="parameterOfFunctionThatIsHandedOut" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = String string="h+"
+    v2 = Strcat v1, v0
+    v3 = Builtin builtin=RegExp
+    v4 = Construct v3, -, v2 @140
+    Return v4
 }

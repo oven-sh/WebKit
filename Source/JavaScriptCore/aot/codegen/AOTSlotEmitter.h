@@ -48,6 +48,8 @@ public:
     void markCellIfMarkerIsStored(CellPointer, ValueID stored);
 
     Pointer extensionOf(CellPointer, const PlacedSlot& extensionWord);
+    // Goes to hasNone where the object has no extra properties.
+    CellPointer extraPropertiesOf(CellPointer, const PlacedSlot& extraPropertiesWord, LBasicBlock hasNone);
     // For stores in a row with no call between them: every store to a field makes B3 load the hidden word again, and the caller knows that it has not changed.
     void storeInExtension(Pointer extension, const PlacedSlot&, const MemoryLocation&, Operand);
     void storeIfExtensionHolds(CellPointer, const PlacedSlot&, const MemoryLocation&, Operand, const PlacedSlot& extensionWord);

@@ -106,6 +106,7 @@ const OperandChangeRow& rowOf(OperandChange);
 struct CapturedProperty {
     RefPtr<UniquedStringImpl> key;
     unsigned attributes { 0 };
+    // Nothing for the accessor of a star that waits.
     EncodedJSValue value { 0 };
 };
 
@@ -116,6 +117,7 @@ struct OperandSnapshot {
     bool hasTooManyProperties { false };
     bool createsPropertiesLazily { false };
     bool isClassPrototypeWithoutMembers { false };
+    bool hasPendingStars { false };
     IndexingType indexingMode { NonArray };
     EncodedJSValue prototype { 0 };
     uint32_t orderWord { 0 };

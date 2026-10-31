@@ -24,6 +24,21 @@ struct DescriptorLiteral {
     bool isAccessor() const { return flags.containsAny({ PropertyDescriptorFlags::HasGet, PropertyDescriptorFlags::HasSet }); }
 };
 
+// The attributes of a property that did not exist before the definition.
+inline OptionSet<FieldForm> formCreatedBy(OptionSet<PropertyDescriptorFlags> flags)
+{
+    OptionSet<FieldForm> form;
+    if (flags.containsAny({ PropertyDescriptorFlags::HasGet, PropertyDescriptorFlags::HasSet }))
+        form.add(FieldForm::IsAccessor);
+    else if (!flags.contains(PropertyDescriptorFlags::IsWritable))
+        form.add(FieldForm::IsReadOnly);
+    if (!flags.contains(PropertyDescriptorFlags::IsEnumerable))
+        form.add(FieldForm::IsNotEnumerable);
+    if (!flags.contains(PropertyDescriptorFlags::IsConfigurable))
+        form.add(FieldForm::IsNotConfigurable);
+    return form;
+}
+
 // The literal lists all its members, and above it stands Object.prototype.
 bool listsMembersOfDescriptor(const Program&, const Value& literal);
 std::optional<bool> constantBooleanOf(const Program&, const Function&, ValueID);

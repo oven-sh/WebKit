@@ -19,8 +19,8 @@ function f1 name="includesString" parameters=[{type=Array<string, proven, Contig
 function f2 name="indexOfStringFromAnIndex" parameters=[{type=Array<anything, pristine[Storage]>}, {type=string}, {type=number}] results=[{type=anything}] {
     v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeIndexOf/1
     Return v3
-# CHECK-NOT: CallInline
-# CHECK: v3:{{*}}= CallBuiltin v0, v1, v2 overload=ArrayPrototypeIndexOf/1
+# CHECK: TryCallInline v0, v1, v2 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/1
+# CHECK: CallBuiltin v0, v1, v2 overload=ArrayPrototypeIndexOf/1
 }
 function f3 name="indexOfStringOrNothing" parameters=[{type=Array<anything, pristine[Storage]>}, {type=undefined|string}] results=[{type=anything}] {
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1

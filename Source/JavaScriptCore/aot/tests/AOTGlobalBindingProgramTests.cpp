@@ -28,6 +28,7 @@ std::span<const NativeTest> globalBindingProgramTests();
 static_assert(GlobalBindings::seesScriptBindingsFlag == Typed::GlobalBindingTable::seesScriptBindingsFlag);
 static_assert(GlobalBindings::isStoredByNameFlag == Typed::GlobalBindingTable::isStoredByNameFlag);
 static_assert(GlobalBindings::isForTypeOfFlag == Typed::GlobalBindingTable::isForTypeOfFlag);
+static_assert(GlobalBindings::isStoredThroughBindingFlag == Typed::GlobalBindingTable::isStoredThroughBindingFlag);
 static_assert(GlobalBindings::identifierMask == Typed::GlobalBindingTable::identifierMask);
 
 // The program stores to the name, so no proof says what a read of it finds.
@@ -178,10 +179,11 @@ const describeError = (what, action) => {
 
 static void checkInEveryBuild(ASCIILiteral programText, ASCIILiteral statements, ASCIILiteral statementsThatPrintCalls, ASCIILiteral output, ASCIILiteral outputWithCalls)
 {
-    checkOutputOfProgramInShell(programText, outputWithCalls, { "heat=EverythingIsHot"_s }, statementsThatPrintCalls, { "--aotCountsPath=/dev/null"_s });
-    checkOutputOfProgramInShell(programText, output, { }, statements, { "--aotCountsPath=/dev/null"_s });
-    for (ASCIILiteral word : { "validate"_s, "heat=EverythingIsCold"_s })
-        checkOutputOfProgramInShell(programText, output, { word }, statements, { "--aotCountsPath=/dev/null"_s });
+    // A record that answers keeps the run time out of it whatever the heat of the code: the test is in line in hot code and in a stub elsewhere.
+    checkOutputOfProgramInShell(programText, outputWithCalls, { }, statementsThatPrintCalls, { "--aotCountsPath=/dev/null"_s });
+    for (ASCIILiteral word : { "heat=EverythingIsHot"_s, "heat=EverythingIsCold"_s })
+        checkOutputOfProgramInShell(programText, outputWithCalls, { word }, statementsThatPrintCalls, { "--aotCountsPath=/dev/null"_s });
+    checkOutputOfProgramInShell(programText, output, { "validate"_s }, statements, { "--aotCountsPath=/dev/null"_s });
 }
 
 #define CHECK_IN_EVERY_BUILD(programText, STATEMENTS, OUTPUT) \

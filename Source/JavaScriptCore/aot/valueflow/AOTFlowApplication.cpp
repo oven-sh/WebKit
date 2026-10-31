@@ -64,8 +64,12 @@ void remapTypes(FlowBodyUpdate& body, const TypeRemap& remap)
 {
     if (remap.isIdentity())
         return;
-    for (FlowValueProof& proof : body.proofs)
+    for (FlowValueProof& proof : body.proofs) {
         remap.apply(proof.type);
+        remap.apply(proof.typeByLayoutsOfClassesBelowBuiltinClasses);
+    }
+    for (FlowValueExpectation& expectation : body.expectations)
+        remap.apply(expectation.type);
     for (FlowClaimUpdate& claim : body.claims)
         remap.apply(claim.arriving);
     for (FlowAccessStamp& access : body.accesses)

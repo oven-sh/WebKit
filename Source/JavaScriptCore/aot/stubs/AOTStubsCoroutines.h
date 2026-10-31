@@ -35,11 +35,14 @@ constexpr StubKey stepGenerator(GeneratorStepCheck check) { return StubKey(StubF
 constexpr StubKey enterSavedFrame() { return StubKey(StubFamily::EnterSavedFrame); }
 // The same adapter for the job loop where the job at hand calls the handler of a promise reaction or a function that queueMicrotask was given. The callee says which realm is entered.
 constexpr StubKey enterHandlerOfJob() { return StubKey(StubFamily::EnterHandlerOfJob); }
+// A step goes on in the function of a heap frame, or by copying the frame to the stack. Either way the frame that goes on returns to the label behind this call.
+constexpr StubKey enterGeneratorFrame() { return StubKey(StubFamily::EnterGeneratorFrame); }
 constexpr StubKey restoreSavedFrameToStack() { return StubKey(StubFamily::RestoreSavedFrameToStack); }
 constexpr StubKey stepAsyncGenerator(StepConsumer consumer) { return StubKey(StubFamily::StepAsyncGenerator).withForm(static_cast<uint8_t>(consumer)); }
 // What all forms of StepAsyncGenerator end in. One body, so that the frame of a generator's body has one return address whoever consumes it.
 constexpr StubKey runAsyncGeneratorStep() { return StubKey(StubFamily::RunAsyncGeneratorStep); }
 constexpr StubKey stepAsyncIteratorInEngine() { return StubKey(StubFamily::StepAsyncIteratorInEngine); }
+constexpr StubKey newHeapFrame() { return StubKey(StubFamily::NewHeapFrame); }
 constexpr StubKey newGenerator(NewGeneratorKind kind) { return StubKey(StubFamily::NewGenerator).withForm(static_cast<uint8_t>(kind)); }
 
 static_assert(static_cast<unsigned>(PromiseHandler::OnRejected) + 1 == descriptorOf(StubFamily::PromiseThen).numberOfForms && exists(promiseThen(PromiseHandler::OnRejected)));
@@ -51,7 +54,7 @@ static_assert(static_cast<unsigned>(StepConsumer::AsyncGeneratorAwaitingCall) + 
 static_assert(static_cast<unsigned>(NewGeneratorKind::Async) + 1 == descriptorOf(StubFamily::NewGenerator).numberOfForms);
 static_assert(exists(newPromise()) && exists(returnAsyncResult()) && exists(awaitCallBySavingFrame()) && exists(suspendGenerator(GeneratorSuspension::AsyncYieldAfterAwait)));
 static_assert(exists(awaitBySavingFrame(AwaitedOperand::ValueAfterTurn)) && exists(awaitBySavingFrame(AwaitedOperand::ValueInModuleBody)));
-static_assert(exists(stepGenerator(GeneratorStepCheck::None)) && exists(enterSavedFrame()) && exists(restoreSavedFrameToStack()));
+static_assert(exists(stepGenerator(GeneratorStepCheck::None)) && exists(enterSavedFrame()) && exists(restoreSavedFrameToStack()) && exists(enterGeneratorFrame()));
 static_assert(exists(stepAsyncGenerator(StepConsumer::AsyncFunctionAwaitingCall)) && exists(stepAsyncGenerator(StepConsumer::AsyncGeneratorAwaitingCall)));
 static_assert(exists(stepAsyncGenerator(StepConsumer::AsyncFunction)) && exists(stepAsyncGenerator(StepConsumer::AsyncGenerator)) && exists(runAsyncGeneratorStep()) && exists(stepAsyncIteratorInEngine()));
 static_assert(bodyOf(stepAsyncIteratorInEngine()) == runAsyncGeneratorStep());

@@ -26,7 +26,7 @@ public:
     OwnerBarrier barrierOfExtension(const ValueContext& store) const;
     void markCardOfStatics(uint32_t offsetInStatics);
     Condition isBeyondBarrierThreshold(CellPointer);
-    void fenceAfterInitialization() { mutatorFence(); }
+    void fenceAfterInitialization();
 
     void validateAfterStore(const ValueContext& store);
     void validateBeforeCollection(const OperationContext&);

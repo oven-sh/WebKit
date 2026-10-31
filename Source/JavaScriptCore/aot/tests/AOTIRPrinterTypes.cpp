@@ -101,6 +101,45 @@ static void visitInPrintedOrder(const Program& program, std::span<const LayoutID
     }
 }
 
+// The reader of a text of wire fields takes a name for its whole family. A declared type can hold the layout of a constructor without all of its tagged layouts:
+// naming that layout would bring them in, so it is left to another name that brings it. The reader numbers the layouts that it derives by the order of the strings,
+// which is another in the text, so one of those is named only where no other name brings it.
+static Vector<LayoutID> findNamesOf(const Program& program, const Vector<LayoutID>& members)
+{
+    auto isDerived = [&](LayoutID layout) {
+        return layout.index() < program.layouts.size() && program.at(layout).isDerived();
+    };
+    Vector<LayoutID> names;
+    Vector<LayoutID> named;
+    for (LayoutID member : members) {
+        if (isDerived(member))
+            continue;
+        LayoutSetID family = program.hasDeclaredMembers(member) ? program.declaredMembersOf(member) : LayoutSetID();
+        if (!family || !isInTable(program.types, family, program.types.numberOfLayoutSets())) {
+            names.append(member);
+            named.append(member);
+            continue;
+        }
+        const Vector<LayoutID>& membersOfFamily = program.at(family).written();
+        if (!std::ranges::includes(members, membersOfFamily))
+            continue;
+        names.append(member);
+        named.appendVector(membersOfFamily);
+    }
+    AOT::sort(named);
+    removeRepeatedElements(named);
+    Vector<LayoutID> derivedNames;
+    for (LayoutID member : members) {
+        if (isDerived(member) && !std::ranges::binary_search(named, member))
+            derivedNames.append(member);
+    }
+    if (named.size() + derivedNames.size() != members.size())
+        return members;
+    names.appendVector(derivedNames);
+    AOT::sort(names);
+    return names;
+}
+
 void IRPrinter::print(StringID id)
 {
     if (!id) {
@@ -338,7 +377,8 @@ void IRPrinter::printObjectParts(const Type& type, CommaPrinter& bar)
         printInvalid("layoutset"_s, type.layouts.index());
     } else if (type.layouts) {
         const LayoutSet& set = types.at(type.layouts);
-        visitInPrintedOrder(m_program, set.written().span(), [&](LayoutID layout) {
+        Vector<LayoutID> layouts = printsEngineFields() ? set.written() : findNamesOf(m_program, set.written());
+        visitInPrintedOrder(m_program, layouts.span(), [&](LayoutID layout) {
             m_out.print(bar);
             print(layout);
         });

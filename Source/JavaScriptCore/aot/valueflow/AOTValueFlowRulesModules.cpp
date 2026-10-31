@@ -10,10 +10,12 @@
 
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
+#include "AOTThreshold.h"
 #include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowRules.h"
 #include "AOTValueFlowRulesHeap.h"
 #include <algorithm>
+#include <ranges>
 #include <wtf/BitVector.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/ASCIILiteral.h>
@@ -106,12 +108,6 @@ ModuleID moduleOf(const Program& program, RuntimeModuleID runtimeModule)
     return { };
 }
 
-static const ModuleExport* findExport(const Module& module, StringID name)
-{
-    auto found = std::ranges::find(module.exports, name, &ModuleExport::name);
-    return found == module.exports.end() ? nullptr : &*found;
-}
-
 static bool moduleHasCode(const Program& program, const Module& module)
 {
     return module.body && program.at(module.body).hasBody();
@@ -153,7 +149,7 @@ static bool isEvaluatedWithImporter(ValueFlowRuleContext& context, const ModuleR
 
 static bool mayHaveExportsNobodyLists(const Module& module)
 {
-    if (module.kind != ModuleKind::SourceText || module.exportRule != SyntheticExportRule::None)
+    if (module.kind != ModuleKind::SourceText || module.exportRule != SyntheticExportRule::None || module.flags.contains(ModuleFlags::MayBeMocked))
         return true;
     return module.requests.containsIf([](const ModuleRequest& request) {
         return request.isDynamicStarExport;
@@ -206,23 +202,114 @@ ClimbingSet knownObjectsThatAreFollowed(ValueFlowRuleContext& context, ClimbingS
     return context.restrict(objects, ValueSets::complement(context.withMembersOf(ValueSets::nothing, context.valueWithin(listedForTheirCalls, ValueFlowProgramNodes::escaped()))));
 }
 
+bool SourcesOfCopies::add(ClimbingSet sources)
+{
+    AOT_THRESHOLD(size_t, mostSearchedInOrder, 8);
+    size_t numberOfSources = m_sources.size();
+    m_context.forEachMemberInLine(sources, [&](ValueFlowObjectID source) {
+        if (m_context.contains(m_copies, source))
+            return;
+        if (m_sources.size() <= mostSearchedInOrder) {
+            if (m_sources.contains(source))
+                return;
+        } else {
+            if (m_isSource.isEmpty()) {
+                for (ValueFlowObjectID earlier : m_sources)
+                    m_isSource.add(earlier.index());
+            }
+            if (!m_isSource.add(source.index()).isNewEntry)
+                return;
+        }
+        m_sources.append(source);
+    });
+    return m_sources.size() > numberOfSources;
+}
+
+ClimbingSet SourcesOfCopies::withCopies()
+{
+    return m_context.unite(m_copies, ClimbingSet(m_context.maker().of(m_sources.span())));
+}
+
+ClimbingSet SourcesOfCopies::sourcesBetween(size_t first, size_t end)
+{
+    return ClimbingSet(m_context.maker().of(m_sources.span().subspan(first, end - first)));
+}
+
+// These objects with the sources that the nodes of earlier turns list for them, and so on. It asks for no node.
+// The answer is a function of the objects and the turn: what the thread remembers saves steps and changes nothing.
+static ClimbingSet peekAtSourcesOfCopies(ValueFlowRuleContext& context, ClimbingSet start)
+{
+    AOT_THRESHOLD(unsigned, stepsBetweenAnswersRemembered, 64);
+    if (std::optional<ClimbingSet> seen = context.sourcesOfCopiesSeenFrom(start))
+        return *seen;
+
+    struct Stop {
+        ClimbingSet objects;
+        size_t firstSource;
+    };
+    Vector<Stop, 8> stops;
+    SourcesOfCopies found(context, start);
+    ClimbingSet all;
+    ClimbingSet last = start;
+    // Whether each step found only new objects. Then what was found from a step on is the answer for the objects of that step.
+    bool isChain = true;
+    for (unsigned step = 1;; ++step) {
+        std::optional<ClimbingSet> sources = context.peekAtWhatWasWritten(last, copiedFromName);
+        if (!sources)
+            break;
+        last = context.restrict(*sources, context.universe().knownObjects());
+        if (std::optional<ClimbingSet> seen = context.sourcesOfCopiesSeenFrom(last)) {
+            all = *seen;
+            break;
+        }
+        size_t size = found.size();
+        bool findsNewSource = found.add(last);
+        isChain = isChain && found.size() - size == context.numberOfMembers(last);
+        if (!findsNewSource)
+            break;
+        if (!(step % stepsBetweenAnswersRemembered))
+            stops.append({ last, size });
+    }
+    size_t end = found.size();
+    if (isChain) {
+        for (const Stop& stop : stops | std::views::reverse) {
+            all = context.unite(all, found.sourcesBetween(stop.firstSource, end));
+            context.noteSourcesOfCopiesSeenFrom(stop.objects, all);
+            end = stop.firstSource;
+        }
+    }
+    all = context.unite(context.unite(all, found.sourcesBetween(0, end)), start);
+    context.noteSourcesOfCopiesSeenFrom(start, all);
+    return all;
+}
+
 ClimbingSet withSourcesOfCopies(ValueFlowRuleContext& context, ClimbingSet objects)
 {
-    ClimbingSet all = objects;
+    AOT_THRESHOLD(unsigned, mostStepsAskedOneByOne, 8);
+    auto askForSourcesOf = [&](ClimbingSet copies) {
+        return context.restrict(context.valueOf(context.readWhatWasWritten(copies, copiedFromName)), context.universe().knownObjects());
+    };
+    SourcesOfCopies found(context, objects);
     ClimbingSet last = objects;
+    for (unsigned step = 0; step < mostStepsAskedOneByOne; ++step) {
+        last = askForSourcesOf(last);
+        if (!found.add(last))
+            return found.withCopies();
+    }
+    // A node asked for at each step of a long chain is n * n / 2 questions for its n copies. The rest of the walk peeks, then asks for
+    // one node over all it saw: that node changes when one of them gets a source that the walk did not see.
+    ClimbingSet all = found.withCopies();
     for (;;) {
-        last = context.restrict(context.valueOf(context.readWhatWasWritten(last, copiedFromName)), context.universe().knownObjects());
-        bool findsNewSource = false;
-        context.forEachMember(last, [&](ValueFlowObjectID source) {
-            findsNewSource |= !context.contains(all, source);
-        });
-        if (!findsNewSource)
+        ClimbingSet seen = peekAtSourcesOfCopies(context, last);
+        all = context.unite(all, seen);
+        last = askForSourcesOf(seen);
+        if (context.holdsAllOf(all, last))
             return all;
-        all = context.unite(all, last);
+        last = context.restrict(last, ValueSets::complement(context.withMembersOf(ValueSets::nothing, all)));
     }
 }
 
-static OwnProperties readOwnProperties(ValueFlowRuleContext& context, ClimbingSet values, std::optional<PropertyKeyID> key)
+static OwnProperties readOwnProperties(ValueFlowRuleContext& context, ClimbingSet values, std::optional<PropertyKeyID> key, DeferredExports deferredExports = DeferredExports::AreRead)
 {
     const ValueFlowUniverse& universe = context.universe();
     ValueFlowName valueName = key ? ValueFlowName::property(context.program(), *key) : everyPropertyName;
@@ -254,6 +341,8 @@ static OwnProperties readOwnProperties(ValueFlowRuleContext& context, ClimbingSe
     if (context.contains(values, ValueFlowUniverse::untrackedObject()))
         properties.others.nodes.append(context.lookup(ClimbingSet(universe.untrackedObjectAlone()), valueName));
 
+    if (deferredExports == DeferredExports::AreNotRead)
+        getters = context.restrict(getters, context.maker().unite(ValueSets::complement(universe.closures()), universe.builtinTables().heap().closuresWrittenInProgram()));
     forEachPartOfCallees(context, context.restrict(getters, universe.callables()), [&](ClimbingSet callees) {
         ValueFlowCallGroup group = context.group(callees, ValueFlowCallKind::Get);
         context.add(group.thisValue, receivers);
@@ -308,7 +397,7 @@ static ValueFlowSources defaultExportOf(ValueFlowRuleContext& context, ModuleID 
     const Module& module = program.at(id);
     if (!hasExportTableOf(module.kind))
         return moduleExportsValueOf(context, id);
-    if (const ModuleExport* entry = findExport(module, program.stringOf(BuiltinNames::defaultKeyword)))
+    if (const ModuleExport* entry = context.defaultExportOf(id))
         return exportedValueOf(context, *entry);
     if (module.kind == ModuleKind::Data)
         return unknownSources(context, ValueFlowUnknownSource::DataFromOutside);
@@ -334,7 +423,7 @@ static ValueFlowSources namespaceOfFile(ValueFlowRuleContext& context, ModuleID 
     return sources;
 }
 
-ValueFlowSources requiredValueOf(ValueFlowRuleContext& context, ModuleID id)
+ValueFlowSources requiredValueOf(ValueFlowRuleContext& context, ModuleID id, WhoRequires asker)
 {
     const Program& program = context.program();
     const Module& module = program.at(id);
@@ -350,6 +439,13 @@ ValueFlowSources requiredValueOf(ValueFlowRuleContext& context, ModuleID id)
         break;
     }
 
+    if (module.flags.contains(ModuleFlags::AnswersLoaderWithNamespace) && asker != WhoRequires::BoundCall) {
+        ValueFlowSources sources = namespaceOf(context, id);
+        if (asker == WhoRequires::Anybody)
+            append(context, sources, requiredValueOf(context, id, WhoRequires::BoundCall));
+        return sources;
+    }
+
     switch (module.requireResult) {
     case RequireResult::ModuleExports: {
         ValueFlowSources sources = moduleExportsValueOf(context, id);
@@ -360,10 +456,12 @@ ValueFlowSources requiredValueOf(ValueFlowRuleContext& context, ModuleID id)
     }
     case RequireResult::DefaultExport:
         return defaultExportOf(context, id);
-    case RequireResult::Namespace: {
+    case RequireResult::Namespace:
+    case RequireResult::NamespaceIfImported: {
         ValueFlowSources sources = namespaceOf(context, id);
-        BuiltinName name = program.builtins().nameOf(byteCast<uint8_t>("module.exports"_s.span()));
-        if (const ModuleExport* entry = name ? findExport(module, program.stringOf(name)) : nullptr)
+        if (module.requireResult == RequireResult::NamespaceIfImported)
+            append(context, sources, defaultExportOf(context, id));
+        if (const ModuleExport* entry = context.moduleExportsExportOf(id))
             append(context, sources, exportedValueOf(context, *entry));
         if (module.kind == ModuleKind::SourceText)
             append(context, sources, sourcesOf(objectThatLoaderMakes(context)));
@@ -395,7 +493,15 @@ static ValueFlowSources evaluationErrorsOf(ValueFlowRuleContext& context, Module
     return sources;
 }
 
-static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Vector<ModuleID, 4>& namespacesInside)
+// The test runner stores a function of its own in the variable, and calls what the variable held.
+static void openToTestRunner(ValueFlowRuleContext& context, VariableID variable)
+{
+    ValueFlowNodeID location = context.nodes().variable(variable);
+    context.connect(location, ValueFlowProgramNodes::escaped());
+    context.add(location, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
+}
+
+static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Vector<ModuleID, 4>& namespacesInside, DeferredExports deferredExports)
 {
     const Program& program = context.program();
     const ValueFlowUniverse& universe = context.universe();
@@ -409,6 +515,8 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
         switch (entry.kind) {
         case ModuleExportKind::Variable:
             connect(context, exportedValueOf(context, entry), location);
+            if (entry.variable && program.at(entry.variable).flags.contains(VariableFlags::IsReplaceable))
+                openToTestRunner(context, entry.variable);
             break;
         case ModuleExportKind::Indirect:
             if (program.at(entry.module).kind == ModuleKind::External || program.at(entry.module).kind == ModuleKind::Runtime) {
@@ -444,6 +552,8 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
             context.connect(context.nodes().variable(entry.variable), context.written(namespaceObject, writtenNameOf(program, entry.name)));
         else
             hasCapturedNames = true;
+        if (entry.variable && entry.isReplaceable)
+            openToTestRunner(context, entry.variable);
     }
 
     auto addPrimitivesUnder = [&](BuiltinName name) {
@@ -457,6 +567,9 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
 
     ValueFlowNodeID underAnyName = context.written(namespaceObject, unknownKeyName);
     ValueFlowNodeID holdersOfNames = context.written(namespaceObject, copiedFromName);
+    // A mock puts what its factory answers under the names that nobody lists too: `mock.module("node:dns", () => ({ lookup }))`, then `(await import("node:dns")).lookup()`.
+    if (module.flags.contains(ModuleFlags::MayBeMocked))
+        context.add(underAnyName, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
 
     if (module.exportRule != SyntheticExportRule::None || module.exportsVariable) {
         ValueFlowSources value = moduleExportsValueOf(context, id);
@@ -466,12 +579,14 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
         // Where every own key of what the module exports is known, what the getter under a key answers lies under that key.
         std::optional<ValueSetID> keysAtCreation = keysThatObjectsWereMadeWith(context, values, OwnKeys::All);
         ClimbingSet keys = keysAtCreation ? context.unite(ClimbingSet(*keysAtCreation), context.valueOf(context.read(values, ValueFlowCellName { ValueFlowNameKind::AddedNames }))) : ClimbingSet();
+        if (module.exportRule != SyntheticExportRule::RuntimeModule)
+            deferredExports = DeferredExports::AreRead;
         if (keysAtCreation && !context.meet(keys, ValueSets::complement(universe.keys()))) {
             context.forEachMember(keys, [&](ValueFlowObjectID key) {
-                connect(context, readOwnProperties(context, values, universe.keyOf(key)).others, context.written(namespaceObject, ValueFlowName::property(program, universe.keyOf(key))));
+                connect(context, readOwnProperties(context, values, universe.keyOf(key), deferredExports).others, context.written(namespaceObject, ValueFlowName::property(program, universe.keyOf(key))));
             });
         } else
-            connect(context, readOwnProperties(context, values, std::nullopt).others, underAnyName);
+            connect(context, readOwnProperties(context, values, std::nullopt, deferredExports).others, underAnyName);
         listOwnPropertiesNobodyWrote(context, values, std::nullopt, underAnyName);
     } else if (module.kind != ModuleKind::SourceText)
         context.add(underAnyName, unknownValue(context, sourceOfWhatLoaderMakes(module)));
@@ -494,37 +609,32 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
     }
 }
 
-ValueFlowSources namespaceOf(ValueFlowRuleContext& context, ModuleID first, ImportPhase phase)
+static void requestNamespaceExports(ValueFlowRuleContext& context, ModuleID id, DeferredExports deferredExports)
+{
+    context.lookup(only(context, context.universe().namespaceOf(id)), ValueFlowCellName { ValueFlowNameKind::NamespaceExports, id.index() << 1 | (deferredExports == DeferredExports::AreRead) });
+}
+
+void runNamespaceExports(const ValueFlowStatement&, ValueFlowRuleContext& context)
+{
+    uint32_t payload = context.nameOfKey().payload;
+    ModuleID id(payload >> 1);
+    DeferredExports deferredExports = payload & 1 ? DeferredExports::AreRead : DeferredExports::AreNotRead;
+    context.add(context.nodes().ofHost(ValueFlowHostNode::CreatedNamespaces), only(context, context.universe().namespaceOf(id)));
+    useModule(context, id);
+    Vector<ModuleID, 4> namespacesInside;
+    tieNamespaceToExports(context, id, namespacesInside, deferredExports);
+    for (ModuleID inside : namespacesInside)
+        requestNamespaceExports(context, inside, deferredExports);
+}
+
+ValueFlowSources namespaceOf(ValueFlowRuleContext& context, ModuleID first, ImportPhase phase, DeferredExports deferredExports)
 {
     const Program& program = context.program();
     const ValueFlowUniverse& universe = context.universe();
     if (program.at(first).kind == ModuleKind::External)
         return sourcesOf(unknownObject(context, sourceOfWhatLoaderMakes(program.at(first))));
 
-    bool staysForGood = context.isStatementOfBody();
-    ValueFlowNodeID tiedForGood = context.nodes().ofHost(ValueFlowHostNode::NamespacesTiedByStatementsOfBodies);
-    ValueSetID tiedByThisStatement = staysForGood && context.rememberedByStatement() ? context.rememberedByStatement() : ValueSets::nothing;
-    Vector<ValueFlowObjectID, 4> tiedNow;
-    BitVector visited;
-    Vector<ModuleID, 4> pending { first };
-    while (!pending.isEmpty()) {
-        ModuleID id = pending.takeLast();
-        if (visited.set(id.index()))
-            continue;
-        ClimbingSet created = only(context, universe.namespaceOf(id));
-        if (!context.sets().contains(tiedByThisStatement, universe.namespaceOf(id))) {
-            if (context.wasAddedInEarlierRound(tiedForGood, created))
-                continue;
-            tiedNow.append(universe.namespaceOf(id));
-        }
-        if (staysForGood)
-            context.add(tiedForGood, created);
-        context.add(context.nodes().ofHost(ValueFlowHostNode::CreatedNamespaces), only(context, universe.namespaceOf(id)));
-        useModule(context, id);
-        tieNamespaceToExports(context, id, pending);
-    }
-    if (staysForGood && !tiedNow.isEmpty())
-        context.rememberedByStatement() = context.maker().unite(tiedByThisStatement, context.maker().of(tiedNow.span()));
+    requestNamespaceExports(context, first, deferredExports);
 
     ClimbingSet namespaceObject = only(context, universe.namespaceOf(first));
     switch (phase) {
@@ -548,20 +658,31 @@ static void runGettersThatProgramLaidOn(ValueFlowRuleContext& context, ClimbingS
     });
 }
 
+// `typeof AbortController` reads what the module abort-controller exports and loads no module.
+void noteLoadOf(ValueFlowRuleContext& context, RuntimeModuleID module)
+{
+    BuiltinID namespaceObject = context.program().builtins().namespaceOf(module);
+    if (!namespaceObject)
+        return;
+    context.use(namespaceObject, BuiltinUse::Read);
+    context.add(context.nodes().ofHost(ValueFlowHostNode::ObjectsOfLoadedModules), only(context, context.universe().objectOf(namespaceObject)));
+}
+
 static void noteEvaluation(ValueFlowRuleContext& context, ModuleID id)
 {
     const Program& program = context.program();
     const Module& module = program.at(id);
-    if (module.runtimeModule) {
-        if (BuiltinID namespaceObject = program.builtins().namespaceOf(module.runtimeModule))
-            context.use(namespaceObject, BuiltinUse::Read);
-    }
+    if (module.runtimeModule)
+        noteLoadOf(context, module.runtimeModule);
     if (module.kind == ModuleKind::External && module.externalKind == ExternalKind::UncompiledCode) {
         letUnseenCodeRun(context, UnseenCodeReach::Loader);
-        context.add(ValueFlowProgramNodes::escaped(), context.universe().holdersOfLibraryExports());
+        raiseHostFlag(context, ValueFlowHostNode::UnseenCopiesOfFilesMayRun);
+        context.add(ValueFlowProgramNodes::escaped(), context.universe().holdersOfPublicLibraryExports());
     }
-    if (module.kind == ModuleKind::External)
+    if (module.kind == ModuleKind::External) {
         enterLoaderOfHost(context);
+        askLoaderFunctionsOfProgram(context, module.referrer, RequestAtRunTime::Require);
+    }
     if (moduleHasCode(program, module))
         return;
 
@@ -576,6 +697,8 @@ static void noteEvaluation(ValueFlowRuleContext& context, ModuleID id)
         if (!entry.variable)
             continue;
         ValueFlowNodeID variable = context.nodes().variable(entry.variable);
+        if (entry.isReplaceable)
+            openToTestRunner(context, entry.variable);
         std::optional<PropertyKeyID> key = object ? program.types.find({ .kind = PropertyKeyKind::Text, .text = entry.name }) : std::nullopt;
         BuiltinName name = key ? program.builtinNameOf(*key) : BuiltinName();
         BuiltinID member = name ? builtins.findOwnMember(object, name) : BuiltinID();
@@ -592,12 +715,19 @@ static void noteEvaluation(ValueFlowRuleContext& context, ModuleID id)
             || context.holdsAnyOf(objectOfModule, ValueFlowProgramNodes::lost());
         if (mayBeMadeAnew)
             context.add(variable, filled());
-        if (!isObjectKind(builtins.at(member).kind))
-            context.add(variable, context.universe().undefinedValue());
-        else if (context.universe().builtinTables().heap().letsInUnseenCode(member)) {
+        // The lookup below answers whoever reads under the name, so it leaves out what lets in unseen code. This is the one who names the member.
+        bool letsInUnseenCode = context.universe().builtinTables().heap().letsInUnseenCode(member);
+        if (letsInUnseenCode)
             context.use(member, BuiltinUse::Read);
+        if (!isObjectKind(builtins.at(member).kind)) {
+            context.add(variable, context.universe().undefinedValue());
+            // No object stands for what a property holds: the importer has a value that nobody knows, and may call it.
+            if (letsInUnseenCode) {
+                context.add(variable, filled());
+                letUnseenCodeRun(context, UnseenCodeReach::Realm);
+            }
+        } else if (letsInUnseenCode)
             context.add(variable, only(context, context.universe().objectOf(member)));
-        }
         connect(context, properties.held, variable);
         connect(context, properties.others, variable);
     }
@@ -617,6 +747,20 @@ void evaluateModule(ValueFlowRuleContext& context, ModuleID first)
         const Module& module = program.at(id);
         if (moduleHasCode(program, module)) {
             context.reach(module.body);
+            // Modules::didThrowInBody(): a CommonJS file whose body throws is out of require.cache, as behind a delete.
+            if (module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::MayBeEvicted)) {
+                raiseHostFlag(context, ValueFlowHostNode::UnseenCopiesOfFilesMayRun);
+                enterLoaderOfHost(context);
+                askLoaderFunctionsOfProgram(context, id, RequestAtRunTime::Require);
+            }
+            // Modules::isChangedOnDisk(): the run has written the file anew, and the loader of the host runs the text that is there, which nobody has read.
+            if (module.flags.contains(ModuleFlags::IsChangedOnDiskByRun)) {
+                letUnseenCodeRun(context, UnseenCodeReach::Loader);
+                raiseHostFlag(context, ValueFlowHostNode::UnseenCopiesOfFilesMayRun);
+                context.add(ValueFlowProgramNodes::escaped(), context.universe().holdersOfPublicLibraryExports());
+                enterLoaderOfHost(context);
+                askLoaderFunctionsOfProgram(context, id, RequestAtRunTime::Require);
+            }
             continue;
         }
         if (visited.set(id.index()))
@@ -688,7 +832,7 @@ static bool mayCaptureDefaultMember(SyntheticExportRule rule)
 }
 
 // The children of a module object that is handed out hold, under `exports`, what its require() has answered for a file that is no CommonJS file.
-static void showAnswerOfRequireAmongChildren(ValueFlowRuleContext& context, ModuleID required)
+void showAnswerOfRequireInModuleObject(ValueFlowRuleContext& context, ModuleID required)
 {
     const Module& module = context.program().at(required);
     bool hasObjectMadeByRequire = !module.flags.contains(ModuleFlags::IsLibrary) && (module.kind == ModuleKind::SourceText || module.kind == ModuleKind::Data);
@@ -721,7 +865,7 @@ static void followModuleObject(ValueFlowRuleContext& context, ModuleID id)
         context.add(context.nodes().ofHost(ValueFlowHostNode::ChildrenOfModuleObjects), children);
         for (const ModuleRequest& request : module.requests) {
             if (request.kind == ModuleRequestKind::Require)
-                showAnswerOfRequireAmongChildren(context, request.target);
+                showAnswerOfRequireInModuleObject(context, request.target);
         }
     }
     if (!objectsOfRequiredModules.isEmpty() && context.holdsAnyOf(children, handedOut))
@@ -736,6 +880,18 @@ void runModuleEvaluation(const ValueFlowStatement& statement, ValueFlowRuleConte
     const Module& module = program.at(id);
 
     noteEvaluation(context, id);
+    // A mock needs no namespace object to get at the exports.
+    if (module.flags.contains(ModuleFlags::MayBeMocked)) {
+        for (const ModuleExport& entry : module.exports) {
+            if (entry.kind == ModuleExportKind::Variable && entry.variable && program.at(entry.variable).flags.contains(VariableFlags::IsReplaceable))
+                openToTestRunner(context, entry.variable);
+        }
+        if (module.exportsVariable)
+            openToTestRunner(context, module.exportsVariable);
+    }
+    // Taken out of require.cache, the file loads again from disk, and the run time stores what that exports.
+    if (module.exportsVariable && module.flags.contains(ModuleFlags::MayBeEvicted))
+        openToTestRunner(context, module.exportsVariable);
     for (const ModuleRequest& request : module.requests) {
         if (request.kind == ModuleRequestKind::Require)
             continue;
@@ -759,6 +915,8 @@ void runModuleEvaluation(const ValueFlowStatement& statement, ValueFlowRuleConte
         if (!entry.variable)
             continue;
         ValueFlowNodeID variable = context.nodes().variable(entry.variable);
+        if (entry.isReplaceable)
+            openToTestRunner(context, entry.variable);
         bool isDefaultExport = entry.name == defaultName;
         if (isDefaultExport)
             connect(context, source, variable);
@@ -766,10 +924,17 @@ void runModuleEvaluation(const ValueFlowStatement& statement, ValueFlowRuleConte
             continue;
         context.add(variable, context.universe().undefinedValue());
         std::optional<PropertyKeyID> key = program.types.find({ .kind = PropertyKeyKind::Text, .text = entry.name });
-        connect(context, ownPropertyOf(context, values, key), variable);
+        ValueFlowSources taken = ownPropertyOf(context, values, key);
+        connect(context, taken, variable);
         listOwnPropertiesNobodyWrote(context, values, key, variable);
-        if (context.sets().meet(context.universe().holdersOfExportsOf(id), context.universe().eventRaisingLibraryExportHolders()))
+        if (context.sets().meet(context.universe().holdersOfExportsOf(id), context.universe().eventRaisingLibraryExportHolders())) {
             letSeenCodeCallEscapedFunctionsAmong(context, variable);
+            // The variable of an export that tests may replace holds a value nobody knows from the start, and lists nothing that has escaped. Where the export comes from does.
+            if (entry.isReplaceable) {
+                for (ValueFlowNodeID node : taken.nodes)
+                    letSeenCodeCallEscapedFunctionsAmong(context, node);
+            }
+        }
     }
 }
 
@@ -787,17 +952,41 @@ static void followModuleObjectsOfRequire(ValueFlowRuleContext& context, ModuleID
     if (context.holdsAnyOf(only(context, parent), handedOut)) {
         if (child)
             context.add(context.nodes().ofHost(ValueFlowHostNode::ChildrenOfModuleObjects), only(context, child));
-        showAnswerOfRequireAmongChildren(context, required);
+        showAnswerOfRequireInModuleObject(context, required);
     }
     if (child && context.holdsAnyOf(only(context, child), handedOut))
         context.add(context.nodes().ofHost(ValueFlowHostNode::ParentsOfModuleObjects), only(context, parent));
 }
 
-static void requireModule(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ModuleID module)
+void requireModule(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ModuleID module, WhoRequires asker)
 {
     noteRequest(context, statement.function, module);
     evaluateModule(context, module);
-    connect(context, requiredValueOf(context, module), statement.result);
+    connect(context, requiredValueOf(context, module, asker), statement.result);
+    if (statement.result && context.program().at(module).flags.contains(ModuleFlags::MayBeEvicted))
+        context.add(statement.result, unknownValue(context, ValueFlowUnknownSource::UnseenCode));
+    // Modules::answerRequire(): what the program has stored as the `exports` of the entry that the run time made for the file.
+    if (const Module& required = context.program().at(module); statement.result && !required.flags.contains(ModuleFlags::IsLibrary) && (required.kind == ModuleKind::SourceText || required.kind == ModuleKind::Data))
+        context.connect(context.nodes().ofHost(ValueFlowHostNode::ExportsOfEntriesStoredInModuleCache), statement.result);
+    // Modules::requireThroughCache()
+    if (statement.result && requireAddsToRequireCache(context.program(), context.program().at(statement.function).module, module))
+        context.connect(context.nodes().ofHost(ValueFlowHostNode::ExportsOfEntriesStoredInModuleCache), statement.result);
+    // Modules::mockWhatRequireAnswered(): what the factory of a mock gave.
+    if (const Module& required = context.program().at(module); statement.result && (required.kind == ModuleKind::SourceText || required.kind == ModuleKind::Data) && !required.runtimeModule && required.flags.contains(ModuleFlags::MayBeMocked)) {
+        context.add(statement.result, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
+        // Modules::answerRequire(): the first call behind the mock of a file of data.
+        if (required.kind == ModuleKind::Data)
+            connect(context, namespaceOf(context, module), statement.result);
+    }
+    if (requireMayAnswerWithMock(context.program(), context.program().at(module)) && isWrittenInProgram(context.program().at(statement.function))) {
+        enterLoaderOfHost(context);
+        askLoaderFunctionsOfProgram(context, context.program().at(statement.function).module, RequestAtRunTime::Require);
+        if (statement.result) {
+            context.add(statement.result, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
+            // Modules::answerRequireWithMock()
+            connect(context, namespaceOf(context, module), statement.result);
+        }
+    }
     const BuiltinTable& builtins = context.program().builtins();
     RuntimeModuleID runtimeModule = context.program().at(module).runtimeModule;
     if (BuiltinID object = runtimeModule ? builtins.namespaceOf(runtimeModule) : BuiltinID(); object && statement.result && builtins.canonicalID(object) == Builtins::Bun)
@@ -805,10 +994,8 @@ static void requireModule(const ValueFlowStatement& statement, ValueFlowRuleCont
     connect(context, evaluationErrorsOf(context, module), statement.thrown ? statement.thrown : ValueFlowProgramNodes::escaped());
 }
 
-static void loadByUnknownName(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ValueFlowHostNode answers, ValueFlowNodeID target)
+static void answerWithWhatLoaderMakesOfData(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ValueFlowNodeID target)
 {
-    if (isWrittenInProgram(context.program().at(statement.function)))
-        letModulesBeLoadedByName(context, answers);
     const ValueFlowUniverse& universe = context.universe();
     ValueFlowObjectID object = universe.siteObject(statement, 1);
     ValueFlowObjectID array = universe.siteObject(statement, 2);
@@ -818,6 +1005,13 @@ static void loadByUnknownName(const ValueFlowStatement& statement, ValueFlowRule
     context.add(context.written(only(context, object), unknownKeyName), data);
     context.add(context.written(only(context, array), { ValueFlowNameKind::Elements, 0 }), data);
     context.add(target, data);
+}
+
+static void loadByUnknownName(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ValueFlowHostNode answers, ValueFlowNodeID target)
+{
+    if (isWrittenInProgram(context.program().at(statement.function)))
+        letModulesBeLoadedByName(context, answers);
+    answerWithWhatLoaderMakesOfData(statement, context, target);
     context.connect(context.nodes().ofHost(answers), target);
 }
 
@@ -837,6 +1031,38 @@ static ValueFlowNodeID reasonOfPromiseAt(const ValueFlowStatement& statement, Va
 {
     ValueFlowObjectID promise = context.universe().siteObject(statement);
     return promise ? context.written(only(context, promise), { ValueFlowNameKind::Slot, BuiltinSlots::PromiseReason.index() }) : ValueFlowProgramNodes::escaped();
+}
+
+static void importModule(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ModuleID module)
+{
+    noteRequest(context, statement.function, module);
+    evaluateModule(context, module);
+    context.connect(context.lookup(valueOf(context, namespaceOf(context, module)), awaitedValueName), settledValueOfPromiseAt(statement, context));
+    connect(context, evaluationErrorsOf(context, module), reasonOfPromiseAt(statement, context));
+    connect(context, evaluationErrorsOf(context, module), ValueFlowProgramNodes::escaped());
+    if (context.program().at(module).flags.contains(ModuleFlags::MayBeEvicted))
+        context.add(settledValueOfPromiseAt(statement, context), unknownValue(context, ValueFlowUnknownSource::UnseenCode));
+    if (importMayAnswerWithMock(context.program().at(module)))
+        context.add(settledValueOfPromiseAt(statement, context), unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
+}
+
+static ModulesThatNamesFind modulesThatNamesFind(const ValueFlowStatement& statement, ValueFlowRuleContext& context, const Value& load)
+{
+    return modulesThatNamesFind(context, { statement.function, load.specifierOperand(), load.referrer(), load.opcode == Opcode::RequireDynamic }, context.operandsOf(statement)[0]);
+}
+
+// `fs.readFileSync(path)` behind `import * as fs`: the namespace object goes to the callee and nowhere else. A callee that looks at its receiver reads the deferred exports: runCall().
+static DeferredExports deferredExportsAt(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ModuleID module)
+{
+    // An accessor of the library's is read when the export is first read, also through the namespace object of a file that passes the module on: `export * from "node:os"`.
+    if (!statement.isOnlyReceiverOfCalls)
+        return DeferredExports::AreRead;
+    ClimbingSet object = only(context, context.universe().namespaceOf(module));
+    for (ValueFlowNodeID elsewhere : { ValueFlowProgramNodes::escaped(), ValueFlowProgramNodes::lost(), context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode) }) {
+        if (context.holdsAnyOf(object, elsewhere))
+            return DeferredExports::AreRead;
+    }
+    return DeferredExports::AreNotRead;
 }
 
 static void escapeOperands(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
@@ -871,7 +1097,7 @@ static void runDirectEval(const ValueFlowStatement& statement, ValueFlowRuleCont
     if (isInSeenCode(context, statement.function))
         letUnseenCodeRun(context, UnseenCodeReach::GlobalScope);
     escapeOperands(statement, context);
-    for (const EvalBinding& binding : program.at(program.at(statement.function).at(statement.site).evalScope()).bindings) {
+    for (const EvalBinding& binding : program.at(context.operationOf(statement).evalScope()).bindings) {
         if (binding.variable)
             open(nodes.variable(binding.variable));
         if (binding.layout && binding.field)
@@ -886,7 +1112,7 @@ static void runDirectEval(const ValueFlowStatement& statement, ValueFlowRuleCont
 void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     const Program& program = context.program();
-    const Value& operation = program.at(statement.function).at(statement.site);
+    const Value& operation = context.operationOf(statement);
 
     switch (statement.opcode) {
     case Opcode::Builtin:
@@ -900,29 +1126,25 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
     case Opcode::ModuleNamespace:
         noteRequest(context, statement.function, operation.module());
         evaluateModule(context, operation.module());
-        connect(context, namespaceOf(context, operation.module(), operation.phase()), statement.result);
+        connect(context, namespaceOf(context, operation.module(), operation.phase(), deferredExportsAt(statement, context, operation.module())), statement.result);
         connect(context, evaluationErrorsOf(context, operation.module()), statement.thrown ? statement.thrown : ValueFlowProgramNodes::escaped());
         return;
     case Opcode::ImportModule: {
         escapeOperands(statement, context);
-        auto import = [&](ModuleID module) {
-            noteRequest(context, statement.function, module);
-            evaluateModule(context, module);
-            context.connect(context.lookup(valueOf(context, namespaceOf(context, module)), awaitedValueName), settledValueOfPromiseAt(statement, context));
-            connect(context, evaluationErrorsOf(context, module), reasonOfPromiseAt(statement, context));
-            connect(context, evaluationErrorsOf(context, module), ValueFlowProgramNodes::escaped());
-        };
-        import(operation.module());
+        importModule(statement, context, operation.module());
         if (!context.operandsOf(statement).empty()) {
             for (ModuleID form : formsInImage(program, operation.module()))
-                import(form);
+                importModule(statement, context, form);
         }
         context.add(reasonOfPromiseAt(statement, context), unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
         break;
     }
     case Opcode::RequireModule:
-        requireModule(statement, context, operation.module());
+        requireModule(statement, context, operation.module(), WhoRequires::BoundCall);
         followModuleObjectsOfRequire(context, operation.referrer(), operation.module());
+        // No import holds the file.
+        if (operation.ifHeldForImport() && statement.result)
+            context.add(statement.result, only(context, ValueFlowUniverse::primitive(PrimitiveSet::Undefined)));
         return;
     case Opcode::EvaluateModule:
         noteRequest(context, statement.function, operation.module());
@@ -934,27 +1156,55 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
             requireModule(statement, context, module);
             return;
         }
-        if (BuiltinID namespaceObject = program.builtins().namespaceOf(operation.runtimeModule()))
-            context.use(namespaceObject, BuiltinUse::Read);
+        noteLoadOf(context, operation.runtimeModule());
         connect(context, runtimeNamespaceOf(context, operation.runtimeModule()), statement.result);
         return;
     case Opcode::ImportDynamic:
         escapeOperands(statement, context);
-        loadByUnknownName(statement, context, ValueFlowHostNode::NamespacesLoadedByName, settledValueOfPromiseAt(statement, context));
+        if (ModulesThatNamesFind found = modulesThatNamesFind(statement, context, operation); found.anything)
+            loadByUnknownName(statement, context, ValueFlowHostNode::NamespacesLoadedByName, settledValueOfPromiseAt(statement, context));
+        else {
+            noteLoadUnderSpelledNames(context, statement.function, found, ValueFlowHostNode::NamespacesLoadedByName, settledValueOfPromiseAt(statement, context));
+            for (ModuleID module : found.libraryModules)
+                importModule(statement, context, module);
+            for (ModuleID module : found.filesOfProgram) {
+                importModule(statement, context, module);
+                for (ModuleID form : formsInImage(program, module))
+                    importModule(statement, context, form);
+            }
+            if (found.fileOutsideImage)
+                answerWithWhatLoaderMakesOfData(statement, context, settledValueOfPromiseAt(statement, context));
+        }
         context.add(reasonOfPromiseAt(statement, context), unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
         break;
-    case Opcode::RequireDynamic:
+    case Opcode::RequireDynamic: {
         escapeOperands(statement, context);
         if (program.at(operation.referrer()).exportsVariable)
             context.add(context.nodes().ofHost(ValueFlowHostNode::ParentsOfModuleObjects), only(context, context.universe().objectOf(Builtins::ModuleObject, operation.referrer())));
-        if (statement.result)
+        bool asksProgram = askLoaderFunctionsOfProgram(context, operation.referrer(), RequestAtRunTime::Require);
+        if (asksProgram && statement.result)
+            context.add(statement.result, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
+        if (ModulesThatNamesFind found = modulesThatNamesFind(statement, context, operation); !found.anything && !asksProgram) {
+            noteLoadUnderSpelledNames(context, statement.function, found, ValueFlowHostNode::RequiredValuesLoadedByName, statement.result);
+            for (ModuleID module : found.libraryModules)
+                requireModule(statement, context, module);
+            for (ModuleID module : found.filesOfProgram) {
+                requireModule(statement, context, module);
+                followModuleObjectsOfRequire(context, operation.referrer(), module);
+            }
+            if (found.fileOutsideImage && statement.result)
+                answerWithWhatLoaderMakesOfData(statement, context, statement.result);
+        } else if (statement.result)
             loadByUnknownName(statement, context, ValueFlowHostNode::RequiredValuesLoadedByName, statement.result);
         else if (isWrittenInProgram(program.at(statement.function)))
             letModulesBeLoadedByName(context, ValueFlowHostNode::RequiredValuesLoadedByName);
         break;
+    }
     case Opcode::ResolveDynamic:
         if (!operation.isURL())
             context.use(Builtins::ModuleRequireResolve, BuiltinUse::Called);
+        if (!operation.isURL() && !operation.isForRequire())
+            askLoaderFunctionsOfProgram(context, operation.referrer(), RequestAtRunTime::Resolve);
         escapeOperands(statement, context);
         if (statement.result)
             context.add(statement.result, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
@@ -984,6 +1234,27 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
     if (statement.thrown)
         context.add(statement.thrown, unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
 }
+
+const ModuleExport* ValueFlowRuleContext::findExportLookedFor(ModuleID id, unsigned which)
+{
+    static const ModuleExport notLookedFor { };
+    const Program& program = this->program();
+    if (m_exportsLookedFor.isEmpty())
+        m_exportsLookedFor = Vector<std::array<const ModuleExport*, 2>>(program.modules.size(), [](size_t) {
+            return std::array<const ModuleExport*, 2> { &notLookedFor, &notLookedFor };
+        });
+    const ModuleExport*& known = m_exportsLookedFor[id.index()][which];
+    if (known != &notLookedFor)
+        return known;
+    BuiltinName name = which ? program.builtins().nameOf(byteCast<uint8_t>("module.exports"_s.span())) : BuiltinNames::defaultKeyword;
+    const Module& module = program.at(id);
+    auto found = name ? std::ranges::find(module.exports, program.stringOf(name), &ModuleExport::name) : module.exports.end();
+    known = found == module.exports.end() ? nullptr : &*found;
+    return known;
+}
+
+const ModuleExport* ValueFlowRuleContext::defaultExportOf(ModuleID id) { return findExportLookedFor(id, 0); }
+const ModuleExport* ValueFlowRuleContext::moduleExportsExportOf(ModuleID id) { return findExportLookedFor(id, 1); }
 
 } } } // namespace JSC::AOT::Typed
 

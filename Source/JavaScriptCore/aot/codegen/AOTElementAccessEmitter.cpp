@@ -14,8 +14,10 @@
 #include "AOTConversionEmitter.h"
 #include "AOTEffectsOfAccesses.h"
 #include "AOTOperatorEmitter.h"
+#include "AOTPlacement.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTRuntimeValidationEmitter.h"
+#include "AOTSlotEmitter.h"
 #include "AOTStringEmitter.h"
 #include "AOTStubsArrays.h"
 #include "ArrayConventions.h"
@@ -130,7 +132,7 @@ Condition ElementAccessEmitter::hasArrayStorage(CellPointer array, ArrayStorage 
     if (isWritable)
         return hasWritableShape(indexingMode(array, IndexingShapeAndWritabilityMask), arrayStorageFormOf(kind));
     if (IndexingType otherShapes = bitsThatOtherShapesHave(kind))
-        return hasNoBits(loadByte(array, m_heaps.JSCell_indexingTypeAndMisc), otherShapes);
+        return hasNoBits(loadByte(array, m_heaps.JSArray_indexingTypeAndMisc), otherShapes);
     return hasShape(indexingMode(array, arrayStorageTestMask), arrayStorageFormOf(kind));
 }
 
@@ -138,7 +140,7 @@ Condition ElementAccessEmitter::hasArrayStorage(CellPointer array, ArrayStorage 
 // So only the yes of that test is a fact. A checking build, which has no slow way, asks hasWritableShapeIgnoringLock().
 Word32 ElementAccessEmitter::indexingMode(CellPointer array, IndexingType mask)
 {
-    Word32 byte = loadByte(array, m_heaps.JSCell_indexingTypeAndMisc);
+    Word32 byte = loadByte(array, m_heaps.JSArray_indexingTypeAndMisc);
     return mask == IndexingShapeAndWritabilityMask ? byte : bitAnd(byte, word32(mask));
 }
 
@@ -261,7 +263,7 @@ Operand ElementAccessEmitter::convertRawElement(const ArrayStorageForm& form, Op
     if (form.element == Representation::Double && holdsDouble(representation))
         return Operand(representation, rawElement.value);
     if (form.element == Representation::Int32 && holdsUnboxedNumber(representation))
-        return convertInt32Element(unboxInt32(rawElement.as<Boxed>()), representation);
+        return convertInt32Element(unboxInt32Element(rawElement.as<Boxed>()), representation);
     return emitter<ConversionEmitter>().unbox(boxRawElement(form, rawElement), result, representation);
 }
 
@@ -388,9 +390,25 @@ LengthTest ElementAccessEmitter::testLength(Integer index, const ArrayElements& 
     return { below(word, loadField<Word32>(elements.butterfly, m_heaps.Butterfly_publicLength)), zeroExtended(word) };
 }
 
+// The operation names the length that the list has where it stands: nothing is read.
+LengthTest ElementAccessEmitter::testLength(const ValueContext& value, Integer index, const ArrayElements& elements)
+{
+    if (!VariadicOperandPosition::length(value->opcode) || value->lengthOperands().empty())
+        return testLength(index, elements);
+    auto lengths = value->lengthOperands();
+    Operand length = get(lengths[0]);
+    bool isWord = length.representation == Representation::Int32;
+    if (!isWord && length.representation != Representation::Int64)
+        return testLength(index, elements);
+    if (index.value()->opcode() != B3::SExt32)
+        return { below(index, isWord ? zeroExtended(length.as<Word32>()) : length.as<Integer>()), index };
+    Word32 word(index.value()->child(0));
+    return { below(word, isWord ? length.as<Word32>() : low32(length.as<Integer>())), zeroExtended(word) };
+}
+
 Operand ElementAccessEmitter::readElement(const ValueContext& value, const ArrayStorageForm& form, const ArrayElements& elements, Integer index, LBasicBlock isAbsent)
 {
-    LengthTest test = testLength(index, elements);
+    LengthTest test = testLength(value, index, elements);
     branchUnless(test.isInside, isAbsent);
     return readElementInsideLength(value, form, elements, test.indexInside, isAbsent);
 }
@@ -425,9 +443,36 @@ Operand ElementAccessEmitter::readElementInsideLength(const ValueContext& value,
     return convertRawElement(form, rawElement, value.representation(), typeOf(value.id()));
 }
 
+const PlacedSlot* ElementAccessEmitter::extraPropertiesWordOfReadByPosition(const ValueContext& read)
+{
+    const Type& receiver = typeOf(read->objectOperand());
+    if (read.shape() != CodeShape::Fast || !receiver.isObject() || !receiver.hasOnlyLayouts() || !typeOf(read->propertyOperand()).hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull))
+        return nullptr;
+    std::span<const LayoutID> layouts = m_program.at(receiver.layouts).completeMembers();
+    if (layouts.size() != 1)
+        return nullptr;
+    // A record's layout may be one that a test has guessed, on a rare arm: what is read by position there has any storage.
+    if (m_program.at(layouts[0]).kind != LayoutKind::Container)
+        return nullptr;
+    const PlacedSlot& word = m_placement.slots().extraPropertiesWord(layouts[0]);
+    return word.hasStorage() ? &word : nullptr;
+}
+
+Boxed ElementAccessEmitter::readElementOfExtraProperties(CellPointer object, const PlacedSlot& extraPropertiesWord, Integer index, LBasicBlock notFound)
+{
+    CellPointer holder = emitter<SlotEmitter>().extraPropertiesOf(object, extraPropertiesWord, notFound);
+    branchUnless(holdsBoxedElements(indexingMode(holder, arrayStorageTestMask)), notFound);
+    ArrayElements elements = elementsOf(holder);
+    LengthTest test = testLength(index, elements);
+    branchUnless(test.isInside, notFound);
+    Boxed rawElement = loadBoxedElement(elements, test.indexInside);
+    branchUnless(isNotEmpty(rawElement), notFound);
+    return rawElement;
+}
+
 Boxed ElementAccessEmitter::readBoxedElement(const ValueContext& value, const ArrayElements& elements, Integer index, LBasicBlock isAbsent)
 {
-    LengthTest test = testLength(index, elements);
+    LengthTest test = testLength(value, index, elements);
     branchUnless(test.isInside, isAbsent);
     Boxed rawElement = loadBoxedElement(elements, test.indexInside);
     if (!isDense(value->arrayOperand()))
@@ -573,7 +618,7 @@ Boxed ElementAccessEmitter::readOutOfLine(const ValueContext& value, CellPointer
 
 void ElementAccessEmitter::branchOnElementPresence(const ValueContext& value, const ArrayStorageForm* form, const ArrayElements& elements, Integer index, BranchTargets targets)
 {
-    LengthTest test = testLength(index, elements);
+    LengthTest test = testLength(value, index, elements);
     if (isDense(value->arrayOperand()) && !generator().validatesOrChecksProofs()) {
         branch(test.isInside, targets);
         return;

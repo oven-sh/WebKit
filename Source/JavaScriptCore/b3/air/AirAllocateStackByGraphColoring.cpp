@@ -45,6 +45,8 @@
 #include "B3ValueInlines.h"
 #include "CompilerTimingScope.h"
 #include <array>
+#include <set>
+#include <tuple>
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/InterferenceGraph.h>
 #include <wtf/Liveness.h>
@@ -180,6 +182,10 @@ public:
         const BlockData& data = m_blockData[block->index()];
         return m_actions.subspan(data.actionStart, data.actionEnd - data.actionStart);
     }
+
+    // Block by block, in the order of the blocks' indexes.
+    std::span<const Action> allActions() const { return m_actions.span(); }
+    uint32_t endOfActionsFor(BasicBlock* block) const { return m_blockData[block->index()].actionEnd; }
 
     std::span<const uint32_t> killCandidatesFor(BasicBlock* block) const
     {
@@ -376,8 +382,41 @@ public:
         return !actions.actionsFor(block).empty() || !actions.killCandidatesFor(block).empty() || !actions.moveSitesFor(block).empty();
     }
 
-    bool fillRows(BasicBlock* block, size_t firstWord, size_t numberOfWords, uint64_t* gen, uint64_t* kill, uint64_t* tail) const
+    // A suspension names every slot that is live across it, so n suspensions with n live slots have n * n actions, and each slice would read them all.
+    // The actions are listed slice by slice, in their order.
+    void willComputeInSlices(size_t wordsPerSlice)
     {
+        const size_t slotsPerSlice = wordsPerSlice * 64;
+        std::span<const StackSlotActions::Action> all = actions.allActions();
+        Vector<size_t> endOfSlice(FillWith { }, numIndices() / slotsPerSlice + 1, static_cast<size_t>(0));
+        for (const auto& action : all)
+            ++endOfSlice[action.slotIndex / slotsPerSlice];
+        size_t numberOfActions = 0;
+        for (size_t& end : endOfSlice)
+            numberOfActions += std::exchange(end, numberOfActions);
+        m_actionsBySlice.grow(all.size());
+        for (uint32_t index = 0; index < all.size(); ++index)
+            m_actionsBySlice[endOfSlice[all[index].slotIndex / slotsPerSlice]++] = index;
+        for (BasicBlock* block : actions.code()) {
+            if (!actions.actionsFor(block).empty())
+                m_blocksWithActions.append({ actions.endOfActionsFor(block), block->index() });
+        }
+        m_isListedBySlice = true;
+    }
+
+    std::optional<unsigned> nextBlockInSlice(size_t firstWord, size_t numberOfWords) const
+    {
+        if (!isNextActionIn(firstWord, numberOfWords))
+            return std::nullopt;
+        auto block = std::ranges::upper_bound(m_blocksWithActions, m_actionsBySlice[m_nextAction], { }, &BlockWithActions::endOfActions);
+        return block->blockIndex;
+    }
+
+    // In slices it is asked block by block in index order, and slice by slice in slot order, which is the order of the list.
+    bool fillRows(BasicBlock* block, size_t firstWord, size_t numberOfWords, uint64_t* gen, uint64_t* kill, uint64_t* tail)
+    {
+        if (m_isListedBySlice)
+            return fillRowsOfSlice(block, firstWord, numberOfWords, gen, kill, tail);
         auto blockActions = actions.actionsFor(block);
         unsigned blockSize = block->size();
         bool isNamedHere = false;
@@ -404,6 +443,55 @@ public:
     }
 
     const StackSlotActions& actions;
+
+private:
+    struct BlockWithActions {
+        uint32_t endOfActions;
+        unsigned blockIndex;
+    };
+
+    bool isNextActionIn(size_t firstWord, size_t numberOfWords) const
+    {
+        return m_nextAction < m_actionsBySlice.size() && actions.allActions()[m_actionsBySlice[m_nextAction]].slotIndex / 64 - firstWord < numberOfWords;
+    }
+
+    bool fillRowsOfSlice(BasicBlock* block, size_t firstWord, size_t numberOfWords, uint64_t* gen, uint64_t* kill, uint64_t* tail)
+    {
+        std::span<const StackSlotActions::Action> all = actions.allActions();
+        const uint32_t endOfBlock = actions.endOfActionsFor(block);
+        const size_t first = m_nextAction;
+        while (isNextActionIn(firstWord, numberOfWords) && m_actionsBySlice[m_nextAction] < endOfBlock)
+            ++m_nextAction;
+        std::span<const uint32_t> listed = m_actionsBySlice.span().subspan(first, m_nextAction - first);
+        const unsigned blockSize = block->size();
+        // From the last boundary to the first, and at a boundary the uses before the definitions, as above.
+        for (size_t end = listed.size(); end;) {
+            const uint32_t boundary = all[listed[end - 1]].boundary;
+            size_t start = end;
+            while (start && all[listed[start - 1]].boundary == boundary)
+                --start;
+            uint64_t* uses = boundary == blockSize ? tail : gen;
+            for (uint32_t index : listed.subspan(start, end - start)) {
+                const auto& action = all[index];
+                if (action.kind == StackSlotActions::UseAction)
+                    uses[action.slotIndex / 64 - firstWord] |= static_cast<uint64_t>(1) << (action.slotIndex % 64);
+            }
+            for (uint32_t index : listed.subspan(start, end - start)) {
+                const auto& action = all[index];
+                if (action.kind != StackSlotActions::UseAction) {
+                    gen[action.slotIndex / 64 - firstWord] &= ~(static_cast<uint64_t>(1) << (action.slotIndex % 64));
+                    kill[action.slotIndex / 64 - firstWord] |= static_cast<uint64_t>(1) << (action.slotIndex % 64);
+                }
+            }
+            end = start;
+        }
+        return !listed.empty();
+    }
+
+    Vector<uint32_t> m_actionsBySlice;
+    Vector<BlockWithActions> m_blocksWithActions;
+    size_t m_nextAction { 0 };
+    bool m_isListedBySlice { false };
 };
 
 class StackSlotLivenessInWords final : public BitMatrixLiveness<StackSlotRows> {
@@ -1183,8 +1271,8 @@ private:
 };
 
 // Gives spill slots their places from the ranges of positions, in layout order, at which each is live. A slot shares a
-// place with another when all of its ranges lie between two ranges of the other, or behind the last one. No set of
-// pairs of slots is built, so the time does not grow with the number of slots that are live together.
+// place with others when none of its ranges meets one of theirs. No set of pairs of slots is built, so the time does not
+// grow with the number of slots that are live together.
 class LiveRangeStackAllocator {
     WTF_FORBID_HEAP_ALLOCATION;
 public:
@@ -1208,6 +1296,7 @@ private:
     static constexpr uint32_t noPosition = std::numeric_limits<uint32_t>::max();
     static constexpr uint32_t noSlot = std::numeric_limits<uint32_t>::max();
     static constexpr uint32_t noCell = std::numeric_limits<uint32_t>::max();
+    static constexpr uint32_t noRange = std::numeric_limits<uint32_t>::max();
     static constexpr unsigned unitsPerWideAlignment = 4;
 
     enum PoolKind : uint8_t { OneUnit, TwoUnits, Wide, NoPool };
@@ -1217,23 +1306,28 @@ private:
         uint32_t slotIndex;
         uint32_t start;
         uint32_t end;
-        uint32_t startOfNextRange { noPosition };
+        uint32_t nextRangeOfSlot { noRange };
     };
 
-    // Cells of one size. Finds the lowest cell that stays free beyond a position in logarithmic time.
+    // Cells of one size. Finds the lowest cell, from a given one on, that stays free beyond a position in logarithmic time.
     class CellPool {
     public:
         void reserve(size_t maxNumberOfCells)
         {
             m_numberOfLeaves = WTF::roundUpToPowerOfTwo(std::max<size_t>(1, maxNumberOfCells));
             m_freeUntil.fill(noPosition, 2 * m_numberOfLeaves);
-            m_topOwner.fill(noSlot, maxNumberOfCells);
         }
 
-        uint32_t findLowestCellFreeBeyond(uint32_t position) const
+        uint32_t findLowestCellFreeBeyond(uint32_t position, uint32_t firstCell = 0) const
         {
-            RELEASE_ASSERT(m_freeUntil[1] > position);
-            size_t node = 1;
+            // Up to the lowest subtree behind the cells in front of `firstCell` that holds such a cell, then down to its first one.
+            size_t node = m_numberOfLeaves + firstCell;
+            while (m_freeUntil[node] <= position) {
+                while (node & 1)
+                    node /= 2;
+                RELEASE_ASSERT(node);
+                ++node;
+            }
             while (node < m_numberOfLeaves) {
                 node *= 2;
                 if (m_freeUntil[node] <= position)
@@ -1250,8 +1344,24 @@ private:
                 m_freeUntil[node] = std::max(m_freeUntil[2 * node], m_freeUntil[2 * node + 1]);
         }
 
+        // The ranges of the slots in a cell that have not begun yet. No two of one cell meet.
+        void addRangeToCome(uint32_t cell, uint32_t start, uint32_t end) { m_rangesToCome.insert({ cell, start, end }); }
+        void removeRangeToCome(uint32_t cell, uint32_t start, uint32_t end) { m_rangesToCome.erase({ cell, start, end }); }
+        uint32_t startOfNextRangeIn(uint32_t cell) const
+        {
+            auto next = m_rangesToCome.lower_bound({ cell, 0, 0 });
+            return next != m_rangesToCome.end() && std::get<0>(*next) == cell ? std::get<1>(*next) : noPosition;
+        }
+        bool meetsRangeToCome(uint32_t cell, uint32_t start, uint32_t end) const
+        {
+            auto behind = m_rangesToCome.upper_bound({ cell, end, noPosition });
+            if (behind == m_rangesToCome.begin())
+                return false;
+            auto [cellOfLast, startOfLast, endOfLast] = *std::prev(behind);
+            return cellOfLast == cell && endOfLast >= start;
+        }
+
         void didUse(uint32_t cell) { m_numberOfCells = std::max(m_numberOfCells, cell + 1); }
-        uint32_t& topOwner(uint32_t cell) { return m_topOwner[cell]; }
         uint32_t numberOfCells() const { return m_numberOfCells; }
 
         unsigned unitsPerCell { 0 };
@@ -1260,7 +1370,7 @@ private:
     private:
         size_t m_numberOfLeaves { 0 };
         Vector<uint32_t> m_freeUntil;
-        Vector<uint32_t> m_topOwner;
+        std::set<std::tuple<uint32_t, uint32_t, uint32_t>> m_rangesToCome;
         uint32_t m_numberOfCells { 0 };
     };
 
@@ -1312,10 +1422,6 @@ private:
         CompilerTimingScope timingScope("Air"_s, "StackAllocator::ranges"_s);
 
         StackSlotActions actions(m_code, false);
-        BitMatrixLiveness<SpillSlotBoundaryRows> liveness(m_code, actions);
-        liveness.compute();
-        RELEASE_ASSERT(liveness.status() == BitMatrixLivenessStatus::Solved);
-
         Vector<BasicBlock*> blocks;
         Vector<uint32_t> firstPositions;
         size_t numberOfPositions = 0;
@@ -1325,6 +1431,14 @@ private:
             numberOfPositions += block->size() + 1;
             RELEASE_ASSERT(numberOfPositions < noPosition);
         }
+
+        BitMatrixLiveness<SpillSlotBoundaryRows> liveness(m_code, actions);
+        // A slot that counts as live in a gap keeps its place there, and no more.
+        liveness.countGapsAsLivePast(numberOfPositions * m_code.proc().limit(Limit::MaxBoundaryIndicesPerInst));
+        liveness.compute();
+        RELEASE_ASSERT(liveness.status() == BitMatrixLivenessStatus::Solved);
+        if (liveness.hasCountedGapsAsLive())
+            m_code.proc().didReachLimit(Limit::MaxBoundaryIndicesPerInst);
 
         Vector<uint32_t> endOfOpenRange(FillWith { }, m_code.stackSlots().size(), noPosition);
         auto isLive = [&](uint32_t slotIndex) {
@@ -1406,7 +1520,7 @@ private:
         });
     }
 
-    // Sorts the ranges by start, joins those of one slot that touch, and tells each where the next one of its slot starts.
+    // Sorts the ranges by start, joins those of one slot that touch, and tells each which is the next one of its slot.
     void linkRanges()
     {
         m_ranges.removeAllMatching([&](const Range& range) {
@@ -1432,13 +1546,11 @@ private:
             return range.slotIndex == noSlot;
         });
 
-        m_lastEndOfSlot.fill(noPosition, m_code.stackSlots().size());
-        Vector<uint32_t> startOfNextRange(FillWith { }, m_code.stackSlots().size(), noPosition);
+        RELEASE_ASSERT(m_ranges.size() < noRange);
+        Vector<uint32_t> nextRangeOfSlot(FillWith { }, m_code.stackSlots().size(), noRange);
         for (size_t index = m_ranges.size(); index--;) {
             Range& range = m_ranges[index];
-            if (m_lastEndOfSlot[range.slotIndex] == noPosition)
-                m_lastEndOfSlot[range.slotIndex] = range.end;
-            range.startOfNextRange = std::exchange(startOfNextRange[range.slotIndex], range.start);
+            range.nextRangeOfSlot = std::exchange(nextRangeOfSlot[range.slotIndex], static_cast<uint32_t>(index));
         }
     }
 
@@ -1465,34 +1577,39 @@ private:
             return m_ranges[a].end != m_ranges[b].end ? m_ranges[a].end < m_ranges[b].end : a < b;
         });
 
-        const size_t numberOfSlots = m_code.stackSlots().size();
-        m_cellOfSlot.fill(noCell, numberOfSlots);
-        Vector<uint32_t> ownerBelow(FillWith { }, numberOfSlots, noSlot);
-        Vector<uint32_t> startAfterGap(FillWith { }, numberOfSlots, noPosition);
+        m_cellOfSlot.fill(noCell, m_code.stackSlots().size());
+
+        // A slot that is read again on a rare path has a range where it is written and one far behind, among the rare blocks. The ranges of two such slots lie
+        // a, b, a, b, so neither fits between two ranges of the other, and a place for each would make the frame grow with the function.
+        // The lowest cell that is free for the first range nearly always fits the others too: two slots that are live together anywhere are live together
+        // where the later one is written first, unless that block is laid out behind one that reads it. So the cells that are looked at are few, however many are in use.
+        auto chooseCell = [&](const CellPool& pool, const Range& first) {
+            for (uint32_t cell = pool.findLowestCellFreeBeyond(first.end);; cell = pool.findLowestCellFreeBeyond(first.end, cell + 1)) {
+                bool fits = true;
+                for (uint32_t next = first.nextRangeOfSlot; fits && next != noRange; next = m_ranges[next].nextRangeOfSlot)
+                    fits = !pool.meetsRangeToCome(cell, m_ranges[next].start, m_ranges[next].end);
+                if (fits)
+                    return cell;
+            }
+        };
 
         forEachRangeBoundaryInOrder(
             [&](const Range& range) {
                 CellPool& pool = m_pools[m_poolOfSlot[range.slotIndex]];
                 uint32_t& cell = m_cellOfSlot[range.slotIndex];
                 if (cell == noCell) {
-                    cell = pool.findLowestCellFreeBeyond(m_lastEndOfSlot[range.slotIndex]);
+                    cell = chooseCell(pool, range);
                     pool.didUse(cell);
-                    ownerBelow[range.slotIndex] = std::exchange(pool.topOwner(cell), range.slotIndex);
-                }
+                    for (uint32_t next = range.nextRangeOfSlot; next != noRange; next = m_ranges[next].nextRangeOfSlot)
+                        pool.addRangeToCome(cell, m_ranges[next].start, m_ranges[next].end);
+                } else
+                    pool.removeRangeToCome(cell, range.start, range.end);
                 pool.setFreeUntil(cell, 0);
             },
             [&](const Range& range) {
                 CellPool& pool = m_pools[m_poolOfSlot[range.slotIndex]];
                 const uint32_t cell = m_cellOfSlot[range.slotIndex];
-                if (range.startOfNextRange != noPosition) {
-                    startAfterGap[range.slotIndex] = range.startOfNextRange;
-                    pool.setFreeUntil(cell, range.startOfNextRange);
-                    return;
-                }
-                RELEASE_ASSERT(pool.topOwner(cell) == range.slotIndex);
-                const uint32_t owner = ownerBelow[range.slotIndex];
-                pool.topOwner(cell) = owner;
-                pool.setFreeUntil(cell, owner == noSlot ? noPosition : startAfterGap[owner]);
+                pool.setFreeUntil(cell, pool.startOfNextRangeIn(cell));
             });
     }
 
@@ -1567,7 +1684,6 @@ private:
     Vector<PoolKind> m_poolOfSlot;
     Vector<Range> m_ranges;
     Vector<uint32_t> m_rangesByEnd;
-    Vector<uint32_t> m_lastEndOfSlot;
     Vector<uint32_t> m_cellOfSlot;
 };
 

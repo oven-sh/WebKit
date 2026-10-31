@@ -35,9 +35,11 @@ runtime ObjectValues, ObjectEntries : JSCell* (EncodedJSValue object) ; unknownC
 runtime PropertyIsEnumerable : size_t (EncodedJSValue object, EncodedJSValue property) ; unknownCode
 runtime GetOwnPropertyDescriptor : EncodedJSValue (EncodedJSValue object, EncodedJSValue property) ; unknownCode
 runtime GetOwnPropertyFields : void (EncodedJSValue object, EncodedJSValue property, EncodedJSValue* results) ; unknownCode
+runtime ObjectAssignWithoutCode, ObjectAssignToUnseenObject : size_t (JSCell* target, EncodedJSValue source) ; unknownCode
 runtime ObjectCreate : JSCell* (JSCell* prototype) ; reads(all) writes(PrototypeLinks, AllocatorState, RuntimeState) collects
 
 runtime IsConstructor : size_t (EncodedJSValue value) ; reads(all)
+runtime ReadsIteratorOfListUnseen : size_t (EncodedJSValue value) ; reads(all)
 runtime ArraySpeciesCreate : EncodedJSValue (EncodedJSValue length, JSCell* array) ; unknownCode
 runtime ResumeGenerator : EncodedJSValue (EncodedJSValue generator, int32_t mode, EncodedJSValue value) ; unknownCode
 runtime IsGeneratorSuspendedAtStart : size_t (JSCell* generator) ; reads(all)
@@ -53,6 +55,9 @@ runtime PrepareBoundFunctionAllocation : void () ; RuntimeAllocates
 runtime NewError : JSCell* (uint32_t errorKind, EncodedJSValue message, EncodedJSValue options) ; unknownCode
 runtime FormatDateTime : JSCell* (EncodedJSValue formatter, double timeValue) ; RuntimeAllocates
 runtime FormatNumber : JSCell* (EncodedJSValue formatter, double number) ; RuntimeAllocates
+runtime FormatWithPattern : EncodedJSValue (uint32_t request, EncodedJSValue value) ; RuntimeAllocates
+runtime NewFormatterWithPattern : JSCell* (uint32_t request) ; RuntimeAllocates
+runtime SetUpFormatterWithOptions : void (JSCell* formatter) ; unknownCode
 
 runtime NumberToStringWithRadix : JSCell* (double value, int32_t radix) ; RuntimeAllocates
 runtime Int32ToStringWithRadix : JSCell* (int32_t value, int32_t radix) ; RuntimeAllocates
@@ -103,6 +108,7 @@ runtime StringIndexOfCharacter : size_t (JSCell* string, uint32_t character, int
 runtime StringsAreEqual : size_t (JSCell* first, JSCell* second) ; reads(all) writes(StringStorage, AllocatorState, RuntimeState) collects
 runtime StringTrim : JSCell* (JSCell* string, uint32_t ends) ; RuntimeCreatesString
 runtime StringLastIndexOf : size_t (JSCell* string, JSCell* other, int32_t position) ; RuntimeCreatesString
+runtime StringIncludes, StringEndsWith : EncodedJSValue (JSCell* string, JSCell* other) ; RuntimeCreatesString
 runtime StringLocaleCompare : size_t (JSCell* string, JSCell* other) ; RuntimeCreatesString
 runtime StringToLowerCase, StringToUpperCase : JSCell* (JSCell* string) ; RuntimeCreatesString
 runtime StringRepeat : JSCell* (JSCell* string, uint32_t count) ; RuntimeCreatesString
@@ -116,6 +122,7 @@ runtime RegExpTestBoxed : EncodedJSValue (JSCell* regExp, JSCell* string) ; unkn
 runtime RegExpMatchLiteral : EncodedJSValue (JSCell* regExp, JSCell* string, uint32_t regExpRecord, uint32_t form) ; RuntimeMatchesRegExp
 runtime RegExpMatchLiteralWithoutObject : EncodedJSValue (JSCell* string, uint32_t regExpRecord, uint32_t form) ; RuntimeMatchesRegExp
 runtime RegExpMatchFlatProgram8 : int64_t (void* program, const Latin1Character* characters, uint32_t length, uint32_t* output) ; none ; leaf
+runtime RegExpMatchFlatProgram16 : int64_t (void* program, const char16_t* characters, uint32_t length, uint32_t* output) ; none ; leaf
 runtime NewRegExpLiteral : JSCell* (uint32_t regExpRecord, uint32_t flags, uint32_t staticsOffset) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime SharedRegExpLiteral : JSCell* (uint32_t staticsOffset, uint32_t regExpRecord, uint32_t flags) ; RuntimeCreatesConstant
 runtime NewRegExp : JSCell* (JSCell* pattern, uint32_t flags) ; RuntimeCreatesString
@@ -123,6 +130,7 @@ runtime RegExpFlags, RegExpSource : JSCell* (JSCell* regExp) ; reads(all) writes
 runtime StringReplaceString, StringReplaceAllString : JSCell* (JSCell* string, JSCell* search, JSCell* replacement) ; RuntimeCreatesString
 runtime StringReplaceRegExp, StringReplaceAllRegExp : JSCell* (JSCell* string, JSCell* regExp, EncodedJSValue replacement) ; unknownCode
 runtime StringReplaceRegExpString : JSCell* (JSCell* string, JSCell* regExp, JSCell* replacement, uint32_t oneBehindStartOfFirstMatch) ; unknownCode
+runtime StringReplaceRegExpWithFunction : EncodedJSValue (JSCell* string, JSCell* regExp, JSCell* replacement, JSCell* hostFunction) ; unknownCode
 runtime StringSplitString : JSCell* (JSCell* string, JSCell* separator, uint32_t limit) ; RuntimeCreatesString
 runtime StringSplitRegExp : JSCell* (JSCell* string, JSCell* regExp, uint32_t limit) ; unknownCode
 runtime StringMatchRegExp, StringSearchRegExp : EncodedJSValue (JSCell* string, JSCell* regExp) ; unknownCode

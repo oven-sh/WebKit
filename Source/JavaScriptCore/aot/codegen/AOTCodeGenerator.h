@@ -48,6 +48,7 @@ class PromisedResults;
 class StackChecks;
 class TypeArena;
 struct CodeRecords;
+struct ValueLocation;
 
 struct CodeGenerationInputs {
     const Program& program;
@@ -66,6 +67,8 @@ struct CodeGenerationInputs {
     const BranchCounterNumbers& branchCounters;
     const ArrivalSiteNumbers& arrivalSites;
     const PromisedResults& promisedResults;
+    // computeEffectSummariesByOperandTypes(), in a validating build.
+    const EffectSummaries* effectsByOperandTypes { nullptr };
 };
 
 struct FunctionInputs {
@@ -79,6 +82,8 @@ struct FunctionInputs {
 };
 
 struct PinnedValues {
+    // An int32 read out of a list's storage, and the word it was read as: the same int32, boxed.
+    UncheckedKeyHashMap<LValue, LValue> wordsOfInt32Elements;
     LValue instance { nullptr };
     LValue instancePrefix { nullptr };
     LValue statics { nullptr };
@@ -140,6 +145,8 @@ public:
     // Whether a call leaves alone the registers it says it keeps is a question about the back end. The answer takes about a kilobyte of code at each call.
     bool checksKeptRegisters() const { return m_checksKeptRegisters; }
     bool forcesGCSlowPaths() const { return m_forcesGCSlowPaths; }
+    bool hasGuardForWritableStorage(const ValueContext& store);
+    ValueID operationBeingGenerated() const { return m_operation ? m_operation->valueID() : ValueID(); }
 
     const Type& typeOf(ValueID id) const { return program().at(function().at(id).type); }
     // Of an operand: the form in which the operation that is being generated takes it.
@@ -152,6 +159,8 @@ public:
     Operand getAsDefined(ValueID) const;
     // For the one user of an operation that leaves its code to the user: from here on the user finds the operands of that operation in the forms in which it takes them.
     void takeOperandsOf(ValueID operationLeftToUser);
+    // Generates a value that generateValue() has passed over, and what it is computed from. Does nothing for a value that is there.
+    void generateValueLeftToUser(const OperationContext& user, ValueID);
     void define(const ValueContext&, Operand);
     void defineTest(const ValueContext&, Condition);
     void defineResults(const ValueContext&, std::span<const Operand>);
@@ -198,6 +207,8 @@ public:
     bool hasFailed() const { return m_hasFailed; }
     bool isValidatedWhereLookedAt(ValueID);
     bool hasTypeOnlyBehindTest(ValueID parameter);
+    // B3 may compute the lowered value ahead of every test: whether the type holds there too.
+    bool holdsTypeWhereverComputed(ValueID);
 
     class InitializationScope {
         WTF_MAKE_NONCOPYABLE(InitializationScope);
@@ -248,7 +259,8 @@ private:
     void generateBlock(BlockID);
     void generateContentsOf(BlockID);
     bool isHandedOnByJumpAlone(BlockID, const Block&, ValueID);
-    void generateValue(BlockID, const Block&, ValueID);
+    bool isAwaitedAtOnce(std::span<const ValueID> valuesOfBlock, size_t index) const;
+    void generateValue(BlockID, const Block&, ValueID, bool isAwaitedAtOnce = false);
     void generateTerminator(BlockID, const Block&);
     void dispatch(const ValueContext&);
     void dispatch(const TerminatorContext&);
@@ -256,6 +268,7 @@ private:
 
     void generate(const ValueContext&);
     void verifyElementGuard(const ValueContext&);
+    ValueLocation locationOfParameter(ValueID) const;
     void defineValue(ValueID, Operand);
     void passArguments(Edge, const Target&, std::span<const Operand> declaredResults);
     void passArgument(ValueID parameter, const IncomingOperand&);

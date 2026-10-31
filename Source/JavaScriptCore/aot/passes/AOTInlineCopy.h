@@ -20,7 +20,7 @@ uint32_t appendInlineFrames(Function& caller, const InlineFrame& callFrame, cons
 ValueID upcastToParameterType(IRBuilder&, const Value& parameter, ValueID argument);
 
 // A read whose type holds from the entry of its function on names no fact there. In a frame of another function it names one that says where the frame begins.
-bool takesFactOfEntry(const Program&, const Value&, bool calleeIsPredicted);
+bool takesFactOfEntry(const Program&, const Value&);
 // A cast without a fact of what the function is handed. It holds from the entry of the function on, so in a frame of another function it names the same fact.
 bool narrowsWhatFunctionIsHanded(const Program&, const Function&, const Value&);
 // Every such read in the blocks names the fact, or gives a word that may be anything to a cast that names it.
@@ -35,7 +35,7 @@ void keepFrameBelowTailCalls(Function&, std::span<const BlockID>, uint32_t frame
 
 InlineDecision canInline(const FunctionPassContext&, const InliningSummary& callee, ValueID call);
 
-enum class InlinedPart : uint8_t { WholeBody, Head };
+enum class InlinedPart : uint8_t { WholeBody, Head, LongHead };
 
 struct InlineRequest {
     ProgramPoint point;
@@ -43,6 +43,7 @@ struct InlineRequest {
     InlinedPart part { InlinedPart::WholeBody };
     const InliningSummary& callee;
     IRBuilder::DeferredResultReads* deferredResultReads { nullptr };
+    const BitVector* longHeadBlocks { nullptr };
 };
 
 // Keeps every id of the caller valid. narrowValueTypes() may renumber them, so typing the copy again is left to the caller's last step.

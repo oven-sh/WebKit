@@ -320,6 +320,21 @@ public:
         options.excludedCode = m_wire.excludedCode;
         recorded.omitsFunctionSource = hasFlag(options.excludedCode, ExcludedCode::FunctionSource);
         options.output = m_wire.output;
+        if (m_wire.target.imagesBelow.size) {
+            if (options.sharesRealms()) {
+                // The address of a list of as many records of the same form, one for each image.
+                std::span list { std::bit_cast<const Wire::ImagesBelowWords*>(static_cast<uintptr_t>(m_wire.target.imagesBelow.address)), static_cast<size_t>(m_wire.target.imagesBelow.size) };
+                for (const Wire::ImagesBelowWords& image : list)
+                    options.imagesBelow.append(std::span { std::bit_cast<const uint8_t*>(static_cast<uintptr_t>(image.address)), static_cast<size_t>(image.size) });
+            } else
+                reportInvalid(m_wire.target.imagesBelow.size);
+        }
+        if (m_wire.target.referenceLibraryImage.size) {
+            if (options.holdsLibraryAlone())
+                options.referenceLibraryImage = std::span { std::bit_cast<const uint8_t*>(static_cast<uintptr_t>(m_wire.target.referenceLibraryImage.address)), static_cast<size_t>(m_wire.target.referenceLibraryImage.size) };
+            else
+                reportInvalid(m_wire.target.referenceLibraryImage.size);
+        }
         options.executableIdentity = m_wire.executableIdentity;
         options.removedFeatures = m_wire.removedFeatures;
         options.featuresKeptOnlyWhenNamed = m_wire.target.featuresKeptOnlyWhenNamed;
@@ -451,6 +466,8 @@ private:
         options.checksClaimsToBackEnd = hasFlag(checks, CheckSet::ClaimsToBackEnd);
         options.checksMovedLoads = hasFlag(checks, CheckSet::MovedLoads);
         options.checksDecidedComparisons = hasFlag(checks, CheckSet::DecidedComparisons);
+        options.checksSpillSlots = hasFlag(checks, CheckSet::SpillSlots) || options.recorded.validates || options.validatesBackEnd;
+        options.checksAllocatedRegisters = hasFlag(checks, CheckSet::AllocatedRegisters) || options.recorded.validates || options.validatesBackEnd;
         options.checksFlowFixpoint = hasFlag(checks, CheckSet::FlowFixpoint);
         options.checksThatUsedValuesAreListed = ASSERT_ENABLED || hasFlag(checks, CheckSet::UsedValuesAreListed) || hasFlag(static_cast<TestingSwitch>(options.recorded.testing), TestingSwitch::CheckProofsAtRunTime);
         options.validatesReferenceGuards = hasFlag(checks, CheckSet::ValidateReferenceGuards);
@@ -681,8 +698,6 @@ static std::optional<String> applyLimit(Wire::CompileOptions& options, const Opt
     auto limit = findMember<LimitID>(name);
     if (!limit || *limit == LimitID::None)
         return unknownNameSentence(word.noun, name);
-    if (!canBeLowered(*limit))
-        return makeString("the limit "_s, name, " fails the build and cannot be lowered"_s);
     auto loweredValue = parseNumber<uint64_t>(*loweredValueText);
     if (!loweredValue)
         return notANumberSentence(*loweredValueText);
@@ -702,7 +717,7 @@ static void listLimits(PrintStream& out)
     for (LimitID limit : allMembersOf<LimitID>) {
         if (limit == LimitID::None)
             continue;
-        ASCIILiteral mark = canBeLowered(limit) ? ""_s : " (cannot be lowered)"_s;
+        ASCIILiteral mark = isLoweredByAll(limit) ? ""_s : " (not lowered by All)"_s;
         listValue(out, nameOf(limit), ' ', defaultLimitValue(limit, hostArchitecture()), ' ', nameOf(stageOf(limit)), ' ', nameOf(protectsOf(limit)), ' ', nameOf(degradesToOf(limit)), mark);
     }
 }

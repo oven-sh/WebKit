@@ -59,8 +59,9 @@ uint64_t savedCalleeSaveBits(const Code& code)
 
 bool isIncomingArgumentAddress(const Arg& arg)
 {
-    return arg.isAddr()
-        && arg.base() == Tmp(GPRInfo::callFrameRegister)
+    const Tmp framePointer(GPRInfo::callFrameRegister);
+    return (arg.isAddr() || (arg.isIndex() && arg.index() != framePointer))
+        && arg.base() == framePointer
         && arg.offset() >= static_cast<Value::OffsetType>(sizeof(CallerFrameAndPC));
 }
 
@@ -87,6 +88,15 @@ FrameNeeds frameNeedsOf(Inst& inst, uint64_t savedCalleeSaves)
 
     result.needsFrame = inst.needsFrame();
     bool isPatch = inst.kind.opcode == Patch;
+    auto addNeedsOf = [&](Tmp tmp) {
+        if (!tmp.isReg())
+            return;
+        Reg reg = tmp.reg();
+        if (reg == Reg(GPRInfo::callFrameRegister) || (savedCalleeSaves & bitOf(reg)))
+            result.needsFrame = true;
+        else if (reg == Reg(MacroAssembler::stackPointerRegister))
+            result.namesStackPointer = true;
+    };
     for (Arg& arg : inst.args()) {
         if (arg.isStack() || arg.isCallArg()) {
             result.needsFrame = true;
@@ -94,17 +104,11 @@ FrameNeeds frameNeedsOf(Inst& inst, uint64_t savedCalleeSaves)
         }
         if (!isPatch && isIncomingArgumentAddress(arg)) {
             result.addressesIncomingArguments = true;
+            if (arg.isIndex())
+                addNeedsOf(arg.index());
             continue;
         }
-        arg.forEachTmpFast([&](Tmp tmp) {
-            if (!tmp.isReg())
-                return;
-            Reg reg = tmp.reg();
-            if (reg == Reg(GPRInfo::callFrameRegister) || (savedCalleeSaves & bitOf(reg)))
-                result.needsFrame = true;
-            else if (reg == Reg(MacroAssembler::stackPointerRegister))
-                result.namesStackPointer = true;
-        });
+        arg.forEachTmpFast(addNeedsOf);
     }
 
     if (isPatch && !result.needsFrame && savedCalleeSaves)

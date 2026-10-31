@@ -34,13 +34,29 @@ void growInParallel(const ParallelLoops& loops, Vector<T, inlineCapacity>& vecto
     vector.grow(size);
 }
 
+// Room for `size` elements on pages that are there, and for a quarter more on pages that nobody has touched.
+template<typename T, size_t inlineCapacity>
+void reserveRoomToSpareInParallel(const ParallelLoops& loops, Vector<T, inlineCapacity>& vector, size_t size)
+{
+    if (size <= vector.capacity())
+        return;
+    Vector<T, inlineCapacity> larger;
+    larger.reserveInitialCapacity(size + size / 4);
+#if !ASAN_ENABLED
+    takePageFaultsInParallel(loops, unsafeMakeSpan(reinterpret_cast<uint8_t*>(larger.mutableSpan().data()), size * sizeof(T)));
+#else
+    UNUSED_PARAM(loops);
+#endif
+    larger.appendVector(WTF::move(vector));
+    vector = WTF::move(larger);
+}
+
 // vector.grow(size), for a list with an entry for each function that stays from one step of the build to the next. A program gets more functions at every loop and at many passes,
-// and a list that grows moves all that it holds, on one thread: so it takes twice the room it needs, which lasts for the build.
+// and a list that grows moves all that it holds, on one thread: so it takes a quarter more room than it needs.
 template<typename T, size_t inlineCapacity>
 void growWithRoomToSpareInParallel(const ParallelLoops& loops, Vector<T, inlineCapacity>& vector, size_t size)
 {
-    if (size > vector.capacity())
-        reserveCapacityInParallel(loops, vector, 2 * size);
+    reserveRoomToSpareInParallel(loops, vector, size);
     vector.grow(size);
 }
 

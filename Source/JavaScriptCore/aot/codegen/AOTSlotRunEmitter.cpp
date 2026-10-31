@@ -106,6 +106,7 @@ void SlotRunEmitter::generatePutSlots(const ValueContext& value)
         entry.hasStorage = !entry.slot().isOutOfLine() || granuleBits & granuleBitOf(entry.slot().offset);
 
     CellPointer cell = in<CellPointer>(value->objectOperand());
+    checkIsCompiledObjectOf(cell, value->receivers());
     SlotEmitter& slots = emitter<SlotEmitter>();
     if (auto entry = std::ranges::find_if(run.entries, &Entry::needsGranule); entry != run.entries.end()) {
         uint64_t granuleBitsBehind = slotAccess.granuleBitsOfStoresBehind(value, *entry->access);
@@ -114,6 +115,10 @@ void SlotRunEmitter::generatePutSlots(const ValueContext& value)
 
     // The keys are listed first, while the slots still say which fields are missing. No code of the program runs before the stores.
     std::optional<StateOfNewObject> newObject = slotAccess.stateOfNewObjectBefore(value, value->objectOperand());
+    if (newObject) {
+        for (Entry& entry : run.entries)
+            entry.mayCreate = entry.mayCreate && !newObject->hasCreated(entry.access->key);
+    }
     listMissingFields(value, cell, run, newObject);
 
     for (const Entry& entry : run.entries)
@@ -137,8 +142,14 @@ void SlotRunEmitter::generatePutSlots(const ValueContext& value)
 
     // An object that is filled for the first time has no Extension, and one test says so for all the granules that are then not there.
     LBasicBlock allStored = nullptr;
-    if (newObject && !newObject->mayHaveExtension && !extension)
+    if (newObject && !newObject->mayHaveExtension && !extension) {
+        if (!storedWhereGranulesAre.isEmpty()) {
+            checkClaim(cell, [&] {
+                return slots.hasNoExtension(cell, storedWhereGranulesAre[0]->access->extensionWord);
+            });
+        }
         storedWhereGranulesAre.shrink(0);
+    }
     if (!storedWhereGranulesAre.isEmpty() && !extension && value.shape() != CodeShape::Compact) {
         const PlacedSlot& extensionWord = storedWhereGranulesAre[0]->access->extensionWord;
         LBasicBlock hasExtension = newBlock();

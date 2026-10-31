@@ -126,6 +126,32 @@ struct Block {
 
     bool isHandlerBlock() const { return role != BlockRole::Ordinary; }
 
+    void appendPartsTo(BodyWords& words) const
+    {
+        parameters.appendStorageTo(words);
+        values.appendStorageTo(words);
+        terminator.appendWordsTo(words);
+        terminator.targets.appendStorageTo(words);
+        handler.appendStorageTo(words);
+        forEachTarget([&](const Target& target) {
+            target.arguments.appendStorageTo(words);
+            target.proofs.appendStorageTo(words);
+        });
+    }
+    // This is a copy, byte for byte, of a block that was written with appendPartsTo().
+    void takePartsFrom(BodyWordsReader& reader)
+    {
+        parameters.takeStorageFrom(reader);
+        values.takeStorageFrom(reader);
+        terminator.takeWordsFrom(reader);
+        terminator.targets.takeStorageFrom(reader);
+        handler.takeStorageFrom(reader);
+        forEachTarget([&](Target& target) {
+            target.arguments.takeStorageFrom(reader);
+            target.proofs.takeStorageFrom(reader);
+        });
+    }
+
     template<typename Functor>
     void forEachTarget(const Functor& functor)
     {

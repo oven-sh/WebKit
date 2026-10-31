@@ -81,6 +81,7 @@ private:
     bool proveTerms(Term left, Term right, int64_t offset, BlockID at);
     bool prove(ValueID left, ValueID right, int64_t offset, BlockID at, UpperBoundGoals&);
     bool proveByInduction(ValueID left, ValueID right, int64_t offset, UpperBoundGoals&);
+    bool proveRoundedSum(ValueID left, ValueID right, int64_t offset, BlockID at, UpperBoundGoals&);
 
     bool proveAtLeast(ValueID base, int64_t minimum, BlockID at, LowerBoundGoals&);
     bool proveValueAtLeast(ValueID, int64_t minimum, BlockID at, LowerBoundGoals&);

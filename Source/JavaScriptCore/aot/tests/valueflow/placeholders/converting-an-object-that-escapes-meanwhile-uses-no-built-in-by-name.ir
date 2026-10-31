@@ -1,0 +1,15 @@
+# `${onlyConverted}`; plain = { held }; plain + 1; odd = { valueOf: somethingNoTableLists, given }; odd + 1
+# The conversion hands the odd object to a function nobody knows. The object escapes while the conversion still lists it, and from then on the unknown object stands above it.
+# Native code that converts or walks the unknown object asks it for no member by name, so it asks for none through an object that has escaped either.
+# The program runs what its own three objects find. No toString, valueOf, Symbol.iterator or next of any other class is used, whichever rule runs first:
+# the files that end in -with-flow-rules-delayed-<n>.ir are this one under schedules that each gave another list.
+# OPTIONS: limit=MaxValueFlowMembersToldApart:1
+# LOSS: MaxValueFlowMembersToldApart
+# RUN: valueflow-solve used
+# CHECK-NOT: used
+# CHECK: run FunctionPrototypeToString
+# CHECK-NEXT: run ObjectPrototypeToString
+# CHECK-NEXT: run ObjectPrototypeValueOf
+# CHECK-NOT: run
+# CHECK-NOT: used
+# PROGRAM-OF: converted-objects-past-those-told-apart-are-handed-to-what-each-of-them-finds.ir

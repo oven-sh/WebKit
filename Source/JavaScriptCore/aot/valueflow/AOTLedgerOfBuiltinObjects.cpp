@@ -68,7 +68,7 @@ LedgerOfBuiltinObjects::LedgerOfBuiltinObjects(const ValueFlowResultInputs& inpu
 Vector<BuiltinID> LedgerOfBuiltinObjects::holdersIn(ValueSetMaker& maker, ValueSetID set) const
 {
     Vector<BuiltinID> found;
-    m_inputs.sets().forEachMember(maker.intersect(set, m_inputs.universe().builtinObjects()), [&](ValueFlowObjectID object) {
+    m_inputs.sets().forEachMemberInLine(maker.intersect(set, m_inputs.universe().builtinObjects()), [&](ValueFlowObjectID object) {
         found.append(m_builtins.canonicalID(m_inputs.universe().builtinOf(object)));
     });
     AOT::sort(found);
@@ -82,11 +82,14 @@ HashSet<uint64_t> LedgerOfBuiltinObjects::findNodesWrittenByCodeNobodySeesAlone(
     const ValueFlowSolver& solver = m_inputs.solver();
     HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> usesByCodeNobodySees;
     unsigned numberOfRulesFound = 0;
+    bool hasFoundHostRoots = false;
     auto noteUsesOf = [&](uint32_t statement) {
         ValueFlowStatementKind kind = solver.statementAt(ValueFlowStatementID(statement)).kind;
         if (kind != ValueFlowStatementKind::Escape && kind != ValueFlowStatementKind::HostRoots && kind != ValueFlowStatementKind::UnseenCode)
             return;
-        ++numberOfRulesFound;
+        // The roots of the host are one rule in several statements where the program has many entry points.
+        if (kind != ValueFlowStatementKind::HostRoots || !std::exchange(hasFoundHostRoots, true))
+            ++numberOfRulesFound;
         m_inputs.forEachIndexOfMadeNodesAskedForBy(ValueFlowStatementID(statement), kindsOfMadeNodes({ ValueFlowMadeNodeKind::Written }), false, [&](uint32_t madeNodes) {
             ++usesByCodeNobodySees.add(madeNodes, 0).iterator->value;
         });
@@ -247,7 +250,18 @@ auto LedgerOfBuiltinObjects::accountOfProperty(BuiltinID holder, PropertyKeyID k
         if (m_mayBeHeldWithoutBeingListed.get(receiver) || m_escaped.get(receiver))
             account.open.add(Actor::ReceiversNobodyKnows);
     }
+    addWritersOfLinkToMembers(account, holder);
     return account;
+}
+
+// Whoever gives such a holder another prototype takes away what the table lists on it.
+void LedgerOfBuiltinObjects::addWritersOfLinkToMembers(Account& account, BuiltinID holder) const
+{
+    if (!m_builtins.has(BuiltinMark::AnswersNullAsItsPrototype, holder) || m_builtins.hasLockedPrototypeLink(holder))
+        return;
+    Account ofLink = accountOfPrototypeLink(holder);
+    account.seen.appendVector(ofLink.seen);
+    account.open.add(ofLink.open);
 }
 
 auto LedgerOfBuiltinObjects::accountOfEveryOwnProperty(BuiltinID holder) const -> Account
@@ -259,6 +273,7 @@ auto LedgerOfBuiltinObjects::accountOfEveryOwnProperty(BuiltinID holder) const -
         account.open.add(Actor::KeysNobodyKnows);
     if ((m_lost.get(receiver) && writesPropertiesThrough(m_untrackedObject)) || (m_escaped.get(receiver) && writesPropertiesThrough(m_unknownObject)))
         account.open.add(Actor::ReceiversNobodyKnows);
+    addWritersOfLinkToMembers(account, holder);
     return account;
 }
 

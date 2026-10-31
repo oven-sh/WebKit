@@ -9,7 +9,7 @@
 # function calledWhereWritten() { return K.kind.length + L.kind.length + K.limit + L.own; }
 # answer = belowFunctions() + calledWhereWritten();
 # FORM: AsRead
-# OPTIONS: disable=pass:InlineCalls
+# OPTIONS: disable=pass:InlineCalls,pass:RemoveUnusedCalls
 # RUN: generate-code calls
 # REQUIRES: unsanitized-code
 
@@ -343,7 +343,7 @@ function f26 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f27 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f26]
 
 # A class with static fields is evaluated inside a function that is called in an `extends` clause, or immediately. Each static field is a variable of the program:
-# the two functions that read them call nothing and need no frame.
+# the two functions that read them call nothing and need no frame. Their answers are known where they are called, so the calls would go, and the functions with them.
 # CHECK: f1: size={{*}} frame=none
 # CHECK-NEXT: f2: size={{*}} frame=none
 # CHECK-NEXT: f{{*}}: size=

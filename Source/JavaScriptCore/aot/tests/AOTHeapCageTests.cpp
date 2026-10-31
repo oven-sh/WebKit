@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCheckedFrameCells.h"
 #include "AOTChildProcess.h"
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
@@ -521,6 +522,24 @@ static void testRandomWindowsLieFarApart()
     AOT_TEST_CHECK(highest - lowest > 4 * 1024 * GB);
 }
 
+// Under the address sanitizer one window of 3,966 held the range, and a program built with `validate` whose heap drew it took its first object for a cell of a frame.
+static void testRandomWindowsLeaveOutCheckedFrameCells()
+{
+    constexpr size_t size = 64 * KB;
+    constexpr uintptr_t endOfRange = CheckedFrameCells::startOfRange + (uintptr_t(1) << CheckedFrameCells::bitsOfOffsetInRange);
+    unsigned numberOfWindows = 0;
+    for (unsigned index = 0; index < 40000; ++index) {
+        void* window = ReservedRangeHeap::tryReserveRandomWindow(size, MarkedBlockCage::maxSize, OSAllocator::UnknownUsage, false);
+        if (!window)
+            continue;
+        ++numberOfWindows;
+        uintptr_t start = std::bit_cast<uintptr_t>(window);
+        OSAllocator::releaseDecommitted(window, size, 0);
+        AOT_TEST_CHECK(start + MarkedBlockCage::maxSize <= CheckedFrameCells::startOfRange || start >= endOfRange);
+    }
+    AOT_TEST_CHECK(numberOfWindows > 30000);
+}
+
 static void testEncodeDecodeRoundTrip()
 {
     static_assert(MarkedBlockCage::shift == 3 && MarkedBlockCage::maxSize == 32 * GB && MarkedBlockCage::minIndex == 1u << 21);
@@ -590,7 +609,8 @@ static void runInProcessWithCage()
     }
 }
 
-#if OS(LINUX) && !ASAN_ENABLED
+// libpas maps a gigabyte at its first allocation, so a process that uses it ends in main() under the limits on address space of these tests.
+#if OS(LINUX) && !ASAN_ENABLED && USE(MIMALLOC)
 static constexpr ASCIILiteral markStackTest = "heap-cage/cage/mark-stack-that-cannot-grow-says-why"_s;
 
 // A collection at the end of what a limit on address space leaves finds no memory for its mark stack. It cannot go on, and the process says what it ran out of and exits.
@@ -621,7 +641,7 @@ static void testMarkStackThatCannotGrowSaysWhy()
 }
 #endif
 
-#if OS(LINUX) && !ASAN_ENABLED
+#if OS(LINUX) && !ASAN_ENABLED && USE(MIMALLOC)
 static constexpr ASCIILiteral frameLinePrefix = "frame 0x"_s;
 
 // Addresses alone: there may be no memory to name them with.
@@ -1291,7 +1311,7 @@ static bool throwErrorIfOwed(VM& vm, JSGlobalObject* realm)
     return hasThrown;
 }
 
-// The allocator of Structures has given out its reserve, and keeps one again once it hears that the error was thrown.
+// The allocator of Structures has given out its reserve, and keeps one again once it hears that the error was thrown. The next poll fills it.
 static void checkErrorOwedForStructuresIsHeardOfByTheirAllocator()
 {
     TestVM test;
@@ -1302,9 +1322,16 @@ static void checkErrorOwedForStructuresIsHeardOfByTheirAllocator()
     AOT_TEST_CHECK(vm.traps().needsOutOfMemoryError() && test.cage().describeExhaustedLimit().contains("Structures"_s));
 
     AOT_TEST_CHECK(throwErrorIfOwed(vm, realm));
-    AOT_TEST_CHECK(!vm.traps().needsOutOfMemoryError() && !test.cage().describeExhaustedLimit().contains("Structures"_s));
+    AOT_TEST_CHECK(!throwErrorIfOwed(vm, realm) && !test.cage().describeExhaustedLimit().contains("Structures"_s));
     // Only an allocator that still waits for the error takes back what it gave out.
     AOT_TEST_CHECK(!StructureAlignedMemoryAllocator::tryRestoreReleasedReserve());
+
+    // No error is owed, and the polls are still on.
+    AOT_TEST_CHECK(vm.traps().needsOutOfMemoryError() && test.cage().errorWaitsForPoll());
+    AOT_TEST_CHECK(test.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm));
+    AOT_TEST_CHECK(!vm.traps().needsOutOfMemoryError() && !test.cage().errorWaitsForPoll());
+    AOT_TEST_CHECK(StructureAlignedMemoryAllocator::releaseReserve());
+    AOT_TEST_CHECK(StructureAlignedMemoryAllocator::tryRestoreReleasedReserve());
 }
 
 static void checkRangeIsReused()
@@ -1494,6 +1521,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/reserved-range/releasing-free-memory-purges-no-other-range"_s, testReleasingFreeMemoryPurgesNoOtherRange },
 #endif
         { "heap-cage/reserved-range/random-windows-lie-far-apart"_s, testRandomWindowsLieFarApart },
+        { "heap-cage/reserved-range/random-windows-leave-out-checked-frame-cells"_s, testRandomWindowsLeaveOutCheckedFrameCells },
 #if OS(LINUX) && !ENABLE(AOT_GUARDED_PAGES)
         { "heap-cage/pages-of-a-vm/pieces-of-one-mapping-go-together"_s, testPiecesOfOneMappingGoTogether },
         { "heap-cage/pages-of-a-vm/a-piece-that-goes-early-leaves-its-neighbors"_s, testEarlyReleasedPieceLeavesNeighbors },
@@ -1501,7 +1529,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/encode-decode-round-trip"_s, testEncodeDecodeRoundTrip },
         { "heap-cage/cage/base-of-any-cell"_s, testBaseOfAnyCell },
         { "heap-cage/cage/off-without-compiled-code"_s, testCageIsOffWithoutCompiledCode },
-#if OS(LINUX) && !ASAN_ENABLED
+#if OS(LINUX) && !ASAN_ENABLED && USE(MIMALLOC)
         { markStackTest, testMarkStackThatCannotGrowSaysWhy },
         { "heap-cage/cage/shared-reserve-is-whole-again-behind-a-cage-that-threw"_s, runInProcessWithSharedRange<checkSharedReserveIsWholeAgainBehindCageThatThrew> },
         { "heap-cage/cage/shared-reserve-is-whole-again-behind-a-cage-that-stays"_s, runInProcessWithSharedRange<checkSharedReserveIsWholeAgainBehindCageThatStays> },
@@ -1509,9 +1537,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/cell-in-a-full-range-grows-into-the-shared-reserve"_s, runInProcessWithSharedRange<checkCellInFullRangeGrowsIntoSharedReserve> },
         { "heap-cage/cage/no-address-in-the-image-names-a-cell-under-a-limit-on-address-space"_s, runInProcessWithSharedRange<checkNoAddressInImageNamesCell> },
         { "heap-cage/cage/error-of-another-request-settles-cells-under-a-limit-on-address-space"_s, runInProcessWithSharedRange<checkErrorOfAnotherRequestAndErrorOwedForCells<true>> },
-#if USE(MIMALLOC)
         { "heap-cage/tables/a-table-that-finds-no-memory-to-grow-stays-as-it-was"_s, checkTableIsUnchangedWhenGrowthFails },
-#endif
 #endif
         { "heap-cage/cage/used-indices-cover-allocations"_s, withCage<checkUsedIndicesCoverAllocations> },
         { "heap-cage/cage/every-cell-is-inside"_s, withCage<checkEveryCellIsInside> },

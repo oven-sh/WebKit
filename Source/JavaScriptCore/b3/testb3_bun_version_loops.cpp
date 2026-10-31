@@ -157,7 +157,8 @@ static void testVersionLoopsVersionsLoopWithCall()
 
     CHECK(versionLoopsAndValidate(proc));
     CHECK(hasRemark(proc, RemarkKind::LoopVersioned, GaveUpReason::None));
-    checkValueCountInEachLoop(proc, Load, { 1, 2 });
+    // The call writes, so the original loop ends in front of the guards of the fast version: the loop around both holds the hoisted load as well.
+    checkValueCountInEachLoop(proc, Load, { 1, 3 });
     checkValueCountInEachLoop(proc, Patchpoint, { 1, 1 });
     auto code = compileProc(proc);
     for (int64_t bound : { -1, 0, 1, 2, 9 }) {
@@ -290,6 +291,104 @@ static void testVersionLoopsOnlyInnermostLoops()
     CHECK_EQ(run(*compileProc(proc), 3, memory, 2), 30);
 }
 
+// Around a call that writes, an iteration that left the fast version ends in front of its guards: the load is hoisted again and the fast version goes on.
+static void testVersionLoopsReturnsToFastVersionAroundCallThatWrites()
+{
+    Procedure proc(remarkPolicy());
+    Graph graph { proc };
+    TopTestedLoop loop(graph);
+    BasicBlock* special = proc.addBlock();
+    BasicBlock* hot = proc.addBlock();
+    Value* increment = graph.make(loop.body, Add, graph.load(loop.body, Int64, loop.pointer, 0, firstHeap), graph.int64(loop.body, 1));
+    appendIncrementingCall(graph, loop.body, loop.pointer, 8, secondHeap);
+    Value* isSpecial = graph.make(loop.body, Equal, graph.make(loop.body, BitAnd, graph.get(loop.body, loop.index), graph.int64(loop.body, 3)), loop.extra);
+    graph.branch(loop.body, isSpecial, rarely(special), FrequentedBlock(hot));
+    graph.increase(special, loop.sum, 1000);
+    appendIncrementingCall(graph, special, loop.pointer, 0, firstHeap);
+    graph.jump(special, hot);
+    graph.increase(hot, loop.sum, increment);
+    loop.endBody(hot);
+    loop.rotate();
+
+    CHECK(versionLoopsAndValidate(proc));
+    CHECK(hasRemark(proc, RemarkKind::LoopVersioned, GaveUpReason::None));
+    B3::NaturalLoops& loops = proc.naturalLoops();
+    CHECK_EQ(loops.numLoops(), 2u);
+    unsigned numberOfLoopsInsideAnother = 0;
+    for (unsigned i = 0; i < loops.numLoops(); ++i)
+        numberOfLoopsInsideAnother += !!loops.innerMostOuterLoop(loops.loop(i));
+    CHECK_EQ(numberOfLoopsInsideAnother, 1u);
+    checkValueCountInEachLoop(proc, Load, { 0, 1 });
+    auto code = compileProc(proc);
+    for (int64_t bound : { 0, 1, 4, 5, 23 }) {
+        for (int64_t specialRemainder : { -1, 0, 1, 3 }) {
+            int64_t expectedWord = 5;
+            int64_t expectedSum = 0;
+            for (int64_t i = 0; i < bound; ++i) {
+                expectedSum += expectedWord + 1;
+                if ((i & 3) != specialRemainder)
+                    continue;
+                expectedSum += 1000;
+                ++expectedWord;
+            }
+            int64_t memory[2] = { 5, 0 };
+            CHECK_EQ(run(*code, bound, memory, specialRemainder), expectedSum);
+            CHECK_EQ(memory[0], expectedWord);
+            CHECK_EQ(memory[1], bound);
+        }
+    }
+}
+
+// The likely path gives the variable a hoisted value. A rare path that is copied into the fast version gives it another, which the next iteration must see.
+static void testVersionLoopsKeepsHeaderPhiThatCopiedRarePathChanges()
+{
+    Procedure proc(remarkPolicy());
+    Graph graph { proc };
+    TopTestedLoop loop(graph);
+    Variable* last = proc.addVariable(Int64);
+    Value* first = proc.add<Const64Value>(Origin(), 5);
+    loop.root->values().insert(loop.root->size() - 1, first);
+    loop.root->values().insert(loop.root->size() - 1, proc.add<VariableValue>(B3::Set, Origin(), last, first));
+    BasicBlock* special = proc.addBlock();
+    BasicBlock* ordinary = proc.addBlock();
+    BasicBlock* hot = proc.addBlock();
+    BasicBlock* unexpected = proc.addBlock();
+    BasicBlock* expected = proc.addBlock();
+    Value* loaded = graph.load(loop.body, Int64, loop.pointer, 0, firstHeap);
+    graph.branch(loop.body, graph.make(loop.body, Below, loaded, graph.int64(loop.body, 100)), FrequentedBlock(expected), rarely(unexpected));
+    graph.callLikePatchpoint(unexpected);
+    graph.jump(unexpected, expected);
+    graph.increase(expected, loop.sum, graph.get(expected, last));
+    appendIncrementingCall(graph, expected, loop.pointer, 8, secondHeap);
+    Value* isSpecial = graph.make(expected, Equal, graph.make(expected, BitAnd, graph.get(expected, loop.index), graph.int64(expected, 3)), loop.extra);
+    graph.branch(expected, isSpecial, rarely(special), FrequentedBlock(ordinary));
+    graph.set(special, last, graph.int64(special, 1000));
+    graph.jump(special, hot);
+    graph.set(ordinary, last, loaded);
+    graph.jump(ordinary, hot);
+    loop.endBody(hot);
+    loop.rotate();
+
+    CHECK(versionLoopsAndValidate(proc));
+    CHECK(hasRemark(proc, RemarkKind::LoopVersioned, GaveUpReason::None));
+    auto code = compileProc(proc);
+    for (int64_t bound : { 0, 1, 2, 5, 23 }) {
+        for (int64_t specialRemainder : { -1, 0, 1, 3 }) {
+            for (int64_t word : { 5, 6 }) {
+                int64_t expectedSum = 0;
+                int64_t expectedLast = 5;
+                for (int64_t i = 0; i < bound; ++i) {
+                    expectedSum += expectedLast;
+                    expectedLast = (i & 3) == specialRemainder ? 1000 : word;
+                }
+                int64_t memory[2] = { word, 0 };
+                CHECK_EQ(run(*code, bound, memory, specialRemainder), expectedSum);
+                CHECK_EQ(memory[1], bound);
+            }
+        }
+    }
+}
+
 static void testVersionLoopsUncloneableRareEdgeContinuesInOriginalLoop()
 {
     enum class RarePath : uint8_t { HasUncloneableValue, StoresToHoistedLocation, CallWritesHoistedLocation };
@@ -320,9 +419,11 @@ static void testVersionLoopsUncloneableRareEdgeContinuesInOriginalLoop()
 
         CHECK(versionLoopsAndValidate(proc));
         CHECK_EQ(valueCountInEachLoop(proc, Load).first(), 0u);
-        CHECK_EQ(numberOfValues(proc, Load), 2u);
-        CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->isInt64(1000); }), 1u);
-        CHECK_EQ(special->numPredecessors(), 2u);
+        CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->opcode() == Load && value->lastChild()->opcode() != SlotBase; }), 2u);
+        // What can be copied ends its turn in a copy, and the fast loop is entered again behind it.
+        bool endsTurnInCopy = rarePath != RarePath::HasUncloneableValue;
+        CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->isInt64(1000); }), endsTurnInCopy ? 2u : 1u);
+        CHECK_EQ(special->numPredecessors(), endsTurnInCopy ? 1u : 2u);
         for (BasicBlock* predecessor : special->predecessors())
             CHECK_EQ(predecessor->numSuccessors(), 1u);
         auto code = compileProc(proc);
@@ -405,6 +506,53 @@ static void testVersionLoopsCloneableRarePathReturnsToFastVersion()
                 }
                 CHECK_EQ(run(*code, bound, memory, special), sum);
                 CHECK_EQ(memory[1], numberOfCalls);
+            }
+        }
+    }
+}
+
+static void testVersionLoopsSidePathOfLoopThatCalls(FrequencyClass frequencyOfSidePath)
+{
+    Procedure proc(remarkPolicy());
+    Graph graph { proc };
+    TopTestedLoop loop(graph);
+    BasicBlock* unexpected = proc.addBlock();
+    BasicBlock* expected = proc.addBlock();
+    BasicBlock* special = proc.addBlock();
+    BasicBlock* hot = proc.addBlock();
+    Value* loaded = graph.load(loop.body, Int64, loop.pointer, 0, secondHeap);
+    graph.branch(loop.body, graph.make(loop.body, Below, loaded, graph.int64(loop.body, 100)), FrequentedBlock(expected), rarely(unexpected));
+    graph.callLikePatchpoint(unexpected);
+    graph.jump(unexpected, expected);
+    Value* maskedIndex = graph.make(expected, BitAnd, graph.get(expected, loop.index), graph.int64(expected, 3));
+    graph.branch(expected, graph.make(expected, Equal, maskedIndex, loop.extra), FrequentedBlock(special, frequencyOfSidePath), FrequentedBlock(hot));
+    graph.increase(special, loop.sum, 1000);
+    graph.jump(special, hot);
+    appendIncrementingCall(graph, hot, loop.pointer, 8, proc.heapSets().unite(firstHeap, thirdHeap));
+    graph.increase(hot, loop.sum, graph.make(hot, Mul, loaded, graph.get(hot, loop.index)));
+    loop.endBody(hot);
+    loop.rotate();
+    checkValueCountInEachLoop(proc, Mul, { 1 });
+    checkValueCountInEachLoop(proc, Patchpoint, { 2 });
+
+    CHECK(versionLoopsAndValidate(proc));
+    // A loop with a call is never unrolled, so an unlikely path jumps back into the fast loop instead of getting its own copy of the call and the product.
+    // A rare path still gets that copy: it is cold code.
+    unsigned copiesForSidePath = frequencyOfSidePath == FrequencyClass::Rare ? 1 : 0;
+    CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->isInt64(1000); }), 2u);
+    CHECK_EQ(numberOfValues(proc, Mul), 2u + copiesForSidePath);
+    CHECK_EQ(numberOfValues(proc, Patchpoint), 3u + copiesForSidePath);
+
+    auto code = compileProc(proc);
+    for (int64_t bound : { -1, 0, 1, 2, 5, 40 }) {
+        for (int64_t special : { -1, 0, 1, 3, 4 }) {
+            for (int64_t factor : { 7, 200 }) {
+                int64_t memory[2] = { factor, 0 };
+                int64_t sum = 0;
+                for (int64_t i = 0; i < bound; ++i)
+                    sum += ((i & 3) == special ? 1000 : 0) + factor * i;
+                CHECK_EQ(run(*code, bound, memory, special), sum);
+                CHECK_EQ(memory[1], std::max<int64_t>(bound, 0));
             }
         }
     }
@@ -923,8 +1071,12 @@ void addBunLoopVersioningTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVersionLoopsKeepsDeepChainTargetInFastVersion());
     RUN(testVersionLoopsSkipsLoopWithNothingToHoist());
     RUN(testVersionLoopsOnlyInnermostLoops());
+    RUN(testVersionLoopsReturnsToFastVersionAroundCallThatWrites());
+    RUN(testVersionLoopsKeepsHeaderPhiThatCopiedRarePathChanges());
     RUN(testVersionLoopsUncloneableRareEdgeContinuesInOriginalLoop());
     RUN(testVersionLoopsCloneableRarePathReturnsToFastVersion());
+    RUN(testVersionLoopsSidePathOfLoopThatCalls(FrequencyClass::Unlikely));
+    RUN(testVersionLoopsSidePathOfLoopThatCalls(FrequencyClass::Rare));
     RUN(testVersionLoopsSkipsLoopWithInvariantBackEdgeTest());
     RUN(testVersionLoopsReloadsSingleInputPhiInExcursion());
     RUN(testVersionLoopsHoistsLoadRepeatingLoadBeforeLoop());

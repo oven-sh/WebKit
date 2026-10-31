@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTGrouping.h"
 #include "AOTID.h"
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
@@ -56,6 +57,20 @@ struct WeightOfBlock {
 
 class HeatGraph;
 
+struct HeatCallOfLongSet {
+    uint32_t set { 0 };
+    // Of each function of the set.
+    double multiplier { 0 };
+};
+
+// A member of a long set that a caller of the set also calls some other way.
+struct HeatCallOfMember {
+    HeatNodeID member;
+    // All told.
+    double multiplier { 0 };
+    double multiplierOfSet { 0 };
+};
+
 class BodyWeights {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(BodyWeights);
     WTF_MAKE_NONCOPYABLE(BodyWeights);
@@ -85,6 +100,16 @@ public:
     std::span<const Node> predecessors(Node node) const LIFETIME_BOUND { return m_predecessors.span().subspan(m_firstPredecessor[node.index()], m_firstPredecessor[node.index() + 1] - m_firstPredecessor[node.index()]); }
     double multiplierOf(Node from, unsigned successorIndex) const { return m_multipliers[m_firstSuccessor[from.index()] + successorIndex]; }
 
+    // n callers that each may enter any function of one set of n are n * n calls. The graph keeps a long callee set once: a caller names the set, and enters each member as often.
+    // successors() and predecessors() leave those calls out. No caller of a set has a member among its successors, and the sets of one caller have no member in common.
+    // Where a caller of a set calls a member some other way too, otherCallsOfMembers() says how often it enters that member all told.
+    unsigned numberOfLongSets() const { return m_firstMemberOfLongSet.isEmpty() ? 0 : m_firstMemberOfLongSet.size() - 1; }
+    std::span<const HeatCallOfLongSet> longSetsOf(Node caller) const LIFETIME_BOUND { return numberOfLongSets() ? entriesOfGroup(m_firstLongSetOf, m_longSetsOf, caller.index()) : std::span<const HeatCallOfLongSet>(); }
+    std::span<const uint32_t> longSetsWith(Node callee) const LIFETIME_BOUND { return numberOfLongSets() ? entriesOfGroup(m_firstLongSetWith, m_longSetsWith, callee.index()) : std::span<const uint32_t>(); }
+    std::span<const Node> membersOfLongSet(uint32_t set) const LIFETIME_BOUND { return entriesOfGroup(m_firstMemberOfLongSet, m_membersOfLongSets, set); }
+    std::span<const Node> usersOfLongSet(uint32_t set) const LIFETIME_BOUND { return entriesOfGroup(m_firstUserOfLongSet, m_usersOfLongSets, set); }
+    std::span<const HeatCallOfMember> otherCallsOfMembers(Node caller) const LIFETIME_BOUND { return numberOfLongSets() ? entriesOfGroup(m_firstOtherCallOfMember, m_otherCallsOfMembers, caller.index()) : std::span<const HeatCallOfMember>(); }
+
     Node hostNode() const { return Node(numberOfFunctions()); }
     Node unknownCodeNode() const { return Node(numberOfFunctions() + 1); }
     double entriesPerEventOf(FunctionID function) const { return function.index() < m_entriesPerEvent.size() ? m_entriesPerEvent[function.index()] : 0; }
@@ -94,12 +119,15 @@ public:
 
     uint32_t sizeOf(FunctionID function) const { return m_sizes[function.index()]; }
     double massOf(FunctionID function) const { return m_masses[function.index()]; }
+    bool isOnlyExpectedToCall(FunctionID caller, FunctionID callee) const { return std::ranges::binary_search(m_callsOnlyExpected, packedCall(caller, callee)); }
     std::span<const HeatBlockGroup> blockGroupsOf(FunctionID function) const LIFETIME_BOUND { return m_blockGroups[function.index()].span(); }
 
     void dump(PrintStream&) const;
 
 private:
     friend HeatGraph buildHeatGraph(const Program&, const CallGraph&, const FlowResults&, const EffectSummaries&, BuildContext&, const BodyReferences*, const BodyWeights*, BodyWeights*, HeatGraph*);
+
+    static uint64_t packedCall(FunctionID caller, FunctionID callee) { return static_cast<uint64_t>(caller.index()) << 32 | callee.index(); }
 
     unsigned m_numberOfNames { 0 };
     Vector<double> m_entriesPerEvent;
@@ -111,8 +139,19 @@ private:
     Vector<double> m_multipliers;
     Vector<uint32_t> m_firstPredecessor;
     Vector<Node> m_predecessors;
+    Vector<uint32_t> m_firstLongSetOf;
+    Vector<HeatCallOfLongSet> m_longSetsOf;
+    Vector<uint32_t> m_firstLongSetWith;
+    Vector<uint32_t> m_longSetsWith;
+    Vector<uint32_t> m_firstMemberOfLongSet;
+    Vector<Node> m_membersOfLongSets;
+    Vector<uint32_t> m_firstUserOfLongSet;
+    Vector<Node> m_usersOfLongSets;
+    Vector<uint32_t> m_firstOtherCallOfMember;
+    Vector<HeatCallOfMember> m_otherCallsOfMembers;
     Vector<uint32_t> m_sizes;
     Vector<double> m_masses;
+    Vector<uint64_t> m_callsOnlyExpected;
     ParallelArray<Vector<HeatBlockGroup, 4>> m_blockGroups;
 };
 

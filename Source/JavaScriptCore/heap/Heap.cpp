@@ -643,11 +643,24 @@ void Heap::deprecatedReportExtraMemorySlowCase(size_t size)
     reportExtraMemoryAllocatedSlowCase(nullptr, nullptr, size);
 }
 
+#if USE(MEMORY_FOOTPRINT_API) && USE(BUN_JSC_ADDITIONS)
+// Kept out of line. Link-time optimization would otherwise inline this, down to the struct that WTF::memoryFootprint() fills, into collectNow() and the
+// allocation slow path. Their frames are on the stack during a collection, and a stale copy of a pointer left in an unwritten word of that struct keeps its object alive.
+static NEVER_INLINE bool isOverCriticalMemoryThreshold()
+{
+    return WTF::percentAvailableMemoryInUse() > Options::criticalGCMemoryThreshold();
+}
+#endif
+
 bool Heap::overCriticalMemoryThreshold(MemoryThresholdCallType memoryThresholdCallType)
 {
 #if USE(MEMORY_FOOTPRINT_API)
     if (memoryThresholdCallType == MemoryThresholdCallType::Direct || ++m_percentAvailableMemoryCachedCallCount >= 100) {
+#if USE(BUN_JSC_ADDITIONS)
+        m_overCriticalMemoryThreshold = isOverCriticalMemoryThreshold();
+#else
         m_overCriticalMemoryThreshold = WTF::percentAvailableMemoryInUse() > Options::criticalGCMemoryThreshold();
+#endif
         m_percentAvailableMemoryCachedCallCount = 0;
     }
 
@@ -715,11 +728,23 @@ void Heap::addGCAwareJITStubRoutine(GCAwareJITStubRoutine* routine)
 void Heap::addReference(JSCell* cell, ArrayBuffer* buffer, size_t bytesAlreadyReported)
 {
     ASSERT(cell->heap() == this);
+    if (MarkedBlockCage::isRequired()) [[unlikely]]
+        cage().willAddArrayBuffer(vm());
     if (m_arrayBuffers.addReference(cell, buffer)) {
         size_t size = buffer->gcSizeEstimateInBytes();
         ASSERT(bytesAlreadyReported <= size);
         reportExtraMemoryAllocatedSlowCase(nullptr, nullptr, size - std::min(size, bytesAlreadyReported));
     }
+}
+
+bool Heap::tryGrowListOfArrayBuffersEarly()
+{
+    return m_arrayBuffers.tryGrowEarly();
+}
+
+bool Heap::tryReserveCapacityForNewArrayBuffer()
+{
+    return m_arrayBuffers.tryReserveCapacityForNewObject();
 }
 
 template<typename CellType, typename CellSet>
@@ -1018,6 +1043,9 @@ void Heap::pruneDeadReferences()
     auto scopeExit = makeScopeExit([&] {
         Thread::currentSingleton().setCurrentAtomStringTable(previous);
     });
+#if ENABLE(AOT)
+    AOT::HeapHooks::WorkForStoppedVMScope workForStoppedVM(vm());
+#endif
 
     if (vm().typeProfiler())
         vm().typeProfiler()->invalidateTypeSetCache(vm());
@@ -2116,6 +2144,13 @@ NEVER_INLINE void Heap::collectInMutatorThreadUntilDone()
     collectInMutatorThread();
 }
 
+// Kept out of line so waitForCollector's frame has no rarely written slots. When the mutator runs the collection itself it does so
+// below that frame and never parks, and a stale copy of a pointer left in such a slot keeps its object alive.
+static NEVER_INLINE void parkWhileWorldStateIs(Atomic<unsigned>& worldState, unsigned expected)
+{
+    ParkingLot::compareAndPark(&worldState, expected);
+}
+
 template<typename Func>
 void Heap::waitForCollector(NOESCAPE const Func& func)
 {
@@ -2158,7 +2193,7 @@ void Heap::waitForCollector(NOESCAPE const Func& func)
         }
         
         // If mutatorWaitingBit is still set then we want to wait.
-        ParkingLot::compareAndPark(&m_worldState, oldState | mutatorWaitingBit);
+        parkWhileWorldStateIs(m_worldState, oldState | mutatorWaitingBit);
     }
 }
 
@@ -2244,7 +2279,8 @@ bool Heap::relinquishConn(unsigned oldState)
     return true;
 }
 
-void Heap::finishRelinquishingConn()
+// Out of line for the same reason: its Locker would be two more such slots.
+NEVER_INLINE void Heap::finishRelinquishingConn()
 {
     dataLogLnIf(HeapInternal::verbose, "Relinquished the conn.");
     

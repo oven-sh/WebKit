@@ -114,10 +114,18 @@ private:
         if (m_isLive.quickGet(index) == isLive)
             return;
         m_isLive.quickSet(index, isLive);
-        if (isLive)
+        if (isLive) {
             ++m_numberLive[bankOf(index)];
-        else
-            --m_numberLive[bankOf(index)];
+            m_positionAmongLive[index] = m_live.size();
+            m_live.append(index);
+            return;
+        }
+        --m_numberLive[bankOf(index)];
+        unsigned last = m_live.takeLast();
+        if (last != index) {
+            m_live[m_positionAmongLive[index]] = last;
+            m_positionAmongLive[last] = m_positionAmongLive[index];
+        }
     }
 
     // Goes from the last block to the first. m_isLive and m_numberLive describe the block's tail in atTail(block) and its head in atHead(block).
@@ -125,6 +133,8 @@ private:
     {
         m_isLive.clearAll();
         m_isLive.ensureSize(m_usesAndDefs.crossesBoundary.size());
+        m_live.shrink(0);
+        m_positionAmongLive.grow(m_usesAndDefs.crossesBoundary.size());
         m_numberLive = { };
         Air::forEachBlockBackwards(m_code, m_liveness, m_usesAndDefs, [&](unsigned index, bool isLive) { setIsLive(index, isLive); }, atTail, atHead);
     }
@@ -201,7 +211,10 @@ private:
         forEachBlockBackwards([](BasicBlock*) { }, [&](BasicBlock* block) {
             if (!isTarget.quickGet(block->index()))
                 return;
-            for (size_t index : m_isLive)
+            // There may be as many such blocks as Tmps, so the set of all Tmps is not gone through for each.
+            Vector<unsigned, 16> live(m_live.span());
+            std::ranges::sort(live);
+            for (unsigned index : live)
                 m_tmpsLiveAtHead[block].append(Tmp::tmpForLinearIndex(m_code, index));
         });
     }
@@ -386,6 +399,9 @@ private:
     BitMatrixLiveness<TmpBoundaryRows> m_liveness;
     const unsigned m_firstIndexOfFP;
     BitVector m_isLive;
+    // The same, in no order, and where each stands in it.
+    Vector<unsigned> m_live;
+    Vector<unsigned> m_positionAmongLive;
     CountByBank m_numberLive { };
     IndexMap<BasicBlock*, Vector<Tmp>> m_tmpsLiveAtHead;
     TmpMap<Tmp> m_tmpInRegion;

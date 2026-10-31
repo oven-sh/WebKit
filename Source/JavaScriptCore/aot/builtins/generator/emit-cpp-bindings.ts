@@ -31,6 +31,7 @@ export type FormatTableEntryRecord = (
 
 interface BindingLists {
   classes: readonly string[];
+  instanceStructureLookup: string;
   cachedGetters: readonly string[];
   customGetters: readonly string[];
   directFunctions: readonly string[];
@@ -161,8 +162,22 @@ function formatClassBinding(builtinClass: ModelClass, id: string): string {
     ["builtinClass", id],
     ["instanceClassInfo", builtinClass.instanceCppClass === null ? null : `${cppClassOf(builtinClass).name}::info()`],
     ["findPrototype", formatRealmLookup("JSC::JSObject*", builtinClass.prototypeCppExpression)],
-    ["findInstanceStructure", formatRealmLookup("JSC::Structure*", builtinClass.instanceStructureCppExpression)],
+    ["namesInstanceStructure", builtinClass.instanceStructureCppExpression === null ? null : "true"],
   ]);
+}
+
+/** One function for all the classes: every start of a compiled program asks for the Structures that the realm has made by then. */
+function emitInstanceStructureLookup(classes: readonly ModelClass[]): string {
+  return [
+    "static void findInstanceStructures(JSC::JSGlobalObject* realm, std::span<JSC::Structure*> structures)",
+    "{",
+    `    RELEASE_ASSERT(structures.size() == ${classes.length});`,
+    "    [[maybe_unused]] auto* globalObject = defaultGlobalObject(realm);",
+    ...classes.flatMap(({ instanceStructureCppExpression }, index) =>
+      instanceStructureCppExpression === null ? [] : [`    structures[${index}] = ${instanceStructureCppExpression};`],
+    ),
+    "}",
+  ].join("\n");
 }
 
 function formatCachedGetterBinding(overload: ModelOverload): string[] {
@@ -270,10 +285,12 @@ function emitBindings(declaration: string, lists: BindingLists): string {
     ["nativeFunctions", "static constexpr BuiltinNativeFunctionBinding", lists.nativeFunctions],
     ["hostNumbers", "static constexpr BuiltinHostNumberBinding", lists.hostNumbers],
   ] as const;
-  const bindingSet = formatAggregate(
-    arrays.map(([name, , elements]): AggregateMember => [name, elements.length === 0 ? null : name]),
+  const [classes, ...others] = arrays.map(
+    ([name, , elements]): AggregateMember => [name, elements.length === 0 ? null : name],
   );
+  const bindingSet = formatAggregate([classes, ["findInstanceStructures", "findInstanceStructures"], ...others]);
   return joinBlocks([
+    lists.instanceStructureLookup,
     ...arrays.map(([name, qualifiedType, elements]) => emitArray(`${qualifiedType} ${name}`, elements)),
     `${declaration} = ${bindingSet};`,
   ]);
@@ -485,6 +502,7 @@ export function emitHostBindings(
     emitDirectFormAssertions(directFunctions),
     emitBindings("static constinit const BuiltinBindingSet hostBindings", {
       classes: classes.map(builtinClass => formatClassBinding(builtinClass, formatId("BuiltinClassID", builtinClass))),
+      instanceStructureLookup: emitInstanceStructureLookup(classes),
       cachedGetters: model.overloads.flatMap(formatCachedGetterBinding),
       customGetters: model.overloads.flatMap(formatCustomGetterBinding),
       directFunctions: directFunctions.map(formatDirectFunctionBinding),

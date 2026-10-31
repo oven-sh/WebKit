@@ -1,0 +1,35 @@
+# SimplifyControlFlow compares the two arms of a test block by block. Arms of two blocks each are joined in the run that finds them, behind the comparison, so they are found to be the same code in the next run, which must not be left out.
+# With VerifyEachPass each pass that is left out runs on a copy of the function, and a change there is SkippedPassChangesFunction.
+# OPTIONS: heat=EverythingIsHot check=VerifyEachPass disable=pass:InlineCalls
+# RUN: pipeline RemoveUnreadFields
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+
+function f1 name="armsOfTwoBlocks" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b3()
+  b1():
+    v3 = Add v1, v1
+    Jump -> next b2()
+  b2():
+    v4 = Mul v3, v1
+    Return v4
+  b3():
+    v5 = Add v1, v1
+    Jump -> next b4()
+  b4():
+    v6 = Mul v5, v1
+    Return v6
+# CHECK-NOT: Branch
+# CHECK: Mul
+# CHECK-NOT: Mul
+}

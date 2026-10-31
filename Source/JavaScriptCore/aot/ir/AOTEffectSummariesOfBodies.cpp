@@ -16,6 +16,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeldOperands.h"
 #include "AOTIR.h"
+#include "AOTProgramPasses.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
 #include "AOTTypePropagation.h"
@@ -206,7 +207,7 @@ static bool isEmpty(const EffectDescription& description)
     return description.own == EffectsOnEdges::none() && description.functions.isEmpty() && description.slowPathFunctions.isEmpty() && !description.callsUnknownCode && !description.followsFieldsOfOperands;
 }
 
-static FunctionID genericVersionEnteredWithOwnParameters(const Program& program, const Function& function)
+static FunctionID genericVersionThatBodyRestartsIn(const Program& program, const Function& function)
 {
     if (function.role != FunctionRole::Source || !function.derivation.source || function.blocks.isEmpty())
         return { };
@@ -223,7 +224,8 @@ static FunctionID genericVersionEnteredWithOwnParameters(const Program& program,
         if (block.values.size() != 1 || block.handler || block.terminator.kind != TerminatorKind::ReturnCall)
             return false;
         const Value& call = function.at(block.values[0]);
-        return call.opcode == Opcode::CallDirect && call.function() == record->fallback && std::ranges::equal(call.variadicOperands(), parameters);
+        // A pass may have put another name of a parameter in its place: what RequireObjectCoercible hands on, a cast.
+        return call.opcode == Opcode::CallDirect && call.function() == record->fallback && call.variadicOperands().size() == parameters.size();
     });
     return isEntered ? record->fallback : FunctionID();
 }
@@ -243,7 +245,7 @@ public:
         , m_exits(computeExitReachability(m_function))
         , m_maySuspend(maySuspend(analyses))
         , m_readAs(readAs)
-        , m_genericVersionEntered(readAs == ReadAs::ItselfAndCalleesByOperandTypes ? genericVersionEnteredWithOwnParameters(context.program, m_function) : FunctionID())
+        , m_genericVersionEntered(readAs == ReadAs::ItselfAndCalleesByOperandTypes ? genericVersionThatBodyRestartsIn(context.program, m_function) : FunctionID())
         , m_wordsInRow((firstBitOfParameters + m_function.numberOfEntryParameters() + bitsInWord - 1) / bitsInWord)
         , m_parametersInMemoryAsTargets(FillWith { }, m_wordsInRow, uint64_t { 0 })
     {
@@ -403,7 +405,7 @@ private:
         Vector<uint32_t, 32> positions(m_sources.size(), [](size_t position) {
             return static_cast<uint32_t>(position);
         });
-        AOT::sort(positions, std::ranges::less { }, [&](uint32_t position) {
+        AOT::sortInLine(positions, std::ranges::less { }, [&](uint32_t position) {
             return sortKeyOf(m_sources[position]);
         });
         size_t numberOfDependencies = 0;
@@ -595,8 +597,7 @@ private:
         case ReadAs::Itself:
             return false;
         case ReadAs::ItselfAndCalleesByOperandTypes:
-            return value.function() == m_genericVersionEntered && !m_function.at(block).handler && m_function.at(block).terminator.kind == TerminatorKind::ReturnCall
-                && std::ranges::equal(operands, m_function.at(entryBlock).parameters.span());
+            return value.function() == m_genericVersionEntered && !m_function.at(block).handler && m_function.at(block).terminator.kind == TerminatorKind::ReturnCall;
         case ReadAs::GenericVersionGivenTypes:
             return callee.role == FunctionRole::OutlinedBody;
         case ReadAs::OutlinedBodyGivenTypes:
@@ -717,23 +718,47 @@ private:
         }
         bool isGivenTypes = m_readAs == ReadAs::GenericVersionGivenTypes || m_readAs == ReadAs::OutlinedBodyGivenTypes;
         bool isUnmatchedCall = value.opcode == Opcode::CallBuiltin && value.builtinCallForm() == BuiltinCallForm::AnyReceiver;
-        EffectDescription description = isGivenTypes && isUnmatchedCall ? describeUnmatchedCallByOperandTypes(program, m_function, value) : describeEffects(program, m_function, value);
+        AOT_THRESHOLD(size_t, mostFunctionsFollowed, 64);
+        // More callees than are followed count as unknown code, whatever they do. n calls of one set of n callees do not go through it to find that out.
+        // The function that has the arms for all places is the one call of its set, and each of its arms follows a callee as it is. What it does is what they do: describeByRole().
+        bool isOneCallOfItsSet = isCallWithSharedArms(m_function);
+        CalleeSetID longSet = isOneCallOfItsSet ? CalleeSetID() : longCalleeSetRunBy(program, value);
+        bool hasTooManyCallees = longSet && program.at(longSet).written().functions.size() > mostFunctionsFollowed;
+        auto describe = [&] {
+            return isGivenTypes && isUnmatchedCall ? describeUnmatchedCallByOperandTypes(program, m_function, value) : describeEffects(program, m_function, value);
+        };
+        EffectDescription description = hasTooManyCallees ? describeCodeRunBesideLongCalleeSet(program, value, longSet) : describe();
         m_summary.followsFieldsOfOperands |= description.followsFieldsOfOperands;
         if (m_references)
             m_references->read(value, description);
         if (value.opcode == Opcode::Check && !program.typeOf(m_function, value.valueOperand()).isSubsetOf(program.at(value.expectedType().predicted()), program))
             description.callsUnknownCode = true;
-        AOT_THRESHOLD(size_t, mostFunctionsFollowed, 64);
-        if (description.functions.size() > mostFunctionsFollowed) {
+        auto countAsUnknownCode = [](EffectDescription& description) {
             description.functions.clear();
             description.callsUnknownCode = true;
+            description.leavesOutOwnEffects = false;
             description.addOwn(Effects::unknownCode());
+        };
+        if (hasTooManyCallees || (!isOneCallOfItsSet && description.functions.size() > mostFunctionsFollowed))
+            countAsUnknownCode(description);
+        if (hasTooManyCallees && m_analyses.context().build.options().verifiesAfterEveryPass) [[unlikely]] {
+            EffectDescription whole = describe();
+            RELEASE_ASSERT(whole.functions.size() > mostFunctionsFollowed);
+            countAsUnknownCode(whole);
+            RELEASE_ASSERT(whole == description);
         }
         if (isReadWithOperandTypes(block, value)) [[unlikely]] {
+            // The generic version is the same function, entered before any effect with what this one was entered with: it does what the code did that stood here.
+            // Every rewrite of that code was checked to add no effect, so the row that the callers read still bounds it. The text of the generic version says more: it calls by name what is resolved here.
+            if (m_readAs == ReadAs::ItselfAndCalleesByOperandTypes && m_function.effectsBeforeRestart) {
+                addToExits(block, description.own.normal, description.own.handler);
+                addToExits(block, m_function.effectsBeforeRestart->normal, m_function.effectsBeforeRestart->handler);
+                return;
+            }
             summarizeCalleeWithOperandTypes(block, id, description);
             return;
         }
-        if (effectRuleOf(value.opcode) == EffectRule::Call && !maySuspend(value.opcode)) {
+        if (effectRuleOf(value.opcode) == EffectRule::Call && !maySuspend(value.opcode) && !hasTooManyCallees) {
             CalleeList callees = calleesThatBoundEffectsOf(program, value);
             if (std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone(); functions && runsOnlyCallees(description, *functions)) {
                 summarizeCall(block, value, *functions, description);

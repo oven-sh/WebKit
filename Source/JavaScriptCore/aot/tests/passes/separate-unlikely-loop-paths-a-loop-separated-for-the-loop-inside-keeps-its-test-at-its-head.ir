@@ -1,0 +1,56 @@
+# Every turn of the inner loop asks the same of a list, so the loop around it is separated in its place. That loop carries a number which each of its turns tests for an integer.
+# Such a test moves to where the value is made in a loop that is separated for its own sake: it then stands on every edge into the loop. Here the one test stays at the head
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SeparateUnlikelyLoopPaths
+# STATISTIC: LoopsSeparatedFromUnlikelyPaths = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="lastOfEach" parameters=[{type=Array}, {type=number}, {type=anything}] results=[{type=anything}] {
+    v3 = Undefined
+    Jump -> next b1(v1, v3)
+  b1(v4: number, v5):
+    LoopHint
+    v7 = TypeTest v4 testedType=i32
+    Branch v7 -> taken b2(| 0), notTaken b10()
+  b2(v8):
+    v9 = Integer integer=0
+    Jump -> next b3(v9, v5)
+  b3(v10, v11):
+    LoopHint
+    v13 = Less v10, v8
+    Branch v13 -> taken b4(| 0), notTaken b8()
+  b4(v14):
+    v15 = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+    Branch v15 -> taken b5(| 0), notTaken b6()
+  b5(v16):
+    v17 = GetArrayElement v0, v14, v16 level=Expected [keyIsIntegral]
+    Jump -> next b7(v17)
+  b6() frequency=Unlikely:
+    v18 = ElemGet v0, v14 [keyIsIntegral]
+    Jump -> next b7(v18)
+  b7(v19):
+    v20 = Increment v14
+    Jump -> next b3(v20, v19)
+  b8():
+    v21 = Integer integer=0
+    v22 = Greater v8, v21
+    Branch v22 -> taken b9(), notTaken b11()
+  b9():
+    v23 = Mul v4, v4
+    Jump -> next b1(v23, v11)
+  b10() frequency=Unlikely:
+    v24 = Call v2, -
+    v25 = Mul v4, v4
+    Jump -> next b1(v25, v5)
+  b11():
+    Return v5
+# CHECK: b1(v4: number, v5: anything):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v7: boolean = TypeTest v4 testedType=i32
+# The test of the inner loop leaves for the copy of the outer one.
+# CHECK: Branch v15 -> taken b5(| 0), notTaken [[failed]]({{*}})
+# CHECK: v23: number = Mul v4, v4
+# CHECK-NEXT: Jump -> next b1(v23, v11)
+# CHECK: [[failed]]({{*}}) frequency=Rare:
+}

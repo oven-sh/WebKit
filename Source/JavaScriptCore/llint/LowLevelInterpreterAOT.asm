@@ -44,6 +44,9 @@ const InstanceRopeStringAllocator = constexpr (AOT_INSTANCE_PREFIX_OFFSET(ropeSt
 const InstanceStringHeader = constexpr (AOT_INSTANCE_PREFIX_OFFSET(stringHeader))
 const InstanceClosureEntrypoint = constexpr (AOT_INSTANCE_OFFSET(stubs.closureEntrypoint))
 const InstanceSlimClosureEntrypoint = constexpr (AOT_INSTANCE_OFFSET(stubs.slimClosureEntrypoint))
+const InstanceAbove = constexpr (AOT_INSTANCE_OFFSET(above))
+const InstanceEndOfClosureNumbers = constexpr (AOT_INSTANCE_OFFSET(endOfClosureNumbers))
+const InstanceLastShape = constexpr (AOT_INSTANCE_OFFSET(lastShape))
 
 const ObjectLiteralPlanTag = constexpr AOT::Interpreter::ObjectLiteralPlan::allocatorTag
 const ObjectLiteralPlanSlowPathTag = constexpr AOT::Interpreter::ObjectLiteralPlan::slowPathTag
@@ -134,11 +137,30 @@ macro loadConstantOperand(size, index, value, isLoaded)
     jmp isLoaded
 end
 
-macro loadInstanceOfRealm(instance, hasNone)
+# The first instance of the realm. Every instance has alike: the base of the cage of cells, the realm, the allocators and the headers of the engine's own cells.
+# And code that is not compiled asks the tables of the first about every cell that is no compiled object: AOT::instanceOfInterpreter().
+macro loadAnyInstanceOfRealm(instance, hasNone)
     loadp CodeBlock[cfr], instance
     loadp CodeBlock::m_globalObject[instance], instance
     loadp JSGlobalObject::m_aotInstance[instance], instance
     btpz instance, hasNone
+end
+
+# The tables of the image of a compiled object say of it all that they say where there is one image. The shapes of the images ascend with the instances.
+macro loadInstanceOfCompiledObject(object, instance, scratch, hasNone)
+    loadp CodeBlock[cfr], instance
+    loadp CodeBlock::m_globalObject[instance], instance
+    loadp JSGlobalObject::m_aotInstance[instance], instance
+    btpz instance, hasNone
+    btpz InstanceAbove[instance], .isFound
+    loadi (constexpr AOT::offsetOfShapeWord)[object], scratch
+    negi scratch
+.next:
+    bibeq scratch, InstanceLastShape[instance], .isFound
+    loadp InstanceAbove[instance], instance
+    btpnz instance, .next
+    jmp hasNone
+.isFound:
 end
 
 macro loadIdentifier(size, opcodeStruct, fieldName, uid, scratch)
@@ -452,7 +474,8 @@ macro loadNameOfKey(key, uid, isNoName)
 end
 
 # The kinds that any object may have. t3: the object, t5: the instance, t0: the kind of the slot in entry. Leaves the value in t0.
-macro getFromHashedSlot(entry, slow, done)
+# Goes to callsCustomGetter with the AOT::CustomAccessorRecord in t0.
+macro getFromHashedSlot(entry, slow, callsCustomGetter, done)
     bbeq t0, constexpr AOT::Slot::Kind::Value, .value
     bbeq t0, constexpr AOT::Slot::Kind::Absent, .undefined
     bbeq t0, constexpr AOT::Slot::Kind::CustomGetter, .customGetter
@@ -460,15 +483,16 @@ macro getFromHashedSlot(entry, slow, done)
     loadq SlotPayload[entry], t0
     jmp done
 
-    # AOT::callCustomGetterAndReturn(), where the object holds what its getter answered before.
+    # AOT::callCustomGetterAndReturn(). The object may hold what its getter answered before.
 .customGetter:
     loadi SlotPayload[entry], t0
     lshiftp constexpr AOT::Interpreter::customAccessorRecordShift, t0
     addp InstanceCustomAccessors[t5], t0
-    loadi (constexpr (OBJECT_OFFSETOF(AOT::CustomAccessorRecord, offsetOfCachedValue)))[t0], t0
-    btiz t0, slow
-    loadq [t3, t0], t0
-    btqz t0, slow
+    loadi (constexpr (OBJECT_OFFSETOF(AOT::CustomAccessorRecord, offsetOfCachedValue)))[t0], t1
+    btiz t1, callsCustomGetter
+    loadq [t3, t1], t1
+    btqz t1, callsCustomGetter
+    move t1, t0
     jmp done
 
 .undefined:
@@ -486,14 +510,16 @@ end
 
 # t3: the compiled object, t1: the uid. Leaves the value in t0.
 macro getFromCompiledObject(slow, done)
-    loadInstanceOfRealm(t5, slow)
+    loadInstanceOfCompiledObject(t3, t5, t2, slow)
     loadi JSCell::m_structureID[t3], t2
     findHashedSlot(t5, t2, t1, makeKeyOfRead, t6, t0, slow)
     loadb SlotKind[t6], t0
     bbeq t0, constexpr AOT::Slot::Kind::Field, .field
     bbeq t0, constexpr AOT::Slot::Kind::ExtraProperty, .extraProperty
     bbeq t0, constexpr AOT::Slot::Kind::InheritedField, .inheritedField
-    getFromHashedSlot(t6, slow, done)
+    bbeq t0, constexpr AOT::Slot::Kind::FieldOrInherited, .field
+    bbeq t0, constexpr AOT::Slot::Kind::FieldOrInheritedField, .field
+    getFromHashedSlot(t6, slow, slow, done)
 
     # The value of a data property does not depend on the receiver, so the holder is asked for it as for a field of its own.
 .inheritedField:
@@ -507,8 +533,20 @@ macro getFromCompiledObject(slow, done)
     readField(t5, t1, t2, t0, .absentField, slow, done)
 
 .absentField:
+    bbeq SlotKind[t6], constexpr AOT::Slot::Kind::FieldOrInherited, .inherits
+    bbneq SlotKind[t6], constexpr AOT::Slot::Kind::Field, slow
     btbz SlotFlags[t6], constexpr AOT::Slot::absentIsUndefined, slow
     move ValueUndefined, t0
+    jmp done
+
+    # loadInheritedValueBySlot() in the stubs.
+.inherits:
+    btbnz SlotFlags[t6], constexpr AOT::Interpreter::flagsOfInheritedValuesLeftToSlowPath, slow
+    loadi SlotSecondPayloadWord[t6], t0
+    lshiftp constexpr AOT::cell32Shift, t0
+    addp InstanceCellCageBase[t5], t0
+    loadhsq SlotLocation[t6], t1
+    loadPropertyAtWordIndex(t0, t1, t0)
     jmp done
 
 .extraProperty:
@@ -520,7 +558,12 @@ end
 
 # t3: the object, t1: the uid.
 macro testPresenceInObject(slow, isPresent, isAbsent)
-    loadInstanceOfRealm(t5, slow)
+    bbeq JSCell::m_type[t3], CompiledObjectType, .isCompiledObject
+    loadAnyInstanceOfRealm(t5, slow)
+    jmp .hasInstance
+.isCompiledObject:
+    loadInstanceOfCompiledObject(t3, t5, t2, slow)
+.hasInstance:
     loadi JSCell::m_structureID[t3], t2
     findHashedSlot(t5, t2, t1, makeKeyOfRead, t6, t0, slow)
     loadb SlotKind[t6], t0
@@ -571,7 +614,7 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
     andi constexpr AOT::Interpreter::maxHiddenWordOffsetInSiteCache, t0
     loadi [t3, t0], t0
     btiz t0, .compiledObject
-    loadInstanceOfRealm(t5, .slow)
+    loadAnyInstanceOfRealm(t5, .slow)
     lshiftp constexpr AOT::cell32Shift, t0
     addp InstanceCellCageBase[t5], t0
     loadhsq OpGetById::Metadata::m_modeMetadata.defaultMode.cachedOffset[t2], t1
@@ -583,7 +626,7 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
     subi NarrowReferenceInSiteCache, t1
     loadi [t3, t1], t0
     bib t0, constexpr AOT::minCell32, .compiledObject
-    loadInstanceOfRealm(t5, .slow)
+    loadAnyInstanceOfRealm(t5, .slow)
     lshiftp constexpr AOT::cell32Shift, t0
     addp InstanceCellCageBase[t5], t0
     return(t0)
@@ -636,7 +679,7 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
 .probe:
     loadi OpGetById::Metadata::m_modeMetadata.defaultMode.structureID[t2], t7
     bbb JSCell::m_type[t3], ObjectType, .slow
-    loadInstanceOfRealm(t5, .slow)
+    loadAnyInstanceOfRealm(t5, .slow)
     loadIdentifier(size, OpGetById, m_property, t1, t0)
     loadi JSCell::m_structureID[t3], t2
     findHashedSlot(t5, t2, t1, makeKeyOfRead, t6, t0, .slow)
@@ -646,11 +689,12 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
     bbneq t0, constexpr AOT::Slot::Kind::Value, .readsHashedSlot
     btbnz SlotFlags[t6], constexpr AOT::Slot::isOwn, .slow
 .readsHashedSlot:
-    getFromHashedSlot(t6, .otherKind, .done)
+    getFromHashedSlot(t6, .otherKind, .callsCustomGetter, .done)
 
-    # As in getFromCompiledObject(): the holder is asked as for a field of its own.
+    # As in getFromCompiledObject(): the holder is asked as for a field of its own. It may be of another image than these tables.
 .otherKind:
     bbneq SlotKind[t6], constexpr AOT::Slot::Kind::InheritedField, .slow
+    btpnz InstanceAbove[t5], .slow
     loadp SlotPayload[t6], t3
     loadi JSCell::m_structureID[t3], t2
     findHashedSlot(t5, t2, t1, makeKeyOfRead, t6, t0, .slow)
@@ -665,6 +709,17 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
 .done:
     return(t0)
 
+    # t0: the AOT::CustomAccessorRecord, t3: the object.
+.callsCustomGetter:
+    move t0, a2
+    move t3, a3
+    prepareStateForCCall()
+    move cfr, a0
+    move PC, a1
+    cCall4(_llint_slow_path_aot_call_custom_getter)
+    restoreStateAfterCCall()
+    dispatch()
+
 .slow:
     callSlowPath(_llint_slow_path_get_by_id)
     dispatch()
@@ -674,6 +729,30 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
 end)
 
 aotOp(op_get_by_val, OpGetByVal, macro (size, get, dispatch, metadata, return)
+    # An element that an array of values holds. Neither profile of the ordinary handler has a reader here.
+    get(m_base, t1)
+    loadOperandInRegister(size, t1, t0, .otherAccess)
+    btqnz t0, notCellMask, .otherAccess
+    get(m_property, t1)
+    loadOperandInRegister(size, t1, t3, .indexIsConstant)
+.hasIndex:
+    bqb t3, numberTag, .otherAccess
+    loadb JSCell::m_indexingTypeAndMisc[t0], t2
+    andi IndexingShapeMask, t2
+    bieq t2, ContiguousShape, .holdsValues
+    bineq t2, Int32Shape, .otherAccess
+.holdsValues:
+    loadp JSObjectWithButterfly::m_butterfly[t0], t1
+    biaeq t3, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], .otherAccess
+    zxi2q t3, t3
+    loadq [t1, t3, 8], t0
+    btqz t0, .otherAccess
+    return(t0)
+
+.indexIsConstant:
+    loadConstantOperand(size, t1, t3, .hasIndex)
+
+.otherAccess:
     getByVal(size, get, dispatch, metadata, return, macro ()
         get(m_base, t0)
         loadConstantOrVariableCell(size, t0, t3, .slow)
@@ -753,7 +832,7 @@ aotOp(op_instanceof, OpInstanceof, macro (size, get, dispatch, metadata, return)
     btqnz t3, notCellMask, .slow
     bbb JSCell::m_type[t3], ObjectType, .slow
     btbz JSCell::m_flags[t3], ImplementsDefaultHasInstance, .slow
-    loadInstanceOfRealm(t5, .slow)
+    loadAnyInstanceOfRealm(t5, .slow)
     loadi JSCell::m_structureID[t3], t2
     loadp InstanceHasInstanceUID[t5], t1
     move t3, t7
@@ -978,7 +1057,7 @@ aotOp(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
 .compiledObject:
     getu(size, OpPutById, m_flags, t1)
     btinz t1, constexpr PutByIdFlagsFits::s_isDirectBit, .slow
-    loadInstanceOfRealm(t5, .slow)
+    loadInstanceOfCompiledObject(t0, t5, t2, .slow)
     loadIdentifier(size, OpPutById, m_property, t1, t2)
     loadi JSCell::m_structureID[t0], t2
     findHashedSlot(t5, t2, t1, makeKeyOfStore, t6, t3, .slow)
@@ -1239,7 +1318,7 @@ end
 
 # JSLexicalEnvironment::create(), once SymbolTable::notifyCreation() has nothing left to say.
 aotOp(op_create_lexical_environment, OpCreateLexicalEnvironment, macro (size, get, dispatch, metadata, return)
-    loadInstanceOfRealm(t5, .slow)
+    loadAnyInstanceOfRealm(t5, .slow)
     get(m_symbolTable, t0)
     loadConstantOrVariable(size, t0, t1)
     bpneq (constexpr AOT::Interpreter::PlacesInSymbolTable::offsetOfSingleton)[t1], constexpr AOT::Interpreter::PlacesInSymbolTable::invalidatedSingleton, .slow
@@ -1301,7 +1380,7 @@ end)
 
 # AOT::generateNewPromise().
 aotOp(op_new_promise, OpNewPromise, macro (size, get, dispatch, metadata, return)
-    loadInstanceOfRealm(t5, .slow)
+    loadAnyInstanceOfRealm(t5, .slow)
     loadp InstancePromiseAllocator[t5], t0
     btpz t0, .slow
     allocateCell(t0, t1, t2, .slow)
@@ -1550,7 +1629,7 @@ end)
 
 # constructArrayNegativeIndexed(), where storing the elements leaves the indexing type of the profile as it is.
 aotOp(op_new_array, OpNewArray, macro (size, get, dispatch, metadata, return)
-    loadInstanceOfRealm(t5, .slow)
+    loadAnyInstanceOfRealm(t5, .slow)
     # AOT::branchIfHavingABadTime().
     btiz InstanceNewArrayWithContiguousHeader[t5], .slow
     metadata(t6, t0)
@@ -1887,7 +1966,7 @@ aotOp(op_add, OpAdd, macro (size, get, dispatch, metadata, return)
     orp isRopeInPointer, t2
 
     # t1: the right string, t2: the left string and the flags, t3: the length
-    loadInstanceOfRealm(t5, .ordinary)
+    loadAnyInstanceOfRealm(t5, .ordinary)
     loadp InstanceRopeStringAllocator[t5], t6
     allocateCell(t6, t7, t0, .ordinary)
     loadq InstanceStringHeader[t5], t0
@@ -2020,12 +2099,158 @@ aotOp(op_call, OpCall, macro (size, get, dispatch, metadata, return)
 
     callHelper(aot_op_call, OpCall, dispatchAfterCallWithoutProfile, m_valueProfile, m_dst, prepareForRegularCall, invokeCallWithoutProfile, prepareForSlowRegularCall, prepareCallSiteForConstruct, size, dispatch, metadata, getCallee, getArgumentStart, getArgumentCount)
 end)
+
+aotOp(op_construct, OpConstruct, macro (size, get, dispatch, metadata, return)
+    # `new f()` of a function of the program that only returns. What AOT::ClassTable::createThis() remembers of it is the whole construction: nothing is entered.
+    get(m_callee, t1)
+    loadConstantOrVariable(size, t1, t0)
+    btqnz t0, notCellMask, .enters
+    bbneq JSCell::m_type[t0], constexpr CompiledClosureType, .enters
+    loadp JSFunction::m_executableOrRareData[t0], t1
+    btpz t1, (constexpr JSFunction::rareDataTag), .enters
+    bbneq (FunctionRareData::m_compiledAllocationConstructorHighBits - (constexpr JSFunction::rareDataTag))[t1], constexpr AOT::Interpreter::highBitsOfConstructorThatOnlyReturns, .enters
+    loadi (FunctionRareData::m_compiledAllocationStructureID - (constexpr JSFunction::rareDataTag))[t1], t2
+    btiz t2, .enters
+    # new.target lies where the callee would find `this`.
+    getu(size, OpConstruct, m_argv, t3)
+    negp t3
+    bqneq ThisArgumentOffset[cfr, t3, 8], t0, .enters
+    loadp CodeBlock[cfr], t1
+    loadp CodeBlock::m_vm[t1], t1
+    loadp (constexpr AOT::Interpreter::offsetOfAllocatorOfDefaultFinalObject)[t1], t1
+    btpz t1, .enters
+    allocateCell(t1, t0, t3, .enters)
+    storei t2, JSCell::m_structureID[t0]
+    structureIDToStructureWithScratch(t2, t3)
+    loadi StructureTypeInfoBlob[t2], t3
+    storei t3, JSCell::m_indexingTypeAndMisc[t0]
+    storep 0, JSObjectWithButterfly::m_butterfly[t0]
+    storeq ValueEmpty, sizeof JSObjectWithButterfly[t0]
+    storeq ValueEmpty, sizeof JSObjectWithButterfly + 8[t0]
+    storeq ValueEmpty, sizeof JSObjectWithButterfly + 16[t0]
+    storeq ValueEmpty, sizeof JSObjectWithButterfly + 24[t0]
+    storeq ValueEmpty, sizeof JSObjectWithButterfly + 32[t0]
+    storeq ValueEmpty, sizeof JSObjectWithButterfly + 40[t0]
+    fenceAfterAllocation(t3)
+    return(t0)
+
+.enters:
+    metadata(t5, t0)
+
+    macro getCallee(dst)
+        get(m_callee, dst)
+    end
+
+    macro getArgumentStart(dst)
+        getu(size, OpConstruct, m_argv, dst)
+    end
+
+    macro getArgumentCount(dst)
+        getu(size, OpConstruct, m_argc, dst)
+    end
+
+    callHelper(aot_op_construct, OpConstruct, dispatchAfterCallWithoutProfile, m_valueProfile, m_dst, prepareForRegularCall, invokeCallWithoutProfile, prepareForSlowRegularCall, prepareCallSiteForConstruct, size, dispatch, metadata, getCallee, getArgumentStart, getArgumentCount)
+end)
 end
 
 macro loadInstanceOfCompiledCallee(callee, instance, scratch)
     loadStructureWithScratch(callee, instance, scratch)
     loadp Structure::m_realm[instance], instance
     loadp JSGlobalObject::m_aotInstance[instance], instance
+end
+
+if X86_64 or ARM64
+# The prologue and op_enter in one. Every test stands in front of the first store into the frame, so a rare case gives the frame back and enters the ordinary prologue.
+macro aotFunctionPrologue(ordinaryPrologue, checkArity)
+    preserveCallerPCAndCFR()
+    loadp CodeBlock[cfr], t1
+    loadp CodeBlock::m_vm[t1], t2
+    getFrameRegisterSizeForCodeBlock(t1, t0)
+    subp cfr, t0, t0
+    bpa VMTrapAwareSoftStackLimitOffset[t2], t0, .ordinary
+    checkArity(.ordinary)
+    btis CodeBlock::m_numberOfArgumentsToSkipAndCouldBeTainted[t1], .ordinary
+    loadb JSCell::m_cellState[t1], t3
+    bibeq t3, (constexpr (VM::offsetOfHeapBarrierThreshold()))[t2], .ordinary
+    btinz VM::m_threadContext + VMThreadContext::m_traps + VMTraps::m_trapBits[t2], VMTrapsAsyncEvents, .ordinary
+
+    preserveCalleeSavesUsedByLLInt()
+    move sp, t2
+    move t0, sp
+    bpeq t0, t2, .zeroStackDone
+    if ARM64
+    .zeroStackLoop:
+        subp 2 * PtrSize, t2
+        storepairq zr, zr, [t2]
+        bpa t2, t0, .zeroStackLoop
+    else
+        move 0, t3
+        fq2d t3, ft0
+        subp t2, t0, t3
+        btpz t3, 2 * PtrSize, .zeroStackLoop
+        subp 2 * PtrSize, t2
+        storev v0, [t2]
+        bpeq t2, t0, .zeroStackDone
+    .zeroStackLoop:
+        subp 4 * PtrSize, t2
+        storev v0, [t2]
+        storev v0, 2 * PtrSize[t2]
+        bpa t2, t0, .zeroStackLoop
+    end
+.zeroStackDone:
+
+    loadi CodeBlock::m_numVars[t1], t2
+    subq CalleeSaveSpaceAsVirtualRegisters, t2
+    btqz t2, .variablesDone
+    leap -CalleeSaveSpaceAsVirtualRegisters * 8[cfr], t3
+    move ValueUndefined, t0
+    negq t2
+.variablesLoop:
+    storeq t0, [t3, t2, 8]
+    addq 1, t2
+    btqnz t2, .variablesLoop
+.variablesDone:
+    loadis CodeBlock::m_scopeRegister[t1], t2
+    loadp Callee[cfr], t0
+    loadp JSCallee::m_scope[t0], t0
+    storeq t0, [cfr, t2, 8]
+
+    loadp CodeBlock::m_instructionsRawPointer[t1], PB
+    loadp CodeBlock::m_metadata[t1], metadataTable
+    move TagNumber, numberTag
+    addq TagOther, numberTag, notCellMask
+    assert(macro (ok) bbeq [PB], constexpr op_enter, ok end)
+    move (constexpr op_enter_length) + OpcodeIDNarrowSize, PC
+    nextInstruction()
+
+.ordinary:
+    restoreCallerPCAndCFR()
+    jmp ordinaryPrologue
+end
+
+macro aotArityIsNotChecked(ordinary)
+end
+
+macro aotArityIsChecked(ordinary)
+    loadi LowWordOffset + ArgumentCountIncludingThis[cfr], t3
+    bib t3, CodeBlock::m_numParameters[t1], ordinary
+end
+
+op(llint_aot_function_for_call_prologue, macro ()
+    aotFunctionPrologue(_llint_function_for_call_prologue, aotArityIsNotChecked)
+end)
+
+op(llint_aot_function_for_construct_prologue, macro ()
+    aotFunctionPrologue(_llint_function_for_construct_prologue, aotArityIsNotChecked)
+end)
+
+op(llint_aot_function_for_call_arity_check, macro ()
+    aotFunctionPrologue(_llint_function_for_call_arity_check, aotArityIsChecked)
+end)
+
+op(llint_aot_function_for_construct_arity_check, macro ()
+    aotFunctionPrologue(_llint_function_for_construct_arity_check, aotArityIsChecked)
+end)
 end
 
 # A call site that has seen too many callees for a stub. t0: the callee, t2: the CallLinkInfo. The ordinary trampoline needs both, and t1, as they are.
@@ -2037,6 +2262,21 @@ op(llint_aot_virtual_call_trampoline, macro ()
     subi constexpr SlimClosureType, t3
     bia t3, constexpr (SlimClosureWithPropertiesType - SlimClosureType), .ordinary
     loadInstanceOfCompiledCallee(t0, t5, t3)
+    btpz InstanceAbove[t5], .slimClosureOfInstance
+    # The realm runs several images. The number of the closure says which of them it is of, and the adapter sees to it that its image runs.
+    bbeq JSCell::m_type[t0], constexpr SlimClosureType, .hasWord
+    loadp (constexpr AOT::offsetOfSlimClosureWord)[t0], t3
+    loadi (constexpr (AOT::ReifiedSlimClosure::offsetOfFunctionIndexInButterfly()))[t3], t3
+    jmp .findInstanceOfSlimClosure
+.hasWord:
+    loadi (constexpr (AOT::offsetOfSlimClosureWord + 4))[t0], t3
+    andi (constexpr AOT::ClosureWord::functionMask), t3
+.findInstanceOfSlimClosure:
+    bib t3, InstanceEndOfClosureNumbers[t5], .slimClosureOfInstance
+    loadp InstanceAbove[t5], t5
+    btpnz t5, .findInstanceOfSlimClosure
+    jmp .ordinary
+.slimClosureOfInstance:
     loadp InstanceSlimClosureEntrypoint[t5], t5
     jmp t5, JSEntryPtrTag
 
@@ -2044,6 +2284,15 @@ op(llint_aot_virtual_call_trampoline, macro ()
     loadq (constexpr AOT::offsetOfClosureEntry)[t0], t3
     bqlt t3, 0, .ordinary
     loadInstanceOfCompiledCallee(t0, t5, t3)
+    btpz InstanceAbove[t5], .closureOfInstance
+    loadi (constexpr (AOT::offsetOfClosureEntry + 4))[t0], t3
+    andi (constexpr AOT::ClosureWord::functionMask), t3
+.findInstanceOfClosure:
+    bib t3, InstanceEndOfClosureNumbers[t5], .closureOfInstance
+    loadp InstanceAbove[t5], t5
+    btpnz t5, .findInstanceOfClosure
+    jmp .ordinary
+.closureOfInstance:
     loadp InstanceClosureEntrypoint[t5], t5
     jmp t5, JSEntryPtrTag
 
@@ -2179,6 +2428,7 @@ _llint_aot_bound_function_call_thunk:
     subi constexpr SlimClosureType, t1
     bia t1, constexpr (SlimClosureWithPropertiesType - SlimClosureType), .boundHostFunction
     loadInstanceOfCompiledCallee(t0, t5, t1)
+    btpnz InstanceAbove[t5], .boundHostFunction
     loadp InstanceSlimClosureEntrypoint[t5], t5
 .enterBoundTarget:
     loadq (constexpr (JSBoundFunction::offsetOfBoundThis()))[t3], t1
@@ -2191,6 +2441,7 @@ _llint_aot_bound_function_call_thunk:
     loadq (constexpr AOT::offsetOfClosureEntry)[t0], t1
     bqlt t1, 0, .boundHostFunction
     loadInstanceOfCompiledCallee(t0, t5, t1)
+    btpnz InstanceAbove[t5], .boundHostFunction
     loadp InstanceClosureEntrypoint[t5], t5
     jmp .enterBoundTarget
 
@@ -2300,6 +2551,7 @@ entry(llint_aot, macro ()
     setEntryAddresses(OpAdd, op_add)
     if not ARM64E
         setEntryAddresses(OpCall, op_call)
+        setEntryAddresses(OpConstruct, op_construct)
     end
     setEntryAddresses(OpCreateLexicalEnvironment, op_create_lexical_environment)
     setEntryAddresses(OpEnumeratorGetByVal, op_enumerator_get_by_val)
@@ -2329,5 +2581,12 @@ entry(llint_aot, macro ()
 
     # VM::getCTIVirtualCall() reads the entry of the ordinary trampoline.
     setEntryAddress(constexpr llint_virtual_call_trampoline, _llint_aot_virtual_call_trampoline)
+
+    if X86_64 or ARM64
+        setEntryAddress(constexpr llint_function_for_call_prologue, _llint_aot_function_for_call_prologue)
+        setEntryAddress(constexpr llint_function_for_construct_prologue, _llint_aot_function_for_construct_prologue)
+        setEntryAddress(constexpr llint_function_for_call_arity_check, _llint_aot_function_for_call_arity_check)
+        setEntryAddress(constexpr llint_function_for_construct_arity_check, _llint_aot_function_for_construct_arity_check)
+    end
 end)
 end

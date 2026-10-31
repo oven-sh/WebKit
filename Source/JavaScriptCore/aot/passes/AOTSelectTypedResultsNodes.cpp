@@ -33,10 +33,25 @@ namespace {
 struct FamilyOfMembers {
     LayoutSetID family;
     LayoutID owner;
-    bool hasSeveralOwners { false };
 };
 
 } // anonymous namespace
+
+// Two layouts may fit each other's types: `{ port, host, tags? }` and a literal `{ port, host }`. A parser builds the declared one, which has a field for every member.
+static bool isBetterHead(const Program& program, LayoutID candidate, LayoutID other)
+{
+    auto rankOf = [&](LayoutID id) {
+        const Layout& layout = program.at(id);
+        return std::tuple { !!layout.name, layout.fields.size(), std::numeric_limits<uint32_t>::max() - id.index() };
+    };
+    return rankOf(candidate) > rankOf(other);
+}
+
+static bool fitsTypeOf(const Program& program, LayoutID layout, LayoutID declared)
+{
+    std::span<const LayoutID> family = program.at(program.declaredMembersOf(declared)).completeMembers();
+    return std::ranges::binary_search(family, layout);
+}
 
 static Vector<FamilyOfMembers> familiesOf(const Program& program, std::span<const LayoutID> members)
 {
@@ -48,10 +63,10 @@ static Vector<FamilyOfMembers> familiesOf(const Program& program, std::span<cons
     });
     size_t numberOfFamilies = 0;
     for (const FamilyOfMembers& family : families) {
-        if (numberOfFamilies && families[numberOfFamilies - 1].family == family.family)
-            families[numberOfFamilies - 1].hasSeveralOwners = true;
-        else
+        if (!numberOfFamilies || families[numberOfFamilies - 1].family != family.family)
             families[numberOfFamilies++] = family;
+        else if (isBetterHead(program, family.owner, families[numberOfFamilies - 1].owner))
+            families[numberOfFamilies - 1].owner = family.owner;
     }
     families.shrink(numberOfFamilies);
     AOT::sort(families, std::ranges::greater { }, [&](const FamilyOfMembers& family) {
@@ -88,22 +103,22 @@ static Vector<LayoutID, 4> headLayoutsOf(const Program& program, const Type& typ
         if (!numberLeft)
             break;
         std::span<const LayoutID> subtypes = program.at(family.family).completeMembers();
-        auto isOwnerAlone = [&](LayoutID layout) {
-            return !family.hasSeveralOwners && layout == family.owner;
+        auto staysBesideOwner = [&](LayoutID layout) {
+            return layout == family.owner || (isBetterHead(program, layout, family.owner) && fitsTypeOf(program, family.owner, layout));
         };
         if (numberLeft <= subtypes.size()) {
             compact();
             candidates.removeAllMatching([&](LayoutID candidate) {
-                return !isOwnerAlone(candidate) && std::ranges::binary_search(subtypes, candidate);
+                return std::ranges::binary_search(subtypes, candidate) && !staysBesideOwner(candidate);
             });
             numberLeft = candidates.size();
             continue;
         }
         for (LayoutID subtype : subtypes) {
-            if (isOwnerAlone(subtype))
-                continue;
             auto position = std::ranges::lower_bound(candidates, subtype);
-            if (position != candidates.end() && *position == subtype && !isRemoved.set(static_cast<size_t>(position - candidates.begin())))
+            if (position == candidates.end() || *position != subtype || staysBesideOwner(subtype))
+                continue;
+            if (!isRemoved.set(static_cast<size_t>(position - candidates.begin())))
                 --numberLeft;
         }
     }
@@ -632,14 +647,14 @@ TypeID findTypeOfTypedResultTarget(const Program& program, const Function& funct
     return mostSpecific;
 }
 
-TypedResultTarget findTypedResultTarget(const Program& program, const Function& function, const UseLists& uses, ValueID call, size_t maxNumberOfLayouts, const HeadLayoutsOfFamilies* headLayouts)
+TypedResultTarget findTypedResultTarget(const Program& program, const Function& function, const UseLists& uses, ValueID call, const HeadLayoutsOfFamilies* headLayouts)
 {
     TypedResultTarget target { findTypeOfTypedResultTarget(program, function, uses, call), { } };
     if (!target)
         return { };
     auto append = [&](LayoutID layout) {
         target.layouts.append(layout);
-        return target.layouts.size() > maxNumberOfLayouts ? IterationStatus::Done : IterationStatus::Continue;
+        return IterationStatus::Continue;
     };
     forEachLayoutReachedBy(program, target.type, headLayouts, ScopedLambda<IterationStatus(LayoutID)>(append));
     AOT::sort(target.layouts);

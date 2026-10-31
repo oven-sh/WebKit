@@ -6,6 +6,7 @@ const clock = "ExternalState";
 const hostTimeZone = "ExternalState";
 const dateCache = "RuntimeState";
 const cachedCalendarFields = "InternalFields";
+const membersAddedWhenRead = "ExternalState";
 
 const component = b.f64.loose;
 const optionalComponent = component.optional;
@@ -280,16 +281,30 @@ export default b.declarations(
       toLocaleString: localized,
       toLocaleDateString: localized,
       toLocaleTimeString: localized,
-      toJSON: {
-        this: b.object.loose.refusing(b.null),
-        args: { key: b.any.optional },
-        returns: b.any,
-        capability: "js",
-        throws: true,
-        runsOnlyOperandCode: true,
-        uses: { this: [b.runs("ToPrimitive", b.calls("toISOString"))], key: b.inspected },
-        implementation: b.hostCall,
-      },
+      toJSON: [
+        {
+          // A pristine date finds the built-in @@toPrimitive, valueOf and toISOString. The host call answers null for an invalid date.
+          this: b.instance("Date").pristine("Names"),
+          args: { key: b.any.optional },
+          returns: b.union(b.string, b.null),
+          capability: "heap",
+          throws: true,
+          uses: { this: [readsTime], key: b.inspected },
+          reads: [membersAddedWhenRead],
+          writes: [cachedCalendarFields, membersAddedWhenRead],
+          implementation: b.inline("DateToISOString", { otherwise: b.hostCall }),
+        },
+        {
+          this: b.object.loose.refusing(b.null),
+          args: { key: b.any.optional },
+          returns: b.any,
+          capability: "js",
+          throws: true,
+          runsOnlyOperandCode: true,
+          uses: { this: [b.runs("ToPrimitive", b.calls("toISOString"))], key: b.inspected },
+          implementation: b.hostCall,
+        },
+      ],
       toTemporalInstant: {
         returns: b.object.fresh,
         capability: "heap",

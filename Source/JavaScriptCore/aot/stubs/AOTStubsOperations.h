@@ -30,7 +30,7 @@ struct OperationCallShape {
     friend constexpr bool operator==(const OperationCallShape&, const OperationCallShape&) = default;
 };
 
-inline constexpr OperationCallShape operationCallShapes[18] = {
+inline constexpr OperationCallShape operationCallShapes[20] = {
     { OperationCall::Returns::Value, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, true, true },
     { OperationCall::Returns::Value, OperationCall::FirstArgument::GlobalObject, OperationCall::Saves::Nothing, true },
     { OperationCall::Returns::Value, OperationCall::FirstArgument::VM, OperationCall::Saves::Nothing, true },
@@ -49,6 +49,8 @@ inline constexpr OperationCallShape operationCallShapes[18] = {
     { OperationCall::Returns::Value, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, true },
     { OperationCall::Returns::Void, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, true },
     { OperationCall::Returns::Double, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, true },
+    { OperationCall::Returns::Double, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, false, true },
+    { OperationCall::Returns::Pair, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, false, true },
 };
 
 inline constexpr OperationCallShape preservingCallShapes[16] = {
@@ -102,9 +104,6 @@ constexpr StubKey tailCallOperation(OperationCall::FirstArgument firstArgument)
 constexpr StubKey callOperationThatMayFailToAllocate(OperationCall::Returns returns)
 {
     constexpr auto instance = OperationCall::FirstArgument::Instance;
-    // These read the exception from the VM whatever the operation returns.
-    if (returns == OperationCall::Returns::Double || returns == OperationCall::Returns::Pair)
-        return callOperation(returns, instance, true);
     std::optional<uint8_t> form = findOperationCallShape(operationCallShapes, { returns, instance, OperationCall::Saves::Nothing, false, true });
     RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(form);
     return StubKey(StubFamily::CallOperation).withForm(*form);
@@ -160,6 +159,32 @@ constexpr StubKey callOperationPreservingRegisters(const OperationCall& call)
     std::optional<StubKey> key = tryCallOperationPreservingRegisters(call);
     RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(key);
     return *key;
+}
+
+// What compiled code moves in front of the call is moved before the stub saves the registers of the caller. So the arguments behind the instance arrive in registers that no parameter of a function arrives in,
+// and go to their places once the registers are saved: a parameter that lives across a rare call keeps its register.
+constexpr std::span<const GPRReg> registersThatPreservingCallsTakeArgumentsIn()
+{
+#if CPU(X86_64)
+    static constexpr GPRReg registers[] = { X86Registers::eax, X86Registers::r10 };
+#elif CPU(ARM64)
+    static constexpr GPRReg registers[] = { ARM64Registers::x10, ARM64Registers::x11, ARM64Registers::x13, ARM64Registers::x14 };
+#endif
+    return registers;
+}
+
+// Where compiled code leaves the argument that the operation gets in operationArgumentGPR(index). A prelude reads the registers of the operation, and the head of its stub moves them over.
+inline GPRReg argumentGPROfPreservingCall(const OperationCall& call, Entry entry, unsigned index)
+{
+    std::span<const GPRReg> registers = registersThatPreservingCallsTakeArgumentsIn();
+    if (call.firstArgument == OperationCall::FirstArgument::Instance && !hasPrelude(entry) && index - 1 < registers.size())
+        return registers[index - 1];
+    return operationArgumentGPR(index);
+}
+
+constexpr GPRReg resultGPROfPreservingCall()
+{
+    return registersThatPreservingCallsTakeArgumentsIn()[0];
 }
 
 // Over every variant a site may pick once it knows which registers are live. OperationCall::saves is ignored.

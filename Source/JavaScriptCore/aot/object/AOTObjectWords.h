@@ -139,6 +139,36 @@ static constexpr uint32_t numberOfPrototypeTransitions = 1024;
 static constexpr unsigned prototypeTransitionHashShift = 6;
 static constexpr uint32_t indexOfPrototypeTransition(uint32_t before, EncodedJSValue prototype) { return ((before ^ static_cast<uint32_t>(prototype)) >> prototypeTransitionHashShift) % numberOfPrototypeTransitions; }
 
+// `{ ...source, name, other }`: what the copy of an ordinary object with this Structure is once the names are defined on it. It follows from the Structure and the names alone.
+// Behind it lies a NameInCopy for each name, in the order of the definitions.
+struct CopyWithNames {
+    uint32_t structureOfSource;
+    uint32_t firstName;
+    // The first word of the cell of the copy.
+    uint64_t header;
+    uint16_t count;
+    uint16_t cellSize;
+    // In bytes, outside the cell. The copy has room for the names that its cell has none for.
+    uint16_t storageSizeOfSource;
+    uint16_t storageSize;
+};
+
+struct NameInCopy {
+    // The number of the identifier.
+    uint32_t name;
+    // Of the value: from the cell, or below zero from the butterfly.
+    int32_t offset;
+};
+
+// The table begins with the places: each holds the distance in bytes from the start of the table to a CopyWithNames, or zero. The next word holds the bytes that are taken behind it, and the records follow.
+static constexpr uint32_t numberOfPlacesOfCopiesWithNames = 512;
+static constexpr uint32_t sizeOfCopiesWithNames = 16 * KB;
+static constexpr uint32_t offsetOfTakenBytesOfCopiesWithNames = numberOfPlacesOfCopiesWithNames * sizeof(uint32_t);
+static constexpr uint32_t offsetOfFirstCopyWithNames = offsetOfTakenBytesOfCopiesWithNames + sizeof(uint64_t);
+static constexpr unsigned copyWithNamesHashShift = 6;
+static constexpr uint32_t copiesThatTakeAnOccupiedPlaceMask = 63;
+static constexpr uint32_t placeOfCopyWithNames(uint32_t structureOfSource, uint32_t firstName) { return ((structureOfSource >> copyWithNamesHashShift) + firstName) % numberOfPlacesOfCopiesWithNames; }
+
 // What the run time last answered at one place in compiled code where a store, or a run of stores, adds fields: an object with these two words has this order word once the fields are listed.
 struct KeyOrderStepCache {
     uint32_t orderWordBefore;
@@ -164,6 +194,12 @@ struct ObjectWords {
     KeyListCacheEntry* keyLists;
     JSCell* emptyKeyList;
     PrototypeTransition* prototypeTransitions;
+    uint8_t* copiesWithNames;
+    // The last operand of the stub that copies an object and defines names on the copy, while the stub copies it by other means.
+    const EncodedJSValue* listOfNamesOfCopy;
+    // Whether the last copy so made came back with its names. Nothing runs between the call and the code behind it that asks.
+    uint32_t copyHasItsNames;
+    uint32_t copiesThatFoundTheirPlaceOccupied;
     EnumeratorCacheEntry* enumerators;
     KeyOrderRun* keyOrderRuns;
     KeyOrderEntriesCacheEntry* keyOrderEntries;
@@ -242,6 +278,24 @@ constexpr size_t secondPlaceOfInstanceOfClassBelow(uintptr_t prototype) { return
 // With this bit the number that operationAOTAllocateSlow() takes is the index of such a record, and the operation makes the whole object.
 constexpr uint32_t allocatesInstanceOfClassBelow = 1u << 31;
 
+struct FieldData;
+
+// Where the objects of a layout keep a private name that the class of another layout declares: `class B extends either {}` has a field for each name of each parent it may have.
+// Layouts and their fields are data of the image, so a place never goes stale. Only the names of a class that is evaluated once have places.
+struct PrivateFieldPlace {
+    // The number of the layout of the object above the number of the declaring class. They differ, so no place that is in use holds nought.
+    uint64_t layouts;
+    // In the declaring layout.
+    uint32_t declaredField;
+    uint32_t unused;
+    // Of the layout of the object.
+    const FieldData* field;
+    uint64_t alsoUnused;
+};
+constexpr uint32_t numberOfPrivateFieldPlaces = 64;
+constexpr unsigned shiftOfPrivateFieldPlace = 5;
+constexpr size_t indexOfPrivateFieldPlace(uint32_t layoutOfObject, uint32_t declaredField) { return (layoutOfObject ^ declaredField) & (numberOfPrivateFieldPlaces - 1); }
+
 struct ClassWords {
     JSCell** classPrototypes;
     const PlaceOfPrototypeProperty* placesOfPrototypeProperties;
@@ -251,12 +305,14 @@ struct ClassWords {
     UniquedStringImpl** brandsOfInstances;
     // The ID of a Structure that carries a class's brand and has no properties other than the class's fields and those the built-in constructor adds. With structureHasOtherNames set, it has others.
     uint32_t* structureNameCache;
+    PrivateFieldPlace* privateFieldPlaces;
 };
 
 constexpr uint32_t structureNameCacheSize = 64;
 constexpr uint32_t structureNameCacheShift = 7;
 constexpr uint32_t structureHasOtherNames = 1;
 
+static_assert(sizeof(PrivateFieldPlace) == 1u << shiftOfPrivateFieldPlace && !(numberOfPrivateFieldPlaces & (numberOfPrivateFieldPlaces - 1)));
 static_assert(sizeof(KeyOrderTransition) == 16);
 static_assert(sizeof(KeyListCacheEntry) == 16);
 static_assert(!(numberOfKeyLists & (numberOfKeyLists - 1)));
@@ -264,6 +320,7 @@ static_assert(sizeof(KeyOrderEntriesCacheEntry) == 16 && !(numberOfCachedKeyOrde
 static_assert(sizeof(EnumeratorCacheEntry) == 16);
 static_assert(!(numberOfCachedEnumerators & (numberOfCachedEnumerators - 1)));
 static_assert(sizeof(PrototypeTransition) == 16);
+static_assert(sizeof(CopyWithNames) == 24 && sizeof(NameInCopy) == 8 && !(numberOfPlacesOfCopiesWithNames & (numberOfPlacesOfCopiesWithNames - 1)) && !(offsetOfFirstCopyWithNames % sizeof(uint64_t)));
 static_assert(sizeof(InstanceOfClassBelow) == 32 && !(numberOfInstancesOfClassesBelow & (numberOfInstancesOfClassesBelow - 1)));
 static_assert(!(numberOfPrototypeTransitions & (numberOfPrototypeTransitions - 1)));
 static_assert(indexOfKeyList(3, numberOfKeyLists + 4) == 7);

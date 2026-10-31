@@ -437,6 +437,9 @@ static void addScriptlessLocaleIfNeeded(LocaleSet& availableLocales, StringView 
     ASSERT(subtags[2].is8Bit() && subtags[2].containsOnlyASCII());
     buffer.append(subtags[2].span8());
 
+    // A static StringImpl is never freed, so do not create one that the set would not keep.
+    if (availableLocales.contains(String::fromLatin1(buffer.span())))
+        return;
     availableLocales.add(StringImpl::createStaticStringImpl(buffer.span()));
 }
 
@@ -447,13 +450,15 @@ const LocaleSet& intlAvailableLocales()
     std::call_once(initializeOnce, [&] {
         availableLocales.construct();
         ASSERT(availableLocales->isEmpty());
-        constexpr bool isImmortal = true;
+        constexpr bool isImmortal = false;
         int32_t count = uloc_countAvailable();
         for (int32_t i = 0; i < count; ++i) {
             String locale = languageTagForLocaleID(uloc_getAvailable(i), isImmortal);
             if (locale.isEmpty())
                 continue;
-            availableLocales->add(locale);
+            // addScriptlessLocaleIfNeeded() may have added it already. A static StringImpl is never freed, so do not create one that the set would not keep.
+            if (!availableLocales->contains(locale))
+                availableLocales->add(StringImpl::createStaticStringImpl(locale.span8()));
             addScriptlessLocaleIfNeeded(availableLocales.get(), locale);
         }
     });
@@ -585,13 +590,14 @@ const LocaleSet& intlCollatorAvailableLocales()
     std::call_once(initializeOnce, [&] {
         availableLocales.construct();
         ASSERT(availableLocales->isEmpty());
-        constexpr bool isImmortal = true;
+        constexpr bool isImmortal = false;
         int32_t count = ucol_countAvailable();
         for (int32_t i = 0; i < count; ++i) {
             String locale = languageTagForLocaleID(ucol_getAvailable(i), isImmortal);
             if (locale.isEmpty())
                 continue;
-            availableLocales->add(locale);
+            if (!availableLocales->contains(locale))
+                availableLocales->add(StringImpl::createStaticStringImpl(locale.span8()));
             addScriptlessLocaleIfNeeded(availableLocales.get(), locale);
         }
         IntlCollator::checkICULocaleInvariants(availableLocales.get());
@@ -606,13 +612,14 @@ const LocaleSet& intlSegmenterAvailableLocales()
     std::call_once(initializeOnce, [&] {
         availableLocales.construct();
         ASSERT(availableLocales->isEmpty());
-        constexpr bool isImmortal = true;
+        constexpr bool isImmortal = false;
         int32_t count = ubrk_countAvailable();
         for (int32_t i = 0; i < count; ++i) {
             String locale = languageTagForLocaleID(ubrk_getAvailable(i), isImmortal);
             if (locale.isEmpty())
                 continue;
-            availableLocales->add(locale);
+            if (!availableLocales->contains(locale))
+                availableLocales->add(StringImpl::createStaticStringImpl(locale.span8()));
             addScriptlessLocaleIfNeeded(availableLocales.get(), locale);
         }
     });

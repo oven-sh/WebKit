@@ -27,6 +27,7 @@ static_assert(SourceLocation { } == noSourceLocation, "A default-constructed rec
 static auto sortKeyOf(const FlowIndirectCall& call) { return std::tuple(call.caller, call.site, call.callee, call.kind); }
 static auto sortKeyOf(const FlowBoundFunctionUse& use) { return std::tuple(use.target, use.numberOfBoundArguments); }
 static auto sortKeyOf(const FlowBoundFunctionAtSite& bound) { return std::tuple(bound.site, bound.use, bound.target, bound.numberOfBoundArguments); }
+static auto sortKeyOf(const FlowClosureStoredUnderKey& stored) { return std::tuple(stored.key, stored.function); }
 static auto sortKeyOf(const FlowProxiesSeenAtSite& seen) { return seen.site; }
 static auto sortKeyOf(const FlowSinkOperand& operand) { return std::tuple(operand.call, operand.operandIndex); }
 static auto sortKeyOf(const FlowTypedResultCall& record) { return record.call; }
@@ -61,9 +62,13 @@ static void checkTableOrder(const FlowResultTables& tables)
     RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.accessSiteLosses, tables.sites.accessSites));
     RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.callsOfBoundFunctions, tables.sites.accessSites));
     RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.receiversThatMayHaveDecidedStorage, tables.sites.accessSites));
+    RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.receiversSeenAtSites, tables.sites.accessSites));
+    RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.sitesThatHandOverOnlyDataFromOutside, tables.sites.accessSites));
+    RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.callsHandedOnlyDataFromOutside, tables.sites.accessSites));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.sinkOperands));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.typedResultCalls));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.boundFunctionsAtSites));
+    RELEASE_ASSERT(isStrictlyAscending(tables.sites.closuresStoredUnderKeys));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.dataNodes));
 
     RELEASE_ASSERT(isStrictlyAscending(tables.builtins.locations));
@@ -111,7 +116,7 @@ static Vector<AllocationClassID> sortClosureClassesByFunction(const Vector<Alloc
         if (classes[index].closureFunction)
             closureClasses.append(AllocationClassID(index));
     }
-    AOT::stableSort(closureClasses, { }, [&](AllocationClassID id) {
+    AOT::stableSortInLine(closureClasses, { }, [&](AllocationClassID id) {
         return classes[id.index()].closureFunction;
     });
     return closureClasses;
@@ -196,6 +201,25 @@ bool FlowResults::mayChangeStorageOfReceiver(AccessSiteID access) const
     const Vector<bool>& mayHaveDecidedStorage = m_tables.sites.receiversThatMayHaveDecidedStorage;
     return mayHaveDecidedStorage.isEmpty() || (access && !recordAt(mayHaveDecidedStorage, access, true));
 }
+
+bool FlowResults::handsOverOnlyDataFromOutside(AccessSiteID access) const
+{
+    return access && recordAt(m_tables.sites.sitesThatHandOverOnlyDataFromOutside, access, false);
+}
+
+bool FlowResults::isHandedOnlyDataFromOutside(AccessSiteID call) const
+{
+    return call && recordAt(m_tables.sites.callsHandedOnlyDataFromOutside, call, false);
+}
+
+std::optional<LayoutSetID> FlowResults::receiversSeenAt(AccessSiteID access) const
+{
+    uint32_t seen = access ? recordAt(m_tables.sites.receiversSeenAtSites, access, 0u) : 0;
+    if (!seen)
+        return std::nullopt;
+    return seen == 1 ? LayoutSetID() : LayoutSetID(seen - 2);
+}
+
 AllocationSiteID FlowResults::typedResultSite(LayoutID layout) const { return recordAt(m_tables.sites.typedResultSites, layout, AllocationSiteID()); }
 const BuiltinLocationFlow* FlowResults::findBuiltinLocation(BuiltinID holder, PropertyKeyID key) const { return findRecord(m_tables.builtins.locations, std::tuple(holder, key)); }
 
@@ -205,6 +229,12 @@ Expected<std::span<const FlowBoundFunctionAtSite>> FlowResults::boundFunctionsSe
         return std::pair(bound.site, bound.use);
     });
     return std::span<const FlowBoundFunctionAtSite>(first, end);
+}
+
+Expected<std::span<const FlowClosureStoredUnderKey>> FlowResults::closuresSeenStoredUnder(PropertyKeyID key) const
+{
+    auto [first, end] = std::ranges::equal_range(m_tables.sites.closuresStoredUnderKeys, key, { }, &FlowClosureStoredUnderKey::key);
+    return std::span<const FlowClosureStoredUnderKey>(first, end);
 }
 
 bool FlowResults::runsAtMostOnce(const Program& program, FunctionID id) const
@@ -423,6 +453,12 @@ bool FlowResults::closuresAreStoredUnder(FunctionID closureFunction, PropertyKey
     });
 }
 
+bool FlowResults::closuresKeepTheirIntegrity(FunctionID closureFunction) const
+{
+    FunctionID analyzed = findAnalyzedFunction(closureFunction);
+    return analyzed && !m_tables.functions.functionsWhoseClosuresChangeIntegrity.get(analyzed.index());
+}
+
 bool FlowResults::closuresMeetOneOf(FunctionID closureFunction, OptionSet<ObjectMutation> mutations) const
 {
     return holdsOfEveryClosureClass(m_tables.sites.allocationClasses, m_closureClassesByFunction, closureFunction, [&](const AllocationClass& closures) {
@@ -440,6 +476,18 @@ const SinkCandidates& FlowResults::sinkCandidates(AccessSiteID call, uint32_t op
 {
     const FlowSinkOperand* operand = findRecord(m_tables.sites.sinkOperands, std::tuple(call, operandIndex));
     return operand ? operand->candidates : m_unknown.sinkCandidates;
+}
+
+bool FlowResults::isTypedResultUnprofitable(AccessSiteID call) const
+{
+    const FlowTypedResultCall* record = findRecord(m_tables.sites.typedResultCalls, call);
+    return record && record->isUnprofitable;
+}
+
+void FlowResults::markTypedResultsUnprofitable(std::span<const AccessSiteID> sortedCalls)
+{
+    for (FlowTypedResultCall& record : m_tables.sites.typedResultCalls)
+        record.isUnprofitable |= std::ranges::binary_search(sortedCalls, record.call);
 }
 
 TypeID FlowResults::typedResultType(AccessSiteID call) const

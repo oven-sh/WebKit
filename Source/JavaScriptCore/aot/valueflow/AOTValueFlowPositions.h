@@ -110,6 +110,7 @@ public:
     FlowPositionUpdate updateFrom(const ValueFlowPositionResult&, const Type& family);
     FlowPositionUpdate updateFor(const DeclaredType&, ValueFlowNodeID, DeadZone = DeadZone::MayBeObserved, const ValueFlowNumbers* = nullptr);
     void takeWhatArrives(const DeclaredType&, ValueFlowNodeID, FlowPositionUpdate&);
+    std::optional<Type> typeByLayoutsOfClassesBelowBuiltinClasses(ValueSetID);
 
     std::optional<LayoutSet> receiversAt(ValueSetID);
     std::optional<CalleeSet> calleesAt(ValueSetID possible, ValueSetID seen, const ValueFlowOperand* calleeOfConstruction);
@@ -119,8 +120,10 @@ public:
     std::optional<Type> typeWhereOnlyInstancesOfBuiltinClassesAreTurnedAway(ValueSetID, const Type&);
     bool holdsObjectThatMayLieOutside(ValueSetID, const Type&);
     bool turnsAwayConstructedObject(ValueSetID, const Type&);
+    bool turnsAwayObjectMadeForOtherClass(ValueSetID, const Type&);
     bool turnsAwayEveryObject(ValueSetID, const Type&);
     bool turnsAwayEverySeenObject(ValueSetID seen, const Type&);
+    void addPrototypesThatAreKept(ValueSetID held, Type&);
 
     Type typeOfObject(ValueFlowObjectID);
 

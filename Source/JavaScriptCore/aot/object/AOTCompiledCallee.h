@@ -63,6 +63,7 @@ JS_EXPORT_PRIVATE bool belongsToBuiltinModule(JSCell*);
 JS_EXPORT_PRIVATE bool isCompiledClassObject(JSFunction*);
 JS_EXPORT_PRIVATE bool isClosureOf(JSCell*, FunctionID);
 std::optional<FunctionID> functionOf(const JSCell*);
+std::optional<uint32_t> closureNumberOf(const JSCell*);
 
 } // namespace AOT
 } // namespace JSC

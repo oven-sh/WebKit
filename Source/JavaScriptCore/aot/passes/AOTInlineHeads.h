@@ -21,7 +21,7 @@ class ProgramEditor;
 struct OptimizationInputs;
 
 // Answers with the callees of all direct calls in the function, or with null where they are not known.
-using DirectCalleesOfFunction = ScopedLambda<const Vector<FunctionID>*(FunctionID)>;
+using DirectCalleesOfFunction = ScopedLambda<const CompactList<FunctionID>*(FunctionID)>;
 
 // The reader is handed each function that a head was copied into, behind all copies.
 void inlineHeads(ProgramEditor&, const OptimizationInputs&, BuildContext&, const ScopedLambda<void(FunctionID)>* readEditedFunction = nullptr, const DirectCalleesOfFunction* = nullptr);

@@ -1,0 +1,20 @@
+# `Kind[k]` in fast code, where Kind is an enum object or still undefined. The word of the numbered properties is read in line only off what is an object for sure:
+# the object is taken as a cell there, and a value that may be undefined has no such form. The build ended with UnsupportedConversion.
+# FORM: Selected
+# OPTIONS: heat=EverythingIsHot
+# RUN: lower-to-b3 f0
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 kind=Container name="Kind" fields=[{key="Root" declared={type=anything}}, {key="Import" declared={type=anything}}]
+
+function f0 name="nameOfMember" parameters=[{type=undefined|L0}, {type=int[0, 3]}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+    v2 = ElemGet v0, v1 [keyIsIntegral]
+    Return v2
+}
+# CHECK: v2:ElemGet
+
+function f1 name="fills" parameters=[{type=L0}, {type=int[0, 3]}, {type=string}] results=[{type=undefined}] capabilities=[HasOrdinaryFrame] {
+    ElemSet v0, v1, v2
+    v4 = Undefined
+    Return v4
+}

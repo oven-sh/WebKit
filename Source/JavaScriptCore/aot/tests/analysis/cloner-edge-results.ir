@@ -9,6 +9,8 @@
 # RUN(CONDITION): duplicate function=f3 region=b3 redirect=b2.0
 # RUN(ALLOCATION): duplicate function=f4 region=b3 redirect=b2.0
 # RUN(INSIDE): duplicate function=f4 region=b3,b4 redirect=b2.0
+# RUN(AROUND): duplicate function=f5 region=b3,b4,b5 redirect=b2.0
+# RUN(WHOLE): duplicate function=f5 region=b3,b4,b5,b6 redirect=b2.0
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}] flow={members=[L0]}
@@ -44,7 +46,7 @@ function f0 name="narrowedOperandIntoHead" parameters=[{type=anything}] results=
 # PROOF-NEXT: Return [[sum]]
 # EXTRACT: check: CanClone
 # EXTRACT-NEXT: live-ins: []
-# EXTRACT-NEXT: function f5 {{*}} role=OutlinedBody {{*}} parameters=[{type=string}] results=[{type=string}]
+# EXTRACT-NEXT: function f6 {{*}} role=OutlinedBody {{*}} parameters=[{type=string}] results=[{type=string}]
 # EXTRACT-NEXT: b0([[entry]]: string):
 # EXTRACT-NEXT: Jump -> next [[head]]([[entry]])
 # EXTRACT-NEXT: [[head]]([[parameter]]: string):
@@ -131,3 +133,32 @@ function f4 name="allocationIsGuardAfterRegion" parameters=[{type=boolean}, {typ
 # INSIDE: v3: number = GetSlot v2, v2 key="x"
 # INSIDE: [[object]]: L0 = NewObject -, v1 layout=L0 fields=[0]
 # INSIDE: = GetSlot [[object]], [[object]] key="x"
+# The test stands in front of a loop and the branch in it. The copy leaves the region at b6 and goes around to b5 itself, with the test that the copy has made.
+function f5 name="branchWithProofsReachedAgainAroundLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v2 = TypeTest v0 testedType=string
+    Jump -> next b4()
+  b4():
+    LoopHint
+    Jump -> next b5()
+  b5():
+    Branch v2 -> taken b6(| 0), notTaken b7()
+  b6(v4):
+    Branch v1 -> taken b4(), notTaken b8(v4)
+  b7():
+    Return v0
+  b8(v5):
+    Return v5
+}
+# AROUND: check: OperandMustBeDefinition
+# AROUND-NOT: function
+# WHOLE: check: CanClone
+# WHOLE-NEXT: function f5
+# WHOLE: Branch v2 -> taken b6(| 0), notTaken b7()
+# WHOLE: [[test]]: boolean = TypeTest v0 testedType=string
+# WHOLE: Branch [[test]] -> taken [[taken]](| 0), notTaken b7()

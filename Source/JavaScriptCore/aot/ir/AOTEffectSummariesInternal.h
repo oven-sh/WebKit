@@ -286,6 +286,8 @@ public:
     void setIsOnlyCheck() { m_isOnlyCheck = true; }
     // Only from scratch: the cached result does not record which other bodies it was computed from.
     void readCalleesByOperandTypes() { m_calleesAreRead = CalleesAreRead::ByOperandTypes; }
+    // Only from scratch. Where these say that a body uses a parameter in fewer ways than the seed does, a caller that hands it an operand reads what the body does.
+    void takeRowsOfBodiesFrom(const EffectSummaries& summaries) { m_rowsOfBodies = &summaries; }
     void giveReferencesTo(BodyReferences* references) { m_references = references; }
     void update(EffectSummaries&);
     void bringSeedUpToDate(EffectSummaries&);
@@ -343,6 +345,7 @@ private:
     const Witnesses m_witnessesWanted;
     bool m_isOnlyCheck { false };
     CalleesAreRead m_calleesAreRead { CalleesAreRead::AsTheyAre };
+    const EffectSummaries* m_rowsOfBodies { nullptr };
     BodyReferences* m_references { nullptr };
     unsigned m_numberOfFunctionsBefore { 0 };
     Vector<uint8_t> m_recordLooksDifferent;

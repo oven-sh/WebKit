@@ -28,6 +28,7 @@ struct HandedOnArray {
     FunctionID callee;
     uint32_t entryParameter { 0 };
     uint32_t parameters { 0 };
+    bool isByValue { false };
 };
 
 struct ScannedParameters {
@@ -41,7 +42,55 @@ struct FunctionsThatEndTheirTailCalls {
     BitVector calledByValue;
 };
 
+class GenericEntrypoints {
+public:
+    explicit GenericEntrypoints(const Program& program)
+    {
+        for (unsigned index = 0; index < program.functions.size(); ++index) {
+            const Function& function = program.functions[index];
+            const auto* record = function.creator.tryAs<CreatorRecord::Entrypoint>();
+            if (record && function.role == FunctionRole::GenericEntrypoint && function.hasBody())
+                m_entrypoints.append({ record->target, FunctionID(index) });
+        }
+        AOT::sort(m_entrypoints);
+    }
+
+    auto of(FunctionID target) const { return std::ranges::equal_range(m_entrypoints, target, { }, &std::pair<FunctionID, FunctionID>::first); }
+
+private:
+    Vector<std::pair<FunctionID, FunctionID>> m_entrypoints;
+};
+
 } // anonymous namespace
+
+// An argument that the entrypoint reads from the buffer is numbered on from its last entry parameter.
+static std::optional<uint32_t> placeInEntrypoint(const Function& target, const Function& entrypoint, uint32_t entryParameter)
+{
+    if (entryParameter == target.thisParameterIndex())
+        return entrypoint.thisParameterIndex();
+    uint32_t firstParameter = target.firstParameterIndex();
+    if (entryParameter < firstParameter || entryParameter - firstParameter >= target.numberOfPositionalParameters())
+        return std::nullopt;
+    uint32_t argument = entryParameter - firstParameter;
+    const auto& record = entrypoint.creator.as<CreatorRecord::Entrypoint>();
+    switch (record.arguments) {
+    case ArgumentPassing::Registers:
+        return entrypoint.firstParameterIndex() + argument;
+    case ArgumentPassing::Buffer:
+        return entrypoint.numberOfEntryParameters() + record.takesNewTarget + argument;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static bool forEachPlaceInEntrypoints(const Program& program, const GenericEntrypoints& entrypoints, FunctionID target, uint32_t entryParameter, NOESCAPE const Invocable<bool(FunctionID, uint32_t)> auto& functor)
+{
+    for (const auto& entry : entrypoints.of(target)) {
+        std::optional<uint32_t> place = placeInEntrypoint(program.at(target), program.at(entry.second), entryParameter);
+        if (!place || *place >= maxFrameArrayParameters || !functor(entry.second, *place))
+            return false;
+    }
+    return true;
+}
 
 static bool mayBeHandedArrays(const Function& function)
 {
@@ -99,7 +148,7 @@ static ScannedParameters scanParametersHandedArrays(const Program& program, cons
                 refused |= parameters;
                 return;
             }
-            result.handedOn.append(HandedOnArray { callee, *entryParameter, parameters });
+            result.handedOn.append(HandedOnArray { callee, *entryParameter, parameters, call.opcode != Opcode::CallDirect });
         }
     };
 
@@ -118,6 +167,18 @@ static ScannedParameters scanParametersHandedArrays(const Program& program, cons
 
     for (uint32_t index = 0; index < entryParameters.size() && index < maxFrameArrayParameters; ++index)
         mayBe[entryParameters[index].index()] = asked & 1u << index;
+    if (uint32_t inBuffer = entryParameters.size() < maxFrameArrayParameters ? asked >> entryParameters.size() : 0) {
+        for (BlockID block : cfg.reversePostOrder()) {
+            for (ValueID id : function.at(block).values) {
+                const Value& value = function.at(id);
+                if (value.opcode == Opcode::GetArgument) {
+                    if (value.argumentIndex() < maxFrameArrayParameters)
+                        mayBe[id.index()] = (inBuffer & 1u << value.argumentIndex()) << entryParameters.size() & arrivesIn[block.index()];
+                } else if (Value::opcodesWithFirstArgument.contains(value.opcode) && value.opcode != Opcode::GetRestLength && value.firstArgument() < maxFrameArrayParameters)
+                    refused |= inBuffer >> value.firstArgument() << value.firstArgument() << entryParameters.size();
+            }
+        }
+    }
     for (bool changed = true; changed;) {
         changed = false;
         for (BlockID block : cfg.reversePostOrder()) {
@@ -219,32 +280,38 @@ static void collectQuestions(const Program& program, BuildContext& build, const 
                     callees = calleesOfCall(program, call);
                 for (FunctionID callee : callees->listed().functions) {
                     if (std::optional<uint32_t> entryParameter = entryParameterOf(program.at(callee), call, operandIndex); entryParameter && *entryParameter < maxFrameArrayParameters)
-                        questions.append(HandedOnArray { callee, *entryParameter, 0 });
+                        questions.append(HandedOnArray { callee, *entryParameter, 0, call.opcode != Opcode::CallDirect });
                 }
             });
         }
     }
 }
 
+// A function ends its tail calls where each of them enters only functions that end theirs. Called by value, it is entered through its entrypoints, which have to end theirs too.
+// Each question waits for the answers it needs and is answered once, and a callee set that many calls name is one question: a thousand methods that each leave by a call of any of the thousand are two thousand questions.
 static FunctionsThatEndTheirTailCalls findFunctionsThatEndTheirTailCalls(const Program& program, const ParallelLoops& loops)
 {
     struct TailCalls {
         FunctionID caller;
         Vector<FunctionID, 2> callees;
         Vector<FunctionID, 2> calleesByValue;
-    };
-    struct Entrypoint {
-        FunctionID function;
-        FunctionID target;
+        Vector<CalleeSetID, 1> sets;
     };
     unsigned numberOfFunctions = program.functions.size();
     Vector<uint8_t> neverEnds(FillWith { }, numberOfFunctions, 0);
     Vector<TailCalls> tailCalls = collectInParallel<TailCalls>(loops, numberOfFunctions, largeFunctions(program, loops).span(), [&](unsigned index, Vector<TailCalls>& found) {
         const Function& function = program.functions[index];
-        TailCalls calls { FunctionID(index), { } };
+        TailCalls calls { FunctionID(index), { }, { }, { } };
         neverEnds[index] = !hasBody(program, FunctionID(index));
         forEachBlockEndingWith(program, FunctionID(index), { TerminatorKind::ReturnCall }, [&](BlockID block) {
             const Value& call = function.at(function.at(block).terminator.callOperand());
+            if (CalleeSetID set = call.opcode == Opcode::CallDirect ? CalleeSetID() : calleeSetOfCall(program, call); set && program.at(set).isLong()) {
+                if (program.at(set).listsEveryCallee() && program.at(set).written().builtins.empty())
+                    calls.sets.append(set);
+                else
+                    neverEnds[index] = true;
+                return;
+            }
             CalleeList callees = calleesOfCall(program, call);
             std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
             if (!functions) {
@@ -254,43 +321,76 @@ static FunctionsThatEndTheirTailCalls findFunctionsThatEndTheirTailCalls(const P
             auto& list = call.opcode == Opcode::CallDirect ? calls.callees : calls.calleesByValue;
             list.append(functions->value());
         });
-        if (!neverEnds[index] && (!calls.callees.isEmpty() || !calls.calleesByValue.isEmpty()))
+        if (!neverEnds[index] && (!calls.callees.isEmpty() || !calls.calleesByValue.isEmpty() || !calls.sets.isEmpty()))
             found.append(WTF::move(calls));
     });
-    Vector<Entrypoint> entrypoints;
+
+    // The questions: does the function end, does it end when called by value, does every function of the set.
+    Vector<CalleeSetID> sets;
+    for (const TailCalls& calls : tailCalls)
+        sets.appendVector(calls.sets);
+    AOT::sort(sets);
+    sets.shrink(std::ranges::unique(sets).begin() - sets.begin());
+    auto directly = [](FunctionID function) { return function.index(); };
+    auto byValue = [&](FunctionID function) { return numberOfFunctions + function.index(); };
+    auto everyOneOf = [&](CalleeSetID set) { return 2 * numberOfFunctions + static_cast<unsigned>(std::ranges::lower_bound(sets, set) - sets.begin()); };
+    unsigned numberOfQuestions = 2 * numberOfFunctions + sets.size();
+
+    Vector<std::pair<unsigned, unsigned>> waits;
+    auto waitFor = [&](unsigned question, unsigned answer) { waits.append({ answer, question }); };
+    for (const TailCalls& calls : tailCalls) {
+        for (FunctionID callee : calls.callees)
+            waitFor(directly(calls.caller), directly(callee));
+        for (FunctionID callee : calls.calleesByValue)
+            waitFor(directly(calls.caller), byValue(callee));
+        for (CalleeSetID set : calls.sets)
+            waitFor(directly(calls.caller), everyOneOf(set));
+    }
+    for (CalleeSetID set : sets) {
+        for (FunctionID callee : program.at(set).written().functions)
+            waitFor(everyOneOf(set), byValue(callee));
+    }
     for (unsigned index = 0; index < numberOfFunctions; ++index) {
+        waitFor(byValue(FunctionID(index)), index);
         if (const auto* record = program.functions[index].creator.tryAs<CreatorRecord::Entrypoint>())
-            entrypoints.append({ FunctionID(index), record->target });
+            waitFor(byValue(record->target), index);
+    }
+
+    Vector<unsigned> numberAwaited(FillWith { }, numberOfQuestions, 0u);
+    Vector<unsigned> firstWaiting(FillWith { }, numberOfQuestions + 1, 0u);
+    for (auto [answer, question] : waits) {
+        ++numberAwaited[question];
+        ++firstWaiting[answer + 1];
+    }
+    for (unsigned index = 0; index < numberOfQuestions; ++index)
+        firstWaiting[index + 1] += firstWaiting[index];
+    Vector<unsigned> waiting(waits.size());
+    Vector<unsigned> cursors(firstWaiting.span().first(numberOfQuestions));
+    for (auto [answer, question] : waits)
+        waiting[cursors[answer]++] = question;
+
+    BitVector isAnsweredYes(numberOfQuestions);
+    Vector<unsigned> worklist;
+    for (unsigned index = 0; index < numberOfFunctions; ++index) {
+        if (!neverEnds[index] && !numberAwaited[index])
+            worklist.append(index);
+    }
+    while (!worklist.isEmpty()) {
+        unsigned answer = worklist.takeLast();
+        isAnsweredYes.quickSet(answer);
+        for (unsigned question : waiting.subspan(firstWaiting[answer], firstWaiting[answer + 1] - firstWaiting[answer])) {
+            if (!--numberAwaited[question] && (question >= numberOfFunctions || !neverEnds[question]))
+                worklist.append(question);
+        }
     }
 
     BitVector ends(numberOfFunctions);
+    BitVector endsByValue(numberOfFunctions);
     for (unsigned index = 0; index < numberOfFunctions; ++index) {
-        if (!neverEnds[index])
+        if (isAnsweredYes.quickGet(index))
             ends.quickSet(index);
-    }
-    for (const TailCalls& calls : tailCalls)
-        ends.quickClear(calls.caller.index());
-    BitVector endsByValue;
-    for (bool changed = true; changed;) {
-        changed = false;
-        endsByValue = ends;
-        for (const Entrypoint& entrypoint : entrypoints) {
-            if (!ends.quickGet(entrypoint.function.index()))
-                endsByValue.quickClear(entrypoint.target.index());
-        }
-        for (const TailCalls& calls : tailCalls) {
-            if (ends.quickGet(calls.caller.index()))
-                continue;
-            bool everyCalleeEnds = std::ranges::all_of(calls.callees, [&](FunctionID callee) {
-                return ends.quickGet(callee.index());
-            }) && std::ranges::all_of(calls.calleesByValue, [&](FunctionID callee) {
-                return endsByValue.quickGet(callee.index());
-            });
-            if (everyCalleeEnds) {
-                ends.quickSet(calls.caller.index());
-                changed = true;
-            }
-        }
+        if (isAnsweredYes.quickGet(numberOfFunctions + index))
+            endsByValue.quickSet(index);
     }
     return { WTF::move(ends), WTF::move(endsByValue) };
 }
@@ -314,21 +414,32 @@ FrameArrayParameters computeFrameArrayParameters(const Program& program, BuildCo
     if (questions.isEmpty())
         return table;
 
+    GenericEntrypoints entrypoints(program);
     Vector<ScannedParameters> scanned(numberOfFunctions);
     Vector<uint32_t> asked(FillWith { }, numberOfFunctions, 0);
+    Vector<uint32_t> askedByValue(FillWith { }, numberOfFunctions, 0);
     Vector<FunctionID> everyFunction;
     while (!questions.isEmpty()) {
         Vector<FunctionID> round;
-        for (const HandedOnArray& question : questions) {
-            uint32_t& word = asked[question.callee.index()];
-            if (word >> question.entryParameter & 1)
-                continue;
-            if (word == scanned[question.callee.index()].asked) {
-                round.append(question.callee);
+        auto ask = [&](FunctionID function, uint32_t entryParameter) {
+            uint32_t& word = asked[function.index()];
+            if (word >> entryParameter & 1)
+                return true;
+            if (word == scanned[function.index()].asked) {
+                round.append(function);
                 if (!word)
-                    everyFunction.append(question.callee);
+                    everyFunction.append(function);
             }
+            word |= 1u << entryParameter;
+            return true;
+        };
+        for (const HandedOnArray& question : questions) {
+            ask(question.callee, question.entryParameter);
+            uint32_t& word = askedByValue[question.callee.index()];
+            if (!question.isByValue || word >> question.entryParameter & 1)
+                continue;
             word |= 1u << question.entryParameter;
+            forEachPlaceInEntrypoints(program, entrypoints, question.callee, question.entryParameter, ask);
         }
         questions.shrink(0);
 
@@ -346,16 +457,30 @@ FrameArrayParameters computeFrameArrayParameters(const Program& program, BuildCo
     words.fill(0, numberOfFunctions);
     for (FunctionID id : everyFunction)
         words[id.index()] = scanned[id.index()].asked & ~scanned[id.index()].refused;
+    auto mayTake = [&](FunctionID function, uint32_t entryParameter) -> bool {
+        return words[function.index()] >> entryParameter & 1;
+    };
+    auto everyEntrypointMayTake = [&](FunctionID target, uint32_t entryParameter) {
+        return forEachPlaceInEntrypoints(program, entrypoints, target, entryParameter, mayTake);
+    };
     for (bool changed = true; changed;) {
         changed = false;
         for (FunctionID id : everyFunction) {
             uint32_t& word = words[id.index()];
             for (const HandedOnArray& entry : scanned[id.index()].handedOn) {
-                if (!(word & entry.parameters) || words[entry.callee.index()] >> entry.entryParameter & 1)
+                if (!(word & entry.parameters) || (mayTake(entry.callee, entry.entryParameter) && (!entry.isByValue || everyEntrypointMayTake(entry.callee, entry.entryParameter))))
                     continue;
                 word &= ~entry.parameters;
                 changed = true;
             }
+        }
+    }
+    Vector<uint32_t>& refusedByEntrypoints = table.m_wordsRefusedByEntrypoints;
+    refusedByEntrypoints.fill(0, numberOfFunctions);
+    for (FunctionID id : everyFunction) {
+        for (uint32_t entryParameter = 0; entryParameter < maxFrameArrayParameters; ++entryParameter) {
+            if (mayTake(id, entryParameter) && !(askedByValue[id.index()] >> entryParameter & 1 && everyEntrypointMayTake(id, entryParameter)))
+                refusedByEntrypoints[id.index()] |= 1u << entryParameter;
         }
     }
     return table;

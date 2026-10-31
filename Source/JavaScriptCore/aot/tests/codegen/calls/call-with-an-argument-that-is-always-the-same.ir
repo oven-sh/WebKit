@@ -10,9 +10,9 @@
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: lower-to-b3 optimized f1 f2
 # REQUIRES: unsanitized-code
-# RUN(X64): lower-to-air size f1
+# RUN(X64): lower-to-air size f2
 # REQUIRES(X64): x86_64 unsanitized-code
-# RUN(ARM64): lower-to-air size f1
+# RUN(ARM64): lower-to-air size f2
 # REQUIRES(ARM64): arm64 unsanitized-code
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
@@ -76,16 +76,19 @@ function f2 name="scaleBoth" module=m0 position=83 flags=[IsChecked, HasExplicit
     Return v11
 }
 
-# Every caller hands in 3, so the function multiplies by the constant and never looks at the parameter.
+# Every caller hands in 3 and nobody enters the function by value, so it multiplies by the constant and has no second parameter. Nothing is left under the old signature.
 # CHECK-LABEL: name="scale" role=Source
 # CHECK: Double b@[[value]] = ArgumentReg(
 # CHECK: Double b@[[scaled]] = Mul(b@[[value]],
 # CHECK-NEXT: Return(b@[[scaled]], Terminal)
 # CHECK-LABEL: end of function
-# The callers still put the 3 into a register for it.
+# CHECK-NOT: name="scale"
+# The callers put nothing into a register for it.
 # CHECK-LABEL: name="scaleBoth" role=Source
-# CHECK: Patchpoint(b@{{*}}:Register({{*}}), $3(b@{{*}}):Register({{*}}), resultConstraints = Register({{*}}), ControlDependent, {{*}}:CallDirect)
-# CHECK: Patchpoint(b@{{*}}:Register({{*}}), $3(b@{{*}}):Register({{*}}), resultConstraints = Register({{*}}), ControlDependent, {{*}}:CallDirect)
+# CHECK: Patchpoint(b@{{*}}:Register({{*}}), resultConstraints = Register({{*}}), ControlDependent, {{*}}:CallDirect)
+# CHECK: Patchpoint(b@{{*}}:Register({{*}}), resultConstraints = Register({{*}}), ControlDependent, {{*}}:CallDirect)
 # CHECK-LABEL: end of function
-# X64: instructions: 2, patchpoints: 1
-# ARM64: instructions: 3, patchpoints: 0
+# X64-LABEL: name="scaleBoth"
+# X64-NEXT: instructions: 7, patchpoints: 2
+# ARM64-LABEL: name="scaleBoth"
+# ARM64-NEXT: instructions: 8, patchpoints: 2

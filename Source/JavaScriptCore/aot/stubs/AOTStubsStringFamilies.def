@@ -9,12 +9,14 @@ v(FlattenString, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never
 v(StringsAreEqual, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), StringsAreEqual)
 v(DistinctStringsAreEqual, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), StringsAreEqual)
 v(CompareStrings, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), CompareStrings)
+v(StringLocaleCompare, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StringLocaleCompare)
 v(StringCodePointAt, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), StringCodePointAt)
 v(StringBuilderAppendString, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, StringBuilderAppendString)
 v(StringBuilderDiscard, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, StringBuilderDiscard)
 v(StackStringBuilderAppendString, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, StackStringBuilderAppendString)
 
 // AOTStubsStringConversions.cpp
+v(ConcatenateKeyOfPair, CalledByCode, (Key, Name), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ConcatenateKeyOfPair)
 v(IntegerToString, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(RuntimeState), IntegerToString)
 
 // AOTStubsStringConcatenation.cpp

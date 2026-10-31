@@ -1,0 +1,39 @@
+# Where an object of one class was seen to arrive and others may, the layouts that have the names by the same declarations are expected too: the test for all of them is one test, and the slots are the same. Layouts that declare the name themselves stay out, and so does everything where flow lists all that arrives
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="TreeNode" constructor=f3 fields=[{key="flags" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+layout L1 kind=Instance name="SourceFile" base=L0 constructor=f4 flags=[HasHeritage] flow={baseState=Layout base=L0}
+layout L2 kind=Instance name="Block" base=L0 constructor=f5 flags=[HasHeritage] flow={baseState=Layout base=L0}
+layout L3 kind=Instance name="Mark" constructor=f6 fields=[{key="flags" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+
+function f0 name="oneClassBelowWasSeen" parameters=[{type=anything}] results=[{type=anything}] {
+    v1: anything ~ L1 = Call v0, -
+    v2 = PropGet v1 key="flags"
+    Return v2
+# CHECK: v1: anything ~ L0|L1|L2 = Call v0
+# CHECK: = GetSlot {{*}} key="flags" receivers=[L0, L1, L2] level=Expected
+# CHECK: = TypeTest v1 testedType=L0|L1|L2
+}
+
+function f1 name="seenAtTheReadAndOthersMayArrive" parameters=[{type=anything}] results=[{type=anything}] {
+    v1: anything ~ L1 = Call v0, -
+    v2 = PropGet v1 key="flags" receivers=[L1, ..]
+    Return v2
+# CHECK: v1: anything ~ L0|L1|L2 = Call v0
+# CHECK: = TypeTest v1 testedType=L0|L1|L2
+}
+
+function f2 name="flowListsAllThatArrives" parameters=[{type=anything}] results=[{type=anything}] {
+    v1: anything ~ L1 = Call v0, -
+    v2 = PropGet v1 key="flags" receivers=[L1]
+    Return v2
+# CHECK: v1: anything ~ L1 = Call v0
+# CHECK: = TypeTest v1 testedType=L1
+}
+
+function f3 name="TreeNode" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f4 name="SourceFile" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f5 name="Block" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f6 name="Mark" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3

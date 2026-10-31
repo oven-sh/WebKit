@@ -157,10 +157,25 @@ static bool isLoopTestSameOnRarePaths(const LoopVersionPlan& plan)
     return !plan.hoisted.isHoisted(loop.bound) || plan.hoisted.valuesValidInExcursion.contains(loop.bound);
 }
 
+// unrollLoops leaves a loop with a call alone. It unrolls other loops only if each side path finishes its iteration on its own.
+static bool callsInLikelyBlocks(const HotRegion& region)
+{
+    for (BasicBlock* block : region.blocks) {
+        for (Value* value : *block) {
+            if (isCall(value) && !isLoopPoll(value))
+                return true;
+        }
+    }
+    return false;
+}
+
 std::optional<GaveUp> LoopVersionPlanner::finishPlan(LoopVersionPlan& plan)
 {
-    plan.excursion = findExcursion(m_proc, m_loops, plan.region, plan.hoisted);
-    if (plan.rangeChecks.dependsOnLoopTest() && plan.excursion.contains(plan.countedLoop->test) && !isLoopTestSameOnRarePaths(plan))
+    bool mayBeUnrolled = !callsInLikelyBlocks(plan.region);
+    plan.excursion = findExcursion(m_proc, m_loops, plan.region, plan.hoisted, [&](Value* value) {
+        return mayBeUnrolled || plan.rangeChecks.strided || plan.rangeChecks.decidedComparisons.contains(value);
+    });
+    if (plan.rangeChecks.dependsOnLoopTest() && plan.excursion.passesThrough(plan.countedLoop->test) && !isLoopTestSameOnRarePaths(plan))
         plan.excursion = { };
     if (plan.firstIterationSlowPath && !plan.excursion.contains(plan.firstIterationSlowPath) && !plan.unswitched && plan.isEnteredFromPreHeader)
         return GaveUp(GaveUpReason::NoSingleLikelyPath);
@@ -190,7 +205,7 @@ std::expected<LoopVersionPlan, GaveUp> LoopVersionPlanner::tryPlan(const HotRegi
         plan.rangeChecks = planRangeChecks({ m_proc, m_phiChildren, plan.region, attempt.invariance, *plan.countedLoop, attempt.blocksBeforeTopTest, canRewriteTest && clampsLoopBounds });
         plan.numberOfRemovedValues += countRemovedComparisons(attempt);
     } else if (clampsLoopBounds) {
-        plan.rangeChecks = planRangeChecksOfMeetingCounters({ m_proc, m_loops, m_phiChildren, plan.region, attempt.invariance });
+        plan.rangeChecks = planRangeChecksOfMeetingCounters({ m_proc, m_loops, m_phiChildren, plan.region, attempt.invariance, mayBeEnteredOnAnyTurn(attempt) });
         plan.numberOfRemovedValues += countRemovedComparisons(attempt);
     }
     if (plan.rangeChecks.decidedComparisons.isEmpty() && !hoistsEnough(attempt))
@@ -417,6 +432,12 @@ static std::optional<IndexSet<BasicBlock*>> findBlocksBeforeTopTest(const HotReg
     return result;
 }
 
+// A turn that has left the fast version by a slow path may end in front of the guards of the fast version.
+bool LoopVersionPlanner::mayBeEnteredOnAnyTurn(const Attempt& attempt)
+{
+    return !attempt.unswitched && !attempt.plan.region.slowPathBlocks.isEmpty();
+}
+
 void LoopVersionPlanner::findCountedLoop(Attempt& attempt)
 {
     LoopVersionPlan& plan = attempt.plan;
@@ -449,6 +470,7 @@ void LoopVersionPlanner::findCountedLoop(Attempt& attempt)
         }
         attempt.blocksBeforeTopTest = WTF::move(*blocksBeforeTopTest);
     }
+    countedLoop->isEnteredOnAnyTurn = mayBeEnteredOnAnyTurn(attempt);
     plan.countedLoop = *countedLoop;
 }
 

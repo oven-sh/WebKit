@@ -503,6 +503,52 @@ CopyOfTwoPlan* AssignmentPlanCache::planForCopyOfTwo(VM& vm, JSGlobalObject* rea
     return &plan;
 }
 
+void AssignmentPlanCache::describeMove(VM& vm, AssignmentPlan::FieldStore& store, const LayoutData& target, bool sharesTypes)
+{
+    using MovesFrom = AssignmentPlan::FieldStore::MovesFrom;
+    const FieldData& to = *store.to;
+    SlotRepresentation representation = to.slot.representation();
+    MappedCopy::Move move { 0, 0, MappedCopy::MoveKind::OtherForm, static_cast<uint8_t>(widthOf(representation)), false, to.isOutOfLine(), SlotRepresentation::JSValue, representation, store.acceptedKinds.toRaw(), target.indexOf(to) };
+    move.leastInt32 = store.leastInt32;
+    move.greatestInt32 = store.greatestInt32;
+    if (!store.from) {
+        std::optional<MappedCopy::MoveKind> kind = moveKindOutOfOrdinaryObject(m_state.objects->layouts, store);
+        if (!kind)
+            return;
+        move.kind = *kind;
+        bool isInline = isInlineOffset(store.sourceOffset);
+        store.movesFrom = isInline ? MovesFrom::InlineProperties : MovesFrom::OutsideProperties;
+        store.bytesInSource = static_cast<int32_t>((isInline ? store.sourceOffset : offsetInOutOfLineStorage(store.sourceOffset)) * sizeof(EncodedJSValue));
+        store.move = move;
+        return;
+    }
+    // Where a field lies in an Extension goes by the granules that the Extension has, which no plan knows.
+    if (!sharesTypes || store.from->isOutOfLine() || !store.isDirect)
+        return;
+    FieldMap::Entry entry = describeMappedField(vm, target, *store.from, 0);
+    if (entry.state < FieldMap::firstField || entry.kind == MappedCopy::MoveKind::OtherForm || entry.kind == MappedCopy::MoveKind::Tested)
+        return;
+    ASSERT(entry.fieldOfTarget() == target.indexOf(to));
+    move.kind = entry.kind;
+    move.representationOfSource = store.from->slot.representation();
+    move.acceptedKinds = entry.acceptedKinds;
+    move.testsUndefinedAndNull = !!(entry.state & FieldMap::testsUndefinedAndNull);
+    store.movesFrom = MovesFrom::Cell;
+    store.bytesInSource = static_cast<int32_t>(store.from->slot.offset);
+    store.move = move;
+}
+
+NEVER_INLINE void AssignmentPlanCache::describeMoves(AssignmentPlan& plan)
+{
+    plan.hasDescribedMoves = true;
+    const LayoutData& layout = uncheckedDowncast<CompiledStructure>(plan.target.decode())->layout();
+    for (AssignmentPlan::FieldStore& store : plan.fieldStores) {
+        // A run copies such bits without a move.
+        if (!store.copiesBitsUntested)
+            describeMove(*m_state.instance.vm, store, layout, plan.sharesTypesWithSource);
+    }
+}
+
 void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index, JSObject* target, JSObject* extraProperties, const AssignmentSource& source)
 {
     Object* record = compiledObjectOrNull(target);
@@ -513,7 +559,9 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
     auto properties = listAssignedProperties(vm, source, plan.excludedList);
     if (!properties)
         return notePlanWithoutUse("the source has no list of its properties"_s);
+    // A source of another image is listed and read by its own image, which also makes the closures that its fields defer. Its values are tested like those of an ordinary object.
     bool sharesTypes = source.compiledObject && &source.compiledObject->state() == &m_state;
+    plan.sharesTypesWithSource = sharesTypes;
     const LayoutData* layout = record ? &record->layout() : nullptr;
     JSGlobalObject* realm = target->structure()->realm();
     Structure* extraPropertiesBefore = extraProperties ? extraProperties->structure() : Instance::of(realm)->realm.emptyExtraPropertiesStructure;
@@ -601,7 +649,7 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
             creatableFieldNames.append(property.name);
     }
     auto isIntercepted = [&](UniquedStringImpl* name) {
-        return !source.defines && !storeCreatesOwnProperty(realm, target->structure(), target, name, ChainDependent { name, index, m_chainDependentOwner });
+        return !source.defines && !storeCreatesOwnProperty(realm, target->structure(), target, name, *m_state.chainDependents, ChainDependent { name, index, m_chainDependentOwner });
     };
     if (std::ranges::any_of(addedNames.span(), isIntercepted) || std::ranges::any_of(creatableFieldNames.span(), isIntercepted))
         return notePlanWithoutUse("a prototype intercepts a name that a store may create"_s);
@@ -612,6 +660,15 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
         for (size_t i = 0; i < addedNames.size(); ++i)
             extraPropertyStores[storesOfAddedNames[i]].offset = extraPropertiesAfter->get(vm, addedNames[i]);
         plan.extraPropertiesAfter = extraPropertiesAfter;
+        for (auto& store : extraPropertyStores) {
+            auto bytesOf = [](PropertyOffset offset) {
+                return static_cast<int32_t>((isInlineOffset(offset) ? offset : offsetInOutOfLineStorage(offset)) * sizeof(EncodedJSValue));
+            };
+            store.isOutsideInSource = isValidOffset(store.sourceOffset) && !isInlineOffset(store.sourceOffset);
+            store.isOutsideInTarget = !isInlineOffset(store.offset);
+            store.bytesInSource = isValidOffset(store.sourceOffset) ? bytesOf(store.sourceOffset) : 0;
+            store.bytesInTarget = bytesOf(store.offset);
+        }
         if (record)
             plan.targetAfter = m_state.objects->structures.withExtraProperties(vm, record->compiledStructure(), extraPropertiesAfter);
     }

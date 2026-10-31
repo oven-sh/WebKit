@@ -34,6 +34,9 @@ namespace JSC { namespace AOT {
 struct HostThreadPool {
     // Calls run(argument) once, on a thread of the pool, and does not wait for it.
     void (*schedule)(void (*run)(void* argument), void* argument);
+    // Gives what the allocator keeps for the current thread, and has no use for, back to the system. One thread at a time. A thread that finds another at it sleeps
+    // until it is its turn, or, where it may not wait, is answered false and has given nothing back.
+    bool (*giveFreeMemoryOfCurrentThreadBack)(bool mayWait);
 };
 
 // Foreground is the critical path of the build.
@@ -54,6 +57,11 @@ public:
     unsigned width() const { return m_width; }
     JS_EXPORT_PRIVATE unsigned numberOfRestingThreads() const;
     void sendRestingThreadsBack() const;
+    // Memory that one thread allocated and another freed stays with the first until that thread looks. Every thread looks before its next task, and the resting ones are woken for it.
+    // Nothing waits: what comes next runs beside it. The caller looks in its next loop, or at once where no thread rests.
+    JS_EXPORT_PRIVATE void giveFreeMemoryBack() const;
+    // The same for the threads at work: each looks between the runs of a loop.
+    JS_EXPORT_PRIVATE void askThreadsAtWorkForFreeMemory() const;
 
     // Loops and tasks that a task starts have its priority unless they name another.
     JS_EXPORT_PRIVATE static TaskPriority currentPriority();
@@ -137,6 +145,16 @@ public:
             new (NotNull, &m_elements[index]) T(create(index));
         });
     }
+
+    // Room alone. The caller makes every element with makeAt() before anybody looks at it, so a page is touched when its elements are needed and not before.
+    static ParallelArray withRoomFor(unsigned size)
+    {
+        static_assert(alignof(T) <= 16);
+        ParallelArray result;
+        result.m_elements = MallocSpan<T>::malloc(size * sizeof(T));
+        return result;
+    }
+    void makeAt(size_t index) { new (NotNull, &m_elements[index]) T(); }
 
     static ParallelArray concatenationOf(const ParallelLoops& loops, Vector<Vector<T>>&& lists)
     {
@@ -224,10 +242,20 @@ Vector<Vector<T>> collectChunksInParallel(const ParallelLoops& loops, unsigned c
     return chunks;
 }
 
+JS_EXPORT_PRIVATE void joinChunksAsBytes(const ParallelLoops&, VectorWords& result, std::span<VectorWords> chunks, size_t elementSize);
+
+// Compiled once for a type of element, not once for everyone who collects.
 template<typename T>
-Vector<T> collectInParallel(const ParallelLoops& loops, unsigned count, std::span<const uint32_t> longestFirst, const Invocable<void(unsigned, Vector<T>&)> auto& collect)
+NEVER_INLINE Vector<T> joinChunks(const ParallelLoops& loops, Vector<Vector<T>>&& chunks)
 {
-    Vector<Vector<T>> chunks = collectChunksInParallel<T>(loops, count, longestFirst, collect);
+#if !ASAN_ENABLED
+    if constexpr (movesAsBytes<T>) {
+        static_assert(sizeof(Vector<T>) == sizeof(VectorWords));
+        Vector<T> result;
+        joinChunksAsBytes(loops, result.wordsOfListThatMovesAsBytes(), unsafeMakeSpan(reinterpret_cast<VectorWords*>(chunks.mutableSpan().data()), chunks.size()), sizeof(T));
+        return result;
+    }
+#endif
     size_t size = 0;
     for (auto& chunk : chunks)
         size += chunk.size();
@@ -241,6 +269,12 @@ Vector<T> collectInParallel(const ParallelLoops& loops, unsigned count, std::spa
         });
     }
     return result;
+}
+
+template<typename T>
+Vector<T> collectInParallel(const ParallelLoops& loops, unsigned count, std::span<const uint32_t> longestFirst, const Invocable<void(unsigned, Vector<T>&)> auto& collect)
+{
+    return joinChunks<T>(loops, collectChunksInParallel<T>(loops, count, longestFirst, collect));
 }
 
 template<typename T>
@@ -284,7 +318,7 @@ void sortOnPool(const ParallelLoops& loops, std::span<T> list, const Less& isLes
             return all.subspan(start, count * (run + 1) / runs - start);
         };
         forEachIndexInParallel(loops, numberOfRuns, [&](unsigned run) {
-            AOT::sort(runOf(from, run, numberOfRuns), isLess);
+            AOT::sortInLine(runOf(from, run, numberOfRuns), isLess);
         });
         // The last round merges two runs: one thread would go through the whole list, and two through the round in front of it.
         constexpr size_t partsPerRound = 4 * numberOfRuns;
@@ -316,7 +350,7 @@ void parallelSort(const ParallelLoops& loops, std::span<T> list, const Less& isL
 {
     AOT_THRESHOLD(size_t, fewestForPool, 1 << 13);
     if (list.size() < fewestForPool) {
-        AOT::sort(list, isLess);
+        AOT::sortInLine(list, isLess);
         return;
     }
     sortOnPool(loops, list, isLess);

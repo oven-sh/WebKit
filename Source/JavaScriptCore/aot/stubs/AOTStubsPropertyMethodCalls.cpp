@@ -114,6 +114,7 @@ static void emitCallOfUncreatedClosure(StubAssembler& jit, unsigned count)
     otherwise.append(jit.branchIfNotCell(thisGPR));
     jit.load32SignedExtendTo64(Address(thisGPR, offsetOfShapeWord), index);
     otherwise.append(jit.branchTest32(CCallHelpers::PositiveOrZero, index));
+    branchUnlessShapeOfThisImage(jit, index, otherwise);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.fieldTableEntries)), table);
     jit.load32(BaseIndex(table, index, CCallHelpers::TimesFour), index);
     jit.add32(calleeGPR, index);
@@ -332,10 +333,10 @@ void generateTryGetSuperById(StubAssembler& jit)
     Jump isNotVariable = branchIfSlotKindDiffers(jit, slot, Slot::Kind::Variable, scratch);
     {
         const CachedSlot variable(SlotForm::PackedSlot, Slot::Kind::Variable, cell, InvalidGPRReg);
-        const FieldReadRegisters registers = fieldReadRegisters(cell, scratch);
+        FieldReadRegisters registers = fieldReadRegisters(cell, scratch);
         FieldReadExits exits;
         variable.loadFirstPayloadWord(jit, registers.field.slotData);
-        loadStaticsBase(jit, cell, structureID);
+        loadStaticsBaseOfVariable(jit, variable, cell, structureID, registers);
         computeFieldAddress(jit, registers.field, false, exits.isAbsent);
         readFieldAndReturn(jit, registers, exits);
         needsGenericRead.append(exits.isAbsent);

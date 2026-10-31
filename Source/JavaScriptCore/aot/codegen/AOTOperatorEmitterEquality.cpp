@@ -373,6 +373,21 @@ private:
         Condition areCells = leftIsString ? (rightIsString ? boolean(true) : isCell(y)) : (rightIsString ? isCell(x) : areBothCells(x, y));
         branch(areCells, { normalEdge(areStrings), normalEdge(oneIsNullish) });
         m_out.appendTo(areStrings);
+        // `a[i] === b[j]`: every code unit up to 255 has one cell, so two cells with 8-bit strings are two characters.
+        auto isCharacterOfString = [&](ValueID operand) {
+            const Value& definition = m_function.at(definitionThroughUpcasts(m_function, operand));
+            if (definition.opcode == Opcode::StringRangeCharacterOrUndefined)
+                return true;
+            return definition.opcode == Opcode::ElemGet && definition.keyIsIntegral() && typeOf(definition.objectOperand()).isString();
+        };
+        if (isCharacterOfString(value->leftOperand()) && isCharacterOfString(value->rightOperand())) {
+            LBasicBlock areOtherCharacters = newBlock();
+            LBasicBlock mayBeSameCharacter = newBlock();
+            branch(emitter<StringEmitter>().areBoth8Bit(unboxCell(x), unboxCell(y)), { normalEdge(areOtherCharacters), unlikelyEdge(mayBeSameCharacter) });
+            m_out.appendTo(areOtherCharacters);
+            join.add(boolean(false));
+            m_out.appendTo(mayBeSameCharacter);
+        }
         join.add(emitter<StringEmitter>().areEqual(value, unboxCell(x), unboxCell(y), StringEmitter::StringIdentity::Distinct));
         m_out.appendTo(oneIsNullish);
         if (isStrict)
@@ -446,6 +461,43 @@ private:
 
 } // anonymous namespace
 
+// The operand of a strict equality of two values that is a written text.
+static ValueID writtenTextComparedWithValue(const Function& function, const Value& equality)
+{
+    for (ValueID operand : { equality.rightOperand(), equality.leftOperand() }) {
+        if (function.at(operand).opcode == Opcode::String)
+            return operand;
+    }
+    return { };
+}
+
+// `shape.kind === "circle"` where the branch narrows `shape`: the comparison stays a StrictEq. It has the characters in its code, or hands them to a stub. Nobody asks for the cell of the text, so it is neither made nor tested for.
+bool OperatorEmitter::comparesOnlyTextOf(ValueID string)
+{
+    // Validation reads every operand in front of its operation.
+    if (generator().validates())
+        return false;
+    const UseLists& useLists = analyses().useLists();
+    std::optional<Use> use = useLists.singleUse(string);
+    ValueLocation location = useLists.locationOf(string);
+    if (!use || use->kind != Use::Kind::Operand || location.placement != ValuePlacement::InBlock || use->block != location.block)
+        return false;
+    const Value& user = m_function.at(use->user);
+    if (user.opcode != Opcode::StrictEq)
+        return false;
+    bool isReadByForm = user.form() == OperatorForm::StringAndValue && m_function.at(string).representation == Representation::Cell;
+    if (!isReadByForm && (user.form() != OperatorForm::Generic || writtenTextComparedWithValue(m_function, user) != string))
+        return false;
+    // What is alive across a suspension is saved with the frame.
+    for (ValueID between : m_function.at(location.block).values.span().subspan(location.index + 1)) {
+        if (between == use->user)
+            return true;
+        if (maySuspend(m_function.at(between).opcode))
+            return false;
+    }
+    return false;
+}
+
 void OperatorEmitter::generateEquality(const ValueContext& value, bool isStrict)
 {
     EqualityEmitter equality(generator());
@@ -454,6 +506,16 @@ void OperatorEmitter::generateEquality(const ValueContext& value, bool isStrict)
     Condition result;
     switch (value->form()) {
     case OperatorForm::Generic:
+        // One call with the characters takes the place of two: one that makes the cell of the text, one that compares any two values.
+        if (ValueID written = isStrict ? writtenTextComparedWithValue(m_function, value.value()) : ValueID()) {
+            ValueID other = written == left ? right : left;
+            const Type& type = typeOf(other);
+            bool everyCellIsString = !type.hasObjects() && !(type.primitives & cellPrimitives & ~Primitive::AnyString);
+            defineTestByBranching(value, [&](BranchTargets targets) {
+                emitter<StringEmitter>().branchOnEqualsLiteral(value, ComparedOperand::Value, in<Boxed>(other).value(), m_function.at(written).string(), targets, false, everyCellIsString);
+            });
+            return;
+        }
         result = equality.equalityOnValues(value, isStrict);
         break;
     case OperatorForm::Integers:

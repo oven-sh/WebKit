@@ -373,6 +373,12 @@ private:
         return headOf(block, location);
     }
 
+    bool isWordOfPinnedRegister(unsigned value) const
+    {
+        const Facts& facts = m_facts[value];
+        return (facts.memberFlags & IsHead) && isRegister(facts.location) && m_code.isPinned(Reg::fromIndex(facts.location));
+    }
+
     unsigned valueIn(unsigned location)
     {
         if (m_current[location] == none) {
@@ -654,7 +660,7 @@ private:
         if (choosesBetweenLastOperands(inst.kind.opcode)) {
             m_facts[result].nextHeadInBlock = std::exchange(m_firstChoiceOfBlock[m_block], result);
             for (unsigned source : m_operands.span().last(std::min<size_t>(m_operands.size(), 2))) {
-                if (source == clobbered)
+                if (source == clobbered || isWordOfPinnedRegister(source))
                     continue;
                 m_choices.append({ result, source });
                 link(m_facts[result].firstSource, source);
@@ -811,6 +817,8 @@ private:
                 if (m_facts[find(incoming)].classFlags & IsPointer)
                     judge(incoming);
             }
+            if (isWordOfPinnedRegister(incoming) && !isWordOfPinnedRegister(head))
+                continue;
             unite(head, incoming);
         }
     }
@@ -897,30 +905,37 @@ private:
     const B3::MemoryValue* findLoadWithoutOwner(unsigned pointer, unsigned block, unsigned position, bool givesCells)
     {
         ++m_query;
+        auto spans = [&](unsigned value) {
+            const Facts& facts = m_facts[value];
+            return facts.block == block && facts.created < position && endOf(facts) >= position;
+        };
         m_classesToAsk.shrink(0);
         m_classesToAsk.append(find(pointer));
         m_queryOfClass[m_classesToAsk[0]] = m_query;
         while (!m_classesToAsk.isEmpty()) {
-            for (unsigned index = m_facts[m_classesToAsk.takeLast()].firstOwner; index != none; index = m_owners[index].next) {
+            unsigned firstOwner = m_facts[m_classesToAsk.takeLast()].firstOwner;
+            for (unsigned index = firstOwner; index != none; index = m_owners[index].next) {
+                if (spans(m_owners[index].value))
+                    m_queryOfHeldClass[find(m_owners[index].value)] = m_query;
+            }
+            for (unsigned index = firstOwner; index != none; index = m_owners[index].next) {
                 const Owner& owner = m_owners[index];
                 unsigned root = find(owner.value);
+                bool isPointer = m_facts[root].classFlags & IsPointer;
+                // By the load and not by the owner: another load from this owner may give a pointer that the scan does not know.
+                if (!isPointer && !givesCells && contains(m_rules.fieldsThatHoldPointersTheScanKnows.span(), owner.load->range()))
+                    continue;
                 if (std::exchange(m_queryOfClass[root], m_query) == m_query)
                     continue;
-                if (m_facts[root].classFlags & IsPointer) {
+                if (isPointer) {
                     m_classesToAsk.append(root);
                     continue;
                 }
-                if (!givesCells && contains(m_rules.fieldsThatHoldPointersTheScanKnows.span(), owner.load->range()))
-                    continue;
                 if (!(m_facts[root].classFlags & HasOrdinaryDefinition))
                     continue;
                 if (m_blockOfEnd[root] == block && m_end[root] >= position)
                     continue;
-                auto spans = [&](unsigned value) {
-                    const Facts& facts = m_facts[value];
-                    return facts.block == block && facts.created < position && endOf(facts) >= position;
-                };
-                if (spans(owner.value))
+                if (m_queryOfHeldClass[root] == m_query)
                     continue;
                 auto choices = std::ranges::equal_range(m_choicesOfNotedBlock, root, { }, &std::pair<unsigned, unsigned>::first);
                 if (std::ranges::any_of(choices, [&](const auto& choice) { return spans(choice.second); }))
@@ -1053,6 +1068,7 @@ private:
         m_blockOfEnd.fill(none, m_facts.size());
         m_end.fill(0, m_facts.size());
         m_queryOfClass.fill(0, m_facts.size());
+        m_queryOfHeldClass.fill(0, m_facts.size());
         unsigned notedBlock = none;
         ReportedPlaces reported;
         for (unsigned pointer : m_pointers) {
@@ -1141,6 +1157,7 @@ private:
     Vector<unsigned> m_blockOfEnd;
     Vector<unsigned> m_end;
     Vector<unsigned> m_queryOfClass;
+    Vector<unsigned> m_queryOfHeldClass;
     Vector<unsigned> m_classesToAsk;
     unsigned m_query { 0 };
 };

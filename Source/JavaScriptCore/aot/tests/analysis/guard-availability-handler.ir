@@ -193,7 +193,7 @@ function f7 name="thrownObjectIsChangedThroughTheCaughtValue" parameters=[{type=
     Return v3
 }
 # CHECK-LABEL: function f7
-# CHECK: b2 available at head: [v2.0 v2.1 v2.2 v2.3 v2.4 v2.5]
+# CHECK: b2 available at head: [v2.0 v2.1 v2.2 v2.3 v2.4 v2.5 v2.6]
 # CHECK: b2:0 available: [v2]
 # CHECK-NEXT: b2:1 available: [v2]
 # CHECK-NEXT: b2:2 available: [v2]

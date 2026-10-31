@@ -16,8 +16,10 @@
 #include "AOTFlowResults.h"
 #include "AOTFunctionDescription.h"
 #include "AOTIRProgram.h"
+#include "AOTImagesBelow.h"
 #include "AOTPlacementSteps.h"
 #include "AOTRepresentation.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -89,6 +91,7 @@ ClosureForm closureFormOf(const Program& program, const FlowResults& flow, Funct
     case FunctionRole::ResultWrapper:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
+    case FunctionRole::ChecksThatGiveUp:
         break;
     case FunctionRole::CoroutineRamp:
         if (kindOfCoroutine(function) != CoroutineKind::AsyncFunction)
@@ -327,7 +330,7 @@ static Vector<FunctionID> closureFormsBySourceOf(const Program& program)
         if (program.at(source).has(FunctionCapabilities::RecordsCalleeOnceRenamed))
             forms.append({ source, FunctionID(index) });
     }
-    std::ranges::stable_sort(forms, { }, [](const Form& form) { return form.source.index(); });
+    AOT::stableSort(forms, { }, [](const Form& form) { return form.source.index(); });
     Vector<FunctionID> result;
     for (size_t index = 0; index < forms.size(); ++index) {
         bool isOneOfSeveral = (index && forms[index - 1].source == forms[index].source) || (index + 1 < forms.size() && forms[index + 1].source == forms[index].source);
@@ -403,6 +406,8 @@ FunctionNumbering numberFunctions(const PlacementContext& context, const PlacedS
     });
     numbering.closureCellNumbers = numberClosureCells(program, loops, declaredByVariables);
     numbering.closureFunctions = closureFunctionRangeOf(program);
+    if (const ImagesBelow* below = context.build.imagesBelow())
+        numbering.closureFunctions.numbersBelow = below->numbersOfLast().endOfClosureNumbers;
     numbering.closureFormsBySource = closureFormsBySourceOf(program);
     return numbering;
 }
@@ -436,6 +441,7 @@ static TraceVisibility visibilityOf(const Function& function, bool implementsBui
     case FunctionRole::ResultWorker:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
+    case FunctionRole::ChecksThatGiveUp:
         // What the front end hides is a function of its own that no trace lists, unless it is a built-in that programs can call. What its role hides is a part of a function that traces list.
         if (function.has(FunctionFlags::IsHiddenInStackTraces) && !implementsBuiltin)
             return TraceVisibility::Hidden;
@@ -506,9 +512,11 @@ static bool callsHostFunction(const BuiltinOverload& overload)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// In the engine a function written inside a built-in function is built-in code too.
+// In the engine a function written inside a built-in function is built-in code too. A module of the library marks the function that it holds in place of such a one.
 static bool isInsideBuiltinFunction(const BuiltinTable& builtins, const Function& source)
 {
+    if (source.syntax.contains(FunctionSyntax::IsShownAsNativeCode))
+        return true;
     if (!source.enclosingRuntimeFunction)
         return false;
     switch (builtins.at(source.enclosingRuntimeFunction).role) {
@@ -537,6 +545,9 @@ static StackTraceBuiltinKind builtinKindOf(const BuiltinTable& builtins, const F
 {
     if (!builtin)
         return isInsideBuiltinFunction(builtins, source) ? StackTraceBuiltinKind::JSBuiltin : StackTraceBuiltinKind::None;
+    // The host has what it does as a function of a module of its own, and a stack trace lists that like any other function: FunctionDescription::isHelperOfCompiler().
+    if (source.syntax.contains(FunctionSyntax::IsShownInModuleOfHelpers))
+        return StackTraceBuiltinKind::None;
     if (std::ranges::any_of(builtins.overloadsOf(*builtin), callsHostFunction))
         return StackTraceBuiltinKind::HostFunction;
     return builtins.at(*builtin).kind == BuiltinKind::Constructor ? StackTraceBuiltinKind::JSBuiltinConstructor : StackTraceBuiltinKind::JSBuiltin;

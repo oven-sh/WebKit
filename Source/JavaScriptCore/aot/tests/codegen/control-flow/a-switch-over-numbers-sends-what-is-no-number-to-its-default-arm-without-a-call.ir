@@ -1,0 +1,146 @@
+# -- source: main.ts
+# declare function print(text: string): void;
+# interface Options {
+#   width?: number;
+#   label: string;
+# }
+# const omitted: Options[] = [{ label: "x" }, { width: 5, label: "y" }];
+# function onWidth(options: Options): number {
+#   switch (options.width) {
+#     case 3:
+#       return 10;
+#     case 5:
+#       return 20;
+#     default:
+#       return 30;
+#   }
+# }
+# function over(objects: any[], n: number, run: (object: any) => number): number {
+#   let sum = 0;
+#   for (let i = 0; i < n; i++) sum += run(objects[i & 1]);
+#   return sum;
+# }
+# print(String(over(omitted, 4, object => onWidth(object))));
+# -- end of source
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-air
+# REQUIRES: unsanitized-code
+# CHECK-LABEL: name="onWidth"
+# CHECK-NOT: Patch
+# CHECK: end of function
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=189 kind=Parameter
+typesite w1 module=m0 position=172 kind=Result
+typesite w2 module=m0 position=107 kind=Variable
+typesite w3 module=m0 position=352 kind=Parameter
+typesite w4 module=m0 position=368 kind=Parameter
+typesite w5 module=m0 position=379 kind=Parameter
+typesite w6 module=m0 position=338 kind=Result
+typesite w7 module=m0 position=538 kind=Result
+typesite w8 module=m0 position=521 kind=CallResult
+typesite w9 module=m0 position=514 kind=CallResult
+typesite w10 module=m0 position=425 kind=Variable
+typesite w11 module=m0 position=445 kind=Variable
+typesite w12 module=m0 position=471 kind=CallResult
+typesite w13 module=m0 position=548 kind=CallResult
+layout L0 name="Options" module=m0 position=54 fields=[{key="label" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="width" declared={type=undefined|number}}] declaredOrder=[1, 0] ownFieldCount=2
+data d0 root=Array{contents=undefined|null|L0 elements=[Object{layout=L0 members=[{key="label" value=String{value="x"}}]}, Object{layout=L0 members=[{key="width" value=Number{value=5}}, {key="label" value=String{value="y"}}]}]} module=m0
+variable g0 name="onWidth" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = Data data=d0 @128
+    v3 = Convert v2 declared={type=undefined|null|Array<undefined|null|L0> site=w2 flags=[OmitsNull, OmitsUndefined]} @128
+    v4 = Builtin builtin=GlobalThis @508
+    v5 = PropGet v4 key="print" [isFreeName] @508
+    v6 = Builtin builtin=String @514
+    v7 = Integer integer=4 @535
+    v8 = NewClosure function=f3 @538
+    v9 = Call v1, -, v3, v7, v8 calleeName="over" @521
+    v10 = Convert v9 declared={type=number site=w8} @521
+    v11 = Call v6, -, v10 calleeName="String" @514
+    v12 = Convert v11 declared={type=undefined|null|string site=w9 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @514
+    v13 = Call v5, -, v12 calleeName="print" @508
+    v14 = Undefined @508
+    Return v14 @508
+}
+function f1 name="onWidth" module=m0 position=172 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1() @172
+  b1():
+    v1 = PropGet v0 key="width" @227
+    Switch v1 cases=[3, 5] -> case b2(| 0), case b4(| 0), otherwise b6() @253
+  b2(v2):
+    v3 = NarrowByField v0, v2 key="width" @253
+    Jump -> next b3() @253
+  b3():
+    v4 = Integer integer=10 @269
+    v5 = Convert v4 declared={type=number site=w1} @269
+    Return v5 @269
+  b4(v6):
+    v7 = NarrowByField v0, v6 key="width" @253
+    Jump -> next b5() @253
+  b5():
+    v8 = Integer integer=20 @298
+    v9 = Convert v8 declared={type=number site=w1} @298
+    Return v9 @298
+  b6():
+    Jump -> next b7() @253
+  b7():
+    v10 = Integer integer=30 @328
+    v11 = Convert v10 declared={type=number site=w1} @328
+    Return v11 @328
+}
+function f2 name="over" module=m0 position=338 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w4}, {type=undefined|null|function|f3 site=w5 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w6}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array, v1: number, v2: undefined|null|function|f3):
+    Jump -> next b1() @338
+  b1():
+    v3 = Integer @431
+    v4 = Convert v3 declared={type=number site=w10} @431
+    v5 = Integer @449
+    v6 = Convert v5 declared={type=number site=w11} @449
+    Jump -> next b2(v4, v6) @445
+  b2(v7: number, v8: number):
+    LoopHint @445
+    v10 = Convert v8 declared={type=i32 flags=[IsExpected]} @452
+    v11 = Less v10, v1 @452
+    Branch v11 -> taken b3(| 0, 1), notTaken b6(| 0, 1) @452
+  b3(v12, v13):
+    Jump -> next b4() @452
+  b4():
+    v14 = Convert v12 declared={type=i32 flags=[IsExpected]} @483
+    v15 = Integer integer=1 @487
+    v16 = BitAnd v14, v15 @483
+    v17 = ElemGet v0, v16 @475
+    v18 = Call v2, -, v17 calleeName="run" @471
+    v19 = Convert v18 declared={type=number site=w12} @471
+    v20 = Add v7, v19 @471
+    v21 = Convert v20 declared={type=number site=w10} @464
+    Jump -> next b5() @464
+  b5():
+    v22 = Increment v14 @471
+    v23 = Convert v22 declared={type=number site=w11} @459
+    Jump -> next b2(v21, v23) @459
+  b6(v24, v25):
+    Jump -> next b7() @452
+  b7():
+    v26 = Convert v7 declared={type=number site=w6} @501
+    Return v26 @501
+}
+function f3 module=m0 position=538 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number site=w7}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @538
+  b1():
+    v1 = GetModuleVariable variable=g0 @548
+    v2 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]} @556
+    v3 = Call v1, -, v2 calleeName="onWidth" @548
+    ReturnCall v3 casts=[{declared={type=number site=w13}}, {declared={type=number site=w7}}] @548
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f4]

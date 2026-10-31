@@ -1,0 +1,24 @@
+# holder = { name }; below = { __proto__: holder }; below.name; somethingNoTableLists(below)
+# While nothing has escaped, the lookup of `name` connects what is written on the two objects to its answer, whole. Then both escape: the object nobody knows stands on the chain and covers them,
+# and the lookup reads the two only for what lets in unseen code, through a mask. An edge stays in the graph when its statement asks for something else:
+# were the second read the node of the first, the whole node would go on answering and the mask would cut nothing.
+# RUN: valueflow-why outlived-edges
+# CHECK: whole-and-masked 0 | whole first 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Holder" fields=[{key="name" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Below"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject v1 layout=L1 fields=[]
+    v3 = PropGet v2 key="name"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="somethingThatNoTableLists" [isFreeName]
+    v6 = Call v5, -, v2
+    Return
+}
+function f1 name="held" kind=Arrow results=[{type=anything}] {
+    Return
+}

@@ -9,6 +9,7 @@ entry module=m0
 layout L0 name="AllocatedLayout" fields=[{key="fieldKey" declared={type=number} flags=[IsRequired]}]
 layout L1 name="UnallocatedLayout" fields=[{key="otherFieldKey" declared={type=number} flags=[IsRequired]}]
 variable g0 name="variableName" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="numberVariableName" module=m0 declared={type=number} initialization=Undefined
 function f0 name="moduleBody" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=MathRandom
     v1 = Call v0
@@ -20,6 +21,7 @@ function f0 name="moduleBody" kind=Module results=[{type=anything}] {
     v7 = NewTemplateObject templateStrings=[{cooked="cookedPart" raw="rawPart"}] @10
     v8 = String string="constantOfCode"
     v9 = CallDirect function=f1
+    PutModuleVariable v2 variable=g1
     Return
 }
 function f1 name="calledFunction" results=[{type=anything}] {
@@ -27,6 +29,7 @@ function f1 name="calledFunction" results=[{type=anything}] {
 }
 # CHECK: "\u{f8}.ts"
 # CHECK-NEXT: "AllocatedLayout"
+# CHECK-NEXT: "variableName"
 # CHECK-NEXT: "moduleBody"
 # CHECK-NEXT: "12345678901234567890"
 # CHECK-NEXT: "cookedPart"
@@ -37,9 +40,9 @@ function f1 name="calledFunction" results=[{type=anything}] {
 # CHECK-NEXT: "src/"
 # UNNAMED-NOT: "/src/\u{f8}.ts"
 
-# A key is named by its identifier number, a variable by its offset, and a layout that is never allocated has no record.
+# A key is named by its identifier number, a variable that holds no cell only by its offset, and a layout that is never allocated has no record.
 # UNNAMED-NOT: "UnallocatedLayout"
 # UNNAMED-NOT: "fieldKey"
 # UNNAMED-NOT: "otherFieldKey"
-# UNNAMED-NOT: "variableName"
+# UNNAMED-NOT: "numberVariableName"
 # UNNAMED-NOT: "constantOfCode"

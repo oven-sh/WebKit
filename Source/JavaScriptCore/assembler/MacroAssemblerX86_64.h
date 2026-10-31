@@ -3717,6 +3717,11 @@ public:
         m_assembler.ret();
     }
 
+    void retAndPop(uint16_t bytesPoppedBehindReturnAddress)
+    {
+        m_assembler.ret(bytesPoppedBehindReturnAddress);
+    }
+
     void compare8(RelationalCondition cond, Address left, TrustedImm32 right, RegisterID dest)
     {
         TrustedImm32 right8(static_cast<int8_t>(right.m_value));

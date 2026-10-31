@@ -80,20 +80,6 @@ struct FlowScopeCalls {
     Vector<uint32_t> firstListByCallee;
     BitVector functionsEnteredByHost;
 
-    void forEachCallBy(const Vector<Vector<FunctionID>>& calleeLists, FunctionID caller, NOESCAPE const Invocable<IterationStatus(const FlowScopeCall&)> auto& functor) const
-    {
-        for (const FlowScopeCall& call : entriesOfGroup(firstByCaller, byCaller, caller.index())) {
-            if (functor(call) == IterationStatus::Done)
-                return;
-        }
-        for (const FlowScopeCallOfList& call : entriesOfGroup(firstCallOfListByCaller, callsOfLists, caller.index())) {
-            for (FunctionID callee : calleeLists[call.calleeList]) {
-                if (functor(FlowScopeCall { call.caller, callee, call.site, call.subject }) == IterationStatus::Done)
-                    return;
-            }
-        }
-    }
-
     void forEachCallOf(FunctionID callee, NOESCAPE const Invocable<IterationStatus(const FlowScopeCall&)> auto& functor) const
     {
         for (const FlowScopeCall& call : entriesOfGroup(firstByCallee, byCallee, callee.index())) {

@@ -1,0 +1,126 @@
+# At 2 ** 53 a step of one is lost to rounding: the sum is the number it started from. So a variable that is stored integers, and what it held plus or minus one, holds integers from -2 ** 53 to 2 ** 53 and nothing else.
+# An end that no step moves stays where the other stores put it. The result of the step is proven with the variable: its own type says only that it has no fraction.
+# A step of two leaves the range, a fraction was never in it, and neither was an integer beyond it.
+# A double takes a step at no cost, an integer beyond 32 bits does not: a variable stays as it was where nothing is done with its number that an integer is better for, but for code that runs once.
+# So does one that is compared: it counts the turns of a loop or stands against a limit, and what bounds and unrolls those knows it as a number.
+# RUN: valueflow-apply
+# CHECK: variable g0 name="up" {{*}}declared={type=int[0, 9007199254740992]}
+# CHECK: variable g1 name="down" {{*}}declared={type=int[-9007199254740992, 5]}
+# CHECK: variable g2 name="both" {{*}}declared={type=int[-9007199254740992, 9007199254740992]}
+# CHECK: variable g3 name="bySum" {{*}}declared={type=int[1, 9007199254740992]}
+# CHECK: variable g4 name="byTwo" {{*}}declared={type=int|whole}
+# CHECK: variable g5 name="fromFraction" {{*}}declared={type=number}
+# CHECK: variable g6 name="beyond" {{*}}declared={type=int|whole}
+# CHECK: variable g7 name="onlyCompared" {{*}}declared={type=int|whole}
+# CHECK: variable g8 name="readOnce" {{*}}declared={type=int|whole}
+# CHECK: variable g9 name="besideFraction" {{*}}declared={type=int|whole}
+# CHECK: variable g10 name="comparedAndKept" {{*}}declared={type=int|whole}
+# CHECK-LABEL: function f1 name="step"
+# CHECK: [[stepped]]: int|whole{{*}} = Increment
+# CHECK-NEXT: : int[1, 9007199254740992]{{*}} = AssumeType [[stepped]] provenType=int[1, 9007199254740992]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="up" module=m0 declared={type=number|absent}
+variable g1 name="down" module=m0 declared={type=number|absent}
+variable g2 name="both" module=m0 declared={type=number|absent}
+variable g3 name="bySum" module=m0 declared={type=number|absent}
+variable g4 name="byTwo" module=m0 declared={type=number|absent}
+variable g5 name="fromFraction" module=m0 declared={type=number|absent}
+variable g6 name="beyond" module=m0 declared={type=number|absent}
+variable g7 name="onlyCompared" module=m0 declared={type=number|absent}
+variable g8 name="readOnce" module=m0 declared={type=number|absent}
+variable g9 name="besideFraction" module=m0 declared={type=number|absent}
+variable g10 name="comparedAndKept" module=m0 declared={type=number|absent}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=0
+    PutModuleVariable v0 variable=g0
+    v2 = Integer integer=5
+    PutModuleVariable v2 variable=g1
+    PutModuleVariable v0 variable=g2
+    v5 = Integer integer=1
+    PutModuleVariable v5 variable=g3
+    PutModuleVariable v0 variable=g4
+    v8 = Double number=0.5
+    PutModuleVariable v8 variable=g5
+    v10 = Integer integer=9007199254740994
+    PutModuleVariable v10 variable=g6
+    PutModuleVariable v0 variable=g7
+    PutModuleVariable v0 variable=g8
+    PutModuleVariable v0 variable=g9
+    PutModuleVariable v0 variable=g10
+    v16 = NewClosure function=f1
+    v17 = Call v16
+    v18 = NewClosure function=f2
+    v19 = Call v18
+    v20 = GetModuleVariable variable=g8
+    v21 = NewArray v19, v20 contents=anything holes=[]
+    Return v21
+}
+function f1 name="step" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="up"
+    v2 = Increment v1
+    PutModuleVariable v2 variable=g0
+    v4 = GetModuleVariable variable=g1
+    v5 = CheckInitialized v4 name="down"
+    v6 = Decrement v5
+    PutModuleVariable v6 variable=g1
+    v8 = GetModuleVariable variable=g2
+    v9 = CheckInitialized v8 name="both"
+    v10 = Increment v9
+    PutModuleVariable v10 variable=g2
+    v12 = GetModuleVariable variable=g2
+    v13 = CheckInitialized v12 name="both"
+    v14 = Decrement v13
+    PutModuleVariable v14 variable=g2
+    v16 = GetModuleVariable variable=g3
+    v17 = CheckInitialized v16 name="bySum"
+    v18 = Integer integer=1
+    v19 = Add v17, v18
+    PutModuleVariable v19 variable=g3
+    v21 = GetModuleVariable variable=g4
+    v22 = CheckInitialized v21 name="byTwo"
+    v23 = Integer integer=2
+    v24 = Add v22, v23
+    PutModuleVariable v24 variable=g4
+    v26 = GetModuleVariable variable=g5
+    v27 = CheckInitialized v26 name="fromFraction"
+    v28 = Increment v27
+    PutModuleVariable v28 variable=g5
+    v30 = GetModuleVariable variable=g6
+    v31 = CheckInitialized v30 name="beyond"
+    v32 = Increment v31
+    PutModuleVariable v32 variable=g6
+    v34 = GetModuleVariable variable=g7
+    v35 = CheckInitialized v34 name="onlyCompared"
+    v36 = Increment v35
+    PutModuleVariable v36 variable=g7
+    v38 = Integer integer=10
+    v39 = Greater v36, v38
+    v40 = GetModuleVariable variable=g8
+    v41 = CheckInitialized v40 name="readOnce"
+    v42 = Increment v41
+    PutModuleVariable v42 variable=g8
+    v44 = Less v42, v38
+    v45 = GetModuleVariable variable=g9
+    v46 = CheckInitialized v45 name="besideFraction"
+    v47 = Increment v46
+    PutModuleVariable v47 variable=g9
+    v49 = Double number=0.5
+    v50 = Add v49, v47
+    v51 = GetModuleVariable variable=g10
+    v52 = CheckInitialized v51 name="comparedAndKept"
+    v53 = Increment v52
+    PutModuleVariable v53 variable=g10
+    v55 = Less v53, v38
+    v56 = NewArray v39, v44, v50, v55, v53 contents=anything holes=[]
+    Return v56
+}
+function f2 name="reader" results=[{type=anything}] {
+# REPEAT: i = 0..6
+    v%(i) = GetModuleVariable variable=g%(i)
+# END REPEAT
+    v7 = NewArray v0, v1, v2, v3, v4, v5, v6 contents=anything holes=[]
+    Return v7
+}

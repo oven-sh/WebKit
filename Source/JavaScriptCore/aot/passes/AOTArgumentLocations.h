@@ -51,6 +51,11 @@ constexpr bool isPassedInFPR(Representation representation)
 
 EntryConvention entryConventionOf(const Function&);
 
+constexpr bool isPassedAs(Representation handed, Representation passed)
+{
+    return handed == passed || (handed == Representation::Double && holdsAnyNaN(passed));
+}
+
 constexpr bool isCellOrBoxedValue(Representation representation)
 {
     return representation == Representation::Cell || representation == Representation::JSValue;
@@ -71,6 +76,7 @@ constexpr bool isInt64OrMarker(Representation representation)
 constexpr bool haveSameRegisterRepresentation(Representation returned, Representation expected)
 {
     return returned == expected
+        || (returned == Representation::Double && expected == Representation::ImpureDouble)
         || (isCellOrBoxedValue(returned) && isCellOrBoxedValue(expected))
         || (isDoubleOrMarker(returned) && isDoubleOrMarker(expected))
         || (isInt64OrMarker(returned) && isInt64OrMarker(expected));

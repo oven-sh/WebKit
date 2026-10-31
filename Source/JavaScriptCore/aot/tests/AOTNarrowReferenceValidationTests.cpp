@@ -25,6 +25,8 @@
 #include "B3UpsilonValue.h"
 #include "B3Validate.h"
 #include "B3ValueInlines.h"
+#include "B3Variable.h"
+#include "B3VariableValue.h"
 
 namespace JSC { namespace AOT {
 
@@ -652,6 +654,38 @@ static void testJoinOfIntegersMadeAnew()
     AOT_TEST_CHECK(!graph.insertGuards());
 }
 
+// A variable that the back end makes for a number of its own, like the turn at which a long loop polls next, stands for no value of the program.
+// Its join says nothing, whatever its block begins with.
+static void testJoinOfVariableThatBackEndMade()
+{
+    Graph graph(policyThatKeepsOrigins());
+    B3::BasicBlock* loop = graph.proc.addBlock();
+    B3::BasicBlock* exit = graph.proc.addBlock();
+    B3::Variable* end = graph.proc.addVariable(B3::Int32);
+    auto get = [&] {
+        return graph.block->appendNew<B3::VariableValue>(graph.proc, B3::Get, Graph::originOf(otherOrigin), end);
+    };
+    auto set = [&](B3::Value* value) {
+        graph.block->appendNew<B3::VariableValue>(graph.proc, B3::Set, Graph::originOf(otherOrigin), end, value);
+    };
+    set(graph.int32(1 << 20));
+    graph.jumpTo(loop);
+    graph.store(graph.loadThrough(graph.decode(graph.loadReference())));
+    B3::Value* reached = get();
+    graph.safepoint();
+    set(graph.binary(B3::Add, reached, graph.int32(1 << 20)));
+    graph.branchTo(graph.loadReference(otherOrigin, 48), loop, exit);
+    graph.block = exit;
+    graph.store(get());
+    graph.finish();
+    AOT_TEST_CHECK(Typed::valueOfOrigin(loop->at(0)->origin()) == Typed::ValueID(referenceOrigin));
+
+    graph.proc.resetReachability();
+    B3::fixSSA(graph.proc);
+    checkFindsNothing(graph);
+    AOT_TEST_CHECK(!graph.insertGuards());
+}
+
 static void testJoinOfReferencesMadeAnew()
 {
     Graph graph(policyThatKeepsOrigins());
@@ -796,6 +830,23 @@ static void testWhatNeedsNoPointer()
         graph.finish();
         checkFindsOne(graph, NarrowReferenceViolationKind::IsDisplaced);
     }
+    for (bool readsHeap : { false, true }) {
+        Graph graph;
+        B3::Value* reference = graph.loadReference();
+        graph.safepoint();
+        B3::PatchpointValue* probe = graph.patchpoint(otherOrigin);
+        probe->effects = B3::Effects::none();
+        probe->effects.writesLocalState = true;
+        if (readsHeap)
+            probe->effects.reads = B3::HeapRange::top();
+        probe->append(graph.object, B3::ValueRep::SomeRegister);
+        probe->append(reference, B3::ValueRep::SomeRegister);
+        graph.finish();
+        if (readsHeap)
+            checkFindsOne(graph);
+        else
+            checkFindsNothing(graph);
+    }
 }
 
 enum class InsertsGuards : bool { No, Yes };
@@ -878,6 +929,7 @@ std::span<const NativeTest> narrowReferenceValidationTests()
         { "narrow-reference-joined"_s, testJoinedReferences },
         { "narrow-reference-join-of-integers-made-anew"_s, testJoinOfIntegersMadeAnew },
         { "narrow-reference-join-of-references-made-anew"_s, testJoinOfReferencesMadeAnew },
+        { "narrow-reference-join-of-a-variable-that-the-back-end-made"_s, testJoinOfVariableThatBackEndMade },
         { "narrow-reference-displaced"_s, testDisplacedReference },
         { "narrow-reference-suspension"_s, testSuspension },
         { "narrow-reference-needs-no-pointer"_s, testWhatNeedsNoPointer },

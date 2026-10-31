@@ -201,6 +201,42 @@ void ObjectBuiltinEmitter::generateObjectFreeze(const InlineCall& call)
     finish(call, get(argument), type);
 }
 
+// An object that is made in the block of the call and that nothing in between names.
+static bool isUnseenNewObject(const Function& function, const Block& block, ValueID call, ValueID object)
+{
+    ValueID finished;
+    if (function.at(object).opcode == Opcode::FinishObject) {
+        finished = object;
+        object = function.at(finished).objectOperand();
+    }
+    if (function.at(object).opcode != Opcode::NewObject)
+        return false;
+    std::span<const ValueID> values = block.values.span();
+    size_t made = std::ranges::find(values, object) - values.begin();
+    if (made == values.size())
+        return false;
+    for (ValueID between : values.subspan(made + 1)) {
+        if (between == call)
+            break;
+        if (between == finished)
+            continue;
+        std::span<const ValueID> operands = function.at(between).operands();
+        if (std::ranges::contains(operands, object) || (finished && std::ranges::contains(operands, finished)))
+            return false;
+    }
+    return true;
+}
+
+void ObjectBuiltinEmitter::generateObjectAssign(const InlineCall& call)
+{
+    ValueID target = call.argument(0);
+    CellPointer object = objectOrMiss(call, target);
+    Boxed source = boxedOperand(call.context(), call.argument(1));
+    bool isUnseen = isUnseenNewObject(m_function, m_function.at(call.context().block()), call.context().valueID(), target);
+    missUnless(call, callOperation<Condition>(call.context(), isUnseen ? RuntimeOperation::ObjectAssignToUnseenObject : RuntimeOperation::ObjectAssignWithoutCode, { object, source }, { .calledBuiltin = functionOf(call.overload()) }));
+    finish(call, get(target), typeOf(target));
+}
+
 void ObjectBuiltinEmitter::generateObjectPrototypeToString(const InlineCall& call)
 {
     CellPointer object = objectOrMiss(call, call.receiver());

@@ -232,6 +232,7 @@ public:
     }
 
     void install(LedgerPartKind kind, const LedgerPart& part) { m_parts[static_cast<unsigned>(kind)] = &part; }
+    void remove(LedgerPartKind kind) { m_parts[static_cast<unsigned>(kind)] = nullptr; }
 
     // A place that no part knows is open to everybody who can write there.
     Writers writersOf(const Place& place) const

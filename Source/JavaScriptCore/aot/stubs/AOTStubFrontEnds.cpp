@@ -15,6 +15,7 @@
 #include "AOTStubsObjectCopy.h"
 #include "AOTStubsOperations.h"
 #include "AOTStubsStrings.h"
+#include <algorithm>
 
 namespace JSC { namespace AOT {
 
@@ -51,6 +52,13 @@ std::span<const OperationPrelude> operationPreludes()
         { Entry::operationAOTThrowAfterCleanup, emitThrowAfterCleanupPrelude },
     };
     return preludes;
+}
+
+bool hasPrelude(Entry entry)
+{
+    return std::ranges::any_of(operationPreludes(), [&](const OperationPrelude& prelude) {
+        return prelude.operation == entry;
+    });
 }
 
 } } // namespace JSC::AOT

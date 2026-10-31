@@ -31,12 +31,14 @@ function f2 name="others" parameters=[{type=anything}, {type=classtoken}, {type=
     v5 = PrivateGet v2, v1 layout=L0
     v6 = PrivateGet v0, v3 layout=L0
     v7 = PrivateGet v0, v1 layout=L0 field=1
-    v8 = PrivateGet v0, v1 layout=L0 field=1
-    Return v8
+    v8 = Call v2
+    v9 = PrivateGet v0, v1 layout=L0 field=1
+    Return v9
 # CHECK: = PrivateGet v0, v1 layout=L0
 # CHECK-NEXT: = PrivateGet v2, v1 layout=L0
 # CHECK-NEXT: = PrivateGet v0, v3 layout=L0
 # CHECK-NEXT: = PrivateGet v0, v1 layout=L0 field=1
+# CHECK-NEXT: = Call v2
 # CHECK-NEXT: = PrivateGet v0, v1 layout=L0 field=1
 }
 

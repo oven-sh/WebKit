@@ -152,7 +152,7 @@ TypeID rememberedType(const TypingContext& context, std::optional<SharedAnswers>
 
 inline constexpr OpcodeSet opcodesWithNaturalTypeRefinedByValue = Value::opcodesWithForm | OpcodeSet {
     Opcode::SharedRegExpLiteral, Opcode::GetTypedArrayElement, Opcode::DivideIntegers, Opcode::TypeTest, Opcode::ToInt32, Opcode::ToUint32,
-    Opcode::ToIntegerOrInfinity, Opcode::ToLength, Opcode::LogicalNot, Opcode::ToObject, Opcode::ToThis
+    Opcode::ToIntegerOrInfinity, Opcode::ToLength, Opcode::LogicalNot, Opcode::ToObject, Opcode::ToThis, Opcode::GetStringLength
 };
 
 Type naturalTypeFrom(const NaturalType&);

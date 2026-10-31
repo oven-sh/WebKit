@@ -19,7 +19,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-enum class RequirementKind : uint8_t { PlacesTest, AsksOnly };
+// TakesProof: the site is rewritten where all that it asks for is proven already. Where something is missing no test is placed, and the site stays what it is.
+enum class RequirementKind : uint8_t { PlacesTest, AsksOnly, TakesProof };
 
 struct TestRequirement {
     uint32_t site { 0 };
@@ -139,7 +140,8 @@ struct TestEventInputs {
 };
 
 struct TestEvent {
-    enum class Kind : uint8_t { ParameterProof, Barrier, Requirement, Ending, Suspension, ValueProof };
+    // EndOfRequirements: behind the requirements of a site that takes proofs.
+    enum class Kind : uint8_t { ParameterProof, Barrier, Requirement, EndOfRequirements, Ending, Suspension, ValueProof };
 
     Kind kind { Kind::Barrier };
     uint32_t index { 0 };

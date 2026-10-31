@@ -215,6 +215,8 @@ private:
 Vector<ValueID, 2> findSingleUseCastChain(const Function&, const UseLists&, ValueID user);
 std::optional<ValueID> constantThroughCasts(const Program&, const Function&, ValueID);
 std::optional<int64_t> integerConstantThroughCasts(const Program&, const Function&, ValueID);
+// A constant is made anew where it is used, so one number may stand under two values.
+bool areSameNumberConstantThroughCasts(const Program&, const Function&, ValueID, ValueID);
 bool isRematerializable(const Value&);
 bool isDeferredClosure(const Function&, ValueID);
 

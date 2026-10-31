@@ -37,12 +37,6 @@ static bool isStringArgument(const InlineBuiltinSite& site, unsigned index)
     return type && type->isAnyString();
 }
 
-static bool isIntegerArgument(const InlineBuiltinSite& site, unsigned index)
-{
-    const Type* type = argumentTypeOf(site, index);
-    return type && type->isInteger();
-}
-
 static bool isNumberOrAbsent(const InlineBuiltinSite& site, unsigned index)
 {
     const Type* type = argumentTypeOf(site, index);
@@ -132,9 +126,11 @@ static InlineForm formOfStringUTF8ByteLength(const InlineBuiltinSite& site)
     return twoWayIf(site.hasSlowPath);
 }
 
+// The code in line asks whether the argument is an integer, so nobody has to know that it is: `String.fromCodePoint(this.next())` in a class without types.
 static InlineForm formOfStringFromCodePoint(const InlineBuiltinSite& site)
 {
-    return twoWayIf(site.arguments().size() == 1 && isIntegerArgument(site, 0));
+    const Type* type = site.arguments().size() == 1 ? argumentTypeOf(site, 0) : nullptr;
+    return twoWayIf(type && type->primitives & Primitive::Number);
 }
 
 static InlineForm formOfStringRepeat(const InlineBuiltinSite& site)

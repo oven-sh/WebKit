@@ -32,6 +32,9 @@ constexpr StubKey allocateCell(CellInitialization initialization, std::optional<
     return StubKey(StubFamily::AllocateCell).withForm(static_cast<uint8_t>(initialization)).withCount(cellSize ? *cellSize / cellSizeStep : 0);
 }
 
+// The second operand is the place in the caller's frame, which is also the result. It gets what allocateCell(HeaderAndWords) stores, with the state of a cell in a frame.
+constexpr StubKey initializeObjectInFrame() { return StubKey(StubFamily::InitializeObjectInFrame); }
+
 // The second operand is the prototype that the object is to have. With the one of the allocation's record the cell is as from allocateCell(HeaderAndWordsAndZeros) and the second result is not zero.
 // With any other the object is whole, of whatever layout the prototype selects, and the second result is zero.
 constexpr StubKey allocateInstance(std::optional<size_t> cellSize = std::nullopt)

@@ -12,12 +12,14 @@
 #include "AOTConstantEmitter.h"
 #include "AOTFieldTable.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTElementAccessEmitter.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTNameClass.h"
 #include "AOTPlacement.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTRuntimeWords.h"
 #include "AOTShapeTestEmitter.h"
+#include "AOTSlotEmitter.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubsElements.h"
 #include "AOTStubsGlobalBindings.h"
@@ -48,7 +50,7 @@ static bool probesFreeNameInline(CodeShape shape)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A binding that is no constant is one that the program stores to. The stub behind a read tests the record as code in line does. So does the operation behind a store, in front of everything else.
+// A binding that is no constant is one that the program stores to. The stub behind a read or a store tests the record as code in line does.
 static bool probesBindingLocationInline(CodeShape shape)
 {
     return shape == CodeShape::Fast;
@@ -126,6 +128,220 @@ Boxed AccessEmitter::getById(const OperationContext& context, Boxed receiver, Pr
         return Boxed(callStub(context, stub, { receiver.value(), siteCacheAddress(cache).value() }, options).first);
     }
     return readThroughTables();
+}
+
+static std::optional<PlacedSlot> findSlotInCellOfEveryMember(const Program& program, const Placement& placement, const Type& receiver, PropertyKeyID key)
+{
+    if (!receiver.isObject() || !receiver.layouts || !receiver.hasOnlyLayouts())
+        return std::nullopt;
+    std::optional<PlacedSlot> found;
+    for (LayoutID member : membersOf(program, receiver)) {
+        const PlannedLayout& planned = placement.layout(member);
+        std::optional<uint32_t> field = program.at(member).findField(key);
+        if (!planned.holdsCompiledObjects() || !field)
+            return std::nullopt;
+        const PlacedSlot& slot = planned.slots[*field];
+        if (!slot.hasStorage() || slot.isOutOfLine() || slot.mayExistWithoutStorage || !traitsOf(slot.representation).hasAbsent || (found && !found->hasLocationOf(slot)))
+            return std::nullopt;
+        found = slot;
+    }
+    return found;
+}
+
+// `Message.prototype.retries = 3`: the slot of the field was found empty, and most objects leave it so. In fast code the site is asked in line.
+// A slot that is not filled may still say that the field lies elsewhere or is undefined, so the read looks for the one pattern that says the object has no such property.
+Boxed AccessEmitter::getMemberAboveEmptySlot(const ValueContext& value)
+{
+    Boxed receiver = in<Boxed>(value->receiverOperand());
+    PropertyKeyID key = value->key();
+    SiteCacheID cache = value->siteCache();
+    std::optional<uint32_t> identifier = build().identifierNumbering().numberOf(key);
+    // A read above the object asks this site, and only this read fills it.
+    bool fillsSite = cache && identifier && RowDisplacementTable::hasColumn(*identifier) && std::ranges::any_of(m_function.values, [&](const Value& other) {
+        return other.opcode == Opcode::ReadAboveFreshObject && other.accessSite() == value->accessSite();
+    });
+    if (fillsSite) {
+        recordArrival(value, receiver);
+        return Boxed(callStub(value, stubThatReadsAtSite(*identifier, value->receiverOperand()), { receiver.value(), siteCacheAddress(cache).value() }, { .immediate = *identifier, .isOnRarePath = true }).first);
+    }
+    bool readsAtSite = cache && identifier && value.shape() == CodeShape::Fast && RowDisplacementTable::hasColumn(*identifier) && comesAgain(value);
+    std::optional<PlacedSlot> slot = readsAtSite ? findSlotInCellOfEveryMember(m_program, m_placement, typeOf(value->receiverOperand()), key) : std::nullopt;
+    if (!slot)
+        return getById(value, receiver, key, cache, std::nullopt, value->receiverOperand());
+
+    recordArrival(value, receiver);
+    CellPointer object = unboxCell(receiver);
+    Pointer site = siteCacheAddress(cache);
+    auto partOfSlot = [&](ptrdiff_t offset) {
+        return m_out.address(m_heaps.AOTInstance_siteCaches, site.value(), offset);
+    };
+    LBasicBlock asksStub = newBlock();
+    Join<Boxed> join(m_out);
+    // Arguments of one call load in an order that differs by compiler.
+    Word32 structureInSlot(m_out.load32(partOfSlot(Slot::offsetOfStructureID())));
+    branchUnless(equal(structureInSlot, loadStructureID(object)), asksStub);
+    branchUnless(equal(Word32(m_out.load8ZeroExt32(partOfSlot(Slot::offsetOfKind()))), static_cast<int32_t>(Slot::Kind::FieldOrInherited)), asksStub);
+    // A getter needs a call, and where an empty slot may stand for undefined the key order decides.
+    Word32 flags(m_out.load8ZeroExt32(partOfSlot(Slot::offsetOfFlags())));
+    constexpr uint8_t flagsOfInheritedValue = Slot::needsHandler | Slot::isOwn | Slot::dependsOnChain | Slot::inheritedIsOutOfLine;
+    branchUnless(logicalNot(hasBits(flags, static_cast<uint8_t>(~flagsOfInheritedValue))), asksStub);
+    SlotEmitter& slots = emitter<SlotEmitter>();
+    branchUnless(slots.holdsAbsent(slots.addressOf(object, *slot, MemoryLocation::objectField(key, typeOf(value->receiverOperand()).layouts)), slot->representation), asksStub);
+    CellPointer holder = decode(NarrowReference(m_out.load32(partOfSlot(Slot::offsetOfPayload() + OBJECT_OFFSETOF(Slot::FieldAndHolderPayload, holder)))));
+    Pointer butterfly(m_out.loadPtr(m_out.address(m_heaps.root, holder.value(), JSObject::butterflyOffset())));
+    Pointer storage = select(hasBits(flags, Slot::inheritedIsOutOfLine), butterfly, Pointer(holder.value()));
+    LValue offset = m_out.shl(m_out.signExt32To64(m_out.load16SignExt32(partOfSlot(Slot::offsetOfLocation()))), 3);
+    join.add(Boxed(m_out.load64(m_out.address(m_heaps.root, m_out.add(storage.value(), offset), 0))));
+
+    m_out.appendTo(asksStub);
+    join.add(Boxed(callStub(value, stubThatReadsAtSite(*identifier, value->receiverOperand()), { receiver.value(), site.value() }, { .immediate = *identifier, .isOnRarePath = true }).first));
+    return join.finish();
+}
+
+// The read behind a miss stands for this one where the site has no answer: it has the object, fills the site, and names the allocation of the object.
+// The read in the source may have other copies in the function. Each has a site of its own, which the one behind the miss does not fill.
+static const Value* findReadThatMakesTheObject(const Function& function, FunctionAnalyses& analyses, ValueID id)
+{
+    const Value& read = function.at(id);
+    Dominators& dominators = analyses.dominators();
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        const Terminator& terminator = function.at(block).terminator;
+        if (!terminator.isConditionalBranch())
+            continue;
+        const Value& test = function.at(terminator.conditionOperand());
+        if (test.opcode != Opcode::DidReadAbove || test.valueOperand() != id)
+            continue;
+        for (BlockID behindMiss : analyses.cfg().reversePostOrder()) {
+            if (!dominators.dominates(terminator.notTaken().block, behindMiss))
+                continue;
+            for (ValueID candidateID : function.at(behindMiss).values) {
+                const Value& candidate = function.at(candidateID);
+                if (candidate.opcode == Opcode::SuperGet && candidate.key() == read.key() && candidate.baseOperand() == candidate.receiverOperand() && candidate.accessSite() == read.accessSite())
+                    return &candidate;
+            }
+        }
+    }
+    return nullptr;
+}
+
+// An object nobody has seen yet, whose slot is known to be empty: what its Structure says of the name needs no object, so that the object need not be made.
+void AccessEmitter::generateReadAboveFreshObject(const ValueContext& value)
+{
+    const Value* partner = findReadThatMakesTheObject(m_function, analyses(), value.id());
+    const Value* object = partner ? &m_function.at(sameObjectThroughCasts(m_function, partner->receiverOperand())) : nullptr;
+    if (!partner || !partner->siteCache() || !object || object->opcode != Opcode::NewObject || !object->allocation()) {
+        define(value, Boxed(m_out.constInt64(0)));
+        return;
+    }
+    Pointer site = siteCacheAddress(partner->siteCache());
+    auto partOfSlot = [&](ptrdiff_t offset) {
+        return m_out.address(m_heaps.AOTInstance_siteCaches, site.value(), offset);
+    };
+    LBasicBlock hasNoAnswer = newBlock();
+    Join<Boxed> join(m_out);
+    Pointer record = emitter<CellAllocationEmitter>().allocationSiteRecord(object->allocation());
+    Word32 structureOfObject(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), record.value(), AllocationSiteRecord::offsetOfHeader())));
+    Word32 structureInSlot(m_out.load32(partOfSlot(Slot::offsetOfStructureID())));
+    branchUnless(equal(structureInSlot, structureOfObject), hasNoAnswer);
+    branchUnless(equal(Word32(m_out.load8ZeroExt32(partOfSlot(Slot::offsetOfKind()))), static_cast<int32_t>(Slot::Kind::FieldOrInherited)), hasNoAnswer);
+    Word32 flags(m_out.load8ZeroExt32(partOfSlot(Slot::offsetOfFlags())));
+    constexpr uint8_t flagsOfInheritedValue = Slot::needsHandler | Slot::isOwn | Slot::dependsOnChain | Slot::inheritedIsOutOfLine;
+    branchUnless(logicalNot(hasBits(flags, static_cast<uint8_t>(~flagsOfInheritedValue))), hasNoAnswer);
+    CellPointer holder = decode(NarrowReference(m_out.load32(partOfSlot(Slot::offsetOfPayload() + OBJECT_OFFSETOF(Slot::FieldAndHolderPayload, holder)))));
+    Pointer butterfly(m_out.loadPtr(m_out.address(m_heaps.root, holder.value(), JSObject::butterflyOffset())));
+    Pointer storage = select(hasBits(flags, Slot::inheritedIsOutOfLine), butterfly, Pointer(holder.value()));
+    LValue offset = m_out.shl(m_out.signExt32To64(m_out.load16SignExt32(partOfSlot(Slot::offsetOfLocation()))), 3);
+    join.add(Boxed(m_out.load64(m_out.address(m_heaps.root, m_out.add(storage.value(), offset), 0))));
+
+    m_out.appendTo(hasNoAnswer);
+    join.add(Boxed(m_out.constInt64(0)));
+    define(value, join.finish());
+}
+
+void AccessEmitter::generateDidReadAbove(const ValueContext& value)
+{
+    if (LValue didAnswer = m_didTablesAnswer.get(value->valueOperand().index())) {
+        defineTest(value, Condition(didAnswer));
+        return;
+    }
+    defineTest(value, isNotEmpty(in<Boxed>(value->valueOperand())));
+}
+
+// What the front cell of the Structure and the name says where no code has to run: a value of the object itself or of an object above it, in the cell or in the butterfly, and undefined for a name that is nowhere.
+// Everything else is no answer.
+Boxed AccessEmitter::getByTablesOrNothing(const ValueContext& value)
+{
+    std::optional<uint32_t> identifier = build().identifierNumbering().numberOf(value->key());
+    if (!identifier || !RowDisplacementTable::hasColumn(*identifier) || value.shape() == CodeShape::Compact)
+        return Boxed(m_out.constInt64(0));
+    constexpr ptrdiff_t front = AOT_INSTANCE_OFFSET(propertyCaches) + PropertyCacheWords::offsetOfFront(SlotAccess::Read);
+    constexpr uint32_t biasedBitsOfAbsent = static_cast<uint8_t>(Slot::Kind::Absent) ^ PackedSlot::ownInlineValueBits;
+    static_assert((static_cast<uint8_t>(Slot::Kind::Value) ^ PackedSlot::ownInlineValueBits) == PackedSlot::isOwn);
+    static_assert(PackedSlot::offsetOfLocation() == sizeof(uint32_t) && PackedSlot::offsetOfBiasedKindAndFlags() == PackedSlot::offsetOfLocation() + 1 && PackedSlot::offsetOfName() == PackedSlot::offsetOfLocation() + 2 && sizeof(PackedSlot) == sizeof(uint64_t));
+    const uint32_t upperHalfOfValueInCell = PackedSlot::upperHalfForOwnInlineValue(static_cast<uint16_t>(*identifier));
+    // One heap, so that a read of it is known again behind a join of paths, none of which wrote it.
+    const B3::AbstractHeap& tables = m_heaps.AOTPropertyCaches_front;
+
+    Boxed receiver = in<Boxed>(value->objectOperand());
+    LBasicBlock isNotInCell = newBlock();
+    LBasicBlock isNotAbsent = newBlock();
+    LBasicBlock isNotOwn = newBlock();
+    LBasicBlock isNotInCellOfHolder = newBlock();
+    LBasicBlock hasNoAnswer = newBlock();
+    LBasicBlock continuation = newBlock();
+    Vector<ValueFromBlock, 4> answers;
+    Vector<ValueFromBlock, 4> didAnswer;
+    auto answer = [&](Boxed found, bool isAnswer) {
+        answers.append(m_out.anchor(found.value()));
+        didAnswer.append(m_out.anchor(m_out.constInt32(isAnswer)));
+        m_out.jump(continuation);
+    };
+    if (!typeOf(value->objectOperand()).isObject())
+        branchUnless(isCell(receiver), hasNoAnswer);
+    CellPointer object = unboxCell(receiver);
+    LValue granule = m_out.zeroExtPtr(m_out.lShr(loadStructureID(object).value(), StructureRowWords::granuleShift));
+    Pointer rows = loadImmutablePointer(front + OBJECT_OFFSETOF(FrontWords, rowsForStructureIDZero));
+    LValue row = m_out.zeroExtPtr(m_out.load32(m_out.address(tables, m_out.add(rows.value(), m_out.shl(granule, 2)), 0)));
+    Pointer plane(m_out.loadPtr(instanceField(tables, front + OBJECT_OFFSETOF(FrontWords, plane))));
+    LValue firstCellOfRow = m_out.add(plane.value(), m_out.shl(row, 3));
+    auto partOfCell = [&](ptrdiff_t offset) {
+        return m_out.address(tables, firstCellOfRow, static_cast<ptrdiff_t>(*identifier * sizeof(PackedSlot)) + offset);
+    };
+    Word32 upperHalf(m_out.load32(partOfCell(PackedSlot::offsetOfLocation())));
+    branchUnless(equal(upperHalf, static_cast<int32_t>(upperHalfOfValueInCell)), isNotInCell);
+    LValue offsetInCell = m_out.shl(m_out.zeroExtPtr(m_out.load32(partOfCell(PackedSlot::offsetOfPayload()))), 3);
+    answer(Boxed(m_out.load64(m_out.address(m_heaps.root, m_out.add(object.value(), offsetInCell), 0))), true);
+
+    m_out.appendTo(isNotInCell);
+    branchUnless(equal(upperHalf, static_cast<int32_t>(upperHalfOfValueInCell | biasedBitsOfAbsent << 8)), isNotAbsent);
+    answer(undefined(), true);
+
+    m_out.appendTo(isNotAbsent);
+    branchUnless(equal(upperHalf, static_cast<int32_t>(upperHalfOfValueInCell | PackedSlot::isOutOfLine << 8)), isNotOwn);
+    Pointer butterfly(m_out.loadPtr(m_out.address(m_heaps.root, object.value(), JSObject::butterflyOffset())));
+    LValue offsetInButterfly = m_out.shl(m_out.signExt32To64(m_out.load32(partOfCell(PackedSlot::offsetOfPayload()))), 3);
+    answer(Boxed(m_out.load64(m_out.address(m_heaps.root, m_out.add(butterfly.value(), offsetInButterfly), 0))), true);
+
+    // A value of an object above: the cell names the holder, and the place in it by one byte.
+    m_out.appendTo(isNotOwn);
+    Word32 nameAndKind(m_out.lShr(upperHalf.value(), 8));
+    LValue offsetInHolder = m_out.shl(m_out.signExt32To64(m_out.load8SignExt32(partOfCell(PackedSlot::offsetOfLocation()))), 3);
+    branchUnless(equal(nameAndKind, static_cast<int32_t>(upperHalfOfValueInCell >> 8 | PackedSlot::isOwn)), isNotInCellOfHolder);
+    CellPointer holder = decode(NarrowReference(m_out.load32(partOfCell(PackedSlot::offsetOfPayload()))));
+    answer(Boxed(m_out.load64(m_out.address(m_heaps.root, m_out.add(holder.value(), offsetInHolder), 0))), true);
+
+    m_out.appendTo(isNotInCellOfHolder);
+    branchUnless(equal(nameAndKind, static_cast<int32_t>(upperHalfOfValueInCell >> 8 | PackedSlot::isOwn | PackedSlot::isOutOfLine)), hasNoAnswer);
+    CellPointer holderWithButterfly = decode(NarrowReference(m_out.load32(partOfCell(PackedSlot::offsetOfPayload()))));
+    Pointer butterflyOfHolder(m_out.loadPtr(m_out.address(m_heaps.root, holderWithButterfly.value(), JSObject::butterflyOffset())));
+    answer(Boxed(m_out.load64(m_out.address(m_heaps.root, m_out.add(butterflyOfHolder.value(), offsetInHolder), 0))), true);
+
+    m_out.appendTo(hasNoAnswer);
+    answer(Boxed(m_out.constInt64(0)), false);
+
+    m_out.appendTo(continuation);
+    m_didTablesAnswer.set(value.id().index(), m_out.phi(B3::Int32, didAnswer));
+    return Boxed(m_out.phi(B3::Int64, answers));
 }
 
 // No layout of the receivers has the name, so the answer lies above the object: in fast code the site is asked in line.
@@ -352,6 +568,70 @@ void AccessEmitter::generateGetCachedGetter(const ValueContext& value)
     define(value, join.finish());
 }
 
+// It stands ahead of a loop, where the code is not fast code.
+void AccessEmitter::generateGetCachedValue(const ValueContext& value)
+{
+    SiteCacheID cache = value->siteCache();
+    std::optional<uint32_t> identifier = findIdentifierNumber(value, value->key());
+    Boxed absent = boxedConstant(JSValue());
+    if (!cache || !identifier) {
+        define(value, absent);
+        return;
+    }
+
+    Pointer site = siteCacheAddress(cache);
+    LBasicBlock isNoValue = newBlock();
+    LBasicBlock isThere = newBlock();
+    LBasicBlock holdsReference = newBlock();
+    LBasicBlock asksRunTime = newBlock();
+    LBasicBlock hasOtherStructure = newBlock();
+    LBasicBlock findsNothing = newBlock();
+    Join<Boxed> join(m_out);
+    Boxed receiver = in<Boxed>(value->objectOperand());
+    if (representationOf(value->objectOperand()) != Representation::Cell)
+        branchUnless(isCell(receiver), findsNothing);
+    CellPointer object = unboxCell(receiver);
+    join.add(loadBySlotAtSite(object, site, Slot::Kind::Value, isNoValue, hasOtherStructure));
+
+    auto partOfSlot = [&](ptrdiff_t offset) {
+        return m_out.address(m_heaps.AOTInstance_siteCaches, site.value(), offset);
+    };
+    m_out.appendTo(isNoValue);
+    Word32 kind(m_out.load8ZeroExt32(partOfSlot(Slot::offsetOfKind())));
+    branchUnless(equal(kind, static_cast<int32_t>(Slot::Kind::Absent)), isThere);
+    join.add(undefined());
+
+    // A field of a compiled object above this one: the slot names the word that holds the integer, or with a negative number the reference. Any other word, and any other form of field, is read by the run time.
+    m_out.appendTo(isThere);
+    branchUnless(equal(kind, static_cast<int32_t>(Slot::Kind::InheritedField)), findsNothing);
+    Word32 word(m_out.load16SignExt32(partOfSlot(Slot::offsetOfLocation())));
+    LValue holder = m_out.load64(partOfSlot(Slot::offsetOfPayload()));
+    auto loadWord = [&](Word32 index) {
+        return m_out.load32(m_out.address(m_heaps.root, m_out.add(holder, m_out.shl(m_out.zeroExtPtr(index.value()), 2)), 0));
+    };
+    branchUnless(greaterThan(word, 0), holdsReference);
+    Word32 integer(loadWord(word));
+    branchUnless(greaterThanOrEqual(integer, minInlineInt32), asksRunTime);
+    join.add(boxInt32(integer));
+
+    m_out.appendTo(holdsReference);
+    branchUnless(lessThan(word, word32(0)), asksRunTime);
+    NarrowReference reference(loadWord(Word32(m_out.neg(word.value()))));
+    branchUnless(isCellReferenceAmongAllWords(reference), asksRunTime);
+    join.add(boxCell(decode(reference)));
+
+    m_out.appendTo(hasOtherStructure);
+    branchUnless(countMissAtSite(site), findsNothing);
+    m_out.jump(asksRunTime);
+
+    m_out.appendTo(asksRunTime);
+    join.add(callOperation<Boxed>(value, RuntimeOperation::ReadValueAndFillSiteCache, { object, word32(static_cast<int32_t>(*identifier)), site }, { .isOnRarePath = true }));
+
+    m_out.appendTo(findsNothing);
+    join.add(absent);
+    define(value, join.finish());
+}
+
 void AccessEmitter::putFreeName(const ValueContext& value)
 {
     Boxed stored = in<Boxed>(value->valueOperand());
@@ -419,6 +699,19 @@ void AccessEmitter::generateGetGlobalBinding(const ValueContext& value)
 
     bool seesScriptBindings = value->seesScriptBindings();
     Pointer record = globalBindingAddress(binding);
+    if (probesBindingLocationInline(value.shape()) && m_placement.globalBindings().bindings[binding.index()].isStoredThroughBinding) {
+        LBasicBlock slowPath = newBlock();
+        Join<Boxed> join(m_out);
+        Boxed read(m_out.load64(globalBindingLocationOrElse(record, seesScriptBindings, slowPath)));
+        branchUnless(isNotEmpty(read), slowPath);
+        validateGlobalBinding(value, read);
+        join.add(read);
+        m_out.appendTo(slowPath);
+        RuntimeOperation operation = seesScriptBindings ? RuntimeOperation::GetGlobalBinding : RuntimeOperation::GetGlobalObjectBinding;
+        join.add(callOperation<Boxed>(value, operation, { word32(static_cast<int32_t>(binding.index())) }, { .isOnRarePath = true }));
+        define(value, join.finish());
+        return;
+    }
     LBasicBlock constantCase = newBlock();
     LBasicBlock slowPath = newBlock();
     Join<Boxed> join(m_out);
@@ -469,7 +762,13 @@ void AccessEmitter::generateSetGlobalBinding(const ValueContext& value)
         callVoidOperation(value, operation, { word32(static_cast<int32_t>(binding.index())), stored }, { .isOnRarePath = isOnRarePath });
     };
     if (!probesBindingLocationInline(value.shape())) {
-        storeByOperation(false);
+        // The first store through a record files it, so a store that never comes again has nothing to find there.
+        if (!comesAgain(value)) {
+            storeByOperation(false);
+            return;
+        }
+        GlobalBindingScope scope = seesScriptBindings ? GlobalBindingScope::ScriptsAndGlobalObject : GlobalBindingScope::GlobalObject;
+        callStub(value, AOT::setGlobalBinding(scope, forMode(value->mode(), true, false)), { stored.value() }, { .immediate = binding.index() });
         return;
     }
 
@@ -486,9 +785,43 @@ void AccessEmitter::generateSetGlobalBinding(const ValueContext& value)
     m_out.appendTo(continuation);
 }
 
+// The tables answer for a compiled object without asking the run time, which knows the names of the fields that were removed as unread.
+void AccessEmitter::checkAbsentFieldWasNotRemoved(const ValueContext& read, Boxed result)
+{
+    std::optional<uint32_t> identifier = build().identifierNumbering().numberOf(read->key());
+    if (!identifier)
+        return;
+    Boxed receiver = in<Boxed>(read->objectOperand());
+    LBasicBlock isAbsent = newBlock();
+    LBasicBlock isCellBlock = newBlock();
+    LBasicBlock isCompiledObject = newBlock();
+    LBasicBlock continuation = newBlock();
+    branch(equal(result, undefined()), { normalEdge(isAbsent), normalEdge(continuation) });
+    m_out.appendTo(isAbsent);
+    branch(isCell(receiver), { normalEdge(isCellBlock), normalEdge(continuation) });
+    m_out.appendTo(isCellBlock);
+    CellPointer cell = unboxCell(receiver);
+    branch(hasCellType(cell, CompiledObjectType), { normalEdge(isCompiledObject), normalEdge(continuation) });
+    m_out.appendTo(isCompiledObject);
+    callWithoutSite<Integer>(RuntimeOperation::ValidateLookup, { cell, word32(static_cast<int32_t>(*identifier)), cell });
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+}
+
 void AccessEmitter::generatePropGet(const ValueContext& value)
 {
-    define(value, value->isFreeName() ? getFreeName(value) : getMemberAboveLayouts(value));
+    if (value->isFreeName()) {
+        define(value, getFreeName(value));
+        return;
+    }
+    if (value->asksOnlyTables()) {
+        define(value, getByTablesOrNothing(value));
+        return;
+    }
+    Boxed result = getMemberAboveLayouts(value);
+    if (generator().validates())
+        checkAbsentFieldWasNotRemoved(value, result);
+    define(value, result);
 }
 
 void AccessEmitter::putNamedProperty(const ValueContext& value, Boxed object, PutMode mode)
@@ -501,6 +834,8 @@ void AccessEmitter::putNamedProperty(const ValueContext& value, Boxed object, Pu
         return;
     }
     recordArrival(value, object);
+    // The stub finds the record of the field through the shape of the object.
+    checkIsCompiledObjectOf(unboxCell(object), typeOf(value->objectOperand()).layouts);
     StubKey stub = putKnownField(mode);
     if (storedFieldTakesAnyValue(m_program, m_placement, m_function, value.value()))
         stub = putKnownFieldThatTakesAnyValue(mode);
@@ -529,6 +864,12 @@ void AccessEmitter::generatePropDefine(const ValueContext& value)
             putByVal(value, object, key, in<Boxed>(value->valueOperand()), PutMode::Define);
             return;
         }
+    }
+    if (m_definitionsWithCopy.get(value.id().index())) {
+        ifElse(isZero(Word32(m_out.load32(mutableInstanceField(AOT_INSTANCE_OFFSET(objects.copyHasItsNames))))), [&] {
+            putNamedProperty(value, object, PutMode::Define);
+        }, [] { });
+        return;
     }
     putNamedProperty(value, object, PutMode::Define);
 }
@@ -622,9 +963,51 @@ std::optional<AccessEmitter::ElementKey> AccessEmitter::elementKeyOf(const Value
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+std::optional<AccessEmitter::ReadByParts> AccessEmitter::findReadByPartsOf(ValueID sumOrCast)
+{
+    ValueID sum = sumOrCast;
+    while (m_function.at(sum).opcode == Opcode::Upcast)
+        sum = m_function.at(sum).valueOperand();
+    const Value& joined = m_function.at(sum);
+    if (joined.opcode != Opcode::Strcat || !joined.isLikelyKey() || joined.partsOperands().size() != 2)
+        return std::nullopt;
+    for (ValueID part : joined.partsOperands()) {
+        if (typeOf(part).hasObjects() || typeOf(part).primitives & Primitive::AnySymbol)
+            return std::nullopt;
+    }
+    const UseLists& useLists = analyses().useLists();
+    if (useLists.locationOf(sum).placement != ValuePlacement::InBlock || m_function.at(useLists.blockOf(sum)).shape == CodeShape::Compact)
+        return std::nullopt;
+    for (ValueID key = sum;;) {
+        std::optional<Use> use = useLists.singleUse(key);
+        if (!use || use->kind != Use::Kind::Operand)
+            return std::nullopt;
+        ValueLocation location = useLists.locationOf(key);
+        if (useLists.locationOf(use->user) != ValueLocation { ValuePlacement::InBlock, location.block, location.index + 1 })
+            return std::nullopt;
+        const Value& user = m_function.at(use->user);
+        if (user.opcode == Opcode::ElemGet) {
+            if (OperandPosition::property(Opcode::ElemGet) != use->operandIndex || user.keyIsIntegral())
+                return std::nullopt;
+            return ReadByParts { use->user, joined.partsOperands()[0], joined.partsOperands()[1] };
+        }
+        if (user.opcode != Opcode::Upcast)
+            return std::nullopt;
+        key = use->user;
+    }
+}
+
 void AccessEmitter::generateElemGet(const ValueContext& value)
 {
     Boxed object = in<Boxed>(value->objectOperand());
+    if (std::optional<ReadByParts> byParts = findReadByPartsOf(value->propertyOperand())) {
+        RELEASE_ASSERT(byParts->read == value.id());
+        build().statistics().count(StatisticID::KeysMadeAsNames);
+        recordArrival(value, object);
+        BaseOfKeyedRead base = typeOf(value->objectOperand()).isObject() ? BaseOfKeyedRead::IsCell : BaseOfKeyedRead::IsAnyValue;
+        define(value, Boxed(callStub(value, getByValOfKeyOfPair(base), { object.value(), in<Boxed>(byParts->first).value(), in<Boxed>(byParts->second).value() }).first));
+        return;
+    }
     std::optional<ElementKey> key = elementKeyOf(value);
     if (!key) {
         define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
@@ -637,7 +1020,26 @@ void AccessEmitter::generateElemGet(const ValueContext& value)
     } else if (typeOf(value->objectOperand()).isObject() && typeOf(value->propertyOperand()).isString())
         stub = getByValCachedCells();
     recordArrival(value, object);
-    define(value, Boxed(callStub(value, stub, { object.value(), key->value }).first));
+    ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
+    const PlacedSlot* extraPropertiesWord = elements.extraPropertiesWordOfReadByPosition(value);
+    if (!extraPropertiesWord) {
+        define(value, Boxed(callStub(value, stub, { object.value(), key->value }).first));
+        return;
+    }
+    LBasicBlock outOfLine = newBlock();
+    OperandJoin join(m_out, Representation::JSValue);
+    Integer index;
+    if (key->isInteger)
+        index = Integer(key->value);
+    else {
+        Boxed boxedKey(key->value);
+        branchUnless(isInt32(boxedKey), outOfLine);
+        index = signExtended(unboxInt32(boxedKey));
+    }
+    join.add(elements.readElementOfExtraProperties(in<CellPointer>(value->objectOperand()), *extraPropertiesWord, index, outOfLine));
+    m_out.appendTo(outOfLine);
+    join.add(Boxed(callStub(value, stub, { object.value(), key->value }).first));
+    define(value, join.finish());
 }
 
 void AccessEmitter::generateElemSet(const ValueContext& value)

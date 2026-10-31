@@ -1,4 +1,4 @@
-# A field of a literal that every object gets where it is made and nothing stores to afterwards gets the type of the one primitive constant that every allocation and every piece of data lists for it, if an access may find it and only the bodies of files make the literal
+# A field of a literal that every object gets where it is made and nothing stores to afterwards gets the type of the one primitive constant that every allocation and every piece of data lists for it, if an access may find it and only the bodies of files make the literal. A type does not say which fraction: a read off a receiver that is proven to be such an object becomes the number
 # FORM: Prepared
 # RUN: pass NarrowConstantVariables
 # CHECK: outcome: Changed
@@ -13,9 +13,10 @@
 # CHECK-NEXT: layout L8 name="sameConstantInData" fields=[{key="port" declared={type=80} {{*}}]
 # CHECK-NEXT: layout L9 name="otherConstantInData" fields=[{key="port" declared={type=number} {{*}}]
 # CHECK-NEXT: layout L10 kind=Instance name="instance" fields=[{key="port" declared={type=number} {{*}}]
-# CHECK-NEXT: layout L11 name="fraction" fields=[{key="half" declared={type=number} {{*}}]
+# CHECK-NEXT: layout L11 name="fraction" fields=[{key="half" declared={type=fractional} {{*}}]
 # CHECK-NEXT: layout L12 name="nobodyReads" fields=[{key="hidden" declared={type=number} {{*}}]
 # CHECK-NEXT: layout L13 name="madeByAFunction" fields=[{key="port" declared={type=number} {{*}}]
+# CHECK: v28: fractional = Double number=1.5
 
 module m0 path="/main.ts" displayPath="main.ts" body=f0
 module m1 path="/other.ts" displayPath="other.ts" body=f1

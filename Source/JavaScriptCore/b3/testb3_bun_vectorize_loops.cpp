@@ -1566,6 +1566,41 @@ static void testVectorConstantIsNotHeldAcrossPatchpointThatKeepsLowerHalves()
     }
 }
 
+// do { poll; store splat(0) } while (load). The first run folds the splat where it stands. A second run finds a constant, and puts every other constant into the first block.
+static void testReduceStrengthLeavesVectorConstantBehindPatchpoint()
+{
+    for (bool keepsOnlyLowerHalves : { true, false }) {
+        Policy policy = vectorPolicy(CPUFeatureSet::buildTarget());
+        policy.air.registers.patchpointsKeepOnlyLowerHalvesOfVectors = keepsOnlyLowerHalves;
+        Procedure proc { policy };
+        proc.setUsesSIMD();
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* loop = proc.addBlock();
+        BasicBlock* exit = proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t, int64_t*, int64_t>(proc, root).eager();
+        graph.jump(root, loop);
+        PatchpointValue* poll = graph.emptyPatchpoint(loop);
+        poll->effects = Effects::none();
+        poll->effects.writesLocalState = true;
+        poll->effects.reads = HeapRange::top();
+        poll->effects.exitsSideways = true;
+        poll->isLoopPoll = true;
+        poll->setGenerator([](CCallHelpers&, const StackmapGenerationParams&) { });
+        graph.store(loop, loop->appendNew<SIMDValue>(proc, Origin(), VectorSplat, V128, SIMDLane::i16x8, SIMDSignMode::None, graph.int32(loop, 0)), arguments[1], 0, firstHeap);
+        graph.branch(loop, graph.load(loop, Int64, arguments[1], 32, secondHeap), loop, exit);
+        graph.ret(exit, graph.int64(exit, 0));
+        proc.resetReachability();
+        validate(proc);
+        for (unsigned run = 0; run < 2; ++run) {
+            reduceStrength(proc);
+            validate(proc);
+        }
+        CHECK(proc.hasEverAdded(Const128));
+        CHECK_EQ(findPatchpointWhereVectorIsAlive(proc), keepsOnlyLowerHalves ? nullptr : poll);
+    }
+}
+
 static void testPipelineVectorizesLoopOverElements()
 {
     const ElementKind& kind = elementKinds[0];
@@ -1944,6 +1979,7 @@ void addBunLoopVectorizingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVectorizeLoopsKeepsWhatHoldsValuesAlive());
     RUN(testVectorizeLoopsCountsWithIntegersOf32Bits());
     RUN(testVectorConstantIsNotHeldAcrossPatchpointThatKeepsLowerHalves());
+    RUN(testReduceStrengthLeavesVectorConstantBehindPatchpoint());
     RUN(testPipelineVectorizesLoopOverElements());
     RUN(testFindsPatchpointWhereVectorIsAlive());
     RUN(testVectorizeLoopsAsksWhatTargetHas());

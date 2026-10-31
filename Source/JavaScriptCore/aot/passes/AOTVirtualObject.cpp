@@ -22,6 +22,8 @@
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include "ArrayConventions.h"
+#include "JSArrayIterator.h"
+#include "JSSetIterator.h"
 #include <algorithm>
 #include <wtf/EnumSet.h>
 #include <wtf/PrintStream.h>
@@ -61,6 +63,9 @@ static bool canBeDeferred(const EffectsOnEdges& effects, VirtualObjectKind kind)
         return onlyReadsAndCreatesStrings(normal);
     if (kind == VirtualObjectKind::ViewRange)
         return onlyMakesView(normal);
+    // The table speaks for every receiver. Of a list the call reads nothing: it makes the iterator and stores the list in it.
+    if (kind == VirtualObjectKind::ArrayIterator || kind == VirtualObjectKind::CollectionIterator)
+        return true;
     return normal.isUnobservable() && normal.reads.containsOnly(bookkeepingHeaps);
 }
 
@@ -205,6 +210,27 @@ static TypeID prefixElementTypeOf(const Program& program, const ClassPart& array
     return internOrFind(program, types, element.withPrimitives(Primitive::Undefined), TypeTable::anything);
 }
 
+bool makesArrayIterator(const Program& program, const Function& function, const Value& call)
+{
+    if (call.opcode != Opcode::CallBuiltin || !call.receiverOperand() || !program.typeOf(function, call.receiverOperand()).isSubsetOf(Type::builtinClass(BuiltinClasses::Array), program))
+        return false;
+    BuiltinID builtin = program.builtins().at(call.overload()).builtin;
+    return builtin == Builtins::ArrayPrototypeKeys || builtin == Builtins::ArrayPrototypeValues || builtin == Builtins::ArrayPrototypeEntries;
+}
+
+bool makesCollectionIterator(const Program& program, const Function& function, const Value& call)
+{
+    if (call.opcode != Opcode::CallBuiltin || !call.receiverOperand())
+        return false;
+    const Type& receiver = program.typeOf(function, call.receiverOperand());
+    BuiltinID builtin = program.builtins().at(call.overload()).builtin;
+    if (receiver.isSubsetOf(Type::builtinClass(BuiltinClasses::Map), program))
+        return builtin == Builtins::MapPrototypeKeys || builtin == Builtins::MapPrototypeValues || builtin == Builtins::MapPrototypeEntries;
+    if (receiver.isSubsetOf(Type::builtinClass(BuiltinClasses::Set), program))
+        return builtin == Builtins::SetPrototypeValues || builtin == Builtins::SetPrototypeEntries;
+    return false;
+}
+
 static DescribedObject describeBuiltinResult(FunctionAnalyses& analyses, const Value& call, VirtualObjectDescription description, TypeArena* types)
 {
     const Program& program = analyses.program();
@@ -213,6 +239,14 @@ static DescribedObject describeBuiltinResult(FunctionAnalyses& analyses, const V
         return unsupported(VirtualObjectSupport::NotFresh);
 
     const BuiltinOverload& overload = program.builtins().at(call.overload());
+    if (makesArrayIterator(program, function, call)) {
+        description.kind = VirtualObjectKind::ArrayIterator;
+        return supported(description);
+    }
+    if (makesCollectionIterator(program, function, call)) {
+        description.kind = VirtualObjectKind::CollectionIterator;
+        return supported(description);
+    }
     bool isNeverBuilt = !overload.code.fieldsForm && overload.code.prefixForm;
     switch (freshnessOf(analyses.effectContext(), function, call)) {
     case ResultFreshness::Unknown:
@@ -386,6 +420,8 @@ void forEachInitialField(const VirtualObjectContext& context, const VirtualObjec
         return;
     case VirtualObjectKind::Opaque:
     case VirtualObjectKind::ViewRange:
+    case VirtualObjectKind::ArrayIterator:
+    case VirtualObjectKind::CollectionIterator:
         // An opaque object is built as a copy of its allocation, with what the operands were at the allocation.
         value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
             functor(VirtualField::operand(operandIndex), operand);
@@ -440,6 +476,8 @@ std::optional<uint32_t> layoutFieldOf(const Program& program, const VirtualObjec
     case VirtualFieldKind::RangeStart:
     case VirtualFieldKind::RangeEnd:
     case VirtualFieldKind::Operand:
+    case VirtualFieldKind::Position:
+    case VirtualFieldKind::Table:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -508,7 +546,7 @@ TypeID typeOfField(const VirtualObjectContext& context, const VirtualObjectDescr
     case VirtualFieldKind::Capture: {
         if (!description.function)
             return TypeTable::never;
-        const Vector<DeclaredType>& captures = program.at(description.function).captures;
+        const auto& captures = program.at(description.function).captures;
         if (field.index >= captures.size())
             return TypeTable::never;
         return program.provenTypeOf(captures[field.index]);
@@ -529,6 +567,11 @@ TypeID typeOfField(const VirtualObjectContext& context, const VirtualObjectDescr
     case VirtualFieldKind::StringBase:
     case VirtualFieldKind::Operand:
         return typeOfInitialValue(context, description, field);
+    case VirtualFieldKind::Table:
+        return TypeTable::anything;
+    case VirtualFieldKind::Position:
+        // The library's next() adds one to whatever it reads, and only then is it known to have read a number.
+        return TypeTable::anything;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -829,6 +872,21 @@ VirtualFieldAccess lookUpField(const VirtualObjectContext& context, const Virtua
         if (description.kind != VirtualObjectKind::StringRange)
             return { };
         return { FieldLookup::DynamicElement, AbsentField::Unknown, PresentField::IsOwnData, { }, access.positionOperand() };
+    case Opcode::GetCollectionIteratorTable:
+    case Opcode::PutCollectionIteratorTable:
+        if (description.kind != VirtualObjectKind::CollectionIterator)
+            return { };
+        return createFieldAccess(VirtualField::part(VirtualFieldKind::Table), PresentField::IsOwnData, access.opcode == Opcode::PutCollectionIteratorTable ? AbsentField::FindsNothing : AbsentField::Unknown);
+    case Opcode::GetInternalField:
+    case Opcode::PutInternalField:
+        if (description.kind == VirtualObjectKind::CollectionIterator) {
+            if (access.index() != static_cast<uint32_t>(JSSetIterator::Field::Entry))
+                return { };
+            return createFieldAccess(VirtualField::part(VirtualFieldKind::Position), PresentField::IsOwnData, access.opcode == Opcode::PutInternalField ? AbsentField::FindsNothing : AbsentField::Unknown);
+        }
+        if (description.kind != VirtualObjectKind::ArrayIterator || access.index() != static_cast<uint32_t>(JSArrayIterator::Field::Index))
+            return { };
+        return createFieldAccess(VirtualField::part(VirtualFieldKind::Position), PresentField::IsOwnData, access.opcode == Opcode::PutInternalField ? AbsentField::FindsNothing : AbsentField::Unknown);
     case Opcode::GetMappedArgument:
     case Opcode::SetMappedArgument:
         return lookUpMappedArgument(description, access);
@@ -976,12 +1034,24 @@ VirtualFieldAccess lookUpElement(const VirtualObjectContext& context, const Virt
     const Program& program = context.program;
     if (std::optional<int64_t> index = integerConstantThroughCasts(program, context.function, position)) {
         // The other accesses go on to the property of that name. This test asks for an element, and none is at a position that is no index.
-        if (*index < 0 || *index > static_cast<int64_t>(MAX_ARRAY_INDEX))
-            return access.opcode == Opcode::IsElementPresent ? createAbsentAccess() : VirtualFieldAccess { };
+        if (*index < 0 || *index > static_cast<int64_t>(MAX_ARRAY_INDEX)) {
+            if (access.opcode == Opcode::IsElementPresent)
+                return createAbsentAccess();
+            return readsUndefinedWhenAbsent && description.kind == VirtualObjectKind::ArgumentList ? createDynamicElementAccess(position) : VirtualFieldAccess { };
+        }
         return createFieldAccess(VirtualField::element(static_cast<uint32_t>(*index)), PresentField::IsOwnData, whenAbsent);
     }
     // A read at an unknown number gives undefined for every number that is no position of an element.
     if (readsUndefinedWhenAbsent && program.typeOf(context.function, position).isNumber())
+        return createDynamicElementAccess(position);
+    // Such a key names "true", "false", "null" or "undefined". A list that is not built holds no property of those names, and its prototypes are built-ins, which are read-only in an executable and hold none either.
+    if (const Type& key = program.typeOf(context.function, position); isArray && access.opcode == Opcode::ElemGet && !key.isNever() && key.hasOnlyPrimitives(Primitive::Boolean | Primitive::UndefinedOrNull))
+        return createAbsentAccess();
+    // A read of the arguments in the frame makes a list for itself where the key turns out to be no number. No prototype of an array holds a getter of the program's, so nobody else ever sees that list.
+    if (description.kind == VirtualObjectKind::ArgumentList && access.opcode == Opcode::ElemGet)
+        return createDynamicElementAccess(position);
+    // The test in front of a read of a present element is answered for a list that is not built only where every position of the index's range holds an element.
+    if (isArray && access.opcode == Opcode::GetArrayElement && access.isPresent() && program.typeOf(context.function, position).isInteger())
         return createDynamicElementAccess(position);
     return { };
 }
@@ -1098,6 +1168,9 @@ static Value makeCopyOfAllocation(const AllocationRequest& request)
 {
     Value copy = request.prototype;
     for (const FieldValue& part : request.parts) {
+        // A store after the allocation puts an iterator where it stood.
+        if (part.field.kind == VirtualFieldKind::Position || part.field.kind == VirtualFieldKind::Table)
+            continue;
         RELEASE_ASSERT(part.field.kind == VirtualFieldKind::Operand);
         copy.setOperand(part.field.index, part.value);
     }
@@ -1116,6 +1189,8 @@ Value makeAllocation(const Program& program, const AllocationRequest& request)
         return makeArray(request);
     case VirtualObjectKind::Opaque:
     case VirtualObjectKind::ViewRange:
+    case VirtualObjectKind::ArrayIterator:
+    case VirtualObjectKind::CollectionIterator:
         return makeCopyOfAllocation(request);
     case VirtualObjectKind::ArgumentList:
         return request.prototype;
@@ -1177,6 +1252,8 @@ Value makeFieldRead(const Program& program, const VirtualObjectDescription& desc
     case VirtualObjectKind::Arguments:
     case VirtualObjectKind::StringRange:
     case VirtualObjectKind::BuiltinFields:
+    case VirtualObjectKind::ArrayIterator:
+    case VirtualObjectKind::CollectionIterator:
     case VirtualObjectKind::BuiltinPrefix:
         break;
     }
@@ -1211,6 +1288,8 @@ Value makeFieldStore(const Program& program, const VirtualObjectDescription& des
     case VirtualObjectKind::Arguments:
     case VirtualObjectKind::StringRange:
     case VirtualObjectKind::BuiltinFields:
+    case VirtualObjectKind::ArrayIterator:
+    case VirtualObjectKind::CollectionIterator:
     case VirtualObjectKind::BuiltinPrefix:
         break;
     }
@@ -1270,8 +1349,12 @@ SpeculativeLoad canLoadSpeculatively(const VirtualObjectContext& context, const 
     switch (description.kind) {
     case VirtualObjectKind::Environment: {
         // A variable has its type where the program reads it. Where nobody reads, the field may hold any word.
+        // A load would be the first read of a field that is recorded as never read, and what nothing reads may lose its stores and its room.
         std::optional<uint32_t> layoutField = layoutFieldOf(program, description, field);
-        isSafe = layoutField && !holdsDeclaredTypeOnlyBehindEntry(flowOf(program, { description.layout, *layoutField }).location);
+        if (layoutField) {
+            const LocationFlow& location = flowOf(program, { description.layout, *layoutField }).location;
+            isSafe = !holdsDeclaredTypeOnlyBehindEntry(location) && location.reads != ReadState::NeverRead;
+        }
         break;
     }
     case VirtualObjectKind::Closure:
@@ -1293,6 +1376,8 @@ SpeculativeLoad canLoadSpeculatively(const VirtualObjectContext& context, const 
     case VirtualObjectKind::Arguments:
     case VirtualObjectKind::StringRange:
     case VirtualObjectKind::BuiltinFields:
+    case VirtualObjectKind::ArrayIterator:
+    case VirtualObjectKind::CollectionIterator:
     case VirtualObjectKind::BuiltinPrefix:
         break;
     }
@@ -1328,6 +1413,8 @@ LateStore canStoreLate(const VirtualObjectContext& context, const VirtualObjectD
     case VirtualObjectKind::Arguments:
     case VirtualObjectKind::StringRange:
     case VirtualObjectKind::BuiltinFields:
+    case VirtualObjectKind::ArrayIterator:
+    case VirtualObjectKind::CollectionIterator:
     case VirtualObjectKind::BuiltinPrefix:
         return LateStore::Unknown;
     }

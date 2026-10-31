@@ -1,0 +1,24 @@
+# A name that two stars of a module export is no export of the module. The image lists such names, so that a link from outside it says why the name is not found
+# RUN: tables modules
+
+module m0 path="/stars.mjs" displayPath="stars.mjs" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}]
+module m1 path="/a.mjs" displayPath="a.mjs" body=f1
+module m2 path="/nested.mjs" displayPath="nested.mjs" body=f2
+ambiguousexport module=m2 name="same"
+ambiguousexport module=m0 name="other"
+ambiguousexport module=m0 name="same"
+entry module=m0
+
+function f0 name="stars" kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="a" module=m1 kind=Module results=[{type=anything}] {
+    Return
+}
+function f2 name="nested" module=m2 kind=Module results=[{type=anything}] {
+    Return
+}
+
+# CHECK: ambiguousExport module=m0 name="other"
+# CHECK-NEXT: ambiguousExport module=m0 name="same"
+# CHECK-NEXT: ambiguousExport module=m2 name="same"

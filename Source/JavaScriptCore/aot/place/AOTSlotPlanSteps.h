@@ -184,6 +184,8 @@ struct SlotUses {
     FastBitVector keysNamed;
     FastBitVector keysDefinedByDescriptor;
     FastBitVector stringsNamed;
+    // One bit: whether some code reads by a key that it finds only at run time.
+    FastBitVector readsByKeyFoundAtRunTime;
     BitVector functionsWhoseNewClosuresAreStoredInto;
 };
 

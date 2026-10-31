@@ -130,7 +130,7 @@ static Vector<LayoutSetID, 4> createArms(SelectionContext& context, const SlotAg
     Vector<size_t, 4> likeliestFirst(membersByArm.size(), [](size_t index) {
         return index;
     });
-    AOT::stableSort(likeliestFirst, std::ranges::greater { }, [&](size_t index) {
+    AOT::stableSortInLine(likeliestFirst, std::ranges::greater { }, [&](size_t index) {
         return likelihoods[index];
     });
 

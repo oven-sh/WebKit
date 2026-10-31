@@ -172,15 +172,15 @@ void ValueFlowHeapIndex::indexNodesWrittenUnder(const ValueFlowResultInputs& inp
             nodesOfManyMembers.append(index);
             continue;
         }
-        sets.forEachMember(node.objects, [&](ValueFlowObjectID member) {
+        sets.forEachMemberInLine(node.objects, [&](ValueFlowObjectID member) {
             entry.nodesOfMembers.append({ member.index(), index });
         });
     }
-    AOT::sort(entry.nodesOfMembers);
+    AOT::sortInLine(entry.nodesOfMembers);
     entry.writtenThroughUnknownObject = maker.get().uniteAll(throughUnknownObject.span());
     entry.writtenThroughUntrackedObject = maker.get().uniteAll(throughUntrackedObject.span());
     // The same value is written through one set after another as the set grows: whoever meets any of them finds that value, so they count as one.
-    AOT::sort(nodesOfManyMembers, { }, [&](uint32_t index) {
+    AOT::sortInLine(nodesOfManyMembers, { }, [&](uint32_t index) {
         return std::pair { entry.nodes[index].value, index };
     });
     for (size_t first = 0; first < nodesOfManyMembers.size();) {
@@ -322,7 +322,7 @@ ValueSetID ValueFlowHeapView::findWrittenUnder(ValueSetMaker& maker, ValueSetID 
             }
         }
     }
-    sets.forEachMember(objects, [&](ValueFlowObjectID member) {
+    sets.forEachMemberInLine(objects, [&](ValueFlowObjectID member) {
         auto first = std::ranges::lower_bound(entry.nodesOfMembers, NodeOfMember { member.index(), 0 });
         for (; first != entry.nodesOfMembers.end() && first->member == member.index(); ++first)
             parts.append(entry.nodes[first->node].value);
@@ -351,7 +351,7 @@ ValueSetID ValueFlowHeapView::prototypesOf(ValueSetID objects)
 ValueSetID ValueFlowHeapView::prototypesOfHeirs(ValueSetMaker& maker, ValueSetID heirs) const
 {
     Vector<ValueFlowObjectID, 8> atCreation;
-    m_inputs.sets().forEachMember(heirs, [&](ValueFlowObjectID object) {
+    m_inputs.sets().forEachMemberInLine(heirs, [&](ValueFlowObjectID object) {
         appendPrototypesAtCreation(object, atCreation);
     });
     return expand(maker, maker.unite(maker.of(atCreation.span()), maker.intersect(writtenUnder(maker, heirs, prototypeLinkName), m_inputs.universe().objects())));
@@ -636,7 +636,7 @@ static void appendBoundFunctionsBindingNoArgument(const ValueFlowResultInputs& i
     if (call.opcode != Opcode::Call && call.opcode != Opcode::CallList)
         return;
     inputs.sets().forEachMember(maker.intersect(callees, maker.intersect(universe.otherCallables(), universe.knownObjects())), [&](ValueFlowObjectID callee) {
-        if (bindsNoArgument(inputs.program, universe, callee))
+        if (bindsNoArgument(universe, callee))
             boundFunctions.append(callee);
     });
 }
@@ -664,6 +664,51 @@ static void findOperandsOf(const ValueFlowResultInputs& inputs, const ValueFlowH
 static ValueFlowCallKind kindOfCallBy(const ValueFlowStatement& call)
 {
     return call.opcode == Opcode::Call || call.opcode == Opcode::CallList ? ValueFlowCallKind::Call : ValueFlowCallKind::Construct;
+}
+
+ValueSetID valuesHandedToCalleesNobodyKnows(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetID among)
+{
+    constexpr uint32_t functionsPerTask = 64;
+    const ValueFlowUniverse& universe = inputs.universe();
+    uint32_t numberOfFunctions = inputs.program.functions.size();
+    std::span<const ValueFlowBodyRange> ranges = inputs.bodies().ranges();
+    std::span<const ValueFlowStatement> statements = inputs.bodies().statements();
+    ValueSetMakers makers(inputs);
+    Vector<ValueSetID> handedOverInTask((numberOfFunctions + functionsPerTask - 1) / functionsPerTask, [](size_t) {
+        return ValueSets::nothing;
+    });
+    forEachIndexInParallel(inputs.loops(), handedOverInTask.size(), [&](unsigned task, unsigned worker) {
+        ValueSetMaker& maker = makers.of(worker);
+        auto take = [&](ValueSetID values) {
+            if (!ValueSets::isComplement(values) && inputs.sets().meet(values, among))
+                handedOverInTask[task] = maker.unite(handedOverInTask[task], maker.intersect(values, among));
+        };
+        uint32_t first = task * functionsPerTask;
+        for (uint32_t function = first; function < std::min(first + functionsPerTask, numberOfFunctions); ++function) {
+            if (!inputs.isReached(FunctionID(function)))
+                continue;
+            for (uint32_t index = ranges[function].statement; index < ranges[function + 1].statement; ++index) {
+                if (!statementCallsValue(statements[index]))
+                    continue;
+                ValueSetID callees = valueSeenByRulesAt(inputs, maker, inputs.bodies().operandsOf(statements[index])[0]);
+                // A function that text made at run time has made is neither a closure of the program nor a built-in function.
+                bool isKnown = !ValueSets::isComplement(callees) && !inputs.sets().contains(callees, ValueFlowUniverse::unknownObject()) && !inputs.sets().contains(callees, ValueFlowUniverse::untrackedObject()) && !inputs.sets().meet(callees, universe.otherCallables());
+                if (isKnown)
+                    continue;
+                ValueFlowBuiltinApplication application;
+                application.kind = kindOfCallBy(statements[index]);
+                findOperandsOf(inputs, heap, maker, statements[index], application);
+                take(application.thisValue);
+                take(application.otherArguments);
+                for (ValueSetID argument : application.arguments)
+                    take(argument);
+            }
+        }
+    });
+    ValueSetID handedOver = ValueSets::nothing;
+    for (ValueSetID found : handedOverInTask)
+        handedOver = makers.of(0).unite(handedOver, found);
+    return handedOver;
 }
 
 void ValueFlowHeapIndex::findOperandsOfCalls(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap)
@@ -770,8 +815,8 @@ static void forEachBuiltinAppliedByGroup(const ValueFlowResultInputs& inputs, co
     ValueFlowCallKind kind = key.callKind();
     Vector<ValueFlowObjectID, 4> boundFunctions;
     if (!isConstruction(kind)) {
-        inputs.sets().forEachMember(heap.expandAmong(maker, key.set, maker.intersect(universe.otherCallables(), universe.knownObjects())), [&](ValueFlowObjectID callee) {
-            if (bindsNoArgument(inputs.program, universe, callee))
+        inputs.sets().forEachMemberInLine(heap.expandAmong(maker, key.set, maker.intersect(universe.otherCallables(), universe.knownObjects())), [&](ValueFlowObjectID callee) {
+            if (bindsNoArgument(universe, callee))
                 boundFunctions.append(callee);
         });
     }
@@ -786,12 +831,13 @@ static void forEachBuiltinAppliedByGroup(const ValueFlowResultInputs& inputs, co
         application.arguments.append(solver.possibleValuesOf(group.argument(index)));
     application.otherArguments = maker.unite(solver.possibleValuesOf(group.otherArguments), solver.possibleValuesOf(group.laterArguments));
     if (passesAnyOf(application, wantedOperands)) {
-        inputs.sets().forEachMember(builtinCallees, [&](ValueFlowObjectID callee) {
+        inputs.sets().forEachMemberInLine(builtinCallees, [&](ValueFlowObjectID callee) {
             bool isFunction = inputs.sets().contains(universe.builtinFunctions(), callee);
             if (!isFunction && !isAccessorCall)
                 return;
             application.builtin = universe.builtinOf(callee);
             application.kind = isFunction && isAccessorCall ? ValueFlowCallKind::Call : kind;
+            application.isCalleeListed = inputs.sets().contains(key.set, callee);
             functor(application);
         });
     }
@@ -963,17 +1009,17 @@ static BuiltinsToApply builtinsToApplyAmong(const ValueFlowResultInputs& inputs,
 {
     const ValueFlowUniverse& universe = inputs.universe();
     Vector<ValueFlowObjectID> objects;
-    inputs.sets().forEachMember(maker.unite(universe.builtinFunctions(), universe.builtinObjects()), [&](ValueFlowObjectID object) {
+    inputs.sets().forEachMemberInLine(maker.unite(universe.builtinFunctions(), universe.builtinObjects()), [&](ValueFlowObjectID object) {
         if (onlyOfBuiltins.quickGet(universe.builtinOf(object).index()) && !universe.builtinTables().isDescribedByCodeAlone(universe.builtinOf(object)))
             objects.append(object);
     });
     ValueSetID among = maker.of(objects.span());
-    return { maker.intersect(universe.builtinFunctions(), among), maker.intersect(universe.builtinObjects(), among) };
+    return { maker.intersect(universe.targetsOfBoundFunctionsAmongBuiltins(), among), maker.intersect(universe.builtinObjects(), among) };
 }
 
 void forEachBuiltinApplication(const ValueFlowResultInputs& inputs, ValueFlowHeapView& heap, NOESCAPE const ValueFlowBuiltinApplicationFunctor& functor)
 {
-    forEachBuiltinApplicationAmong(inputs, heap, { inputs.universe().builtinFunctions(), inputs.universe().builtinObjects() }, ValueSets::anything, functor);
+    forEachBuiltinApplicationAmong(inputs, heap, { inputs.universe().targetsOfBoundFunctionsAmongBuiltins(), inputs.universe().builtinObjects() }, ValueSets::anything, functor);
 }
 
 void forEachBuiltinApplication(const ValueFlowResultInputs& inputs, ValueFlowHeapView& heap, const BitVector& onlyOfBuiltins, NOESCAPE const ValueFlowBuiltinApplicationFunctor& functor)

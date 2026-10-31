@@ -169,6 +169,21 @@ struct ProgramTables {
     FOR_EACH_AOT_PROGRAM_TABLE(AOT_PROGRAM_TABLE_ACCESSOR)
 #undef AOT_PROGRAM_TABLE_ACCESSOR
 
+    // One table: first the members that start-up locks, then those of the table's locks that a test run leaves open, each with the first bit.
+    // Then the names that a test run opens on objects which take no other new name: two words a name, the object and the number of the string, each with both bits.
+    // An executable has the first kind only.
+    static constexpr uint32_t unlockedBuiltinMember = 1u << 31;
+    static constexpr uint32_t openedName = 3u << 30;
+    size_t numberOfWordsBelow(uint32_t mark) const
+    {
+        std::span<const uint32_t> members = constantAndUnlockedBuiltinMembers();
+        return std::ranges::lower_bound(members, mark) - members.begin();
+    }
+    std::span<const uint32_t> constantBuiltinMembers() const { return constantAndUnlockedBuiltinMembers().first(numberOfWordsBelow(unlockedBuiltinMember)); }
+    std::span<const uint32_t> unlockedBuiltinMembers() const { return constantAndUnlockedBuiltinMembers().first(numberOfWordsBelow(openedName)).subspan(numberOfWordsBelow(unlockedBuiltinMember)); }
+    std::span<const uint32_t> openedNames() const { return constantAndUnlockedBuiltinMembers().subspan(numberOfWordsBelow(openedName)); }
+    static bool isUnlocked(std::span<const uint32_t> unlockedBuiltinMembers, uint32_t member) { return std::ranges::binary_search(unlockedBuiltinMembers, member | unlockedBuiltinMember); }
+
     uint32_t constructorOfAllocation(uint32_t number) const
     {
         if (!allocations()[number].isConstructed)
@@ -247,18 +262,38 @@ struct ProgramTables {
     {
         return *std::ranges::lower_bound(functionsWithLargeCounts(), function, { }, [](const FunctionWithLargeCountsData& entry) -> uint32_t { return entry.function; });
     }
+    bool hasClosureNumber(uint32_t number) const { return number - closureFunctions.numbersBelow < closureFunctions.end - closureFunctions.first; }
+    // What closure words, requests for closures and the stubs have for a function that closures are made of.
+    uint32_t closureNumberOf(uint32_t function) const
+    {
+        ASSERT(function >= closureFunctions.first && function < closureFunctions.end);
+        return function - closureFunctions.first + closureFunctions.numbersBelow;
+    }
+    uint32_t closureFunctionWithNumber(uint32_t number) const
+    {
+        ASSERT(hasClosureNumber(number));
+        return closureFunctions.first + number - closureFunctions.numbersBelow;
+    }
     uint32_t functionLengthOf(uint32_t function) const
     {
         uint8_t length = functionLengths()[function - closureFunctions.first];
         return length == countsAreListed ? largeCountsOf(function).length() : length;
     }
-    CaptureCounts captureCountsOf(uint32_t function) const
+    CaptureCounts captureCountsOfClosureNumber(uint32_t number) const
     {
-        uint8_t counts = closureCaptureCounts()[function - closureFunctions.first];
+        uint8_t counts = closureCaptureCounts()[number - closureFunctions.numbersBelow];
         if (counts == countsAreListed) [[unlikely]]
-            return largeCountsOf(function).captureCounts;
+            return largeCountsOf(closureFunctionWithNumber(number)).captureCounts;
         return CaptureCounts::decode(counts);
     }
+    CaptureCounts captureCountsOf(uint32_t function) const { return captureCountsOfClosureNumber(closureNumberOf(function)); }
+    bool closureNumberOnlyReturns(uint32_t number) const
+    {
+        auto entries = constructEntrypoints();
+        auto entry = std::ranges::lower_bound(entries, number, { }, &ConstructEntrypointData::function);
+        return entry != entries.end() && entry->function == number && entry->constructEntrypointAndFlag == ConstructEntrypointData::onlyReturns;
+    }
+    FunctionKindData kindOfClosureNumber(uint32_t number) const { return closureFunctionKinds()[number - closureFunctions.numbersBelow]; }
     size_t numberOfFunctions() const { return functionRecordNumbers().size(); }
     const FunctionRecordData& recordOfFunction(uint32_t function) const
     {

@@ -257,7 +257,7 @@ std::optional<Type> ValueFlowPositions::typeWhereOnlyInstancesOfBuiltinClassesAr
         Type alone = typeOfObject(member);
         if (alone.isSubsetOf(type, program))
             return false;
-        bool isInstance = alone.isObject() && alone.hasOnlyClassObjects() && !alone.classes.isEmpty();
+        bool isInstance = alone.isObject() && alone.hasOnlyClassObjects() && !alone.classes.isEmpty() && !m_inputs.classOfObjectMadeForSuperCall(member);
         turnsAwayInstance |= isInstance;
         return !isInstance;
     });
@@ -285,6 +285,20 @@ bool ValueFlowPositions::turnsAwayConstructedObject(ValueSetID set, const Type& 
     if (ValueSets::isComplement(set) || !type.isJavaScriptValue() || !m_inputs.sets().meet(set, universe.constructedObjects()))
         return false;
     return !m_inputs.sets().isSubset(maker().intersect(set, universe.constructedObjects()), universe.maskOf(maker(), m_inputs.program, type));
+}
+
+// `class B extends either {}`: what the constructor of a parent makes for B has the layout of B, which is none of the parent's while nobody knows the parent of B.
+bool ValueFlowPositions::turnsAwayObjectMadeForOtherClass(ValueSetID set, const Type& type)
+{
+    if (ValueSets::isComplement(set) || !type.isJavaScriptValue() || type.anyObject)
+        return false;
+    std::span<const LayoutID> members = membersOf(m_inputs.program, type);
+    return m_inputs.sets().anyMember(maker().intersect(set, m_inputs.universe().objectsThatPickTheirLayout()), [&](ValueFlowObjectID object) {
+        const ValueFlowLayoutsOfSite* picked = findLayoutsPickedBy(object);
+        return picked && std::ranges::any_of(picked->layouts, [&](LayoutID layout) {
+            return !std::ranges::binary_search(members, layout);
+        });
+    });
 }
 
 bool ValueFlowPositions::turnsAwayEveryObject(ValueSetID set, const Type& type)
@@ -339,6 +353,27 @@ TypeID ValueFlowPositions::withStringsWithinLimit(TypeID id)
     return m_types.intern(WTF::move(within));
 }
 
+// `value instanceof Error` asks for nothing but the chain above the value, so only what it is asked of says this much.
+void ValueFlowPositions::addPrototypesThatAreKept(ValueSetID held, Type& type)
+{
+    if (ValueSets::isComplement(held) || type.classes.isEmpty() || !m_inputs.containers || !isEnabled(FlowResultKind::PristineInstances))
+        return;
+    bool areAllKept = true;
+    m_inputs.sets().forEachMember(maker().intersect(held, m_inputs.universe().objects()), [&](ValueFlowObjectID member) {
+        // An object with a layout is no part of a class, but where its layout is one of dictionaries: then it counts as an Object. What a built-in class makes for a class below it has the prototype of that class.
+        if (!areAllKept || (m_inputs.universe().layoutOf(member) && !m_inputs.isDictionary(member) && !m_inputs.classOfObjectMadeForSuperCall(member)))
+            return;
+        const ValueFlowContainerFacts* facts = m_inputs.containers->find(member);
+        areAllKept = facts && facts->pristine.containsAny({ PristineAspects::Names, PristineAspects::Prototype });
+    });
+    if (!areAllKept)
+        return;
+    for (ClassPart& part : type.classes) {
+        if (!part.provenPristine.contains(PristineAspects::Names))
+            part.provenPristine.add(PristineAspects::Prototype);
+    }
+}
+
 bool ValueFlowPositions::addInstanceOfClass(Type& type, ValueFlowObjectID member, BuiltinClassID builtinClass)
 {
     Type instance = Type::builtinClass(builtinClass);
@@ -352,7 +387,7 @@ bool ValueFlowPositions::addInstanceOfClass(Type& type, ValueFlowObjectID member
         if (isEnabled(FlowResultKind::ArrayStorageKinds) && part.contentsAreProven)
             part.arrayStorage = facts->arrayStorage;
         if (isEnabled(FlowResultKind::PristineInstances))
-            part.provenPristine = facts->pristine;
+            part.provenPristine = facts->pristine - PristineAspects::Prototype;
     }
     bool isRegExp = builtinClass == BuiltinClasses::RegExp;
     if (isRegExp && site && site->origin == ValueFlowSiteOrigin::Operation) {
@@ -424,8 +459,12 @@ BuiltinClassID ValueFlowPositions::addUnlessInstanceOfClass(Type& type, Vector<L
     case ValueFlowObjectKind::Site: {
         if (LayoutID layout = universe.layoutOf(member); layout && !m_inputs.isLayoutOfDictionaries(layout)) {
             const ValueFlowSite* site = universe.siteOf(member);
-            if (site && site->origin == ValueFlowSiteOrigin::BuiltinResult)
-                break;
+            if (site && site->origin == ValueFlowSiteOrigin::BuiltinResult) {
+                BuiltinClassID builtinClass = m_inputs.classOfObjectMadeForSuperCall(member);
+                if (!builtinClass || builtins.at(builtinClass).hasClosureInstances)
+                    break;
+                return builtinClass;
+            }
             const ValueFlowLayoutsOfSite* picked = findLayoutsPickedBy(member);
             if (picked && picked->mayBeOtherObject)
                 break;
@@ -523,7 +562,7 @@ Type ValueFlowPositions::typeOfMembers(ValueSetID set)
     Vector<LayoutID, 8> layouts;
     Vector<StringID, 16> texts;
     bool hasMetInstance = false;
-    m_inputs.sets().forEachMember(set, [&](ValueFlowObjectID member) {
+    m_inputs.sets().forEachMemberInLine(set, [&](ValueFlowObjectID member) {
         if (member == ValueFlowUniverse::untrackedObject())
             return;
         bool isKey = universe.kindOf(member) == ValueFlowObjectKind::Key;
@@ -584,8 +623,6 @@ Type ValueFlowPositions::withinLimits(Type&& type)
         type.regExpLiteralSet.clear();
     if (!type.functions.isEmpty() && (!isEnabled(FlowResultKind::ExactFunctions) || type.functions.size() > build.limit(LimitID::MaxFunctionsInType)))
         type.anyFunction = true;
-    if (type.builtins.size() > build.limit(LimitID::MaxBuiltinsInType))
-        type.anyObject = type.anyFunction = true;
     type.canonicalize();
     return WTF::move(type);
 }
@@ -802,14 +839,36 @@ FlowPositionUpdate ValueFlowPositions::updateFor(const DeclaredType& declared, V
     return update;
 }
 
+std::optional<Type> ValueFlowPositions::typeByLayoutsOfClassesBelowBuiltinClasses(ValueSetID set)
+{
+    if (ValueSets::isComplement(set) || !m_inputs.sets().meet(set, m_inputs.objectsMadeForSuperCalls))
+        return std::nullopt;
+    Vector<ValueFlowObjectID, 4> made;
+    Vector<LayoutID, 4> layouts;
+    m_inputs.sets().forEachMember(maker().intersect(set, m_inputs.objectsMadeForSuperCalls), [&](ValueFlowObjectID object) {
+        LayoutID layout = m_inputs.universe().layoutOf(object);
+        if (m_inputs.isLayoutOfDictionaries(layout))
+            return;
+        made.append(object);
+        if (!layouts.contains(layout))
+            layouts.append(layout);
+    });
+    if (layouts.isEmpty())
+        return std::nullopt;
+    return typeOf(maker().intersect(set, ValueSets::complement(maker().of(made.span())))).unionWith(Type::forLayouts(layouts.span(), m_types), m_types);
+}
+
 void ValueFlowPositions::takeWhatArrives(const DeclaredType& declared, ValueFlowNodeID node, FlowPositionUpdate& update)
 {
     const Type& expected = m_inputs.program.at(declared.expected().predicted());
     if (update.isProven || !declared.isExpected() || !expected.layouts)
         return;
-    ValueFlowPositionResult arriving = resultAt(ExpectedType(TypeTable::anything), m_inputs.solver().possibleValuesOf(node));
+    ValueSetID possible = m_inputs.solver().possibleValuesOf(node);
+    ValueFlowPositionResult arriving = resultAt(ExpectedType(TypeTable::anything), possible);
     if (arriving.proof != ValueFlowProof::Proven || !arriving.narrowed || arriving.narrowed->anyObject || arriving.narrowed->primitives & ~expected.primitives)
         return;
+    if (std::optional<Type> byLayouts = typeByLayoutsOfClassesBelowBuiltinClasses(possible))
+        arriving.narrowed = arriving.narrowed->withoutObjects().unionWith(byLayouts->withOnlyObjects(), m_types);
     if (declared.site && !leavesOutOnlyInstancesOfBuiltinClasses(expected, *arriving.narrowed, m_types))
         return;
     update.type = m_types.intern(*arriving.narrowed);
@@ -868,7 +927,7 @@ std::optional<CalleeSet> ValueFlowPositions::calleesAt(ValueSetID possible, Valu
     Vector<FunctionID> functions;
     Vector<BuiltinID> builtins;
     bool isComplete = !mayBeAnyCallee;
-    m_inputs.sets().forEachMember(listed, [&](ValueFlowObjectID member) {
+    m_inputs.sets().forEachMemberInLine(listed, [&](ValueFlowObjectID member) {
         if (!universe.isObject(member))
             return;
         if (FunctionID function = universe.closureFunction(member)) {
@@ -925,7 +984,7 @@ bool ValueFlowPositions::isDataFromOutside(ValueFlowObjectID object)
             if (statements[position].kind == ValueFlowStatementKind::Operation && statements[position].site)
                 m_operationsBySite.append({ statements[position].site.index(), position });
         }
-        AOT::sort(m_operationsBySite);
+        AOT::sortInLine(m_operationsBySite);
         m_hasOperationsBySite = true;
     }
     for (auto [index, position] : std::ranges::equal_range(m_operationsBySite, site->value.index(), { }, &std::pair<uint32_t, uint32_t>::first))

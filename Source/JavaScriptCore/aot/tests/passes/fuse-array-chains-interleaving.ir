@@ -3,7 +3,7 @@
 # OPTIONS: report=Declines heat=OnlyLoopsAreHot
 # RUN: pass FuseArrayChains
 # RUN(DECLINES): pass FuseArrayChains
-# STATISTIC: ArrayChainsFused = 12
+# STATISTIC: ArrayChainsFused = 14
 # CHECK: outcome: Changed
 # DECLINES: outcome: Changed
 # DECLINES: decline ArrayChainNotFused f17 v7 None [0] reason=SourceIsNotPristine
@@ -13,8 +13,6 @@
 # DECLINES: decline ArrayChainNotFused f22 v7 None [0] reason=CallbackSeesIntermediateArray
 # DECLINES: decline ArrayChainNotFused f25 v7 None [0] reason=CallbackSeesIntermediateArray
 # DECLINES: decline ArrayChainNotFused f26 v7 None [0] reason=CallbacksInterfere
-# DECLINES: decline ArrayChainNotFused f28 v7 None [0] reason=CallbacksInterfere
-# DECLINES: decline ArrayChainNotFused f29 v8 None [0] reason=CallbacksInterfere
 # DECLINES: decline ArrayChainNotFused f30 v7 None [0] reason=SkippedCallIsObservable
 # DECLINES: decline ArrayChainNotFused f31 v7 None [0] reason=SkippedCallIsObservable
 # DECLINES: decline ArrayChainNotFused f33 v7 None [0] reason=CallbackWritesSource
@@ -312,8 +310,13 @@ function f28 name="bothMayThrow" parameters=[{type=Array<number, proven, pristin
     v7 = CallDirect v4, v5, v6 function=f4
     v8 = AssumeType v7 provenType=Array<number>
     Return v8
-# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f4
-# CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f4
+# CHECK-NOT: = CallDirect v0, v1, {{*}} function=f4
+# CHECK: [[asWritten28]]() role=CatchHandler frequency=Rare:
+# CHECK: [[first28]]: anything = CallDirect v0, v1, {{*}} function=f4
+# CHECK-NEXT: [[list28]]: Array<number> = AssumeType [[first28]] provenType=Array<number>
+# CHECK: = CallDirect [[list28]], v5, {{*}} function=f4
+# CHECK: handler=[[asWritten28]]():
+# CHECK-NEXT: = CallDirect v0, {{*}}, v1, {{*}}, v5, {{*}} function=[[mapMapToArray]]
 }
 
 function f29 name="firstMayThrowSecondPure" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
@@ -327,8 +330,12 @@ function f29 name="firstMayThrowSecondPure" parameters=[{type=Array<number, prov
     v8 = CallDirect v5, v6, v7 function=f4
     v9 = AssumeType v8 provenType=Array<number>
     Return v9
+# CHECK-NOT: = CallDirect v0, v1, {{*}} function=f4
+# CHECK: [[asWritten29]]() role=CatchHandler frequency=Rare:
 # CHECK: = CallDirect v0, v1, {{*}} function=f4
-# CHECK: = CallDirect v5, v6, {{*}} function=f4
+# CHECK: = CallDirect {{*}}, v6, {{*}} function=f4
+# CHECK: handler=[[asWritten29]]():
+# CHECK-NEXT: = CallDirect v0, {{*}}, v1, {{*}}, v6, {{*}} function=[[mapMapToArray]]
 }
 
 function f30 name="secondMayThrowFirstWrites" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {

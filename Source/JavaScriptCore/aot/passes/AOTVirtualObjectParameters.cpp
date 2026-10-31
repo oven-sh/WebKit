@@ -17,6 +17,7 @@
 #include "AOTExactBuffer.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
+#include "AOTHeldOperands.h"
 #include "AOTIRBuilder.h"
 #include "AOTInlineCopy.h"
 #include "AOTPredictedValues.h"
@@ -79,12 +80,22 @@ public:
     void run();
 
 private:
+    struct OperandOfLongSet {
+        CalleeSetID callees;
+        Opcode opcode;
+        uint32_t operandIndex;
+        bool isHeld;
+
+        friend bool operator==(const OperandOfLongSet&, const OperandOfLongSet&) = default;
+    };
+
     bool isFreshObject(ValueID);
     void visitCall(const Value& call);
 
     const AnalysisContext m_context;
     const Function& m_caller;
     Vector<FreshArgument>& m_freshArguments;
+    Vector<OperandOfLongSet, 4> m_operandsOfLongSets;
     std::optional<FunctionAnalyses> m_analyses;
 };
 
@@ -145,6 +156,18 @@ void FreshArgumentCollector::visitCall(const Value& call)
         return;
 
     const Program& program = m_context.program;
+    // Which parameter an operand arrives at follows from the operation and the place of the operand. n calls of one set of n callees find the same parameters n times.
+    if (CalleeSetID set = calleeSetOfCall(program, call); set && program.at(set).isLong()) {
+        freshOperands.removeAllMatching([&](uint32_t operandIndex) {
+            OperandOfLongSet operand { set, call.opcode, operandIndex, isHeldOperand(call, operandIndex) };
+            if (m_operandsOfLongSets.contains(operand))
+                return true;
+            m_operandsOfLongSets.append(operand);
+            return false;
+        });
+        if (freshOperands.isEmpty())
+            return;
+    }
     CalleeList callees = calleesOfCall(program, call);
     for (FunctionID id : callees.seen().predicted().functions) {
         const Function& callee = program.at(id);
@@ -904,7 +927,7 @@ static void showOperationsInFrameOfBody(const Program& program, TypeArena& types
     for (uint32_t index = 0; index < wrapper.blocks.size(); ++index) {
         blocks.append(BlockID(index));
         for (ValueID id : wrapper.blocks[index].values) {
-            if (entered || !takesFactOfEntry(program, wrapper.at(id), false))
+            if (entered || !takesFactOfEntry(program, wrapper.at(id)))
                 continue;
             Value fact = IRBuilder::make(Opcode::Entered);
             fact.setFunction(body);

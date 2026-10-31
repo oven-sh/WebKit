@@ -158,4 +158,4 @@ function f3 module=m0 position=6 kind=Initializer flags=[HasThis, IsChecked, IsH
 # CALLS: f{{*}}: size=
 # The four values are constants, and this half still gets them by a call of the other half.
 # X64: instructions: 13, patchpoints: 2, rare instructions: 3
-# ARM64: instructions: 14, patchpoints: 2, rare instructions: 5
+# ARM64: instructions: 14, patchpoints: 2, rare instructions: 4

@@ -72,6 +72,10 @@ v(StoreSlotExit, InternalEntry, (StrictByIdMiss, StrictByIdUncached, StrictByVal
 // AOTStubsObjectCopy.cpp
 v(CopyObjectFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CopyObjectFrontEnd)
 AOT_STUB_FRONT_END(CopyObject, CopyObjectFrontEnd)
+v(AssignToNewObjectFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, AssignToNewObjectFrontEnd)
+AOT_STUB_FRONT_END(AssignToNewObject, AssignToNewObjectFrontEnd)
+v(CopyObjectAndDefineFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CopyObjectAndDefineFrontEnd)
+AOT_STUB_FRONT_END(CopyObjectAndDefine, CopyObjectAndDefineFrontEnd)
 
 // AOTStubsFieldCreation.cpp
 v(DidCreateField, CalledByCode, (One, OneOutOfLine, Run), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(ObjectFields, OrderWords, ShapeWords, AllocatorState, RuntimeState) | writes(ObjectFields, OrderWords, AllocatorState), DidCreateField)
@@ -81,6 +85,13 @@ v(RememberKeyOrderStep, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice
 // AOTStubsKeyedAccess.cpp
 v(GetByValCached, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByValCached)
 v(GetByValCachedCells, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByValCached)
+v(GetByValCachedAtPlace, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByValCached)
+v(GetByValCachedBehindPlaces, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByValCached)
+v(GetByValCachedKeepingRegisters, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetByValCachedKeepingRegisters)
+v(GetByValCachedCellsKeepingRegisters, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetByValCachedKeepingRegisters)
+v(GetByValCachedAtPlaceKeepingRegisters, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetByValCachedKeepingRegisters)
+v(GetByValCachedBehindPlacesKeepingRegisters, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetByValCachedKeepingRegisters)
+v(GetByValOfKeyOfPair, CalledByCode, (OfCell, OfAnyValue), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetByValOfKeyOfPair)
 v(GetSuperByVal, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetSuperByVal)
 v(InByValCached, CalledByCode, (In, HasOwn), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, InByValCached)
 v(DeleteByIdCached, CalledByCode, (Strict, Sloppy), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, DeleteByIdCached)

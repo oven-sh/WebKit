@@ -312,15 +312,35 @@ void generateReadSlot(StubAssembler& jit)
             returnUndefined();
             return;
         }
-        case Slot::Kind::InheritedField:
+        case Slot::Kind::InheritedField: {
+            if (slot.form() == SlotForm::Slot) {
+                const GPRReg word = jit.clobberOperand(headerOperand);
+                jit.rshift64(TrustedImm32(48), word);
+                Jump hasNoWord = jit.branchTest64(CCallHelpers::Zero, word);
+                slot.loadHolder(jit, R0);
+                Jump holdsReference = jit.branch64(CCallHelpers::LessThan, word, TrustedImm32(0));
+                jit.load32(BaseIndex(R0, word, CCallHelpers::TimesFour), T10);
+                Jump isNoInteger = jit.branch32(CCallHelpers::LessThan, T10, TrustedImm32(minInlineInt32));
+                returnInt32(T10);
+                holdsReference.link(&jit);
+                jit.neg64(word);
+                jit.load32(BaseIndex(R0, word, CCallHelpers::TimesFour), T10);
+                Jump isNoReference = jit.branch32(CCallHelpers::Below, T10, TrustedImm32(minCell32));
+                decodeCell32(jit, T10, R0);
+                jit.returnToCaller();
+                hasNoWord.link(&jit);
+                isNoInteger.link(&jit);
+                isNoReference.link(&jit);
+            }
             readFromHolder();
             return;
+        }
         case Slot::Kind::Variable: {
             const GPRReg statics = jit.clobberOperand(headerOperand);
-            const FieldReadRegisters registers = allocateFieldReadRegisters(statics, T10);
+            FieldReadRegisters registers = allocateFieldReadRegisters(statics, T10);
             FieldReadExits exits;
             slot.loadFirstPayloadWord(jit, registers.field.slotData);
-            loadStaticsBase(jit, statics, T11);
+            loadStaticsBaseOfVariable(jit, slot, statics, T11, registers);
             computeFieldAddress(jit, registers.field, false, exits.isAbsent);
             readFieldAndReturn(jit, registers, exits);
 
@@ -516,7 +536,7 @@ void generateThroughProxy(StubAssembler& jit)
         loadStructure(jit, target, scratch);
         bindsNothing.append(jit.branchTest32(CCallHelpers::Zero, Address(scratch, Structure::bitFieldOffset()), TrustedImm32(operations.bitsOfTargetThatMayBind)));
         // The Structure of a compiled object says yes for all of them. What was done to one object stands in the object, and what its fields are born with in the layout.
-        Jump isCompiledObject = jit.branchIfType(target, CompiledObjectType);
+        Jump isCompiledObject = branchIfCompiledObjectOfThisImage(jit, target);
         if (trap == TrapOfProxy::Has) {
             // Whoever hands over no slot asks for the text of an index. The elements of an extensible array in plain storage are configurable.
             static_assert(Int32Shape < ContiguousShape && DoubleShape < ContiguousShape && UndecidedShape < ContiguousShape && ArrayStorageShape > ContiguousShape);

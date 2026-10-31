@@ -91,5 +91,5 @@ function f3 module=m0 position=6 kind=Initializer flags=[HasThis, IsChecked, IsH
 # CHECK-NEXT: Successors: Then:{{*}}Rare:#{{*}}
 # CHECK: Store(b@[[sum]], b@[[account]], offset = 16, ControlDependent|Writes:ObjectFields{{*}}:PutSlot)
 # CHECK-LABEL: end of function
-# X64: instructions: 11, patchpoints: 0
+# X64: instructions: 10, patchpoints: 0
 # ARM64: instructions: 12, patchpoints: 0

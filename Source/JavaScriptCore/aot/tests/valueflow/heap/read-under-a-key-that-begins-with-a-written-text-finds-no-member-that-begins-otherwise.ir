@@ -1,0 +1,24 @@
+# table = {}; table["$" + name] = first; table["$" + name]()
+# Whatever `name` is, the key begins with "$", and nothing on Object.prototype does: the read finds what the program has stored, and neither `constructor` nor `hasOwnProperty`.
+# RUN: valueflow-solve calls
+# CHECK: f0 v9 -> f1
+# CHECK-NOT: f0 v9 -> {{*}}Object
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewDictionary
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="name" [isFreeName]
+    v3 = String string="$"
+    v4 = Add v3, v2
+    v5 = NewClosure function=f1
+    ElemSet v0, v4, v5 mode=Strict
+    v7 = Add v3, v2
+    v8 = ElemGet v0, v7
+    v9 = Call v8, v0
+    Return
+}
+function f1 name="first" results=[{type=anything}] {
+    Return
+}

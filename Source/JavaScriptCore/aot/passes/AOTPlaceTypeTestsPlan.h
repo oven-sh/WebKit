@@ -25,7 +25,7 @@ class Heat;
 inline constexpr OpcodeSet testSiteOpcodes = builtinUseOpcodes | Value::opcodesWithForm | namedAccesses | OpcodeSet {
     Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemHas,
     Opcode::GetArrayElement, Opcode::PutArrayElement, Opcode::GetTypedArrayElement, Opcode::PutTypedArrayElement,
-    Opcode::Call, Opcode::Construct, Opcode::SuperConstruct, Opcode::SuperGet, Opcode::SuperSet, Opcode::CallBuiltin,
+    Opcode::Call, Opcode::Construct, Opcode::SuperConstruct, Opcode::SuperConstructList, Opcode::ConstructSuperForwardVarargs, Opcode::SuperGet, Opcode::SuperSet, Opcode::CallBuiltin,
     Opcode::GetConstructPrototype, Opcode::InstanceOf, Opcode::NewObject, Opcode::TypeTest,
 };
 
@@ -33,6 +33,9 @@ inline constexpr OpcodeSet testSiteOpcodes = builtinUseOpcodes | Value::opcodesW
 inline constexpr OpcodeSet opcodesPlaceTypeTestsLooksFor = testSiteOpcodes | OpcodeSet { Opcode::HasArrayElement, Opcode::IsSlotFilled };
 
 bool mayPlaceTestsOfAccessesByName(const Heat&, FunctionAnalyses&, BlockID);
+// A prediction: what arrives as the receiver in this function has none of the layouts of the program, whatever other callers hand over.
+bool arrivesWithoutLayoutOfProgram(FunctionPassContext&, BlockID, ValueID receiver);
+bool paysToLeaveDataFromOutsideUntested(FunctionPassContext&, BlockID);
 
 enum class PlannedTestPosition : uint8_t { BeforeUse, OnEdge };
 
@@ -92,6 +95,10 @@ struct TestPlacementPlan {
 enum class ProofsHeldByGuards : uint8_t { AreListed, AreLeftOut };
 Vector<ExistingProof> findExistingProofs(FunctionPassContext&, const TestConditions&, ProofsHeldByGuards = ProofsHeldByGuards::AreListed);
 ValueID ensureEdgeResult(IRBuilder&, FunctionAnalyses&, Edge, uint32_t proof);
+
+// The `k` of `k < list.length` in front of `list[k]`.
+enum class ComparedPositions : uint8_t { HaveNoTests, HaveTests };
+PassOutcome askWhetherComparedPositionsAreInBounds(FunctionPassContext&, ComparedPositions);
 
 TestPlacementPlan planTestPlacement(FunctionPassContext&);
 TestPlacementPlan planTestPlacement(FunctionPassContext&, TestSites&&);

@@ -278,5 +278,5 @@ function f5 module=m0 position=97 kind=Initializer flags=[HasThis, IsChecked, Is
 # HOT-NOT: Branch(
 # HOT-LABEL: end of loop
 # The patchpoint is the poll of the loop.
-# X64: instructions: 3, patchpoints: 1, {{*}} steps by 1
-# ARM64: instructions: 3, patchpoints: 1, {{*}} steps by 1
+# X64: instructions: 3, patchpoints: 0, {{*}} steps by 1
+# ARM64: instructions: 3, patchpoints: 0, {{*}} steps by 1

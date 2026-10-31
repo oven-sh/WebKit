@@ -1,5 +1,4 @@
-# A loop whose blocks name a handler stays until the handler that nothing can reach is taken off them.
-# TODO: nobody: the block with the loop hint keeps its handler, because the poll may throw an out-of-memory error that is owed, so a dead loop that is covered whole stays
+# A loop whose blocks name a handler stays until the handler that nothing can reach is taken off them. The block with the loop hint loses it too: nothing in the loop allocates.
 # FORM: Prepared
 # OPTIONS: check=VerifyEachPass
 # RUN: pass RemoveDeadCountedLoops

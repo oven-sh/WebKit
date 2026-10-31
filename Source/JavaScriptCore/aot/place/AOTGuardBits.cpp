@@ -49,7 +49,7 @@ static Vector<GuardUse, 4> guardsOfConditions(const auto& conditions)
     Vector<GuardUse, 4> guards(conditions.size(), [&](size_t index) {
         return guardOf(conditions[index]);
     });
-    AOT::sort(guards, { }, guardKeyOf);
+    AOT::sortInLine(guards, { }, guardKeyOf);
     guards.shrink(guards.size() - std::ranges::unique(guards, { }, guardKeyOf).size());
     return guards;
 }
@@ -160,7 +160,7 @@ void placeGuardSets(const PlacementContext& context, const PlacedSites& sites, G
             setsByMember.append({ member, set });
     }
 
-    AOT::sort(setsByMember);
+    AOT::sortInLine(setsByMember);
     table.firstSetOfClassBit = Vector<uint32_t>(FillWith { }, table.numberOfClassBits + 1, 0u);
     table.setsOfClassBits.reserveInitialCapacity(setsByMember.size());
     for (auto [member, set] : setsByMember) {

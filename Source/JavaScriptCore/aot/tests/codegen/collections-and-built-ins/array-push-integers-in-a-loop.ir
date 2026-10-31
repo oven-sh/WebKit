@@ -98,23 +98,22 @@ function f1 name="range" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
     Return v2
 }
 
-# A push onto a list made in the function is written out: the length is loaded and compared with the capacity, the element is stored and the longer length is stored.
+# A push onto a list made in the function is written out: the length is compared with the capacity, the element is stored and the length grows by one.
 # LOOP-LABEL: loop #
-# LOOP: Int32 b@[[length]] = Load(b@[[storage]], offset = -8, ControlDependent|Reads:Butterfly_publicLength, {{*}}:HasSpareArrayCapacity)
 # LOOP: Int32 b@[[fits]] = Below(b@[[length]], b@{{*}}, {{*}}:HasSpareArrayCapacity)
 # LOOP-NEXT: Branch(b@[[fits]], Terminal, {{*}}:HasSpareArrayCapacity)
 # LOOP-NEXT: Successors: Then:#{{*}}, Else:Rare:#
 # LOOP: Store(b@{{*}}, b@{{*}}, ControlDependent|Writes:indexedDoubleProperties, {{*}}:CallInline)
 # LOOP: Int32 b@[[longer]] = Add(b@[[length]], $1(b@{{*}}), {{*}}:CallInline)
-# LOOP-NEXT: Store(b@[[longer]], b@[[storage]], offset = -8, ControlDependent|Writes:Butterfly_publicLength, {{*}}:CallInline)
 # LOOP-LABEL: end of loop
-# The storage and its capacity stay in registers: only the path that grows the list, which leaves the loop, changes them. The kind of storage is not tested. Nothing is called; the one patchpoint is the poll.
+# The storage, its capacity and the length stay in registers: only the path that grows the list, which leaves the loop, changes them. The kind of storage is not tested. Nothing is called; the one patchpoint is the poll.
 # NONE-LABEL: loop #
 # NONE-NOT: Reads:JSObject_butterfly
 # NONE-NOT: Reads:Butterfly_vectorLength
+# NONE-NOT: Butterfly_publicLength
 # NONE-NOT: Reads:JSCell_indexingTypeAndMisc
 # NONE-NOT: :CallBuiltin
 # NONE-NOT: Register(
 # NONE-LABEL: end of loop
-# X64: loop #{{*}}, instructions: 9, patchpoints: 1
-# ARM64: loop #{{*}}, instructions: 8, patchpoints: 1
+# X64: loop #{{*}}, instructions: 7, patchpoints: 0
+# ARM64: loop #{{*}}, instructions: 6, patchpoints: 0

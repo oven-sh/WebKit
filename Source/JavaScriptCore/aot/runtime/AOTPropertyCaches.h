@@ -81,6 +81,7 @@ public:
 
     void dropChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl* uidOrNull) final;
     bool hasChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl* uidOrNull) const final;
+    bool keepChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl* uidOrNull, const CreatedMembers&) final;
 
     template<typename Visitor> void visitRoots(Visitor&);
     size_t removeDeadEntries(VM&, CollectionScope);
@@ -261,9 +262,12 @@ public:
 
     void dropChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull) final;
     bool hasChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull) const final;
+    bool keepChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull, const CreatedMembers&) final;
 
     size_t removeDeadEntries(VM&, CollectionScope);
     void validate(VM&) const;
+    bool describesObjectOfOtherImage(Structure*) const;
+    void validateImageOfSlot(VM&, const Slot&, SlotAccess, UniquedStringImpl*) const;
 
     // An object of some chain that is changed first and reports behind that. A collection may end in between. No compiled code runs there, so validation leaves alone what the report is about to drop.
     class UnreportedChange {
@@ -296,7 +300,11 @@ private:
         std::array<NameOfText, NameOfText::numberOfEntries> namesOfTexts;
     };
 
+    // The VM has tables like these for each image that it runs, and an instance reads those of its own image.
+    bool serves(const Instance&) const;
+
     VM& m_vm;
+    const Image* m_image;
     CustomAccessorTable m_customAccessors;
     RowDisplacementTable m_front;
     HashedSlotTable m_hashedTable;
@@ -359,6 +367,7 @@ public:
     void fillSiteCacheFromTables(SiteCache, JSCell* base, uint32_t identifierNumber, SlotAccess);
     // The getter that a read of the name calls on every object with the Structure of this one. Runs no code of the program and allocates no cell.
     JSValue findGetterAndFillSiteCache(SiteCache, JSCell* base, uint32_t identifierNumber);
+    void fileValueWithoutChangingObject(JSCell* base, uint32_t identifierNumber);
     void cacheFreeName(SiteCache, UniquedStringImpl*, SlotAccess, const PropertyAnswer&);
     // The cell that a trap of a proxy is handed for the name. A slot names it and does not hold it. For a name of the program there is one, which is kept, so such a slot lasts as long as its Structure.
     JSCell* keyForTraps(UniquedStringImpl*);

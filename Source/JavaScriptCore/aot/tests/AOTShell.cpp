@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
+#include "AOTBuiltinTableBindings.h"
 #include "AOTHost.h"
 #include "AOTImageLoading.h"
 #include "AOTObject.h"
@@ -150,6 +151,7 @@ void mapImageFromOptions()
     if (!path)
         return;
 
+    BuiltinBindings::bindNativeHelpersOfEngine();
     std::optional<MappedImage> image = mapFile(path);
     if (!image) {
         dataLogLn("Cannot use ", path, ": cannot read it");

@@ -181,6 +181,8 @@ void AOTHeaps::nestUpstreamHeaps()
     nest(mutableEntire(IRHeap::ArrayStorage), { &JSObject_butterfly, &Butterfly_publicLength, &Butterfly_vectorLength, &ArrayStorage_numValuesInVector });
     // An array stays an array, so an array's butterfly word and another object's are separate heaps. JSObject_butterfly is for an object that may be either.
     nest(JSObject_butterfly, { &JSArray_butterfly, &JSNonArray_butterfly });
+    // The same for the byte that names the kind of storage. JSCell_indexingTypeAndMisc is for a cell that may be either.
+    nest(JSCell_indexingTypeAndMisc, { &JSArray_indexingTypeAndMisc, &JSNonArray_indexingTypeAndMisc });
     nest(mutableEntire(IRHeap::TypedArrayStorage), {
         &JSArrayBufferView_byteOffset, &JSArrayBufferView_length, &JSArrayBufferView_mode, &JSArrayBufferView_vector, &ArrayBuffer_data, &Butterfly_arrayBuffer,
     });
@@ -327,8 +329,16 @@ bool AOTHeaps::mayReplaceStorageOfArrays(const Typed::Effects& effectsOfCall)
 
 void AOTHeaps::appendHeapsOfConvertedCells(B3HeapList& list, ConvertedCells cells) const
 {
-    list.append(&JSCell_header);
-    list.append(cells == ConvertedCells::All ? &JSObject_butterfly : &JSNonArray_butterfly);
+    if (cells == ConvertedCells::All) {
+        list.append(&JSCell_header);
+        list.append(&JSObject_butterfly);
+    } else {
+        // What leaves the storage of arrays alone leaves its kind alone too.
+        list.append(&JSCell_structureID);
+        list.append(&JSNonArray_indexingTypeAndMisc);
+        list.append(&JSCell_typeInfoFlags);
+        list.append(&JSNonArray_butterfly);
+    }
     list.append(&AOTSlimClosure_word);
 }
 

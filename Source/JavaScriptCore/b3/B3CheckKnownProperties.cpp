@@ -75,16 +75,19 @@ private:
             if (!record.relationHoldsOnEntry)
                 return;
             auto counted = analyzeCountedLoop({ m_proc, *m_loops, *loop, phiChildren, [&](Value* value) { return !m_loops->belongsTo(value->owner, *loop); }, std::nullopt });
-            if (counted && counted->inductionVariable == record.phi)
+            if (counted && counted->inductionVariable == record.phi && counted->relationHoldsOnEntry)
                 m_entryChecks.append({ counted->preHeader, counted->relation, counted->start, counted->bound });
         });
     }
 
-    void insertTrap(unsigned index, Origin origin, Value* isViolated)
+    void insertTrap(unsigned index, Origin origin, Value* isViolated, KnownProperty property = KnownProperty::Induction)
     {
         CheckValue* check = m_insertionSet.insert<CheckValue>(index, Check, origin, isViolated);
-        check->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams&) {
-            jit.breakpoint();
+        check->setGenerator([property, origin, report = m_proc.policy().reportsBrokenKnownProperty](CCallHelpers& jit, const StackmapGenerationParams&) {
+            if (report)
+                report->run(jit, property, origin);
+            else
+                jit.breakpoint();
         });
         m_changed = true;
     }
@@ -118,7 +121,7 @@ private:
         Value* width = m_insertionSet.insertIntConstant(index, origin, type, static_cast<int64_t>(static_cast<uint64_t>(range->max()) - static_cast<uint64_t>(range->min())));
         Value* opaque = m_insertionSet.insert<Value>(index, Opaque, origin, value);
         Value* distance = m_insertionSet.insert<Value>(index, Sub, origin, opaque, min);
-        insertTrap(index, origin, insertComparison(index, origin, Above, distance, width));
+        insertTrap(index, origin, insertComparison(index, origin, Above, distance, width), KnownProperty::Range);
     }
 
     void checkDereferenceableBytes(unsigned index, Value* value)

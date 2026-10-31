@@ -247,7 +247,7 @@ public:
     SharedLists forEachLayoutNamedByMembers(ValueSetID objects, Vector<uint32_t, 4>& lists, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const
     {
         SharedLists shared;
-        m_inputs.sets().forEachMember(objects, [&](ValueFlowObjectID object) {
+        m_inputs.sets().forEachMemberInLine(objects, [&](ValueFlowObjectID object) {
             LayoutID named = namedLayoutOf(object);
             if (!named)
                 return;
@@ -550,7 +550,9 @@ public:
     bool getsAccessorsUnderKeysNobodyKnows(LayoutID) const;
     void setReceiversOfReads(ListsOfSetsByNumber&&);
     void noteKeyBroughtByCopies(LayoutID target, PropertyKeyID, ValueSetID value);
-    std::span<const PropertyKeyID> keysReadFrom(LayoutID layout) const LIFETIME_BOUND { return m_keysReadFrom[layout.index()].span(); }
+    bool isAnyKeyReadFrom(LayoutID layout) const { return !m_groupsOfKeysReadFrom[layout.index()].isEmpty(); }
+    // Sorted. Made where it is asked for: see m_groupsOfKeysReadFrom.
+    Vector<PropertyKeyID> keysReadFrom(LayoutID) const;
 
     bool hasEscapedObject(LayoutID layout) const { return m_hasEscapedObject.quickGet(layout.index()); }
     bool hasLostObject(LayoutID layout) const { return m_hasLostObject.quickGet(layout.index()); }
@@ -603,7 +605,7 @@ private:
         OptionSet<Actor> writers;
         ValueSetID value;
         ValueFlowNumbers numbers;
-        // The numbers are those that these objects hold under the key, and `numbers` is empty.
+        // The numbers are `numbers` and those that these objects hold under the key.
         ValueSetID objectsRead;
         uint32_t keyRead;
 
@@ -643,6 +645,7 @@ private:
     };
 
     void findReceiversBehindChecks();
+    void findValuesBehindStoredParameters();
     static constexpr uint32_t isStatementInListOfWrites = 1u << 31;
 
     LayoutSetID familyOfReceiverOf(const ValueFlowStatement&) const;
@@ -685,6 +688,7 @@ private:
     void unite(ValueSetID& into, ValueSetID value) { into = m_heap.maker().unite(into, value); }
     bool spellsKey(ValueSetMaker&, const Writer&, ValueFlowName) const;
     void note(ValueSetMaker&, StoresIntoObjects&, ValueFlowName, ValueSetID value, bool isAllocation, bool isNamedByOperation);
+    ValueFlowNumbers numbersOf(FunctionID, ValueID) const;
     ValueFlowNumbers numbersStoredBy(const Writer&, ValueFlowName) const;
     ValueFlowNumbers numbersInData(LayoutID, ValueFlowName) const;
     void noteNumbers(StoresIntoObjects&, ValueFlowName, const ValueFlowNumbers&);
@@ -696,7 +700,7 @@ private:
     std::optional<CopiedObjects> objectsCopiedOnto(ValueSetMaker&, LayoutID) const;
     std::optional<CopiedObjects> withLayoutsIfFollowed(ValueSetMaker&, ValueSetID objects) const;
     void followCopiedProperties();
-    std::optional<ReadOfFields> readOfFieldsStoredBy(ValueSetMaker&, const Writer&, ValueFlowName) const;
+    std::optional<ReadOfFields> readOfFieldsStoredBy(ValueSetMaker&, const Writer&, ValueFlowName, ValueFlowNumbers& numbersBesideReads) const;
     std::optional<CopiedObjects> objectsReadUnder(ValueSetMaker&, ValueSetID objects, PropertyKeyID) const;
     void followReadsOfFields();
     void forEachSourceOf(LayoutID, ObjectsOfLayout, NOESCAPE const Invocable<void(const StoresIntoObjects&)> auto&) const;
@@ -704,7 +708,10 @@ private:
     const ValueFlowResultInputs& m_inputs;
     ValueFlowHeapView& m_heap;
     ListsOfSetsByNumber m_receiversOfReads;
-    Vector<Vector<PropertyKeyID>> m_keysReadFrom;
+    // Objects of many layouts travel in one set, and then every key read off that set is read from each of the layouts: layouts times keys.
+    // So the keys that are read from the same layouts are one group, each key in one group, and a layout lists its groups.
+    Vector<Vector<PropertyKeyID>> m_groupsOfKeys;
+    Vector<Vector<uint32_t>> m_groupsOfKeysReadFrom;
     ValueSetID m_objectsPutAboveOthers { ValueSets::nothing };
     const LayoutsOfObjects& m_layoutsOfObjects;
     Vector<uint32_t> m_setsLookedAt;
@@ -739,6 +746,12 @@ private:
     BitVector m_isLostClass;
     Vector<NameStoredThroughDeclaredReceiver> m_namesStoredThroughDeclaredReceivers;
     Vector<BitVector> m_valuesBehindChecks;
+    struct ValuesBehindParameter {
+        ValueID parameter;
+        Vector<ValueID, 2> reads;
+        Vector<ValueID, 2> others;
+    };
+    Vector<Vector<ValuesBehindParameter>> m_valuesBehindStoredParameters;
     Vector<uint8_t> m_hasChecksNotLookedAt;
     Vector<uint32_t> m_writes;
     BitVector m_hasObjectOfCodeWithoutSolve;
@@ -791,6 +804,8 @@ private:
     void noteShownKeys(Noter, ValueSetID objects, ShownKeys, bool goesOnToPrototypes = false) const;
     void noteShownKeys(Noter, const ValueFlowBuiltinApplication&, BuiltinOperand, ShownKeys) const;
     ValueSetID followPrototypeLinks(ValueSetMaker&, ValueSetID objects) const;
+    ValueSetID withTargetsOfProxies(ValueSetMaker&, ValueSetID objects) const;
+    ValueSetID chainThroughProxies(ValueSetMaker&, ValueSetID objects) const;
     Noter noterOf(ValueSetMakers& makers, unsigned worker) { return { m_notes[worker], makers.of(worker) }; }
     void noteReads(ValueSetMakers&);
     void noteRead(Noter, const ValueFlowNodeKey&, Reader, ValueSetID startOfLookup);

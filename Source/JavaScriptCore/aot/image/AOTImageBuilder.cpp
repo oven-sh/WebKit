@@ -18,6 +18,7 @@
 #include "AOTHeat.h"
 #include "AOTIRProgram.h"
 #include "AOTImage.h"
+#include "AOTImagesBelow.h"
 #include "AOTPhaseTimes.h"
 #include "AOTPipeline.h"
 #include "AOTPlacement.h"
@@ -124,6 +125,7 @@ static FunctionID bodyBehind(const Typed::Program& program, FunctionID id)
     case FunctionRole::AllocatedThisVersion:
     case FunctionRole::ConstructBody:
     case FunctionRole::CalleeVersion:
+    case FunctionRole::ChecksThatGiveUp:
     case FunctionRole::CoroutineBody:
     case FunctionRole::AsyncWorker:
     case FunctionRole::BoundFunction:
@@ -255,11 +257,21 @@ static void encodeFrameRanges(Vector<uint8_t>& bytes, const CompiledCode& code)
 {
     if (!code.frame.hasFrame())
         return;
+    // A function may set its frame up in thousands of places. The offsets ascend, so one walk through the sorted ranges answers for all of them.
+    Vector<CodeRange, 1> ranges = code.frame.frameRanges;
+    AOT::sortInLine(ranges, { }, &CodeRange::begin);
+    size_t nextRange = 0;
+    uint32_t endOfRangesPassed = 0;
+    auto hasFrameAt = [&](uint32_t offset) {
+        for (; nextRange < ranges.size() && ranges[nextRange].begin <= offset; ++nextRange)
+            endOfRangesPassed = std::max(endOfRangesPassed, ranges[nextRange].end);
+        return offset < endOfRangesPassed;
+    };
     bool hasFrame = false;
     uint32_t previousChange = 0;
     uint32_t endOfLastUnitAsked = 0;
     for (uint32_t offset : collectOffsetsAskedForFrame(code)) {
-        if (code.frame.hasFrameAt(offset) != hasFrame) {
+        if (hasFrameAt(offset) != hasFrame) {
             SideTableParts::appendFrameChange(bytes, previousChange, endOfLastUnitAsked);
             previousChange = endOfLastUnitAsked;
             hasFrame = !hasFrame;
@@ -325,11 +337,24 @@ static Vector<uint8_t> joinPositions(std::span<const Vector<uint8_t>> positions,
 SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Vector<uint8_t>> callSites, BuildContext& context)
 {
     RELEASE_ASSERT(callSites.size() == functions.size());
+    // Most functions that wait have the frame maps of many others. Equal ones are held once.
     Vector<uint64_t> firstWordOf(functions.size());
+    BitVector hasFrameMapsOfEarlierFunction(functions.size());
+    UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> firstWithHashAndSize;
     uint64_t numberOfWords = 0;
     for (size_t position = 0; position < functions.size(); ++position) {
+        std::span words = functions[position].sites.frameMapWords.span();
         firstWordOf[position] = numberOfWords;
-        numberOfWords += functions[position].sites.frameMapWords.size();
+        if (words.empty())
+            continue;
+        uint64_t hashAndSize = static_cast<uint64_t>(StringHasher::computeHashAndMaskTop8Bits(byteCast<Latin1Character>(asBytes(words)))) << 32 | words.size();
+        uint32_t first = firstWithHashAndSize.add(hashAndSize, static_cast<uint32_t>(position)).iterator->value;
+        if (first != position && equalSpans(functions[first].sites.frameMapWords.span(), words)) {
+            firstWordOf[position] = firstWordOf[first];
+            hasFrameMapsOfEarlierFunction.quickSet(position);
+            continue;
+        }
+        numberOfWords += words.size();
     }
     static_assert(WTF::isValidCapacityForVector<uint32_t>(defaultLimitValue(LimitID::VectorBytes, hostArchitecture()) / sizeof(uint32_t)));
     if (!checkSectionSize(numberOfWords * sizeof(uint32_t), context))
@@ -355,7 +380,8 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Ve
         std::optional<std::pair<uint32_t, uint32_t>> frameMapRange;
         if (!sites.frameMapWords.isEmpty()) {
             frameMapRange.emplace(static_cast<uint32_t>(firstWordOf[position]), static_cast<uint32_t>(sites.frameMapWords.size()));
-            memcpySpan(result.frameMapWords.mutableSpan().subspan(frameMapRange->first), sites.frameMapWords.span());
+            if (!hasFrameMapsOfEarlierFunction.quickGet(position))
+                memcpySpan(result.frameMapWords.mutableSpan().subspan(frameMapRange->first), sites.frameMapWords.span());
         }
         Vector<uint8_t> handlers;
         encodeHandlers(handlers, sites.handlers.span());
@@ -417,7 +443,7 @@ static Vector<uint8_t> encodeStubAddresses(const StubBlob& blob)
         if (AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE || usesCallConvention || hasAddressInImage(linkage))
             addresses.append({ placement.key.bits(), placement.offset, usesCallConvention });
     }
-    AOT::sort(addresses, [](const StubAddressInImage& a, const StubAddressInImage& b) {
+    AOT::sortInLine(addresses, [](const StubAddressInImage& a, const StubAddressInImage& b) {
         bool isFirstPart = isFoundByKey(StubKey::fromBits(a.key).family());
         if (isFirstPart != isFoundByKey(StubKey::fromBits(b.key).family()))
             return isFirstPart;
@@ -441,7 +467,7 @@ OptionSet<ImageFlag> flagsForUnseenCode(const Typed::PipelineOutput& pipeline, c
 {
     const Typed::FlowResults& flow = *pipeline.flow;
     if (!flow.hasResults()) {
-        OptionSet<ImageFlag> flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::FindsDataFilesByName };
+        OptionSet<ImageFlag> flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::FindsDataFilesByName, ImageFlag::StoresPathOfMainModule, ImageFlag::RunsUnreadCode };
         // Any load may name a file outside the image, so only the options say whether one is loaded.
         if (!options.excludesCodeOutsideImage())
             flags.add(ImageFlag::LoadsCodeOutsideImage);
@@ -451,6 +477,10 @@ OptionSet<ImageFlag> flagsForUnseenCode(const Typed::PipelineOutput& pipeline, c
     OptionSet<ImageFlag> flags;
     if (flow.findsFilesOfProgramByName())
         flags.add(ImageFlag::FindsDataFilesByName);
+    if (flow.storesPathOfMainModule())
+        flags.add(ImageFlag::StoresPathOfMainModule);
+    if (flow.reachedFunctionsCountUnreadCode())
+        flags.add(ImageFlag::RunsUnreadCode);
     for (const auto& record : flow.unseenCode()) {
         if (Typed::admitsUnknownJavaScript(record.cause))
             flags.add(ImageFlag::AdmitsUnknownJavaScript);
@@ -499,7 +529,7 @@ struct TextRecords {
 
 struct StringHeaderNumbers {
     bool hasRecords() const { return form == ImageForm::PositionIndependent; }
-    uint64_t sizeOfHeaders() const { return static_cast<uint64_t>(count) * (hasRecords() ? sizeof(ImageStringRecord) : sizeof(ImageStringHeader)); }
+    uint64_t sizeOfHeaders() const { return static_cast<uint64_t>(capacity - first) * (hasRecords() ? sizeof(ImageStringRecord) : sizeof(ImageStringHeader)); }
     uint64_t sizeOfList() const { return static_cast<uint64_t>(numberOfListedWords) * sizeof(uint32_t); }
 
     ImageForm form { ImageForm::Absolute };
@@ -507,7 +537,10 @@ struct StringHeaderNumbers {
     Vector<uint32_t> byString;
     Vector<uint32_t> listedWordIndexes;
     Vector<uint32_t> literalStringWords;
+    // ImageNumberRanges::firstStringHeader, endOfStringHeaders and, of the first image of a realm, capacityOfStringHeaders.
+    uint32_t first { 0 };
     uint32_t count { 0 };
+    uint32_t capacity { 0 };
     uint32_t numberOfListedWords { 0 };
 };
 
@@ -546,6 +579,9 @@ static ShapeSetsOfTables takeShapeSets(Vector<uint8_t>& programTables, const Typ
     return sets;
 }
 
+// What the first image of a realm leaves behind its own headers.
+static constexpr uint64_t stringHeadersKeptForOtherImages = 1 << 20;
+
 static std::optional<StringHeaderNumbers> numberStringHeaders(const TextRecords& text, std::span<const uint32_t> literalStrings, ImageForm form, BuildContext& context)
 {
     StringHeaderNumbers numbers;
@@ -582,7 +618,17 @@ static std::optional<StringHeaderNumbers> numberStringHeaders(const TextRecords&
         return std::nullopt;
     }
     numbers.count = static_cast<uint32_t>(count);
+    numbers.capacity = numbers.count;
     numbers.numberOfListedWords = static_cast<uint32_t>(numberOfListedWords);
+    if (const ImagesBelow* below = context.imagesBelow()) {
+        numbers.first = below->numbersOfLast().endOfStringHeaders;
+        if (count > below->capacityOfStringHeaders()) {
+            context.reportLimitExceeded(LimitID::MaxListedStrings, count);
+            return std::nullopt;
+        }
+    } else if (context.options().sharesRealms())
+        numbers.capacity = static_cast<uint32_t>(std::min<uint64_t>(count + stringHeadersKeptForOtherImages, ImageString::hashMask + 1));
+    RELEASE_ASSERT(numbers.first <= numbers.count);
     return numbers;
 }
 
@@ -661,7 +707,7 @@ static Vector<uint8_t> allocateImage(const ImageExtent& extent, size_t executabl
 template<typename T>
 static constexpr bool hasNoPadding = std::has_unique_object_representations_v<T>;
 
-static void writeHeader(ImageHeader& header, const ImageWriterInputs& parts, const ImageExtent& extent, BuildContext& context)
+static void writeHeader(ImageHeader& header, const ImageWriterInputs& parts, const ImageExtent& extent, const StringHeaderNumbers& stringHeaders, uint32_t endOfIdentifiers, BuildContext& context)
 {
     static_assert(hasNoPadding<RecordedOptions> && hasNoPadding<ImageSectionRange> && hasNoPadding<ImageCounts> && hasNoPadding<ImageCodeRanges>, "padding in a member assigned as a whole would make the bytes of the image differ from build to build");
     static_assert(sizeof(ImageHeapOptions) == sizeof(double) + 2 * sizeof(uint32_t), "a double has no unique object representation, so the sizes say that there is no padding");
@@ -694,8 +740,24 @@ static void writeHeader(ImageHeader& header, const ImageWriterInputs& parts, con
     OptionSet<ImageFlag> flags = flagsForUnseenCode(parts.inputs.pipeline, context.options());
     if (context.options().obfuscates())
         flags.add(ImageFlag::IsObfuscated);
+    if (context.options().sharesRealms())
+        flags.add(ImageFlag::SharesRealms);
+    if (context.options().holdsLibraryAlone())
+        flags.add(ImageFlag::HoldsLibraryAlone);
+    header.numbers = {
+        .shapesBelow = context.imagesBelow() ? context.imagesBelow()->numbersOfLast().lastShape : 0,
+        .lastShape = parts.inputs.pipeline.placement->shapes().numberOfShapes(),
+        .firstClosureNumber = parts.inputs.pipeline.placement->closureFunctions().numbersBelow,
+        .endOfClosureNumbers = parts.inputs.pipeline.placement->closureFunctions().numbersBelow + parts.inputs.pipeline.placement->closureFunctions().end.index() - parts.inputs.pipeline.placement->closureFunctions().first.index(),
+        .firstStringHeader = stringHeaders.first,
+        .endOfIdentifiers = endOfIdentifiers,
+        .endOfStringHeaders = stringHeaders.count,
+        .capacityOfStringHeaders = stringHeaders.capacity,
+    };
     if (Typed::namesWaysToModuleObjects(*parts.inputs.pipeline.program))
         flags.add(ImageFlag::ShowsWaysBetweenModuleObjects);
+    if (std::ranges::any_of(parts.inputs.pipeline.program->modules, [](const Typed::Module& module) { return module.flags.contains(Typed::ModuleFlags::RunsAgain); }))
+        flags.add(ImageFlag::RunsEntryPointsAgain);
     header.flags = flags.toRaw();
     for (size_t entry : parts.entriesUsed)
         header.entriesUsed[entry / 32] |= 1u << entry % 32;
@@ -774,6 +836,10 @@ static void writeStrings(std::span<uint8_t> image, const TextRecords& text, cons
         if (isIdentifier)
             RELEASE_ASSERT(text.identifiers[number].kind() == PropertyKeyKind::Text && text.identifiers[number].text() == StringID(index));
         uint32_t hash = isIdentifier ? text.identifiers[number].hashOrSymbol() : string.hashOrIdentifierNumber();
+        // An image before this one has the header.
+        if (number < numbers.first)
+            return;
+        number -= numbers.first;
         if (!numbers.hasRecords()) {
             // The atom with no characters is the engine's own.
             if (range.length || !isIdentifier)
@@ -801,12 +867,16 @@ static void writeStrings(std::span<uint8_t> image, const TextRecords& text, cons
 static void writeLiteralStringWords(std::span<ImageStringHeader> headers, const TextRecords& text, const StringHeaderNumbers& numbers, std::span<const uint32_t> literalStrings)
 {
     RELEASE_ASSERT(!headers.empty() && !headers[0].length);
-    headers[0].literalStringWord = static_cast<uint32_t>(headers.size_bytes());
+    headers[0].literalStringWord = static_cast<uint32_t>((numbers.count - numbers.first) * sizeof(ImageStringHeader));
     for (uint32_t number = 0; number < literalStrings.size(); ++number) {
         const ImageString& string = text.strings[literalStrings[number]];
         if (!string.hasText() || !string.hasHeader())
             continue;
-        ImageStringHeader& header = headers[string.hasIdentifierNumber() ? string.hashOrIdentifierNumber() : numbers.byString[literalStrings[number]]];
+        uint32_t numberOfHeader = string.hasIdentifierNumber() ? string.hashOrIdentifierNumber() : numbers.byString[literalStrings[number]];
+        // The word in a header is a number of the image that has the header.
+        if (numberOfHeader < numbers.first)
+            continue;
+        ImageStringHeader& header = headers[numberOfHeader - numbers.first];
         if (header.length)
             header.literalStringWord = literalStringWord(number);
     }
@@ -857,7 +927,7 @@ static Vector<uint8_t> writeImage(const ImageWriterInputs& parts, BuildContext& 
 
     const ParallelLoops& loops = context.parallelLoops();
     Vector<uint8_t> image = allocateImage(*extent, layout.executableSize, parts.linker.layoutInputs.templates, loops);
-    writeHeader(*reinterpret_cast<ImageHeader*>(image.mutableSpan().data()), parts, *extent, context);
+    writeHeader(*reinterpret_cast<ImageHeader*>(image.mutableSpan().data()), parts, *extent, *stringHeaders, static_cast<uint32_t>(text.identifiers.size()), context);
     runTasksInParallel(loops, {
         [&] {
             copySections(image.mutableSpan(), parts, *extent, loops);

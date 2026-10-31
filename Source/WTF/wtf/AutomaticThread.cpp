@@ -191,9 +191,16 @@ bool AutomaticThread::tryEnsureUnderlyingThread(const AbstractLocker& locker)
     return m_hasUnderlyingThread;
 }
 
+bool AutomaticThread::s_threadsSayWhenTheyAreUp { false };
+
+void AutomaticThread::setThreadsSayWhenTheyAreUp()
+{
+    s_threadsSayWhenTheyAreUp = true;
+}
+
 void AutomaticThread::waitUntilIsUp(const AbstractLocker&)
 {
-    while (m_hasUnderlyingThread && !m_isUp)
+    while (s_threadsSayWhenTheyAreUp && m_hasUnderlyingThread && !m_isUp)
         m_isUpCondition.wait(*m_lock);
 }
 
@@ -237,10 +244,10 @@ void AutomaticThread::start(const AbstractLocker&)
             thread->threadDidStart();
 
 #if ENABLE(AOT)
-            // A park whose validation fails allocates this thread's ParkingLot data and the address's bucket, and does not park.
-            for (const void* address : { static_cast<const void*>(m_lock.get()), static_cast<const void*>(&m_waitCondition) })
-                ParkingLot::parkConditionally(address, [] { return false; }, [] { }, TimeWithDynamicClockType(MonotonicTime::infinity()));
-            {
+            if (s_threadsSayWhenTheyAreUp) [[unlikely]] {
+                // A park whose validation fails allocates this thread's ParkingLot data and the address's bucket, and does not park.
+                for (const void* address : { static_cast<const void*>(m_lock.get()), static_cast<const void*>(&m_waitCondition) })
+                    ParkingLot::parkConditionally(address, [] { return false; }, [] { }, TimeWithDynamicClockType(MonotonicTime::infinity()));
                 Locker locker { *m_lock };
                 m_isUp = true;
                 m_isUpCondition.notifyAll();
@@ -256,7 +263,8 @@ void AutomaticThread::start(const AbstractLocker&)
                 thread->threadIsStopping(locker);
                 thread->m_hasUnderlyingThread = false;
 #if ENABLE(AOT)
-                m_isUpCondition.notifyAll();
+                if (s_threadsSayWhenTheyAreUp) [[unlikely]]
+                    m_isUpCondition.notifyAll();
 #endif
             };
             

@@ -3448,6 +3448,7 @@ NEVER_INLINE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, 
         return ByteCompiler(pattern).compile(allocator, lock, errorCode);
 
     RequiredTexts requiredTexts = findRequiredTexts(pattern);
+    std::optional<RequiredText> textOfEveryMatch = findTextOfEveryMatch(pattern);
     // This has to come first: the bytecode compiler takes m_userCharacterClasses out of the pattern.
     auto flatProgram = compileFlatProgram(pattern);
     if (!flatProgram) {
@@ -3463,13 +3464,26 @@ NEVER_INLINE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, 
     }
     if (!requiredTexts.isEmpty()) {
         bool hasSelectiveStartScan = (*flatProgram)->hasSelectiveStartScan();
+        RequiredTexts textsBehindRuns;
         requiredTexts.removeAllMatching([&](const RequiredText& required) {
-            return !required.isAllThatMatchesAtEndHold && (hasSelectiveStartScan || (*flatProgram)->startScanCovers(required));
+            bool isLeftOut = !required.isAllThatMatchesAtEndHold && (hasSelectiveStartScan || (*flatProgram)->startScanCovers(required));
+            if (isLeftOut && !required.text.isEmpty() && required.greatestDistance == RequiredText::unbounded)
+                textsBehindRuns.append(required);
+            return isLeftOut;
         });
+        if (requiredTexts.isEmpty() && !textsBehindRuns.isEmpty()) {
+            dataLogLnIf(Options::verboseRegExpCompilation(), "Searches for ", textsBehindRuns.size(), " texts that every match holds once its attempts have come far");
+            (*flatProgram)->setRequiredTextsAskedLate(textsBehindRuns);
+        }
     }
     if (!requiredTexts.isEmpty()) {
         dataLogLnIf(Options::verboseRegExpCompilation(), "Searches for ", requiredTexts.size(), " texts that every match holds");
         (*flatProgram)->setRequiredTexts(requiredTexts);
+    }
+    if (textOfEveryMatch && ((*flatProgram)->triesOnlyOnce || textOfEveryMatch->isForFirstAttemptOnly) && !(*flatProgram)->isEnteredOutOfLine && !(*flatProgram)->jitCountsTurns && textOfEveryMatch->greatestDistance == RequiredText::unbounded && !textOfEveryMatch->knowsUnitsInFront) {
+        // An attempt that comes to the text at a known place fails there sooner than a search ends.
+        dataLogLnIf(Options::verboseRegExpCompilation(), "Looks for a text that every match holds once the attempt has gone back often");
+        (*flatProgram)->setTextOfEveryMatch(WTF::move(*textOfEveryMatch));
     }
 
     dataLogLnIf(Options::dumpCompiledRegExpPatterns() || Options::verboseRegExpCompilation(), "Runs on a flat program");
@@ -3562,6 +3576,14 @@ static void validateFlatProgram(BytecodePattern* bytecode, const FlatProgram& pr
     JSRegExpResult memoResult = matchFlatProgramWithSurrogates(program, input, start, memoOutput.mutableSpan().data(), FlatMatchPolicy::RemembersFromStart);
     validateFlatProgramResult(program, input, start, { memoResult, memoOutput.span().data() }, { bytecodeResult, bytecodeOutput.span().data() });
 
+    if (const FlatProgram* second = program.programThatFindsEndsOfRuns.get()) {
+        for (FlatMatchPolicy policy : { FlatMatchPolicy::HandsOverEarly, FlatMatchPolicy::RemembersFromStart }) {
+            Vector<unsigned, 32> secondOutput(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
+            JSRegExpResult secondResult = matchFlatProgramWithSurrogates(*second, input, start, secondOutput.mutableSpan().data(), policy);
+            validateFlatProgramResult(*second, input, start, { secondResult, secondOutput.span().data() }, { bytecodeResult, bytecodeOutput.span().data() });
+        }
+    }
+
     unsigned remainingTurns { 0 };
     Vector<unsigned, 32> countingOutput(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
     auto countingResult = matchCountingTurns(bytecode, input, start, countingOutput.mutableSpan().data(), remainingTurns);
@@ -3653,6 +3675,13 @@ static void validateRequiredTexts(BytecodePattern* bytecode, StringView input, u
     dataLogLn("  pattern: ", bytecode->m_source);
     dataLogLn("  subject: ", input);
     CRASH();
+}
+
+bool collectMatchesOfOneSetOrRun(BytecodePattern* bytecode, StringView input, Vector<unsigned, 128>& matches)
+{
+    // bytecode->m_body: the checking mode, which compares every match.
+    const FlatProgram* program = bytecode->m_flatProgram.get();
+    return program && program->isOneSetOrRun && !bytecode->m_body && collectMatchesOfOneSetOrRun(*program, input, matches);
 }
 
 NEVER_INLINE unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)

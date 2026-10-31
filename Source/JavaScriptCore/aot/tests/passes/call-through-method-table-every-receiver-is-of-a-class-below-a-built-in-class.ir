@@ -1,0 +1,31 @@
+# The table serves no object of a class below a built-in class. Where every receiver is one, no method has a receiver of the table,
+# and the call stays as it is: a test for an empty set of layouts in front of a call through the table would be a type that names no layout
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass CallThroughMethodTable
+# STATISTIC: TableCalls = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 kind=Instance name="A" constructor=f0 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Object allocationClasses=[0] constructorOrders=[{}] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType] keys=NeverEnumerated addedKeysAreComplete=true neverEscapes=true} classFlow={prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L1 kind=Instance name="B" base=L0 constructor=f1 supertypes=[L0] flags=[HasHeritage] flow={baseState=Layout base=L0 allocationClasses=[1] constructorOrders=[{}] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType] keys=NeverEnumerated addedKeysAreComplete=true neverEscapes=true} classFlow={prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L2 kind=Instance name="C" base=L1 constructor=f2 supertypes=[L0, L1] flags=[HasHeritage] flow={baseState=Layout base=L1 allocationClasses=[2] constructorOrders=[{}] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType] keys=NeverEnumerated addedKeysAreComplete=true neverEscapes=true} classFlow={prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed staticNamesAreComplete=true members=[{key="m" function=f4 closureUse=CalledOnly}] namedMembers=[{key="m" function=f4 closureUse=CalledOnly}]}
+layout L3 kind=Instance name="D" base=L0 constructor=f3 supertypes=[L0] flags=[HasHeritage] flow={baseState=Layout base=L0 allocationClasses=[3] constructorOrders=[{}] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType] keys=NeverEnumerated addedKeysAreComplete=true neverEscapes=true} classFlow={prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="m" function=f5 mutability=Fixed closureUse=CalledOnly isWritableData=true}] namedMembers=[{key="m" function=f5 mutability=Fixed closureUse=CalledOnly isWritableData=true}]}
+function f0 name="A" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="B" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f2 name="C" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f3 name="D" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f4 name="m" kind=Method results=[{type=string}] {
+    v0 = String string="C"
+    Return v0
+}
+function f5 name="m" kind=Method results=[{type=string}] {
+    v0 = String string="D"
+    Return v0
+}
+function f6 name="calls" parameters=[{type=L0|L1|L2|L3}] results=[{type=anything}] {
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, v0 calleeKey="m" callees=[f4, f5, ..]
+    Return v2
+# CHECK: = Call v1, v0 calleeKey="m"
+}

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCodeGenerator.h"
+#include "AOTMutatorFenceMerging.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
@@ -28,6 +29,8 @@
 #include "B3ValueInlines.h"
 #include <limits>
 #include <optional>
+#include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/SharedTask.h>
 
 namespace JSC { namespace AOT {
@@ -701,6 +704,143 @@ B3::ClientPhase mergeImpliedBranchesAfterOptimization(const Typed::Program& prog
             return mergeImpliedBranches(proc);
         })
     };
+}
+
+namespace {
+
+class MutatorFenceMerger {
+public:
+    MutatorFenceMerger(B3::Procedure& proc, const MutatorFenceRecords& records)
+        : m_proc(proc)
+        , m_records(records)
+    {
+    }
+
+    bool run()
+    {
+        if (m_records.fences.size() < 2)
+            return false;
+
+        m_numberOfIncomingEdges.fill(0, m_proc.size());
+        for (B3::BasicBlock* block : m_proc) {
+            for (B3::BasicBlock* successor : block->successorBlocks())
+                ++m_numberOfIncomingEdges[successor->index()];
+        }
+        for (const MutatorFence& fence : m_records.fences)
+            m_endsInFenceBranch.set(fence.branchBlock->index());
+
+        bool changed = false;
+        for (const MutatorFence& fence : m_records.fences) {
+            if (!isCoveredByLaterFence(fence.continuation))
+                continue;
+            fence.branchBlock->last()->replaceWithJump(fence.branchBlock, B3::FrequentedBlock(fence.continuation));
+            changed = true;
+        }
+        return changed;
+    }
+
+private:
+    // A block is entered once every edge into it has been followed, so the start dominates whatever is visited and no block is visited for two fences.
+    bool isCoveredByLaterFence(B3::BasicBlock* start)
+    {
+        m_newCells.clear();
+        m_arrivals.clear();
+        unsigned numberOfWaitingBlocks = 0;
+        Vector<B3::BasicBlock*, 8> worklist { start };
+        while (!worklist.isEmpty()) {
+            B3::BasicBlock* block = worklist.takeLast();
+            B3::Value* last = block->last();
+            for (B3::Value* value : *block) {
+                if (value != last && !publishesNothing(value))
+                    return false;
+            }
+            if (m_endsInFenceBranch.get(block->index()))
+                continue;
+            if (!block->numSuccessors() || !continuesWithoutPublishing(last))
+                return false;
+            for (B3::BasicBlock* successor : block->successorBlocks()) {
+                unsigned arrivals = ++m_arrivals.add(successor, 0).iterator->value;
+                if (arrivals == 1)
+                    ++numberOfWaitingBlocks;
+                if (arrivals == m_numberOfIncomingEdges[successor->index()]) {
+                    --numberOfWaitingBlocks;
+                    worklist.append(successor);
+                }
+            }
+        }
+        return !numberOfWaitingBlocks;
+    }
+
+    bool continuesWithoutPublishing(B3::Value* terminal)
+    {
+        switch (terminal->opcode()) {
+        case B3::Jump:
+        case B3::Branch:
+        case B3::Switch:
+            return true;
+        default:
+            return noteIfAllocation(terminal);
+        }
+    }
+
+    bool noteIfAllocation(B3::Value* value)
+    {
+        if (!m_records.allocations.get(value->index()))
+            return false;
+        m_newCells.add(value);
+        return true;
+    }
+
+    bool publishesNothing(B3::Value* value)
+    {
+        if (noteIfAllocation(value))
+            return true;
+        if (m_records.initializingStores.get(value->index()))
+            return fillsNewCell(value);
+        B3::Effects effects = value->effects();
+        return !effects.writes && !effects.writesPinned && !effects.exitsSideways && !effects.fence && !effects.terminal;
+    }
+
+    // A safepoint may hand an older cell to the collector, which then reads it while the mutator runs. A cell that is newer than the fence is handed over only at a safepoint behind the stores that the fence orders.
+    bool fillsNewCell(B3::Value* store)
+    {
+        B3::Value* pointer = nullptr;
+        if (store->as<B3::MemoryValue>())
+            pointer = store->lastChild();
+        else if (store->opcode() == B3::Patchpoint && store->numChildren() == 1)
+            pointer = store->child(0);
+        while (pointer) {
+            if (m_newCells.contains(pointer))
+                return true;
+            switch (pointer->opcode()) {
+            case B3::Add:
+            case B3::Extract:
+            case B3::Identity:
+                pointer = pointer->child(0);
+                break;
+            case B3::Load:
+                pointer = pointer->lastChild();
+                break;
+            default:
+                return false;
+            }
+        }
+        return false;
+    }
+
+    B3::Procedure& m_proc;
+    const MutatorFenceRecords& m_records;
+    Vector<unsigned> m_numberOfIncomingEdges;
+    BitVector m_endsInFenceBranch;
+    UncheckedKeyHashSet<B3::Value*> m_newCells;
+    UncheckedKeyHashMap<B3::BasicBlock*, unsigned> m_arrivals;
+};
+
+} // anonymous namespace
+
+bool mergeMutatorFences(B3::Procedure& proc, const MutatorFenceRecords& records)
+{
+    return MutatorFenceMerger(proc, records).run();
 }
 
 } } // namespace JSC::AOT

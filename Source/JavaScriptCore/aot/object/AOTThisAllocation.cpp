@@ -17,6 +17,7 @@
 #include "AOTProgramStrings.h"
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTState.h"
+#include "AOTThisAllocationInlines.h"
 #include "AOTThreshold.h"
 #include "FunctionRareData.h"
 #include "InternalFunction.h"
@@ -38,9 +39,11 @@ struct ThisPrototype {
 
 static std::optional<FunctionID> functionInInstance(const Instance& instance, const JSCell* callee)
 {
-    if (Instance::of(callee->structure()->realm()) != &instance)
+    // Whichever image runs: new.target and the constructor may be of two.
+    std::optional<uint32_t> number = closureNumberOf(callee);
+    if (!number || callee->structure()->realm() != instance.globalObject || !instance.tables().hasClosureNumber(*number))
         return std::nullopt;
-    return functionOf(callee);
+    return FunctionID(instance.tables().closureFunctionWithNumber(*number));
 }
 
 enum class Ancestry : uint8_t { NotBelow, Unknown, SameOrBelow };
@@ -94,8 +97,13 @@ static std::optional<ThisPrototype> resolveThisPrototype(JSGlobalObject* globalO
             result.layout = targetLayout;
     }
     if (!prototype) {
+        if (JSObject* remembered = classes.tryReadPrototypePropertyAtRememberedPlace(newTarget)) {
+            result.prototype = remembered;
+            return result;
+        }
         prototype = newTarget->get(globalObject, vm.propertyNames->prototype);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
+        classes.rememberPrototypeOfClassOfOtherImage(vm, newTarget, prototype);
     }
     if (prototype.isObject()) {
         result.prototype = asObject(prototype);
@@ -123,18 +131,13 @@ Object* ClassTable::createClassInstance(VM& vm, const LayoutData& classLayout, J
     return createWithoutFields(vm, m_state.objects->layouts, m_state.objects->structures.objectStructure(vm, classLayout.shape, prototype), classLayout);
 }
 
-// What FunctionRareData::compiledAllocationConstructor() holds for a function that was constructed with itself as new.target. Any other constructor is remembered by its number.
-static constexpr uint32_t constructorIsNewTarget = FunctionRareData::maxCompiledAllocationConstructor;
-static_assert(ClosureWord::functionMask < constructorIsNewTarget);
-
 // What createThis() allocates depends on new.target, on which function is constructed and on the instance of that function.
 static bool isRememberedFor(FunctionRareData& rareData, Structure* remembered, JSObject* constructor, JSObject* newTarget)
 {
     uint32_t rememberedConstructor = rareData.compiledAllocationConstructor();
     if (constructor == newTarget)
-        return rememberedConstructor == constructorIsNewTarget;
-    std::optional<FunctionID> function = functionOf(constructor);
-    return function && rememberedConstructor == function->index() && constructor->structure()->realm() == remembered->realm();
+        return isConstructorThatIsNewTarget(rememberedConstructor);
+    return closureNumberOf(constructor) == rememberedConstructor && constructor->structure()->realm() == remembered->realm();
 }
 
 JSObject* ClassTable::createThis(JSGlobalObject* globalObject, JSObject* constructor, JSObject* newTarget)
@@ -150,7 +153,7 @@ JSObject* ClassTable::createThis(JSGlobalObject* globalObject, JSObject* constru
         return constructEmptyObject(vm, remembered);
     }
 
-    std::optional<FunctionID> function = functionOf(constructor);
+    std::optional<FunctionID> function = functionInInstance(m_state.instance, constructor);
     const LayoutData* constructorLayout = function ? classConstructedBy(*function) : nullptr;
     RELEASE_ASSERT(!constructorLayout || !constructorLayout->hasUntypedBase);
 
@@ -163,8 +166,15 @@ JSObject* ClassTable::createThis(JSGlobalObject* globalObject, JSObject* constru
     JSObject* object = layout && layout->shape
         ? static_cast<JSObject*>(createClassInstance(vm, *layout, prototype))
         : createOrdinaryInstance(globalObject, layout ? layout->numberOfFields : 0, prototype);
-    if (canRemember)
-        target->ensureRareData(vm)->setCompiledAllocation(vm, object->structure(), constructor == newTarget ? constructorIsNewTarget : function->index());
+    if (canRemember) {
+        Structure* structure = object->structure();
+        uint32_t number = m_tables.closureNumberOf(function->index());
+        if (constructor == newTarget) {
+            bool isWholeConstruction = !compiledLayoutOrNull(structure) && structure->inlineCapacity() == JSFinalObject::defaultInlineCapacity && m_tables.closureNumberOnlyReturns(number) && !vm.aotState().validatesRuntime;
+            number = isWholeConstruction ? constructorIsNewTargetAndOnlyReturns : constructorIsNewTarget;
+        }
+        target->ensureRareData(vm)->setCompiledAllocation(vm, structure, number);
+    }
     return object;
 }
 
@@ -188,7 +198,7 @@ void ClassTable::rememberPlaceOfPrototypeProperty(VM& vm, Closure* function, JSO
     unsigned attributes = 0;
     PropertyOffset offset = structure->get(vm, vm.propertyNames->prototype, attributes);
     if (!isValidOffset(offset)) {
-        const LayoutData* classLayout = classConstructedBy(function->function());
+        const LayoutData* classLayout = classConstructedBy(functionOfOwnClosure(*function));
         if (classLayout && isDefinedByClass(*classLayout))
             m_prototypesOfClassObjects[indexOfClassObject(function)] = { function, prototype };
         return;
@@ -199,11 +209,22 @@ void ClassTable::rememberPlaceOfPrototypeProperty(VM& vm, Closure* function, JSO
     m_placesOfPrototypeProperties[indexOfPlace(structureID)] = { structureID, offset };
 }
 
+void ClassTable::rememberPrototypeOfClassOfOtherImage(VM& vm, JSObject* newTarget, JSValue prototype)
+{
+    auto* classObject = dynamicDowncast<Closure>(newTarget);
+    if (!classObject || !prototype.isObject() || !classObject->kind().isConstructor || vm.aotState().validatesRuntime)
+        return;
+    if (Instance::owning(classObject) == &m_state.instance)
+        return;
+    m_prototypesOfClassObjects[indexOfClassObject(classObject)] = { classObject, asObject(prototype) };
+}
+
 // The object that the definition of a class made its prototype. What a program stores as the prototype of a constructor function names no class.
 const LayoutData* ClassTable::classWithPrototype(JSObject* prototype) const
 {
+    // The class of another image is none of this table's.
     if (auto* lazyPrototype = dynamicDowncast<ClassPrototype>(prototype))
-        return classWithIndex(lazyPrototype->classIndex());
+        return classOf(*lazyPrototype);
     ClassSide side;
     const LayoutData* held = classHeldBy(prototype, side);
     return held && side == ClassSide::Prototype && isDefinedByClass(*held) ? held : nullptr;
@@ -226,7 +247,7 @@ static JSValue valueForInstance(VM& vm, State& state, const Object& allocated, c
         captured = &instance;
     else if (field.flags & fieldDeferredClosureCapturesEnvironment)
         captured = closureEnvironmentOf(state, allocated, field);
-    return state.objects->closures.createClosureOver(vm, allocated.layout().deferredClosureOf(field), captured);
+    return state.objects->closures.createClosureOver(vm, FunctionID(state.tables.closureFunctionWithNumber(allocated.layout().deferredClosureNumberOf(field))), captured);
 }
 
 static void shareClosureEnvironment(VM& vm, State& state, const Object& allocated, const FieldData& field, Object& instance, const FieldData& target)
@@ -359,7 +380,9 @@ JSObject* ClassTable::instanceWithPrototype(VM& vm, Object* allocated, JSObject*
     const LayoutData* requested = isDefinedByClass(allocatedClass) ? classWithPrototype(prototype) : nullptr;
     if (!requested || requested->index == allocatedClass.index) {
         allocated->setPrototypeAtCreation(vm, prototype);
-        if (requested && listsNoField && allocation)
+        // A class of another image that extends this one has one prototype object too, and every `new` of it comes here.
+        auto* lazyPrototype = requested ? nullptr : dynamicDowncast<ClassPrototype>(prototype);
+        if ((requested || (lazyPrototype && !hasClassOf(*lazyPrototype))) && listsNoField && allocation)
             rememberInstanceOfOtherEvaluation(vm, *allocated, prototype, *allocation);
         return allocated;
     }

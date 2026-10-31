@@ -239,6 +239,20 @@ export default b.declarations(
       uses: { this: b.inspected, items: [itemsProtocols, b.contentsStoredIn(b.resultSlot("element"))] },
       implementation: b.compiled("ArrayConstructor", "from"),
     },
+    // An iterable whose @@iterator is proven unchanged: the loop over it reads the method once, as Array.from does.
+    {
+      ...operandCodeEffects,
+      args: { items: builtinIterable, mapper: b.callable, thisArg: b.any.optional },
+      returns: newArrayOf(b.callbackResult("mapper")).dense,
+      uses: {
+        this: b.inspected,
+        items: [b.runs("Iterate")],
+        mapper: [mapperCall(b.iterated("items"))],
+        thisArg: b.inspected,
+      },
+      isSpecialCase: true,
+      implementation: b.compiled("prelude/iterator-consumers", "from"),
+    },
     {
       ...operandCodeEffects,
       args: { items: b.any, mapper: b.callable, thisArg: b.any.optional },

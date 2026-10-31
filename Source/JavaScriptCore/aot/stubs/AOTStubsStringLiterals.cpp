@@ -336,6 +336,9 @@ void findLiteralStringWord(StubAssembler& jit, const LiteralStringProbeRegisters
     const GPRReg sizeOfHeaders = maxLength;
     jit.loadPtr(Address(string, JSString::offsetOfValue()), impl);
     jit.loadPtr(Address(instanceGPR, jit.options().isPositionIndependent ? AOT_INSTANCE_OFFSET(lazyStrings.headers) : AOT_INSTANCE_OFFSET(image.programIdentifiers)), headers);
+    // The word in a header is a number of the image that has the header.
+    if (jit.options().firstStringHeader)
+        jit.addPtr(TrustedImm32(static_cast<int32_t>(jit.options().firstStringHeader * sizeof(ImageStringHeader))), headers);
     jit.load32(Address(headers, OBJECT_OFFSETOF(ImageStringHeader, literalStringWord)), sizeOfHeaders);
     jit.sub64(impl, headers, entry);
     Jump isOutsideOfImage = jit.branch64(CCallHelpers::AboveOrEqual, entry, sizeOfHeaders);

@@ -16,6 +16,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTLayout.h"
 #include "AOTLedger.h"
+#include "AOTSharedPrefixList.h"
 #include "AOTSort.h"
 #include "AOTSortedSet.h"
 #include "AOTStronglyConnectedComponents.h"
@@ -41,16 +42,6 @@ namespace JSC { namespace AOT { namespace Typed {
 namespace {
 
 template<typename Key, typename Mapped> using MapByNumber = HashMap<Key, Mapped, IntHash<Key>, WTF::UnsignedWithZeroKeyHashTraits<Key>>;
-
-struct ConstructionName {
-    PropertyKeyID key;
-    FieldReference field;
-    bool standsForValue { false };
-
-    friend auto operator<=>(const ConstructionName&, const ConstructionName&) = default;
-};
-
-using ConstructionNames = SortedSet<ConstructionName>;
 
 enum class ConstructionEventKind : uint8_t { Store, Read, Leak, Call, Exit };
 
@@ -111,7 +102,10 @@ struct SolvedConstruction {
     ConstructionNames readBeforeStore;
     ConstructionNames readNames;
     ConstructionNames selfReferenceNames;
-    Vector<ConstructionName> initialOrder;
+    SharedPrefixList<ConstructionName> initialOrder;
+    ConstructionNames namesInInitialOrder;
+    // What follows the order of the function that the object is first passed on to.
+    Vector<ConstructionName> ownPartOfInitialOrder;
 };
 
 struct ResolvedConstructionEvent {
@@ -289,7 +283,7 @@ struct ConstructionEventCollector {
                 events.append({ .kind = ConstructionEventKind::Exit, .point = pointBeforeTerminatorOf(function, block) });
         }
 
-        AOT::sort(events, { }, [](const ConstructionEvent& event) {
+        AOT::sortInLine(events, { }, [](const ConstructionEvent& event) {
             return std::tuple { event.point.block, event.point.index, event.kind, event.operandIndex, event.name, event.operand };
         });
         removeRepeatedElements(events);
@@ -555,7 +549,7 @@ std::unique_ptr<FunctionConstruction> buildFunctionConstruction(const ValueFlowR
         if (statement.kind == ValueFlowStatementKind::Operation)
             result->statements.append(&statement);
     }
-    AOT::sort(result->statements, { }, &ValueFlowStatement::site);
+    AOT::sortInLine(result->statements, { }, &ValueFlowStatement::site);
     return result;
 }
 
@@ -901,6 +895,46 @@ struct ConstructionGraphBuilder {
         }).iterator->value;
     }
 
+    std::optional<ValueSetID> prototypeObjectsExpectedAbove(ValueFlowObjectID object)
+    {
+        if (universe.kindOf(object) != ValueFlowObjectKind::Instance)
+            return std::nullopt;
+        ValueSetID expected = ValueSets::nothing;
+        LayoutID current = universe.layoutOf(object);
+        for (size_t steps = 0; current && steps <= program.layouts.size(); ++steps) {
+            const Layout& layout = program.at(current);
+            std::optional<ValueSetID> prototypes = prototypesGivenAtCreation(universe.instanceOf(current));
+            std::optional<LayoutID> base = layout.base ? std::optional(layout.base) : findBaseLinkedByProgram(inputs, current);
+            if (!prototypes || !base || (!*base && layout.has(LayoutFlags::HasHeritage)))
+                return std::nullopt;
+            // The guards watch the link of the prototype object that the class is born with, and of no other object.
+            ValueSetID born = maker.of(universe.prototypeOf(current));
+            expected = maker.unite(expected, maker.unite(born, heap.chainOf(maker.intersect(*prototypes, ValueSets::complement(born)))));
+            current = *base;
+        }
+        return current ? std::nullopt : std::optional(expected);
+    }
+
+    // A store behind its guards: each prototype object still has above it what the compiler expects there.
+    const std::optional<ChainOfReceivers>& chainWhileLinksAreAsExpected(ValueSetID receivers, const ChainOfReceivers& chainBeforeLeak)
+    {
+        return chainsWhileLinksAreAsExpected.ensure(receivers.index(), [&]() -> std::optional<ChainOfReceivers> {
+            ValueSetID objects = maker.intersect(chainBeforeLeak.chain, ValueSets::complement(chainBeforeLeak.above));
+            std::optional<ValueSetID> expected = ValueSets::nothing;
+            sets.forEachMember(objects, [&](ValueFlowObjectID object) {
+                std::optional<ValueSetID> above = expected ? prototypeObjectsExpectedAbove(object) : std::nullopt;
+                expected = above ? std::optional(maker.unite(*expected, *above)) : std::nullopt;
+            });
+            if (!expected)
+                return std::nullopt;
+            ChainOfReceivers result;
+            result.above = maker.intersect(chainBeforeLeak.above, *expected);
+            result.chain = maker.unite(objects, result.above);
+            result.isKnown = true;
+            return result;
+        }).iterator->value;
+    }
+
     void resolveAccess(const FunctionConstruction& construction, bool isEnteredByNew, const ConstructionEvent& event, ResolvedConstructionEvent& resolved)
     {
         const Function& function = construction.analyses->function();
@@ -918,25 +952,34 @@ struct ConstructionGraphBuilder {
         ValueSetID receivers = operands[*receiverOf(access.opcode)];
         bool isExactStore = event.kind == ConstructionEventKind::Store && event.isExact && access.opcode == Opcode::PropSet;
         std::optional<ChainOfReceivers> chainOfRoot;
+        ValueSetID roots = isEnteredByNew ? universe.objectsWith(function.constructedClass) : receivers;
         if (event.isExact)
-            chainOfRoot = chainOfObjectsBeforeTheyLeak(isEnteredByNew ? universe.objectsWith(function.constructedClass) : receivers);
-        const ChainOfReceivers& chain = chainOfRoot ? *chainOfRoot : chainOf(receivers);
-        resolved.mayLeak = resolved.otherCodeMayRun = !chain.isKnown && !(unknownChains == UnknownChains::HoldNothingUnderName && isExactStore);
-        if (!chain.isKnown)
+            chainOfRoot = chainOfObjectsBeforeTheyLeak(roots);
+        const ChainOfReceivers* chain = chainOfRoot ? &*chainOfRoot : &chainOf(receivers);
+        bool standsBehindGuards = unknownChains == UnknownChains::HoldNothingUnderName && isExactStore;
+        resolved.mayLeak = resolved.otherCodeMayRun = !chain->isKnown && !standsBehindGuards;
+        if (!chain->isKnown)
             return;
 
+        bool mayBeStopped = isExactStore && !isPrivateKey(program, key) && mayBeStoppedAbove(*chain, key);
+        if (mayBeStopped && standsBehindGuards && chainOfRoot) {
+            if (const std::optional<ChainOfReceivers>& expected = chainWhileLinksAreAsExpected(roots, *chainOfRoot)) {
+                chain = &*expected;
+                mayBeStopped = mayBeStoppedAbove(*chain, key);
+            }
+        }
         if (kind == Access::Read || kind == Access::Store) {
             bool getters = kind == Access::Read;
             ValueSetID accessors;
             if (chainOfRoot) {
-                ValueSetID own = accessorsUnder(maker.intersect(chain.chain, ValueSets::complement(chain.above)), key, getters);
-                accessors = maker.unite(maker.intersect(own, ValueSets::complement(universe.placeholdersAlone())), accessorsUnder(chain.above, key, getters));
+                ValueSetID own = accessorsUnder(maker.intersect(chain->chain, ValueSets::complement(chain->above)), key, getters);
+                accessors = maker.unite(maker.intersect(own, ValueSets::complement(universe.placeholdersAlone())), accessorsUnder(chain->above, key, getters));
             } else
-                accessors = accessorsUnder(chain.chain, key, getters);
-            resolved.mayLeak = !builtinMembersArePlainValues(chain.chain, key);
+                accessors = accessorsUnder(chain->chain, key, getters);
+            resolved.mayLeak = !builtinMembersArePlainValues(chain->chain, key);
             enterWithObjectAsThis(accessors, resolved);
         }
-        resolved.otherCodeMayRun |= isExactStore && !isPrivateKey(program, key) && mayBeStoppedAbove(chain, key);
+        resolved.otherCodeMayRun |= mayBeStopped;
     }
 
     static bool collectsArgument(const Function& callee, uint32_t argument)
@@ -1096,6 +1139,7 @@ struct ConstructionGraphBuilder {
     std::optional<ValueSetID> objectsOfProgramThatStopStores { };
     MapByNumber<uint32_t, bool> holdersOfNamesNobodyLists { };
     MapByNumber<uint32_t, std::optional<ChainOfReceivers>> chainsBeforeLeak { };
+    MapByNumber<uint32_t, std::optional<ChainOfReceivers>> chainsWhileLinksAreAsExpected { };
     ConstructionGraph graph { };
 };
 
@@ -1172,8 +1216,13 @@ struct StoredNamesProblem {
         }
         if (!stateAfterCall)
             return;
-        if (runsOneOfThem)
-            state.stored.unite(stateAfterCall->stored);
+        if (runsOneOfThem) {
+            bool holdsWhatWasStoredBefore = state.stored.size() == stateBeforeOperation.stored.size();
+            if (holdsWhatWasStoredBefore)
+                state.stored = WTF::move(stateAfterCall->stored);
+            else
+                state.stored.unite(stateAfterCall->stored);
+        }
         state.selfReferences.unite(stateAfterCall->selfReferences);
     }
 
@@ -1265,7 +1314,8 @@ void solveStoredNames(const ConstructionGraph& graph, ConstructionNode& node)
     node.construction->analyses->solveForward(problem);
     node.solved = WTF::move(problem.solved);
     if (problem.storedAtExit) {
-        problem.storedBeforeLeak->subtract(node.solved.readBeforeStore);
+        if (!node.solved.readBeforeStore.isEmpty())
+            problem.storedBeforeLeak->subtract(node.solved.readBeforeStore);
         node.solved.storedBeforeLeak = WTF::move(*problem.storedBeforeLeak);
         node.solved.storedAtExit = WTF::move(*problem.storedAtExit);
     }
@@ -1293,6 +1343,7 @@ struct InitialOrderBuilder {
             }
         }
         node.solved.storesOnlyInInitialOrder = !node.solved.mayLeak && everyPointAccepted;
+        node.solved.namesInInitialOrder = WTF::move(acceptedNames);
     }
 
     const ConstructionEvent& eventAt(uint32_t position) const { return summary.events[position]; }
@@ -1389,7 +1440,7 @@ struct InitialOrderBuilder {
         if (createsOwnKey(point) && !isAccepted(nameAt(point)))
             return false;
         return std::ranges::all_of(resolvedAt(point).callees, [&](uint32_t callee) {
-            return solvedOf(callee).storesOnlyInInitialOrder && std::ranges::all_of(solvedOf(callee).initialOrder, isAccepted);
+            return solvedOf(callee).storesOnlyInInitialOrder && solvedOf(callee).initialOrder.allOf(isAccepted);
         });
     }
 
@@ -1432,8 +1483,15 @@ struct InitialOrderBuilder {
         });
         if (!calleesAgree)
             return false;
-        for (const ConstructionName& name : first.initialOrder)
-            addToOrder(name);
+        if (acceptedNames.isEmpty())
+            node.solved.initialOrder = first.initialOrder;
+        else {
+            first.initialOrder.forEach([&](const ConstructionName& name) {
+                if (!acceptedNames.contains(name))
+                    node.solved.initialOrder.append(name);
+            });
+        }
+        acceptedNames.unite(first.namesInInitialOrder);
         return first.storesOnlyInInitialOrder;
     }
 
@@ -1457,22 +1515,6 @@ struct InitialOrderBuilder {
     ConstructionNames acceptedNames { };
 };
 
-void solveConstructions(ConstructionGraph& graph)
-{
-    StronglyConnectedComponents components = computeStronglyConnectedComponents(graph.nodes.size(), [&](unsigned node) -> const Vector<uint32_t>& {
-        return graph.nodes[node].callees;
-    });
-    for (uint32_t index : components.members) {
-        ConstructionNode& node = graph.nodes[index];
-        if (components.isInCycle.get(index))
-            node.summary = nullptr;
-        if (!node.summary)
-            continue;
-        solveStoredNames(graph, node);
-        InitialOrderBuilder { graph, node }.build();
-    }
-}
-
 size_t parentOrderLength(const ConstructionGraph& graph, const ConstructionNode& node)
 {
     if (!node.summary)
@@ -1486,10 +1528,53 @@ size_t parentOrderLength(const ConstructionGraph& graph, const ConstructionNode&
     return std::min(graph.nodes[node.resolvedEvents[rootEvent - events.begin()].callees[0]].solved.initialOrder.size(), node.solved.initialOrder.size());
 }
 
-std::pair<FieldOrder, bool> ownOrderOf(const Program& program, const ConstructionGraph& graph, const ConstructionNode& node, LayoutID layout)
+void solveConstructions(ConstructionGraph& graph, const BitVector* nodesThatAreRead = nullptr)
+{
+    StronglyConnectedComponents components = computeStronglyConnectedComponents(graph.nodes.size(), [&](unsigned node) -> const Vector<uint32_t>& {
+        return graph.nodes[node].callees;
+    });
+    // A constructor holds the names of all the constructors above it, several times over. Most of that is read by its callers alone, while they are solved, so it goes with the last of them:
+    // kept, a row of classes that extend one another would hold a number of names that grows with the square of its length.
+    Vector<uint32_t> numberOfCallersToCome(FillWith { }, graph.nodes.size(), 0u);
+    for (const ConstructionNode& node : graph.nodes) {
+        for (uint32_t callee : node.callees)
+            ++numberOfCallersToCome[callee];
+    }
+    auto releaseWhatCallersRead = [](SolvedConstruction& solved) {
+        solved.storedAtExit = { };
+        solved.readBeforeStore = { };
+        solved.readNames = { };
+        solved.selfReferenceNames = { };
+        solved.initialOrder = { };
+        solved.namesInInitialOrder = { };
+    };
+    for (uint32_t index : components.members) {
+        ConstructionNode& node = graph.nodes[index];
+        if (!nodesThatAreRead || nodesThatAreRead->quickGet(index)) {
+            if (components.isInCycle.get(index))
+                node.summary = nullptr;
+            if (node.summary) {
+                solveStoredNames(graph, node);
+                InitialOrderBuilder { graph, node }.build();
+                node.solved.initialOrder.allOfFrom(parentOrderLength(graph, node), [&](const ConstructionName& name) {
+                    node.solved.ownPartOfInitialOrder.append(name);
+                    return true;
+                });
+            }
+        }
+        for (uint32_t callee : node.callees) {
+            if (!--numberOfCallersToCome[callee])
+                releaseWhatCallersRead(graph.nodes[callee].solved);
+        }
+        if (!numberOfCallersToCome[index])
+            releaseWhatCallersRead(node.solved);
+    }
+}
+
+std::pair<FieldOrder, bool> ownOrderOf(const Program& program, const ConstructionNode& node, LayoutID layout)
 {
     FieldOrder order;
-    for (ConstructionName name : node.solved.initialOrder.span().subspan(parentOrderLength(graph, node))) {
+    for (ConstructionName name : node.solved.ownPartOfInitialOrder) {
         std::optional<uint32_t> field = name.key ? program.at(layout).findField(name.key) : name.field.layout == layout ? std::optional(name.field.field) : std::nullopt;
         if (!field)
             return { WTF::move(order), false };
@@ -1686,21 +1771,242 @@ Vector<uint32_t, 2> findMakers(const ValueFlowResultInputs& inputs, const Constr
     return makers;
 }
 
-void listNamesStoredByEveryMaker(const ConstructionGraph& graph, std::span<const uint32_t> makers, Vector<PropertyKeyID>& keys, Vector<FieldReference>& fields, Vector<PropertyKeyID>* keysStoredWithValue)
+ConstructionNames namesStoredByEveryMaker(const ConstructionGraph& graph, std::span<const uint32_t> makers)
 {
     ConstructionNames stored = graph.nodes[makers[0]].solved.storedBeforeLeak;
-    for (uint32_t maker : makers)
+    for (uint32_t maker : makers.subspan(1))
         stored.intersect(graph.nodes[maker].solved.storedBeforeLeak);
-    for (ConstructionName name : stored) {
+    return stored;
+}
+
+void listNamesStoredByEveryMaker(const ConstructionGraph& graph, std::span<const uint32_t> makers, Vector<PropertyKeyID>& keys, Vector<FieldReference>& fields, Vector<PropertyKeyID>& keysStoredWithValue)
+{
+    namesStoredByEveryMaker(graph, makers).forEach([&](const ConstructionName& name) {
         if (name.standsForValue) {
-            if (name.key && keysStoredWithValue)
-                keysStoredWithValue->append(name.key);
+            if (name.key)
+                keysStoredWithValue.append(name.key);
         } else if (name.key)
             keys.append(name.key);
         else
             fields.append(name.field);
-    }
+    });
 }
+
+// `const table = {}; table.a = 1; table.b = 2;` in the body of a file, and what tsc emits for an enum or a namespace: `(function (E) { E[E["A"] = 0] = "A"; })(E || (E = {}));`.
+// The stores that follow the literal in a straight line fill the object as a constructor fills `this`.
+class StoresBehindLiterals {
+public:
+    struct Keys {
+        void append(const Keys& other)
+        {
+            all.appendVector(other.all);
+            storedWithValue.appendVector(other.storedWithValue);
+            functionsThatStore.appendVector(other.functionsThatStore);
+        }
+
+        Vector<PropertyKeyID> all;
+        Vector<PropertyKeyID> storedWithValue;
+        Vector<FunctionID, 1> functionsThatStore;
+    };
+    using KeysByLiteral = MapByNumber<uint32_t, Keys>;
+
+    explicit StoresBehindLiterals(const Program& program)
+        : m_program(program)
+    {
+    }
+
+    KeysByLiteral inBodyOfFile(FunctionID body)
+    {
+        KeysByLiteral keys;
+        for (Followed& followed : follow(m_program.at(body), std::nullopt)) {
+            // Other functions find the object in a variable of the file. One that only the body holds is read as often as the body runs.
+            if (!followed.isHeldByVariable || followed.keys.all.isEmpty())
+                continue;
+            m_functionsThatFill.appendVector(followed.keys.functionsThatStore);
+            keys.add(followed.object.index(), WTF::move(followed.keys));
+        }
+        if (!keys.isEmpty())
+            m_functionsThatFill.append(body);
+        return keys;
+    }
+
+    // They hold objects that are not finished.
+    Vector<FunctionID> takeFunctionsThatFill() { return std::exchange(m_functionsThatFill, { }); }
+
+private:
+    struct Followed {
+        ValueID object;
+        uint32_t line { 0 };
+        bool isHeldByVariable { false };
+        Keys keys;
+    };
+
+    // Blocks that a jump forward joins have one number.
+    static Vector<uint32_t> numberLines(const Function& function, const CFG& cfg)
+    {
+        Vector<uint32_t> lines(function.blocks.size(), [](size_t index) {
+            return static_cast<uint32_t>(index);
+        });
+        auto find = [&](uint32_t block) {
+            while (lines[block] != block)
+                block = lines[block] = lines[lines[block]];
+            return block;
+        };
+        for (BlockID block : cfg.reversePostOrder()) {
+            const Terminator& terminator = function.at(block).terminator;
+            if (terminator.kind != TerminatorKind::Jump)
+                continue;
+            BlockID next = terminator.targets[0].block;
+            if (cfg.reversePostOrderIndex(next) > cfg.reversePostOrderIndex(block))
+                lines[find(next.index())] = find(block.index());
+        }
+        for (uint32_t block = 0; block < lines.size(); ++block)
+            lines[block] = find(block);
+        return lines;
+    }
+
+    bool isLiteralOfRecord(const Value& value) const
+    {
+        LayoutID layout;
+        if (value.opcode == Opcode::NewObject)
+            layout = value.layout();
+        else if (value.opcode == Opcode::Data) {
+            if (const DataNode::Object* object = m_program.at(value.data()).root.tryAs<DataNode::Object>())
+                layout = object->layout;
+        }
+        return layout && m_program.at(layout).kind == LayoutKind::Record && !m_program.at(layout).isDerived();
+    }
+
+    // A function that is made for this one call: it runs as often as the call.
+    static FunctionID calleeOf(const Function& function, const Vector<uint32_t>& numberOfUses, const Value& call)
+    {
+        ValueID callee = call.operand(OperandIndex::Call::callee);
+        while (numberOfUses[callee.index()] == 1 && isCast(function.at(callee).opcode))
+            callee = function.at(callee).operand(0);
+        return numberOfUses[callee.index()] == 1 && function.at(callee).opcode == Opcode::NewClosure ? function.at(callee).function() : FunctionID();
+    }
+
+    static Vector<uint32_t> countUses(const Function& function, const CFG& cfg)
+    {
+        Vector<uint32_t> numberOfUses(FillWith { }, function.values.size(), 0u);
+        auto count = [&](ValueID operand, uint32_t) {
+            if (operand)
+                ++numberOfUses[operand.index()];
+        };
+        for (BlockID id : cfg.reversePostOrder()) {
+            const Block& block = function.at(id);
+            for (ValueID value : block.values)
+                function.at(value).forEachOperand(count);
+            block.terminator.forEachOperand(count);
+            for (const Target& target : block.terminator.targets) {
+                for (ValueID argument : target.arguments)
+                    count(argument, 0);
+            }
+        }
+        return numberOfUses;
+    }
+
+    Keys keysStoredInto(FunctionID callee, uint32_t entryParameter)
+    {
+        uint64_t number = static_cast<uint64_t>(callee.index()) << 32 | entryParameter;
+        // A function that calls itself finds nothing here.
+        if (auto entry = m_keysOfParameters.add(number, Keys()); !entry.isNewEntry)
+            return entry.iterator->value;
+        const Function& function = m_program.at(callee);
+        if (!function.hasBody() || function.isUnsplitCoroutine() || function.hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator }))
+            return { };
+        Vector<Followed, 1> followed = follow(function, entryParameter);
+        if (!followed[0].keys.all.isEmpty())
+            followed[0].keys.functionsThatStore.append(callee);
+        m_keysOfParameters.set(number, followed[0].keys);
+        return WTF::move(followed[0].keys);
+    }
+
+    // The literals of the function, or one of its parameters.
+    Vector<Followed, 1> follow(const Function& function, std::optional<uint32_t> entryParameter)
+    {
+        CFG cfg(function);
+        Vector<uint32_t> lines = numberLines(function, cfg);
+        std::optional<Vector<uint32_t>> numberOfUses;
+        Vector<Followed, 1> followed;
+        MapByNumber<uint32_t, uint32_t> objectOfValue;
+        MapByNumber<uint32_t, uint32_t> objectInVariable;
+        auto begin = [&](ValueID object, BlockID block) {
+            objectOfValue.add(object.index(), followed.size());
+            followed.append({ object, lines[block.index()], false, { } });
+        };
+        auto objectNamedBy = [&](ValueID value) -> std::optional<uint32_t> {
+            if (!value)
+                return std::nullopt;
+            return objectOfValue.getOptional(sameObjectThroughConversionsToObject(function, value).valueInFrontOfFacts().index());
+        };
+        if (entryParameter)
+            begin(function.at(entryBlock).parameters[*entryParameter], entryBlock);
+
+        for (BlockID id : cfg.reversePostOrder()) {
+            const Block& block = function.at(id);
+            auto objectFilledBy = [&](ValueID receiver) -> Followed* {
+                std::optional<uint32_t> object = objectNamedBy(receiver);
+                return object && followed[*object].line == lines[id.index()] ? &followed[*object] : nullptr;
+            };
+            for (ValueID valueID : block.values) {
+                const Value& value = function.at(valueID);
+                switch (value.opcode) {
+                case Opcode::NewObject:
+                case Opcode::Data:
+                    if (!entryParameter && isLiteralOfRecord(value))
+                        begin(valueID, id);
+                    break;
+                case Opcode::GetModuleVariable:
+                    if (std::optional<uint32_t> object = objectInVariable.getOptional(value.variable().index()))
+                        objectOfValue.add(valueID.index(), *object);
+                    break;
+                case Opcode::PutModuleVariable:
+                    if (std::optional<uint32_t> object = objectNamedBy(value.valueOperand())) {
+                        objectInVariable.set(value.variable().index(), *object);
+                        followed[*object].isHeldByVariable = true;
+                    } else
+                        objectInVariable.remove(value.variable().index());
+                    break;
+                case Opcode::PropSet:
+                case Opcode::PropDefine:
+                    if (Followed* object = objectFilledBy(value.objectOperand()); object && !m_program.isIndexLike(value.key())) {
+                        object->keys.all.append(value.key());
+                        if (!m_program.typeOf(function, value.valueOperand()).mayBeUndefinedOrNull())
+                            object->keys.storedWithValue.append(value.key());
+                    }
+                    break;
+                case Opcode::Call:
+                    value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                        std::optional<uint32_t> object = objectNamedBy(operand);
+                        if (!object || followed[*object].line != lines[id.index()])
+                            return;
+                        if (!numberOfUses)
+                            numberOfUses = countUses(function, cfg);
+                        FunctionID callee = calleeOf(function, *numberOfUses, value);
+                        if (std::optional<uint32_t> parameter = callee ? entryParameterOf(m_program.at(callee), value, operandIndex) : std::nullopt)
+                            followed[*object].keys.append(keysStoredInto(callee, *parameter));
+                    });
+                    break;
+                default:
+                    break;
+                }
+            }
+            for (const Target& target : block.terminator.targets) {
+                const Block& next = function.at(target.block);
+                for (uint32_t index = 0; index < target.arguments.size() && index < next.parameters.size(); ++index) {
+                    if (std::optional<uint32_t> object = objectNamedBy(target.arguments[index]))
+                        objectOfValue.add(next.parameters[index].index(), *object);
+                }
+            }
+        }
+        return followed;
+    }
+
+    const Program& m_program;
+    Vector<FunctionID> m_functionsThatFill;
+    HashMap<uint64_t, Keys, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_keysOfParameters;
+};
 
 void addBirthsOfLiterals(const ValueFlowResultInputs& inputs, const FlowResultTables& tables, ValueFlowConstructions& result)
 {
@@ -1717,6 +2023,10 @@ void addBirthsOfLiterals(const ValueFlowResultInputs& inputs, const FlowResultTa
         });
     };
     Vector<KeysByLayout> keysOfWorker(inputs.loops().width());
+    // With what is stored behind the literal.
+    Vector<KeysByLayout> laterKeysOfWorker(inputs.loops().width());
+    Vector<KeysByLayout> laterKeysWithValueOfWorker(inputs.loops().width());
+    Vector<Vector<FunctionID>> functionsThatFillOfWorker(inputs.loops().width());
     forEachIndexInParallel(inputs.loops(), program.functions.size(), [&](unsigned index, unsigned worker) {
         FunctionID id(index);
         if (!inputs.bodies().holdsAnyOf(id, notedOperations({ ValueFlowNotedOperation::NewObject, ValueFlowNotedOperation::Data, ValueFlowNotedOperation::PieceOutsideSlots })))
@@ -1724,9 +2034,34 @@ void addBirthsOfLiterals(const ValueFlowResultInputs& inputs, const FlowResultTa
         if (!inputs.isReached(id) && !isUnsolvedCode(inputs, tables, id))
             return;
         const Function& function = program.functions[index];
+        StoresBehindLiterals::KeysByLiteral keysBehindLiterals;
+        if (function.kind == FunctionKind::Module) {
+            StoresBehindLiterals stores(program);
+            keysBehindLiterals = stores.inBodyOfFile(id);
+            functionsThatFillOfWorker[worker].appendVector(stores.takeFunctionsThatFill());
+        }
+        auto keepKeysOfLiteral = [&](LayoutID layout, Vector<PropertyKeyID>&& keys, const StoresBehindLiterals::Keys* keysBehind) {
+            Vector<PropertyKeyID> laterKeys = keys;
+            Vector<PropertyKeyID> laterKeysWithValue;
+            if (keysBehind) {
+                laterKeys.appendVector(keysBehind->all);
+                AOT::sort(laterKeys);
+                removeRepeatedElements(laterKeys);
+                laterKeysWithValue = keysBehind->storedWithValue;
+                AOT::sort(laterKeysWithValue);
+                removeRepeatedElements(laterKeysWithValue);
+            }
+            keepCommonKeys(keysOfWorker[worker], layout.index(), WTF::move(keys));
+            keepCommonKeys(laterKeysOfWorker[worker], layout.index(), WTF::move(laterKeys));
+            keepCommonKeys(laterKeysWithValueOfWorker[worker], layout.index(), WTF::move(laterKeysWithValue));
+        };
+        auto keysBehind = [&](const Value& literal) -> const StoresBehindLiterals::Keys* {
+            auto found = keysBehindLiterals.find(static_cast<uint32_t>(&literal - function.values.begin()));
+            return found == keysBehindLiterals.end() ? nullptr : &found->value;
+        };
         for (const Value& value : function.values) {
             if (value.opcode == Opcode::Data) {
-                forEachDataNodeInPreorder(program.at(value.data()).root, [&](uint32_t, const DataNode& node) {
+                forEachDataNodeInPreorder(program.at(value.data()).root, [&](uint32_t ordinal, const DataNode& node) {
                     const DataNode::Object* object = node.tryAs<DataNode::Object>();
                     if (!object || !object->layout || program.at(object->layout).kind != LayoutKind::Record || program.at(object->layout).isDerived())
                         return;
@@ -1738,14 +2073,14 @@ void addBirthsOfLiterals(const ValueFlowResultInputs& inputs, const FlowResultTa
                             break;
                     }
                     AOT::sort(keys);
-                    keepCommonKeys(keysOfWorker[worker], object->layout.index(), WTF::move(keys));
+                    keepKeysOfLiteral(object->layout, WTF::move(keys), ordinal ? nullptr : keysBehind(value));
                 });
                 continue;
             }
             if (value.opcode == Opcode::DefineGetter || value.opcode == Opcode::DefineSetter || value.opcode == Opcode::ElemDefine || value.opcode == Opcode::CopyDataProperties) {
                 const Value& object = function.at(value.operand(0));
                 if (object.opcode == Opcode::NewObject && program.at(object.layout()).kind == LayoutKind::Record)
-                    keepCommonKeys(keysOfWorker[worker], object.layout().index(), { });
+                    keepKeysOfLiteral(object.layout(), { }, nullptr);
                 continue;
             }
             if (value.opcode != Opcode::NewObject)
@@ -1759,15 +2094,25 @@ void addBirthsOfLiterals(const ValueFlowResultInputs& inputs, const FlowResultTa
                     keys.append(key);
             }
             AOT::sort(keys);
-            keepCommonKeys(keysOfWorker[worker], value.layout().index(), WTF::move(keys));
+            keepKeysOfLiteral(value.layout(), WTF::move(keys), keysBehind(value));
         }
     });
-    for (KeysByLayout& keysOfOneWorker : keysOfWorker.mutableSpan().subspan(1)) {
-        for (auto& [layout, keys] : keysOfOneWorker)
-            keepCommonKeys(keysOfWorker[0], layout, WTF::move(keys));
+    for (Vector<KeysByLayout>* keysOfWorkers : { &keysOfWorker, &laterKeysOfWorker, &laterKeysWithValueOfWorker }) {
+        for (KeysByLayout& keysOfOneWorker : keysOfWorkers->mutableSpan().subspan(1)) {
+            for (auto& [layout, keys] : keysOfOneWorker)
+                keepCommonKeys((*keysOfWorkers)[0], layout, WTF::move(keys));
+        }
     }
     for (auto& [layout, keys] : keysOfWorker[0])
         result.layouts[layout].keysStoredAtBirth = WTF::move(keys);
+    for (auto& [layout, keys] : laterKeysOfWorker[0])
+        result.layouts[layout].keysStoredBehindLiteral = WTF::move(keys);
+    for (auto& [layout, keys] : laterKeysWithValueOfWorker[0])
+        result.layouts[layout].keysStoredWithValueBehindLiteral = WTF::move(keys);
+    for (const Vector<FunctionID>& functionsThatFill : functionsThatFillOfWorker) {
+        for (FunctionID function : functionsThatFill)
+            result.functionsSeeingOnlyFinishedObjects.quickClear(function.index());
+    }
 }
 
 } // anonymous namespace
@@ -1802,7 +2147,7 @@ ValueFlowConstructions computeConstructions(const ValueFlowResultInputs& inputs,
         bool createsFieldsOnlyInListedOrders = true;
         for (uint32_t maker : makers) {
             const ConstructionNode& node = graph.nodes[maker];
-            auto [order, isComplete] = ownOrderOf(program, graph, node, LayoutID(index));
+            auto [order, isComplete] = ownOrderOf(program, node, LayoutID(index));
             createsFieldsOnlyInListedOrders &= !node.solved.mayLeak && node.solved.storesOnlyInInitialOrder && isComplete;
             if (!construction.orders.contains(order))
                 construction.orders.append(WTF::move(order));
@@ -1815,7 +2160,7 @@ ValueFlowConstructions computeConstructions(const ValueFlowResultInputs& inputs,
             continue;
         construction.isFollowed = true;
         construction.createsFieldsOnlyInListedOrders = createsFieldsOnlyInListedOrders;
-        listNamesStoredByEveryMaker(graph, makers.span(), construction.keysStoredBeforeObjectLeaks, construction.fieldsStoredBeforeObjectLeaks, nullptr);
+        construction.namesStoredBeforeObjectLeaks = namesStoredByEveryMaker(graph, makers.span());
     }
 
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
@@ -1834,15 +2179,34 @@ ValueFlowConstructions computeConstructions(const ValueFlowResultInputs& inputs,
         AOT::sort(keys);
     }
 
+    graph.nodes.clear();
     ConstructionGraph graphUnderGuards = ConstructionGraphBuilder { inputs, heap, functions, UnknownChains::HoldNothingUnderName }.build();
-    solveConstructions(graphUnderGuards);
+    Vector<std::pair<uint32_t, Vector<uint32_t, 2>>> makersOfLayouts;
+    BitVector nodesThatAreRead(graphUnderGuards.nodes.size());
+    Vector<uint32_t> nodesToFollow;
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         const Layout& layout = program.layouts[index];
         if (layout.kind != LayoutKind::Instance || !layout.constructor || layout.isDerived() || layout.has(LayoutFlags::HasHeritage))
             continue;
+        Vector<uint32_t, 2> makers = findMakers(inputs, graphUnderGuards, LayoutID(index));
+        if (makers.isEmpty())
+            continue;
+        for (uint32_t maker : makers) {
+            if (!nodesThatAreRead.quickSet(maker))
+                nodesToFollow.append(maker);
+        }
+        makersOfLayouts.append({ index, WTF::move(makers) });
+    }
+    while (!nodesToFollow.isEmpty()) {
+        for (uint32_t callee : graphUnderGuards.nodes[nodesToFollow.takeLast()].callees) {
+            if (!nodesThatAreRead.quickSet(callee))
+                nodesToFollow.append(callee);
+        }
+    }
+    solveConstructions(graphUnderGuards, &nodesThatAreRead);
+    for (auto& [index, makers] : makersOfLayouts) {
         ValueFlowConstructions::OfLayout& construction = result.layouts[index];
-        if (Vector<uint32_t, 2> makers = findMakers(inputs, graphUnderGuards, LayoutID(index)); !makers.isEmpty())
-            listNamesStoredByEveryMaker(graphUnderGuards, makers.span(), construction.keysStoredAtBirth, construction.fieldsStoredAtBirth, &construction.keysStoredWithValueAtBirth);
+        listNamesStoredByEveryMaker(graphUnderGuards, makers.span(), construction.keysStoredAtBirth, construction.fieldsStoredAtBirth, construction.keysStoredWithValueAtBirth);
     }
     addBirthsOfLiterals(inputs, tables, result);
     for (const TaggedFamily& family : program.taggedFamilies) {
@@ -1851,8 +2215,7 @@ ValueFlowConstructions computeConstructions(const ValueFlowResultInputs& inputs,
             ValueFlowConstructions::OfLayout& construction = result.layouts[member.layout.index()];
             construction.isFollowed = maker.isFollowed;
             construction.isNewTargetOfOtherFunctions = maker.isNewTargetOfOtherFunctions;
-            construction.keysStoredBeforeObjectLeaks = maker.keysStoredBeforeObjectLeaks;
-            construction.fieldsStoredBeforeObjectLeaks = maker.fieldsStoredBeforeObjectLeaks;
+            construction.namesStoredBeforeObjectLeaks = maker.namesStoredBeforeObjectLeaks;
             construction.keysStoredAtBirth = maker.keysStoredAtBirth;
             construction.keysStoredWithValueAtBirth = maker.keysStoredWithValueAtBirth;
         }

@@ -83,12 +83,17 @@ public:
     // Move's or anything that has Move-like behavior, though it's probably not worth it.
     bool visitInst(Inst& inst)
     {
+        if (inst.kind.opcode == Shuffle) [[unlikely]] {
+            visitShuffle(inst);
+            return true;
+        }
+
         if (inst.kind.opcode != Move || !inst.args()[1].isTmp())
             return false;
 
         if (inst.args()[0].isTmp()) {
             // We bucket the Move's per-bank so that the fixpoint can run independently for each bank.
-            m_moves[Arg(inst.args()[1]).bank()].append(&inst);
+            m_moves[Arg(inst.args()[1]).bank()].append({ inst.args()[0].tmp(), inst.args()[1].tmp() });
             return true;
         }
 
@@ -146,6 +151,24 @@ private:
     static constexpr bool beCareful = false;
     static constexpr bool verbose = false;
 
+    void visitShuffle(Inst& inst)
+    {
+        auto visit = [&](Tmp& tmp, Arg::Role role, Bank bank, Width width) {
+            visitTmp(tmp, role, bank, width);
+        };
+        for (unsigned i = 0; i + 2 < inst.args().size(); i += 3) {
+            Arg& source = inst.args()[i];
+            Arg& destination = inst.args()[i + 1];
+            Width width = inst.args()[i + 2].width();
+            Bank bank = source.isGP() && destination.isGP() ? GP : FP;
+            source.forEachTmp(Arg::Use, bank, width, visit);
+            if (isCopyOfWholeGeneralRegister(source, destination, width))
+                m_moves[GP].append({ source.tmp(), destination.tmp() });
+            else
+                destination.forEachTmp(Arg::Def, bank, width, visit);
+        }
+    }
+
     void assumeTheWorst(Tmp tmp)
     {
         Width conservative = m_conservativeWidths[Arg(tmp).bank()];
@@ -153,7 +176,7 @@ private:
     }
 
     TmpWidth& m_widths;
-    std::array<Vector<Inst*>, numBanks> m_moves;
+    std::array<Vector<Copy>, numBanks> m_moves;
     std::array<Width, numBanks> m_conservativeWidths;
 };
 

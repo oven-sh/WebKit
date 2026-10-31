@@ -95,4 +95,4 @@ function f1 name="write" module=m0 flags=[IsChecked, HasExplicitName] length=3 t
 # CHECK: Void b@{{*}} = Patchpoint(b@[[to]]:Register({{*}}), b@[[from]]:Register({{*}}), b@[[count]]:Register({{*}}), {{*}}resultConstraints = WarmAny, ControlDependent|Writes:{{*}}TypedArrayElements}|Reads:{{*}}TypedArrayElements}
 # CHECK: Void b@{{*}} = Patchpoint(b@[[to]]:Register({{*}}), b@[[from]]:Register({{*}}), b@[[count]]:Register({{*}}), resultConstraints = WarmAny, ControlDependent|Writes:{{*}}TypedArrayElements}|Reads:TypedArrayElements)
 # CHECK-LABEL: end of function
-# X64: instructions: 25, patchpoints: 5, rare instructions: 17
+# X64: instructions: 26, patchpoints: 5, rare instructions: 15

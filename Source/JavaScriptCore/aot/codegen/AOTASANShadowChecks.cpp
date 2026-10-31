@@ -122,6 +122,14 @@ static GPRReg scratchOtherThan(GPRReg first, GPRReg second, GPRReg third)
 static void pushFlags(CCallHelpers& jit) { jit.m_assembler.buffer().putByte(static_cast<int8_t>(0x9c)); }
 static void popFlags(CCallHelpers& jit) { jit.m_assembler.buffer().putByte(static_cast<int8_t>(0x9d)); }
 
+// A word that is popped keeps what it held, and a conservative collector reads it once another frame lies over it.
+static void popAndClear(CCallHelpers& jit, GPRReg reg)
+{
+    jit.load64(CCallHelpers::Address(CCallHelpers::stackPointerRegister), reg);
+    jit.store64(CCallHelpers::TrustedImm32(0), CCallHelpers::Address(CCallHelpers::stackPointerRegister));
+    jit.addPtrNoFlags(CCallHelpers::TrustedImm32(sizeof(void*)), CCallHelpers::stackPointerRegister);
+}
+
 template<typename AddressType>
 static void emitStandaloneCheck(CCallHelpers& jit, AddressType address, GPRReg index, unsigned size, bool isStore)
 {
@@ -155,10 +163,10 @@ static void emitStandaloneCheck(CCallHelpers& jit, AddressType address, GPRReg i
     emitReport(jit, size, isStore, redZoneSize + (size < 8 ? 3 : 2) * sizeof(void*));
     if (size < 8) {
         isPartiallyAddressable.link(&jit);
-        jit.pop(last);
+        popAndClear(jit, last);
     }
     isAddressable.link(&jit);
-    jit.pop(shadow);
+    popAndClear(jit, shadow);
     popFlags(jit);
     jit.addPtrNoFlags(CCallHelpers::TrustedImm32(redZoneSize), CCallHelpers::stackPointerRegister);
 }

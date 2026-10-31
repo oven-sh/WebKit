@@ -1,0 +1,55 @@
+# `Object.create(shared)` is an allocation and a link to the prototype. Once the reads of the object are answered by its stores, the link is all that names it, and both go.
+# A prototype that may be refused keeps the link: it throws.
+# FORM: Prepared optimizing
+# RUN: pass SinkAllocations EliminateDeadCode
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Shared" fields=[{key="kind" declared={type=number}}]
+layout L1 name="Made" fields=[{key="held" declared={type=anything}}]
+
+function f0 name="prototypeIsAnObject" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    SetLiteralPrototype v2, v0 [refusesOtherValues]
+    Return v1
+# CHECK: b0(
+# CHECK-NEXT: Return v1
+}
+
+function f1 name="prototypeIsNull" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Null
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    SetLiteralPrototype v2, v1 [refusesOtherValues]
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: Return v0
+}
+
+function f2 name="prototypeMayBeRefused" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    SetLiteralPrototype v2, v0 [refusesOtherValues]
+    Return v1
+# CHECK: = NewObject
+# CHECK-NEXT: SetLiteralPrototype v2, v0 [refusesOtherValues]
+}
+
+function f3 name="otherValuesAreLeftOut" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    SetLiteralPrototype v2, v0
+    Return v1
+# CHECK: b0(
+# CHECK-NEXT: Return v1
+}
+
+function f4 name="objectIsReturned" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    SetLiteralPrototype v2, v0 [refusesOtherValues]
+    Return v2
+# CHECK: = NewObject
+# CHECK-NEXT: SetLiteralPrototype v2, v0 [refusesOtherValues]
+# CHECK-NEXT: Return v2
+}

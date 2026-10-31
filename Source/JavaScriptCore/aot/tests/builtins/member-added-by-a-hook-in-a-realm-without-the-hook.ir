@@ -1,0 +1,21 @@
+# print(typeof WebAssembly.compileStreaming, typeof WebAssembly.instantiateStreaming), in the shell, whose host has no hook for streaming compilation.
+# JSWebAssembly::finishCreation() adds each function only if the host has its hook, so the table marks both MayBeAbsent and the reads answer undefined.
+# Without the mark the shell aborted at the cell of the built-in.
+# FORM: AsRead
+# RUN: run-in-shell
+# CHECK: undefined undefined
+# CHECK-NEXT: exited with 0
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = PropGet v0 key="WebAssembly" [isFreeName]
+    v3 = PropGet v2 key="compileStreaming"
+    v4 = TypeOf v3
+    v5 = PropGet v2 key="instantiateStreaming"
+    v6 = TypeOf v5
+    v7 = Call v1, -, v4, v6
+    Return
+}

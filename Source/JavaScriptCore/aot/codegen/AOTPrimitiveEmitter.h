@@ -9,6 +9,7 @@
 
 #include "AOTCodeGenerator.h"
 #include "AOTInstance.h"
+#include "AOTMutatorFenceMerging.h"
 #include "AOTOperand.h"
 #include "B3MovedLoadCheck.h"
 #include "JSCJSValue.h"
@@ -32,6 +33,7 @@ protected:
         , m_numberTag(generator.pinned().numberTag)
         , m_notCellMask(generator.pinned().notCellMask)
         , m_cellCageBase(generator.pinned().cellCageBase)
+        , m_wordsOfInt32Elements(generator.pinned().wordsOfInt32Elements)
     {
     }
 
@@ -161,6 +163,8 @@ protected:
     Word32 low32(Integer value) { return Word32(m_out.castToInt32(value.value())); }
     Word32 low32(Boxed value) { return Word32(m_out.castToInt32(value.value())); }
     Word32 asWord32(Condition value) { return Word32(value.value()); }
+    // For zero the count is any number.
+    LValue countTrailingZerosOfNonZero(LValue bits);
 
     Condition isInt32(Boxed value) { return Condition(m_out.aboveOrEqual(value.value(), m_numberTag)); }
     Condition isNumber(Boxed value) { return Condition(m_out.testNonZero64(value.value(), m_numberTag)); }
@@ -181,7 +185,12 @@ protected:
     // What a load makes of the word in a narrow slot: the cell where the word is a reference, the word itself where it is none.
     std::optional<NarrowReference> narrowWordBehind(LiteralStringWord);
 
-    Boxed boxInt32(Word32 value) { return Boxed(m_out.add(m_out.zeroExt(value.value(), B3::Int64), m_numberTag)); }
+    Boxed boxInt32(Word32 value)
+    {
+        if (auto word = m_wordsOfInt32Elements.find(value.value()); word != m_wordsOfInt32Elements.end())
+            return Boxed(word->value);
+        return Boxed(m_out.add(m_out.zeroExt(value.value(), B3::Int64), m_numberTag));
+    }
     Boxed boxBoolean(Condition value)
     {
         static_assert(JSValue::ValueTrue == (JSValue::ValueFalse | 1));
@@ -189,6 +198,12 @@ protected:
     }
     Boxed boxCell(CellPointer value) { return Boxed(value.value()); }
     Word32 unboxInt32(Boxed value) { return Word32(m_out.castToInt32(value.value())); }
+    Word32 unboxInt32Element(Boxed word)
+    {
+        Word32 element = unboxInt32(word);
+        m_wordsOfInt32Elements.add(element.value(), word.value());
+        return element;
+    }
     Number unboxDouble(Boxed value) { return Number(m_out.bitCast(m_out.add(value.value(), m_numberTag), B3::Double)); }
     Condition unboxBoolean(Boxed value) { return Condition(m_out.bitAnd(m_out.castToInt32(value.value()), 1)); }
     CellPointer unboxCell(Boxed value) { return CellPointer(value.value()); }
@@ -231,7 +246,7 @@ protected:
     CellPointer emptyString() { return CellPointer(loadImmutablePointer(AOT_INSTANCE_PREFIX_OFFSET(emptyString)).value()); }
     CellPointer singleCharacterString(Word32 character);
 
-    void mutatorFence();
+    std::optional<MutatorFence> mutatorFence();
 
     // Ends every read through a pointer loaded from a cell (a view's vector, a string's characters): B3 hoists and shares that load, and then nothing else keeps the cell visible to the conservative scan.
     void ensureStillAliveHere(CellPointer);
@@ -245,6 +260,7 @@ protected:
     LValue& m_numberTag;
     LValue& m_notCellMask;
     LValue& m_cellCageBase;
+    UncheckedKeyHashMap<LValue, LValue>& m_wordsOfInt32Elements;
 
 private:
     Word32 loadCellType(CellPointer cell) { return Word32(m_out.load8ZeroExt32(cell.value(), m_heaps.JSCell_typeInfoType)); }

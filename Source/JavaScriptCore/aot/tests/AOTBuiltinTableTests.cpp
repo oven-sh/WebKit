@@ -1109,7 +1109,13 @@ static void testHostUsesOfLibraryFunctions()
     // The result of getLightStdioWriteStreams holds both streams. Each property's cell keeps its stream, and the member of `console` holds it too.
     // Printing a warning calls `write` on the second stream, with the stream as the receiver, and drops the result.
     for (BuiltinID stream : std::initializer_list<BuiltinID> { hostBuiltin("ProcessStdout"_s), hostBuiltin("ProcessStderr"_s) }) {
-        const BuiltinHostCall* creation = findCallOfOnlyFunction(stream, 1);
+        std::span<const BuiltinCalledFunction> makers = table().calledFunctionsOf(stream);
+        AOT_TEST_CHECK(makers.size() == 2);
+        const BuiltinCalledFunction& light = makers[makers[0].condition ? 1 : 0];
+        const BuiltinCalledFunction& whole = makers[makers[0].condition ? 0 : 1];
+        AOT_TEST_CHECK(!light.condition && light.uses.areListed && light.uses.list.size() == 1 && light.uses.list[0].use == BuiltinHostReadUse::Called);
+        AOT_TEST_CHECK(whole.condition && whole.condition->testsReplaceBuiltins && whole.uses.areListed && whole.uses.list.size() == 2);
+        const BuiltinHostCall* creation = light.uses.list[0].call;
         AOT_TEST_CHECK(creation && creation->arguments.size() == 7 && creation->result.list.size() == 6);
         std::span<const BuiltinHostUse> uses = creation->result.list;
         for (size_t index : { 0, 2 }) {

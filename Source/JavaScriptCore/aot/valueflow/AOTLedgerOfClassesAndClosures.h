@@ -79,6 +79,8 @@ private:
     void fileWrites(ValueSetMaker&);
     void findLinks(ValueSetMaker&);
     void findCallablesLookedInto(ValueSetMaker&);
+    bool forEachClassRightAbove(LayoutID classLayout, NOESCAPE const Invocable<void(LayoutID)> auto&) const;
+    void findClassesBelowUnknownMakers();
 
     const ValueFlowResultInputs& m_inputs;
 
@@ -103,6 +105,7 @@ private:
     HashMap<uint32_t, ValueFlowNodeID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_nodesOfMarks;
 
     ValueSetID m_callablesLookedInto { ValueSets::nothing };
+    BitVector m_classesBelowUnknownMakers;
     std::array<Vector<Reach, numberOfReachForms>, 1u << numberOfReachForms> m_reachesOfForms;
 };
 

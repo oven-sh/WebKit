@@ -240,13 +240,18 @@ void ArrayStorageBuiltinEmitter::generateArrayWithLength(const InlineCall& call)
 {
     RELEASE_ASSERT(call.numberOfArguments());
     ArrayAllocationEmitter allocation(generator());
-    LBasicBlock isNotInteger = newBlock();
-    Join<Integer> join(m_out);
-    join.add(elements().indexOrElse(call.argument(0), false, isNotInteger));
+    auto lengthAtRunTime = [&] {
+        LBasicBlock isNotInteger = newBlock();
+        Join<Integer> join(m_out);
+        join.add(elements().indexOrElse(call.argument(0), false, isNotInteger));
 
-    m_out.appendTo(isNotInteger);
-    join.add(integer(invalidArrayLength));
-    Integer length = join.finish();
+        m_out.appendTo(isNotInteger);
+        join.add(integer(invalidArrayLength));
+        return join.finish();
+    };
+    const Type& given = typeOf(call.argument(0));
+    bool isWritten = given.isInteger() && given.integers.minimum == given.integers.maximum && Range::length().contains(given.integers.minimum);
+    Integer length = isWritten ? integer(given.integers.minimum) : lengthAtRunTime();
     bool isDoneInPlace = call.value() && (*call.value())->isDoneInPlace();
     finishInlineCall(call, allocation.newArrayOfHoles(call.context(), length, allocation.formAtAllocation(typeOfArraysCreatedBy(call)), isDoneInPlace ? BuiltinID() : functionOf(call.overload())));
 }

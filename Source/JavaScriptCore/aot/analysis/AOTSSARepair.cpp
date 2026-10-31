@@ -132,6 +132,7 @@ public:
         m_events.shrink(0);
         m_definitions.shrink(0);
         m_answers.shrink(0);
+        m_keptDefinitions.shrink(0);
     }
 
     void defineAtTail(BlockID block, uint32_t definition)
@@ -161,7 +162,38 @@ public:
         }
     }
 
+    void solveAndKeepDefinitions()
+    {
+        AOT::sort(m_events);
+        m_keptDefinitions.shrink(0);
+        uint32_t nearest = none;
+        for (uint64_t event : m_events) {
+            uint32_t number = static_cast<uint32_t>(event >> numberShift);
+            while (nearest != none && m_keptDefinitions[nearest].lastNumberBelow < number)
+                nearest = m_keptDefinitions[nearest].nearestAbove;
+            uint32_t index = static_cast<uint32_t>(event);
+            if (static_cast<Kind>((event >> kindShift) & 3) == Kind::Definition) {
+                m_keptDefinitions.append({ number, m_definitions[index].lastNumberBelow, m_definitions[index].definition, nearest });
+                nearest = static_cast<uint32_t>(m_keptDefinitions.size() - 1);
+            } else if (nearest != none)
+                m_answers[index] = m_keptDefinitions[nearest].definition;
+        }
+    }
+
     uint32_t answerTo(uint32_t question) const { return m_answers[question]; }
+
+    uint32_t findAmongKeptDefinitionsAtHead(BlockID block) const
+    {
+        RELEASE_ASSERT(m_cfg.isReachable(block));
+        uint32_t number = m_dominators.numberOf(block);
+        size_t numberOfDefinitionsInFront = std::ranges::partition_point(m_keptDefinitions, [&](const KeptDefinition& kept) {
+            return kept.number < number;
+        }) - m_keptDefinitions.begin();
+        uint32_t nearest = numberOfDefinitionsInFront ? static_cast<uint32_t>(numberOfDefinitionsInFront - 1) : none;
+        while (nearest != none && m_keptDefinitions[nearest].lastNumberBelow < number)
+            nearest = m_keptDefinitions[nearest].nearestAbove;
+        return nearest == none ? none : m_keptDefinitions[nearest].definition;
+    }
 
 private:
     enum class Kind : uint8_t { QuestionAtHead, Definition, QuestionAtTail };
@@ -169,6 +201,13 @@ private:
     struct DefinitionAtTail {
         uint32_t lastNumberBelow;
         uint32_t definition;
+    };
+
+    struct KeptDefinition {
+        uint32_t number;
+        uint32_t lastNumberBelow;
+        uint32_t definition;
+        uint32_t nearestAbove;
     };
 
     static constexpr unsigned kindShift = 32;
@@ -194,6 +233,7 @@ private:
     Vector<DefinitionAtTail> m_definitions;
     Vector<DefinitionAtTail, 16> m_stack;
     Vector<uint32_t> m_answers;
+    Vector<KeptDefinition> m_keptDefinitions;
 };
 
 } // anonymous namespace
@@ -283,6 +323,7 @@ void SSARepair::addDefinition(Variable variable, ValueID definition)
     bool wasDefinition = m_isDefinition.set(definition.index());
     RELEASE_ASSERT(!wasDefinition);
     m_variables[variable].values.append(definition);
+    m_definitions.append({ definition, variable });
     if (m_variables[variable].values.size() > 1)
         setIsPending(true);
 }
@@ -291,11 +332,17 @@ std::optional<SSARepair::Variable> SSARepair::findVariable(ValueID definition) c
 {
     if (!m_isDefinition.get(definition.index()))
         return std::nullopt;
-    for (Variable variable = 0; variable < m_variables.size(); ++variable) {
-        if (m_variables[variable].values.contains(definition))
-            return variable;
+    AOT_THRESHOLD(size_t, mostSearchedInOrder, 16);
+    if (m_definitions.size() <= mostSearchedInOrder) {
+        auto found = std::ranges::find(m_definitions, definition, &std::pair<ValueID, Variable>::first);
+        RELEASE_ASSERT(found != m_definitions.end());
+        return found->second;
     }
-    RELEASE_ASSERT_NOT_REACHED();
+    for (; m_numberOfIndexedDefinitions < m_definitions.size(); ++m_numberOfIndexedDefinitions)
+        m_variableOfDefinition.add(m_definitions[m_numberOfIndexedDefinitions].first.index(), m_definitions[m_numberOfIndexedDefinitions].second);
+    auto found = m_variableOfDefinition.find(definition.index());
+    RELEASE_ASSERT(found != m_variableOfDefinition.end());
+    return found->value;
 }
 
 void SSARepair::run()
@@ -325,7 +372,7 @@ void SSARepair::run()
         }
         if (data.uses.isEmpty())
             continue;
-        AOT::sort(data.uses, [&](const RecordedUse& a, const RecordedUse& b) {
+        AOT::sortInLine(data.uses, [&](const RecordedUse& a, const RecordedUse& b) {
             return useLists.isBefore(a.use, b.use);
         });
 
@@ -502,7 +549,7 @@ void SSARepair::splitCoveredBlocksAfterDefinitions()
     if (cuts.isEmpty())
         return;
 
-    AOT::sort(cuts, [](const ProgramPoint& a, const ProgramPoint& b) {
+    AOT::sortInLine(cuts, [](const ProgramPoint& a, const ProgramPoint& b) {
         return std::tie(a.block, a.index) < std::tie(b.block, b.index);
     });
     removeRepeatedElements(cuts);
@@ -673,19 +720,10 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
     Vector<Source> sourcesOfJoins;
     Vector<uint32_t> firstSourceOfJoin;
     Vector<uint32_t, 16> joinsToVisit;
-    auto findJoinsThatReachUses = [&](const VariableData& data, unsigned stamp) {
-        joinReachesUse.clearAll();
-        joinReachesUse.ensureSize(joins.size());
-        questionsOfUses.shrink(0);
+    auto findSourcesOfJoins = [&](const VariableData& data, unsigned stamp) {
         sourcesOfJoins.shrink(0);
         firstSourceOfJoin.shrink(0);
-        joinsToVisit.shrink(0);
         nearest.clear();
-        auto didReach = [&](uint32_t definition) {
-            if (definition < writtenDefinition && !joinReachesUse.quickSet(definition))
-                joinsToVisit.append(definition);
-        };
-
         forEachBlockWithDefinitions(data, [&](const Definition& definition) {
             nearest.defineAtTail(definition.block, writtenDefinition);
         });
@@ -698,15 +736,6 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
                 return { indexOfJoin[block.index()], false };
             return { nearest.askAtHead(block), true };
         };
-        for (const RecordedUse& recorded : data.uses) {
-            if (findLocalDefinition(data, recorded))
-                continue;
-            Source source = sourceAtHead(recorded.use.block);
-            if (source.isQuestion)
-                questionsOfUses.append(source.definitionOrQuestion);
-            else
-                didReach(source.definitionOrQuestion);
-        }
         for (BlockID join : joins) {
             firstSourceOfJoin.append(sourcesOfJoins.size());
             for (Edge edge : cfg.incomingEdges(join)) {
@@ -721,10 +750,22 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
             }
         }
         firstSourceOfJoin.append(sourcesOfJoins.size());
-        nearest.solve();
-
-        for (uint32_t question : questionsOfUses)
-            didReach(nearest.answerTo(question));
+        nearest.solveAndKeepDefinitions();
+    };
+    auto findJoinsThatReachUses = [&](const VariableData& data, unsigned stampOfJoins) {
+        joinReachesUse.clearAll();
+        joinReachesUse.ensureSize(joins.size());
+        joinsToVisit.shrink(0);
+        auto didReach = [&](uint32_t definition) {
+            if (definition < writtenDefinition && !joinReachesUse.quickSet(definition))
+                joinsToVisit.append(definition);
+        };
+        for (const RecordedUse& recorded : data.uses) {
+            if (findLocalDefinition(data, recorded))
+                continue;
+            BlockID block = recorded.use.block;
+            didReach(isJoinStamp[block.index()] == stampOfJoins ? indexOfJoin[block.index()] : nearest.findAmongKeptDefinitionsAtHead(block));
+        }
         while (!joinsToVisit.isEmpty()) {
             uint32_t index = joinsToVisit.takeLast();
             for (const Source& source : sourcesOfJoins.span().subspan(firstSourceOfJoin[index], firstSourceOfJoin[index + 1] - firstSourceOfJoin[index]))
@@ -756,25 +797,39 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
     Vector<unsigned> wasVisitedStamp(FillWith { }, cfg.numNodes(), 0u);
     uint32_t numberOfArguments = 0;
     AOT_THRESHOLD(size_t, stepsOfFirstTurn, 64);
+    unsigned stampOfKeptJoins = 0;
+    Vector<Definition, 2> definitionsOfKeptJoins;
     for (uint32_t indexOfVariable = 0; indexOfVariable < variables.size(); ++indexOfVariable) {
         firstAddedParameter.append(addedParameters.size());
         VariableData& data = m_variables[variables[indexOfVariable]];
         unsigned stamp = indexOfVariable + 1;
-        for (const Definition& definition : data.definitions)
-            hasDefinitionStamp[definition.block.index()] = stamp;
+        bool hasJoinsOfVariableBefore = stampOfKeptJoins && std::ranges::equal(data.definitions, definitionsOfKeptJoins, [](const Definition& a, const Definition& b) {
+            return a.block == b.block && (a.order == headOrder) == (b.order == headOrder);
+        });
 
         bool didWalkFromUses = false;
-        beginWalkOverFrontiers(data);
-        for (size_t steps = stepsOfFirstTurn; !continueWalkOverFrontiers(stamp, steps); steps *= 2) {
-            if (steps == stepsOfFirstTurn)
-                beginWalkFromUses(data, stamp);
-            if ((didWalkFromUses = continueWalkFromUses(data, stamp, steps)))
-                break;
+        if (!hasJoinsOfVariableBefore) {
+            stampOfKeptJoins = 0;
+            for (const Definition& definition : data.definitions)
+                hasDefinitionStamp[definition.block.index()] = stamp;
+            beginWalkOverFrontiers(data);
+            for (size_t steps = stepsOfFirstTurn; !continueWalkOverFrontiers(stamp, steps); steps *= 2) {
+                if (steps == stepsOfFirstTurn)
+                    beginWalkFromUses(data, stamp);
+                if ((didWalkFromUses = continueWalkFromUses(data, stamp, steps)))
+                    break;
+            }
+            if (!didWalkFromUses) {
+                stampOfKeptJoins = stamp;
+                definitionsOfKeptJoins = data.definitions;
+                if (!joins.isEmpty())
+                    findSourcesOfJoins(data, stamp);
+            }
         }
         if (!didWalkFromUses) {
             if (joins.isEmpty())
                 continue;
-            findJoinsThatReachUses(data, stamp);
+            findJoinsThatReachUses(data, stampOfKeptJoins);
         }
         auto needsParameter = [&](BlockID block) {
             if (didWalkFromUses)
@@ -908,7 +963,7 @@ const SSARepair::Definition* SSARepair::findLastDefinitionBefore(const VariableD
 
 void SSARepair::sortDefinitions(VariableData& data)
 {
-    AOT::stableSort(data.definitions, [](const Definition& a, const Definition& b) {
+    AOT::stableSortInLine(data.definitions, [](const Definition& a, const Definition& b) {
         return std::tie(a.block, a.order) < std::tie(b.block, b.order);
     });
 }

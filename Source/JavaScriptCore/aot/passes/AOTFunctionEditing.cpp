@@ -66,8 +66,6 @@ void editFunctionsInParallelImpl(ProgramEditor& editor, BuildContext& build, Kin
                 TaskArenas arenas(*phases, index);
                 Function& function = functionAt(functions[index]);
                 edit(index, functions[index], function, arenas);
-                if (behindEdit == BehindEdit::Nothing)
-                    return;
                 shrinkToFit(function);
                 if (!arenas.types.hasUsedProvisionalRecords())
                     writeRow(functions[index], function);

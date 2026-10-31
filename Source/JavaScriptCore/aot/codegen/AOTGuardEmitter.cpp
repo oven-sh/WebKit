@@ -166,6 +166,10 @@ void GuardEmitter::defineTestOfCompiledObject(const ValueContext& value, NOESCAP
     ShapeTestEmitter& shapes = emitter<ShapeTestEmitter>();
     const Type& type = typeOf(value->objectOperand());
     if (!shapes.mayBeCellWithBrand(type)) {
+        CellPointer cell = in<CellPointer>(value->objectOperand());
+        checkClaim(cell, [&] {
+            return shapes.isCompiledObject(cell);
+        });
         defineTest(value, test());
         return;
     }
@@ -245,7 +249,7 @@ void GuardEmitter::planTestsOfFlags()
                 mayBeUnfinished.add(analyses().identityOf(test.objectOperand()));
         }
     }
-    AOT::stableSort(tests, { }, [](const Test& test) {
+    AOT::stableSortInLine(tests, { }, [](const Test& test) {
         return test.object.index();
     });
 
@@ -328,6 +332,19 @@ void GuardEmitter::generateHasLayoutPrototype(const ValueContext& value)
             return testOfFlags(value);
         });
     }
+}
+
+// A class without a rank has no word to compare with. What is made below the prototype is linked as it is built.
+void GuardEmitter::generateIsPrototypeOfClass(const ValueContext& value)
+{
+    std::optional<uint32_t> rank = m_placement.rankOfClass(declaredLayoutOf(m_program, value->layout()));
+    if (!rank) {
+        defineTest(value, boolean(false));
+        return;
+    }
+    Pointer prototypes = loadImmutablePointer(AOT_INSTANCE_OFFSET(classes.classPrototypes));
+    ptrdiff_t offset = static_cast<ptrdiff_t>(*rank) * sizeof(void*);
+    defineTest(value, Condition(m_out.equal(in<CellPointer>(value->prototypeOperand()).value(), m_out.load64(m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), prototypes.value(), offset)))));
 }
 
 void GuardEmitter::generateIsPristine(const ValueContext& value)

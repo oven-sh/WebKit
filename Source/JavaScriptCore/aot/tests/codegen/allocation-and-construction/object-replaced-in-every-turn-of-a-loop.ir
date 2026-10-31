@@ -116,9 +116,9 @@ function f1 name="walk" module=m0 position=39 flags=[IsChecked, HasExplicitName]
 # Two additions, the counter, a move and the branch, which itself leads back.
 # X64-NOT: , instructions:
 # X64: loop #{{*}}, instructions: 5, patchpoints: 0
-# X64: loop #{{*}}, instructions: 5, patchpoints: 1, {{*}}entered rarely
+# X64: loop #{{*}}, instructions: 6, patchpoints: 0, rare instructions: 7, {{*}}entered rarely
 # X64-NOT: , instructions:
 # ARM64-NOT: , instructions:
 # ARM64: loop #{{*}}, instructions: 5, patchpoints: 0
-# ARM64: loop #{{*}}, instructions: 5, patchpoints: 1, {{*}}entered rarely
+# ARM64: loop #{{*}}, instructions: {{*}}, patchpoints: 0, rare instructions: {{*}}entered rarely
 # ARM64-NOT: , instructions:

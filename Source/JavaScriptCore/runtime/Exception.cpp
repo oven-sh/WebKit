@@ -80,6 +80,7 @@ void Exception::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     if (auto* returnAddresses = thisObject->returnAddresses()) {
         visitor.markAuxiliary(returnAddresses);
         visitor.appendUnbarriered(AOT::livenessToken(returnAddresses->instance));
+        AOT::visitCallees(visitor, *returnAddresses);
     }
 #endif
     visitor.reportExtraMemoryVisited(thisObject->m_stack.sizeInBytes());
@@ -141,6 +142,9 @@ Exception* Exception::tryCreateWithStackOfErrorMadeHere(VM& vm, JSValue thrownVa
 {
     ErrorInstance* error = errorToTakeStackFrom(vm, thrownValue);
     if (!error || !AOT::beginsInTopCompiledFrame(vm, *error->returnAddresses()))
+        return nullptr;
+    // The stack of an Error ends at Error.stackTraceLimit. The report of an uncaught exception lists the frames below that too.
+    if (error->returnAddresses()->isFull && error->returnAddresses()->limit < Options::exceptionStackTraceLimit())
         return nullptr;
     // The end of a collection may turn the stack of the Error into text.
     DeferGC deferGC(vm);

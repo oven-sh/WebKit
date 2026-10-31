@@ -1,0 +1,48 @@
+# function Helper(target) { this.target = target; }   Helper.prototype.define = function (name) { this.target[name] = function () { return name; }; return this; };
+# new Helper(object).define("a");
+# The helper is a function declaration of a module that another function names: its closure is in the variable before the body runs, and no store of the body puts it there.
+# FORM: AsRead
+# RUN: pass CopyClosureFactories
+# CHECK: outcome: Changed
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[isDefine]]{{*}} = IsClosureOf {{*}} function=f2
+# CHECK-NEXT: Branch [[isDefine]]
+# CHECK: [[copy]]{{*}} = NewClosure {{*}} function=f6
+# CHECK-NEXT: = Call [[copy]], {{*}} [isAlwaysInlined]
+# CHECK-LABEL: function f6 name="define"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[]
+variable g0 name="Helper" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f2
+    PropSet v1, v2 key="define" mode=Strict
+    v4 = NewObject layout=L0
+    v5 = FinishObject v4
+    v6 = GetModuleVariable variable=g0
+    v7 = Construct v6, -, v5
+    v8 = PropGet v7 key="define"
+    v9 = String string="a"
+    v10 = Call v8, v7, v9
+    Return
+}
+function f1 name="Helper" module=m0 position=10 flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="target" mode=Strict
+    Return
+}
+function f2 name="define" module=m0 position=20 flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="target"
+    v3 = NewClosure v1 function=f3
+    ElemSet v2, v1, v3 mode=Strict
+    Return v0
+}
+function f3 name="member" module=m0 position=30 captures=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f4 name="names" module=m0 position=40 results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}

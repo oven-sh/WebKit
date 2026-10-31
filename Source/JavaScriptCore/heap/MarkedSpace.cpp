@@ -276,6 +276,16 @@ void MarkedSpace::registerPreciseAllocation(PreciseAllocation* allocation, bool 
     }
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+bool MarkedSpace::tryMakeRoomForPreciseAllocation()
+{
+    size_t capacity = m_preciseAllocations.capacity();
+    if (m_preciseAllocations.size() < capacity) [[likely]]
+        return true;
+    return m_preciseAllocations.tryReserveCapacity(std::max<size_t>(16, capacity + capacity / 4 + 1));
+}
+#endif
+
 void MarkedSpace::sweepPreciseAllocations()
 {
     RELEASE_ASSERT(m_preciseAllocationsNurseryOffset == m_preciseAllocations.size());

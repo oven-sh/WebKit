@@ -237,9 +237,7 @@ static void loadNumberOfClosureCell(StubAssembler& jit, GPRReg function, GPRReg 
     ASSERT(noOverlap(function, number, scratch));
     const GPRReg tables = scratch;
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
-    jit.move(function, number);
-    jit.sub32(Address(tables, OBJECT_OFFSETOF(ProgramTables, closureFunctions) + OBJECT_OFFSETOF(ClosureFunctionRangeData, first)), number);
-    jit.getEffectiveAddress(BaseIndex(number, number, CCallHelpers::TimesTwo), number);
+    jit.getEffectiveAddress(BaseIndex(function, function, CCallHelpers::TimesTwo, -static_cast<int32_t>(jit.options().closureNumbersBelow * sizeof(Number24))), number);
     jit.add32(Address(tables, offsetOfProgramTableRange(ProgramTableIndex::closureCellNumbers) + OBJECT_OFFSETOF(TableRange, offset)), number);
     jit.addPtr(tables, number);
     const GPRReg lowBytes = scratch;
@@ -427,7 +425,7 @@ void generateMaterializeEnvironment(StubAssembler& jit)
     jit.returnToCaller();
 }
 
-void loadSlimClosureWord(StubAssembler& jit, GPRReg closure, GPRReg word, JumpList* isRenamed)
+void loadSlimClosureWord(StubAssembler& jit, GPRReg closure, GPRReg word, JumpList* isRenamed, JumpList* isOfOtherImage)
 {
     ASSERT(noOverlap(closure, word, instanceGPR));
     jit.load64(Address(closure, offsetOfSlimClosureWord), word);
@@ -435,6 +433,8 @@ void loadSlimClosureWord(StubAssembler& jit, GPRReg closure, GPRReg word, JumpLi
     if (isRenamed)
         isRenamed->append(jit.branchTest8(CCallHelpers::NonZero, Address(closure, JSCell::typeInfoFlagsOffset()), TrustedImm32(TypeInfoPerCellBit)));
     jit.load32(Address(word, ReifiedSlimClosure::offsetOfFunctionIndexInButterfly()), word);
+    if (isOfOtherImage)
+        branchUnlessClosureNumberOfThisImage(jit, word, *isOfOtherImage);
     jit.lshift64(TrustedImm32(3), word);
     jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(functionTables.closureWords)), word);
     jit.load64(Address(word), word);
@@ -466,6 +466,43 @@ void generateValueEndsItsTailCalls(StubAssembler& jit)
     isNotCell.link(&jit);
     isNeither.link(&jit);
     jit.returnFlagsConstant(false);
+}
+
+StubSignature signatureOfRecordCallee(StubKey)
+{
+    return StubSignature::withoutResult({ calleeGPR });
+}
+
+void generateRecordCallee(StubAssembler& jit)
+{
+    const GPRReg closure = jit.operand(0);
+    const GPRReg stackPointerOfCaller = jit.allocateScratch(StubRegister::T11);
+    const GPRReg entries = jit.allocateScratch(StubRegister::T13);
+    const GPRReg scratch = jit.scratchRegister();
+
+    constexpr ptrdiff_t offsetOfMask = OBJECT_OFFSETOF(RecordedCallee, stackPointerOfCaller) - static_cast<ptrdiff_t>(sizeof(RecordedCallee));
+    jit.addPtr(TrustedImm32(sizeof(CallerFrameAndPC)), GPRInfo::callFrameRegister, stackPointerOfCaller);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(heap.recordedCallees)), entries);
+    // The call that was made from further out may not have returned.
+#if CPU(X86_64)
+    jit.move(stackPointerOfCaller, scratch);
+    jit.and64(Address(entries, offsetOfMask), scratch);
+    Jump isTaken = jit.branchPtr(CCallHelpers::Above, BaseIndex(entries, scratch, CCallHelpers::TimesOne, OBJECT_OFFSETOF(RecordedCallee, stackPointerOfCaller)), stackPointerOfCaller);
+    jit.storePtr(stackPointerOfCaller, BaseIndex(entries, scratch, CCallHelpers::TimesOne, OBJECT_OFFSETOF(RecordedCallee, stackPointerOfCaller)));
+    jit.storePtr(closure, BaseIndex(entries, scratch, CCallHelpers::TimesOne, OBJECT_OFFSETOF(RecordedCallee, closure)));
+#else
+    jit.loadPtr(Address(entries, offsetOfMask), scratch);
+    jit.andPtr(stackPointerOfCaller, scratch);
+    jit.addPtr(scratch, entries);
+    jit.loadPtr(Address(entries, OBJECT_OFFSETOF(RecordedCallee, stackPointerOfCaller)), scratch);
+    Jump isTaken = jit.branchPtr(CCallHelpers::Above, scratch, stackPointerOfCaller);
+    jit.storePtr(stackPointerOfCaller, Address(entries, OBJECT_OFFSETOF(RecordedCallee, stackPointerOfCaller)));
+    jit.storePtr(closure, Address(entries, OBJECT_OFFSETOF(RecordedCallee, closure)));
+#endif
+    jit.returnToCaller();
+
+    isTaken.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTRecordCallee, { .returns = OperationCall::Returns::Void, .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = closure, .thirdArgumentIn = stackPointerOfCaller });
 }
 
 StubSignature signatureOfValueIsClosureOf(StubKey)

@@ -17,7 +17,7 @@
 # RUN(X64): lower-to-air size f1
 # REQUIRES(X64): x86_64 unsanitized-code not-windows faulting-loop-polls
 # X64: function f1 name="siftUp" role=Source
-# X64-NEXT: instructions: 103, patchpoints: 10, rare instructions: 141, polls: 2
+# X64-NEXT: instructions: 101, patchpoints: 10, rare instructions: 111, polls: 2
 
 module m0 path="/$bunfs/root/sift.js" displayPath="sift.js" body=f0
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary]

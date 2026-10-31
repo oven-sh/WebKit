@@ -215,19 +215,34 @@ void GroupRewriter::emitSlowPath(ValueID succeeded)
     builder().endExpansion(*m_expansion, results.span());
 }
 
-void GroupRewriter::emitTwoWay(Terminator&& fast)
+void GroupRewriter::emitTwoWay(Terminator&& fast, Vector<Value, 1>&& inFront, Vector<Value, 1>&& behindFastPath)
 {
     RELEASE_ASSERT(m_group.hasSlowPath && fast.kind == TerminatorKind::TryCallInline && fast.targets.isEmpty());
     RELEASE_ASSERT(!hasMemberUsedOutside(m_group));
     RELEASE_ASSERT(hasResult(m_originals.last()) && !numberOfResultsOf(m_session.m_context.program(), function(), m_originals.last()));
 
     expandRoot();
+    for (Value& value : inFront)
+        builder().append(WTF::move(value));
     BlockID head = builder().currentBlock();
     BlockID miss = addArm(slowPathFrequency());
-    fast.targets.append(Target { m_expansion->continuation, { }, { } });
+    BlockID done = m_expansion->continuation;
+    ValueID answer;
+    if (!behindFastPath.isEmpty()) {
+        done = addArm(function().at(head).frequency);
+        answer = builder().addParameter(done, m_originals.last().type);
+    }
+    fast.targets.append(Target { done, { }, { } });
     fast.targets.append(Target { miss, { }, { } });
     builder().emitTerminator(WTF::move(fast));
     m_blocksWithCreatedTerminators.append(head);
+
+    if (answer) {
+        builder().moveToEndOf(done);
+        for (Value& value : behindFastPath)
+            builder().append(WTF::move(value));
+        endArm(answer);
+    }
 
     builder().moveToEndOf(miss);
     endArm(appendOriginals());

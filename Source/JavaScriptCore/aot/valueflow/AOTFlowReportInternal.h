@@ -40,8 +40,10 @@ constexpr unsigned rankOf(AccessCost cost)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-Vector<Wire::AccessRecord> buildAccessRecords(const Program&, const FlowResults&, std::span<const FlowSiteLevel>, BuildContext&);
+Vector<Wire::AccessRecord> buildAccessRecords(const Program&, const FlowResults&, std::span<const FlowSiteLevel>, std::span<const double> heat, BuildContext&);
 Vector<Wire::AccessCountRecord> countAccesses(const Program&, std::span<const Wire::AccessRecord>, std::span<const Wire::TypeTestRecord>);
+// What countAccesses() says of the records that buildAccessRecords() makes.
+Vector<Wire::AccessCountRecord> countAccessesWithoutRecords(const Program&, const FlowResults&, std::span<const FlowSiteLevel>, std::span<const Wire::TypeTestRecord>, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed
 

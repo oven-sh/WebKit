@@ -11,6 +11,7 @@
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTKnownClosures.h"
+#include "AOTPrimitiveKeyTexts.h"
 #include "AOTValueFlowBuiltinTables.h"
 #include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowHeapTables.h"
@@ -22,6 +23,40 @@
 #include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+// The walk over all modules is cut into parts, each a statement of its own: a part runs again only when one of its own modules changes, and the parts run side by side.
+AOT_THRESHOLD(uint32_t, modulesOfPartLoadedByName, 1024);
+
+static uint32_t numberOfPartsLoadedByName(const Program& program)
+{
+    return std::max<uint32_t>(1, (program.modules.size() + modulesOfPartLoadedByName - 1) / modulesOfPartLoadedByName);
+}
+
+// Where the walk has parts, what is said of the copies of files stands in two statements in front of them: which files the copies reach, once, and where that goes on to.
+static constexpr uint32_t numberOfStatementsOnCopiesOfFiles = 2;
+
+// A layer that test files share has thousands of entry points. None where one statement takes them all.
+AOT_THRESHOLD(uint32_t, entriesOfPartOfHostRoots, 256);
+
+static uint32_t numberOfPartsOfEntries(const Program& program)
+{
+    if (program.entries.size() <= entriesOfPartOfHostRoots)
+        return 0;
+    return (program.entries.size() + entriesOfPartOfHostRoots - 1) / entriesOfPartOfHostRoots;
+}
+
+// The host has no operands: the word for their guards says which part a statement is. A site would be taken for a value of a function.
+static void appendPart(ValueFlowBody& body, ValueFlowStatementKind kind, uint32_t part)
+{
+    ValueFlowBody::Statement statement { { }, { }, 0, 0, { }, { }, kind };
+    statement.guardsOfOperands = part;
+    body.statements.append(statement);
+}
+
+static uint32_t partOf(const ValueFlowStatement& statement)
+{
+    return statement.guardsOfOperands;
+}
 
 void describeHost(const Program& program, ValueFlowBody& body)
 {
@@ -38,8 +73,13 @@ void describeHost(const Program& program, ValueFlowBody& body)
     if (!moduleObjects.isEmpty())
         body.constants.append(WTF::move(moduleObjects));
 
-    for (ValueFlowStatementKind kind : { ValueFlowStatementKind::HostRoots, ValueFlowStatementKind::UsedBuiltins, ValueFlowStatementKind::UnseenCode, ValueFlowStatementKind::ModulesLoadedByName })
+    for (uint32_t part = 0; part <= numberOfPartsOfEntries(program); ++part)
+        appendPart(body, ValueFlowStatementKind::HostRoots, part);
+    for (ValueFlowStatementKind kind : { ValueFlowStatementKind::UsedBuiltins, ValueFlowStatementKind::UnseenCode })
         body.statements.append({ { }, { }, 0, 0, { }, { }, kind });
+    uint32_t parts = numberOfPartsLoadedByName(program);
+    for (uint32_t part = 0; part < (parts == 1 ? 1 : numberOfStatementsOnCopiesOfFiles + parts); ++part)
+        appendPart(body, ValueFlowStatementKind::ModulesLoadedByName, part);
 }
 
 static void passFromNativeCode(ValueFlowRuleContext& context, FunctionID function, const Function& callee, unsigned index, NativeCaller caller, ValueSetID unknown)
@@ -208,7 +248,7 @@ void letModulesBeLoadedByName(ValueFlowRuleContext& context, ValueFlowHostNode a
         return;
     raiseHostFlag(context, ValueFlowHostNode::CodeOutsideImageIsLoaded);
     letUnseenCodeRun(context, UnseenCodeReach::Loader);
-    context.add(ValueFlowProgramNodes::escaped(), context.universe().holdersOfLibraryExports());
+    context.add(ValueFlowProgramNodes::escaped(), context.universe().holdersOfPublicLibraryExports());
     context.add(context.nodes().ofHost(answers), unknownValue(context, ValueFlowUnknownSource::UnseenCode));
 }
 
@@ -297,6 +337,8 @@ static bool mayBeServerConfiguration(ValueFlowRuleContext& context, const ValueF
     return true;
 }
 
+static bool mayProgramHaveStoredUnder(ValueFlowRuleContext&, BuiltinID member);
+
 static bool mayHold(const BuiltinCondition* condition)
 {
     return !condition || !condition->buildAdmitsRuntimeCode;
@@ -310,6 +352,10 @@ static bool mayHold(ValueFlowRuleContext& context, BuiltinID builtin, const Buil
         return false;
     if (condition->objectNobodyKnowsIsWritten)
         return isHostFlagRaised(context, ValueFlowHostNode::ObjectNobodyKnowsIsWritten) || mayUnknownCodeWrite(context);
+    if (condition->testsReplaceBuiltins)
+        return context.program().testsReplaceBuiltins();
+    if (condition->programStores)
+        return mayProgramHaveStoredUnder(context, condition->programStores);
 
     const BuiltinTable& builtins = context.program().builtins();
     ValueFlowObjectID objectOfBuiltin = context.universe().objectOf(builtin);
@@ -363,8 +409,7 @@ static void loadRuntimeModule(ValueFlowRuleContext& context, const BuiltinModule
     };
     ModuleID id = load.module ? context.universe().moduleOf(load.module) : moduleOf(program, load.module);
     if (!id) {
-        if (BuiltinID namespaceObject = program.builtins().namespaceOf(load.module))
-            context.use(namespaceObject, BuiltinUse::Read);
+        noteLoadOf(context, load.module);
         return;
     }
     evaluateModule(context, id);
@@ -578,7 +623,7 @@ static void followWhatNativeCodeHolds(ValueFlowRuleContext& context)
     });
 }
 
-void runHostRoots(const ValueFlowStatement&, ValueFlowRuleContext& context)
+static void followFunctionsOfSeenCode(ValueFlowRuleContext& context)
 {
     const Program& program = context.program();
     const ValueFlowUniverse& universe = context.universe();
@@ -593,7 +638,7 @@ void runHostRoots(const ValueFlowStatement&, ValueFlowRuleContext& context)
         uint32_t setPlusOne = remembered.load(std::memory_order_acquire);
         if (!setPlusOne) {
             Vector<ValueFlowObjectID, 8> called;
-            for (const Value& value : function.values) {
+            for (const Value& value : context.functionWithBody(id).values) {
                 if (value.opcode == Opcode::CallDirect)
                     called.append(universe.closureOf(value.function()));
             }
@@ -604,8 +649,24 @@ void runHostRoots(const ValueFlowStatement&, ValueFlowRuleContext& context)
             context.add(functionsOfSeenCode, only(context, called));
         });
     });
+}
 
-    for (const Entry& entry : program.entries) {
+// The first statement runs again each time seen code calls one more function of the library. The entry points are left to the others.
+void runHostRoots(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
+{
+    const Program& program = context.program();
+    const ValueFlowUniverse& universe = context.universe();
+    std::span<const Entry> entries = program.entries.span();
+    if (!numberOfPartsOfEntries(program))
+        followFunctionsOfSeenCode(context);
+    else if (uint32_t index = partOf(statement))
+        entries = entries.subspan((index - 1) * entriesOfPartOfHostRoots).first(std::min<size_t>(entriesOfPartOfHostRoots, entries.size() - (index - 1) * entriesOfPartOfHostRoots));
+    else {
+        followFunctionsOfSeenCode(context);
+        return;
+    }
+
+    for (const Entry& entry : entries) {
         context.add(context.nodes().ofHost(ValueFlowHostNode::ModulesOfSeenCode), only(context, context.universe().namespaceOf(entry.module)));
         evaluateModule(context, entry.module);
         if (program.at(entry.module).kind == ModuleKind::CommonJs)
@@ -659,6 +720,12 @@ std::optional<UnseenCodeCause> eventOfCalling(const BuiltinTable& builtins, Buil
     if (unseenCode ? mayHold(unseenCode->condition) : entry.flags.contains(BuiltinFlag::RunsUnseenCode))
         return UnseenCodeCause::RunsUnseenCode;
     return std::nullopt;
+}
+
+// Where code outside the image is refused the run time refuses every file that such a loader is asked for, those of the image too: it runs a file from its text.
+bool loadsCodeOnceRead(const BuiltinTable& builtins, BuiltinID builtin, RefusedCode refused)
+{
+    return !refused.codeOutsideImage && builtins.has(BuiltinMark::ReadLoadsCodeByName, builtins.canonicalID(builtin));
 }
 
 static bool someCallPassesPropertyThatRunsUnseenCode(ValueFlowRuleContext& context, BuiltinID builtin)
@@ -722,7 +789,13 @@ bool mayAnswerToName(const Program& program, ModuleID id)
         return isBundlerHelperNamedByProgram(program, id);
     if (module.runtimeModule && !program.builtins().at(module.runtimeModule).flags.contains(RuntimeModuleFlag::IsPublic))
         return false;
-    return !isWrittenByProgram(program, module) || module.kind == ModuleKind::External || module.kind == ModuleKind::Data || std::ranges::contains(program.entries, id, &Entry::module);
+    return !isWrittenByProgram(program, module) || module.kind == ModuleKind::External || module.kind == ModuleKind::Data || module.flags.contains(ModuleFlags::IsFoundByName) || std::ranges::contains(program.entries, id, &Entry::module);
+}
+
+bool answersOnlyToLoadsOfProgram(const Program& program, ModuleID id)
+{
+    const Module& module = program.at(id);
+    return module.kind == ModuleKind::Data || (module.flags.contains(ModuleFlags::IsFoundByName) && !std::ranges::contains(program.entries, id, &Entry::module));
 }
 
 bool isAskedOfHostByName(const Module& module)
@@ -730,16 +803,16 @@ bool isAskedOfHostByName(const Module& module)
     return module.kind == ModuleKind::RuntimeSource && !module.flags.contains(ModuleFlags::IsLoadedByImportOnly);
 }
 
-static void forEachModuleLoadableByName(ValueFlowRuleContext& context, NOESCAPE const Invocable<void(ModuleID, bool isOfProgram)> auto& functor)
+static void forEachModuleLoadableByName(ValueFlowRuleContext& context, uint32_t first, uint32_t end, NOESCAPE const Invocable<void(ModuleID, bool isOfProgram)> auto& functor)
 {
     const Program& program = context.program();
     const ValueFlowHeapTables& tables = context.universe().builtinTables().heap();
-    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+    for (uint32_t index = first; index < end; ++index) {
         const Module& module = program.modules[index];
         if (!tables.mayAnswerToName(ModuleID(index)))
             continue;
         bool isOfProgram = isWrittenByProgram(program, module);
-        if (module.body ? !context.isReached(module.body) && !isAskedOfHostByName(module) : !isOfProgram && module.kind != ModuleKind::Runtime)
+        if (module.body ? !isOfProgram && !context.isReached(module.body) && !isAskedOfHostByName(module) : !isOfProgram && module.kind != ModuleKind::Runtime)
             continue;
         functor(ModuleID(index), isOfProgram);
     }
@@ -751,24 +824,24 @@ static void handLibraryModulesTo(ValueFlowRuleContext& context, ValueFlowNodeID 
     context.connect(context.nodes().ofHost(ValueFlowHostNode::LibraryValuesLoadedByName), hands);
 }
 
+// Whoever asks for this runs again each time something escapes. The walk over all modules is left to runModulesLoadedByName(), which runs again only when a module changes.
 static void handLoadedModulesToNativeCode(ValueFlowRuleContext& context)
 {
     for (ValueFlowHostNode answers : { ValueFlowHostNode::RequiredValuesLoadedByName, ValueFlowHostNode::NamespacesLoadedByName })
         letModulesBeLoadedByName(context, answers);
-    forEachModuleLoadableByName(context, [&](ModuleID module, bool isOfProgram) {
-        ValueFlowNodeID hands = isOfProgram ? ValueFlowProgramNodes::escaped() : context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode);
-        connect(context, requiredValueOf(context, module), hands);
-        connect(context, namespaceOf(context, module), hands);
-    });
+    raiseHostFlag(context, ValueFlowHostNode::LoadedModulesAreHandedToNativeCode);
 }
 
 // Text has import() and process.getBuiltinModule() and no require of a file. The loader answers it with an entry point under any name,
-// and with a data file of the image only where the program itself loads files by name.
+// and with another file of the image only where the program itself loads files by name.
 static void handLoadableModulesToText(ValueFlowRuleContext& context, bool filesOfProgramAreLoadedByName)
 {
     handLibraryModulesTo(context, context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode));
-    forEachModuleLoadableByName(context, [&](ModuleID module, bool isOfProgram) {
-        if (!isOfProgram || (context.program().at(module).kind == ModuleKind::Data && !filesOfProgramAreLoadedByName))
+    forEachModuleLoadableByName(context, 0, context.program().modules.size(), [&](ModuleID module, bool isOfProgram) {
+        if (!isOfProgram || (answersOnlyToLoadsOfProgram(context.program(), module) && !filesOfProgramAreLoadedByName))
+            return;
+        // The files that the host runs name what they use, and a file of the build hands them that.
+        if (context.refusedCode().hostRunsFilesOutsideImage && showsOutsideOnlyWhatIsOpen(context.program().at(module)))
             return;
         connect(context, requiredValueOf(context, module), ValueFlowProgramNodes::escaped());
         connect(context, namespaceOf(context, module), ValueFlowProgramNodes::escaped());
@@ -805,32 +878,130 @@ static std::span<const uint8_t> packageNamedBy(std::span<const uint8_t> name)
 }
 
 // Where code outside the image is refused, the name of a package loads a file of that package in the image or nothing, whatever file asks.
-static bool isNameOfPackageOutsideImage(ValueFlowRuleContext& context, std::span<const uint8_t> name)
+static bool isNameOfPackageOutsideImage(const ValueFlowUniverse& universe, RefusedCode refused, std::span<const uint8_t> name)
 {
     std::span<const uint8_t> package = packageNamedBy(name);
-    return !package.empty() && context.refusedCode().codeOutsideImage && !context.universe().builtinTables().heap().holdsModuleOfPackage(package);
+    return !package.empty() && refused.codeOutsideImage && !universe.builtinTables().heap().holdsModuleOfPackage(package);
 }
 
-static bool passesOnlyNamesThatNoFileOfProgramAnswersTo(const ValueFlowStatement& call, ValueFlowRuleContext& context)
+// "node:" and "bun:" stand in front of names of the library alone.
+static bool hasSchemeOfLibrary(std::span<const uint8_t> name)
+{
+    return spanHasPrefix(name, byteCast<uint8_t>("node:"_span)) || spanHasPrefix(name, byteCast<uint8_t>("bun:"_span));
+}
+
+ModulesThatNamesFind modulesThatNamesFind(const Program& program, const ValueFlowUniverse& universe, RefusedCode refused, const LoadUnderName& load, NOESCAPE const NamesOfLoad& forEachName)
+{
+    const ValueFlowHeapTables& tables = universe.builtinTables().heap();
+    ModulesThatNamesFind found;
+    auto addPath = [&](std::span<const uint8_t> path) {
+        std::optional<Vector<ModuleID, 2>> files = load.referrer ? tables.filesThatPathFinds(load.referrer, path) : std::nullopt;
+        if (!files || (files->isEmpty() && !refused.codeOutsideImage))
+            found.anything = true;
+        else if (files->isEmpty())
+            found.fileOutsideImage = true;
+        else
+            found.filesOfProgram.appendVector(*files);
+    };
+    auto add = [&](std::span<const uint8_t> text) {
+        if (ModuleID module = tables.libraryModuleNamed(text))
+            found.libraryModules.append(module);
+        else if (hasSchemeOfLibrary(text) || isNameOfPackageOutsideImage(universe, refused, text))
+            found.nativeModule = true;
+        else if (!text.empty() && text[0] == '.')
+            addPath(text);
+        else
+            found.anything = true;
+    };
+    // A text that is no key of the program is any string to the values.
+    const Function& function = program.at(load.function);
+    if (const Value& definition = function.at(definitionThroughSameValues(function, load.written)); definition.opcode == Opcode::String) {
+        add(program.string(definition.string()));
+        return found;
+    }
+    forEachName([&](ValueFlowObjectID member) {
+        if (universe.kindOf(member) == ValueFlowObjectKind::Key) {
+            const PropertyKey& key = program.at(universe.keyOf(member));
+            if (key.kind == PropertyKeyKind::Text)
+                add(program.string(key.text));
+            else
+                found.anything = true;
+            return found.anything;
+        }
+        constexpr uint16_t neverConvertedToString = Primitive::Symbol | Primitive::Absent;
+        constexpr uint16_t noString = Primitive::NumberLike | Primitive::BigInt | neverConvertedToString;
+        if (member.index() < ValueFlowUniverse::numberOfPrimitiveKinds && ((1u << member.index()) & (load.takesStringsAlone ? noString : neverConvertedToString)))
+            return false;
+        // No module of the library is spelled "undefined".
+        auto text = std::ranges::find_if(primitiveKeyTexts, [&](const PrimitiveKeyText& entry) {
+            return member == ValueFlowUniverse::primitive(static_cast<PrimitiveSet>(entry.primitive));
+        });
+        found.anything = text == std::end(primitiveKeyTexts) || !isNameOfPackageOutsideImage(universe, refused, byteCast<uint8_t>(text->text.span()));
+        return found.anything;
+    });
+    return found;
+}
+
+ModulesThatNamesFind modulesThatNamesFind(ValueFlowRuleContext& context, const LoadUnderName& load, const ValueFlowOperand& name)
+{
+    context.functionWithBody(load.function);
+    return modulesThatNamesFind(context.program(), context.universe(), context.refusedCode(), load, [&](const ScopedLambda<bool(ValueFlowObjectID)>& functor) {
+        context.anyMember(context.valueOf(name), functor);
+    });
+}
+
+static ClimbingSet publicNativeModules(ValueFlowRuleContext& context)
+{
+    const BuiltinTable& builtins = context.program().builtins();
+    Vector<ValueFlowObjectID, 32> objects;
+    for (uint32_t index = 0; index < builtins.moduleCount(); ++index) {
+        const RuntimeModuleData& module = builtins.at(RuntimeModuleID(index));
+        if (module.namespaceObject && module.flags.contains(RuntimeModuleFlag::IsPublic) && !module.flags.contains(RuntimeModuleFlag::HasSource))
+            objects.append(context.universe().objectOf(module.namespaceObject));
+    }
+    return ClimbingSet(context.maker().of(objects.span()));
+}
+
+void noteLoadUnderSpelledNames(ValueFlowRuleContext& context, FunctionID load, const ModulesThatNamesFind& found, ValueFlowHostNode answers, ValueFlowNodeID answer)
+{
+    RELEASE_ASSERT(answers == ValueFlowHostNode::RequiredValuesLoadedByName || answers == ValueFlowHostNode::NamespacesLoadedByName);
+    if (isWrittenInProgram(context.program().at(load))) {
+        raiseHostFlag(context, ValueFlowHostNode::LibraryModulesAreLoadedUnderSpelledNames);
+        // The image keeps every file that a name may find findable. Only this load is known to find fewer.
+        if (!found.filesOfProgram.isEmpty())
+            raiseHostFlag(context, answers == ValueFlowHostNode::RequiredValuesLoadedByName ? ValueFlowHostNode::ModulesAreRequiredByName : ValueFlowHostNode::ModulesAreImportedByName);
+    }
+    if (found.nativeModule && answer)
+        context.add(answer, publicNativeModules(context));
+    // `require.cache["fs"] = { exports: fake }`: require() looks there for a Node.js module that is named without `node:`, overridableRequire() in CommonJS.ts.
+    if (answers == ValueFlowHostNode::RequiredValuesLoadedByName && (found.nativeModule || !found.libraryModules.isEmpty()) && answer) {
+        context.connect(context.nodes().ofHost(ValueFlowHostNode::ExportsOfEntriesStoredInModuleCache), answer);
+        if (isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeHasLoader))
+            context.add(answer, unknownValue(context, ValueFlowUnknownSource::UnseenCode));
+    }
+}
+
+static ModulesThatNamesFind modulesThatNamesPassedFind(const ValueFlowStatement& call, ValueFlowRuleContext& context, ValueFlowObjectID loader, BuiltinID builtin)
 {
     constexpr size_t indexOfName = 2;
     if (call.kind != ValueFlowStatementKind::Operation || call.opcode != Opcode::Call || call.operandCount <= indexOfName)
-        return false;
-    const Program& program = context.program();
-    const ValueFlowUniverse& universe = context.universe();
-    auto isSuchName = [&](StringID text) {
-        return universe.builtinTables().heap().isNameOfLibraryModule(program.string(text)) || isNameOfPackageOutsideImage(context, program.string(text));
-    };
-    // A text that is no key of the program is any string to the values.
-    const Function& function = program.at(call.function);
-    if (const Value& name = function.at(definitionThroughSameValues(function, function.at(call.site).operand(indexOfName))); name.opcode == Opcode::String)
-        return isSuchName(name.string());
-    bool passesOnlyThose = true;
-    context.forEachMember(context.valueOf(context.operandsOf(call)[indexOfName]), [&](ValueFlowObjectID name) {
-        const PropertyKey* key = universe.kindOf(name) == ValueFlowObjectKind::Key ? &program.at(universe.keyOf(name)) : nullptr;
-        passesOnlyThose = passesOnlyThose && key && key->kind == PropertyKeyKind::Text && isSuchName(key->text);
-    });
-    return passesOnlyThose;
+        return { .anything = true };
+    ModulesThatNamesFind found = modulesThatNamesFind(context, { call.function, context.functionWithBody(call.function).at(call.site).operand(indexOfName), context.universe().moduleOf(loader), builtin == Builtins::ModuleRequire }, context.operandsOf(call)[indexOfName]);
+    // What the loader makes of a file on disk has a site at the two operations alone.
+    found.anything |= found.fileOutsideImage;
+    return found;
+}
+
+static std::optional<RequestAtRunTime> requestMadeByCalling(const BuiltinTable& builtins, BuiltinID canonicalCallee)
+{
+    if (canonicalCallee == Builtins::ModuleRequire)
+        return RequestAtRunTime::Require;
+    if (canonicalCallee == Builtins::ModuleRequireResolve)
+        return RequestAtRunTime::Resolve;
+    const Builtin& callee = builtins.at(canonicalCallee);
+    if (callee.holder && builtins.canonicalID(callee.holder) == Builtins::ModuleRequirePrototype && callee.name == builtins.at(Builtins::ModuleRequireResolve).name)
+        return RequestAtRunTime::Resolve;
+    return std::nullopt;
 }
 
 void applyEventsOfCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ClimbingSet callees)
@@ -843,8 +1014,10 @@ void applyEventsOfCall(const ValueFlowStatement& statement, ValueFlowRuleContext
     if (context.meet(callees, universe.closures()) && isCalledBySeenCode())
         context.add(context.nodes().ofHost(ValueFlowHostNode::FunctionsOfSeenCode), context.restrict(callees, universe.closures()));
 
-    context.forEachMember(context.restrict(callees, universe.builtinFunctions()), [&](ValueFlowObjectID callee) {
+    context.forEachMemberInLine(context.restrict(callees, universe.builtinFunctions()), [&](ValueFlowObjectID callee) {
         BuiltinID builtin = builtins.canonicalID(universe.builtinOf(callee));
+        std::optional<RequestAtRunTime> request = requestMadeByCalling(builtins, builtin);
+        bool asksProgram = request && askLoaderFunctionsOfProgram(context, universe.moduleOf(callee), *request);
         std::optional<UnseenCodeCause> cause = eventOfCalling(builtins, builtin, context.refusedCode());
         if (!cause && someCallPassesPropertyThatRunsUnseenCode(context, builtin))
             cause = UnseenCodeCause::RunsUnseenCode;
@@ -854,10 +1027,17 @@ void applyEventsOfCall(const ValueFlowStatement& statement, ValueFlowRuleContext
         context.add(context.nodes().ofHost(ValueFlowHostNode::FunctionsOfSeenCode), only(context, callee));
         if (!cause)
             return;
-        if (loadsOnlyLibraryModules(builtin) || (loadsModulesByName(*cause) && passesOnlyNamesThatNoFileOfProgramAnswersTo(statement, context)))
-            handLibraryModulesTo(context, statement.result);
-        else
-            raiseEvent(context, builtin, *cause, statement.result);
+        if (!loadsModulesByName(*cause))
+            return raiseEvent(context, builtin, *cause, statement.result);
+        ModulesThatNamesFind found = modulesThatNamesPassedFind(statement, context, callee, builtin);
+        found.anything |= asksProgram;
+        if (found.anything || (loadsOnlyLibraryModules(builtin) && !found.filesOfProgram.isEmpty()))
+            return loadsOnlyLibraryModules(builtin) ? handLibraryModulesTo(context, statement.result) : raiseEvent(context, builtin, *cause, statement.result);
+        noteLoadUnderSpelledNames(context, statement.function, found, ValueFlowHostNode::RequiredValuesLoadedByName, statement.result);
+        for (ModuleID module : found.libraryModules)
+            requireModule(statement, context, module);
+        for (ModuleID module : found.filesOfProgram)
+            requireModule(statement, context, module);
     });
 }
 
@@ -874,11 +1054,31 @@ static void handOut(ValueFlowRuleContext& context, ValueFlowObjectID moduleObjec
     context.add(context.nodes().ofHost(ValueFlowHostNode::ModuleObjectsHandedOut), only(context, moduleObject));
 }
 
+static bool storesPathOfMainModule(ValueFlowRuleContext& context)
+{
+    return isHostFlagRaised(context, ValueFlowHostNode::PathOfMainModuleIsStored);
+}
+
+// The run time answers for the same files: Modules::mainModuleObject().
+static BitVector modulesThatMayBeMain(ValueFlowRuleContext& context)
+{
+    const Program& program = context.program();
+    bool findsFilesByName = context.refusedCode().hostRunsFilesOutsideImage || isHostFlagRaised(context, ValueFlowHostNode::ModulesAreRequiredByName) || isHostFlagRaised(context, ValueFlowHostNode::ModulesAreImportedByName);
+    BitVector modules = modulesThatHostAsksFor(program, findsFilesByName);
+    if (!storesPathOfMainModule(context))
+        return modules;
+    for (size_t index = 0; index < program.modules.size(); ++index) {
+        if (!program.modules[index].flags.contains(ModuleFlags::IsLibrary))
+            modules.quickSet(index);
+    }
+    return modules;
+}
+
 void appendModuleObjectsAnsweredBy(ValueFlowRuleContext& context, BuiltinID entry, Vector<ValueFlowObjectID, 32>& objects)
 {
     const ValueFlowProgramNodes& nodes = context.nodes();
     bool answersMainModule = entry == Builtins::ModuleRequireMain || entry == Builtins::ProcessMainModule;
-    if (!answersMainModule)
+    if (!answersMainModule || isHostFlagRaised(context, ValueFlowHostNode::CodeOutsideImageIsLoaded) || storesPathOfMainModule(context))
         objects.append(context.universe().objectOf(Builtins::ModuleObject));
     if (!namesWaysToModuleObjects(context.program()))
         return;
@@ -894,11 +1094,13 @@ void appendModuleObjectsAnsweredBy(ValueFlowRuleContext& context, BuiltinID entr
         return answer(ValueFlowHostNode::ParentsOfModuleObjects);
     if (!answersMainModule)
         return;
-    for (const Entry& entryPoint : context.program().entries) {
-        if (ValueFlowObjectID moduleObject = moduleObjectOfEvaluatedModule(context, entryPoint.module)) {
+    bool mayBeNoCommonJSFile = storesPathOfMainModule(context);
+    for (size_t index : modulesThatMayBeMain(context)) {
+        if (ValueFlowObjectID moduleObject = moduleObjectOfEvaluatedModule(context, ModuleID(static_cast<uint32_t>(index)))) {
             handOut(context, moduleObject);
             objects.append(moduleObject);
-        }
+        } else if (mayBeNoCommonJSFile)
+            showAnswerOfRequireInModuleObject(context, ModuleID(static_cast<uint32_t>(index)));
     }
 }
 
@@ -970,12 +1172,42 @@ bool isFoundByNameAlone(BuiltinID member)
     return BuiltinTable::singleton().has(BuiltinMark::HoldsLoader, member) || member == Builtins::ProcessMainModule;
 }
 
+bool isCalledByLoaderOnceStored(BuiltinID member)
+{
+    const BuiltinTable& builtins = BuiltinTable::singleton();
+    return builtins.has(BuiltinMark::IsResolverThatLoaderCalls, member) || builtins.has(BuiltinMark::IsRequireThatLoaderCalls, member);
+}
+
 void applyEventsOfStore(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ClimbingSet receivers, PropertyKeyID)
 {
     if (!statement.function || !context.contains(receivers, context.universe().objectOf(Builtins::ModuleCache)))
         return;
-    if (isInSeenCode(context, statement.function))
+    if (isInSeenCode(context, statement.function)) {
         context.add(context.nodes().ofHost(ValueFlowHostNode::RequiredValuesLoadedByName), unknownValue(context, ValueFlowUnknownSource::ContentsOfEscapedObject));
+        context.add(context.nodes().ofHost(ValueFlowHostNode::ExportsOfEntriesStoredInModuleCache), unknownValue(context, ValueFlowUnknownSource::ContentsOfEscapedObject));
+    }
+}
+
+void applyEventsOfRead(ValueFlowRuleContext& context, ClimbingSet receivers)
+{
+    // Where the host runs files of its own the run time refuses the entry of a module that the build has closed.
+    if (context.refusedCode().hostRunsFilesOutsideImage || !context.contains(receivers, context.universe().objectOf(Builtins::ModuleCache)))
+        return;
+    raiseHostFlag(context, ValueFlowHostNode::UnseenCopiesOfFilesMayRun);
+    raiseHostFlag(context, ValueFlowHostNode::EntriesOfModuleCacheAreRead);
+}
+
+// In a test run a file taken out of require.cache loads again, through the loader of the host.
+void applyEventsOfDelete(ValueFlowRuleContext& context, ClimbingSet receivers)
+{
+    if (!context.contains(receivers, context.universe().objectOf(Builtins::ModuleCache)))
+        return;
+    raiseHostFlag(context, ValueFlowHostNode::UnseenCopiesOfFilesMayRun);
+    bool mayEvict = std::ranges::any_of(context.program().modules, [](const Module& module) {
+        return module.flags.contains(ModuleFlags::MayBeEvicted);
+    });
+    if (mayEvict)
+        enterLoaderOfHost(context);
 }
 
 static bool isGetterFoundWithoutItsName(const BuiltinTable& builtins, BuiltinID builtin)
@@ -995,6 +1227,61 @@ static void exposeModuleObjectOf(ValueFlowRuleContext& context, ModuleID id)
     }
 }
 
+static bool mayProgramHaveStoredUnder(ValueFlowRuleContext& context, BuiltinID member)
+{
+    ClimbingSet object = only(context, context.universe().objectOf(member));
+    return context.holdsAnyOf(object, context.nodes().ofHost(ValueFlowHostNode::WrittenBuiltins)) || context.holdsAnyOf(object, context.nodes().ofHost(ValueFlowHostNode::MembersStoredByNameThroughPlaceholders));
+}
+
+static bool isSeenToStoreLoaderFunction(ValueFlowRuleContext& context, BuiltinID member)
+{
+    return context.holdsAnyOf(only(context, context.universe().objectOf(member)), context.nodes().ofHost(ValueFlowHostNode::LoaderFunctionsSeenToBeStored));
+}
+
+// Whoever is handed the object by the host takes the loaders off it under every name that the program spells.
+static void handOverLoadersOn(ValueFlowRuleContext& context, ValueFlowObjectID holder)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    const BuiltinTable& builtins = context.program().builtins();
+    ModuleID module = universe.moduleOf(holder);
+    Vector<ValueFlowObjectID, 8> loaders;
+    Vector<ValueFlowObjectID, 8> named;
+    for (BuiltinID member : builtins.membersOf(universe.builtinOf(holder))) {
+        BuiltinID canonical = builtins.canonicalID(member);
+        if (!builtins.letsInUnseenCode(canonical) || !context.program().keyOf(builtins.at(member).name))
+            continue;
+        ValueFlowObjectID ofModule = module ? universe.objectOf(canonical, module) : ValueFlowObjectID();
+        loaders.append(ofModule ? ofModule : universe.objectOf(canonical));
+        named.append(universe.objectOf(canonical));
+    }
+    context.add(ValueFlowProgramNodes::escaped(), ClimbingSet(context.maker().of(loaders.span())));
+    context.add(context.nodes().ofHost(ValueFlowHostNode::LoadersAndEvaluatorsThatProgramNames), ClimbingSet(context.maker().of(named.span())));
+}
+
+bool askLoaderFunctionsOfProgram(ValueFlowRuleContext& context, ModuleID asking, RequestAtRunTime request)
+{
+    const BuiltinTable& builtins = context.program().builtins();
+    bool asksProgram = false;
+    for (const BuiltinMarkedEntry& resolver : builtins.marked(BuiltinMark::IsResolverThatLoaderCalls)) {
+        if (!isSeenToStoreLoaderFunction(context, resolver.builtin))
+            continue;
+        asksProgram = true;
+        ValueFlowObjectID holder = context.universe().objectOf(builtins.at(resolver.builtin).holder);
+        context.add(ValueFlowProgramNodes::escaped(), only(context, holder));
+        handOverLoadersOn(context, holder);
+    }
+    if (request == RequestAtRunTime::Require) {
+        for (const BuiltinMarkedEntry& require : builtins.marked(BuiltinMark::IsRequireThatLoaderCalls))
+            asksProgram |= isSeenToStoreLoaderFunction(context, require.builtin);
+    }
+    if (!asksProgram || !asking)
+        return asksProgram;
+    exposeModuleObjectOf(context, asking);
+    if (ValueFlowObjectID moduleObject = moduleObjectOfEvaluatedModule(context, asking))
+        handOverLoadersOn(context, moduleObject);
+    return true;
+}
+
 static bool mayMachineCodeRun(ValueFlowRuleContext& context)
 {
     Vector<ValueFlowObjectID, 32> loaders;
@@ -1010,8 +1297,12 @@ static void exposeModuleObjectsOfEntryPoints(ValueFlowRuleContext& context)
     ClimbingSet process = only(context, context.universe().objectOf(context.program().builtins().at(Builtins::ProcessMainModule).holder));
     if (!isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns) && !mayMachineCodeRun(context) && !context.holdsAnyOf(process, ValueFlowProgramNodes::escaped()) && !context.holdsAnyOf(process, ValueFlowProgramNodes::lost()))
         return;
-    for (const Entry& entryPoint : context.program().entries)
-        exposeModuleObjectOf(context, entryPoint.module);
+    bool mayBeNoCommonJSFile = storesPathOfMainModule(context);
+    for (size_t index : modulesThatMayBeMain(context)) {
+        exposeModuleObjectOf(context, ModuleID(static_cast<uint32_t>(index)));
+        if (mayBeNoCommonJSFile)
+            showAnswerOfRequireInModuleObject(context, ModuleID(static_cast<uint32_t>(index)));
+    }
 }
 
 // Array.prototype.map and its like read `constructor` from their receiver and `Symbol.species` from that. Nothing else that happens to an escaped object goes that way.
@@ -1055,6 +1346,7 @@ static void callWhatLetsInUnseenCode(ValueFlowRuleContext& context, ValueFlowObj
             }
         }
         context.add(ValueFlowProgramNodes::escaped(), ClimbingSet(context.maker().of(returned.span())));
+        context.add(context.nodes().ofHost(ValueFlowHostNode::LoadersAndEvaluatorsThatProgramNames), ClimbingSet(context.maker().of(returned.span())));
         return;
     }
     context.add(context.nodes().ofHost(ValueFlowHostNode::FunctionsOfSeenCode), only(context, callee));
@@ -1082,18 +1374,22 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
     Vector<ValueFlowObjectID, 16> calledFunctionsOfHost;
     bool callsLoaderThatHasEscaped = false;
     Attachments attachments { context, builtins };
-    context.forEachMember(escaped, [&](ValueFlowObjectID object) {
+    context.forEachMemberInLine(escaped, [&](ValueFlowObjectID object) {
         BuiltinID builtin = universe.builtinOf(object);
         if (!builtin)
             return;
         callsLoaderThatHasEscaped |= callsWhateverHasEscaped && builtins.at(builtins.canonicalID(builtin)).flags.contains(BuiltinFlag::LoadsModuleByName);
+        if (std::optional<RequestAtRunTime> request = callsWhateverHasEscaped ? requestMadeByCalling(builtins, builtins.canonicalID(builtin)) : std::nullopt)
+            askLoaderFunctionsOfProgram(context, universe.moduleOf(object), *request);
         // A member of a holder of the realm that has escaped has not escaped with it: the program has to have taken it off its holder.
         bool isInHandsOfProgram = builtins.at(builtin).origin != BuiltinOrigin::Host || context.contains(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::LoadersAndEvaluatorsThatProgramNames)), universe.objectOf(builtins.canonicalID(builtin)));
         if (callsWhateverHasEscaped && builtins.letsInUnseenCode(builtins.canonicalID(builtin)) && context.contains(handedOut, object) && isInHandsOfProgram)
             callWhatLetsInUnseenCode(context, object);
         bool isOfLanguage = builtins.at(builtin).origin != BuiltinOrigin::Host;
-        if (!isOfLanguage && callsWhateverHasEscaped && context.contains(takenFromHolders, object))
+        if (!isOfLanguage && callsWhateverHasEscaped && context.contains(takenFromHolders, object)) {
             calledFunctionsOfHost.append(object);
+            exposeObjectsOfModulesReturnedBy(context, builtin);
+        }
         if (!isOfLanguage)
             return;
         escapedObjectsOfLanguage.append(object);
@@ -1106,10 +1402,14 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
         else if (isHostFlagRaised(context, ValueFlowHostNode::LibraryModulesAreRequiredByName))
             handLibraryModulesTo(context, context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode));
     }
-    if (callsWhateverHasEscaped)
+    if (callsWhateverHasEscaped || isHostFlagRaised(context, ValueFlowHostNode::MemberNobodyKnowsIsCalled))
         callBuiltinsThatReadSpecies(context, context.restrict(escaped, universe.builtinFunctionsThatReadSpecies()));
     ClimbingSet escapedOfLanguage(context.maker().of(escapedObjectsOfLanguage.span()));
     ClimbingSet used = context.unite(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)), escapedOfLanguage);
+    if (ValueFlowObjectID moduleCache = universe.objectOf(Builtins::ModuleCache); !context.refusedCode().hostRunsFilesOutsideImage && (context.contains(used, moduleCache) || context.contains(handedOut, moduleCache)))
+        raiseHostFlag(context, ValueFlowHostNode::UnseenCopiesOfFilesMayRun);
+    if (context.contains(handedOut, universe.objectOf(Builtins::ModuleCache)))
+        context.add(context.nodes().ofHost(ValueFlowHostNode::ExportsOfEntriesStoredInModuleCache), unknownValue(context, ValueFlowUnknownSource::ContentsOfEscapedObject));
     run = context.unite(run, callsWhateverHasEscaped ? escapedOfLanguage : context.valueWithin(escapedOfLanguage, context.nodes().ofHost(ValueFlowHostNode::BuiltinsThatStatementsName)));
     run = context.unite(run, ClimbingSet(context.maker().of(calledFunctionsOfHost.span())));
     for (ValueFlowObjectID function : calledFunctionsOfHost) {
@@ -1117,15 +1417,17 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
         passUnknownOperandsTo(context, universe.builtinOf(function));
     }
 
-    context.forEachMember(used, [&](ValueFlowObjectID object) {
+    context.forEachMemberInLine(used, [&](ValueFlowObjectID object) {
         BuiltinID builtin = universe.builtinOf(object);
         if (!builtin)
             return;
+        if (context.contains(run, object) && loadsCodeOnceRead(builtins, builtin, context.refusedCode()))
+            handLoadedModulesToNativeCode(context);
         attachments.addRowsOf(builtin);
         if (!isObjectKind(builtins.at(builtin).kind) || membersFollowHolders || context.contains(run, object))
             attachments.addCodeOf(builtin);
     });
-    context.forEachMember(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::WrittenBuiltins)), [&](ValueFlowObjectID object) {
+    context.forEachMemberInLine(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::WrittenBuiltins)), [&](ValueFlowObjectID object) {
         if (BuiltinID builtin = universe.builtinOf(object))
             attachments.addCodeOf(builtin, true);
     });
@@ -1148,7 +1450,7 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
         return context.contains(run, universe.objectOf(entry));
     });
     Vector<BuiltinID, 4> waysBetweenModuleObjectsAnswered;
-    context.forEachMember(escaped, [&](ValueFlowObjectID object) {
+    context.forEachMemberInLine(escaped, [&](ValueFlowObjectID object) {
         BuiltinID builtin = universe.builtinOf(object);
         if (!builtin)
             return;
@@ -1163,6 +1465,11 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
 
 void runUnseenCode(const ValueFlowStatement&, ValueFlowRuleContext& context)
 {
+    if (context.refusedCode().hostRunsFilesOutsideImage) {
+        raiseHostFlag(context, ValueFlowHostNode::CodeOutsideImageIsLoaded);
+        letUnseenCodeRun(context, UnseenCodeReach::Loader);
+        context.add(ValueFlowProgramNodes::escaped(), context.universe().holdersOfPublicLibraryExports());
+    }
     if (!isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns))
         return;
 
@@ -1176,14 +1483,22 @@ void runUnseenCode(const ValueFlowStatement&, ValueFlowRuleContext& context)
         const Builtin& entry = builtins.at(BuiltinID(index));
         if (entry.origin == BuiltinOrigin::Host && entry.scope == BuiltinScope::Realm && isObjectKind(entry.kind) && builtins.canonicalID(BuiltinID(index)) == BuiltinID(index))
             objectsOfHost.append(universe.objectOf(BuiltinID(index)));
+        // Unseen code can read process.versions too, and gets the same object.
+        if (entry.scope == BuiltinScope::Realm && entry.holder && builtins.at(entry.holder).kind != BuiltinKind::Prototype && builtins.isUnder(BuiltinID(index), Builtins::GlobalThis)) {
+            exposeNativeCellsReturnedBy(context, BuiltinID(index));
+            exposeObjectsOfModulesReturnedBy(context, BuiltinID(index));
+        }
     }
+    // No object of the host escapes with the global object, which has them all. What the program lays on one, unseen code reads there, and it runs the accessors that the program defines there.
+    for (ValueFlowNameKind kind : { ValueFlowNameKind::EveryProperty, ValueFlowNameKind::EveryGetter, ValueFlowNameKind::EverySetter })
+        context.connect(context.readWhatWasWritten(ClimbingSet(context.maker().of(objectsOfHost.span())), { kind, 0 }), ValueFlowProgramNodes::escaped());
     if (isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeChangesRealm))
         letAnythingHappenTo(context, ClimbingSet(context.maker().of(objectsOfHost.span())));
     bool filesOfProgramAreLoadedByName = isHostFlagRaised(context, ValueFlowHostNode::ModulesAreRequiredByName) || isHostFlagRaised(context, ValueFlowHostNode::ModulesAreImportedByName);
     if (filesOfProgramAreLoadedByName && isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeHasLoader))
         handLoadedModulesToNativeCode(context);
     else
-        handLoadableModulesToText(context, filesOfProgramAreLoadedByName);
+        handLoadableModulesToText(context, filesOfProgramAreLoadedByName || context.refusedCode().hostRunsFilesOutsideImage);
 
     for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
         if (builtins.at(BuiltinID(index)).flags.contains(BuiltinFlag::EvaluatesText))
@@ -1198,40 +1513,160 @@ void runUnseenCode(const ValueFlowStatement&, ValueFlowRuleContext& context)
         exposeModuleObjectOf(context, ModuleID(index));
 }
 
-void runModulesLoadedByName(const ValueFlowStatement&, ValueFlowRuleContext& context)
+// In a test run require.cache lists the files that have run, each with what require() answers for it. A file that is taken out of it, or loaded under a query,
+// runs again as code that nobody has seen, and imports what its text names.
+static bool copiesOfFilesMayRun(ValueFlowRuleContext& context)
 {
+    return context.holdsAnything(context.nodes().ofHost(ValueFlowHostNode::UnseenCopiesOfFilesMayRun));
+}
+
+// Goes by the flags and requests of the modules, which stay as they are.
+static void connectWhatCopiesOfFilesReach(ValueFlowRuleContext& context)
+{
+    const Program& program = context.program();
+    const ValueFlowProgramNodes& nodes = context.nodes();
+    // A file that has not run yet and imports one that was taken out, itself or through others, is left to the loader of the host as well.
+    BitVector mayRunAsCopy(program.modules.size());
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        if (program.modules[index].flags.contains(ModuleFlags::MayBeEvicted))
+            mayRunAsCopy.quickSet(index);
+    }
+    for (bool hasFoundMore = true; hasFoundMore;) {
+        hasFoundMore = false;
+        for (uint32_t index = 0; index < program.modules.size(); ++index) {
+            const Module& module = program.modules[index];
+            if (mayRunAsCopy.quickGet(index) || !isWrittenByProgram(program, module))
+                continue;
+            if (std::ranges::any_of(module.requests, [&](const ModuleRequest& request) { return mayRunAsCopy.quickGet(request.target.index()); })) {
+                mayRunAsCopy.quickSet(index);
+                hasFoundMore = true;
+            }
+        }
+    }
+    // A copy reads the names of the global scope as the compiled file does, and calls what the program has laid there. It comes in by the entry that everybody may use.
+    if (!mayRunAsCopy.isEmpty())
+        context.add(ValueFlowProgramNodes::escaped(), only(context, context.universe().objectOf(Builtins::GlobalThis)));
+    BitVector isReached = mayRunAsCopy;
+    for (size_t index : mayRunAsCopy) {
+        for (const ModuleRequest& request : program.modules[index].requests) {
+            if (isWrittenByProgram(program, program.at(request.target)))
+                isReached.quickSet(request.target.index());
+        }
+    }
+    // What the text of a copy names in a call, import() or require(), is no request of its module. The front end marks it.
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        if (program.modules[index].flags.contains(ModuleFlags::IsFoundByName) && isWrittenByProgram(program, program.modules[index]))
+            isReached.quickSet(index);
+    }
+    ValueFlowNodeID reached = nodes.ofHost(ValueFlowHostNode::ReachedByUnseenCopiesOfFiles);
+    for (size_t index : isReached) {
+        ModuleID id(static_cast<uint32_t>(index));
+        // The host begins a file that nothing has run yet, and perhaps no compiled code ever runs it.
+        if (program.at(id).kind != ModuleKind::External)
+            evaluateModule(context, id);
+        connect(context, requiredValueOf(context, id), reached);
+    }
+}
+
+static void handOnWhatCopiesOfFilesReach(ValueFlowRuleContext& context)
+{
+    const Program& program = context.program();
+    const ValueFlowProgramNodes& nodes = context.nodes();
+    ValueFlowNodeID reached = nodes.ofHost(ValueFlowHostNode::ReachedByUnseenCopiesOfFiles);
+    // A copy links to the names of a namespace object and takes what they hold. It shows the object itself to nobody, so no spy that is out of sight gets hold of it.
+    ValueSetID namespaceObjects = context.universe().namespaces();
+    if (context.holdsAnything(nodes.ofHost(ValueFlowHostNode::EntriesOfModuleCacheAreRead))) {
+        context.connect(reached, ValueFlowProgramNodes::escaped());
+        // The table has an entry for every file of the program that has run, whether or not anything takes the file out.
+        for (uint32_t index = 0; index < program.modules.size(); ++index) {
+            if (program.modules[index].flags.contains(ModuleFlags::IsListedInCache))
+                connect(context, requiredValueOf(context, ModuleID(index)), ValueFlowProgramNodes::escaped());
+        }
+    } else {
+        ClimbingSet linkedTo = context.restrict(context.valueOf(reached), namespaceObjects);
+        context.connect(context.masked(reached, ValueSets::complement(namespaceObjects)), ValueFlowProgramNodes::escaped());
+        context.connect(context.readWhatWasWritten(linkedTo, { ValueFlowNameKind::EveryProperty, 0 }), ValueFlowProgramNodes::escaped());
+        context.mark(linkedTo, ObjectMutation::ReachNativeCode);
+    }
+}
+
+void runModulesLoadedByName(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
+{
+    uint32_t numberOfParts = numberOfPartsLoadedByName(context.program());
+    bool isWhole = numberOfParts == 1;
+    if (!isWhole && partOf(statement) < numberOfStatementsOnCopiesOfFiles) {
+        if (!copiesOfFilesMayRun(context))
+            return;
+        if (!partOf(statement))
+            connectWhatCopiesOfFilesReach(context);
+        else
+            handOnWhatCopiesOfFilesReach(context);
+        return;
+    }
+    // What else is not said of one module stands behind the walk, in the last part.
+    uint32_t part = isWhole ? 0 : partOf(statement) - numberOfStatementsOnCopiesOfFiles;
+    bool isLastPart = part + 1 == numberOfParts;
     bool areRequired = isHostFlagRaised(context, ValueFlowHostNode::ModulesAreRequiredByName);
     bool areImported = isHostFlagRaised(context, ValueFlowHostNode::ModulesAreImportedByName);
     bool libraryIsRequired = isHostFlagRaised(context, ValueFlowHostNode::LibraryModulesAreRequiredByName);
-    if (!areRequired && !areImported && !libraryIsRequired)
+    bool areLoaded = areRequired || areImported || libraryIsRequired;
+    const ValueFlowProgramNodes& nodes = context.nodes();
+    // Native code gets the modules also where a source of unknown values is left out and no flag counts as raised.
+    bool areHandedToNativeCode = context.holdsAnything(nodes.ofHost(ValueFlowHostNode::LoadedModulesAreHandedToNativeCode));
+    if (isWhole && copiesOfFilesMayRun(context)) {
+        connectWhatCopiesOfFilesReach(context);
+        handOnWhatCopiesOfFilesReach(context);
+    }
+    auto enterLoaderForSpelledNames = [&] {
+        if (isLastPart && isHostFlagRaised(context, ValueFlowHostNode::LibraryModulesAreLoadedUnderSpelledNames))
+            enterLoaderOfHost(context);
+    };
+    if (!areLoaded && !areHandedToNativeCode) {
+        enterLoaderForSpelledNames();
+        return;
+    }
+
+    uint32_t first = part * modulesOfPartLoadedByName;
+    uint32_t end = std::min<uint32_t>(first + modulesOfPartLoadedByName, context.program().modules.size());
+    forEachModuleLoadableByName(context, first, end, [&](ModuleID id, bool isOfProgram) {
+        bool isLoaded = areLoaded && (!isOfProgram || areRequired || areImported);
+        if (isLoaded) {
+            context.add(nodes.ofHost(ValueFlowHostNode::ModulesOfSeenCode), only(context, context.universe().namespaceOf(id)));
+            if (isOfProgram || isAskedOfHostByName(context.program().at(id)))
+                evaluateModule(context, id);
+        }
+        ValueFlowNodeID hands = isOfProgram ? ValueFlowProgramNodes::escaped() : nodes.ofHost(ValueFlowHostNode::HeldByNativeCode);
+        bool isRequired = isLoaded && areRequired;
+        bool isRequiredFromLibrary = isLoaded && libraryIsRequired && !isOfProgram;
+        if (areHandedToNativeCode || isRequired || isRequiredFromLibrary) {
+            ValueFlowSources required = requiredValueOf(context, id);
+            if (areHandedToNativeCode)
+                connect(context, required, hands);
+            if (isRequired) {
+                connect(context, required, nodes.ofHost(ValueFlowHostNode::RequiredValuesLoadedByName));
+                if (ValueFlowObjectID moduleObject = moduleObjectOfEvaluatedModule(context, id))
+                    context.add(nodes.ofHost(ValueFlowHostNode::ChildrenOfModuleObjects), only(context, moduleObject));
+            }
+            if (isRequiredFromLibrary)
+                connect(context, required, nodes.ofHost(ValueFlowHostNode::LibraryValuesLoadedByName));
+        }
+        bool isImported = isLoaded && areImported;
+        if (areHandedToNativeCode || isImported) {
+            ValueFlowSources namespaceObject = namespaceOf(context, id);
+            if (areHandedToNativeCode)
+                connect(context, namespaceObject, hands);
+            if (isImported)
+                connect(context, namespaceObject, nodes.ofHost(ValueFlowHostNode::NamespacesLoadedByName));
+        }
+    });
+    if (!areLoaded) {
+        enterLoaderForSpelledNames();
+        return;
+    }
+    if (!isLastPart)
         return;
 
-    const ValueFlowProgramNodes& nodes = context.nodes();
-    forEachModuleLoadableByName(context, [&](ModuleID id, bool isOfProgram) {
-        if (isOfProgram && !areRequired && !areImported)
-            return;
-        context.add(nodes.ofHost(ValueFlowHostNode::ModulesOfSeenCode), only(context, context.universe().namespaceOf(id)));
-        if (isOfProgram || isAskedOfHostByName(context.program().at(id)))
-            evaluateModule(context, id);
-        if (areRequired) {
-            connect(context, requiredValueOf(context, id), nodes.ofHost(ValueFlowHostNode::RequiredValuesLoadedByName));
-            if (ValueFlowObjectID moduleObject = moduleObjectOfEvaluatedModule(context, id))
-                context.add(nodes.ofHost(ValueFlowHostNode::ChildrenOfModuleObjects), only(context, moduleObject));
-        }
-        if (areImported)
-            connect(context, namespaceOf(context, id), nodes.ofHost(ValueFlowHostNode::NamespacesLoadedByName));
-        if (libraryIsRequired && !isOfProgram)
-            connect(context, requiredValueOf(context, id), nodes.ofHost(ValueFlowHostNode::LibraryValuesLoadedByName));
-    });
-
-    const BuiltinTable& builtins = context.program().builtins();
-    Vector<ValueFlowObjectID, 32> objectsOfNativeModules;
-    for (uint32_t index = 0; index < builtins.moduleCount(); ++index) {
-        const RuntimeModuleData& module = builtins.at(RuntimeModuleID(index));
-        if (module.namespaceObject && module.flags.contains(RuntimeModuleFlag::IsPublic) && !module.flags.contains(RuntimeModuleFlag::HasSource))
-            objectsOfNativeModules.append(context.universe().objectOf(module.namespaceObject));
-    }
-    ClimbingSet nativeModules(context.maker().of(objectsOfNativeModules.span()));
+    ClimbingSet nativeModules = publicNativeModules(context);
     if (areRequired)
         context.add(nodes.ofHost(ValueFlowHostNode::RequiredValuesLoadedByName), nativeModules);
     if (areImported)

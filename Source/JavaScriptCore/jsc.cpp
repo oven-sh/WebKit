@@ -985,6 +985,10 @@ private:
             putDirect(vm, Identifier::fromString(vm, "arguments"_s), array, DontEnum);
         }
 
+#if ENABLE(AOT)
+        // Compiled code tells `console` from the program's own objects by identity.
+        if (!Options::aotImagePath())
+#endif
         putDirect(vm, Identifier::fromString(vm, "console"_s), jsUndefined(), DontEnum);
         
         Structure* plainObjectStructure = JSFinalObject::createStructure(vm, this, objectPrototype(), 0);

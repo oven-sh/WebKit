@@ -45,11 +45,11 @@ static_assert(exists(mapDelete(KeyComparison::Bits)) && exists(setDelete(KeyComp
 static_assert(!JSValue::ValueEmpty && !absentCell32);
 
 enum class WeakTableLookup : uint8_t { MapGet, MapHas, SetHas };
-enum class InsertionPoint : uint8_t { AmongTags, AtShortSlot, AtLongSlot };
+enum class InsertionPoint : uint8_t { AmongTags, AtSlot };
 
 static StubSignature signatureOfLookup()
 {
-    return StubSignature::withGPRResult({ thisGPR, argumentGPR(0) });
+    return StubSignature::withGPRResult({ ownerOfHashTableGPR, argumentGPR(0) });
 }
 
 static KeyComparison keyComparisonOf(const StubAssembler& jit)
@@ -64,6 +64,11 @@ static void emitAtExit(StubAssembler& jit, JumpList& exit, const Functor& emitEn
         return;
     exit.link(&jit);
     emitEnd();
+}
+
+static bool hasFoundExit(const HashTableExits& exits)
+{
+    return !exits.foundInCompactTable.empty() || !exits.foundAmongNarrowKeys.empty() || !exits.foundAmongWideKeys.empty();
 }
 
 static void returnConstant(StubAssembler& jit, JSValue value)
@@ -160,10 +165,12 @@ static void emitClearInColumn(StubAssembler& jit, Jump isWide, GPRReg column, GP
     isCleared.link(&jit);
 }
 
-static void emitLoadValueOfCompactTable(StubAssembler& jit, const HashTableRegisters& registers, JumpList& keysAreNarrow)
+static void emitLoadValueOfCompactTable(StubAssembler& jit, const HashTableRegisters& registers, HashTableExits& exits)
 {
     const GPRReg result = jit.result();
-    emitLoadValuesOfCompactTable(jit, registers, registers.keys, &keysAreNarrow);
+    const bool everyoneKnowsTheWidth = exits.foundInCompactTable.empty();
+    exits.foundInCompactTable.link(&jit);
+    emitLoadValuesOfCompactTable(jit, registers, registers.keys, &exits.foundAmongNarrowKeys, &exits.foundAmongWideKeys, everyoneKnowsTheWidth);
     Jump isWide = jit.branchTest8(CCallHelpers::NonZero, Address(registers.table, CompactTable::offsetOfValueWidth()), TrustedImm32(static_cast<int32_t>(CompactTable::Width::Wide)));
     jit.load32(BaseIndex(registers.keys, registers.entry, CCallHelpers::TimesFour), result);
     Jump isNotCell = jit.branch32(CCallHelpers::Below, result, TrustedImm32(minCell32));
@@ -176,33 +183,55 @@ static void emitLoadValueOfCompactTable(StubAssembler& jit, const HashTableRegis
     jit.returnToCaller();
 }
 
-static void emitStoreValueOfCompactTable(StubAssembler& jit, const HashTableRegisters& registers, GPRReg value, JumpList* doesNotFit, JumpList* keysAreNarrow = nullptr)
+static void emitStoreValueOfCompactTable(StubAssembler& jit, const HashTableRegisters& registers, GPRReg value, JumpList* doesNotFit, JumpList* keysAreNarrow = nullptr, bool everyoneKnowsTheWidth = false)
 {
     const GPRReg values = registers.keys;
-    emitLoadValuesOfCompactTable(jit, registers, values, keysAreNarrow);
+    emitLoadValuesOfCompactTable(jit, registers, values, keysAreNarrow, nullptr, everyoneKnowsTheWidth);
     emitStoreInColumn(jit, branchIfValuesAreWide(jit, registers), values, registers.entry, value, registers.candidate, doesNotFit);
 }
 
 static void emitStoreInIndex(StubAssembler& jit, const HashTableRegisters& registers, InsertionPoint point)
 {
-    switch (point) {
-    case InsertionPoint::AmongTags:
+    if (point == InsertionPoint::AmongTags) {
         jit.urshift32(TrustedImm32(CompactTable::tagShiftOfTags), registers.hash);
         jit.store8(registers.hash, BaseIndex(registers.table, registers.entry, CCallHelpers::TimesOne, CompactTable::offsetOfIndex()));
         return;
-    case InsertionPoint::AtShortSlot:
-        jit.or32(registers.entry, registers.hash);
-        jit.store16(registers.hash, Address(registers.cursor));
-        return;
-    case InsertionPoint::AtLongSlot:
-        jit.or32(registers.entry, registers.hash);
-        jit.store32(registers.hash, Address(registers.cursor));
-        return;
     }
-    RELEASE_ASSERT_NOT_REACHED();
+    constexpr int32_t index = CompactTable::offsetOfIndex();
+    const GPRReg slot = registers.cursor;
+    const GPRReg slots = registers.candidate;
+    const GPRReg scratch = registers.hash;
+    jit.store8(registers.hash, BaseIndex(registers.table, slot, CCallHelpers::TimesOne, index));
+    // The tags and the numbers lie between the header and the keys, and there are as many of each as slots.
+    jit.sub64(registers.keys, registers.table, slots);
+    jit.sub64(TrustedImm32(index), slots);
+    Jump hasLongSlots = jit.branch32(CCallHelpers::Above, Address(registers.table, CompactTable::offsetOfCapacity()), TrustedImm32(CompactTable::maxCapacityWithShortSlots));
+    jit.urshift64(TrustedImm32(1), slots);
+    jit.add64(slot, slots);
+    jit.store8(registers.entry, BaseIndex(registers.table, slots, CCallHelpers::TimesOne, index));
+    Jump isStored = jit.jump();
+
+    hasLongSlots.link(&jit);
+    Jump hasHugeSlots = jit.branch32(CCallHelpers::Above, Address(registers.table, CompactTable::offsetOfCapacity()), TrustedImm32(CompactTable::maxCapacityWithLongSlots));
+    jit.urshift64(TrustedImm32(2), slots);
+    jit.getEffectiveAddress(BaseIndex(slot, slot, CCallHelpers::TimesTwo), scratch);
+    jit.add64(slots, scratch);
+    jit.store16(registers.entry, BaseIndex(registers.table, scratch, CCallHelpers::TimesOne, index));
+    jit.urshift32(registers.entry, TrustedImm32(16), slots);
+    jit.store8(slots, BaseIndex(registers.table, scratch, CCallHelpers::TimesOne, index + 2));
+    Jump isStoredAmongLong = jit.jump();
+
+    hasHugeSlots.link(&jit);
+    jit.urshift64(TrustedImm32(3), slots);
+    jit.lshift64(slot, TrustedImm32(3), scratch);
+    jit.sub64(slot, scratch);
+    jit.add64(slots, scratch);
+    jit.store32(registers.entry, BaseIndex(registers.table, scratch, CCallHelpers::TimesOne, index));
+    isStored.link(&jit);
+    isStoredAmongLong.link(&jit);
 }
 
-// Nothing is stored before the last exit to isFull, a table without room, or to cannotAppend, a column that is too narrow for the key or the value.
+// Nothing is stored before the last exit to isFull, a table without room, or to cannotAppend, a column that is too narrow for the key or the value. The search has marked the home slot that it left, which holds for whoever inserts the key.
 static void emitAppendToCompactTable(StubAssembler& jit, const HashTableRegisters& registers, InsertionPointExits& insertionPoints, std::optional<GPRReg> value, JumpList& isFull, JumpList& cannotAppend)
 {
     const GPRReg table = registers.table;
@@ -226,9 +255,7 @@ static void emitAppendToCompactTable(StubAssembler& jit, const HashTableRegister
     JumpList isIndexed;
     storeKeyAt(InsertionPoint::AmongTags, insertionPoints.amongTags);
     isIndexed.append(jit.jump());
-    storeKeyAt(InsertionPoint::AtLongSlot, insertionPoints.atLongSlot);
-    isIndexed.append(jit.jump());
-    storeKeyAt(InsertionPoint::AtShortSlot, insertionPoints.atShortSlot);
+    storeKeyAt(InsertionPoint::AtSlot, insertionPoints.atSlot);
 
     isIndexed.link(&jit);
     if (value)
@@ -250,16 +277,18 @@ static void emitInsert(StubAssembler& jit, CompactTableOwner owner)
         value = jit.operand(2);
     HashTableExits exits;
     emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .searchesTablesInImage = false, .findsInsertionPoint = true }, exits);
-    if (!value)
+    exits.foundInCompactTable.append(exits.foundAmongWideKeys);
+    if (!value) {
         exits.foundInCompactTable.append(exits.foundAmongNarrowKeys);
-    emitAtExit(jit, exits.foundInCompactTable, [&] {
-        if (!value) {
+        emitAtExit(jit, exits.foundInCompactTable, [&] {
             returnOwner(jit, registers);
-            return;
-        }
-        emitStoreValueOfCompactTable(jit, registers, *value, &exits.unknown, &exits.foundAmongNarrowKeys);
+        });
+    } else if (hasFoundExit(exits)) {
+        const bool everyoneKnowsTheWidth = exits.foundInCompactTable.empty();
+        exits.foundInCompactTable.link(&jit);
+        emitStoreValueOfCompactTable(jit, registers, *value, &exits.unknown, &exits.foundAmongNarrowKeys, everyoneKnowsTheWidth);
         emitBarrierAndReturnOwner(jit, registers, registers.table);
-    });
+    }
 
     RELEASE_ASSERT(exits.absent.empty());
     JumpList isFull;
@@ -285,6 +314,7 @@ static void emitTestForKey(StubAssembler& jit, bool searchesTablesInImage, Entry
     HashTableExits exits;
     emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .searchesTablesInImage = searchesTablesInImage }, exits);
     exits.foundInCompactTable.append(exits.foundAmongNarrowKeys);
+    exits.foundInCompactTable.append(exits.foundAmongWideKeys);
     emitAtExit(jit, exits.foundInCompactTable, [&] {
         emitAtEntry(registers);
         returnConstant(jit, jsBoolean(true));
@@ -355,7 +385,7 @@ StubSignature signatureOfSetDelete(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfWeakMapGet(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfWeakMapHas(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfWeakSetHas(StubKey) { return signatureOfLookup(); }
-StubSignature signatureOfMapSet(StubKey) { return StubSignature::withGPRResult({ thisGPR, argumentGPR(0), argumentGPR(1) }); }
+StubSignature signatureOfMapSet(StubKey) { return StubSignature::withGPRResult({ ownerOfHashTableGPR, argumentGPR(0), argumentGPR(1) }); }
 StubSignature signatureOfNewMap(StubKey) { return StubSignature::withGPRResult({ }); }
 StubSignature signatureOfNewSet(StubKey) { return StubSignature::withGPRResult({ }); }
 
@@ -364,9 +394,8 @@ void generateMapGet(StubAssembler& jit)
     const HashTableRegisters registers = HashTableRegisters::take(jit);
     HashTableExits exits;
     emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .searchesTablesInImage = true }, exits);
-    emitAtExit(jit, exits.foundInCompactTable, [&] {
-        emitLoadValueOfCompactTable(jit, registers, exits.foundAmongNarrowKeys);
-    });
+    if (hasFoundExit(exits))
+        emitLoadValueOfCompactTable(jit, registers, exits);
     emitAtExit(jit, exits.absent, [&] {
         returnConstant(jit, jsUndefined());
     });
@@ -439,8 +468,6 @@ static void emitCreateTableWithEntry(StubAssembler& jit, const HashTableRegister
     isCreated.append(jit.jump());
 }
 
-static constexpr GPRReg ownerAfterLookup = hashTableRegisterPlan.copyOfOwner ? gprOf(*hashTableRegisterPlan.copyOfOwner) : thisGPR;
-
 // The last operand of a map's stub is the value.
 static StubSignature signatureAfterLookup(StubKey key, std::initializer_list<Reg> operands)
 {
@@ -450,8 +477,8 @@ static StubSignature signatureAfterLookup(StubKey key, std::initializer_list<Reg
     return signature;
 }
 
-StubSignature signatureOfNewCompactTable(StubKey key) { return signatureAfterLookup(key, { ownerAfterLookup, argumentGPR(0), gprOf(hashTableRegisterPlan.hash) }); }
-StubSignature signatureOfGrowCompactTable(StubKey key) { return signatureAfterLookup(key, { ownerAfterLookup, argumentGPR(0) }); }
+StubSignature signatureOfNewCompactTable(StubKey key) { return signatureAfterLookup(key, { ownerOfHashTableGPR, argumentGPR(0), gprOf(hashTableRegisterPlan.hash) }); }
+StubSignature signatureOfGrowCompactTable(StubKey key) { return signatureAfterLookup(key, { ownerOfHashTableGPR, argumentGPR(0) }); }
 
 static HashTableRegisters registersAfterLookup(StubAssembler& jit, GPRReg hash)
 {
@@ -531,10 +558,9 @@ static void emitFillWords(StubAssembler& jit, GPRReg to, GPRReg end, int32_t wor
 // The owner's table is full and lacks the key.
 void generateGrowCompactTable(StubAssembler& jit)
 {
-    using ShortSlots = CompactTable::SlotFormat<CompactTable::SlotKind::Short>;
     constexpr int32_t index = CompactTable::offsetOfIndex();
     static_assert(CompactTable::growthPlansPerValueWidth * sizeof(uint64_t) == static_cast<unsigned>(CompactTable::Width::Narrow) << 6);
-    static_assert(sizeof(Allocator) == sizeof(uint64_t) && !static_cast<uint8_t>(CompactTable::Status::Live) && sizeof(ShortSlots::Slot) == 2);
+    static_assert(sizeof(Allocator) == sizeof(uint64_t) && !static_cast<uint8_t>(CompactTable::Status::Live) && CompactTable::SlotFormat<CompactTable::SlotKind::Short>::entryBytes == 1);
     static_assert(CompactTable::offsetOfKeysShift() == CompactTable::offsetOfCapacity() + 5);
     const auto kindOfOwner = static_cast<CompactTableOwner>(jit.key().form());
     const HashTableRegisters registers = registersAfterLookup(jit, jit.allocateScratch(hashTableRegisterPlan.hash));
@@ -633,13 +659,13 @@ void generateGrowCompactTable(StubAssembler& jit)
     jit.addPtr(TrustedImm32(index + CompactTable::maxCapacityWithTags), table, from);
     hasIndex.append(jit.jump());
 
-    // An index of short slots has 2 << indexBits bytes. Entries keep their numbers, and an index of the same size has them at the same positions.
+    // An index of short slots has 2 << indexBits bytes. Entries keep their numbers, and an index of the same size has them in the same slots.
     getsSlots.link(&jit);
     jit.load8(Address(table, CompactTable::offsetOfIndexBits()), end);
     Jump keepsSlots = jit.branch32(CCallHelpers::Equal, end, scratch);
     loadSizeOfIndex(scratch, end);
     jit.add64(to, end);
-    emitFillWords(jit, to, end, -1);
+    emitFillWords(jit, to, end, 0);
     jit.load8(Address(table, CompactTable::offsetOfKeysShift()), scratch);
     jit.and32(TrustedImm32(CompactTable::keysShiftMask), scratch);
     loadSizeOfIndex(scratch, end);
@@ -719,18 +745,28 @@ void generateGrowCompactTable(StubAssembler& jit)
             jit.urshift32(TrustedImm32(StringImpl::s_flagCount), hash);
             Label hasHash = jit.label();
             jit.and32(hash, mask, position);
+            Jump homeIsFree = jit.branchTest8(CCallHelpers::Zero, BaseIndex(larger, position, CCallHelpers::TimesOne, index));
+            emitMarkThatKeyLeftHomeSlot(jit, BaseIndex(larger, position, CCallHelpers::TimesOne, index));
+            jit.and32(TrustedImm32(~static_cast<int32_t>(CompactTable::slotsPerGroup - 1)), position);
             Label probe = jit.label();
-            jit.load16(BaseIndex(larger, position, CCallHelpers::TimesTwo, index), slot);
-            Jump isFree = jit.branch32(CCallHelpers::Equal, slot, TrustedImm32(ShortSlots::freeSlot));
-            jit.add32(TrustedImm32(1), position);
+            jit.load64(BaseIndex(larger, position, CCallHelpers::TimesOne, index), slot);
+            jit.not64(slot);
+            jit.and64(TrustedImm64(CompactTable::onesOfTags << 7), slot);
+            Jump hasFreeSlot = jit.branchTest64(CCallHelpers::NonZero, slot);
+            jit.add32(TrustedImm32(CompactTable::slotsPerGroup), position);
             jit.and32(mask, position);
             jit.jump().linkTo(probe, &jit);
 
-            isFree.link(&jit);
-            jit.urshift32(TrustedImm32(ShortSlots::tagShift), hash);
-            jit.lshift32(TrustedImm32(ShortSlots::entryBits), hash);
-            jit.or32(entry, hash);
-            jit.store16(hash, BaseIndex(larger, position, CCallHelpers::TimesTwo, index));
+            hasFreeSlot.link(&jit);
+            jit.countTrailingZeros64(slot, slot);
+            jit.urshift32(TrustedImm32(3), slot);
+            jit.add32(slot, position);
+            homeIsFree.link(&jit);
+            emitLoadTagOfSlot(jit, hash);
+            jit.store8(hash, BaseIndex(larger, position, CCallHelpers::TimesOne, index));
+            // The numbers begin behind the tags: mask + 1 bytes.
+            jit.getEffectiveAddress(BaseIndex(larger, mask, CCallHelpers::TimesOne, index + 1), slot);
+            jit.store8(entry, BaseIndex(slot, position, CCallHelpers::TimesOne));
             jit.add32(TrustedImm32(1), entry);
             jit.branch32(CCallHelpers::BelowOrEqual, entry, count).linkTo(nextEntry, &jit);
             Jump isIndexed = jit.jump();
@@ -923,6 +959,30 @@ static void emitNextFrontEnd(StubAssembler& jit, CompactTableOwner kind, Entry r
 
 void generateMapNextFrontEnd(StubAssembler& jit) { emitNextFrontEnd(jit, CompactTableOwner::Map, Entry::RawMapNext); }
 void generateSetNextFrontEnd(StubAssembler& jit) { emitNextFrontEnd(jit, CompactTableOwner::Set, Entry::RawSetNext); }
+
+StubSignature signatureOfReserveCollectionCapacityFrontEnd(StubKey) { return operationFrontEndSignature(4); }
+
+// The operands are those of the operation: the owner, the additions left, the additions the loop has come by, and the size in front of the loop.
+// A loop that has only replaced values so far is not expected to add entries. Its table stays full, so it comes here in every iteration.
+void generateReserveCollectionCapacityFrontEnd(StubAssembler& jit)
+{
+    const GPRReg owner = jit.operand(0);
+    const GPRReg sizeAtEntry = jit.operand(3);
+    const GPRReg storage = jit.allocateScratch(StubRegister::T9);
+
+    jit.loadPtr(Address(owner, offsetOfHashTableStorage()), storage);
+    Jump hasNoStorage = jit.branchTestPtr(CCallHelpers::Zero, storage);
+    Jump isOrdinary = jit.branch8(CCallHelpers::Equal, Address(storage, JSCell::typeInfoTypeOffset()), TrustedImm32(JSCellButterflyType));
+    jit.load32(Address(storage, CompactTable::offsetOfAliveCount()), storage);
+    Jump hasAdded = jit.branch64(CCallHelpers::Above, storage, sizeAtEntry);
+    hasNoStorage.link(&jit);
+    isOrdinary.link(&jit);
+    jit.returnToCaller();
+
+    hasAdded.link(&jit);
+    jit.tailCallOperation(Entry::RawReserveCollectionCapacity, OperationCall::FirstArgument::Instance);
+}
+
 void generateWeakMapGet(StubAssembler& jit) { emitLookupInWeakTable(jit, WeakTableLookup::MapGet); }
 void generateWeakMapHas(StubAssembler& jit) { emitLookupInWeakTable(jit, WeakTableLookup::MapHas); }
 void generateWeakSetHas(StubAssembler& jit) { emitLookupInWeakTable(jit, WeakTableLookup::SetHas); }

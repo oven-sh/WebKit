@@ -40,6 +40,22 @@ TypeID typedElementTypeOf(const Program& program, const ClassPart& array)
     return array.writtenContentsAt(program.builtins(), ContentsSlot::Element);
 }
 
+void forEachIndexOfListedLayoutAmong(std::span<const LayoutID> members, std::span<const LayoutID> listed, NOESCAPE const Invocable<void(size_t)> auto& functor)
+{
+    if (members.size() < listed.size()) {
+        for (LayoutID member : members) {
+            auto found = std::ranges::lower_bound(listed, member);
+            if (found != listed.end() && *found == member)
+                functor(found - listed.begin());
+        }
+        return;
+    }
+    for (size_t index = 0; index < listed.size(); ++index) {
+        if (std::ranges::binary_search(members, listed[index]))
+            functor(index);
+    }
+}
+
 void followTypes(const Program& program, ValueFlowTypedResult& result)
 {
     HashSet<TypeID> visitedTypes;
@@ -58,17 +74,15 @@ void followTypes(const Program& program, ValueFlowTypedResult& result)
             result.typesWithArrays.append(id);
             visit(typedElementTypeOf(program, *array));
         }
-        std::span<const LayoutID> members = membersOf(program, type);
-        for (size_t index = 0; index < result.layouts.size() && !members.empty(); ++index) {
-            LayoutID layout = result.layouts[index];
-            if (isNamed.get(index) || !std::ranges::binary_search(members, layout))
-                continue;
+        forEachIndexOfListedLayoutAmong(membersOf(program, type), result.layouts.span(), [&](size_t index) {
+            if (isNamed.get(index))
+                return;
             isNamed.set(index);
-            for (const Field& field : program.at(layout).fields) {
+            for (const Field& field : program.at(result.layouts[index]).fields) {
                 if (field.key)
                     visit(expectationOf(field.declared).predicted());
             }
-        }
+        });
     }
     AOT::sort(result.typesWithArrays);
 
@@ -85,7 +99,7 @@ bool answersPromise(const BuiltinTable& builtins, const BuiltinOverload& overloa
     });
 }
 
-ValueFlowTypedResult typedResultOf(const Program& program, ExpectedResultID id, uint64_t mostObjects)
+ValueFlowTypedResult typedResultOf(const Program& program, ExpectedResultID id)
 {
     const ExpectedResult& expected = program.at(id);
     ValueFlowTypedResult result;
@@ -93,7 +107,7 @@ ValueFlowTypedResult typedResultOf(const Program& program, ExpectedResultID id, 
     result.layouts.appendRange(expected.layouts.begin(), expected.layouts.end());
     AOT::sort(result.layouts);
     result.layouts.shrink(std::ranges::unique(result.layouts).begin() - result.layouts.begin());
-    if (result.type && result.numberOfObjects() <= mostObjects)
+    if (result.type)
         followTypes(program, result);
     return result;
 }
@@ -106,19 +120,14 @@ static ValueFlowTypedResult findTypedResult(const Program& program, const ValueF
     if (operation.opcode != Opcode::Call)
         return { };
 
-    uint64_t mostObjects = tables.mostObjectsOfTypedResult();
-    ValueFlowTypedResult result;
     if (ExpectedResultID id = operation.expectedResult())
-        result = typedResultOf(program, id, mostObjects);
-    else {
-        TypedResultTarget target = findTypedResultTarget(program, function, uses, call, mostObjects, &tables.headLayoutsOfFamilies());
-        result.type = target.type;
-        result.layouts = WTF::move(target.layouts);
-        if (result.type && result.numberOfObjects() <= mostObjects)
-            followTypes(program, result);
-    }
-    if (!result.type || result.numberOfObjects() > mostObjects)
-        return { };
+        return typedResultOf(program, id);
+    ValueFlowTypedResult result;
+    TypedResultTarget target = findTypedResultTarget(program, function, uses, call, &tables.headLayoutsOfFamilies());
+    result.type = target.type;
+    result.layouts = WTF::move(target.layouts);
+    if (result.type)
+        followTypes(program, result);
     return result;
 }
 
@@ -163,7 +172,7 @@ static void fillTypedResult(const ValueFlowStatement& call, ValueFlowNodeID targ
 {
     const Program& program = context.program();
     const ValueFlowUniverse& universe = context.universe();
-    const Function& function = program.at(call.function);
+    const Function& function = context.functionWithBody(call.function);
     CFG cfg(function);
     ValueFlowTypedResult result = findTypedResult(program, universe.builtinTables(), function, UseLists(function, cfg), call.site);
     RELEASE_ASSERT(result);
@@ -195,11 +204,9 @@ static void fillTypedResult(const ValueFlowStatement& call, ValueFlowNodeID targ
             members.append(ValueFlowUniverse::primitive(PrimitiveSet::Symbol));
 
         bool admitsPlainObjects = type.anyObject || type.anyFunction || !type.functions.isEmpty() || !type.builtins.isEmpty();
-        std::span<const LayoutID> layoutsOfType = membersOf(program, type);
-        for (size_t index = 0; index < result.layouts.size() && !layoutsOfType.empty(); ++index) {
-            if (std::ranges::binary_search(layoutsOfType, result.layouts[index]))
-                members.append(objectAt(result.ordinalOfLayout(index)));
-        }
+        forEachIndexOfListedLayoutAmong(membersOf(program, type), result.layouts.span(), [&](size_t index) {
+            members.append(objectAt(result.ordinalOfLayout(index)));
+        });
         for (const ClassPart& part : type.classes) {
             auto listed = std::ranges::lower_bound(result.typesWithArrays, id);
             if (part.builtinClass != BuiltinClasses::Array || listed == result.typesWithArrays.end() || *listed != id) {
@@ -263,11 +270,11 @@ void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStateme
         return;
 
     const Program& program = context.program();
-    ExpectedResultID expected = program.at(call.function).at(call.site).expectedResult();
     TypedResultForm form = overload.result.typedResultForm;
     if (form == TypedResultForm::None || !context.universe().siteObject(call, ValueFlowTypedResult::firstOrdinal))
         return;
 
+    ExpectedResultID expected = context.operationOf(call).expectedResult();
     ValueFlowNodeID target = description.result;
     if (!expected && form != TypedResultForm::ParsedText && answersPromise(program.builtins(), overload)) {
         if (!promise)
@@ -279,9 +286,10 @@ void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStateme
 
 void allocateRowsOfQuery(const ValueFlowStatement& call, ValueFlowRuleContext& context)
 {
-    if (call.opcode != Opcode::Call || typedResultFormOf(context.program(), context.program().at(call.function).at(call.site)) != TypedResultForm::Rows)
+    // Few calls have such an object, and only of those is the text asked.
+    if (call.opcode != Opcode::Call || !context.universe().siteObject(call, ValueFlowTypedResult::firstOrdinal))
         return;
-    if (context.universe().siteObject(call, ValueFlowTypedResult::firstOrdinal))
+    if (typedResultFormOf(context.program(), context.operationOf(call)) == TypedResultForm::Rows)
         fillTypedResult(call, call.result, { }, context);
 }
 
@@ -359,7 +367,7 @@ void computeTypedResultResults(const ValueFlowResultInputs& inputs, FlowResultTa
             accessSites = accessSitesByValue(function, application.accessSites, call->function);
         }
         if (AccessSiteID accessSite = accessSites[call->site.index()])
-            tables.sites.typedResultCalls.append({ accessSite, result.type, result.layouts });
+            tables.sites.typedResultCalls.append({ accessSite, result.type, result.layouts, call->function });
 
         for (LayoutID layout : result.layouts) {
             application.layouts[layout.index()].flow.observedUses.add({ ObservedUse::ReachesTypedParse, ObservedUse::IsParsedByType });
@@ -377,7 +385,7 @@ void computeTypedResultResults(const ValueFlowResultInputs& inputs, FlowResultTa
 
 static constexpr OptionSet<ObjectMutation> mutationsOfArraysWithoutMark { ObjectMutation::ChangePrototype, ObjectMutation::BecomePrototype, ObjectMutation::StoreOfOtherType };
 
-void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlowContainerResults& containers, TypeTable& types, FlowResultTables& tables)
+void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlowContainerResults& containers, ValueSetID listsToldApart, TypeTable& types, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
     const ValueFlowUniverse& universe = inputs.universe();
@@ -399,6 +407,7 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
         TypeID elements;
         TypeID type;
         ArrayStorage arrayStorage { ArrayStorage::Other };
+        bool isNeverToldApart { false };
     };
     const ParallelLoops& loops = inputs.loops();
     Vector<uint32_t> functions = findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {
@@ -427,9 +436,11 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
                     const Vector<AllocationClassID>& classes = application.layouts[site.layout.index()].flow.allocationClasses;
                     if (!classes.isEmpty())
                         node.classOfLayout = classes[0];
+                    node.neverChanges = neverChangesOnceMade(inputs, object);
                 } else {
                     node.markedMutations = markedMutationsOf(inputs, object);
                     node.neverChanges = neverChangesOnceMade(inputs, object);
+                    node.isNeverToldApart = site.builtinClass == BuiltinClasses::Array && isNeverToldApart(inputs, object, listsToldApart);
                     const ValueFlowContainerFacts* facts = containers.find(object);
                     if (facts && indexOfElements < facts->contents.size() && facts->contents[indexOfElements] != TypeTable::never)
                         node.elements = facts->contents[indexOfElements];
@@ -446,6 +457,19 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
         }
     });
 
+    // One cell stands for a list only where one cell stands for each thing inside it: all the nodes of one operation, or none.
+    forEachIndexInParallel(loops, functions.size(), [&](unsigned task) {
+        std::span<Node> nodes = nodesOfFunction[task].mutableSpan();
+        for (size_t first = 0; first < nodes.size();) {
+            size_t end = first;
+            bool allAreNeverToldApart = true;
+            for (; end < nodes.size() && nodes[end].operation == nodes[first].operation; ++end)
+                allAreNeverToldApart &= nodes[end].neverChanges && nodes[end].isNeverToldApart;
+            for (; first < end; ++first)
+                nodes[first].isNeverToldApart = allAreNeverToldApart;
+        }
+    });
+
     auto classOfArray = [&](const Node& node) -> AllocationClassID& {
         return classesOfArrays[node.markedMutations.contains(ObjectMutation::StoreAfterCreation)];
     };
@@ -456,8 +480,11 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
         firstSiteOfFunction.append(numberOfSites);
         for (const Node& node : nodes) {
             uint32_t site = numberOfSites++;
-            if (node.layout)
+            if (node.layout) {
+                if (node.neverChanges && inputs.build.isEnabled(FlowResultKind::HolderMutations, site))
+                    tables.sites.sitesOfObjectsThatNeverChange.set(site);
                 continue;
+            }
             AllocationClassID& classOfArrays = classOfArray(node);
             if (!classOfArrays) {
                 classOfArrays = AllocationClassID(tables.sites.allocationClasses.size());
@@ -467,8 +494,11 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
                 tables.sites.allocationClasses.append(WTF::move(arrays));
             }
             tables.sites.allocationClasses[classOfArrays.index()].impossibleMutations.remove(node.markedMutations);
-            if (node.neverChanges && inputs.build.isEnabled(FlowResultKind::HolderMutations, node.builtinClass.index()))
+            if (node.neverChanges && inputs.build.isEnabled(FlowResultKind::HolderMutations, node.builtinClass.index())) {
                 tables.sites.sitesOfObjectsThatNeverChange.set(site);
+                if (node.isNeverToldApart)
+                    tables.sites.sitesOfListsNeverToldApart.set(site);
+            }
         }
     }
     tables.sites.allocationSites.grow(numberOfSites);
@@ -477,7 +507,7 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
     forEachIndexInParallel(loops, functions.size(), [&](unsigned task) {
         uint32_t index = functions[task];
         const Function& function = program.functions[index];
-        Vector<FlowAllocationStamp>& stamps = application.bodies[index].allocations;
+        CompactList<FlowAllocationStamp>& stamps = application.bodies[index].allocations;
         size_t numberOfOtherStamps = stamps.size();
         uint32_t nextSite = firstSiteOfFunction[task];
         ValueID operation;
@@ -497,7 +527,7 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
             tables.sites.dataNodes[numberOfOtherNodes + (stamp.site.index() - numberOfOtherSites)] = { rootSite, node.ordinal, stamp };
         }
         if (stamps.size() != numberOfOtherStamps)
-            AOT::sort(stamps, { }, &FlowAllocationStamp::value);
+            AOT::sortInLine(stamps, { }, &FlowAllocationStamp::value);
     });
 
     for (AllocationClassID classOfArrays : classesOfArrays) {

@@ -1,0 +1,16 @@
+# `import a from "./data.txt" with { type: "toml" }; import b from "./data.txt"`: two modules outside the image, and the loader of the host is asked for the first with the type that the statement writes.
+# LIBRARY: own
+# RUN: tables modules
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}]
+module m1 path="./data.txt" displayPath="./data.txt" kind=External typeAttribute="toml" referrer=m0
+module m2 path="./data.txt" displayPath="./data.txt" kind=External referrer=m0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    Return
+}
+
+# CHECK: modulesByPath
+# CHECK-NEXT: typeAttribute module=m1 type="toml"
+# CHECK-NOT: typeAttribute

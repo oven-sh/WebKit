@@ -1,0 +1,28 @@
+# `return f.apply(this, rest)`: the list is never made and the call hands on the arguments of the frame. It keeps the text of the callee, for the message if `f` is no function.
+# FORM: Prepared
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="target" flags=[HasRestParameter] parameters=[{type=Array}] results=[{type=anything}] {
+    Return
+}
+
+function f1 name="applyWithRest" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
+    v2 = GetArgument argumentIndex=0
+    v3 = GetArgument argumentIndex=1
+    v4 = CreateRest firstArgument=2
+    v5 = CallList v2, v3, v4 calleeKey="apply" calleeName="f.apply"
+    Return v5
+# CHECK-NOT: CreateRest
+# CHECK: v5: anything = CallForwardVarargs v2, v3 firstArgument=2 calleeKey="apply" calleeName="f.apply"
+}
+
+function f2 name="spreadOfRest" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
+    v2 = GetArgument argumentIndex=0
+    v3 = CreateRest firstArgument=1
+    v4 = CallList v2, -, v3 calleeName="f"
+    Return v4
+# CHECK-NOT: CreateRest
+# CHECK: v4: anything = CallForwardVarargs v2, {{*}} firstArgument=1 calleeName="f"
+}

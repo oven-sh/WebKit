@@ -1,0 +1,68 @@
+# A locked member that a test run lists as replaceable is taken for what the realm was created with behind a test of its location, like a member that was never locked.
+# Its neighbors stay locked, and so does a member under a name that the language reads by itself.
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+replaceablebuiltin member=ArrayIteratorPrototypeNext
+replaceablebuiltin member=MathMin
+replaceablebuiltin member=ArrayPrototypeSymbolIterator
+replaceablebuiltin member=FunctionPrototypeCall
+replaceablebuiltin member=PromisePrototypeThen
+replaceablebuiltin member=StringPrototypeIndexOf
+function f0 name="functionOfNamespace" results=[{type=anything}] {
+    v0 = Builtin builtin=Math
+    v1 = PropGet v0 key="min"
+    Return v1
+}
+# CHECK-LABEL: function f0 name="functionOfNamespace"
+# CHECK: [[isUnchanged0]]: boolean{{*}} = IsBuiltinLocationUnchanged member=MathMin
+# CHECK-NEXT: Branch [[isUnchanged0]] -> taken
+# CHECK: v1: builtin(MathMin) = Builtin builtin=MathMin
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: anything = PropGet v0 key="min"
+
+function f1 name="methodOfPrimitive" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = PropGet v0 key="indexOf"
+    Return v1
+}
+# CHECK-LABEL: function f1 name="methodOfPrimitive"
+# CHECK: [[isUnchanged1]]: boolean{{*}} = IsBuiltinLocationUnchanged member=StringPrototypeIndexOf
+# CHECK: v1: builtin(StringPrototypeIndexOf) = Builtin builtin=StringPrototypeIndexOf
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: anything = PropGet v0 key="indexOf"
+
+function f2 name="neighborStaysLocked" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Builtin builtin=Math
+    v2 = PropGet v1 key="max"
+    v3 = PropGet v0 key="lastIndexOf"
+    v4 = NewArray v2, v3 contents=anything
+    Return v4
+}
+# CHECK-LABEL: function f2 name="neighborStaysLocked"
+# CHECK-NOT: IsBuiltinLocationUnchanged
+
+function f3 name="nameThatTheLanguageReadsStaysLocked" results=[{type=anything}] {
+    v0 = Builtin builtin=ArrayIteratorPrototype
+    v1 = PropGet v0 key="next"
+    Return v1
+}
+# CHECK-LABEL: function f3 name="nameThatTheLanguageReadsStaysLocked"
+# CHECK-NOT: IsBuiltinLocationUnchanged
+
+function f4 name="nameThatIsLookedUpToResolveAPromise" results=[{type=anything}] {
+    v0 = Builtin builtin=PromisePrototype
+    v1 = PropGet v0 key="then"
+    Return v1
+}
+# CHECK-LABEL: function f4 name="nameThatIsLookedUpToResolveAPromise"
+# CHECK: boolean{{*}} = IsBuiltinLocationUnchanged member=PromisePrototypeThen
+
+function f5 name="nameThatOnlyACallThatSpellsItReads" results=[{type=anything}] {
+    v0 = Builtin builtin=FunctionPrototype
+    v1 = PropGet v0 key="call"
+    Return v1
+}
+# CHECK-LABEL: function f5 name="nameThatOnlyACallThatSpellsItReads"
+# CHECK: boolean{{*}} = IsBuiltinLocationUnchanged member=FunctionPrototypeCall

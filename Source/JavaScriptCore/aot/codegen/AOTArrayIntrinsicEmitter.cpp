@@ -8,11 +8,15 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBarrierEmitter.h"
 #include "AOTElementAccessEmitter.h"
 #include "AOTElementEmitterAllocation.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTThreshold.h"
+#include "AOTValueIdentity.h"
 #include "JSType.h"
+#include <algorithm>
+#include <bit>
 #include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -42,11 +46,12 @@ void ArrayIntrinsicEmitter::generateIsPristineArray(const ValueContext& value)
 
 void ArrayIntrinsicEmitter::generateArrayStorageKind(const ValueContext& value)
 {
+    // The three shapes lie two apart in the order of their kinds, and the shape below them is of no kind.
+    static_assert(int32s.shape + 2 == doubles.shape && doubles.shape + 2 == contiguous.shape && int32s.shape >= 2);
+    static_assert(!static_cast<int32_t>(ArrayStorage::Other) && static_cast<int32_t>(ArrayStorage::Int32) == 1 && static_cast<int32_t>(ArrayStorage::Double) == 2 && static_cast<int32_t>(ArrayStorage::Contiguous) == 3);
     Word32 shape = elements().indexingMode(in<CellPointer>(value->arrayOperand()), arrayStorageTestMask);
-    Word32 kind = word32(static_cast<int32_t>(ArrayStorage::Other));
-    for (const ArrayStorageForm& form : arrayStorageForms)
-        kind = select(elements().hasShape(shape, form), static_cast<int32_t>(form.kind), kind);
-    define(value, kind);
+    Word32 number = shiftRightUnsigned(sub(shape, int32s.shape - 2), 1);
+    define(value, select(belowOrEqual(number, static_cast<int32_t>(ArrayStorage::Contiguous)), number, word32(static_cast<int32_t>(ArrayStorage::Other))));
 }
 
 void ArrayIntrinsicEmitter::generateGetDoubleIndex(const ValueContext& value)
@@ -70,8 +75,10 @@ Boxed ArrayIntrinsicEmitter::contiguousElementOrEmpty(CellPointer array, Integer
     LBasicBlock otherwise = newBlock();
     Join<Boxed> join(m_out);
     Word32 shape = elements().indexingMode(array, arrayStorageTestMask);
-    Condition isContiguous = elements().hasShape(shape, contiguous);
-    branchUnless(logicalOr(isContiguous, elements().hasShape(shape, int32s)), otherwise);
+    // One comparison for the two shapes: the distance from the lower one is nothing or the one bit between them.
+    constexpr IndexingType distance = contiguous.shape - int32s.shape;
+    static_assert(contiguous.shape > int32s.shape && hasOneBitSet(distance));
+    branchUnless(Condition(m_out.testIsZero32(m_out.sub(shape.value(), int32s.shape), ~static_cast<int32_t>(distance))), otherwise);
     ArrayElements storage = elements().elementsOf(array);
     branchUnless(below(index, elements().publicLength(storage)), otherwise);
     Boxed element(m_out.load64(elements().elementOfUnknownForm(storage, index)));
@@ -96,6 +103,53 @@ void ArrayIntrinsicEmitter::generateGetContiguousIndex(const ValueContext& value
     Boxed element = contiguousElementOrEmpty(array, integerOperand(value->positionOperand()));
     Condition isFilled = isNotEmpty(element);
     defineAs(value, select(isFilled, element, undefined()), typeOf(value.id()));
+}
+
+// For an array that the library made, filled and handed to nothing else: its form holds, and it holds the index.
+void ArrayIntrinsicEmitter::generateGetOwnContiguousIndex(const ValueContext& value)
+{
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    ArrayElements storage = elements().elementsOf(array);
+    Boxed element(m_out.load64(elements().elementOfUnknownForm(storage, integerOperand(value->positionOperand()))));
+    ensureStillAliveHere(array);
+    defineAs(value, element, typeOf(value.id()));
+}
+
+void ArrayIntrinsicEmitter::generateGetOwnDoubleIndex(const ValueContext& value)
+{
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    ArrayElements storage = elements().elementsOf(array);
+    define(value, elements().loadRawElement(doubles, storage, integerOperand(value->positionOperand())).as<Number>());
+}
+
+void ArrayIntrinsicEmitter::generateGetOwnInt32Index(const ValueContext& value)
+{
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    ArrayElements storage = elements().elementsOf(array);
+    define(value, Word32(m_out.load32(elements().elementOfUnknownForm(storage, integerOperand(value->positionOperand())))));
+}
+
+void ArrayIntrinsicEmitter::generatePutOwnContiguousIndex(const ValueContext& value)
+{
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    ValueID stored = value->valueOperand();
+    Operand rawElement = get(stored);
+    elements().storeRawElement(contiguous, elements().elementsOf(array), integerOperand(value->positionOperand()), rawElement);
+    barrierAfterStore(value, array, rawElement, typeOf(stored));
+}
+
+void ArrayIntrinsicEmitter::generatePutOwnDoubleIndex(const ValueContext& value)
+{
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    elements().storeRawElement(doubles, elements().elementsOf(array), integerOperand(value->positionOperand()), get(value->valueOperand()));
+}
+
+// Over an integer: the upper half of the word is the tag of every int32, and stays.
+void ArrayIntrinsicEmitter::generatePutOwnInt32Index(const ValueContext& value)
+{
+    static_assert(std::endian::native == std::endian::little);
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    m_out.store32(low32(integerOperand(value->valueOperand())).value(), elements().elementOfUnknownForm(elements().elementsOf(array), integerOperand(value->positionOperand())));
 }
 
 void ArrayIntrinsicEmitter::putInBounds(const ValueContext& value, const ArrayStorageForm& form)
@@ -162,11 +216,30 @@ CellPointer ArrayIntrinsicEmitter::sourceOrNull(ValueID id)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// The next operation copies as many elements into the array as it has. Only casts stand between the two, so nothing runs and nobody else has the array.
+bool ArrayIntrinsicEmitter::isFilledByCopyBehind(const ValueContext& allocation) const
+{
+    if (allocation.opcode() != Opcode::NewContiguousArray)
+        return false;
+    std::span<const ValueID> values = m_function.at(allocation.block()).values.span();
+    auto next = std::ranges::find(values, allocation.id());
+    RELEASE_ASSERT(next != values.end());
+    for (++next; next != values.end(); ++next) {
+        const Value& value = m_function.at(*next);
+        if (value.opcode == Opcode::AssumeType)
+            continue;
+        return value.opcode == Opcode::TryCopyFilledElements && value.countOperand() == allocation->lengthOperand()
+            && sameObjectThroughCasts(m_function, value.arrayOperand()).valueInFrontOfFacts() == allocation.id();
+    }
+    return false;
+}
+
 void ArrayIntrinsicEmitter::newArrayOfHoles(const ValueContext& value, Integer length, ValueID source, const ArrayStorageForm& form, uint32_t flags)
 {
+    using ElementsBelowLength = ArrayAllocationEmitter::ElementsBelowLength;
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);
-    join.add(ArrayAllocationEmitter(generator()).allocateArrayOfHoles(value, length, form, slowPath));
+    join.add(ArrayAllocationEmitter(generator()).allocateArrayOfHoles(value, length, form, slowPath, isFilledByCopyBehind(value) ? ElementsBelowLength::NotCleared : ElementsBelowLength::Cleared));
 
     m_out.appendTo(slowPath);
     join.add(callOperation<CellPointer>(value, RuntimeOperation::NewArrayWithHoles, { sourceOrNull(source), length, word32(form.indexingType), word32(flags) }, { .isOnRarePath = true }));
@@ -242,6 +315,146 @@ void ArrayIntrinsicEmitter::generateTryPutDoubleIndex(const ValueContext& value)
     branchUnless(below(index, elements().publicLength(storage)), otherwise);
     elements().storeRawElement(doubles, storage, index, rawElement);
     join.add(boolean(true));
+
+    m_out.appendTo(otherwise);
+    join.add(boolean(false));
+    define(value, join.finish());
+}
+
+// No poll and no barrier stands in the loop: it calls nothing, and whoever makes it runs the barrier behind it.
+template<typename Functor>
+void ArrayIntrinsicEmitter::forEachPositionBelow(Integer count, const Functor& functor)
+{
+    LBasicBlock loop = newBlock();
+    LBasicBlock element = newBlock();
+    LBasicBlock done = newBlock();
+    ValueFromBlock start = m_out.anchor(integer(0).value());
+    m_out.jump(loop);
+
+    m_out.appendTo(loop);
+    Integer position(m_out.phi(B3::Int64, start));
+    branch(below(position, count), { normalEdge(element), normalEdge(done) });
+
+    m_out.appendTo(element);
+    functor(position);
+    m_out.addIncomingToPhi(position.value(), m_out.anchor(add(position, integer(1)).value()));
+    m_out.jump(loop);
+
+    m_out.appendTo(done);
+}
+
+// One comparison for the two forms that hold boxed values: the distance from the lower one is nothing or the one bit between them.
+Condition ArrayIntrinsicEmitter::isOneOfBoxedForms(Word32 mode, IndexingType ofIntegers, IndexingType ofValues)
+{
+    IndexingType distance = ofValues - ofIntegers;
+    RELEASE_ASSERT(ofValues > ofIntegers && hasOneBitSet(distance));
+    return Condition(m_out.testIsZero32(m_out.sub(mode.value(), ofIntegers), ~static_cast<int32_t>(distance)));
+}
+
+// Into an array that the library has just made with room for boxed values and handed to nobody, out of one that the program holds. False where that one has storage of another kind,
+// is shorter, or has a hole or undefined among them: the new array is then left empty, for its elements may never have been cleared. A number out of storage for doubles is boxed.
+// Nothing has run since the array was made, so the collector has not marked it: no barrier.
+void ArrayIntrinsicEmitter::generateTryCopyFilledElements(const ValueContext& value)
+{
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    CellPointer source = in<CellPointer>(value->sourceOperand());
+    Integer count = integerOperand(value->countOperand());
+    LBasicBlock holdsBoxedValues = newBlock();
+    LBasicBlock holdsNoBoxedValues = newBlock();
+    LBasicBlock copied = newBlock();
+    LBasicBlock otherwise = newBlock();
+    Join<Condition> join(m_out);
+    Word32 shape = elements().indexingMode(source, arrayStorageTestMask);
+    branch(isOneOfBoxedForms(shape, int32s.shape, contiguous.shape), { normalEdge(holdsBoxedValues), normalEdge(holdsNoBoxedValues) });
+
+    m_out.appendTo(holdsBoxedValues);
+    {
+        ArrayElements from = elements().elementsOf(source);
+        ArrayElements to = elements().elementsOf(array);
+        branchUnless(belowOrEqual(count, elements().publicLength(from)), otherwise);
+        forEachPositionBelow(count, [&](Integer position) {
+            LBasicBlock mayBeGap = newBlock();
+            LBasicBlock isValue = newBlock();
+            Boxed word(m_out.load64(elements().elementOfUnknownForm(from, position)));
+            // One test for the two: the hole is no bit at all, and undefined has two bits, one of which is null.
+            static_assert(!contiguous.hole && JSValue::ValueUndefined == (JSValue::ValueNull | JSValue::UndefinedTag));
+            m_out.branch(m_out.testIsZero64(word.value(), ~static_cast<int64_t>(JSValue::ValueUndefined)), rareEdge(mayBeGap), normalEdge(isValue));
+
+            m_out.appendTo(mayBeGap);
+            m_out.branch(m_out.equal(word.value(), m_out.constInt64(JSValue::ValueNull)), normalEdge(isValue), normalEdge(otherwise));
+
+            m_out.appendTo(isValue);
+            m_out.store64(word.value(), elements().elementOfUnknownForm(to, position));
+        });
+        m_out.jump(copied);
+    }
+
+    m_out.appendTo(holdsNoBoxedValues);
+    {
+        branchUnless(elements().hasShape(shape, doubles), otherwise);
+        ArrayElements from = elements().elementsOf(source);
+        ArrayElements to = elements().elementsOf(array);
+        branchUnless(belowOrEqual(count, elements().publicLength(from)), otherwise);
+        forEachPositionBelow(count, [&](Integer position) {
+            Number number = elements().loadRawElement(doubles, from, position).as<Number>();
+            // In this storage NaN means a hole.
+            branchUnless(equal(number, number), otherwise);
+            m_out.store64(elements().boxRawElement(doubles, number).value(), elements().elementOfUnknownForm(to, position));
+        });
+        m_out.jump(copied);
+    }
+
+    m_out.appendTo(copied);
+    ensureStillAliveHere(source);
+    join.add(boolean(true));
+
+    m_out.appendTo(otherwise);
+    elements().setPublicLength(elements().elementsOf(array), integer(0));
+    join.add(boolean(false));
+    define(value, join.finish());
+}
+
+// Out of an array of boxed values that the library made and filled, into one that the program holds. False, with nothing stored, where that one is shorter or has no writable storage
+// of the three kinds. Storage for integers or doubles takes them as they are: whoever asks knows that they are such numbers then.
+void ArrayIntrinsicEmitter::generateTryPutElements(const ValueContext& value)
+{
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    CellPointer source = in<CellPointer>(value->sourceOperand());
+    Integer count = integerOperand(value->countOperand());
+    LBasicBlock holdsBoxedValues = newBlock();
+    LBasicBlock holdsNoBoxedValues = newBlock();
+    LBasicBlock otherwise = newBlock();
+    Join<Condition> join(m_out);
+    Word32 mode = elements().indexingMode(array, IndexingShapeAndWritabilityMask);
+    branch(isOneOfBoxedForms(mode, int32s.indexingType, contiguous.indexingType), { normalEdge(holdsBoxedValues), normalEdge(holdsNoBoxedValues) });
+
+    m_out.appendTo(holdsBoxedValues);
+    {
+        ArrayElements from = elements().elementsOf(source);
+        ArrayElements to = elements().elementsOf(array);
+        branchUnless(belowOrEqual(count, elements().publicLength(to)), otherwise);
+        forEachPositionBelow(count, [&](Integer position) {
+            m_out.store64(m_out.load64(elements().elementOfUnknownForm(from, position)), elements().elementOfUnknownForm(to, position));
+        });
+        ensureStillAliveHere(source);
+        emitter<BarrierEmitter>().barrier(value, array);
+        join.add(boolean(true));
+    }
+
+    m_out.appendTo(holdsNoBoxedValues);
+    {
+        branchUnless(elements().hasWritableShape(mode, doubles), otherwise);
+        ArrayElements from = elements().elementsOf(source);
+        ArrayElements to = elements().elementsOf(array);
+        branchUnless(belowOrEqual(count, elements().publicLength(to)), otherwise);
+        forEachPositionBelow(count, [&](Integer position) {
+            Boxed word(m_out.load64(elements().elementOfUnknownForm(from, position)));
+            Number number = select(isInt32(word), toNumber(unboxInt32(word)), unboxDouble(word));
+            elements().storeRawElement(doubles, to, position, number);
+        });
+        ensureStillAliveHere(source);
+        join.add(boolean(true));
+    }
 
     m_out.appendTo(otherwise);
     join.add(boolean(false));

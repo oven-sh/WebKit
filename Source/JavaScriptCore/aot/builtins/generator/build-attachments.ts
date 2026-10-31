@@ -194,6 +194,8 @@ const conditionOnNoOperand: ModelCondition = {
   buildAdmitsRuntimeCode: false,
   callRunsOtherCode: false,
   objectNobodyKnowsIsWritten: false,
+  testsReplaceBuiltins: false,
+  programStores: null,
 };
 
 function resolveConditionOnOverload(
@@ -227,6 +229,13 @@ export function resolveCondition(
     );
     return null;
   }
+  if ("testsReplaceBuiltins" in condition || "programStores" in condition) {
+    builder.problems.add(
+      source,
+      `${builtin.text}: only loads and callsFunctions can depend on what the program replaces`,
+    );
+    return null;
+  }
   const operand = resolveOperand(builder, builtin, condition.operand, source);
   if (operand === null) return null;
   if ("hasProperty" in condition) {
@@ -251,6 +260,11 @@ function resolveDependencyCondition(
 ): ModelCondition | null {
   if ("callRunsOtherCode" in condition) return resolveConditionOnOverload(builder, builtin, source);
   if ("objectNobodyKnowsIsWritten" in condition) return { ...conditionOnNoOperand, objectNobodyKnowsIsWritten: true };
+  if ("testsReplaceBuiltins" in condition) return { ...conditionOnNoOperand, testsReplaceBuiltins: true };
+  if ("programStores" in condition) {
+    const programStores = resolveObject(builder, condition.programStores, source);
+    return programStores === null ? null : { ...conditionOnNoOperand, programStores };
+  }
   return resolveCondition(builder, builtin, condition, source);
 }
 
@@ -346,6 +360,19 @@ function holdsOnlyPrimitives({ kind, flags, overloads }: ModelBuiltin): boolean 
   return overloads.every(({ mode, result }) => mode === "Get" && isPrimitive(result.type));
 }
 
+// `typeof AbortController.AbortSignal`: what the read hands out has an entry of its own, which names the features for whoever calls it.
+function holdsOnlyBuiltinsThatName(uses: readonly ModelFeatureUse[], { kind, flags, overloads }: ModelBuiltin): boolean {
+  if (kind !== "DataProperty" || flags.includes("IsLazilyCreated") || overloads.length === 0) return false;
+  const namesThem = (held: ModelBuiltin): boolean =>
+    uses.every(({ feature }) => (held.sameObjectAs ?? held).attachments.featureUses.some(own => own.feature === feature));
+  return overloads.every(
+    ({ mode, result: { type } }) =>
+      mode === "Get" &&
+      isPrimitive({ ...type, parts: [] }) &&
+      type.parts.every(part => part.part === "Builtin" && namesThem(part.builtin)),
+  );
+}
+
 // The object is there as soon as its constructor is. The flow analysis lets the constructor escape where the property is read.
 const holdsPrototypeObjectOfConstructor = ({ kind, holder, name }: ModelBuiltin): boolean =>
   kind === "DataProperty" && holder?.kind === "Constructor" && name.kind === "Text" && name.text === "prototype";
@@ -357,7 +384,8 @@ function inheritFeatureUses(context: AttachmentContext): void {
     if (builtin.attachments.featureUses.length > 0 || holdsOnlyPrimitives(builtin)) continue;
     if (holdsPrototypeObjectOfConstructor(builtin) || isAccessorReadByName(builtin)) continue;
     const holderUses = findHolderFeatureUses(context.builder, builtin);
-    if (holderUses.length > 0) inherited.push([builtin, withoutConditions(holderUses)]);
+    if (holderUses.length === 0 || holdsOnlyBuiltinsThatName(holderUses, builtin)) continue;
+    inherited.push([builtin, withoutConditions(holderUses)]);
   }
   for (const [builtin, featureUses] of inherited) builtin.attachments = { ...builtin.attachments, featureUses };
 }
@@ -603,13 +631,22 @@ function collectNativeCalls(builder: ModelBuilder): NativeCalls {
   return byBuiltin;
 }
 
-const describeCondition = ({ operand, isOneOf, startsWith, calledOn, hasProperty, ...flags }: ModelCondition): string =>
+const describeCondition = ({
+  operand,
+  isOneOf,
+  startsWith,
+  calledOn,
+  hasProperty,
+  programStores,
+  ...flags
+}: ModelCondition): string =>
   JSON.stringify([
     operand,
     isOneOf.map(name => name.text),
     startsWith.map(name => name.text),
     calledOn === null ? null : calledOn.id,
     hasProperty === null ? null : [hasProperty.kind, hasProperty.text],
+    programStores === null ? null : programStores.id,
     flags,
   ]);
 
@@ -954,6 +991,7 @@ function buildHostObjects(context: AttachmentContext): ModelHostObject[] {
       internalFields: internalFields.flatMap(({ index, uses }) => (uses === null ? [] : [{ index, uses }])),
       keepsStringsOfStoredValues: declared.keepsStringsOfStoredValues,
       nativeAccessors: declared.nativeAccessors.map(name => builder.internComponent(name)),
+      platforms: declared.platforms,
       source,
     });
   }

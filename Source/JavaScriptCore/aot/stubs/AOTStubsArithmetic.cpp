@@ -12,6 +12,7 @@
 #include "AOTSlotRepresentation.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsOperations.h"
 #include "AOTStubsStrings.h"
 #include "AOTStubsValues.h"
 #include "JSCJSValueInlines.h"
@@ -537,7 +538,9 @@ static constexpr bool isInFPR(BoxedNumberForm form) { return form == BoxedNumber
 
 StubSignature signatureOfBoxNumber(StubKey key)
 {
-    return StubSignature::withGPRResult({ isInFPR(static_cast<BoxedNumberForm>(key.form())) ? Reg(FPRInfo::argumentFPR0) : Reg(gprOf(StubRegister::R0)) });
+    StubSignature signature = StubSignature::withGPRResult({ isInFPR(static_cast<BoxedNumberForm>(key.form())) ? Reg(FPRInfo::argumentFPR0) : Reg(resultGPROfPreservingCall()) });
+    signature.firstResult = resultGPROfPreservingCall();
+    return signature;
 }
 
 static void boxMarkerAndReturn(StubAssembler& jit, GPRReg bitsAndResult, const SlotMarkers& markers)

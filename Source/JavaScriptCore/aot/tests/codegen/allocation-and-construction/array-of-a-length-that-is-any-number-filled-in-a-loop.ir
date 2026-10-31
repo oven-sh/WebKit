@@ -1,0 +1,180 @@
+# function squares(count: number): number[] {
+#   const list = new Array<number>(count);
+#   for (let k = 0; k < count; k++) list[k] = k * k;
+#   return list;
+# }
+# function caught(count: number): number {
+#   let list: number[];
+#   try { list = new Array<number>(count); } catch { return count < 2 ? 1 : 2; }
+#   list[0] = 1 / count;
+#   return count < 2 ? list[0] : 3;
+# }
+# declare const input: any;
+# (globalThis as any).answer = [squares(+input), caught(+input)];
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,pass:SplitFreshResults
+# RUN: lower-to-b3 optimized loops f1
+# REQUIRES: unsanitized-code
+# RUN(IR): pipeline ResolveBuiltins
+# RUN(X64): lower-to-air loops f1
+# REQUIRES(X64): x86_64 unsanitized-code
+# RUN(ARM64): lower-to-air loops f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=17 kind=Parameter function=f1
+typesite w1 module=m0 kind=Result
+typesite w2 module=m0 position=169 kind=Parameter function=f2
+typesite w3 module=m0 position=153 kind=Result
+typesite w4 module=m0 position=410 kind=CallResult
+typesite w5 module=m0 position=427 kind=CallResult
+typesite w6 module=m0 position=59 kind=CallResult
+typesite w7 module=m0 position=96 kind=Variable
+typesite w8 module=m0 position=119 kind=Element
+typesite w9 module=m0 position=200 kind=Variable
+typesite w10 module=m0 position=231 kind=CallResult
+typesite w11 module=m0 position=297 kind=Element
+typesite w12 module=m0 position=339 kind=Element
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="globalThis" [isFreeName]
+    v6 = Convert v5 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v7 = Convert v6 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="input" [isFreeName]
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    v11 = ToNumber v10
+    v12 = Call v1, -, v11 calleeName="squares"
+    v13 = Convert v12 declared={type=undefined|null|Array<number> site=w4 flags=[OmitsNull, OmitsUndefined]}
+    v14 = Builtin builtin=GlobalThis
+    v15 = PropGet v14 key="input" [isFreeName]
+    v16 = Convert v15 declared={type=number flags=[IsExpected]}
+    v17 = ToNumber v16
+    v18 = Call v3, -, v17 calleeName="caught"
+    v19 = Convert v18 declared={type=number site=w5}
+    v20 = NewArray v13, v19 contents=anything
+    PropSet v7, v20 key="answer"
+    v22 = Undefined
+    Return v22
+}
+function f1 name="squares" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0}] results=[{type=undefined|null|Array<number> site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = Builtin builtin=Array
+    v2 = Call v1, -, v0 calleeName="Array" [isDoneInPlace]
+    v3 = Convert v2 declared={type=undefined|null|Array<number> site=w6 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v4 = Integer
+    v5 = Convert v4 declared={type=number site=w7}
+    Jump -> next b2(v5)
+  b2(v6: number):
+    LoopHint
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v9 = Less v8, v0
+    Branch v9 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+  b3(v10, v11):
+    Jump -> next b4()
+  b4():
+    v12 = Convert v10 declared={type=i32 flags=[IsExpected]}
+    v13 = Mul v12, v12
+    v14 = Convert v13 declared={type=number site=w8}
+    ElemSet v3, v12, v14
+    Jump -> next b5()
+  b5():
+    v16 = Increment v12
+    v17 = Convert v16 declared={type=number site=w7}
+    Jump -> next b2(v17)
+  b6(v18, v19):
+    Jump -> next b7()
+  b7():
+    Return v3
+}
+function f2 name="caught" module=m0 position=153 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w2}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = Undefined
+    v2 = Convert v1 declared={type=undefined|null|Array<number> site=w9 flags=[OmitsNull]} illTypedCause=FromLooseType
+    Jump -> next b2()
+  b2() handler=b11():
+    v3 = Builtin builtin=Array
+    v4 = Call v3, -, v0 calleeName="Array" [isDoneInPlace]
+    v5 = Convert v4 declared={type=undefined|null|Array<number> site=w10 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    Jump -> next b3()
+  b3() handler=b11():
+    Jump -> next b4()
+  b4():
+    Jump -> next b5()
+  b5():
+    v6 = Integer
+    v7 = Integer integer=1
+    v8 = Div v7, v0
+    v9 = Convert v8 declared={type=number site=w11}
+    ElemSet v5, v6, v9
+    v11 = Integer integer=2
+    v12 = Less v0, v11
+    Branch v12 -> taken b6(| 0), notTaken b8(| 0)
+  b6(v13):
+    Jump -> next b7()
+  b7():
+    v14 = Integer
+    v15 = ElemGet v5, v14
+    v16 = Convert v15 declared={type=number site=w12} illTypedCause=ContainerWriterUnseen
+    Jump -> next b10(v16)
+  b8(v17):
+    Jump -> next b9()
+  b9():
+    v18 = Integer integer=3
+    Jump -> next b10(v18)
+  b10(v19):
+    v20 = Convert v19 declared={type=number site=w3}
+    Return v20
+  b11() role=CatchHandler:
+    v21 = CatchValue
+    v22 = Integer integer=2
+    v23 = Less v0, v22
+    Branch v23 -> taken b12(| 0), notTaken b14(| 0)
+  b12(v24):
+    Jump -> next b13()
+  b13():
+    v25 = Integer integer=1
+    Jump -> next b16(v25)
+  b14(v26):
+    Jump -> next b15()
+  b15():
+    v27 = Integer integer=2
+    Jump -> next b16(v27)
+  b16(v28):
+    v29 = Convert v28 declared={type=number site=w3}
+    Return v29
+}
+
+# new Array(count) returns only if count is a whole number from 0 to 2^32 - 1, or -0, and the list is then that long. So behind the call `k < count` asks for the length of the list, which is an integer.
+# IR-LABEL: name="squares"
+# IR: [[length]]: int[0, 4294967295] = GetArrayLength
+# IR: = Less {{*}}, [[length]]
+# A call that threw says nothing of count: the comparison in the catch keeps it. So does the division, which tells -0 from 0.
+# IR-LABEL: name="caught"
+# IR: [[made]]: int[0, 4294967295] = GetArrayLength
+# IR: = Div {{*}}, v0
+# IR: = Less [[made]],
+# IR: role=CatchHandler
+# IR: = Less v0,
+# The counter stays below the length, the list keeps the length it was made with, and the loop goes up to that: no test stands between the product and its store, and the loop has no poll.
+# CHECK-LABEL: steps by 1
+# CHECK: Double b@[[square]] = Mul(
+# CHECK-NOT: Branch(
+# CHECK: Store(b@[[square]], b@{{*}}, ControlDependent|Writes:indexedDoubleProperties, {{*}}:PutArrayElement)
+# CHECK-NOT: Patchpoint(
+# CHECK: Branch(b@{{*}}, Terminal, {{*}}:Less)
+# CHECK-LABEL: end of loop
+# X64: loop #{{*}}, instructions: 6, patchpoints: 0, {{*}} steps by 1
+# ARM64: loop #{{*}}, patchpoints: 0, {{*}} steps by 1

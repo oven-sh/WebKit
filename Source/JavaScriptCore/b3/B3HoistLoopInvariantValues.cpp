@@ -71,6 +71,11 @@ static bool isTrappingLoad(const Value* value)
 }
 
 // Whether a poll leaves depends on nothing that the procedure computes, so it guards no value behind it.
+static bool widensInteger(const Value* value)
+{
+    return value->opcode() == ZExt32 || value->opcode() == SExt32;
+}
+
 static bool isBarrier(const Value* value, const Effects& effects)
 {
     return effects.isTrapBarrier() && !isLoopPoll(value);
@@ -136,6 +141,8 @@ bool hoistLoopInvariantValues(Procedure& proc)
     Dominators& dominators = proc.dominators();
     const bool hoistsOnlyFromLikelyPaths = proc.policy().loops.hoistsOnlyFromLikelyPaths;
     const bool hoistsImmutableLoadsPastWrites = proc.policy().loops.hoistsImmutableLoadsPastWrites;
+    // A loop polls, and what stands in front of a loop is alive at its poll.
+    const bool hoistsVectors = !proc.policy().air.registers.patchpointsKeepOnlyLowerHalvesOfVectors;
     
     // FIXME: We should have a reusable B3::EffectsSet data structure.
     // https://bugs.webkit.org/show_bug.cgi?id=174762
@@ -238,7 +245,7 @@ bool hoistLoopInvariantValues(Procedure& proc)
         if (blockLoops.isEmpty())
             continue;
         bool mayHoistFromBlock = !hoistsOnlyFromLikelyPaths || blockLoops.containsIf([&](const NaturalLoop* loop) {
-            return data[*loop].blocksOnEveryLikelyPath.contains(block);
+            return data[*loop].likelyBlocks.contains(block);
         });
         if (!mayHoistFromBlock)
             continue;
@@ -255,13 +262,15 @@ bool hoistLoopInvariantValues(Procedure& proc)
             // We never hoist write effects or control constructs. A trapping load is allowed
             // through. The fault it reports as a side exit is its own, and the checks below decide
             // whether it may move.
-            if (!effects.mustExecute() || trappingLoad) {
+            if ((!effects.mustExecute() || trappingLoad) && (hoistsVectors || !value->type().isVector())) {
                 // Try outermost loop first.
                 for (unsigned i = blockLoops.size(); i--;) {
                     const NaturalLoop& loop = *blockLoops[i];
 
                     if (hoistsOnlyFromLikelyPaths) {
-                        if (!data[loop].blocksOnEveryLikelyPath.contains(block) || data[loop].preHeader->last()->opcode() != Jump)
+                        // An integer that is only made wider costs an instruction a turn and, in front of the loop, the register that the narrow one had. So it need not lie on every likely path.
+                        bool isOnPathsHoistedFrom = data[loop].blocksOnEveryLikelyPath.contains(block) || (widensInteger(value) && data[loop].likelyBlocks.contains(block));
+                        if (!isOnPathsHoistedFrom || data[loop].preHeader->last()->opcode() != Jump)
                             continue;
                         if (effects.reads) {
                             Bank bank = bankOfLoad(value);

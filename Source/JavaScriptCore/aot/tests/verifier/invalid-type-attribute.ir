@@ -1,0 +1,9 @@
+# only a module of code outside the image has a type attribute: the loader of the host is asked with it, and nothing asks the loader for a file of the image or for a value of the host
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: InvalidModule 2
+
+module m0 path="main" displayPath="main" requests=[{target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}]
+module m1 path="./good.txt" displayPath="./good.txt" kind=External typeAttribute="toml" referrer=m0
+module m2 path="badFile" displayPath="badFile" typeAttribute="toml"
+module m3 path="badHostValue" displayPath="badHostValue" kind=External exportRule=CommonJsIgnoringAnnotation externalKind=HostValue typeAttribute="toml" referrer=m0

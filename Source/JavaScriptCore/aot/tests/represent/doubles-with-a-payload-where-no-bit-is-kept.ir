@@ -105,5 +105,5 @@ function f7 name="switchOnSumWithUndefined" parameters=[{type=number}, {type=und
 # X64-NEXT: f5: size=38 frame
 # X64-NEXT: f6: size=70 frame
 # X64-NEXT: f7: size=70 frame
-# BYTES: f0: size=55 frame
+# BYTES: f0: size=49 frame
 # BYTES: f2: size=76 frame

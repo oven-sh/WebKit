@@ -1,0 +1,76 @@
+# answers = { set body(value) {}, get status() {}, set status(value) {} }; globalThis[name] = handle; globalThis.answer = Object.create(answers); Bun.serve({ fetch(call) { return call() } })
+# handle(answer) { answer.body = 1; answer.status = 2; return answer.status }
+# The handler calls a value with every event, so `handle` is entered as often, and so is what lies under `status`, because that name is read. The setter under `body` is entered by the same function
+# and as often, though nothing reads `body`: whether a setter comes with events does not hang on a read of its name.
+# FORM: AsRead
+# RUN: heat-graph flow classes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Answers"
+layout L1 name="Options" fields=[{key="fetch" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f3
+    DefineSetter v0, v1 key="body"
+    v3 = NewClosure function=f4
+    DefineGetter v0, v3 key="status"
+    v5 = NewClosure function=f5
+    DefineSetter v0, v5 key="status"
+    v7 = FinishObject v0
+    v8 = Builtin builtin=GlobalThis
+    v9 = Builtin builtin=Process
+    v10 = PropGet v9 key="title"
+    v11 = NewClosure function=f2
+    ElemSet v8, v10, v11 mode=Sloppy
+    v13 = Builtin builtin=Object
+    v14 = Builtin builtin=ObjectCreate
+    v15 = Call v14, v13, v7
+    PropSet v8, v15 key="answer" mode=Strict
+    v17 = NewClosure function=f1
+    v18 = NewObject -, v17 layout=L1 fields=[0]
+    v19 = Builtin builtin=BunServe
+    v20 = Builtin builtin=Bun
+    v21 = Call v19, v20, v18
+    Return
+}
+function f1 name="fetch" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0
+    Return v2
+}
+function f2 name="handle" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="body"
+    v3 = Integer integer=2
+    PropSet v0, v3 key="status"
+    v5 = PropGet v0 key="status"
+    Return v5
+}
+function f3 name="body" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="held"
+    Return
+}
+function f4 name="status" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="code"
+    Return v1
+}
+function f5 name="status" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="code"
+    Return
+}
+# CHECK: host: f0*1.000000 f1*32768.000000 f2*32768.000000 f3*32768.000000 f4*32768.000000 f5*32768.000000
+# CHECK: activations:
+# CHECK-NEXT: f0 1.000000
+# CHECK-NEXT: f1 32768.000000
+# CHECK-NEXT: f2 32768.000000
+# CHECK-NEXT: f3 32768.000000
+# CHECK-NEXT: f4 32768.000000
+# CHECK-NEXT: f5 32768.000000
+# CHECK: entries per event:
+# CHECK-NEXT: f1 32768.000000
+# CHECK-NEXT: f2 32768.000000
+# CHECK-NEXT: f3 32768.000000

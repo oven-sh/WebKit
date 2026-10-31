@@ -16,6 +16,7 @@
 #include "AOTEffectsOfAccesses.h"
 #include "AOTExactBuffer.h"
 #include "AOTFrameAllocationPointers.h"
+#include "AOTHeldOperands.h"
 #include "AOTIR.h"
 #include "AOTLargeVectors.h"
 #include "AOTLiveness.h"
@@ -172,8 +173,51 @@ uint32_t HandedOnTargetLists::intern(Vector<HandedOnTarget>&& targets)
     return lists.last();
 }
 
+HandedOnTargetLists::ListOfOperand HandedOnTargetLists::listOfOperand(const Program& program, CalleeSetID set, const Value& call, uint32_t operandIndex)
+{
+    // All that entryParameterOf() reads from the call.
+    constexpr unsigned bitsOfOperandIndex = 15;
+    static_assert(sizeof(Opcode) <= 2);
+    std::optional<uint64_t> key;
+    if (operandIndex < 1u << bitsOfOperandIndex)
+        key = static_cast<uint64_t>(set.index()) << 32 | static_cast<uint64_t>(call.opcode) << (bitsOfOperandIndex + 1) | operandIndex << 1 | isHeldOperand(call, operandIndex);
+    if (key) {
+        Locker locker { m_lock };
+        if (auto known = m_listsOfOperands.find(*key); known != m_listsOfOperands.end())
+            return known->value;
+    }
+
+    ListOfOperand result;
+    std::span<const FunctionID> callees = program.at(set).written().functions;
+    Vector<HandedOnTarget> targets;
+    targets.reserveInitialCapacity(callees.size());
+    for (FunctionID callee : callees) {
+        std::optional<uint32_t> entryParameter = entryParameterOf(program.at(callee), call, operandIndex);
+        if (!entryParameter || *entryParameter >= maxBorrowedParameters)
+            result.hasCalleeWithoutParameter = true;
+        targets.append({ callee, entryParameter.value_or(maxBorrowedParameters) });
+    }
+    result.list = intern(WTF::move(targets));
+    if (key) {
+        Locker locker { m_lock };
+        m_listsOfOperands.add(*key, result);
+    }
+    return result;
+}
+
 // Fewer callees than this stay entries of their own: nearly every call has one or two.
 AOT_THRESHOLD(size_t, minCalleesOfSharedTargetList, 16);
+
+static CalleeSetID setOfManyFunctionsAlone(const Program& program, const Value& call)
+{
+    CalleeSetID id = calleeSetOfCall(program, call);
+    if (!id)
+        return { };
+    const CalleeSet& set = program.at(id);
+    if (!set.listsEveryCallee() || !set.written().builtins.empty() || set.written().functions.size() < minCalleesOfSharedTargetList)
+        return { };
+    return id;
+}
 
 static BorrowingBody scanBorrowingBody(const Program& program, const Function& function, HandedOnTargetLists* targetLists = nullptr, const BitVector* closuresPlannedInFrame = nullptr, Vector<HandedOnReferences>* heldByWhatIsHandedOn = nullptr, PrintStream* explanation = nullptr, FunctionID explainedFunction = { })
 {
@@ -192,7 +236,13 @@ static BorrowingBody scanBorrowingBody(const Program& program, const Function& f
     uint64_t uncountedCalls = 0;
     uint64_t lost = 0;
     ValueID currentUser;
-    BorrowingBody body;
+    struct {
+        uint64_t word { 0 };
+        Vector<HandedOnReferences> handedOn;
+        Vector<HandedOnToManyCallees> handedOnToManyCallees;
+        Vector<FunctionID> calleesWhoseRecordsWereRead;
+        Vector<uint32_t> targetListsRead;
+    } body;
 
     auto referencesIn = [&](ValueID id) -> uint64_t { return id ? mayBe[id.index()] : 0; };
     auto heldReferencesIn = [&](ValueID id) -> uint64_t { return id && !mayHold.isEmpty() ? mayHold[id.index()] : 0; };
@@ -297,33 +347,36 @@ static BorrowingBody scanBorrowingBody(const Program& program, const Function& f
         });
     };
 
-    auto checkOperandOfCall = [&](const Value& call, uint32_t operandIndex, const CalleeList& callees, Carried carried) {
+    struct CalleesOfCurrentCall {
+        bool isKnown { false };
+        CalleeSetID manyFunctionsAlone;
+        std::optional<CalleeList> list;
+    };
+    auto checkOperandOfCall = [&](const Value& call, uint32_t operandIndex, CalleesOfCurrentCall& callees, Carried carried) {
         ASSERT(!maySuspend(call.opcode));
         bool isCalled = call.operandUses(operandIndex).containsAny(callingUses);
         bool isCalledByNativeCode = isCalled && runtimeOf(call.opcode);
-        if (isCalled && !isCalledByNativeCode) {
+        if (isCalled) {
             lose(countedCallsOf(carried.all()));
             if (call.opcode == Opcode::Call)
                 return;
         }
-        std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
-        if (isCalledByNativeCode || !functions) {
-            lose(carried.all());
+        if (!std::exchange(callees.isKnown, true) && targetLists)
+            callees.manyFunctionsAlone = setOfManyFunctionsAlone(program, call);
+        if (callees.manyFunctionsAlone && !isCalled) {
+            HandedOnTargetLists::ListOfOperand targets = targetLists->listOfOperand(program, callees.manyFunctionsAlone, call, operandIndex);
+            if (targets.hasCalleeWithoutParameter)
+                lose(carried.all());
+            body.targetListsRead.append(targets.list);
+            if (uint64_t bits = carried.references | countedCallsOf(carried.all()))
+                body.handedOnToManyCallees.append({ targets.list, bits });
             return;
         }
-        if (targetLists && !isCalled && functions->value().size() >= minCalleesOfSharedTargetList) {
-            Vector<HandedOnTarget> targets;
-            targets.reserveInitialCapacity(functions->value().size());
-            for (FunctionID callee : functions->value()) {
-                std::optional<uint32_t> entryParameter = entryParameterOf(program.at(callee), call, operandIndex);
-                if (!entryParameter || *entryParameter >= maxBorrowedParameters)
-                    lose(carried.all());
-                targets.append({ callee, entryParameter.value_or(maxBorrowedParameters) });
-            }
-            uint32_t list = targetLists->intern(WTF::move(targets));
-            body.targetListsRead.append(list);
-            if (uint64_t bits = carried.references | countedCallsOf(carried.all()))
-                body.handedOnToManyCallees.append({ list, bits });
+        if (!callees.list)
+            callees.list = calleesOfCall(program, call);
+        std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.list->functionsAlone();
+        if (isCalledByNativeCode || !functions) {
+            lose(carried.all());
             return;
         }
         for (FunctionID callee : functions->value()) {
@@ -341,6 +394,9 @@ static BorrowingBody scanBorrowingBody(const Program& program, const Function& f
             handOn(user.function(), *capture, carried);
             return;
         }
+
+        if (user.opcode == Opcode::GetSuperBase)
+            lose(contentsOf(carried.references) | countedCallsOf(carried.references));
 
         OperandUses uses = summarizeOperand(effects, function, user, operandIndex).uses;
         bool followsResult = propagatesFramePointers(user.opcode);
@@ -441,7 +497,7 @@ static BorrowingBody scanBorrowingBody(const Program& program, const Function& f
             if (user.opcode == Opcode::CallDirect)
                 readRecordOf(user.function());
             currentUser = id;
-            std::optional<CalleeList> callees;
+            CalleesOfCurrentCall callees;
             user.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
                 Carried carried { referencesIn(operand) & ~lost, heldReferencesIn(operand) & ~lost };
                 if (!carried.all() || user.operandKind(operandIndex) == OperandKind::Guard)
@@ -449,9 +505,7 @@ static BorrowingBody scanBorrowingBody(const Program& program, const Function& f
 
                 switch (effectRuleOf(user.opcode)) {
                 case EffectRule::Call:
-                    if (!callees)
-                        callees = calleesOfCall(program, user);
-                    checkOperandOfCall(user, operandIndex, *callees, carried);
+                    checkOperandOfCall(user, operandIndex, callees, carried);
                     return;
                 case EffectRule::Builtin:
                 case EffectRule::Inline:
@@ -491,7 +545,7 @@ static BorrowingBody scanBorrowingBody(const Program& program, const Function& f
 
     body.word = tracked & ~lost;
     Vector<HandedOnReferences>& entries = body.handedOn;
-    AOT::sort(entries, [](const HandedOnReferences& a, const HandedOnReferences& b) {
+    AOT::sortInLine(entries, [](const HandedOnReferences& a, const HandedOnReferences& b) {
         return std::tuple(a.callee, a.entryParameter) < std::tuple(b.callee, b.entryParameter);
     });
     size_t numberOfMergedEntries = 0;
@@ -504,7 +558,6 @@ static BorrowingBody scanBorrowingBody(const Program& program, const Function& f
             entries[numberOfMergedEntries++] = entry;
     }
     entries.shrink(numberOfMergedEntries);
-    moveToExactBuffer(entries);
     Vector<HandedOnToManyCallees>& entriesOfLists = body.handedOnToManyCallees;
     AOT::sort(entriesOfLists, { }, &HandedOnToManyCallees::targetList);
     numberOfMergedEntries = 0;
@@ -517,14 +570,11 @@ static BorrowingBody scanBorrowingBody(const Program& program, const Function& f
             entriesOfLists[numberOfMergedEntries++] = entry;
     }
     entriesOfLists.shrink(numberOfMergedEntries);
-    moveToExactBuffer(entriesOfLists);
     AOT::sort(body.targetListsRead);
     removeRepeatedElements(body.targetListsRead);
-    moveToExactBuffer(body.targetListsRead);
     AOT::sort(body.calleesWhoseRecordsWereRead);
     removeRepeatedElements(body.calleesWhoseRecordsWereRead);
-    moveToExactBuffer(body.calleesWhoseRecordsWereRead);
-    return body;
+    return { body.word, body.handedOn, body.handedOnToManyCallees, body.calleesWhoseRecordsWereRead, body.targetListsRead };
 }
 
 static uint64_t bitsLostThrough(uint64_t wordOfCallee, const HandedOnReferences& entry)
@@ -806,6 +856,7 @@ BorrowedParameters computeBorrowedParameters(const Program& program, BuildContex
     RELEASE_ASSERT(numberOfKeptBodies <= numberOfFunctions && hasChanged.size() == numberOfKeptBodies && recordLooksDifferent.size() == numberOfKeptBodies);
     OpcodeSet opcodesThatBorrowNothing = opcodesOfFunctionsThatBorrowNothing();
     const bool checksKeptBodies = build.options().verifiesAfterEveryPass;
+    kept.m_targetLists.forgetOperands();
 
     auto scan = [&](unsigned index) {
         const Function& function = program.functions[index];

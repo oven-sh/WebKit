@@ -21,7 +21,7 @@ inline constexpr EscapeReasons callReasons { EscapeReason::PassedToUnknownCode, 
 inline constexpr OperandUses leakingUses { OperandUse::Retains, OperandUse::Returns, OperandUse::PassesToUserCode };
 
 struct ValueSet {
-    BitVector objects;
+    SparseObjectSet objects;
     bool mayBeUntracked { true };
 };
 

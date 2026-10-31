@@ -49,6 +49,8 @@ public:
 
     ModuleID module() const { return m_module; }
     JSGlobalObject* instanceRealm() const;
+    // A realm may run several images. To the modules of one, a record of another is a record of code that its build has not seen.
+    bool isOf(const Instance& instance) const { return &m_instance == &instance; }
 
     bool isOnStack(const ModuleEvaluationStack& stack) const { return m_evaluationStack == &stack; }
     void setEvaluationStack(const ModuleEvaluationStack* stack) { m_evaluationStack = stack; }
@@ -83,6 +85,8 @@ public:
     static void didRequestModule(JSGlobalObject*, const Identifier& key, JSCell* payload);
     static void didSettleLoad(JSGlobalObject*, const ModuleGraphLoadingState&);
     static void didFailToMakeModule(JSGlobalObject*, const Identifier& key);
+    // Another load has settled the entry of the module while its record was made, and the loader drops what making the record threw.
+    static void didLoseErrorOfModule(JSGlobalObject*, const Identifier& key);
     void willBeLoadedByImport();
     bool takeStepOfMainModule();
     bool takeLoadPromiseBelowMainModule();
@@ -106,6 +110,8 @@ public:
     void didAskHostForRequest(uint8_t flagsBefore);
     // What the host answers when it is asked to fetch the module under a key that this record requests. Null where the host has to be asked.
     AbstractModuleRecord* recordOfRequest(JSGlobalObject*, const Identifier& key);
+    // True: the promise of the fetch is fulfilled with the record in a later turn of the event loop.
+    bool holdTextOfRequest(JSPromise* fetched, AbstractModuleRecord* requested);
     // Behind appendRequestedModule() with a key of a compiled module.
     void didRequestCompiledModule(const Identifier& key, ModuleID module) { m_compiledRequests.append({ key.impl(), module }); }
     unsigned innerModuleLinking(JSGlobalObject*, ModuleLinkingStack&, unsigned index, RefPtr<ScriptFetcher>);

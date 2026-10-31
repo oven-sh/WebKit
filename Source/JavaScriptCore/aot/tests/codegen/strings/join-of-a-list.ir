@@ -78,7 +78,7 @@ function f1 name="line" module=m0 flags=[IsChecked, HasExplicitName] length=1 th
 # `cells.join(",")` on a list reads no `join` by name: one byte of the cell says that the list has plain storage, and the run time's join is called with the list and the cell of the comma, which comes out of the table of one-character texts.
 # CHECK-LABEL: name="line" role=Source
 # CHECK: Int64 b@[[comma]] = Load(b@{{*}}, offset = 352, ControlDependent|ReadsImmutable|Reads:singleCharacterStrings, {{*}}:String)
-# CHECK: Int32 b@[[kind]] = Load8Z(b@[[cells]], offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc
+# CHECK: Int32 b@[[kind]] = Load8Z(b@[[cells]], offset = 4, ControlDependent|Reads:JSArray_indexingTypeAndMisc
 # CHECK: Int64 b@[[text]] = Patchpoint(b@[[cells]]:ColdAny, b@[[comma]]:ColdAny, resultConstraints = Register(
 # CHECK-LABEL: end of function
 # The other two are the rare way: the built-in itself is called, as any function is.

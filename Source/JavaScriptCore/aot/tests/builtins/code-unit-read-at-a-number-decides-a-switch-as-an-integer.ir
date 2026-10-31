@@ -1,0 +1,44 @@
+# switch (text.charCodeAt(position)) where the position is a number that may be no integer. Whatever the position is, the call answers with a code unit or with NaN. In the unlikely code that keeps the call
+# a code unit joins the one that was read in line, as an integer, and NaN goes on by itself as the constant it is, straight to where the switch sends it: the switch asks an integer, and no number is made of the code unit.
+# codePointAt likewise, with undefined for a position outside
+# FORM: Prepared optimizing
+# RUN: pass SimplifyBuiltinCalls RetypeValues PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters SimplifyCasts RetypeValues EliminateDeadCode CompactBlocks
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="kindOfUnit" parameters=[{type=string}, {type=number}] results=[{type=number}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+    Switch v2 cases=[32, 10] -> case b1(), case b2(), otherwise b3()
+  b1():
+    v3 = Integer integer=1
+    Return v3
+  b2():
+    v4 = Integer integer=2
+    Return v4
+  b3():
+    v5 = Integer integer=3
+    Return v5
+# CHECK: [[unit]]: int[0, 65535] = GetStringCodeUnit v0,
+# CHECK-NEXT: Jump -> next [[asked]]([[unit]])
+# CHECK: [[answer]]: number = CallBuiltin v0, {{*}}overload=StringPrototypeCharCodeAt/0
+# CHECK-NEXT: [[isUnit]]: boolean = TypeTest [[answer]] testedType=int[0, 65535]
+# CHECK: [[asked]]([[subject]]: int[0, 65535]):
+# CHECK-NEXT: Switch [[subject]] cases=[32, 10]
+# CHECK-NOT: Switch
+}
+
+function f1 name="kindOfPoint" parameters=[{type=string}, {type=number}] results=[{type=number}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeCodePointAt/0
+    Switch v2 cases=[32, 10] -> case b1(), case b2(), otherwise b3()
+  b1():
+    v3 = Integer integer=1
+    Return v3
+  b2():
+    v4 = Integer integer=2
+    Return v4
+  b3():
+    v5 = Integer integer=3
+    Return v5
+# CHECK: ([[point]]: int[0, 1114111]{{*}}):
+# CHECK-NEXT: Switch [[point]] cases=[32, 10]
+# CHECK-NOT: Switch
+}

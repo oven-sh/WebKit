@@ -194,10 +194,14 @@ InitializerSummary summarizeInitializer(const Program& program, const Function& 
     auto aliasesObject = [&](ValueID id) {
         return id && (isObject(id) || closuresCapturingObject.contains(identities.identityOf(id)));
     };
+    // Definitions are only appended, so each is added to a set of keys once.
+    size_t numberOfShownDefinitions = 0;
     auto showDefinitions = [&] {
-        for (const DefinitionOfUndefined& definition : summary.definitionsOfUndefined)
+        for (const DefinitionOfUndefined& definition : summary.definitionsOfUndefined.span().subspan(numberOfShownDefinitions))
             summary.keysShownToOtherCode.add(definition.key);
+        numberOfShownDefinitions = summary.definitionsOfUndefined.size();
     };
+    size_t numberOfDefinitionsBeforeOthers = 0;
 
     Keys keysDefinedTwice;
     for (BlockID block : cfg.reversePostOrder()) {
@@ -226,8 +230,9 @@ InitializerSummary summarizeInitializer(const Program& program, const Function& 
             if (!definesProperty || usesOfObject != 1u + storesAlias)
                 return summary;
             summary.holdsItself |= storesAlias;
-            for (const DefinitionOfUndefined& definition : summary.definitionsOfUndefined)
+            for (const DefinitionOfUndefined& definition : summary.definitionsOfUndefined.span().subspan(numberOfDefinitionsBeforeOthers))
                 summary.keysDefinedBeforeOthers.add(definition.key);
+            numberOfDefinitionsBeforeOthers = summary.definitionsOfUndefined.size();
             std::optional<PropertyKeyID> key = keyOfFieldAccess(program, value);
             if (!key) {
                 if (program.typeOf(initializer, value.operand(OperandIndex::ElemDefine::property)).hasObjects())
@@ -773,7 +778,9 @@ KeysOfLiterals keysStoredRightAfterAllocations(const Program& program, const Fun
                 keys.add(receiver.index(), Vector<PropertyKeyID, 8>()).iterator->value.append(value.key());
 
             if (value.opcode == Opcode::NewObject ? !program.at(value.layout()).isEnvironment() : value.opcode == Opcode::Data && program.at(value.data()).root.is<DataNode::Object>()) {
-                isFresh.set(id.index());
+                // A bit vector grows to the bit that is set and no further: thousands of objects would copy it thousands of times.
+                isFresh.ensureSize(function.values.size());
+                isFresh.quickSet(id.index());
                 objectsOfBlock.append(id);
                 ++numberOfFreshObjects;
             }

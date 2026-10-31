@@ -744,6 +744,8 @@ public:
     }
     static constexpr ptrdiff_t offsetOfOrderedHashTableDeletedValue() { return OBJECT_OFFSETOF(VM, m_orderedHashTableDeletedValue); }
 
+    static constexpr ptrdiff_t offsetOfOrderedHashTableSentinel() { return OBJECT_OFFSETOF(VM, m_orderedHashTableSentinel); }
+
     Structure* sentinelStructure() { return m_sentinelStructure.get(); }
     JSSentinel* fastArrayValuesSentinel() { return m_fastArrayValuesSentinel.get(); }
     JSSentinel* fastArrayKeysSentinel() { return m_fastArrayKeysSentinel.get(); }

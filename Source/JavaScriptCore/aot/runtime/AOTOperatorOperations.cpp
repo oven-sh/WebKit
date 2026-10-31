@@ -8,11 +8,16 @@
 
 #if ENABLE(AOT)
 
+#include "AOTChainDependents.h"
+#include "AOTCompiledCall.h"
 #include "AOTInstance.h"
+#include "AOTObject.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTPrimitives.h"
 #include "AOTProgramStrings.h"
+#include "AOTPropertyCaches.h"
+#include "AOTPropertyCachesKeys.h"
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
@@ -98,7 +103,95 @@ AOT_DEFINE_BINARY_OPERATION(operationAOTCompareStrictEq, size_t, JSValue::strict
 AOT_DEFINE_UNARY_OPERATION(operationAOTValueBitNot, EncodedJSValue, JSValue::encode(jsBitwiseNot(globalObject, operand)))
 AOT_DEFINE_UNARY_OPERATION(operationAOTToNumber, double, operand.toNumber(globalObject))
 AOT_DEFINE_UNARY_OPERATION(operationAOTToNumeric, EncodedJSValue, JSValue::encode(operand.toNumeric(globalObject)))
-AOT_DEFINE_UNARY_OPERATION(operationAOTToString, JSCell*, operand.toString(globalObject))
+
+// What JSObject::toString() calls for an instance of a class with a toString() of its own. The caches of reads by name say what its two reads find, so no chain is walked.
+// Null where they do not say so: nothing has run then, and the generic path starts from the beginning.
+static JSObject* compiledToStringOrNull(Instance* instance, Object& object, CallData& callData)
+{
+    VM& vm = *instance->vm;
+    PropertyCaches& caches = *instance->state->propertyCaches;
+    Structure* structure = object.structure();
+    const Slot* exotic = caches.findByKey(structure, vm.propertyNames->toPrimitiveSymbol.impl(), SlotAccess::Read);
+    if (!exotic) {
+        fileReadWithoutCode(instance, &object, vm.propertyNames->toPrimitiveSymbol);
+        return nullptr;
+    }
+    if (exotic->kind != Slot::Kind::Absent)
+        return nullptr;
+    const Slot* method = caches.findByKey(structure, vm.propertyNames->toString.impl(), SlotAccess::Read);
+    if (!method) {
+        fileReadWithoutCode(instance, &object, vm.propertyNames->toString);
+        return nullptr;
+    }
+    if (method->kind != Slot::Kind::Value || method->has(Slot::isOwn))
+        return nullptr;
+    JSValue function = valueAtOffset(asObject(method->holder), method->offsetInStorage());
+    if (!function.isCell())
+        return nullptr;
+    // A class has the type of a closure too, and calling it throws: the generic path says so.
+    callData = compiledCallDataOf(function.asCell());
+    return callData.type == CallData::Type::Compiled ? asObject(function) : nullptr;
+}
+
+// JSObject::ordinaryToPrimitive() from where toString() has answered with an object.
+static JSValue primitiveFromValueOf(JSGlobalObject* globalObject, JSObject* object)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue function = object->get(globalObject, vm.propertyNames->valueOf);
+    RETURN_IF_EXCEPTION(scope, { });
+    CallData callData = JSC::getCallData(function);
+    if (callData.type != CallData::Type::None) {
+        JSValue result = call(globalObject, function, callData, object, ArgList());
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!result.isObject())
+            return result;
+    }
+    throwTypeError(globalObject, scope, "No default value"_s);
+    return { };
+}
+
+// Apart from the operation, which most often converts a number: that path saves few registers.
+static NEVER_INLINE JSString* toStringOfCompiledObject(Instance* instance, Object& object)
+{
+    VM& vm = *instance->vm;
+    JSGlobalObject* globalObject = instance->globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    CallData callData;
+    JSObject* method = compiledToStringOrNull(instance, object, callData);
+    if (!method)
+        RELEASE_AND_RETURN(scope, JSValue(&object).toString(globalObject));
+    JSValue result = callCompiledCode(vm, method, callData, &object, nullptr, ArgList());
+    RETURN_IF_EXCEPTION(scope, jsEmptyString(vm));
+    if (result.isString()) [[likely]]
+        return asString(result);
+    if (result.isObject()) {
+        result = primitiveFromValueOf(globalObject, &object);
+        RETURN_IF_EXCEPTION(scope, jsEmptyString(vm));
+    }
+    RELEASE_AND_RETURN(scope, result.toString(globalObject));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTToString, JSCell*, (Instance* instance, EncodedJSValue encodedOperand))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTToString);
+    JSValue operand = JSValue::decode(encodedOperand);
+    // As JSValue::toStringSlowCase(), which asks six questions about a cell before it looks at it.
+    if (operand.isCell()) {
+        JSCell* cell = operand.asCell();
+        if (cell->type() == CompiledObjectType)
+            OPERATION_RETURN(scope, toStringOfCompiledObject(instance, *uncheckedDowncast<Object>(cell)));
+        JSString* string = cell->toStringInline(globalObject);
+        OPERATION_RETURN_IF_EXCEPTION(scope, jsEmptyString(vm));
+        OPERATION_RETURN(scope, string);
+    }
+    if (operand.isInt32())
+        OPERATION_RETURN(scope, int32ToString(vm, operand.asInt32(), 10));
+    if (operand.isDouble())
+        OPERATION_RETURN(scope, numberToString(vm, operand.asDouble(), 10));
+    OPERATION_RETURN(scope, operand.toString(globalObject));
+}
+
 // The stub finds the text of a small index there the next time.
 AOT_DEFINE_UNARY_OPERATION(operationAOTToKey, EncodedJSValue, JSValue::encode(operand.isInt32() && static_cast<uint32_t>(operand.asInt32()) < NumericStrings::cacheSize ? JSValue(instance->vm->numericStrings.addJSString(*instance->vm, operand.asInt32())) : operand.toPropertyKeyValue(globalObject)))
 #undef AOT_DEFINE_BINARY_OPERATION
@@ -146,17 +239,43 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTIsCallable, size_t, (Instance*, JS
     return cell->isCallable();
 }
 
+// Exact for a whole quotient below maxExactQuotient.
+#if CPU(ARM64) || defined(__FMA__)
+static constexpr double maxExactQuotient = 0x1p53;
+static ALWAYS_INLINE double subtractProduct(double dividend, double quotient, double divisor)
+{
+    return std::fma(-quotient, divisor, dividend);
+}
+#else
+static constexpr double maxExactQuotient = 0x1p26;
+static ALWAYS_INLINE double subtractProduct(double dividend, double quotient, double divisor)
+{
+    double high = std::bit_cast<double>(std::bit_cast<uint64_t>(divisor) & ~((1ull << 27) - 1));
+    return (dividend - quotient * high) - quotient * (divisor - high);
+}
+#endif
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFmod, double, (double a, double b))
 {
+    double dividend = std::abs(a);
+    double divisor = std::abs(b);
+    if (dividend < divisor)
+        return a;
+    double quotient = std::trunc(dividend / divisor);
+    if (quotient < maxExactQuotient && dividend < 0x1p1000) [[likely]] {
+        double remainder = subtractProduct(dividend, quotient, divisor);
+        if (remainder < 0) [[unlikely]]
+            remainder += divisor;
+        return std::copysign(remainder, a);
+    }
+
     constexpr double limit = 4611686018427387904.0;
-    if (std::abs(a) < limit) [[likely]] {
-        int64_t dividend = static_cast<int64_t>(a);
-        if (static_cast<double>(dividend) == a && std::abs(b) < limit) [[likely]] {
-            int64_t divisor = static_cast<int64_t>(b);
-            if (static_cast<double>(divisor) == b && divisor) [[likely]] {
-                int64_t remainder = dividend % divisor;
-                return remainder ? static_cast<double>(remainder) : a * 0.0;
-            }
+    if (dividend < limit && divisor < limit) [[likely]] {
+        int64_t wholeDividend = static_cast<int64_t>(a);
+        int64_t wholeDivisor = static_cast<int64_t>(b);
+        if (static_cast<double>(wholeDividend) == a && static_cast<double>(wholeDivisor) == b && wholeDivisor) [[likely]] {
+            int64_t remainder = wholeDividend % wholeDivisor;
+            return remainder ? static_cast<double>(remainder) : a * 0.0;
         }
     }
     return Math::fmodDouble(a, b);

@@ -37,6 +37,7 @@ public:
             initializeProgramStatics();
     }
     void initializeStatics(uint32_t firstWord, uint32_t endWord);
+    void putBack(uint32_t offset, uint32_t size);
     // By its number in ProgramTables::staticsOfFiles(): the group and all that its files import.
     void fillVariablesOfFiles(uint32_t group);
     bool fillsVariablesWithFiles() const { return m_filledFiles; }
@@ -59,9 +60,13 @@ public:
 
     static JSValue readVariable(Instance&, SlotData);
     static JSValue readVariableWithoutAllocating(const Instance&, SlotData);
+    // Nothing has been stored to it. Allocates nothing.
+    static bool isVariableEmpty(const Instance&, SlotData);
     // Null if the variable does not hold a string.
     static String readStringWithoutAllocating(const Instance&, SlotData);
     static void writeVariable(Instance&, SlotData, JSValue);
+    // Allocates nothing: the collector's threads call it.
+    JSCell* cellIn(const NamedVariableData&) const;
 
     template<typename Visitor> void visitRoots(Visitor&);
 

@@ -172,6 +172,10 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
 
     AllocatingScope helpingHeap(heap);
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (MarkedBlockCage::isRequired() && m_directory->m_subspace->alignedMemoryAllocator() == heap.structureAllocator.get())
+        heap.cage().willAllocateStructureInSlowPath();
+#endif
     heap.collectIfNecessaryOrDefer(deferralContext);
     
     // Goofy corner case: the GC called a callback and now this directory has a currentBlock. This only

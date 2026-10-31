@@ -8,23 +8,33 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAnalysisContext.h"
+#include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinCallPlan.h"
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTHeat.h"
 #include "AOTJSONEmission.h"
+#include "AOTPlaceTypeTestsPlan.h"
+#include "AOTRecordUsers.h"
 #include "AOTResolveBuiltinsInternal.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRules.h"
+#include "AOTSchemaWalkers.h"
 #include "AOTSelectTypedResultsNodes.h"
 #include "AOTSelectTypedResultsTargets.h"
+#include "AOTSort.h"
 #include "AOTStringArena.h"
+#include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTValueFlowTypedResults.h"
 #include <algorithm>
+#include <optional>
 #include <ranges>
+#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -79,16 +89,21 @@ static std::optional<Value> tryMakeBuiltinCall(const TypingContext& typing, Buil
 
 static bool isCompiledContainer(const NodeDecisionInputs& inputs, ResultNodeRef ref, const ResultNode& node)
 {
-    return node.isContainer() && decideNodeCode(inputs, ref).code == NodeCode::Compiled;
+    if (!node.isContainer() || decideNodeCode(inputs, ref).code != NodeCode::Compiled)
+        return false;
+    // A parser reads an object with more members as a plain value. That is none of the type, so the source would be parsed a second time.
+    return node.shape != ResultShape::Object || node.members.size() <= inputs.build.limit(LimitID::MaxParsedObjectMembers);
 }
 
-static bool hasTypedPart(const NodeDecisionInputs& inputs, ResultNodeRef root)
+static bool hasTypedPart(const NodeDecisionInputs& inputs, ResultNodeRef ref)
 {
-    ResultNode node = describeNode(inputs.program, root);
-    if (!isCompiledContainer(inputs, root, node))
+    ResultNode node = describeNode(inputs.program, ref);
+    if (!isCompiledContainer(inputs, ref, node))
         return false;
+    if (node.shape == ResultShape::Array)
+        return !describeNode(inputs.program, node.children[0]).isContainer() || hasTypedPart(inputs, node.children[0]);
     return node.shape != ResultShape::Union || node.children.containsIf([&](ResultNodeRef arm) {
-        return isCompiledContainer(inputs, arm, describeNode(inputs.program, arm));
+        return hasTypedPart(inputs, arm);
     });
 }
 
@@ -290,6 +305,8 @@ static TypedResultChoice chooseResult(FunctionPassContext& context, TypedResultS
 
     TypeID type;
     if (flow.hasResults()) {
+        if (flow.isTypedResultUnprofitable(call.accessSite()))
+            return { };
         type = flow.typedResultType(call.accessSite());
         if (!type && findTypeOfTarget())
             return { .declineReason = TypedResultDeclineReason::TargetIsNotModeledByFlow };
@@ -326,9 +343,226 @@ static TypedResultChoice chooseResult(FunctionPassContext& context, TypedResultS
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// Which results are not worth a parser.
+
+static void sortAndRemoveRepeated(auto& list)
+{
+    AOT::sort(list);
+    removeRepeatedElements(list);
+}
+
+namespace {
+
+struct ReferencedRecords {
+    void add(TypeID id) { addTo(types, id.index(), !!id); }
+    void add(LayoutID id) { addTo(layouts, id.index(), !!id); }
+    void add(LayoutSetID id) { addTo(layoutSets, id.index(), !!id); }
+    void add(const auto&) { }
+
+    void addReferencesOf(const Function& function, ValueID id)
+    {
+        const Value& value = function.at(id);
+        add(value.type);
+        add(value.expected().predicted());
+        forEachReference(value, [&](const auto& reference) { add(reference); });
+    }
+
+    void addReferencesOf(const Function& function, const Block& block)
+    {
+        for (ValueID parameter : block.parameters)
+            addReferencesOf(function, parameter);
+        for (ValueID value : block.values)
+            addReferencesOf(function, value);
+        forEachReference(block.terminator, [&](const auto& reference) { add(reference); });
+    }
+
+    void merge(const ReferencedRecords& other)
+    {
+        types.merge(other.types);
+        layouts.merge(other.layouts);
+        layoutSets.merge(other.layoutSets);
+    }
+
+    static void addTo(BitVector& records, uint32_t index, bool isSet)
+    {
+        if (isSet)
+            records.set(index);
+    }
+
+    BitVector types;
+    BitVector layouts;
+    BitVector layoutSets;
+};
+
+} // anonymous namespace
+
+static void addTransitiveReferences(const Program& program, ReferencedRecords& references)
+{
+    Vector<TypeID, 32> types;
+    Vector<LayoutID, 32> layouts;
+    Vector<LayoutSetID, 32> layoutSets;
+    for (size_t index : references.types)
+        types.append(TypeID(static_cast<uint32_t>(index)));
+    for (size_t index : references.layouts)
+        layouts.append(LayoutID(static_cast<uint32_t>(index)));
+    for (size_t index : references.layoutSets)
+        layoutSets.append(LayoutSetID(static_cast<uint32_t>(index)));
+
+    auto visit = [&](const auto& id) {
+        using Record = std::remove_cvref_t<decltype(id)>;
+        if constexpr (std::same_as<Record, TypeID>) {
+            if (id && !references.types.set(id.index()))
+                types.append(id);
+        } else if constexpr (std::same_as<Record, LayoutID>) {
+            if (id && !references.layouts.set(id.index()))
+                layouts.append(id);
+        } else if constexpr (std::same_as<Record, LayoutSetID>) {
+            if (id && !references.layoutSets.set(id.index()))
+                layoutSets.append(id);
+        }
+    };
+    while (true) {
+        if (!types.isEmpty()) {
+            const Type& type = program.at(types.takeLast());
+            visit(type.environment);
+            visit(type.layouts);
+            for (const ClassPart& part : type.classes)
+                std::ranges::for_each(part.writtenContents, visit);
+            continue;
+        }
+        if (!layoutSets.isEmpty()) {
+            std::ranges::for_each(program.at(layoutSets.takeLast()).written(), visit);
+            continue;
+        }
+        if (layouts.isEmpty())
+            return;
+        LayoutID id = layouts.takeLast();
+        const Layout& layout = program.at(id);
+        forEachReference(static_cast<const LayoutRecord&>(layout), visit);
+        visit(layout.flow.base);
+        visit(layout.classFlow.prototypeBase);
+        std::ranges::for_each(layout.flow.members, visit);
+        visit(program.declaredMembersOf(id));
+        std::ranges::for_each(program.layoutsBelow(id), visit);
+    }
+}
+
+static bool hasBoundedSize(const Program& program, ResultNodeRef ref, Vector<ResultNodeRef, 8>& path, Vector<ResultNodeRef, 8>& known)
+{
+    if (known.contains(ref))
+        return true;
+    if (path.contains(ref))
+        return false;
+    ResultNode node = describeNode(program, ref);
+    if (node.shape == ResultShape::Array)
+        return false;
+
+    path.append(ref);
+    bool isBounded = true;
+    node.forEachChild([&](ResultNodeRef child) {
+        isBounded = isBounded && hasBoundedSize(program, child, path, known);
+    });
+    path.removeLast();
+    if (isBounded)
+        known.append(ref);
+    return isBounded;
+}
+
+static bool isCandidate(const Program& program, const FlowTypedResultCall& call)
+{
+    if (call.isUnprofitable || !std::ranges::all_of(call.layouts, [&](LayoutID layout) { return program.at(layout).flow.neverEscapes; }))
+        return false;
+    Vector<ResultNodeRef, 8> path;
+    Vector<ResultNodeRef, 8> known;
+    return hasBoundedSize(program, ResultNodeRef { call.type }, path, known);
+}
+
+// A parsed object is only found in its layout by a type test, so a cold call whose result never reaches code that gets tests gains nothing from a parser.
+// A build that reports mismatches tests the result wherever a declaration names its type.
+void markUnprofitableTypedResults(const Program& program, FlowResults& flow, const Heat& heat, BuildContext& build)
+{
+    if (!build.recordedOptions().usesExpectedTypes() || build.recordedOptions().policy() == MismatchPolicy::Report)
+        return;
+    std::span<const FlowTypedResultCall> calls = flow.typedResultCalls();
+    Vector<FunctionID, 4> callers;
+    for (const FlowTypedResultCall& call : calls) {
+        if (call.function && program.at(call.function).hasBody() && isCandidate(program, call))
+            callers.append(call.function);
+    }
+    if (callers.isEmpty())
+        return;
+    sortAndRemoveRepeated(callers);
+
+    auto findCall = [&](const Value& value) -> const FlowTypedResultCall* {
+        if (!typedResultCallOpcodes.contains(value.opcode) || !value.accessSite())
+            return nullptr;
+        auto found = std::ranges::lower_bound(calls, value.accessSite(), { }, &FlowTypedResultCall::call);
+        return found != calls.end() && found->call == value.accessSite() ? &*found : nullptr;
+    };
+    Vector<AccessSiteID, 4> coldCalls;
+    Vector<AccessSiteID, 4> hotCalls;
+    for (FunctionID id : callers) {
+        const Function& function = program.at(id);
+        FunctionAnalyses analyses(AnalysisContext { build, program, nullptr, nullptr, id }, function);
+        for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+            for (ValueID value : function.blocks[blockIndex].values) {
+                const FlowTypedResultCall* call = findCall(function.at(value));
+                if (!call || call->function != id || !isCandidate(program, *call))
+                    continue;
+                (mayPlaceTestsOfAccessesByName(heat, analyses, BlockID(blockIndex)) ? hotCalls : coldCalls).append(call->call);
+            }
+        }
+    }
+    sortAndRemoveRepeated(coldCalls);
+    coldCalls.removeAllMatching([&](AccessSiteID call) { return hotCalls.contains(call); });
+    if (coldCalls.isEmpty())
+        return;
+
+    auto layoutsOf = [&](AccessSiteID call) {
+        return std::ranges::lower_bound(calls, call, { }, &FlowTypedResultCall::call)->layouts.span();
+    };
+    Vector<LayoutID> layouts;
+    for (AccessSiteID call : coldCalls)
+        layouts.append(layoutsOf(call));
+    sortAndRemoveRepeated(layouts);
+
+    const ParallelLoops& loops = build.parallelLoops();
+    Vector<uint8_t> hasBody(program.functions.size(), [&](size_t index) { return static_cast<uint8_t>(program.functions[index].hasBody()); });
+    Vector<FunctionID> functions = findFunctionsSeeing(program, { .layouts = layouts.span() }, hasBody.span(), hasBody.span(), loops);
+    Vector<std::optional<ReferencedRecords>> referencesByWorker(loops.width());
+    forEachIndexInParallel(loops, functions.size(), [&](unsigned index, unsigned worker) {
+        FunctionID id = functions[index];
+        const Function& function = program.at(id);
+        FunctionAnalyses analyses(AnalysisContext { build, program, nullptr, nullptr, id }, function);
+        std::optional<ReferencedRecords>& references = referencesByWorker[worker];
+        bool hasTestedBlock = false;
+        for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+            if (!mayPlaceTestsOfAccessesByName(heat, analyses, BlockID(blockIndex)))
+                continue;
+            if (!references)
+                references.emplace();
+            references->addReferencesOf(function, function.blocks[blockIndex]);
+            hasTestedBlock = true;
+        }
+        if (hasTestedBlock)
+            forEachReference(static_cast<const FunctionRecord&>(function), [&](const auto& reference) { references->add(reference); });
+    });
+    ReferencedRecords references;
+    for (const std::optional<ReferencedRecords>& referencesOfWorker : referencesByWorker) {
+        if (referencesOfWorker)
+            references.merge(*referencesOfWorker);
+    }
+    addTransitiveReferences(program, references);
+
+    coldCalls.removeAllMatching([&](AccessSiteID call) {
+        return std::ranges::any_of(layoutsOf(call), [&](LayoutID layout) { return references.layouts.get(layout.index()); });
+    });
+    flow.markTypedResultsUnprofitable(coldCalls.span());
+}
+
 // What a call becomes.
 
-// What the casts between the call and its await say holds for the promise of json(), not for the promise of bytes().
+// What the casts between the call and its await say isBounded for the promise of json(), not for the promise of bytes().
 static void removeCasts(Function& function, BlockID block, ValueID lastCast, ValueID promise)
 {
     BitVector casts;

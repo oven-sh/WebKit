@@ -15,6 +15,7 @@
 #include "AOTCellFormat.h"
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
+#include "AOTDescriptorLiteral.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGuardFactDetails.h"
@@ -29,6 +30,7 @@
 #include "AOTRuntimeValidationEmitter.h"
 #include "AOTShapeTestEmitter.h"
 #include "AOTSlotEmitter.h"
+#include "AOTSort.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTThreshold.h"
 #include "AOTUseLists.h"
@@ -161,6 +163,8 @@ Word32 SlotAccessEmitter::distanceBehindLowestOffset(CellPointer cell, const Fie
 
 CellPointer SlotAccessEmitter::baseOfSlot(CellPointer cell, const FieldAccess& access)
 {
+    // The table of distances has entries for the members with the field alone.
+    checkIsCompiledObjectOf(cell, access.findsOffsetByShape ? access.membersWithField : access.receivers);
     if (!access.findsOffsetByShape)
         return cell;
     return CellPointer(m_out.add(cell.value(), zeroExtended(distanceBehindLowestOffset(cell, access)).value()));
@@ -233,7 +237,10 @@ Operand SlotAccessEmitter::readSlot(const ValueContext& value, CellPointer cell,
             return undefinedResult(value);
         return guardProvesSlotFilled(analyses(), value.value()) ? resultBehindTestThatNeverPasses(value) : failRead(value, InternalErrorKind::SlotAccessNotPlaced);
     case FieldAccess::Coverage::SomeMembers:
-        return mayBeAbsent ? readIfMemberHasField(value, cell, access, load) : inResultRepresentation(value, loadFilledSlot(value, baseOfSlot(cell, access), access));
+        if (mayBeAbsent)
+            return readIfMemberHasField(value, cell, access, load);
+        checkIsCompiledObjectOf(cell, access.membersWithField);
+        return inResultRepresentation(value, loadFilledSlot(value, baseOfSlot(cell, access), access));
     case FieldAccess::Coverage::EveryMemberHasSlot:
     case FieldAccess::Coverage::EveryMember:
         return mayBeAbsent ? load() : inResultRepresentation(value, loadFilledSlot(value, baseOfSlot(cell, access), access));
@@ -269,6 +276,9 @@ std::optional<CellPointer> SlotAccessEmitter::loadHalfOfAccessorInSlot(const Val
     CellPointer accessor = held.is<CellPointer>() ? held.as<CellPointer>()
         : held.is<NarrowReference>() ? emitter<ConversionEmitter>().decode(held.as<NarrowReference>(), Type::object(), Representation::Cell).as<CellPointer>()
         : unboxCell(held.as<Boxed>());
+    checkClaim(accessor, [&] {
+        return hasCellType(accessor, GetterSetterType);
+    });
     return CellPointer(m_out.loadPtr(m_out.address(m_heaps.at(m_program, location), accessor.value(), offsetInGetterSetter)));
 }
 
@@ -308,28 +318,36 @@ void SlotAccessEmitter::readDeferringSlot(const ValueContext& value, bool readsE
     define(value, testsForField ? readIfMemberHasField(value, cell, access, load) : load());
 }
 
-// If every receiver defers the closure of the same function, capturing itself or nothing, a stub creates it as the allocation would have.
+// If every receiver defers a closure that captures the object, or every one a closure that captures nothing, a stub creates it as the allocation would have.
+// `new Readable({ read() {} })`: the constructor reads `options.read` of every caller's literal, each with a function of its own.
 CellPointer SlotAccessEmitter::makeDeferredClosure(const ValueContext& value, CellPointer cell, const FieldAccess& access)
 {
-    FunctionID function;
+    AOT_THRESHOLD(unsigned, maxFunctionsDeferredAtOneRead, 8);
+    Vector<ConstantEmitter::DeferredFunction, 4> functions;
     ClosureDeferral deferral = ClosureDeferral::Unknown;
-    bool isOneClosure = !access.findsOffsetByShape && !access.slot.isOutOfLine() && std::ranges::all_of(m_program.at(access.receivers).completeMembers(), [&](LayoutID member) {
+    bool areAlike = !access.findsOffsetByShape && !access.slot.isOutOfLine() && std::ranges::all_of(m_program.at(access.receivers).completeMembers(), [&](LayoutID member) {
         std::optional<uint32_t> field = m_program.at(member).findField(access.key);
         if (!field)
             return true;
         FieldReference declaration = declarationOf(m_program, { member, *field });
         const LocationFlow& location = flowOf(m_program, declaration).location;
-        if (!fieldAt(m_program, declaration).form.isEmpty() || !location.deferredFunction || (function && (function != location.deferredFunction || deferral != location.deferral)))
+        if (!fieldAt(m_program, declaration).form.isEmpty() || !location.deferredFunction || (!functions.isEmpty() && deferral != location.deferral))
             return false;
-        function = location.deferredFunction;
         deferral = location.deferral;
-        return true;
+        size_t known = functions.findIf([&](const ConstantEmitter::DeferredFunction& deferred) { return deferred.function == location.deferredFunction; });
+        if (known == notFound) {
+            known = functions.size();
+            functions.append({ location.deferredFunction, { } });
+        }
+        functions[known].layouts.append(member);
+        return functions.size() <= maxFunctionsDeferredAtOneRead;
     });
-    if (isOneClosure && (deferral == ClosureDeferral::CapturesNothing || deferral == ClosureDeferral::CapturesObject)) {
-        if (std::optional<CellPointer> closure = emitter<ConstantEmitter>().tryMakeClosureOfField(value, function, cell, access.slot.offset, deferral == ClosureDeferral::CapturesObject))
-            return *closure;
-    }
-    return callOperation<CellPointer>(value, RuntimeOperation::MaterializeDeferredClosure, { cell, identifierNumber(access.key) }, { .isOnRarePath = true });
+    auto makeInRunTime = [&] {
+        return callOperation<CellPointer>(value, RuntimeOperation::MaterializeDeferredClosure, { cell, identifierNumber(access.key) }, { .isOnRarePath = true });
+    };
+    if (areAlike && !functions.isEmpty() && (deferral == ClosureDeferral::CapturesNothing || deferral == ClosureDeferral::CapturesObject))
+        return emitter<ConstantEmitter>().makeClosureOfField(value, functions.span(), cell, access.slot.offset, deferral == ClosureDeferral::CapturesObject, makeInRunTime);
+    return makeInRunTime();
 }
 
 Operand SlotAccessEmitter::loadDeferringSlot(const ValueContext& value, CellPointer cell, const FieldAccess& access, bool readsEmptySlotAsUndefined)
@@ -494,8 +512,13 @@ void SlotAccessEmitter::generatePutSlotOrAdd(const ValueContext& value)
             writeSlot(value, cell, access, stored);
         else if (!newObject || newObject->mayHaveExtension)
             slots.storeIfExtensionHolds(baseOfSlot(cell, access), access.slot, location, get(stored), access.extensionWord);
+        else {
+            checkClaim(cell, [&] {
+                return slots.hasNoExtension(cell, access.extensionWord);
+            });
+        }
     };
-    if (!mayCreateListedField(access)) {
+    if (!mayCreateListedField(access) || (newObject && newObject->hasCreated(access.key))) {
         store();
         return;
     }
@@ -520,20 +543,6 @@ void SlotAccessEmitter::generatePutSlotOrAdd(const ValueContext& value)
     // The key is listed first, while the slot still says whether the field is missing.
     listCreatedFields(value, cell, access.membersWithField, singleElementSpan(access.key), newObject, isExpectedToCreate(value->accessSite()), listFieldIfMissing);
     store();
-}
-
-static OptionSet<FieldForm> formCreatedBy(OptionSet<PropertyDescriptorFlags> flags)
-{
-    OptionSet<FieldForm> form;
-    if (flags.containsAny({ PropertyDescriptorFlags::HasGet, PropertyDescriptorFlags::HasSet }))
-        form.add(FieldForm::IsAccessor);
-    else if (!flags.contains(PropertyDescriptorFlags::IsWritable))
-        form.add(FieldForm::IsReadOnly);
-    if (!flags.contains(PropertyDescriptorFlags::IsEnumerable))
-        form.add(FieldForm::IsNotEnumerable);
-    if (!flags.contains(PropertyDescriptorFlags::IsConfigurable))
-        form.add(FieldForm::IsNotConfigurable);
-    return form;
 }
 
 // Compiled code calls the getter found in a filled slot as one of the functions listed in the field's type.
@@ -860,8 +869,10 @@ std::optional<StateOfNewObject> SlotAccessEmitter::stateOfObjectsThatMeet(BlockI
 
 bool SlotAccessEmitter::leavesObjectsAsTheyAre(ValueID id)
 {
+    // A variable of compiled code is no part of an object: `exports` holds the object from the first line of a CommonJS file on. Neither is what the host keeps.
+    constexpr AbstractHeapSet heapsOutsideObjects = heapsWhoseWritesNobodySees | compiledCodeHeaps | AbstractHeapSet { AbstractHeap::ExternalState };
     const Effects& effects = analyses().effectsOf(id).normal;
-    return !effects.mayRunOtherCode() && effects.writes.containsOnly(heapsWhoseWritesNobodySees);
+    return !effects.mayRunOtherCode() && effects.writes.containsOnly(heapsOutsideObjects);
 }
 
 bool SlotAccessEmitter::applyStoreBySlot(StateOfNewObject& state, const Value& store) const
@@ -872,7 +883,7 @@ bool SlotAccessEmitter::applyStoreBySlot(StateOfNewObject& state, const Value& s
             return false;
         const FieldAccess& access = m_placement.fieldAccess(id);
         state.mayHaveExtension |= access.slot.isOutOfLine() && needsStorageFor(access.slot, typeOf(stored));
-        if (mayAdd && mayCreateListedField(access))
+        if (mayAdd && mayCreateListedField(access) && !state.hasCreated(access.key))
             createdKeys.append(access.key);
         return true;
     };
@@ -906,6 +917,8 @@ bool SlotAccessEmitter::applyStoreBySlot(StateOfNewObject& state, const Value& s
     if (!orderWordAfter)
         return false;
     state.orderWord = *orderWordAfter;
+    state.createdKeys.appendVector(createdKeys);
+    AOT::sortInLine(state.createdKeys, { }, &PropertyKeyID::index);
     return true;
 }
 
@@ -930,9 +943,12 @@ std::optional<StateOfNewObject> SlotAccessEmitter::stateOfNewObjectBefore(const 
                 const Value& value = m_function.at(id);
                 // A definition on a newly created object creates its field without calling the runtime, like a store by slot.
                 bool storesBySlotIntoObject = (storesBySlot.contains(value.opcode) || value.opcode == Opcode::DefineOwnProperty) && analyses().identityOf(value.objectOperand()) == object;
-                if (storesBySlotIntoObject)
+                if (storesBySlotIntoObject) {
                     storesOnTheWay.append(id);
-                else if (!leavesObjectsAsTheyAre(id))
+                    // A long row of stores is walked once, not once from each of them.
+                    if (m_lastStateOfNewObject && m_lastStateOfNewObject->object == object && m_lastStateOfNewObject->user == id)
+                        return m_lastStateOfNewObject->before;
+                } else if (!leavesObjectsAsTheyAre(id))
                     return std::nullopt;
             }
             if (std::ranges::contains(m_function.at(block).parameters.span(), object))
@@ -960,6 +976,11 @@ std::optional<StateOfNewObject> SlotAccessEmitter::stateOfNewObjectBefore(const 
         if (!applyStoreBySlot(*state, m_function.at(store)))
             return std::nullopt;
     }
+    CellPointer cell = in<CellPointer>(operand);
+    checkClaim(cell, [&] {
+        return equal(emitter<ShapeTestEmitter>().orderWordOf(cell), static_cast<int32_t>(state->orderWord));
+    });
+    m_lastStateOfNewObject = LastStateOfNewObject { object, user.id(), *state };
     return state;
 }
 

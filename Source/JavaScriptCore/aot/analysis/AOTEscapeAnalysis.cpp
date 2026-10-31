@@ -27,6 +27,7 @@
 #include <utility>
 #include <wtf/BitVector.h>
 #include <wtf/CheckedArithmetic.h>
+#include <wtf/MathExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -41,7 +42,7 @@ static Vector<Containment> collectLeakedContainments(const PointsToResults& resu
         if (entry.isLeaked)
             leaked.append({ entry.container, entry.object });
     }
-    AOT::sort(leaked);
+    AOT::sortInLine(leaked);
     removeRepeatedElements(leaked);
     return leaked;
 }
@@ -62,8 +63,7 @@ static bool escapesThroughContainer(const EscapeAnalysis& escape, const PointsTo
     const ValueSet* containers = results.setOf(use.retainedBy);
     if (!containers)
         return false;
-    for (size_t index : containers->objects) {
-        ObjectID container(index);
+    for (ObjectID container : ObjectSet(containers->objects)) {
         if (isOpenContainer(escape.at(container)) || std::ranges::binary_search(leaked, Containment { container, object }))
             return true;
     }
@@ -75,10 +75,63 @@ static bool escapesThroughCall(const PointsToResults& results, const SolvedUse& 
     return use.uses.containsAny(callingUses) && results.objects[object.index()].reasons.containsAny(callReasons);
 }
 
-bool ObjectSet::overlaps(ObjectSet other) const
+void SparseObjectSet::add(std::span<const Entry> others, SparseObjectSet& added)
 {
-    for (ObjectID object : *this) {
-        if (other.contains(object))
+    size_t position = 0;
+    for (const Entry& other : others) {
+        position = positionOf(other.index, position);
+        if (position == m_entries.size() || m_entries[position].index != other.index) {
+            m_entries.insert(position, other);
+            added.add(other);
+            continue;
+        }
+        Word missing = other.word & ~m_entries[position].word;
+        if (!missing)
+            continue;
+        m_entries[position].word |= missing;
+        added.add({ other.index, missing });
+    }
+}
+
+void SparseObjectSet::add(const Entry& entry)
+{
+    size_t position = !m_entries.isEmpty() && m_entries.last().index < entry.index ? m_entries.size() : positionOf(entry.index, 0);
+    if (position == m_entries.size() || m_entries[position].index != entry.index)
+        m_entries.insert(position, entry);
+    else
+        m_entries[position].word |= entry.word;
+}
+
+void SparseObjectSet::remove(const SparseObjectSet& others)
+{
+    size_t position = 0;
+    m_entries.removeAllMatching([&](Entry& entry) {
+        position = others.positionOf(entry.index, position);
+        if (position < others.m_entries.size() && others.m_entries[position].index == entry.index)
+            entry.word &= ~others.m_entries[position].word;
+        return !entry.word;
+    });
+}
+
+size_t ObjectSet::size() const
+{
+    size_t size = 0;
+    for (const SparseObjectSet::Entry& entry : m_words.entries())
+        size += std::popcount(entry.word);
+    return size;
+}
+
+bool SparseObjectSet::overlaps(const SparseObjectSet& other) const
+{
+    // One object is held against all that an array holds, once for each read and store.
+    if (m_entries.size() > other.m_entries.size())
+        return other.overlaps(*this);
+    size_t position = 0;
+    for (const Entry& entry : m_entries) {
+        position = other.positionOf(entry.index, position);
+        if (position == other.m_entries.size())
+            return false;
+        if (other.m_entries[position].index == entry.index && (other.m_entries[position].word & entry.word))
             return true;
     }
     return false;
@@ -86,13 +139,10 @@ bool ObjectSet::overlaps(ObjectSet other) const
 
 std::optional<ObjectID> ObjectSet::onlyMember() const
 {
-    Iterator first = begin();
-    if (first == end())
+    std::span<const SparseObjectSet::Entry> entries = m_words.entries();
+    if (entries.size() != 1 || !hasOneBitSet(entries.front().word))
         return std::nullopt;
-    ObjectID object = *first;
-    if (++first != end())
-        return std::nullopt;
-    return object;
+    return *begin();
 }
 
 namespace {
@@ -282,30 +332,40 @@ void EscapeAnalysis::takeSets(PointsToResults& results)
 {
     m_setOfValue = WTF::move(results.setOfValue);
     m_sets.reserveInitialCapacity(results.sets.size());
-    BitVector allocations(m_objects.size());
-    Vector<size_t, 8> entryParameters;
-    Vector<size_t, 2> superConstructResults;
+    // A function that constructs thousands of derived classes has as many results of super().
+    SparseObjectSet entryParameters;
+    SparseObjectSet superConstructResults;
+    SparseObjectSet frameWords;
+    SparseObjectSet entryParametersBesideFrameWords;
     for (size_t index = 0; index < m_objects.size(); ++index) {
         if (m_objects[index].kind == ObjectKind::Allocation)
-            allocations.quickSet(index);
-        else {
-            entryParameters.append(index);
-            if (m_function.at(m_objects[index].definition).opcode != Opcode::Parameter)
-                superConstructResults.append(index);
+            continue;
+        SparseObjectSet::Entry entry = SparseObjectSet::entryOf(ObjectID(index));
+        entryParameters.add(entry);
+        const Value& definition = m_function.at(m_objects[index].definition);
+        if (definition.opcode == Opcode::GetHeapFrameWord) {
+            frameWords.add(entry);
+            continue;
         }
+        entryParametersBesideFrameWords.add(entry);
+        if (definition.opcode != Opcode::Parameter)
+            superConstructResults.add(entry);
     }
     // Once for each set, not once for each question about two values: the sets of a row of a thousand branches hold hundreds of objects, and each read is held against each store.
     for (ValueSet& set : results.sets) {
-        StoredSet stored { WTF::move(set.objects), { }, set.mayBeUntracked, false, false };
-        stored.holdsEntryParameter = std::ranges::any_of(entryParameters, [&](size_t index) {
-            return stored.objects.get(index);
-        });
+        StoredSet stored { WTF::move(set.objects), { }, set.mayBeUntracked, false, false, false, { } };
+        stored.holdsEntryParameter = stored.objects.overlaps(entryParameters);
         if (stored.holdsEntryParameter) {
-            stored.holdsSuperConstructResult = std::ranges::any_of(superConstructResults, [&](size_t index) {
-                return stored.objects.get(index);
-            });
+            stored.holdsSuperConstructResult = stored.objects.overlaps(superConstructResults);
             stored.allocationsBesideEntryParameters = stored.objects;
-            stored.allocationsBesideEntryParameters.filter(allocations);
+            stored.allocationsBesideEntryParameters.remove(entryParameters);
+            stored.holdsNothingElseFromOutside = !stored.mayBeUntracked && !stored.objects.overlaps(entryParametersBesideFrameWords);
+            if (stored.holdsNothingElseFromOutside) {
+                for (ObjectID object : ObjectSet(stored.objects)) {
+                    if (frameWords.contains(object))
+                        stored.groupsOfFrameWords.appendIfNotContains(*m_function.at(m_objects[object.index()].definition).allocationGroup());
+                }
+            }
         }
         m_sets.append(WTF::move(stored));
     }
@@ -328,7 +388,7 @@ void EscapeAnalysis::computeContents(const PointsToResults& results)
     containments.reserveInitialCapacity(results.contents.size());
     for (const SolvedContents& entry : results.contents)
         containments.append({ entry.container, entry.object });
-    AOT::sort(containments);
+    AOT::sortInLine(containments);
     removeRepeatedElements(containments);
 
     groupByIndex(numberOfObjects(), m_firstContent, m_contents, [&](const auto& visit) {
@@ -445,7 +505,7 @@ void EscapeAnalysis::listUses() const
         return OrderedUse { useLists.orderOf(m_sharedUses[m_unlistedUses[index].sharedUse].use), static_cast<uint32_t>(index) };
     });
     if (!std::ranges::is_sorted(orderedUses, { }, &OrderedUse::order))
-        AOT::stableSort(orderedUses, { }, &OrderedUse::order);
+        AOT::stableSortInLine(orderedUses, { }, &OrderedUse::order);
     Vector<uint32_t, 32> nextPosition(m_firstUse.span().first(m_objects.size()));
     m_uses.grow(m_firstUse.last());
     for (const OrderedUse& ordered : orderedUses) {
@@ -555,7 +615,7 @@ bool mayNameUnescapedAllocation(const Function& function, ValueID value)
                 return true;
             continue;
         }
-        if (definingOpcodes.contains(definition.opcode))
+        if (definition.opcode != Opcode::GetHeapFrameWord && definingOpcodes.contains(definition.opcode))
             return true;
         definition.forEachOperand([&](ValueID operand, uint32_t) {
             definitions.appendIfNotContains(operand);
@@ -645,7 +705,7 @@ void EscapeAnalysis::computeLiveInstances(const CFG& cfg, const UseLists& useLis
     if (candidates.isEmpty())
         return;
 
-    AOT::sort(candidates, { }, [](const AllocationInCycle& candidate) {
+    AOT::sortInLine(candidates, { }, [](const AllocationInCycle& candidate) {
         return std::pair { candidate.block, candidate.index };
     });
 
@@ -713,10 +773,13 @@ bool EscapeAnalysis::isOnlyOperandHolding(ObjectID object, const Use& use) const
 EscapeAnalysis::AllocationSet EscapeAnalysis::allocationSetOf(ValueID value) const
 {
     ValueSetID id = m_setOfValue[value.index()];
-    if (!id)
-        return { m_noObjects, true, false };
+    if (!id) {
+        // The function that resumes a generator reads the words of the frame before it stores any, and returns behind its stores: what a word holds an earlier run has put there.
+        bool isWordOfOwnFrame = m_function.role == FunctionRole::CoroutineBody && m_function.at(sameObjectThroughCasts(m_function, value).valueInFrontOfFacts()).opcode == Opcode::GetHeapFrameWord;
+        return { m_emptySet, true, isWordOfOwnFrame, nullptr };
+    }
     const StoredSet& set = m_sets[id.index()];
-    return { set.holdsEntryParameter ? set.allocationsBesideEntryParameters : set.objects, set.mayBeUntracked || set.holdsEntryParameter, !set.mayBeUntracked && !set.holdsSuperConstructResult };
+    return { set.holdsEntryParameter ? set.allocationsBesideEntryParameters : set.objects, set.mayBeUntracked || set.holdsEntryParameter, !set.mayBeUntracked && !set.holdsSuperConstructResult, set.holdsNothingElseFromOutside ? &set.groupsOfFrameWords : nullptr };
 }
 
 AliasResult EscapeAnalysis::alias(ValueID a, ValueID b) const
@@ -765,8 +828,12 @@ AliasResult EscapeAnalysis::aliasAmongAllocations(ValueID a, ValueID b, NOESCAPE
     }
     if (areBothTracked)
         return AliasResult::NoAlias;
-    if (first.mayBeUntracked && second.mayBeUntracked)
-        return AliasResult::MayAlias;
+    if (first.mayBeUntracked && second.mayBeUntracked) {
+        bool areWordsOfOtherGroups = first.groupsOfFrameWords && second.groupsOfFrameWords && std::ranges::none_of(*first.groupsOfFrameWords, [&](uint32_t group) {
+            return second.groupsOfFrameWords->contains(group);
+        });
+        return areWordsOfOtherGroups ? AliasResult::NoAlias : AliasResult::MayAlias;
+    }
     if ((first.mayBeUntracked ? first : second).existedAtEntryIfUntracked)
         return AliasResult::NoAlias;
 
@@ -828,7 +895,10 @@ static OperandSummary summarizeRetention(FunctionAnalyses& analyses, OperandUses
 
 static bool mayLoadReference(FunctionAnalyses& analyses, const ObjectUse& objectUse)
 {
-    return objectUse.readsContents && !analyses.escape().objectDefinedBy(objectUse.use.user);
+    if (!objectUse.readsContents)
+        return false;
+    std::optional<ObjectID> made = analyses.escape().objectDefinedBy(objectUse.use.user);
+    return !made || analyses.function().at(analyses.escape().at(*made).definition).opcode == Opcode::GetHeapFrameWord;
 }
 
 // The escape analysis does not follow what is read out of a parameter. The summaries that the function is analyzed against cover it.

@@ -190,6 +190,13 @@ struct HandlerKnownByItsSlots {
     const FieldData* fieldOfGetOwnPropertyDescriptor { nullptr };
 };
 
+// The field of an object's layout that has the name of a field that a class declares. Layouts and their fields are data of the image, so what is remembered never goes stale.
+struct FieldUnderDeclaredName {
+    const LayoutData* layoutOfObject;
+    const FieldData* declared;
+    const FieldData* field;
+};
+
 struct State {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(State);
     WTF_MAKE_NONCOPYABLE(State);
@@ -201,6 +208,8 @@ struct State {
 
     Instance& instance;
     const ProgramTables& tables;
+    // The realm runs other images beside the one that these tables are of: a compiled object or a closure of the realm need not be theirs.
+    const bool sharesRealm;
     ZeroedPages pages;
     ZeroedTableArena tableArena;
     std::unique_ptr<CacheRegistry> caches;
@@ -230,6 +239,9 @@ struct State {
     uint64_t keptByCleanup { 0 };
     static constexpr unsigned numberOfHandlersKnownByTheirSlots = 8;
     std::array<HandlerKnownByItsSlots, numberOfHandlersKnownByTheirSlots> handlersKnownByTheirSlots { };
+    static constexpr size_t numberOfFieldsUnderDeclaredNames = 64;
+    // Allocated when a private name is first looked for in an object of another layout than the one that declares it.
+    FieldUnderDeclaredName* fieldsUnderDeclaredNames { nullptr };
 
 private:
     explicit State(Instance&);

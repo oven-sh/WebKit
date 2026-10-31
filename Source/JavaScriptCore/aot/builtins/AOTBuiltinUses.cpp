@@ -37,6 +37,7 @@ public:
     {
         expectArgumentsToBePresent(isCalledOnlyDirectly(inputs.program.builtins(), callee));
         expectArgumentsRefusedWhenAbsentToBePresent(inputs.program.builtins(), callee, mode);
+        expectArgumentsTakenAsTheyAreOnlyWhenPresentToBePresent(inputs.program.builtins(), callee, mode);
         expectArgumentsToBeWhatEveryOverloadTakes(inputs.program.builtins(), callee, mode);
         if (mode == BuiltinCallMode::Call)
             expectReceiverToBePresent(inputs.program.builtins(), callee);
@@ -82,6 +83,33 @@ private:
                     && fitOf(m_typing, TypeTable::null, parameter->accepted).fit == TypeFit::Outside;
             });
             if (refusesAbsentArgument && isTakenAsItIs)
+                m_expected.arguments[index] = present;
+        }
+    }
+
+    // `text.replace(pattern, "")` where the pattern is null|RegExp: one overload takes a RegExp as it is and neither undefined nor null. Expect the object, and pick that overload. `undefined|string` stays as it is: it is what a read of a list that may miss answers, and the overload that takes it is not another kind of call.
+    void expectArgumentsTakenAsTheyAreOnlyWhenPresentToBePresent(const BuiltinTable& table, BuiltinID callee, BuiltinCallMode mode)
+    {
+        TypeArena& types = m_typing.types;
+        for (size_t index = 0; index < m_expected.arguments.size() && index <= BuiltinOperand::maxArgumentIndex; ++index) {
+            TypeID proven = m_proven.arguments[index];
+            if (m_expected.arguments[index] != proven || !types.at(proven).mayBeUndefinedOrNull())
+                continue;
+            TypeID present = types.intern(types.at(proven).withoutPrimitives(Primitive::UndefinedOrNull));
+            if (!types.at(present).isObject())
+                continue;
+            bool isTakenOnlyWhenPresent = std::ranges::any_of(table.overloadIDsOf(callee), [&](BuiltinOverloadID id) {
+                const BuiltinOverload& overload = table.at(id);
+                if (overload.mode != mode)
+                    return false;
+                const BuiltinParameter* parameter = table.parameterFor(overload, BuiltinOperand::argument(static_cast<unsigned>(index)));
+                if (!parameter || parameter->mode != BuiltinParameterMode::Required || parameter->conversion != BuiltinConversion::None)
+                    return false;
+                return fitOf(m_typing, present, parameter->accepted).fit == TypeFit::Inside
+                    && fitOf(m_typing, TypeTable::undefined, parameter->accepted).fit == TypeFit::Outside
+                    && fitOf(m_typing, TypeTable::null, parameter->accepted).fit == TypeFit::Outside;
+            });
+            if (isTakenOnlyWhenPresent)
                 m_expected.arguments[index] = present;
         }
     }
@@ -167,6 +195,9 @@ static BuiltinUsePlan planByOpcode(const BuiltinUseInputs& inputs, ValueID use, 
 
     switch (opcode) {
     case Opcode::PropGet:
+        // It has been moved as a read that runs nothing. The read behind its failing side is the one that becomes the call of a getter.
+        if (inputs.function.at(use).asksOnlyTables())
+            return { };
         return planBuiltinRead(inputs, use, point);
     case Opcode::PropSet:
         return planBuiltinStore(inputs, use, point);

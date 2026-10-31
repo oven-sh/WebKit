@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinMembers.h"
 #include "AOTRuleSupport.h"
 #include "AOTSelectionContext.h"
 #include "AOTVector.h"
@@ -168,8 +169,19 @@ static std::optional<InlineMatch> findInlineMatch(SelectionContext& context, Val
     return match;
 }
 
-static void rewriteInlineCall(const Program& program, GroupRewriter& rewriter, const InlineMatch& match)
+static Vector<Value, 1> makeFirstReadsOf(SelectionContext& context, std::span<const BuiltinID> members)
 {
+    Vector<Value, 1> reads;
+    for (BuiltinID member : members) {
+        if (std::optional<Value> read = tryMakeInitializeBuiltin(context.program().builtins(), context.flow(), member))
+            reads.append(WTF::move(*read));
+    }
+    return reads;
+}
+
+static void rewriteInlineCall(SelectionContext& context, GroupRewriter& rewriter, const InlineMatch& match)
+{
+    const Program& program = context.program();
     ValueID root = match.group.root;
     const Value& original = rewriter.original(root);
     switch (match.form) {
@@ -178,7 +190,8 @@ static void rewriteInlineCall(const Program& program, GroupRewriter& rewriter, c
     case InlineForm::TwoWay: {
         Terminator fast(TerminatorKind::TryCallInline);
         fillInlineCall(fast, program, original, match.builtin);
-        rewriter.emitTwoWay(WTF::move(fast));
+        MembersReadByHost members = membersReadByHostIn(program.builtins(), overloadOf(program, original));
+        rewriter.emitTwoWay(WTF::move(fast), makeFirstReadsOf(context, members.inEveryCall.span()), makeFirstReadsOf(context, members.whereInlineCodeAnswers.span()));
         return;
     }
     case InlineForm::Whole:
@@ -201,9 +214,8 @@ void selectInlineBuiltin(SelectionContext& context)
             matches.append(WTF::move(*match));
     }
 
-    const Program& program = context.program();
     context.rewriteGroups(SelectionRuleID::InlineBuiltin, matches, [&](GroupRewriter& rewriter, const InlineMatch& match) {
-        rewriteInlineCall(program, rewriter, match);
+        rewriteInlineCall(context, rewriter, match);
     });
 }
 
