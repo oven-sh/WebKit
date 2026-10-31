@@ -236,6 +236,9 @@ protected:
     DECLARE_DEFAULT_FINISH_CREATION;
 
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    Identifier toIdentifierSlow(JSGlobalObject*) const;
+#endif
     Identifier toIdentifier(JSGlobalObject*) const;
     GCOwnedDataScope<AtomStringImpl*> toAtomString(JSGlobalObject*) const;
     GCOwnedDataScope<AtomStringImpl*> toExistingAtomString(JSGlobalObject*) const;
@@ -950,6 +953,17 @@ ALWAYS_INLINE Identifier JSString::toIdentifier(JSGlobalObject* globalObject) co
 {
     if constexpr (validateDFGDoesGC)
         getVM(globalObject).verifyCanGC();
+#if USE(BUN_JSC_ADDITIONS)
+    if (!isRope()) [[likely]] {
+        if (SUPPRESS_UNCOUNTED_LOCAL AtomStringImpl* atom = existingAtomOrNull())
+            return Identifier::fromString(getVM(globalObject), Ref { *atom });
+    }
+    return toIdentifierSlow(globalObject);
+}
+
+NEVER_INLINE inline Identifier JSString::toIdentifierSlow(JSGlobalObject* globalObject) const
+{
+#endif
     if (isRope())
         return static_cast<const JSRopeString*>(this)->toIdentifier(globalObject);
     VM& vm = getVM(globalObject);
