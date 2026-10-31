@@ -27,7 +27,20 @@ namespace JSC { namespace AOT {
 
 // What FunctionRareData::compiledAllocationConstructor() holds for a function that was constructed with itself as new.target. Any other constructor is remembered by its closure number.
 static constexpr uint32_t constructorIsNewTarget = FunctionRareData::maxCompiledAllocationConstructor;
-static_assert(ClosureWord::functionMask < constructorIsNewTarget);
+// The same, where the function only returns and its object is an ordinary one of the default size: llint_aot_op_construct makes the object and enters nothing. It tells by the high bits alone.
+static constexpr uint32_t bitOfConstructorWithBody = 1u << 16;
+static constexpr uint32_t constructorIsNewTargetAndOnlyReturns = constructorIsNewTarget & ~bitOfConstructorWithBody;
+static_assert(ClosureWord::functionMask < constructorIsNewTargetAndOnlyReturns && ClosureWord::functionMask >> 16 < constructorIsNewTargetAndOnlyReturns >> 16);
+constexpr bool isConstructorThatIsNewTarget(uint32_t rememberedConstructor) { return (rememberedConstructor | bitOfConstructorWithBody) == constructorIsNewTarget; }
+
+namespace Interpreter {
+
+inline constexpr uint8_t highBitsOfConstructorThatOnlyReturns = constructorIsNewTargetAndOnlyReturns >> 16;
+inline constexpr size_t sizeOfDefaultFinalObject = sizeof(JSObjectWithButterfly) + JSFinalObject::defaultInlineCapacity * sizeof(EncodedJSValue);
+static_assert(JSFinalObject::defaultInlineCapacity == 6, "llint_aot_op_construct clears them one by one");
+inline constexpr ptrdiff_t offsetOfAllocatorOfDefaultFinalObject = OBJECT_OFFSETOF(VM, heap) + OBJECT_OFFSETOF(Heap, cellSpace) + CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(sizeOfDefaultFinalObject) * sizeof(Allocator);
+
+} // namespace Interpreter
 
 // The fast paths of ClassTable::createThis(). They call nothing, so they cannot collect and their callers need no frame.
 
@@ -42,7 +55,7 @@ ALWAYS_INLINE Structure* rememberedStructureOfThis(VM& vm, JSCell* constructor, 
         return nullptr;
     uint32_t rememberedConstructor = rareData->compiledAllocationConstructor();
     if (constructor == newTarget)
-        return rememberedConstructor == constructorIsNewTarget ? remembered : nullptr;
+        return isConstructorThatIsNewTarget(rememberedConstructor) ? remembered : nullptr;
     return closureNumberOf(constructor) == rememberedConstructor && constructor->structure()->realm() == remembered->realm() ? remembered : nullptr;
 }
 

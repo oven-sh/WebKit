@@ -202,9 +202,8 @@ public:
             return nullptr;
         return uncheckedDowncast<JSString>(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(entry)));
     }
-    // Without a key: the text of the integer has been asked for once. Most integers that become text come once, and a key costs more than it saves until it is found again.
-    void cacheIntegerKey(VM&, uint32_t integer, JSString* keyOrNull);
-    bool wasAskedForIntegerKey(uint32_t integer) const { return !m_integerKeys.isEmpty() && m_integerKeys[integer & (m_integerKeys.size() - 1)] >> 32 == integer; }
+    // False where the table cannot name the key.
+    bool cacheIntegerKey(uint32_t integer, JSString* key);
     // Every road to the text of an integer asks for it by the integer first, so the text is entered in no table by its characters.
     JSString* makeIntegerKey(VM&, uint32_t integer, std::span<const Latin1Character>);
 

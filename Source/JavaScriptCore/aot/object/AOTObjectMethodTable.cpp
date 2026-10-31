@@ -800,9 +800,9 @@ bool Object::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, Pr
                 slot.disableCaching();
                 return true;
             }
-            // Whoever asks whether the name is there reads no value and calls no getter, as with a module namespace object.
+            // Whoever asks whether the name is there reads no value and calls no getter, as with a module namespace object. A slot that holds a value is no accessor's.
             if (slot.internalMethodType() == PropertySlot::InternalMethodType::HasProperty) {
-                slot.setValue(object, attributesOfStarBinding, jsUndefined());
+                slot.setValue(object, attributesOfStarBinding & ~PropertyAttribute::Accessor, jsUndefined());
                 slot.disableCaching();
                 return true;
             }

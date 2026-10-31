@@ -1995,6 +1995,9 @@ void Modules::resumeDeferredImports(ModuleID file, uint8_t jobsUntilLoaded)
 JSPromise* Modules::askLoaderForImport(ModuleID module, std::optional<int64_t> referrerAsyncOrder)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    // A file of the graph was taken out of the program between the call and this step. The loader reads the graph from disk, as for a call that comes now: import().
+    if (isLeftToHost(module)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, loader()->requestImportModuleForKey(m_instance.globalObject, keyWithoutForm(fileOf(module)), Identifier(), nullptr, nullptr, false, referrerAsyncOrder.value_or(-1)));
     bool wasAskingHost = setIsAskingHost(true);
     // What the host would answer when it is asked to fetch the module.
     ModuleRecord* record = nullptr;
@@ -2262,7 +2265,7 @@ void Modules::decideHowCountedImportGoesOn(CountedImport& import)
         scope.release();
         runJobsThatAreDue(vm, *import.jobsOfLoader);
     };
-    if (import.jobsOfLoader)
+    if (import.jobsOfLoader || isLeftToHost(module))
         return goOnWithLoader();
 
     // Where no job waits none will run before the graph has run: nobody can tell in how many jobs it is loaded, unless the host does something of its own behind a job.
@@ -2449,6 +2452,18 @@ void Modules::continueImport(JSPromise* importPromise, ModuleID module, std::opt
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // See askLoaderForImport().
+    if (isLeftToHost(module)) [[unlikely]] {
+        JSPromise* loaded = askLoaderForImport(module, referrerAsyncOrder);
+        if (scope.exception()) [[unlikely]] {
+            importPromise->rejectWithCaughtException(vm, scope);
+            return;
+        }
+        scope.release();
+        importPromise->resolve(m_instance.globalObject, vm, loaded);
+        return;
+    }
 
     if (status(module) == ModuleStatus::Evaluating) {
         // The body of the module is on the stack below this job, so a job queued now would run, and queue itself again, before the body can go on.

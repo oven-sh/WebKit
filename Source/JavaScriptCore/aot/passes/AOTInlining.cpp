@@ -3526,7 +3526,7 @@ static Vector<ValueSite> findCallsOfHeads(const AnalysisContext& context, const 
     const Program& program = context.program;
     const Function& caller = program.at(context.id);
     Vector<ValueSite> sites;
-    if (!caller.hasBody() || context.flow->runsAtMostOnce(program, context.id) || !context.build.isEnabled(PassID::InlineHeads, context.id))
+    if (!caller.hasBody() || !context.build.isEnabled(PassID::InlineHeads, context.id))
         return sites;
 
     std::optional<FunctionAnalyses> analyses;
@@ -3551,6 +3551,8 @@ static Vector<ValueSite> findCallsOfHeads(const AnalysisContext& context, const 
                     return sites;
             }
             // A copy buys time where time is spent.
+            if (analyses->executionCountOf(BlockID(blockIndex)) == ExecutionCount::AtMostOnce)
+                break;
             Expected<HeatClass> heatOfCall = heatClassOf(heat, *analyses, BlockID(blockIndex));
             bool isInCycle = analyses->isInCycle(BlockID(blockIndex));
             // The tests in front of a body are entered for the body.

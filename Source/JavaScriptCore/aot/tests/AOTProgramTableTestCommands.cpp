@@ -582,8 +582,13 @@ static void printFunctions(const TablesContext& context)
             .field("arguments"_s, static_cast<uint32_t>(bound.numberOfBoundArguments)).field("targetClosureSlot"_s, bound.targetClosureSlot())
             .field("constructs"_s, !!bound.constructs).field("firstArgumentSlot"_s, static_cast<uint32_t>(bound.firstArgumentSlot)).field("capturedArguments"_s, static_cast<uint32_t>(bound.numberOfCapturedArguments));
     }
-    for (const ConstructEntrypointData& entrypoint : tables.constructEntrypoints())
+    for (const ConstructEntrypointData& entrypoint : tables.constructEntrypoints()) {
+        if (entrypoint.constructEntrypointAndFlag == ConstructEntrypointData::onlyReturns) {
+            RecordLine(context, "constructEntrypoint"_s).field("function"_s, FunctionID(tables.closureFunctionWithNumber(entrypoint.function))).word("onlyReturns"_s);
+            continue;
+        }
         RecordLine(context, "constructEntrypoint"_s).field("function"_s, FunctionID(tables.closureFunctionWithNumber(entrypoint.function))).field("entrypoint"_s, FunctionID(tables.closureFunctionWithNumber(entrypoint.constructEntrypoint()))).field("allocatesThis"_s, !!(entrypoint.constructEntrypointAndFlag & ConstructEntrypointData::allocatesThis));
+    }
     forEachTailCallPlace(tables.placesOfTailCalls(), [&](const TailCallPlace& place) {
         RecordLine(context, "placeOfTailCall"_s).field("function"_s, FunctionID(place.function)).field("callee"_s, place.callee == TailCallPlace::noCallee ? std::optional<FunctionID>() : FunctionID(place.callee))
             .field("line"_s, place.line).field("column"_s, place.column).field("isWhereThisIsMade"_s, place.isWhereThisIsMade);

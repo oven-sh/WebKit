@@ -251,8 +251,11 @@ CellPointer OperatorEmitter::concatenationOfParts(const ValueContext& value)
     if (!value->isLikelyKey()) {
         ToStringEmitter toStrings(generator());
         Vector<CellPointer, 8> fibers;
-        for (ValueID part : parts)
-            fibers.append(toStrings.convertAddend(value, part));
+        for (ValueID part : parts) {
+            size_t first = std::ranges::find(parts, part) - parts.begin();
+            bool isConvertedAlready = first < fibers.size() && !typeOf(part).hasObjects();
+            fibers.append(isConvertedAlready ? fibers[first] : toStrings.convertAddend(value, part));
+        }
         return emitter<StringEmitter>().concatenate(value, fibers.span());
     }
     if (parts.size() == 1)

@@ -50,6 +50,7 @@ static constexpr bool writesOnlyNamedBlocks(SelectionRuleID rule)
     case SelectionRuleID::ResolvedCallTarget:
     case SelectionRuleID::RegExpLiteralMatch:
     case SelectionRuleID::ThrowNewError:
+    case SelectionRuleID::MoveLookupTablesToHeap:
     case SelectionRuleID::KeyPartsLookup:
     case SelectionRuleID::StringBuilderParts:
     case SelectionRuleID::ArrayLiteralStorage:

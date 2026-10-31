@@ -1,11 +1,11 @@
 # class List extends Array { constructor() { super(); this.tag = 1 } }; list = new List; somethingNoTableLists.takes(list); JSON.stringify(list)
-# The list has escaped and the hub of JSON.stringify holds the unknown object in its place. A list finds Array.prototype.toString, which counts as run under every order of flow's rules.
-# Under this order it did not count: only a list that the hub saw listed did.
 # OPTIONS: testing=DelayFlowRules:1
 # RUN: valueflow-solve used
 # CHECK: run JSONStringify
+# CHECK-NEXT: run ArrayPrototypeJoin
+# CHECK-NEXT: used ArrayPrototypeLength
 # CHECK-NEXT: run ArrayPrototypeToString
-# CHECK-NEXT: run ObjectPrototypeToString
+# CHECK: run ObjectPrototypeToString
 # CHECK-NEXT: run ObjectPrototypeValueOf
 
 module m0 path="main.js" displayPath="main.js" body=f0

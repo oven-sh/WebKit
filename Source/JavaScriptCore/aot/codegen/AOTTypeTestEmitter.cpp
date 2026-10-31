@@ -565,9 +565,6 @@ Condition TypeTestEmitter::integerPasses(Integer value, const TypeTestPlan& plan
 
     Range range = *plan.integers;
     Range known = m_program.at(plan.from).integers.intersectWith(heldByForm);
-    uint64_t maximum = static_cast<uint64_t>(range.maximum);
-    if (known.minimum >= 0 && range.minimum <= 0 && range.maximum > 0 && !(maximum & (maximum + 1)))
-        return Condition(m_out.testIsZero64(value.value(), m_out.constInt64(~range.maximum)));
     if (known.minimum >= range.minimum)
         return lessThanOrEqual(value, integer(range.maximum));
     if (known.maximum <= range.maximum)

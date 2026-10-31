@@ -9,6 +9,7 @@
 
 #include "AOTOperationEmitter.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTStronglyConnectedComponents.h"
 #include "AOTStubsArithmetic.h"
 #include <array>
 #include <limits>
@@ -52,7 +53,7 @@ public:
     // A number beyond int64 is a multiple of 2^11, and what toInteger() makes of it, or of NaN, ends in as many zeros: whoever looks at so many of the lowest bits alone needs no test of the number.
     enum class BitsOfInt32 : uint8_t { All, Lowest };
     static constexpr unsigned numberOfLowestBits = std::numeric_limits<int64_t>::digits - (std::numeric_limits<double>::digits - 1);
-    Word32 toInt32(Number, BitsOfInt32 = BitsOfInt32::All);
+    Word32 toInt32(Number, BitsOfInt32 = BitsOfInt32::All, ValueID irValue = { });
     // What a read of bytes as a number answers: every NaN is the one NaN.
     Number purified(Number);
     // A NaN keeps the sign that arithmetic gave it and none of its other bits.
@@ -96,8 +97,11 @@ private:
     };
     using IntegersBehindNumbers = UncheckedKeyHashMap<LValue, std::optional<IntegerBehindNumber>>;
     using ExactIntegers = UncheckedKeyHashMap<LValue, std::optional<ExactInteger>>;
-    std::optional<ExactInteger> findExactIntegerBehind(LValue number, bool mayBeTested = true);
+    std::optional<ExactInteger> findExactIntegerBehind(LValue number, ValueID irValue, bool mayBeTested = true);
     bool holdsJoinedInteger(LValue number);
+    bool isInLoopCarriedIntegerCycle(ValueID);
+    bool isMadeOutsideLoopOf(LValue user, LValue number);
+    void computeValueCycles();
     std::optional<IntegerBehindNumber> describeIntegerBehind(LValue number, bool mayTestWhatWasRead, const IntegersBehindNumbers& operands);
     ExactInteger computeIntegerBehind(LValue number, const IntegerBehindNumber&, const ExactIntegers& operands);
     ExactInteger wholeNumberReadFromStorage(LValue);
@@ -115,6 +119,8 @@ private:
 
     std::optional<PlaceOnEdge> m_placeOnEdge;
     UncheckedKeyHashMap<LValue, bool> m_holdsJoinedInteger;
+    std::optional<StronglyConnectedComponents> m_valueCycles;
+    BitVector m_cyclesWithIntegers;
     // By whether what was read may be tested.
     std::array<IntegersBehindNumbers, 2> m_integersBehindNumbers;
 

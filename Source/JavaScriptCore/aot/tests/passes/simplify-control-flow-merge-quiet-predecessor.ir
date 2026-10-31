@@ -1,4 +1,4 @@
-# A covered block merges into a predecessor without a handler in which nothing may throw, and the result takes the handler
+# A covered block merges into a predecessor without a handler in which nothing may throw, and the result takes the handler. An allocation that fails throws where it stands.
 # FORM: Prepared
 # RUN: pass SimplifyControlFlow
 # STATISTIC: SimplifyControlFlowChanges = 4
@@ -128,4 +128,19 @@ function f7 name="handlerArgumentBecomesValueOfPredecessor" parameters=[{type=fu
 # CHECK-NEXT: Jump -> next b2()
 # CHECK: b2() handler=b3(v2):
 # CHECK-NEXT: = Call v0, -, v4
+}
+
+function f8 name="predecessorAllocates" parameters=[{type=function}] results=[{type=anything}] {
+    v1 = NewClosure function=f0
+    Jump -> next b1()
+  b1() handler=b2():
+    v2 = Call v0, -, v1
+    Return v2
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+# CHECK: b0(v0: function):
+# CHECK-NEXT: = NewClosure function=f0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b2():
 }

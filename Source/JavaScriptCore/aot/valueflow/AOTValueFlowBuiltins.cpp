@@ -359,6 +359,11 @@ public:
                 readSpeciesFor(m_builtins.at(overload));
             return;
         }
+        if (m_call.onlyAsksReceiverThatHasEscaped) {
+            for (BuiltinOverloadID overload : selected)
+                askReceiverThatHasEscaped(m_builtins.at(overload));
+            return;
+        }
         for (BuiltinOverloadID overload : selected)
             apply(m_builtins.at(overload));
         if (mayGetThisThatDeclaredOverloadsLeaveOut())
@@ -936,6 +941,17 @@ private:
             read(*overload.receiver);
         for (const BuiltinParameter& parameter : overload.parameters)
             read(parameter);
+    }
+
+    void askReceiverThatHasEscaped(const BuiltinOverload& overload)
+    {
+        if (!overload.receiver || overload.receiver->uses == OperandUses::all())
+            return;
+        ValueFlowBehaviorID behavior = m_tables.behaviorOf(*overload.receiver);
+        if (!behavior)
+            return;
+        bool asksContents = overload.receiver->uses.containsAny({ OperandUse::AppliesToContents, OperandUse::AppliesTransitively });
+        m_context.add(m_context.hub(behavior), asksContents ? unknownValue(m_context, ValueFlowUnknownSource::ContentsOfEscapedObject) : m_universe.unknownObjectAlone());
     }
 
     // A receiver that the overload does not accept makes the call throw. All that the call does with it is to describe it in the error. A data property asks nothing of the receiver that finds it.
@@ -4430,6 +4446,51 @@ static ClimbingSet chainOfProgramFrom(ValueFlowRuleContext& context, ClimbingSet
     return context.restrict(context.valueOf(context.lookup(objects, prototypeLinkName)), context.maker().intersect(universe.objects(), ValueSets::complement(universe.builtinObjects())));
 }
 
+static ClimbingSet holdersAboveEscapedObjects(ValueFlowRuleContext& context, BuiltinName name)
+{
+    return context.valueWithin(ClimbingSet(context.universe().builtinTables().heap().under(context.program().keyOf(name)).prototypeObjects), context.nodes().ofHost(ValueFlowHostNode::BuiltinObjectsAboveEscapedObjects));
+}
+
+static ValueFlowBuiltinCall useByEscapedReceiver(ValueFlowRuleContext& context, ValueFlowCallKind kind)
+{
+    return { .kind = kind, .thisValue = operandHolding(context.universe().unknownObjectAlone()), .argumentsMayBeAbsent = true, .thrown = ValueFlowProgramNodes::escaped(), .isFoundOnReceiver = true, .onlyAsksReceiverThatHasEscaped = true };
+}
+
+static void readNamedMembersAboveEscapedObjects(ValueFlowRuleContext& context, ValueFlowNodeID hub, const ValueFlowBehavior& behavior)
+{
+    if (!behavior.protocols.contains(Protocol::Named) || behavior.namedMembers.empty() || !mayUnknownCodeWrite(context))
+        return;
+    const ValueFlowUniverse& universe = context.universe();
+    const BuiltinTable& builtins = context.program().builtins();
+    ValueFlowBuiltinCall get = useByEscapedReceiver(context, ValueFlowCallKind::Get);
+    auto read = [&](BuiltinID holder, BuiltinName name) {
+        BuiltinID member = builtins.findOwnMember(builtins.canonicalID(holder), name);
+        if (!member || universe.builtinTables().heap().letsInUnseenCode(member))
+            return BuiltinID();
+        BuiltinKind kind = builtins.at(member).kind;
+        if (kind == BuiltinKind::DataProperty || kind == BuiltinKind::Accessor)
+            BuiltinApplication(member, get, context).run();
+        else
+            context.use(member, BuiltinUse::Read);
+        return member;
+    };
+    for (BuiltinName name : behavior.namedMembers) {
+        context.forEachMemberInLine(holdersAboveEscapedObjects(context, name), [&](ValueFlowObjectID holder) {
+            BuiltinID member = read(universe.builtinOf(holder), name);
+            if (!member || !behavior.isTransitive)
+                return;
+            if (name == BuiltinNames::constructor)
+                read(member, BuiltinNames::name);
+            else if (isCallableBuiltin(builtins, member))
+                context.add(hub, only(context, universe.objectOf(member)));
+        });
+    }
+    if (behavior.isTransitive)
+        context.add(hub, unknownValue(context, ValueFlowUnknownSource::ContentsOfEscapedObject));
+    else if (behavior.protocols.contains(Protocol::ToPrimitive))
+        context.add(context.hub(universe.builtinTables().conversionToPrimitive()), unknownValue(context, ValueFlowUnknownSource::ContentsOfEscapedObject));
+}
+
 static void readMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeID hub, const ValueFlowBehavior& behavior, ClimbingSet receivers)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -4461,8 +4522,10 @@ static void readMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeI
 
     if (behavior.namedMembers.empty() && behavior.isTransitive)
         context.connect(context.readWhatWasWritten(chainOfProgramFrom(context, objects), everyPropertyName), hub);
+    bool findsUnknownObject = false;
     for (BuiltinName name : behavior.namedMembers) {
         ValueFlowNodeID member = context.lookup(receivers, property(context, name));
+        findsUnknownObject |= context.contains(context.valueOf(member), ValueFlowUniverse::unknownObject());
         if (behavior.isTransitive && name == BuiltinNames::constructor) {
             context.connect(context.lookup(context.valueOf(member), property(context, BuiltinNames::name)), hub);
             continue;
@@ -4474,6 +4537,8 @@ static void readMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeI
         if (behavior.protocols.contains(Protocol::ToPrimitive))
             context.connect(member, context.hub(universe.builtinTables().conversionToPrimitive()));
     }
+    if (findsUnknownObject)
+        readNamedMembersAboveEscapedObjects(context, hub, behavior);
 }
 
 // Beside the unknown object the members that have escaped are not listed.
@@ -4481,7 +4546,15 @@ static ClimbingSet withEscapedBuiltinsUnder(ValueFlowRuleContext& context, Climb
 {
     if (!context.contains(found, ValueFlowUniverse::unknownObject()))
         return found;
-    return context.unite(found, context.restrict(escapedMembersUnder(context, context.program().keyOf(name)), context.universe().builtinFunctions()));
+    const ValueFlowUniverse& universe = context.universe();
+    const BuiltinTable& builtins = context.program().builtins();
+    Vector<ValueFlowObjectID, 4> aboveEscapedObjects;
+    context.forEachMemberInLine(holdersAboveEscapedObjects(context, name), [&](ValueFlowObjectID holder) {
+        if (BuiltinID method = builtins.findOwnMember(builtins.canonicalID(universe.builtinOf(holder)), name))
+            aboveEscapedObjects.append(universe.objectOf(method));
+    });
+    found = context.unite(found, context.restrict(ClimbingSet(context.maker().of(aboveEscapedObjects.span())), universe.builtinFunctions()));
+    return context.unite(found, context.restrict(escapedMembersUnder(context, context.program().keyOf(name)), universe.builtinFunctions()));
 }
 
 static ClimbingSet membersToCall(ValueFlowRuleContext& context, ClimbingSet receivers, BuiltinName name)
@@ -4741,10 +4814,12 @@ static void callLibraryMethodsOfUnknownReceiver(ValueFlowRuleContext& context, V
     const ValueFlowUniverse& universe = context.universe();
     const BuiltinTable& builtins = context.program().builtins();
     Vector<ValueFlowObjectID, 4> methods;
+    ValueFlowBuiltinCall call = useByEscapedReceiver(context, ValueFlowCallKind::CallByNativeCode);
     auto find = [&](BuiltinName name) {
         ClimbingSet prototypes(universe.builtinTables().heap().under(context.program().keyOf(name)).prototypeObjects);
         ClimbingSet ofClassesWithInstances = context.unite(context.valueWithin(prototypes, context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)), context.valueWithin(prototypes, ValueFlowProgramNodes::escaped()));
-        ofClassesWithInstances = context.unite(ofClassesWithInstances, context.valueWithin(prototypes, context.nodes().ofHost(ValueFlowHostNode::BuiltinObjectsAboveEscapedObjects)));
+        ClimbingSet aboveEscapedObjects = holdersAboveEscapedObjects(context, name);
+        ofClassesWithInstances = context.unite(ofClassesWithInstances, aboveEscapedObjects);
         context.forEachMemberInLine(ofClassesWithInstances, [&](ValueFlowObjectID prototype) {
             BuiltinID method = builtins.findOwnMember(builtins.canonicalID(universe.builtinOf(prototype)), name);
             if (!method)
@@ -4754,11 +4829,14 @@ static void callLibraryMethodsOfUnknownReceiver(ValueFlowRuleContext& context, V
             });
             if (isWrittenInJavaScript)
                 methods.append(universe.objectOf(method));
+            else if (mayUnknownCodeWrite(context) && context.contains(aboveEscapedObjects, prototype) && !raisesEventWhenCalled(builtins, method))
+                BuiltinApplication(method, call, context).run();
             else
                 context.use(method, BuiltinUse::Called);
         });
     };
     forEachNameCalledIn(behavior, find);
+    readNamedMembersAboveEscapedObjects(context, hub, behavior);
     if (methods.isEmpty())
         return;
     callFromNativeCode(context, ClimbingSet(context.maker().of(methods.span())), operandHolding(universe.unknownObjectAlone()), universe.anyPrimitive(), behavior.isTransitive ? hub : ValueFlowProgramNodes::escaped(), [](ClimbingSet) {
@@ -4854,6 +4932,8 @@ void runBehavior(const ValueFlowStatement& statement, ValueFlowRuleContext& cont
 
     ValueSetID mask = everythingButUnknownObject(context);
     ClimbingSet receivers = context.restrict(context.valueOf(hub), mask);
+    if (!mayUnknownCodeWrite(context))
+        receivers = context.unite(receivers, context.coveredByUnknownObjectAmong(context.valueWithin(ClimbingSet(context.universe().knownObjects()), hub)));
     // Whoever sends a proxy here to be listed has asked it by its traps.
     if (onlyLists(behavior)) {
         mask = context.maker().intersect(mask, ValueSets::complement(context.withMembersOf(ValueSets::nothing, context.followedProxiesAmong(receivers))));

@@ -279,6 +279,15 @@ HeapChain HeapRule::chainFrom(ClimbingSet receivers, const HeapKey& key)
         if (isStoredThroughPlaceholdersInto(holdersThatMayLoseMember, deleted) || mayBeDeleted)
             answering = ValueSets::nothing;
     }
+    // `Object.setPrototypeOf(import.meta, other)` takes away all that the table lists on the object.
+    if (ValueSetID belowMember = m_tables.holdersWithMemberOnHiddenPrototypeUnder(key.name); belowMember != ValueSets::nothing) {
+        ClimbingSet holdersBelowMember = m_context.restrict(receivers, belowMember);
+        if (holdsAnything(holdersBelowMember)) {
+            bool mayGetAnotherLink = holdsAnything(readWhereWritten(holdersBelowMember, prototypeLinkName));
+            if (isStoredThroughPlaceholdersInto(holdersBelowMember, prototypeLinkName) || mayGetAnotherLink)
+                answering = ValueSets::nothing;
+        }
+    }
     if (key.name == m_tables.prototypeKey())
         answering = m_context.maker().unite(answering, m_tables.closuresWithPrototypeProperty());
 
@@ -1280,6 +1289,16 @@ void HeapRule::readMembersLeftOutThatLoadNothing(const ValueFlowOperand& object)
     add(m_statement.result, members);
 }
 
+bool HeapRule::isBunNamedIn(const ValueFlowOperand& object, const HeapChain& chain)
+{
+    if (holdsNamedBun(object))
+        return true;
+    ClimbingSet mark(only(ValueFlowUniverse::markOfNamedBun()));
+    if (ValueFlowNodeID sourcesOfCopies = readWhereWritten(known(chain.start), copiedFromName); sourcesOfCopies && m_context.holdsAnyOf(mark, sourcesOfCopies))
+        return true;
+    return !m_findsOwnPropertiesAlone && m_context.holdsAnyOf(mark, m_context.lookup(chain.start, prototypeLinkName));
+}
+
 void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key)
 {
     ValueSetID holders = ValueSets::nothing;
@@ -1303,6 +1322,8 @@ void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key
     bool mayAnswerMemberLeftOut = holdsMarkOfMemberLeftOut(m_statement.result) || holdsMarkOfMemberLeftOut(object.node);
     HeapChain chain = chainFrom(m_context.valueOf(object), key);
     ClimbingSet found = m_context.restrict(chain.objects, holders);
+    if (ValueFlowObjectID bun = m_universe.objectOf(Builtins::Bun); m_context.contains(found, bun) && !isBunNamedIn(object, chain) && !isHostFlagRaised(m_context, ValueFlowHostNode::AllElseIsAtRest))
+        found = m_context.restrict(found, ValueSets::complement(only(bun)));
     if (holdsNamedBun(object) || holdsMarkOfLoadedBun(m_statement.result))
         found = m_context.unite(found, m_context.restrict(ClimbingSet(only(m_universe.objectOf(Builtins::Bun))), holders));
     if (chain.holdsUnknownObject) {

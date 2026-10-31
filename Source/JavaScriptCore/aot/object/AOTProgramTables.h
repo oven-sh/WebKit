@@ -287,6 +287,12 @@ struct ProgramTables {
         return CaptureCounts::decode(counts);
     }
     CaptureCounts captureCountsOf(uint32_t function) const { return captureCountsOfClosureNumber(closureNumberOf(function)); }
+    bool closureNumberOnlyReturns(uint32_t number) const
+    {
+        auto entries = constructEntrypoints();
+        auto entry = std::ranges::lower_bound(entries, number, { }, &ConstructEntrypointData::function);
+        return entry != entries.end() && entry->function == number && entry->constructEntrypointAndFlag == ConstructEntrypointData::onlyReturns;
+    }
     FunctionKindData kindOfClosureNumber(uint32_t number) const { return closureFunctionKinds()[number - closureFunctions.numbersBelow]; }
     size_t numberOfFunctions() const { return functionRecordNumbers().size(); }
     const FunctionRecordData& recordOfFunction(uint32_t function) const

@@ -335,8 +335,8 @@ enum class ValueFlowFactOfText : uint8_t {
     // Of an ElemSet: objectsReadUnderKeyOfStore() finds one object, or two. They stand behind the operands of the statement.
     StoresWhatOneObjectHoldsUnderSameKey = 1 << 5,
     StoresWhatTwoObjectsHoldUnderSameKey = 1 << 6,
-    // Of an IteratorResume: the step of `...rest` in a pattern, which runs once for each place from its own on.
-    StepsRestElement = 1 << 7,
+    // Of an IteratorResume with an index: the step of `...rest`, which runs once for each place from its own on, or a step of a pattern whose steps do not take place after place from the first on.
+    StepFillsNoOnePlace = 1 << 7,
 };
 
 // Of the few operations of which one of these holds, in the order of functions and sites.

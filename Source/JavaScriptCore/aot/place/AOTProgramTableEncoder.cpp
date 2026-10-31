@@ -2628,8 +2628,11 @@ static void appendConstructEntrypoints(TableEncoder& encoder)
         if (function.role != FunctionRole::GenericEntrypoint || !function.hasBody())
             continue;
         FunctionID constructEntrypoint = function.creator.as<CreatorRecord::Entrypoint>().constructEntrypoint;
-        if (!constructEntrypoint)
+        if (!constructEntrypoint) {
+            if (encoder.inputs.bodyFacts.functionsThatOnlyReturn.get(index) && encoder.placement.functionKind(FunctionID(index)).isConstructiblePlainFunction())
+                constructEntrypoints.append({ encoder.placement.closureNumberOf(FunctionID(index)), ConstructEntrypointData::onlyReturns });
             continue;
+        }
         if (!program.at(constructEntrypoint).hasBody()) {
             encoder.fail(ProgramTableRule::FunctionWithoutEntrypoint, { }, FunctionID(index));
             continue;
@@ -2738,20 +2741,31 @@ struct EncodedRequestTargets {
 
 } // anonymous namespace
 
-static BitVector findModuleBodiesThatOnlyReturn(const Program& program)
+static bool onlyReturns(const Function& function)
+{
+    if (function.blocks.size() != 1 || function.has(FunctionFlags::IsAsync) || function.blocks.first().terminator.kind != TerminatorKind::Return)
+        return false;
+    // Not an argument, which is no value of the block.
+    ValueID returned = function.blocks.first().terminator.valueOperand();
+    if (returned && function.at(returned).opcode != Opcode::Undefined)
+        return false;
+    return std::ranges::all_of(function.blocks.first().values, [&](ValueID id) {
+        return function.at(id).opcode == Opcode::Undefined;
+    });
+}
+
+// The bodies of modules, and what a function is entered at by value.
+static BitVector findFunctionsThatOnlyReturn(const Program& program)
 {
     BitVector result(program.functions.size());
     for (const Module& module : program.modules) {
-        if (!module.body)
-            continue;
-        const Function& body = program.at(module.body);
-        if (body.blocks.size() != 1 || body.has(FunctionFlags::IsAsync) || body.blocks.first().terminator.kind != TerminatorKind::Return)
-            continue;
-        bool hasOnlyUndefined = std::ranges::all_of(body.blocks.first().values, [&](ValueID id) {
-            return body.at(id).opcode == Opcode::Undefined;
-        });
-        if (hasOnlyUndefined)
+        if (module.body && onlyReturns(program.at(module.body)))
             result.quickSet(module.body.index());
+    }
+    for (size_t index = 0; index < program.functions.size(); ++index) {
+        const Function& function = program.functions[index];
+        if (function.role == FunctionRole::GenericEntrypoint && onlyReturns(function))
+            result.quickSet(index);
     }
     return result;
 }
@@ -3638,7 +3652,7 @@ BodyFactsForTables collectBodyFactsForTables(const Program& program, const BitVe
     BodyFactsForTables facts;
     if (build.recordedOptions().policy() == MismatchPolicy::Report)
         facts.usedTypeSites = findUsedTypeSites(program, build.parallelLoops());
-    facts.functionsThatOnlyReturn = findModuleBodiesThatOnlyReturn(program);
+    facts.functionsThatOnlyReturn = findFunctionsThatOnlyReturn(program);
     facts.functionsWithFrames = BitVector(program.functions.size());
     for (size_t index = 0; index < program.functions.size(); ++index) {
         const Function& function = program.functions[index];

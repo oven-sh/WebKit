@@ -53,6 +53,7 @@ struct FunctionKindData {
     constexpr MethodKind accessor() const { return accessorKind == methodThatNotesLooksForName ? MethodKind::Method : static_cast<MethodKind>(accessorKind); }
     constexpr bool notesLooksForName() const { return accessorKind != static_cast<unsigned>(MethodKind::Method); }
     constexpr bool isBound() const { return callable() == CallableKind::Bound; }
+    constexpr bool isConstructiblePlainFunction() const { return !isConstructor && callable() == CallableKind::Plain && !isAsync && !isGenerator; }
     // The function object stays as it is: the name that the look brings into its frames is the one that the tables have.
     constexpr bool notesLooksForNameInCell() const { return accessorKind == methodThatNotesLooksForName && !isBound(); }
     constexpr bool hasInitialNamePrefix() const { return isBound() || accessor() != MethodKind::Method; }
@@ -156,6 +157,8 @@ static_assert(sizeof(BoundFunctionData) == 16 && isImageRecord<BoundFunctionData
 struct ConstructEntrypointData {
     // The entrypoint allocates the object itself, and is entered only where the function is its own new.target. Under any other new.target [[Construct]] enters at the entry of [[Call]] with a new object.
     static constexpr uint32_t allocatesThis = 1u << 31;
+    // In place of an entrypoint: a plain function that only returns undefined, so the new object is all that its [[Construct]] makes. No stub looks for such a function here.
+    static constexpr uint32_t onlyReturns = UINT32_MAX;
 
     uint32_t function;
     uint32_t constructEntrypointAndFlag;

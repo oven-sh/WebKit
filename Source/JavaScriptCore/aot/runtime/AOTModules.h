@@ -638,6 +638,7 @@ private:
     JSObject* moduleObjectMadeByRequire(ModuleID);
     bool mayHandOutModuleObject(ModuleID module) const { return data(module).kind != ModuleKind::CommonJs || data(module).hasValue(); }
     JSValue answerRequire(ModuleID, ModuleID referrer = { }, RequiredBy = RequiredBy::Referrer);
+    JSValue settledAnswerOfRequire(ModuleID, RequiredBy) const;
     JSValue requireThroughCache(ModuleID, ModuleID referrer);
     JSValue answerRequireWithMock(ModuleID, ModuleID referrer);
     JSValue loadEvictedFile(ModuleID);
@@ -1030,6 +1031,19 @@ ALWAYS_INLINE auto Modules::loadedIfExists(ModuleID module) const -> LoadedModul
         m_moduleOfLoadedFoundLast = module;
     }
     return loaded;
+}
+
+// What answerRequire() comes to at its end for a module of the program that has run and has answered before, where each of its steps up to there does nothing:
+// no mock waits to run, no file was evicted, no require() of the module is under way. Empty: it has to take the steps.
+// A step that is added to answerRequire() and can do something in that state needs its test here.
+ALWAYS_INLINE JSValue Modules::settledAnswerOfRequire(ModuleID target, RequiredBy requiredBy) const
+{
+    if (requiredBy != RequiredBy::Referrer || !m_modulesWithMockToRun.isEmpty() || !m_evictedFiles.isEmpty() || m_otherImageHasEvictedFiles)
+        return { };
+    const LoadedModule* loaded = loadedIfExists(target);
+    if (!loaded || !loaded->requiredValue || loaded->isBeingRequired || storedStatus(target) != StoredModuleStatus::Evaluated || data(target).isOfLibrary())
+        return { };
+    return loaded->requiredValue.get();
 }
 
 ALWAYS_INLINE bool Modules::isLoadedModuleWithoutRecord(ModuleID module) const

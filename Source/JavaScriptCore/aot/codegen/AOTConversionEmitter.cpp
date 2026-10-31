@@ -8,8 +8,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCFG.h"
 #include "AOTCheckedFrameCells.h"
 #include "AOTConstantEmitter.h"
+#include "AOTEdgeResults.h"
 #include "AOTNumberLiteralStrings.h"
 #include "AOTPureOperations.h"
 #include "AOTRepresentation.h"
@@ -586,6 +588,88 @@ bool ConversionEmitter::holdsJoinedInteger(LValue number)
     return m_holdsJoinedInteger.get(number);
 }
 
+void ConversionEmitter::computeValueCycles()
+{
+    const CFG& cfg = analyses().cfg();
+    unsigned numberOfValues = m_function.values.size();
+    Vector<ValueID> parameterSources;
+    Vector<std::pair<uint32_t, uint32_t>> parameterSourceRanges;
+    parameterSourceRanges.fill({ 0, 0 }, numberOfValues);
+    for (BlockID blockID : cfg.reversePostOrder()) {
+        const auto& parameters = m_function.at(blockID).parameters;
+        for (uint32_t index = 0; index < parameters.size(); ++index) {
+            uint32_t start = parameterSources.size();
+            for (Edge edge : cfg.incomingEdges(blockID)) {
+                IncomingValue incoming = incomingValueOf(m_function, edge, index);
+                if (incoming.kind == IncomingValue::Kind::Argument) {
+                    parameterSources.append(incoming.argument);
+                    continue;
+                }
+                EdgeResult result = edgeResultAt(m_function, incoming.result);
+                switch (result.kind) {
+                case EdgeResultKind::NarrowedOperand:
+                    parameterSources.append(result.subject);
+                    break;
+                case EdgeResultKind::Guard:
+                    break;
+                case EdgeResultKind::DeclaredResult:
+                    parameterSources.append(m_function.at(edge.from).terminator.operands());
+                    break;
+                }
+            }
+            parameterSourceRanges[parameters[index].index()] = { start, parameterSources.size() - start };
+        }
+    }
+
+    struct Sources {
+        size_t size() const { return values.size(); }
+        unsigned operator[](size_t index) const { return values[index] ? values[index].index() : absentOperand; }
+
+        std::span<const ValueID> values;
+        unsigned absentOperand;
+    };
+    unsigned absentOperand = numberOfValues;
+    m_valueCycles = computeStronglyConnectedComponents(numberOfValues + 1, [&](unsigned index) -> Sources {
+        if (index == absentOperand)
+            return { { }, absentOperand };
+        const Value& value = m_function.at(ValueID(index));
+        if (value.opcode == Opcode::Parameter)
+            return { parameterSources.subspan(parameterSourceRanges[index].first, parameterSourceRanges[index].second), absentOperand };
+        return { value.operands(), absentOperand };
+    });
+    for (unsigned index = 0; index < numberOfValues; ++index) {
+        if (!m_valueCycles->isInCycle.get(index))
+            continue;
+        Representation representation = m_function.at(ValueID(index)).representation;
+        if (representation == Representation::Int32 || representation == Representation::Int64)
+            m_cyclesWithIntegers.set(m_valueCycles->componentOf[index]);
+    }
+}
+
+// `sum = (sum + list[i]) | 0`: the sum is computed from an integer that the next iteration computes from the sum.
+bool ConversionEmitter::isInLoopCarriedIntegerCycle(ValueID id)
+{
+    if (!analyses().cfg().hasCycle())
+        return false;
+    if (!m_valueCycles)
+        computeValueCycles();
+    return m_valueCycles->isInCycle.get(id.index()) && m_cyclesWithIntegers.get(m_valueCycles->componentOf[id.index()]);
+}
+
+bool ConversionEmitter::isMadeOutsideLoopOf(LValue user, LValue number)
+{
+    ValueID userID = valueOfOrigin(user->origin());
+    ValueID numberID = valueOfOrigin(number->origin());
+    if (!userID || !numberID)
+        return false;
+    const UseLists& useLists = analyses().useLists();
+    const NaturalLoops& loops = analyses().naturalLoops();
+    BlockID blockOfUser = useLists.blockOf(userID);
+    BlockID blockOfNumber = useLists.blockOf(numberID);
+    const NaturalLoop* loop = blockOfUser ? loops.innerMostLoopOf(blockOfUser) : nullptr;
+    return loop && blockOfNumber && !loops.belongsTo(blockOfNumber, *loop);
+}
+
 std::optional<ConversionEmitter::IntegerBehindNumber> ConversionEmitter::describeIntegerBehind(LValue number, bool mayTestWhatWasRead, const IntegersBehindNumbers& operands)
 {
     auto converted = [&](LValue source, bool mayBeTested = false) -> std::optional<IntegerBehindNumber> {
@@ -633,12 +717,13 @@ std::optional<ConversionEmitter::IntegerBehindNumber> ConversionEmitter::describ
     case B3::Sub: {
         std::optional<IntegerBehindNumber> left = operands.get(number->child(0));
         std::optional<IntegerBehindNumber> right = operands.get(number->child(1));
-        if ((!left && !right) || (!mayTestWhatWasRead && (!left || !right)))
+        if (!left && !right)
             return std::nullopt;
         // `sum = (sum + list[i]) | 0` over a list held as numbers: in numbers each turn waits for the last through three conversions. A test of the element waits for the load alone.
-        // `total += i & 255; return total & 1023`: every integer in it is made anew in each turn, nothing waits for the truncation, and the test would only come on top.
+        // `total += i & 255; return total & 1023` and `marks[k] = (marks[k] + i) & 1023`: nothing waits for the truncation, and the test would only come on top.
         std::optional<IntegerBehindNumber>& missing = left ? right : left;
-        if (!missing && isReadFromStorage(number->child(left ? 1 : 0)))
+        LValue operandWithoutInteger = number->child(left ? 1 : 0);
+        if (!missing && isReadFromStorage(operandWithoutInteger) && (mayTestWhatWasRead || isMadeOutsideLoopOf(number, operandWithoutInteger)))
             missing = IntegerBehindNumber { .range = Range::int32(), .isTested = true };
         if (!left || !right || (left->mayBeRounded && right->mayBeRounded))
             return std::nullopt;
@@ -716,9 +801,9 @@ ConversionEmitter::ExactInteger ConversionEmitter::computeIntegerBehind(LValue n
 }
 
 // No code is emitted until it is known that the whole of the arithmetic can be done in integers.
-std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactIntegerBehind(LValue number, bool mayBeTested)
+std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactIntegerBehind(LValue number, ValueID irValue, bool mayBeTested)
 {
-    bool mayTestWhatWasRead = holdsJoinedInteger(number);
+    bool mayTestWhatWasRead = mayBeTested && irValue && holdsJoinedInteger(number) && isInLoopCarriedIntegerCycle(irValue);
     IntegersBehindNumbers& known = m_integersBehindNumbers[mayTestWhatWasRead];
     answerOperandsFirst<std::optional<IntegerBehindNumber>>(number, known, [&](LValue value) {
         return describeIntegerBehind(value, mayTestWhatWasRead, known);
@@ -739,7 +824,7 @@ std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactInteg
 
 std::optional<Integer> ConversionEmitter::exactIntegerBehind(Number number)
 {
-    std::optional<ExactInteger> exact = findExactIntegerBehind(number.value(), false);
+    std::optional<ExactInteger> exact = findExactIntegerBehind(number.value(), { }, false);
     if (!exact)
         return std::nullopt;
     build().statistics().count(StatisticID::ExactIntegersBehindNumbers);
@@ -751,11 +836,11 @@ Integer ConversionEmitter::widen(Word32 value, Range range)
     return isNonNegative(range) ? zeroExtended(value) : signExtended(value);
 }
 
-Word32 ConversionEmitter::toInt32(Number value, BitsOfInt32 bits)
+Word32 ConversionEmitter::toInt32(Number value, BitsOfInt32 bits, ValueID irValue)
 {
     if (std::optional<Word32> converted = convertedInt32Of(value))
         return *converted;
-    std::optional<ExactInteger> exact = findExactIntegerBehind(value.value());
+    std::optional<ExactInteger> exact = findExactIntegerBehind(value.value(), irValue);
     if (exact && !exact->holdsWhile) {
         build().statistics().count(StatisticID::ExactIntegersBehindNumbers);
         if (!exact->mayBeRounded)

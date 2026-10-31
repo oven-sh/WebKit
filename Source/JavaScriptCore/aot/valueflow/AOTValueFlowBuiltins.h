@@ -37,6 +37,7 @@ struct ValueFlowBuiltinCall {
     bool isFoundOnReceiver { false };
     bool saysOnlyWhatIsCalled { false };
     bool readsOnlySpecies { false };
+    bool onlyAsksReceiverThatHasEscaped { false };
 };
 
 inline ValueFlowCellName cellOfCallsThatRunOtherCode(const BuiltinTable& builtins)

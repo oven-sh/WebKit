@@ -1419,6 +1419,13 @@ static CompactTable* heapTableOrNull(JSGlobalObject* globalObject, JSObject* col
     return moved ? moved : table;
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMoveTableToHeap, JSCell*, (Instance* instance, JSCell* collection))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTMoveTableToHeap);
+    heapTableOrNull(globalObject, asObject(collection));
+    OPERATION_RETURN(scope, collection);
+}
+
 template<Entry entry>
 static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES findInCollectionGeneric(Instance* instance, JSCell* collection, EncodedJSValue lookupKey)
 {

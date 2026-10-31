@@ -324,7 +324,7 @@ void Heat::takeInFunctionsMadeSince(const Program& program, const FlowResults& f
     }
 
     for (unsigned position = 0; position < added.size(); ++position) {
-        if (entries[position].heatClass != HeatClass::Unknown)
+        if (entries[position].heatClass == HeatClass::Warm || entries[position].heatClass == HeatClass::Hot)
             m_entries.appendEntryOfLaterFunction(added[position], WTF::move(entries[position]));
     }
 }
@@ -793,6 +793,8 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
     // Most of a very large program never runs, and which part does is not in the estimate: its products along paths of calls pass every bound, and a call that nobody follows spreads evenly over all that it may reach.
     // The thresholds of a very large program are fixed, and no class in it comes from a threshold.
     const bool isVeryLargeProgram = totalSize > maxValuesOfOrdinaryProgram(build);
+    if (isVeryLargeProgram)
+        build.statistics().count(StatisticID::HeatEstimatesOfVeryLargeProgram);
     heat.m_hasWeights = heatFor == HeatFor::Everything || !isVeryLargeProgram;
     Vector<uint8_t> isCalledInLoop;
     Vector<uint8_t> runsInLoop;

@@ -19,7 +19,7 @@ enum SelectionRuleID {
     None
     PlannedSlots ClassDefinition DescriptorLiteral AccessorGroup SlotStoreRun PropertyRun MethodCall PropertyReadAndTest EncodedVariableTest
     PropertyChain PropertyPair SubstringView SwitchString SwitchNumber StringLiteralForms HoistStringCharacters SharedStringOrder
-    IntegerBound FreshPromiseFulfillment AwaitInPlace ResolvedCallTarget RegExpLiteralMatch ThrowNewError KeyPartsLookup InlineBuiltin StringBuilderParts ArrayLiteralStorage
+    IntegerBound FreshPromiseFulfillment AwaitInPlace ResolvedCallTarget RegExpLiteralMatch ThrowNewError MoveLookupTablesToHeap KeyPartsLookup InlineBuiltin StringBuilderParts ArrayLiteralStorage
     DataEncoding ClosureForm NumberPaths OperatorForm TestAndBranch
 }
 

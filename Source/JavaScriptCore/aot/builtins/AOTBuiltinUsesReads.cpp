@@ -761,6 +761,107 @@ BuiltinUsePlan planBuiltinRead(const BuiltinUseInputs& inputs, ValueID use, Prog
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// `formatter.format`: the accessor answers a function that it has bound to the formatter. The table lists what a call of that function does among the overloads of the accessor.
+static bool answersFunctionBoundToReceiver(const BuiltinTable& table, BuiltinID member)
+{
+    return table.at(member).kind == BuiltinKind::Accessor && table.dispatchOf(member, BuiltinCallMode::Call);
+}
+
+ValueID findReadOfCallee(const Program& program, const Function& function, const Value& call)
+{
+    if (call.opcode != Opcode::Call)
+        return { };
+    ValueID id = sameObjectThroughCasts(function, call.calleeOperand()).valueInFrontOfFacts();
+    const Value& read = function.at(id);
+    switch (read.opcode) {
+    case Opcode::PropGet: {
+        bool readsCalledMemberOfReceiver = call.calleeKey() && read.key() == call.calleeKey() && call.thisValueOperand()
+            && sameObjectThroughCasts(function, read.objectOperand()) == sameObjectThroughCasts(function, call.thisValueOperand());
+        return readsCalledMemberOfReceiver ? id : ValueID();
+    }
+    case Opcode::CallBuiltin: {
+        const BuiltinTable& table = program.builtins();
+        const BuiltinOverload& overload = table.at(read.overload());
+        bool runsAccessor = overload.mode == BuiltinCallMode::Get && read.builtinCallForm() == BuiltinCallForm::Whole && read.receiverOperand();
+        return runsAccessor && answersFunctionBoundToReceiver(table, table.canonicalID(overload.builtin)) ? id : ValueID();
+    }
+    default:
+        return { };
+    }
+}
+
+bool mayFindProvenCallOfFunctionBoundToReceiver(const BuiltinUseInputs& inputs, const Value& call)
+{
+    const Program& program = inputs.program;
+    ValueID read = findReadOfCallee(program, inputs.function, call);
+    if (!read)
+        return false;
+    if (inputs.function.at(read).opcode == Opcode::CallBuiltin)
+        return true;
+    if (!builtinMemberNameOf(program, call.calleeKey()) || !mayBeKnownReceiver(program.typeOf(inputs.function, call.thisValueOperand())))
+        return false;
+    std::optional<MemberSite> site = findMember(inputs, call.thisValueOperand(), call.calleeKey());
+    return site && !site->testedReceiverType && answersFunctionBoundToReceiver(program.builtins(), site->answer.member);
+}
+
+// No test of the callee tells that it is the function of this receiver. What the read has found tells it.
+// An object never gets back the names it was created with, and the arguments are evaluated behind the read: a receiver that passes the test in front of the call would have passed it in front of the read.
+BuiltinUsePlan planCallOfFunctionBoundToReceiver(const BuiltinUseInputs& inputs, ValueID use, ProgramPoint point)
+{
+    const Program& program = inputs.program;
+    const BuiltinTable& table = program.builtins();
+    const Value& call = inputs.function.at(use);
+    ValueID readID = findReadOfCallee(program, inputs.function, call);
+    if (!readID)
+        return { };
+    const Value& read = inputs.function.at(readID);
+
+    KnownBuiltinCall known;
+    known.operands.arguments.append(call.argumentsOperands());
+    known.stamps.expectedResult = call.expectedResult();
+    known.stamps.accessSite = call.accessSite();
+
+    std::optional<MemberSite> site;
+    LocationState location = LocationState::Constant;
+    if (read.opcode == Opcode::CallBuiltin) {
+        known.callee = table.canonicalID(table.at(read.overload()).builtin);
+        known.operands.receiver = read.receiverOperand();
+    } else {
+        if (!builtinMemberNameOf(program, call.calleeKey()))
+            return { };
+        site = findMember(inputs, call.thisValueOperand(), call.calleeKey());
+        if (!site || site->start.kind != BuiltinReceiverKind::Instance || !answersFunctionBoundToReceiver(table, site->answer.member))
+            return { };
+        // A program may put another accessor in its place, and never this one again: a location that is unchanged in front of the call was unchanged at the read.
+        location = locationStateOf(inputs, *site);
+        if (location == LocationState::Unknown)
+            return { };
+        known.callee = site->answer.member;
+        known.operands.receiver = site->receiver;
+    }
+
+    BuiltinUsePlan plan = planKnownBuiltinCall(inputs, known, point);
+    if (plan.kind != BuiltinUseKind::Call)
+        return { };
+    // The getter looks into any other receiver, and refuses it in front of the arguments.
+    BuiltinClassID receiverClass = table.receiverClassOf(known.callee);
+    const BuiltinOverload& overload = table.at(plan.call.overload);
+    TypingContext typing = inputs.typing();
+    if (!receiverClass || !overload.receiver || !typeOfBuiltinType({ typing }, overload.receiver->accepted).isSubsetOf(Type::builtinClass(receiverClass), program))
+        return { };
+
+    // Flow may have followed the read to the accessor.
+    bool isReadAnsweredByAccessor = singleBuiltinOf(program.typeOf(inputs.function, readID)) == known.callee;
+    if (site && !isReadAnsweredByAccessor) {
+        bool isPossible = addLocationRequirement(inputs, *site, location, plan);
+        addReceiverRequirements(inputs, *site, point, plan, isPossible);
+        if (!isPossible)
+            return { };
+    }
+    plan.isNeverInlined = call.isNeverInlined();
+    return plan;
+}
+
 BuiltinUsePlan planBuiltinStore(const BuiltinUseInputs& inputs, ValueID use, ProgramPoint point)
 {
     const Value& store = inputs.function.at(use);

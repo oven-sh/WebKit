@@ -311,10 +311,9 @@ static void fillRealmWords(Instance& instance, VM& vm, JSGlobalObject* realm)
     if (Structure* structure = realm->setStructureConcurrently())
         instance.receiverStructureID(Receiver::Set) = structure->id().bits();
     instance.receiverStructureID(Receiver::RegExp) = realm->regExpStructure()->id().bits();
-    for (const BuiltinClassBinding& binding : BuiltinBindings::classesOfHost()) {
-        if (Structure* structure = binding.findInstanceStructure ? binding.findInstanceStructure(realm) : nullptr)
-            instance.didCreateInstanceStructure(binding.builtinClass, structure);
-    }
+    BuiltinBindings::forEachInstanceStructureOfHost(realm, [&](const BuiltinClassBinding& binding, Structure* structure) {
+        instance.didCreateInstanceStructure(binding.builtinClass, structure);
+    });
 
     RealmWords& words = instance.realm;
     words.boundFunctionStructureID = realm->boundFunctionStructure()->id().bits();

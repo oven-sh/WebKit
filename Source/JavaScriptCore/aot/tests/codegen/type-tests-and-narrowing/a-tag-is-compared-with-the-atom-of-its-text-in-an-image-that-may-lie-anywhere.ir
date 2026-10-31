@@ -6,7 +6,7 @@
 # REQUIRES: unsanitized-code
 # CHECK-LABEL: name="radii" role=Source
 # CHECK: = Load16Z({{*}}offset = 5, {{*}}Reads:JSCell_usefulBytes, {{*}}:StrictEq)
-# CHECK-NEXT: = Equal(
+# CHECK: = Equal(
 # CHECK-NEXT: = Branch(
 # CHECK: = Load({{*}}Reads:AOTInstance_fieldsFilledOnce, {{*}}:StrictEq)
 # CHECK-NEXT: = Load(

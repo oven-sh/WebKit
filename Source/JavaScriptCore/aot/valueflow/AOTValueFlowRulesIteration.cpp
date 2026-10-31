@@ -422,7 +422,7 @@ void runIterationOperation(const ValueFlowStatement& statement, ValueFlowRuleCon
         ValueFlowNodeID values = statement.result ? statement.result : nodeThatNobodyReads(context);
         if (operation.operand(OperandIndex::IteratorResume::sent))
             sendToIterators(context, state, operands[1]);
-        std::optional<uint32_t> indexInPattern = statement.factsOfText.contains(ValueFlowFactOfText::StepsRestElement) ? std::nullopt : operation.stepIndex();
+        std::optional<uint32_t> indexInPattern = statement.factsOfText.contains(ValueFlowFactOfText::StepFillsNoOnePlace) ? std::nullopt : operation.stepIndex();
         stepIterators(context, state, { operation.iteratorKind(), mode, operation.readsValueWhenDone() || mode != ResumeMode::Next, pairAllocatedAt(statement, context), indexInPattern, !operation.stepIndex() }, values);
         if (!operation.readsValueWhenDone() && operation.stepIndex() && !readsKeyOrValueOfPair(context, state, indexInPattern))
             context.add(values, context.universe().undefinedValue());

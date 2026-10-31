@@ -365,6 +365,8 @@ static ALWAYS_INLINE void forEachInstanceStructureOfEngine(JSGlobalObject* realm
     visitIfCreated(BuiltinClasses::String, realm->stringObjectStructure());
     visitIfCreated(BuiltinClasses::Error, realm->errorStructureConcurrently());
     visitIfCreated(BuiltinClasses::Date, realm->dateStructureConcurrently());
+    visitIfCreated(BuiltinClasses::IntlDateTimeFormat, realm->m_dateTimeFormatStructure.getConcurrently());
+    visitIfCreated(BuiltinClasses::IntlNumberFormat, realm->m_numberFormatStructure.getConcurrently());
 #define AOT_VISIT_TYPED_ARRAY_STRUCTURE(name) visitIfCreated(BuiltinClasses::name##Array, realm->typedArrayStructureConcurrently(Type##name, false));
     FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(AOT_VISIT_TYPED_ARRAY_STRUCTURE)
 #undef AOT_VISIT_TYPED_ARRAY_STRUCTURE
@@ -381,11 +383,9 @@ static ALWAYS_INLINE void forEachInstanceStructureOfEngine(JSGlobalObject* realm
 void forEachInstanceStructure(JSGlobalObject* realm, const ScopedLambda<void(BuiltinClassID, Structure*)>& function)
 {
     forEachInstanceStructureOfEngine(realm, function);
-    for (const BuiltinClassBinding& binding : BuiltinBindings::classesOfHost()) {
-        Structure* structure = binding.findInstanceStructure ? binding.findInstanceStructure(realm) : nullptr;
-        if (structure)
-            function(binding.builtinClass, structure);
-    }
+    BuiltinBindings::forEachInstanceStructureOfHost(realm, [&](const BuiltinClassBinding& binding, Structure* structure) {
+        function(binding.builtinClass, structure);
+    });
 }
 
 BuiltinClassID findClassWithInstanceStructure(JSGlobalObject* realm, Structure* structure)
@@ -396,10 +396,10 @@ BuiltinClassID findClassWithInstanceStructure(JSGlobalObject* realm, Structure* 
             found = builtinClass;
     });
     const ClassInfo* info = structure->classInfoForCells();
-    for (const BuiltinClassBinding& binding : BuiltinBindings::classesOfHost()) {
-        if ((!binding.instanceClassInfo || info->isSubClassOf(binding.instanceClassInfo)) && binding.findInstanceStructure && binding.findInstanceStructure(realm) == structure)
+    BuiltinBindings::forEachInstanceStructureOfHost(realm, [&](const BuiltinClassBinding& binding, Structure* original) {
+        if (original == structure && (!binding.instanceClassInfo || info->isSubClassOf(binding.instanceClassInfo)))
             found = binding.builtinClass;
-    }
+    });
     return found;
 }
 

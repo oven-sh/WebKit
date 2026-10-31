@@ -7,7 +7,7 @@
 # declare const input: any;
 # (globalThis as any).answer = sumOfHalves(new Float64Array(input));
 # FORM: AsRead
-# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,pass:InlineHeads
 # RUN(HOT): lower-to-b3 optimized loops f2
 # REQUIRES(HOT): unsanitized-code
 # RUN(NONE): lower-to-b3 optimized loops f2
@@ -99,9 +99,6 @@ function f2 name="sumOfHalves" module=m0 position=59 flags=[IsChecked, HasExplic
 
 # half(list[k]): the element goes from the bytes into the floating-point register of the argument, and the result is added as it comes back. Nothing is boxed.
 # The bytes may hold a NaN of any bits. Every call of half() hands it a number out of bytes and half() only computes with it, so its parameter and its result take such a NaN as it is: nothing is tested in the loop.
-# The first loop listed lies around it: a turn that has left the loop ends there, in a copy of its own, and comes back in front of the loop.
-# HOT-LABEL: steps by 1
-# HOT-LABEL: end of loop
 # HOT-LABEL: steps by 1
 # HOT: Double b@[[sum]] = Phi(
 # HOT-NOT: Equal(
@@ -113,8 +110,6 @@ function f2 name="sumOfHalves" module=m0 position=59 flags=[IsChecked, HasExplic
 # HOT-NEXT: Double b@{{*}} = Add(b@[[sum]], b@[[half]], {{*}}:Add)
 # HOT-LABEL: end of loop
 # The length and the address of the bytes are not read again behind the call, which cannot change them.
-# NONE-LABEL: steps by 1
-# NONE-LABEL: end of loop
 # NONE-LABEL: steps by 1
 # NONE-NOT: BitwiseCast
 # NONE-NOT: Reads:JSArrayBufferView

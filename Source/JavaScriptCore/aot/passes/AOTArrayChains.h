@@ -41,6 +41,7 @@ struct ChainShape {
     static constexpr unsigned linkWidth = 2;
     static constexpr unsigned hasInitialValueShift = endWidth + maxNumberOfLinks * linkWidth;
     static constexpr unsigned flattensShortListsShift = hasInitialValueShift + 1;
+    static constexpr unsigned runsLinksOnEveryElementShift = flattensShortListsShift + 1;
 
     constexpr unsigned numberOfLinks() const
     {
@@ -53,6 +54,7 @@ struct ChainShape {
     constexpr uint32_t encode() const
     {
         uint32_t word = static_cast<uint32_t>(end) | static_cast<uint32_t>(hasInitialValue) << hasInitialValueShift | static_cast<uint32_t>(flattensShortLists) << flattensShortListsShift;
+        word |= static_cast<uint32_t>(runsLinksOnEveryElement) << runsLinksOnEveryElementShift;
         for (unsigned i = 0; i < maxNumberOfLinks; ++i)
             word |= static_cast<uint32_t>(links[i]) << (endWidth + i * linkWidth);
         return word;
@@ -64,6 +66,7 @@ struct ChainShape {
         shape.end = static_cast<ChainEndKind>(word & ((1u << endWidth) - 1));
         shape.hasInitialValue = word >> hasInitialValueShift & 1;
         shape.flattensShortLists = word >> flattensShortListsShift & 1;
+        shape.runsLinksOnEveryElement = word >> runsLinksOnEveryElementShift & 1;
         for (unsigned i = 0; i < maxNumberOfLinks; ++i)
             shape.links[i] = static_cast<ChainLinkKind>(word >> (endWidth + i * linkWidth) & ((1u << linkWidth) - 1));
         return shape;
@@ -76,6 +79,8 @@ struct ChainShape {
     bool hasInitialValue { false };
     // The callback of a flatMap returns nothing but short list literals. The traversal reads them at constant positions, so that they are never made.
     bool flattensShortLists { false };
+    // The end has its answer before the last element. The callbacks of the links run on the elements behind it all the same, as they do where one method runs after the other.
+    bool runsLinksOnEveryElement { false };
 };
 
 constexpr bool endTakesCallback(ChainEndKind end)
@@ -148,7 +153,7 @@ struct ArrayChain {
 // The body of its callee is about to take the place of a call that is taken alone, so no longer chain will come of it.
 Vector<ArrayChain> findArrayChains(FunctionPassContext&, const BitVector* callsTakenAlone = nullptr, BlockID onlyBlock = { }, ChainOperandProofs = ChainOperandProofs::Required, const BitVector* callsNotJoinedThroughTests = nullptr);
 PassOutcome fuseArrayMethodsTakenAlone(FunctionPassContext&, const BitVector& calls);
-ArrayChainDeclineReason checkInterleaving(FunctionPassContext&, const ArrayChain&, ChainOperandProofs = ChainOperandProofs::Required, bool* startsOverAfterThrow = nullptr, uint8_t* callbacksThatGiveUp = nullptr);
+ArrayChainDeclineReason checkInterleaving(FunctionPassContext&, const ArrayChain&, ChainOperandProofs = ChainOperandProofs::Required, bool* startsOverAfterThrow = nullptr, uint8_t* callbacksThatGiveUp = nullptr, bool* runsLinksOnEveryElement = nullptr);
 // What a version of the function does that throws where the function would do what the program can see, in code that seldom runs. No answer: it would throw in common code, or a handler of its own would catch that.
 std::optional<Effects> effectsOfVersionThatGivesUp(FunctionPassContext&, FunctionID);
 FunctionID findChainTraversal(const Program&);
@@ -159,6 +164,7 @@ static_assert(static_cast<unsigned>(ChainEndKind::FlatMap) < 1u << ChainShape::e
 // array-traversal.ts repeats these numbers.
 static_assert(ChainShape { { ChainLinkKind::Map, ChainLinkKind::Filter, ChainLinkKind::Map }, ChainEndKind::FlatMap, true }.encode() == (9u | 1u << 4 | 2u << 6 | 1u << 8 | 1u << 10));
 static_assert(ChainShape::flattensShortListsShift == 11 && ChainShape::maxLengthOfShortList == 3);
+static_assert(ChainShape::runsLinksOnEveryElementShift == 12);
 static_assert(static_cast<unsigned>(ChainEndKind::Array) == 0 && static_cast<unsigned>(ChainEndKind::Length) == 1 && static_cast<unsigned>(ChainEndKind::ForEach) == 2);
 static_assert(static_cast<unsigned>(ChainEndKind::Reduce) == 3 && static_cast<unsigned>(ChainEndKind::Some) == 4 && static_cast<unsigned>(ChainEndKind::Every) == 5);
 static_assert(static_cast<unsigned>(ChainEndKind::Find) == 6 && static_cast<unsigned>(ChainEndKind::FindIndex) == 7 && static_cast<unsigned>(ChainEndKind::Join) == 8);

@@ -616,6 +616,11 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     RELEASE_ASSERT(!branchesOnFlags || signature.result == StubResult::Flags);
 
     Effects effects = context ? effectsOfCall(*context, request.effectsOfCallee) : request.effectsOfCallee;
+    if (options.alsoPerforms) {
+        Effects effectsOfOther = effectsOfCall(analyses().effectsOf(options.alsoPerforms), request.effectsOfCallee);
+        effects.reads.merge(effectsOfOther.reads);
+        effects.writes.merge(effectsOfOther.writes);
+    }
     if (options.pureFunction)
         effects.reads = { };
     // A site says where in the source a frame stands and which handler is in force there.
@@ -639,7 +644,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     RuntimeValidationEmitter::PhotographedOperands photographedOperands;
     bool comesBack = returns || (branchesOnFlags && !effects.mayThrow);
     if (validates && comesBack && !effects.mayRunOtherCode() && !options.runsCodeOfHost && !generator().isInitializingCell())
-        photographedOperands = emitter<RuntimeValidationEmitter>().photographOperands(*context, effects);
+        photographedOperands = emitter<RuntimeValidationEmitter>().photographOperands(*context, effects, options.alsoPerforms);
     uint32_t calleeNumber = request.entry ? static_cast<uint32_t>(*request.entry) : static_cast<uint32_t>(key.family());
     uint32_t photographedCallee = request.entry ? calleeNumber : PhotographedCall::calleeIsStub | calleeNumber;
     std::optional<Integer> stopsBeforeCall;
@@ -870,7 +875,12 @@ Pointer RuntimeCallEmitter::uninitializedArgumentBuffer(unsigned numberOfWords)
 
 Effects RuntimeCallEmitter::effectsOfCall(const OperationContext& context, const Effects& effectsOfCallee) const
 {
-    Effects effects = context.effects().onAnyEdge().intersectedWith(effectsOfCallee);
+    return effectsOfCall(context.effects(), effectsOfCallee);
+}
+
+Effects RuntimeCallEmitter::effectsOfCall(const EffectsOnEdges& effectsOfOperation, const Effects& effectsOfCallee) const
+{
+    Effects effects = effectsOfOperation.onAnyEdge().intersectedWith(effectsOfCallee);
     if (m_options.recorded.isSabotaged(Sabotage::NoCallCollects))
         effects.mayCollect = false;
     if (m_options.recorded.isSabotaged(Sabotage::NoCallWrites))

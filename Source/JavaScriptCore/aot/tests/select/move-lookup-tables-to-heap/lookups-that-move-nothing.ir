@@ -1,0 +1,79 @@
+# No table is moved for a lookup outside a loop, for one by a number or by a text that was just joined, for one in a Map that each turn of the loop picks anew, or where the loop adds to a Map or a Set: those lookups call the stub
+# FORM: Prepared
+# OPTIONS: references=narrow heat=OnlyLoopsAreHot
+# RUN: pass Select
+# STATISTIC: MoveLookupTablesToHeapGroups = 0
+# CHECK-NOT: MoveTableToHeap
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="outside-a-loop" parameters=[{type=Map}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=MapPrototypeGet/0
+    Return v2
+}
+
+function f1 name="by-a-number" parameters=[{type=Map}, {type=number}] results=[{type=anything}] {
+    v2 = Undefined
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    Jump -> next b1(v3, v2)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v5, v1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = CallBuiltin v0, v5 overload=MapPrototypeGet/0
+    v10 = Add v5, v4
+    Jump -> next b1(v10, v9)
+  b3():
+    Return v6
+}
+
+function f2 name="another-map-in-each-turn" parameters=[{type=Map}, {type=Map}, {type=string}, {type=number}] results=[{type=anything}] {
+    v4 = Integer integer=0
+    v5 = Integer integer=1
+    Jump -> next b1(v4, v0, v1)
+  b1(v6, v7, v8):
+    LoopHint
+    v10 = Less v6, v3
+    Branch v10 -> taken b2(), notTaken b3()
+  b2():
+    v11 = CallBuiltin v7, v2 overload=MapPrototypeGet/0
+    v12 = Add v6, v5
+    Jump -> next b1(v12, v8, v7)
+  b3():
+    Return v6
+}
+
+function f3 name="the-loop-adds-to-the-set" parameters=[{type=Set}, {type=string}, {type=number}] results=[{type=anything}] {
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    Jump -> next b1(v3)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v2
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = CallBuiltin v0, v1 overload=SetPrototypeHas/0
+    v9 = CallBuiltin v0, v1 overload=SetPrototypeAdd/0
+    v10 = Add v5, v4
+    Jump -> next b1(v10)
+  b3():
+    Return v5
+}
+
+function f4 name="by-a-text-that-was-just-joined" parameters=[{type=Set}, {type=string}, {type=number}] results=[{type=anything}] {
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    Jump -> next b1(v3, v1)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v5, v2
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Strcat v6, v1
+    v10 = CallBuiltin v0, v9 overload=SetPrototypeHas/0
+    v11 = Add v5, v4
+    Jump -> next b1(v11, v9)
+  b3():
+    Return v6
+}

@@ -165,7 +165,7 @@ CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
         lookAtReadersOf(value.id());
         lookAtReadersOf(m_function.at(*append).arrayOperand());
         const ArrayStorageForm& form = expected ? arrayStorageFormOf(*expected) : formOfEmptyLiteral(value.id(), typeOf(value.id()));
-        return CellPointer(callStub(value, newArrayOfMembers(kindOf(form)), { in<CellPointer>(m_function.at(*append).sourceOperand()).value() }).first);
+        return CellPointer(callStub(value, newArrayOfMembers(kindOf(form)), { in<CellPointer>(m_function.at(*append).sourceOperand()).value() }, { .alsoPerforms = *append }).first);
     }
 
     switch (value->literalStorage()) {

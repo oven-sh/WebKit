@@ -11,6 +11,7 @@
 #include "AOTImage.h"
 #include "AOTImageText.h"
 #include "AOTInstance.h"
+#include "AOTJSONTextWriter.h"
 #include "AOTLimits.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationData.h"
@@ -723,17 +724,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTIntToString, JSCell*, (Instance* i
         StringKeyCache& keys = *instance->state->stringKeys;
         JSString* string = keys.tryFindIntegerKey(static_cast<uint32_t>(value));
         if (!string) {
-            std::array<Latin1Character, 10> digits;
-            size_t first = digits.size();
-            for (uint32_t rest = static_cast<uint32_t>(value); rest; rest /= 10)
-                digits[--first] = static_cast<Latin1Character>('0' + rest % 10);
-            std::span characters = std::span<const Latin1Character> { digits }.subspan(first);
-            if (!keys.wasAskedForIntegerKey(static_cast<uint32_t>(value))) {
-                keys.cacheIntegerKey(vm, static_cast<uint32_t>(value), nullptr);
-                OPERATION_RETURN(scope, jsNontrivialString(vm, String(StringImpl::create(characters))));
-            }
-            string = keys.makeIntegerKey(vm, static_cast<uint32_t>(value), characters);
-            vm.numericStrings.setJSString(static_cast<int32_t>(value), string->tryGetValue(), string);
+            std::array<Latin1Character, maxJSONIntegerLength> digits;
+            size_t length = appendJSONInteger(digits.data(), value) - digits.data();
+            string = jsNontrivialString(vm, String(StringImpl::create(std::span<const Latin1Character> { digits }.first(length))));
+            if (!keys.cacheIntegerKey(static_cast<uint32_t>(value), string)) [[unlikely]]
+                vm.numericStrings.setJSString(static_cast<int32_t>(value), string->tryGetValue(), string);
         }
         OPERATION_RETURN(scope, string);
     }

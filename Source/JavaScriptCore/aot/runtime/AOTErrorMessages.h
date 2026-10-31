@@ -129,6 +129,9 @@ String assignmentThatBuildDidNotSeeMessage(ASCIILiteral property);
 enum class LockedIn : bool { Executable, TestRun };
 String assignmentToLockedBuiltinMessage(VM&, BuiltinID holder, UniquedStringImpl* key, LockedIn);
 String deletionFromLockedBuiltinMessage(VM&, BuiltinID holder, UniquedStringImpl* key, LockedIn);
+// `property` is no entry of the table: hostDidFillObjectWithFoldedMembers(). No test run opens it.
+String assignmentToFoldedMemberMessage(const String& property, LockedIn);
+String deletionOfFoldedMemberMessage(const String& property, LockedIn);
 // call, apply, bind, Symbol.hasInstance: BuiltinTable::isFunctionOfEngine().
 String assignmentToNameThatBuiltinFunctionInheritsMessage(UniquedStringImpl*);
 String prototypeChangeOfLockedBuiltinMessage(const String& holder, LockedIn = LockedIn::Executable);

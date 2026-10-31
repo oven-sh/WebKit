@@ -3072,6 +3072,8 @@ JSValue Modules::answerRequireWithMock(ModuleID target, ModuleID referrer)
 
 JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy requiredBy)
 {
+    if (JSValue settled = settledAnswerOfRequire(target, requiredBy))
+        return settled;
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
     runMocksBelow(target);

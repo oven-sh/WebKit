@@ -17,19 +17,15 @@
 
 namespace JSC { namespace AOT {
 
-static ALWAYS_INLINE bool hasStructure(EncodedJSValue encodedValue, Structure* structure)
-{
-    JSValue value = JSValue::decode(encodedValue);
-    return value.isCell() && value.asCell()->structureID() == structure->id();
-}
-
+// The function is bound to the formatter: what the formatter has got under a name since makes no difference to it.
 template<typename Formatter>
-static ALWAYS_INLINE JSCell* tryFormat(JSGlobalObject* globalObject, EncodedJSValue formatter, Structure* structure, double value)
+static ALWAYS_INLINE JSCell* tryFormat(JSGlobalObject* globalObject, EncodedJSValue encodedFormatter, double value)
 {
-    if (!hasStructure(formatter, structure)) [[unlikely]]
+    auto* formatter = dynamicDowncast<Formatter>(JSValue::decode(encodedFormatter));
+    if (!formatter) [[unlikely]]
         return nullptr;
     auto topScope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
-    JSValue text = uncheckedDowncast<Formatter>(JSValue::decode(formatter).asCell())->format(globalObject, value);
+    JSValue text = formatter->format(globalObject, value);
     if (topScope.exception()) [[unlikely]] {
         topScope.clearExceptionExceptTermination();
         return nullptr;
@@ -42,12 +38,12 @@ static JSCell* tryFormatDateTime(JSGlobalObject* globalObject, EncodedJSValue fo
     double clippedTimeValue = WTF::timeClip(timeValue);
     if (!std::isfinite(clippedTimeValue)) [[unlikely]]
         return nullptr;
-    return tryFormat<IntlDateTimeFormat>(globalObject, formatter, globalObject->dateTimeFormatStructure(), clippedTimeValue);
+    return tryFormat<IntlDateTimeFormat>(globalObject, formatter, clippedTimeValue);
 }
 
 static JSCell* tryFormatNumber(JSGlobalObject* globalObject, EncodedJSValue formatter, double number)
 {
-    return tryFormat<IntlNumberFormat>(globalObject, formatter, globalObject->numberFormatStructure(), number);
+    return tryFormat<IntlNumberFormat>(globalObject, formatter, number);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFormatDateTime, JSCell*, (Instance* instance, EncodedJSValue formatter, double timeValue))

@@ -3,12 +3,12 @@
 # OPTIONS: report=Declines heat=OnlyLoopsAreHot
 # RUN: pass FuseArrayChains
 # RUN(DECLINES): pass FuseArrayChains
-# STATISTIC: ArrayChainsFused = 3
+# STATISTIC: ArrayChainsFused = 5
 # CHECK: outcome: Changed
 # DECLINES: outcome: Changed
 # DECLINES: decline ArrayChainNotFused f10 v7 None [0] reason=CallbacksInterfere
 # DECLINES: decline ArrayChainNotFused f11 v7 None [0] reason=CallbacksInterfere
-# DECLINES: decline ArrayChainNotFused f12 v7 None [0] reason=SkippedCallIsObservable
+# DECLINES: decline ArrayChainNotFused f15 v7 None [0] reason=SkippedCallIsObservable
 # DECLINES-NOT: decline
 
 module m0 path="main.js" displayPath="main.js"
@@ -165,9 +165,50 @@ function f12 name="filterThrowsBehindWhatFindTakes" parameters=[{type=Array<anyt
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f2
     Return v7
-# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f1
+# The callback of `filter` still runs on the elements behind the one that `find` takes.
+# CHECK: role=CatchHandler frequency=Rare:
+# CHECK: = CallDirect v0, v1, {{*}} function=f1
+# CHECK: = CallDirect {{*}}, v5, {{*}} function=f2
+# CHECK: = CallDirect v0, {{*}}, v1, {{*}}, v5, {{*}} function=[[filterToFindOnEveryElement]] [isAlwaysInlined]
+}
+
+function f13 name="isSeen" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    PutModuleVariable v0 variable=g0
+    Return v0
+}
+function f14 name="same" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f15 name="mapIsSeenBehindWhatFindTakes" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f13
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f3
+    v4 = AssumeType v3 provenType=Array<anything>
+    v5 = NewClosure function=f14
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f2
+    Return v7
+# Any call may find the stack full. Where the one behind does, the one in front has been seen on every element, and nothing that was seen can start over.
+# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f3
 # CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f2
 # CHECK-NOT: role=CatchHandler
 }
+function f16 name="nothingIsMissedBehindWhatFindTakes" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f14
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f3
+    v4 = AssumeType v3 provenType=Array<anything>
+    v5 = NewClosure function=f14
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f2
+    Return v7
+# CHECK-NOT: role=CatchHandler
+# CHECK: = CallDirect v0, {{*}}, v1, {{*}}, v5, {{*}} function=[[mapToFind]] [isAlwaysInlined]
+}
 
+# Find is 6, a map in front 1 << 4, a filter 2 << 4, and 1 << 12 says that the links run on every element.
+# CHECK: function [[mapToFind]] name="traverseArray"{{*}}role=ChainStep
+# CHECK: = Integer integer=22
 # CHECK: function [[filterMapToArray]] name="traverseArray"{{*}}role=ChainStep
+# CHECK: function [[filterToFindOnEveryElement]] name="traverseArray"{{*}}role=ChainStep
+# CHECK: = Integer integer=4134

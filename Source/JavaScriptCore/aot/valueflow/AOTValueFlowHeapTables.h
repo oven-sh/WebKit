@@ -128,6 +128,7 @@ private:
     macro(ValueSetID, lockedObjects) \
     macro(ValueSetID, holdersWithLockedIndexes) \
     macro(ValueSetID, holdersWithLockedPrototypeLink) \
+    macro(ValueSetID, holdersWithMembersOnHiddenPrototype) \
     macro(ValueSetID, objectsOfRealm) \
     macro(ValueSetID, prototypeObjects) \
     macro(ValueSetID, prototypeObjectsOfHost) \
@@ -199,6 +200,7 @@ public:
     ValueSetID objectsDeclaringFieldThatNoStoreCreates(PropertyKeyID key) const { return m_objectsDeclaringFieldThatNoStoreCreates[key.index()]; }
     ValueSetID holdersThatAnswerUnder(PropertyKeyID key) const { return holdersUnder(key).thatAnswer; }
     ValueSetID holdersThatMayLoseMemberUnder(PropertyKeyID key) const { return holdersUnder(key).thatMayLoseMember; }
+    ValueSetID holdersWithMemberOnHiddenPrototypeUnder(PropertyKeyID key) const { return holdersUnder(key).withMemberOnHiddenPrototype; }
     ValueSetID objectsStoredToAtCreationUnder(PropertyKeyID key) const { return holdersUnder(key).storedToAtCreation; }
 
     const ValueFlowMembersOfHolder& membersOf(BuiltinID holder) const LIFETIME_BOUND
@@ -247,6 +249,7 @@ private:
         uint32_t record { 0 };
         ValueSetID thatAnswer;
         ValueSetID thatMayLoseMember;
+        ValueSetID withMemberOnHiddenPrototype;
         ValueSetID storedToAtCreation;
     };
 

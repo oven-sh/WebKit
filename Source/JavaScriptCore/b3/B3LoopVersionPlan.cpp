@@ -205,7 +205,7 @@ std::expected<LoopVersionPlan, GaveUp> LoopVersionPlanner::tryPlan(const HotRegi
         plan.rangeChecks = planRangeChecks({ m_proc, m_phiChildren, plan.region, attempt.invariance, *plan.countedLoop, attempt.blocksBeforeTopTest, canRewriteTest && clampsLoopBounds });
         plan.numberOfRemovedValues += countRemovedComparisons(attempt);
     } else if (clampsLoopBounds) {
-        plan.rangeChecks = planRangeChecksOfMeetingCounters({ m_proc, m_loops, m_phiChildren, plan.region, attempt.invariance, mayBeEnteredOnAnyTurn(attempt) });
+        plan.rangeChecks = planRangeChecksOfMeetingCounters({ m_proc, m_loops, m_phiChildren, plan.region, attempt.invariance });
         plan.numberOfRemovedValues += countRemovedComparisons(attempt);
     }
     if (plan.rangeChecks.decidedComparisons.isEmpty() && !hoistsEnough(attempt))
@@ -432,12 +432,6 @@ static std::optional<IndexSet<BasicBlock*>> findBlocksBeforeTopTest(const HotReg
     return result;
 }
 
-// A turn that has left the fast version by a slow path may end in front of the guards of the fast version.
-bool LoopVersionPlanner::mayBeEnteredOnAnyTurn(const Attempt& attempt)
-{
-    return !attempt.unswitched && !attempt.plan.region.slowPathBlocks.isEmpty();
-}
-
 void LoopVersionPlanner::findCountedLoop(Attempt& attempt)
 {
     LoopVersionPlan& plan = attempt.plan;
@@ -470,7 +464,6 @@ void LoopVersionPlanner::findCountedLoop(Attempt& attempt)
         }
         attempt.blocksBeforeTopTest = WTF::move(*blocksBeforeTopTest);
     }
-    countedLoop->isEnteredOnAnyTurn = mayBeEnteredOnAnyTurn(attempt);
     plan.countedLoop = *countedLoop;
 }
 

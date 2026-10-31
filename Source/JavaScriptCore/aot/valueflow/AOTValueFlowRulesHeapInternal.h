@@ -306,6 +306,7 @@ private:
     ClimbingSet holdersOfReplaceableMemberThatUnknownObjectMayBe(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     // Bun stays listed beside the unknown object wherever it goes, so that a name read on it or on a copy of it is found. Anything else counts as done to Bun only where Bun is followed from a read under its name.
     ClimbingSet findListedBun(const ValueFlowOperand& object, ClimbingSet receivers) { return object.node && mayBeUnknownObject(receivers) ? m_context.valueWithin(ClimbingSet(only(m_universe.objectOf(Builtins::Bun))), object.node) : ClimbingSet(); }
+    bool isBunNamedIn(const ValueFlowOperand& object, const HeapChain&);
     bool holdsNamedBun(const ValueFlowOperand& object) { return object.node && m_context.holdsAnyOf(ClimbingSet(only(ValueFlowUniverse::markOfNamedBun())), object.node); }
     bool holdsMarkOfMemberLeftOut(ValueFlowNodeID node) { return node && m_context.holdsAnyOf(ClimbingSet(only(ValueFlowUniverse::markOfMemberLeftOut())), node); }
     bool holdsMarkOfLoadedBun(ValueFlowNodeID node) { return node && m_context.holdsAnyOf(ClimbingSet(only(ValueFlowUniverse::markOfLoadedBun())), node); }

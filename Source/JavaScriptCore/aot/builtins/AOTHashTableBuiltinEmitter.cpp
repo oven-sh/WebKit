@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinTypes.h"
 #include "AOTCompactTable.h"
 #include "AOTConversionEmitter.h"
 #include "AOTFunctionAnalyses.h"
@@ -292,22 +293,6 @@ Boxed HashTableBuiltinEmitter::lookUpAmongTags(const InlineCall& call, CellPoint
     return join.finish();
 }
 
-static bool hasOnlyMapsAndSets(const Program& program, const Type& type)
-{
-    auto isMapOrSet = [](BuiltinClassID builtinClass) {
-        return builtinClass == BuiltinClasses::Map || builtinClass == BuiltinClasses::Set;
-    };
-    if (!type.isObject() || type.anyObject || type.anyFunction || !type.functions.isEmpty() || !type.builtins.isEmpty())
-        return false;
-    for (const ClassPart& part : type.classes) {
-        if (!isMapOrSet(part.builtinClass))
-            return false;
-    }
-    return std::ranges::all_of(membersOf(program, type), [&](LayoutID layout) {
-        return isMapOrSet(builtinBaseClassOf(program, layout));
-    });
-}
-
 bool HashTableBuiltinEmitter::hasReceiverThatLeavesLoop(const InlineCall& call)
 {
     if (call.context().shape() != CodeShape::Fast || m_options.recorded.useWideReferences())
@@ -332,7 +317,7 @@ bool HashTableBuiltinEmitter::hasReceiverThatLeavesLoop(const InlineCall& call)
         for (ValueID id : m_function.at(block).values) {
             const Value& value = m_function.at(id);
             // A lookup only moves a table in the image, which code that has read it takes the stub for.
-            if (value.opcode == Opcode::CallInline && (value.inlineBuiltin() == InlineBuiltin::MapGet || value.inlineBuiltin() == InlineBuiltin::MapHas || value.inlineBuiltin() == InlineBuiltin::SetHas))
+            if (value.opcode == Opcode::MoveTableToHeap || (value.opcode == Opcode::CallInline && (value.inlineBuiltin() == InlineBuiltin::MapGet || value.inlineBuiltin() == InlineBuiltin::MapHas || value.inlineBuiltin() == InlineBuiltin::SetHas)))
                 continue;
             if (writesTables(functionAnalyses.effectsOf(id).onAnyEdge()))
                 return false;
@@ -343,16 +328,22 @@ bool HashTableBuiltinEmitter::hasReceiverThatLeavesLoop(const InlineCall& call)
     return true;
 }
 
+static bool mayHoldMoreNamesThanTags(const Program& program, const Type& collection)
+{
+    return std::ranges::any_of(collection.classes, [&](const ClassPart& part) {
+        ContentsSlot keys = part.builtinClass == BuiltinClasses::Map ? ContentsSlot::Key : ContentsSlot::Element;
+        return program.at(part.expectedContentsAt(program.builtins(), keys).predicted()).stringLiterals.size() > CompactTable::maxCapacityWithTags;
+    });
+}
+
 bool HashTableBuiltinEmitter::looksAmongTags(const InlineCall& call)
 {
     // A larger table pays for the header that is read here and again in the stub. Keys that are written in the program are few, and mostly so are the entries of the table they are looked up in.
-    return typeOf(call.argument(0)).hasOnlyPrimitives(Primitive::LiteralString) && hasReceiverThatLeavesLoop(call);
+    return typeOf(call.argument(0)).hasOnlyPrimitives(Primitive::LiteralString) && !mayHoldMoreNamesThanTags(m_program, typeOf(call.receiver())) && hasReceiverThatLeavesLoop(call);
 }
 
 bool HashTableBuiltinEmitter::looksIntoHomeSlot(const InlineCall& call, KeyComparison comparison)
 {
-    // A string that was just made has no hash yet, so the stub would run as well.
-    static constexpr OpcodeSet makersOfStrings { Opcode::Add, Opcode::CallBuiltin, Opcode::Strcat, Opcode::Substring, Opcode::SubstringOrUndefined, Opcode::StringBuilderFinish, Opcode::StringBuilderToString, Opcode::ToString };
     ValueID key = call.argument(0);
     const Type& type = typeOf(key);
     bool isKey = comparison == KeyComparison::String ? !makersOfStrings.contains(m_function.at(key).opcode) : comparison == KeyComparison::Bits && type.isNumber();
@@ -686,6 +677,32 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
 
     m_out.appendTo(byStub);
     join.add(Boxed(callStub(call.context(), lookupStubFor(kindOfOwner, returnsValue, comparison), { owner.value(), key.value() }).first));
+    return join.finish();
+}
+
+// The lookups read the table through the reference that is returned, so B3 reads nothing of it ahead of the move.
+CellPointer HashTableBuiltinEmitter::moveTableToHeap(const OperationContext& context, CellPointer owner)
+{
+    auto inHeader = [&](LValue base, ptrdiff_t offset) { return m_out.address(m_heaps.entire(AbstractHeap::CollectionStorage), base, offset); };
+    LBasicBlock hasTable = newBlock();
+    LBasicBlock isOnHeap = newBlock();
+    LBasicBlock isInImage = newBlock();
+    Join<CellPointer> join(m_out);
+
+    LValue table = m_out.loadPtr(inHeader(owner.value(), JSMap::offsetOfStorage()));
+    m_out.branch(m_out.notNull(table), normalEdge(hasTable), normalEdge(isOnHeap));
+
+    m_out.appendTo(hasTable);
+    LValue flags = m_out.load8ZeroExt32(inHeader(table, CompactTable::offsetOfKeysShift()));
+    m_out.branch(m_out.testNonZero32(flags, m_out.constInt32(CompactTable::keysAreInImage)), rareEdge(isInImage), normalEdge(isOnHeap));
+
+    m_out.appendTo(isOnHeap);
+    join.add(owner);
+
+    m_out.appendTo(isInImage);
+    emitter<RuntimeCallEmitter>().setCallsOnlyMoveTables(true);
+    join.add(callOperation<CellPointer>(context, RuntimeOperation::MoveTableToHeap, { owner }, { .isOnRarePath = true }));
+    emitter<RuntimeCallEmitter>().setCallsOnlyMoveTables(false);
     return join.finish();
 }
 

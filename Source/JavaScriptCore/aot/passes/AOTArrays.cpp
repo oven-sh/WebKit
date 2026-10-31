@@ -903,7 +903,7 @@ static bool canLeaveOutWhatStandsBetweenCalls(FunctionPassContext& context, cons
     return true;
 }
 
-ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const ArrayChain& chain, ChainOperandProofs proofs, bool* startsOverAfterThrow, uint8_t* callbacksThatGiveUp)
+ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const ArrayChain& chain, ChainOperandProofs proofs, bool* startsOverAfterThrow, uint8_t* callbacksThatGiveUp, bool* runsLinksOnEveryElement)
 {
     const Program& program = context.program;
     FunctionAnalyses& analyses = context.analyses;
@@ -947,6 +947,7 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
     effectsOfVersions.fill(Effects::none());
     RELEASE_ASSERT(chain.callbacks.size() <= effectsOfVersions.size());
     bool differsOnlyInWhatIsThrown = false;
+    bool skipsCallThatShows = false;
     auto judge = [&]() -> ArrayChainDeclineReason {
         effects.shrink(0);
         mayStopAfterFirstCall.shrink(0);
@@ -990,9 +991,6 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
         if (givesUp) {
             if (!mayRunAgain)
                 return ArrayChainDeclineReason::CallbacksInterfere;
-            // What stops early does not reach the tests that a later element would fail, and behind those tests may be whatever the program can see.
-            if (last->method->stopsEarly && (givesUp & ((1u << chain.shape.numberOfLinks()) - 1)))
-                return ArrayChainDeclineReason::SkippedCallIsObservable;
             differsOnlyInWhatIsThrown = true;
         }
         for (size_t earlier = 0; earlier < effects.size(); ++earlier) {
@@ -1011,11 +1009,12 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
                     return ArrayChainDeclineReason::SkippedCallIsObservable;
             }
         }
-        bool skipsCallThatShows = last->method->stopsEarly && std::ranges::any_of(effects.span().first(chain.shape.numberOfLinks()), [](const Effects& step) {
+        // Where one method runs after the other, a link has run on every element before the end looks at the first. What it does on an element behind the answer shows: what the program can see, what is thrown,
+        // and the test that such an element fails, behind which may be either. So the traversal goes on behind the answer, with the links alone.
+        bool linkGivesUp = givesUp & ((1u << chain.shape.numberOfLinks()) - 1);
+        skipsCallThatShows = last->method->stopsEarly && (linkGivesUp || std::ranges::any_of(effects.span().first(chain.shape.numberOfLinks()), [](const Effects& step) {
             return canBeObserved(step) || mayStopOtherThanStackOverflow(step);
-        });
-        if (skipsCallThatShows)
-            return ArrayChainDeclineReason::SkippedCallIsObservable;
+        }));
         return ArrayChainDeclineReason::None;
     };
     auto judgeWithSource = [&]() -> ArrayChainDeclineReason {
@@ -1075,6 +1074,8 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
         *startsOverAfterThrow = differsOnlyInWhatIsThrown;
     if (callbacksThatGiveUp)
         *callbacksThatGiveUp = givesUp;
+    if (runsLinksOnEveryElement)
+        *runsLinksOnEveryElement = skipsCallThatShows;
     return ArrayChainDeclineReason::None;
 }
 
@@ -1456,11 +1457,11 @@ PassOutcome fuseArrayMethodsTakenAlone(FunctionPassContext& context, const BitVe
                     continue;
                 }
             }
-            ArrayChainDeclineReason obstacle = checkInterleaving(context, chain, ChainOperandProofs::Required, &chain.startsOverAfterThrow, &chain.callbacksThatGiveUp);
+            ArrayChainDeclineReason obstacle = checkInterleaving(context, chain, ChainOperandProofs::Required, &chain.startsOverAfterThrow, &chain.callbacksThatGiveUp, &chain.shape.runsLinksOnEveryElement);
             bool takesProofs = obstacle == ArrayChainDeclineReason::SourceIsNotPristine && (calls.get(chain.lastCall.index()) || wouldFuseWithProofsOfPristineTests(context, chain));
             if (takesProofs && takeProofsOfPristineTests(context, chain.source)) {
                 outcomeWithoutChain = PassOutcome::Changed;
-                obstacle = checkInterleaving(context, chain, ChainOperandProofs::Required, &chain.startsOverAfterThrow, &chain.callbacksThatGiveUp);
+                obstacle = checkInterleaving(context, chain, ChainOperandProofs::Required, &chain.startsOverAfterThrow, &chain.callbacksThatGiveUp, &chain.shape.runsLinksOnEveryElement);
             }
             if (obstacle != ArrayChainDeclineReason::None && chain.isSplitByTests()) {
                 callsNotJoinedThroughTests.set(chain.lastCall.index());
@@ -1513,9 +1514,12 @@ PassOutcome fuseArrayMethodsTakenAlone(FunctionPassContext& context, const BitVe
 
     context.function = WTF::move(fused);
     context.build.statistics().count(StatisticID::ArrayChainsFused, accepted.size());
-    // A chain that never starts over is rewritten inside its block: the fused body has the blocks, the targets and the handlers of the body that it replaces.
-    if (std::ranges::none_of(accepted, &ArrayChain::startsOverAfterThrow))
-        context.keptAnalyses = controlFlowAnalyses;
+    // A chain in one block that never starts over is rewritten inside that block: the fused body has the blocks, the targets and the handlers of the body that it replaces.
+    // InlineCalls asks more than once in one run, so what an earlier answer kept does not stand for this one.
+    bool addsBlocks = std::ranges::any_of(accepted, [](const ArrayChain& chain) {
+        return chain.startsOverAfterThrow || chain.isSplitByTests();
+    });
+    context.keptAnalyses = addsBlocks ? AnalysisSet { } : controlFlowAnalyses;
     return PassOutcome::Changed;
 }
 

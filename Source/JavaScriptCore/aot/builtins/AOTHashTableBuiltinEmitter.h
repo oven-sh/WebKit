@@ -24,6 +24,7 @@ public:
     Boxed normalizedKey(const OperationContext&, ValueID);
     Word32 hashOfBits(Boxed normalizedKey);
     Integer sizeOf(CellPointer table, HashTableOwner);
+    CellPointer moveTableToHeap(const OperationContext&, CellPointer owner);
 
 private:
     Boxed normalizedNumber(const OperationContext&, Number);

@@ -1,4 +1,4 @@
-# An allocation that fails throws where it stands, so one that stands under a handler goes to its use only where the same handler covers the use.
+# An allocation that fails throws where it stands, so it goes to its use only where the same handler covers both, or none covers either.
 # FORM: Prepared
 # RUN: pass SinkConstants
 
@@ -63,4 +63,21 @@ function f3 name="bothUnderOneHandler" parameters=[{type=boolean}, {type=functio
 # CHECK-NEXT: b2() handler=b4():
 # CHECK-NEXT: [[copy]]: f0 = NewClosure function=f0
 # CHECK-NEXT: = Call v1, -, [[copy]]
+}
+
+function f4 name="madeInFrontOfTheTry" parameters=[{type=boolean}, {type=function}] results=[{type=anything}] {
+    v2 = NewClosure function=f0
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() handler=b3():
+    v3 = Call v1, -, v2
+    Return v3
+  b2():
+    Return v1
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    Return v4
+# CHECK: b0(v0: boolean, v1: function):
+# CHECK-NEXT: v2: f0 = NewClosure function=f0
+# CHECK: b1() handler=b3():
+# CHECK-NEXT: = Call v1, -, v2
 }

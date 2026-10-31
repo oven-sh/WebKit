@@ -2239,12 +2239,58 @@ private:
         }
     }
 
-    bool stepsRestElement(const Value& step)
+    const BitVector& patternsSteppedPlaceAfterPlace()
+    {
+        if (m_patternsSteppedPlaceAfterPlace)
+            return *m_patternsSteppedPlaceAfterPlace;
+
+        struct Steps {
+            ValueID iterator;
+            BitVector indexes;
+            uint32_t highestIndex { 0 };
+            bool haveOnePlaceEach { true };
+        };
+        constexpr uint32_t none = std::numeric_limits<uint32_t>::max();
+        Vector<Steps, 4> patterns;
+        Vector<uint32_t> patternOfIterator(FillWith { }, m_function.values.size(), none);
+        for (BlockID block : m_cfg.reversePostOrder()) {
+            for (ValueID id : m_function.at(block).values) {
+                const Value& step = m_function.at(id);
+                if (step.opcode != Opcode::IteratorResume)
+                    continue;
+                ValueID iterator = step.operand(OperandIndex::IteratorResume::iterator);
+                uint32_t& pattern = patternOfIterator[iterator.index()];
+                if (pattern == none) {
+                    pattern = patterns.size();
+                    patterns.append(Steps { iterator, { }, 0, true });
+                }
+                Steps& steps = patterns[pattern];
+                std::optional<uint32_t> index = step.stepIndex();
+                if (step.resumeMode() != ResumeMode::Next || step.sentOperand() || step.readsValueWhenDone() || !index || steps.indexes.set(*index)) {
+                    steps.haveOnePlaceEach = false;
+                    continue;
+                }
+                steps.highestIndex = std::max(steps.highestIndex, *index);
+            }
+        }
+
+        m_patternsSteppedPlaceAfterPlace.emplace();
+        for (const Steps& steps : patterns) {
+            if (steps.haveOnePlaceEach && steps.indexes.bitCount() == steps.highestIndex + 1)
+                m_patternsSteppedPlaceAfterPlace->set(steps.iterator.index());
+        }
+        return *m_patternsSteppedPlaceAfterPlace;
+    }
+
+    bool stepFillsNoOnePlace(const Value& step)
     {
         if (!step.stepIndex())
             return false;
-        const Value& open = m_function.at(step.operand(OperandIndex::IteratorResume::iterator));
-        return open.opcode != Opcode::IteratorOpen || (open.hasRest() && *step.stepIndex() >= open.elementCount().value_or(0));
+        ValueID iterator = step.operand(OperandIndex::IteratorResume::iterator);
+        const Value& open = m_function.at(iterator);
+        if (open.opcode != Opcode::IteratorOpen || (open.hasRest() && *step.stepIndex() >= open.elementCount().value_or(0)))
+            return true;
+        return !patternsSteppedPlaceAfterPlace().get(iterator.index());
     }
 
     void noteFactsOfText(const Value& value, ValueID site, Body::Statement& statement)
@@ -2255,8 +2301,8 @@ private:
         }
         if (value.opcode == Opcode::ElemGet && readsUnderNameOfEnumerationOfSameObject(m_function, value))
             statement.factsOfText.add(ValueFlowFactOfText::ReadsUnderNameOfEnumerationOfSameObject);
-        if (value.opcode == Opcode::IteratorResume && stepsRestElement(value))
-            statement.factsOfText.add(ValueFlowFactOfText::StepsRestElement);
+        if (value.opcode == Opcode::IteratorResume && stepFillsNoOnePlace(value))
+            statement.factsOfText.add(ValueFlowFactOfText::StepFillsNoOnePlace);
         ValueFlowRareFactsOfText rare { m_body.function, site, { }, { } };
         if (flowRuleOf(value.opcode) == FlowRule::Call) {
             if (value.operand(1))
@@ -2399,6 +2445,7 @@ private:
     CFG m_cfg;
     std::optional<UseLists> m_uses;
     std::optional<Dominators> m_dominators;
+    std::optional<BitVector> m_patternsSteppedPlaceAfterPlace;
     Body m_body;
     InternedBodyRecords<Body::Constant> m_constants;
     InternedBodyRecords<Body::Mask> m_masks;

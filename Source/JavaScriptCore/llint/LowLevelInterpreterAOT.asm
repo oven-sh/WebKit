@@ -2101,6 +2101,40 @@ aotOp(op_call, OpCall, macro (size, get, dispatch, metadata, return)
 end)
 
 aotOp(op_construct, OpConstruct, macro (size, get, dispatch, metadata, return)
+    # `new f()` of a function of the program that only returns. What AOT::ClassTable::createThis() remembers of it is the whole construction: nothing is entered.
+    get(m_callee, t1)
+    loadConstantOrVariable(size, t1, t0)
+    btqnz t0, notCellMask, .enters
+    bbneq JSCell::m_type[t0], constexpr CompiledClosureType, .enters
+    loadp JSFunction::m_executableOrRareData[t0], t1
+    btpz t1, (constexpr JSFunction::rareDataTag), .enters
+    bbneq (FunctionRareData::m_compiledAllocationConstructorHighBits - (constexpr JSFunction::rareDataTag))[t1], constexpr AOT::Interpreter::highBitsOfConstructorThatOnlyReturns, .enters
+    loadi (FunctionRareData::m_compiledAllocationStructureID - (constexpr JSFunction::rareDataTag))[t1], t2
+    btiz t2, .enters
+    # new.target lies where the callee would find `this`.
+    getu(size, OpConstruct, m_argv, t3)
+    negp t3
+    bqneq ThisArgumentOffset[cfr, t3, 8], t0, .enters
+    loadp CodeBlock[cfr], t1
+    loadp CodeBlock::m_vm[t1], t1
+    loadp (constexpr AOT::Interpreter::offsetOfAllocatorOfDefaultFinalObject)[t1], t1
+    btpz t1, .enters
+    allocateCell(t1, t0, t3, .enters)
+    storei t2, JSCell::m_structureID[t0]
+    structureIDToStructureWithScratch(t2, t3)
+    loadi StructureTypeInfoBlob[t2], t3
+    storei t3, JSCell::m_indexingTypeAndMisc[t0]
+    storep 0, JSObjectWithButterfly::m_butterfly[t0]
+    storeq ValueEmpty, sizeof JSObjectWithButterfly[t0]
+    storeq ValueEmpty, sizeof JSObjectWithButterfly + 8[t0]
+    storeq ValueEmpty, sizeof JSObjectWithButterfly + 16[t0]
+    storeq ValueEmpty, sizeof JSObjectWithButterfly + 24[t0]
+    storeq ValueEmpty, sizeof JSObjectWithButterfly + 32[t0]
+    storeq ValueEmpty, sizeof JSObjectWithButterfly + 40[t0]
+    fenceAfterAllocation(t3)
+    return(t0)
+
+.enters:
     metadata(t5, t0)
 
     macro getCallee(dst)

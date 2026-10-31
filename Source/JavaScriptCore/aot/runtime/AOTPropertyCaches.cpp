@@ -2829,27 +2829,24 @@ void StringKeyCache::resizeIntegerKeys(size_t tableSize)
     publishIntegerKeys();
 }
 
-void StringKeyCache::cacheIntegerKey(VM& vm, uint32_t integer, JSString* keyOrNull)
+bool StringKeyCache::cacheIntegerKey(uint32_t integer, JSString* key)
 {
-    if (keyOrNull && !vm.heap.cage().contains(keyOrNull))
-        return;
+    if (!canEncode(key))
+        return false;
     if (m_integerKeys.isEmpty()) [[unlikely]] {
         if (!tryResize(m_integerKeys, minIntegerKeyTableSize))
-            return;
+            return false;
         publishIntegerKeys();
     }
     size_t tableSize = m_integerKeys.size();
     uint64_t& entry = m_integerKeys[integer & (tableSize - 1)];
     bool overwrites = entry && entry >> 32 != integer;
-    entry = static_cast<uint64_t>(integer) << 32;
-    if (keyOrNull) {
-        entry |= MarkedBlockCage::encode(m_cageBase, keyOrNull);
-        ++m_integerKeysEnteredSinceSweep;
-        m_writtenSinceCollection.recordAll();
-    }
-    if (!overwrites || ++m_integerKeyEvictionCount <= tableSize / 4 || tableSize >= maxIntegerKeyTableSize) [[likely]]
-        return;
-    resizeIntegerKeys(tableSize * 2);
+    entry = static_cast<uint64_t>(integer) << 32 | MarkedBlockCage::encode(m_cageBase, key);
+    ++m_integerKeysEnteredSinceSweep;
+    m_writtenSinceCollection.recordAll();
+    if (overwrites && ++m_integerKeyEvictionCount > tableSize / 4 && tableSize < maxIntegerKeyTableSize) [[unlikely]]
+        resizeIntegerKeys(tableSize * 2);
+    return true;
 }
 
 JSString* StringKeyCache::makeIntegerKey(VM& vm, uint32_t integer, std::span<const Latin1Character> characters)
@@ -2857,7 +2854,7 @@ JSString* StringKeyCache::makeIntegerKey(VM& vm, uint32_t integer, std::span<con
     ASSERT(characters.size() >= 2);
     unsigned hash = RapidHash::computeHashAndMaskTop8Bits<Latin1Character>(characters);
     JSString* key = jsNontrivialString(vm, String(StringImpl::create(characters, hash)));
-    cacheIntegerKey(vm, integer, key);
+    cacheIntegerKey(integer, key);
     return key;
 }
 
@@ -3023,11 +3020,8 @@ size_t StringKeyCache::removeDeadIntegerKeys(VM& vm)
     size_t removedCount = 0;
     size_t aliveCount = 0;
     for (uint64_t& entry : m_integerKeys) {
-        // An integer without a key names no cell: nothing dies with it, and its entry needs no record.
-        if (!static_cast<uint32_t>(entry)) {
-            entry = 0;
+        if (!entry)
             continue;
-        }
         if (vm.heap.isMarked(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(entry)))) {
             ++aliveCount;
             continue;

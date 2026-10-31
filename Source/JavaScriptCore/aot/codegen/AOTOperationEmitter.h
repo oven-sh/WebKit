@@ -59,6 +59,8 @@ struct CallOptions {
     bool convertsNoCells { false };
     // The caller is suspended as soon as the callee returns, so it has read what it keeps in its saved registers for the last time.
     bool callerSuspendsAtReturn { false };
+    // The callee reads and writes what this operation does too, which stands behind the one that the call is emitted for.
+    ValueID alsoPerforms { };
 };
 
 struct StubCallResult {

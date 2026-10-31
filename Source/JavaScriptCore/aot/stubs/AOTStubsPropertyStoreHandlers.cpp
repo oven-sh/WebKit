@@ -404,6 +404,10 @@ void generateStoreSlot(StubAssembler& jit)
         break;
     }
     case Slot::Kind::ExtraProperty:
+        if (origin == SlotOrigin::ByVal && accessOf(traits.operation) == SlotAccess::Store) {
+            jit.load32(Address(receiver, JSCell::structureIDOffset()), T11);
+            rememberPlaceOfExtraProperty(jit, SlotAccess::Store, slot, receiver, operands.keyCell, T10, T11);
+        }
         storeExtraProperty(jit, slot, extraPropertyRegisters, value, finishExtraPropertyStore, miss);
         break;
     case Slot::Kind::ExtraSetter:

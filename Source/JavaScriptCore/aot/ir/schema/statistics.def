@@ -16,6 +16,7 @@ enum StatisticID {
     FlowUnreachedFunctions FlowAppendedFields
     FlowSetsOutsideTypes LayoutsOutsideFamily
     FlowCallsOfUnknownCallees FlowAccessesOfUnknownReceivers FlowLibraryFunctionsLacked FlowEdgesLogged FlowReaders FlowBodiesParked FlowBodiesTakenBack FlowRunsForWholeProgram
+    HeatEstimatesOfVeryLargeProgram
     FieldsNarrowedToInt32 InitialValuesStoredBehindAllocations
     AccessesProven AccessesGuarded AccessesUnknown DirectCalls IndirectCalls TableCalls MethodTableSelectors MethodTableBytes
     ClosuresFull ClosuresSlim ClosuresDeferred ClosuresInFrames ClosuresLent ClosuresNeverCreated EnvironmentsOnHeap EnvironmentsInFrames ObjectsInFrames ArraysInFrames RestArraysInFrames

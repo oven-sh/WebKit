@@ -3529,8 +3529,10 @@ struct ControlFlowSimplifier {
 
     void mergeChains(const CFG& cfg)
     {
+        // An allocation that fails throws where it stands.
         auto mayThrowIn = [&](BlockID id) {
-            return analyses.effectTraitsOfTerminator(id).normal.mayThrow() || std::ranges::any_of(function.at(id).values, [&](ValueID value) { return analyses.mayThrow(value); });
+            return analyses.effectTraitsOfTerminator(id).normal.mayThrow() || analyses.effectsOfTerminator(id).onAnyEdge().mayCollect
+                || std::ranges::any_of(function.at(id).values, [&](ValueID value) { return analyses.mayThrow(value) || analyses.effectsOf(value).onAnyEdge().mayCollect; });
         };
         for (BlockID id : cfg.hasHandlers() ? cfg.reversePostOrder() : std::span<const BlockID> { }) {
             std::optional<BlockID> next = findMergeableSuccessor(cfg, id);
@@ -4015,7 +4017,7 @@ struct ConstantSinker {
             return true;
         const std::optional<Target>& handler = rewrite.at(from).handler;
         const std::optional<Target>& handlerThere = rewrite.at(to).handler;
-        return !handler || (handlerThere && handlerThere->block == handler->block);
+        return handler ? handlerThere && handlerThere->block == handler->block : !handlerThere;
     }
 
     bool canSink(ValueID id, BlockID definitionBlock, std::span<const Use> uses)

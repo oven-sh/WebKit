@@ -79,6 +79,7 @@ public:
     void stateWhichCallsChangeWhatOnlyGeneratedCodeReads();
     void applyEffects(B3::PatchpointValue*, const Effects&, ArgumentBufferAccess, bool accessesCollectorState = false, CellConversions = CellConversions::AsEffectsSay, SlotsOfSites = SlotsOfSites::MayChange);
     Effects effectsOfCall(const OperationContext&, const Effects& effectsOfCallee) const;
+    Effects effectsOfCall(const EffectsOnEdges& effectsOfOperation, const Effects& effectsOfCallee) const;
 
     RegisterSet registersClobberedByCalls() const;
     // A lookup may replace a table in the image by a copy on the heap. That changes the word in the collection and nothing that AOTCompactTable_lookupHeader reads means: code that has read a table in the image goes on to the stub.

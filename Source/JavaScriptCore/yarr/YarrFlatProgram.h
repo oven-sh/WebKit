@@ -319,6 +319,21 @@ public:
     bool isEnteredOutOfLine { false };
     // The pattern is one set, or a run of at least one of its members: [aeiou], \d+. A match needs no machine.
     bool isOneSetOrRun { false };
+    // `^(?:break|case|catch)$`: the subject is one of the texts or there is no match. A match needs no machine: a text is found by its length, its first unit and its last.
+    struct WholeTexts {
+        struct Text {
+            uint32_t begin { 0 };
+            uint32_t length { 0 };
+        };
+        static ALWAYS_INLINE unsigned placeOf(unsigned length, char16_t first, char16_t last) { return (first * 31u + last) * 31u + length; }
+
+        Vector<char16_t> units;
+        Vector<Text> texts;
+        // The index of a text and one more, or 0. A text that finds its place taken stands at the next free one.
+        Vector<uint32_t> places;
+        unsigned greatestLength { 0 };
+    };
+    std::optional<WholeTexts> wholeTexts;
     // Rows are numbered in this order: position-keyed, run-suffix, capture-keyed.
     unsigned memoRows { 0 };
     unsigned positionKeyedMemoRows { 0 };

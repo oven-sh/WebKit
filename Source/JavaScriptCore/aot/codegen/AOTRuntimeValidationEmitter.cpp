@@ -329,7 +329,7 @@ static uint64_t bitsOfHeapsIn(const LocationMasks& locations)
     return bits;
 }
 
-RuntimeValidationEmitter::PhotographedOperands RuntimeValidationEmitter::photographOperands(const OperationContext& context, const Effects& effectsOfCall)
+RuntimeValidationEmitter::PhotographedOperands RuntimeValidationEmitter::photographOperands(const OperationContext& context, const Effects& effectsOfCall, ValueID alsoPerformed)
 {
     PhotographedOperands result;
     uint64_t writtenByCall = bitsOfHeapsIn(effectsOfCall.writes);
@@ -351,15 +351,22 @@ RuntimeValidationEmitter::PhotographedOperands RuntimeValidationEmitter::photogr
         return result;
     }
 
-    const Value& operation = m_function.at(context.valueID());
     EffectSummaries unknownSummaries;
     EffectContext effectContext { m_program, unknownSummaries };
     uint64_t heapsOfObjects = bitsOfHeapsIn(LocationMasks { perObjectHeaps });
-    operation.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        // As the passes ask it: an operation that names the operands it writes leaves the objects of the others alone.
-        uint64_t writtenThroughOperand = bitsOfHeapsIn(memoryAccessedThrough(effectContext, m_function, operation, operandIndex, context.effects()).writes);
-        photograph(operand, writtenByCall & (writtenThroughOperand | ~heapsOfObjects));
-    });
+    auto photographOperandsOf = [&](ValueID performed, ValueID madeByCall) {
+        const Value& operation = m_function.at(performed);
+        operation.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            if (madeByCall && sameObjectThroughCasts(m_function, operand).valueInFrontOfFacts() == madeByCall)
+                return;
+            // As the passes ask it: an operation that names the operands it writes leaves the objects of the others alone.
+            uint64_t writtenThroughOperand = bitsOfHeapsIn(memoryAccessedThrough(effectContext, m_function, operation, operandIndex, analyses().effectsOf(performed)).writes);
+            photograph(operand, writtenByCall & (writtenThroughOperand | ~heapsOfObjects));
+        });
+    };
+    photographOperandsOf(context.valueID(), ValueID());
+    if (alsoPerformed)
+        photographOperandsOf(alsoPerformed, context.valueID());
     return result;
 }
 

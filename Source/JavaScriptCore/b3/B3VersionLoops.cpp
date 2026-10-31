@@ -8,7 +8,6 @@
 
 #if ENABLE(B3_JIT)
 
-#include "AirStackSlot.h"
 #include "B3BasicBlockInlines.h"
 #include "B3ClampLoopBound.h"
 #include "B3CountedLoops.h"
@@ -26,7 +25,6 @@
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
 #include "B3RegionCloner.h"
-#include "B3SlotBaseValue.h"
 #include "B3ValueInlines.h"
 #include <wtf/IndexSet.h>
 
@@ -169,8 +167,6 @@ private:
     {
         if (Value* replacement = valueInPreHeader(version, value, IsPeeled::No))
             return replacement;
-        if (Variable* variable = variableOfHeaderPhi(version.plan, value))
-            return version.front->last()->appendNew<VariableValue>(m_proc, Get, value->origin(), variable);
         if (!m_cloner.contains(value->owner))
             return value;
         Value* valueOfCopiedBlock = version.front->last()->appendNew<VariableValue>(m_proc, Get, value->origin(), variableHolding(value));
@@ -253,18 +249,11 @@ private:
     }
 
     // The guards in front of the fast loop read variables, so they hold for the next iteration, whichever it is.
-    // The guards of range checks do where they were planned so. Otherwise they start from the values that enter the loop, and hold for the first iteration only.
+    // The guards of range checks start from the values that enter the loop, and hold for the first iteration only.
     static bool guardsStartFromVariables(const LoopVersionPlan& plan)
     {
-        if (!plan.isEnteredFromPreHeader || plan.unswitched)
-            return false;
-        return plan.rangeChecks.holdsOnAnyTurn || !removesRangeChecks(plan);
-    }
-
-    static bool removesRangeChecks(const LoopVersionPlan& plan)
-    {
         const RangeCheckPlan& rangeChecks = plan.rangeChecks;
-        return rangeChecks.clampsBound() || rangeChecks.strided || !rangeChecks.entryGuards.isEmpty() || !rangeChecks.decidedComparisons.isEmpty();
+        return plan.isEnteredFromPreHeader && !plan.unswitched && !rangeChecks.clampsBound() && !rangeChecks.strided && rangeChecks.entryGuards.isEmpty() && rangeChecks.decidedComparisons.isEmpty();
     }
 
     // A loop that may be entered again on any turn keeps its poll, its turns are not written out, and more values live around it. Beside a call that costs little.
@@ -282,9 +271,6 @@ private:
 
     bool canReturnFromOriginalLoop(const LoopVersionPlan& plan) const
     {
-        // A loop without its range checks is short, and gains most from having its turns written out.
-        if (removesRangeChecks(plan))
-            return false;
         if (callsAndWritesInEveryTurn(plan))
             return canCompareHeaderPhis(plan);
         // A first turn that fails a guard on what changes from turn to turn says nothing of the next: without a way back the fast version would never run.
@@ -661,11 +647,6 @@ private:
         appendEntryGuards(*version.front, plan.region.header->at(0)->origin(), plan.rangeChecks.entryGuards.span(), [&](Value* value) {
             return hoistedValueOrSelf(version, value);
         });
-        if (version.returnsFromSlowPaths) {
-            appendEntryGuards(*version.front, plan.region.header->at(0)->origin(), plan.rangeChecks.entryGuardsOfLaterTurns.span(), [&](Value* value) {
-                return hoistedValueOrSelf(version, value);
-            });
-        }
         if (plan.rangeChecks.strided) {
             appendStridedRangeCheckGuards(*version.front, *plan.rangeChecks.strided, *plan.countedLoop, [&](Value* value) {
                 return hoistedValueOrSelf(version, value);
@@ -676,7 +657,7 @@ private:
         version.bounds = appendEntryGuards(*version.front, plan.rangeChecks, *plan.countedLoop, [&](Value* value) {
             return hoistedValueOrSelf(version, value);
         });
-        version.start = hoistedValueOrSelf(version, plan.countedLoop->counterOnEntry());
+        version.start = hoistedValueOrSelf(version, plan.countedLoop->start);
     }
 
     void closeWithGuard(Version& version, unsigned index, Value* terminal)
@@ -905,19 +886,17 @@ private:
         // Coming back costs about what one turn of the fast loop saves: its guards, once more. Two turns in a row outside it say that it saves nothing here.
         auto [counter, step] = *version.counterOfCopiedSlowPaths;
         Origin origin = region.header->at(0)->origin();
-        // Only the turns outside the fast loop touch this, so it lives in the frame: it takes no register from the fast loop, and a likely path that needs no frame still needs none.
-        // So nothing writes it on the way in either. It chooses between two forms of one loop: whatever it holds will do, also behind a suspension.
-        // It is kept scrambled, so that a small number, a boxed one or an address that somebody else left there is not taken for a counter of this loop.
-        constexpr int32_t scramble = static_cast<int32_t>(0x9e3779b9);
-        Air::StackSlot* counterBehindNextTurn = m_proc.addStackSlot(sizeofType(counter->type()));
-        counterBehindNextTurn->setIsDeadAtSuspensions(true);
+        Variable* counterBehindNextTurn = m_proc.addVariable(counter->type());
+        BasicBlock* entry = m_proc.addBlock();
+        entry->appendNew<VariableValue>(m_proc, Set, origin, counterBehindNextTurn, entry->appendIntConstant(m_proc, origin, counter->type(), std::numeric_limits<int32_t>::min()));
+        entry->appendNew<Value>(m_proc, Jump, origin);
+        entry->setSuccessors(FrequentedBlock(version.front->first()));
+        region.preHeader->replaceSuccessor(version.front->first(), entry);
+
         BasicBlock* end = m_proc.addBlock();
-        auto scrambled = [&](Value* value) {
-            return end->appendNew<Value>(m_proc, BitXor, origin, value, end->appendIntConstant(m_proc, origin, counter->type(), scramble));
-        };
         Value* current = end->appendNew<VariableValue>(m_proc, Get, origin, counter);
-        Value* wasOutsideInTurnBefore = end->appendNew<Value>(m_proc, Equal, origin, scrambled(current), end->appendNew<MemoryValue>(m_proc, Load, counter->type(), origin, end->appendNew<SlotBaseValue>(m_proc, origin, counterBehindNextTurn), 0, m_proc.heapOfStackSlots()));
-        end->appendNew<MemoryValue>(m_proc, Store, origin, scrambled(end->appendNew<Value>(m_proc, Add, origin, current, end->appendIntConstant(m_proc, origin, counter->type(), step))), end->appendNew<SlotBaseValue>(m_proc, origin, counterBehindNextTurn), 0, m_proc.heapOfStackSlots());
+        Value* wasOutsideInTurnBefore = end->appendNew<Value>(m_proc, Equal, origin, current, end->appendNew<VariableValue>(m_proc, Get, origin, counterBehindNextTurn));
+        end->appendNew<VariableValue>(m_proc, Set, origin, counterBehindNextTurn, end->appendNew<Value>(m_proc, Add, origin, current, end->appendIntConstant(m_proc, origin, counter->type(), step)));
         end->appendNew<Value>(m_proc, Branch, origin, wasOutsideInTurnBefore);
         end->setSuccessors(FrequentedBlock(region.header, FrequencyClass::Rare), FrequentedBlock(version.front->first()));
 

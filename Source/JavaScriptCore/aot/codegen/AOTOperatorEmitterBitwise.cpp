@@ -128,7 +128,7 @@ Operand OperatorEmitter::bitwiseResult(const ValueContext& value, BitwiseOperato
         case Representation::ImpureDouble:
         case Representation::OptionalDouble:
             return int32ConvertedOnce(value, id, needsLowestBitsAlone, [&] {
-                return emitter<ConversionEmitter>().toInt32(asNumericOperand(id), bits);
+                return emitter<ConversionEmitter>().toInt32(asNumericOperand(id), bits, id);
             });
         case Representation::JSValue: {
             if (!typeOf(id).isNumber())

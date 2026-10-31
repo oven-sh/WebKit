@@ -263,9 +263,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRegExpMatchLiteral, EncodedJSValue, (Instan
 }
 
 // Answers as the code of a pattern in the image does: where the match starts, -1 where there is none, less where the match has to be given to somebody else.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRegExpMatchFlatProgram8, int64_t, (void* program, const Latin1Character* characters, uint32_t length, uint32_t* output))
+static ALWAYS_INLINE int64_t answerOfFlatProgram(Yarr::JSRegExpResult result, const uint32_t* output)
 {
-    switch (Yarr::matchFlatProgram(*static_cast<const Yarr::FlatProgram*>(program), std::span { characters, length }, 0, output)) {
+    switch (result) {
     case Yarr::JSRegExpResult::Match:
         return output[0];
     case Yarr::JSRegExpResult::NoMatch:
@@ -273,6 +273,21 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRegExpMatchFlatProgram8, int64_t, 
     default:
         return static_cast<int64_t>(Yarr::JSRegExpResult::JITCodeFailure);
     }
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRegExpMatchFlatProgram8, int64_t, (void* program, const Latin1Character* characters, uint32_t length, uint32_t* output))
+{
+    return answerOfFlatProgram(Yarr::matchFlatProgram(*static_cast<const Yarr::FlatProgram*>(program), std::span { characters, length }, 0, output), output);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRegExpMatchFlatProgram16, int64_t, (void* program, const char16_t* characters, uint32_t length, uint32_t* output))
+{
+    const auto& flatProgram = *static_cast<const Yarr::FlatProgram*>(program);
+    StringView subject(std::span { characters, length });
+    Yarr::JSRegExpResult result = Yarr::matchFlatProgram(flatProgram, subject, 0, output);
+    if (result == Yarr::JSRegExpResult::JITCodeFailure) [[unlikely]]
+        result = Yarr::matchFlatProgramBehindSurrogate(flatProgram, subject, 0, output);
+    return answerOfFlatProgram(result, output);
 }
 
 static JSValue valueOfFailedMatch(RegExpMatchForm form)

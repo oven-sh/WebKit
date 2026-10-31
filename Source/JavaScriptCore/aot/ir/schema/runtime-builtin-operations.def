@@ -119,6 +119,7 @@ runtime RegExpTestBoxed : EncodedJSValue (JSCell* regExp, JSCell* string) ; unkn
 runtime RegExpMatchLiteral : EncodedJSValue (JSCell* regExp, JSCell* string, uint32_t regExpRecord, uint32_t form) ; RuntimeMatchesRegExp
 runtime RegExpMatchLiteralWithoutObject : EncodedJSValue (JSCell* string, uint32_t regExpRecord, uint32_t form) ; RuntimeMatchesRegExp
 runtime RegExpMatchFlatProgram8 : int64_t (void* program, const Latin1Character* characters, uint32_t length, uint32_t* output) ; none ; leaf
+runtime RegExpMatchFlatProgram16 : int64_t (void* program, const char16_t* characters, uint32_t length, uint32_t* output) ; none ; leaf
 runtime NewRegExpLiteral : JSCell* (uint32_t regExpRecord, uint32_t flags, uint32_t staticsOffset) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime SharedRegExpLiteral : JSCell* (uint32_t staticsOffset, uint32_t regExpRecord, uint32_t flags) ; RuntimeCreatesConstant
 runtime NewRegExp : JSCell* (JSCell* pattern, uint32_t flags) ; RuntimeCreatesString

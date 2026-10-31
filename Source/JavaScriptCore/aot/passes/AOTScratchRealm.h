@@ -61,7 +61,8 @@ public:
         m_vm = nullptr;
     }
 
-    std::optional<Answer> call(const Program& program, BuiltinID function, KnownValue receiver, std::span<const Operand> arguments)
+    // An answer that is a list of strings is given to whoever names a place for it, and is no answer for anybody else.
+    std::optional<Answer> call(const Program& program, BuiltinID function, KnownValue receiver, std::span<const Operand> arguments, Vector<String>* listOfTexts = nullptr)
     {
         VM& vm = *m_vm;
         JSLockHolder locker(vm);
@@ -99,6 +100,18 @@ public:
             if (scope.exception())
                 return std::nullopt;
             return Answer { { }, text->isolatedCopy(), !mayHaveNarrowParts && (text->is8Bit() || !text->containsOnlyLatin1()) };
+        }
+        if (JSArray* list = listOfTexts ? dynamicDowncast<JSArray>(result) : nullptr) {
+            for (unsigned index = 0; index < list->length(); ++index) {
+                JSValue element = list->getIndex(realm, index);
+                if (scope.exception() || !element.isString())
+                    return std::nullopt;
+                auto text = asString(element)->value(realm);
+                if (scope.exception())
+                    return std::nullopt;
+                listOfTexts->append(text->isolatedCopy());
+            }
+            return Answer { };
         }
         if (result.isUndefined())
             return Answer { KnownValue::undefined(), { } };

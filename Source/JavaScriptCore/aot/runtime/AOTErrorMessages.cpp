@@ -2709,6 +2709,11 @@ String assignmentThatBuildDidNotSeeMessage(ASCIILiteral property)
 
 static constexpr ASCIILiteral pageOnCompiledTests = " (https://bun.com/docs/compiler/debugging#run-your-tests-compiled)"_s;
 
+static String refusalThatNoTestRunLifts(ASCIILiteral change, const String& member, ASCIILiteral does)
+{
+    return makeString(change, member, " because built-in objects are read-only in compiled code, and a test can't "_s, does, " this one: it is read without being looked up. Replace a function of your own that uses it"_s, pageOnCompiledTests);
+}
+
 static String refusalInTestRun(VM& vm, ASCIILiteral change, BuiltinID holder, UniquedStringImpl* key)
 {
     const BuiltinTable& table = BuiltinTable::singleton();
@@ -2719,7 +2724,7 @@ static String refusalInTestRun(VM& vm, ASCIILiteral change, BuiltinID holder, Un
     bool canBeOpened = found ? table.canBeReplacedInTestRuns(found) : isText && table.canTakeNameInTestRuns(holder, name);
     ASCIILiteral does = found ? "replace"_s : "add"_s;
     if (!canBeOpened)
-        return makeString(change, member, " because built-in objects are read-only in compiled code, and a test can't "_s, does, " this one: it is read without being looked up. Replace a function of your own that uses it"_s, pageOnCompiledTests);
+        return refusalThatNoTestRunLifts(change, member, does);
     String object = table.textOf(holder);
     String spelled = isText ? makeString(object, '.', StringView(key)) : makeString(object, '[', StringView(key), ']');
     String example = found
@@ -2740,6 +2745,20 @@ String deletionFromLockedBuiltinMessage(VM& vm, BuiltinID holder, UniquedStringI
     if (lockedIn == LockedIn::TestRun)
         return refusalInTestRun(vm, "Cannot delete "_s, holder, key);
     return deletionFromLockedBuiltinMessage(memberOfLockedBuiltin(holder, key));
+}
+
+String assignmentToFoldedMemberMessage(const String& property, LockedIn lockedIn)
+{
+    if (lockedIn == LockedIn::TestRun)
+        return refusalThatNoTestRunLifts("Cannot assign to "_s, property, "replace"_s);
+    return assignmentToLockedBuiltinMessage(property);
+}
+
+String deletionOfFoldedMemberMessage(const String& property, LockedIn lockedIn)
+{
+    if (lockedIn == LockedIn::TestRun)
+        return refusalThatNoTestRunLifts("Cannot delete "_s, property, "replace"_s);
+    return deletionFromLockedBuiltinMessage(property);
 }
 
 String assignmentToNameThatBuiltinFunctionInheritsMessage(UniquedStringImpl* uid)

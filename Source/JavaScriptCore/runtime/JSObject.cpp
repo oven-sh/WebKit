@@ -636,25 +636,32 @@ static bool putsAsOrdinaryObjectAboveReceiver(JSObject* object)
     return put == JSArray::info()->methodTable.put || put == InternalFunction::info()->methodTable.put;
 }
 
-static bool changesNothingThroughSetterOfPrototype(VM& vm, JSObject* object, PropertyName propertyName, JSValue value)
+// A store to `__proto__` is judged by the accessor that will answer it, not by the name: a test may have replaced the engine's accessor with its own, which leaves the receiver alone.
+enum class StoreToLockedProto : uint8_t { ChangesReceiver, ChangesNothing, CallsAnotherAccessor };
+
+static StoreToLockedProto classifyStoreToLockedProto(VM& vm, JSObject* object, PropertyName propertyName, JSValue value)
 {
     if (propertyName.uid() != vm.propertyNames->underscoreProto.impl())
-        return false;
-    if ((value.isObject() || value.isNull()) && object->getPrototypeDirect() != value)
-        return false;
+        return StoreToLockedProto::ChangesReceiver;
     for (JSObject* current = object;;) {
         Structure* structure = current->structure();
         if ((current != object && !putsAsOrdinaryObjectAboveReceiver(current)) || structure->typeInfo().overridesGetPrototype())
-            return false;
+            return StoreToLockedProto::ChangesReceiver;
         unsigned attributes;
         PropertyOffset offset = structure->get(vm, propertyName, attributes);
-        if (isValidOffset(offset))
-            return attributes & PropertyAttribute::Accessor && isSetterOfPrototype(uncheckedDowncast<GetterSetter>(current->getDirect(offset))->setter());
+        if (isValidOffset(offset)) {
+            if (!(attributes & PropertyAttribute::Accessor))
+                return StoreToLockedProto::ChangesReceiver;
+            if (!isSetterOfPrototype(uncheckedDowncast<GetterSetter>(current->getDirect(offset))->setter()))
+                return current == object ? StoreToLockedProto::ChangesReceiver : StoreToLockedProto::CallsAnotherAccessor;
+            bool changesPrototype = (value.isObject() || value.isNull()) && object->getPrototypeDirect() != value;
+            return changesPrototype ? StoreToLockedProto::ChangesReceiver : StoreToLockedProto::ChangesNothing;
+        }
         if (structure->hasNonReifiedStaticProperties() && structure->findPropertyHashEntry(propertyName))
-            return false;
+            return StoreToLockedProto::ChangesReceiver;
         JSValue above = current->getPrototypeDirect();
         if (!above.isObject())
-            return false;
+            return StoreToLockedProto::ChangesReceiver;
         current = asObject(above);
     }
 }
@@ -675,12 +682,15 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
     if (structure()->isImmutableProperty(propertyName.uid()) && !isThisValueAltered(slot, this)) [[unlikely]] {
         bool holdsValue = holdsInWritableProperty(globalObject, this, propertyName, value);
         RETURN_IF_EXCEPTION(scope, false);
-        if (holdsValue || changesNothingThroughSetterOfPrototype(vm, this, propertyName, value))
+        StoreToLockedProto store = holdsValue ? StoreToLockedProto::ChangesNothing : classifyStoreToLockedProto(vm, this, propertyName, value);
+        if (store == StoreToLockedProto::ChangesNothing)
             return true;
-        WriteOrigin origin = slot.context() == PutPropertySlot::ReflectSet ? WriteOrigin::Reflect : WriteOrigin::Operator;
-        if (specRejectsStore(globalObject, this, propertyName))
-            origin = WriteOrigin::RejectedBySpec;
-        return rejectWriteToLockedProperty(globalObject, scope, slot.isStrictMode(), origin, this, propertyName, ReadonlyPropertyWriteError);
+        if (store == StoreToLockedProto::ChangesReceiver) {
+            WriteOrigin origin = slot.context() == PutPropertySlot::ReflectSet ? WriteOrigin::Reflect : WriteOrigin::Operator;
+            if (specRejectsStore(globalObject, this, propertyName))
+                origin = WriteOrigin::RejectedBySpec;
+            return rejectWriteToLockedProperty(globalObject, scope, slot.isStrictMode(), origin, this, propertyName, ReadonlyPropertyWriteError);
+        }
     }
 
     if (!vm.isSafeToRecurseSoft()) [[unlikely]] {

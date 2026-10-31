@@ -1099,7 +1099,7 @@ static bool isCreatedWithReportedStructure(const BuiltinTable& table, BuiltinID 
     if (!builtinClass || (table.at(builtinClass).prototype != holder && table.at(builtinClass).constructor != holder))
         return false;
     return std::ranges::any_of(BuiltinBindings::classesOfHost(), [&](const BuiltinClassBinding& binding) {
-        return binding.builtinClass == builtinClass && binding.findInstanceStructure;
+        return binding.builtinClass == builtinClass && binding.namesInstanceStructure;
     });
 }
 
@@ -1330,6 +1330,42 @@ void hostDidCreateObjectOfGlobal(JSGlobalObject* realm, UniquedStringImpl* key, 
 {
     if (realm->aotInstance())
         lockMemberOfLockedHolder(realm, realm, key, object);
+}
+
+namespace {
+
+class FoldedMembersOfHostObject final : public ImmutablePropertyNames::OutsideNames {
+public:
+    FoldedMembersOfHostObject(ASCIILiteral holder, LockedIn lockedIn)
+        : m_holder(holder)
+        , m_lockedIn(lockedIn)
+    {
+    }
+
+    // The names are listed.
+    bool contains(UniquedStringImpl*) const final { return false; }
+    String storeErrorMessage(UniquedStringImpl* uid) const final { return assignmentToFoldedMemberMessage(makeString(m_holder, '.', StringView(uid)), m_lockedIn); }
+    String deleteErrorMessage(UniquedStringImpl* uid) const final { return deletionOfFoldedMemberMessage(makeString(m_holder, '.', StringView(uid)), m_lockedIn); }
+    bool throwsInSloppyMode() const final { return true; }
+    bool throwsFromReflect() const final { return m_lockedIn == LockedIn::TestRun; }
+
+private:
+    ASCIILiteral m_holder;
+    LockedIn m_lockedIn;
+};
+
+} // anonymous namespace
+
+void hostDidFillObjectWithFoldedMembers(JSGlobalObject* realm, JSObject* object, ASCIILiteral holder, std::span<const ASCIILiteral> names)
+{
+    VM& vm = realm->vm();
+    IdentifierSet folded;
+    for (ASCIILiteral name : names)
+        folded.add(Identifier::fromString(vm, name).impl());
+    Instance* instance = realm->aotInstance();
+    LockedIn lockedIn = instance && admitsReplacedBuiltins(*instance) ? LockedIn::TestRun : LockedIn::Executable;
+    Ref<ImmutablePropertyNames> closed = ImmutablePropertyNames::create(WTF::move(folded), { }, { }, adoptRef(*new FoldedMembersOfHostObject(holder, lockedIn)));
+    RELEASE_ASSERT(object->makePropertiesImmutable(vm, closed.get()));
 }
 
 void hostDidCreateNodeModule(JSGlobalObject* realm, JSObject* constructor)

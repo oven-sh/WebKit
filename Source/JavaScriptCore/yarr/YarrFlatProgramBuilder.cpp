@@ -110,8 +110,9 @@ public:
         bool isOneRun = ops[0].kind == Kind::PossessiveRun && ops[0].target == 1 && ops[0].argument == quantifyInfinite;
         // The last op is where a failure goes.
         program->isOneSetOrRun = !m_countsTurns && !program->numSubpatterns && !program->triesOnlyOnce && !m_decodesSurrogatePairs && ops.size() == 3 && ops[1].kind == Kind::Match && (isOneRun || ops[0].kind == Kind::Set);
-        program->isEnteredOutOfLine = m_countsTurns || program->needsFullMachine || program->isOneSetOrRun;
-        if (!program->needsFullMachine)
+        findWholeTexts();
+        program->isEnteredOutOfLine = m_countsTurns || program->needsFullMachine || program->isOneSetOrRun || program->wholeTexts;
+        if (!program->needsFullMachine && !program->wholeTexts)
             program->stepsPerCharacterBeforeStopping = program->stepsPerCharacterBeforeStoppingOnFullMachine;
         if (!m_countsTurns)
             computeStartScan(alternatives.span().first(count));
@@ -140,6 +141,50 @@ public:
 
 private:
     static bool isSingleCodeUnit(char32_t character) { return U_IS_BMP(character) && !U_IS_SURROGATE(character); }
+
+    void findWholeTexts()
+    {
+        if (m_countsTurns || m_findsEndsOfRuns || m_decodesSurrogatePairs || m_program->needsFullMachine || m_pattern.m_numSubpatterns || m_pattern.ignoreCase() || m_pattern.multiline())
+            return;
+        const auto& alternatives = m_pattern.m_body->m_alternatives;
+        if (alternatives.size() != 1 || alternatives[0]->m_terms.size() != 3)
+            return;
+        const auto& terms = alternatives[0]->m_terms;
+        const PatternTerm& group = terms[1];
+        if (terms[0].type != PatternTerm::Type::AssertionBOL || terms[2].type != PatternTerm::Type::AssertionEOL || group.type != PatternTerm::Type::ParenthesesSubpattern)
+            return;
+        if (terms[0].multiline() || terms[2].multiline())
+            return;
+        if (group.capture() || group.quantityType != QuantifierType::FixedCount || group.quantityMinCount != 1 || group.quantityMaxCount != 1)
+            return;
+
+        FlatProgram::WholeTexts found;
+        for (const auto& alternative : group.parentheses.disjunction->m_alternatives) {
+            if (alternative->m_terms.isEmpty())
+                return;
+            uint32_t begin = found.units.size();
+            for (const PatternTerm& term : alternative->m_terms) {
+                if (term.type != PatternTerm::Type::PatternCharacter || term.quantityType != QuantifierType::FixedCount || term.quantityMaxCount != 1 || term.ignoreCase() || !isSingleCodeUnit(term.patternCharacter))
+                    return;
+                found.units.append(static_cast<char16_t>(term.patternCharacter));
+            }
+            uint32_t length = found.units.size() - begin;
+            found.texts.append({ begin, length });
+            found.greatestLength = std::max(found.greatestLength, length);
+        }
+        found.places.fill(0, std::bit_ceil(found.texts.size() * 4));
+        unsigned mask = found.places.size() - 1;
+        for (unsigned index = 0; index < found.texts.size(); ++index) {
+            auto [begin, length] = found.texts[index];
+            unsigned place = FlatProgram::WholeTexts::placeOf(length, found.units[begin], found.units[begin + length - 1]) & mask;
+            while (found.places[place])
+                place = (place + 1) & mask;
+            found.places[place] = index + 1;
+        }
+        found.units.shrinkToFit();
+        found.texts.shrinkToFit();
+        m_program->wholeTexts = WTF::move(found);
+    }
 
     static bool holdsSingleCodeUnits(const CharacterClass& characterClass)
     {

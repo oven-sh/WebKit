@@ -136,7 +136,7 @@ static bool isRememberedFor(FunctionRareData& rareData, Structure* remembered, J
 {
     uint32_t rememberedConstructor = rareData.compiledAllocationConstructor();
     if (constructor == newTarget)
-        return rememberedConstructor == constructorIsNewTarget;
+        return isConstructorThatIsNewTarget(rememberedConstructor);
     return closureNumberOf(constructor) == rememberedConstructor && constructor->structure()->realm() == remembered->realm();
 }
 
@@ -166,8 +166,15 @@ JSObject* ClassTable::createThis(JSGlobalObject* globalObject, JSObject* constru
     JSObject* object = layout && layout->shape
         ? static_cast<JSObject*>(createClassInstance(vm, *layout, prototype))
         : createOrdinaryInstance(globalObject, layout ? layout->numberOfFields : 0, prototype);
-    if (canRemember)
-        target->ensureRareData(vm)->setCompiledAllocation(vm, object->structure(), constructor == newTarget ? constructorIsNewTarget : m_tables.closureNumberOf(function->index()));
+    if (canRemember) {
+        Structure* structure = object->structure();
+        uint32_t number = m_tables.closureNumberOf(function->index());
+        if (constructor == newTarget) {
+            bool isWholeConstruction = !compiledLayoutOrNull(structure) && structure->inlineCapacity() == JSFinalObject::defaultInlineCapacity && m_tables.closureNumberOnlyReturns(number) && !vm.aotState().validatesRuntime;
+            number = isWholeConstruction ? constructorIsNewTargetAndOnlyReturns : constructorIsNewTarget;
+        }
+        target->ensureRareData(vm)->setCompiledAllocation(vm, structure, number);
+    }
     return object;
 }
 

@@ -375,43 +375,55 @@ static void returnOwnValueAt(StubAssembler& jit, GPRReg base, GPRReg wordIndex)
     jit.returnToCaller();
 }
 
-// The place belongs to the key. Returns the value if the place records where objects of the Structure keep it among their extra properties. On fall-through the base, key, StructureID and place are unchanged.
-static void returnExtraPropertyByPlace(StubAssembler& jit, const KeyedProbeRegisters& registers, JumpList& hasNoExtraProperties)
+// The place belongs to the key. Goes on if the place records where objects of the Structure keep the value among their extra properties, with the object that holds them in registers.payload and Slot::wordIndexFor() in registers.header.
+// Where the returned jump is taken the base, key, StructureID and place are unchanged.
+static Jump findExtraPropertyByPlace(StubAssembler& jit, SlotAccess access, const KeyedProbeRegisters& registers, JumpList& hasNoExtraProperties)
 {
     const GPRReg hiddenWordOffset = registers.uid;
     const GPRReg wordIndex = registers.header;
     const GPRReg extraProperties = registers.payload;
     constexpr ptrdiff_t offsetOfExtraProperty = OBJECT_OFFSETOF(KeyedValuePlace, extraProperty);
     jit.add32(TrustedImm32(KeyedValuePlace::extraPropertyBits), registers.structureID, registers.header);
-    Jump doesNotSay = jit.branch32(CCallHelpers::NotEqual, inKeyedValuePlace(registers.entry, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, structureID)), registers.header);
-    jit.load16(inKeyedValuePlace(registers.entry, SlotAccess::Read, offsetOfExtraProperty + OBJECT_OFFSETOF(KeyedValuePlace::ExtraProperty, hiddenWordOffset)), hiddenWordOffset);
+    Jump doesNotSay = jit.branch32(CCallHelpers::NotEqual, inKeyedValuePlace(registers.entry, access, OBJECT_OFFSETOF(KeyedValuePlace, structureID)), registers.header);
+    jit.load16(inKeyedValuePlace(registers.entry, access, offsetOfExtraProperty + OBJECT_OFFSETOF(KeyedValuePlace::ExtraProperty, hiddenWordOffset)), hiddenWordOffset);
     loadExtraProperties(jit, registers.base, hiddenWordOffset, extraProperties, hasNoExtraProperties);
-    jit.load16SignedExtendTo32(inKeyedValuePlace(registers.entry, SlotAccess::Read, offsetOfExtraProperty + OBJECT_OFFSETOF(KeyedValuePlace::ExtraProperty, wordIndex)), wordIndex);
+    jit.load16SignedExtendTo32(inKeyedValuePlace(registers.entry, access, offsetOfExtraProperty + OBJECT_OFFSETOF(KeyedValuePlace::ExtraProperty, wordIndex)), wordIndex);
     jit.signExtend32ToPtr(wordIndex, wordIndex);
-    jit.move(extraProperties, registers.base);
-    returnOwnValueAt(jit, registers.base, wordIndex);
+    return doesNotSay;
+}
+
+static void returnExtraPropertyByPlace(StubAssembler& jit, const KeyedProbeRegisters& registers, JumpList& hasNoExtraProperties)
+{
+    Jump doesNotSay = findExtraPropertyByPlace(jit, SlotAccess::Read, registers, hasNoExtraProperties);
+    jit.move(registers.payload, registers.base);
+    returnOwnValueAt(jit, registers.base, registers.header);
     doesNotSay.link(&jit);
 }
 
 // A slot of the hashed table names an extra property of a compiled object. The object's Structure identifies the Structure of the object that holds the extra properties, so the property's location is valid for as long as the Structure lives.
-static void rememberExtraPropertyOfKey(StubAssembler& jit, const KeyedProbeRegisters& registers, const ProbedSlot& slot)
+void rememberPlaceOfExtraProperty(StubAssembler& jit, SlotAccess access, const CachedSlot& extraProperty, GPRReg object, GPRReg key, GPRReg place, GPRReg structureID)
 {
-    const CachedSlot extraProperty(slot.form, Slot::Kind::ExtraProperty, slot.header, slot.payload);
-    const GPRReg scratch = registers.structureID;
+    RELEASE_ASSERT(extraProperty.kind() == Slot::Kind::ExtraProperty && noOverlap(extraProperty.header(), object, key, place, structureID, instanceGPR));
+    const GPRReg scratch = structureID;
     constexpr ptrdiff_t offsetOfExtraProperty = OBJECT_OFFSETOF(KeyedValuePlace, extraProperty);
-    locateKeyedValuePlace(jit, SlotAccess::Read, registers.key, registers.structureID, registers.entry);
+    locateKeyedValuePlace(jit, access, key, structureID, place);
     extraProperty.loadSecondPayloadWord(jit, scratch);
     jit.add32(TrustedImm32(-INT16_MIN), scratch);
     Jump isTooFar = jit.branch32(CCallHelpers::Above, scratch, TrustedImm32(UINT16_MAX));
     jit.add32(TrustedImm32(INT16_MIN), scratch);
-    jit.store16(scratch, inKeyedValuePlace(registers.entry, SlotAccess::Read, offsetOfExtraProperty + OBJECT_OFFSETOF(KeyedValuePlace::ExtraProperty, wordIndex)));
+    jit.store16(scratch, inKeyedValuePlace(place, access, offsetOfExtraProperty + OBJECT_OFFSETOF(KeyedValuePlace::ExtraProperty, wordIndex)));
     extraProperty.loadHiddenWordOffset(jit, scratch);
-    jit.store16(scratch, inKeyedValuePlace(registers.entry, SlotAccess::Read, offsetOfExtraProperty + OBJECT_OFFSETOF(KeyedValuePlace::ExtraProperty, hiddenWordOffset)));
-    jit.storePtr(registers.key, inKeyedValuePlace(registers.entry, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, key)));
-    jit.load32(Address(registers.base, JSCell::structureIDOffset()), scratch);
+    jit.store16(scratch, inKeyedValuePlace(place, access, offsetOfExtraProperty + OBJECT_OFFSETOF(KeyedValuePlace::ExtraProperty, hiddenWordOffset)));
+    jit.storePtr(key, inKeyedValuePlace(place, access, OBJECT_OFFSETOF(KeyedValuePlace, key)));
+    jit.load32(Address(object, JSCell::structureIDOffset()), scratch);
     jit.add32(TrustedImm32(KeyedValuePlace::extraPropertyBits), scratch);
-    jit.store32(scratch, inKeyedValuePlace(registers.entry, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, structureID)));
+    jit.store32(scratch, inKeyedValuePlace(place, access, OBJECT_OFFSETOF(KeyedValuePlace, structureID)));
     isTooFar.link(&jit);
+}
+
+static void rememberExtraPropertyOfKey(StubAssembler& jit, const KeyedProbeRegisters& registers, const ProbedSlot& slot)
+{
+    rememberPlaceOfExtraProperty(jit, SlotAccess::Read, CachedSlot(slot.form, Slot::Kind::ExtraProperty, slot.header, slot.payload), registers.base, registers.key, registers.entry, registers.structureID);
     jit.load32(Address(registers.base, JSCell::structureIDOffset()), registers.structureID);
 }
 
@@ -427,6 +439,13 @@ static void storeOwnValueAtAndReturn(StubAssembler& jit, GPRReg base, GPRReg wor
     jit.loadPtr(Address(base, JSObject::butterflyOffset()), storage);
     jit.store64(value, BaseIndex(storage, wordIndex, CCallHelpers::TimesEight));
     jit.jump().linkTo(isStored, &jit);
+}
+
+static void storeExtraPropertyByPlaceAndReturn(StubAssembler& jit, const KeyedProbeRegisters& registers, GPRReg value, JumpList& hasNoExtraProperties)
+{
+    Jump doesNotSay = findExtraPropertyByPlace(jit, SlotAccess::Store, registers, hasNoExtraProperties);
+    storeOwnValueAtAndReturn(jit, registers.payload, registers.header, registers.entry, value);
+    doesNotSay.link(&jit);
 }
 
 static void storeAtPlaceInGlobalObjectAndReturn(StubAssembler& jit, const KeyedProbeRegisters& registers, GPRReg value)
@@ -1540,6 +1559,7 @@ static void storeByKeyedSlot(StubAssembler& jit, SlotOperation operation, const 
 
         placeIsOfNoValue.link(&jit);
         storeAtPlaceInGlobalObjectAndReturn(jit, registers, value);
+        storeExtraPropertyByPlaceAndReturn(jit, registers, value, hasNoPlace);
         hasNoPlace.link(&jit);
         structureIDOfBase = StructureIDOfBase::IsLoaded;
     }

@@ -829,6 +829,8 @@ struct WhatCanBeSeen {
     bool underHandler { false };
 };
 
+}
+
 struct VersionsThatGiveUp {
     AnalysisContext contextOf(FunctionID id) const { return { build, program, &inputs.flow, &inputs.effects, id }; }
 
@@ -842,8 +844,6 @@ struct VersionsThatGiveUp {
     HashMap<FunctionID, std::unique_ptr<FunctionSummary>> answers { };
 };
 
-}
-
 static bool canBeSeen(const Effects& effects)
 {
     return effects.writes.containsAny(observableHeaps) || effects.mayRunOtherCode() || !effects.alwaysCompletes();
@@ -851,13 +851,14 @@ static bool canBeSeen(const Effects& effects)
 
 // A body stands here as it was when the schedule began: what it expects of its values is not tested yet, and each of its operations may still do whatever the language allows.
 // With the tests that it gets when its own turn comes, all of that lies behind a test that seldom fails.
-static Function copyWithTests(const VersionsThatGiveUp& versions, FunctionID id)
+static Function copyWithTests(VersionsThatGiveUp& versions, FunctionID id)
 {
     Function copy = versions.program.at(id);
     FunctionAnalyses analyses(versions.contextOf(id), copy);
     FunctionPassContext context { versions.program, versions.inputs, id, copy, analyses, versions.types, versions.strings, versions.build };
     analyses.setTypingMemo(&context.typingMemo);
     context.isInRounds = true;
+    context.versionsBeingRead = &versions;
     if (copy.valuesAreTypedAsDefined())
         context.pendingTyping.didEnterScheduleTyped(context.changes);
     for (auto* pass : { placeTypeTests, retypeValues, foldConstants, simplifyControlFlow }) {
@@ -989,7 +990,7 @@ static std::optional<FunctionSummary> readVersion(VersionsThatGiveUp& versions, 
 std::optional<Effects> effectsOfVersionThatGivesUp(FunctionPassContext& context, FunctionID id)
 {
     VersionsThatGiveUp versions { context.program, context.inputs, context.types, context.strings, context.build };
-    const FunctionSummary* summary = summaryOfVersion(versions, id);
+    const FunctionSummary* summary = summaryOfVersion(context.versionsBeingRead ? *context.versionsBeingRead : versions, id);
     if (!summary)
         return std::nullopt;
     return summary->onCall().onAnyEdge();

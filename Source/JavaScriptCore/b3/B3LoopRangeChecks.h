@@ -104,11 +104,7 @@ struct RangeCheckPlan {
     Vector<RangeCheckBound, 4> bounds;
     std::unique_ptr<StridedRangeChecks> strided;
     Vector<EntryGuard, 8> entryGuards;
-    // What is known of the values that enter the loop, and has to be asked in front of a later turn.
-    Vector<EntryGuard, 1> entryGuardsOfLaterTurns;
     bool relationHoldsOnEntry { false };
-    // The guards name the counters and what the loop computes again, and nothing that was computed in front of the loop in their place.
-    bool holdsOnAnyTurn { false };
 
     bool clampsBound() const { return !bounds.isEmpty(); }
     bool dependsOnLoopTest() const { return clampsBound() || strided; }
@@ -132,7 +128,6 @@ struct MeetingCountersInputs {
     PhiChildren& phiChildren;
     const HotRegion& region;
     const LoopInvariance& invariance;
-    bool isEnteredOnAnyTurn;
 };
 
 // For a loop that goes on while a counter that rises is below one that falls. Neither leaves the stretch between where the two started.

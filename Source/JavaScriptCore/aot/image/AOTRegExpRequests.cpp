@@ -33,8 +33,11 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <ranges>
+#include <set>
 #include <tuple>
 #include <utility>
+#include <vector>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/Scope.h>
@@ -91,8 +94,11 @@ public:
         FunctionID declaration { };
         // A value that the walk cannot tell, of one operation under one call. What is stored under it in one place is read under it in another.
         ValueID unnamed { };
+        // A list of texts that a built-in has answered, by its place in m_listsOfTexts, counted from 1. Two of them with the same texts are one.
+        uint32_t listOfTexts { 0 };
 
         bool isObjectOrArray() const { return literal || data || declaration; }
+        bool hasElements() const { return isObjectOrArray() || listOfTexts; }
         friend bool operator==(const Constant&, const Constant&) = default;
     };
     using Constants = Vector<Constant, 1>;
@@ -153,6 +159,8 @@ public:
         m_worlds = 0;
         m_active.shrink(0);
         m_bindings.shrink(0);
+        m_loopsFollowed.shrink(0);
+        m_valuesInTurn.shrink(0);
         Patterns result;
         explore(call, result);
         return result;
@@ -217,6 +225,34 @@ private:
     struct Split {
         ValueKey value;
         Constants alternatives;
+    };
+
+    // Every way round the loop passes the header, which takes what one turn hands to the next as parameters and ends by testing one of them.
+    struct Loop {
+        Typed::BlockID header;
+        uint32_t targetThatStays { 0 };
+        // The header, and what runs between two passes of it.
+        BitVector turn;
+        // What runs before the header is passed for the first time. A block may be on both ways.
+        BitVector wayIn;
+        bool isLeftAtHeaderAlone { true };
+    };
+
+    enum class PartOfLoop : uint8_t { WayIn, Turn };
+
+    struct LoopFollowed {
+        const Typed::Value* call;
+        FunctionID function;
+        const Loop* loop;
+        PartOfLoop part;
+    };
+
+    // What a parameter of the header holds in the turn that is being followed. Nothing where the walk cannot tell.
+    struct ValueInTurn {
+        const Typed::Value* call;
+        ValueKey value;
+        Constants values;
+        bool sawEverything;
     };
 
     void explore(const CallWithUnknownText& call, Patterns& result)
@@ -347,7 +383,7 @@ private:
 
     const Constants* recall(const MemoKey& key)
     {
-        auto remembered = m_bindings.isEmpty() ? m_remembered.find(key) : m_remembered.end();
+        auto remembered = holdsForEveryChoice() ? m_remembered.find(key) : m_remembered.end();
         if (remembered == m_remembered.end())
             return nullptr;
         m_sawEverything &= remembered->value->sawEverything;
@@ -355,6 +391,9 @@ private:
             m_split = remembered->value->split;
         return &remembered->value->values;
     }
+
+    // What is read under the choice of one object, or in one turn of a loop, holds there alone.
+    bool holdsForEveryChoice() const { return m_bindings.isEmpty() && m_valuesInTurn.isEmpty(); }
 
     bool mayFollowAnotherValue()
     {
@@ -383,6 +422,12 @@ private:
             if (value == ValueKey { activation.function, id })
                 return { constant };
         }
+        for (const ValueInTurn& bound : m_valuesInTurn.span() | std::views::reverse) {
+            if (bound.call == activation.call && bound.value == ValueKey { activation.function, id }) {
+                m_sawEverything &= bound.sawEverything;
+                return bound.values;
+            }
+        }
         const Typed::Function& function = m_program.at(activation.function);
         if (Typed::KnownValue known = knownValueOf(m_program, function, id); known.isKnown() && !known.isObject())
             return { Constant { known } };
@@ -394,9 +439,9 @@ private:
             return { };
         }
 
-        bool mayRemember = m_bindings.isEmpty();
+        bool mayRemember = holdsForEveryChoice() && !isDefinedInLoopFollowed(activation, function, id);
         MemoKey memoKey { callsLeadingTo(activation), nullptr, activation.function.index(), id.index() };
-        if (const Constants* remembered = recall(memoKey))
+        if (const Constants* remembered = mayRemember ? recall(memoKey) : nullptr)
             return *remembered;
 
         unsigned walksCutShortBefore = m_walksCutShort;
@@ -493,6 +538,20 @@ private:
         }
         case Typed::Opcode::Substring:
             return substringsOf(activation, function, value);
+        case Typed::Opcode::Increment:
+        case Typed::Opcode::Decrement: {
+            Constants numbers;
+            for (const Constant& constant : evaluate(activation, value.valueOperand())) {
+                Typed::KnownValue number = constant.primitive.isNumber() ? Typed::KnownValue::computedNumber(constant.primitive.asNumber() + (value.opcode == Typed::Opcode::Increment ? 1 : -1)) : Typed::KnownValue();
+                if (!number.isNumber())
+                    m_sawEverything = false;
+                else if (!add(numbers, Constant { number }))
+                    return { };
+            }
+            return numbers;
+        }
+        case Typed::Opcode::Sub:
+            return sumsOrDifferencesOf(activation, function, value, { evaluate(activation, value.leftOperand()), evaluate(activation, value.rightOperand()) });
         case Typed::Opcode::ResultAt:
             return resultsAt(activation, function, value.resultsOperand(), value.index());
         default:
@@ -526,7 +585,7 @@ private:
         }
         m_sawEverything &= !values.isEmpty();
         // What was read under the choice of one object holds for that choice alone.
-        if (m_bindings.isEmpty() && !m_split && m_walksCutShort == walksCutShortBefore)
+        if (holdsForEveryChoice() && !m_split && m_walksCutShort == walksCutShortBefore)
             m_variables.set(variable.index(), ValuesOfVariable { values, m_sawEverything });
         else
             m_variables.remove(variable.index());
@@ -1065,6 +1124,8 @@ private:
         unsigned walksCutShortBefore = m_walksCutShort;
         bool sawEverythingBefore = m_sawEverything;
         auto bindingsBefore = std::exchange(m_bindings, { });
+        auto loopsFollowedBefore = std::exchange(m_loopsFollowed, { });
+        auto valuesInTurnBefore = std::exchange(m_valuesInTurn, { });
         auto activeBefore = std::exchange(m_active, { });
         std::optional<Split> splitBefore = std::exchange(m_split, std::nullopt);
 
@@ -1096,6 +1157,8 @@ private:
         m_walksCutShort = walksCutShortBefore;
         m_sawEverything = sawEverythingBefore;
         m_bindings = WTF::move(bindingsBefore);
+        m_loopsFollowed = WTF::move(loopsFollowedBefore);
+        m_valuesInTurn = WTF::move(valuesInTurnBefore);
         m_active = WTF::move(activeBefore);
         m_split = WTF::move(splitBefore);
         entry->second = WTF::move(contents);
@@ -1192,7 +1255,7 @@ private:
         WhereMade whereMade(array);
         Constants sources = evaluate(whereMade.activation, sourceOperand);
         Constants callbacks = isMappedByCallback ? evaluate(whereMade.activation, callback) : Constants();
-        if (sources.size() != 1 || !sources[0].isObjectOrArray())
+        if (sources.size() != 1 || !sources[0].hasElements())
             return std::nullopt;
         MappedArray mapped { sources[0], { }, { }, { } };
 
@@ -1252,6 +1315,8 @@ private:
 
     size_t sizeOf(const Constant& array)
     {
+        if (array.listOfTexts)
+            return m_listsOfTexts[array.listOfTexts - 1].size();
         if (const Typed::DataNode::Array* data = array.data ? array.data->tryAs<Typed::DataNode::Array>() : nullptr)
             return data->elements.size();
         const Typed::Value* literal = array.literal ? &m_program.at(array.function).at(array.literal) : nullptr;
@@ -1270,6 +1335,8 @@ private:
 
     Constants elementOf(const Constant& array, size_t index)
     {
+        if (array.listOfTexts)
+            return { Constant { Typed::KnownValue::string(m_listsOfTexts[array.listOfTexts - 1][index]) } };
         if (array.data)
             return { constantOf(array.data->as<Typed::DataNode::Array>().elements[index]) };
         const Typed::Value& literal = m_program.at(array.function).at(array.literal);
@@ -1337,10 +1404,17 @@ private:
             return { };
         Vector<Constants, 8> parts;
         if (!isBegunHere) {
+            // A block that is asked for again while it is walked lies on a way round that nobody follows.
+            if (!end)
+                remembered.emplace(std::pair { builder, block }, Constants());
             const Typed::CFG& cfg = cfgOf(activation.function);
             Constants before;
             for (Typed::Edge edge : cfg.incomingEdges(block)) {
-                if (!cfg.isReachable(edge.from) || cfg.reversePostOrderIndex(edge.from) >= cfg.reversePostOrderIndex(block) || isRuledOut(activation, function, cfg, edge))
+                if (!cfg.isReachable(edge.from) || isOffTheWayFollowed(activation, block, edge))
+                    continue;
+                if (cfg.reversePostOrderIndex(edge.from) >= cfg.reversePostOrderIndex(block) && !liesInFrontOfHeaderFollowed(activation, block))
+                    continue;
+                if (isRuledOut(activation, function, cfg, edge))
                     continue;
                 ValueID arriving = builder;
                 if (arrivesAsParameter) {
@@ -1349,12 +1423,38 @@ private:
                         return { };
                     arriving = incoming.argument;
                 }
-                if (!addAll(before, textsBuiltIn(activation, function, arriving, edge.from, ValueID(), remembered)))
+                if (!addAll(before, textsWhereEdgeBegins(activation, function, arriving, edge, block, remembered)))
                     return { };
             }
             parts.append(WTF::move(before));
         }
+        Constants texts = textsAppendedIn(activation, function, builder, block, end, WTF::move(parts));
+        if (!end)
+            remembered.insert_or_assign(std::pair { builder, block }, texts);
+        return texts;
+    }
 
+    // A block that both the way into a loop and the way round it pass. The way round comes to it from below.
+    bool liesInFrontOfHeaderFollowed(const Activation& activation, Typed::BlockID block) const
+    {
+        return m_loopsFollowed.containsIf([&](const LoopFollowed& followed) {
+            return followed.part == PartOfLoop::Turn && followed.call == activation.call && followed.function == activation.function && followed.loop->turn.get(block.index()) && followed.loop->wayIn.get(block.index());
+        });
+    }
+
+    // What the builder holds where the edge leaves its block. `to` is the block that the edge leads to.
+    Constants textsWhereEdgeBegins(const Activation& activation, const Typed::Function& function, ValueID builder, Typed::Edge edge, Typed::BlockID to, TextsWhereBlocksEnd& remembered)
+    {
+        if (const Loop* loop = loopTestedAt(activation.function, function, edge.from); loop && !loop->turn.get(to.index())) {
+            if (std::optional<Constants> texts = textsBehindLoop(activation, function, builder, *loop))
+                return WTF::move(*texts);
+        }
+        return textsBuiltIn(activation, function, builder, edge.from, ValueID(), remembered);
+    }
+
+    // `parts` is what the builder holds where the block begins. The answer is what it holds in front of `end`, and without an end where the block ends.
+    Constants textsAppendedIn(const Activation& activation, const Typed::Function& function, ValueID builder, Typed::BlockID block, ValueID end, Vector<Constants, 8>&& parts)
+    {
         for (ValueID id : function.at(block).values) {
             const Typed::Value& value = function.at(id);
             if (id == builder || !Typed::OperandPosition::builder(value.opcode) || value.builderOperand() != builder)
@@ -1366,6 +1466,7 @@ private:
                 parts.append(Constants { Constant { Typed::KnownValue::string(value.string()) } });
                 break;
             case Typed::Opcode::StringBuilderAppendString:
+            case Typed::Opcode::StringBuilderAppendValue:
                 parts.append(evaluate(activation, value.valueOperand()));
                 break;
             default:
@@ -1374,9 +1475,7 @@ private:
         }
         if (end)
             return { };
-        Constants texts = concatenated(parts.span());
-        remembered.emplace(std::pair { builder, block }, texts);
-        return texts;
+        return concatenated(parts.span());
     }
 
     Constants concatenated(std::span<const Constants> parts)
@@ -1489,6 +1588,262 @@ private:
         return *found;
     }
 
+    static constexpr Typed::OpcodeSet testsOfCounters { Typed::Opcode::Less, Typed::Opcode::LessEq, Typed::Opcode::Greater, Typed::Opcode::GreaterEq };
+
+    const Loop* loopTestedAt(FunctionID id, const Typed::Function& function, Typed::BlockID header)
+    {
+        const Typed::CFG& cfg = cfgOf(id);
+        const Typed::Block& block = function.at(header);
+        const Typed::Terminator& terminator = block.terminator;
+        if (!cfg.hasCycle() || (terminator.kind != Typed::TerminatorKind::TestAndBranch && terminator.kind != Typed::TerminatorKind::Branch) || terminator.targets.size() != 2)
+            return nullptr;
+        const Typed::Value& test = function.at(terminator.conditionOperand());
+        if (!testsOfCounters.contains(test.opcode))
+            return nullptr;
+        if (!block.parameters.contains(throughChecks(function, test.leftOperand())) && !block.parameters.contains(throughChecks(function, test.rightOperand())))
+            return nullptr;
+        return m_loops.ensure(static_cast<uint64_t>(id.index()) << 32 | header.index(), [&]() -> std::unique_ptr<Loop> {
+            BitVector atHeader(function.blocks.size());
+            atHeader.set(header.index());
+            BitVector comesBack(function.blocks.size());
+            Vector<Typed::BlockID, 16> worklist { header };
+            while (!worklist.isEmpty()) {
+                for (Typed::BlockID before : cfg.predecessors(worklist.takeLast())) {
+                    if (before != header && cfg.isReachable(before) && !comesBack.set(before.index()))
+                        worklist.append(before);
+                }
+            }
+            auto loop = makeUniqueWithoutFastMallocCheck<Loop>();
+            loop->header = header;
+            unsigned targetsThatStay = 0;
+            for (uint32_t index = 0; index < 2; ++index) {
+                Typed::BlockID target = terminator.targets[index].block;
+                if (target != header && !comesBack.get(target.index()))
+                    continue;
+                ++targetsThatStay;
+                loop->targetThatStays = index;
+                if (target != header)
+                    loop->turn = cfg.blocksReachableFrom(target, atHeader);
+            }
+            if (targetsThatStay != 1)
+                return nullptr;
+            loop->turn.ensureSize(function.blocks.size());
+            loop->turn.filter(comesBack);
+            for (size_t index : loop->turn) {
+                for (Typed::BlockID next : cfg.successors(Typed::BlockID(index)))
+                    loop->isLeftAtHeaderAlone &= next == header || loop->turn.get(next.index()) || Typed::wayOutOf(function.at(next).terminator.kind) == Typed::WayOut::Abnormal;
+            }
+            loop->turn.set(header.index());
+            loop->wayIn = cfg.blocksReachableFrom(Typed::entryBlock, atHeader);
+            return loop;
+        }).iterator->value.get();
+    }
+
+    // evaluate() has put the parameter itself on top of the values that are being walked. Below it lies whoever reads it.
+    bool isReadInTurn(const Activation& activation, const Typed::Function& function, const Loop& loop)
+    {
+        if (m_active.size() < 2)
+            return !activation.call && activation.function == m_subject.function && loop.turn.get(m_subject.block.index());
+        auto [call, reader, value] = m_active[m_active.size() - 2];
+        if (call != activation.call || reader != activation.function)
+            return false;
+        if (std::optional<BlockParameter> merge = findMerge(reader, function, value))
+            return loop.turn.get(merge->block.index());
+        uint64_t place = placesIn(reader)[value.index()];
+        return place != notListed && loop.turn.get(blockAt(reader, place).index());
+    }
+
+    // It is read along the part that is followed, and holds for that part alone.
+    bool isDefinedInLoopFollowed(const Activation& activation, const Typed::Function& function, ValueID id)
+    {
+        Typed::BlockID block;
+        for (const LoopFollowed& followed : m_loopsFollowed) {
+            if (followed.call != activation.call || followed.function != activation.function)
+                continue;
+            if (!block) {
+                std::optional<BlockParameter> merge = findMerge(activation.function, function, id);
+                uint64_t place = placesIn(activation.function)[id.index()];
+                if (!merge && place == notListed)
+                    return false;
+                block = merge ? merge->block : blockAt(activation.function, place);
+            }
+            if (followed.loop->turn.get(block.index()))
+                return true;
+        }
+        return false;
+    }
+
+    // While a loop is followed, what arrives at a block of it comes along the part that is followed.
+    bool isOffTheWayFollowed(const Activation& activation, Typed::BlockID block, Typed::Edge edge) const
+    {
+        return m_loopsFollowed.containsIf([&](const LoopFollowed& followed) {
+            if (followed.call != activation.call || followed.function != activation.function || !followed.loop->turn.get(block.index()))
+                return false;
+            return !(followed.part == PartOfLoop::WayIn ? followed.loop->wayIn : followed.loop->turn).get(edge.from.index());
+        });
+    }
+
+    struct ValuesAtHeader {
+        Constants values;
+        bool sawEverything { false };
+    };
+
+    Vector<ValuesAtHeader, 4> valuesArrivingAtHeader(const Activation& activation, const Typed::Function& function, const Loop& loop, PartOfLoop part)
+    {
+        m_loopsFollowed.append(LoopFollowed { activation.call, activation.function, &loop, part });
+        Vector<ValuesAtHeader, 4> arriving(function.at(loop.header).parameters.size());
+        for (uint32_t index = 0; index < arriving.size(); ++index) {
+            bool sawEverythingBefore = std::exchange(m_sawEverything, true);
+            for (Typed::Edge edge : cfgOf(activation.function).incomingEdges(loop.header)) {
+                if (isOffTheWayFollowed(activation, loop.header, edge))
+                    continue;
+                Typed::IncomingValue incoming = incomingValueOf(function, edge, index);
+                if (!addAll(arriving[index].values, incoming.kind == Typed::IncomingValue::Kind::Argument ? evaluate(activation, incoming.argument) : Constants()))
+                    break;
+            }
+            arriving[index].sawEverything = std::exchange(m_sawEverything, sawEverythingBefore) && !arriving[index].values.isEmpty();
+        }
+        m_loopsFollowed.removeLast();
+        return arriving;
+    }
+
+    // How far the two sides of the test are apart, where both are one number.
+    std::optional<double> distanceTested(const Activation& activation, const Typed::Value& test)
+    {
+        bool sawEverythingBefore = m_sawEverything;
+        Constants left = evaluate(activation, test.leftOperand());
+        Constants right = evaluate(activation, test.rightOperand());
+        m_sawEverything = sawEverythingBefore;
+        if (left.size() != 1 || right.size() != 1 || !left[0].primitive.isNumber() || !right[0].primitive.isNumber())
+            return std::nullopt;
+        return std::abs(left[0].primitive.asNumber() - right[0].primitive.asNumber());
+    }
+
+    using NameOfCarried = std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>;
+
+    NameOfCarried nameOf(const Activation& activation, const Loop& loop, uint32_t carried) { return { callsLeadingTo(activation), activation.function.index(), loop.header.index(), carried }; }
+
+    // A loop over a list that the walk knows hands a value from row to row: the value of one turn comes of the value of the turn before and of that turn's row. Each turn is walked as any
+    // other code is, with the parameters of the header known, and the test of the header says which pass of it is the last. `atHeader` is told at each pass whether the loop goes on, and
+    // answers whether it can still tell what it is after. `carried` names that among all that the loop hands on.
+    std::optional<Vector<ValuesAtHeader, 4>> followLoop(const Activation& activation, const Typed::Function& function, const Loop& loop, uint32_t carried, NOESCAPE const Invocable<bool(bool goesOn)> auto& atHeader)
+    {
+        bool isBeingFollowed = m_loopsFollowed.containsIf([&](const LoopFollowed& followed) {
+            return followed.loop == &loop && followed.call == activation.call;
+        });
+        NameOfCarried name = nameOf(activation, loop, carried);
+        if (isBeingFollowed || m_loopsLeftAlone.contains(name))
+            return std::nullopt;
+
+        const Typed::Block& header = function.at(loop.header);
+        const Typed::Value& test = function.at(header.terminator.conditionOperand());
+        bool holdsForEveryChoiceBefore = holdsForEveryChoice();
+        size_t numberOfValuesInTurnBefore = m_valuesInTurn.size();
+        bool isLeft = false;
+        bool isShortOfBudget = false;
+        std::optional<double> distanceBefore;
+        Vector<ValuesAtHeader, 4> arriving = valuesArrivingAtHeader(activation, function, loop, PartOfLoop::WayIn);
+        std::optional<Split> splitBefore = m_split;
+        while (mayFollowAnotherValue()) {
+            m_valuesInTurn.shrink(numberOfValuesInTurnBefore);
+            for (uint32_t index = 0; index < arriving.size(); ++index)
+                m_valuesInTurn.append(ValueInTurn { activation.call, { activation.function, header.parameters[index] }, arriving[index].values, arriving[index].sawEverything });
+
+            Typed::KnownBoolean answer = answerOf(activation, function, header.terminator.conditionOperand());
+            if (answer == Typed::KnownBoolean::Unknown)
+                break;
+            if ((answer == Typed::KnownBoolean::True) == !!loop.targetThatStays) {
+                isLeft = atHeader(false);
+                break;
+            }
+
+            // Two turns say how far a turn gets and what it costs. A loop that the walk cannot go round to its end is left alone.
+            std::optional<double> distance = distanceTested(activation, test);
+            if (!distance || (distanceBefore && *distance >= *distanceBefore))
+                break;
+            unsigned valuesFollowedBefore = m_valuesFollowed;
+            if (!atHeader(true))
+                break;
+            arriving = valuesArrivingAtHeader(activation, function, loop, PartOfLoop::Turn);
+            isShortOfBudget = distanceBefore && *distance / (*distanceBefore - *distance) * (m_valuesFollowed - valuesFollowedBefore) > m_budget - std::min(m_budget, m_valuesFollowed);
+            if (isShortOfBudget)
+                break;
+            distanceBefore = distance;
+        }
+        m_valuesInTurn.shrink(numberOfValuesInTurnBefore);
+        // The choice of an object in one turn is no choice for the others.
+        m_split = WTF::move(splitBefore);
+        if (isLeft) {
+            m_sawEverything &= loop.isLeftAtHeaderAlone;
+            return arriving;
+        }
+        // Another walk may come here with more left to spend.
+        if (holdsForEveryChoiceBefore && !isShortOfBudget && m_valuesFollowed <= m_budget)
+            m_loopsLeftAlone.insert(name);
+        return std::nullopt;
+    }
+
+    // What a parameter of the header holds where the loop has been left.
+    std::optional<Constants> valuesBehindLoop(const Activation& activation, const Typed::Function& function, const Loop& loop, uint32_t asked)
+    {
+        std::optional<Vector<ValuesAtHeader, 4>> arriving = followLoop(activation, function, loop, asked, [&](bool) {
+            return true;
+        });
+        if (!arriving)
+            return std::nullopt;
+        if (arriving->at(asked).values.isEmpty()) {
+            if (holdsForEveryChoice())
+                m_loopsLeftAlone.insert(nameOf(activation, loop, asked));
+            return std::nullopt;
+        }
+        m_sawEverything &= arriving->at(asked).sawEverything;
+        return WTF::move(arriving->at(asked).values);
+    }
+
+    // What a builder that was begun in front of the loop holds where the loop has been left: each turn appends to what the turn before has left.
+    std::optional<Constants> textsBehindLoop(const Activation& activation, const Typed::Function& function, ValueID builder, const Loop& loop)
+    {
+        std::optional<BlockParameter> merge = findMerge(activation.function, function, builder);
+        if (merge && loop.turn.get(merge->block.index()))
+            return std::nullopt;
+        bool isUsedInLoop = false;
+        for (size_t block : loop.turn) {
+            isUsedInLoop |= std::ranges::any_of(function.at(Typed::BlockID(block)).values, [&](ValueID id) {
+                return Typed::OperandPosition::builder(function.at(id).opcode) && function.at(id).builderOperand() == builder;
+            });
+        }
+        if (!isUsedInLoop)
+            return std::nullopt;
+        const Typed::CFG& cfg = cfgOf(activation.function);
+        auto textsArrivingAlong = [&](PartOfLoop part, TextsWhereBlocksEnd& remembered) {
+            m_loopsFollowed.append(LoopFollowed { activation.call, activation.function, &loop, part });
+            Constants texts;
+            for (Typed::Edge edge : cfg.incomingEdges(loop.header)) {
+                if (!cfg.isReachable(edge.from) || isOffTheWayFollowed(activation, loop.header, edge))
+                    continue;
+                if (!addAll(texts, textsWhereEdgeBegins(activation, function, builder, edge, loop.header, remembered)))
+                    break;
+            }
+            m_loopsFollowed.removeLast();
+            return texts;
+        };
+        TextsWhereBlocksEnd rememberedOnWayIn;
+        Constants texts = textsArrivingAlong(PartOfLoop::WayIn, rememberedOnWayIn);
+        constexpr uint32_t firstNameOfBuilder = 1u << 31;
+        std::optional<Vector<ValuesAtHeader, 4>> arriving = followLoop(activation, function, loop, firstNameOfBuilder | builder.index(), [&](bool goesOn) {
+            texts = textsAppendedIn(activation, function, builder, loop.header, ValueID(), { WTF::move(texts) });
+            if (goesOn && !texts.isEmpty()) {
+                TextsWhereBlocksEnd rememberedInTurn;
+                rememberedInTurn.emplace(std::pair { builder, loop.header }, WTF::move(texts));
+                texts = textsArrivingAlong(PartOfLoop::Turn, rememberedInTurn);
+            }
+            return !texts.isEmpty();
+        });
+        if (!arriving)
+            return std::nullopt;
+        return texts;
+    }
+
     Constants valuesArrivingAt(const Activation& activation, const Typed::Function& function, ValueID parameter)
     {
         std::optional<BlockParameter> location = findBlockParameter(activation.function, function, parameter);
@@ -1496,10 +1851,14 @@ private:
             return { };
         if (location->block == Typed::entryBlock)
             return argumentsFor(activation, function, location->index);
+        if (const Loop* loop = loopTestedAt(activation.function, function, location->block); loop && !isReadInTurn(activation, function, *loop)) {
+            if (std::optional<Constants> values = valuesBehindLoop(activation, function, *loop, location->index))
+                return WTF::move(*values);
+        }
         const Typed::CFG& cfg = cfgOf(activation.function);
         Constants values;
         for (Typed::Edge edge : cfg.incomingEdges(location->block)) {
-            if (isRuledOut(activation, function, cfg, edge))
+            if (isOffTheWayFollowed(activation, location->block, edge) || isRuledOut(activation, function, cfg, edge))
                 continue;
             Typed::IncomingValue incoming = incomingValueOf(function, edge, location->index);
             if (incoming.kind == Typed::IncomingValue::Kind::Argument) {
@@ -2082,7 +2441,7 @@ private:
         if (overload.mode == BuiltinCallMode::Get && callee == Builtins::ArrayPrototypeLength) {
             Constants lengths;
             for (const Constant& receiver : evaluate(activation, call.receiver)) {
-                size_t size = receiver.isObjectOrArray() ? sizeOf(receiver) : notFound;
+                size_t size = receiver.hasElements() ? sizeOf(receiver) : notFound;
                 if (size == notFound)
                     m_sawEverything = false;
                 else if (!add(lengths, Constant { Typed::KnownValue::number(static_cast<double>(size)) }))
@@ -2111,7 +2470,8 @@ private:
         }
         if (overload.mode == BuiltinCallMode::Call && callee == Builtins::StringRaw && !call.arguments.empty())
             return rawTextsOf(activation, call.arguments);
-        bool dependsOnOperandsAlone = table.at(callee).flags.contains(BuiltinFlag::IsDeterministic) || callee == Builtins::NumberPrototypeToString;
+        // split() makes a new list each time. The texts in it depend on the operands alone.
+        bool dependsOnOperandsAlone = table.at(callee).flags.contains(BuiltinFlag::IsDeterministic) || callee == Builtins::NumberPrototypeToString || callee == Builtins::StringPrototypeSplit;
         if (overload.mode != BuiltinCallMode::Call || !dependsOnOperandsAlone || !call.receiver)
             return { };
 
@@ -2248,6 +2608,18 @@ private:
         return created;
     }
 
+    // The texts together are no longer than the operands they were cut from, which are within the limit.
+    Constant listOf(std::span<const String> texts)
+    {
+        Vector<StringID> list(texts.size(), [&](size_t index) {
+            return m_strings.intern(StringView(texts[index]));
+        });
+        auto [known, isNew] = m_placesOfListsOfTexts.try_emplace(std::vector<StringID>(list.begin(), list.end()), static_cast<uint32_t>(m_listsOfTexts.size() + 1));
+        if (isNew)
+            m_listsOfTexts.append(WTF::move(list));
+        return Constant { .listOfTexts = known->second };
+    }
+
     Constants answersOf(BuiltinID callee, Vector<Constants, 4>&& operands)
     {
         Constants answers;
@@ -2271,9 +2643,12 @@ private:
                 return std::nullopt;
             if (!m_scratchRealm)
                 m_scratchRealm.emplace();
-            std::optional<Typed::ScratchRealm::Answer> answer = m_scratchRealm->call(m_program, callee, choice[0].primitive, arguments.span().subspan(1));
+            Vector<String> listOfTexts;
+            std::optional<Typed::ScratchRealm::Answer> answer = m_scratchRealm->call(m_program, callee, choice[0].primitive, arguments.span().subspan(1), &listOfTexts);
             if (!answer)
                 return std::nullopt;
+            if (answer->text.isNull() && !answer->primitive.isKnown())
+                return listOf(listOfTexts.span());
             if (answer->text.isNull())
                 return Constant { answer->primitive };
             if (m_context.exceeds(LimitID::RegExpCandidateTextLength, answer->text.sizeInBytes(), m_subject))
@@ -2283,11 +2658,28 @@ private:
         return answers;
     }
 
+    Constants sumsOrDifferencesOf(const Activation&, const Typed::Function& function, const Typed::Value& value, std::array<Constants, 2>&& operands)
+    {
+        Constants numbers;
+        addAnswerForEachChoice(numbers, operands, [&](std::span<const Constant> choice) -> std::optional<Constant> {
+            if (!choice[0].primitive.isNumber() || !choice[1].primitive.isNumber())
+                return std::nullopt;
+            Typed::KnownValue number = Typed::evaluateOperation(m_program, function, value, { choice[0].primitive, choice[1].primitive });
+            return number.isNumber() ? std::optional(Constant { number }) : std::nullopt;
+        });
+        return numbers;
+    }
+
     Constants concatenate(const Activation& activation, const Typed::Value& value)
     {
         Vector<Constants, 8> operands;
         for (uint32_t index = 0; index < value.numberOfOperands(); ++index)
             operands.append(evaluate(activation, value.operand(index)));
+        auto holdsNumbers = [](const Constants& constants) {
+            return !constants.isEmpty() && std::ranges::all_of(constants, [](const Constant& constant) { return constant.primitive.isNumber(); });
+        };
+        if (value.opcode == Typed::Opcode::Add && operands.size() == 2 && holdsNumbers(operands[0]) && holdsNumbers(operands[1]))
+            return sumsOrDifferencesOf(activation, m_program.at(activation.function), value, { WTF::move(operands[0]), WTF::move(operands[1]) });
 
         Constants texts;
         addAnswerForEachChoice(texts, operands.span(), [&](std::span<const Constant> choice) -> std::optional<Constant> {
@@ -2328,6 +2720,12 @@ private:
     bool m_sawEverything { true };
     std::optional<Split> m_split;
     Vector<std::pair<ValueKey, Constant>, 4> m_bindings;
+    Vector<LoopFollowed, 2> m_loopsFollowed;
+    Vector<ValueInTurn, 8> m_valuesInTurn;
+    HashMap<uint64_t, std::unique_ptr<Loop>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_loops;
+    std::set<NameOfCarried> m_loopsLeftAlone;
+    Vector<Vector<StringID>> m_listsOfTexts;
+    std::map<std::vector<StringID>, uint32_t> m_placesOfListsOfTexts;
     Vector<Store> m_stores;
     Vector<DirectCall> m_directCalls;
     Vector<DirectCall> m_closures;

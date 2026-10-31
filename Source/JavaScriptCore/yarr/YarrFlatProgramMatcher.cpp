@@ -2667,10 +2667,38 @@ static ALWAYS_INLINE JSRegExpResult matchOneSetOrRun(const FlatProgram& program,
     return JSRegExpResult::NoMatch;
 }
 
+template<typename CharType>
+static ALWAYS_INLINE JSRegExpResult matchWholeTexts(const FlatProgram::WholeTexts& wholeTexts, std::span<const CharType> input, unsigned start, unsigned* output)
+{
+    unsigned length = input.size();
+    if (start || !length || length > wholeTexts.greatestLength)
+        return JSRegExpResult::NoMatch;
+    const uint32_t* places = wholeTexts.places.span().data();
+    const FlatProgram::WholeTexts::Text* texts = wholeTexts.texts.span().data();
+    unsigned mask = wholeTexts.places.size() - 1;
+    for (unsigned place = FlatProgram::WholeTexts::placeOf(length, input[0], input[length - 1]) & mask; uint32_t entry = places[place]; place = (place + 1) & mask) {
+        const auto& text = texts[entry - 1];
+        if (text.length != length)
+            continue;
+        const char16_t* units = wholeTexts.units.span().data() + text.begin;
+        unsigned same = 0;
+        while (same < length && units[same] == input[same])
+            ++same;
+        if (same == length) {
+            output[0] = 0;
+            output[1] = length;
+            return JSRegExpResult::Match;
+        }
+    }
+    return JSRegExpResult::NoMatch;
+}
+
 // Whatever is not the common case.
 template<typename CharType>
 static NEVER_INLINE JSRegExpResult matchOutOfLine(const FlatProgram& program, std::span<const CharType> input, unsigned start, unsigned* output, FlatMatchPolicy policy)
 {
+    if (program.wholeTexts && policy == FlatMatchPolicy::HandsOverEarly)
+        return matchWholeTexts(*program.wholeTexts, input, start, output);
     if (program.isOneSetOrRun && policy == FlatMatchPolicy::HandsOverEarly)
     {
         StartSearch search { start };

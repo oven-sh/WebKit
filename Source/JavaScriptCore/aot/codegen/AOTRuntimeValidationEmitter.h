@@ -39,7 +39,7 @@ public:
     void checkCellsWereNotConverted(const OperandCells& beforeCall);
     // A call that runs no other code is judged by what it does to the operands of its operation: each is photographed in front of the call and compared behind it.
     using PhotographedOperands = Vector<ValueID, 4>;
-    PhotographedOperands photographOperands(const OperationContext&, const Effects& effectsOfCall);
+    PhotographedOperands photographOperands(const OperationContext&, const Effects& effectsOfCall, ValueID alsoPerformed = { });
     void compareWithPhotographs(const OperationContext&, const PhotographedOperands&, uint32_t callee);
     // Around a call that collects nothing by what its operation is proven to do, while its callee may collect where less is known.
     Integer countStopsForCollector();

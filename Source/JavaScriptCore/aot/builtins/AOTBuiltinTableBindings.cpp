@@ -173,6 +173,21 @@ std::span<const BuiltinClassBinding> BuiltinBindings::classesOfHost()
     return host ? host->classes : std::span<const BuiltinClassBinding>();
 }
 
+void BuiltinBindings::forEachInstanceStructureOfHost(JSGlobalObject* realm, const ScopedLambda<void(const BuiltinClassBinding&, Structure*)>& function)
+{
+    const BuiltinBindingSet* host = registeredHost();
+    if (!host || !host->findInstanceStructures)
+        return;
+    Vector<Structure*, 192> structures(host->classes.size(), [](size_t) -> Structure* {
+        return nullptr;
+    });
+    host->findInstanceStructures(realm, structures.mutableSpan());
+    for (size_t index = 0; index < structures.size(); ++index) {
+        if (Structure* structure = structures[index])
+            function(host->classes[index], structure);
+    }
+}
+
 std::optional<uint32_t> BuiltinBindings::cachedValueOffsetOf(BuiltinOverloadID id)
 {
     auto* binding = findBinding(&BuiltinBindingSet::cachedGetters, &BuiltinCachedGetterBinding::overload, id);

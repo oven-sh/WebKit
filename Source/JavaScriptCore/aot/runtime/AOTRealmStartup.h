@@ -58,6 +58,8 @@ JS_EXPORT_PRIVATE void hostDidCreateStructure(JSGlobalObject*, Structure*);
 JS_EXPORT_PRIVATE void hostDidCreateNodeModule(JSGlobalObject*, JSObject* constructor);
 // For an object that the global object names only from the first read of the name on. It is locked from its creation: there are other ways to it.
 JS_EXPORT_PRIVATE void hostDidCreateObjectOfGlobal(JSGlobalObject*, UniquedStringImpl* key, JSObject*);
+// process.versions.node: members of an ordinary object that the host fills. The table ends above them, and the build folds their reads. `holder` is how a program writes the object.
+JS_EXPORT_PRIVATE void hostDidFillObjectWithFoldedMembers(JSGlobalObject*, JSObject*, ASCIILiteral holder, std::span<const ASCIILiteral> names);
 
 } } // namespace JSC::AOT
 

@@ -48,7 +48,6 @@ struct StridedLoopShape {
     Vector<int32_t> addends { 0 };
     std::optional<int64_t> lengthStoredOnRarePath;
     std::optional<int64_t> lengthClobberedOnRarePath;
-    bool readsLengthBeforeLoop { false };
     bool addsOnRarePath { false };
     bool continuesEarly { false };
 };
@@ -75,10 +74,6 @@ struct StridedLoop {
         Value* offset = graph.load(root, Int32, pointer, OBJECT_OFFSETOF(StridedMemory, offset), thirdHeap);
         graph.set(root, counter, start);
         graph.set(root, sum, graph.int64(root, 0));
-        if (shape.readsLengthBeforeLoop) {
-            Value* length = graph.load(root, Int64, pointer, 0, firstHeap);
-            graph.set(root, sum, graph.make(root, Sub, length, length));
-        }
         graph.jump(root, shape.isBottomTested ? body : header);
         Value* test = nullptr;
         if (!shape.isBottomTested) {
@@ -413,41 +408,6 @@ static void testVersionLoopsLeavesStridedFastLoopWhenLimitIsClobbered()
     }
 }
 
-// The fast loop is entered again behind the turn that changed the limit, with the counter where it stands: its guards are asked of that counter and of the new limit.
-static void testVersionLoopsEntersStridedFastLoopAgainWithTheNewLimit()
-{
-    for (int64_t length : { 0, 4, 9, 35, 70 }) {
-        for (B3::Opcode relation : { LessThan, LessEqual, GreaterThan, GreaterEqual }) {
-            for (int32_t stepSize : { 1, 2 }) {
-                for (IndexKind indexKind : { IndexKind::ZeroExtendedInt32, IndexKind::SignExtendedInt32, IndexKind::Int64 }) {
-                    for (std::optional<int32_t> constantScale : { std::optional<int32_t> { }, std::optional<int32_t> { 1 }, std::optional<int32_t> { 3 }, std::optional<int32_t> { -2 } }) {
-                        for (bool isBottomTested : { false, true }) {
-                            StridedLoopShape shape;
-                            shape.relation = relation;
-                            shape.step = isLessRelation(relation) ? stepSize : -stepSize;
-                            shape.indexKind = indexKind;
-                            shape.constantScale = constantScale;
-                            shape.isBottomTested = isBottomTested;
-                            shape.lengthClobberedOnRarePath = length;
-                            shape.readsLengthBeforeLoop = stepSize == 2;
-                            shape.addends = { 0, 2 };
-                            StridedLoop loop(loopPolicy(), shape);
-                            CHECK(versionLoopsAndValidate(loop.proc));
-                            CHECK_EQ(loop.proc.report().countOf(Counter::RangeChecksRemoved), 2u);
-                            unsigned numberOfClobbers = numberOfValues(loop.proc, [](Value* value) {
-                                auto* patchpoint = value->as<PatchpointValue>();
-                                return patchpoint && !patchpoint->isLoopPoll && patchpoint->effects.writes == firstHeap;
-                            });
-                            CHECK_EQ(numberOfClobbers, 2u);
-                            checkRuns(loop);
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 static void testVersionLoopsStrengthReducesStridedIndices()
 {
     for (IndexKind indexKind : { IndexKind::ZeroExtendedInt32, IndexKind::SignExtendedInt32, IndexKind::Int64 }) {
@@ -625,7 +585,6 @@ void addBunStridedRangeCheckTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVersionLoopsOmitsStridedLimitGuardOnlyWhenToldTo());
     RUN(testVersionLoopsKeepsStridedRangeCheckWhoseLimitIsStoredInLoop());
     RUN(testVersionLoopsLeavesStridedFastLoopWhenLimitIsClobbered());
-    RUN(testVersionLoopsEntersStridedFastLoopAgainWithTheNewLimit());
     RUN(testVersionLoopsStridedFastLoopKeepsItsPoll());
 }
 

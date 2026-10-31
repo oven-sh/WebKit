@@ -597,6 +597,7 @@ export const builtinMarks = [
   // The native code it loads only receives and returns numbers and pointers. It never gets a JSValue or the global object, so it cannot create objects, register symbols or touch properties.
   "LoadsCodeWithoutJSAccess",
   // A lookup goes on to the object that the table names above it. Whoever asks what stands above it is told null: Object.getPrototypeOf, __proto__.
+  // The host keeps what the table lists on it on an object in between, which nobody gets to see. Object.setPrototypeOf takes all of that away.
   "AnswersNullAsItsPrototype",
   // What it answers loads files with code under names that the build does not see, and the table has no entry for the function that does. So the read itself counts as such a load.
   "ReadLoadsCodeByName",

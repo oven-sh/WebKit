@@ -308,6 +308,16 @@ static bool keepsPrototype(const Program& program, const FlowResults& results, c
     return !prototype.hasObjects() || isWhatLiesAbove(prototype);
 }
 
+// A store to `__proto__` is answered by the accessor on Object.prototype. If a test replaces that accessor, what the store does is unknown.
+static bool isAnsweredByReplacedAccessor(const Program& program, const FlowResults& results, const Value& write, BuiltinID callee, const BuiltinLocationFlow& location)
+{
+    if (location.key != program.keyOf(BuiltinNames::__proto__) || location.holder == Builtins::ObjectPrototype)
+        return false;
+    bool isStore = write.opcode == Opcode::Call ? callee == Builtins::ReflectSet : storedOf(write.opcode) && results.at(write.accessSite()).kind == AccessKind::Store;
+    const BuiltinLocationFlow* accessor = results.findBuiltinLocation(Builtins::ObjectPrototype, location.key);
+    return isStore && accessor && accessor->state != BuiltinLocationState::Constant;
+}
+
 static void reportWrite(const Program& program, const FlowResults& results, BuildContext& build, const BitVector& alwaysEvaluatedModules, const BuiltinLocationFlow& location)
 {
     const BuiltinTable& table = program.builtins();
@@ -334,6 +344,8 @@ static void reportWrite(const Program& program, const FlowResults& results, Buil
     if (stored && !stored->primitives && stored->singleBuiltin() == member)
         return;
     if (mayLeaveMemberAsItIs(program, function, analyses.cfg(), write->value, callee, member) || keepsPrototype(program, results, function, value, callee, location))
+        return;
+    if (isAnsweredByReplacedAccessor(program, results, value, callee, location))
         return;
 
     bool isInSloppyCode = Value::opcodesWithMode.contains(value.opcode) && value.mode() == ECMAMode::Sloppy;

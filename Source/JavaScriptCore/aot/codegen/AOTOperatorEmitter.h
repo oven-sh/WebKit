@@ -103,7 +103,7 @@ private:
     CellPointer concatenationOfParts(const ValueContext&);
     Operand unaryOnIntegers(const ValueContext&, UnaryOperator);
     Operand unaryOnCheckedIntegers(const ValueContext&, UnaryOperator);
-    Operand unaryOnNumbers(UnaryOperator, Number);
+    Operand unaryOnNumbers(UnaryOperator, ValueID operand);
     Word32 bitwiseOnWords(BitwiseOperator, Word32, Word32);
     template<typename Functor> Word32 int32ConvertedOnce(const ValueContext& user, ValueID number, bool needsLowestBitsAlone, const Functor& convert);
 

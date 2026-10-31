@@ -99,6 +99,7 @@ struct OptimizationInputs {
 };
 
 struct AnswersAboutCallbacksOfChains;
+struct VersionsThatGiveUp;
 
 struct FunctionPassContext {
     const Program& program;
@@ -149,6 +150,8 @@ struct FunctionPassContext {
     bool planAsksAboutPlace { false };
     // The passes that look at a chain of array methods ask the same of its callbacks in every round, and the other functions of the program stay as they are while this one is optimized.
     std::shared_ptr<AnswersAboutCallbacksOfChains> answersAboutCallbacksOfChains { };
+    // Set for the passes that run over the copy of a function whose version that gives up is being read: what they ask about other versions goes on from there.
+    VersionsThatGiveUp* versionsBeingRead { nullptr };
 
     FunctionID derivedFunction(const DerivedFunctionKey&);
 
