@@ -145,9 +145,8 @@ BINLINE void* malloc(size_t size, CompactAllocationMode mode, HeapKind kind = He
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
     BUNUSED(kind);
-    void* memory = mi_malloc(size);
-    RELEASE_BASSERT(memory);
-    return memory;
+    // Reports out of memory itself (MI_NEW_OOM) and does not return null: no test and no crash block at each caller.
+    return mi_new(size);
 #else
     BUNUSED(mode);
     BUNUSED(kind);
@@ -256,9 +255,7 @@ BINLINE void* memalign(size_t alignment, size_t size, CompactAllocationMode mode
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
     BUNUSED(kind);
-    void* memory = mi_malloc_aligned(size, alignment);
-    RELEASE_BASSERT(memory);
-    return memory;
+    return mi_new_aligned(size, alignment);
 #else
     BUNUSED(mode);
     BUNUSED(kind);
@@ -376,9 +373,7 @@ BINLINE void* realloc(void* object, size_t newSize, CompactAllocationMode mode, 
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
     BUNUSED(kind);
-    void* memory = mi_realloc(object, newSize);
-    RELEASE_BASSERT(memory);
-    return memory;
+    return mi_new_realloc(object, newSize);
 #else
     BUNUSED(mode);
     BUNUSED(kind);
