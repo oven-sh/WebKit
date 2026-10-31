@@ -37,15 +37,6 @@ namespace LLInt {
 extern "C" {
     void llintPCRangeStart();
     void llintPCRangeEnd();
-#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
-    // The bounds of the three sections that LowLevelInterpreter.cpp puts its code in.
-    void jsc_llint_begin();
-    void jsc_llint_end();
-    void jsc_llint_bytecode_begin();
-    void jsc_llint_bytecode_end();
-    void jsc_llint_webassembly_begin();
-    void jsc_llint_webassembly_end();
-#endif
     void llintBytecodePCRangeStart();
     void llintBytecodePCRangeEnd();
 #if ENABLE(WEBASSEMBLY)

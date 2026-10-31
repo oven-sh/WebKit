@@ -928,12 +928,7 @@ public:
     
     void setPolicy(const AssemblerPolicy& policy)
     {
-#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
-        // There is nothing yet but the landing pad that all code begins with.
-        RELEASE_ASSERT(m_assembler.codeSize() <= sizeof(uint32_t));
-#else
-        RELEASE_ASSERT(!m_assembler.codeSize());
-#endif
+        RELEASE_ASSERT(m_assembler.codeSize() <= (ENABLE_BRANCH_TARGET_IDENTIFICATION ? sizeof(uint32_t) : 0)); // Bun: the landing pad that all code begins with.
         m_policy = policy;
 #if CPU(X86_64)
         m_assembler.setRecordsJumps(policy.recordsLinkedSites || policy.shortensJumps);

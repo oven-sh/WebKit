@@ -35,9 +35,6 @@ struct OSRExitCompilationInfo {
     MacroAssembler::JumpList m_failureJumps;
     MacroAssembler::Label m_replacementSource;
     MacroAssembler::Label m_replacementDestination;
-#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
-    MacroAssembler::Label m_exceptionHandler; // A landing pad and a jump to m_replacementDestination, which has no room for one.
-#endif
 };
 
 } } // namespace JSC::DFG

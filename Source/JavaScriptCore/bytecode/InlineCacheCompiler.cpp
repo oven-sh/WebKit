@@ -5173,7 +5173,7 @@ AccessGenerationResult InlineCacheCompiler::compile(const GCSafeConcurrentJSLock
         // Note also that this is not reachable from custom getter/setter. Custom getter/setters will have
         // their own exception handling logic that doesn't go through genericUnwind.
         MacroAssembler::Label makeshiftCatchHandler = jit.label();
-        jit.indirectJumpTarget(); // Bun
+        jit.indirectJumpTarget(); // Bun: genericUnwind() jumps here.
         JIT_COMMENT(jit, "exception handler");
 
         InlineCacheCompiler::SpillState spillState = this->spillStateForJSCall();

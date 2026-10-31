@@ -69,6 +69,7 @@ static const char* LEGACY_NODELETE profileName(LinkBuffer::Profile profile)
 LinkBuffer::CodeRef<LinkBufferPtrTag> LinkBuffer::finalizeCodeWithoutDisassemblyImpl(ASCIILiteral simpleName)
 {
     performFinalization();
+    validateIndirectBranchTarget(LinkBufferPtrTag, code()); // Bun: for --validateIndirectBranchTargets.
 
     ASSERT(m_didAllocate);
     CodeRef<LinkBufferPtrTag> codeRef(m_executableMemory ? CodeRef<LinkBufferPtrTag>(*m_executableMemory) : CodeRef<LinkBufferPtrTag>::createSelfManagedCodeRef(m_code));
@@ -81,6 +82,9 @@ LinkBuffer::CodeRef<LinkBufferPtrTag> LinkBuffer::finalizeCodeWithoutDisassembly
 #if ENABLE(BRANCH_TARGET_IDENTIFICATION)
 void LinkBuffer::validateIndirectBranchTarget(PtrTag tag, const void* address)
 {
+    if (!Options::validateIndirectBranchTargets()) [[likely]]
+        return;
+
     // All code begins with a landing pad, but for code that replaces a part of other code. Of an address in the middle of code the tag
     // has to tell: with any other it may be one that code is patched at, or that a direct branch is linked to.
     ASCIILiteral name = "start of code"_s;

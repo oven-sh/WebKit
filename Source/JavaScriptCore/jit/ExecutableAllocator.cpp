@@ -48,8 +48,8 @@
 #include <wtf/UUID.h>
 #include <wtf/WorkQueue.h>
 #include <wtf/posix/POSIXExtras.h>
+
 #if ENABLE(BRANCH_TARGET_IDENTIFICATION)
-#include <sys/auxv.h>
 #include <sys/mman.h>
 #endif
 
@@ -576,24 +576,16 @@ static void registerJITUnwindInfo(PageReservation& pageReservation, void*& base,
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #if ENABLE(BRANCH_TARGET_IDENTIFICATION)
-#if ENABLE(MPROTECT_RX_TO_RWX)
-#error "startWriting() and finishWriting() take the guard off the pages of JIT code"
-#endif
-
 bool guardExecutablePages(const void* start, const void* end, bool writable)
 {
-    // Newer than the headers that this is compiled with.
-    constexpr unsigned long hwcap2BTI = 1UL << 17;
-    constexpr int protBTI = 0x10;
+    constexpr int protBTI = 0x10; // Newer than the headers that this is compiled with.
 
-    if (!Options::useBranchTargetIdentification() || !(getauxval(AT_HWCAP2) & hwcap2BTI))
+    // What is behind the end in its page may have no landing pads.
+    if (!Options::useBranchTargetIdentification() || !isPageAligned(std::bit_cast<uintptr_t>(end)))
         return false;
-    uintptr_t firstPage = WTF::roundUpToMultipleOf(pageSize(), std::bit_cast<uintptr_t>(start));
-    uintptr_t endOfLastPage = WTF::roundDownToMultipleOf(pageSize(), std::bit_cast<uintptr_t>(end));
-    if (firstPage >= endOfLastPage)
-        return false;
-    bool isAllOfIt = firstPage == std::bit_cast<uintptr_t>(start) && endOfLastPage == std::bit_cast<uintptr_t>(end);
-    return !mprotect(std::bit_cast<void*>(firstPage), endOfLastPage - firstPage, PROT_READ | (writable ? PROT_WRITE : 0) | PROT_EXEC | protBTI) && isAllOfIt;
+    // This fails, and changes nothing, where the processor or the kernel is without the feature or the start is not that of a page.
+    size_t size = static_cast<const char*>(end) - static_cast<const char*>(start);
+    return !mprotect(const_cast<void*>(start), size, PROT_READ | (writable ? PROT_WRITE : 0) | PROT_EXEC | protBTI);
 }
 #endif
 

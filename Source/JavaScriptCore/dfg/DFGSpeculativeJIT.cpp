@@ -233,7 +233,7 @@ void SpeculativeJIT::compileFunction()
     bool requiresArityFixup = m_codeBlock->numParameters() != 1;
     if (requiresArityFixup) {
         arityCheck = label();
-        indirectCallTarget(); // Bun
+        indirectCallTarget(); // Bun: a call with too few arguments comes in here.
         unsigned numberOfParameters = m_codeBlock->numParameters();
         load32(calleeFrameLowWordSlot(CallFrameSlot::argumentCountIncludingThis).withOffset(sizeof(CallerFrameAndPC) - prologueStackPointerDelta()), GPRInfo::argumentGPR2);
         branch32(AboveOrEqual, GPRInfo::argumentGPR2, TrustedImm32(numberOfParameters)).linkTo(entryLabel, this);

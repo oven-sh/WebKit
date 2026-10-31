@@ -164,6 +164,9 @@ using namespace JSC;
 IGNORE_WARNINGS_BEGIN("frame-address")
 
 extern "C" void SYSV_ABI ctiMasmProbeTrampoline();
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+extern "C" void SYSV_ABI llint_landing_pad_and_return();
+#endif
 
 namespace JSC {
 
@@ -2330,12 +2333,12 @@ static JSC_DECLARE_HOST_FUNCTION(functionUseJIT);
 static JSC_DECLARE_HOST_FUNCTION(functionUseDFGJIT);
 static JSC_DECLARE_HOST_FUNCTION(functionUseFTLJIT);
 static JSC_DECLARE_HOST_FUNCTION(functionFunctionsSignReturnAddress);
+static JSC_DECLARE_HOST_FUNCTION(functionReturnAddressOfCallerIsSigned);
+static JSC_DECLARE_HOST_FUNCTION(functionCorruptSignatureOfReturnAddressOfCaller);
 static JSC_DECLARE_HOST_FUNCTION(functionPagesOfLLIntAreGuarded);
 static JSC_DECLARE_HOST_FUNCTION(functionPagesOfJITCodeAreGuarded);
 static JSC_DECLARE_HOST_FUNCTION(functionCallIntoLLInt);
 static JSC_DECLARE_HOST_FUNCTION(functionCallIntoJITCode);
-static JSC_DECLARE_HOST_FUNCTION(functionReturnAddressOfCallerIsSigned);
-static JSC_DECLARE_HOST_FUNCTION(functionCorruptSignatureOfReturnAddressOfCaller);
 static JSC_DECLARE_HOST_FUNCTION(functionIsGigacageEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionToCacheableDictionary);
 static JSC_DECLARE_HOST_FUNCTION(functionToUncacheableDictionary);
@@ -4950,70 +4953,6 @@ JSC_DEFINE_HOST_FUNCTION(functionUseFTLJIT, (JSGlobalObject*, CallFrame*))
     return JSValue::encode(jsBoolean(Options::useFTLJIT()));
 }
 
-// Returns true if an indirect branch into LLInt traps unless it lands on a landing pad: with ENABLE(BRANCH_TARGET_IDENTIFICATION) and
-// --useBranchTargetIdentification on a processor that has the feature.
-// Usage: $vm.pagesOfLLIntAreGuarded()
-JSC_DEFINE_HOST_FUNCTION(functionPagesOfLLIntAreGuarded, (JSGlobalObject*, CallFrame*))
-{
-    DollarVMAssertScope assertScope;
-    return JSValue::encode(jsBoolean(g_jscConfig.pagesOfLLIntAreGuarded));
-}
-
-// The same of the code that the JITs generate.
-// Usage: $vm.pagesOfJITCodeAreGuarded()
-JSC_DEFINE_HOST_FUNCTION(functionPagesOfJITCodeAreGuarded, (JSGlobalObject*, CallFrame*))
-{
-    DollarVMAssertScope assertScope;
-    return JSValue::encode(jsBoolean(g_jscConfig.pagesOfJITCodeAreGuarded));
-}
-
-#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
-extern "C" void llint_landing_pad_and_return();
-
-// The code is a landing pad and a return. Past the landing pad it does no harm either, where nothing is guarded.
-static void callCodeThatIsLandingPadAndReturn(const void* code, bool pastLandingPad)
-{
-    auto* function = reinterpret_cast<void (*)()>(const_cast<char*>(static_cast<const char*>(code) + (pastLandingPad ? sizeof(uint32_t) : 0)));
-    asm volatile("blr %0" : : "r"(function) : "x30", "memory");
-}
-#endif
-
-// Calls code of LLInt that does nothing but return, at its landing pad or behind it.
-// Usage: $vm.callIntoLLInt(pastLandingPad)
-JSC_DEFINE_HOST_FUNCTION(functionCallIntoLLInt, (JSGlobalObject*, CallFrame* callFrame))
-{
-    DollarVMAssertScope assertScope;
-#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
-    callCodeThatIsLandingPadAndReturn(reinterpret_cast<const void*>(llint_landing_pad_and_return), callFrame->argument(0).asBoolean());
-#else
-    UNUSED_PARAM(callFrame);
-#endif
-    return JSValue::encode(jsUndefined());
-}
-
-// The same with code in the memory of the JITs.
-// Usage: $vm.callIntoJITCode(pastLandingPad)
-JSC_DEFINE_HOST_FUNCTION(functionCallIntoJITCode, (JSGlobalObject*, CallFrame* callFrame))
-{
-    DollarVMAssertScope assertScope;
-#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
-    if (!Options::useJIT())
-        return JSValue::encode(jsUndefined());
-    static LazyNeverDestroyed<MacroAssemblerCodeRef<JITThunkPtrTag>> code;
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
-        CCallHelpers jit; // It begins with a landing pad by itself.
-        jit.m_assembler.ret(); // Not ret(), which expects a signed return address.
-        LinkBuffer linkBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::Thunk);
-        code.construct(FINALIZE_THUNK(linkBuffer, JITThunkPtrTag, "landingPadAndReturn"_s, "$vm.callIntoJITCode"));
-    });
-    callCodeThatIsLandingPadAndReturn(code->code().untaggedPtr(), callFrame->argument(0).asBoolean());
-#else
-    UNUSED_PARAM(callFrame);
-#endif
-    return JSValue::encode(jsUndefined());
-}
-
 // Returns true with ENABLE(RETURN_ADDRESS_SIGNING) on a processor that has pointer authentication.
 // Usage: $vm.functionsSignReturnAddress()
 JSC_DEFINE_HOST_FUNCTION(functionFunctionsSignReturnAddress, (JSGlobalObject*, CallFrame*))
@@ -5053,6 +4992,70 @@ JSC_DEFINE_HOST_FUNCTION(functionCorruptSignatureOfReturnAddressOfCaller, (JSGlo
     // Bit 54 is part of the signature however many bits of an address the kernel uses. Taking the signature off would do nothing
     // where all of its bits are zero.
     caller->setReturnPC(std::bit_cast<void*>(std::bit_cast<uintptr_t>(caller->rawReturnPC()) ^ (1ULL << 54)));
+    return JSValue::encode(jsUndefined());
+}
+
+// Returns true if an indirect branch into LLInt traps unless it lands on a landing pad: with ENABLE(BRANCH_TARGET_IDENTIFICATION) and
+// --useBranchTargetIdentification on a processor that has the feature.
+// Usage: $vm.pagesOfLLIntAreGuarded()
+JSC_DEFINE_HOST_FUNCTION(functionPagesOfLLIntAreGuarded, (JSGlobalObject*, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsBoolean(g_jscConfig.pagesOfLLIntAreGuarded));
+}
+
+// The same of the code that the JITs generate.
+// Usage: $vm.pagesOfJITCodeAreGuarded()
+JSC_DEFINE_HOST_FUNCTION(functionPagesOfJITCodeAreGuarded, (JSGlobalObject*, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsBoolean(g_jscConfig.pagesOfJITCodeAreGuarded));
+}
+
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+// The code is a landing pad and a return. Past the landing pad it does no harm either, where nothing is guarded.
+static void callCodeThatIsLandingPadAndReturn(const void* code, bool pastLandingPad)
+{
+    auto* function = reinterpret_cast<void (*)()>(const_cast<char*>(static_cast<const char*>(code) + (pastLandingPad ? sizeof(uint32_t) : 0)));
+    asm volatile("blr %0" : : "r"(function) : "x30", "memory");
+}
+#endif
+
+// Calls code of LLInt that does nothing but return, at its landing pad or behind it.
+// Usage: $vm.callIntoLLInt(pastLandingPad)
+JSC_DEFINE_HOST_FUNCTION(functionCallIntoLLInt, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+    callCodeThatIsLandingPadAndReturn(reinterpret_cast<const void*>(llint_landing_pad_and_return), callFrame->argument(0).toBoolean(globalObject));
+#else
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(callFrame);
+#endif
+    return JSValue::encode(jsUndefined());
+}
+
+// The same with code in the memory of the JITs.
+// Usage: $vm.callIntoJITCode(pastLandingPad)
+JSC_DEFINE_HOST_FUNCTION(functionCallIntoJITCode, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+    if (!Options::useJIT())
+        return JSValue::encode(jsUndefined());
+    static LazyNeverDestroyed<MacroAssemblerCodeRef<JITThunkPtrTag>> code;
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [] {
+        CCallHelpers jit; // It begins with a landing pad by itself.
+        jit.m_assembler.ret(); // Not ret(), which expects a signed return address.
+        LinkBuffer linkBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::Thunk);
+        code.construct(FINALIZE_THUNK(linkBuffer, JITThunkPtrTag, "landingPadAndReturn"_s, "$vm.callIntoJITCode"));
+    });
+    callCodeThatIsLandingPadAndReturn(code->code().untaggedPtr(), callFrame->argument(0).toBoolean(globalObject));
+#else
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(callFrame);
+#endif
     return JSValue::encode(jsUndefined());
 }
 
@@ -6363,12 +6366,12 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "useDFGJIT"_s, functionUseDFGJIT, 0);
     addFunction(vm, alwaysAllow, "useFTLJIT"_s, functionUseFTLJIT, 0);
     addFunction(vm, alwaysAllow, "functionsSignReturnAddress"_s, functionFunctionsSignReturnAddress, 0);
+    addFunction(vm, alwaysAllow, "returnAddressOfCallerIsSigned"_s, functionReturnAddressOfCallerIsSigned, 0);
+    addFunction(vm, allowIfNotFuzz, "corruptSignatureOfReturnAddressOfCaller"_s, functionCorruptSignatureOfReturnAddressOfCaller, 0);
     addFunction(vm, alwaysAllow, "pagesOfLLIntAreGuarded"_s, functionPagesOfLLIntAreGuarded, 0);
     addFunction(vm, alwaysAllow, "pagesOfJITCodeAreGuarded"_s, functionPagesOfJITCodeAreGuarded, 0);
     addFunction(vm, allowIfNotFuzz, "callIntoLLInt"_s, functionCallIntoLLInt, 1);
     addFunction(vm, allowIfNotFuzz, "callIntoJITCode"_s, functionCallIntoJITCode, 1);
-    addFunction(vm, alwaysAllow, "returnAddressOfCallerIsSigned"_s, functionReturnAddressOfCallerIsSigned, 0);
-    addFunction(vm, allowIfNotFuzz, "corruptSignatureOfReturnAddressOfCaller"_s, functionCorruptSignatureOfReturnAddressOfCaller, 0);
     addFunction(vm, alwaysAllow, "isGigacageEnabled"_s, functionIsGigacageEnabled, 0);
 
     addFunction(vm, allowIfNotFuzz, "toCacheableDictionary"_s, functionToCacheableDictionary, 1);

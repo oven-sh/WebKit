@@ -93,9 +93,7 @@ public:
         , m_cachedMemoryTempRegister(this, memoryTempRegister)
         , m_makeJumpPatchable(false)
     {
-#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
-        indirectCallTarget();
-#endif
+        indirectCallTarget(); // Bun: whatever this assembles may be called or jumped to. See removeLandingPadAtStart().
     }
 
     typedef Assembler::LinkRecord LinkRecord;
@@ -5598,8 +5596,7 @@ public:
 #if ENABLE(BRANCH_TARGET_IDENTIFICATION)
         // A jump with its target in any other register may land on indirectJumpTarget() alone: not on what a function begins with.
         if (target != dataTempRegister && target != memoryTempRegister) {
-            invalidateAllTempRegisters();
-            m_assembler.mov<64>(dataTempRegister, target);
+            move(target, getCachedDataTempRegisterIDAndInvalidate());
             target = dataTempRegister;
         }
 #endif

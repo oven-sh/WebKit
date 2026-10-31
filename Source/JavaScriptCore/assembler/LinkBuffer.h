@@ -320,10 +320,7 @@ public:
     template<PtrTag tag>
     CodeLocationLabel<tag> locationOf(Label label)
     {
-#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
-        if (Options::validateIndirectBranchTargets()) [[unlikely]]
-            validateIndirectBranchTarget(tag, getLinkerAddress<NoPtrTag>(applyOffset(label.m_label)));
-#endif
+        validateIndirectBranchTarget(tag, getLinkerAddress<NoPtrTag>(applyOffset(label.m_label))); // Bun: for --validateIndirectBranchTargets.
         return CodeLocationLabel<tag>(getLinkerAddress<tag>(applyOffset(label.m_label)));
     }
 
@@ -377,20 +374,12 @@ public:
     template<PtrTag tag>
     CodeRef<tag> finalizeCodeWithoutDisassembly(ASCIILiteral simpleName)
     {
-#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
-        if (Options::validateIndirectBranchTargets()) [[unlikely]]
-            validateIndirectBranchTarget(tag, code());
-#endif
         return finalizeCodeWithoutDisassemblyImpl(simpleName).template retagged<tag>();
     }
 
     template<PtrTag tag, typename... Args>
     CodeRef<tag> finalizeCodeWithDisassembly(bool dumpDisassembly, ASCIILiteral simpleName, const char* format, Args... args)
     {
-#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
-        if (Options::validateIndirectBranchTargets()) [[unlikely]]
-            validateIndirectBranchTarget(tag, code());
-#endif
 ALLOW_NONLITERAL_FORMAT_BEGIN
         IGNORE_WARNINGS_BEGIN("format-security")
         return finalizeCodeWithDisassemblyImpl(dumpDisassembly, simpleName, format, WTF::logPrintfType(args)...).template retagged<tag>();
@@ -538,8 +527,11 @@ private:
         return address;
     }
 
+    // Bun: with --validateIndirectBranchTargets, crashes if the address is one that an indirect branch goes to and has no landing pad.
 #if ENABLE(BRANCH_TARGET_IDENTIFICATION)
     JS_EXPORT_PRIVATE void validateIndirectBranchTarget(PtrTag, const void*);
+#else
+    void validateIndirectBranchTarget(PtrTag, const void*) { }
 #endif
 
     JS_EXPORT_PRIVATE void linkCode(MacroAssembler&, JITCompilationEffort);

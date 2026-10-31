@@ -1133,8 +1133,14 @@
 #error "ENABLE(BRANCH_TARGET_IDENTIFICATION) needs ENABLE(JIT)"
 #endif
 
+/* startWriting() and finishWriting() would take the guard off the pages of JIT code. */
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION) && ENABLE(MPROTECT_RX_TO_RWX)
+#error "ENABLE(BRANCH_TARGET_IDENTIFICATION) is not for ENABLE(MPROTECT_RX_TO_RWX)"
+#endif
+
+/* ENABLE(RETURN_ADDRESS_SIGNING) refuses this too, for now. This is for when it no longer does. */
 #if ENABLE(BRANCH_TARGET_IDENTIFICATION) && ENABLE(AOT)
-#error "Nobody has tried ENABLE(BRANCH_TARGET_IDENTIFICATION) with the ahead-of-time compiler"
+#error "The ahead-of-time compiler and the run time of its programs are not ready for ENABLE(BRANCH_TARGET_IDENTIFICATION)"
 #endif
 
 #if !defined(ENABLE_JIT_SCAN_ASSEMBLER_BUFFER_FOR_ZEROES) && CPU(X86_64) && PLATFORM(MAC)

@@ -4096,9 +4096,9 @@ void BBQJIT::prepareForExceptions()
 
         auto labels = WTF::map(targets, [&](auto& target) {
             auto label = Box<CCallHelpers::Label>::create(m_jit.label());
-            m_jit.indirectJumpTarget(); // Bun
+            m_jit.indirectJumpTarget(); // Bun: the jump table has its address.
             bool isCodeEmitted = currentControlData().addExit(*this, target->targetLocations(), results);
-            if (isCodeEmitted || ENABLE_BRANCH_TARGET_IDENTIFICATION)
+            if (isCodeEmitted || ENABLE_BRANCH_TARGET_IDENTIFICATION) // Bun: the landing pad is code.
                 target->addBranch(m_jit.jump());
             else {
                 // It is common that we do not need to emit anything before jumping to the target block.
@@ -4109,7 +4109,7 @@ void BBQJIT::prepareForExceptions()
             return label;
         });
         labels.append(Box<CCallHelpers::Label>::create(m_jit.label()));
-        m_jit.indirectJumpTarget(); // Bun
+        m_jit.indirectJumpTarget(); // Bun: the jump table has its address.
 
         m_jit.addLinkTask([labels = WTF::move(labels), jumpTable](LinkBuffer& linkBuffer) {
             for (unsigned index = 0; index < labels.size(); ++index)

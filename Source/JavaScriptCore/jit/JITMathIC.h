@@ -126,7 +126,7 @@ public:
     {
         auto linkJumpToOutOfLineSnippet = [&] () {
             CCallHelpers jit(codeBlock);
-            jit.removeLandingPadAtStart(); // Bun
+            jit.removeLandingPadAtStart(); // Bun: this replaces a part of other code.
             jit.jumpThunk(CodeLocationLabel<JITStubRoutinePtrTag>(m_code.code()));
             RELEASE_ASSERT(jit.m_assembler.buffer().codeSize() <= static_cast<size_t>(MacroAssembler::differenceBetweenCodePtr(m_inlineStart, m_inlineEnd)));
             LinkBuffer linkBuffer(jit, m_inlineStart, jit.m_assembler.buffer().codeSize(), LinkBuffer::Profile::InlineCache, JITCompilationMustSucceed);

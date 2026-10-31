@@ -118,13 +118,14 @@ void JITCompiler::linkOSRExits()
     }
 
 #if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+    // genericUnwind() jumps to these, and an entrance has no room for a landing pad.
     for (auto& callSite : m_exceptionHandlerOSRExitCallSites) {
-        OSRExitCompilationInfo& info = callSite.exitInfo;
-        if (!info.m_replacementDestination.isSet())
+        Label& destination = callSite.exitInfo.m_replacementDestination;
+        if (!destination.isSet())
             continue;
-        info.m_exceptionHandler = label();
+        Label entrance = std::exchange(destination, label());
         indirectJumpTarget();
-        jump().linkTo(info.m_replacementDestination, this);
+        jump().linkTo(entrance, this);
     }
 #endif
 
@@ -339,11 +340,7 @@ void JITCompiler::link(LinkBuffer& linkBuffer)
             // i.e, we explicitly emitted an exceptionCheck that we know will be caught in this machine frame.
             // If this *is set*, it means we will be landing at this code location from genericUnwind from an
             // exception thrown in a child call frame.
-#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
-            CodeLocationLabel<ExceptionHandlerPtrTag> catchLabel = linkBuffer.locationOf<ExceptionHandlerPtrTag>(info.m_exceptionHandler);
-#else
             CodeLocationLabel<ExceptionHandlerPtrTag> catchLabel = linkBuffer.locationOf<ExceptionHandlerPtrTag>(info.m_replacementDestination);
-#endif
             HandlerInfo newExceptionHandler = m_exceptionHandlerOSRExitCallSites[i].baselineExceptionHandler;
             CallSiteIndex callSite = m_exceptionHandlerOSRExitCallSites[i].callSiteIndex;
             newExceptionHandler.start = callSite.bits();
