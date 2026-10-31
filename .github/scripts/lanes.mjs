@@ -53,15 +53,23 @@ const SANITIZERS = "address,undefined";
 
 // All of it is decided when a function is compiled to IR (a function attribute, a store, a call to a checked libc
 // function), so it means the same with and without LTO. _FORTIFY_SOURCE is 2 because glibc 2.31 has nothing above it.
-//
-// Not -mbranch-protection=pac-ret for arm64: it signs the return address that a C++ function saves. The run time of
-// compiled programs reads that word in the frame record of its operations (AOT_OPERATION_FRAME_RECORD) and writes it
-// (throwOutOfMemoryErrorAtReturnOf). bun would have to compile with it too: LLVM inlines no function into one that differs in it.
 const HARDENING =
   "-fstack-protector-strong -D_FORTIFY_SOURCE=2 -fstack-clash-protection -ftrivial-auto-var-init=zero -ftrivial-auto-var-init-max-size=4096" +
   " -fno-delete-null-pointer-checks -fno-strict-overflow -fno-strict-aliasing -fsanitize=array-bounds -fsanitize-trap=array-bounds" +
   " -D_GLIBCXX_ASSERTIONS=1 -fPIE -DBUN_HARDENED=1 -DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1 -DENABLE_AOT_GUARDED_PAGES=1" +
   " -DBUN_REFUSES_EXECUTE_ONLY_START=1";
+// On top of HARDENING for arm64, which alone has it (clang refuses the flag for x86-64): a function signs the return address
+// that it saves and checks it before it returns. The flag is for what the compiler generates, the definition for LLInt and
+// what the JITs generate (wtf/PlatformEnable.h). The instructions are hints, which a processor without pointer
+// authentication ignores. What reads such a word takes the signature off first (WTF::removeReturnAddressSignature).
+//
+// Not with the compiler: the run time of compiled programs reads that word in the frame record of its operations
+// (AOT_OPERATION_FRAME_RECORD) as it is, and then finds no handler for what an operation throws.
+//
+// Code with and without the flag runs together. But LLVM inlines no function into one that differs in it, so LTO inlines
+// nothing between these libraries and a bun that is compiled without (for Rust it is -Zbranch-protection=pac-ret), and what
+// walks the frame pointers there, as bun's crash handler does, has to take the signatures off too.
+const SIGNED_RETURN_ADDRESSES = " -mbranch-protection=pac-ret -DENABLE_RETURN_ADDRESS_SIGNING=1";
 
 // Which ICU every platform but macOS (which uses the system's) builds and bundles: icu/source.json, and nowhere else.
 const icu = JSON.parse(readFileSync(join(root, "icu/source.json"), "utf8"));
@@ -101,9 +109,10 @@ const variants = {
   "coverage-aot": { buildType: "Release", mimalloc: true, coverage: true },
   "assertions-coverage-aot": { buildType: "Release", mimalloc: true, assertions: true, coverage: true },
   // "aot", "lto" and "lto-aot" with ICU and WebKit compiled with HARDENING, and nothing else changed but for arm64's
-  // -mtune (see MARCH_FLAG of Linux). Only what ships has a twin without the compiler.
+  // -mtune (see MARCH_FLAG of Linux). Only what ships has a twin without the compiler, and on arm64 that twin also has
+  // SIGNED_RETURN_ADDRESSES, which the run time of compiled programs is not ready for.
   "hardened-aot": { buildType: "Release", mimalloc: true, hardened: true },
-  "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true, aot: false },
+  "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true, signedReturnAddresses: true, aot: false },
   "lto-hardened-aot": { buildType: "Release", mimalloc: true, lto: true, hardened: true },
   // "lto-hardened-aot" with ENABLE_WEBASSEMBLY=0: there is no global of that name, and JavaScriptCore's code for it is not
   // in the libraries.
@@ -127,9 +136,10 @@ const withoutAOT = variant => (variant === "aot" ? "release" : variant.replace(/
 //   imageInputs     files and directories the `base` stage copies in, besides the Dockerfile
 //   tested          per architecture, the variants whose jsc shell the `test` job runs the JavaScriptCore tests with,
 //                   and the runner it does that on: a machine of the lane's own platform and architecture. "lto-aot" is
-//                   what bun ships, "lto" is that without the compiler, and nothing else runs "lto-hardened-aot". The
-//                   asan lanes are not tested: the tests take 65 to 100 minutes there on Linux and macOS and do not
-//                   finish in 275 on Windows. `quick` is --quick, for a runner with few cores.
+//                   what bun ships, "lto" is that without the compiler, and nothing else runs "lto-hardened-aot", nor
+//                   arm64's "lto-hardened", the lane with SIGNED_RETURN_ADDRESSES. The asan lanes are not tested: the
+//                   tests take 65 to 100 minutes there on Linux and macOS and do not finish in 275 on Windows. `quick`
+//                   is --quick, for a runner with few cores.
 //   testPrograms    what a tested lane builds besides what it ships, for the `test` job (the Dockerfile's TEST_PROGRAMS)
 //   fuzzed          per architecture, the variants that are downloaded to be fuzzed. See `programs`.
 //   bunTests        per architecture, the variants bun's CI links and then runs bun's tests with (buildPlatforms and
@@ -149,7 +159,7 @@ const platforms = [
     },
     tested: {
       amd64: { on: "linux-x64-gh", variants: ["lto", "lto-aot", "lto-hardened-aot"] },
-      arm64: { on: "linux-arm64-gh", variants: ["lto", "lto-aot", "lto-hardened-aot"] },
+      arm64: { on: "linux-arm64-gh", variants: ["lto", "lto-aot", "lto-hardened", "lto-hardened-aot"] },
     },
     testPrograms: ["testb3", "testair", "testmasm", "TestWTF"],
     // Not "asan-aot" of amd64: it has the objects of testaot, for bun's CI.
@@ -163,7 +173,7 @@ const platforms = [
       ENABLE_SANITIZERS: v.sanitizers ?? "",
       ENABLE_ASSERTS: v.assertions ? "ON" : "AUTO",
       ENABLE_FUZZILLI: v.coverage ? "ON" : "OFF",
-      HARDENING_FLAGS: v.hardened ? HARDENING : "",
+      HARDENING_FLAGS: v.hardened ? HARDENING + (arch === "arm64" && v.signedReturnAddresses ? SIGNED_RETURN_ADDRESSES : "") : "",
       ENABLE_WEBASSEMBLY: v.webAssembly === false ? "OFF" : "ON",
       // Explicit --target: Ubuntu's clang defaults to x86_64-pc-linux-gnu, while bun's own objects and its Rust code
       // are <arch>-unknown-linux-gnu; with LTO, lld warns about the vendor mismatch once per JavaScriptCore object.
@@ -352,8 +362,8 @@ const lanes = platforms.flatMap(platform =>
         test_quick: platform.tested?.[arch]?.quick ?? false,
         programs: programs(platform, arch, variant, test).join(" "),
         aot: v.aot === false ? 0 : 1,
-        // What of HARDENING the headers in the tarball test: they lay classes out by it.
-        defines: v.hardened ? [...HARDENING.matchAll(/-D((?:BUN|ENABLE)_\w+=\S+)/g)].map(match => match[1]).join(" ") : "",
+        // What of HARDENING_FLAGS the headers in the tarball test: they lay classes out by it, and generate code by it.
+        defines: [...(buildArgs.HARDENING_FLAGS ?? "").matchAll(/-D((?:BUN|ENABLE)_\w+=\S+)/g)].map(match => match[1]).join(" "),
         image: imageRef(platform, arch, buildArgs),
         build_args: buildArgs,
       };
@@ -464,7 +474,7 @@ if (command === "build") {
   const build = ({ label, sources, runner, image, package_os, package_cpu, test, programs, aot, defines }) => ({ label, sources, runner, image, package_os, package_cpu, test, programs, aot, defines });
   console.log(`build=${matrix(lanes.filter(lane => !lane.test).map(build))}`);
   console.log(`build_tested=${matrix(lanes.filter(lane => lane.test).map(build))}`);
-  console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner, quick: lane.test_quick })))}`);
+  console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner, quick: lane.test_quick, signs_return_addresses: lane.defines.includes("ENABLE_RETURN_ADDRESS_SIGNING=1") })))}`);
   console.log(`labels=${JSON.stringify([...labels, SOURCES.label])}`);
   // Only the toolchain images that are not in the registry yet get an `image` job: normally none.
   const missing = images.filter(({ image }) => {

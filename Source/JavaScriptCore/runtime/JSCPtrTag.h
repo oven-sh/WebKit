@@ -202,6 +202,28 @@ ALWAYS_INLINE static bool isTaggedJSCCodePtrImpl(PtrType ptr)
     return WTF::isTaggedNativeCodePtrImpl<tag>(ptr);
 }
 
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+// What a function of LLInt or of a JIT does to the return address that it saves, for C++ that moves such a frame. The stack pointer
+// is the one at the function's entry.
+inline void* signReturnAddress(void* returnAddress, const void* stackPointer)
+{
+    register void* pointer asm("x17") = returnAddress;
+    register const void* modifier asm("x16") = stackPointer;
+    asm("hint #10" : "+r"(pointer) : "r"(modifier)); // PACIB1716
+    return pointer;
+}
+
+inline void* authenticateReturnAddress(void* signedReturnAddress, const void* stackPointer)
+{
+    register void* pointer asm("x17") = signedReturnAddress;
+    register const void* modifier asm("x16") = stackPointer;
+    asm("hint #14" : "+r"(pointer) : "r"(modifier)); // AUTIB1716
+    // Not every processor faults where it fails to authenticate. See MacroAssemblerARM64::validateUntaggedPtr().
+    RELEASE_ASSERT(pointer == removeReturnAddressSignature(signedReturnAddress));
+    return pointer;
+}
+#endif
+
 template<typename PtrType>
 inline PtrType tagCodePtrWithStackPointerForJITCall(PtrType ptr, const void* stackPointer)
 {

@@ -209,7 +209,7 @@ static inline void prepareForTailCall(CCallHelpers& jit, const B3::StackmapGener
     newStackOffset -= Checked<int32_t>(sizeof(Register));
 #elif CPU(ARM64) || CPU(RISCV64)
     jit.loadPtr(CCallHelpers::Address(MacroAssembler::stackPointerRegister, newStackOffset - Checked<int32_t>(sizeof(Register))), MacroAssembler::linkRegister);
-#if CPU(ARM64E)
+#if CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
     GPRReg callerSP = jit.scratchRegister();
     jit.addPtr(MacroAssembler::TrustedImm32(frameSize + Checked<int32_t>(sizeof(CallerFrameAndPC))), MacroAssembler::stackPointerRegister, callerSP);
     jit.untagPtr(callerSP, MacroAssembler::linkRegister);
@@ -251,7 +251,7 @@ inline void emitRestoreInstanceFrameIfNeeded(CCallHelpers& jit, GPRReg currentIn
 
     JIT_COMMENT(jit, "Check for existing restore frame");
     jit.loadPtr(CCallHelpers::Address(MacroAssembler::framePointerRegister, CallFrame::returnPCOffset()), scratch1);
-#if CPU(ARM64E)
+#if CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
     jit.removePtrTag(scratch1);
 #endif
     auto hasExistingThunk = jit.branchPtr(CCallHelpers::Equal, scratch1,
@@ -296,7 +296,7 @@ inline void emitRestoreInstanceFrameIfNeeded(CCallHelpers& jit, GPRReg currentIn
     CCallHelpers::Address callerFrameAndPCAddress(GPRInfo::callFrameRegister, topSourceOffsetFromFP > 0 ? -static_cast<int32_t>(restoreFrameSize) : 0);
 
     JIT_COMMENT(jit, "Creating the restore frame");
-#if CPU(ARM64E)
+#if CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
     jit.loadPairPtr(callerFrameAndPCAddress, scratch1, ARM64Registers::lr);
     jit.addPtr(CCallHelpers::TrustedImm32(sizeof(CallerFrameAndPC)), MacroAssembler::framePointerRegister, scratch2);
     jit.untagPtr(scratch2, ARM64Registers::lr);
@@ -325,7 +325,7 @@ inline void emitRestoreInstanceFrameIfNeeded(CCallHelpers& jit, GPRReg currentIn
     jit.addPtr(CCallHelpers::TrustedImm32(restoreFrameBase), GPRInfo::callFrameRegister, scratch1);
 
     JIT_COMMENT(jit, "Update CallerFrameAndPC to return to the restore frame");
-#if CPU(ARM64E)
+#if CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
     // Move to where callFrameRegister will be when actually untagging.
     jit.subPtr(CCallHelpers::TrustedImm32(restoreFrameSize - sizeof(CallerFrameAndPC)), GPRInfo::callFrameRegister);
     jit.move(CCallHelpers::TrustedImmPtr(restoreFrameReturnAddress), ARM64Registers::lr);

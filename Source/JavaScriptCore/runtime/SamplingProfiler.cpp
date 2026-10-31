@@ -275,7 +275,7 @@ public:
 
             if (isCFrame()) {
                 RELEASE_ASSERT(!LLInt::isLLIntPC(frame()->callerFrame));
-                stackTrace[m_depth] = UnprocessedStackFrame(frame()->returnPC);
+                stackTrace[m_depth] = UnprocessedStackFrame(removeReturnAddressSignature(frame()->returnPC));
                 m_depth++;
             } else
                 recordJITFrame(stackTrace);
@@ -391,7 +391,7 @@ protected:
         m_framePointerOfFrameWithoutRecord = nullptr;
         CallFrame* calleeFrame = m_callFrame;
         EntryFrame* calleeEntryFrame = m_entryFrame;
-        m_pc = removeCodePtrTag(reinterpret_cast<const CallerFrameAndPC*>(calleeFrame)->returnPC);
+        m_pc = removeReturnAddressSignature(reinterpret_cast<const CallerFrameAndPC*>(calleeFrame)->returnPC);
         Base::advanceToParentFrame();
         if (isAtTop())
             return;
@@ -462,7 +462,7 @@ public:
 
             if (isCFrame()) {
                 RELEASE_ASSERT(!LLInt::isLLIntPC(frame()->callerFrame));
-                stackTrace[m_depth] = UnprocessedStackFrame(frame()->returnPC);
+                stackTrace[m_depth] = UnprocessedStackFrame(removeReturnAddressSignature(frame()->returnPC));
                 m_depth++;
             } else
                 recordJITFrame(stackTrace);
