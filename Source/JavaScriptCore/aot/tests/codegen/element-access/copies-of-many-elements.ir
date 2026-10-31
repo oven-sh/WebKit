@@ -1,0 +1,65 @@
+# function take(list: unknown[], count: number) { const out = $newContiguousArray(count); return $tryCopyFilledElements(out, list, count) ? out : undefined }
+# function put(list: unknown[], from: unknown[], count: number) { return $tryPutElements(list, from, count) }
+# TryCopyFilledElements copies out of storage of boxed values, of integers or of doubles that is long enough and has neither a hole nor undefined among what is asked for. null is a value
+# like any other, and a double is boxed. TryPutElements stores into such storage where it may be written and is long enough, or stores nothing. It compares the whole byte that names the kind of storage, where the lock of the cell
+# lies too, so it also refuses while a thread holds the lock.
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = (take, put) => { const filled = (...all) => { const list = []; for (const one of all) list.push(one); return list; }; const fractions = () => { const list = []; list.push(1.5, 2, -0, 2.5); return list; }; const fractionsWithHole = fractions(); delete fractionsWithHole[1]; const text = list => list === undefined ? "refused" : list.map(one => one === null ? "null" : typeof one === "object" ? "{}" : String(one)).join() + " | " + list.length; const showTake = (name, list, count) => print(name + ": " + text(take(list, count))); const holes = filled(1, 2, 3); delete holes[1]; showTake("integers", filled(1, 2, 3), 3); showTake("values", filled("a", {}, 3, null, false, 0), 6); showTake("a part", filled("a", "b", "c"), 2); showTake("none", filled("a"), 0); showTake("too many", filled("a", "b"), 3); showTake("undefined", filled("a", undefined, "c"), 3); showTake("undefined behind the part", filled("a", "b", undefined), 2); showTake("a hole", holes, 3); showTake("doubles", fractions(), 4); showTake("doubles, a part", fractions(), 1); showTake("doubles, too many", fractions(), 5); showTake("doubles with a hole", fractionsWithHole, 4); print("minus zero: " + Object.is(take(fractions(), 4)[2], -0)); showTake("shared with a literal", [1, 2, 3], 3); showTake("frozen", Object.freeze(filled("a", "b")), 2); const showPut = (name, list, from, count) => print(name + ": " + put(list, from, count) + " | " + text(list)); const values = filled("a", "b", "c"); showPut("values", values, filled("x", {}, null), 3); showPut("a part", values, filled("p", "q", "r"), 2); showPut("none", values, filled("z"), 0); showPut("too many", filled("a", "b"), filled("x", "y", "z"), 3); showPut("integers", filled(1, 2, 3), filled(7, 8, 9), 3); showPut("over a hole", holes, filled(7, 8, 9), 3); showPut("doubles", fractions(), filled(7, 8.5), 2); showPut("doubles, too many", fractions(), filled(1, 2, 3, 4, 5), 5); showPut("doubles over a hole", fractionsWithHole, filled(0.5, 1, -0, 3), 4); print("minus zero: " + Object.is(fractionsWithHole[2], -0)); showPut("doubles shared with a literal", [1.5, 2.5], filled(7, 8), 2); showPut("shared with a literal", [1, 2], filled(7, 8), 2); showPut("frozen", Object.freeze(filled("a", "b")), filled("x", "y"), 2); lockCell(values); showPut("lock held", values, filled("l", "m", "n"), 3); unlockCell(values); showPut("lock free", values, filled("l", "m", "n"), 3); const old = filled({}, {}, {}); gc(); put(old, filled({ young: 1 }, { young: 2 }, { young: 3 }), 3); edenGC(); print("behind a collection: " + old.map(one => one.young).join()); };
+# CHECK-NOT: AOT validation
+# CHECK: integers: 1,2,3 | 3
+# CHECK-NEXT: values: a,{},3,null,false,0 | 6
+# CHECK-NEXT: a part: a,b | 2
+# CHECK-NEXT: none:  | 0
+# CHECK-NEXT: too many: refused
+# CHECK-NEXT: undefined: refused
+# CHECK-NEXT: undefined behind the part: a,b | 2
+# CHECK-NEXT: a hole: refused
+# CHECK-NEXT: doubles: 1.5,2,0,2.5 | 4
+# CHECK-NEXT: doubles, a part: 1.5 | 1
+# CHECK-NEXT: doubles, too many: refused
+# CHECK-NEXT: doubles with a hole: refused
+# CHECK-NEXT: minus zero: true
+# CHECK-NEXT: shared with a literal: 1,2,3 | 3
+# CHECK-NEXT: frozen: a,b | 2
+# CHECK-NEXT: values: true | x,{},null | 3
+# CHECK-NEXT: a part: true | p,q,null | 3
+# CHECK-NEXT: none: true | p,q,null | 3
+# CHECK-NEXT: too many: false | a,b | 2
+# CHECK-NEXT: integers: true | 7,8,9 | 3
+# CHECK-NEXT: over a hole: true | 7,8,9 | 3
+# CHECK-NEXT: doubles: true | 7,8.5,0,2.5 | 4
+# CHECK-NEXT: doubles, too many: false | 1.5,2,0,2.5 | 4
+# CHECK-NEXT: doubles over a hole: true | 0.5,1,0,3 | 4
+# CHECK-NEXT: minus zero: true
+# CHECK-NEXT: doubles shared with a literal: false | 1.5,2.5 | 2
+# CHECK-NEXT: shared with a literal: false | 1,2 | 2
+# CHECK-NEXT: frozen: false | a,b | 2
+# CHECK-NEXT: lock held: false | p,q,null | 3
+# CHECK-NEXT: lock free: true | l,m,n | 3
+# CHECK-NEXT: behind a collection: 1,2,3
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="register" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return
+}
+function f1 name="take" role=Library parameters=[{type=Array}, {type=i32}] results=[{type=anything}] {
+    v2 = NewContiguousArray v1
+    v3 = TryCopyFilledElements v2, v0, v1
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2():
+    v4 = Undefined
+    Return v4
+}
+function f2 name="put" role=Library parameters=[{type=Array}, {type=Array}, {type=i32}] results=[{type=anything}] {
+    v3 = TryPutElements v0, v1, v2
+    Return v3
+}

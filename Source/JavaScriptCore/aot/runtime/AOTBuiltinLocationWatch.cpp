@@ -210,6 +210,7 @@ void publishStructureOfOwnSlot(Instance& instance, BuiltinOverloadID id)
     uint32_t& published = instance.builtins.ownSlotStructureIDs[slot.structure.index()];
     if (published)
         return;
+    instance.builtins.ownSlotStructuresLookedFor |= 1u << slot.structure.index();
 
     const BuiltinRealmStructure& description = table.at(slot.structure);
     BuiltinClassID builtinClass = table.receiverClassOf(overload.builtin);

@@ -105,7 +105,7 @@ static Vector<EntryBelow> listEntriesBelowEntries(const BuiltinTable& builtins)
         if (isObjectKind(entry.kind) && entry.prototypeLink == BuiltinPrototypeLink::Builtin)
             list.append({ builtins.canonicalID(entry.inheritsFrom), BuiltinID(index) });
     }
-    AOT::sort(list);
+    AOT::sortInLine(list);
     return list;
 }
 
@@ -192,6 +192,16 @@ ValueFlowObjectID ValueFlowHeapTables::objectOf(BuiltinID builtin) const
     return ValueFlowObjectID(m_firstObjectOfBuiltins + m_program.builtins().canonicalID(builtin).index());
 }
 
+void ValueFlowHeapTables::keepSetsHeld() const
+{
+    Locker locker { m_lock };
+    m_maker.keepSetsToKeep();
+    m_maker.forgetWhatIsRemembered();
+    // Blocks are remembered by their numbers.
+    for (size_t index = 0; index < static_cast<size_t>(5) << (64 - m_shiftOfBlocks); ++index)
+        m_prototypesOfBlocks[index].store(0, std::memory_order_relaxed);
+}
+
 void ValueFlowHeapTables::describeKey(PropertyKeyID key) const
 {
     Locker locker { m_lock };
@@ -205,6 +215,7 @@ void ValueFlowHeapTables::describeKey(PropertyKeyID key) const
     holders.thatAnswer = m_maker.unite(members.holders, created);
     ValueSetID holdersOfOpenLocations = m_maker.intersect(members.holders, ValueSets::complement(members.holdersWithLockedLocation));
     holders.thatMayLoseMember = m_maker.unite(m_maker.unite(holdersOfOpenLocations, created), holders.storedToAtCreation);
+    holders.withMemberOnHiddenPrototype = m_maker.intersect(members.holders, m_holdersWithMembersOnHiddenPrototype);
     holders.isDescribed.store(true, std::memory_order_release);
 }
 
@@ -215,7 +226,18 @@ uint32_t ValueFlowHeapTables::findOrAddRecordOf(PropertyKeyID key) const
     if (!name) {
         if (isPrivateName)
             return recordOfEnginePrivateName;
-        return m_program.at(key).kind == PropertyKeyKind::Text ? recordOfText : recordOfOtherKey;
+        if (m_program.at(key).kind != PropertyKeyKind::Text)
+            return recordOfOtherKey;
+        if (!m_program.isOpenedSomewhere(m_program.at(key).text)) [[likely]]
+            return recordOfText;
+        // A text like every other, but for the objects that a test run opens for it.
+        ValueFlowMembersUnderKey members = m_membersUnderKey[recordOfText];
+        MembersUnderKey membersUnderKey(m_program, key);
+        members.holdersWithLockedLocation = withoutHoldersOpenedFor(membersUnderKey, members.holdersWithLockedLocation);
+        members.holdersOfUndeclaredProperties = m_maker.unite(members.holdersOfUndeclaredProperties, holdersOpenedFor(membersUnderKey));
+        RELEASE_ASSERT(m_membersUnderKey.size() < m_membersUnderKey.capacity());
+        m_membersUnderKey.append(members);
+        return static_cast<uint32_t>(m_membersUnderKey.size() - 1);
     }
     return (isPrivateName ? m_recordOfPrivateName : m_recordOfName).ensure(name.name.index(), [&] {
         RELEASE_ASSERT(m_membersUnderKey.size() < m_membersUnderKey.capacity());
@@ -232,8 +254,10 @@ ValueFlowMembersUnderKey ValueFlowHeapTables::describeMembersUnder(PropertyKeyID
     Objects objectsOfHolders;
     Objects holdersOfEvaluators;
     Objects membersOfEngineAndLibrary;
+    bool isMemberOfListedFunction = false;
     auto addHolder = [&](BuiltinID holder) {
         objectsOfHolders.append(objectsOf(holder));
+        isMemberOfListedFunction |= m_isListedFunctionThatDoesNotEscape.get(holder.index());
         BuiltinID member = membersUnderKey.findOwnMember(holder);
         if (member && builtins.at(member).origin != BuiltinOrigin::Host)
             membersOfEngineAndLibrary.append(objectOf(member));
@@ -257,6 +281,7 @@ ValueFlowMembersUnderKey ValueFlowHeapTables::describeMembersUnder(PropertyKeyID
     // BuiltinTable::mismatches() compares: an object of the table that has such a method lists it.
     if (!isPrivateName && std::ranges::contains(builtins.namesOfHostMethodsCallingStartupLoads(), name))
         undeclared = m_maker.intersect(undeclared, openTo(Actor::NativeCode));
+    undeclared = m_maker.unite(undeclared, holdersOpenedFor(membersUnderKey));
     ValueSetID instancesThatKeepProperty = ValueSets::nothing;
     if (!isPrivateName) {
         Objects prototypes;
@@ -277,8 +302,23 @@ ValueFlowMembersUnderKey ValueFlowHeapTables::describeMembersUnder(PropertyKeyID
             classes.append(objectOf(entry));
         hostClassesWithSuchMethod = m_maker.of(classes.span());
     }
+    Objects unescapedHoldersWithoutKey;
+    if (!isPrivateName) {
+        for (BuiltinID holder : m_listedHoldersThatDoNotEscape) {
+            if (builtins.findMember(holder, name).outcome == BuiltinMemberLookup::Outcome::Absent)
+                unescapedHoldersWithoutKey.append(objectsOf(holder));
+        }
+    }
+    ValueSetID unescapedFunctionsWithoutKey = ValueSets::nothing;
+    if (!isPrivateName) {
+        for (auto [inheritsFrom, functions] : m_listedFunctionsThatDoNotEscape) {
+            if (inheritsFrom && builtins.findMember(inheritsFrom, name).outcome != BuiltinMemberLookup::Outcome::Absent)
+                continue;
+            unescapedFunctionsWithoutKey = m_maker.unite(unescapedFunctionsWithoutKey, isMemberOfListedFunction ? m_maker.intersect(functions, ValueSets::complement(holders)) : functions);
+        }
+    }
     return { holders, m_maker.intersect(holders, m_prototypeObjects), undeclared, m_maker.unite(m_lockedObjects, findLockedHolders(membersUnderKey, name, isPrivateName)), m_maker.intersect(holders, m_maker.of(holdersOfEvaluators.span())),
-        instancesThatKeepProperty, m_maker.intersect(holders, m_prototypeObjectsOfEntries), m_maker.of(membersOfEngineAndLibrary.span()), entriesWithFeaturesOfHostClasses, hostClassesWithSuchMethod };
+        instancesThatKeepProperty, m_maker.intersect(holders, m_prototypeObjectsOfEntries), m_maker.of(membersOfEngineAndLibrary.span()), entriesWithFeaturesOfHostClasses, hostClassesWithSuchMethod, m_maker.of(unescapedHoldersWithoutKey.span()), unescapedFunctionsWithoutKey };
 }
 
 // Whatever makes an instance of a class is listed with the feature that guards the class. A class that no feature guards is there in every executable, and so is whatever makes its instances.
@@ -323,11 +363,26 @@ ValueSetID ValueFlowHeapTables::findEntriesWithFeaturesOfHostClasses(ValueSetID 
     return m_maker.of(entries.span());
 }
 
+// A test may have put anything there, also a test that this build does not see.
+ValueSetID ValueFlowHeapTables::holdersOpenedFor(const MembersUnderKey& membersUnderKey) const
+{
+    Objects opened;
+    for (BuiltinID holder : membersUnderKey.holdersOpenedForKey())
+        opened.append(objectsOf(holder));
+    return m_maker.of(opened.span());
+}
+
+ValueSetID ValueFlowHeapTables::withoutHoldersOpenedFor(const MembersUnderKey& membersUnderKey, ValueSetID holders) const
+{
+    return m_maker.intersect(holders, ValueSets::complement(holdersOpenedFor(membersUnderKey)));
+}
+
 ValueSetID ValueFlowHeapTables::findLockedHolders(const MembersUnderKey& membersUnderKey, BuiltinName name, bool isPrivateName) const
 {
     Objects locked;
+    // What is opened for this key alone is taken out at the end: the answers of closed holders are kept for every key of a class.
     auto appendIfLocked = [&](BuiltinID holder, Objects& list) {
-        if (membersUnderKey.isLockedLocation(holder))
+        if (membersUnderKey.isLockedLocation(holder) || std::ranges::contains(membersUnderKey.holdersOpenedForKey(), holder))
             list.append(objectsOf(holder));
     };
     Vector<BuiltinID, 16> closedHoldersListingName;
@@ -368,7 +423,7 @@ ValueSetID ValueFlowHeapTables::findLockedHolders(const MembersUnderKey& members
     ValueSetID result = m_maker.unite(m_maker.of(locked.span()), m_maker.intersect(others.locked, ValueSets::complement(m_maker.of(objectsListingName.span()))));
     if (!isPrivateName && m_program.builtins().isClosedOnHostFunctions(name))
         result = m_maker.unite(result, m_functionsOfEngine);
-    return result;
+    return withoutHoldersOpenedFor(membersUnderKey, result);
 }
 
 const ValueFlowMembersOfHolder& ValueFlowHeapTables::describeMembersOf(BuiltinID holder) const
@@ -507,16 +562,18 @@ void ValueFlowHeapTables::listWherePackagesAreNamedInPaths()
         m_mayAnswerToName.quickSet(index);
         StringID path = m_program.modules[index].path;
         std::span<const uint8_t> text = m_program.string(path);
-        m_whereNamesOfPackagesBegin.append(RestOfPath { path, 0 });
-        if (const Module& module = m_program.modules[index]; module.runtimeModule && (!module.body || isAskedOfHostByName(module))) {
-            m_namesOfLibraryModules.append(RestOfPath { path, 0 });
+        m_whereNamesOfPackagesBegin.append(RestOfPath { path, 0, ModuleID(index) });
+        if (const Module& module = m_program.modules[index]; module.runtimeModule) {
+            m_namesOfLibraryModules.append(RestOfPath { path, 0, ModuleID(index) });
             if (spanHasPrefix(text, std::span(prefixOfLibrary)))
-                m_namesOfLibraryModules.append(RestOfPath { path, static_cast<uint32_t>(prefixOfLibrary.size()) });
+                m_namesOfLibraryModules.append(RestOfPath { path, static_cast<uint32_t>(prefixOfLibrary.size()), ModuleID(index) });
+            for (StringID name : module.otherNames)
+                m_namesOfLibraryModules.append(RestOfPath { name, 0, ModuleID(index) });
         }
         for (size_t start = 0; start + folder.size() < text.size(); ++start) {
             uint8_t separator = text[start + folder.size()];
             if ((separator == '/' || separator == '\\') && spanHasPrefix(text.subspan(start), std::span(folder)))
-                m_whereNamesOfPackagesBegin.append(RestOfPath { path, static_cast<uint32_t>(start + folder.size() + 1) });
+                m_whereNamesOfPackagesBegin.append(RestOfPath { path, static_cast<uint32_t>(start + folder.size() + 1), ModuleID(index) });
         }
     }
     for (Vector<RestOfPath>* list : { &m_whereNamesOfPackagesBegin, &m_namesOfLibraryModules }) {
@@ -542,10 +599,137 @@ bool ValueFlowHeapTables::holdsModuleOfPackage(std::span<const uint8_t> package)
     return found && spanHasPrefix(textOf(*found), package);
 }
 
-bool ValueFlowHeapTables::isNameOfLibraryModule(std::span<const uint8_t> name) const
+ModuleID ValueFlowHeapTables::libraryModuleNamed(std::span<const uint8_t> name) const
 {
     const RestOfPath* found = findFirstNotBefore(m_namesOfLibraryModules, name);
-    return found && equalSpans(textOf(*found), name);
+    return found && equalSpans(textOf(*found), name) ? found->module : ModuleID();
+}
+
+// On Windows a path of the image may be written with either slash.
+static constexpr uint8_t withForwardSlash(uint8_t character) { return character == '\\' ? '/' : character; }
+
+static bool isPathBefore(std::span<const uint8_t> first, std::span<const uint8_t> second)
+{
+    return std::ranges::lexicographical_compare(first, second, { }, withForwardSlash, withForwardSlash);
+}
+
+static size_t lastIndexOf(std::span<const uint8_t> path, uint8_t character)
+{
+    for (size_t index = path.size(); index--;) {
+        if (withForwardSlash(path[index]) == character)
+            return index;
+    }
+    return notFound;
+}
+
+static std::span<const uint8_t> withoutExtension(std::span<const uint8_t> path)
+{
+    size_t slash = lastIndexOf(path, '/');
+    size_t name = slash == notFound ? 0 : slash + 1;
+    size_t dot = lastIndexOf(path.subspan(name), '.');
+    return dot == notFound || !dot ? path : path.first(name + dot);
+}
+
+void ValueFlowHeapTables::listSpellingsOfFiles()
+{
+    static constexpr std::array<uint8_t, 6> indexFile { '/', 'i', 'n', 'd', 'e', 'x' };
+    bool isFirst = true;
+    for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
+        const Module& module = m_program.modules[index];
+        if (module.runtimeModule || module.kind == ModuleKind::External || module.flags.containsAny({ ModuleFlags::IsLibrary, ModuleFlags::IsBundlerHelper }))
+            continue;
+        std::span<const uint8_t> path = m_program.string(module.path);
+        size_t slash = lastIndexOf(path, '/');
+        std::span<const uint8_t> folder = slash == notFound ? std::span<const uint8_t>() : path.first(slash + 1);
+        if (std::exchange(isFirst, false))
+            m_folderOfProgram = folder;
+        size_t common = std::ranges::mismatch(m_folderOfProgram, folder, { }, withForwardSlash, withForwardSlash).in1 - m_folderOfProgram.begin();
+        size_t end = lastIndexOf(m_folderOfProgram.first(common), '/');
+        m_folderOfProgram = end == notFound ? std::span<const uint8_t>() : m_folderOfProgram.first(end + 1);
+        if (!mayAnswerToName(ModuleID(index)))
+            continue;
+        std::span<const uint8_t> spelling = withoutExtension(path);
+        m_spellingsOfFiles.append(StartOfPath { module.path, static_cast<uint32_t>(spelling.size()), ModuleID(index) });
+        if (spelling.size() >= indexFile.size() && std::ranges::equal(spelling.last(indexFile.size()), indexFile, { }, withForwardSlash))
+            m_spellingsOfFiles.append(StartOfPath { module.path, static_cast<uint32_t>(spelling.size() - indexFile.size()), ModuleID(index) });
+    }
+    AOT::sort(m_spellingsOfFiles, [&](StartOfPath first, StartOfPath second) {
+        return isPathBefore(textOf(first), textOf(second));
+    });
+}
+
+std::optional<Vector<ModuleID, 2>> ValueFlowHeapTables::filesThatPathFinds(ModuleID from, std::span<const uint8_t> path) const
+{
+    auto isMoreThanPath = [](uint8_t character) {
+        return character == '?' || character == '#' || character == '%' || character == ':' || character == '\\';
+    };
+    std::span<const uint8_t> start = m_program.string(m_program.at(from).path);
+    size_t slash = lastIndexOf(start, '/');
+    bool liesInFolderOfProgram = !m_folderOfProgram.empty() && start.size() >= m_folderOfProgram.size() && std::ranges::equal(start.first(m_folderOfProgram.size()), m_folderOfProgram, { }, withForwardSlash, withForwardSlash);
+    if (slash == notFound || !liesInFolderOfProgram || std::ranges::any_of(path, isMoreThanPath))
+        return std::nullopt;
+
+    Vector<uint8_t, 256> joined;
+    joined.append(start.first(slash));
+    while (!path.empty()) {
+        size_t length = std::ranges::find(path, '/') - path.begin();
+        std::span<const uint8_t> part = path.first(length);
+        path = path.subspan(std::min(length + 1, path.size()));
+        if (part.empty() || (part.size() == 1 && part[0] == '.'))
+            continue;
+        if (part.size() == 2 && part[0] == '.' && part[1] == '.') {
+            if (joined.size() < m_folderOfProgram.size())
+                return std::nullopt;
+            joined.shrink(lastIndexOf(joined.span(), '/'));
+            continue;
+        }
+        joined.append('/');
+        joined.append(part);
+    }
+    if (joined.size() + 1 < m_folderOfProgram.size())
+        return std::nullopt;
+
+    Vector<ModuleID, 2> found;
+    auto add = [&](std::span<const uint8_t> spelling) {
+        auto [first, last] = std::ranges::equal_range(m_spellingsOfFiles, spelling, isPathBefore, [&](StartOfPath start) {
+            return textOf(start);
+        });
+        for (; first != last; ++first) {
+            if (!found.contains(first->module))
+                found.append(first->module);
+        }
+    };
+    add(joined.span());
+    if (std::span<const uint8_t> shorter = withoutExtension(joined.span()); shorter.size() != joined.size())
+        add(shorter);
+    return found;
+}
+
+std::span<const PropertyKeyID> ValueFlowHeapTables::namesThatBeginWith(StringID beginning) const
+{
+    auto textOf = [&](PropertyKeyID key) {
+        return m_program.string(m_program.at(key).text);
+    };
+    auto isBefore = [](std::span<const uint8_t> left, std::span<const uint8_t> right) {
+        return std::ranges::lexicographical_compare(left, right);
+    };
+    std::call_once(m_didSortNames, [&] {
+        for (uint32_t index = 0; index < m_program.types.numberOfPropertyKeys(); ++index) {
+            if (m_program.at(PropertyKeyID(index)).kind == PropertyKeyKind::Text)
+                m_namesInOrderOfText.append(PropertyKeyID(index));
+        }
+        AOT::sort(m_namesInOrderOfText, [&](PropertyKeyID left, PropertyKeyID right) {
+            return isBefore(textOf(left), textOf(right));
+        });
+    });
+    std::span<const uint8_t> text = m_program.string(beginning);
+    std::span<const PropertyKeyID> names = m_namesInOrderOfText.span();
+    auto first = std::ranges::lower_bound(names, text, isBefore, textOf);
+    auto last = std::ranges::find_if_not(first, names.end(), [&](PropertyKeyID key) {
+        std::span<const uint8_t> name = textOf(key);
+        return name.size() >= text.size() && equalSpans(name.first(text.size()), text);
+    });
+    return { first, last };
 }
 
 ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlowUniverse& universe, ValueSets& allSets, ValueSetMaker& maker, const ParallelLoops& loops, NOESCAPE const ScopedLambda<void()>& runBesideTables)
@@ -585,6 +769,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
     if (StringID text = program.strings.find(byteCast<uint8_t>("displayName"_span)))
         m_displayNameKey = program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = text }).value_or(PropertyKeyID());
     listWherePackagesAreNamedInPaths();
+    listSpellingsOfFiles();
 
     m_prototypesAtCreation = ZeroFilledPages<std::atomic<uint64_t>>(universe.numberOfObjects());
     unsigned bitsOfBlocks = std::clamp<unsigned>(std::bit_width(static_cast<uint64_t>(universe.numberOfObjects())) + 2, 12, 20);
@@ -606,6 +791,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_hasGetEntry.ensureSize(builtins.builtinCount());
         m_hasSetEntry.ensureSize(builtins.builtinCount());
         m_letsInUnseenCode.ensureSize(builtins.builtinCount());
+        m_standsRightAboveObjectOfModule.ensureSize(builtins.builtinCount());
         Vector<ValueFlowObjectID, 32> objectsThatLetInUnseenCode;
         Vector<ValueFlowObjectID, 32> objectsThatLetInUnseenCodeWhenCalled;
         // f.call(..), f.bind(..), Reflect.apply(f, ..), list.map(f): the row says that the function calls its receiver or an argument, or answers a bound function.
@@ -629,6 +815,9 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 m_hasSetEntry.quickSet(index);
             if (builtins.letsInUnseenCode(builtins.canonicalID(BuiltinID(index))))
                 m_letsInUnseenCode.quickSet(index);
+            // Function.prototype stands above the functions of a module too. It is the engine's, and lists nothing of theirs.
+            if (const Builtin& entry = builtins.at(BuiltinID(index)); entry.scope == BuiltinScope::Module && entry.prototypeLink == BuiltinPrototypeLink::Builtin && builtins.at(entry.inheritsFrom).origin == BuiltinOrigin::Host)
+                m_standsRightAboveObjectOfModule.quickSet(entry.inheritsFrom.index());
             if (builtins.canonicalID(BuiltinID(index)) == BuiltinID(index) && builtins.letsInUnseenCode(BuiltinID(index)))
                 universe.appendObjectsOf(BuiltinID(index), objectsThatLetInUnseenCode);
             if (builtins.canonicalID(BuiltinID(index)) == BuiltinID(index) && builtins.letsInUnseenCodeWhenCalled(BuiltinID(index)))
@@ -715,6 +904,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         Objects lockedObjects;
         Objects holdersWithLockedIndexes;
         Objects holdersWithLockedPrototypeLink;
+        Objects holdersWithMembersOnHiddenPrototype;
         Objects holdersClosedToOtherNames;
         Objects functionsOfEngine;
         Objects prototypesOfInstancesWithNames;
@@ -740,6 +930,8 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             StringID text = program.strings.stringOf(name);
             return mayBeElementKey(text ? program.strings.nameClass(text) : classifyName(builtins.textOf(name)));
         };
+        Vector<std::pair<BuiltinID, Objects>, 2> listedFunctionsBelow;
+        m_isListedFunctionThatDoesNotEscape.ensureSize(builtins.builtinCount());
         for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
             m_endOfObjectsOfHolder[index] = m_objectsOfHolders.size();
             BuiltinID holder(index);
@@ -753,12 +945,30 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             m_endOfObjectsOfHolder[index] = m_objectsOfHolders.size();
             if (entry.flags.contains(BuiltinFlag::ListsAllMembers) || m_compiledModuleOfHolder[index])
                 holdersThatListAllMembers.appendVector(objects);
+            // What exposeMembersOf() passes by. A name that no object of the table has is absent there exactly where the whole chain is listed.
+            if (entry.kind != BuiltinKind::Prototype && entry.scope == BuiltinScope::Realm && (entry.origin == BuiltinOrigin::Host || builtins.letsInUnseenCode(holder))
+                && !entry.flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::IsClosedToOtherNames }) && builtins.findMember(holder, BuiltinName()).outcome == BuiltinMemberLookup::Outcome::Absent) {
+                if (entry.kind == BuiltinKind::Namespace || entry.kind == BuiltinKind::Constructor)
+                    m_listedHoldersThatDoNotEscape.append(holder);
+                else {
+                    BuiltinID inheritsFrom = entry.prototypeLink == BuiltinPrototypeLink::Builtin ? builtins.canonicalID(entry.inheritsFrom) : BuiltinID();
+                    auto found = std::ranges::find(listedFunctionsBelow, inheritsFrom, &std::pair<BuiltinID, Objects>::first);
+                    if (found == listedFunctionsBelow.end()) {
+                        listedFunctionsBelow.append({ inheritsFrom, Objects() });
+                        found = listedFunctionsBelow.end() - 1;
+                    }
+                    found->second.appendVector(objects);
+                    m_isListedFunctionThatDoesNotEscape.set(index);
+                }
+            }
             if (entry.flags.contains(BuiltinFlag::IsLockedObject))
                 lockedObjects.appendVector(objects);
             if (builtins.closesIndexKeys(holder))
                 holdersWithLockedIndexes.appendVector(objects);
             if (builtins.hasLockedPrototypeLink(holder))
                 holdersWithLockedPrototypeLink.appendVector(objects);
+            else if (builtins.has(BuiltinMark::AnswersNullAsItsPrototype, holder))
+                holdersWithMembersOnHiddenPrototype.appendVector(objects);
             if (entry.flags.contains(BuiltinFlag::IsClosedToOtherNames))
                 holdersClosedToOtherNames.appendVector(objects);
             bool hasClosedKeys = entry.flags.contains(BuiltinFlag::IsClosedToOtherNames) || !builtins.closedKeysOf(holder).empty();
@@ -853,7 +1063,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 keysOfMembersOfBun.append(universe.keyConstant(key));
         }
         m_keysOfMembersOfBun = maker.of(keysOfMembersOfBun.span());
-        AOT::sort(m_closedHoldersListingNames);
+        AOT::sortInLine(m_closedHoldersListingNames);
         AOT::sort(m_prototypesOfInstancesWithNames);
         for (auto [mark, member] : builtins.marked(BuiltinMark::IsReplacedBySetter)) {
             if (PropertyKeyID key = program.keyOf(builtins.at(member).name))
@@ -893,17 +1103,31 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_prototypeObjectsListingOwnPropertiesOfInstances = maker.of(prototypeObjectsListingOwnPropertiesOfInstances.span());
         m_prototypeObjectsOfClassesThatLayPropertiesOnInstances = maker.unite(maker.unite(m_prototypeObjectsListingOwnPropertiesOfInstances, m_prototypeObjectsOfClassesThatListNamesWithoutTypes), maker.unite(m_prototypeObjectsOfClassesThatListNoOwnNames, m_prototypesAboveNativeElements));
         m_holdersOfUndeclaredPropertiesUnderAnyKey = maker.unite(m_entriesOpenToTableOrNativeCode, m_prototypeObjectsOfClassesThatListNamesWithoutTypes);
+        Objects holdersOfOpenedNames;
+        for (const OpenedName& opened : program.openedNames)
+            holdersOfOpenedNames.append(objectsOf(opened.holder));
+        m_holdersOfUndeclaredPropertiesUnderAnyKey = maker.unite(m_holdersOfUndeclaredPropertiesUnderAnyKey, maker.of(holdersOfOpenedNames.span()));
 
         m_lockedObjects = maker.of(lockedObjects.span());
         m_holdersWithLockedIndexes = maker.of(holdersWithLockedIndexes.span());
         m_holdersWithLockedPrototypeLink = maker.of(holdersWithLockedPrototypeLink.span());
+        m_holdersWithMembersOnHiddenPrototype = maker.of(holdersWithMembersOnHiddenPrototype.span());
         m_functionsOfEngine = maker.of(functionsOfEngine.span());
         m_prototypeObjectsOfEntries = maker.of(prototypeObjectsOfEntries.span());
 
-        m_membersUnderKey.reserveInitialCapacity(numberOfRecordsOfUnnamedKeys + 2 * static_cast<size_t>(builtins.nameCount()));
+        m_membersUnderKey.reserveInitialCapacity(numberOfRecordsOfUnnamedKeys + 2 * static_cast<size_t>(builtins.nameCount()) + program.openedNames.size());
         m_membersUnderKey.append({ ValueSets::nothing, ValueSets::nothing, m_entriesOpenToTableOrNativeCode, m_lockedObjects, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing });
         m_membersUnderKey.append({ ValueSets::nothing, ValueSets::nothing, builtinObjects, m_lockedObjects, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing });
         m_membersUnderKey.append({ ValueSets::nothing, ValueSets::nothing, m_entriesOpenToTableOrNativeCode, maker.unite(m_lockedObjects, maker.of(holdersClosedToOtherNames.span())), ValueSets::nothing, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing });
+        Objects unescapedHolders;
+        for (BuiltinID holder : m_listedHoldersThatDoNotEscape)
+            unescapedHolders.append(objectsOf(holder));
+        m_membersUnderKey[recordOfText].unescapedHoldersWithoutKey = maker.of(unescapedHolders.span());
+        for (auto& [inheritsFrom, functions] : listedFunctionsBelow) {
+            m_listedFunctionsThatDoNotEscape.append({ inheritsFrom, maker.of(functions.span()) });
+            ValueSetID& all = m_membersUnderKey[recordOfText].unescapedFunctionsWithoutKey;
+            all = maker.unite(all, m_listedFunctionsThatDoNotEscape.last().functions);
+        }
         m_closedHoldersNotListingKeyOfClass.grow(MembersUnderKey::numberOfClasses);
         m_holdersUnderKey = std::make_unique<HoldersUnderKey[]>(numberOfKeys);
         m_membersOfHolder = std::make_unique<std::atomic<const ValueFlowMembersOfHolder*>[]>(builtins.builtinCount());
@@ -1028,6 +1252,16 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             }
             createdInStretches[stretch] = WTF::move(createdInStretch);
         });
+        ObjectsCreatedWithFields prototypeObjectsWithMethods;
+        prototypeObjectsWithMethods.underKeys = collectInParallel<ObjectCreatedWithKey>(loops, program.functions.size(), [&](unsigned index, Vector<ObjectCreatedWithKey>& found) {
+            forEachListedValue(program, FunctionID(index), { Opcode::DefineMethod }, [&](BlockID, uint32_t, ValueID, const Value& definition) {
+                if (definition.key() && definition.side() != ClassSide::Static && definition.methodKind() == MethodKind::Method)
+                    found.append({ definition.key(), universe.prototypeOf(definition.layout()) });
+            });
+        });
+        for (const ObjectCreatedWithKey& created : prototypeObjectsWithMethods.underKeys)
+            prototypeObjectsWithMethods.objects.append(created.object);
+        createdInStretches.append(WTF::move(prototypeObjectsWithMethods));
         auto layOut = [&](Vector<ObjectCreatedWithKey> ObjectsCreatedWithFields::* list, Vector<uint32_t>& endOfKey, Vector<ValueFlowObjectID>& objects) {
             endOfKey.fill(0u, numberOfKeys);
             for (const ObjectsCreatedWithFields& createdInStretch : createdInStretches) {
@@ -1067,6 +1301,15 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_objectsDeclaringField = Vector<ValueSetID>(numberOfKeys, [&](size_t key) {
             return maker.uniteAll(entriesOfKey(objectsDeclaringFields, endOfObjectsDeclaringField, key));
         });
+        m_objectsDeclaringFieldThatNoStoreCreates.fill(ValueSets::nothing, numberOfKeys);
+        for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+            for (const Field& field : program.layouts[index].fields) {
+                if (!field.key || field.form.isEmpty())
+                    continue;
+                ValueSetID& objects = m_objectsDeclaringFieldThatNoStoreCreates[field.key.index()];
+                objects = maker.unite(objects, maker.intersect(universe.objectsWith(LayoutID(index)), ValueSets::complement(universe.objectsThatMayBeAnything())));
+            }
+        }
     };
     runTasksInParallel(loops, {
         [&] {
@@ -1085,7 +1328,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                     objectsHoldingOnlyWhatWasWritten.append(object);
             };
             // An object that no case lists among those that hold what the solve shows is left to its class.
-            maker.sets().forEachMember(knownObjectsOfProgram, [&](ValueFlowObjectID object) {
+            maker.sets().forEachMemberInLine(knownObjectsOfProgram, [&](ValueFlowObjectID object) {
                 switch (universe.kindOf(object)) {
                 case ValueFlowObjectKind::RestArray:
                     arraysThatOperationsAllocate.append(object);
@@ -1152,7 +1395,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             m_constantsHoldingModules = ConstantsHoldingModules(program);
         },
         [&] {
-            maker.sets().forEachMember(universe.arrays(), [&](ValueFlowObjectID object) {
+            maker.sets().forEachMemberInLine(universe.arrays(), [&](ValueFlowObjectID object) {
                 const ValueFlowSite* site = universe.siteOf(object);
                 if (site && site->origin == ValueFlowSiteOrigin::Operation && program.at(universe.functionOf(object)).at(site->value).opcode == Opcode::NewTemplateObject)
                     templateObjects.append(object);

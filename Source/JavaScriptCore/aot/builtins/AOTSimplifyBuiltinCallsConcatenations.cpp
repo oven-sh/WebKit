@@ -9,15 +9,22 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTBuiltinCallPlan.h"
+#include "AOTEffectsDescription.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
+#include "AOTInlineBuiltinForms.h"
 #include "AOTKnownValue.h"
+#include "AOTObservableOperations.h"
+#include "AOTSort.h"
 #include "AOTSplitUnions.h"
 #include "AOTStringArena.h"
+#include "AOTStringBuilderAnalysis.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <span>
+#include <utility>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -31,6 +38,17 @@ struct ConcatenatedPart {
 struct Concatenation {
     ValueSite site;
     Vector<ConcatenatedPart, 8> parts;
+};
+
+struct TestOfConcatenation {
+    ValueSite call;
+    ValueID string;
+    BuiltinOverloadID overload;
+    BuiltinOverloadID codeUnitRead;
+    bool isAtEnd { false };
+    bool mayBeTooLong { false };
+    Vector<ValueID, 4> parts;
+    Vector<ValueID, 4> readByCallAlone;
 };
 
 } // anonymous namespace
@@ -224,6 +242,221 @@ unsigned simplifyConcatenatingCalls(FunctionPassContext& context, const BuiltinC
         replaceKeepingType(context, concatenations[index].site.value, WTF::move(rewritten[index]));
     context.analyses.didChangeValues();
     return static_cast<unsigned>(concatenations.size());
+}
+
+static bool collectPartsReadByCallAlone(FunctionPassContext& context, TestOfConcatenation& test, ValueID operand, ValueID user)
+{
+    const Program& program = context.program;
+    const Function& function = context.function;
+    const UseLists& useLists = context.analyses.useLists();
+
+    size_t numberOfLinks = test.readByCallAlone.size();
+    ValueID definition = operand;
+    bool isReadByUserAlone = true;
+    while (true) {
+        std::optional<Use> use = useLists.singleUse(definition);
+        isReadByUserAlone = use && use->kind == Use::Kind::Operand && use->user == user && use->block == test.call.block && useLists.blockOf(definition) == test.call.block;
+        if (!isReadByUserAlone || !isCastWithoutTest(function.at(definition).opcode))
+            break;
+        test.readByCallAlone.append(definition);
+        user = definition;
+        definition = function.at(definition).operand(0);
+    }
+
+    const Value& value = function.at(definition);
+    bool joinsTexts = isReadByUserAlone && isStringConcatenation(program, function, value) && std::ranges::all_of(value.operands(), [&](ValueID part) {
+        return isConvertedWithoutCode(program.typeOf(function, part));
+    });
+    if (!joinsTexts) {
+        test.readByCallAlone.shrink(numberOfLinks);
+        test.parts.append(operand);
+        return false;
+    }
+
+    test.readByCallAlone.append(definition);
+    test.mayBeTooLong |= !context.analyses.isRemovableWhenUnused(definition);
+    for (ValueID part : value.operands())
+        collectPartsReadByCallAlone(context, test, part, definition);
+    return true;
+}
+
+static std::optional<TestOfConcatenation> matchTestOfConcatenation(FunctionPassContext& context, const ValueSite& site)
+{
+    const Program& program = context.program;
+    const Function& function = context.function;
+    const Value& call = function.at(site.value);
+    if (call.opcode != Opcode::CallBuiltin || call.builtinCallForm() != BuiltinCallForm::Whole)
+        return std::nullopt;
+    std::optional<InlineBuiltin> builtin = inlineImplementationOf(program, call);
+    if (builtin != InlineBuiltin::StringStartsWith && builtin != InlineBuiltin::StringEndsWith)
+        return std::nullopt;
+
+    ValueID string = call.receiverOperand();
+    std::span<const ValueID> arguments = call.argumentsOperands();
+    if (!string || arguments.size() != 1 || !program.typeOf(function, string).isAnyString() || function.at(site.block).frequency.predicted() == BlockFrequency::Rare)
+        return std::nullopt;
+
+    TestOfConcatenation test { .call = site, .string = string, .isAtEnd = builtin == InlineBuiltin::StringEndsWith };
+    if (!collectPartsReadByCallAlone(context, test, arguments[0], site.value))
+        return std::nullopt;
+
+    const BlockValues& values = function.at(site.block).values;
+    uint32_t first = site.index;
+    for (ValueID id : test.readByCallAlone)
+        first = std::min(first, context.analyses.useLists().locationOf(id).index);
+    for (uint32_t index = first; index < site.index; ++index) {
+        if (!test.readByCallAlone.contains(values[index]) && !context.analyses.isRemovableWhenUnused(values[index]))
+            return std::nullopt;
+    }
+
+    int64_t longest = static_cast<int64_t>(test.parts.size()) * Range::length().maximum;
+    TypingContext typing { program, function, context.types };
+    BuiltinOperandTypes operands { function.at(string).type, { TypeTable::string, context.types.intern(Type::integer(Range { -longest, longest })) } };
+    OverloadMatch match = matchOverload({ typing, program.builtins().at(call.overload()).builtin, BuiltinCallMode::Call, operands, operands });
+    if (match.state != BuiltinMatchState::Proven || !match.requirements.isEmpty() || !match.overload)
+        return std::nullopt;
+    test.overload = match.overload;
+
+    BuiltinOperandTypes operandsOfRead { operands.receiver, { operands.arguments[1] } };
+    OverloadMatch read = matchOverload({ typing, Builtins::StringPrototypeCharCodeAt, BuiltinCallMode::Call, operandsOfRead, operandsOfRead });
+    if (read.state == BuiltinMatchState::Proven && read.requirements.isEmpty())
+        test.codeUnitRead = read.overload;
+    return test;
+}
+
+static std::optional<char16_t> findOnlyCodeUnit(FunctionPassContext& context, ValueID text)
+{
+    KnownValue known = knownValueOf(context.program, context.function, text);
+    if (known.kind() != KnownValue::Kind::String)
+        return std::nullopt;
+    Vector<char16_t> buffer;
+    StringView characters = context.program.strings.viewOf(known.asString(), buffer);
+    return characters.length() == 1 ? std::optional(characters[0]) : std::nullopt;
+}
+
+static void emitTestsOfParts(FunctionPassContext& context, IRBuilder& builder, const TestOfConcatenation& test)
+{
+    Function& function = context.function;
+    ValueID call = test.call.value;
+    BlockID block = context.analyses.useLists().blockOf(call);
+    const Terminator& terminator = function.at(block).terminator;
+    if (terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == call)
+        builder.demoteReturnCall(block);
+
+    Origin originOfConcatenation = function.at(test.readByCallAlone.last()).origin();
+    for (ValueID id : test.readByCallAlone) {
+        if (concatenationOpcodes.contains(function.at(id).opcode)) {
+            originOfConcatenation = function.at(id).origin();
+            break;
+        }
+    }
+
+    IRBuilder::Expansion cut = builder.beginExpansion(context.analyses.useLists().pointOf(call));
+    Origin originOfCall = builder.origin();
+
+    const BlockValues& values = function.at(block).values;
+    BitVector indexes(values.size());
+    for (uint32_t index = 0; index < values.size(); ++index) {
+        if (!test.readByCallAlone.contains(values[index]))
+            continue;
+        explainOperationThatGoes(function, values[index], InPlaceOfOperation::ItsExpansion);
+        indexes.quickSet(index);
+    }
+    builder.eraseValues(block, indexes);
+
+    const Program& program = context.program;
+    Vector<ValueID, 4> texts;
+    for (ValueID part : test.parts) {
+        const Type& type = program.typeOf(function, part);
+        if (type.isAnyString())
+            texts.append(part);
+        else
+            texts.append(type.isNumberLike() ? ValueID() : builder.append(Opcode::ToString, { part }));
+    }
+    Vector<ValueID, 4> lengths(texts.size());
+    auto lengthOf = [&](size_t index) {
+        if (!lengths[index])
+            lengths[index] = builder.append(Opcode::GetStringLength, { texts[index] });
+        return lengths[index];
+    };
+
+    ValueID total;
+    uint64_t lengthOfShortTexts = 0;
+    for (size_t index = 0; test.mayBeTooLong && index < texts.size(); ++index) {
+        if (!texts[index])
+            lengthOfShortTexts += longestTextOf(program, program.typeOf(function, test.parts[index]));
+        else
+            total = total ? builder.append(Opcode::Add, { total, lengthOf(index) }) : lengthOf(index);
+    }
+    if (total) {
+        ValueID fits = builder.append(Opcode::LessEq, { total, builder.appendInteger(Range::length().maximum - static_cast<int64_t>(lengthOfShortTexts)) });
+        IRBuilder::BranchBlocks blocks = builder.emitBranch(fits, BlockFrequency::Normal, BlockFrequency::Rare);
+
+        builder.moveToEndOf(blocks.notTaken);
+        builder.setOrigin(originOfConcatenation);
+        Value concatenation = IRBuilder::make(Opcode::Strcat);
+        concatenation.setVariadicOperands(test.parts.span());
+        ValueID joined = builder.append(WTF::move(concatenation));
+        builder.setOrigin(originOfCall);
+        bool alwaysThrows = !texts.contains(ValueID());
+        builder.endExpansion(cut, alwaysThrows ? builder.appendBoolean(false) : builder.append(makeBuiltinCall(test.overload, BuiltinCallForm::Whole, { test.string, { joined } }, { })));
+        builder.moveToEndOf(blocks.taken);
+    }
+
+    ValueID position;
+    for (size_t step = 0; step < texts.size(); ++step) {
+        size_t index = test.isAtEnd ? texts.size() - 1 - step : step;
+        if (!texts[index])
+            texts[index] = builder.append(Opcode::ToString, { test.parts[index] });
+        ValueID next;
+        ValueID holds;
+        if (std::optional<char16_t> unit = position && test.codeUnitRead ? findOnlyCodeUnit(context, texts[index]) : std::nullopt) {
+            if (test.isAtEnd)
+                next = builder.append(Opcode::Sub, { position, lengthOf(index) });
+            ValueID read = builder.append(makeBuiltinCall(test.codeUnitRead, BuiltinCallForm::Whole, { test.string, { test.isAtEnd ? next : position } }, { }));
+            holds = builder.append(Opcode::StrictEq, { read, builder.appendInteger(*unit) });
+        } else if (position)
+            holds = builder.append(makeBuiltinCall(test.overload, BuiltinCallForm::Whole, { test.string, { texts[index], position } }, { }));
+        else
+            holds = builder.append(makeBuiltinCall(test.overload, BuiltinCallForm::Whole, { test.string, { texts[index] } }, { }));
+        if (step + 1 == texts.size()) {
+            builder.endExpansion(cut, holds);
+            break;
+        }
+
+        IRBuilder::BranchBlocks blocks = builder.emitBranch(holds);
+        builder.moveToEndOf(blocks.notTaken);
+        builder.endExpansion(cut, builder.appendBoolean(false));
+        builder.moveToEndOf(blocks.taken);
+        if (next)
+            position = next;
+        else if (test.isAtEnd)
+            position = builder.append(Opcode::Sub, { position ? position : builder.append(Opcode::GetStringLength, { test.string }), lengthOf(index) });
+        else
+            position = position ? builder.append(Opcode::Add, { position, lengthOf(index) }) : lengthOf(index);
+    }
+}
+
+// path.startsWith(directory + "/") asks about directory, then about "/" behind it, and makes no string.
+unsigned testPartsOfConcatenations(FunctionPassContext& context, const BuiltinCallSites& calls)
+{
+    Vector<TestOfConcatenation> tests;
+    for (const ValueSite& site : calls) {
+        std::optional<TestOfConcatenation> test = matchTestOfConcatenation(context, site);
+        if (test && !context.exceeds(LimitID::MaxFusedConcatenationParts, test->parts.size(), site.value))
+            tests.append(WTF::move(*test));
+    }
+    if (tests.isEmpty())
+        return 0;
+
+    AOT::sort(tests, std::ranges::greater { }, [](const TestOfConcatenation& test) {
+        return std::pair { test.call.block, test.call.index };
+    });
+    IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
+    for (const TestOfConcatenation& test : tests)
+        emitTestsOfParts(context, builder, test);
+    builder.setHandler(std::nullopt);
+    return static_cast<unsigned>(tests.size());
 }
 
 static bool isReadByPositionAlone(FunctionPassContext& context, ValueID templateObject)

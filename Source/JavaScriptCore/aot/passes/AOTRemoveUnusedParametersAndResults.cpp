@@ -13,13 +13,16 @@
 #include "AOTCallGraph.h"
 #include "AOTChooseCallingConventions.h"
 #include "AOTEffectSummaries.h"
+#include "AOTEffectsDescription.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTFlowApply.h"
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
+#include "AOTKnownValue.h"
 #include "AOTMethodTableEntrypoints.h"
 #include "AOTParameterUses.h"
 #include "AOTPassRunner.h"
+#include "AOTPhaseTimes.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRules.h"
 #include "AOTThreads.h"
@@ -27,6 +30,7 @@
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <atomic>
 #include <optional>
 #include <wtf/BitVector.h>
 
@@ -94,10 +98,46 @@ static bool canEditParameters(const Program& program, const CallGraph& callGraph
     return !function.constructedClass && !function.isUnsplitCoroutine() && !function.isModuleBody() && !countsEntryParameters(function.creator.kind());
 }
 
-static Vector<BitVector> findUnusedParameters(const Program& program, const CallGraph& callGraph, BuildContext& build)
+// A string is left out: making one may cost a call, and the caller may have made it outside a loop.
+static KnownValue onlyValueOfParameter(const Program& program, const Function& function, unsigned index)
+{
+    const Block& entry = function.at(entryBlock);
+    ValueID parameter = entry.parameters[index];
+    if (entry.handler || entry.subject == parameter)
+        return { };
+    KnownValue value = knownValueOfType(program.at(function.at(parameter).type));
+    switch (value.kind()) {
+    case KnownValue::Kind::Undefined:
+    case KnownValue::Kind::Null:
+    case KnownValue::Kind::Boolean:
+    case KnownValue::Kind::Integer:
+        return value;
+    case KnownValue::Kind::Unknown:
+    case KnownValue::Kind::Double:
+    case KnownValue::Kind::String:
+    case KnownValue::Kind::Object:
+    case KnownValue::Kind::Function:
+        return { };
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+namespace {
+
+struct RemovedParameters {
+    Vector<BitVector> all;
+    // Those that the body reads and every caller gives the same value.
+    Vector<BitVector> constants;
+};
+
+} // anonymous namespace
+
+static RemovedParameters findUnusedParameters(const Program& program, const CallGraph& callGraph, BuildContext& build)
 {
     unsigned count = program.functions.size();
     Vector<BitVector> unused(count);
+    Vector<BitVector> constants(count);
+    Vector<BitVector> hasOnlyValue(count);
     Vector<Vector<ForwardedParameter>> forwarded(count);
     forEachIndexInParallel(build.parallelLoops(), count, [&](unsigned index) {
         FunctionID id(index);
@@ -112,7 +152,17 @@ static Vector<BitVector> findUnusedParameters(const Program& program, const Call
         }
         auto uses = classifyParameterUses(function, removableEntryParameters, &forwarded[index]);
         for (unsigned i = 0; i < uses.size(); ++i) {
-            if (uses[i] != ParameterUse::Used)
+            if (uses[i] == ParameterUse::Unused) {
+                unused[index].set(i);
+                continue;
+            }
+            if (!removableEntryParameters.get(i))
+                continue;
+            // Whoever enters by value needs the old signature, and what keeps it costs more than a constant in a register.
+            bool isConstant = callGraph.entrySet(id) == EntrySet::DirectCallers && onlyValueOfParameter(program, function, i).isKnown();
+            if (isConstant)
+                (uses[i] == ParameterUse::Used ? constants : hasOnlyValue)[index].set(i);
+            if (isConstant || uses[i] == ParameterUse::ForwardedOnly)
                 unused[index].set(i);
         }
     });
@@ -127,12 +177,16 @@ static Vector<BitVector> findUnusedParameters(const Program& program, const Call
             for (auto& forwardedParameter : forwarded[index]) {
                 if (!unused[index].get(forwardedParameter.parameter) || unused[forwardedParameter.callee.index()].get(forwardedParameter.calleeParameter))
                     continue;
+                if (hasOnlyValue[index].get(forwardedParameter.parameter)) {
+                    constants[index].set(forwardedParameter.parameter);
+                    continue;
+                }
                 unused[index].clear(forwardedParameter.parameter);
                 changed = true;
             }
         }
     }
-    return unused;
+    return { WTF::move(unused), WTF::move(constants) };
 }
 
 void removeEntryParameters(Function& function, const BitVector& removed)
@@ -228,7 +282,7 @@ void removeUnusedParameters(ProgramEditor& editor, const OptimizationInputs& inp
     const Program& program = editor.program();
     const ParallelLoops& loops = build.parallelLoops();
 
-    Vector<BitVector> removed = findUnusedParameters(program, inputs.callGraph, build);
+    auto [removed, constants] = findUnusedParameters(program, inputs.callGraph, build);
     Vector<FunctionID> candidates;
     uint64_t numberOfRemovedParameters = 0;
     for (size_t index = 0; index < removed.size(); ++index) {
@@ -283,6 +337,15 @@ void removeUnusedParameters(ProgramEditor& editor, const OptimizationInputs& inp
     callers.appendVector(reducedFunctions);
 
     editFunctionsInParallel(editor, build, callers.span(), [&](unsigned, FunctionID id, Function& caller, TaskArenas& arenas) {
+        if (id.index() >= reducedFunctions.first().index()) {
+            FunctionID original = candidates[id.index() - reducedFunctions.first().index()];
+            uint32_t position = 0;
+            for (size_t parameter : constants[original.index()]) {
+                ValueID value = program.at(original).at(entryBlock).parameters[parameter];
+                becomeConstant(program, caller, arenas.types, value, onlyValueOfParameter(program, program.at(original), parameter));
+                caller.edit(entryBlock, BlockEdit::Values).values.insert(position++, value);
+            }
+        }
         bool didRetarget = false;
         for (auto& block : caller.blocks) {
             for (ValueID value : block.values) {
@@ -601,6 +664,88 @@ void removeUnusedResults(ProgramEditor& editor, const OptimizationInputs& inputs
     build.statistics().count(StatisticID::UnusedResultsRemoved, numberOfRemovedResults);
 }
 
+// The passes that remove fields, results and parameters simplify the functions they edit without effect summaries, so to them every call may run any code.
+// A call whose result they left unused stays until here.
+void removeUnusedCalls(ProgramEditor& editor, const OptimizationInputs& inputs, const PassRunner& runner)
+{
+    BuildContext& build = runner.build();
+    const Program& program = editor.program();
+    const ParallelLoops& loops = build.parallelLoops();
+    unsigned count = program.functions.size();
+
+    OpcodeSet calls;
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        if (effectRuleOf(opcode) == EffectRule::Call)
+            calls.add(opcode);
+    }
+
+    // Only a body that calls a function without visible effects is read.
+    PhaseTimes times(build, PassID::RemoveUnusedCalls);
+    Vector<uint8_t> hasNoVisibleEffects(count);
+    forEachIndexInParallel(loops, count, [&](unsigned index) {
+        hasNoVisibleEffects[index] = program.functions[index].hasBody() && inputs.effects.of(FunctionID(index)).isRemovableWhenUnused();
+    });
+    times.didFinish("findFunctionsWithoutVisibleEffects"_s);
+    auto callsOnlyFunctionsWithoutVisibleEffects = [&](const Value& call) {
+        if (call.opcode == Opcode::CallDirect)
+            return !!hasNoVisibleEffects[call.function().index()];
+        CalleeList callees = calleesThatBoundEffectsOf(program, call);
+        auto functions = callees.functionsAlone();
+        return functions && std::ranges::all_of(functions->value(), [&](FunctionID callee) {
+            return !!hasNoVisibleEffects[callee.index()];
+        });
+    };
+
+    std::optional<ProgramCaches> caches(std::in_place, program, build);
+    Vector<FunctionID> functions = collectInParallel<FunctionID>(loops, count, [&](unsigned index, Vector<FunctionID>& found) {
+        FunctionID id(index);
+        const Function& function = program.at(id);
+        if (!function.hasBody() || !mayListValueWith(program, id, calls))
+            return;
+        Vector<ValueID, 8> candidates;
+        forEachListedValue(program, id, calls, [&](BlockID, uint32_t, ValueID call, const Value& value) {
+            if (callsOnlyFunctionsWithoutVisibleEffects(value))
+                candidates.append(call);
+        });
+        if (candidates.isEmpty() || !build.isEnabled(PassID::RemoveUnusedCalls, findFunctionAsRead(&program, id)))
+            return;
+        BitVector isUsed(function.values.size());
+        auto markUsed = [&](ValueID value) {
+            isUsed.quickSet(value.index());
+        };
+        for (const Block& block : function.blocks) {
+            for (ValueID value : block.values)
+                function.at(value).forEachChild(markUsed);
+            block.forEachChildOutsideValues(markUsed);
+        }
+        bool hasUnusedCall = std::ranges::any_of(candidates, [&](ValueID call) {
+            return !isUsed.quickGet(call.index()) && effectsOf(EffectContext { program, inputs.effects }, function, function.at(call)).onAnyEdge().isRemovableWhenUnused();
+        });
+        if (hasUnusedCall)
+            found.append(id);
+    });
+    caches.reset();
+    times.didFinish("findUnusedCalls"_s);
+
+    auto countCalls = [&](const Function& function) {
+        uint64_t numberOfCalls = 0;
+        for (const Block& block : function.blocks) {
+            numberOfCalls += std::ranges::count_if(block.values, [&](ValueID value) {
+                return calls.contains(function.at(value).opcode);
+            });
+        }
+        return numberOfCalls;
+    };
+    std::atomic<uint64_t> numberOfRemovedCalls { 0 };
+    editFunctionsInParallel(editor, build, functions.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
+        uint64_t numberOfCalls = countCalls(function);
+        simplifyEditedFunction(runner, program, inputs, id, function, arenas);
+        numberOfRemovedCalls.fetch_add(numberOfCalls - countCalls(function), std::memory_order_relaxed);
+    });
+    times.didFinish("simplify"_s);
+    build.statistics().count(StatisticID::UnusedCallsRemoved, numberOfRemovedCalls.load(std::memory_order_relaxed));
+}
+
 static bool hasResultThatMayBeProven(const Program& program, const Function& function)
 {
     return function.hasBody() && !function.isModuleBody() && function.results.size() == 1 && !function.isUnsplitCoroutine()
@@ -670,6 +815,13 @@ struct DirectTailCall {
 
     FunctionID callee;
     FunctionID caller;
+};
+
+using TypedCall = std::pair<FunctionID, FunctionID>;
+
+struct CallsOfCandidates {
+    const BitVector& isCandidate;
+    const Vector<TypedCall>& sortedByCallee;
 };
 
 // A call through the method table enters its selector's lookup or one of the entrypoints, so they all return in the same location.
@@ -787,7 +939,7 @@ static ReturnsOfFunction collectReturnsOf(const Program& program, FunctionID id)
 
 // A result's location follows from its type, which is what the function returns: numbers that are all integers return as an integer, a number or undefined returns in a floating-point register.
 // A function that forwards another's result returns what that one does. A tail call that is a jump stays one: both ends change together or not at all.
-static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const Program& program, BuildContext& build, std::span<const FunctionID> functions, const TableFunctions* tables)
+static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const Program& program, BuildContext& build, std::span<const FunctionID> functions, const TableFunctions* tables, const CallsOfCandidates* calls)
 {
     const ParallelLoops& loops = build.parallelLoops();
     unsigned count = program.functions.size();
@@ -821,7 +973,7 @@ static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const 
     Vector<Index> indexOf(count);
     for (unsigned index = 0; index < returns.size(); ++index)
         indexOf[returns[index].function.index()] = Index(index);
-    Vector<DirectTailCall> tailCalls = collectInParallel<DirectTailCall>(loops, count, [&](unsigned caller, Vector<DirectTailCall>& found) {
+    auto appendTailCallsOf = [&](unsigned caller, Vector<DirectTailCall>& found) {
         const Function& function = program.functions[caller];
         forEachBlockEndingWith(program, FunctionID(caller), { TerminatorKind::ReturnCall }, [&](BlockID block) {
             const Value& call = function.at(function.at(block).terminator.callOperand());
@@ -829,7 +981,26 @@ static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const 
             if (call.opcode == Opcode::CallDirect && call.function().index() != caller && function.role != FunctionRole::TableEntrypoint && (indexOf[call.function().index()] || indexOf[caller]))
                 found.append({ call.function(), FunctionID(caller) });
         });
+    };
+    bool everyCallerIsListed = calls && std::ranges::all_of(returns, [&](const ReturnsOfFunction& returnsOfFunction) {
+        return calls->isCandidate.quickGet(returnsOfFunction.function.index());
     });
+    Vector<DirectTailCall> tailCalls;
+    if (everyCallerIsListed) {
+        Vector<FunctionID> endsOfTailCalls;
+        for (const ReturnsOfFunction& returnsOfFunction : returns) {
+            FunctionID id = returnsOfFunction.function;
+            endsOfTailCalls.append(id);
+            for (auto call = std::ranges::lower_bound(calls->sortedByCallee, TypedCall { id, FunctionID(0u) }); call != calls->sortedByCallee.end() && call->first == id; ++call)
+                endsOfTailCalls.append(call->second);
+        }
+        AOT::sort(endsOfTailCalls);
+        removeRepeatedElements(endsOfTailCalls);
+        tailCalls = collectInParallel<DirectTailCall>(loops, endsOfTailCalls.size(), [&](unsigned index, Vector<DirectTailCall>& found) {
+            appendTailCallsOf(endsOfTailCalls[index].index(), found);
+        });
+    } else
+        tailCalls = collectInParallel<DirectTailCall>(loops, count, appendTailCallsOf);
 
     auto asDeclared = [&](FunctionID id) {
         ReturnedNumbers declared;
@@ -840,6 +1011,34 @@ static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const 
             declared.add(program.at(result.written()));
         return declared;
     };
+    // A function behind those whose results it returns: where no calls go round, one round over this order finds everything, however long the row of calls.
+    Vector<uint32_t> calleesFirst;
+    {
+        struct Visit {
+            uint32_t index;
+            uint32_t nextCallee { 0 };
+        };
+        BitVector wasEntered(returns.size());
+        Vector<Visit, 16> visits;
+        for (uint32_t root = 0; root < returns.size(); ++root) {
+            if (wasEntered.quickSet(root))
+                continue;
+            visits.append({ root });
+            while (!visits.isEmpty()) {
+                Visit& visit = visits.last();
+                const auto& handedOn = returns[visit.index].handedOn;
+                if (visit.nextCallee == handedOn.size()) {
+                    calleesFirst.append(visit.index);
+                    visits.removeLast();
+                    continue;
+                }
+                Index callee = indexOf[handedOn[visit.nextCallee++].index()];
+                if (callee && !wasEntered.quickSet(callee.index()))
+                    visits.append({ static_cast<uint32_t>(callee.index()) });
+            }
+        }
+    }
+
     BitVector staysAsDeclared(returns.size());
     Vector<ReturnedNumbers> returned(returns.size());
     Vector<Representation> chosen(returns.size());
@@ -852,7 +1051,7 @@ static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const 
             returned[index] = returns[index].values;
         for (bool didGrow = true; didGrow;) {
             didGrow = false;
-            for (unsigned index = 0; index < returns.size(); ++index) {
+            for (uint32_t index : calleesFirst) {
                 if (staysAsDeclared.quickGet(index))
                     continue;
                 ReturnedNumbers before = returned[index];
@@ -959,12 +1158,12 @@ void proveResults(ProgramEditor& editor, const OptimizationInputs& inputs, const
     };
     // Applies the findings and returns the functions whose results changed type.
     uint64_t numberOfProvenResults = 0;
-    auto establishAmong = [&](std::span<const FunctionID> functions) {
+    auto establishAmong = [&](std::span<const FunctionID> functions, const CallsOfCandidates* calls) {
         Vector<FunctionID> changed = findProvenAmong(functions);
         editFunctionsInParallel(editor, build, changed.span(), [&](unsigned, FunctionID, Function& function, TaskArenas&) {
             function.results[0].establish(Proven::byEveryArrival(function.results[0].expected()));
         });
-        Vector<std::pair<FunctionID, ReturnedNumbers>> narrowed = findResultsToNarrow(program, build, functions, std::exchange(tables, nullptr));
+        Vector<std::pair<FunctionID, ReturnedNumbers>> narrowed = findResultsToNarrow(program, build, functions, std::exchange(tables, nullptr), calls);
         Vector<FunctionID> narrowedFunctions = narrowed.map([](auto& entry) { return entry.first; });
         editFunctionsInParallel(editor, build, narrowedFunctions.span(), [&](unsigned index, FunctionID id, Function& function, TaskArenas& arenas) {
             TypeID type = arenas.types.intern(narrowed[index].second.type());
@@ -986,12 +1185,11 @@ void proveResults(ProgramEditor& editor, const OptimizationInputs& inputs, const
         if (isCandidateFunction(program.functions[index]))
             found.append(FunctionID(index));
     });
-    Vector<FunctionID> proven = establishAmong(candidates.span());
+    Vector<FunctionID> proven = establishAmong(candidates.span(), nullptr);
     if (proven.isEmpty())
         return;
 
     // Whose values have the type of a candidate's result: a direct call, and a call of a value that can only be one function, whether or not anybody has listed the callee at the call.
-    using TypedCall = std::pair<FunctionID, FunctionID>;
     BitVector isCandidate(count);
     for (FunctionID id : candidates)
         isCandidate.quickSet(id.index());
@@ -1012,6 +1210,7 @@ void proveResults(ProgramEditor& editor, const OptimizationInputs& inputs, const
             appendTypedCallsOf(FunctionID(index), found);
     });
     sortAndRemoveDuplicates(loops, typedCalls);
+    CallsOfCandidates callsOfCandidates { isCandidate, typedCalls };
 
     while (!proven.isEmpty()) {
         BitVector isCaller(count);
@@ -1033,14 +1232,21 @@ void proveResults(ProgramEditor& editor, const OptimizationInputs& inputs, const
                 simplifyEditedFunction(runner, program, inputs, id, function, arenas);
         });
         // With narrower types a value may have come to be one function only.
+        // Nearly all of its calls are listed already. A row of functions that each return what the next returns takes a turn a function: the list is not sorted anew in each.
         size_t numberOfSortedCalls = typedCalls.size();
         for (FunctionID caller : callers)
             appendTypedCallsOf(caller, typedCalls);
+        size_t numberOfCalls = numberOfSortedCalls;
+        for (size_t index = numberOfSortedCalls; index < typedCalls.size(); ++index) {
+            if (!std::ranges::binary_search(typedCalls.span().first(numberOfSortedCalls), typedCalls[index]))
+                typedCalls[numberOfCalls++] = typedCalls[index];
+        }
+        typedCalls.shrink(numberOfCalls);
         if (typedCalls.size() != numberOfSortedCalls)
             sortAndRemoveDuplicates(loops, typedCalls);
 
         callers.removeAllMatching([&](FunctionID id) { return !isCandidateFunction(program.at(id)); });
-        proven = establishAmong(callers.span());
+        proven = establishAmong(callers.span(), &callsOfCandidates);
     }
     build.statistics().count(StatisticID::ResultsProvenByReturns, numberOfProvenResults);
 }

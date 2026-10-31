@@ -15,6 +15,7 @@
 #include "AOTClosureTable.h"
 #include "AOTErrorMessages.h"
 #include "AOTFrameArrays.h"
+#include "AOTImageOfCellScope.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
@@ -58,8 +59,10 @@ static void fileRead(Instance* instance, JSValue base, Structure* structureBefor
     bool isFoundAbove = (answer.kind == PropertyAnswerKind::Value || answer.kind == PropertyAnswerKind::Accessor) && answer.holder;
     instance->state->propertyCaches->cache({ structureBefore, name, SlotAccess::Read, site }, WTF::move(answer));
     ensureStillAliveHere(structureBefore);
-    if (Object* object = isFoundAbove ? compiledObjectOrNull(base) : nullptr)
-        instance->state->objects->classes.didFindMemberByName(*instance->vm, object->layout(), name.uid);
+    if (Object* object = isFoundAbove ? compiledObjectOrNull(base) : nullptr) {
+        ImageOfCellScope imageOfObject(*instance->vm, object);
+        object->state().objects->classes.didFindMemberByName(*instance->vm, object->layout(), name.uid);
+    }
 }
 
 // The first object that is given a name becomes a dictionary while it is filled, and the next one gets a Structure. The first object's transition does not recur, so it says nothing about the Structure it started with.
@@ -148,6 +151,35 @@ JSValue getAndCache(const NamedAccess& access, JSValue base, JSValue receiver)
     RETURN_IF_EXCEPTION(scope, { });
     fileRead(access.instance, base, structureBefore, access.name(), slot, access.site);
     return result;
+}
+
+void fileReadWithoutCode(Instance* instance, JSObject* base, const Identifier& ident)
+{
+    VM& vm = *instance->vm;
+    JSGlobalObject* globalObject = instance->globalObject;
+    NamedAccess access { instance, ident, std::nullopt, nullptr };
+    UniquedStringImpl* uid = ident.impl();
+    Object* compiledBase = compiledObjectOrNull(base);
+    if (!access.caches().shouldFile(base->structureID(), uid, SlotAccess::Read) || (compiledBase && hasPendingStars(*compiledBase)))
+        return;
+    Object::ensureStructureForExtraPropertiesIfNeeded(vm, base);
+    LazyPrototypeRead lazy = classifyReadThroughLazyPrototypes(globalObject, base, uid);
+    if (lazy.result == LazyPrototypeReadResult::NotApplicable && uid->isSymbol() && !isNeverCachedName(vm, uid)) {
+        for (JSObject* object = base; object; object = object->getPrototypeDirect().getObject())
+            ClassPrototype::ensureMembers(object);
+    }
+    Structure* structureBefore = base->structure();
+    if (lazy.result == LazyPrototypeReadResult::Answered) {
+        access.caches().cache({ structureBefore, access.name(), SlotAccess::Read, nullptr }, lazy.answer);
+        return;
+    }
+    DeferTerminationForAWhile deferTermination(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    PropertySlot slot(base, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    (lazy.firstObjectAbove ? lazy.firstObjectAbove : base)->getPropertySlot(globalObject, ident, slot);
+    scope.assertNoException();
+    if (!slot.isTaintedByOpaqueObject())
+        fileRead(instance, base, structureBefore, access.name(), slot);
 }
 
 JSValue getUnderKeyForReceiver(Instance* instance, JSObject* base, const Identifier& name, JSValue receiver)
@@ -352,6 +384,23 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
     VM& vm = *access.instance->vm;
     JSGlobalObject* globalObject = access.instance->globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // The tables of the image that runs say nothing of a cell of another image, and its caches hold nothing about one.
+    if (vm.aotState().hasSeveralImages && belongsToOtherImageSlow(vm, cell)) [[unlikely]] {
+        PutPropertySlot slot(cell, mode != PutMode::Sloppy, PutPropertySlot::PutById);
+        bool shouldFile = cell->isObject() && access.caches().shouldFile(cell->structureID(), access.ident.impl(), accessFor(mode));
+        Structure* structureBefore = WTF::opaque(cell->structure());
+        {
+            ImageOfCellScope imageOfCell(vm, cell);
+            if (mode == PutMode::Define && cell->isObject())
+                defineDataProperty(Instance::owning(cell), asObject(cell), access.ident, value, slot);
+            else
+                JSValue(cell).putInline(globalObject, access.ident, value, slot);
+        }
+        RETURN_IF_EXCEPTION(scope, void());
+        if (shouldFile)
+            fileStore(access.instance, asObject(cell), structureBefore, access.name(), slot, mode, access.site);
+        return;
+    }
     if (cell->type() == SlimClosureType && mode != PutMode::Define)
         RELEASE_AND_RETURN(scope, putToSlimClosureAndCache(access, *uncheckedDowncast<SlimClosure>(cell), value, mode));
     const Identifier& ident = access.ident;
@@ -371,6 +420,9 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
 
     Object* object = compiledObjectOrNull(base);
     const FieldData* field = object ? object->fieldNamed(object->state(), ident) : nullptr;
+    // As for a read, nothing is filed about an object whose stars wait. A store to one of its fields leaves them waiting.
+    if (field && hasPendingStars(*object))
+        shouldFile = false;
     if (field && access.caches().countsNames()) [[unlikely]]
         access.caches().countNamed(whyStubLeftFieldStore(access, *object, *field, value, mode), uid);
     bool chainLetsStoresPass = false;
@@ -429,7 +481,7 @@ static bool tryRepeatFieldExit(Instance* instance, JSValue base, uint32_t key, J
         return false;
     PropertyCaches& caches = *instance->state->propertyCaches;
     FieldExit* exit = caches.findFieldExit(base.asCell()->structureID(), key);
-    if (!exit)
+    if (!exit || exit->isDefinition)
         return false;
     auto* object = uncheckedDowncast<Object>(base.asCell());
     // A definition asks nothing of what is above the object.
@@ -468,6 +520,42 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillSiteCache, void, (Instance* in
         return;
     LeafOperationScope leaf(*instance->vm);
     instance->state->propertyCaches->fillSiteCacheFromTables(cache, base, key, static_cast<SlotAccess>(access));
+}
+
+// The question stands ahead of a loop, which may be the first to read the name and may be entered only once: what is there is filed by a look that changes nothing, and answered at once.
+// A value that would have to be made is left for a read by name.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReadValueAndFillSiteCache, EncodedJSValue, (Instance* instance, JSCell* base, uint32_t key, SiteCache cache))
+{
+    LeafOperationScope leaf(*instance->vm);
+    PropertyCaches& caches = *instance->state->propertyCaches;
+    if (cache->get().structureID != base->structureID()) {
+        if (!caches.tables().find(base->structureID(), caches.nameOf(key), SlotAccess::Read))
+            caches.fileValueWithoutChangingObject(base, key);
+        instance->state->siteCaches->didMissRepeatedly(cache);
+        caches.fillSiteCacheFromTables(cache, base, key, SlotAccess::Read);
+    }
+    Slot slot = cache->get();
+    if (slot.structureID != base->structureID())
+        return encodedJSValue();
+    switch (slot.kind) {
+    case Slot::Kind::Value:
+        return JSValue::encode(valueAtOffset(asObject(slot.has(Slot::isOwn) ? base : slot.holder), slot.offsetInStorage()));
+    case Slot::Kind::Absent:
+        return JSValue::encode(jsUndefined());
+    case Slot::Kind::InheritedField: {
+        Object* holder = compiledObjectOrNull(slot.holder);
+        Identifier name = identifierAt(instance, key);
+        const FieldData* field = holder ? holder->fieldNamed(holder->state(), name.impl()) : nullptr;
+        if (!field || field->isAccessor())
+            return encodedJSValue();
+        SlotValueKind valueKind = traitsOf(field->slot.representation()).valueKind;
+        if (valueKind == SlotValueKind::DeferredClosure || valueKind == SlotValueKind::LiteralString)
+            return encodedJSValue();
+        return JSValue::encode(holder->read(*field));
+    }
+    default:
+        return encodedJSValue();
+    }
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindGetterAndFillSiteCache, EncodedJSValue, (Instance* instance, JSCell* base, uint32_t key, SiteCache cache))
@@ -540,6 +628,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefaultHasInstance, size_t, (Instance* inst
     OPERATION_RETURN(scope, JSObject::defaultHasInstance(globalObject, JSValue::decode(encodedValue), JSValue::decode(encodedPrototype)));
 }
 
+// `memo[n] ??= ..`. What such an object does not hold in its vector it does not have, and nothing above it answers for an index.
+static bool isPlainObjectBelowNoIndexedProperties(Structure* structure)
+{
+    if (structure->typeInfo().type() != FinalObjectType || hasAnyArrayStorage(structure->indexingType()) || structure->hasPolyProto())
+        return false;
+    JSValue prototype = structure->storedPrototype();
+    JSGlobalObject* realm = structure->realm();
+    return prototype.isNull() || (realm && prototype == realm->objectPrototype() && realm->objectPrototypeChainIsSane());
+}
+
 static JSValue getByVal(JSGlobalObject* globalObject, JSValue base, JSValue property)
 {
     VM& vm = globalObject->vm();
@@ -555,6 +653,8 @@ static JSValue getByVal(JSGlobalObject* globalObject, JSValue base, JSValue prop
                 return result;
             Structure* structure = object->structure();
             if (structure->realm() == globalObject && globalObject->isOriginalArrayStructure(structure) && !hasAnyArrayStorage(structure->indexingType()) && globalObject->arrayPrototypeChainIsSane())
+                return jsUndefined();
+            if (isPlainObjectBelowNoIndexedProperties(structure))
                 return jsUndefined();
             // The stub finds the text of the index there the next time.
             if (object->type() == ProxyObjectType && *index < NumericStrings::cacheSize)
@@ -657,9 +757,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTFinishSetThroughProxy, void, (Instance* ins
     OPERATION_RETURN(scope);
 }
 
-static void putByVal(JSGlobalObject* globalObject, JSValue base, JSValue property, JSValue value, bool isStrict)
+static void putByVal(Instance* instance, JSValue base, JSValue property, JSValue value, bool isStrict)
 {
-    VM& vm = globalObject->vm();
+    JSGlobalObject* globalObject = instance->globalObject;
+    VM& vm = *instance->vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (base.isUndefinedOrNull()) [[unlikely]] {
         throwException(globalObject, scope, createNotAnObjectError(globalObject, base, property));
@@ -676,6 +777,8 @@ static void putByVal(JSGlobalObject* globalObject, JSValue base, JSValue propert
     }
     auto key = property.toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
+    if (tryReplaceGlobalProperty(instance, vm, base, key.impl(), value))
+        return;
     PutPropertySlot slot(base, isStrict);
     scope.release();
     base.put(globalObject, key, value, slot);
@@ -690,7 +793,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutByVal, void, (Instance* instance, Encode
         if (index && !globalObject->isHavingABadTime() && !object->anyObjectInChainMayInterceptIndexedAccesses() && tryDefineElementOfCompiledObject(instance, object, *index, JSValue::decode(encodedValue)))
             OPERATION_RETURN(scope);
     }
-    putByVal(globalObject, JSValue::decode(encodedBase), JSValue::decode(encodedProperty), JSValue::decode(encodedValue), isStrict);
+    putByVal(instance, JSValue::decode(encodedBase), JSValue::decode(encodedProperty), JSValue::decode(encodedValue), isStrict);
     OPERATION_RETURN(scope);
 }
 
@@ -703,6 +806,8 @@ static JSValue getFromCellAndCache(Instance* instance, JSValue base, const Ident
     CachedName cachedName { name.impl(), std::nullopt };
     JSObject* object = base.getObject();
     bool shouldFile = !object || caches.shouldFile(object->structureID(), name.impl(), SlotAccess::Read);
+    if (Object* compiledObject = compiledObjectOrNull(base); compiledObject && hasPendingStars(*compiledObject))
+        shouldFile = false;
     if (object && shouldFile) {
         Object::ensureStructureForExtraPropertiesIfNeeded(vm, object);
         createClassObjectsOnChain(vm, object, name.impl());
@@ -771,7 +876,7 @@ static void putByValAndCache(Instance* instance, JSValue base, JSValue property,
     } else if (base.isObject())
         name = nameForKeyedCache(globalObject, property);
     if (!name)
-        RELEASE_AND_RETURN(scope, putByVal(globalObject, base, property, value, isStrict));
+        RELEASE_AND_RETURN(scope, putByVal(instance, base, property, value, isStrict));
 
     JSObject* object = asObject(base);
     CachedName cachedName { name->impl(), std::nullopt };
@@ -782,7 +887,10 @@ static void putByValAndCache(Instance* instance, JSValue base, JSValue property,
     if (compiledObject && !field && tryStoreExtraPropertyAndCache(instance, *compiledObject, cachedName, nullptr, value, mode, slot))
         return;
 
-    Object::ensureStructureForExtraPropertiesIfNeeded(vm, object);
+    if (field && hasPendingStars(*compiledObject))
+        shouldFile = false;
+    else
+        Object::ensureStructureForExtraPropertiesIfNeeded(vm, object);
     createClassObjectsOnChain(vm, object, name->impl());
     Structure* structureBefore = WTF::opaque(object->structure());
     bool repeatsAddition = compiledObject || repeatsPropertyAddition(structureBefore, name->impl());
@@ -832,6 +940,18 @@ static bool answerImpliesResult(const PropertyAnswer& answer, Structure* structu
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// A lookup for a descriptor has to find the accessor, which carries waiting stars out. A compiled object has no traps that could tell the two lookups apart.
+static PropertySlot::InternalMethodType lookupThatFindsOwnProperty(bool starsWait)
+{
+    return starsWait ? PropertySlot::InternalMethodType::HasProperty : PropertySlot::InternalMethodType::GetOwnProperty;
+}
+
+static bool hasStarsThatWait(JSObject* object)
+{
+    Object* compiledObject = compiledObjectOrNull(object);
+    return compiledObject && hasPendingStars(*compiledObject);
+}
+
 static bool hasAndCache(Instance* instance, JSObject* object, const CachedName& name, bool isIn)
 {
     VM& vm = *instance->vm;
@@ -843,6 +963,9 @@ static bool hasAndCache(Instance* instance, JSObject* object, const CachedName& 
     bool shouldFile = (isIn || object->type() != ProxyObjectType) && caches.shouldFile(object->structureID(), name.uid, SlotAccess::Read);
     if (caches.countsNames()) [[unlikely]]
         caches.countMiss(isIn ? "in"_s : "has own"_s, shouldFile, object, name.uid);
+    // Nothing is filed about an object whose stars wait, as for a read: only a Structure that lists the extra properties says which names are there.
+    bool starsWait = hasStarsThatWait(object);
+    shouldFile &= !starsWait;
     if (shouldFile) {
         Object::ensureStructureForExtraPropertiesIfNeeded(vm, object);
         createClassObjectsOnChain(vm, object, name.uid);
@@ -872,7 +995,7 @@ static bool hasAndCache(Instance* instance, JSObject* object, const CachedName& 
         return result;
     };
     auto hasOwnProperty = [&] {
-        PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+        PropertySlot slot(object, lookupThatFindsOwnProperty(starsWait));
         bool result = object->methodTable()->getOwnPropertySlot(object, globalObject, propertyName, slot);
         RETURN_IF_EXCEPTION(scope, false);
         if (result && shouldFile)
@@ -923,8 +1046,12 @@ static bool hasByValAndCache(Instance* instance, JSObject* object, JSValue prope
     }
     Identifier identifier = property.toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
-    if ((!property.isString() && !property.isSymbol()) || parseIndex(identifier))
-        RELEASE_AND_RETURN(scope, isIn ? object->hasProperty(globalObject, identifier) : object->hasOwnProperty(globalObject, identifier));
+    if ((!property.isString() && !property.isSymbol()) || parseIndex(identifier)) {
+        if (isIn)
+            RELEASE_AND_RETURN(scope, object->hasProperty(globalObject, identifier));
+        PropertySlot slot(object, lookupThatFindsOwnProperty(hasStarsThatWait(object)));
+        RELEASE_AND_RETURN(scope, object->methodTable()->getOwnPropertySlot(object, globalObject, identifier, slot));
+    }
     RELEASE_AND_RETURN(scope, hasAndCache(instance, object, { identifier.impl(), std::nullopt }, isIn));
 }
 
@@ -933,7 +1060,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInByIdAndCache, size_t, (Instance* instance
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTInByIdAndCache);
     JSValue base = JSValue::decode(encodedBase);
     if (!base.isObject()) {
-        throwException(globalObject, scope, createInvalidInParameterError(globalObject, base));
+        throwException(globalObject, scope, createKeyTestOfNonObjectError(globalObject, base));
         OPERATION_RETURN(scope, 0);
     }
     OPERATION_RETURN(scope, hasAndCache(instance, asObject(base), instance->state->propertyCaches->nameOf(key), true));
@@ -944,7 +1071,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInByValAndCache, size_t, (Instance* instanc
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTInByValAndCache);
     JSValue base = JSValue::decode(encodedBase);
     if (!base.isObject()) {
-        throwException(globalObject, scope, createInvalidInParameterError(globalObject, base));
+        throwException(globalObject, scope, createKeyTestOfNonObjectError(globalObject, base));
         OPERATION_RETURN(scope, 0);
     }
     OPERATION_RETURN(scope, hasByValAndCache(instance, asObject(base), JSValue::decode(encodedProperty), true));

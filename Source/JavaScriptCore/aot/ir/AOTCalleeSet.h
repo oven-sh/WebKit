@@ -9,6 +9,7 @@
 
 #include "AOTBuiltinIDTypes.h"
 #include "AOTSchemaIDs.h"
+#include "AOTThreshold.h"
 #include "AOTTypeKinds.h"
 #include "AOTVector.h"
 #include <optional>
@@ -53,12 +54,17 @@ struct CalleeSet {
 
     bool listsEveryCallee() const { return isComplete; }
 
+    // Many calls may name one long set. Whoever can reads its functions once for the set, not once for each call.
+    bool isLong() const { return functions.size() >= minFunctionsOfLongSet; }
+
     // For printers, tables, and whoever has to keep what a record names. It says nothing of a call.
     Callees written() const LIFETIME_BOUND { return { functions.span(), builtins.span() }; }
 
     friend bool operator==(const CalleeSet&, const CalleeSet&) = default;
 
 private:
+    AOT_CLASS_THRESHOLD(size_t, minFunctionsOfLongSet, 16);
+
     friend void add(WTF::Hasher&, const CalleeSet&);
     friend void canonicalize(CalleeSet&);
     friend void printFields(IRPrinter&, const CalleeSet&);

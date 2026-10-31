@@ -85,6 +85,7 @@ public:
     void noteRemovedAllocationUnderHandler() { m_removedAllocationUnderHandler = true; }
     std::span<const ValueID> narrowedValues() const LIFETIME_BOUND { return m_narrowedValues.span(); }
     bool hasWidenedValue() const { return m_hasWidenedValue; }
+    bool takeDidKeepType() { return std::exchange(m_didKeepType, false); }
     void didRestoreTypes();
     void didRenumberValues();
     std::span<const uint32_t> claimCounts() const LIFETIME_BOUND { return m_claimCounts; }
@@ -129,6 +130,7 @@ private:
     Vector<ListedValue> m_listedValues;
     Vector<ValueID> m_narrowedValues;
     bool m_hasWidenedValue { false };
+    bool m_didKeepType { false };
     bool m_didRewrite { false };
     bool m_needsCompaction { false };
     bool m_removedAllocationUnderHandler { false };

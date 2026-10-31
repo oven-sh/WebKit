@@ -1,0 +1,46 @@
+# function k(c, f) { while (c < f) c = (c + 1) | 0; return [c, f]; } with c and f an integer or undefined, in a later round:
+# where `c` is no number it is undefined, and that has been written into the arm of the failed test. A turn in which `f` is no number does not begin there.
+# FORM: Prepared
+# OPTIONS: heat=NothingIsHottest
+# RUN: pass PlaceTypeTests
+# STATISTIC: LoopParametersTestedInFrontOfLoops = 1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="k" parameters=[{type=undefined|int}, {type=undefined|int}] results=[{type=anything}] {
+  b0(v0: undefined|int, v1: undefined|int):
+    Jump -> next b1(v0, v1)
+  b1(v2: undefined|int ~ int, v3: undefined|int ~ int):
+    LoopHint
+    v5 = TypeTest v2 testedType=number
+    Branch v5 -> taken b2(| 0), notTaken b5()
+  b2(v6):
+    v7 = TypeTest v3 testedType=number
+    Branch v7 -> taken b3(| 0), notTaken b6()
+  b3(v8):
+    v9 = Less v6, v8
+    Branch v9 -> taken b4(), notTaken b8()
+  b4():
+    v10 = Integer integer=1
+    v11 = Add v6, v10
+    v12 = Integer
+    v13 = BitOr v11, v12
+    Jump -> next b1(v13, v8)
+  b5() frequency=Unlikely:
+    v14 = Undefined
+    Jump -> next b7(v14, v3)
+  b6() frequency=Unlikely:
+    v15 = Undefined
+    Jump -> next b7(v6, v15)
+  b7(v16, v17) frequency=Unlikely:
+    v18 = NewArray v16, v17 contents=anything
+    Return v18
+  b8():
+    v19 = NewArray v6, v8 contents=anything
+    Return v19
+}
+# CHECK: ([[c]]: int, [[f]]: undefined|int ~ int):
+# CHECK-NEXT: LoopHint
+# CHECK: = TypeTest [[f]] testedType=number
+# CHECK: = TypeTest v0 testedType=number
+# CHECK-NOT: = TypeTest v1 testedType=number

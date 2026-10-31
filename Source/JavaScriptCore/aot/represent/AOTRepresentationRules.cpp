@@ -97,26 +97,24 @@ static Representation chosenOrDefaultRepresentationOf(const RepresentationInputs
     return chosen == Representation::Unchosen ? defaultRepresentationOf(inputs.typeOf(id)) : chosen;
 }
 
-static std::optional<unsigned> entryParameterIndexOf(const Function& function, const Value& value)
+static std::optional<uint32_t> entryParameterIndexOf(const RepresentationInputs& inputs, const Value& value)
 {
-    std::span<const ValueID> parameters = function.at(entryBlock).parameters.span();
-    for (unsigned index = 0; index < parameters.size(); ++index) {
-        if (&function.at(parameters[index]) == &value)
-            return index;
-    }
-    return std::nullopt;
+    std::span<const Value> values = inputs.function.values.span();
+    if (&value < values.data() || &value >= values.data() + values.size())
+        return std::nullopt;
+    return inputs.entryParameters.find(inputs.function, ValueID(static_cast<size_t>(&value - values.data())));
 }
 
-static bool picksOwnRepresentation(const Function& function, const Value& value)
+static bool picksOwnRepresentation(const RepresentationInputs& inputs, const Value& value)
 {
     if (value.opcode == Opcode::Parameter)
-        return !entryParameterIndexOf(function, value);
+        return !entryParameterIndexOf(inputs, value);
     return forwardsOperand(value.opcode) || value.opcode == Opcode::Unspecified || constantsInFormOfUses.contains(value.opcode);
 }
 
-bool picksOwnRepresentation(const Function& function, ValueID id)
+bool picksOwnRepresentation(const RepresentationInputs& inputs, ValueID id)
 {
-    return picksOwnRepresentation(function, function.at(id));
+    return picksOwnRepresentation(inputs, inputs.function.at(id));
 }
 
 bool isForwardedOperand(const Value& user, uint32_t operandIndex)
@@ -234,6 +232,13 @@ bool isEqualityOfNumbers(const Program& program, const Function& function, const
     return program.typeOf(function, value.leftOperand()).isNumber() && program.typeOf(function, value.rightOperand()).isNumber();
 }
 
+bool takesNumberAsItIs(const RepresentationInputs& inputs, const Value& user, ValueID operand)
+{
+    if (!hasOperatorForm(user.opcode) || user.form() != OperatorForm::Numbers)
+        return false;
+    return relationalOperators.contains(user.opcode) || isEqualityOfNumbers(inputs.program, inputs.function, user) || (user.opcode == Opcode::ToBoolean && inputs.typeOf(operand).isNumber());
+}
+
 static bool isSumOfBoxedNumbers(const Value& value)
 {
     return sumsOfNumbers.contains(value.opcode) && value.form() == OperatorForm::Numbers && value.representation == Representation::JSValue;
@@ -251,10 +256,11 @@ static Representation wantedByNumbers(const RepresentationInputs& inputs, const 
         if (type.isNumber() && isBoxedOrUnchosen(chosen))
             return Representation::Unchosen;
     }
+    if (user.opcode == Opcode::ToBoolean && chosen == Representation::OptionalInt64)
+        return Representation::OptionalInt64;
     if (isSumOfBoxedNumbers(user))
         return type.isInt32() ? Representation::Int32 : Representation::JSValue;
-    bool takesNumberAsItIs = relationalOperators.contains(user.opcode) || isEqualityOfNumbers(inputs.program, inputs.function, user) || (user.opcode == Opcode::ToBoolean && type.isNumber());
-    if (takesNumberAsItIs && (isBoxedOrUnchosen(chosen) || (chosen == Representation::Int32 && type.isInt32())))
+    if (takesNumberAsItIs(inputs, user, operand) && (isBoxedOrUnchosen(chosen) || (chosen == Representation::Int32 && type.isInt32())))
         return Representation::Unchosen;
     if (type.isNumber())
         return Representation::Double;
@@ -391,6 +397,16 @@ static bool isNewArrayElement(const Value& user, uint32_t operandIndex)
 static Representation wantedByNewArrayElement(const RepresentationInputs& inputs, ValueID element)
 {
     return unboxedElementRepresentations.contains(chosenOrDefaultRepresentationOf(inputs, element)) ? Representation::Unchosen : Representation::JSValue;
+}
+
+static Representation wantedByNewArrayElement(const RepresentationInputs& inputs, const Value& user, ValueID element)
+{
+    Representation wanted = wantedByNewArrayElement(inputs, element);
+    if (wanted != Representation::JSValue || user.opcode != Opcode::NewArray || user.storage() != AllocationStorage::Heap)
+        return wanted;
+    // Boxing a 64-bit integer tests its range. Double storage takes the converted number.
+    bool isStoredAsDouble = arrayStorageAtAllocation(inputs.program, inputs.program.at(user.type)) == ArrayStorage::Double;
+    return isStoredAsDouble && chosenOrDefaultRepresentationOf(inputs, element) == Representation::Int64 ? Representation::Double : wanted;
 }
 
 static bool isCompiledInline(BuiltinCallForm form)
@@ -547,6 +563,28 @@ static Representation wantedByDeclaredPosition(const RepresentationInputs& input
     return inputs.conventions.resultRepresentation(inputs.program, inputs.id, 0);
 }
 
+unsigned commonestOf(std::span<const unsigned> lengths)
+{
+    unsigned commonest = 0;
+    size_t most = 0;
+    for (unsigned length : lengths) {
+        size_t count = std::ranges::count(lengths, length);
+        if (count >= most) {
+            most = count;
+            commonest = length;
+        }
+    }
+    return commonest;
+}
+
+static bool isLengthSelectedByNumber(const Program& program, const Type& type)
+{
+    Vector<unsigned, 16> lengths(type.stringLiterals.size(), [&](size_t index) {
+        return program.strings.toWTFString(type.stringLiterals[index]).length();
+    });
+    return lengths.size() - std::ranges::count(lengths, commonestOf(lengths.span())) <= maxLiteralsComparedForLength;
+}
+
 static Representation wantedByOperation(const RepresentationInputs& inputs, const Value& user, uint32_t operandIndex)
 {
     ValueID operand = user.operand(operandIndex);
@@ -568,10 +606,10 @@ static Representation wantedByOperation(const RepresentationInputs& inputs, cons
         return integerRepresentationOf(type);
     if (opcode == Opcode::GetMyArgumentByVal)
         return unboxedNumberOrJSValue(type);
-    if (opcode == Opcode::GetStringLength && defaultRepresentationOf(type) == Representation::LiteralString && type.stringLiterals.size() <= maxLiteralsDistinguishedByLength)
+    if (opcode == Opcode::GetStringLength && defaultRepresentationOf(type) == Representation::LiteralString && isLengthSelectedByNumber(inputs.program, type))
         return Representation::Unchosen;
     if (isNewArrayElement(user, operandIndex))
-        return wantedByNewArrayElement(inputs, operand);
+        return wantedByNewArrayElement(inputs, user, operand);
     if (opcode == Opcode::Strcat && !user.isLikelyKey())
         return wantedByConcatenation(type);
     if (opcode == Opcode::StringBuilderAppendNumber && kind == OperandKind::Number && isBoxedOrUnchosen(inputs.function.at(operand).representation))
@@ -736,6 +774,33 @@ static bool takesAnyNaN(const User& user, uint32_t operandIndex)
     return handsBitsOfNaNOnToResult(user) || storesAsElement(user, operandIndex) || keepsNoBitsOfNumber(user, operandIndex) || (builtin && (builtinsThatMoveBytes.contains(*builtin) || builtinsThatInspectNumbers.contains(*builtin)));
 }
 
+static std::optional<InlineBuiltin> inlineBuiltinBeforeSelection(const Program& program, const Value& value)
+{
+    return value.opcode == Opcode::CallBuiltin ? program.builtins().at(value.overload()).code.implementation.inlineBuiltin : inlineBuiltinOf(value);
+}
+
+bool readsDoubleOutOfBytesBeforeSelection(const Program& program, const Value& value)
+{
+    std::optional<InlineBuiltin> builtin = inlineBuiltinBeforeSelection(program, value);
+    return value.opcode == Opcode::GetTypedArrayElement || (builtin && builtinsThatMoveBytes.contains(*builtin));
+}
+
+NaNUse nanUseBeforeSelection(const Program& program, const Value& user, uint32_t operandIndex, OperatorForm formOfOperator)
+{
+    if (isForwardedOperand(user, operandIndex))
+        return NaNUse::Propagates;
+    if (hasOperatorForm(user.opcode))
+        return formOfOperator == OperatorForm::Numbers ? NaNUse::Propagates : NaNUse::Purifies;
+    if (storesAsElement(user, operandIndex) || keepsNoBitsOfNumber(user, operandIndex))
+        return NaNUse::Ignores;
+    std::optional<InlineBuiltin> builtin = inlineBuiltinBeforeSelection(program, user);
+    if (!builtin || !user.variadicOperandIndex(operandIndex))
+        return NaNUse::Purifies;
+    if (builtinsThatComputeWithNumbers.contains(*builtin))
+        return NaNUse::Propagates;
+    return builtinsThatMoveBytes.contains(*builtin) || builtinsThatInspectNumbers.contains(*builtin) ? NaNUse::Ignores : NaNUse::Purifies;
+}
+
 static bool convertsOperand(const Value& value)
 {
     return isRepresentationConversion(value.opcode);
@@ -823,7 +888,7 @@ static Representation resultOfDeclaredPosition(const RepresentationInputs& input
     case Opcode::CallTable:
         return inputs.conventions.resultRepresentation(inputs.program, value.function(), resultIndex);
     case Opcode::Parameter: {
-        std::optional<unsigned> index = entryParameterIndexOf(inputs.function, value);
+        std::optional<uint32_t> index = entryParameterIndexOf(inputs, value);
         RELEASE_ASSERT(index);
         return inputs.conventions.parameterRepresentation(inputs.program, inputs.id, *index);
     }
@@ -895,7 +960,7 @@ private:
 
 Representation resultRepresentationOf(const RepresentationInputs& inputs, const Value& value)
 {
-    if (picksOwnRepresentation(inputs.function, value))
+    if (picksOwnRepresentation(inputs, value))
         return Representation::Unchosen;
     if (isRepresentationConversion(value.opcode))
         return value.representation;

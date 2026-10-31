@@ -66,6 +66,11 @@ BuiltinID singleBuiltinFunction(const Program& program, const Type& type)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+bool calleeVersionIsFor(const Function& version, FunctionID callee)
+{
+    return version.role == FunctionRole::CalleeVersion && !(version.derivation.parameter & (isForAnyFunctionBit | isForBuiltinBit)) && version.derivation.node == callee.index();
+}
+
 bool canHaveCalleeVersion(const Program& program, FunctionID id, uint32_t entryParameter)
 {
     const Function& function = program.at(id);

@@ -30,17 +30,19 @@ template<typename> class ID;
 template<typename, typename> class BuiltinTableID;
 
 // std::sort and std::stable_sort are 3 to 5 KB of code for every pair of an element type and an order, because the whole algorithm
-// is compiled around each order. Here only the loops that compare are compiled for an order: an insertion sort, a partition, a
-// merge. What decides which of them runs on which range is compiled once.
-// sort() asks the questions and makes the moves of libstdc++'s std::sort, so equal elements end up where that leaves them, whichever
-// standard library this is compiled with.
+// is compiled around each order. For sort() and stableSort() only the comparison is compiled for an order, about 80 bytes. For
+// sortInLine() and stableSortInLine() the loops that compare are too: an insertion sort, a partition, a merge, about 1 KB. They are
+// for the orders that a build spends time in: a comparison through isLess() costs about 25 instructions more.
+// What decides which loop runs on which range is compiled once.
+// All four ask the questions and make the moves of libstdc++'s std::sort and std::stable_sort, so equal elements end up where those
+// leave them, whichever standard library this is compiled with and whichever of the two forms is called.
 
 // The steps are virtual functions so that the linker folds those of two orders that compile to the same code.
 class SortSteps {
 public:
-    virtual void insertionSort(void* first, void* endOfGuarded, void* last) const = 0;
-    virtual void* partition(void*, void*) const { RELEASE_ASSERT_NOT_REACHED(); }
-    virtual void merge(void*, void*, void*, void*, void*) const { RELEASE_ASSERT_NOT_REACHED(); }
+    virtual void insertionSort(void* first, void* endOfGuarded, void* last) const;
+    virtual void* partition(void* first, void* last) const;
+    virtual void merge(void* first, void* endOfFirst, void* second, void* endOfSecond, void* output) const;
     virtual bool isLess(void*, void*) const { RELEASE_ASSERT_NOT_REACHED(); }
 
     size_t elementSize() const { return m_elementSize; }
@@ -61,6 +63,94 @@ inline constexpr size_t longestInsertionSort = 16;
 inline constexpr size_t stableSortChunkSize = 7;
 
 using SortedIndices = Vector<uint32_t, 32>;
+
+// Room for one element of any type that sorts as bytes.
+class HeldElement {
+public:
+    explicit HeldElement(size_t elementSize)
+        : m_words((elementSize + sizeof(uint64_t) - 1) / sizeof(uint64_t))
+    {
+    }
+
+    char* bytes() { return reinterpret_cast<char*>(m_words.mutableSpan().data()); }
+
+private:
+    Vector<uint64_t, 8> m_words;
+};
+
+// These three are OrderedSteps::insertionSort(), PartitioningSteps::partition() and MergingSteps::merge(), step for step.
+inline NEVER_INLINE void SortSteps::insertionSort(void* erasedFirst, void* erasedEndOfGuarded, void* erasedLast) const
+{
+    size_t size = m_elementSize;
+    char* first = static_cast<char*>(erasedFirst);
+    char* endOfGuarded = static_cast<char*>(erasedEndOfGuarded);
+    char* last = static_cast<char*>(erasedLast);
+    HeldElement room(size);
+    char* held = room.bytes();
+    for (char* current = first + size; current < last; current += size) {
+        memcpy(held, current, size);
+        if (current < endOfGuarded && isLess(held, first)) {
+            memmove(first + size, first, current - first);
+            memcpy(first, held, size);
+            continue;
+        }
+        char* hole = current;
+        for (char* previous = hole - size; isLess(held, previous); previous -= size) {
+            memcpy(hole, previous, size);
+            hole = previous;
+        }
+        memcpy(hole, held, size);
+    }
+}
+
+inline NEVER_INLINE void* SortSteps::partition(void* erasedFirst, void* erasedLast) const
+{
+    size_t size = m_elementSize;
+    char* first = static_cast<char*>(erasedFirst);
+    char* last = static_cast<char*>(erasedLast);
+    HeldElement room(size);
+    auto swap = [&](char* a, char* b) {
+        memcpy(room.bytes(), a, size);
+        memcpy(a, b, size);
+        memcpy(b, room.bytes(), size);
+    };
+    char* lesser = first + size;
+    char* greater = first + (last - first) / size / 2 * size;
+    char* c = last - size;
+    if (!isLess(lesser, greater))
+        std::swap(lesser, greater);
+    swap(first, isLess(greater, c) ? greater : isLess(lesser, c) ? c : lesser);
+    char* low = first + size;
+    char* high = last;
+    while (true) {
+        while (isLess(low, first))
+            low += size;
+        high -= size;
+        while (isLess(first, high))
+            high -= size;
+        if (!(low < high))
+            return low;
+        swap(low, high);
+        low += size;
+    }
+}
+
+inline NEVER_INLINE void SortSteps::merge(void* erasedFirst, void* erasedEndOfFirst, void* erasedSecond, void* erasedEndOfSecond, void* erasedOutput) const
+{
+    size_t size = m_elementSize;
+    char* first = static_cast<char*>(erasedFirst);
+    char* endOfFirst = static_cast<char*>(erasedEndOfFirst);
+    char* second = static_cast<char*>(erasedSecond);
+    char* endOfSecond = static_cast<char*>(erasedEndOfSecond);
+    char* output = static_cast<char*>(erasedOutput);
+    for (; first != endOfFirst && second != endOfSecond; output += size) {
+        char*& taken = isLess(second, first) ? second : first;
+        memcpy(output, taken, size);
+        taken += size;
+    }
+    memcpy(output, first, endOfFirst - first);
+    memcpy(output + (endOfFirst - first), second, endOfSecond - second);
+}
 
 inline NEVER_INLINE SortedIndices indicesInOrder(size_t size)
 {
@@ -152,8 +242,43 @@ inline NEVER_INLINE void stableSortLongRange(const SortSteps& steps, char* first
         memcpy(first, from, size * elementSize);
 }
 
+inline NEVER_INLINE void sortRange(const SortSteps& steps, char* first, size_t size)
+{
+    if (size <= longestInsertionSort) {
+        char* last = first + size * steps.elementSize();
+        steps.insertionSort(first, last, last);
+    } else
+        sortLongRange(steps, first, size);
+}
+
+inline NEVER_INLINE void stableSortRange(const SortSteps& steps, char* first, size_t size)
+{
+    if (size <= longestInsertionSort) {
+        char* last = first + size * steps.elementSize();
+        steps.insertionSort(first, last, last);
+    } else
+        stableSortLongRange(steps, first, size);
+}
+
 template<typename T>
 inline constexpr bool sortsAsBytes = alignof(T) <= alignof(uint64_t) && movesAsBytes<T>;
+
+template<typename T, typename IsLess, typename Projection>
+class ComparingSteps final : public SortSteps {
+public:
+    ComparingSteps(IsLess& isLess, Projection& projection)
+        : SortSteps(sizeof(T))
+        , m_isLess(isLess)
+        , m_projection(projection)
+    {
+    }
+
+    bool isLess(void* first, void* second) const final { return std::invoke(m_isLess, std::invoke(m_projection, *static_cast<T*>(first)), std::invoke(m_projection, *static_cast<T*>(second))); }
+
+private:
+    IsLess& m_isLess;
+    Projection& m_projection;
+};
 
 template<typename T, typename IsLess, typename Projection>
 class OrderedSteps : public SortSteps {
@@ -313,8 +438,9 @@ NEVER_INLINE void moveIntoOrder(T* elements, SortedIndices&& sources)
 }
 
 enum class EqualElements : bool { InAnyOrder, KeepTheirOrder };
+enum class SortLoops : bool { Shared, InLine };
 
-template<EqualElements equalElements, typename T, typename IsLess, typename Projection>
+template<EqualElements equalElements, SortLoops loops, typename T, typename IsLess, typename Projection>
 void sortElements(T* elements, size_t size, IsLess& isLess, Projection& projection)
 {
     if (size < 2)
@@ -325,8 +451,14 @@ void sortElements(T* elements, size_t size, IsLess& isLess, Projection& projecti
             return std::invoke(isLess, std::invoke(projection, elements[first]), std::invoke(projection, elements[second]));
         };
         std::identity identity;
-        sortElements<equalElements>(indices.mutableSpan().data(), size, isLessAt, identity);
+        sortElements<equalElements, loops>(indices.mutableSpan().data(), size, isLessAt, identity);
         moveIntoOrder(elements, WTF::move(indices));
+    } else if constexpr (loops == SortLoops::Shared) {
+        ComparingSteps<T, IsLess, Projection> steps(isLess, projection);
+        if constexpr (equalElements == EqualElements::KeepTheirOrder)
+            stableSortRange(steps, reinterpret_cast<char*>(elements), size);
+        else
+            sortRange(steps, reinterpret_cast<char*>(elements), size);
     } else {
         constexpr bool isStable = equalElements == EqualElements::KeepTheirOrder;
         std::conditional_t<isStable, MergingSteps<OrderedSteps<T, IsLess, Projection>>, PartitioningSteps<T, IsLess, Projection>> steps(isLess, projection);
@@ -339,8 +471,8 @@ void sortElements(T* elements, size_t size, IsLess& isLess, Projection& projecti
     }
 }
 
-template<std::ranges::random_access_range Range, typename IsLess = std::ranges::less, typename Projection = std::identity>
-void sort(Range&& range, IsLess isLess = { }, Projection projection = { })
+template<SortLoops loops, std::ranges::random_access_range Range, typename IsLess, typename Projection>
+void sortWith(Range&& range, IsLess& isLess, Projection& projection)
 {
     using T = std::ranges::range_value_t<Range>;
     using Integer = typename IntegerOrderedLike<T>::Type;
@@ -353,16 +485,40 @@ void sort(Range&& range, IsLess isLess = { }, Projection projection = { })
             sortIntegers(begin, begin + size);
         }
     } else
-        sortElements<EqualElements::InAnyOrder>(std::ranges::data(range), std::ranges::size(range), isLess, projection);
+        sortElements<EqualElements::InAnyOrder, loops>(std::ranges::data(range), std::ranges::size(range), isLess, projection);
+}
+
+template<SortLoops loops, std::ranges::random_access_range Range, typename IsLess, typename Projection>
+void stableSortWith(Range&& range, IsLess& isLess, Projection& projection)
+{
+    if constexpr (!std::ranges::contiguous_range<Range>)
+        std::ranges::stable_sort(range, WTF::move(isLess), WTF::move(projection));
+    else
+        sortElements<EqualElements::KeepTheirOrder, loops>(std::ranges::data(range), std::ranges::size(range), isLess, projection);
+}
+
+template<std::ranges::random_access_range Range, typename IsLess = std::ranges::less, typename Projection = std::identity>
+void sort(Range&& range, IsLess isLess = { }, Projection projection = { })
+{
+    sortWith<SortLoops::Shared>(range, isLess, projection);
+}
+
+template<std::ranges::random_access_range Range, typename IsLess = std::ranges::less, typename Projection = std::identity>
+void sortInLine(Range&& range, IsLess isLess = { }, Projection projection = { })
+{
+    sortWith<SortLoops::InLine>(range, isLess, projection);
 }
 
 template<std::ranges::random_access_range Range, typename IsLess = std::ranges::less, typename Projection = std::identity>
 void stableSort(Range&& range, IsLess isLess = { }, Projection projection = { })
 {
-    if constexpr (!std::ranges::contiguous_range<Range>)
-        std::ranges::stable_sort(range, WTF::move(isLess), WTF::move(projection));
-    else
-        sortElements<EqualElements::KeepTheirOrder>(std::ranges::data(range), std::ranges::size(range), isLess, projection);
+    stableSortWith<SortLoops::Shared>(range, isLess, projection);
+}
+
+template<std::ranges::random_access_range Range, typename IsLess = std::ranges::less, typename Projection = std::identity>
+void stableSortInLine(Range&& range, IsLess isLess = { }, Projection projection = { })
+{
+    stableSortWith<SortLoops::InLine>(range, isLess, projection);
 }
 
 } } // namespace JSC::AOT

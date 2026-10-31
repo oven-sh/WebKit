@@ -1316,7 +1316,7 @@ void JSArray::validatePristine(VM& vm) const
     check(structure->typeInfo().isPristine());
     check(type() == ArrayType && structure->classInfoForCells() == info());
     check(realm->arrayPrototype()->structure()->hasImmutableIndexedProperties() && realm->arrayPrototype()->structure()->hasImmutablePrototype());
-    check(realm->objectPrototype()->structure()->hasImmutableProperties());
+    check(realm->objectPrototype()->structure()->hasImmutableIndexedProperties() && realm->objectPrototype()->structure()->hasImmutablePrototype());
     check(!structure->isDictionary() && structure->hasMonoProto() && structure->storedPrototype() == realm->arrayPrototype());
     if (structure->hasPristineElements()) {
         check(!structure->mayInterceptIndexedAccesses() && !hasSlowPutArrayStorage(structure->indexingType()));

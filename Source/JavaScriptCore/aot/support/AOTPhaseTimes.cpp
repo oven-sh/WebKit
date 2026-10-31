@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCompile.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <mutex>
@@ -206,18 +207,44 @@ size_t PhaseTimes::residentMegabytes()
 
 // Linux lets a process reset its own high-water mark, so each line of the log can say how high its phase went.
 // The reset also lowers what getrusage() reports, so the peak of the process is kept here.
+static constinit std::atomic<size_t> peakBeforeResets { 0 };
+
 PhaseTimes::PeakResidentMegabytes PhaseTimes::takePeakResidentMegabytes()
 {
-    static std::atomic<size_t> peakOfProcess { 0 };
     size_t sinceLastTaken = takePeakResidentMegabytesSinceLastTaken();
-    size_t ofProcess = std::max({ sinceLastTaken, peakResidentMegabytes(), peakOfProcess.load(std::memory_order_relaxed) });
-    peakOfProcess.store(ofProcess, std::memory_order_relaxed);
+#if OS(LINUX)
+    size_t sinceLastReset = sinceLastTaken;
+#else
+    size_t sinceLastReset = peakResidentMegabytes();
+#endif
+    size_t ofProcess = std::max(sinceLastReset, peakBeforeResets.load(std::memory_order_relaxed));
+    peakBeforeResets.store(ofProcess, std::memory_order_relaxed);
     return { ofProcess, sinceLastTaken };
+}
+
+size_t peakResidentMegabytesOfProcess()
+{
+    return std::max(PhaseTimes::peakResidentMegabytes(), peakBeforeResets.load(std::memory_order_relaxed));
 }
 
 size_t PhaseTimes::takePeakResidentMegabytesSinceLastTaken()
 {
 #if OS(LINUX)
+    size_t peak = peakResidentMegabytes();
+    if (FILE* file = fopen("/proc/self/clear_refs", "w")) {
+        fputs("5", file);
+        fclose(file);
+    }
+    return peak;
+#else
+    return 0;
+#endif
+}
+
+size_t PhaseTimes::peakResidentMegabytes()
+{
+#if OS(LINUX)
+    // Not getrusage(): there a spawned process starts from the peak of its parent.
     size_t peakKilobytes = 0;
     if (FILE* file = fopen("/proc/self/status", "r")) {
         char line[256];
@@ -230,19 +257,8 @@ size_t PhaseTimes::takePeakResidentMegabytesSinceLastTaken()
         }
         fclose(file);
     }
-    if (FILE* file = fopen("/proc/self/clear_refs", "w")) {
-        fputs("5", file);
-        fclose(file);
-    }
     return peakKilobytes / KB;
-#else
-    return 0;
-#endif
-}
-
-size_t PhaseTimes::peakResidentMegabytes()
-{
-#if OS(UNIX)
+#elif OS(UNIX)
     struct rusage usage;
     if (getrusage(RUSAGE_SELF, &usage))
         return 0;

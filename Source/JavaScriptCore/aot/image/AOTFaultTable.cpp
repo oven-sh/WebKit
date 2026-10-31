@@ -434,11 +434,17 @@ static bool handleLoopPoll(const Fault& fault, PlatformRegisters& registers)
 {
     static_assert(hasFaultingLoopPolls);
     bool isFrameless = fault.callerFrame == CallerFrame::Frameless;
-    if (fault.address != registerOf(registers, instanceGPR) + InstanceLayout::offsetOfLoopPollPage() + (isFrameless ? offsetOfLeafPollInLoopPollPage : 0))
+    uintptr_t instance = registerOf(registers, instanceGPR);
+    uintptr_t address = instance + InstanceLayout::offsetOfLoopPollPage() + (isFrameless ? offsetOfLeafPollInLoopPollPage : 0);
+    bool leavesOwedError = fault.address == address + offsetOfPollLeavingOwedErrorInLoopPollPage;
+    if (fault.address != address && !leavesOwedError)
         return false;
     void* target = findStub(fault.image, pollAtLoop(fault.callerFrame));
     if (!target)
         return false;
+
+    if (leavesOwedError)
+        std::bit_cast<Instance*>(instance)->runtime.exceptions.pollLeavesOwedError = 1;
 
     void*& stackPointer = MachineContext::stackPointerImpl(registers);
     auto* top = static_cast<uintptr_t*>(stackPointer);

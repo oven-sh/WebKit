@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTImageOfCellScope.h"
 #include "AOTChainDependents.h"
 #include "AOTClosure.h"
 #include "AOTCompiledCallee.h"
@@ -58,6 +59,11 @@ static ASCIILiteral describeExit(SlotExitReason reason, JSValue value)
 
 void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingProperty leaving, SlotExitReason reason)
 {
+    if (reason == SlotExitReason::Redefinition) {
+        const FieldExit* exit = state().propertyCaches->findFieldExit(structureID(), field.name);
+        if (exit && exit->isDefinition && exit->attributes == leaving.attributes && tryRepeat(vm, *exit, leaving.valueOrAccessor))
+            return;
+    }
     willLeaveStateOfBirth(vm, *this, field, mutationOf(reason));
     validateMutation(vm, *this, field, mutationOf(reason));
     RELEASE_ASSERT(field.canLeaveSlot());
@@ -79,14 +85,16 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
     count(instance(), counterFor(reason));
     state.propertyCaches->countNamed(describeExit(reason, leaving.valueOrAccessor), name);
 
-    if (reason != SlotExitReason::StoreOfOtherType || leaving.attributes || hadOtherCellInPlaceOfExtraProperties || field.isPrivate() || hasOutOfLineKeyOrder() || !layout().extraPropertiesSlot() || state.propertyCaches->countsNames())
+    exit.isDefinition = reason == SlotExitReason::Redefinition;
+    exit.attributes = static_cast<uint8_t>(leaving.attributes);
+    if (reason == SlotExitReason::Delete || (!exit.isDefinition && leaving.attributes) || exit.attributes != leaving.attributes || hadOtherCellInPlaceOfExtraProperties || field.isPrivate() || hasOutOfLineKeyOrder() || !layout().extraPropertiesSlot() || state.propertyCaches->countsNames())
         return;
     Structure* extraStructure = extra->structure();
     if (structure()->mayBePrototype() || extraStructure->isDictionary())
         return;
     unsigned attributes;
     exit.offset = extraStructure->get(vm, name, attributes);
-    if (!isValidOffset(exit.offset) || !isInlineOffset(exit.offset) || attributes)
+    if (!isValidOffset(exit.offset) || !isInlineOffset(exit.offset) || attributes != leaving.attributes)
         return;
     exit.structureAfter = structureID();
     exit.extraPropertiesAfter = extraStructure->id();
@@ -94,7 +102,7 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
     exit.extraPropertiesCellSize = JSFinalObject::allocationSize(extraStructure->inlineCapacity());
     exit.offsetOfExtraPropertiesWord = layout().extraPropertiesSlot()->offset;
     SlotTraits traits = traitsOf(field.slot.representation());
-    if (!field.isOutOfLine() && absentPatternOf(field.slot.representation()) && traits.width >= sizeof(uint32_t)) {
+    if (!exit.isDefinition && !field.isOutOfLine() && absentPatternOf(field.slot.representation()) && traits.width >= sizeof(uint32_t)) {
         exit.absentBits = traits.absentBits;
         exit.offsetOfSlot = field.slot.offset;
         exit.widthOfSlot = traits.width;
@@ -107,13 +115,14 @@ bool Object::tryRepeat(VM& vm, const FieldExit& exit, JSValue value)
     const FieldData& field = *exit.field;
     if (structureID() != exit.structureBefore || orderWord() != exit.orderWordBefore || isInFrame() || isInSlot(field) != exit.wasInSlot)
         return false;
-    if (state().objects->layouts.slotAdmits(field, value))
+    if (!exit.isDefinition && state().objects->layouts.slotAdmits(field, value))
         return false;
+    SlotExitReason reason = exit.isDefinition ? SlotExitReason::Redefinition : SlotExitReason::StoreOfOtherType;
     JSObject* extra = extraPropertiesIfMade(*this);
     if (exit.extraPropertiesBefore ? !extra || extra->structureID() != exit.extraPropertiesBefore : hasExtraProperties())
         return false;
-    willLeaveStateOfBirth(vm, *this, field, ObjectMutation::StoreOfOtherType);
-    validateMutation(vm, *this, field, ObjectMutation::StoreOfOtherType);
+    willLeaveStateOfBirth(vm, *this, field, mutationOf(reason));
+    validateMutation(vm, *this, field, mutationOf(reason));
     // A collection forgets the exit, and then these pointers alone keep the Structures alive.
     auto* structureAfter = WTF::opaque(uncheckedDowncast<CompiledStructure>(exit.structureAfter.decode()));
     Structure* extraStructureAfter = WTF::opaque(exit.extraPropertiesAfter.decode());
@@ -131,7 +140,7 @@ bool Object::tryRepeat(VM& vm, const FieldExit& exit, JSValue value)
     at<uint32_t>(offsetOfOrderWord) = orderWordAfter;
     setPerCellBit(true);
     clear(field);
-    count(instance(), counterFor(SlotExitReason::StoreOfOtherType));
+    count(instance(), counterFor(reason));
     ensureStillAliveHere(structureAfter);
     ensureStillAliveHere(extraStructureAfter);
     return true;
@@ -316,6 +325,7 @@ static bool defineFieldProperty(Object* object, JSGlobalObject* globalObject, co
 
 bool Object::defineOwnProperty(JSObject* cell, JSGlobalObject* globalObject, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     Object* object = uncheckedDowncast<Object>(cell);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     const FieldData* field = object->fieldNamed(object->state(), name);
@@ -698,6 +708,7 @@ bool Object::testIntegrity(VM& vm, Integrity integrity) const
 
 bool Object::preventExtensions(JSObject* cell, JSGlobalObject* globalObject)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     uncheckedDowncast<Object>(cell)->setIntegrity(globalObject, Integrity::NotExtensible);
     return true;
 }
@@ -729,6 +740,7 @@ void Object::setPrototypeAtCreation(VM& vm, JSValue prototype)
 
 bool Object::setPrototype(JSObject* cell, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrow)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     Object* object = uncheckedDowncast<Object>(cell);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -753,6 +765,7 @@ static void finishSlotOfExtraProperty(Object* object, PropertySlot& slot, bool f
 
 bool Object::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     Object* object = uncheckedDowncast<Object>(cell);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -775,15 +788,24 @@ bool Object::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, Pr
         }
     } else
         object->state().objects->layouts.didReadAbsentField(vm, object->layout(), name.uid());
-    if (object->hasExtraProperties() && slot.internalMethodType() == PropertySlot::InternalMethodType::Get) {
+    if (object->hasExtraProperties()) {
         if (std::optional<Object*> source = sourceOfPendingBinding(vm, *object, name.uid())) {
+            // An object whose stars wait has no other extra property.
             if (!*source)
                 return false;
-            JSValue value = (*source)->get(globalObject, name);
-            RETURN_IF_EXCEPTION(scope, false);
-            slot.setValue(object, 0, value);
-            slot.disableCaching();
-            return true;
+            if (slot.internalMethodType() == PropertySlot::InternalMethodType::Get) {
+                JSValue value = (*source)->get(globalObject, name);
+                RETURN_IF_EXCEPTION(scope, false);
+                slot.setValue(object, 0, value);
+                slot.disableCaching();
+                return true;
+            }
+            // Whoever asks whether the name is there reads no value and calls no getter, as with a module namespace object. A slot that holds a value is no accessor's.
+            if (slot.internalMethodType() == PropertySlot::InternalMethodType::HasProperty) {
+                slot.setValue(object, attributesOfStarBinding & ~PropertyAttribute::Accessor, jsUndefined());
+                slot.disableCaching();
+                return true;
+            }
         }
     }
     JSObject* extra = object->extraProperties();
@@ -797,7 +819,9 @@ bool Object::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, Pr
 
 bool Object::getOwnPropertySlotByIndex(JSObject* cell, JSGlobalObject* globalObject, unsigned index, PropertySlot& slot)
 {
-    JSObject* extra = uncheckedDowncast<Object>(cell)->extraProperties();
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
+    // No star binds an element.
+    JSObject* extra = extraPropertiesIfMade(*uncheckedDowncast<Object>(cell));
     if (!extra)
         return false;
     bool found = extra->methodTable()->getOwnPropertySlotByIndex(extra, globalObject, index, slot);
@@ -807,6 +831,7 @@ bool Object::getOwnPropertySlotByIndex(JSObject* cell, JSGlobalObject* globalObj
 
 void Object::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, PropertyNameArrayBuilder& names, DontEnumPropertiesMode mode)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     Object* object = uncheckedDowncast<Object>(cell);
     VM& vm = globalObject->vm();
     State& state = object->state();
@@ -987,6 +1012,7 @@ static bool isProxyThatDefinesOnTarget(VM& vm, JSValue receiver, Object* target)
 
 bool Object::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     Object* object = uncheckedDowncast<Object>(cell);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     const FieldData* field = object->fieldNamed(object->state(), name);
@@ -999,6 +1025,7 @@ bool Object::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, 
 
 bool Object::putWithKnownField(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot, const FieldData* field, bool chainLetsStoresPass)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     ASSERT(!field || !field->isPrivate());
     Object* object = uncheckedDowncast<Object>(cell);
     VM& vm = globalObject->vm();
@@ -1073,12 +1100,14 @@ bool Object::putWithKnownField(JSCell* cell, JSGlobalObject* globalObject, Prope
 
 bool Object::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     PutPropertySlot slot(cell, shouldThrow);
     return ordinarySet(globalObject, uncheckedDowncast<Object>(cell), Identifier::from(globalObject->vm(), index), value, slot);
 }
 
 bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot& slot)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     Object* object = uncheckedDowncast<Object>(cell);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1129,6 +1158,7 @@ bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Property
 
 bool Object::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     Object* object = uncheckedDowncast<Object>(cell);
     JSObject* extra = object->extraProperties();
     if (!extra)

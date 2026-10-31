@@ -106,7 +106,7 @@ static void orderBodies(Vector<ReachedBody>& bodies, uint32_t layoutSeed)
     auto isBoundByPolicy = [](const ReachedBody& body) {
         return body.key.immediate() && descriptorOf(body.key.family()).binding == ImmediateBinding::ByPolicy;
     };
-    AOT::sort(bodies, { }, [&](const ReachedBody& body) {
+    AOT::sortInLine(bodies, { }, [&](const ReachedBody& body) {
         return std::pair { isBoundByPolicy(body), body.key };
     });
     if (!layoutSeed)
@@ -156,7 +156,7 @@ static void checkReturnLabels(const Vector<StubAssembler::BoundReturnLabel>& ret
 static Vector<StubEntryRange> findEntriesInFrontOfSingleReturnSites(const StubBlob& blob)
 {
     Vector<StubPlacement> byOffset = blob.placements;
-    AOT::sort(byOffset, { }, &StubPlacement::offset);
+    AOT::sortInLine(byOffset, { }, &StubPlacement::offset);
     auto isSingleReturnSite = [&](uint32_t offset) {
         auto site = std::ranges::lower_bound(blob.returnSites, offset, { }, &StubReturnSite::offset);
         return site != blob.returnSites.end() && site->offset == offset && hasSingleReturnSite(site->kind);
@@ -222,10 +222,10 @@ static std::expected<StubBlob, LinkFailure> buildStubBlob(BuildContext& context,
     }));
     for (auto& entry : jit.boundEntries())
         blob.placements.append(StubPlacement { entry.key, linkBuffer.offsetOf(entry.label) });
-    AOT::sort(blob.placements, { }, &StubPlacement::key);
+    AOT::sortInLine(blob.placements, { }, &StubPlacement::key);
     for (auto& returnLabel : jit.boundReturnLabels())
         blob.returnSites.append(StubReturnSite { linkBuffer.offsetOf(returnLabel.label), returnLabel.kind });
-    AOT::sort(blob.returnSites, { }, &StubReturnSite::offset);
+    AOT::sortInLine(blob.returnSites, { }, &StubReturnSite::offset);
     RELEASE_ASSERT(std::ranges::adjacent_find(blob.returnSites, { }, &StubReturnSite::offset) == blob.returnSites.end());
     blob.entriesInFrontOfSingleReturnSites = findEntriesInFrontOfSingleReturnSites(blob);
     blob.entriesUsed = reached.entriesUsed;

@@ -1,9 +1,14 @@
-# set = new Set; set.add(member); for (const each of set) each()        for (;;) { step = next(); value = step.value; if (step.done) break; value() }
-# The step that finds the end answers undefined (primitive 0) as its value. A for..of reads the value behind the branch on `done`, where the step has not found the end: what it reads is what the set holds.
-# A value that is read in front of the branch may be that of the last step.
-# RUN: valueflow-why values=f0:v10 values=f0:v17
+# set = new Set; set.add(member); for (const each of set) each()     three times, and once over an array: for (const each of [member, , member]) each()
+# The step that finds the end answers undefined (primitive 0) as its value. A for..of uses the value behind the branch on `done`, where the step has not found the end: what it gets is what the set holds.
+# Where the result is taken apart says nothing: the first loop does it behind the branch and the second in front of it, as the front end writes a loop.
+# The third loop uses the value where the step has found the end. The fourth goes over an array, where a hole reads as undefined.
+# RUN: valueflow-why values=f0:v10 values=f0:v17 values=f0:v24 values=f0:v32
 # CHECK: Call
 # CHECK: operand 0 {{*}} 1 members: f1
+# CHECK: Call
+# CHECK: operand 0 {{*}} 1 members: f1
+# CHECK: Call
+# CHECK: operand 0 {{*}} 2 members: primitive0 f1
 # CHECK: Call
 # CHECK: operand 0 {{*}} 2 members: primitive0 f1
 
@@ -40,6 +45,33 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v17 = Call v15
     Jump -> next b4()
   b6():
+    v18 = IteratorOpen v1
+    Jump -> next b7()
+  b7():
+    LoopHint
+    v20 = IteratorResume v18
+    v21 = ResultAt v20
+    v22 = ResultAt v20 index=1
+    Branch v21 -> taken b9(), notTaken b8()
+  b8():
+    v23 = Undefined
+    Jump -> next b7()
+  b9():
+    v24 = Call v22
+    v25 = NewArray v3, v3 contents=anything holes=[1]
+    v26 = IteratorOpen v25
+    Jump -> next b10()
+  b10():
+    LoopHint
+    v28 = IteratorResume v26
+    v29 = ResultAt v28
+    v30 = ResultAt v28 index=1
+    Branch v29 -> taken b12(), notTaken b11()
+  b11():
+    v31 = Undefined
+    v32 = Call v30
+    Jump -> next b10()
+  b12():
     Return
 }
 function f1 name="member" results=[{type=anything}] {

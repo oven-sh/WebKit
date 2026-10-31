@@ -96,6 +96,8 @@ public:
     }
     static bool isRegistered() { return !!s_current.load(std::memory_order_acquire); }
     JS_EXPORT_PRIVATE static void setCurrentOfThread(const Image*);
+    // Where setCurrentOfThread() writes on this thread.
+    static const Image** addressOfCurrentOfThread();
     // For a thread whose VM runs no compiled program.
     JS_EXPORT_PRIVATE static void useNoneOnThisThread();
     JS_EXPORT_PRIVATE static const Image* find(std::span<const uint8_t> bytes);
@@ -109,6 +111,32 @@ public:
     JS_EXPORT_PRIVATE static std::optional<OptionSet<ImageFlag>> flags(std::span<const uint8_t> bytes);
     JS_EXPORT_PRIVATE static std::unique_ptr<Image> create(std::span<const uint8_t> bytes, const uint8_t* code);
     JS_EXPORT_PRIVATE static void publish(std::unique_ptr<Image>&&, std::span<const uint8_t> allImages);
+    // The image was built above the last of the images that share their realms with `first`. Every VM that is created from here on for `first` runs it too.
+    static void publishAbove(const Image& first, std::unique_ptr<Image>&&);
+
+    // Images that share their realms stand in a list, in the order in which they were built. An image that shares none is a list of one.
+    bool sharesRealms() const { return header().has(ImageFlag::SharesRealms); }
+    bool holdsLibraryAlone() const { return header().has(ImageFlag::HoldsLibraryAlone); }
+    const Image& first() const { return *m_first; }
+    const Image* above() const { return m_above.load(std::memory_order_acquire); }
+    const Image& last() const;
+    // How many stand in front of it.
+    unsigned position() const { return m_position; }
+    const Image* atPosition(unsigned) const;
+    // How many layout indices, and how many modules, those in front of it have together. A number that counts on from there says which image of the list it is of.
+    uint32_t layoutIndicesBelow() const { return m_layoutIndicesBelow; }
+    uint32_t modulesBelow() const { return m_modulesBelow; }
+    // In the list of this image.
+    const Image* findInListByCodeAddress(const void*) const;
+    const Image& holderOfStringHeader(uint32_t number) const;
+    // The image of the list that the address lies in: a table, or something a table points at.
+    ALWAYS_INLINE const Image& holderOf(const void* address) const
+    {
+        if (std::bit_cast<uintptr_t>(address) - std::bit_cast<uintptr_t>(m_bytes.data()) < m_bytes.size()) [[likely]]
+            return *this;
+        return holderInListOf(address);
+    }
+    JS_EXPORT_PRIVATE const Image& holderInListOf(const void* address) const;
 
     struct PositionInFile {
         int descriptor { -1 };
@@ -119,6 +147,7 @@ public:
     unsigned number() const { return m_number; }
 
     const ImageHeader& header() const { return *reinterpret_cast<const ImageHeader*>(m_bytes.data()); }
+    std::span<const uint8_t> bytes() const { return m_bytes; }
     template<typename T> std::span<const T> section(ImageSection) const;
     std::span<const uint8_t> code() const { return { m_code, static_cast<size_t>(header().codeSize) }; }
     std::span<const uint8_t> regExpCode() const { return code().subspan(header().code.regExpCodeOffset, header().code.constantsOffset - header().code.regExpCodeOffset); }
@@ -127,13 +156,17 @@ public:
     std::span<const uint8_t> ffiDirectory() const;
     const ProgramTables& programTables() const { return *reinterpret_cast<const ProgramTables*>(section<uint8_t>(ImageSection::ProgramTables).data()); }
     const ImageText& text() const { return m_text; }
+    ImageText& text() { return m_text; }
     bool isObfuscated() const { return header().has(ImageFlag::IsObfuscated); }
     bool admitsUnknownJavaScript() const { return header().has(ImageFlag::AdmitsUnknownJavaScript); }
     bool loadsModulesByName() const { return header().has(ImageFlag::LoadsModulesByName); }
     bool findsDataFilesByName() const { return header().has(ImageFlag::FindsDataFilesByName); }
     bool admitsLibraryText() const { return header().has(ImageFlag::AdmitsLibraryText); }
+    bool runsUnreadCode() const { return header().has(ImageFlag::RunsUnreadCode); }
     bool loadsCodeOutsideImage() const { return !runsOnlyCodeOfImage && header().has(ImageFlag::LoadsCodeOutsideImage); }
     bool showsWaysBetweenModuleObjects() const { return header().has(ImageFlag::ShowsWaysBetweenModuleObjects); }
+    bool storesPathOfMainModule() const { return header().has(ImageFlag::StoresPathOfMainModule); }
+    bool runsEntryPointsAgain() const { return header().has(ImageFlag::RunsEntryPointsAgain); }
 
     JS_EXPORT_PRIVATE CodeLocation locate(const void* pc) const;
 
@@ -162,7 +195,10 @@ public:
     JS_EXPORT_PRIVATE bool containsCharactersOf(const StringImpl&) const;
     static bool isBackedByStaticData(const StringImpl&);
 
+    std::optional<uint32_t> imageFunctionFromClosureWord(FunctionID) const;
+    // Sorts every function without a closure word on first use.
     std::optional<uint32_t> imageFunctionOf(FunctionID) const;
+    bool hasSortedFunctionIndex() const { return !m_functionsByID.isEmpty(); }
     std::optional<FunctionID> innerEntryContaining(const void* pc) const;
     std::span<const uint32_t> frameMapWords(uint32_t function) const;
     bool hasFrameAt(uint32_t function, uint32_t offset) const;
@@ -184,6 +220,9 @@ public:
 
     std::optional<SourcePosition> positionOf(uint32_t function, CallSiteIndex) const;
 
+    // False: no module has a path that starts so. A program asks about every path that the disk does not have, and nearly all of them lie in directories without modules.
+    bool mayHoldModulePathStartingWith(StringView start) const;
+
 private:
     Image(std::span<const uint8_t> bytes, const uint8_t* code);
 
@@ -197,6 +236,11 @@ private:
     std::optional<PositionInFile> m_positionInFile;
     unsigned m_number { 0 };
     const Image* m_publishedBefore { nullptr };
+    const Image* m_first { this };
+    mutable std::atomic<const Image*> m_above { nullptr };
+    unsigned m_position { 0 };
+    uint32_t m_layoutIndicesBelow { 0 };
+    uint32_t m_modulesBelow { 0 };
     std::span<const uint8_t> m_bytes;
     const uint8_t* m_code;
     const ImageFunction* m_functions;
@@ -306,6 +350,7 @@ JS_EXPORT_PRIVATE bool isCompiledCodePC(const void*);
 JS_EXPORT_PRIVATE std::optional<uint32_t> imageCodeOffset(const void* address);
 JS_EXPORT_PRIVATE uintptr_t imageCodeStart();
 JS_EXPORT_PRIVATE std::optional<ImageFrame> imageFrameAtReturnAddress(const void* returnAddress);
+JS_EXPORT_PRIVATE bool isInStubOfImage(const void* address);
 
 } } // namespace JSC::AOT
 

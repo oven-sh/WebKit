@@ -98,7 +98,9 @@ function textsDecidingCall(condition: ModelCondition): Pick<CallsForTexts, "argu
     hasProperty !== null ||
     condition.buildAdmitsRuntimeCode ||
     condition.callRunsOtherCode ||
-    condition.objectNobodyKnowsIsWritten;
+    condition.objectNobodyKnowsIsWritten ||
+    condition.testsReplaceBuiltins ||
+    condition.programStores !== null;
   if (operand === null || operand.operand !== "Argument" || isOneOf.length === 0 || asksMore) return null;
   return { argument: operand.index, texts: isOneOf };
 }

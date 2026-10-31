@@ -35,9 +35,11 @@ struct FieldTableEntry {
     static constexpr unsigned nameShift = operandBits + formBits;
     static constexpr uint32_t maxOperand = (1u << operandBits) - 1;
     // Operands of the form Field. Zero: by the record. Up to maxSlotNumber: kept free.
-    static constexpr uint32_t maxSlotNumber = 6015;
+    static constexpr uint32_t maxSlotNumber = 4991;
+    // A field in the cell that holds a 64-bit integer. Beyond int32 it may be a marker, which the field's record explains. Less this: the index of the 64-bit word in the cell.
+    static constexpr uint32_t firstInt64 = maxSlotNumber + 1;
     // A field in the Extension that holds a 32-bit reference, in the first or in the second half of its granule. Less this: the number of the granule and one more.
-    static constexpr uint32_t firstNarrowCellInExtension = maxSlotNumber + 1;
+    static constexpr uint32_t firstNarrowCellInExtension = firstInt64 + 1024;
     static constexpr uint32_t firstNarrowCellInSecondHalfOfGranule = firstNarrowCellInExtension + 64;
     // A field in the cell whose byte is the low byte of the JSValue: false, true, undefined or null, zero for an empty slot. Less this: the index of the byte in the cell.
     static constexpr uint32_t firstEncodedByte = firstNarrowCellInSecondHalfOfGranule + 64;
@@ -108,9 +110,12 @@ struct FieldTableEntry {
             if (field.isOutOfLine() || offset >= firstBoolean - firstEncodedByte)
                 return otherField;
             return create(field.name, Form::Field, (field.slot.representation() == SlotRepresentation::Boolean ? firstBoolean : firstEncodedByte) + offset);
-        case SlotRepresentation::Uint32:
         case SlotRepresentation::Int64:
         case SlotRepresentation::OptionalInt64:
+            if (field.isOutOfLine() || offset % sizeof(int64_t) || offset / sizeof(int64_t) >= firstNarrowCellInExtension - firstInt64)
+                return otherField;
+            return create(field.name, Form::Field, firstInt64 + offset / sizeof(int64_t));
+        case SlotRepresentation::Uint32:
         case SlotRepresentation::Float:
         case SlotRepresentation::Uint8:
         case SlotRepresentation::Int8:
@@ -211,6 +216,7 @@ static_assert(traitsOf(SlotRepresentation::Cell).absentBits == JSValue::ValueEmp
 static_assert(absentCell32 < FieldTableEntry::minNarrowValue && uncreatedDeferredClosure < FieldTableEntry::minNarrowValue && absentDeferredClosure < FieldTableEntry::minNarrowValue);
 static_assert(FieldTableEntry::minNarrowValue <= nullCell32 && FieldTableEntry::minNarrowValue <= undefinedCell32);
 static_assert(absentInt32 < minInlineInt32 && undefinedInt32 < minInlineInt32 && nullInt32 < minInlineInt32);
+static_assert(absentInteger > INT32_MAX && undefinedInteger > INT32_MAX && nullInteger > INT32_MAX);
 static_assert(shapeWordOf(1) & compiledObjectShapeBit && !(pointerUpperHalfBits & compiledObjectShapeBit) && !(bigIntHashMask & compiledObjectShapeBit));
 
 } } // namespace JSC::AOT

@@ -699,6 +699,22 @@ TypedArrayType typedArrayTypeOf(const BuiltinTable& table, const Type& type)
     return common;
 }
 
+bool hasOnlyMapsAndSets(const Program& program, const Type& type)
+{
+    auto isMapOrSet = [](BuiltinClassID builtinClass) {
+        return builtinClass == BuiltinClasses::Map || builtinClass == BuiltinClasses::Set;
+    };
+    if (!type.isObject() || type.anyObject || type.anyFunction || !type.functions.isEmpty() || !type.builtins.isEmpty())
+        return false;
+    for (const ClassPart& part : type.classes) {
+        if (!isMapOrSet(part.builtinClass))
+            return false;
+    }
+    return std::ranges::all_of(membersOf(program, type), [&](LayoutID layout) {
+        return isMapOrSet(builtinBaseClassOf(program, layout));
+    });
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

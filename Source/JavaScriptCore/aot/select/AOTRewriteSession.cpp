@@ -50,6 +50,7 @@ static constexpr bool writesOnlyNamedBlocks(SelectionRuleID rule)
     case SelectionRuleID::ResolvedCallTarget:
     case SelectionRuleID::RegExpLiteralMatch:
     case SelectionRuleID::ThrowNewError:
+    case SelectionRuleID::MoveLookupTablesToHeap:
     case SelectionRuleID::KeyPartsLookup:
     case SelectionRuleID::StringBuilderParts:
     case SelectionRuleID::ArrayLiteralStorage:
@@ -119,7 +120,7 @@ Vector<uint32_t> RewriteSession::takeOrder()
     Vector<uint32_t> order(m_groups.size(), [](size_t index) {
         return static_cast<uint32_t>(index);
     });
-    AOT::stableSort(order, std::ranges::greater { }, [&](uint32_t index) {
+    AOT::stableSortInLine(order, std::ranges::greater { }, [&](uint32_t index) {
         return std::pair { m_groups[index].blockOrder, m_groups[index].index };
     });
     return order;
@@ -188,7 +189,7 @@ void RewriteSession::eraseOperandsLeftUnused()
     if (erased.isEmpty())
         return;
 
-    AOT::sort(erased, std::ranges::less { }, [](const ValueLocation& location) {
+    AOT::sortInLine(erased, std::ranges::less { }, [](const ValueLocation& location) {
         return location.block.index();
     });
     for (size_t next = 0; next < erased.size();) {

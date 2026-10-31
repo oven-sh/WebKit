@@ -1,8 +1,7 @@
-# What is stored ahead of every caller that flow has followed need not be stored around the copy of a callee that was predicted. A read in such a copy, or in a copy inside it, names a fact or says that the word may
-# be anything
+# What is stored before every read need not be stored around the copy of a callee, predicted or followed by flow. A read in a copy, or in a copy inside it, names a fact or says that the word may be anything
 # FORM: Prepared
 # RUN: verify
-# DIAGNOSTIC: InvalidGuard 2
+# DIAGNOSTIC: InvalidGuard 3
 
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="storedOnce" declared={type=string} flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead isUnchangedDuringActivation=true}
@@ -11,7 +10,7 @@ function f0 name="reads" results=[{type=string}] {
     v0 = GetModuleVariable variable=g0
     Return v0
 }
-function f1 name="goodCopyOfFollowedCallee" results=[{type=string}] inlineFrames=[{}, {callee=f0 module=m0}] {
+function f1 name="badCopyOfFollowedCalleeNamesNothing" results=[{type=string}] inlineFrames=[{}, {callee=f0 module=m0}] {
     v0 = GetModuleVariable variable=g0 @0:1
     Return v0
 }

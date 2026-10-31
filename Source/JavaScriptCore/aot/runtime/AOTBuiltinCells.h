@@ -68,6 +68,7 @@ public:
     void didCreateMember(JSObject* holder, UniquedStringImpl* key, JSObject* member);
     // What compiled code was handed before the program read the member. The holder adds this very object. Null if there is none.
     JSObject* takeMemberMadeAhead(JSObject* holder, UniquedStringImpl* key);
+    JSObject* memberMadeAhead(JSObject* holder, UniquedStringImpl* key) const;
     void fillCellsOfEngine();
 
     // The program may replace a step of the path to a locked object, such as the global `Response`, so a cell is looked for in the object that was locked when the realm created it.
@@ -76,12 +77,26 @@ public:
     void didLockEveryPropertyOf(JSObject* object) { m_objectsWithEveryPropertyLocked.append(object); }
     bool hasLocked(BuiltinID id) const { return m_lockedBuiltins.get(id.index()); }
     BuiltinID builtinOfLockedObject(JSObject*) const;
+    // The realm keeps the prototype object of a class for as long as it lives.
+    void awaitConstructor(JSObject* prototype, BuiltinID constructor) { m_awaitedConstructors.append({ prototype, constructor }); }
+    BuiltinID takeAwaitedConstructor(JSObject* prototype)
+    {
+        size_t index = m_awaitedConstructors.findIf([&](const AwaitedConstructor& awaited) { return awaited.prototype == prototype; });
+        if (index == notFound)
+            return { };
+        BuiltinID constructor = m_awaitedConstructors[index].constructor;
+        m_awaitedConstructors.removeAt(index);
+        return constructor;
+    }
     std::span<JSObject* const> objectsWithEveryPropertyLocked() const { return m_objectsWithEveryPropertyLocked.span(); }
 
     // The built-ins that are locked once the realm has created them, and the holders on the paths to them.
     const BitVector& builtinsToLock() const { return m_builtinsToLock; }
     // Among them, the holders of members that the program may replace.
     const BitVector& holdersThatTellOfWrites() const { return m_holdersThatTellOfWrites; }
+    // ProgramTables::unlockedBuiltinMembers() of this program with those of the first program of the realm. Empty in the first.
+    std::span<const uint32_t> membersUnlockedInRealm() const { return m_membersUnlockedInRealm.span(); }
+    void setMembersUnlockedInRealm(Vector<uint32_t>&& members) { m_membersUnlockedInRealm = WTF::move(members); }
     void setBuiltinsToLock(BitVector&& builtins, BitVector&& holdersThatTellOfWrites)
     {
         m_builtinsToLock = WTF::move(builtins);
@@ -127,6 +142,11 @@ private:
         JSObject* member;
     };
     Vector<MemberMadeAhead> m_membersMadeAhead;
+    struct AwaitedConstructor {
+        JSObject* prototype;
+        BuiltinID constructor;
+    };
+    Vector<AwaitedConstructor> m_awaitedConstructors;
     struct CellAwaitingModule {
         uint32_t root;
         uint32_t number;
@@ -137,6 +157,7 @@ private:
     UncheckedKeyHashMap<JSObject*, uint32_t> m_builtinsOfLockedObjects;
     BitVector m_builtinsToLock;
     BitVector m_holdersThatTellOfWrites;
+    Vector<uint32_t> m_membersUnlockedInRealm;
     BitVector m_writtenMembers;
     ObjectsByBuiltin m_membersMadeBehindAnnouncedWrite;
     Vector<JSObject*> m_objectsWithEveryPropertyLocked;

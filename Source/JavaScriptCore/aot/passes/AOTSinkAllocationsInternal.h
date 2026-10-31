@@ -385,6 +385,7 @@ struct RewriteTables {
     BitVector enteredBlocks;
     Vector<BlockID, 2> blocksWithDecidedBranches;
     Vector<std::pair<ValueID, ValueID>> replacedReads;
+    Vector<ValueID> claimsAssumedOfContents;
     Vector<ValueID> entryConstants;
     Vector<BlockID> order;
     // No object is there, none is made and none is entered into a block behind: to rewrite such a block is to put it together again as it was.
@@ -496,8 +497,13 @@ public:
     const Vector<VirtualObjectID>& objectsWhoseCreationMayBeOrderedWithGuards() const LIFETIME_BOUND;
 
     uint32_t numberOfCandidates() const { return m_candidates.size(); }
-    Candidate& at(VirtualObjectID object) LIFETIME_BOUND { return m_candidates[object.index()]; }
-    const Candidate& at(VirtualObjectID object) const LIFETIME_BOUND { return m_candidates[object.index()]; }
+    Candidate& at(VirtualObjectID object) LIFETIME_BOUND
+    {
+        if (m_trialRange) [[unlikely]]
+            willAccessInTrial(object.index());
+        return m_candidates[object.index()];
+    }
+    const Candidate& at(VirtualObjectID object) const LIFETIME_BOUND { return const_cast<AllocationSinking&>(*this).at(object); }
     VirtualFamily& familyOf(VirtualObjectID object) LIFETIME_BOUND { return m_families[at(object).family.index()]; }
     const VirtualFamily& familyOf(VirtualObjectID object) const LIFETIME_BOUND { return m_families[at(object).family.index()]; }
     const VirtualObjectDescription& descriptionOf(VirtualObjectID) const LIFETIME_BOUND;
@@ -580,6 +586,7 @@ public:
     bool hasStartedOverWithFewerCandidates() const { return m_hasStartedOverWithFewerCandidates; }
     bool exceeds(LimitID, uint64_t amount, ValueID);
     void abandon(VirtualObjectID, LimitID = LimitID::None);
+    void abandonJoinsOfFamilyOf(VirtualObjectID);
     void tagVariants(BlockID, VirtualObjectID, ObjectState&);
     void buildAtHeadForLackOfTagBits(BlockID, VirtualObjectID);
     bool isIgnored(Edge) const;
@@ -620,6 +627,7 @@ private:
     void solveAgainIn(std::span<const BlockID> range);
     void giveUpOnEveryCandidate();
     bool startOverWithFewerCandidates();
+    void giveUpOnCandidatesCarriedTooFar();
     void giveUpForLackOfWork(std::span<const uint32_t> candidates);
     void analyzeUntilNothingChanges();
     void setAsideJoinsThatCarryOnlyCells();
@@ -638,6 +646,7 @@ private:
     void abandonJoinsThatOnlyFeedAbandonedJoins();
     bool paysToSink(const Candidate&) const;
     void resetCounters();
+    void willAccessInTrial(uint32_t candidate);
 
     bool meetsObjectMadeOnAnotherWay(const Candidate&) const;
     bool handOnToNextJoin(IRBuilder&, const Candidate& join);
@@ -713,6 +722,15 @@ private:
     Vector<VirtualReturn, 2> m_returns;
     Vector<Edge, 2> m_ignoredEdges;
     const BitVector* m_trialRange { nullptr };
+    // A trial saves a candidate when it first asks for it, and resets its counters when it first asks for it after resetCounters(): it costs the same however many candidates there are.
+    struct TrialsOfCandidate {
+        uint32_t lastSavedIn { 0 };
+        uint32_t lastResetIn { 0 };
+    };
+    Vector<TrialsOfCandidate> m_trialsOfCandidates;
+    Vector<std::pair<uint32_t, Candidate>> m_candidatesSavedInTrial;
+    uint32_t m_trial { 0 };
+    bool m_didResetCountersInTrial { false };
     Vector<Edge, 2> m_edgesNeedingCode;
     Vector<ValueID, 2> m_testedListsThatMayNotFit;
     const FreshResultShape* m_resultShape { nullptr };
@@ -736,6 +754,12 @@ struct BytesOperands {
 std::optional<BytesOperands> findBytesOperands(const Program&, const Function&, const Value& call, BuiltinCallForm formOfCall);
 
 bool isFrameAllocatable(const AllocationSinking&, const Candidate&);
+// It goes where an operand of it is an object that is not built there.
+inline bool goesWithUnbuiltOperands(Opcode opcode)
+{
+    return familyOf(opcode) == OperationFamily::RuntimeValidation || opcode == Opcode::ReleaseHint;
+}
+
 bool buildsOperand(const Program&, const Value& user, uint32_t operandIndex);
 
 } } } // namespace JSC::AOT::Typed

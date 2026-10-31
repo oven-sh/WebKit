@@ -1,0 +1,89 @@
+# A counter that only steps up or down is a number and no integer by its type, so its sums are sums of doubles, which are rounded. Rounding keeps the order:
+# where x + c is at most, or at least, a number that a double holds exactly, so is the rounded sum. The operand has to be a whole number by what makes it, not by what a check says of it.
+# for (end = bound - 1; end > 0; end--) for (k = 0; k < end; k++) use(k, k + 1)
+# FORM: Prepared
+# RUN(NEST): integer-relations function=f0 at-most=v3,v0,-1,b2 at-most=v3,v0,-2,b2 at-most=v7,v0,-2,b4 at-most=v10,v0,-1,b4 at-most=v10,v0,-2,b4 at-least=v10,1,b4
+# NEST: function f0
+# NEST-NEXT: v3 <= v0 + -1 at b2: Proven
+# NEST-NEXT: v3 <= v0 + -2 at b2: Unknown
+# NEST-NEXT: v7 <= v0 + -2 at b4: Proven
+# NEST-NEXT: v10 <= v0 + -1 at b4: Proven
+# NEST-NEXT: v10 <= v0 + -2 at b4: Unknown
+# NEST-NEXT: v10 >= 1 at b4: Proven
+# if (bound > 0) { for (k = bound - 1; k >= 0; k--); use(k + 1) }
+# RUN(DOWN): integer-relations function=f1 at-least=v5,-1,b4 at-least=v9,0,b4 at-least=v9,1,b4 at-most=v9,v0,0,b4 at-most=v9,v0,-1,b4
+# DOWN: function f1
+# DOWN-NEXT: v5 >= -1 at b4: Proven
+# DOWN-NEXT: v9 >= 0 at b4: Proven
+# DOWN-NEXT: v9 >= 1 at b4: Unknown
+# DOWN-NEXT: v9 <= v0 + 0 at b4: Proven
+# DOWN-NEXT: v9 <= v0 + -1 at b4: Unknown
+# if (0 <= any && any < bound) use(any + 1)
+# RUN(ANY): integer-relations function=f2 at-most=v1,v0,0,b2 at-most=v6,v0,1,b2 at-least=v6,1,b2
+# ANY: function f2
+# ANY-NEXT: v1 <= v0 + 0 at b2: Proven
+# ANY-NEXT: v6 <= v0 + 1 at b2: Unknown
+# ANY-NEXT: v6 >= 1 at b2: Proven
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="nest" parameters=[{type=i32}] results=[{type=undefined}] {
+    v1 = Integer integer=1
+    v2 = Sub v0, v1
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Integer
+    v6 = Greater v3, v5
+    Branch v6 -> taken b2(), notTaken b6()
+  b2():
+    Jump -> next b3(v5)
+  b3(v7):
+    LoopHint
+    v9 = Less v7, v3
+    Branch v9 -> taken b4(), notTaken b5()
+  b4():
+    v10 = Add v7, v1
+    Jump -> next b3(v10)
+  b5():
+    v11 = Decrement v3
+    Jump -> next b1(v11)
+  b6():
+    Return
+}
+
+function f1 name="downToMinusOne" parameters=[{type=i32}] results=[{type=undefined}] {
+    v1 = Integer integer=1
+    v2 = Integer
+    v3 = Greater v0, v2
+    Branch v3 -> taken b1(), notTaken b5()
+  b1():
+    v4 = Sub v0, v1
+    Jump -> next b2(v4)
+  b2(v5):
+    LoopHint
+    v7 = GreaterEq v5, v2
+    Branch v7 -> taken b3(), notTaken b4()
+  b3():
+    v8 = Decrement v5
+    Jump -> next b2(v8)
+  b4():
+    v9 = Add v5, v1
+    Return
+  b5():
+    Return
+}
+
+function f2 name="anyNumber" parameters=[{type=i32}, {type=number}] results=[{type=undefined}] {
+    v2 = Integer integer=1
+    v3 = Integer
+    v4 = GreaterEq v1, v3
+    Branch v4 -> taken b1(), notTaken b3()
+  b1():
+    v5 = Less v1, v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v1, v2
+    Return
+  b3():
+    Return
+}

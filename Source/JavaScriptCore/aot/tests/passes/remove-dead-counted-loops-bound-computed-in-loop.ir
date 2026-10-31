@@ -1,8 +1,9 @@
-# A bound that every iteration computes again is not known to stay the same, so the loop stays
+# `for (let k = 0; k < (n | 0); k++)`, `for (let i = 0; i < list.length; i++)`: every iteration computes the bound again, from operands that the loop does not change.
+# A loop that is removed changes nothing at all, so the bound is the same in every iteration. A bound that is computed from the counter, or that may be Infinity, keeps the loop
 # FORM: Prepared
 # OPTIONS: check=VerifyEachPass
 # RUN: pass RemoveDeadCountedLoops
-# STATISTIC: RemoveDeadCountedLoopsChanges = 2
+# STATISTIC: RemoveDeadCountedLoopsChanges = 7
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="lengthReadInHeader" parameters=[{type=string}] results=[{type=undefined}] {
@@ -19,9 +20,8 @@ function f0 name="lengthReadInHeader" parameters=[{type=string}] results=[{type=
     Jump -> next b1(v8)
   b3():
     Return
-# CHECK: Jump -> next b1(v1)
-# CHECK: b1(v2: int[{{*}}]):
-# CHECK: LoopHint
+# CHECK: Jump -> next b3()
+# CHECK-NOT: LoopHint
 }
 
 function f1 name="lengthReadBeforeLoop" parameters=[{type=string}] results=[{type=undefined}] {
@@ -56,9 +56,8 @@ function f2 name="sumComputedInHeader" parameters=[{type=int[0, 100]}] results=[
     Jump -> next b1(v8)
   b3():
     Return
-# CHECK: Jump -> next b1(v1)
-# CHECK: b1(v2: int[{{*}}]):
-# CHECK: LoopHint
+# CHECK: Jump -> next b3()
+# CHECK-NOT: LoopHint
 }
 
 function f3 name="sumComputedBeforeLoop" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
@@ -90,6 +89,108 @@ function f4 name="boundMovesWithCounter" parameters=[{type=int[0, 100]}] results
     Branch v6 -> taken b2(| 0), notTaken b3()
   b2(v7):
     v8 = Add v7, v2
+    Jump -> next b1(v8)
+  b3():
+    Return
+# CHECK: Jump -> next b1(v1)
+# CHECK: LoopHint
+}
+
+function f5 name="boundMadeAnInt32InHeader" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Integer integer=0
+    v5 = BitOr v0, v4
+    v6 = Less v2, v5
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = Increment v7
+    Jump -> next b1(v8)
+  b3():
+    Return
+# CHECK: Jump -> next b3()
+# CHECK-NOT: LoopHint
+}
+
+function f6 name="lengthOfListReadInHeader" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = GetArrayLength v0
+    v5 = Less v2, v4
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = Mul v6, v6
+    v8 = Increment v6
+    Jump -> next b1(v8)
+  b3():
+    Return
+# CHECK: Jump -> next b3()
+# CHECK-NOT: LoopHint
+}
+
+function f7 name="innerBoundComputedInInnerHeader" parameters=[{type=number}, {type=int[0, 100]}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(| 0), notTaken b6()
+  b2(v6):
+    v7 = Integer integer=0
+    Jump -> next b3(v7)
+  b3(v8):
+    LoopHint
+    v10 = Integer integer=0
+    v11 = BitOr v0, v10
+    v12 = Less v8, v11
+    Branch v12 -> taken b4(| 0), notTaken b5()
+  b4(v13):
+    v14 = Increment v13
+    Jump -> next b3(v14)
+  b5():
+    v15 = Increment v6
+    Jump -> next b1(v15)
+  b6():
+    Return
+# CHECK: Jump -> next b6()
+# CHECK-NOT: LoopHint
+}
+
+# The list grows as fast as the counter
+function f8 name="loopAppendsToList" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = GetArrayLength v0
+    v5 = Less v2, v4
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    AppendElement v0, v6
+    v8 = Increment v6
+    Jump -> next b1(v8)
+  b3():
+    Return
+# CHECK: Jump -> next b1(v1)
+# CHECK: LoopHint
+}
+
+function f9 name="numberComputedInHeader" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Integer integer=2
+    v5 = Mul v0, v4
+    v6 = Less v2, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Increment v2
+    v8 = AssumeType v7 provenType=int[0, 100]
     Jump -> next b1(v8)
   b3():
     Return

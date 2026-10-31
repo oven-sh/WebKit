@@ -1,0 +1,22 @@
+# helper.cjs: module.exports = exportedByHelper; require.main.exports()
+# The runner takes the test files from disk, and the one that runs is the main module: nobody knows what it exports.
+# OPTIONS: admit=FilesRunByHost
+# RUN: valueflow-solve calls
+# REQUIRES: code-outside-image
+# CHECK: f0 v5 ->{{*}} unknown
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="/app/helper.cjs" displayPath="helper.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects] requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+function f0 name="helper" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v3 = PropGet v2 key="main"
+    v4 = PropGet v3 key="exports"
+    v5 = Call v4, v3
+    Return
+}
+function f1 name="exportedByHelper" module=m0 results=[{type=anything}] {
+    Return
+}

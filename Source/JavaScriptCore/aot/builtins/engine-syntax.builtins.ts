@@ -69,8 +69,10 @@ export default b.declarations(
     "GeneratorPrototype",
     "IteratorOperations",
     "JSIteratorHelperPrototype",
+    "MapIteratorPrototype",
     "MapPrototype",
     "ObjectConstructor",
+    "SetIteratorPrototype",
     "SetPrototype",
     "TypedArrayPrototype",
   ),
@@ -79,6 +81,7 @@ export default b.declarations(
   b.intrinsic("nakedConstructor", "Value", { intrinsic: "Directive", directive: "NakedConstructor" }),
 
   b.intrinsic("undefined", "Value", { intrinsic: "Undefined" }),
+  b.intrinsic("arrayProtoValues", "Value", { intrinsic: "Builtin", path: "Array.prototype.values" }),
   b.intrinsic("Infinity", "Value", { intrinsic: "Double", value: Infinity }),
   b.intrinsic("MAX_SAFE_INTEGER", "Value", {
     intrinsic: "Int",
@@ -113,6 +116,7 @@ export default b.declarations(
   operation("CreatePromise", "createPromise"),
   operation("GetByValWithThis", "getByValWithThis"),
   operation("IsConstructor", "isConstructor"),
+  operation("ReadsIteratorOfListUnseen", "readsIteratorOfListUnseen"),
   operation("ToObject", "toObject"),
 
   jsTypeTests({
@@ -127,6 +131,8 @@ export default b.declarations(
     isRegExpObject: "RegExpObjectType",
     isSet: "JSSetType",
     isWrapForValidIterator: "JSWrapForValidIteratorType",
+    isMapIterator: "JSMapIteratorType",
+    isSetIterator: "JSSetIteratorType",
   }),
   b.intrinsic("isTypedArrayView", "Call", {
     intrinsic: "HasJSType",
@@ -224,6 +230,8 @@ export default b.declarations(
   operation("ResumeGenerator", "resumeGenerator"),
   operation("SetNext", "setNext"),
   operation("StepArrayIterator", "stepArrayIterator"),
+  operation("StepMapIterator", "stepMapIterator"),
+  operation("StepSetIterator", "stepSetIterator"),
   operation("StepGenerator", "stepGenerator"),
 
   enumerators("Typed::ArrayStorage", {

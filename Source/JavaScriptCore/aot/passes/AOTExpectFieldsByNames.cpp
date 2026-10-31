@@ -228,7 +228,7 @@ void expectFieldsByNamesAsked(Program& program, BuildContext& build)
             entry.field = grouped->second;
     }
     AOT::stableSort(groups, { }, &FieldAndGroup::second);
-    AOT::sort(asked);
+    AOT::sortInLine(asked);
     removeRepeatedElements(asked);
 
     TypeArena types(program.types);

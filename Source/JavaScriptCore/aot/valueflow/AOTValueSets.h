@@ -15,6 +15,7 @@
 #include <bit>
 #include <memory>
 #include <span>
+#include <wtf/ScopedLambda.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
@@ -52,6 +53,13 @@ private:
 void giveBackMostRoomOf(auto& list)
 {
     list.shrinkCapacity(std::max<size_t>(list.size(), list.capacity() / 4));
+}
+
+// The lists of one step of a round are long in the same rounds. One that has been read gives its room to the lists of the next step.
+void giveBackRoomIfEmpty(auto& list)
+{
+    if (list.isEmpty() && list.capacity() * sizeof(list[0]) >= 64 * KB)
+        list.shrinkCapacity(0);
 }
 
 class ValueSets {
@@ -225,7 +233,20 @@ public:
 
     uint64_t hashOfMembers(ValueSetID) const;
 
+    // Hundreds of callers share one walk over the stored form and pay a call for each word of members.
     void forEachMember(ValueSetID set, NOESCAPE const Invocable<void(ValueFlowObjectID)> auto& functor) const
+    {
+        walkMembers<false>(set, functor);
+    }
+
+    // For the walks that a build runs most, at the price of a copy of the walk for each.
+    void forEachMemberInLine(ValueSetID set, NOESCAPE const Invocable<void(ValueFlowObjectID)> auto& functor) const
+    {
+        walkMembers<true>(set, functor);
+    }
+
+    template<bool isInLine>
+    ALWAYS_INLINE void walkMembers(ValueSetID set, NOESCAPE const Invocable<void(ValueFlowObjectID)> auto& functor) const
     {
         if (isComplement(set)) [[unlikely]] {
             auto callForRange = [&](uint32_t begin, uint32_t end) NEVER_INLINE {
@@ -233,14 +254,14 @@ public:
                     functor(ValueFlowObjectID(member));
             };
             uint32_t next = 0;
-            forEachStoredMember(set, [&](uint32_t member) {
+            forEachStoredMember<isInLine>(set, [&](uint32_t member) {
                 callForRange(next, member);
                 next = member + 1;
             });
             callForRange(next, m_sizeOfUniverse);
             return;
         }
-        forEachStoredMember(set, [&](uint32_t member) {
+        forEachStoredMember<isInLine>(set, [&](uint32_t member) {
             functor(ValueFlowObjectID(member));
         });
     }
@@ -312,6 +333,19 @@ public:
         m_blocks.freeOutgrownTables();
     }
 
+    // Most sets are steps on the way to another set, and soon nobody names them. Their memory is taken back like this, while no thread makes or reads a set:
+    // willFreeSets(), keep() for every set that anybody still names (any thread), freeShareOfSets() for every share (any thread), didFreeSets().
+    // A set keeps its number for as long as it is kept. What was made before keepSetsMadeSoFar() is never freed, so only who has written down a set since then needs to be asked.
+    // What is freed is marked as such. A build with assertions looks for the mark wherever a set is read, and hands nothing out again before the next time, so that whoever still names a freed set is caught.
+    void keepSetsMadeSoFar();
+    void willFreeSets();
+    void keep(ValueSetID);
+    static constexpr unsigned sharesOfSetsToFree = 3 * 64;
+    void freeShareOfSets(unsigned share);
+    void didFreeSets();
+    size_t bytesOfSetsMade() const { return m_lists.bytesMade() + m_groups.bytesMade() + m_blocks.bytesMade(); }
+    size_t bytesOfSetsFree() const { return m_lists.bytesFree() + m_groups.bytesFree() + m_blocks.bytesFree(); }
+
 private:
     friend class ValueSetMaker;
 
@@ -320,6 +354,8 @@ private:
     struct Run {
         const uint64_t* words() const LIFETIME_BOUND { return reinterpret_cast<const uint64_t*>(this + 1); }
         std::span<const uint64_t> span() const LIFETIME_BOUND { return unsafeMakeSpan(words(), numberOfWords); }
+
+        static constexpr uint32_t isFree = UINT32_MAX;
 
         uint32_t numberOfWords { 0 };
         uint32_t numberOfMembers { 0 };
@@ -335,13 +371,23 @@ private:
 
         const Run& at(uint32_t number) const LIFETIME_BOUND
         {
-            const char* segment = m_segments[number / unitsPerSegment].load(std::memory_order_acquire);
-            return *reinterpret_cast<const Run*>(segment + static_cast<size_t>(number % unitsPerSegment) * bytesPerUnit);
+            const Run& run = freeOrNotAt(number);
+#if ASSERT_ENABLED || defined(AOT_CATCHES_FREED_SETS)
+            RELEASE_ASSERT(run.numberOfMembers != Run::isFree);
+#endif
+            return run;
         }
 
+        static constexpr uint32_t mostUnitsHandedOutAgain = 64;
+        struct FreeRuns {
+            std::array<Vector<uint32_t>, mostUnitsHandedOutAgain + 1> ofUnits;
+        };
         struct Room {
             uint32_t nextUnit { 0 };
             uint32_t endOfChunk { 0 };
+            FreeRuns* freeRuns { nullptr };
+            // Where every run that is made or found is written down, for a maker whose sets are all kept.
+            Vector<uint32_t>* runsToKeep { nullptr };
         };
 
         uint32_t intern(Room&, std::span<const uint64_t> words, uint32_t numberOfMembers, uint64_t hashOfMembers, uint64_t lowestMembers = 0);
@@ -350,6 +396,24 @@ private:
 
         size_t size() const;
         uint32_t endOfNumbers() const { return m_endOfNumbers.load(std::memory_order_relaxed); }
+
+        void keepRunsMadeSoFar() { m_firstThatMayBeFreed = endOfNumbers(); }
+        void willFreeRuns();
+        // True for a run that may be freed and was not kept so far.
+        bool keep(uint32_t number)
+        {
+            if (number < m_firstThatMayBeFreed)
+                return false;
+            uint32_t bit = number - m_firstThatMayBeFreed;
+            uint64_t mask = 1ull << bit % 64;
+            if (m_isKept[bit / 64].load(std::memory_order_relaxed) & mask)
+                return false;
+            return !(m_isKept[bit / 64].fetch_or(mask, std::memory_order_relaxed) & mask);
+        }
+        void freeRunsOfShard(unsigned shard);
+        void didFreeRuns();
+        size_t bytesMade() const { return static_cast<size_t>(endOfNumbers()) * bytesPerUnit; }
+        size_t bytesFree() const { return m_unitsFree * bytesPerUnit; }
         void addBytesTo(ValueFlowBytesByTable&, ASCIILiteral runs, ASCIILiteral index) const;
 
     private:
@@ -390,13 +454,21 @@ private:
             alignas(64) Lock lock;
             uint32_t size { 0 };
             Vector<Table> outgrownTables;
+            Vector<uint32_t> runsJustFreed;
+            Vector<uint32_t> runsFreedLastTime;
         };
 
         static Table createTable(unsigned bits);
         uint32_t find(Table, size_t& position, uint32_t hash, const Run& head, std::span<const uint64_t> words) const;
         uint32_t takeUnits(uint32_t numberOfUnits);
         uint32_t allocate(Room&, size_t numberOfWords);
-        Run& mutableRunAt(uint32_t number) { return const_cast<Run&>(at(number)); }
+        const Run& freeOrNotAt(uint32_t number) const LIFETIME_BOUND
+        {
+            const char* segment = m_segments[number / unitsPerSegment].load(std::memory_order_acquire);
+            return *reinterpret_cast<const Run*>(segment + static_cast<size_t>(number % unitsPerSegment) * bytesPerUnit);
+        }
+        Run& mutableRunAt(uint32_t number) { return const_cast<Run&>(freeOrNotAt(number)); }
+        static uint32_t unitsOf(size_t numberOfWords) { return static_cast<uint32_t>((sizeof(Run) + numberOfWords * sizeof(uint64_t) + bytesPerUnit - 1) / bytesPerUnit); }
         void grow(Shard&);
 
         std::array<Shard, numberOfShards> m_shards;
@@ -404,6 +476,12 @@ private:
         uint32_t m_nextUnit WTF_GUARDED_BY_LOCK(m_lockOfUnits) { 0 };
         std::atomic<uint32_t> m_endOfNumbers { 0 };
         std::array<std::atomic<char*>, numberOfSegments> m_segments { };
+        uint32_t m_firstThatMayBeFreed { UINT32_MAX };
+        std::unique_ptr<std::atomic<uint64_t>[]> m_isKept;
+        Lock m_lockOfFreeRuns;
+        FreeRuns m_freeRuns WTF_GUARDED_BY_LOCK(m_lockOfFreeRuns);
+        std::atomic<bool> m_hasFreeRuns { false };
+        size_t m_unitsFree { 0 };
     };
 
     static constexpr uint32_t storedSetOf(ValueSetID set) { return set.index() >> 1; }
@@ -623,13 +701,27 @@ private:
         }
     }
 
+    template<bool isInLine = true>
     void forEachStoredMember(ValueSetID set, NOESCAPE const Invocable<void(uint32_t)> auto& functor) const
     {
-        anyStoredMember(set, [&](uint32_t member) {
-            functor(member);
-            return false;
-        });
+        if constexpr (isInLine) {
+            anyStoredMember(set, [&](uint32_t member) {
+                functor(member);
+                return false;
+            });
+        } else {
+            if (holdsOneMember(storedSetOf(set))) {
+                functor(onlyMemberOf(storedSetOf(set)));
+                return;
+            }
+            forEachWordOfRun(set, [&](uint32_t first, uint64_t bits) {
+                for (; bits; bits &= bits - 1)
+                    functor(first + static_cast<uint32_t>(std::countr_zero(bits)));
+            });
+        }
     }
+
+    void forEachWordOfRun(ValueSetID, const ScopedLambda<void(uint32_t first, uint64_t bits)>&) const;
 
     struct RememberedByAll {
         std::atomic<uint64_t> resultAndCount { 0 };
@@ -681,6 +773,11 @@ public:
     explicit ValueSetMaker(ValueSets&);
 
     const ValueSets& sets() const { return m_sets; }
+    // For when sets are freed: what is remembered may name one of them.
+    void forgetWhatIsRemembered();
+    // For a maker whose owner writes its sets down where nobody looks for them. Call before the first set is made.
+    void keepEverySetMade() { m_roomForLists.runsToKeep = &m_setsToKeep; }
+    void keepSetsToKeep();
 
     ValueSetID of(ValueFlowObjectID member) { return ValueSetID(ValueSets::storedSetOfOneMember(member.index()) * 2); }
     ValueSetID of(std::span<const ValueFlowObjectID>);
@@ -798,6 +895,8 @@ private:
     ValueSets::InternedRuns::Room m_roomForBlocks;
     ValueSets::InternedRuns::Room m_roomForGroups;
     ValueSets::InternedRuns::Room m_roomForLists;
+    std::array<ValueSets::InternedRuns::FreeRuns, 3> m_freeRuns;
+    Vector<uint32_t> m_setsToKeep;
     std::array<Remembered, 1u << bitsOfRememberedSets> m_rememberedSets { };
     Vector<RememberedEntries> m_rememberedEntries;
     Vector<Remembered> m_rememberedBlocks;

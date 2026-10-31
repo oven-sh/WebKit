@@ -1,0 +1,89 @@
+# Two arrays that a generator makes are still two when they are read back from its frame. Where a third name may be either, all three share a group
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass MoveGeneratorFramesToHeap
+# STATISTIC: GeneratorsWithHeapFrames = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="twoArrays" role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=number}] results=[{type=Generator}] creator=Coroutine{ramp=f0 body=f1 promiseParameter=2}
+function f1 name="twoArrays" role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=number}, {type=Generator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{ramp=f0 body=f1 promiseParameter=2} {
+    v3 = Undefined
+    v4 = YieldBySavingFrame v2, v3 @10
+    v5 = ResultAt v4 index=0
+    v6 = ResultAt v4 index=1
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1() frequency=Rare:
+    Throw v5
+  b2() frequency=Rare:
+    Return v5
+  b3():
+    v7 = NewArray contents=number
+    v8 = AssumeType v7 provenType=Array<number, proven, pristine[Storage, Names]>
+    v9 = NewArray contents=number
+    v10 = AssumeType v9 provenType=Array<number, proven, pristine[Storage, Names]>
+    Jump -> next b4()
+  b4():
+    LoopHint
+    v12 = Call v5
+    v13 = ToBoolean v12
+    Branch v13 -> taken b5(), notTaken b8()
+  b5():
+    v14 = YieldBySavingFrame v2, v1 @11
+    v15 = ResultAt v14 index=0
+    v16 = ResultAt v14 index=1
+    Switch v16 cases=[1, 2] -> case b6(), case b7(), otherwise b4()
+  b6() frequency=Rare:
+    Throw v15
+  b7() frequency=Rare:
+    Return v15
+  b8():
+    v17 = HasArrayStorage v8 arrayStorage=Double [isWritable]
+    Branch v17 -> taken b9(| 0), notTaken b10()
+  b9(v18):
+    ConvertToDoubleStorage v10
+    v20 = Integer
+    PutArrayElement v8, v20, v1, v18 arrayStorage=Double level=Expected [keyIsIntegral]
+    Return v10
+  b10():
+    Return v8
+}
+function f2 name="oneNameForEither" role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=number}] results=[{type=Generator}] creator=Coroutine{ramp=f2 body=f3 promiseParameter=2}
+function f3 name="oneNameForEither" role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=number}, {type=Generator}] results=[{type=anything}] derivation={source=f2} creator=Coroutine{ramp=f2 body=f3 promiseParameter=2} {
+    v3 = Undefined
+    v4 = YieldBySavingFrame v2, v3 @20
+    v5 = ResultAt v4 index=0
+    v6 = ResultAt v4 index=1
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1() frequency=Rare:
+    Throw v5
+  b2() frequency=Rare:
+    Return v5
+  b3():
+    v7 = NewArray contents=number
+    v8 = NewArray contents=number
+    v9 = ToBoolean v1
+    Branch v9 -> taken b4(v7), notTaken b4(v8)
+  b4(v10):
+    v11 = YieldBySavingFrame v2, v1 @21
+    v12 = ResultAt v11 index=0
+    v13 = ResultAt v11 index=1
+    Switch v13 cases=[1, 2] -> case b5(), case b6(), otherwise b7()
+  b5() frequency=Rare:
+    Throw v12
+  b6() frequency=Rare:
+    Return v12
+  b7():
+    v14 = Call v12, v7, v8, v10
+    Return v14
+}
+# CHECK: function f4 name="twoArrays"
+# CHECK: b0([[saved]]: anything,
+# CHECK: GetHeapFrameWord [[saved]] index=[[word]] valueType=anything allocationGroup=[[group]] @11
+# CHECK-NOT: allocationGroup=[[group]] @11
+# CHECK: GetHeapFrameWord [[saved]] index={{*}} valueType=anything allocationGroup={{*}} @11
+# CHECK: function f5 name="oneNameForEither"
+# CHECK: b0([[frame]]: anything,
+# CHECK: GetHeapFrameWord [[frame]] index={{*}} valueType=anything allocationGroup=[[shared]] @21
+# CHECK: GetHeapFrameWord [[frame]] index={{*}} valueType=anything allocationGroup=[[shared]] @21
+# CHECK: GetHeapFrameWord [[frame]] index={{*}} valueType=anything allocationGroup=[[shared]] @21

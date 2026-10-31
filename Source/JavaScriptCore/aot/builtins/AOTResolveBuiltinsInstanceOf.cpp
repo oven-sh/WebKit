@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFlowApply.h"
 #include "AOTFlowResults.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTResultRules.h"
@@ -91,7 +92,7 @@ static InstanceOfAnswer findInPrototypeChain(const BuiltinLookupContext& context
 
 static InstanceOfAnswer answerForClassPart(const BuiltinLookupContext& context, const ClassPart& part, BuiltinID soughtPrototype)
 {
-    if (!part.provenPristine.contains(PristineAspects::Names))
+    if (!part.provenPristine.containsAny({ PristineAspects::Names, PristineAspects::Prototype }))
         return InstanceOfAnswer::Unknown;
     return findInPrototypeChain(context, part.builtinClass, soughtPrototype);
 }
@@ -128,12 +129,12 @@ InstanceOfAnswer instanceOfAnswerFor(const BuiltinLookupContext& context, const 
     auto add = [&](InstanceOfAnswer ofPart) {
         answer = answer ? joinAnswers(*answer, ofPart) : ofPart;
     };
-    if (subject.primitives)
-        add(InstanceOfAnswer::No);
     if (subject.layouts)
         add(answerForLayouts(context, subject.layouts, soughtPrototype));
     for (const ClassPart& part : subject.classes)
         add(answerForClassPart(context, part, soughtPrototype));
+    if (subject.primitives && *answer == InstanceOfAnswer::Yes)
+        return InstanceOfAnswer::YesIfObject;
     return *answer;
 }
 
@@ -218,11 +219,24 @@ static void becomeAnswer(FunctionPassContext& context, ValueID id, bool answer)
     value.setExpected({ });
 }
 
+static void becomeTestForObject(FunctionPassContext& context, ValueID id)
+{
+    Value& value = context.function.edit(id);
+    Origin origin = value.origin();
+    value = makeTypeTest(value.valueOperand(), context.types.intern(Type::object()));
+    value.setOrigin(origin);
+    value.type = resultTypeOf(context.program, context.function, value, context.types);
+}
+
 static void finishArmWithWalk(SiteExpansion& expansion, BuiltinClassID builtinClass, ValueID subject)
 {
     FunctionPassContext& context = expansion.context();
     const BuiltinTable& table = context.program.builtins();
     InstanceOfAnswer answer = instanceOfAnswerFor({ context.program, context.inputs.flow }, context.program.typeOf(context.function, subject), builtinClass);
+    if (answer == InstanceOfAnswer::YesIfObject) {
+        expansion.finishArm(expansion.builder().appendTypeTest(subject, Type::object()));
+        return;
+    }
     if (answer != InstanceOfAnswer::Unknown) {
         expansion.finishArm(expansion.builder().appendBoolean(answer == InstanceOfAnswer::Yes));
         return;
@@ -283,6 +297,18 @@ static void expand(SiteExpansion& expansion, const BuiltinInstanceOfSite& site)
         builder.moveToEndOf(arms.taken);
     }
 
+    // A validating build walks the chain all the same and compares.
+    auto finishArmWithAnswer = [&](ValueID answer) {
+        FunctionPassContext& context = expansion.context();
+        if (context.build.validates()) {
+            const BuiltinTable& table = context.program.builtins();
+            ValueID prototype = builder.append(*tryMakeBuiltinConstant(table, table.at(site.builtinClass).prototype));
+            ValueID walked = expansion.append(IRBuilder::make(Opcode::HasInPrototypeChain, { expansion.original().valueOperand(), prototype }));
+            ValueID isSame = builder.append(IRBuilder::make(Opcode::StrictEq, { walked, answer }));
+            builder.append(makeValidateType(isSame, context.types.intern(Type::fromPrimitives(Primitive::True))));
+        }
+        expansion.finishArm(answer);
+    };
     switch (site.answer) {
     case InstanceOfAnswer::Unknown:
         if (site.readsPrototype)
@@ -293,10 +319,13 @@ static void expand(SiteExpansion& expansion, const BuiltinInstanceOfSite& site)
             finishArmWithWalk(expansion, site.builtinClass, expansion.original().valueOperand());
         break;
     case InstanceOfAnswer::No:
-        expansion.finishArm(builder.appendBoolean(false));
+        finishArmWithAnswer(builder.appendBoolean(false));
         break;
     case InstanceOfAnswer::Yes:
-        expansion.finishArm(builder.appendBoolean(true));
+        finishArmWithAnswer(builder.appendBoolean(true));
+        break;
+    case InstanceOfAnswer::YesIfObject:
+        finishArmWithAnswer(builder.appendTypeTest(expansion.original().valueOperand(), Type::object()));
         break;
     }
     expansion.end();
@@ -310,7 +339,7 @@ void rewriteBuiltinInstanceOfSites(FunctionPassContext& context, std::span<const
     IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
     SiteExpansion expansion(context, builder);
     for (const BuiltinInstanceOfSite& site : sites | std::views::reverse) {
-        if (site.constructorToTest) {
+        if (site.constructorToTest || context.build.validates()) {
             expand(expansion, site);
             continue;
         }
@@ -323,6 +352,9 @@ void rewriteBuiltinInstanceOfSites(FunctionPassContext& context, std::span<const
             break;
         case InstanceOfAnswer::Yes:
             becomeAnswer(context, site.site.value, true);
+            break;
+        case InstanceOfAnswer::YesIfObject:
+            becomeTestForObject(context, site.site.value);
             break;
         }
     }

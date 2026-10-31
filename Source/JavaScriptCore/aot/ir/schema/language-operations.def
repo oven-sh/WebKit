@@ -38,9 +38,12 @@ operation ReadScope (values...: Convertible/inspects) -> none ; none ; AsRead..A
 family Module AsRead..Placed
 operation ModuleNamespace (module: Module(Target), phase: ImportPhase) -> declared(module) ; unknownCode ; runtime = GetModuleNamespace ; flow = Copies ; flowRule = Module
 operation ImportModule (module: Module(Target), options?: Any/retains, referrer: Module(Referrer)) -> allocation(Promise) ; unknownCode ; runtime = ImportModule ; flow = Allocates ; flowRule = Module
-operation RequireModule (module: Module(Target), referrer: Module(Referrer), specifier: String) -> unknown ; unknownCode ; runtime = RequireModule ; flow = Copies ; flowRule = Module
+operation RequireModule (module: Module(Target), referrer: Module(Referrer), specifier: String) [ifHeldForImport] -> unknown ; unknownCode ; runtime = RequireModule ; flow = Copies ; flowRule = Module
 operation EvaluateModule (module: Module(Target), referrer: Module(Referrer)) [isBare isCallOfRequire] -> none ; unknownCode ; AsRead..Prepared ; removedBy = CallModules ; flow = Copies ; flowRule = Module
 operation RecordRequire (module: Module(Target), referrer: Module(Referrer)) -> none ; unknownCode ; runtime = RecordRequire ; flow = Copies ; flowsWithoutRule = true
+operation WasLoadedSynchronously (module: Module(Referrer)) -> natural(boolean) ; reads(ExternalState) writes(ExternalState) ; runtime = WasLoadedSynchronously ; flow = TableProves
+operation AreLoaderFunctionsStored () -> natural(boolean) ; reads(ExternalState) ; runtime = AreLoaderFunctionsStored ; flow = TableProves
+operation CountExecution (module: Module(Referrer), description: String, counter: UInt32) -> none ; writes(ExternalState) ; runtime = CountExecution ; flow = TableProves ; flowsWithoutRule = true
 operation ResolveModule (module: Module(Referrer), referrer: Module(Referrer), specifier: String) [isURL] -> unknown ; unknownCode ; runtime = ResolveModule ; flow = Unsound
 operation ThrowModuleFailure (failure: ModuleFailure) [isForRequire] -> natural(never) ; Allocates UsesRuntime throws ; runtime = ThrowModuleFailure ; flow = TableProves
 operation ImportDynamic (specifier: Any/Converted, options?: Any/retains, referrer: Module(Referrer)) -> allocation(Promise) ; unknownCode ; raises = LoadsModule ; runtime = ImportDynamic ; flow = Allocates ; flowRule = Module

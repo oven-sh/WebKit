@@ -14,6 +14,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+class EffectSummaries;
 struct Type;
 
 struct EffectDescription {
@@ -42,7 +43,8 @@ struct EffectDescription {
     friend bool operator==(const EffectDescription&, const EffectDescription&) = default;
 };
 
-EffectDescription describeEffects(const Program&, const Function&, const Value&);
+// A table that is given keeps what is found out about a long list of callees.
+EffectDescription describeEffects(const Program&, const Function&, const Value&, const EffectSummaries* = nullptr);
 EffectDescription describeEffects(const Program&, const Function&, const Terminator&);
 EffectDescription describeCodeRunBy(const Program&, const Function&, const Value&);
 EffectDescription describeCodeRunBy(const Program&, const Function&, const Terminator&);
@@ -67,7 +69,7 @@ private:
 void describeOperator(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&);
 void describeOperator(const Program&, Opcode, std::span<const Type> operandTypes, const Type& result, EffectDescription&);
 void describeAccess(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&);
-void describeCall(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&);
+void describeCall(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&, const EffectSummaries* = nullptr);
 void describeBuiltinCall(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&);
 EffectDescription describeUnmatchedCallByOperandTypes(const Program&, const Function&, const Value&);
 void describeInlineBuiltin(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&);
@@ -75,7 +77,7 @@ void describeInlineBuiltin(const Program&, const Function&, const Terminator&, c
 
 void describeBound(const Effects& declared, EffectDescription&);
 void describeCallees(const Program&, const CalleeList&, BuiltinCallMode, EffectDescription&);
-void describeCallees(const Program&, const CalleeList&, BuiltinCallMode, const EnteringOperands&, EffectDescription&);
+void describeCallees(const Program&, const CalleeList&, BuiltinCallMode, const EnteringOperands&, EffectDescription&, const EffectSummaries* = nullptr);
 void describeCallOf(const Program&, BuiltinID, BuiltinCallMode, EffectDescription&);
 void describeOperandsOfCall(const Program&, BuiltinID, BuiltinCallMode, BuiltinCallForm, TypeID receiver, std::span<const TypeID> arguments, EffectDescription&);
 void describeOverload(const Program&, BuiltinOverloadID, TypeID receiver, std::span<const TypeID> arguments, EffectDescription&);
@@ -85,6 +87,16 @@ void describeOperandCode(const Program&, const Type& operand, const OperandBehav
 void describeOperandCode(const Program&, TypeID operand, const OperandBehavior&, EffectDescription&);
 
 CalleeList calleesOfCall(const Program&, const Value& call);
+// Empty for every other operation. The call enters them, so it keeps them alive, which a stamp does not.
+std::span<const FunctionID> entrypointsOfTableCall(const Program&, const Value& call);
+inline std::span<const FunctionID> entrypointsOfTableCall(const Program&, const Terminator&) { return { }; }
+// The set that calleesOfCall() copies its answer from, if it is one. Reading the set costs nothing per callee.
+CalleeSetID calleeSetOfCall(const Program&, const Value& call);
+// The long set whose functions are the functions that describeCodeRunBy() lists for the call, if there is one.
+CalleeSetID longCalleeSetRunBy(const Program&, const Value& call);
+inline CalleeSetID longCalleeSetRunBy(const Program&, const Terminator&) { return { }; }
+// What describeCodeRunBy() says of such a call, without the functions of the set.
+EffectDescription describeCodeRunBesideLongCalleeSet(const Program&, const Value& call, CalleeSetID);
 CalleeList calleesThatBoundEffectsOf(const Program&, const Value& call);
 // A call of what is no function throws, and so does a call of a class and `new` of what is no constructor. A list of callees says what is entered, not that anything is.
 bool mayThrowBeforeEntry(const Program&, const Type& callee, BuiltinCallMode);

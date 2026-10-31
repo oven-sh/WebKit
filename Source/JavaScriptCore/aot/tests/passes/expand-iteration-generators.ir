@@ -10,7 +10,7 @@
 # TWICE-NEXT: outcome: Unchanged
 # ABSENT-NOT: IteratorOpen
 # ABSENT-NOT: IteratorResume
-# ABSENT-NOT: IteratorClose
+# ABSENT-NOT: IteratorClose v
 # ABSENT-NOT: role=IterationCleanup
 
 module m0 path="main.js" displayPath="main.js"

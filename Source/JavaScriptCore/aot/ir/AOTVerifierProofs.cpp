@@ -334,7 +334,9 @@ void FunctionVerifier::verifyProofsOfValueBesideMode(BlockID blockOfSuspension, 
             bool validates = user.opcode == Opcode::ValidateType;
             if ((!validates && !isCastWithoutTest(user.opcode)) || isBehindArm(use.block))
                 continue;
-            if (!typeOf(same).isSubsetOf(validates ? m_program.at(user.validatedType()) : typeOf(use.user), m_program)) {
+            // That a variable which holds the value has been given one says nothing of the value.
+            Type taken = (validates ? m_program.at(user.validatedType()) : typeOf(use.user)).withPrimitives(Primitive::Unspecified);
+            if (!typeOf(same).isSubsetOf(taken, m_program)) {
                 fail(InternalErrorKind::ProofInFrontOfMode, use.block, use.user, suspension.index());
                 return;
             }

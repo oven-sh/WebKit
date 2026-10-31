@@ -1,0 +1,171 @@
+# `const E = {}; E.a = 1;`: a read of a field becomes the constant that every new object of the layout is given before anybody can see it, where no store anywhere gives the field another value.
+# The walk behind a birth passes constants, casts, stores that run no code, a jump, and a call of one known function. The type of the field stays: its slot is empty until the store.
+# The constant of a literal that a function makes is read as the constant too, and the type of that field stays as well.
+# FORM: Prepared
+# RUN: pass NarrowConstantVariables
+# CHECK: outcome: Changed
+# CHECK: layout L0 name="storedBehindBirth" fields=[{key="a" declared={type=number} {{*}}
+# CHECK: layout L12 name="madeByAFunction" fields=[{key="a" declared={type=number} {{*}}
+# CHECK-LABEL: name="reads"
+# CHECK: v13: 1 = Integer integer=1
+# CHECK-NEXT: v14: {{*}} = PropGet v1 key="a"
+# CHECK-NEXT: v15: {{*}} = PropGet v2 key="a"
+# CHECK-NEXT: v16: {{*}} = PropGet v3 key="a"
+# CHECK-NEXT: v17: 1 = Integer integer=1
+# CHECK-NEXT: v18: 1 = Integer integer=1
+# CHECK-NEXT: v19: 1 = Integer integer=1
+# CHECK-NEXT: v20: {{*}} = PropGet v7 key="a"
+# CHECK-NEXT: v21: 1 = Integer integer=1
+# CHECK-NEXT: v22: {{*}} = PropGet v9 key="a"
+# CHECK-NEXT: v23: {{*}} = PropGet v10 key="a"
+# CHECK-NEXT: v24: {{*}} = PropGet v11 key="b"
+# CHECK-NEXT: v25: 2 = Integer integer=2
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="storedBehindBirth" module=m0 declared={type=L0}
+variable g1 name="callBetween" module=m0 declared={type=L1}
+variable g2 name="readBetween" module=m0 declared={type=L2}
+variable g3 name="otherConstantLater" module=m0 declared={type=L3}
+variable g4 name="sameConstantLater" module=m0 declared={type=L4}
+variable g5 name="byAFunction" module=m0 declared={type=L5}
+variable g6 name="behindAJump" module=m0 declared={type=L6}
+variable g7 name="aSetterMayAnswer" module=m0 declared={type=L7}
+variable g8 name="elementsBetween" module=m0 declared={type=L8}
+variable g9 name="aKeyThatIsNoIndexBetween" module=m0 declared={type=L9}
+variable g10 name="oneBirthWithoutTheStore" module=m0 declared={type=L10}
+variable g11 name="storedByNobodyKnowsWhom" module=m0 declared={type=L11}
+variable g12 name="madeByAFunction" module=m0 declared={type=L12}
+layout L0 name="storedBehindBirth" fields=[{key="a" declared={type=number} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[RedefineProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="callBetween" fields=[{key="a" declared={type=number} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[RedefineProperty, ChangeIntegrity, ChangePrototype]}
+layout L2 name="readBetween" fields=[{key="a" declared={type=number} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[RedefineProperty, ChangeIntegrity, ChangePrototype]}
+layout L3 name="otherConstantLater" fields=[{key="a" declared={type=number} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[RedefineProperty, ChangeIntegrity, ChangePrototype]}
+layout L4 name="sameConstantLater" fields=[{key="a" declared={type=number} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[RedefineProperty, ChangeIntegrity, ChangePrototype]}
+layout L5 name="byAFunction" fields=[{key="a" declared={type=number} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[RedefineProperty, ChangeIntegrity, ChangePrototype]}
+layout L6 name="behindAJump" fields=[{key="a" declared={type=number} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[RedefineProperty, ChangeIntegrity, ChangePrototype]}
+layout L7 name="aSetterMayAnswer" fields=[{key="a" declared={type=number} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[RedefineProperty, ChangeIntegrity, ChangePrototype]}
+layout L8 name="elementsBetween" fields=[{key="a" declared={type=number} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[RedefineProperty, ChangeIntegrity, ChangePrototype]}
+layout L9 name="aKeyThatIsNoIndexBetween" fields=[{key="a" declared={type=number} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[RedefineProperty, ChangeIntegrity, ChangePrototype]}
+layout L10 name="oneBirthWithoutTheStore" fields=[{key="a" declared={type=number} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[RedefineProperty, ChangeIntegrity, ChangePrototype]}
+layout L11 name="storedByNobodyKnowsWhom" fields=[{key="b" declared={type=number} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[RedefineProperty, ChangeIntegrity, ChangePrototype]}
+layout L12 name="madeByAFunction" fields=[{key="a" declared={type=number} flow={location={writers=AllKnown stores=AtMostOnce initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None}
+data d0 root=Object{layout=L0} module=m0
+data d1 root=Object{layout=L1} module=m0
+data d2 root=Object{layout=L2} module=m0
+data d3 root=Object{layout=L3} module=m0
+data d4 root=Object{layout=L4} module=m0
+data d5 root=Object{layout=L5} module=m0
+data d6 root=Object{layout=L6} module=m0
+data d7 root=Object{layout=L7} module=m0
+data d8 root=Object{layout=L8} module=m0
+data d9 root=Object{layout=L9} module=m0
+data d10 root=Object{layout=L10} module=m0
+data d11 root=Object{layout=L11} module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = String string="x"
+    v3 = Integer integer=-1
+    v4 = Integer
+    v5 = NewClosure function=f2
+    v6 = NewClosure function=f3
+    v7 = NewClosure function=f4
+    v8 = NewClosure function=f1
+    v9 = Data data=d0
+    PutModuleVariable v9 variable=g0
+    PropSet v9, v0 key="a" receivers=[L0]
+    v12 = Data data=d1
+    PutModuleVariable v12 variable=g1
+    v14 = Call v5
+    PropSet v12, v0 key="a" receivers=[L1]
+    v16 = Data data=d2
+    PutModuleVariable v16 variable=g2
+    v18 = PropGet v16 key="a"
+    PropSet v16, v0 key="a" receivers=[L2]
+    v20 = Data data=d3
+    PutModuleVariable v20 variable=g3
+    PropSet v20, v0 key="a" receivers=[L3]
+    v23 = Data data=d4
+    PutModuleVariable v23 variable=g4
+    PropSet v23, v0 key="a" receivers=[L4]
+    v26 = Data data=d5
+    PutModuleVariable v26 variable=g5
+    v28 = Call v6, -, v26 callees=[f3]
+    v29 = Data data=d7
+    PutModuleVariable v29 variable=g7
+    PropSet v29, v0 key="a" receivers=[L7]
+    v32 = Data data=d8
+    PutModuleVariable v32 variable=g8
+    ElemSet v32, v4, v2 receivers=[L8]
+    PropSet v32, v0 key="a" receivers=[L8]
+    v36 = Data data=d9
+    PutModuleVariable v36 variable=g9
+    ElemSet v36, v3, v2 receivers=[L9]
+    PropSet v36, v0 key="a" receivers=[L9]
+    v40 = Data data=d10
+    PutModuleVariable v40 variable=g10
+    PropSet v40, v0 key="a" receivers=[L10]
+    v43 = Data data=d10
+    v44 = Data data=d11
+    PutModuleVariable v44 variable=g11
+    PropSet v44, v0 key="b" receivers=[L11]
+    v47 = Data data=d6
+    PutModuleVariable v47 variable=g6
+    Jump -> next b1(v47)
+  b1(v49: L6):
+    PropSet v49, v0 key="a" receivers=[L6]
+    v51 = Call v5
+    PropSet v20, v1 key="a" receivers=[L3]
+    PropSet v23, v0 key="a" receivers=[L4]
+    v54 = Call v5
+    PropSet v54, v1 key="b"
+    v56 = Call v7
+    v57 = Call v8
+    Return
+}
+function f1 name="reads" module=m0 results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = GetModuleVariable variable=g2
+    v3 = GetModuleVariable variable=g3
+    v4 = GetModuleVariable variable=g4
+    v5 = GetModuleVariable variable=g5
+    v6 = GetModuleVariable variable=g6
+    v7 = GetModuleVariable variable=g7
+    v8 = GetModuleVariable variable=g8
+    v9 = GetModuleVariable variable=g9
+    v10 = GetModuleVariable variable=g10
+    v11 = GetModuleVariable variable=g11
+    v12 = GetModuleVariable variable=g12
+    v13 = PropGet v0 key="a"
+    v14 = PropGet v1 key="a"
+    v15 = PropGet v2 key="a"
+    v16 = PropGet v3 key="a"
+    v17 = PropGet v4 key="a"
+    v18 = PropGet v5 key="a"
+    v19 = PropGet v6 key="a"
+    v20 = PropGet v7 key="a"
+    v21 = PropGet v8 key="a"
+    v22 = PropGet v9 key="a"
+    v23 = PropGet v10 key="a"
+    v24 = PropGet v11 key="b"
+    v25 = PropGet v12 key="a"
+    Return
+}
+function f2 name="unknown" module=m0 results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+}
+function f3 name="fills" module=m0 length=1 parameters=[{type=L5}] results=[{type=anything}] {
+  b0(v0: L5):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="a" receivers=[L5]
+    Return
+}
+function f4 name="makes" module=m0 results=[{type=anything}] {
+    v0 = Integer integer=2
+    v1 = NewObject -, v0 layout=L12 fields=[0]
+    PutModuleVariable v1 variable=g12
+    Return
+}

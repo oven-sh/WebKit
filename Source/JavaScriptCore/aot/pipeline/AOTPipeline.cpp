@@ -61,6 +61,7 @@
 #include "AOTRemoveUnreadExports.h"
 #include "AOTRemoveUnreadFields.h"
 #include "AOTReuseEnvironments.h"
+#include "AOTSelectTypedResultsTargets.h"
 #include "AOTSlotPlan.h"
 #include "AOTSplitBehindEntryChecks.h"
 #include "AOTStringArena.h"
@@ -171,12 +172,16 @@ constexpr std::array rows {
     addingOnly({ }, programPass(RemoveUnusedResults, Optional, { Prepared, Prepared }, simplifyInputs | CallGraph, { }, resultsAboutBodies)),
     addingOnly({ }, programPass(ProveResults, Optional, { Prepared, Prepared }, simplifyInputs, { }, resultsAboutBodies)),
     addingOnly({ }, programPass(RemoveUnusedParameters, Optional, { Prepared, Prepared }, simplifyInputs | CallGraph, { }, resultsAboutBodies)),
+    // It asks for what AllocateInFrames asks for, so that all of it is computed together. A call graph that still lists a call which is gone says no less than before.
+    addingOnly({ }, programPass(RemoveUnusedCalls, Optional, { Prepared, Prepared }, simplifyInputs | Results { CallGraph, Heat }, { }, { })),
     programPass(RemoveUnreachableFunctions, Optional, { Prepared, Selected }, { CallGraph }, { }, { }),
     programPass(SplitBehindEntryChecks, Optional, { Prepared, Prepared }, { Flow, CallGraph, Heat }, { }, resultsAboutBodies | Results { Heat }),
     addingOnly({ }, programPass(SkipAnsweredEntryChecks, Optional, { Prepared, Prepared }, { Heat }, { }, resultsAboutBodies)),
     addingOnly({ }, programPass(SplitFreshResults, Optional, { Prepared, Prepared }, simplifyInputs | Results { CallGraph, Heat }, { }, resultsAboutBodies)),
     programPass(PromoteAggregateParameters, Optional, { Prepared, Prepared }, { Flow, EffectSummaries }, { }, resultsAboutBodies),
     programPass(SplitCoroutines, Required, { Prepared, Prepared }, simplifyInputs, { }, resultsAboutBodies),
+    programPass(MoveGeneratorFramesToHeap, Optional, { Prepared, Prepared }, simplifyInputs, { }, resultsAboutBodies),
+    programPass(KeepValuesInHeapWords, Optional, { Prepared, Prepared }, simplifyInputs, { }, resultsAboutBodies),
     programPass(CallModules, Required, { Prepared, Prepared }, { Flow }, { }, resultsAboutBodies | Results { Heat }),
     countingOwnChanges(programPass(CreateEntrypoints, Required, { Prepared, Prepared }, { Flow }, { }, resultsAboutBodies)),
     addingOnly({ }, countingOwnChanges(programPass(ChooseCallingConventions, Optional, { Prepared, Prepared }, simplifyInputs | Results { CallGraph }, { CallingConventions }, resultsAboutBodies))),
@@ -185,7 +190,7 @@ constexpr std::array rows {
     addingOnly({ Opcode::ReleaseEnvironment, Opcode::MarkEnvironmentEscaped }, programPass(ReuseEnvironments, Optional, { Prepared, Prepared }, { Flow, FrameAllocation }, { EnvironmentReuse }, { EffectSummaries })),
     programPass(NumberLiteralStrings, Required, { Prepared, Placed }, { }, { LiteralStrings }, { }),
     addingOnly({ Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData }, programPass(EmbedConstantCollections, Optional, { Prepared, Prepared }, { Flow }, { ConstantCollections }, { })),
-    countingOwnChanges(programPass(CollectRegExpLiterals, Required, { Selected, Selected }, { Flow }, { RegExpRequests }, { })),
+    countingOwnChanges(programPass(CollectRegExpLiterals, Required, { Selected, Selected }, { Flow, CallGraph }, { RegExpRequests }, { })),
     programPass(OutlineColdOperations, Optional, { Selected, Selected }, { Flow, Heat, EffectSummaries, CallingConventions }, { }, resultsAboutBodies),
     programPass(InlineHeads, Optional, { Selected, Selected }, { Flow, Heat, EffectSummaries }, { }, resultsAboutBodies),
     programPass(ElideStackChecks, Optional, { Selected, Selected }, { CallGraph }, { StackChecks }, { }),
@@ -207,7 +212,7 @@ constexpr std::array rows {
     derivingFunctions(readingOtherBodies(functionPass(ResolveCalls, resolveCalls, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything))),
     functionPass(ResolveAccesses, resolveAccesses, Optional, Prepared, { Flow, EffectSummaries }, everything),
     functionPass(SplitUnions, splitUnions, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
-    functionPass(PlaceTypeTests, placeTypeTests, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
+    readingOtherBodies(functionPass(PlaceTypeTests, placeTypeTests, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything)),
     derivingFunctions(functionPass(ExpandIteration, expandIteration, Required, Prepared, { Flow, EffectSummaries }, everything)),
     functionPass(ExpandProvenIterations, expandProvenIterations, Optional, Prepared, { Flow, EffectSummaries }, everything),
     derivingFunctions(functionPass(ExpandOwnKeys, expandOwnKeys, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything)),
@@ -245,6 +250,7 @@ constexpr std::array rows {
     functionPass(PlanCollectionCapacities, planCollectionCapacities, Optional, Prepared, { Flow, EffectSummaries }, everything),
     functionPass(FoldConstantRegExps, foldConstantRegExps, Optional, Prepared, { Flow }, everything),
     functionPass(ShareRegExpLiterals, shareRegExpLiterals, Optional, Prepared, { Flow }, values),
+    functionPass(KeepStringsJoinedInLoops, keepStringsJoinedInLoops, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
     functionPass(InsertObjectCoercibleChecks, insertObjectCoercibleChecks, Optional, Prepared, { }, everything),
     functionPass(EliminateTailRecursion, eliminateTailRecursion, Optional, Prepared, { }, everything),
     readingOtherBodies(functionPass(ResolveAwaitedCalls, resolveAwaitedCalls, Optional, Prepared, { EffectSummaries }, everything)),
@@ -349,17 +355,25 @@ constexpr std::array optimizeSteps {
     ScheduleStep::run(ShareRegExpLiterals),
     ScheduleStep::run(FuseConcatenations),
     ScheduleStep::run(CreateStringBuilders),
+    ScheduleStep::run(KeepStringsJoinedInLoops),
     ScheduleStep::includeWithoutCompacting(FunctionSchedule::Simplify),
     ScheduleStep::beginFixpoint(LimitID::MaxSinkingRounds),
         ScheduleStep::run(SinkAllocations),
         ScheduleStep::includeWithoutCompacting(FunctionSchedule::Simplify),
+        // A list that has just gone leaves a loop up to its length, which is a constant now.
+        ScheduleStep::run(UnrollShortLoops),
     ScheduleStep::endFixpoint(),
     // The tests of a cold function of a very large program. Nothing is inlined, expanded or sunk any more.
     ScheduleStep::runBehindRounds(PlaceTypeTests),
+    ScheduleStep::runBehindRounds(ConvertCountersToIntegers),
+    // Behind its tests a number that was expected to be an int32 is one.
+    ScheduleStep::run(ReduceIntegerDivisions),
     ScheduleStep::run(ResolveCalls),
     ScheduleStep::run(ResolveAccesses),
     // Where the rounds above were cut short by their limit, ResolveCalls still finds calls to resolve here, and makes of a call with a spread what only ExpandIteration removes.
     ScheduleStep::run(ExpandIteration),
+    // No test is placed and nothing is sunk any more, so a copy of a join costs one more round of cleaning up and no copy of what lies below it.
+    ScheduleStep::runBehindRounds(ThreadJumps),
     ScheduleStep::includeWithoutCompacting(FunctionSchedule::Simplify),
     ScheduleStep::run(RestartInGenericVersion),
     ScheduleStep::run(RemoveDeadCountedLoops),
@@ -429,7 +443,6 @@ constexpr PassesLeftIdle passesThatCanWait[] {
     { EliminateRedundantReads, { RemoveTrivialParameters, PropagateBranchConditions, HoistTestsIntoPredecessors, ThreadJumps, EliminateRedundantReads } },
     { FoldConstants, { RemoveTrivialParameters, EliminateRedundantReads } },
     { FuseConcatenations, { EliminateRedundantReads } },
-    { PlanArrayCapacities, { RetypeValues } },
     { PlanCollectionCapacities, { RetypeValues } },
     { RemoveRedundantHandlers, { ResolveBuiltins, EliminateRedundantReads } },
     { RemoveTrivialParameters, { PlaceTypeTests, SimplifyCasts, SinkAllocations, RemoveTrivialParameters, PropagateBranchConditions, EliminateRedundantReads } },
@@ -443,6 +456,9 @@ constexpr PassesLeftIdle passesThatCanWait[] {
     { SinkConstants, { RetypeValues } },
     { ThreadJumps, { ResolveBuiltins, FoldConstants, PropagateBranchConditions, EliminateRedundantReads } },
 };
+
+// A pass that waits is left out for good where nothing else gives it work. What these find then is too much to lose: they run before the rounds end, and at their steps outside the rounds.
+constexpr PassSet impatientPasses { EliminateRedundantReads };
 
 constexpr ByPass<PassSet> passesThatCanWaitByChanger = [] {
     ByPass<PassSet> result { };
@@ -785,6 +801,7 @@ static_assert(canRunSimplify(RemoveUnreadFields));
 static_assert(canRunSimplify(RemoveUnusedResults));
 static_assert(canRunSimplify(ProveResults));
 static_assert(canRunSimplify(RemoveUnusedParameters));
+static_assert(canRunSimplify(RemoveUnusedCalls));
 static_assert(canRunSimplify(SplitFreshResults));
 static_assert(canRunSimplify(SplitCoroutines));
 static_assert(canRunSimplify(ChooseCallingConventions));
@@ -793,6 +810,8 @@ static_assert(canRunFunctionPass(RemoveUnusedResults, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(ProveResults, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(ProveResults, SimplifyControlFlow));
 static_assert(canRunFunctionPass(RemoveUnusedParameters, RemoveDeadCountedLoops));
+static_assert(canRunFunctionPass(RemoveUnusedCalls, RemoveDeadCountedLoops));
+static_assert(descriptorAt(RemoveUnusedCalls).inputs == descriptorAt(AllocateInFrames).inputs);
 static_assert(canRunFunctionPass(SplitFreshResults, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(ChooseCallingConventions, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(SplitFreshResults, SinkAllocations));
@@ -817,6 +836,11 @@ const PassSet& passesThatCanWaitBehind(PassID changer)
 {
     RELEASE_ASSERT(PassTable::indexOf(changer) < numberOfPasses);
     return PassTable::passesThatCanWaitByChanger[PassTable::indexOf(changer)];
+}
+
+const PassSet& impatientPasses()
+{
+    return PassTable::impatientPasses;
 }
 
 const ScheduleDescriptor& descriptorOf(FunctionSchedule schedule)
@@ -1121,10 +1145,10 @@ PlacementInputs Pipeline::createPlacementInputs(const CallGraph& callGraph)
     };
 }
 
-static RegExpRequests collectRegExpRequestsOf(Program& program, const FlowResults& flow, BuildContext& build)
+static RegExpRequests collectRegExpRequestsOf(Program& program, const FlowResults& flow, const CallGraph& callGraph, BuildContext& build)
 {
     StringArena strings(program.strings);
-    return collectRegExpRequests(program, flow, strings, build);
+    return collectRegExpRequests(program, flow, callGraph, strings, build);
 }
 
 void Pipeline::runSchedule(FunctionSchedule schedule, const StepsAroundSchedule& steps)
@@ -1187,7 +1211,7 @@ PassOutcome Pipeline::outlineColdOperations(OutliningSiteFinder* finder, const R
 
 PassOutcome Pipeline::inlineHeads(const ReaderOfScheduledFunction* readEditedFunction)
 {
-    auto findDirectCallees = [&](FunctionID id) -> const Vector<FunctionID>* {
+    auto findDirectCallees = [&](FunctionID id) -> const CompactList<FunctionID>* {
         const ReferencesOfBody* references = m_factsOfSelectedBodies ? m_factsOfSelectedBodies->referencesOf(id) : nullptr;
         return references ? &references->directCallees : nullptr;
     };
@@ -1234,7 +1258,7 @@ const CallGraph& Pipeline::prepareToReadSelectedBodiesBesideNumbering()
 void Pipeline::collectRegExpsAndElideStackChecks(const CallGraph& callGraph)
 {
     *m_output->regExpRequests = m_runner.runAnalysisBeside(PassID::CollectRegExpLiterals, m_program, [&] {
-        return collectRegExpRequestsOf(m_program, flow(), m_build);
+        return collectRegExpRequestsOf(m_program, flow(), callGraph, m_build);
     }, [&] {
         *m_output->stackChecks = m_runner.runAnalysis(PassID::ElideStackChecks, m_program, [&] {
             return elideStackChecks(m_program, callGraph, m_build);
@@ -1265,10 +1289,15 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         edit(id, checkTypesAtEntry, m_build);
         return m_runner.lastProgramPassOutcome();
     case PassID::SplitBehindEntryChecks:
-        // The pass drops the heat that it asks for, and leaves most bodies as they are.
         m_analyses.keepPartsOfBodiesForNextHeat();
-        edit(id, splitBehindEntryChecks, &inputsFor(id).heat, m_build);
+        edit(id, [&](ProgramEditor& editor) {
+            const Heat& heat = inputsFor(id).heat;
+            expectFieldsOutsideTestedCode(editor, heat, m_build);
+            markUnprofitableTypedResults(editor.program(), *output.flow, heat, m_build);
+            splitBehindEntryChecks(editor, &heat, m_build);
+        });
         didAddFunctions();
+        m_analyses.dropHeat();
         return m_runner.lastProgramPassOutcome();
     case PassID::SkipAnsweredEntryChecks:
         edit(id, skipAnsweredEntryChecks, inputsFor(id).heat, m_build);
@@ -1292,6 +1321,12 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         });
         return m_runner.lastProgramPassOutcome();
     case PassID::AnalyzeFlow:
+        // Flow asks the index nothing, and ApplyFlowResults forgets every row.
+        m_analyses.bodyIndex().letGoOfRows(m_build);
+        // What typing has found out about pairs of types is a memo: whoever asks again behind flow finds it out again.
+        m_build.destroyLater(m_program.types.takeSavedSharedMemo());
+        // Flow's tables are large and fit into no hole that reading and typing have left.
+        m_build.giveFreedMemoryBack();
         *output.flow = read(id, [&] {
             return analyzeValueFlow(m_program, m_program.types, m_build, nullptr, std::exchange(m_goesOnBehindFlowAnalysis, nullptr));
         });
@@ -1364,6 +1399,9 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         edit(id, removeUnusedParameters, inputsFor(id), m_runner);
         didAddFunctions();
         return m_runner.lastProgramPassOutcome();
+    case PassID::RemoveUnusedCalls:
+        edit(id, removeUnusedCalls, inputsFor(id), m_runner);
+        return m_runner.lastProgramPassOutcome();
     case PassID::RemoveUnreachableFunctions:
         edit(id, [&](ProgramEditor& editor) {
             // Select gives calls by value other forms, and the body that throws is written in the form in front of it.
@@ -1389,6 +1427,13 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         edit(id, splitCoroutines, inputsFor(id), m_runner);
         didAddFunctions();
         return m_runner.lastProgramPassOutcome();
+    case PassID::MoveGeneratorFramesToHeap:
+        edit(id, moveGeneratorFramesToHeap, inputsFor(id), m_runner);
+        didAddFunctions();
+        return m_runner.lastProgramPassOutcome();
+    case PassID::KeepValuesInHeapWords:
+        edit(id, keepValuesInHeapWords, inputsFor(id), m_runner);
+        return m_runner.lastProgramPassOutcome();
     case PassID::CallModules:
         edit(id, callModules, flow(), m_build);
         didAddFunctions();
@@ -1404,6 +1449,7 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         if (!m_runner.isStopped()) {
             inputsFor(id);
             output.flow->setBorrowedParameters(m_analyses.borrowedParameters());
+            ProgramCachesWithScratchTypes caches(m_program, m_build);
             output.flow->setFrameArrayParameters(computeFrameArrayParameters(m_program, m_build));
         }
         *output.frameAllocation = edit(id, allocateInFrames, inputsFor(id), *output.flow, m_build);
@@ -1416,6 +1462,7 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         });
         return m_runner.lastProgramPassOutcome();
     case PassID::NumberLiteralStrings:
+        hidePathsOfModules(m_program, flow(), m_build);
         internPiecesOfModulePaths(m_program);
         *output.literalStrings = read(id, numberLiteralStrings, m_program, flow(), m_build);
         return m_runner.lastProgramPassOutcome();
@@ -1430,7 +1477,7 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         });
         return m_runner.lastProgramPassOutcome();
     case PassID::CollectRegExpLiterals:
-        *output.regExpRequests = read(id, collectRegExpRequestsOf, m_program, flow(), m_build);
+        *output.regExpRequests = read(id, collectRegExpRequestsOf, m_program, flow(), inputsFor(id).callGraph, m_build);
         return m_runner.lastProgramPassOutcome();
     case PassID::OutlineColdOperations:
         return outlineColdOperations();
@@ -1642,6 +1689,7 @@ void Pipeline::runOptimizeStage()
     stage.run(PassID::CreateEntrypoints);
     stage.run(FunctionSchedule::Resolve);
     stage.run(FunctionSchedule::Optimize);
+    stage.run(PassID::MoveGeneratorFramesToHeap);
     stage.run(PassID::ProveResults);
     stage.run(PassID::ReadCapturesFromEnvironments);
     stage.run(PassID::RemoveUnreadFields);
@@ -1653,8 +1701,12 @@ void Pipeline::runOptimizeStage()
     stage.run(PassID::MarkResultsUsedAsKeys);
     stage.run(PassID::EmbedConstantCollections);
     stage.run(PassID::RemoveUnreachableFunctions);
+    // Behind whatever follows an object from where it is made to where it is written: a word read back does not say where its object was made.
+    stage.run(PassID::KeepValuesInHeapWords);
     stage.run(PassID::ChooseCallingConventions);
     stage.run(PassID::DeferClosuresInFields);
+    // The first pass behind the Optimize schedule for which the effect summaries are brought up to date, and AllocateInFrames reads the same ones.
+    stage.run(PassID::RemoveUnusedCalls);
     stage.run(PassID::AllocateInFrames);
     stage.run(PassID::ReuseEnvironments);
     if (m_build.options().verifiesAfterEveryStage)
@@ -1675,6 +1727,7 @@ void Pipeline::runSlotStage()
         stage.run(PassID::PlanSlots);
         return;
     }
+    hidePathsOfModules(m_program, flow(), m_build);
     internPiecesOfModulePaths(m_program);
     SlotPlanInputs inputs = createSlotPlanInputs(*this);
     inputsFor(PassID::PlanSlots);
@@ -1708,12 +1761,15 @@ void Pipeline::runSelectStage()
         // Whoever only reads a function reads it where it is in the cache: behind its selection, or behind the last step that changes it.
         bool findsOutliningSites = m_build.isEnabled(PassID::OutlineColdOperations, FunctionID());
         OutliningSiteFinder finder(m_program, inputsFor(PassID::OutlineColdOperations), m_build);
-        AccessSiteObserver observer(m_program, flow(), m_build, heatForReport());
+        std::optional<AccessSiteObserver> observer;
+        if (m_build.options().countsAccesses())
+            observer.emplace(m_program, flow(), m_build, heatForReport());
         m_factsOfSelectedBodies = makeUnique<FactsOfSelectedBodies>(*this);
         FactsOfSelectedBodies& facts = *m_factsOfSelectedBodies;
         std::span<const uint8_t> hasOutliningSites = finder.hasSites();
         auto observe = [&](FunctionID id) {
-            observer.observe(id);
+            if (observer)
+                observer->observe(id);
         };
         auto findOutliningSitesOrReadFinishedFunction = [&](FunctionID id) {
             FunctionAnalyses analyses(finder.contextOf(id), std::as_const(m_program).at(id));
@@ -1728,8 +1784,8 @@ void Pipeline::runSelectStage()
         const ReaderOfScheduledFunction* readersOfSelectedFunction[] = { &readers1[0], &readers1[1] };
         stage.run(FunctionSchedule::Select, { .behind = readersOfSelectedFunction });
         advanceTo(IRForm::Selected, wasRunning);
-        if (!m_runner.isStopped())
-            m_output->accessSiteObservations = observer.finish();
+        if (!m_runner.isStopped() && observer)
+            m_output->accessSiteObservations = observer->finish();
         stage.didFinish("observe access sites"_s);
 
         auto noteAddedFunctions = [&] {
@@ -1755,7 +1811,7 @@ void Pipeline::runSelectStage()
         stage.run(FunctionSchedule::Select);
         stage.verifyOnRequest(IRForm::Selected);
         advanceTo(IRForm::Selected, wasRunning);
-        if (!m_runner.isStopped())
+        if (!m_runner.isStopped() && m_build.options().countsAccesses())
             m_output->accessSiteObservations = observeAccessSites(m_program, flow(), m_build, heatForReport());
         stage.didFinish("observe access sites"_s);
         stage.run(PassID::OutlineColdOperations);
@@ -1787,16 +1843,65 @@ void Pipeline::runPlacementStage()
         stage.run(PassID::CheckPlacement);
 }
 
-// Code generation writes function numbers into closure words, which have no room for a larger one. The image builder checks the same limit, but only after the code is generated.
-void Pipeline::checkNumberOfFunctions()
+// The tables have three bytes for the number of a function. The image builder checks the same limit, but only after the tables are encoded.
+bool Pipeline::checkNumberOfFunctions()
 {
     if (m_runner.isStopped())
-        return;
+        return true;
     uint64_t count = m_program.functions.size();
     while (count && !m_program.functions[count - 1].hasBody())
         --count;
-    if (m_build.exceeds(LimitID::ImageFunctions, count))
-        m_build.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::TooManyFunctions, .limit = LimitID::ImageFunctions, .count = clampTo<uint32_t>(count) });
+    if (!m_build.exceeds(LimitID::ImageFunctions, count))
+        return true;
+    m_build.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::TooManyFunctions, .limit = LimitID::ImageFunctions, .count = clampTo<uint32_t>(count) });
+    return false;
+}
+
+// How far the program is from the limits that stop a build.
+void Pipeline::logSizeOfProgram() const
+{
+    std::array<uint64_t, numberOfEnumerators<FunctionRole>> all { };
+    std::array<uint64_t, numberOfEnumerators<FunctionRole>> withBody { };
+    for (const Function& function : m_program.functions) {
+        ++all[static_cast<size_t>(function.role)];
+        withBody[static_cast<size_t>(function.role)] += function.hasBody();
+    }
+    auto log = [](ASCIILiteral what, uint64_t count) {
+        dataLog(" | ", what, " ", count);
+    };
+    ClosureFunctionRange closures = m_output->placement->closureFunctions();
+    dataLog("AOT size of the program:");
+    log("functions"_s, m_program.functions.size());
+    log("first closure function"_s, closures.first.index());
+    log("end of closure functions"_s, closures.end.index());
+    log("strings"_s, m_program.strings.size());
+    log("layouts"_s, m_program.layouts.size());
+    log("variables"_s, m_program.variables.size());
+    log("modules"_s, m_program.modules.size());
+    log("data"_s, m_program.data.size());
+    log("allocations"_s, m_output->placement->numberOfAllocations());
+    dataLogLn();
+    for (size_t role = 0; role < all.size(); ++role) {
+        if (!all[role])
+            continue;
+        dataLog("AOT size of the program:");
+        log(nameOf(static_cast<FunctionRole>(role)), all[role]);
+        log("with a body"_s, withBody[role]);
+        dataLogLn();
+    }
+}
+
+// Code generation writes the numbers of the functions that closures are made of into closure words, which have no room for a larger one. No other function needs a number that fits there.
+void Pipeline::checkNumberOfClosureFunctions()
+{
+    if (m_runner.isStopped())
+        return;
+    if (m_build.options().logging.logsPhaseTimes) [[unlikely]]
+        logSizeOfProgram();
+    ClosureFunctionRange closures = m_output->placement->closureFunctions();
+    uint64_t count = closures.end.index() - closures.first.index();
+    if (m_build.exceeds(LimitID::ImageClosureFunctions, count))
+        m_build.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::TooManyFunctions, .limit = LimitID::ImageClosureFunctions, .count = clampTo<uint32_t>(count) });
 }
 
 void Pipeline::runRepresentationStage()
@@ -1836,6 +1941,7 @@ void Pipeline::runPlacementAndRepresentationStagesTogether()
     auto readPlacedFunction = [&](FunctionID id, Function& function) {
         steps.resolveFieldAccessesOf(placement, id, function);
         collectSiteCacheRequests(m_program, placement, flow(), heat, m_build, id, needsWeightsOfSiteCaches, siteCacheRequests[id.index()]);
+        siteCacheRequests[id.index()].shrinkToFit();
     };
     auto numberRest = [&] {
         steps.numberRest(placement);
@@ -1844,9 +1950,10 @@ void Pipeline::runPlacementAndRepresentationStagesTogether()
     auto listCalledFunctions = [&](FunctionID id) {
         Vector<FunctionID>& called = m_output->calledFunctions[id.index()];
         called.shrink(0);
-        forEachCalledFunction(m_program.functions[id.index()], [&](FunctionID target) {
+        forEachCalledFunction(m_program, m_program.functions[id.index()], [&](FunctionID target) {
             called.append(target);
         });
+        called.shrinkToFit();
     };
     ScopedLambda<void(FunctionID, Function&)> inFront(readPlacedFunction);
     ScopedLambda<void()> beside(numberRest);
@@ -1887,17 +1994,24 @@ void Pipeline::runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLas
     if (std::exchange(m_goesOnBehindFlowAnalysis, nullptr) && !goesOn(reportUsesOfLibraryCode(flow())))
         return;
     runOptimizeStage();
+    m_build.destroyLater(m_program.types.takeSavedSharedMemo());
     runSlotStage();
     runSelectStage();
+    m_build.giveFreedMemoryBack();
     // Whoever stops, prints or verifies between the two stages sees bodies that have all their words.
     const auto& options = m_build.options();
-    if (m_runner.mayRunAnalysesTogether() && !options.verifiesProgram && !options.isVerifyOnly())
+    if (!checkNumberOfFunctions())
+        m_runner.stopAfterErrors();
+    else if (m_runner.mayRunAnalysesTogether() && !options.verifiesProgram && !options.isVerifyOnly())
         runPlacementAndRepresentationStagesTogether();
     else {
         runPlacementStage();
         runRepresentationStage();
     }
-    checkNumberOfFunctions();
+    checkNumberOfClosureFunctions();
+    // No body changes any more, and what reads the bodies from here on reads each of them once.
+    m_analyses.bodyIndex().letGoOfRows(m_build);
+    m_build.giveFreedMemoryBack();
     {
         // A run that was stopped after a pass hands out what its passes used. What it never computed stays the default result.
         PhaseTimes times(m_build, Stage::GenerateCode);
@@ -1911,7 +2025,7 @@ void Pipeline::runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLas
             });
         }
         m_output->heat = m_analyses.takeHeat(flow());
-        if (m_output->accessSiteObservations.isEmpty())
+        if (m_output->accessSiteObservations.isEmpty() && m_build.options().countsAccesses())
             m_output->accessSiteObservations = observeAccessSites(m_program, flow(), m_build);
         if (m_build.validates() && !m_runner.isStopped())
             checkEffectSummaries(m_program, flow(), *m_output->effects, m_build);

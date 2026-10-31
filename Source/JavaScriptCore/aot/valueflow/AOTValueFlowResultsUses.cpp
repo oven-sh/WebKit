@@ -209,6 +209,29 @@ bool UsesOfObjects::mayBeObservedUnder(ValueSetID objects, PropertyKeyID key) co
     return sets.meet(objects, m_enumerated) || sets.meet(objects, m_observedUnderAnyKey) || sets.meet(objects, setAt(m_observedUnderKey, key.index()));
 }
 
+// A proxy whose handler lacks the trap hands a test on to its target, which answers from its own chain. A walk links a proxy to its target only where it passes the proxy from below.
+ValueSetID UsesOfObjects::withTargetsOfProxies(ValueSetMaker& maker, ValueSetID objects) const
+{
+    ValueFlowName target { ValueFlowNameKind::Slot, BuiltinSlots::ProxyTarget.index() };
+    for (ValueSetID frontier = objects; frontier != ValueSets::nothing;) {
+        ValueSetID all = maker.unite(objects, m_heap.expand(maker, m_heap.writtenUnder(maker, frontier, target)));
+        frontier = maker.intersect(all, ValueSets::complement(objects));
+        objects = all;
+    }
+    return objects;
+}
+
+// The walk may meet a proxy at its start and at any step above it.
+ValueSetID UsesOfObjects::chainThroughProxies(ValueSetMaker& maker, ValueSetID objects) const
+{
+    for (;;) {
+        ValueSetID chain = m_heap.chainOf(maker, withTargetsOfProxies(maker, objects));
+        if (chain == objects)
+            return chain;
+        objects = chain;
+    }
+}
+
 void UsesOfObjects::goOnToPrototypes(ValueSetMakers& makers)
 {
     const ParallelLoops& loops = m_inputs.loops();
@@ -249,7 +272,7 @@ void UsesOfObjects::goOnToPrototypes(ValueSetMakers& makers)
             removeRepeatedElements(distinctStarts);
             Vector<ValueSetID> chains(distinctStarts.size());
             forEachIndexInParallel(loops, distinctStarts.size(), [&](unsigned index, unsigned worker) {
-                chains[index] = m_heap.chainOf(makers.of(worker), distinctStarts[index]);
+                chains[index] = chainThroughProxies(makers.of(worker), distinctStarts[index]);
             });
             Vector<PartOfNumber> observedUnderKey = takeParts(&Notes::observedUnderKey);
             for (unsigned position = 0; position < startsOfTests.size(); ++position) {
@@ -261,13 +284,13 @@ void UsesOfObjects::goOnToPrototypes(ValueSetMakers& makers)
         },
         [&] {
             BorrowedValueSetMaker maker(m_inputs.makerPool());
-            m_enumerated = m_heap.chainOf(maker.get(), takeUnion(&Notes::enumerated).takeExpanded(m_heap, maker.get()));
+            m_enumerated = chainThroughProxies(maker.get(), takeUnion(&Notes::enumerated).takeExpanded(m_heap, maker.get()));
             m_withAllKeysShown = takeUnion(&Notes::withAllKeysShown).take(maker.get());
             m_withEnumerableKeysShown = maker.get().unite(takeUnion(&Notes::withEnumerableKeysShown).take(maker.get()), followPrototypeLinks(maker.get(), takeUnion(&Notes::walkedForEnumerableKeys).take(maker.get())));
         },
         [&] {
             BorrowedValueSetMaker maker(m_inputs.makerPool());
-            m_observedUnderAnyKey = m_heap.chainOf(maker.get(), takeUnion(&Notes::observedUnderAnyKey).takeExpanded(m_heap, maker.get()));
+            m_observedUnderAnyKey = chainThroughProxies(maker.get(), takeUnion(&Notes::observedUnderAnyKey).takeExpanded(m_heap, maker.get()));
         },
         [&] {
             ValueSetMakers makersBeside(m_inputs);
@@ -389,6 +412,7 @@ void UsesOfObjects::noteRead(Noter noter, const ValueFlowNodeKey& key, Reader re
     case ValueFlowNameKind::AddedNames:
     case ValueFlowNameKind::FoundThroughEscapedInstances:
     case ValueFlowNameKind::NamesOfMethods:
+    case ValueFlowNameKind::NamespaceExports:
         break;
     }
 }
@@ -539,7 +563,7 @@ ValueSetID UsesOfObjects::followPrototypeLinks(ValueSetMaker& maker, ValueSetID 
     ValueSetID frontier = objects;
     while (frontier != ValueSets::nothing) {
         ValueSetID above = ValueSets::nothing;
-        m_inputs.sets().forEachMember(frontier, [&](ValueFlowObjectID object) {
+        m_inputs.sets().forEachMemberInLine(frontier, [&](ValueFlowObjectID object) {
             ValueSetID prototypes = m_heap.prototypesOf(maker, maker.of(object));
             above = maker.unite(above, isFullyKnown(prototypes) ? prototypes : m_inputs.universe().builtinObjects());
         });

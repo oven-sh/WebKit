@@ -208,6 +208,15 @@ void ControlEmitter::switchOnBoxedInteger(const TerminatorContext& terminator, B
     join.add(signExtended(unboxInt32(subject)));
 
     m_out.appendTo(isOtherSubject);
+    if (!typeOf(terminator->subjectOperand()).isNumber()) {
+        LBasicBlock isDoubleSubject = newBlock();
+        LBasicBlock isNoNumber = newBlock();
+        branch(isNumber(subject), { normalEdge(isDoubleSubject), normalEdge(isNoNumber) });
+        // What the operation answers for it. The switch stays the only way to its targets, which lets the back end read the answers of the cases out of a table.
+        m_out.appendTo(isNoNumber);
+        join.add(integer(std::numeric_limits<int64_t>::min()));
+        m_out.appendTo(isDoubleSubject);
+    }
     join.add(callLeaf<Integer>(RuntimeOperation::TryConvertToInteger, { subject }));
 
     switchOnInteger(terminator, join.finish().value(), B3::Int64, otherwise);

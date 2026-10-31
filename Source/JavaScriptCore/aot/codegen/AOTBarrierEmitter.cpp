@@ -287,6 +287,12 @@ void BarrierEmitter::validateAfterStore(const ValueContext& store)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+void BarrierEmitter::fenceAfterInitialization()
+{
+    if (std::optional<MutatorFence> fence = mutatorFence())
+        m_records.mutatorFences.fences.append(*fence);
+}
+
 void BarrierEmitter::validateBeforeCollection(const OperationContext& context)
 {
     if (!generator().validates())

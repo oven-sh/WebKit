@@ -3,13 +3,13 @@
 # RUN: pipeline PromoteEnvironmentsToVariables
 # OPTIONS: only-passes=PromoteEnvironmentsToVariables check=VerifyEachPass
 # STATISTIC: EnvironmentsPromotedToVariables = 1
-# CHECK: variable g0 name="y.0"
+# CHECK: variable g0 name="y"
 # CHECK-NOT: variable g1
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-layout L0 kind=Environment name="seenByEval" fields=[{key=@"x.0" declared={type=anything}}]
-layout L1 kind=Environment name="notSeenByEval" fields=[{key=@"y.0" declared={type=anything}}]
+layout L0 kind=Environment name="seenByEval" fields=[{key=@"x.0" declared={type=anything} variableName="x"}]
+layout L1 kind=Environment name="notSeenByEval" fields=[{key=@"y.0" declared={type=anything} variableName="y"}]
 evalscope e0 bindings=[{name="x" layout=L0 field=0 operand=0}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {

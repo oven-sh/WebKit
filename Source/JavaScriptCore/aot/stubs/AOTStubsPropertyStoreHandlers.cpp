@@ -23,6 +23,8 @@
 #include "Butterfly.h"
 #include "IndexingType.h"
 #include "JSFunction.h"
+#include "JSGlobalObject.h"
+#include "JSGlobalProxy.h"
 #include "JSObject.h"
 #include "JSType.h"
 #include "PureNaN.h"
@@ -327,7 +329,7 @@ void generateStoreSlot(StubAssembler& jit)
             remembersNothing.link(&jit);
         }
         Label hasAddress = jit.label();
-        storeField(jit, r, FieldStoreEnd::ReturnAfterBarrier, FieldTypeTest::IsEmitted, nullptr, exits);
+        storeField(jit, r, FieldStoreEnd::ReturnAfterBarrier, FieldTypeTest::IsEmittedForSlot, nullptr, exits);
 
         isOutOfLine.link(&jit);
         slot.loadHiddenWordOffset(jit, r.field.extensionWordOffset);
@@ -402,6 +404,10 @@ void generateStoreSlot(StubAssembler& jit)
         break;
     }
     case Slot::Kind::ExtraProperty:
+        if (origin == SlotOrigin::ByVal && accessOf(traits.operation) == SlotAccess::Store) {
+            jit.load32(Address(receiver, JSCell::structureIDOffset()), T11);
+            rememberPlaceOfExtraProperty(jit, SlotAccess::Store, slot, receiver, operands.keyCell, T10, T11);
+        }
         storeExtraProperty(jit, slot, extraPropertyRegisters, value, finishExtraPropertyStore, miss);
         break;
     case Slot::Kind::ExtraSetter:
@@ -617,12 +623,63 @@ static Entry entryFor(const Entry (&byMode)[numberOfModes], PutMode mode)
     return byMode[static_cast<size_t>(mode)];
 }
 
+// `root.shelf = value` where root turns out to be globalThis. Nothing is filed about the proxy, so its stores come here. What they replace is a property of the global object,
+// and tryReplaceGlobalProperty() files where that lies under the Structure of the global object, which changes when the property is deleted or stops being a writable value.
+// Goes on, with the three operands as they were, where the receiver is something else or nothing is filed.
+static void storeToGlobalObjectThroughItsProxyAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg identifierNumber, GPRReg value)
+{
+    const GPRReg uid = jit.allocateScratch(StubRegister::T10);
+    const GPRReg structureID = jit.allocateScratch(StubRegister::T11);
+    const GPRReg header = jit.allocateScratch(slotHeaderRegister);
+    const GPRReg payload = jit.allocateScratch(slotPayloadRegister);
+    const GPRReg entry = jit.allocateScratch(StubRegister::T14);
+    const GPRReg globalObject = entry;
+    const GPRReg kind = uid;
+    const GPRReg wordIndex = uid;
+    const GPRReg storage = structureID;
+    RELEASE_ASSERT(noOverlap(receiver, identifierNumber, value, uid, structureID, header, payload, entry, instanceGPR));
+    JumpList isLeftToOperation;
+
+    isLeftToOperation.append(jit.branchIfNotCell(receiver));
+    isLeftToOperation.append(jit.branch8(CCallHelpers::NotEqual, Address(receiver, JSCell::typeInfoTypeOffset()), TrustedImm32(GlobalProxyType)));
+    jit.loadPtr(Address(receiver, JSGlobalProxy::targetOffset()), globalObject);
+    isLeftToOperation.append(jit.branchPtr(CCallHelpers::NotEqual, globalObject, Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject))));
+    isLeftToOperation.append(jit.branchPtr(CCallHelpers::NotEqual, Address(globalObject, JSGlobalObject::offsetOfGlobalThis()), receiver));
+    jit.load32(Address(globalObject, JSCell::structureIDOffset()), structureID);
+    loadIdentifier(jit, identifierNumber, uid, isLeftToOperation);
+    findHashedSlot(jit, SlotAccess::Store, { structureID, uid, entry, header, payload, payload, kind }, isLeftToOperation);
+
+    const CachedSlot nearValue(SlotForm::Slot, Slot::Kind::Value, header, payload);
+    const CachedSlot farValue(SlotForm::Slot, Slot::Kind::FarValue, header, payload);
+    isLeftToOperation.append(nearValue.branchUnlessFlag(jit, Slot::isOwn));
+    Jump isFar = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(static_cast<int32_t>(Slot::Kind::FarValue)));
+    isLeftToOperation.append(jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(static_cast<int32_t>(Slot::Kind::Value))));
+    jit.loadPtr(Address(receiver, JSGlobalProxy::targetOffset()), globalObject);
+    nearValue.loadOwnWordIndex(jit, wordIndex);
+    jit.move(globalObject, storage);
+    Jump isInline = nearValue.branchUnlessFlag(jit, Slot::isOutOfLine);
+    Label isOutOfLine = jit.label();
+    jit.loadPtr(Address(globalObject, JSObject::butterflyOffset()), storage);
+    isInline.link(&jit);
+    jit.store64(value, BaseIndex(storage, wordIndex, CCallHelpers::TimesEight));
+    returnAfterStoring(jit, globalObject, value);
+
+    isFar.link(&jit);
+    jit.loadPtr(Address(receiver, JSGlobalProxy::targetOffset()), globalObject);
+    farValue.loadOwnWordIndex(jit, wordIndex);
+    jit.jump().linkTo(isOutOfLine, &jit);
+
+    isLeftToOperation.link(&jit);
+}
+
 static void emitStoreByIdExit(StubAssembler& jit, PutMode mode, SlotExit exit)
 {
     const GPRReg receiver = jit.operand(receiverOperand);
     const GPRReg identifierNumber = jit.operand(exitNameOperand);
     const GPRReg value = jit.operand(exitValueOperand);
     if (exit == SlotExit::Uncached) {
+        if (mode != PutMode::Define)
+            storeToGlobalObjectThroughItsProxyAndReturn(jit, receiver, identifierNumber, value);
         jit.callOperationAndReturn(entryFor(uncachedOperationsById, mode), createExitCall(receiver, identifierNumber, value));
         return;
     }

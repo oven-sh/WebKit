@@ -53,6 +53,7 @@ enum class ValueKind : uint8_t {
 
 OptionSet<ValueKind> valueKindOf(JSValue);
 OptionSet<ValueKind> kindsAlwaysAccepted(const RuntimeType&);
+bool acceptsEveryValue(const RuntimeType&);
 // Which of the values that the slot of one field holds the slot of another takes.
 enum class SlotFit : uint8_t {
     Always,

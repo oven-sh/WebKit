@@ -287,7 +287,7 @@ void DerivedFunctions::PhaseState::confirm(uint32_t requestedOrdinal)
     }
 }
 
-DerivedFunctions::Entry& DerivedFunctions::entryOf(FunctionID id) const
+NEVER_INLINE DerivedFunctions::Entry& DerivedFunctions::entryOf(FunctionID id) const
 {
     RELEASE_ASSERT(m_phase && contains(id) && ordinalOf(id) < m_phase->size());
     return m_phase->entries[ordinalOf(id)];
@@ -330,7 +330,7 @@ const Function& DerivedFunctions::buildOrWait(Entry& entry) const
         {
             const DerivedFunctionKey& key = entry.key;
             TaskArenas arenas(m_phase->interning, entry.buildTask);
-            DerivedFunctionInputs inputs { m_phase->program, m_phase->flow, arenas.types, arenas.strings, const_cast<DerivedFunctions&>(*this), m_build };
+            DerivedFunctionInputs inputs { m_phase->program, m_phase->flow, arenas.types, arenas.strings, const_cast<DerivedFunctions&>(*this), m_build, m_phase->optimization };
             auto function = makeUniqueWithoutFastMallocCheck<Function>(findDerivedFunctionRole(key.role)->build(key, inputs));
             RELEASE_ASSERT(function->role == key.role && function->hasBody());
             function->derivation.source = key.target;
@@ -428,11 +428,11 @@ void DerivedFunctions::forgetFunctionsWithoutBody(const Program& program)
     });
 }
 
-DerivedFunctionPhase::DerivedFunctionPhase(DerivedFunctions& table, Program& program, const FlowResults& flow, InterningPhases& interning)
+DerivedFunctionPhase::DerivedFunctionPhase(DerivedFunctions& table, Program& program, const FlowResults& flow, InterningPhases& interning, const OptimizationInputs* optimization)
     : m_table(table)
 {
     RELEASE_ASSERT(!table.m_phase);
-    table.m_phase = makeUnique<DerivedFunctions::PhaseState>(program, flow, interning);
+    table.m_phase = makeUnique<DerivedFunctions::PhaseState>(program, flow, interning, optimization);
     program.setProvisionalFunctions(&table);
 }
 

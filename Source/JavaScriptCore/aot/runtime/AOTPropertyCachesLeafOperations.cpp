@@ -144,7 +144,7 @@ static StructuralRead readEmptyFieldByFiledSlot(const Object& object, UniquedStr
 
 static JSValue readModuleNamespaceExport(Instance* instance, ModuleNamespace* namespaceObject, UniquedStringImpl* uid)
 {
-    if (Instance::of(namespaceObject->structure()->realm()) != instance)
+    if (Instance::owning(namespaceObject) != instance)
         return { };
     const Modules& modules = *instance->state->modules;
     ModuleID module = namespaceObject->module();
@@ -395,6 +395,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTInByValGeneric, size_t, (Instance*
 static LeafAnswer putToCompiledObject(Instance* instance, Object* object, UniquedStringImpl* uid, JSValue value)
 {
     VM& vm = *instance->vm;
+    // What is filed below says where a field lies and what it takes in the numbers of the object's image, and the stubs of this image would read it in their own.
+    // The caching operation stores under the object's image and knows what may be filed about such an object.
+    if (instance->state->sharesRealm && !object->isDescribedBy(*instance->state)) [[unlikely]]
+        return LeafAnswer::TakeSlowPath;
     PropertyCaches& caches = *instance->state->propertyCaches;
     Structure* structure = object->structure();
     // Every field has a name that the program spells.
@@ -493,6 +497,25 @@ static LeafAnswer putToFinalObject(Instance* instance, JSObject* object, Uniqued
     return LeafAnswer::Yes;
 }
 
+// A property of the global object that a store through globalThis has filed: filing it fired what watched its replacement, as for any store that a stub makes.
+static LeafAnswer putToGlobalObjectThroughItsProxy(Instance* instance, JSObject* proxy, JSCell* key, UniquedStringImpl* uid, JSValue value)
+{
+    JSGlobalObject* target = instance->globalObject;
+    if (proxy != target->globalThis())
+        return LeafAnswer::TakeSlowPath;
+    Structure* structure = target->structure();
+    const Slot* filed = instance->state->propertyCaches->findByKey(structure, uid, SlotAccess::Store);
+    if (!filed || !filed->has(Slot::isOwn) || (filed->kind != Slot::Kind::Value && filed->kind != Slot::Kind::FarValue))
+        return LeafAnswer::TakeSlowPath;
+    PropertyOffset offset = filed->offsetInStorage();
+    target->putDirectOffset(*instance->vm, offset, value);
+    if (proxy->classInfo() == JSGlobalProxy::info() && uncheckedDowncast<JSGlobalProxy>(proxy)->target() == target) {
+        auto placesForStores = instance->keyedValuePlaces().last<KeyedValuePlace::numberOfPlacesPerAccess>();
+        placesForStores[KeyedValuePlace::offsetFor(key, proxy->structureID()) >> KeyedValuePlace::sizeShift] = { key, structure->id().bits() + KeyedValuePlace::globalObjectBit, { Slot::wordIndexFor(offset) } };
+    }
+    return LeafAnswer::Yes;
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPutByValGeneric, size_t, (Instance* instance, JSCell* base, JSCell* key, EncodedJSValue encodedValue))
 {
     LeafOperationScope leaf(*instance->vm);
@@ -503,6 +526,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPutByValGeneric, size_t, (Instance
         answer = LeafAnswer::Yes;
     else if (name.kind == KeyNameKind::Name && base->type() == FinalObjectType)
         answer = putToFinalObject(instance, asObject(base), name.uid, value);
+    else if (name.kind == KeyNameKind::Name && base->type() == GlobalProxyType)
+        answer = putToGlobalObjectThroughItsProxy(instance, asObject(base), key, name.uid, value);
     else if (Object* object = name.kind == KeyNameKind::Name ? compiledObjectOrNull(base) : nullptr)
         answer = putToCompiledObject(instance, object, name.uid, value);
     return static_cast<size_t>(answer);
@@ -605,57 +630,46 @@ UniquedStringImpl* uidOfKey(JSCell* key)
     return key->isSymbol() ? &asSymbol(key)->uid() : atomOfKey(key);
 }
 
-struct StringComparison {
-    StringView name;
-    uint64_t remainingPieces;
-    bool isEqual { true };
-};
-
-template<typename Character>
-static void compareStringPiece(jsstring_iterator* iterator, const void* characters, uint32_t length, uint32_t offset)
+// Nothing is made: neither an atom nor, of a rope, a flat string. A flat string takes the text of the atom in place of its own, so the next access under it compares nothing.
+static std::optional<RefPtr<AtomStringImpl>> findAtomEqualTo(JSGlobalObject* globalObject, JSString* string)
 {
-    auto& comparison = *static_cast<StringComparison*>(iterator->data);
-    auto isEqualToName = [&] {
-        std::span piece { static_cast<const Character*>(characters), length };
-        if constexpr (std::is_same_v<Character, Latin1Character>) {
-            if (comparison.name.is8Bit() && offset <= comparison.name.length() && length <= comparison.name.length() - offset)
-                return equalSpans(comparison.name.span8().subspan(offset, length), piece);
-        }
-        return comparison.name.substring(offset, length) == StringView(piece);
+    if (string->tryGetValueImpl())
+        return RefPtr<AtomStringImpl>(string->toExistingAtomString(globalObject).data);
+    auto lookUp = [&]<typename Character>(Vector<Character>&& characters) -> std::optional<RefPtr<AtomStringImpl>> {
+        if (!characters.tryGrow(string->length()))
+            return std::nullopt;
+        string->resolveToBuffer(characters.mutableSpan());
+        return AtomStringImpl::lookUp(characters.span());
     };
-    if (comparison.remainingPieces && isEqualToName()) {
-        comparison.remainingPieces--;
-        return;
-    }
-    comparison.isEqual = false;
-    iterator->stop = 1;
+    return string->is8Bit() ? lookUp(Vector<Latin1Character>()) : lookUp(Vector<char16_t>());
 }
 
-template<typename Character>
-static void compareWholeString(jsstring_iterator* iterator, const void* characters, uint32_t length)
+static std::optional<bool> isEqualToName(JSString* string, const UniquedStringImpl& name)
 {
-    compareStringPiece<Character>(iterator, characters, length, 0);
-}
-
-static bool stringEqualsName(JSString* string, StringView name, uint64_t maxPieces, bool& hasTooManyPieces)
-{
-    StringComparison comparison { name, maxPieces };
-    jsstring_iterator iterator { };
-    iterator.data = &comparison;
-    iterator.append8 = compareWholeString<Latin1Character>;
-    iterator.append16 = compareWholeString<char16_t>;
-    iterator.write8 = compareStringPiece<Latin1Character>;
-    iterator.write16 = compareStringPiece<char16_t>;
-    string->value(&iterator);
-    hasTooManyPieces |= !comparison.remainingPieces;
-    return comparison.isEqual;
+    auto isEqual = [&]<typename Character>(std::span<const Character> characters) {
+        if (name.is8Bit() != (sizeof(Character) == 1))
+            return StringView(name) == StringView(characters);
+        if constexpr (sizeof(Character) == 1)
+            return equalSpans(name.span8(), characters);
+        else
+            return equalSpans(name.span16(), characters);
+    };
+    if (StringImpl* text = string->tryGetValueImpl())
+        return text->is8Bit() ? isEqual(text->span8()) : isEqual(text->span16());
+    auto resolveAndCompare = [&]<typename Character>(Vector<Character>&& characters) -> std::optional<bool> {
+        if (!characters.tryGrow(string->length()))
+            return std::nullopt;
+        string->resolveToBuffer(characters.mutableSpan());
+        return isEqual(std::span<const Character>(characters.span()));
+    };
+    return string->is8Bit() ? resolveAndCompare(Vector<Latin1Character>()) : resolveAndCompare(Vector<char16_t>());
 }
 
 static bool mayHaveFieldWithNameOfLength(const Object& object, unsigned length)
 {
     if (!object.state().tables.removedFields().empty())
         return true;
-    const ImageText& text = Image::current()->text();
+    const ImageText& text = object.instance().program->text();
     return std::ranges::any_of(object.layout().fields(), [&](const FieldData& field) {
         StringID name = text.identifier(field.name).text();
         return name && text.view(name).length() == length;
@@ -668,19 +682,23 @@ static bool hasOrdinaryLookups(JSObject* object)
     return !TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) && !TypeInfo::hasStaticPropertyTable(object->inlineTypeFlags()) && !structure->typeInfo().overridesGetPrototype() && !structure->isCompiledStructure();
 }
 
+// A key this long is not made an atom to be looked up. Every name of an ordinary object is an atom already, and the table of atoms says which one equals the key, if any.
 std::optional<UniquedStringImpl*> findNameEqualToLongString(JSValue base, JSValue key, bool checksPrototypes)
 {
     if (!key.isString() || asString(key)->length() <= JSString::maxLengthForOnStackResolve || !base.isObject() || atomOfKey(key))
         return std::nullopt;
     JSString* string = asString(key);
     VM& vm = string->vm();
+    JSGlobalObject* globalObject = asObject(base)->globalObject();
     unsigned length = string->length();
-    uint64_t maxPieces = length / std::max<uint64_t>(runtimeLimitValue(vm, LimitID::MinLongKeyUnitsPerPiece), 1) + runtimeLimitValue(vm, LimitID::LongKeyExtraPieces);
-    uint64_t remainingNames = std::max<uint64_t>(length / 4, runtimeLimitValue(vm, LimitID::MaxNamesComparedWithLongKey));
+    // Visiting a name costs about as much as hashing sixteen units of the key.
+    uint64_t remainingNames = length / 16;
+    UniquedStringImpl* nameWithSameLength = nullptr;
+    std::optional<RefPtr<AtomStringImpl>> atom;
     for (JSObject* object = asObject(base); object; object = checksPrototypes ? object->getPrototypeDirect().getObject() : nullptr) {
         JSObject* holder = object;
         if (Object* compiled = compiledObjectOrNull(object)) {
-            if (mayHaveFieldWithNameOfLength(*compiled, length))
+            if (mayHaveFieldWithNameOfLength(*compiled, length) || hasPendingStars(*compiled))
                 return std::nullopt;
             holder = compiled->extraProperties();
             if (!holder)
@@ -689,28 +707,46 @@ std::optional<UniquedStringImpl*> findNameEqualToLongString(JSValue base, JSValu
         if (!hasOrdinaryLookups(holder))
             return std::nullopt;
         Structure* structure = holder->structure();
-        unsigned numberOfNames = structure->isDictionary() ? structure->dictionaryPropertyCount() : numberOfSlotsForMaxOffset(structure->maxOffset(), structure->inlineCapacity());
-        if (numberOfNames > remainingNames) {
-            countLimitHit(vm, LimitID::MaxNamesComparedWithLongKey);
-            return std::nullopt;
+        if (!atom) {
+            unsigned numberOfNames = structure->isDictionary() ? structure->dictionaryPropertyCount() : numberOfSlotsForMaxOffset(structure->maxOffset(), structure->inlineCapacity());
+            bool needsHash = numberOfNames > remainingNames;
+            if (!needsHash) {
+                remainingNames -= numberOfNames;
+                structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
+                    UniquedStringImpl* name = entry.key();
+                    if (name->length() != length || name->isSymbol() || name == nameWithSameLength)
+                        return true;
+                    needsHash = !!nameWithSameLength;
+                    if (!needsHash)
+                        nameWithSameLength = name;
+                    return !needsHash;
+                });
+            }
+            if (!needsHash)
+                continue;
+            atom = findAtomEqualTo(globalObject, string);
+            if (!atom)
+                return std::nullopt;
+            // The holders visited so far have no other name of this length.
+            if (*atom && atom->get() == nameWithSameLength)
+                return nameWithSameLength;
         }
-        remainingNames -= numberOfNames;
-        UniquedStringImpl* equalName = nullptr;
-        bool hasTooManyPieces = false;
-        structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
-            UniquedStringImpl* name = entry.key();
-            if (name->length() == length && !name->isSymbol() && stringEqualsName(string, name, maxPieces, hasTooManyPieces))
-                equalName = name;
-            return !equalName && !hasTooManyPieces;
-        });
-        if (hasTooManyPieces) {
-            countLimitHit(vm, LimitID::MinLongKeyUnitsPerPiece);
-            return std::nullopt;
-        }
-        if (equalName)
-            return equalName;
+        // The holder keeps the atom alive.
+        if (*atom && isValidOffset(structure->get(vm, PropertyName(atom->get()))))
+            return atom->get();
     }
-    return nullptr;
+    if (atom || !nameWithSameLength)
+        return nullptr;
+    std::optional<bool> isEqual = isEqualToName(string, *nameWithSameLength);
+    if (!isEqual)
+        return std::nullopt;
+    if (!*isEqual)
+        return nullptr;
+    // Only compared. A flat key that comes back takes the text of the atom, so that later accesses compare nothing.
+    static thread_local const JSString* lastKeyCompared;
+    if (std::exchange(lastKeyCompared, string) == string && string->tryGetValueImpl())
+        string->toExistingAtomString(globalObject);
+    return nameWithSameLength;
 }
 
 // A compiled object's fields have names that appear in the program, which are atoms wherever they are looked up, and its extra properties are in an ordinary object.

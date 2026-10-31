@@ -329,12 +329,11 @@ static InitializationState variableInitializationFor(InitializationState fieldIn
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static Variable createFieldVariable(const Program& program, ModuleID module, const Field& field)
+static Variable createFieldVariable(ModuleID module, const Field& field)
 {
     const LocationFlow& location = field.flow.location;
     Variable variable;
-    if (field.key)
-        variable.name = program.at(field.key).text;
+    variable.name = field.variableName;
     variable.module = module;
     variable.declared = field.declared;
     if (field.flags.contains(FieldFlags::IsImmutable))
@@ -350,10 +349,11 @@ static Variable createFieldVariable(const Program& program, ModuleID module, con
 }
 
 // Where the type of the value rests on a check, the generic version of the function stores what the check has turned away.
-static Variable createValueVariable(const Function& function, const PredictedValues& predicted, ValueID id, const DeclaredType& capture)
+static Variable createValueVariable(const Function& function, const PredictedValues& predicted, ValueID id, const DeclaredType& capture, StringID name)
 {
     const Value& value = function.at(id);
     Variable variable;
+    variable.name = name;
     variable.module = function.module;
     // A position has one type. What is expected of a value is worth keeping where nothing is proven of it.
     bool isOnlyExpected = value.type == TypeTable::anything && value.expected().predicted();
@@ -526,7 +526,7 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
         plan.promotedLayouts.set(layoutID.index());
         plan.firstVariables[layoutID.index()] = VariableID(program.variables.size() + plan.variables.size());
         for (const Field& field : layout.fields)
-            addVariable(createFieldVariable(program, module, field));
+            addVariable(createFieldVariable(module, field));
         isEdited.set(function.index());
     }
     for (auto [function, capture] : collectInParallel<std::pair<FunctionID, uint32_t>>(loops, numberOfFunctions, [&](unsigned index, Vector<std::pair<FunctionID, uint32_t>>& found) {
@@ -592,7 +592,7 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
     };
     UncheckedKeyHashMap<uint64_t, VariableID, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> variablesByValue;
     UncheckedKeyHashMap<uint32_t, std::unique_ptr<PredictedValues>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> predictedValuesOfFunctions;
-    auto ensureVariable = [&](const PromotedCaptureSource& source, const DeclaredType& capture) {
+    auto ensureVariable = [&](const PromotedCaptureSource& source, const DeclaredType& capture, StringID name) {
         if (source.variable)
             return source.variable;
         return variablesByValue.ensure(static_cast<uint64_t>(source.function.index()) << 32 | source.value.index(), [&] {
@@ -600,12 +600,12 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
             const PredictedValues& predicted = *predictedValuesOfFunctions.ensure(source.function.index(), [&] {
                 return makeUniqueWithoutFastMallocCheck<PredictedValues>(function, CFG(function));
             }).iterator->value;
-            VariableID variable = addVariable(createValueVariable(function, predicted, source.value, capture));
+            VariableID variable = addVariable(createValueVariable(function, predicted, source.value, capture, name));
             plan.storedValues.append({ variable, source.function, source.value });
             return variable;
         }).iterator->value;
     };
-    AOT::sort(suppliers, { }, [&](const CaptureSupplier& supplier) {
+    AOT::sortInLine(suppliers, { }, [&](const CaptureSupplier& supplier) {
         return std::tuple(plan.closureFunctionOf(supplier.callee), supplier.function, supplier.site);
     });
     for (bool didChange = true; std::exchange(didChange, false);) {
@@ -628,7 +628,7 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
                 PromotedCaptureSource source = findCommonSource(closureFunction, capture, suppliersOfFunction);
                 if (!source || !fitsCapture(source, closureFunction, capture))
                     continue;
-                plannedCapture(closureFunction, capture) = { true, ensureVariable(source, captures[capture]), { } };
+                plannedCapture(closureFunction, capture) = { true, ensureVariable(source, captures[capture], captures[capture].variableName), { } };
                 ++plan.numberOfPromotedCaptures;
                 didChange = true;
             }
@@ -1046,7 +1046,7 @@ struct ClosureWebs {
         }
         if (isEmpty)
             return;
-        AOT::sort(closuresWithStores);
+        AOT::sortInLine(closuresWithStores);
         objects.ensureSize(function.values.size());
 
         // What a parameter of the target is on this edge: an argument, or what the test in front of the branch has asked. Nothing for a guard.
@@ -1439,7 +1439,7 @@ static ClosureParameterTable findClosureParameters(const Program& program, const
         FieldReference reference = candidates.fields[candidate];
         candidatesOfFunctions.append({ program.at(program.at(reference.layout).fields[reference.field].declared.written()).singleFunction(), candidate });
     }
-    AOT::sort(candidatesOfFunctions);
+    AOT::sortInLine(candidatesOfFunctions);
     BitVector liesInOneField(program.functions.size());
     BitVector liesInField(program.functions.size());
     for (auto fieldsOfFunction : candidatesOfFunctions.span() | std::views::chunk_by([](const auto& a, const auto& b) { return a.first == b.first; })) {
@@ -1544,8 +1544,8 @@ static ClosureParameterTable findClosureParameters(const Program& program, const
         Vector<ClosureParameter> filled;
         for (const Evidence& entry : evidence)
             (entry.isFilled ? filled : refuted).append(entry.parameter);
-        AOT::sort(refuted);
-        AOT::sort(filled);
+        AOT::sortInLine(refuted);
+        AOT::sortInLine(filled);
         if (build.options().logging.dumpedPass == PassID::ReadCapturesFromEnvironments) [[unlikely]]
             dataLogLn("round ", round, ": ", table.parameters.size(), " parameters of ", table.functions.bitCount(), " functions, ", table.capturesOneValue.bitCount(), " functions with one capture, ", asked.size(), " of ", users.size(), " functions asked");
         // Nothing is known of a parameter that nobody fills.
@@ -1748,7 +1748,7 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
     auto layoutOf = [&](const FoundCaptures& store) {
         return candidates.fields[store.candidate].layout;
     };
-    AOT::sort(found, { }, [&](const FoundCaptures& store) {
+    AOT::sortInLine(found, { }, [&](const FoundCaptures& store) {
         return std::tuple { layoutOf(store), store.function, store.environment, store.block, store.candidate, store.indexInBlock, store.store, store.closure };
     });
     BitVector isFilled(candidates.fields.size());
@@ -1825,6 +1825,7 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
                     const Field& fieldOfClosure = program.at(layout).fields[candidates.fields[member.candidate].field];
                     Field field;
                     field.declared = wanted.declared;
+                    field.variableName = declaredCaptures[index].variableName;
                     field.flags = fieldOfClosure.flags | OptionSet<FieldFlags> { FieldFlags::IsHidden, FieldFlags::IsAddedLate };
                     field.flow.location.writers = writerStateOf(writersOfFieldThatPassAdds()).state;
                     field.flow.location.stores = fieldOfClosure.flow.location.stores;
@@ -1906,7 +1907,7 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
             if (store.indexOfClosure)
                 environmentsOfClosures.append({ store.function, store.closure, store.environment });
         }
-        AOT::sort(environmentsOfClosures);
+        AOT::sortInLine(environmentsOfClosures);
     }
     for (const ClosureParameter& parameter : closureParameters.parameters) {
         PlannedClosure& planned = plan.closures[parameter.candidate];
@@ -1916,7 +1917,7 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
 
     forEachLayout([&](LayoutID layout, Stores stores, std::span<const Stores> runs, Vector<Member, 16>& members) {
         // Closures that are stored at the same places can share the fields for what they capture.
-        AOT::sort(members, [](const Member& a, const Member& b) {
+        AOT::sortInLine(members, [](const Member& a, const Member& b) {
             if (a.runs != b.runs)
                 return std::ranges::lexicographical_compare(a.runs, b.runs);
             return a.candidate < b.candidate;
@@ -2051,10 +2052,11 @@ static void giveAbsentInPlaceOfUndefined(const ClosureParameterTable& closurePar
         builder.applyInsertions();
 }
 
-static void readCaptures(const Program& program, const CaptureCandidateTable& candidates, const CaptureReadPlan& plan, const ClosureWebs& webs, IRBuilder& builder)
+static void readCaptures(const Program& program, const CaptureCandidateTable& candidates, const CaptureReadPlan& plan, const ClosureWebs& webs, IRBuilder& builder, Vector<ValueID, 8>& valuesWithOtherTypeThanRead)
 {
     Function& function = builder.function();
     ValueSubstitution substitution(function);
+    Vector<ValueID, 8> replacedReads;
     auto typeInPlaceOfValue = [&](ValueID id) {
         return typeInPlaceOf(plan.closures[webs.candidateOf(id)], program.typeOf(function, id));
     };
@@ -2119,6 +2121,7 @@ static void readCaptures(const Program& program, const CaptureCandidateTable& ca
             uint32_t source = plan.closures[candidate].fields[value.index()];
             if (source == noField) {
                 substitution.replace(id, closure);
+                replacedReads.append(id);
                 erasedIndexes.set(index);
                 continue;
             }
@@ -2129,6 +2132,11 @@ static void readCaptures(const Program& program, const CaptureCandidateTable& ca
         }
         if (!erasedIndexes.isEmpty())
             builder.eraseValues(block, erasedIndexes);
+    }
+    for (ValueID read : replacedReads) {
+        ValueID value = substitution.resolve(read);
+        if (function.at(value).type != function.at(read).type)
+            valuesWithOtherTypeThanRead.appendIfNotContains(value);
     }
     substitution.apply(function, nullptr);
     if (!webs.isHeld)
@@ -2780,12 +2788,18 @@ void readCapturesFromEnvironments(ProgramEditor& editor, FlowResults& flow, cons
                 function.edit(added.block, BlockEdit::Values).values.insert(added.indexInBlock + 1, store);
             }
             giveAbsentInPlaceOfUndefined(closureParameters, webs, builder);
+            Vector<ValueID, 8> valuesWithOtherTypeThanRead;
             if (!webs.isEmpty)
-                readCaptures(program, candidates, plan, webs, builder);
+                readCaptures(program, candidates, plan, webs, builder, valuesWithOtherTypeThanRead);
             removeStores(plan, id, builder);
             if (!webs.isEmpty)
                 makeClosuresAtReads(candidates, plan, webs, builder);
             nameFactsWhereReadsStand(program, function, arenas.types);
+            // What is computed from a capture has its type, and later its form, from the type of the value that now stands for the read.
+            if (!valuesWithOtherTypeThanRead.isEmpty()) {
+                FunctionAnalyses analyses(builder.context(), function);
+                narrowValueTypes(TypePropagationInputs { program, id, function, analyses, arenas.types, build }, valuesWithOtherTypeThanRead.span());
+            }
         });
     }
     passOwnCaptures(editor, flow, build, plan);
@@ -2866,7 +2880,7 @@ static const FunctionPlan& withOwnedValues(FunctionPlan& plan, FunctionAnalyses&
         if (value.opcode != Opcode::Results)
             continue;
         value.forEachOperand([&](ValueID operand, uint32_t) {
-            objectsHandedBack.merge(escape.pointsTo(operand).objects.bits());
+            escape.pointsTo(operand).objects.addTo(objectsHandedBack);
         });
     }
     auto isOwned = [&](const PointsToSet& pointsTo) {
@@ -3036,7 +3050,7 @@ static void classifyHolders(const AnalysisContext& context, const EffectContext&
 
     AOT::sort(plan.disqualifiedLayouts);
     removeRepeatedElements(plan.disqualifiedLayouts);
-    AOT::sort(plan.marks, { }, [](const EscapeMark& mark) {
+    AOT::sortInLine(plan.marks, { }, [](const EscapeMark& mark) {
         return std::tuple { mark.point.block, mark.environment, mark.point.index };
     });
     removeRepeatedElements(plan.marks, [](const EscapeMark& a, const EscapeMark& b) {

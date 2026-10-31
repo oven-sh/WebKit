@@ -7,12 +7,15 @@
 
 #if ENABLE(AOT)
 
+#include "AOTID.h"
 #include "DeferGC.h"
 #include "Options.h"
 #include "VM.h"
 #include <array>
+#include <tuple>
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/text/StringHash.h>
@@ -39,7 +42,12 @@ class AllocationCounts {
     WTF_MAKE_TZONE_ALLOCATED(AllocationCounts);
     WTF_MAKE_NONCOPYABLE(AllocationCounts);
 public:
-    using Lines = UncheckedKeyHashMap<String, CountedCells>;
+    // The words of a place are made once, so a line is nearly always asked for with the text that it is kept under: no letter is compared then.
+    struct WordsHash : StringHash {
+        using StringHash::equal;
+        static bool equal(const String& a, const String& b) { return a.impl() == b.impl() || StringHash::equal(a, b); }
+    };
+    using Lines = UncheckedKeyHashMap<String, CountedCells, WordsHash>;
 
     AllocationCounts() = default;
 
@@ -61,9 +69,19 @@ public:
     static void dump(const Instance&, PrintStream&);
 
 private:
+    // What a line counts at its place. A number, an index or an address tells the things of one kind apart.
+    enum class Counted : uint8_t { Layout = 1, Closure, Map, Set, CellsOfAllocator };
+
     static AllocationCounts& ensure(Instance&);
     static AllocationCounts* ensureForFirstInstance(VM&);
+    template<typename Functor> const String& wordsAtAllocatingFrame(VM&, Typed::FunctionID constructor, Counted, uint64_t detail, const Functor& describeCounted);
 
+    // A line is put into words once. From then on the numbers of the frame and of what is counted there find it: a loop that allocates comes here with every free list.
+    UncheckedKeyHashMap<std::tuple<uint64_t, uint64_t, unsigned>, String> m_wordsOfLines;
+    // CompiledFrameIterator::findReturnAddressInFunctionAtTop() says which call site runs: the frame there is looked at once.
+    UncheckedKeyHashMap<std::pair<const void*, uint64_t>, String> m_wordsOfReturnAddresses;
+    // Those that this VM has put on the list of all VMs, which lies behind a lock.
+    UncheckedKeyHashSet<const LocalAllocator*> m_listedAllocators;
     Lines m_allocations;
     Lines m_refills;
     Lines m_made;

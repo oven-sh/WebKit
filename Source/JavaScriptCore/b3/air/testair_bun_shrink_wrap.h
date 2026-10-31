@@ -1135,6 +1135,46 @@ void testValueKeptThroughCrowdedBlockLeavesOtherPathWithoutFrame()
     }
 }
 
+void testCrowdedBlockInLoopHasFrameAroundLoopUnlessRare()
+{
+    for (B3::FrequencyClass frequency : { B3::FrequencyClass::Unlikely, B3::FrequencyClass::Rare }) {
+        KeptValueGraph graph(frameSplittingPolicy());
+        Code& code = graph.code;
+        BasicBlock* early = graph.addReturn(1);
+        BasicBlock* header = code.addBlock();
+        BasicBlock* arm = code.addBlock();
+        BasicBlock* latch = code.addBlock();
+        BasicBlock* exit = code.addBlock();
+        appendBranchTest(graph.entry, graph.first, header, early);
+        graph.appendAddAndBranch(header, 2, graph.second, FrequentedBlock(arm, frequency), latch);
+        unsigned numberOfValues = 0;
+        for (Reg reg : code.regsInPriorityOrder(GP))
+            numberOfValues += !RegisterSet::calleeSaveRegisters().contains(reg, IgnoreVectors);
+        Vector<Tmp> values;
+        for (unsigned i = 0; i < numberOfValues; ++i) {
+            values.append(code.newTmp(GP));
+            arm->append(Move, nullptr, graph.addressOf(FrameGraph::Word::Second), values.last());
+        }
+        for (Tmp value : values)
+            graph.appendAdd(arm, value);
+        appendJump(arm, latch);
+        graph.appendLoopBranch(latch, header, exit);
+        graph.appendAdd(exit, graph.kept);
+        graph.appendReturnOfSum(exit);
+
+        prepare(graph.proc);
+        CHECK(code.frameLayout().coverage == FrameCoverage::SomePaths);
+        CHECK(stateAtHead(code, graph.entry) == FrameState::NotSetUp);
+        CHECK(stateAtHead(code, early) == FrameState::NotSetUp);
+        FrameState stateInLoop = frequency == B3::FrequencyClass::Rare ? FrameState::NotSetUp : FrameState::SetUp;
+        CHECK(stateAtHead(code, header) == stateInLoop);
+        CHECK(stateAtHead(code, latch) == stateInLoop);
+        graph.checkRun({ .first = 0, .second = 3, .result = 1 });
+        graph.checkRun({ .first = 4, .second = 0, .result = 8 });
+        graph.checkRun({ .first = 4, .second = 3, .result = 8 + 3 + 4 * 3 * static_cast<int64_t>(numberOfValues) });
+    }
+}
+
 // Random control flow over values that are read and changed on both sides of the frame's border: calls, crowded blocks, rare edges and a loop.
 struct RandomFrameBorders {
     struct Step {
@@ -1451,6 +1491,7 @@ void testLiveRangeSplitPutsShufflesOnBorder()
         RUN(testValueKeptAcrossCallsLeavesEarlyExitWithoutFrame()); \
         RUN(testValueKeptThroughCallsReturnsToItsTmp()); \
         RUN(testValueKeptThroughCrowdedBlockLeavesOtherPathWithoutFrame()); \
+        RUN(testCrowdedBlockInLoopHasFrameAroundLoopUnlessRare()); \
         RUN(testValuesSurviveRandomFrameBorders()); \
         RUN(testLiveRangesAreNotSplitWithoutBorderToCross()); \
         RUN(testLiveRangeSplitInFunctionWithManyBlocksAndTmps()); \

@@ -39,8 +39,11 @@ static uint8_t numberOfRegisterParameters(const Function& function)
 {
     switch (entryConventionOf(function)) {
     case EntryConvention::Direct:
-    case EntryConvention::GenericBuffer:
         return 0;
+    case EntryConvention::GenericBuffer: {
+        size_t numberOfArguments = function.length + (function.creator.as<CreatorRecord::Entrypoint>().takesNewTarget ? 1 : 0);
+        return static_cast<uint8_t>(std::min<size_t>(numberOfArguments, numberOfArgumentGPRs));
+    }
     case EntryConvention::GenericRegisters: {
         size_t numberOfArguments = function.parameters.size() + (function.newTargetParameterIndex() ? 1 : 0);
         return static_cast<uint8_t>(std::min<size_t>(numberOfArguments, numberOfArgumentGPRs));
@@ -122,6 +125,12 @@ uint32_t EntryEmitter::indexOfFirstArgumentInList() const
 {
     RELEASE_ASSERT(m_argumentCount.value());
     return m_indexOfFirstArgumentInList;
+}
+
+uint32_t EntryEmitter::numberOfArgumentsAlwaysInList() const
+{
+    RELEASE_ASSERT(m_argumentCount.value() && !m_indexOfFirstArgumentInList);
+    return numberOfRegisterParameters(m_function);
 }
 
 static uint32_t stackWordsPassedBy(const CodeGenerationInputs& inputs, const Value& tailCall)

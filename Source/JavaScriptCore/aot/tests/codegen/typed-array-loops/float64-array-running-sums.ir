@@ -126,7 +126,7 @@ function f1 name="turn" module=m0 position=73 flags=[IsChecked, HasExplicitName]
 
 # Each iteration reads what the one before stored.
 # BODY-LABEL: steps by 8
-# BODY-COUNT-16: Double b@{{*}} = Load(b@{{*}}Reads:TypedArrayElements
+# BODY-COUNT-9: Double b@{{*}} = Load(b@{{*}}Reads:TypedArrayElements
 # BODY-NOT: Double b@{{*}} = Load(b@{{*}}Reads:TypedArrayElements
 # BODY-LABEL: end of loop
 # Where the turns share base + index * 8, a turn is seen to read what the turn before stored, and only the first of the eight reads it.
@@ -147,5 +147,5 @@ function f1 name="turn" module=m0 position=73 flags=[IsChecked, HasExplicitName]
 # HOT-NOT: isLoopPoll
 # HOT-NOT: Reads:JSArrayBufferView
 # HOT-LABEL: end of loop
-# X64: instructions: 27, patchpoints: 24, {{*}} steps by 8
+# X64: instructions: 20, patchpoints: 24, {{*}} steps by 8
 # ARM64: instructions: 31, patchpoints: 24, {{*}} steps by 8

@@ -389,14 +389,15 @@ static void testEqualStreamsShare()
     AOT_TEST_CHECK(tables.offsets[0] != tables.offsets[3]);
 }
 
-static void testFrameMapsDivide()
+static void testEqualFrameMapsShare()
 {
     BuildContext context(wireOptions());
-    LinkedFunctions functions = createLinkedFunctions(bodies(handlerBody(1, 5, { 1, 2 }), handlerBody(2, 5, { 1, 2 })), context);
-    Vector<Vector<uint8_t>> callSites { { 8 }, { 8 } };
+    LinkedFunctions functions = createLinkedFunctions(bodies(handlerBody(1, 5, { 1, 2 }), handlerBody(2, 5, { 1, 2 }), handlerBody(3, 5, { 1, 3 })), context);
+    Vector<Vector<uint8_t>> callSites { { 8 }, { 8 }, { 8 } };
     SideTables tables = encodeSideTables(functions, callSites.span(), context);
-    AOT_TEST_CHECK(tables.offsets[0] != tables.offsets[1]);
-    AOT_TEST_CHECK(tables.frameMapWords == Vector<uint32_t>({ 1, 2, 1, 2 }));
+    AOT_TEST_CHECK(tables.offsets[0] == tables.offsets[1]);
+    AOT_TEST_CHECK(tables.offsets[0] != tables.offsets[2]);
+    AOT_TEST_CHECK(tables.frameMapWords == Vector<uint32_t>({ 1, 2, 1, 3 }));
 }
 
 static void testAppendAligns()
@@ -541,7 +542,7 @@ static Vector<CompiledCode> bodiesCallingStub(uint32_t numberOfBodies, size_t bo
     return code;
 }
 
-static constexpr uint32_t numberOfBodiesPastReach = 48;
+static constexpr uint32_t numberOfBodiesPastReach = 48 * scaleOfSharedCode;
 static constexpr size_t sizeOfBodyPastReach = 64 * KB;
 static_assert(numberOfBodiesPastReach * sizeOfBodyPastReach >= 3 * loweredSharedCodeReach);
 
@@ -580,7 +581,7 @@ static void testManySharedCodeCopies()
 {
     constexpr size_t leastNumberOfCopies = 49;
     constexpr size_t bodySize = 256 * KB;
-    constexpr uint32_t numberOfBodies = 400;
+    constexpr uint32_t numberOfBodies = 400 * scaleOfSharedCode;
     static_assert(bodySize < loweredSharedCodeReach);
     static_assert(numberOfBodies * bodySize >= leastNumberOfCopies * 2 * loweredSharedCodeReach, "One copy serves less than the reach on either side.");
     if (AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE)
@@ -847,9 +848,12 @@ static void testCompileLimitValues()
 
 static void testCompileLimitThatFailsBuild()
 {
-    for (LimitID limit : { LimitID::TableBytes, LimitID::VectorBytes, LimitID::CodeBytes, LimitID::ImageFunctions }) {
-        AOT_TEST_CHECK(!canBeLowered(limit));
-        checkOptionsRejected(wireOptions({ .loweredLimit = limit, .loweredLimitValue = 64 }));
+    for (LimitID limit : { LimitID::TableBytes, LimitID::VectorBytes, LimitID::CodeBytes, LimitID::ImageFunctions, LimitID::ImageClosureFunctions }) {
+        AOT_TEST_CHECK(canBeLowered(limit) && !isLoweredByAll(limit));
+        std::unique_ptr<CompileOutput> byName = compileProgram({ }, wireOptions({ .loweredLimit = limit, .loweredLimitValue = 64 }));
+        AOT_TEST_CHECK(byName && byName->limitValues[static_cast<size_t>(limit)] == 64);
+        std::unique_ptr<CompileOutput> byAll = compileProgram({ }, wireOptions({ .loweredLimit = LimitID::All, .loweredLimitValue = 64 }));
+        AOT_TEST_CHECK(byAll && byAll->limitValues[static_cast<size_t>(limit)] == defaultLimitValue(limit, hostArchitecture()));
     }
 }
 
@@ -881,7 +885,7 @@ std::span<const NativeTest> imageBuildTests()
         { "image/callees/inline-frame-needs-none"_s, testInlineFrameNeedsNone },
         { "image/callees/alias"_s, testAliasResolves },
         { "image/side-tables/equal-streams-share"_s, testEqualStreamsShare },
-        { "image/side-tables/frame-maps-divide"_s, testFrameMapsDivide },
+        { "image/side-tables/equal-frame-maps-share"_s, testEqualFrameMapsShare },
         { "image/byte-streams/append-aligns"_s, testAppendAligns },
         { "image/byte-streams/append-all"_s, testAppendAll },
         { "image/byte-streams/append-all-threads"_s, testAppendAllThreads },

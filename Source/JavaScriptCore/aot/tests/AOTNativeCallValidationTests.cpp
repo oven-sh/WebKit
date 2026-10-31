@@ -75,7 +75,8 @@ public:
 
     static ObjectWithOwnMethods* create(VM& vm, JSGlobalObject* globalObject)
     {
-        auto* object = new (NotNull, allocateCell<ObjectWithOwnMethods>(vm)) ObjectWithOwnMethods(vm, createStructure(vm, globalObject, globalObject->objectPrototype()));
+        Structure* structure = createStructure(vm, globalObject, globalObject->objectPrototype());
+        auto* object = new (NotNull, allocateCell<ObjectWithOwnMethods>(vm)) ObjectWithOwnMethods(vm, structure);
         object->finishCreation(vm);
         return object;
     }

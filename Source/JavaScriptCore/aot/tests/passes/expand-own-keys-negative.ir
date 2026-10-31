@@ -17,6 +17,7 @@ function f0 name="nullishReplacerAndIndent" parameters=[{type=object}] results=[
     Return v3
 # CHECK: = StringBuilderBegin
 # CHECK: frequency=Rare:
+# CHECK-NEXT: StringBuilderDiscard
 # CHECK-NEXT: = CallBuiltin -, v0, v1, v2 overload=JSONStringify/0
 }
 

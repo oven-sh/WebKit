@@ -51,14 +51,17 @@ constexpr uint64_t defaultLimitValue(LimitID limit, Architecture architecture)
 }
 
 constexpr bool failsBuild(LimitID limit) { return degradesToOf(limit) == Wire::DegradesTo::BuildError; }
-constexpr bool canBeLowered(LimitID limit) { return limit != LimitID::None && !failsBuild(limit); }
+// By its own name.
+constexpr bool canBeLowered(LimitID limit) { return limit != LimitID::None; }
+// A build with every limit lowered prints what any other build prints, so it leaves alone what would stop it.
+constexpr bool isLoweredByAll(LimitID limit) { return canBeLowered(limit) && !failsBuild(limit); }
 
 // What `limit` is worth in a build that lowers `lowered` to `value`. The compiler and the run time both ask here.
 constexpr uint64_t valueWhenLowered(LimitID limit, uint64_t usual, LimitID lowered, uint64_t value)
 {
     if (lowered == limit)
         return std::min(usual, value);
-    if (lowered == LimitID::All && canBeLowered(limit))
+    if (lowered == LimitID::All && isLoweredByAll(limit))
         return std::min(usual, std::max(value, smallestOf(limit)));
     return usual;
 }

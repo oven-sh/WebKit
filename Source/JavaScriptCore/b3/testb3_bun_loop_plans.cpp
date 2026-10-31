@@ -172,8 +172,10 @@ static void checkExcursion(bool hasSmallPath, uint64_t additions, bool copiesLar
     endBodyAndRotate(loop, block);
 
     CHECK(versionLoopsAndValidate(proc));
-    CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->isInt64(1000); }), hasSmallPath ? 2u : 0u);
-    CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->isInt64(2000); }), copiesLargePath ? 2u : 1u);
+    // A turn that takes a path that the fast loop has no copy of ends in a copy of the whole turn.
+    unsigned copiesOfTurn = copiesLargePath ? 0 : 1;
+    CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->isInt64(1000); }), hasSmallPath ? 2u + copiesOfTurn : 0u);
+    CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->isInt64(2000); }), 2u);
     CHECK_EQ(limitHits(proc, Limit::MaxClonedValuesPerExcursion), copiesLargePath ? 0u : 1u);
     if (additions > defaultValueOf(Limit::MaxClonedValuesPerExcursion))
         CHECK(hasNumber(proc.report().firstOriginOf(Limit::MaxClonedValuesPerExcursion), 2000));
@@ -238,7 +240,8 @@ static void testVersionLoopsHoistsLoadAfterPeeledGuard()
             checkAccessCountInEachLoop(proc, secondHeap, { 1, 1 });
         else {
             checkAccessCountInEachLoop(proc, secondHeap, { 0, 1 });
-            checkAccessCountInEachLoop(proc, thirdHeap, { 1, 1 });
+            // A turn of the original loop ends in front of the guards, so the flag of the next turn is read there too.
+            checkAccessCountInEachLoop(proc, thirdHeap, { 1, 2 });
             CHECK_EQ(numberOfValues(proc, [](Value* value) { return accessesHeap(value, thirdHeap); }), 3u);
         }
 
@@ -320,7 +323,8 @@ static void testVersionLoopsSharesEqualPureValues()
             CHECK(versionLoopsAndValidate(proc));
             B3::Opcode opcode = operation == Operation::Product ? Mul : Patchpoint;
             checkAccessCountInEachLoop(proc, secondHeap, { 0, 1 });
-            checkValueCountInEachLoop(proc, opcode, { 0, 2 });
+            // Where nothing is shared, a turn of the original loop ends in front of the guards, with what is hoisted there.
+            checkValueCountInEachLoop(proc, opcode, { 0, areEqual ? 2u : 4u });
             CHECK_EQ(numberOfValues(proc, opcode), areEqual ? 3u : 4u);
 
             auto code = compileProc(proc);

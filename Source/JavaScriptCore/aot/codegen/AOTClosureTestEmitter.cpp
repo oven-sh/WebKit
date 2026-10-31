@@ -63,7 +63,7 @@ Condition ClosureTestEmitter::hasClosureWordThatDecides(CellPointer cell, Functi
         m_out.appendTo(hasProperties);
         Pointer butterfly = loadField<Pointer>(cell, m_heaps.JSObject_butterfly);
         Word32 reifiedFunction(m_out.load32(m_out.address(m_heaps.properties.atAnyNumber(), butterfly.value(), ReifiedSlimClosure::offsetOfFunctionIndexInButterfly())));
-        emitter<RuntimeValidationEmitter>().checkTypeTestsAgree(notEqual(reifiedFunction, word32(genericEntrypoint.index())), cell);
+        emitter<RuntimeValidationEmitter>().checkTypeTestsAgree(notEqual(reifiedFunction, word32(m_placement.closureNumberOf(genericEntrypoint))), cell);
         m_out.jump(continuation);
 
         m_out.appendTo(continuation);
@@ -159,7 +159,7 @@ void ClosureTestEmitter::branchOnIsClosureOf(CellPointer cell, FunctionID functi
     }
     Pointer butterfly = loadField<Pointer>(cell, m_heaps.JSObject_butterfly);
     Word32 reifiedFunction(m_out.load32(m_out.address(m_heaps.properties.atAnyNumber(), butterfly.value(), ReifiedSlimClosure::offsetOfFunctionIndexInButterfly())));
-    branch(equal(reifiedFunction, word32(entrypoint.index())), targets);
+    branch(equal(reifiedFunction, word32(m_placement.closureNumberOf(entrypoint))), targets);
 }
 
 Condition ClosureTestEmitter::isClosureOfAny(CellPointer cell, std::span<const FunctionID> functions)
@@ -210,7 +210,7 @@ void ClosureTestEmitter::branchOnIsClosureOfAny(CellPointer cell, std::span<cons
         FunctionID entrypoint = inputs().derivedFunctions.find(derivedFunctionKey(FunctionRole::GenericEntrypoint, function));
         if (!entrypoint)
             continue;
-        entrypoints.append(entrypoint.index());
+        entrypoints.append(m_placement.closureNumberOf(entrypoint));
         FunctionKindData kind = m_placement.functionKind(function);
         (kind.isSlim ? hasSlimMember : hasFullMember) = true;
         ptrdiff_t offsetOfHeader = offsetOfClosureHeader(kind);
@@ -286,7 +286,7 @@ uint32_t ClosureTestEmitter::upperHalfOfClosureWordOf(FunctionID genericEntrypoi
     ClosureWord::Flags flags = closureWordFlags(m_placement.functionKind(genericEntrypoint));
     flags.borrowedArguments = entry.borrowedArguments;
     flags.endsItsTailCalls = entry.endsItsTailCalls;
-    return ClosureWord::encodeUpperHalf(entry.numberOfParameters, genericEntrypoint.index(), flags);
+    return ClosureWord::encodeUpperHalf(entry.numberOfParameters, m_placement.closureNumberOf(genericEntrypoint), flags);
 }
 
 Condition ClosureTestEmitter::hasClosureWordOf(CellPointer closure, bool isSlim, FunctionID genericEntrypoint)

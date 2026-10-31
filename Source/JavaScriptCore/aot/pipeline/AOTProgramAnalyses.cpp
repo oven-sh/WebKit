@@ -162,6 +162,15 @@ void ProgramAnalyses::estimateHeatFor(HeatFor heatFor)
     }
 }
 
+void ProgramAnalyses::dropHeat()
+{
+    // A runner that has stopped makes no other.
+    if (!m_heat || m_runner.isStopped())
+        return;
+    destroyResultsLater(m_runner.build(), m_inlining, m_heat);
+    m_runner.didInvalidate({ ProgramResult::Heat, ProgramResult::InliningSummaries });
+}
+
 const Heat& ProgramAnalyses::heat(const FlowResults& flow) const
 {
     if (!m_heat) {
@@ -184,6 +193,10 @@ const Heat& ProgramAnalyses::heat(const FlowResults& flow) const
         m_keepsPartsOfBodies = false;
         m_bodyWeights = WTF::move(madeWeights);
         destroyResultsLater(build, keptWeights);
+    }
+    if (!m_heat->hasSeenAllFunctionsOf(m_program)) {
+        ProgramCachesWithScratchTypes caches(m_program, m_runner.build());
+        m_heat->takeInFunctionsMadeSince(m_program, flow, m_runner.build());
     }
     return *m_heat;
 }
@@ -292,6 +305,7 @@ BorrowedParameters ProgramAnalyses::borrowedParameters() const
     if (const BodySummaries* summaries = summariesOfBodiesAsTheyAre())
         return summaries->borrowedParameters();
     BuildContext& build = m_runner.build();
+    ProgramCachesWithScratchTypes caches(m_program, build);
     if (m_summarizesNoBodies || !m_bodySummaries)
         return computeBorrowedParameters(m_program, build);
     BorrowedParameters table = m_bodySummaries->computeBorrowedParametersOfChangedBodies(m_program, build);

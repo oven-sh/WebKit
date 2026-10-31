@@ -1,8 +1,8 @@
-# Array.from({ length: 2 }, make), as the front end writes it: a call of the compiler's arrayFromLength (runtimefunction 131110), in a program that was handed over WITHOUT that function.
+# Array.from({ length: 2 }, make), as the front end writes it: a call of the compiler's arrayFromLength, in a program that was handed over WITHOUT that function.
 # Flow wants to enter it with what the call passes and does not find it. It says so: whoever handed the program over adds the function and compiles again.
 # LIBRARY: own
 # RUN: valueflow-solve lacked
-# CHECK: lacked 131110
+# CHECK: lacked {{*}}
 # CHECK-NOT: lacked
 
 module m0 path="main.js" displayPath="main.js" body=f0

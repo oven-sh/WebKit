@@ -1,0 +1,119 @@
+# `ring[i & 7] = x; ring[j & 7]`: a store near the start of a list may lengthen its storage or move it, and leaves the form of it: the guard of the test of the form holds behind the store. It ends where the position may lie so far out that the list becomes sparse, where the storage may have to be converted for the value, and where the position is any number. What was asked about the length ends at every one of these stores
+# FORM: Prepared
+# RUN: guards points uses
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="nearTheStart" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=int[0, 7]}, {type=anything}] results=[{type=anything}] {
+    v3 = HasArrayStorage v0 arrayStorage=Contiguous [isWritable]
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutArrayElement v0, v1, v2, v4 arrayStorage=Contiguous mode=Strict level=Expected [keyIsIntegral]
+    v6 = GetArrayElement v0, v1, v4 arrayStorage=Contiguous level=Expected [keyIsIntegral]
+    Return v6
+  b2():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK: b1:0 available: [v4]
+# CHECK-NEXT: b1:1 available: [v4]
+# CHECK-NEXT: b1:2 available: [v4]
+# CHECK: v6 guard v4: Available
+
+function f1 name="lastPositionThatNeverMakesAListSparse" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=int[0, 999]}, {type=anything}] results=[{type=anything}] {
+    v3 = HasArrayStorage v0 arrayStorage=Contiguous
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutArrayElement v0, v1, v2, v4 arrayStorage=Contiguous mode=Strict level=Expected [keyIsIntegral]
+    v6 = GetArrayElement v0, v1, v4 arrayStorage=Contiguous level=Expected [keyIsIntegral]
+    Return v6
+  b2():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK: b1:1 available: [v4]
+# CHECK: v6 guard v4: Available
+
+function f2 name="farEnoughOutToMakeTheListSparse" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=int[0, 1000]}, {type=anything}] results=[{type=anything}] {
+    v3 = HasArrayStorage v0 arrayStorage=Contiguous [isWritable]
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutArrayElement v0, v1, v2, v4 arrayStorage=Contiguous mode=Strict level=Expected [keyIsIntegral]
+    v6 = Undefined
+    Return v6
+  b2():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK: b1:0 available: [v4]
+# CHECK-NEXT: b1:1 available: []
+
+function f3 name="belowTheStart" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=int[-1, 7]}, {type=anything}] results=[{type=anything}] {
+    v3 = HasArrayStorage v0 arrayStorage=Contiguous [isWritable]
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutArrayElement v0, v1, v2, v4 arrayStorage=Contiguous mode=Strict level=Expected [keyIsIntegral]
+    v6 = Undefined
+    Return v6
+  b2():
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK: b1:0 available: [v4]
+# CHECK-NEXT: b1:1 available: []
+
+function f4 name="anyNumberStoredAmongIntegers" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 7]}, {type=number}] results=[{type=anything}] {
+    v3 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutArrayElement v0, v1, v2 mode=Strict level=Expected [keyIsIntegral]
+    v6 = Undefined
+    Return v6
+  b2():
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK: b1:0 available: [v4]
+# CHECK-NEXT: b1:1 available: []
+
+function f5 name="integerStoredAmongIntegers" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 7]}, {type=i32}] results=[{type=anything}] {
+    v3 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutArrayElement v0, v1, v2, v4 arrayStorage=Int32 mode=Strict level=Expected [keyIsIntegral]
+    v6 = Undefined
+    Return v6
+  b2():
+    Return
+}
+# CHECK-LABEL: function f5
+# CHECK: b1:0 available: [v4]
+# CHECK-NEXT: b1:1 available: [v4]
+
+function f6 name="textStoredAmongDoubles" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=int[0, 7]}, {type=string}] results=[{type=anything}] {
+    v3 = HasArrayStorage v0 arrayStorage=Double
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutArrayElement v0, v1, v2 mode=Strict level=Expected [keyIsIntegral]
+    v6 = Undefined
+    Return v6
+  b2():
+    Return
+}
+# CHECK-LABEL: function f6
+# CHECK: b1:0 available: [v4]
+# CHECK-NEXT: b1:1 available: []
+
+function f7 name="whatWasAskedOfTheLengthEnds" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=int[0, 7]}, {type=anything}] results=[{type=anything}] {
+    v3 = IsInBounds v0, v1
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutArrayElement v0, v1, v2 mode=Strict level=Expected [keyIsIntegral]
+    v6 = Undefined
+    Return v6
+  b2():
+    Return
+}
+# CHECK-LABEL: function f7
+# CHECK: b1:0 available: [v4]
+# CHECK-NEXT: b1:1 available: []

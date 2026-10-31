@@ -78,7 +78,7 @@ ArgumentMoves CallGenerator::moveArguments(CCallHelpers& jit, const B3::Stackmap
         B3::Type childType = call->child(i)->type();
         if (childType == B3::Double)
             continue;
-        GPRReg destination = operationArgumentGPR(destinationIndex++);
+        GPRReg destination = argumentGPROfPreservingCall(*preservingCall, entryAtOffset(*immediate), destinationIndex++);
         const B3::ValueRep& rep = params[firstRep + i];
         if (rep.isGPR()) {
             if (rep.gpr() != destination)
@@ -505,11 +505,11 @@ void RuntimeCallEmitter::placeArguments(CallRequest& request, std::span<const LV
             continue;
         }
         RELEASE_ASSERT(nextGPR < numberOfOperationArgumentGPRs);
-        GPRReg destination = operationArgumentGPR(nextGPR++);
         if (!request.preservingCall) {
-            request.operands.append({ argument, B3::ValueRep::reg(destination) });
+            request.operands.append({ argument, B3::ValueRep::reg(operationArgumentGPR(nextGPR++)) });
             continue;
         }
+        GPRReg destination = argumentGPROfPreservingCall(*request.preservingCall, *request.entry, nextGPR++);
         LValue widened = argument->hasInt32() ? m_out.constInt64(static_cast<uint32_t>(argument->asInt32())) : argument;
         request.operands.append({ widened, B3::ValueRep::ColdAny });
         request.additionalClobbers.add(destination, IgnoreVectors);
@@ -616,6 +616,11 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     RELEASE_ASSERT(!branchesOnFlags || signature.result == StubResult::Flags);
 
     Effects effects = context ? effectsOfCall(*context, request.effectsOfCallee) : request.effectsOfCallee;
+    if (options.alsoPerforms) {
+        Effects effectsOfOther = effectsOfCall(analyses().effectsOf(options.alsoPerforms), request.effectsOfCallee);
+        effects.reads.merge(effectsOfOther.reads);
+        effects.writes.merge(effectsOfOther.writes);
+    }
     if (options.pureFunction)
         effects.reads = { };
     // A site says where in the source a frame stands and which handler is in force there.
@@ -639,7 +644,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     RuntimeValidationEmitter::PhotographedOperands photographedOperands;
     bool comesBack = returns || (branchesOnFlags && !effects.mayThrow);
     if (validates && comesBack && !effects.mayRunOtherCode() && !options.runsCodeOfHost && !generator().isInitializingCell())
-        photographedOperands = emitter<RuntimeValidationEmitter>().photographOperands(*context, effects);
+        photographedOperands = emitter<RuntimeValidationEmitter>().photographOperands(*context, effects, options.alsoPerforms);
     uint32_t calleeNumber = request.entry ? static_cast<uint32_t>(*request.entry) : static_cast<uint32_t>(key.family());
     uint32_t photographedCallee = request.entry ? calleeNumber : PhotographedCall::calleeIsStub | calleeNumber;
     std::optional<Integer> stopsBeforeCall;
@@ -652,6 +657,8 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
 
     B3::PatchpointValue* patchpoint = m_out.patchpoint(patchpointTypeOf(m_proc, signature.result));
     patchpoint->effects.terminal = !returns;
+    if (MutatorFenceRecords::isUsed && returns && request.effectsOfCallee.writes.containsOnly(bookkeepingHeaps) && request.effectsOfCallee.alwaysCompletes())
+        m_records.mutatorFences.allocations.set(patchpoint->index());
     patchpoint->setNeedsFrameRecord(readsFrameRecordOfCaller(key.family()));
     patchpoint->setRunsWithoutFrame(!hasSite && !generator().validates() && returns && leavesCallerWithoutFrame(key));
 
@@ -868,7 +875,12 @@ Pointer RuntimeCallEmitter::uninitializedArgumentBuffer(unsigned numberOfWords)
 
 Effects RuntimeCallEmitter::effectsOfCall(const OperationContext& context, const Effects& effectsOfCallee) const
 {
-    Effects effects = context.effects().onAnyEdge().intersectedWith(effectsOfCallee);
+    return effectsOfCall(context.effects(), effectsOfCallee);
+}
+
+Effects RuntimeCallEmitter::effectsOfCall(const EffectsOnEdges& effectsOfOperation, const Effects& effectsOfCallee) const
+{
+    Effects effects = effectsOfOperation.onAnyEdge().intersectedWith(effectsOfCallee);
     if (m_options.recorded.isSabotaged(Sabotage::NoCallCollects))
         effects.mayCollect = false;
     if (m_options.recorded.isSabotaged(Sabotage::NoCallWrites))
@@ -924,6 +936,11 @@ void RuntimeCallEmitter::applyEffects(B3::PatchpointValue* patchpoint, const Eff
     bool underreportsWrites = m_options.recorded.isSabotaged(Sabotage::CallsGiveNoArrayOtherStorage) && !effects.writes.isTop();
     m_heaps.appendHeaps(effects.reads, reads);
     m_heaps.appendHeaps(underreportsWrites ? effects.writes.without(AbstractHeap::ArrayStorage) : effects.writes, writes);
+    if (m_callsOnlyMoveTables) {
+        writes.removeAll(&m_heaps.entire(AbstractHeap::CollectionStorage));
+        writes.append(&m_heaps.JSMap_storage);
+        writes.append(&m_heaps.JSSet_storage);
+    }
     if (convertsCells)
         m_heaps.appendHeapsOfConvertedCells(writes, replacesStorageOfArrays && !underreportsWrites ? AOTHeaps::ConvertedCells::All : AOTHeaps::ConvertedCells::AllButArrays);
     if (effects.mayCollect)

@@ -149,6 +149,13 @@ static LayoutList computeAllocatedMembers(const Program& program, std::span<cons
     return allocatedMembers;
 }
 
+// What membersWhoseFieldCannotHold() asks of a member, whatever is read: `node.kind === 7` asks one family for one key once for each number.
+struct FieldOfMember {
+    LayoutID member;
+    TypeID type;
+    bool holdsUndefinedAndNull { false };
+};
+
 struct FamilyTables::Cache {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Cache);
 
@@ -202,6 +209,7 @@ struct FamilyTables::Cache {
     ConcurrentCache<Family> families;
     CacheByKey<const Family*, LayoutSetID> familiesBySet;
     CacheByKey<FamilyMember, uint32_t, PropertyKeyID> members;
+    CacheByKey<Vector<FieldOfMember>, uint32_t, PropertyKeyID, TypeLevel> fieldsOfMembers;
     CacheByKey<LayoutSetID, uint32_t, PropertyKeyID, TypeID, TypeLevel> excludedMembers;
     CacheByKey<Candidates, LayoutSetID, LayoutSetID, LayoutSetID> candidates;
     CacheByKey<bool, LayoutSetID, LayoutSetID> subsets;
@@ -352,25 +360,37 @@ bool FamilyTables::isSubsetOf(LayoutSetID subset, LayoutSetID superset) const
     return cache().subsets.ensure(computeHash(subset, superset), { subset, superset }, compute);
 }
 
-static LayoutSetID computeMembersWhoseFieldCannotHold(const Program& program, const LayoutList& allocatedMembers, PropertyKeyID key, TypeID read, TypeLevel level)
+static Vector<FieldOfMember> computeFieldsOfMembers(const Program& program, const LayoutList& allocatedMembers, PropertyKeyID key, TypeLevel level)
 {
-    ScratchTypeArena scratch(program.types);
-    TypeArena& types = scratch;
-    const Type& readType = program.at(read);
-    UncheckedKeyHashMap<TypeID, bool> cannotHoldByFieldType;
-    Vector<LayoutID> excluded;
+    Vector<FieldOfMember> fields;
     for (LayoutID layout : allocatedMembers) {
         std::optional<FieldReference> field = findField(program, layout, key, BaseChain::Proven);
         if (!field)
             continue;
-        if (level == TypeLevel::Proven && (!staysFilled(program, *field) || (readType.mayBeUndefinedOrNull() && slotHoldsUndefinedAndNull(program, *field))))
+        if (level != TypeLevel::Proven)
+            fields.append({ layout, fieldAt(program, *field).declared.expected().predicted() });
+        else if (staysFilled(program, *field))
+            fields.append({ layout, slotTypeOf(program, fieldAt(program, *field)), slotHoldsUndefinedAndNull(program, *field) });
+    }
+    return fields;
+}
+
+static LayoutSetID computeMembersWhoseFieldCannotHold(const Program& program, std::span<const FieldOfMember> fields, TypeID read)
+{
+    ScratchTypeArena scratch(program.types);
+    TypeArena& types = scratch;
+    const Type& readType = program.at(read);
+    bool readsUndefinedOrNull = readType.mayBeUndefinedOrNull();
+    UncheckedKeyHashMap<TypeID, bool> cannotHoldByFieldType;
+    Vector<LayoutID> excluded;
+    for (const FieldOfMember& field : fields) {
+        if (readsUndefinedOrNull && field.holdsUndefinedAndNull)
             continue;
-        TypeID fieldType = level == TypeLevel::Proven ? slotTypeOf(program, fieldAt(program, *field)) : fieldAt(program, *field).declared.expected().predicted();
-        bool cannotHold = cannotHoldByFieldType.ensure(fieldType, [&] {
-            return program.at(fieldType).intersectWith(readType, types).isNever();
+        bool cannotHold = cannotHoldByFieldType.ensure(field.type, [&] {
+            return program.at(field.type).intersectWith(readType, types).isNever();
         }).iterator->value;
         if (cannotHold)
-            excluded.append(layout);
+            excluded.append(field.member);
     }
     if (excluded.isEmpty())
         return { };
@@ -381,12 +401,15 @@ LayoutSetID FamilyTables::membersWhoseFieldCannotHold(LayoutSetID set, PropertyK
 {
     std::span<const LayoutID> members = membersListedIn(m_program, set);
     if (members.size() < minCachedSetSize)
-        return computeMembersWhoseFieldCannotHold(m_program, computeAllocatedMembers(m_program, members), key, read, level);
+        return computeMembersWhoseFieldCannotHold(m_program, computeFieldsOfMembers(m_program, computeAllocatedMembers(m_program, members), key, level).span(), read);
 
     Cache& cache = this->cache();
     const Cache::Family& family = cache.familyOf(m_program, set);
     return cache.excludedMembers.ensure(computeHash(family.number, key, read, level), { family.number, key, read, level }, [&] {
-        return computeMembersWhoseFieldCannotHold(m_program, family.allocatedMembers, key, read, level);
+        const Vector<FieldOfMember>& fields = cache.fieldsOfMembers.ensure(computeHash(family.number, key, level), { family.number, key, level }, [&] {
+            return computeFieldsOfMembers(m_program, family.allocatedMembers, key, level);
+        });
+        return computeMembersWhoseFieldCannotHold(m_program, fields.span(), read);
     });
 }
 

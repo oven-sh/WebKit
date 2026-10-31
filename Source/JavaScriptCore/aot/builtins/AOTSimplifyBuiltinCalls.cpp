@@ -12,20 +12,28 @@
 #include "AOTBuiltinCallPlan.h"
 #include "AOTCoroutines.h"
 #include "AOTDescriptorLiteral.h"
+#include "AOTEdgeResults.h"
 #include "AOTEffectsCheck.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfRules.h"
+#include "AOTExpandOwnKeysInternal.h"
+#include "AOTFlowApply.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
+#include "AOTInlineBuiltinForms.h"
 #include "AOTInt32Conversions.h"
 #include "AOTKnownValue.h"
 #include "AOTNarrowFieldTypes.h"
+#include "AOTProgramPasses.h"
 #include "AOTPropertyAccessElements.h"
+#include "AOTResultRules.h"
 #include "AOTSplitUnions.h"
 #include "AOTStringRanges.h"
 #include "AOTThreshold.h"
+#include "AOTTypePropagation.h"
 #include "AOTTypeTestSite.h"
 #include "AOTValueIdentity.h"
+#include "AOTValueSubstitution.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
@@ -307,8 +315,15 @@ static std::optional<Value> simplifyIntrinsic(FunctionPassContext& context, cons
     switch (intrinsic.opcode) {
     case Opcode::HasJSType:
         return simplifyTestOfCellKind(context, intrinsic);
-    case Opcode::IsPristineArray:
+    case Opcode::IsPristineArray: {
+        // It asks whether `[...value]` does for `Array.from(value)`. It does for a Set that the built-in iterator walks too: the rule for its known value says so,
+        // and whoever folds constants knows what to do with a branch that hands the proof on.
+        const Type& value = context.program.typeOf(context.function, intrinsic.valueOperand());
+        const ClassPart* part = value.singleBuiltinClass();
+        if (part && part->builtinClass == BuiltinClasses::Set && !value.mayBeUndefinedOrNull() && pristineAspectsProvenBy(value, BuiltinClasses::Set).contains(PristineAspects::Names))
+            return std::nullopt;
         return makePristineTest(intrinsic.valueOperand(), BuiltinClasses::Array, { PristineAspects::Storage, PristineAspects::Names });
+    }
     case Opcode::ToLength:
         return simplifyIntegerConversion(context, intrinsic, integersUnchangedByToLength);
     case Opcode::ToIntegerOrInfinity:
@@ -326,6 +341,48 @@ static std::optional<Value> simplifyIntrinsic(FunctionPassContext& context, cons
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+// A generator is not stepped where it is running, has ended or belongs to another realm.
+static unsigned markNotSteppedArmsRare(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    const UseLists& useLists = context.analyses.useLists();
+    auto isComparisonWithNotStepped = [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        const Value& user = function.at(use.user);
+        if (user.opcode != Opcode::StrictEq)
+            return false;
+        const Value& other = function.at(use.operandIndex == OperandIndex::StrictEq::left ? user.rightOperand() : user.leftOperand());
+        return other.opcode == Opcode::Integer && other.integer() == static_cast<int64_t>(GeneratorStepStatus::NotStepped);
+    };
+
+    Vector<BlockID, 2> arms;
+    for (const ValueSite& site : context.sitesIn(SiteList::SimplifiedIntrinsics)) {
+        if (function.at(site.value).opcode != Opcode::StepGenerator)
+            continue;
+        for (const Use& read : useLists.usesOf(site.value)) {
+            if (read.kind != Use::Kind::Operand || function.at(read.user).opcode != Opcode::ResultAt || function.at(read.user).index() != static_cast<uint32_t>(StepGeneratorResult::Status))
+                continue;
+            for (const Use& comparison : useLists.usesOf(read.user)) {
+                if (!isComparisonWithNotStepped(comparison))
+                    continue;
+                for (const Use& use : useLists.usesOf(comparison.user)) {
+                    if (use.kind != Use::Kind::TerminatorOperand || function.at(use.block).terminator.kind != TerminatorKind::Branch)
+                        continue;
+                    BlockID arm = function.at(use.block).terminator.targets[0].block;
+                    if (function.at(arm).frequency.predicted() != BlockFrequency::Rare && context.analyses.cfg().incomingEdges(arm).size() == 1)
+                        arms.append(arm);
+                }
+            }
+        }
+    }
+    for (BlockID arm : arms)
+        function.edit(arm, BlockEdit::Rest).frequency = BlockFrequency::Rare;
+    if (!arms.isEmpty())
+        context.analyses.invalidate(FunctionAnalysis::Frequencies);
+    return arms.size();
 }
 
 unsigned simplifyIntrinsics(FunctionPassContext& context)
@@ -560,6 +617,10 @@ static std::optional<Value> simplifyPrimitiveCall(FunctionPassContext& context, 
     const BuiltinOverload* overload = findWholeCallOverload(context.program, value);
     if (!overload)
         return std::nullopt;
+
+    // `iterable[Symbol.iterator]()` of an iterator, valueOf() of a primitive: what is known of the object in front of the call is known of what comes out of it.
+    if (inlineImplementationOf(context.program, value) == InlineBuiltin::ReturnThis)
+        return makeIdentityCast(context.function, builtinCallOf(context.program, value).receiver);
 
     std::span<const ValueID> arguments = value.argumentsOperands();
     if (arguments.empty())
@@ -905,14 +966,103 @@ static unsigned definePlainPropertiesByName(FunctionPassContext& context, const 
     return static_cast<unsigned>(matches.size());
 }
 
+static bool mayChangeLists(FunctionPassContext& context, ValueID id)
+{
+    Effects effects = context.analyses.effectsOf(id).onAnyEdge();
+    return effects.mayRunOtherCode() || effects.writes.contains(AbstractHeap::ArrayStorage);
+}
+
+static bool standsBehindTestThatListHoldsSomething(FunctionPassContext& context, const ValueSite& call)
+{
+    const Program& program = context.program;
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    std::optional<Edge> entry = analyses.cfg().singleIncomingEdge(call.block);
+    if (!entry || entry->isHandlerEdge() || function.at(entry->from).terminator.kind != TerminatorKind::Branch)
+        return false;
+    const Value& condition = function.at(function.at(entry->from).terminator.conditionOperand());
+    if (condition.opcode != Opcode::ToBoolean && !relationalOperators.contains(condition.opcode))
+        return false;
+    ValueID list = analyses.identityOf(function.at(call.value).receiverOperand());
+    const BlockValues& valuesInFront = function.at(entry->from).values;
+    for (uint32_t operandIndex = 0; operandIndex < condition.numberOfOperands(); ++operandIndex) {
+        ValueID length = analyses.identityOf(condition.operand(operandIndex));
+        std::optional<MeasuredStorage> measured = storageMeasuredBy(program, function.at(length));
+        if (!measured || measured->heap != AbstractHeap::ArrayStorage || analyses.identityOf(measured->owner) != list)
+            continue;
+        Type lengthBehindTest = narrowOperandByTest({ program, function, context.types }, condition, operandIndex, entry->targetIndex ? EdgeSide::NotTaken : EdgeSide::Taken);
+        if (!lengthBehindTest.isInteger() || lengthBehindTest.integers.minimum < 1)
+            continue;
+        size_t indexOfLength = std::ranges::find(valuesInFront, length) - valuesInFront.begin();
+        if (indexOfLength == valuesInFront.size())
+            continue;
+        bool isLeftAlone = std::ranges::none_of(valuesInFront.span().subspan(indexOfLength + 1), [&](ValueID id) {
+            return mayChangeLists(context, id);
+        }) && std::ranges::none_of(function.at(call.block).values.span().first(call.index), [&](ValueID id) {
+            return mayChangeLists(context, id);
+        });
+        if (isLeftAlone)
+            return true;
+    }
+    return false;
+}
+
+static unsigned takeElementsOutOfListsThatHoldSome(FunctionPassContext& context, const BuiltinCallSites& calls)
+{
+    const Program& program = context.program;
+    Function& function = context.function;
+    Vector<ValueSite, 2> matches;
+    for (const ValueSite& site : calls) {
+        const Value& call = function.at(site.value);
+        if (call.opcode != Opcode::CallBuiltin || !call.receiverOperand() || call.needsPristineReceiver() || !(program.at(call.type).primitives & Primitive::Undefined))
+            continue;
+        std::optional<InlineBuiltin> builtin = inlineImplementationOf(program, call);
+        if (builtin != InlineBuiltin::ArrayPop && builtin != InlineBuiltin::ArrayShift)
+            continue;
+        const Type& list = program.typeOf(function, call.receiverOperand());
+        const ClassPart* part = list.singleBuiltinClass();
+        if (!part || list.mayBeUndefinedOrNull() || !part->contentsAreProven || !part->provenPristine.containsAll({ PristineAspects::Storage, PristineAspects::Dense }))
+            continue;
+        if (typeOfContentsRead({ program, function, context.types }, list, ContentsSlot::Element).primitives & Primitive::Undefined)
+            continue;
+        bool isCastAlready = std::ranges::any_of(context.analyses.useLists().usesOf(site.value), [&](const Use& use) {
+            return use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::AssumeType && !(program.typeOf(function, use.user).primitives & Primitive::Undefined);
+        });
+        if (!isCastAlready && standsBehindTestThatListHoldsSomething(context, site))
+            matches.append(site);
+    }
+    if (matches.isEmpty())
+        return 0;
+
+    Vector<Vector<Use, 4>, 2> uses(matches.size(), [&](size_t index) {
+        return Vector<Use, 4>(context.analyses.useLists().usesOf(matches[index].value));
+    });
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    Vector<ValueID, 2> elements;
+    for (const ValueSite& match : matches) {
+        builder.setOrigin(function.at(match.value).origin());
+        elements.append(builder.insertBefore({ match.block, match.index + 1 }, makeAssumeType(match.value, Proven::byConstruction(context.types.withoutPrimitives(function.at(match.value).type, Primitive::Undefined)))));
+    }
+    builder.applyInsertions();
+    for (size_t index = 0; index < matches.size(); ++index) {
+        for (const Use& use : uses[index])
+            replaceUse(function, use, elements[index]);
+    }
+    context.analyses.didChangeValues();
+    narrowValueTypes({ context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo }, elements.span());
+    return static_cast<unsigned>(matches.size());
+}
+
 PassOutcome simplifyBuiltinCalls(FunctionPassContext& context)
 {
     unsigned rewrites = 0;
     auto hasSitesIn = [&](SiteList list) {
         return !context.sitesIn(list).empty();
     };
-    if (hasSitesIn(SiteList::SimplifiedIntrinsics))
+    if (hasSitesIn(SiteList::SimplifiedIntrinsics)) {
         rewrites += simplifyIntrinsics(context);
+        rewrites += markNotSteppedArmsRare(context);
+    }
     if (hasSitesIn(SiteList::TemplateObjects))
         rewrites += replaceTemplateObjectsReadByPosition(context);
     if (context.hasConstantListSource() && hasSitesIn(SiteList::ConstantListSpreads))
@@ -921,6 +1071,8 @@ PassOutcome simplifyBuiltinCalls(FunctionPassContext& context)
         rewrites += simplifyConcatenationsOfLiterals(context);
         rewrites += simplifySearchesOfLiterals(context);
     }
+    if (hasSitesIn(SiteList::ElementReads))
+        rewrites += simplifyCharacterReads(context);
     if (!hasSitesIn(SiteList::BuiltinCalls)) {
         bool hasTruncation = std::ranges::any_of(context.sitesIn(SiteList::SimplifiedIntrinsics), [&](const ValueSite& site) {
             return context.function.at(site.value).opcode == Opcode::ToIntegerOrInfinity;
@@ -946,15 +1098,19 @@ PassOutcome simplifyBuiltinCalls(FunctionPassContext& context)
         didRewrite(simplifyInt32Conversions(context));
     didRewrite(simplifyStringReads(context, calls));
     didRewrite(simplifyConcatenatingCalls(context, calls));
+    didRewrite(testPartsOfConcatenations(context, calls));
     didRewrite(simplifyMatches(context, calls));
     didRewrite(simplifyLastPiecesOfSplits(context, calls));
     didRewrite(simplifySplitsOfConstants(context, calls));
     didRewrite(simplifyPromiseAllOfLiterals(context, calls));
     didRewrite(simplifyPromiseResolve(context, calls));
     didRewrite(leaveURLsUnbuilt(context));
+    didRewrite(formatFromPatterns(context));
+    didRewrite(leavePairsOfOwnEntriesUnmade(context, calls.span()));
     didRewrite(expandRangesOfViews(context, calls));
     didRewrite(definePlainPropertiesByName(context, calls));
     didRewrite(takeLiteralArgumentsApart(context, calls));
+    didRewrite(takeElementsOutOfListsThatHoldSome(context, calls));
 
     PassOutcome outcome = rewrites ? PassOutcome::Changed : PassOutcome::Unchanged;
     outcome |= expandStringRanges(context, calls);

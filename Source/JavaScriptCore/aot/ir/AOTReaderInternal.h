@@ -120,6 +120,7 @@ private:
     };
 
     bool readHeader();
+    bool readReplaceableBuiltins();
     bool readNamesAndFamilies();
     bool readStrings();
     bool readPropertyKeys();
@@ -228,6 +229,7 @@ public:
 
     template<typename Record> void didRead(Record&) { }
     void didRead(DeclaredType&);
+    void didRead(DeclaredCapture& capture) { didRead(static_cast<DeclaredType&>(capture)); }
     void didRead(PropertyKey&);
     void didRead(FunctionRecord&);
     void didRead(LayoutRecord&);

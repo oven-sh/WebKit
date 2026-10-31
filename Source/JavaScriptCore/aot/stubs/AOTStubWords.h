@@ -36,7 +36,7 @@ static_assert(OBJECT_OFFSETOF(BoxedCallEntry, nativeFunction) == BoxedCallEntry:
 static_assert(OBJECT_OFFSETOF(BoxedCallEntry, targets) == BoxedCallEntry::offsetOfTarget(BoxedCallEntry::minArgumentCount));
 
 struct StubWords {
-    static constexpr unsigned numberOfBoxedCallEntries = 64;
+    static constexpr unsigned numberOfBoxedCallEntries = 128;
     static constexpr unsigned boxedCallHashShift = 4;
 
     static constexpr unsigned indexOfBoxedCall(uintptr_t nativeFunctionBits) { return (nativeFunctionBits >> boxedCallHashShift) % numberOfBoxedCallEntries; }

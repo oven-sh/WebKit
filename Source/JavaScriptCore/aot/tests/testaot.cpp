@@ -16,6 +16,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinTableBindings.h"
 #include "AOTChildProcess.h"
 #include "AOTCompileOptionWords.h"
 #include "AOTCrashExitCode.h"
@@ -285,7 +286,7 @@ static void listLimits(PrintStream& out)
 {
     for (LimitID limit : allMembersOf<LimitID>) {
         if (limit != LimitID::None)
-            out.println(nameOf(limit), " ", defaultLimitValue(limit, hostArchitecture()), canBeLowered(limit) ? "" : " fixed", " ", purposeOf(limit));
+            out.println(nameOf(limit), " ", defaultLimitValue(limit, hostArchitecture()), isLoweredByAll(limit) ? "" : " fixed", " ", purposeOf(limit));
     }
 }
 
@@ -413,6 +414,8 @@ int main(int argc, char** argv)
         JSC::Options::notifyOptionsChanged();
     }
     JSC::initialize();
+    BuiltinBindings::bindNativeHelpersOfEngine();
+    installTrapReporter();
 
     checkTestCommandNames();
     setProgramPath(String::fromUTF8(commandLine[0]));
@@ -424,10 +427,13 @@ int main(int argc, char** argv)
 
     switch (entry->subcommand) {
     case Subcommand::All:
+        enterTemporaryFolder();
         return runAllSubcommand(arguments, createLauncher());
     case Subcommand::Run:
+        enterTemporaryFolder();
         return runRunSubcommand(arguments, createLauncher());
     case Subcommand::Native:
+        enterTemporaryFolder();
         return runNativeSubcommand(arguments, createLauncher());
     case Subcommand::List:
         return runListSubcommand(arguments);

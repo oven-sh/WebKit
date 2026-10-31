@@ -1,0 +1,35 @@
+# class List extends Array { constructor() { super(); this.tag = 1 } }; list = new List; somethingNoTableLists.takes(list); JSON.stringify(list)
+# OPTIONS: testing=DelayFlowRules:1
+# RUN: valueflow-solve used
+# CHECK: run JSONStringify
+# CHECK-NEXT: run ArrayPrototypeJoin
+# CHECK-NEXT: used ArrayPrototypeLength
+# CHECK-NEXT: run ArrayPrototypeToString
+# CHECK: run ObjectPrototypeToString
+# CHECK-NEXT: run ObjectPrototypeValueOf
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="List" constructor=f1 fields=[{key="tag" declared={type=anything} flags=[IsRequired]}] flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Array
+    v1 = NewClosure function=f1
+    v2 = ResolveHeritage v0
+    v3 = NewClass v1, v0, v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Construct v4
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="somethingThatNoTableLists" [isFreeName]
+    v8 = PropGet v7 key="takes"
+    v9 = Call v8, v7, v5 calleeKey="takes"
+    v10 = Builtin builtin=JSONStringify
+    v11 = Call v10, -, v5
+    Return
+}
+function f1 name="List" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L0
+    v4 = Integer integer=1
+    PropSet v3, v4 key="tag"
+    Return v3
+}

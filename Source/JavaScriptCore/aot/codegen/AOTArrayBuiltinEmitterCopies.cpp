@@ -27,6 +27,11 @@ static_assert(sizeof(IndexingHeader) == sizeof(EncodedJSValue));
 
 void ArrayBuiltinEmitter::copyElements(const ArrayStorageForm& form, const ElementRange& source, const ElementRange& target, Integer count, CopyDirection direction)
 {
+    copyElements(form, form, source, target, count, direction);
+}
+
+void ArrayBuiltinEmitter::copyElements(const ArrayStorageForm& form, const ArrayStorageForm& formOfTarget, const ElementRange& source, const ElementRange& target, Integer count, CopyDirection direction, LBasicBlock ifHole, bool reverses)
+{
     bool isBackward = direction == CopyDirection::Backward;
     LBasicBlock loop = newBlock();
     LBasicBlock element = newBlock();
@@ -41,7 +46,18 @@ void ArrayBuiltinEmitter::copyElements(const ArrayStorageForm& form, const Eleme
     m_out.appendTo(element);
     Integer index = isBackward ? sub(position, integer(1)) : position;
     Operand rawElement = elements().loadRawElement(form, source.elements, add(source.first, index));
-    elements().storeRawElement(form, target.elements, add(target.first, index), rawElement);
+    if (ifHole)
+        branchUnless(logicalNot(elements().isHole(form, rawElement)), ifHole);
+    if (formOfTarget.kind == ArrayStorage::Double && form.kind != formOfTarget.kind) {
+        RELEASE_ASSERT(form.kind == ArrayStorage::Int32);
+        Number number = toNumber(unboxInt32Element(rawElement.as<Boxed>()));
+        rawElement = select(elements().isHole(form, rawElement), elements().rawHole(formOfTarget).as<Number>(), number);
+    } else if (form.kind == ArrayStorage::Double && form.kind != formOfTarget.kind) {
+        RELEASE_ASSERT(formOfTarget.kind == ArrayStorage::Contiguous);
+        rawElement = select(elements().isHole(form, rawElement), elements().rawHole(formOfTarget).as<Boxed>(), elements().boxRawElement(form, rawElement));
+    } else
+        RELEASE_ASSERT(form.kind == formOfTarget.kind || (form.kind == ArrayStorage::Int32 && formOfTarget.kind == ArrayStorage::Contiguous));
+    elements().storeRawElement(formOfTarget, target.elements, add(target.first, reverses ? sub(sub(count, integer(1)), index) : index), rawElement);
     m_out.addIncomingToPhi(position.value(), m_out.anchor((isBackward ? index : add(position, integer(1))).value()));
     m_out.jump(loop);
 
@@ -71,19 +87,59 @@ void ArrayBuiltinEmitter::generateArrayConcat(const InlineCall& call)
     ArrayAllocationEmitter allocation(generator());
     LBasicBlock miss = missBlockOf(call);
     Join<CellPointer> join(m_out);
-    forEachFormOrMiss(call, receiverOf(call), arrayStorageTestMask, [&](const ArrayStorageForm& form) {
+    bool isDeclaredDouble = arrayStorageDeclaredBy(m_program, resultTypeOf(call)).predicted() == ArrayStorage::Double;
+    // The readers go by the type that the cast behind the call gives the list: what flow says of its contents, where the call itself knows better what this one holds. They and the creator take the same storage.
+    const UseLists& useLists = analyses().useLists();
+    for (ValueID list = resultOf(call); !isDeclaredDouble && list;) {
+        std::optional<Use> use = useLists.singleUse(list);
+        if (!use || use->kind != Use::Kind::Operand || (m_function.at(use->user).opcode != Opcode::AssumeType && m_function.at(use->user).opcode != Opcode::Upcast))
+            break;
+        list = use->user;
+        isDeclaredDouble = arrayStorageDeclaredBy(m_program, typeOf(list)).predicted() == ArrayStorage::Double;
+    }
+    // `list.concat([item])`: a list that is written at the call has the storage that its literal makes, and a type may prove the storage of a list. Any other list is expected in the storage of the receiver.
+    auto knownFormOf = [&](ValueID list) -> const ArrayStorageForm* {
+        const ClassPart* part = typeOf(list).singleBuiltinClass();
+        if (const ArrayStorageForm* proven = part && part->contentsAreProven ? findArrayStorageForm(part->arrayStorage) : nullptr)
+            return proven;
+        ValueID written = analyses().identityOf(list);
+        const Value& literal = m_function.at(written);
+        if (literal.opcode == Opcode::NewArray && !literal.elementsOperands().empty() && literal.holes().empty())
+            return &allocation.formAtAllocation(typeOf(written));
+        return nullptr;
+    };
+    // `[].concat(list, [item])`: a list that nothing is ever stored into is expected to be empty. Its storage then says nothing about the new list, and the first list behind it stands in its place.
+    const ArrayStorageForm* formBehindEmptyReceiver = nullptr;
+    const ClassPart* receiver = typeOf(call.receiver()).singleBuiltinClass();
+    if (receiver && receiver->contentsAreProven && m_program.at(receiver->expectedContentsAt(m_program.builtins(), ContentsSlot::Element).predicted()).isNever()) {
+        auto list = std::ranges::find_if(call.arguments(), [&](ValueID argument) {
+            return typeOf(argument).hasObjects();
+        });
+        if (list != call.arguments().end())
+            formBehindEmptyReceiver = knownFormOf(*list);
+    }
+    auto concatenate = [&](const ArrayStorageForm& form) {
         // No array stands for an argument that is an element itself.
         Vector<CellPointer, maxConcatenatedArrays> arrays { receiverOf(call) };
+        Vector<const ArrayStorageForm*, maxConcatenatedArrays> forms { &form };
+        // The new list has the storage that holds what all of them hold.
+        const ArrayStorageForm* widest = &form;
         for (ValueID argument : call.arguments()) {
             if (!typeOf(argument).hasObjects()) {
                 arrays.append(CellPointer());
+                forms.append(nullptr);
                 continue;
             }
             CellPointer array = cellOperand(argument);
+            const ArrayStorageForm* known = knownFormOf(argument);
+            forms.append(known ? known : &form);
             missUnless(call, elements().isPristineArray(array, { PristineAspects::Storage, PristineAspects::Names }));
-            missUnless(call, elements().hasShape(elements().indexingMode(array, arrayStorageTestMask), form));
+            missUnless(call, elements().hasShape(elements().indexingMode(array, arrayStorageTestMask), *forms.last()));
             arrays.append(array);
+            if (forms.last()->shape > widest->shape)
+                widest = forms.last();
         }
+        const ArrayStorageForm& made = isDeclaredDouble && widest->kind == ArrayStorage::Int32 ? *findArrayStorageForm(ArrayStorage::Double) : *widest;
 
         Vector<ArrayElements, maxConcatenatedArrays> sources;
         Vector<Integer, maxConcatenatedArrays> lengths;
@@ -93,8 +149,10 @@ void ArrayBuiltinEmitter::generateArrayConcat(const InlineCall& call)
             lengths.append(array ? elements().publicLength(sources.last()) : integer(1));
             length = add(length, lengths.last());
         }
+        if (formBehindEmptyReceiver)
+            missUnless(call, isZero(lengths[0]));
         missUnless(call, belowOrEqual(length, integer(maxLengthForElementwiseCopy)));
-        Integer header = allocation.headerOfNewArray(form);
+        Integer header = allocation.headerOfNewArray(made);
         missUnless(call, isNotZero(header));
         Integer capacity = bitOr(length, integer(1));
         CellPointer concatenated = allocation.allocateEmptyArrayWithStorage(call.context(), header, capacity, miss);
@@ -103,13 +161,13 @@ void ArrayBuiltinEmitter::generateArrayConcat(const InlineCall& call)
         {
             CodeGenerator::InitializationScope scope(generator());
             // The indexing header is one word, so word `capacity` of the storage is the last element of the vector.
-            elements().storeRawElement(form, ArrayElements { CellPointer(), storage }, capacity, elements().rawHole(form));
+            elements().storeRawElement(made, ArrayElements { CellPointer(), storage }, capacity, elements().rawHole(made));
             Integer position = integer(0);
-            for (unsigned i = 0; i < arrays.size(); ++i) {
+            for (unsigned i = formBehindEmptyReceiver ? 1 : 0; i < arrays.size(); ++i) {
                 if (arrays[i])
-                    copyElements(form, { sources[i], integer(0) }, { target, position }, lengths[i], CopyDirection::Forward);
-                else if (std::optional<Operand> rawElement = elements().rawElementToStore(form, call.argument(i - 1), miss))
-                    elements().storeRawElement(form, target, position, *rawElement);
+                    copyElements(*forms[i], made, { sources[i], integer(0) }, { target, position }, lengths[i], CopyDirection::Forward);
+                else if (std::optional<Operand> rawElement = elements().rawElementToStore(made, call.argument(i - 1), miss))
+                    elements().storeRawElement(made, target, position, *rawElement);
                 else {
                     m_out.jump(miss);
                     m_out.appendTo(newBlock());
@@ -120,8 +178,134 @@ void ArrayBuiltinEmitter::generateArrayConcat(const InlineCall& call)
         }
         emitter<BarrierEmitter>().fenceAfterInitialization();
         join.add(concatenated);
+    };
+    if (formBehindEmptyReceiver)
+        concatenate(*formBehindEmptyReceiver);
+    else
+        forEachFormOrMiss(call, receiverOf(call), arrayStorageTestMask, concatenate);
+    finish(call, join.finish());
+}
+
+const ArrayStorageForm& ArrayBuiltinEmitter::formOfCopy(const InlineCall& call, const ArrayStorageForm& formOfReceiver)
+{
+    if (formOfReceiver.kind != ArrayStorage::Int32)
+        return formOfReceiver;
+    bool isExpectedDouble = arrayStorageDeclaredBy(m_program, resultTypeOf(call)).predicted() == ArrayStorage::Double || resultIsTestedForDoubles(call);
+    return isExpectedDouble ? *findArrayStorageForm(ArrayStorage::Double) : formOfReceiver;
+}
+
+CellPointer ArrayBuiltinEmitter::copyIntoNewArray(const InlineCall& call, const ArrayStorageForm& formOfReceiver, const LengthOfCopy& lengthOfCopy, const FillOfCopy& fill)
+{
+    ArrayAllocationEmitter allocation(generator());
+    const ArrayStorageForm& made = formOfCopy(call, formOfReceiver);
+    ArrayElements source = elements().elementsOf(receiverOf(call));
+    Integer length = lengthOfCopy(elements().publicLength(source));
+    missUnless(call, belowOrEqual(length, integer(maxLengthForElementwiseCopy)));
+    Integer header = allocation.headerOfNewArray(made);
+    missUnless(call, isNotZero(header));
+    Integer capacity = bitOr(length, integer(1));
+    CellPointer copy = allocation.allocateEmptyArrayWithStorage(call.context(), header, capacity, missBlockOf(call));
+    Pointer storage = offsetBy(asPointer(copy), sizeof(JSArray));
+    ArrayElements target { CellPointer(), offsetBy(storage, sizeof(IndexingHeader)) };
+    {
+        CodeGenerator::InitializationScope scope(generator());
+        elements().storeRawElement(made, ArrayElements { CellPointer(), storage }, capacity, elements().rawHole(made));
+        fill(made, source, target);
+        elements().setPublicLength(target, length);
+    }
+    emitter<BarrierEmitter>().fenceAfterInitialization();
+    return copy;
+}
+
+void ArrayBuiltinEmitter::copyIntoNewArray(const InlineCall& call, const LengthOfCopy& lengthOfCopy, const ScopedLambda<void(const ArrayStorageForm&, const ArrayStorageForm& made, ArrayElements source, ArrayElements target)>& fill)
+{
+    Join<CellPointer> join(m_out);
+    forEachFormOrMiss(call, receiverOf(call), arrayStorageTestMask, [&](const ArrayStorageForm& form) {
+        join.add(copyIntoNewArray(call, form, lengthOfCopy, [&](const ArrayStorageForm& made, ArrayElements source, ArrayElements target) {
+            fill(form, made, source, target);
+        }));
     });
     finish(call, join.finish());
+}
+
+Integer ArrayBuiltinEmitter::clampToLength(Integer relative, Integer length)
+{
+    Integer fromEnd = add(relative, length);
+    return select(lessThan(relative, 0), select(lessThan(fromEnd, 0), 0, fromEnd), select(lessThan(relative, length), relative, length));
+}
+
+void ArrayBuiltinEmitter::storeItem(const InlineCall& call, const ArrayStorageForm& form, ArrayElements target, Integer position, ValueID item)
+{
+    if (std::optional<Operand> rawElement = elements().rawElementToStore(form, item, missBlockOf(call))) {
+        elements().storeRawElement(form, target, position, *rawElement);
+        return;
+    }
+    m_out.jump(missBlockOf(call));
+    m_out.appendTo(newBlock());
+}
+
+void ArrayBuiltinEmitter::generateArrayWith(const InlineCall& call)
+{
+    if (!checkChosenForm(call, call.canMiss() && call.numberOfArguments() == 2 && typeOf(call.argument(0)).isNumber()))
+        return;
+    LBasicBlock miss = missBlockOf(call);
+    Integer relative = wholeNumberOrElse(call.argument(0), miss);
+    Integer length;
+    Integer position;
+    copyIntoNewArray(call, [&](Integer lengthOfReceiver) {
+        length = lengthOfReceiver;
+        position = select(lessThan(relative, 0), add(relative, length), relative);
+        missUnless(call, below(position, length));
+        return length;
+    }, [&](const ArrayStorageForm& form, const ArrayStorageForm& made, ArrayElements source, ArrayElements target) {
+        copyElements(form, made, { source, integer(0) }, { target, integer(0) }, length, CopyDirection::Forward, miss);
+        storeItem(call, made, target, position, call.argument(1));
+    });
+}
+
+void ArrayBuiltinEmitter::generateArrayToReversed(const InlineCall& call)
+{
+    if (!checkChosenForm(call, call.canMiss() && !call.numberOfArguments()))
+        return;
+    Integer length;
+    copyIntoNewArray(call, [&](Integer lengthOfReceiver) {
+        return length = lengthOfReceiver;
+    }, [&](const ArrayStorageForm& form, const ArrayStorageForm& made, ArrayElements source, ArrayElements target) {
+        copyElements(form, made, { source, integer(0) }, { target, integer(0) }, length, CopyDirection::Forward, missBlockOf(call), true);
+    });
+}
+
+void ArrayBuiltinEmitter::generateArrayToSpliced(const InlineCall& call)
+{
+    size_t numberOfRangeArguments = std::min<size_t>(call.numberOfArguments(), 2);
+    bool hasNumberRange = std::ranges::all_of(call.arguments().first(numberOfRangeArguments), [&](ValueID bound) {
+        return typeOf(bound).isNumber();
+    });
+    std::span<const ValueID> items = itemsToInsert(call);
+    if (!checkChosenForm(call, call.canMiss() && hasNumberRange && items.size() <= maxInlineSpliceInsertions))
+        return;
+    LBasicBlock miss = missBlockOf(call);
+    Integer start = numberOfRangeArguments ? wholeNumberOrElse(call.argument(0), miss) : integer(0);
+    Integer skipCount = numberOfRangeArguments > 1 ? wholeNumberOrElse(call.argument(1), miss) : Integer();
+    Integer from;
+    Integer behind;
+    Integer tail;
+    copyIntoNewArray(call, [&](Integer length) {
+        from = clampToLength(start, length);
+        Integer left = sub(length, from);
+        Integer skipped = !numberOfRangeArguments ? integer(0) : !skipCount ? left : select(lessThan(skipCount, 0), 0, select(lessThan(skipCount, left), skipCount, left));
+        behind = add(from, skipped);
+        tail = sub(length, behind);
+        return add(add(from, tail), integer(static_cast<int64_t>(items.size())));
+    }, [&](const ArrayStorageForm& form, const ArrayStorageForm& made, ArrayElements source, ArrayElements target) {
+        copyElements(form, made, { source, integer(0) }, { target, integer(0) }, from, CopyDirection::Forward, miss);
+        Integer position = from;
+        for (ValueID item : items) {
+            storeItem(call, made, target, position, item);
+            position = add(position, integer(1));
+        }
+        copyElements(form, made, { source, behind }, { target, position }, tail, CopyDirection::Forward, miss);
+    });
 }
 
 CellPointer ArrayBuiltinEmitter::copyRemovedElements(const InlineCall& call, const InlineSplice& splice, const ArrayStorageForm& form)

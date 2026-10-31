@@ -1,0 +1,75 @@
+# A list of constants that nothing changes, and that nothing can tell from another list made at the same place, may be one cell for every evaluation. A list of such lists is one
+# data record and is one cell in cold code too, where no stub can make it. Each such list has a record of its own. A list that is compared is a new cell each time
+# OPTIONS: heat=EverythingIsHot disable=pass:SplitFreshResults
+# RUN: pipeline EmbedConstantCollections
+# RUN(SELECTED): pipeline RemoveRedundantBarriers
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Call v0, - [isNeverInlined]
+    v2 = Call v0, - [isNeverInlined]
+    v3 = Integer integer=0
+    v4 = ElemGet v1, v3
+    v5 = ElemGet v2, v3
+    v6 = Add v4, v5
+    v7 = NewClosure function=f2
+    v8 = Call v7, - [isNeverInlined]
+    v9 = Call v7, - [isNeverInlined]
+    v10 = ElemGet v8, v3
+    v11 = ElemGet v10, v3
+    v12 = ElemGet v9, v3
+    v13 = ElemGet v12, v3
+    v14 = Add v11, v13
+    v15 = Add v6, v14
+    v16 = NewClosure function=f3
+    v17 = Call v16, - [isNeverInlined]
+    v18 = Call v16, - [isNeverInlined]
+    v19 = StrictEq v17, v18
+    v20 = ElemGet v17, v3
+    v21 = Add v15, v20
+    v22 = NewArray v21, v19
+    Return v22
+}
+
+function f1 name="neverToldApart" module=m0 results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = Integer integer=3
+    v3 = NewArray v0, v1, v2
+    Return v3
+}
+# CHECK-LABEL: name="neverToldApart"
+# CHECK-NOT: NewArray
+# CHECK: = Data data={{*}}[isNeverToldApart]
+
+function f2 name="listOfLists" module=m0 results=[{type=anything}] {
+    v0 = Integer integer=4
+    v1 = Integer integer=5
+    v2 = NewArray v0, v1
+    v3 = Integer integer=6
+    v4 = NewArray v3
+    v5 = NewArray v2, v4
+    Return v5
+}
+# CHECK-LABEL: name="listOfLists"
+# CHECK-NOT: NewArray
+# CHECK: = Data data={{*}}[isNeverToldApart]
+# CHECK-NOT: Data
+# SELECTED-LABEL: name="listOfLists"
+# SELECTED: = Data data={{*}}encoding=MadeOnce
+
+function f3 name="compared" module=m0 results=[{type=anything}] {
+    v0 = Integer integer=7
+    v1 = Integer integer=8
+    v2 = NewArray v0, v1
+    Return v2
+}
+# CHECK-LABEL: name="compared"
+# CHECK-NOT: isNeverToldApart
+# CHECK: = Data data=
+# CHECK-NOT: isNeverToldApart
+# CHECK: root=Array{contents={{*}} elements=[Array{contents={{*}} elements=[Number{value=4}, Number{value=5}]}, Array{contents={{*}} elements=[Number{value=6}]}]}
+# SELECTED-LABEL: name="compared"
+# SELECTED: = Data data={{*}}encoding=CopyOnWriteArray

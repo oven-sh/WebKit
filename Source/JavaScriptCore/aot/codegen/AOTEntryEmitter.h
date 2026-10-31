@@ -23,6 +23,8 @@ public:
     Word32 argumentCount() const;
     Pointer argumentList() const;
     uint32_t indexOfFirstArgumentInList() const;
+    // A caller that passes fewer puts undefined in their registers, which the entry spills into the list.
+    uint32_t numberOfArgumentsAlwaysInList() const;
 
 private:
     Operand read(const ArgumentLocation&);

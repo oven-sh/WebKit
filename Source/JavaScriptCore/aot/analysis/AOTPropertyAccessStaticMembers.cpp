@@ -183,9 +183,11 @@ MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const Mem
     }
 
     bool listsEveryName = exportListingOf(program, layout.namespaceOf) == FlowOwnListing::Complete;
+    // The names of a mock that comes ahead of the load are the names of the module: those that its factory gives, and no other.
+    bool mayBeMocked = program.at(layout.namespaceOf).flags.contains(ModuleFlags::MayBeMocked);
     std::optional<uint32_t> field = layout.findField(query.key);
     if (!field) {
-        if (!listsEveryName)
+        if (!listsEveryName || mayBeMocked)
             return MemberAnswer::unknown(UnprovenCause::UnknownObject);
         if (program.builtinNameOf(query.key) == BuiltinNames::__esModule)
             return MemberAnswer::unknown(UnprovenCause::PropertyAdded);
@@ -194,7 +196,9 @@ MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const Mem
 
     const ModuleExport& entry = program.at(layout.namespaceOf).exports[*field];
     bool mayBeAmbiguous = entry.isFromStarExport && !listsEveryName;
-    if (mayBeAmbiguous)
+    // A name that the factory leaves out reads as undefined, as its variable does.
+    bool mayBeLeftOut = mayBeMocked && query.access == Access::Has;
+    if (mayBeAmbiguous || mayBeLeftOut || entry.isDroppedWhileEmpty)
         return MemberAnswer::unknown(UnprovenCause::UnknownObject);
     switch (entry.kind) {
     case ModuleExportKind::Variable:

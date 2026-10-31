@@ -17,6 +17,7 @@
 #include "AOTNativeTest.h"
 #include "AOTPipeline.h"
 #include "AOTRelocation.h"
+#include "AOTRuntimeTable.h"
 #include "AOTStubCalls.h"
 #include "AOTStubCatalog.h"
 #include "AOTVector.h"
@@ -46,7 +47,9 @@ void changeUnits(CodeBody&, NOESCAPE const Invocable<void(Vector<CodeUnit>&)> au
 using Typed::FunctionID;
 
 inline constexpr uint64_t loweredReach = 128 * KB;
-inline constexpr uint64_t loweredSharedCodeReach = 1 * MB;
+// Code that checks the shadow of the address sanitizer is several times as long, and so is the shared code, of which the reach has to hold a copy.
+inline constexpr uint32_t scaleOfSharedCode = AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE ? 4 : 1;
+inline constexpr uint64_t loweredSharedCodeReach = scaleOfSharedCode * MB;
 inline constexpr std::array<uint8_t, 16> testIdentity { 'a', 'o', 't', '-', 'i', 'm', 'a', 'g', 'e', '-', 't', 'e', 's', 't', 's', 1 };
 
 struct TestOptions {

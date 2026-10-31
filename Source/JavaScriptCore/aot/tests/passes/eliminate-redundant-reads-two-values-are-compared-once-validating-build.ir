@@ -1,0 +1,19 @@
+# In a validating build the second comparison of the same two values stays, its users take the first one's answer, and the two answers are held against each other. The comparison that was kept is left alone when the pass runs again.
+# FORM: Prepared
+# OPTIONS: validate check=VerifyEachPass
+# RUN: pass EliminateRedundantReads EliminateRedundantReads
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="behindACall" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = StrictEq v0, v1
+    v4 = Call v2, v3
+    v5 = StrictEq v0, v1
+    v6 = Call v2, v5
+    Return v6
+# CHECK: v3: boolean = StrictEq v0, v1
+# CHECK-NEXT: = Call v2, v3
+# CHECK-NEXT: v5: boolean = StrictEq v0, v1
+# CHECK-NEXT: ValidateSameValue v5, v3
+# CHECK-NEXT: = Call v2, v3
+# CHECK-NEXT: Return
+}

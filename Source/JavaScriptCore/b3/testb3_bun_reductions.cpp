@@ -376,6 +376,63 @@ static void testThreadJumpsIgnoresConditionOfEarlierIteration()
     }
 }
 
+// if (guard) { if (*p & 1) ..; else ..; } if (guard) { if (*p & 1) return 10; return 20; } return 30;
+// The second read stands below its own test of the guard, so no earlier read dominates it and it is a value of its own.
+// Where one way has written the word, that way needs the second test, and then no way passes it by.
+static void testThreadJumpsDecidesTestOfWordReadAgain()
+{
+    enum class Between : uint8_t { Nothing, WriteToOtherWord, WriteToSameWord };
+    for (Between between : { Between::Nothing, Between::WriteToOtherWord, Between::WriteToSameWord }) {
+        Procedure proc(jumpThreadingPolicy());
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* firstRead = proc.addBlock();
+        BasicBlock* odd = proc.addBlock();
+        BasicBlock* even = proc.addBlock();
+        BasicBlock* unguarded = proc.addBlock();
+        BasicBlock* join = proc.addBlock();
+        BasicBlock* secondRead = proc.addBlock();
+        BasicBlock* taken = proc.addBlock();
+        BasicBlock* notTaken = proc.addBlock();
+        BasicBlock* end = proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t, int64_t*>(proc, root);
+        Value* guard = arguments[0];
+        Value* pointer = arguments[1];
+        auto isOdd = [&](BasicBlock* block) {
+            return graph.make(block, BitAnd, graph.load(block, Int64, pointer, 0, firstHeap), graph.int64(block, 1));
+        };
+        graph.branch(root, guard, firstRead, unguarded);
+        graph.branch(firstRead, isOdd(firstRead), odd, even);
+        if (between == Between::WriteToOtherWord)
+            graph.store(odd, graph.int64(odd, 4), pointer, 8, secondHeap);
+        if (between == Between::WriteToSameWord)
+            graph.store(odd, graph.int64(odd, 4), pointer, 0, firstHeap);
+        graph.jump(odd, join);
+        graph.jump(even, join);
+        graph.jump(unguarded, join);
+        graph.branch(join, guard, secondRead, end);
+        graph.branch(secondRead, isOdd(secondRead), taken, notTaken);
+        graph.ret(taken, graph.int64(taken, 10));
+        graph.ret(notTaken, graph.int64(notTaken, 20));
+        graph.ret(end, graph.int64(end, 30));
+        resetAndValidate(proc);
+        threadJumps(proc);
+        fixSSA(proc);
+        validate(proc);
+        CHECK(odd->successorBlock(0) == (between == Between::WriteToSameWord ? secondRead : taken));
+        CHECK(even->successorBlock(0) == (between == Between::WriteToSameWord ? secondRead : notTaken));
+        CHECK(unguarded->successorBlock(0) == end);
+
+        auto code = compileProc(proc);
+        for (int64_t word : { 3, 6 }) {
+            int64_t memory[2] = { word, 0 };
+            CHECK_EQ(invoke<int64_t>(*code, static_cast<int64_t>(1), memory), word == 3 && between != Between::WriteToSameWord ? 10 : 20);
+            memory[0] = word;
+            CHECK_EQ(invoke<int64_t>(*code, static_cast<int64_t>(0), memory), 30);
+        }
+    }
+}
+
 static void testThreadJumpsLeavesNoTemporaries()
 {
     Procedure proc(jumpThreadingPolicy());
@@ -1303,6 +1360,43 @@ static void testPartOfAddressIsSharedByAccessesThatDoNotFollowEachOther()
     CHECK_EQ(invoke<int64_t>(*code, memory, 1, 0), 13);
 }
 
+// An element moves down by one place: the load at index + 1 stands in front of the store at index. Outside x86 the base + (index << 3) that the walk makes for the load is the one
+// that the program wrote for the store, whichever way round it wrote it.
+static void testPartOfAddressIsSharedWithSameSumFurtherDown()
+{
+    for (bool pointerComesFirst : { false, true }) {
+        Procedure proc(policyWith([](Policy& policy) {
+            policy.optimization.redundancyElimination = RedundancyElimination::MemoryNumbering;
+            policy.optimization.reducesWithRanges = true;
+            policy.loops.unrolls = true;
+        }));
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t*, int64_t>(proc, root);
+        Value* pointer = arguments[0];
+        Value* index = arguments[1];
+        auto address = [&](Value* place) {
+            Value* offset = graph.make(root, Shl, place, graph.int32(root, 3));
+            return pointerComesFirst ? graph.make(root, Add, pointer, offset) : graph.make(root, Add, offset, pointer);
+        };
+        Value* element = graph.load(root, Int64, address(graph.make(root, Add, index, graph.int64(root, 1))), 0, firstHeap);
+        graph.store(root, element, address(index), 0, firstHeap);
+        graph.ret(root, element);
+
+        reduceStrength(proc, ReduceStrengthPass::Initial);
+        validate(proc);
+        if (!isX86()) {
+            CHECK_EQ(numberOfValues(proc, Shl), 1u);
+            CHECK_EQ(numberOfValues(proc, Add), 1u);
+        }
+        auto code = compileProc(proc);
+        int64_t memory[4] = { 10, 11, 12, 13 };
+        CHECK_EQ(invoke<int64_t>(*code, memory, 1), 12);
+        CHECK_EQ(memory[1], 12);
+        CHECK_EQ(memory[2], 12);
+    }
+}
+
 // A cycle with two entries, each behind a test that folds. The walk reduces the blocks of the cycle before it has seen that nothing leads to them, and they leave the procedure behind it.
 // What is left shares its part as if the cycle had never been there.
 static void testPartOfAddressIsSharedBesideCycleThatLeavesProcedure()
@@ -1377,6 +1471,7 @@ void addBunReductionTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testThreadJumpsUsesConditionAcrossJoin());
     RUN(testThreadJumpsUsesImpliedComparison());
     RUN(testThreadJumpsIgnoresConditionOfEarlierIteration());
+    RUN(testThreadJumpsDecidesTestOfWordReadAgain());
     RUN(testThreadJumpsLeavesNoTemporaries());
     RUN(testTruncOfSumWithZeroLowHalf());
     RUN(testLowWordOfWideOperationIsNarrowOperation());
@@ -1398,6 +1493,7 @@ void addBunReductionTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testConstantLeavesZeroExtendedSumInAddress());
     RUN(testZeroExtendedSumWithAnotherUserStaysOutsideX86());
     RUN(testPartOfAddressIsSharedByAccessesThatDoNotFollowEachOther());
+    RUN(testPartOfAddressIsSharedWithSameSumFurtherDown());
     RUN(testPartOfAddressIsSharedBesideCycleThatLeavesProcedure());
     RUN(testDifferencePlusSubtrahend());
 }

@@ -176,7 +176,7 @@ static void collectCallsOfClosures(const ValueFlowResultInputs& inputs, const Fl
                 someCallHasManyCallees.store(true, std::memory_order_relaxed);
                 return;
             }
-            inputs.sets().forEachMember(key.set, [&](ValueFlowObjectID callee) {
+            inputs.sets().forEachMemberInLine(key.set, [&](ValueFlowObjectID callee) {
                 FunctionID function = universe.closureFunction(callee);
                 if (!function)
                     return;
@@ -231,7 +231,7 @@ static void collectModules(const ValueFlowResultInputs& inputs, FlowOrderInputs&
         if (module.body && inputs.isReached(module.body))
             order.evaluatedModules.quickSet(index);
         bool isEntryPoint = std::ranges::contains(program.entries, ModuleID(index), &Entry::module);
-        if ((isEntryPoint ? filesOfProgramAreNamedAtRunTime : modulesAreNamedAtRunTime) && mayAnswerToName(program, ModuleID(index)))
+        if ((isEntryPoint || answersOnlyToLoadsOfProgram(program, ModuleID(index)) ? filesOfProgramAreNamedAtRunTime : modulesAreNamedAtRunTime) && mayAnswerToName(program, ModuleID(index)))
             order.modulesLoadedByName.quickSet(index);
         if (libraryLoadsItsModulesByName && module.kind == ModuleKind::RuntimeSource)
             order.modulesLoadedByHost.quickSet(index);
@@ -308,7 +308,7 @@ static FlowOrderInputs collectOrderInputs(const ValueFlowResultInputs& inputs, c
     return order;
 }
 
-void computeOrderResults(const ValueFlowResultInputs& inputs, const ValueFlowStampedCalls&, FlowResultTables& tables)
+FlowCallsOfProgram computeOrderResults(const ValueFlowResultInputs& inputs, const ValueFlowStampedCalls&, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
     FlowApplication& application = *tables.application;
@@ -359,6 +359,7 @@ void computeOrderResults(const ValueFlowResultInputs& inputs, const ValueFlowSta
             application.bodies[read.function.index()].readsAfterInitialization.append(read.value);
     }
     tables.wholeProgram.moduleOrder = WTF::move(moduleOrder);
+    return { WTF::move(orderInputs.calls), WTF::move(orderInputs.callsOfLists), WTF::move(orderInputs.calleeLists), orderInputs.host() };
 }
 
 } } } // namespace JSC::AOT::Typed

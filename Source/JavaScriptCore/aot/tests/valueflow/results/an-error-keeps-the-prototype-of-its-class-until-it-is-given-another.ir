@@ -1,0 +1,32 @@
+# const kept = new TypeError("x"); kept.extra = 1; kept instanceof Error      const moved = new TypeError("y"); Object.setPrototypeOf(moved, null); moved instanceof Error      new TypeError("z")
+# The constructor defines names on the error and the program adds one, so the names of the class are not proven of it. The object above it is still the one it was made with.
+# `instanceof` asks for nothing else, so what it is asked of says that much. Of the error that is given another prototype nothing is proven, and an error that nobody asks says nothing.
+# RUN: valueflow-apply
+# CHECK: = AssumeType v2 provenType=TypeError<pristine[Prototype]>
+# CHECK: = AssumeType v8 provenType=TypeError
+# CHECK-NOT: pristine
+# CHECK: Return
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=TypeError
+    v1 = String string="x"
+    v2 = Construct v0, -, v1
+    v3 = Integer integer=1
+    PropSet v2, v3 key="extra" mode=Strict
+    v5 = Builtin builtin=Error
+    v6 = InstanceOf v2, v5
+    v7 = String string="y"
+    v8 = Construct v0, -, v7
+    v9 = Builtin builtin=ObjectSetPrototypeOf
+    v10 = Null
+    v11 = Call v9, -, v8, v10
+    v12 = InstanceOf v8, v5
+    v13 = String string="z"
+    v14 = Construct v0, -, v13
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="register" [isFreeName]
+    v17 = Call v16, -, v6, v12
+    Return v14
+}

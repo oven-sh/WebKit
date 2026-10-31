@@ -84,9 +84,8 @@ function f1 name="repeat" module=m0 flags=[IsChecked, HasExplicitName] length=2 
     Return v3
 }
 
-# A push of a reference is inline: the test of the capacity, the test of the write barrier on the list, the two stores.
+# A push of a reference is inline: the test of the capacity, the test of the write barrier on the list, the store.
 # CHECK-LABEL: steps by 1
-# CHECK: Int32 b@[[length]] = Load(b@[[storage]], offset = -8, ControlDependent|Reads:Butterfly_publicLength, {{*}}:HasSpareArrayCapacity)
 # CHECK: Int32 b@[[fits]] = Below(b@[[length]], b@[[capacity]], {{*}}:HasSpareArrayCapacity)
 # CHECK-NEXT: Branch(b@[[fits]], Terminal, {{*}}:HasSpareArrayCapacity)
 # CHECK-NEXT: Successors: Then:#[[barrier]], Else:Rare:#
@@ -97,12 +96,13 @@ function f1 name="repeat" module=m0 flags=[IsChecked, HasExplicitName] length=2 
 # CHECK-NEXT: BB#[[push]]:
 # CHECK: Store(b@[[word]], b@{{*}}, ControlDependent|Writes:indexedContiguousProperties,
 # CHECK-NEXT: Int32 b@[[longer]] = Add(b@[[length]], $1(
-# CHECK-NEXT: Store(b@[[longer]], b@[[storage]], offset = -8, ControlDependent|Writes:Butterfly_publicLength,
 # CHECK: Branch(b@{{*}}, Terminal, {{*}}:Less)
 # CHECK-LABEL: end of loop
 # NONE-LABEL: steps by 1
 # NONE-NOT: Reads:JSObject_butterfly
 # NONE-NOT: Reads:Butterfly_vectorLength
+# The length is a variable of the loop. The storage gets it where the loop is left.
+# NONE-NOT: Butterfly_publicLength
 # NONE-NOT: Reads:JSCell
 # The turns can be counted ahead of the loop: where they are few it goes without its poll, and a copy of it that polls takes the others.
 # NONE-NOT: Patchpoint(
@@ -110,10 +110,12 @@ function f1 name="repeat" module=m0 flags=[IsChecked, HasExplicitName] length=2 
 # CALLS: f1: size=
 # CALLS: stub NewArrayWithLength.Contiguous x1
 # X64-NOT: , instructions:
-# X64: loop #{{*}}, instructions: 9, patchpoints: 0
-# X64: loop #{{*}}, instructions: 9, patchpoints: 1, {{*}}entered rarely
+# X64: loop #{{*}}, instructions: 7, patchpoints: 0
+# The loop around it: a turn that has left the loop above ends here and comes back.
+# X64: loop #{{*}}, instructions: 12, patchpoints: 1, rare instructions: 15, {{*}}entered rarely
+# X64: loop #{{*}}, instructions: 9, patchpoints: 0, rare instructions: 9, {{*}}entered rarely
 # X64-NOT: , instructions:
 # ARM64-NOT: , instructions:
-# ARM64: loop #{{*}}, instructions: 10, patchpoints: 0
-# ARM64: loop #{{*}}, instructions: 10, patchpoints: 1, {{*}}entered rarely
+# ARM64: loop #{{*}}, instructions: 8, patchpoints: 0
+# ARM64: loop #{{*}}, instructions: {{*}}, patchpoints: 0, rare instructions: {{*}}entered rarely
 # ARM64-NOT: , instructions:

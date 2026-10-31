@@ -12,6 +12,7 @@
 #include "AOTRuntimeRecords.h"
 #include "Structure.h"
 #include <optional>
+#include <wtf/BitVector.h>
 #include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -28,6 +29,7 @@ public:
     void generateGetGlobalBinding(const ValueContext&);
     void generateSetGlobalBinding(const ValueContext&);
     void generateGetCachedGetter(const ValueContext&);
+    void generateGetCachedValue(const ValueContext&);
     void generateMayBindAnswersOfGetAndSetTraps(const ValueContext& value) { defineTest(value, mayBindAnswersOfTraps(value->targetOperand(), Structure::s_hasNonConfigurableReadOnlyOrGetterSetterPropertiesBits)); }
     void generateMayBindAnswersOfHasTraps(const ValueContext& value) { defineTest(value, mayBindAnswersOfTraps(value->targetOperand(), Structure::s_didPreventExtensionsBits | Structure::s_hasNonConfigurablePropertiesBits)); }
     void generateValidateAnswerOfGetTrap(const ValueContext&);
@@ -53,9 +55,17 @@ public:
     void generateSuperGet(const ValueContext&);
     void generateSuperSet(const ValueContext&);
 
+    // dict["on" + type]: the one user of the sum, or of a cast of it, is the read that stands right behind it. That read looks the property up by the two parts.
+    bool leavesKeyToRead(ValueID sumOrCast) { return !!findReadByPartsOf(sumOrCast); }
+
     Boxed getById(const OperationContext&, Boxed receiver, PropertyKeyID, SiteCacheID, std::optional<Origin> = std::nullopt, ValueID receiverID = { });
     StubKey stubThatReadsAtSite(uint32_t identifierNumber, ValueID receiver);
     Boxed getMemberAboveLayouts(const ValueContext&);
+    Boxed getByTablesOrNothing(const ValueContext&);
+    Boxed getMemberAboveEmptySlot(const ValueContext&);
+    void generateReadAboveFreshObject(const ValueContext&);
+    void generateDidReadAbove(const ValueContext&);
+    void checkAbsentFieldWasNotRemoved(const ValueContext& read, Boxed result);
     // What the slot at the site finds for every object with its Structure, where the object has that Structure and the slot is of the kind.
     Boxed loadBySlotAtSite(CellPointer object, Pointer site, Slot::Kind, LBasicBlock whenSlotIsOfOtherKind, LBasicBlock whenSlotIsOfOtherStructure);
     void putById(const OperationContext&, Boxed receiver, PropertyKeyID, Boxed value, PutMode, SiteCacheID);
@@ -86,6 +96,8 @@ private:
     }
 
     std::optional<uint32_t> findIdentifierNumber(const OperationContext&, PropertyKeyID);
+    // By the read: whether the tables had an answer, for the test that stands behind the read.
+    UncheckedKeyHashMap<uint32_t, LValue, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_didTablesAnswer;
     bool comesAgain(const OperationContext&);
     void putNamedProperty(const ValueContext&, Boxed object, PutMode);
     Boxed getFreeName(const ValueContext&);
@@ -101,6 +113,12 @@ private:
         bool isInteger;
     };
     std::optional<ElementKey> elementKeyOf(const ValueContext&);
+    struct ReadByParts {
+        ValueID read;
+        ValueID first;
+        ValueID second;
+    };
+    std::optional<ReadByParts> findReadByPartsOf(ValueID sumOrCast);
     Boxed keyOperand(const OperationContext&, PropertyKeyID key, ValueID computedKey);
     struct ExcludedKeys {
         Word32 run;
@@ -122,6 +140,20 @@ private:
         Condition didCopy;
     };
     std::optional<CopyAtAllocation> m_copyAtAllocation;
+
+    // `{ ...source, name, other }`: the definitions by name that come first behind a CopyObject whose copy is an ordinary object, with values that are there at the copy.
+    // One call copies and defines, when it knows how. The code behind it asks whether it did: nothing that can run other code stands between them.
+    struct DefinitionWithCopy {
+        ValueID definition;
+        uint32_t name;
+        Boxed value;
+    };
+    Vector<DefinitionWithCopy, 4> findDefinitionsWithCopy(const ValueContext& copy);
+    bool isThereAtCopy(ValueID copy, ValueID);
+    Boxed valueAtCopy(const ValueContext& copy, ValueID);
+    bool canTakeNames(ValueID);
+    std::optional<Vector<ValueID, 4>> copiesThatMeet(const Target&, size_t index);
+    BitVector m_definitionsWithCopy;
 };
 
 } } } // namespace JSC::AOT::Typed

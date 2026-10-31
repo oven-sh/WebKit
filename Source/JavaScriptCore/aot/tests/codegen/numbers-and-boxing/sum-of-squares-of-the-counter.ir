@@ -93,5 +93,5 @@ function f1 name="sumOfSquares" module=m0 flags=[IsChecked, HasExplicitName] len
 # NONE-NOT: Branch(b@{{*}}, Terminal, {{*}}:Mul)
 # NONE-LABEL: end of loop
 # x86-64 clears the register ahead of the conversion, which writes only half of it.
-# X64: instructions: 6, patchpoints: 1, {{*}} steps by 1
-# ARM64: instructions: 5, patchpoints: 1, {{*}} steps by 1
+# X64: instructions: 6, patchpoints: 0, {{*}} steps by 1
+# ARM64: instructions: 5, patchpoints: 0, {{*}} steps by 1

@@ -131,8 +131,7 @@ bool GuardAvailability::isSamePosition(ValueID a, ValueID b) const
         return true;
     if (!a || !b)
         return false;
-    std::optional<int64_t> constant = integerConstantThroughCasts(m_analyses.program(), m_function, a);
-    return constant && constant == integerConstantThroughCasts(m_analyses.program(), m_function, b);
+    return areSameNumberConstantThroughCasts(m_analyses.program(), m_function, a, b);
 }
 
 bool GuardAvailability::areSameFact(const GuardFact& a, const GuardFact& b) const

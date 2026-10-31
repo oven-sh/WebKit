@@ -71,8 +71,11 @@ void Policy::dump(PrintStream& out) const
     AIR_POLICY_PRINT_IF_DIFFERENT(splitting, splitMultiplier);
     AIR_POLICY_PRINT_IF_DIFFERENT(splitting, maxLoopFractionOfLiveRange);
     AIR_POLICY_PRINT_IF_SET(splitting, splitsAroundClobbersEarly);
+    AIR_POLICY_PRINT_IF_SET(splitting, splitsAroundClobbersThatRead);
+    AIR_POLICY_PRINT_IF_SET(splitting, keepsUnusedTmpsOnStackThroughLoops);
+    AIR_POLICY_PRINT_IF_SET(splitting, spillsTmpsReadInPlaceFirst);
     AIR_POLICY_PRINT_IF_SET(splitting, spansStretchesOfClobbers);
-    AIR_POLICY_PRINT_IF_SET(splitting, limitsClobberSitesPerSplit);
+    AIR_POLICY_PRINT_IF_DIFFERENT(splitting, leastCostOfSplitAroundClobber);
     AIR_POLICY_PRINT_IF_SET(splitting, splitsIntoClustersOverBlocks);
     AIR_POLICY_PRINT_IF_SET(splitting, splitsAroundFrame);
 

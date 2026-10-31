@@ -13,6 +13,7 @@
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTShellProgramTestSupport.h"
 #include "JSCInlines.h"
+#include <bit>
 
 namespace JSC { namespace AOT {
 
@@ -484,6 +485,35 @@ static void testOwnSlotHasTheStructureOfNewError(LoadedProgram& program)
     AOT_TEST_CHECK(error->getDirectOffset(program.vm(), program.vm().propertyNames->cause) == propertyOffsetOfOwnSlot(ErrorInstanceType, 1));
 }
 
+static void testEachClassOfErrorsHasOwnSlotsBehindItsOwnStructure(LoadedProgram& program)
+{
+    const uint32_t& lookedFor = program.instance().builtins.ownSlotStructuresLookedFor;
+    AOT_TEST_CHECK(!lookedFor);
+
+    uint32_t ofError = publishedStructureIDOf(program, Builtins::ErrorPrototypeMessage);
+    AOT_TEST_CHECK(std::popcount(lookedFor) == 1);
+    uint32_t ofTypeError = publishedStructureIDOf(program, Builtins::TypeErrorPrototypeMessage);
+    uint32_t ofRangeError = publishedStructureIDOf(program, Builtins::RangeErrorPrototypeMessage);
+    uint32_t ofTypeErrorWithCause = publishedStructureIDOf(program, Builtins::TypeErrorPrototypeCause);
+    AOT_TEST_CHECK(std::popcount(lookedFor) == 4);
+    publishedStructureIDOf(program, Builtins::TypeErrorPrototypeMessage);
+    AOT_TEST_CHECK(std::popcount(lookedFor) == 4);
+
+    AOT_TEST_CHECK(structureIDOf(program, "new Error('text')"_s) == ofError);
+    AOT_TEST_CHECK(structureIDOf(program, "new TypeError('text')"_s) == ofTypeError);
+    AOT_TEST_CHECK(structureIDOf(program, "TypeError('text')"_s) == ofTypeError);
+    AOT_TEST_CHECK(structureIDOf(program, "new RangeError('text')"_s) == ofRangeError);
+    AOT_TEST_CHECK(structureIDOf(program, "new TypeError('text', { cause: 1 })"_s) == ofTypeErrorWithCause);
+    AOT_TEST_CHECK(structureIDOf(program, "(() => { try { null.x; } catch (error) { return error; } })()"_s) == ofTypeError);
+    AOT_TEST_CHECK(structureIDOf(program, "new TypeError"_s) != ofTypeError);
+    AOT_TEST_CHECK(structureIDOf(program, "new (class extends TypeError { })('text')"_s) != ofTypeError);
+    AOT_TEST_CHECK(ofError != ofTypeError && ofTypeError != ofRangeError && ofError != ofRangeError && ofTypeError != ofTypeErrorWithCause);
+
+    JSObject* error = program.realms().object(program.realm(), "new TypeError('text', { cause: 1 })"_s);
+    AOT_TEST_CHECK(error->getDirectOffset(program.vm(), program.vm().propertyNames->message) == propertyOffsetOfOwnSlot(ErrorInstanceType, 0));
+    AOT_TEST_CHECK(error->getDirectOffset(program.vm(), program.vm().propertyNames->cause) == propertyOffsetOfOwnSlot(ErrorInstanceType, 1));
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withUsesOfMathSign)() = runNativeTestWithLoadedProgram<builtinLocationWatchTests, usesOfMathSign, body>;
 
@@ -514,6 +544,7 @@ std::span<const NativeTest> builtinLocationWatchTests()
         { "builtin-location-watch/member-stored-before-host-makes-it-is-changed"_s, withUsesOfIntlCollator<testMemberStoredBeforeHostMakesItIsChanged> },
         { "builtin-location-watch/member-made-and-then-replaced-is-changed"_s, withUsesOfIntlCollator<testMemberMadeAndThenReplacedIsChanged> },
         { "builtin-location-watch/own-slot-has-the-structure-of-new-error"_s, withReadsOfErrors<testOwnSlotHasTheStructureOfNewError> },
+        { "builtin-location-watch/each-class-of-errors-has-own-slots-behind-its-own-structure"_s, withReadsOfErrors<testEachClassOfErrorsHasOwnSlotsBehindItsOwnStructure> },
     };
     return tests;
 }

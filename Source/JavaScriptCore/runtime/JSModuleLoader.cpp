@@ -1000,7 +1000,8 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
                 promise->rejectWithCaughtException(vm, scope);
             } else if (requested) {
                 promise = JSPromise::create(vm, globalObject->promiseStructure());
-                promise->fulfill(vm, requested);
+                if (!compiled->holdTextOfRequest(promise, requested))
+                    promise->fulfill(vm, requested);
             }
         }
 #endif
@@ -1655,7 +1656,12 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
             for (const VM::SynchronousModuleTask& step : outer->tasks) {
                 if (step.task != InternalMicrotask::ModuleLoadStep || uncheckedDowncast<JSPromise>(step.arg0)->status() != JSPromise::Status::Pending)
                     continue;
-                auto* load = dynamicDowncast<ModuleGraphLoadingState>(uncheckedDowncast<ModuleLoadingContext>(step.arg2)->payload());
+                auto* context = uncheckedDowncast<ModuleLoadingContext>(step.arg2);
+                auto* load = dynamicDowncast<ModuleGraphLoadingState>(context->payload());
+                // The step in which the root itself asks for what it imports, where an import() has begun the load of the root.
+                // Not where a graph has asked for the root: `bun run` reads the files of a graph on other threads and has taken that step by the time a file of the graph runs.
+                if (!load && context->entry() == entry)
+                    return false;
                 if (load && load->containsVisited(entry->record()))
                     return false;
             }

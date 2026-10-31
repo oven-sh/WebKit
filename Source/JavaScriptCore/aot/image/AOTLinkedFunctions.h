@@ -37,6 +37,7 @@ public:
     const CompiledCode* begin() const { return span().data(); }
     const CompiledCode* end() const { return begin() + size(); }
     void grow(size_t newSize, BuildContext&);
+    void makeRoomFor(size_t newSize);
     void clearOnAllThreads(BuildContext&);
     void reorder(std::span<const uint32_t> order, BuildContext&);
 };

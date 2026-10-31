@@ -1,0 +1,37 @@
+# function clone(value) { const copy = {}; for (const key in value) copy[key] = value[key]; return copy }, where value is a literal or what unknown code answers
+# The program names no field of the copy, and flow does not hold every object that is enumerated: the copy may hold other names each time it is made, so it stays without fields.
+# RUN: valueflow-apply
+# CHECK-NOT: IsAddedLate
+
+layout L0 fields=[{key="locations" declared={type=anything} flags=[IsRequired]}, {key="ranges" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Boolean
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = NewObject layout=L1
+    v4 = FinishObject v3
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="hand" [isFreeName]
+    v7 = Call v6, -
+    v8 = ToBoolean v7
+    Branch v8 -> taken b1(v2), notTaken b1(v7)
+  b1(v9):
+    v10 = ForInOpen v9
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v12 = ForInStep v10, v9
+    v13 = ResultAt v12
+    v14 = ResultAt v12 index=1
+    Branch v13 -> taken b4(), notTaken b3()
+  b3():
+    v15 = ElemGet v9, v14
+    ElemSet v4, v14, v15
+    Jump -> next b2()
+  b4():
+    v17 = PropGet v4 key="locations"
+    Return v17
+}

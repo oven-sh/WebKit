@@ -17,6 +17,7 @@
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowResults.h"
 #include "AOTFlowSinkEquations.h"
+#include "AOTHeldOperands.h"
 #include "AOTProgramCaches.h"
 #include "AOTResultRules.h"
 #include "AOTThreads.h"
@@ -114,6 +115,36 @@ public:
         return m_firstNode + unions.last();
     }
 
+    // Where one operand of a call with many callees goes. It follows from the set of callees and from the place of the operand in the call, so it is worked out once for all calls of the set.
+    struct ParametersOfOperand {
+        bool isPassedToUnknownParameter { false };
+        uint32_t node { noNode };
+
+        friend bool operator==(const ParametersOfOperand&, const ParametersOfOperand&) = default;
+    };
+
+    static std::optional<uint64_t> keyOf(CalleeSetID callees, Opcode opcode, uint32_t operandIndex, bool isCalledValue, bool flagOfCall)
+    {
+        constexpr uint32_t opcodeBits = 12;
+        constexpr uint32_t operandBits = 18;
+        if (!callees || TypeTable::isProvisional(callees) || static_cast<uint32_t>(opcode) >> opcodeBits || operandIndex >> operandBits)
+            return std::nullopt;
+        return static_cast<uint64_t>(callees.index()) << 32 | static_cast<uint64_t>(opcode) << (operandBits + 2) | static_cast<uint64_t>(operandIndex) << 2 | static_cast<uint64_t>(isCalledValue) << 1 | static_cast<uint64_t>(flagOfCall);
+    }
+
+    std::optional<ParametersOfOperand> find(uint64_t key)
+    {
+        Locker locker { m_lock };
+        auto known = m_parametersOfOperands.find(key);
+        return known == m_parametersOfOperands.end() ? std::nullopt : std::optional(known->value);
+    }
+
+    void remember(uint64_t key, ParametersOfOperand parameters)
+    {
+        Locker locker { m_lock };
+        m_parametersOfOperands.add(key, parameters);
+    }
+
     uint32_t size() const { return m_parameters.size(); }
 
     CollectedRules rules() const
@@ -130,7 +161,8 @@ private:
     uint32_t m_firstNode;
     Lock m_lock;
     Vector<Vector<uint32_t>> m_parameters;
-    UncheckedKeyHashMap<unsigned, Vector<uint32_t, 1>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_unionsByHash;
+    UncheckedKeyHashMap<uint64_t, Vector<uint32_t, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_unionsByHash;
+    UncheckedKeyHashMap<uint64_t, ParametersOfOperand, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_parametersOfOperands;
 };
 
 } // anonymous namespace
@@ -538,7 +570,8 @@ static void collectRulesOfBody(const Program& program, const FlowResults& flow, 
             rules.dependencies.append(SinkRule { subject, SinkDependency { result, parameter, SinkTransform::IfReturned } });
     };
     AOT_THRESHOLD(size_t, minCalleesOfParameterUnion, 16);
-    auto passToEach = [&](uint32_t subject, std::span<const FunctionID> callees, ValueID call, bool isInCycle, NOESCAPE const auto& forEachEntryParameter) {
+    bool checksAnswers = program.propertyAccessCache() && program.propertyAccessCache()->checksAnswers;
+    auto passToEach = [&](uint32_t subject, std::span<const FunctionID> callees, ValueID call, bool isInCycle, std::optional<uint64_t> keyOfOperand, NOESCAPE const auto& forEachEntryParameter) {
         if (callees.size() < minCalleesOfParameterUnion) {
             for (FunctionID callee : callees) {
                 forEachEntryParameter(callee, [&](std::optional<uint32_t> entryParameter) {
@@ -547,21 +580,33 @@ static void collectRulesOfBody(const Program& program, const FlowResults& flow, 
             }
             return;
         }
-        Vector<uint32_t> parameters;
-        bool isPassedToUnknownParameter = false;
-        for (FunctionID callee : callees) {
-            forEachEntryParameter(callee, [&](std::optional<uint32_t> entryParameter) {
-                if (!entryParameter || !nodes.hasNodesOf(callee))
-                    isPassedToUnknownParameter = true;
-                else
-                    parameters.append(nodes.entryParameter(callee, *entryParameter));
-            });
+        auto findParameters = [&] {
+            Vector<uint32_t> parameters;
+            ParameterUnions::ParametersOfOperand found;
+            for (FunctionID callee : callees) {
+                forEachEntryParameter(callee, [&](std::optional<uint32_t> entryParameter) {
+                    if (!entryParameter || !nodes.hasNodesOf(callee))
+                        found.isPassedToUnknownParameter = true;
+                    else
+                        parameters.append(nodes.entryParameter(callee, *entryParameter));
+                });
+            }
+            if (!parameters.isEmpty())
+                found.node = parameterUnions.nodeFor(WTF::move(parameters));
+            return found;
+        };
+        std::optional<ParameterUnions::ParametersOfOperand> found = keyOfOperand ? parameterUnions.find(*keyOfOperand) : std::nullopt;
+        RELEASE_ASSERT(!found || !checksAnswers || *found == findParameters());
+        if (!found) {
+            found = findParameters();
+            if (keyOfOperand)
+                parameterUnions.remember(*keyOfOperand, *found);
         }
-        if (isPassedToUnknownParameter)
+        if (found->isPassedToUnknownParameter)
             addUses(subject, OperandUses::all());
-        if (parameters.isEmpty())
+        if (found->node == noNode)
             return;
-        uint32_t parameter = parameterUnions.nodeFor(WTF::move(parameters));
+        uint32_t parameter = found->node;
         addDependency(subject, parameter, isInCycle ? SinkTransform::RepeatedArgument : SinkTransform::Argument);
         if (uint32_t result = nodeOf(call); result != noNode)
             rules.dependencies.append(SinkRule { subject, SinkDependency { result, parameter, SinkTransform::IfReturned } });
@@ -586,16 +631,18 @@ static void collectRulesOfBody(const Program& program, const FlowResults& flow, 
             return;
         }
 
+        CalleeSetID setOfCallees = calleeSetOfCall(program, call);
         if (isCalledValue) {
             addUses(subject, usesOfCalledValue);
-            passToEach(subject, functions->value(), callID, isInCycle, [&](FunctionID callee, const auto& pass) {
+            std::optional<unsigned> newTarget = OperandPosition::newTarget(call.opcode);
+            passToEach(subject, functions->value(), callID, isInCycle, ParameterUnions::keyOf(setOfCallees, call.opcode, operandIndex, true, newTarget && !call.operand(*newTarget)), [&](FunctionID callee, const auto& pass) {
                 for (uint32_t entryParameter : entryParametersOfCalledValue(program.at(callee), call))
                     pass(entryParameter);
             });
             return;
         }
         addUses(subject, OperandUse::Inspects);
-        passToEach(subject, functions->value(), callID, isInCycle, [&](FunctionID callee, const auto& pass) {
+        passToEach(subject, functions->value(), callID, isInCycle, ParameterUnions::keyOf(setOfCallees, call.opcode, operandIndex, false, isHeldOperand(call, operandIndex)), [&](FunctionID callee, const auto& pass) {
             if (!isDroppedBy(program.at(callee), call, operandIndex))
                 pass(entryParameterOf(program.at(callee), call, operandIndex));
         });

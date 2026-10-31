@@ -11,7 +11,6 @@
 # }
 # declare const input: any;
 # (globalThis as any).answer = commas(String(input));
-# TODO: nobody: the poll of a loop inside a try block keeps its handler, because it may throw an out-of-memory error that is owed, so the back end leaves the loop as written
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: lower-to-b3 optimized loops f1
@@ -117,6 +116,7 @@ function f1 name="commas" module=m0 flags=[IsChecked, HasExplicitName] length=1 
 # IR: role=CatchHandler
 # IR: [[entry]]() handler=
 # IR-NEXT: flatstring = FlattenString v0
+# IR-NEXT: LoopHint [throwsOwedError]
 # IR-NEXT: Jump -> next b1(
 
 # The loop is the one that stands outside a try block: eight characters a turn off one address, no poll, no test of the string.

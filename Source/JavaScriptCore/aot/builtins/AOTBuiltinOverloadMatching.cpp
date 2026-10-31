@@ -169,6 +169,8 @@ std::optional<BuiltinDispatchTarget> OverloadWalk::chooseBranch(const BuiltinDis
 {
     Vector<BuiltinOperand, 4> positions = positionsTestedBy(node, m_query.proven);
     for (const BuiltinDispatchBranch& branch : node.branches) {
+        if (m_query.context.program.passesByRowFor(m_query.builtin, branch.tested))
+            continue;
         switch (decideBranch(positions.span(), branch.tested)) {
         case TypeFit::Outside:
             continue;
@@ -284,7 +286,7 @@ BuiltinOverloadID OverloadWalk::firstReachableOverload(BuiltinDispatchTarget tar
     while (!target.isOverload()) {
         const BuiltinDispatchNode& node = m_table.at(target.node);
         auto branch = std::ranges::find_if(node.branches, [&](const BuiltinDispatchBranch& candidate) {
-            return provenFitOf(m_query, node, candidate.tested) != TypeFit::Outside;
+            return !m_query.context.program.passesByRowFor(m_query.builtin, candidate.tested) && provenFitOf(m_query, node, candidate.tested) != TypeFit::Outside;
         });
         RELEASE_ASSERT(branch != node.branches.end());
         target = branch->target;
@@ -296,7 +298,7 @@ BuiltinOverloadID OverloadWalk::firstReachableOverload(BuiltinDispatchTarget tar
 
 OverloadMatch matchOverload(const OverloadQuery& query)
 {
-    if (query.context.program.mayBeTrimmed(query.builtin))
+    if (query.context.program.mayBeTrimmed(query.builtin) || query.context.program.callsUnlockedMemberThatNoRowNames(query.builtin))
         return { };
     std::optional<BuiltinDispatchTarget> root = dispatchRootOf(query);
     if (!root)
@@ -316,6 +318,8 @@ static void visitReachable(const OverloadQuery& query, BuiltinDispatchTarget tar
 
     const BuiltinDispatchNode& node = query.context.program.builtins().at(target.node);
     for (const BuiltinDispatchBranch& branch : node.branches) {
+        if (query.context.program.passesByRowFor(query.builtin, branch.tested))
+            continue;
         switch (provenFitOf(query, node, branch.tested)) {
         case TypeFit::Outside:
             continue;

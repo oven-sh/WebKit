@@ -203,8 +203,8 @@ void ArrayBuiltinEmitter::removeElementAtEnd(const InlineCall& call, bool remove
     finishInlineCall(call, join.finish());
 }
 
-// Whether this function goes on to store a named property into the array that the call makes.
-bool ArrayBuiltinEmitter::resultGetsNamedProperties(const InlineCall& call)
+template<typename Functor>
+bool ArrayBuiltinEmitter::anyUserOfResult(const InlineCall& call, const Functor& isWanted)
 {
     constexpr unsigned maxValuesFollowed = 16;
     const UseLists& useLists = analyses().useLists();
@@ -222,7 +222,7 @@ bool ArrayBuiltinEmitter::resultGetsNamedProperties(const InlineCall& call)
             switch (use.kind) {
             case Use::Kind::Operand: {
                 const Value& user = m_function.at(use.user);
-                if (user.opcode == Opcode::PropSet && use.operandIndex == OperandIndex::PropSet::object)
+                if (isWanted(user, use))
                     return true;
                 if (isCast(user.opcode))
                     follow(use.user);
@@ -244,6 +244,29 @@ bool ArrayBuiltinEmitter::resultGetsNamedProperties(const InlineCall& call)
     return false;
 }
 
+// Whether this function goes on to store a named property into the array that the call makes.
+bool ArrayBuiltinEmitter::resultGetsNamedProperties(const InlineCall& call)
+{
+    return anyUserOfResult(call, [](const Value& user, const Use& use) {
+        return user.opcode == Opcode::PropSet && use.operandIndex == OperandIndex::PropSet::object;
+    });
+}
+
+// The plan of the function has its readers and its stores test for doubles, and it converts an array of integers where such a test fails.
+bool ArrayBuiltinEmitter::resultIsTestedForDoubles(const InlineCall& call)
+{
+    return anyUserOfResult(call, [](const Value& user, const Use&) {
+        switch (user.opcode) {
+        case Opcode::ConvertToDoubleStorage:
+            return true;
+        case Opcode::HasArrayStorage:
+            return user.arrayStorage() == ArrayStorage::Double;
+        default:
+            return false;
+        }
+    });
+}
+
 void ArrayBuiltinEmitter::generateArraySlice(const InlineCall& call)
 {
     bool hasNumberBounds = call.numberOfArguments() <= 2 && std::ranges::all_of(call.arguments(), [&](ValueID bound) {
@@ -253,17 +276,17 @@ void ArrayBuiltinEmitter::generateArraySlice(const InlineCall& call)
         return;
     CellPointer array = receiverOf(call);
     bool withPropertyRoom = resultGetsNamedProperties(call);
+    const ArrayStorageForm& wholeNumbers = arrayStorageFormOf(ArrayStorage::Int32);
+    bool makesDoubles = !withPropertyRoom && formOfCopy(call, wholeNumbers).kind != wholeNumbers.kind;
+    Integer start = call.numberOfArguments() ? wholeNumberOrElse(call.argument(0), missBlockOf(call)) : Integer();
+    Integer end = call.numberOfArguments() > 1 ? wholeNumberOrElse(call.argument(1), missBlockOf(call)) : Integer();
     StubCallResult copy;
-    if (!call.numberOfArguments())
-        copy = callStub(call.context(), arrayCopy(withPropertyRoom), { array.value() });
-    else {
-        Integer start = wholeNumberOrElse(call.argument(0), missBlockOf(call));
-        Integer end = call.numberOfArguments() > 1 ? wholeNumberOrElse(call.argument(1), missBlockOf(call)) : integer(arraySliceToEnd);
-        copy = callStub(call.context(), arraySlice(withPropertyRoom), { array.value(), start.value(), end.value() });
-    }
-    Boxed copied(copy.first);
-    missUnless(call, isNotEmpty(copied));
-    finish(call, copied);
+    if (!start)
+        copy = callStub(call.context(), makesDoubles ? arrayCopyAsDoubles() : arrayCopy(withPropertyRoom), { array.value() });
+    else
+        copy = callStub(call.context(), makesDoubles ? arraySliceAsDoubles() : arraySlice(withPropertyRoom), { array.value(), start.value(), (end ? end : integer(arraySliceToEnd)).value() });
+    missUnless(call, isNotEmpty(Boxed(copy.first)));
+    finish(call, CellPointer(copy.first));
 }
 
 void ArrayBuiltinEmitter::generateArrayUnshift(const InlineCall& call)
@@ -403,8 +426,15 @@ Integer ArrayBuiltinEmitter::indexOfString(const InlineCall& call, CellPointer a
 {
     Type contents = typeOfContentsRead({ m_program, m_function, types(), TypeLevel::Proven }, typeOf(call.receiver()), ContentsSlot::Element);
     bool elementsAreStrings = contents.isAnyString() && elements().isDense(call.receiver()) && !generator().validatesOrChecksProofs();
-    StubKey stub = arrayIndexOfString(elementsAreStrings ? SearchedElements::Strings : SearchedElements::Values);
-    return Integer(callStub(call.context(), stub, { array.value(), searched.value() }).first);
+    if (call.numberOfArguments() == 1) {
+        StubKey stub = arrayIndexOfString(elementsAreStrings ? SearchedElements::Strings : SearchedElements::Values);
+        return Integer(callStub(call.context(), stub, { array.value(), searched.value() }).first);
+    }
+    // Below 2^32: a negative start counts from the end, and the stub multiplies this by the size of an element. The host function answers both.
+    Integer start = wholeNumberOrElse(call.argument(1), missBlockOf(call));
+    missUnless(call, below(start, integer(1ll << 32)));
+    StubKey stub = arrayIndexOfString(elementsAreStrings ? SearchedElements::StringsFromStart : SearchedElements::ValuesFromStart);
+    return Integer(callStub(call.context(), stub, { array.value(), searched.value(), start.value() }).first);
 }
 
 Integer ArrayBuiltinEmitter::indexOfSearched(const InlineCall& call, HoleIs hole)
@@ -418,9 +448,16 @@ Integer ArrayBuiltinEmitter::indexOfSearched(const InlineCall& call, HoleIs hole
     return indexOfValueComparedByIdentity(call, receiverOf(call), hole);
 }
 
+bool ArrayBuiltinEmitter::handlesSearch(const InlineCall& call)
+{
+    if (call.numberOfArguments() == 2)
+        return call.canMiss() && typeOf(call.argument(0)).isAnyString() && typeOf(call.argument(1)).isNumber();
+    return call.numberOfArguments() == 1 && (call.canMiss() || typeOf(call.argument(0)).isAnyString());
+}
+
 void ArrayBuiltinEmitter::generateArrayIndexOf(const InlineCall& call)
 {
-    if (!checkChosenForm(call, call.numberOfArguments() == 1 && (call.canMiss() || typeOf(call.argument(0)).isAnyString())))
+    if (!checkChosenForm(call, handlesSearch(call)))
         return;
     bool maySearchForString = typeOf(call.argument(0)).primitives & Primitive::AnyString;
     finish(call, indexOfSearched(call, HoleIs::Nothing), Range { -1, maySearchForString ? static_cast<int64_t>(MAX_ARRAY_INDEX) : INT32_MAX });
@@ -428,7 +465,7 @@ void ArrayBuiltinEmitter::generateArrayIndexOf(const InlineCall& call)
 
 void ArrayBuiltinEmitter::generateArrayIncludes(const InlineCall& call)
 {
-    if (!checkChosenForm(call, call.numberOfArguments() == 1 && (call.canMiss() || typeOf(call.argument(0)).isAnyString())))
+    if (!checkChosenForm(call, handlesSearch(call)))
         return;
     finish(call, notEqual(indexOfSearched(call, HoleIs::Undefined), -1));
 }

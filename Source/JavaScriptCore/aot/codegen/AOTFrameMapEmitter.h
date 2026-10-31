@@ -14,6 +14,8 @@
 
 namespace JSC {
 
+class CCallHelpers;
+
 namespace B3 {
 class StackmapGenerationParams;
 }
@@ -31,6 +33,9 @@ public:
 
     Roots appendRoots(B3::PatchpointValue*, const ValueContext& suspension);
     static std::optional<uint64_t> siteWordFor(FrameMapRecords&, const B3::StackmapGenerationParams&, const Roots&, unsigned promiseChild);
+    static bool savesDeadPreservedRegister(const B3::StackmapGenerationParams&);
+    // In front of a call that clobbers calleeSavesClobberedAtSuspensions(): a callee stores the saved registers that it uses, and that word would go on naming a dead object.
+    static void releaseSavedRegisters(CCallHelpers&, const B3::StackmapGenerationParams&);
 };
 
 } } } // namespace JSC::AOT::Typed

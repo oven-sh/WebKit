@@ -29,10 +29,24 @@ namespace JSC { namespace AOT { namespace Typed {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Program);
 
 Program::Program(const BuiltinTable& builtins)
-    : types(builtins, this)
-    , m_builtins(builtins)
+    : m_tableOfBuild(builtins)
+    , types(m_tableOfBuild.table(), this)
+    , m_builtins(m_tableOfBuild.table())
     , m_familyTables(makeUnique<FamilyTables>(*this))
 {
+}
+
+bool Program::passesByRowFor(BuiltinID function, BuiltinTypeID tested) const
+{
+    if (!looksUpUnlockedName(function))
+        return false;
+    return std::ranges::any_of(m_builtins.at(tested).parts, [&](const BuiltinTypePart& part) {
+        if (part.pristine.isEmpty())
+            return false;
+        if (!part.builtinClass || !m_classesWithKnownChains.get(part.builtinClass.index()))
+            return true;
+        return m_functionsLookingUpUnlockedNamesOnInstances[part.builtinClass.index()].get(m_builtins.canonicalID(function).index());
+    });
 }
 
 Program::~Program() = default;
@@ -55,18 +69,24 @@ std::span<const uint8_t> Program::copyBorrowedBytes(std::span<const uint8_t> byt
     return m_bytes.owned.span();
 }
 
-void Program::copyBorrowedLineStarts(const ParallelLoops& loops)
+void Program::copyBorrowedWordsOfPositions(const ParallelLoops& loops)
 {
-    Vector<size_t> firstLineStarts(modules.size());
+    Vector<size_t> firstWords(modules.size());
     size_t count = 0;
-    for (size_t index = 0; index < modules.size(); ++index)
-        firstLineStarts[index] = std::exchange(count, count + modules[index].positions.lineStarts.size());
-    m_bytes.lineStarts.grow(count);
+    for (size_t index = 0; index < modules.size(); ++index) {
+        const SourcePositions& positions = modules[index].positions;
+        firstWords[index] = std::exchange(count, count + positions.lineStarts.size() + positions.whereThisIsMade.size());
+    }
+    m_bytes.wordsOfPositions.grow(count);
     forEachIndexInParallel(loops, static_cast<unsigned>(modules.size()), [&](unsigned index) {
-        std::span<const uint32_t>& lineStarts = modules[index].positions.lineStarts;
-        std::span<uint32_t> copy = m_bytes.lineStarts.mutableSpan().subspan(firstLineStarts[index], lineStarts.size());
-        memcpySpan(copy, lineStarts);
-        lineStarts = copy;
+        SourcePositions& positions = modules[index].positions;
+        size_t first = firstWords[index];
+        for (std::span<const uint32_t>* words : { &positions.lineStarts, &positions.whereThisIsMade }) {
+            std::span<uint32_t> copy = m_bytes.wordsOfPositions.mutableSpan().subspan(first, words->size());
+            memcpySpan(copy, *words);
+            *words = copy;
+            first += copy.size();
+        }
     });
 }
 
@@ -81,7 +101,7 @@ void Program::collectConstructionStarts()
         function.constructionStarts = { };
     }
     for (Vector<ConstructionStart>& starts : m_constructionStartsOfModules) {
-        AOT::sort(starts, { }, [](const ConstructionStart& start) { return std::pair { start.reported, start.isForCallers }; });
+        AOT::sortInLine(starts, { }, [](const ConstructionStart& start) { return std::pair { start.reported, start.isForCallers }; });
         // A site is looked up by where it is reported. Of two starts with one such place the construction's stays.
         auto repeated = std::ranges::unique(starts, { }, &ConstructionStart::reported);
         starts.shrink(starts.size() - repeated.size());
@@ -188,9 +208,8 @@ bool Program::prototypeMaySelectOtherClass(LayoutID id) const
 
 void Program::indexClasses()
 {
-    auto provenBaseOf = [&](LayoutID id) {
-        const LayoutFlow& flow = at(id).flow;
-        return flow.baseState == BaseState::Layout ? flow.base : LayoutID();
+    auto layoutAbove = [&](LayoutID id) {
+        return nearestLayoutAlwaysAbove(at(id).flow);
     };
 
     Vector<Vector<LayoutID>>& layoutsBelow = m_derivedTables.layoutsBelow;
@@ -206,7 +225,7 @@ void Program::indexClasses()
         m_derivedTables.numberOfClasses += isDefinedByClass(layout);
         if (layout.flow.allocation == AllocationState::NeverAllocated)
             continue;
-        for (LayoutID base = provenBaseOf(id); base && base != id; base = provenBaseOf(base)) {
+        for (LayoutID base = layoutAbove(id); base && base != id; base = layoutAbove(base)) {
             Vector<LayoutID>& below = layoutsBelow[base.index()];
             bool isOnCycle = !below.isEmpty() && below.last() == id;
             if (isOnCycle)
@@ -340,7 +359,7 @@ void Program::indexNames(const ParallelLoops& loops)
             inheritsFields &= layout.flow.baseState == BaseState::Layout;
         }
         std::span<Holder> ofLayout = found.mutableSpan().subspan(firstOfLayout);
-        AOT::stableSort(ofLayout, { }, &Holder::key);
+        AOT::stableSortInLine(ofLayout, { }, &Holder::key);
         found.shrink(firstOfLayout + (std::ranges::unique(ofLayout, { }, &Holder::key).begin() - ofLayout.begin()));
     });
     parallelSort(loops, holders.mutableSpan(), [&](const Holder& a, const Holder& b) {
@@ -644,6 +663,18 @@ bool isBundlerHelperModule(const Program&, const Module& module)
     return module.flags.contains(ModuleFlags::IsBundlerHelper);
 }
 
+BitVector modulesThatHostAsksFor(const Program& program, bool findsFilesByName, bool beginsModulesOfData)
+{
+    BitVector modules(program.modules.size());
+    for (const Entry& entry : program.entries)
+        modules.quickSet(entry.module.index());
+    for (size_t index = 0; findsFilesByName && index < program.modules.size(); ++index) {
+        if (program.modules[index].flags.containsAny({ ModuleFlags::IsFoundByName, ModuleFlags::MayBeEvicted }) || (beginsModulesOfData && program.modules[index].kind == ModuleKind::Data))
+            modules.quickSet(index);
+    }
+    return modules;
+}
+
 bool answersToPath(const Program& program, const Module& module)
 {
     if (!isFoundByPathOf(module.kind))
@@ -717,6 +748,35 @@ Vector<ModuleID, 2> formsInImage(const Program& program, ModuleID named)
     return forms;
 }
 
+bool importMayAnswerWithMock(const Module& module)
+{
+    return (module.runtimeModule || module.flags.contains(ModuleFlags::IsBundlerHelper)) && module.flags.contains(ModuleFlags::MayBeMocked);
+}
+
+bool requireMayAnswerWithMock(const Program& program, const Module& module)
+{
+    std::span<const uint8_t> name = program.string(module.path);
+    return importMayAnswerWithMock(module) && !spanHasPrefix(name, byteCast<uint8_t>("node:"_span)) && !equalSpans(name, byteCast<uint8_t>("bun"_span));
+}
+
+bool requireReadsModuleValue(const Program& program, const Module& module)
+{
+    return (module.kind == ModuleKind::RuntimeSource || module.kind == ModuleKind::Runtime) && !module.exportsVariable && !requireMayAnswerWithMock(program, module);
+}
+
+static bool isLibraryModule(const Program& program, const Module& module)
+{
+    return module.kind == ModuleKind::RuntimeSource || module.kind == ModuleKind::Runtime || module.flags.contains(ModuleFlags::IsLibrary) || isBundlerHelperModule(program, module);
+}
+
+bool requireAddsToRequireCache(const Program& program, ModuleID referrer, ModuleID target)
+{
+    if (!referrer || isLibraryModule(program, program.at(referrer)) || !isLibraryModule(program, program.at(target)))
+        return false;
+    std::span<const uint8_t> name = program.string(program.at(target).path);
+    return !spanHasPrefix(name, byteCast<uint8_t>("node:"_span)) && !equalSpans(name, byteCast<uint8_t>("bun"_span)) && !equalSpans(name, byteCast<uint8_t>("bun:test"_span));
+}
+
 BuiltinID functionOfHostThatRequireCallsFor(const Module& module)
 {
     switch (module.kind) {
@@ -739,6 +799,21 @@ bool namesWaysToModuleObjects(const Program& program)
     return std::ranges::any_of(program.modules, [](const Module& module) {
         return module.flags.contains(ModuleFlags::NamesWayToModuleObjects);
     });
+}
+
+// A face has the display path of its file, and the file has a rule for what importers see of it.
+// What a bundler's `__commonJS` or `__esm` wraps has the display path of the file around it and no such rule: nobody imports it, and the file around it is an ES module like any other.
+bool isFaceOfCommonJSFile(const Program& program, const Module& module)
+{
+    if (module.kind != ModuleKind::SourceText || module.requests.isEmpty() || module.requests[0].kind != ModuleRequestKind::Require)
+        return false;
+    const Module& file = program.at(module.requests[0].target);
+    if (file.kind != ModuleKind::CommonJs || file.exportRule == SyntheticExportRule::None)
+        return false;
+    auto displayPath = [&](const Module& shown) {
+        return shown.displayPath ? program.string(shown.displayPath) : std::span<const uint8_t>();
+    };
+    return std::ranges::equal(displayPath(module), displayPath(file));
 }
 
 bool isBodyOfModuleEvaluatedByRequire(const Program& program, const Function& function)
@@ -1008,7 +1083,7 @@ Vector<FieldReference> ProgramEditor::changedFields() const
 {
     Locker locker { m_changedFieldsLock };
     Vector<FieldReference> fields = m_changedFields;
-    AOT::sort(fields);
+    AOT::sortInLine(fields);
     removeRepeatedElements(fields);
     return fields;
 }

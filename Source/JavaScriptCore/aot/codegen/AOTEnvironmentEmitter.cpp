@@ -14,9 +14,12 @@
 #include "AOTPlacement.h"
 #include "AOTRuntimeValidationEmitter.h"
 #include "AOTStaticsEmitter.h"
+#include "AOTStubsCallFrames.h"
 #include "AOTStubsClosures.h"
 #include "AirStackSlot.h"
+#include "AllowMacroScratchRegisterUsage.h"
 #include "B3SlotBaseValue.h"
+#include "B3StackmapGenerationParams.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -91,11 +94,53 @@ void EnvironmentEmitter::generateReleaseEnvironment(const ValueContext& value)
     m_out.appendTo(continuation);
 }
 
+// Stack words of the tail call from an entrypoint into its function, if that call needs an argument list frame.
+std::optional<uint32_t> EnvironmentEmitter::stackWordsOfHandOverFromListFrame() const
+{
+    const CallingConventions& conventions = inputs().conventions;
+    std::optional<uint32_t> words;
+    for (const Block& block : m_function.blocks) {
+        if (block.terminator.kind != TerminatorKind::ReturnCall)
+            continue;
+        const Value& call = m_function.at(block.terminator.callOperand());
+        if (call.opcode != Opcode::CallDirect)
+            return std::nullopt;
+        uint32_t passed = conventions.stackWordsReservedByCallersOf(m_program, call.function());
+        if (words && *words != passed)
+            return std::nullopt;
+        words = passed;
+    }
+    if (!words || !*words || (hasStackArgumentAreaOf(m_function.role) && *words <= conventions.stackWordsReservedByCallersOf(m_program, m_id)))
+        return std::nullopt;
+    return words;
+}
+
 void EnvironmentEmitter::generateRecordCallee(const ValueContext& value)
 {
     CellPointer closure = in<CellPointer>(value->closureOperand());
-    ptrdiff_t bytesAboveFrameRecord = sizeof(CallerFrameAndPC) + (inputs().conventions.of(m_program, m_id).spillsArgumentRegisters ? sizeOfSpilledArgumentRegisters : 0);
-    LValue stackPointerOfCaller = m_out.add(m_out.framePointer(), bytesAboveFrameRecord);
+    unsigned spilledBytes = inputs().conventions.of(m_program, m_id).spillsArgumentRegisters ? sizeOfSpilledArgumentRegisters : 0;
+    std::optional<uint32_t> words = stackWordsOfHandOverFromListFrame();
+    // On arm64 the stub takes fewer instructions than the record in line, which moves the arguments out of its way. On x64 it takes as many, and a few cycles more.
+    if ((isARM64() || value.shape() != CodeShape::Fast) && !spilledBytes && !words) {
+        callStub(value, recordCallee(), { closure.value() }, { .accessesCollectorState = true });
+        return;
+    }
+    LValue stackPointerOfCaller;
+    if (words) {
+        // The function is called from the list frame, so a stack walk looks for the record under the stack pointer of that call.
+        B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::pointerType());
+        patchpoint->numGPScratchRegisters = 1;
+        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+        patchpoint->effects = B3::Effects::none();
+        patchpoint->effects.reads = B3::HeapRange::top();
+        patchpoint->setNeedsFrameRecord(true);
+        patchpoint->setGenerator([numberOfWords = *words, spilledBytes](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            emitFindStackPointerOfArgumentListFrame(jit, params[0].gpr(), params.gpScratch(0), numberOfWords, spilledBytes);
+        });
+        stackPointerOfCaller = patchpoint;
+    } else
+        stackPointerOfCaller = m_out.add(m_out.framePointer(), static_cast<ptrdiff_t>(sizeof(CallerFrameAndPC) + spilledBytes));
     const B3::AbstractHeap& heap = m_heaps.collectorState;
     LValue entries = m_out.loadPtr(instanceField(heap, AOT_INSTANCE_OFFSET(heap.recordedCallees)));
 
@@ -113,7 +158,7 @@ void EnvironmentEmitter::generateRecordCallee(const ValueContext& value)
     m_out.jump(continuation);
 
     m_out.appendTo(callRuntime);
-    callVoidOperation(value, RuntimeOperation::RecordCallee, { closure }, { .isOnRarePath = true });
+    callVoidOperation(value, RuntimeOperation::RecordCallee, { closure, Pointer(stackPointerOfCaller) }, { .isOnRarePath = true });
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);

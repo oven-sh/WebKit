@@ -18,7 +18,7 @@ operation JSONParseString (cursor: Cursor/inspects) -> results(natural(boolean),
 operation JSONParseKey (cursor: Cursor/inspects) -> results(natural(boolean), natural(string), natural(Cursor)) ; Allocates reads(ParserState) ; runtime = JSONParseKey
 operation JSONParseNumber (cursor: Cursor/inspects) -> results(natural(boolean), natural(number), natural(Cursor)) ; reads(ParserState) ; runtime = JSONParseNumber
 operation JSONParseInteger (cursor: Cursor/inspects) -> results(natural(boolean), natural(int[-9007199254740991, 9007199254740991]), natural(Cursor)) ; reads(ParserState) ; runtime = JSONParseInteger
-operation JSONParseValue (cursor: Cursor/inspects) -> results(natural(boolean), unknown, natural(Cursor)) ; Allocates reads(ParserState) ; runtime = JSONParseValue
+operation JSONParseValue (cursor: Cursor/inspects) -> results(natural(boolean), natural(null | boolean | number | string | object), natural(Cursor)) ; Allocates reads(ParserState) ; runtime = JSONParseValue
 operation JSONFindMember (string: String, cursor: Cursor/inspects) -> results(natural(JSONMemberSearch), natural(Cursor)) ; reads(ParserState) ; runtime = JSONFindMember
 operation JSONMemberRepeats (string: String, valueStart: Cursor/inspects) -> natural(boolean) ; reads(ParserState) ; runtime = JSONMemberRepeats
 operation JSONKeyHasEscapes (cursor: Cursor/inspects) -> natural(boolean) ; reads(ParserState)

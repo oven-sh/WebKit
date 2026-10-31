@@ -47,9 +47,23 @@ struct StubOptions {
     bool forceGCSlowPaths { false };
     bool imageHasWebAssembly { false };
     bool hasOneInstance { false };
+    // CompileOptions::sharesRealms(): a compiled object or a closure of the realm may be of another image, and its numbers say nothing in the tables of this one.
+    bool sharesRealms { false };
+    // How many instances stand in front of this image's in the list of a realm.
+    uint32_t imagesBelow { 0 };
+    // ImageNumberRanges.
+    uint32_t shapesBelow { 0 };
+    uint32_t lastShape { 0 };
+    uint32_t firstStringHeader { 0 };
+    uint32_t closureNumbersBelow { 0 };
+    uint32_t endOfClosureNumbers { 0 };
+    // Image::layoutIndicesBelow(), and ProgramTables::numberOfLayoutIndices of this image.
+    uint32_t layoutIndicesBelow { 0 };
+    uint32_t numberOfLayoutIndices { 0 };
     // Whether the stubs read and call the traps of a proxy themselves. It chooses between two roads to one answer and says nothing about the program: where it is false, the stubs leave an access through a proxy to the run time.
     // So it may rest on a guess that the program meets no proxy.
     Typed::Expected<bool> callsTrapsOfProxies { true };
+    Typed::Expected<bool> matchesRegExps { true };
     bool validates { false };
     bool checksProofs { false };
     bool countsAllocations { false };
@@ -85,12 +99,16 @@ struct StubPolicy {
     std::array<BitVector, numberOfEnumerators<Typed::Access>> namesWithOwnStubByAccess;
     // For a name with its own stub for reads: the entry of the field table that most layouts have for it, where that is a JSValue in the cell or in the Extension. A guess that the stub tests.
     UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> expectedFieldTableEntries;
+    // A lookup in the field table tests the forms one after the other. In a program with many optional fields most reads by name that miss the first form find a JSValue in the Extension.
+    bool readsTestOutOfLineValuesSecond { false };
+    bool readsTestDoublesSecond { false };
     // [RegExpRecordID::index()], for the literal without the flag g.
     Vector<RegExpLiteralConstants> regExpLiterals;
 };
 
 StubPolicy chooseStubPolicy(const KeyUses&, const IdentifierNumbering&, BuildContext&);
 void addExpectedFieldTableEntries(StubPolicy&, const Typed::Program&, const Typed::SlotPlan&, const IdentifierNumbering&);
+void chooseOrderOfFieldTableForms(StubPolicy&, const Typed::Program&, const Typed::SlotPlan&, const KeyUses&);
 void addRegExpLiterals(StubPolicy&, const RegExpRequests&, bool legacyStaticsMayBeRead, BuildContext&);
 
 struct StubSummary {

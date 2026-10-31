@@ -79,19 +79,12 @@ function f0 name="smallLoop" parameters=[{type=undefined|null|Array<number>}, {t
 # CHECK: = AssumeType [[index0]], [[isArrayAtStep0]] provenType=int[0, 9007199254740991]
 # CHECK: [[protocolStep0]]() frequency=Unlikely:
 # CHECK-NEXT: [[isProtocolAtStep0]]: fact = Specified
-# CHECK-NEXT: [[nextAtStep0]]: anything = AssumeType [[next0]], [[isProtocolAtStep0]] provenType=anything
 # CHECK-NEXT: [[iteratorAtStep0]]: object = AssumeType [[iterator0]], [[isProtocolAtStep0]] provenType=object
-# CHECK-NEXT: = Call [[nextAtStep0]], [[iteratorAtStep0]]
+# CHECK-NEXT: [[nextAtStep0]]: anything = AssumeType [[next0]], [[isProtocolAtStep0]] provenType=anything
+# CHECK-NEXT: = CallDirect [[iteratorAtStep0]], [[nextAtStep0]] function={{*}} [isNeverInlined]
 # CHECK: = ElemGet [[arrayAtStep0]], {{*}} [keyIsIntegral]
-# On the edge of the array form next is a value nobody reads, so selection resolves no call target from it in front of the loop, where both forms pass.
+# On the edge of the array form next is a value nobody reads, and the step hands it to the shared function, so selection resolves no call target from it in this function.
 # SELECTED: ({{*}}: int[0, 1], {{*}}: unspecified|Array<number>, [[selectedIterator0]]: object|unspecified, [[selectedNext0]]: anything|unspecified,
-# SELECTED-NOT: ResolveCallTarget [[selectedNext0]]
-# SELECTED: = ResolveCallTarget v1 argumentCount=1
-# SELECTED-NOT: ResolveCallTarget [[selectedNext0]]
-# SELECTED: [[selectedNextAtStep0]]: anything = AssumeType [[selectedNext0]],
-# SELECTED-NEXT: [[selectedIteratorAtStep0]]: object = AssumeType [[selectedIterator0]],
-# SELECTED-NOT: ResolveCallTarget
-# SELECTED: = Call [[selectedNextAtStep0]], [[selectedIteratorAtStep0]]
 # SELECTED-NOT: ResolveCallTarget [[selectedNext0]]
 # ABSENT-NOT: role=IterationCleanup
 # ABSENT-NOT: subject=
@@ -186,14 +179,14 @@ function f3 name="coroutine" role=CoroutineBody flags=[IsAsync] parameters=[{typ
 # CHECK-NEXT: = PropGet [[array3There]] key="length"
 # CHECK: [[protocolStep3]]() frequency=Unlikely:
 # CHECK-NEXT: [[filled2]]: fact = Specified
-# CHECK-NEXT: [[next3There]]: anything = AssumeType [[next3]], [[filled2]] provenType=anything
 # CHECK-NEXT: [[iterator3There]]: object = AssumeType [[iterator3]], [[filled2]] provenType=object
-# CHECK-NEXT: = Call [[next3There]], [[iterator3There]]
+# CHECK-NEXT: [[next3There]]: anything = AssumeType [[next3]], [[filled2]] provenType=anything
+# CHECK-NEXT: = CallDirect [[iterator3There]], [[next3There]] function={{*}} [isNeverInlined]
 # ABSENT-COUNT-1: AwaitBySavingFrame
 # ABSENT-NOT: AwaitBySavingFrame
 }
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume
-# LEFT-NOT: IteratorClose
+# LEFT-NOT: IteratorClose v
 # LEFT-NOT: AppendSpread

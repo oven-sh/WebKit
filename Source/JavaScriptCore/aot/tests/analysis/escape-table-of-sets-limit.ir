@@ -1,12 +1,12 @@
-# Past 64 objects the set of a value has more than one word, and the words of all sets count against the work limit
+# Past 64 objects a row with a bit for each object has more than one word. A set holds the words in which it has a member, and those count against the work limit:
+# the set of one object takes one word however many objects the function makes. As whole rows the sets of f0 and of f2 took 142 words, and the analysis gave up
 # FORM: Prepared
 # OPTIONS: limit=MaxEscapeAnalysisWork:140
 # RUN: analyses escape
-# LOSS: MaxEscapeAnalysisWork x2 f0
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point"
-function f0 name="setsOfObjectsAlonePassLimit" results=[{type=boolean}] {
+function f0 name="setsOfObjectsAloneTakeOneWordEach" results=[{type=boolean}] {
 # REPEAT: i = 0..70
     v%(i) = NewObject layout=L0 fields=[]
 # END REPEAT
@@ -15,8 +15,9 @@ function f0 name="setsOfObjectsAlonePassLimit" results=[{type=boolean}] {
 }
 # CHECK-LABEL: function f0
 # CHECK-NEXT: escape:
-# CHECK-NEXT: gave up: true
-# CHECK-NEXT: objects: 0
+# CHECK-NEXT: objects: 71
+# CHECK: o0 state: DoesNotEscape
+# CHECK: o70 state: DoesNotEscape
 function f1 name="setsOfObjectsAloneFit" results=[{type=boolean}] {
 # REPEAT: i = 0..69
     v%(i) = NewObject layout=L0 fields=[]
@@ -29,7 +30,7 @@ function f1 name="setsOfObjectsAloneFit" results=[{type=boolean}] {
 # CHECK-NEXT: objects: 70
 # CHECK: o0 state: DoesNotEscape
 # CHECK: o69 state: DoesNotEscape
-function f2 name="sixCopiesPassLimit" results=[{type=boolean}] {
+function f2 name="sixCopiesTakeOneWordEach" results=[{type=boolean}] {
 # REPEAT: i = 0..64
     v%(i) = NewObject layout=L0 fields=[]
 # END REPEAT
@@ -40,13 +41,11 @@ function f2 name="sixCopiesPassLimit" results=[{type=boolean}] {
 }
 # CHECK-LABEL: function f2
 # CHECK-NEXT: escape:
-# CHECK-NEXT: gave up: true
 # CHECK-NEXT: objects: 65
-# CHECK: o0 state: Unknown
-# CHECK-NEXT: o0 reasons: [LimitReached]
-# CHECK: o0 aliases: [v0]
-# CHECK: o64 state: Unknown
-# CHECK-NEXT: o64 reasons: [LimitReached]
+# CHECK: o0 state: DoesNotEscape
+# CHECK: o0 aliases: [v0 v65]
+# CHECK: o5 aliases: [v5 v70]
+# CHECK: o64 state: DoesNotEscape
 function f3 name="fiveCopiesFit" results=[{type=boolean}] {
 # REPEAT: i = 0..64
     v%(i) = NewObject layout=L0 fields=[]

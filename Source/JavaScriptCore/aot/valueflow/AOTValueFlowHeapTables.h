@@ -46,6 +46,10 @@ struct ValueFlowMembersUnderKey {
     ValueSetID entriesWithFeaturesOfHostClasses { ValueSets::nothing };
     // And the entries that are marked as classes whose instances have such a method.
     ValueSetID hostClassesWithSuchMethod { ValueSets::nothing };
+    // The objects that do not escape with the object that holds them, `process` say, on which the table takes the key for absent. Code that nobody has seen finds them all the same.
+    ValueSetID unescapedHoldersWithoutKey { ValueSets::nothing };
+    // The same of functions, `Buffer.from` say. There are many, and under nearly every key this is the set of them all.
+    ValueSetID unescapedFunctionsWithoutKey { ValueSets::nothing };
 };
 
 struct ValueFlowPropertyKeptForLife {
@@ -124,6 +128,7 @@ private:
     macro(ValueSetID, lockedObjects) \
     macro(ValueSetID, holdersWithLockedIndexes) \
     macro(ValueSetID, holdersWithLockedPrototypeLink) \
+    macro(ValueSetID, holdersWithMembersOnHiddenPrototype) \
     macro(ValueSetID, objectsOfRealm) \
     macro(ValueSetID, prototypeObjects) \
     macro(ValueSetID, prototypeObjectsOfHost) \
@@ -186,11 +191,16 @@ public:
     ValueSetID openTo(Actor actor) const { return m_openTo[indexOf(actor)]; }
 
     const ValueFlowMembersUnderKey& under(PropertyKeyID key) const LIFETIME_BOUND { return m_membersUnderKey[holdersUnder(key).record]; }
+    // The names in the program's text that begin with the text. They are sorted when somebody first asks.
+    std::span<const PropertyKeyID> namesThatBeginWith(StringID) const LIFETIME_BOUND;
     // Filled when the record of such a name is made.
     const BitVector& featuresGuardingHostClassesWithMethodsCallingStartupLoads() const LIFETIME_BOUND { return m_featuresGuardingHostClassesWithMethodsCallingStartupLoads; }
     ValueSetID objectsDeclaringField(PropertyKeyID key) const { return m_objectsDeclaringField[key.index()]; }
+    // Their layout gives the field another form than a store gives a property that it creates.
+    ValueSetID objectsDeclaringFieldThatNoStoreCreates(PropertyKeyID key) const { return m_objectsDeclaringFieldThatNoStoreCreates[key.index()]; }
     ValueSetID holdersThatAnswerUnder(PropertyKeyID key) const { return holdersUnder(key).thatAnswer; }
     ValueSetID holdersThatMayLoseMemberUnder(PropertyKeyID key) const { return holdersUnder(key).thatMayLoseMember; }
+    ValueSetID holdersWithMemberOnHiddenPrototypeUnder(PropertyKeyID key) const { return holdersUnder(key).withMemberOnHiddenPrototype; }
     ValueSetID objectsStoredToAtCreationUnder(PropertyKeyID key) const { return holdersUnder(key).storedToAtCreation; }
 
     const ValueFlowMembersOfHolder& membersOf(BuiltinID holder) const LIFETIME_BOUND
@@ -203,10 +213,16 @@ public:
     bool hasGetEntry(BuiltinID member) const { return m_hasGetEntry.quickGet(member.index()); }
     bool hasSetEntry(BuiltinID member) const { return m_hasSetEntry.quickGet(member.index()); }
     bool letsInUnseenCode(BuiltinID member) const { return m_letsInUnseenCode.quickGet(member.index()); }
+    // An object of the host that the table names right above one that the host makes for each module. It has the members that the table lists under both.
+    bool standsRightAboveObjectOfModule(BuiltinID holder) const { return m_standsRightAboveObjectOfModule.quickGet(holder.index()); }
     bool mayAnswerToName(ModuleID module) const { return m_mayAnswerToName.quickGet(module.index()); }
     // Whether the path of a module that may answer to a name, or what stands in it behind a folder node_modules, begins with the text.
     bool holdsModuleOfPackage(std::span<const uint8_t> package) const;
-    bool isNameOfLibraryModule(std::span<const uint8_t> name) const;
+    // The module of the library that the name finds: its path, with or without "node:" in front, or one of its other names.
+    ModuleID libraryModuleNamed(std::span<const uint8_t> name) const;
+    // The files of the image that "./name" and "../name" may find from the folder of a file. The extension may differ, and a folder stands for its index file.
+    // No answer where only the run time can say: the path leaves the folder of the program, or holds more than a path.
+    std::optional<Vector<ModuleID, 2>> filesThatPathFinds(ModuleID from, std::span<const uint8_t> path) const;
 
     std::span<const ValueFlowClassOfEntries> classesOfEntries() const LIFETIME_BOUND { return m_classesOfEntries.span(); }
     std::span<const ValueFlowClassOfEntries> classesOfHostWithEntries() const LIFETIME_BOUND { return m_classesOfHostWithEntries.span(); }
@@ -219,15 +235,21 @@ public:
     bool isNamedAtOneOperation(FunctionID function) const { return m_functionsNamedAtOneOperation.get(function.index()); }
     const ConstantsHoldingModules& constantsHoldingModules() const LIFETIME_BOUND { return m_constantsHoldingModules; }
 
+    // The tables that are filled when first asked for hold sets of m_maker alone, made of what the program says: all of them are kept.
+    void keepEverySetMadeFromNowOn() const { m_maker.keepEverySetMade(); }
+    void keepSetsHeld() const;
     std::atomic<uint64_t>* prototypesOfBlock(uint64_t nameOfBlock) const { return &m_prototypesOfBlocks[((nameOfBlock * 0x9e3779b97f4a7c15ull) >> m_shiftOfBlocks) * 5]; }
     std::atomic<uint64_t>& prototypesAtCreationOf(ValueFlowObjectID object) const { return m_prototypesAtCreation[object.index()]; }
 
 private:
+    mutable std::once_flag m_didSortNames;
+    mutable Vector<PropertyKeyID> m_namesInOrderOfText;
     struct HoldersUnderKey {
         std::atomic<bool> isDescribed { false };
         uint32_t record { 0 };
         ValueSetID thatAnswer;
         ValueSetID thatMayLoseMember;
+        ValueSetID withMemberOnHiddenPrototype;
         ValueSetID storedToAtCreation;
     };
 
@@ -265,6 +287,8 @@ private:
     ValueFlowMembersUnderKey describeMembersUnder(PropertyKeyID, BuiltinName, bool isPrivateName) const;
     ValueSetID findEntriesWithFeaturesOfHostClasses(ValueSetID prototypeObjects, BuiltinName) const;
     mutable BitVector m_featuresGuardingHostClassesWithMethodsCallingStartupLoads;
+    ValueSetID holdersOpenedFor(const MembersUnderKey&) const;
+    ValueSetID withoutHoldersOpenedFor(const MembersUnderKey&, ValueSetID holders) const;
     ValueSetID findLockedHolders(const MembersUnderKey&, BuiltinName, bool isPrivateName) const;
     const ValueFlowMembersOfHolder& describeMembersOf(BuiltinID holder) const LIFETIME_BOUND;
     std::span<const ValueFlowObjectID> objectsOf(BuiltinID canonicalHolder) const LIFETIME_BOUND;
@@ -288,6 +312,15 @@ private:
     Vector<MemberOfHolder> m_membersUnderNames;
     Vector<HolderListingName> m_closedHoldersListingNames;
     Vector<HolderListingName> m_prototypesOfInstancesWithNames;
+    // Namespaces and constructors with a list of all members on every object of the chain, which are passed by where the members of their holder escape.
+    Vector<BuiltinID> m_listedHoldersThatDoNotEscape;
+    // The functions and methods of that kind, by the object that they inherit from: whether a key is absent there is asked once for all of them.
+    struct ListedFunctionsBelow {
+        BuiltinID inheritsFrom;
+        ValueSetID functions;
+    };
+    Vector<ListedFunctionsBelow, 2> m_listedFunctionsThatDoNotEscape;
+    BitVector m_isListedFunctionThatDoesNotEscape;
     Vector<std::pair<BuiltinName, ValueSetID>, 4> m_instancesThatKeepName;
     Vector<BuiltinID> m_holdersWithClosedKeys;
     BitVector m_hasClosedKeys;
@@ -302,10 +335,12 @@ private:
     Vector<uint32_t> m_endOfObjectsStoredToUnderKey;
     Vector<ValueFlowObjectID> m_objectsStoredToUnderKeys;
     Vector<ValueSetID> m_objectsDeclaringField;
+    Vector<ValueSetID> m_objectsDeclaringFieldThatNoStoreCreates;
     Vector<ModuleID> m_compiledModuleOfHolder;
     BitVector m_hasGetEntry;
     BitVector m_hasSetEntry;
     BitVector m_letsInUnseenCode;
+    BitVector m_standsRightAboveObjectOfModule;
     BitVector m_hasNumericName;
     Vector<ValueFlowClassOfEntries> m_classesOfEntries;
     Vector<ValueFlowClassOfEntries> m_classesOfHostWithEntries;
@@ -316,6 +351,7 @@ private:
     struct RestOfPath {
         StringID path;
         uint32_t start { 0 };
+        ModuleID module;
     };
     std::span<const uint8_t> textOf(RestOfPath rest) const { return m_program.string(rest.path).subspan(rest.start); }
     const RestOfPath* findFirstNotBefore(const Vector<RestOfPath>&, std::span<const uint8_t> text) const;
@@ -323,6 +359,16 @@ private:
     BitVector m_mayAnswerToName;
     Vector<RestOfPath> m_whereNamesOfPackagesBegin;
     Vector<RestOfPath> m_namesOfLibraryModules;
+    struct StartOfPath {
+        StringID path;
+        uint32_t length;
+        ModuleID module;
+    };
+    std::span<const uint8_t> textOf(StartOfPath start) const { return m_program.string(start.path).first(start.length); }
+    void listSpellingsOfFiles();
+    Vector<StartOfPath> m_spellingsOfFiles;
+    // With the slash at its end. Every file of the program lies under it.
+    std::span<const uint8_t> m_folderOfProgram;
     BitVector m_keysStoredUnderOnGlobalObject;
     BitVector m_functionsNamedAtOneOperation;
     ConstantsHoldingModules m_constantsHoldingModules;

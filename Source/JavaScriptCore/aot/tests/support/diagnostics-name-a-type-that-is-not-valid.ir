@@ -1,0 +1,10 @@
+# A type that is not valid has no layout to name: the message gives its number
+# RUN: diagnostics InvalidType,count=622
+# CHECK: internal records 1
+# CHECK-NEXT: InvalidType - - - - None 622 - - | type 622 is not canonical, or its set of layouts is empty or open
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="main" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}

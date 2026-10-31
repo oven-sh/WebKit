@@ -184,7 +184,7 @@ ForInEmitter::EnumeratorFields ForInEmitter::loadFields(CellPointer enumerator)
 Condition ForInEmitter::hasCachedKeys(CellPointer enumerator, const EnumeratorFields& fields, CellPointer object)
 {
     Condition hasCachedStructure = equal(loadStructureID(object), fields.cachedStructureID);
-    Word32 orderWord = emitter<ShapeTestEmitter>().orderWordOf(object);
+    Word32 orderWord = emitter<ShapeTestEmitter>().orderWordOfAnyCell(object);
     Word32 mask = loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_cachedOrderWordMask);
     Word32 cachedOrderWord = loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_cachedOrderWord);
     return logicalAnd(hasCachedStructure, equal(bitAnd(orderWord, mask), cachedOrderWord));

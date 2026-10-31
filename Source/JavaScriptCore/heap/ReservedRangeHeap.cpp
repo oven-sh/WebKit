@@ -80,8 +80,6 @@ static constexpr unsigned maxSegmentPlacements = 8;
 static constexpr unsigned maxRandomPlacements = 16;
 // The system keeps one mapping for each stretch of granules with the same access.
 static constexpr size_t maxAccessBorders = 16384;
-static constexpr uintptr_t lowestRandomAddress = 64 * GB;
-static constexpr uintptr_t highestRandomAddress = 124 * 1024 * GB;
 #if OS(LINUX)
 static constexpr bool refusalMeansNoRoomAnywhere = true;
 #else

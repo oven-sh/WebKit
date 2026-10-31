@@ -1,0 +1,119 @@
+# Where one sweep would take many times the steps allowed, the allocations that fit are chosen by how many blocks lie between an allocation and its last use.
+# Twenty-four objects that live through 13 blocks stay where they are. The one that is used in the next block still fits, and sinks
+# FORM: Prepared
+# OPTIONS: limit=MaxSinkingWork:64
+# RUN: pass SinkAllocations
+# LOSS: MaxSinkingWork x1 f0
+# STATISTIC: AllocationsSunk = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+
+function f0 name="manyLiveLong" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = NewObject -, v0 layout=L0 fields=[0]
+    v5 = NewObject -, v0 layout=L0 fields=[0]
+    v6 = NewObject -, v0 layout=L0 fields=[0]
+    v7 = NewObject -, v0 layout=L0 fields=[0]
+    v8 = NewObject -, v0 layout=L0 fields=[0]
+    v9 = NewObject -, v0 layout=L0 fields=[0]
+    v10 = NewObject -, v0 layout=L0 fields=[0]
+    v11 = NewObject -, v0 layout=L0 fields=[0]
+    v12 = NewObject -, v0 layout=L0 fields=[0]
+    v13 = NewObject -, v0 layout=L0 fields=[0]
+    v14 = NewObject -, v0 layout=L0 fields=[0]
+    v15 = NewObject -, v0 layout=L0 fields=[0]
+    v16 = NewObject -, v0 layout=L0 fields=[0]
+    v17 = NewObject -, v0 layout=L0 fields=[0]
+    v18 = NewObject -, v0 layout=L0 fields=[0]
+    v19 = NewObject -, v0 layout=L0 fields=[0]
+    v20 = NewObject -, v0 layout=L0 fields=[0]
+    v21 = NewObject -, v0 layout=L0 fields=[0]
+    v22 = NewObject -, v0 layout=L0 fields=[0]
+    v23 = NewObject -, v0 layout=L0 fields=[0]
+    v24 = NewObject -, v0 layout=L0 fields=[0]
+    v25 = NewObject -, v0 layout=L0 fields=[0]
+    v26 = NewObject -, v0 layout=L0 fields=[0]
+    v27 = NewObject -, v1 layout=L0 fields=[0]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v28 = Call v0, -, v27
+    Return v28
+  b2():
+    Jump -> next b3()
+  b3():
+    Jump -> next b4()
+  b4():
+    Jump -> next b5()
+  b5():
+    Jump -> next b6()
+  b6():
+    Jump -> next b7()
+  b7():
+    Jump -> next b8()
+  b8():
+    Jump -> next b9()
+  b9():
+    Jump -> next b10()
+  b10():
+    Jump -> next b11()
+  b11():
+    Jump -> next b12()
+  b12():
+    Jump -> next b13()
+  b13():
+    v29 = Call v0, -, v3
+    v30 = Call v0, -, v4
+    v31 = Call v0, -, v5
+    v32 = Call v0, -, v6
+    v33 = Call v0, -, v7
+    v34 = Call v0, -, v8
+    v35 = Call v0, -, v9
+    v36 = Call v0, -, v10
+    v37 = Call v0, -, v11
+    v38 = Call v0, -, v12
+    v39 = Call v0, -, v13
+    v40 = Call v0, -, v14
+    v41 = Call v0, -, v15
+    v42 = Call v0, -, v16
+    v43 = Call v0, -, v17
+    v44 = Call v0, -, v18
+    v45 = Call v0, -, v19
+    v46 = Call v0, -, v20
+    v47 = Call v0, -, v21
+    v48 = Call v0, -, v22
+    v49 = Call v0, -, v23
+    v50 = Call v0, -, v24
+    v51 = Call v0, -, v25
+    v52 = Call v0, -, v26
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: Branch v2
+# CHECK: b1():
+# CHECK-NEXT: [[short]]:{{*}}= NewObject -, v1 layout=L0 fields=[0]
+# CHECK-NEXT: = Call v0, -, [[short]]
+}

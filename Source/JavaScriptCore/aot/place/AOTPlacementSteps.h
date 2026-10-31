@@ -172,10 +172,12 @@ struct SiteLists {
     Vector<SourceSite> templateObjects;
     Vector<DataID> copyOnWriteArrays;
     Vector<DataID> arraysWithStorageInImage;
+    Vector<DataID> dataMadeOnce;
     Vector<BuiltinCellKey> builtinCells;
     Vector<StringID> bigIntConstants;
     Vector<RequireEdgeUse> requireEdges;
     Vector<ModuleBuiltinUse> moduleBuiltins;
+    Vector<ModuleID> moduleNamespaces;
     unsigned maxClosureCaptures { 0 };
 };
 
@@ -241,6 +243,7 @@ struct LiteralSites {
     Vector<uint32_t> templateObjectOffsets;
     Vector<uint32_t> sharedStorageOffsets;
     Vector<uint32_t> nodesOfStorageInImage;
+    Vector<uint32_t> cellOffsetsOfDataMadeOnce;
 };
 
 struct PlacedOrderWords {

@@ -1,0 +1,56 @@
+# One way into a join makes an object and the other does not. Behind the join one name of it says that it may not be made yet and a cast of that name says that it is made.
+# Both live across a yield in one word. The word is read once, so a test of the one name still serves a read of the other
+# FORM: Prepared
+# RUN: pass MoveGeneratorFramesToHeap
+# STATISTIC: GeneratorsWithHeapFrames = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Box" fields=[{key="on" declared={type=anything} flow={occupancy=FilledAtBirth}}]
+function f0 name="steps" role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=boolean}, {type=L0}] results=[{type=Generator}] creator=Coroutine{ramp=f0 body=f1 promiseParameter=3}
+function f1 name="steps" role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=boolean}, {type=L0}, {type=Generator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{ramp=f0 body=f1 promiseParameter=3} {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    v4 = Unspecified valueType=L0
+    Jump -> next b3(v4)
+  b3(v5):
+    Branch v1 -> taken b4(), notTaken b10()
+  b4():
+    v6 = Specified
+    v7 = AssumeType v5, v6 provenType=L0
+    v8 = Undefined
+    v9 = YieldBySavingFrame v3, v8 @10
+    v10 = ResultAt v9 index=0
+    v11 = ResultAt v9 index=1
+    Switch v11 cases=[1, 2] -> case b5(), case b6(), otherwise b7()
+  b5() frequency=Rare:
+    Throw v10
+  b6() frequency=Rare:
+    Return v10
+  b7():
+    v12 = HasBirthFieldsFilled v7
+    Branch v12 -> taken b8(| 0), notTaken b9()
+  b8(v13):
+    v14 = Specified
+    v15 = AssumeType v5, v14 provenType=L0
+    v16 = GetSlot v15, v13 key="on" receivers=[L0] level=Expected
+    Return v16
+  b9():
+    v17 = Undefined
+    Return v17
+  b10():
+    v18 = Undefined
+    Return v18
+}
+# CHECK: function f2 name="steps"
+# CHECK: b0([[saved]]: anything,
+# CHECK-NEXT: [[word]]: anything|unspecified = GetHeapFrameWord [[saved]] index=1 valueType=anything|unspecified @10
+# CHECK-NEXT: [[maybe]]: unspecified|L0 = AssumeType [[word]] provenType=unspecified|L0 @10
+# CHECK-NEXT: [[filled]]: fact = Specified @10
+# CHECK-NEXT: [[made]]: L0 = AssumeType [[word]], [[filled]] provenType=L0 @10
+# CHECK-NOT: GetHeapFrameWord
+# CHECK: HasBirthFieldsFilled [[made]]
+# CHECK: [[cast]]: L0 = AssumeType [[maybe]],
+# CHECK-NEXT: GetSlot [[cast]],

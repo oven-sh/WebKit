@@ -1,0 +1,6 @@
+# a-built-in-stored-under-another-name-reads-the-species-of-an-unknown-receiver.ir with another order of the rules: the answer is the same. Under this one the read of `walk` first runs when the unknown object is already among its receivers, and its node does not list map.
+# OPTIONS: testing=DelayFlowRules:4
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f2
+# CHECK-NOT: unreached f3
+# PROGRAM-OF: a-built-in-stored-under-another-name-reads-the-species-of-an-unknown-receiver.ir

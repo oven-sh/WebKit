@@ -37,6 +37,14 @@ Word32 ShapeTestEmitter::shapeWordOf(CellPointer cell)
 
 Word32 ShapeTestEmitter::orderWordOf(CellPointer cell)
 {
+    checkClaim(cell, [&] {
+        return isCompiledObject(cell);
+    });
+    return orderWordOfAnyCell(cell);
+}
+
+Word32 ShapeTestEmitter::orderWordOfAnyCell(CellPointer cell)
+{
     return loadField<Word32>(cell, m_heaps.AOTObject_orderWord);
 }
 
@@ -172,6 +180,9 @@ Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, con
     const ShapeTable& shapes = m_placement.shapes();
     bool isKnownCompiledObject = hasOnlyCompiledObjects(known);
     const ShapeTest& test = isKnownCompiledObject ? shapes.testOf(tested, known.layouts) : shapes.testOf(tested);
+    // The test tells the tested shapes from the known ones alone.
+    if (isKnownCompiledObject)
+        checkIsCompiledObjectOf(cell, known.layouts);
 
     switch (test.form) {
     case ShapeTestForm::NeverPasses:
@@ -201,6 +212,14 @@ Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, con
     if (isKnownCompiledObject || holdsForAnyCell(test.form))
         return passesTest;
     return logicalAnd(hasBits(shapeWord, compiledObjectShapeBit), passesTest);
+}
+
+Condition ShapeTestEmitter::isShapeOf(Word32 shapeWord, LayoutID layout)
+{
+    ShapeRange shapes = m_placement.shapes().shapesOf(layout);
+    if (shapes.isEmpty())
+        return boolean(false);
+    return passesRange(shapeWord, ShapeTest { .form = ShapeTestForm::Range, .first = shapes.first, .count = shapes.count });
 }
 
 void ShapeTestEmitter::branchOnShapeIn(CellPointer cell, LayoutSetID tested, const Type& known, BranchTargets targets)

@@ -34,6 +34,7 @@
 #include "AOTTypeTestPlan.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
+#include "AllowMacroScratchRegisterUsage.h"
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"
 #include "VM.h"
@@ -76,8 +77,12 @@ void RuntimeValidationEmitter::checkValue(ValueID id, Operand operand)
         const Value& definition = m_function.at(id);
         bool readsMemberKeptInVariable = definition.opcode == Opcode::GetModuleVariable && m_program.at(definition.variable()).owner;
         // So is the word of a built-in that the realm lacks.
-        bool mayBeEmpty = readsMemberKeptInVariable || definition.opcode == Opcode::Builtin;
-        checkHasType(id, operand, mayBeEmpty ? type.withPrimitives(Primitive::Absent) : type, ValidationFailureKind::ValueType);
+        // And what the tables of the run time or a site do not answer, which only the test behind the read looks at.
+        bool mayBeEmpty = readsMemberKeptInVariable || definition.opcode == Opcode::Builtin || definition.opcode == Opcode::ReadAboveFreshObject || (definition.opcode == Opcode::PropGet && definition.asksOnlyTables());
+        if (mayBeEmpty)
+            checkHasType(id, operand, type.withPrimitives(Primitive::Absent), ValidationFailureKind::ValueType, id);
+        else
+            checkHasType(id, operand, definition.type, ValidationFailureKind::ValueType, id);
         return;
     }
     if (operand.is<CellPointer>())
@@ -97,29 +102,39 @@ void RuntimeValidationEmitter::checkLiteralStringWord(ValueID id, LiteralStringW
 }
 
 // A cell of a frame may have no header. In a validating build only environments live in frames (staysOnHeapForValidation()), so the header of an object or a closure is there to be read.
-void RuntimeValidationEmitter::checkHasType(ValueID id, Operand operand, const Type& type, ValidationFailureKind kind)
+void RuntimeValidationEmitter::checkHasType(ValueID id, Operand operand, TypeID type, ValidationFailureKind kind, ValueID tested)
+{
+    checkHasType(id, operand, m_program.at(type), kind, tested, type);
+}
+
+void RuntimeValidationEmitter::checkHasType(ValueID id, Operand operand, const Type& type, ValidationFailureKind kind, ValueID tested, TypeID numberOfType)
 {
     bool mustBeThere = mayHoldPointer(operand) && !(type.primitives & Primitive::Absent);
     TypeID widest = types().intern(widestTypeOf(operand.representation));
-    const TypeTestPlan& plan = typeTestPlanFor(widest, operand.representation, types().intern(testableTypeOf(type)));
+    TypeID testedType = types().intern(testableTypeOf(type));
+    const TypeTestPlan& plan = typeTestPlanFor(widest, operand.representation, testedType);
     bool needsTest = plan.verdict != TypeTestVerdict::AlwaysPasses;
     if (!mustBeThere && !needsTest)
         return;
 
-    // One report for both: what was found says which of the two failed.
-    LBasicBlock doesNotHold = newBlock();
-    LBasicBlock continuation = newBlock();
-    if (mustBeThere) {
-        LBasicBlock isThere = needsTest ? newBlock() : continuation;
-        m_out.branch(m_out.notZero64(operand.value), normalEdge(isThere), rareEdge(doesNotHold));
-        if (needsTest)
-            m_out.appendTo(isThere);
+    // A result is tested where it is made, where flow says something about it and at each use. Nothing has written to the heap since the value passed the same test, and the test of a union takes dozens of blocks.
+    if (!generator().checksKeptRegisters()) {
+        PassedTypeTest test { tested, testedType, mustBeThere };
+        if (m_passedTypeTests.contains(test))
+            return;
+        if (m_passedTypeTests.size() == m_passedTypeTests.capacity())
+            m_passedTypeTests.removeAt(0);
+        m_passedTypeTests.append(test);
     }
+
+    // Both report the same: what was found says which of the two failed.
+    bool testRefusesEmptyValue = needsTest && operand.is<Boxed>() && plan.failingPrimitives & Primitive::Absent;
+    if (mustBeThere && !testRefusesEmptyValue)
+        failUnless(Condition(m_out.notZero64(operand.value)), kind, operand, id);
+    // The tables of the image hold the same test (encodeTypes()). The run time says no of the empty value, and of a cell that only compiled code sees: such a cell has a type that every cell passes.
+    bool runTimeHasTest = mustBeThere && plan.looksIntoCells() && numberOfType && m_placement.typesNeededAtRunTime().get(numberOfType.index()) && testedType == types().intern(type.withoutClassProofs().withUntestableBuiltinsWidened());
     if (needsTest)
-        m_out.branch(hasType(operand, plan).value(), normalEdge(continuation), rareEdge(doesNotHold));
-    m_out.appendTo(doesNotHold);
-    reportFailure(kind, operand, id);
-    m_out.appendTo(continuation);
+        failUnlessHasType(operand, plan, kind, id, runTimeHasTest ? numberOfType : TypeID());
 }
 
 void RuntimeValidationEmitter::checkIsSpecified(ValueID id)
@@ -151,8 +166,10 @@ void RuntimeValidationEmitter::generateValidateType(const ValueContext& value)
     }
     if (!hasTestableBits(source) || type.opaque || type.environment)
         return;
-    checkHasType(value.id(), get(source), type, ValidationFailureKind::AssumedType);
-    checkClassProofs(value.id(), get(source), type);
+    checkHasType(value.id(), get(source), value->validatedType(), ValidationFailureKind::AssumedType, source);
+    // The operands of this operation were validated in front of it.
+    if (value->validatedType() != m_function.at(source).type || !m_checkedClassProofs.contains(source))
+        checkClassProofs(value.id(), get(source), type);
 }
 
 // The shapes ascend, and the layouts of one family have numbers in a row.
@@ -181,6 +198,13 @@ Condition RuntimeValidationEmitter::hasShapeAmong(CellPointer cell, LayoutSetID 
     for (RunOfShapes run : runs)
         hasShape = logicalOr(hasShape, below(add(shapeWord, run.last), run.count));
     return hasShape;
+}
+
+void RuntimeValidationEmitter::checkIsCompiledObjectOf(CellPointer cell, LayoutSetID layouts)
+{
+    std::span<const uint32_t> shapes = m_placement.shapes().memberShapes(layouts);
+    if (!shapes.empty())
+        failUnless(hasShapeAmong(cell, layouts, shapes), ValidationFailureKind::ReceiverShape, cell, generator().operationBeingGenerated());
 }
 
 // A guard may rely on a guard: whether the fields are in the order of the layout is asked of an object that an earlier test found to have the layout.
@@ -296,10 +320,13 @@ void RuntimeValidationEmitter::checkClassProofs(ValueID id, Operand operand, con
 
         LBasicBlock instance = newBlock();
         LBasicBlock continuation = newBlock();
-        Condition isProvenInstance = hasType(operand, isInstance);
-        if (isListedBuiltin)
-            isProvenInstance = logicalAnd(isProvenInstance, logicalNot(hasType(operand, *isListedBuiltin)));
-        m_out.branch(isProvenInstance.value(), normalEdge(instance), normalEdge(continuation));
+        if (isListedBuiltin) {
+            LBasicBlock mayBeListed = newBlock();
+            branchOnType(operand, isInstance, { normalEdge(mayBeListed), normalEdge(continuation) });
+            m_out.appendTo(mayBeListed);
+            branchOnType(operand, *isListedBuiltin, { normalEdge(continuation), normalEdge(instance) });
+        } else
+            branchOnType(operand, isInstance, { normalEdge(instance), normalEdge(continuation) });
         m_out.appendTo(instance);
         checkClassProofs(id, operand.is<CellPointer>() ? operand.as<CellPointer>() : unboxCell(operand.as<Boxed>()), part);
         m_out.jump(continuation);
@@ -673,21 +700,32 @@ void RuntimeValidationEmitter::poisonFields(CellPointer cell, LayoutID layout, A
 
 Condition RuntimeValidationEmitter::isInStack(Pointer pointer)
 {
-    Pointer top(m_out.loadPtr(m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), vm().value(), VM::topEntryFrameOffset())));
-    Condition isAboveStackPointer = aboveOrEqual(pointer, stackPointer());
-    // AOTCheckedFrameCells.h
-    Condition isInRangeOfFrameCells(m_out.equal(m_out.lShr(pointer.value(), m_out.constInt32(CheckedFrameCells::bitsOfOffsetInRange)), m_out.constInt64(CheckedFrameCells::startOfRange >> CheckedFrameCells::bitsOfOffsetInRange)));
-    return logicalOr(isInRangeOfFrameCells, logicalAnd(isAboveStackPointer, below(pointer, top)));
-}
-
-Pointer RuntimeValidationEmitter::stackPointer()
-{
-    B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Int64);
+    Pointer vm = this->vm();
+    B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Int32);
+    patchpoint->append(pointer.value(), B3::ValueRep::SomeRegister);
+    patchpoint->append(vm.value(), B3::ValueRep::SomeRegister);
+    patchpoint->resultConstraints = { B3::ValueRep::SomeEarlyRegister };
+    patchpoint->numGPScratchRegisters = 1;
+    patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     emitter<RuntimeCallEmitter>().applyEffects(patchpoint, Effects::none(), ArgumentBufferAccess::None);
+    m_heaps.decoratePatchpointRead(&m_heaps.entire(AbstractHeap::RuntimeState), patchpoint);
     patchpoint->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-        jit.move(MacroAssembler::stackPointerRegister, params[0].gpr());
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        GPRReg result = params[0].gpr();
+        GPRReg pointer = params[1].gpr();
+        GPRReg vm = params[2].gpr();
+        GPRReg scratch = params.gpScratch(0);
+        jit.move(MacroAssembler::stackPointerRegister, scratch);
+        jit.compare64(CCallHelpers::AboveOrEqual, pointer, scratch, result);
+        jit.loadPtr(CCallHelpers::Address(vm, VM::topEntryFrameOffset()), scratch);
+        jit.compare64(CCallHelpers::Below, pointer, scratch, scratch);
+        jit.and32(scratch, result);
+        // AOTCheckedFrameCells.h
+        jit.urshift64(pointer, CCallHelpers::TrustedImm32(CheckedFrameCells::bitsOfOffsetInRange), scratch);
+        jit.compare64(CCallHelpers::Equal, scratch, CCallHelpers::TrustedImm32(CheckedFrameCells::startOfRange >> CheckedFrameCells::bitsOfOffsetInRange), scratch);
+        jit.or32(scratch, result);
     });
-    return Pointer(patchpoint);
+    return Condition(patchpoint);
 }
 
 } } } // namespace JSC::AOT::Typed

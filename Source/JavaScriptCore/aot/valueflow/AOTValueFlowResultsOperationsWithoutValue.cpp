@@ -121,7 +121,7 @@ private:
     bool asksForCodeToRun(ValueFlowStatementID id, unsigned levels) const
     {
         bool answer = false;
-        m_inputs.solver().forEachMadeNodeAskedForBy(id, [&](const ValueFlowNodeKey& key, ValueFlowStatementID made) {
+        m_inputs.forEachMadeNodeAskedForBy(id, kindsOfMadeNodes({ ValueFlowMadeNodeKind::CallGroup, ValueFlowMadeNodeKind::Hub }), true, [&](const ValueFlowNodeKey& key, ValueFlowStatementID made) {
             if (answer)
                 return;
             answer = key.kind == ValueFlowMadeNodeKind::CallGroup || key.kind == ValueFlowMadeNodeKind::Hub || (made && levels && asksForCodeToRun(made, levels - 1));

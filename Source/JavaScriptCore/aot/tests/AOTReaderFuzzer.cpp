@@ -340,10 +340,12 @@ void Fuzzer::addProgram(ProgramFile&& program)
 void Fuzzer::loadPrograms(const Vector<String>& paths)
 {
     if (paths.isEmpty()) {
-        ProgramFile fixture;
-        fixture.text = String(readerFixtureText);
-        fixture.bytes = Vector<uint8_t>(readerFixtureText.span8());
-        addProgram(WTF::move(fixture));
+        for (ASCIILiteral text : { readerFixtureText, readerFixtureWithTagsText }) {
+            ProgramFile fixture;
+            fixture.text = String(text);
+            fixture.bytes = Vector<uint8_t>(text.span8());
+            addProgram(WTF::move(fixture));
+        }
         return;
     }
 

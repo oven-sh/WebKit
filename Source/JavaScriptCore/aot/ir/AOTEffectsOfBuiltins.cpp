@@ -103,7 +103,7 @@ static OperandCode describeCodeOf(const Program& program, const BuiltinOverload&
         description.addOwn(heapCapabilityEffects);
         description.addThrow();
     }
-    if (overload.isUndeclared()) {
+    if (overload.isUndeclared() || program.callsUnlockedMemberThatNoRowNames(overload.builtin)) {
         description.addUnknownCode();
         return OperandCode::IsDescribed;
     }

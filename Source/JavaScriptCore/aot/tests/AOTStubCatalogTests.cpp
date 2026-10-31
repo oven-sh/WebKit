@@ -255,6 +255,8 @@ static void checkPreservingCallSummary(const StubCatalog& catalog, StubKey key)
     const StubSummary& summary = catalog.summaryOf(key);
     RegisterSet callProtocolRegisters = macroClobberedRegisters();
     callProtocolRegisters.merge(resultAndImmediateRegisters(summary.signature));
+    for (GPRReg reg : registersThatPreservingCallsTakeArgumentsIn())
+        callProtocolRegisters.add(reg, IgnoreVectors);
     if (preservingCallShapes[key.form()].saves == OperationCall::Saves::CallerSavedGPRs)
         callProtocolRegisters.merge(RegisterSet::allFPRs());
     AOT_TEST_CHECK(callProtocolRegisters.subsumes(summary.clobbered));

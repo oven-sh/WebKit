@@ -86,13 +86,11 @@ function f2 name="Failure" module=m0 position=6 kind=DerivedConstructor flags=[H
     Return v5
 }
 
-# Without a written type the value is known to be an object and no more. Error.isError asks in place: it compares the type byte of the cell, and nothing is called for it.
+# Without a written type: what Error makes for `super()` of the class is an error. Error.isError is true at build time: one arm is left, and the object is not looked at.
 # CHECK-LABEL: name="next" role=Source
 # CHECK-NEXT: BB#0:
-# CHECK: Int32 b@[[type]] = Load8Z(b@{{*}}, offset = 5, ControlDependent|ReadsImmutable|Reads:JSCell_typeInfoType
-# CHECK: Int32 b@[[isErrorCell]] = Equal(b@[[type]], $
-# CHECK-NEXT: Branch(b@[[isErrorCell]], Terminal
-# CHECK: Double b@[[sum]] = Add(b@[[count]], b@[[count]], {{*}}:Add)
+# CHECK-NEXT: Double b@[[count]] = ArgumentReg(
+# CHECK-NEXT: Double b@[[sum]] = Add(b@[[count]], b@[[count]], {{*}}:Add)
 # CHECK-NEXT: Return(b@[[sum]], Terminal)
 # CHECK-LABEL: end of function
 # NONE-LABEL: name="next" role=Source

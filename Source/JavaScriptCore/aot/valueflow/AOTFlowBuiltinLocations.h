@@ -39,7 +39,7 @@ inline Vector<BuiltinID> constantBuiltinMembersToLock(const Program& program, co
         if (findOwnMember(program, builtins.at(member).holder, program.keyOf(builtins.at(member).name)) == member)
             members.append(member);
     }
-    AOT::sort(members, { }, [&](BuiltinID member) {
+    AOT::sortInLine(members, { }, [&](BuiltinID member) {
         return std::pair { builtins.at(member).holder, member };
     });
     return members;

@@ -711,6 +711,37 @@ static void countedContentsFollowLog()
     function.detach(log);
 }
 
+static void indexOfBodiesAnswersForEveryOpcode()
+{
+    Program program { BuiltinTable::singleton() };
+    OpcodeSet all;
+    for (unsigned index = 0; index < numberOfEnumerators<Opcode>; ++index) {
+        Function function;
+        addValue(function, addBlock(function), static_cast<Opcode>(index));
+        program.functions.append(WTF::move(function));
+        all.add(static_cast<Opcode>(index));
+    }
+    BodyIndex bodies;
+    bodies.growTo(program.functions.size());
+    program.setBodyIndex(&bodies);
+    for (unsigned index = 0; index < numberOfEnumerators<Opcode>; ++index) {
+        FunctionID id(index);
+        OpcodeSet own { static_cast<Opcode>(index) };
+        OpcodeSet others;
+        all.forEach([&](Opcode opcode) {
+            if (!own.contains(opcode))
+                others.add(opcode);
+        });
+        AOT_TEST_CHECK(mayListValueWith(program, id, own) && mayListValueWith(program, id, all) && !mayListValueWith(program, id, others));
+        AOT_TEST_CHECK(bodies.rowOf(program, id)->opcodes == own && bodies.contentsOf(id)->opcodes == own);
+        unsigned found = 0;
+        forEachListedValue(program, id, own, [&](auto&&...) { ++found; });
+        forEachListedValue(program, id, others, [&](auto&&...) { found += 2; });
+        AOT_TEST_CHECK(found == 1);
+    }
+    program.setBodyIndex(nullptr);
+}
+
 static void editOfWhatWasAddedTakesItsPromiseBack()
 {
     ChangeLog log;
@@ -825,7 +856,7 @@ function f0 name="oneOfTwoNumbers" parameters=[{type=anything}] results=[{type=a
     v(compactKeepsBlockReachedThroughHandlerOnly) v(compactSortsBlocksWithoutEarlierPredecessor) v(compactKeepsValidBlockOrder) \
     v(remapIDsRewritesTypesOfValues) v(remapIDsClearsExpectedTypeThatBecomesTheType) v(remapIDsRewritesPayloadsOfValues) v(remapIDsRewritesPayloadsOfTerminators) v(remapIDsRewritesHeader) \
     v(remapIDsWithIdentityRemapsChangesNothing) v(adoptIDsGivesBodyBuiltInAnotherArenaTheIDsOfThisOne) \
-    v(logNamesWhatWasHandedOut) v(logHoldsOneEntryForWhatWasAddedUntilItIsShown) v(countedContentsFollowLog) v(editOfWhatWasAddedTakesItsPromiseBack) \
+    v(logNamesWhatWasHandedOut) v(logHoldsOneEntryForWhatWasAddedUntilItIsShown) v(countedContentsFollowLog) v(indexOfBodiesAnswersForEveryOpcode) v(editOfWhatWasAddedTakesItsPromiseBack) \
     v(valuePutInBehindAnalysisOfPredictionsMayBeBehindCheck) v(typingThatFillsLogLeavesEveryValuePending)
 
 std::span<const NativeTest> irFunctionTests()

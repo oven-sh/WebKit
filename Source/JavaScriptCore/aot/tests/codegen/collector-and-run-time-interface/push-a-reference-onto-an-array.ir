@@ -100,6 +100,6 @@ function f1 name="add" module=m0 position=33 flags=[IsChecked, HasExplicitName] 
 # CHECK: Patchpoint(b@[[list]]:Register({{*}}), b@[[entry]]:Register({{*}}), resultConstraints = Register({{*}}), ExitsSideways|
 # CHECK-NOT: Patchpoint(
 # CHECK-LABEL: end of function
-# The first instruction on both targets copies the entry into the register in which the rare call takes it.
-# X64: instructions: 12, patchpoints: 0
-# ARM64: instructions: 14, patchpoints: 0
+# The entry stays in the register in which it arrived. Only the rare block copies it into the register in which the call takes it, before the list is moved to where the entry was.
+# X64: instructions: 11, patchpoints: 0
+# ARM64: instructions: 13, patchpoints: 0

@@ -187,7 +187,7 @@ static void testSymbolTable()
     }
 }
 
-static constexpr uint32_t numberOfBodiesWithStubCalls = 80;
+static constexpr uint32_t numberOfBodiesWithStubCalls = 80 * scaleOfSharedCode;
 
 static Vector<CompiledCode> bodiesWithStubCalls()
 {

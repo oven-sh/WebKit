@@ -1,0 +1,159 @@
+# A callee set of 16 functions or more is kept once in the heat graph. The edges, the cycles and the activations are those of a graph that lists each member at each caller, to the last digit
+# FORM: Prepared
+# RUN: heat-graph
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="State" fields=[{key="a" declared={type=anything}}] flow={members=[L0]}
+
+function f0 name="" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject layout=L0
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f1 name="step1" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f2 name="step2" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f3 name="step3" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    v3 = CallDirect v1 function=f21
+    Return v2
+}
+function f4 name="step4" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f5 name="step5" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f6 name="step6" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f7 name="step7" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f8 name="step8" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f9 name="step9" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Boolean boolean=true
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return v1
+}
+function f10 name="step10" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f11 name="step11" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f12 name="step12" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f13 name="step13" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    v3 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20, ..]
+    Return v2
+}
+function f14 name="step14" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f15 name="step15" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f16 name="step16" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f17 name="step17" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    v3 = Call v0, -, v1, v0 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f18 name="step18" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f19 name="step19" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f20 name="step20" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f21 name="helper" role=OutlinedBody parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f22 name="outside" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+# CHECK: f0 size 4 mass 4.000000: f1*0.050000 f2*0.050000 f3*0.050000 f4*0.050000 f5*0.050000 f6*0.050000 f7*0.050000 f8*0.050000 f9*0.050000 f10*0.050000 f11*0.050000 f12*0.050000 f13*0.050000 f14*0.050000 f15*0.050000 f16*0.050000 f17*0.050000 f18*0.050000 f19*0.050000 f20*0.050000
+# CHECK-NEXT: f1 size 2 mass 2.000000: f1*0.050000 f2*0.050000 f3*0.050000 f4*0.050000 f5*0.050000 f6*0.050000 f7*0.050000 f8*0.050000 f9*0.050000 f10*0.050000 f11*0.050000 f12*0.050000 f13*0.050000 f14*0.050000 f15*0.050000 f16*0.050000 f17*0.050000 f18*0.050000 f19*0.050000 f20*0.050000
+# CHECK-NEXT: f2 size 2 mass 2.000000: f1*0.050000 f2*0.050000 f3*0.050000 f4*0.050000 f5*0.050000 f6*0.050000 f7*0.050000 f8*0.050000 f9*0.050000 f10*0.050000 f11*0.050000 f12*0.050000 f13*0.050000 f14*0.050000 f15*0.050000 f16*0.050000 f17*0.050000 f18*0.050000 f19*0.050000 f20*0.050000
+# CHECK-NEXT: f3 size 3 mass 3.000000: f1*0.050000 f2*0.050000 f3*0.050000 f4*0.050000 f5*0.050000 f6*0.050000 f7*0.050000 f8*0.050000 f9*0.050000 f10*0.050000 f11*0.050000 f12*0.050000 f13*0.050000 f14*0.050000 f15*0.050000 f16*0.050000 f17*0.050000 f18*0.050000 f19*0.050000 f20*0.050000 f21*1.000000
+# CHECK-NEXT: f4 size 2 mass 2.000000: f1*0.050000 f2*0.050000 f3*0.050000 f4*0.050000 f5*0.050000 f6*0.050000 f7*0.050000 f8*0.050000 f9*0.050000 f10*0.050000 f11*0.050000 f12*0.050000 f13*0.050000 f14*0.050000 f15*0.050000 f16*0.050000 f17*0.050000 f18*0.050000 f19*0.050000 f20*0.050000
+# CHECK-NEXT: f5 size 2 mass 2.000000: f1*0.050000 f2*0.050000 f3*0.050000 f4*0.050000 f5*0.050000 f6*0.050000 f7*0.050000 f8*0.050000 f9*0.050000 f10*0.050000 f11*0.050000 f12*0.050000 f13*0.050000 f14*0.050000 f15*0.050000 f16*0.050000 f17*0.050000 f18*0.050000 f19*0.050000 f20*0.050000
+# CHECK-NEXT: f6 size 2 mass 2.000000: f1*0.050000 f2*0.050000 f3*0.050000 f4*0.050000 f5*0.050000 f6*0.050000 f7*0.050000 f8*0.050000 f9*0.050000 f10*0.050000 f11*0.050000 f12*0.050000 f13*0.050000 f14*0.050000 f15*0.050000 f16*0.050000 f17*0.050000 f18*0.050000 f19*0.050000 f20*0.050000
+# CHECK-NEXT: f7 size 2 mass 2.000000: f1*0.050000 f2*0.050000 f3*0.050000 f4*0.050000 f5*0.050000 f6*0.050000 f7*0.050000 f8*0.050000 f9*0.050000 f10*0.050000 f11*0.050000 f12*0.050000 f13*0.050000 f14*0.050000 f15*0.050000 f16*0.050000 f17*0.050000 f18*0.050000 f19*0.050000 f20*0.050000
+# CHECK-NEXT: f8 size 2 mass 2.000000: f1*0.050000 f2*0.050000 f3*0.050000 f4*0.050000 f5*0.050000 f6*0.050000 f7*0.050000 f8*0.050000 f9*0.050000 f10*0.050000 f11*0.050000 f12*0.050000 f13*0.050000 f14*0.050000 f15*0.050000 f16*0.050000 f17*0.050000 f18*0.050000 f19*0.050000 f20*0.050000
+# CHECK-NEXT: f9 size 6 mass 33.000000: f1*0.500000 f2*0.500000 f3*0.500000 f4*0.500000 f5*0.500000 f6*0.500000 f7*0.500000 f8*0.500000 f9*0.500000 f10*0.500000 f11*0.500000 f12*0.500000 f13*0.500000 f14*0.500000 f15*0.500000 f16*0.500000 f17*0.500000 f18*0.500000 f19*0.500000 f20*0.500000
+# CHECK-NEXT: f10 size 2 mass 2.000000: f1*0.050000 f2*0.050000 f3*0.050000 f4*0.050000 f5*0.050000 f6*0.050000 f7*0.050000 f8*0.050000 f9*0.050000 f10*0.050000 f11*0.050000 f12*0.050000 f13*0.050000 f14*0.050000 f15*0.050000 f16*0.050000 f17*0.050000 f18*0.050000 f19*0.050000 f20*0.050000
+# CHECK-NEXT: f11 size 2 mass 2.000000: f1*0.050000 f2*0.050000 f3*0.050000 f4*0.050000 f5*0.050000 f6*0.050000 f7*0.050000 f8*0.050000 f9*0.050000 f10*0.050000 f11*0.050000 f12*0.050000 f13*0.050000 f14*0.050000 f15*0.050000 f16*0.050000 f17*0.050000 f18*0.050000 f19*0.050000 f20*0.050000
+# CHECK-NEXT: f12 size 2 mass 2.000000: f1*0.050000 f2*0.050000 f3*0.050000 f4*0.050000 f5*0.050000 f6*0.050000 f7*0.050000 f8*0.050000 f9*0.050000 f10*0.050000 f11*0.050000 f12*0.050000 f13*0.050000 f14*0.050000 f15*0.050000 f16*0.050000 f17*0.050000 f18*0.050000 f19*0.050000 f20*0.050000
+# CHECK-NEXT: f13 size 3 mass 3.000000: f1*0.100000 f2*0.100000 f3*0.100000 f4*0.100000 f5*0.100000 f6*0.100000 f7*0.100000 f8*0.100000 f9*0.100000 f10*0.100000 f11*0.100000 f12*0.100000 f13*0.100000 f14*0.100000 f15*0.100000 f16*0.100000 f17*0.100000 f18*0.100000 f19*0.100000 f20*0.100000 unknown*1.000000
+# CHECK-NEXT: f14 size 2 mass 2.000000: f1*0.050000 f2*0.050000 f3*0.050000 f4*0.050000 f5*0.050000 f6*0.050000 f7*0.050000 f8*0.050000 f9*0.050000 f10*0.050000 f11*0.050000 f12*0.050000 f13*0.050000 f14*0.050000 f15*0.050000 f16*0.050000 f17*0.050000 f18*0.050000 f19*0.050000 f20*0.050000
+# CHECK-NEXT: f15 size 2 mass 2.000000: f1*0.050000 f2*0.050000 f3*0.050000 f4*0.050000 f5*0.050000 f6*0.050000 f7*0.050000 f8*0.050000 f9*0.050000 f10*0.050000 f11*0.050000 f12*0.050000 f13*0.050000 f14*0.050000 f15*0.050000 f16*0.050000 f17*0.050000 f18*0.050000 f19*0.050000 f20*0.050000
+# CHECK-NEXT: f16 size 2 mass 2.000000: f1*0.050000 f2*0.050000 f3*0.050000 f4*0.050000 f5*0.050000 f6*0.050000 f7*0.050000 f8*0.050000 f9*0.050000 f10*0.050000 f11*0.050000 f12*0.050000 f13*0.050000 f14*0.050000 f15*0.050000 f16*0.050000 f17*0.050000 f18*0.050000 f19*0.050000 f20*0.050000
+# CHECK-NEXT: f17 size 3 mass 3.000000: f1*0.100000 f2*0.100000 f3*0.100000 f4*0.100000 f5*0.100000 f6*0.100000 f7*0.100000 f8*0.100000 f9*0.100000 f10*0.100000 f11*0.100000 f12*0.100000 f13*0.100000 f14*0.100000 f15*0.100000 f16*0.100000 f17*0.100000 f18*0.100000 f19*0.100000 f20*0.100000
+# CHECK-NEXT: f18 size 2 mass 2.000000: f1*0.050000 f2*0.050000 f3*0.050000 f4*0.050000 f5*0.050000 f6*0.050000 f7*0.050000 f8*0.050000 f9*0.050000 f10*0.050000 f11*0.050000 f12*0.050000 f13*0.050000 f14*0.050000 f15*0.050000 f16*0.050000 f17*0.050000 f18*0.050000 f19*0.050000 f20*0.050000
+# CHECK-NEXT: f19 size 2 mass 2.000000: f1*0.050000 f2*0.050000 f3*0.050000 f4*0.050000 f5*0.050000 f6*0.050000 f7*0.050000 f8*0.050000 f9*0.050000 f10*0.050000 f11*0.050000 f12*0.050000 f13*0.050000 f14*0.050000 f15*0.050000 f16*0.050000 f17*0.050000 f18*0.050000 f19*0.050000 f20*0.050000
+# CHECK-NEXT: f20 size 2 mass 2.000000: f1*0.050000 f2*0.050000 f3*0.050000 f4*0.050000 f5*0.050000 f6*0.050000 f7*0.050000 f8*0.050000 f9*0.050000 f10*0.050000 f11*0.050000 f12*0.050000 f13*0.050000 f14*0.050000 f15*0.050000 f16*0.050000 f17*0.050000 f18*0.050000 f19*0.050000 f20*0.050000
+# CHECK-NEXT: f21 size 1 mass 1.000000:
+# CHECK-NEXT: f22 size 2 mass 2.000000: f1*0.050000 f2*0.050000 f3*0.050000 f4*0.050000 f5*0.050000 f6*0.050000 f7*0.050000 f8*0.050000 f9*0.050000 f10*0.050000 f11*0.050000 f12*0.050000 f13*0.050000 f14*0.050000 f15*0.050000 f16*0.050000 f17*0.050000 f18*0.050000 f19*0.050000 f20*0.050000
+# CHECK-NEXT: host: f0*1.000000 f1*1.000000 f2*1.000000 f3*1.000000 f4*1.000000 f5*1.000000 f6*1.000000 f7*1.000000 f8*1.000000 f9*1.000000 f10*1.000000 f11*1.000000 f12*1.000000 f13*1.000000 f14*1.000000 f15*1.000000 f16*1.000000 f17*1.000000 f18*1.000000 f19*1.000000 f20*1.000000 f22*1.000000
+# CHECK-NEXT: unknown:
+# CHECK-NEXT: activations:
+# CHECK-NEXT: f0 1.000000
+# CHECK-NEXT: f1 220.000000
+# CHECK-NEXT: f2 2299.000000
+# CHECK-NEXT: f3 22869.000000
+# CHECK-NEXT: f4 215985.000000
+# CHECK-NEXT: f5 1931160.000000
+# CHECK-NEXT: f6 16294162.500000
+# CHECK-NEXT: f7 129267022.500000
+# CHECK-NEXT: f8 960269310.000000
+# CHECK-NEXT: f9 6648018300.000001
+# CHECK-NEXT: f10 371735023275.000061
+# CHECK-NEXT: f11 2196616046625.000244
+# CHECK-NEXT: f12 11861726651775.001953
+# CHECK-NEXT: f13 57990663630900.007812
+# CHECK-NEXT: f14 456676476093337.562500
+# CHECK-NEXT: f15 1761466407788587.750000
+# CHECK-NEXT: f16 5871554692628626.000000
+# CHECK-NEXT: f17 293577734631431.312500
+# CHECK-NEXT: f18 322935508094574.437500
+# CHECK-NEXT: f19 339082283499303.187500
+# CHECK-NEXT: f20 356036397674268.375000
+# CHECK-NEXT: f21 22869.000000
+# CHECK-NEXT: f22 1.000000

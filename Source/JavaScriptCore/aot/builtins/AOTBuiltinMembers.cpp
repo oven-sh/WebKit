@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinLocationWatch.h"
 #include "AOTFlowResults.h"
 #include "AOTIRBuilder.h"
 #include "AOTPropertyAccessCache.h"
@@ -158,6 +159,16 @@ MembersUnderKey::MembersUnderKey(const Program& program, PropertyKeyID key)
     , m_kind(program.at(key).kind)
     , m_isIndexLike(program.isIndexLike(key))
 {
+    if (program.openedNames.isEmpty() || m_kind != PropertyKeyKind::Text) [[likely]]
+        return;
+    // A test run opens hundreds of names, and this is asked for every access by name.
+    StringID text = program.at(key).text;
+    if (!program.isOpenedSomewhere(text)) [[likely]]
+        return;
+    for (const OpenedName& opened : program.openedNames) {
+        if (opened.name == text)
+            m_holdersOpenedForKey.append(opened.holder);
+    }
 }
 
 BuiltinID MembersUnderKey::findOwnMember(BuiltinID holder) const
@@ -167,6 +178,8 @@ BuiltinID MembersUnderKey::findOwnMember(BuiltinID holder) const
 
 bool MembersUnderKey::isClosedKey(BuiltinID holder) const
 {
+    if (m_holdersOpenedForKey.contains(holder)) [[unlikely]]
+        return false;
     if (m_table.at(holder).flags.contains(BuiltinFlag::IsLockedObject))
         return true;
     if (m_isIndexLike)
@@ -291,15 +304,53 @@ BuiltinMemberAnswer findMemberOfInstances(const BuiltinLookupContext& context, B
     return answerFor(context, table.canonicalID(prototype), key, found, name);
 }
 
-static bool canHaveGlobalBinding(const Program& program, PropertyKeyID key)
+BuiltinOverloadID findOwnSlotOfInstances(const BuiltinTable& table, BuiltinClassID builtinClass, BuiltinName name)
+{
+    BuiltinID member = table.findOwnPropertyOfInstances(builtinClass, name);
+    if (!member || table.receiverClassOf(member) != builtinClass)
+        return { };
+    for (BuiltinOverloadID id : table.overloadIDsOf(member)) {
+        if (table.at(id).code.implementation.kind == BuiltinImplementationKind::OwnSlot)
+            return id;
+    }
+    return { };
+}
+
+bool liesAtSamePlace(const BuiltinTable& table, BuiltinOverloadID ownSlot, BuiltinOverloadID otherOwnSlot)
+{
+    auto placeOf = [&](BuiltinOverloadID id) {
+        const BuiltinOverload& overload = table.at(id);
+        return propertyOffsetOfOwnSlot(table.at(table.receiverClassOf(overload.builtin)).type, overload.code.implementation.ownSlot.offset);
+    };
+    return placeOf(ownSlot) == placeOf(otherOwnSlot);
+}
+
+static bool canBeDeclaredByScript(const Program& program, PropertyKeyID key)
 {
     return program.at(key).kind == PropertyKeyKind::Text && keyLookupOf(program, key) == KeyLookup::Ordinary;
 }
 
+// The global object has properties under symbols as under names: `globalThis[Symbol.for("registry")]`.
+static bool canHaveGlobalBinding(const Program& program, PropertyKeyID key)
+{
+    switch (program.at(key).kind) {
+    case PropertyKeyKind::Text:
+    case PropertyKeyKind::WellKnownSymbol:
+    case PropertyKeyKind::RegisteredSymbol:
+    case PropertyKeyKind::CreatedSymbol:
+        return keyLookupOf(program, key) == KeyLookup::Ordinary;
+    case PropertyKeyKind::PrivateName:
+    case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 static bool canBeShadowedByScript(const BuiltinLookupContext& context, PropertyKeyID key)
 {
-    // No script can declare a private name of the engine.
-    if (!canHaveGlobalBinding(context.program, key) || isLockedLocation(context.program, Builtins::GlobalThis, key))
+    // No script can declare a symbol or a private name of the engine.
+    if (!canBeDeclaredByScript(context.program, key) || isLockedLocation(context.program, Builtins::GlobalThis, key))
         return false;
     return !context.flow.hasResults() || context.flow.unseenScriptsCanRun();
 }
@@ -334,7 +385,7 @@ Vector<MemberOfClasses, 4> methodsNamed(const BuiltinTable& table, BuiltinName n
         }
         existing->classes.append(builtinClass);
     }
-    AOT::sort(methods, { }, &MemberOfClasses::member);
+    AOT::sortInLine(methods, { }, &MemberOfClasses::member);
     return methods;
 }
 

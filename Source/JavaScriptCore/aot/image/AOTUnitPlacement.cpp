@@ -247,7 +247,7 @@ private:
             Run run = findRun(first);
             // The copy with the shortest reach lies next to its user.
             Vector<CopyableUse, 8> usesByReach(usesOfRun(run));
-            AOT::stableSort(usesByReach, std::ranges::greater { }, &CopyableUse::reach);
+            AOT::stableSortInLine(usesByReach, std::ranges::greater { }, &CopyableUse::reach);
             bool didPlaceCopy;
             do {
                 didPlaceCopy = false;

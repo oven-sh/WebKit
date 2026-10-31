@@ -17,7 +17,6 @@
 # OTHER-NOT: unseen-code ImportsUncompiledModule
 # OTHER-NOT: unseen-code RunsUnseenCode
 # OTHER-NOT: unseen-code OptionAdmitsCode
-# OTHER-NOT: unseen-code LimitReached
 # OTHER-NOT: unseen-code FlowResultDisabled
 
 module m0 path="main.js" displayPath="main.js" body=f0

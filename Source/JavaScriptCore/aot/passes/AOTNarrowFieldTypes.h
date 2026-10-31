@@ -16,6 +16,8 @@ class BuildContext;
 
 namespace Typed {
 
+class Heat;
+
 void markEnforcedFields(Program&, BuildContext&);
 struct Int32ParameterCandidate {
     FunctionID function;
@@ -44,6 +46,9 @@ bool canBeStoredBehindAllocation(const Field&);
 std::optional<Value> tryCreateFiller(const Program&, const Type&);
 bool canStoreInitialValueBehindAllocation(const Program&, const Value& allocation, uint32_t valueIndex);
 void storeUnprovenInitialValues(const Program&, FunctionID, Function&, TypeArena&, BuildContext&);
+// Code that gets no tests fills a slot that has a form of its own by a store by name behind the allocation, and reads it by name.
+// Where no other code names the field and the form makes the slot no narrower, the slot holds any value and the type is only expected.
+void expectFieldsOutsideTestedCode(ProgramEditor&, const Heat&, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed
 

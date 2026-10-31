@@ -1,0 +1,22 @@
+# pair = Object.entries({ x: 1, y: 2.5 })[0]; pair[0] = true; return pair[1]
+# Nobody knows at which index a store lands, so the pair no longer says what lies where.
+# RUN: valueflow-apply
+# CHECK: function f0 name="main" {{*}}results=[{type=undefined|true|int|fractional|string}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = Double number=2.5
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectEntries
+    v5 = Call v4, v3, v2
+    v6 = Integer integer=0
+    v7 = ElemGet v5, v6
+    v8 = Boolean boolean=true
+    ElemSet v7, v6, v8
+    v10 = ElemGet v7, v0
+    Return v10
+}

@@ -16,6 +16,10 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRProgram.h"
 #include "AOTIdentifierNumbering.h"
+#include "AOTProgramTables.h"
+#include "AOTIdentifierTable.h"
+#include "AOTImagesBelow.h"
+#include "AOTModuleTable.h"
 #include "AOTNumberLiteralStrings.h"
 #include "AOTOpcodesNamingRecords.h"
 #include "AOTPipeline.h"
@@ -26,6 +30,7 @@
 #include "AOTSchemaWalkers.h"
 #include "AOTSlotPlanSteps.h"
 #include "AOTSort.h"
+#include "AOTTextEncoder.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include "SmallStrings.h"
@@ -38,6 +43,7 @@
 #include <wtf/Atomics.h>
 #include <wtf/FastBitVector.h>
 #include <wtf/HashSet.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 
@@ -52,6 +58,10 @@ static constexpr Typed::TerminatorKindSet keyOrComparisonTerminators { Typed::Te
 
 static constexpr bool usesOperandsAsKeys(Typed::Opcode opcode) { return keyOrComparisonOpcodes.contains(opcode); }
 static constexpr bool usesOperandsAsKeys(Typed::TerminatorKind kind) { return keyOrComparisonTerminators.contains(kind); }
+static constexpr bool comparesWithWrittenText(Typed::Opcode opcode) { return opcode == Typed::Opcode::StringEqualsLiteral || opcode == Typed::Opcode::ValueEqualsLiteral; }
+static constexpr bool comparesWithWrittenText(Typed::TerminatorKind) { return false; }
+static constexpr bool comparesOperands(Typed::Opcode opcode) { return opcode == Typed::Opcode::StrictEq || opcode == Typed::Opcode::Eq; }
+static constexpr bool comparesOperands(Typed::TerminatorKind) { return false; }
 
 // The value of `list[i] = "text"` is only stored: nothing compares it or looks it up.
 static constexpr bool isOnlyKept(Typed::OperandUses uses) { return !uses.isEmpty() && uses.containsOnly({ Typed::OperandUse::Retains, Typed::OperandUse::Returns }); }
@@ -145,6 +155,7 @@ struct SharedUses {
     FastBitVector isConstant { numberOfStrings };
     FastBitVector isCreatedRepeatedly { numberOfStrings };
     FastBitVector isAtom { numberOfStrings };
+    FastBitVector isComparedRepeatedly { numberOfStrings };
 };
 
 struct FunctionWalk {
@@ -193,9 +204,12 @@ struct FunctionWalk {
         bool createsStringConstant = runtimeOf(operation) == Typed::RuntimeOperation::StringConstant;
         bool looksUpByName = looksUpKeysByName(operation);
         bool looksUpInTables = !runsAtMostOnce && looksUpByName;
+        bool isComparedRepeatedly = !runsAtMostOnce && hasCode;
         forEachReference(instruction, [&]<typename Reference>(const Reference& reference) {
             if constexpr (std::same_as<Reference, StringID>) {
                 nameString(reference);
+                if (reference && isComparedRepeatedly && comparesWithWrittenText(operation))
+                    shared.isComparedRepeatedly.atomicSetAndCheck(reference.index(), true);
                 if (createsStringConstant)
                     countCreationSite(reference, runsAtMostOnce);
                 else if (reference && !hasStringsForMessagesOnly(operation))
@@ -210,8 +224,11 @@ struct FunctionWalk {
             if (isOnlyKept(instruction.operandUses(operandIndex)))
                 return;
             const Typed::Value& definition = function.at(sameObjectThroughCasts(function, operand));
-            if (definition.opcode == Typed::Opcode::String)
-                shared.isAtom.atomicSetAndCheck(definition.string().index(), true);
+            if (definition.opcode != Typed::Opcode::String)
+                return;
+            shared.isAtom.atomicSetAndCheck(definition.string().index(), true);
+            if (isComparedRepeatedly && comparesOperands(operation))
+                shared.isComparedRepeatedly.atomicSetAndCheck(definition.string().index(), true);
         });
     }
 
@@ -321,6 +338,7 @@ ProgramUses collectProgramUses(const Typed::PipelineOutput& pipeline, const BitV
     strings.functionsInSourceOrder = sortFunctionsBySourcePosition(program, loops);
 
     uses.keys.byKey = WTF::move(shared.keys);
+    uses.keys.textsComparedRepeatedly = toBitVector(shared.isComparedRepeatedly);
     return uses;
 }
 
@@ -335,6 +353,8 @@ struct NameCandidate {
     NumberedIdentifier identifier;
     bool hasPromisedColumn { false };
     bool isEngineSymbol { false };
+    // Nothing looks it up, so it takes no column and comes behind every other name.
+    bool isOnlyCompared { false };
     uint32_t uses { 0 };
     uint32_t tableLookupUses { 0 };
     uint32_t lookupsByName { 0 };
@@ -394,12 +414,18 @@ static Vector<NameCandidate> collectNumberedNames(const Typed::Program& program,
         if (!isTextOfNumberedKey.get(index))
             names.append(NameCandidate { .identifier = { PropertyKeyID(), StringID(index) } });
     }
+    for (size_t index : uses.textsComparedRepeatedly) {
+        if (!isTextOfNumberedKey.get(index) && !uses.stringsNamedAsKeysByTables.get(index) && !program.strings[StringID(index)].empty())
+            names.append(NameCandidate { .identifier = { PropertyKeyID(), StringID(index) }, .isOnlyCompared = true });
+    }
     return names;
 }
 
 static void sortByUse(const ParallelLoops& loops, std::span<NameCandidate> names)
 {
     parallelSort(loops, names, [](const NameCandidate& a, const NameCandidate& b) {
+        if (a.isOnlyCompared != b.isOnlyCompared)
+            return b.isOnlyCompared;
         if (a.hasPromisedColumn != b.hasPromisedColumn)
             return a.hasPromisedColumn;
         if (a.tableLookupUses != b.tableLookupUses)
@@ -418,7 +444,7 @@ static void groupColumnsByFunction(std::span<NameCandidate> namesWithColumn)
     if (namesWithColumn.size() <= hotNameCount)
         return;
     auto remainingNamesWithColumn = namesWithColumn.subspan(hotNameCount);
-    AOT::stableSort(remainingNamesWithColumn, [](const NameCandidate& a, const NameCandidate& b) {
+    AOT::stableSortInLine(remainingNamesWithColumn, [](const NameCandidate& a, const NameCandidate& b) {
         return a.firstTableLookupFunction < b.firstTableLookupFunction;
     });
 }
@@ -442,6 +468,8 @@ static void sortByFirstMention(const ParallelLoops& loops, std::span<NameCandida
         // The table of fields takes more names than the front table. The names that code looks up get the low numbers, which are the ones it takes.
         if (!a.lookupsByName != !b.lookupsByName)
             return !!a.lookupsByName;
+        if (a.isOnlyCompared != b.isOnlyCompared)
+            return b.isOnlyCompared;
         if (a.isEngineSymbol != b.isEngineSymbol)
             return a.isEngineSymbol;
         if (a.identifier.text != b.identifier.text)
@@ -450,11 +478,167 @@ static void sortByFirstMention(const ParallelLoops& loops, std::span<NameCandida
     });
 }
 
+static String keyOfEngineSymbol(PropertyKeyKind kind, uint32_t wellKnownSymbol, const String& text)
+{
+    return makeString(static_cast<unsigned>(kind), ':', wellKnownSymbol, ':', text);
+}
+
+static bool isSameSymbolInEveryImage(PropertyKeyKind kind)
+{
+    switch (kind) {
+    case PropertyKeyKind::WellKnownSymbol:
+    case PropertyKeyKind::RegisteredSymbol:
+    case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
+        return true;
+    case PropertyKeyKind::Text:
+    case PropertyKeyKind::PrivateName:
+    case PropertyKeyKind::CreatedSymbol:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+std::unique_ptr<ImagesBelow> ImagesBelow::tryCreate(std::span<const std::span<const uint8_t>> images)
+{
+    std::unique_ptr<ImagesBelow> result(new ImagesBelow);
+    for (std::span<const uint8_t> bytes : images) {
+        std::optional<OptionSet<ImageFlag>> flags = Image::flags(bytes);
+        if (!flags || !flags->contains(ImageFlag::SharesRealms))
+            return nullptr;
+        auto& header = *reinterpret_cast<const ImageHeader*>(bytes.data());
+        if (header.formatVersion != imageFormatVersion || header.size > bytes.size() || header.codeOffset > header.size)
+            return nullptr;
+        std::span<const uint8_t> image = bytes.first(header.size);
+        result->m_images.append(Image::create(image, image.data() + header.codeOffset));
+    }
+    if (result->m_images.isEmpty())
+        return nullptr;
+    for (size_t position = 0; position < result->m_images.size(); ++position) {
+        const std::unique_ptr<Image>& image = result->m_images[position];
+        const ImageText& text = image->text();
+        const ImageNumberRanges& numbers = image->header().numbers;
+        for (uint32_t number : image->programTables().identifiersOfEngineSymbols()) {
+            if (number < numbers.firstStringHeader)
+                continue;
+            const ImageIdentifierWord& identifier = text.identifier(number);
+            if (!isSameSymbolInEveryImage(identifier.kind()))
+                continue;
+            bool isWellKnown = identifier.kind() == PropertyKeyKind::WellKnownSymbol;
+            String name = !isWellKnown && identifier.text() ? result->viewOf(position, identifier.text()).toString() : String();
+            result->m_engineSymbols.add(keyOfEngineSymbol(identifier.kind(), isWellKnown ? static_cast<uint32_t>(identifier.wellKnownSymbol()) : 0, name), number);
+        }
+    }
+    return result;
+}
+
+// These images are bytes that nothing has loaded: each has the headers of its own numbers alone. A text that is a name of an image before it lies there.
+bool ImagesBelow::holdsFile(StringView path) const
+{
+    for (size_t position = 0; position < m_images.size(); ++position) {
+        auto viewInImage = [&](StringID string) {
+            return viewOf(position, string);
+        };
+        ModuleTable::TextOfString text(viewInImage);
+        ModuleTable table(m_images[position]->programTables(), text);
+        if (table.mayHoldPathStartingWith(path) && table.holdsFileAt(path))
+            return true;
+    }
+    return false;
+}
+
+StringView ImagesBelow::viewOf(size_t position, StringID string) const
+{
+    const ImageText& text = m_images[position]->text();
+    std::optional<uint32_t> number = text.identifierNumber(string);
+    if (!number || *number >= m_images[position]->header().numbers.firstStringHeader)
+        return text.view(string);
+    for (size_t before = 0; before < position; ++before) {
+        const ImageNumberRanges& numbers = m_images[before]->header().numbers;
+        if (*number >= numbers.firstStringHeader && *number < numbers.endOfStringHeaders) {
+            const ImageText& holder = m_images[before]->text();
+            return holder.view(holder.identifier(*number).text());
+        }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+std::optional<uint32_t> ImagesBelow::numberOfName(const DecodedString& name) const
+{
+    StringView characters = name.is16Bit() ? StringView(name.units16.span()) : StringView(byteCast<Latin1Character>(name.units8.span()));
+    for (size_t position = 0; position < m_images.size(); ++position) {
+        const std::unique_ptr<Image>& image = m_images[position];
+        const ImageText& text = image->text();
+        std::optional<uint32_t> number = IdentifierTable(image->programTables().identifiersByHash()).find(name.hash, [&](uint32_t candidate) {
+            StringID string = text.identifier(candidate).text();
+            return string ? viewOf(position, string) == characters : characters.isEmpty();
+        });
+        if (number)
+            return number;
+    }
+    return std::nullopt;
+}
+
+std::optional<uint32_t> ImagesBelow::numberOfEngineSymbol(PropertyKeyKind kind, uint32_t wellKnownSymbol, const String& text) const
+{
+    if (!isSameSymbolInEveryImage(kind))
+        return std::nullopt;
+    auto found = m_engineSymbols.find(keyOfEngineSymbol(kind, wellKnownSymbol, text));
+    if (found == m_engineSymbols.end())
+        return std::nullopt;
+    return found->value;
+}
+
+std::optional<uint32_t> numberInImagesBelow(const Typed::Program& program, PropertyKeyID key, StringID text, const ImagesBelow& below)
+{
+    PropertyKeyKind kind = key ? program.at(key).kind : PropertyKeyKind::Text;
+    if (kind == PropertyKeyKind::Text)
+        return text ? below.numberOfName(decodeForImage(program.strings[text])) : std::nullopt;
+    if (kind == PropertyKeyKind::WellKnownSymbol)
+        return below.numberOfEngineSymbol(kind, static_cast<uint32_t>(*program.at(key).symbol), String());
+    if (!text)
+        return std::nullopt;
+    DecodedString decoded = decodeForImage(program.strings[text]);
+    return below.numberOfEngineSymbol(kind, 0, decoded.is16Bit() ? String(decoded.units16.span()) : String(byteCast<Latin1Character>(decoded.units8.span())));
+}
+
 IdentifierNumbering numberIdentifiers(const Typed::Program& program, const KeyUses& uses, const BitVector& keysWithColumn, BuildContext& context)
 {
     Vector<NameCandidate> names = collectNumberedNames(program, uses, keysWithColumn);
+    // A name that an image below has keeps its number there, and with it its column or its lack of one. The others go on where the headers of those images end.
+    if (const ImagesBelow* below = context.imagesBelow()) {
+        sortByFirstMention(context.parallelLoops(), names.mutableSpan());
+        Vector<std::optional<uint32_t>> numbersBelow(names.size());
+        forEachIndexInParallel(context.parallelLoops(), static_cast<unsigned>(names.size()), [&](unsigned index) {
+            numbersBelow[index] = numberInImagesBelow(program, names[index].identifier.key, names[index].identifier.text, *below);
+        });
+        // The first number stands for nothing, as 0 does in the first image: its header says how many headers the image has.
+        uint32_t next = below->numbersOfLast().endOfStringHeaders;
+
+        IdentifierNumbering numbering;
+        numbering.m_first = next++;
+        numbering.m_numbersByKey.fill(0, program.types.numberOfPropertyKeys());
+        numbering.m_numbersByText.fill(0, program.strings.size());
+        numbering.m_identifiers.grow(next + static_cast<size_t>(std::ranges::count_if(numbersBelow, [](const std::optional<uint32_t>& number) { return !number; })));
+        for (uint32_t index = 0; index < names.size(); ++index) {
+            const NumberedIdentifier& identifier = names[index].identifier;
+            uint32_t number = numbersBelow[index] ? *numbersBelow[index] : next++;
+            numbering.m_identifiers[number] = identifier;
+            if (identifier.key)
+                numbering.m_numbersByKey[identifier.key.index()] = number;
+            if (isFoundByText(program, identifier))
+                numbering.m_numbersByText[identifier.text.index()] = number;
+        }
+        numbering.m_countWithLookupTableColumn = std::min(numbering.count(), RowDisplacementTable::maxColumn + 1);
+        numbering.m_countWithFieldTableColumn = std::min(numbering.count(), FieldTableEntry::maxName + 1);
+        context.statistics().count(StatisticID::IdentifiersNumbered, names.size());
+        if (context.exceeds(LimitID::MaxIdentifiers, numbering.count()))
+            context.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::TooManyIdentifiers, .limit = LimitID::MaxIdentifiers, .count = numbering.count() });
+        return numbering;
+    }
     sortByUse(context.parallelLoops(), names.mutableSpan());
-    auto columnCount = static_cast<uint32_t>(std::min<uint64_t>(names.size(), context.limit(LimitID::LookupTableNames)));
+    auto numberOfNamesLookedUp = static_cast<uint64_t>(std::ranges::count_if(names, [](const NameCandidate& name) { return !name.isOnlyCompared; }));
+    auto columnCount = static_cast<uint32_t>(std::min<uint64_t>(numberOfNamesLookedUp, context.limit(LimitID::LookupTableNames)));
     groupColumnsByFunction(names.mutableSpan().first(columnCount));
     reportNamesWithoutColumn(names.span().subspan(columnCount), context);
     sortByFirstMention(context.parallelLoops(), names.mutableSpan().subspan(columnCount));

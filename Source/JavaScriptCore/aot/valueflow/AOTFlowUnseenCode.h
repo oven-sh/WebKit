@@ -16,6 +16,10 @@ struct RefusedCode {
     bool evaluatedText { false };
     bool hostEvaluatedText { false };
     bool codeOutsideImage { false };
+    // Not a refusal: CompileOptions::admitsFilesRunByHost().
+    bool hostRunsFilesOutsideImage { false };
+    // Not a refusal: BuildContext::imagesBelow(). The realm runs those images first, and the lowest holds all of the library: its copy, not this program's, has made what the realm keeps.
+    bool hasImagesBelow { false };
 };
 
 constexpr bool admitsUnknownJavaScript(UnseenCodeCause cause)
@@ -29,7 +33,6 @@ constexpr bool admitsUnknownJavaScript(UnseenCodeCause cause)
         return true;
     case UnseenCodeCause::Unknown:
     case UnseenCodeCause::LoadsModuleByName:
-    case UnseenCodeCause::LimitReached:
     case UnseenCodeCause::FlowResultDisabled:
     case UnseenCodeCause::RunsMachineCode:
         return false;

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTAllocationCounts.h"
+#include "AOTArrayAllocationProfile.h"
 #include "AOTBuiltinCells.h"
 #include "AOTBuiltinFamilyState.h"
 #include "AOTBuiltinModules.h"
@@ -18,6 +19,8 @@
 #include "AOTCellFormat.h"
 #include "AOTChainDependents.h"
 #include "AOTCheckedFrameCells.h"
+#include "AOTClassPrototype.h"
+#include "AOTClosure.h"
 #include "AOTCompactTable.h"
 #include "AOTCompileOptions.h"
 #include "AOTCoroutineTable.h"
@@ -29,13 +32,16 @@
 #include "AOTHeapHooks.h"
 #include "AOTHost.h"
 #include "AOTImage.h"
+#include "AOTImageOfCellScope.h"
 #include "AOTImageLoading.h"
 #include "AOTLimits.h"
 #include "AOTMembersLeftOut.h"
 #include "AOTModuleHost.h"
+#include "AOTModuleNamespace.h"
 #include "AOTModuleRecord.h"
 #include "AOTModules.h"
 #include "AOTNativeCallValidation.h"
+#include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
@@ -43,6 +49,7 @@
 #include "AOTProgramStatics.h"
 #include "AOTProgramStrings.h"
 #include "AOTPropertyCaches.h"
+#include "AOTPropertyCachesStringKeys.h"
 #include "AOTRealmStartup.h"
 #include "AOTRegExpRecords.h"
 #include "AOTRuntimeCounters.h"
@@ -51,6 +58,8 @@
 #include "AOTRuntimeReporter.h"
 #include "AOTRuntimeTable.h"
 #include "AOTRuntimeValidation.h"
+#include "AOTSavedFrame.h"
+#include "AOTSlimClosure.h"
 #include "AOTSlotAccess.h"
 #include "AOTState.h"
 #include "AOTStringBuilderStorage.h"
@@ -66,6 +75,7 @@
 #include "DeferGC.h"
 #include "ErrorConstructor.h"
 #include "FastMarkAppender.h"
+#include "IntlObject.h"
 #include "JSAsyncGenerator.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
@@ -99,10 +109,12 @@
 #include <wtf/DataLog.h>
 #include <wtf/HashFunctions.h>
 #include <wtf/MathExtras.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/ThreadSpecific.h>
 #include <wtf/WTFConfig.h>
 
 #if ENABLE(WEBASSEMBLY)
@@ -157,7 +169,7 @@ static Instance* reserveMemory(PagesOfVM& pages, const Image& image)
 static void releaseMemory(Instance* instance)
 {
     VMState& vmState = instance->vm->aotState();
-    auto [below, above] = reservationSizes(*vmState.image);
+    auto [below, above] = reservationSizes(*instance->program);
     vmState.pages->release(reinterpret_cast<char*>(instance) - below, below + above);
 }
 
@@ -170,6 +182,7 @@ static void fillHeaderAndPrefix(Instance& instance, VM& vm, JSGlobalObject* real
     instance.numberTag = JSValue::NumberTag;
     instance.notCellMask = JSValue::NotCellMask;
     instance.singleCharacterStrings = vm.smallStrings.singleCharacterStrings();
+    instance.collation.ducetLevel1Weights = ducetLevel1Weights;
 
     InstancePrefix& prefix = instance.prefix();
     prefix.structureIDBase = JSC::structureIDBase();
@@ -217,7 +230,7 @@ static void fillImageWords(Instance& instance, VM& vm, const Image& image)
     words.fieldRecordIndices = image.programTables().fieldRecordIndices().data();
     words.classAccessors = image.programTables().classAccessors().data();
     words.data = image.programTables().data().data();
-    words.closureFunctionKindsOrigin = std::bit_cast<uintptr_t>(image.programTables().closureFunctionKinds().data()) - image.programTables().closureFunctions.first * sizeof(FunctionKindData);
+    words.closureFunctionKinds = image.programTables().closureFunctionKinds().data() - image.programTables().closureFunctions.numbersBelow;
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     words.stringRecords = image.text().stringRecords().data();
     words.lazyStringHeaderOffsets = image.text().lazyHeaderOffsets();
@@ -298,10 +311,9 @@ static void fillRealmWords(Instance& instance, VM& vm, JSGlobalObject* realm)
     if (Structure* structure = realm->setStructureConcurrently())
         instance.receiverStructureID(Receiver::Set) = structure->id().bits();
     instance.receiverStructureID(Receiver::RegExp) = realm->regExpStructure()->id().bits();
-    for (const BuiltinClassBinding& binding : BuiltinBindings::classesOfHost()) {
-        if (Structure* structure = binding.findInstanceStructure ? binding.findInstanceStructure(realm) : nullptr)
-            instance.didCreateInstanceStructure(binding.builtinClass, structure);
-    }
+    BuiltinBindings::forEachInstanceStructureOfHost(realm, [&](const BuiltinClassBinding& binding, Structure* structure) {
+        instance.didCreateInstanceStructure(binding.builtinClass, structure);
+    });
 
     RealmWords& words = instance.realm;
     words.boundFunctionStructureID = realm->boundFunctionStructure()->id().bits();
@@ -309,7 +321,9 @@ static void fillRealmWords(Instance& instance, VM& vm, JSGlobalObject* realm)
     // Compiled code binds compiled closures, which are no JSFunctions: a slim one ends before JSFunction's executable. JSBoundFunction::create picks the same for them.
     constexpr bool targetIsJSFunction = false;
     words.boundFunctionExecutable = vm.getBoundFunction(targetIsJSFunction, SourceTaintedOrigin::Untainted);
-    words.emptyExtraPropertiesStructure = JSFinalObject::createStructure(vm, realm, jsNull(), extraPropertiesInlineCapacity);
+    // One for the realm: whichever image runs when an object gets its first extra property, the object's own image knows the structure.
+    Instance* first = realm->aotInstance();
+    words.emptyExtraPropertiesStructure = first && first != &instance ? first->realm.emptyExtraPropertiesStructure : JSFinalObject::createStructure(vm, realm, jsNull(), extraPropertiesInlineCapacity);
     words.extraPropertiesWithElementsStructure = Structure::nonPropertyTransition(vm, words.emptyExtraPropertiesStructure, TransitionKind::AllocateContiguous, nullptr);
     words.headerOfExtraPropertiesWithElements = cellHeaderFor(words.extraPropertiesWithElementsStructure);
     words.boundFunctionClassInfo = JSBoundFunction::info();
@@ -317,6 +331,8 @@ static void fillRealmWords(Instance& instance, VM& vm, JSGlobalObject* realm)
     words.functionPrototypeCall = realm->linkTimeConstant(LinkTimeConstant::callFunction);
     words.smallIntStrings = vm.numericStrings.smallIntCache();
     words.intStrings = vm.numericStrings.intCache();
+    words.keysOfPairs = StringKeyCache::noKeysOfPairs();
+    words.keyOfPairMask = 0;
 }
 
 static void fillInstanceClassInfos(Instance& instance)
@@ -340,7 +356,7 @@ void makeTailCallsByValuePoll(Instance& instance, const uint8_t* isRenamedAtRunT
     StackManager::Mirror& limit = instance.callsByValue.limit.get();
     if (!limit.isOnList())
         return;
-    instance.callsByValue.isRenamedAtRunTime = isRenamedAtRunTime;
+    instance.callsByValue.isRenamedAtRunTime = isRenamedAtRunTime + instance.image.tables->closureFunctions.first - instance.image.tables->closureFunctions.numbersBelow;
     // No change of the limit of the stack reaches the word any more.
     instance.vm->traps().unregisterMirror(limit);
     *std::bit_cast<uintptr_t*>(std::bit_cast<uintptr_t>(&limit) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit()) = std::numeric_limits<uintptr_t>::max();
@@ -408,6 +424,32 @@ static void initializeRuntimeWords(Instance& instance, VM& vm)
     }
 }
 
+size_t numberOfRunningInstances(const VMState& state)
+{
+    return std::ranges::count_if(state.instances, [](const Instance* instance) {
+        return !instance->globalObject || instance->globalObject->microtaskRunnability() != QueuedTaskResult::Discard;
+    });
+}
+
+static Instance* reserveInstanceOfRunningImage(VM& vm, JSGlobalObject* realm)
+{
+    VMState& vmState = vm.aotState();
+    const Image& image = *vmState.image;
+    vmState.runtimeTable->finishInitialization(vm);
+
+    Instance* instance = reserveMemory(*vmState.pages, image);
+    instance->program = &image;
+    instance->partsOfImageInVM = vmState.partsOfImageThatRuns;
+    instance->endOfClosureNumbers = image.header().numbers.endOfClosureNumbers;
+    instance->lastShape = image.header().numbers.lastShape;
+    fillHeaderAndPrefix(*instance, vm, realm);
+    fillImageWords(*instance, vm, image);
+    fillNumberWords(*instance);
+    fillAllocationSpaces(*instance, vm);
+    vmState.propertyCaches->publishWords(*instance);
+    return instance;
+}
+
 Instance* reserveInstance(JSGlobalObject* realm)
 {
     VM& vm = realm->vm();
@@ -417,20 +459,143 @@ Instance* reserveInstance(JSGlobalObject* realm)
 #endif
     Instance::destroyDeadInstances(vm);
     VMState& vmState = vm.aotState();
-    const Image& image = *vmState.image;
-    if (!(image.programTables().flags & ProgramTables::mayRunInMultipleInstances) && !vmState.instances.isEmpty())
+    RunningImageScope firstImage(vmState, &vmState.image->first());
+    if (!(vmState.image->programTables().flags & ProgramTables::mayRunInMultipleInstances) && numberOfRunningInstances(vmState))
         return nullptr;
-    vmState.runtimeTable->finishInitialization(vm);
     vmState.identifiers->createEngineSymbols();
 
-    Instance* instance = reserveMemory(*vmState.pages, image);
-    fillHeaderAndPrefix(*instance, vm, realm);
-    fillImageWords(*instance, vm, image);
-    fillNumberWords(*instance);
-    fillAllocationSpaces(*instance, vm);
-    vmState.propertyCaches->publishWords(*instance);
-    realm->setAOTInstance(instance);
+    Instance* first = reserveInstanceOfRunningImage(vm, realm);
+    Instance* last = first;
+    for (const Image* image = first->program->above(); image; image = image->above()) {
+        RunningImageScope scope(vmState, image);
+        last->above = reserveInstanceOfRunningImage(vm, realm);
+        last = last->above;
+    }
+    realm->setAOTInstance(first);
+    return first;
+}
+
+Instance* Instance::findInstanceOfRunningImage()
+{
+    const Image* running = vm->aotState().image;
+    Instance* instance = this;
+    while (instance->program != running) {
+        instance = instance->above;
+        RELEASE_ASSERT(instance);
+    }
     return instance;
+}
+
+void Instance::forEachOf(JSGlobalObject* realm, const ScopedLambda<void(Instance&)>& functor)
+{
+    for (Instance* instance = realm->aotInstance(); instance; instance = instance->above) {
+        RunningImageScope scope(instance->vm->aotState(), instance->program);
+        functor(*instance);
+    }
+}
+
+static std::optional<uint32_t> closureNumberOfCell(const JSCell* cell)
+{
+    switch (cell->type()) {
+    case CompiledClosureType:
+        return uncheckedDowncast<Closure>(cell)->closureNumber();
+    case SlimClosureType:
+        return uncheckedDowncast<SlimClosure>(cell)->closureNumber();
+    case SlimClosureWithPropertiesType:
+        return uncheckedDowncast<ReifiedSlimClosure>(cell)->closureNumber();
+    default:
+        return std::nullopt;
+    }
+}
+
+void ImageOfCellScope::runImageOf(const JSCell* cell)
+{
+    JSGlobalObject* realm = cell->structure()->realm();
+    if (!realm || !realm->vm().aotState().hasSeveralImages)
+        return;
+    if (Instance* owner = Instance::owning(cell))
+        m_scope.emplace(realm->vm().aotState(), owner->program);
+}
+
+bool belongsToOtherImageSlow(VM& vm, const JSCell* cell)
+{
+    const Image& running = *vm.aotState().image;
+    if (cell->type() == CompiledObjectType) {
+        uint32_t shape = uncheckedDowncast<Object>(cell)->shape();
+        return shape <= running.header().numbers.shapesBelow || shape > running.header().numbers.lastShape;
+    }
+    if (std::optional<uint32_t> closureNumber = closureNumberOfCell(cell))
+        return !running.programTables().hasClosureNumber(*closureNumber);
+    const ClassInfo* info = cell->classInfo();
+    if (info == ClassPrototype::info())
+        return uncheckedDowncast<ClassPrototype>(cell)->classNumber() - running.layoutIndicesBelow() >= running.programTables().numberOfLayoutIndices;
+    if (info == ModuleNamespace::info())
+        return uncheckedDowncast<ModuleNamespace>(cell)->imagePosition() != running.position();
+    return false;
+}
+
+// Never in line: a caller that had the rare call below in its own body would keep slots for what it saves around that call and write them on that road alone,
+// and the collector reads every word of the frames between a job and the body of an async generator.
+NEVER_INLINE Instance* Instance::owning(const JSCell* cell)
+{
+    Instance* first = cell->structure()->realm()->aotInstance();
+    if (!first || !first->above) [[likely]]
+        return first;
+    return first->findInstanceOwning(cell);
+}
+
+// Apart, so that a realm with one instance saves no registers for it.
+NEVER_INLINE Instance* Instance::findInstanceOwning(const JSCell* cell)
+{
+    Instance* first = this;
+    if (cell->type() == CompiledObjectType)
+        return &first->instanceWithShape(uncheckedDowncast<Object>(cell)->shape());
+    if (std::optional<uint32_t> closureNumber = closureNumberOfCell(cell))
+        return &first->instanceWithClosureNumber(*closureNumber);
+    auto atPosition = [&](unsigned position) {
+        Instance* instance = first;
+        while (position--)
+            instance = instance->above;
+        return instance;
+    };
+    const ClassInfo* info = cell->classInfo();
+    if (info == ClassPrototype::info()) {
+        uint32_t classNumber = uncheckedDowncast<ClassPrototype>(cell)->classNumber();
+        Instance* instance = first;
+        while (classNumber - instance->program->layoutIndicesBelow() >= instance->program->programTables().numberOfLayoutIndices) {
+            instance = instance->above;
+            RELEASE_ASSERT(instance);
+        }
+        return instance;
+    }
+    if (info == ModuleNamespace::info())
+        return atPosition(uncheckedDowncast<ModuleNamespace>(cell)->imagePosition());
+    if (info == SavedFrame::info()) {
+        if (const Image* image = first->program->findInListByCodeAddress(removeCodePtrTag(uncheckedDowncast<SavedFrame>(cell)->resumeAddress())))
+            return atPosition(image->position());
+    }
+    return first->findInstanceOfRunningImage();
+}
+
+Instance& Instance::instanceWithClosureNumber(uint32_t number)
+{
+    // The images of a realm hand the numbers out one behind the other.
+    Instance* instance = globalObject->aotInstance();
+    while (number >= instance->endOfClosureNumbers) {
+        instance = instance->above;
+        RELEASE_ASSERT(instance);
+    }
+    return *instance;
+}
+
+Instance& Instance::instanceWithShape(uint32_t shape)
+{
+    Instance* instance = globalObject->aotInstance();
+    while (shape > instance->lastShape) {
+        instance = instance->above;
+        RELEASE_ASSERT(instance);
+    }
+    return *instance;
 }
 
 // A header holds the pristine bit of its Structure. The other inline allocations are prepared again by their first allocation.
@@ -444,9 +609,26 @@ void Instance::didCreateInstanceStructure(BuiltinClassID builtinClass, Structure
         receiverStructureID(Receiver::Buffer) = structure->id().bits();
 }
 
+void Instance::findShortArrayAllocators()
+{
+    static_assert(LocalAllocator::offsetOfFreeList() + sizeof(FreeList) <= ShortArrayWords::wordsOfExhaustedAllocator * sizeof(uint64_t));
+    bool hasHeaders = prefix().newArrayWithContiguousHeader;
+    // Nothing is allocated from it, so nothing reads the size of its cells.
+    uint8_t* exhausted = reinterpret_cast<uint8_t*>(shortArrays.exhaustedAllocator);
+    new (NotNull, exhausted + LocalAllocator::offsetOfFreeList()) FreeList(static_cast<unsigned>(MarkedSpace::sizeStep));
+    for (unsigned i = 0; i < ShortArrayWords::numberOfAllocators; ++i) {
+        size_t cellSize = sizeOfArrayWithStorage(2 * i + 1);
+        static_assert(sizeOfArrayWithStorage(2 * ShortArrayWords::numberOfAllocators - 1) <= MarkedSpace::largeCutoff);
+        RELEASE_ASSERT(ShortArrayWords::indexOfAllocator(2 * i + 1) == i && !(cellSize % MarkedSpace::sizeStep));
+        LocalAllocator* allocator = hasHeaders ? vm->cellSpace().allocatorFor(cellSize, AllocatorForMode::AllocatorIfExists).localAllocator() : nullptr;
+        shortArrays.allocators[i] = allocator ? static_cast<void*>(allocator) : exhausted;
+    }
+}
+
 void Instance::captureCellHeaders()
 {
     fillArrayHeaders(*this, globalObject);
+    findShortArrayAllocators();
     for (auto& inlineAllocation : allocation.inlineAllocations)
         inlineAllocation = { };
     for (auto& typedArrayAllocation : allocation.typedArrayAllocations)
@@ -462,12 +644,12 @@ Instance* Instance::create(JSGlobalObject* realm)
     RELEASE_ASSERT(vm.hasCompiledCode());
     DeferGCForAWhile deferGC(vm);
     destroyDeadInstances(vm);
+    if (auto& functionTables = vm.aotState().functionTables)
+        functionTables->forgetRecordedCalleesIfNotEntered(vm);
 
-    Instance* instance = realm->aotInstance();
-    if (!instance) {
-        instance = reserveInstance(realm);
-        RELEASE_ASSERT(instance);
-    }
+    if (!realm->aotInstance())
+        RELEASE_ASSERT(reserveInstance(realm));
+    Instance* instance = Instance::of(realm);
     RELEASE_ASSERT(!instance->state);
 
     instance->captureCellHeaders();
@@ -510,6 +692,7 @@ void Instance::destroy(Instance* instance)
 {
     VM& vm = *instance->vm;
     VMState& vmState = vm.aotState();
+    RunningImageScope scope(vmState, instance->program);
     {
         Locker locker { vmState.instancesLock };
         vmState.instances.removeFirst(instance);
@@ -539,7 +722,7 @@ void Instance::destroyAll(VM& vm)
 
 const RecordedOptions& Instance::options() const
 {
-    return vm->aotState().image->header().options;
+    return program->header().options;
 }
 
 JSCell* livenessToken(Instance* instance)
@@ -634,6 +817,7 @@ ZeroedTableArena::ZeroedTableArena(ZeroedPages& pages, size_t capacity)
 State::State(Instance& instance)
     : instance(instance)
     , tables(instance.tables())
+    , sharesRealm(instance.vm->aotState().hasSeveralImages)
     , pages(*instance.vm->aotState().pages)
     , tableArena(pages, tables)
     , propertyCaches(*this)
@@ -704,6 +888,16 @@ static ALWAYS_INLINE VM& vmFor(const JSCell* cell) { return cell->vm(); }
 template<typename First>
 concept CanFindVM = requires(First first) { vmFor(first); };
 
+template<CanFindVM First>
+static NEVER_INLINE AOT_KEEPS_CALLERS_REGISTERS void didCallCountedOperation(First first, Entry entry)
+{
+    vmFor(first).aotState().runtimeTable->didCall(entry);
+    if constexpr (std::is_same_v<First, Instance*>) {
+        if (ArrivalCounts* arrivals = first->state ? first->state->arrivalCounts.get() : nullptr)
+            arrivals->didCallOperation(entry);
+    }
+}
+
 // No primary definition: an operation whose calling convention matches no specialization fails to compile instead of going uncounted.
 template<Entry entry, auto operation, typename Function>
 struct CountedCall;
@@ -728,11 +922,7 @@ struct CountedCall<entry, operation, Result JIT_OPERATION_ATTRIBUTES (First, Res
     static constexpr bool isCounted = true;
     static Result JIT_OPERATION_ATTRIBUTES call(First first, Rest... rest) noexcept(isNoexcept)
     {
-        vmFor(first).aotState().runtimeTable->didCall(entry);
-        if constexpr (std::is_same_v<First, Instance*>) {
-            if (ArrivalCounts* arrivals = first->state ? first->state->arrivalCounts.get() : nullptr)
-                arrivals->didCallOperation(entry);
-        }
+        didCallCountedOperation(first, entry);
         AOT_MUST_TAIL_CALL return operation(first, rest...);
     }
 };
@@ -848,6 +1038,10 @@ RuntimeTable::RuntimeTable(VM& vm)
 {
     const Image& image = *vm.aotState().image;
     (m_countsCalls ? fillOperations<true> : fillOperations<false>)(m_entries);
+    if (image.sharesRealms()) {
+        constexpr Entry entry = Entry::operationAOTLookupExceptionHandler;
+        m_entries[static_cast<unsigned>(entry)] = m_countsCalls ? operationAddress<entry, CountedCallInTable<entry, &operationAOTLookupExceptionHandlerAmongImages>::call>() : operationAddress<entry, functionInTable<entry, &operationAOTLookupExceptionHandlerAmongImages>>();
+    }
     fillThunkAndPointers(m_entries, image);
     installOperationFrontEnds(m_entries, image);
     trapUnusedEntries(m_entries, image);
@@ -919,6 +1113,121 @@ size_t StructuresWithFastIndexing::removeDeadEntries(VM& vm, CollectionScope)
 static size_t sizeOfPagesAtStart(const Image&);
 
 VMState::VMState() = default;
+VMState::PartsOfImage::PartsOfImage() = default;
+VMState::PartsOfImage::PartsOfImage(PartsOfImage&&) = default;
+VMState::PartsOfImage::~PartsOfImage() = default;
+
+// Only a VM that runs several images writes it. Not a thread_local: the block of those has a bound, and an executable would pay for the word.
+static VMState*& stateOfVMOnThisThread()
+{
+    static NeverDestroyed<ThreadSpecific<VMState*, CanBeGCThread::True>> state;
+    return *state.get();
+}
+
+void runImageOnThisThread(const Image& image)
+{
+    if (VMState* state = image.sharesRealms() ? stateOfVMOnThisThread() : nullptr; state && state->hasSeveralImages)
+        state->run(image);
+    else
+        Image::setCurrentOfThread(&image);
+}
+
+HeapHooks::WorkForStoppedVMScope::WorkForStoppedVMScope(VM& vm)
+    : m_hasSeveralImages(vm.aotState().hasSeveralImages)
+{
+    if (!m_hasSeveralImages) [[likely]]
+        return;
+    m_stateOfThread = std::exchange(stateOfVMOnThisThread(), &vm.aotState());
+    m_imageOfThread = Image::current();
+    Image::setCurrentOfThread(vm.aotState().image);
+}
+
+HeapHooks::WorkForStoppedVMScope::~WorkForStoppedVMScope()
+{
+    if (!m_hasSeveralImages) [[likely]]
+        return;
+    stateOfVMOnThisThread() = m_stateOfThread;
+    Image::setCurrentOfThread(m_imageOfThread);
+}
+
+VMState::PartsOfImage& VMState::partsOfRunningImage()
+{
+    return parts[image->position()];
+}
+
+void VMState::run(const Image& next)
+{
+    PartsOfImage& partsOfNext = parts[next.position()];
+    RELEASE_ASSERT(partsOfNext.image == &next);
+    partsOfImageThatRuns = &partsOfNext;
+    image = &next;
+    runtimeTable = partsOfNext.runtimeTable.get();
+    propertyCaches = partsOfNext.propertyCaches.get();
+    callSiteCache = partsOfNext.callSiteCache.get();
+    functionTables = partsOfNext.functionTables.get();
+    regExpLiterals = partsOfNext.regExpLiterals.get();
+    Image::setCurrentOfThread(&next);
+}
+
+void VMState::makeRoomForImagesBelowAdapters()
+{
+    size_t size = endOfImagesBelowAdapters - imagesBelowAdapters.get();
+    size_t room = std::max<size_t>(64, 2 * size);
+    auto larger = makeUniqueArray<ImageBelowAdapter>(room);
+    if (size)
+        std::copy_n(imagesBelowAdapters.get(), size, larger.get());
+    else {
+        larger[size++] = { aboveEveryAdapterFrame(), nullptr };
+        adapterFrameThatRestoresImage = aboveEveryAdapterFrame();
+    }
+    imagesBelowAdapters = WTF::move(larger);
+    endOfImagesBelowAdapters = imagesBelowAdapters.get() + size;
+    endOfRoomForImagesBelowAdapters = imagesBelowAdapters.get() + room;
+}
+
+// emitEnterAdapter() does the same where there is room and every frame that is noted is still there.
+void VMState::runImageOfAdapter(const Image& next, const void* adapterFrame)
+{
+    // The stack grows down: a frame that is still there lies above the new one. A frame that was left by no way that restores (none is known) would leave the image of it
+    // running in its caller for good: what ran below the outermost of such frames runs now.
+    const PartsOfImage* below = partsOfImageThatRuns;
+    while (endOfImagesBelowAdapters[-1].adapterFrame <= adapterFrame) [[unlikely]] {
+        ASSERT_NOT_REACHED();
+        below = (--endOfImagesBelowAdapters)->parts;
+    }
+    if (endOfImagesBelowAdapters == endOfRoomForImagesBelowAdapters)
+        makeRoomForImagesBelowAdapters();
+    *endOfImagesBelowAdapters++ = { adapterFrame, below };
+    adapterFrameThatRestoresImage = adapterFrame;
+    run(next);
+}
+
+// As emitAdapterEpilogue() does.
+void VMState::restoreImageBelowAdapter()
+{
+    run(*(--endOfImagesBelowAdapters)->parts->image);
+    adapterFrameThatRestoresImage = endOfImagesBelowAdapters[-1].adapterFrame;
+}
+
+void VMState::restoreImagesBelowAdaptersBelow(const void* frame)
+{
+    // No adapter has changed the image yet.
+    if (!endOfImagesBelowAdapters)
+        return;
+    while (endOfImagesBelowAdapters[-1].adapterFrame < frame) {
+        if (ASSERT_ENABLED) {
+            dataLogLn("AOT: a throw passed the adapter's frame ", RawPointer(endOfImagesBelowAdapters[-1].adapterFrame), " without restoring the image below it; it lands at ", RawPointer(frame));
+            WTFReportBacktrace();
+        }
+        restoreImageBelowAdapter();
+    }
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRunImageOfAdapter, void, (void* instance, void* adapterFrame))
+{
+    auto* entered = static_cast<Instance*>(instance);
+    entered->vm->aotState().runImageOfAdapter(*entered->program, adapterFrame);
+}
 
 VMState::~VMState()
 {
@@ -929,7 +1238,24 @@ void VMState::attachImage(VM& vm)
 {
     RELEASE_ASSERT(!hasCompiledCode && !image);
     image = Image::current();
-    RELEASE_ASSERT(image);
+    RELEASE_ASSERT(image && image == &image->first());
+    const Image& first = *image;
+    size_t sizeOfPages = 0;
+    size_t sizeOfRegExpMatchOutput = 2 * (maxGroupsInRegExpMatchOutput + 1);
+    for (const Image* each = image; each; each = each->above()) {
+        parts.append(PartsOfImage());
+        parts.last().image = each;
+        if (uint32_t offset = each->header().singleReturnSites[static_cast<unsigned>(StubFrameKind::EngineCallee)])
+            parts.last().returnAddressOfEngineCallee = each->sharedCodeCopy(0) + offset;
+        sizeOfPages += sizeOfPagesAtStart(*each);
+        sizeOfRegExpMatchOutput = std::max<size_t>(sizeOfRegExpMatchOutput, each->header().counts.maxRegExpOutputSize);
+    }
+    hasSeveralImages = parts.size() > 1;
+    if (hasSeveralImages) {
+        stateOfVMOnThisThread() = this;
+        currentImageOfThread = Image::addressOfCurrentOfThread();
+        makeRoomForImagesBelowAdapters();
+    }
     RELEASE_ASSERT(vm.structureStructure && !vm.structureRareDataStructure);
 
     structureIDBase = JSC::structureIDBase();
@@ -938,7 +1264,7 @@ void VMState::attachImage(VM& vm)
         imageChecksProofs.store(true, std::memory_order_relaxed);
     vm.updateSoftReservedZoneSize(Options::softReservedZoneSize() + BuiltinCells::stackKeptFromProgram);
 
-    pages = makeUnique<PagesOfVM>(sizeOfPagesAtStart(*image));
+    pages = makeUnique<PagesOfVM>(sizeOfPages);
     caches = makeUnique<CacheRegistry>();
     caches->add(CacheKind::WeakByKey, "structures with fast indexing"_s, structuresWithFastIndexing);
     counters = makeUniqueWithoutFastMallocCheck<RuntimeCounters>();
@@ -948,12 +1274,17 @@ void VMState::attachImage(VM& vm)
     vm.heap.setValidatesCellVisits(validatesRuntime || Options::verifyGC());
 
     reporter = makeUniqueWithoutFastMallocCheck<RuntimeReporter>(vm);
-    runtimeTable = makeUnique<RuntimeTable>(vm);
-    identifiers = makeUnique<ProgramIdentifiers>(vm, *image);
-    callSiteCache = makeUnique<CallSiteCache>();
-    propertyCaches = makeUnique<VMPropertyCaches>(vm);
-    regExpLiterals = makeUnique<RegExpLiterals>(*caches);
-    regExpMatchOutput = makeUniqueArray<int>(std::max<size_t>(image->header().counts.maxRegExpOutputSize, 2 * (maxGroupsInRegExpMatchOutput + 1)));
+    identifiers = makeUnique<ProgramIdentifiers>(vm, first);
+    for (PartsOfImage& partsOfImage : parts) {
+        run(*partsOfImage.image);
+        partsOfImage.runtimeTable = makeUnique<RuntimeTable>(vm);
+        partsOfImage.callSiteCache = makeUnique<CallSiteCache>();
+        run(*partsOfImage.image);
+        partsOfImage.propertyCaches = makeUnique<VMPropertyCaches>(vm);
+        partsOfImage.regExpLiterals = makeUnique<RegExpLiterals>(*caches);
+    }
+    run(first);
+    regExpMatchOutput = makeUniqueArray<int>(sizeOfRegExpMatchOutput);
 
     moduleRecordStructure.setWithoutWriteBarrier(ModuleRecord::createStructure(vm, nullptr, jsNull()));
     stringBuilderStorageStructure.setWithoutWriteBarrier(StringBuilderStorage::createStructure(vm, nullptr, jsNull()));
@@ -965,6 +1296,7 @@ void VMState::attachImage(VM& vm)
 // The rows of Structures are words of one table of the process, so they are given back while the Structure IDs still belong to this VM.
 void VMState::willShutDownHeap()
 {
+    formatPatternState = nullptr;
     if (propertyCaches)
         propertyCaches->front().clear();
     if (AllocationCounts::isEnabled()) [[unlikely]]
@@ -990,8 +1322,25 @@ void VMState::releaseImage(VM& vm)
     propertyCaches = nullptr;
     functionTables = nullptr;
     callSiteCache = nullptr;
-    identifiers = nullptr;
     runtimeTable = nullptr;
+    for (PartsOfImage& partsOfImage : parts) {
+        partsOfImage.regExpLiterals = nullptr;
+        partsOfImage.propertyCaches = nullptr;
+        partsOfImage.functionTables = nullptr;
+        partsOfImage.callSiteCache = nullptr;
+    }
+    identifiers = nullptr;
+    Image::setCurrentOfThread(&image->first());
+    parts.clear();
+    partsOfImageThatRuns = nullptr;
+    if (hasSeveralImages && stateOfVMOnThisThread() == this)
+        stateOfVMOnThisThread() = nullptr;
+    hasSeveralImages = false;
+    currentImageOfThread = nullptr;
+    adapterFrameThatRestoresImage = nullptr;
+    endOfImagesBelowAdapters = nullptr;
+    endOfRoomForImagesBelowAdapters = nullptr;
+    imagesBelowAdapters = nullptr;
     reporter = nullptr;
     counters = nullptr;
     caches = nullptr;
@@ -1396,6 +1745,34 @@ void ProgramStatics::initializeStatics(uint32_t firstWord, uint32_t endWord)
     }
 }
 
+void ProgramStatics::putBack(uint32_t offset, uint32_t size)
+{
+    std::span<const StaticsRun> runs = m_tables.staticsRuns();
+    auto initialWordAt = [&](uint32_t word) -> uint64_t {
+        auto run = std::ranges::upper_bound(runs, word, { }, &StaticsRun::firstWord);
+        if (run == runs.begin())
+            return 0;
+        --run;
+        return word - run->firstWord < run->numberOfWords ? run->bits() : 0;
+    };
+    // The collector's threads read the slots meanwhile: each is written at once.
+    auto putBackSlot = [&]<typename Slot>(Slot) {
+        at<Slot>(offset) = static_cast<Slot>(initialWordAt(offset / sizeof(uint64_t)) >> (offset % sizeof(uint64_t) * 8));
+        offset += sizeof(Slot);
+    };
+    for (uint32_t end = offset + size; offset < end;) {
+        uint32_t left = end - offset;
+        if (!(offset % sizeof(uint64_t)) && left >= sizeof(uint64_t))
+            putBackSlot(uint64_t());
+        else if (!(offset % sizeof(uint32_t)) && left >= sizeof(uint32_t))
+            putBackSlot(uint32_t());
+        else if (!(offset % sizeof(uint16_t)) && left >= sizeof(uint16_t))
+            putBackSlot(uint16_t());
+        else
+            putBackSlot(uint8_t());
+    }
+}
+
 uint32_t ProgramStatics::groupWithWord(uint32_t word) const
 {
     std::span<const StaticsOfFiles> groups = m_tables.staticsOfFiles();
@@ -1471,8 +1848,13 @@ JSValue ProgramStatics::readVariable(Instance& instance, SlotData slot)
     statics.ensureVariableIsFilled(offset);
     if (JSValue value = readSlot(slot.representation(), instance.statics() + offset, statics.m_strings))
         return value;
-    if (std::optional<FunctionID> function = findFunctionVariable(statics.m_tables, offset))
-        return closures.closure(vm, *function);
+    if (std::optional<FunctionID> function = findFunctionVariable(statics.m_tables, offset)) {
+        // Every reader takes an empty word for the one closure of the function, so the word may as well hold it.
+        // A stub that answers for the variable reads the word alone: code of another image of the realm comes by one for each function that it imports.
+        JSCell* closure = closures.closure(vm, *function);
+        writeVariable(instance, slot, closure);
+        return closure;
+    }
     return { };
 }
 
@@ -1494,6 +1876,19 @@ JSValue ProgramStatics::readVariableWithoutAllocating(const Instance& instance, 
     if (std::optional<FunctionID> function = findFunctionVariable(statics.m_tables, offset))
         return closures.closureIfCreated(*function);
     return { };
+}
+
+bool ProgramStatics::isVariableEmpty(const Instance& instance, SlotData slot)
+{
+    if (slot.representation() == SlotRepresentation::DeferredClosure)
+        return false;
+    const ProgramStatics& statics = *instance.state->statics;
+    if (!statics.isInitialized(slot.offset))
+        return true;
+    const uint8_t* address = instance.statics() + slot.offset;
+    if (literalStringWithoutCell(instance, slot.representation(), address) || readSlot(slot.representation(), address, statics.m_strings))
+        return false;
+    return !findFunctionVariable(statics.m_tables, slot.offset);
 }
 
 String ProgramStatics::readStringWithoutAllocating(const Instance& instance, SlotData slot)
@@ -1524,6 +1919,23 @@ void ProgramStatics::writeVariable(Instance& instance, SlotData slot, JSValue va
     RELEASE_ASSERT(didWrite);
     if (traitsOf(representation).holdsCell)
         statics.didStoreRootInStatics(slot.offset);
+}
+
+JSCell* ProgramStatics::cellIn(const NamedVariableData& variable) const
+{
+    const ClosureTable& closures = m_instance.state->objects->closures;
+    if (variable.place() == NamedVariableData::Place::Closure)
+        return closures.closureIfCreated(variable.function());
+    uint32_t offset = variable.offset();
+    if (!isInitialized(offset))
+        return nullptr;
+    const uint8_t* word = m_instance.statics() + offset;
+    if (variable.place() == NamedVariableData::Place::NarrowWord)
+        return cellInSlot(SlotRepresentation::Cell32, word, m_instance.cellCageBase);
+    if (*reinterpret_cast<const uint64_t*>(word))
+        return cellInSlot(SlotRepresentation::JSValue, word, m_instance.cellCageBase);
+    std::optional<FunctionID> function = findFunctionVariable(m_tables, offset);
+    return function ? closures.closureIfCreated(*function) : nullptr;
 }
 
 template<typename Word, typename Functor>

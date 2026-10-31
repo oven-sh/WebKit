@@ -18,6 +18,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+struct PlacedSlot;
+
 using ArrayStorageFormList = Vector<const ArrayStorageForm*, arrayStorageForms.size()>;
 
 // The collector reaches the elements through the array alone, and B3 may load `butterfly` once in front of a loop and let the array die.
@@ -46,6 +48,7 @@ public:
     void generatePutArrayElement(const ValueContext&);
     void generateHasArrayElement(const ValueContext&);
     void generateAppendElements(const ValueContext&);
+    void generateAppendMembers(const ValueContext&);
     void generateHasSpareArrayCapacity(const ValueContext&);
     void generateReserveArrayCapacity(const ValueContext&);
     void generateConvertToDoubleStorage(const ValueContext&);
@@ -108,9 +111,14 @@ public:
     Integer indexInsideLength(ValueID position);
     // Of storage that has a form. The index of the result is the position only where the test has passed.
     LengthTest testLength(Integer index, const ArrayElements&);
+    LengthTest testLength(const ValueContext&, Integer index, const ArrayElements&);
     Boxed boxedPosition(ValueID position);
 
     Operand readElement(const ValueContext&, const ArrayStorageForm&, const ArrayElements&, Integer index, LBasicBlock isAbsent);
+    // Of a read by position of an object of one layout in fast code, such as a name of an enum by its value. The elements of such an object lie in its extra properties, and the layout says where those are.
+    const PlacedSlot* extraPropertiesWordOfReadByPosition(const ValueContext& read);
+    // What is not found there goes to notFound: it may be up the chain, and it may be of any other kind of storage.
+    Boxed readElementOfExtraProperties(CellPointer object, const PlacedSlot& extraPropertiesWord, Integer index, LBasicBlock notFound);
     Operand readElementInsideLength(const ValueContext&, const ArrayStorageForm&, const ArrayElements&, Integer index, LBasicBlock isHole);
     // Taken if the array has an element of its own at the position. A position that is no index has none.
     void branchOnPresentElement(const ValueContext& test, const ArrayStorageForm&, BranchTargets);
@@ -121,6 +129,7 @@ public:
     Condition tryStoreElement(const ValueContext& store, CellPointer array, Integer index, ValueID stored);
 
     TypedArrayElements typedArrayElementsOf(CellPointer view, LBasicBlock isNotFixedLength);
+    TypedArrayElements typedArrayElementsOf(ValueID view, LBasicBlock isNotFixedLength);
     Operand loadTypedArrayElement(const TypedArrayElements&, Integer index, TypedArrayType);
     void storeTypedArrayElement(const TypedArrayElements&, Integer index, TypedArrayType, Operand stored);
 

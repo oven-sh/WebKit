@@ -1,0 +1,172 @@
+# A test whose two arms only store the tested value or pass it on decides nothing: one arm stays and takes the value as it was before the test. The test stays where what takes the value takes less than that: a parameter of the next block, the result of the function or a variable whose type holds the value only because of what the test found and what was proven behind it.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass SimplifyControlFlow
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="shared" module=m0 declared={type=undefined|number|string} initialization=Undefined
+
+function f0 name="bothArmsStoreTheValue" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2: number):
+    SetGlobalBinding v2 key="answer" level=Expected
+    Jump -> next b3()
+  b2(v4: undefined|null|boolean|string|symbol|bigint|object) frequency=Rare:
+    SetGlobalBinding v4 key="answer" level=Expected
+    Jump -> next b3()
+  b3():
+    v6 = Undefined
+    Return v6
+# CHECK-NOT: Branch
+# CHECK: SetGlobalBinding v0 key="answer"
+# CHECK-NOT: SetGlobalBinding
+# CHECK: Return
+}
+
+function f1 name="bothArmsReturnTheValue" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2: number):
+    Return v2
+  b2(v3: undefined|null|boolean|string|symbol|bigint|object):
+    Return v3
+# CHECK-NOT: Branch
+# CHECK: Return v0
+}
+
+# The arm for numbers is faster than the other one: that is what the test is for.
+function f2 name="bothArmsLookAtTheValue" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2: number):
+    v3 = ToBoolean v2
+    Return v3
+  b2(v4: undefined|null|boolean|string|symbol|bigint|object):
+    v5 = ToBoolean v4
+    Return v5
+# CHECK: Branch
+# CHECK: {{*}}= ToBoolean v2
+# CHECK: {{*}}= ToBoolean v4
+}
+
+function f3 name="armsStoreUnderDifferentNames" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2: number):
+    SetGlobalBinding v2 key="answer" level=Expected
+    Jump -> next b3()
+  b2(v4: undefined|null|boolean|string|symbol|bigint|object):
+    SetGlobalBinding v4 key="other" level=Expected
+    Jump -> next b3()
+  b3():
+    v6 = Undefined
+    Return v6
+# CHECK: Branch
+# CHECK: SetGlobalBinding v2 key="answer"
+# CHECK: SetGlobalBinding v4 key="other"
+}
+
+# An error thrown in one arm names another position than one thrown in the other.
+function f4 name="armsStandAtDifferentPositions" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2: number):
+    SetGlobalBinding v2 key="answer" level=Expected @10
+    Jump -> next b3()
+  b2(v4: undefined|null|boolean|string|symbol|bigint|object):
+    SetGlobalBinding v4 key="answer" level=Expected @20
+    Jump -> next b3()
+  b3():
+    v6 = Undefined
+    Return v6
+# CHECK: Branch
+# CHECK: SetGlobalBinding v2 key="answer" level=Expected @10
+# CHECK: SetGlobalBinding v4 key="answer" level=Expected @20
+}
+
+# What the casts of an arm say of the value holds behind its edge alone. The arm that stays loses them.
+function f5 name="armsDifferInCastsOfTheValue" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2: number):
+    v3 = Specified
+    v4 = AssumeType v2, v3 provenType=number
+    SetGlobalBinding v4 key="answer" level=Expected
+    Jump -> next b3()
+  b2(v6: undefined|null|boolean|string|symbol|bigint|object) frequency=Rare:
+    v7 = Upcast v6 castType=anything
+    v8 = Specified
+    v9 = AssumeType v7, v8 provenType=anything
+    SetGlobalBinding v9 key="answer" level=Expected
+    Jump -> next b3()
+  b3():
+    v11 = Undefined
+    Return v11
+# CHECK-NOT: Branch
+# CHECK-NOT: AssumeType
+# CHECK: SetGlobalBinding v0 key="answer"
+# CHECK-NOT: SetGlobalBinding
+# CHECK: Return
+}
+
+function f6 name="nextBlockTakesLessThanTheValue" parameters=[{type=anything}] results=[{type=undefined|number|string}] {
+    v1 = TypeTest v0 testedType=undefined|number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2: undefined|number):
+    Jump -> next b3(v2)
+  b2(v3: null|boolean|string|symbol|bigint|object):
+    v4 = AssumeType v3 provenType=undefined|number|string
+    Jump -> next b3(v4)
+  b3(v5: undefined|number|string):
+    Return v5
+# CHECK: Branch v1
+# CHECK: AssumeType
+}
+
+function f7 name="resultIsLessThanTheValue" parameters=[{type=anything}] results=[{type=number|string}] {
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2: number):
+    Return v2
+  b2(v3: undefined|null|boolean|string|symbol|bigint|object):
+    v4 = AssumeType v3 provenType=string
+    Return v4
+# CHECK: Branch v1
+# CHECK: AssumeType
+}
+
+function f8 name="variableTakesLessThanTheValue" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2: number):
+    PutModuleVariable v2 variable=g0
+    Jump -> next b3()
+  b2(v4: undefined|null|boolean|string|symbol|bigint|object):
+    v5 = AssumeType v4 provenType=string
+    PutModuleVariable v5 variable=g0
+    Jump -> next b3()
+  b3():
+    v7 = Undefined
+    Return v7
+# CHECK: Branch v1
+# CHECK: AssumeType
+}
+
+function f9 name="testOfAnElementStays" parameters=[{type=Array<int, proven, Int32, pristine[Storage, Names, Dense]>}, {type=int}] results=[{type=undefined}] {
+    v2 = GetArrayElement v0, v1 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    v3 = TypeTest v2 testedType=int
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4: int):
+    SetGlobalBinding v4 key="answer" level=Expected
+    Jump -> next b3()
+  b2(v6: undefined):
+    SetGlobalBinding v6 key="answer" level=Expected
+    Jump -> next b3()
+  b3():
+    v8 = Undefined
+    Return v8
+# CHECK: TypeTest
+# CHECK-NEXT: Branch
+}

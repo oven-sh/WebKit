@@ -267,7 +267,10 @@ FlowReportBodyRecords collectFlowReportBodyRecords(const Program& program, Build
 {
     FlowReportBodyRecords records;
     runTasksInParallel(build.parallelLoops(), {
-        [&] { records.typeTests = collectTypeTestRecords(program, build.parallelLoops()); },
+        [&] {
+            if (build.options().countsAccesses())
+                records.typeTests = collectTypeTestRecords(program, build.parallelLoops());
+        },
         [&] { records.builtinsCalledDirectly = findBuiltinsCalledDirectly(program, build.parallelLoops()); },
         [&] {
             if (program.form() == IRForm::AsRead)
@@ -277,7 +280,7 @@ FlowReportBodyRecords collectFlowReportBodyRecords(const Program& program, Build
     return records;
 }
 
-FlowReport reportUsesOfLibraryCode(std::span<const Wire::UnseenCodeRecord> unseenCode, std::span<const Wire::UnseenCodeRecord> loadsOfMachineCode, std::span<const Wire::BuiltinUseRecord> builtinUses, std::span<const RuntimeFunctionID> libraryFunctionsLacked)
+FlowReport reportUsesOfLibraryCode(std::span<const Wire::UnseenCodeRecord> unseenCode, std::span<const Wire::UnseenCodeRecord> loadsOfMachineCode, std::span<const Wire::BuiltinUseRecord> builtinUses, std::span<const RuntimeFunctionID> libraryFunctionsLacked, std::span<const VariableID> exportsThatSpiesReplace, std::span<const BuiltinID> builtinsThatTestsReplace, std::span<const FlowAddedName> namesThatTestsAdd)
 {
     FlowReport report;
     report.unseenCode = Vector<Wire::UnseenCodeRecord>(unseenCode);
@@ -285,17 +288,25 @@ FlowReport reportUsesOfLibraryCode(std::span<const Wire::UnseenCodeRecord> unsee
     report.builtinsUsed = Vector<Wire::BuiltinUseRecord>(builtinUses);
     for (RuntimeFunctionID function : libraryFunctionsLacked)
         report.libraryFunctionsLacked.append(Wire::LackedFunctionRecord { .function = function.index() });
+    for (VariableID variable : exportsThatSpiesReplace)
+        report.exportsThatSpiesReplace.append(Wire::ReplacedExportRecord { .variable = variable.index() });
+    for (BuiltinID member : builtinsThatTestsReplace)
+        report.builtinsThatTestsReplace.append(Wire::ReplacedBuiltinRecord { .member = member.index() });
+    for (const FlowAddedName& added : namesThatTestsAdd) {
+        report.namesThatTestsAdd.append(Wire::AddedNameRecord { .holder = added.holder.index(), .name = { static_cast<uint32_t>(report.textOfNamesThatTestsAdd.size()), static_cast<uint32_t>(added.name.size()) } });
+        report.textOfNamesThatTestsAdd.append(added.name.span());
+    }
     return report;
 }
 
 FlowReport reportUsesOfLibraryCode(const FlowResults& flow)
 {
     if (flow.hasResults())
-        return reportUsesOfLibraryCode(flow.unseenCode(), flow.loadsOfMachineCode(), flow.builtinUses(), flow.libraryFunctionsLacked());
+        return reportUsesOfLibraryCode(flow.unseenCode(), flow.loadsOfMachineCode(), flow.builtinUses(), flow.libraryFunctionsLacked(), flow.exportsThatSpiesReplace(), flow.builtinsThatTestsReplace(), flow.namesThatTestsAdd());
     Vector<Wire::UnseenCodeRecord> unseenCode(flow.unseenCode());
     if (unseenCode.isEmpty())
         unseenCode.append(Wire::UnseenCodeRecord { .cause = UnseenCodeCause::FlowResultDisabled });
-    return reportUsesOfLibraryCode(unseenCode.span(), flow.loadsOfMachineCode(), flow.builtinUses(), flow.libraryFunctionsLacked());
+    return reportUsesOfLibraryCode(unseenCode.span(), flow.loadsOfMachineCode(), flow.builtinUses(), flow.libraryFunctionsLacked(), flow.exportsThatSpiesReplace(), flow.builtinsThatTestsReplace(), flow.namesThatTestsAdd());
 }
 
 FlowReport buildFlowReport(const Program& program, const FlowResults& flow, const GradedSites& sites, std::span<const Wire::RemainingCheckRecord> checksLeftByFlow, FlowReportBodyRecords&& bodyRecords, BuildContext& build)
@@ -309,6 +320,8 @@ FlowReport buildFlowReport(const Program& program, const FlowResults& flow, cons
         report.workerEntries.append(Wire::WorkerEntryRecord { .path = { static_cast<uint32_t>(report.workerEntryPaths.size()), static_cast<uint32_t>(text.size()) }, .isGuess = entry.isGuess, .hasOptions = entry.hasOptions, .witness = entry.witness });
         report.workerEntryPaths.append(text);
     }
+    if (std::optional<Witness> start = flow.workerStartWithoutName())
+        report.workerStartsWithoutName.append(Wire::WorkerStartRecord { .witness = *start });
     if (build.options().collectsAllocationRemarks()) {
         report.allocationSites = WTF::map(flow.allocationSites(), [&](const AllocationSite& site) {
             return AllocationSiteReport { findFunctionAsRead(&program, site.function), allocationKindOf(program, flow, site) };
@@ -317,21 +330,29 @@ FlowReport buildFlowReport(const Program& program, const FlowResults& flow, cons
 
     ReportSet reports = build.options().reports;
     bool collectsRecords = hasFlag(reports, ReportSet::Flow);
+    bool keepsAccesses = collectsRecords || hasFlag(reports, ReportSet::Functions);
     report.typeTests = WTF::move(bodyRecords.typeTests);
-    report.accesses = buildAccessRecords(program, flow, sites.levels.span(), build);
-    report.accesses.appendVector(sites.generalOperations);
+    if (keepsAccesses || build.validates()) {
+        report.accesses = buildAccessRecords(program, flow, sites.levels.span(), sites.heat.span(), build);
+        report.accesses.appendVector(sites.generalOperations);
+    }
     report.otherOrigins = Vector<Wire::OtherOriginsRecord>(flow.otherOrigins());
     if (program.form() == IRForm::AsRead)
         report.remainingChecks = WTF::move(bodyRecords.remainingChecks);
     else if (collectsRecords)
         report.remainingChecks = Vector<Wire::RemainingCheckRecord>(checksLeftByFlow);
 
-    report.accessCounts = countAccesses(program, report.accesses.span(), report.typeTests.span());
+    if (keepsAccesses)
+        report.accessCounts = countAccesses(program, report.accesses.span(), report.typeTests.span());
+    else if (build.options().countsAccesses()) {
+        report.accessCounts = countAccessesWithoutRecords(program, flow, sites.levels.span(), report.typeTests.span(), build);
+        RELEASE_ASSERT(!build.validates() || report.accessCounts == countAccesses(program, report.accesses.span(), report.typeTests.span()));
+    }
     countAccessStatistics(report.accessCounts.span(), build.statistics());
     if (!collectsRecords) {
         report.typeTests.clear();
         report.remainingChecks.clear();
-        if (!hasFlag(reports, ReportSet::Functions))
+        if (!keepsAccesses)
             report.accesses.clear();
     }
     return report;

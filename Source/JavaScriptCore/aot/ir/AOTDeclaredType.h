@@ -16,6 +16,7 @@
 namespace JSC { namespace AOT {
 
 namespace Wire {
+struct DeclaredCapture;
 struct DeclaredType;
 }
 
@@ -23,6 +24,7 @@ namespace Typed {
 
 class IRPrinter;
 class RecordChecker;
+struct DeclaredCapture;
 template<typename> struct PayloadWords;
 
 // Any flag of a position but the one that says of which kind its type is.
@@ -95,6 +97,9 @@ private:
     friend void read(RecordChecker&, const Wire::DeclaredType&, DeclaredType&);
     friend void printFields(IRPrinter&, const DeclaredType&);
     template<typename Subject, typename Visitor> friend void walkDeclaredType(Subject&, Visitor&);
+    friend void read(RecordChecker&, const Wire::DeclaredCapture&, DeclaredCapture&);
+    friend void printFields(IRPrinter&, const DeclaredCapture&);
+    template<typename Subject, typename Visitor> friend void walkDeclaredCapture(Subject&, Visitor&);
 
     TypeID type;
     OptionSet<PositionFlags> flags;

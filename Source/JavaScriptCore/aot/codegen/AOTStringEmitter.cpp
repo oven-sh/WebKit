@@ -13,6 +13,7 @@
 #include "AOTRepresentationRules.h"
 #include "AOTStringBuilderStorage.h"
 #include "AOTStubsStrings.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "B3MemoryValue.h"
 #include "JSString.h"
@@ -203,23 +204,51 @@ Word32 StringEmitter::lengthOf(LiteralStringWord word, const Type& type)
 {
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
     bool mayBeCell = type.primitives & Primitive::String;
-    Vector<std::pair<StringID, unsigned>, maxLiteralsDistinguishedByLength> lengths;
+    Vector<std::pair<StringID, unsigned>, 16> lengths;
     for (StringID literal : type.stringLiterals) {
         if (inputs().literalStrings.indexOf(literal))
             lengths.append({ literal, m_program.strings.toWTFString(literal).length() });
         else
             mayBeCell = true;
     }
+    unsigned commonest = commonestOf(Vector<unsigned, 16>(lengths.size(), [&](size_t index) { return lengths[index].second; }).span());
     std::optional<NarrowReference> narrow = mayBeCell ? std::nullopt : narrowWordBehind(word);
     auto isLiteral = [&](StringID literal) {
         if (narrow)
             return equal(*narrow, NarrowReference(m_out.constInt32(static_cast<int32_t>(literalStringWord(inputs().literalStrings.numberOf(literal))))));
         return equal(word, conversions.literalStringConstant(literal));
     };
+    // Strings that are written side by side have neighboring numbers. Their lengths then lie in one constant, a byte for each number, and the word says how far to shift it.
+    auto lengthOutOfConstant = [&]() -> std::optional<Word32> {
+        AOT_THRESHOLD(unsigned, minSelectsInPlaceOfWhichConstantIsShifted, 3);
+        constexpr uint32_t numbersInConstant = sizeof(uint32_t);
+        uint32_t least = std::numeric_limits<uint32_t>::max();
+        uint32_t greatest = 0;
+        unsigned selects = 0;
+        for (auto [literal, lengthOfLiteral] : lengths) {
+            if (lengthOfLiteral > std::numeric_limits<uint8_t>::max())
+                return std::nullopt;
+            uint32_t number = inputs().literalStrings.numberOf(literal);
+            least = std::min(least, number);
+            greatest = std::max(greatest, number);
+            selects += lengthOfLiteral != commonest;
+        }
+        if (selects < minSelectsInPlaceOfWhichConstantIsShifted || greatest - least >= numbersInConstant)
+            return std::nullopt;
+        uint32_t lengthsByNumber = 0;
+        for (auto [literal, lengthOfLiteral] : lengths)
+            lengthsByNumber |= lengthOfLiteral << (8 * (inputs().literalStrings.numberOf(literal) - least));
+        static_assert(literalStringShift == 2, "twice the distance between two words is eight times the distance between their numbers");
+        LValue distance = m_out.sub(narrow ? narrow->value() : m_out.castToInt32(word.value()), m_out.constInt32(static_cast<int32_t>(literalStringWord(least))));
+        LValue shifted = m_out.lShr(m_out.constInt32(static_cast<int32_t>(lengthsByNumber)), m_out.shl(distance, m_out.constInt32(1)));
+        return Word32(m_out.bitAnd(shifted, m_out.constInt32(std::numeric_limits<uint8_t>::max())));
+    };
     auto lengthByNumber = [&] {
-        Word32 length = word32(lengths.isEmpty() ? 0 : static_cast<int32_t>(lengths.last().second));
-        for (auto [literal, lengthOfLiteral] : lengths.span().first(lengths.isEmpty() ? 0 : lengths.size() - 1)) {
-            if (lengthOfLiteral != lengths.last().second)
+        if (std::optional<Word32> length = lengthOutOfConstant())
+            return *length;
+        Word32 length = word32(static_cast<int32_t>(commonest));
+        for (auto [literal, lengthOfLiteral] : lengths) {
+            if (lengthOfLiteral != commonest)
                 length = Word32(m_out.select(isLiteral(literal).value(), m_out.constInt32(static_cast<int32_t>(lengthOfLiteral)), length.value()));
         }
         return length;
@@ -557,6 +586,9 @@ CellPointer StringEmitter::concatenateKey(const OperationContext& context, std::
 {
     using StringUse = StringBuilderStorage::StringUse;
     StringUse use = keyUse == KeyUse::NameOfProperty ? StringUse::LikelyName : StringUse::LikelyKey;
+    // Where code seldom runs, the call of the operation saves the registers of the code around it.
+    if (primitives.size() == 2 && context.shape() != CodeShape::Compact)
+        return CellPointer(callStub(context, concatenateKeyOfPair(keyUse == KeyUse::NameOfProperty ? ConcatenatedKeyForm::Name : ConcatenatedKeyForm::Key), { primitives[0].value(), primitives[1].value() }).first);
     return callOperation<CellPointer>(context, RuntimeOperation::Concatenate, { word32(static_cast<int32_t>(primitives.size())), argumentBuffer(primitives), word32(static_cast<int32_t>(use)) });
 }
 

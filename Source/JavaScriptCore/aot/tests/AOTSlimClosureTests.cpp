@@ -133,11 +133,11 @@ static FunctionID findSlimFunction(LoadedProgram& program, ASCIILiteral name)
     const uint64_t* closureWords = FunctionTables::of(program.vm()).words;
     for (uint32_t index = tables.closureFunctions.first; index < tables.closureFunctions.end; ++index) {
         FunctionID function(index);
-        if (closureWords[index] && functionKindData(function).isSlim && writtenFunctionName(function) == name)
+        if (closureWords[closureNumberOf(function)] && functionKindData(function).isSlim && writtenFunctionName(function) == name)
             return function;
     }
     for (uint32_t index = tables.closureFunctions.first; index < tables.closureFunctions.end; ++index)
-        dataLogLn("f", index, ": word ", closureWords[index], functionKindData(FunctionID(index)).isSlim ? " slim" : " full", " name \"", writtenFunctionName(FunctionID(index)), "\"");
+        dataLogLn("f", index, ": word ", closureWords[tables.closureNumberOf(index)], functionKindData(FunctionID(index)).isSlim ? " slim" : " full", " name \"", writtenFunctionName(FunctionID(index)), "\"");
     failNativeTest(__FILE__, __LINE__, name.characters());
 }
 
@@ -147,7 +147,7 @@ static FunctionID findClosureFunction(LoadedProgram& program, ASCIILiteral name)
     const uint64_t* closureWords = FunctionTables::of(program.vm()).words;
     for (uint32_t index = tables.closureFunctions.first; index < tables.closureFunctions.end; ++index) {
         FunctionID function(index);
-        if (closureWords[index] && writtenFunctionName(function) == name)
+        if (closureWords[closureNumberOf(function)] && writtenFunctionName(function) == name)
             return function;
     }
     failNativeTest(__FILE__, __LINE__, name.characters());
@@ -223,8 +223,8 @@ static void testCreatedCellsAreSlim(LoadedProgram& program)
         AOT_TEST_CHECK(isSlim(closure));
         AOT_TEST_CHECK(closure->function() == function);
         uint64_t word = *reinterpret_cast<const uint64_t*>(reinterpret_cast<const uint8_t*>(closure) + SlimClosure::offsetOfWord());
-        AOT_TEST_CHECK(word == FunctionTables::of(program.vm()).words[function.index()]);
-        AOT_TEST_CHECK(ClosureWord::functionOf(word) == function.index());
+        AOT_TEST_CHECK(word == FunctionTables::of(program.vm()).words[closureNumberOf(function)]);
+        AOT_TEST_CHECK(functionOfClosureWord(word) == function);
         AOT_TEST_CHECK(ClosureWord::isCallable(word) && !ClosureWord::takesNewTarget(word));
         AOT_TEST_CHECK(closure->numberOfReferences() == counts.references);
         AOT_TEST_CHECK(equalSpans(closure->captures(), capturesOf(function, jsNull()).span()));

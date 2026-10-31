@@ -1,0 +1,47 @@
+# let heard = 0; listener: heard += i & 1, in line in a loop. Nobody has proven that `heard` is a number, so the turn tests it. The loop carries the variable, and every turn hands on a number.
+# The test stands behind the test that ends the loop and behind what only computes. It goes ahead of the loop with both, and with the fact that says the variable is there. The loop carries a number and tests nothing.
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass SeparateUnlikelyLoopPaths
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="heard" declared={type=anything} flow={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}
+
+function f0 name="adds" parameters=[{type=i32}] results=[{type=i32}] {
+  b0(v0: i32):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2: i32):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b6()
+  b2():
+    Jump -> next b3()
+  b3():
+    v5 = Integer integer=1
+    v6 = BitAnd v2, v5
+    v7 = Entered function=f1
+    v8 = GetModuleVariable fact=v7 variable=g0
+    v9 = TypeTest v8 testedType=number
+    Branch v9 -> taken b4(| 0), notTaken b5()
+  b4(v10: number):
+    v11 = Add v10, v6
+    PutModuleVariable v11 variable=g0
+    v13 = Add v2, v5
+    v14 = BitOr v13, v1
+    Jump -> next b1(v14)
+  b5() frequency=Rare:
+    Return v1
+  b6():
+    Return v2
+# CHECK: b1(v2: i32, [[heard]]: number):
+# CHECK: Jump -> next b4([[heard]])
+# CHECK: [[there]]: anything = AssumeType {{*}} provenType=anything
+# CHECK-NEXT: [[isNumber]]: boolean = TypeTest [[there]] testedType=number
+# CHECK-NEXT: Branch [[isNumber]] -> taken {{*}}(| 0), notTaken b5()
+}
+
+function f1 name="listener" parameters=[{type=i32}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    Return v1
+}

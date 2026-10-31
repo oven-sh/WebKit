@@ -231,7 +231,7 @@ IRBuilder::DeferredResultReads::DeferredResultReads(IRBuilder& builder, std::spa
                 m_reads.append(Read { producer, use.user });
         }
     }
-    AOT::stableSort(m_reads, { }, &Read::producer);
+    AOT::stableSortInLine(m_reads, { }, &Read::producer);
 }
 
 void IRBuilder::DeferredResultReads::finish()

@@ -227,7 +227,7 @@ struct WireTypes {
         , builtins(fixture.word(variableOffset(fixture, 3, offsetof(Wire::Variable, declared.type))))
     {
         Wire::Span captures = fixture.spanAt(functionOffset(fixture, f1, offsetof(Wire::Function, captures)));
-        environment = fixture.word(fixture.offsetOf<Wire::DeclaredType>(List::DeclaredTypes, captures.start, offsetof(Wire::DeclaredType, type)));
+        environment = fixture.word(fixture.offsetOf<Wire::DeclaredCapture>(List::DeclaredCaptures, captures.start, offsetof(Wire::DeclaredCapture, type)));
     }
 
     uint32_t number;

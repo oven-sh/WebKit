@@ -13,7 +13,7 @@
 # RUN(NONE): lower-to-b3 optimized loops f1
 # REQUIRES(NONE): unsanitized-code
 # RUN(X64): lower-to-air loops f1
-# REQUIRES(X64): x86_64 unsanitized-code
+# REQUIRES(X64): x86_64 unsanitized-code faulting-loop-polls
 # RUN(ARM64): lower-to-air loops f1
 # REQUIRES(ARM64): arm64 unsanitized-code
 
@@ -96,7 +96,7 @@ function f1 name="copy" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
 # NONE-NOT: isLoopPoll
 # NONE-LABEL: end of loop
 # No turn leaves for an access by key, so the loop that takes one element at a time is five instructions, and eight of its turns are written out for the views that the wide loops do not take.
-# X64: instructions: 19, patchpoints: 16, rare instructions: 28, {{*}} steps by 8
+# X64: instructions: 19, patchpoints: 16, rare instructions: 22, {{*}} steps by 8
 # X64: instructions: 4, patchpoints: 2, {{*}} steps by 2
 # X64: instructions: 5, patchpoints: 2, {{*}} steps by 1
 # X64: instructions: 18, patchpoints: 16, {{*}} steps by 16

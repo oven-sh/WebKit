@@ -27,7 +27,9 @@ class VM;
 
 namespace AOT {
 
+class Image;
 struct Instance;
+struct VMState;
 
 namespace HeapHooks {
 
@@ -38,10 +40,26 @@ void visitCalleesOfFrames(VM&, SlotVisitor&, uint64_t phase);
 void visitCalleesOfFrames(VM&, AbstractSlotVisitor&, uint64_t phase);
 // For a thread of the collector, before it does anything for the heap of the VM: what it asks of the image it asks of the image of that VM.
 void willWorkOnThisThread(VM&);
+// While it lives, this thread does the work of the VM's own thread, which is stopped. Of several images in one realm, the one that the VM runs is the one that runs here,
+// and whoever runs another one for a while changes both. willWorkOnThisThread() looked while the program still ran, which goes from image to image.
+class WorkForStoppedVMScope {
+    WTF_MAKE_NONCOPYABLE(WorkForStoppedVMScope);
+public:
+    explicit WorkForStoppedVMScope(VM&);
+    ~WorkForStoppedVMScope();
+
+private:
+    bool m_hasSeveralImages;
+    VMState* m_stateOfThread { nullptr };
+    const Image* m_imageOfThread { nullptr };
+};
 void didChangeBarrierThreshold(VM&, unsigned threshold, bool mutatorShouldBeFenced);
 void willAnalyzeHeap(VM&);
 void willCollectForExhaustedCage(VM&);
+// No collection runs because it would find no memory for itself. The call in compiled code that led here throws the error that is owed, as after a collection.
+void didFindNoRoomWhereCollectionMayRun(VM&);
 String nameOfCompiledCallee(JSCell*);
+bool isModuleEnvironment(JSCell*);
 [[noreturn]] void crashOnCellVisitMismatch(VM&, const JSCell*);
 // Where the cells of a live Structure keep their 32-bit references, from the start of the cell. Nothing for a Structure of other cells than compiled objects.
 std::span<const uint32_t> offsetsOfNarrowReferences(const Structure*);

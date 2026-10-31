@@ -1,0 +1,15 @@
+# Flow has seen NullObject arrive at the `new` and has followed no construction to it, so the layout has no objects: nothing is allocated here, and the run time makes an ordinary object.
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# CHECK-NOT: NewObject
+# CHECK: = Construct v0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="NullObject" constructor=f0 flags=[IsConstructorFunction] flow={allocation=NeverAllocated baseState=None} classFlow={evaluations=AtMostOnce}
+function f0 name="NullObject" results=[{type=undefined}] constructedClass=L0 {
+    Return
+}
+function f1 name="constructs" parameters=[{type=f0}] results=[{type=anything}] {
+    v1 = Construct v0
+    Return v1
+}

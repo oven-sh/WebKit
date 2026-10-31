@@ -1,4 +1,4 @@
-# The turns of a hot loop that counts from a constant to a constant a few steps away stand one behind the other, and the loop behind the last of them
+# A hot loop that counts from a constant to a constant a few steps away is fully unrolled: no back edge is left
 # FORM: Prepared
 # OPTIONS: heat=OnlyLoopsAreHot
 # RUN: pass UnrollShortLoops
@@ -21,8 +21,10 @@ function f0 name="twoTurns" parameters=[{type=i32}] results=[{type=number}] {
     Return v3
 # CHECK: Jump -> next [[first]](v1, v2)
 # CHECK: b1(v3: int|whole, v4: int|whole):
-# CHECK-NEXT: LoopHint
+# CHECK-NOT: LoopHint
 # CHECK: Branch v7 -> taken b2(), notTaken b3(v3)
+# CHECK: b2():
+# CHECK: Jump -> next [[never]]()
 # CHECK: b3([[sum]]: int|whole):
 # CHECK-NEXT: Return [[sum]]
 # CHECK: [[body1]]():
@@ -35,6 +37,8 @@ function f0 name="twoTurns" parameters=[{type=i32}] results=[{type=number}] {
 # CHECK: [[second]]([[sum2]]: int|whole, [[counter2]]: int|whole):
 # CHECK-NOT: LoopHint
 # CHECK: Branch {{*}} -> taken [[body2]](), notTaken b3([[sum2]])
+# CHECK: [[never]]() frequency=Rare:
+# CHECK-NEXT: Unreachable
 }
 
 function f1 name="boundIsNoConstant" parameters=[{type=i32}] results=[{type=number}] {

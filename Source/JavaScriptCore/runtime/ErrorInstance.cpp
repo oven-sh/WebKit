@@ -206,12 +206,10 @@ void ErrorInstance::materializeStackTrace()
 #if ENABLE(AOT)
 NEVER_INLINE bool ErrorInstance::tryRetainReturnAddresses(VM& vm, bool useCurrentFrame, JSCell* subclassCaller, std::unique_ptr<Vector<StackFrame>>& otherFrames)
 {
-    if (!useCurrentFrame)
-        return false;
     std::optional<unsigned> stackTraceLimit = realm()->stackTraceLimit();
     if (!stackTraceLimit)
         return false;
-    auto* returnAddresses = AOT::tryCaptureStackTrace(vm, this, *stackTraceLimit, otherFrames, subclassCaller);
+    auto* returnAddresses = AOT::tryCaptureStackTrace(vm, this, *stackTraceLimit, otherFrames, subclassCaller, useCurrentFrame ? AOT::FrameOnTop::IsListed : AOT::FrameOnTop::IsLeftOut);
     if (!returnAddresses)
         return false;
     Locker locker { cellLock() };
@@ -288,7 +286,7 @@ void ErrorInstance::finishCreation(VM& vm, const String& message, JSValue cause,
             messageWithSource = appendSourceToErrorMessage(codeBlock, bytecodeIndex, message, type, appender);
         }
 #if ENABLE(AOT)
-        else if (String quoted = AOT::quotedSourceOfFailedExpression(vm); !quoted.isNull() && !message.isNull()) {
+        else if (String quoted = AOT::quotedSourceOfFailedExpression(vm, sourceAppender() == defaultSourceAppender); !quoted.isNull() && !message.isNull()) {
             ErrorInstance::SourceAppender appender = sourceAppender();
             clearSourceAppender();
             RuntimeType type = runtimeTypeForCause();
@@ -491,7 +489,7 @@ void ErrorInstance::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
     }
 
 #if ENABLE(AOT)
-    if (m_returnAddresses && !vm.heap.isMarked(AOT::livenessToken(m_returnAddresses->instance))) [[unlikely]] {
+    if (m_returnAddresses && (!vm.heap.isMarked(AOT::livenessToken(m_returnAddresses->instance)) || AOT::hasUnmarkedCallee(vm, *m_returnAddresses))) [[unlikely]] {
         computeErrorInfo(vm, false);
         return;
     }

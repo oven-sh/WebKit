@@ -306,6 +306,13 @@ static unsigned leastCellSizeOf(const Program& program, const Placement& placeme
     return least.value_or(0);
 }
 
+bool CodeGenerator::holdsTypeWhereverComputed(ValueID id)
+{
+    // A reference is used as it was lowered. Any other form has to be converted first, and B3 may do that earlier.
+    PublishedValue published = function().at(id).representation == Representation::Cell ? PublishedValue::Itself : PublishedValue::DerivedFromIt;
+    return !typeOf(id).mayBeUnspecified() && typeHoldsWhereverComputed(*this, m_values.span(), id, published);
+}
+
 void CodeGenerator::publishKnownProperties(ValueID id, LValue lowered)
 {
     publishKnownProperties(id, Operand(function().at(id).representation, lowered), false);

@@ -45,15 +45,19 @@ JS_EXPORT_PRIVATE void resumeDriver(VM&, JSObject* driver, JSValue resolution, b
 // For the request of an async generator, or of the wrapper of a sync iterator, that settles the target.
 JS_EXPORT_PRIVATE JSValue tryAwaitForStepInProgress(JSGlobalObject*, JSValue settlementTarget, JSValue awaited);
 JS_EXPORT_PRIVATE bool tryFinishStepInProgress(JSValue settlementTarget, JSValue value, bool isDone);
-struct AsyncGeneratorBodyEntry {
-    Instance* instance { nullptr };
+struct AdapterEntry {
     JSCell* outerFrame { nullptr };
     JSCell* outerAsyncGenerator { nullptr };
     JSCell* outerPromiseOfHandler { nullptr };
     // A whole word, so that a frame that holds an entry writes all of it.
     uintptr_t outerAsyncContextIsPutBack { false };
 };
-static_assert(sizeof(AsyncGeneratorBodyEntry) == 5 * sizeof(void*));
+// An even number of words, so that a frame that holds one needs no padding: nobody writes padding, and the conservative scan reads it.
+static_assert(sizeof(AdapterEntry) == 4 * sizeof(void*));
+struct AsyncGeneratorBodyEntry {
+    Instance* instance { nullptr };
+    AdapterEntry adapterEntry;
+};
 // The job loop enters a body as the last thing it does in a job.
 JS_EXPORT_PRIVATE AsyncGeneratorBodyEntry willEnterAsyncGeneratorBody(JSAsyncGenerator*, bool isEnteredByJobLoop);
 // The adapter may have gone on to the consumers of the body and to the jobs that follow. Returns the generator whose body returned last, or null if something else did: that is finished here.

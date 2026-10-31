@@ -27,7 +27,14 @@ TypeID TypingContext::typeIDOf(const DeclaredType& declared) const
         if (std::optional<Type> known = knownPositions->find(declared))
             return types.intern(*known);
     }
-    return level == TypeLevel::Expected ? declared.expected().predicted() : program.provenTypeOf(declared);
+    if (level == TypeLevel::Proven)
+        return program.provenTypeOf(declared);
+    // Integers that end where a step of one is lost to rounding are those of a counter, which seldom outgrows 32 bits.
+    TypeID expected = declared.expected().predicted();
+    const Type& type = types.at(expected);
+    bool isCounter = type.isInteger() && (type.integers.maximum == maxExactInteger || type.integers.minimum == -maxExactInteger);
+    Range withinInt32 = type.integers.intersectWith(Range::int32());
+    return isCounter && !withinInt32.isEmpty() ? types.intern(Type::integer(withinInt32)) : expected;
 }
 
 static TypeID typeIDOfField(const TypingContext& context, const Field& field)
@@ -99,6 +106,7 @@ std::optional<Type> tryTypeOfFieldRead(const TypingContext& context, std::span<c
     BaseChain chain = isProof ? BaseChain::Proven : BaseChain::Predicted;
     Type result = Type::never();
     bool isMissingInEveryReceiver = true;
+    bool isMissingInSomeReceiver = false;
     bool hasUninformativeField = false;
     for (LayoutID receiver : receivers) {
         if (context.program.at(receiver).flow.allocation == AllocationState::NeverAllocated)
@@ -107,7 +115,7 @@ std::optional<Type> tryTypeOfFieldRead(const TypingContext& context, std::span<c
         if (!field) {
             if (isProof)
                 return std::nullopt;
-            result = result.withPrimitives(Primitive::Undefined);
+            isMissingInSomeReceiver = true;
             continue;
         }
         isMissingInEveryReceiver = false;
@@ -122,6 +130,8 @@ std::optional<Type> tryTypeOfFieldRead(const TypingContext& context, std::span<c
     }
     if (isMissingInEveryReceiver)
         return std::nullopt;
+    if (isMissingInSomeReceiver)
+        result = result.withPrimitives(Primitive::Undefined);
     if (hasUninformativeField && !holdsOnlyArrays(result))
         return Type::anything();
     return result;

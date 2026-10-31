@@ -39,7 +39,7 @@ public:
     void checkCellsWereNotConverted(const OperandCells& beforeCall);
     // A call that runs no other code is judged by what it does to the operands of its operation: each is photographed in front of the call and compared behind it.
     using PhotographedOperands = Vector<ValueID, 4>;
-    PhotographedOperands photographOperands(const OperationContext&, const Effects& effectsOfCall);
+    PhotographedOperands photographOperands(const OperationContext&, const Effects& effectsOfCall, ValueID alsoPerformed = { });
     void compareWithPhotographs(const OperationContext&, const PhotographedOperands&, uint32_t callee);
     // Around a call that collects nothing by what its operation is proven to do, while its callee may collect where less is known.
     Integer countStopsForCollector();
@@ -58,6 +58,9 @@ public:
     void checkAssumedType(const ValueContext&);
 
     void checkPrecondition(const ValueContext&, Condition);
+    // For code that several operations share: the report names the operation that is being generated.
+    void checkClaim(std::optional<CellPointer> about, Condition);
+    void checkIsCompiledObjectOf(CellPointer, LayoutSetID);
     void checkBindingIsStored(const ValueContext&, Condition);
     // A short form of a test answers as the whole test does.
     void checkTypeTestsAgree(Condition, CellPointer tested);
@@ -73,22 +76,28 @@ private:
     template<typename User> void validateOperandsOf(const OperationContext&, const User&, ValueID ownedValue);
     void inheritCheckedClassProofs(BlockID);
     void validateSlotAccess(const OperationContext&, const Value&);
-    void checkRetainedOperand(const OperationContext&, const Value& user, ValueID operand, uint32_t operandIndex);
-    void checkRetainedOperand(const OperationContext&, const Terminator& user, ValueID operand, uint32_t operandIndex);
-    void checkIsNoFrameArray(const OperationContext&, const Value& user, ValueID operand, uint32_t operandIndex);
-    void checkIsNoFrameArray(const OperationContext&, const Terminator& user, ValueID operand, uint32_t operandIndex);
+    bool checkRetainedOperand(const OperationContext&, const Value& user, ValueID operand, uint32_t operandIndex, bool refusesFrameArray);
+    bool checkRetainedOperand(const OperationContext&, const Terminator& user, ValueID operand, uint32_t operandIndex, bool refusesFrameArray);
+    bool refusesFrameArray(const Value& user, ValueID operand, uint32_t operandIndex);
+    bool refusesFrameArray(const Terminator& user, ValueID operand, uint32_t operandIndex);
+    static constexpr FrameCellFilter filterOfRefusedFrameArray(const Value&) { return FrameCellFilter::Arrays; }
+    static constexpr FrameCellFilter filterOfRefusedFrameArray(const Terminator&) { return FrameCellFilter::All; }
 
     // A test of the program may refuse a changed closure. What is validated is asked what it is.
     Condition hasType(Operand, const TypeTestPlan&);
+    void branchOnType(Operand, const TypeTestPlan&, BranchTargets);
     void failUnless(Condition, ValidationFailureKind, Operand found, ValueID);
+    void failUnlessHasType(Operand, const TypeTestPlan&, ValidationFailureKind, ValueID, TypeID typeThatRunTimeTests);
     void askOperationUnless(Condition, ValidationFailureKind, Operand found, ValueID);
     void reportFailure(ValidationFailureKind, Operand found, ValueID);
     void callReport(ValidationFailureKind, Operand found, ValueID);
+    Word32 reportedFailure(ValidationFailureKind, Operand found);
     Boxed reportedValueOf(Operand found);
 
     void checkValue(ValueID, Operand);
     void checkIsSpecified(ValueID);
-    void checkHasType(ValueID, Operand, const Type&, ValidationFailureKind);
+    void checkHasType(ValueID, Operand, TypeID, ValidationFailureKind, ValueID tested);
+    void checkHasType(ValueID, Operand, const Type&, ValidationFailureKind, ValueID tested, TypeID numberOfType = { });
     void checkLiteralStringWord(ValueID, LiteralStringWord);
     Condition hasShapeAmong(CellPointer, LayoutSetID, std::span<const uint32_t> ascendingShapes);
     void checkReceiverOfSlotAccess(const OperationContext&, const Value&);
@@ -107,12 +116,22 @@ private:
     bool isSuspensionPoint(ValueID);
     bool maySuspendBetween(ValueID allocation, ProgramPoint);
     Condition isInStack(Pointer);
-    Pointer stackPointer();
 
+    struct PassedTypeTest {
+        ValueID value;
+        TypeID type;
+        bool mustBeThere;
+
+        friend bool operator==(const PassedTypeTest&, const PassedTypeTest&) = default;
+    };
+
+    RefPtr<B3::StackmapGenerator> m_reportGenerator;
     FramePointers m_framePointers;
     BlockID m_blockOfCheckedClassProofs;
     Vector<ValueID, 4> m_checkedClassProofs;
     Vector<Vector<ValueID, 4>> m_checkedClassProofsAtEnd;
+    // In the block of m_blockOfCheckedClassProofs, since the last operation that may have written to the heap.
+    Vector<PassedTypeTest, 16> m_passedTypeTests;
 };
 
 } } } // namespace JSC::AOT::Typed

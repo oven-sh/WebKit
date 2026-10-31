@@ -16,6 +16,7 @@
 #include "AOTInstance.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
+#include "AOTPendingStars.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStrings.h"
 #include "AOTRuntimeValidation.h"
@@ -78,12 +79,23 @@ Object* Object::createWithBody(VM& vm, Structure* structure, std::span<const uin
 
 Instance& Object::instance() const
 {
-    return *Instance::of(structure()->realm());
+    Instance* instance = structure()->realm()->aotInstance();
+    if (!instance->above) [[likely]]
+        return *instance;
+    uint32_t shape = this->shape();
+    while (shape > instance->lastShape)
+        instance = instance->above;
+    return *instance;
 }
 
 State& Object::state() const
 {
     return *instance().state;
+}
+
+bool Object::isDescribedBy(const State& state) const
+{
+    return &instance() == &state.instance;
 }
 
 VM& Object::vm() const
@@ -307,7 +319,7 @@ bool Extension::tryInsert(uint64_t granuleBits)
 
 static StringView nameOfLayout(VM& vm, const LayoutData& layout)
 {
-    const ImageText& text = vm.aotState().image->text();
+    const ImageText& text = vm.aotState().image->holderOf(&layout).text();
     StringID name(layout.name);
     return name && text.hasText(name) ? text.view(name) : StringView("-"_s);
 }
@@ -366,6 +378,12 @@ UniquedStringImpl* propertyNameOf(VM& vm, const Object& object, const FieldData&
     return object.state().objects->layouts.nameOf(vm, field);
 }
 
+// Pending stars go on waiting unless one of them binds the name of the field.
+static JSObject* extraPropertiesThatMayHold(const Object& object, const FieldData& field)
+{
+    return isBoundByPendingStar(object, field).value_or(false) ? object.extraProperties() : extraPropertiesIfMade(object);
+}
+
 FieldProperty findFieldProperty(VM& vm, const Object& object, const FieldData& field)
 {
     // readInline() called read() for a field that is stored out of line.
@@ -374,7 +392,7 @@ FieldProperty findFieldProperty(VM& vm, const Object& object, const FieldData& f
         value = object.read(field);
     if (value)
         return { value, object.attributesOf(field), true };
-    JSObject* extra = object.extraProperties();
+    JSObject* extra = extraPropertiesThatMayHold(object, field);
     if (!extra)
         return { };
     unsigned attributes;
@@ -386,12 +404,16 @@ FieldProperty findFieldProperty(VM& vm, const Object& object, const FieldData& f
 
 bool livesInExtraProperties(VM& vm, const Object& object, const FieldData& field)
 {
-    JSObject* extra = object.extraProperties();
+    if (std::optional<bool> isBound = isBoundByPendingStar(object, field))
+        return *isBound;
+    JSObject* extra = extraPropertiesIfMade(object);
     return extra && extra->getDirect(vm, propertyNameOf(vm, object, field));
 }
 
-bool tryCreateField(VM& vm, State& state, Object& object, const FieldData& field, JSValue value)
+bool tryCreateField(VM& vm, State& stateAtHand, Object& object, const FieldData& field, JSValue value)
 {
+    // As in Object::fieldNamed(): the state may be the caller's, and the object of another image.
+    State& state = stateAtHand.sharesRealm ? object.state() : stateAtHand;
     ASSERT(!object.isInSlot(field) && !livesInExtraProperties(vm, object, field));
     // The creation is the one store of a field that is stored once, so this does not ask tryStore, which refuses every store to such a field.
     std::optional<AcceptedValue> accepted = state.objects->layouts.accept(field, value);
@@ -510,7 +532,7 @@ void Environment::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
         if (!traitsOf(variable.slot.representation()).holdsCell)
             continue;
         JSCell* target = cellInSlot(variable.slot.representation(), &environment->at<uint8_t>(variable.slot.offset), cageBase);
-        UniquedStringImpl* name = target ? identifiers.tryGetIdentifierConcurrently(variable.name) : nullptr;
+        UniquedStringImpl* name = target ? identifiers.nameInHeapSnapshots(&variable) : nullptr;
         if (name)
             analyzer.analyzeVariableNameEdge(environment, target, name);
     }

@@ -26,6 +26,12 @@ void EngineIntrinsicEmitter::generateIsConstructor(const ValueContext& value)
     defineAs(value, callWithoutSite<Condition>(RuntimeOperation::IsConstructor, { operand }), m_program.at(TypeTable::boolean));
 }
 
+void EngineIntrinsicEmitter::generateReadsIteratorOfListUnseen(const ValueContext& value)
+{
+    Boxed operand = boxedOperand(value, value->valueOperand());
+    defineAs(value, callWithoutSite<Condition>(RuntimeOperation::ReadsIteratorOfListUnseen, { operand }), m_program.at(TypeTable::boolean));
+}
+
 void EngineIntrinsicEmitter::generateArraySpeciesCreate(const ValueContext& value)
 {
     LBasicBlock invalid = newBlock();

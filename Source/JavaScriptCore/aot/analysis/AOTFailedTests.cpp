@@ -69,7 +69,7 @@ void FailedTests::nestFailedEdges()
         lastNumberBelow[block.index()] = nextNumber - 1;
     });
 
-    AOT::sort(m_failedEdges, { }, [&](const FailedEdge& edge) {
+    AOT::sortInLine(m_failedEdges, { }, [&](const FailedEdge& edge) {
         return std::tuple { edge.opcode, edge.subject, m_numberInDominatorTree[edge.target.index()] };
     });
 

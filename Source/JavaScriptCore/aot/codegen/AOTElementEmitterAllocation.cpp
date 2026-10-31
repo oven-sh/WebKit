@@ -17,6 +17,7 @@
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStaticsEmitter.h"
 #include "AOTTypeTable.h"
+#include "AOTValueIdentity.h"
 #include "ArrayConventions.h"
 #include "IndexingHeader.h"
 #include "JSArray.h"
@@ -119,6 +120,15 @@ const ArrayStorageForm& ArrayAllocationEmitter::formOfLiteral(const OperationCon
     // arrayStorageOfLiteral() returns nothing for an array created with no elements and no holes, unless it is declared to use storage for any value.
     if (elements.empty() && !hasHoles)
         return formOfEmptyLiteral(context.valueID(), array);
+    if (const ArrayStorageForm* form = findFormOfLiteral(elements, array))
+        return *form;
+    fail(context, InternalErrorKind::OpcodeWithoutCode);
+    return arrayStorageFormOf(ArrayStorage::Contiguous);
+}
+
+// Null where the declared storage cannot hold the elements.
+const ArrayStorageForm* ArrayAllocationEmitter::findFormOfLiteral(std::span<const ValueID> elements, const Type& array)
+{
     const ArrayStorageForm& form = formAtAllocation(array);
     // A literal with an element that never arrives is never made.
     bool isNeverMade = std::ranges::any_of(elements, [&](ValueID element) {
@@ -128,17 +138,35 @@ const ArrayStorageForm& ArrayAllocationEmitter::formOfLiteral(const OperationCon
         return (form.element == Representation::Double && isNumberOrMarker(element)) || fitsStorageOfLiteral(form.kind, typeOf(element));
     });
     if (canHoldElements)
-        return form;
+        return &form;
     const ClassPart* part = array.singleBuiltinClass();
     if (!isNeverMade && part && holdsOnlyNumbers(part->arrayStorage))
-        fail(context, InternalErrorKind::OpcodeWithoutCode);
-    return arrayStorageFormOf(ArrayStorage::Contiguous);
+        return nullptr;
+    return &arrayStorageFormOf(ArrayStorage::Contiguous);
 }
 
 CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
 {
     if (value->storage() != AllocationStorage::Heap)
         return emitter<CellAllocationEmitter>().newArrayOf(value, boxElements<Boxed>(generator(), value, value->elementsOperands()).span(), value->storage());
+
+    if (std::optional<ValueID> append = membersThatFillLiteral(value.block(), value.id())) {
+        // Of the kind that whoever reads the list expects. No profile has to learn it.
+        std::optional<ArrayStorage> expected;
+        auto lookAtReadersOf = [&](ValueID list) {
+            for (const Use& use : analyses().useLists().usesOf(list)) {
+                if (use.kind != Use::Kind::Operand)
+                    continue;
+                const Value& user = m_function.at(use.user);
+                if (Value::opcodesWithArrayStorage.contains(user.opcode) && hasArrayStorageForm(user.arrayStorage()))
+                    expected = std::max(expected.value_or(ArrayStorage::Int32), user.arrayStorage());
+            }
+        };
+        lookAtReadersOf(value.id());
+        lookAtReadersOf(m_function.at(*append).arrayOperand());
+        const ArrayStorageForm& form = expected ? arrayStorageFormOf(*expected) : formOfEmptyLiteral(value.id(), typeOf(value.id()));
+        return CellPointer(callStub(value, newArrayOfMembers(kindOf(form)), { in<CellPointer>(m_function.at(*append).sourceOperand()).value() }, { .alsoPerforms = *append }).first);
+    }
 
     switch (value->literalStorage()) {
     case ArrayLiteralStorage::Fresh:
@@ -199,18 +227,32 @@ CellPointer ArrayAllocationEmitter::allocateArrayCell(Integer header, Pointer bu
     return array;
 }
 
-CellPointer ArrayAllocationEmitter::allocateArrayOfHoles(const OperationContext& context, Integer length, const ArrayStorageForm& form, LBasicBlock slowPath)
+CellPointer ArrayAllocationEmitter::allocateArrayOfHoles(const OperationContext& context, Integer length, const ArrayStorageForm& form, LBasicBlock slowPath, ElementsBelowLength elementsBelowLength)
 {
+    auto setLength = [&](CellPointer array) {
+        CodeGenerator::InitializationScope scope(generator());
+        m_out.store32(low32(length).value(), m_out.loadPtr(array.value(), m_heaps.JSArray_butterfly), m_heaps.Butterfly_publicLength);
+        return array;
+    };
+    // `new Array(3)`: the stub for an empty array with that room knows its size and its allocator.
+    if (length.value()->hasInt64() && length.value()->asInt64() >= 1 && length.value()->asInt64() <= 3 && kindOf(form) != ArrayElementKind::Int32) {
+        bool holdsOne = length.value()->asInt64() == 1;
+        if (kindOf(form) == ArrayElementKind::Double)
+            return setLength(callNewEmptyArray(context, holdsOne ? EmptyArray::DoubleCapacity1 : EmptyArray::DoubleCapacity3));
+        return setLength(callNewEmptyArray(context, holdsOne ? EmptyArray::ContiguousCapacity1 : EmptyArray::ContiguousCapacity3));
+    }
     branchUnless(belowOrEqual(length, integer(maxHoleArrayCapacity)), slowPath);
     // Nobody makes an array of no elements to leave it so.
     bool isEmpty = length.value()->hasInt64() && !length.value()->asInt64();
     Integer capacity = isEmpty ? integer(BASE_CONTIGUOUS_VECTOR_LEN_EMPTY | 1) : bitOr(length, integer(1));
-    CellPointer array = callNewArrayWithLength(context, form, Integer(m_out.shl(capacity.value(), m_out.constInt32(holeArrayCapacityShift))));
+    Integer lengthAndCapacity(m_out.shl(capacity.value(), m_out.constInt32(holeArrayCapacityShift)));
+    // The stub sets the length that it is handed and puts holes behind it.
+    static_assert(maxHoleArrayCapacity < 1 << holeArrayCapacityShift);
+    if (elementsBelowLength == ElementsBelowLength::NotCleared)
+        lengthAndCapacity = bitOr(lengthAndCapacity, length);
+    CellPointer array = callNewArrayWithLength(context, form, lengthAndCapacity);
     branchUnless(Condition(m_out.notNull(array.value())), slowPath);
-    CodeGenerator::InitializationScope scope(generator());
-    Word32 publicLength = low32(length);
-    m_out.store32(publicLength.value(), m_out.loadPtr(array.value(), m_heaps.JSArray_butterfly), m_heaps.Butterfly_publicLength);
-    return array;
+    return elementsBelowLength == ElementsBelowLength::NotCleared ? array : setLength(array);
 }
 
 CellPointer ArrayAllocationEmitter::newArrayOfHoles(const OperationContext& context, Integer length, const ArrayStorageForm& form, BuiltinID calledBuiltin)
@@ -358,6 +400,18 @@ CellPointer ArrayAllocationEmitter::newArrayOf(const OperationContext& context, 
         }
         return newDoubleLiteral(context, numbersOrMarkers.span(), isNumberMask);
     }
+    bool areInt32 = std::ranges::all_of(elements, [&](ValueID element) {
+        return representationOf(element) == Representation::Int32;
+    });
+    if (form.kind == ArrayStorage::Int32 && length && length <= maxArrayElementsInRegisters && areInt32) {
+        Vector<LValue, maxArrayElementsInRegisters> operands;
+        for (ValueID element : elements)
+            operands.append(zeroExtended(get(element).as<Word32>()).value());
+        return CellPointer(callStub(context, arrayLiteralWithInt32(length), operands.span()).first);
+    }
+
+    if (storesElementsBehindAllocation(elements, form))
+        return newArrayStoredBehindAllocation(context, elements, form);
 
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);
@@ -366,16 +420,125 @@ CellPointer ArrayAllocationEmitter::newArrayOf(const OperationContext& context, 
         fail(context, InternalErrorKind::OpcodeWithoutCode);
         return CellPointer(m_out.int64Zero);
     }
-    CellPointer newArray = length
-        ? callNewArrayWithLength(context, form, integer(length | arrayLiteralVectorLength(length) << holeArrayCapacityShift))
-        : callNewEmptyArray(context, emptyNumberArray(form));
-    branchUnless(Condition(m_out.notNull(newArray.value())), slowPath);
-    storeElements(newArray, form, rawElements.span(), indexesWithoutHoles(length).span());
-    join.add(newArray);
+    if (length && length <= maxArrayLengthInStubKey) {
+        CellAllocationEmitter& cells = emitter<CellAllocationEmitter>();
+        CellPointer newArray = cells.allocateArrayOfLength(context, form.indexingType, length);
+        storeElements(newArray, form, rawElements.span(), indexesWithoutHoles(length).span());
+        cells.finishArrayOfLength(context, newArray, length);
+        join.add(newArray);
+    } else {
+        CellPointer newArray = length
+            ? callNewArrayWithLength(context, form, integer(length | arrayLiteralVectorLength(length) << holeArrayCapacityShift))
+            : callNewEmptyArray(context, emptyNumberArray(form));
+        branchUnless(Condition(m_out.notNull(newArray.value())), slowPath);
+        storeElements(newArray, form, rawElements.span(), indexesWithoutHoles(length).span());
+        join.add(newArray);
+    }
 
     m_out.appendTo(slowPath);
     join.add(newArrayOutOfLine(context, elements, form));
     return join.finish();
+}
+
+// No element needs a test, so nothing sends the literal elsewhere once the array is allocated.
+bool ArrayAllocationEmitter::storesElementsBehindAllocation(std::span<const ValueID> elements, const ArrayStorageForm& form)
+{
+    if (elements.size() <= maxArrayElementsInRegisters || elements.size() > maxArrayLengthInStubKey || !holdsOnlyNumbers(form.kind))
+        return false;
+    return std::ranges::all_of(elements, [&](ValueID element) {
+        // In the form in which the operation takes it: Array.of() takes an integer boxed, and a boxed value is tested.
+        switch (representationOf(element)) {
+        case Representation::Int32:
+            return true;
+        case Representation::Double:
+            return form.kind == ArrayStorage::Double && canStoreWithoutConversion(form.kind, typeOf(element));
+        default:
+            return false;
+        }
+    });
+}
+
+CellPointer ArrayAllocationEmitter::newArrayStoredBehindAllocation(const OperationContext& context, std::span<const ValueID> elements, const ArrayStorageForm& form)
+{
+    ElementAccessEmitter& access = emitter<ElementAccessEmitter>();
+    CellAllocationEmitter& cells = emitter<CellAllocationEmitter>();
+    unsigned length = elements.size();
+    CellPointer newArray = cells.allocateArrayOfLength(context, form.indexingType, length);
+    ArrayElements storage = access.elementsOf(newArray);
+    for (unsigned i = 0; i < length; ++i) {
+        generator().generateValueLeftToUser(context, elements[i]);
+        Operand rawElement = *access.rawElementToStore(form, elements[i], nullptr);
+        CodeGenerator::InitializationScope scope(generator());
+        access.storeRawElement(form, storage, integer(i), rawElement);
+    }
+    cells.finishArrayOfLength(context, newArray, length);
+    return newArray;
+}
+
+static bool isArithmeticOnInt32(const Value& value)
+{
+    if (value.representation != Representation::Int32)
+        return false;
+    switch (value.opcode) {
+    case Opcode::BitAnd:
+    case Opcode::BitOr:
+    case Opcode::BitXor:
+    case Opcode::LShift:
+    case Opcode::RShift:
+    case Opcode::URShift:
+        return value.form() == OperatorForm::Integers || value.form() == OperatorForm::Numbers;
+    case Opcode::Add:
+    case Opcode::Sub:
+    case Opcode::Mul:
+        return value.form() == OperatorForm::Integers;
+    default:
+        return false;
+    }
+}
+
+bool ArrayAllocationEmitter::isComputedBehindAllocation(ValueID id)
+{
+    AOT_THRESHOLD(unsigned, maxOperationsOfElement, 4);
+    AOT_THRESHOLD(uint32_t, maxValuesBetweenElementAndLiteral, 64);
+    // A checking build looks at the operands of the literal in front of it.
+    if (generator().validatesOrChecksProofs() || generator().checksKeptRegisters())
+        return false;
+    const UseLists& useLists = analyses().useLists();
+    ValueLocation location = useLists.locationOf(id);
+    for (unsigned depth = 0; depth < maxOperationsOfElement; ++depth) {
+        const Value& value = m_function.at(id);
+        if (!isArithmeticOnInt32(value))
+            return false;
+        // Computed late, a value of two variables would hold both across the call in place of itself.
+        unsigned numberOfVariables = 0;
+        for (uint32_t i = 0; i < value.numberOfOperands(); ++i) {
+            const Value& operand = m_function.at(value.operand(i));
+            if (operand.representation != Representation::Int32)
+                return false;
+            numberOfVariables += !isRematerializable(operand);
+        }
+        std::optional<Use> use = useLists.singleUse(id);
+        if (numberOfVariables > 1 || !use || use->kind != Use::Kind::Operand)
+            return false;
+        id = use->user;
+        const Value& user = m_function.at(id);
+        if (user.opcode != Opcode::NewArray)
+            continue;
+
+        ValueLocation locationOfLiteral = useLists.locationOf(id);
+        if (locationOfLiteral.block != location.block || locationOfLiteral.index - location.index > maxValuesBetweenElementAndLiteral)
+            return false;
+        // What is alive across a suspension is saved with the frame: the value, not what it is computed from.
+        std::span<const ValueID> between = m_function.at(location.block).values.span().subspan(location.index, locationOfLiteral.index - location.index);
+        if (std::ranges::any_of(between, [&](ValueID other) { return maySuspend(m_function.at(other).opcode); }))
+            return false;
+        std::span<const ValueID> elements = user.elementsOperands();
+        if (user.storage() != AllocationStorage::Heap || !user.holes().empty() || user.capacityOperand() || elements.size() > build().limit(LimitID::MaxInlineArrayLiteralLength))
+            return false;
+        const ArrayStorageForm* form = findFormOfLiteral(elements, typeOf(id));
+        return form && storesElementsBehindAllocation(elements, *form);
+    }
+    return false;
 }
 
 CellPointer ArrayAllocationEmitter::newLiteralWithHoles(const ValueContext& value)
@@ -396,12 +559,64 @@ CellPointer ArrayAllocationEmitter::newLiteralWithHoles(const ValueContext& valu
     join.add(newArray);
 
     m_out.appendTo(slowPath);
-    CellPointer arrayOfHoles = callOperation<CellPointer>(value, RuntimeOperation::NewArrayWithHoles, { CellPointer(m_out.int64Zero), integer(length), word32(form.indexingType), word32(0) }, { .isOnRarePath = true });
+    uint32_t flags = value->keepsLength() ? NewArrayWithHolesFlag::mustHaveIndexingType : 0;
+    CellPointer arrayOfHoles = callOperation<CellPointer>(value, RuntimeOperation::NewArrayWithHoles, { CellPointer(m_out.int64Zero), integer(length), word32(form.indexingType), word32(flags) }, { .isOnRarePath = true });
     RawElements boxedElements = boxElements<Operand>(generator(), value, elements);
     for (size_t i = 0; i < boxedElements.size(); ++i)
         callVoidOperation(value, RuntimeOperation::ArrayPutAtIndex, { arrayOfHoles, boxedElements[i], integer(indexes[i]) }, { .isOnRarePath = true });
     join.add(arrayOfHoles);
     return join.finish();
+}
+
+std::optional<ValueID> ArrayAllocationEmitter::appendThatFillsLiteral(BlockID block, ValueID id)
+{
+    const Value& literal = m_function.at(id);
+    if (literal.opcode != Opcode::NewArray || literal.storage() != AllocationStorage::Heap || !literal.capacityOperand() || !literal.elementsOperands().empty() || !literal.holes().empty())
+        return std::nullopt;
+    if (literal.literalStorage() == ArrayLiteralStorage::Profiled && literal.staticsOffset())
+        return std::nullopt;
+    if (get(literal.capacityOperand()).value->hasInt())
+        return std::nullopt;
+    std::span<const ValueID> values = m_function.at(block).values.span();
+    auto next = std::ranges::find(values, id);
+    if (next == values.end())
+        return std::nullopt;
+    // Only casts of the literal stand between the two: nothing runs, nobody else has the list, and the source is there when the literal is made.
+    for (++next; next != values.end(); ++next) {
+        const Value& value = m_function.at(*next);
+        if (value.opcode != Opcode::AssumeType && value.opcode != Opcode::AppendElements)
+            return std::nullopt;
+        bool isAppend = value.opcode == Opcode::AppendElements;
+        if (sameObjectThroughCasts(m_function, isAppend ? value.arrayOperand() : value.valueOperand()).valueInFrontOfFacts() != id)
+            return std::nullopt;
+        if (isAppend)
+            return *next;
+    }
+    return std::nullopt;
+}
+
+// `[...set]`: the list is made with the members in it.
+std::optional<ValueID> ArrayAllocationEmitter::membersThatFillLiteral(BlockID block, ValueID id)
+{
+    const Value& literal = m_function.at(id);
+    if (literal.opcode != Opcode::NewArray || literal.storage() != AllocationStorage::Heap || literal.capacityOperand() || !literal.elementsOperands().empty() || !literal.holes().empty())
+        return std::nullopt;
+    std::span<const ValueID> values = m_function.at(block).values.span();
+    auto next = std::ranges::find(values, id);
+    if (next == values.end())
+        return std::nullopt;
+    // Only casts of the literal stand between the two: nothing runs, nobody else has the list, and the set is there when the literal is made.
+    for (++next; next != values.end(); ++next) {
+        const Value& value = m_function.at(*next);
+        if (value.opcode != Opcode::AssumeType && value.opcode != Opcode::AppendMembers)
+            return std::nullopt;
+        bool isAppend = value.opcode == Opcode::AppendMembers;
+        if (sameObjectThroughCasts(m_function, isAppend ? value.arrayOperand() : value.valueOperand()).valueInFrontOfFacts() != id)
+            return std::nullopt;
+        if (isAppend)
+            return *next;
+    }
+    return std::nullopt;
 }
 
 CellPointer ArrayAllocationEmitter::newLiteralWithCapacity(const ValueContext& value)
@@ -420,6 +635,11 @@ CellPointer ArrayAllocationEmitter::newLiteralWithCapacity(const ValueContext& v
             return newArrayOf(value, elements, array);
         if (std::optional<EmptyArray> emptyArray = emptyArrayWithCapacity(form, constantCapacity | 1))
             return callNewEmptyArray(value, *emptyArray);
+    }
+
+    if (std::optional<ValueID> append = appendThatFillsLiteral(value.block(), value.id())) {
+        Integer room = select(belowOrEqual(capacity, integer(maxCapacity)), capacity, integer(0));
+        return CellPointer(callStub(value, newArrayOfElements(kindOf(form)), { in<CellPointer>(m_function.at(*append).sourceOperand()).value(), room.value() }).first);
     }
 
     LBasicBlock fallback = newBlock();

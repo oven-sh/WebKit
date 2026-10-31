@@ -58,6 +58,7 @@
 #include <wtf/FastBitVector.h>
 #include <wtf/PrintStream.h>
 #include <wtf/UnionFind.h>
+#include <wtf/text/MakeString.h>
 #include <wtf/text/StringView.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -1248,7 +1249,7 @@ Vector<ValueID, 8> StringBuilderStep::rewriteWebs(const StringBuilderPlan& plan)
         InsertionSite site = siteOfUse(use);
         switch (read.kind) {
         case StringStateUse::Length:
-            if (equalityComparisonsOfStrings.contains(function.at(use.user).opcode)) {
+            if (use.kind == Use::Kind::Operand && equalityComparisonsOfStrings.contains(function.at(use.user).opcode)) {
                 ValueID length = insert(site, IRBuilder::make(Opcode::StringBuilderLength, { handle }));
                 ValueID lengthOfEmptyString = insert(site, makeInteger(0));
                 Value& comparison = function.edit(use.user);
@@ -1487,7 +1488,7 @@ PassOutcome StringBuilderStep::joinNestedBuilders()
         ProgramPoint start = useLists.pointAfter(begin);
         BitVector closingBlocks;
         for (const Use& use : useLists.usesOf(begin)) {
-            if (closingOperations.contains(function.at(use.user).opcode))
+            if (use.kind == Use::Kind::Operand && closingOperations.contains(function.at(use.user).opcode))
                 closingBlocks.set(use.block.index());
         }
 
@@ -1810,6 +1811,100 @@ static PassOutcome rollBackAppendsUnderHandlers(FunctionPassContext& context)
     return PassOutcome::Changed;
 }
 
+// `let out = ""; .. return out + text.slice(start, end)`: where nothing was appended on the way there, the last part is the text.
+static PassOutcome takeOnlyPartsOutOfBuilders(FunctionPassContext& context, std::span<const ValueID> appends)
+{
+    static constexpr OpcodeSet operationsThatAppendNothing { Opcode::StringBuilderFinish, Opcode::StringBuilderDiscard, Opcode::StringBuilderLength, Opcode::StringBuilderToString, Opcode::StringBuilderCheckpoint, Opcode::StringBuilderRollBack };
+    Function& function = context.function;
+    const CFG& cfg = context.analyses.cfg();
+    const UseLists& useLists = context.analyses.useLists();
+    struct LastAppend {
+        ValueLocation location;
+        ValueID append;
+        ValueID finish;
+    };
+    // A builder goes from block to block as a parameter.
+    auto followsAnotherAppend = [&](ValueID append, ProgramPoint point) {
+        Vector<ValueID, 8> names { function.at(append).builderOperand() };
+        auto add = [&](ValueID name) {
+            if (name && !names.contains(name))
+                names.append(name);
+        };
+        for (size_t position = 0; position < names.size(); ++position) {
+            ValueID name = names[position];
+            ValueLocation location = useLists.locationOf(name);
+            if (location.placement == ValuePlacement::Parameter) {
+                for (Edge edge : cfg.incomingEdges(location.block))
+                    add(valuePassedOn(function, edge, location.index));
+            }
+            for (const Use& use : useLists.usesOf(name)) {
+                if (use.isEdgeUse()) {
+                    add(function.at(targetOf(function, use.edge()).block).parameters[use.operandIndex]);
+                    continue;
+                }
+                if (use.kind == Use::Kind::Operand && use.user != append && !operationsThatAppendNothing.contains(function.at(use.user).opcode) && context.analyses.dominates(use.user, point))
+                    return true;
+            }
+        }
+        return false;
+    };
+    Vector<LastAppend, 2> lastAppends;
+    for (ValueID id : appends) {
+        const Value& append = function.at(id);
+        if (append.opcode != Opcode::StringBuilderAppend || append.partsOperands().size() != 1 || !context.program.typeOf(function, append.partsOperands()[0]).isString())
+            continue;
+        ValueLocation location = useLists.locationOf(id);
+        if (location.placement != ValuePlacement::InBlock)
+            continue;
+        const Block& block = function.at(location.block);
+        if (block.handler || location.index + 1 >= block.values.size())
+            continue;
+        ValueID handle = append.builderOperand();
+        ValueID finishID = block.values[location.index + 1];
+        const Value& finish = function.at(finishID);
+        if (finish.opcode != Opcode::StringBuilderFinish || finish.builderOperand() != handle || finish.isLikelyKey())
+            continue;
+        if (!followsAnotherAppend(id, { location.block, location.index }))
+            lastAppends.append({ location, id, finishID });
+    }
+    if (lastAppends.isEmpty())
+        return PassOutcome::Unchanged;
+
+    // Of the appends of a block the last one is cut out first, so each is still where it was found.
+    AOT::sort(lastAppends, std::greater { }, [](const LastAppend& last) {
+        return last.location.index;
+    });
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    for (const LastAppend& last : lastAppends) {
+        BlockID block = last.location.block;
+        Value finish = function.at(last.finish);
+        ValueID handle = finish.builderOperand();
+        ValueID part = function.at(last.append).partsOperands()[0];
+        // A slice made for the append alone is made on either side: behind other text its characters are copied and no string is made.
+        bool isMadeForAppend = function.at(part).opcode == Opcode::Substring && useLists.usesOf(part).size() == 1 && useLists.locationOf(part).placement == ValuePlacement::InBlock && useLists.blockOf(part) == block;
+        BlockValues moved;
+        BlockValues remaining;
+        for (ValueID id : function.at(block).values)
+            (id == last.append || (isMadeForAppend && id == part) ? moved : remaining).append(id);
+        function.edit(block).values = WTF::move(remaining);
+        context.analyses.didChangeValues();
+
+        builder.setOrigin(finish.origin());
+        Expected<BlockFrequency> frequency = function.at(block).frequency;
+        IRBuilder::Expansion expansion = builder.beginExpansion({ block, static_cast<uint32_t>(function.at(block).values.find(last.finish)) });
+        ValueID length = builder.append(Opcode::StringBuilderLength, { handle });
+        IRBuilder::BranchBlocks isEmpty = builder.emitBranch(builder.append(Opcode::StrictEq, { length, builder.appendInteger(0) }), frequency, frequency);
+        builder.append(Opcode::StringBuilderDiscard, { handle });
+        builder.endExpansion(expansion, isMadeForAppend ? builder.append(Value(function.at(part))) : part);
+        function.edit(isEmpty.notTaken).values.appendVector(moved);
+        context.analyses.didChangeValues();
+        builder.moveToEndOf(isEmpty.notTaken);
+        builder.endExpansion(expansion, builder.append(WTF::move(finish)));
+    }
+    context.analyses.didChangeControlFlow();
+    return PassOutcome::Changed;
+}
+
 static PassOutcome createAndJoinBuilders(FunctionPassContext& context, const BitVector& statesReadAsStrings)
 {
     PassOutcome outcome = PassOutcome::Unchanged;
@@ -1840,8 +1935,9 @@ static PassOutcome createAndJoinBuilders(FunctionPassContext& context, const Bit
             break;
         }
     }
+    Vector<ValueID, 8> appends;
     if (!plan.createdWebs().empty()) {
-        Vector<ValueID, 8> appends = StringBuilderStep { context, statesReadAsStrings }.rewriteWebs(plan);
+        appends = StringBuilderStep { context, statesReadAsStrings }.rewriteWebs(plan);
         StringBuilderStep { context, statesReadAsStrings }.foldConversionsInto(appends.span());
         outcome = PassOutcome::Changed;
     }
@@ -1849,6 +1945,7 @@ static PassOutcome createAndJoinBuilders(FunctionPassContext& context, const Bit
     if (markLikelyKeys(context))
         outcome = PassOutcome::Changed;
     outcome |= expandAppendedStringRanges(context);
+    outcome |= takeOnlyPartsOutOfBuilders(context, appends.span());
     return outcome | rollBackAppendsUnderHandlers(context);
 }
 
@@ -2190,6 +2287,8 @@ SplitStringStep appendSplitStringStep(IRBuilder& builder, const SplitString& spl
     builder.moveToEndOf(merge);
     return { branch.notTaken, start, end, next };
 }
+
+AOT_THRESHOLD(uint64_t, maxBytesOfJoinedTexts, 256);
 
 PassOutcome fuseConcatenations(FunctionPassContext& context)
 {
@@ -2721,9 +2820,52 @@ PassOutcome fuseConcatenations(FunctionPassContext& context)
         }
     }
     numberOfAbsorbedValues += eraseAbsorbedValues();
+
+    // Neighboring texts of a concatenation are one text: `s + "a" + "b"`.
+    bool didJoinTexts = false;
+    auto textOf = [&](ValueID part) -> std::optional<StringID> {
+        KnownValue known = knownValueOf(program, function, part);
+        return known.kind() == KnownValue::Kind::String ? std::optional(known.asString()) : std::nullopt;
+    };
+    // In UTF-8 a larger byte begins a character outside Latin-1.
+    auto isWide = [&](StringID text) { return std::ranges::any_of(program.string(text), [](uint8_t byte) { return byte > 0xc3; }); };
+    for (size_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+        BlockID block(blockIndex);
+        for (uint32_t index = 0; index < function.at(block).values.size(); ++index) {
+            ValueID id = function.at(block).values[index];
+            if (function.at(id).opcode != Opcode::Strcat)
+                continue;
+            // The builder makes values, which may move this one.
+            Vector<ValueID, 16> operands;
+            operands.append(function.at(id).operands());
+            Vector<ValueID, 16> parts;
+            for (ValueID part : operands) {
+                std::optional<StringID> right = textOf(part);
+                std::optional<StringID> left = parts.isEmpty() || !right ? std::nullopt : textOf(parts.last());
+                // How a text is held follows its literal, so a narrow one and a wide one stay apart.
+                if (!left || isWide(*left) != isWide(*right) || program.string(*left).size() + program.string(*right).size() > maxBytesOfJoinedTexts) {
+                    parts.append(part);
+                    continue;
+                }
+                Vector<char16_t> leftBuffer;
+                Vector<char16_t> rightBuffer;
+                Value joined = IRBuilder::make(Opcode::String);
+                String text = makeString(program.strings.viewOf(*left, leftBuffer), program.strings.viewOf(*right, rightBuffer));
+                joined.setString(context.strings.intern(StringView(text)));
+                parts.last() = builder.insertBefore({ block, index }, WTF::move(joined));
+            }
+            // A concatenation of one part would be a conversion, and FoldConstants has already asked for what is wholly known.
+            if (parts.size() < 2 || parts.size() == operands.size())
+                continue;
+            becomeConcatenationOf(id, parts.span());
+            didJoinTexts = true;
+        }
+        builder.applyInsertions();
+    }
+
     if (numberOfAbsorbedValues)
         context.build.statistics().count(StatisticID::ConcatenationsFused, numberOfAbsorbedValues);
-    else if (!didMoveStrings && !didDropParts)
+    else if (!didMoveStrings && !didDropParts && !didJoinTexts)
         return PassOutcome::Unchanged;
     // The analyses were told of every edit, so whatever they hold was made behind the last one.
     context.keptAnalyses = allAnalyses;
@@ -2881,8 +3023,64 @@ static constexpr OperandUses usesOfMatching {
     OperandUse::PassesToUserCode,
 };
 
+// One evaluation of the literal gets to one of the blocks at most: none of them leads to another, or back to itself, except through the block of the literal.
+static bool excludeOneAnother(const CFG& cfg, BlockID blockOfLiteral, std::span<const BlockID> blocks)
+{
+    BitVector isReached;
+    Vector<BlockID, 16> worklist(blocks);
+    while (!worklist.isEmpty()) {
+        for (BlockID target : cfg.successors(worklist.takeLast())) {
+            if (target != blockOfLiteral && isReached.add(target.index()))
+                worklist.append(target);
+        }
+    }
+    return std::ranges::none_of(blocks, [&](BlockID block) { return isReached.get(block.index()); });
+}
+
+// `/x/.test(text)` in a test run that may replace RegExp.prototype.test: the literal stands ahead of the test of the member, the built-in takes it on one arm and a call does on the other.
+// Each of the blocks makes its own object, and the one that only the built-in sees can be shared.
+static PassOutcome createLiteralsInBlocksThatUseThem(FunctionPassContext& context)
+{
+    if (context.function.blocks.size() < 2)
+        return PassOutcome::Unchanged;
+    Rewrite rewrite(context);
+    const UseLists& useLists = rewrite.uses();
+    Vector<BlockID, 4> userBlocks;
+    for (BlockID block : rewrite.blocks()) {
+        for (ValueID id : rewrite.at(block).values) {
+            const Value& literal = rewrite.at(id);
+            std::span<const Use> uses = literal.opcode == Opcode::NewRegExp ? useLists.usesOf(id) : std::span<const Use> { };
+            if (uses.empty() || !std::ranges::all_of(uses, [&](const Use& use) { return use.kind == Use::Kind::Operand && use.block != block; }))
+                continue;
+            // Where the pattern may fail to compile, the error is thrown at the place of the literal.
+            const RegExpSummary& summary = regExpSummaryOf(context, literal.pattern(), literal.regExpFlags());
+            if (!summary.isValid() || summary.metadata != RegExpMetadata::Known)
+                continue;
+            userBlocks.shrink(0);
+            for (const Use& use : uses) {
+                if (userBlocks.isEmpty() || userBlocks.last() != use.block)
+                    userBlocks.append(use.block);
+            }
+            if (!excludeOneAnother(rewrite.cfg(), block, userBlocks.span()))
+                continue;
+            rewrite.later([&rewrite, &useLists, block, id, uses = rewrite.keep(uses)]() mutable {
+                while (!uses.empty()) {
+                    size_t numberOfUses = std::ranges::find_if(uses, [&](const Use& use) { return use.block != uses.front().block; }) - uses.begin();
+                    ValueID copy = rewrite.insertBefore(useLists.pointOf(uses.front()), rewrite.at(id).origin(), Value(rewrite.at(id)));
+                    for (const Use& use : uses.first(numberOfUses))
+                        rewrite.replaceUse(use, copy);
+                    uses = uses.subspan(numberOfUses);
+                }
+                rewrite.erase(block, id);
+            });
+        }
+    }
+    return rewrite.commit();
+}
+
 PassOutcome shareRegExpLiterals(FunctionPassContext& context)
 {
+    PassOutcome outcomeOfCopying = createLiteralsInBlocksThatUseThem(context);
     const Program& program = context.program;
     Function& function = context.function;
     const BuildContext& build = context.build;
@@ -2894,7 +3092,7 @@ PassOutcome shareRegExpLiterals(FunctionPassContext& context)
         }
     }
     if (literals.isEmpty())
-        return PassOutcome::Unchanged;
+        return outcomeOfCopying;
 
     const EscapeAnalysis& escape = context.analyses.escape();
     const ValueIdentities& identities = context.analyses.identities();
@@ -2975,7 +3173,7 @@ PassOutcome shareRegExpLiterals(FunctionPassContext& context)
     };
     literals.removeAllMatching([&](ValueID literal) { return !canShare(literal); });
     if (literals.isEmpty())
-        return PassOutcome::Unchanged;
+        return outcomeOfCopying;
 
     for (ValueID literal : literals) {
         Value& value = function.edit(literal);
@@ -3053,16 +3251,16 @@ LiteralStringTable numberLiteralStrings(const Program& program, const FlowResult
         for (StringID string : program.at(id).stringLiterals)
             members.atomicSetAndCheck(string.index(), true);
     };
-    auto collectLiteralsOfAll = [&](std::span<const DeclaredType> positions, Source source) {
+    auto collectLiteralsOfAll = [&](const auto& positions, Source source) {
         for (const DeclaredType& declared : positions)
             collectLiteralsOf(declared.written(), source);
     };
     auto collectStringsOfFunction = [&](FunctionID id, Source sourceOfArguments) {
         const Function& function = program.at(id);
-        collectLiteralsOfAll(function.captures.span(), Source::Program);
+        collectLiteralsOfAll(function.captures, Source::Program);
         collectLiteralsOf(function.thisType.written(), sourceOfArguments);
-        collectLiteralsOfAll(function.parameters.span(), sourceOfArguments);
-        collectLiteralsOfAll(function.results.span(), Source::Program);
+        collectLiteralsOfAll(function.parameters, sourceOfArguments);
+        collectLiteralsOfAll(function.results, Source::Program);
 
         auto collectFromValue = [&](const Value& value) {
             if (value.opcode != Opcode::String)

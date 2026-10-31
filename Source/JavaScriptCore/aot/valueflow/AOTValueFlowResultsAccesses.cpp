@@ -215,6 +215,15 @@ Witness witnessOfStatement(const Program& program, const ValueFlowStatement& sta
     return { statement.function.index(), statement.site.index(), function.locationOf(statement.site) };
 }
 
+// A statement created by a rule passes values on behalf of the operation, or the statement, that first requested it.
+static ValueFlowStatementID requestingOperationOf(const ValueFlowSolver& solver, ValueFlowStatementID logger)
+{
+    AOT_THRESHOLD(unsigned, maxStatementsFollowed, 64);
+    for (unsigned followed = 0; logger && solver.isMadeByRule(logger) && followed < maxStatementsFollowed; ++followed)
+        logger = solver.firstRequesterOf(logger);
+    return logger;
+}
+
 ValueFlowEscapeOrigins::ValueFlowEscapeOrigins(const ValueFlowResultInputs& inputs)
 {
     using ByNumber = WTF::UnsignedWithZeroKeyHashTraits<uint32_t>;
@@ -229,22 +238,15 @@ ValueFlowEscapeOrigins::ValueFlowEscapeOrigins(const ValueFlowResultInputs& inpu
     uint32_t numberOfObjects = universe.numberOfObjects();
     ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
     ValueFlowNodeID carriedOut = nodes.ofHost(ValueFlowHostNode::ValuesCarriedOut);
-    // A statement created by a rule passes values on behalf of the operation, or the statement, that first requested it.
-    auto requestingOperationOf = [&](ValueFlowStatementID logger) {
-        AOT_THRESHOLD(unsigned, maxStatementsFollowed, 64);
-        for (unsigned followed = 0; logger && solver.isMadeByRule(logger) && followed < maxStatementsFollowed; ++followed)
-            logger = solver.firstRequesterOf(logger);
-        return logger;
-    };
     ValueSetID escapedObjects = maker.intersect(solver.possibleValuesOf(escaped), ValueSets::complement(universe.placeholdersAlone()));
     if (ValueSets::isComplement(escapedObjects))
         return;
     // A built-in that inspects its arguments returns some of what it finds. What it finds is derived from what it was passed.
     Vector<ValueFlowNodeID, 4> inspectedNodes;
     for (ValueFlowNodeID taking : { escaped, carriedOut }) {
-        solver.graph().forEachPredecessor(taking, [&](ValueFlowNodeID predecessor) {
+        solver.forEachPredecessorIncludingRemoved(taking, [&](ValueFlowNodeID predecessor) {
             const ValueFlowSolver::LoggedEdge* logged = solver.findLoggedEdge({ predecessor, taking });
-            ValueFlowStatementID operation = logged ? requestingOperationOf(logged->statement) : ValueFlowStatementID();
+            ValueFlowStatementID operation = logged ? requestingOperationOf(solver, logged->statement) : ValueFlowStatementID();
             if (!operation || solver.statementAt(operation).kind != ValueFlowStatementKind::Behavior)
                 return;
             ValueFlowNodeID inspectedNode = solver.statementAt(operation).result;
@@ -346,7 +348,7 @@ ValueFlowEscapeOrigins::ValueFlowEscapeOrigins(const ValueFlowResultInputs& inpu
         return node == escaped || node == carriedOut;
     };
     auto addPathsThrough = [&](const EscapedHolders& through, ValueSetID lookedFor) {
-        solver.graph().forEachPredecessor(through.contents, [&](ValueFlowNodeID value) {
+        solver.forEachPredecessorIncludingRemoved(through.contents, [&](ValueFlowNodeID value) {
             const ValueFlowNodeKey* key = solver.keyOfMadeNode(value);
             bool mirrorsWrittenValues = key && (key->kind == ValueFlowMadeNodeKind::Written || key->kind == ValueFlowMadeNodeKind::WrittenUnderKind);
             ValueSetID escaping = mirrorsWrittenValues || holdsEscapedObjects(value) ? ValueSets::nothing : maker.intersect(solver.seenValuesOf(value), lookedFor);
@@ -367,7 +369,7 @@ ValueFlowEscapeOrigins::ValueFlowEscapeOrigins(const ValueFlowResultInputs& inpu
         for (ValueFlowNodeID node : level) {
             ValueSetID lookedFor = std::exchange(lookedForNext[node.index()], ValueSets::nothing);
             bool receivesEscapedObjects = node == escaped || node == carriedOut;
-            solver.graph().forEachPredecessor(node, [&](ValueFlowNodeID predecessor) {
+            solver.forEachPredecessorIncludingRemoved(node, [&](ValueFlowNodeID predecessor) {
                 if (predecessor == escaped)
                     return;
                 ValueSetID escaping = maker.intersect(solver.seenValuesOf(predecessor), lookedFor);
@@ -384,7 +386,7 @@ ValueFlowEscapeOrigins::ValueFlowEscapeOrigins(const ValueFlowResultInputs& inpu
                 };
                 auto follow = [&](const ValueFlowSolver::LoggedEdge* logged) {
                     ValueFlowStatementID logger = logged ? logged->statement : ValueFlowStatementID();
-                    if (ValueFlowStatementID operation = receivesEscapedObjects ? requestingOperationOf(logger) : ValueFlowStatementID(); operation && operation != logger) {
+                    if (ValueFlowStatementID operation = receivesEscapedObjects ? requestingOperationOf(solver, logger) : ValueFlowStatementID(); operation && operation != logger) {
                         if (isProgramStatement(operation))
                             return paths.append({ operation, ValueSets::nothing, escaping });
                         if (solver.statementAt(operation).kind == ValueFlowStatementKind::Behavior)
@@ -481,15 +483,41 @@ void ValueFlowBirthsOfUnknownObject::findRoots(const ValueFlowResultInputs& inpu
     BitVector isMeetingPlace(numberOfNodes);
     isMeetingPlace.quickSet(ValueFlowProgramNodes::escaped().index());
     isMeetingPlace.quickSet(ValueFlowProgramNodes::lost().index());
+    // One object stands for what a built-in answers wherever it is called without a site. It holds what every such call in the program stored on it.
+    BitVector readsSharedResultsOfBuiltins(numberOfNodes);
+    uint32_t firstHostObject = inputs.universe().hostObject(0).index();
     for (size_t index : holders.holdsUnknownObject) {
         const ValueFlowNodeKey* key = solver.keyOfMadeNode(ValueFlowNodeID(static_cast<uint32_t>(index)));
         if (!key || !key->set || key->kind == ValueFlowMadeNodeKind::Constant || key->kind == ValueFlowMadeNodeKind::Masked || key->kind == ValueFlowMadeNodeKind::Instance)
             continue;
-        if (ValueSets::isComplement(key->set) || inputs.sets().contains(key->set, ValueFlowUniverse::unknownObject()))
+        if (ValueSets::isComplement(key->set) || inputs.sets().contains(key->set, ValueFlowUniverse::unknownObject())) {
             isMeetingPlace.quickSet(index);
+            continue;
+        }
+        if (key->kind != ValueFlowMadeNodeKind::Read && key->kind != ValueFlowMadeNodeKind::ReadUnderKind && key->kind != ValueFlowMadeNodeKind::Lookup)
+            continue;
+        bool readsOnlySharedResults = key->set != ValueSets::nothing;
+        inputs.sets().forEachMember(key->set, [&](ValueFlowObjectID object) {
+            readsOnlySharedResults &= inputs.universe().kindOf(object) == ValueFlowObjectKind::ResultOfBuiltin && object.index() < firstHostObject;
+        });
+        if (readsOnlySharedResults)
+            readsSharedResultsOfBuiltins.quickSet(index);
     }
     auto isTraced = [&](ValueFlowNodeID node) {
         return node && holders.holdsUnknownObject.quickGet(node.index()) && !isMeetingPlace.quickGet(node.index());
+    };
+    // A statement calls built-ins without a site for what an operand of unknown type may be, so it reads their shared results only while the operand has unknown type.
+    auto forEachOperandOfUnknownType = [&](const ValueFlowStatement& statement, const auto& functor) {
+        bool hasFound = false;
+        if (statement.kind != ValueFlowStatementKind::Operation)
+            return hasFound;
+        for (const ValueFlowOperand& operand : inputs.bodies().operandsOf(statement)) {
+            if (!isTraced(operand.node))
+                continue;
+            functor(operand.node);
+            hasFound = true;
+        }
+        return hasFound;
     };
     // Where a statement finds the callee or the holder it passes values to: in its first operands, or in a lookup its rule asked for.
     auto forEachUnknownInput = [&](ValueFlowStatementID id, size_t numberOfOperands, const auto& functor) {
@@ -500,9 +528,11 @@ void ValueFlowBirthsOfUnknownObject::findRoots(const ValueFlowResultInputs& inpu
                     functor(operand.node);
             }
         }
-        solver.forEachMadeNodeAskedForBy(id, [&](const ValueFlowNodeKey& key, ValueFlowStatementID, ValueFlowNodeID first) {
+        inputs.forEachMadeNodeAskedForBy(id, kindsOfMadeNodes({ ValueFlowMadeNodeKind::Read, ValueFlowMadeNodeKind::ReadUnderKind, ValueFlowMadeNodeKind::Lookup }), false, [&](const ValueFlowNodeKey& key, ValueFlowStatementID, ValueFlowNodeID first) {
             bool reads = key.kind == ValueFlowMadeNodeKind::Read || key.kind == ValueFlowMadeNodeKind::ReadUnderKind || key.kind == ValueFlowMadeNodeKind::Lookup;
-            if (reads && isTraced(first))
+            if (!reads || !isTraced(first))
+                return;
+            if (!readsSharedResultsOfBuiltins.quickGet(first.index()) || !forEachOperandOfUnknownType(statement, functor))
                 functor(first);
         });
     };
@@ -730,8 +760,18 @@ void ValueFlowBirthsOfUnknownObject::findRoots(const ValueFlowResultInputs& inpu
         if (isMeetingPlace.quickGet(node))
             continue;
         for (uint32_t successor : holders.successorsOf(static_cast<uint32_t>(node))) {
-            if (!isMeetingPlace.quickGet(successor))
-                graph.addEdge(firstNodeVertex + node, firstNodeVertex + successor);
+            if (isMeetingPlace.quickGet(successor))
+                continue;
+            if (readsSharedResultsOfBuiltins.quickGet(node) && !readsSharedResultsOfBuiltins.quickGet(successor)) {
+                const ValueFlowSolver::LoggedEdge* logged = solver.findLoggedEdge({ ValueFlowNodeID(static_cast<uint32_t>(node)), ValueFlowNodeID(successor) });
+                ValueFlowStatementID reader = logged ? requestingOperationOf(solver, logged->statement) : ValueFlowStatementID();
+                bool dependsOnOperands = reader && forEachOperandOfUnknownType(solver.statementAt(reader), [&](ValueFlowNodeID operand) {
+                    graph.addEdge(firstNodeVertex + operand.index(), firstNodeVertex + successor);
+                });
+                if (dependsOnOperands)
+                    continue;
+            }
+            graph.addEdge(firstNodeVertex + node, firstNodeVertex + successor);
         }
     }
     graph.buildLists();
@@ -917,7 +957,7 @@ ValueFlowBirthsOfUnknownObject::ValueFlowBirthsOfUnknownObject(const ValueFlowRe
         for (size_t index : holdsUnknownObject) {
             if (isConstant.quickGet(index))
                 continue;
-            graph.forEachPredecessor(ValueFlowNodeID(static_cast<uint32_t>(index)), [&](ValueFlowNodeID predecessor) {
+            solver.forEachPredecessorIncludingRemoved(ValueFlowNodeID(static_cast<uint32_t>(index)), [&](ValueFlowNodeID predecessor) {
                 if (holdsUnknownObject.quickGet(predecessor.index()))
                     functor(predecessor.index(), static_cast<uint32_t>(index));
             });

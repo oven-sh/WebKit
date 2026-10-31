@@ -105,6 +105,8 @@ private:
     struct PlacedArguments {
         Vector<B3::ConstrainedValue, 8> inRegisters;
         Vector<LValue, 4> onStack;
+        // CallingConventions::letsGoOfParameter().
+        Vector<LValue, 1> letGoByCallee;
         uint32_t stackWordsToReserve { 0 };
         uint16_t entry { primaryEntry };
     };
@@ -121,6 +123,8 @@ private:
 
     PlacedArguments placeArguments(FunctionID callee, const ArgumentLocations&, std::span<const Operand>, OmittedArguments);
     PlacedArguments placeConventionArguments(const ConventionCall&);
+    void markArgumentsLetGoByCallee(B3::PatchpointValue*, const PlacedArguments&);
+    static void emitClearOfReleasedRegisters(CCallHelpers&, const B3::StackmapGenerationParams&, const RegisterSet& among);
     NativeCallExpectation expectationOf(const OperationContext&, CalledBuiltin);
     std::span<const BuiltinID> builtinsCalledByNativeCode();
 

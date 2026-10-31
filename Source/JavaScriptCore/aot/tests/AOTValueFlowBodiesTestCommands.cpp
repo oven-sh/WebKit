@@ -253,7 +253,7 @@ static void printValueFlowBody(PrintStream& out, const Program& program, const V
 void runValueFlowBodyTestCommand(TestCommandContext& context)
 {
     const Program& program = *context.program;
-    ValueFlowBuiltinTables tables(program.builtins(), context.build.limit(LimitID::MaxObjectsOfTypedResult));
+    ValueFlowBuiltinTables tables(program.builtins());
     auto print = [&](const ValueFlowBody& body) {
         printValueFlowBody(context.out, program, body);
     };

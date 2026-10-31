@@ -34,7 +34,7 @@ variable g3 name="t3" declared={type=L3} initialization=Undefined
 # CHECK-NEXT: Branch [[closingSeenId0]] -> taken {{*}}, notTaken [[idIsMissing0]]()
 # CHECK: = JSONParseNumber [[idValue0]]
 # CHECK: [[plain0]]:{{*}}= JSONParseValue [[idValue0]]
-# CHECK: [[plainValue0]]: anything = ResultAt [[plain0]] index=1
+# CHECK: [[plainValue0]]: null|boolean|number|string|object = ResultAt [[plain0]] index=1
 # CHECK: [[fits0]]: boolean = TypeTest [[plainValue0]] testedType=number
 # CHECK-NEXT: Branch [[fits0]] -> taken {{*}}, notTaken [[otherKind0]](| 0)
 # CHECK: [[otherKind0]]({{*}}) frequency=Rare:
@@ -66,7 +66,7 @@ variable g3 name="t3" declared={type=L3} initialization=Undefined
 # CHECK: [[again2]]() frequency=Rare:
 # CHECK-NEXT: [[plain2]]:{{*}}= JSONParseValue [[element2]]
 # CHECK: AppendElement [[array2]],
-# CHECK: [[plainValue2]]: anything = ResultAt [[plain2]] index=1
+# CHECK: [[plainValue2]]: null|boolean|number|string|object = ResultAt [[plain2]] index=1
 # CHECK: [[isUser2]]: boolean = TypeTest [[plainValue2]] testedType=L0
 # CHECK-NEXT: Branch [[isUser2]] -> taken {{*}}, notTaken [[notUser2]](| 0)
 # CHECK: [[notUser2]]({{*}}) frequency=Rare:
@@ -81,7 +81,7 @@ variable g3 name="t3" declared={type=L3} initialization=Undefined
 # CHECK: [[plain3]]:{{*}}= JSONParseValue [[countValue3]]
 # CHECK: [[parsedInteger3]]:{{*}}= ResultAt [[integer3]] index=1
 # CHECK: = TypeTest [[parsedInteger3]] testedType=i32
-# CHECK: [[plainValue3]]: anything = ResultAt [[plain3]] index=1
+# CHECK: [[plainValue3]]: null|boolean|number|string|object = ResultAt [[plain3]] index=1
 # CHECK: [[fits3]]: boolean = TypeTest [[plainValue3]] testedType=i32
 # CHECK-NEXT: Branch [[fits3]] -> taken {{*}}, notTaken [[doesNotFit3]](| 0)
 # CHECK: [[doesNotFit3]]({{*}}) frequency=Rare:

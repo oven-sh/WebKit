@@ -1,7 +1,9 @@
 aot/analysis/AOTWholeLiterals.cpp
 aot/builtins/AOTBuiltinCallEmitter.cpp
+aot/builtins/AOTFormatPatternPlanner.cpp
 aot/builtins/AOTResolveBuiltinsTailCalls.cpp
 aot/builtins/AOTSimplifyBuiltinCallsConcatenations.cpp
+aot/builtins/AOTSimplifyBuiltinCallsFormatters.cpp
 aot/builtins/AOTSimplifyBuiltinCallsRegExps.cpp
 aot/builtins/AOTSimplifyBuiltinCallsSplits.cpp
 aot/codegen/AOTConversionEmitter.cpp

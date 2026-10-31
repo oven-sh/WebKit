@@ -16,7 +16,7 @@
 # RUN(CALLS): lower-to-b3 optimized loops f1
 # REQUIRES(CALLS): unsanitized-code
 # RUN(X64): lower-to-air loops f1
-# REQUIRES(X64): x86_64 not-windows unsanitized-code
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls
 # RUN(ARM64): lower-to-air loops f1
 # REQUIRES(ARM64): arm64 not-windows unsanitized-code
 
@@ -135,7 +135,7 @@ function f1 name="drain" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 
 # A pop is written out. The kind of storage is loaded and compared, first with integers: that arm loads the last element, stores the mark of a hole over it and stores the shorter length.
 # LOOP-LABEL: loop #
-# LOOP: Int32 b@[[kind]] = Load8Z(b@{{*}}, offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc)
+# LOOP: Int32 b@[[kind]] = Load8Z(b@{{*}}, offset = 4, ControlDependent|Reads:JSArray_indexingTypeAndMisc)
 # LOOP: Int32 b@[[isIntegers]] = Equal(b@[[kind]], $5(b@{{*}}))
 # LOOP: Branch(b@[[isIntegers]], Terminal)
 # LOOP: Int64 b@{{*}} = Load(b@{{*}}, offset = -8, ControlDependent|Reads:indexedInt32Properties)
@@ -149,8 +149,8 @@ function f1 name="drain" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 # LOOP-LABEL: end of loop
 # Only a list in none of the three kinds of storage calls Array.prototype.pop itself: the one call in the loop beside the poll. The kind is loaded once a turn.
 # CALLS-LABEL: loop #
-# CALLS-COUNT-1: Reads:JSCell_indexingTypeAndMisc
-# CALLS-NOT: Reads:JSCell_indexingTypeAndMisc
+# CALLS-COUNT-1: Reads:JSArray_indexingTypeAndMisc
+# CALLS-NOT: Reads:JSArray_indexingTypeAndMisc
 # CALLS: isLoopPoll, ExitsSideways
 # CALLS-NOT: ExitsSideways
 # CALLS: ExitsSideways{{*}}:CallBuiltin)

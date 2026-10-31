@@ -1,4 +1,4 @@
-# `parse` holds JSON.parse or String, so the call in the loop is split by its callee. String(text) becomes its operand and takes the operand's narrower type.
+# `parse` holds JSON.parse or String, and a function that is handed to code nobody knows stores to it, so it is read in every turn and the call in the loop is split by its callee. String(text) becomes its operand and takes the operand's narrower type.
 # The cast that read the call now reads the operand. It is retyped too, so the next round removes it.
 # RUN: pipeline Select
 
@@ -24,8 +24,12 @@ function f0 name="" kind=Module results=[{type=anything}] {
     Jump -> next b2()
   b2():
     v10 = Integer integer=10
-    v11 = Call v0, -, v10
-    Return v11
+    v11 = NewClosure function=f2
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="keep" [isFreeName]
+    v14 = Call v13, -, v11
+    v15 = Call v0, -, v10
+    Return v15
 }
 
 function f1 name="read" parameters=[{type=anything}] results=[{type=anything}] {
@@ -53,8 +57,18 @@ function f1 name="read" parameters=[{type=anything}] results=[{type=anything}] {
   b3():
     Return v2
 }
+
+function f2 name="replace" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=String
+    PutModuleVariable v0 variable=g1
+    Return v0
+}
 # CHECK-LABEL: function f1 name="read"
 # CHECK-NOT: overload=String/0
 # CHECK-NOT: : string = Upcast
+# CHECK: [[text]]: {{*}} = String string=
+# CHECK-NOT: overload=String/0
+# CHECK-NOT: : string = Upcast
 # CHECK: frequency=Unlikely
-# CHECK-NEXT: = PropGet v9 key="id"
+# CHECK-NEXT: = PropGet [[text]] key="id"

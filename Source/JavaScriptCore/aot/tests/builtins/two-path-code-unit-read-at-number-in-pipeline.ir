@@ -1,4 +1,4 @@
-# A code unit is the position of the next read. The joined answer of a read is a number, so the next read tests it for an int32, and the edge from inside the string skips that test: on the path that stays inside the string only the first of the three reads tests its position
+# A code unit is the position of the next read. Every code unit that a read answers with joins the others as an integer, also the one of the call in unlikely code, and NaN goes its own way: only the first of the three reads tests its position
 # FORM: Prepared optimizing
 # RUN: pass SimplifyBuiltinCalls RetypeValues PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters SimplifyCasts RetypeValues EliminateDeadCode CompactBlocks
 
@@ -13,12 +13,12 @@ function f0 name="chainOfReads" parameters=[{type=string}, {type=number}] result
 # CHECK-NEXT: = TypeTest v1 testedType=i32
 # CHECK: [[unit1]]: int[0, 65535] = GetStringCodeUnit v0,
 # CHECK-NEXT: Jump -> next [[second]]([[unit1]])
-# CHECK: [[second]]([[position2]]: i32{{*}}):
+# CHECK: [[second]]([[position2]]: int[0, 65535]):
 # CHECK-NEXT: [[zero2]]: 0 = Integer
 # CHECK-NEXT: = URShift [[position2]], [[zero2]]
 # CHECK: [[unit2]]: int[0, 65535] = GetStringCodeUnit v0,
 # CHECK-NEXT: Jump -> next [[third]]([[unit2]])
-# CHECK: [[third]]([[position3]]: i32{{*}}):
+# CHECK: [[third]]([[position3]]: int[0, 65535]):
 # CHECK-NEXT: [[zero3]]: 0 = Integer
 # CHECK-NEXT: = URShift [[position3]], [[zero3]]
 # CHECK: [[unit3]]: int[0, 65535] = GetStringCodeUnit v0,

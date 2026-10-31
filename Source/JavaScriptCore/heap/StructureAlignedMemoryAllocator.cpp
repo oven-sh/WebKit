@@ -240,6 +240,31 @@ public:
         m_hasReleasedReserve = false;
     }
 
+    // keepReserve() takes a block whenever a block is allocated, but the heap may go a long way on the blocks it already has.
+    bool tryFillReserve()
+    {
+        for (;;) {
+            {
+                Locker locker(m_reserveLock);
+                if (m_hasReleasedReserve)
+                    return false;
+                if (m_reserve.size() == reserveBlockCount)
+                    return true;
+            }
+            void* block = tryMallocStructureBlockWithoutReserve();
+            if (!block)
+                return false;
+            {
+                Locker locker(m_reserveLock);
+                if (!m_hasReleasedReserve && m_reserve.size() < reserveBlockCount) {
+                    m_reserve.append(block);
+                    continue;
+                }
+            }
+            freeStructureBlock(block);
+        }
+    }
+
     void keepReserve()
     {
         if (m_blockCount.load(std::memory_order_relaxed) * MarkedBlock::blockSize <= g_jscConfig.sizeOfStructureHeap / reserveThresholdDivisor)
@@ -398,6 +423,11 @@ void StructureAlignedMemoryAllocator::didThrowOutOfMemoryError()
     s_structureMemoryManager->didThrowOutOfMemoryError();
 }
 
+bool StructureAlignedMemoryAllocator::tryFillReserve()
+{
+    return s_structureMemoryManager->tryFillReserve();
+}
+
 void StructureAlignedMemoryAllocator::initializeStructureAddressSpace()
 {
     s_structureMemoryManager.construct();
@@ -462,6 +492,11 @@ bool StructureAlignedMemoryAllocator::tryRestoreReleasedReserve()
 
 void StructureAlignedMemoryAllocator::didThrowOutOfMemoryError()
 {
+}
+
+bool StructureAlignedMemoryAllocator::tryFillReserve()
+{
+    return true;
 }
 
 void StructureAlignedMemoryAllocator::initializeStructureAddressSpace()

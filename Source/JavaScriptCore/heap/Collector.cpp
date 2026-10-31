@@ -1234,6 +1234,12 @@ void Collector::startCollectingContinuously()
         [this] () {
             MonotonicTime initialTime = MonotonicTime::now();
             Seconds period = Seconds::fromMilliseconds(Options::collectContinuouslyPeriodMS());
+#if OS(WINDOWS)
+            // ThreadCondition::timedWait() rounds its timeout down to whole milliseconds and returns at once for zero, so no wait is shorter than 1 ms.
+            constexpr Seconds shortestWait = 1_ms;
+#else
+            constexpr Seconds shortestWait = 0_s;
+#endif
             while (true) {
                 Locker locker { m_collectContinuouslyLock };
                 {
@@ -1248,9 +1254,10 @@ void Collector::startCollectingContinuously()
 
                 Seconds elapsed = MonotonicTime::now() - initialTime;
                 Seconds elapsedInPeriod = elapsed % period;
-                MonotonicTime timeToWakeUp =
-                    initialTime + elapsed - elapsedInPeriod + period;
-                while (!hasElapsed(timeToWakeUp) && !m_shouldStopCollectingContinuously) {
+                MonotonicTime timeToWakeUp = std::max(
+                    initialTime + elapsed - elapsedInPeriod + period,
+                    initialTime + elapsed + 2 * shortestWait);
+                while (!hasElapsed(timeToWakeUp - shortestWait) && !m_shouldStopCollectingContinuously) {
                     m_collectContinuouslyCondition.waitUntil(
                         m_collectContinuouslyLock, timeToWakeUp);
                 }

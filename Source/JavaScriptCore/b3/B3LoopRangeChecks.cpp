@@ -62,6 +62,15 @@ static bool isSameValueInPreHeader(const LoopInvariance& invariance, Value* othe
     }
 }
 
+// Behind a slow path, what the loop computes again may differ from what was computed in front of the loop.
+static Value* canonicalValueOnEntry(const LoopInvariance& invariance, bool isEnteredOnAnyTurn, Value* value)
+{
+    Value* canonical = invariance.canonicalValue(value);
+    if (isEnteredOnAnyTurn && !invariance.plan().isHoisted(canonical))
+        return value;
+    return canonical;
+}
+
 static void decideComparisonsWithBound(const RangeCheckInputs& inputs, RangeCheckPlan& plan)
 {
     const CountedLoop& loop = inputs.loop;
@@ -161,7 +170,7 @@ struct CounterEnd {
 static CounterEnd counterEnd(const CountedLoop& loop, bool isMax)
 {
     if (isMax != loop.increases())
-        return { loop.start, 0 };
+        return { loop.counterOnEntry(), 0 };
     if (loop.includesEqual())
         return { loop.bound, 0 };
     return { loop.bound, isMax ? -1 : 1 };
@@ -213,7 +222,7 @@ static bool findAffineIndexInLoop(const RangeCheckInputs& inputs, Value* value, 
     return findAffineIndex({ proc, loop.inductionVariable, IntRange(lowestCounter->min(), highestCounter->max()), [&](Value* value) -> Value* {
         if (!invariance.isInvariant(value))
             return nullptr;
-        Value* canonical = invariance.canonicalValue(value);
+        Value* canonical = canonicalValueOnEntry(invariance, loop.isEnteredOnAnyTurn, value);
         if (!invariance.isAvailableInPreHeader(canonical) || isStoredInLoop(*inputs.region.loop, canonical))
             return nullptr;
         return canonical;
@@ -365,7 +374,7 @@ static void findRangeChecks(const RangeCheckInputs& inputs, RangeCheckPlan& plan
     const LoopInvariance& invariance = inputs.invariance;
     if (!inputs.canClampBound)
         return;
-    Int128 maxStart = intervalFor(proc, loop.start, Signedness::Signed).max;
+    Int128 maxStart = intervalFor(proc, loop.counterOnEntry(), Signedness::Signed).max;
     for (BasicBlock* block : inputs.region.blocks) {
         if (loop.isTopTested && inputs.blocksBeforeTopTest.contains(block))
             continue;
@@ -378,7 +387,7 @@ static void findRangeChecks(const RangeCheckInputs& inputs, RangeCheckPlan& plan
                 continue;
             if (isStoredInLoop(*inputs.region.loop, limit))
                 continue;
-            limit = invariance.canonicalValue(limit);
+            limit = canonicalValueOnEntry(invariance, loop.isEnteredOnAnyTurn, limit);
             if (!invariance.isAvailableInPreHeader(limit))
                 continue;
             std::optional<int64_t> offset;
@@ -390,7 +399,7 @@ static void findRangeChecks(const RangeCheckInputs& inputs, RangeCheckPlan& plan
             }
             if (maxStart + *offset < 0)
                 continue;
-            size_t found = plan.bounds.findIf([&](auto& bound) { return bound.limit == limit; });
+            size_t found = plan.bounds.findIf([&](auto& bound) { return bound.limit == limit || (loop.isEnteredOnAnyTurn && isSameValueInPreHeader(invariance, bound.limit, limit)); });
             if (found == notFound) {
                 if (plan.bounds.size() == proc.limit(Limit::MaxRangeCheckBoundsPerLoop)) {
                     proc.didReachLimit(Limit::MaxRangeCheckBoundsPerLoop, value->origin());
@@ -416,7 +425,7 @@ static void findRangeChecks(const RangeCheckInputs& inputs, RangeCheckPlan& plan
         return;
     Signedness signedness = loop.signedness();
     if (!loop.isTopTested && !plan.relationHoldsOnEntry)
-        plan.entryGuards.append({ loop.relation, loop.start, signedness, loop.bound, signedness, 0 });
+        plan.entryGuards.append({ loop.relation, loop.counterOnEntry(), signedness, loop.bound, signedness, 0 });
     if (!loop.cannotWrap())
         plan.entryGuards.append({ safeBoundRelation(loop), loop.bound, signedness, nullptr, Signedness::Signed, static_cast<int64_t>(loop.farthestSafeBound) });
 }
@@ -424,8 +433,13 @@ static void findRangeChecks(const RangeCheckInputs& inputs, RangeCheckPlan& plan
 RangeCheckPlan planRangeChecks(const RangeCheckInputs& inputs)
 {
     RangeCheckPlan plan;
+    const CountedLoop& loop = inputs.loop;
+    plan.holdsOnAnyTurn = loop.isEnteredOnAnyTurn;
     decideComparisonsWithBound(inputs, plan);
     findRangeChecks(inputs, plan);
+    // A slow path may have changed the bound behind the test.
+    if (loop.isEnteredOnAnyTurn && !loop.isTopTested && plan.relationHoldsOnEntry && !plan.clampsBound() && !plan.decidedComparisons.isEmpty())
+        plan.entryGuardsOfLaterTurns.append({ loop.relation, loop.counterOnEntry(), loop.signedness(), loop.bound, loop.signedness(), 0 });
     return plan;
 }
 
@@ -531,12 +545,14 @@ static std::optional<MeetingCounters> findMeetingCounters(const MeetingCountersI
 RangeCheckPlan planRangeChecksOfMeetingCounters(const MeetingCountersInputs& inputs)
 {
     RangeCheckPlan plan;
+    plan.holdsOnAnyTurn = inputs.isEnteredOnAnyTurn;
     std::optional<MeetingCounters> counters = findMeetingCounters(inputs);
     if (!counters)
         return plan;
     const LoopInvariance& invariance = inputs.invariance;
-    Value* low = counters->rising.start;
-    Value* high = counters->falling.start;
+    counters->rising.isEnteredOnAnyTurn = counters->falling.isEnteredOnAnyTurn = inputs.isEnteredOnAnyTurn;
+    Value* low = counters->rising.counterOnEntry();
+    Value* high = counters->falling.counterOnEntry();
     IndexSet<BasicBlock*> noBlocks;
     Vector<Value*, 4> limits;
     for (BasicBlock* block : inputs.region.blocks) {
@@ -547,7 +563,7 @@ RangeCheckPlan planRangeChecksOfMeetingCounters(const MeetingCountersInputs& inp
             Value* limit = rangeCheck->limit;
             if (!invariance.isInvariant(limit) || isStoredInLoop(*inputs.region.loop, limit))
                 continue;
-            limit = invariance.canonicalValue(limit);
+            limit = canonicalValueOnEntry(invariance, inputs.isEnteredOnAnyTurn, limit);
             if (!invariance.isAvailableInPreHeader(limit))
                 continue;
             auto offsetFrom = [&](const CountedLoop& counter) {
@@ -639,7 +655,7 @@ void appendStridedRangeCheckGuards(FastPreHeader& front, const StridedRangeCheck
             front.appendGuard(origin, LessThan, appender.indexAt(counterEnd(loop, check.isIncreasing), check.maxOffset), limit);
         if (!check.isStrengthReduced)
             continue;
-        firstIndices[i] = appender.indexAt({ loop.start, 0 }, 0);
+        firstIndices[i] = appender.indexAt({ loop.counterOnEntry(), 0 }, 0);
         variables[i].stride = front.append(origin, Mul, scale, front.appendIntConstant(origin, Int64, loop.step));
     }
 #pragma clang loop unroll(disable)
@@ -669,7 +685,8 @@ static Value* appendClampedBound(FastPreHeader& front, const RangeCheckPlan& pla
     Value* clamped = widen(bound, loop.signedness());
     if (loop.isUnsigned())
         front.appendGuard(origin, BelowEqual, clamped, constant(maxLimit));
-    Value* startInPreHeader = valueInPreHeader(loop.start);
+    Value* startInPreHeader = valueInPreHeader(loop.counterOnEntry());
+    Int128 minStart = intervalFor(proc, loop.counterOnEntry(), Signedness::Signed).min;
     Value* start = widen(startInPreHeader, Signedness::Signed);
     for (auto& rangeCheckBound : plan.bounds) {
         Value* limit = widen(valueInPreHeader(rangeCheckBound.limit), Signedness::Unsigned);
@@ -679,7 +696,8 @@ static Value* appendClampedBound(FastPreHeader& front, const RangeCheckPlan& pla
             clamped = select(GreaterThan, constant(-rangeCheckBound.minOffset - !loop.includesEqual()), clamped);
             continue;
         }
-        front.appendGuard(origin, GreaterEqual, start, constant(-rangeCheckBound.minOffset));
+        if (!loop.isEnteredOnAnyTurn || minStart < -rangeCheckBound.minOffset)
+            front.appendGuard(origin, GreaterEqual, start, constant(-rangeCheckBound.minOffset));
         front.appendGuard(origin, BelowEqual, limit, constant(maxLimit));
         Value* last = front.append(origin, Sub, limit, constant(rangeCheckBound.maxOffset + loop.includesEqual()));
         front.appendGuard(origin, GreaterEqual, last, constant(0));

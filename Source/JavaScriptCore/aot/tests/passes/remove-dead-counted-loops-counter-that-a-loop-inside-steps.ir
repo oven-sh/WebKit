@@ -1,0 +1,118 @@
+# `for (; i < n; i++) { while (i < m) i++; }`: a loop inside that counts the same way leaves the counter on its way to the bound. One that counts back, or is the only one to count, may keep the loop turning for ever
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass RemoveDeadCountedLoops
+# STATISTIC: RemoveDeadCountedLoopsChanges = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="loopInsideCountsOn" parameters=[{type=int[0, 100]}, {type=int[0, 100]}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3: int[0, 101]):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b6()
+  b2(v6):
+    Jump -> next b3(v6)
+  b3(v7: int[0, 100]):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b4(| 0), notTaken b5()
+  b4(v10):
+    v11 = Increment v10
+    Jump -> next b3(v11)
+  b5():
+    v12 = Increment v7
+    Jump -> next b1(v12)
+  b6():
+    Return
+# CHECK: b0(
+# CHECK: Jump -> next b6()
+# CHECK-NOT: LoopHint
+}
+
+function f1 name="loopInsideCountsBack" parameters=[{type=int[0, 100]}, {type=int[0, 100]}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3: int[0, 100]):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b6()
+  b2(v6):
+    Jump -> next b3(v6)
+  b3(v7: int[0, 99]):
+    LoopHint
+    v9 = Greater v7, v1
+    Branch v9 -> taken b4(| 0), notTaken b5()
+  b4(v10):
+    v11 = Decrement v10
+    Jump -> next b3(v11)
+  b5():
+    v12 = Increment v7
+    Jump -> next b1(v12)
+  b6():
+    Return
+# CHECK: b0(
+# CHECK: Jump -> next b1(v2)
+# CHECK-COUNT-2: LoopHint
+}
+
+function f2 name="onlyLoopInsideCounts" parameters=[{type=int[0, 100]}, {type=int[0, 100]}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3: int[0, 100]):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b6()
+  b2(v6):
+    Jump -> next b3(v6)
+  b3(v7: int[0, 100]):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b4(| 0), notTaken b5()
+  b4(v10):
+    v11 = Increment v10
+    Jump -> next b3(v11)
+  b5():
+    Jump -> next b1(v7)
+  b6():
+    Return
+# CHECK: b0(
+# CHECK: Jump -> next b1(v2)
+# CHECK-COUNT-2: LoopHint
+}
+
+function f3 name="loopsInsideCountBothWays" parameters=[{type=int[0, 100]}, {type=int[0, 100]}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3: int[0, 101]):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b9()
+  b2(v6):
+    Jump -> next b3(v6)
+  b3(v7: int[0, 100]):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b4(| 0), notTaken b5()
+  b4(v10):
+    v11 = Increment v10
+    Jump -> next b3(v11)
+  b5():
+    Jump -> next b6(v7)
+  b6(v12: int[0, 100]):
+    LoopHint
+    v14 = Greater v12, v1
+    Branch v14 -> taken b7(| 0), notTaken b8()
+  b7(v15):
+    v16 = Decrement v15
+    Jump -> next b6(v16)
+  b8():
+    v17 = Increment v12
+    Jump -> next b1(v17)
+  b9():
+    Return
+# CHECK: b0(
+# CHECK: Jump -> next b1(v2)
+# CHECK-COUNT-3: LoopHint
+}

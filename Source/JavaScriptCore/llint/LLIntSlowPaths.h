@@ -34,6 +34,12 @@ namespace JSC {
 class CallFrame;
 struct ProtoCallFrame;
 
+#if ENABLE(AOT)
+namespace AOT {
+struct CustomAccessorRecord;
+}
+#endif
+
 namespace LLInt {
 
 extern "C" UGPRPair SYSV_ABI llint_trace_operand(CallFrame*, const JSInstruction*, int fromWhere, int operand) REFERENCED_FROM_ASM WTF_INTERNAL;
@@ -94,6 +100,7 @@ LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_new_object);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_new_array);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_jtrue);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_jfalse);
+extern "C" UGPRPair SYSV_ABI llint_slow_path_aot_call_custom_getter(CallFrame*, const JSInstruction*, const AOT::CustomAccessorRecord*, JSCell* base) REFERENCED_FROM_ASM WTF_INTERNAL;
 #endif
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_has_private_name);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_has_private_brand);

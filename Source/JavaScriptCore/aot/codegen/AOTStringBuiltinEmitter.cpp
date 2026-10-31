@@ -11,9 +11,11 @@
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinFamilyEmitter.h"
 #include "AOTConversionEmitter.h"
+#include "AOTElementAccessEmitter.h"
 #include "AOTOperatorEmitter.h"
 #include "AOTRepresentation.h"
 #include "AOTRuntimeCallEmitter.h"
+#include "AOTStubsStrings.h"
 #include "AOTThreshold.h"
 #include "AOTTypeTable.h"
 #include "AOTVector.h"
@@ -173,9 +175,25 @@ void StringBuiltinEmitter::generateStringFromCharCode(const InlineCall& call)
 void StringBuiltinEmitter::generateStringFromCodePoint(const InlineCall& call)
 {
     LBasicBlock miss = missBlockOf(call);
-    Integer codePoint = integerOperand(call.argument(0));
-    branchUnless(belowOrEqual(codePoint, integer(maxSingleCharacterString)), miss);
-    finish(call, singleCharacterString(low32(codePoint)));
+    ValueID argument = call.argument(0);
+    Integer codePoint = [&] {
+        switch (representationOf(argument)) {
+        case Representation::Int32:
+        case Representation::Int64:
+        case Representation::Double:
+        case Representation::DoubleWithPayload:
+        case Representation::ImpureDouble:
+            return emitter<ElementAccessEmitter>().indexOrElse(argument, false, miss);
+        default:
+            break;
+        }
+        Boxed boxed = in<Boxed>(argument);
+        branchUnless(isInt32(boxed), miss);
+        return signExtended(unboxInt32(boxed));
+    }();
+    // Up to here a code point is one code unit, half of a pair too. A negative number is far above.
+    branchUnless(belowOrEqual(codePoint, integer(UINT16_MAX)), miss);
+    finish(call, strings().stringFromCodeUnit(call.context(), low32(codePoint)));
 }
 
 void StringBuiltinEmitter::generateCallStringConstructor(const InlineCall& call)
@@ -276,7 +294,7 @@ void StringBuiltinEmitter::generateStringLocaleCompare(const InlineCall& call)
 {
     CellPointer string = stringOperand(call.receiver());
     CellPointer other = stringOperand(call.argument(0));
-    finish(call, low32(callOperation<Integer>(call.context(), RuntimeOperation::StringLocaleCompare, { string, other })));
+    finish(call, low32(Integer(callStub(call.context(), stringLocaleCompare(), { string.value(), other.value() }).first)));
 }
 
 void StringBuiltinEmitter::generateStringConcat(const InlineCall& call)

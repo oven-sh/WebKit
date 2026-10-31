@@ -11,6 +11,7 @@
 #include "AOTArrayBufferViewBuiltinEmitter.h"
 #include "AOTBarrierEmitter.h"
 #include "AOTBuiltinOperationSupport.h"
+#include "AOTBuiltinTypes.h"
 #include "AOTCellAllocationEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTResultRules.h"

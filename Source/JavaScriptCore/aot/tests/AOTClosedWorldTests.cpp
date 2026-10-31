@@ -22,13 +22,13 @@ using Flags = OptionSet<ImageFlag>;
 
 static constexpr Flags closed { };
 // Text may ask process.getBuiltinModule for a module of the library under a name that nobody knows. No file of the program answers to such a name: closed-world/modules/evaluated-text-finds-no-module-by-name.
-static constexpr Flags runsText { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName };
+static constexpr Flags runsText { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::RunsUnreadCode };
 // A module that stays outside the image has require and every module of the library. It sees no module object of the program and replaces no answer of the loader.
-static constexpr Flags runsModuleFromOutside { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText };
+static constexpr Flags runsModuleFromOutside { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::RunsUnreadCode };
 static constexpr Flags findsModulesByName { ImageFlag::LoadsModulesByName, ImageFlag::FindsDataFilesByName };
-static constexpr Flags loadsCodeFromOutside { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::LoadsCodeOutsideImage, ImageFlag::FindsDataFilesByName };
+static constexpr Flags loadsCodeFromOutside { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::LoadsCodeOutsideImage, ImageFlag::FindsDataFilesByName, ImageFlag::RunsUnreadCode };
 static constexpr Flags showsWaysBetweenModuleObjects { ImageFlag::ShowsWaysBetweenModuleObjects };
-static constexpr Flags open { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::FindsDataFilesByName };
+static constexpr Flags open { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::FindsDataFilesByName, ImageFlag::StoresPathOfMainModule, ImageFlag::RunsUnreadCode };
 
 #define AOT_APPLY_EVALUATOR_TEXT R"IR(function f1 name="apply" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -553,7 +553,7 @@ static void testProgramThatWasNotAnalyzedIsOpen()
 {
     AOT_TEST_CHECK(flagsOf(printsSum, { "disable=flow-results"_s, "exclude=CodeOutsideImage"_s }) == open);
     // Any load may name a file outside the image, so only the options say whether one is loaded.
-    AOT_TEST_CHECK(flagsOf(printsSum, { "disable=flow-results"_s }) == (runsOnlyCodeOfImage ? open : loadsCodeFromOutside));
+    AOT_TEST_CHECK(flagsOf(printsSum, { "disable=flow-results"_s }) == (runsOnlyCodeOfImage ? open : open | Flags { ImageFlag::LoadsCodeOutsideImage }));
 }
 
 static void testObfuscationIsAnotherFlag()

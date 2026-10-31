@@ -24,10 +24,9 @@ ResolvedCallEmitter::ResolvedCallEmitter(CodeGenerator& generator)
 
 void ResolvedCallEmitter::generateResolveCallTarget(const ValueContext& value)
 {
-    uint32_t count = value->argumentCount();
-    RELEASE_ASSERT(count <= numberOfArgumentGPRs);
-    CallOptions options { .pureFunction = pureFunction(PureOperation::ResolveCallTarget, count, true) };
-    LValue target = callStub(value, resolveCallValue(count), { in<Boxed>(value->calleeOperand()).value() }, options).first;
+    StubKey stub = resolveCallValue(value->argumentCount());
+    CallOptions options { .pureFunction = pureFunction(PureOperation::ResolveCallTarget, stub.count(), true) };
+    LValue target = callStub(value, stub, { in<Boxed>(value->calleeOperand()).value() }, options).first;
     define(value, Operand(value.representation(), target));
 }
 
@@ -35,7 +34,6 @@ void ResolvedCallEmitter::generateCallResolved(const ValueContext& value)
 {
     RELEASE_ASSERT(!value.returnCall());
     std::span<const ValueID> arguments = value->argumentsOperands();
-    RELEASE_ASSERT(arguments.size() <= numberOfArgumentGPRs);
 
     std::array<LValue, 1> stubOperands { in<Pointer>(value->targetOperand()).value() };
     Boxed thisValue = value->thisValueOperand() ? in<Boxed>(value->thisValueOperand()) : undefined();

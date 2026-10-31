@@ -6,7 +6,7 @@
 # declare const input: any;
 # (globalThis as any).answer = sums(+input, +input);
 # FORM: AsRead
-# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=pass:MoveGeneratorFramesToHeap
 # RUN: lower-to-b3 optimized f1
 # REQUIRES: unsanitized-code
 # RUN(NONE): lower-to-b3 optimized f1

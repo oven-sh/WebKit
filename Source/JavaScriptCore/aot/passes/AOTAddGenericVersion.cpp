@@ -914,8 +914,8 @@ struct PositionsProvenByTypes {
             for (uint32_t field = 0; layout.isEnvironment() && field < layout.fields.size(); ++field)
                 addVariableIfOpen({ Position::Kind::Field, index, field }, layout.fields[field].flow.location, assignedByEvaluatedText.span());
         }
-        AOT::sort(assumed);
-        AOT::sort(assumedWithoutStart);
+        AOT::sortInLine(assumed);
+        AOT::sortInLine(assumedWithoutStart);
         noteCandidates();
     }
 
@@ -1240,7 +1240,7 @@ struct PositionsProvenByTypes {
                 Vector<Position> taken = collectInParallel<Position>(loops, bodiesToLookAt.size(), [&](unsigned index, Vector<Position>& found) {
                     found.appendVector(std::exchange(bodies[bodiesToLookAt[index]].*list, { }));
                 });
-                AOT::sort(taken);
+                AOT::sortInLine(taken);
                 return taken;
             };
             Vector<Position> givenUp = takeInOrder(&Body::positionsGivenUp);
@@ -1367,7 +1367,7 @@ struct PositionsProvenByTypes {
 
         std::atomic<uint64_t> numberOfChecks { 0 };
         ProgramEditor editor(program);
-        editFunctionsInParallel(editor, build, BehindEdit::Nothing, changed.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
+        editFunctionsInParallel(editor, build, BehindEdit::Fit, changed.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
             const Body* body = bodyOfFunction[id.index()];
             bool hasAnsweredCheck = body && applyTo(function, *body, numberOfChecks);
             {
@@ -1632,7 +1632,7 @@ static ReadsOfBody listReads(const Program& program, const Function& function)
                 reads.typedReadsByName.append(id);
         }
     }
-    AOT::sort(reads.positions);
+    AOT::sortInLine(reads.positions);
     removeRepeatedElements(reads.positions);
     reads.positions.shrinkToFit();
     reads.typedReadsByName.shrinkToFit();
@@ -1849,12 +1849,12 @@ static uint64_t guardTaintedPositions(Program& program, BuildContext& build, Tai
         Vector<Position> marked = std::exchange(assignedByEvaluatedText, { });
         for (Vector<Position>& stores : storesByFunction)
             marked.appendVector(WTF::move(stores));
-        AOT::sort(marked);
+        AOT::sortInLine(marked);
         removeRepeatedElements(marked);
         marked.removeAllMatching([&](Position position) { return !markExpected(program, position); });
         for (FieldReference field : std::exchange(fieldsTakenBack, { }))
             marked.append(positionOfField(field));
-        AOT::sort(marked);
+        AOT::sortInLine(marked);
         if (marked.isEmpty())
             break;
         numberOfPositions += marked.size();
@@ -1895,7 +1895,7 @@ static uint64_t guardTaintedPositions(Program& program, BuildContext& build, Tai
                 found.append(id);
         });
         sortLargestFirst(program, loops, worklist);
-        editFunctionsInParallel(editor, build, BehindEdit::Nothing, worklist.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
+        editFunctionsInParallel(editor, build, BehindEdit::Fit, worklist.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
             numberOfChecks.fetch_add(insertReadChecks(program, id, function, arenas.types, build, marked.span()), std::memory_order_relaxed);
             if (run == TaintedPositionsRun::AfterFlow)
                 assumeTypesOfPositionsAtStores(program, id, function, arenas.types, build);
@@ -1913,7 +1913,7 @@ static uint64_t guardTaintedPositions(Program& program, BuildContext& build, Tai
                 found.append(FunctionID(index));
         });
         sortLargestFirst(program, loops, functionsWithoutChecks);
-        editFunctionsInParallel(editor, build, BehindEdit::Nothing, functionsWithoutChecks.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
+        editFunctionsInParallel(editor, build, BehindEdit::Fit, functionsWithoutChecks.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
             AnalysisContext context { build, program, nullptr, nullptr, id };
             FunctionAnalyses analyses(context, function);
             finishTypedValues(TypePropagationInputs { program, id, function, analyses, arenas.types, build });
@@ -1954,7 +1954,7 @@ static FunctionID findGenericVersionBeside(const Program& program, FunctionID id
     return record && record->body == id && program.at(record->fallback).hasBody() ? record->fallback : FunctionID();
 }
 
-static BitVector findBlocksThatEndBeforeAnyEffect(FunctionPassContext& pass)
+BitVector findBlocksThatEndBeforeAnyEffect(FunctionPassContext& pass)
 {
     const CFG& cfg = pass.analyses.cfg();
     // Nobody can tell that it ran, so nobody can tell that it ran twice.
@@ -1997,6 +1997,14 @@ static BlockID emitCallOfGenericVersion(IRBuilder& builder, FunctionID genericVe
     terminator.setRequirement(tailCallRequirementOf(builder.context().program.at(genericVersion)));
     builder.emitTerminator(WTF::move(terminator));
     return block;
+}
+
+// The callers are compiled by the row that the function has now. The text of the generic version says more than the code that the call stands for.
+static BlockID emitCallOfGenericVersion(FunctionPassContext& pass, IRBuilder& builder, FunctionID genericVersion)
+{
+    if (!pass.function.effectsBeforeRestart && pass.inputs.effects.contains(pass.id))
+        pass.function.effectsBeforeRestart = std::make_shared<const EffectsOnEdges>(pass.inputs.effects.of(pass.id).onCall());
+    return emitCallOfGenericVersion(builder, genericVersion);
 }
 
 static BlockID findCallOfGenericVersion(FunctionPassContext& pass, FunctionID genericVersion)
@@ -2105,22 +2113,38 @@ static bool moveAllocationsBehindTestsThatRestart(FunctionPassContext& pass, Blo
     return hasMoved;
 }
 
-// A test of the state of an object that fails leads into generic code for what follows it, which the function holds for itself.
-PassOutcome restartInGenericVersion(FunctionPassContext& pass)
+FunctionID findGenericVersionToRestartIn(FunctionPassContext& pass)
 {
     const Program& program = pass.program;
-    Function& function = pass.function;
+    const Function& function = pass.function;
     FunctionID genericVersion = findGenericVersionBeside(program, pass.id, function);
     if (!genericVersion || function.at(entryBlock).parameters.size() != program.at(genericVersion).at(entryBlock).parameters.size())
-        return PassOutcome::Unchanged;
+        return { };
     const Function& generic = program.at(genericVersion);
     TypingContext typing { program, function, pass.types };
     if (!typing.typeOf(generic.result()).isSubsetOf(typing.typeOf(function.result()), program))
-        return PassOutcome::Unchanged;
+        return { };
     for (unsigned index = 0; index < generic.numberOfEntryParameters(); ++index) {
         if (!program.typeOf(function, function.at(entryBlock).parameters[index]).isSubsetOf(program.at(declaredEntryTypeOf(typing, generic, index)), program))
-            return PassOutcome::Unchanged;
+            return { };
     }
+    return genericVersion;
+}
+
+BlockID ensureCallOfGenericVersion(FunctionPassContext& pass, IRBuilder& builder, FunctionID genericVersion)
+{
+    if (BlockID restart = findCallOfGenericVersion(pass, genericVersion))
+        return restart;
+    return emitCallOfGenericVersion(pass, builder, genericVersion);
+}
+
+// A test of the state of an object that fails leads into generic code for what follows it, which the function holds for itself.
+PassOutcome restartInGenericVersion(FunctionPassContext& pass)
+{
+    Function& function = pass.function;
+    FunctionID genericVersion = findGenericVersionToRestartIn(pass);
+    if (!genericVersion)
+        return PassOutcome::Unchanged;
 
     IRBuilder builder(pass.analyses.context(), function, pass.types, &pass.analyses);
     builder.setOrigin({ function.position, 0 });
@@ -2132,7 +2156,7 @@ PassOutcome restartInGenericVersion(FunctionPassContext& pass)
         if (failingEdges.isEmpty())
             break;
         if (!restart)
-            restart = emitCallOfGenericVersion(builder, genericVersion);
+            restart = emitCallOfGenericVersion(pass, builder, genericVersion);
         for (Edge edge : failingEdges)
             builder.redirectEdge(edge, Target { restart, { }, { } });
         builder.emptyUnreachableBlocks();

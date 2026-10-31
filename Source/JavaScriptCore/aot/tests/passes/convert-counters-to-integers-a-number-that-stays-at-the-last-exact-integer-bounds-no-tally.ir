@@ -1,0 +1,69 @@
+# 2 ** 53 + 1 is no double: a number that goes up by one stays at 2 ** 53, in as many turns as the loop has. Its range says nothing about how often the loop runs, and the tally goes by the counter
+# that is tested.
+# FORM: Prepared
+# RUN: pass ConvertCountersToIntegers
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="goesUpToTheLastExactInteger" parameters=[{type=int[0, 1000]}] results=[{type=number}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=9007199254740983
+    v3 = Integer integer=2147483600
+    Jump -> next b1(v3, v2, v1)
+  b1(v4, v5, v6):
+    LoopHint
+    v8 = Less v6, v0
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Increment v4
+    v10 = Increment v5
+    v11 = AssumeType v10 provenType=int[9007199254740984, 9007199254740992]
+    v12 = Increment v6
+    Jump -> next b1(v9, v11, v12)
+  b3():
+    Return v4
+# CHECK: b1(v4: int[2147483600, 2147484600], v5: int[9007199254740983, 9007199254740992], v6: int[0, 1000]):
+# CHECK: = AssumeType v9, {{*}} provenType=int[2147483600, 2147484600]
+}
+
+function f1 name="goesDownToTheFirstExactInteger" parameters=[{type=int[0, 1000]}] results=[{type=number}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=-9007199254740983
+    v3 = Integer integer=-2147483600
+    Jump -> next b1(v3, v2, v1)
+  b1(v4, v5, v6):
+    LoopHint
+    v8 = Less v6, v0
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Decrement v4
+    v10 = Decrement v5
+    v11 = AssumeType v10 provenType=int[-9007199254740992, -9007199254740984]
+    v12 = Increment v6
+    Jump -> next b1(v9, v11, v12)
+  b3():
+    Return v4
+# CHECK: b1(v4: int[-2147484600, -2147483600], v5: int[-9007199254740992, -9007199254740983], v6: int[0, 1000]):
+# CHECK: = AssumeType v9, {{*}} provenType=int[-2147484600, -2147483600]
+}
+
+function f2 name="endsOneBelowTheLastExactInteger" parameters=[{type=int[0, 1000]}] results=[{type=number}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=9007199254740983
+    v3 = Integer integer=2147483600
+    Jump -> next b1(v3, v2, v1)
+  b1(v4, v5, v6):
+    LoopHint
+    v8 = Less v6, v0
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Increment v4
+    v10 = Increment v5
+    v11 = AssumeType v10 provenType=int[9007199254740984, 9007199254740991]
+    v12 = Increment v6
+    Jump -> next b1(v9, v11, v12)
+  b3():
+    Return v4
+# CHECK: b1(v4: int[2147483600, 2147483608], v5: int[9007199254740983, 9007199254740991], v6: int[0, 1000]):
+}

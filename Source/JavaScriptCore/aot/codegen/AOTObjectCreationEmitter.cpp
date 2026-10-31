@@ -97,7 +97,7 @@ bool ObjectCreationEmitter::tryDefineAccessorsInSlots(const ValueContext& value,
     if (value.shape() != CodeShape::Fast)
         return false;
     LayoutID layoutID = typeOf(value->objectOperand()).singleLayout(m_program);
-    if (!layoutID || m_program.at(layoutID).isEnvironment())
+    if (!layoutID || !m_placement.layout(layoutID).holdsCompiledObjects())
         return false;
     const Layout& layout = m_program.at(layoutID);
     auto listsOnlyFunctionsOfProgram = [](const Type& type) {

@@ -13,6 +13,7 @@
 #include "AOTEdgeResults.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTHeat.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -77,12 +78,27 @@ static bool isOnlyInterpreted(FunctionAnalyses& analyses, ValueID value, NOESCAP
     const Function& function = analyses.function();
     const UseLists& useLists = analyses.useLists();
 
-    BitVector visited(function.values.size());
-    Vector<ValueID, 8> worklist;
-    visited.quickSet(value.index());
-    worklist.append(value);
-    while (!worklist.isEmpty()) {
-        for (const Use& use : useLists.usesOf(worklist.takeLast())) {
+    // Asked for each call, so a bit for each value of the function is made only for a value with many aliases.
+    AOT_THRESHOLD(size_t, mostSearchedInOrder, 16);
+    Vector<ValueID, 16> visited { value };
+    std::optional<BitVector> isVisited;
+    auto visit = [&](ValueID alias) {
+        if (visited.size() <= mostSearchedInOrder) {
+            if (visited.contains(alias))
+                return;
+        } else {
+            if (!isVisited) {
+                isVisited.emplace(function.values.size());
+                for (ValueID earlier : visited)
+                    isVisited->quickSet(earlier.index());
+            }
+            if (isVisited->quickSet(alias.index()))
+                return;
+        }
+        visited.append(alias);
+    };
+    for (size_t next = 0; next < visited.size(); ++next) {
+        for (const Use& use : useLists.usesOf(visited[next])) {
             if (!isLookedAt(use))
                 continue;
             CallResultUse classified = classifyCallResultUse(analyses.program(), function, use);
@@ -92,8 +108,7 @@ static bool isOnlyInterpreted(FunctionAnalyses& analyses, ValueID value, NOESCAP
             case CallResultUseKind::Interpreted:
                 break;
             case CallResultUseKind::Alias:
-                if (!visited.quickSet(classified.alias.index()))
-                    worklist.append(classified.alias);
+                visit(classified.alias);
                 break;
             }
         }
@@ -270,7 +285,9 @@ static SeenOfAllocation lookAtUsesOf(FunctionAnalyses& analyses, ValueID maker, 
     bool hasSeenAll = true;
     Vector<ValueID, maxNames> names { maker };
     auto addName = [&](ValueID name) {
-        if (names.contains(name) || !mayBeReference(analyses.program().typeOf(function, name)))
+        // The values of a function with several results are the operands of a Results, which has no type of its own.
+        bool mayNameObject = mayBeReference(analyses.program().typeOf(function, name)) || numberOfResultsOf(analyses.program(), function, function.at(name)).has_value();
+        if (names.contains(name) || !mayNameObject)
             return;
         if (names.size() < maxNames)
             names.append(name);
@@ -377,7 +394,7 @@ static unsigned countAllocationsBuiltOnlyFor(FunctionAnalyses& analyses, ValueID
     const EscapeAnalysis& escape = analyses.escape();
     BitVector passedObjects;
     analyses.function().at(call).forEachOperand([&](ValueID operand, uint32_t) {
-        passedObjects.merge(escape.pointsTo(operand).objects.bits());
+        escape.pointsTo(operand).objects.addTo(passedObjects);
     });
 
     unsigned count = 0;
