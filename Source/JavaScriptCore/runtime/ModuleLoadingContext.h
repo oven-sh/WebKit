@@ -81,6 +81,10 @@ public:
     bool deferred() const { return m_flags.contains(ModuleLoadFlag::Deferred); }
 #if USE(BUN_JSC_ADDITIONS)
     int64_t referrerAsyncOrder() const { return m_referrerAsyncOrder; }
+    OptionSet<ModuleLoadFlag> flags() const { return m_flags; }
+    // JSModuleLoader::registryEpoch() as this load by name started. Only a context of loadModule(name) has one.
+    uint32_t registryEpoch() const { return m_registryEpoch; }
+    void setRegistryEpoch(uint32_t epoch) { m_registryEpoch = epoch; }
 #endif
 
 private:
@@ -88,6 +92,11 @@ private:
     ModuleLoadingContext(VM&, Structure*, JSModuleLoader*, AbstractModuleRecord::ModuleRequest&&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder);
 
     Step m_step { Step::Main };
+#if USE(BUN_JSC_ADDITIONS)
+    // In the padding after m_step. Not initialized: loadModule(name) sets it, and no other context is asked for it,
+    // so the contexts of static imports pay nothing.
+    uint32_t m_registryEpoch;
+#endif
     AbstractModuleRecord::ModuleRequest m_moduleRequest;
     const RefPtr<ScriptFetcher> m_scriptFetcher;
     WriteBarrier<JSCell> m_payload;

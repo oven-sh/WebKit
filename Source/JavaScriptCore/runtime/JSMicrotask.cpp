@@ -1301,6 +1301,19 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
     auto* context = uncheckedDowncast<ModuleLoadingContext>(arguments[2]);
     auto* intermediatePromise = uncheckedDowncast<JSPromise>(arguments[0]);
     auto status = static_cast<JSPromise::Status>(payload);
+#if USE(BUN_JSC_ADDITIONS)
+    // clearAll() ran while this fetch was in flight (JSModuleLoader::registryEpoch()). What the fetch settled with, a
+    // source or an error, is from before the clear and is not used. The load starts again, as a load by name made now.
+    if (context->registryEpoch() != context->loader()->registryEpoch()) [[unlikely]] {
+        JSPromise* restarted = context->loader()->loadModule(globalObject, context->moduleRequest().m_specifier, context->moduleRequest().m_attributes, context->scriptFetcher(), context->flags(), context->referrerAsyncOrder());
+        if (scope.exception()) {
+            intermediatePromise->rejectWithCaughtException(vm, scope);
+            return;
+        }
+        intermediatePromise->pipeFrom(vm, restarted);
+        return;
+    }
+#endif
     if (status == JSPromise::Status::Fulfilled) {
         auto moduleData = arguments[1];
 
