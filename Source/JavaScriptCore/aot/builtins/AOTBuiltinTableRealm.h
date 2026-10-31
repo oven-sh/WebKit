@@ -89,6 +89,8 @@ JS_EXPORT_PRIVATE JSObject* findExistingObject(JSObject* holder, UniquedStringIm
 // The object of a built-in, unless it or one of its holders is yet to be created. Allocates no cell.
 JS_EXPORT_PRIVATE JSObject* findExistingBuiltin(JSGlobalObject*, BuiltinID);
 BuiltinID findGlobalCreatedWith(JSGlobalObject*, const LazyClassStructure&);
+// The constructor of a class that hangs on an object of the realm, as Temporal.Instant does.
+BuiltinID findMemberOfNamespaceCreatedWith(JSGlobalObject*, const LazyClassStructure&);
 void forEachCreatedClassOfGlobal(JSGlobalObject*, const ScopedLambda<void(BuiltinID, JSObject* constructor)>&);
 JS_EXPORT_PRIVATE void forEachLockedObject(JSGlobalObject*, const ScopedLambda<void(BuiltinID, JSObject*)>&);
 JS_EXPORT_PRIVATE void forEachHiddenPrototype(JSGlobalObject*, const ScopedLambda<void(JSObject*)>&);
@@ -102,7 +104,9 @@ public:
     virtual void willWrite(BuiltinID member, UniquedStringImpl* key) = 0;
 };
 
-JS_EXPORT_PRIVATE Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM&, BuiltinID holder, std::span<const uint32_t> constantMembers = { }, WritesToBuiltinMembers* = nullptr);
+// unlockedMembers: ProgramTables::unlockedBuiltinMembers(). openedNames: those of ProgramTables::openedNames() that are opened on the holder.
+// A wholly locked object gets these names where a test run opens some of it: everything but what the two lists say stays closed.
+JS_EXPORT_PRIVATE Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM&, BuiltinID holder, std::span<const uint32_t> constantMembers = { }, WritesToBuiltinMembers* = nullptr, std::span<const uint32_t> unlockedMembers = { }, bool reflectThrows = false, std::span<const Identifier> openedNames = { });
 
 } // namespace AOT
 } // namespace JSC

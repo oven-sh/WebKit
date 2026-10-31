@@ -1,0 +1,43 @@
+# class Box { open() { return 1 }  shut() { return 2 } }   box = new Box; publish(box); publish(box.open)
+# Native code holds the instance, so it may call what stands above it: that is a record of the host for `shut`, which nobody else can reach.
+# `open` was also handed out as a value. Whoever holds a closure that has escaped enters it, and no record says so: whether the rule that looks above the instance was still shown `open`
+# when it last ran hangs on the order of the rules.
+# RUN: valueflow-results
+# CHECK: function f2 cause=ReachesNativeCode
+# CHECK: function f3 cause=ReachesNativeCode
+# CHECK: indirect - - -> f3 Host Repeatedly
+# RUN(NOWHERE): valueflow-results
+# NOWHERE-NOT: -> f2 Host
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Box" constructor=f1 fields=[]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = NewClosure function=f2
+    DefineMethod v3, v4 layout=L0 key="open"
+    v6 = NewClosure function=f3
+    DefineMethod v3, v6 layout=L0 index=1 key="shut"
+    v8 = FinishClass v3 layout=L0
+    v9 = Construct v8
+    v10 = Call v1, -, v9
+    v11 = PropGet v9 key="open"
+    v12 = Call v1, -, v11
+    Return
+}
+function f1 name="Box" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="open" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Integer integer=1
+    Return v1
+}
+function f3 name="shut" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Integer integer=2
+    Return v1
+}

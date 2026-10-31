@@ -365,7 +365,7 @@ void TypePropagation::listFromLastToFirst(std::span<const ValueID> values)
         uint64_t isInBlock = location.placement == ValuePlacement::InBlock;
         positions.append({ static_cast<uint64_t>(m_cfg.reversePostOrderIndex(location.block)) << 33 | isInBlock << 32 | location.index, id });
     }
-    AOT::sort(positions, std::ranges::greater { }, &std::pair<uint64_t, ValueID>::first);
+    AOT::sortInLine(positions, std::ranges::greater { }, &std::pair<uint64_t, ValueID>::first);
     for (auto [position, id] : positions)
         m_restartedValuesFromLastToFirst.append(id);
 }
@@ -882,7 +882,7 @@ TypePropagationOutcome TypePropagation::finish()
     Vector<ValueID> parametersBehindRemovedEdges;
     finishWithoutCompacting(parametersBehindRemovedEdges);
     if (m_outcome.cutBlocks) {
-        compactFunction(m_inputs.function);
+        compactFunction(m_inputs.function, m_inputs.renumbering);
         m_inputs.analyses.didChangeControlFlow();
     }
     return m_outcome;
@@ -1498,9 +1498,9 @@ TypePropagationOutcome typeUntilNothingIsCut(const TypePropagationInputs& inputs
 
     if (total.cutBlocks) {
         if (pending)
-            pending->compact(inputs.function);
+            pending->compact(inputs.function, inputs.renumbering);
         else
-            compactFunction(inputs.function);
+            compactFunction(inputs.function, inputs.renumbering);
         inputs.analyses.didChangeControlFlow();
     }
     if (pending && total.didLookForCodeToCut)
@@ -1639,7 +1639,12 @@ static ValueID findValueTypedWider(const TypePropagationInputs& inputs, const Fu
     forEachListedValue(function, inputs.analyses.cfg(), [&](ValueID id) {
         TypeID type = function.at(id).type;
         TypeID fromNever = typedFromNever.at(id).type;
-        if (!found && type != fromNever && !inputs.types.at(type).isSubsetOf(inputs.types.at(fromNever), inputs.program))
+        if (found || type == fromNever || inputs.types.at(type).isSubsetOf(inputs.types.at(fromNever), inputs.program))
+            return;
+        // How far the range of a variable of a loop is widened depends on the steps by which it grew, and they are other steps from never than from what changed.
+        Type withRangeFromNever = inputs.types.at(type);
+        withRangeFromNever.integers = inputs.types.at(fromNever).integers;
+        if (!withRangeFromNever.isSubsetOf(inputs.types.at(fromNever), inputs.program))
             found = id;
     });
     return found;

@@ -1,6 +1,5 @@
-# A variable that is stored once, ahead of every caller of its readers, is stored ahead of the callers that flow has followed. A call that was made direct behind a test of a callee which flow has not followed
-# to it may stand in another function: there the variable is known to be stored only where the callee is entered. So in the copy of such a callee the read of that variable names the fact too, and so does a
-# read in the copy of whatever the callee calls
+# A variable that is stored once is known to be stored only where a function that reads it is entered: the function around a copy may run and never enter the copy. So in the copy of a callee the read names the
+# fact, whether flow has followed the callee to the call or the callee was predicted, and so does a read in the copy of whatever the callee calls
 # FORM: Prepared
 # OPTIONS: heat=OnlyLoopsAreHot
 # RUN: pass InlineCalls VerifyProgram
@@ -27,8 +26,9 @@ function f2 name="callsWhatFlowFollowed" parameters=[{type=anything}] results=[{
     Return
 }
 # CHECK-LABEL: name="callsWhatFlowFollowed"
-# CHECK-NOT: Entered
-# CHECK: = GetModuleVariable variable=g0
+# CHECK: b1():
+# CHECK-NEXT: [[entered2]]: fact = Entered function=f0
+# CHECK: = GetModuleVariable fact=[[entered2]] variable=g0
 
 function f3 name="callsWhatWasPredicted" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = IsClosureOf v0 function=f0

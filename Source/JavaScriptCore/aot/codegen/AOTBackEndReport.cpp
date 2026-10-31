@@ -53,6 +53,10 @@ static InternalErrorKind internalErrorKindOf(B3::FailureKind kind)
         return InternalErrorKind::RelocationNotLowered;
     case B3::FailureKind::VariableReadBeforeSet:
         return InternalErrorKind::VariableReadBeforeSet;
+    case B3::FailureKind::SpillSlotLacksItsValue:
+        return InternalErrorKind::SpillSlotLacksItsValue;
+    case B3::FailureKind::RegisterLacksItsValue:
+        return InternalErrorKind::RegisterLacksItsValue;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -128,6 +132,10 @@ static StatisticID statisticOf(B3::Counter counter)
         return StatisticID::KnownInductionsUsed;
     case B3::Counter::TrapsFoldedIntoAccesses:
         return StatisticID::NullChecksFoldedIntoAccesses;
+    case B3::Counter::ColdUsesKeptThroughSecondSplit:
+        return StatisticID::ColdUsesKeptThroughSecondSplit;
+    case B3::Counter::ColdUsesKeptThroughSecondSplitBetweenDefs:
+        return StatisticID::ColdUsesKeptThroughSecondSplitBetweenDefs;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -136,7 +144,7 @@ BackEndReport collectBackEndReport(const B3::CompilationReport& report, std::spa
 {
     BackEndReport result;
     if (report.failure)
-        result.findings.append(BackEndFinding { internalErrorKindOf(report.failure->kind), report.failure->origin });
+        result.findings.append(BackEndFinding { internalErrorKindOf(report.failure->kind), report.failure->origin, B3::Origin(), report.failure->detail });
     for (const FrameAddressViolation& violation : violations)
         result.findings.append(BackEndFinding { InternalErrorKind::FrameAddressAcrossSuspension, violation.address });
 
@@ -213,6 +221,10 @@ bool reportBackEnd(BuildContext& build, Typed::FunctionID id, const Typed::Funct
         if (uint32_t amount = raw.countOf(counter))
             build.statistics().count(statisticOf(counter), amount);
     }
+    if (raw.countOf(B3::Counter::ColdUsesKeptThroughSecondSplit))
+        build.statistics().count(StatisticID::FunctionsWithColdUsesKeptThroughSecondSplit);
+    if (raw.countOf(B3::Counter::ColdUsesKeptThroughSecondSplitBetweenDefs))
+        build.statistics().count(StatisticID::FunctionsWithColdUsesKeptThroughSecondSplitBetweenDefs);
     return !report.findings.isEmpty();
 }
 

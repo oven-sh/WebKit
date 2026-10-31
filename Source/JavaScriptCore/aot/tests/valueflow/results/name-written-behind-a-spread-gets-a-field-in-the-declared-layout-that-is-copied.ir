@@ -1,0 +1,35 @@
+# const given: R = { a: 1, name: "o" }; (given as any).other = 2; const made = { ...given, at: 2, get size() { return 1 } }; made.late = 2: what the maker of a copy gives it gets fields in the layout that is copied, whatever the types above it declare.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="R" fields=[{key="a"
+# CHECK-NOT: key="other"
+# CHECK: {key="at" declared={type=2} flags=[IsAddedLate
+# CHECK-NOT: key="other"
+# CHECK: {key="size" {{*}} flags=[IsAddedLate
+# CHECK-NOT: key="other"
+# CHECK: {key="late" declared={type=2} flags=[IsAddedLate
+# CHECK-NOT: key="other"
+# CHECK: addedKeys=["other"]
+# CHECK: layout L1 name="Base"
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="R" fields=[{key="a" declared={type=number}}, {key="name" declared={type=string}}] supertypes=[L1]
+layout L1 name="Base" fields=[{key="name" declared={type=string} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = String string="o"
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = Integer integer=2
+    PropSet v2, v3 key="other" mode=Strict
+    v5 = CopyObject v2
+    PropDefine v5, v3 key="at"
+    v7 = NewClosure function=f1
+    DefineGetter v5, v7 key="size"
+    PropSet v5, v3 key="late" mode=Strict
+    v10 = PropGet v5 key="at"
+    Return v10
+}
+function f1 name="size" results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}

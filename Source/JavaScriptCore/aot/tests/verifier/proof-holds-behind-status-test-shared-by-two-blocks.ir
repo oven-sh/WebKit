@@ -7,9 +7,10 @@
 # it passes no copy of the value, and no copy defined above the block is named from there on before the operation runs again. So two copies of one operation may hand value and mode on to one block,
 # also where one of them stands above the other.
 # A copy that has passed an arm does not count: the result of one step may be the loop variable while the next step runs.
+# A variable that holds the value on some ways and nothing yet on others is cast to say that it has been given a value. That says nothing of the value, so it stands anywhere.
 # FORM: Prepared
 # RUN: verify
-# DIAGNOSTIC: ProofInFrontOfMode 15
+# DIAGNOSTIC: ProofInFrontOfMode 16
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="made" role=CoroutineRamp flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f1 promiseType=Promise promiseParameter=2}
@@ -479,4 +480,24 @@ function f29 name="goodYieldAboveAnotherInALoopIsNamedAgainOnlyAfterItRuns" role
   b5():
     v13 = AssumeType v11 provenType=undefined|int
     Jump -> next b1()
+}
+function f30 name="goodCastSaysOnlyThatTheVariableHasAValue" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f30 promiseType=Promise promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    Jump -> next b1(v4)
+  b1(v6: anything|unspecified):
+    v7 = Specified
+    v8 = AssumeType v6, v7 provenType=anything
+    Return v8
+}
+function f31 name="badCastSaysMoreThanThatTheVariableHasAValue" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f31 promiseType=Promise promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    Jump -> next b1(v4)
+  b1(v6: anything|unspecified):
+    v7 = Specified
+    v8 = AssumeType v6, v7 provenType=int
+    Return v8
 }

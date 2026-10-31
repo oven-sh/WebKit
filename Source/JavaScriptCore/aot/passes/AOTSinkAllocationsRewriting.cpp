@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTDecidedBranches.h"
+#include "AOTPredictedValues.h"
 #include "AOTSort.h"
 #include "AOTSpecifiedValues.h"
 #include "AOTTypeArena.h"
@@ -271,6 +272,10 @@ void AllocationSinking::rewrite(IRBuilder& builder, const FreshResultShape* shap
         replaceReadWithValue(m_program, builder.function(), substitution, read, replacement);
     substitution.apply(builder.function(), &m_analyses);
     nameFactsWhereUnspecifiedValuesAreUsed(builder, m_analyses);
+    if (!tables.claimsAssumedOfContents.isEmpty()) {
+        PredictedValues predicted(builder.function());
+        settleProofsBehindAnsweredChecks(builder.function(), tables.claimsAssumedOfContents.span(), &predicted);
+    }
 }
 
 ValueID AllocationSinking::sameValueThroughTests(ValueID id)

@@ -63,7 +63,7 @@ static void returnIfMarkStackTakes(StubAssembler& jit, GPRReg owner, GPRReg scra
     jit.addPtr(TrustedImm32(1), Address(scratch));
     jit.returnToCaller();
     leftToOperation.link(&jit);
-#elif CPU(ARM64) && !ASSERT_ENABLED
+#elif CPU(ARM64)
     // An addition to a word in memory and the store of a constant take the macro assembler's scratch register, so neither comes while top is in it.
     static_assert(MutatorMarkStackLayout::segmentCapacity < 1 << 12, "The capacity is the immediate of one comparison.");
     const GPRReg top = jit.scratchRegister();
@@ -77,6 +77,9 @@ static void returnIfMarkStackTakes(StubAssembler& jit, GPRReg owner, GPRReg scra
     jit.add64(TrustedImm32(1), top);
     jit.storePtr(top, Address(scratch, MutatorMarkStackLayout::offsetOfTop()));
     jit.loadPtr(Address(scratch, MutatorMarkStackLayout::offsetOfHeadSegment()), scratch);
+#if ASSERT_ENABLED
+    jit.storePtr(top, Address(scratch, MutatorMarkStackLayout::offsetOfTopInSegment));
+#endif
     jit.getEffectiveAddress(BaseIndex(scratch, top, CCallHelpers::TimesEight), scratch);
     jit.storePtr(owner, Address(scratch, MutatorMarkStackLayout::offsetOfFirstCellInSegment - static_cast<ptrdiff_t>(sizeof(JSCell*))));
     jit.store8(TrustedImm32(static_cast<int32_t>(CellState::PossiblyGrey)), Address(owner, JSCell::cellStateOffset()));

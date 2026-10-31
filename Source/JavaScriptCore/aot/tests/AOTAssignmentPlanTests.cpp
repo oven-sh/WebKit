@@ -710,6 +710,49 @@ static void testIntegersMoveIntoSlotsThatMayHoldNone()
         AOT_TEST_CHECK(!moves(integer));
 }
 
+// The word of a literal string becomes the reference to its cell without a frame, once the cell is made.
+static void testLiteralStringsMoveIntoSlotsOfReferences()
+{
+    constexpr uintptr_t cageBase = 1ull << 40;
+    constexpr uint32_t reference = minCell32 + 6;
+    const std::array<uint32_t, 3> literalStrings { 0, reference, 0 };
+    enum class Outcome : uint8_t { IsAbsent, IsLeftToOtherWay, IsMoved };
+    uint64_t stored = 0;
+    auto move = [&](SlotRepresentation from, SlotRepresentation to, SlotFit fit, uint64_t bits) {
+        MappedCopy::Move move { };
+        move.kind = moveKindFor(from, to, fit);
+        AOT_TEST_CHECK(move.kind == (from == SlotRepresentation::LiteralString32 ? MappedCopy::MoveKind::NarrowLiteralString : MappedCopy::MoveKind::WideLiteralString));
+        bool isLeftToOtherWay = false;
+        bool didMove = tryMove(cageBase, move, reinterpret_cast<const uint8_t*>(&bits), [&](auto moved) {
+            AOT_TEST_CHECK(sizeof(moved) == widthOf(to));
+            stored = moved;
+        }, [&] {
+            isLeftToOtherWay = true;
+            return false;
+        }, literalStrings.data());
+        AOT_TEST_CHECK(!didMove || !isLeftToOtherWay);
+        return didMove ? Outcome::IsMoved : isLeftToOtherWay ? Outcome::IsLeftToOtherWay : Outcome::IsAbsent;
+    };
+    for (SlotFit fit : { SlotFit::Always, SlotFit::UnlessUndefinedOrNull }) {
+        for (SlotRepresentation to : { SlotRepresentation::Cell32, SlotRepresentation::OptionalCell32 }) {
+            constexpr SlotRepresentation from = SlotRepresentation::LiteralString32;
+            AOT_TEST_CHECK(move(from, to, fit, literalStringWord(1)) == Outcome::IsMoved && stored == reference);
+            AOT_TEST_CHECK(move(from, to, fit, reference + 1) == Outcome::IsMoved && stored == reference + 1);
+            AOT_TEST_CHECK(move(from, to, fit, literalStringWord(0)) == Outcome::IsLeftToOtherWay && move(from, to, fit, literalStringWord(2)) == Outcome::IsLeftToOtherWay);
+            AOT_TEST_CHECK(move(from, to, fit, undefinedCell32) == Outcome::IsLeftToOtherWay && move(from, to, fit, nullCell32) == Outcome::IsLeftToOtherWay);
+            AOT_TEST_CHECK(move(from, to, fit, absentCell32) == Outcome::IsAbsent);
+        }
+        for (SlotRepresentation to : { SlotRepresentation::JSValue, SlotRepresentation::Cell }) {
+            constexpr SlotRepresentation from = SlotRepresentation::LiteralString;
+            AOT_TEST_CHECK(move(from, to, fit, literalStringWord(1)) == Outcome::IsMoved && stored == std::bit_cast<uint64_t>(MarkedBlockCage::decode(cageBase, reference)));
+            AOT_TEST_CHECK(move(from, to, fit, cageBase + 64) == Outcome::IsMoved && stored == cageBase + 64);
+            AOT_TEST_CHECK(move(from, to, fit, literalStringWord(2)) == Outcome::IsLeftToOtherWay);
+            AOT_TEST_CHECK(move(from, to, fit, JSValue::ValueUndefined) == Outcome::IsLeftToOtherWay && move(from, to, fit, JSValue::ValueNull) == Outcome::IsLeftToOtherWay);
+            AOT_TEST_CHECK(move(from, to, fit, JSValue::ValueEmpty) == Outcome::IsAbsent);
+        }
+    }
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withPoints)() = runNativeTestWithLoadedProgram<assignmentPlanTests, programText, body>;
 
@@ -735,6 +778,7 @@ std::span<const NativeTest> assignmentPlanTests()
         { "assignment-plans/copies-without-frame-fill-empty-objects-and-are-forgotten-at-each-collection"_s, withPoints<testCopiesWithoutFrameFillEmptyObjectsAndAreForgottenAtEachCollection> },
         { "assignment-plans/copies-without-frame-overwrite-fields-that-the-target-lists"_s, withPoints<testCopiesWithoutFrameOverwriteFieldsThatTheTargetLists> },
         { "assignment-plans/integers-move-into-slots-that-may-hold-none"_s, testIntegersMoveIntoSlotsThatMayHoldNone },
+        { "assignment-plans/literal-strings-move-into-slots-of-references"_s, testLiteralStringsMoveIntoSlotsOfReferences },
     };
     return tests;
 }

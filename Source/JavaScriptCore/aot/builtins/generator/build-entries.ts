@@ -389,8 +389,16 @@ function createClassObjects(
     : null;
   builtinClass.constructor = classConstructor;
   builtinClass.prototype = prototype;
+  const { namesReadByNativeCodeOnPrototype } = declaration.columns;
+  if (namesReadByNativeCodeOnPrototype !== undefined && prototype !== null) {
+    builder.namesReadByNativeCode.set(prototype, {
+      names: namesReadByNativeCodeOnPrototype.map(name => builder.internComponent(name)),
+      namesOnlyInspected: [],
+    });
+  }
   if (classConstructor !== null) classConstructor.instanceClass = builtinClass;
   if (prototype !== null) prototype.instanceClass = builtinClass;
+  if (prototype !== null && declaration.columns.prototypeListsAllMembers) addFlag(prototype, "ListsAllMembers");
   for (const [sides, flag] of [
     [lockedObjects, "IsLockedObject"],
     [lockedMembers, "HasLockedMembers"],
@@ -478,6 +486,9 @@ function registerModules({ builder, sorted }: EntryContext): void {
       listsAllExports,
       isPublic,
       namespace,
+      exportsHoldingModuleObject: declaration.exports
+        .filter(({ holder }) => holder === "ModuleObject")
+        .map(({ name }) => builder.internComponent(name)),
       exportsHeldByNamespace: declaration.exportsHeldByNamespace.map(name => builder.internComponent(name)),
     };
     if (!builder.addModule(module)) builder.problems.add(source, `the module ${specifier} is declared twice`);

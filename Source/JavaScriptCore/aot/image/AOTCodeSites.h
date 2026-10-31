@@ -41,6 +41,8 @@ static constexpr size_t sizeOfLoopPoll = 0;
 #endif
 static constexpr bool hasFaultingLoopPolls = !!sizeOfLoopPoll;
 static constexpr ptrdiff_t offsetOfLeafPollInLoopPollPage = 4;
+// The handler of the fault tells a poll that has left its handler by the address it loads.
+static constexpr ptrdiff_t offsetOfPollLeavingOwedErrorInLoopPollPage = 8;
 
 struct PollSite {
     uint32_t offset { 0 };

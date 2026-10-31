@@ -42,6 +42,7 @@ struct TypePropagationInputs {
     const KnownPositionTypes* knownPositions { nullptr };
     // Parameters are typed as if no edge came from these blocks.
     const BitVector* blocksThatPassNothing { nullptr };
+    Renumbering* renumbering { nullptr };
 };
 
 struct TypePropagationOutcome {

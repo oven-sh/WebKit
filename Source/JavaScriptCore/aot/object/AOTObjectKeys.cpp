@@ -15,6 +15,7 @@
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTObjectModelCaches.h"
+#include "AOTPendingStars.h"
 #include "AOTPropertyCaches.h"
 #include "AOTState.h"
 #include "AOTVector.h"
@@ -56,14 +57,17 @@ std::span<const uint16_t> Object::keyOrder(State& state, KeyOrderStorage& storag
         }
         return storage.span();
     }
-    if (hasOutOfLineKeyOrder())
-        return compiledStructure().outOfLineKeyOrder();
     uint32_t word = orderWord();
+    if (isOrderStoredOutOfLine(word)) {
+        std::span<const uint16_t> held = compiledStructure().outOfLineKeyOrder();
+        return countOf(word) ? held.first(countOf(word)) : held;
+    }
     return state.objects->keyOrders.entriesInOrder(layout, orderOf(word)).first(countOf(word));
 }
 
-bool Object::isInKeyOrder(State& state, const FieldData& field) const
+bool Object::isInKeyOrder(State& stateAtHand, const FieldData& field) const
 {
+    State& state = stateAtHand.sharesRealm ? this->state() : stateAtHand;
     if (layout().keysAreNeverEnumerated)
         return isPresent(vm(), *this, field);
     KeyOrderStorage storage;
@@ -419,7 +423,7 @@ std::optional<Object::InitialKeyOrder> Object::initialKeyOrder(VM& vm, std::span
     if (auto orderAndCount = state.objects->keyOrders.orderStartingWith(layout, keys))
         return InitialKeyOrder { *orderAndCount, structure };
     count(instance(), RuntimeCounterID::KeyOrdersStoredOutOfLine);
-    return InitialKeyOrder { outOfLineOrderWord, structures.withOutOfLineKeyOrder(vm, *structure, keys) };
+    return InitialKeyOrder { outOfLineOrderWordFor(keys.size()), structures.withOutOfLineKeyOrder(vm, *structure, keys) };
 }
 
 void Object::setInitialKeyOrder(VM& vm, InitialKeyOrder order, JSObject* extra)
@@ -471,14 +475,14 @@ std::optional<uint32_t> Object::numberOfExtraKeysByStructure() const
 
 using AddedEntries = Vector<uint16_t, 4>;
 
-static AddedEntries entriesPositioningExtraKeys(State& state, const Object& object)
+static AddedEntries entriesPositioningExtraKeys(State& state, const Object& object, std::optional<uint32_t> numberOfKeysOfPendingStars)
 {
     AddedEntries entries;
-    JSObject* extra = object.extraProperties();
-    if (!extra)
+    JSObject* extra = numberOfKeysOfPendingStars ? nullptr : object.extraProperties();
+    if (!extra && !numberOfKeysOfPendingStars)
         return entries;
     const LayoutData& layout = object.layout();
-    uint32_t numberOfExtraKeys = countExtraKeys(state, object, extra);
+    uint32_t numberOfExtraKeys = extra ? countExtraKeys(state, object, extra) : *numberOfKeysOfPendingStars;
     if (!numberOfExtraKeys)
         return entries;
     if (!object.hasOutOfLineKeyOrder() && state.objects->keyOrders.positionsExtraKeys(layout, object.orderWord() & orderAndCountMask, numberOfExtraKeys))
@@ -490,12 +494,38 @@ static AddedEntries entriesPositioningExtraKeys(State& state, const Object& obje
     return entries;
 }
 
-static void appendEntries(VM& vm, State& state, Object& object, std::span<const uint16_t> added)
+static void storeKeyOrderOutOfLine(VM& vm, State& state, Object& object, std::span<const uint16_t> keys)
 {
+    object.JSCell::setStructure(vm, state.objects->structures.withOutOfLineKeyOrder(vm, object.compiledStructure(), keys));
+    object.setOrderAndCount(outOfLineOrderWordFor(keys.size()));
+    count(object.instance(), RuntimeCounterID::KeyOrdersStoredOutOfLine);
+}
+
+static bool tryStepInOutOfLineKeyOrder(Object& object, std::span<const uint16_t> added)
+{
+    uint32_t count = countOf(object.orderWord());
+    if (!object.hasOutOfLineKeyOrder() || !count || count + added.size() > maxFieldsInOrder)
+        return false;
+    const CompiledStructure& structure = object.compiledStructure();
+    for (uint16_t entry : added) {
+        std::span<const uint16_t> held = structure.outOfLineKeyOrder();
+        if (count < held.size() ? held[count] != entry : !structure.tryAppendToOutOfLineKeyOrder(entry))
+            return false;
+        ++count;
+    }
+    object.setOrderAndCount(outOfLineOrderWordFor(count));
+    return true;
+}
+
+// For an order that has no number. No order with a number starts with it, and the table takes no other order once it has refused one, so what is longer has no number either.
+static void appendEntriesToUnnumberedKeyOrder(VM& vm, State& state, Object& object, std::span<const uint16_t> added)
+{
+    if (tryStepInOutOfLineKeyOrder(object, added))
+        return;
     Object::KeyOrderStorage storage;
     Vector<uint16_t, 32> entries(object.keyOrder(state, storage));
     entries.append(added);
-    object.setKeyOrder(vm, state, entries.span());
+    storeKeyOrderOutOfLine(vm, state, object, entries.span());
 }
 
 void Object::willCreateField(State&, const FieldData& field)
@@ -504,11 +534,14 @@ void Object::willCreateField(State&, const FieldData& field)
         ensureStorageFor(vm(), field);
 }
 
-void Object::didCreateField(State& state, const FieldData& field, bool withStorage)
+void Object::didCreateField(State& stateAtHand, const FieldData& field, bool withStorage)
 {
+    State& state = stateAtHand.sharesRealm ? this->state() : stateAtHand;
     if (withStorage)
         willCreateField(state, field);
     const LayoutData& layout = this->layout();
+    if (layout.isClass())
+        state.objects->classes.didShadowMember(layout, state.objects->layouts.nameOf(vm(), field));
     if (layout.keysAreNeverEnumerated)
         return;
     KeyOrderTable& keyOrders = state.objects->keyOrders;
@@ -530,9 +563,11 @@ void Object::didCreateField(State& state, const FieldData& field, bool withStora
             return;
         }
     }
-    if (tryListFieldBehindNamedKey(state, field))
+    // The order needs the number of the keys in front of the field, so stars go on waiting.
+    std::optional<uint32_t> numberOfKeysOfStars = numberOfKeysOfPendingStars(vm(), *this);
+    if (!numberOfKeysOfStars && tryListFieldBehindNamedKey(state, field))
         return;
-    AddedEntries added = entriesPositioningExtraKeys(state, *this);
+    AddedEntries added = entriesPositioningExtraKeys(state, *this, numberOfKeysOfStars);
     numberOfExtraKeys = numberOfExtraKeysByStructure();
     if (field.flags & fieldMayExistWithoutStorage && isInKeyOrder(state, field)) {
         if (!hasOutOfLineKeyOrder() && numberOfExtraKeys)
@@ -554,7 +589,7 @@ void Object::didCreateField(State& state, const FieldData& field, bool withStora
             return;
         }
     }
-    appendEntries(vm(), state, *this, added.span());
+    appendEntriesToUnnumberedKeyOrder(vm(), state, *this, added.span());
 }
 
 void Object::setKeyOrder(VM& vm, State& state, std::span<const uint16_t> keys)
@@ -569,9 +604,7 @@ void Object::setKeyOrder(VM& vm, State& state, std::span<const uint16_t> keys)
             JSCell::setStructure(vm, structures.withNumberedKeyOrder(vm, compiledStructure()));
         return;
     }
-    JSCell::setStructure(vm, structures.withOutOfLineKeyOrder(vm, compiledStructure(), keys));
-    setOrderAndCount(outOfLineOrderWord);
-    count(instance(), RuntimeCounterID::KeyOrdersStoredOutOfLine);
+    storeKeyOrderOutOfLine(vm, state, *this, keys);
 }
 
 void Object::removeExtraKeyFromOrder(VM& vm, State& state, uint32_t ordinal)

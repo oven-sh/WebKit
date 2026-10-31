@@ -32,6 +32,23 @@ namespace JSC { namespace AOT {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BuiltinModuleTable);
 
+namespace {
+
+// What a realm has of the library, it has from the first of its images, which holds all of it: a later image holds what its own code calls.
+class FirstImageScope {
+public:
+    explicit FirstImageScope(VM& vm)
+    {
+        if (vm.aotState().hasSeveralImages) [[unlikely]]
+            m_scope.emplace(vm.aotState(), &vm.aotState().image->first());
+    }
+
+private:
+    std::optional<RunningImageScope> m_scope;
+};
+
+} // anonymous namespace
+
 BuiltinModuleTable::BuiltinModuleTable(State& state)
     : m_state(state)
 {
@@ -49,12 +66,14 @@ JSValue BuiltinModuleTable::evaluate(ModuleID module)
 
 bool hasBuiltinModule(JSGlobalObject* globalObject, uint32_t id)
 {
+    FirstImageScope firstImage(globalObject->vm());
     Instance* instance = Instance::of(globalObject);
     return instance && instance->state && instance->state->builtinModules->find(id);
 }
 
 JSValue evaluateBuiltinModule(JSGlobalObject* globalObject, uint32_t id)
 {
+    FirstImageScope firstImage(globalObject->vm());
     Instance* instance = Instance::of(globalObject);
     RELEASE_ASSERT(instance && instance->state);
     BuiltinModuleTable& builtinModules = *instance->state->builtinModules;
@@ -66,7 +85,7 @@ JSValue evaluateBuiltinModule(JSGlobalObject* globalObject, uint32_t id)
 bool hasBuiltinFunction(VM&, uint32_t id)
 {
     const Image* image = Image::current();
-    return image && ModuleTable(image->programTables()).findRuntimeFunction(id);
+    return image && ModuleTable(image->first().programTables()).findRuntimeFunction(id);
 }
 
 static std::optional<FunctionID> findCompiledFunction(JSGlobalObject* globalObject, uint32_t id)
@@ -78,6 +97,7 @@ static std::optional<FunctionID> findCompiledFunction(JSGlobalObject* globalObje
 
 JSFunction* builtinFunction(JSGlobalObject* globalObject, uint32_t id, JSObject* prototype)
 {
+    FirstImageScope firstImage(globalObject->vm());
     std::optional<FunctionID> function = findCompiledFunction(globalObject, id);
     if (!function)
         return nullptr;
@@ -112,6 +132,7 @@ static FunctionID compiledBuiltinFunctionID(const NativeExecutable& executable)
 
 static JSObject* compiledClosureOfCallee(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
+    FirstImageScope firstImage(globalObject->vm());
     auto* executable = uncheckedDowncast<NativeExecutable>(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->executable());
     return asObject(State::of(globalObject).objects->closures.closure(globalObject->vm(), compiledBuiltinFunctionID(*executable)));
 }
@@ -148,6 +169,7 @@ JSC_DEFINE_HOST_FUNCTION(constructCompiledBuiltin, (JSGlobalObject* globalObject
 
 NativeExecutable* builtinExecutable(JSGlobalObject* globalObject, uint32_t id)
 {
+    FirstImageScope firstImage(globalObject->vm());
     std::optional<FunctionID> function = findCompiledFunction(globalObject, id);
     if (!function)
         return nullptr;
@@ -161,7 +183,7 @@ NativeExecutable* builtinExecutable(JSGlobalObject* globalObject, uint32_t id)
 bool refusesLibraryText()
 {
     const Image* image = Image::current();
-    return image && !image->admitsLibraryText();
+    return image && !image->first().admitsLibraryText();
 }
 
 bool refusesLibraryText(JSGlobalObject* realm)
@@ -174,19 +196,33 @@ static std::optional<uint32_t> builtinFunctionHolding(const FunctionExecutable& 
     return executable.source().provider()->builtinFunctionAt(executable.source().startOffset());
 }
 
-bool refusesToInterpret(JSGlobalObject* realm, ScriptExecutable& executable)
+static bool isTextOfHostLibrary(ScriptExecutable& executable)
 {
     auto* function = dynamicDowncast<FunctionExecutable>(&executable);
-    if (!refusesLibraryText(realm) || !function || !function->isBuiltinFunction() || function->unlinkedExecutable()->isBuiltinDefaultClassConstructor())
+    if (!function || !function->isBuiltinFunction() || function->unlinkedExecutable()->isBuiltinDefaultClassConstructor())
         return false;
     std::optional<uint32_t> id = builtinFunctionHolding(*function);
     return !id || *id >= numberOfBuiltinCodes;
+}
+
+bool refusesToInterpret(JSGlobalObject* realm, ScriptExecutable& executable)
+{
+    return refusesLibraryText(realm) && isTextOfHostLibrary(executable);
 }
 
 bool refusesToRun(JSFunction* function)
 {
     auto* executable = dynamicDowncast<FunctionExecutable>(function->executable());
     return executable && refusesToInterpret(function->realm(), *executable);
+}
+
+bool isNeededByNothingThatRuns(JSFunction* function)
+{
+    auto* executable = dynamicDowncast<FunctionExecutable>(function->executable());
+    if (!executable || !Instance::of(function->realm()) || !isTextOfHostLibrary(*executable))
+        return false;
+    const Image& image = Image::current()->first();
+    return !image.admitsLibraryText() || !image.runsUnreadCode();
 }
 
 static Vector<String, 4> globalBuiltinsThatRun(RuntimeFunctionID function)
@@ -205,7 +241,7 @@ static Vector<String, 4> globalBuiltinsThatRun(RuntimeFunctionID function)
         add(builtin);
     for (unsigned index = 0; index < table.builtinCount(); ++index) {
         for (const BuiltinCalledFunction& called : table.calledFunctionsOf(BuiltinID(index))) {
-            if (called.function == function)
+            if (called.function == function && !(called.condition && called.condition->isAboutWhatProgramReplaces()))
                 add(called.builtin);
         }
     }

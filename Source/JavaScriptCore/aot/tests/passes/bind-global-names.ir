@@ -1,4 +1,4 @@
-# A read, a `typeof` or a store of a global that no proof settles goes through the record of the name. What a record cannot answer stays an access by name:
+# A read, a `typeof` or a store of a global that no proof settles goes through the record of the name, or of the symbol. What a record cannot answer stays an access by name:
 # a key that is no ordinary name, and a deletion. A locked global is a constant before this pass runs, so the pass leaves its read alone
 # FORM: Prepared
 # RUN: pass BindGlobalNames
@@ -52,4 +52,21 @@ function f3 name="otherReceiver" parameters=[{type=anything}] results=[{type=any
     Return v1
 # CHECK-NOT: GlobalBinding
 # CHECK: = PropGet v0 key="shared"
+}
+
+function f4 name="underSymbols" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key=Symbol.for("registry")
+    v3 = PropGet v1 key=@@unscopables
+    v4 = PropGet v1 key=symbol("made here")@m0:100
+    PropSet v1, v0 key=Symbol.for("registry") mode=Strict
+    PropSet v1, v0 key=symbol("made here")@m0:100 mode=Sloppy
+    Return v2
+# CHECK: v2:{{*}}= GetGlobalBinding key=Symbol.for("registry") level=Expected
+# CHECK-NEXT: v3:{{*}}= GetGlobalBinding key=@@unscopables level=Expected
+# CHECK-NEXT: v4:{{*}}= GetGlobalBinding key=symbol("made here")@m0:100 level=Expected
+# CHECK-NEXT: SetGlobalBinding v0 key=Symbol.for("registry") level=Expected
+# CHECK-NEXT: SetGlobalBinding v0 key=symbol("made here")@m0:100 mode=Sloppy level=Expected
+# CHECK-NOT: PropGet
+# CHECK-NOT: PropSet
 }

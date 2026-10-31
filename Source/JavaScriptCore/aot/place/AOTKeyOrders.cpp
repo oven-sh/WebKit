@@ -355,7 +355,7 @@ static KeyOrderList computeKeyOrders(const PlacementContext& context, std::span<
         if (canBeKeyOrder)
             addCandidate(test.fields);
     }
-    AOT::sort(candidates, isLexicographicallyLess);
+    AOT::sortInLine(candidates, isLexicographicallyLess);
 
     KeyOrderList orders;
     orders.reserveInitialCapacity(candidates.size());

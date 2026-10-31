@@ -226,6 +226,7 @@ private:
         OP_STOS_YvEAX                   = 0xAB,
         OP_MOV_EAXIv                    = 0xB8,
         OP_GROUP2_EvIb                  = 0xC1,
+        OP_RET_Iw                       = 0xC2,
         OP_RET                          = 0xC3,
         OP_GROUP11_EvIb                 = 0xC6,
         OP_GROUP11_EvIz                 = 0xC7,
@@ -4324,6 +4325,12 @@ public:
     void ret()
     {
         m_formatter.oneByteOp(OP_RET);
+    }
+
+    void ret(uint16_t bytesPoppedBehindReturnAddress)
+    {
+        m_formatter.oneByteOp(OP_RET_Iw);
+        m_formatter.immediate16(bytesPoppedBehindReturnAddress);
     }
 
     void stc()

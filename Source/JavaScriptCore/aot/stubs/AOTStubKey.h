@@ -38,6 +38,7 @@ constexpr bool readsFrameRecordOfCaller(StubFamily family)
     case StubFamily::SuspendGenerator:
     case StubFamily::StepAsyncGenerator:
     case StubFamily::TailCallWithList:
+    case StubFamily::RecordCallee:
         return true;
     default:
         return false;

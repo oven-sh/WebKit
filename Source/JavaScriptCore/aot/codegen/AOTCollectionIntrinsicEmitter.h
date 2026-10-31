@@ -18,6 +18,10 @@ public:
     void generateCollectionTable(const ValueContext&);
     void generateMapNext(const ValueContext& value) { generateNext(Collection::Map, value); }
     void generateSetNext(const ValueContext& value) { generateNext(Collection::Set, value); }
+    void generateCollectionIteratorClosedMark(const ValueContext&);
+    void generateGetCollectionIteratorTable(const ValueContext&);
+    void generatePutCollectionIteratorTable(const ValueContext&);
+    void generateIsCollectionIteratorClosedMark(const ValueContext&);
     void generateIsCollectionTableFull(const ValueContext&);
     void generateReserveCollectionCapacity(const ValueContext&);
 
@@ -26,6 +30,7 @@ private:
 
     class TableReader;
 
+    std::optional<bool> isTakenForNumberAfter(const ValueContext& step, uint32_t result);
     void generateNext(Collection, const ValueContext&);
 };
 

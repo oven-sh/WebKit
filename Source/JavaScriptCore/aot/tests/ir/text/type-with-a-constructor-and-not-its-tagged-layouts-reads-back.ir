@@ -1,0 +1,30 @@
+# interface Node { kind: string; pos: number }  interface Add extends Node { kind: "add"; left: Node }  interface Num extends Node { kind: "num"; value: number }
+# interface Keyword extends Node { kind: "false" | "true" }  function NodeObject(this: Node, kind: string, pos: number) { this.kind = kind; this.pos = pos }
+# Keyword takes the layout of the function and neither of its tagged layouts. In a text a name stands for its family, and `L0` would bring both:
+# the printer of wire fields names `L4`, whose family is the set, and the text reads back to itself.
+# RUN: round-trip wire
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="NodeObject" constructor=f1 fields=[{key="kind" declared={type=undefined|null|string}}, {key="pos" declared={type=number}}] supertypes=[L1] flags=[IsConstructorFunction]
+layout L1 name="Node" fields=[{key="kind" declared={type=undefined|null|string} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Add" fields=[{key="kind" declared={type=undefined|null|"add"} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="left" declared={type=undefined|null|L1} flags=[IsRequired]}] supertypes=[L1]
+layout L3 name="Num" fields=[{key="kind" declared={type=undefined|null|"num"} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
+layout L4 name="Keyword" fields=[{key="kind" declared={type=undefined|null|"false"|"true"} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="NodeObject" flags=[HasThis] thisType={type=undefined|null|L1} parameters=[{type=undefined|null|string}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="kind" mode=Strict
+    PropSet v0, v2 key="pos" mode=Strict
+    Return
+}
+function f2 name="isKeyword" parameters=[{type=undefined|null|L4}] results=[{type=anything}] {
+    Return v0
+}
+
+# CHECK-LABEL: function f1 name="NodeObject"
+# CHECK: thisType={type=undefined|null|L0|L1|L2|L3|L4}
+# CHECK-LABEL: function f2 name="isKeyword"
+# CHECK: parameters=[{type=undefined|null|L4}]
+# CHECK: round trip: same

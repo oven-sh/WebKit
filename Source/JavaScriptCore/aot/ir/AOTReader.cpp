@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTFlowSiteData.h"
+#include "AOTImagesBelow.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
@@ -34,9 +35,34 @@ bool Reader::run()
 {
     return readHeader()
         && readNamesAndFamilies()
+        && readReplaceableBuiltins()
         && readTypes()
         && readListsLayoutsAndFunctions()
         && finishProgram();
+}
+
+// Before anything asks the table about a lock, and while one thread reads.
+bool Reader::readReplaceableBuiltins()
+{
+    auto& members = m_program.replaceableBuiltins;
+    if (!readList(m_sections.replaceableBuiltins, members) || !readList(m_sections.openedNames, m_program.openedNames))
+        return false;
+    for (size_t index = 1; index < members.size(); ++index) {
+        RecordChecker checker(*this, inRecord(static_cast<uint32_t>(index)));
+        checker.requireAscending(members[index - 1].member, members[index].member);
+        if (auto failure = checker.takeFailure())
+            return report(*failure);
+    }
+    if (const ImagesBelow* below = m_build.imagesBelow()) {
+        below->forEachUnlockedBuiltinMember([&](BuiltinID member) {
+            members.append(ReplaceableBuiltin { member });
+        });
+        AOT::sort(members, { }, &ReplaceableBuiltin::member);
+        members.shrink(members.size() - std::ranges::unique(members, { }, &ReplaceableBuiltin::member).size());
+    }
+    m_program.takesAnyNameFromTests = m_build.options().holdsLibraryAlone();
+    m_program.unlockReplaceableBuiltins();
+    return true;
 }
 
 bool Reader::readNamesAndFamilies()
@@ -242,6 +268,8 @@ bool Reader::readProgramLists()
         && readListInParallel(m_sections.variables, m_program.variables)
         && readListInParallel(m_sections.modules, m_program.modules)
         && readList(m_sections.moduleFailures, m_program.moduleFailures)
+        && readList(m_sections.ambiguousExports, m_program.ambiguousExports)
+        && readList(m_sections.sourceStamps, m_program.sourceStamps)
         && readList(m_sections.evalScopes, m_program.evalScopes)
         && readListInParallel(m_sections.data, m_program.data)
         && readList(m_sections.entries, m_program.entries)
@@ -353,7 +381,7 @@ static std::unique_ptr<Program> readProgram(std::span<const uint8_t> bytes, cons
         reader.setPreparesFunctionsForTyping();
     if (!reader.run())
         return nullptr;
-    program->copyBorrowedLineStarts(build.parallelLoops());
+    program->copyBorrowedWordsOfPositions(build.parallelLoops());
     program->collectConstructionStarts();
     program->borrowBuffer({ });
     return program;

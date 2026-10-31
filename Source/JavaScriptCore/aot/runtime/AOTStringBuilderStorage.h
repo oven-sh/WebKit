@@ -258,16 +258,22 @@ struct StackStringBuilder {
     static constexpr uint32_t minLengthAppendedByReference = defaultLimitValue(LimitID::MinLengthAppendedByReference, hostArchitecture());
 
     bool isOnStack() const { return limit == buffer + capacity; }
+    // One string and nothing behind it. It is the text unless something follows, and there is no room, so whatever follows comes by a call.
+    bool holdsOneString() const { return limit == buffer; }
     std::span<const Latin1Character> charactersOnStack(const Latin1Character* cursor) const LIFETIME_BOUND { return { buffer, cursor }; }
 
     // These return null after throwing.
     StringBuilderStorage* moveToStorage(JSGlobalObject*, Instance&, const Latin1Character* cursor);
     Latin1Character* didChangeStorage(JSGlobalObject*);
+    Latin1Character* holdOneString(JSString*);
     JSString* finish(JSGlobalObject*, Instance&, const Latin1Character* cursor, StringBuilderStorage::StringUse);
 
     Latin1Character* limit;
     Latin1Character* lengthOrigin;
-    StringBuilderStorage* storage;
+    union {
+        StringBuilderStorage* storage;
+        JSString* oneString;
+    };
     Latin1Character buffer[capacity + maxBytesWrittenPastLimit];
 };
 

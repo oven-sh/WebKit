@@ -95,45 +95,77 @@ struct KeyParameter {
 struct InliningSummary {
     bool canInlineWholeBody() const { return barrier == InlineBarrier::None && blocksBoundToFrame.isEmpty(); }
     bool canInlineHead() const { return barrier == InlineBarrier::None && !headBlocks.isEmpty(); }
+    void shrinkToFit();
 
+    bool testsParentOfClass { false };
     InlineBarrier barrier { InlineBarrier::Unknown };
+    bool neverReturns { false };
+    // Nothing in it loops: it does not spin, it ends by throwing.
+    bool onlyThrows { false };
+    bool hasCycle { false };
+    bool hasBareReturn { false };
+    bool isWrapper { false };
+    // Its rest parameter is only spread into its calls, and it is short.
+    bool onlyForwardsRestParameter { false };
+    // Its rest parameter is only read: by key, for its length, or as the arguments of a call.
+    bool onlyReadsRestParameter { false };
+    // `(a, b) => a - b`: handed two numbers, the function answers with their difference and does nothing else.
+    enum class Difference : uint8_t { None, FirstMinusSecond, SecondMinusFirst };
+    Difference difference { Difference::None };
+    // `(a, b) => a.rank - b.rank`: handed two values of a list that holds no undefined, the function answers with a number or a boolean, and nobody can see that it ran or what the list held meanwhile.
+    bool nobodySeesItRun { false };
+    enum class Answer : uint8_t { NotAsked, No, Yes };
+    // The answer of returnsFreshAggregate() for the function, once it is made. Threads that share the summary read and write it as an atomic: each that finds none makes it, and all make the same.
+    mutable Answer returnsFreshAggregate { Answer::NotAsked };
     uint32_t codeBytes { 0 };
     // The larger of two parts: the code that is expected to run, without the tests of declared types, and the code that is not.
     uint32_t likelyCodeBytes { 0 };
     uint32_t headBytes { 0 };
     // The generic version of a function is entered where one of several tests of the parameters fails, so no single test owns its bytes. They go where every one of the tests is decided.
     uint32_t bytesOnlyIfSomeTestFails { 0 };
+    // The tests of a rest parameter that is only read. They are answered where the list is not made.
+    uint32_t bytesOfTestsOfRestParameter { 0 };
     BitVector headBlocks;
     BitVector noReturnBlocks;
     BitVector blocksBoundToFrame;
     BitVector calledParameters;
     BitVector parametersCalledInCycles;
+    // In a loop that stands in a loop.
+    BitVector parametersCalledInNestedLoops;
+    // sort() calls no comparator: it hands the comparator to the function that compares. The parameters of library code that reach a called parameter
+    // by calls that are made whenever the function runs, and where each is handed on.
+    struct ForwardedParameter {
+        uint32_t entryParameter { 0 };
+        FunctionID callee;
+        uint32_t calleeParameter { 0 };
+    };
+    BitVector forwardedParameters;
     BitVector iteratedParameters;
-    Vector<ParameterCondition, 2> conditions;
+    CompactList<ForwardedParameter> forwards;
+    CompactList<ParameterCondition> conditions;
     Vector<ParameterSwitch, 0> switches;
-    Vector<BytesInRange, 0> partsOfBytesOnlyIfSomeTestFails;
-    Vector<SpreadOfParameter, 0> spreadsOfParameters;
-    Vector<ReceiverParameter, 1> receiverParameters;
-    Vector<KeyParameter, 1> keyParameters;
-    bool neverReturns { false };
-    bool hasCycle { false };
-    bool hasBareReturn { false };
-    bool isWrapper { false };
-    // Its rest parameter is only spread into its calls, and it is short.
-    bool onlyForwardsRestParameter { false };
-    enum class Answer : uint8_t { NotAsked, No, Yes };
-    // The answer of returnsFreshAggregate() for the function, once it is made. Threads that share the summary read and write it as an atomic: each that finds none makes it, and all make the same.
-    mutable Answer returnsFreshAggregate { Answer::NotAsked };
+    CompactList<BytesInRange> partsOfBytesOnlyIfSomeTestFails;
+    CompactList<SpreadOfParameter> spreadsOfParameters;
+    CompactList<ReceiverParameter> receiverParameters;
+    CompactList<KeyParameter> keyParameters;
+    // It returns what these answer when handed its two parameters: the versions behind the tests of the declared types.
+    struct DifferenceCall {
+        FunctionID callee;
+        bool swapsParameters { false };
+    };
+    CompactList<DifferenceCall> differenceCalls;
 };
+static_assert(sizeof(InliningSummary) <= 168);
 
 class InliningSummaries {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(InliningSummaries);
 public:
     InliningSummaries() = default;
 
-    bool contains(FunctionID id) const { return id.index() < m_summaries.size(); }
-    const InliningSummary& of(const Program&, FunctionID id) const LIFETIME_BOUND { return contains(id) ? m_summaries[id.index()] : m_unknown; }
+    bool contains(FunctionID id) const { return id.index() < m_positions.size(); }
+    const InliningSummary& of(const Program&, FunctionID id) const LIFETIME_BOUND { return contains(id) ? m_summaries[m_positions[id.index()]] : m_unknown; }
     bool neverReturns(const Program& program, FunctionID id) const { return of(program, id).neverReturns; }
+    bool onlyThrows(const Program& program, FunctionID id) const { return of(program, id).onlyThrows; }
     // What returnsFreshAggregate() says of a function that can be inlined.
     bool returnsFreshAggregate(const Program&, FunctionID) const;
 
@@ -143,7 +175,11 @@ private:
     friend InliningSummaries summarizeForInlining(const Program&, const CallGraph&, const Heat&, const FlowResults&, BuildContext&);
 
     static constexpr unsigned numberOfLocks = 256;
+    static constexpr uint32_t positionWithoutBody = 0;
+    static constexpr uint32_t positionOfUnknown = 1;
+    static constexpr uint32_t firstOwnPosition = 2;
 
+    Vector<uint32_t> m_positions;
     ParallelArray<InliningSummary> m_summaries;
     InliningSummary m_unknown;
     BuildContext* m_build { nullptr };

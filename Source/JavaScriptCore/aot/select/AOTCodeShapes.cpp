@@ -10,6 +10,7 @@
 
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
+#include "AOTProgramPasses.h"
 #include <algorithm>
 #include <optional>
 
@@ -28,11 +29,22 @@ static bool isCompactAtEveryFrequencyUpToEntry(FunctionPassContext& pass)
     return codeShapeFor(pass.inputs.heat.activationsOf(pass.program, pass.id) * roundingOfFrequencySums, false, BlockFrequency::Normal) == CodeShape::Compact;
 }
 
+// One function for all the loops of the program: whoever calls it calls it once a turn, and its long forms are paid for once.
+static bool takesStepsOfLoops(const Function& function)
+{
+    if (!isOutlinedIteration(function))
+        return false;
+    OutlinedIteration kind = kindOfOutlinedBody(function.derivation.node);
+    return kind == OutlinedIteration::StepIterator || kind == OutlinedIteration::StepString;
+}
+
 static CodeShape computeCodeShape(FunctionPassContext& pass, BlockID block, std::optional<bool>& isCompactEverywhere)
 {
     Expected<BlockFrequency> recordedFrequency = pass.function.at(block).frequency;
     if (recordedFrequency.predicted() == BlockFrequency::Rare || !pass.analyses.cfg().isReachable(block) || pass.runsAtMostOnce(block))
         return CodeShape::Compact;
+    if (takesStepsOfLoops(pass.function) && recordedFrequency.predicted() == BlockFrequency::Normal && !pass.analyses.blockFrequencies().alwaysEndsInThrow(block))
+        return CodeShape::Fast;
     if (!isCompactEverywhere)
         isCompactEverywhere = isCompactAtEveryFrequencyUpToEntry(pass) && runsNoBlockMoreOftenThanEntry(pass.analyses.cfg());
     if (*isCompactEverywhere || pass.analyses.blockFrequencies().alwaysEndsInThrow(block))

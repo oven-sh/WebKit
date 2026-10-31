@@ -206,8 +206,20 @@ void checkSummaryCoversBody(const EffectContext& context, FunctionID id, Functio
         return effects;
     };
     claimed = { withMemoryOfObjectsOnAnyEdge(claimed.normal), withMemoryOfObjectsOnAnyEdge(claimed.handler) };
-    if (!fresh.elsewhere.isSubsetOf(claimed) || !coversParameters)
-        diagnostics.add(InternalError { .kind = InternalErrorKind::EffectsExceedSummary, .function = id });
+    if (fresh.elsewhere.isSubsetOf(claimed) && coversParameters)
+        return;
+
+    StringPrintStream detail;
+    detail.print("beyond it: "_s, effectsBeyond(fresh.elsewhere.normal, claimed.normal));
+    if (!fresh.elsewhere.handler.isSubsetOf(claimed.handler))
+        detail.print("; where it throws: "_s, effectsBeyond(fresh.elsewhere.handler, claimed.handler));
+    if (!coversParameters) {
+        Effects throughParameters = Effects::none();
+        throughParameters.reads = fresh.throughParameters.reads;
+        throughParameters.writes = fresh.throughParameters.writes;
+        detail.print("; through parameters: "_s, effectsBeyond(throughParameters, onAnyEdge));
+    }
+    diagnostics.add(InternalError { .kind = InternalErrorKind::EffectsExceedSummary, .function = id, .detail = detail.toString() });
 }
 
 static Effects effectsOfEntering(const Program& program, FunctionID target, BuiltinCallMode mode)

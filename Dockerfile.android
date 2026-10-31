@@ -85,6 +85,20 @@ RUN wget -q "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linu
     rm /tmp/node.tar.xz && \
     node --version
 
+# The zstd CLI, for icu/compress-data.ts (built from source: noble's apt has 1.5.5, 1.5.7 matches Bun's vendored decoder).
+# Its lib/ sources stay, at /zstd/lib: the jsc shell builds the decoder from them to read that data
+# (shell/CMakeLists.txt, BUN_ICU_ZSTD_SOURCE_DIR).
+ARG ZSTD_VERSION=1.5.7
+ARG ZSTD_SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
+RUN wget -q "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" -O /tmp/zstd.tar.gz && \
+    echo "${ZSTD_SHA256}  /tmp/zstd.tar.gz" | sha256sum -c - && \
+    tar xzf /tmp/zstd.tar.gz -C /tmp && \
+    make -C /tmp/zstd-${ZSTD_VERSION}/programs zstd -j$(nproc) CC=$CC && \
+    cp /tmp/zstd-${ZSTD_VERSION}/programs/zstd /usr/local/bin/ && \
+    mkdir /zstd && cp -r /tmp/zstd-${ZSTD_VERSION}/lib /zstd/lib && test -f /zstd/lib/zstd.h && \
+    rm -rf /tmp/zstd-${ZSTD_VERSION} /tmp/zstd.tar.gz && \
+    zstd --version
+
 RUN mkdir -p /output/lib /output/include /output/include/JavaScriptCore /output/include/wtf /output/include/bmalloc /output/include/unicode
 
 # ICU's sources and, for this container, its tools. ICU runs them while it builds (pkgdata, genrb, ...), so a cross
@@ -125,9 +139,10 @@ ARG ANDROID_ARCH
 # Most of rbnf/ goes too, but root/ja/zh/zh_Hant stay: ICU reaches those on its own
 # through the algorithmic numbering systems in numberingSystems.res (see the note and
 # the staleness guard in ./Dockerfile).
-# This image does not run compress-data.ts, so those five items cost their raw
-# 35 KB here rather than the ~8 KB they compress to elsewhere.
-COPY icu/decnum-allocation-failure.patch /icu-bun/
+#
+# udata.cpp gets the per-item decompression hook (a weak extern Bun defines; null in ICU's own tools), and at the end
+# the filtered .dat is repacked with per-item zstd (icu/compress-data.ts), as in ./Dockerfile: 25.3 MB > 12.1 MB.
+COPY icu/ /icu-bun/
 RUN --mount=type=tmpfs,target=/icu \
     export TARGET_TRIPLE="${ANDROID_ARCH}-unknown-linux-android${ANDROID_API}" && \
     export CROSS_FLAGS="--target=${TARGET_TRIPLE} --sysroot=${NDK_SYSROOT}" && \
@@ -135,6 +150,7 @@ RUN --mount=type=tmpfs,target=/icu \
     export CXXFLAGS="${CROSS_FLAGS} ${DEFAULT_CFLAGS} ${MARCH_FLAG} -Os -std=c++20 -fno-exceptions ${LTO_FLAG} -fno-c++-static-destructors" && \
     export LDFLAGS="${CROSS_FLAGS} --rtlib=compiler-rt -fuse-ld=lld" && \
     cd /icu && tar -xf /icu.tgz --strip-components=1 && rm /icu.tgz && \
+    patch -p1 < /icu-bun/udata-decompress-hook.patch && \
     patch -p1 < /icu-bun/decnum-allocation-failure.patch && \
     cd source && \
     /icu-host/source/bin/icupkg -l data/in/icudt${ICU_VERSION%%.*}l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > data/in/rm.lst && \
@@ -147,7 +163,8 @@ RUN --mount=type=tmpfs,target=/icu \
       || { cat config.log; exit 1; }; } && \
     make -j$(nproc) && \
     cp lib/*.a /output/lib && \
-    cp -r i18n/unicode/* common/unicode/* /output/include/unicode
+    cp -r i18n/unicode/* common/unicode/* /output/include/unicode && \
+    node --experimental-strip-types /icu-bun/compress-data.ts data/in/icudt${ICU_VERSION%%.*}l.dat /output/lib/libicudata.a --skip /icu-bun/keep-raw.txt --icupkg /icu-host/source/bin/icupkg --cc "$CC --target=${TARGET_TRIPLE}" --ar llvm-ar
 
 # ───────────────────────────────────────────────────────────────────────────
 # WebKit (JSCOnly) — cross-compiled via CMake's built-in Android support.
@@ -217,6 +234,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
     -DICU_ROOT=/icu \
     -DICU_INCLUDE_DIR=/icu/include \
+    -DBUN_ICU_ZSTD_SOURCE_DIR=/zstd/lib \
     -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH \
     -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH \
     -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \

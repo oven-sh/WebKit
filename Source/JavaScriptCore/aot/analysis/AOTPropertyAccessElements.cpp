@@ -279,7 +279,7 @@ static const ClassPart* findOnlyClassWithElements(const BuiltinTable& builtins, 
 static bool hasOnlyArraySubclassInstances(const Program& program, const Type& type)
 {
     return type.hasOnlyLayouts() && std::ranges::all_of(membersOf(program, type), [&](LayoutID member) {
-        return program.at(member).writtenBuiltinBase == BuiltinClasses::Array;
+        return program.at(member).writtenBuiltinBase == BuiltinClasses::Array && !program.at(member).mayBeOrdinaryObject;
     });
 }
 

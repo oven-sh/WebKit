@@ -46,6 +46,10 @@
 #include "B3Variable.h"
 #include "B3VariableValue.h"
 #include "B3WasmBoundsCheckValue.h"
+#include <algorithm>
+#include <bit>
+#include <span>
+#include <utility>
 #include <wtf/HashSet.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/CString.h>
@@ -58,8 +62,10 @@ enum class ViolationAction : uint8_t { Crash, Record };
 
 class Validater {
 public:
-    Validater(Procedure& procedure, UTF8CStringView dumpBefore, ViolationAction violationAction)
+    // What follows from the control flow is computed into `form` where it is not there yet.
+    Validater(Procedure& procedure, UTF8CStringView dumpBefore, ViolationAction violationAction, ValidatedForm& form)
         : m_procedure(procedure)
+        , m_form(form)
         , m_dumpBefore(dumpBefore)
         , m_violationAction(violationAction)
     {
@@ -80,12 +86,13 @@ public:
 
     void run()
     {
-        UncheckedKeyHashSet<BasicBlock*> blocks;
-        UncheckedKeyHashSet<Value*> valueInProc;
-        UncheckedKeyHashMap<Value*, unsigned> valueInBlock;
-        UncheckedKeyHashMap<Value*, BasicBlock*> valueOwner;
-        UncheckedKeyHashMap<Value*, unsigned> valueIndex;
+        // Values and blocks are numbered, so the tables are vectors, which stay cheap on large procedures.
+        const SparseCollection<Value>& values = m_procedure.values();
+        m_ownerOfValue.fill(nullptr, values.size());
+        Vector<unsigned> indexInBlock;
+        indexInBlock.fill(0, values.size());
         UncheckedKeyHashMap<Value*, Vector<std::optional<Type>>> extractions;
+        m_blocksWithPhis.ensureSize(m_procedure.size());
 
         for (unsigned tuple = 0; tuple < m_procedure.tuples().size(); ++tuple) {
             VALIDATE(m_procedure.tuples()[tuple].size(), ("In tuple ", tuple));
@@ -94,61 +101,86 @@ public:
         }
 
         for (BasicBlock* block : m_procedure) {
-            blocks.add(block);
             for (unsigned i = 0; i < block->size(); ++i) {
                 Value* value = block->at(i);
                 VALIDATE(value, ("At ", *block, ", index ", i));
-                valueInBlock.add(value, 0).iterator->value++;
-                valueOwner.add(value, block);
-                valueIndex.add(value, i);
+                VALIDATE(isInProcedure(value), ("At ", *block, ", index ", i));
+                VALIDATE(!m_ownerOfValue[value->index()], ("At ", *value));
+                m_ownerOfValue[value->index()] = block;
+                indexInBlock[value->index()] = i;
+                if (value->opcode() == Phi)
+                    m_blocksWithPhis.quickSet(block->index());
+                VALIDATE(value->effects().terminal == (i + 1 == block->size()), ("At ", *value));
             }
         }
 
-        for (Value* value : m_procedure.values())
-            valueInProc.add(value);
-
-        for (Value* value : valueInProc)
-            VALIDATE(valueInBlock.contains(value), ("At ", *value));
-        for (auto& entry : valueInBlock) {
-            VALIDATE(valueInProc.contains(entry.key), ("At ", *entry.key));
-            VALIDATE(entry.value == 1, ("At ", *entry.key));
-        }
+        for (unsigned index = 0; index < values.size(); ++index)
+            VALIDATE(!values[index] || m_ownerOfValue[index], ("At ", *values[index]));
 
         // Compute dominators ourselves to avoid perturbing Procedure.
-        Dominators dominators(m_procedure);
+        if (!m_form.dominators)
+            m_form.dominators = makeUnique<Dominators>(m_procedure);
+        Dominators& dominators = *m_form.dominators;
 
-        for (Value* value : valueInProc) {
+        for (Value* value : values) {
             for (Value* child : value->children()) {
                 VALIDATE(child, ("At ", *value));
-                VALIDATE(valueInProc.contains(child), ("At ", *value, "->", pointerDump(child)));
-                if (valueOwner.get(child) == valueOwner.get(value))
-                    VALIDATE(valueIndex.get(value) > valueIndex.get(child), ("At ", *value, "->", pointerDump(child)));
+                VALIDATE(isInProcedure(child), ("At ", *value, "->", pointerDump(child)));
+                if (ownerOf(child) == ownerOf(value))
+                    VALIDATE(indexInBlock[value->index()] > indexInBlock[child->index()], ("At ", *value, "->", pointerDump(child)));
                 else
-                    VALIDATE(dominators.dominates(valueOwner.get(child), valueOwner.get(value)), ("at ", *value, "->", pointerDump(child)));
+                    VALIDATE(dominators.dominates(ownerOf(child), ownerOf(value)), ("at ", *value, "->", pointerDump(child)));
                 if (child->effects().terminal)
-                    VALIDATE_RULE(ValidationRule::TerminalResult, firstSuccessorEdgeDominates(dominators, valueOwner.get(child), valueOwner.get(value)), ("At ", *value, "->", pointerDump(child)));
+                    VALIDATE_RULE(ValidationRule::TerminalResult, firstSuccessorEdgeDominates(dominators, ownerOf(child), ownerOf(value)), ("At ", *value, "->", pointerDump(child)));
             }
         }
 
-        UncheckedKeyHashMap<BasicBlock*, UncheckedKeyHashSet<BasicBlock*>> allPredecessors;
-        for (BasicBlock* block : blocks) {
+        // The blocks that jump to each block, each of them once.
+        Vector<unsigned> firstJumperTo;
+        firstJumperTo.fill(0, m_procedure.size() + 1);
+        Vector<BasicBlock*> latestJumperTo;
+        latestJumperTo.fill(nullptr, m_procedure.size());
+        for (BasicBlock* block : m_procedure) {
             VALIDATE(block->size() >= 1, ("At ", *block));
-            for (unsigned i = 0; i < block->size() - 1; ++i)
-                VALIDATE(!block->at(i)->effects().terminal, ("At ", *block->at(i)));
-            VALIDATE(block->last()->effects().terminal, ("At ", *block->last()));
-            
+
             for (BasicBlock* successor : block->successorBlocks()) {
-                allPredecessors.add(successor, UncheckedKeyHashSet<BasicBlock*>()).iterator->value.add(block);
-                VALIDATE(
-                    blocks.contains(successor), ("At ", *block, "->", pointerDump(successor)));
+                VALIDATE(isInProcedure(successor), ("At ", *block, "->", pointerDump(successor)));
+                if (std::exchange(latestJumperTo[successor->index()], block) != block)
+                    ++firstJumperTo[successor->index() + 1];
+            }
+        }
+        for (unsigned index = 0; index < m_procedure.size(); ++index)
+            firstJumperTo[index + 1] += firstJumperTo[index];
+        Vector<BasicBlock*> jumpers;
+        jumpers.fill(nullptr, firstJumperTo.last());
+        Vector<unsigned> nextJumperTo(firstJumperTo.span().first(m_procedure.size()));
+        latestJumperTo.fill(nullptr);
+        for (BasicBlock* block : m_procedure) {
+            for (BasicBlock* successor : block->successorBlocks()) {
+                if (std::exchange(latestJumperTo[successor->index()], block) != block)
+                    jumpers[nextJumperTo[successor->index()]++] = block;
             }
         }
 
-        // Note that this totally allows dead code.
-        for (auto& entry : allPredecessors) {
-            BasicBlock* successor = entry.key;
-            UncheckedKeyHashSet<BasicBlock*>& predecessors = entry.value;
-            VALIDATE(predecessors == successor->predecessors(), ("At ", *successor));
+        // The pointers are compared and not followed: the list of a dead block may name blocks that are gone.
+        Vector<BasicBlock*, 8> predecessors;
+        for (BasicBlock* block : m_procedure) {
+            if (block->numPredecessors() == 1 && firstJumperTo[block->index() + 1] - firstJumperTo[block->index()] == 1) {
+                VALIDATE(block->predecessor(0) == jumpers[firstJumperTo[block->index()]], ("At ", *block));
+                continue;
+            }
+            predecessors.shrink(0);
+            predecessors.appendRange(block->predecessors().begin(), block->predecessors().end());
+            std::ranges::sort(predecessors);
+            // We expect the predecessor list to be de-duplicated.
+            VALIDATE(std::ranges::adjacent_find(predecessors) == predecessors.end(), ("At ", *block));
+
+            // Note that this totally allows dead code.
+            std::span<BasicBlock*> jumpersToBlock = jumpers.mutableSpan().subspan(firstJumperTo[block->index()], firstJumperTo[block->index() + 1] - firstJumperTo[block->index()]);
+            if (jumpersToBlock.empty())
+                continue;
+            std::ranges::sort(jumpersToBlock);
+            VALIDATE(std::ranges::equal(predecessors, jumpersToBlock), ("At ", *block));
         }
 
         for (Value* value : m_procedure.values()) {
@@ -861,7 +893,7 @@ public:
                     }
                 }
                 validateStackmap(value);
-                validatePatchpointContract(value->as<PatchpointValue>(), valueOwner.get(value));
+                validatePatchpointContract(value->as<PatchpointValue>(), ownerOf(value));
                 break;
             case Extract: {
                 VALIDATE(value->numChildren() == 1, ("At ", *value));
@@ -953,7 +985,7 @@ public:
                 VALIDATE(value->as<UpsilonValue>()->phi()->opcode() == Phi, ("At ", *value));
                 VALIDATE(value->child(0)->type() != Void, ("At ", *value));
                 VALIDATE(value->child(0)->type() == value->as<UpsilonValue>()->phi()->type(), ("At ", *value));
-                VALIDATE(valueInProc.contains(value->as<UpsilonValue>()->phi()), ("At ", *value));
+                VALIDATE(isInProcedure(value->as<UpsilonValue>()->phi()), ("At ", *value));
                 break;
             case Phi:
                 VALIDATE(!value->kind().hasExtraBits(), ("At ", *value));
@@ -964,37 +996,37 @@ public:
                 VALIDATE(!value->kind().hasExtraBits(), ("At ", *value));
                 VALIDATE(!value->numChildren(), ("At ", *value));
                 VALIDATE(value->type() == Void, ("At ", *value));
-                VALIDATE(valueOwner.get(value)->numSuccessors() == 1, ("At ", *value));
+                VALIDATE(ownerOf(value)->numSuccessors() == 1, ("At ", *value));
                 break;
             case Oops:
                 VALIDATE(!value->kind().hasExtraBits(), ("At ", *value));
                 VALIDATE(!value->numChildren(), ("At ", *value));
                 VALIDATE(value->type() == Void, ("At ", *value));
-                VALIDATE(!valueOwner.get(value)->numSuccessors(), ("At ", *value));
+                VALIDATE(!ownerOf(value)->numSuccessors(), ("At ", *value));
                 break;
             case Return:
                 VALIDATE(!value->kind().hasExtraBits(), ("At ", *value));
                 VALIDATE(value->numChildren() <= 1, ("At ", *value));
                 VALIDATE(value->type() == Void, ("At ", *value));
-                VALIDATE(!valueOwner.get(value)->numSuccessors(), ("At ", *value));
+                VALIDATE(!ownerOf(value)->numSuccessors(), ("At ", *value));
                 break;
             case Branch:
                 VALIDATE(!value->kind().hasExtraBits(), ("At ", *value));
                 VALIDATE(value->numChildren() == 1, ("At ", *value));
                 VALIDATE(value->child(0)->type().isInt(), ("At ", *value));
                 VALIDATE(value->type() == Void, ("At ", *value));
-                VALIDATE(valueOwner.get(value)->numSuccessors() == 2, ("At ", *value));
+                VALIDATE(ownerOf(value)->numSuccessors() == 2, ("At ", *value));
                 break;
             case Switch: {
                 VALIDATE(!value->kind().hasExtraBits(), ("At ", *value));
                 VALIDATE(value->numChildren() == 1, ("At ", *value));
                 VALIDATE(value->child(0)->type().isInt(), ("At ", *value));
                 VALIDATE(value->type() == Void, ("At ", *value));
-                VALIDATE(value->as<SwitchValue>()->hasFallThrough(valueOwner.get(value)), ("At ", *value));
+                VALIDATE(value->as<SwitchValue>()->hasFallThrough(ownerOf(value)), ("At ", *value));
                 // This validates the same thing as hasFallThrough, but more explicitly. We want to
                 // make sure that if anyone tries to change the definition of hasFallThrough, they
                 // will feel some pain here, since this is fundamental.
-                VALIDATE(valueOwner.get(value)->numSuccessors() == value->as<SwitchValue>()->numCaseValues() + 1, ("At ", *value));
+                VALIDATE(ownerOf(value)->numSuccessors() == value->as<SwitchValue>()->numCaseValues() + 1, ("At ", *value));
                 
                 // Check that there are no duplicate cases.
                 Vector<int64_t> caseValues = value->as<SwitchValue>()->caseValues();
@@ -1007,7 +1039,7 @@ public:
                 VALIDATE(!value->kind().hasExtraBits(), ("At ", *value));
                 VALIDATE(!value->numChildren(), ("At ", *value));
                 VALIDATE(value->type() == Void, ("At ", *value));
-                VALIDATE(valueOwner.get(value)->numSuccessors() == m_procedure.numEntrypoints(), ("At ", *value));
+                VALIDATE(ownerOf(value)->numSuccessors() == m_procedure.numEntrypoints(), ("At ", *value));
                 break;
             }
 
@@ -1029,19 +1061,15 @@ public:
         for (Variable* variable : m_procedure.variables())
             VALIDATE(variable->type() != Void, ("At ", *variable));
 
-        for (BasicBlock* block : m_procedure) {
-            // We expect the predecessor list to be de-duplicated.
-            UncheckedKeyHashSet<BasicBlock*> predecessors;
-            for (BasicBlock* predecessor : block->predecessors())
-                predecessors.add(predecessor);
-            VALIDATE(block->numPredecessors() == predecessors.size(), ("At ", *block));
-        }
-
         validatePhisAreDominatedByUpsilons();
-        validateKnownInductions(valueOwner, dominators);
+        validateKnownInductions(dominators);
     }
 
 private:
+    bool isInProcedure(Value* value) const { return value->index() < m_procedure.values().size() && m_procedure.values()[value->index()] == value; }
+    bool isInProcedure(BasicBlock* block) const { return block->index() < m_procedure.size() && m_procedure[block->index()] == block; }
+    BasicBlock* ownerOf(Value* value) const { return m_ownerOfValue[value->index()]; }
+
     void validateStackmap(Value* value)
     {
         StackmapValue* stackmap = value->as<StackmapValue>();
@@ -1169,36 +1197,36 @@ private:
         VALIDATE_RULE(ValidationRule::PureFunction, !effects.readsLocalState && !effects.writesLocalState, ("At ", *patchpoint));
     }
 
-    void validateKnownInductions(const UncheckedKeyHashMap<Value*, BasicBlock*>& valueOwner, Dominators& dominators)
+    void validateKnownInductions(Dominators& dominators)
     {
         if (m_violatedRule || m_procedure.knownInductions().isEmpty())
             return;
         m_procedure.knownInductions().forEach([&](const InductionRecord& record) {
-            validateKnownInduction(record, valueOwner);
+            validateKnownInduction(record);
         });
         if (m_violatedRule)
             return;
         NaturalLoops loops(m_procedure, dominators);
         for (Value* value : m_procedure.values()) {
             if (auto* upsilon = value->as<UpsilonValue>())
-                validateKnownInductionStep(upsilon, valueOwner, loops);
+                validateKnownInductionStep(upsilon, loops);
         }
     }
 
-    void validateKnownInduction(const InductionRecord& record, const UncheckedKeyHashMap<Value*, BasicBlock*>& valueOwner)
+    void validateKnownInduction(const InductionRecord& record)
     {
-        VALIDATE_RULE(ValidationRule::KnownInduction, valueOwner.contains(record.phi) && valueOwner.contains(record.next), ("At ", *record.phi));
-        VALIDATE_RULE(ValidationRule::KnownInduction, !record.test || valueOwner.contains(record.test), ("At ", *record.phi));
+        VALIDATE_RULE(ValidationRule::KnownInduction, isInProcedure(record.phi) && isInProcedure(record.next), ("At ", *record.phi));
+        VALIDATE_RULE(ValidationRule::KnownInduction, !record.test || isInProcedure(record.test), ("At ", *record.phi));
         VALIDATE_RULE(ValidationRule::KnownInduction, record.phi->type().isInt() && record.step, ("At ", *record.phi));
     }
 
-    void validateKnownInductionStep(UpsilonValue* upsilon, const UncheckedKeyHashMap<Value*, BasicBlock*>& valueOwner, const NaturalLoops& loops)
+    void validateKnownInductionStep(UpsilonValue* upsilon, const NaturalLoops& loops)
     {
         std::optional<InductionRecord> record = m_procedure.knownInduction(upsilon->phi());
         if (!record)
             return;
-        const NaturalLoop* loop = loops.headerOf(valueOwner.get(record->phi));
-        if (!loop || !loops.belongsTo(valueOwner.get(upsilon), *loop))
+        const NaturalLoop* loop = loops.headerOf(ownerOf(record->phi));
+        if (!loop || !loops.belongsTo(ownerOf(upsilon), *loop))
             return;
         auto form = affineFormOf(m_procedure, upsilon->child(0), record->phi, Signedness::Signed);
         VALIDATE_RULE(ValidationRule::KnownInduction, !form || form->offset == record->step, ("At ", *upsilon, " of ", *record->phi));
@@ -1211,12 +1239,18 @@ private:
         bool changed = true;
         BitVector blocksToVisit;
         IndexMap<BasicBlock*, UncheckedKeyHashSet<Value*>> undominatedPhisAtTail(m_procedure.size());
+        // A BitVector grows by no more than it is asked for.
+        blocksToVisit.ensureSize(m_procedure.size());
         for (BasicBlock* block : m_procedure)
-            blocksToVisit.set(block->index());
+            blocksToVisit.quickSet(block->index());
+        if (m_form.blocksInPostOrder.isEmpty())
+            m_form.blocksInPostOrder = m_procedure.blocksInPostOrder();
         while (changed) {
             changed = false;
-            for (BasicBlock* block : m_procedure.blocksInPostOrder()) {
+            for (BasicBlock* block : m_form.blocksInPostOrder) {
                 if (!blocksToVisit.quickClear(block->index()))
+                    continue;
+                if (undominatedPhisAtTail[block].isEmpty() && !m_blocksWithPhis.quickGet(block->index()))
                     continue;
                 UncheckedKeyHashSet<Value*> undominatedPhis = undominatedPhisAtTail[block];
                 for (unsigned index = block->size()-1; index--;) {
@@ -1280,22 +1314,112 @@ private:
     }
     
     Procedure& m_procedure;
+    ValidatedForm& m_form;
+    Vector<BasicBlock*> m_ownerOfValue;
+    BitVector m_blocksWithPhis;
     UTF8CStringView m_dumpBefore;
     ViolationAction m_violationAction;
     std::optional<ValidationRule> m_violatedRule;
 };
 
+class Hasher {
+public:
+    void add(uint64_t word)
+    {
+        m_hash = (m_hash ^ word) * 0x9e3779b97f4a7c15ull;
+        m_hash ^= m_hash >> 29;
+    }
+
+    void add(const void* pointer) { add(static_cast<uint64_t>(std::bit_cast<uintptr_t>(pointer))); }
+
+    uint64_t hash() const { return m_hash; }
+
+private:
+    uint64_t m_hash { 0 };
+};
+
+// Reads blocks and the values in them, and follows no other pointer: a broken procedure is for the validation to report.
+void hashProcedure(Procedure& procedure, uint64_t& hashOfControlFlow, uint64_t& hashOfValues)
+{
+    Hasher controlFlow;
+    Hasher values;
+    controlFlow.add(procedure.size());
+    values.add(procedure.values().size());
+    values.add(procedure.variables().size());
+    values.add(procedure.tuples().size());
+    for (BasicBlock* block : procedure) {
+        controlFlow.add(block);
+        controlFlow.add(static_cast<uint64_t>(block->numSuccessors()) << 32 | block->numPredecessors());
+        for (const FrequentedBlock& successor : block->successors())
+            controlFlow.add(successor.block());
+        for (BasicBlock* predecessor : block->predecessors())
+            controlFlow.add(predecessor);
+
+        values.add(block);
+        for (Value* value : *block) {
+            values.add(value);
+            if (!value)
+                continue;
+            values.add(static_cast<uint64_t>(value->kind().hash()) << 32 | value->type().hash());
+            values.add(value->numChildren());
+            for (Value* child : value->children())
+                values.add(child);
+            if (auto* memory = value->as<MemoryValue>()) {
+                values.add(static_cast<uint64_t>(memory->offset()));
+                values.add(static_cast<uint64_t>(memory->range().begin()) << 32 | memory->range().end());
+            } else if (auto* upsilon = value->as<UpsilonValue>())
+                values.add(upsilon->phi());
+            else if (auto* access = value->as<VariableValue>())
+                values.add(access->variable());
+        }
+    }
+    hashOfControlFlow = controlFlow.hash();
+    hashOfValues = values.hash();
+}
+
+enum class After : uint8_t { Phase, AnythingElse };
+
+void validate(Procedure& procedure, UTF8CStringView dumpBefore, After after)
+{
+    // Whoever turns validation on with an option gets what upstream does.
+    if (procedure.policy().validation.level != ValidationLevel::AtEachPhase) {
+        ValidatedForm form;
+        Validater(procedure, dumpBefore, ViolationAction::Crash, form).run();
+        return;
+    }
+
+    uint64_t hashOfControlFlow;
+    uint64_t hashOfValues;
+    hashProcedure(procedure, hashOfControlFlow, hashOfValues);
+    std::unique_ptr<ValidatedForm>& form = procedure.validatedForm();
+    if (!form || form->hashOfControlFlow != hashOfControlFlow)
+        form = makeUnique<ValidatedForm>();
+    else if (after == After::Phase && form->hashOfValues == hashOfValues)
+        return;
+    form->hashOfControlFlow = hashOfControlFlow;
+    form->hashOfValues = hashOfValues;
+    Validater(procedure, dumpBefore, ViolationAction::Crash, *form).run();
+}
+
 } // anonymous namespace
+
+ValidatedForm::ValidatedForm() = default;
+ValidatedForm::~ValidatedForm() = default;
 
 void validate(Procedure& procedure, UTF8CStringView dumpBefore)
 {
-    Validater validater(procedure, dumpBefore, ViolationAction::Crash);
-    validater.run();
+    validate(procedure, dumpBefore, After::AnythingElse);
+}
+
+void validateAfterPhase(Procedure& procedure, UTF8CStringView dumpBefore)
+{
+    validate(procedure, dumpBefore, After::Phase);
 }
 
 std::optional<ValidationRule> findViolatedRule(Procedure& procedure)
 {
-    Validater validater(procedure, { }, ViolationAction::Record);
+    ValidatedForm form;
+    Validater validater(procedure, { }, ViolationAction::Record, form);
     validater.run();
     return validater.violatedRule();
 }

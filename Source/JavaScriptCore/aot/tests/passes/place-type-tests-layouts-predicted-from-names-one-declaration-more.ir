@@ -1,4 +1,4 @@
-# A name with one declaration more than the limit predicts as many declarations as a name at the limit: only the objects of the layout that is left out take the access by name, and the run says that it left one out
+# A name with more declarations than the limit predicts one declaration fewer than a name at the limit: each one kept is a fast path at every access, and the last one picked out of many seldom arrives. The run says that it left some out
 # FORM: Prepared optimizing
 # RUN: pass PlaceTypeTests
 # LOSS: MaxDeclarationsPredictedFromNames x2 f1 v1
@@ -6,7 +6,7 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="Circle" constructor=f8 fields=[{key="area" declared={type=number} flags=[IsRequired]}, {key="weight" declared={type=number} flags=[IsRequired]}, {key="span" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
 layout L1 kind=Instance name="Square" constructor=f9 fields=[{key="area" declared={type=number} flags=[IsRequired]}, {key="weight" declared={type=number} flags=[IsRequired]}, {key="span" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
-layout L2 kind=Instance name="Ring" constructor=f10 fields=[{key="area" declared={type=number} flags=[IsRequired]}, {key="weight" declared={type=number} flags=[IsRequired]}, {key="span" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+layout L2 kind=Instance name="Ring" constructor=f10 fields=[{key="area" declared={type=number} flags=[IsRequired]}, {key="weight" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
 layout L3 kind=Instance name="Wedge" constructor=f11 fields=[{key="area" declared={type=number} flags=[IsRequired]}, {key="weight" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
 layout L4 kind=Instance name="Blob" constructor=f12 fields=[{key="weight" declared={type=number} flags=[IsRequired]}, {key="blobSkin" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
 layout L5 kind=Instance name="Beam" constructor=f4 fields=[{key="span" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
@@ -27,9 +27,9 @@ function f1 name="oneMore" parameters=[{type=object flags=[IsExpected]}] results
   b0(v0: anything ~ object):
     v1 = PropGet v0 key="weight"
     Return v1
-# CHECK-NEXT: b0(v0: anything ~ L0|L1|L2|L3):
-# CHECK-NEXT: = TypeTest v0 testedType=L0|L1|L2|L3
-# CHECK: = GetSlot {{*}} key="weight" receivers=[L0, L1, L2, L3] level=Expected
+# CHECK-NEXT: b0(v0: anything ~ L0|L1|L2):
+# CHECK-NEXT: = TypeTest v0 testedType=L0|L1|L2
+# CHECK: = GetSlot {{*}} key="weight" receivers=[L0, L1, L2] level=Expected
 # CHECK: = PropGet v0 key="weight"
 }
 
@@ -37,9 +37,9 @@ function f2 name="classAndWhatIsBelowItTakeOnePlace" parameters=[{type=object fl
   b0(v0: anything ~ object):
     v1 = PropGet v0 key="span"
     Return v1
-# CHECK-NEXT: b0(v0: anything ~ L0|L1|L2|L5|L6|L7):
-# CHECK-NEXT: = TypeTest v0 testedType=L0|L1|L2|L5|L6|L7
-# CHECK: = GetSlot {{*}} key="span" receivers=[L0, L1, L2, L5, L6, L7] level=Expected
+# CHECK-NEXT: b0(v0: anything ~ L0|L1|L5|L6|L7):
+# CHECK-NEXT: = TypeTest v0 testedType=L0|L1|L5|L6|L7
+# CHECK: = GetSlot {{*}} key="span" receivers=[L0, L1, L5, L6, L7] level=Expected
 }
 
 function f3 name="nameOnOnePathLeavesNothingOut" parameters=[{type=object flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
@@ -63,8 +63,8 @@ function f7 name="storeLeavesOutTheSameLayout" parameters=[{type=object flags=[I
   b0(v0: anything ~ object, v1: number):
     PropSet v0, v1 key="weight"
     Return v1
-# CHECK-NEXT: b0(v0: anything ~ L0|L1|L2|L3, v1: number):
-# CHECK-NEXT: = TypeTest v0 testedType=L0|L1|L2|L3
+# CHECK-NEXT: b0(v0: anything ~ L0|L1|L2, v1: number):
+# CHECK-NEXT: = TypeTest v0 testedType=L0|L1|L2
 }
 
 function f8 name="Circle" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0

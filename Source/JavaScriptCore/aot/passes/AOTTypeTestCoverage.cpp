@@ -47,6 +47,8 @@ struct EndingsAtWriter {
             return false;
         if (dependencies && leavesSlotsAsTested(analyses.program(), analyses.function(), analyses.function().at(writer), effects, dependencies->slotState))
             return false;
+        if (dependencies && leavesArrayStorageAsTested(analyses.program(), analyses.function(), analyses.function().at(writer), effects, dependencies->arrayStorage))
+            return false;
         if (!isBoundedByWriter)
             return true;
         if (!dependencies)
@@ -102,13 +104,17 @@ ConditionGroups::ConditionGroups(FunctionAnalyses& analyses, const TestCondition
     , groupOf(FillWith { }, conditions.size(), 0u)
     , subjectsFromOutside(conditions.size())
 {
-    for (size_t index : conditions.stretchConditions())
-        dependencies[index] = dependenciesOfGuardOf(analyses, conditions.at(TestConditionID(index)).test);
+    for (size_t index : conditions.stretchConditions()) {
+        const Value& test = conditions.at(TestConditionID(index)).test;
+        dependencies[index] = dependenciesOfGuardOf(analyses, test);
+        dependencies[index]->arrayStorage = arrayStorageTestedBy(test);
+    }
 
     auto hashOf = [](const TestCondition& condition, const GuardDependencies& dependencies) {
         Hasher hasher;
         add(hasher, condition.proof);
         add(hasher, dependencies.slotState);
+        add(hasher, dependencies.arrayStorage);
         for (const Vector<MemoryLocation, 2>* locations : { &condition.dependsOn, &dependencies.locations }) {
             add(hasher, locations->size());
             for (const MemoryLocation& location : *locations) {
@@ -132,7 +138,7 @@ ConditionGroups::ConditionGroups(FunctionAnalyses& analyses, const TestCondition
         std::optional<uint32_t> group = groupsByHash.find(hash, [&](uint32_t position) {
             const TestCondition& other = conditions.at(TestConditionID(firstConditions[position]));
             const GuardDependencies& otherDependencies = *dependencies[firstConditions[position]];
-            return other.proof == condition.proof && other.dependsOn == condition.dependsOn && otherDependencies.locations == dependenciesOfCondition.locations && otherDependencies.slotState == dependenciesOfCondition.slotState;
+            return other.proof == condition.proof && other.dependsOn == condition.dependsOn && otherDependencies.locations == dependenciesOfCondition.locations && otherDependencies.slotState == dependenciesOfCondition.slotState && otherDependencies.arrayStorage == dependenciesOfCondition.arrayStorage;
         });
         if (!group) {
             group = firstConditions.size();
@@ -304,8 +310,8 @@ struct TestEvents::Collector {
                 break;
             }
         }
-        AOT::stableSort(parameterProofItems, { }, orderOf);
-        AOT::stableSort(valueProofItems, { }, orderOf);
+        AOT::stableSortInLine(parameterProofItems, { }, orderOf);
+        AOT::stableSortInLine(valueProofItems, { }, orderOf);
         requirements = requirementItems.span();
         valueProofs = valueProofItems.span();
         parameterProofs = parameterProofItems.span();
@@ -453,12 +459,16 @@ struct TestEvents::Collector {
             events.m_lastResultRead[value.index()] = lastResultRead;
 
             const TestSite* site = nullptr;
+            bool takesProofs = false;
             takeItemsAt(requirements, index, [&](uint32_t requirementIndex) {
                 appendEvent(TestEvent::Kind::Requirement, index, requirementIndex);
                 const TestRequirement& requirement = inputs.requirements[requirementIndex];
-                if (requirement.kind == RequirementKind::PlacesTest)
+                if (requirement.kind != RequirementKind::AsksOnly)
                     site = &inputs.sites[requirement.site];
+                takesProofs |= requirement.kind == RequirementKind::TakesProof;
             });
+            if (takesProofs)
+                appendEvent(TestEvent::Kind::EndOfRequirements, index, 0);
 
             std::optional<EffectsOnEdges> effectsWhenPassed;
             if (site)
@@ -557,6 +567,8 @@ namespace {
 
 struct TestState {
     bool isReachable { true };
+    // Between the requirements of a site that takes proofs and their end.
+    bool lacksProofOfSite { false };
     BitVector passed;
     Vector<uint32_t, 8> bytesSinceUse;
     uint32_t pendingBytes { 0 };
@@ -726,6 +738,11 @@ struct TestCoverageProblem {
         case TestEvent::Kind::Requirement:
             applyRequirement(state, events.requirements()[event.payload]);
             return;
+        case TestEvent::Kind::EndOfRequirements:
+            // The site stays an operation that may run any code.
+            if (std::exchange(state.lacksProofOfSite, false))
+                state.endAll();
+            return;
         case TestEvent::Kind::Ending:
             state.passed.exclude(events.endedBy(event));
             if (largestBudget) {
@@ -741,6 +758,13 @@ struct TestCoverageProblem {
     {
         switch (requirement.kind) {
         case RequirementKind::AsksOnly:
+            return;
+        case RequirementKind::TakesProof:
+            settlePendingBytes(state);
+            if (classify(state, requirement.condition, requirement.point.block) == RequirementCoverage::Covered)
+                state.markAsPassed(requirement.condition);
+            else
+                state.lacksProofOfSite = true;
             return;
         case RequirementKind::PlacesTest:
             break;
@@ -866,6 +890,7 @@ static uint32_t firstValueAfter(const TestEvent& event)
     case TestEvent::Kind::ParameterProof:
     case TestEvent::Kind::Barrier:
     case TestEvent::Kind::Requirement:
+    case TestEvent::Kind::EndOfRequirements:
         return event.index;
     case TestEvent::Kind::Ending:
     case TestEvent::Kind::Suspension:
@@ -1030,6 +1055,9 @@ void WantedProofs::applyEventBackward(BlockID block, const TestEvent& event, Bit
     case TestEvent::Kind::Ending:
         wanted.exclude(m_events.endedBy(event));
         return;
+    case TestEvent::Kind::EndOfRequirements:
+        // Whoever places tests has sorted out the sites that take proofs.
+        RELEASE_ASSERT_NOT_REACHED();
     case TestEvent::Kind::Requirement:
         break;
     }

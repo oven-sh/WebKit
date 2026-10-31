@@ -18,8 +18,11 @@
 #include "B3MemoryValueInlines.h"
 #include "B3NaturalLoops.h"
 #include "B3PatchpointValue.h"
+#include "B3InsertionSetInlines.h"
 #include "B3PhaseScope.h"
+#include "B3PhiChildren.h"
 #include "B3ProcedureInlines.h"
+#include "B3SlotBaseValue.h"
 #include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
 #include <wtf/IndexMap.h>
@@ -510,6 +513,92 @@ private:
     Vector<SunkValue> m_sunk;
 };
 
+// Each way into a block reads the same word of a stack slot last, only to hand it to a Phi. One read in the block does, and it can be part of the instruction that uses it.
+bool readStackSlotsWhereWaysMeet(Procedure& proc)
+{
+    if (proc.policy().validation.logsMovedLoads || !proc.code().stackSlots().size())
+        return false;
+    bool handsOnReadOfStackSlot = false;
+    for (Value* value : proc.values())
+        handsOnReadOfStackSlot |= value->opcode() == Upsilon && value->child(0)->opcode() == Load && value->child(0)->lastChild()->opcode() == SlotBase;
+    if (!handsOnReadOfStackSlot)
+        return false;
+    PhiChildren phiChildren(proc);
+
+    IndexMap<Value*, unsigned> numberOfUses(proc.values().size());
+    for (Value* value : proc.values()) {
+        for (Value* child : value->children())
+            ++numberOfUses[child];
+    }
+    proc.resetValueOwners();
+
+    // The Upsilon's block leads to the Phi's. From there up to the read there is one way, and nothing on it writes the word.
+    constexpr unsigned maxBlocksBetween = 4;
+    auto holdsUntilEndOfBlockOf = [&](Value* upsilon, MemoryValue* load) {
+        BasicBlock* block = upsilon->owner;
+        if (!upsilon->as<UpsilonValue>()->phi()->owner->containsPredecessor(block))
+            return false;
+        for (unsigned remaining = maxBlocksBetween; remaining--; block = block->predecessor(0)) {
+            for (unsigned index = block->size(); index--;) {
+                Value* value = block->at(index);
+                if (value == load)
+                    return true;
+                Effects effects = value->effects();
+                if (effects.fence || effects.writes.overlaps(load->range()))
+                    return false;
+            }
+            if (block->numPredecessors() != 1)
+                return false;
+        }
+        return false;
+    };
+
+    InsertionSet insertionSet(proc);
+    IndexMap<BasicBlock*, Vector<Value*, 2>> phisToReplace(proc.size());
+    for (Value* phi : phiChildren.phis()) {
+        const auto& upsilons = phiChildren[phi];
+        MemoryValue* first = nullptr;
+        bool allReadOneWord = upsilons.size() > 1;
+        for (unsigned index = 0; allReadOneWord && index < upsilons.size(); ++index) {
+            Value* upsilon = upsilons[index];
+            MemoryValue* load = upsilon->child(0)->as<MemoryValue>();
+            allReadOneWord = load && load->opcode() == Load && !load->hasFence() && !load->traps() && load->lastChild()->opcode() == SlotBase
+                && numberOfUses[load] == 1 && holdsUntilEndOfBlockOf(upsilon, load);
+            if (!allReadOneWord)
+                break;
+            if (!first) {
+                first = load;
+                continue;
+            }
+            allReadOneWord = load->type() == first->type() && load->offset() == first->offset() && load->range() == first->range() && load->readsMutability() == first->readsMutability()
+                && load->lastChild()->as<SlotBaseValue>()->slot() == first->lastChild()->as<SlotBaseValue>()->slot();
+        }
+        if (allReadOneWord)
+            phisToReplace[phi->owner].append(phi);
+    }
+
+    bool changed = false;
+    for (BasicBlock* block : proc) {
+        for (Value* phi : phisToReplace[block]) {
+            const auto& upsilons = phiChildren[phi];
+            MemoryValue* first = upsilons[0]->child(0)->as<MemoryValue>();
+            Value* base = insertionSet.insert<SlotBaseValue>(0, phi->origin(), first->lastChild()->as<SlotBaseValue>()->slot());
+            MemoryValue* load = insertionSet.insert<MemoryValue>(0, Load, first->type(), phi->origin(), base, first->offset(), first->range());
+            load->setReadsMutability(first->readsMutability());
+            for (unsigned index = 0; index < upsilons.size(); ++index)
+                upsilons[index]->replaceWithNop();
+            phi->replaceWithIdentity(load);
+            changed = true;
+        }
+        insertionSet.execute(block);
+    }
+    if (changed) {
+        for (Value* value : proc.values())
+            value->performSubstitution();
+    }
+    return changed;
+}
+
 } // anonymous namespace
 
 bool sinkValues(Procedure& proc)
@@ -517,8 +606,9 @@ bool sinkValues(Procedure& proc)
     PhaseScope phaseScope(proc, "sinkValues"_s);
     if (proc.size() < 2)
         return false;
+    bool changed = readStackSlotsWhereWaysMeet(proc);
     SinkValues sinkValues(proc);
-    return sinkValues.run();
+    return sinkValues.run() || changed;
 }
 
 } } // namespace JSC::B3

@@ -1,0 +1,155 @@
+# All twelve short loops of one function are unrolled
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass UnrollShortLoops
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="twelveLoops" parameters=[{type=i32}] results=[{type=number}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=0
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Integer integer=2
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Add v3, v0
+    v9 = Increment v4
+    Jump -> next b1(v8, v9)
+  b3():
+    v10 = Integer integer=0
+    Jump -> next b4(v3, v10)
+  b4(v11, v12):
+    LoopHint
+    v14 = Integer integer=2
+    v15 = Less v12, v14
+    Branch v15 -> taken b5(), notTaken b6()
+  b5():
+    v16 = Add v11, v0
+    v17 = Increment v12
+    Jump -> next b4(v16, v17)
+  b6():
+    v18 = Integer integer=0
+    Jump -> next b7(v11, v18)
+  b7(v19, v20):
+    LoopHint
+    v22 = Integer integer=2
+    v23 = Less v20, v22
+    Branch v23 -> taken b8(), notTaken b9()
+  b8():
+    v24 = Add v19, v0
+    v25 = Increment v20
+    Jump -> next b7(v24, v25)
+  b9():
+    v26 = Integer integer=0
+    Jump -> next b10(v19, v26)
+  b10(v27, v28):
+    LoopHint
+    v30 = Integer integer=2
+    v31 = Less v28, v30
+    Branch v31 -> taken b11(), notTaken b12()
+  b11():
+    v32 = Add v27, v0
+    v33 = Increment v28
+    Jump -> next b10(v32, v33)
+  b12():
+    v34 = Integer integer=0
+    Jump -> next b13(v27, v34)
+  b13(v35, v36):
+    LoopHint
+    v38 = Integer integer=2
+    v39 = Less v36, v38
+    Branch v39 -> taken b14(), notTaken b15()
+  b14():
+    v40 = Add v35, v0
+    v41 = Increment v36
+    Jump -> next b13(v40, v41)
+  b15():
+    v42 = Integer integer=0
+    Jump -> next b16(v35, v42)
+  b16(v43, v44):
+    LoopHint
+    v46 = Integer integer=2
+    v47 = Less v44, v46
+    Branch v47 -> taken b17(), notTaken b18()
+  b17():
+    v48 = Add v43, v0
+    v49 = Increment v44
+    Jump -> next b16(v48, v49)
+  b18():
+    v50 = Integer integer=0
+    Jump -> next b19(v43, v50)
+  b19(v51, v52):
+    LoopHint
+    v54 = Integer integer=2
+    v55 = Less v52, v54
+    Branch v55 -> taken b20(), notTaken b21()
+  b20():
+    v56 = Add v51, v0
+    v57 = Increment v52
+    Jump -> next b19(v56, v57)
+  b21():
+    v58 = Integer integer=0
+    Jump -> next b22(v51, v58)
+  b22(v59, v60):
+    LoopHint
+    v62 = Integer integer=2
+    v63 = Less v60, v62
+    Branch v63 -> taken b23(), notTaken b24()
+  b23():
+    v64 = Add v59, v0
+    v65 = Increment v60
+    Jump -> next b22(v64, v65)
+  b24():
+    v66 = Integer integer=0
+    Jump -> next b25(v59, v66)
+  b25(v67, v68):
+    LoopHint
+    v70 = Integer integer=2
+    v71 = Less v68, v70
+    Branch v71 -> taken b26(), notTaken b27()
+  b26():
+    v72 = Add v67, v0
+    v73 = Increment v68
+    Jump -> next b25(v72, v73)
+  b27():
+    v74 = Integer integer=0
+    Jump -> next b28(v67, v74)
+  b28(v75, v76):
+    LoopHint
+    v78 = Integer integer=2
+    v79 = Less v76, v78
+    Branch v79 -> taken b29(), notTaken b30()
+  b29():
+    v80 = Add v75, v0
+    v81 = Increment v76
+    Jump -> next b28(v80, v81)
+  b30():
+    v82 = Integer integer=0
+    Jump -> next b31(v75, v82)
+  b31(v83, v84):
+    LoopHint
+    v86 = Integer integer=2
+    v87 = Less v84, v86
+    Branch v87 -> taken b32(), notTaken b33()
+  b32():
+    v88 = Add v83, v0
+    v89 = Increment v84
+    Jump -> next b31(v88, v89)
+  b33():
+    v90 = Integer integer=0
+    Jump -> next b34(v83, v90)
+  b34(v91, v92):
+    LoopHint
+    v94 = Integer integer=2
+    v95 = Less v92, v94
+    Branch v95 -> taken b35(), notTaken b36()
+  b35():
+    v96 = Add v91, v0
+    v97 = Increment v92
+    Jump -> next b34(v96, v97)
+  b36():
+    Return v91
+# CHECK-NOT: LoopHint
+}

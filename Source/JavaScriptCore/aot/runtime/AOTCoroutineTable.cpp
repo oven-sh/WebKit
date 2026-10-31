@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTImageOfCellScope.h"
 #include "AOTAsyncResumption.h"
 #include "AOTGenerator.h"
 #include "AOTHeapCacheRegistry.h"
@@ -55,6 +56,7 @@ CoroutineTable::CoroutineTable(State& state)
     m_savedFrameStructure = SavedFrame::createStructure(vm, globalObject);
     m_state.immortalCells->add(m_savedFrameStructure);
     m_instance.coroutines.savedFrameHeader = cellHeaderFor(m_savedFrameStructure);
+    m_instance.coroutines.plainGeneratorHeader = cellHeaderFor(m_generatorStructure);
     m_instance.coroutines.emptyGeneratorPrototypeStructureID = createEmptyPrototypeStructure(vm, globalObject->generatorPrototype());
     m_instance.coroutines.emptyAsyncGeneratorPrototypeStructureID = createEmptyPrototypeStructure(vm, globalObject->asyncGeneratorPrototype());
     initializeCoroutineWords(vm);
@@ -158,7 +160,7 @@ Structure* SavedFrame::createStructure(VM& vm, JSGlobalObject* globalObject)
 CallData SavedFrame::getCallData(JSCell* cell)
 {
     JSGlobalObject* realm = uncheckedDowncast<SavedFrame>(cell)->realm();
-    return CallData::forCompiledCode(Instance::of(realm)->state->coroutines->savedFrameEntrypoint(), realm);
+    return CallData::forCompiledCode(Instance::owning(cell)->state->coroutines->savedFrameEntrypoint(), realm);
 }
 
 SavedFrame* SavedFrame::forFrame(const Instance& instance, const uint64_t* frame)
@@ -187,6 +189,15 @@ SavedFrame* SavedFrame::create(VM& vm, Instance& instance, CoroutineKind kind, c
     // What an earlier call left at their addresses would be kept, and every resumption would put it back on the stack.
     std::ranges::fill(std::span { const_cast<uint64_t*>(machineFrame.firstSavedWord()), clearedWordsOf(siteWord) }, 0);
     return create(vm, instance, kind, numberOfWords, savedRegistersOrPairsOf(siteWord), skippedAtBottomOf(siteWord));
+}
+
+SavedFrame* SavedFrame::createHeapFrame(VM& vm, Instance& instance, size_t numberOfWords, void* resumeAddress)
+{
+    SavedFrame* saved = create(vm, instance, CoroutineKind::Generator, numberOfWords, 0, 0);
+    std::ranges::fill(std::span { saved->words(), numberOfWords }, 0);
+    saved->m_resumeAddress = resumeAddress;
+    saved->m_flags = isHeapFrameFlag;
+    return saved;
 }
 
 SavedFrame* SavedFrame::createForAsyncFunction(VM& vm, Instance& instance, const SuspendedMachineFrame& machineFrame)
@@ -235,6 +246,9 @@ void SavedFrame::save(VM& vm, const SuspendedMachineFrame& machineFrame, Suspens
 std::optional<SavedFrameMap> SavedFrame::liveSlotMap(uint32_t offsetPlusOne) const
 {
     const Image* image = Image::current();
+    // The collector's threads ask too, and know nothing of which image runs.
+    if (image->sharesRealms()) [[unlikely]]
+        image = image->findInListByCodeAddress(static_cast<const uint8_t*>(m_resumeAddress) - 1);
     // The byte before a return address is in the calling function. The return address itself may start the next one.
     CodeLocation where = image->locate(static_cast<const uint8_t*>(m_resumeAddress) - 1);
     if (where.kind != CodeKind::Function)
@@ -244,7 +258,7 @@ std::optional<SavedFrameMap> SavedFrame::liveSlotMap(uint32_t offsetPlusOne) con
 
 void SavedFrame::overwriteDeadWordsAtEndOfCollection(uint32_t versionAtVisit, const SavedFrameMap& map)
 {
-    Instance::of(realm())->state->coroutines->didVisitFrameWithDeadWords(this, versionAtVisit, map.firstWord());
+    Instance::owning(this)->state->coroutines->didVisitFrameWithDeadWords(this, versionAtVisit, map.firstWord());
 }
 
 void SavedFrame::overwriteDeadWords(uint32_t versionAtVisit, const SavedFrameMap& map, uint64_t replacement)
@@ -271,6 +285,7 @@ void SavedFrame::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 DEFINE_VISIT_CHILDREN(SavedFrame);
 
 // A word that the map does not list is dead, or it is no reference: an integer, half a fraction, the header for the next closure, whatever compiled code keeps over the suspension.
+// A live word that is no reference can read as one: of two integers that share it, the upper one may be the upper half of the addresses of cells. Where the map says that a word is live, it is kept.
 void SavedFrame::poisonDeadUnlistedWords(VM& vm)
 {
     static_assert(locationHolding(2 * 3) == 3 && !isInUpperHalf(2 * 3) && locationHolding(2 * 3 - 1) == 3 && isInUpperHalf(2 * 3 - 1));
@@ -279,7 +294,7 @@ void SavedFrame::poisonDeadUnlistedWords(VM& vm)
     std::optional<SavedFrameMap> map = liveSlotMap(m_liveSlotMapOffsetPlusOne);
     RELEASE_ASSERT(map);
     auto poisonDeadUnlistedWord = [&](uint32_t location) {
-        if (map->listsValue(location) || map->listsNarrowReference(2 * location) || (location != locationInRegister && map->listsNarrowReference(2 * location - 1)))
+        if (map->listsValue(location) || map->listsOtherLiveWord(location) || map->listsNarrowReference(2 * location) || (location != locationInRegister && map->listsNarrowReference(2 * location - 1)))
             return;
         uint64_t& word = location == locationInRegister ? m_preservedRegister : words()[m_numberOfWords + numberOfWordsSkippedAtTop() - location];
         if (HeapUtil::classifyWord(vm.heap, std::bit_cast<const void*>(word)) == HeapUtil::WordKind::UnmarkedCell)
@@ -408,6 +423,7 @@ Generator* Generator::create(VM& vm, Structure* structure)
 
 bool Generator::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrowIfCantSet)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     bool isSet = Base::setPrototype(object, globalObject, prototype, shouldThrowIfCantSet);
     uncheckedDowncast<Generator>(object)->m_hasOtherPrototype = !object->structure()->storedPrototype().isObject();
     return isSet;
@@ -456,7 +472,7 @@ JSValue Generator::resume(JSGlobalObject* globalObject, ResumeMode mode, JSValue
         return { };
     }
     m_state = State::Running;
-    JSValue result = enterSavedFrame(vm, *Instance::of(realm()), m_savedFrame, mode, value);
+    JSValue result = enterSavedFrame(vm, *Instance::owning(m_savedFrame), m_savedFrame, mode, value);
     if (scope.exception()) [[unlikely]] {
         m_state = State::Completed;
         return { };

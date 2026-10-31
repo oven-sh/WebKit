@@ -1,7 +1,7 @@
 # A proven access to a private field becomes a slot operation under the private name, without the class token as an operand
 # FORM: Prepared
 # RUN: pass ResolveAccesses
-# STATISTIC: ResolveAccessesChanges = 7
+# STATISTIC: ResolveAccessesChanges = 8
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
@@ -112,7 +112,9 @@ function f16 name="definition-field-may-exist-already" parameters=[{type=L4}, {t
     v2 = NewClassToken layout=L4
     PrivateDefine v0, v2, v1 layout=L4 field=0
     Return
+# CHECK: = IsSlotFilled v0 key=#"x"@L4 receivers=[L4] level=Proven
 # CHECK: PrivateDefine v0, v2, v1 layout=L4
+# CHECK: PutSlotOrAdd v0, -, v1 key=#"x"@L4 receivers=[L4] level=Proven
 }
 function f17 name="receiver-of-an-unrelated-class" parameters=[{type=L5}, {type=number}] results=[{type=anything}] {
     v2 = NewClassToken layout=L0

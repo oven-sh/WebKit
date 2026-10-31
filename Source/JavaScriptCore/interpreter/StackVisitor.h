@@ -32,7 +32,9 @@
 #include "LineColumn.h"
 #include "SourceID.h"
 #include "WasmIndexOrName.h"
+#include <bit>
 #include <cstddef>
+#include <span>
 #include <wtf/Function.h>
 #include <wtf/Indenter.h>
 #include <wtf/IterationStatus.h>
@@ -290,10 +292,12 @@ private:
     CallFrame* leaveCompiledFrames();
     void gotoNextCompiledFrame();
     void startInCompiledFrames(CallFrame* startFrame, bool skipFirstFrame);
+    bool isCalledByCompiledCode(CallFrame*) const;
 
     static constexpr size_t compiledFrameIteratorCapacity = 1024;
 
     VM& m_vm;
+    std::span<const uint8_t> m_compiledCode;
     AOT::ShownFrameFilter m_shownFrameFilter;
     CompiledFrameVisit m_compiledFrameVisit;
     bool m_nextFrameIsPublished { false };

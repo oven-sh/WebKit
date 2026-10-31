@@ -30,6 +30,19 @@ inline bool isLoopPoll(const Value* value)
     return patchpoint && patchpoint->isLoopPoll;
 }
 
+// Beside a call, a test or a poll in each turn costs little.
+inline bool isCall(const Value* value)
+{
+    if (value->opcode() == CCall)
+        return true;
+    auto* patchpoint = value->as<PatchpointValue>();
+    if (!patchpoint)
+        return false;
+    RegisterSet scratch = RegisterSet::macroClobberedGPRs();
+    scratch.merge(RegisterSet::macroClobberedFPRs());
+    return !scratch.subsumes(patchpoint->earlyClobbered()) || !scratch.subsumes(patchpoint->lateClobbered());
+}
+
 // A patchpoint that is given no register has nothing to compute with: it only holds its operands alive.
 inline bool onlyKeepsValuesAlive(const Value* value)
 {

@@ -1,0 +1,36 @@
+# FORM: Prepared optimizing
+# RUN: pass RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Busy" fields=[{key="since" declared={type=number}}, {key="kind" declared={type=string} flags=[IsRequired]}]
+layout L1 kind=Instance name="Above" fields=[{key="since" declared={type=number} flow={location={writers=AllKnown stores=Never reads=NeverRead}}}] flow={allocation=NeverAllocated}
+layout L2 kind=Instance name="Below" base=L1 fields=[{key="kind" declared={type=string} flags=[IsRequired]}, {key="since" declared={type=number} flags=[IsInherited] originLayout=L1 originField=0}] flags=[HasHeritage] ownFieldCount=1 flow={baseState=Layout base=L1}
+layout L3 kind=Instance name="AboveNamedByNobody" fields=[{key="since" declared={type=number} flow={location={writers=AllKnown stores=Never reads=NeverRead}}}] flow={allocation=NeverAllocated}
+layout L4 kind=Instance name="BelowNamedByNobody" base=L3 fields=[{key="kind" declared={type=string} flags=[IsRequired]}, {key="since" declared={type=number} flags=[IsInherited] originLayout=L3 originField=0}] flags=[HasHeritage] ownFieldCount=1 flow={baseState=Layout base=L3}
+# CHECK: layout L1 kind=Instance name="Above" fields=[{key="since" declared={type=number} flow={location={writers=AllKnown reads=NeverRead}}}]
+# CHECK: layout L3 kind=Instance name="AboveNamedByNobody" fields=[{key="since" declared={type=number} flow={location={writers=AllKnown stores=Never reads=NeverRead}}}]
+
+function f0 name="describes" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = ShapeTest v0 layouts=[L0, L2]
+    Branch v1 -> taken b1(| 0), notTaken b3()
+  b1(v2):
+    v3 = IsSlotFilled v0, v2 key="since" receivers=[L0, L2] level=Expected
+    Branch v3 -> taken b2(| 0), notTaken b3()
+  b2(v4):
+    v5 = AllGuards v2, v4
+    v6 = GetSlot v0, v5 key="since" receivers=[L0, L2] level=Expected
+    Return v6
+  b3():
+    v7 = PropGet v0 key="since"
+    Return v7
+}
+function f1 name="makes" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[1]
+    v2 = NewObject -, v0 layout=L2 fields=[0]
+    v3 = NewObject -, v0 layout=L4 fields=[0]
+    v4 = NewArray v1, v2, v3 contents=anything holes=[]
+    Return v4
+}
+# CHECK-LABEL: function f0 name="describes"
+# CHECK: IsSlotFilled v0, v2 key="since" receivers=[L0, L2]

@@ -30,6 +30,8 @@ static constexpr uint16_t outOfLineArgumentCountTag = 1;
 static_assert(!((static_cast<uint64_t>(outOfLineArgumentCountTag) << outOfLineArgumentCountTagShift) & JSValue::NumberTag));
 void emitAdapterEpilogue(StubAssembler&);
 void emitRestoreAdapterCallerRegisters(StubAssembler&, GPRReg adapterFrame);
+// Where images share realms. The adapter made its image the one that runs, and callEngineCallee() of the image that ran before has called it: that image runs again, as behind the adapter's return.
+void emitLeaveAdapterCalledByOtherImage(StubAssembler&, GPRReg adapterFrame, GPRReg vm, GPRReg end, GPRReg parts, CCallHelpers::JumpList& isNotCalledByOtherImage);
 
 // The callee is a closure of this realm that can be called, and word is its word.
 void emitConstructWithPlainFunction(StubAssembler&, GPRReg word, CCallHelpers::JumpList& isNotPlainFunction);

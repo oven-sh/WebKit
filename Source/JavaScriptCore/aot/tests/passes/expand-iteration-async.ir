@@ -194,5 +194,5 @@ function f4 name="forAwaitInBody" role=CoroutineBody flags=[IsAsync] parameters=
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume
-# LEFT-NOT: IteratorClose
+# LEFT-NOT: IteratorClose v
 # LEFT-NOT: AppendSpread

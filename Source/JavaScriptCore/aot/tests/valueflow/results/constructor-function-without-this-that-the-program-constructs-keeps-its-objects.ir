@@ -1,0 +1,33 @@
+# const Empty = function () {}; hand(Empty); new Empty()
+# The program constructs the function too: what it stores into the object may get a slot, so the layout stays.
+# function Names() { hand(this) } names `this`, and its body is compiled for an object of the layout.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance
+# CHECK-NOT: NeverAllocated
+# CHECK: module m0
+
+layout L0 kind=Instance constructor=f1 flags=[IsConstructorFunction]
+layout L1 kind=Instance constructor=f2 flags=[IsConstructorFunction]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="hand" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = Construct v0, -
+    v5 = NewClosure function=f2
+    v6 = Call v2, -, v5
+    Return v4
+}
+function f1 name="Empty" module=m0 results=[{type=anything}] constructedClass=L0 {
+    v0 = Undefined
+    Return v0
+}
+function f2 name="Names" module=m0 flags=[HasThis] results=[{type=anything}] constructedClass=L1 {
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="hand" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = Undefined
+    Return v4
+}

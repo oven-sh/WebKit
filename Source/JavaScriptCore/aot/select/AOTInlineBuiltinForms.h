@@ -53,6 +53,12 @@ struct InlineBuiltinSite {
 FOR_EACH_AOT_INLINE_BUILTIN_FAMILY(AOT_DECLARE_INLINE_FORM_CHOOSER)
 #undef AOT_DECLARE_INLINE_FORM_CHOOSER
 
+struct MembersReadByHost {
+    Vector<BuiltinID, 1> inEveryCall;
+    Vector<BuiltinID, 1> whereInlineCodeAnswers;
+};
+MembersReadByHost membersReadByHostIn(const BuiltinTable&, const BuiltinOverload&);
+
 std::optional<InlineBuiltin> inlineImplementationOf(const Program&, const Value& builtinCall);
 std::optional<InlineBuiltinSite> findInlineBuiltinSite(SelectionContext&, ValueID call);
 InlineForm chooseInlineForm(const InlineBuiltinSite&);

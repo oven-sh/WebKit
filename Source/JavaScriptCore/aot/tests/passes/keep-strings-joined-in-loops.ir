@@ -1,0 +1,160 @@
+# A string joined in a loop from parts that the loop leaves alone is the same in every iteration. The first iteration that gets to the join makes it, where it stands, and hands it on:
+# a join that throws does so where it did, and a loop that never gets there joins nothing. Every later iteration reads the string, so it is made in one piece, as a key is.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass KeepStringsJoinedInLoops
+# STATISTIC: KeepStringsJoinedInLoopsChanges = 5
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="partsFromOutside" parameters=[{type=string}, {type=string}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    v4 = String string="."
+    v5 = Strcat v0, v4, v1
+    v6 = StrictEq v5, v0
+    Branch v6 -> taken b1(), notTaken b3()
+  b3():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: [[nothing]]: false = Boolean
+# CHECK-NEXT: Jump -> next b4([[nothing]])
+# CHECK-NEXT: b1([[held]]: boolean|string):
+# CHECK: b2():
+# CHECK: [[test]]: boolean = TypeTest [[held]] testedType=boolean
+# CHECK-NEXT: Branch [[test]] -> taken b6(| 0), notTaken b7(| 0)
+# CHECK: b5(v5: string):
+# CHECK-NEXT: [[next]]: string = Upcast v5 castType=boolean|string
+# CHECK-NEXT: v6: boolean = StrictEq v5, v0
+# CHECK-NEXT: Branch v6 -> taken b1([[next]]), notTaken b3()
+# CHECK-NEXT: b6({{*}}) frequency=Rare:
+# CHECK-NEXT: [[joined]]: string = Strcat v0, v4, v1 [isLikelyKey]
+# CHECK-NEXT: Jump -> next b5([[joined]])
+# CHECK-NEXT: b7([[kept]]: string):
+# CHECK-NEXT: Jump -> next b5([[kept]])
+}
+
+function f1 name="partOfTheLoop" parameters=[{type=string}, {type=string}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1(v0)
+  b1(v3):
+    LoopHint
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Strcat v3, v1
+    Jump -> next b1(v5)
+  b3():
+    Return v3
+# CHECK: b2():
+# CHECK-NEXT: v5: string = Strcat v3, v1
+# CHECK-NEXT: Jump -> next b1(v5)
+}
+
+function f2 name="partThatRunsCode" parameters=[{type=anything}, {type=string}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    v4 = Strcat v0, v1
+    v5 = StrictEq v4, v1
+    Branch v5 -> taken b1(), notTaken b3()
+  b3():
+    Return v0
+# CHECK: b2():
+# CHECK-NEXT: v4: string = Strcat v0, v1
+# CHECK-NEXT: v5: boolean = StrictEq v4, v1
+}
+
+function f3 name="staysInBothLoops" parameters=[{type=string}, {type=string}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v2 -> taken b2(), notTaken b4()
+  b2():
+    LoopHint
+    Branch v3 -> taken b3(), notTaken b1()
+  b3():
+    v6 = Add v0, v1
+    v7 = StrictEq v6, v0
+    Branch v7 -> taken b2(), notTaken b4()
+  b4():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: [[nothingOfBoth]]: false = Boolean
+# CHECK: b1([[outer]]: boolean|string):
+# CHECK: Branch v2 -> taken b2([[outer]]), notTaken b4()
+# CHECK-NEXT: b2([[inner]]: boolean|string):
+# CHECK: Branch v3 -> taken b3(), notTaken b1([[inner]])
+# CHECK: = TypeTest [[inner]] testedType=boolean
+}
+
+function f4 name="staysInTheInnerLoop" parameters=[{type=string}, {type=string}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1(v0)
+  b1(v4):
+    LoopHint
+    Branch v2 -> taken b2(), notTaken b5()
+  b2():
+    LoopHint
+    Branch v3 -> taken b3(), notTaken b4()
+  b3():
+    v7 = Strcat v4, v1
+    v8 = StrictEq v7, v0
+    Branch v8 -> taken b2(), notTaken b5()
+  b4():
+    Jump -> next b1(v1)
+  b5():
+    Return v0
+# CHECK: b1(v4: string):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[nothingOfInner]]: false = Boolean
+# CHECK-NEXT: Branch v2 -> taken b6([[nothingOfInner]]), notTaken b5()
+# CHECK-NEXT: b2([[heldInInner]]: boolean|string):
+# CHECK: = TypeTest [[heldInInner]] testedType=boolean
+# CHECK: b4():
+# CHECK-NEXT: Jump -> next b1(v1)
+}
+
+function f5 name="enteredFromTheBlockOfAnotherJoin" parameters=[{type=string}, {type=string}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = Strcat v0, v1
+    v5 = StrictEq v4, v0
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    LoopHint
+    v7 = Strcat v1, v0
+    v8 = StrictEq v7, v0
+    Branch v8 -> taken b2(), notTaken b3()
+  b3():
+    Return v0
+# CHECK: b1([[heldInFirst]]: boolean|string):
+# CHECK: = TypeTest [[heldInFirst]] testedType=boolean
+# CHECK: b2([[heldInSecond]]: boolean|string):
+# CHECK: = TypeTest [[heldInSecond]] testedType=boolean
+# CHECK: [[nothingOfSecond]]: false = Boolean
+# CHECK-NEXT: Branch v5 -> taken b1({{*}}), notTaken b{{*}}([[nothingOfSecond]])
+}
+
+function f6 name="textOfAPart" parameters=[{type=undefined|string}, {type=string}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    v4 = ToString v0
+    v5 = String string="."
+    v6 = Strcat v4, v5
+    v7 = StrictEq v6, v1
+    Branch v7 -> taken b1(), notTaken b3()
+  b3():
+    Return v0
+# What only the join reads is made where the join is.
+# CHECK: b2():
+# CHECK-NOT: ToString
+# CHECK: frequency=Rare:
+# CHECK-NEXT: v4: string = ToString v0
+# CHECK-NEXT: = Strcat v4, v5 [isLikelyKey]
+}

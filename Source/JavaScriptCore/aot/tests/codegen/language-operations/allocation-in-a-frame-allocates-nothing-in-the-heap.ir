@@ -1,16 +1,29 @@
 # An object in a frame takes its header from the record of its allocation. Where the record is still empty an operation fills it and returns the header:
 # no cell is allocated in the heap, where it would lie with a header and without its fields. The same object in the heap has the slow allocation.
 # FORM: Selected
+# OPTIONS: heat=EverythingIsHot
 # RUN: generate-code calls
 # CHECK: f0: size=
+# CHECK-NEXT: stub InitializeObjectInFrame x1
+# CHECK-NOT: operation
+# CHECK-NOT: stub
+# CHECK: f1: size=
+# CHECK-NOT: operationAOTGetHeaderOfAllocation
+# CHECK-NOT: InitializeObjectInFrame
+# CHECK: f2: size=
 # CHECK-NEXT: operation operationAOTGetHeaderOfAllocation x1
 # CHECK-NOT: operationAOTAllocateSlow
 # CHECK-NOT: stub AllocateCell
-# CHECK: f1: size=
-# CHECK-NOT: operationAOTGetHeaderOfAllocation
+# CHECK-NOT: InitializeObjectInFrame
+# CHECK: f3: size=
+# CHECK-NEXT: operation operationAOTGetHeaderOfAllocation x1
+# CHECK-NOT: operationAOTAllocateSlow
+# CHECK-NOT: stub AllocateCell
+# CHECK-NOT: InitializeObjectInFrame
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Node" fields=[{key="next" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="MadeWhole" fields=[{key="next" declared={type=anything} flags=[IsRequired]}] flow={baseState=None members=[L1] fieldCreation=OnlyAtConstruction}
 function f0 name="inTheFrame" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = NewObject -, v0 layout=L0 fields=[0] storage=Frame
     v2 = GetSlotOrUndefined v1 key="next" receivers=[L0] level=Proven
@@ -19,4 +32,19 @@ function f0 name="inTheFrame" parameters=[{type=anything}] results=[{type=anythi
 function f1 name="inTheHeap" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = NewObject -, v0 layout=L0 fields=[0]
     Return v1
+}
+function f2 name="inTheFrameInLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = NewObject -, v0 layout=L0 fields=[0] storage=Frame
+    v4 = GetSlotOrUndefined v3 key="next" receivers=[L0] level=Proven
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v4
+}
+function f3 name="everyObjectOfTheLayoutIsMadeWhole" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L1 fields=[0] storage=Frame
+    v2 = GetSlotOrUndefined v1 key="next" receivers=[L1] level=Proven
+    Return v2
 }

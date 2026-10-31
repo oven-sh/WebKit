@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAccessEmitter.h"
 #include "AOTBlockFrequencies.h"
 #include "AOTBranchCounterNumbers.h"
 #include "AOTCastEmitter.h"
@@ -16,6 +17,7 @@
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTEdgeResults.h"
+#include "AOTElementEmitterAllocation.h"
 #include "AOTEntryEmitter.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGuardAvailability.h"
@@ -243,7 +245,8 @@ void CodeGenerator::generateContentsOf(BlockID id)
         values = values.first(values.size() - 1);
     }
     Vector<ValueID, 2> generatedLast;
-    for (ValueID value : values) {
+    for (size_t index = 0; index < values.size(); ++index) {
+        ValueID value = values[index];
         if (isHandedOnByJumpAlone(id, block, value)) {
             generatedLast.append(value);
             continue;
@@ -256,7 +259,7 @@ void CodeGenerator::generateContentsOf(BlockID id)
                     return;
             }
         }
-        generateValue(id, block, value);
+        generateValue(id, block, value, isAwaitedAtOnce(values, index));
         if (m_hasFailed)
             return;
         if (m_valuesOutliveNoSuspension && maySuspend(function().at(value).opcode))
@@ -278,7 +281,24 @@ void CodeGenerator::generateContentsOf(BlockID id)
     generateTerminator(id, block);
 }
 
-void CodeGenerator::generateValue(BlockID blockID, const Block& block, ValueID id)
+bool CodeGenerator::isAwaitedAtOnce(std::span<const ValueID> values, size_t index) const
+{
+    constexpr OpcodeSet calls { Opcode::Call, Opcode::CallDirect, Opcode::CallMethod };
+    ValueID awaited = values[index];
+    if (!calls.contains(function().at(awaited).opcode))
+        return false;
+    for (ValueID next : values.subspan(index + 1)) {
+        const Value& value = function().at(next);
+        if (value.opcode == Opcode::AwaitBySavingFrame)
+            return value.awaitedOperand() == awaited;
+        if (value.opcode != Opcode::AssumeType || value.valueOperand() != awaited)
+            return false;
+        awaited = next;
+    }
+    return false;
+}
+
+void CodeGenerator::generateValue(BlockID blockID, const Block& block, ValueID id, bool isAwaitedAtOnce)
 {
     // The one user of a deferred closure is a store that writes nothing: the slot already names the function.
     if (isDeferredClosure(function(), id))
@@ -288,8 +308,30 @@ void CodeGenerator::generateValue(BlockID blockID, const Block& block, ValueID i
         return;
     if (function().at(id).opcode == Opcode::Mod && emitter<OperatorEmitter>().leavesRemainderToTest(id))
         return;
+    if ((function().at(id).opcode == Opcode::Strcat || function().at(id).opcode == Opcode::Upcast) && emitter<AccessEmitter>().leavesKeyToRead(id))
+        return;
+    // The one user of such a text has the characters in its code.
+    if (function().at(id).opcode == Opcode::String && emitter<OperatorEmitter>().comparesOnlyTextOf(id))
+        return;
+    if (function().at(id).representation == Representation::Int32 && ArrayAllocationEmitter(*this).isComputedBehindAllocation(id))
+        return;
     ValueContext context(blockID, block, id, function().at(id), analyses());
+    context.m_isAwaitedAtOnce = isAwaitedAtOnce;
     generate(context);
+}
+
+void CodeGenerator::generateValueLeftToUser(const OperationContext& user, ValueID id)
+{
+    const Value& value = function().at(id);
+    if (m_values[id.index()] || !hasRegister(value.representation))
+        return;
+    for (uint32_t i = 0; i < value.numberOfOperands(); ++i) {
+        if (ValueID operand = value.operand(i))
+            generateValueLeftToUser(user, operand);
+    }
+    ValueContext context(user.block(), function().at(user.block()), id, value, analyses());
+    generate(context);
+    setOrigin(m_out, user.valueID());
 }
 
 static constexpr OpcodeSet opcodesRelyingOnElementProofs = [] {
@@ -305,16 +347,29 @@ static_assert(std::ranges::all_of(allMembersOf<Opcode>, [](Opcode opcode) {
     return !opcodesRelyingOnElementProofs.contains(opcode) || OperandPosition::guard(opcode);
 }));
 
+ValueLocation CodeGenerator::locationOfParameter(ValueID parameter) const
+{
+    BlockID block = m_blockOfParameter[parameter.index()];
+    if (!block)
+        return { };
+    return { ValuePlacement::Parameter, block, static_cast<uint32_t>(function().at(block).parameters.find(parameter)) };
+}
+
 void CodeGenerator::verifyElementGuard(const ValueContext& context)
 {
-    auto locate = [&](ValueID parameter) -> ValueLocation {
-        BlockID block = m_blockOfParameter[parameter.index()];
-        if (!block)
-            return { };
-        return { ValuePlacement::Parameter, block, static_cast<uint32_t>(function().at(block).parameters.find(parameter)) };
+    auto locate = [&](ValueID parameter) {
+        return locationOfParameter(parameter);
     };
     if (!hasGuardForElementProofs(program(), function(), analyses().cfg(), locate, context.value()))
         fail(context, InternalErrorKind::InvalidGuard);
+}
+
+bool CodeGenerator::hasGuardForWritableStorage(const ValueContext& store)
+{
+    auto locate = [&](ValueID parameter) {
+        return locationOfParameter(parameter);
+    };
+    return Typed::hasGuardForWritableStorage(program(), function(), analyses().cfg(), locate, store.value());
 }
 
 void CodeGenerator::generate(const ValueContext& context)
@@ -435,8 +490,10 @@ void CodeGenerator::generateNullishCheckBehindFailedTest(BlockID id, ValueID che
 
 void CodeGenerator::finishProcedure()
 {
+    emitter<ConversionEmitter>().placeExactIntegers();
     emitter<RuntimeCallEmitter>().stateWhichCallsChangeWhatOnlyGeneratedCodeReads();
     m_heaps.computeRangesAndDecorateInstructions();
+    m_proc.setHeapOfStackSlots(m_heaps.rangeOf(m_heaps.frameSlots));
     if (!build().recordedOptions().has(TestingSwitch::FoldLoadsPastCollections))
         m_proc.setHeapThatLoadsStayInFrontOf(m_heaps.rangeWrittenByWhateverMayCollect());
     if (build().recordedOptions().isSabotaged(Sabotage::FieldsNeverChange)) {
@@ -446,6 +503,7 @@ void CodeGenerator::finishProcedure()
                 load->setReadsMutability(B3::Mutability::Immutable);
         }
     }
+    mergeMutatorFences(m_proc, m_records.mutatorFences);
     m_proc.deleteOrphans();
     m_out.applyBlockOrder();
 }
@@ -940,6 +998,11 @@ CodeGenerator::InitializationScope::~InitializationScope()
 {
     --m_generator.m_initializationDepth;
     m_generator.m_exemptStores.append({ m_begin, m_generator.m_heaps.markDecorations() });
+    if constexpr (MutatorFenceRecords::isUsed) {
+        m_generator.m_heaps.forEachWriteDecoratedSince(m_begin, [&](const B3::AbstractHeap&, B3::Value* value) {
+            m_generator.m_records.mutatorFences.initializingStores.set(value->index());
+        });
+    }
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -19,6 +19,7 @@
 #include "AOTTypePropagation.h"
 #include "AOTVector.h"
 #include <array>
+#include <memory>
 #include <optional>
 #include <span>
 #include <wtf/OptionSet.h>
@@ -97,6 +98,9 @@ struct OptimizationInputs {
     OptimizationInputs withEffects(const EffectSummaries& otherEffects LIFETIME_BOUND) const { return { flow, callGraph, heat, inlining, otherEffects, derivedFunctions, callingConventions, slots, placement }; }
 };
 
+struct AnswersAboutCallbacksOfChains;
+struct VersionsThatGiveUp;
+
 struct FunctionPassContext {
     const Program& program;
     const OptimizationInputs& inputs;
@@ -122,6 +126,13 @@ struct FunctionPassContext {
     bool isShortSchedule { false };
     bool hasUsesAwaitingExpansion { false };
     bool hasCountersConvertedSinceTestsWerePlaced { false };
+    // ConvertCountersToIntegers runs twice behind the rounds. The second run has work only where a bound got its test after the first.
+    bool hasConvertedCountersBehindRounds { false };
+    // ConvertCountersToIntegers tries counters whose comparison names no variable in one round only: what it passes on for a counter that stays a number is taken away again, and the next round would pass it on anew.
+    bool hasTriedCountersThatCompareNoVariable { false };
+    bool hasBoundsTestedBehindRounds { false };
+    // Whoever cleans up behind it finds joins that take one value twice.
+    bool hasCopiedJoinsAboveTests { false };
     // The opcodes of the values in the blocks where the run of a pass begins, for a pass that the runner starts by what the body holds.
     const OpcodeSet* opcodesWhereRunBegins { nullptr };
     // Set by a pass in a run that changes the function: the analyses that describe the function as it is behind the run. The runner empties it in front of every run and drops what the row of the pass names, less these.
@@ -137,6 +148,10 @@ struct FunctionPassContext {
     bool lookedOnlyNearby { false };
     // Set by the planner of a site where its answer follows from more than the site, the types of its operands and the program: from where the site stands, or from who else uses a value.
     bool planAsksAboutPlace { false };
+    // The passes that look at a chain of array methods ask the same of its callbacks in every round, and the other functions of the program stay as they are while this one is optimized.
+    std::shared_ptr<AnswersAboutCallbacksOfChains> answersAboutCallbacksOfChains { };
+    // Set for the passes that run over the copy of a function whose version that gives up is being read: what they ask about other versions goes on from there.
+    VersionsThatGiveUp* versionsBeingRead { nullptr };
 
     FunctionID derivedFunction(const DerivedFunctionKey&);
 
@@ -216,6 +231,7 @@ using FunctionPass = PassOutcome (*)(FunctionPassContext&);
     v(PlanCollectionCapacities, planCollectionCapacities) \
     v(FoldConstantRegExps, foldConstantRegExps) \
     v(ShareRegExpLiterals, shareRegExpLiterals) \
+    v(KeepStringsJoinedInLoops, keepStringsJoinedInLoops) \
     v(InsertObjectCoercibleChecks, insertObjectCoercibleChecks) \
     v(EliminateTailRecursion, eliminateTailRecursion) \
     v(ResolveAwaitedCalls, resolveAwaitedCalls) \

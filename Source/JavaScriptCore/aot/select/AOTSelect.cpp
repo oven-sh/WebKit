@@ -14,6 +14,7 @@
 #include "AOTBuiltinUses.h"
 #include "AOTCodeShapes.h"
 #include "AOTIRBuilder.h"
+#include "AOTPredictedValues.h"
 #include "AOTResolveAccesses.h"
 #include "AOTResultRules.h"
 #include "AOTSelectionContext.h"
@@ -196,6 +197,8 @@ PassOutcome select(FunctionPassContext& pass)
         if (!context.isEnabled(rule.id))
             continue;
         rule.apply(context);
+        if (context.takeDidKeepType())
+            settleProofsBehindAnsweredChecks(pass.function, pass.analyses.cfg());
         restoreExactTypes(pass, context);
     }
     if (context.didRewrite())

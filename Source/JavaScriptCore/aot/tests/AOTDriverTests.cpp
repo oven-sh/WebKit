@@ -844,24 +844,9 @@ static void testReaderFuzzerShortRun()
 
 static void testReadStageCountsEntryParametersAheadOfItsPasses()
 {
-    static constexpr ASCIILiteral constructorFunctionWithTags =
-        "module m0 path=\"main.ts\" displayPath=\"main.ts\" body=f0\n"
-        "entry module=m0\n"
-        "layout L0 kind=Instance name=\"NodeObject\" constructor=f1 fields=[{key=\"kind\" declared={type=undefined|null|string}}] supertypes=[L1] flags=[IsConstructorFunction]\n"
-        "layout L1 name=\"Node\" fields=[{key=\"kind\" declared={type=undefined|null|string} flags=[IsRequired]}]\n"
-        "layout L2 name=\"Add\" fields=[{key=\"kind\" declared={type=undefined|null|\"add\"} flags=[IsRequired]}, {key=\"left\" declared={type=undefined|null|L1} flags=[IsRequired]}] supertypes=[L1]\n"
-        "layout L3 name=\"Num\" fields=[{key=\"kind\" declared={type=undefined|null|\"num\"} flags=[IsRequired]}, {key=\"value\" declared={type=number} flags=[IsRequired]}] supertypes=[L1]\n"
-        "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
-        "    Return\n"
-        "}\n"
-        "function f1 name=\"NodeObject\" flags=[HasThis] thisType={type=undefined|null|L1} parameters=[{type=undefined|null|string}] results=[{type=anything}] {\n"
-        "    PropSet v0, v1 key=\"kind\" mode=Strict\n"
-        "    Return\n"
-        "}\n"_s;
-
     runOnBuildThread([&] {
         BuildContext build(makeDefaultCompileOptions());
-        std::unique_ptr<Program> program = parseProgram(constructorFunctionWithTags, IRForm::AsRead, build);
+        std::unique_ptr<Program> program = parseProgram(readerFixtureWithTagsText, IRForm::AsRead, build);
         AOT_TEST_CHECK(program && !program->taggedFamilies.isEmpty());
         program->functions[1].parameters.clear();
         AOT_TEST_CHECK(!runReadStage(*program, build));

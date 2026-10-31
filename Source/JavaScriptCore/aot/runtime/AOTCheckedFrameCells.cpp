@@ -17,6 +17,7 @@
 #include "ConservativeRoots.h"
 #include "JSCInlines.h"
 #include "MarkedBlock.h"
+#include "ReservedRangeHeap.h"
 #include <atomic>
 #include <mutex>
 #include <wtf/DataLog.h>
@@ -33,6 +34,9 @@
 namespace JSC { namespace AOT {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CheckedFrameCells);
+
+// Generated code asks for nothing but the upper half of an address, so no cell of the heap may have that of the range. The heap draws its place.
+static_assert(CheckedFrameCells::startOfRange + (uintptr_t(1) << CheckedFrameCells::bitsOfOffsetInRange) <= ReservedRangeHeap::lowestRandomAddress || CheckedFrameCells::startOfRange >= ReservedRangeHeap::highestRandomAddress);
 
 namespace {
 

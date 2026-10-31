@@ -212,7 +212,7 @@ static void fillPlan(TypeTestPlan& plan, const Program& program, const Type& fro
     Type fromObjects = from.withOnlyObjects();
     plan.objects = computeObjectsVerdict(program, from, to, fromObjects);
     appendObjectTests(plan, program, from, to, fromObjects);
-    AOT::stableSort(plan.cellTests, { }, [](const CellTest& test) {
+    AOT::stableSortInLine(plan.cellTests, { }, [](const CellTest& test) {
         return std::tuple { planOrder[static_cast<size_t>(test.kind)], subjectOf(test) };
     });
     settleVerdict(plan);
@@ -264,6 +264,18 @@ TypeTestPlan computeTypeTestPlanFromAnything(const Program& program, const Type&
 {
     TypeTestPlan plan { .from = TypeTable::anything };
     fillPlan(plan, program, program.at(TypeTable::anything), to);
+    return plan;
+}
+
+TypeTestPlan computeTypeTestPlanOfBoxedValue(const Program& program, const Type& from, const Type& to)
+{
+    TypeTestPlan plan;
+    if (from.isSubsetOf(to, program))
+        plan.verdict = TypeTestVerdict::AlwaysPasses;
+    else if (!from.overlaps(to, program))
+        plan.verdict = TypeTestVerdict::NeverPasses;
+    else
+        fillPlan(plan, program, from, to);
     return plan;
 }
 

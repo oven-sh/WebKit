@@ -1,0 +1,79 @@
+# for (..) last = (list[i] ? Object.getOwnPropertyDescriptor(list, "a") : list[i]).writable
+# Where the other arm is unlikely it leaves the loop, and the built-in can then hand back the field in place of the object: the read stays whole.
+# Where both arms are likely the object is made in any case, and the read asks the tables of the run time.
+# OPTIONS: heat=OnlyLoopsAreHot disable=pass:InlineCalls
+# RUN: pipeline SeparateUnlikelyLoopPaths
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = Integer integer=10
+    v5 = Call v0, -, v3, v4
+    v6 = Call v1, -, v3, v4
+    Return v6
+}
+function f1 name="describedInMostTurns" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=0
+    v3 = Undefined
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v4, v1
+    Branch v7 -> taken b2(), notTaken b6()
+  b2():
+    v8 = ElemGet v0, v4
+    v9 = ToBoolean v8
+    Branch v9 -> taken b3(), notTaken b4()
+  b3():
+    v10 = Builtin builtin=Object
+    v11 = Builtin builtin=ObjectGetOwnPropertyDescriptor
+    v12 = String string="a"
+    v13 = Call v11, v10, v0, v12
+    Jump -> next b5(v13)
+  b4() frequency=Unlikely:
+    Jump -> next b5(v8)
+  b5(v14):
+    v15 = PropGet v14 key="writable"
+    v16 = Increment v4
+    Jump -> next b1(v16, v15)
+  b6():
+    Return v5
+}
+function f2 name="describedInHalfOfTheTurns" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=0
+    v3 = Undefined
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v4, v1
+    Branch v7 -> taken b2(), notTaken b6()
+  b2():
+    v8 = ElemGet v0, v4
+    v9 = ToBoolean v8
+    Branch v9 -> taken b3(), notTaken b4()
+  b3():
+    v10 = Builtin builtin=Object
+    v11 = Builtin builtin=ObjectGetOwnPropertyDescriptor
+    v12 = String string="a"
+    v13 = Call v11, v10, v0, v12
+    Jump -> next b5(v13)
+  b4():
+    Jump -> next b5(v8)
+  b5(v14):
+    v15 = PropGet v14 key="writable"
+    v16 = Increment v4
+    Jump -> next b1(v16, v15)
+  b6():
+    Return v5
+}
+# CHECK-LABEL: name="describedInMostTurns"
+# CHECK-NOT: asksOnlyTables
+# CHECK-LABEL: name="describedInHalfOfTheTurns"
+# CHECK: key="writable" accessSite=[[site]] [asksOnlyTables]

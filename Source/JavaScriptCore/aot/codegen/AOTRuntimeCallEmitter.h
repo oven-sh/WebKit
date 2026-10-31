@@ -79,8 +79,11 @@ public:
     void stateWhichCallsChangeWhatOnlyGeneratedCodeReads();
     void applyEffects(B3::PatchpointValue*, const Effects&, ArgumentBufferAccess, bool accessesCollectorState = false, CellConversions = CellConversions::AsEffectsSay, SlotsOfSites = SlotsOfSites::MayChange);
     Effects effectsOfCall(const OperationContext&, const Effects& effectsOfCallee) const;
+    Effects effectsOfCall(const EffectsOnEdges& effectsOfOperation, const Effects& effectsOfCallee) const;
 
     RegisterSet registersClobberedByCalls() const;
+    // A lookup may replace a table in the image by a copy on the heap. That changes the word in the collection and nothing that AOTCompactTable_lookupHeader reads means: code that has read a table in the image goes on to the stub.
+    void setCallsOnlyMoveTables(bool value) { m_callsOnlyMoveTables = value; }
     // Under validation: where a call patchpoint stores the registers that its callee keeps. One call of a frame runs at a time.
     B3::Air::StackSlot* keptRegisterStorage() { return ensureRegisterStorage(m_keptRegisterStorage); }
     // The same for the registers that a landing pad relies on, stored before each operation that may throw to one.
@@ -129,6 +132,7 @@ private:
     B3::Air::StackSlot* m_transientBuffer { nullptr };
     Vector<B3::PatchpointValue*, 16> m_callsThatMayChangeSlotsOfSites;
     Vector<B3::PatchpointValue*, 4> m_callsThatLookForPrivateNames;
+    bool m_callsOnlyMoveTables { false };
     B3::Air::StackSlot* m_keptRegisterStorage { nullptr };
     B3::Air::StackSlot* m_landingPadRegisterStorage { nullptr };
 };

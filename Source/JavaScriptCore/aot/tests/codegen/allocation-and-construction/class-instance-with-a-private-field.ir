@@ -128,22 +128,18 @@ function f4 module=m0 position=6 kind=Initializer flags=[HasThis, IsChecked, IsH
     Return v7
 }
 
-# A private field is a slot like any other. In front of it the instance has a word that says which evaluation of the class made it: it is read from a variable of the module and stored at birth.
+# A private field is a slot like any other. The class is evaluated once and has no private method, so nothing has to tell its objects from those of another evaluation: the instance has no word for that, and the class token is not read.
 # CHECK-LABEL: name="make" role=ResultWrapper
 # CHECK-NEXT: BB#0:
-# CHECK: Int64, Double b@[[fields]] = Patchpoint({{*}}:CallDirect)
-# CHECK-NEXT: Int64 b@[[brand]] = Extract(b@[[fields]], <<0,
-# CHECK-NEXT: Double b@[[count]] = Extract(b@[[fields]], <<1,
+# CHECK: Double b@[[count]] = Patchpoint({{*}}:CallDirect)
 # CHECK: Int64 b@[[counter]] = Patchpoint($1(b@{{*}}):Register({{*}}), resultConstraints = Register({{*}}), {{*}}:NewObject)
-# CHECK-NEXT: Store(b@[[brand]], b@[[counter]], offset = 16, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
-# CHECK-NEXT: Store(b@[[count]], b@[[counter]], offset = 24, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
+# CHECK-NEXT: Store(b@[[count]], b@[[counter]], offset = 16, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
 # CHECK: Return(b@[[counter]], Terminal)
 # CHECK-LABEL: end of function
 # CHECK-LABEL: name="make" role=ResultWorker
-# CHECK: Int64 b@[[token]] = Load(b@{{*}}Reads:ModuleVariables{{*}}:GetModuleVariable)
-# CHECK: Patchpoint(b@[[token]]:Register({{*}}), b@{{*}}:Register({{*}}), runsWithoutFrame,
+# CHECK-NOT: :GetModuleVariable
 # CHECK-LABEL: end of function
-# Nothing adds the private name by a call, tests the brand at the store, or has a write barrier.
+# Nothing adds the private name by a call or has a write barrier.
 # NONE-LABEL: name="make" role=ResultWrapper
 # NONE-NOT: :PrivateSet
 # NONE-NOT: Reads:JSCell
@@ -157,5 +153,5 @@ function f4 module=m0 position=6 kind=Initializer flags=[HasThis, IsChecked, IsH
 # CALLS-NOT: stub
 # CALLS-NOT: operation
 # CALLS: f{{*}}: size=
-# X64: instructions: 8, patchpoints: 2
-# ARM64: instructions: 9, patchpoints: 2, rare instructions: 2
+# X64: instructions: 6, patchpoints: 2
+# ARM64: instructions: 7, patchpoints: 2, rare instructions: 2

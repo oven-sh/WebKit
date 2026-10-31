@@ -22,8 +22,10 @@
 #include "AOTValueFlowRulesModules.h"
 #include "AOTValueFlowTypedResults.h"
 #include "AOTValueIdentity.h"
+#include "AOTValuesOfSteps.h"
 #include <algorithm>
 #include <utility>
+#include <wtf/Hasher.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -75,6 +77,8 @@ struct PendingStatement {
     uint32_t firstOperand { 0 };
     uint32_t operandCount { 0 };
     bool leavesBody { true };
+    // They stand behind the operands.
+    uint8_t numberOfObjectsReadUnderKeyOfStore { 0 };
 };
 
 struct Guard {
@@ -166,7 +170,7 @@ public:
 private:
     Vector<Record>& m_records;
     Vector<unsigned, 25> m_hashes;
-    HashMap<unsigned, Vector<uint32_t, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_byHash;
+    HashMap<uint64_t, Vector<uint32_t, 1>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_byHash;
 };
 
 class BodyReducer {
@@ -227,7 +231,7 @@ public:
 private:
     static void sortAndRemoveRepeats(auto& list)
     {
-        AOT::sort(list);
+        AOT::sortInLine(list);
         list.shrink(std::ranges::unique(list).begin() - list.begin());
     }
 
@@ -289,7 +293,7 @@ private:
         Vector<uint32_t> order(m_body.sites.size(), [](size_t index) {
             return static_cast<uint32_t>(index);
         });
-        AOT::sort(order, { }, [&](uint32_t index) {
+        AOT::sortInLine(order, { }, [&](uint32_t index) {
             return std::pair { m_body.sites[index].value, m_body.sites[index].ordinal };
         });
         Vector<uint32_t> placeOf(order.size());
@@ -305,7 +309,7 @@ private:
                 if (object.kind == ValueFlowObjectKind::Site)
                     object.index = placeOf[object.index];
             }
-            AOT::sort(constant.objects);
+            AOT::sortInLine(constant.objects);
         }
         for (Body::Statement& statement : m_body.statements) {
             auto first = std::ranges::lower_bound(m_body.sites, statement.site, { }, &ValueFlowSite::value);
@@ -352,6 +356,20 @@ private:
         objects.appendVector(m_body.constants[second].objects);
         sortAndRemoveRepeats(objects);
         return constantOf(m_body.constants[first].primitives | m_body.constants[second].primitives, objects.span());
+    }
+
+    uint32_t uniteConstants(std::span<const uint32_t> constants)
+    {
+        uint16_t primitives = 0;
+        Vector<ObjectName, 16> objects;
+        for (uint32_t constant : constants) {
+            if (!constant)
+                continue;
+            primitives |= m_body.constants[constant].primitives;
+            objects.appendVector(m_body.constants[constant].objects);
+        }
+        sortAndRemoveRepeats(objects);
+        return constantOf(primitives, objects.span());
     }
 
     uint32_t internMask(Body::Mask&& mask)
@@ -490,7 +508,9 @@ private:
     {
         const Type& type = typeOf(id);
         const ClassPart* classPart = type.singleBuiltinClass();
-        return addSite({ ValueFlowSiteOrigin::Operation, id, 0, type.singleLayout(m_program), classPart ? classPart->builtinClass : BuiltinClassID() });
+        const Value& value = m_function.at(id);
+        bool isDenseArrayLiteral = value.opcode == Opcode::NewArray && value.holes().empty();
+        return addSite({ ValueFlowSiteOrigin::Operation, id, 0, type.singleLayout(m_program), classPart ? classPart->builtinClass : BuiltinClassID(), false, false, isDenseArrayLiteral });
     }
 
     void addInterface()
@@ -621,6 +641,20 @@ private:
 
     bool isTypedByChecks(ValueID id) const { return isBehindCheck(id) && takesTypeFromOperands(m_function.at(id).opcode); }
 
+    bool copiesPrimitives(ValueID id) const
+    {
+        const Type& type = typeOf(id);
+        return flowOf(m_function.at(id).opcode) == ValueFlowEdgeClass::Copies && !type.hasObjects() && type.isJavaScriptValue();
+    }
+
+    bool callsFunctionWithoutBody(const Value& value) const
+    {
+        if (value.opcode != Opcode::Call)
+            return false;
+        FunctionID callee = onlyCalleeOf(m_program, typeOf(value.operand(OperandIndex::Call::callee)));
+        return callee && !m_program.at(callee).hasBody();
+    }
+
     // A block that one edge leads to is entered only behind what that edge is behind. Out of a test the edge brings the tested value as the test lets it through.
     void findGuardsOf(BlockID id)
     {
@@ -634,7 +668,7 @@ private:
         const Block& block = m_function.at(id);
         for (uint32_t index = 0; index < block.parameters.size(); ++index) {
             ValueID parameter = block.parameters[index];
-            if (!carriesValue(parameter) || (!isBehindCheck(parameter) && (m_function.role != FunctionRole::Library || m_function.kind == FunctionKind::Module)))
+            if (!carriesValue(parameter))
                 continue;
             IncomingValue value = incomingValueOf(m_function, incoming[0], index);
             if (value.kind != IncomingValue::Kind::EdgeResult)
@@ -642,11 +676,39 @@ private:
             EdgeResult result = edgeResultAt(m_function, value.result);
             if (result.kind != EdgeResultKind::NarrowedOperand || (!result.test && !result.caseIndex))
                 continue;
+            bool isInLibraryFunction = m_function.role == FunctionRole::Library && m_function.kind != FunctionKind::Module;
+            if (!isBehindCheck(parameter) && !isInLibraryFunction && !(isExportOfAnotherModule(result.subject) && leadsToLoadOfModule(id)))
+                continue;
             addGuard(guards, { parameter, 0 });
         }
         const Terminator& terminator = m_function.at(incoming[0].from).terminator;
         if (terminator.isConditionalBranch() && !incoming[0].isHandlerEdge())
-            addGuardOfCondition(guards, terminator.conditionOperand(), incoming[0].targetIndex ? EdgeSide::NotTaken : EdgeSide::Taken);
+            addGuardOfCondition(guards, id, terminator.conditionOperand(), incoming[0].targetIndex ? EdgeSide::NotTaken : EdgeSide::Taken);
+    }
+
+    // Among the blocks that are entered only through this one. A guard delays what stands behind it, and in the order of flow's rules that moves other answers, so a test of the program is read only where it decides this much.
+    bool leadsToLoadOfModule(BlockID first) const
+    {
+        Vector<BlockID, 16> blocks { first };
+        for (size_t index = 0; index < blocks.size(); ++index) {
+            for (ValueID id : m_function.at(blocks[index]).values) {
+                Opcode opcode = m_function.at(id).opcode;
+                if (opcode == Opcode::EvaluateModule || opcode == Opcode::ImportModule)
+                    return true;
+            }
+            for (BlockID successor : m_cfg.successors(blocks[index])) {
+                if (m_cfg.incomingEdges(successor).size() == 1)
+                    blocks.append(successor);
+            }
+        }
+        return false;
+    }
+
+    // `if (DEBUG) require("./big")`: a flag of another module decides what this one loads.
+    bool isExportOfAnotherModule(ValueID tested) const
+    {
+        const Value& definition = m_function.at(definitionThroughSameValues(m_function, tested));
+        return definition.opcode == Opcode::GetModuleVariable && m_program.at(definition.variable()).module != m_function.module;
     }
 
     void addGuard(GuardsOfBlock& guards, Guard guard)
@@ -658,7 +720,7 @@ private:
     }
 
     // What the edge brings of the operand of the last conversion is a guard already.
-    void addGuardOfCondition(GuardsOfBlock& guards, ValueID condition, EdgeSide side)
+    void addGuardOfCondition(GuardsOfBlock& guards, BlockID block, ValueID condition, EdgeSide side)
     {
         bool isNegated = false;
         ValueID tested = condition;
@@ -677,8 +739,28 @@ private:
                 addGuard(guards, { test.valueOperand(), mask, true });
             return;
         }
+        if (test.opcode == Opcode::StrictEq) {
+            if (leadsToLoadOfModule(block))
+                addGuardsOfComparison(guards, test, side);
+            return;
+        }
         if (isNegated && carriesValue(tested))
             addGuard(guards, { tested, maskOfTruthinessTest(side) });
+    }
+
+    // `if (MODE === "development") require("./tools")`: the edge brings nothing where the arm does not read the name again.
+    void addGuardsOfComparison(GuardsOfBlock& guards, const Value& test, EdgeSide side)
+    {
+        for (uint32_t index = 0; index < 2; ++index) {
+            ValueID compared = test.operand(index);
+            ValueID other = test.operand(index ? 0 : 1);
+            if (!carriesValue(compared) || !isExportOfAnotherModule(compared) || isBehindCheck(other))
+                continue;
+            if (side == EdgeSide::Taken && isStrictlyEqualOnlyToItself(typeOf(other)))
+                addGuard(guards, { compared, maskInside(m_function.at(other).type, ValueFlowMaskKind::Checked) });
+            else if (side == EdgeSide::NotTaken && typeOf(other).isSingleValue())
+                addGuard(guards, { compared, maskOutside(m_function.at(other).type) });
+        }
     }
 
     void addSourcesOfBlockParameters()
@@ -727,6 +809,89 @@ private:
         return maskInside(m_program.types.find(Type::stringLiteral(terminator.strings()[caseIndex])).value_or(TypeTable::string), ValueFlowMaskKind::Checked);
     }
 
+    // Whether a value is a primitive of some kind, an object or a function never changes. Whether an object has a layout does.
+    static bool answersTheSameForever(const Type& tested)
+    {
+        return tested.isJavaScriptValue() && !tested.layouts && tested.classes.isEmpty() && tested.functions.isEmpty() && tested.builtins.isEmpty() && tested.regExpLiteralSet.isEmpty();
+    }
+
+    std::optional<uint32_t> findBlockParameter(ValueID value)
+    {
+        if (m_function.at(value).opcode != Opcode::Parameter)
+            return std::nullopt;
+        if (m_positionOfBlockParameter.isEmpty()) {
+            m_positionOfBlockParameter.fill(UINT32_MAX, m_function.values.size());
+            for (uint32_t position = 0; position < m_blockParameters.size(); ++position)
+                m_positionOfBlockParameter[m_blockParameters[position].parameter.index()] = position;
+        }
+        uint32_t position = m_positionOfBlockParameter[value.index()];
+        return position == UINT32_MAX ? std::nullopt : std::optional(position);
+    }
+
+    // The side that the value took out of the same test on its way here, where one way leads here.
+    std::optional<EdgeSide> sideTakenEarlier(ValueID value, TypeID tested)
+    {
+        AOT_THRESHOLD(unsigned, mostEdgesWalkedBack, 8);
+        for (unsigned steps = 0; steps < mostEdgesWalkedBack; ++steps) {
+            std::optional<uint32_t> position = findBlockParameter(value);
+            if (!position)
+                return std::nullopt;
+            std::span<const Edge> incoming = m_cfg.incomingEdges(m_blockParameters[*position].block);
+            if (incoming.size() != 1)
+                return std::nullopt;
+            IncomingValue brought = incomingValueOf(m_function, incoming[0], m_blockParameters[*position].index);
+            if (brought.kind == IncomingValue::Kind::Argument) {
+                value = brought.argument;
+                continue;
+            }
+            EdgeResult result = edgeResultAt(m_function, brought.result);
+            if (result.kind != EdgeResultKind::NarrowedOperand)
+                return std::nullopt;
+            if (result.test) {
+                const Value& test = m_function.at(result.test);
+                if (test.opcode == Opcode::TypeTest && test.testedType() == tested)
+                    return result.side;
+            }
+            value = result.subject;
+        }
+        return std::nullopt;
+    }
+
+    // The tested value comes together from several blocks. What comes from behind the other side of the same test does not take this edge.
+    bool addSourcesThatCanTakeEdge(ValueID parameter, const EdgeResult& result, uint32_t mask)
+    {
+        if (!result.test || m_function.at(result.test).opcode != Opcode::TypeTest)
+            return false;
+        TypeID tested = m_function.at(result.test).testedType();
+        std::optional<uint32_t> position = findBlockParameter(result.subject);
+        if (!position || !answersTheSameForever(m_program.at(tested)))
+            return false;
+        Vector<ValueID, 4> sources;
+        std::span<const Edge> incoming = m_cfg.incomingEdges(m_blockParameters[*position].block);
+        if (incoming.size() == 1) {
+            std::optional<EdgeSide> earlier = sideTakenEarlier(result.subject, tested);
+            if (!earlier || *earlier == result.side)
+                return false;
+        } else {
+            for (Edge edge : incoming) {
+                IncomingValue brought = incomingValueOf(m_function, edge, m_blockParameters[*position].index);
+                if (brought.kind != IncomingValue::Kind::Argument)
+                    return false;
+                std::optional<EdgeSide> earlier = sideTakenEarlier(brought.argument, tested);
+                if (!earlier || *earlier == result.side)
+                    sources.append(brought.argument);
+            }
+            if (sources.size() == incoming.size())
+                return false;
+        }
+        // Where nothing takes the edge, a source that lets nothing by gives the parameter a node, which the statements behind the edge wait for.
+        if (sources.isEmpty())
+            addSource(parameter, result.subject, maskInside(TypeTable::never, ValueFlowMaskKind::Checked));
+        for (ValueID source : sources)
+            addSource(parameter, source, mask);
+        return true;
+    }
+
     void addEdgeResult(ValueID parameter, const EdgeResult& result, const Terminator& terminator)
     {
         TypeID type = m_function.at(parameter).type;
@@ -762,6 +927,8 @@ private:
                 } else if (parameterIsBehindCheck && test.opcode == Opcode::ToBoolean)
                     mask = maskOfTruthinessTest(result.side);
             }
+            if (addSourcesThatCanTakeEdge(parameter, result, mask))
+                return;
             return addSource(parameter, result.subject, mask);
         }
         case EdgeResultKind::DeclaredResult:
@@ -886,10 +1053,12 @@ private:
             return setConstant(id, constantOf({ ValueFlowObjectKind::Key, value.key().index(), { } }));
         case Opcode::Parameter:
         case Opcode::LoopHint:
+        case Opcode::ReleaseHint:
         case Opcode::InitialYield:
         case Opcode::ReadScope:
         case Opcode::ReportMismatch:
         case Opcode::RecordRequire:
+        case Opcode::CountExecution:
             return;
         case Opcode::GetModuleVariable:
             if (carriesValue(id))
@@ -961,7 +1130,7 @@ private:
         }
         if (producer.opcode == Opcode::CallDirect && !m_program.at(producer.function()).isUnsplitCoroutine())
             return setNode(id, NodeName::result(producer.function(), value.index()));
-        bool isListedName = value.index() == static_cast<uint32_t>(ForInStepResult::Key) && walksNamesThatAreReExported(m_function, producer);
+        bool isListedName = producer.opcode == Opcode::ForInStep && value.index() == static_cast<uint32_t>(ForInStepResult::Key);
         if (!isListedName && !typeOf(id).hasObjects() && typeOf(id).isJavaScriptValue())
             return setConstant(id, constantOfType(typeOf(id)));
         beginSources(id);
@@ -1014,7 +1183,12 @@ private:
 
     void describeResult(ValueID id, const Value& value)
     {
-        if (provesOf(value.opcode) == Proof::Equality && m_program.typeOf(m_function, value.operand(0)).mayBeFunction() && m_program.typeOf(m_function, value.operand(1)).mayBeFunction())
+        // A comparison tells two closures apart, and two instances of a built-in class.
+        auto mayBeToldApart = [&](ValueID operand) {
+            const Type& type = m_program.typeOf(m_function, operand);
+            return type.mayBeFunction() || !type.classes.isEmpty();
+        };
+        if (provesOf(value.opcode) == Proof::Equality && mayBeToldApart(value.operand(0)) && mayBeToldApart(value.operand(1)))
             m_comparedValues.append({ value.operand(0), value.operand(1) });
         if (value.opcode == Opcode::IteratorResume || value.opcode == Opcode::AppendSpread)
             addSite({ ValueFlowSiteOrigin::Operation, id, 0, { }, BuiltinClasses::Array });
@@ -1043,7 +1217,7 @@ private:
         }
         if (flowRuleOf(value.opcode) == FlowRule::Call) {
             bool namesLayout = value.opcode == Opcode::SuperConstruct || value.opcode == Opcode::SuperConstructList;
-            addSite({ ValueFlowSiteOrigin::BuiltinResult, id, 0, namesLayout ? value.layout() : LayoutID(), { }, false, constructsProxyByName(value) });
+            addSite({ ValueFlowSiteOrigin::BuiltinResult, id, 0, namesLayout ? value.layout() : LayoutID(), { }, false, constructsProxyByName(value), false, value.opcode == Opcode::Call && value.variadicOperands().size() <= 1 });
             addSite({ ValueFlowSiteOrigin::BuiltinResult, id, 1, { }, { } });
         }
         if (!carriesValue(id))
@@ -1138,7 +1312,8 @@ private:
         }
         bool mayTurnOutWithoutFraction = type.primitives & Primitive::FractionalNumber && makesNoFraction(value.opcode);
         bool isOfOneKind = (type.hasOnlyPrimitives(Primitive::Number) && !mayTurnOutWithoutFraction) || type.hasOnlyPrimitives(Primitive::AnyString) || type.hasOnlyPrimitives(Primitive::BigInt);
-        if (!type.hasObjects() && type.isJavaScriptValue() && !isTypedByChecks(id) && (isOfOneKind || !answersByKindsOfOperands(value.opcode)))
+        bool isCopiedByRule = copiesPrimitives(id) && hasRuleOfItsOwn(value.opcode) && !type.isNever() && !callsFunctionWithoutBody(value);
+        if (!type.hasObjects() && type.isJavaScriptValue() && !isTypedByChecks(id) && !isCopiedByRule && (isOfOneKind || !answersByKindsOfOperands(value.opcode)))
             return setConstant(id, constantOfType(type));
         at(id).role = Role::Result;
     }
@@ -1152,8 +1327,9 @@ private:
             std::optional<ObjectName> site;
             switch (node.kind()) {
             case DataNode::Kind::Array: {
-                site = addSite({ ValueFlowSiteOrigin::DataNode, id, ordinal, { }, BuiltinClasses::Array });
                 const Vector<DataNode>& elements = node.as<DataNode::Array>().elements;
+                bool hasHole = std::ranges::any_of(elements, [](const DataNode& element) { return element.kind() == DataNode::Kind::Hole; });
+                site = addSite({ ValueFlowSiteOrigin::DataNode, id, ordinal, { }, BuiltinClasses::Array, false, false, !hasHole });
                 for (size_t index = elements.size(); index--;)
                     stack.append(&elements[index]);
                 break;
@@ -1251,6 +1427,12 @@ private:
         PendingStatement statement { id, block, static_cast<uint32_t>(m_statementOperands.size()), value.numberOfOperands(), !onlyLooksAtOperands(value) };
         for (uint32_t index = 0; index < statement.operandCount; ++index)
             m_statementOperands.append(value.operand(index));
+        if (value.opcode == Opcode::ElemSet) {
+            if (Vector<ValueID, 2> objects = objectsReadUnderKeyOfStore(m_function, value); objects.size() <= 2) {
+                m_statementOperands.appendVector(objects);
+                statement.numberOfObjectsReadUnderKeyOfStore = objects.size();
+            }
+        }
         m_guardsOfBlock[block.index()].areAskedFor = true;
         m_statements.append(statement);
     }
@@ -1444,28 +1626,16 @@ private:
         }
     }
 
-    bool readsValueOfStepThatFindsEnd(BlockID block, ValueID step)
+    bool readsValueOfStepThatFindsEnd(ValueID step)
     {
         const Value& operation = m_function.at(step);
         if (operation.readsValueWhenDone() || operation.stepIndex())
             return false;
-        auto reads = [&](ValueID id, IteratorResumeResult result) {
-            const Value& value = m_function.at(id);
-            return value.opcode == Opcode::ResultAt && value.resultsOperand() == step && value.index() == static_cast<uint32_t>(result);
-        };
-        const Terminator& terminator = m_function.at(block).terminator;
-        if (terminator.kind != TerminatorKind::Branch || !reads(terminator.operand(0), IteratorResumeResult::Done))
-            return true;
-        BlockID behind = terminator.notTaken().block;
-        if (behind == terminator.taken().block || m_cfg.incomingEdges(behind).size() != 1)
-            return true;
-        size_t numberOfReads = 0;
-        for (uint32_t index = step.index() + 1; index < m_function.values.size(); ++index)
-            numberOfReads += reads(ValueID(index), IteratorResumeResult::Value);
-        size_t numberOfReadsBehind = std::ranges::count_if(m_function.at(behind).values, [&](ValueID id) {
-            return reads(id, IteratorResumeResult::Value);
-        });
-        return numberOfReads != numberOfReadsBehind;
+        if (!m_uses) {
+            m_uses.emplace(m_function, m_cfg);
+            m_dominators.emplace(m_cfg, false);
+        }
+        return !blockThatAloneUsesValueOfStep(m_function, m_cfg, *m_uses, *m_dominators, step);
     }
 
     void addResultNodes()
@@ -1478,9 +1648,9 @@ private:
                 TypeID type = m_function.at(id).type;
                 Opcode opcode = m_function.at(id).opcode;
                 bool isInsideType = type && resultRuleOf(opcode) != ResultRule::Results && opcode != Opcode::Builtin;
-                ValueFlowMaskKind kind = isTypedByChecks(id) ? ValueFlowMaskKind::Expected : kindOfResultMask(opcode);
+                ValueFlowMaskKind kind = isTypedByChecks(id) ? ValueFlowMaskKind::Expected : copiesPrimitives(id) ? ValueFlowMaskKind::Checked : kindOfResultMask(opcode);
                 description.name = addNode(ValueFlowBodyNodeKind::OperationResult, id, isInsideType ? maskInside(type, kind) : 0);
-                if (opcode == Opcode::IteratorResume && readsValueOfStepThatFindsEnd(block, id))
+                if (opcode == Opcode::IteratorResume && readsValueOfStepThatFindsEnd(id))
                     m_body.seedsOnceReached.append({ description.name, constantOf(Primitive::Undefined), 0 });
             }
         }
@@ -1580,10 +1750,18 @@ private:
                 joins.append({ joinedForm[position], position });
         }
         AOT::sort(joins);
-        for (auto [index, other] : joins) {
-            if (!forms[index].node)
-                forms[index].node = forms[other].node;
-            forms[index].constant = uniteConstants(forms[index].constant, forms[other].constant);
+        Vector<uint32_t, 16> constants;
+        for (size_t begin = 0; begin < joins.size();) {
+            uint32_t index = joins[begin].first;
+            constants.shrink(0);
+            constants.append(forms[index].constant);
+            for (; begin < joins.size() && joins[begin].first == index; ++begin) {
+                uint32_t other = joins[begin].second;
+                if (!forms[index].node)
+                    forms[index].node = forms[other].node;
+                constants.append(forms[other].constant);
+            }
+            forms[index].constant = uniteConstants(constants.span());
         }
         keepFormsAt(forms, [&](uint32_t position) {
             return joinedForm[position] == position;
@@ -1620,14 +1798,36 @@ private:
         (leavesBody ? m_body.edgesOnceReached : m_body.edges).append({ from, target });
     }
 
+    Vector<uint32_t, 1>& filterNodesWithHashOf(const OperandForm& form)
+    {
+        unsigned hash = computeHash(form.node.kind, form.node.owner, form.node.index, form.constant, form.mask) >> 1;
+        return m_filterNodesByHash.add(hash, Vector<uint32_t, 1> { }).iterator->value;
+    }
+
     NodeName filterNodeOf(const OperandForm& form)
     {
-        for (auto& [known, node] : m_filterNodes) {
-            if (known == form)
-                return node;
+        AOT_THRESHOLD(size_t, mostSearchedInOrder, 16);
+        Vector<uint32_t, 1>* withSameHash = nullptr;
+        if (m_filterNodes.size() <= mostSearchedInOrder) {
+            for (auto& [known, node] : m_filterNodes) {
+                if (known == form)
+                    return node;
+            }
+        } else {
+            if (m_filterNodesByHash.isEmpty()) {
+                for (uint32_t position = 0; position < m_filterNodes.size(); ++position)
+                    filterNodesWithHashOf(m_filterNodes[position].first).append(position);
+            }
+            withSameHash = &filterNodesWithHashOf(form);
+            for (uint32_t position : *withSameHash) {
+                if (m_filterNodes[position].first == form)
+                    return m_filterNodes[position].second;
+            }
         }
         NodeName node = addNode(ValueFlowBodyNodeKind::Filter, ValueID(), form.mask);
         m_body.edges.append({ form.node, node });
+        if (withSameHash)
+            withSameHash->append(m_filterNodes.size());
         m_filterNodes.append({ form, node });
         return node;
     }
@@ -1654,12 +1854,11 @@ private:
     OperandForm throughSharedFilters(OperandForm form)
     {
         while (form.node && !form.constant) {
-            size_t index = m_sharedFilters.findIf([&](const auto& filter) {
-                return filter.first == form.node;
-            });
-            if (index == notFound)
+            // makeNode() appends a node that is newer than all the others.
+            auto filter = std::ranges::lower_bound(m_sharedFilters, form.node, { }, &std::pair<NodeName, OperandForm>::first);
+            if (filter == m_sharedFilters.end() || filter->first != form.node)
                 break;
-            form = throughMask(m_sharedFilters[index].second, form.mask);
+            form = throughMask(filter->second, form.mask);
         }
         return form;
     }
@@ -1794,7 +1993,46 @@ private:
             staysAsNode = operandReaders || forms.size() * readers > forms.size() + readers;
         if (staysAsNode)
             forms = { makeNode(head, forms) };
+        else if (readers)
+            gatherLongListInNode(head, forms);
         m_forms[head.index()] = WTF::move(forms);
+    }
+
+    AOT_CLASS_THRESHOLD(size_t, mostCarriedFromOnePassingValueToTheNext, 32);
+
+    size_t sizeCarriedIn(const Forms& forms) const
+    {
+        size_t size = forms.size();
+        for (const OperandForm& form : forms) {
+            if (form.constant)
+                size += m_body.constants[form.constant].objects.size();
+        }
+        return size;
+    }
+
+    void gatherLongListInNode(ValueID head, Forms& forms)
+    {
+        if (sizeCarriedIn(forms) <= mostCarriedFromOnePassingValueToTheNext)
+            return;
+        if (forms.size() == 1) {
+            forms = { makeNode(head, forms) };
+            return;
+        }
+        Forms gathered;
+        Forms ofParameters;
+        for (const OperandForm& form : forms) {
+            if (!operandOfCallerAt(throughSharedFilters(form).node)) {
+                gathered.append(form);
+                continue;
+            }
+            ofParameters.append({ form.node, 0, form.mask });
+            if (form.constant)
+                gathered.append({ { }, form.constant, form.mask });
+        }
+        if (sizeCarriedIn(gathered) <= mostCarriedFromOnePassingValueToTheNext)
+            return;
+        forms = { makeNode(head, gathered) };
+        forms.appendVector(ofParameters);
     }
 
     void resolveCycleThroughMasks(std::span<const ValueID> members)
@@ -1907,6 +2145,9 @@ private:
     void findReadsHandedOn()
     {
         m_readsHandedOn = BitVector(m_function.values.size());
+        m_valuesHandedOnOtherwiseThanAsReceivers = BitVector(m_function.values.size());
+        m_valuesThatAreMoreThanTested = BitVector(m_function.values.size());
+        Vector<std::pair<ValueID, ValueID>> readsOfMembers;
         Vector<ValueID> narrowedFrom(m_function.values.size());
         auto definitionOf = [&](ValueID id) {
             for (unsigned steps = 0; steps < 8; ++steps) {
@@ -1917,9 +2158,14 @@ private:
             }
             return id;
         };
-        auto handOn = [&](ValueID used) {
-            if (used)
-                m_readsHandedOn.quickSet(definitionOf(used).index());
+        auto handOn = [&](ValueID used, bool isReceiverOfCall = false, bool isReceiverOfRead = false) {
+            if (!used)
+                return;
+            m_readsHandedOn.quickSet(definitionOf(used).index());
+            if (!isReceiverOfRead)
+                m_valuesThatAreMoreThanTested.quickSet(definitionOf(used).index());
+            if (!isReceiverOfCall)
+                m_valuesHandedOnOtherwiseThanAsReceivers.quickSet(definitionOf(used).index());
         };
         Vector<ValueID, 8> narrowedTwice;
         for (uint32_t from = 0; from < m_function.blocks.size(); ++from) {
@@ -1947,12 +2193,17 @@ private:
                     const OperandInfo& info = operandInfoOf(user.opcode, index);
                     if (info.uses.contains(OperandUse::Calls) && info.uses.containsOnly({ OperandUse::Inspects, OperandUse::Calls }) && (user.opcode == Opcode::Call || user.opcode == Opcode::CallList) && user.thisValueOperand()) {
                         const Value& read = m_function.at(definitionOf(operand));
-                        if (read.opcode != Opcode::PropGet || definitionOf(read.objectOperand()) == definitionOf(user.thisValueOperand()))
+                        if (read.opcode != Opcode::PropGet || definitionOf(read.objectOperand()) == definitionOf(user.thisValueOperand())) {
+                            m_valuesThatAreMoreThanTested.quickSet(definitionOf(operand).index());
                             continue;
+                        }
                     }
                     if (info.uses.containsOnly(OperandUse::Inspects) && info.protocols.isEmpty() && receiverOf(user.opcode) != index)
                         continue;
-                    handOn(operand);
+                    bool isReceiverOfRead = user.opcode == Opcode::PropGet && receiverOf(user.opcode) == index;
+                    if (isReceiverOfRead)
+                        readsOfMembers.append({ definitionOf(operand), id });
+                    handOn(operand, user.opcode == Opcode::Call && index == OperandIndex::Call::thisValue, isReceiverOfRead);
                 }
             }
             const Terminator& terminator = block.terminator;
@@ -1971,6 +2222,13 @@ private:
             }
             handOn(block.subject);
         }
+        for (bool hasFoundMore = true; hasFoundMore;) {
+            hasFoundMore = false;
+            for (auto [holder, read] : readsOfMembers) {
+                if (m_valuesThatAreMoreThanTested.quickGet(read.index()) && !m_valuesThatAreMoreThanTested.quickSet(holder.index()))
+                    hasFoundMore = true;
+            }
+        }
     }
 
     // The pass that replaces such a call reads the type of its answer, wherever the call stands.
@@ -1985,19 +2243,170 @@ private:
         return entry.flags.contains(BuiltinFlag::IsCompilerHelper) || entry.holder == Builtins::BunBundle;
     }
 
+    PropertyKeyID keyOfStatement(const Value& value) const
+    {
+        if (Value::opcodesWithKey.contains(value.opcode))
+            return value.key();
+        if (!Value::opcodesWithCalleeKey.contains(value.opcode))
+            return { };
+        PropertyKeyID key = value.calleeKey();
+        ValueID receiver = value.thisValueOperand();
+        if (!key || !receiver || m_program.isIndexLike(key))
+            return { };
+        const Value& read = m_function.at(definitionThroughSameValues(m_function, value.calleeOperand()));
+        if (read.opcode != Opcode::PropGet || read.isFreeName() || read.key() != key)
+            return { };
+        return definitionThroughSameValues(m_function, read.objectOperand()) == definitionThroughSameValues(m_function, receiver) ? key : PropertyKeyID();
+    }
+
+    static bool isReadByRules(Opcode opcode)
+    {
+        switch (opcode) {
+        case Opcode::Data:
+        case Opcode::NewObject:
+        case Opcode::NewDictionary:
+        case Opcode::CopyObject:
+        case Opcode::SetLiteralPrototype:
+        case Opcode::ForInOpen:
+        case Opcode::ForInStep:
+        case Opcode::GetSuperBase:
+        case Opcode::GetInternalField:
+        case Opcode::PrivateGet:
+        case Opcode::PrivateSet:
+        case Opcode::PrivateDefine:
+        case Opcode::IteratorOpen:
+        case Opcode::IteratorResume:
+        case Opcode::IteratorClose:
+        case Opcode::NewClass:
+        case Opcode::DefineMethod:
+        case Opcode::Builtin:
+        case Opcode::ModuleNamespace:
+        case Opcode::ImportModule:
+        case Opcode::RequireModule:
+        case Opcode::EvaluateModule:
+        case Opcode::RequireBuiltinModule:
+        case Opcode::ImportDynamic:
+        case Opcode::RequireDynamic:
+        case Opcode::ResolveDynamic:
+        case Opcode::DirectEval:
+        case Opcode::NativeBinding:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    const BitVector& patternsSteppedPlaceAfterPlace()
+    {
+        if (m_patternsSteppedPlaceAfterPlace)
+            return *m_patternsSteppedPlaceAfterPlace;
+
+        struct Steps {
+            ValueID iterator;
+            BitVector indexes;
+            uint32_t highestIndex { 0 };
+            bool haveOnePlaceEach { true };
+        };
+        constexpr uint32_t none = std::numeric_limits<uint32_t>::max();
+        Vector<Steps, 4> patterns;
+        Vector<uint32_t> patternOfIterator(FillWith { }, m_function.values.size(), none);
+        for (BlockID block : m_cfg.reversePostOrder()) {
+            for (ValueID id : m_function.at(block).values) {
+                const Value& step = m_function.at(id);
+                if (step.opcode != Opcode::IteratorResume)
+                    continue;
+                ValueID iterator = step.operand(OperandIndex::IteratorResume::iterator);
+                uint32_t& pattern = patternOfIterator[iterator.index()];
+                if (pattern == none) {
+                    pattern = patterns.size();
+                    patterns.append(Steps { iterator, { }, 0, true });
+                }
+                Steps& steps = patterns[pattern];
+                std::optional<uint32_t> index = step.stepIndex();
+                if (step.resumeMode() != ResumeMode::Next || step.sentOperand() || step.readsValueWhenDone() || !index || steps.indexes.set(*index)) {
+                    steps.haveOnePlaceEach = false;
+                    continue;
+                }
+                steps.highestIndex = std::max(steps.highestIndex, *index);
+            }
+        }
+
+        m_patternsSteppedPlaceAfterPlace.emplace();
+        for (const Steps& steps : patterns) {
+            if (steps.haveOnePlaceEach && steps.indexes.bitCount() == steps.highestIndex + 1)
+                m_patternsSteppedPlaceAfterPlace->set(steps.iterator.index());
+        }
+        return *m_patternsSteppedPlaceAfterPlace;
+    }
+
+    bool stepFillsNoOnePlace(const Value& step)
+    {
+        if (!step.stepIndex())
+            return false;
+        ValueID iterator = step.operand(OperandIndex::IteratorResume::iterator);
+        const Value& open = m_function.at(iterator);
+        if (open.opcode != Opcode::IteratorOpen || (open.hasRest() && *step.stepIndex() >= open.elementCount().value_or(0)))
+            return true;
+        return !patternsSteppedPlaceAfterPlace().get(iterator.index());
+    }
+
+    void noteFactsOfText(const Value& value, ValueID site, Body::Statement& statement)
+    {
+        if (isReadByRules(value.opcode)) {
+            statement.factsOfText.add(ValueFlowFactOfText::HasCopyOfOperation);
+            m_body.copiesOfOperations.append(ValueFlowCopyOfOperation { m_body.function, site, value });
+        }
+        if (value.opcode == Opcode::ElemGet && readsUnderNameOfEnumerationOfSameObject(m_function, value))
+            statement.factsOfText.add(ValueFlowFactOfText::ReadsUnderNameOfEnumerationOfSameObject);
+        if (value.opcode == Opcode::IteratorResume && stepFillsNoOnePlace(value))
+            statement.factsOfText.add(ValueFlowFactOfText::StepFillsNoOnePlace);
+        ValueFlowRareFactsOfText rare { m_body.function, site, { }, { } };
+        if (flowRuleOf(value.opcode) == FlowRule::Call) {
+            if (value.operand(1))
+                statement.factsOfText.add(ValueFlowFactOfText::HasSecondOperand);
+            if (ValueID callee = value.operand(0))
+                rare.entryNamed = entryNamedByOperations(m_program, m_function, callee);
+            if (!statement.key)
+                rare.keyOfMemberCalledOnItsHolder = keyOfMemberCalledOnItsHolderByText(m_program, m_function, value);
+        } else if (value.opcode == Opcode::PropGet || value.opcode == Opcode::PropSet || value.opcode == Opcode::PropDelete) {
+            if (value.isFreeName())
+                statement.factsOfText.add(ValueFlowFactOfText::IsFreeName);
+            if (value.opcode == Opcode::PropGet)
+                rare.entryNamed = entryNamedByOperations(m_program, m_function, site);
+        }
+        if (value.opcode == Opcode::ElemGet || value.opcode == Opcode::ElemSet) {
+            static_assert(OperandIndex::ElemGet::property == OperandIndex::ElemSet::property);
+            rare.textThatKeyBeginsWith = textThatSumBeginsWith(m_program, m_function, value.operand(OperandIndex::ElemGet::property));
+        }
+        if (value.opcode == Opcode::ElemGet)
+            rare.positionInPair = positionInPairWrittenAsKey(m_function, value);
+        if (!rare.entryNamed && !rare.keyOfMemberCalledOnItsHolder && !rare.textThatKeyBeginsWith && !rare.positionInPair)
+            return;
+        statement.factsOfText.add(ValueFlowFactOfText::HasRareFacts);
+        m_body.rareFactsOfText.append(rare);
+    }
+
     void emitStatement(const PendingStatement& pending)
     {
         const Value& value = m_function.at(pending.site);
         Body::Statement statement { value.opcode, pending.site, static_cast<uint32_t>(m_body.operands.size()), pending.operandCount, { }, { } };
-        if (value.opcode == Opcode::PropGet) {
+        statement.key = keyOfStatement(value);
+        noteFactsOfText(value, pending.site, statement);
+        if (value.opcode == Opcode::PropGet || value.opcode == Opcode::ElemGet || value.opcode == Opcode::ModuleNamespace) {
             if (!std::exchange(m_hasFoundReadsHandedOn, true))
                 findReadsHandedOn();
-            statement.isOnlyCalledOnItsHolder = !m_readsHandedOn.quickGet(pending.site.index());
+            statement.isOnlyTested = value.opcode != Opcode::ModuleNamespace && !m_valuesThatAreMoreThanTested.quickGet(pending.site.index());
+            statement.isOnlyCalledOnItsHolder = value.opcode == Opcode::PropGet && !m_readsHandedOn.quickGet(pending.site.index());
+            statement.isOnlyReceiverOfCalls = value.opcode == Opcode::ModuleNamespace && !m_valuesHandedOnOtherwiseThanAsReceivers.quickGet(pending.site.index());
         }
         for (uint32_t index = 0; index < pending.operandCount; ++index) {
             const UnobservedFieldDefinition* unobserved = findUnobservedDefinition(pending.site, index);
             m_body.operands.append(unobserved ? valueOf(*unobserved) : operandFormOf(value, index, m_statementOperands[pending.firstOperand + index]));
         }
+        for (uint32_t index = 0; index < pending.numberOfObjectsReadUnderKeyOfStore; ++index)
+            m_body.operands.append(operandFormOf(m_statementOperands[pending.firstOperand + pending.operandCount + index]));
+        if (pending.numberOfObjectsReadUnderKeyOfStore)
+            statement.factsOfText.add(pending.numberOfObjectsReadUnderKeyOfStore == 1 ? ValueFlowFactOfText::StoresWhatOneObjectHoldsUnderSameKey : ValueFlowFactOfText::StoresWhatTwoObjectsHoldUnderSameKey);
         GuardsOfBlock& guards = m_guardsOfBlock[pending.block.index()];
         if (!guards.areWritten) {
             guards.areWritten = true;
@@ -2055,7 +2464,7 @@ private:
         for (auto [test, value] : m_observedValues)
             m_body.observedValues.append({ test, operandFormOf(value) });
         for (auto [left, right] : m_comparedValues)
-            m_body.comparedValues.append({ operandFormOf(left), operandFormOf(right) });
+            m_body.comparedValues.append({ operandFormOf(left), operandFormOf(right), m_program.typeOf(m_function, left).mayBeFunction() && m_program.typeOf(m_function, right).mayBeFunction() });
         for (uint32_t index = 0; index < m_descriptions.size(); ++index) {
             if (m_descriptions[index].isLiveForComparisonsOnly)
                 m_body.valuesAliveForComparisonsOnly.append(ValueID(index));
@@ -2085,10 +2494,15 @@ private:
     const ValueFlowBuiltinTables& m_tables;
     const UnobservedFieldDefinitions* m_unobservedDefinitions;
     BitVector m_readsHandedOn;
+    BitVector m_valuesHandedOnOtherwiseThanAsReceivers;
+    BitVector m_valuesThatAreMoreThanTested;
     bool m_hasFoundReadsHandedOn { false };
     FunctionID m_id;
     const Function& m_function;
     CFG m_cfg;
+    std::optional<UseLists> m_uses;
+    std::optional<Dominators> m_dominators;
+    std::optional<BitVector> m_patternsSteppedPlaceAfterPlace;
     Body m_body;
     InternedBodyRecords<Body::Constant> m_constants;
     InternedBodyRecords<Body::Mask> m_masks;
@@ -2098,6 +2512,7 @@ private:
     ValueID m_valueWithHashedSources;
     UncheckedKeyHashSet<uint64_t> m_hashedSources;
     Vector<BlockParameter, 16> m_blockParameters;
+    Vector<uint32_t> m_positionOfBlockParameter;
     Vector<GuardsOfBlock> m_guardsOfBlock;
     Vector<ValueID, 8> m_returnedValues;
     bool m_returnsCall { false };
@@ -2114,6 +2529,7 @@ private:
     BitVector m_isBehindCheck;
     Vector<Forms, 48> m_forms;
     Vector<std::pair<OperandForm, NodeName>, 4> m_filterNodes;
+    HashMap<unsigned, Vector<uint32_t, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_filterNodesByHash;
     Vector<std::pair<NodeName, OperandForm>, 4> m_sharedFilters;
     std::array<std::optional<std::optional<TypeID>>, 2> m_typeOfBoolean;
 };
@@ -2218,9 +2634,17 @@ bool isUsedOnlyAsInstanceOfOwnFunction(const Program& program, FunctionID functi
 ValueFlowBody reduceBody(const Program& program, const ValueFlowBuiltinTables& tables, FunctionID id, const UnobservedFieldDefinitions* unobservedDefinitions)
 {
     const Function& function = program.at(id);
+    // A list takes room for sixteen elements with its first. Most functions are short, there are hundreds of thousands of them, and all bodies stand side by side until they are linked.
+    auto withoutSpareRoom = [](ValueFlowBody&& body) {
+        auto shrink = [](auto&... lists) {
+            (lists.shrinkToFit(), ...);
+        };
+        shrink(body.passedParameters, body.nodes, body.sites, body.constants, body.masks, body.edges, body.edgesOnceReached, body.seedsOnceReached, body.functionsEnteredOnceReached, body.copiesOfOperations, body.statements, body.operands, body.observedValues, body.rareFactsOfText, body.comparedValues, body.valuesAliveForComparisonsOnly, body.nodesOfValuesAliveForComparisonsOnly);
+        return WTF::move(body);
+    };
     if (!function.hasBody())
-        return makeBodyWithoutOperations(id, function.numberOfEntryParameters(), function.results.size(), function.isUnsplitCoroutine() && function.has(FunctionFlags::IsGenerator));
-    return BodyReducer(program, tables, id, unobservedDefinitions).reduce();
+        return withoutSpareRoom(makeBodyWithoutOperations(id, function.numberOfEntryParameters(), function.results.size(), function.isUnsplitCoroutine() && function.has(FunctionFlags::IsGenerator)));
+    return withoutSpareRoom(BodyReducer(program, tables, id, unobservedDefinitions).reduce());
 }
 
 bool startsWithoutValueInSolve(const Program& program, const Variable& variable)

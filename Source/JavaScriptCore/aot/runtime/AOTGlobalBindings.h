@@ -24,7 +24,8 @@ public:
     static constexpr uint32_t seesScriptBindingsFlag = 1u << 31;
     static constexpr uint32_t isStoredByNameFlag = 1u << 30;
     static constexpr uint32_t isForTypeOfFlag = 1u << 29;
-    static constexpr uint32_t identifierMask = isForTypeOfFlag - 1;
+    static constexpr uint32_t isStoredThroughBindingFlag = 1u << 28;
+    static constexpr uint32_t identifierMask = isStoredThroughBindingFlag - 1;
 
     explicit GlobalBindings(State&);
 
@@ -36,6 +37,8 @@ public:
     Identifier nameOf(uint32_t number) const;
     bool seesScriptBindings(uint32_t number) const { return m_names[number] & seesScriptBindingsFlag; }
     // A free name that nothing is bound to throws. `typeof` of it and a read of the global object answer undefined.
+    // Compiled code that reads through such a record looks at its location alone, so a constant would never be found.
+    bool filesLocationAlone(uint32_t number) const { return m_names[number] & isStoredThroughBindingFlag; }
     bool answersUndefinedWhereAbsent(uint32_t number) const { return !seesScriptBindings(number) || m_names[number] & isForTypeOfFlag; }
 
     // Without a holder to watch, the value is fixed for ever. With one, false where no watch can be set: then nothing is filed.

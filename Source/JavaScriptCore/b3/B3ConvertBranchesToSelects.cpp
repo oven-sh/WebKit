@@ -17,6 +17,8 @@
 #include "B3ProcedureInlines.h"
 #include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
+#include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/IndexSet.h>
 
 namespace JSC { namespace B3 {
@@ -62,6 +64,8 @@ public:
                 // A branch that mostly goes one way costs little, and what its unlikely side computes is seldom computed. Without the branch it is computed every time.
                 bool hasUnlikelySide = head->taken().frequency() != head->notTaken().frequency();
                 if (hasUnlikelySide && cost + numberOfSelects(region) > Limits::maxValuesInPlaceOfBranchWithUnlikelySide)
+                    break;
+                if (loops && wouldChainRunsOfLoop(*loops, head, region))
                     break;
                 convert(head, region);
                 changed = true;
@@ -177,11 +181,15 @@ private:
     bool dependsOnValueLoadedInLoop(NaturalLoops& loops, const NaturalLoop& loop, Value* condition)
     {
         Vector<Value*, 16> worklist;
-        IndexSet<Value*> seen;
+        // A set indexed by value would cost as much as the procedure has values, for every branch.
+        Vector<Value*, 16> seen;
         worklist.append(condition);
         while (!worklist.isEmpty() && seen.size() < m_proc.limit(Limit::MaxValuesSearchedForDominatingLoad)) {
             Value* value = worklist.takeLast();
-            if (!seen.add(value) || value->opcode() == Phi || !loops.belongsTo(value->owner, loop))
+            if (seen.contains(value))
+                continue;
+            seen.append(value);
+            if (value->opcode() == Phi || !loops.belongsTo(value->owner, loop))
                 continue;
             if (isLoad(value->opcode()))
                 return true;
@@ -191,6 +199,141 @@ private:
         if (!worklist.isEmpty())
             m_proc.didReachLimit(Limit::MaxValuesSearchedForDominatingLoad, condition->origin());
         return false;
+    }
+
+    using IncomingValues = UncheckedKeyHashMap<Value*, Vector<Value*, 2>>;
+
+    static void collectIncomingValuesAndStores(const NaturalLoop& loop, IncomingValues& incomingValues, Vector<MemoryValue*, 8>& stores)
+    {
+        for (unsigned i = loop.size(); i--;) {
+            for (Value* value : *loop.at(i)) {
+                if (auto* upsilon = value->as<UpsilonValue>())
+                    incomingValues.add(upsilon->phi(), Vector<Value*, 2>()).iterator->value.append(upsilon->child(0));
+                else if (isStore(value->opcode()))
+                    stores.append(value->as<MemoryValue>());
+            }
+        }
+    }
+
+    static bool isAnyComputedFrom(Vector<Value*, 16> worklist, const Vector<Value*, 4>& sources, NaturalLoops& loops, const NaturalLoop& loop, const IncomingValues& incomingValues)
+    {
+        UncheckedKeyHashSet<Value*> seen;
+        while (!worklist.isEmpty()) {
+            Value* value = worklist.takeLast();
+            if (!loops.belongsTo(value->owner, loop) || !seen.add(value).isNewEntry)
+                continue;
+            if (sources.contains(value))
+                return true;
+            if (value->opcode() != Phi) {
+                for (Value* child : value->children())
+                    worklist.append(child);
+                continue;
+            }
+            if (auto iterator = incomingValues.find(value); iterator != incomingValues.end())
+                worklist.appendVector(iterator->value);
+        }
+        return false;
+    }
+
+    static Vector<Value*, 4> basesOf(Value* address, const IncomingValues& incomingValues)
+    {
+        Vector<Value*, 4> bases;
+        Vector<Value*, 4> worklist { address };
+        while (!worklist.isEmpty()) {
+            Value* value = worklist.takeLast();
+            switch (value->opcode()) {
+            case Add:
+                worklist.append(value->child(0));
+                worklist.append(value->child(1));
+                break;
+            case Phi:
+                if (bases.contains(value))
+                    break;
+                if (auto iterator = incomingValues.find(value); iterator != incomingValues.end())
+                    worklist.appendVector(iterator->value);
+                [[fallthrough]];
+            case Load:
+            case ArgumentReg:
+            case Patchpoint:
+                bases.append(value);
+                break;
+            default:
+                break;
+            }
+        }
+        return bases;
+    }
+
+    static bool readSamePlace(Value* a, Value* b)
+    {
+        while (a != b) {
+            if (a->opcode() != Load || b->opcode() != Load || a->as<MemoryValue>()->offset() != b->as<MemoryValue>()->offset())
+                return false;
+            a = a->lastChild();
+            b = b->lastChild();
+        }
+        return true;
+    }
+
+    static bool haveSameBase(const Vector<Value*, 4>& bases, const Vector<Value*, 4>& otherBases)
+    {
+        return bases.containsIf([&](Value* base) {
+            return otherBases.containsIf([&](Value* otherBase) { return readSamePlace(base, otherBase); });
+        });
+    }
+
+    // A binary search for the place to store into the list that it searches. With selects for its bounds, each load waits for the comparison before it and each search for the store before it.
+    bool wouldChainRunsOfLoop(NaturalLoops& loops, BasicBlock* head, const Region& region)
+    {
+        const NaturalLoop* loop = loops.innerMostLoopOf(head);
+        const NaturalLoop* outerLoop = loop ? loops.innerMostOuterLoop(*loop) : nullptr;
+        if (!outerLoop)
+            return false;
+        while (const NaturalLoop* next = loops.innerMostOuterLoop(*outerLoop))
+            outerLoop = next;
+
+        Vector<Value*, 4> selected;
+        for (Value* phi : *region.join) {
+            if (phi->opcode() == Phi && (isWrittenInArm(region, 0, phi) || isWrittenInArm(region, 1, phi)))
+                selected.append(phi);
+        }
+
+        Vector<MemoryValue*, 4> loads;
+        Vector<Value*, 16> loadAddresses;
+        Vector<Value*, 16> worklist { head->last()->child(0) };
+        UncheckedKeyHashSet<Value*> seen;
+        while (!worklist.isEmpty()) {
+            Value* value = worklist.takeLast();
+            if (value->opcode() == Phi || !loops.belongsTo(value->owner, *loop) || !seen.add(value).isNewEntry)
+                continue;
+            if (isLoad(value->opcode())) {
+                loads.append(value->as<MemoryValue>());
+                loadAddresses.append(value->lastChild());
+            }
+            for (Value* child : value->children())
+                worklist.append(child);
+        }
+
+        IncomingValues incomingValues;
+        Vector<MemoryValue*, 8> stores;
+        collectIncomingValuesAndStores(*loop, incomingValues, stores);
+        if (!isAnyComputedFrom(WTF::move(loadAddresses), selected, loops, *loop, incomingValues))
+            return false;
+
+        incomingValues.clear();
+        stores.shrink(0);
+        collectIncomingValuesAndStores(*outerLoop, incomingValues, stores);
+        auto basesOfLoads = loads.map<Vector<Vector<Value*, 4>, 4>>([&](MemoryValue* load) { return basesOf(load->lastChild(), incomingValues); });
+        Vector<Value*, 16> storeAddresses;
+        for (MemoryValue* store : stores) {
+            for (unsigned i = 0; i < loads.size(); ++i) {
+                if (loads[i]->range().overlaps(store->range()) && haveSameBase(basesOfLoads[i], basesOf(store->lastChild(), incomingValues))) {
+                    storeAddresses.append(store->lastChild());
+                    break;
+                }
+            }
+        }
+        return isAnyComputedFrom(WTF::move(storeAddresses), selected, loops, *outerLoop, incomingValues);
     }
 
     bool isSpeculated(Value* value, unsigned& cost)
@@ -274,6 +417,11 @@ private:
         return nullptr;
     }
 
+    static bool isWrittenInArm(const Region& region, unsigned arm, Value* phi)
+    {
+        return region.arms[arm] && (lastUpsilonFor(region.arms[arm], phi) || (region.nested[arm] && lastUpsilonFor(region.nested[arm]->join, phi)));
+    }
+
     bool analyze(BasicBlock* head, unsigned depth, unsigned& cost, Region& region)
     {
         if (head->last()->opcode() != Branch || head->taken().isRare() || head->notTaken().isRare() || head->taken().block() == head->notTaken().block())
@@ -330,9 +478,9 @@ private:
                 continue;
             bool isWritten = false;
             for (unsigned i = 0; i < 2; ++i) {
-                bool isWrittenInArm = region.arms[i] && (lastUpsilonFor(region.arms[i], phi) || (region.nested[i] && lastUpsilonFor(region.nested[i]->join, phi)));
-                isWritten |= isWrittenInArm;
-                if (!isWrittenInArm && !lastUpsilonFor(head, phi))
+                bool isWrittenHere = isWrittenInArm(region, i, phi);
+                isWritten |= isWrittenHere;
+                if (!isWrittenHere && !lastUpsilonFor(head, phi))
                     return false;
             }
             if (!isWritten)

@@ -965,6 +965,8 @@ private:
             BasicBlock* target = block->successorBlock(0);
             if (distance(m_start[m_positionOf[target]], endOf(position)) <= reach)
                 continue;
+            if (!block->successor(0).isRare() && m_positionOf[target] <= position)
+                continue;
             m_branches.append({ position, target });
         }
     }

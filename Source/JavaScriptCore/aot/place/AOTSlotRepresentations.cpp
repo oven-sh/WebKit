@@ -53,6 +53,7 @@ struct FieldInputs {
     const FieldFlow& flow;
     const Type& type;
     const SlotRowUse& use;
+    bool someCodeReadsByKey;
     bool isCreatedByStore;
     bool isInObjectBornWithoutValues;
     Expected<bool> isNamedSomewhere;
@@ -176,8 +177,9 @@ static bool hasStorage(const SlotPlanContext& context, const FieldInputs& field)
         return !isRemovedField(context.program, field.reference);
     if (!context.isCompiledObject(field.reference.layout))
         return false;
-    constexpr OptionSet<FieldFlags> privateNameFlags { FieldFlags::IsPrivate, FieldFlags::IsBrand };
-    if (field.declaration.flags.containsAny(privateNameFlags))
+    if (field.declaration.flags.contains(FieldFlags::IsBrand))
+        return !isRemovedField(context.program, field.reference);
+    if (field.declaration.flags.contains(FieldFlags::IsPrivate))
         return true;
 
     if (field.declaration.form.contains(FieldForm::IsAccessor))
@@ -258,6 +260,11 @@ static SlotClaim claimFor(const SlotPlanContext& context, const FieldInputs& fie
         .prefersInt32 = typeFitsInt32Slot(field.type),
         .holdsWideReferences = claim.needsWideReference,
     });
+    // The object is in hands that nobody knows and no code reads this number by name: it goes to whoever asks for it by key or lists it, as a value. From a double it would be made into one each time.
+    bool isDouble = claim.representation == SlotRepresentation::Double || claim.representation == SlotRepresentation::OptionalDouble;
+    bool isReadByKeyAlone = field.someCodeReadsByKey && isObjectLayout(field.layout.kind) && !field.use.accessSites && field.layout.flow.cause == UnprovenCause::ReachesUnknownJavaScript;
+    if (isDouble && isReadByKeyAlone)
+        claim.representation = SlotRepresentation::JSValue;
     claim.mayBeOutOfLine = mayBeOutOfLine(field, claim);
     if (claim.mayBeOutOfLine)
         claim.outOfLineRepresentation = outOfLineRepresentationFor(context, field.type.withPrimitives(Primitive::Absent), claim.needsWideReference);
@@ -294,11 +301,13 @@ static BitVector findFieldsCreatedByStores(const SlotPlanContext& context, const
             if (uses.rows[context.rows.rowOf(id, field)].privateDefinitionsByName)
                 rows.append(declaringRowOf(context, { id, field }));
         }
-        bool isLiteral = layout.kind == LayoutKind::Record && !layout.constructor;
-        if (!context.isCompiledObject(id) || (!layout.constructor && !isLiteral) || keysAreNeverEnumerated(program, context.inputs.flow, id))
+        // A layout that the constructor picks by a tag, or that comes of an added field, names no constructor: its declared layout does.
+        FunctionID constructor = program.at(declaredLayoutOf(program, id)).constructor;
+        bool isLiteral = layout.kind == LayoutKind::Record && !constructor;
+        if (!context.isCompiledObject(id) || (!constructor && !isLiteral) || keysAreNeverEnumerated(program, context.inputs.flow, id))
             return;
 
-        bool isAllocatedByRunTime = !isLiteral && program.at(layout.constructor).kind != FunctionKind::BaseConstructor;
+        bool isAllocatedByRunTime = !isLiteral && program.at(constructor).kind != FunctionKind::BaseConstructor;
         uint32_t allocationSites = uses.layouts[index].allocationSites;
         for (FieldIndex field = 0; field < layout.fields.size(); ++field) {
             if (isAllocatedByRunTime || uses.rows[context.rows.rowOf(id, field)].initializingSitesOfOwnLayout != allocationSites)
@@ -360,6 +369,7 @@ static SlotClaim claimFor(const SlotPlanContext& context, const SlotUses& uses, 
         .flow = flowOf(program, reference),
         .type = typeHeldBy(program, declaration),
         .use = use,
+        .someCodeReadsByKey = uses.readsByKeyFoundAtRunTime.at(0),
         .isCreatedByStore = fieldsCreatedByStores.quickGet(declaringRowOf(context, reference)),
         .isInObjectBornWithoutValues = use.initializingSites && !use.sitesInitializingWithValue && isBornWithoutValues(context, uses, reference.layout),
         .isNamedSomewhere = isNamedSomewhere(program, uses, declaration, use),
@@ -529,7 +539,7 @@ private:
             if (m_claims[row].hasStorage)
                 m_rowsByFamily.append(row);
         }
-        AOT::sort(m_rowsByFamily, { }, [&](SlotRow row) {
+        AOT::sortInLine(m_rowsByFamily, { }, [&](SlotRow row) {
             return std::pair(inheritedRows.declaringRowOf(row), row);
         });
         std::span<const SlotRow> rows = m_rowsByFamily.span();
@@ -573,7 +583,7 @@ private:
             for (SlotRow row : unit.rows)
                 unitsByRow.append({ row, &unit });
         }
-        AOT::sort(unitsByRow);
+        AOT::sortInLine(unitsByRow);
 
         SiteWeight weightSaved = 0;
         SiteWeight weightSpent = 0;

@@ -100,6 +100,8 @@ static void emitMakeClosureOfFieldAndReturn(StubAssembler& jit)
     callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(static_cast<int32_t>(SlotRepresentation::DeferredClosure))));
     jit.and32(TrustedImm32(SlotData::maxOffset), payload, word);
     callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, BaseIndex(receiver, word, CCallHelpers::TimesOne)));
+    // The function of the field is a number of the image of the object.
+    branchIfObjectOfOtherImage(jit, receiver, callsOperation);
 
     jit.emitFunctionPrologue();
     jit.preserving({ header, payload, object }, [&] {

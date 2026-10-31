@@ -173,6 +173,24 @@ void runWithLoadedProgram(ASCIILiteral testName, ASCIILiteral programText, Loade
     runInChildProcess(testName, file.path());
 }
 
+void runWithLoadedProgramThatStops(ASCIILiteral testName, ASCIILiteral programText, LoadedProgramTest body, ASCIILiteral lastWords)
+{
+    if (Options::aotImagePath()) {
+        runWithLoadedProgram(testName, programText, body);
+        return;
+    }
+
+    TemporaryFile file(".image"_s, compileProgramText(programText).span());
+    ChildProcessLauncher launcher(String(programPath()), { });
+    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(testName), makeString("--aotImagePath="_s, file.path()) };
+    ChildProcessResult result = launcher.run(arguments.span());
+    if (result.outcome != ChildProcessOutcome::Crashed || !result.output.contains(lastWords)) {
+        dataLogLn(result.output);
+        dataLogLn("The process that uses the image ", result.description());
+        failNativeTest(__FILE__, __LINE__, testName.characters());
+    }
+}
+
 } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

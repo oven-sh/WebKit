@@ -77,6 +77,6 @@ function f1 name="half" module=m0 flags=[IsChecked, HasExplicitName] length=1 th
 # NONE-NOT: ExitsSideways
 # NONE-LABEL: end of function
 # X64-LABEL: name="half" role=Source
-# X64-NEXT: instructions: 11, patchpoints: 2
+# X64-NEXT: instructions: 11, patchpoints: 1
 # ARM64-LABEL: name="half" role=Source
-# ARM64-NEXT: instructions: 9, patchpoints: 2
+# ARM64-NEXT: instructions: 9, patchpoints: 1

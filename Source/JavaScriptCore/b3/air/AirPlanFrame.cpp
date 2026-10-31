@@ -24,6 +24,7 @@
 #include <array>
 #include <limits>
 #include <wtf/BitVector.h>
+#include <wtf/IndexSet.h>
 #include <wtf/MathExtras.h>
 
 namespace JSC { namespace B3 { namespace Air {
@@ -1105,6 +1106,7 @@ void FramePlanner::rewriteFrameSites()
         return;
 
     Vector<BasicBlock*, 8> changedBlocks;
+    IndexSet<BasicBlock*> isChanged;
     for (const FrameSite& site : m_frameSites) {
         uint64_t words = chooseWords(site).words;
         if (!words)
@@ -1123,7 +1125,7 @@ void FramePlanner::rewriteFrameSites()
             ++(site.isSetup ? m_layout.numberOfSpillsPushedAtFrameSetup : m_layout.numberOfReloadsPoppedAtFrameTeardown);
         }
         inst = Inst(inst.kind.opcode, inst.origin, operands.span());
-        if (!changedBlocks.contains(site.block))
+        if (isChanged.add(site.block))
             changedBlocks.append(site.block);
     }
     for (BasicBlock* block : changedBlocks) {

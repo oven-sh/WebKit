@@ -1387,15 +1387,21 @@ private:
                     upsilons.append({ upsilon, block->frequency() });
             }
         }
+        // Those of one candidate follow one another, in the order of the blocks, so that no candidate goes through the Upsilons of all.
+        std::ranges::stable_sort(upsilons, { }, [&](const auto& upsilon) { return candidateOfPhi[upsilon.first->phi()]; });
         // A Phi that is kept so hands zeros on to the next.
         for (bool changed = true; changed;) {
             changed = false;
+            auto rest = upsilons.span();
             for (const Candidate& candidate : candidates) {
+                size_t count = std::ranges::find_if(rest, [&](const auto& upsilon) { return upsilon.first->phi() != candidate.phi; }) - rest.begin();
+                auto upsilonsOfCandidate = rest.first(count);
+                rest = rest.subspan(count);
                 if (m_phisKeptZeroExtended.contains(candidate.phi))
                     continue;
                 double frequencyOfMoves = 0;
-                for (auto [upsilon, frequency] : upsilons) {
-                    if (upsilon->phi() == candidate.phi && upsilon->child(0) != candidate.phi && mayHaveUpperHalf(upsilon->child(0)))
+                for (auto [upsilon, frequency] : upsilonsOfCandidate) {
+                    if (upsilon->child(0) != candidate.phi && mayHaveUpperHalf(upsilon->child(0)))
                         frequencyOfMoves += frequency;
                 }
                 if (candidate.frequencyOfExtensions > 2 * frequencyOfMoves) {
@@ -2348,9 +2354,42 @@ private:
         return ensureSpecial(result.iterator->value, key);
     }
 
+    struct MoveToRegister {
+        Value* value;
+        Reg reg;
+    };
+
+    static Reg registerOfParameter(Value* value)
+    {
+        while (value->opcode() == Identity || value->opcode() == Trunc)
+            value = value->child(0);
+        return value->opcode() == ArgumentReg ? value->as<ArgumentRegValue>()->argumentReg() : Reg();
+    }
+
+    // In front of a call that few runs of the function reach, a parameter leaves its register before another operand is moved there. Otherwise the two overlap,
+    // the parameter cannot stay where it arrived, and the entry of the function copies it for every run. A call that most runs reach needs the copy anyway,
+    // and the sooner it is made the sooner the register is free for what the call wants there.
+    void appendMovesToRegisters(Vector<MoveToRegister, 4>& moves)
+    {
+        bool isReachedByFewRuns = 2 * m_block->frequency() <= m_procedure.at(0)->frequency();
+        while (!moves.isEmpty()) {
+            size_t next = !isReachedByFewRuns ? 0 : moves.findIf([&](const MoveToRegister& move) {
+                return std::ranges::none_of(moves, [&](const MoveToRegister& other) {
+                    return &other != &move && registerOfParameter(other.value) == move.reg;
+                });
+            });
+            if (next == notFound)
+                next = 0;
+            Value* value = moves[next].value;
+            moveToTmp(relaxedMoveForType(value->type()), immOrTmpOrZeroReg(value), Tmp(moves[next].reg));
+            moves.removeAt(next);
+        }
+    }
+
     template<size_t argsInlineCapacity>
     void fillStackmap(Vector<Arg, argsInlineCapacity>& args, StackmapValue* stackmap, unsigned numSkipped)
     {
+        Vector<MoveToRegister, 4> movesToRegisters;
         for (unsigned i = numSkipped; i < stackmap->numChildren(); ++i) {
             ConstrainedValue value = stackmap->constrainedChild(i);
 
@@ -2391,7 +2430,10 @@ private:
             case ValueRep::Register: {
                 stackmap->earlyClobbered().remove(value.rep().reg());
                 Tmp dstTmp = Tmp(value.rep().reg());
-                moveToTmp(relaxedMoveForType(value.value()->type()), immOrTmpOrZeroReg(value.value()), dstTmp);
+                if (m_procedure.policy().selection.extendsInstructionSelection)
+                    movesToRegisters.append({ value.value(), value.rep().reg() });
+                else
+                    moveToTmp(relaxedMoveForType(value.value()->type()), immOrTmpOrZeroReg(value.value()), dstTmp);
                 arg = dstTmp;
                 break;
             }
@@ -2405,6 +2447,7 @@ private:
             }
             args.append(arg);
         }
+        appendMovesToRegisters(movesToRegisters);
     }
     
     // Create an Inst to do the comparison specified by the given value.

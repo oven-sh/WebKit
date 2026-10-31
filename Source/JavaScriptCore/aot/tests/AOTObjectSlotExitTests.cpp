@@ -869,12 +869,16 @@ static void checkManyKeyOrdersOnOneLayout(LoadedProgram& program)
     const LayoutData& layout = layoutNamed(program, "Bag"_s);
     AOT_TEST_CHECK(declaredFieldsOf(program, layout).size() == numberOfBagFields && !layout.keysAreNeverEnumerated);
     Costs costsBefore = costsOf(program);
+    uint64_t limitHitsBefore = limitHitsOf(program.vm(), LimitID::KeyOrdersPerLayout);
+    uint64_t structuresMadeBefore = 0;
 
     CreationOrder order;
     std::iota(order.begin(), order.end(), 0);
     unsigned numberStoredOutOfLine = 0;
     for (unsigned count = 0; count < numberOfOrders; ++count) {
         Object* bag = createBag(program, order, [](Object&, const FieldData&, uint64_t) { });
+        if (!count)
+            structuresMadeBefore = valueOf(program.vm(), RuntimeCounterID::CompiledStructuresMade);
         AOT_TEST_CHECK(isCompiledObject(bag) && bag->shapeWord() == shapeWordOf(layout.shape) && !bag->hasExtraProperties());
         Object::KeyOrderStorage storage;
         AOT_TEST_CHECK(std::ranges::equal(bag->keyOrder(program.state(), storage), order));
@@ -886,6 +890,9 @@ static void checkManyKeyOrdersOnOneLayout(LoadedProgram& program)
     }
 
     AOT_TEST_CHECK(numberStoredOutOfLine >= numberOfOrders - maxKeyOrdersPerLayout && numberStoredOutOfLine < numberOfOrders);
+    // An object asks for a number until it is refused one, and gets at most one Structure made for it, however many fields follow.
+    AOT_TEST_CHECK(limitHitsOf(program.vm(), LimitID::KeyOrdersPerLayout) == limitHitsBefore + numberStoredOutOfLine);
+    AOT_TEST_CHECK(valueOf(program.vm(), RuntimeCounterID::CompiledStructuresMade) <= structuresMadeBefore + numberStoredOutOfLine);
     Costs costsAfter = costsOf(program);
     AOT_TEST_CHECK(costsAfter.keyOrdersStoredOutOfLine >= costsBefore.keyOrdersStoredOutOfLine + numberStoredOutOfLine);
     costsAfter.keyOrdersStoredOutOfLine = costsBefore.keyOrdersStoredOutOfLine;

@@ -211,7 +211,8 @@ void createGranuleOfField(StubAssembler& jit, const FieldStoreRegisters& r, cons
     cannotAppend.link(&jit);
     // The offset may share its register with the address.
     loadOffsetOfExtensionWord();
-    jit.preservingCallerSavedRegisters(false, [&](unsigned) {
+    // Neither stub touches a floating-point register, and the operations that they leave the rest to save all of them.
+    jit.preservingCallerSavedRegisters(false, RegisterSet::allFPRs(), [&](unsigned) {
         const StubKey allocate = allocateExtension(extensionCellSizeFor(1));
         const StubSignature signature = signatureOfAllocateExtension(allocate);
         const GPRReg owner = signature.operands[0].gpr();

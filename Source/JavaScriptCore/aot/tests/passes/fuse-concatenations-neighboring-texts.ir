@@ -1,0 +1,16 @@
+# Neighboring texts of a concatenation are one text. A narrow one and a wide one stay apart.
+# FORM: Prepared
+# RUN: pass FuseConcatenations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="main" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = String string="a"
+    v2 = String string="b"
+    v3 = Strcat v0, v1, v2
+# CHECK: "ab" = String string="ab"
+# CHECK: = Strcat v0, {{*}}
+    v4 = String string="モ"
+    v5 = Strcat v0, v1, v4
+# CHECK: = Strcat v0, v1, v4
+    Return v3
+}

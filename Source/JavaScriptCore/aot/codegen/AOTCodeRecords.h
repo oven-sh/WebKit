@@ -12,6 +12,7 @@
 #include "AOTCompiledCode.h"
 #include "AOTFrameMaps.h"
 #include "AOTID.h"
+#include "AOTMutatorFenceMerging.h"
 #include "AOTOperationData.h"
 #include "AOTRelocation.h"
 #include "AOTSchemaRecords.h"
@@ -192,6 +193,7 @@ struct CodeRecords {
     // Only with --aot-check=MovedLoads.
     GuardTests guardTests;
     bool hasBirthsOfFrameCells { false };
+    MutatorFenceRecords mutatorFences;
 };
 
 } } } // namespace JSC::AOT::Typed

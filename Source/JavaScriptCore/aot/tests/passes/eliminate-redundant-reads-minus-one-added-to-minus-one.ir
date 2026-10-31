@@ -1,0 +1,63 @@
+# `-1 + -1` is a sum like any other: the second one goes, wherever another sum was seen before it, and it is taken for no other sum.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass EliminateRedundantReads
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="afterASumOnAnotherPath" parameters=[{type=int}, {type=int}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Add v0, v1
+    v5 = Call v3, v4
+    Return v5
+  b2():
+    v6 = Integer integer=-1
+    v7 = Add v6, v6
+    v8 = Add v6, v6
+    v9 = Call v3, v7, v8
+    Return v9
+# CHECK: b2():
+# CHECK: = Add v6, v6
+# CHECK-NEXT: = Call v3, v7, v7
+}
+
+function f1 name="afterASumInTheSameBlock" parameters=[{type=int}, {type=int}, {type=anything}] results=[{type=anything}] {
+    v3 = Add v0, v1
+    v4 = Integer integer=-1
+    v5 = Add v4, v4
+    v6 = Integer integer=-1
+    v7 = Add v6, v4
+    v8 = Call v2, v3, v5, v7
+    Return v8
+# CHECK: = Call v2, v3, v5, v5
+}
+
+function f2 name="first" parameters=[{type=int}, {type=int}, {type=anything}] results=[{type=anything}] {
+    v3 = Integer integer=-1
+    v4 = Add v3, v3
+    v5 = Add v0, v1
+    v6 = Add v3, v3
+    v7 = Add v1, v0
+    v8 = Call v2, v4, v5, v6, v7
+    Return v8
+# CHECK: = Call v2, v4, v5, v4, v5
+}
+
+function f3 name="insideAndAfterABranch" parameters=[{type=int}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+    v3 = Integer integer=-1
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Add v3, v3
+    v5 = Add v0, v3
+    v6 = Call v2, v4, v5
+    Jump -> next b2()
+  b2():
+    v7 = Add v3, v3
+    v8 = Add v0, v3
+    v9 = Call v2, v7, v8
+    Return v9
+# CHECK: b2():
+# CHECK-NEXT: = Add v3, v3
+# CHECK-NEXT: = Add v0, v3
+# CHECK-NEXT: = Call v2, v7, v8
+}

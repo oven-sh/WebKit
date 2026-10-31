@@ -65,16 +65,20 @@ using B3HeapList = Vector<const B3::AbstractHeap*, 8>;
     v(AOTInstance_mutableFields, 0, RuntimeState) \
     v(AOTInstance_stringCells, 0, AllocatorState) \
     v(AOTInstance_siteCaches, 0, RuntimeState) \
+    v(AOTPropertyCaches_front, 0, RuntimeState) \
     v(AOTInstance_closureCells, 0, RuntimeState) \
     v(AOTInstance_misfit, 0, RuntimeState) \
     v(AOTInstance_globalBindings, 0, RuntimeState) \
     v(AOTClassToken_knownStructures, JSCellButterfly::offsetOfData() + ClassToken::knownStructuresSlot * sizeof(EncodedJSValue), RuntimeState) \
     v(AOTClassToken_records, 0, RuntimeState) \
+    v(AOTCompactTable_lookupHeader, 0, CollectionStorage) \
     v(hostObjectCachedValues, 0, ExternalState) \
     v(AOTObject_orderWord, offsetOfOrderWord, OrderWords) \
     v(AOTSlimClosure_word, offsetOfSlimClosureWord, ShapeWords) \
     v(JSArray_butterfly, JSObject::butterflyOffset(), ArrayStorage) \
     v(JSNonArray_butterfly, JSObject::butterflyOffset(), ArrayStorage) \
+    v(JSArray_indexingTypeAndMisc, JSCell::indexingTypeAndMiscOffset(), ShapeWords) \
+    v(JSNonArray_indexingTypeAndMisc, JSCell::indexingTypeAndMiscOffset(), ShapeWords) \
     v(AOTExtension_granuleBits, offsetOfExtensionGranuleBits, ObjectFields) \
     v(ArrayBuffer_sizeInBytes, ArrayBuffer::offsetOfSizeInBytes(), TypedArrayStorage) \
     v(AOTStringBuilderStorage_fields, 0, StringBuilderContents) \

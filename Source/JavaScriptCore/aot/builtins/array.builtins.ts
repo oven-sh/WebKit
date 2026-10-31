@@ -115,7 +115,7 @@ const searchFromStart = (name: string, inlineBuiltin: string, nativeSymbol: stri
       ...allocationEffects,
       readsStateBeforeConversions: true,
       uses: { this: [b.readsContents()], searched: b.inspected },
-      implementation: b.inline(inlineBuiltin, { max: 1, otherwise: b.compiled("prelude/array-search", name, { stubConvention: true }) }),
+      implementation: b.inline(inlineBuiltin, { max: 2, otherwise: b.compiled("prelude/array-search", name, { stubConvention: true }) }),
     },
     searchInArrayLike(found),
   ] satisfies b.FunctionField[];
@@ -425,7 +425,7 @@ export default b.declarations(
           ...allocationEffects,
           uses: { this: [b.readsContents()] },
           ...rareMethod("arrayProtoFuncToReversed"),
-          implementation: b.hostCall,
+          implementation: b.inline("ArrayToReversed", { otherwise: b.hostCall }),
         },
         {
           this: arrayLike,
@@ -444,7 +444,7 @@ export default b.declarations(
           readsStateBeforeConversions: true,
           uses: { this: [b.readsContents()], items: b.inspected },
           ...rareMethod("arrayProtoFuncToSpliced"),
-          implementation: b.hostCall,
+          implementation: b.inline("ArrayToSpliced", { otherwise: b.hostCall }),
         },
         {
           this: arrayLike,
@@ -468,7 +468,7 @@ export default b.declarations(
           readsStateBeforeConversions: true,
           uses: { this: [b.readsContents()], value: b.inspected },
           ...rareMethod("arrayProtoFuncWith"),
-          implementation: b.hostCall,
+          implementation: b.inline("ArrayWith", { otherwise: b.hostCall }),
         },
         {
           this: arrayLike,
@@ -589,7 +589,7 @@ export default b.declarations(
           this: arrayLike,
           returns: b.any,
           ...operandCodeEffects,
-          uses: { this: [...readsArrayLike, convertsElements, b.runs(b.calls("join"), b.named("@@toStringTag"))] },
+          uses: { this: [...readsArrayLike, convertsElements, b.runs(b.calls("join"), b.named("@@toStringTag")), b.returned] },
           implementation: b.hostCall,
         },
       ],

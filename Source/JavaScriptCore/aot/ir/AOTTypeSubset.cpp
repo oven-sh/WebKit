@@ -311,7 +311,7 @@ BuiltinClassID builtinClassWrittenAbove(const TypeTable& types, LayoutID layout)
 bool isInsideSomeClassPart(const TypeTable& types, LayoutID layout, const Type& type)
 {
     BuiltinClassID builtinClass = builtinClassWrittenAbove(types, layout);
-    return builtinClass && std::ranges::any_of(type.classes, [&](const ClassPart& part) {
+    return builtinClass && !types.program()->at(layout).mayBeOrdinaryObject && std::ranges::any_of(type.classes, [&](const ClassPart& part) {
         bool onlyProvesInstance = !part.contentsAreProven && part.provenPristine.isEmpty() && !(part.builtinClass == BuiltinClasses::RegExp && !type.regExpLiteralSet.isEmpty());
         return onlyProvesInstance && types.builtins().isSameOrSubclassOf(builtinClass, part.builtinClass);
     });

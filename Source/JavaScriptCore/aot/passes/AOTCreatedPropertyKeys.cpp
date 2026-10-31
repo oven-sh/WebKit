@@ -169,7 +169,7 @@ void markResultsUsedAsKeys(ProgramEditor& editor, BuildContext& build)
                 found.append(findUseOfResult(program, FunctionID(index), useLists, call));
         }
     });
-    AOT::stableSort(uses, { }, &KeyResultUse::callee);
+    AOT::stableSortInLine(uses, { }, &KeyResultUse::callee);
 
     uint64_t numberOfMarkedStrings = 0;
     for (const ReturnedStrings& strings : returned) {

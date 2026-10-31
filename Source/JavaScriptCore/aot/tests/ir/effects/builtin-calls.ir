@@ -21,15 +21,15 @@ function f2 name="protocolsAndCallbacks" parameters=[{type=L0}, {type=object}, {
     v6 = CallBuiltin -, v5 overload=MathAbs/0
     v7 = CallBuiltin -, v0 overload=ObjectKeys/0
     v8 = CallBuiltin -, v1 overload=ObjectKeys/0
-    v9 = CallBuiltin v2, v3 overload=TypedArrayPrototypeForEach/0
-    v10 = CallBuiltin v2, v4 overload=TypedArrayPrototypeForEach/0
+    v9 = CallBuiltin v2, v3 overload=TypedArrayPrototypeSort/1
+    v10 = CallBuiltin v2, v4 overload=TypedArrayPrototypeSort/1
     Return
 }
 # CHECK-LABEL: function f2
 # CHECK-NEXT: v6 CallBuiltin: none
 # CHECK-NEXT: v7 CallBuiltin: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
 # CHECK-NEXT: v8 CallBuiltin: {{*}}callsUnknownCode
-# CHECK-NEXT: v9 CallBuiltin: reads(TypedArrayStorage, TypedArrayElements, StringStorage, AllocatorState, RuntimeState) writes(ModuleVariables/1, StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v9 CallBuiltin: reads(TypedArrayStorage, TypedArrayElements, StringStorage, AllocatorState, RuntimeState) writes(ModuleVariables/1, TypedArrayElements, StringStorage, AllocatorState, RuntimeState) throws collects
 # CHECK-NEXT: v10 CallBuiltin: {{*}}callsUnknownCode
 function f3 name="implementedInJavaScript" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=f1}] results=[{type=undefined}] {
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeMap/0

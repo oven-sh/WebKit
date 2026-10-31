@@ -33,6 +33,7 @@ struct PropertyAccessQuery {
     bool expectsEmptySlot { false };
     bool storesWhatWasMadeOfField { false };
     bool mayTestSlotFirst { false };
+    bool testsThatDefinedNameIsNotTaken { false };
     LayoutID declaringLayout;
     FunctionID expectedClassObject;
     AccessSiteID site;
@@ -118,15 +119,22 @@ bool isUnfinishedAllocationLeavingOut(const Program&, const Function&, ValueID o
 struct TestsOfEmptySlot {
     ProofSet proofs;
     MemberConditions conditions;
+    bool failOnceAccessorIsDefined { false };
 
     bool isEmpty() const { return proofs.isEmpty() && conditions.isEmpty(); }
 };
+
+bool failsOnceAccessorIsDefined(const PropertyAccessContext&, const MemberCondition&);
 
 enum class OptionKind : uint8_t {
     RecordOption = 1 << 0,
     LazilyInitializedField = 1 << 1,
     FieldWithoutStorage = 1 << 2,
 };
+// For an IsSlotFilled that ends the block and has no site of its own: a test in front of a read. Its empty arm mostly reads by name, which finds a value that the slot cannot hold.
+// An arm that answers by itself, with undefined or with a member from above, and does not ask whether a field lies outside its slot relies on the field staying in its slot.
+bool asksObjectWhereSlotIsEmpty(const Function&, BlockID, ValueID test);
+
 std::optional<TestsOfEmptySlot> testsThatOptionLeftOutReadsAsUndefined(const PropertyAccessContext&, std::span<const LayoutID> receivers, PropertyKeyID, OptionSet<OptionKind>);
 
 struct MethodAboveEmptySlot {
@@ -147,6 +155,8 @@ struct LazyFieldCreation {
     MemberConditions conditions;
 };
 std::optional<LazyFieldCreation> planLazyFieldCreation(const PropertyAccessContext&, std::span<const LayoutID> receivers, PropertyKeyID);
+// `Emitter.prototype.count = 0`, `emitter.count++`: an object has the value of its prototype until the first store gives it a field of its own.
+std::optional<LazyFieldCreation> planFieldCreationBelowInheritedValue(const PropertyAccessContext&, std::span<const LayoutID> receivers, PropertyKeyID);
 
 Type storedTypeOf(const Program&, std::span<const LayoutID> receivers, PropertyKeyID, TypeArena&);
 

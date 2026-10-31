@@ -42,7 +42,7 @@ static void runConvert(const ValueFlowStatement& statement, ValueFlowRuleContext
     if (!statement.result)
         return;
     const ValueFlowOperand& converted = context.operandsOf(statement)[0];
-    if (context.program().at(statement.function).at(statement.site).illTypedCause() == IllTypedCause::None) {
+    if (context.operationOf(statement).illTypedCause() == IllTypedCause::None) {
         context.connect(converted, statement.result);
         return;
     }
@@ -101,6 +101,7 @@ static void runConversionToObject(const ValueFlowStatement& statement, ValueFlow
     if (statement.opcode != Opcode::ToThis || !mayBe(value, Primitive::Undefined | Primitive::Null))
         return;
     // Where every use stands behind a test that the global object fails, the uses never meet it. proveValuesOfOperations() says of the value itself that it may be the global object.
+    context.functionWithBody(statement.function);
     if (isUsedOnlyAsInstanceOfOwnFunction(context.program(), statement.function, statement.site))
         return addWhatUndefinedBecomesBehindTestForOwnInstances(statement, context);
     context.add(statement.result, only(context, universe.objectOf(Builtins::GlobalThis)));
@@ -125,7 +126,7 @@ void callInProtocol(ValueFlowRuleContext& context, const ValueFlowProtocolCall& 
     ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
     ClimbingSet builtinFunctions = context.restrict(call.callees, universe.builtinFunctionsOfProtocols());
     if (call.origin == ValueFlowCalleeOrigin::MemberFoundUnderName && context.contains(call.callees, ValueFlowUniverse::unknownObject())) {
-        context.forEachMember(context.valueWithin(ClimbingSet(universe.builtinFunctionsOfProtocols()), escaped), [&](ValueFlowObjectID callee) {
+        context.forEachMemberInLine(context.valueWithin(ClimbingSet(universe.builtinFunctionsOfProtocols()), escaped), [&](ValueFlowObjectID callee) {
             if (context.program().builtins().at(universe.builtinOf(callee)).origin != BuiltinOrigin::Host)
                 noteCallOfBuiltin(universe.builtinOf(callee), ValueFlowCallKind::CallByNativeCode, context);
         });
@@ -233,8 +234,18 @@ static void followWhatHasArrived(ValueFlowRuleContext& context, ClimbingSet arri
     });
     ClimbingSet others = context.restrict(arrived, ValueSets::complement(context.maker().of(instances.span())));
 
-    for (ValueFlowNameKind kind : kindsOfMembers)
-        carryOut(context, context.readWhatWasWritten(arrived, { kind, 0 }));
+    // What an object holds is in the hands that hold the object. The constructor of a library class also escapes where a lookup on a value nobody knows finds a member on it, and then it
+    // is in nobody's hands: its `prototype` escapes with it. runEscape() carries out the `prototype` of a constructor that was itself carried out.
+    ClimbingSet constructorsOfLibrary = context.restrict(arrived, universe.constructorsOfLibraryClasses());
+    ClimbingSet otherHolders = context.restrict(arrived, ValueSets::complement(universe.constructorsOfLibraryClasses()));
+    for (ValueFlowNameKind kind : kindsOfMembers) {
+        carryOut(context, context.readWhatWasWritten(otherHolders, { kind, 0 }));
+        if (!holdsSomething(context, constructorsOfLibrary))
+            continue;
+        ValueFlowNodeID held = context.readWhatWasWritten(constructorsOfLibrary, { kind, 0 });
+        carryOut(context, context.masked(held, ValueSets::complement(universe.prototypeObjectsOfLibraryClasses())));
+        context.connect(context.masked(held, universe.prototypeObjectsOfLibraryClasses()), escapedNode);
+    }
     context.connect(context.masked(context.readWhatWasWritten(arrived, { ValueFlowNameKind::CopiedFrom, 0 }), ValueSets::complement(universe.builtinTables().heap().objectsHoldingOnlyWhatWasWritten())), escapedNode);
     context.connect(context.masked(context.readWhatWasWritten(others, prototypeLinkName), ValueSets::complement(universe.builtinTables().heap().objectsThatLetInUnseenCode())), escapedNode);
     context.connect(context.masked(context.readWhatWasWritten(others, prototypeLinkName), universe.builtinTables().heap().namespacesNotedWhenCarriedOut()), context.nodes().ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues));
@@ -244,6 +255,8 @@ static void followWhatHasArrived(ValueFlowRuleContext& context, ClimbingSet arri
             context.add(escapedNode, only(context, classOfEntries.prototype));
     }
     context.mark(arrived, ObjectMutation::ReachNativeCode);
+    // Beside the unknown object a hub lists no object that has escaped, so what it would find there is taken from here.
+    context.connect(context.masked(context.lookup(known(context, arrived), prototypeLinkName), universe.builtinObjects()), context.nodes().ofHost(ValueFlowHostNode::BuiltinObjectsAboveEscapedObjects));
 
     letNativeCodeStepIterators(context, arrived);
     ValueSetID describedByEntries = universe.builtinTables().closuresThatEntriesDescribe();
@@ -470,6 +483,19 @@ static void handOutMembersOfModules(ValueFlowRuleContext& context, ClimbingSet m
     }
 }
 
+static void readBunUnderNamesThatHaveEscaped(ValueFlowRuleContext& context)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    ValueFlowNodeID escapedNode = ValueFlowProgramNodes::escaped();
+    ClimbingSet names(universe.builtinTables().heap().keysOfMembersOfBun());
+    if (!holdsSomething(context, names) || !context.holdsAnyOf(only(context, ValueFlowUniverse::markOfNamedBun()), escapedNode) || !holdsSomething(context, context.membersMissingFrom(escapedNode, names)))
+        return;
+    ClimbingSet bun = only(context, universe.objectOf(Builtins::Bun));
+    context.forEachMember(context.valueWithin(names, escapedNode), [&](ValueFlowObjectID name) {
+        context.connect(context.lookup(bun, ValueFlowName::property(context.program(), universe.keyOf(name))), escapedNode);
+    });
+}
+
 static void runEscape(const ValueFlowStatement&, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -483,12 +509,21 @@ static void runEscape(const ValueFlowStatement&, ValueFlowRuleContext& context)
 
     if (holdsSomething(context, arrived))
         followWhatHasArrived(context, arrived);
+    readBunUnderNamesThatHaveEscaped(context);
+    if (ClimbingSet constructors = context.newSince(context.masked(context.nodes().ofHost(ValueFlowHostNode::ValuesCarriedOut), universe.constructorsOfLibraryClasses())); holdsSomething(context, constructors)) {
+        for (ValueFlowNameKind kind : kindsOfMembers)
+            carryOut(context, context.masked(context.readWhatWasWritten(constructors, { kind, 0 }), universe.prototypeObjectsOfLibraryClasses()));
+    }
     if (ClimbingSet carriedOut = context.newSince(context.nodes().ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues)); holdsSomething(context, carriedOut)) {
         if (ClimbingSet namespaces = context.restrict(carriedOut, universe.builtinTables().heap().namespacesWhoseHoldersListThem()); holdsSomething(context, namespaces))
             connectEnumerableMembersOf(namespaces, escapedNode, context);
         if (ClimbingSet holdersOfExports = context.restrict(carriedOut, universe.holdersOfLibraryExports()); holdsSomething(context, holdersOfExports))
             context.connect(context.readWhatWasWritten(holdersOfExports, { ValueFlowNameKind::EveryGetter, 0 }), escapedNode);
     }
+    // As a receiver, an object that shows only what the library exports is handed to nobody new. Where the program has written to it, the member may be a function of the program's.
+    ValueFlowNodeID receiversOfMembersNobodyKnows = context.nodes().ofHost(ValueFlowHostNode::ReceiversOfMembersNobodyKnows);
+    context.connect(context.masked(receiversOfMembersNobodyKnows, ValueSets::complement(universe.builtinTables().heap().objectsShowingLibraryExports())), escapedNode);
+    context.add(escapedNode, context.valueWithin(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::HoldersOfLibraryExportsThatProgramWrites)), receiversOfMembersNobodyKnows));
     context.add(context.nodes().ofHost(ValueFlowHostNode::LibraryModulesHandedOut), context.valueWithin(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::LibraryModulesRequestedByProgram)), context.nodes().ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues)));
     if (ClimbingSet modules = context.valueOf(context.nodes().ofHost(ValueFlowHostNode::LibraryModulesHandedOut)); holdsSomething(context, modules))
         handOutMembersOfModules(context, modules);
@@ -522,8 +557,41 @@ bool hasRuleOfItsOwn(Opcode opcode)
     return flowRuleOf(opcode) != FlowRule::General;
 }
 
+void noteArraysThatMayGetHoles(ValueFlowRuleContext& context, ClimbingSet objects)
+{
+    context.add(context.nodes().ofHost(ValueFlowHostNode::ArraysThatMayHaveHoles), context.restrict(objects, context.universe().denseArrayLiterals()));
+}
+
+static uint8_t operandsThatMayGetHoles(Opcode opcode)
+{
+    static const std::array<uint8_t, numberOfOpcodes>& masks = *[] {
+        auto result = makeUniqueWithoutFastMallocCheck<std::array<uint8_t, numberOfOpcodes>>();
+        result->fill(0);
+        for (Opcode member : allMembersOf<Opcode>) {
+            if (member == Opcode::AppendElement || member == Opcode::AppendSpread || effectRuleOf(member) == EffectRule::Call)
+                continue;
+            uint32_t numberOfDeclaredOperands = numberOfNamedOperandsOf(member) + (hasVariadicOperand(member) ? 1 : 0);
+            for (uint32_t index = 0; index < numberOfDeclaredOperands; ++index) {
+                if (!operandUsesOf(member, index).containsAny(usesThatMayCreateHoles))
+                    continue;
+                RELEASE_ASSERT(index < 8);
+                (*result)[static_cast<unsigned>(member)] |= 1 << index;
+            }
+        }
+        return result.release();
+    }();
+    return masks[static_cast<unsigned>(opcode)];
+}
+
 static void runOperation(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
+    if (uint8_t mask = operandsThatMayGetHoles(statement.opcode)) {
+        std::span<const ValueFlowOperand> operands = context.operandsOf(statement);
+        for (uint32_t index = 0; index < operands.size(); ++index) {
+            if (mask & (1 << std::min(index, numberOfNamedOperandsOf(statement.opcode))))
+                noteArraysThatMayGetHoles(context, context.valueOf(operands[index]));
+        }
+    }
     switch (flowRuleOf(statement.opcode)) {
     case FlowRule::General:
         break;
@@ -600,6 +668,8 @@ static void runRuleOnNodesNamed(const ValueFlowStatement& statement, ValueFlowRu
             return runAwaitedValue(statement, context);
         case ValueFlowNameKind::FoundThroughEscapedInstances:
             return runLookupThroughInstances(statement, context);
+        case ValueFlowNameKind::NamespaceExports:
+            return runNamespaceExports(statement, context);
         case ValueFlowNameKind::Property:
         case ValueFlowNameKind::Getter:
         case ValueFlowNameKind::Setter:
@@ -647,7 +717,7 @@ void runValueFlowRule(const ValueFlowStatement& statement, ValueFlowRuleContext&
     if (!instanced || !instanced->find(statement.function))
         return runRuleOnNodesNamed(statement, context);
     context.makeInstanceOfOtherCalls(statement.function);
-    context.forEachMember(context.unite(context.valueOf(context.markersOf(statement.function)), only(context, ValueFlowInstancedFunctions::markerOfOtherCalls())), [&](ValueFlowObjectID marker) {
+    context.forEachMemberInLine(context.unite(context.valueOf(context.markersOf(statement.function)), only(context, ValueFlowInstancedFunctions::markerOfOtherCalls())), [&](ValueFlowObjectID marker) {
         ValueFlowRuleContext::InstanceOfRun instance(context, statement.function, marker);
         runRuleOnNodesNamed(statement, context);
     });

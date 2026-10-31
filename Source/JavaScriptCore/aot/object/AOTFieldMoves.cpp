@@ -75,7 +75,7 @@ OptionSet<ValueKind> kindsAlwaysAccepted(const RuntimeType& type)
     return kinds;
 }
 
-static bool acceptsEveryValue(const RuntimeType& type)
+bool acceptsEveryValue(const RuntimeType& type)
 {
     if (!type.primitiveSet().containsAll(allPrimitives) || type.integerRange() || !type.literalStrings().empty())
         return false;
@@ -314,6 +314,8 @@ JSFinalObject* tryCopyAsOrdinaryObject(VM& vm, JSGlobalObject* realm, JSObject* 
         return nullptr;
     State& state = *instance->state;
     Object* compiled = compiledObjectOrNull(source);
+    if (state.sharesRealm && compiled && !compiled->isDescribedBy(state)) [[unlikely]]
+        return nullptr;
     FieldMovePlanKey key { .targetWords = excluded.numberPlusOne };
     if (compiled) {
         if (compiled->hasExtraProperties() || compiled->hasOutOfLineKeyOrder() || compiled->layout().keysAreNeverEnumerated)
@@ -328,8 +330,13 @@ JSFinalObject* tryCopyAsOrdinaryObject(VM& vm, JSGlobalObject* realm, JSObject* 
     DeferGC deferGC(vm);
     FieldMovePlanCache& plans = state.objects->caches->movePlans;
     const FieldMovePlan* plan = plans.find(key);
-    if (!plan)
+    if (!plan) {
+        if (!compiled && !excluded.numberPlusOne && source->structure()->isDictionary() && source->structure()->storedPrototype() == JSValue(realm->objectPrototype())) {
+            if (JSFinalObject* copy = tryCopyDictionary(vm, source))
+                return copy;
+        }
         plan = &plans.add(vm, WTF::move(key), state.objects->caches->assignmentPlans.createPlanForOrdinaryCopy(vm, realm, source, excluded));
+    }
     if (!plan->isUsable())
         return nullptr;
     if (plan->sourceHasDeferredClosures)

@@ -15,6 +15,7 @@
 
 namespace JSC {
 
+class ArgList;
 class JSObject;
 class Structure;
 
@@ -26,6 +27,7 @@ inline constexpr unsigned maxLengthOfInsertionSortedArray = 64;
 
 JSValue callInEngine(Instance*, BuiltinID function, JSValue first, JSValue second = JSValue(), JSValue third = JSValue());
 JSValue callMethodInEngine(Instance*, BuiltinID function, JSValue receiver, JSValue first = JSValue(), JSValue second = JSValue());
+JSValue callMethodInEngine(Instance*, BuiltinID function, JSValue receiver, const ArgList&);
 
 void markPristineIfOriginal(Instance&, JSObject*);
 

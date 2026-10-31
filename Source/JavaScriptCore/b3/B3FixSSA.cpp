@@ -494,9 +494,11 @@ void fixSSAGlobally(Procedure& proc, IndexSet<Value*>& valuesToDelete)
     {
         CompilerTimingScope timingScope("B3"_s, "fixSSA: computePhis"_s);
         LivePhiFinder livePhiFinder(proc);
+        // A variable that a phase made for a value of its own stands for no value of the client. Where the client tells values apart by their origins, its Phi does not borrow the origin of whatever stands first in the block.
+        const bool originsTellValuesApart = proc.policy().optimization.keepsOriginsOfDemotedValues;
         for (Variable* variable : proc.variables()) {
             livePhiFinder.forEachPhiBlock(variable, [&](BasicBlock* block) {
-                Value* phi = proc.add<Value>(Phi, variable->type(), variable->origin() ? variable->origin() : block->at(0)->origin());
+                Value* phi = proc.add<Value>(Phi, variable->type(), variable->origin() || originsTellValuesApart ? variable->origin() : block->at(0)->origin());
                 if (proc.knownInductions().hasDemoted()) [[unlikely]]
                     proc.knownInductions().didCreatePhi(variable, block, phi);
                 proc.knownProperties().didCreatePhi(variable, phi);

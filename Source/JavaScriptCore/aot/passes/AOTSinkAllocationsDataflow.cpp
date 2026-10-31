@@ -138,7 +138,7 @@ void SinkingState::set(std::span<ObjectEntry> movedEntries)
     if (addedEntries.isEmpty())
         return;
 
-    AOT::sort(addedEntries, { }, &ObjectEntry::object);
+    AOT::sortInLine(addedEntries, { }, &ObjectEntry::object);
     size_t source = objects.size();
     size_t destination = source + addedEntries.size();
     objects.grow(destination);
@@ -452,8 +452,6 @@ public:
         , m_function(sinking.function())
         , m_cfg(sinking.analyses().cfg())
         , m_inputs(sinking.inputs())
-        , m_heads(m_function.blocks.size())
-        , m_blocksEnteredWithNothing(m_function.blocks.size())
         , m_isPending(m_cfg.reversePostOrder().size())
     {
     }
@@ -462,24 +460,12 @@ public:
 
     AllocationSinking::Heads run()
     {
+        m_heads.grow(m_function.blocks.size());
+        m_blocksEnteredWithNothing.ensureSize(m_function.blocks.size());
         BlockID root = m_cfg.root();
         m_blocksEnteredWithNothing.quickSet(root.index());
         m_isPending.quickSet(m_cfg.reversePostOrderIndex(root));
-        return solvePendingBlocks();
-    }
-
-    AllocationSinking::Heads solvePendingBlocks()
-    {
-        std::span<const BlockID> order = m_cfg.reversePostOrder();
-        for (bool shouldRepeat = true; shouldRepeat;) {
-            shouldRepeat = false;
-            for (uint32_t blockOrder = 0; blockOrder < order.size(); ++blockOrder) {
-                if (m_isPending.quickClear(blockOrder))
-                    shouldRepeat |= visit(order[blockOrder], blockOrder);
-            }
-            shouldRepeat = shouldRepeat && !m_sinking.hasSpentItsWork();
-        }
-        return WTF::move(m_heads);
+        return solvePendingBlocks(0, m_cfg.reversePostOrder().size());
     }
 
     // Solves the trial range again from the heads of the blocks that enter it, and keeps all heads outside it.
@@ -491,14 +477,24 @@ public:
             m_heads[block.index()] = std::nullopt;
             m_blocksEnteredWithNothing.quickClear(block.index());
         }
+        // No block outside these bounds becomes pending, so a trial costs the same in a function of any size.
+        uint32_t first = m_cfg.reversePostOrder().size();
+        uint32_t end = 0;
+        auto include = [&](BlockID block) {
+            uint32_t blockOrder = m_cfg.reversePostOrderIndex(block);
+            first = std::min(first, blockOrder);
+            end = std::max(end, blockOrder + 1);
+            return blockOrder;
+        };
         for (BlockID block : range) {
+            include(block);
             for (Edge edge : m_cfg.incomingEdges(block)) {
                 bool isReached = m_heads[edge.from.index()] || m_blocksEnteredWithNothing.quickGet(edge.from.index());
                 if (isReached && m_sinking.isOutsideTrialRange(edge.from))
-                    m_isPending.quickSet(m_cfg.reversePostOrderIndex(edge.from));
+                    m_isPending.quickSet(include(edge.from));
             }
         }
-        return solvePendingBlocks();
+        return solvePendingBlocks(first, end);
     }
 
 private:
@@ -506,6 +502,20 @@ private:
         SinkingState state;
         bool includesCurrentState { true };
     };
+
+    AllocationSinking::Heads solvePendingBlocks(uint32_t first, uint32_t end)
+    {
+        std::span<const BlockID> order = m_cfg.reversePostOrder();
+        for (bool shouldRepeat = true; shouldRepeat;) {
+            shouldRepeat = false;
+            for (uint32_t blockOrder = first; blockOrder < end; ++blockOrder) {
+                if (m_isPending.quickClear(blockOrder))
+                    shouldRepeat |= visit(order[blockOrder], blockOrder);
+            }
+            shouldRepeat = shouldRepeat && !m_sinking.hasSpentItsWork();
+        }
+        return WTF::move(m_heads);
+    }
 
     static bool holdsObjectToBuild(const SinkingState& state)
     {
@@ -773,6 +783,60 @@ bool AllocationSinking::startOverWithFewerCandidates()
     return true;
 }
 
+// The work is looked at when a sweep has ended, and a sweep carries each object through every block between its allocation and its last use.
+// In a function of n blocks that keeps n objects alive that is n * n, many times the work allowed, only to find out how many objects fit.
+// There the distance in blocks stands for the sweep: the objects that fit are chosen by it, the most frequent first, and a short-lived one still fits behind a long-lived one that does not.
+void AllocationSinking::giveUpOnCandidatesCarriedTooFar()
+{
+    AOT_THRESHOLD(uint64_t, timesTheWorkThatOneSweepMayTake, 4);
+    if (!m_inputs.isLargeForItsWork)
+        return;
+
+    const CFG& cfg = m_analyses.cfg();
+    const UseLists& useLists = m_analyses.useLists();
+    Vector<uint32_t> mostFrequentFirst;
+    Vector<uint64_t> blocksCarrying(FillWith { }, numberOfCandidates(), uint64_t { 0 });
+    uint64_t blocksInAll = 0;
+    Vector<ValueID, 8> names;
+    for (uint32_t index = 0; index < numberOfCandidates(); ++index) {
+        const Candidate& candidate = m_candidates[index];
+        if (candidate.isJoin || candidate.isAbandoned || !cfg.isReachable(candidate.block))
+            continue;
+        uint32_t first = cfg.reversePostOrderIndex(candidate.block);
+        uint32_t last = first;
+        names.append(candidate.definition);
+        while (!names.isEmpty()) {
+            for (const Use& use : useLists.usesOf(names.takeLast())) {
+                if (!cfg.isReachable(use.block))
+                    continue;
+                last = std::max(last, cfg.reversePostOrderIndex(use.block));
+                if (use.kind == Use::Kind::Operand && interpretedOf(m_function.at(use.user).opcode) == Interpretation::Cast)
+                    names.append(use.user);
+            }
+        }
+        blocksCarrying[index] = last - first + 1;
+        blocksInAll += blocksCarrying[index];
+        mostFrequentFirst.append(index);
+    }
+    if (blocksInAll <= m_maxWork * timesTheWorkThatOneSweepMayTake)
+        return;
+
+    const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
+    AOT::stableSort(mostFrequentFirst, std::ranges::greater { }, [&](uint32_t index) {
+        return frequencies.frequencyOf(m_candidates[index].block).predicted();
+    });
+    uint64_t blocksThatFit = m_maxWork / expectedNumberOfSweeps;
+    Vector<uint32_t> carriedTooFar;
+    for (uint32_t index : mostFrequentFirst) {
+        if (blocksCarrying[index] <= blocksThatFit)
+            blocksThatFit -= blocksCarrying[index];
+        else
+            carriedTooFar.append(index);
+    }
+    giveUpForLackOfWork(carriedTooFar.span());
+    m_hasStartedOverWithFewerCandidates = true;
+}
+
 void AllocationSinking::giveUpForLackOfWork(std::span<const uint32_t> candidates)
 {
     for (uint32_t index : candidates) {
@@ -810,7 +874,7 @@ void AllocationSinking::setAside(uint32_t join)
 
 bool buildsOperand(const Program& program, const Value& user, uint32_t operandIndex)
 {
-    return interpretationOf(program, user) == Interpretation::None && familyOf(user.opcode) != OperationFamily::RuntimeValidation && !isHeldOperand(user, operandIndex);
+    return interpretationOf(program, user) == Interpretation::None && !goesWithUnbuiltOperands(user.opcode) && !isHeldOperand(user, operandIndex);
 }
 
 bool AllocationSinking::isBuiltInItsBlock(const Candidate& allocation) const
@@ -893,7 +957,7 @@ void AllocationSinking::tagVariants(BlockID block, VirtualObjectID object, Objec
             return;
         }
     }
-    AOT::sort(state.variants);
+    AOT::sortInLine(state.variants);
     removeRepeatedElements(state.variants);
 }
 
@@ -1050,18 +1114,30 @@ static void removeDeadEntries(AllocationSinking& sinking, SinkingState& state, B
     auto isLive = [&](ValueID value) {
         return isParameterOf(useLists, target, value) || sinking.isLiveAtHead(value, target);
     };
+    // A branch in a later block asks a test again, of the operands that the test names. An operand that is no longer known to be the object would be taken for another value:
+    // `a === object`, where nobody else uses `a`, would come out false.
+    auto isNamedByLiveTest = [&](ValueID value) {
+        return state.tests.containsIf([&](const TestEntry& test) {
+            bool namesValue = false;
+            sinking.function().at(test.test).forEachOperand([&](ValueID operand, uint32_t) {
+                namesValue |= operand == value;
+            });
+            return namesValue && isLive(test.test);
+        });
+    };
+    auto isLiveAlias = [&](const AliasEntry& alias) {
+        return isLive(alias.value) || isNamedByLiveTest(alias.value);
+    };
     bool everyNameIsLive = std::ranges::all_of(state.objects, [&](const ObjectEntry& entry) {
         return isLive(sinking.at(entry.object).definition);
-    }) && std::ranges::all_of(state.aliases, [&](const AliasEntry& alias) {
-        return isLive(alias.value);
-    }) && std::ranges::all_of(state.tests, [&](const TestEntry& test) {
+    }) && std::ranges::all_of(state.aliases, isLiveAlias) && std::ranges::all_of(state.tests, [&](const TestEntry& test) {
         return isLive(test.test);
     });
     if (everyNameIsLive)
         return;
 
     state.aliases.removeAllMatching([&](const AliasEntry& alias) {
-        return !isLive(alias.value);
+        return !isLiveAlias(alias);
     });
     state.tests.removeAllMatching([&](const TestEntry& test) {
         return !isLive(test.test);
@@ -1265,16 +1341,17 @@ void ObjectInterpreter::enterJoin(VirtualObjectID join, const IncomingBinding& b
         m_sinking.didEnterJoin(join, source);
     if (binding.kind == IncomingBinding::Kind::Other)
         m_sinking.abandon(join);
+    bool isOfOtherFamily = source && m_sinking.at(source).family != m_sinking.at(join).family;
+    bool entersAsCell = isOfOtherFamily || m_sinking.decisions().isBuiltAtHead(outgoing.target, join);
     if (source) {
         const ObjectState& sourceState = *stateOf(source);
         TypeID joinType = function().at(m_sinking.at(join).definition).type;
-        bool canCastCell = !outgoing.edge.isHandlerEdge() && (sourceState.isCell() || !sourceState.hasCell());
+        // The edge to a handler has no room for a cast. An object that arrives unbuilt needs none: whoever builds the join casts the cell.
+        bool canCastCell = outgoing.edge.isHandlerEdge() ? !entersAsCell && !sourceState.hasCell() : sourceState.isCell() || !sourceState.hasCell();
         if (!(canCastCell ? fitsType(source, joinType) : fitsTypeWithoutCasts(source, joinType)))
             m_sinking.abandon(join);
     }
 
-    bool isOfOtherFamily = source && m_sinking.at(source).family != m_sinking.at(join).family;
-    bool entersAsCell = isOfOtherFamily || m_sinking.decisions().isBuiltAtHead(outgoing.target, join);
     if (source && !entersAsCell) {
         m_enteredEdge.consumedSources.append(ConsumedSource { source, join });
         return;
@@ -1288,6 +1365,14 @@ void ObjectInterpreter::enterJoin(VirtualObjectID join, const IncomingBinding& b
     if (!entersAsCell) {
         if (std::optional<VirtualConstant> constant = virtualConstantOf(program(), function(), binding.value))
             shape = m_sinking.familyOf(join).intern(VirtualShape::ofConstant(*constant));
+    }
+    if (isRewriting() && shape != cellShape) {
+        const ObjectState* atHead = m_sinking.headOf(outgoing.target)->find(join);
+        bool isKnownAtHead = atHead && atHead->variants.containsIf([&](const ObjectVariant& variant) {
+            return variant.shape == shape;
+        });
+        if (!isKnownAtHead)
+            shape = cellShape;
     }
     m_enteredEdge.newJoinStates.append(ObjectEntry { join, ObjectState::withShape(shape) });
 }

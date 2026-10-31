@@ -15,6 +15,7 @@
 #include "AOTIdentifierNumbering.h"
 #include "AOTInlineCall.h"
 #include "AOTRuntimeCallEmitter.h"
+#include "AOTRuntimeValidationEmitter.h"
 #include "AOTThrowEmitter.h"
 #include "AOTTypeTable.h"
 #include "AOTTypeTestEmitter.h"
@@ -120,6 +121,13 @@ Representation OperationEmitter::resultRepresentationOf(const InlineCall& call) 
     return parameter ? representationOf(parameter) : Representation::Void;
 }
 
+ValueID OperationEmitter::resultOf(const InlineCall& call) const
+{
+    if (const ValueContext* value = call.value())
+        return value->id();
+    return resultParameterOf(m_function, *call.terminator());
+}
+
 const Type& OperationEmitter::resultTypeOf(const InlineCall& call) const
 {
     if (const ValueContext* value = call.value())
@@ -165,6 +173,17 @@ Word32 OperationEmitter::identifierNumber(PropertyKeyID key)
         return word32(0);
     }
     return word32(static_cast<int32_t>(*number));
+}
+
+void OperationEmitter::reportUnlessClaimHolds(std::optional<CellPointer> about, Condition holds)
+{
+    emitter<RuntimeValidationEmitter>().checkClaim(about, holds);
+}
+
+void OperationEmitter::checkIsCompiledObjectOf(CellPointer cell, LayoutSetID layouts)
+{
+    if (m_generator.validatesOrChecksProofs())
+        emitter<RuntimeValidationEmitter>().checkIsCompiledObjectOf(cell, layouts);
 }
 
 Pointer OperationEmitter::siteCacheAddress(SiteCacheID id)

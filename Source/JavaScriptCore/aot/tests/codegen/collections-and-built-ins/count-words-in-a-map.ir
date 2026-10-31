@@ -160,5 +160,5 @@ function f1 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 # WHOLE-NOT: :Call)
 # WHOLE-LABEL: end of function
 # The counts hold calls, whose moves follow the calling convention: not for Windows.
-# X64: loop #{{*}}, instructions: 32, patchpoints: 5
+# X64: loop #{{*}}, instructions: 31, patchpoints: 5
 # ARM64: loop #{{*}}, instructions: 31, patchpoints: 6

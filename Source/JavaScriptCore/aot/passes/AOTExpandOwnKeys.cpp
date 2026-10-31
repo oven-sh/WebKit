@@ -18,15 +18,21 @@
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
+#include "AOTIRBuilder.h"
+#include "AOTIntegerRelations.h"
 #include "AOTJSONSerializerBuilder.h"
 #include "AOTJSONSupport.h"
 #include "AOTKnownValue.h"
 #include "AOTNaturalLoops.h"
+#include "AOTPredictedValues.h"
+#include "AOTProgramPasses.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTRegionCloner.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRules.h"
+#include "AOTResultRulesInternal.h"
 #include "AOTRewrite.h"
+#include "AOTRuleSupport.h"
 #include "AOTSort.h"
 #include "AOTSpecifiedValues.h"
 #include "AOTThreshold.h"
@@ -248,6 +254,7 @@ static bool isExpandedByPlan(OwnKeyWalk walk)
     case OwnKeyWalk::Keys:
     case OwnKeyWalk::Values:
     case OwnKeyWalk::Entries:
+    case OwnKeyWalk::FlatEntries:
     case OwnKeyWalk::Assign:
     case OwnKeyWalk::Spread:
     case OwnKeyWalk::Copy:
@@ -283,14 +290,16 @@ UnchangedAllocations::UnchangedAllocations(FunctionPassContext& context, std::sp
 
 bool UnchangedAllocations::contains(ValueID allocation, ProgramPoint point) const
 {
-    size_t index = m_uses.findIf([&](const AllocationAtPoint& use) {
-        return use.allocation == allocation && use.point.block == point.block && use.point.index == point.index;
+    const CFG& cfg = m_context.analyses.cfg();
+    auto usesAtPoint = std::ranges::equal_range(m_uses, std::pair { cfg.reversePostOrderIndex(point.block), point.index }, { }, [&](const AllocationAtPoint& use) {
+        return std::pair { cfg.reversePostOrderIndex(use.point.block), use.point.index };
     });
-    if (index == notFound)
+    auto use = std::ranges::find(usesAtPoint, allocation, &AllocationAtPoint::allocation);
+    if (use == usesAtPoint.end())
         return false;
     if (!m_unchanged)
         m_unchanged = findUnchangedAllocations(m_context, m_uses.span());
-    return m_unchanged->get(index);
+    return m_unchanged->get(use - m_uses.begin());
 }
 
 static BuiltinID calledBuiltinOf(const BuiltinTable& builtins, const Value& call)
@@ -324,6 +333,8 @@ static std::optional<OwnKeyWalk> ownKeyWalkOf(const Program& program, const Valu
         return OwnKeyWalk::Values;
     if (builtin == Builtins::ObjectEntries)
         return OwnKeyWalk::Entries;
+    if (builtin == Builtins::CompilerHelpersOwnEntriesFlat)
+        return OwnKeyWalk::FlatEntries;
     if (builtin == Builtins::ObjectAssign)
         return OwnKeyWalk::Assign;
     if (builtin == Builtins::JSONStringify)
@@ -335,7 +346,30 @@ static std::optional<OwnKeyWalk> ownKeyWalkOf(const Program& program, const Valu
     return std::nullopt;
 }
 
-static std::optional<OwnKeyWalkSite> findSiteAt(const Program& program, const Function& function, ProgramPoint point)
+// The type of the first AssumeType of the value in its own block.
+static TypeID provenTypeBehind(const Function& function, const UseLists& useLists, ProgramPoint point, ValueID id)
+{
+    auto assumesTypeOf = [&](ValueID user) {
+        return function.at(user).opcode == Opcode::AssumeType && function.at(user).operand(0) == id;
+    };
+    ValueID found;
+    for (const Use& use : useLists.usesOf(id)) {
+        if (use.kind != Use::Kind::Operand || use.block != point.block || !assumesTypeOf(use.user) || use.user == found)
+            continue;
+        if (!found) {
+            found = use.user;
+            continue;
+        }
+        for (ValueID later : function.at(point.block).values.span().subspan(point.index + 1)) {
+            if (assumesTypeOf(later))
+                return function.at(later).type;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    return found ? function.at(found).type : TypeID();
+}
+
+static std::optional<OwnKeyWalkSite> findSiteAt(const Program& program, const Function& function, const UseLists& useLists, ProgramPoint point)
 {
     ValueID id = function.at(point.block).values[point.index];
     const Value& value = function.at(id);
@@ -344,12 +378,7 @@ static std::optional<OwnKeyWalkSite> findSiteAt(const Program& program, const Fu
         return std::nullopt;
 
     OwnKeyWalkSite site { .walk = *walk, .block = point.block, .index = point.index, .value = id };
-    for (ValueID later : function.at(point.block).values.span().subspan(point.index + 1)) {
-        if (function.at(later).opcode == Opcode::AssumeType && function.at(later).operand(0) == id) {
-            site.provenTypeOfList = function.at(later).type;
-            break;
-        }
-    }
+    site.provenTypeOfList = provenTypeBehind(function, useLists, point, id);
     if (*walk == OwnKeyWalk::Spread) {
         site.source = value.sourceOperand();
         site.target = value.targetOperand();
@@ -365,6 +394,7 @@ static std::optional<OwnKeyWalkSite> findSiteAt(const Program& program, const Fu
     case OwnKeyWalk::Keys:
     case OwnKeyWalk::Values:
     case OwnKeyWalk::Entries:
+    case OwnKeyWalk::FlatEntries:
         break;
     case OwnKeyWalk::Assign:
         if (arguments.size() < 2)
@@ -422,6 +452,7 @@ static constexpr bool copiesNothingFromNullish(OwnKeyWalk walk)
     case OwnKeyWalk::Keys:
     case OwnKeyWalk::Values:
     case OwnKeyWalk::Entries:
+    case OwnKeyWalk::FlatEntries:
     case OwnKeyWalk::Stringify:
     case OwnKeyWalk::StringifyIntoText:
         return false;
@@ -617,8 +648,14 @@ std::optional<OwnKeyWalkPlan> planOwnKeyWalk(FunctionPassContext& context, const
         const Layout& layout = context.program.at(arm.layout);
         if (layout.kind != LayoutKind::Record || arm.order.size() > maxFieldsCopiedByAllocation)
             return true;
+        // A store to the new object is a definition where Object.prototype does not have the name, as it has __proto__. It gets no new name: built-in objects are read-only.
+        bool assigns = context.function.at(site.value).assigns();
+        const BuiltinTable& builtins = context.program.builtins();
         return !std::ranges::all_of(arm.order, [&](uint32_t field) {
-            return isEnumerableStringField(context.program, layout.fields[field]) && isOrdinaryDataField(context.program, { arm.layout, field });
+            // A symbol has no text.
+            if (!isEnumerableStringField(context.program, layout.fields[field]) || !isOrdinaryDataField(context.program, { arm.layout, field }))
+                return false;
+            return !assigns || !builtins.findOwnMember(Builtins::ObjectPrototype, context.program.strings.builtinName(context.program.at(layout.fields[field].key).text));
         });
     });
     if (plan->arms.isEmpty())
@@ -786,7 +823,7 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context, std:
         if (function.at(block).frequency.predicted() == BlockFrequency::Rare)
             continue;
         for (uint32_t index = function.at(block).values.size(); index--;) {
-            std::optional<OwnKeyWalkSite> site = findSiteAt(context.program, function, { block, index });
+            std::optional<OwnKeyWalkSite> site = findSiteAt(context.program, function, context.analyses.useLists(), { block, index });
             if (!site || (onlyWalk && site->walk != *onlyWalk))
                 continue;
             Expected<HeatClass> heat = heatClassByOwnLoops(context, block);
@@ -923,6 +960,7 @@ static bool visitsSymbolKeys(OwnKeyWalk walk)
     case OwnKeyWalk::Keys:
     case OwnKeyWalk::Values:
     case OwnKeyWalk::Entries:
+    case OwnKeyWalk::FlatEntries:
     case OwnKeyWalk::Stringify:
     case OwnKeyWalk::StringifyIntoText:
         return false;
@@ -987,6 +1025,14 @@ static ValueID emitWalk(Emission& emission, const OwnKeyWalkSite& site, const Va
             return appendArray(entryContents, entry);
         });
         return appendArray(entryType, entries.span());
+    }
+    case OwnKeyWalk::FlatEntries: {
+        Values namesAndValues;
+        for (uint32_t field : walkedFields) {
+            namesAndValues.append(appendName(field));
+            namesAndValues.append(appendRead(field));
+        }
+        return appendArrayOfCells(elementTypeOf(original.type), namesAndValues.span());
     }
     case OwnKeyWalk::Assign:
     case OwnKeyWalk::Spread: {
@@ -1129,8 +1175,20 @@ static void expandWalk(FunctionPassContext& context, Emission& emission, const P
         nameResultsOfOnlyArm(context, builder, site.block, expansion.continuation);
 }
 
+static bool isLeftByExpansion(const Function& function, const OwnKeyWalkSite& site)
+{
+    const Value& call = function.at(site.value);
+    return std::ranges::any_of(function.at(site.block).values.span().first(site.index), [&](ValueID id) {
+        const Value& earlier = function.at(id);
+        return earlier.opcode == Opcode::StringBuilderDiscard && earlier.position == call.position && earlier.inlineFrame == call.inlineFrame;
+    });
+}
+
 static PassOutcome expandStringify(FunctionPassContext& context, Emission& emission, const OwnKeyWalkSite& site)
 {
+    // The serializer writes a date, a list and a record on the word of their kinds, and asks none of them for `toJSON`.
+    if (context.program.looksUpUnlockedName(Builtins::JSONStringify) || isLeftByExpansion(context.function, site))
+        return PassOutcome::Unchanged;
     IRBuilder& builder = emission.builder();
     JSONSerializerBuilder planner(builder, emission.inputs(), ValueID());
     if (!planner.hasPlanFor(site.source))
@@ -1162,15 +1220,22 @@ static PassOutcome expandStringify(FunctionPassContext& context, Emission& emiss
 
     const Value original = context.function.at(site.value);
     IRBuilder::Expansion expansion = builder.beginExpansion({ site.block, site.index });
-    BlockID generic = builder.addBlock(BlockFrequency::Rare);
     BlockID noText = builder.addBlock(BlockFrequency::Rare);
+    Expected<BlockFrequency> frequency = builder.function().at(builder.currentBlock()).frequency;
+
+    ValueID source = site.source;
+    if (site.walk == OwnKeyWalk::Stringify && evaluateTypeTest(context.program, emission.typeOf(source), context.program.at(TypeTable::undefined)) == KnownBoolean::Unknown) {
+        IRBuilder::ProvenBranch isUndefined = builder.emitBranchWithProof(builder.appendTypeTest(source, TypeTable::undefined), 0, BlockFrequency::Rare, frequency);
+        builder.endExpansion(expansion, convertTo(builder, builder.append(Opcode::Undefined, { }), DeclaredType(Proven::byPosition(original.type))));
+        builder.moveToEndOf(isUndefined.notTaken);
+        source = isUndefined.provenOnNotTaken;
+    }
 
     ValueID stringBuilder = builder.append(Opcode::StringBuilderBegin, { });
     JSONSerializerBuilder serializer(builder, emission.inputs(), stringBuilder, calledBuiltinOf(context.program.builtins(), original));
 
-    bool listsHolders = serializer.mayListHolders(site.source);
-    bool isCovered = listsHolders || (!serializer.writingRunsCode(site.source) && serializer.mayHoldItself(site.source));
-    Expected<BlockFrequency> frequency = builder.function().at(builder.currentBlock()).frequency;
+    bool listsHolders = serializer.mayListHolders(source);
+    bool isCovered = listsHolders || (!serializer.writingRunsCode(source) && serializer.mayHoldItself(source));
     std::optional<Target> outerHandler = builder.handler();
     BlockID threw;
     if (isCovered) {
@@ -1181,7 +1246,7 @@ static PassOutcome expandStringify(FunctionPassContext& context, Emission& emiss
         builder.moveToEndOf(covered);
     }
 
-    serializer.appendRoot(site.source, noText);
+    serializer.appendRoot(source, noText);
     serializer.commit();
 
     ValueID result = builder.append(Opcode::StringBuilderFinish, { stringBuilder });
@@ -1215,9 +1280,6 @@ static PassOutcome expandStringify(FunctionPassContext& context, Emission& emiss
 
     builder.moveToEndOf(noText);
     builder.append(Opcode::StringBuilderDiscard, { stringBuilder });
-    builder.emitJump(generic);
-
-    builder.moveToEndOf(generic);
     builder.endExpansion(expansion, appendOriginalOperation(builder, original));
     return PassOutcome::Changed;
 }
@@ -2238,6 +2300,214 @@ PassOutcome expandData(FunctionPassContext& context)
         }
     }
     return rewrite.commit();
+}
+
+namespace {
+
+struct OwnEntriesReadByPosition {
+    ValueID call;
+    Vector<ValueID, 2> castsOfList;
+    Vector<ValueID, 2> lengths;
+    Vector<ValueID, 4> pairs;
+};
+
+} // anonymous namespace
+
+static bool collectReadsOfOwnEntries(FunctionPassContext& context, ValueID list, OwnEntriesReadByPosition& found)
+{
+    const Function& function = context.function;
+    for (const Use& use : context.analyses.useLists().usesOf(list)) {
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        const Value& user = function.at(use.user);
+        if (isCastWithoutTest(user.opcode) && !use.operandIndex) {
+            found.castsOfList.append(use.user);
+            if (!collectReadsOfOwnEntries(context, use.user, found))
+                return false;
+            continue;
+        }
+        std::optional<MeasuredStorage> measured = storageMeasuredBy(context.program, user);
+        if (measured && measured->heap == AbstractHeap::ArrayStorage && measured->owner == list && !measured->guard)
+            found.lengths.append(use.user);
+        else if (user.opcode == Opcode::ElemGet && use.operandIndex == OperandIndex::ElemGet::object && user.propertyOperand() != list)
+            found.pairs.append(use.user);
+        else
+            return false;
+    }
+    return true;
+}
+
+// Nobody can tell a pair that is made for one read from the pair of the list: it is not stored into, not compared with anything and handed to nobody.
+static bool isOnlyTakenApart(FunctionPassContext& context, ValueID pair)
+{
+    const Function& function = context.function;
+    for (const Use& use : context.analyses.useLists().usesOf(pair)) {
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        const Value& user = function.at(use.user);
+        if ((isCastWithoutTest(user.opcode) || user.opcode == Opcode::RequireObjectCoercible) && !use.operandIndex) {
+            if (!isOnlyTakenApart(context, use.user))
+                return false;
+            continue;
+        }
+        std::optional<MeasuredStorage> measured = storageMeasuredBy(context.program, user);
+        if (measured && measured->heap == AbstractHeap::ArrayStorage && measured->owner == pair && !measured->guard)
+            continue;
+
+        ValueID position;
+        if (user.opcode == Opcode::ElemGet && use.operandIndex == OperandIndex::ElemGet::object)
+            position = user.propertyOperand();
+        else if (user.opcode == Opcode::GetArrayElement && use.operandIndex == OperandIndex::GetArrayElement::array && !user.guardOperand())
+            position = user.positionOperand();
+        if (!position)
+            return false;
+        // Anywhere but at its two elements the read goes on to the prototypes, where an accessor would get the pair.
+        std::optional<int64_t> constant = integerConstantThroughCasts(context.program, function, position);
+        bool readsElement = constant == 0 || constant == 1;
+        if (!readsElement && context.analyses.effectsOf(use.user).onAnyEdge().mayRunOtherCode())
+            return false;
+    }
+    return true;
+}
+
+static std::optional<OwnEntriesReadByPosition> findOwnEntriesReadByPosition(FunctionPassContext& context, IntegerRelations& relations, ValueID id)
+{
+    const Function& function = context.function;
+    const BuiltinTable& builtins = context.program.builtins();
+    const Value& call = function.at(id);
+    if (call.opcode != Opcode::CallBuiltin || (call.builtinCallForm() != BuiltinCallForm::Whole && call.builtinCallForm() != BuiltinCallForm::AnyReceiver))
+        return std::nullopt;
+    if (builtins.at(call.overload()).mode != BuiltinCallMode::Call || calledBuiltinOf(builtins, call) != Builtins::ObjectEntries || call.argumentsOperands().size() != 1)
+        return std::nullopt;
+
+    OwnEntriesReadByPosition found { .call = id };
+    if (!collectReadsOfOwnEntries(context, id, found) || found.lengths.isEmpty() || found.pairs.isEmpty())
+        return std::nullopt;
+    // Nothing changes the list, so each of its lengths is its length.
+    bool readsOnlyPairsOfList = std::ranges::all_of(found.pairs, [&](ValueID pair) {
+        ValueID position = function.at(pair).propertyOperand();
+        BlockID block = context.analyses.useLists().blockOf(pair);
+        auto isProven = [](IntegerRelations::Answer answer) { return answer == IntegerRelations::Answer::Proven; };
+        return isProven(relations.isWholeNumber(position, block)) && isProven(relations.isAtLeast(position, 0, block))
+            && std::ranges::any_of(found.lengths, [&](ValueID length) { return isProven(relations.isAtMost(position, length, -1, block)); })
+            && isOnlyTakenApart(context, pair);
+    });
+    if (!readsOnlyPairsOfList)
+        return std::nullopt;
+    return found;
+}
+
+// Nobody sees how the list holds its pairs, so it holds none: the pair at a position is the two elements from twice the position on, and is made where it is read, where whoever takes it apart sees what it is made of.
+// Half of a length is below 2^31, so twice a position below it, and the position behind that, are positions of a list.
+unsigned leavePairsOfOwnEntriesUnmade(FunctionPassContext& context, std::span<const ValueSite> builtinCalls)
+{
+    Function& function = context.function;
+    const Program& program = context.program;
+    auto mayBeList = [&](const ValueSite& site) {
+        const Value& call = function.at(site.value);
+        return call.opcode == Opcode::CallBuiltin && calledBuiltinOf(program.builtins(), call) == Builtins::ObjectEntries;
+    };
+    if (std::ranges::none_of(builtinCalls, mayBeList))
+        return 0;
+
+    IntegerRelations relations(context.analyses);
+    Vector<OwnEntriesReadByPosition, 1> lists;
+    for (const ValueSite& site : builtinCalls) {
+        if (std::optional<OwnEntriesReadByPosition> found = findOwnEntriesReadByPosition(context, relations, site.value))
+            lists.append(WTF::move(*found));
+    }
+    if (lists.isEmpty())
+        return 0;
+
+    struct Read {
+        ValueID value;
+        ProgramPoint point;
+        // What is known of the pair, and of all that it holds.
+        std::optional<ProvenType> type { };
+        std::optional<ProvenType> contents { };
+        ValueID first { };
+        ValueID second { };
+    };
+    Vector<Read, 8> lengths;
+    Vector<Read, 8> pairs;
+    PredictedValues predicted(function);
+    TypingContext typing { program, function, context.types, TypeLevel::Proven };
+    for (const OwnEntriesReadByPosition& list : lists) {
+        for (ValueID length : list.lengths)
+            lengths.append({ length, context.analyses.useLists().pointOf(length) });
+        for (ValueID pair : list.pairs) {
+            std::optional<Type> contents = tryTypeOfContentsRead(typing, typing.typeOf(pair), ContentsSlot::Element);
+            pairs.append({ pair, context.analyses.useLists().pointOf(pair), Proven::byRules(predicted, pair, function.at(pair).type), contents ? std::optional(Proven::byRules(predicted, pair, context.types.intern(*contents))) : std::nullopt });
+        }
+    }
+
+    // What is read from the list has its type from the list.
+    BuiltinOverloadID flatList = *program.builtins().overloadIDsOf(Builtins::CompilerHelpersOwnEntriesFlat).begin();
+    for (const OwnEntriesReadByPosition& list : lists) {
+        ValueID object = function.at(list.call).argumentsOperands()[0];
+        Value& call = function.edit(list.call);
+        becomeBuiltinCall(call, flatList, BuiltinCallForm::Whole, { { }, { object } }, { });
+        call.type = resultTypeOf(program, function, call, context.types);
+        call.setExpected({ });
+        // In the order in which they were found: each comes behind what it casts.
+        for (ValueID cast : list.castsOfList) {
+            ValueID operand = function.at(cast).operand(0);
+            Origin origin = function.at(cast).origin();
+            Value& upcast = function.edit(cast);
+            upcast = IRBuilder::make(Opcode::Upcast, { operand });
+            upcast.setOrigin(origin);
+            upcast.setCastType(function.at(operand).type);
+            upcast.type = function.at(operand).type;
+        }
+    }
+
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    for (Read& length : lengths) {
+        builder.setOrigin(function.at(length.value).origin());
+        length.first = builder.insertBefore(length.point, Value(function.at(length.value)));
+        length.second = builder.insertBefore(length.point, makeInteger(1));
+    }
+    for (Read& pair : pairs) {
+        builder.setOrigin(function.at(pair.value).origin());
+        auto insertRead = [&](ValueID position, std::optional<ProvenType> proven) {
+            Value read = IRBuilder::make(Opcode::ElemGet, { function.at(pair.value).objectOperand(), position });
+            read.setKeyIsIntegral(true);
+            ValueID element = builder.insertBefore(pair.point, WTF::move(read));
+            if (!proven)
+                return element;
+            if (context.build.validates())
+                builder.insertBefore(pair.point, makeValidateType(element, proven->payload()));
+            return builder.insertBefore(pair.point, makeAssumeType(element, *proven));
+        };
+        ValueID position = function.at(pair.value).propertyOperand();
+        ValueID positionOfKey = builder.insertBefore(pair.point, IRBuilder::make(Opcode::Add, { position, position }));
+        ValueID key = insertRead(positionOfKey, Proven::byConstruction(TypeTable::string));
+        ValueID value = insertRead(builder.insertBefore(pair.point, IRBuilder::make(Opcode::Add, { positionOfKey, builder.insertBefore(pair.point, makeInteger(1)) })), pair.contents);
+        Value made(Opcode::NewArray);
+        made.setContents(context.types.unionOf(function.at(key).type, function.at(value).type));
+        made.setElementsOperands(std::array { key, value });
+        made.setArrayStorage(ArrayStorage::Contiguous);
+        pair.first = builder.insertBefore(pair.point, WTF::move(made));
+    }
+    builder.applyInsertions();
+
+    for (const Read& length : lengths) {
+        Value& half = function.edit(length.value);
+        half.become(Opcode::URShift);
+        half.setLeftOperand(length.first);
+        half.setRightOperand(length.second);
+        half.type = resultTypeOf(program, function, half, context.types);
+        half.setExpected({ });
+    }
+    // All that was known of the pair of the list holds of this one, and whoever reads it keeps its type.
+    for (const Read& made : pairs) {
+        Value& pair = function.edit(made.value);
+        pair.becomeAssumeType(made.first, *made.type);
+        pair.type = resultTypeOf(program, function, pair, context.types);
+        pair.setExpected({ });
+    }
+    context.analyses.didChangeValues();
+    return static_cast<unsigned>(lists.size());
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -10,6 +10,7 @@
 #include "AOTLayoutData.h"
 #include "AOTRuntimeRecords.h"
 #include <array>
+#include <bit>
 #include <type_traits>
 #include <wtf/MathExtras.h>
 
@@ -169,10 +170,14 @@ struct KeyedValuePlace {
         return access == SlotAccess::Read ? 0 : numberOfPlacesPerAccess << sizeShift;
     }
 
+    static uint32_t offsetFor(const JSCell* key, StructureID structureID) { return (static_cast<uint32_t>(std::bit_cast<uintptr_t>(key)) + structureID.bits()) & offsetMask; }
+
     // The low bits of a StructureID are zero. What a place says beside the absence bit holds until an object of some chain changes: PropertyCacheWords::placesSayAbsence.
     static constexpr uint32_t absenceBit = 1;
     static constexpr uint32_t fieldBit = 2;
     static constexpr uint32_t extraPropertyBits = absenceBit | fieldBit;
+    // Of a place for stores under the Structure of globalThis: the StructureID and the word index are those of the global object.
+    static constexpr uint32_t globalObjectBit = 1;
 
     // For a compiled object whose Structure identifies the Structure of its extra-property object.
     struct ExtraProperty {
@@ -236,11 +241,17 @@ struct PropertyCacheWords {
     uint8_t placesSayAbsence;
     // A place for stores was filled while nobody watched the Structure for replacements. Such a place holds until somebody does.
     uint8_t placesTakeReplacementsAsUnwatched;
+    // StringKeyCache::KeyOfPair: some pair has a place beside its key.
+    uint8_t pairsHavePlaces;
+    // How often the places that say absence were cleared. A pair that says absence says it for one such count.
+    uint32_t timesAbsencesWereForgotten;
     const void* infoOfClassPrototypes;
     SiteCacheState* siteCacheStates;
     uint8_t missesOfEmptySites;
     uint8_t storesAtEmptySites;
     uint8_t storesToGuardedFields;
+    // Reads by a pair that has the place of another Structure, in steps of StringKeyCache::KeyOfPair::stepOfMisses.
+    uint8_t missesOfPlacesOfPairs;
     const CustomAccessorRecord* customAccessors;
     uint32_t numberStructureID;
     uint32_t booleanStructureID;

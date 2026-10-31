@@ -45,11 +45,22 @@ public:
     ModuleID module() const { return m_module; }
     bool isDeferred() const { return m_isDeferred; }
     // A read of a deferred namespace object may evaluate the module, so that object does not have the module's namespace layout.
-    bool hasNamespaceLayoutOf(ModuleID module) const { return m_module == module && !m_isDeferred; }
+    // Image::position() of the image that has the module.
+    unsigned imagePosition() const { return m_imagePosition; }
+    bool hasNamespaceLayoutOf(ModuleID module) const { return (m_module == module || m_face == module) && !m_isDeferred; }
+    // The object of a file is also what code gets that asks for the namespace object of the file's face, where that face captures nothing.
+    void setFace(ModuleID face) { m_face = face; }
     std::optional<unsigned> find(UniquedStringImpl*) const;
     bool hasExport(UniquedStringImpl* name) const { return find(name) || isDynamicExport(name); }
     // Reads every export once, in the order of the keys, as [[OwnPropertyKeys]] and [[Get]] of each key would, without a lookup by name.
     bool tryReadExports(JSGlobalObject*, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values);
+
+    void replaceCapturedValue(JSGlobalObject*, const Identifier& name, JSValue);
+    // The value of an export that was captured when its file had run, as every export of a CommonJS file is, or nothing. It stays until replaceCapturedValue(), which gives the object another Structure.
+    // Nothing is allocated.
+    JSValue capturedValueWithoutAllocating(UniquedStringImpl*) const;
+    // Of a module of the library: the export is read now if nobody has read it yet, and stays what it is then. False: the name is no export of such a module.
+    bool readDeferredExport(JSGlobalObject*, const Identifier& name);
 
     bool hasESModuleMarker() const { return m_hasESModuleMarker; }
     void setESModuleMarker(bool hasMarker) { m_hasESModuleMarker = hasMarker; }
@@ -71,7 +82,8 @@ private:
 
     Modules& modules() const;
     std::span<const ModuleExportData> exports() const;
-    bool isAmbiguousExport(unsigned index) const;
+    // Listed in the table of the module, and no export of it.
+    bool isHiddenExport(unsigned index) const;
     bool isSymbolLikeKey(UniquedStringImpl*) const;
     bool isOrdinaryKey(PropertyName) const;
     bool isDynamicExport(UniquedStringImpl*) const;
@@ -82,6 +94,8 @@ private:
     WriteBarrier<JSObject> m_capturedValues;
     WriteBarrier<JSObject> m_liveSources;
     ModuleID m_module;
+    ModuleID m_face;
+    unsigned m_imagePosition;
     bool m_isDeferred;
     bool m_mayNeedEvaluation;
     bool m_hasESModuleMarker { false };

@@ -1066,11 +1066,12 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
 #if ENABLE(AOT)
             } else if (visitor->isCompiledFrame()) {
                 const AOT::CompiledFrame& frame = visitor->compiledFrame();
+                AOT::RunningImageScope imageOfFrame(vm.aotState(), frame.instance->program);
                 if (visitor->isOfConstructedFunctionThatLeft())
                     appendIfWanted(StackFrame(*visitor.compiledFrames().constructedFunctionThatLeft()));
                 else if (visitor->isOfBuiltinCalledByCompiledFrame())
                     appendIfWanted(StackFrame(AOT::TraceFrame { frame.code, AOT::functionInFramesOf(frame.calledBuiltin), frame.callSite, !!frame.inlineFrame, false, false, false, false, false, AOT::leavesByTailCall(frame.calledBuiltin) }));
-                else if (visitor.compiledFrames().isAtFailedTailCall())
+                else if (visitor.compiledFrames().isAtFailedTailCall() && !visitor->isConstructCall()) // A function that was constructed makes no tail calls.
                     appendIfWanted(StackFrame(AOT::TraceFrame { frame.code, frame.function, frame.callSite, !!frame.inlineFrame, visitor->isConstructCall(), false, false, false, false, true }));
                 else {
                     std::optional<JSObject*> callee = visitor.compiledFrames().recordedCallee();
@@ -1861,6 +1862,12 @@ NEVER_INLINE JSValue Interpreter::executeBoundCall(VM& vm, JSBoundFunction* func
 
 ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, const CallData& callData, JSValue thisValue, JSCell* context, const ArgList& args)
 {
+#if ENABLE(AOT)
+    // It says that it entered the VM by itself. Nothing waits behind it here, so this frame is gone during the call.
+    if (callData.type == CallData::Type::Compiled)
+        return AOT::callCompiledCode(vm, function, callData, thisValue, context, args);
+#endif
+
     auto clobberizeValidator = makeScopeExit([&] {
         vm.didEnterVM = true;
     });
@@ -1870,11 +1877,6 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
     scope.assertNoException();
 
     ASSERT(!vm.isCollectorBusyOnCurrentThread());
-
-#if ENABLE(AOT)
-    if (callData.type == CallData::Type::Compiled)
-        RELEASE_AND_RETURN(scope, AOT::callCompiledCode(vm, function, callData, thisValue, context, args));
-#endif
 
     bool isJSCall = callData.type == CallData::Type::JS;
     JSScope* functionScope = nullptr;

@@ -1,0 +1,75 @@
+# In a test run the analysis lists the locked members that a reached write may replace: under a name that the operation holds, under the keys that may arrive at it, through a helper, and through the functions
+# that write under a key. It lists no member that is listed as replaceable already, none that is open anyway, none under a name that the language reads by itself, and nothing for a write that nothing reaches
+# RUN: valueflow-results
+# OPTIONS: admit=ReplacedBuiltins
+# CHECK-NOT: replaced-builtin
+# CHECK: replaced-builtin ArrayFrom
+# CHECK-NEXT: replaced-builtin ObjectFreeze
+# CHECK-NEXT: replaced-builtin ArrayPrototypeIncludes
+# CHECK-NEXT: replaced-builtin ArrayPrototypeJoin
+# CHECK-NEXT: replaced-builtin MapPrototypeGet
+# CHECK-NEXT: replaced-builtin ObjectPrototypeHasOwnProperty
+# CHECK-NEXT: replaced-builtin StringPrototypeIndexOf
+# CHECK-NOT: replaced-builtin
+# And the names that a write may add to an object which takes none: not one that is opened already, none that the language reads by itself, no index, and none on an object that takes new names anyway.
+# CHECK-NOT: added-name
+# CHECK: added-name FunctionPrototype marked
+# CHECK-NEXT: added-name ObjectPrototype polluted
+# CHECK-NOT: added-name
+
+module m0 path="main.test.js" displayPath="main.test.js" body=f0
+entry module=m0
+layout L0 name="Descriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+replaceablebuiltin member=StringPrototypeNormalize
+openedname holder=ObjectPrototype name="known"
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=StringPrototype
+    PropSet v1, v0 key="indexOf" mode=Strict
+    PropSet v1, v0 key="normalize" mode=Strict
+    PropSet v1, v0 key="at" mode=Strict
+    PropSet v1, v0 key="constructor" mode=Strict
+    PropSet v1, v0 key="mine" mode=Strict
+    v7 = Builtin builtin=Array
+    v8 = String string="from"
+    ElemSet v7, v8, v0 mode=Strict
+    v10 = NewClosure function=f2
+    v11 = Builtin builtin=ArrayPrototype
+    v12 = String string="join"
+    v13 = Call v10, -, v11, v12, v0
+    v14 = Builtin builtin=ObjectDefineProperty
+    v15 = String string="includes"
+    v16 = NewObject -, v0 layout=L0 fields=[0]
+    v17 = Call v14, -, v11, v15, v16
+    v18 = Builtin builtin=ReflectSet
+    v19 = Builtin builtin=MapPrototype
+    v20 = String string="get"
+    v21 = Call v18, -, v19, v20, v0
+    v22 = Builtin builtin=Object
+    v23 = PropDelete v22 key="freeze" mode=Strict
+    v24 = Builtin builtin=ObjectPrototype
+    PropSet v24, v0 key="hasOwnProperty" mode=Strict
+    PropSet v24, v0 key="polluted" mode=Strict
+    PropSet v24, v0 key="known" mode=Strict
+    PropSet v24, v0 key="then" mode=Strict
+    PropSet v24, v0 key="0" mode=Strict
+    v30 = Builtin builtin=FunctionPrototype
+    v31 = String string="marked"
+    v32 = Call v18, -, v30, v31, v0
+    Return
+}
+function f1 name="replacement" results=[{type=anything}] {
+    Return
+}
+function f2 name="stub" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    ElemSet v0, v1, v2 mode=Strict
+    Return
+}
+function f3 name="unreached" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=StringPrototype
+    PropSet v1, v0 key="split" mode=Strict
+    Return
+}

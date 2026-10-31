@@ -187,6 +187,8 @@ B3::PatchpointValue* CallEmitter::leaveAfterFrameTeardown(std::span<const B3::Co
     patchpoint->setRunsWithoutFrame(stackIndices.isEmpty());
     patchpoint->setGenerator([numberInRegisters = static_cast<unsigned>(inRegisters.size()), stackIndices, leave](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
+        // The frame may be gone already: the registers that it saved are the caller's again.
+        emitClearOfReleasedRegisters(jit, params, registersClobberedByCompiledCalls());
         for (unsigned i = 0; i < stackIndices.size(); ++i)
             emitStoreToStackWord(jit, params.code(), params[numberInRegisters + i], params.gpScratch(0), stackIndices[i]);
         if (params.context().frameIsSetUp)
@@ -216,6 +218,8 @@ void CallEmitter::jumpAfterFrameTeardown(const CallTarget& target, const PlacedA
             emitDropSpilledArgumentRegisters(jit);
         emitJumpTo(jit, *records, destination);
     });
+    // The frame of the callee lies where this one was.
+    markArgumentsLetGoByCallee(patchpoint, placed);
     // The stack check is part of the frame setup.
     patchpoint->setFollowsFrameSetup(m_records.frame.needsStackCheckForTailCalls && !pollsWithoutFrame(inputs(), m_id, target));
 }
@@ -437,7 +441,7 @@ void CallEmitter::returnValues(const TerminatorContext&, std::span<const Operand
     bool spillsArgumentRegisters = conventions.of(m_program, m_id).spillsArgumentRegisters;
     RELEASE_ASSERT(operands.size() == results.size());
     for (size_t i = 0; i < results.size(); ++i)
-        RELEASE_ASSERT(operands[i].representation == results[i].representation);
+        RELEASE_ASSERT(isPassedAs(operands[i].representation, results[i].representation));
     emitter<CellAllocationEmitter>().leaveFrameOfCheckedCells();
 
     if (!spillsArgumentRegisters && results.size() <= 1) {

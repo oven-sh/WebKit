@@ -15,6 +15,7 @@
 #include "AOTCompiledStructure.h"
 #include "AOTFunctionNames.h"
 #include "AOTFunctionTables.h"
+#include "AOTImageOfCellScope.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
@@ -384,6 +385,7 @@ static bool tryDefineOwnPropertyFromBits(JSGlobalObject* globalObject, JSObject*
     RELEASE_ASSERT(!(bits.hasValue || bits.hasWritable) || !(bits.hasGet || bits.hasSet));
     if (!descriptorObjectsInheritNoMembers(globalObject)) [[unlikely]]
         return false;
+    ImageOfCellScope imageOfCell(vm, object);
     bool isDefined = tryDefineNameOfFunction(globalObject, object, name, valueOrGetter, bits);
     RETURN_IF_EXCEPTION(scope, false);
     if (isDefined)
@@ -777,10 +779,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryReExportFields, size_t, (Instan
     OPERATION_RETURN(scope, static_cast<size_t>(tryReExportFields(instance, asObject(target), asObject(source), FunctionID(getter), rule)));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRecordCallee, void, (Instance* instance, JSCell* closure))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRecordCallee, void, (Instance* instance, JSCell* closure, void* stackPointerOfCaller))
 {
     AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTRecordCallee);
-    recordCallee(vm, asObject(closure));
+    FunctionTables::of(vm).recordCallee(vm, stackPointerOfCaller, asObject(closure));
     instance->heap.recordedCallees = FunctionTables::recordedCalleesOf(&FunctionTables::of(vm));
 }
 

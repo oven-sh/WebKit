@@ -2,12 +2,13 @@
 # FORM: Prepared
 # RUN: pass SplitUnions
 # RUN(RESOLVED): pass SplitUnions ResolveAccesses ResolveAccesses
-# STATISTIC: UnionsSplit = 3
+# STATISTIC: UnionsSplit = 5
 # LOSS: MaxDispatchCases f5 v2
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Table" fields=[{key="one" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="two" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="three" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="four" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="five" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Entry" fields=[{key="one" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[ChangeIntegrity, ChangePrototype]}
 
 function f0 name="read" parameters=[{type=L0}, {type="one"|"three"|"two"}] results=[{type=anything}] {
     v2 = ElemGet v0, v1
@@ -97,4 +98,30 @@ function f8 name="key-may-be-a-boolean" parameters=[{type=L0}, {type=boolean|"on
     Return v2
 # CHECK-NOT: TypeTest
 # CHECK: v2: anything = ElemGet v0, v1
+}
+
+function f9 name="no-key-names-a-field-and-properties-may-be-added" parameters=[{type=L1}, {type="nine"|"ten"}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+# CHECK-NOT: TypeTest
+# CHECK: v2: anything = ElemGet v0, v1
+}
+
+function f10 name="one-key-names-a-field-and-properties-may-be-added" parameters=[{type=L1}, {type="nine"|"one"}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+# CHECK: = TypeTest v1 testedType=
+# CHECK: ([[present]]: "one"):
+# CHECK-NEXT: = ElemGet v0, [[present]]
+# RESOLVED: = GetSlot v0 key="one"
+}
+
+function f11 name="no-key-names-a-field-and-nothing-is-added" parameters=[{type=L0}, {type="nine"|"ten"}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+# CHECK: = TypeTest v1 testedType=
+# RESOLVED-NOT: ElemGet
+# RESOLVED: = Undefined
+# RESOLVED-NOT: ElemGet
+# RESOLVED: = Undefined
 }

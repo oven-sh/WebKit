@@ -12,11 +12,11 @@ layout L3 name="Item" fields=[{key="x" declared={type=number}}] flow={constructo
 # CHECK: function {{*}}creator=Serializer{layout=L0}
 # CHECK: = GetArrayElement {{*}} arrayStorage=Contiguous [keyIsIntegral]
 # CHECK: = ShapeTest [[object]] layouts=[L3]
-# CHECK: = CallDirect [[object]], v1 function=[[serializerOfItem]]
+# CHECK: = CallDirect [[object]], v1, {{*}} function=[[serializerOfItem]]
 # CHECK: function {{*}}creator=Serializer{layout=L1}
 # CHECK: = GetArrayElement {{*}} arrayStorage=Contiguous [keyIsIntegral]
 # CHECK-NOT: ShapeTest
-# CHECK: = CallDirect {{*}}, v1 function=[[serializerOfItem]]
+# CHECK: = CallDirect {{*}}, v1, {{*}} function=[[serializerOfItem]]
 # CHECK-NOT: ShapeTest
 # CHECK: function {{*}}creator=Serializer{layout=L2}
 # CHECK: = GetArrayElement {{*}} arrayStorage=Contiguous [keyIsIntegral]

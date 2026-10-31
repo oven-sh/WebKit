@@ -13,6 +13,7 @@
 #include "AOTTypeTable.h"
 #include "AOTVector.h"
 #include "AOTWire.h"
+#include <memory>
 #include <optional>
 #include <utility>
 #include <wtf/OptionSet.h>
@@ -21,6 +22,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class FunctionRemap;
 class ReasonsForOperationsThatWent;
+struct EffectsOnEdges;
 class StringRemap;
 class TypeRemap;
 
@@ -120,6 +122,9 @@ struct ConstructionStart {
     bool isWrittenAsCall { false };
     // No construction: an operation that reports its own errors at one place, and at `start` whatever it calls.
     bool isForCallers { false };
+    // No construction: a list that takes values, as in `const [[x]] = v`. Several lists are reported at one place, and an error quotes the one that failed.
+    // So the position of what opens a list is where the list is written, which is `reported` here, and a stack trace shows it at `start`.
+    bool isShownAtStart { false };
 };
 
 struct Function : FunctionRecord {
@@ -133,6 +138,8 @@ struct Function : FunctionRecord {
     Vector<ConstructionStart> constructionStarts;
     bool representationsAreChosen { false };
     bool bodyIsReleased { false };
+    // What a call of the function was summarized to do when RestartInGenericVersion first sent a failing test to the generic version. For the verifier: no code depends on it.
+    std::shared_ptr<const EffectsOnEdges> effectsBeforeRestart;
 
     bool has(FunctionFlags flag) const { return flags.contains(flag); }
     bool hasAny(OptionSet<FunctionFlags> set) const { return flags.containsAny(set); }
@@ -299,6 +306,27 @@ struct Renumbering {
 };
 
 bool compactFunction(Function&, Renumbering* = nullptr);
+
+// The tables of a body that nobody reads for a while, and what they point to, in a third of the room.
+class ParkedBody {
+    WTF_MAKE_NONCOPYABLE(ParkedBody);
+public:
+    ParkedBody() = default;
+    ParkedBody(ParkedBody&&) = default;
+    ParkedBody& operator=(ParkedBody&&) = default;
+    // Leaves the tables empty.
+    ParkedBody(Function::Blocks::Storage&, Function::Values::Storage&);
+
+    explicit operator bool() const { return !m_bytes.isEmpty(); }
+    // Into empty tables. Leaves nothing here.
+    void takeInto(Function::Blocks::Storage&, Function::Values::Storage&);
+
+private:
+    Vector<uint8_t> m_bytes;
+    uint32_t m_numberOfValues { 0 };
+    uint32_t m_numberOfBlocks { 0 };
+    uint32_t m_numberOfWordsOfParts { 0 };
+};
 bool needsCompaction(const Function&);
 void remapIDs(Function&, const TypeRemap&, const StringRemap&, const FunctionRemap&);
 void adoptIDs(Function& fromOtherArena, TypeArena&);

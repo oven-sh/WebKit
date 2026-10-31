@@ -1,0 +1,11 @@
+# heat=ReadOffStructure: a part of a program that is built by itself, such as the test files of a run, gets the classes of a very large program whatever its size: how its
+# functions rank among themselves says nothing about which of them runs often.
+# FORM: AsRead
+# OPTIONS: only-passes=EstimateHeat heat=ReadOffStructure
+# RUN: pipeline EstimateHeat
+# CHECK: f1 Cold 10 1
+# CHECK-NEXT: f2 Hot 90 100
+# CHECK-NEXT: f3 Cold 10 1
+# CHECK-NEXT: f4 Cold 10 1
+# CHECK: thresholds: cold=4 hot=50
+# PROGRAM-OF: estimate-heat-very-large-program.ir

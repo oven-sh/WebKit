@@ -78,7 +78,7 @@ struct PassesByContent {
 
 } // anonymous namespace
 
-// A pass without a row may have something to do in any body.
+// A pass without a row may have something to do in any body. A pass over loops asks for LoopHint: every cycle holds one (FunctionVerifier::verifyLoopMarks).
 static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::ListLiveValuesAtSuspensions, { .opcodes = { Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::IteratorResume, Opcode::IteratorClose, Opcode::ReadScope } } },
     { PassID::CheckInt32Promises, { .opcodes = { Opcode::Convert }, .terminators = { TerminatorKind::ReturnCall } } },
@@ -101,7 +101,7 @@ static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::EliminateRedundantReads, { .opcodes = opcodesOfRedundantReadElimination } },
     { PassID::EliminateGuards, { .opcodes = opcodesOfGuardElimination } },
     { PassID::SeparateUnlikelyLoopPaths, { .opcodes = { Opcode::LoopHint } } },
-    { PassID::ConvertCountersToIntegers, { .traits = BodyTrait::BlockParameters } },
+    { PassID::ConvertCountersToIntegers, { .traits = BodyTrait::BlockParameters }, { { .opcodes = { Opcode::LoopHint } } } },
     { PassID::RemoveDeadCountedLoops, { .opcodes = { Opcode::LoopHint } } },
     { PassID::UnrollShortLoops, { .opcodes = { Opcode::LoopHint } } },
     { PassID::FuseArrayChains, { .opcodes = arrayMethodCallOpcodes } },
@@ -118,19 +118,20 @@ static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::TestNarrowerTypesFirst, { .opcodes = { Opcode::TypeTest, Opcode::StrictEq } } },
     { PassID::ThreadJumps, { .opcodes = { Opcode::TypeTest }, .traits = BodyTrait::BlockParameters } },
     { PassID::RemoveRedundantHandlers, { .traits = BodyTrait::Handlers } },
-    { PassID::HoistLoopInvariantReads, { .opcodes = hoistableOpcodes }, { { .traits = BodyTrait::SeveralBlocks } } },
-    { PassID::SimplifyBuiltinCalls, { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::NewTemplateObject } | simplifiedIntrinsics | constantListSourceOpcodes }, { { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::NewTemplateObject } | simplifiedIntrinsics | constantListUserOpcodes } } },
-    { PassID::ReduceIntegerDivisions, { .opcodes = { Opcode::Div } }, { { .opcodes = OpcodeSet { Opcode::CallBuiltin } | int32ConvertingOperations } } },
+    { PassID::HoistLoopInvariantReads, { .opcodes = hoistableOpcodes }, { { .opcodes = { Opcode::LoopHint } } } },
+    { PassID::SimplifyBuiltinCalls, { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::NewTemplateObject, Opcode::ElemGet } | simplifiedIntrinsics | constantListSourceOpcodes }, { { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::NewTemplateObject, Opcode::GetStringLength } | simplifiedIntrinsics | constantListUserOpcodes } } },
+    { PassID::ReduceIntegerDivisions, { .opcodes = { Opcode::Div } }, { { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::Mod } | int32ConvertingOperations } } },
     { PassID::PlanArrayCapacities, { .opcodes = arrayCapacityOpcodes } },
     { PassID::PlanCollectionCapacities, { .opcodes = { Opcode::CallBuiltin } }, { { .traits = BodyTrait::SeveralBlocks } } },
     { PassID::FoldConstantRegExps, { .opcodes = { Opcode::CallBuiltin } } },
     { PassID::ShareRegExpLiterals, { .opcodes = { Opcode::NewRegExp } } },
+    { PassID::KeepStringsJoinedInLoops, { .opcodes = joinsOfStrings }, { { .opcodes = { Opcode::LoopHint } } } },
     { PassID::InsertObjectCoercibleChecks, { .opcodes = objectCoercibleCheckOpcodes } },
     { PassID::EliminateTailRecursion, { .terminators = { TerminatorKind::ReturnCall } } },
     { PassID::ResolveAwaitedCalls, { .opcodes = { Opcode::AwaitBySavingFrame, Opcode::PromiseAllOfElements } } },
     { PassID::SinkConstants, { .traits = BodyTrait::SeveralBlocks } },
     { PassID::ExpandLongArrayLiterals, { .opcodes = { Opcode::NewArray } } },
-    { PassID::FinishBirths, { .opcodes = { Opcode::PutSlot, Opcode::PutSlotOrAdd, Opcode::NewObject }, .traits = BodyTrait::UnfinishedThis } },
+    { PassID::FinishBirths, { .opcodes = { Opcode::PutSlot, Opcode::PutSlotOrAdd, Opcode::PropSet, Opcode::PropDefine, Opcode::NewObject }, .traits = BodyTrait::UnfinishedThis } },
     { PassID::RemoveRedundantBarriers, { .opcodes = operationsThatMayRunBarrier } },
 };
 
@@ -486,6 +487,7 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::InlineHeads, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::OutlineColdOperations, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::PlaceTypeTests, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::PlanArrayCapacities, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
     { PassID::RemoveRedundantHandlers, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
     { PassID::RemoveUnreachableFunctions, InPlaceOfOperation::NothingBecauseNothingComesHere, true, TakesHandlersAway::No, { } },
     { PassID::ResolveAccesses, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
@@ -497,6 +499,7 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::SeparateUnlikelyLoopPaths, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::SinkAllocations, InPlaceOfOperation::NothingByProofOfThePass, true, TakesHandlersAway::No, { } },
     { PassID::SplitBehindEntryChecks, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
+    { PassID::MoveGeneratorFramesToHeap, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
     { PassID::SplitCoroutines, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
     { PassID::SplitFreshResults, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::SplitUnions, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
@@ -794,7 +797,9 @@ PassOutcome PassRunner::runFunctionPass(PassID id, FunctionPassContext& context,
     context.changes.settle();
     const bool reachedFixpoint = run.reachedFixpoint.get(index);
     run.reachedFixpoint.clear(index);
-    if (run.passesThatRan.contains(id) && !run.passesWithWork.get(index)) {
+    // No round follows a step outside the rounds.
+    const bool hasWaitedLongEnough = !context.isInRounds && run.isImpatient(id);
+    if (run.passesThatRan.contains(id) && !run.passesWithWork.get(index) && !hasWaitedLongEnough) {
         if (reachedFixpoint || run.passesEnabledByTable.get(index)) {
             // Leave the same state behind as the idle run that this skips.
             ++run.numberOfSkippedRuns;
@@ -1118,7 +1123,7 @@ void PassRunner::runSteps(std::span<const ScheduleStep> steps, std::span<const S
         WhatFollows whatFollowsStep = index + 1 == steps.size() ? whatFollows : WhatFollows::MoreSteps;
         switch (step.kind) {
         case ScheduleStep::Kind::RunPass:
-            if (!step.isBehindRounds && run.isAtRest(step.pass))
+            if (!step.isBehindRounds && run.isAtRest(step.pass) && (context.isInRounds || !run.isImpatient(step.pass)))
                 break;
             if (step.isBehindRounds) {
                 // It has run in the rounds and changed nothing there, on purpose.
@@ -1160,7 +1165,10 @@ void PassRunner::runSteps(std::span<const ScheduleStep> steps, std::span<const S
                     break;
                 uint32_t numberOfChangesBefore = run.numberOfChanges;
                 runSteps(body, stepsInside.subspan(index + 1, end - index - 1), context, run);
-                if (run.numberOfChanges == numberOfChangesBefore || run.isStopped)
+                if (run.isStopped)
+                    break;
+                // What an impatient pass finds may start another round.
+                if (run.numberOfChanges == numberOfChangesBefore && (wasInRounds || !run.giveWorkToImpatientPasses(stepsInside[index].passes)))
                     break;
             }
             context.isInRounds = wasInRounds;

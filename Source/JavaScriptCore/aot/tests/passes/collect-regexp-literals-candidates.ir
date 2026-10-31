@@ -1,10 +1,10 @@
-# The texts that can reach a call of RegExp are candidates: every valid pair of a pattern and flags once, numbered behind the literals. A text of plain characters is none: it needs no code
+# The texts that can reach a call of RegExp are candidates: every valid pair of a pattern and flags once, numbered behind the literals. A text of plain characters is one too: it needs no code, and with its record the run time need not parse it to find that out
 # FORM: AsRead
 # RUN: pipeline CollectRegExpLiterals
 # OPTIONS: only-passes=AnalyzeFlow
 # DIAGNOSTIC: RegExpWithoutCode 3
-# STATISTIC: CollectRegExpLiteralsChanges = 27
-# CHECK: regexp requests: 27
+# STATISTIC: CollectRegExpLiteralsChanges = 28
+# CHECK: regexp requests: 28
 # CHECK-NEXT: 0 literal "lit+" flags=- sites=f11:v1, f11:v3
 # CHECK-NEXT: 1 candidate "x+" flags=i sites=f1:v3
 # CHECK-NEXT: 2 candidate "x+" flags=m sites=f1:v3
@@ -32,6 +32,7 @@
 # CHECK-NEXT: 24 candidate "k+" flags=- sites=f9:v3
 # CHECK-NEXT: 25 candidate "a+" flags=- sites=f10:v2
 # CHECK-NEXT: 26 candidate "b+" flags=- sites=f10:v2
+# CHECK-NEXT: 27 candidate "plain" flags=- sites=f7:v2
 # CHECK-NEXT: module m0
 
 module m0 path="main.js" displayPath="main.js" body=f0

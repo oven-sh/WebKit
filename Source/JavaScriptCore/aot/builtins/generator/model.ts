@@ -413,6 +413,8 @@ export interface ModelCondition {
   buildAdmitsRuntimeCode: boolean;
   callRunsOtherCode: boolean;
   objectNobodyKnowsIsWritten: boolean;
+  testsReplaceBuiltins: boolean;
+  programStores: ModelBuiltin | null;
 }
 
 export interface ModelFeatureUse {
@@ -482,6 +484,7 @@ export interface ModelHostObject {
   internalFields: readonly ModelHostObjectInternalField[];
   keepsStringsOfStoredValues: boolean;
   nativeAccessors: readonly ModelName[];
+  platforms: readonly TargetPlatform[];
   source: Source;
 }
 
@@ -635,6 +638,7 @@ export interface ModelModule {
   listsAllExports: boolean;
   isPublic: boolean;
   namespace: ModelBuiltin;
+  exportsHoldingModuleObject: readonly ModelName[];
   exportsHeldByNamespace: readonly ModelName[];
 }
 

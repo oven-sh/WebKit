@@ -12,6 +12,7 @@
 #include <array>
 #include <optional>
 #include <wtf/Vector.h>
+#include <wtf/text/WTFString.h>
 
 namespace JSC { namespace B3 {
 
@@ -19,11 +20,14 @@ enum class FailureKind : uint8_t {
     AbsoluteAddress,
     RelocationNotLowered,
     VariableReadBeforeSet,
+    SpillSlotLacksItsValue,
+    RegisterLacksItsValue,
 };
 
 struct Failure {
     FailureKind kind;
     Origin origin;
+    String detail { };
 };
 
 enum class RemarkKind : uint8_t {
@@ -54,10 +58,12 @@ enum class Counter : uint8_t {
     SumsKeptAsIntegers,
     KnownInductionsUsed,
     TrapsFoldedIntoAccesses,
+    ColdUsesKeptThroughSecondSplit,
+    ColdUsesKeptThroughSecondSplitBetweenDefs,
 };
 
-static constexpr unsigned numberOfCounters = 10;
-static_assert(static_cast<unsigned>(Counter::TrapsFoldedIntoAccesses) + 1 == numberOfCounters);
+static constexpr unsigned numberOfCounters = 12;
+static_assert(static_cast<unsigned>(Counter::ColdUsesKeptThroughSecondSplitBetweenDefs) + 1 == numberOfCounters);
 
 struct LimitHit {
     uint32_t count { 0 };

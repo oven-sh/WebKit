@@ -85,10 +85,7 @@ function f1 name="squares" module=m0 flags=[IsChecked, HasExplicitName] length=1
 # CHECK-NEXT: Double b@[[wide]] = IToD(b@[[k]],
 # CHECK-NEXT: Double b@[[square]] = Mul(b@[[wide]], b@[[wide]],
 # CHECK-NOT: Equal(b@[[square]], b@[[square]]
-# CHECK: Int32 b@[[isInside]] = Above(b@[[length]], b@[[k]], {{*}}:PutArrayElement)
-# CHECK-NEXT: Branch(b@[[isInside]], Terminal,
-# CHECK-NEXT: Successors: Then:#[[store]], Else:Unlikely:#
-# CHECK-NEXT: BB#[[store]]:
+# CHECK-NOT: Above(
 # CHECK: Store(b@[[square]], b@{{*}}, ControlDependent|Writes:indexedDoubleProperties, {{*}}:PutArrayElement)
 # CHECK: Branch(b@{{*}}, Terminal, {{*}}:Less)
 # CHECK-LABEL: end of loop
@@ -101,6 +98,6 @@ function f1 name="squares" module=m0 flags=[IsChecked, HasExplicitName] length=1
 # CALLS: stub NewArrayWithLength.Double x1
 # CALLS-NOT: stub NewArray
 # CALLS: f{{*}}: size=
-# One loop, a turn at a time: each turn keeps the test of the index and polls.
-# X64: loop #{{*}}, instructions: 7, patchpoints: 1, polls: 1, {{*}} steps by 1
-# ARM64: loop #{{*}}, instructions: 6, patchpoints: 1, polls: 1, {{*}} steps by 1
+# The list has the length it was made with, and the loop goes up to that: its one test is the test of the loop.
+# X64: loop #{{*}}, instructions: 6, patchpoints: 0, {{*}} steps by 1
+# ARM64: loop #{{*}}, patchpoints: 0, {{*}} steps by 1

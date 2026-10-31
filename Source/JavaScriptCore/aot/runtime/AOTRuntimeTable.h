@@ -36,6 +36,7 @@ enum class BrokenClaim : uint32_t {
     LoadMayMove,
     ValueIsInRange,
     ComparisonIsDecided,
+    CounterStepsAsTold,
 };
 
 #if ASAN_ENABLED && CPU(X86_64) && OS(LINUX)
@@ -167,6 +168,7 @@ constexpr std::optional<RemovableFeature> featureOf(Entry entry)
     case Entry::operationAOTRegExpMatchLiteral:
     case Entry::operationAOTRegExpMatchLiteralWithoutObject:
     case Entry::operationAOTRegExpMatchFlatProgram8:
+    case Entry::operationAOTRegExpMatchFlatProgram16:
     case Entry::operationAOTNewRegExpLiteral:
     case Entry::operationAOTSharedRegExpLiteral:
     case Entry::operationAOTNewRegExp:
@@ -175,6 +177,7 @@ constexpr std::optional<RemovableFeature> featureOf(Entry entry)
     case Entry::operationAOTStringReplaceRegExp:
     case Entry::operationAOTStringReplaceAllRegExp:
     case Entry::operationAOTStringReplaceRegExpString:
+    case Entry::operationAOTStringReplaceRegExpWithFunction:
     case Entry::operationAOTStringSplitRegExp:
     case Entry::operationAOTStringMatchRegExp:
     case Entry::operationAOTStringSearchRegExp:
@@ -205,6 +208,8 @@ static_assert(isOperation(Entry::operationArrayIndexOfValueInt32OrContiguous) &&
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTReportPoisonedAccess, void, (Instance*, void* address, uint32_t sizeAndIsStore, void* const* stackPointer));
 #endif
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, (VM*, Instance*));
+// Stands in its place in the table of an image that shares realms.
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandlerAmongImages, UGPRPair, (VM*, Instance*));
 // How far the stack pointer at the stack check of a frame without a record is below the return address of the frame. Zero for a frame that has a record.
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTBytesAllocatedAtPrologueCheck, UGPRPair, (Instance*, const void* returnAddress));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTFindLandingOfMisfit, void*, (Instance*, void* returnAddress, EncodedJSValue misfit));

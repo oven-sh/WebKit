@@ -6,8 +6,8 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-layout L0 kind=Environment name="private" fields=[{key=@"sum.0" declared={type=anything}}]
-layout L1 kind=Environment name="observed" fields=[{key=@"sum.0" declared={type=anything}}]
+layout L0 kind=Environment name="private" fields=[{key=@"sum.0" declared={type=anything} variableName="sum"}]
+layout L1 kind=Environment name="observed" fields=[{key=@"sum.0" declared={type=anything} variableName="sum"}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = CallDirect function=f1
@@ -77,8 +77,8 @@ function f5 name="observes" kind=Arrow captures=[{type=env L1}] results=[{type=a
     Return v1
 }
 
-# CHECK: variable g0 name="sum.0"{{*}}stores=Never{{*}}reads=NeverRead
-# CHECK: variable g1 name="sum.0"
+# CHECK: variable g0 name="sum"{{*}}stores=Never{{*}}reads=NeverRead
+# CHECK: variable g1 name="sum"
 # CHECK-NOT: variable=g0
 # CHECK: LoopHint
 # CHECK-NOT: variable=g0

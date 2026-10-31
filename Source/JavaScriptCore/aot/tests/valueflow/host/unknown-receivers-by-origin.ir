@@ -6,7 +6,7 @@
 # CHECK: kinds
 # CHECK: 3{{*}}PropGet: parameter of an escaped function
 # CHECK: shapes
-# CHECK: 3{{*}}PropGet: parameter of an escaped function{{*}}an argument of Source, escaped by
+# CHECK: 3{{*}}PropGet: parameter of an escaped function{{*}}an argument of Source, escaped through host node {{*}}, out of group, by CallGroup
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

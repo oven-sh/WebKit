@@ -1,5 +1,5 @@
 # That a variable has been stored holds where a function that reads it is entered. In the body of that function a read names nothing. The copy of the body in a caller begins with a fact, and the read names it: whoever
-# moves the read, or what looks at the value, stays behind where the call stood. A variable that has been stored before every caller is entered needs none
+# moves the read, or what looks at the value, stays behind where the call stood. So it is for a variable that no activation of a caller changes: the caller may run and never get to the call, with the variable never stored
 # FORM: Prepared
 # OPTIONS: heat=OnlyLoopsAreHot
 # RUN: pass InlineCalls VerifyProgram
@@ -13,7 +13,7 @@ function f0 name="reads" results=[{type=number}] {
     v1 = GetStringLength v0
     Return v1
 }
-function f1 name="readsWhatWasStoredBeforeCallers" results=[{type=number}] {
+function f1 name="readsWhatIsStoredOnce" results=[{type=number}] {
     v0 = GetModuleVariable variable=g1
     v1 = GetStringLength v0
     Return v1
@@ -31,7 +31,7 @@ function f2 name="calls" parameters=[{type=boolean}] results=[{type=anything}] {
 # CHECK-NEXT: [[entered]]: fact = Entered function=f0
 # CHECK: = GetModuleVariable fact=[[entered]] variable=g0
 
-function f3 name="callsReaderOfWhatWasStoredBeforeCallers" parameters=[{type=boolean}] results=[{type=anything}] {
+function f3 name="callsReaderOfWhatIsStoredOnce" parameters=[{type=boolean}] results=[{type=anything}] {
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v1 = CallDirect function=f1 [isAlwaysInlined]
@@ -39,6 +39,7 @@ function f3 name="callsReaderOfWhatWasStoredBeforeCallers" parameters=[{type=boo
   b2():
     Return
 }
-# CHECK-LABEL: name="callsReaderOfWhatWasStoredBeforeCallers"
-# CHECK-NOT: Entered
-# CHECK: = GetModuleVariable variable=g1
+# CHECK-LABEL: name="callsReaderOfWhatIsStoredOnce"
+# CHECK: b1():
+# CHECK-NEXT: [[enteredOnce]]: fact = Entered function=f1
+# CHECK: = GetModuleVariable fact=[[enteredOnce]] variable=g1

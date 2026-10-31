@@ -37,6 +37,11 @@
 # REQUIRES: unsanitized-code
 # RUN(NONE): lower-to-b3 optimized f10
 # REQUIRES(NONE): unsanitized-code
+# RUN(IR): pipeline Select
+# RUN(SHARED): lower-to-b3 optimized
+# REQUIRES(SHARED): unsanitized-code
+# RUN(ONCE): lower-to-b3 optimized
+# REQUIRES(ONCE): unsanitized-code
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -213,17 +218,50 @@ function f18 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f11]
 function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 
-# Nine functions are ever handed in, which is too many to tell apart by comparisons, also where numbers would stay in their registers. The call goes by value through the entry that takes any value:
-# the number is boxed for it, and what comes back is unboxed again.
+# Nine functions are ever handed in, which is too many for each place to tell apart by comparisons, and each takes and returns a number in a register. A call by value would box the number, the entry of the callee
+# would take it out of its box, and so again for the result. The place calls the one function that has the arms for all such places: the double stays in its register on the way in and on the way out.
 # CHECK-LABEL: name="apply" role=Source
 # CHECK: Double b@[[value]] = ArgumentReg(
-# CHECK: Int64 b@[[result]] = Patchpoint(b@[[operation]]:Register({{*}}), b@[[boxed]]:Register({{*}}), resultConstraints = Register({{*}}), {{*}}:Call)
-# CHECK: Double b@[[number]] = Phi(
-# CHECK: Double b@[[sum]] = Add(b@[[number]],
+# CHECK-NEXT: Double b@[[result]] = Patchpoint(b@[[value]]:Register({{*}}), b@{{*}}:Register({{*}}), resultConstraints = Register({{*}}), {{*}}:CallDirect)
+# CHECK: Double b@[[sum]] = Add(b@[[result]],
 # CHECK-NEXT: Return(b@[[sum]], Terminal)
 # CHECK-LABEL: end of function
-# There is one call and no comparison of the callee.
+# Nothing is boxed, nothing that comes back is tested or converted, and the place does not look at the word of the closure.
 # NONE-LABEL: name="apply" role=Source
 # NONE-NOT: Reads:AOTSlimClosure_word
-# NONE-NOT: :CallDirect)
+# NONE-NOT: pureFunction
+# NONE-NOT: IToD(
+# NONE-NOT: BitwiseCast(
+# NONE-NOT: AboveEqual(
 # NONE-LABEL: end of function
+
+# The index may lie outside the list, so the place tests for undefined, and the call of undefined throws where it stands, under the name that is written there.
+# IR-LABEL: name="apply"
+# IR-NEXT: b0(v0: undefined|f1|f2|f3|f4|f5|f6|f7|f8|f9, v1: number):
+# IR-NEXT: [[isNoFunction]]: boolean = TypeTest v0 testedType=undefined|null
+# IR-NEXT: TestAndBranch [[isNoFunction]] -> taken [[throws]](), notTaken [[calls]](| 0)
+# IR-NEXT: [[throws]]() frequency=Rare:
+# IR: : never = Call {{*}}, -, v1 calleeName="operation"
+# IR: [[calls]]([[function]]: f1|f2|f3|f4|f5|f6|f7|f8|f9):
+# IR-NEXT: [[result]]: number = CallDirect [[function]], v1 function={{*}}[isNeverInlined]
+# The shared function takes any function and expects the nine: a closure that has got a property or another name since it was made passes no test, and is called as a value behind the arms. No stack trace lists it.
+# IR-LABEL: name="callWithSharedArms" module=- role=OutlinedBody length=2 thisType={type=anything} parameters=[{type=function}, {type=number}] results=[{type=number}]
+# IR-NEXT: b0(v0: function, v1: number):
+# IR-COUNT-9: : boolean = TypeTest {{*}} testedType=f
+# IR: ([[other]]: function) frequency=Unlikely:
+# IR-NEXT: [[boxed]]: anything = Call [[other]], -, v1
+# IR-NEXT: : number = AssumeType [[boxed]] provenType=number
+
+# The nine tests are of one word for nine constants: the word of the closure is loaded once, and an entry of a jump table leads to the arm.
+# SHARED-LABEL: name="callWithSharedArms" role=OutlinedBody
+# SHARED: Int64 b@[[closure]] = ArgumentReg(
+# SHARED-NEXT: Int32 b@[[word]] = Load(b@[[closure]], offset = 12, ControlDependent|Reads:AOTSlimClosure_word,
+# SHARED: Int32 b@[[index]] = Add(b@[[word]],
+# SHARED: Void b@{{*}} = Patchpoint<CloningForbidden>(b@{{*}}:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, Terminal,
+# SHARED-NEXT: Successors: #{{*}}, #{{*}}, #{{*}}, #{{*}}, #{{*}}, #{{*}}, #{{*}}, #{{*}}, #{{*}}, Unlikely:#
+# SHARED-LABEL: end of function
+# ONCE-LABEL: name="callWithSharedArms" role=OutlinedBody
+# ONCE: Reads:AOTSlimClosure_word
+# ONCE-NOT: Reads:AOTSlimClosure_word
+# ONCE-NOT: = Equal(
+# ONCE-LABEL: end of function

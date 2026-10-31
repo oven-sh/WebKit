@@ -467,6 +467,57 @@ void emitTakeYieldAwaitedJob(StubAssembler& jit, const GeneratorJobRegisters& re
     jit.move(TrustedImm32(static_cast<int32_t>(ResumeMode::Next)), mode);
 }
 
+StubSignature signatureOfNewHeapFrame(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
+
+// SavedFrame::createHeapFrame. A heap frame has its words zeroed, because the collector visits all of them.
+void generateNewHeapFrame(StubAssembler& jit)
+{
+    const GPRReg numberOfWords = jit.operand(0);
+    const GPRReg resumeAddress = jit.operand(1);
+    const GPRReg frame = jit.result();
+    const GPRReg allocator = jit.allocateScratch(StubRegister::T9);
+    const GPRReg index = jit.allocateScratch(StubRegister::T10);
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
+    static_assert(hasOneBitSet(MarkedSpace::sizeStep) && sizeof(Allocator) == sizeof(void*) && MarkedSpace::sizeStep == 2 * sizeof(uint64_t) && !(sizeof(SavedFrame) % MarkedSpace::sizeStep));
+    static_assert(SavedFrame::offsetOfKind() == SavedFrame::offsetOfLiveSlotMapOffsetPlusOne() + 4 && SavedFrame::offsetOfFlags() == SavedFrame::offsetOfKind() + 3 && !static_cast<int32_t>(CoroutineKind::Generator) && !static_cast<int32_t>(SavedFrame::Continuation::None));
+    RELEASE_ASSERT(numberOfWords == operationArgumentGPR(1) && resumeAddress == operationArgumentGPR(2));
+    RELEASE_ASSERT(noOverlap(numberOfWords, resumeAddress, frame, allocator, index, scratch, instanceGPR));
+    constexpr ptrdiff_t offsetOfAllocatorWithoutWords = CompleteSubspace::offsetOfAllocatorForSizeStep() + sizeof(SavedFrame) / MarkedSpace::sizeStep * sizeof(Allocator);
+
+    JumpList slowCases;
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), allocator);
+    jit.add32(TrustedImm32(1), numberOfWords, index);
+    jit.urshift32(TrustedImm32(1), index);
+    jit.loadPtr(BaseIndex(allocator, index, CCallHelpers::TimesEight, offsetOfAllocatorWithoutWords), allocator);
+    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+    const AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, frame, allocator, scratch, slowCases);
+    jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.savedFrameHeader)), scratch);
+    jit.store64(scratch, Address(frame));
+    jit.store64(TrustedImm32(0), Address(frame, JSObject::butterflyOffset()));
+    jit.store64(numberOfWords, Address(frame, SavedFrame::offsetOfNumberOfWords()));
+    jit.move(TrustedImm64(static_cast<int64_t>(static_cast<uint64_t>(SavedFrame::isHeapFrameFlag) << 56)), scratch);
+    jit.store64(scratch, Address(frame, SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
+    jit.store64(resumeAddress, Address(frame, SavedFrame::offsetOfResumeAddress()));
+    jit.store64(frame, Address(frame, SavedFrame::offsetOfPromiseOrWaiter()));
+    jit.store64(TrustedImm32(0), Address(frame, SavedFrame::offsetOfPreservedRegister()));
+    jit.store64(TrustedImm32(0), Address(frame, SavedFrame::offsetOfAsyncContext()));
+    jit.move(numberOfWords, index);
+    Label next = jit.label();
+    jit.store64(TrustedImm32(0), BaseIndex(frame, index, CCallHelpers::TimesEight, SavedFrame::offsetOfWords() - static_cast<int32_t>(sizeof(uint64_t))));
+    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), index).linkTo(next, &jit);
+    fenceAfterAllocation(jit);
+    jit.returnToCaller();
+
+    emitLateRefill(jit, refill, slowCases);
+    slowCases.link(&jit);
+    OperationCall call {
+        .returns = OperationCall::Returns::Value,
+        .saves = OperationCall::Saves::CallerSavedRegisters,
+        .checksException = false,
+    };
+    jit.callOperationAndReturn(Entry::operationAOTNewHeapFrame, call);
+}
+
 StubSignature signatureOfNewGenerator(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1) }); }
 
 // createGenerator where InternalFunction::createSubclassStructure finds the Structure that the closure remembers.

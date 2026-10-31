@@ -238,6 +238,13 @@ static bool readUnchangingWordsAgainAtUses(B3::Procedure& proc, Typed::FunctionI
     return changed;
 }
 
+void reportBrokenKnownProperties(B3::Policy& policy, Typed::FunctionID function)
+{
+    policy.reportsBrokenKnownProperty = createSharedTask<void(CCallHelpers&, B3::KnownProperty, B3::Origin)>([function](CCallHelpers& jit, B3::KnownProperty property, B3::Origin origin) {
+        emitReportOfBrokenClaim(jit, property == B3::KnownProperty::Range ? BrokenClaim::ValueIsInRange : BrokenClaim::CounterStepsAsTold, function, Typed::valueOfOrigin(origin));
+    });
+}
+
 void checkClaimsAtRunTime(B3::Policy& policy, Typed::FunctionID function, const SlotsOfCells& slotsOfCells)
 {
     policy.clientPhases.append(B3::ClientPhase {

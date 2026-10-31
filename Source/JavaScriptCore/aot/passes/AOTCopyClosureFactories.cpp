@@ -1401,7 +1401,7 @@ struct Copier {
             return { };
         ExpectedValue result;
         for (const Block& block : function.blocks) {
-            ValueID returned = block.terminator.kind == TerminatorKind::Return ? block.terminator.valueOperand() : ValueID();
+            ValueID returned = block.terminator.kind == TerminatorKind::Return ? block.terminator.valueOperand() : block.terminator.kind == TerminatorKind::ReturnCall ? block.terminator.callOperand() : ValueID();
             ExpectedValue expected = returned ? expectedValueOf(activation, returned, steps) : ExpectedValue();
             if (!expected)
                 continue;
@@ -1474,6 +1474,8 @@ struct Copier {
             return { };
         }
         if (value.opcode == Opcode::GetModuleVariable) {
+            if (FunctionID held = functionHeldBy(value.variable()))
+                return expectClosureOf(held);
             noteStoresOfCodeThatRunsOnce();
             return expectClosureOf(closuresInVariables.get(value.variable().index() + 1));
         }
@@ -1531,11 +1533,8 @@ struct Copier {
     {
         Vector<ExpectedCall> calls;
         const Function& caller = program.at(activation.function);
-        forEachValueOf(caller, [&](ProgramPoint point, ValueID id, const Value& value) {
+        forEachValueOf(caller, [&](ProgramPoint, ValueID id, const Value& value) {
             if (value.opcode != Opcode::Call || caller.at(definitionBehindDeadZoneChecks(caller, value.calleeOperand())).opcode != Opcode::PropGet)
-                return;
-            // A call in tail position ends its block.
-            if (const Terminator& terminator = caller.at(point.block).terminator; terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == id)
                 return;
             if (std::optional<Activation> callee = expectedCalleeOf(activation, value, 0); callee && definesClosureUnderWrittenName(*callee, depth))
                 calls.append({ id, WTF::move(*callee) });
@@ -1653,6 +1652,13 @@ struct Copier {
     void callCopyWhereCalleeIsExpected(IRBuilder& builder, const ExpectedCall& expected)
     {
         Function& caller = builder.function();
+        // `return this.getter(name).setter(name)` in strict code: a call in tail position ends its block, and the test of the callee needs a block behind the call. The copy is pasted in, so no frame is left over.
+        BlockID block = pointOf(caller, expected.call).block;
+        if (const Terminator& terminator = caller.at(block).terminator; terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == expected.call) {
+            // A cast that stands behind the call asks for the type of what it casts.
+            caller.edit(expected.call).type = TypeTable::anything;
+            builder.demoteReturnCall(block);
+        }
         Value call = caller.at(expected.call);
         FunctionID callee = expected.callee.function;
         builder.setOrigin(call.origin());

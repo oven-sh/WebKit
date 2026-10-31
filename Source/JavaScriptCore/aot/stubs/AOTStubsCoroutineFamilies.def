@@ -17,10 +17,12 @@ v(SuspendGenerator, CalledByCode, (Yield, AsyncAwait, AsyncYield, AsyncYieldAfte
 v(StepGenerator, CalledByCode, (IsUnmodifiedGenerator, IsGenerator, IsUnmodified, None), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StepGenerator)
 v(EnterSavedFrame, EnteredByRuntime, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, EnterSavedFrame)
 v(EnterHandlerOfJob, EnteredByRuntime, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, EnterSavedFrame)
+v(EnterGeneratorFrame, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, EnterGeneratorFrame)
 v(RestoreSavedFrameToStack, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RestoreSavedFrameToStack)
 
 // AOTStubsCoroutineSteps.cpp
 v(StepAsyncGenerator, CalledByCode, (InAsyncFunction, InAsyncGenerator, AwaitedInAsyncFunction, AwaitedInAsyncGenerator), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StepAsyncGenerator)
 v(RunAsyncGeneratorStep, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RunAsyncGeneratorStep)
 v(StepAsyncIteratorInEngine, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RunAsyncGeneratorStep)
+v(NewHeapFrame, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewHeapFrame)
 v(NewGenerator, CalledByCode, (Sync, Async), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewGenerator)

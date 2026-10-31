@@ -55,7 +55,7 @@ function f2 name="execTested" parameters=[{type=RegExp}, {type=string}] results=
 # CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=RegExpPrototypeExec/0 builtinCallForm=Prefix prefixLength=2
 # CHECK-NEXT: [[flag2]]: boolean = ResultAt v2
 # CHECK: [[shift2]]: int[0, 1] = ToNumber [[flag2]]
-# CHECK-NEXT: [[tag2]]: i32 = LShift {{*}}, [[shift2]]
+# CHECK-NEXT: [[tag2]]: int[1, 2] = LShift {{*}}, [[shift2]]
 # CHECK: [[start2]]:{{*}}= ResultAt v2 index=6
 # CHECK-NEXT: [[end2]]:{{*}}= ResultAt v2 index=7
 # CHECK-NEXT: [[group2]]: undefined|string = SubstringOrUndefined v1, [[start2]], [[end2]]
@@ -82,7 +82,7 @@ function f3 name="matchComparedWithNull" parameters=[{type=string}, {type=RegExp
     v7 = ElemGet v5, v6
     Return v7
 # CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=StringPrototypeMatch/0 builtinCallForm=Prefix prefixLength=1
-# CHECK: [[tag3]]: i32 = LShift
+# CHECK: [[tag3]]: int[1, 2] = LShift
 # CHECK: [[whole3]]: undefined|string = ResultAt v2 index=2
 # CHECK-NOT: StrictEq
 # CHECK: [[masked3]]:{{*}}= BitAnd [[tag3]], [[absent3]]
@@ -120,7 +120,7 @@ function f5 name="coercibleCheckWithoutTest" parameters=[{type=RegExp}, {type=st
     v5 = ElemGet v3, v4
     Return v5
 # CHECK: builtinCallForm=Prefix prefixLength=2
-# CHECK: [[tag5]]: i32 = LShift
+# CHECK: [[tag5]]: int[1, 2] = LShift
 # CHECK: [[start5]]:{{*}}= ResultAt v2 index=6
 # CHECK-NEXT: [[end5]]:{{*}}= ResultAt v2 index=7
 # CHECK-NEXT: [[group5]]: undefined|string = SubstringOrUndefined v1, [[start5]], [[end5]]
@@ -349,7 +349,7 @@ function f19 name="execOrNull" parameters=[{type=RegExp}, {type=string}, {type=b
   b5():
     Return v1
 # CHECK: builtinCallForm=Prefix prefixLength=2
-# CHECK: [[tag19]]: i32 = LShift
+# CHECK: [[tag19]]: int[1, 2] = LShift
 # CHECK: [[start19]]:{{*}}= ResultAt v3 index=6
 # CHECK-NEXT: [[end19]]:{{*}}= ResultAt v3 index=7
 # CHECK-NEXT: [[group19]]: undefined|string = SubstringOrUndefined v1, [[start19]], [[end19]]

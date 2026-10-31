@@ -3275,6 +3275,10 @@ class YarrGenerator final : public YarrJITInfo {
         bool m_isDeadCode { false };
 #if defined(YARR_FOR_IMAGE)
         InputClaims m_claims;
+        // See planForFailedRuns().
+        bool m_skipsStartsBehindFailedRun { false };
+        std::optional<unsigned> m_failedRunSlot;
+        MacroAssembler::Jump m_hasFailedFromHere;
 #endif
 
         // Currently used in the case of some of the more complex management of
@@ -4943,8 +4947,10 @@ class YarrGenerator final : public YarrJITInfo {
 #if defined(YARR_FOR_IMAGE)
 
         bool savesStartIndex = savesStartIndexInsteadOfCount(op);
-        if (op.m_claims.isInNonBacktrackingAlternative || savesStartIndex) {
-            if (savesStartIndex)
+        if (op.m_claims.isInNonBacktrackingAlternative || savesStartIndex || goesBackByIndex(op)) {
+            if (goesBackByIndex(op))
+                storeToFrame(m_regs.index, term->frameLocation + BackTrackInfoPatternCharacter::beginIndex());
+            else if (savesStartIndex && !op.m_skipsStartsBehindFailedRun)
                 saveIndexReachedAt(op, term->frameLocation + BackTrackInfoPatternCharacter::beginIndex());
             if (isLatin1(ch) || m_charSize != CharSize::Char8) {
                 MacroAssembler::JumpList endsRun;
@@ -4956,6 +4962,8 @@ class YarrGenerator final : public YarrJITInfo {
                     m_jit.jump(nextCharacter);
                 endsRun.link(&m_jit);
             }
+            if (goesBackByIndex(op))
+                storeToFrame(m_regs.index, term->frameLocation + BackTrackInfoPatternCharacter::matchAmountIndex());
             defineReentryLabel(op);
             return;
         }
@@ -5030,15 +5038,21 @@ class YarrGenerator final : public YarrJITInfo {
         if (m_backtrackingState.isEmpty())
             return;
         if (op.m_claims.isInNonBacktrackingAlternative) {
-            restoreIndexFromMatchStart(op);
+            if (!op.m_skipsStartsBehindFailedRun)
+                restoreIndexFromMatchStart(op);
             return;
         }
 #endif
         m_backtrackingState.link(*this, op);
 
 #if defined(YARR_FOR_IMAGE)
+        if (goesBackByIndex(op)) {
+            goBackByIndex(op, term->frameLocation + BackTrackInfoPatternCharacter::beginIndex(), term->frameLocation + BackTrackInfoPatternCharacter::matchAmountIndex());
+            return;
+        }
         if (savesStartIndexInsteadOfCount(op)) {
-            restoreIndexReachedAt(op, term->frameLocation + BackTrackInfoPatternCharacter::beginIndex());
+            if (!op.m_skipsStartsBehindFailedRun)
+                restoreIndexReachedAt(op, term->frameLocation + BackTrackInfoPatternCharacter::beginIndex());
             m_backtrackingState.fallthrough();
             return;
         }
@@ -5142,6 +5156,14 @@ class YarrGenerator final : public YarrJITInfo {
             m_jit.jump(op.m_reentry);
             nonGreedyFailures.link(&m_jit);
         }
+#if defined(YARR_FOR_IMAGE)
+        if (op.m_failedRunSlot)
+            storeToFrame(m_regs.index, *op.m_failedRunSlot);
+        if (op.m_skipsStartsBehindFailedRun) {
+            m_backtrackingState.fallthrough();
+            return;
+        }
+#endif
 
         if (m_decodeSurrogatePairs && !U_IS_BMP(ch)) {
             // subtract countRegister*2 for non-BMP characters
@@ -5643,6 +5665,22 @@ class YarrGenerator final : public YarrJITInfo {
         return true;
     }
 
+    // A greedy run of planForFailedRuns() that gives its units back one at a time keeps where it began and where it stopped, and no count.
+    bool goesBackByIndex(const YarrOp& op) const
+    {
+        return op.m_skipsStartsBehindFailedRun && op.m_term->quantityType == QuantifierType::Greedy && !op.m_term->possessive() && !op.m_claims.isInNonBacktrackingAlternative;
+    }
+
+    void goBackByIndex(YarrOp& op, unsigned beginSlot, unsigned endSlot)
+    {
+        MacroAssembler::Jump hasGivenEverythingBack = m_jit.branch32(MacroAssembler::Equal, m_regs.index, frameAddress().withOffset(beginSlot * sizeof(void*)));
+        m_jit.sub32(MacroAssembler::TrustedImm32(1), m_regs.index);
+        m_jit.jump(op.m_reentry);
+        hasGivenEverythingBack.link(&m_jit);
+        loadFromFrame(endSlot, m_regs.index);
+        m_backtrackingState.fallthrough();
+    }
+
     bool savesStartIndexInsteadOfCount(const YarrOp& op) const
     {
         const PatternTerm& term = *op.m_term;
@@ -5674,8 +5712,10 @@ class YarrGenerator final : public YarrJITInfo {
 #if defined(YARR_FOR_IMAGE)
 
         bool savesStartIndex = savesStartIndexInsteadOfCount(op);
-        if (needsNoMatchCount(op) || savesStartIndex) {
-            if (savesStartIndex)
+        if (needsNoMatchCount(op) || savesStartIndex || goesBackByIndex(op)) {
+            if (goesBackByIndex(op))
+                storeToFrame(m_regs.index, term->frameLocation + BackTrackInfoCharacterClass::beginIndex());
+            else if (savesStartIndex && !op.m_skipsStartsBehindFailedRun)
                 saveIndexReachedAt(op, term->frameLocation + BackTrackInfoCharacterClass::beginIndex());
             MacroAssembler::JumpList endsRun;
             MacroAssembler::JumpList endsRunAfterOneUnit;
@@ -5699,6 +5739,8 @@ class YarrGenerator final : public YarrJITInfo {
                 m_jit.sub32(MacroAssembler::TrustedImm32(1), m_regs.index);
             }
             endsRun.link(&m_jit);
+            if (goesBackByIndex(op))
+                storeToFrame(m_regs.index, term->frameLocation + BackTrackInfoCharacterClass::matchAmountIndex());
             defineReentryLabel(op);
             return;
         }
@@ -5831,7 +5873,8 @@ class YarrGenerator final : public YarrJITInfo {
         if (m_backtrackingState.isEmpty())
             return;
         if (op.m_claims.isInNonBacktrackingAlternative) {
-            restoreIndexFromMatchStart(op);
+            if (!op.m_skipsStartsBehindFailedRun)
+                restoreIndexFromMatchStart(op);
             return;
         }
         RELEASE_ASSERT(!needsNoMatchCount(op));
@@ -5839,8 +5882,13 @@ class YarrGenerator final : public YarrJITInfo {
         m_backtrackingState.link(*this, op);
 
 #if defined(YARR_FOR_IMAGE)
+        if (goesBackByIndex(op)) {
+            goBackByIndex(op, term->frameLocation + BackTrackInfoCharacterClass::beginIndex(), term->frameLocation + BackTrackInfoCharacterClass::matchAmountIndex());
+            return;
+        }
         if (savesStartIndexInsteadOfCount(op)) {
-            restoreIndexReachedAt(op, term->frameLocation + BackTrackInfoCharacterClass::beginIndex());
+            if (!op.m_skipsStartsBehindFailedRun)
+                restoreIndexReachedAt(op, term->frameLocation + BackTrackInfoCharacterClass::beginIndex());
             m_backtrackingState.fallthrough();
             return;
         }
@@ -6002,6 +6050,14 @@ class YarrGenerator final : public YarrJITInfo {
                 m_jit.sub32(MacroAssembler::TrustedImm32(1), m_regs.index);
         }
         nonGreedyFailures.link(&m_jit);
+#if defined(YARR_FOR_IMAGE)
+        if (op.m_failedRunSlot)
+            storeToFrame(m_regs.index, *op.m_failedRunSlot);
+        if (op.m_skipsStartsBehindFailedRun) {
+            m_backtrackingState.fallthrough();
+            return;
+        }
+#endif
 
         // Restore the frontier to where this term began. With per-match widths
         // (unicode) the distance is not derivable from the match count, so it is
@@ -6187,6 +6243,10 @@ class YarrGenerator final : public YarrJITInfo {
         YarrOp& op = m_ops[opIndex];
         PatternTerm* term = op.m_term;
 
+#if defined(YARR_FOR_IMAGE)
+        if (op.m_failedRunSlot)
+            op.m_hasFailedFromHere = m_jit.branch32(MacroAssembler::LessThanOrEqual, m_regs.index, frameAddress().withOffset(*op.m_failedRunSlot * sizeof(void*)));
+#endif
         switch (term->type) {
         case PatternTerm::Type::PatternCharacter:
             switch (term->quantityType) {
@@ -6256,6 +6316,16 @@ class YarrGenerator final : public YarrJITInfo {
         }
     }
     void backtrackTerm(size_t opIndex)
+    {
+        backtrackTermByType(opIndex);
+#if defined(YARR_FOR_IMAGE)
+        // Nothing has been taken, so this goes back as the run does once it has given everything up.
+        if (m_ops[opIndex].m_hasFailedFromHere.isSet())
+            m_backtrackingState.append(m_ops[opIndex].m_hasFailedFromHere);
+#endif
+    }
+
+    void backtrackTermByType(size_t opIndex)
     {
         YarrOp& op = m_ops[opIndex];
         PatternTerm* term = op.m_term;
@@ -10959,7 +11029,9 @@ class YarrGenerator final : public YarrJITInfo {
         storeToFrame(m_regs.regT0, frameLocation);
         m_jit.popToRestore(m_regs.regT0);
         MacroAssembler::JumpList done;
-        if (required.greatestDistance <= greatestRequiredTextDistance) {
+        // A pattern that counts turns can run out of them at a place that the text rules out, as the JIT does: makes an attempt at every place. A text that is absent still answers, since giving up answers as no match does.
+        bool movesStart = !m_containsNestedSubpatterns;
+        if (movesStart && required.greatestDistance <= greatestRequiredTextDistance) {
             m_jit.sub32(MacroAssembler::TrustedImm32(required.greatestDistance), m_regs.index);
             MacroAssembler::Jump isBehindStart = m_jit.branch32(MacroAssembler::GreaterThan, m_regs.index, m_regs.regT0);
             m_jit.move(m_regs.regT0, m_regs.index);
@@ -10985,7 +11057,7 @@ class YarrGenerator final : public YarrJITInfo {
         m_jit.popToRestore(m_regs.regT0);
         generateFailReturn();
         done.link(&m_jit);
-        if (required.knowsUnitsInFront) {
+        if (movesStart && required.knowsUnitsInFront) {
             loadFromFrame(frameLocation, m_regs.regT0);
             m_jit.sub32(MacroAssembler::TrustedImm32(static_cast<int32_t>(claimed) - static_cast<int32_t>(required.leastDistance)), m_regs.regT0);
             generateWalkBackOver(required.asciiMembersInFront, required.allNonASCIICanStandInFront);
@@ -11065,17 +11137,121 @@ class YarrGenerator final : public YarrJITInfo {
         bool hasStartSearch = hasSelectiveStartSearch();
         m_requiredTexts.removeAllMatching([&](const RequiredText& required) {
             if (required.isAllThatMatchesAtEndHold)
-                return false;
+                return m_containsNestedSubpatterns;
             // An attempt that fails within a few units costs less than the code of a search: what pays is a text behind a run.
             return hasStartSearch || required.greatestDistance == required.leastDistance || required.leastDistance > greatestRequiredTextDistance || !canGenerateSharedRoutine(SharedRoutine { requiredTextRoutine(required) });
         });
-        if (!m_requiredTexts.isEmpty() && m_requiredTexts[0].isSilentOnSomeRepeatedAlternative)
+        if (!m_requiredTexts.isEmpty() && (m_requiredTexts[0].isSilentOnSomeRepeatedAlternative || m_requiredTexts[0].allowsEmptyMatchAtEnd))
             m_requiredTexts.clear();
         if (m_requiredTexts.isEmpty())
             return;
         dataLogLnIf(Options::verboseRegExpCompilation(), "Searches for ", m_requiredTexts.size(), " texts that every match holds");
         m_requiredTextFrameLocation = m_callFrameSizeInBytes / sizeof(void*);
         m_callFrameSizeInBytes = alignCallFrameSizeInBytes(m_requiredTextFrameLocation + m_requiredTexts.size() + (m_requiredTexts.size() > 1 ? 1 : 0));
+    }
+
+    // \[.+?\]\(# on a line of a thousand brackets walks from every bracket to the end of the line: the time grows with the square of the length. But once a run without an upper bound has
+    // tried every end up to where its members stop, and the rest has failed at each, a later attempt that enters the run at or in front of that place has only ends that have failed.
+    // That holds where the rest of the search depends on the position alone: no back reference up to the end of the alternative, or of the lookahead that the run lies in, which is never
+    // gone back into. And where each attempt enters the run further right than the one before: nothing but steps of a fixed width stand in front of it, so it is the first choice of
+    // its alternative and in no repeated group.
+    // A pattern with one repeated alternative pays nothing for it: the run that has failed leaves the index where it stopped, not where it began, and the code that goes on to the next
+    // attempt, which counts from the index, skips the starts that have no chance.
+    // With several alternatives a start that one of them has ruled out is still open to the others. There the run keeps the place in a slot of the frame, and fails at once where it is
+    // entered at or in front of it. A greedy run writes the slot when it stops, which is only right if it is sure to go through all its ends: not in a lookahead.
+    // The JIT counts the turns of repeated groups in the attempts that are left out here, and gives a match up by their number.
+    void planForFailedRuns()
+    {
+        if (m_failureReason || m_pattern.eitherUnicode() || m_pattern.sticky() || m_executionMode == ExecutionMode::InlineTest || m_containsNestedSubpatterns)
+            return;
+        auto isRepeatedAlternative = [](const YarrOp& op) {
+            return (op.m_op == YarrOpCode::BodyAlternativeBegin || op.m_op == YarrOpCode::BodyAlternativeNext) && !op.m_alternative->onceThrough();
+        };
+        bool hasOneAlternative = std::ranges::count_if(m_ops, isRepeatedAlternative) == 1;
+        if (!hasOneAlternative && m_frameMode == FrameMode::Omitted)
+            return;
+        auto canFail = [](const YarrOp& op) {
+            if (op.m_op != YarrOpCode::Term)
+                return false;
+            switch (op.m_term->type) {
+            case PatternTerm::Type::NumberedForwardReference:
+            case PatternTerm::Type::NamedForwardReference:
+                return false;
+            case PatternTerm::Type::PatternCharacter:
+            case PatternTerm::Type::CharacterClass:
+                return op.m_term->quantityType == QuantifierType::FixedCount && op.m_term->quantityMaxCount;
+            default:
+                return true;
+            }
+        };
+        auto dependsOnMoreThanPosition = [](const YarrOp& op) {
+            if (op.m_op != YarrOpCode::Term)
+                return false;
+            PatternTerm::Type type = op.m_term->type;
+            return type == PatternTerm::Type::NumberedBackReference || type == PatternTerm::Type::NamedBackReference || type == PatternTerm::Type::DotStarEnclosure;
+        };
+        unsigned slots = 0;
+        unsigned firstSlot = m_callFrameSizeInBytes / sizeof(void*);
+        for (size_t head = 0; head < m_ops.size(); ++head) {
+            if (!isRepeatedAlternative(m_ops[head]))
+                continue;
+            size_t end = m_ops[head].m_nextOp;
+            bool isInLookahead = false;
+            for (size_t i = head + 1; i < end; ++i) {
+                YarrOp& op = m_ops[i];
+                if (preservesClaim(i))
+                    continue;
+                bool isLookaheadWithOneAlternative = op.m_term && op.m_term->type == PatternTerm::Type::ParentheticalAssertion && op.m_direction == Forward && op.m_term->matchDirection() == Forward
+                    && op.m_term->parentheses.disjunction->m_alternatives.size() == 1;
+                // Where a negative lookahead fails to match, the search goes on from the index.
+                if (op.m_op == YarrOpCode::ParentheticalAssertionBegin && isLookaheadWithOneAlternative && !(hasOneAlternative && op.m_term->invert())) {
+                    isInLookahead = true;
+                    end = op.m_nextOp;
+                    continue;
+                }
+                if (op.m_op == YarrOpCode::SimpleNestedAlternativeBegin && isInLookahead && isLookaheadWithOneAlternative)
+                    continue;
+                if (!isCountedAtom(op) || op.m_direction != Forward || op.m_term->quantityMaxCount != quantifyInfinite)
+                    break;
+                auto rest = m_ops.span().subspan(i + 1, end - i - 1);
+                if (std::ranges::none_of(rest, canFail) || std::ranges::any_of(rest, dependsOnMoreThanPosition))
+                    break;
+                bool isGreedy = op.m_term->quantityType == QuantifierType::Greedy;
+                // Behind runs that never go back, an attempt goes one way up to the last run and enters it no further left than the attempt before. That run keeps its place in a slot.
+                if (hasOneAlternative && !isInLookahead && op.m_term->possessive() && m_frameMode != FrameMode::Omitted) {
+                    size_t lastRun = 0;
+                    for (size_t j = i + 1; j < end; ++j) {
+                        const YarrOp& next = m_ops[j];
+                        if (next.m_op != YarrOpCode::Term || next.m_direction != Forward || (next.m_term->type != PatternTerm::Type::PatternCharacter && next.m_term->type != PatternTerm::Type::CharacterClass))
+                            break;
+                        if (next.m_term->quantityType == QuantifierType::FixedCount)
+                            continue;
+                        if (next.m_term->quantityMaxCount != quantifyInfinite)
+                            break;
+                        lastRun = j;
+                        if (!next.m_term->possessive())
+                            break;
+                    }
+                    if (lastRun && std::ranges::any_of(m_ops.span().subspan(lastRun + 1, end - lastRun - 1), canFail))
+                        m_ops[lastRun].m_failedRunSlot = firstSlot + slots++;
+                }
+                if (!hasOneAlternative) {
+                    if (!isGreedy || !isInLookahead)
+                        op.m_failedRunSlot = firstSlot + slots++;
+                    break;
+                }
+                // The index has to be where the run stopped when the search comes back to it.
+                if (op.m_claims.isInNonBacktrackingAlternative && std::ranges::any_of(rest, isCountedAtom))
+                    break;
+                if (isGreedy && !op.m_claims.isInNonBacktrackingAlternative && (needsNoMatchCount(op) || (op.m_term->possessive() && !savesStartIndexInsteadOfCount(op))))
+                    break;
+                op.m_skipsStartsBehindFailedRun = true;
+                break;
+            }
+            head = m_ops[head].m_nextOp - 1;
+        }
+        if (slots)
+            m_callFrameSizeInBytes = alignCallFrameSizeInBytes(firstSlot + slots);
     }
 
     // At the head of the repeated alternatives, with the first one's input claimed. The first attempt begins with the searches. Defines where a new attempt comes in: it makes one comparison as long as every text is known to lie ahead.
@@ -12246,6 +12422,7 @@ public:
 #if CPU(X86_64) || CPU(ARM64)
         planRequiredTextSearches();
 #endif
+        planForFailedRuns();
 #endif
 
         if (Options::dumpDisassembly() || Options::dumpRegExpDisassembly()) [[unlikely]]
@@ -12354,6 +12531,12 @@ public:
             storeToFrame(m_regs.index, m_pattern.initialStartFrameLocation());
             storeToFrame(m_regs.index, m_pattern.noNewlineBeforeFrameLocation());
         }
+#if defined(YARR_FOR_IMAGE)
+        for (const YarrOp& op : m_ops) {
+            if (op.m_failedRunSlot)
+                storeToFrame(MacroAssembler::TrustedImm32(-1), *op.m_failedRunSlot);
+        }
+#endif
 
         generate();
         if (m_disassembler)
@@ -12806,6 +12989,11 @@ public:
 
     void defineReentryLabel(YarrOp& op)
     {
+#if defined(YARR_FOR_IMAGE)
+        // A greedy run has just stopped. It is entered again only after every end from here down has failed.
+        if (op.m_failedRunSlot && op.m_term->quantityType == QuantifierType::Greedy)
+            storeToFrame(m_regs.index, *op.m_failedRunSlot);
+#endif
         op.m_reentry = m_jit.label();
         if (Options::traceRegExpJITExecution()) [[unlikely]] {
             GPRReg indexReg = m_regs.index;

@@ -1,0 +1,133 @@
+# A value that is a primitive or an instance of built-in classes, and behind a type test such an instance alone: a use that only the taken edge leads to sees that.
+# A use behind the other edge, a use that both edges lead to, a value that the test leaves a primitive and a value that may be any object stay as they are.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass PropagateBranchConditions
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="behindEachEdge" parameters=[{type=number|Error|TypeError}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=object
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = PropGet v0 key="message"
+    Return v2
+  b2():
+    Return v0
+# CHECK: Branch v1 -> taken b1(| 0), notTaken b2()
+# CHECK: b1([[object0]]: Error|TypeError):
+# CHECK: = PropGet [[object0]] key="message"
+# CHECK: b2():
+# CHECK: Return v0
+}
+
+function f1 name="inBlocksBelowTheEdge" parameters=[{type=string|Error}, {type=boolean}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=object
+    Branch v2 -> taken b1(), notTaken b4()
+  b1():
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v3 = PropGet v0 key="message"
+    Return v3
+  b3():
+    v4 = PropGet v0 key="cause"
+    Return v4
+  b4():
+    v5 = Undefined
+    Return v5
+# CHECK: Branch v2 -> taken b1(| 0), notTaken b4()
+# CHECK: b1([[object1]]: Error):
+# CHECK: = PropGet [[object1]] key="message"
+# CHECK: = PropGet [[object1]] key="cause"
+}
+
+function f2 name="theEdgeHandsItOnAlready" parameters=[{type=string|Error}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=object
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="message"
+    v4 = PropGet v0 key="cause"
+    v5 = StrictEq v3, v4
+    Return v5
+  b2():
+    v6 = Undefined
+    Return v6
+# CHECK: Branch v1 -> taken b1(| 0), notTaken b2()
+# CHECK: b1(v2: Error):
+# CHECK: = PropGet v2 key="message"
+# CHECK: = PropGet v2 key="cause"
+}
+
+function f3 name="behindTheMergeOfBothEdges" parameters=[{type=string|Error}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=object
+    Branch v1 -> taken b1(), notTaken b1()
+  b1():
+    Return v0
+# CHECK: Branch v1 -> taken b1(), notTaken b1()
+# CHECK: Return v0
+}
+
+function f4 name="anotherEdgeLeadsThereToo" parameters=[{type=string|Error}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = TypeTest v0 testedType=object
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    Return v0
+  b3():
+    v3 = Undefined
+    Return v3
+# CHECK: Branch v2 -> taken b2(), notTaken b3()
+# CHECK: Return v0
+}
+
+function f5 name="theTestLeavesAPrimitive" parameters=[{type=number|string|Error}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v2 = PropGet v0 key="message"
+    Return v2
+# CHECK: Branch v1 -> taken b1(), notTaken b2()
+# CHECK: Return v0
+# CHECK: = PropGet v0 key="message"
+}
+
+function f6 name="instancesOfAnyBuiltInClass" parameters=[{type=undefined|string|Map|Array}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=object
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = PropGet v0 key="size"
+    Return v2
+  b2():
+    v3 = Undefined
+    Return v3
+# CHECK: Branch v1 -> taken b1(| 0), notTaken b2()
+# CHECK: b1([[object6]]: Array|Map):
+# CHECK: = PropGet [[object6]] key="size"
+}
+
+function f7 name="anObjectNobodyKnows" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=object
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = PropGet v0 key="size"
+    Return v2
+  b2():
+    v3 = Undefined
+    Return v3
+# CHECK: Branch v1 -> taken b1(), notTaken b2()
+# CHECK: = PropGet v0 key="size"
+}
+
+function f8 name="aClassAmongAllThatMayCome" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=Date
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v2 = Undefined
+    Return v2
+# CHECK: Branch v1 -> taken b1(), notTaken b2()
+# CHECK: Return v0
+}

@@ -39,6 +39,10 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringHash.h>
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT {
 
 enum class NativeCallDeclarationSource : uint8_t {
@@ -107,14 +111,14 @@ static BuiltinID findConstructorOfHostClass(const BuiltinTable& table, JSGlobalO
     if (callee->inherits<JSFunction>())
         return { };
     VM& vm = realm->vm();
-    for (const BuiltinClassBinding& binding : BuiltinBindings::classesOfHost()) {
+    BuiltinID found;
+    BuiltinBindings::forEachInstanceStructureOfHost(realm, [&](const BuiltinClassBinding& binding, Structure* structure) {
         BuiltinID constructor = table.at(binding.builtinClass).constructor;
-        Structure* structure = constructor && binding.findInstanceStructure ? binding.findInstanceStructure(realm) : nullptr;
-        JSObject* prototype = structure ? structure->storedPrototypeObject() : nullptr;
+        JSObject* prototype = constructor && !found ? structure->storedPrototypeObject() : nullptr;
         if (prototype && prototype->getDirect(vm, vm.propertyNames->constructor) == JSValue(callee))
-            return constructor;
-    }
-    return { };
+            found = constructor;
+    });
+    return found;
 }
 
 // Whoever asks for the description of an accessor of native code gets new function objects for its halves.
@@ -1151,5 +1155,9 @@ JSC_DEFINE_HOST_FUNCTION(constructNativeFunctionUnderValidation, (JSGlobalObject
 }
 
 } } // namespace JSC::AOT
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

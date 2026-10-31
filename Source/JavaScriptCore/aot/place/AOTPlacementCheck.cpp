@@ -46,7 +46,7 @@ namespace JSC { namespace AOT { namespace Typed {
 static_assert(Value::opcodesWithAllocation == OpcodeSet { Opcode::NewClosure, Opcode::NewObject, Opcode::MaterializeEnvironment });
 static_assert(Value::opcodesWithGuardBit == OpcodeSet { Opcode::AreMembersUnchanged });
 static_assert(Value::opcodesWithStaticsOffset == OpcodeSet { Opcode::NewArray, Opcode::NewRegExp, Opcode::SharedRegExpLiteral, Opcode::NewTemplateObject });
-static_assert(Value::opcodesWithRequest == OpcodeSet { Opcode::TryPutByIds, Opcode::NewClass, Opcode::NewTemplateObject, Opcode::DirectEval, Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData, Opcode::CopyDataProperties, Opcode::CopyObject });
+static_assert(Value::opcodesWithRequest == OpcodeSet { Opcode::TryPutByIds, Opcode::NewClass, Opcode::NewTemplateObject, Opcode::DirectEval, Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData, Opcode::NewFormatterWithPattern, Opcode::FormatDateWithPattern, Opcode::FormatNumberWithPattern, Opcode::CopyDataProperties, Opcode::CopyObject });
 
 namespace {
 
@@ -584,7 +584,7 @@ static bool checkShapeNumbers(const PlacementCheckContext& context)
     numbersInRanges.ensureSize(static_cast<size_t>(context.shapes.numberOfShapes()) + 1);
     for (unsigned i = 0; i < context.program.layouts.size(); ++i)
         areValid &= context.expect(tryMarkShapeRange(context, LayoutID(i), numbersInRanges), PlacementRule::ShapeNumbers, LayoutID(i));
-    for (uint32_t number = 1; number <= context.shapes.numberOfShapes(); ++number) {
+    for (uint32_t number = context.shapes.shapesBelow() + 1; number <= context.shapes.numberOfShapes(); ++number) {
         bool isAssigned = context.shapes.isAssigned(number);
         areValid &= context.expect(isAssigned == numbersInRanges.quickGet(number) && context.shapes.shapeCountInRange(number, number) == static_cast<uint32_t>(isAssigned), PlacementRule::ShapeNumbers, context.shapes.shape(number).layout);
     }
@@ -1086,8 +1086,14 @@ static void checkStaticsExtents(const PlacementCheckContext& context)
         if (offset)
             add(*offset, sizeOfStaticsWord);
     }
+    for (size_t module : context.statics.modulesWithRequireCacheValue)
+        add(*context.statics.moduleValueOffsets[module] + sizeOfStaticsWord, sizeOfStaticsWord);
     for (auto& cell : context.statics.moduleBuiltinCells)
         add(cell.offset, sizeOfStaticsWord);
+    for (auto offset : context.statics.moduleNamespaceOffsets) {
+        if (offset)
+            add(*offset, sizeOfStaticsWord);
+    }
     for (auto offset : context.statics.freeCellOffsets) {
         if (offset)
             add(*offset, sizeOfStaticsWord);
@@ -1130,8 +1136,12 @@ static void checkRoots(const PlacementCheckContext& context)
     }
     for (auto offset : context.statics.moduleValueOffsets)
         context.expect(!offset || isRoot(context.statics, *offset), PlacementRule::RootMissing);
+    for (size_t module : context.statics.modulesWithRequireCacheValue)
+        context.expect(isRoot(context.statics, *context.statics.moduleValueOffsets[module] + sizeOfStaticsWord), PlacementRule::RootMissing);
     for (auto& cell : context.statics.moduleBuiltinCells)
         context.expect(isRoot(context.statics, cell.offset), PlacementRule::RootMissing);
+    for (auto offset : context.statics.moduleNamespaceOffsets)
+        context.expect(!offset || isRoot(context.statics, *offset), PlacementRule::RootMissing);
 }
 
 static void checkClearedRanges(const PlacementCheckContext& context)
@@ -1462,6 +1472,8 @@ struct SiteCheck : PlacementCheckContext {
     {
         if (record.data != value.data() || (record.sharedStorageOffset || record.node) != (value.encoding() == DataEncoding::CopyOnWriteArray))
             return false;
+        if (!!record.cellOffset != (value.encoding() == DataEncoding::MadeOnce) || (record.cellOffset && !isRoot(statics, *record.cellOffset)))
+            return false;
         if (record.node)
             return !record.sharedStorageOffset && isStorageOfArray(program.at(record.data).root.as<DataNode::Array>());
         return !record.sharedStorageOffset || isRoot(statics, *record.sharedStorageOffset);
@@ -1475,7 +1487,8 @@ struct SiteCheck : PlacementCheckContext {
             [&](const TemplateObjectRecord& record) { return opcode == Opcode::NewTemplateObject && std::ranges::equal(record.parts, value.templateStrings()); },
             [&](const DirectEvalRecord& record) { return opcode == Opcode::DirectEval && record.scope == value.evalScope() && record.module == program.sourceFunctionOf(function, value).module; },
             [&](const DataRecord& record) { return opcode == Opcode::Data && isDataRequestOf(record, value); },
-            [&](const CollectionDataRecord& record) { return (opcode == Opcode::NewSetFromData || opcode == Opcode::NewMapFromData) && record.data == value.data() && record.hasValues == (opcode == Opcode::NewMapFromData); });
+            [&](const CollectionDataRecord& record) { return (opcode == Opcode::NewSetFromData || opcode == Opcode::NewMapFromData) && record.data == value.data() && record.hasValues == (opcode == Opcode::NewMapFromData); },
+            [&](const FormatPatternRecord& record) { return Value::opcodesWithFormatPattern.contains(opcode) && std::ranges::equal(record.words, value.formatPattern()); });
     }
 
     void checkRequest(ValueID id, const Value& value)
@@ -1722,7 +1735,8 @@ static void checkSites(const PlacementCheckContext& context)
             [](const TemplateObjectRecord&) { return DataID(); },
             [](const DirectEvalRecord&) { return DataID(); },
             [](const DataRecord& record) { return record.data; },
-            [](const CollectionDataRecord& record) { return record.data; });
+            [](const CollectionDataRecord& record) { return record.data; },
+            [](const FormatPatternRecord&) { return DataID(); });
         if (data)
             checkDataTree(context, context.program.at(data).root);
     });
@@ -1751,7 +1765,7 @@ static void collectSiteCacheUses(const PlacementCheckContext& context, FunctionI
             if (!Value::opcodesWithSiteCache.contains(value.opcode))
                 continue;
             unsigned numberUsed = numberOfSiteCachesUsedBy(context.program, context.placement, function, value);
-            if (numberUsed && !mayReadSiteCachesAgain(ensureAnalyses(), block))
+            if (numberUsed && !usesItsSiteCaches(ensureAnalyses(), value, block))
                 numberUsed = 0;
             unsigned numberSet = 0;
             forEachSiteCache(value, [&](SiteCacheID cache) {
@@ -1786,18 +1800,32 @@ static void checkSiteCaches(const PlacementCheckContext& context)
     std::span<const SiteCacheUse> placed = uses.span().first(numberOfPlacedCaches);
     std::span<const SiteCacheUse> sitesWithoutCache = uses.span().subspan(numberOfPlacedCaches);
 
-    for (size_t index = 0; index < placed.size(); ++index) {
-        expect(placed[index].cache.index() == (index ? placed[index - 1].cache.index() + 1 : 0), PlacementRule::SiteCacheNotDistinct, placed[index]);
-        expect(!index || !(positionOf(placed[index]) < positionOf(placed[index - 1])), PlacementRule::SiteCacheOrder, placed[index]);
+    uint32_t numberOfCaches = 0;
+    uint64_t lowestPlacedWeight = UINT64_MAX;
+    const SiteCacheUse* previousOwner = nullptr;
+    for (size_t first = 0; first < placed.size();) {
+        const SiteCacheUse& owner = placed[first];
+        expect(owner.cache.index() == numberOfCaches++, PlacementRule::SiteCacheNotDistinct, owner);
+        expect(!previousOwner || !(positionOf(owner) < positionOf(*previousOwner)), PlacementRule::SiteCacheOrder, owner);
+        previousOwner = &owner;
+        const Function& function = context.program.at(owner.user.function);
+        uint64_t weight = owner.weight.predicted();
+        size_t next = first + 1;
+        for (; next < placed.size() && placed[next].cache == owner.cache; ++next) {
+            const SiteCacheUse& copy = placed[next];
+            expect(copy.user.function == owner.user.function && mayShareSiteCache(function, function.at(owner.user.value), function.at(copy.user.value)), PlacementRule::SiteCacheNotDistinct, copy);
+            weight = std::max(weight, copy.weight.predicted());
+        }
+        lowestPlacedWeight = std::min(lowestPlacedWeight, weight);
+        first = next;
     }
-    context.expect(placed.size() == context.siteCaches.count(), PlacementRule::SiteCacheNotDistinct);
+    context.expect(numberOfCaches == context.siteCaches.count(), PlacementRule::SiteCacheNotDistinct);
 
     if (sitesWithoutCache.empty())
         return;
     expect(context.siteCaches.count() == context.build.limit(LimitID::MaxSiteCaches), PlacementRule::SiteCacheOrder, sitesWithoutCache.front());
-    SiteWeight lowestPlacedWeight = placed.empty() ? 0 : std::ranges::min(placed, { }, [](const SiteCacheUse& use) { return use.weight.predicted(); }).weight;
     for (const SiteCacheUse& use : sitesWithoutCache)
-        expect(placed.empty() || (use.weight <= lowestPlacedWeight).predicted(), PlacementRule::SiteCacheOrder, use);
+        expect(use.weight.predicted() <= lowestPlacedWeight, PlacementRule::SiteCacheOrder, use);
 }
 
 void checkPlacement(const Program& program, const PlacementInputs& inputs, const Placement& placement, const SiteCaches& siteCaches, BuildContext& build)

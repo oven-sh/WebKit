@@ -59,20 +59,21 @@ function f1 name="tax" module=m0 position=40 flags=[IsChecked, HasExplicitName] 
     Return v5
 }
 
-# The object is held in a const of the module. The read loads the variable, then the field off the object: two loads, no test that the variable is initialized, no shape test.
+# The object is held in a const of the module and nothing stores to the field after the literal: the read is the number. One load, of the constant: neither the variable nor the object is read.
 # CHECK-LABEL: name="tax" role=Source
 # CHECK-NEXT: BB#0:
-# CHECK: Int64 b@[[rates]] = Load(b@{{*}}ControlDependent|Reads:ModuleVariables{{*}}:GetModuleVariable)
-# CHECK-NEXT: Double b@[[high]] = Load(b@[[rates]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Int64 b@[[address]] = Patchpoint({{*}}:Double)
+# CHECK-NEXT: Double b@[[high]] = Load(b@[[address]], {{*}}:Double)
 # CHECK-NEXT: Double b@[[amount]] = ArgumentReg(
 # CHECK-NEXT: Double b@[[tax]] = Mul(b@[[amount]], b@[[high]],
 # CHECK-NEXT: Return(b@[[tax]], Terminal)
 # CHECK-LABEL: end of function
 # NONE-LABEL: name="tax" role=Source
 # NONE-NOT: Branch(
-# NONE-NOT: Patchpoint(
+# NONE-NOT: GetModuleVariable
+# NONE-NOT: GetSlot
 # NONE-LABEL: end of function
 # X64-LABEL: name="tax" role=Source
-# X64-NEXT: instructions: 3, patchpoints: 0
+# X64-NEXT: instructions: 2, patchpoints: 1
 # ARM64-LABEL: name="tax" role=Source
-# ARM64-NEXT: instructions: 5, patchpoints: 0
+# ARM64-NEXT: instructions: 3, patchpoints: 1

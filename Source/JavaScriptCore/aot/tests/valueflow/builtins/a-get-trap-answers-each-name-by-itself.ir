@@ -1,0 +1,54 @@
+# const held = { first, second };
+# const proxy = new Proxy({}, { get(target, key) { if (key === "a") return held.first; if (key === "b") return held.second; } });
+# proxy.a(); proxy.b;
+# The trap is followed once for each name that it is asked for, and a read gets what the trap returns for its name. So what `b` answers is not called.
+# The trap is a function of the library: there a block behind a test is entered only with what the test lets through.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK-NOT: unreached f2
+# CHECK: unreached f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Target"
+layout L1 name="Handler" fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Held" fields=[{key="first" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewObject -, v1, v2 layout=L2 fields=[0, 1]
+    v4 = NewClosure v3 function=f1
+    v5 = NewObject -, v4 layout=L1 fields=[0]
+    v6 = Builtin builtin=Proxy
+    v7 = Construct v6, -, v0, v5
+    v8 = PropGet v7 key="a"
+    v9 = Call v8
+    v10 = PropGet v7 key="b"
+    Return v10
+}
+function f1 name="get" kind=Method role=Library captures=[{type=anything}] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = String string="a"
+    v4 = StrictEq v2, v3
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5):
+    v6 = PropGet v0 key="first"
+    Return v6
+  b2(v7):
+    v8 = String string="b"
+    v9 = StrictEq v7, v8
+    Branch v9 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v10):
+    v11 = PropGet v0 key="second"
+    Return v11
+  b4(v12):
+    v13 = Undefined
+    Return v13
+}
+function f2 name="first" results=[{type=anything}] {
+    Return
+}
+function f3 name="second" results=[{type=anything}] {
+    Return
+}

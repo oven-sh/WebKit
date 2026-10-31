@@ -37,12 +37,29 @@ enum class ValidationLevel : uint8_t {
     AtEachPhase,
 };
 
+enum class KnownProperty : uint8_t {
+    Range,
+    Induction,
+};
+
+enum class MoveLeftOutByRegisterAllocator : uint8_t {
+    None,
+    StoreBehindCluster,
+    LoadAheadOfCluster,
+    StoreAheadOfClobber,
+    LoadBehindClobber,
+    StoreBehindSpilledDefinition,
+};
+
 struct ValidationPolicy {
     ValidationLevel level { ValidationLevel::FromOptions };
     bool checksKnownPropertiesAtRunTime { false };
     bool logsMovedLoads { false };
     bool logsDecidedComparisons { false };
     bool keepsOriginsOfAccessesThatTakeTraps { false };
+    // Every read of a spill slot sees the value that the slot stands for, and every read of a register the Tmp that it is read for: AirCheckSpillSlots.h. They change no code.
+    bool checksSpillSlots { false };
+    bool checksAllocatedRegisters { false };
     // These break a phase on purpose, for the tests of the checks.
     bool overlooksWritesOnUnlikelyPaths { false };
     bool overlooksWritesBetweenReadsOfBound { false };
@@ -57,6 +74,8 @@ struct ValidationPolicy {
     bool takesSumsOfNumbersToBeWhole { false };
     bool comparesAllLanesWithSign { false };
     bool setsUpFrameBehindWrites { false };
+    bool overlooksColdUsesOfClustersOverBlocks { false };
+    MoveLeftOutByRegisterAllocator moveLeftOutByRegisterAllocator { MoveLeftOutByRegisterAllocator::None };
 };
 
 enum class RedundancyElimination : uint8_t {
@@ -244,6 +263,8 @@ struct Policy {
     RefPtr<SharedTask<bool(const MemoryValue&, MovedLoad&)>> saysWhatCountsOfMovedLoad;
     // For a phase that puts its own check where it moves loads. `found` and `given` are what the check compared.
     RefPtr<SharedTask<void(CCallHelpers&, const MovedLoad&, GPRReg found, GPRReg given)>> reportsMovedLoad;
+    // What checkKnownProperties() emits where a known property does not hold. It does not return. Null: a breakpoint.
+    RefPtr<SharedTask<void(CCallHelpers&, KnownProperty, Origin)>> reportsBrokenKnownProperty;
     // Whether arrays in that memory are mostly short. Null: none are.
     RefPtr<SharedTask<bool(Procedure&, const HeapRange&)>> holdsMostlyShortArrays;
 

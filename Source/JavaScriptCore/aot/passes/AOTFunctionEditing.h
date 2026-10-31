@@ -24,8 +24,8 @@ class PassRunner;
 using FunctionEdit = ScopedLambda<void(unsigned index, FunctionID, Function&, TaskArenas&)>;
 
 enum class KindOfEdit : uint8_t { Any, Lowering };
-// Nothing: for a pass that changes the records of functions by itself behind its edits. A row also holds what stands in the record.
-enum class BehindEdit : uint8_t { FitAndWriteRow, Nothing };
+// Fit: for a pass that changes the records of functions by itself behind its edits. A row also holds what stands in the record.
+enum class BehindEdit : uint8_t { FitAndWriteRow, Fit };
 
 void editFunctionsInParallelImpl(ProgramEditor&, BuildContext&, KindOfEdit, BehindEdit, std::span<const FunctionID> functions, std::span<const FunctionID> functionsBuiltByEdits, NOESCAPE const FunctionEdit&, NOESCAPE const ScopedLambda<void()>* beside = nullptr);
 

@@ -40,10 +40,12 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     Return v20
 }
 
-# The object is stored where any code finds it, so it is made. What it is given for the field goes through the store by name, which tests it.
+# The object is stored where any code finds it, so it is made. All of this runs once and gets no tests, so the slot holds any value: what the field is given is stored as it is, and the read takes what was stored.
 # CHECK-LABEL: function f0 role=Source
 # CHECK: b@[[given]] = Patchpoint({{*}}:PropGet)
 # CHECK: b@[[pair]] = Patchpoint({{*}}:NewObject)
-# CHECK: Patchpoint(b@[[pair]]:{{*}}b@[[given]]:{{*}}:PropSet)
+# CHECK: Store(b@[[given]], b@[[pair]], offset = 16{{*}}:NewObject)
+# CHECK-NOT: :PropSet)
+# CHECK-NOT: :PropGet)
 # CHECK: Patchpoint({{*}}b@[[pair]]:ColdAny{{*}}:SetGlobalBinding)
 # CHECK-LABEL: end of function f0

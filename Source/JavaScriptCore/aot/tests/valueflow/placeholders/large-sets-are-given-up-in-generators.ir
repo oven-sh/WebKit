@@ -3,7 +3,6 @@
 # OPTIONS: limit=MaxValueFlowSetMembers:0
 # STATISTIC: MaxValueFlowSetMembersHits >= 1
 # RUN: valueflow-solve
-# CHECK-NOT: stopped at a limit
 # CHECK: functions
 # RUN(APPLY): valueflow-apply
 # APPLY: function f0

@@ -92,7 +92,7 @@ public:
     void endBlockAsUnreachable();
 
     void emitSlowPath(ValueID succeeded);
-    void emitTwoWay(Terminator&&);
+    void emitTwoWay(Terminator&&, Vector<Value, 1>&& inFront = { }, Vector<Value, 1>&& behindFastPath = { });
 
     void beginArms();
     // The follower stands in the block that only the taken edge of the branch on the root enters, and nobody else uses what stands in front of it there. Each arm gets a copy of that edge and, behind it, copies of those values and of the follower.
@@ -138,6 +138,7 @@ private:
     ValueID appendFastResult(ValueID member);
     Vector<ValueID, 4> appendOriginalMembers();
     bool isRootListed() const;
+    bool canStandBehindCast(ValueID);
     void retype(ValueID);
     void finishMembers();
     void finishCreatedValues();

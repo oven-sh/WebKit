@@ -38,6 +38,8 @@ namespace JSC { namespace AOT { namespace Typed {
 // The passes whose changes may give this pass something to do.
 const PassSet& passesEnabling(PassID);
 const PassSet& passesThatCanWaitBehind(PassID changer);
+// The passes that do not wait past the end of the rounds.
+const PassSet& impatientPasses();
 // False for a pass that may have something to do in any body.
 bool hasTriggers(PassID);
 // The passes that may have something to do in such a body.
@@ -164,6 +166,25 @@ private:
             passesWithWork.set(static_cast<unsigned>(pass));
             if (recordsChangers) [[unlikely]]
                 notes->changersSinceLastRun[static_cast<unsigned>(pass)] |= passesEnabling(pass);
+        }
+
+        bool isImpatient(PassID pass) const
+        {
+            return passesThatWait.get(static_cast<unsigned>(pass)) && impatientPasses().contains(pass);
+        }
+
+        bool giveWorkToImpatientPasses(const PassBits& passes)
+        {
+            bool gaveWork = false;
+            impatientPasses().forEach([&](PassID pass) {
+                unsigned index = static_cast<unsigned>(pass);
+                if (!passes.get(index) || !passesThatWait.get(index))
+                    return;
+                passesThatWait.clear(index);
+                passesWithWork.set(index);
+                gaveWork = true;
+            });
+            return gaveWork;
         }
 
         void setContents(const BodyContents& newContents, const Function& function)

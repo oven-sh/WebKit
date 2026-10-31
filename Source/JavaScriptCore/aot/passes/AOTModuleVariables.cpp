@@ -21,6 +21,7 @@
 #include "AOTEdgeResults.h"
 #include "AOTEffectSummaries.h"
 #include "AOTEffectsDescription.h"
+#include "AOTEffectsOfAccesses.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowApply.h"
 #include "AOTFlowRecords.h"
@@ -165,6 +166,7 @@ struct ConstantVariableStore {
     VariableID variable;
     KnownValue value;
     std::optional<Vector<KnownValue, 8>> list;
+    std::optional<Vector<ConstantMember, 8>> members;
 };
 
 } // anonymous namespace
@@ -182,11 +184,13 @@ static Vector<ConstantVariableStore> collectConstantStores(const Program& progra
             // The type of what a store stores has to lie inside the type of the variable, so the type has to say the constant.
             KnownValue stored;
             std::optional<Vector<KnownValue, 8>> list;
+            std::optional<Vector<ConstantMember, 8>> members;
             if (value.opcode == Opcode::PutModuleVariable) {
                 stored = knownValueOfType(program.typeOf(program.functions[index], value.valueOperand()));
                 list = findConstantsOfWholeLiteral(program, flow, program.functions[index], value.valueOperand());
+                members = findMembersOfWholeObject(program, flow, program.functions[index], value.valueOperand());
             }
-            stores.append(ConstantVariableStore { value.variable(), stored.isObject() ? KnownValue() : stored, WTF::move(list) });
+            stores.append(ConstantVariableStore { value.variable(), stored.isObject() ? KnownValue() : stored, WTF::move(list), WTF::move(members) });
         });
     });
 }
@@ -202,14 +206,35 @@ static ConstantLists collectListsStoredAlone(const Program& program, const Vecto
     for (const ConstantVariableStore& store : stores) {
         if (store.list && numberOfStores[store.variable.index()] == 1)
             lists.entries.append({ store.variable, Vector<KnownValue>(store.list->span()) });
+        if (store.members && numberOfStores[store.variable.index()] == 1)
+            lists.objects.append({ store.variable, Vector<ConstantMember>(store.members->span()) });
     }
     AOT::sort(lists.entries, { }, &ConstantLists::Entry::variable);
+    AOT::sort(lists.objects, { }, &ConstantLists::ObjectEntry::variable);
     return lists;
 }
 
 ConstantLists collectConstantLists(const Program& program, const FlowResults& flow, BuildContext& build)
 {
     return collectListsStoredAlone(program, collectConstantStores(program, flow, build));
+}
+
+// Whatever names a key and is neither a read of it nor a question about it, where its row in the schema lets it write a property or does not bound what it does.
+// An operation that comes into the schema is in here until its row says otherwise.
+static const OpcodeSet& operationsThatMayStoreUnderTheirKey()
+{
+    static const OpcodeSet opcodes = [] {
+        OpcodeSet result;
+        for (Opcode opcode : allMembersOf<Opcode>) {
+            if (!Value::opcodesWithKey.contains(opcode) || accessOf(opcode) == Access::Read || accessOf(opcode) == Access::Has)
+                continue;
+            if (!effectFactsOf(opcode).staysWithinDeclaredBound || declaredBoundOf(opcode).writes.containsAny({ AbstractHeap::ObjectFields, AbstractHeap::NamedProperties }))
+                result.add(opcode);
+        }
+        RELEASE_ASSERT(result.contains(Opcode::PropSet) && result.contains(Opcode::PropDefine) && result.contains(Opcode::SuperSet));
+        return result;
+    }();
+    return opcodes;
 }
 
 static bool isWrittenByAllocationsAlone(const Field& field)
@@ -221,68 +246,273 @@ static bool isWrittenByAllocationsAlone(const Field& field)
         && field.flow.occupancy == Occupancy::AlwaysFilled && field.flow.stability == everyFlagOf<FieldStability>();
 }
 
+// `const E = {}; E.A = 0; E.B = 1;`. Every store is found by the name, or the type of the field says the one value that any of them stores.
+static bool isWrittenByStoresOfKnownValues(const Program& program, const Field& field)
+{
+    constexpr OptionSet<FieldFlags> flagsOfOtherFields { FieldFlags::IsMethod, FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsHidden, FieldFlags::IsInherited };
+    const LocationFlow& location = field.flow.location;
+    return field.key && !field.flags.containsAny(flagsOfOtherFields) && !field.form.contains(FieldForm::IsAccessor) && !field.declared.isExpected()
+        && location.writers == WriterState::AllKnown && location.initialization != InitializationState::SetAtCreation
+        && field.flow.prototypeName == PrototypeNameState::AbsentOnPrototypes && field.flow.stability == everyFlagOf<FieldStability>()
+        && (location.storeNaming == StoreNaming::EveryStoreNamesLocation || knownValueOfType(program.at(field.declared.written())).isKnown());
+}
+
+// No setter and no read-only property answers for the name, so the store gives the object a property of its own, or a new value to the one it has.
+static bool storeRunsNoCode(const Layout& layout, const Field& field)
+{
+    return !field.form.contains(FieldForm::IsAccessor) && field.flow.prototypeName == PrototypeNameState::AbsentOnPrototypes && field.flow.stability.contains(FieldStability::IsNeverRedefined)
+        && layout.flow.impossibleMutations.containsAll({ ObjectMutation::ChangePrototype, ObjectMutation::ChangeIntegrity });
+}
+
+namespace {
+
+// Follows a new object for as long as nobody can see it without what is stored on the way: no code runs but the code that is followed, nothing is thrown, and nothing is read from an object.
+// `const E = {}; E.A = 0;`, `(function (E) { E[E["A"] = 0] = "A"; })(E = exports.E || (exports.E = {}));`
+class WalkBehindBirth {
+public:
+    WalkBehindBirth(const Program& program, const BitVector& layoutsWalkedBehind, const Layout& layout, std::span<KnownValue> known)
+        : m_program(program)
+        , m_layoutsWalkedBehind(layoutsWalkedBehind)
+        , m_layout(layout)
+        , m_known(known)
+    {
+    }
+
+    void walk(FunctionID id, BlockID block, size_t positionOfBirth)
+    {
+        Names names { m_program.at(id).at(block).values[positionOfBirth] };
+        follow(id, block, positionOfBirth + 1, names);
+    }
+
+private:
+    using Names = Vector<ValueID, 4>;
+
+    static bool isObject(const Function& function, const Names& names, ValueID value)
+    {
+        return names.contains(sameObjectThroughCasts(function, value).valueInFrontOfFacts());
+    }
+
+    bool followStore(const Function& function, const Names& names, const Value& store)
+    {
+        auto receivers = store.receivers() ? m_program.at(store.receivers()).all() : std::nullopt;
+        if (!receivers)
+            return false;
+        for (LayoutID receiver : receivers->value()) {
+            const Layout& layout = m_program.at(receiver);
+            std::optional<uint32_t> field = layout.findField(store.key());
+            if (!field || !storeRunsNoCode(layout, layout.fields[*field]))
+                return false;
+        }
+        if (std::optional<uint32_t> field = isObject(function, names, store.objectOperand()) ? m_layout.findField(store.key()) : std::nullopt)
+            m_known[*field] = knownValueOf(m_program, function, store.valueOperand());
+        return true;
+    }
+
+    // `E[0] = "A"`: above the object lies Object.prototype alone, which takes no index.
+    bool createsElement(const Function& function, const Names& names, const Value& store) const
+    {
+        return isObject(function, names, store.objectOperand()) && isArrayIndex(m_program.typeOf(function, store.propertyOperand())) && m_program.builtins().closesIndexKeys(Builtins::ObjectPrototype)
+            && m_layout.flow.impossibleMutations.containsAll({ ObjectMutation::ChangePrototype, ObjectMutation::ChangeIntegrity, ObjectMutation::RedefineProperty });
+    }
+
+    // Whether the callee comes back with nobody having seen the object. A function is followed once: what calls itself is not a straight line.
+    bool followCall(const Function& function, Names& names, ValueID id, const Value& call)
+    {
+        auto callees = call.callees() ? m_program.at(call.callees()).all() : std::nullopt;
+        if (!callees || !callees->value().builtins.empty() || callees->value().functions.size() != 1)
+            return false;
+        FunctionID calleeID = callees->value().functions[0];
+        const Function& callee = m_program.at(calleeID);
+        bool runsToItsEnd = (callee.kind == FunctionKind::Plain || callee.kind == FunctionKind::Arrow) && !callee.flags.containsAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator });
+        if (!callee.hasBody() || !runsToItsEnd || m_followed.contains(calleeID))
+            return false;
+        m_followed.append(calleeID);
+        Names namesInCallee;
+        for (uint32_t index = 0; index < call.numberOfOperands(); ++index) {
+            if (!call.operand(index) || !isObject(function, names, call.operand(index)))
+                continue;
+            std::optional<uint32_t> parameter = entryParameterOf(callee, call, index);
+            if (!parameter)
+                return false;
+            namesInCallee.append(callee.at(entryBlock).parameters[*parameter]);
+        }
+        std::optional<bool> returnsObject = follow(calleeID, entryBlock, 0, namesInCallee);
+        if (returnsObject.value_or(false))
+            names.append(id);
+        return !!returnsObject;
+    }
+
+    // Where the function returns with nobody having seen the object: whether the object is what it returns.
+    std::optional<bool> follow(FunctionID id, BlockID blockID, size_t position, Names& names)
+    {
+        const Function& function = m_program.at(id);
+        for (size_t numberOfBlocks = 0; numberOfBlocks++ < function.blocks.size(); position = 0) {
+            const Block& block = function.at(blockID);
+            for (; position < block.values.size(); ++position) {
+                const Value& value = function.at(block.values[position]);
+                bool goesOn = false;
+                switch (value.opcode) {
+                case Opcode::PropSet:
+                    goesOn = followStore(function, names, value);
+                    break;
+                case Opcode::ElemSet:
+                case Opcode::ElemDefine:
+                    goesOn = createsElement(function, names, value);
+                    break;
+                case Opcode::Call:
+                    goesOn = followCall(function, names, block.values[position], value);
+                    break;
+                case Opcode::GetModuleVariable:
+                case Opcode::PutModuleVariable:
+                    goesOn = true;
+                    break;
+                case Opcode::NewObject:
+                    // A walk begins here too: a thousand literals in a row are walked behind once, not a thousand times.
+                    goesOn = !m_layoutsWalkedBehind.quickGet(value.layout().index());
+                    break;
+                default:
+                    goesOn = isRematerializable(value) || isCastWithoutTest(value.opcode) || (interpretedOf(value.opcode) == Interpretation::Allocation && declaredBoundOf(value.opcode).isUnobservable());
+                    break;
+                }
+                if (!goesOn)
+                    return std::nullopt;
+            }
+            if (block.terminator.kind == TerminatorKind::Return)
+                return block.terminator.valueOperand() && isObject(function, names, block.terminator.valueOperand());
+            if (block.terminator.kind != TerminatorKind::Jump)
+                return std::nullopt;
+            const Target& next = block.terminator.next();
+            for (size_t index = 0; index < next.arguments.size(); ++index) {
+                if (isObject(function, names, next.arguments[index]))
+                    names.append(function.at(next.block).parameters[index]);
+            }
+            blockID = next.block;
+        }
+        return std::nullopt;
+    }
+
+    const Program& m_program;
+    const BitVector& m_layoutsWalkedBehind;
+    const Layout& m_layout;
+    std::span<KnownValue> m_known;
+    Vector<FunctionID, 4> m_followed;
+};
+
+} // anonymous namespace
+
 static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
 {
     const Program& program = editor.program();
     const ParallelLoops& loops = build.parallelLoops();
     constexpr OptionSet<LayoutFlags> flagsOfOtherLayouts { LayoutFlags::HasHeritage, LayoutFlags::HasMembersWithoutLayout, LayoutFlags::IsTypeParameter, LayoutFlags::IsNeverAllocated, LayoutFlags::IsWrittenUnderDictionaryType, LayoutFlags::IsDerived, LayoutFlags::IsOfCreatedObject };
+    auto isStoredBehindBirth = [&](const Field& field) {
+        return isWrittenByStoresOfKnownValues(program, field);
+    };
     BitVector hasCandidates(program.layouts.size());
+    BitVector hasFieldsStoredBehindBirth(program.layouts.size());
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         const Layout& layout = program.layouts[index];
         bool isLiteral = (layout.kind == LayoutKind::Record || layout.kind == LayoutKind::Container) && !layout.flags.containsAny(flagsOfOtherLayouts);
         bool isFilledByNativeCode = layout.flow.observedUses.contains(ObservedUse::ReachesTypedParse);
-        if (isLiteral && !isFilledByNativeCode && layout.flow.baseState == BaseState::None && program.layoutsBelow(LayoutID(index)).empty() && std::ranges::any_of(layout.fields, isWrittenByAllocationsAlone))
+        if (!isLiteral || isFilledByNativeCode || layout.flow.baseState != BaseState::None || !program.layoutsBelow(LayoutID(index)).empty())
+            continue;
+        if (std::ranges::any_of(layout.fields, isStoredBehindBirth))
+            hasFieldsStoredBehindBirth.quickSet(index);
+        if (hasFieldsStoredBehindBirth.quickGet(index) || std::ranges::any_of(layout.fields, isWrittenByAllocationsAlone))
             hasCandidates.quickSet(index);
     }
     if (hasCandidates.isEmpty())
         return;
 
     // The value is unknown where no primitive constant is listed for the field.
-    using Listing = std::pair<FieldReference, KnownValue>;
-    auto listFields = [&](LayoutID id, Vector<Listing>& found, NOESCAPE const Invocable<KnownValue(uint32_t field)> auto& findValue) {
-        if (!hasCandidates.quickGet(id.index()))
-            return;
+    struct Listing {
+        FieldReference field;
+        KnownValue value;
+        // The slot of a constant is as narrow as the constant, and what a function makes again and again is filled with fewer stores where its slots are alike. There only the reads change.
+        bool keepsTypeOfField { false };
+    };
+    // The values lie at the indexes of their fields, written in one pass over the object. A lookup per field is quadratic in a large literal.
+    using ValuesOfFields = Vector<KnownValue, 16>;
+    auto listFields = [&](LayoutID id, const ValuesOfFields& values, bool listsFieldsOfBirth, bool listsFieldsStoredLater, bool keepsTypes, Vector<Listing>& found) {
         const Layout& layout = program.at(id);
         for (uint32_t field = 0; field < layout.fields.size(); ++field) {
-            if (!isWrittenByAllocationsAlone(layout.fields[field]))
-                continue;
-            KnownValue value = findValue(field);
-            found.append({ { id, field }, value.isObject() ? KnownValue() : value });
+            if (listsFieldsOfBirth && isWrittenByAllocationsAlone(layout.fields[field]) ? true : listsFieldsStoredLater && isStoredBehindBirth(layout.fields[field]))
+                found.append({ { id, field }, values[field].isObject() ? KnownValue() : values[field], keepsTypes });
         }
     };
+    auto valuesOfMembers = [&](const DataNode::Object& object) {
+        const Layout& layout = program.at(object.layout);
+        ValuesOfFields values(layout.fields.size());
+        for (const DataMember& member : object.members | std::views::reverse) {
+            if (std::optional<uint32_t> field = layout.findField(member.key))
+                values[*field] = knownValueOf(member.value);
+        }
+        return values;
+    };
+    auto rootObjectOf = [&](const Value& data) -> const DataNode::Object* {
+        const DataNode::Object* object = program.at(data.data()).root.tryAs<DataNode::Object>();
+        return object && object->layout && hasFieldsStoredBehindBirth.quickGet(object->layout.index()) ? object : nullptr;
+    };
     Vector<Listing> listings = collectInParallel<Listing>(loops, program.functions.size(), [&](unsigned index, Vector<Listing>& found) {
-        forEachListedValue(program, FunctionID(index), { Opcode::NewObject }, [&](BlockID, uint32_t, ValueID, const Value& allocation) {
-            std::span<const uint32_t> listed = allocation.fields();
-            listFields(allocation.layout(), found, [&](uint32_t field) {
-                size_t position = std::ranges::find(listed, field) - listed.begin();
-                // The slot of a constant is as narrow as the constant, and what a function makes again and again is filled with fewer stores where its slots are alike.
-                if (!program.functions[index].isModuleBody() || listed.size() != allocation.numberOfVariadicOperands() || position == listed.size())
-                    return KnownValue();
-                return knownValueOfType(program.typeOf(program.functions[index], allocation.variadicOperands()[position]));
-            });
+        const Function& function = program.functions[index];
+        bool hasBirth = false;
+        forEachListedValue(program, FunctionID(index), { Opcode::NewObject, Opcode::Data }, [&](BlockID, uint32_t, ValueID, const Value& birth) {
+            hasBirth |= birth.opcode == Opcode::NewObject ? hasCandidates.quickGet(birth.layout().index()) : !!rootObjectOf(birth);
         });
+        if (!hasBirth)
+            return;
+        for (uint32_t block = 0; block < function.blocks.size(); ++block) {
+            const BlockValues& values = function.blocks[block].values;
+            for (size_t position = 0; position < values.size(); ++position) {
+                const Value& birth = function.at(values[position]);
+                LayoutID id;
+                ValuesOfFields known;
+                if (birth.opcode == Opcode::NewObject && hasCandidates.quickGet(birth.layout().index())) {
+                    id = birth.layout();
+                    known.grow(program.at(id).fields.size());
+                    std::span<const uint32_t> listed = birth.fields();
+                    for (size_t operand = listed.size() == birth.numberOfVariadicOperands() ? listed.size() : 0; operand--;)
+                        known[listed[operand]] = knownValueOf(program, function, birth.variadicOperands()[operand]);
+                } else if (const DataNode::Object* object = birth.opcode == Opcode::Data ? rootObjectOf(birth) : nullptr) {
+                    id = object->layout;
+                    known = valuesOfMembers(*object);
+                } else
+                    continue;
+                if (hasFieldsStoredBehindBirth.quickGet(id.index()))
+                    WalkBehindBirth(program, hasFieldsStoredBehindBirth, program.at(id), known.mutableSpan()).walk(FunctionID(index), BlockID(block), position);
+                listFields(id, known, birth.opcode == Opcode::NewObject, true, !function.isModuleBody(), found);
+            }
+        }
     });
     listings.appendVector(collectInParallel<Listing>(loops, program.data.size(), [&](unsigned index, Vector<Listing>& found) {
-        forEachDataNodeInPreorder(program.data[index].root, [&](uint32_t, const DataNode& node) {
+        forEachDataNodeInPreorder(program.data[index].root, [&](uint32_t ordinal, const DataNode& node) {
             const DataNode::Object* object = node.tryAs<DataNode::Object>();
-            if (!object || !object->layout)
-                return;
-            listFields(object->layout, found, [&](uint32_t field) {
-                auto member = std::ranges::find(object->members, program.at(object->layout).fields[field].key, &DataMember::key);
-                return member == object->members.end() ? KnownValue() : knownValueOf(member->value);
-            });
+            // Stores may follow the operation that makes the root. Nothing names an object inside while it is made.
+            if (object && object->layout && hasCandidates.quickGet(object->layout.index()))
+                listFields(object->layout, valuesOfMembers(*object), true, !!ordinal, false, found);
         });
     }));
-    AOT::stableSort(listings, { }, &Listing::first);
-    Vector<std::pair<FieldReference, TypeID>> constants;
+    AOT::stableSortInLine(listings, { }, &Listing::field);
+    // A type says which integer, string or boolean, not which fraction: a read of such a field becomes the number itself.
+    struct ConstantField {
+        FieldReference field;
+        TypeID type;
+        KnownValue number;
+    };
+    Vector<ConstantField> constants;
     BitVector keysOfConstants;
+    BitVector keysWithStoresToLookAt;
     BitVector layoutsWithConstants(program.layouts.size());
     for (size_t first = 0; first < listings.size();) {
         size_t end = first;
         bool isOneConstant = true;
-        for (; end < listings.size() && listings[end].first == listings[first].first; ++end)
-            isOneConstant &= listings[end].second.isKnown() && listings[end].second == listings[first].second;
-        auto [reference, value] = listings[first];
+        bool keepsType = false;
+        for (; end < listings.size() && listings[end].field == listings[first].field; ++end) {
+            isOneConstant &= listings[end].value.isKnown() && listings[end].value == listings[first].value;
+            keepsType |= listings[end].keepsTypeOfField;
+        }
+        FieldReference reference = listings[first].field;
+        KnownValue value = listings[first].value;
         first = end;
         if (!isOneConstant)
             continue;
@@ -291,11 +521,62 @@ static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
         if (!constant.isSubsetOf(program.at(field.declared.written()), program))
             continue;
         TypeID narrowed = editor.types().intern(constant);
-        if (narrowed == field.declared.written())
+        bool typeSaysValue = knownValueOfType(constant) == value;
+        bool fieldSaysValue = narrowed == field.declared.written() && typeSaysValue;
+        // Its slot is empty until the store, so a read is typed with `undefined` whatever the field says.
+        if (isStoredBehindBirth(field)) {
+            if (!fieldSaysValue)
+                keysWithStoresToLookAt.set(field.key.index());
+            keepsType = true;
+        } else if (fieldSaysValue)
             continue;
-        constants.append({ reference, narrowed });
+        constants.append({ reference, keepsType ? field.declared.written() : narrowed, typeSaysValue && !keepsType ? KnownValue() : value });
         keysOfConstants.set(field.key.index());
         layoutsWithConstants.quickSet(reference.layout.index());
+    }
+    auto findConstant = [&](LayoutID id, PropertyKeyID key) -> const ConstantField* {
+        std::optional<uint32_t> field = layoutsWithConstants.quickGet(id.index()) ? program.at(id).findField(key) : std::nullopt;
+        auto found = field ? std::ranges::lower_bound(constants, FieldReference { id, *field }, { }, &ConstantField::field) : constants.end();
+        return found != constants.end() && found->field == FieldReference { id, *field } ? &*found : nullptr;
+    };
+    if (!keysWithStoresToLookAt.isEmpty()) {
+        // A store of the same constant changes nothing, whenever it runs. A store to nobody knows which objects is listed by its key, with this bit.
+        constexpr uint32_t isKey = 1u << 31;
+        Vector<uint32_t> changed = collectInParallel<uint32_t>(loops, program.functions.size(), [&](unsigned index, Vector<uint32_t>& found) {
+            // `{ ...{ f: 7 }, ...{ f: y } }`: the literal lists the first value and defines the member again.
+            forEachListedValue(program, FunctionID(index), operationsThatMayStoreUnderTheirKey(), [&](BlockID, uint32_t, ValueID, const Value& store) {
+                if (!store.key() || !keysWithStoresToLookAt.get(store.key().index()))
+                    return;
+                // A store and a definition say what they store, and into what. Of anything else the name alone is known.
+                bool saysWhatItStores = store.opcode == Opcode::PropSet || store.opcode == Opcode::PropDefine;
+                auto receivers = saysWhatItStores && store.receivers() ? program.at(store.receivers()).all() : std::nullopt;
+                if (!receivers) {
+                    found.append(store.key().index() | isKey);
+                    return;
+                }
+                for (LayoutID receiver : receivers->value()) {
+                    const ConstantField* constant = findConstant(receiver, store.key());
+                    if (constant && isStoredBehindBirth(fieldAt(program, constant->field)) && constant->number != knownValueOf(program, program.functions[index], store.valueOperand()))
+                        found.append(constant - constants.begin());
+                }
+            });
+        });
+        BitVector isChanged(constants.size());
+        BitVector keysChanged;
+        for (uint32_t entry : changed) {
+            if (entry & isKey)
+                keysChanged.set(entry & ~isKey);
+            else
+                isChanged.quickSet(entry);
+        }
+        size_t kept = 0;
+        for (size_t position = 0; position < constants.size(); ++position) {
+            const Field& field = fieldAt(program, constants[position].field);
+            if (isChanged.quickGet(position) || (keysChanged.get(field.key.index()) && isStoredBehindBirth(field)))
+                continue;
+            constants[kept++] = constants[position];
+        }
+        constants.shrink(kept);
     }
     if (constants.isEmpty())
         return;
@@ -309,11 +590,7 @@ static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
             if (!type)
                 continue;
             for (LayoutID id : membersOf(program, program.at(type))) {
-                std::optional<uint32_t> field = layoutsWithConstants.quickGet(id.index()) ? program.at(id).findField(access.key()) : std::nullopt;
-                if (!field)
-                    continue;
-                auto found = std::ranges::lower_bound(constants, FieldReference { id, *field }, { }, &std::pair<FieldReference, TypeID>::first);
-                if (found != constants.end() && found->first == FieldReference { id, *field })
+                if (const ConstantField* found = findConstant(id, access.key()))
                     functor(found - constants.begin());
             }
         }
@@ -330,18 +607,39 @@ static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
     BitVector isFound(constants.size());
     Vector<FunctionID> functions;
     for (auto [function, position] : readers) {
-        if (!isFound.quickSet(position))
-            editor.at(constants[position].first).declared.changeType(Proven::byPosition(constants[position].second));
+        if (!isFound.quickSet(position) && constants[position].type != fieldAt(program, constants[position].field).declared.written())
+            editor.at(constants[position].field).declared.changeType(Proven::byPosition(constants[position].type));
         if (functions.isEmpty() || functions.last() != function)
             functions.append(function);
     }
     // A function enters its next schedule with the types that it has, but for what is typed from variables and signatures. An access that may find a narrowed field counts as edited, so its function is typed anew.
-    editFunctionsInParallel(editor, build, functions.span(), [&](unsigned, FunctionID, Function& function, TaskArenas&) {
+    // The receiver is proven to be an object of these layouts, and each holds the same number in a field that is always filled and never changes.
+    auto findNumberRead = [&](const Function& function, const Value& access) {
+        KnownValue number;
+        if (access.opcode != Opcode::PropGet || !access.operand(0))
+            return number;
+        const Type& receiver = program.typeOf(function, access.operand(0));
+        if (!receiver.hasOnlyLayouts())
+            return number;
+        for (LayoutID id : membersOf(program, receiver)) {
+            const ConstantField* found = findConstant(id, access.key());
+            bool isSameNumber = found && found->number.isKnown() && (!number.isKnown() || number == found->number);
+            if (!isSameNumber)
+                return KnownValue();
+            number = found->number;
+        }
+        return number;
+    };
+    editFunctionsInParallel(editor, build, functions.span(), [&](unsigned, FunctionID, Function& function, TaskArenas& arenas) {
         for (const Block& block : function.blocks) {
             for (ValueID id : block.values) {
                 bool findsConstant = false;
                 forEachConstantFoundBy(function, function.at(id), [&](size_t) { findsConstant = true; });
-                if (findsConstant)
+                if (!findsConstant)
+                    continue;
+                if (KnownValue number = findNumberRead(function, function.at(id)); number.isKnown())
+                    becomeConstant(program, function, arenas.types, id, number);
+                else
                     function.edit(id, ValueEdit::Definition);
             }
         }
@@ -954,6 +1252,9 @@ struct Knowledge {
     BitVector made;
     // An object that never changes once it is made: what is read out of it is the same whenever it is read.
     BitVector unchanging;
+    // What MovableCode::isOnlyFilledHere() has answered, by allocation. A body may store to one object thousands of times, and each answer reads all uses of the object.
+    mutable BitVector isKnownWhetherOnlyFilled { };
+    mutable BitVector isOnlyFilled { };
 };
 
 struct CallContext {
@@ -1142,7 +1443,19 @@ struct MovableCode {
     }
 
     // The function allocates the object without a prototype of its own, and does nothing with it but store to it, read from it and keep it.
-    bool isOnlyFilledHere(FunctionAnalyses& analyses, ValueID object) const
+    bool isOnlyFilledHere(FunctionAnalyses& analyses, const Knowledge& known, ValueID object) const
+    {
+        size_t allocation = allocationOf(analyses.function(), object).index();
+        if (!known.isKnownWhetherOnlyFilled.get(allocation)) {
+            known.isKnownWhetherOnlyFilled.ensureSize(known.made.size());
+            known.isOnlyFilled.ensureSize(known.made.size());
+            known.isKnownWhetherOnlyFilled.quickSet(allocation);
+            known.isOnlyFilled.quickSet(allocation, isOnlyFilledByItsUses(analyses, object));
+        }
+        return known.isOnlyFilled.get(allocation);
+    }
+
+    bool isOnlyFilledByItsUses(FunctionAnalyses& analyses, ValueID object) const
     {
         auto fillsReadsOrKeeps = [](Opcode opcode) {
             switch (opcode) {
@@ -1589,7 +1902,7 @@ struct MovableCode {
         // All that was done to an array since the initializer made it has passed these rules, and none of them lets an index become an accessor or the prototype change.
         if (hasOnlyArrays(type, { }) && !hasName && typeOf(function, value.propertyOperand()).isNumber())
             return true;
-        if (function.at(allocationOf(function, object)).opcode != Opcode::NewDictionary || !isOnlyFilledHere(analyses, object)) {
+        if (function.at(allocationOf(function, object)).opcode != Opcode::NewDictionary || !isOnlyFilledHere(analyses, known, object)) {
             bool hasOnlyPlainObjects = type.isObject() && type.hasOnlyLayouts() && std::ranges::all_of(membersOf(program, type), [&](LayoutID id) {
                 return (program.at(id).kind == LayoutKind::Record || program.at(id).kind == LayoutKind::Container) && !program.at(id).base;
             });
@@ -1599,7 +1912,7 @@ struct MovableCode {
                 return flow.impossibleMutations.containsAll({ ObjectMutation::ChangePrototype, ObjectMutation::ChangeIntegrity, ObjectMutation::RedefineProperty }) && flow.ownAccessorsAreComplete && flow.ownAccessors.isEmpty()
                     && std::ranges::none_of(program.at(id).fields, [](const Field& field) { return field.form.containsAny({ FieldForm::IsAccessor, FieldForm::IsReadOnly, FieldForm::IsNotConfigurable }); });
             };
-            if (!hasOnlyPlainObjects || (!std::ranges::all_of(membersOf(program, type), isKnownToStayPlain) && !isOnlyFilledHere(analyses, object)))
+            if (!hasOnlyPlainObjects || (!std::ranges::all_of(membersOf(program, type), isKnownToStayPlain) && !isOnlyFilledHere(analyses, known, object)))
                 return false;
         }
         // The setter of __proto__ does nothing with what is neither an object nor null.

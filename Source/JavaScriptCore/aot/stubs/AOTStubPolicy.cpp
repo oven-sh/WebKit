@@ -18,10 +18,12 @@
 #include "AOTPropertyCachesFront.h"
 #include "AOTRegExpRequests.h"
 #include "AOTRegExpSummary.h"
+#include "AOTRemovableFeature.h"
 #include "AOTSlotPlan.h"
 #include "AOTStringUses.h"
 #include "AOTWasmModules.h"
 #include "YarrFlags.h"
+#include <algorithm>
 #include <array>
 #include <span>
 
@@ -35,6 +37,7 @@ StubOptions StubOptions::from(const RecordedOptions& recorded, const Typed::Prog
         .imageHasWebAssembly = mayHaveWebAssemblyModules(program),
         .hasOneInstance = flow.programInstances() == Typed::ProgramInstances::AtMostOne,
         .callsTrapsOfProxies = flow.mayRunUnseenCode() || !flow.loadsOfMachineCode().empty() || !flow.usesOf(Builtins::Proxy).isEmpty() || !flow.usesOf(Builtins::ProxyRevocable).isEmpty(),
+        .matchesRegExps = flow.mayRunUnseenCode() || std::ranges::any_of(flow.featureUses(), [](const auto& use) { return use.feature == static_cast<uint32_t>(RemovableFeature::RegExp); }),
         .validates = recorded.validates,
         .checksProofs = recorded.validates || recorded.has(TestingSwitch::CheckProofsAtRunTime),
         .countsAllocations = recorded.countsBranches,
@@ -105,6 +108,45 @@ void addExpectedFieldTableEntries(StubPolicy& policy, const Typed::Program& prog
         if (count * 2 > layoutsWithName.get(name))
             policy.expectedFieldTableEntries.add(name, bits);
     }
+}
+
+void chooseOrderOfFieldTableForms(StubPolicy& policy, const Typed::Program& program, const Typed::SlotPlan& slots, const KeyUses& uses)
+{
+    // By key: in how many layouts the field is a JSValue in the cell, a JSValue in the Extension, a double in the cell, anything else.
+    enum Place : uint8_t { InCell, InExtension, DoubleInCell, Elsewhere, NumberOfPlaces };
+    Vector<std::array<uint32_t, NumberOfPlaces>> layoutsByKey(FillWith { }, uses.byKey.size(), std::array<uint32_t, NumberOfPlaces> { });
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        Typed::LayoutID id(index);
+        if (!slots.holdsCompiledObjects(id))
+            continue;
+        const auto& fields = program.at(id).fields;
+        for (uint32_t field = 0; field < fields.size(); ++field) {
+            size_t key = fields[field].key.index();
+            const Typed::PlacedSlot& slot = slots.slot(id, field);
+            if (key >= layoutsByKey.size() || !slot.hasStorage())
+                continue;
+            bool isValue = slot.representation == SlotRepresentation::JSValue || slot.representation == SlotRepresentation::Cell;
+            bool isDoubleInCell = traitsOf(slot.representation).valueKind == SlotValueKind::Double && !slot.isOutOfLine();
+            ++layoutsByKey[key][isDoubleInCell ? DoubleInCell : !isValue ? Elsewhere : slot.isOutOfLine() ? InExtension : InCell];
+        }
+    }
+    // A place that reads the name counts for each form by the share of the layouts that have it.
+    std::array<double, NumberOfPlaces> reads { };
+    for (size_t key = 0; key < layoutsByKey.size(); ++key) {
+        const auto& layouts = layoutsByKey[key];
+        double total = layouts[InCell] + layouts[InExtension] + layouts[DoubleInCell] + layouts[Elsewhere];
+        if (!total)
+            continue;
+        // A read under a key that the build does not know may ask for any name, so each name counts once by itself.
+        const auto& usesOfKey = uses.byKey[key].usesByAccess;
+        double places = 1 + usesOfKey[static_cast<size_t>(Typed::Access::Read)] + usesOfKey[static_cast<size_t>(Typed::Access::Has)];
+        for (unsigned place = 0; place < NumberOfPlaces; ++place)
+            reads[place] += places * (layouts[place] / total);
+    }
+    // It saves two tests on the one side and costs one on the other.
+    policy.readsTestOutOfLineValuesSecond = 2 * reads[InExtension] > reads[Elsewhere] + reads[DoubleInCell];
+    // A double is the last form asked for: that saves six tests and costs one.
+    policy.readsTestDoublesSecond = 6 * reads[DoubleInCell] > reads[Elsewhere] + reads[InExtension];
 }
 
 void addRegExpLiterals(StubPolicy& policy, const RegExpRequests& requests, bool legacyStaticsMayBeRead, BuildContext& context)

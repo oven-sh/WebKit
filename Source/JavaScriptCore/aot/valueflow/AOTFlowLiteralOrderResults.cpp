@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCFG.h"
+#include "AOTFlowSiteData.h"
 #include "AOTNameClass.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTSort.h"
@@ -49,8 +50,16 @@ struct Literal {
     Vector<LiteralPiece, 4> pieces;
 };
 
+struct CopiedLiteral {
+    LayoutID layout;
+    KeyOrder order;
+
+    friend bool operator==(const CopiedLiteral&, const CopiedLiteral&) = default;
+};
+
 struct CopiedObjects {
     Vector<LayoutID, 2> layouts;
+    Vector<CopiedLiteral, 1> literals;
     bool mayHaveNoKeys { false };
 };
 
@@ -145,19 +154,66 @@ struct LiteralOrderSolver {
     Vector<Vector<uint32_t>> readersOfLayout = Vector<Vector<uint32_t>>(layouts.size());
     Vector<LiteralKeyOrders> literalOrdersOfLayout = Vector<LiteralKeyOrders>(layouts.size());
     BitVector hasOrdersUnread { };
+    FunctionID functionOfCopies { };
+    Vector<const ValueFlowStatement*> copiesBySite { };
 
     const LayoutFlow& flowOf(LayoutID layout) const { return layouts[layout.index()].flow; }
     LayoutID provenBaseOf(LayoutID layout) const { return flowOf(layout).baseState == BaseState::Layout ? flowOf(layout).base : LayoutID(); }
+
+    // Literals are looked at function by function, and one function may copy thousands of times.
+    const ValueFlowStatement* findCopy(FunctionID function, ValueID copy)
+    {
+        if (functionOfCopies != function) {
+            functionOfCopies = function;
+            copiesBySite.shrink(0);
+            for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(function.index())) {
+                if (statement.kind == ValueFlowStatementKind::Operation && statement.opcode == Opcode::CopyDataProperties)
+                    copiesBySite.append(&statement);
+            }
+            AOT::stableSort(copiesBySite, { }, &ValueFlowStatement::site);
+        }
+        auto found = std::ranges::lower_bound(copiesBySite, copy, { }, &ValueFlowStatement::site);
+        return found != copiesBySite.end() && (*found)->site == copy ? *found : nullptr;
+    }
+
+    // `const defaults: O = { a: 1, b: 2 }` beside `const options: Partial<O> = { b: 5 }`: one layout with two orders. Where no object of the layout gets a field once it is created,
+    // a literal has the order that it lists itself.
+    std::optional<KeyOrder> orderListedBy(ValueFlowObjectID object, LayoutID id) const
+    {
+        const ValueFlowUniverse& universe = inputs.universe();
+        const ValueFlowSite* site = universe.siteOf(object);
+        if (!site || site->layout != id || flowOf(id).baseState != BaseState::None || flowOf(id).fieldCreation != FieldCreation::OnlyAtConstruction)
+            return std::nullopt;
+        const Vector<Field>& fields = program.at(id).fields;
+        std::optional<KeyOrder> order;
+        auto list = [&](std::span<const uint32_t> listed) {
+            bool hasOnlyConstantKeys = std::ranges::all_of(listed, [&](uint32_t field) {
+                return !!fields[field].key;
+            });
+            if (!hasOnlyConstantKeys)
+                return;
+            order = KeyOrder(listed.size(), [&](size_t index) {
+                return fields[listed[index]].key;
+            });
+        };
+        const Value& operation = program.at(universe.functionOf(object)).at(site->value);
+        if (site->origin == ValueFlowSiteOrigin::Operation && !site->ordinal && operation.opcode == Opcode::NewObject)
+            list(operation.fields());
+        else if (site->origin == ValueFlowSiteOrigin::DataNode) {
+            forEachDataNodeInPreorder(program.at(operation.data()).root, [&](uint32_t ordinal, const DataNode& node) {
+                if (ordinal == site->ordinal)
+                    list(fieldsFilledBy(program, program.at(id), node.as<DataNode::Object>()).span());
+            });
+        }
+        return order;
+    }
 
     CopiedObjects objectsCopiedBy(FunctionID function, ValueID copy)
     {
         const ValueFlowUniverse& universe = inputs.universe();
         CopiedObjects copied;
-        std::span<const ValueFlowStatement> statements = inputs.bodies().statementsOf(function.index());
-        auto statement = std::ranges::find_if(statements, [&](const ValueFlowStatement& candidate) {
-            return candidate.kind == ValueFlowStatementKind::Operation && candidate.site == copy;
-        });
-        if (statement == statements.end()) {
+        const ValueFlowStatement* statement = findCopy(function, copy);
+        if (!statement) {
             copied.mayHaveNoKeys = true;
             return copied;
         }
@@ -172,7 +228,11 @@ struct LiteralOrderSolver {
             if (kind != ValueFlowObjectKind::Site && kind != ValueFlowObjectKind::Instance)
                 return;
             LayoutID layout = universe.layoutOf(object);
-            if (layout && hasObjectsThatCodeAlters(program.at(layout).kind))
+            if (!layout || !hasObjectsThatCodeAlters(program.at(layout).kind))
+                return;
+            if (std::optional<KeyOrder> order = orderListedBy(object, layout))
+                appendIfAbsent(copied.literals, CopiedLiteral { layout, WTF::move(*order) });
+            else
                 copied.layouts.append(layout);
         });
         AOT::sort(copied.layouts);
@@ -292,18 +352,25 @@ struct LiteralOrderSolver {
     LiteralKeyOrders copyInto(const LiteralKeyOrders& orders, const CopiedObjects& copied, const Value& copy)
     {
         LiteralKeyOrders result;
-        for (LayoutID source : copied.layouts) {
-            for (const KeyOrder& sourceOrder : ordersOf(source)) {
-                for (const KeyOrder& order : orders) {
-                    KeyOrder extended = order;
-                    for (PropertyKeyID key : sourceOrder) {
-                        PropertyKeyKind kind = kindOfKey[key.index()];
-                        if ((kind == PropertyKeyKind::Text || isSymbolKind(kind)) && isCopied(source, key, copy))
-                            appendIfAbsent(extended, key);
-                    }
-                    appendIfAbsent(result, WTF::move(extended));
+        auto copyInOrder = [&](LayoutID source, const KeyOrder& sourceOrder) {
+            for (const KeyOrder& order : orders) {
+                KeyOrder extended = order;
+                for (PropertyKeyID key : sourceOrder) {
+                    PropertyKeyKind kind = kindOfKey[key.index()];
+                    if ((kind == PropertyKeyKind::Text || isSymbolKind(kind)) && isCopied(source, key, copy))
+                        appendIfAbsent(extended, key);
                 }
+                appendIfAbsent(result, WTF::move(extended));
             }
+        };
+        for (const CopiedLiteral& literal : copied.literals) {
+            copyInOrder(literal.layout, literal.order);
+            if (result.size() > maxOrders)
+                return result;
+        }
+        for (LayoutID source : copied.layouts) {
+            for (const KeyOrder& sourceOrder : ordersOf(source))
+                copyInOrder(source, sourceOrder);
             if (result.size() > maxOrders)
                 return result;
         }
@@ -442,7 +509,7 @@ struct LiteralOrderSolver {
             for (const KeyOrder& order : creations[creation].orders)
                 listedOrders.append(&order);
         }
-        AOT::sort(listedOrders, [](const KeyOrder* a, const KeyOrder* b) {
+        AOT::sortInLine(listedOrders, [](const KeyOrder* a, const KeyOrder* b) {
             return std::ranges::lexicographical_compare(*a, *b);
         });
 

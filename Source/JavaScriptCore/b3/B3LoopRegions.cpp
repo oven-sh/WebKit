@@ -113,7 +113,7 @@ IndexSet<BasicBlock*> findRejoiningBlocks(NaturalLoops& loops, const HotRegion& 
     return rejoiningBlocks;
 }
 
-static Vector<BasicBlock*, 8> findExcursionEntries(const HotRegion& region, const HoistPlan& hoisted, const IndexSet<BasicBlock*>& rejoiningBlocks)
+static Vector<FrequentedBlock, 8> findExcursionEntries(const HotRegion& region, const HoistPlan& hoisted, const IndexSet<BasicBlock*>& rejoiningBlocks)
 {
     Vector<FrequentedBlock, 8> edges;
     for (BasicBlock* block : region.blocks) {
@@ -127,21 +127,47 @@ static Vector<BasicBlock*, 8> findExcursionEntries(const HotRegion& region, cons
     std::ranges::stable_sort(edges, { }, [](const FrequentedBlock& edge) {
         return rarityOf(edge.frequency());
     });
-    Vector<BasicBlock*, 8> entries;
-    for (const FrequentedBlock& edge : edges)
-        entries.append(edge.block());
-    return entries;
+    return edges;
 }
 
 template<typename Functor>
 static void forEachSuccessorInExcursion(BasicBlock* block, const HoistPlan& hoisted, const Functor& functor)
 {
     if (hoisted.valuesValidInExcursion.contains(block->last())) {
-        functor(hoisted.likelySuccessors.get(block->last()));
+        functor(FrequentedBlock(hoisted.likelySuccessors.get(block->last())));
         return;
     }
-    for (BasicBlock* successor : block->successorBlocks())
+    for (const FrequentedBlock& successor : block->successors())
         functor(successor);
+}
+
+static IndexSet<BasicBlock*> findShareableBlocks(const HotRegion& region, const HoistPlan& hoisted, const ScopedLambda<bool(Value*)>& isReplacedOnlyInFastLoop)
+{
+    IndexSet<BasicBlock*> result;
+    for (BasicBlock* block : region.blocks) {
+        bool isSame = block != region.header;
+        for (Value* value : *block)
+            isSame &= hoisted.isHoisted(value) ? hoisted.valuesValidInExcursion.contains(value) : !isReplacedOnlyInFastLoop(value);
+        if (isSame)
+            result.add(block);
+    }
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (unsigned i = region.blocks.size(); i--;) {
+            BasicBlock* block = region.blocks[i];
+            if (!result.contains(block))
+                continue;
+            bool staysSame = true;
+            forEachSuccessorInExcursion(block, hoisted, [&](const FrequentedBlock& successor) {
+                staysSame &= successor.block() == region.header || !region.contains(successor.block()) || result.contains(successor.block());
+            });
+            if (!staysSame) {
+                result.remove(block);
+                changed = true;
+            }
+        }
+    }
+    return result;
 }
 
 static void pruneNonRejoiningBlocks(Excursion& excursion, const HotRegion& region, const HoistPlan& hoisted)
@@ -153,8 +179,8 @@ static void pruneNonRejoiningBlocks(Excursion& excursion, const HotRegion& regio
             if (rejoins.contains(block))
                 continue;
             bool reachesHeader = false;
-            forEachSuccessorInExcursion(block, hoisted, [&](BasicBlock* successor) {
-                reachesHeader |= successor == region.header || rejoins.contains(successor);
+            forEachSuccessorInExcursion(block, hoisted, [&](const FrequentedBlock& successor) {
+                reachesHeader |= successor.block() == region.header || rejoins.contains(successor.block()) || excursion.rejoinsFastLoop(block, successor);
             });
             if (reachesHeader)
                 changed |= rejoins.add(block);
@@ -165,10 +191,30 @@ static void pruneNonRejoiningBlocks(Excursion& excursion, const HotRegion& regio
     });
 }
 
-Excursion findExcursion(Procedure& proc, NaturalLoops& loops, const HotRegion& region, const HoistPlan& hoisted)
+static void dropUnreachedSharedBlocks(Excursion& excursion, const HoistPlan& hoisted)
+{
+    IndexSet<BasicBlock*> reached;
+    Vector<BasicBlock*, 8> worklist;
+    for (BasicBlock* block : excursion.blocks) {
+        forEachSuccessorInExcursion(block, hoisted, [&](const FrequentedBlock& successor) {
+            if (excursion.rejoinsFastLoop(block, successor) && reached.add(successor.block()))
+                worklist.append(successor.block());
+        });
+    }
+    while (!worklist.isEmpty()) {
+        forEachSuccessorInExcursion(worklist.takeLast(), hoisted, [&](const FrequentedBlock& successor) {
+            if (excursion.sharedBlocks.contains(successor.block()) && reached.add(successor.block()))
+                worklist.append(successor.block());
+        });
+    }
+    excursion.sharedBlocks = WTF::move(reached);
+}
+
+Excursion findExcursion(Procedure& proc, NaturalLoops& loops, const HotRegion& region, const HoistPlan& hoisted, const ScopedLambda<bool(Value*)>& isReplacedOnlyInFastLoop)
 {
     IndexSet<BasicBlock*> rejoiningBlocks = findRejoiningBlocks(loops, region, hoisted.invalidation);
     Excursion excursion;
+    excursion.sharedBlocks = findShareableBlocks(region, hoisted, isReplacedOnlyInFastLoop);
     IndexSet<BasicBlock*> reached;
     uint64_t numberOfClonedValues = 0;
     auto add = [&](BasicBlock* block) {
@@ -184,11 +230,31 @@ Excursion findExcursion(Procedure& proc, NaturalLoops& loops, const HotRegion& r
         numberOfClonedValues += cost;
         excursion.blocks.append(block);
     };
-    for (BasicBlock* entry : findExcursionEntries(region, hoisted, rejoiningBlocks))
-        add(entry);
-    for (unsigned i = 0; i < excursion.blocks.size(); ++i)
-        forEachSuccessorInExcursion(excursion.blocks[i], hoisted, add);
+    Vector<FrequentedBlock, 8> entries = findExcursionEntries(region, hoisted, rejoiningBlocks);
+    if (!excursion.sharedBlocks.isEmpty()) {
+        auto addUnlikely = [&](const FrequentedBlock& edge) {
+            if (edge.isRare() || excursion.sharedBlocks.contains(edge.block()))
+                return;
+            unsigned numberOfBlocks = excursion.blocks.size();
+            add(edge.block());
+            if (excursion.blocks.size() > numberOfBlocks)
+                excursion.unlikelyBlocks.add(edge.block());
+        };
+        for (const FrequentedBlock& entry : entries)
+            addUnlikely(entry);
+        for (unsigned i = 0; i < excursion.blocks.size(); ++i)
+            forEachSuccessorInExcursion(excursion.blocks[i], hoisted, addUnlikely);
+    }
+    for (const FrequentedBlock& entry : entries)
+        add(entry.block());
+    for (unsigned i = 0; i < excursion.blocks.size(); ++i) {
+        forEachSuccessorInExcursion(excursion.blocks[i], hoisted, [&](const FrequentedBlock& successor) {
+            if (!excursion.rejoinsFastLoop(excursion.blocks[i], successor))
+                add(successor.block());
+        });
+    }
     pruneNonRejoiningBlocks(excursion, region, hoisted);
+    dropUnreachedSharedBlocks(excursion, hoisted);
     return excursion;
 }
 

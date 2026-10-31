@@ -364,6 +364,7 @@ function formatModuleData(module: ModelModule): string {
     `namespace: ${formatBuiltinId(module.namespace)}`,
     `specifier: ${formatString(module.specifier)}`,
     `flags: ${formatBits("ModuleFlags", moduleFlags, flagsOfModule(module))}`,
+    `exports_holding_module_object: &[${module.exportsHoldingModuleObject.map(name => formatBuiltinName(name.number)).join(", ")}]`,
     `exports_held_by_namespace: &[${module.exportsHeldByNamespace.map(name => formatBuiltinName(name.number)).join(", ")}]`,
   ]);
 }

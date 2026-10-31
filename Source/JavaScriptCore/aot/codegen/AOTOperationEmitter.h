@@ -57,6 +57,10 @@ struct CallOptions {
     bool hasLandingOfMisfit { false };
     // Whatever the callee writes, no cell that exists has another header, butterfly or closure word behind it.
     bool convertsNoCells { false };
+    // The caller is suspended as soon as the callee returns, so it has read what it keeps in its saved registers for the last time.
+    bool callerSuspendsAtReturn { false };
+    // The callee reads and writes what this operation does too, which stands behind the one that the call is emitted for.
+    ValueID alsoPerforms { };
 };
 
 struct StubCallResult {
@@ -127,6 +131,7 @@ protected:
 
     Representation resultRepresentationOf(const InlineCall&) const;
     const Type& resultTypeOf(const InlineCall&) const;
+    ValueID resultOf(const InlineCall&) const;
     LBasicBlock missBlockOf(const InlineCall&);
     void finishInlineCall(const InlineCall&, Operand result);
 
@@ -135,6 +140,11 @@ protected:
     Pointer siteCacheAddress(SiteCacheID);
 
     void fail(const OperationContext& context, InternalErrorKind kind) { m_generator.fail(context, kind); }
+
+    // The code that follows acts on something about the cell that it does not test. A validating build tests it first.
+    void checkClaim(std::optional<CellPointer> about, NOESCAPE const Invocable<Condition()> auto& holds);
+    void reportUnlessClaimHolds(std::optional<CellPointer> about, Condition holds);
+    void checkIsCompiledObjectOf(CellPointer, LayoutSetID);
 
     CodeGenerator& m_generator;
     const Program& m_program;
@@ -157,6 +167,12 @@ void OperationEmitter::defineTestByBranching(const ValueContext& value, NOESCAPE
         return;
     }
     branchOnTest(value.branchTargets());
+}
+
+void OperationEmitter::checkClaim(std::optional<CellPointer> about, NOESCAPE const Invocable<Condition()> auto& holds)
+{
+    if (m_generator.validatesOrChecksProofs())
+        reportUnlessClaimHolds(about, holds());
 }
 
 template<typename T>

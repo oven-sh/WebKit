@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTImageOfCellScope.h"
 #include "AOTBuiltinModules.h"
 #include "AOTBuiltinTableRealm.h"
 #include "AOTCheckedFrameCells.h"
@@ -40,6 +41,7 @@
 #include <algorithm>
 #include <limits>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <type_traits>
 #include <wtf/MathExtras.h>
@@ -111,6 +113,31 @@ static_assert(!FunctionTables::canConstruct(functionKindWith({ .callableKind = C
 static_assert(FunctionTables::executableKind(functionKindWith({ .takesNewTarget = true })) == FunctionTables::ExecutableKind::Constructible);
 static_assert(closureWordFlags(functionKindWith({ .takesNewTarget = true })) == ClosureWord::Flags { .takesNewTarget = true });
 
+const Image& imageWithClosureNumber(uint32_t number)
+{
+    const Image* running = Image::current();
+    if (running->programTables().hasClosureNumber(number)) [[likely]]
+        return *running;
+    for (const Image* image = &running->first(); image; image = image->above()) {
+        if (image->programTables().hasClosureNumber(number))
+            return *image;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+uint32_t closureNumberOf(FunctionID function)
+{
+    return programTables().closureNumberOf(function.index());
+}
+
+FunctionID closureFunctionWithNumber(uint32_t number)
+{
+    // The number of a function says something in the image that runs.
+    const ProgramTables& tables = programTables();
+    RELEASE_ASSERT(tables.hasClosureNumber(number));
+    return FunctionID(tables.closureFunctionWithNumber(number));
+}
+
 unsigned functionLengthOf(FunctionID function)
 {
     const ProgramTables& tables = programTables();
@@ -131,14 +158,14 @@ const BoundFunctionData& boundFunctionData(FunctionID function)
     return *found;
 }
 
-static const uint64_t* closureWordsByFunction(const Image& image)
+static const uint64_t* closureWordsByNumber(const Image& image)
 {
-    auto section = image.section<uint64_t>(ImageSection::ClosureWords);
-    return reinterpret_cast<const uint64_t*>(reinterpret_cast<uintptr_t>(section.data()) - image.programTables().closureFunctions.omittedWordCount * sizeof(uint64_t));
+    const ClosureFunctionRangeData& range = image.programTables().closureFunctions;
+    return image.section<uint64_t>(ImageSection::ClosureWords).subspan(range.first - range.omittedWordCount).data() - range.numbersBelow;
 }
 
 FunctionTables::FunctionTables(VM& vm)
-    : words(closureWordsByFunction(*Image::current()))
+    : words(closureWordsByNumber(*Image::current()))
 {
     RELEASE_ASSERT(!Options::useJIT());
     for (unsigned index = 0; index < numberOfExecutables; ++index) {
@@ -155,18 +182,25 @@ NativeExecutable* FunctionTables::executableOf(FunctionID function) const
     return uncheckedDowncast<NativeExecutable>(executables[static_cast<unsigned>(executableKind(functionKindData(function)))].get());
 }
 
+NEVER_INLINE FunctionTables& FunctionTables::createFor(VM& vm)
+{
+    auto& owner = vm.aotState().partsOfRunningImage().functionTables;
+    owner = makeUnique<FunctionTables>(vm);
+    vm.aotState().functionTables = owner.get();
+    return *owner;
+}
+
 FunctionTables& FunctionTables::of(VM& vm)
 {
     RELEASE_ASSERT(vm.hasCompiledCode());
-    auto& tables = vm.aotState().functionTables;
-    if (!tables)
-        tables = makeUnique<FunctionTables>(vm);
-    return *tables;
+    if (auto& tables = vm.aotState().functionTables) [[likely]]
+        return *tables;
+    return createFor(vm);
 }
 
 static ClosureTable& closureTableOf(JSObject* callee)
 {
-    return State::of(callee->structure()->realm()).objects->closures;
+    return (*Instance::owning(callee)->state).objects->closures;
 }
 
 static ASCIILiteral initialNamePrefix(FunctionKindData kind)
@@ -264,14 +298,26 @@ static RecordedCallee& entryOfCallFrom(std::span<RecordedCallee> storage, uintpt
     return storage[1 + (stackPointerOfCaller & storage[0].stackPointerOfCaller) / sizeof(RecordedCallee)];
 }
 
+// The VM has tables for each image that it runs, and an instance reads those of its own image.
+static const Image* imageOf(const VMState& state, const FunctionTables& tables)
+{
+    for (auto& parts : state.parts) {
+        if (parts.functionTables.get() == &tables)
+            return parts.image;
+    }
+    return state.image;
+}
+
 static void setRecordedCalleeStorage(VM& vm, FunctionTables& tables, Vector<RecordedCallee>&& storage)
 {
     tables.recordedCalleeStorage = WTF::move(storage);
     tables.phaseOfLastWalkOfRecordedCallees = std::nullopt;
     VMState& state = vm.aotState();
     Locker locker { state.instancesLock };
-    for (Instance* instance : state.instances)
-        instance->heap.recordedCallees = FunctionTables::recordedCalleesOf(&tables);
+    for (Instance* instance : state.instances) {
+        if (instance->program == imageOf(state, tables))
+            instance->heap.recordedCallees = FunctionTables::recordedCalleesOf(&tables);
+    }
 }
 
 void FunctionTables::recordCallee(VM& vm, const void* stackPointer, JSObject* closure)
@@ -310,7 +356,8 @@ void FunctionTables::recordCallee(VM& vm, const void* stackPointer, JSObject* cl
 
 bool FunctionTables::framesAreNamedByCallee(FunctionID function)
 {
-    return recordsCalleesOf(function) || FunctionDescription(function).recordsCallee();
+    FunctionDescription description(function);
+    return description.recordsCallee() || description.recordsCalleeOnceRenamed();
 }
 
 void FunctionTables::recordCalleesOf(VM& vm, FunctionID closureFunction)
@@ -333,42 +380,41 @@ void FunctionTables::recordCalleesOf(VM& vm, FunctionID closureFunction)
     }
     VMState& state = vm.aotState();
     Locker locker { state.instancesLock };
-    for (Instance* instance : state.instances)
-        makeTailCallsByValuePoll(*instance, isRenamedAtRunTime.load(std::memory_order_acquire));
+    for (Instance* instance : state.instances) {
+        if (instance->program == imageOf(state, *this))
+            makeTailCallsByValuePoll(*instance, isRenamedAtRunTime.load(std::memory_order_acquire));
+    }
 }
 
 // In the lowest bit of the function object: a collection has left the entry in the table. The call that writes the entry anew takes the mark away.
 static constexpr uintptr_t markOfCollection = 1;
-// In the next bit: the function object lies in a frame. The collector visits what is recorded, so the function as it is written stands above the two bits in its place.
-static constexpr uintptr_t markOfClosureInFrame = 2;
-static constexpr unsigned numberOfMarks = 2;
 
-static bool liesInFrame(const RecordedCallee& entry)
+// Compiled code records whatever it was entered through. The collector visits what is recorded, and nobody has seen a function object that lies in a frame.
+static bool liesInFrame(VM& vm, const RecordedCallee& entry)
 {
-    return std::bit_cast<uintptr_t>(entry.closure) & markOfClosureInFrame;
+    return !vm.heap.cage().contains(entry.closure);
 }
 
-static JSObject* closureOnHeapOf(const RecordedCallee& entry)
+static JSObject* closureOnHeapOf(VM& vm, const RecordedCallee& entry)
 {
-    return liesInFrame(entry) ? nullptr : std::bit_cast<JSObject*>(std::bit_cast<uintptr_t>(entry.closure) & ~markOfCollection);
+    return liesInFrame(vm, entry) ? nullptr : std::bit_cast<JSObject*>(std::bit_cast<uintptr_t>(entry.closure) & ~markOfCollection);
 }
 
-static FunctionID sourceFunctionOf(const RecordedCallee& entry)
-{
-    if (liesInFrame(entry))
-        return FunctionID(safeCast<uint32_t>(std::bit_cast<uintptr_t>(entry.closure) >> numberOfMarks));
-    return sourceFunctionOf(*functionOf(closureOnHeapOf(entry)));
-}
-
-std::optional<JSObject*> FunctionTables::recordedCalleeOfCallFrom(const void* stackPointer, FunctionID sourceFunction)
+std::optional<JSObject*> FunctionTables::recordedCalleeOfCallFrom(VM& vm, const void* stackPointer, FunctionID sourceFunction)
 {
     if (!hasRecordedCallees())
         return std::nullopt;
     uintptr_t stackPointerOfCaller = std::bit_cast<uintptr_t>(stackPointer);
     const RecordedCallee& entry = entryOfCallFrom(recordedCalleeStorage.mutableSpan(), stackPointerOfCaller);
-    if (entry.stackPointerOfCaller != stackPointerOfCaller || sourceFunctionOf(entry) != sourceFunction)
+    if (entry.stackPointerOfCaller != stackPointerOfCaller)
         return std::nullopt;
-    return closureOnHeapOf(entry);
+    JSObject* closure = closureOnHeapOf(vm, entry);
+    if (closure && sourceFunctionOf(*functionOf(closure)) != sourceFunction)
+        return std::nullopt;
+    // What bind makes of a closure is a closure too, of a function that is written where the target is. No frame is listed for it: the frames are the target's, whatever it was renamed to.
+    if (closure && functionKindData(*functionOf(closure)).isBound())
+        return std::nullopt;
+    return closure;
 }
 
 SUPPRESS_ASAN std::optional<JSObject*> FunctionTables::calleeKeptInFrame(VM& vm, const void* frameRecordOfCaller, CalleeOfSite site, FunctionID sourceFunction)
@@ -377,15 +423,22 @@ SUPPRESS_ASAN std::optional<JSObject*> FunctionTables::calleeKeptInFrame(VM& vm,
         return std::nullopt;
     auto isFunctionObjectOfFunction = [&](JSCell* cell) {
         std::optional<FunctionID> function = functionOf(cell);
-        return function && sourceFunctionOf(*function) == sourceFunction;
+        // As in recordedCalleeOfCallFrom().
+        return function && sourceFunctionOf(*function) == sourceFunction && !functionKindData(*function).isBound();
+    };
+    auto isCellOnHeap = [&](JSCell* cell) {
+        return cell && !cell->isPreciseAllocation() && HeapUtil::isJSCellStorage(vm.heap, vm.heap.objectSpace().blocks().filter(), cell);
     };
     auto* kept = static_cast<JSCell* const*>(frameRecordOfCaller)[site.wordInFrame()];
     bool liesInFrame = Thread::currentSingleton().stack().contains(kept) || CheckedFrameCells::isInRange(kept);
-    if (!liesInFrame && (!kept || kept->isPreciseAllocation() || !HeapUtil::isJSCellStorage(vm.heap, vm.heap.objectSpace().blocks().filter(), kept)))
+    if (!liesInFrame && !isCellOnHeap(kept))
         return std::nullopt;
-    if (std::optional<uint32_t> field = site.fieldInEnvironment(); field && kept->type() == CompiledEnvironmentType) {
+    // An environment in a frame has no header that says what it is. What its slot holds is asked in its place.
+    if (std::optional<uint32_t> field = site.fieldInEnvironment(); field && (liesInFrame || kept->type() == CompiledEnvironmentType)) {
         SlotData slot = SlotData::decode(*field);
         JSCell* closure = cellInSlot(slot.representation(), reinterpret_cast<const uint8_t*>(kept) + slot.offset, vm.heap.cage().base());
+        if (liesInFrame && !isCellOnHeap(closure))
+            return nullptr;
         return closure && isFunctionObjectOfFunction(closure) ? asObject(closure) : nullptr;
     }
     if (liesInFrame)
@@ -410,7 +463,7 @@ void FunctionTables::visitRecordedCallees(VM& vm, Visitor& visitor, uint64_t pha
     Locker locker { recordedCalleesLock };
     std::span<const RecordedCallee> entries = recordedCallees();
     auto visit = [&](const RecordedCallee& entry) {
-        if (JSObject* closure = closureOnHeapOf(entry); closure && !hasReturned(vm, *this, entry))
+        if (JSObject* closure = closureOnHeapOf(vm, entry); closure && !hasReturned(vm, *this, entry))
             visitor.appendUnbarriered(closure);
     };
     // The GC verifier marks on its own and leaves the state of the real collection alone.
@@ -438,7 +491,7 @@ void FunctionTables::finalizeRecordedCallees(VM& vm, uint64_t phaseOfCollector)
     auto finalize = [&](RecordedCallee& entry) {
         if (!entry.closure)
             return;
-        if (hasReturned(vm, *this, entry) || (!liesInFrame(entry) && !vm.heap.isMarked(closureOnHeapOf(entry)))) {
+        if (hasReturned(vm, *this, entry) || (!liesInFrame(vm, entry) && !vm.heap.isMarked(closureOnHeapOf(vm, entry)))) {
             entry = { 0, nullptr };
             return;
         }
@@ -457,6 +510,14 @@ void FunctionTables::finalizeRecordedCallees(VM& vm, uint64_t phaseOfCollector)
     entryCountAtLastCollection = vm.entryCountFromOutside();
     if (!isInUse && recordedCallees().size() > leastNumberOfRecordedCallees)
         setRecordedCalleeStorage(vm, *this, { });
+}
+
+void FunctionTables::forgetRecordedCalleesIfNotEntered(VM& vm)
+{
+    if (!hasRecordedCallees() || vm.isEntered())
+        return;
+    Locker locker { recordedCalleesLock };
+    zeroSpan(recordedCallees());
 }
 
 
@@ -522,7 +583,7 @@ void didChangeDisplayName(VM& vm, JSObject* closure)
     bool isClassObject = classObject && classObject->classData();
     String text = isClassObject ? String() : ownStringProperty(closure, vm.propertyNames->displayName);
     bool mayHaveDisplayName = isClassObject || !text.isNull();
-    State* state = &State::of(closure->structure()->realm());
+    State* state = &(*Instance::owning(closure)->state);
     Locker locker { tables.namesLock };
     if (!mayHaveDisplayName && !tables.displayNames.contains(sourceFunction))
         return;
@@ -750,40 +811,249 @@ void setComputedFunctionName(VM& vm, JSObject* closure, const Identifier& key, M
     nameFramesOfFunction(vm, closure, name);
 }
 
-JSString* functionSourceText(JSGlobalObject* globalObject, FunctionID function)
+// The entries of the functions that implement the closures of the source.
+static std::span<const FunctionTextEntry> functionTextEntriesOfSource(const ProgramTables& tables, uint32_t source)
+{
+    auto texts = tables.functionTexts();
+    if (texts.empty())
+        return { };
+    std::span entries { tables.at<FunctionTextEntry>(texts[0].entriesOffset), texts[0].numberOfEntries };
+    auto found = std::ranges::equal_range(entries, source, { }, [&](const FunctionTextEntry& entry) { return tables.sourceFunctionOf(entry.function); });
+    return { found.begin(), found.end() };
+}
+
+static std::span<const Latin1Character> bytesOf(const ProgramTables& tables, const FunctionTextEntry& entry)
+{
+    return { tables.at<Latin1Character>(tables.functionTexts()[0].textOffset) + entry.start, entry.end - entry.start };
+}
+
+std::span<const Latin1Character> functionSourceBytes(FunctionID function)
+{
+    const ProgramTables& tables = programTables();
+    std::span entries = functionTextEntriesOfSource(tables, tables.sourceFunctionOf(function.index()));
+    auto entry = std::ranges::find(entries, function.index(), [](const FunctionTextEntry& entry) -> uint32_t { return entry.function; });
+    if (entry == entries.end())
+        return { };
+    return bytesOf(tables, *entry);
+}
+
+std::span<const Latin1Character> functionSourceBytesOfSource(FunctionID source)
+{
+    const ProgramTables& tables = programTables();
+    std::span entries = functionTextEntriesOfSource(tables, source.index());
+    if (entries.empty())
+        return { };
+    return bytesOf(tables, entries.front());
+}
+
+unsigned linesOfTextAboveSource(FunctionID source)
+{
+    std::span constructors = programTables().constructorLines();
+    auto found = std::ranges::lower_bound(constructors, source.index(), { }, &ConstructorLineData::function);
+    return found != constructors.end() && found->function == source.index() ? found->linesOfTextAbove : 0;
+}
+
+// Goes over the characters of text[at, limit) that stand in front of the place, and answers where the first one starts that does not.
+static size_t advanceTo(PlaceOfTextInFile& place, LineColumn wanted, std::span<const uint8_t> text, size_t at, size_t limit)
+{
+    auto isInFront = [&] {
+        return place.line < wanted.line || (place.line == wanted.line && place.column < wanted.column);
+    };
+    auto advanceByCharactersTo = [&](size_t end) {
+        while (at < end && isInFront())
+            at = place.advanceOver(text, at);
+    };
+    std::span characters = byteCast<Latin1Character>(text.first(limit));
+    while (at < limit && isInFront()) {
+        if (place.isBehindCarriageReturn) {
+            at = place.advanceOver(text, at);
+            continue;
+        }
+        // What stands above the line of the place is gone over at once, as far as its line feed or a cut. The column counts for nothing there: each line sets it anew.
+        if (place.line < wanted.line) {
+            size_t lineFeed = std::min(WTF::find(characters, static_cast<Latin1Character>('\n'), at), limit);
+            size_t endOfLine = lineFeed - (lineFeed < limit && lineFeed > at && text[lineFeed - 1] == '\r');
+            std::span line = characters.subspan(at, endOfLine - at);
+            if (WTF::find(line, static_cast<Latin1Character>('\r')) != notFound || WTF::find(line, static_cast<Latin1Character>(0xE2)) != notFound)
+                advanceByCharactersTo(std::min(lineFeed + 1, limit));
+            else if (lineFeed < limit) {
+                place.startLine();
+                at = lineFeed + 1;
+            } else
+                at = limit;
+            continue;
+        }
+        // In the line of the place, each character of ASCII is one column.
+        size_t size = std::min<size_t>({ limit - at, wanted.column - place.column, 64 });
+        uint8_t seen = 0;
+        bool endsLine = false;
+        for (uint8_t byte : text.subspan(at, size)) {
+            seen |= byte;
+            endsLine |= byte == '\n' || byte == '\r';
+        }
+        if (seen < 0x80 && !endsLine) {
+            place.column += static_cast<uint32_t>(size);
+            at += size;
+        } else
+            advanceByCharactersTo(at + size);
+    }
+    return at;
+}
+
+std::optional<PlaceInKeptText> findInKeptText(FunctionID source, ModuleID module, LineColumn wanted)
+{
+    const ProgramTables& tables = programTables();
+    if (tables.functionTexts().empty())
+        return std::nullopt;
+    std::span entries = functionTextEntriesOfSource(tables, source.index());
+    const FunctionTextEntry* entry = entries.empty() ? nullptr : &entries.front();
+    const FunctionTexts& texts = tables.functionTexts()[0];
+    const uint8_t* pieces = tables.at<uint8_t>(texts.piecesOffset);
+    // The last of them belongs to no module.
+    std::span records { tables.at<PiecesOfModule>(texts.modulesWithPiecesOffset), texts.numberOfModulesWithPieces + 1 };
+    auto recordsOfModule = std::ranges::equal_range(records, module.index(), { }, &PiecesOfModule::module);
+    auto behind = std::ranges::partition_point(recordsOfModule, [&](const PiecesOfModule& record) {
+        const uint8_t* cursor = pieces + record.start;
+        return !PieceOfKeptText::read(cursor, { }).startsBehind(wanted);
+    });
+    if (behind == recordsOfModule.begin())
+        return std::nullopt;
+
+    const uint8_t* cursor = pieces + std::prev(behind)->start;
+    const uint8_t* end = pieces + behind->start;
+    PieceOfKeptText piece;
+    const uint8_t* cuts = nullptr;
+    while (cursor < end) {
+        PieceOfKeptText next = PieceOfKeptText::read(cursor, piece);
+        if (next.startsBehind(wanted))
+            break;
+        piece = next;
+        cuts = cursor;
+        while (cursor < end && !(*cursor & 1)) {
+            readVarint(cursor);
+            if (readVarint(cursor) & 1)
+                readVarint(cursor);
+        }
+    }
+
+    // The same text may stand in the file twice, and is held once.
+    size_t startOfSearched = entry ? entry->start : piece.startOfWhole;
+    size_t endOfSearched = entry ? entry->end : piece.endOfWhole;
+    if (startOfSearched < piece.startOfWhole || endOfSearched > piece.endOfWhole)
+        return std::nullopt;
+    std::span text { tables.at<uint8_t>(texts.textOffset), piece.end };
+    PlaceOfTextInFile place { piece.line, piece.column };
+    cursor = cuts;
+    size_t at = piece.start;
+    for (size_t cut = piece.start;;) {
+        bool hasCut = cursor < end && !(*cursor & 1);
+        cut = hasCut ? cut + static_cast<size_t>(readVarint(cursor) >> 1) : piece.end;
+        size_t limit = std::min(cut, endOfSearched);
+        at = advanceTo(place, wanted, text, at, limit);
+        if (at < limit) {
+            if (place.line == wanted.line && place.column == wanted.column && at >= startOfSearched)
+                return PlaceInKeptText { startOfSearched, endOfSearched, at, piece.startOfWhole, piece.endOfWhole };
+            return std::nullopt;
+        }
+        if (!hasCut)
+            return std::nullopt;
+        uint64_t columns = readVarint(cursor);
+        place.advanceOverCut(columns & 1 ? static_cast<uint32_t>(readVarint(cursor)) : 0, static_cast<uint32_t>(columns >> 1));
+    }
+}
+
+std::span<const Latin1Character> sourceBytesOfAllFunctions()
 {
     const ProgramTables& tables = programTables();
     auto texts = tables.functionTexts();
     if (texts.empty())
-        return nullptr;
+        return { };
+    // What follows the text in the image ends it.
+    return { tables.at<Latin1Character>(texts[0].textOffset), texts[0].modulesWithPiecesOffset - texts[0].textOffset };
+}
+
+Vector<TextPrintedInPlace> textPrintedInPlaceOf(ModuleID module, StartOfPrintedText start)
+{
+    return textPrintedInPlaceOf(module, start, 0, std::numeric_limits<size_t>::max());
+}
+
+Vector<TextPrintedInPlace> textPrintedInPlaceOf(ModuleID module, StartOfPrintedText start, size_t from, size_t to)
+{
+    const ProgramTables& tables = programTables();
+    std::span records = tables.modulesWithTextPrintedInPlace();
+    std::span bytes = tables.textPrintedInPlace();
+    if (records.empty() || bytes[0] != static_cast<uint8_t>(start))
+        return { };
+    // The last of them belongs to no module.
+    auto recordsOfModule = std::ranges::equal_range(records, module.index(), { }, &TextPrintedInPlaceOfModule::module);
+    if (recordsOfModule.empty())
+        return { };
+    size_t firstRecord = recordsOfModule.begin() - records.begin();
+    size_t endOfRecords = recordsOfModule.end() - records.begin();
+    auto bytesOf = [&](size_t record) {
+        return bytes.subspan(records[record].start, records[record + 1].start - records[record].start);
+    };
+    auto startOfFirstIn = [&](size_t record) {
+        const uint8_t* cursor = bytesOf(record).data();
+        return readVarint(cursor);
+    };
+    Vector<TextPrintedInPlace> pieces;
+    if (endOfRecords - firstRecord == 1) {
+        TextPrintedInPlace::appendThoseThatStartIn(pieces, bytesOf(firstRecord), 0, 1);
+        if (TextPrintedInPlace::sayFileRunsAsWritten(pieces.span()))
+            return pieces;
+        pieces.shrink(0);
+    }
+    size_t record = *std::ranges::partition_point(std::views::iota(firstRecord, endOfRecords), [&](size_t record) {
+        return startOfFirstIn(record) < from;
+    });
+    if (record > firstRecord)
+        --record;
+    for (; record < endOfRecords && startOfFirstIn(record) < to; ++record)
+        TextPrintedInPlace::appendThoseThatStartIn(pieces, bytesOf(record), from, to);
+    return pieces;
+}
+
+JSString* functionSourceText(JSGlobalObject* globalObject, FunctionID function)
+{
     VM& vm = globalObject->vm();
     FunctionTables::TextsByFunction& answered = FunctionTables::of(vm).sourceTexts;
     if (auto found = answered.find(function); found != answered.end()) {
         if (JSString* text = found->value.get())
             return text;
     }
-    std::span entries { tables.at<FunctionTextEntry>(texts[0].entriesOffset), texts[0].numberOfEntries };
-    auto entry = std::ranges::lower_bound(entries, function.index(), { }, &FunctionTextEntry::function);
-    if (entry == entries.end() || entry->function != function.index())
+    std::span bytes = functionSourceBytes(function);
+    if (!bytes.data())
         return nullptr;
-    std::span bytes { tables.at<Latin1Character>(texts[0].textOffset) + entry->start, entry->end - entry->start };
     JSString* text = charactersAreAllASCII(bytes) ? jsOwnedString(vm, StringImpl::createWithoutCopying(bytes)) : jsString(vm, String::fromUTF8ReplacingInvalidSequences(bytes));
     answered.set(function, Weak<JSString>(text));
     return text;
 }
 
-std::optional<FunctionID> functionOf(const JSCell* cell)
+std::optional<uint32_t> closureNumberOf(const JSCell* cell)
 {
     switch (cell->type()) {
     case SlimClosureType:
-        return uncheckedDowncast<SlimClosure>(cell)->function();
+        return uncheckedDowncast<SlimClosure>(cell)->closureNumber();
     case SlimClosureWithPropertiesType:
-        return uncheckedDowncast<ReifiedSlimClosure>(cell)->function();
+        return uncheckedDowncast<ReifiedSlimClosure>(cell)->closureNumber();
     case CompiledClosureType:
-        return uncheckedDowncast<Closure>(cell)->function();
+        return uncheckedDowncast<Closure>(cell)->closureNumber();
     default:
         return std::nullopt;
     }
+}
+
+std::optional<FunctionID> functionOf(const JSCell* cell)
+{
+    std::optional<uint32_t> number = closureNumberOf(cell);
+    if (!number)
+        return std::nullopt;
+    // A closure of another image of the realm is like a function that no build has seen.
+    const ProgramTables& tables = programTables();
+    if (!tables.hasClosureNumber(*number)) [[unlikely]]
+        return std::nullopt;
+    return FunctionID(tables.closureFunctionWithNumber(*number));
 }
 
 static FunctionID checkedFunctionOf(const JSCell* callee)
@@ -802,16 +1072,20 @@ bool isCompiledCallee(const JSCell* cell)
 
 String name(JSObject* callee)
 {
+    ImageOfCellScope imageOfCell(callee);
     return initialNameProperty(checkedFunctionOf(callee));
 }
 
 unsigned length(JSObject* callee)
 {
-    return functionLengthOf(checkedFunctionOf(callee));
+    return runInImageOfCell(callee, [&]() ALWAYS_INLINE_LAMBDA {
+        return functionLengthOf(checkedFunctionOf(callee));
+    });
 }
 
 bool canAssumeNameAndLengthAreOriginal(VM& vm, JSObject* callee)
 {
+    ImageOfCellScope imageOfCell(callee);
     ASSERT(isSlimClosureType(callee->type()));
     if (callee->type() == SlimClosureType)
         return true;
@@ -831,6 +1105,7 @@ bool canAssumeNameAndLengthAreOriginal(VM& vm, JSObject* callee)
 
 JSValue sourceText(JSGlobalObject* globalObject, JSObject* callee)
 {
+    ImageOfCellScope imageOfCell(callee);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     FunctionID function = checkedFunctionOf(callee);
     FunctionKindData kindData = functionKindData(function);
@@ -856,6 +1131,7 @@ JSValue sourceText(JSGlobalObject* globalObject, JSObject* callee)
 
 JSString* sourceStringIfCreated(VM& vm, JSObject* callee)
 {
+    ImageOfCellScope imageOfCell(callee);
     FunctionID function = checkedFunctionOf(callee);
     FunctionKindData kindData = functionKindData(function);
     if (kindData.isBound() || kindData.isInRuntimeModule)
@@ -867,11 +1143,13 @@ JSString* sourceStringIfCreated(VM& vm, JSObject* callee)
 
 bool isBoundFunction(JSObject* callee)
 {
+    ImageOfCellScope imageOfCell(callee);
     return functionKindData(checkedFunctionOf(callee)).isBound();
 }
 
 FunctionKind kind(JSObject* callee)
 {
+    ImageOfCellScope imageOfCell(callee);
     FunctionID function = checkedFunctionOf(callee);
     FunctionKindData kindData = functionKindData(function);
     if (kindData.isInRuntimeModule)
@@ -900,11 +1178,13 @@ FunctionKind kind(JSObject* callee)
 
 String ownDisplayName(JSObject* object)
 {
+    ImageOfCellScope imageOfCell(object);
     return ownStringProperty(object, object->vm().propertyNames->displayName);
 }
 
 String displayName(JSObject* object)
 {
+    ImageOfCellScope imageOfCell(object);
     std::optional<FunctionID> function = functionOf(object);
     if (!function)
         return String();
@@ -920,6 +1200,7 @@ String displayName(JSObject* object)
 
 bool reifyProperties(VM& vm, JSObject* object)
 {
+    ImageOfCellScope imageOfCell(object);
     if (object->type() != SlimClosureType)
         return false;
     uncheckedDowncast<SlimClosure>(object)->reify(vm);
@@ -928,6 +1209,7 @@ bool reifyProperties(VM& vm, JSObject* object)
 
 void setPrototypeProperty(VM& vm, JSObject* callee, JSObject* prototype, unsigned attributes)
 {
+    ImageOfCellScope imageOfCell(callee);
     RELEASE_ASSERT(isCompiledCallee(callee));
     if (callee->type() == CompiledClosureType) {
         uncheckedDowncast<Closure>(callee)->setPrototypeProperty(vm, prototype, attributes);
@@ -939,6 +1221,7 @@ void setPrototypeProperty(VM& vm, JSObject* callee, JSObject* prototype, unsigne
 
 void setNameProperty(JSGlobalObject* globalObject, JSObject* callee, JSString* name, unsigned attributes)
 {
+    ImageOfCellScope imageOfCell(callee);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     RELEASE_ASSERT(isCompiledCallee(callee));
@@ -955,12 +1238,14 @@ void setNameProperty(JSGlobalObject* globalObject, JSObject* callee, JSString* n
 
 void showNameUntilLookedFor(VM& vm, JSObject* callee, const String& name)
 {
+    ImageOfCellScope imageOfCell(callee);
     RELEASE_ASSERT(isCompiledCallee(callee));
     AOT::showNameUntilLookedFor(vm, callee, name);
 }
 
 Structure* cachedBoundFunctionStructure(JSObject* callee)
 {
+    ImageOfCellScope imageOfCell(callee);
     if (!isSlimClosureType(callee->type()))
         return nullptr;
     return closureTableOf(callee).asyncBoundFunctionStructure();
@@ -968,6 +1253,7 @@ Structure* cachedBoundFunctionStructure(JSObject* callee)
 
 void setCachedBoundFunctionStructure(VM&, JSObject* callee, Structure* structure)
 {
+    ImageOfCellScope imageOfCell(callee);
     if (isSlimClosureType(callee->type()))
         closureTableOf(callee).setAsyncBoundFunctionStructure(structure);
 }
@@ -976,9 +1262,14 @@ void setCachedBoundFunctionStructure(VM&, JSObject* callee, Structure* structure
 
 DeclaredAs declaredAs(JSCell* cell)
 {
+    ImageOfCellScope imageOfCell(cell);
     std::optional<FunctionID> function = functionOf(cell);
-    if (!function)
+    std::optional<RunningImageScope> firstImage;
+    if (!function) {
         function = compiledBuiltinFunctionID(cell);
+        if (VMState& state = cell->vm().aotState(); function && state.hasSeveralImages) [[unlikely]]
+            firstImage.emplace(state, &state.image->first());
+    }
     if (!function)
         return standsInForFunction(cell) ? DeclaredAs::Function : DeclaredAs::NotCompiled;
     FunctionKindData kindData = functionKindData(*function);
@@ -993,6 +1284,7 @@ DeclaredAs declaredAs(JSCell* cell)
 
 String closureDeclaredName(JSObject* object)
 {
+    ImageOfCellScope imageOfCell(object);
     std::optional<FunctionID> function = functionOf(object);
     if (!function)
         return String();
@@ -1005,12 +1297,14 @@ String closureDeclaredName(JSObject* object)
 
 bool belongsToBuiltinModule(JSCell* cell)
 {
+    ImageOfCellScope imageOfCell(cell);
     std::optional<FunctionID> function = functionOf(cell);
     return function && functionKindData(*function).isInRuntimeModule;
 }
 
 bool isCompiledClassObject(JSFunction* candidate)
 {
+    ImageOfCellScope imageOfCell(candidate);
     std::optional<FunctionID> function = functionOf(candidate);
     return function && functionKindData(*function).isConstructor;
 }

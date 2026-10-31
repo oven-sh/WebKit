@@ -98,7 +98,7 @@ function f1 name="append" module=m0 flags=[IsChecked, HasExplicitName] length=2 
 # CHECK: Branch(b@[[fits]], Terminal, {{*}}:CallInline)
 # CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#[[slow]]
 # The storage must hold doubles, and the number must not be NaN, which marks a hole there.
-# CHECK: Int32 b@[[kind]] = Load8Z(b@[[list]], offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc, {{*}}:CallInline)
+# CHECK: Int32 b@[[kind]] = Load8Z(b@[[list]], offset = 4, ControlDependent|Reads:JSArray_indexingTypeAndMisc, {{*}}:CallInline)
 # CHECK: Int32 b@[[isDoubles]] = Equal(b@[[kind]], $7(b@{{*}}), {{*}}:CallInline)
 # CHECK-NEXT: Branch(b@[[isDoubles]], Terminal, {{*}}:CallInline)
 # CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#[[slow]]

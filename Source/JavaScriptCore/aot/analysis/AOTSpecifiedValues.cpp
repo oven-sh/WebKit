@@ -43,7 +43,7 @@ static bool storesBackIntoVariable(const Program& program, const Value& user, ui
 
 bool handsOperandOn(const Program& program, const Value& user, uint32_t operandIndex)
 {
-    return user.opcode == Opcode::ValidateSameValue || isHeldOperand(user, operandIndex) || storesBackIntoVariable(program, user, operandIndex) || givesOperandBack(user, operandIndex);
+    return user.opcode == Opcode::ValidateSameValue || user.opcode == Opcode::PutHeapFrameWord || isHeldOperand(user, operandIndex) || storesBackIntoVariable(program, user, operandIndex) || givesOperandBack(user, operandIndex);
 }
 
 Value makeCastBehindFact(const Function& function, TypeArena& types, ValueID value, ValueID fact)
@@ -140,7 +140,7 @@ private:
             if (m_casts.isEmpty() || m_casts.last().operand != use.operand || m_casts.last().block != use.block)
                 m_casts.append({ use.operand, use.block, 0, ValueID() });
         }
-        AOT::sort(m_casts, { }, &Cast::key);
+        AOT::sortInLine(m_casts, { }, &Cast::key);
         removeRepeatedElements(m_casts, [](const Cast& a, const Cast& b) { return a.key() == b.key(); });
 
         Vector<uint32_t, 16> inOrderOfTree;

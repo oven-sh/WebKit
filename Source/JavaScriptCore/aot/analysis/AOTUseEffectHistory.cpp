@@ -189,7 +189,7 @@ UseEffectHistory::UseEffectHistory(FunctionAnalyses& analyses, const UseEffectHi
         addAction(allocation.block, allocation.index, object, ActionKind::Reset);
     }
 
-    AOT::sort(pendingActions, { }, [](const PendingAction& pending) {
+    AOT::sortInLine(pendingActions, { }, [](const PendingAction& pending) {
         auto& action = pending.action;
         return std::tuple { pending.blockOrder, action.object, action.index, action.kind == ActionKind::Event };
     });

@@ -32,6 +32,8 @@ void readForReceiver(ValueFlowRuleContext&, const ValueFlowOperand& object, cons
 void listProxiesByTheirTraps(ValueFlowRuleContext&, ClimbingSet proxies);
 ClimbingSet targetsListedInPlaceOf(ValueFlowRuleContext&, ClimbingSet proxies);
 void askProxiesForListedValues(ValueFlowRuleContext&, ClimbingSet proxies, ValueFlowNodeID result);
+// getOwnPropertyDescriptor or defineProperty. The second gets a descriptor that the engine has made.
+void askProxiesAboutOwnProperty(ValueFlowRuleContext&, ClimbingSet proxies, const ValueFlowOperand& property, BuiltinName trap, ValueFlowNodeID descriptor, ValueFlowNodeID result);
 
 ClimbingSet objectsHeldFromCreation(ValueFlowRuleContext&, ClimbingSet objects);
 void readOwnPropertiesNobodyWrote(ValueFlowRuleContext&, ClimbingSet holders, std::optional<PropertyKeyID>, ValueFlowNodeID result);
@@ -39,7 +41,9 @@ enum class MetBy : bool { Program, NativeCode };
 ValueFlowNodeID enumerablePropertiesNobodyWrote(ValueFlowRuleContext&, ClimbingSet holders, MetBy);
 // Whoever goes over the properties of an object nobody knows reads them as a key nobody knows does.
 inline constexpr ValueFlowName everyGetterRunByWalkName { ValueFlowNameKind::EveryMemberRead, 1 };
+inline constexpr ValueFlowName everyGetterRunByPrinterName { ValueFlowNameKind::EveryMemberRead, 2 };
 void runGettersOnObjectsNobodyKnows(ValueFlowRuleContext&);
+void runGettersOnPrintedObjectsNobodyKnows(ValueFlowRuleContext&);
 ClimbingSet objectsRightAbove(ValueFlowRuleContext&, ClimbingSet knownObjects);
 ValueFlowNodeID exportsOfHoldersListedBesideUnknownObject(ValueFlowRuleContext&, const ValueFlowOperand&);
 ValueFlowNodeID exportsOfHoldersIn(ValueFlowRuleContext&, const ValueFlowOperand&);

@@ -1200,7 +1200,7 @@ int SamplingProfiler::StackFrame::functionStartLine()
 {
 #if ENABLE(AOT)
     if (isCompiledFrame()) {
-        auto definition = AOT::FunctionDescription(compiledFrame.function).definition();
+        auto definition = AOT::definitionOf(compiledFrame);
         return definition ? static_cast<int>(definition->lineColumn.line) : -1;
     }
 #endif
@@ -1225,7 +1225,7 @@ unsigned SamplingProfiler::StackFrame::functionStartColumn()
 {
 #if ENABLE(AOT)
     if (isCompiledFrame()) {
-        auto definition = AOT::FunctionDescription(compiledFrame.function).definition();
+        auto definition = AOT::definitionOf(compiledFrame);
         return definition ? definition->lineColumn.column : std::numeric_limits<unsigned>::max();
     }
 #endif
@@ -1250,7 +1250,7 @@ unsigned SamplingProfiler::StackFrame::functionStartColumn()
 #if ENABLE(AOT)
 AOT::Typed::ModuleID SamplingProfiler::StackFrame::compiledModule() const
 {
-    auto definition = AOT::FunctionDescription(compiledFrame.function).definition();
+    auto definition = AOT::definitionOf(compiledFrame);
     return definition && definition->source ? definition->source : compiledSiteModule;
 }
 #endif

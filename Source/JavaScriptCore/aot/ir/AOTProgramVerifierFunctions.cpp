@@ -34,6 +34,7 @@ constexpr OptionSet<FunctionCapabilities> capabilitiesAddedByPasses {
     FunctionCapabilities::NotesLooksForName,
     FunctionCapabilities::IsLongConstructor,
     FunctionCapabilities::MakesNoTailCall,
+    FunctionCapabilities::MakesNoTailCallIfConstructed,
 };
 
 bool isSentByFrontEnd(FunctionRole role)

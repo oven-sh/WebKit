@@ -21,7 +21,9 @@
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGrouping.h"
+#include "AOTHeldOperands.h"
 #include "AOTIR.h"
+#include "AOTImagesBelow.h"
 #include "AOTLargeVectors.h"
 #include "AOTLayout.h"
 #include "AOTOpcodesNamingRecords.h"
@@ -30,6 +32,10 @@
 #include "AOTThreshold.h"
 #include <algorithm>
 #include <atomic>
+#include <cmath>
+#include <concepts>
+#include <optional>
+#include <tuple>
 #include <wtf/Atomics.h>
 #include <wtf/BitVector.h>
 #include <wtf/CycleForest.h>
@@ -51,6 +57,8 @@ struct WeightedCall {
     double weight;
     // How surely the call is made once its function is entered, where an even branch counts as taken.
     double share { 0 };
+    // The caller also calls a long set that holds the node. The weight and the share are those of both together.
+    bool isAlsoInLongSet { false };
 };
 
 using WeightedCallList = Vector<WeightedCall, 4>;
@@ -70,9 +78,9 @@ public:
     {
         Hasher hasher;
         for (const WeightedCall& call : calls)
-            add(hasher, call.node, call.weight, call.share);
+            add(hasher, call.node, call.weight, call.share, call.isAlsoInLongSet);
         auto isSame = [](const WeightedCall& a, const WeightedCall& b) {
-            return a.node == b.node && a.weight == b.weight && a.share == b.share;
+            return a.node == b.node && a.weight == b.weight && a.share == b.share && a.isAlsoInLongSet == b.isAlsoInLongSet;
         };
 
         Locker locker { m_lock };
@@ -88,7 +96,7 @@ public:
 
 private:
     Lock m_lock;
-    UncheckedKeyHashMap<unsigned, Vector<Ref<SharedCallList>, 1>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_listsByHash;
+    UncheckedKeyHashMap<uint64_t, Vector<Ref<SharedCallList>, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_listsByHash;
 };
 
 // The calls of one node. n functions that each may call any of the n have n equal lists of n calls, so nodes with equal long lists share one.
@@ -146,7 +154,7 @@ enum class EstimateOf : uint8_t { Ranks, Classes };
 
 static void mergeEdges(WeightedCallList& calls)
 {
-    AOT::stableSort(calls, [](const WeightedCall& a, const WeightedCall& b) {
+    AOT::stableSortInLine(calls, [](const WeightedCall& a, const WeightedCall& b) {
         return a.node < b.node;
     });
     size_t mergedSize = 0;
@@ -256,6 +264,12 @@ public:
         return found - m_names.begin();
     }
     std::span<const FunctionID> at(size_t position) const LIFETIME_BOUND { return m_functions.span().subspan(m_first[position], m_first[position + 1] - m_first[position]); }
+    std::span<const FunctionID> accessorsAt(size_t position, FunctionKind kind) const LIFETIME_BOUND
+    {
+        uint32_t first = kind == FunctionKind::Getter ? m_firstGetter[position] : m_firstSetter[position];
+        uint32_t end = kind == FunctionKind::Getter ? m_firstSetter[position] : m_firstGetter[position + 1];
+        return m_accessors.span().subspan(first, end - first);
+    }
     bool isUnderSomeName(FunctionID function) const { return m_isUnderSomeName.get(function.index()); }
     // Of these functions, the ones that lie in objects of one layout, under whatever name. No layout stands for the objects whose layout nobody knows.
     static uint32_t holderOf(LayoutID layout) { return layout ? layout.index() + 1 : 0; }
@@ -266,6 +280,9 @@ private:
     Vector<PropertyKeyID> m_names;
     Vector<uint32_t> m_first;
     Vector<FunctionID> m_functions;
+    Vector<uint32_t> m_firstGetter;
+    Vector<uint32_t> m_firstSetter;
+    Vector<FunctionID> m_accessors;
     BitVector m_isUnderSomeName;
     Vector<uint32_t> m_firstInHolder;
     Vector<FunctionID> m_functionsInHolders;
@@ -388,6 +405,16 @@ FunctionsUnderNames::FunctionsUnderNames(const Program& program, const CallGraph
         m_isUnderSomeName.set(static_cast<uint32_t>(stored));
     }
     m_first.append(m_functions.size());
+    for (size_t position = 0; position < m_names.size(); ++position) {
+        for (auto [kind, first] : { std::pair { FunctionKind::Getter, &m_firstGetter }, std::pair { FunctionKind::Setter, &m_firstSetter } }) {
+            first->append(m_accessors.size());
+            for (FunctionID function : at(position)) {
+                if (program.at(function).kind == kind)
+                    m_accessors.append(function);
+            }
+        }
+    }
+    m_firstGetter.append(m_accessors.size());
 }
 
 static bool readsUnderName(Opcode opcode) { return accessOf(opcode) == Access::Read && PayloadWord::key(opcode); }
@@ -428,6 +455,22 @@ static PropertyKeyID nameOfAccessorInDescriptor(const Program& program, const Va
 
 static PropertyKeyID nameOfAccessorInDescriptor(const Program&, const Terminator&) { return { }; }
 
+struct AccessorsReached {
+    PropertyKeyID name;
+    FunctionKind kind { FunctionKind::Getter };
+};
+
+static AccessorsReached accessorsReachedBy(const Value& access)
+{
+    if (!PayloadWord::key(access.opcode) || !access.key())
+        return { };
+    if (accessOf(access.opcode) == Access::Read)
+        return { access.key(), FunctionKind::Getter };
+    return accessOf(access.opcode) == Access::Store ? AccessorsReached { access.key(), FunctionKind::Setter } : AccessorsReached { };
+}
+
+static AccessorsReached accessorsReachedBy(const Terminator&) { return { }; }
+
 static bool constructsUnknownCallee(const Program& program, const Function& function, const Value& value)
 {
     std::optional<unsigned> callee = OperandPosition::callee(value.opcode);
@@ -435,6 +478,20 @@ static bool constructsUnknownCallee(const Program& program, const Function& func
 }
 
 static bool constructsUnknownCallee(const Program&, const Function&, const Terminator&) { return false; }
+
+static std::span<const FunctionID> expectedCalleesOf(const Program& program, const Function& function, const Value& call)
+{
+    std::optional<unsigned> callee = OperandPosition::callee(call.opcode);
+    if (!callee || !call.operand(*callee))
+        return { };
+    ExpectedType expected = function.at(call.operand(*callee)).expected();
+    if (!expected)
+        return { };
+    std::span<const FunctionID> functions = program.at(expected.predicted()).functions.span();
+    return functions.size() > maxFunctionsOfStoredValue ? std::span<const FunctionID>() : functions;
+}
+
+static std::span<const FunctionID> expectedCalleesOf(const Program&, const Function&, const Terminator&) { return { }; }
 
 enum class EnteredAsValueBy : uint8_t { Nothing, Calls, Constructions };
 
@@ -464,6 +521,7 @@ struct SeenCode {
     BitVector isReached;
     BitVector mayBeCalledAsValue;
     BitVector hasSiteThatMayEnter;
+    BitVector isAccessorReachedUnderItsName;
     bool reachesEverything { false };
     bool seesWhatRuns { false };
 
@@ -477,13 +535,14 @@ struct SeenCode {
 static bool isModuleBodyFunction(const Function& function) { return function.module && function.isModuleBody(); }
 
 // A module is loaded by the entry, or by a module that names it. A closure is made by a body that runs. A call of a callee that nobody knows reaches what has been made and may stand there.
-static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph& callGraph, const FlowResults& flow, const HeatGraph& graph, const ParallelArray<CallsOfNode>& calls, const FunctionsUnderNames& names, const Vector<Vector<FunctionID>>& functionsMadeBy, const BitVector& isCalledByHost, const BitVector& hasOnlySeenCallers, const Vector<Vector<uint32_t>>& namesReadBy, const Vector<Vector<uint32_t>>& holdersReadBy, const Vector<Vector<ModuleID>>& modulesLoadedBy, const Vector<uint8_t>& constructsUnknownValue, EstimateOf estimate)
+static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph& callGraph, const FlowResults& flow, const HeatGraph& graph, const ParallelArray<CallsOfNode>& calls, const FunctionsUnderNames& names, const Vector<Vector<FunctionID>>& functionsMadeBy, const BitVector& isCalledByHost, const BitVector& hasOnlySeenCallers, const Vector<Vector<uint32_t>>& namesReadBy, const Vector<Vector<FunctionID>>& accessorsReachedFrom, const Vector<Vector<uint32_t>>& holdersReadBy, const Vector<Vector<ModuleID>>& modulesLoadedBy, const Vector<uint8_t>& constructsUnknownValue, EstimateOf estimate, bool hasCallersInOtherImages)
 {
     unsigned count = graph.numberOfFunctions();
     bool isForClasses = estimate == EstimateOf::Classes;
     SeenCode seen;
+    seen.isAccessorReachedUnderItsName = BitVector(count);
     BitVector& isReached = seen.isReached;
-    isReached.ensureSize(graph.numNodes());
+    isReached.ensureSize(calls.size());
     Vector<FunctionID> entrypointOf(count);
     BitVector isEntrypoint(count);
     if (isForClasses) {
@@ -549,7 +608,7 @@ static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph&
     BitVector isUnderNameThatIsCalled(count);
     BitVector isUnderNameReadAsValue(count);
     auto mayStandWhereValueIsCalled = [&](FunctionID function) {
-        return hasEscaped.quickGet(function.index()) && (!names.isUnderSomeName(function) || isUnderNameReadAsValue.quickGet(function.index()) || (evaluatesText && !isLibraryCode(program, program.at(function))));
+        return hasEscaped.quickGet(function.index()) && (hasCallersInOtherImages || !names.isUnderSomeName(function) || isUnderNameReadAsValue.quickGet(function.index()) || seen.isAccessorReachedUnderItsName.quickGet(function.index()) || (evaluatesText && !isLibraryCode(program, program.at(function))));
     };
     bool constructsValue = false;
     Vector<Vector<FunctionID>> functionsWaitingFor(program.modules.size());
@@ -579,6 +638,8 @@ static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph&
                 reachIfCalled(waiting);
         }
     };
+    if (hasCallersInOtherImages)
+        reach(graph.unknownCodeNode().index());
     for (const Entry& entry : program.entries)
         load(entry.module);
     if (program.entries.isEmpty()) {
@@ -592,8 +653,21 @@ static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph&
     }
     for (size_t root : isStartedByHost)
         reachIfCalled(FunctionID(root));
+    auto followCallsOf = [&](uint32_t node) {
+        for (const WeightedCall& call : calls[node]) {
+            if (isForClasses && call.node < count && hasMaker.quickGet(call.node) && !isMade.quickGet(call.node)) {
+                isAwaited.quickSet(call.node);
+                continue;
+            }
+            reach(call.node);
+        }
+    };
     while (!worklist.isEmpty()) {
         uint32_t node = worklist.takeLast();
+        if (node >= graph.numNodes()) {
+            followCallsOf(node);
+            continue;
+        }
         if (node == graph.unknownCodeNode().index()) {
             for (size_t function : hasEscaped)
                 reachIfCalled(FunctionID(function));
@@ -630,6 +704,12 @@ static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph&
                 reachIfCalled(read);
             }
         }
+        for (FunctionID accessor : accessorsReachedFrom[node]) {
+            if (hasOnlySeenCallers.get(accessor.index()) || seen.isAccessorReachedUnderItsName.quickSet(accessor.index()))
+                continue;
+            isUnderNameThatIsCalled.quickSet(accessor.index());
+            reachIfCalled(accessor);
+        }
         for (uint32_t holder : holdersReadBy[node]) {
             if (isReadUnderUnknownKey.quickSet(holder))
                 continue;
@@ -638,13 +718,7 @@ static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph&
                 reachIfCalled(read);
             }
         }
-        for (const WeightedCall& call : calls[node]) {
-            if (isForClasses && call.node < count && hasMaker.quickGet(call.node) && !isMade.quickGet(call.node)) {
-                isAwaited.quickSet(call.node);
-                continue;
-            }
-            reach(call.node);
-        }
+        followCallsOf(node);
         if (isBodyOfModule(function))
             load(program.at(function).module);
         if (FunctionID functionAsRead = findFunctionAsRead(&program, function)) {
@@ -679,7 +753,7 @@ static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph&
 static Vector<double> estimateHowSurelyNodesAreReached(const Program& program, const FlowResults& flow, const HeatGraph& graph, const ParallelArray<CallsOfNode>& calls, const FunctionsUnderNames& names, const SeenCode& seen, const BitVector& hasOnlySeenCallers, const Vector<Vector<ModuleID>>& modulesLoadedBy)
 {
     unsigned count = graph.numberOfFunctions();
-    Vector<double> sureness(FillWith { }, graph.numNodes(), 0.0);
+    Vector<double> sureness(FillWith { }, calls.size(), 0.0);
     Vector<std::pair<double, uint32_t>> heap;
     auto enter = [&](uint32_t node, double howSurely) {
         if (howSurely <= sureness[node] || (node < count && !seen.reaches(FunctionID(node))))
@@ -720,6 +794,11 @@ static Vector<double> estimateHowSurelyNodesAreReached(const Program& program, c
             continue;
         if (node == graph.hostNode().index())
             continue;
+        if (node >= graph.numNodes()) {
+            for (const WeightedCall& call : calls[node])
+                enter(call.node, howSurely);
+            continue;
+        }
         if (node == graph.unknownCodeNode().index()) {
             double share = howSurely / std::max<size_t>(seen.mayBeCalledAsValue.bitCount(), 1);
             for (size_t function : seen.mayBeCalledAsValue)
@@ -762,8 +841,8 @@ static Vector<double> estimateHowSurelyNodesAreReached(const Program& program, c
 static Vector<double> estimateEntriesPerEvent(const Program& program, const HeatGraph& graph, const ParallelArray<CallsOfNode>& calls, const FunctionsUnderNames& names, const BitVector& isCalledPerEvent, const SeenCode& seen, const BitVector& hasOnlySeenCallers, const Vector<double>& eventsOfHandlers)
 {
     unsigned count = graph.numberOfFunctions();
-    Vector<double> entries(FillWith { }, graph.numNodes(), 0.0);
-    Vector<uint8_t> isReachedByKnownCalls(FillWith { }, graph.numNodes(), static_cast<uint8_t>(0));
+    Vector<double> entries(FillWith { }, calls.size(), 0.0);
+    Vector<uint8_t> isReachedByKnownCalls(FillWith { }, calls.size(), static_cast<uint8_t>(0));
     Vector<std::pair<double, uint32_t>> heap;
     auto enter = [&](uint32_t node, double times, bool byKnownCalls) {
         if (times < 1 || times < entries[node] || (times == entries[node] && byKnownCalls <= !!isReachedByKnownCalls[node]))
@@ -782,7 +861,7 @@ static Vector<double> estimateEntriesPerEvent(const Program& program, const Heat
         auto [times, node] = heap.takeLast();
         if (times < entries[node] || node == graph.hostNode().index())
             continue;
-        if (node < count) {
+        if (node < count || node >= graph.numNodes()) {
             for (const WeightedCall& call : calls[node])
                 enter(call.node, times * call.share, isReachedByKnownCalls[node]);
             continue;
@@ -810,6 +889,8 @@ static WeightedCallList collectHostCalls(const Program& program, const CallGraph
     callees.append(callGraph.roots());
     callees.append(callGraph.functionsCalledByUnknownCode());
     for (size_t index : isCalledPerEvent)
+        callees.append(FunctionID(index));
+    for (size_t index : seen.isAccessorReachedUnderItsName)
         callees.append(FunctionID(index));
     sortAndRemoveDuplicates(loops, callees);
 
@@ -885,7 +966,7 @@ static WeightedCallList collectHostCalls(const Program& program, const CallGraph
         drainWorklist();
     }
     if (calls.size() > numberOfSortedCalls)
-        AOT::sort(calls, { }, &WeightedCall::node);
+        AOT::sortInLine(calls, { }, &WeightedCall::node);
     return calls;
 }
 
@@ -940,7 +1021,9 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
         }
         names = FunctionsUnderNames(program, callGraph, loops);
     }
+    Vector<Vector<FunctionID>> calleesOnlyExpectedBy(followsNames ? 0 : count);
     Vector<Vector<uint32_t>> namesReadBy(countWhereNamesAreFollowed);
+    Vector<Vector<FunctionID>> accessorsReachedFrom(countWhereNamesAreFollowed);
     Vector<Vector<uint32_t>> holdersReadBy(countWhereNamesAreFollowed);
     Vector<Vector<ModuleID>> modulesLoadedBy(countWhereNamesAreFollowed);
     Vector<uint8_t> constructsUnknownValue(FillWith { }, countWhereNamesAreFollowed, static_cast<uint8_t>(0));
@@ -956,7 +1039,9 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
     Vector<Vector<FunctionID>> functionsMadeBy(countWhereNamesAreFollowed);
     unsigned numberOfNodes = graph.numNodes();
     graph.m_isPresent.fill(true, numberOfNodes);
-    ParallelArray<CallsOfNode> calls(loops, numberOfNodes, [](unsigned) {
+    // A long callee set has a list behind those of the nodes. A caller has one call of the set, with the weight of each member, and the set has a call of weight 1 of each member.
+    const unsigned numberOfLongSets = callGraph.numberOfLongSets();
+    ParallelArray<CallsOfNode> calls(loops, numberOfNodes + numberOfLongSets, [](unsigned) {
         return CallsOfNode();
     });
     SharedCallLists sharedCallLists;
@@ -969,6 +1054,62 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
         if (call.times.predicted() == BuiltinCallbackTimes::PerEvent)
             isCalledPerEvent.set(call.callee.index());
     }
+    forEachIndexInParallel(loops, numberOfLongSets, [&](unsigned set) {
+        WeightedCallList members;
+        for (FunctionID member : callGraph.membersOfLongSet(set)) {
+            if (program.at(member).hasBody() && !isCalledPerEvent.get(member.index()))
+                members.append(WeightedCall { graph.nodeOf(member).index(), 1.0, 1.0 });
+        }
+        calls[numberOfNodes + set] = WTF::move(members);
+    });
+    auto isInLongSet = [&](uint32_t set, uint32_t node) {
+        return std::ranges::binary_search(calls[numberOfNodes + set].span(), node, { }, &WeightedCall::node);
+    };
+    Vector<uint8_t> isLongSetCalled(FillWith { }, numberOfLongSets, static_cast<uint8_t>(0));
+    Lock lockOfLongSetsInCommon;
+    UncheckedKeyHashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> haveMemberInCommon;
+    auto longSetsHaveMemberInCommon = [&](uint32_t a, uint32_t b) {
+        uint64_t key = static_cast<uint64_t>(std::min(a, b)) << 32 | std::max(a, b);
+        {
+            Locker locker { lockOfLongSetsInCommon };
+            if (auto known = haveMemberInCommon.find(key); known != haveMemberInCommon.end())
+                return known->value;
+        }
+        std::span<const WeightedCall> first = calls[numberOfNodes + a].span();
+        std::span<const WeightedCall> second = calls[numberOfNodes + b].span();
+        bool answer = false;
+        while (!first.empty() && !second.empty() && !answer) {
+            if (first.front().node == second.front().node)
+                answer = true;
+            else if (first.front().node < second.front().node)
+                first = first.subspan(1);
+            else
+                second = second.subspan(1);
+        }
+        Locker locker { lockOfLongSetsInCommon };
+        haveMemberInCommon.add(key, answer);
+        return answer;
+    };
+    // What the callees of a long set do with an operand is the same for all calls of one form.
+    Lock lockOfUsesByLongSets;
+    UncheckedKeyHashMap<uint64_t, OperandUses, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> usesByLongSets;
+    auto usesByLongSet = [&](uint32_t set, const Value& call, uint32_t operandIndex, NOESCAPE const Invocable<OperandUses()> auto& summarize) {
+        constexpr unsigned bitsOfOperandIndex = 15;
+        static_assert(sizeof(Opcode) <= 2);
+        // The type of an operand whose contents are retained counts too.
+        if (operandIndex >= 1u << bitsOfOperandIndex || declaredBehaviorOf(call.opcode, operandIndex).uses.contains(OperandUse::RetainsContents))
+            return summarize();
+        uint64_t key = static_cast<uint64_t>(set) << 32 | static_cast<uint64_t>(call.opcode) << (bitsOfOperandIndex + 1) | operandIndex << 1 | isHeldOperand(call, operandIndex);
+        {
+            Locker locker { lockOfUsesByLongSets };
+            if (auto known = usesByLongSets.find(key); known != usesByLongSets.end())
+                return known->value;
+        }
+        OperandUses uses = summarize();
+        Locker locker { lockOfUsesByLongSets };
+        usesByLongSets.add(key, uses);
+        return uses;
+    };
     const bool verifies = build.options().verifiesAfterEveryPass;
     const EntriesThatRunNoCode entriesThatRunNoCode = findEntriesThatRunNoCode();
     graph.m_blockGroups = ParallelArray<Vector<HeatBlockGroup, 4>>(loops, count, largeFunctions(program, loops).span(), [&](unsigned index) -> Vector<HeatBlockGroup, 4> {
@@ -998,8 +1139,20 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
         };
         auto addUnknownCallee = [&](const auto& instruction, double weight) {
             if (!followsNames) {
+                std::span<const FunctionID> expected = expectedCalleesOf(program, function, instruction);
+                for (FunctionID callee : expected)
+                    add(callee, weight / expected.size());
+                calleesOnlyExpectedBy[index].append(expected);
                 addUnknownCode(weight);
                 return;
+            }
+            if (AccessorsReached reached = isCall(instruction) ? AccessorsReached { } : accessorsReachedBy(instruction); reached.name) {
+                if (std::optional<size_t> position = names.find(reached.name)) {
+                    for (FunctionID accessor : names.accessorsAt(*position, reached.kind)) {
+                        if (!accessorsReachedFrom[index].contains(accessor))
+                            accessorsReachedFrom[index].append(accessor);
+                    }
+                }
             }
             PropertyKeyID name = isCall(instruction) ? nameOfCallee(program, function, instruction) : nameOfAccessorInDescriptor(program, instruction);
             if (!name) {
@@ -1028,13 +1181,18 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
                     add(callee, weight / seen.size(), CallOfHost::IsReplaced);
             }
         };
-        auto addCallsOfSite = [&](const auto& instruction, double weight, std::span<const FunctionID> candidates, bool callsUnknownCode) {
-            for (FunctionID candidate : candidates)
-                add(candidate, weight / candidates.size());
+        auto addCallsBesideCandidates = [&](const auto& instruction, double weight, bool callsUnknownCode, std::optional<uint32_t> longSetOfCallees = std::nullopt) {
             if (callsUnknownCode)
                 addUnknownCallee(instruction, weight);
             instruction.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-                OperandUses uses = summarizeOperand(analyses.effectContext(), function, instruction, operandIndex, UsesAskedFor::AllButPassesToUserCode).uses;
+                auto summarize = [&] {
+                    return summarizeOperand(analyses.effectContext(), function, instruction, operandIndex, UsesAskedFor::AllButPassesToUserCode).uses;
+                };
+                OperandUses uses;
+                if constexpr (std::same_as<std::remove_cvref_t<decltype(instruction)>, Value>)
+                    uses = longSetOfCallees ? usesByLongSet(*longSetOfCallees, instruction, operandIndex, summarize) : summarize();
+                else
+                    uses = summarize();
                 if (verifies) [[unlikely]]
                     RELEASE_ASSERT((uses | OperandUse::PassesToUserCode) == (summarizeOperand(analyses.effectContext(), function, instruction, operandIndex).uses | OperandUse::PassesToUserCode));
                 if (saysNothingAboutCalls(uses)) {
@@ -1055,8 +1213,93 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
                     addUnknownCode(weight * additionalCalls);
             });
         };
+        auto addCallsOfSite = [&](const auto& instruction, double weight, std::span<const FunctionID> candidates, bool callsUnknownCode) {
+            for (FunctionID candidate : candidates)
+                add(candidate, weight / candidates.size());
+            addCallsBesideCandidates(instruction, weight, callsUnknownCode);
+        };
+        auto addCallsOfLongSet = [&](const auto& instruction, double weight) {
+            CalleeSetID id = numberOfLongSets ? longCalleeSetRunBy(program, instruction) : CalleeSetID();
+            std::optional<uint32_t> set = id ? callGraph.findLongSet(id) : std::nullopt;
+            if (!set)
+                return false;
+            double weightOfMember = weight / program.at(id).written().functions.size();
+            callsOfBody.append(WeightedCall { numberOfNodes + *set, weightOfMember, shareOf(weightOfMember) });
+            AtomicRef(isLongSetCalled[*set]).store(1, std::memory_order_relaxed);
+            // A call that first looks its callee up in a table hands its operands to the lookup.
+            bool handsOperandsToSet = false;
+            if constexpr (std::same_as<std::remove_cvref_t<decltype(instruction)>, Value>)
+                handsOperandsToSet = calleeSetOfCall(program, instruction) == id;
+            addCallsBesideCandidates(instruction, weight, !program.at(id).listsEveryCallee(), handsOperandsToSet ? set : std::nullopt);
+            return true;
+        };
+        // A member that the body also calls some other way has a weight of its own: all that comes to it, added up in the order of the sites. The call of the set stays for the other members.
+        // A body that calls two sets with a member in common lists the members as it would list those of short sets.
+        auto addUpCallsOfMembersCalledOtherwise = [&] {
+            if (!numberOfLongSets)
+                return;
+            Vector<uint32_t, 4> sets;
+            for (const WeightedCall& call : callsOfBody) {
+                if (call.node >= numberOfNodes && !sets.contains(call.node - numberOfNodes))
+                    sets.append(call.node - numberOfNodes);
+            }
+            if (sets.isEmpty())
+                return;
+            bool setsHaveMemberInCommon = false;
+            for (size_t first = 0; first < sets.size() && !setsHaveMemberInCommon; ++first) {
+                for (size_t second = first + 1; second < sets.size() && !setsHaveMemberInCommon; ++second)
+                    setsHaveMemberInCommon = longSetsHaveMemberInCommon(sets[first], sets[second]);
+            }
+            if (setsHaveMemberInCommon) {
+                WeightedCallList listed;
+                for (const WeightedCall& call : callsOfBody) {
+                    if (call.node < numberOfNodes) {
+                        listed.append(call);
+                        continue;
+                    }
+                    for (const WeightedCall& member : calls[call.node])
+                        listed.append(WeightedCall { member.node, call.weight, call.share });
+                }
+                callsOfBody = WTF::move(listed);
+                return;
+            }
+            WeightedCallList addedUp;
+            auto isAddedUp = [&](uint32_t node) {
+                return addedUp.containsIf([&](const WeightedCall& call) { return call.node == node; });
+            };
+            for (size_t index = 0; index < callsOfBody.size(); ++index) {
+                uint32_t node = callsOfBody[index].node;
+                if (node >= count || isAddedUp(node))
+                    continue;
+                size_t position = sets.findIf([&](uint32_t set) { return isInLongSet(set, node); });
+                if (position == notFound)
+                    continue;
+                // An earlier sum holds what came through the set.
+                bool hasEarlierSum = callsOfBody.containsIf([&](const WeightedCall& call) { return call.node == node && call.isAlsoInLongSet; });
+                std::optional<WeightedCall> sum;
+                for (const WeightedCall& call : callsOfBody) {
+                    if (call.node != node && (hasEarlierSum || call.node != numberOfNodes + sets[position]))
+                        continue;
+                    if (!sum) {
+                        sum = WeightedCall { node, call.weight, call.share, true };
+                        continue;
+                    }
+                    sum->weight += call.weight;
+                    sum->share = std::max(sum->share, call.share);
+                }
+                addedUp.append(*sum);
+            }
+            if (addedUp.isEmpty())
+                return;
+            callsOfBody.removeAllMatching([&](const WeightedCall& call) { return isAddedUp(call.node); });
+            callsOfBody.appendVector(addedUp);
+        };
+        auto mergeCallsOfBody = [&] {
+            addUpCallsOfMembersCalledOtherwise();
+            mergeEdges(callsOfBody);
+        };
         auto addCalls = [&](const auto& instruction, double weight) {
-            if (entriesThatRunNoCode.contains(instruction))
+            if (entriesThatRunNoCode.contains(instruction) || addCallsOfLongSet(instruction, weight))
                 return;
             EffectDescription description = describeEffects(program, function, instruction);
             if (description.functions.isEmpty() && !description.callsUnknownCode)
@@ -1140,7 +1383,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
         }
         sharePerWeight = 1;
         if (!followsNames)
-            mergeEdges(callsOfBody);
+            mergeCallsOfBody();
         else {
             Vector<ModuleID>& loaded = modulesLoadedBy[index];
             auto loadRuntimeModule = [&](RuntimeModuleID module) {
@@ -1169,7 +1412,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
                         add(behind->function, 1);
                 }
             });
-            mergeEdges(callsOfBody);
+            mergeCallsOfBody();
         }
         if (followsNames) {
             Vector<uint32_t, 16> readsOfCallees;
@@ -1223,7 +1466,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
         }
         if (!followsNames) {
         } else if (referencesOfBody)
-            functionsMadeBy[index] = referencesOfBody->otherReferences;
+            functionsMadeBy[index] = Vector<FunctionID>(referencesOfBody->otherReferences.span());
         else {
             forEachFunctionReference(program, id, [&](FunctionID made, FunctionReferenceKind kind) {
                 if (kind == FunctionReferenceKind::Closure || kind == FunctionReferenceKind::Constructor)
@@ -1237,7 +1480,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
                 if (double numberOfCalls = estimateIndirectCalls(call))
                     countedByFlow.append({ call.callee, numberOfCalls });
             }
-            AOT::stableSort(countedByFlow, { }, [](const auto& entry) {
+            AOT::stableSortInLine(countedByFlow, { }, [](const auto& entry) {
                 return entry.first.index();
             });
 
@@ -1245,7 +1488,13 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
             auto callsCountedByWalk = [&](FunctionID callee) {
                 std::span<const WeightedCall> edges = callsOfBody.span().first(mergedSize);
                 auto edge = std::ranges::lower_bound(edges, graph.nodeOf(callee).index(), { }, &WeightedCall::node);
-                return edge != edges.end() && edge->node == graph.nodeOf(callee).index() ? edge->weight : 0;
+                if (edge != edges.end() && edge->node == graph.nodeOf(callee).index())
+                    return edge->weight;
+                for (; !edges.empty() && edges.back().node >= numberOfNodes; edges = edges.first(edges.size() - 1)) {
+                    if (isInLongSet(edges.back().node - numberOfNodes, graph.nodeOf(callee).index()))
+                        return edges.back().weight;
+                }
+                return 0.0;
             };
             for (size_t position = 0; position < countedByFlow.size();) {
                 FunctionID callee = countedByFlow[position].first;
@@ -1257,10 +1506,10 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
                     add(callee, numberOfCalls - countedByWalk);
             }
             if (callsOfBody.size() > mergedSize)
-                mergeEdges(callsOfBody);
+                mergeCallsOfBody();
         }
 
-        AOT::sort(blockGroups, std::ranges::greater { }, &HeatBlockGroup::frequency);
+        AOT::sortInLine(blockGroups, std::ranges::greater { }, &HeatBlockGroup::frequency);
         size_t numberOfGroups = 0;
         for (const HeatBlockGroup& group : blockGroups) {
             if (numberOfGroups && blockGroups[numberOfGroups - 1].frequency == group.frequency)
@@ -1274,8 +1523,17 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
         calls[index].take(WTF::move(callsOfBody), sharedCallLists);
         return blockGroups;
     });
+    forEachIndexInParallel(loops, numberOfLongSets, [&](unsigned set) {
+        if (!isLongSetCalled[set])
+            return;
+        for (const WeightedCall& member : calls[numberOfNodes + set]) {
+            if (flow.runsAtMostOnce(program, FunctionID(member.node)))
+                AtomicRef(isCountedByProgram[member.node]).store(1, std::memory_order_relaxed);
+        }
+    });
     BitVector noFunction(count);
     Vector<double> entriesPerEvent;
+    const bool hasCallersInOtherImages = build.imagesBelow() && build.imagesBelow()->hasPrebuiltLibrary();
     auto addCallsOfNodes = [&](EstimateOf estimate) {
         bool isForClasses = estimate == EstimateOf::Classes;
         const BitVector& hasOnlySeenCallers = isForClasses ? hasOnlySeenCallersByFlow : noFunction;
@@ -1287,7 +1545,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
             if (flow.mayRunUnseenCode())
                 calls[graph.unknownCodeNode().index()] = shareAmong(program, flow, graph, isCalledPerEvent, seen, callGraph.functionsCalledByUnknownCode());
         } else
-            seen = findWhatSeenCodeReaches(program, callGraph, flow, graph, calls, names, functionsMadeBy, isCalledByHost, hasOnlySeenCallers, namesReadBy, holdersReadBy, modulesLoadedBy, constructsUnknownValue, estimate);
+            seen = findWhatSeenCodeReaches(program, callGraph, flow, graph, calls, names, functionsMadeBy, isCalledByHost, hasOnlySeenCallers, namesReadBy, accessorsReachedFrom, holdersReadBy, modulesLoadedBy, constructsUnknownValue, estimate, hasCallersInOtherImages);
         Vector<double> eventsOfHandlers(FillWith { }, count, 0.0);
         if (!isForClasses) {
             forEachIndexInParallel(loops, graph.m_numberOfNames, [&](unsigned position) {
@@ -1305,6 +1563,11 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
                     return call.node < count && !seen.isReached.get(call.node);
                 });
             });
+            forEachIndexInParallel(loops, numberOfLongSets, [&](unsigned set) {
+                calls[numberOfNodes + set].removeAllMatching([&](const WeightedCall& call) {
+                    return !seen.isReached.get(call.node);
+                });
+            });
             // A handler gets events only as surely as whoever registers it is reached. What is reached as surely as a rare edge is taken counts as reached.
             Vector<double> sureness = estimateHowSurelyNodesAreReached(program, flow, graph, calls, names, seen, hasOnlySeenCallers, modulesLoadedBy);
             for (const FlowIndirectCall& call : flow.indirectCalls()) {
@@ -1319,20 +1582,109 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
         }
         calls[graph.hostNode().index()] = collectHostCalls(program, callGraph, flow, graph, calls, isCalledPerEvent, isCountedByProgram, seen, loops, estimate, hasOnlySeenCallers, entriesPerEvent, eventsOfHandlers);
     };
+    // The calls of long sets come last in a list.
+    auto numberOfCallsOfNodes = [&](unsigned index) {
+        std::span<const WeightedCall> list = calls[index].span();
+        size_t size = list.size();
+        while (size && list[size - 1].node >= numberOfNodes)
+            --size;
+        return size;
+    };
+    auto callsOfNodes = [&](unsigned index) {
+        return calls[index].span().first(numberOfCallsOfNodes(index));
+    };
+    auto forEachEdgeOf = [&](unsigned index, const auto& functor) {
+        for (const WeightedCall& call : callsOfNodes(index)) {
+            if (!call.isAlsoInLongSet)
+                functor(call);
+        }
+    };
+    auto fillLongSets = [&](HeatGraph& filled) {
+        if (!numberOfLongSets)
+            return;
+        auto forEachCallOfLongSet = [&](const auto& functor) {
+            for (unsigned index = 0; index < numberOfNodes; ++index) {
+                for (const WeightedCall& call : calls[index].span().subspan(numberOfCallsOfNodes(index)))
+                    functor(index, call);
+            }
+        };
+        // A set that nobody calls says nothing about its members.
+        auto forEachMember = [&](const auto& functor) {
+            for (unsigned set = 0; set < numberOfLongSets; ++set) {
+                if (filled.m_firstUserOfLongSet[set] == filled.m_firstUserOfLongSet[set + 1])
+                    continue;
+                for (const WeightedCall& member : calls[numberOfNodes + set])
+                    functor(set, member.node);
+            }
+        };
+        // Each table is one walk on one thread, and only the tables of members wait for another: the one of users.
+        runTasksInParallel(loops, {
+            [&] {
+                groupByIndex(numberOfNodes, filled.m_firstLongSetOf, filled.m_longSetsOf, [&](const auto& add) {
+                    forEachCallOfLongSet([&](unsigned index, const WeightedCall& call) {
+                        add(index, HeatCallOfLongSet { call.node - numberOfNodes, call.weight });
+                    });
+                });
+            },
+            [&] {
+                groupByIndex(numberOfNodes, filled.m_firstOtherCallOfMember, filled.m_otherCallsOfMembers, [&](const auto& add) {
+                    for (unsigned index = 0; index < count; ++index) {
+                        std::span<const WeightedCall> callsOfLongSets = calls[index].span().subspan(numberOfCallsOfNodes(index));
+                        if (callsOfLongSets.empty())
+                            continue;
+                        for (const WeightedCall& call : callsOfNodes(index)) {
+                            if (!call.isAlsoInLongSet)
+                                continue;
+                            auto callOfSet = std::ranges::find_if(callsOfLongSets, [&](const WeightedCall& candidate) { return isInLongSet(candidate.node - numberOfNodes, call.node); });
+                            RELEASE_ASSERT(callOfSet != callsOfLongSets.end());
+                            add(index, HeatCallOfMember { HeatNodeID(call.node), call.weight, callOfSet->weight });
+                        }
+                    }
+                });
+            },
+            [&] {
+                groupByIndex(numberOfLongSets, filled.m_firstUserOfLongSet, filled.m_usersOfLongSets, [&](const auto& add) {
+                    forEachCallOfLongSet([&](unsigned index, const WeightedCall& call) {
+                        add(call.node - numberOfNodes, HeatNodeID(index));
+                    });
+                });
+                runTasksInParallel(loops, {
+                    [&] {
+                        groupByIndex(numberOfLongSets, filled.m_firstMemberOfLongSet, filled.m_membersOfLongSets, [&](const auto& add) {
+                            forEachMember([&](unsigned set, uint32_t member) {
+                                add(set, HeatNodeID(member));
+                            });
+                        });
+                    },
+                    [&] {
+                        groupByIndex(numberOfNodes, filled.m_firstLongSetWith, filled.m_longSetsWith, [&](const auto& add) {
+                            forEachMember([&](unsigned set, uint32_t member) {
+                                add(member, set);
+                            });
+                        });
+                    },
+                });
+            },
+        });
+    };
     auto fillEdges = [&](HeatGraph& filled) {
+        fillLongSets(filled);
         filled.m_firstSuccessor.fill(0u, numberOfNodes);
         filled.m_numberOfSuccessors.fill(0u, numberOfNodes);
         filled.m_firstPredecessor.fill(0u, numberOfNodes + 1);
         forEachIndexInParallel(loops, numberOfNodes, [&](unsigned index) {
-            for (const WeightedCall& call : calls[index])
+            uint32_t numberOfSuccessors = 0;
+            forEachEdgeOf(index, [&](const WeightedCall& call) {
                 AtomicRef(filled.m_firstPredecessor[call.node + 1]).fetch_add(1, std::memory_order_relaxed);
+                ++numberOfSuccessors;
+            });
+            filled.m_numberOfSuccessors[index] = numberOfSuccessors;
         });
         uint32_t numberOfStoredSuccessors = 0;
         BitVector storesSuccessors(numberOfNodes);
         UncheckedKeyHashMap<const SharedCallList*, uint32_t> firstSuccessorOfSharedList;
         for (unsigned index = 0; index < numberOfNodes; ++index) {
             filled.m_firstPredecessor[index + 1] += filled.m_firstPredecessor[index];
-            filled.m_numberOfSuccessors[index] = calls[index].size();
             filled.m_firstSuccessor[index] = numberOfStoredSuccessors;
             if (const SharedCallList* shared = calls[index].sharedList()) {
                 auto added = firstSuccessorOfSharedList.add(shared, numberOfStoredSuccessors);
@@ -1341,7 +1693,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
                     continue;
             }
             storesSuccessors.quickSet(index);
-            numberOfStoredSuccessors += calls[index].size();
+            numberOfStoredSuccessors += filled.m_numberOfSuccessors[index];
         }
         filled.m_successors.shrink(0);
         filled.m_multipliers.shrink(0);
@@ -1353,19 +1705,25 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
         forEachIndexInParallel(loops, numberOfNodes, [&](unsigned index) {
             uint32_t position = filled.m_firstSuccessor[index];
             bool storesOwnSuccessors = storesSuccessors.quickGet(index);
-            for (const WeightedCall& call : calls[index]) {
+            forEachEdgeOf(index, [&](const WeightedCall& call) {
                 if (storesOwnSuccessors) {
                     filled.m_successors[position] = HeatNodeID(call.node);
                     filled.m_multipliers[position++] = call.weight;
                 }
                 filled.m_predecessors[AtomicRef(nextPredecessor[call.node]).fetch_add(1, std::memory_order_relaxed)] = HeatNodeID(index);
-            }
+            });
         });
         // A node's predecessors are sorted by index.
         forEachIndexInParallel(loops, numberOfNodes, [&](unsigned index) {
             AOT::sort(filled.m_predecessors.mutableSpan().subspan(filled.m_firstPredecessor[index], filled.m_firstPredecessor[index + 1] - filled.m_firstPredecessor[index]));
         });
     };
+    for (unsigned caller = 0; caller < calleesOnlyExpectedBy.size(); ++caller) {
+        for (FunctionID callee : calleesOnlyExpectedBy[caller])
+            graph.m_callsOnlyExpected.append(HeatGraph::packedCall(FunctionID(caller), callee));
+    }
+    AOT::sort(graph.m_callsOnlyExpected);
+    removeRepeatedElements(graph.m_callsOnlyExpected);
     addCallsOfNodes(EstimateOf::Ranks);
     fillEdges(graph);
     uint64_t numberOfValues = 0;
@@ -1380,7 +1738,9 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
         fillEdges(*graphOfClasses);
     }
     build.destroyLater(WTF::move(calls));
+    build.destroyLater(WTF::move(calleesOnlyExpectedBy));
     build.destroyLater(WTF::move(namesReadBy));
+    build.destroyLater(WTF::move(accessorsReachedFrom));
     build.destroyLater(WTF::move(holdersReadBy));
     build.destroyLater(WTF::move(modulesLoadedBy));
     build.destroyLater(WTF::move(functionsMadeBy));
@@ -1389,6 +1749,9 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
 
 uint64_t maxValuesOfOrdinaryProgram(const BuildContext& build)
 {
+    // A part of a program that is built by itself: how its functions rank among themselves says nothing.
+    if (build.recordedOptions().heat() == HeatOverride::ReadOffStructure)
+        return 0;
     return static_cast<uint64_t>(HeatModel::warmCodeLimitsInVeryLargeProgram) * build.limit(LimitID::MaxWarmCodeValues);
 }
 
@@ -1406,9 +1769,482 @@ bool isVeryLargeProgram(const Program& program, const BuildContext& build)
     return numberOfValues.load(std::memory_order_relaxed) > maxValuesOfOrdinaryProgram(build);
 }
 
+// sum + addend + addend + .., each sum rounded as the machine rounds it, in a number of steps that grows with the logarithm of count.
+// While the exponent of the sum stays, the machine adds the same multiple of the last place each time. Where the addend lies halfway between two multiples that holds from the second sum on, which starts at an even one.
+static double addRepeatedly(double sum, double addend, uint64_t count)
+{
+    unsigned sumsWithSameExponent = 0;
+    while (count) {
+        double next = sum + addend;
+        if (next == sum)
+            return sum;
+        --count;
+        sumsWithSameExponent = std::ilogb(next) == std::ilogb(sum) ? sumsWithSameExponent + 1 : 0;
+        double step = next - sum;
+        sum = next;
+        if (sumsWithSameExponent < 2)
+            continue;
+        double stepsToNextExponent = (std::ldexp(1.0, std::ilogb(sum) + 1) - sum) / step;
+        if (stepsToNextExponent < 4)
+            continue;
+        uint64_t steps = std::min(count, static_cast<uint64_t>(stepsToNextExponent) - 2);
+        sum += static_cast<double>(steps) * step;
+        count -= steps;
+    }
+    return sum;
+}
+
+namespace {
+
+// WTF::CycleForest and WTF::estimateMultipliedFrequencies() for a graph with long sets. Both read a graph edge by edge, and a long set stands for as many edges as it has users times members.
+// This finds the cycles, the headers and the order that they would find if each user listed the members among its successors, and reads each set once for each cycle that holds some of it.
+class ActivationsThroughLongSets {
+public:
+    ActivationsThroughLongSets(HeatGraph& graph, unsigned maxDepth)
+        : m_graph(graph)
+        , m_maxDepth(maxDepth)
+        , m_numberOfNodes(graph.numNodes())
+        , m_numberOfLongSets(graph.numberOfLongSets())
+    {
+    }
+
+    Vector<double> run()
+    {
+        findCycles();
+        Forest::Parts parts;
+        parts.cycles = WTF::move(m_cycles);
+        parts.innermost = WTF::Vector<unsigned>(m_numberOfNodes, [&](size_t index) {
+            return m_states[index].innermost;
+        });
+        Forest cycles(m_graph, WTF::move(parts));
+        return propagate(cycles, computePostOrder(cycles));
+    }
+
+private:
+    using Forest = WTF::CycleForest<HeatGraph>;
+    using Node = HeatNodeID;
+    static constexpr unsigned none = Forest::none;
+
+    struct Frame {
+        unsigned node;
+        unsigned next;
+    };
+
+    struct Pending {
+        unsigned cycle;
+        Vector<unsigned> nodes;
+    };
+
+    // Of a node, and behind the nodes of a long set. A call passes through a set in whichever cycle it stays.
+    struct State {
+        unsigned number { 0 };
+        unsigned lowest { 0 };
+        unsigned innermost { none };
+        bool isOnStack { false };
+    };
+
+    void findCycles()
+    {
+        m_states.fill(State { }, m_numberOfNodes + m_numberOfLongSets);
+        m_membersInScope.grow(m_numberOfLongSets);
+        m_usersInCycle.fill(0u, m_numberOfLongSets);
+        m_membersInCycle.fill(0u, m_numberOfLongSets);
+        Vector<unsigned> nodes;
+        for (unsigned index = 0; index < m_numberOfNodes; ++index) {
+            if (m_graph.node(index))
+                nodes.append(index);
+        }
+        decompose(nodes, none);
+        while (!m_pending.isEmpty()) {
+            Pending pending = m_pending.takeLast();
+            decompose(pending.nodes, pending.cycle);
+        }
+    }
+
+    void enter(unsigned node)
+    {
+        State& state = m_states[node];
+        state.number = state.lowest = ++m_nextNumber;
+        state.isOnStack = true;
+        m_stack.append(node);
+        m_frames.append(Frame { node, 0 });
+    }
+
+    void decompose(const Vector<unsigned>& nodes, unsigned scope)
+    {
+        unsigned scopeHeader = scope == none ? none : m_cycles[scope].header().index();
+        for (unsigned node : nodes) {
+            m_states[node].number = 0;
+            for (const HeatCallOfLongSet& call : m_graph.longSetsOf(Node(node)))
+                m_states[m_numberOfNodes + call.set].number = 0;
+            for (uint32_t set : m_graph.longSetsWith(Node(node)))
+                m_membersInScope[set].append(node);
+        }
+        for (unsigned start : nodes) {
+            if (m_states[start].number)
+                continue;
+            enter(start);
+            while (!m_frames.isEmpty())
+                walkOn(scope, scopeHeader);
+        }
+        for (unsigned node : nodes) {
+            for (uint32_t set : m_graph.longSetsWith(Node(node)))
+                m_membersInScope[set].shrink(0);
+        }
+    }
+
+    void walkOn(unsigned scope, unsigned scopeHeader)
+    {
+        unsigned node = m_frames.last().node;
+        unsigned next = m_frames.last().next;
+        State& state = m_states[node];
+        bool isLongSet = node >= m_numberOfNodes;
+        std::span<const Node> successors = isLongSet ? std::span<const Node>() : m_graph.successors(Node(node));
+        std::span<const HeatCallOfLongSet> longSets = isLongSet ? std::span<const HeatCallOfLongSet>() : m_graph.longSetsOf(Node(node));
+        std::span<const unsigned> members = isLongSet ? m_membersInScope[node - m_numberOfNodes].span() : std::span<const unsigned>();
+        unsigned size = successors.size() + longSets.size() + members.size();
+        while (next < size) {
+            unsigned position = next++;
+            unsigned successor;
+            if (isLongSet)
+                successor = members[position];
+            else if (position < successors.size()) {
+                successor = successors[position].index();
+                if (m_states[successor].innermost != scope || successor == scopeHeader)
+                    continue;
+            } else
+                successor = m_numberOfNodes + longSets[position - successors.size()].set;
+            const State& stateOfSuccessor = m_states[successor];
+            if (!stateOfSuccessor.number) {
+                m_frames.last().next = next;
+                enter(successor);
+                return;
+            }
+            if (stateOfSuccessor.isOnStack)
+                state.lowest = std::min(state.lowest, stateOfSuccessor.number);
+        }
+        m_frames.removeLast();
+        if (!m_frames.isEmpty()) {
+            State& parent = m_states[m_frames.last().node];
+            parent.lowest = std::min(parent.lowest, state.lowest);
+        }
+        if (state.lowest != state.number)
+            return;
+        unsigned first = m_stack.size() - 1;
+        while (m_stack[first] != node)
+            --first;
+        Vector<unsigned, 8> nodes;
+        bool passesThroughLongSet = false;
+        for (unsigned member : m_stack.span().subspan(first)) {
+            m_states[member].isOnStack = false;
+            if (member < m_numberOfNodes)
+                nodes.append(member);
+            else
+                passesThroughLongSet = true;
+        }
+        m_stack.shrink(first);
+        if (nodes.size() > 1 || (nodes.size() == 1 && (passesThroughLongSet || std::ranges::contains(m_graph.successors(Node(nodes[0])), Node(nodes[0])))))
+            addCycle(nodes.span(), scope);
+    }
+
+    void addCycle(std::span<const unsigned> members, unsigned parent)
+    {
+        unsigned cycle = m_cycles.size();
+        m_cycles.append(Forest::Cycle { });
+        m_cycles[cycle].parent = parent;
+        m_cycles[cycle].depth = (parent == none ? 0 : m_cycles[parent].depth) + 1;
+        auto isInCycle = [&](Node node) {
+            return m_states[node.index()].innermost == cycle;
+        };
+        for (unsigned member : members) {
+            m_states[member].innermost = cycle;
+            for (const HeatCallOfLongSet& call : m_graph.longSetsOf(Node(member)))
+                ++m_usersInCycle[call.set];
+            for (uint32_t set : m_graph.longSetsWith(Node(member)))
+                ++m_membersInCycle[set];
+        }
+
+        Vector<unsigned, 2> entries;
+        for (unsigned member : members) {
+            bool isEntered = !std::ranges::all_of(m_graph.predecessors(Node(member)), isInCycle) || std::ranges::any_of(m_graph.longSetsWith(Node(member)), [&](uint32_t set) {
+                return m_usersInCycle[set] < m_graph.usersOfLongSet(set).size();
+            });
+            if (isEntered)
+                entries.append(member);
+        }
+        unsigned header = none;
+        if (entries.size() == 1)
+            header = entries[0];
+        else {
+            int64_t mostPaths = 0;
+            for (unsigned member : members) {
+                int64_t predecessors = std::ranges::count_if(m_graph.predecessors(Node(member)), isInCycle);
+                for (uint32_t set : m_graph.longSetsWith(Node(member)))
+                    predecessors += m_usersInCycle[set];
+                int64_t successors = std::ranges::count_if(m_graph.successors(Node(member)), isInCycle);
+                for (const HeatCallOfLongSet& call : m_graph.longSetsOf(Node(member)))
+                    successors += m_membersInCycle[call.set];
+                int64_t paths = predecessors * successors;
+                if (header != none && (paths < mostPaths || (paths == mostPaths && header < member)))
+                    continue;
+                header = member;
+                mostPaths = paths;
+            }
+        }
+        for (unsigned member : members) {
+            for (const HeatCallOfLongSet& call : m_graph.longSetsOf(Node(member)))
+                m_usersInCycle[call.set] = 0;
+            for (uint32_t set : m_graph.longSetsWith(Node(member)))
+                m_membersInCycle[set] = 0;
+        }
+
+        auto& result = m_cycles[cycle].entries;
+        result.append(Node(header));
+        for (unsigned entry : entries) {
+            if (entry != header)
+                result.append(Node(entry));
+        }
+        if (members.size() == 1 || m_cycles[cycle].depth >= m_maxDepth)
+            return;
+        Pending pending { cycle, { } };
+        pending.nodes.reserveInitialCapacity(members.size() - 1);
+        for (unsigned member : members) {
+            if (member != header)
+                pending.nodes.append(member);
+        }
+        m_pending.append(WTF::move(pending));
+    }
+
+    static std::optional<Node> targetInOrder(const Forest& cycles, Node from, Node to)
+    {
+        if (!cycles.size())
+            return to;
+        unsigned cycle = cycles.innermost(to);
+        unsigned common = cycles.nearestCommon(cycles.innermost(from), cycle);
+        if (cycle == common) {
+            if (cycles.isHeader(to))
+                return std::nullopt;
+            return to;
+        }
+        while (cycles[cycle].parent != common)
+            cycle = cycles[cycle].parent;
+        return cycles[cycle].header();
+    }
+
+    // A walk enters a cycle at its header and sees all of the cycle before it leaves. So a successor that has been seen leads nowhere new from any node, and one that has not leads somewhere new from every node
+    // that has it. What is seen stays seen, so all the users of a set go on where the last one stopped.
+    Vector<Node> computePostOrder(const Forest& cycles)
+    {
+        Vector<Node> postOrder;
+        postOrder.reserveInitialCapacity(m_numberOfNodes);
+        Vector<bool> isSeen(FillWith { }, m_numberOfNodes, false);
+        Vector<unsigned> firstNotSeen(FillWith { }, m_numberOfLongSets, 0u);
+        isSeen[m_graph.root().index()] = true;
+        m_frames.append(Frame { m_graph.root().index(), 0 });
+        while (!m_frames.isEmpty()) {
+            Node node(m_frames.last().node);
+            std::span<const Node> successors = m_graph.successors(node);
+            unsigned& next = m_frames.last().next;
+            std::optional<Node> target;
+            for (; next < successors.size(); ++next) {
+                target = targetInOrder(cycles, node, successors[next]);
+                if (target && !isSeen[target->index()])
+                    break;
+            }
+            Node least = next < successors.size() ? successors[next] : Node();
+            for (const HeatCallOfLongSet& call : m_graph.longSetsOf(node)) {
+                std::span<const Node> members = m_graph.membersOfLongSet(call.set);
+                unsigned& first = firstNotSeen[call.set];
+                for (; first < members.size(); ++first) {
+                    if (isSeen[members[first].index()])
+                        continue;
+                    std::optional<Node> targetOfMember = targetInOrder(cycles, node, members[first]);
+                    ASSERT(targetOfMember && !isSeen[targetOfMember->index()]);
+                    if (!targetOfMember || isSeen[targetOfMember->index()])
+                        continue;
+                    if (!least || members[first] < least) {
+                        least = members[first];
+                        target = targetOfMember;
+                    }
+                    break;
+                }
+            }
+            if (!least) {
+                postOrder.append(node);
+                m_frames.removeLast();
+                continue;
+            }
+            isSeen[target->index()] = true;
+            m_frames.append(Frame { target->index(), 0 });
+        }
+        return postOrder;
+    }
+
+    Vector<double> propagate(const Forest& cycles, const Vector<Node>& postOrder)
+    {
+        const double maxFlow = frequencyConstants.maxMultipliedFrequency;
+        // What has come to the members of a set that lie right in one cycle, or in none: what the users inside that cycle have sent.
+        struct MembersInCycle {
+            unsigned cycle;
+            uint32_t numberOfMembers;
+            double incoming;
+        };
+        Vector<uint32_t> firstGroup(FillWith { }, m_numberOfLongSets + 1, 0u);
+        Vector<MembersInCycle> groups;
+        // The members of a set that lie anywhere in a cycle. What a user outside the cycle sends to them enters the cycle.
+        struct MembersInside {
+            unsigned cycle;
+            uint32_t set;
+            uint32_t numberOfMembers;
+            uint32_t sum { 0 };
+        };
+        Vector<MembersInside> inside;
+        // What the users of a set have sent so far to so many of its members, added up one member after the other as a walk over the edges adds it.
+        struct SentToMembers {
+            uint32_t numberOfMembers;
+            double sum;
+        };
+        Vector<uint32_t> firstSum(FillWith { }, m_numberOfLongSets + 1, 0u);
+        Vector<SentToMembers> sums;
+        Vector<unsigned> cyclesOfMembers;
+        for (uint32_t set = 0; set < m_numberOfLongSets; ++set) {
+            cyclesOfMembers.shrink(0);
+            for (Node member : m_graph.membersOfLongSet(set))
+                cyclesOfMembers.append(cycles.innermost(member));
+            AOT::sort(cyclesOfMembers);
+            for (unsigned cycle : cyclesOfMembers) {
+                if (groups.size() > firstGroup[set] && groups.last().cycle == cycle)
+                    ++groups.last().numberOfMembers;
+                else
+                    groups.append(MembersInCycle { cycle, 1, 0 });
+            }
+            firstGroup[set + 1] = groups.size();
+            for (const MembersInCycle& group : groups.span().subspan(firstGroup[set])) {
+                for (unsigned cycle = group.cycle; cycle != none; cycle = cycles[cycle].parent)
+                    inside.append(MembersInside { cycle, set, group.numberOfMembers });
+            }
+        }
+        AOT::sortInLine(inside, [](const MembersInside& a, const MembersInside& b) {
+            return std::tuple(a.set, a.cycle) < std::tuple(b.set, b.cycle);
+        });
+        size_t numberOfMerged = 0;
+        for (const MembersInside& entry : inside) {
+            if (numberOfMerged && inside[numberOfMerged - 1].set == entry.set && inside[numberOfMerged - 1].cycle == entry.cycle)
+                inside[numberOfMerged - 1].numberOfMembers += entry.numberOfMembers;
+            else
+                inside[numberOfMerged++] = entry;
+        }
+        inside.shrink(numberOfMerged);
+        AOT::sortInLine(inside, [](const MembersInside& a, const MembersInside& b) {
+            return std::tuple(a.set, a.numberOfMembers) < std::tuple(b.set, b.numberOfMembers);
+        });
+        uint32_t nextSet = 0;
+        for (MembersInside& entry : inside) {
+            while (nextSet <= entry.set)
+                firstSum[nextSet++] = sums.size();
+            if (sums.size() == firstSum[entry.set] || sums.last().numberOfMembers != entry.numberOfMembers)
+                sums.append(SentToMembers { entry.numberOfMembers, 0 });
+            entry.sum = sums.size() - 1;
+        }
+        while (nextSet <= m_numberOfLongSets)
+            firstSum[nextSet++] = sums.size();
+        AOT::sortInLine(inside, [](const MembersInside& a, const MembersInside& b) {
+            return std::tuple(a.cycle, a.set) < std::tuple(b.cycle, b.set);
+        });
+        Vector<uint32_t> firstInside(FillWith { }, cycles.size() + 1, 0u);
+        for (const MembersInside& entry : inside)
+            ++firstInside[entry.cycle + 1];
+        for (unsigned cycle = 0; cycle < cycles.size(); ++cycle)
+            firstInside[cycle + 1] += firstInside[cycle];
+        auto groupOf = [&](uint32_t set, unsigned cycle) -> MembersInCycle* {
+            std::span<MembersInCycle> ofSet = groups.mutableSpan().subspan(firstGroup[set], firstGroup[set + 1] - firstGroup[set]);
+            auto found = std::ranges::lower_bound(ofSet, cycle, { }, &MembersInCycle::cycle);
+            return found != ofSet.end() && found->cycle == cycle ? &*found : nullptr;
+        };
+
+        Vector<double> frequencies(FillWith { }, m_numberOfNodes, 0.0);
+        Vector<double> incoming(FillWith { }, m_numberOfNodes, 0.0);
+        Vector<double> entering(FillWith { }, cycles.size(), 0.0);
+        Node root = m_graph.root();
+        incoming[root.index()] = 1;
+        for (unsigned cycle = cycles.innermost(root); cycle != none; cycle = cycles[cycle].parent)
+            entering[cycle] = 1;
+        for (unsigned index = postOrder.size(); index--;) {
+            Node node = postOrder[index];
+            unsigned nodeCycle = cycles.innermost(node);
+            double arriving;
+            if (cycles.isHeader(node)) {
+                // Every user that has been visited lies outside: the header is the first node of its cycle in this order.
+                arriving = entering[nodeCycle];
+                for (const MembersInside& entry : inside.span().subspan(firstInside[nodeCycle], firstInside[nodeCycle + 1] - firstInside[nodeCycle]))
+                    arriving += sums[entry.sum].sum;
+                arriving *= frequencyConstants.iterationsPerLoop;
+            } else {
+                arriving = incoming[node.index()];
+                for (uint32_t set : m_graph.longSetsWith(node))
+                    arriving += groupOf(set, nodeCycle)->incoming;
+            }
+            double flow = std::min(arriving, maxFlow);
+            frequencies[node.index()] = std::clamp(flow, 0.0, maxFlow);
+            auto amountFor = [&](double multiplier) {
+                return flow * std::clamp(multiplier, 0.0, frequencyConstants.maxMultiplier);
+            };
+            auto send = [&](Node successor, double amount) {
+                unsigned cycle = cycles.innermost(successor);
+                unsigned common = cycles.nearestCommon(nodeCycle, cycle);
+                if (cycle == common) {
+                    incoming[successor.index()] += amount;
+                    return;
+                }
+                for (; cycle != common; cycle = cycles[cycle].parent)
+                    entering[cycle] += amount;
+            };
+            std::span<const Node> successors = m_graph.successors(node);
+            for (unsigned successorIndex = 0; successorIndex < successors.size(); ++successorIndex)
+                send(successors[successorIndex], amountFor(m_graph.multiplierOf(node, successorIndex)));
+            // The member gets its share of what goes to the set below.
+            for (const HeatCallOfMember& call : m_graph.otherCallsOfMembers(node))
+                send(call.member, amountFor(call.multiplier) - amountFor(call.multiplierOfSet));
+            for (const HeatCallOfLongSet& call : m_graph.longSetsOf(node)) {
+                double amount = amountFor(call.multiplier);
+                for (SentToMembers& sent : sums.mutableSpan().subspan(firstSum[call.set], firstSum[call.set + 1] - firstSum[call.set]))
+                    sent.sum = addRepeatedly(sent.sum, amount, sent.numberOfMembers);
+                for (unsigned cycle = nodeCycle;; cycle = cycles[cycle].parent) {
+                    if (MembersInCycle* group = groupOf(call.set, cycle))
+                        group->incoming += amount;
+                    if (cycle == none)
+                        break;
+                }
+            }
+        }
+        return frequencies;
+    }
+
+    HeatGraph& m_graph;
+    unsigned m_maxDepth;
+    unsigned m_numberOfNodes;
+    unsigned m_numberOfLongSets;
+    WTF::Vector<Forest::Cycle> m_cycles;
+    Vector<State> m_states;
+    Vector<unsigned, 32> m_stack;
+    Vector<Frame, 32> m_frames;
+    Vector<Pending> m_pending;
+    Vector<Vector<unsigned>> m_membersInScope;
+    Vector<uint32_t> m_usersInCycle;
+    Vector<uint32_t> m_membersInCycle;
+    unsigned m_nextNumber { 0 };
+};
+
+} // anonymous namespace
+
 Vector<double> estimateActivations(HeatGraph& graph)
 {
     AOT_THRESHOLD(unsigned, maxDepthOfCallCycles, 16);
+    if (graph.numberOfLongSets()) {
+        Vector<double> result = ActivationsThroughLongSets(graph, maxDepthOfCallCycles).run();
+        result.shrink(graph.numberOfFunctions());
+        return result;
+    }
     WTF::CycleForest<HeatGraph> cycles(graph, [&](std::span<const HeatNodeID> members, const Vector<HeatNodeID, 2>&, const auto& isInCycle) {
         HeatNodeID header;
         int64_t mostPaths = 0;
@@ -1431,15 +2267,24 @@ Vector<double> estimateActivations(HeatGraph& graph)
 void HeatGraph::dump(PrintStream& out) const
 {
     auto printSuccessors = [&](Node node) {
-        std::span<const Node> callees = successors(node);
-        for (unsigned index = 0; index < callees.size(); ++index) {
-            if (FunctionID function = functionOf(callees[index]))
+        Vector<std::pair<Node, double>> callees;
+        for (unsigned index = 0; index < successors(node).size(); ++index)
+            callees.append({ successors(node)[index], multiplierOf(node, index) });
+        for (const HeatCallOfLongSet& call : longSetsOf(node)) {
+            for (Node member : membersOfLongSet(call.set)) {
+                auto other = std::ranges::find(otherCallsOfMembers(node), member, &HeatCallOfMember::member);
+                callees.append({ member, other != otherCallsOfMembers(node).end() ? other->multiplier : call.multiplier });
+            }
+        }
+        AOT::sort(callees, { }, [](const auto& callee) { return callee.first; });
+        for (auto [callee, multiplier] : callees) {
+            if (FunctionID function = functionOf(callee))
                 out.print(" f", function.index());
-            else if (callees[index] == unknownCodeNode())
+            else if (callee == unknownCodeNode())
                 out.print(" unknown");
             else
-                out.print(" name", callees[index].index() - nodeOfName(0).index());
-            out.print("*", multiplierOf(node, index));
+                out.print(" name", callee.index() - nodeOfName(0).index());
+            out.print("*", multiplier);
         }
         out.println();
     };

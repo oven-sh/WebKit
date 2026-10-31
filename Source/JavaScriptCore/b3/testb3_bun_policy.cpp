@@ -62,8 +62,11 @@ static void enableEveryAirSwitch(Air::Policy& air)
     air.registers.usesSecondPreferredRegister = true;
     air.registers.evictsHolderOfPreferredRegister = true;
     air.splitting.splitsAroundClobbersEarly = true;
+    air.splitting.splitsAroundClobbersThatRead = true;
+    air.splitting.keepsUnusedTmpsOnStackThroughLoops = true;
+    air.splitting.spillsTmpsReadInPlaceFirst = true;
     air.splitting.spansStretchesOfClobbers = true;
-    air.splitting.limitsClobberSitesPerSplit = true;
+    air.splitting.leastCostOfSplitAroundClobber = 1.0f / 1024;
     air.splitting.splitsIntoClustersOverBlocks = true;
     air.splitting.splitsAroundFrame = true;
     air.frame.shrinkWraps = true;
@@ -130,7 +133,7 @@ static bool hasSamePreferredRegisters(const Policy& policy, const Policy& other)
 static bool hasSameLiveRangeSplitting(const Policy& policy, const Policy& other)
 {
     auto fieldsOf = [](const Air::LiveRangeSplitPolicy& splitting) {
-        return std::tuple(splitting.splitsAroundClobbersEarly, splitting.spansStretchesOfClobbers, splitting.limitsClobberSitesPerSplit, splitting.splitsIntoClustersOverBlocks);
+        return std::tuple(splitting.splitsAroundClobbersEarly, splitting.splitsAroundClobbersThatRead, splitting.keepsUnusedTmpsOnStackThroughLoops, splitting.spillsTmpsReadInPlaceFirst, splitting.spansStretchesOfClobbers, splitting.leastCostOfSplitAroundClobber, splitting.splitsIntoClustersOverBlocks);
     };
     return fieldsOf(policy.air.splitting) == fieldsOf(other.air.splitting);
 }

@@ -7,13 +7,21 @@
 #include "MarkedBlockCage.h"
 
 #include "AOTCellFormat.h"
+#include "AOTHeapHooks.h"
 #include "AddressSpaceBudget.h"
+#include "HeapAnalyzer.h"
+#include "HeapIterationScope.h"
+#include "HeapProfiler.h"
+#include "JSArray.h"
+#include "JSCInlines.h"
 #include "MarkedBlock.h"
+#include "MarkedSpaceInlines.h"
 #include "Options.h"
 #include "OwedOutOfMemoryError.h"
 #include "ReservedRangeHeap.h"
 #include "ResourceExhaustion.h"
 #include "StructureAlignedMemoryAllocator.h"
+#include "WeakBlock.h"
 #include "WeakInlines.h"
 #include <algorithm>
 #include <array>
@@ -22,12 +30,15 @@
 #include <optional>
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/DataLog.h>
+#include <wtf/Deque.h>
+#include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/MathExtras.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
 #include <wtf/StackPointer.h>
+#include <wtf/Threading.h>
 #include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 
@@ -421,6 +432,8 @@ MarkedBlockCage::MarkedBlockCage()
 
 MarkedBlockCage::~MarkedBlockCage()
 {
+    for (void* block : std::exchange(m_spareWeakBlocks, { }))
+        WeakBlockMalloc::free(block);
     releaseOwnLastReserve();
     // The blocks of this VM have gone back to the range.
     if (m_owesSharedReserve)
@@ -558,7 +571,7 @@ bool MarkedBlockCage::releaseReserve()
 
 bool MarkedBlockCage::hasHeapThatReleasedReserve() const
 {
-    return m_hasReleasedReserve || m_exhaustedHeaps.containsAny({ ExhaustedHeap::Structures, ExhaustedHeap::Tables });
+    return m_hasReleasedReserve || m_exhaustedHeaps.containsAny({ ExhaustedHeap::Structures, ExhaustedHeap::Tables, ExhaustedHeap::WeakBlocks });
 }
 
 bool MarkedBlockCage::tryRestoreReleasedReserves(VM& vm)
@@ -574,6 +587,11 @@ bool MarkedBlockCage::tryRestoreReleasedReserves(VM& vm)
         if (!vm.symbolImplToSymbolMap.tryGrowEarly())
             return false;
         m_exhaustedHeaps.remove(ExhaustedHeap::Tables);
+    }
+    if (m_exhaustedHeaps.contains(ExhaustedHeap::WeakBlocks)) {
+        if (!tryFillSpareWeakBlocks())
+            return false;
+        m_exhaustedHeaps.remove(ExhaustedHeap::WeakBlocks);
     }
     if (m_hasReleasedReserve && !tryRestoreOwnReserve())
         return false;
@@ -601,12 +619,21 @@ bool MarkedBlockCage::tryRestoreOwnReserve()
     return true;
 }
 
+void MarkedBlockCage::didCollectForStructureReserve()
+{
+    bool isFirst = std::exchange(m_pollFillsStructureReserve, false);
+    if (!isFirst && !m_owesStructureReserve)
+        return;
+    m_owesStructureReserve = !StructureAlignedMemoryAllocator::tryFillReserve() && isFirst;
+}
+
 bool MarkedBlockCage::tryTakeBackOutOfMemoryError(VM& vm)
 {
     if (!m_owesCollection || vm.heap.isDeferred())
         return false;
     m_owesCollection = false;
     vm.heap.collectForExhaustedCage();
+    didCollectForStructureReserve();
     if (!vm.traps().needsOutOfMemoryError())
         return false;
     if (!tryRestoreReleasedReserves(vm))
@@ -615,19 +642,204 @@ bool MarkedBlockCage::tryTakeBackOutOfMemoryError(VM& vm)
     return true;
 }
 
+static constexpr size_t numberOfWordsCopiedUnderPoll = 2048;
+static constexpr size_t numberOfWordsCopied = 32768;
+static uintptr_t* s_copiedWords;
+static uintptr_t* s_originOfStack;
+static uintptr_t* s_endOfStack;
+static uintptr_t* s_lowestCopiedWord;
+static uintptr_t* s_stackPointerAtPoll;
+static size_t s_numberOfCopiedWords;
+
+static NEVER_INLINE void prepareToCopyWordsOfStack()
+{
+    const StackBounds& bounds = Thread::currentSingleton().stack();
+    s_originOfStack = static_cast<uintptr_t*>(bounds.origin());
+    s_endOfStack = static_cast<uintptr_t*>(bounds.end());
+    s_copiedWords = static_cast<uintptr_t*>(fastMalloc(numberOfWordsCopied * sizeof(uintptr_t)));
+}
+
+#if ASAN_ENABLED
+// Inlined, its loads would be checked as those of its caller are.
+SUPPRESS_ASAN static NEVER_INLINE void copyWordsOfStack(void* stackPointer)
+#else
+static ALWAYS_INLINE void copyWordsOfStack(void* stackPointer)
+#endif
+{
+    s_stackPointerAtPoll = std::bit_cast<uintptr_t*>(std::bit_cast<uintptr_t>(stackPointer) & ~(sizeof(uintptr_t) - 1));
+    s_lowestCopiedWord = static_cast<size_t>(s_stackPointerAtPoll - s_endOfStack) > numberOfWordsCopiedUnderPoll ? s_stackPointerAtPoll - numberOfWordsCopiedUnderPoll : s_endOfStack;
+    s_numberOfCopiedWords = std::min<size_t>(numberOfWordsCopied, s_originOfStack - s_lowestCopiedWord);
+    // From the top down: Windows commits the stack one page at a time.
+    for (size_t index = s_numberOfCopiedWords; index--;)
+        s_copiedWords[index] = s_lowestCopiedWord[index];
+}
+
+namespace {
+
+class HoldersOfLists final : public HeapAnalyzer {
+public:
+    void analyzeNode(JSCell*) final { }
+    void analyzeEdge(JSCell* from, JSCell* to, RootMarkReason reason) final { add(from, to, reason, nullptr); }
+    void analyzePropertyNameEdge(JSCell* from, JSCell* to, UniquedStringImpl* name) final { add(from, to, RootMarkReason::None, name); }
+    void analyzeVariableNameEdge(JSCell* from, JSCell* to, UniquedStringImpl* name) final { add(from, to, RootMarkReason::None, name); }
+    void analyzeIndexEdge(JSCell*, JSCell*, uint32_t) final { }
+    void setOpaqueRootReachabilityReasonForCell(JSCell*, ASCIILiteral) final { }
+    void setWrappedObjectForCell(JSCell*, void*) final { }
+    void setLabelForCell(JSCell*, const String&) final { }
+
+    void didCollect()
+    {
+        std::ranges::sort(m_references, { }, &Reference::to);
+    }
+
+    JSCell* logPathTo(JSCell* target) const
+    {
+        HashMap<JSCell*, const Reference*> stepToward;
+        Deque<JSCell*> queue;
+        stepToward.add(target, nullptr);
+        queue.append(target);
+        while (!queue.isEmpty()) {
+            JSCell* cell = queue.takeFirst();
+            std::span<const Reference> references = referencesTo(cell);
+            auto root = std::ranges::find(references, nullptr, &Reference::from);
+            if (references.empty() || root != references.end()) {
+                if (references.empty())
+                    dataLogLn("AOT full heap |   no cell and no root with a name refers to this ", cell->classInfo()->className, ": the scan of the stack, the registers or a scratch buffer found it");
+                else
+                    dataLogLn("AOT full heap |   a root refers to this ", cell->classInfo()->className, ": ", root->reason);
+                for (JSCell* from = cell; from != target;) {
+                    const Reference* step = stepToward.get(from);
+                    UniquedStringImpl* name = nullptr;
+                    for (const Reference& other : referencesTo(step->to)) {
+                        if (other.from == from && other.name)
+                            name = other.name;
+                    }
+                    dataLogLn("AOT full heap |   ", from->classInfo()->className, name ? " ." : "", name ? String(name) : String(), " > ", step->to->classInfo()->className);
+                    from = step->to;
+                }
+                return cell;
+            }
+            for (const Reference& reference : references) {
+                if (stepToward.add(reference.from, &reference).isNewEntry)
+                    queue.append(reference.from);
+            }
+        }
+        return nullptr;
+    }
+
+private:
+    struct Reference {
+        JSCell* from;
+        JSCell* to;
+        UniquedStringImpl* name;
+        RootMarkReason reason;
+    };
+
+    void add(JSCell* from, JSCell* to, RootMarkReason reason, UniquedStringImpl* name)
+    {
+        if (to->type() == StructureType)
+            return;
+        Locker locker { m_lock };
+        m_references.append(Reference { from, to, name, reason });
+    }
+
+    std::span<const Reference> referencesTo(JSCell* cell) const
+    {
+        auto range = std::ranges::equal_range(m_references, cell, { }, &Reference::to);
+        return { range.begin(), range.end() };
+    }
+
+    Lock m_lock;
+    Vector<Reference> m_references;
+};
+
+} // anonymous namespace
+
+static void logCopiedWordsThatName(VM& vm, JSCell* cell, ASCIILiteral className)
+{
+    auto bytesOverPoll = [](const void* address) {
+        return static_cast<intptr_t>(std::bit_cast<uintptr_t>(address) - std::bit_cast<uintptr_t>(s_stackPointerAtPoll));
+    };
+    unsigned numberOfWords = 0;
+    for (size_t index = 0; index < s_numberOfCopiedWords; ++index) {
+        if (s_copiedWords[index] != std::bit_cast<uintptr_t>(cell))
+            continue;
+        ++numberOfWords;
+        dataLogLn("AOT full heap |   a word of the stack names this ", className, ": ", bytesOverPoll(s_lowestCopiedWord + index), " bytes over the stack pointer of the function that collects at a poll");
+    }
+    dataLogLn("AOT full heap |   ", numberOfWords, " of the ", s_numberOfCopiedWords, " words copied name it | under 0: frames of the collection, which have returned and may have put it there themselves | the caller's frame is at ", bytesOverPoll(vm.topCallFrame), ", the entry frame at ", bytesOverPoll(vm.topEntryFrame), ", the stack begins at ", bytesOverPoll(s_originOfStack));
+}
+
+static NEVER_INLINE void logHoldersOfLongLists(VM& vm)
+{
+    Vector<std::pair<JSArray*, unsigned>, 8> lists;
+    {
+        HeapIterationScope iterationScope(vm.heap);
+        vm.heap.objectSpace().forEachLiveCell(iterationScope, [&](HeapCell* cell, HeapCell::Kind kind) {
+            if (!isJSCellKind(kind))
+                return IterationStatus::Continue;
+            auto* array = dynamicDowncast<JSArray>(static_cast<JSCell*>(cell));
+            if (array && array->length() >= Options::logHoldersOfListsThisLongWhenCageIsFull() && lists.size() < lists.capacity())
+                lists.append({ array, array->length() });
+            return IterationStatus::Continue;
+        });
+    }
+    dataLogLn("AOT full heap | the collection at a poll freed too little | lists of ", Options::logHoldersOfListsThisLongWhenCageIsFull(), " elements and more that outlived it: ", lists.size());
+
+    HoldersOfLists holders;
+    HeapProfiler& profiler = vm.ensureHeapProfiler();
+    profiler.setActiveHeapAnalyzer(&holders);
+    vm.heap.collectForExhaustedCage();
+    profiler.setActiveHeapAnalyzer(nullptr);
+    holders.didCollect();
+
+    for (auto [list, length] : lists) {
+        bool isAlive = vm.heap.isMarked(list);
+        dataLogLn("AOT full heap | a list of ", length, " elements | a second collection from the same place ", isAlive ? "keeps it too" : "lets go of it");
+        logCopiedWordsThatName(vm, list, "list"_s);
+        if (!isAlive)
+            continue;
+        JSCell* first = holders.logPathTo(list);
+        if (first && first != list)
+            logCopiedWordsThatName(vm, first, first->classInfo()->className);
+    }
+}
+
 bool MarkedBlockCage::tryTakeBackOutOfMemoryErrorAtPoll(VM& vm)
 {
+    if (m_pollFillsStructureReserve && m_exhaustedHeaps.isEmpty()) {
+        if (vm.heap.isDeferred())
+            return true;
+        m_errorWaitsForPoll = false;
+        m_owesCollection = false;
+        vm.heap.collectForExhaustedCage();
+        didCollectForStructureReserve();
+        vm.traps().setNeedsOutOfMemoryError(false);
+        return true;
+    }
     m_errorWaitsForPoll = false;
+    // A collection takes its own memory from malloc, and malloc has none.
+    if (m_exhaustedHeaps == ExhaustedHeap::ListOfArrayBuffers)
+        return false;
     if (vm.heap.isDeferred() || (m_hasCollectedAtPoll && !m_owesCollection))
         return false;
     m_owesCollection = false;
     m_hasCollectedAtPoll = true;
+    bool logsHolders = Options::logHoldersOfListsThisLongWhenCageIsFull();
+    if (logsHolders && !s_copiedWords) [[unlikely]]
+        prepareToCopyWordsOfStack();
     vm.heap.collectForExhaustedCage();
+    if (logsHolders) [[unlikely]]
+        copyWordsOfStack(currentStackPointer());
+    didCollectForStructureReserve();
     if (!vm.traps().needsOutOfMemoryError())
         return false;
     if (hasHeapThatReleasedReserve()) {
-        if (!tryRestoreReleasedReserves(vm))
+        if (!tryRestoreReleasedReserves(vm)) {
+            if (logsHolders) [[unlikely]]
+                logHoldersOfLongLists(vm);
             return false;
+        }
     } else {
         // How much the program can allocate now says whether this collection was barren too.
         m_numberOfBarrenCollections = barrenCollectionsUntilError - 1;
@@ -748,6 +960,19 @@ void MarkedBlockCage::didThrowOutOfMemoryError()
         StructureAlignedMemoryAllocator::didThrowOutOfMemoryError();
 }
 
+void MarkedBlockCage::didThrowOutOfMemoryError(VM& vm)
+{
+    bool wasForStructures = m_exhaustedHeaps.contains(ExhaustedHeap::Structures);
+    didThrowOutOfMemoryError();
+    if (!wasForStructures)
+        return;
+    m_owesStructureReserve = false;
+    // No error is owed: whoever looks for one waits for the poll.
+    m_pollFillsStructureReserve = true;
+    m_errorWaitsForPoll = true;
+    vm.traps().setNeedsOutOfMemoryError(true);
+}
+
 void MarkedBlockCage::didCreateOutOfMemoryError()
 {
     m_numberOfBarrenCollections = 0;
@@ -758,10 +983,10 @@ void MarkedBlockCage::didCreateOutOfMemoryError(VM& vm)
 {
     didCreateOutOfMemoryError();
     // A range that grows takes its room from where storage takes it.
-    if (!m_exhaustedHeaps.contains(ExhaustedHeap::Tables) && !(s_isGrowable && m_exhaustedHeaps.contains(ExhaustedHeap::Cells)))
+    if (!m_exhaustedHeaps.containsAny({ ExhaustedHeap::Tables, ExhaustedHeap::ListOfArrayBuffers, ExhaustedHeap::WeakBlocks }) && !(s_isGrowable && m_exhaustedHeaps.contains(ExhaustedHeap::Cells)))
         return;
-    didThrowOutOfMemoryError();
     vm.traps().setNeedsOutOfMemoryError(false);
+    didThrowOutOfMemoryError(vm);
 }
 
 void MarkedBlockCage::didFindNoRoom(VM& vm, ExhaustedHeap exhaustedHeap)
@@ -849,6 +1074,50 @@ void MarkedBlockCage::willAddSymbol(VM& vm)
         return;
     vm.heap.cage().addExhaustedHeap(ExhaustedHeap::Tables);
     vm.traps().setNeedsOutOfMemoryError(true);
+}
+
+void MarkedBlockCage::willAddArrayBuffer(VM& vm)
+{
+    if (!s_isGrowable || vm.heap.tryGrowListOfArrayBuffersEarly()) [[likely]]
+        return;
+    if (vm.traps().needsOutOfMemoryError())
+        return;
+    addExhaustedHeap(ExhaustedHeap::ListOfArrayBuffers);
+    vm.traps().setNeedsOutOfMemoryError(true);
+#if ENABLE(AOT)
+    // The heap counts the bytes of the buffer next and may collect there.
+    if (vm.hasCompiledCode() && !vm.heap.isDeferred())
+        AOT::HeapHooks::didFindNoRoomWhereCollectionMayRun(vm);
+#endif
+}
+
+bool MarkedBlockCage::keepsSpareWeakBlocks()
+{
+    return s_isGrowable;
+}
+
+bool MarkedBlockCage::tryFillSpareWeakBlocks()
+{
+    while (m_spareWeakBlocks.size() < numberOfSpareWeakBlocks) {
+        void* block = WeakBlockMalloc::tryAlignedMalloc(WeakBlock::blockSize, WeakBlock::blockSize);
+        if (!block)
+            return false;
+        m_spareWeakBlocks.append(block);
+    }
+    return true;
+}
+
+void* MarkedBlockCage::allocateWeakBlock(VM& vm)
+{
+    if (!tryFillSpareWeakBlocks() && !vm.traps().needsOutOfMemoryError()) [[unlikely]] {
+        addExhaustedHeap(ExhaustedHeap::WeakBlocks);
+        vm.traps().setNeedsOutOfMemoryError(true);
+    }
+    if (m_spareWeakBlocks.isEmpty()) [[unlikely]] {
+        logExhaustion(ExhaustedHeap::Cells);
+        RELEASE_ASSERT_RESOURCE_AVAILABLE(false, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
+    }
+    return m_spareWeakBlocks.takeLast();
 }
 
 void MarkedBlockCage::setLastReserveHandler(LastReserveHandler handler)

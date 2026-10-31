@@ -45,6 +45,9 @@ function f3 name="comparesWithEarlierEvaluation" parameters=[{type=anything}] re
   b2():
     v4 = StrictEq v0, v1
     Return v4
-# CHECK: NewRegExp
-# CHECK-NOT: SharedRegExpLiteral
+# One evaluation gets to one of the two blocks, so each makes its own. The one that is handed to the call stays an allocation, so what comes in is never the one that is compared with it.
+# CHECK: b1():
+# CHECK-NEXT: NewRegExp
+# CHECK: b2():
+# CHECK-NEXT: SharedRegExpLiteral pattern="a"
 }

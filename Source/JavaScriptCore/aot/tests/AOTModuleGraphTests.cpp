@@ -64,6 +64,7 @@ public:
     bool has(unsigned module, Flags expected) const { return flagsOf(module) == expected; }
     bool isImportedByModule(unsigned module) const { return m_modules[module].isImportedByModule(); }
 
+    void group(std::span<const ModuleImportSite> sites) { m_groupsLoadedWithGroups = groupModulesLoadedTogether(m_modules.mutableSpan(), m_requests.span(), sites); }
     void group(std::initializer_list<ModuleImportSite> sites) { m_groupsLoadedWithGroups = groupModulesLoadedTogether(m_modules.mutableSpan(), m_requests.span(), std::span(sites.begin(), sites.size())); }
     unsigned headOf(unsigned module) const
     {
@@ -508,6 +509,86 @@ static void testWhatTwoRootsLeadToIsAGroupOfItsOwn()
     AOT_TEST_CHECK(graph.groupsLoadedWithItAre(shared, { }) && graph.groupsLoadedWithItAre(late, { }) && graph.groupsLoadedWithItAre(entryPoint, { }));
 }
 
+// More roots than go at once, some below another root, over imports with cycles: modules are together exactly where the same roots come to them first.
+static void testManyRootsSplitLikeOneAtATime()
+{
+    constexpr unsigned numberOfEntryPoints = 150;
+    constexpr unsigned numberOfRootsBelow = 100;
+    constexpr unsigned numberOfModules = 300;
+    Graph graph;
+    unsigned top = graph.addSourceText(Flag::IsEntryPoint);
+    Vector<unsigned> roots;
+    for (unsigned index = 0; index < numberOfEntryPoints; ++index)
+        roots.append(graph.addSourceText(Flag::IsEntryPoint));
+    for (unsigned index = 0; index < numberOfRootsBelow; ++index)
+        roots.append(graph.addSourceText());
+    unsigned firstModule = roots.last() + 1;
+    for (unsigned index = 0; index < numberOfModules; ++index)
+        graph.addSourceText();
+    unsigned numberOfNodes = firstModule + numberOfModules;
+    Vector<Vector<unsigned>> imports(numberOfNodes);
+    uint32_t seed = 12345;
+    auto draw = [&](unsigned below) {
+        seed = seed * 48271 % 2147483647;
+        return seed % below;
+    };
+    auto import = [&](unsigned from, unsigned to) {
+        graph.request(from, to);
+        imports[from].append(to);
+    };
+    for (unsigned count = 0; count < 6; ++count)
+        import(top, firstModule + draw(numberOfModules));
+    for (unsigned root : roots) {
+        for (unsigned count = 0; count < 3; ++count)
+            import(root, firstModule + draw(numberOfModules));
+    }
+    for (unsigned index = 0; index < numberOfModules; ++index) {
+        // Mostly toward the end. Every tenth one goes back, which makes cycles.
+        unsigned module = firstModule + index;
+        if (index + 1 < numberOfModules)
+            import(module, module + 1 + draw(std::min(numberOfModules - index - 1, 8u)));
+        if (!(index % 10))
+            import(module, firstModule + draw(numberOfModules));
+    }
+    graph.compute();
+    Vector<ModuleImportSite> sites;
+    for (unsigned index = numberOfEntryPoints; index < roots.size(); ++index)
+        sites.append(ModuleImportSite { top, roots[index] });
+    graph.group(sites.span());
+
+    auto reachOf = [&](unsigned root) {
+        Vector<bool> isReached(FillWith { }, numberOfNodes, false);
+        Vector<unsigned> found { root };
+        isReached[root] = true;
+        while (!found.isEmpty()) {
+            for (unsigned target : imports[found.takeLast()]) {
+                if (!std::exchange(isReached[target], true))
+                    found.append(target);
+            }
+        }
+        return isReached;
+    };
+    Vector<bool> reachOfTop = reachOf(top);
+    Vector<Vector<unsigned>> rootsOf(numberOfNodes);
+    for (unsigned module = 0; module < numberOfNodes; ++module) {
+        if (reachOfTop[module])
+            rootsOf[module].append(top);
+    }
+    for (unsigned index = 0; index < roots.size(); ++index) {
+        Vector<bool> reach = reachOf(roots[index]);
+        for (unsigned module = 0; module < numberOfNodes; ++module) {
+            if (reach[module] && (index < numberOfEntryPoints || !reachOfTop[module]))
+                rootsOf[module].append(roots[index]);
+        }
+    }
+    for (unsigned first = 0; first < numberOfNodes; ++first) {
+        for (unsigned second = first + 1; second < numberOfNodes; ++second) {
+            if (!rootsOf[first].isEmpty() || !rootsOf[second].isEmpty())
+                AOT_TEST_CHECK((rootsOf[first] == rootsOf[second]) == graph.areLoadedTogether({ first, second }));
+        }
+    }
+}
+
 static void testARootThatTwoModulesNameIsBelowNeither()
 {
     Graph graph;
@@ -568,6 +649,7 @@ std::span<const NativeTest> moduleGraphTests()
         { "module-graph/wire-flag-is-untouched"_s, testWireFlagIsUntouched },
         { "module-graph/what-one-root-leads-to-is-loaded-together"_s, testWhatOneRootLeadsToIsLoadedTogether },
         { "module-graph/what-two-roots-lead-to-is-a-group-of-its-own"_s, testWhatTwoRootsLeadToIsAGroupOfItsOwn },
+        { "module-graph/many-roots-split-like-one-at-a-time"_s, testManyRootsSplitLikeOneAtATime },
         { "module-graph/a-root-that-two-modules-name-is-below-neither"_s, testARootThatTwoModulesNameIsBelowNeither },
         { "module-graph/what-a-file-names-is-below-no-root"_s, testWhatAFileNamesIsBelowNoRoot },
     };

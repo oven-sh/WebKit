@@ -198,6 +198,9 @@ void printRequestRecord(IRPrinter& printer, const RequestRecord& request)
             printer.print(record.data);
             if (record.hasValues)
                 out.print(" hasValues"_s);
+        },
+        [&](const FormatPatternRecord& record) {
+            out.print("FormatPattern "_s, record.words.size(), " words"_s);
         });
 }
 

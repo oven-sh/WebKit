@@ -498,13 +498,38 @@ static void onlyCompleteListOfCalleesSaysAllThatIsEntered()
     AOT_TEST_CHECK(CalleeList::none().runsNothing() && CalleeList::none().functionsAlone() && !CalleeList::unknown().all() && CalleeList::unknown().mayRunUserCode());
 }
 
+// A plan that is found refused in a memo is skipped, and under --aot-verify-each-pass it is made again, to see that it uses no record of the phase: that alone is what skipping it would leave out.
+static void hitInMemoOfArenaIsEventThatUsesNoRecord()
+{
+    TypeTable types(BuiltinTable::singleton());
+    TypeID narrow = types.intern(Type::integer(Range { 0, 10 }));
+    TypeID wide = types.intern(Type::integer(Range { 0, 20 }));
+    TypeInterningPhase phase(types, 1);
+    {
+        TypeArena arena(phase, 0);
+        uint64_t events = arena.unshareableEventCount();
+        uint64_t uses = arena.useCountOfRecordsOfPhase();
+        AOT_TEST_CHECK(arena.unionOf(narrow, wide) == wide && arena.intersectionOf(narrow, wide) == narrow);
+        AOT_TEST_CHECK(arena.unshareableEventCount() == events && arena.useCountOfRecordsOfPhase() == uses);
+        AOT_TEST_CHECK(arena.unionOf(narrow, wide) == wide && arena.intersectionOf(narrow, wide) == narrow);
+        AOT_TEST_CHECK(arena.unshareableEventCount() == events + 2 && arena.useCountOfRecordsOfPhase() == uses);
+
+        events = arena.unshareableEventCount();
+        AOT_TEST_CHECK(TypeTable::isProvisional(arena.intern(Type::integer(Range { 0, 30 }))));
+        AOT_TEST_CHECK(arena.unshareableEventCount() == events + 1 && arena.useCountOfRecordsOfPhase() == uses + 1);
+        AOT_TEST_CHECK(TypeTable::isProvisional(arena.intern(Type::integer(Range { 0, 30 }))));
+        AOT_TEST_CHECK(arena.unshareableEventCount() == events + 2 && arena.useCountOfRecordsOfPhase() == uses + 2);
+    }
+    phase.finish(StringRemap());
+}
+
 #define FOR_EACH_AOT_TYPE_ARENA_TEST(v) \
     v(internedTablesDoNotDependOnThreads) v(listsNestedToAnyDepthAreMergedAlikeByOneThreadAndByMany) v(provisionalStringLiteralsAreSortedAfterRemap) v(scratchArenaInOpenPhaseLeavesNoRecord) \
     v(scratchArenaWithoutOpenPhaseLeavesNoRecord) v(scratchArenasWithoutOpenPhaseOnManyThreads) v(layoutSetOfTwoTasksGetsOneID) \
     v(tasksCommitInTheListedOrder) v(discardedPhaseLeavesNoRecord) v(sharedMemoIsThreadSafe) v(fullSharedMemoRejectsNewEntries) \
     v(idsThatDifferInHighBitsHashDifferently) \
     v(arenasShareOnlySideEffectFreeAnswers) v(verifyingSharedMemoRecomputesAnswers) v(internedTablesDoNotDependOnSharedAnswers) \
-    v(onlyCompleteListOfCalleesSaysAllThatIsEntered)
+    v(onlyCompleteListOfCalleesSaysAllThatIsEntered) v(hitInMemoOfArenaIsEventThatUsesNoRecord)
 
 std::span<const NativeTest> typeArenaTests()
 {

@@ -1149,6 +1149,7 @@ public:
     }
 
     bool isOnStack() const { return m_builder.isOnStack(); }
+    bool holdsOneString() const { return m_builder.holdsOneString(); }
     size_t length() const { return m_cursor - m_builder.lengthOrigin; }
     const String expected() { return m_expected.toString(); }
 
@@ -1171,6 +1172,19 @@ public:
         AOT_TEST_CHECK(storage && storage->append(m_program.realm(), string) == AppendResult::Appended);
         m_expected.append(textOf(m_program, string));
         didChangeStorage();
+    }
+
+    void appendRangeAsCompiledCodeDoes(JSString* string, int32_t start, int32_t end)
+    {
+        m_cursor = byteCast<Latin1Character>(callOperationFromTest(m_program.vm(), operationAOTStackStringBuilderAppendStringRange, &m_program.instance(), reinterpret_cast<uint8_t*>(&m_builder), byteCast<uint8_t>(m_cursor), string, start, end).value);
+        AOT_TEST_CHECK(m_cursor && m_cursor <= m_builder.limit);
+        m_expected.append(StringView(textOf(m_program, string)).substring(start, end - start));
+    }
+
+    void discardAsCompiledCodeDoes()
+    {
+        if (!isOnStack())
+            operationAOTStackStringBuilderDiscard(&m_program.instance(), reinterpret_cast<uint8_t*>(&m_builder));
     }
 
     JSString* finish(StringUse use)
@@ -1241,6 +1255,55 @@ static void testStackBuilder(LoadedProgram& program)
             mixed.appendToStorage(jsString(vm, repeated('y', 200)));
     }
     mixed.finish(StringUse::Unknown);
+}
+
+// `"" + text.slice(start, end)`: no storage is taken for it.
+static void testStackBuilderHoldsOneSlice(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    static constexpr char16_t units[] = { 'w', 'o', 'r', 'd', ' ', 0x65e5, 0x672c, ' ', 'x' };
+    JSString* wide = jsString(vm, String(std::span(units)));
+    JSString* longString = jsString(vm, repeated('x', 1000));
+
+    for (JSString* text : { wide, longString }) {
+        int32_t end = text == wide ? 4 : 900;
+        StackBuilderForTest alone(program);
+        alone.appendRangeAsCompiledCodeDoes(text, 0, end);
+        AOT_TEST_CHECK(alone.holdsOneString() && alone.length() == static_cast<size_t>(end));
+        alone.finishAsCompiledCodeDoes();
+
+        StackBuilderForTest followed(program);
+        followed.appendRangeAsCompiledCodeDoes(text, 0, end);
+        followed.appendInline("!"_s);
+        AOT_TEST_CHECK(!followed.holdsOneString() && !followed.isOnStack());
+        followed.appendRangeAsCompiledCodeDoes(text, 1, end);
+        followed.appendInline("0123456789abcdef"_s);
+        followed.finish(StringUse::Unknown);
+
+        StackBuilderForTest twice(program);
+        twice.appendRangeAsCompiledCodeDoes(text, 0, end);
+        twice.appendRangeAsCompiledCodeDoes(text, 0, end);
+        AOT_TEST_CHECK(!twice.holdsOneString() && !twice.isOnStack());
+        twice.finishAsCompiledCodeDoes();
+
+        StackBuilderForTest behindText(program);
+        behindText.appendInline("a"_s);
+        behindText.appendRangeAsCompiledCodeDoes(text, 0, end);
+        AOT_TEST_CHECK(!behindText.holdsOneString());
+        behindText.finish(StringUse::LikelyKey);
+
+        StackBuilderForTest dropped(program);
+        dropped.appendRangeAsCompiledCodeDoes(text, 0, end);
+        dropped.discardAsCompiledCodeDoes();
+    }
+
+    StackBuilderForTest nothing(program);
+    nothing.appendRangeAsCompiledCodeDoes(wide, 3, 3);
+    AOT_TEST_CHECK(nothing.finishAsCompiledCodeDoes() == vm.smallStrings.emptyString());
+
+    StackBuilderForTest narrowPart(program);
+    narrowPart.appendRangeAsCompiledCodeDoes(wide, 0, 2);
+    AOT_TEST_CHECK(narrowPart.isOnStack() && narrowPart.finishAsCompiledCodeDoes()->is8Bit());
 }
 
 static void testShortTextBuiltOnStackIsFoundAgain(LoadedProgram& program)
@@ -1612,6 +1675,7 @@ std::span<const NativeTest> stringBuilderStorageTests()
         { "string-builder-storage/keys-that-are-integers"_s, withInstance<testKeysThatAreIntegers> },
         { "string-builder-storage/parse-index"_s, testParseIndex },
         { "string-builder-storage/stack-builder"_s, withInstance<testStackBuilder> },
+        { "string-builder-storage/stack-builder-holds-one-slice"_s, withInstance<testStackBuilderHoldsOneSlice> },
         { "string-builder-storage/short-text-built-on-stack-is-found-again"_s, withInstance<testShortTextBuiltOnStackIsFoundAgain> },
         { "string-builder-storage/keys-up-to-the-cached-length"_s, withInstance<testKeysUpToTheCachedLength> },
         { "string-builder-storage/concatenated-keys"_s, withInstance<testConcatenatedKeys> },

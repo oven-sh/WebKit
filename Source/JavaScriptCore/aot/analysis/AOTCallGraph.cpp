@@ -22,7 +22,9 @@
 #include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
+#include <algorithm>
 #include <atomic>
+#include <climits>
 #include <functional>
 #include <numeric>
 #include <optional>
@@ -56,6 +58,18 @@ struct SuccessorList {
 
     std::span<const FunctionID> functions;
     std::optional<unsigned> unknownCodeNode;
+};
+
+// What the members of each long set that have a rank say to the users of the set.
+struct RankedMembersOfLongSets {
+    explicit RankedMembersOfLongSets(const CallGraph& graph)
+        : numberWithoutRank(graph.numberOfLongSets(), [&](size_t set) { return static_cast<uint32_t>(graph.membersOfLongSet(set).size()); })
+        , reachUnknownCode(FillWith { }, graph.numberOfLongSets(), static_cast<uint8_t>(0))
+    {
+    }
+
+    Vector<uint32_t> numberWithoutRank;
+    Vector<uint8_t> reachUnknownCode;
 };
 
 } // anonymous namespace
@@ -98,27 +112,45 @@ void BodyReferenceCollector::addReference(FunctionID target, FunctionReferenceKi
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static EffectDescription describeCodeRunBesideLongCalleeSet(const Program&, const Terminator&, CalleeSetID) { RELEASE_ASSERT_NOT_REACHED(); }
+
 void BodyReferenceCollector::readInstruction(const auto& instruction, const EffectDescription& description)
 {
     m_hasReadBody = true;
     forEachFunctionReference(instruction, [&](FunctionID target, FunctionReferenceKind kind) {
         addReference(target, kind);
     });
+    CalleeSetID entered;
+    if constexpr (std::same_as<std::remove_cvref_t<decltype(instruction)>, Value>) {
+        if (instruction.opcode == Opcode::CallTable)
+            entered = instruction.entrypoints();
+    }
     forEachCalleeSet(instruction, [&](CalleeSetID set) {
-        m_references.calleeSets.append(set);
+        if (set != entered)
+            m_references.calleeSets.append(set);
     });
-    for (FunctionID callee : description.functions)
-        add(callee);
+    if (entered && m_program.at(entered).isLong())
+        m_references.enteredSets.append(entered);
+    else {
+        for (FunctionID entrypoint : entrypointsOfTableCall(m_program, instruction))
+            addReference(entrypoint, FunctionReferenceKind::Call);
+    }
+    // The description may list the functions of the set or leave them out.
+    bool runsLongSet = !!longCalleeSetRunBy(m_program, instruction);
+    if (!runsLongSet) {
+        for (FunctionID callee : description.functions)
+            add(callee);
+    }
     for (FunctionID callee : description.slowPathFunctions)
         add(callee);
     if (description.callsUnknownCode)
         m_references.callsUnknownCode = true;
     if (description.followsFieldsOfOperands)
         m_references.followsFieldsOfOperands = true;
-    if (!description.callsUnknownCode && description.functions.isEmpty())
+    if (!description.callsUnknownCode && description.functions.isEmpty() && !runsLongSet)
         return;
     RELEASE_ASSERT(m_indexInBlock < 1u << 30);
-    bool listsManyFunctions = description.functions.size() > mostFunctionsKeptOfSite;
+    bool listsManyFunctions = runsLongSet || description.functions.size() > mostFunctionsKeptOfSite;
     if (!listsManyFunctions)
         m_references.functionsOfSites.append(description.functions.span());
     m_references.sitesThatRunCode.append(SiteThatRunsCode { BlockID(m_block), m_indexInBlock, description.callsUnknownCode, listsManyFunctions, static_cast<uint32_t>(m_references.functionsOfSites.size()) });
@@ -142,11 +174,12 @@ ReferencesOfBody BodyReferenceCollector::finish(const FlowResults& flow, Functio
     Vector<CalleeSetID>& sets = m_references.calleeSets;
     AOT::sort(sets);
     for (size_t index = 0; index < sets.size(); ++index) {
-        if (index && sets[index] == sets[index - 1])
+        if ((index && sets[index] == sets[index - 1]) || m_program.at(sets[index]).isLong())
             continue;
         for (FunctionID callee : m_program.at(sets[index]).followed().value())
             add(callee);
     }
+    AOT::sort(m_references.enteredSets);
 
     Vector<FunctionID, 8> sources;
     auto addSource = [&](FunctionID source) {
@@ -172,19 +205,23 @@ ReferencesOfBody BodyReferenceCollector::finish(const FlowResults& flow, Functio
         }
         AOT::sort(types);
         removeRepeatedElements(types);
-        moveToExactBuffer(types);
     }
     AOT::sort(m_references.callees);
     removeRepeatedElements(m_references.callees);
     AOT::sort(m_references.otherReferences);
     removeRepeatedElements(m_references.otherReferences);
-    moveToExactBuffer(m_references.callees);
-    moveToExactBuffer(m_references.directCallees);
-    moveToExactBuffer(m_references.calleeSets);
-    moveToExactBuffer(m_references.otherReferences);
-    moveToExactBuffer(m_references.sitesThatRunCode);
-    moveToExactBuffer(m_references.functionsOfSites);
-    return WTF::move(m_references);
+    return {
+        m_references.callees,
+        m_references.directCallees,
+        m_references.calleeSets,
+        m_references.enteredSets,
+        m_references.otherReferences,
+        m_references.expectedFunctionTypes,
+        m_references.sitesThatRunCode,
+        m_references.functionsOfSites,
+        m_references.callsUnknownCode,
+        m_references.followsFieldsOfOperands,
+    };
 }
 
 EntriesThatRunNoCode findEntriesThatRunNoCode()
@@ -212,6 +249,8 @@ ReferencesOfBody collectReferencesOf(const Program& program, const FlowResults& 
     auto read = [&](const auto& entry) {
         if (entriesThatRunNoCode.contains(entry))
             collector.read(entry, descriptionWithoutCode);
+        else if (CalleeSetID set = longCalleeSetRunBy(program, entry))
+            collector.read(entry, describeCodeRunBesideLongCalleeSet(program, entry, set));
         else
             collector.read(entry, describeCodeRunBy(program, function, entry));
     };
@@ -335,7 +374,7 @@ static BitVector createBitVector(const Vector<uint8_t>& flags)
     return bits;
 }
 
-static Vector<uint32_t> peelAcyclicFunctions(const CallGraph& graph, const ParallelLoops& loops, Vector<uint8_t>& isRanked, FunctionRanks& result)
+static Vector<uint32_t> peelAcyclicFunctions(const CallGraph& graph, const ParallelLoops& loops, Vector<uint8_t>& isRanked, RankedMembersOfLongSets& longSets, FunctionRanks& result)
 {
     AOT_THRESHOLD(size_t, maxRemainingPerPeeledFunction, 16);
 
@@ -347,11 +386,16 @@ static Vector<uint32_t> peelAcyclicFunctions(const CallGraph& graph, const Paral
         Vector<uint32_t> peeled = collectInParallel<uint32_t>(loops, remaining.size(), [&](unsigned position, Vector<uint32_t>& chunk) {
             uint32_t index = remaining[position];
             FunctionID function(index);
-            uint8_t reachesUnknownCode = !graph.allCalleesOf(function);
-            for (FunctionID callee : graph.calleesOf(function)) {
+            uint8_t reachesUnknownCode = !graph.hasCompleteCalleeSet(function);
+            for (FunctionID callee : graph.ownCalleesOf(function)) {
                 if (!isRanked[callee.index()])
                     return;
                 reachesUnknownCode |= result.reachesUnknownCode[callee.index()];
+            }
+            for (uint32_t set : graph.longSetsOf(function)) {
+                if (longSets.numberWithoutRank[set])
+                    return;
+                reachesUnknownCode |= longSets.reachUnknownCode[set];
             }
             result.ranks[index] = rank;
             result.reachesUnknownCode[index] = reachesUnknownCode;
@@ -360,6 +404,14 @@ static Vector<uint32_t> peelAcyclicFunctions(const CallGraph& graph, const Paral
         forEachIndexInParallel(loops, peeled.size(), [&](unsigned position) {
             isRanked[peeled[position]] = 1;
         });
+        if (graph.numberOfLongSets()) {
+            for (uint32_t index : peeled) {
+                for (uint32_t set : graph.longSetsWith(FunctionID(index))) {
+                    --longSets.numberWithoutRank[set];
+                    longSets.reachUnknownCode[set] |= result.reachesUnknownCode[index];
+                }
+            }
+        }
         remaining = collectInParallel<uint32_t>(loops, remaining.size(), [&](unsigned position, Vector<uint32_t>& chunk) {
             if (!isRanked[remaining[position]])
                 chunk.append(remaining[position]);
@@ -369,7 +421,99 @@ static Vector<uint32_t> peelAcyclicFunctions(const CallGraph& graph, const Paral
     }
 }
 
-static void rankRemainingFunctions(const CallGraph& graph, const ParallelLoops& loops, std::span<const uint32_t> remaining, const Vector<uint8_t>& isRanked, FunctionRanks& result)
+// computeStronglyConnectedComponents() for nodes that have, beside successors of their own, all the nodes of some lists. It walks as if each node listed all its successors in ascending order,
+// so it numbers the components alike, and it reads a list once, however many nodes have it.
+static StronglyConnectedComponents computeComponentsWithSharedLists(unsigned numberOfNodes, unsigned numberOfLists, NOESCAPE const auto& ownSuccessorsOf, NOESCAPE const auto& listsOf, NOESCAPE const auto& nodesOf, NOESCAPE const auto& listsWith)
+{
+    constexpr unsigned none = UINT_MAX;
+    StronglyConnectedComponents result;
+    result.componentOf.fill(0, numberOfNodes);
+    result.isInCycle.ensureSize(numberOfNodes);
+    result.members.reserveInitialCapacity(numberOfNodes);
+    BitVector hasSelfEdge(numberOfNodes);
+    BitVector isInComponentStack(numberOfNodes);
+    BitVector isVisited(numberOfNodes);
+    Vector<unsigned> order(FillWith { }, numberOfNodes, 0u);
+    Vector<unsigned> lowest = order;
+    Vector<unsigned> componentStack;
+    Vector<std::pair<unsigned, unsigned>> walk;
+    // Nodes are visited once, so the nodes of a list before this one stay visited.
+    Vector<unsigned> firstNotVisited(FillWith { }, numberOfLists, 0u);
+    // Components leave the stack from its top, so of the nodes of a list the one that came first leaves last.
+    Vector<unsigned> lowestInStack(FillWith { }, numberOfLists, none);
+    unsigned numberVisited = 0;
+    auto enter = [&](unsigned node) {
+        order[node] = lowest[node] = numberVisited++;
+        isVisited.set(node);
+        componentStack.append(node);
+        isInComponentStack.set(node);
+        for (uint32_t list : listsWith(node)) {
+            if (lowestInStack[list] == none)
+                lowestInStack[list] = order[node];
+        }
+        walk.append({ node, 0 });
+    };
+    for (unsigned root = 0; root < numberOfNodes; ++root) {
+        if (isVisited.get(root))
+            continue;
+        enter(root);
+        while (!walk.isEmpty()) {
+            unsigned node = walk.last().first;
+            unsigned& nextOwn = walk.last().second;
+            std::span<const uint32_t> own = ownSuccessorsOf(node);
+            for (; nextOwn < own.size() && isVisited.get(own[nextOwn]); ++nextOwn) {
+                if (own[nextOwn] == node)
+                    hasSelfEdge.set(node);
+                if (isInComponentStack.get(own[nextOwn]))
+                    lowest[node] = std::min(lowest[node], order[own[nextOwn]]);
+            }
+            unsigned next = nextOwn < own.size() ? own[nextOwn] : none;
+            for (uint32_t list : listsOf(node)) {
+                std::span<const uint32_t> nodes = nodesOf(list);
+                unsigned& first = firstNotVisited[list];
+                while (first < nodes.size() && isVisited.get(nodes[first]))
+                    ++first;
+                if (first < nodes.size())
+                    next = std::min(next, nodes[first]);
+            }
+            if (next != none) {
+                enter(next);
+                continue;
+            }
+            for (uint32_t list : listsOf(node)) {
+                lowest[node] = std::min(lowest[node], lowestInStack[list]);
+                if (std::ranges::binary_search(nodesOf(list), node))
+                    hasSelfEdge.set(node);
+            }
+            walk.removeLast();
+            if (!walk.isEmpty())
+                lowest[walk.last().first] = std::min(lowest[walk.last().first], lowest[node]);
+            if (lowest[node] != order[node])
+                continue;
+            bool isCycle = componentStack.last() != node || hasSelfEdge.get(node);
+            result.firstMemberOf.append(result.members.size());
+            for (;;) {
+                unsigned member = componentStack.takeLast();
+                isInComponentStack.clear(member);
+                for (uint32_t list : listsWith(member)) {
+                    if (lowestInStack[list] == order[member])
+                        lowestInStack[list] = none;
+                }
+                if (isCycle)
+                    result.isInCycle.quickSet(member);
+                result.componentOf[member] = result.numberOfComponents;
+                result.members.append(member);
+                if (member == node)
+                    break;
+            }
+            ++result.numberOfComponents;
+        }
+    }
+    result.firstMemberOf.append(result.members.size());
+    return result;
+}
+
+static void rankRemainingFunctions(const CallGraph& graph, const ParallelLoops& loops, std::span<const uint32_t> remaining, const Vector<uint8_t>& isRanked, const RankedMembersOfLongSets& longSets, FunctionRanks& result)
 {
     unsigned count = static_cast<unsigned>(remaining.size());
     if (!count)
@@ -381,14 +525,16 @@ static void rankRemainingFunctions(const CallGraph& graph, const ParallelLoops& 
         uint32_t index = remaining[node];
         FunctionID function(index);
         nodeIndex[index] = node;
-        uint8_t reachesUnknownCode = !graph.allCalleesOf(function);
+        uint8_t reachesUnknownCode = !graph.hasCompleteCalleeSet(function);
         uint32_t numberOfSuccessors = 0;
-        for (FunctionID callee : graph.calleesOf(function)) {
+        for (FunctionID callee : graph.ownCalleesOf(function)) {
             if (isRanked[callee.index()])
                 reachesUnknownCode |= result.reachesUnknownCode[callee.index()];
             else
                 ++numberOfSuccessors;
         }
+        for (uint32_t set : graph.longSetsOf(function))
+            reachesUnknownCode |= longSets.reachUnknownCode[set];
         result.reachesUnknownCode[index] = reachesUnknownCode;
         successorOffsets[node] = numberOfSuccessors;
     });
@@ -399,7 +545,7 @@ static void rankRemainingFunctions(const CallGraph& graph, const ParallelLoops& 
     Vector<uint32_t> successors(numberOfEdges);
     forEachIndexInParallel(loops, count, [&](unsigned node) {
         uint32_t next = successorOffsets[node];
-        for (FunctionID callee : graph.calleesOf(FunctionID(remaining[node]))) {
+        for (FunctionID callee : graph.ownCalleesOf(FunctionID(remaining[node]))) {
             if (!isRanked[callee.index()])
                 successors[next++] = nodeIndex[callee.index()];
         }
@@ -407,8 +553,49 @@ static void rankRemainingFunctions(const CallGraph& graph, const ParallelLoops& 
     auto successorsOf = [&](unsigned node) {
         return successors.subspan(successorOffsets[node], successorOffsets[node + 1] - successorOffsets[node]);
     };
+    auto longSetsOf = [&](unsigned node) {
+        return graph.longSetsOf(FunctionID(remaining[node]));
+    };
 
-    StronglyConnectedComponents components = computeStronglyConnectedComponents(count, successorsOf);
+    unsigned numberOfLongSets = graph.numberOfLongSets();
+    Vector<uint32_t> firstNodeOfLongSet;
+    Vector<uint32_t> nodesOfLongSets;
+    StronglyConnectedComponents components;
+    if (!numberOfLongSets)
+        components = computeStronglyConnectedComponents(count, successorsOf);
+    else {
+        groupByIndex(numberOfLongSets, firstNodeOfLongSet, nodesOfLongSets, [&](const auto& add) {
+            for (uint32_t set = 0; set < numberOfLongSets; ++set) {
+                if (!longSets.numberWithoutRank[set])
+                    continue;
+                for (FunctionID member : graph.membersOfLongSet(set)) {
+                    if (!isRanked[member.index()])
+                        add(set, nodeIndex[member.index()]);
+                }
+            }
+        });
+        components = computeComponentsWithSharedLists(count, numberOfLongSets, successorsOf, longSetsOf, [&](uint32_t set) {
+            return entriesOfGroup(firstNodeOfLongSet, nodesOfLongSets, set);
+        }, [&](unsigned node) {
+            return graph.longSetsWith(FunctionID(remaining[node]));
+        });
+    }
+    // The members of a set are in the component of its first user or in earlier ones. What they say is final behind that component.
+    enum class AnswerOfLongSet : uint8_t { NotAsked, HoldsInComponent, IsFinal };
+    Vector<AnswerOfLongSet> answerOfLongSet(FillWith { }, numberOfLongSets, AnswerOfLongSet::NotAsked);
+    Vector<uint32_t> componentOfAnswer(FillWith { }, numberOfLongSets, 0u);
+    Vector<uint8_t> longSetReachesUnknownCode(FillWith { }, numberOfLongSets, static_cast<uint8_t>(0));
+    auto reachesUnknownCodeThrough = [&](uint32_t set, uint32_t component) {
+        bool holds = answerOfLongSet[set] == AnswerOfLongSet::IsFinal || (answerOfLongSet[set] == AnswerOfLongSet::HoldsInComponent && componentOfAnswer[set] == component);
+        if (!holds) {
+            answerOfLongSet[set] = answerOfLongSet[set] == AnswerOfLongSet::NotAsked ? AnswerOfLongSet::HoldsInComponent : AnswerOfLongSet::IsFinal;
+            componentOfAnswer[set] = component;
+            longSetReachesUnknownCode[set] = std::ranges::any_of(entriesOfGroup(firstNodeOfLongSet, nodesOfLongSets, set), [&](uint32_t node) {
+                return !!result.reachesUnknownCode[remaining[node]];
+            });
+        }
+        return longSetReachesUnknownCode[set];
+    };
     for (uint32_t component = 0; component < components.numberOfComponents; ++component) {
         std::span<const uint32_t> members = components.membersOf(component);
         uint8_t reachesUnknownCode = 0;
@@ -416,6 +603,8 @@ static void rankRemainingFunctions(const CallGraph& graph, const ParallelLoops& 
             reachesUnknownCode |= result.reachesUnknownCode[remaining[member]];
             for (uint32_t successor : successorsOf(member))
                 reachesUnknownCode |= result.reachesUnknownCode[remaining[successor]];
+            for (uint32_t set : longSetsOf(member))
+                reachesUnknownCode |= reachesUnknownCodeThrough(set, component);
         }
         uint8_t isInCycle = components.isInCycle.quickGet(members[0]);
         for (uint32_t member : members) {
@@ -431,15 +620,26 @@ static void rankRemainingFunctions(const CallGraph& graph, const ParallelLoops& 
 static Vector<uint8_t> findFunctionsReachableFromUnknownCode(const CallGraph& graph, const ParallelLoops& loops)
 {
     Vector<uint8_t> isReachable(FillWith { }, graph.numberOfFunctions(), static_cast<uint8_t>(0));
+    Vector<uint8_t> isLongSetReachable(FillWith { }, graph.numberOfLongSets(), static_cast<uint8_t>(0));
     Vector<FunctionID> frontier(graph.functionsCalledByUnknownCode());
     for (FunctionID function : frontier)
         isReachable[function.index()] = 1;
+    auto reach = [](uint8_t& flag) {
+        AtomicRef isReached(flag);
+        return !isReached.load(std::memory_order_relaxed) && !isReached.exchange(1, std::memory_order_relaxed);
+    };
     while (!frontier.isEmpty()) {
         frontier = collectInParallel<FunctionID>(loops, frontier.size(), [&](unsigned position, Vector<FunctionID>& chunk) {
-            for (FunctionID callee : graph.calleesOf(frontier[position])) {
-                AtomicRef isCalleeReachable(isReachable[callee.index()]);
-                if (!isCalleeReachable.load(std::memory_order_relaxed) && !isCalleeReachable.exchange(1, std::memory_order_relaxed))
-                    chunk.append(callee);
+            auto reachAll = [&](std::span<const FunctionID> callees) {
+                for (FunctionID callee : callees) {
+                    if (reach(isReachable[callee.index()]))
+                        chunk.append(callee);
+                }
+            };
+            reachAll(graph.ownCalleesOf(frontier[position]));
+            for (uint32_t set : graph.longSetsOf(frontier[position])) {
+                if (reach(isLongSetReachable[set]))
+                    reachAll(graph.membersOfLongSet(set));
             }
         });
     }
@@ -461,8 +661,9 @@ void CallGraph::computeRanks(BuildContext& build) const
             ranks.isInCycle.fill(0, count);
             ranks.reachesUnknownCode.fill(0, count);
             Vector<uint8_t> isRanked(FillWith { }, count, static_cast<uint8_t>(0));
-            Vector<uint32_t> remaining = peelAcyclicFunctions(*this, loops, isRanked, ranks);
-            rankRemainingFunctions(*this, loops, remaining.span(), isRanked, ranks);
+            RankedMembersOfLongSets longSets(*this);
+            Vector<uint32_t> remaining = peelAcyclicFunctions(*this, loops, isRanked, longSets, ranks);
+            rankRemainingFunctions(*this, loops, remaining.span(), isRanked, longSets, ranks);
         },
         [&] {
             isReachableFromUnknownCode = findFunctionsReachableFromUnknownCode(*this, loops);
@@ -490,12 +691,14 @@ static void verifyCallers(const CallGraph& graph)
     size_t numberOfCallers = 0;
     for (unsigned index = 0; index < graph.numberOfFunctions(); ++index) {
         FunctionID function(index);
-        std::span<const FunctionID> callers = graph.callersOf(function);
-        numberOfCallees += graph.calleesOf(function).size();
-        numberOfCallers += callers.size();
-        RELEASE_ASSERT(std::ranges::adjacent_find(callers, std::ranges::greater_equal { }) == callers.end());
-        for (FunctionID caller : callers)
-            RELEASE_ASSERT(std::ranges::binary_search(graph.calleesOf(caller), function));
+        numberOfCallees += std::ranges::distance(graph.calleesOf(function));
+        FunctionID previous;
+        for (FunctionID caller : graph.callersOf(function)) {
+            ++numberOfCallers;
+            RELEASE_ASSERT(!previous || previous < caller);
+            previous = caller;
+            RELEASE_ASSERT(graph.calleesOf(caller).contains(function));
+        }
     }
     RELEASE_ASSERT(numberOfCallees == numberOfCallers);
 }
@@ -503,13 +706,18 @@ static void verifyCallers(const CallGraph& graph)
 static void verifyRanks(const CallGraph& graph)
 {
     unsigned unknownCodeNode = graph.numberOfFunctions();
+    Vector<Vector<FunctionID>> callees(unknownCodeNode, [&](size_t index) {
+        Vector<FunctionID> list;
+        for (FunctionID callee : graph.calleesOf(FunctionID(index)))
+            list.append(callee);
+        return list;
+    });
     StronglyConnectedComponents components = computeStronglyConnectedComponents(unknownCodeNode + 1, [&](unsigned node) -> SuccessorList {
         if (node == unknownCodeNode)
             return { graph.functionsCalledByUnknownCode(), std::nullopt };
-        FunctionID function(node);
-        if (std::optional<ProvenValue<std::span<const FunctionID>>> all = graph.allCalleesOf(function))
-            return { *all, std::nullopt };
-        return { graph.calleesOf(function), unknownCodeNode };
+        if (graph.hasCompleteCalleeSet(FunctionID(node)))
+            return { callees[node].span(), std::nullopt };
+        return { callees[node].span(), unknownCodeNode };
     });
     for (unsigned index = 0; index < unknownCodeNode; ++index) {
         FunctionID function(index);
@@ -629,7 +837,7 @@ void CallGraph::Adjacency::addInverseOfLongLists(Adjacency& result) const
     });
 
     result.longListOf.fill(0, count);
-    UncheckedKeyHashMap<unsigned, Vector<std::pair<uint32_t, uint32_t>, 1>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> sourcesOfSameLists;
+    UncheckedKeyHashMap<uint64_t, Vector<std::pair<uint32_t, uint32_t>, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> sourcesOfSameLists;
     Vector<FunctionID> sources;
     for (unsigned target = 0; target < count; ++target) {
         std::span<const uint32_t> lists = entriesOfGroup(firstListOfTarget, listsOfTargets, target);
@@ -705,9 +913,23 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
             });
         });
     }
+    Vector<uint8_t> longSetListsRecordThatLooksDifferent;
+    if (someRecordLooksDifferentToCallers) {
+        longSetListsRecordThatLooksDifferent.grow(program.types.numberOfCalleeSets());
+        forEachIndexInParallel(loops, longSetListsRecordThatLooksDifferent.size(), [&](unsigned index) {
+            const CalleeSet& set = program.at(CalleeSetID(index));
+            longSetListsRecordThatLooksDifferent[index] = set.isLong() && std::ranges::any_of(set.followed().value(), [&](FunctionID listed) {
+                return listed.index() < numberOfKeptBodies && recordLooksDifferentToCallers[listed.index()];
+            });
+        });
+    }
     auto namesOnlyRecordsThatLookTheSame = [&](FunctionID id, const ReferencesOfBody& body) {
         bool callsOne = std::ranges::any_of(body.callees, [&](FunctionID callee) {
             return recordLooksDifferentToCallers[callee.index()];
+        }) || std::ranges::any_of(body.calleeSets, [&](CalleeSetID set) {
+            return !!longSetListsRecordThatLooksDifferent[set.index()];
+        }) || std::ranges::any_of(body.enteredSets, [&](CalleeSetID set) {
+            return !!longSetListsRecordThatLooksDifferent[set.index()];
         });
         if (callsOne)
             return false;
@@ -753,6 +975,7 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
     Vector<uint32_t> directCallSites(FillWith { }, count, 0u);
     Vector<uint32_t> linkedCallSites(FillWith { }, count, 0u);
     Vector<uint32_t> calleeSetCallSites(FillWith { }, program.types.numberOfCalleeSets(), 0u);
+    Vector<uint32_t> enteredSetCallSites(FillWith { }, program.types.numberOfCalleeSets(), 0u);
     Vector<uint8_t> hasOtherReference(FillWith { }, count, static_cast<uint8_t>(0));
     Vector<uint8_t> callsUnknownCode(FillWith { }, count, static_cast<uint8_t>(0));
     Vector<uint8_t> hasBodyByFunction(count);
@@ -795,6 +1018,8 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
         }
         for (CalleeSetID set : body.calleeSets)
             WTF::atomicExchangeAdd(&calleeSetCallSites[set.index()], 1u, std::memory_order_relaxed);
+        for (CalleeSetID set : body.enteredSets)
+            WTF::atomicExchangeAdd(&enteredSetCallSites[set.index()], 1u, std::memory_order_relaxed);
     });
     std::partial_sum(calleeOffsets.begin(), calleeOffsets.end(), calleeOffsets.begin());
     callees.grow(calleeOffsets[count]);
@@ -812,7 +1037,7 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
     CallGraph graph;
     if (someFunctionHasLongList.load(std::memory_order_relaxed)) {
         graph.m_callees.longListOf.fill(0, count);
-        UncheckedKeyHashMap<unsigned, Vector<uint32_t, 1>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> functionsWithList;
+        UncheckedKeyHashMap<uint64_t, Vector<uint32_t, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> functionsWithList;
         Vector<FunctionID> list;
         for (unsigned index = 0; index < count; ++index) {
             if (!hasLongList[index])
@@ -833,12 +1058,67 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
             known.append(index);
         }
     }
+    Vector<uint32_t> longSets;
+    for (uint32_t index = 0; index < calleeSetCallSites.size(); ++index) {
+        if (enteredSetCallSites[index] || (calleeSetCallSites[index] && program.at(CalleeSetID(index)).isLong()))
+            longSets.append(index);
+    }
+    if (!longSets.isEmpty()) {
+        CallGraph::LongSets& lists = graph.m_longSets;
+        lists.ids = longSets.map([](uint32_t index) {
+            return CalleeSetID(index);
+        });
+        groupByIndex(longSets.size(), lists.firstMember, lists.members, [&](const auto& add) {
+            for (uint32_t set = 0; set < longSets.size(); ++set) {
+                std::span<const FunctionID> functions = program.at(CalleeSetID(longSets[set])).followed().value();
+                for (FunctionID callee : functions) {
+                    if (isCalleeWithBody(callee))
+                        add(set, callee);
+                }
+            }
+        });
+        groupByIndex(count, lists.firstSetOfMember, lists.setsOfMembers, [&](const auto& add) {
+            for (uint32_t set = 0; set < longSets.size(); ++set) {
+                for (FunctionID callee : entriesOfGroup(lists.firstMember, lists.members, set))
+                    add(callee.index(), set);
+            }
+        });
+        groupByIndex(count, lists.firstSetOfUser, lists.setsOfUsers, [&](const auto& add) {
+            for (unsigned index = 0; index < count; ++index) {
+                Vector<uint32_t, 8> setsOfUser;
+                for (const CompactList<CalleeSetID>* sets : { &bodies.m_bodies[index].calleeSets, &bodies.m_bodies[index].enteredSets }) {
+                    CalleeSetID previous;
+                    for (CalleeSetID set : *sets) {
+                        if (set != std::exchange(previous, set) && program.at(set).isLong())
+                            setsOfUser.append(static_cast<uint32_t>(std::ranges::lower_bound(longSets, set.index()) - longSets.begin()));
+                    }
+                }
+                AOT::sort(setsOfUser);
+                removeRepeatedElements(setsOfUser);
+                for (uint32_t set : setsOfUser)
+                    add(index, set);
+            }
+        });
+        groupByIndex(longSets.size(), lists.firstUser, lists.users, [&](const auto& add) {
+            for (unsigned index = 0; index < count; ++index) {
+                for (uint32_t set : entriesOfGroup(lists.firstSetOfUser, lists.setsOfUsers, index))
+                    add(set, FunctionID(index));
+            }
+        });
+    }
     forEachIndexInParallel(loops, calleeSetCallSites.size(), [&](unsigned index) {
         uint32_t numberOfSites = calleeSetCallSites[index];
         if (!numberOfSites)
             return;
         for (FunctionID callee : program.at(CalleeSetID(index)).followed().value())
             WTF::atomicExchangeAdd(&linkedCallSites[callee.index()], numberOfSites, std::memory_order_relaxed);
+    });
+    forEachIndexInParallel(loops, enteredSetCallSites.size(), [&](unsigned index) {
+        uint32_t numberOfSites = enteredSetCallSites[index];
+        if (!numberOfSites)
+            return;
+        for (FunctionID entrypoint : program.at(CalleeSetID(index)).written().functions)
+            WTF::atomicExchangeAdd(&directCallSites[entrypoint.index()], numberOfSites, std::memory_order_relaxed);
     });
     times.didFinish("addUpReferences"_s);
     markRecordReferences(program, hasOtherReference, loops);
@@ -920,7 +1200,7 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
 
 void CallGraph::dump(PrintStream& out, const Program& program) const
 {
-    auto printFunctions = [&](std::span<const FunctionID> functions) {
+    auto printFunctions = [&](const auto& functions) {
         for (FunctionID function : functions)
             out.print(" f", function.index());
     };

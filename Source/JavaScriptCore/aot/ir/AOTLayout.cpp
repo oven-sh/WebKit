@@ -227,12 +227,19 @@ bool isNeverStored(const Program& program, FieldReference reference)
     return location.stores == StoreCount::Never && (location.writers == WriterState::AllKnown || declaration.flags.contains(FieldFlags::IsMethod));
 }
 
+LayoutID nearestLayoutAlwaysAbove(const LayoutFlow& flow)
+{
+    return flow.baseState == BaseState::Layout ? flow.base : flow.commonAncestor;
+}
+
 static LayoutID baseOf(const Layout& layout, BaseChain chain)
 {
     switch (layout.flow.baseState) {
     case BaseState::Layout:
         return layout.flow.base;
     case BaseState::Unknown:
+        if (layout.flow.commonAncestor)
+            return layout.flow.commonAncestor;
         return chain == BaseChain::Predicted ? predictedHeritageOf(layout) : LayoutID();
     case BaseState::None:
     case BaseState::BuiltinClass:
@@ -512,10 +519,14 @@ void noteSubclassesOfBuiltinClasses(Program& program, const ParallelLoops& loops
         Layout& layout = program.layouts[index];
         if (!layout.base || layout.writtenBuiltinBase)
             continue;
+        bool isBelowConstructorFunction = layout.has(LayoutFlags::IsConstructorFunction);
         LayoutID highest = layout.base;
-        for (size_t steps = 0; program.at(highest).base && steps < program.layouts.size(); ++steps)
+        for (size_t steps = 0; program.at(highest).base && steps < program.layouts.size(); ++steps) {
+            isBelowConstructorFunction |= program.at(highest).has(LayoutFlags::IsConstructorFunction);
             highest = program.at(highest).base;
+        }
         layout.writtenBuiltinBase = program.at(highest).writtenBuiltinBase;
+        layout.mayBeOrdinaryObject = layout.writtenBuiltinBase && isBelowConstructorFunction;
         classWithoutBrandAbove[index] = classWithoutBrandAbove[highest.index()];
     }
     if (hasClassWithoutBrand)
@@ -626,6 +637,7 @@ Layout createDerivedLayout(const Program& program, LayoutID base)
     layout.position = declared.position;
     layout.flags = LayoutFlags::IsDerived;
     layout.writtenBuiltinBase = declared.writtenBuiltinBase;
+    layout.mayBeOrdinaryObject = declared.mayBeOrdinaryObject;
     layout.flow.baseState = BaseState::Layout;
     layout.flow.base = base;
     return layout;
@@ -682,19 +694,27 @@ void initializeAddedLayout(Program& program, LayoutID id)
     program.setDeclaredMembers(id, program.types.intern(LayoutSet::complete({ id })));
 }
 
-static bool shouldAppendInheritedFields(const Layout& layout)
+static bool listsInheritedFields(const Layout& layout)
 {
-    if (layout.flow.baseState != BaseState::Layout)
-        return false;
-    return layout.isDerived() || std::ranges::none_of(layout.fields, [](const Field& field) {
+    return std::ranges::any_of(layout.fields, [](const Field& field) {
         return field.flags.contains(FieldFlags::IsInherited);
     });
 }
 
-static void appendBaseFields(Program& program, LayoutID id)
+static bool hasNoObjectsOfItsOwn(const Layout& layout)
 {
-    Layout& layout = program.at(id);
-    LayoutID base = layout.flow.base;
+    return !layout.isDerived() && layout.flow.allocation == AllocationState::NeverAllocated;
+}
+
+static bool shouldAppendInheritedFields(const Layout& layout)
+{
+    if (!nearestLayoutAlwaysAbove(layout.flow) || hasNoObjectsOfItsOwn(layout))
+        return false;
+    return layout.isDerived() || !listsInheritedFields(layout);
+}
+
+static void appendFieldsOf(Program& program, Layout& layout, LayoutID base)
+{
     const Layout& baseLayout = program.at(base);
     for (uint32_t i = 0; i < baseLayout.fields.size(); ++i) {
         const Field& baseField = baseLayout.fields[i];
@@ -719,12 +739,31 @@ static void appendBaseFields(Program& program, LayoutID id)
     }
 }
 
+static void appendBaseFields(Program& program, LayoutID id)
+{
+    Layout& layout = program.at(id);
+    size_t steps = 0;
+    for (LayoutID base = nearestLayoutAlwaysAbove(layout.flow); base; base = nearestLayoutAlwaysAbove(program.at(base).flow)) {
+        RELEASE_ASSERT(steps++ < program.layouts.size());
+        appendFieldsOf(program, layout, base);
+        if (!hasNoObjectsOfItsOwn(program.at(base)) || listsInheritedFields(program.at(base)))
+            break;
+    }
+}
+
 void appendInheritedFields(Program& program, LayoutID id)
 {
+    if (hasNoObjectsOfItsOwn(program.at(id)))
+        return;
     Vector<LayoutID, 8> chain;
-    for (LayoutID current = id; shouldAppendInheritedFields(program.at(current)); current = program.at(current).flow.base) {
-        RELEASE_ASSERT(chain.size() < program.layouts.size());
-        chain.append(current);
+    size_t steps = 0;
+    for (LayoutID current = id; current; current = nearestLayoutAlwaysAbove(program.at(current).flow)) {
+        RELEASE_ASSERT(steps++ < program.layouts.size());
+        const Layout& layout = program.at(current);
+        if (shouldAppendInheritedFields(layout))
+            chain.append(current);
+        else if (!hasNoObjectsOfItsOwn(layout) || listsInheritedFields(layout))
+            break;
     }
     while (!chain.isEmpty())
         appendBaseFields(program, chain.takeLast());

@@ -188,6 +188,8 @@ private:
     CompiledStructure* find(const Variant&) const;
     CompiledStructure* findOrCreate(VM&, const Variant&);
     static Variant variantOf(const CompiledStructure&);
+    // For a Structure that differs in something else than the key order.
+    static Variant variantWithKeyOrderOf(const CompiledStructure&);
     // No table lists such a Structure.
     static bool belongsToOneObject(const Variant& variant) { return variant.heldExtraProperties || variant.keysNamedByOrder; }
 
@@ -213,7 +215,6 @@ private:
     std::unique_ptr<VariantMaps> m_variants;
     // In a run with --aotCountsPath.
     std::unique_ptr<MadeStructures> m_made;
-    Vector<StructureID> m_variantsMadeSinceCollection;
     RememberedSlotSet m_writtenStructures;
     RememberedSlotSet m_writtenRecords;
 };
@@ -235,6 +236,9 @@ struct ObjectModel {
 
 inline const FieldData* Object::fieldNamed(State& state, PropertyName name) const
 {
+    // Whoever has a state at hand passes it to save the way to it. It may be the caller's, and the object of another image.
+    if (state.sharesRealm) [[unlikely]]
+        return this->state().objects->layouts.field(*state.instance.vm, layout(), name.uid());
     return state.objects->layouts.field(*state.instance.vm, layout(), name.uid());
 }
 

@@ -29,9 +29,11 @@ class CacheRegistry;
 class CustomAccessorTable;
 
 class StructureRows {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(StructureRows);
     WTF_MAKE_NONCOPYABLE(StructureRows);
 public:
-    static StructureRows& singleton();
+    // The images that share a realm keep their caches apart: a slot says things in the numbers of one image.
+    static StructureRows& ofImageAt(unsigned position);
 
     uint32_t rowOf(StructureID id) const { return *wordFor(id); }
     void setRowOf(StructureID id, uint32_t row) { *wordFor(id) = row; }

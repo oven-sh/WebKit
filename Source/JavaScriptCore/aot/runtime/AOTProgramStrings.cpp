@@ -360,13 +360,22 @@ void ProgramStrings::willAnalyzeHeap(VM& vm)
         if (!m_tables.layouts()[shape])
             continue;
         if (shape >= m_tables.firstEnvironmentShape) {
-            for (const VariableData& variable : m_tables.environmentForShape(shape).describedVariables())
-                ensureName(variable.name, variable.slot);
+            for (const VariableData& variable : m_tables.environmentForShape(shape).describedVariables()) {
+                if (!m_hasNamedVariablesForHeapSnapshots && variable.name != VariableData::noName)
+                    identifiers.nameForHeapSnapshots(&variable, AtomString(text(m_tables, StringID(variable.name))));
+            }
             continue;
         }
         for (const FieldData& field : m_tables.layoutForShape(shape).fields())
             ensureName(field.name, field.slot);
     }
+    if (!m_hasNamedVariablesForHeapSnapshots) {
+        bool endsWhereAFunctionEnds = forEachNamedCapture(m_tables.namedCaptures(), [&](const NamedCaptureData& capture) {
+            identifiers.nameForHeapSnapshots(m_tables.closureNumberOf(capture.function), capture.slot, AtomString(text(m_tables, capture.nameString())));
+        });
+        RELEASE_ASSERT(endsWhereAFunctionEnds);
+    }
+    m_hasNamedVariablesForHeapSnapshots = true;
 }
 
 template<typename Appender>

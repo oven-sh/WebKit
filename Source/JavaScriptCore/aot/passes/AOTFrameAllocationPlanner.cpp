@@ -40,6 +40,41 @@ struct PendingMove {
     Use use;
 };
 
+class ObjectsInBits {
+public:
+    class Iterator {
+    public:
+        explicit Iterator(BitVector::iterator position)
+            : m_position(position)
+        {
+        }
+
+        ObjectID operator*() const { return ObjectID(*m_position); }
+
+        Iterator& operator++()
+        {
+            ++m_position;
+            return *this;
+        }
+
+        friend bool operator==(const Iterator& a, const Iterator& b) { return a.m_position == b.m_position; }
+
+    private:
+        BitVector::iterator m_position;
+    };
+
+    explicit ObjectsInBits(const BitVector& bits LIFETIME_BOUND)
+        : m_bits(bits)
+    {
+    }
+
+    Iterator begin() const { return Iterator(m_bits.begin()); }
+    Iterator end() const { return Iterator(m_bits.end()); }
+
+private:
+    const BitVector& m_bits;
+};
+
 class FramePlanner {
     WTF_MAKE_NONCOPYABLE(FramePlanner);
 public:
@@ -48,7 +83,7 @@ public:
     FramePlan run();
 
 private:
-    ObjectSet candidates() const { return ObjectSet(m_isCandidate); }
+    ObjectsInBits candidates() const { return ObjectsInBits(m_isCandidate); }
     ValueID allocationOf(ObjectID object) const { return m_escape.at(object).definition; }
     const Value& definitionOf(ObjectID object) const LIFETIME_BOUND { return m_function.at(allocationOf(object)); }
     bool isCandidate(ObjectID object) const { return m_isCandidate.get(object.index()); }
@@ -572,7 +607,8 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
         // A use that keeps the closure in a cell, gives it back or passes it on makes another way to it, which is not among the uses of the value.
         bool staysInFrame = use.kind == Use::Kind::Operand && known != knownUses.end() && (!known->isEscape || effectRuleOf(m_function.at(use.user).opcode) == EffectRule::Call) && !isPassedOnByBranch(use);
         if (staysInFrame && known->uses.containsOnly(usesOfBorrowedParameter) && checkUse(closure, *known) == AllocationHeapCause::None) {
-            if (isListedUnderItsOwnName && known->uses.containsAny({ OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly }))
+            // What is left of a call that was copied into this function is the word that keeps its callee.
+            if (isListedUnderItsOwnName && (known->uses.containsAny({ OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly }) || m_function.at(use.user).opcode == Opcode::KeepCalleeInFrame))
                 usesThatRunIt.append(use);
             isBorrowed = true;
             continue;
@@ -637,6 +673,12 @@ Expected<bool> FramePlanner::mayFindBorrowingCallee(const Value& call, uint32_t 
     });
 }
 
+// A cell in a frame keeps the fields that it is made with. One that is made with every field of its layout has none left to create, however other objects of the layout come by theirs.
+bool mayCreateFieldsLater(const Layout& layout, size_t numberOfFieldsAtAllocation)
+{
+    return layout.flow.fieldCreation != FieldCreation::OnlyAtConstruction && numberOfFieldsAtAllocation != layout.fields.size();
+}
+
 static AllocationHeapCause checkObjectForm(const Program& program, const Value& object)
 {
     LayoutID id = object.layout();
@@ -661,7 +703,7 @@ static AllocationHeapCause checkObjectForm(const Program& program, const Value& 
         if (defersClosureWithCapture(flowOf(program, FieldReference { id, field }).location.deferral))
             return AllocationHeapCause::LayoutDefersClosures;
     }
-    if (layout.flow.fieldCreation != FieldCreation::OnlyAtConstruction)
+    if (mayCreateFieldsLater(layout, object.fields().size()))
         return AllocationHeapCause::FieldsCreatedLater;
     return AllocationHeapCause::None;
 }
@@ -670,7 +712,7 @@ static AllocationHeapCause checkCellForm(const Program& program, const Value& al
 {
     if (allocation.opcode != Opcode::NewClosure)
         return checkObjectForm(program, allocation);
-    // The list of recorded callees holds the closure that the function is entered through, and the collector visits the list. Where it is the run time that records, once a closure of the function was renamed, no closure that lies in a frame is written into the list.
+    // A frame of such a function is named by the closure that the function was entered through, when the stack is read. Where no statement is seen to rename a closure of the function, one that lies in a frame has the name that is written.
     const Function& callee = program.at(allocation.function());
     if (callee.has(FunctionCapabilities::RecordsCallee) && !callee.has(FunctionCapabilities::RecordsCalleeOnceRenamed))
         return AllocationHeapCause::ClosureIsNotOnlyCalled;
@@ -1253,7 +1295,7 @@ void FramePlanner::finishPlan()
             m_plan.add(m_program, value, value.storage(), value.opcode == Opcode::NewClosure && value.isLent());
         }
     }
-    AOT::sort(m_plan.decisions, { }, &FrameDecision::allocation);
+    AOT::sortInLine(m_plan.decisions, { }, &FrameDecision::allocation);
 }
 
 } } } // namespace JSC::AOT::Typed

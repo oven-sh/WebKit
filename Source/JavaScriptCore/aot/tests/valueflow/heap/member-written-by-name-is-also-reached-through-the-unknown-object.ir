@@ -1,0 +1,27 @@
+# JSON.parse = one; hide(JSON)[hide()] = two; JSON.parse()
+# The first store leaves JSON.parse without a lock. The second has a receiver and a key that flow does not know, and at run time nothing refuses it, so the call may enter what it stored.
+# RUN: valueflow-solve calls
+# CHECK: f0 v10 -> unknown JSONParse f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="hide" [isFreeName]
+    v2 = Builtin builtin=JSON
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    PropSet v2, v3 key="parse" mode=Strict
+    v6 = Call v1, -, v2
+    v7 = Call v1, -
+    ElemSet v6, v7, v4 mode=Strict
+    v9 = PropGet v2 key="parse"
+    v10 = Call v9, v2
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+    Return
+}
+function f2 name="two" results=[{type=anything}] {
+    Return
+}

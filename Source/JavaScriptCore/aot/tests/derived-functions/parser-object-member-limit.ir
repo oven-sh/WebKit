@@ -14,7 +14,7 @@ variable g1 name="one" declared={type=L1} initialization=Undefined
 # CHECK-NOT: NewObject
 # CHECK-NOT: JSONObjectBegin
 # CHECK: [[generic]]:{{*}}= JSONParseValue v0
-# CHECK: [[value]]: anything = ResultAt [[generic]] index=1
+# CHECK: [[value]]: null|boolean|number|string|object = ResultAt [[generic]] index=1
 # CHECK: = TypeTest [[value]] testedType=L0
 # CHECK-NOT: NewObject
 # CHECK-NOT: JSONObjectBegin

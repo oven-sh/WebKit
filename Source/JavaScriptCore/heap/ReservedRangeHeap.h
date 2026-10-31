@@ -15,6 +15,7 @@
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/OSAllocator.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
 #include <wtf/text/ASCIILiteral.h>
 
@@ -51,6 +52,14 @@ public:
     static ReservedRangeHeap* tryCreate(const Request&);
     // Null where none of the multiples of the alignment that were drawn is free.
     static void* tryReserveRandomWindow(size_t, size_t alignment, OSAllocator::Usage, bool isWritable);
+    // Every window that is drawn lies between these two. What code knows by a constant address lies outside.
+#if ASAN_ENABLED
+    // Below lie the shadow of the address sanitizer and AOT::CheckedFrameCells::startOfRange.
+    static constexpr uintptr_t lowestRandomAddress = 33 * 1024 * GB;
+#else
+    static constexpr uintptr_t lowestRandomAddress = 64 * GB;
+#endif
+    static constexpr uintptr_t highestRandomAddress = 124 * 1024 * GB;
 
     uintptr_t start() const { return m_start; }
     size_t size() const { return m_size; }

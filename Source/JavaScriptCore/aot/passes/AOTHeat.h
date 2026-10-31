@@ -97,6 +97,8 @@ public:
     Expected<double> allocationsOf(LayoutID) const;
     // Whether a function of the module allocates the layout. The literals of many modules may share one layout, which names only the first of them as its module.
     Expected<bool> isAllocatedIn(LayoutID, ModuleID) const;
+    // Whether a function of the program allocates the layout, and not the library alone.
+    Expected<bool> isAllocatedByProgram(const Program&, LayoutID) const;
     // Whether some store, definition or literal of the program puts a value of the layout under the name. Only values whose type lists a few layouts count.
     Expected<bool> isStoredUnder(LayoutID, PropertyKeyID) const;
     // Whether some store or definition puts a new object without prototype or layout under the name: `this._events = Object.create(null)`.
@@ -123,6 +125,9 @@ public:
     // Whether code of this heat is cold only because it does not fit MaxWarmCodeValues. Such code is expected to run.
     Expected<bool> isColdByLimitAlone(Expected<double> heat) const { return m_thresholds && heat.predicted() >= m_thresholds->coldWithoutLimit && heat.predicted() < m_thresholds->cold; }
     Expected<std::span<const FunctionID>> hottestFirst() const LIFETIME_BOUND { return m_hottestFirst.span(); }
+    // A function made since the estimate that derives from no other function is entered as often as the blocks that call it run. Cold callers say nothing about it.
+    bool hasSeenAllFunctionsOf(const Program& program) const { return m_numberOfFunctionsSeen >= program.functions.size(); }
+    void takeInFunctionsMadeSince(const Program&, const FlowResults&, BuildContext&);
 
     void dump(PrintStream&, const Program&) const;
 
@@ -141,7 +146,10 @@ private:
         double rank { 0 };
     };
 
+    Expected<HeatClass> classOf(const Entry&, const Function&, double activations, double frequencyInFunction) const;
+
     PerFunction<Entry> m_entries;
+    unsigned m_numberOfFunctionsSeen { 0 };
     bool m_hasWeights { true };
     bool m_hotIsByRank { false };
     std::optional<HeatThresholds> m_thresholds;
@@ -167,6 +175,8 @@ Expected<bool> isInColderPartOfProgram(const Heat&, const Program&, FunctionID);
 Expected<HeatClass> heatClassOf(FunctionPassContext&, BlockID);
 // Reads nothing outside the function: hot in a loop, warm elsewhere, cold on the way to a throw.
 Expected<HeatClass> heatClassByOwnLoops(FunctionPassContext&, BlockID);
+// Of what a loop at the block would run.
+Expected<HeatClass> heatClassOfLoopAt(FunctionPassContext&, BlockID);
 Expected<bool> isExpectedToRun(FunctionPassContext&, const NaturalLoop&);
 
 } } } // namespace JSC::AOT::Typed

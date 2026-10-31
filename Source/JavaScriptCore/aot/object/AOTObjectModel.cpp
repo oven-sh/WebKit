@@ -75,12 +75,18 @@ ObjectModelCaches::ObjectModelCaches(State& state)
     : movePlans(state)
     , assignmentPlans(state)
     , propertyLists(state)
+    , getterSources(state)
     , classStructures(state)
     , memberGuardWatchpoints(state)
 {
 }
 
 ObjectModelCaches::~ObjectModelCaches() = default;
+
+GetterSourceLists::GetterSourceLists(State& state)
+{
+    state.caches->add(CacheKind::ClearedEachCollection, "lists of sources with getters"_s, *this);
+}
 
 enum class FieldKeyKind : uint8_t { String, Symbol, PrivateName };
 
@@ -101,23 +107,21 @@ static FieldKeyKind keyKindOf(PropertyKeyKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static const ImageText& text()
+static const ImageText& textOf(const State& state)
 {
-    return Image::current()->text();
+    return state.instance.program->text();
 }
 
-static bool matchesAnyLiteral(std::span<const uint32_t> literals, StringView characters)
+static bool matchesAnyLiteral(const ImageText& imageText, std::span<const uint32_t> literals, StringView characters)
 {
-    const ImageText& imageText = text();
     return std::ranges::any_of(literals, [&](uint32_t literal) {
         return imageText.hasText(StringID(literal)) && imageText.view(StringID(literal)).length() == characters.length() && imageText.equals(StringID(literal), characters);
     });
 }
 
-static NEVER_INLINE bool ropeMatchesAnyLiteral(JSGlobalObject* globalObject, std::span<const uint32_t> literals, JSString* rope)
+static NEVER_INLINE bool ropeMatchesAnyLiteral(JSGlobalObject* globalObject, const ImageText& imageText, std::span<const uint32_t> literals, JSString* rope)
 {
     unsigned length = rope->length();
-    const ImageText& imageText = text();
     bool hasLiteralWithLength = std::ranges::any_of(literals, [&](uint32_t literal) {
         return imageText.hasText(StringID(literal)) && imageText.view(StringID(literal)).length() == length;
     });
@@ -125,16 +129,16 @@ static NEVER_INLINE bool ropeMatchesAnyLiteral(JSGlobalObject* globalObject, std
         return false;
     if (rope->isSubstring()) {
         auto characters = rope->view(globalObject);
-        return matchesAnyLiteral(literals, characters.data);
+        return matchesAnyLiteral(imageText, literals, characters.data);
     }
     if (rope->is8Bit()) {
         Vector<Latin1Character, 64> characters(length);
         rope->resolveToBuffer(characters.mutableSpan());
-        return matchesAnyLiteral(literals, StringView(characters.span()));
+        return matchesAnyLiteral(imageText, literals, StringView(characters.span()));
     }
     Vector<char16_t, 64> characters(length);
     rope->resolveToBuffer(characters.mutableSpan());
-    return matchesAnyLiteral(literals, StringView(characters.span()));
+    return matchesAnyLiteral(imageText, literals, StringView(characters.span()));
 }
 
 static bool numberHasType(const RuntimeType& type, double number)
@@ -164,8 +168,8 @@ static bool stringHasType(const State& state, const RuntimeType& type, JSString*
             return false;
     }
     if (StringImpl* impl = value->tryGetValueImpl())
-        return matchesAnyLiteral(literals, StringView(*impl));
-    return ropeMatchesAnyLiteral(globalObject, literals, value);
+        return matchesAnyLiteral(textOf(state), literals, StringView(*impl));
+    return ropeMatchesAnyLiteral(globalObject, textOf(state), literals, value);
 }
 
 static bool inheritsBuiltinClass(JSCell* cell, BuiltinClassID builtinClass)
@@ -347,12 +351,12 @@ UniquedStringImpl* RuntimeLayoutTable::nameOf(VM& vm, const FieldData& field)
 
 bool RuntimeLayoutTable::hasSymbolKey(const FieldData& field) const
 {
-    return keyKindOf(text().identifier(field.name).kind()) == FieldKeyKind::Symbol;
+    return keyKindOf(textOf(m_state).identifier(field.name).kind()) == FieldKeyKind::Symbol;
 }
 
 bool RuntimeLayoutTable::hasStringKey(const FieldData& field) const
 {
-    return keyKindOf(text().identifier(field.name).kind()) == FieldKeyKind::String && !field.isPrivate();
+    return keyKindOf(textOf(m_state).identifier(field.name).kind()) == FieldKeyKind::String && !field.isPrivate();
 }
 
 bool RuntimeLayoutTable::mayBeAbsent(const FieldData& field) const
@@ -396,21 +400,15 @@ bool RuntimeLayoutTable::valueHasType(const RuntimeType& type, JSValue value) co
 
 bool RuntimeLayoutTable::objectHasType(const RuntimeType& type, JSCell* cell) const
 {
-    // A member that holds one of many functions has a test for each of them.
-    bool hasAskedForFunction = false;
-    std::optional<FunctionID> function;
-    for (const RuntimeCellTest& test : type.cellTests()) {
-        if (test.kind != CellTestKind::IsClosureOf) {
-            if (cellPassesTest(test, cell))
-                return true;
-            continue;
-        }
-        if (!std::exchange(hasAskedForFunction, true))
-            function = functionOf(cell);
-        if (function == test.function())
+    std::span<const RuntimeCellTest> tests = type.testsOfMoreThanOneFunction();
+    for (const RuntimeCellTest& test : tests) {
+        if (cellPassesTest(test, cell))
             return true;
     }
-    return false;
+    if (tests.size() == type.numberOfCellTests)
+        return false;
+    std::optional<uint32_t> closureNumber = closureNumberOf(cell);
+    return closureNumber && type.listsClosureNumber(*closureNumber);
 }
 
 std::optional<AcceptedValue> RuntimeLayoutTable::accept(const FieldData& field, JSValue value) const
@@ -451,7 +449,7 @@ bool RuntimeLayoutTable::cellPassesTest(const RuntimeCellTest& test, JSCell* cel
         return cell == m_state.builtinCells->cell(test.builtinCellNumber());
     }
     case CellTestKind::IsClosureOf:
-        return functionOf(cell) == test.function();
+        return closureNumberOf(cell) == test.closureNumber();
     case CellTestKind::IsSymbol:
         // A symbol that nothing has made yet is the uid of no cell.
         return cell->isSymbol() && &asSymbol(cell)->uid() == m_state.instance.vm->aotState().identifiers->tryGetIdentifierConcurrently(test.symbolKeyNumber());
@@ -533,7 +531,13 @@ struct StructureTable::VariantMaps {
             return false;
         if (variant.keysNamedByOrder || structure.hasKeyOrderOfOneObject())
             return false;
-        return !variant.outOfLineKeyOrder || equalSpans(structure.outOfLineKeyOrder(), *variant.outOfLineKeyOrder);
+        if (!variant.outOfLineKeyOrder)
+            return true;
+        std::span<const uint16_t> held = structure.outOfLineKeyOrder();
+        std::span<const uint16_t> asked = *variant.outOfLineKeyOrder;
+        if (countOf(outOfLineOrderWordFor(asked.size())) && held.size() > asked.size())
+            held = held.first(asked.size());
+        return equalSpans(held, asked);
     }
 
     explicit VariantMaps(VM& vm)
@@ -577,9 +581,15 @@ struct StructureTable::VariantMaps {
         }
     }
 
+    struct FiledVariant {
+        Key key;
+        StructureID id;
+    };
+
     WeakGCMap<Key, CompiledStructure> structures;
     // The values of `structures`. Written under the lock of the caches.
     Vector<StructureID> listed;
+    Vector<FiledVariant> filedSinceCollection;
     std::array<StructureID, 1u << recentIndexBits> recentByExtraProperties { };
     WTF::BitSet<1u << requestedIndexBits> requestedExtraPropertiesStructures;
 };
@@ -693,6 +703,8 @@ StructureTable::StructureTable(State& state)
     state.caches->addClearedEachCollection("recent structures by extra properties"_s, asWritableBytes(std::span { m_variants->recentByExtraProperties }));
     state.instance.objects.prototypeTransitions = state.tableArena.allocate<PrototypeTransition>(numberOfPrototypeTransitions);
     state.caches->addClearedEachCollection("prototype transitions"_s, asWritableBytes(std::span { state.instance.objects.prototypeTransitions, numberOfPrototypeTransitions }));
+    state.instance.objects.copiesWithNames = state.tableArena.allocate<uint8_t>(sizeOfCopiesWithNames);
+    state.caches->addClearedEachCollection("copies with names"_s, std::span { state.instance.objects.copiesWithNames, sizeOfCopiesWithNames });
 }
 
 StructureTable::~StructureTable() = default;
@@ -752,8 +764,10 @@ void StructureTable::visitRoots(Visitor& visitor)
     }
     if (visitor.collectionScope() != CollectionScope::Eden)
         return;
-    for (StructureID id : m_variantsMadeSinceCollection) {
-        CompiledStructure* variant = VariantMaps::decode(id);
+    for (const VariantMaps::FiledVariant& filed : m_variants->filedSinceCollection) {
+        CompiledStructure* variant = VariantMaps::decode(filed.id);
+        if (variant->hasOutOfLineKeyOrder())
+            continue;
         JSObject* prototype = variant->storedPrototype().getObject();
         if (!variant->hasOtherPrototype() || !prototype || visitor.isMarked(prototype))
             visitor.appendUnbarriered(variant);
@@ -767,7 +781,11 @@ size_t StructureTable::removeDeadEntries(VM& vm, CollectionScope scope)
 {
     {
         Locker locker { m_state.caches->lock() };
-        m_variantsMadeSinceCollection.shrink(0);
+        for (const VariantMaps::FiledVariant& filed : m_variants->filedSinceCollection) {
+            if (!vm.heap.isMarked(filed.id.decode()) && !m_variants->structures.get(filed.key))
+                m_variants->structures.remove(filed.key);
+        }
+        m_variants->filedSinceCollection.shrink(0);
         m_variants->listed.removeAllMatching([&](StructureID id) {
             return !vm.heap.isMarked(id.decode());
         });
@@ -942,6 +960,12 @@ StructureTable::Variant StructureTable::variantOf(const CompiledStructure& struc
     return variant;
 }
 
+StructureTable::Variant StructureTable::variantWithKeyOrderOf(const CompiledStructure& structure)
+{
+    structure.endOutOfLineKeyOrder();
+    return variantOf(structure);
+}
+
 CompiledStructure* StructureTable::find(const Variant& variant) const
 {
     if (belongsToOneObject(variant))
@@ -955,7 +979,9 @@ CompiledStructure* StructureTable::find(const Variant& variant) const
 CompiledStructure* StructureTable::findOrCreate(VM& vm, const Variant& requested)
 {
     // outOfLineKeyOrder may point into a Structure that nothing else keeps alive.
-    DeferGC deferGC(vm);
+    // A collection that is put off runs at the next poll or allocation, not when this returns: this frame and the caller's hold Variants,
+    // and an empty std::optional leaves its payload unwritten, so the conservative scan would keep whatever stale pointers lie there alive.
+    DeferGCForAWhile deferGC(vm);
     const LayoutData& layout = *requested.layout;
     CompiledStructure* usualStructure = usualStructureIfExists(layout.shape);
     RELEASE_ASSERT(m_tables.hasLayoutForShape(layout.shape));
@@ -971,9 +997,10 @@ CompiledStructure* StructureTable::findOrCreate(VM& vm, const Variant& requested
         return createUsual(vm, layout, usual);
     CompiledStructure* created = create(vm, layout, variant);
     if (!belongsToOneObject(variant)) {
-        m_variants->structures.set(VariantMaps::keyOf(variant), created);
+        VariantMaps::Key key = VariantMaps::keyOf(variant);
+        m_variants->structures.set(key, created);
         Locker locker { m_state.caches->lock() };
-        m_variantsMadeSinceCollection.append(created->id());
+        m_variants->filedSinceCollection.append({ key, created->id() });
         m_variants->listed.append(created->id());
     }
     if (variant.hasOtherPrototype)
@@ -989,7 +1016,7 @@ CompiledStructure* StructureTable::withPrototype(VM& vm, const CompiledStructure
     if (recent.before == before && recent.prototype == encodedPrototype)
         return VariantMaps::decode(std::bit_cast<StructureID>(recent.after));
 
-    Variant variant = variantOf(current);
+    Variant variant = variantWithKeyOrderOf(current);
     variant.prototype = prototype;
     CompiledStructure* structure = findOrCreate(vm, variant);
     // Compiled code replays a transition by storing the StructureID and setting IsPristine, which a compiled object has where its prototype is not its layout's, in the cell: it looks for no cycle and tells nobody who depends on the chain.
@@ -1001,14 +1028,14 @@ CompiledStructure* StructureTable::withPrototype(VM& vm, const CompiledStructure
 
 CompiledStructure* StructureTable::asPrototype(VM& vm, const CompiledStructure& current)
 {
-    Variant variant = variantOf(current);
+    Variant variant = variantWithKeyOrderOf(current);
     variant.mayBePrototype = true;
     return findOrCreate(vm, variant);
 }
 
 CompiledStructure* StructureTable::withExtraProperties(VM& vm, const CompiledStructure& current, Structure* extraPropertiesStructureOrNull)
 {
-    Variant variant = variantOf(current);
+    Variant variant = variantWithKeyOrderOf(current);
     Structure* named = extraPropertiesStructureOrNull;
     if (!named || !named->propertyAccessesAreCacheable() || !current.extraPropertiesSlot()) {
         if (variant.hasExtraProperties && !variant.extraPropertiesStructure)
@@ -1037,7 +1064,7 @@ CompiledStructure* StructureTable::existingWithExtraProperties(const CompiledStr
 {
     if (!current.extraPropertiesSlot() || !m_variants->requestedExtraPropertiesStructures.get(VariantMaps::requestedIndex(extraPropertiesStructure)))
         return nullptr;
-    Variant variant = variantOf(current);
+    Variant variant = variantWithKeyOrderOf(current);
     variant.hasExtraProperties = true;
     variant.extraPropertiesStructure = &extraPropertiesStructure;
     if (CompiledStructure* recent = m_variants->findRecent(variant))
@@ -1052,7 +1079,7 @@ CompiledStructure* StructureTable::existingWithExtraProperties(const CompiledStr
 CompiledStructure* StructureTable::holdingExtraProperties(VM& vm, const CompiledStructure& current, JSObject* extraProperties)
 {
     ASSERT(!current.extraPropertiesSlot() && !current.hasExtraProperties());
-    Variant variant = variantOf(current);
+    Variant variant = variantWithKeyOrderOf(current);
     variant.hasExtraProperties = true;
     variant.heldExtraProperties = extraProperties;
     return findOrCreate(vm, variant);
@@ -1309,6 +1336,15 @@ CompiledStructure::~CompiledStructure()
     delete rareData();
 }
 
+static size_t roomForKeyOrder(const CompiledStructure::ObjectParameters& parameters)
+{
+    AOT_THRESHOLD(size_t, smallestRoom, 16);
+    size_t size = parameters.outOfLineKeyOrder->size();
+    size_t numberOfFields = parameters.layout->numberOfFields;
+    size_t longest = std::min<size_t>(parameters.hasExtraProperties ? 2 * numberOfFields + 1 : numberOfFields, maxFieldsInOrder);
+    return std::max(size, std::min(longest, std::max(2 * size, smallestRoom)));
+}
+
 void CompiledStructure::initializeForObject(const ObjectParameters& parameters)
 {
     static_assert(std::endian::native == std::endian::little);
@@ -1332,8 +1368,11 @@ void CompiledStructure::initializeForObject(const ObjectParameters& parameters)
         m_flags.add(Flag::HasOtherPrototype);
     if (parameters.hasExtraProperties)
         m_flags.add(Flag::HasExtraProperties);
-    if (parameters.outOfLineKeyOrder)
+    if (parameters.outOfLineKeyOrder) {
         m_flags.add(Flag::HasOutOfLineKeyOrder);
+        if (parameters.hasExtraProperties)
+            m_heldKeyOrder.add(HeldKeyOrder::IsBesideExtraProperties);
+    }
     if (!parameters.hasOtherPrototype && !parameters.hasExtraProperties && parameters.prototype == JSValue(parameters.realm->objectPrototype()))
         m_flags.add(Flag::HasOnlyFieldsBelowObjectPrototype);
     setMayBePrototype(parameters.mayBePrototype);
@@ -1343,12 +1382,15 @@ void CompiledStructure::initializeForObject(const ObjectParameters& parameters)
     std::unique_ptr<RareData> rareData;
     if (parameters.outOfLineKeyOrder || parameters.heldExtraProperties) {
         rareData = makeUnique<RareData>();
-        if (parameters.outOfLineKeyOrder)
-            rareData->outOfLineKeyOrder = Vector<uint16_t>(*parameters.outOfLineKeyOrder);
+        if (parameters.outOfLineKeyOrder) {
+            if (!parameters.keysNamedByOrder)
+                rareData->outOfLineKeyOrder.reserveInitialCapacity(roomForKeyOrder(parameters));
+            rareData->outOfLineKeyOrder.append(*parameters.outOfLineKeyOrder);
+        }
         if (parameters.keysNamedByOrder) {
             ASSERT(parameters.outOfLineKeyOrder);
             rareData->keysNamedByOrder = Vector<RefPtr<UniquedStringImpl>>(*parameters.keysNamedByOrder);
-            rareData->keyOrderBelongsToOneObject = true;
+            m_heldKeyOrder.add(HeldKeyOrder::IsOfOneObject);
         }
         rareData->heldExtraProperties.setWithoutWriteBarrier(parameters.heldExtraProperties);
     }
@@ -1411,6 +1453,7 @@ void CompiledStructure::visitAdditionalChildren(JSCell* cell, Visitor& visitor)
         visitor.appendUnbarriered(named);
     if (const RareData* rareData = structure->rareData())
         visitor.append(rareData->heldExtraProperties);
+    visitor.append(structure->m_successorByPrivateName);
 }
 
 template void CompiledStructure::visitAdditionalChildren(JSCell*, AbstractSlotVisitor&);

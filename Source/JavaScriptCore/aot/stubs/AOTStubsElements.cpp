@@ -101,6 +101,7 @@ struct ElementRegisters {
 
 StubSignature signatureOfGetByVal(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::R0), gprOf(StubRegister::A1) }); }
 StubSignature signatureOfGetByValAtIndex(StubKey key) { return signatureOfGetByVal(key); }
+StubSignature signatureOfGetByValKeepingRegisters(StubKey key) { return signatureOfGetByVal(key); }
 StubSignature signatureOfGetByValExpecting(StubKey key) { return signatureOfGetByVal(key); }
 StubSignature signatureOfGetByValAtIndexExpecting(StubKey key) { return signatureOfGetByVal(key); }
 
@@ -171,7 +172,7 @@ static void loadExtraPropertiesOfCompiledObject(StubAssembler& jit, const Elemen
     loadExtraProperties(jit, base, hiddenWordOffset, extraProperties, hasNone);
 }
 
-static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters& registers)
+static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters& registers, FPRReg numberScratch, JumpList& isNeitherStringNorCompiledObject)
 {
     const auto [base, index, storage, length, shape, number] = registers;
     const BaseIndex element(storage, index, CCallHelpers::TimesEight);
@@ -204,7 +205,7 @@ static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters&
 
     // A table that a literal with numbers for keys has made.
     isNotString.link(&jit);
-    notHandled.append(jit.branchIfNotType(base, CompiledObjectType));
+    JumpList isNotCompiledObject = branchIfNotCompiledObjectOfThisImage(jit, base);
     loadExtraPropertiesOfCompiledObject(jit, registers, notHandled);
     jit.load8(Address(storage, JSCell::indexingTypeAndMiscOffset()), shape);
     jit.and32(TrustedImm32(IndexingShapeMask), shape);
@@ -216,6 +217,20 @@ static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters&
 
     hasIndexedStorage.link(&jit);
     jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(Int32Shape)).linkTo(hasContiguousShape, &jit);
+    notHandled.append(jit.branch32(CCallHelpers::NotEqual, shape, TrustedImm32(DoubleShape)));
+    jit.loadPtr(Address(base, JSObject::butterflyOffset()), storage);
+    jit.load32(Address(storage, Butterfly::offsetOfPublicLength()), length);
+    notHandled.append(jit.branch64(CCallHelpers::AboveOrEqual, index, length));
+    jit.loadDouble(element, number);
+    returnBoxedDouble(jit, registers, PureDouble::branchIfNaN(jit, number, notHandled), numberScratch);
+
+    // Mostly a typed array, whose arm below takes a key that is an int32. Any other key goes through the tests of the entry for any key.
+    isNotCompiledObject.link(&jit);
+    jit.signExtend32ToPtr(index, storage);
+    notHandled.append(jit.branch64(CCallHelpers::NotEqual, index, storage));
+    boxInt32(jit, index, index);
+    isNeitherStringNorCompiledObject.append(jit.jump());
+
     notHandled.link(&jit);
     jit.boxInt52(index, index, storage, number);
 }
@@ -390,7 +405,7 @@ void loadKeptTextOfIndex(StubAssembler& jit, GPRReg key, GPRReg storage, GPRReg 
     hasNoText.append(jit.branchTestPtr(CCallHelpers::Zero, text));
 }
 
-void generateGetByVal(StubAssembler& jit)
+static void generateGetByVal(StubAssembler& jit, RegistersOfCaller registersOfCaller)
 {
     const ElementRegisters registers = allocateElementRegisters(jit);
     const FPRReg numberScratch = jit.allocateScratch(FPRInfo::fpRegT1);
@@ -400,7 +415,9 @@ void generateGetByVal(StubAssembler& jit)
     JumpList slow;
     JumpList absent;
 
-    emitGetByValAtIndexEntry(jit, registers);
+    JumpList isNeitherStringNorCompiledObject;
+    if (registersOfCaller == RegistersOfCaller::AreLost)
+        emitGetByValAtIndexEntry(jit, registers, numberScratch, isNeitherStringNorCompiledObject);
     jit.bindEntry(jit.key());
     Jump notInt32 = jit.branch64(CCallHelpers::Below, key, numberTag);
     Label indexReady = jit.label();
@@ -435,10 +452,11 @@ void generateGetByVal(StubAssembler& jit)
     loadStringCharacterAndReturn(jit, registers, slow, isAbsent);
 
     notString.link(&jit);
-    Jump isNotCompiledObject = jit.branchIfNotType(base, CompiledObjectType);
+    JumpList isNotCompiledObject = branchIfNotCompiledObjectOfThisImage(jit, base);
     loadCompiledObjectElementAndReturn(jit, registers, numberScratch, slow);
 
     isNotCompiledObject.link(&jit);
+    isNeitherStringNorCompiledObject.link(&jit);
     loadTypedArrayElementAndReturn(jit, registers, numberScratch, slow, isAbsent);
 
     notInt32.link(&jit);
@@ -451,8 +469,8 @@ void generateGetByVal(StubAssembler& jit)
     notNumber.link(&jit);
     slow.append(jit.branchIfNotCell(base));
     slow.append(jit.branchIfNotCell(key));
-    checkStubOperands(getByValCachedCells(), { base, key });
-    jit.jumpToStub(getByValCachedCells());
+    checkStubOperands(getByValCachedCells(registersOfCaller), { base, key });
+    jit.jumpToStub(getByValCachedCells(registersOfCaller));
 
     slow.link(&jit);
     if (jit.options().callsTrapsOfProxies.predicted()) {
@@ -467,7 +485,21 @@ void generateGetByVal(StubAssembler& jit)
         jit.jumpToStub(throughProxy(TrapOfProxy::Get));
         operationReads.link(&jit);
     }
-    callBinaryOperation(jit, Entry::operationAOTGetByVal);
+    if (registersOfCaller == RegistersOfCaller::AreLost) {
+        callBinaryOperation(jit, Entry::operationAOTGetByVal);
+        return;
+    }
+    jit.callOperationAndReturn(Entry::operationAOTGetByVal, { .saves = OperationCall::Saves::CallerSavedGPRsAndFewFPRs, .secondArgumentIn = base, .thirdArgumentIn = key });
+}
+
+void generateGetByVal(StubAssembler& jit)
+{
+    generateGetByVal(jit, RegistersOfCaller::AreLost);
+}
+
+void generateGetByValKeepingRegisters(StubAssembler& jit)
+{
+    generateGetByVal(jit, RegistersOfCaller::AreKept);
 }
 
 static ECMAMode ecmaModeOf(ElementStoreMode mode)
@@ -788,7 +820,7 @@ void generatePutByVal(StubAssembler& jit)
     Jump isDoubleShape = jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(DoubleShape));
     slow.append(jit.branchTest32(CCallHelpers::NonZero, shape));
     checkStubOperands(storeElementOfCompiledObject(mode.isStrict() ? PutMode::Strict : PutMode::Sloppy), { base, key, value });
-    jit.linkToStub(jit.branchIfType(base, CompiledObjectType), storeElementOfCompiledObject(mode.isStrict() ? PutMode::Strict : PutMode::Sloppy));
+    jit.linkToStub(branchIfCompiledObjectOfThisImage(jit, base), storeElementOfCompiledObject(mode.isStrict() ? PutMode::Strict : PutMode::Sloppy));
     storeTypedArrayElementAndReturn(jit, registers, value, doubleBits, slow);
 
     isDoubleShape.link(&jit);

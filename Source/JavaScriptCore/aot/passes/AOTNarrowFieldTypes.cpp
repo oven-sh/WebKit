@@ -17,14 +17,18 @@
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
+#include "AOTHeat.h"
 #include "AOTIRBuilder.h"
+#include "AOTPlaceTypeTestsPlan.h"
 #include "AOTProgramCaches.h"
+#include "AOTPropertyAccess.h"
 #include "AOTRepresentation.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTTypePropagation.h"
+#include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include "AOTVisibleStores.h"
 #include <algorithm>
@@ -90,7 +94,7 @@ bool holdsRawValueFromBirth(const Program& program, FieldReference reference)
 
 static void sortAndRemoveRepeated(auto& list)
 {
-    AOT::sort(list);
+    AOT::sortInLine(list);
     removeRepeatedElements(list);
 }
 
@@ -934,6 +938,134 @@ Vector<Int32ParameterCandidate> narrowFieldTypes(Program& program, BuildContext&
         storeUnprovenInitialValues(program, id, function, arenas.types, build);
     });
     return candidates;
+}
+
+// What is stored may lie outside the type, so only a test finds the value in its slot. The slot is as wide as one that holds any value.
+static bool hasFormThatOnlyTestsMakeUseOf(const Program& program, const Field& field)
+{
+    if (!field.flags.contains(FieldFlags::IsEnforced) || field.flags.contains(FieldFlags::IsInherited) || !field.form.isEmpty() || !canBeStoredBehindAllocation(field))
+        return false;
+    if (field.flow.location.deferral != ClosureDeferral::Unknown || field.flow.stability.contains(FieldStability::IsNeverStoredWithOtherType))
+        return false;
+    return likelyWidthOfSlot(program, field) == sizeof(EncodedJSValue);
+}
+
+// AddGenericVersion takes every check away, and with it what the check has proven.
+static bool restsOnCheck(const Function& function, ValueID value)
+{
+    return std::ranges::any_of(CastChain(function, value), [&](ValueID cast) { return function.at(cast).opcode == Opcode::Check; });
+}
+
+void expectFieldsOutsideTestedCode(ProgramEditor& editor, const Heat& heat, BuildContext& build)
+{
+    const Program& program = editor.program();
+    const ParallelLoops& loops = build.parallelLoops();
+    Vector<FieldReference> fields = collectInParallel<FieldReference>(loops, program.layouts.size(), [&](unsigned layoutIndex, Vector<FieldReference>& found) {
+        if (!hasSlots(program, LayoutID(layoutIndex)))
+            return;
+        const Vector<Field>& fieldsOfLayout = program.layouts[layoutIndex].fields;
+        for (uint32_t index = 0; index < fieldsOfLayout.size(); ++index) {
+            if (hasFormThatOnlyTestsMakeUseOf(program, fieldsOfLayout[index]))
+                found.append({ LayoutID(layoutIndex), index });
+        }
+    });
+    if (fields.isEmpty())
+        return;
+    sortAndRemoveRepeated(fields);
+    BitVector keys;
+    for (FieldReference field : fields)
+        keys.set(fieldAt(program, field).key.index());
+
+    // Where a test may be placed the form pays. Elsewhere it costs an access by name wherever the object is known to have the field.
+    constexpr uint8_t inCodeThatMayGetTests = 1 << 0;
+    constexpr uint8_t byNameForItsForm = 1 << 1;
+    Vector<uint8_t> whereNamed(FillWith { }, fields.size(), uint8_t { 0 });
+    forEachIndexInParallel(loops, program.functions.size(), [&](unsigned index) {
+        FunctionID id(index);
+        const Function& function = program.functions[index];
+        if (!function.hasBody())
+            return;
+        AnalysisContext context { build, program, nullptr, nullptr, id };
+        std::optional<FunctionAnalyses> analyses;
+        auto note = [&](BlockID block, FieldReference field, NOESCAPE const Invocable<bool()> auto& goesByNameWithoutTests) {
+            FieldReference declaration = declarationOf(program, field);
+            auto position = std::ranges::lower_bound(fields, declaration);
+            if (position == fields.end() || *position != declaration)
+                return;
+            AtomicRef<uint8_t> where(whereNamed[position - fields.begin()]);
+            uint8_t known = where.load(std::memory_order_relaxed);
+            if (known & inCodeThatMayGetTests)
+                return;
+            if (!analyses)
+                analyses.emplace(context, function);
+            if (mayPlaceTestsOfAccessesByName(heat, *analyses, block))
+                where.fetch_or(inCodeThatMayGetTests, std::memory_order_relaxed);
+            else if (!(known & byNameForItsForm) && goesByNameWithoutTests())
+                where.fetch_or(byNameForItsForm, std::memory_order_relaxed);
+        };
+        forEachListedValue(program, id, opcodesThatListInitialValues, [&](BlockID block, uint32_t, ValueID, const Value& allocation) {
+            if (!writesInitialValues(program, allocation))
+                return;
+            for (uint32_t valueIndex = 0; valueIndex < allocation.numberOfVariadicOperands(); ++valueIndex) {
+                note(block, { allocation.layout(), allocation.fields()[valueIndex] }, [&] {
+                    return restsOnCheck(function, allocation.variadicOperands()[valueIndex]) || isUnprovenInitialValue(program, function, allocation, valueIndex);
+                });
+            }
+        });
+        auto namesKey = [&](NameKind kind, uint32_t name) { return kind == NameKind::Key && keys.get(name); };
+        forEachListedValueNaming(program, id, namedAccesses, namesKey, [&](BlockID block, ValueID, const Value& access) {
+            std::optional<PropertyAccessQuery> query = propertyAccessQueryOf(program, function, access);
+            if (!query || query->start != MemberStart::Instance || !keys.get(query->key.index()))
+                return;
+            auto noteFieldOf = [&](LayoutID layout, bool isProven) {
+                if (std::optional<FieldReference> field = findField(program, layout, query->key, BaseChain::Predicted))
+                    note(block, *field, [&] { return isProven; });
+            };
+            const LayoutList& expected = query->receivers.expected.predicted();
+            for (LayoutID layout : query->receivers.proven)
+                noteFieldOf(layout, true);
+            for (LayoutID layout : expected)
+                noteFieldOf(layout, false);
+            // PlaceTypeTests guesses the layout of such a receiver by the names that are asked of it.
+            if (!query->receivers.isProven() && expected.isEmpty()) {
+                for (LayoutID layout : program.layoutsWithName(query->key))
+                    noteFieldOf(layout, false);
+            }
+        });
+    });
+    size_t numberKept = 0;
+    for (size_t index = 0; index < fields.size(); ++index) {
+        if (whereNamed[index] == byNameForItsForm)
+            fields[numberKept++] = fields[index];
+    }
+    fields.shrink(numberKept);
+    if (fields.isEmpty())
+        return;
+
+    for (FieldReference reference : fields) {
+        Field& field = editor.at(reference);
+        field.declared.expect(field.declared.expected());
+        field.declared.remove(PositionFlags::IsInt32Promise);
+        field.flags.remove(FieldFlags::IsEnforced);
+        // No store moves a value out of a slot that holds any value.
+        if (field.flow.location.initialization == InitializationState::SetAtCreation && field.flow.stability.containsAll({ FieldStability::IsNeverDeleted, FieldStability::IsNeverRedefined })) {
+            field.flow.occupancy = Occupancy::AlwaysFilled;
+            field.flow.prototypeName = PrototypeNameState::Unknown;
+        }
+    }
+    Vector<FieldReference> copies = collectInParallel<FieldReference>(loops, program.layouts.size(), [&](unsigned layoutIndex, Vector<FieldReference>& found) {
+        const Vector<Field>& fieldsOfLayout = program.layouts[layoutIndex].fields;
+        for (uint32_t index = 0; index < fieldsOfLayout.size(); ++index) {
+            const Field& field = fieldsOfLayout[index];
+            if (field.flags.contains(FieldFlags::IsInherited) && originCanBeResolved(program, field) && std::ranges::binary_search(fields, FieldReference { field.originLayout, *field.originField }))
+                found.append({ LayoutID(layoutIndex), index });
+        }
+    });
+    for (FieldReference copy : copies) {
+        Field& field = editor.at(copy);
+        field.declared = fieldAt(program, { field.originLayout, *field.originField }).declared;
+        field.flags.remove(FieldFlags::IsEnforced);
+    }
 }
 
 } } } // namespace JSC::AOT::Typed

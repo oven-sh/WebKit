@@ -61,6 +61,14 @@ static bool isWorthAnArm(const Program& program, BuiltinID method)
     });
 }
 
+// A typed array's walk with a callback is fast once it is inlined where the class, and so the element type, is known. Called for any class it gains little over the host's function.
+static bool walksElementsOfAnyWidth(const BuiltinTable& table, BuiltinID method)
+{
+    return table.receiverClassOf(method) == BuiltinClasses::TypedArray && std::ranges::any_of(table.overloadsOf(method), [](const BuiltinOverload& overload) {
+        return overload.code.implementation.kind == BuiltinImplementationKind::Compiled && overload.flags.contains(BuiltinOverloadFlag::RunsOnlyOperandCode);
+    });
+}
+
 static bool passesCallOn(const BuiltinTable& table, BuiltinID method)
 {
     return std::ranges::any_of(table.overloadsOf(method), [](const BuiltinOverload& overload) {
@@ -152,6 +160,8 @@ static std::optional<CalleeSplit> planCalleeSplit(FunctionPassContext& context, 
         if ((hasToStayTailCall || knowsReceiver) && !passesCallOn(table, method.member) && !isFoundByCalleeAlone)
             return true;
         if (!hasToStayTailCall && !isWorthAnArm(program, method.member))
+            return true;
+        if (!hasToStayTailCall && !knowsReceiver && walksElementsOfAnyWidth(table, method.member))
             return true;
         return !isExpectedToBe(context, callee, method.member);
     });

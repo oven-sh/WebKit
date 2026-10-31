@@ -100,7 +100,9 @@ function f1 name="fill" module=m0 position=33 flags=[IsChecked, HasExplicitName]
 
 # The loop ends within the array and an allocation always comes back, so the loop does not poll: the allocation is where a collection can start.
 # The array may be old and every object is new, so each turn has the barrier of the array in line. The new object itself is filled without one.
-# An allocation gives no array other storage, so the storage and its length are loaded ahead of the loop. The index is checked against that length.
+# An allocation gives no array other storage, so the storage and its length are loaded ahead of the loop. The loop's own test has said that the index lies inside the array: nothing asks again.
+# So no turn leaves for the store that may give the array other storage. The loop around that store, for an array that holds its elements in another way, stands apart and comes first.
+# CHECK-LABEL: end of loop
 # CHECK-LABEL: steps by 1
 # CHECK-NOT: Patchpoint(
 # CHECK: Int64 b@[[entry]] = Patchpoint({{*}}Writes:{collectorState, {{*}}:NewObject)
@@ -108,6 +110,7 @@ function f1 name="fill" module=m0 position=33 flags=[IsChecked, HasExplicitName]
 # CHECK-NOT: Patchpoint(
 # CHECK-NOT: Reads:JSArray_butterfly
 # CHECK-NOT: Reads:Butterfly_publicLength
+# CHECK-NOT: :IsInBounds)
 # CHECK: Store(b@[[entry]], b@{{*}}, ControlDependent|Writes:indexedContiguousProperties, {{*}}:PutArrayElement)
 # CHECK-NEXT: Int32 b@[[threshold]] = Load(b@{{*}}, offset = {{*}}, ControlDependent|Reads:collectorState, {{*}}:PutArrayElement)
 # CHECK-NEXT: Int32 b@[[state]] = Load8Z(b@{{*}}, offset = 7, ControlDependent|Reads:collectorState, {{*}}:PutArrayElement)
@@ -118,9 +121,10 @@ function f1 name="fill" module=m0 position=33 flags=[IsChecked, HasExplicitName]
 # CHECK: Branch(b@{{*}}, Terminal, {{*}}:Less)
 # CHECK-LABEL: end of loop
 # A turn allocates, and the way round the allocator comes back into the loop: the loop polls on every turn. On ARM64 the rare way round the barrier has a copy of the poll.
+# POLLS-LABEL: end of loop
 # POLLS-LABEL: steps by 1
 # POLLS-COUNT-1: isLoopPoll
 # POLLS-NOT: isLoopPoll
 # POLLS-LABEL: end of loop
-# X64: loop #{{*}}, instructions: 13, patchpoints: 2
-# ARM64: loop #{{*}}, instructions: 13, patchpoints: 2
+# X64: loop #{{*}}, instructions: 11, patchpoints: 2
+# ARM64: loop #{{*}}, instructions: 12, patchpoints: 2

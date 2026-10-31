@@ -75,9 +75,10 @@ function f1 name="dashes" module=m0 flags=[IsChecked, HasExplicitName] length=1 
 }
 
 # `out += "-"` in a loop fills a buffer on the stack: the character is stored as an immediate, the cursor goes up by one and is compared with the buffer's limit. Cursor and limit go round the loop as values: neither is loaded. No rope and no text is made in the loop.
-# CHECK-LABEL: loop #
-# CHECK: Int64 b@[[limit]] = Phi(
+# Under a bound that is an int32 eight iterations are written out. The loop that steps by one runs what is left.
+# CHECK-LABEL: steps by 1
 # CHECK: Int64 b@[[cursor]] = Phi(
+# CHECK: Int64 b@[[limit]] = Phi(
 # CHECK: Store8($45(b@{{*}}), b@[[cursor]], ControlDependent|Writes:stringBuilderBytes, {{*}}:StringBuilderAppendConstant)
 # CHECK-NOT: Load(
 # CHECK: Int64 b@[[next]] = Add(b@[[cursor]], $1(
@@ -96,12 +97,14 @@ function f1 name="dashes" module=m0 flags=[IsChecked, HasExplicitName] length=1 
 # HOT-NOT: Reads:StringBuilderContents
 # HOT: Successors: Then:#{{*}}, Else:Rare:#
 # HOT-LABEL: end of loop
-# The loop holds a poll and, on its rare side, a call, so x86-64 is counted where the calling convention is not that of Windows.
+# The loops hold a poll or, on their rare side, a call, so x86-64 is counted where the calling convention is not that of Windows.
 # The rare block is the call, the load of the limit and the jump back.
-# X64: instructions: 5, patchpoints: 1, rare instructions: 3
-# ARM64: instructions: 5, patchpoints: 1, rare instructions: 3
-# The text is made once, behind the loop.
+# X64: instructions: 5, patchpoints: 0, rare instructions: 3
+# X64: instructions: 26, patchpoints: 1, polls: 1
+# ARM64: instructions: 26, patchpoints: 1, polls: 1
+# ARM64: instructions: 5, patchpoints: 0, rare instructions: 3
+# The text is made once, behind the loops: the two above and the copy for a bound that is no int32.
 # CALLS-LABEL: f3: size=
 # CALLS: operation operationAOTStackStringBuilderFinish x1
-# CALLS-NEXT: operation operationAOTStackStringBuilderGrow x1
+# CALLS-NEXT: operation operationAOTStackStringBuilderGrow x3
 # CALLS-NEXT: f4: size=

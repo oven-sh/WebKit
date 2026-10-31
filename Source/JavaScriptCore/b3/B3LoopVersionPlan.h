@@ -70,6 +70,7 @@ private:
     bool isNeverNegative(Value*);
     static bool hoistsEnough(const Attempt&);
     std::optional<GaveUp> checkHoistThresholds(const Attempt&) const;
+    static bool mayBeEnteredOnAnyTurn(const Attempt&);
     void findCountedLoop(Attempt&);
     bool canRewriteLoopTest(const Attempt&) const;
     unsigned countRemovedComparisons(const Attempt&) const;

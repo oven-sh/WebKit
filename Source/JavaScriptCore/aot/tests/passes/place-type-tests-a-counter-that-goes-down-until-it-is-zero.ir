@@ -1,0 +1,64 @@
+# `while (i--)`: a counter that goes down by one until it is zero starts at zero or above, or the loop does not end. It is asked for that and not for any int32: then that it is not zero says that it is above zero, which bounds it.
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="downByOneUntilZero" parameters=[{type=i32 flags=[IsExpected]}] results=[{type=i32}] {
+  b0(v0: anything ~ i32):
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v0)
+  b1(v2: i32, v3: anything ~ i32):
+    LoopHint
+    v5: number|bigint ~ i32 = ToNumeric v3
+    v6: number|bigint ~ int[-2147483649, 2147483646] = Decrement v5
+    v7 = ToBoolean v5
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Integer integer=1
+    v9: i32 = BitXor v2, v8
+    Jump -> next b1(v9, v6)
+  b3():
+    Return v2
+# CHECK: TypeTest {{*}} testedType=int[0, 2147483647]
+}
+
+function f1 name="downByTwoMayPassZero" parameters=[{type=i32 flags=[IsExpected]}] results=[{type=i32}] {
+  b0(v0: anything ~ i32):
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v0)
+  b1(v2: i32, v3: anything ~ i32):
+    LoopHint
+    v5: number|bigint ~ i32 = ToNumeric v3
+    v6 = Integer integer=2
+    v7: number ~ int[-2147483650, 2147483645] = Sub v5, v6
+    v8 = ToBoolean v5
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Integer integer=1
+    v10: i32 = BitXor v2, v9
+    Jump -> next b1(v10, v7)
+  b3():
+    Return v2
+# CHECK-NOT: testedType=int[0, 2147483647]
+# CHECK: TypeTest {{*}} testedType=i32
+}
+
+function f2 name="upUntilZeroStartsBelowIt" parameters=[{type=i32 flags=[IsExpected]}] results=[{type=i32}] {
+  b0(v0: anything ~ i32):
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v0)
+  b1(v2: i32, v3: anything ~ i32):
+    LoopHint
+    v5: number|bigint ~ i32 = ToNumeric v3
+    v6: number|bigint ~ int[-2147483647, 2147483648] = Increment v5
+    v7 = ToBoolean v5
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Integer integer=1
+    v9: i32 = BitXor v2, v8
+    Jump -> next b1(v9, v6)
+  b3():
+    Return v2
+# CHECK-NOT: testedType=int[0, 2147483647]
+# CHECK: TypeTest {{*}} testedType=i32
+}

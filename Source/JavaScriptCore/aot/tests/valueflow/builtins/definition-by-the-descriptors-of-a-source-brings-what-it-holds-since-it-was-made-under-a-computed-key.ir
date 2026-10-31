@@ -43,6 +43,8 @@ function f1 name="one" results=[{type=anything}] {
     Return
 }
 function f2 name="name" results=[{type=string}] {
-    v0 = String string="some text that names no property of the program"
-    Return v0
+    v0 = String string="some text that "
+    v1 = String string="is joined while the program runs"
+    v2 = Add v0, v1
+    Return v2
 }

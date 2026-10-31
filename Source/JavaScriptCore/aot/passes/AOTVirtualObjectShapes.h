@@ -104,6 +104,7 @@ private:
     bool m_refusesUnprovenValues { false };
     BitVector m_fieldsThatMayHoldUndefinedOrNull;
     Vector<VirtualShape, 4> m_shapes;
+    UncheckedKeyHashMap<uint64_t, Vector<uint32_t, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_shapesByHash;
     UncheckedKeyHashMap<uint64_t, uint8_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_tagBits;
     unsigned m_numberOfTagBits { 0 };
     unsigned m_numberOfReservedTagBits { 0 };
@@ -171,7 +172,7 @@ inline constexpr OpcodeSet evaluatedTests {
 };
 
 inline constexpr OpcodeSet testsLeftToRun {
-    Opcode::IsNotThenable, Opcode::AreMembersUnchanged, Opcode::IsEnumeratorCurrent, Opcode::IsInsideView,
+    Opcode::IsNotThenable, Opcode::AreMembersUnchanged, Opcode::IsEnumeratorCurrent, Opcode::IsInsideView, Opcode::IsPrototypeOfClass,
     Opcode::IsBuiltinLocationUnchanged,
 };
 

@@ -1,0 +1,28 @@
+# Where predictions are made to fail, the entry of a serializer ends with the branch that asks whether this one fails. The tests of the stack and of the depth come
+# behind that branch, in a block of their own, though the body is built before them.
+# FORM: Prepared
+# OPTIONS: testing=FailPredictions:2
+# RUN: derived-functions Serializer:L0 Serializer:L1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Link" fields=[{key="x" declared={type=number} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="below" declared={type=Array<L0, proven, pristine[Storage, Names]>} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={constructorOrders=[{fields=[0, 1]}] impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L1 name="Point" fields=[{key="x" declared={type=number} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={constructorOrders=[{fields=[0]}] impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+
+# CHECK: function {{*}}creator=Serializer{layout=L0}
+# CHECK-NEXT: b0(v0: object, v1: stringbuilder, v2: int[0, 105536]):
+# CHECK-NEXT: [[fails0]]: boolean = ShouldFailPrediction
+# CHECK-NEXT: Branch [[fails0]] -> taken [[gaveUp0]](), notTaken [[tests0]]()
+# CHECK: [[gaveUp0]]() frequency=Rare:
+# CHECK-NEXT: [[zero0]]: 0 = Integer
+# CHECK-NEXT: Return [[zero0]]
+# CHECK: [[tests0]]():
+# CHECK-NEXT: = JSONHasStackSpace [failsAtWatchedLevels]
+# CHECK: = Less v2,
+
+# CHECK: function {{*}}creator=Serializer{layout=L1}
+# CHECK-NEXT: b0(v0: object, v1: stringbuilder, v2: int[0, 105536]):
+# CHECK-NEXT: [[fails1]]: boolean = ShouldFailPrediction
+# CHECK-NEXT: Branch [[fails1]] -> taken {{*}}(), notTaken [[tests1]]()
+# CHECK: [[tests1]]():
+# CHECK-NEXT: = JSONHasStackSpace
+# CHECK: = Less v2,

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTForwardedCalls.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaOperandIndexes.h"
@@ -79,9 +80,10 @@ static BuiltinUsePlan planBuiltinCallee(const BuiltinUseInputs& inputs, const Va
 {
     if (inputs.function.at(site.value).opcode != Opcode::CallList)
         return { };
-    if (tailCallRequirementOf(inputs.function, site.block, site.value) == TailCallRequirement::Required)
-        return { };
     BuiltinUsePlan plan = planListCallOfBuiltin(inputs, site.value, array, point);
+    // Whatever the list turns out to be, the callee is this built-in. Unless it calls somebody in its place it comes back here, so the frame may stay.
+    if (plan && tailCallRequirementOf(inputs.function, site.block, site.value) == TailCallRequirement::Required && forwardsCall(inputs.program.builtins().at(plan.call.overload)))
+        return { };
     RELEASE_ASSERT(!plan || (plan.form == BuiltinCallForm::List && plan.operands.arguments.size() == 1 && plan.operands.arguments[0] == array));
     return plan;
 }

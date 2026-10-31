@@ -1,0 +1,31 @@
+# An operation of a body was moved into a function of its own, made after flow analysis, so the seed says nothing of that function's parameter. Read once, the body that hands
+# its parameter on seems to use it in every way, and a caller's list seems to escape. The summaries for a check are read twice: the body then uses the parameter as it did before
+# FORM: Selected
+# RUN(ONCE): effects summaries
+# RUN(TWICE): effects summaries-by-types-of-operands
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="inOwnBody" module=m0 parameters=[{type=Array<int|"u"|"v", proven, pristine[Storage, Names, Dense]>}] results=[{type=undefined}] capabilities=[HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+    v1 = String string="u"
+    v2 = String string="v"
+    v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeUnshift/0
+    v4 = Undefined
+    Return v4
+}
+function f1 name="" module=m0 role=OutlinedBody parameters=[{type=Array<int|"u"|"v", proven, pristine[Storage, Names, Dense]>}] results=[{type=undefined}] capabilities=[HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+    v1 = String string="u"
+    v2 = String string="v"
+    v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeUnshift/0
+    Return
+}
+function f2 name="movedOut" module=m0 parameters=[{type=Array<int|"u"|"v", proven, pristine[Storage, Names, Dense]>}] results=[{type=undefined}] capabilities=[HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+    v1 = CallDirect v0 function=f1
+    v2 = Undefined
+    Return v2
+}
+# ONCE: f0 return: {{*}} p0: [Inspects, ReadsContents, WritesContents, MovesElements] reads
+# ONCE: f1 return: {{*}} p0: [Inspects, ReadsContents, WritesContents, MovesElements] reads
+# ONCE: f2 return: {{*}} p0: [Inspects, Retains, Calls,
+# TWICE: f0 return: {{*}} p0: [Inspects, ReadsContents, WritesContents, MovesElements] reads
+# TWICE: f1 return: {{*}} p0: [Inspects, ReadsContents, WritesContents, MovesElements] reads
+# TWICE: f2 return: {{*}} p0: [Inspects, ReadsContents, WritesContents, MovesElements] reads

@@ -15,6 +15,9 @@ export default b.declarations(
     "%CompilerHelpers%.scanPlainURL",
     "%CompilerHelpers%.scanPlainURLWithBase",
     "%CompilerHelpers%.scanPlainURLWithPlainBase",
+    "%CompilerHelpers%.sortByDifference",
+    "%CompilerHelpers%.sortByReversedDifference",
+    "%CompilerHelpers%.sortWhereNobodySeesTheComparator",
     "%CompilerHelpers%.traverseArray",
   ),
   b.hostRoles(
@@ -41,6 +44,7 @@ export default b.declarations(
     "%ModuleRequire%",
     "%ModuleRequire%.main",
     "%ModuleRequire%.resolve",
+    "%ModuleRequirePrototype%",
     "%bun:bundle%",
     "node:module",
     "node:module.createRequire",

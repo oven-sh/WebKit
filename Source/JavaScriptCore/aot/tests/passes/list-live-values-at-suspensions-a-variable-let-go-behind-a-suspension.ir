@@ -1,0 +1,242 @@
+# `x = null` behind a suspension, of a value that was last read in front of it: the hint moves up to right behind that read, where the run whose registers and stack
+# slots hold the value still runs. No suspension lists the value for the hint's sake.
+# FORM: AsRead
+# RUN: pass ListLiveValuesAtSuspensions
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="letsGoBehindAnAwait" flags=[IsAsync] thisType={type=anything} parameters=[{type=object}, {type=number}] results=[{type=Promise}] {
+    v2 = NewArray v1 contents=number
+    v3 = ElemGet v2, v1
+    v4 = Await v3 @10
+    ReleaseHint v2 @20
+    Return v4
+}
+# CHECK-LABEL: function f0 name="letsGoBehindAnAwait"
+# CHECK: ElemGet v2, v1
+# CHECK-NEXT: ReleaseHint v2 @20
+# CHECK-NEXT: Await {{*}} @10
+# CHECK-NOT: ReleaseHint
+
+function f1 name="letsGoBehindTwoAwaits" flags=[IsAsync] thisType={type=anything} parameters=[{type=object}, {type=number}] results=[{type=Promise}] {
+    v2 = NewArray v1 contents=number
+    v3 = ElemGet v2, v1
+    v4 = Await v3 @30
+    v5 = Await v4 @40
+    ReleaseHint v2 @50
+    Return v5
+}
+# CHECK-LABEL: function f1 name="letsGoBehindTwoAwaits"
+# CHECK: ElemGet v2, v1
+# CHECK-NEXT: ReleaseHint v2 @50
+# CHECK-NEXT: Await {{*}} @30
+# CHECK-NEXT: Await {{*}} @40
+# CHECK-NOT: ReleaseHint
+
+function f2 name="awaitsInALoop" flags=[IsAsync] thisType={type=anything} parameters=[{type=object}, {type=boolean}, {type=number}] results=[{type=Promise}] {
+  b0(v0: object, v1: boolean, v2: number):
+    v3 = NewArray v2 contents=number
+    v4 = ElemGet v3, v2
+    Jump -> next b1()
+  b1():
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Await v0 @60
+    Jump -> next b1()
+  b3():
+    ReleaseHint v3 @70
+    Return v4
+}
+# In front of the await in the loop the hint would be read again on the next turn, across that await.
+# CHECK-LABEL: function f2 name="awaitsInALoop"
+# CHECK: ElemGet v3, v2
+# CHECK-NEXT: ReleaseHint v3 @70
+# CHECK-NEXT: Jump
+# CHECK: Await v0, v0, v1, v4 @60
+# CHECK-NOT: ReleaseHint
+
+function f3 name="readsOnOneWay" flags=[IsAsync] thisType={type=anything} parameters=[{type=object}, {type=boolean}, {type=number}] results=[{type=Promise}] {
+  b0(v0: object, v1: boolean, v2: number):
+    v3 = NewArray v2 contents=number
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v4 = ElemGet v3, v2
+    Jump -> next b2()
+  b2():
+    v5 = Await v0 @80
+    ReleaseHint v3 @90
+    Return v5
+}
+# Behind the read on the one way, and where the other way comes in.
+# CHECK-LABEL: function f3 name="readsOnOneWay"
+# CHECK: ElemGet v3, v2
+# CHECK-NEXT: ReleaseHint v3 @90
+# CHECK-NEXT: Jump
+# CHECK: b2():
+# CHECK-NEXT: ReleaseHint v3 @90
+# CHECK-NEXT: Await v0 @80
+# CHECK-NOT: ReleaseHint
+
+function f4 name="readsOnAnotherWayBehindTheAwait" flags=[IsAsync] thisType={type=anything} parameters=[{type=object}, {type=boolean}, {type=number}] results=[{type=Promise}] {
+  b0(v0: object, v1: boolean, v2: number):
+    v3 = NewArray v2 contents=number
+    v4 = Await v0 @100
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v5 = ElemGet v3, v2
+    Return v5
+  b2():
+    ReleaseHint v3 @110
+    Return v4
+}
+# The function holds the value for the read, so the hint holds nothing and stays.
+# CHECK-LABEL: function f4 name="readsOnAnotherWayBehindTheAwait"
+# CHECK: NewArray
+# CHECK-NEXT: Await v0, v1, v2, v3 @100
+# CHECK: b2():
+# CHECK-NEXT: ReleaseHint v3 @110
+
+function f5 name="isSuspendedOnOneWayIntoTheJoin" flags=[IsAsync] thisType={type=anything} parameters=[{type=object}, {type=boolean}, {type=number}] results=[{type=Promise}] {
+  b0(v0: object, v1: boolean, v2: number):
+    v3 = NewArray v2 contents=number
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v4 = ElemGet v3, v2
+    v5 = Await v0 @120
+    Jump -> next b3()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    v6 = Await v0 @130
+    ReleaseHint v3 @140
+    Return v6
+  b4():
+    v8 = ElemGet v3, v2
+    Return v8
+}
+# At the head of the join the hint would be read across the await of the other way in.
+# CHECK-LABEL: function f5 name="isSuspendedOnOneWayIntoTheJoin"
+# CHECK: ElemGet v3, v2
+# CHECK-NEXT: ReleaseHint v3 @140
+# CHECK-NEXT: Await v0, v0 @120
+# CHECK: b3():
+# CHECK-NEXT: Await v0 @130
+# CHECK-NOT: ReleaseHint
+
+function f6 name="awaitsTheValueOnOneWay" flags=[IsAsync] thisType={type=anything} parameters=[{type=object}, {type=boolean}, {type=number}] results=[{type=Promise}] {
+  b0(v0: object, v1: boolean, v2: number):
+    v3 = NewArray v2 contents=number
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Await v3 @150
+    Jump -> next b3()
+  b2():
+    v5 = ElemGet v3, v2
+    v6 = Await v0 @160
+    Jump -> next b3()
+  b3():
+    ReleaseHint v3 @170
+    Return v0
+}
+# Right behind the await that reads the value last, the hint would be read across that await.
+# CHECK-LABEL: function f6 name="awaitsTheValueOnOneWay"
+# CHECK: Await v3, v0 @150
+# CHECK-NEXT: Jump
+# CHECK: ElemGet v3, v2
+# CHECK-NEXT: ReleaseHint v3 @170
+# CHECK-NEXT: Await v0, v0 @160
+# CHECK-NOT: ReleaseHint
+
+function f7 name="letsGoInAFinallyThatIsEnteredFromAReader" flags=[IsAsync] thisType={type=anything} parameters=[{type=object}, {type=function}, {type=number}] results=[{type=Promise}] {
+  b0(v0: object, v1: function, v2: number):
+    v3 = NewArray v2 contents=number
+    Jump -> next b1()
+  b1() handler=b3():
+    v4 = Call v1
+    Jump -> next b2()
+  b2():
+    v5 = ElemGet v3, v2
+    Return v5
+  b3() role=CleanupHandler:
+    v6 = CatchException
+    v7 = Await v0 @180
+    ReleaseHint v3 @190
+    Rethrow v6
+}
+# What a handler catches stays at its head: by it the handler is known for a `finally`.
+# CHECK-LABEL: function f7 name="letsGoInAFinallyThatIsEnteredFromAReader"
+# CHECK: b3() role=CleanupHandler:
+# CHECK-NEXT: CatchException
+# CHECK-NEXT: ReleaseHint v3 @190
+# CHECK-NEXT: Await {{*}} @180
+# CHECK-NOT: ReleaseHint
+
+function f8 name="letsGoInAFinallyThatReadsWhatWasThrown" flags=[IsAsync] thisType={type=anything} parameters=[{type=object}, {type=function}, {type=number}] results=[{type=Promise}] {
+  b0(v0: object, v1: function, v2: number):
+    v3 = NewArray v2 contents=number
+    Jump -> next b1()
+  b1() handler=b3():
+    v4 = Call v1
+    Jump -> next b2()
+  b2():
+    v5 = ElemGet v3, v2
+    Return v5
+  b3() role=CleanupHandler:
+    v6 = CatchException
+    v7 = CatchValue
+    v8 = Await v7 @200
+    ReleaseHint v3 @210
+    Rethrow v6
+}
+# CHECK-LABEL: function f8 name="letsGoInAFinallyThatReadsWhatWasThrown"
+# CHECK: b3() role=CleanupHandler:
+# CHECK-NEXT: CatchException
+# CHECK-NEXT: CatchValue
+# CHECK-NEXT: ReleaseHint v3 @210
+# CHECK-NEXT: Await {{*}} @200
+# CHECK-NOT: ReleaseHint
+
+function f9 name="letsGoInACatchThatIsEnteredFromAReader" flags=[IsAsync] thisType={type=anything} parameters=[{type=object}, {type=function}, {type=number}] results=[{type=Promise}] {
+  b0(v0: object, v1: function, v2: number):
+    v3 = NewArray v2 contents=number
+    Jump -> next b1()
+  b1() handler=b3():
+    v4 = Call v1
+    Jump -> next b2()
+  b2():
+    v5 = ElemGet v3, v2
+    Return v5
+  b3() role=CatchHandler:
+    v6 = CatchValue
+    v7 = Await v0 @220
+    ReleaseHint v3 @230
+    Return v6
+}
+# CHECK-LABEL: function f9 name="letsGoInACatchThatIsEnteredFromAReader"
+# CHECK: b3() role=CatchHandler:
+# CHECK-NEXT: CatchValue
+# CHECK-NEXT: ReleaseHint v3 @230
+# CHECK-NEXT: Await {{*}} @220
+# CHECK-NOT: ReleaseHint
+
+function f10 name="letsGoOfWhatTwoWaysMade" flags=[IsAsync] thisType={type=anything} parameters=[{type=object}, {type=boolean}, {type=number}] results=[{type=Promise}] {
+  b0(v0: object, v1: boolean, v2: number):
+    v3 = NewArray v2 contents=number
+    v4 = ElemGet v3, v2
+    Branch v1 -> taken b1(), notTaken b2(v3)
+  b1():
+    v5 = NewArray v2 contents=number
+    v6 = ElemGet v5, v2
+    Jump -> next b2(v5)
+  b2(v7):
+    v8 = Await v0 @300
+    ReleaseHint v7 @310
+    Return v8
+}
+# Only the hint reads the join. It goes, and each of the two is let go of behind its own last read.
+# CHECK-LABEL: function f10 name="letsGoOfWhatTwoWaysMade"
+# CHECK: ElemGet v3, v2
+# CHECK-NEXT: ReleaseHint v3 @310
+# CHECK: ElemGet v6, v2
+# CHECK-NEXT: ReleaseHint v6 @310
+# CHECK: Await {{*}} @300
+# CHECK-NOT: ReleaseHint

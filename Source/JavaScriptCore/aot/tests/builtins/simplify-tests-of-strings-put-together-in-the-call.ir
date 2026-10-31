@@ -1,0 +1,140 @@
+# path.startsWith(directory + "/"), path.endsWith(name + "." + extension): the parts are asked about one after the other and no string is made.
+# Where the parts together are longer than a string may be, the concatenation runs and throws as it did.
+# FORM: Prepared
+# The arm that keeps the concatenation is rare and stays as it is, however often the pass runs.
+# RUN: pass SimplifyBuiltinCalls
+# RUN(AGAIN): function-passes SimplifyBuiltinCalls SimplifyBuiltinCalls
+# OPTIONS: check=VerifyEachPass
+# CHECK: outcome: Changed
+# AGAIN: f0 SimplifyBuiltinCalls: Changed
+# AGAIN-NEXT: f0 SimplifyBuiltinCalls: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="startsWithTwoParts" parameters=[{type=string}, {type=string}, {type=string}] results=[{type=anything}] {
+    v3 = Add v1, v2
+    v4 = CallBuiltin v0, v3 overload=StringPrototypeStartsWith/1
+    Return v4
+# CHECK-NOT: = Add v1, v2
+# CHECK: [[first0]]:{{*}}= GetStringLength v1
+# CHECK: [[second0]]:{{*}}= GetStringLength v2
+# CHECK: [[total0]]:{{*}}= Add [[first0]], [[second0]]
+# CHECK: [[longest0]]:{{*}}= Integer integer=2147483647
+# CHECK: [[fits0]]:{{*}}= LessEq [[total0]], [[longest0]]
+# CHECK: Branch [[fits0]]
+# CHECK: [[holds0]]:{{*}}= CallBuiltin v0, v1 overload=StringPrototypeStartsWith/1
+# CHECK: Branch [[holds0]]
+# CHECK: frequency=Rare:
+# CHECK-NEXT: = Strcat v1, v2
+# CHECK-NEXT: false = Boolean
+# CHECK: = CallBuiltin v0, v2, [[first0]] overload=StringPrototypeStartsWith/1
+# CHECK: false = Boolean
+}
+function f1 name="endsWithThreeParts" parameters=[{type=string}, {type=string}, {type=string}] results=[{type=anything}] {
+    v3 = String string="."
+    v4 = Add v1, v3
+    v5 = Add v4, v2
+    v6 = CallBuiltin v0, v5 overload=StringPrototypeEndsWith/1
+    Return v6
+# CHECK-NOT: = Add v1, v3
+# CHECK: [[lengthOfLast1]]:{{*}}= GetStringLength v2
+# CHECK: = CallBuiltin v0, v2 overload=StringPrototypeEndsWith/1
+# CHECK: = Strcat v1, v3, v2
+# CHECK: [[length1]]:{{*}}= GetStringLength v0
+# CHECK: [[end1]]:{{*}}= Sub [[length1]], [[lengthOfLast1]]
+# CHECK: [[endOfFirst1]]:{{*}}= Sub [[end1]],
+# CHECK: [[unit1]]:{{*}}= CallBuiltin v0, [[endOfFirst1]] overload=StringPrototypeCharCodeAt/0
+# CHECK: [[dot1]]:{{*}}= Integer integer=46
+# CHECK: = StrictEq [[unit1]], [[dot1]]
+# CHECK: = CallBuiltin v0, v1, [[endOfFirst1]] overload=StringPrototypeEndsWith/1
+}
+function f2 name="template" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+    v2 = String string="/"
+    v3 = Strcat v1, v2
+    v4 = CallBuiltin v0, v3 overload=StringPrototypeStartsWith/1
+    Return v4
+# CHECK: [[first2]]:{{*}}= GetStringLength v1
+# CHECK: = CallBuiltin v0, v1 overload=StringPrototypeStartsWith/1
+# CHECK: frequency=Rare:
+# CHECK-NEXT: = Strcat v1, v2
+# CHECK: [[unit2]]:{{*}}= CallBuiltin v0, [[first2]] overload=StringPrototypeCharCodeAt/0
+# CHECK: [[slash2]]:{{*}}= Integer integer=47
+# CHECK: = StrictEq [[unit2]], [[slash2]]
+}
+function f3 name="textsOfTheProgram" parameters=[{type=string}, {type="a"|"b"}] results=[{type=anything}] {
+    v2 = String string=":"
+    v3 = Add v1, v2
+    v4 = CallBuiltin v0, v3 overload=StringPrototypeStartsWith/1
+    Return v4
+# CHECK-NOT: LessEq
+# CHECK-NOT: Strcat
+# CHECK: = CallBuiltin v0, v1 overload=StringPrototypeStartsWith/1
+# CHECK: [[first3]]:{{*}}= GetStringLength v1
+# CHECK: = CallBuiltin v0, [[first3]] overload=StringPrototypeCharCodeAt/0
+}
+function f4 name="mayBeUndefined" parameters=[{type=string}, {type=undefined|string}] results=[{type=anything}] {
+    v2 = String string=":"
+    v3 = Add v1, v2
+    v4 = CallBuiltin v0, v3 overload=StringPrototypeStartsWith/1
+    Return v4
+# CHECK: [[text4]]: string = ToString v1
+# CHECK: [[first4]]:{{*}}= GetStringLength [[text4]]
+# CHECK: = CallBuiltin v0, [[text4]] overload=StringPrototypeStartsWith/1
+# CHECK: = Strcat v1, v2
+# CHECK: = CallBuiltin v0, [[first4]] overload=StringPrototypeCharCodeAt/0
+}
+function f5 name="number" parameters=[{type=string}, {type=string}, {type=number}] results=[{type=anything}] {
+    v3 = Add v1, v2
+    v4 = CallBuiltin v0, v3 overload=StringPrototypeStartsWith/1
+    Return v4
+# CHECK: [[first5]]:{{*}}= GetStringLength v1
+# CHECK-NOT: ToString
+# CHECK: [[holds5]]:{{*}}= CallBuiltin v0, v1 overload=StringPrototypeStartsWith/1
+# CHECK: Branch [[holds5]]
+# CHECK: [[joined5]]:{{*}}= Strcat v1, v2
+# CHECK-NEXT: = CallBuiltin v0, [[joined5]] overload=StringPrototypeStartsWith/1
+# CHECK: [[text5]]: string = ToString v2
+# CHECK-NEXT: = CallBuiltin v0, [[text5]], [[first5]] overload=StringPrototypeStartsWith/1
+}
+function f6 name="readTwice" parameters=[{type=string}, {type=string}, {type=string}] results=[{type=anything}] {
+    v3 = Add v1, v2
+    v4 = CallBuiltin v0, v3 overload=StringPrototypeStartsWith/1
+    v5 = NewArray v3, v4 contents=anything
+    Return v5
+# CHECK: v3: string = Add v1, v2
+# CHECK-NEXT: = CallBuiltin v0, v3 overload=StringPrototypeStartsWith/1
+}
+function f7 name="position" parameters=[{type=string}, {type=string}, {type=string}, {type=i32}] results=[{type=anything}] {
+    v4 = Add v1, v2
+    v5 = CallBuiltin v0, v4, v3 overload=StringPrototypeStartsWith/1
+    Return v5
+# CHECK: v4: string = Add v1, v2
+# CHECK-NEXT: = CallBuiltin v0, v4, v3 overload=StringPrototypeStartsWith/1
+}
+function f8 name="object" parameters=[{type=string}, {type=string}, {type=anything}] results=[{type=anything}] {
+    v3 = Strcat v1, v2
+    v4 = CallBuiltin v0, v3 overload=StringPrototypeStartsWith/1
+    Return v4
+# CHECK: v3: string = Strcat v1, v2
+# CHECK-NEXT: = CallBuiltin v0, v3 overload=StringPrototypeStartsWith/1
+}
+function f9 name="codeRunsInBetween" parameters=[{type=string}, {type=string}, {type=string}, {type=anything}] results=[{type=anything}] {
+    v4 = Add v1, v2
+    v5 = Call v3
+    v6 = CallBuiltin v0, v4 overload=StringPrototypeStartsWith/1
+    Return v6
+# CHECK: v4: string = Add v1, v2
+# CHECK: = CallBuiltin v0, v4 overload=StringPrototypeStartsWith/1
+}
+function f10 name="inRareCode" parameters=[{type=string}, {type=string}, {type=string}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: string, v1: string, v2: string, v3: boolean):
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v3
+  b2() frequency=Rare:
+    v4 = Add v1, v2
+    v5 = CallBuiltin v0, v4 overload=StringPrototypeStartsWith/1
+    Return v5
+# CHECK: v4: string = Add v1, v2
+# CHECK-NEXT: = CallBuiltin v0, v4 overload=StringPrototypeStartsWith/1
+}

@@ -14,6 +14,8 @@ namespace JSC { namespace AOT {
 
 JS_EXPORT_PRIVATE bool narrowTruncatedPhis(B3::Procedure&);
 B3::ClientPhase narrowTruncatedPhisAfterOptimization();
+JS_EXPORT_PRIVATE bool carryWholeNumbersAsIntegers(B3::Procedure&);
+B3::ClientPhase carryWholeNumbersAsIntegersBeforeOptimization();
 
 } } // namespace JSC::AOT
 

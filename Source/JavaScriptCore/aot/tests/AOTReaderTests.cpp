@@ -59,14 +59,14 @@ void testListCounts()
 {
     ReaderFixture fixture;
     const std::pair<List, uint32_t> counts[] = {
-        { List::ClassParts, 2 }, { List::TypeSites, 1 }, { List::DeclaredTypes, 15 }, { List::ExpectedResults, 1 },
+        { List::ClassParts, 2 }, { List::TypeSites, 1 }, { List::DeclaredTypes, 12 }, { List::ExpectedResults, 1 },
         { List::Layouts, 4 },
         { List::Fields, 4 }, { List::StaticFields, 1 }, { List::Variables, 4 }, { List::Modules, 2 }, { List::ModuleRequests, 1 },
         { List::ModuleExports, 2 }, { List::SyntheticExports, 2 }, { List::RequiredNames, 1 }, { List::ColumnAdjustments, 1 },
-        { List::ModuleFailures, 1 }, { List::EvalScopes, 1 }, { List::EvalBindings, 1 },
+        { List::ModuleFailures, 1 }, { List::AmbiguousExports, 1 }, { List::SourceStamps, 1 }, { List::EvalScopes, 1 }, { List::EvalBindings, 1 }, { List::DeclaredCaptures, 3 },
         { List::Functions, 9 }, { List::DataNodes, 2 },
         { List::DataMembers, 2 }, { List::Data, 1 }, { List::Entries, 1 }, { List::HostReads, 1 }, { List::RuntimeFunctions, 2 },
-        { List::WebAssemblyModules, 1 },
+        { List::WebAssemblyModules, 1 }, { List::ReplaceableBuiltins, 1 }, { List::OpenedNames, 1 },
     };
     for (auto [list, count] : counts)
         AOT_TEST_CHECK(fixture.countOf(list) == count);
@@ -77,9 +77,9 @@ void testListCounts()
     AOT_TEST_CHECK(program->numberOfLayoutsAsRead() == 4 && program->layouts.size() == numberOfLayoutIDs(fixture));
     AOT_TEST_CHECK(program->numberOfFunctionsAsRead() == 9 && program->functions.size() == 9);
     AOT_TEST_CHECK(program->typeSites.size() == 1 && program->expectedResults.size() == 1);
-    AOT_TEST_CHECK(program->variables.size() == 4 && program->modules.size() == 2 && program->moduleFailures.size() == 1);
+    AOT_TEST_CHECK(program->variables.size() == 4 && program->modules.size() == 2 && program->moduleFailures.size() == 1 && program->ambiguousExports.size() == 1 && program->sourceStamps.size() == 1);
     AOT_TEST_CHECK(program->evalScopes.size() == 1 && program->data.size() == 1 && program->entries.size() == 1);
-    AOT_TEST_CHECK(program->runtimeFunctions.size() == 2 && program->webAssemblyModules.size() == 1);
+    AOT_TEST_CHECK(program->runtimeFunctions.size() == 2 && program->webAssemblyModules.size() == 1 && program->replaceableBuiltins.size() == 1);
     AOT_TEST_CHECK(program->strings.size() >= fixture.countOf(List::Strings));
 }
 
@@ -104,7 +104,7 @@ void testEveryTruncation()
 {
     ReaderFixture fixture;
     const Vector<uint8_t>& bytes = fixture.bytes;
-    size_t endOfRecords = fixture.offsetOf<Wire::WebAssemblyModule>(List::WebAssemblyModules, 0) + fixture.countOf(List::WebAssemblyModules) * sizeof(Wire::WebAssemblyModule);
+    size_t endOfRecords = fixture.offsetOf<Wire::OpenedName>(List::OpenedNames, 0) + fixture.countOf(List::OpenedNames) * sizeof(Wire::OpenedName);
     AOT_TEST_CHECK(endOfRecords <= bytes.size() && bytes.size() - endOfRecords < sizeof(uint64_t));
     for (size_t length = 0; length < bytes.size(); length += wordSize) {
         dataLogLn("length ", length);

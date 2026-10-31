@@ -14,6 +14,7 @@
 #include "AOTWire.h"
 #include "JSExportMacros.h"
 #include <array>
+#include <span>
 #include <optional>
 #include <type_traits>
 #include <wtf/text/ASCIILiteral.h>
@@ -167,6 +168,8 @@ struct CompileOptions {
     bool checksClaimsToBackEnd { false };
     bool checksMovedLoads { false };
     bool checksDecidedComparisons { false };
+    bool checksSpillSlots { false };
+    bool checksAllocatedRegisters { false };
     // Once the flow analysis is at rest every rule runs once more over the solved sets. Whatever that adds is an update that the solve has lost, and an error.
     bool checksFlowFixpoint { false };
     // More to begin with never proves more. The flow analysis is solved twice: as it is, and with more given to nodes that the layout seed draws. Whatever the first solve holds and the second lacks is an error.
@@ -177,20 +180,37 @@ struct CompileOptions {
     ReportSet reports { };
     ExcludedCode excludedCode { };
     OutputOptions output { };
+    // The images that were built before this one for the same realms, the first of them first, as their builds wrote them. They outlive the build.
+    Vector<std::span<const uint8_t>, 2> imagesBelow;
+    std::span<const uint8_t> referenceLibraryImage;
     LoggingOptions logging;
 
     bool isVerifyOnly() const { return action == CompileAction::VerifyOnly; }
     bool isCheckOnly() const { return action == CompileAction::CheckOnly; }
     bool collectsDeclines() const { return hasFlag(reports, ReportSet::Declines); }
     bool collectsAllocationRemarks() const { return hasFlag(reports, ReportSet::Allocations); }
+    // The records of accesses are counted too, and a build that validates compares the two counts.
+    bool countsAccesses() const { return hasFlag(reports, ReportSet::AccessCounts) || hasFlag(reports, ReportSet::Flow) || hasFlag(reports, ReportSet::Functions) || recorded.validates; }
     // Code comes in at any place and at any time, so nothing holds for the program as a whole.
-    bool admitsUnseenCode() const { return recorded.admitted() != AdmittedCode { }; }
+    bool admitsUnseenCode() const { return hasFlag(recorded.admitted(), AdmittedCode::Inspector); }
+    // A test run: what a test replaces on a built-in object is unlocked, and the build is told of what it still finds locked.
+    bool admitsReplacedBuiltins() const { return hasFlag(recorded.admitted(), AdmittedCode::ReplacedBuiltins); }
+    // The host runs files with code that the build has not seen, though no load of the program names one.
+    bool admitsFilesRunByHost() const { return !excludesCodeOutsideImage() && hasFlag(recorded.admitted(), AdmittedCode::FilesRunByHost); }
     bool excludesEvaluatedText() const { return hasFlag(excludedCode, ExcludedCode::EvaluatedText); }
     bool excludesHostEvaluatedText() const { return hasFlag(excludedCode, ExcludedCode::HostEvaluatedText); }
     bool excludesForeignCalls() const { return hasFlag(excludedCode, ExcludedCode::ForeignCalls); }
     bool excludesForeignCallsOfUnseenCode() const { return hasFlag(excludedCode, ExcludedCode::ForeignCallsOfUnseenCode); }
+    // The image holds every module of the library that the run can load, so none runs from its text.
+    bool excludesLibraryText() const { return hasFlag(excludedCode, ExcludedCode::LibraryText); }
     bool excludesCodeOutsideImage() const { return runsOnlyCodeOfImage || hasFlag(excludedCode, ExcludedCode::CodeOutsideImage); }
     bool obfuscates() const { return hasFlag(output, OutputOptions::Obfuscate); }
+    // A realm that runs the image runs other images too. Each is built alone, and takes the cells of the others for cells of code that no build has seen.
+    bool sharesRealms() const { return hasFlag(output, OutputOptions::SharesRealms); }
+    // The image holds the library and nothing else, and is built before any of the runs that it serves is known. So it rests on no lock that a test run can open.
+    bool holdsLibraryAlone() const { return hasFlag(output, OutputOptions::HoldsLibraryAlone); }
+    // The host runs the image in one realm of the VM after another, each with an instance of its own, and what it carries from one realm to the next may hold a function of the earlier one.
+    bool runsInSeveralRealms() const { return hasFlag(output, OutputOptions::RunsInSeveralRealms); }
     bool writesCodeSizeMap() const { return !logging.mapFilePath.isNull(); }
 
     JS_EXPORT_PRIVATE static CompileOptions fromWire(const Wire::CompileOptions&, Diagnostics&);

@@ -11,18 +11,22 @@
 #include "AOTBuiltinTable.h"
 #include "AOTIdentifierTable.h"
 #include "AOTImage.h"
+#include "AOTPropertyWalk.h"
+#include "AOTRuntimeCounters.h"
 #include "AOTThreshold.h"
 #include "BuiltinNames.h"
 #include "JSCInlines.h"
 #include <algorithm>
 #include <bit>
 #include <span>
+#include <tuple>
 #include <utility>
 #include <wtf/FastMalloc.h>
 #include <wtf/MathExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/AtomStringTable.h>
+#include <wtf/text/StringHasherInlines.h>
 #include <wtf/text/SymbolImpl.h>
 #include <wtf/text/SymbolRegistry.h>
 
@@ -67,7 +71,7 @@ Identifier enginePrivateName(VM& vm, const String& text)
 ProgramIdentifiers::ProgramIdentifiers(VM& vm, const Image& image)
     : m_vm(vm)
     , m_image(image)
-    , m_count(image.text().numberOfIdentifiers())
+    , m_count(image.last().text().numberOfIdentifiers())
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     , m_text(image.text())
 #else
@@ -75,7 +79,7 @@ ProgramIdentifiers::ProgramIdentifiers(VM& vm, const Image& image)
 #endif
     , m_symbols(createSymbols(std::max(minNumberOfSymbolPlaces, WTF::roundUpToPowerOfTwo(static_cast<uint32_t>(image.programTables().identifiersOfEngineSymbols().size()) * 2 + 2))))
 {
-    RELEASE_ASSERT(&image == Image::current());
+    RELEASE_ASSERT(&image == Image::current() && &image == &image.first());
     AtomStringTable::setReadOnlyAtomLookup(findAtom);
 }
 
@@ -93,8 +97,10 @@ void ProgramIdentifiers::createEngineSymbols()
     if (m_hasCreatedEngineSymbols)
         return;
     m_hasCreatedEngineSymbols = true;
-    for (uint32_t number : m_image.programTables().identifiersOfEngineSymbols())
-        uid(number);
+    for (const Image* image = &m_image; image; image = image->above()) {
+        for (uint32_t number : image->programTables().identifiersOfEngineSymbols())
+            uid(number);
+    }
 }
 
 NEVER_INLINE UniquedStringImpl* ProgramIdentifiers::uidSlowCase(uint32_t number)
@@ -133,7 +139,7 @@ void ProgramIdentifiers::addSymbol(uint32_t number, UniquedStringImpl* uid)
 
 Identifier ProgramIdentifiers::create(uint32_t number) const
 {
-    const ImageText& text = m_image.text();
+    const ImageText& text = m_image.holderOfStringHeader(number).text();
     const ImageIdentifierWord& record = text.identifier(number);
     StringID string = record.text();
     switch (record.kind()) {
@@ -199,8 +205,14 @@ std::optional<uint32_t> ProgramIdentifiers::numberOf(UniquedStringImpl* uid) con
             return std::nullopt;
         return found->value;
     }
-    if (!uid->length())
-        return numberOfText(m_image, StringView(*uid), uid->existingHash());
+    // The empty name is no atom of an image. Whichever image is the first to have it has numbered it.
+    if (!uid->length()) {
+        for (const Image* image = &m_image; image; image = image->above()) {
+            if (std::optional<uint32_t> number = numberOfText(*image, StringView(*uid), uid->existingHash()))
+                return number;
+        }
+        return std::nullopt;
+    }
     ASSERT(!numberOfText(m_image, StringView(*uid), uid->existingHash()));
     return std::nullopt;
 }
@@ -281,10 +293,13 @@ NEVER_INLINE AtomStringImpl* ProgramIdentifiers::findAtomSlow(StringView charact
     const Image* imageOfThread = Image::current();
     if (characters.isEmpty() || !imageOfThread)
         return nullptr;
-    const Image& image = *imageOfThread;
-    std::optional<uint32_t> number = numberOfText(image, characters, hash);
+    const Image* holder = &imageOfThread->first();
+    std::optional<uint32_t> number = numberOfText(*holder, characters, hash);
+    while (!number && (holder = holder->above()))
+        number = numberOfText(*holder, characters, hash);
     if (!number)
         return nullptr;
+    const Image& image = *holder;
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     return static_cast<AtomStringImpl*>(&image.text().ensureLazyHeader(*number));
 #else
@@ -292,9 +307,84 @@ NEVER_INLINE AtomStringImpl* ProgramIdentifiers::findAtomSlow(StringView charact
 #endif
 }
 
+// The whole text up to 16 characters, the length and both ends of a longer one.
+static ALWAYS_INLINE uint64_t fingerprintOf(std::span<const Latin1Character> characters)
+{
+    const Latin1Character* data = characters.data();
+    size_t length = characters.size();
+    uint64_t first;
+    uint64_t last;
+    if (length >= sizeof(uint64_t)) {
+        first = unalignedLoad<uint64_t>(data);
+        last = unalignedLoad<uint64_t>(data + length - sizeof(uint64_t));
+    } else if (length >= sizeof(uint32_t)) {
+        first = unalignedLoad<uint32_t>(data);
+        last = unalignedLoad<uint32_t>(data + length - sizeof(uint32_t));
+    } else {
+        first = data[0];
+        last = static_cast<uint64_t>(data[length / 2]) << 8 | data[length - 1];
+    }
+    uint64_t mixed = (first ^ length * 0x9e3779b97f4a7c15ull) * 0xff51afd7ed558ccdull;
+    mixed = ((mixed ^ mixed >> 32) ^ last) * 0xc4ceb9fe1a85ec53ull;
+    return (mixed ^ mixed >> 29) | 1;
+}
+
+// Where the linker puts two literals decides whether they share a place by address, anew in every build. Two that do would put each other out at every turn.
+NEVER_INLINE AtomStringImpl* ProgramIdentifiers::findAtomOfNativeTextByCharacters(std::span<const Latin1Character> characters)
+{
+    static_assert(hasOneBitSet(std::tuple_size_v<decltype(m_nativeTextsByCharacters)>));
+    constexpr unsigned bitsOfSet = std::countr_zero(std::tuple_size_v<decltype(m_nativeTextsByCharacters)>);
+    uint64_t fingerprint = fingerprintOf(characters);
+    std::array<NativeTextFingerprintSet*, 2> sets { &m_nativeTextsByCharacters[fingerprint >> (64 - bitsOfSet)], &m_nativeTextsByCharacters[fingerprint << bitsOfSet >> (64 - bitsOfSet)] };
+    for (NativeTextFingerprintSet* set : sets) {
+        for (const NativeTextFingerprint& known : *set) {
+            if (known.fingerprint != fingerprint)
+                continue;
+            if (!known.atom || (known.atom->length() == characters.size() && WTF::equal(known.atom->span8().data(), characters)))
+                return known.atom;
+        }
+    }
+    countNativeTextHashed(m_vm);
+    AtomStringImpl* atom = findAtom(StringView(characters), StringHasher::computeHashAndMaskTop8Bits(characters));
+    if (atom && !atom->is8Bit())
+        atom = nullptr;
+    NativeTextFingerprintSet& set = sets[0]->back().fingerprint && !sets[1]->back().fingerprint ? *sets[1] : *sets[0];
+    std::move_backward(set.begin(), set.end() - 1, set.end());
+    set.front() = { fingerprint, atom };
+    return atom;
+}
+
+AtomStringImpl* ProgramIdentifiers::findAtomOfNativeText(std::span<const Latin1Character> characters)
+{
+    if (characters.empty() || characters.size() > String::MaxLength)
+        return nullptr;
+    static_assert(hasOneBitSet(std::tuple_size_v<decltype(m_recentNativeTexts)>));
+    NativeText& recent = m_recentNativeTexts[std::bit_cast<uintptr_t>(characters.data()) * 0x9e3779b97f4a7c15ull >> (64 - std::countr_zero(m_recentNativeTexts.size()))];
+    if (recent.characters == characters.data() && recent.length == characters.size()) [[likely]] {
+        // The address may hold other characters by now. Whoever gets null asks the atom table, which is right whatever stands here.
+        if (!recent.atom)
+            return nullptr;
+        if (WTF::equal(recent.atom->span8().data(), characters)) [[likely]]
+            return recent.atom;
+    }
+    AtomStringImpl* atom = findAtomOfNativeTextByCharacters(characters);
+    recent = { characters.data(), characters.size(), atom };
+    return atom;
+}
+
+namespace PropertyWalk {
+
+UniquedStringImpl* tryFindName(VM& vm, std::span<const Latin1Character> characters)
+{
+    ProgramIdentifiers* identifiers = vm.aotState().identifiers.get();
+    return identifiers ? identifiers->findAtomOfNativeText(characters) : nullptr;
+}
+
+} // namespace PropertyWalk
+
 String ProgramIdentifiers::textOf(const Image& image, uint32_t number)
 {
-    const ImageText& text = image.text();
+    const ImageText& text = image.holderOfStringHeader(number).text();
     const ImageIdentifierWord& record = text.identifier(number);
     if (record.kind() != PropertyKeyKind::Text || !record.text())
         return String();

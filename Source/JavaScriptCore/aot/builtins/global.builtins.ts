@@ -103,4 +103,8 @@ export default b.declarations(
     "WebAssembly.Suspending",
     "WebAssembly.SuspendError",
   ].flatMap(path => b.extend(path, { marks: ["MayBeAbsent"] })),
+  // JSWebAssembly::finishCreation() adds these two only if the host's method table has the hook.
+  ["WebAssembly.compileStreaming", "WebAssembly.instantiateStreaming"].flatMap(path =>
+    b.extend(path, { marks: ["MayBeAbsent"] }),
+  ),
 );

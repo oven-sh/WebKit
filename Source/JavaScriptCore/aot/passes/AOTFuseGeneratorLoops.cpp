@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTBuiltinIDs.h"
 #include "AOTCodeSizeEstimate.h"
 #include "AOTCoroutines.h"
 #include "AOTEscapeAnalysis.h"
@@ -23,6 +24,7 @@
 #include "AOTSSARepair.h"
 #include "AOTSort.h"
 #include "AOTSummarizeForInlining.h"
+#include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
@@ -1024,6 +1026,85 @@ static PassOutcome startAtFirstStep(FunctionPassContext& pass, IRBuilder& builde
     return PassOutcome::Changed;
 }
 
+// The program never gets hold of a generator that goes nowhere but into an iterator helper, so nothing tells which object it inherits from.
+static bool isHeldOnlyByIteratorHelper(FunctionPassContext& pass, const EscapeAnalysis& escape, ValueID generator)
+{
+    const Function& function = pass.function;
+    std::optional<ObjectID> object = escape.objectDefinedBy(generator);
+    std::optional<GeneratorBodyDescription> description = describeGeneratorBody(pass.program, function, generator);
+    if (!object || !description)
+        return false;
+
+    const Function& body = pass.program.at(description->body);
+    if (!body.hasBody() || description->generatorParameter >= body.at(entryBlock).parameters.size())
+        return false;
+    ValueID generatorParameter = body.at(entryBlock).parameters[description->generatorParameter];
+    bool bodyOnlySuspends = std::ranges::all_of(body.blocks, [&](const Block& block) {
+        bool onlySuspends = true;
+        for (ValueID id : block.values) {
+            const Value& value = body.at(id);
+            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                if (operand == generatorParameter)
+                    onlySuspends &= value.opcode == Opcode::IsGeneratorRunning || (value.opcode == Opcode::YieldBySavingFrame && operandIndex == OperandIndex::YieldBySavingFrame::generator);
+            });
+        }
+        block.forEachChildOutsideValues([&](ValueID child) {
+            onlySuspends &= !child || child != generatorParameter;
+        });
+        return onlySuspends;
+    });
+    if (!bodyOnlySuspends)
+        return false;
+
+    return std::ranges::all_of(escape.usesOf(*object), [&](const ObjectUse& objectUse) {
+        const Use& use = objectUse.use;
+        if (use.kind == Use::Kind::EdgeArgument)
+            return true;
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        const Value& user = function.at(use.user);
+        if (isCastWithoutTest(user.opcode))
+            return true;
+        switch (user.opcode) {
+        case Opcode::CallDirect:
+            return use.user == description->startAtCreation && use.operandIndex == OperandIndex::CallDirect::arguments + description->generatorParameter;
+        case Opcode::CallBuiltin:
+            return pass.program.builtins().at(user.overload()).builtin == Builtins::LinkTimeConstantIteratorHelperCreate && use.operandIndex == OperandIndex::CallBuiltin::arguments;
+        // The other two checks ask for the Structure of a prototype object of its own.
+        case Opcode::StepGenerator:
+            return use.operandIndex == OperandIndex::StepGenerator::generator && (user.check() == GeneratorStepCheck::None || user.check() == GeneratorStepCheck::IsGenerator);
+        case Opcode::ResumeGenerator:
+            return use.operandIndex == OperandIndex::ResumeGenerator::generator;
+        case Opcode::IsGeneratorSuspendedAtStart:
+        case Opcode::IsGeneratorUnstarted:
+        case Opcode::MarkGeneratorRunning:
+        case Opcode::TakeGeneratorStepStatus:
+            return true;
+        default:
+            return false;
+        }
+    });
+}
+
+// Such a generator inherits from %GeneratorPrototype% itself: its function makes no prototype object and no Structure for it.
+static PassOutcome dropCalleesOfHiddenGenerators(FunctionPassContext& pass)
+{
+    const EscapeAnalysis& escape = pass.analyses.escapeWithLiveInstances();
+    if (escape.gaveUp())
+        return PassOutcome::Unchanged;
+    Vector<ValueID, 4> hidden;
+    for (ValueID generator : listValues(pass.analyses, Opcode::NewGenerator)) {
+        if (pass.function.at(generator).calleeOperand() && isHeldOnlyByIteratorHelper(pass, escape, generator))
+            hidden.append(generator);
+    }
+    if (hidden.isEmpty())
+        return PassOutcome::Unchanged;
+    for (ValueID generator : hidden)
+        pass.function.edit(generator, ValueEdit::Definition).setOperand(OperandIndex::NewGenerator::callee, ValueID());
+    pass.analyses.didChangeValues();
+    return PassOutcome::Changed;
+}
+
 // A generator that no loop could be fused with is still seldom looked at between its creation and its first step.
 PassOutcome startGeneratorsAtFirstStep(FunctionPassContext& pass)
 {
@@ -1031,7 +1112,7 @@ PassOutcome startGeneratorsAtFirstStep(FunctionPassContext& pass)
         return PassOutcome::Unchanged;
 
     IRBuilder builder(pass.analyses.context(), pass.function, pass.types, &pass.analyses);
-    PassOutcome outcome = PassOutcome::Unchanged;
+    PassOutcome outcome = dropCalleesOfHiddenGenerators(pass);
     BitVector isTried;
     for (;;) {
         const EscapeAnalysis& escape = pass.analyses.escapeWithLiveInstances();

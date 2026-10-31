@@ -1,0 +1,26 @@
+# A loop that is expected to take lists out of a list may as well walk a Map: it gets the Map's own walk, with no result object and no pair where the pair is only read. Nobody's expectation names the Map, so its test comes after theirs, and it goes first where copies of the body would not all fit.
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# RUN(LEFT): pass ExpandIteration
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="pairs" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ Array<Array<number>>):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f0 name="pairs"
+# CHECK: TypeTest {{*}} testedType=Array<
+# CHECK: TypeTest {{*}} testedType=Map
+# CHECK: MapNext
+# LEFT-NOT: IteratorOpen
+# LEFT-NOT: IteratorResume

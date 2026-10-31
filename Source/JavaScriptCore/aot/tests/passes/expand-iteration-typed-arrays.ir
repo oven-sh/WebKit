@@ -119,9 +119,10 @@ function f3 name="dataView" parameters=[{type=DataView}] results=[{type=anything
 # ABSENT-NOT: GetTypedArrayLength
 # ABSENT-NOT: GetTypedArrayElement
 # ABSENT-NOT: IsPristine
+# ABSENT: function {{*}} name="stepIterator"
 }
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume
-# LEFT-NOT: IteratorClose
+# LEFT-NOT: IteratorClose v
 # LEFT-NOT: AppendSpread

@@ -85,10 +85,37 @@ BitVector findReachableFunctions(const Program& program, const CallGraph& callGr
             reachedBodies.append(function);
     };
 
+    // The functions of a set are reached by the first body that names it.
+    auto readOnce = [](Vector<uint8_t>& isRead, size_t index) {
+        AtomicRef flag(isRead[index]);
+        return !flag.load(std::memory_order_relaxed) && !flag.exchange(1, std::memory_order_relaxed);
+    };
+    Vector<uint8_t> isLongSetRead(FillWith { }, callGraph.numberOfLongSets(), static_cast<uint8_t>(0));
+    Vector<uint8_t> isCalleeSetRead(FillWith { }, program.types.numberOfCalleeSets(), static_cast<uint8_t>(0));
+
     Vector<FunctionID> frontier;
     // The tables take the body of a module or of a function that is registered for the host as the sign that it can run.
     BitVector isCalledByHost = functionsCalledByHost(program, loops);
+    // A declared function is a root for whoever reads its variable and gets its closure. What is left of one that has lost parameters only hands on to the version without them, for nobody where the variable is never read.
+    BitVector isOnlyInUnreadVariable(count);
+    for (const Variable& variable : program.variables) {
+        if (variable.function && variable.flow.reads == ReadState::NeverRead)
+            isOnlyInUnreadVariable.quickSet(variable.function.index());
+    }
+    for (const Variable& variable : program.variables) {
+        if (variable.function && variable.flow.reads != ReadState::NeverRead)
+            isOnlyInUnreadVariable.quickClear(variable.function.index());
+    }
+    auto onlyHandsOnToOwnVersion = [&](FunctionID id) {
+        const Function& function = program.at(id);
+        if (!function.hasBody() || function.blocks.size() != 1 || function.at(entryBlock).values.size() != 1)
+            return false;
+        const Value& call = function.at(function.at(entryBlock).values[0]);
+        return call.opcode == Opcode::CallDirect && program.at(call.function()).derivation.source == id;
+    };
     for (FunctionID root : callGraph.roots()) {
+        if (isOnlyInUnreadVariable.quickGet(root.index()) && !isCalledByHost.get(root.index()) && callGraph.numberOfCallSites(root) == callGraph.numberOfCallSitesInCode(root) && onlyHandsOnToOwnVersion(root))
+            continue;
         if (isCalledByHost.get(root.index()) || entrypointsOf(root).empty())
             reach(root, frontier);
     }
@@ -100,8 +127,14 @@ BitVector findReachableFunctions(const Program& program, const CallGraph& callGr
     while (!frontier.isEmpty()) {
         frontier = collectInParallel<FunctionID>(loops, frontier.size(), [&](unsigned position, Vector<FunctionID>& reachedBodies) {
             // An operation that may enter a function has the effects of that body, also where it enters through an entrypoint: a function without a body counts as unknown code.
-            for (FunctionID callee : callGraph.calleesOf(frontier[position]))
+            for (FunctionID callee : callGraph.ownCalleesOf(frontier[position]))
                 reach(callee, reachedBodies);
+            for (uint32_t set : callGraph.longSetsOf(frontier[position])) {
+                if (!readOnce(isLongSetRead, set))
+                    continue;
+                for (FunctionID callee : callGraph.membersOfLongSet(set))
+                    reach(callee, reachedBodies);
+            }
             forEachFunctionReference(program, frontier[position], [&](FunctionID target, FunctionReferenceKind kind) {
                 switch (kind) {
                 case FunctionReferenceKind::Call:
@@ -123,6 +156,8 @@ BitVector findReachableFunctions(const Program& program, const CallGraph& callGr
                     return;
                 for (FunctionID entrypoint : entrypointsOf(bound->target))
                     reach(entrypoint, reachedBodies);
+            }, [&](CalleeSetID set) {
+                return readOnce(isCalleeSetRead, set.index());
             });
         });
     }
@@ -198,6 +233,9 @@ static constexpr OperandUses keyedStoreUses { OperandUse::StoresByKey, OperandUs
 
 static bool isUnread(const BuildContext& build, const Layout& layout, const Field& field)
 {
+    // The brand of a class without private methods only tells its evaluations apart. A private field says by itself whether an object has it.
+    if (field.flags.contains(FieldFlags::IsBrand))
+        return !field.flags.containsAny({ FieldFlags::IsInherited, FieldFlags::IsAddedLate, FieldFlags::IsBrandOfMethods }) && layout.classFlow.evaluations == ExecutionCount::AtMostOnce;
     constexpr OptionSet<FieldFlags> excludedFlags { FieldFlags::IsInherited, FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsHidden };
     if (field.flags.containsAny(excludedFlags) || field.form.contains(FieldForm::IsAccessor))
         return false;
@@ -678,9 +716,12 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
         areReceiverSetsEnabled = build.isEnabled(FlowResultKind::ReceiverSets, function);
     for (uint32_t layoutIndex = 0; areReceiverSetsEnabled && layoutIndex < program.layouts.size(); ++layoutIndex) {
         const Layout& layout = program.layouts[layoutIndex];
-        if (!supportsRemovalOf(layout.kind) || layout.flow.allocation == AllocationState::NeverAllocated)
+        if (!supportsRemovalOf(layout.kind))
             continue;
+        bool onlyDeclaresFieldsOfLayoutsBelow = layout.flow.allocation == AllocationState::NeverAllocated;
         for (uint32_t field = 0; field < layout.fields.size(); ++field) {
+            if (onlyDeclaresFieldsOfLayoutsBelow && !hasNoAccesses(layout.fields[field].flow.location))
+                continue;
             if (isUnread(build, layout, layout.fields[field]))
                 fields.append(FieldReference { LayoutID(layoutIndex), field });
         }
@@ -749,7 +790,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
         if (PropertyKeyID key = fieldAt(program, fields[candidate]).key)
             candidatesByKey.append({ key, candidate });
     }
-    AOT::sort(candidatesByKey);
+    AOT::sortInLine(candidatesByKey);
 
     for (const EvalScope& scope : program.evalScopes) {
         for (const EvalBinding& binding : scope.bindings) {
@@ -818,6 +859,12 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
                     const Type& type = program.typeOf(function, value.operand(*receiver));
                     members = membersOf(program, type);
                     mayReachAnyLayout = type.anyObject;
+                    // A read loses its stamp where a check above it becomes an expectation. Flow still says which objects it saw arrive.
+                    bool asksFlow = mayReachAnyLayout && !createsPropertyByName(opcode) && !build.isSabotaged(Sabotage::RemovedFieldsHaveUnknownReaders);
+                    if (std::optional<LayoutSetID> seen = asksFlow ? inputs.flow.receiversSeenAt(value.accessSite()) : std::nullopt) {
+                        members = *seen ? program.at(*seen).seen().predicted() : std::span<const LayoutID>();
+                        mayReachAnyLayout = false;
+                    }
                 }
 
                 PropertyKeyID key = Value::opcodesWithKey.contains(opcode) ? value.key() : PropertyKeyID();
@@ -851,7 +898,9 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
                     return;
                 AOT::sort(found);
                 removeRepeatedElements(found);
-                bool isRemovableStore = isRemovableSlotStore(opcode) && !stores.keepsObjectAlive(value.operand(*storedOf(opcode)), value.operand(*receiverOf(opcode)));
+                // The class holds its token, whatever becomes of the store of a brand.
+                bool isStoreOfBrand = fieldAt(program, fields[found[0]]).flags.contains(FieldFlags::IsBrand);
+                bool isRemovableStore = isRemovableSlotStore(opcode) && (isStoreOfBrand || !stores.keepsObjectAlive(value.operand(*storedOf(opcode)), value.operand(*receiverOf(opcode))));
                 addAccess(WTF::move(found), reachesOnlyCandidates && (isRemovableStore || isUnusedSlotRead()));
             };
 
@@ -860,7 +909,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
                     markFieldsLive(layout);
                 auto addNamedField = [&](uint32_t field, ValueID stored, ValueID holder) {
                     if (auto candidate = candidateOf(layout, field))
-                        addAccess({ *candidate }, stored && !stores.keepsObjectAlive(stored, holder));
+                        addAccess({ *candidate }, stored && (fieldAt(program, { layout, field }).flags.contains(FieldFlags::IsBrand) || !stores.keepsObjectAlive(stored, holder)));
                 };
                 for (const PayloadFieldInfo& field : payloadFieldsOf(opcode)) {
                     if (field.kind == PayloadKind::Field) {
@@ -938,7 +987,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
         if (field.flow.occupancy == Occupancy::FilledAtBirth || field.flow.occupancy == Occupancy::FilledWithValueAtBirth)
             field.flow.occupancy = Occupancy::Unknown;
         // A validating build tells the run time which names it took away, so that a lookup of one from outside compiled code ends the process.
-        if (build.validates())
+        if (build.validates() && !field.flags.contains(FieldFlags::IsBrand))
             field.flags.add(FieldFlags::IsRemovedAsUnread);
         ++numberOfRemovedFields;
     }

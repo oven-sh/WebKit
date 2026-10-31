@@ -27,8 +27,9 @@ public:
 
     static Structure* realmClosureStructure(VM&, JSGlobalObject*, unsigned index);
     Structure* closureStructure(VM&, unsigned index);
-    Structure* closureStructureFor(VM& vm, FunctionID function) { return closureStructure(vm, functionKindData(function).closureStructure); }
-    Structure* slimClosureStructure(VM&, FunctionID function) { return m_slimClosureStructures[functionKindData(function).slimClosureKind()]; }
+    Structure* closureStructureFor(VM& vm, FunctionID function) { return closureStructure(vm, m_tables.kindOfFunction(function.index()).closureStructure); }
+    Structure* slimClosureStructure(FunctionKindData kind) { return m_slimClosureStructures[kind.slimClosureKind()]; }
+    Structure* slimClosureStructure(VM&, FunctionID function) { return slimClosureStructure(m_tables.kindOfFunction(function.index())); }
     Structure* reifiedSlimClosureStructure(VM&, FunctionID);
     JSCell* uncreatedPrototypeProperty() const { return m_uncreatedPrototypeProperty; }
     JSCell* untakenNameProperty() const { return m_untakenNameProperty; }
@@ -48,6 +49,7 @@ public:
     bool hasSingletonClosure(FunctionID) const;
     void registerClassObject(Closure*);
     void registerClosureOfMember(FunctionID, JSCell*);
+    void forgetClosures(uint32_t firstCell, uint32_t numberOfCells);
     JSObject* createClosure(VM&, FunctionID, std::span<const uint64_t> captures, unsigned numberOfReferences);
     JSObject* createClosureOver(VM&, FunctionID, JSValue captured);
     // For a function that captures nothing and that no value of the program names, as the body of a module: the table does not keep the closure.

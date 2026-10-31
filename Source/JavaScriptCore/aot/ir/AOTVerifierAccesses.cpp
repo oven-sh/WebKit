@@ -11,6 +11,7 @@
 #include "AOTArrayStorageForms.h"
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinTable.h"
+#include "AOTGuardAvailability.h"
 #include "AOTGuardFactDetails.h"
 #include "AOTLayout.h"
 #include "AOTRemoveUnreadFields.h"
@@ -195,6 +196,11 @@ void FunctionVerifier::verifyElementOperation(BlockID block, ValueID id, const V
                 fail(InternalErrorKind::OperandTypeMismatch, block, id, element.index());
                 return;
             }
+        }
+        // Selection writes accesses in forms of its own.
+        if (value.keepsLength() && (!hasArrayStorageForm(value.arrayStorage()) || (m_form < IRForm::Selected && !isTouchedOnlyBelowLength(m_program, m_function, analyses().useLists(), id, value.holes().size() + value.elementsOperands().size())))) {
+            fail(InternalErrorKind::PayloadOutOfRange, block, id);
+            return;
         }
     }
     if (value.opcode == Opcode::Data && value.arrayStorage() != ArrayStorage::Other) {

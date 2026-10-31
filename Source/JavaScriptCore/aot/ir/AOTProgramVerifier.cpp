@@ -162,7 +162,7 @@ std::optional<InternalError> findTypeError(const Program& program, TypeID id, Re
     if (type.layouts) {
         const LayoutSet& set = program.at(type.layouts);
         if (!set.listsEveryLayout() || set.written().isEmpty())
-            return InternalError { .kind = InternalErrorKind::InvalidLayout, .count = id.index() };
+            return InternalError { .kind = InternalErrorKind::InvalidType, .count = id.index() };
         for (LayoutID member : set.written()) {
             if (!member || program.at(member).isEnvironment())
                 return InternalError { .kind = InternalErrorKind::InvalidLayout, .layout = member, .count = id.index() };
@@ -174,7 +174,7 @@ std::optional<InternalError> findTypeError(const Program& program, TypeID id, Re
     Type canonical = type;
     canonical.canonicalize();
     if (canonical != type)
-        return InternalError { .kind = InternalErrorKind::InvalidLayout, .count = id.index() };
+        return InternalError { .kind = InternalErrorKind::InvalidType, .count = id.index() };
     return std::nullopt;
 }
 
@@ -333,6 +333,9 @@ std::optional<InternalError> findLayoutFlowError(const Program& program, LayoutI
     bool hasValidBaseClass = flow.baseState == BaseState::BuiltinClass ? program.builtins().contains(flow.baseClass) : !flow.baseClass;
     if (!!flow.base != (flow.baseState == BaseState::Layout) || !hasValidBaseClass)
         return InternalError { .kind = InternalErrorKind::InvalidLayout, .layout = id };
+    bool namesClassesBetween = !flow.intermediateClasses.isEmpty();
+    if ((flow.commonAncestor && flow.baseState != BaseState::Unknown) || (namesClassesBetween && !flow.commonAncestor) || findUnsortedEntry(flow.intermediateClasses))
+        return InternalError { .kind = InternalErrorKind::InvalidLayout, .layout = id };
 
     bool hasOnlyObjectMembers = std::ranges::all_of(flow.members, [&](LayoutID member) {
         return member && !program.at(member).isEnvironment();
@@ -477,11 +480,15 @@ void ProgramVerifier::verifyIDs()
     verifyList(m_program.variables);
     verifyList(m_program.modules);
     verifyList(m_program.moduleFailures);
+    verifyList(m_program.ambiguousExports);
+    verifyList(m_program.sourceStamps);
     verifyList(m_program.evalScopes);
     verifyList(m_program.data);
     verifyList(m_program.entries);
     verifyList(m_program.runtimeFunctions);
     verifyList(m_program.webAssemblyModules);
+    verifyList(m_program.replaceableBuiltins);
+    verifyList(m_program.openedNames);
 
     const TypeTable& types = m_program.types;
     verifyRecords(types.numberOfPropertyKeys(), [&](unsigned index) -> const PropertyKey& { return types.at(PropertyKeyID(index)); }, inRecord);
@@ -619,6 +626,8 @@ void ProgramVerifier::verifyVariables()
         if (!variable.module || !!variable.function != startsAsFunction)
             return false;
         if (startsAsFunction && !hoistsFunctionsIntoVariables(m_program.at(variable.module).kind))
+            return false;
+        if (variable.flags.contains(VariableFlags::IsReplaceable) && (variable.flags.contains(VariableFlags::IsImmutable) || variable.owner))
             return false;
         return !variable.owner || (m_program.at(variable.owner).kind == LayoutKind::Instance && isStaticField.quickGet(index));
     };

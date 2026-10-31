@@ -435,10 +435,13 @@ void Pipeline::dumpResultOf(PassID id, PrintStream& out) const
     case PassID::RemoveUnusedResults:
     case PassID::ProveResults:
     case PassID::RemoveUnusedParameters:
+    case PassID::RemoveUnusedCalls:
     case PassID::RemoveUnreachableFunctions:
     case PassID::SplitFreshResults:
     case PassID::PromoteAggregateParameters:
     case PassID::SplitCoroutines:
+    case PassID::MoveGeneratorFramesToHeap:
+    case PassID::KeepValuesInHeapWords:
     case PassID::CallModules:
     case PassID::CreateEntrypoints:
     case PassID::OutlineColdOperations:

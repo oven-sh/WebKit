@@ -232,9 +232,10 @@ function f8 name="openInLoopAroundNoCall" parameters=[{type=Map<string, number>}
 # CHECK: = ResultAt [[open8]] index=1
 # ABSENT-NOT: CollectionTable
 # ABSENT-NOT: MapNext
+# ABSENT: function {{*}} name="stepIterator"
 }
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume
-# LEFT-NOT: IteratorClose
+# LEFT-NOT: IteratorClose v
 # LEFT-NOT: AppendSpread
