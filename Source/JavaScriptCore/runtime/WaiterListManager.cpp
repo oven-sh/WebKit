@@ -94,11 +94,15 @@ void Waiter::notifyOfTerminationRequest()
 // which cannot do that while it is parked in a wait. Another thread asking this VM to terminate
 // (VM::notifyNeedTermination) is visible as the pending NeedTermination trap. Neither interrupts the
 // wait while termination is being deferred (DeferTermination); it takes effect when the deferral ends.
+// A wait is not a trap check: a request that $vm.callWithTerminationAtTrapCheck() holds back for a later
+// trap check does not end the wait either.
 static ALWAYS_INLINE bool shouldStopWaitingForTermination(VM& vm)
 {
     if (vm.traps().isDeferringTermination()) [[unlikely]]
         return false;
-    return vm.hasTerminationRequest() || vm.traps().needHandling(VMTraps::NeedTermination);
+    if (vm.hasTerminationRequest())
+        return true;
+    return vm.traps().needHandling(VMTraps::NeedTermination) && !vm.traps().trapChecksBeforeTermination();
 }
 
 
