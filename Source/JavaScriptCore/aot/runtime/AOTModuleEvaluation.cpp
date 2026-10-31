@@ -2044,10 +2044,13 @@ void Modules::evaluateWithOwnStack(ModuleID root)
     Exception* exception = scope.exception();
     ASSERT(exception || stack.isEmpty());
     // An import() of the root that was called while the root ran has given it a capability, which CyclicModuleRecord::evaluate() would settle here.
-    ModuleRecord* record = recordIfExists(root);
+    // The table has the status of a root that compiled code began, and recordIfExists() does not find the record that the import() made: that record takes the status now.
+    ModuleRecord* record = m_records.get(root);
     JSPromise* capability = record ? record->topLevelCapability() : nullptr;
     if (capability && capability->status() != JSPromise::Status::Pending)
         capability = nullptr;
+    if (capability) [[unlikely]]
+        record->takeStatus();
     if (!exception) {
         if (capability) [[unlikely]]
             capability->fulfill(vm, jsUndefined());

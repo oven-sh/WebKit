@@ -505,6 +505,56 @@ function f10 name="importLast" results=[{type=anything}] {
 }
 )IR"_s;
 
+// main.js requires running.js, which imports imported.js, so its start evaluates it and the table has its status. It requires imports-back.js, which calls import() on running.js and hands the promise to the script.
+static constexpr ASCIILiteral importOfModuleThatRequireRuns = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/running.js" displayPath="running.js" body=f1 requests=[{target=m2 completes=true}] exports=[{name="ended" variable=g0}]
+module m2 path="/imported.js" displayPath="imported.js" body=f2
+module m3 path="/imports-back.js" displayPath="imports-back.js" body=f3
+entry module=m0
+variable g0 name="ended" module=m1 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = RequireModule module=m1 referrer=m0 specifier="./running.js"
+    v3 = String string="ends"
+    v4 = String string="main.js"
+    v5 = Call v1, -, v3, v4
+    Return
+}
+function f1 name="running" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="running.js"
+    v3 = String string="begins"
+    v4 = Call v1, -, v3, v2
+    v5 = RequireModule module=m3 referrer=m1 specifier="./imports-back.js"
+    v6 = String string="ends"
+    v7 = Call v1, -, v6, v2
+    v8 = Boolean boolean=true
+    PutModuleVariable v8 variable=g0
+    Return
+}
+function f2 name="imported" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="imported.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f3 name="importsBack" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="imports-back.js"
+    v4 = Call v1, -, v2, v3
+    v5 = ImportModule module=m1 referrer=m3
+    v6 = PropGet v0 key="register" [isFreeName]
+    v7 = Call v6, -, v5
+    Return
+}
+)IR"_s;
+
 static constexpr ASCIILiteral scriptStart = R"js(
 globalThis.report = (label, value) => print(label + ": " + value);
 globalThis.id = value => value;
@@ -687,6 +737,24 @@ later import: fulfilled
 )js"_s);
 }
 
+static void testImportOfModuleThatRequireRuns()
+{
+    checkShellOutput(importOfModuleThatRequireRuns, { "validate"_s }, R"(runs: imported.js
+begins: running.js
+runs: imports-back.js
+ends: running.js
+ends: main.js
+import() of running.js: fulfilled, ended: true
+)"_s, R"js(.then(async () => {
+    let outcome = "pending";
+    registered.then(names => { outcome = "fulfilled, ended: " + names.ended; }, error => { outcome = "rejected with " + error; });
+    for (let turn = 0; turn < 16; ++turn)
+        await null;
+    report("import() of running.js", outcome);
+}).catch(error => print("the script threw " + error));
+)js"_s);
+}
+
 std::span<const NativeTest> moduleProgramTests()
 {
     static constexpr NativeTest tests[] = {
@@ -698,6 +766,7 @@ std::span<const NativeTest> moduleProgramTests()
         { "module-programs/import-meta-passed-on"_s, testImportMetaPassedOn },
         { "module-programs/module-builtins-in-every-position"_s, testModuleBuiltinsInEveryPosition },
         { "module-programs/termination-during-import-handoff"_s, testTerminationDuringImportHandoff },
+        { "module-programs/import-of-module-that-require-runs"_s, testImportOfModuleThatRequireRuns },
     };
     return tests;
 }
