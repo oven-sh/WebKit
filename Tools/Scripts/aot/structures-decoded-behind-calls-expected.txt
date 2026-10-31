@@ -6,7 +6,7 @@ operationAOTSetGlobalObjectBindingSloppy     # the same
 operationAOTSetFreeName                      # the same
 operationAOTSetFreeNameSloppy                # the same
 JSC::AOT::destructureIterable                # the result of next() is alive and keeps its Structure
-JSC::AOT::StructureTable::allocateAsCompiledCodeDoes    # the records of allocation sites are roots
+JSC::AOT::StructureTable::allocateAsCompiledCodeDoes    # the records of allocation sites are roots. The record that stands in for one while the first object of a class of created objects is made names the usual Structure of its layout, which is a root too
 JSC::AOT::Object::tryCreateCopyOfFields      # collections are deferred, and the source is alive and keeps its Structure
 JSC::AOT::Object::tryCreateCopyOfFieldsAndExtraProperties    # the same
 operationAOTPrivateDefine                    # JSObject::putDirectInternal(): the object keeps the Structure before until the one behind is set

@@ -1,0 +1,18 @@
+# const base = { get size() { return this.items } }   function mid(below) { const made = Object.create(below); made.items = 7; return made }   function leaf(below) { const made = Object.create(below); made.extra = 1; return made }   function read(made) { return made.size }   register(mid, leaf, read, base)   read(mid(base)); read(leaf(mid(base)))
+# Two places: the second makes objects below what the first makes. The first call at the first place is handed a number and throws, so the class of that place awaits its prototype object as
+# before, and the layout keeps the Structure that the object was born with, through a collection. Then the second place is handed an object below the literal: it defines the class of the
+# second place, and through it the class of the first. From then on the first place makes its objects below the literal, and it hears of an object below Object.prototype: read() finds no
+# getter above that one, and none above an object that is moved below Object.prototype later.
+# In a run that validates, each collection looks at the Structure that each layout has and at what the records of the places name: a class that has its prototype object has no Structure
+# that an object was born with while the class awaited it, and no record names one.
+# FORM: AsRead
+# OPTIONS: validate
+# RUN: run-in-shell --aotCountsPath=/dev/null globalThis.register = (mid, leaf, read, base) => { const calls = () => aotOperationCount("operationAOTSetLiteralPrototype"); try { mid(1); print("no error"); } catch (error) { print(error instanceof TypeError); } gc(); const heir = leaf(Object.setPrototypeOf({}, base)); print(read(heir), Object.getPrototypeOf(Object.getPrototypeOf(heir)) === base); gc(); const early = mid(Object.prototype); const middle = mid(base); print(read(early), read(middle), Object.getPrototypeOf(early) === Object.prototype, Object.getPrototypeOf(middle) === base); Object.setPrototypeOf(middle, Object.prototype); print(read(middle), Object.getPrototypeOf(middle) === Object.prototype); print(read(leaf(mid(base))), read(leaf(early))); let wrong = 0; const before = calls(); for (let turn = 0; turn < 2000; turn++) { if (turn === 1000) gc(); wrong += read(turn % 2 ? mid(base) : mid(Object.prototype)) !== (turn % 2 ? 7 : undefined); } print(wrong, calls() - before < 10 ? "a few objects asked the run time" : calls() - before); };
+# CHECK: true
+# CHECK-NEXT: undefined true
+# CHECK-NEXT: undefined 7 true true
+# CHECK-NEXT: undefined true
+# CHECK-NEXT: 7 undefined
+# CHECK-NEXT: 0 a few objects asked the run time
+# CHECK-NEXT: exited with 0
+# PROGRAM-OF: a-class-of-created-objects-that-an-heir-defines-hears-of-an-object-below-object-prototype.ir

@@ -507,6 +507,205 @@ static void testUsualStructureWithoutObjectsOutlastsCollections(LoadedProgram& p
 template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<compiledStructureTests, programText, body>;
 
+// One place of Object.create, which a function of the program hands a literal: the class of what the place makes has the members of the literal. No test runs the program, so the class
+// awaits its prototype object when a test begins.
+static constexpr ASCIILiteral createdObjectsProgramText = R"IR(layout L0 fields=[{key="size" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="members" module=m0 declared={type=anything} flags=[IsImmutable]
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f3
+    DefineGetter v0, v1 key="size"
+    v3 = FinishObject v0
+    PutModuleVariable v3 variable=g0
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="publish" [isFreeName]
+    v7 = NewClosure function=f1
+    v8 = Call v6, -, v7
+    Return
+}
+function f1 name="belowMembers" results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v0, -, v1
+    Return v2
+}
+function f2 name="make" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=7
+    PropSet v3, v4 key="items"
+    Return v3
+}
+function f3 name="size" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="items"
+    Return v1
+}
+)IR"_s;
+
+template<LoadedProgramTest body>
+static constexpr void (*withCreatedObjectsProgram)() = runNativeTestWithLoadedProgram<compiledStructureTests, createdObjectsProgramText, body>;
+
+static const LayoutData& layoutOfCreatedObjects(LoadedProgram& program)
+{
+    const ProgramTables& tables = program.state().tables;
+    for (uint32_t shape = 1; shape < tables.firstEnvironmentShape; ++shape) {
+        if (tables.hasLayoutForShape(shape) && ClassTable::isClassOfCreatedObjects(tables.layoutForShape(shape)))
+            return tables.layoutForShape(shape);
+    }
+    failNativeTest(__FILE__, __LINE__, "the image has a class of created objects");
+}
+
+static uint32_t allocationOfCreatedObjects(LoadedProgram& program)
+{
+    const ProgramTables& tables = program.state().tables;
+    uint32_t shape = layoutOfCreatedObjects(program).shape;
+    for (uint32_t number = 0; number < tables.allocations().size(); ++number) {
+        if (tables.allocations()[number].shape == shape)
+            return number;
+    }
+    failNativeTest(__FILE__, __LINE__, "the image has an allocation of created objects");
+}
+
+// Compiled code leaves the operation out where Object.create is handed the prototype of the Structure that the object was born with. For the first object of a class that awaits its
+// prototype object, that is an object that no program holds. A version that refused the class when it was handed Object.prototype fails here, and so does one that made the Structure of the
+// first object the one that the next are born with.
+static void testFirstObjectOfClassThatAwaitsItsPrototypeObjectIsBornBelowNobodysObject(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    StructureTable& table = structures(program);
+    ClassTable& classes = program.state().objects->classes;
+    const LayoutData& layout = layoutOfCreatedObjects(program);
+    JSValue objectPrototype = program.realm()->objectPrototype();
+    AOT_TEST_CHECK(layout.evaluation() == EvaluationState::ProvenOnce && classes.awaitsPrototypeOfCreatedObjects(layout));
+
+    CompiledStructure* atBirth = table.objectStructure(vm, layout.shape);
+    AOT_TEST_CHECK(table.isBelowAwaitedPrototype(*atBirth) && atBirth->hasOtherPrototype());
+    AOT_TEST_CHECK(atBirth->storedPrototype().isObject() && atBirth->storedPrototype() != objectPrototype);
+    AOT_TEST_CHECK(table.objectStructure(vm, layout.shape) == atBirth);
+
+    // The first object takes the Structure along. The next are born below Object.prototype, and the class awaits its prototype object as before.
+    CompiledStructure* belowNull = table.leaveAwaitedPrototype(vm, *atBirth, jsNull());
+    CompiledStructure* usual = table.objectStructure(vm, layout.shape);
+    AOT_TEST_CHECK(belowNull->storedPrototype().isNull() && belowNull->hasOtherPrototype());
+    AOT_TEST_CHECK(usual != atBirth && usual != belowNull && !table.isBelowAwaitedPrototype(*usual));
+    AOT_TEST_CHECK(usual->storedPrototype() == objectPrototype && usual->hasOtherPrototype());
+    AOT_TEST_CHECK(classes.awaitsPrototypeOfCreatedObjects(layout));
+    AOT_TEST_CHECK(table.withPrototype(vm, *usual, jsNull()) == belowNull && table.withPrototype(vm, *usual, objectPrototype) == usual);
+    AOT_TEST_CHECK(table.objectStructure(vm, layout.shape) == usual);
+
+    // An object below Object.prototype has no class, and Object.prototype defines none.
+    AOT_TEST_CHECK(!classes.defineClassOfCreatedObjects(vm, classes.classOfInstances(layout), asObject(objectPrototype)));
+    AOT_TEST_CHECK(classes.awaitsPrototypeOfCreatedObjects(layout) && table.objectStructure(vm, layout.shape) == usual);
+
+    JSObject* prototype = constructEmptyObject(program.realm());
+    AOT_TEST_CHECK(classes.defineClassOfCreatedObjects(vm, classes.classOfInstances(layout), prototype));
+    CompiledStructure* defined = table.objectStructure(vm, layout.shape);
+    AOT_TEST_CHECK(!classes.awaitsPrototypeOfCreatedObjects(layout));
+    AOT_TEST_CHECK(defined != usual && defined->storedPrototype() == JSValue(prototype) && !defined->hasOtherPrototype());
+    AOT_TEST_CHECK(table.withPrototype(vm, *defined, objectPrototype) == usual);
+}
+
+// An array is no prototype object of a class. The class awaits nothing more, and its objects are born below Object.prototype, like those of a layout without a class. The refusal alone
+// changes no Structure: a version that looked for Structures to forget there fails here.
+static void testObjectThatTheClassRefusesTakesItsStructureAlong(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    StructureTable& table = structures(program);
+    ClassTable& classes = program.state().objects->classes;
+    const LayoutData& layout = layoutOfCreatedObjects(program);
+    JSValue objectPrototype = program.realm()->objectPrototype();
+
+    CompiledStructure* atBirth = table.objectStructure(vm, layout.shape);
+    AOT_TEST_CHECK(table.isBelowAwaitedPrototype(*atBirth));
+    JSObject* array = constructEmptyArray(program.realm(), nullptr);
+    AOT_TEST_CHECK(!classes.defineClassOfCreatedObjects(vm, classes.classOfInstances(layout), array));
+    AOT_TEST_CHECK(!classes.awaitsPrototypeOfCreatedObjects(layout) && table.objectStructure(vm, layout.shape) == atBirth);
+    CompiledStructure* belowArray = table.leaveAwaitedPrototype(vm, *atBirth, array);
+    CompiledStructure* usual = table.objectStructure(vm, layout.shape);
+    AOT_TEST_CHECK(belowArray->storedPrototype() == JSValue(array) && belowArray->hasOtherPrototype());
+    AOT_TEST_CHECK(usual != atBirth && usual != belowArray && !table.isBelowAwaitedPrototype(*usual));
+    AOT_TEST_CHECK(usual->storedPrototype() == objectPrototype && usual->hasOtherPrototype());
+    AOT_TEST_CHECK(table.withPrototype(vm, *usual, array) == belowArray && table.objectStructure(vm, layout.shape) == usual);
+}
+
+// What the objects are born with behind the first object below null is a Structure below Object.prototype, and a refusal leaves it to them: a version that looked for Structures to forget
+// at a refusal fails here too.
+static void testObjectThatTheClassRefusesBehindAnObjectBelowNullLeavesTheStructure(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    StructureTable& table = structures(program);
+    ClassTable& classes = program.state().objects->classes;
+    const LayoutData& layout = layoutOfCreatedObjects(program);
+
+    table.leaveAwaitedPrototype(vm, *table.objectStructure(vm, layout.shape), jsNull());
+    CompiledStructure* usual = table.objectStructure(vm, layout.shape);
+    AOT_TEST_CHECK(!table.isBelowAwaitedPrototype(*usual) && classes.awaitsPrototypeOfCreatedObjects(layout));
+    AOT_TEST_CHECK(!classes.defineClassOfCreatedObjects(vm, classes.classOfInstances(layout), constructEmptyArray(program.realm(), nullptr)));
+    AOT_TEST_CHECK(!classes.awaitsPrototypeOfCreatedObjects(layout) && table.objectStructure(vm, layout.shape) == usual);
+}
+
+// A class is also refused while none of its objects is at hand: the definition of a class below it names its prototype object. The next object is born as the first was, and the Structure
+// that it gets below Object.prototype is the one that the objects behind it are born with.
+static void testClassThatIsRefusedWithoutAnObjectAtHandIsLeftByItsNextObject(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    StructureTable& table = structures(program);
+    ClassTable& classes = program.state().objects->classes;
+    const LayoutData& layout = layoutOfCreatedObjects(program);
+    JSValue objectPrototype = program.realm()->objectPrototype();
+
+    CompiledStructure* atBirth = table.objectStructure(vm, layout.shape);
+    AOT_TEST_CHECK(!classes.defineClassOfCreatedObjects(vm, classes.classOfInstances(layout), constructEmptyArray(program.realm(), nullptr)));
+    AOT_TEST_CHECK(table.objectStructure(vm, layout.shape) == atBirth && table.isBelowAwaitedPrototype(*atBirth));
+    CompiledStructure* belowObjectPrototype = table.leaveAwaitedPrototype(vm, *atBirth, objectPrototype);
+    AOT_TEST_CHECK(belowObjectPrototype->storedPrototype() == objectPrototype && belowObjectPrototype->hasOtherPrototype());
+    AOT_TEST_CHECK(table.objectStructure(vm, layout.shape) == belowObjectPrototype);
+}
+
+// The object that is born below nobody's object leaves that Structure in the operation behind its allocation. The record of the place gets no header for it, so compiled code finds no room
+// there and allocates no object in line that nobody hears of. The record is filled with what the objects are born with once the first has left. A class that gets its prototype object
+// after that empties the record: what Object.create makes there may then take the Structure of the record and ask nobody.
+static void testNoRecordKeepsTheStructureOfTheFirstObject(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    DeferGC deferGC(vm);
+    StructureTable& table = structures(program);
+    ClassTable& classes = program.state().objects->classes;
+    const LayoutData& layout = layoutOfCreatedObjects(program);
+    uint32_t number = allocationOfCreatedObjects(program);
+    const AllocationData& allocation = program.state().tables.allocations()[number];
+    auto allocate = [&] {
+        JSCell* cell = table.allocateAsCompiledCodeDoes(vm, number);
+        zeroSpan(std::span { reinterpret_cast<uint8_t*>(cell) + 2 * sizeof(uint64_t), allocation.size() - 2 * sizeof(uint64_t) });
+        for (const FieldData& field : uncheckedDowncast<Object>(cell)->layout().fields())
+            uncheckedDowncast<Object>(cell)->clear(field);
+        return uncheckedDowncast<Object>(cell);
+    };
+
+    Object* first = allocate();
+    CompiledStructure* atBirth = uncheckedDowncast<CompiledStructure>(first->structure());
+    AOT_TEST_CHECK(table.isBelowAwaitedPrototype(*atBirth) && table.objectStructure(vm, layout.shape) == atBirth);
+    AOT_TEST_CHECK(!table.structureIDOf(number) && static_cast<uint32_t>(table.fillAllocationSite(vm, number).header) == atBirth->id().bits() && !table.structureIDOf(number));
+    // A call that throws leaves its object where it was born, and the place as it was.
+    Object* second = allocate();
+    AOT_TEST_CHECK(second->structure() == atBirth && !table.structureIDOf(number));
+
+    second->setStructure(vm, table.leaveAwaitedPrototype(vm, *atBirth, jsNull()));
+    CompiledStructure* usual = table.objectStructure(vm, layout.shape);
+    AOT_TEST_CHECK(usual != atBirth && !table.isBelowAwaitedPrototype(*usual) && !table.structureIDOf(number));
+    Object* third = allocate();
+    AOT_TEST_CHECK(third->structure() == usual && table.structureIDOf(number) == usual->id());
+
+    JSObject* prototype = constructEmptyObject(program.realm());
+    AOT_TEST_CHECK(classes.defineClassOfCreatedObjects(vm, classes.classOfInstances(layout), prototype) && !table.structureIDOf(number));
+    Object* fourth = allocate();
+    AOT_TEST_CHECK(fourth->structure()->storedPrototype() == JSValue(prototype) && fourth->structure() == table.objectStructure(vm, layout.shape));
+    AOT_TEST_CHECK(table.structureIDOf(number) == fourth->structure()->id() && third->structure() == usual);
+}
+
 static uint32_t allocationOf(LoadedProgram& program, ASCIILiteral layoutName)
 {
     const ProgramTables& tables = program.state().tables;
@@ -637,6 +836,11 @@ std::span<const NativeTest> compiledStructureTests()
         { "compiled-structures/variant-nobody-holds-lives-as-long-as-its-prototype"_s, withProgram<testVariantNobodyHoldsLivesAsLongAsItsPrototype> },
         { "compiled-structures/usual-structure-lives-with-its-objects"_s, withProgram<testUsualStructureLivesWithItsObjects> },
         { "compiled-structures/usual-structure-without-objects-outlasts-collections"_s, withProgram<testUsualStructureWithoutObjectsOutlastsCollections> },
+        { "compiled-structures/first-object-of-class-that-awaits-its-prototype-object-is-born-below-nobodys-object"_s, withCreatedObjectsProgram<testFirstObjectOfClassThatAwaitsItsPrototypeObjectIsBornBelowNobodysObject> },
+        { "compiled-structures/object-that-the-class-refuses-takes-its-structure-along"_s, withCreatedObjectsProgram<testObjectThatTheClassRefusesTakesItsStructureAlong> },
+        { "compiled-structures/object-that-the-class-refuses-behind-an-object-below-null-leaves-the-structure"_s, withCreatedObjectsProgram<testObjectThatTheClassRefusesBehindAnObjectBelowNullLeavesTheStructure> },
+        { "compiled-structures/class-that-is-refused-without-an-object-at-hand-is-left-by-its-next-object"_s, withCreatedObjectsProgram<testClassThatIsRefusedWithoutAnObjectAtHandIsLeftByItsNextObject> },
+        { "compiled-structures/no-record-keeps-the-structure-of-the-first-object"_s, withCreatedObjectsProgram<testNoRecordKeepsTheStructureOfTheFirstObject> },
         { "compiled-structures/slow-allocation-writes-what-the-stub-writes"_s, withProgram<testSlowAllocationWritesWhatTheStubWrites> },
         { "compiled-structures/header-of-an-allocation-comes-without-a-cell"_s, withProgram<testHeaderOfAnAllocationComesWithoutACell> },
         { "compiled-structures/slow-allocation-of-an-environment"_s, withProgram<testSlowAllocationOfAnEnvironment> },

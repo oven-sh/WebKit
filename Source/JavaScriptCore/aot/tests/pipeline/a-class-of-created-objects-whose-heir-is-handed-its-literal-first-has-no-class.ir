@@ -1,0 +1,14 @@
+# const base = { get size() { return this.items } }   function mid(below) { const made = Object.create(below); made.items = 7; return made }   function leaf(below) { const made = Object.create(below); made.extra = 1; return made }   function read(made) { return made.size }   register(mid, leaf, read, base)   read(mid(base)); read(leaf(mid(base)))
+# Two places: the second makes objects below what the first makes. Here the second place is handed the literal itself first, so the literal is the prototype object of the class of the
+# second place. What lies above the literal is Object.prototype, which defines no class, and the class of the first place awaits its prototype object as before. Then the first place is
+# handed the literal too: an object is the prototype object of one class, so the first place has no class from then on, and its objects are read by name. Every read finds what plain code
+# finds, for an object below the literal, below an object of the first place, and below Object.prototype, also once the getter of the literal is redefined.
+# FORM: AsRead
+# RUN: run-in-shell --aotCountsPath=/dev/null globalThis.register = (mid, leaf, read, base) => { const calls = () => aotOperationCount("operationAOTSetLiteralPrototype"); const heir = leaf(base); const middle = mid(base); print(read(middle), read(heir), Object.getPrototypeOf(heir) === base, Object.getPrototypeOf(middle) === base); const below = leaf(middle); print(read(below), Object.getPrototypeOf(below) === middle); const early = mid(Object.prototype); print(read(early), Object.getPrototypeOf(early) === Object.prototype); let wrong = 0; const before = calls(); for (let turn = 0; turn < 2000; turn++) { if (turn === 1000) gc(); wrong += read(turn % 2 ? leaf(middle) : mid(base)) !== 7; } print(wrong, calls() - before < 10 ? "a few objects asked the run time" : calls() - before); Object.defineProperty(base, "size", { get() { return "redefined"; }, configurable: true }); print(read(middle), read(heir), read(below), read(early), read(mid(base))); };
+# CHECK: 7 undefined true true
+# CHECK-NEXT: 7 true
+# CHECK-NEXT: undefined true
+# CHECK-NEXT: 0 a few objects asked the run time
+# CHECK-NEXT: redefined redefined redefined undefined redefined
+# CHECK-NEXT: exited with 0
+# PROGRAM-OF: a-class-of-created-objects-that-an-heir-defines-hears-of-an-object-below-object-prototype.ir

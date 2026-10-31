@@ -1,0 +1,13 @@
+# const base = { get size() { return this.items } }   function mid(below) { const made = Object.create(below); made.items = 7; return made }   function leaf(below) { const made = Object.create(below); made.extra = 1; return made }   function read(made) { return made.size }   register(mid, leaf, read, base)   read(mid(base)); read(leaf(mid(base)))
+# A call of Object.create that is handed what is neither an object nor null throws. While every call at a place has thrown, the class of the place awaits its prototype object and no object
+# has left the Structure that the first is born with: no record of the place names that Structure, so the run time allocates the object of each such call, also behind a collection. Once
+# an object has been made at the place, compiled code allocates what the calls that throw leave behind.
+# FORM: AsRead
+# RUN: run-in-shell --aotCountsPath=/dev/null globalThis.register = (mid, leaf, read, base) => { const slow = () => aotOperationCount("operationAOTAllocateSlow"); const links = () => aotOperationCount("operationAOTSetLiteralPrototype"); const throwing = () => { const before = [slow(), links()]; let threw = 0; for (let turn = 0; turn < 100; turn++) { try { mid(turn); } catch (error) { threw += error instanceof TypeError; } } const allocated = slow() - before[0]; print("threw", threw, "allocated by the run time:", allocated === 100 ? "each" : allocated < 10 ? "a few" : allocated, "links:", links() - before[1]); }; throwing(); gc(); throwing(); const first = mid(null); throwing(); print(Object.getPrototypeOf(first) === null, read(mid(base)), read(mid(Object.prototype))); throwing(); };
+# CHECK: threw 100 allocated by the run time: each links: 100
+# CHECK-NEXT: threw 100 allocated by the run time: each links: 100
+# CHECK-NEXT: threw 100 allocated by the run time: a few links: 100
+# CHECK-NEXT: true 7 undefined
+# CHECK-NEXT: threw 100 allocated by the run time: a few links: 100
+# CHECK-NEXT: exited with 0
+# PROGRAM-OF: a-class-of-created-objects-that-an-heir-defines-hears-of-an-object-below-object-prototype.ir

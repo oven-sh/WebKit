@@ -88,6 +88,12 @@ static void testObjectAndNullAlternate()
         "true undefined 0\ntrue yes 0\ntrue undefined 0\ntrue undefined 0\ntrue yes 0\ntrue undefined 0\ntrue undefined 0\ntrue yes 0\ntrue undefined 0\ntrue undefined 0\ntrue yes 0\ntrue undefined 0\n"_s);
 }
 
+static void testObjectPrototypeAlternatesWithObjectAndNull()
+{
+    checkUnderEveryOption(WITH_PUBLISHED_FUNCTIONS("let base = { inherited: 'yes' }; for (let create of [underObjectOrNull, underAnything]) { for (let prototype of [Object.prototype, base, Object.prototype, null, Object.prototype, Array.prototype, base, Object.prototype]) { let object = create(prototype); print((Object.getPrototypeOf(object) === prototype) + ' ' + object.inherited + ' ' + Object.keys(object).length); } }"),
+        "true undefined 0\ntrue yes 0\ntrue undefined 0\ntrue undefined 0\ntrue undefined 0\ntrue undefined 0\ntrue yes 0\ntrue undefined 0\ntrue undefined 0\ntrue yes 0\ntrue undefined 0\ntrue undefined 0\ntrue undefined 0\ntrue undefined 0\ntrue yes 0\ntrue undefined 0\n"_s);
+}
+
 static void testOtherValuesThrow()
 {
     checkUnderEveryOption(WITH_PUBLISHED_FUNCTIONS("for (let wrong of [undefined, 1, 'text', true, Symbol.iterator]) { try { underAnything(wrong); print('no error'); } catch (error) { print(error instanceof TypeError); } }"),
@@ -106,6 +112,7 @@ std::span<const NativeTest> objectCreateProgramTests()
         { "object-create/null-gives-object-without-prototype"_s, testNullGivesObjectWithoutPrototype },
         { "object-create/stores-follow-the-creation"_s, testStoresFollowTheCreation },
         { "object-create/object-and-null-alternate"_s, testObjectAndNullAlternate },
+        { "object-create/object-prototype-alternates-with-object-and-null"_s, testObjectPrototypeAlternatesWithObjectAndNull },
         { "object-create/other-values-throw"_s, testOtherValuesThrow },
         { "object-create/objects-survive-collections"_s, testObjectsSurviveCollections },
     };

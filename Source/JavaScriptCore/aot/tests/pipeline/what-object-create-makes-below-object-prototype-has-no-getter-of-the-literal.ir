@@ -1,0 +1,70 @@
+# const members = { get size() { return this.items } }   function make(below) { const made = Object.create(below); made.items = 7; return made }   function read(made) { return made.size }   register(() => make(Object.prototype), () => make(members), read, members)   read(make(members))
+# One place hands Object.create the Object.prototype of the realm and a literal. The class of the objects that are made there has the members of the literal, and the literal becomes its prototype
+# object when the run time is first handed it. The first object of the class is born below an object that no program holds, so the operation hears of it whatever the call is handed. An object
+# below Object.prototype has no class, like one below null: read() finds no getter above it, before the class has its prototype object and after, also where the program sets the prototype that
+# the object has again, and the class awaits the literal as before. From the second object below either on, no object asks the run time.
+# FORM: AsRead
+# RUN(FLOW): pipeline ApplyFlowResults
+# RUN(IR): pipeline Select
+# RUN: run-in-shell --aotCountsPath=/dev/null globalThis.register = (belowObjectPrototype, belowMembers, read, members) => { const first = belowObjectPrototype(); print("first:", read(first), Object.getPrototypeOf(first) === Object.prototype, Object.keys(first).join()); Object.setPrototypeOf(first, Object.prototype); Reflect.setPrototypeOf(first, Object.prototype); first.__proto__ = Object.prototype; print("set again:", read(first)); let wrong = 0; for (let turn = 0; turn < 1000; turn++) wrong += read(belowObjectPrototype()) !== undefined; const second = belowMembers(); print("second:", read(first), read(second), Object.getPrototypeOf(second) === members, wrong); for (let turn = 0; turn < 1000; turn++) wrong += read(turn % 2 ? belowMembers() : belowObjectPrototype()) !== (turn % 2 ? 7 : undefined); print("in turns:", read(first), read(second), wrong); const calls = aotOperationCount("operationAOTSetLiteralPrototype"); print(calls > 0 && calls < 10 ? "a few objects asked the run time" : calls); Object.defineProperty(members, "size", { get() { return "redefined"; }, configurable: true }); print("redefined:", read(first), read(second), read(belowMembers()), read(belowObjectPrototype())); };
+# FLOW: layout {{*}}kind=Instance {{*}}key="items" {{*}}IsOfCreatedObject{{*}}classFlow={evaluations=AtMostOnce members=[{key="size" kind=Getter function=f5}]
+# FLOW: function f4 name="make"
+# FLOW: = NewObject layout=
+# FLOW: SetLiteralPrototype {{*}}[refusesOtherValues]
+# IR: = AreMembersUnchanged conditions=[{layout={{*}} key="size"}
+# CHECK: first: undefined true items
+# CHECK-NEXT: set again: undefined
+# CHECK-NEXT: second: undefined 7 true 0
+# CHECK-NEXT: in turns: undefined 7 0
+# CHECK-NEXT: a few objects asked the run time
+# CHECK-NEXT: redefined: undefined redefined redefined undefined
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="size" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="members" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f5
+    DefineGetter v0, v1 key="size"
+    v3 = FinishObject v0
+    PutModuleVariable v3 variable=g0
+    v5 = NewClosure function=f1
+    v6 = NewClosure function=f2
+    v7 = NewClosure function=f3
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="register" [isFreeName]
+    v10 = Call v9, -, v5, v6, v7, v3
+    v11 = Call v6, -
+    v12 = Call v7, -, v11
+    Return
+}
+function f1 name="belowObjectPrototype" results=[{type=anything}] {
+    v0 = NewClosure function=f4
+    v1 = Builtin builtin=ObjectPrototype
+    v2 = Call v0, -, v1
+    Return v2
+}
+function f2 name="belowMembers" results=[{type=anything}] {
+    v0 = NewClosure function=f4
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v0, -, v1
+    Return v2
+}
+function f3 name="read" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+function f4 name="make" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=7
+    PropSet v3, v4 key="items"
+    Return v3
+}
+function f5 name="size" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="items"
+    Return v1
+}

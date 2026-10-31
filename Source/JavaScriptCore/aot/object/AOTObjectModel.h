@@ -154,7 +154,15 @@ public:
     // A site that had no class object to take a prototype from predicts the first one that its operation named.
     void predictStructure(VM&, uint32_t allocation, CompiledStructure*);
     std::optional<StructureID> structureIDOf(uint32_t allocation) const;
-    void forgetStructuresOf(const LayoutData& classLayout);
+    // Whether it found one to forget.
+    bool forgetStructuresOf(const LayoutData& classLayout);
+    // For a class of created objects that gets its prototype object. It looks at the records of the places only where one of them can name a Structure of the class.
+    void forgetStructuresOfCreatedObjects(VM&, const LayoutData& classLayout);
+    // The first object of a class of created objects that awaits its prototype object is born with such a Structure: see usualVariantOf(). No object is handed on with it, and no record
+    // of a place keeps it.
+    bool isBelowAwaitedPrototype(const Structure& structure) const { return m_awaitedPrototype && structure.storedPrototype() == JSValue(m_awaitedPrototype); }
+    // For the operation behind Object.create, which alone sees such an object. It answers the Structure of the object below the prototype that the call was handed.
+    CompiledStructure* leaveAwaitedPrototype(VM&, const CompiledStructure& atBirth, JSValue prototype);
 
     template<typename Visitor> void visitRoots(Visitor&);
     size_t removeDeadEntries(VM&, CollectionScope);
@@ -183,6 +191,8 @@ private:
     CompiledStructure* usualStructureIfExists(uint32_t shape) const;
     CompiledStructure* usualStructure(VM&, uint32_t shape);
     Variant usualVariantOf(VM&, const LayoutData&);
+    JSObject* awaitedPrototype(VM&);
+    void validateStructuresBelowAwaitedPrototype(VM&) const;
     CompiledStructure* createUsual(VM&, const LayoutData&, const Variant&);
     CompiledStructure* create(VM&, const LayoutData&, const Variant&);
     CompiledStructure* find(const Variant&) const;
@@ -212,6 +222,12 @@ private:
     AllocatorWithoutRoom m_allocatorWithoutRoom { };
     // No cell has them. Every other Structure of a compiled object starts as a copy of one: the second is for objects with another prototype than their layout's.
     std::array<CompiledStructure*, 2> m_templateStructures { };
+    // Stands where the prototype object that a class of created objects awaits will stand: the first object of the class is born below it. No program holds it, so no call of
+    // Object.create is handed it. This is not the lazy prototype object of a class that MemberGuardWatchpoints speaks of.
+    JSObject* m_awaitedPrototype { nullptr };
+    // What fillAllocationSite() hands out in place of the record of a place whose object is born below m_awaitedPrototype. The record itself stays without a header, and nothing
+    // visits this one: the Structure that it names is the usual one of its layout, which is a root.
+    AllocationSiteRecord m_recordBelowAwaitedPrototype { };
     std::unique_ptr<VariantMaps> m_variants;
     // In a run with --aotCountsPath.
     std::unique_ptr<MadeStructures> m_made;

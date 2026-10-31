@@ -1,0 +1,62 @@
+# const members = {}   function make(below) { const made = Object.create(below); made.items = 7; return made }   function call(made) { return made.later() }   const first = make(Object.prototype); report(call, first)   const kept = { text: "later" }; members.later = function () { return kept.text + " " + this.items }; report(call, first)   const second = make(members); report(call, first); report(call, second)
+# One place hands Object.create the Object.prototype of the realm first and an empty literal second. The program stores a closure into the literal, under the name that call() calls, only
+# after the first object is made. The first object is below Object.prototype and never has the name: the call throws a TypeError before the store and after it, and only the object below the
+# literal enters the closure, which reads what it has captured.
+# FORM: AsRead
+# RUN(FLOW): pipeline ApplyFlowResults
+# RUN: run-in-shell globalThis.report = (call, made) => { try { print(call(made)); } catch (error) { print(error.constructor.name); } };
+# FLOW: layout {{*}}kind=Instance {{*}}key="items" {{*}}IsOfCreatedObject{{*}}classFlow={evaluations=AtMostOnce
+# CHECK: TypeError
+# CHECK-NEXT: TypeError
+# CHECK-NEXT: TypeError
+# CHECK-NEXT: later 7
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0
+layout L1 fields=[{key="text" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="members" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g0
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="report" [isFreeName]
+    v7 = Builtin builtin=ObjectPrototype
+    v8 = Call v3, -, v7
+    v9 = Call v6, -, v4, v8
+    v10 = String string="later"
+    v11 = NewObject -, v10 layout=L1 fields=[0]
+    v12 = FinishObject v11
+    v13 = NewClosure v12 function=f3
+    PropSet v1, v13 key="later"
+    v15 = Call v6, -, v4, v8
+    v16 = Call v3, -, v1
+    v17 = Call v6, -, v4, v8
+    v18 = Call v6, -, v4, v16
+    Return
+}
+function f1 name="make" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=7
+    PropSet v3, v4 key="items"
+    Return v3
+}
+function f2 name="call" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="later"
+    v2 = Call v1, v0 calleeKey="later"
+    Return v2
+}
+function f3 name="later" flags=[HasThis] captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] {
+    v2 = PropGet v0 key="text"
+    v3 = String string=" "
+    v4 = Add v2, v3
+    v5 = PropGet v1 key="items"
+    v6 = Add v4, v5
+    Return v6
+}

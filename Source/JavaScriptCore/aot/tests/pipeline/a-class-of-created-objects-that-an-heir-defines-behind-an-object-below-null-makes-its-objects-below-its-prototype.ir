@@ -1,0 +1,81 @@
+# const base = { twice(x) { return x * 2 } }
+# function make(below, i) { const made = Object.create(below); made.items = i; return made }
+# function leaf(below) { const made = Object.create(below); made.extra = 1; return made }
+# function use(n) { let total = 0; for (let i = 0; i < n; i++) total += make(base, i).twice(i); return total }
+# register(make, leaf, base, use)   leaf(make(base, 0))
+# Two places: the second makes objects below what the first makes. The first place is handed null first, so the record of the place names what its objects are born with from then on, a
+# Structure below Object.prototype. Then the second place is handed an object below the literal: it defines the class of the second place, and through it the class of the first. In use() the
+# first place is handed the literal. Compiled code tests that the value is the prototype object of the class and leaves the operation out, so the object keeps the Structure of its record. The
+# definition has emptied that record: the objects are born below the literal, and twice() is found on each of them.
+# FORM: AsRead
+# RUN(FLOW): pipeline ApplyFlowResults
+# RUN(SEL): pipeline Select
+# RUN: run-in-shell --aotCountsPath=/dev/null globalThis.register = (make, leaf, base, use) => { const calls = () => aotOperationCount("operationAOTSetLiteralPrototype"); const attempt = (label, run) => { const before = calls(); let answer; try { answer = run(); } catch (error) { answer = error.constructor.name; } print(label, answer, "links:", calls() - before); }; attempt("1:", () => Object.getPrototypeOf(make(null, 1)) === null); attempt("2:", () => Object.getPrototypeOf(Object.getPrototypeOf(leaf(Object.setPrototypeOf({}, base)))) === base); attempt("3:", () => use(10)); attempt("4:", () => Object.getPrototypeOf(make(base, 5)) === base); let wrong = 0; const before = calls(); for (let turn = 0; turn < 1000; turn++) { try { wrong += use(3) !== 6; } catch { wrong++; } } print("5:", wrong, "of 1000 wrong, links:", calls() - before); };
+# FLOW: prototypeBase=L1
+# SEL: IsPrototypeOfClass
+# CHECK: 1: true links: 1
+# CHECK-NEXT: 2: true links: 1
+# CHECK-NEXT: 3: 90 links: 0
+# CHECK-NEXT: 4: true links: 0
+# CHECK-NEXT: 5: 0 of 1000 wrong, links: 0
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="twice" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="base" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f3
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    PutModuleVariable v2 variable=g0
+    v4 = NewClosure function=f1
+    v5 = NewClosure function=f2
+    v6 = NewClosure function=f4
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="register" [isFreeName]
+    v9 = Call v8, -, v4, v5, v2, v6
+    v10 = Integer integer=0
+    v11 = Call v4, -, v2, v10
+    v12 = Call v5, -, v11
+    Return
+}
+function f1 name="make" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectCreate
+    v4 = Call v3, v2, v0
+    PropSet v4, v1 key="items"
+    Return v4
+}
+function f2 name="leaf" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=1
+    PropSet v3, v4 key="extra"
+    Return v3
+}
+function f3 name="twice" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = Integer integer=2
+    v3 = Mul v1, v2
+    Return v3
+}
+function f4 name="use" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    v2 = NewClosure function=f1
+    v3 = GetModuleVariable variable=g0
+    Jump -> next b1(v1, v1)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Call v2, -, v3, v5
+    v9 = PropGet v8 key="twice"
+    v10 = Call v9, v8, v5
+    v11 = Add v4, v10
+    v12 = Increment v5
+    Jump -> next b1(v11, v12)
+  b3():
+    Return v4
+}

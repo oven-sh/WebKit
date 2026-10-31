@@ -154,7 +154,8 @@ void AccessEmitter::generateSetLiteralPrototype(const ValueContext& value)
     Boxed prototype = in<Boxed>(value->prototypeOperand());
     LBasicBlock isUnknown = newBlock();
     LBasicBlock continuation = newBlock();
-    // What Object.create makes is born below the object that the first call was handed.
+    // What Object.create makes is born below the prototype object of its class once the class has one. The first object of a class that awaits it is born below an object that no call is
+    // handed, so it always gets to the operation, and the objects behind it below Object.prototype: StructureTable::usualVariantOf().
     LBasicBlock isOther = newBlock();
     branch(equal(prototype, loadField<Boxed>(loadStructure(object), m_heaps.Structure_prototype)), { normalEdge(continuation), normalEdge(isOther) });
     m_out.appendTo(isOther);

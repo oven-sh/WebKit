@@ -39,6 +39,7 @@
 #include "JSArrayBuffer.h"
 #include "JSCInlines.h"
 #include "MarkedSpace.h"
+#include "ObjectConstructor.h"
 #include "PropertyName.h"
 #include "SlotVisitorInlines.h"
 #include "Symbol.h"
@@ -815,6 +816,7 @@ size_t StructureTable::removeDeadEntries(VM& vm, CollectionScope scope)
             ++removed;
         });
     });
+    validateStructuresBelowAwaitedPrototype(vm);
     return removed;
 }
 
@@ -860,6 +862,15 @@ ALWAYS_INLINE CompiledStructure* StructureTable::usualStructureIfExists(uint32_t
     return known ? VariantMaps::decode(std::bit_cast<StructureID>(known)) : nullptr;
 }
 
+NEVER_INLINE JSObject* StructureTable::awaitedPrototype(VM& vm)
+{
+    if (!m_awaitedPrototype) {
+        m_awaitedPrototype = constructEmptyObject(vm, m_state.instance.globalObject->nullPrototypeObjectStructure());
+        m_state.immortalCells->add(m_awaitedPrototype);
+    }
+    return m_awaitedPrototype;
+}
+
 ALWAYS_INLINE StructureTable::Variant StructureTable::usualVariantOf(VM& vm, const LayoutData& layout)
 {
     JSGlobalObject* realm = m_state.instance.globalObject;
@@ -872,8 +883,14 @@ ALWAYS_INLINE StructureTable::Variant StructureTable::usualVariantOf(VM& vm, con
     case LayoutKind::Instance:
         if (JSObject* classPrototype = m_state.objects->classes.classPrototypeOfInstances(vm, m_state.objects->classes.classOfInstances(layout)))
             usual.prototype = classPrototype;
-        else
+        else {
             usual.hasOtherPrototype = true;
+            // The first object that Object.create makes at some place is allocated before its class has a prototype object. Where an object may still define the class, it is born below an object
+            // that no program holds. So the comparison that compiled code makes is the only one: whatever the call is handed is another object, and the operation hears of it. That object
+            // leaves this Structure there, and takes it along: leaveAwaitedPrototype().
+            if (layout.evaluation() == EvaluationState::ProvenOnce && m_state.objects->classes.awaitsPrototypeOfCreatedObjects(layout))
+                usual.prototype = awaitedPrototype(vm);
+        }
         return usual;
     case LayoutKind::Environment:
     case LayoutKind::Closure:
@@ -914,7 +931,8 @@ ALWAYS_INLINE CompiledStructure* StructureTable::createUsual(VM& vm, const Layou
     m_writtenStructures.record(&known);
     if (!m_shapeHasStructure.set(layout.shape))
         m_shapesWithStructure.append(layout.shape);
-    // The first object that Object.create makes at some place is allocated before its class has a prototype object.
+    // The first object that Object.create makes at some place is allocated before its class has a prototype object, and nobody is told of it. Where an object may define the class, no object
+    // keeps this Structure: it is the one below m_awaitedPrototype. The other classes of created objects have no guards.
     if (usual.hasOtherPrototype && !(layout.isClass() && m_state.objects->classes.awaitsPrototypeOfCreatedObjects(layout)))
         m_state.objects->classes.didChangeInstancePrototype(vm, layout, usual.prototype);
     return created;
@@ -1023,6 +1041,25 @@ CompiledStructure* StructureTable::withPrototype(VM& vm, const CompiledStructure
     constexpr uint32_t pristineBitInBlob = IsPristine << 16;
     if (structure->isPristine() && structure->typeInfoBlob() == (current.typeInfoBlob() | pristineBitInBlob) && !current.mayBePrototype() && !belongsToOneObject(variant))
         recent = { encodedPrototype, before, structure->id().bits() };
+    return structure;
+}
+
+// The object that was born below m_awaitedPrototype takes that Structure along: no other object has it, and no record of a place names it. The class has no prototype object then, so the
+// objects that follow are born below Object.prototype, as those of a layout without a class are. Whoever makes that Structure tells the class of objects below another prototype: a class that
+// awaits its prototype object as before need not hear of them again. No transition is recorded, so compiled code replays none from a Structure that an object has on its way to the operation.
+CompiledStructure* StructureTable::leaveAwaitedPrototype(VM& vm, const CompiledStructure& atBirth, JSValue prototype)
+{
+    const LayoutData& layout = atBirth.layout();
+    ASSERT(isBelowAwaitedPrototype(atBirth) && usualStructureIfExists(layout.shape) == &atBirth);
+    Variant variant = variantWithKeyOrderOf(atBirth);
+    variant.prototype = prototype;
+    CompiledStructure* structure = findOrCreate(vm, variant);
+
+    JSGlobalObject* realm = m_state.instance.globalObject;
+    uint32_t& known = m_structures[layout.shape];
+    known = 0;
+    known = findOrCreate(vm, Variant { .realm = realm, .prototype = realm->objectPrototype(), .layout = &layout, .hasOtherPrototype = true })->id().bits();
+    m_writtenStructures.record(&known);
     return structure;
 }
 
@@ -1197,12 +1234,17 @@ AllocationSiteRecord& StructureTable::fillAllocationSite(VM& vm, uint32_t number
     CompleteSubspace& space = kind == AllocatedCellKind::Object ? vm.cellSpace() : *vm.heap.aotClosureSpace<SubspaceAccess::OnMainThread>();
     // No size class holds a cell beyond MarkedSpace::largeCutoff, so no allocator does. Compiled code finds no room and leaves every such cell to the operation.
     void* allocator = space.allocatorFor(allocation.size(), AllocatorForMode::EnsureAllocator).localAllocator();
-    record = AllocationSiteRecord {
+    // No record keeps the Structure below m_awaitedPrototype. The object that is born with it leaves it in the operation behind its allocation, and whoever allocates there next asks again.
+    bool leavesRecordEmpty = isBelowAwaitedPrototype(*structure);
+    AllocationSiteRecord& filled = leavesRecordEmpty ? m_recordBelowAwaitedPrototype : record;
+    filled = AllocationSiteRecord {
         .header = kind == AllocatedCellKind::Environment ? Environment::headerFor(structure, allocation.shape) : objectHeaderFor(structure, allocation),
         .orderAndShapeWords = orderAndShapeWordsFor(allocation.shape, allocation.orderWord()),
         .allocator = allocator ? allocator : &m_allocatorWithoutRoom,
         .prototype = kind == AllocatedCellKind::Object ? static_cast<uint64_t>(JSValue::encode(structure->storedPrototype())) : 0,
     };
+    if (leavesRecordEmpty) [[unlikely]]
+        return filled;
     m_writtenRecords.record(&record);
     count(vm, RuntimeCounterID::AllocationSiteRecordsFilled);
     return record;
@@ -1231,24 +1273,79 @@ std::optional<StructureID> StructureTable::structureIDOf(uint32_t number) const
     return std::bit_cast<StructureID>(static_cast<uint32_t>(record->header));
 }
 
-void StructureTable::forgetStructuresOf(const LayoutData& classLayout)
+// A Structure below m_awaitedPrototype is for an object that the operation behind its allocation has not seen yet. No record of a place keeps one, and a class that has its prototype object has
+// none: what Object.create makes there may take the Structure of its record and ask nobody.
+void StructureTable::validateStructuresBelowAwaitedPrototype(VM& vm) const
+{
+    if (!m_awaitedPrototype)
+        return;
+    auto structureBelowAwaitedPrototype = [&](uint32_t structureIDOrZero) -> const CompiledStructure* {
+        Structure* structure = structureIDOrZero ? std::bit_cast<StructureID>(structureIDOrZero).decode() : nullptr;
+        return structure && isBelowAwaitedPrototype(*structure) ? uncheckedDowncast<CompiledStructure>(structure) : nullptr;
+    };
+    const ClassTable& classes = m_state.objects->classes;
+    for (uint32_t structureID : usualStructureIDs()) {
+        const CompiledStructure* structure = structureBelowAwaitedPrototype(structureID);
+        if (!structure)
+            continue;
+        const LayoutData& classLayout = classes.classOfInstances(structure->layout());
+        if (ClassTable::isClassOfCreatedObjects(classLayout) && !classes.classPrototypeIfExists(classLayout))
+            continue;
+        dataLogLn("AOT: the objects of layout ", structure->layout().index, ", shape ", structure->layout().shape, ", are still born below the object that stands for an awaited prototype, and their class awaits none");
+        crashOnValidationFailure(vm, { ValidationFailureKind::OperationPreconditionBroken, { }, { }, structure });
+    }
+    std::span<AllocationSiteRecord> records = allocationSiteRecords();
+    for (const AllocationSiteRecord& record : records) {
+        const CompiledStructure* structure = structureBelowAwaitedPrototype(static_cast<uint32_t>(record.header));
+        if (!structure)
+            continue;
+        dataLogLn("AOT: record ", &record - records.data(), " of the allocation sites names the Structure below the object that stands for an awaited prototype, of layout ", structure->layout().index, ", shape ", structure->layout().shape);
+        crashOnValidationFailure(vm, { ValidationFailureKind::OperationPreconditionBroken, { }, { }, structure });
+    }
+}
+
+// The records of the places of a class of created objects name what its objects are born with, and it has one layout. While no object of the class has been made, and until one has left the
+// Structure below m_awaitedPrototype, no record names a Structure of the class: the table has the only entry.
+void StructureTable::forgetStructuresOfCreatedObjects(VM& vm, const LayoutData& classLayout)
+{
+    ASSERT(ClassTable::isClassOfCreatedObjects(classLayout));
+    uint32_t& known = m_structures[classLayout.shape];
+    bool hasNoRecord = !known || isBelowAwaitedPrototype(*VariantMaps::decode(std::bit_cast<StructureID>(known)));
+    if (hasNoRecord) {
+        known = 0;
+        if (!validatesRuntime(vm)) [[likely]]
+            return;
+    }
+    if (forgetStructuresOf(classLayout) && hasNoRecord) [[unlikely]] {
+        dataLogLn("AOT: a record of an allocation site, or the table of Structures, named a Structure of layout ", classLayout.index, " before any object had left the one that its objects are born with");
+        crashOnValidationFailure(vm, { ValidationFailureKind::OperationPreconditionBroken, { }, { }, JSValue() });
+    }
+}
+
+bool StructureTable::forgetStructuresOf(const LayoutData& classLayout)
 {
     // The shapes of the layouts that were derived from the class are numbered wherever the tests of the program want them.
     const ClassTable& classes = m_state.objects->classes;
     auto belongsToClass = [&](uint32_t shape) {
         return m_tables.hasLayoutForShape(shape) && classes.classOfInstances(m_tables.layoutForShape(shape)).index == classLayout.index;
     };
+    bool hasForgotten = false;
     for (uint32_t shape : m_shapesWithStructure) {
-        if (m_structures[shape] && belongsToClass(shape))
+        if (m_structures[shape] && belongsToClass(shape)) {
             m_structures[shape] = 0;
+            hasForgotten = true;
+        }
     }
 
     // Allocations that share a record have the same shape, which the record stores once it is filled.
     for (AllocationSiteRecord& record : std::span { m_state.instance.objects.emptyAllocationSite() - m_numberOfAllocationSiteRecords, m_numberOfAllocationSiteRecords }) {
         uint32_t shape = shapeWordOf(static_cast<uint32_t>(record.orderAndShapeWords >> 32));
-        if (record.header && shape < m_tables.firstEnvironmentShape && belongsToClass(shape))
+        if (record.header && shape < m_tables.firstEnvironmentShape && belongsToClass(shape)) {
             record = emptyAllocationSiteRecord();
+            hasForgotten = true;
+        }
     }
+    return hasForgotten;
 }
 
 static Structure* structureOf(const AllocationSiteRecord& record)
