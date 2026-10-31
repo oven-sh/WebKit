@@ -163,6 +163,7 @@ if (DEVELOPER_MODE OR ENABLE_BUN_TEST_PROGRAMS)
         ../API/tests/TemporalCoreTest.cpp
         ../API/tests/TypedArrayCTest.cpp
         ../API/tests/VMManagerStopTheWorldTest.cpp
+        ../API/tests/WindowsVMDecommitTest.cpp
         ../API/tests/testapi.cpp
         ${aotProgramSources}
     )
