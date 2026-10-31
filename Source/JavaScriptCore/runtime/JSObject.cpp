@@ -614,11 +614,30 @@ bool JSObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName prop
 // As a definition compares the two: an equal string in another cell and a number in another form are the value that is held.
 static bool holdsInWritableProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, JSValue value)
 {
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned attributes;
-    PropertyOffset offset = object->structure()->get(globalObject->vm(), propertyName, attributes);
-    if (!isValidOffset(offset) || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue)
+    PropertyOffset offset = object->structure()->get(vm, propertyName, attributes);
+    if (isValidOffset(offset)) {
+        if (attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue)
+            return false;
+        RELEASE_AND_RETURN(scope, sameValue(globalObject, object->getDirect(offset), value));
+    }
+    // `globalThis.Map = globalThis.Map || polyfill`: the global object makes such a class when something first reads the property, and compiled code
+    // has the class without reading it. Making it calls no JavaScript, which the callback of another lazy property may.
+    if (!value.isCell() || !object->hasNonReifiedStaticProperties())
         return false;
-    return sameValue(globalObject, object->getDirect(offset), value);
+    auto entry = object->structure()->findPropertyHashEntry(propertyName);
+    if (!entry || !(entry->value->attributes() & (PropertyAttribute::ClassStructure | PropertyAttribute::CellProperty)) || entry->value->attributes() & PropertyAttribute::ReadOnly)
+        return false;
+    PropertySlot held(object, PropertySlot::InternalMethodType::GetOwnProperty);
+    bool isThere = object->methodTable()->getOwnPropertySlot(object, globalObject, propertyName, held);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!isThere || !held.isValue())
+        return false;
+    JSValue heldValue = held.getValue(globalObject, propertyName);
+    RETURN_IF_EXCEPTION(scope, false);
+    return heldValue == value;
 }
 
 static bool isSetterOfPrototype(JSObject* setter)

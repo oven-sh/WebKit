@@ -974,8 +974,11 @@ void noteLoadUnderSpelledNames(ValueFlowRuleContext& context, FunctionID load, c
     if (found.nativeModule && answer)
         context.add(answer, publicNativeModules(context));
     // `require.cache["fs"] = { exports: fake }`: require() looks there for a Node.js module that is named without `node:`, overridableRequire() in CommonJS.ts.
-    if (answers == ValueFlowHostNode::RequiredValuesLoadedByName && (found.nativeModule || !found.libraryModules.isEmpty()) && answer)
+    if (answers == ValueFlowHostNode::RequiredValuesLoadedByName && (found.nativeModule || !found.libraryModules.isEmpty()) && answer) {
         context.connect(context.nodes().ofHost(ValueFlowHostNode::ExportsOfEntriesStoredInModuleCache), answer);
+        if (isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeHasLoader))
+            context.add(answer, unknownValue(context, ValueFlowUnknownSource::UnseenCode));
+    }
 }
 
 static ModulesThatNamesFind modulesThatNamesPassedFind(const ValueFlowStatement& call, ValueFlowRuleContext& context, ValueFlowObjectID loader, BuiltinID builtin)

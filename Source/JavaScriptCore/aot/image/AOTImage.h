@@ -162,6 +162,7 @@ public:
     bool loadsModulesByName() const { return header().has(ImageFlag::LoadsModulesByName); }
     bool findsDataFilesByName() const { return header().has(ImageFlag::FindsDataFilesByName); }
     bool admitsLibraryText() const { return header().has(ImageFlag::AdmitsLibraryText); }
+    bool runsUnreadCode() const { return header().has(ImageFlag::RunsUnreadCode); }
     bool loadsCodeOutsideImage() const { return !runsOnlyCodeOfImage && header().has(ImageFlag::LoadsCodeOutsideImage); }
     bool showsWaysBetweenModuleObjects() const { return header().has(ImageFlag::ShowsWaysBetweenModuleObjects); }
     bool storesPathOfMainModule() const { return header().has(ImageFlag::StoresPathOfMainModule); }

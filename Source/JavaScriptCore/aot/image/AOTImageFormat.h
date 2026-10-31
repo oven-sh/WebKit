@@ -141,6 +141,8 @@ enum class ImageFlag : uint32_t {
     // CompileOptions::holdsLibraryAlone(). It knows nothing of the run: the image above it is the first that does, and says what the realm locks.
     HoldsLibraryAlone = 1 << 9,
     StoresPathOfMainModule = 1 << 10,
+    // FlowResults::reachedFunctionsCountUnreadCode(). Without it whatever runs beside the code of the image is a copy of a file of the image.
+    RunsUnreadCode = 1 << 11,
 };
 
 // The numbers of an image that cells, or code of another image, may hold. The images of a realm were built one after the other, and none takes a number of those before it.

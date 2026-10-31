@@ -1281,6 +1281,7 @@ Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultIn
     tables.wholeProgram.loadsOfMachineCode = WTF::move(usesOfLibraryCode.loadsOfMachineCode);
     tables.wholeProgram.findsFilesOfProgramByName = filesOfProgramAreLoadedByName(inputs.solution) || inputs.solver().input().refusedCode.hostRunsFilesOutsideImage;
     tables.wholeProgram.hostRunsFilesOutsideImage = inputs.solver().input().refusedCode.hostRunsFilesOutsideImage;
+    tables.wholeProgram.reachedFunctionsCountUnreadCode = unseenCodeCanRun(inputs.solution);
     tables.wholeProgram.storesPathOfMainModule = isRaised(inputs.solution, ValueFlowHostNode::PathOfMainModuleIsStored);
     warnAboutLoadsUnderComputedNames(inputs, tables.wholeProgram.unseenCode.span());
     tables.wholeProgram.instances = countProgramInstances(inputs);

@@ -196,19 +196,33 @@ static std::optional<uint32_t> builtinFunctionHolding(const FunctionExecutable& 
     return executable.source().provider()->builtinFunctionAt(executable.source().startOffset());
 }
 
-bool refusesToInterpret(JSGlobalObject* realm, ScriptExecutable& executable)
+static bool isTextOfHostLibrary(ScriptExecutable& executable)
 {
     auto* function = dynamicDowncast<FunctionExecutable>(&executable);
-    if (!refusesLibraryText(realm) || !function || !function->isBuiltinFunction() || function->unlinkedExecutable()->isBuiltinDefaultClassConstructor())
+    if (!function || !function->isBuiltinFunction() || function->unlinkedExecutable()->isBuiltinDefaultClassConstructor())
         return false;
     std::optional<uint32_t> id = builtinFunctionHolding(*function);
     return !id || *id >= numberOfBuiltinCodes;
+}
+
+bool refusesToInterpret(JSGlobalObject* realm, ScriptExecutable& executable)
+{
+    return refusesLibraryText(realm) && isTextOfHostLibrary(executable);
 }
 
 bool refusesToRun(JSFunction* function)
 {
     auto* executable = dynamicDowncast<FunctionExecutable>(function->executable());
     return executable && refusesToInterpret(function->realm(), *executable);
+}
+
+bool isNeededByNothingThatRuns(JSFunction* function)
+{
+    auto* executable = dynamicDowncast<FunctionExecutable>(function->executable());
+    if (!executable || !Instance::of(function->realm()) || !isTextOfHostLibrary(*executable))
+        return false;
+    const Image& image = Image::current()->first();
+    return !image.admitsLibraryText() || !image.runsUnreadCode();
 }
 
 static Vector<String, 4> globalBuiltinsThatRun(RuntimeFunctionID function)

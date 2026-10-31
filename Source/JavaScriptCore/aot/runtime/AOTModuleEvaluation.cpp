@@ -2316,6 +2316,10 @@ void Modules::noteLoadOfFile(ModuleID module, LoadOfFile load)
     // Where nothing but its face runs a file, the face alone has the status.
     if ((status(file) != ModuleStatus::Evaluating && status(module) != ModuleStatus::Evaluating) || asyncLoadMustWaitFor(file) || file == m_fileBeingHandedToLoader)
         return;
+    // An import() asks now. Where the host reads the text on another thread, the loader comes to the file when the body has returned or thrown: evaluateLoadedCommonJSFile() tells of that.
+    // Where the host reads the text itself, as under a require() of an ES module, the loader has the file at once.
+    if (load == LoadOfFile::IsRootOfImport && isTextReadOnOtherThread(file))
+        return;
     ensureLoaded(file).wasLoadedWhileItRan = true;
     ensureLoaded(file).wasLoadedSynchronouslyWhileItRan |= !!m_instance.vm->synchronousModuleQueue();
     if (!data(file).mayBeImportedWhileItRuns() || load == LoadOfFile::IsRequested)

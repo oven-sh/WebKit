@@ -467,7 +467,7 @@ OptionSet<ImageFlag> flagsForUnseenCode(const Typed::PipelineOutput& pipeline, c
 {
     const Typed::FlowResults& flow = *pipeline.flow;
     if (!flow.hasResults()) {
-        OptionSet<ImageFlag> flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::FindsDataFilesByName, ImageFlag::StoresPathOfMainModule };
+        OptionSet<ImageFlag> flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::FindsDataFilesByName, ImageFlag::StoresPathOfMainModule, ImageFlag::RunsUnreadCode };
         // Any load may name a file outside the image, so only the options say whether one is loaded.
         if (!options.excludesCodeOutsideImage())
             flags.add(ImageFlag::LoadsCodeOutsideImage);
@@ -479,6 +479,8 @@ OptionSet<ImageFlag> flagsForUnseenCode(const Typed::PipelineOutput& pipeline, c
         flags.add(ImageFlag::FindsDataFilesByName);
     if (flow.storesPathOfMainModule())
         flags.add(ImageFlag::StoresPathOfMainModule);
+    if (flow.reachedFunctionsCountUnreadCode())
+        flags.add(ImageFlag::RunsUnreadCode);
     for (const auto& record : flow.unseenCode()) {
         if (Typed::admitsUnknownJavaScript(record.cause))
             flags.add(ImageFlag::AdmitsUnknownJavaScript);

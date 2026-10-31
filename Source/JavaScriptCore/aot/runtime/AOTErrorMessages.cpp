@@ -2721,7 +2721,8 @@ static String refusalInTestRun(VM& vm, ASCIILiteral change, BuiltinID holder, Un
     BuiltinName name = table.nameOf(vm, key);
     BuiltinID found = name ? table.findOwnMember(holder, name) : BuiltinID();
     bool isText = !key->isSymbol() && !parseIndex(*key);
-    bool canBeOpened = found ? table.canBeReplacedInTestRuns(found) : isText && table.canTakeNameInTestRuns(holder, name);
+    // A member that is constant unless written is locked only where the build has followed no write to it.
+    bool canBeOpened = found ? table.canBeReplacedInTestRuns(found) || table.at(found).mutability == BuiltinMutability::ConstantUnlessWritten : isText && table.canTakeNameInTestRuns(holder, name);
     ASCIILiteral does = found ? "replace"_s : "add"_s;
     if (!canBeOpened)
         return refusalThatNoTestRunLifts(change, member, does);

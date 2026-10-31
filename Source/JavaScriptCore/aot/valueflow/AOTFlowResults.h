@@ -295,6 +295,8 @@ struct FlowProgramTables {
     bool storesPathOfMainModule { true };
     // CompileOptions::admitsFilesRunByHost()
     bool hostRunsFilesOutsideImage { false };
+    // The functions that are reached count what code that nobody has read may call. A copy from disk of a file of the program has a record above and is no such code: it calls what the file calls.
+    bool reachedFunctionsCountUnreadCode { true };
     ProgramInstances instances { ProgramInstances::Unknown };
     Vector<PropertyKeyID> keysStoredThroughUnknownReceivers;
     Vector<PropertyKeyID> keysDefinedOnObjectsWithoutKnownLayout;
@@ -481,6 +483,7 @@ public:
     std::span<const UnseenCodeRecord> loadsOfMachineCode() const LIFETIME_BOUND { return m_tables.wholeProgram.loadsOfMachineCode.span(); }
     bool findsFilesOfProgramByName() const { return !hasResults() || m_tables.wholeProgram.findsFilesOfProgramByName; }
     bool hostRunsFilesOutsideImage() const { return hasResults() && m_tables.wholeProgram.hostRunsFilesOutsideImage; }
+    bool reachedFunctionsCountUnreadCode() const { return !hasResults() || m_tables.wholeProgram.reachedFunctionsCountUnreadCode; }
     bool storesPathOfMainModule() const { return !hasResults() || m_tables.wholeProgram.storesPathOfMainModule; }
     // The body of the first has run to its end when the body of the second begins.
     bool completesBefore(ModuleID first, ModuleID second) const { return m_tables.wholeProgram.moduleOrder.completesBefore(first, second); }
