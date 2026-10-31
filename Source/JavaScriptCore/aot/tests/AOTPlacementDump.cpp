@@ -14,7 +14,7 @@
 #include "AOTVector.h"
 #include <algorithm>
 #include <cinttypes>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/CommaPrinter.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>

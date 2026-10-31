@@ -12,7 +12,7 @@
 #include <algorithm>
 #include <optional>
 #include <span>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/Noncopyable.h>
 
 namespace JSC { namespace AOT { namespace Typed {

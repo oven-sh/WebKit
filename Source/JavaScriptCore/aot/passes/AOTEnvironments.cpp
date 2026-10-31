@@ -48,7 +48,7 @@
 #include <span>
 #include <tuple>
 #include <utility>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/CommaPrinter.h>
 #include <wtf/DataLog.h>
 #include <wtf/HashMap.h>

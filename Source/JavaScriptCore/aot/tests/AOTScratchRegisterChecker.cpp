@@ -20,7 +20,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <string_view>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/StdLibExtras.h>
 
 // The library holds the decoder only where it can print code. This copy is private to this file: some of its functions are extern "C", which a namespace does not hide.

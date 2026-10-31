@@ -50,7 +50,7 @@
 #include <span>
 #include <utility>
 #include <wtf/Atomics.h>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/HashFunctions.h>
 #include <wtf/Hasher.h>
 #include <wtf/MathExtras.h>

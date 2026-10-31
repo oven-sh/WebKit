@@ -17,7 +17,7 @@
 #include <bit>
 #include <memory>
 #include <span>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/SegmentedVector.h>
 #include <wtf/TZoneMalloc.h>
 

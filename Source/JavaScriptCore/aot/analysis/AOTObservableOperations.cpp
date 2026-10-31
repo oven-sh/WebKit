@@ -12,7 +12,7 @@
 #include "AOTDefinitions.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTTypePropagation.h"
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/HashSet.h>
 #include <wtf/text/MakeString.h>
 

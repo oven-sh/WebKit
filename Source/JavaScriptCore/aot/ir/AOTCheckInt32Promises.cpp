@@ -16,7 +16,7 @@
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include <optional>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

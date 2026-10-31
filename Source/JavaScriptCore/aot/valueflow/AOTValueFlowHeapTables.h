@@ -17,7 +17,7 @@
 #include <array>
 #include <atomic>
 #include <memory>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>

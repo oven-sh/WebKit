@@ -13,7 +13,7 @@
 #include "AOTVector.h"
 #include <memory>
 #include <span>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/PrintStream.h>
 
 namespace JSC { namespace AOT { namespace Typed {

@@ -36,7 +36,7 @@
 #include <bit>
 #include <optional>
 #include <span>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/text/MakeString.h>
 
 namespace JSC::AOT {

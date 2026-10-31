@@ -21,7 +21,7 @@
 #include <memory>
 #include <optional>
 #include <type_traits>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/Noncopyable.h>
 #include <wtf/Nonmovable.h>
 #include <wtf/StdLibExtras.h>

@@ -32,7 +32,7 @@
 #include <span>
 #include <tuple>
 #include <utility>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 

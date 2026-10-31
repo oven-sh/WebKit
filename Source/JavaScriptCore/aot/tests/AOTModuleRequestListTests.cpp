@@ -13,7 +13,7 @@
 #include "AOTVector.h"
 #include <algorithm>
 #include <initializer_list>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/OptionSet.h>
 
 namespace JSC { namespace AOT {

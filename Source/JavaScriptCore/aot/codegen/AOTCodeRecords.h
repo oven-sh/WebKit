@@ -22,7 +22,7 @@
 #include "CCallHelpers.h"
 #include "HandlerInfo.h"
 #include <optional>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/Box.h>
 #include <wtf/Noncopyable.h>
 

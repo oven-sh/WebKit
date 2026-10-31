@@ -16,7 +16,7 @@
 #include <memory>
 #include <utility>
 #include <wtf/Atomics.h>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/ConcurrentVector.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/HashMap.h>

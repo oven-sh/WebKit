@@ -16,7 +16,7 @@
 #include "AOTTypeArena.h"
 #include <type_traits>
 #include <utility>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/OptionSet.h>
 #include <wtf/StringPrintStream.h>
 

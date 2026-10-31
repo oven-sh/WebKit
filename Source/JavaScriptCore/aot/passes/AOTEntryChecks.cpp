@@ -37,7 +37,7 @@
 #include <algorithm>
 #include <optional>
 #include <ranges>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {

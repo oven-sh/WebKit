@@ -21,7 +21,7 @@
 #include "AOTWasmModules.h"
 #include <algorithm>
 #include <tuple>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/DataLog.h>
 #include <wtf/FilePrintStream.h>
 #include <wtf/HashMap.h>

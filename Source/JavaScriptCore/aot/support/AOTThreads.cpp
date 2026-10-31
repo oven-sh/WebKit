@@ -18,7 +18,7 @@
 #include <limits>
 #include <optional>
 #include <wtf/Atomics.h>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/CPUTime.h>
 #include <wtf/Deque.h>
 #include <wtf/Lock.h>

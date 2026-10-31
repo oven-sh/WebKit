@@ -19,7 +19,7 @@
 #include <optional>
 #include <span>
 #include <wtf/Atomics.h>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/FastMalloc.h>
 #include <wtf/MallocSpan.h>
 #include <wtf/Noncopyable.h>

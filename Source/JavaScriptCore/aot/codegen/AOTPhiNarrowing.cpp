@@ -15,7 +15,7 @@
 #include "B3Procedure.h"
 #include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/SharedTask.h>
 
 namespace JSC { namespace AOT {

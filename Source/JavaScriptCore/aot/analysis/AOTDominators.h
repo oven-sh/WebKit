@@ -13,7 +13,7 @@
 #include <optional>
 #include <span>
 #include <utility>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/Dominators.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>

@@ -14,7 +14,7 @@
 #include "AOTValueFlowRules.h"
 #include "AOTValueFlowRulesHeap.h"
 #include <algorithm>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/ASCIILiteral.h>
 

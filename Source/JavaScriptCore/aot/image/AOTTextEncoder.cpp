@@ -22,7 +22,7 @@
 #include <limits>
 #include <optional>
 #include <wtf/ASCIICType.h>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/HashMap.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/ASCIIFastPath.h>

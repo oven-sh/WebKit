@@ -14,7 +14,7 @@
 #include "JSCJSValue.h"
 #include <memory>
 #include <span>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>

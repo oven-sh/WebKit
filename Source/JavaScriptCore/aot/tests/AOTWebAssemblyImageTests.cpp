@@ -29,7 +29,7 @@
 #include <algorithm>
 #include <array>
 #include <bmalloc/Gigacage.h>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/DataLog.h>
 #include <wtf/NeverDestroyed.h>
 

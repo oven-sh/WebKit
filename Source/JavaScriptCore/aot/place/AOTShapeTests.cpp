@@ -24,7 +24,7 @@
 #include <tuple>
 #include <utility>
 #include <wtf/BitSet.h>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/Hasher.h>
 #include <wtf/Int128.h>

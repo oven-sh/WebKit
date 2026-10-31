@@ -11,7 +11,7 @@
 #include "AOTRuntimeWords.h"
 #include "AOTWatchpoints.h"
 #include "Identifier.h"
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 
 namespace JSC { namespace AOT {
 

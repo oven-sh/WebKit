@@ -36,7 +36,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/HashMap.h>
 #include <wtf/Hasher.h>
 

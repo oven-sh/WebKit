@@ -27,7 +27,7 @@
 #include "JSCInlines.h"
 #include "PropertyNameArray.h"
 #include <algorithm>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/text/StringView.h>
 
 namespace JSC { namespace AOT {

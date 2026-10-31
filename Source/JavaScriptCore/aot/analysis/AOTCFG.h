@@ -12,7 +12,7 @@
 #include "AOTVector.h"
 #include <optional>
 #include <span>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/IndexMap.h>
 #include <wtf/IndexSet.h>
 #include <wtf/Noncopyable.h>

@@ -14,7 +14,7 @@
 #include "JSExportMacros.h"
 #include <array>
 #include <optional>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/text/WTFString.h>
 
 namespace JSC { namespace AOT {

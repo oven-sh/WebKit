@@ -12,7 +12,7 @@
 #include "AOTCFG.h"
 #include "AOTVector.h"
 #include <optional>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/FastMalloc.h>
 #include <wtf/FrequencyEstimator.h>
 #include <wtf/Noncopyable.h>

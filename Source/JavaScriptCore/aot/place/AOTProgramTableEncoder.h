@@ -23,7 +23,7 @@
 #include <span>
 #include <type_traits>
 #include <utility>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/HashMap.h>
 #include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>

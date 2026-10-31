@@ -23,7 +23,7 @@
 #include <cstdlib>
 #include <limits>
 #include <optional>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/HashMap.h>
 #include <wtf/SharedTask.h>
 

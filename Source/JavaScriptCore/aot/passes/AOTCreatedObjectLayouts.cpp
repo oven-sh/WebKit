@@ -19,7 +19,7 @@
 #include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {

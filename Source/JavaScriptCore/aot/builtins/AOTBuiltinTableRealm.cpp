@@ -36,7 +36,7 @@
 #include <algorithm>
 #include <array>
 #include <mutex>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/StringView.h>

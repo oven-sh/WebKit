@@ -42,7 +42,7 @@
 #include <array>
 #include <expected>
 #include <ranges>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/Function.h>
 
 namespace JSC { namespace AOT { namespace Typed {

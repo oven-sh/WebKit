@@ -13,7 +13,7 @@
 #include "AOTValueFlowHeapTables.h"
 #include "AOTVector.h"
 #include <span>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 

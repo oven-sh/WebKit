@@ -47,7 +47,7 @@
 #include <tuple>
 #include <utility>
 #include <wtf/Atomics.h>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/HashMap.h>
 #include <wtf/Hasher.h>
 

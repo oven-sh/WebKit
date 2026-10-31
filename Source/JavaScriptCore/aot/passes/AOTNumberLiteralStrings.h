@@ -11,7 +11,7 @@
 #include "AOTVector.h"
 #include <optional>
 #include <span>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
 

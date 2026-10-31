@@ -15,7 +15,7 @@
 #include "AOTHeldOperands.h"
 #include "AOTIR.h"
 #include <array>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/CommaPrinter.h>
 #include <wtf/StdLibExtras.h>
 

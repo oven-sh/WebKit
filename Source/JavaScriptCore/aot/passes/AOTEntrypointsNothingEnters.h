@@ -10,7 +10,7 @@
 #include "AOTIR.h"
 #include "AOTVector.h"
 #include <compare>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 
 namespace JSC { namespace AOT {
 

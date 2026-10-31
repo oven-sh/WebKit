@@ -14,7 +14,7 @@
 #include "AOTRelocation.h"
 #include "AOTWasmInterface.h"
 #include <expected>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
 

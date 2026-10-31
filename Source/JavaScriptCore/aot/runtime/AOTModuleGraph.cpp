@@ -14,7 +14,7 @@
 #include "AOTVector.h"
 #include <algorithm>
 #include <ranges>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/OptionSet.h>
 
 namespace JSC { namespace AOT {

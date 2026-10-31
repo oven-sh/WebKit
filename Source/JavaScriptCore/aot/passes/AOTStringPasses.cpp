@@ -54,7 +54,7 @@
 #include <algorithm>
 #include <array>
 #include <ranges>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/FastBitVector.h>
 #include <wtf/PrintStream.h>
 #include <wtf/UnionFind.h>

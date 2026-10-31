@@ -160,7 +160,7 @@ std::optional<uint64_t> FrameMapEmitter::siteWordFor(FrameMapRecords& records, c
         return std::nullopt;
     uint32_t deadWordsAtBottom = static_cast<uint32_t>(code.frameLayout().bytesDeadAtSuspensions / sizeof(uint64_t));
     size_t numberOfWordsInFrame = code.bytesBelowFrameRecord() / sizeof(uint64_t);
-    if (const std::optional<BitVector>& deadWords = params.value()->frameWordsDeadAcrossSuspension()) {
+    if (const std::optional<WTF::BitVector>& deadWords = params.value()->frameWordsDeadAcrossSuspension()) {
         builder.setListsEveryLiveWord();
         uint32_t lastLocationKept = static_cast<uint32_t>(numberOfWordsInFrame) - SavedFrame::numberOfWordsSkippedFor(deadWordsAtBottom);
         // Every restore writes the save area anew.

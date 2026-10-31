@@ -25,7 +25,7 @@
 #include "B3Generate.h"
 #include <algorithm>
 #include <array>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

@@ -21,7 +21,7 @@
 #include <atomic>
 #include <numeric>
 #include <wtf/Atomics.h>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

@@ -17,7 +17,7 @@
 #include <algorithm>
 #include <array>
 #include <optional>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
