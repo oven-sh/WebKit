@@ -149,7 +149,7 @@ static void checkViolationCrashes(ASCIILiteral test, ValidationFailureKind kind)
 static NEVER_INLINE bool JIT_OPERATION_ATTRIBUTES frameRecordHoldsReturnAddress()
 {
     CallerFrameAndPC* frameRecord = AOT_OPERATION_FRAME_RECORD();
-    return removeCodePtrTag(frameRecord->returnPC) == OUR_RETURN_ADDRESS;
+    return removeReturnAddressSignature(frameRecord->returnPC) == OUR_RETURN_ADDRESS;
 }
 
 static void testFrameRecordHoldsReturnAddress()

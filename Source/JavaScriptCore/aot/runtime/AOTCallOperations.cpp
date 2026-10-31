@@ -702,7 +702,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
         return handlerCodeAndFrame;
     bool stackIsUnobserved = false;
     if (!exception && !rethrownException) {
-        if (removeCodePtrTag(frameRecord->callerFrame->rawReturnPC()) == instance->state->returnAddressOfThrowAfterCleanup) {
+        if (removeReturnAddressSignature(frameRecord->callerFrame->rawReturnPC()) == instance->state->returnAddressOfThrowAfterCleanup) {
             if (uint64_t kept = instance->state->keptByCleanup)
                 rethrownException = exceptionKeptByCleanup(kept, JSValue::decode(exceptions.thrownValue));
         }

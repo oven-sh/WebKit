@@ -112,7 +112,7 @@ public:
     {
         auto* record = reinterpret_cast<const CallerFrameAndPC*>(m_frame.callFrame);
         CallFrame* framePointer = m_frame.hasFrameRecord ? record->callerFrame : m_frame.framePointer;
-        const void* pc = removeCodePtrTag(record->returnPC);
+        const void* pc = removeReturnAddressSignature(record->returnPC);
         CodeLocation code = m_image->locate(pc);
         ImageFrame imageFrame = imageFrameAt(code);
         CallFrame* callFrame = frameAtReturnSite(imageFrame, stackPointerOfCaller(m_frame.callFrame, m_frame.bytesAboveReturnAddress), framePointer);

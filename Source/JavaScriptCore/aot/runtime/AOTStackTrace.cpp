@@ -257,7 +257,7 @@ public:
     void findSiteAgain()
     {
         if (m_site)
-            m_site = m_cache.resolve(m_image, removeCodePtrTag(m_rawPC));
+            m_site = m_cache.resolve(m_image, removeReturnAddressSignature(m_rawPC));
         if (m_isAtFirstReadSite)
             m_site = m_cache.withMethodReadSite(m_image, m_site);
     }
@@ -313,7 +313,7 @@ private:
         m_isAtFirstReadSite = true;
         if (!passOverFrame())
             return false;
-        m_cache.withMethodReadSite(m_image, m_cache.find(removeCodePtrTag(m_rawPC)));
+        m_cache.withMethodReadSite(m_image, m_cache.find(removeReturnAddressSignature(m_rawPC)));
         return true;
     }
 
@@ -364,7 +364,7 @@ private:
     ALWAYS_INLINE void findFunctionFrame()
     {
         for (;;) {
-            const void* pc = removeCodePtrTag(m_rawPC);
+            const void* pc = removeReturnAddressSignature(m_rawPC);
             m_site = m_cache.find(pc);
             if (!m_site) [[unlikely]] {
                 m_site = resolveReturnAddressInRun(m_cache, m_image, pc, m_callFrame);
@@ -647,7 +647,7 @@ static std::optional<RunStart> findRunBelowHostFunction(VM& vm)
     auto* function = callee ? dynamicDowncast<JSFunction>(callee) : nullptr;
     if (!function || function->executable()->implementationVisibility() != ImplementationVisibility::Public)
         return std::nullopt;
-    const CallSiteCache::Entry* site = vm.aotState().callSiteCache->find(removeCodePtrTag(top->rawReturnPC()));
+    const CallSiteCache::Entry* site = vm.aotState().callSiteCache->find(removeReturnAddressSignature(top->rawReturnPC()));
     if (!site || !site->isStubReturnSite() || site->stubFrameKind != StubFrameKind::HostCall)
         return std::nullopt;
     return RunStart { stackPointerOfCaller(top), top->callerFrame(), top->rawReturnPC(), vm.topEntryFrame, false, true };
@@ -944,7 +944,7 @@ void forEachShownFrame(const ReturnAddressTrace& trace, const ScopedLambda<void(
 
 static std::optional<JSObject*> findRecordedCallee(VM& vm, const RunStart& machineFrame, unsigned inlineFrame)
 {
-    auto frames = CompiledFrameIterator::tryCreate(vm, machineFrame.framePointer, removeCodePtrTag(machineFrame.rawPC), machineFrame.entryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, machineFrame.stackPointer);
+    auto frames = CompiledFrameIterator::tryCreate(vm, machineFrame.framePointer, removeReturnAddressSignature(machineFrame.rawPC), machineFrame.entryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, machineFrame.stackPointer);
     RELEASE_ASSERT(frames);
     while (frames->frame().inlineFrame != inlineFrame)
         frames->advance();

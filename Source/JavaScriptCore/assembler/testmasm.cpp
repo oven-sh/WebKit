@@ -9420,9 +9420,43 @@ void checkFeaturesAboveHost()
     FINALIZE_CODE(linkBuffer, JSEntryPtrTag, nullptr, "testmasm code for every CPU feature");
 }
 
+#if CPU(ARM64)
+// Whatever signs, authenticates or strips here is a hint. NOP is hint 0.
+static unsigned numberOfHintsInFunction(const AssemblerPolicy& policy)
+{
+    Vector<uint8_t> bytes = emitWithPolicy(policy, [](CCallHelpers& jit) {
+        jit.emitFunctionPrologue();
+        jit.emitFunctionEpilogue();
+        jit.ret();
+        jit.tagReturnAddress();
+        jit.untagReturnAddress();
+        jit.ret();
+    });
+    unsigned result = 0;
+    for (size_t offset = 0; offset < bytes.size(); offset += sizeof(uint32_t)) {
+        uint32_t instruction;
+        memcpySpan(asMutableByteSpan(instruction), bytes.subspan(offset, sizeof(uint32_t)));
+        if ((instruction & 0xfffff01f) == 0xd503201f && instruction != 0xd503201f)
+            result++;
+    }
+    return result;
+}
+
+static void checkReturnAddressSigningFollowsPolicy()
+{
+    CHECK_EQ(numberOfHintsInFunction(AssemblerPolicy::forImage(CPUFeatureSet::host())), 0u);
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    CHECK_EQ(numberOfHintsInFunction(AssemblerPolicy::forJIT()), 5u);
+#elif !CPU(ARM64E)
+    CHECK_EQ(numberOfHintsInFunction(AssemblerPolicy::forJIT()), 0u);
+#endif
+}
+#endif
+
 void testAssemblerPolicy()
 {
     constexpr AssemblerPolicy imagePolicy = AssemblerPolicy::forImage(CPUFeatureSet());
+    static_assert(!imagePolicy.signsReturnAddresses && AssemblerPolicy().signsReturnAddresses);
     static_assert(!imagePolicy.blindsConstants && imagePolicy.recordsProcessAddresses && imagePolicy.recordsLinkedSites && imagePolicy.shortensJumps && imagePolicy.shortensEncodings);
     static_assert(imagePolicy.oops == OopsForm::Breakpoint);
     static_assert(imagePolicy.needsLinkRecords() && !AssemblerPolicy().needsLinkRecords());
@@ -9435,6 +9469,9 @@ void testAssemblerPolicy()
     checkOopsForm();
 #if CPU(X86_64)
     checkEncodingsFollowPolicy();
+#endif
+#if CPU(ARM64)
+    checkReturnAddressSigningFollowsPolicy();
 #endif
     checkFeaturesAboveHost();
 }

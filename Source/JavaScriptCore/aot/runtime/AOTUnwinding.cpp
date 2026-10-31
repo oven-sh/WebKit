@@ -149,7 +149,7 @@ static CompiledFrameExit leaveRunAt(CallFrame* outermostFrame, EntryFrame* entry
 
 static NEVER_INLINE Instance* findInstanceOfRun(VM& vm, const ReturnSiteInRun& site, EntryFrame* entryFrame)
 {
-    auto frames = CompiledFrameIterator::tryCreate(vm, site.framePointer, removeCodePtrTag(site.rawPC), entryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, site.stackPointer);
+    auto frames = CompiledFrameIterator::tryCreate(vm, site.framePointer, removeReturnAddressSignature(site.rawPC), entryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, site.stackPointer);
     return frames && !frames->isAtEnd() ? frames->instance() : nullptr;
 }
 
@@ -195,7 +195,7 @@ CompiledUnwindResult unwindRun(VM& vm, const ReturnSiteInRun& start, EntryFrame*
     ImageFrame leftImageFrame { };
 
     for (;;) {
-        const void* pc = removeCodePtrTag(place.rawPC);
+        const void* pc = removeReturnAddressSignature(place.rawPC);
         const CallSiteCache::Entry* site = cache.find(pc);
         if (!site) [[unlikely]]
             site = place.callee == start.callee ? cache.resolve(image, pc) : resolveReturnAddressInRun(cache, image, pc, place.callee);
@@ -361,13 +361,13 @@ static ALWAYS_INLINE std::optional<HandlerType> findHandlerInRun(VM& vm, CallFra
     CallFrame* first = callee;
     unsigned remainingFrames = search == HandlerSearch::NearestThatEndsThrow ? Options::exceptionStackTraceLimit() : 0;
     while (framePointer != entryFrame) {
-        const void* pc = removeCodePtrTag(callee->rawReturnPC());
+        const void* pc = removeReturnAddressSignature(callee->rawReturnPC());
         const CallSiteCache::Entry* site = cache.find(pc);
         if (!site) [[unlikely]]
             site = cache.resolve(*state.image, pc);
         if (!site) {
             if (callee != first)
-                checkReturnAddressInRun(*state.image, removeCodePtrTag(callee->rawReturnPC()), callee);
+                checkReturnAddressInRun(*state.image, removeReturnAddressSignature(callee->rawReturnPC()), callee);
             return std::nullopt;
         }
         if (site->isStubReturnSite()) {
@@ -408,7 +408,7 @@ void JIT_OPERATION_ATTRIBUTES checkThatThrowingCallHasSite(Instance* instance, C
     void* stackPointer = stackPointerOfCaller(stubFrame);
     void* framePointer = stubFrame->callerFrameOrEntryFrame();
     while (framePointer != vm.topEntryFrame) {
-        const void* pc = removeCodePtrTag(callee->rawReturnPC());
+        const void* pc = removeReturnAddressSignature(callee->rawReturnPC());
         const CallSiteCache::Entry* site = state.callSiteCache->resolve(*state.image, pc);
         if (!site)
             return;
@@ -439,7 +439,7 @@ bool isCaughtAboveCleanup(VM& vm, const ReturnSiteInRun& siteOfCleanup)
 {
     if (findHandlerInRun<HandlerSearch::NearestThatEndsThrow>(vm, siteOfCleanup.callee, siteOfCleanup.stackPointer, siteOfCleanup.framePointer, vm.topEntryFrame))
         return true;
-    auto frames = CompiledFrameIterator::tryCreate(vm, siteOfCleanup.framePointer, removeCodePtrTag(siteOfCleanup.rawPC), vm.topEntryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, siteOfCleanup.stackPointer);
+    auto frames = CompiledFrameIterator::tryCreate(vm, siteOfCleanup.framePointer, removeReturnAddressSignature(siteOfCleanup.rawPC), vm.topEntryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, siteOfCleanup.stackPointer);
     return frames && findCatchInRun(*frames);
 }
 
@@ -503,7 +503,7 @@ Exception* exceptionKeptByCleanup(uint64_t kept, JSValue thrown)
 NEVER_INLINE Exception::StackCaptureAction stackCaptureActionOfThrow(VM& vm, const Instance& instance, JSValue thrown, const CallerFrameAndPC* frameRecordOfOperation, const CompiledUnwindResult* runWithoutHandler)
 {
     using Action = Exception::StackCaptureAction;
-    if (removeCodePtrTag(frameRecordOfOperation->callerFrame->rawReturnPC()) == instance.state->returnAddressOfThrowAfterCleanup) {
+    if (removeReturnAddressSignature(frameRecordOfOperation->callerFrame->rawReturnPC()) == instance.state->returnAddressOfThrowAfterCleanup) {
         uint64_t kept = instance.state->keptByCleanup;
         // The program threw the value somewhere else, and an Error keeps the stack that it holds.
         if (!isAddressInCompiledCode(kept))
