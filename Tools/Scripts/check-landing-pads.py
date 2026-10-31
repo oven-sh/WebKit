@@ -21,8 +21,8 @@ instruction = re.compile(r'^\s*([0-9a-f]+):\s+(.*)$')
 # What signs the return address is a landing pad for a call, and for a jump that has its target in x16 or x17.
 landing_pad = re.compile(r'bti\s+(?:c|j|jc)|paci[ab]sp')
 # The handlers of IPInt are in slots, and such a label is where a slot begins. The jump from one to the next has its target in any
-# register (arm64LowerJumpsForLandingPads in arm64.rb).
-landing_pad_of_slot = re.compile(r'bti\s+(?:j|jc)')
+# register (arm64LowerJumpsForLandingPads in arm64.rb), and nothing calls one.
+landing_pad_of_slot = re.compile(r'bti\s+j')
 
 errors = []
 

@@ -202,7 +202,7 @@ class Assembler
     def putsPendingLandingPad
         return unless @pendingLandingPad
         @outp.puts(formatDump("    \"hint ##{@pendingLandingPad} \\n\"", ""))
-        @pendingLandingPad = nil
+        @pendingLandingPad = @pendingLandingPadIsOfSlot = nil
     end
 
     def puts(*line)
@@ -267,7 +267,8 @@ class Assembler
             }
         end
         if $currentSettings and $currentSettings["BRANCH_TARGET_IDENTIFICATION"]
-            isHandler = (alignTo or (not isGlobal and /\Allint_op_/.match(labelName)))
+            @pendingLandingPadIsOfSlot ||= alignTo # Its other labels are names of the handler in it.
+            isHandler = (@pendingLandingPadIsOfSlot or (not isGlobal and /\Allint_op_/.match(labelName)))
             @pendingLandingPad = (@pendingLandingPad || 0) | (isHandler ? 36 : 34) # BTI j, BTI c. Both together are 38, BTI jc.
         end
         @newlineSpacerState = :none # After a global label, we can use another spacer.
