@@ -599,6 +599,17 @@ void Modules::retireRecord(ModuleRecord* record)
     m_records.remove(record->module());
 }
 
+void Modules::retireRecordOfModuleThatHasNotBegun(ModuleRecord* record)
+{
+    ASSERT(!record->isRetained());
+    ASSERT(status(record->module()) == ModuleStatus::Linked);
+    ASSERT(!record->evaluationError());
+    setStoredStatus(record->module(), StoredModuleStatus::Linked);
+    loader()->removeEntryOfRecord(record);
+    Locker locker { m_state.caches->lock() };
+    m_records.remove(record->module());
+}
+
 // An import() of a module of a cycle settles as the evaluation of the root of the cycle does.
 bool Modules::hasRunToItsEndWithItsCycle(const ModuleRecord& record) const
 {
@@ -641,9 +652,12 @@ void Modules::retireRecordsOfSettledLoads()
         record->takeStatus();
         if (!record->holdsStatus())
             continue;
-        if (status(module) == ModuleStatus::Linked)
-            recordEvaluationIfNothingIsLeftToRun(module);
-        if (hasRunToItsEndWithItsCycle(*record))
+        // The load has failed, and the loader keeps the error with the record.
+        if (record->status() == CyclicModuleRecord::Status::New)
+            continue;
+        if (isLeftToStartsOfImporters(module))
+            retireRecordOfModuleThatHasNotBegun(record);
+        else if (hasRunToItsEndWithItsCycle(*record))
             retireRecord(record);
     }
 }

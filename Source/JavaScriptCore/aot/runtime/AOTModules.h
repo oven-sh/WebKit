@@ -581,6 +581,7 @@ private:
     void keepErrorOfLoad(ModuleID root, RootOfLoad, ModuleID mocked, JSValue error);
     ModuleRecord* ensureRecordWithoutStatus(ModuleID);
     void retireRecord(ModuleRecord*);
+    void retireRecordOfModuleThatHasNotBegun(ModuleRecord*);
     bool hasRunToItsEndWithItsCycle(const ModuleRecord&) const;
     void setValue(ModuleID, JSValue);
     LoadedModule& ensureLoaded(ModuleID);
@@ -657,6 +658,7 @@ private:
     void didThrowInBody(ModuleID, JSValue error);
     void failEvaluatedModulesOfUnfinishedCycles(std::span<const ModuleID> failedModules, JSValue error);
     void recordEvaluationIfNothingIsLeftToRun(ModuleID);
+    bool isLeftToStartsOfImporters(ModuleID) const;
     bool isPassedOverByEvaluationInProgress(ModuleID) const;
 
     std::optional<ModuleID> mainCommonJSModule();

@@ -2629,6 +2629,11 @@ void Modules::recordEvaluationIfNothingIsLeftToRun(ModuleID module)
     setStatus(module, ModuleStatus::Evaluated);
 }
 
+bool Modules::isLeftToStartsOfImporters(ModuleID module) const
+{
+    return status(module) == ModuleStatus::Linked && isPassedOverByEvaluation(data(module));
+}
+
 // While a body runs, the modules between it and the root of its evaluation are being evaluated, and no status says so for one that is passed over.
 bool Modules::isPassedOverByEvaluationInProgress(ModuleID module) const
 {
