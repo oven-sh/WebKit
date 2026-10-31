@@ -288,7 +288,7 @@ const FieldData* RuntimeLayoutTable::findFieldWithoutColumn(const LayoutData& la
     }
     auto found = m_fieldsByName.find(layout.index + 1);
     if (found == m_fieldsByName.end())
-        found = m_fieldsByName.add(layout.index + 1, indexFieldsByName(fields)).iterator;
+        found = m_fieldsByName.iteratorAt(m_fieldsByName.add(layout.index + 1, indexFieldsByName(fields)).iterator);
     const Vector<uint16_t>& slots = found->value;
     size_t mask = slots.size() - 1;
     for (size_t slot = firstSlotOfName(identifierNumber, mask); slots[slot] != noFieldInSlot; slot = (slot + 1) & mask) {

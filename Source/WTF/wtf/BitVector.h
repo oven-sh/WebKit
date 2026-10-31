@@ -68,7 +68,7 @@ class FixedBitVector;
 
 // If you know the length of the vector at compile-time,
 // please consider using WTF::BitSet instead.
-class BitVector final {
+class TRIVIAL_ABI BitVector final {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(BitVector);
 public: 
     BitVector()

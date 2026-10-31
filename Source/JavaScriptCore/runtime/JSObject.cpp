@@ -3504,7 +3504,7 @@ bool JSObject::defineOwnIndexedProperty(JSGlobalObject* globalObject, unsigned i
     // 4. If current is undefined and extensible is true, then
     if (result.isNewEntry) {
         if (!isStructureExtensible()) {
-            map->remove(static_cast<SparseArrayValueMap::const_iterator>(result.iterator));
+            map->remove(map->iteratorAt(result.iterator));
             return typeError(globalObject, scope, throwException, NonExtensibleObjectPropertyDefineError);
         }
 

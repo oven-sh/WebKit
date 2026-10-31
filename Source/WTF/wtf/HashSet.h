@@ -31,7 +31,7 @@
 namespace WTF {
 
 template<typename ValueArg, typename HashArg, typename TraitsArg, typename TableTraitsArg, ShouldValidateKey shouldValidateKey>
-class HashSet final {
+class TRIVIAL_ABI HashSet final {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(HashSet);
 private:
     using HashFunctions = HashArg;
@@ -150,6 +150,8 @@ public:
     bool addAll(ContainerType&&);
     template<typename ContainerType>
     bool removeAll(const ContainerType&);
+
+    iterator iteratorAt(decltype(AddResult::iterator) entry) LIFETIME_BOUND { return iterator(m_impl.iteratorAt(entry)); }
 
     bool remove(const ValueType&);
     bool remove(iterator);

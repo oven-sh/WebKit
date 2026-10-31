@@ -26,7 +26,7 @@
 
 namespace WTF {
 
-class AtomString final {
+class TRIVIAL_ABI AtomString final {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(AtomString);
 public:
     AtomString();

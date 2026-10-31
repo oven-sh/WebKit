@@ -129,7 +129,7 @@ private:
         if (found == m_lists.end()) {
             if (isSmall)
                 return nullptr;
-            found = m_lists.add(block, IndexedList { }).iterator;
+            found = m_lists.iteratorAt(m_lists.add(block, IndexedList { }).iterator);
             auto& predecessors = block->predecessors();
             for (unsigned i = 0; i < predecessors.size(); ++i)
                 found->value.hasDuplicatePredecessor |= !found->value.indices.add(predecessors[i], i).isNewEntry;

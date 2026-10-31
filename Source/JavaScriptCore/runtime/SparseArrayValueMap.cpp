@@ -106,7 +106,7 @@ bool SparseArrayValueMap::putEntry(JSGlobalObject* globalObject, JSObject* array
     // In the uncommon case that this is a new property, and the array is not
     // extensible, this is not the right thing to have done - so remove again.
     if (result.isNewEntry && !array->isStructureExtensible()) {
-        remove(static_cast<const_iterator>(result.iterator));
+        remove(iteratorAt(result.iterator));
         return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
     }
 
@@ -128,7 +128,7 @@ bool SparseArrayValueMap::putDirect(JSGlobalObject* globalObject, JSObject* arra
     // In the uncommon case that this is a new property, and the array is not
     // extensible, this is not the right thing to have done - so remove again.
     if (mode != PutDirectIndexLikePutDirect && result.isNewEntry && !array->isStructureExtensible()) {
-        remove(static_cast<const_iterator>(result.iterator));
+        remove(iteratorAt(result.iterator));
         return typeError(globalObject, scope, shouldThrow, NonExtensibleObjectPropertyDefineError);
     }
 
