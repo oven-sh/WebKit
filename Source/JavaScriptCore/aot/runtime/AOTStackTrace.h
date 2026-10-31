@@ -178,6 +178,7 @@ JS_EXPORT_PRIVATE LineColumn obfuscatedPositionOf(const TraceFrame&);
 JS_EXPORT_PRIVATE String sourceURLOf(ModuleID);
 // What the engine writes for the file in the lines `name@url:line:column`.
 String sourceProviderURLOf(ModuleID);
+String sourceProviderURLOf(const TraceFrame&, const std::optional<SourcePosition>&);
 JS_EXPORT_PRIVATE String describeCodeAddresses(std::span<const void* const>);
 JS_EXPORT_PRIVATE JSCell* livenessToken(Instance*);
 

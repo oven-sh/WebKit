@@ -95,10 +95,6 @@ std::optional<AOT::SourcePosition> StackFrame::compiledPosition() const
     return isCompiledFrame() ? AOT::positionOf(compiledFrame()) : std::nullopt;
 }
 
-static String compiledSourceURL(const std::optional<AOT::SourcePosition>& position)
-{
-    return position ? AOT::sourceProviderURLOf(position->source) : emptyString();
-}
 
 static String compiledFunctionName(VM& vm, const CompiledFrameData& compiledFrame, const AOT::FunctionDescription& description)
 {
@@ -287,7 +283,7 @@ String StackFrame::sourceURL(VM& vm, AllowURLOverride allowOverride) const
         }
 #if ENABLE(AOT)
         , [this](const CompiledFrameData&) -> String {
-            return representsHostFunction() ? "[native code]"_s : compiledSourceURL(compiledPosition());
+            return representsHostFunction() ? "[native code]"_s : AOT::sourceProviderURLOf(compiledFrame(), compiledPosition());
         }
 #endif
     );
@@ -316,7 +312,7 @@ String StackFrame::sourceURLStripped(VM& vm) const
         }
 #if ENABLE(AOT)
         , [this](const CompiledFrameData&) -> String {
-            return representsHostFunction() ? "[native code]"_s : compiledSourceURL(compiledPosition());
+            return representsHostFunction() ? "[native code]"_s : AOT::sourceProviderURLOf(compiledFrame(), compiledPosition());
         }
 #endif
     );
@@ -427,7 +423,7 @@ ALWAYS_INLINE auto StackFrame::withPartsOfString(VM& vm, const Functor& functor)
         if (description.builtinKind() == AOT::StackTraceBuiltinKind::HostFunction)
             return functor(functionName, "@[native code]"_s);
         auto position = AOT::positionOf(compiledFrame->frame);
-        fullSourceURL = compiledSourceURL(position);
+        fullSourceURL = AOT::sourceProviderURLOf(compiledFrame->frame, position);
         hasLineAndColumnInfo = true;
         if (position)
             lineColumn = position->lineColumn;

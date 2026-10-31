@@ -545,6 +545,9 @@ static StackTraceBuiltinKind builtinKindOf(const BuiltinTable& builtins, const F
 {
     if (!builtin)
         return isInsideBuiltinFunction(builtins, source) ? StackTraceBuiltinKind::JSBuiltin : StackTraceBuiltinKind::None;
+    // The host has what it does as a function of a module of its own, and a stack trace lists that like any other function: FunctionDescription::isHelperOfCompiler().
+    if (source.syntax.contains(FunctionSyntax::IsShownInModuleOfHelpers))
+        return StackTraceBuiltinKind::None;
     if (std::ranges::any_of(builtins.overloadsOf(*builtin), callsHostFunction))
         return StackTraceBuiltinKind::HostFunction;
     return builtins.at(*builtin).kind == BuiltinKind::Constructor ? StackTraceBuiltinKind::JSBuiltinConstructor : StackTraceBuiltinKind::JSBuiltin;

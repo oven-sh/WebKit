@@ -2865,7 +2865,7 @@ struct ArmDispatcher {
             RELEASE_ASSERT(rest);
             // Whoever expects only undefined or null of what is left says nothing about what is iterated.
             if (arm.isExpectedByNobody)
-                rest = builder.append(makeWith(Opcode::Expect, { rest }, &Value::setExpectedType, ExpectedType(pass.types.intern(pass.program.typeOf(function, rest).withoutNullish()))));
+                rest = builder.append(makeWith(Opcode::Expect, { rest }, &Value::setExpectedType, ExpectedType(pass.types.intern(pass.program.typeOf(function, rest).withoutNullish().withoutClassProofs()))));
             bool isFollowedByLoopOfItsOwn = &arm != &plan.classArms().back() && plan.classArms().back().isExpectedByNobody;
             rest = emitClassArm(arm, rest, protocolEntry, isFollowedByLoopOfItsOwn ? BlockFrequency::Normal : BlockFrequency::Unlikely);
         }

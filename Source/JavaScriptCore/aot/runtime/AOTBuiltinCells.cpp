@@ -1237,6 +1237,8 @@ static void didCreateClass(Instance* instance, JSGlobalObject* realm, const Lazy
     if (builtinClass)
         instance->didCreateInstanceStructure(builtinClass, structure);
     BuiltinID constructorID = findGlobalCreatedWith(realm, lazyStructure);
+    if (!constructorID)
+        constructorID = findMemberOfNamespaceCreatedWith(realm, lazyStructure);
     BuiltinID prototypeID;
     if (constructorID) {
         constructorID = table.canonicalID(constructorID);
@@ -1305,6 +1307,39 @@ JSObject* takeStaticPropertyMadeAhead(JSObject* holder, UniquedStringImpl* key)
     return taken;
 }
 
+// The host makes the constructor of such a class where somebody first asks for it, by the name of the class or through an instance.
+static void awaitConstructorOfClass(Instance& instance, BuiltinClassID builtinClass, JSObject* prototype)
+{
+    BuiltinCells& cells = *instance.state->builtinCells;
+    BuiltinID constructor = BuiltinTable::singleton().at(builtinClass).constructor;
+    if (constructor && prototype && cells.builtinsToLock().get(constructor.index()) && !cells.hasLocked(constructor))
+        cells.awaitConstructor(prototype, constructor);
+}
+
+void hostDidCreateConstructor(JSGlobalObject* realm, JSObject* constructor)
+{
+    if (!realm->aotInstance())
+        return;
+    JSObject* prototype = findExistingObject(constructor, realm->vm().propertyNames->prototype.impl());
+    if (!prototype)
+        return;
+    const BuiltinTable& table = BuiltinTable::singleton();
+    forEachInstanceThatLocks(realm, [&](Instance& instance) {
+        BuiltinCells& cells = *instance.state->builtinCells;
+        BuiltinID id = cells.takeAwaitedConstructor(prototype);
+        // A program that came to the realm behind the Structure found the prototype object there.
+        if (BuiltinID prototypeID = id ? BuiltinID() : cells.builtinOfLockedObject(prototype)) {
+            BuiltinClassID builtinClass = table.at(prototypeID).instanceClass;
+            if (builtinClass && table.at(builtinClass).prototype == prototypeID)
+                id = table.at(builtinClass).constructor;
+        }
+        if (!id)
+            return;
+        BuiltinLocker locker(instance);
+        locker.lock(id, constructor);
+    });
+}
+
 void hostDidCreateStructure(JSGlobalObject* realm, Structure* structure)
 {
     if (!realm->aotInstance())
@@ -1318,10 +1353,20 @@ void hostDidCreateStructure(JSGlobalObject* realm, Structure* structure)
     forEachInstanceThatLocks(realm, [&](Instance& instance) {
         if (validatesRuntime(realm->vm())) [[unlikely]]
             validateClassWithInstanceStructure(realm, structure, builtinClass);
-        if (!builtinClass)
-            return;
         BuiltinLocker locker(instance);
-        lockPrototypeOfClass(locker, builtinClass, structure->storedPrototypeObject());
+        JSObject* prototype = structure->storedPrototypeObject();
+        if (!builtinClass) {
+            // The host need not say where it keeps the Structure: the instances say which class they are of.
+            const ClassInfo* info = structure->classInfoForCells();
+            BuiltinClassID classOfInstances = BuiltinBindings::classOf(info);
+            if (!classOfInstances || BuiltinBindings::instanceClassInfoOf(classOfInstances) != info)
+                return;
+            lockPrototypeOfClass(locker, classOfInstances, prototype);
+            awaitConstructorOfClass(instance, classOfInstances, prototype);
+            return;
+        }
+        lockPrototypeOfClass(locker, builtinClass, prototype);
+        awaitConstructorOfClass(instance, builtinClass, prototype);
         markPristine(realm->vm(), builtinClass, structure);
     });
 }

@@ -348,6 +348,8 @@ JSGlobalObject* CompiledFrame::globalObject() const
 
 String CompiledFrame::sourceURL() const
 {
+    if (FunctionDescription(function).isHelperOfCompiler()) [[unlikely]]
+        return moduleOfCompilerHelpers;
     auto position = findPosition(*this);
     return position && position->source ? sourceURLOf(position->source) : String();
 }

@@ -226,6 +226,11 @@ StackTraceBuiltinKind FunctionDescription::builtinKind() const
     return m_record->builtinKind();
 }
 
+bool FunctionDescription::isHelperOfCompiler() const
+{
+    return m_record->implementsBuiltin && builtinKind() == StackTraceBuiltinKind::None;
+}
+
 std::optional<SourcePosition> FunctionDescription::definition() const
 {
     if (isOfCalledBuiltin())
@@ -1630,6 +1635,14 @@ String sourceURLOf(ModuleID module)
 String sourceProviderURLOf(ModuleID module)
 {
     return module ? sourceProviderURL(module) : emptyString();
+}
+
+String sourceProviderURLOf(const TraceFrame& frame, const std::optional<SourcePosition>& position)
+{
+    ImageOfTraceFrameScope imageOfFrame(frame);
+    if (FunctionDescription(frame.function).isHelperOfCompiler()) [[unlikely]]
+        return moduleOfCompilerHelpers;
+    return position ? sourceProviderURLOf(position->source) : emptyString();
 }
 
 String describeCodeAddresses(std::span<const void* const> addresses)

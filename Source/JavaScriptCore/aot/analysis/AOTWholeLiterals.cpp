@@ -42,11 +42,13 @@ std::optional<Vector<ConstantMember, 8>> findMembersOfObjectLiteral(const Progra
     }
     if (literal.opcode != Opcode::NewObject || literal.prototypeOperand())
         return std::nullopt;
+    const Layout& layout = program.at(literal.layout());
+    if (layout.kind != LayoutKind::Record)
+        return std::nullopt;
     auto fields = literal.fields();
     auto values = literal.valuesOperands();
     if (fields.size() != values.size())
         return std::nullopt;
-    const Layout& layout = program.at(literal.layout());
     Vector<ConstantMember, 8> members;
     for (size_t index = 0; index < fields.size(); ++index) {
         PropertyKeyID key = layout.fields[fields[index]].key;

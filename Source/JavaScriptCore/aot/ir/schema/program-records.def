@@ -36,7 +36,7 @@ flags FunctionFlags {
     HasExplicitName IsNakedConstructor IsNamedByComputedKey
     | engine AllocatesOwnThis IsSplitOffGenericVersion
 }
-flags FunctionSyntax { HasWrittenAwait IsEvaluatedScript IsShownAsNativeCode }
+flags FunctionSyntax { HasWrittenAwait IsEvaluatedScript IsShownAsNativeCode IsShownInModuleOfHelpers }
 enum EntryParameter (presentWith: FunctionFlags) {
     Capture(none) This(HasThis) Callee(TakesCallee) NewTarget(HasNewTarget) ArgumentCount(HasArgumentCount) Parameter(none) HiddenRest(HasHiddenRest)
 }

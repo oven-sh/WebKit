@@ -715,12 +715,19 @@ static void noteEvaluation(ValueFlowRuleContext& context, ModuleID id)
             || context.holdsAnyOf(objectOfModule, ValueFlowProgramNodes::lost());
         if (mayBeMadeAnew)
             context.add(variable, filled());
-        if (!isObjectKind(builtins.at(member).kind))
-            context.add(variable, context.universe().undefinedValue());
-        else if (context.universe().builtinTables().heap().letsInUnseenCode(member)) {
+        // The lookup below answers whoever reads under the name, so it leaves out what lets in unseen code. This is the one who names the member.
+        bool letsInUnseenCode = context.universe().builtinTables().heap().letsInUnseenCode(member);
+        if (letsInUnseenCode)
             context.use(member, BuiltinUse::Read);
+        if (!isObjectKind(builtins.at(member).kind)) {
+            context.add(variable, context.universe().undefinedValue());
+            // No object stands for what a property holds: the importer has a value that nobody knows, and may call it.
+            if (letsInUnseenCode) {
+                context.add(variable, filled());
+                letUnseenCodeRun(context, UnseenCodeReach::Realm);
+            }
+        } else if (letsInUnseenCode)
             context.add(variable, only(context, context.universe().objectOf(member)));
-        }
         connect(context, properties.held, variable);
         connect(context, properties.others, variable);
     }

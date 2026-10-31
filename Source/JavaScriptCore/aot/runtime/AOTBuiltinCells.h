@@ -77,6 +77,17 @@ public:
     void didLockEveryPropertyOf(JSObject* object) { m_objectsWithEveryPropertyLocked.append(object); }
     bool hasLocked(BuiltinID id) const { return m_lockedBuiltins.get(id.index()); }
     BuiltinID builtinOfLockedObject(JSObject*) const;
+    // The realm keeps the prototype object of a class for as long as it lives.
+    void awaitConstructor(JSObject* prototype, BuiltinID constructor) { m_awaitedConstructors.append({ prototype, constructor }); }
+    BuiltinID takeAwaitedConstructor(JSObject* prototype)
+    {
+        size_t index = m_awaitedConstructors.findIf([&](const AwaitedConstructor& awaited) { return awaited.prototype == prototype; });
+        if (index == notFound)
+            return { };
+        BuiltinID constructor = m_awaitedConstructors[index].constructor;
+        m_awaitedConstructors.removeAt(index);
+        return constructor;
+    }
     std::span<JSObject* const> objectsWithEveryPropertyLocked() const { return m_objectsWithEveryPropertyLocked.span(); }
 
     // The built-ins that are locked once the realm has created them, and the holders on the paths to them.
@@ -131,6 +142,11 @@ private:
         JSObject* member;
     };
     Vector<MemberMadeAhead> m_membersMadeAhead;
+    struct AwaitedConstructor {
+        JSObject* prototype;
+        BuiltinID constructor;
+    };
+    Vector<AwaitedConstructor> m_awaitedConstructors;
     struct CellAwaitingModule {
         uint32_t root;
         uint32_t number;

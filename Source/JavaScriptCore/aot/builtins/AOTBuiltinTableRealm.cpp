@@ -282,6 +282,38 @@ static const ClassesOfStaticTables& classesOfStaticTablesOfFirstRealm(JSGlobalOb
     return classes.get();
 }
 
+BuiltinID findMemberOfNamespaceCreatedWith(JSGlobalObject* realm, const LazyClassStructure& lazyStructure)
+{
+    struct ClassOfNamespace {
+        const LazyClassStructure* lazyStructure;
+        ASCIILiteral holder;
+        ASCIILiteral name;
+    };
+    const ClassOfNamespace classes[] = {
+        { &realm->m_durationStructure, "Temporal"_s, "Duration"_s },
+        { &realm->m_instantStructure, "Temporal"_s, "Instant"_s },
+        { &realm->m_plainDateStructure, "Temporal"_s, "PlainDate"_s },
+        { &realm->m_plainDateTimeStructure, "Temporal"_s, "PlainDateTime"_s },
+        { &realm->m_plainMonthDayStructure, "Temporal"_s, "PlainMonthDay"_s },
+        { &realm->m_plainTimeStructure, "Temporal"_s, "PlainTime"_s },
+        { &realm->m_plainYearMonthStructure, "Temporal"_s, "PlainYearMonth"_s },
+        { &realm->m_zonedDateTimeStructure, "Temporal"_s, "ZonedDateTime"_s },
+#define AOT_CLASS_OF_WEBASSEMBLY(capitalName, lowerName, properName, instanceType, jsName, prototypeBase, featureFlag) { &realm->m_ ## properName ## Structure, "WebAssembly"_s, #jsName ## _s },
+        FOR_EACH_WEBASSEMBLY_CONSTRUCTOR_TYPE(AOT_CLASS_OF_WEBASSEMBLY)
+#undef AOT_CLASS_OF_WEBASSEMBLY
+    };
+    const BuiltinTable& table = BuiltinTable::singleton();
+    for (const ClassOfNamespace& entry : classes) {
+        if (entry.lazyStructure != &lazyStructure)
+            continue;
+        BuiltinName holderName = table.nameOf(byteCast<uint8_t>(entry.holder.span()));
+        BuiltinID holder = holderName ? table.findGlobal(holderName) : BuiltinID();
+        BuiltinName name = holder ? table.nameOf(byteCast<uint8_t>(entry.name.span())) : BuiltinName();
+        return name ? table.findOwnMember(table.canonicalID(holder), name) : BuiltinID();
+    }
+    return { };
+}
+
 BuiltinID findGlobalCreatedWith(JSGlobalObject* realm, const LazyClassStructure& lazyStructure)
 {
     const BuiltinTable& table = BuiltinTable::singleton();

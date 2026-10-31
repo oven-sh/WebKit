@@ -201,8 +201,13 @@ static std::optional<LineColumn> positionInBuiltin(const Program& program, Funct
     if (!owner.enclosingRuntimeFunction)
         return std::nullopt;
     switch (program.builtins().at(owner.enclosingRuntimeFunction).role) {
-    case RuntimeFunctionRole::CompilerFunction:
-        return positionOfImplementedBuiltin(functionTraceOf(program, shown).builtinKind());
+    case RuntimeFunctionRole::CompilerFunction: {
+        auto trace = functionTraceOf(program, shown);
+        // The text of the module that its frames name is the host's.
+        if (trace.implementsBuiltin && trace.builtinKind() == StackTraceBuiltinKind::None)
+            return startOfBuiltinFunction;
+        return positionOfImplementedBuiltin(trace.builtinKind());
+    }
     case RuntimeFunctionRole::Model:
         return std::nullopt;
     case RuntimeFunctionRole::EngineBuiltin:

@@ -54,6 +54,8 @@ JSObject* takeStaticPropertyMadeAhead(JSObject* holder, UniquedStringImpl* key);
 bool reportsCreationOfMember(JSObject* holder, UniquedStringImpl* key);
 // For a Structure of instances that a host does not keep in a LazyClassStructure.
 JS_EXPORT_PRIVATE void hostDidCreateStructure(JSGlobalObject*, Structure*);
+// For the constructor of a class whose Structure was reported so. An instance leads to it, and nobody need have read the name of the class by then.
+JS_EXPORT_PRIVATE void hostDidCreateConstructor(JSGlobalObject*, JSObject* constructor);
 // No name of the realm leads to the object of node:module, and the table locks the hooks of the loader on it.
 JS_EXPORT_PRIVATE void hostDidCreateNodeModule(JSGlobalObject*, JSObject* constructor);
 // For an object that the global object names only from the first read of the name on. It is locked from its creation: there are other ways to it.
