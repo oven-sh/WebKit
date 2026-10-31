@@ -196,6 +196,34 @@ bool Modules::wouldBeEvicted(ModuleID module)
     return status(file) == ModuleStatus::Evaluating || hasRun(file);
 }
 
+// ES modules import a CommonJS file through its face, which require() leaves alone. The loader has what a module imports before the module begins.
+bool Modules::wasLoadedByImport(ModuleID module)
+{
+    ModuleID file = fileOf(module);
+    if (data(file).kind == ModuleKind::SourceText)
+        return true;
+    ModuleID imported = moduleWithExportsOf(file);
+    if (imported != file && status(imported) >= ModuleStatus::Evaluating)
+        return true;
+    BitVector reached(m_table.size());
+    Vector<ModuleID, 64> toFollow;
+    for (unsigned index = 0; index < m_table.size(); ++index) {
+        if (status(ModuleID(index)) >= ModuleStatus::Evaluating)
+            toFollow.append(ModuleID(index));
+    }
+    while (!toFollow.isEmpty()) {
+        for (const ModuleRequestData& request : m_table.requests(toFollow.takeLast())) {
+            if (request.isDeferred || request.isRequire)
+                continue;
+            if (request.targetModule() == imported)
+                return true;
+            if (!reached.set(request.target()))
+                toFollow.append(request.targetModule());
+        }
+    }
+    return false;
+}
+
 void Modules::evict(ModuleID module)
 {
     ModuleID file = fileOf(module);
@@ -2826,12 +2854,25 @@ static void evictFromItsImage(JSGlobalObject* realm, ModuleID moduleOfHost)
     modules->evict(module);
 }
 
+// A store leaves the loader as it is, and the host's require() looks there behind a falsy entry: it finds a module of the library, and a file that an import has loaded.
+static bool isFoundBehindFalsyEntry(JSGlobalObject* realm, ModuleID moduleOfHost)
+{
+    ModuleFromHost module(realm, moduleOfHost);
+    Modules* modules = modulesOf(realm);
+    return modules && (modules->data(module).isOfLibrary() || modules->wasLoadedByImport(module));
+}
+
+enum class TakenOutBy : bool { Deletion, FalsyStore };
+
 // The cache knows a file by its path. Several images may hold the file, the image of a test file and one that it shares with others, and the copy that has run may be in any of them.
-void didDeleteRequireCacheEntry(JSGlobalObject* realm, ModuleID moduleOfHost)
+static void evictFromEveryImage(JSGlobalObject* realm, ModuleID moduleOfHost, TakenOutBy takenOutBy)
 {
     const Image* running = Image::current();
-    if (!running || !running->sharesRealms()) [[likely]]
+    if (!running || !running->sharesRealms()) [[likely]] {
+        if (takenOutBy == TakenOutBy::FalsyStore && isFoundBehindFalsyEntry(realm, moduleOfHost))
+            return;
         return evictFromItsImage(realm, moduleOfHost);
+    }
     String path;
     {
         ModuleFromHost module(moduleOfHost);
@@ -2843,6 +2884,8 @@ void didDeleteRequireCacheEntry(JSGlobalObject* realm, ModuleID moduleOfHost)
             copies.append(moduleIDForHost(image, *copy));
         return IterationStatus::Continue;
     });
+    if (takenOutBy == TakenOutBy::FalsyStore && std::ranges::any_of(copies, [&](ModuleID copy) { return isFoundBehindFalsyEntry(realm, copy); }))
+        return;
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
     for (ModuleID copy : copies) {
         evictFromItsImage(realm, copy);
@@ -2852,6 +2895,16 @@ void didDeleteRequireCacheEntry(JSGlobalObject* realm, ModuleID moduleOfHost)
         if (Modules* modules = instance->state->modules.get())
             modules->didEvictFromOtherImage();
     }
+}
+
+void didDeleteRequireCacheEntry(JSGlobalObject* realm, ModuleID moduleOfHost)
+{
+    evictFromEveryImage(realm, moduleOfHost, TakenOutBy::Deletion);
+}
+
+void willClearRequireCacheEntry(JSGlobalObject* realm, ModuleID moduleOfHost)
+{
+    evictFromEveryImage(realm, moduleOfHost, TakenOutBy::FalsyStore);
 }
 
 bool willLoadFileInAnotherWay(JSGlobalObject* realm, ModuleID moduleOfHost)
@@ -3201,7 +3254,7 @@ std::pair<Modules*, ModuleID> Modules::ownerOfRequiredModule(ModuleID required)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The host's require() takes no entry that is falsy.
+// The host's require() takes no entry that is falsy: willClearRequireCacheEntry().
 void willSetRequireCacheEntry(JSGlobalObject* realm, ModuleID moduleOfHost, JSValue entry)
 {
     ModuleFromHost module(realm, moduleOfHost);

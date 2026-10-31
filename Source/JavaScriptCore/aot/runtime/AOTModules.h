@@ -232,6 +232,8 @@ public:
     void recordRequireOfOtherImage(ModuleID referrer, ModuleID required);
     // Whether evict() would do anything: the file runs or has run.
     bool wouldBeEvicted(ModuleID);
+    // Whether the loader of plain Bun would hold a module for the file, which only a deletion takes away.
+    bool wasLoadedByImport(ModuleID);
     // Code is compiled for files that load once, but for those that the build saw taken out of require.cache. What holds no code is read again at any time.
     bool mayBeEvicted(ModuleID module) const
     {

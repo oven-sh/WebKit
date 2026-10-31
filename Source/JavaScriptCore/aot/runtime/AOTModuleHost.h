@@ -170,6 +170,9 @@ JS_EXPORT_PRIVATE void didRequireModule(JSGlobalObject*, ModuleID, ModuleID refe
 JS_EXPORT_PRIVATE void willSetRequireCacheEntry(JSGlobalObject*, ModuleID, JSValue entry);
 // The host admits code from disk: the next load of the file takes it from there, as a new instance. An executable has its files in no cache.
 JS_EXPORT_PRIVATE void didDeleteRequireCacheEntry(JSGlobalObject*, ModuleID);
+// The host admits code from disk, and the program stores a falsy value over the entry, which the host's require() takes for no entry. The store leaves the modules that imports have made
+// where they are, and the host's require() looks there next: a file that an import has loaded stays.
+JS_EXPORT_PRIVATE void willClearRequireCacheEntry(JSGlobalObject*, ModuleID);
 // The host admits code from disk, and the program has given it something that loads the file in another way than the build did. A file that has run stays.
 // False: the code that imports the file was compiled for the file as the build read it.
 JS_EXPORT_PRIVATE bool willLoadFileInAnotherWay(JSGlobalObject*, ModuleID);
