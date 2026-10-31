@@ -230,7 +230,6 @@ private:
         TokenType nextMaybeIdentifier();
         TokenType nextAfterValue();
         bool consumeColon();
-        void skipWhitespaceBeforeKey();
         CharType peek() const { return m_ptr < m_end ? *m_ptr : CharType { }; }
         TokenType nextString();
         TokenType nextNumber();
@@ -245,7 +244,8 @@ private:
         }
         void cacheString(JSONCache&, JSString*, std::span<const CachedCharType> source);
         // At a quote. Of the texts in UTF-8 bytes only ASCII ones are cached.
-        bool mayHaveCachedString() const { return !isUTF8 || m_end - m_ptr < 2 || isASCII(m_ptr[1]); }
+        static bool mayHaveCachedString(const CharType* quote, const CharType* end) { return !isUTF8 || end - quote < 2 || isASCII(quote[1]); }
+        bool mayHaveCachedString() const { return mayHaveCachedString(m_ptr, m_end); }
         String takeStringOfCurrentToken() requires isUTF8;
         bool failedToAllocate() const { return m_failedToAllocate; }
 
@@ -288,10 +288,15 @@ private:
 
         const CharType* ptr() const { return m_ptr; }
         const CharType* start() const { return m_start; }
+        const CharType* end() const { return m_end; }
+        void setPtr(const CharType* ptr)
+        {
+            ASSERT(m_start <= ptr && ptr <= m_end);
+            m_ptr = ptr;
+        }
 #if USE(BUN_JSC_ADDITIONS)
         bool isAtEnd() const { return m_ptr >= m_end; }
         const CharType* positionAfterLastToken() const { return m_positionAfterLastToken; }
-        const CharType* end() const { return m_end; }
         void advanceTo(const CharType* p) { m_ptr = p; }
 #endif
         inline const CharType* LEGACY_NODELETE currentTokenStart() const;

@@ -3248,7 +3248,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDollarAgentStart, (JSGlobalObject* globalObject
         return JSValue::encode(throwException(globalObject, scope, createError(globalObject, "Too many live agents"_s)));
     }
 
-    Thread::create(
+    RefPtr thread = Thread::tryCreate(
         "JSC Agent"_s,
         [sourceCode = WTF::move(sourceCode).isolatedCopy(), workerPath = WTF::move(workerPath).isolatedCopy(), &didStartLock, &didStartCondition, &didStart] () {
             CommandLine commandLine(CommandLine::CommandLineForWorkers);
@@ -3273,8 +3273,13 @@ JSC_DEFINE_HOST_FUNCTION(functionDollarAgentStart, (JSGlobalObject* globalObject
                         exitProcess(EXIT_FAILURE);
                 });
             numLiveAgents.fetch_sub(1);
-        })->detach();
-    
+        });
+    if (!thread) [[unlikely]] {
+        numLiveAgents.fetch_sub(1);
+        return JSValue::encode(throwOutOfMemoryError(globalObject, scope, "Failed to create agent thread"_s));
+    }
+    thread->detach();
+
     {
         Locker locker { didStartLock };
         while (!didStart)

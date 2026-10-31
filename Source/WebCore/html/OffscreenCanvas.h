@@ -39,6 +39,7 @@
 #include <WebCore/IntSize.h>
 #include <WebCore/PlaceholderRenderingContextIdentifier.h>
 #include <WebCore/ScriptWrappable.h>
+#include <WebCore/WritingMode.h>
 #include <wtf/FixedVector.h>
 #include <wtf/Forward.h>
 #include <wtf/RefCounted.h>
@@ -90,9 +91,9 @@ class DetachedOffscreenCanvas {
     friend class OffscreenCanvas;
 
 public:
-    DetachedOffscreenCanvas(const IntSize&, bool originClean, RefPtr<PlaceholderRenderingContextSource>&&);
+    DetachedOffscreenCanvas(const IntSize&, bool originClean, RefPtr<PlaceholderRenderingContextSource>&&, String&& inheritedLanguage, TextDirection inheritedDirection);
     // Decoded after crossing a process boundary, where only the placeholder's identity can travel.
-    WEBCORE_EXPORT DetachedOffscreenCanvas(const IntSize&, bool originClean, std::optional<RemotePlaceholderRenderingContextIdentifier>);
+    WEBCORE_EXPORT DetachedOffscreenCanvas(const IntSize&, bool originClean, std::optional<RemotePlaceholderRenderingContextIdentifier>, String&& inheritedLanguage, TextDirection inheritedDirection);
     WEBCORE_EXPORT DetachedOffscreenCanvas(DetachedOffscreenCanvas&&);
     WEBCORE_EXPORT DetachedOffscreenCanvas& operator=(DetachedOffscreenCanvas&&);
     WEBCORE_EXPORT ~DetachedOffscreenCanvas();
@@ -102,6 +103,8 @@ public:
     const IntSize& size() const LIFETIME_BOUND { return m_size; }
     bool originClean() const { return m_originClean; }
     WEBCORE_EXPORT std::optional<RemotePlaceholderRenderingContextIdentifier> placeholderIdentifier() const;
+    const String& inheritedLanguage() const LIFETIME_BOUND { return m_inheritedLanguage; }
+    TextDirection inheritedDirection() const { return m_inheritedDirection; }
 
 private:
     RefPtr<PlaceholderRenderingContextSource> takePlaceholderSource(ScriptExecutionContext&);
@@ -110,6 +113,8 @@ private:
     Variant<RefPtr<PlaceholderRenderingContextSource>, RemotePlaceholderRenderingContextIdentifier> m_placeholder;
     IntSize m_size;
     bool m_originClean;
+    String m_inheritedLanguage;
+    TextDirection m_inheritedDirection;
 };
 
 class OffscreenCanvas final : public ActiveDOMObject, public CanvasBase, public RefCounted<OffscreenCanvas>, public EventTarget {
@@ -168,6 +173,11 @@ public:
     void dispatchEvent(Event&) final;
     bool isDetached() const { return m_detached; };
 
+    // https://html.spec.whatwg.org/multipage/canvas.html#offscreencanvas-inherited-lang
+    const AtomString& inheritedLanguage() const LIFETIME_BOUND { return m_inheritedLanguage; }
+    // https://html.spec.whatwg.org/multipage/canvas.html#offscreencanvas-inherited-direction
+    TextDirection inheritedDirection() const { return m_inheritedDirection; }
+
 private:
     OffscreenCanvas(ScriptExecutionContext&, IntSize, RefPtr<PlaceholderRenderingContextSource>&&);
 
@@ -192,6 +202,8 @@ private:
 
     std::unique_ptr<CanvasRenderingContext> m_context;
     RefPtr<PlaceholderRenderingContextSource> m_placeholderSource;
+    AtomString m_inheritedLanguage;
+    TextDirection m_inheritedDirection { TextDirection::LTR };
     bool m_detached { false };
     bool m_hasScheduledCommit { false };
 #if ENABLE(WEBGL)

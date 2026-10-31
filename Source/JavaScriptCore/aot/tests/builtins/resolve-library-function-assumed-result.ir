@@ -5,11 +5,11 @@
 # CHECK: outcome: Unchanged
 
 module m0 path="main.js" displayPath="main.js"
-runtimefunction id=31 function=f2
-runtimefunction id=65 function=f7
-runtimefunction id=89 function=f0
+runtimefunction id=30 function=f2
+runtimefunction id=64 function=f7
+runtimefunction id=88 function=f0
 runtimefunction id=131091 function=f1
-function f0 name="some" role=Library flags=[HasThis] enclosingRuntimeFunction=89 thisType={type=anything} parameters=[{type=anything}, {type=boolean flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] {
+function f0 name="some" role=Library flags=[HasThis] enclosingRuntimeFunction=88 thisType={type=anything} parameters=[{type=anything}, {type=boolean flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] {
   b0(v0: anything, v1: anything, v2: anything):
     Return v2
 }
@@ -17,7 +17,7 @@ function f1 name="traverseArray" role=Library enclosingRuntimeFunction=131091 pa
   b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
     Return v0
 }
-function f2 name="every" role=Library flags=[HasThis] enclosingRuntimeFunction=31 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+function f2 name="every" role=Library flags=[HasThis] enclosingRuntimeFunction=30 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
     v3 = Boolean boolean=true
     Return v3
 }
@@ -54,6 +54,6 @@ function f6 name="promisedClass" parameters=[{type=Array<anything, pristine[Stor
 # CHECK-NEXT: v3: Array = AssumeType [[called6]] provenType=Array
 }
 
-function f7 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f7 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     Return v0
 }

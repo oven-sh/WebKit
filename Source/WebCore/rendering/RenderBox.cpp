@@ -499,7 +499,7 @@ void RenderBox::styleDidChange(Style::Difference diff, const Style::ComputedStyl
 
     if (layer() && oldStyle && oldStyle->scrollbarWidth() != newStyle.scrollbarWidth()) {
         if (isDocElementRenderer)
-            protect(view())->frameView().scrollbarWidthChanged(Style::toPlatform(newStyle.scrollbarWidth()));
+            view().frameView().scrollbarWidthChanged(Style::toPlatform(newStyle.scrollbarWidth()));
         else if (CheckedPtr scrollableArea = layer()->scrollableArea())
             scrollableArea->scrollbarWidthChanged(Style::toPlatform(newStyle.scrollbarWidth()));
     }
@@ -535,7 +535,7 @@ void RenderBox::styleDidChange(Style::Difference diff, const Style::ComputedStyl
     bool isBodyRenderer = isBody();
 
     if (isDocElementRenderer || isBodyRenderer) {
-        protect(view())->frameView().recalculateScrollbarOverlayStyle();
+        view().frameView().recalculateScrollbarOverlayStyle();
 
         if (diff != Style::DifferenceResult::Equal)
             view().compositor().rootOrBodyStyleChanged(*this, oldStyle);
@@ -1148,7 +1148,7 @@ LayoutRect RenderBox::outlineBoundsForRepaint(const RenderLayerModelObject* repa
     // repaint containers. https://bugs.webkit.org/show_bug.cgi?id=23308
     box.move(view().frameView().layoutContext().layoutDelta());
 
-    return LayoutRect(snapRectToDevicePixels(box, protect(document())->deviceScaleFactor()));
+    return LayoutRect(snapRectToDevicePixels(box, document().deviceScaleFactor()));
 }
 
 int RenderBox::reflectionOffset() const
@@ -1355,7 +1355,7 @@ void RenderBox::autoscroll(const IntPoint& position)
 bool RenderBox::canAutoscroll() const
 {
     if (isRenderView())
-        return protect(view())->frameView().isScrollable();
+        return view().frameView().isScrollable();
 
     // Check for a box that can be scrolled in its own right.
     if (canBeScrolledAndHasScrollableArea())
@@ -1369,8 +1369,8 @@ bool RenderBox::canAutoscroll() const
 IntSize RenderBox::calculateAutoscrollDirection(const IntPoint& windowPoint) const
 {
     IntRect box(absoluteBoundingBoxRect());
-    box.moveBy(protect(view())->frameView().scrollPosition());
-    IntRect windowBox = protect(view())->frameView().contentsToWindow(box);
+    box.moveBy(view().frameView().scrollPosition());
+    IntRect windowBox = view().frameView().contentsToWindow(box);
 
     IntPoint windowAutoscrollPoint = windowPoint;
 
@@ -1535,8 +1535,7 @@ LayoutUnit RenderBox::minContentLogicalWidthContribution() const
     if (hasInvalidContentLogicalWidths()) {
         SetLayoutNeededForbiddenScope layoutForbiddenScope(*this);
         auto intrinsicWidthComputationScope = IntrinsicLogicalWidthComputationScope { view().frameView().layoutContext(), *this };
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<RenderBox&>(*this).computeIntrinsicLogicalWidthContributions();
+        const_cast<RenderBox&>(*this).computeIntrinsicLogicalWidthContributions();
     }
     return m_minContentLogicalWidthContribution;
 }
@@ -1546,8 +1545,7 @@ LayoutUnit RenderBox::maxContentLogicalWidthContribution() const
     if (hasInvalidContentLogicalWidths()) {
         SetLayoutNeededForbiddenScope layoutForbiddenScope(*this);
         auto intrinsicWidthComputationScope = IntrinsicLogicalWidthComputationScope { view().frameView().layoutContext(), *this };
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<RenderBox&>(*this).computeIntrinsicLogicalWidthContributions();
+        const_cast<RenderBox&>(*this).computeIntrinsicLogicalWidthContributions();
     }
     return m_maxContentLogicalWidthContribution;
 }
@@ -1918,7 +1916,7 @@ void RenderBox::paintBoxDecorations(PaintInfo& paintInfo, const LayoutPoint& pai
         // beginning the layer).
         stateSaver.save();
         auto borderShape = BorderShape::shapeForBorderRect(usedStyle(), paintRect);
-        borderShape.clipToOuterShape(paintInfo.context(), protect(document())->pixelSnappingScaleFactor());
+        borderShape.clipToOuterShape(paintInfo.context(), document().pixelSnappingScaleFactor());
         paintInfo.context().beginTransparencyLayer(1);
     }
 
@@ -2289,7 +2287,7 @@ void RenderBox::incrementVisuallyNonEmptyPixelCountIfNeeded(const IntSize& size)
     if (didContributeToVisuallyNonEmptyPixelCount())
         return;
 
-    protect(view())->frameView().incrementVisuallyNonEmptyPixelCount(size);
+    view().frameView().incrementVisuallyNonEmptyPixelCount(size);
     setDidContributeToVisuallyNonEmptyPixelCount();
 }
 
@@ -2308,8 +2306,8 @@ bool RenderBox::repaintLayerRectsForImage(WrappedImagePtr image, const Layers& l
                     layerRenderer = &view();
 
                     auto& renderView = downcast<RenderView>(*layerRenderer);
-                    LayoutUnit rw = protect(renderView)->frameView().contentsWidth();
-                    LayoutUnit rh = protect(renderView)->frameView().contentsHeight();
+                    LayoutUnit rw = renderView.frameView().contentsWidth();
+                    LayoutUnit rh = renderView.frameView().contentsHeight();
 
                     rendererRect = LayoutRect(-layerRenderer->marginLeft(),
                         -layerRenderer->marginTop(),
@@ -2343,9 +2341,9 @@ bool RenderBox::repaintLayerRectsForImage(WrappedImagePtr image, const Layers& l
             // If this is the root background layer, we may need to extend the repaintRect if the FrameView has an
             // extendedBackground. We should only extend the rect if it is already extending the full width or height
             // of the rendererRect.
-            if (drawingRootBackground && protect(view())->frameView().hasExtendedBackgroundRectForPainting()) {
+            if (drawingRootBackground && view().frameView().hasExtendedBackgroundRectForPainting()) {
                 shouldClipToLayer = false;
-                IntRect extendedBackgroundRect = protect(view())->frameView().extendedBackgroundRectForPainting();
+                IntRect extendedBackgroundRect = view().frameView().extendedBackgroundRectForPainting();
                 if (rectToRepaint.width() == rendererRect.width()) {
                     rectToRepaint.move(extendedBackgroundRect.x(), 0);
                     rectToRepaint.setWidth(extendedBackgroundRect.width());
@@ -2394,7 +2392,7 @@ bool RenderBox::pushContentsClip(PaintInfo& paintInfo, const LayoutPoint& accumu
         paintObject(paintInfo, accumulatedOffset);
         paintInfo.phase = PaintPhase::ChildBlockBackgrounds;
     }
-    float snappingScaleFactor = protect(document())->pixelSnappingScaleFactor();
+    float snappingScaleFactor = document().pixelSnappingScaleFactor();
     FloatRect clipRect = snapRectToDevicePixels((isControlClip ? controlClipRect(accumulatedOffset) : overflowClipRect(accumulatedOffset, OverlayScrollbarSizeRelevancy::IgnoreOverlayScrollbarSize, paintInfo.phase)), snappingScaleFactor);
     paintInfo.context().save();
     if (style().border().hasBorderRadius())
@@ -2580,8 +2578,8 @@ LayoutUnit RenderBox::perpendicularContainingBlockLogicalHeight() const
     }
 
     LayoutUnit fillFallbackExtent = containingBlockStyle.writingMode().isHorizontal()
-        ? protect(view())->frameView().layoutSize().height()
-        : protect(view())->frameView().layoutSize().width();
+        ? view().frameView().layoutSize().height()
+        : view().frameView().layoutSize().width();
     auto containingBlockHasIndefiniteHeight = [&] {
         // When the containing block's block size is indefinite, the orthogonal
         // child's available inline space is indefinite. Use the viewport fallback
@@ -2603,13 +2601,11 @@ LayoutUnit RenderBox::perpendicularContainingBlockLogicalHeight() const
         return true;
     };
     if (containingBlockHasIndefiniteHeight()) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST view().addPercentHeightDescendant(const_cast<RenderBox&>(*this));
+        view().addPercentHeightDescendant(const_cast<RenderBox&>(*this));
         return fillFallbackExtent;
     }
     LayoutUnit fillAvailableExtent = containingBlock->availableLogicalHeight(AvailableLogicalHeightType::ExcludeMarginBorderPadding);
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST view().addPercentHeightDescendant(const_cast<RenderBox&>(*this));
+    view().addPercentHeightDescendant(const_cast<RenderBox&>(*this));
     // FIXME: https://bugs.webkit.org/show_bug.cgi?id=158286 We also need to perform the same percentHeightDescendant treatment to the element which dictates the return value for containingBlock()->availableLogicalHeight() above.
     return std::min(fillAvailableExtent, fillFallbackExtent);
 }
@@ -2663,7 +2659,7 @@ auto RenderBox::computeVisibleRectsUsingPaintOffset(const RepaintRects& rects) c
     auto adjustedRects = rects;
 
     if (hasLayer() && layer()->transform())
-        adjustedRects.transform(*layer()->transform(), protect(document())->deviceScaleFactor());
+        adjustedRects.transform(*layer()->transform(), document().deviceScaleFactor());
 
     adjustedRects.moveBy(location());
     return RenderBoxModelObject::computeVisibleRectsUsingPaintOffset(adjustedRects);
@@ -2805,7 +2801,7 @@ void RenderBox::computeLogicalWidth(LogicalExtentComputedValues& computedValues)
     if (hasPerpendicularContainingBlock || isFloating() || isInline()) {
         computedValues.margins.start = usedStyle().marginStart(containerLogicalWidth).value_or(0_lu);
         computedValues.margins.end = usedStyle().marginEnd(containerLogicalWidth).value_or(0_lu);
-        if (CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(containingBlock); hasPerpendicularContainingBlock && blockFlow) {
+        if (auto* blockFlow = dynamicDowncast<RenderBlockFlow>(containingBlock); hasPerpendicularContainingBlock && blockFlow) {
             if (blockFlow->shouldTrimChildMargin(Style::MarginTrimSide::BlockStart, *this))
                 computedValues.margins.start = 0_lu;
             if (blockFlow->shouldTrimChildMargin(Style::MarginTrimSide::BlockEnd, *this))
@@ -3078,6 +3074,7 @@ template<typename SizeType> LayoutUnit RenderBox::computeLogicalWidthUsingGeneri
 template<typename SizeType> LayoutUnit RenderBox::computeCalcSizeOnAutoLogicalWidth(const SizeType& logicalWidth, LayoutUnit autoLogicalWidth, LayoutUnit availableLogicalWidth) const
 {
     if (sizesLogicalWidthToFitContent()) {
+        auto intrinsicWidthComputationScope = IntrinsicLogicalWidthComputationScope { view().frameView().layoutContext(), *this };
         auto [minContentLogicalWidth, maxContentLogicalWidth] = computeIntrinsicLogicalWidths();
         auto borderAndPadding = borderAndPaddingLogicalWidth();
         autoLogicalWidth = std::max(minContentLogicalWidth + borderAndPadding, std::min(maxContentLogicalWidth + borderAndPadding, autoLogicalWidth));
@@ -3495,7 +3492,7 @@ RenderBox::LogicalExtentComputedValues RenderBox::computeLogicalHeight(LayoutUni
     // height since we don't set a height in RenderView when we're printing. So without this quirk, the 
     // height has nothing to be a percentage of, and it ends up being 0. That is bad.
     auto paginatedContentNeedsBaseHeight = [&] {
-        if (!protect(document())->printing() || !computedLogicalHeight.isPercentOrCalculated() || isInline())
+        if (!document().printing() || !computedLogicalHeight.isPercentOrCalculated() || isInline())
             return false;
         if (isDocumentElementRenderer())
             return true;
@@ -3958,8 +3955,7 @@ template<typename SizeType> std::optional<LayoutUnit> RenderBox::computePercenta
         containingBlock = containingBlock->containingBlock();
     }
     if (updateDescendants == UpdatePercentageHeightDescendants::Yes) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST containingBlock->addPercentHeightDescendant(const_cast<RenderBox&>(*this));
+        containingBlock->addPercentHeightDescendant(const_cast<RenderBox&>(*this));
     }
 
     if (is<RenderView>(containingBlock) && view().frameView().isAutoSizeEnabled()) {
@@ -4477,6 +4473,7 @@ template<typename SizeType> LayoutUnit RenderBox::computeOutOfFlowPositionedLogi
         [&](const CSS::Keyword::Auto&) -> LayoutUnit {
             if constexpr (std::same_as<SizeType, Style::MinimumSize>) {
                 if (shouldComputeLogicalWidthFromAspectRatio()) {
+                    auto intrinsicWidthComputationScope = IntrinsicLogicalWidthComputationScope { view().frameView().layoutContext(), *this };
                     auto [minLogicalWidth, maxLogicalWidth] = computeIntrinsicLogicalWidths();
                     return minLogicalWidth;
                 }
@@ -5038,7 +5035,7 @@ bool RenderBox::hasUnsplittableScrollingOverflow() const
     // Fragmenting scrollbars is only problematic in interactive media, e.g. multicol on a
     // screen. If we're printing, which is non-interactive media, we should allow objects with
     // non-visible overflow to be paginated as normally.
-    if (protect(document())->printing())
+    if (document().printing())
         return false;
 
     // We do have overflow. We'll still be willing to paginate as long as the block
@@ -5748,8 +5745,7 @@ bool RenderBox::hasAutoHeightOrContainingBlockWithAutoHeight(UpdatePercentageHei
     auto* containingBlock = containingBlockForAutoHeightDetection(logicalHeight);
 
     if (updatePercentageDescendants == UpdatePercentageHeightDescendants::Yes && logicalHeight.isPercentOrCalculated() && containingBlock) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST containingBlock->addPercentHeightDescendant(const_cast<RenderBox&>(*this));
+        containingBlock->addPercentHeightDescendant(const_cast<RenderBox&>(*this));
     }
 
     if (isFlexItem() && downcast<RenderFlexibleBox>(*parent()).canUseFlexItemForPercentageResolution(*this))

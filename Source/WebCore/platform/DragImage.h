@@ -30,7 +30,6 @@
 #include <WebCore/IntSize.h>
 #include <WebCore/Path.h>
 #include <WebCore/TextFlags.h>
-#include <WebCore/TextIndicator.h>
 #include <wtf/Forward.h>
 
 #include <wtf/Platform.h>
@@ -42,34 +41,42 @@ typedef struct CGImage *CGImageRef;
 OBJC_CLASS NSImage;
 #elif USE(CAIRO)
 #if PLATFORM(WIN)
+#include <wtf/win/GDIObject.h>
 typedef struct HBITMAP__* HBITMAP;
+typedef struct HDC__* HDC;
 #endif
 #include "RefPtrCairo.h"
 #elif USE(SKIA)
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkImage.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #endif
 
 namespace WebCore {
 
-class Element;
+class Color;
 class GraphicsClient;
-class IntRect;
-class LocalFrame;
 class NativeImage;
-class Node;
 
 #if PLATFORM(IOS_FAMILY)
-typedef RetainPtr<CGImageRef> DragImageRef;
+using PlatformDragImage = RetainPtr<CGImageRef>;
 #elif PLATFORM(MAC)
-typedef RetainPtr<NSImage> DragImageRef;
+using PlatformDragImage = RetainPtr<NSImage>;
 #elif USE(CAIRO) && PLATFORM(WIN)
-typedef HBITMAP DragImageRef;
+using PlatformDragImage = HBITMAP;
 #elif USE(CAIRO)
-typedef RefPtr<cairo_surface_t> DragImageRef;
+using PlatformDragImage = RefPtr<cairo_surface_t>;
 #elif USE(SKIA)
-typedef sk_sp<SkImage> DragImageRef;
+using PlatformDragImage = sk_sp<SkImage>;
 #else
-typedef void* DragImageRef;
+using PlatformDragImage = void*;
+#endif
+
+#if PLATFORM(WIN) && USE(CAIRO)
+class GraphicsContextCairo;
+
+GDIObject<HBITMAP> allocImage(HDC, IntSize, GraphicsContextCairo** targetRef);
+void deallocContext(GraphicsContextCairo*);
 #endif
 
 #if PLATFORM(COCOA)
@@ -78,65 +85,40 @@ inline constexpr float ColorSwatchStrokeSize = 4;
 inline constexpr float ColorSwatchWidth = 24;
 #endif
 
-IntSize dragImageSize(DragImageRef);
-IntPoint dragOffsetForLinkDragImage(DragImageRef);
-FloatPoint anchorPointForLinkDragImage(DragImageRef);
-IntPoint platformAdjustDragImageHotSpot(const IntPoint& hotSpot, const IntSize& dragImageSize);
-
-// These functions should be memory neutral, eg. if they return a newly allocated image,
-// they should release the input image. As a corollary these methods don't guarantee
-// the input image ref will still be valid after they have been called.
-DragImageRef fitDragImageToMaxSize(DragImageRef, const IntSize& srcSize, const IntSize& dstSize);
-DragImageRef scaleDragImage(DragImageRef, FloatSize scale);
-DragImageRef platformAdjustDragImageForDeviceScaleFactor(DragImageRef, float deviceScaleFactor);
-DragImageRef dissolveDragImageToFraction(DragImageRef, float delta);
-
-DragImageRef createDragImageFromImage(NativeImage&, GraphicsClient* = nullptr, float deviceScaleFactor = 1);
-DragImageRef createDragImageIconForCachedImageFilename(const String&);
-
-struct DragImageData {
-    DragImageRef dragImageRef;
-    RefPtr<TextIndicator> textIndicator;
-};
-// FIXME: These platform helpers should be refactored to avoid using `LocalFrame` and `Node`.
-WEBCORE_EXPORT DragImageRef createDragImageForNode(LocalFrame&, Node&);
-WEBCORE_EXPORT DragImageData createDragImageForSelection(LocalFrame&, bool forceBlackText = false);
-WEBCORE_EXPORT DragImageRef createDragImageForRange(LocalFrame&, const SimpleRange&, bool forceBlackText = false);
-DragImageRef createDragImageForColor(const Color&, const FloatRect&, float, Path&);
-DragImageRef createDragImageForImage(LocalFrame&, Node&, IntRect& imageRect, IntRect& elementRect);
-
-DragImageData createDragImageForLink(Element&, URL&, const String& label, float deviceScaleFactor);
-void deleteDragImage(DragImageRef);
-
 class DragImage final {
 public:
-    WEBCORE_EXPORT DragImage();
-    explicit DragImage(DragImageRef);
+    DragImage() = default;
+    explicit DragImage(PlatformDragImage&& platformImage)
+        : m_platformImage(WTF::move(platformImage))
+    {
+    }
     WEBCORE_EXPORT DragImage(DragImage&&);
+    WEBCORE_EXPORT DragImage& operator=(DragImage&&);
     WEBCORE_EXPORT ~DragImage();
 
-    DragImage(RefPtr<TextIndicator> textIndicator, std::optional<Path>&& visiblePath)
-        : m_textIndicator(WTF::move(textIndicator))
-        , m_visiblePath(WTF::move(visiblePath))
-    { }
+    static DragImage create(NativeImage&, GraphicsClient* = nullptr, float deviceScaleFactor = 1);
+    static DragImage createForColor(const Color&, const FloatRect&, float, Path&);
+    static DragImage createIconForCachedImageFilename(const String&);
 
-    WEBCORE_EXPORT DragImage& operator=(DragImage&&);
+    explicit operator bool() const { return !!m_platformImage; }
+    const PlatformDragImage& platformImage() const LIFETIME_BOUND { return m_platformImage; }
+    PlatformDragImage takePlatformImage() { return std::exchange(m_platformImage, { }); }
 
-    void setTextIndicator(const RefPtr<TextIndicator> textIndicator) { m_textIndicator = textIndicator; }
-    bool hasTextIndicator() const { return !!m_textIndicator; }
-    const RefPtr<TextIndicator> textIndicator() const { return m_textIndicator; }
+    IntSize size() const;
+    IntPoint dragOffsetForLink() const;
+    FloatPoint anchorPointForLink() const;
 
-    void setVisiblePath(const Path& path) { m_visiblePath = path; }
-    bool hasVisiblePath() const { return !!m_visiblePath; }
-    const std::optional<Path>& visiblePath() const LIFETIME_BOUND { return m_visiblePath; }
+    void scale(FloatSize);
+    void fitToMaxSize(const IntSize& layoutSize, const IntSize& maxSize);
+    void adjustForDeviceScaleFactor(float);
+    void dissolveToFraction(float);
 
-    explicit operator bool() const { return !!m_dragImageRef; }
-    DragImageRef get() const { return m_dragImageRef; }
+    static IntPoint platformAdjustDragImageHotSpot(const IntPoint& hotSpot, const IntSize& dragImageSize);
 
 private:
-    DragImageRef m_dragImageRef;
-    RefPtr<TextIndicator> m_textIndicator;
-    std::optional<Path> m_visiblePath;
+    static void deletePlatformImage(PlatformDragImage);
+
+    PlatformDragImage m_platformImage { };
 };
 
 }

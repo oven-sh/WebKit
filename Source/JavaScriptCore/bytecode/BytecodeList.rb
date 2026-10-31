@@ -61,7 +61,6 @@ types [
     :SymbolTableOrScopeDepth,
     :ToThisStatus,
     :TypeLocation,
-    :WasmBoundLabel,
     :InlineWatchpointSet,
     :WriteBarrierStructureID,
 

@@ -10,6 +10,8 @@ https://www.365scores.com/
     (none)
 https://actesting.org/
     ShouldEnableLegacyGetUserMediaQuirk
+https://www.affirm.com/
+    NeedsFormControlToBeMouseFocusableQuirk
 https://www.airindiaexpress.com/
     NeedsAirIndiaExpressLayeringQuirk
 https://www.amazon.com/
@@ -55,8 +57,10 @@ https://www.capitalgroup.com/
     ShouldDelayReloadWhenRegisteringServiceWorker
 https://www.cbssports.com/
     (none)
-https://www.cnn.com/
+https://chatgpt.com/
     (none)
+https://www.cnn.com/
+    NeedsFormControlToBeMouseFocusableQuirk
 https://configurator.audi.com/
     ShouldRenderModelElementFallbackContentQuirk
 https://www.digitaltrends.com/

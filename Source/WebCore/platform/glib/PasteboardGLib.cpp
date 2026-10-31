@@ -25,7 +25,6 @@
 #include "Color.h"
 #include "CommonAtomStrings.h"
 #include "DragData.h"
-#include "Image.h"
 #include "MIMETypeRegistry.h"
 #include "NotImplemented.h"
 #include "PasteboardStrategy.h"
@@ -259,7 +258,7 @@ void Pasteboard::clear(const String& type)
 }
 
 #if ENABLE(DRAG_SUPPORT)
-void Pasteboard::setDragImage(DragImage, const IntPoint&)
+void Pasteboard::setDragImage(DragImage&&, const IntPoint&)
 {
 }
 #endif

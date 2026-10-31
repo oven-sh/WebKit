@@ -112,7 +112,7 @@ public:
     {
     }
 
-    ContextMenuContextData(const WebCore::IntPoint& menuLocation, WebCore::Image&, bool isEditable, const WebCore::IntRect& imageRect, const String& attachmentID, std::optional<WebCore::ElementContext>&&, const String& sourceImageMIMEType);
+    ContextMenuContextData(const WebCore::IntPoint& menuLocation, RefPtr<WebCore::ShareableBitmap>&& controlledImage, bool isEditable, const WebCore::IntRect& imageRect, const String& attachmentID, std::optional<WebCore::ElementContext>&&, const String& sourceImageMIMEType);
 
     WebCore::ShareableBitmap* controlledImage() const { return m_controlledImage.get(); }
     std::optional<WebCore::ShareableBitmap::Handle> createControlledImageReadOnlyHandle() const;
@@ -162,8 +162,6 @@ private:
     bool m_allowsFollowingImageURL { false };
 
 #if ENABLE(SERVICE_CONTROLS)
-    void setImage(WebCore::Image&);
-    
     RefPtr<WebCore::ShareableBitmap> m_controlledImage;
     WebCore::AttributedString m_controlledSelection;
     Vector<String> m_selectedTelephoneNumbers;
@@ -177,8 +175,8 @@ private:
 #endif
 
 #if ENABLE(CONTEXT_MENU_QR_CODE_DETECTION)
-    void setPotentialQRCodeNodeSnapshotImage(WebCore::BitmapImage&);
-    void setPotentialQRCodeViewportSnapshotImage(WebCore::BitmapImage&);
+    void setPotentialQRCodeNodeSnapshotImage(WebCore::NativeImage&);
+    void setPotentialQRCodeViewportSnapshotImage(WebCore::NativeImage&);
 
     RefPtr<WebCore::ShareableBitmap> m_potentialQRCodeNodeSnapshotImage;
     RefPtr<WebCore::ShareableBitmap> m_potentialQRCodeViewportSnapshotImage;

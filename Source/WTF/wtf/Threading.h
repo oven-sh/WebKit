@@ -138,7 +138,6 @@ public:
     static dispatch_qos_class_t LEGACY_NODELETE dispatchQOSClass(QOS);
 #endif
 
-    // Returns nullptr if thread creation failed.
     // The thread name must be a literal since on some platforms it's passed in to the thread.
     WTF_EXPORT_PRIVATE static Ref<Thread> create(ASCIILiteral threadName, Function<void()>&&, ThreadType = ThreadType::Unknown, QOS = defaultQOS, SchedulingPolicy = defaultSchedulingPolicy, StackAllocationSpecification = { });
 #if ENABLE(AOT)
@@ -146,9 +145,9 @@ public:
     // and crashes with a line that names the thread and the error; and a thread that the work gets done without (AutomaticThread::isOptional()) is left out.
     static bool survivesFailedCreation() { return s_survivesFailedCreation; }
     WTF_EXPORT_PRIVATE static void setSurvivesFailedCreation();
+#endif
     // Returns nullptr if thread creation failed: the limit on threads is reached, or there is no memory for a stack. errno says which.
     WTF_EXPORT_PRIVATE static RefPtr<Thread> tryCreate(ASCIILiteral threadName, Function<void()>&&, ThreadType = ThreadType::Unknown, QOS = defaultQOS, SchedulingPolicy = defaultSchedulingPolicy, StackAllocationSpecification = { });
-#endif
 
     // Returns Thread object.
     static Thread& currentSingleton();
@@ -420,7 +419,11 @@ protected:
     WordLock m_mutex;
     StackBounds m_stack { StackBounds::emptyBounds() };
     ThreadSafeWeakHashSet<ThreadGroup> m_threadGroups;
-    PlatformThreadHandle m_handle;
+#if OS(WINDOWS)
+    PlatformThreadHandle m_handle { INVALID_HANDLE_VALUE };
+#else
+    PlatformThreadHandle m_handle { };
+#endif
     const uint32_t m_uid;
 #if OS(WINDOWS)
     ThreadIdentifier m_id { 0 };

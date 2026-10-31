@@ -670,6 +670,30 @@ struct WKWebExtensionAPIActionTests {
     }
 
     @Test
+    func setIconWithWindowIdNotifiesWindowAction() async throws {
+        let backgroundScript = """
+            const [currentTab] = await browser.tabs.query({ active: true, currentWindow: true })
+
+            await browser.action.setIcon({ path: 'window-toolbar-48.png', windowId: currentTab.windowId })
+            """
+
+        let resources: [String: Any] = [
+            "background.js": backgroundScript,
+            "popup.html": "Hello World!",
+            "toolbar-32.png": makePNGData(size: CGSize(width: 32, height: 32), color: .red),
+            "window-toolbar-48.png": makePNGData(size: CGSize(width: 48, height: 48), color: .green),
+        ]
+
+        let manager = try loadWebExtension(manifest: actionPopupManifest, resources: resources)
+
+        let action = try await manager.nextUpdatedAction()
+        #expect(action.associatedTab == nil)
+
+        let icon = try #require(action.icon(for: CGSize(width: 48, height: 48)))
+        #expect(icon.size == CGSize(width: 48, height: 48))
+    }
+
+    @Test
     func setIconSinglePath() async throws {
         let resources: [String: Any] = [
             "background.js": "await browser.action.setIcon({ path: 'toolbar-48.png' })",
@@ -969,17 +993,32 @@ struct WKWebExtensionAPIActionTests {
         try await expectDefaultIconAfterSettingIcon(with: backgroundScript)
     }
 
+    @Test
+    func setIconWithEmptyDetails() async throws {
+        let backgroundScript = """
+            await browser.action.setIcon({ path: 'toolbar-48.png' })
+            await browser.action.setIcon({})
+            browser.test.sendMessage('Icon Set')
+            """
+
+        let additionalResources: [String: Any] = ["toolbar-48.png": makePNGData(size: CGSize(width: 48, height: 48), color: .red)]
+
+        try await expectDefaultIconAfterSettingIcon(with: backgroundScript, additionalResources: additionalResources)
+    }
+
     /// Runs a background script that clears the action icon and sends `Icon Set`, then checks that
     /// the action fell back to the icon declared in the manifest.
     private func expectDefaultIconAfterSettingIcon(
         with backgroundScript: String,
+        additionalResources: [String: Any] = [:],
         sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
-        let resources: [String: Any] = [
+        var resources: [String: Any] = [
             "background.js": backgroundScript,
             "toolbar-32.png": makePNGData(size: CGSize(width: 32, height: 32), color: .blue),
             "popup.html": "Hello world!",
         ]
+        resources.merge(additionalResources) { current, _ in current }
 
         let manager = try loadWebExtension(manifest: actionPopupManifest, resources: resources)
         let context = try #require(manager.context)

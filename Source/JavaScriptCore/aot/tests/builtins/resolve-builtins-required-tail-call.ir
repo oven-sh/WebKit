@@ -8,8 +8,8 @@
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-runtimefunction id=31 function=f0
-function f0 name="every" role=Library flags=[HasThis] enclosingRuntimeFunction=31 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+runtimefunction id=30 function=f0
+function f0 name="every" role=Library flags=[HasThis] enclosingRuntimeFunction=30 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
     v3 = Boolean boolean=true
     Return v3
 }

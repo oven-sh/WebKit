@@ -179,7 +179,7 @@ static JSString* tryJoin(JSGlobalObject* globalObject, JSArray* array, JSString*
     JSString* between = separatorOrNull ? separatorOrNull : vm.smallStrings.singleCharacterString(',');
     auto view = between->view(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    JSOnlyStringsAndInt32sJoiner joiner(view);
+    JSExactLengthJoiner joiner(view);
     if (!hasInt32(array->indexingType()) && !hasDouble(array->indexingType()) && !hasContiguous(array->indexingType()))
         return nullptr;
     Butterfly& butterfly = *array->butterfly();

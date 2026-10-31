@@ -213,7 +213,7 @@ void WebLocalFrameLoaderClient::detachedFromParent2()
         return;
 
     if (RefPtr backend = webPage->inspector(WebPage::LazyCreationPolicy::UseExistingOnly))
-        backend->removeInstrumentationForFrame(m_frame->frameID());
+        backend->removeInstrumentationForFrame(protect(m_localFrame));
 
     removeStorageAccess();
 
@@ -519,6 +519,7 @@ void WebLocalFrameLoaderClient::didSameDocumentNavigationForFrameViaJS(SameDocum
         false, /* isInitialFrameSrcLoad */
         false, /* isContentRuleListRedirect */
         { }, /* openedMainFrameName */
+        { }, /* openedByScriptDomain */
         std::nullopt, /* targetBackForwardItemIdentifier */
         std::nullopt, /* sourceBackForwardItemIdentifier */
         WebCore::LockHistory::No,
@@ -1074,6 +1075,7 @@ void WebLocalFrameLoaderClient::dispatchDecidePolicyForNewWindowAction(const Nav
         navigationAction.isInitialFrameSrcLoad(),
         navigationAction.isContentRuleListRedirect(),
         { }, /* openedMainFrameName */
+        { }, /* openedByScriptDomain */
         std::nullopt, /* targetBackForwardItemIdentifier */
         std::nullopt, /* sourceBackForwardItemIdentifier */
         WebCore::LockHistory::No,
