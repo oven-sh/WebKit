@@ -975,6 +975,10 @@ private:
 
     MarkedSpace m_objectSpace;
     GCIncomingRefCountedSet<ArrayBuffer> m_arrayBuffers;
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr unsigned resizableArrayBuffersPerCollectionRequest = 4096;
+    unsigned m_resizableArrayBuffersSinceCollectionRequest { 0 };
+#endif
     size_t m_extraMemorySize { 0 };
     size_t m_deprecatedExtraMemorySize { 0 };
     size_t m_extraMemoryBytesSinceLastCollectionCheck { 0 };

@@ -93,6 +93,7 @@
 #include "ModuleProgramExecutable.h"
 #include "ModuleRegistryEntry.h"
 #include "NumberObject.h"
+#include "PageCount.h"
 #include "PinballCompletion.h"
 #include "PreventCollectionScope.h"
 #include "ProgramExecutable.h"
@@ -734,6 +735,13 @@ void Heap::addReference(JSCell* cell, ArrayBuffer* buffer, size_t bytesAlreadyRe
         size_t size = buffer->gcSizeEstimateInBytes();
         ASSERT(bytesAlreadyReported <= size);
         reportExtraMemoryAllocatedSlowCase(nullptr, nullptr, size - std::min(size, bytesAlreadyReported));
+#if USE(BUN_JSC_ADDITIONS)
+        // A resizable buffer with a maximum past one page holds two mappings until it is collected, and the size above does not count them.
+        if (buffer->maxByteLength().value_or(0) > PageCount::pageSize && ++m_resizableArrayBuffersSinceCollectionRequest >= resizableArrayBuffersPerCollectionRequest && !isDeferred()) {
+            m_resizableArrayBuffersSinceCollectionRequest = 0;
+            collectAsync(CollectionScope::Full);
+        }
+#endif
     }
 }
 
@@ -2611,6 +2619,9 @@ void Heap::updateAllocationLimits()
         dataLogLnIf(verbose, "Full: maxHeapSize = ", m_maxHeapSize);
         dataLogLnIf(verbose, "Full: maxEdenSize = ", m_maxEdenSize);
         m_sizeAfterLastFullCollect = currentHeapSize;
+#if USE(BUN_JSC_ADDITIONS)
+        m_resizableArrayBuffersSinceCollectionRequest = 0;
+#endif
         dataLogLnIf(verbose, "Full: sizeAfterLastFullCollect = ", currentHeapSize);
         m_bytesAbandonedSinceLastFullCollect = 0;
         dataLogLnIf(verbose, "Full: bytesAbandonedSinceLastFullCollect = ", 0);
