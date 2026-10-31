@@ -1400,7 +1400,7 @@ static JSObject* promiseAnySlow(JSGlobalObject* globalObject, CallFrame* callFra
     uint64_t count = globalContext->remainingElementsCount() - 1;
     globalContext->setRemainingElementsCount(count);
     if (!count) {
-        auto* aggregateError = createAggregateError(vm, globalObject->errorStructure(ErrorType::AggregateError), errors, String(), jsUndefined());
+        auto* aggregateError = createAggregateError(vm, globalObject->errorStructure(ErrorType::AggregateError), errors, String(), JSValue());
         callReject(aggregateError);
         if (scope.exception()) [[unlikely]] {
             callRejectWithScopeException();
@@ -1510,7 +1510,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAny, (JSGlobalObject* globalObjec
     uint64_t count = globalContext->remainingElementsCount() - 1;
     globalContext->setRemainingElementsCount(count);
     if (!count) {
-        auto* aggregateError = createAggregateError(vm, globalObject->errorStructure(ErrorType::AggregateError), errors, String(), jsUndefined());
+        auto* aggregateError = createAggregateError(vm, globalObject->errorStructure(ErrorType::AggregateError), errors, String(), JSValue());
         scope.release();
         promise->reject(vm, aggregateError);
         if (scope.exception()) [[unlikely]] {
@@ -1547,7 +1547,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseAnyRejectFunction, (JSGlobalObject* globalObject
     uint64_t count = globalContext->remainingElementsCount() - 1;
     globalContext->setRemainingElementsCount(count);
     if (!count) {
-        auto* aggregateError = createAggregateError(vm, globalObject->errorStructure(ErrorType::AggregateError), errors, String(), jsUndefined());
+        auto* aggregateError = createAggregateError(vm, globalObject->errorStructure(ErrorType::AggregateError), errors, String(), JSValue());
         scope.release();
         promise->reject(vm, aggregateError);
     }
@@ -1582,7 +1582,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseAnySlowRejectFunction, (JSGlobalObject* globalOb
     uint64_t count = globalContext->remainingElementsCount() - 1;
     globalContext->setRemainingElementsCount(count);
     if (!count) {
-        auto* aggregateError = createAggregateError(vm, globalObject->errorStructure(ErrorType::AggregateError), errors, String(), jsUndefined());
+        auto* aggregateError = createAggregateError(vm, globalObject->errorStructure(ErrorType::AggregateError), errors, String(), JSValue());
         auto rejectArguments = WTF::toArray<EncodedJSValue>({
             JSValue::encode(aggregateError),
         });
