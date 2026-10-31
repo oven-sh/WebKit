@@ -216,6 +216,10 @@ public:
     };
 
     bool isDeferringTermination() const { return m_deferTerminationCount; }
+    // For tests ($vm.callWithTerminationAtTrapCheck): while the count is not zero, a requested termination waits. Each
+    // handling of traps counts down, and the one that reaches zero takes the termination. So a test can begin a
+    // termination at every exception check of an operation in turn, where a time limit reaches the few that are slow.
+    void setTrapChecksBeforeTermination(unsigned count) { m_trapChecksBeforeTermination = count; }
     inline void deferTermination(DeferAction);
     inline void undoDeferTermination(DeferAction);
 
@@ -338,6 +342,7 @@ private:
     StackManager m_stack;
     Atomic<BitField> m_trapBits { 0 };
     unsigned m_deferTerminationCount { 0 };
+    unsigned m_trapChecksBeforeTermination { 0 };
     bool m_needToInvalidateCodeBlocks { false };
     bool m_isShuttingDown { false };
     bool m_suspendedTerminationException { false };
