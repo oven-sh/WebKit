@@ -792,7 +792,10 @@ void ParametersLeftToBody::findFirstValuesOfLoopVariables()
         if (std::ranges::none_of(incomingEdges, comesAround) || std::ranges::any_of(incomingEdges, &Edge::isHandlerEdge))
             continue;
         for (uint32_t index = 0; index < m_function.at(head).parameters.size(); ++index) {
-            auto argumentOn = [&](Edge edge) { return inFrontOfChecks(targetOf(m_function, edge).arguments[index]); };
+            auto argumentOn = [&](Edge edge) {
+                IncomingValue incoming = incomingValueOf(m_function, edge, index);
+                return incoming.kind == IncomingValue::Kind::Argument ? inFrontOfChecks(incoming.argument) : ValueID();
+            };
             // Two of the values that come around tell of any value whether another one does.
             ValueID comingAround;
             ValueID anotherComingAround;

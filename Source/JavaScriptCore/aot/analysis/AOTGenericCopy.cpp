@@ -741,7 +741,9 @@ auto GenericCopy::planRejoin(const TestedRejoin& rejoin, const RejoinTypes& rejo
         return std::ranges::any_of(m_analyses.cfg().incomingEdges(rejoin.block), [&](Edge edge) {
             if (edge.isHandlerEdge() || isCopy.get(edge.from.index()) || (loop && m_analyses.naturalLoops().belongsTo(edge.from, *loop)))
                 return false;
-            return !types.at(m_function.at(targetOf(m_function, edge).arguments[parameterIndex]).type).isSubsetOf(expected, program);
+            // What an edge itself gives to the block is what its test has proven.
+            IncomingValue incoming = incomingValueOf(m_function, edge, parameterIndex);
+            return incoming.kind == IncomingValue::Kind::Argument && !types.at(m_function.at(incoming.argument).type).isSubsetOf(expected, program);
         });
     };
     auto addTest = [&](std::optional<uint32_t> parameterIndex, ValueID inTypedCode, TypeID typeInCopy) {
