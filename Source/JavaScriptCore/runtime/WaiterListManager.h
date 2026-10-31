@@ -114,6 +114,7 @@ public:
 
     void scheduleWorkAndClear(const AbstractLocker&, DeferredWorkTimer::Task&&);
     void cancelAndClear(const AbstractLocker&);
+    void cancelCrossThreadAndClear(const AbstractLocker&);
     void dump(PrintStream&) const;
 
 private:
