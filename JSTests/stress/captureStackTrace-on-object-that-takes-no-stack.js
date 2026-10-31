@@ -121,6 +121,21 @@ for (const create of targets) {
     shouldBe(Object.isExtensible(target), true);
 }
 
+// A WebAssembly GC object takes no property at all. The store to one used to end the process.
+if (this.WebAssembly) {
+    // (type $s (struct (field (mut i32))))
+    // (func (export "mk") (result (ref null $s)) struct.new_default $s)
+    const bytes = new Uint8Array([
+        0, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
+        1, 10, 2, 0x5f, 1, 0x7f, 1, 0x60, 0, 1, 0x63, 0,
+        3, 2, 1, 1,
+        7, 6, 1, 2, 0x6d, 0x6b, 0, 0,
+        10, 7, 1, 5, 0, 0xfb, 1, 0, 0x0b,
+    ]);
+    const struct = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
+    shouldThrowTypeError(() => capturedHere(struct), notExtensible);
+}
+
 // globalThis answers isExtensible() itself: it is asked, and it is extensible until a script says otherwise.
 capturedHere(globalThis);
 Object.preventExtensions(globalThis);
