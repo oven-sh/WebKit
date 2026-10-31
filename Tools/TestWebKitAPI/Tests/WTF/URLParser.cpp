@@ -387,7 +387,7 @@ TEST_F(WTF_URLParser, Basic)
     checkURL("http://[0:f:0:0:f::]:\t123"_s, { "http"_s, ""_s, ""_s, "[0:f:0:0:f::]"_s, 123, "/"_s, ""_s, ""_s, "http://[0:f:0:0:f::]:123/"_s });
     checkURL("http://[0:f:0:0:f::]:1\t23"_s, { "http"_s, ""_s, ""_s, "[0:f:0:0:f::]"_s, 123, "/"_s, ""_s, ""_s, "http://[0:f:0:0:f::]:123/"_s });
     checkURL("http://[0:f::f:f:0:0]:/path"_s, { "http"_s, ""_s, ""_s, "[0:f::f:f:0:0]"_s, 0, "/path"_s, ""_s, ""_s, "http://[0:f::f:f:0:0]/path"_s });
-    checkURL("a://[::2:]"_s, { "a"_s, ""_s, ""_s, "[::2]"_s, 0, ""_s, ""_s, ""_s, "a://[::2]"_s });
+    shouldFail("a://[::2:]"_s); // Bun: the URL Standard fails an IPv6 address that ends with a single ':'. Upstream expects a://[::2] (https://bugs.webkit.org/show_bug.cgi?id=199627).
     checkURL("http://[0:f::f:f:0:0]:"_s, { "http"_s, ""_s, ""_s, "[0:f::f:f:0:0]"_s, 0, "/"_s, ""_s, ""_s, "http://[0:f::f:f:0:0]/"_s });
     checkURL("http://host:10100/path"_s, { "http"_s, ""_s, ""_s, "host"_s, 10100, "/path"_s, ""_s, ""_s, "http://host:10100/path"_s });
     checkURL("http://host:/path"_s, { "http"_s, ""_s, ""_s, "host"_s, 0, "/path"_s, ""_s, ""_s, "http://host/path"_s });
@@ -871,6 +871,15 @@ TEST_F(WTF_URLParser, ParserDifferences)
         { "http"_s, ""_s, ""_s, "[::100:ffff]"_s, 0, "/"_s, ""_s, ""_s, "http://[::100:ffff]/"_s });
     checkURLDifferences("http://[::A:1.0.255.255]/"_s,
         { "http"_s, ""_s, ""_s, "[::a:100:ffff]"_s, 0, "/"_s, ""_s, ""_s, "http://[::a:100:ffff]/"_s });
+    // Bun: the fork's own rows. Upstream rejects a compressed address with an IPv4 tail at piece 5. The URL Standard parses it.
+    checkURLDifferences("http://[2001:db8:1234::5efe:127.0.0.1]/"_s,
+        { "http"_s, ""_s, ""_s, "[2001:db8:1234::5efe:7f00:1]"_s, 0, "/"_s, ""_s, ""_s, "http://[2001:db8:1234::5efe:7f00:1]/"_s });
+    checkURLDifferences("http://[2001:db8:1234::5efe:10.0.0.1]/"_s,
+        { "http"_s, ""_s, ""_s, "[2001:db8:1234::5efe:a00:1]"_s, 0, "/"_s, ""_s, ""_s, "http://[2001:db8:1234::5efe:a00:1]/"_s });
+    checkURLDifferences("http://[2001:db8:1234::5efe:8.8.8.8]/"_s,
+        { "http"_s, ""_s, ""_s, "[2001:db8:1234::5efe:808:808]"_s, 0, "/"_s, ""_s, ""_s, "http://[2001:db8:1234::5efe:808:808]/"_s });
+    checkURLDifferences("http://[2001:db8:1234:4:5::5efe:127.0.0.1]/"_s,
+        { ""_s, ""_s, ""_s, ""_s, 0, ""_s, ""_s, ""_s, "http://[2001:db8:1234:4:5::5efe:127.0.0.1]/"_s });
     checkURLDifferences("http://[:127.0.0.1]"_s,
         { ""_s, ""_s, ""_s, ""_s, 0, ""_s, ""_s, ""_s, "http://[:127.0.0.1]"_s });
     checkURLDifferences("http://[127.0.0.1]"_s,
@@ -1100,6 +1109,10 @@ TEST_F(WTF_URLParser, ParserFailures)
     shouldFail("asdf://space In\aHost"_s);
     shouldFail("asdf://[0:0:0:0:a:b:c:d"_s);
     shouldFail("http://[::0:0.0.00000.0]/"_s);
+    // Bun: the fork's own rows. Upstream parses these and drops the last ':'.
+    shouldFail("http://[::1:]/"_s);
+    shouldFail("http://[1::2:]:81/"_s);
+    shouldFail("http://[1:2::3:4:]"_s);
 }
 
 // These are in the spec but not in the web platform tests.
