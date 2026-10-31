@@ -2195,6 +2195,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionTriggerMemoryPressure);
 static JSC_DECLARE_HOST_FUNCTION(functionGC);
 static JSC_DECLARE_HOST_FUNCTION(functionCallWithTimeLimit);
 static JSC_DECLARE_HOST_FUNCTION(functionCancelTermination);
+static JSC_DECLARE_HOST_FUNCTION(functionCallWithTerminationAtTrapCheck);
 static JSC_DECLARE_HOST_FUNCTION(functionHasPendingTermination);
 static JSC_DECLARE_HOST_FUNCTION(functionEdenGC);
 static JSC_DECLARE_HOST_FUNCTION(functionGCSweepAsynchronously);
@@ -2824,9 +2825,84 @@ JSC_DEFINE_HOST_FUNCTION(functionCallWithTimeLimit, (JSGlobalObject* globalObjec
             break;
         }
     }
+    // So did an enclosing $vm.callWithTerminationAtTrapCheck() whose count has ended.
+    if (vm.traps().terminationAtTrapCheck() == VMTraps::TerminationAtTrapCheck::Requested)
+        vm.notifyNeedTermination();
     if (!wasCutShort)
         RELEASE_AND_RETURN(scope, JSValue::encode(result));
     return throwVMRangeError(globalObject, scope, "timed out"_s);
+}
+
+// Calls `fn`, requests a termination at the n-th trap check from here (n >= 1), and withdraws that termination when
+// the call ends, as an embedder does with VM::cancelTermination(). Returns true if the n-th check was reached, and
+// false if `fn` returned first. An error that leaves `fn` is thrown, also behind the n-th check (the error of a time
+// limit inside `fn`), so a throw does not tell whether the count ended. A loop over n walks a termination through
+// every exception check of what `fn` does: native code polls traps at each RETURN_IF_EXCEPTION, and the interpreter
+// polls them where a function is called and where a loop goes around.
+// The n-th check is a fixed place only for native code and the interpreter, and only while `fn` does the same work.
+// Code from the optimizing JITs polls less or not at all, so such a loop runs with --useJIT=0. A function polls more
+// while its inline caches are empty, so the loop calls `fn` a few times first. The VM keeps what it compiled by the
+// text of the source, and a garbage collection drops that: the next calls that load the same text have more checks,
+// and the loop goes back some places. A loop that needs each place loads text that no call before it has loaded.
+// Compiled (AOT) code counts one poll up to three times.
+// Before the n-th check no termination is pending, as when a timer thread requests one at that moment:
+// VM::hasPendingTermination() is false, and Atomics.wait() is not ended (a wait without a timeout does not return).
+// A check does not count where a termination cannot begin (DeferTermination), where another termination is requested
+// and not taken yet, or where one unwinds. One that native code has cleared does not stop the count.
+// The call withdraws its own termination only. A time limit ($vm.callWithTimeLimit()) around the call ends it, and
+// one inside `fn` ends what it limits: the count goes on behind it. Another kind of limit inside `fn` (node:vm's
+// `timeout`) can withdraw the termination of the call where both unwind together.
+// The call is refused inside another call of this function, inside a DeferTermination scope, and in a VM that has a
+// watchdog: the count uses the trap bit of the watchdog.
+// Usage: $vm.callWithTerminationAtTrapCheck(fn, n)
+JSC_DEFINE_HOST_FUNCTION(functionCallWithTerminationAtTrapCheck, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue function = callFrame->argument(0);
+    double count = callFrame->argument(1).toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto callData = JSC::getCallData(function);
+    if (callData.type == CallData::Type::None)
+        return throwVMTypeError(globalObject, scope, "expected a function"_s);
+    if (!(count >= 1) || count > std::numeric_limits<int32_t>::max() || count != std::trunc(count))
+        return throwVMRangeError(globalObject, scope, "expected an integer count from 1 to 2147483647"_s);
+    // The VM has one count.
+    if (vm.traps().terminationAtTrapCheck() != VMTraps::TerminationAtTrapCheck::None)
+        return throwVMTypeError(globalObject, scope, "a call of $vm.callWithTerminationAtTrapCheck() is in progress"_s);
+    // While the count runs, the watchdog would get none of its checks.
+    if (vm.watchdog())
+        return throwVMTypeError(globalObject, scope, "$vm.callWithTerminationAtTrapCheck() needs a VM without a watchdog"_s);
+    // No trap check counts there, and VM::cancelTermination() cannot be called there.
+    if (vm.traps().isDeferringTermination())
+        return throwVMTypeError(globalObject, scope, "$vm.callWithTerminationAtTrapCheck() cannot be called while terminations are deferred"_s);
+    // A termination that is pending already, in whatever form, is taken here, before the count starts.
+    vm.throwTerminationExceptionIfNeeded();
+    RETURN_IF_EXCEPTION(scope, { });
+
+    vm.ensureTerminationException();
+    vm.traps().beginTerminationAtTrapCheck(static_cast<unsigned>(count));
+    call(globalObject, function, callData, jsUndefined(), ArgList());
+    if (!vm.traps().endTerminationAtTrapCheck()) {
+        // The termination of this call was not requested. What `fn` threw stays thrown, and so does a termination
+        // that something else requested.
+        RETURN_IF_EXCEPTION(scope, { });
+        return JSValue::encode(jsBoolean(false));
+    }
+    // Withdraw the termination of this call, and whatever it has merged with since it began.
+    vm.cancelTermination();
+    // An enclosing time-limited call whose limit has passed made a request of its own; make it again.
+    auto& calls = vm.ensureSideData<TimeLimitedCalls>(&timeLimitedCallsKey, [] { return makeUnique<TimeLimitedCalls>(); });
+    for (auto& enclosing : calls.active) {
+        if (enclosing->didFire()) {
+            vm.notifyNeedTermination();
+            break;
+        }
+    }
+    // This takes the request that was made again. It also returns with an error that left `fn` behind the n-th check.
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(jsBoolean(true));
 }
 
 // VM::cancelTermination() / VM::hasPendingTermination().
@@ -6108,6 +6184,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "crash"_s, functionCrash, 0);
     addFunction(vm, allowIfNotFuzz, "callWithTimeLimit"_s, functionCallWithTimeLimit, 2);
     addFunction(vm, allowIfNotFuzz, "cancelTermination"_s, functionCancelTermination, 0);
+    addFunction(vm, allowIfNotFuzz, "callWithTerminationAtTrapCheck"_s, functionCallWithTerminationAtTrapCheck, 2);
     addFunction(vm, allowIfNotFuzz, "hasPendingTermination"_s, functionHasPendingTermination, 0);
     addFunction(vm, allowIfNotFuzz, "breakpoint"_s, functionBreakpoint, 0);
     addFunction(vm, allowIfNotFuzz, "exit"_s, functionExit, 0);
