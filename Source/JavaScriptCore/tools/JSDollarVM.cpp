@@ -2195,6 +2195,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionTriggerMemoryPressure);
 static JSC_DECLARE_HOST_FUNCTION(functionGC);
 static JSC_DECLARE_HOST_FUNCTION(functionCallWithTimeLimit);
 static JSC_DECLARE_HOST_FUNCTION(functionCancelTermination);
+static JSC_DECLARE_HOST_FUNCTION(functionCallWithTerminationAtTrapCheck);
 static JSC_DECLARE_HOST_FUNCTION(functionHasPendingTermination);
 static JSC_DECLARE_HOST_FUNCTION(functionEdenGC);
 static JSC_DECLARE_HOST_FUNCTION(functionGCSweepAsynchronously);
@@ -2827,6 +2828,56 @@ JSC_DEFINE_HOST_FUNCTION(functionCallWithTimeLimit, (JSGlobalObject* globalObjec
     if (!wasCutShort)
         RELEASE_AND_RETURN(scope, JSValue::encode(result));
     return throwVMRangeError(globalObject, scope, "timed out"_s);
+}
+
+// Calls `fn` with a termination requested that the VM takes at the n-th trap check from here (n >= 1), and withdraws
+// the termination when the call ends, as an embedder does with VM::cancelTermination(). Returns whether the
+// termination was taken; false means that `fn` returned first. A loop over n walks a termination through every
+// exception check of what `fn` does: native code polls traps at each RETURN_IF_EXCEPTION, and the interpreter polls
+// them where a function is called and where a loop goes around. Code from the optimizing JITs polls less or not at
+// all, and a function polls more while its inline caches are empty, so such a loop runs with --useJIT=0 and calls
+// `fn` a few times first.
+// The call can be inside $vm.callWithTimeLimit(): a limit that passes ends it. It cannot be inside another call of
+// this function, and `fn` cannot use $vm.callWithTimeLimit(): a limit that passes there waits for the count.
+// Usage: $vm.callWithTerminationAtTrapCheck(fn, n)
+JSC_DEFINE_HOST_FUNCTION(functionCallWithTerminationAtTrapCheck, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue function = callFrame->argument(0);
+    double count = callFrame->argument(1).toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto callData = JSC::getCallData(function);
+    if (callData.type == CallData::Type::None)
+        return throwVMTypeError(globalObject, scope, "expected a function"_s);
+    if (!(count >= 1) || count > std::numeric_limits<int32_t>::max())
+        return throwVMRangeError(globalObject, scope, "expected a count of at least 1"_s);
+    // The request of an enclosing call of this function is still there: the check above has counted it down, and has
+    // taken any other termination. Its count would be lost here.
+    if (vm.traps().needHandling(VMTraps::NeedTermination))
+        return throwVMTypeError(globalObject, scope, "a termination is requested already"_s);
+
+    vm.ensureTerminationException();
+    vm.traps().setTrapChecksBeforeTermination(static_cast<unsigned>(count));
+    vm.notifyNeedTermination();
+    call(globalObject, function, callData, jsUndefined(), ArgList());
+    bool wasTaken = vm.hasTerminationRequest();
+    vm.traps().setTrapChecksBeforeTermination(0);
+    vm.cancelTermination();
+    // An enclosing time-limited call whose limit has passed made the same request; make it again.
+    auto& calls = vm.ensureSideData<TimeLimitedCalls>(&timeLimitedCallsKey, [] { return makeUnique<TimeLimitedCalls>(); });
+    for (auto& enclosing : calls.active) {
+        if (enclosing->didFire()) {
+            vm.notifyNeedTermination();
+            break;
+        }
+    }
+    if (!wasTaken) {
+        // Whatever `fn` threw by itself stays thrown.
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(wasTaken)));
 }
 
 // VM::cancelTermination() / VM::hasPendingTermination().
@@ -6108,6 +6159,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "crash"_s, functionCrash, 0);
     addFunction(vm, allowIfNotFuzz, "callWithTimeLimit"_s, functionCallWithTimeLimit, 2);
     addFunction(vm, allowIfNotFuzz, "cancelTermination"_s, functionCancelTermination, 0);
+    addFunction(vm, allowIfNotFuzz, "callWithTerminationAtTrapCheck"_s, functionCallWithTerminationAtTrapCheck, 2);
     addFunction(vm, allowIfNotFuzz, "hasPendingTermination"_s, functionHasPendingTermination, 0);
     addFunction(vm, allowIfNotFuzz, "breakpoint"_s, functionBreakpoint, 0);
     addFunction(vm, allowIfNotFuzz, "exit"_s, functionExit, 0);
