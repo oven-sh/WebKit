@@ -67,14 +67,13 @@ void forEachTestPrerequisite(std::span<const TestRequirement> requirements, cons
     }
 }
 
-enum class ProofSource : uint8_t { TakenEdge, SwitchCase, GuardValue, Allocation, AllocationPassedOnEdge };
+enum class ProofSource : uint8_t { TakenEdge, SwitchCase, GuardValue, Allocation };
 
 constexpr bool isOnEdge(ProofSource source)
 {
     switch (source) {
     case ProofSource::TakenEdge:
     case ProofSource::SwitchCase:
-    case ProofSource::AllocationPassedOnEdge:
         return true;
     case ProofSource::GuardValue:
     case ProofSource::Allocation:
@@ -88,7 +87,6 @@ struct ExistingProof {
     TestConditionID condition;
     ValueID value;
     Edge edge;
-    bool isFromStrongerTest { false };
 };
 
 struct HoistedTest {

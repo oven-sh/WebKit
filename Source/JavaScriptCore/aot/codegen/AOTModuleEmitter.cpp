@@ -148,6 +148,11 @@ void ModuleEmitter::generateRecordRequire(const ValueContext& value)
     callVoidOperation(value, RuntimeOperation::RecordRequire, { moduleIndex(value->module()), moduleIndex(value->referrer()) });
 }
 
+void ModuleEmitter::generateAreLoaderFunctionsStored(const ValueContext& value)
+{
+    defineTest(value, callWithoutSite<Condition>(RuntimeOperation::AreLoaderFunctionsStored, { }));
+}
+
 void ModuleEmitter::generateWasLoadedSynchronously(const ValueContext& value)
 {
     defineTest(value, callWithoutSite<Condition>(RuntimeOperation::WasLoadedSynchronously, { moduleIndex(value->module()) }));

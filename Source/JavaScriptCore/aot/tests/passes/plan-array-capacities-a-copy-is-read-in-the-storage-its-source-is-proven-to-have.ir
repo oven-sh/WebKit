@@ -1,0 +1,65 @@
+# `[...list]` of a list proven to have Int32 storage, read where Double storage was expected: the copy is made in one piece without a test of the source, and its reads ask for Int32 storage. Beside it: a copy that is stored into keeps its old way, without a test that cannot pass; a source of no proven storage is tested as before.
+# FORM: Prepared
+# RUN: pass PlanArrayCapacities
+# CHECK-LABEL: name="copyThatIsRead"
+# CHECK-NOT: HasArrayStorage v0
+# CHECK: CallBuiltin v0 overload=ArrayPrototypeSlice/0
+# CHECK-NOT: AppendElements
+# CHECK-NOT: ConvertToDoubleStorage
+# CHECK-NOT: arrayStorage=Double
+# CHECK: GetArrayElement {{*}} arrayStorage=Int32
+# CHECK: HasArrayStorage {{*}} arrayStorage=Int32
+# CHECK-LABEL: name="copyThatIsStoredInto"
+# CHECK-NOT: HasArrayStorage v0
+# CHECK-NOT: ArrayPrototypeSlice
+# CHECK: AppendElements {{*}}, v0
+# CHECK: PutArrayElement {{*}} arrayStorage=Double
+# CHECK-LABEL: name="copyOfAnyNumbers"
+# CHECK: HasArrayStorage v0 arrayStorage=Double
+# CHECK: GetArrayElement {{*}} arrayStorage=Double
+# CHECK: CallBuiltin v0 overload=ArrayPrototypeSlice/0
+# CHECK: AppendElements {{*}}, v0
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="copyThatIsRead" parameters=[{type=Array<int[0, 7], proven, Int32, pristine[Storage, Names, Dense]>}, {type=int[0, 3]}] results=[{type=anything}] {
+    v2 = NewArray contents=undefined|int
+    v3 = AssumeType v2 provenType=Array<undefined|int, proven, pristine[Storage, Names, Dense]>
+    AppendElements v3, v0
+    v5 = HasArrayStorage v3 arrayStorage=Double
+    Branch v5 -> taken b1(| 0), notTaken b2()
+  b1(v6):
+    v7 = GetArrayElement v3, v1, v6 arrayStorage=Double level=Expected [keyIsIntegral]
+    Return v7
+  b2() frequency=Unlikely:
+    v8 = ElemGet v3, v1
+    Return v8
+}
+
+function f1 name="copyThatIsStoredInto" parameters=[{type=Array<int[0, 7], proven, Int32, pristine[Storage, Names, Dense]>}, {type=int[0, 3]}, {type=number}] results=[{type=anything}] {
+    v3 = NewArray contents=undefined|number
+    v4 = AssumeType v3 provenType=Array<undefined|number, proven, pristine[Storage, Names, Dense]>
+    AppendElements v4, v0
+    v6 = HasArrayStorage v4 arrayStorage=Double [isWritable]
+    Branch v6 -> taken b1(| 0), notTaken b2()
+  b1(v7):
+    PutArrayElement v4, v1, v2, v7 arrayStorage=Double level=Expected [keyIsIntegral]
+    Return v4
+  b2() frequency=Unlikely:
+    ElemSet v4, v1, v2
+    Return v4
+}
+
+function f2 name="copyOfAnyNumbers" parameters=[{type=Array<number, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 3]}] results=[{type=anything}] {
+    v2 = NewArray contents=undefined|number
+    v3 = AssumeType v2 provenType=Array<undefined|number, proven, pristine[Storage, Names, Dense]>
+    AppendElements v3, v0
+    v5 = HasArrayStorage v3 arrayStorage=Double
+    Branch v5 -> taken b1(| 0), notTaken b2()
+  b1(v6):
+    v7 = GetArrayElement v3, v1, v6 arrayStorage=Double level=Expected [keyIsIntegral]
+    Return v7
+  b2() frequency=Unlikely:
+    v8 = ElemGet v3, v1
+    Return v8
+}

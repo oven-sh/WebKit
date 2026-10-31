@@ -746,6 +746,14 @@ void evaluateModule(ValueFlowRuleContext& context, ModuleID first)
                 enterLoaderOfHost(context);
                 askLoaderFunctionsOfProgram(context, id, RequestAtRunTime::Require);
             }
+            // Modules::isChangedOnDisk(): the run has written the file anew, and the loader of the host runs the text that is there, which nobody has read.
+            if (module.flags.contains(ModuleFlags::IsChangedOnDiskByRun)) {
+                letUnseenCodeRun(context, UnseenCodeReach::Loader);
+                raiseHostFlag(context, ValueFlowHostNode::UnseenCopiesOfFilesMayRun);
+                context.add(ValueFlowProgramNodes::escaped(), context.universe().holdersOfPublicLibraryExports());
+                enterLoaderOfHost(context);
+                askLoaderFunctionsOfProgram(context, id, RequestAtRunTime::Require);
+            }
             continue;
         }
         if (visited.set(id.index()))

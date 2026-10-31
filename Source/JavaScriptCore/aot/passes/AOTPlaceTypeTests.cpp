@@ -721,27 +721,28 @@ static void dropSitesBeyondConditionLimit(FunctionPassContext& context, TestSite
     });
 }
 
-static void appendTakenEdgeProofs(FunctionAnalyses& analyses, const TestConditions& conditions, BlockID block, Vector<ExistingProof>& proofs)
+static void appendTakenEdgeProof(FunctionAnalyses& analyses, const TestConditions& conditions, BlockID block, Vector<ExistingProof>& proofs)
 {
     const Function& function = analyses.function();
     const Terminator& terminator = function.at(block).terminator;
     ValueID test = terminator.conditionOperand();
     if (terminator.taken().block == terminator.notTaken().block || provesOf(function.at(test).opcode) == Proof::None)
         return;
-    conditions.forEachConditionProvenBy(function.at(test), [&](TestConditionID condition, TestConditions::Strength strength) {
-        ValueLocation location = analyses.useLists().locationOf(test);
-        if (location.placement != ValuePlacement::InBlock || location.block != block)
-            return;
+    std::optional<TestConditionID> condition = conditions.find(function.at(test));
+    if (!condition)
+        return;
+    ValueLocation location = analyses.useLists().locationOf(test);
+    if (location.placement != ValuePlacement::InBlock || location.block != block)
+        return;
 
-        const TestCondition& tested = conditions.at(condition);
-        const BlockValues& values = function.at(block).values;
-        for (uint32_t index = location.index + 1; !tested.lastsForever() && index < values.size(); ++index) {
-            const EffectsOnEdges& effects = analyses.effectsOf(values[index]);
-            if (effects.normal.maySuspend || endingBetweenTestAndBranch(analyses, tested, values[index], effects) == ProofEnding::MayEnd)
-                return;
-        }
-        proofs.append(ExistingProof { ProofSource::TakenEdge, condition, test, Edge { block, 0 }, strength == TestConditions::Strength::Weaker });
-    });
+    const TestCondition& tested = conditions.at(*condition);
+    const BlockValues& values = function.at(block).values;
+    for (uint32_t index = location.index + 1; !tested.lastsForever() && index < values.size(); ++index) {
+        const EffectsOnEdges& effects = analyses.effectsOf(values[index]);
+        if (effects.normal.maySuspend || endingBetweenTestAndBranch(analyses, tested, values[index], effects) == ProofEnding::MayEnd)
+            return;
+    }
+    proofs.append(ExistingProof { ProofSource::TakenEdge, *condition, test, Edge { block, 0 } });
 }
 
 // What one of several origins proved is weaker than the condition of any of them.
@@ -800,66 +801,14 @@ static void appendGuardValueProofs(FunctionAnalyses& analyses, const TestConditi
     }
 }
 
-static void forEachAllocationPassedTo(FunctionAnalyses& analyses, ValueID parameter, NOESCAPE const Invocable<IterationStatus(Edge, ValueID allocation, ValueLocation)> auto& functor)
-{
-    const Function& function = analyses.function();
-    const UseLists& useLists = analyses.useLists();
-    ValueLocation location = useLists.locationOf(parameter);
-    if (location.placement != ValuePlacement::Parameter)
-        return;
-    for (Edge edge : analyses.cfg().incomingEdges(location.block)) {
-        if (edge.isHandlerEdge() || function.at(edge.from).terminator.kind != TerminatorKind::Jump)
-            continue;
-        ValueID passed = valuePassedOn(function, edge, location.index);
-        if (!passed)
-            continue;
-        ValueID allocation = analyses.identityOf(passed);
-        ValueLocation made = useLists.locationOf(allocation);
-        if (made.placement != ValuePlacement::InBlock || made.block != edge.from || proofsOfAllocation(analyses.program(), function, function.at(allocation)).isEmpty())
-            continue;
-        if (functor(edge, allocation, made) == IterationStatus::Done)
-            return;
-    }
-}
-
-bool takesAllocationOnSomeEdge(FunctionAnalyses& analyses, ValueID parameter)
-{
-    bool found = false;
-    forEachAllocationPassedTo(analyses, parameter, [&](Edge, ValueID, ValueLocation) {
-        found = true;
-        return IterationStatus::Done;
-    });
-    return found;
-}
-
-static void appendProofsOfAllocationsThatMeet(FunctionAnalyses& analyses, const TestConditions& conditions, TestConditionID id, Vector<ExistingProof>& proofs)
-{
-    const Function& function = analyses.function();
-    forEachAllocationPassedTo(analyses, conditions.at(id).subject, [&](Edge edge, ValueID allocation, ValueLocation made) {
-        TestCondition aboutAllocation = conditions.at(id);
-        aboutAllocation.subject = allocation;
-        aboutAllocation.test.setOperand(testedOperandIndex, allocation);
-        if (allocationProofOf(analyses.program(), function, function.at(allocation), aboutAllocation) != AllocationProof::Proves)
-            return IterationStatus::Continue;
-        const BlockValues& values = function.at(made.block).values;
-        for (uint32_t index = made.index + 1; index < values.size(); ++index) {
-            const EffectsOnEdges& effects = analyses.effectsOf(values[index]);
-            if (effects.normal.maySuspend || endingBetweenTestAndBranch(analyses, aboutAllocation, values[index], effects) == ProofEnding::MayEnd)
-                return IterationStatus::Continue;
-        }
-        proofs.append(ExistingProof { ProofSource::AllocationPassedOnEdge, id, allocation, edge });
-        return IterationStatus::Continue;
-    });
-}
-
-Vector<ExistingProof> findExistingProofs(FunctionPassContext& context, const TestConditions& conditions, ProofsHeldByGuards heldByGuards, ProofsOfAllocationsThatMeet ofAllocationsThatMeet)
+Vector<ExistingProof> findExistingProofs(FunctionPassContext& context, const TestConditions& conditions, ProofsHeldByGuards heldByGuards)
 {
     const Function& function = context.function;
     Vector<ExistingProof> proofs;
     for (BlockID block : context.analyses.cfg().reversePostOrder()) {
         const Terminator& terminator = function.at(block).terminator;
         if (terminator.isConditionalBranch())
-            appendTakenEdgeProofs(context.analyses, conditions, block, proofs);
+            appendTakenEdgeProof(context.analyses, conditions, block, proofs);
         std::span<const LayoutSetID> layoutSets = terminator.kind == TerminatorKind::SwitchOnShape ? terminator.layoutSets() : std::span<const LayoutSetID> { };
         for (uint32_t caseIndex = 0; caseIndex < layoutSets.size(); ++caseIndex) {
             if (std::optional<TestConditionID> condition = conditions.find(makeShapeTest(terminator.subjectOperand(), layoutSets[caseIndex])))
@@ -873,12 +822,8 @@ Vector<ExistingProof> findExistingProofs(FunctionPassContext& context, const Tes
         appendGuardValueProofs(context.analyses, conditions, proofs);
     for (size_t index : conditions.stretchConditions()) {
         const TestCondition& condition = conditions.at(TestConditionID(index));
-        if (!condition.subject)
-            continue;
-        if (allocationProofOf(context.program, function, function.at(condition.subject), condition) == AllocationProof::Proves)
+        if (condition.subject && allocationProofOf(context.program, function, function.at(condition.subject), condition) == AllocationProof::Proves)
             proofs.append(ExistingProof { ProofSource::Allocation, TestConditionID(index), condition.subject, { } });
-        else if (ofAllocationsThatMeet == ProofsOfAllocationsThatMeet::AreListed)
-            appendProofsOfAllocationsThatMeet(context.analyses, conditions, TestConditionID(index), proofs);
     }
     return proofs;
 }
@@ -3369,8 +3314,6 @@ struct TestPlacer {
             case ProofSource::Allocation:
                 adoptedProofs.append(proof.value);
                 break;
-            case ProofSource::AllocationPassedOnEdge:
-                RELEASE_ASSERT_NOT_REACHED();
             }
         }
     }

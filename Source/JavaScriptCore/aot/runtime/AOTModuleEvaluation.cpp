@@ -3118,6 +3118,11 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         return settled;
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (JSValue error = errorOfLoadEndedByMock(target); error && !hasBegunToLoad(target)) [[unlikely]] {
+        m_importersOfMockThatNextImportLoads.clear(target.index());
+        throwException(m_instance.globalObject, scope, error);
+        return { };
+    }
     runMocksBelow(target);
     RETURN_IF_EXCEPTION(scope, { });
     if (isLeftToHost(target)) [[unlikely]]

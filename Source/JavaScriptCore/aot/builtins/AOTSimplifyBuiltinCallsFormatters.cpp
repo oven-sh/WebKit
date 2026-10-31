@@ -133,6 +133,9 @@ static std::optional<FormatterSite> matchFormatterSite(FunctionPassContext& cont
     std::optional<FormatterRequest> request = findFormatterMadeBy(program, call);
     if (!request)
         return std::nullopt;
+    // `new Number(5).toLocaleString("en-US")`: the function takes the number out of the object. A pattern is written from a number.
+    if (request->kind == FormatPatternKind::Number && call.receiverOperand() && !program.typeOf(function, call.receiverOperand()).isSubsetOf(program.at(TypeTable::number), program))
+        return std::nullopt;
     auto arguments = call.argumentsOperands();
     if (arguments.empty() || arguments.size() > 2)
         return std::nullopt;

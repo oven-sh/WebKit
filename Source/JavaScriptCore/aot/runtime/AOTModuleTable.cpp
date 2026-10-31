@@ -397,13 +397,6 @@ bool ModuleTable::holdsFileAt(StringView path) const
     return isFile && !found.registryID() && !found.evaluatorModule();
 }
 
-bool ModuleTable::hasFileWithExtension(StringView extension) const
-{
-    return std::ranges::any_of(modulesByPath(), [&](uint32_t module) {
-        return ProgramStrings::viewInImage(*m_tables, StringID(m_modules[module].publicPathOrName)).endsWith(extension);
-    });
-}
-
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

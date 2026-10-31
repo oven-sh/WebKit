@@ -97,7 +97,6 @@ public:
     String displayPathText(ModuleID) const;
     String pathTextForLineColumns(ModuleID) const;
     bool hasFilePath(ModuleID module) const { return data(module).hasExportTable() || data(module).kind == ModuleKind::CommonJs; }
-    bool hasFileWithExtension(StringView) const;
     // The path of each program file with code that starts with `start`, in sorted order.
     IterationStatus forEachFilePathStartingWith(StringView start, const ScopedLambda<IterationStatus(const String&)>&) const;
     // A file with code or with data, as it is loaded where no attribute asks for another form.

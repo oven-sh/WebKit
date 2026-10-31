@@ -55,7 +55,6 @@ enum class LoadByName : uint8_t { Require, Import };
 enum class RequireOverride : uint8_t {
     ResolveFilename = 1 << 0,
     RequireFunction = 1 << 1,
-    Extensions = 1 << 2,
 };
 
 // A host without the thing that a member is for leaves the member null.
@@ -222,7 +221,6 @@ JS_EXPORT_PRIVATE void forEachEvaluatedFile(JSGlobalObject*, const WTF::Function
 JS_EXPORT_PRIVATE void forEachLibraryModuleInRequireCache(JSGlobalObject*, const WTF::Function<void(const String&)>&);
 JS_EXPORT_PRIVATE std::optional<ModuleID> findLibraryModuleInRequireCache(JSGlobalObject*, const String& name);
 JS_EXPORT_PRIVATE void willChangeRequireOverride(JSGlobalObject*, RequireOverride, bool isOverridden);
-JS_EXPORT_PRIVATE bool hasFileWithExtension(StringView);
 // The host admits code from disk, and the program stores a loader under the extension: the host's require() hands it every file of that extension that has not run. Throws for a file that the build bound for good.
 JS_EXPORT_PRIVATE void willStoreLoaderOfExtension(JSGlobalObject*, StringView extension);
 

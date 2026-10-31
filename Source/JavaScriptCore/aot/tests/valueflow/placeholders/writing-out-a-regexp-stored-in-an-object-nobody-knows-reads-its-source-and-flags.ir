@@ -1,5 +1,4 @@
 # pattern = new RegExp; somethingNoTableLists.held = pattern; JSON.stringify(somethingNoTableLists); JSON.stringify(pattern)
-# TODO: row 3380: where no unknown code writes, what an escaped object finds above it goes by the order of the rules of flow
 # RUN: valueflow-solve used
 # CHECK: used RegExpPrototypeFlags
 # CHECK: used RegExpPrototypeGlobal

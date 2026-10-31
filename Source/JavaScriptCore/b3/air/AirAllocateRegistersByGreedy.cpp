@@ -1215,15 +1215,10 @@ public:
 
     bool hasPointClobberingAll(uint64_t regs, Interval interval) const
     {
-        return hasPointClobberingAll(regs, interval, [](Point) { return true; });
-    }
-
-    bool hasPointClobberingAll(uint64_t regs, Interval interval, NOESCAPE const Invocable<bool(Point)> auto& counts) const
-    {
         auto clobberPoints = m_clobberPoints.span();
         size_t index = std::ranges::lower_bound(clobberPoints, interval.begin()) - clobberPoints.begin();
         for (; index < clobberPoints.size() && clobberPoints[index] < interval.end(); ++index) {
-            if ((m_clobberedRegsAtPoint[index] & regs) == regs && counts(clobberPoints[index]))
+            if ((m_clobberedRegsAtPoint[index] & regs) == regs)
                 return true;
         }
         return false;
@@ -3903,40 +3898,6 @@ private:
             return a.tmp1.tmpIndex(bank) < b.tmp1.tmpIndex(bank);
         });
 
-        // Where no register of the bank outlives a call, a Tmp that no loop names and that lives past a call is split around the call or waits on the stack. As one Tmp with it,
-        // what a loop computes would share that fate, in every turn. Apart, the move between them is the store or the load that the one that waits has in any case.
-        // A Tmp that a loop names is another matter, whatever calls it lives past: what it is moved to in that loop goes the same way, and apart they would cost a move a turn.
-        uint64_t allowedRegisters = 0;
-        for (Reg reg : m_allowedRegistersInPriorityOrder[bank])
-            allowedRegisters |= 1ULL << reg.index();
-        const bool keepsApartWhatWaitsPastCalls = !moves.isEmpty() && m_splitPolicy.keepsUnusedTmpsOnStackThroughLoops && allowedRegisters && regsClobberedAtCalls(bank) == allowedRegisters;
-        // The Tmps are still those of the code as it came: m_cycles is for the ones that stand for their groups.
-        std::optional<Cycles> cycles;
-        BitVector isAsked;
-        BitVector waitsPastCallAnswers;
-        auto waitsPastCall = [&](Tmp tmp) {
-            unsigned index = tmp.tmpIndex(bank);
-            if (!isAsked.set(index)) {
-                bool answer = std::ranges::any_of(m_map.get<bank>(tmp).liveRange.intervals(), [&](const Interval& interval) {
-                    return m_occupancy.hasPointClobberingAll(allowedRegisters, interval);
-                });
-                if (answer) {
-                    if (!cycles)
-                        cycles.emplace(m_code);
-                    for (unsigned cycle = 0; cycle < cycles->forest.size() && answer; ++cycle)
-                        answer = cycles->forest[cycle].parent != cycles->forest.none || !cycles->names(m_code, cycle, tmp);
-                }
-                waitsPastCallAnswers.set(index, answer);
-            }
-            return waitsPastCallAnswers.get(index);
-        };
-
-        // Whether one of the members of a group waits past a call.
-        Vector<bool> groupWaitsPastCall;
-        auto waits = [&](Tmp tmp, GroupIndex groupIndex) {
-            return groupIndex != noGroup ? groupWaitsPastCall[groupIndex] : waitsPastCall(tmp);
-        };
-
         for (Move& move : moves) {
             dataLogLnIf(verbose(), "Processing move: ", move);
             auto groupIndex0 = tmpToGroup[move.tmp0];
@@ -3947,32 +3908,14 @@ private:
                 continue;
             }
 
-            bool bothWait = false;
-            if (keepsApartWhatWaitsPastCalls) {
-                bothWait = waits(move.tmp0, groupIndex0);
-                if (bothWait != waits(move.tmp1, groupIndex1)) {
-                    dataLogLnIf(verbose(), "Kept apart: one of them waits past a call");
-                    continue;
-                }
-            }
-
-            GroupIndex grown = noGroup;
-            if (groupIndex0 == noGroup && groupIndex1 == noGroup) {
+            if (groupIndex0 == noGroup && groupIndex1 == noGroup)
                 coalesceSingletons<bank>(move.tmp0, move.tmp1, groups, tmpToGroup);
-                grown = groups.size() - 1;
-            } else if (groupIndex0 != noGroup && groupIndex1 != noGroup) {
-                if (tryCoalesceGroups<bank>(groupIndex0, groupIndex1, groups, tmpToGroup))
-                    grown = groupIndex0;
-            } else {
+            else if (groupIndex0 != noGroup && groupIndex1 != noGroup)
+                tryCoalesceGroups<bank>(groupIndex0, groupIndex1, groups, tmpToGroup);
+            else {
                 auto groupIndex = groupIndex0 != noGroup ? groupIndex0 : groupIndex1;
                 Tmp singleton = groupIndex0 != noGroup ? move.tmp1 : move.tmp0;
-                if (tryCoalesceSingletonWithGroup<bank>(singleton, groupIndex, groups, tmpToGroup))
-                    grown = groupIndex;
-            }
-            if (keepsApartWhatWaitsPastCalls && grown != noGroup) {
-                if (groupWaitsPastCall.size() <= grown)
-                    groupWaitsPastCall.grow(grown + 1);
-                groupWaitsPastCall[grown] = bothWait;
+                tryCoalesceSingletonWithGroup<bank>(singleton, groupIndex, groups, tmpToGroup);
             }
         }
     }
@@ -4735,8 +4678,6 @@ private:
         }
         if (tmpData.isOnlyReadAtSomeClobber && trySplitAroundClobbers<bank>(tmp, tmpData, true, ClobbersThatRead::AreSplitAround))
             return true;
-        if (tryWaitOnStackPastCalls<bank>(tmp, tmpData))
-            return true;
         if (trySplitAroundLoop<bank>(tmp, tmpData))
             return true;
         if (tryTakeRegisterOfTmpsCheaperOnStack<bank>(tmp, tmpData))
@@ -4994,13 +4935,9 @@ private:
         return taken / all;
     }
 
-    // Behind a Patch that ends a block a move has its place at the head of a block that nothing else leads to: no block is put on the edge for it.
-    enum class BehindPatch : bool { NoMove, MoveAtHeadOfOnlySuccessor };
-
-    float costOfMoveBetween(BasicBlock* from, BasicBlock* to, BehindPatch behindPatch = BehindPatch::NoMove)
+    float costOfMoveBetween(BasicBlock* from, BasicBlock* to)
     {
-        bool standsAtHead = behindPatch == BehindPatch::MoveAtHeadOfOnlySuccessor && from->last().kind.opcode == Patch && to->numPredecessors() == 1 && !to->at(0).clobbersAtBlockEntry();
-        if (!standsAtHead && !canPlaceMovesBetween(from, to))
+        if (!canPlaceMovesBetween(from, to))
             return std::numeric_limits<float>::infinity();
         float frequency = std::min<float>(adjustedBlockFrequency(from) * shareOfFrequency(from, to), adjustedBlockFrequency(to));
         return endsInLoneJump(from) || to->numPredecessors() == 1 ? frequency : 2 * frequency;
@@ -5235,147 +5172,6 @@ private:
             m_blocksOnStack.append(WTF::move(other));
         }
         assign(tmp, tmpData, bestReg);
-        return true;
-    }
-
-    // What a loop computes may have to wait, behind the loop or in front of it, past calls that leave no register of its bank alone: on x86-64 no register that holds a double outlives a call.
-    // Two moves at each of those calls may cost more than a spill, and a spilled Tmp is loaded and stored in the loop too, where each turn then waits for the store of the turn before.
-    // So it waits on the stack in the blocks with such calls that never name it, and in the blocks around them that never name it either: a store on the way in, a load on the way out.
-    // A block without a call in a cycle that names the Tmp is no place to wait: the Tmp is on its way to the next use there.
-    template<Bank bank>
-    bool tryWaitOnStackPastCalls(Tmp tmp, TmpData& tmpData)
-    {
-        if (!m_splitPolicy.keepsUnusedTmpsOnStackThroughLoops || isConstDef<bank>(tmp))
-            return false;
-        if (tmpData.isOnStackInSomeBlocks || tmpData.splitAroundClobbersMetadataIndex || tmpData.splitFrom || tmpData.spansStretch)
-            return false;
-        // Where some register of the bank outlives a call, what a loop computes competes for that one.
-        uint64_t clobberedAtCalls = regsClobberedAtCalls(bank);
-        uint64_t allowedRegisters = 0;
-        for (Reg reg : m_allowedRegistersInPriorityOrder[bank])
-            allowedRegisters |= 1ULL << reg.index();
-        if (!clobberedAtCalls || clobberedAtCalls != allowedRegisters)
-            return false;
-        CostOfSpill spill = costOfSpill(tmp);
-        if (!spill.mostFrequentBlock)
-            return false;
-        if (!m_cycles)
-            m_cycles.emplace(m_code);
-        // What a loop only reads it can read from the stack. By the estimates a loop that is entered on one way of several may run less often than the code around it, so this asks for any loop.
-        auto useDefs = useDefsOf(tmp);
-        bool isWrittenInCycle = std::ranges::any_of(useDefs, [&](Point point) {
-            BasicBlock* block = findBlockContainingPoint(point);
-            if (m_cycles->forest.innermost(block) == m_cycles->forest.none)
-                return false;
-            bool isWritten = false;
-            forEachMention(tmp, point, block->at(instIndex(positionOfHead(block), point)), [&](Tmp&, Arg::Role role) {
-                isWritten |= Arg::isAnyDef(role);
-            });
-            return isWritten;
-        });
-        if (!isWrittenInCycle)
-            return false;
-
-        BitVector mayWaitIn;
-        mayWaitIn.ensureSize(m_code.size());
-        Vector<unsigned, 8> worklist;
-        for (const Interval& interval : tmpData.liveRange.intervals()) {
-            for (size_t blockIndex = findBlockIndexContainingPoint(interval.begin());;) {
-                Point head = positionOfHead(m_code[blockIndex]);
-                Point tail = m_tailPoints[blockIndex];
-                auto nextUseDef = std::ranges::lower_bound(useDefs, head);
-                if (interval.begin() <= head && tail < interval.end() && (nextUseDef == useDefs.end() || *nextUseDef > tail)) {
-                    unsigned cycle = m_cycles->forest.innermost(m_code[blockIndex]);
-                    if (m_occupancy.hasPointClobberingAll(clobberedAtCalls, Interval(head, tail + 1))) {
-                        mayWaitIn.quickSet(blockIndex);
-                        worklist.append(blockIndex);
-                    } else if (cycle == m_cycles->forest.none || !m_cycles->names(m_code, cycle, tmp))
-                        mayWaitIn.quickSet(blockIndex);
-                }
-                if (tail + 1 >= interval.end())
-                    break;
-                do {
-                    ++blockIndex;
-                } while (!m_code[blockIndex]);
-            }
-        }
-        if (worklist.isEmpty())
-            return false;
-
-        // The moves stand where the blocks around a call begin to run more often than the call: a rare call in a loop does not take what leads to the loop along.
-        Vector<unsigned, 8> blocksWithCalls = std::exchange(worklist, { });
-        std::ranges::stable_sort(blocksWithCalls, std::ranges::greater { }, [&](unsigned blockIndex) {
-            return m_code[blockIndex]->frequency();
-        });
-        BitVector waitsIn;
-        waitsIn.ensureSize(m_code.size());
-        BlocksOnStack onStack { tmp, { } };
-        for (unsigned blockWithCall : blocksWithCalls) {
-            double frequencyOfCall = m_code[blockWithCall]->frequency();
-            worklist.append(blockWithCall);
-            while (!worklist.isEmpty()) {
-                unsigned blockIndex = worklist.takeLast();
-                if (waitsIn.quickSet(blockIndex))
-                    continue;
-                onStack.blocks.append(blockIndex);
-                auto visit = [&](BasicBlock* neighbor) {
-                    if (mayWaitIn.quickGet(neighbor->index()) && !waitsIn.quickGet(neighbor->index()) && neighbor->frequency() <= frequencyOfCall)
-                        worklist.append(neighbor->index());
-                };
-                for (BasicBlock* predecessor : m_code[blockIndex]->predecessors())
-                    visit(predecessor);
-                for (BasicBlock* successor : m_code[blockIndex]->successorBlocks())
-                    visit(successor);
-            }
-        }
-        std::ranges::sort(onStack.blocks);
-
-        // A store on the way in stands for the one that a spill puts behind the definition in front, a load on the way out for the one in front of the use behind. So nothing is divided by the
-        // multiplier for splits here: where the estimates of the two are level, the run is no longer than that of a spill, and a loop whose turns were underestimated is the one that gains.
-        float limit = spill.frequency;
-        float cost = 0;
-        LiveRange rangeOnStack;
-        for (unsigned blockIndex : onStack.blocks) {
-            BasicBlock* block = m_code[blockIndex];
-            for (BasicBlock* predecessor : block->predecessors()) {
-                if (!waitsIn.quickGet(predecessor->index()))
-                    cost += costOfMoveBetween(predecessor, block, BehindPatch::MoveAtHeadOfOnlySuccessor);
-            }
-            BasicBlock* previous = nullptr;
-            for (BasicBlock* successor : block->successorBlocks()) {
-                if (successor != std::exchange(previous, successor) && !waitsIn.quickGet(successor->index()) && containsPoint(tmpData.liveRange, positionOfHead(successor)))
-                    cost += costOfMoveBetween(block, successor, BehindPatch::MoveAtHeadOfOnlySuccessor);
-            }
-            if (cost >= limit) {
-                dataLogLnIf(verbose(), "Not on the stack past calls: ", tmp, " in blocks ", listDump(onStack.blocks), " cost = ", cost, " at block ", blockIndex, " limit = ", limit);
-                return false;
-            }
-            rangeOnStack.append(m_intervalArena, Interval(positionOfHead(block), positionOfTail(block) + 1));
-        }
-
-        // It is for a Tmp that has a register then. Past the calls that are left, those in blocks that name it, it is split around each, if that costs less than a split may.
-        LiveRange rangeInRegister = LiveRange::subtract(m_intervalArena, tmpData.liveRange, rangeOnStack);
-        float mostForCallsLeft = tmpData.useDefCost.value();
-        if (m_splitPolicy.splitMultiplier > 0.0)
-            mostForCallsLeft /= m_splitPolicy.splitMultiplier;
-        float costOfCallsLeft = 0;
-        bool callsLeftCostTooMuch = std::ranges::any_of(rangeInRegister.intervals(), [&](const Interval& interval) {
-            return m_occupancy.hasPointClobberingAll(clobberedAtCalls, interval, [&](Point point) {
-                costOfCallsLeft += 2 * adjustedBlockFrequency(findBlockContainingPoint(point));
-                return costOfCallsLeft >= mostForCallsLeft;
-            });
-        });
-        if (callsLeftCostTooMuch) {
-            dataLogLnIf(verbose(), "Not on the stack past calls: ", tmp, " lives past calls in blocks that name it");
-            return false;
-        }
-
-        tmpData.setLiveRange(WTF::move(rangeInRegister));
-        tmpData.isOnStackInSomeBlocks = true;
-        ensureSpillSlotTableEntry(tmpData);
-        dataLogLnIf(verbose(), "On the stack past calls: ", tmp, " in blocks ", listDump(onStack.blocks), " cost = ", cost, " limit = ", limit);
-        m_blocksOnStack.append(WTF::move(onStack));
-        setStageAndEnqueue(tmp, tmpData, Stage::TryAllocate);
         return true;
     }
 

@@ -2,7 +2,6 @@
 # FORM: Prepared
 # OPTIONS: heat=OnlyLoopsAreHot
 # RUN: pass UnrollShortLoops
-# LOSS: MaxInlineHeadBytes
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="everyTurn" parameters=[{type=i32}] results=[{type=number}] {

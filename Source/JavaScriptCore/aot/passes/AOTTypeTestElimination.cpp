@@ -570,14 +570,14 @@ struct RedundantBranchSearch {
         for (const TestRequirement& branch : all.branches)
             ++numberOfBranches[branch.condition.index()];
         auto mayBeProvenElsewhere = [&](TestConditionID id) {
-            if (numberOfBranches[id.index()] > 1 || all.conditionsWithOtherTests.get(id.index()) || all.conditions.isWeakerThanAnotherCondition(id))
+            if (numberOfBranches[id.index()] > 1 || all.conditionsWithOtherTests.get(id.index()))
                 return true;
             const TestCondition& condition = all.conditions.at(id);
             if (!all.conditions.stretchConditions().get(id.index()))
                 return false;
             if (all.hasSwitchOnShape && condition.proof == Proof::Shape)
                 return true;
-            return condition.subject && (!proofsOfAllocation(context.program, function, function.at(condition.subject)).isEmpty() || takesAllocationOnSomeEdge(analyses, condition.subject));
+            return condition.subject && !proofsOfAllocation(context.program, function, function.at(condition.subject)).isEmpty();
         };
 
         hasSwitchOnShape = all.hasSwitchOnShape;
@@ -595,7 +595,6 @@ struct RedundantBranchSearch {
         case ProofSource::TakenEdge:
         case ProofSource::SwitchCase:
         case ProofSource::Allocation:
-        case ProofSource::AllocationPassedOnEdge:
             return proof.source;
         case ProofSource::GuardValue:
             break;
@@ -671,16 +670,16 @@ struct RedundantBranchSearch {
 
     void findProofs(ProofsHeldByGuards heldByGuards)
     {
-        Vector<ExistingProof> found = findExistingProofs(context, conditions, heldByGuards, ProofsOfAllocationsThatMeet::AreListed);
+        Vector<ExistingProof> found = findExistingProofs(context, conditions, heldByGuards);
 
         BitVector conditionsProvenByAllocation;
         Vector<ProofSet> reliedOn;
         for (const ExistingProof& proof : found) {
-            if (proof.source != ProofSource::Allocation && proof.source != ProofSource::AllocationPassedOnEdge)
+            if (proof.source != ProofSource::Allocation)
                 continue;
             if (reliedOn.isEmpty())
                 reliedOn = findProofsReliedOn();
-            if (proof.source == ProofSource::AllocationPassedOnEdge ? reliedOn[proof.condition.index()].isEmpty() : canReplaceTests(proof, reliedOn[proof.condition.index()]))
+            if (canReplaceTests(proof, reliedOn[proof.condition.index()]))
                 conditionsProvenByAllocation.set(proof.condition.index());
         }
 
@@ -698,7 +697,6 @@ struct RedundantBranchSearch {
                     otherProofs.append(proof);
                 break;
             case ProofSource::Allocation:
-            case ProofSource::AllocationPassedOnEdge:
                 if (isProvenByAllocation)
                     otherProofs.append(proof);
                 break;
@@ -760,11 +758,6 @@ struct RedundantBranchSearch {
                 conditionsStillTested.set(condition);
         }
 
-        for (const ExistingProof& proof : proofsFromTests) {
-            if (proof.isFromStrongerTest)
-                conditionsStillTested.set(proof.condition.index());
-        }
-
         for (const ExistingProof& proof : otherProofs)
             mixedConditions.set(proof.condition.index());
         mixedConditions.filter(conditionsInPlay);
@@ -805,16 +798,6 @@ struct RedundantBranchSearch {
                     break;
                 assumed = WTF::move(stillAssumed);
             }
-
-            // Whatever proved a removed branch takes its place, and canReplaceTests() was never asked whether that may also stand in for a weaker condition.
-            BitVector blocksOfRedundantBranches;
-            for (size_t index : verdicts.redundant)
-                blocksOfRedundantBranches.set(branches[index].point.block.index());
-            bool didRemoveProofs = proofsFromTests.removeAllMatching([&](const ExistingProof& proof) {
-                return proof.isFromStrongerTest && blocksOfRedundantBranches.get(proof.edge.from.index());
-            });
-            if (didRemoveProofs)
-                continue;
 
             BitVector mixedConditions = findMixedConditions(verdicts);
             if (mixedConditions.isEmpty())
@@ -894,14 +877,9 @@ static void foldRedundantBranches(FunctionPassContext& context, const RedundantB
 
     Vector<Vector<ValueID, 2>> provingValues(search.conditions.size());
     for (const ExistingProof& proof : search.proofs) {
-        if (!conditionsInPlay.get(proof.condition.index()))
+        if (!conditionsInPlay.get(proof.condition.index()) || (proof.source == ProofSource::TakenEdge && foldedBlocks.get(proof.edge.from.index())))
             continue;
-        if (proof.source == ProofSource::TakenEdge && foldedBlocks.get(proof.edge.from.index())) {
-            RELEASE_ASSERT(!proof.isFromStrongerTest);
-            continue;
-        }
-        bool isResultOfEdge = proof.source == ProofSource::TakenEdge || proof.source == ProofSource::SwitchCase;
-        provingValues[proof.condition.index()].appendIfNotContains(isResultOfEdge ? ensureEdgeResult(builder, analyses, proof.edge, testedOperandIndex) : proof.value);
+        provingValues[proof.condition.index()].appendIfNotContains(isOnEdge(proof.source) ? ensureEdgeResult(builder, analyses, proof.edge, testedOperandIndex) : proof.value);
     }
 
     const UseLists& useLists = analyses.useLists();

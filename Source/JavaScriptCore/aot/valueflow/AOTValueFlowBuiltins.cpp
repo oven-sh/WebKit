@@ -4756,17 +4756,24 @@ static void forEachGetterOfHostClassesAbove(ValueFlowRuleContext& context, Climb
     });
 }
 
-static void callMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeID hub, const ValueFlowBehavior& behavior, ClimbingSet receivers, const ValueFlowOperand& thisValue)
+static ClimbingSet membersToCall(ValueFlowRuleContext& context, ClimbingSet receivers, BuiltinName name, ValueSetID followed)
+{
+    if (followed == ValueSets::anything)
+        return membersToCall(context, receivers, name);
+    return context.restrict(context.valueOf(context.lookup(receivers, property(context, name))), followed);
+}
+
+static void callMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeID hub, const ValueFlowBehavior& behavior, ClimbingSet receivers, const ValueFlowOperand& thisValue, ValueSetID followed = ValueSets::anything)
 {
     const ValueFlowUniverse& universe = context.universe();
     ValueFlowNodeID handedOut = behavior.isTransitive ? hub : ValueFlowNodeID();
     enum class Passes : bool { Primitives, ValuesNobodyDescribes };
     auto call = [&](BuiltinName name, Passes passes, ValueFlowNodeID result) {
-        ClimbingSet members = membersToCall(context, receivers, name);
+        ClimbingSet members = membersToCall(context, receivers, name, followed);
         if (!context.meet(members, universe.callables()))
             return;
         callFromNativeCode(context, members, thisValue, passes == Passes::Primitives ? universe.anyPrimitive() : unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult), result, [&](ClimbingSet receiver) {
-            return membersToCall(context, receiver, name);
+            return membersToCall(context, receiver, name, followed);
         });
     };
     auto take = [&](ValueFlowNodeID node) {
@@ -4778,7 +4785,7 @@ static void callMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeI
     ClimbingSet objects = context.restrict(withWhatUntrackedObjectCovers(context, context.restrict(receivers, universe.objects())), walked);
     auto runGettersOn = [&](NOESCAPE const Invocable<ClimbingSet(ClimbingSet)> auto& holdersOf) {
         auto find = [&](ClimbingSet asked) {
-            return context.valueOf(context.readWhatWasWritten(holdersOf(context.restrict(asked, walked)), everyGetterName));
+            return context.restrict(context.valueOf(context.readWhatWasWritten(holdersOf(context.restrict(asked, walked)), everyGetterName)), followed);
         };
         ClimbingSet found = find(objects);
         if (!context.meet(found, universe.callables()))
@@ -4815,8 +4822,8 @@ static void callMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeI
         holdingConverted.mask = context.maker().intersect(holdingConverted.mask, universe.objects());
         ClimbingSet converted = context.restrict(receivers, universe.objects());
         for (BuiltinName name : { BuiltinNames::toPrimitiveSymbol, BuiltinNames::valueOf, BuiltinNames::toString }) {
-            callFromNativeCode(context, membersToCall(context, converted, name), holdingConverted, universe.anyPrimitive(), { }, [&](ClimbingSet receiver) {
-                return membersToCall(context, receiver, name);
+            callFromNativeCode(context, membersToCall(context, converted, name, followed), holdingConverted, universe.anyPrimitive(), { }, [&](ClimbingSet receiver) {
+                return membersToCall(context, receiver, name, followed);
             });
         }
     }
@@ -4824,9 +4831,9 @@ static void callMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeI
         call(BuiltinNames::toJSON, Passes::Primitives, handedOut ? handedOut : ValueFlowProgramNodes::escaped());
     if (behavior.protocols.contains(Protocol::HasInstance))
         call(BuiltinNames::hasInstanceSymbol, Passes::ValuesNobodyDescribes, { });
-    if (behavior.protocols.contains(Protocol::Thenable))
+    if (behavior.protocols.contains(Protocol::Thenable) && followed == ValueSets::anything)
         take(context.lookup(receivers, awaitedValueName));
-    if (behavior.protocols.contains(Protocol::Iterate))
+    if (behavior.protocols.contains(Protocol::Iterate) && followed == ValueSets::anything)
         take(context.lookup(receivers, iteratedValues));
     if (behavior.protocols.contains(Protocol::Named) && behavior.namedMembers.empty())
         runGettersOn([&](ClimbingSet holders) {
@@ -4835,22 +4842,22 @@ static void callMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeI
     if (behavior.protocols.contains(Protocol::CallsNamed)) {
         bool callsSomething = false;
         if (behavior.calledMembers.empty()) {
-            ClimbingSet methods = context.valueOf(context.readWhatWasWritten(chainOfProgramFrom(context, objects), everyPropertyName));
+            ClimbingSet methods = context.restrict(context.valueOf(context.readWhatWasWritten(chainOfProgramFrom(context, objects), everyPropertyName)), followed);
             if (context.meet(methods, universe.callables())) {
                 callFromNativeCode(context, methods, thisValue, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult), handedOut ? handedOut : ValueFlowProgramNodes::escaped(), [&](ClimbingSet receiver) {
-                    return context.valueOf(context.readWhatWasWritten(chainOfProgramFrom(context, withWhatUntrackedObjectCovers(context, receiver)), everyPropertyName));
+                    return context.restrict(context.valueOf(context.readWhatWasWritten(chainOfProgramFrom(context, withWhatUntrackedObjectCovers(context, receiver)), everyPropertyName)), followed);
                 });
                 callsSomething = true;
             }
         }
         for (BuiltinName name : behavior.calledMembers) {
             ValueFlowNodeID result = handedOut ? handedOut : ValueFlowProgramNodes::escaped();
-            ClimbingSet members = withoutWhatBuiltinsMadeAsNoFunction(context, context.valueOf(context.lookup(receivers, property(context, name))));
+            ClimbingSet members = context.restrict(withoutWhatBuiltinsMadeAsNoFunction(context, context.valueOf(context.lookup(receivers, property(context, name)))), followed);
             const BuiltinNamedMemberCall* record = context.program().builtins().callOfMemberNamed(name);
             if (record) {
                 ValueFlowBuiltinCall noCall { .kind = ValueFlowCallKind::CallByNativeCode };
                 BuiltinApplication(Builtins::UndeclaredNativeCode, noCall, context).callNamedMember(members, thisValue, record->arguments, result, [&](ClimbingSet receiver) {
-                    return withoutWhatBuiltinsMadeAsNoFunction(context, context.valueOf(context.lookup(receiver, property(context, name))));
+                    return context.restrict(withoutWhatBuiltinsMadeAsNoFunction(context, context.valueOf(context.lookup(receiver, property(context, name)))), followed);
                 });
             } else
                 call(name, Passes::ValuesNobodyDescribes, result);
@@ -5059,6 +5066,15 @@ void runBehavior(const ValueFlowStatement& statement, ValueFlowRuleContext& cont
     });
     if (!context.contains(context.valueOf(hub), ValueFlowUniverse::unknownObject()))
         return;
+    if (!mayUnknownCodeWrite(context)) {
+        const ValueFlowUniverse& universe = context.universe();
+        ValueSetID objectsOfProgram = context.maker().intersect(universe.knownObjects(), ValueSets::complement(context.maker().unite(universe.builtinObjects(), universe.proxiesFromNamedConstructor())));
+        ClimbingSet covered = context.coveredByUnknownObjectAmong(context.valueWithin(ClimbingSet(objectsOfProgram), hub));
+        readMembersOfReceivers(context, hub, behavior, covered);
+        forEachReceiverToldApart(context, covered, { }, [&](ClimbingSet toldApart, const ValueFlowOperand& thisValue) {
+            callMembersOfReceivers(context, hub, behavior, toldApart, thisValue, ValueSets::complement(universe.placeholdersAlone()));
+        });
+    }
     callLibraryMethodsOfUnknownReceiver(context, hub, behavior);
     callMethodsOfEscapedLibraryInstances(context, hub, behavior);
     applyBuiltinsThatActOnEscapedReceivers(context, hub, behavior);

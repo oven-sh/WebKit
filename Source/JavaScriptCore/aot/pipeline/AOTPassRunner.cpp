@@ -78,7 +78,7 @@ struct PassesByContent {
 
 } // anonymous namespace
 
-// A pass without a row may have something to do in any body.
+// A pass without a row may have something to do in any body. A pass over loops asks for LoopHint: every cycle holds one (FunctionVerifier::verifyLoopMarks).
 static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::ListLiveValuesAtSuspensions, { .opcodes = { Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::IteratorResume, Opcode::IteratorClose, Opcode::ReadScope } } },
     { PassID::CheckInt32Promises, { .opcodes = { Opcode::Convert }, .terminators = { TerminatorKind::ReturnCall } } },
@@ -101,7 +101,7 @@ static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::EliminateRedundantReads, { .opcodes = opcodesOfRedundantReadElimination } },
     { PassID::EliminateGuards, { .opcodes = opcodesOfGuardElimination } },
     { PassID::SeparateUnlikelyLoopPaths, { .opcodes = { Opcode::LoopHint } } },
-    { PassID::ConvertCountersToIntegers, { .traits = BodyTrait::BlockParameters } },
+    { PassID::ConvertCountersToIntegers, { .traits = BodyTrait::BlockParameters }, { { .opcodes = { Opcode::LoopHint } } } },
     { PassID::RemoveDeadCountedLoops, { .opcodes = { Opcode::LoopHint } } },
     { PassID::UnrollShortLoops, { .opcodes = { Opcode::LoopHint } } },
     { PassID::FuseArrayChains, { .opcodes = arrayMethodCallOpcodes } },
@@ -118,7 +118,7 @@ static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::TestNarrowerTypesFirst, { .opcodes = { Opcode::TypeTest, Opcode::StrictEq } } },
     { PassID::ThreadJumps, { .opcodes = { Opcode::TypeTest }, .traits = BodyTrait::BlockParameters } },
     { PassID::RemoveRedundantHandlers, { .traits = BodyTrait::Handlers } },
-    { PassID::HoistLoopInvariantReads, { .opcodes = hoistableOpcodes }, { { .traits = BodyTrait::SeveralBlocks } } },
+    { PassID::HoistLoopInvariantReads, { .opcodes = hoistableOpcodes }, { { .opcodes = { Opcode::LoopHint } } } },
     { PassID::SimplifyBuiltinCalls, { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::NewTemplateObject, Opcode::ElemGet } | simplifiedIntrinsics | constantListSourceOpcodes }, { { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::NewTemplateObject, Opcode::GetStringLength } | simplifiedIntrinsics | constantListUserOpcodes } } },
     { PassID::ReduceIntegerDivisions, { .opcodes = { Opcode::Div } }, { { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::Mod } | int32ConvertingOperations } } },
     { PassID::PlanArrayCapacities, { .opcodes = arrayCapacityOpcodes } },

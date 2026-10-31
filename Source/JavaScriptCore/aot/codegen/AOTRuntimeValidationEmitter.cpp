@@ -24,6 +24,7 @@
 #include "AOTTypeTestPlan.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
+#include "AOTWrittenFunction.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "B3CheckValue.h"
 #include "B3StackmapGenerationParams.h"
@@ -185,6 +186,9 @@ static bool mayBeArray(const Type& type)
 bool RuntimeValidationEmitter::checkRetainedOperand(const OperationContext& context, const Value& user, ValueID operand, uint32_t operandIndex, bool refusesFrameArray)
 {
     if (callsOutlinedBody(m_program, user))
+        return false;
+    // Such a function records whatever it was entered through. Of a function object in a frame the list keeps where it lay, and its readers follow nothing outside the cage of the heap: FunctionTables::closureOnHeapOf().
+    if (user.opcode == Opcode::RecordCallee && recordsCalleeOnlyOnceRenamed(m_program, m_id))
         return false;
     FrameCellFilter asked = mayBeArray(typeOf(operand)) ? FrameCellFilter::AllButArrays : FrameCellFilter::All;
     auto checkStaysOutOfUnknownMemory = [&] {

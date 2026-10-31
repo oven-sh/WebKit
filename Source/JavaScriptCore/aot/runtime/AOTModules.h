@@ -224,7 +224,11 @@ public:
     void forgetWhatNamesResolvedTo();
     void willMockLibraryModule(ModuleID);
     bool letMockStandInPlaceOfLibraryModule(ModuleID);
-    void runMocksBelow(ModuleID root);
+    enum class RootOfLoad : bool { BeginsLoad, IsImportedByStatement };
+    void runMocksBelow(ModuleID root, RootOfLoad = RootOfLoad::BeginsLoad);
+    void runMocksBelowModuleThatLoaderFetches(ModuleID);
+    void dropErrorOfLoadEndedByMock(ModuleID);
+    JSValue errorOfLoadEndedByMock(ModuleID module) const { return m_modulesWithLoadEndedByMock.get(module.index()) ? loadedIfExists(module)->errorKeptByLoader.get() : JSValue(); }
     JSObject* capturedExports(ModuleID);
     // Empty if the module has no export of the name.
     JSValue capturedValue(ModuleID, const Identifier&);
@@ -456,6 +460,9 @@ public:
     void mockWhatRequireCacheHolds(ModuleID, JSObject* exports);
     void recordRequire(ModuleID, ModuleID referrer);
     bool wasLoadedSynchronously(ModuleID file);
+    // `Module._resolveFilename` or `Module.prototype.require` of the realm is the program's. Every image of the realm is told.
+    bool areLoaderFunctionsStored() const { return !m_storedLoaderFunctions.isEmpty(); }
+    void noteLoaderFunction(RequireOverride function, bool isStored) { m_storedLoaderFunctions.set(function, isStored); }
     bool wasFirstLoadedSynchronously(ModuleID file);
     bool hostLoadsSynchronously(ModuleID file);
     void forgetFirstLoad(ModuleID);
@@ -471,6 +478,7 @@ public:
     // The host hands what it gets to import() in code that is not compiled, which gives the program a promise of its own.
     enum class ImportCaller : bool { CompiledCode, Host };
     JSPromise* startImport(ModuleID, std::optional<int64_t> referrerAsyncOrder, ImportCaller = ImportCaller::CompiledCode);
+    JSPromise* importDespiteErrorOfLoad(ModuleID, ImportCaller, const ScopedLambda<JSPromise*()>& import);
     JSPromise* importDynamic(JSValue specifier, JSValue options, ModuleID referrer);
     // `bun run` reads the text of a file that is imported on another thread, and hears of it in a later turn of the event loop: every job that waits runs first, and so does what is left of a graph
     // that has all its texts. A program sees that where a file that runs while a graph is loaded calls import(). From that call until the last text has come, each text comes in a turn of its own, in the order in which they were asked for.
@@ -570,6 +578,7 @@ private:
     ModuleStatus statusInRecord(ModuleID) const;
     void setStatus(ModuleID, ModuleStatus);
     void setFailed(ModuleID, JSValue error);
+    void keepErrorOfLoad(ModuleID root, RootOfLoad, ModuleID mocked, JSValue error);
     ModuleRecord* ensureRecordWithoutStatus(ModuleID);
     void retireRecord(ModuleRecord*);
     bool hasRunToItsEndWithItsCycle(const ModuleRecord&) const;
@@ -781,6 +790,7 @@ private:
     Box<MockedModules> m_mocks;
     unsigned m_numberOfMockedSets { 0 };
     bool m_isAnsweringRequireOfMock { false };
+    OptionSet<RequireOverride> m_storedLoaderFunctions;
     std::optional<UncheckedKeyHashMap<uint32_t, SyntheticExportPlace, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> m_syntheticExportsByVariable;
     UncheckedKeyHashMap<ModuleID, BitVector> m_exportsLeftOut;
     BitVector m_evictedFiles;
@@ -794,6 +804,11 @@ private:
     BitVector m_modulesThatRanWithImporters;
     Vector<uint8_t> m_statusesWhenImportsWereFollowed;
     BitVector m_modulesWithMockToRun;
+    // The factory of a mock failed while they were loaded, and they import the mocked module by statements, one through another. As in the loader of `bun test`: an import() of one gets that error for good,
+    // a require() until the module has run, and a statement that imports one loads it anew.
+    BitVector m_modulesWithLoadEndedByMock;
+    // There the next import() of the one that names the mocked module loads it all the same, unless it began the load or a require() came first.
+    BitVector m_importersOfMockThatNextImportLoads;
     BitVector m_modulesWithMockThatWaited;
     BitVector m_modulesLoadedBeforeMockThatWaited;
     Vector<ModuleID> m_libraryModulesInRequireCache;

@@ -93,10 +93,7 @@ struct TestPlacementPlan {
 
 // A guard holds what one test or one case of a switch has proven, wherever that has not ended on any way to the guard.
 enum class ProofsHeldByGuards : uint8_t { AreListed, AreLeftOut };
-// A parameter that takes a new object on each edge. No guard holds what the objects prove together.
-enum class ProofsOfAllocationsThatMeet : uint8_t { AreLeftOut, AreListed };
-bool takesAllocationOnSomeEdge(FunctionAnalyses&, ValueID parameter);
-Vector<ExistingProof> findExistingProofs(FunctionPassContext&, const TestConditions&, ProofsHeldByGuards = ProofsHeldByGuards::AreListed, ProofsOfAllocationsThatMeet = ProofsOfAllocationsThatMeet::AreLeftOut);
+Vector<ExistingProof> findExistingProofs(FunctionPassContext&, const TestConditions&, ProofsHeldByGuards = ProofsHeldByGuards::AreListed);
 ValueID ensureEdgeResult(IRBuilder&, FunctionAnalyses&, Edge, uint32_t proof);
 
 // The `k` of `k < list.length` in front of `list[k]`.

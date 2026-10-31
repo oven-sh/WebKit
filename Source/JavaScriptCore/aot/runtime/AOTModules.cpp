@@ -1257,7 +1257,63 @@ void Modules::runMockThatWaits(ModuleID module)
         m_modulesWithMockToRun.set(module.index());
 }
 
-void Modules::runMocksBelow(ModuleID root)
+void Modules::keepErrorOfLoad(ModuleID root, RootOfLoad rootOfLoad, ModuleID mocked, JSValue error)
+{
+    if (root == mocked)
+        return;
+    UncheckedKeyHashMap<ModuleID, Vector<ModuleID, 2>> importers;
+    BitVector seen(m_table.size());
+    seen.quickSet(root.index());
+    Vector<ModuleID, 32> work { root };
+    while (!work.isEmpty()) {
+        ModuleID module = work.takeLast();
+        if (isMocked(module) || hasBegunToLoad(module))
+            continue;
+        for (const ModuleRequestData& request : m_table.imports(module)) {
+            if (request.isHoisted)
+                continue;
+            importers.add(request.targetModule(), Vector<ModuleID, 2>()).iterator->value.append(module);
+            if (!seen.quickSet(request.target()))
+                work.append(request.targetModule());
+        }
+    }
+    BitVector above(m_table.size());
+    work.append(mocked);
+    while (!work.isEmpty()) {
+        ModuleID imported = work.takeLast();
+        auto found = importers.find(imported);
+        if (found == importers.end())
+            continue;
+        for (ModuleID importer : found->value) {
+            if (above.quickSet(importer.index()))
+                continue;
+            work.append(importer);
+            if (m_modulesWithLoadEndedByMock.set(importer.index()))
+                continue;
+            ensureLoaded(importer).errorKeptByLoader.set(*this, error);
+            m_importersOfMockThatNextImportLoads.set(importer.index(), imported == mocked && (importer != root || rootOfLoad == RootOfLoad::IsImportedByStatement));
+        }
+    }
+}
+
+void Modules::dropErrorOfLoadEndedByMock(ModuleID module)
+{
+    m_importersOfMockThatNextImportLoads.clear(module.index());
+    if (m_modulesWithLoadEndedByMock.clear(module.index()))
+        ensureLoaded(module).errorKeptByLoader.set(*this, JSValue());
+}
+
+// The loader has made an entry for what a statement asks for, and none yet for what an import() or a require() asks for.
+void Modules::runMocksBelowModuleThatLoaderFetches(ModuleID module)
+{
+    if (m_modulesWithMockToRun.isEmpty()) [[likely]]
+        return;
+    ModuleRegistryEntry* entry = loader()->registryEntry(moduleKey(module));
+    bool isImportedByStatement = entry && entry->status() == ModuleRegistryEntry::Status::New;
+    runMocksBelow(module, isImportedByStatement ? RootOfLoad::IsImportedByStatement : RootOfLoad::BeginsLoad);
+}
+
+void Modules::runMocksBelow(ModuleID root, RootOfLoad rootOfLoad)
 {
     if (m_modulesWithMockToRun.isEmpty()) [[likely]]
         return;
@@ -1268,7 +1324,8 @@ void Modules::runMocksBelow(ModuleID root)
         mayComeToOne |= !isMocked(ModuleID(module)) || !mocks.hides(ModuleID(module));
     if (!mayComeToOne)
         return;
-    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BitVector reached(m_table.size());
     Vector<ModuleID, 32> work { root };
     while (!work.isEmpty()) {
@@ -1277,7 +1334,11 @@ void Modules::runMocksBelow(ModuleID root)
             continue;
         if (m_modulesWithMockToRun.get(module.index())) {
             runMockThatWaits(module);
-            RETURN_IF_EXCEPTION(scope, void());
+            if (Exception* exception = scope.exception()) [[unlikely]] {
+                if (!vm.isTerminationException(exception))
+                    keepErrorOfLoad(root, rootOfLoad, module, exception->value());
+                return;
+            }
         }
         if (isMocked(module))
             continue;
@@ -1792,7 +1853,9 @@ void runCompiledModuleImportSettled(JSGlobalObject*, JSValue importPromise, JSVa
     auto* promise = uncheckedDowncast<JSPromise>(importPromise);
     RELEASE_ASSERT(status != JSPromise::Status::Pending);
     withModuleOfJob(promise->realm(), module, [&](Modules& modules, ModuleID imported) {
-        if (modules.isImportedByLoader(imported))
+        if (JSValue error = modules.errorOfLoadEndedByMock(imported)) [[unlikely]]
+            promise->reject(promise->vm(), error);
+        else if (modules.isImportedByLoader(imported))
             queueStepOfImport(promise, module, numberOfJobsBehindEvaluation - 1, status == JSPromise::Status::Rejected ? resolution : JSValue());
         else if (status == JSPromise::Status::Rejected)
             promise->reject(promise->vm(), resolution);
@@ -1835,11 +1898,32 @@ static JSPromise* importPromiseRejectedByLoader(JSGlobalObject* realm, ThrowScop
     return createPromiseOfProgram(realm, rejected);
 }
 
+JSPromise* Modules::importDespiteErrorOfLoad(ModuleID module, ImportCaller caller, const ScopedLambda<JSPromise*()>& import)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!m_importersOfMockThatNextImportLoads.clear(module.index())) {
+        throwException(realm, scope, errorOfLoadEndedByMock(module));
+        return caller == ImportCaller::CompiledCode ? importPromiseRejectedByLoader(realm, scope) : rejectedPromiseWithPendingException(realm, scope);
+    }
+    JSPromise* loaded = import();
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSPromise* promise = JSPromise::create(vm, realm->promiseStructure());
+    loaded->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::CompiledModuleImportSettled, promise, jsNumber(moduleIDForHost(*m_instance.program, module).index()));
+    return promise;
+}
+
 JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
 {
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
 
+    if (m_modulesWithLoadEndedByMock.get(module.index())) [[unlikely]] {
+        RELEASE_AND_RETURN(scope, importDespiteErrorOfLoad(module, ImportCaller::CompiledCode, [&] {
+            return startImport(module, asyncEvaluationOrder(referrer));
+        }));
+    }
     runMocksBelow(module);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     auto fetchParameters = JSModuleLoader::fetchParametersFromImportOptions(realm, options);
@@ -1891,7 +1975,8 @@ bool Modules::hostAnswersInPlaceOf(ModuleID module, LoadByName way)
     // And its transpiler writes the global `Bun` for `require("bun")`.
     if (way == LoadByName::Require && (name.startsWith("node:"_s) || name == "bun"_s || isInRequireCache(module)))
         return false;
-    return (isNative && way == LoadByName::Import) || m_libraryModulesThatMockReplaces.get(module.index());
+    // Over a module of native code that an import had loaded the mock is laid too: the namespace object of the image has it, with the names that the mock lacks.
+    return m_libraryModulesThatMockReplaces.get(module.index());
 }
 
 // Under `bun run` the first require() of a module of the library from code of the program leaves a module object in require.cache, which answers the later ones.
@@ -2827,8 +2912,18 @@ JSPromise* Modules::importUncompiled(const Identifier& key, ModuleID referrer, R
     handCountedImportsToLoader();
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     VM& vm = *m_instance.vm;
-    SetForScope frameOfImportThatAsksLoader(vm.aotState().frameOfImportThatAsksLoader, vm.topCallFrame);
-    JSPromise* loaded = loader()->requestImportModuleForKey(realm, key, moduleKey(referrer), WTF::move(fetchParameters), nullptr, false, asyncEvaluationOrder(referrer).value_or(-1));
+    auto askLoader = [&] {
+        SetForScope frameOfImportThatAsksLoader(vm.aotState().frameOfImportThatAsksLoader, vm.topCallFrame);
+        return loader()->requestImportModuleForKey(realm, key, moduleKey(referrer), WTF::move(fetchParameters), nullptr, false, asyncEvaluationOrder(referrer).value_or(-1));
+    };
+    for (Instance* instance = fetchParameters ? nullptr : realm->aotInstance(); instance; instance = instance->above) {
+        Modules* modules = instance->state->modules.get();
+        if (!modules || modules->m_modulesWithLoadEndedByMock.isEmpty()) [[likely]]
+            continue;
+        if (std::optional<ModuleID> found = modules->m_table.findByPath(key.string()); found && modules->errorOfLoadEndedByMock(*found))
+            RELEASE_AND_RETURN(scope, modules->importDespiteErrorOfLoad(*found, ImportCaller::CompiledCode, askLoader));
+    }
+    JSPromise* loaded = askLoader();
     RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
     RELEASE_AND_RETURN(scope, createPromiseOfProgram(realm, loaded));
 }
@@ -3382,6 +3477,11 @@ static NEVER_INLINE RuntimeCounters::CountedFile* findCountedFile(Instance& inst
     return files[module];
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAreLoaderFunctionsStored, size_t, (Instance* instance))
+{
+    return modulesOf(*instance).areLoaderFunctionsStored();
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTWasLoadedSynchronously, size_t, (Instance* instance, uint32_t module))
 {
     return modulesOf(*instance).wasLoadedSynchronously(ModuleID(module));
@@ -3894,8 +3994,10 @@ static void evictFromItsImage(JSGlobalObject* realm, ModuleID moduleOfHost, Take
         return modules->takeOutOfRequireCache(module);
     }
     modules->forgetObjectMadeByRequire(module);
-    if (takenOutBy == TakenOutBy::Deletion)
+    if (takenOutBy == TakenOutBy::Deletion) {
         modules->forgetFirstLoad(module);
+        modules->dropErrorOfLoadEndedByMock(module);
+    }
     // The host's require() answers with an entry that the program has made, whether the file has run or not.
     bool standsInPlaceOfFile = takenOutBy == TakenOutBy::EntryOfProgram;
     if (!modules->mayBeEvicted(module)) {
@@ -4378,6 +4480,11 @@ JSPromise* importModule(JSGlobalObject* realm, ModuleID moduleOfHost, std::optio
 {
     ModuleFromHost module(realm, moduleOfHost);
     Modules* modules = modulesForEvaluation(realm, module);
+    if (modules && modules->errorOfLoadEndedByMock(module)) [[unlikely]] {
+        return modules->importDespiteErrorOfLoad(module, Modules::ImportCaller::Host, [&] {
+            return modules->startImport(module, referrerAsyncOrder, Modules::ImportCaller::Host);
+        });
+    }
     return modules ? modules->startImport(module, referrerAsyncOrder, Modules::ImportCaller::Host) : nullptr;
 }
 
@@ -4491,8 +4598,10 @@ void willSetRequireCacheEntryUnderName(JSGlobalObject* realm, ModuleID moduleOfH
 // A request that is resolved at run time asks the other two functions, as under plain Bun.
 void willChangeRequireOverride(JSGlobalObject* realm, RequireOverride location, bool isOverridden)
 {
-    if (modulesOf(realm) && isOverridden && location == RequireOverride::Extensions)
-        throwLoaderChangeRefused(realm, LoaderChange::ReplaceLoaderFunction, "a loader in Module._extensions"_s);
+    for (Instance* instance = realm->aotInstance(); instance; instance = instance->above) {
+        if (Modules* modules = instance->state->modules.get())
+            modules->noteLoaderFunction(location, isOverridden);
+    }
 }
 
 void willStoreLoaderOfExtension(JSGlobalObject* realm, StringView extension)
@@ -4517,12 +4626,6 @@ void willStoreLoaderOfExtension(JSGlobalObject* realm, StringView extension)
             modules->leaveToHostUnlessItHasRun(module);
         }
     }
-}
-
-bool hasFileWithExtension(StringView extension)
-{
-    std::optional<ModuleTable> table = currentModuleTable();
-    return table && table->hasFileWithExtension(extension);
 }
 
 bool isModuleNamespace(JSCell* cell)
@@ -4605,7 +4708,7 @@ void runMocksBelow(JSGlobalObject* realm, ModuleID moduleOfHost)
 {
     ModuleFromHost module(realm, moduleOfHost);
     if (Modules* modules = modulesOf(realm))
-        modules->runMocksBelow(module);
+        modules->runMocksBelowModuleThatLoaderFetches(module);
 }
 
 void willMockModule(JSGlobalObject* realm, ModuleID moduleOfHost, JSObject* exports)

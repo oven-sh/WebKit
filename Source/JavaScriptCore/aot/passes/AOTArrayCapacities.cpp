@@ -2076,8 +2076,39 @@ static unsigned makeElementsOfAppendsBehindLiterals(FunctionPassContext& context
     return found.size();
 }
 
+static std::optional<Vector<ValueID, 4>> findTestedReadsOfStorage(FunctionPassContext& context, ValueID list)
+{
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    Vector<ValueID, 4> asking;
+    for (const Use& use : analyses.useLists().usesOf(list)) {
+        if (use.kind != Use::Kind::Operand || function.at(use.user).opcode != Opcode::HasArrayStorage)
+            continue;
+        BlockID tested = analyses.useLists().locationOf(use.user).block;
+        if (!isBranchedOnIn(function, tested, use.user))
+            continue;
+        ReadsBehindStorageTest found { function.at(tested).terminator.taken().block, { }, { }, { }, { }, { } };
+        if (numberOfEdgeResults(function, tested, 0) != 1 || analyses.cfg().predecessors(found.passed).size() != 1)
+            return std::nullopt;
+        found.guard = function.at(found.passed).parameters.last();
+        if (!collectReadsRelyingOn(context, use.user, found) || !collectTestsRepeatedForValidation(context, function.at(use.user), found))
+            return std::nullopt;
+        asking.append(use.user);
+        asking.appendVector(found.reads);
+        asking.appendVector(found.repeatedTests);
+    }
+    for (const Use& use : analyses.useLists().usesOf(list)) {
+        if (use.kind != Use::Kind::Operand)
+            continue;
+        const Value& user = function.at(use.user);
+        if (Value::opcodesWithArrayStorage.contains(user.opcode) && hasArrayStorageForm(user.arrayStorage()) && !asking.contains(use.user))
+            return std::nullopt;
+    }
+    return asking;
+}
+
 // `[...list]` of a list without holes that stays in the storage it has is a copy of it, which the stub of slice() makes in one piece.
-static PassOutcome copyListsInOnePiece(FunctionPassContext& context)
+static PassOutcome copyListsInOnePiece(FunctionPassContext& context, bool& readsHaveOtherTypes)
 {
     static constexpr int64_t maxSteps = 8;
     Function& function = context.function;
@@ -2090,6 +2121,7 @@ static PassOutcome copyListsInOnePiece(FunctionPassContext& context)
         ValueID append;
         ArrayStorage storage;
         bool testsStorage;
+        Vector<ValueID, 4> readsToAskForStorage { };
     };
     Vector<Copy, 2> copies;
     for (BlockID block : analyses.cfg().reversePostOrder()) {
@@ -2143,6 +2175,7 @@ static PassOutcome copyListsInOnePiece(FunctionPassContext& context)
             const ClassPart* castPart = context.program.typeOf(function, cast).singleBuiltinClass();
             if (expected == ArrayStorage::Other && castPart)
                 expected = castPart->arrayStorage;
+            bool isNamedByList = expected != ArrayStorage::Other;
             for (const Use& use : analyses.useLists().usesOf(cast)) {
                 if (use.kind != Use::Kind::Operand)
                     continue;
@@ -2152,8 +2185,16 @@ static PassOutcome copyListsInOnePiece(FunctionPassContext& context)
                 isCopy &= expected == ArrayStorage::Other || expected == user.arrayStorage();
                 expected = user.arrayStorage();
             }
-            if (isCopy && hasArrayStorageForm(expected))
+            if (!isCopy || !hasArrayStorageForm(expected))
+                continue;
+            if (!hasArrayStorageForm(part->arrayStorage) || part->arrayStorage == expected) {
                 copies.append({ values[index], cast, append, expected, part->arrayStorage != expected });
+                continue;
+            }
+            if (isNamedByList)
+                continue;
+            if (std::optional<Vector<ValueID, 4>> reads = findTestedReadsOfStorage(context, cast))
+                copies.append({ values[index], cast, append, part->arrayStorage, false, WTF::move(*reads) });
         }
     }
     if (copies.isEmpty())
@@ -2169,6 +2210,9 @@ static PassOutcome copyListsInOnePiece(FunctionPassContext& context)
         if (match.state != BuiltinMatchState::Proven || !match.requirements.isEmpty())
             continue;
         outcome = PassOutcome::Changed;
+        for (ValueID read : copy.readsToAskForStorage)
+            function.edit(read, ValueEdit::Definition).setArrayStorage(copy.storage);
+        readsHaveOtherTypes |= !copy.readsToAskForStorage.isEmpty();
         Value literal = function.at(copy.literal);
         Value cast = function.at(copy.cast);
         ValueLocation appendAt = analyses.useLists().locationOf(copy.append);
@@ -2311,7 +2355,8 @@ PassOutcome planArrayCapacities(FunctionPassContext& context)
     if (!context.analyses.opcodesOfValues().intersects(arrayCapacityOpcodes))
         return PassOutcome::Unchanged;
 
-    PassOutcome copied = copyListsInOnePiece(context);
+    bool readsHaveOtherTypes = false;
+    PassOutcome copied = copyListsInOnePiece(context, readsHaveOtherTypes);
     if (bringLiteralsToAppendsOfMembers(context) == PassOutcome::Changed)
         copied = PassOutcome::Changed;
     makeListsThatMayReadUndefinedForAnyValue(context);
@@ -2338,7 +2383,7 @@ PassOutcome planArrayCapacities(FunctionPassContext& context)
         context.analyses.invalidate(valueAnalyses - analysesThatReadNoTypes);
     context.keptAnalyses = allAnalyses - FunctionAnalysis::Effects;
     // The length that stands in place of an append has another type than the call had, and so has what uses it.
-    if (!literalsWithAppends)
+    if (!literalsWithAppends && !readsHaveOtherTypes)
         context.passesThatCanWait.add(PassID::RetypeValues);
     return PassOutcome::Changed;
 }
