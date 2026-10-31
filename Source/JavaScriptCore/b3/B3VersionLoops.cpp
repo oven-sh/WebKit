@@ -983,6 +983,8 @@ private:
         targets.beyondLimit = fast.isTopTested ? original.header : copyOriginalLatch(original.latch);
         if (BasicBlock* test = version.excursionCopies.get(original.test))
             targets.otherTests.append(LoopTestCopy { test, test->successorBlock(fast.latchSuccessorIndex), version.testedCopyInExcursion, fast.isTopTested ? original.test : nullptr });
+        else if (version.testedCopyInExcursion)
+            targets.otherTestedValues.append(version.testedCopyInExcursion);
 
         clampLoopBound(m_proc, fast, targets);
     }

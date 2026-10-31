@@ -27,6 +27,8 @@ struct ClampTargets {
     Value* limit { nullptr };
     BasicBlock* beyondLimit { nullptr };
     Vector<LoopTestCopy, 1> otherTests;
+    // Copies of the tested value on ways that come back to the loop's own test.
+    Vector<Value*, 1> otherTestedValues;
 };
 
 JS_EXPORT_PRIVATE void clampLoopBound(Procedure&, const CountedLoop&, const ClampTargets&);
