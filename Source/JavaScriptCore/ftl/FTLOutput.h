@@ -71,7 +71,19 @@ namespace FTL {
 
 enum Scale { ScaleOne, ScaleTwo, ScaleFour, ScaleEight, ScalePtr };
 
+#if USE(BUN_JSC_ADDITIONS)
+struct OutputPosition {
+    B3::Procedure& m_proc;
+
+    DFG::Node* m_origin { nullptr };
+    LBasicBlock m_block { nullptr };
+    LBasicBlock m_nextBlock { nullptr };
+};
+
+class Output : public OutputPosition, public CommonValues {
+#else
 class Output : public CommonValues {
+#endif
 public:
 #if ENABLE(FTL_JIT)
     Output(State&);
@@ -490,11 +502,13 @@ public:
 #if PLATFORM(COCOA)
 #pragma mark - States
 #endif
+#if !USE(BUN_JSC_ADDITIONS)
     B3::Procedure& m_proc;
 
     DFG::Node* m_origin { nullptr };
     LBasicBlock m_block { nullptr };
     LBasicBlock m_nextBlock { nullptr };
+#endif
 
     AbstractHeapRepository* m_heaps;
 
