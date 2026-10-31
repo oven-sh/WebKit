@@ -36,6 +36,7 @@
 #include "LLIntPCRanges.h"
 #include "MachineContext.h"
 #include "MacroAssemblerCodeRef.h"
+#include "SideDataRepository.h"
 #include "VMEntryScopeInlines.h"
 #include "VMInlines.h"
 #include "VMManager.h"
@@ -443,6 +444,27 @@ CONCURRENT_SAFE void VMTraps::updateThreadStopRequestIfNeeded()
         cancelThreadStopIfNeeded();
 }
 
+namespace {
+class TrapChecksBeforeTermination final : public SideDataRepository::SideData {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(TrapChecksBeforeTermination);
+public:
+    unsigned count { 0 };
+};
+char trapChecksBeforeTerminationKey;
+}
+
+static unsigned& trapChecksBeforeTermination(VM& vm)
+{
+    return vm.ensureSideData<TrapChecksBeforeTermination>(&trapChecksBeforeTerminationKey, [] {
+        return makeUnique<TrapChecksBeforeTermination>();
+    }).count;
+}
+
+void VMTraps::setTrapChecksBeforeTermination(unsigned count)
+{
+    trapChecksBeforeTermination(vm()) = count;
+}
+
 bool VMTraps::handleTraps(VMTraps::BitField mask)
 {
     VM& vm = this->vm();
@@ -455,6 +477,11 @@ bool VMTraps::handleTraps(VMTraps::BitField mask)
 
     if (isDeferringTermination())
         mask &= ~NeedTermination;
+    else if (vm.m_hasSideData && hasTrapBit(NeedTermination, mask)) [[unlikely]] {
+        // $vm.callWithTerminationAtTrapCheck(): the termination waits for a later trap check.
+        if (unsigned& count = trapChecksBeforeTermination(vm); count && --count)
+            mask &= ~NeedTermination;
+    }
 
     {
         Locker codeBlockSetLocker { vm.heap.codeBlockSet().getLock() };

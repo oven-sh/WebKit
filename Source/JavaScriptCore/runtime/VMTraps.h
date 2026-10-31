@@ -216,6 +216,11 @@ public:
     };
 
     bool isDeferringTermination() const { return m_deferTerminationCount; }
+    // For tests ($vm.callWithTerminationAtTrapCheck): while the count is not zero, a requested termination waits. Each
+    // handling of traps counts down, and the one that reaches zero takes the termination. So a test can begin a
+    // termination at every exception check of an operation in turn, where a time limit reaches the few that are slow.
+    // The count is side data of the VM (VM::ensureSideData()): a VM that no test has touched has none.
+    JS_EXPORT_PRIVATE void setTrapChecksBeforeTermination(unsigned);
     inline void deferTermination(DeferAction);
     inline void undoDeferTermination(DeferAction);
 
