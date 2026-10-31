@@ -78,6 +78,9 @@ Rules for an edit to an upstream test:
   `options.with`. Bun passes every attribute to its loaders (`with { type: "file" }`, `{ type: "sqlite", embed: "true" }`).
 - Files (2): `modules/import-attributes-unsupported.js` (the unknown-key case expects no error; the two malformed-syntax
   cases are unchanged), `stress/invalid-import-assertion.js` (resolves instead of rejecting).
+- test262: `with { type: "text" }` is one of those host types (`ScriptFetchParameters::parseType`, upstream: `Type::Text`
+  behind `--useImportText`). Bun's loader reads the file as text; the `jsc` shell loads it as JavaScript. The six tests
+  of the feature `import-text` are skipped in `JSTests/test262/config.yaml`.
 
 ### A5. An array that contains itself joins as `""`, it does not overflow the stack
 
@@ -153,7 +156,7 @@ Rules for an edit to an upstream test:
 |---|---|
 | `microbenchmarks/parse-line-comment.js`, `stress/class-subclassing-function.js` | `SourceCodeKey::operator==` does not compare source text (3186362fe1a8). Two sources of the same length, flags, name and host whose 24-bit `StringImpl::hash()` collide share a code cache entry, and the second runs the first's code. 3 collisions in 20,000 same-length sources measured |
 | `microbenchmarks/regexp-buffer-boundary-anchor-start.js`, `-anchor-end.js`, `stress/regexp-boundary-assertions.js`, `stress/regexp-buffer-boundaries-anchoring.js` | upstream's RegExp buffer boundaries (`\A \z \Z`, 2f66f5ed23f9). Sync #455 brought the tests but not the `yarr/` changes: no feature, no `--useRegExpBufferBoundaries` |
-| `stress/module-loader-promise-then-tampered.js` | `globalFuncImportModule()` wraps the loader's promise and resolves the wrapper through `resolve()`, which looks up `Promise.prototype.then`. The fast path that avoided it (8a5ce3999589) is unreachable since the loader rewrite (4a638109b905) |
+| `stress/module-loader-promise-then-tampered.js`; test262 `test/language/expressions/dynamic-import/import-defer/import-defer-transitive-async-module/promise-prototype-then-not-called.js`, which is not skipped but in the record of failing runs (see test262 below) | `globalFuncImportModule()` wraps the loader's promise and resolves the wrapper through `resolve()`, which looks up `Promise.prototype.then`. The fast path that avoided it (8a5ce3999589) is unreachable since the loader rewrite (4a638109b905). `import()` and `import.defer()` each call a replaced `then` once |
 
 ---
 
@@ -166,6 +169,69 @@ Upstream's too, and run by the `test` job.
 | `Threading.cpp` | `WTF_Thread.SchedulingAttributesFollowQOS` and `.HighPriorityThreadsRestoresClampWhenReenabled` are compiled only without `USE(BUN_JSC_ADDITIONS)` | on purpose, as in A: `Thread::updateSchedulingAttributes()` (`wtf/posix/ThreadingPOSIX.cpp`) does nothing on Linux, so a thread keeps the scheduling policy, nice level and utilization clamp of the process that embeds it. The tests expect upstream's mapping from QOS |
 | `StackTraceTest.cpp` | `StackTraceTest.StackTraceWorks` and `.CaptureStackTraceLimitAndSkip` are `DISABLED_` on Linux | the build, as in B: `DEFAULT_CFLAGS` in `Dockerfile` has `-fno-unwind-tables -fno-asynchronous-unwind-tables`, and glibc's `backtrace()` then returns its own frame alone |
 | `StringBuilder.cpp` | the `JSONEscape*` tests are the fork's own | they hold `appendEscapedJSONStringContent()` (`wtf/text/StringBuilderJSON.h`), which the fork vectorizes, to a scalar escaper, to its buffer, and to its check that the output has six characters of room for each one of the input |
+
+---
+
+## test262 (`JSTests/test262`)
+
+tc39's tests, as upstream imports them, run by the `test` job on every tested lane (about 102,000 runs of `jsc`). A test
+of test262 is never edited. Two files beside them say what this fork's shell does with them. `.github/scripts/test262.sh`
+writes both and holds both to the shell, and neither is edited by hand.
+
+- `expectations-linux.yaml` is the record of the runs that fail: the test, the mode (`default`, `strict mode`, `module`,
+  `raw`) and the exit code. It has no comments.
+- `skipped-linux.txt` is the list of the tests that `config.yaml` takes out of the run. `config.yaml` is the file that is
+  edited: it names the tests and the features that are not run, with the reason in a comment, and the flag that the
+  tests of a feature are run with.
+
+The step fails unless the lane's shell gives exactly the two checked-in files: when a run fails that is not in the
+record, when a run that is in it passes, fails with another exit code or is not run any more, and when `config.yaml`
+skips a test that is not in the list. The two files are those of every tested shell, so a run that fails in one of them
+and passes in another cannot be recorded: fix the engine, or skip that test in `config.yaml` with the reason.
+
+It does not hold that a skip in `config.yaml` is still needed: a test that is skipped is not run.
+
+When the step is red, its log has the runner's `! NEW FAIL` lines (with what the test printed) and `NEW PASS` lines,
+and below them the diff between the two files and the shell. In this order:
+
+1. Are the same lines in the `test262` step of the latest run of `main`? Then they are `main`'s. A pull request is
+   tested as its own head, and only the run of `main` that follows a merge tests the merge: a change that is merged with
+   a red leg leaves the leg red in every branch that merges `main`. Do not record such a line on the branch. Whoever
+   merged repairs `main`, with a revert or with a pull request that has only the files `main`'s leg wrote.
+2. Does the log say that a run did not end in 300 s? That is the runner's limit for one `jsc`, and it calls such a run
+   a failure. The longest run, `test/staging/sm/regress/regress-1507322-deep-weakmap.js`, takes 38 to 92 s on CI's
+   runners and can pass the limit on a machine that is slow or busy: run it again. A run that does not end on any
+   machine is the engine's.
+3. A run fails that is to pass: fix the engine.
+4. A run that was in the record passes, or a run fails because of a behavior the fork has on purpose (A) or of a known
+   gap (C): commit the two files that the leg wrote. They are in `test262/` of the leg's artifact,
+   `jsc-test-results-<label>` (`git apply` takes `test262/test262.diff`). For a run that fails, write the reason in A
+   or C here, as for any other test.
+5. The tests of a feature that this fork's `jsc` cannot have because the host has it, as with `import-text`: skip the
+   feature in `config.yaml`, with a `# Bun:` comment, and commit the two files the leg then writes.
+
+By hand, on Linux, with `python3-yaml` installed: `bash .github/scripts/test262.sh <jsc>`, with the `bin/jsc` of a
+tested lane (from the release of the commit, or from the preview of a pull request). The two files are those of the
+shells CI tests, with the defaults `jsc` has for its options. Bun turns on two options that `jsc` leaves off.
+`useShadowRealm` is given to the tests of the feature by `config.yaml`. `useV8DateParser` is given to none: the tests
+that parse a date string run WTF's parser, and `test/staging/sm/Date/two-digit-years.js` is in the record for that
+reason alone. No lane with assertions runs test262.
+
+Where `config.yaml` is not upstream's:
+
+| difference | reason |
+|---|---|
+| the tests of `ShadowRealm` are run, with `--useShadowRealm` (upstream skips the feature) | Bun turns the option on |
+| the tests of `import-text` are skipped (upstream runs them with `--useImportText`) | A4 |
+
+`expectations-linux.yaml` is not upstream's either. Upstream's bots fail only for a run that fails and is not in the
+record, and a `--save` on a Mac writes `expectations.yaml` alone, so a run that upstream's engine has fixed can stay in
+its Linux record. Here the step writes it.
+
+`expectations.yaml`, which the runner reads on macOS and Windows, is upstream's, and this fork does not edit it: no
+lane is tested there, so no run says what a line of it should be. A pull request that changes the Linux record leaves
+it alone. On a Mac, `Tools/Scripts/test262-runner --expectations JSTests/test262/expectations-linux.yaml` compares a
+shell with the Linux record.
 
 ---
 
@@ -220,3 +286,11 @@ the programs that test ahead-of-time compilation are in Bun's `test/aot`.
    the commit that added the test)? Bring the feature over, or skip with `TODO(bun)` naming the upstream commit, as in C.
 4. Otherwise the sync broke something. Upstream's own results for the same test and mode:
    `https://results.webkit.org/api/results/javascriptcore-tests/<url-encoded test.mode>?limit=5000`.
+
+test262 after a sync: the sync brings upstream's `config.yaml`, `expectations-linux.yaml` and `expectations.yaml`. In
+`config.yaml`, keep the lines of the table in the test262 section: the step says when the `import-text` skip is lost
+(its runs fail) and when upstream's `ShadowRealm` skip is back (its tests are new in the list). `expectations.yaml`
+is upstream's side, always. Where `expectations-linux.yaml` conflicts, take upstream's side too: the `test262` step of
+the sync's pull request then prints, line by line, where this fork's shells differ from it. Sort each line as that
+section says, and commit the two files the leg wrote. A sync is red here whenever upstream has fixed a test and left
+the run in its Linux record.

@@ -21,6 +21,10 @@ skip:
     - import-bytes
     - immutable-arraybuffer
     - error-stack-accessor
+    # Bun: upstream runs these with --useImportText. In this fork `with { type: "text" }` is a host-defined type
+    # (ScriptFetchParameters::parseType): bun's loader reads the file, and the jsc shell loads it as JavaScript.
+    # JSTests/BUN-TEST-DIFFERENCES.md, A4.
+    - import-text
   paths:
     # Depends on the nonextensible-applies-to-private proposal which JSC has not implemented yet.
     - test/language/import/import-defer/evaluation-triggers/ignore-private-name-access.js

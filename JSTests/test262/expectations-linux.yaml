@@ -52,9 +52,6 @@ test/built-ins/Proxy/construct/arguments-realm.js:
 test/built-ins/Proxy/construct/trap-is-not-callable-realm.js:
   default: 3
   strict mode: 3
-test/built-ins/TypedArray/prototype/slice/speciesctor-return-same-buffer-with-offset.js:
-  default: 3
-  strict mode: 3
 test/built-ins/Uint8Array/prototype/setFromBase64/trailing-garbage.js:
   default: 3
   strict mode: 3
@@ -109,12 +106,11 @@ test/language/eval-code/direct/arrow-fn-no-pre-existing-arguments-bindings-are-p
   default: 3
 test/language/eval-code/direct/arrow-fn-no-pre-existing-arguments-bindings-are-present-arrow-func-declare-arguments-assign.js:
   default: 3
-test/language/expressions/assignment/fn-name-lhs-cover.js:
-  default: 3
-  strict mode: 3
 test/language/expressions/delete/super-property-uninitialized-this.js:
   default: 3
   strict mode: 3
+test/language/expressions/dynamic-import/import-defer/import-defer-transitive-async-module/promise-prototype-then-not-called.js:
+  module: 3
 test/language/expressions/new/non-ctor-err-realm.js:
   default: 3
   strict mode: 3
@@ -156,34 +152,20 @@ test/language/statements/with/get-mutable-binding-binding-deleted-in-get-unscopa
   default: 3
 test/language/statements/with/set-mutable-binding-idref-compound-assign-with-proxy-env.js:
   default: 3
-test/staging/sm/ArrayBuffer/slice-species.js:
-  default: 3
-  strict mode: 3
 test/staging/sm/Date/two-digit-years.js:
   default: 3
   strict mode: 3
 test/staging/sm/Function/arguments-parameter-shadowing.js:
-  default: 3
-test/staging/sm/Function/function-name-assignment.js:
   default: 3
 test/staging/sm/Function/function-toString-builtin-name.js:
   default: 3
   strict mode: 3
 test/staging/sm/PrivateName/modify-non-extensible.js:
   default: 3
-test/staging/sm/RegExp/replace-sticky-lastIndex.js:
-  default: 3
-  strict mode: 3
-test/staging/sm/RegExp/replace-sticky.js:
-  default: 3
-  strict mode: 3
 test/staging/sm/RegExp/unicode-braced.js:
   default: 3
   strict mode: 3
 test/staging/sm/RegExp/unicode-class-braced.js:
-  default: 3
-  strict mode: 3
-test/staging/sm/TypedArray/slice-memcpy.js:
   default: 3
   strict mode: 3
 test/staging/sm/class/superPropOrdering.js:
@@ -192,9 +174,6 @@ test/staging/sm/class/superPropOrdering.js:
 test/staging/sm/eval/redeclared-arguments-in-param-expression-eval.js:
   default: 3
 test/staging/sm/expressions/object-literal-computed-property-evaluation.js:
-  default: 3
-  strict mode: 3
-test/staging/sm/expressions/short-circuit-compound-assignment-anon-fns.js:
   default: 3
   strict mode: 3
 test/staging/sm/extensions/function-caller-skips-eval-frames.js:
