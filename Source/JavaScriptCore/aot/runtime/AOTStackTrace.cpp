@@ -675,6 +675,7 @@ static ALWAYS_INLINE void captureRun(VM& vm, RunWalk& walk, CapturedRun& run, Ca
         if (isAtEnd)
             break;
         const CallSiteCache::Entry& site = walk.site();
+        bool calleeOfSiteWasEntered = calleeWasEntered && !walk.isAtFirstReadSite();
         outermostCode = site.code;
         if (!codeAbove || !site.isOfEntrypointAtTailCall())
             codeAbove = outermostCode;
@@ -690,7 +691,7 @@ static ALWAYS_INLINE void captureRun(VM& vm, RunWalk& walk, CapturedRun& run, Ca
 
         std::optional<unsigned> shownFrameCount;
         if (!lastConstructorToSkip)
-            shownFrameCount = site.shownFrameCountFor(filter.hasShownFrame(), calleeWasEntered);
+            shownFrameCount = site.shownFrameCountFor(filter.hasShownFrame(), calleeOfSiteWasEntered);
         bool mayShowFrame = !shownFrameCount || *shownFrameCount;
         if (run.numberShown >= maxStackSize && mayShowFrame)
             break;
@@ -702,9 +703,9 @@ static ALWAYS_INLINE void captureRun(VM& vm, RunWalk& walk, CapturedRun& run, Ca
             continue;
         }
         if (!site.site.inlineFrame && !site.site.calledBuiltin)
-            countLogicalFrame(site.innermostFunction, site.innermostVisibility, site.site.isTailDeleted(calleeWasEntered), filter, run, lastConstructorToSkip);
+            countLogicalFrame(site.innermostFunction, site.innermostVisibility, site.site.isTailDeleted(calleeOfSiteWasEntered), filter, run, lastConstructorToSkip);
         else
-            countLogicalFrames(walk.image(), vm.aotState().callSiteCache->inlineFrames(), site, calleeWasEntered, filter, run, lastConstructorToSkip);
+            countLogicalFrames(walk.image(), vm.aotState().callSiteCache->inlineFrames(), site, calleeOfSiteWasEntered, filter, run, lastConstructorToSkip);
     }
 
     // The walk ended at the limit, in a frame through which the last frame was entered.
@@ -1103,8 +1104,9 @@ public:
     ALWAYS_INLINE bool addMachineFrame(const CallSiteCache::Entry& entry, bool isAtFirstReadSite, bool isCaller)
     {
         const CallSiteRecord& record = entry.site;
-        CallSiteIndex site = isAtFirstReadSite && record.firstReadSite ? *record.firstReadSite : record.callSite;
-        bool isTailDeleted = record.isTailDeleted(isCaller);
+        bool isAtRead = isAtFirstReadSite && record.firstReadSite;
+        CallSiteIndex site = isAtRead ? *record.firstReadSite : record.callSite;
+        bool isTailDeleted = record.isTailDeleted(isCaller && !isAtRead);
         if (record.inlineFrame || record.calledBuiltin || isTailDeleted || entry.innermostVisibility != TraceVisibility::Visible || m_numberToOmit) [[unlikely]]
             return addLogicalFrames(entry.code, record, site, isTailDeleted, isCaller);
         // emit() may ask the cache, which may move the entry.

@@ -660,8 +660,9 @@ void CompiledFrameIterator::enterMachineFrame(const CallSiteCache::Entry* entry)
 void CompiledFrameIterator::readFrame() const
 {
     const CallSiteCache::Entry& entry = m_callSite;
-    CallSiteIndex site = m_cursor.isAtFirstReadSite && entry.site.firstReadSite ? *entry.site.firstReadSite : entry.site.callSite;
-    m_frame = { m_instance, m_cursor.callFrame, removeCodePtrTag(m_cursor.rawPC), entry.code, entry.innermostFunction, site, entry.site.inlineFrame, entry.innermostVisibility, entry.site.isTailDeleted(m_calleeWasEntered) };
+    bool isAtRead = m_cursor.isAtFirstReadSite && entry.site.firstReadSite;
+    CallSiteIndex site = isAtRead ? *entry.site.firstReadSite : entry.site.callSite;
+    m_frame = { m_instance, m_cursor.callFrame, removeCodePtrTag(m_cursor.rawPC), entry.code, entry.innermostFunction, site, entry.site.inlineFrame, entry.innermostVisibility, entry.site.isTailDeleted(m_calleeWasEntered && !isAtRead) };
     m_frame.calledBuiltin = entry.site.calledBuiltin;
     if (m_calleeWasEntered && m_frame.calledBuiltin && leavesByTailCall(m_frame.calledBuiltin))
         m_frame.calledBuiltin = { };
