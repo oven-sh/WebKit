@@ -186,10 +186,12 @@ JSC_DEFINE_HOST_FUNCTION(temporalDurationPrototypeFuncAdd, (JSGlobalObject* glob
         return throwVMTypeError(globalObject, scope, "Temporal.Duration.prototype.add called on value that's not a Duration"_s);
 
     // Step 3: Return ? AddDurations(add, duration, other).
+    //   temporalDurationFromInternal's result satisfies IsValidDuration → skip createTemporalDuration.
     auto result = duration->addDurations<AddOrSubtract::Add>(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(createTemporalDuration(globalObject, WTF::move(result))));
+    ASSERT(ISO8601::isValidDuration(result));
+    return JSValue::encode(TemporalDuration::create(vm, globalObject->durationStructure(), WTF::move(result)));
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal.duration.prototype.subtract
@@ -204,10 +206,12 @@ JSC_DEFINE_HOST_FUNCTION(temporalDurationPrototypeFuncSubtract, (JSGlobalObject*
         return throwVMTypeError(globalObject, scope, "Temporal.Duration.prototype.subtract called on value that's not a Duration"_s);
 
     // Step 3: Return ? AddDurations(subtract, duration, other).
+    //   temporalDurationFromInternal's result satisfies IsValidDuration → skip createTemporalDuration.
     auto result = duration->addDurations<AddOrSubtract::Subtract>(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(createTemporalDuration(globalObject, WTF::move(result))));
+    ASSERT(ISO8601::isValidDuration(result));
+    return JSValue::encode(TemporalDuration::create(vm, globalObject->durationStructure(), WTF::move(result)));
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal.duration.prototype.round
@@ -227,10 +231,12 @@ JSC_DEFINE_HOST_FUNCTION(temporalDurationPrototypeFuncRound, (JSGlobalObject* gl
         return throwVMTypeError(globalObject, scope, "Temporal.Duration.prototype.round requires an options argument"_s);
 
     // Steps 3-13: GetDifferenceSettings + TemporalDurationRound → CreateTemporalDuration.
+    //   temporalDurationFromInternal's result satisfies IsValidDuration → skip createTemporalDuration.
     auto result = duration->round(globalObject, options);
     RETURN_IF_EXCEPTION(scope, { });
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(createTemporalDuration(globalObject, WTF::move(result))));
+    ASSERT(ISO8601::isValidDuration(result));
+    return JSValue::encode(TemporalDuration::create(vm, globalObject->durationStructure(), WTF::move(result)));
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal.duration.prototype.total

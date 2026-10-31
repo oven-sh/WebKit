@@ -2006,6 +2006,13 @@ private:
         case DateSetTime:
             compileDateSet();
             break;
+        case TemporalCompare:
+        case TemporalEquals:
+            compileTemporalCompareOrEquals();
+            break;
+        case TemporalGetNumber:
+            compileTemporalGetNumber();
+            break;
         case DataViewGetInt:
         case DataViewGetFloat:
             compileDataViewGet();
@@ -23230,6 +23237,100 @@ IGNORE_CLANG_WARNINGS_END
         LValue seconds = m_out.doubleFloor(m_out.doubleDiv(milliseconds, msPerSecondConstant));
         LValue result = m_out.doubleToInt32(m_out.doubleSub(milliseconds, m_out.doubleMul(seconds, msPerSecondConstant)));
         setJSValue(m_out.select(m_out.doubleNotEqualOrUnordered(milliseconds, milliseconds), m_out.constInt64(JSValue::encode(jsNaN())), boxInt32(result)));
+    }
+
+    template<typename Function, typename... Args>
+    LValue callTemporalOperation(B3::Type type, Function function, Args... args)
+    {
+        LValue result = m_out.callWithoutSideEffects(type, function, args...);
+        // Control dependent: the operation reads its operands as its class without checking.
+        result->as<B3::CCallValue>()->effects.controlDependent = true;
+        return result;
+    }
+
+    void compileTemporalCompareOrEquals()
+    {
+        LValue one = lowCell(m_node->child1());
+        LValue two = lowCell(m_node->child2());
+
+        switch (m_node->temporalOperation()) {
+        case TemporalOperation::InstantCompare:
+        case TemporalOperation::InstantEquals:
+        case TemporalOperation::ZonedDateTimeCompare: {
+            // CompareEpochNanoseconds on the two Int128s: the high words compare signed, the low words unsigned.
+            bool isInstant = m_node->temporalOperation() == TemporalOperation::InstantCompare || m_node->temporalOperation() == TemporalOperation::InstantEquals;
+            const AbstractHeap& highHeap = isInstant ? m_heaps.TemporalInstant_epochNanosecondsHigh : m_heaps.TemporalZonedDateTime_epochNanosecondsHigh;
+            const AbstractHeap& lowHeap = isInstant ? m_heaps.TemporalInstant_epochNanosecondsLow : m_heaps.TemporalZonedDateTime_epochNanosecondsLow;
+            LValue oneHigh = m_out.load64(one, highHeap);
+            LValue twoHigh = m_out.load64(two, highHeap);
+            LValue oneLow = m_out.load64(one, lowHeap);
+            LValue twoLow = m_out.load64(two, lowHeap);
+            if (m_node->op() == TemporalEquals) {
+                setBoolean(m_out.isZero64(m_out.bitOr(m_out.bitXor(oneHigh, twoHigh), m_out.bitXor(oneLow, twoLow))));
+                return;
+            }
+            LValue lowOrder = m_out.select(m_out.below(oneLow, twoLow), m_out.constInt32(-1), m_out.above(oneLow, twoLow));
+            setInt32(m_out.select(m_out.lessThan(oneHigh, twoHigh), m_out.constInt32(-1),
+                m_out.select(m_out.greaterThan(oneHigh, twoHigh), m_out.constInt32(1), lowOrder)));
+            return;
+        }
+        default:
+            break;
+        }
+
+        LValue operation = m_out.constInt32(static_cast<uint32_t>(m_node->temporalOperation()));
+        if (m_node->op() == TemporalCompare) {
+            setInt32(m_out.castToInt32(callTemporalOperation(Int64, operationTemporalCompare, one, two, operation)));
+            return;
+        }
+        setBoolean(m_out.notZero32(m_out.castToInt32(callTemporalOperation(Int64, operationTemporalEquals, one, two, operation))));
+    }
+
+    void compileTemporalGetNumber()
+    {
+        LValue base = lowCell(m_node->child1());
+        TemporalOperation operation = m_node->temporalOperation();
+        LValue value;
+        switch (operation) {
+        case TemporalOperation::InstantEpochMilliseconds:
+        case TemporalOperation::ZonedDateTimeEpochMilliseconds:
+            value = temporalEpochMilliseconds(base, operation);
+            break;
+        default:
+            value = m_out.load64(m_out.address(base, m_heaps.TemporalDuration_fields, durationFieldOffsetForTemporalOperation(operation)));
+            break;
+        }
+
+        // Any int64 (epochMilliseconds and Duration milliseconds can exceed int52), which strictInt52ToJSValue handles.
+        setJSValue(strictInt52ToJSValue(value));
+    }
+
+    LValue temporalEpochMilliseconds(LValue base, TemporalOperation operation)
+    {
+        bool isInstant = operation == TemporalOperation::InstantEpochMilliseconds;
+        LValue low = m_out.load64(base, isInstant ? m_heaps.TemporalInstant_epochNanosecondsLow : m_heaps.TemporalZonedDateTime_epochNanosecondsLow);
+        LValue high = m_out.load64(base, isInstant ? m_heaps.TemporalInstant_epochNanosecondsHigh : m_heaps.TemporalZonedDateTime_epochNanosecondsHigh);
+
+        LBasicBlock fitsInInt64 = m_out.newBlock();
+        LBasicBlock slowPath = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        // floor(ns / 10^6), in int64 when the nanoseconds fit; otherwise the Int128 slow path.
+        m_out.branch(m_out.equal(high, m_out.aShr(low, m_out.constInt32(63))), usually(fitsInInt64), rarely(slowPath));
+
+        LBasicBlock lastNext = m_out.appendTo(fitsInInt64, slowPath);
+        LValue nanosecondsPerMillisecond = m_out.constInt64(1000000);
+        LValue quotient = m_out.div(low, nanosecondsPerMillisecond);
+        LValue remainder = m_out.sub(low, m_out.mul(quotient, nanosecondsPerMillisecond));
+        ValueFromBlock fastResult = m_out.anchor(m_out.sub(quotient, m_out.zeroExt(m_out.lessThan(remainder, m_out.int64Zero), Int64)));
+        m_out.jump(continuation);
+
+        m_out.appendTo(slowPath, continuation);
+        ValueFromBlock slowResult = m_out.anchor(callTemporalOperation(Int64, operationTemporalGetEpochMilliseconds, base, m_out.constInt32(static_cast<uint32_t>(operation))));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+        return m_out.phi(Int64, fastResult, slowResult);
     }
 
     void compileDateGetTime()
