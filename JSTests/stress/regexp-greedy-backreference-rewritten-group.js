@@ -1,11 +1,12 @@
 //@ runDefault
 //@ runDefault("--useRegExpJIT=false")
 
-// The interpreter and the JIT must agree on a greedy backreference whose group
-// is written again between the two times the term runs. A backreference to a
-// duplicate named group reads whichever of the groups of that name matched
-// last, so an alternative that writes the group again changes what the term
-// refers to.
+// Each pattern has a \k<name> inside a second group of that name. Such a
+// reference matches the empty string, and the pattern constructor makes it a
+// forward reference (regexp-named-backreference-inside-duplicate-named-group.js).
+// When this test was written it was a greedy backreference whose group was
+// written again between the two times the term ran, and the interpreter gave
+// back the wrong amount. The cases stay as a check of both engines on the shape.
 //
 // Each case gives one pattern in two forms that describe the same language. The
 // second form adds a prefix that matches the empty string only, or an
