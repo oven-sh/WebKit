@@ -339,6 +339,10 @@ private:
     template<bool useCallOnEachMicrotask>
     std::pair<JSGlobalObject*, bool> drainImpl(JSGlobalObject*, VM&, TopExceptionScope&);
 
+#if USE(BUN_JSC_ADDITIONS)
+    void clearAfterTermination(VM&);
+#endif
+
     MarkedMicrotaskDeque m_queue;
     MarkedMicrotaskDeque m_toKeep;
 };

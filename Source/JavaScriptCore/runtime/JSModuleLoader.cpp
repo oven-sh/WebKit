@@ -64,6 +64,20 @@ namespace JSModuleLoaderInternal {
 static constexpr unsigned maximumResolutionFailures = 128;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// The run time of compiled programs (aot/runtime) has records of its own for each load, which the exits of the loader
+// for a termination do not update. Where the VM runs compiled code, each of those exits leaves the load as it is.
+static ALWAYS_INLINE bool loadsBelongToCompiledProgram(VM& vm)
+{
+#if ENABLE(AOT)
+    return vm.hasCompiledCode();
+#else
+    UNUSED_PARAM(vm);
+    return false;
+#endif
+}
+#endif
+
 static Identifier jsValueToSpecifier(JSGlobalObject* globalObject, JSValue value)
 {
     if (value.isSymbol())
@@ -880,7 +894,13 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         resolved = specifier;
 
     if (mapEntry) {
+#if USE(BUN_JSC_ADDITIONS)
+        // provideFetch() registers an entry before its fetch is settled, and an exception can end it in between
+        // (ModuleRegistryEntry::provideFetch()). No load can have gone past such an entry: its fetch starts below.
+        ASSERT(mapEntry->status() != ModuleRegistryEntry::Status::New || (!mapEntry->record() && !mapEntry->loadPromise()));
+#else
         ASSERT(mapEntry->status() != ModuleRegistryEntry::Status::New);
+#endif
 
         // Only fetching errors should be checked here, not instantiation or evaluation errors.
         // This allows fetch errors to propagate first because they're required to have priority.
@@ -1007,7 +1027,12 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         // Per "fetch the descendants of a module script", the referrer is the referring module's base URL.
         if (!promise)
             promise = fetch(globalObject, identifierToJSValue(vm, resolved), moduleReferrer(referrerKey), moduleRequest.m_attributes, scriptFetcher);
+#if USE(BUN_JSC_ADDITIONS)
+        // The hook threw, or a termination begins at this check. Either way no fetch was started for the entry.
+        RETURN_IF_EXCEPTION(scope, didNotStartFetch(mapEntry));
+#else
         RETURN_IF_EXCEPTION(scope, nullptr);
+#endif
 
         mapEntry->setStatus(ModuleRegistryEntry::Status::Fetching);
         mapEntry->ensureFetchPromise(globalObject)->pipeFrom(vm, promise);
@@ -1150,6 +1175,10 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
 #endif
                     if (scope.exception()) [[unlikely]] {
                         state->setDrainingInnerLoad(false);
+#if USE(BUN_JSC_ADDITIONS)
+                        if (!loadsBelongToCompiledProgram(vm))
+                            state->endAbandonedLoad();
+#endif
                         return;
                     }
                     // 2.d.iii.2. NOTE: HostLoadImportedModule will call FinishLoadingImportedModule, which re-enters the graph loading process through ContinueModuleLoading.
@@ -1533,6 +1562,122 @@ void JSModuleLoader::removeFailedFetchEntry(ModuleRegistryEntry* entry)
     didRemoveModuleMapEntry(moduleMapKey.second);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void JSModuleLoader::removeEntryIfRegistered(ModuleRegistryEntry* entry)
+{
+    ModuleMapKey moduleMapKey { entry->key().impl(), entry->moduleType() };
+    auto iter = m_moduleMap.find(moduleMapKey);
+    if (iter == m_moduleMap.end() || iter->value.get() != entry)
+        return;
+    Locker locker { cellLock() };
+    m_moduleMap.remove(iter);
+    didRemoveModuleMapEntry(moduleMapKey.second);
+}
+
+// For the RETURN_IF_EXCEPTION behind the fetch hook in hostLoadImportedModule().
+JSPromise* JSModuleLoader::didNotStartFetch(ModuleRegistryEntry* entry)
+{
+    if (entry->isUntouched() && !loadsBelongToCompiledProgram(vm()))
+        removeEntryIfRegistered(entry);
+    return nullptr;
+}
+
+// Ends the loads that wait for `promise`, which nothing settles any more. The loads are the reactions on the promise.
+// With a synchronous queue open, a rejection collects them in that queue, and this function is its only reader: for
+// each load it takes the load promise out of the entry and rejects it in turn, which collects the loads that wait for
+// that one. So every entry up to the roots is as it was before it was asked for, with its record, when this returns,
+// and a load that starts in the same turn takes its own steps. None of the loader's steps run for the rejection: the
+// value reaches no entry and no record, and the jobs that link, evaluate or answer an import() are dropped.
+void JSModuleLoader::abandonLoadsWaitingFor(JSPromise* promise)
+{
+    VM& vm = this->vm();
+    VM::SynchronousModuleQueueScope queue(vm);
+    auto& tasks = vm.m_synchronousModuleQueue->tasks;
+
+    auto abandon = [&](JSPromise* waitedFor) {
+        if (waitedFor->status() != JSPromise::Status::Pending)
+            return;
+        waitedFor->markAsHandled();
+        // pipeFrom() has taken the resolving functions of its target. The pipe job is what settles it.
+        if (waitedFor->flags() & JSPromise::isFirstResolvingFunctionCalledFlag)
+            waitedFor->rejectPromise(vm, jsUndefined());
+        else
+            waitedFor->reject(vm, jsUndefined());
+    };
+
+    abandon(promise);
+    for (size_t i = 0; i < tasks.size(); ++i) {
+        auto task = tasks[i];
+        switch (task.task) {
+        case InternalMicrotask::ModuleLoadStep: {
+            auto* loadPromise = uncheckedDowncast<JSPromise>(task.arg0);
+            if (ModuleRegistryEntry* entry = uncheckedDowncast<ModuleLoadingContext>(task.arg2)->entry())
+                forgetLoadPromise(entry, loadPromise);
+            abandon(loadPromise);
+            break;
+        }
+        case InternalMicrotask::ModuleGraphLoadingError: {
+            auto* state = uncheckedDowncast<ModuleGraphLoadingState>(task.arg2);
+            state->endAbandonedLoad();
+            abandon(state->promise());
+            break;
+        }
+        case InternalMicrotask::PromiseFulfillWithoutHandlerJob:
+            abandon(uncheckedDowncast<JSPromise>(task.arg0));
+            break;
+        default:
+            break;
+        }
+    }
+}
+
+// The entry gives up `loadPromise` if that is the promise it answers with.
+void JSModuleLoader::forgetLoadPromise(ModuleRegistryEntry* entry, JSPromise* loadPromise)
+{
+    if (entry->loadPromise() != loadPromise)
+        return;
+    entry->clearLoadPromise();
+    // hostLoadImportedModule() answers for a module of the realm's [[LoadedModules]] with the load promise of its entry.
+    if (AbstractModuleRecord* record = entry->record()) {
+        Locker locker { cellLock() };
+        m_loadedModules.removeIf([&](auto& loaded) {
+            return loaded.value.m_module.get() == record;
+        });
+    }
+}
+
+void JSModuleLoader::makeModuleWasCutShort(ModuleRegistryEntry* entry, JSPromise* modulePromise)
+{
+    // A load that the hook itself started can have made the record meanwhile (hostLoadImportedModule()).
+    if (loadsBelongToCompiledProgram(vm()) || modulePromise->status() != JSPromise::Status::Pending)
+        return;
+    // The entry has no record and no step left that makes one. The next load of the module fetches it again.
+    removeEntryIfRegistered(entry);
+    abandonLoadsWaitingFor(modulePromise);
+}
+
+void JSModuleLoader::loadRequestedModulesWasCutShort(ModuleRegistryEntry* entry, JSPromise* loadPromise)
+{
+    if (loadsBelongToCompiledProgram(vm()))
+        return;
+    // The entry keeps its record. The next load of the module takes its own steps from the module promise.
+    forgetLoadPromise(entry, loadPromise);
+    abandonLoadsWaitingFor(loadPromise);
+}
+
+// Returns whether the step goes on to settle its own promise: the module of the step is loaded, and the payload has
+// heard of it before the termination began (ContinueModuleLoading counts the module before its first exception check).
+bool JSModuleLoader::finishLoadingWasCutShort(JSCell* payload)
+{
+    if (loadsBelongToCompiledProgram(vm()))
+        return false;
+    // innerModuleLoading() ends a state whose drain an exception ended, and nothing settles the promise of that state.
+    if (auto* state = dynamicDowncast<ModuleGraphLoadingState>(payload); state && !state->isLoading())
+        abandonLoadsWaitingFor(state->promise());
+    return true;
+}
+#endif
+
 #if ENABLE(AOT)
 void JSModuleLoader::removeEntryOfRecord(AbstractModuleRecord* record)
 {
@@ -1605,6 +1750,23 @@ JSValue JSModuleLoader::ModuleReferrer::toJSValue() const
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+// The entries from `first` on are reactions that performPromiseThen…/
+// triggerPromiseReactions diverted off the global microtask queue.
+// Dropping them would leave their loadPromise/modulePromise pending
+// forever, so hand them back to the global queue (where they would
+// have gone without the synchronous diversion). They run on the next
+// normal microtask drain.
+void JSModuleLoader::handBackSynchronousModuleQueue(JSGlobalObject* globalObject, size_t first)
+{
+    VM& vm = globalObject->vm();
+    auto& tasks = vm.m_synchronousModuleQueue->tasks;
+    for (size_t i = first; i < tasks.size(); ++i) {
+        auto rest = tasks[i];
+        globalObject->queueMicrotask(vm, rest.task, rest.payload, rest.arg0, rest.arg1, rest.arg2, rest.arg3);
+    }
+    tasks.shrink(0);
+}
+
 void JSModuleLoader::drainSynchronousModuleQueue(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -1619,17 +1781,8 @@ void JSModuleLoader::drainSynchronousModuleQueue(JSGlobalObject* globalObject)
         auto t = tasks[i++];
         runInternalMicrotask(globalObject, vm, t.task, t.payload, t.arg0, t.arg1, t.arg2, t.arg3);
         if (scope.exception()) [[unlikely]] {
-            // The remaining entries are reactions that performPromiseThen…/
-            // triggerPromiseReactions diverted off the global microtask queue.
-            // Dropping them would leave their loadPromise/modulePromise pending
-            // forever, so hand them back to the global queue (where they would
-            // have gone without the synchronous diversion) before propagating
-            // the exception. They run on the next normal microtask drain.
-            while (i < tasks.size()) {
-                auto rest = tasks[i++];
-                globalObject->queueMicrotask(vm, rest.task, rest.payload, rest.arg0, rest.arg1, rest.arg2, rest.arg3);
-            }
-            tasks.shrink(0);
+            // The rest of the queue runs later, before the exception propagates.
+            handBackSynchronousModuleQueue(globalObject, i);
             return;
         }
     }
@@ -1663,7 +1816,8 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
         return true;
     };
     JSPromise* result = loadModule(globalObject, moduleName, parameters.copyRef(), scriptFetcher.copyRef(), { ModuleLoadFlag::Evaluate });
-    RETURN_IF_EXCEPTION(scope, result);
+    // What the call diverted into the queue is not drained on this exit.
+    RETURN_IF_EXCEPTION(scope, (handBackSynchronousModuleQueue(globalObject), result));
     drainSynchronousModuleQueue(globalObject);
     RETURN_IF_EXCEPTION(scope, result);
     if (result->status() != JSPromise::Status::Pending || !waitsForStepOfImport())
@@ -1674,7 +1828,8 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
 #else
     JSPromise* result = loadModule(globalObject, moduleName, WTF::move(parameters), WTF::move(scriptFetcher), { ModuleLoadFlag::Evaluate });
 #endif
-    RETURN_IF_EXCEPTION(scope, result);
+    // What the call diverted into the queue is not drained on this exit.
+    RETURN_IF_EXCEPTION(scope, (handBackSynchronousModuleQueue(globalObject), result));
 
     scope.release();
     drainSynchronousModuleQueue(globalObject);

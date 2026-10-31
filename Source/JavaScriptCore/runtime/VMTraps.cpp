@@ -455,6 +455,8 @@ bool VMTraps::handleTraps(VMTraps::BitField mask)
 
     if (isDeferringTermination())
         mask &= ~NeedTermination;
+    else if (m_trapChecksBeforeTermination && hasTrapBit(NeedTermination, mask) && --m_trapChecksBeforeTermination)
+        mask &= ~NeedTermination; // $vm.callWithTerminationAtTrapCheck(): not at this trap check yet.
 
     {
         Locker codeBlockSetLocker { vm.heap.codeBlockSet().getLock() };

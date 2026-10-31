@@ -91,6 +91,16 @@ public:
     AbstractModuleRecord* takeInnerLoad() { return m_innerLoadQueue.isEmpty() ? nullptr : m_innerLoadQueue.takeLast(); }
     bool drainingInnerLoad() const { return m_drainingInnerLoad; }
     void setDrainingInnerLoad(bool draining) { m_drainingInnerLoad = draining; }
+#if USE(BUN_JSC_ADDITIONS)
+    // A drain that an exception ended has counted requests that it never made, so [[PendingModulesCount]] cannot reach
+    // zero any more. The state stops here: ContinueModuleLoading returns for it at step 1, and its queue is empty.
+    void endAbandonedLoad()
+    {
+        m_isLoading = false;
+        m_drainingInnerLoad = false;
+        m_innerLoadQueue.clear();
+    }
+#endif
 
     // Combined-promise AND-join state used by top-level loadModule (mirrors ModuleLoaderPayload's same-named fields).
     bool decrementRemaining()
