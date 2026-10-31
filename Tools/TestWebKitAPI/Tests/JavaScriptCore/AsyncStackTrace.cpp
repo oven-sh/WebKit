@@ -50,6 +50,7 @@ TEST(JavaScriptCore_AsyncStackTrace, SuspendedFrameUsesResumeInstruction)
     auto context = JSGlobalContextCreate(nullptr);
     ASSERT_NE(context, nullptr);
     auto releaseContext = makeScopeExit([&] {
+        JSC::JSLockHolder locker(toJS(context));
         JSGlobalContextRelease(context);
     });
 
