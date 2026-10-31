@@ -69,9 +69,14 @@ struct AssignedValue {
     ValueSetID value;
     MethodKind kind { MethodKind::Method };
     bool isWrittenForOtherObjectsToo { false };
+    ValueSetID through;
 };
 
-using AnswersAboutSets = UncheckedKeyHashMap<uint32_t, bool, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+struct AnswersAboutSets {
+    UncheckedKeyHashMap<uint32_t, bool, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> reachesOthers;
+    // What each store under a name goes through once flow is at rest, above the key. Made when somebody asks.
+    std::optional<UncheckedKeyHashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>> storesAtRest;
+};
 
 } // anonymous namespace
 
@@ -601,7 +606,7 @@ static std::optional<MethodKind> kindOfMemberUnder(ValueFlowNameKind kind)
 
 static bool isWrittenForOtherObjectsToo(const ValueFlowResultInputs& inputs, const LedgerOfClassesAndClosures& ledger, ValueSetID through, AnswersAboutSets& answers)
 {
-    auto answer = answers.add(through.index(), false);
+    auto answer = answers.reachesOthers.add(through.index(), false);
     if (!answer.isNewEntry)
         return answer.iterator->value;
     const ValueFlowUniverse& universe = inputs.universe();
@@ -620,6 +625,28 @@ static bool isWrittenForOtherObjectsToo(const ValueFlowResultInputs& inputs, con
     });
     answer.iterator->value = reachesOthers;
     return reachesOthers;
+}
+
+static bool isWhatStoreGoesThroughAtRest(const ValueFlowResultInputs& inputs, ValueSetID through, PropertyKeyID key, AnswersAboutSets& answers)
+{
+    auto numberOf = [](ValueSetID set, PropertyKeyID key) {
+        return static_cast<uint64_t>(set.index()) << 32 | key.index();
+    };
+    if (!answers.storesAtRest) {
+        answers.storesAtRest.emplace();
+        for (uint32_t index = 0; index < inputs.program.functions.size(); ++index) {
+            if (!inputs.isReached(FunctionID(index)))
+                continue;
+            for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
+                if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::PropSet || !statement.key)
+                    continue;
+                std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
+                if (!operands.empty() && operands[0].node)
+                    answers.storesAtRest->add(numberOf(inputs.solver().possibleValuesOf(operands[0].node), statement.key));
+            }
+        }
+    }
+    return answers.storesAtRest->contains(numberOf(through, key));
 }
 
 // Point.prototype.norm = .. and Object.defineProperty(Point.prototype, ..): the prototype objects that a statement reads out of one class to store into or to pass on.
@@ -673,14 +700,14 @@ static Vector<AssignedValue> listWhatIsAssigned(const ValueFlowResultInputs& inp
                 if (!field.key || inputs.program.isIndexLike(field.key) || heap->writtenUnder(sourceAlone, ValueFlowName::getter(field.key)) != ValueSets::nothing)
                     continue;
                 if (ValueSetID value = heap->writtenUnder(sourceAlone, ValueFlowName::property(field.key)); value != ValueSets::nothing)
-                    assigned.append({ field.key, value, MethodKind::Method, isWrittenForOtherObjectsToo });
+                    assigned.append({ field.key, value, MethodKind::Method, isWrittenForOtherObjectsToo, write.through });
             }
         });
     };
     auto list = [&](ValueFlowObjectID holder) {
         for (const Write& write : ledger.writesFiledOn(holder)) {
             if (std::optional<MethodKind> kind = kindOfMemberUnder(write.under.kind))
-                assigned.append({ PropertyKeyID(write.under.payload), write.arrives, *kind, isWrittenForOtherObjectsToo(inputs, ledger, write.through, answers) });
+                assigned.append({ PropertyKeyID(write.under.payload), write.arrives, *kind, isWrittenForOtherObjectsToo(inputs, ledger, write.through, answers), write.through });
             else if (write.under.kind == ValueFlowNameKind::CopiedFrom)
                 listWhatIsCopied(write);
         }
@@ -689,6 +716,21 @@ static Vector<AssignedValue> listWhatIsAssigned(const ValueFlowResultInputs& inp
     for (ValueFlowObjectID stored : ledger.prototypeObjectsStoredFor(classLayout))
         list(stored);
     AOT::stableSortInLine(assigned, { }, &AssignedValue::key);
+    // While flow was finding out what a store goes through, the store wrote through fewer objects, and what it wrote then is still there: which object came first goes by the order of the rules.
+    // So what no store goes through at rest is judged by the most that is written through under the name.
+    for (size_t first = 0, end = 0; first < assigned.size(); first = end) {
+        while (end < assigned.size() && assigned[end].key == assigned[first].key)
+            ++end;
+        std::span<AssignedValue> ofKey = assigned.mutableSpan().subspan(first, end - first);
+        for (AssignedValue& value : ofKey) {
+            if (value.isWrittenForOtherObjectsToo)
+                continue;
+            bool isPartOfWiderWrite = std::ranges::any_of(ofKey, [&](const AssignedValue& other) {
+                return other.isWrittenForOtherObjectsToo && other.kind == value.kind && inputs.sets().isSubset(value.through, other.through);
+            });
+            value.isWrittenForOtherObjectsToo = isPartOfWiderWrite && !isWhatStoreGoesThroughAtRest(inputs, value.through, value.key, answers);
+        }
+    }
     return assigned;
 }
 
