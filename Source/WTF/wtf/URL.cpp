@@ -263,7 +263,8 @@ static String decodeEscapeSequencesFromParsedURLForWindowsPath(const std::span<c
         }
     }   
 
-    return String::fromUTF8ReplacingInvalidSequences(percentDecodedUTF8.span());
+    // Null when the decoded bytes are not valid UTF-8, like decodeEscapeSequencesFromParsedURL().
+    return String::fromUTF8(percentDecodedUTF8.span());
 }
 
 String URL::user() const
@@ -327,12 +328,14 @@ URL URL::truncatedForUseAsBase() const
 #if !USE(CF)
 
 #if OS(WINDOWS)
-static inline String fileSystemPathWindows(WTF::StringView host, WTF::StringView path)
+static inline Markable<String> fileSystemPathWindows(WTF::StringView host, WTF::StringView path)
 {
     ASSERT(path.containsOnlyASCII());
 
     // UNC paths look like '\\server\share\etc', but in a URL they look like 'file://server/share/etc'.
     String decodedPath = path.is8Bit() ? decodeEscapeSequencesFromParsedURLForWindowsPath<Latin1Character>(path.span8()) : decodeEscapeSequencesFromParsedURLForWindowsPath<UChar>(path.span16());
+    if (decodedPath.isNull())
+        return { };
     if (host.length() > 0) [[unlikely]] {
         return makeString("\\\\"_s, host, "\\"_s, decodedPath);
     }
@@ -340,7 +343,7 @@ static inline String fileSystemPathWindows(WTF::StringView host, WTF::StringView
 }
 #endif
 
-String URL::fileSystemPath() const
+Markable<String> URL::fileSystemPath() const
 {
     if (!protocolIsFile())
         return { };
