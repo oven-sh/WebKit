@@ -942,7 +942,7 @@ static std::optional<RunStart> findRunThatCalled(VM& vm, const RunWalk& walk, En
     }
     if (!callee)
         return std::nullopt;
-    imageOfCaller = vm.aotState().image->findInListByCodeAddress(removeCodePtrTag(callee->rawReturnPC()));
+    imageOfCaller = vm.aotState().image->findInListByCodeAddress(removeReturnAddressSignature(callee->rawReturnPC()));
     if (!imageOfCaller)
         return std::nullopt;
     return RunStart { stackPointerOfCaller(callee), callee->callerFrame(), callee->rawReturnPC(), exit.entryFrame, false, true };

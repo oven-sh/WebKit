@@ -397,7 +397,7 @@ CompiledFrameIterator::CompiledFrameIterator(VM& vm, const Cursor& cursor, bool 
 {
     // The frames of one run are of one image: a call into another image leaves compiled code.
     if (vm.aotState().hasSeveralImages) [[unlikely]] {
-        if (const Image* image = m_image->findInListByCodeAddress(removeCodePtrTag(cursor.rawPC))) {
+        if (const Image* image = m_image->findInListByCodeAddress(removeReturnAddressSignature(cursor.rawPC))) {
             m_image = image;
             m_cache = vm.aotState().parts[image->position()].callSiteCache.get();
             m_imageOfRun.run(vm.aotState(), *image);
@@ -522,7 +522,7 @@ const void* CompiledFrameIterator::findReturnAddressInFunctionAtTop(VM& vm)
     Cursor cursor { callee->callerFrame(), callee->rawReturnPC(), vm.topEntryFrame, callee, stackPointerOfCaller(callee) };
     Exit exit;
     do {
-        const void* pc = removeCodePtrTag(cursor.rawPC);
+        const void* pc = removeReturnAddressSignature(cursor.rawPC);
         const CallSiteCache::Entry* site = pc ? findReturnSite(vm, pc) : nullptr;
         if (!site)
             return nullptr;
@@ -731,7 +731,7 @@ void CompiledFrameIterator::listFunctionWhoseThisTheAdapterMakes()
     m_hasNoMachineFrame = true;
     m_isAtEnd = false;
     m_instance = *reinterpret_cast<Instance* const*>(reinterpret_cast<const char*>(m_runEnd.adapterFrame) + AdapterFrame::offsetOfInstance);
-    m_frame = { m_instance, m_runEnd.adapterFrame, removeCodePtrTag(m_cursor.rawPC), { }, m_constructedFunctionThatLeft->function, CallSiteIndex(0) };
+    m_frame = { m_instance, m_runEnd.adapterFrame, removeReturnAddressSignature(m_cursor.rawPC), { }, m_constructedFunctionThatLeft->function, CallSiteIndex(0) };
     m_hasReadFrame = true;
 }
 

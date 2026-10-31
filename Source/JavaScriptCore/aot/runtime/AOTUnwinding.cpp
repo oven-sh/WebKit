@@ -191,7 +191,7 @@ static bool isCalledByCodeOfOtherImage(const VMState& state, CallFrame* adapterF
     if (state.adapterFrameThatRestoresImage != adapterFrame || adapterFrame->callerFrameOrEntryFrame() == entryFrame)
         return false;
     std::span<const uint8_t> code = state.endOfImagesBelowAdapters[-1].parts->image->code();
-    return std::bit_cast<uintptr_t>(removeCodePtrTag(adapterFrame->rawReturnPC())) - std::bit_cast<uintptr_t>(code.data()) < code.size();
+    return std::bit_cast<uintptr_t>(removeReturnAddressSignature(adapterFrame->rawReturnPC())) - std::bit_cast<uintptr_t>(code.data()) < code.size();
 }
 
 // Compiled code keeps its instance in a register that its callees save.
@@ -557,7 +557,7 @@ static bool isCaughtByCallersOfNativeCode(VM& vm, CompiledFrameExit exit)
         if (exit.callFrame->callerFrameOrEntryFrame() == exit.entryFrame)
             return false;
         // So may code of another realm that runs the image.
-        if (exit.returnPC && isAddressInCompiledCode(std::bit_cast<uintptr_t>(removeCodePtrTag(exit.returnPC))))
+        if (exit.returnPC && isAddressInCompiledCode(std::bit_cast<uintptr_t>(removeReturnAddressSignature(exit.returnPC))))
             return false;
         if (void* taker = vm.aotState().stackPointerOfExceptionTaker; taker && taker < static_cast<void*>(exit.callFrame))
             return false;

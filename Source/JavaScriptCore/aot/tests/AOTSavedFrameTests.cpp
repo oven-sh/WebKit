@@ -1071,9 +1071,9 @@ JSC_DEFINE_HOST_FUNCTION(readFramesBelowJobCaller, (JSGlobalObject*, CallFrame* 
                 continue;
             ++numberOfUnwrittenWords;
 #if CPU(X86_64)
-            numberOfPaddingWords += isInJobFunction(removeCodePtrTag(std::bit_cast<const void*>(frame[1])));
+            numberOfPaddingWords += isInJobFunction(removeReturnAddressSignature(std::bit_cast<const void*>(frame[1])));
 #endif
-            dataLogLn("unwritten word ", (frameOfCaller - word) * sizeof(uint64_t), " bytes below frame record ", numberOfFrames + 1, " of ", (frameOfCaller - frame - 2) * sizeof(uint64_t), " bytes, in ", describeCodeAddress(removeCodePtrTag(std::bit_cast<const void*>(frame[1]))));
+            dataLogLn("unwritten word ", (frameOfCaller - word) * sizeof(uint64_t), " bytes below frame record ", numberOfFrames + 1, " of ", (frameOfCaller - frame - 2) * sizeof(uint64_t), " bytes, in ", describeCodeAddress(removeReturnAddressSignature(std::bit_cast<const void*>(frame[1]))));
         }
         frame = frameOfCaller;
         AOT_TEST_CHECK(++numberOfFrames < 12);
@@ -1223,7 +1223,7 @@ static NEVER_INLINE void readFramesThatCollectionScans()
     static constexpr size_t largestCapturingFunction = KB;
     auto* frame = static_cast<const uint64_t*>(__builtin_frame_address(0));
     unsigned numberOfFramesBelow = 0;
-    while (std::bit_cast<uintptr_t>(removeCodePtrTag(std::bit_cast<const void*>(frame[1]))) - std::bit_cast<uintptr_t>(&callWithCurrentThreadState) >= largestCapturingFunction) {
+    while (std::bit_cast<uintptr_t>(removeReturnAddressSignature(std::bit_cast<const void*>(frame[1]))) - std::bit_cast<uintptr_t>(&callWithCurrentThreadState) >= largestCapturingFunction) {
         frame = *reinterpret_cast<const uint64_t* const*>(frame);
         AOT_TEST_CHECK(++numberOfFramesBelow < 40 && frame < frameOfCollectionCaller);
     }
@@ -1236,7 +1236,7 @@ static NEVER_INLINE void readFramesThatCollectionScans()
             if (*word != wordOfDeadStack)
                 continue;
             ++numberOfUnwrittenWords;
-            dataLogLn("unwritten word ", (frameOfCaller - word) * sizeof(uint64_t), " bytes below frame record ", numberOfFrames + 1, " of ", (frameOfCaller - frame - 2) * sizeof(uint64_t), " bytes, in ", describeCodeAddress(removeCodePtrTag(std::bit_cast<const void*>(frame[1]))));
+            dataLogLn("unwritten word ", (frameOfCaller - word) * sizeof(uint64_t), " bytes below frame record ", numberOfFrames + 1, " of ", (frameOfCaller - frame - 2) * sizeof(uint64_t), " bytes, in ", describeCodeAddress(removeReturnAddressSignature(std::bit_cast<const void*>(frame[1]))));
         }
         frame = frameOfCaller;
         AOT_TEST_CHECK(++numberOfFrames < 16);
