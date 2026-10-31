@@ -1437,8 +1437,13 @@ private:
     JS_EXPORT_PRIVATE void setException(Exception*);
 
     JS_EXPORT_PRIVATE Exception* throwException(JSGlobalObject*, Exception*);
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE NEVER_INLINE Exception* throwException(JSGlobalObject*, JSValue);
+    JS_EXPORT_PRIVATE NEVER_INLINE Exception* throwException(JSGlobalObject*, JSObject*);
+#else
     JS_EXPORT_PRIVATE Exception* throwException(JSGlobalObject*, JSValue);
     JS_EXPORT_PRIVATE Exception* throwException(JSGlobalObject*, JSObject*);
+#endif
 
 #if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
     void verifyExceptionCheckNeedIsSatisfied(unsigned depth, ExceptionEventLocation&);
