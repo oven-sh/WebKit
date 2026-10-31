@@ -188,6 +188,27 @@ struct StartSearch {
 template<typename CharType> static unsigned findStartBehindFailedRun(const FlatProgram&, const CharType* input, unsigned length, unsigned from, unsigned next, StartSearch&);
 template<typename CharType> static unsigned findStartByPair(const FlatProgram&, const CharType* input, unsigned length, unsigned from, StartSearch&);
 
+// Zeros behind the copy. memcpy() of a length that nobody knows is a call.
+static ALWAYS_INLINE void copyFewerThanTwoVectors(uint8_t* to, const uint8_t* from, size_t count)
+{
+    memset(to, 0, 2 * StartCandidates::stride);
+    auto copyBothEnds = [&]<size_t size>(std::integral_constant<size_t, size>) ALWAYS_INLINE_LAMBDA {
+        memcpy(to, from, size);
+        memcpy(to + count - size, from + count - size, size);
+    };
+    if (count >= 16)
+        copyBothEnds(std::integral_constant<size_t, 16> { });
+    else if (count >= 8)
+        copyBothEnds(std::integral_constant<size_t, 8> { });
+    else if (count >= 4)
+        copyBothEnds(std::integral_constant<size_t, 4> { });
+    else if (count) {
+        to[0] = from[0];
+        to[count >> 1] = from[count >> 1];
+        to[count - 1] = from[count - 1];
+    }
+}
+
 // A program with required texts has no run behind fixed steps.
 enum class SkipsStarts : bool { No, BehindFailedRun };
 
@@ -275,13 +296,25 @@ static ALWAYS_INLINE unsigned findStartByTables(const FlatProgram& program, cons
         unsigned nextPlacesBegin = none;
         if (from - candidates.begin < stride)
             from = candidates.begin + stride;
+        else if (from == search.startOffset && from <= last && length - from < 2 * stride) {
+            // The text is shorter than two vectors, and looking through a copy of it costs as much as an attempt. A match at the first place, and a text of few places, are found sooner without.
+            if ((entryOf(from) & 1) && canBeginAt(from))
+                return from;
+            if (last - from < stride / 2) {
+                while (++from <= last) {
+                    if (canBeginAt(from))
+                        return from;
+                }
+                return noneByTables();
+            }
+        }
         for (;; from += stride) {
             if (from > last)
                 return noneByTables();
             const uint8_t* characters = std::bit_cast<const uint8_t*>(input + from);
-            uint8_t endOfInput[2 * stride] { };
+            uint8_t endOfInput[2 * stride];
             if (length - from < 2 * stride) {
-                memcpy(endOfInput, characters, length - from);
+                copyFewerThanTwoVectors(endOfInput, characters, length - from);
                 characters = endOfInput;
             }
             auto places = nextPlacesBegin == from ? nextPlaces : placesOf(characters);

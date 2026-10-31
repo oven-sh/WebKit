@@ -63,6 +63,7 @@ v(ThrowUnlessForwardedCalleeIsCallable, CalledByCode, (), NoAxis, 0, 0, AllISAs,
 
 // AOTStubsGlobalBindings.cpp
 v(GetGlobalBinding, CalledByCode, (ScriptsAndGlobalObject, GlobalObject), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetGlobalBinding)
+v(SetGlobalBinding, CalledByCode, (ScriptsAndGlobalObject, ScriptsAndGlobalObjectSloppy, GlobalObject, GlobalObjectSloppy), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, SetGlobalBinding)
 v(Equal, CalledByCode, (Loose, Strict), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(StringStorage), Equal)
 
 // AOTStubsArithmetic.cpp

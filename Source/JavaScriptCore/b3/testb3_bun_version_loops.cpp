@@ -419,7 +419,7 @@ static void testVersionLoopsUncloneableRareEdgeContinuesInOriginalLoop()
 
         CHECK(versionLoopsAndValidate(proc));
         CHECK_EQ(valueCountInEachLoop(proc, Load).first(), 0u);
-        CHECK_EQ(numberOfValues(proc, Load), 2u);
+        CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->opcode() == Load && value->lastChild()->opcode() != SlotBase; }), 2u);
         // What can be copied ends its turn in a copy, and the fast loop is entered again behind it.
         bool endsTurnInCopy = rarePath != RarePath::HasUncloneableValue;
         CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->isInt64(1000); }), endsTurnInCopy ? 2u : 1u);

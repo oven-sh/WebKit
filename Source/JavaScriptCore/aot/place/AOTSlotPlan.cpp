@@ -697,6 +697,9 @@ bool isDescribedToRunTime(const Program& program, const FlowResults& flow, Modul
 {
     switch (moduleExport.kind) {
     case ModuleExportKind::Variable:
+        // Only the variable says whether the name is an export.
+        if (moduleExport.isDroppedWhileEmpty)
+            return true;
         switch (flow.module(exporter).namespaceUse) {
         case NamespaceUse::Unknown:
             return true;

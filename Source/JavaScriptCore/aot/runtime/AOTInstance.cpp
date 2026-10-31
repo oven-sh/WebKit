@@ -1878,6 +1878,19 @@ JSValue ProgramStatics::readVariableWithoutAllocating(const Instance& instance, 
     return { };
 }
 
+bool ProgramStatics::isVariableEmpty(const Instance& instance, SlotData slot)
+{
+    if (slot.representation() == SlotRepresentation::DeferredClosure)
+        return false;
+    const ProgramStatics& statics = *instance.state->statics;
+    if (!statics.isInitialized(slot.offset))
+        return true;
+    const uint8_t* address = instance.statics() + slot.offset;
+    if (literalStringWithoutCell(instance, slot.representation(), address) || readSlot(slot.representation(), address, statics.m_strings))
+        return false;
+    return !findFunctionVariable(statics.m_tables, slot.offset);
+}
+
 String ProgramStatics::readStringWithoutAllocating(const Instance& instance, SlotData slot)
 {
     if (JSValue value = readVariableWithoutAllocating(instance, slot))

@@ -617,11 +617,17 @@ static void printTextPrintedInPlace(const TablesContext& context)
     if (modules.empty())
         return;
     context.out.println("printed in place, from the start of ", bytes[0] ? "the file" : "the text");
+    auto texts = context.tables.functionTexts();
     for (size_t index = 0; index + 1 < modules.size(); ++index) {
-        for (const TextPrintedInPlace& piece : TextPrintedInPlace::readAll(bytes.subspan(modules[index].start, modules[index + 1].start - modules[index].start))) {
+        Vector<TextPrintedInPlace> pieces = TextPrintedInPlace::readAll(bytes.subspan(modules[index].start, modules[index + 1].start - modules[index].start));
+        for (const TextPrintedInPlace& piece : pieces) {
             if (piece.isCopy)
                 context.out.println("printed m", modules[index].module, " ", piece.start, "..", piece.end, " copy=", piece.startOfCopied, "..", piece.endOfCopied, piece.isInBrackets ? " inBrackets" : "");
-            else
+            else if (isFromPrinter(piece) && !bytes[0] && !texts.empty()) {
+                Vector<Latin1Character> printed;
+                appendTextFromPrinter(printed, byteCast<Latin1Character>(context.bytes.subspan(texts[0].textOffset)), piece, pieces.span());
+                context.out.println("printed m", modules[index].module, " ", piece.start, "..", piece.end, " from the printer in ", piece.bytes.size(), " bytes \"", StringView(printed.subspan(1, printed.size() - 2)), "\"");
+            } else
                 context.out.println("printed m", modules[index].module, " ", piece.start, "..", piece.end, " \"", StringView(byteCast<Latin1Character>(piece.bytes)), "\"");
         }
     }
@@ -635,8 +641,11 @@ static void printFunctionTexts(const TablesContext& context)
         return;
     auto entries = unsafeMakeSpan(context.tables.at<FunctionTextEntry>(texts[0].entriesOffset), texts[0].numberOfEntries);
     auto text = byteCast<Latin1Character>(context.bytes.subspan(texts[0].textOffset));
-    for (const FunctionTextEntry& entry : entries)
-        context.out.println("f", entry.function, " ", entry.start, "..", entry.end, " \"", StringView(text.subspan(entry.start, entry.end - entry.start)), "\"");
+    for (const FunctionTextEntry& entry : entries) {
+        uint32_t start = entry.start;
+        uint32_t end = entry.end;
+        context.out.println("f", static_cast<uint32_t>(entry.function), " ", start, "..", end, " \"", StringView(text.subspan(start, end - start)), "\"");
+    }
     for (const ConstructorLineData& constructor : context.tables.constructorLines())
         context.out.println("constructor f", constructor.function, " linesOfTextAbove=", constructor.linesOfTextAbove);
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -644,19 +653,19 @@ static void printFunctionTexts(const TablesContext& context)
     for (size_t index = 0; index + 1 < modules.size(); ++index) {
         const uint8_t* cursor = context.tables.at<uint8_t>(texts[0].piecesOffset) + modules[index].start;
         const uint8_t* end = context.tables.at<uint8_t>(texts[0].piecesOffset) + modules[index + 1].start;
-        uint64_t endOfLastPiece = 0;
-        uint64_t line = 0;
+        PieceOfKeptText piece;
         uint64_t cut = 0;
         while (cursor < end) {
-            uint64_t head = readVarint(cursor);
-            if (head & 1) {
-                cut = endOfLastPiece + zigZagDecode(head >> 1);
-                endOfLastPiece = cut + readVarint(cursor);
-                line += readVarint(cursor);
-                context.out.println("piece m", modules[index].module, " ", cut, "..", endOfLastPiece, " line=", line, " column=", readVarint(cursor));
+            if (*cursor & 1) {
+                piece = PieceOfKeptText::read(cursor, piece);
+                cut = piece.start;
+                context.out.print("piece m", modules[index].module, " ", piece.start, "..", piece.end, " line=", piece.line, " column=", piece.column);
+                if (piece.startOfWhole != piece.start || piece.endOfWhole != piece.end)
+                    context.out.print(" of=", piece.startOfWhole, "..", piece.endOfWhole);
+                context.out.println();
                 continue;
             }
-            cut += head >> 1;
+            cut += readVarint(cursor) >> 1;
             uint64_t columns = readVarint(cursor);
             context.out.println("cut ", cut, " lines=", columns & 1 ? readVarint(cursor) : 0, " columns=", columns >> 1);
         }
@@ -717,7 +726,7 @@ static void printModuleExportRecord(const TablesContext& context, uint32_t index
         line.field("indirectExport"_s, moduleExport.indirectExport);
         break;
     }
-    line.flag("deferred"_s, moduleExport.isDeferred).flag("fromStarExport"_s, moduleExport.isFromStarExport);
+    line.flag("deferred"_s, moduleExport.isDeferred).flag("fromStarExport"_s, moduleExport.isFromStarExport).flag("droppedWhileEmpty"_s, moduleExport.isDroppedWhileEmpty);
 }
 
 static void printModules(const TablesContext& context)
@@ -776,7 +785,7 @@ static void printModules(const TablesContext& context)
     for (uint32_t index = 0; index < requiredNames.size(); ++index)
         RecordLine(context, "requiredName"_s, index).field("exporter"_s, requiredNames[index].exporterModule()).identifier("name"_s, requiredNames[index].name).flag("mayBeAbsent"_s, requiredNames[index].mayBeAbsent);
     for (const ExportStatementData& statement : tables.exportStatements())
-        RecordLine(context, "exportStatement"_s).field("requiredName"_s, statement.requiredName).field("exportName"_s, statement.exportNameString()).field("specifier"_s, statement.specifierString());
+        RecordLine(context, "exportStatement"_s).field("requiredName"_s, statement.requiredName).field("exportName"_s, statement.exportNameString()).field("specifier"_s, statement.specifierString()).flag("dropsExportIfAbsent"_s, statement.dropsExportIfAbsent);
     for (const ModuleFailureData& failure : tables.moduleFailures()) {
         if (failure.isLoadOfModule()) {
             RecordLine(context, "loadFailure"_s).field("module"_s, failure.importerModule()).field("failure"_s, failure.failureOfLoad().index());

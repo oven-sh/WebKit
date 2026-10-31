@@ -89,12 +89,13 @@ bool tryReplaceGlobalProperty(Instance* instance, VM& vm, JSValue base, UniquedS
         offset = structure->get(vm, uid, attributes);
         if (!isValidOffset(offset) || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue || structure->isImmutableProperty(uid))
             return false;
+        // Filing fires what watches the replacement of the property, once and for all, as for any store that a stub makes.
         if (structure->propertyAccessesAreCacheable()) {
             structure->didCachePropertyReplacement(vm, offset);
             caches.cache({ structure, { uid, std::nullopt }, SlotAccess::Store }, PropertyAnswer::own(PropertyAnswerKind::Value, SlotAccess::Store, offset));
-        }
+        } else
+            structure->didReplaceProperty(offset);
     }
-    structure->didReplaceProperty(offset);
     target->putDirectOffset(vm, offset, value);
     return true;
 }

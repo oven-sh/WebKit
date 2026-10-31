@@ -25,7 +25,7 @@ enum FunctionRole (hasSourceBody: Bool, canBeCalledByValue: Bool, hasStackArgume
     ResultWorker(false, false, true, ResultWorker, MayChangeSignature+MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost, true, true, false, false)
     ParameterWrapper(false, true, true, ParameterWrapper, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, true, true, true, false)
     EntryChecks(false, true, true, EntryChecks, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, true, true, true, false)
-    ChecksThatGiveUp(false, true, true, Version, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, true, true, true, false)
+    ChecksThatGiveUp(false, true, true, Version, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost, true, true, true, false)
     OutlinedBody(false, false, true, None, HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost+IsHiddenInStackTraces, false, true, false, false)
     Serializer(false, false, true, Serializer, MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost+IsHiddenInStackTraces, false, true, false, false)
     Parser(false, false, true, Parser, MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost+IsHiddenInStackTraces, false, true, false, false)

@@ -13,6 +13,8 @@
 #include "AOTDecidedBranches.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfAccesses.h"
+#include "AOTEffectsOfOperands.h"
+#include "AOTEscapeAnalysis.h"
 #include "AOTFlowApply.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
@@ -20,6 +22,7 @@
 #include "AOTHeat.h"
 #include "AOTIRBuilder.h"
 #include "AOTInductionVariables.h"
+#include "AOTInlineBuiltinForms.h"
 #include "AOTMemoryLocation.h"
 #include "AOTNaturalLoops.h"
 #include "AOTObservableOperations.h"
@@ -30,6 +33,7 @@
 #include "AOTSort.h"
 #include "AOTStringBuilderAnalysis.h"
 #include "AOTThreshold.h"
+#include "AOTUseEffectHistory.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include <algorithm>
@@ -1579,7 +1583,230 @@ static bool isCollectionLookup(const Program& program, const Value& value)
     return builtin == Builtins::MapPrototypeGet || builtin == Builtins::MapPrototypeHas || builtin == Builtins::SetPrototypeHas;
 }
 
-static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop& loop, Vector<BlockID>& definingBlock, const BitVector& headersWhoseTestHoldsOnEntry, Vector<Edge, 2>& entriesFromBranches)
+static ValueID listWhoseLengthIsRead(const Program& program, const Value& value)
+{
+    if (value.opcode == Opcode::GetArrayLength)
+        return value.arrayOperand();
+    if (value.opcode != Opcode::CallBuiltin || !value.receiverOperand() || value.needsPristineReceiver())
+        return { };
+    const BuiltinOverload& overload = program.builtins().at(value.overload());
+    return overload.mode == BuiltinCallMode::Get && program.builtins().canonicalID(overload.builtin) == Builtins::ArrayPrototypeLength ? value.receiverOperand() : ValueID();
+}
+
+// These ask whether a position lies below the length of a list, and can be told the length.
+static constexpr OpcodeSet testsOfPositionsInLists { Opcode::IsInBounds, Opcode::GetArrayElement, Opcode::IsElementPresent, Opcode::HasArrayElement };
+// These look at how a list keeps its elements and not at how many it has.
+static constexpr OpcodeSet readersOfStorageFormAlone { Opcode::HasArrayStorage, Opcode::NewArrayWithCapacity };
+
+struct ListsLeftAlone {
+    BitVector lengths;
+    Vector<ValueID> tests;
+    // Tests in the loop that have been told already. What one of them was told holds for all of them: the list has one length all the way round.
+    Vector<ValueID> testsToldLength;
+    // In order. The tests of such a list are told the length only if it leaves the loop: they and the comparison with it go on asking the same.
+    Vector<ValueID> listsMeasuredInLoop;
+};
+
+// `for (let k = 0; k < xs.length; k++) out.push(xs[k])`: the loop asks for the length of one list and writes the length of another. Asked before anything moves: a program point is a place in the blocks as they stand.
+// Where the loop writes to no list at all there is nothing to find: the machine code reads each length once by itself.
+// A length leaves the loop only where everything in the loop that asks for it can be told it. Otherwise one would compare with the length in front of the loop and another with the length in the storage, and nobody could see that they ask the same.
+static ListsLeftAlone findListsTheLoopLeavesAlone(FunctionPassContext& context, const NaturalLoop& loop, std::optional<UseEffectHistory>& captures)
+{
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+
+    auto reliesOnProofOfPosition = [](const Value& value) {
+        return Value::opcodesWithIsInBounds.contains(value.opcode) && value.isInBounds();
+    };
+    struct Reader {
+        ValueID list;
+        ValueID id;
+    };
+    Vector<Reader, 8> readers;
+    BitVector isLengthRead;
+    bool hasSomethingToTellOrMove = false;
+    LocationMasks reads { AbstractHeapSet { AbstractHeap::ArrayStorage } };
+    for (unsigned i = 0; i < loop.size(); ++i) {
+        for (ValueID id : function.at(loop.at(i)).values) {
+            const Value& value = function.at(id);
+            if (testsOfPositionsInLists.contains(value.opcode)) {
+                bool isTold = !value.lengthOperands().empty();
+                if (isTold || !reliesOnProofOfPosition(value)) {
+                    readers.append({ analyses.identityOf(value.arrayOperand()), id });
+                    hasSomethingToTellOrMove |= !isTold;
+                }
+                continue;
+            }
+            ValueID list = listWhoseLengthIsRead(context.program, value);
+            if (!list || !context.program.typeOf(function, id).isInteger())
+                continue;
+            Effects effects = analyses.effectsOf(id).onAnyEdge();
+            if (!effects.isUnobservable())
+                continue;
+            readers.append({ analyses.identityOf(list), id });
+            isLengthRead.set(id.index());
+            hasSomethingToTellOrMove = true;
+            reads.merge(effects.reads);
+        }
+    }
+    if (!hasSomethingToTellOrMove)
+        return { };
+
+    struct Writer {
+        ValueID list;
+        ProgramPoint point;
+    };
+    Vector<Writer, 8> writers;
+    Vector<ValueID, 8> listsReadOtherwise;
+    for (unsigned i = 0; i < loop.size(); ++i) {
+        BlockID block = loop.at(i);
+        Effects ofTerminator = analyses.effectsOfTerminator(block).onAnyEdge();
+        if (ofTerminator.mayRunOtherCode() || ofTerminator.writes.overlaps(reads))
+            return { };
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            const Value& value = function.at(values[index]);
+            const EffectsOnEdges& effects = analyses.effectsOf(values[index]);
+            Effects any = effects.onAnyEdge();
+            bool mayWrite = any.mayRunOtherCode() || any.writes.overlaps(reads);
+            bool readsOtherwise = any.reads.contains(AbstractHeap::ArrayStorage) && !isLengthRead.get(values[index].index()) && !testsOfPositionsInLists.contains(value.opcode) && !readersOfStorageFormAlone.contains(value.opcode) && !reliesOnProofOfPosition(value);
+            if (!mayWrite && !readsOtherwise)
+                continue;
+            // A push that runs no code reads and writes the list it pushes to and nothing else.
+            if (value.opcode == Opcode::CallBuiltin && !any.mayRunOtherCode() && inlineImplementationOf(context.program, value) == InlineBuiltin::ArrayPush) {
+                writers.append({ value.receiverOperand(), { block, index } });
+                continue;
+            }
+            Effects beyond = effectsBeyondOperands(analyses.effectContext(), function, value, effects).onAnyEdge();
+            if (beyond.mayRunOtherCode() || beyond.writes.overlaps(reads))
+                return { };
+            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                OperandMemory memory = memoryAccessedThrough(analyses.effectContext(), function, value, operandIndex, effects);
+                if (memory.writes.overlaps(reads))
+                    writers.append({ operand, { block, index } });
+                else if (readsOtherwise && memory.reads.contains(AbstractHeap::ArrayStorage))
+                    listsReadOtherwise.append(analyses.identityOf(operand));
+            });
+        }
+    }
+    if (writers.isEmpty())
+        return { };
+    const EscapeAnalysis& escape = analyses.escape();
+    if (escape.gaveUp())
+        return { };
+
+    // Each list that is written to is looked at once, and each list that is measured is held against those.
+    AOT::sortInLine(writers, { }, [](const Writer& writer) { return writer.list; });
+    AOT::sortInLine(readers, { }, [](const Reader& reader) { return reader.list; });
+    AOT::sortInLine(listsReadOtherwise);
+    struct WrittenList {
+        ValueID list;
+        bool isHeldByNobodyElse;
+    };
+    // A list that nobody else holds yet is not the list that is measured, whatever the measured one came from. The history of captures starts over where the list is made, so an earlier turn's list does not count.
+    auto isHeldByNobodyElse = [&](std::span<const Writer> writersOfList) {
+        PointsToSet written = escape.pointsTo(writersOfList.front().list);
+        if (written.mayBeUntracked || written.objects.isEmpty())
+            return false;
+        for (ObjectID object : written.objects) {
+            if (escape.at(object).kind != ObjectKind::Allocation || escape.at(object).state == EscapeState::Unknown)
+                return false;
+            if (!captures)
+                captures.emplace(analyses, UseEffectHistoryOptions { .uses = { OperandUse::Retains } });
+            for (const Writer& writer : writersOfList) {
+                if (captures->occurredBefore(object, writer.point) != Occurrence::HasNotOccurred)
+                    return false;
+            }
+        }
+        return true;
+    };
+    Vector<WrittenList, 4> writtenLists;
+    for (size_t first = 0, end; first < writers.size(); first = end) {
+        for (end = first + 1; end < writers.size() && writers[end].list == writers[first].list; ++end) { }
+        writtenLists.append({ writers[first].list, isHeldByNobodyElse(writers.span().subspan(first, end - first)) });
+    }
+    auto isLeftAlone = [&](ValueID measured) {
+        return std::ranges::all_of(writtenLists, [&](const WrittenList& written) {
+            if (!escape.mayAlias(written.list, measured))
+                return true;
+            return written.isHeldByNobodyElse && !escape.pointsTo(written.list).objects.overlaps(escape.pointsTo(measured).objects);
+        });
+    };
+
+    ListsLeftAlone found;
+    for (size_t first = 0, end; first < readers.size(); first = end) {
+        for (end = first + 1; end < readers.size() && readers[end].list == readers[first].list; ++end) { }
+        std::span<const Reader> readersOfList = readers.span().subspan(first, end - first);
+        bool isMeasuredInLoop = std::ranges::any_of(readersOfList, [&](const Reader& reader) { return isLengthRead.get(reader.id.index()); });
+        if ((isMeasuredInLoop && std::ranges::binary_search(listsReadOtherwise, readers[first].list)) || !isLeftAlone(readers[first].list))
+            continue;
+        if (isMeasuredInLoop)
+            found.listsMeasuredInLoop.append(readers[first].list);
+        for (const Reader& reader : readersOfList) {
+            const Value& value = function.at(reader.id);
+            if (!testsOfPositionsInLists.contains(value.opcode))
+                found.lengths.set(reader.id.index());
+            else if (value.lengthOperands().empty())
+                found.tests.append(reader.id);
+            else
+                found.testsToldLength.append(reader.id);
+        }
+    }
+    return found;
+}
+
+// The list has the length that was read in front of the loop all the way round, so whoever tests a position need not read it again. Nor does a store to another list in the loop then make them read it: both lengths lie in one heap for the machine code.
+// A length that has left this loop holds in all of it, however far it goes from here.
+static unsigned tellTestsLengthInFrontOfLoop(FunctionPassContext& context, const NaturalLoop& loop, std::span<const ValueID> lengthsThatLeftLoop, const ListsLeftAlone& lists)
+{
+    std::span<const ValueID> tests = lists.tests.span();
+    if (tests.empty())
+        return 0;
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    struct Length {
+        ValueID list;
+        ValueID id;
+    };
+    Vector<Length, 4> lengths;
+    for (ValueID id : lengthsThatLeftLoop)
+        lengths.append({ analyses.identityOf(listWhoseLengthIsRead(context.program, function.at(id))), id });
+    size_t numberThatLeftLoop = lengths.size();
+    for (ValueID id : lists.testsToldLength)
+        lengths.append({ analyses.identityOf(function.at(id).arrayOperand()), function.at(id).lengthOperands()[0] });
+
+    LocationMasks reads { AbstractHeapSet { AbstractHeap::ArrayStorage } };
+    auto mayChangeLength = [&](Effects effects) {
+        return effects.mayRunOtherCode() || effects.writes.overlaps(reads);
+    };
+    std::optional<Edge> entry = analyses.naturalLoops().findSingleEntry(loop);
+    if (entry && !entry->isHandlerEdge() && !mayChangeLength(analyses.effectsOfTerminator(entry->from).onAnyEdge())) {
+        const BlockValues& valuesInFront = function.at(entry->from).values;
+        for (size_t index = valuesInFront.size(); index--;) {
+            ValueID id = valuesInFront[index];
+            if (mayChangeLength(analyses.effectsOf(id).onAnyEdge()))
+                break;
+            if (ValueID measured = listWhoseLengthIsRead(context.program, function.at(id)); measured && context.program.typeOf(function, id).isInteger())
+                lengths.append({ analyses.identityOf(measured), id });
+        }
+    }
+    if (lengths.isEmpty())
+        return 0;
+    unsigned numberOfTestsTold = 0;
+    for (ValueID test : tests) {
+        if (!function.at(test).lengthOperands().empty())
+            continue;
+        ValueID list = analyses.identityOf(function.at(test).arrayOperand());
+        size_t index = lengths.findIf([&](const Length& length) { return length.list == list; });
+        if (index == notFound || (index >= numberThatLeftLoop && std::ranges::binary_search(lists.listsMeasuredInLoop, list)))
+            continue;
+        function.edit(test).setLengthOperands(std::span(&lengths[index].id, 1));
+        ++numberOfTestsTold;
+    }
+    return numberOfTestsTold;
+}
+
+static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop& loop, Vector<BlockID>& definingBlock, const BitVector& headersWhoseTestHoldsOnEntry, const BitVector& lengthsLeftAlone, Vector<ValueID, 4>& lengthsThatLeftLoop, Vector<Edge, 2>& entriesFromBranches)
 {
     const Program& program = context.program;
     Function& function = context.function;
@@ -1603,7 +1830,7 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
     for (unsigned i = 0; i < loop.size() && !hasCandidate; ++i) {
         hasCandidate = std::ranges::any_of(function.at(loop.at(i)).values, [&](ValueID id) {
             const Value& value = function.at(id);
-            if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode) || testsOfValuesThemselves.contains(value.opcode) || isCollectionLookup(program, value))
+            if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode) || testsOfValuesThemselves.contains(value.opcode) || isCollectionLookup(program, value) || lengthsLeftAlone.get(id.index()))
                 return hasInvariantOperands(value);
             return hoistableReadOpcodes.contains(value.opcode) && variableAccessOf(function, value).kind == MemoryAccess::Kind::Read;
         });
@@ -1666,6 +1893,8 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
             Effects effects = context.analyses.effectsOf(id).onAnyEdge();
             return effects.isRemovableWhenUnused() && !effects.reads.without(heapsWhoseWritesNobodySees).overlaps(clobbers.writes);
         }
+        if (lengthsLeftAlone.get(id.index()))
+            return !keptReads.get(id.index()) && hasInvariantOperands(value);
         if (!hoistableReadOpcodes.contains(value.opcode))
             return false;
         MemoryAccess access = variableAccessOf(function, value);
@@ -1739,6 +1968,8 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
             function.edit(preheader).values.append(id);
             definingBlock[id.index()] = preheader;
             appendKeptReadForValidation(builder, remaining, id);
+            if (lengthsLeftAlone.get(id.index()))
+                lengthsThatLeftLoop.append(id);
             if (context.build.validates() && blockID != header && function.at(id).opcode == Opcode::GetModuleVariable)
                 function.edit(id).setIsValidatedWhereLookedAt(true);
         }
@@ -1785,9 +2016,17 @@ static unsigned hoistReadsOutOfLoops(FunctionPassContext& context, Vector<Edge, 
             headersWhoseTestHoldsOnEntry.set(loop->header().index());
     }
 
+    std::optional<UseEffectHistory> captures;
+    Vector<ListsLeftAlone> listsLeftAlone = WTF::map(loopsInnermostFirst, [&](const NaturalLoop* loop) {
+        return findListsTheLoopLeavesAlone(context, *loop, captures);
+    });
+
     unsigned numberOfHoistedReads = 0;
-    for (const NaturalLoop* loop : loopsInnermostFirst)
-        numberOfHoistedReads += hoistReadsOutOf(context, *loop, definingBlock, headersWhoseTestHoldsOnEntry, entriesFromBranches);
+    for (unsigned i = 0; i < loopsInnermostFirst.size(); ++i) {
+        Vector<ValueID, 4> lengthsThatLeftLoop;
+        numberOfHoistedReads += hoistReadsOutOf(context, *loopsInnermostFirst[i], definingBlock, headersWhoseTestHoldsOnEntry, listsLeftAlone[i].lengths, lengthsThatLeftLoop, entriesFromBranches);
+        numberOfHoistedReads += tellTestsLengthInFrontOfLoop(context, *loopsInnermostFirst[i], lengthsThatLeftLoop.span(), listsLeftAlone[i]);
+    }
     if (numberOfHoistedReads)
         context.analyses.didChangeValues();
     return numberOfHoistedReads;

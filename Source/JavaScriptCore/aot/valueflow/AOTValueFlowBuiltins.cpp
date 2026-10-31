@@ -1072,7 +1072,7 @@ private:
         }
         if (m_call.operation)
             allocateTypedResult(overload, *m_call.operation, m_call, m_resultObject, m_plainDataOfResult, m_context);
-        if (const BuiltinType& answer = m_builtins.at(overload.result.type); isConstruction(m_call.kind) && (answer.isAnything() || answer.flags.containsAny({ BuiltinTypeFlag::HasAnyObject, BuiltinTypeFlag::HasAnyFunction })))
+        if (isConstruction(m_call.kind) && mayReturnUnknownObject(m_builtins.at(overload.result.type)))
             m_context.connect(m_context.lookup(m_context.restrict(m_context.valueOf(m_call.thisValue), ValueSets::complement(m_universe.builtinObjects())), property(m_context, BuiltinNames::prototype)), escaped());
 
         if (overload.effects.capability == BuiltinCapability::JS || runsOperandCode(overload))
@@ -3404,11 +3404,23 @@ std::optional<ValueSetID> keysThatObjectsWereMadeWith(ValueFlowRuleContext& cont
         if (kind == PropertyKeyKind::Text || (listed == OwnKeys::All && kind != PropertyKeyKind::PrivateName && kind != PropertyKeyKind::EnginePrivateName && kind != PropertyKeyKind::ModulePrivateName))
             keys.append(universe.keyConstant(key));
     };
+    ValueSetID withNamesOfNativeCode = context.maker().unite(context.maker().unite(universe.instancesBelowBuiltinClasses(), universe.instancesBelowLibraryClasses()), universe.objectsThatMayBeAnything());
     context.forEachMember(objects, [&](ValueFlowObjectID object) {
         // The prototype object of a constructor function is born with `constructor` alone, which is not enumerable.
         if (LayoutID layout = universe.classLayoutOf(object); layout && program.at(layout).has(LayoutFlags::IsConstructorFunction)) {
             if (listed != OwnKeys::EnumerableStrings)
                 list(program.keyOf(BuiltinNames::constructor));
+            return;
+        }
+        // What a class declares on its prototype object is not enumerable.
+        if (universe.classLayoutOf(object) && listed == OwnKeys::EnumerableStrings)
+            return;
+        // What a constructor of the program makes is born without a name. The stores of its declared fields are not counted as added names.
+        if (universe.kindOf(object) == ValueFlowObjectKind::Instance && program.at(universe.layoutOf(object)).constructor && !context.sets().contains(withNamesOfNativeCode, object)) {
+            for (const Field& field : program.at(universe.layoutOf(object)).fields) {
+                if (field.key)
+                    list(field.key);
+            }
             return;
         }
         const ValueFlowSite* site = universe.kindOf(object) == ValueFlowObjectKind::Site ? universe.siteOf(object) : nullptr;

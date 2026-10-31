@@ -19,6 +19,7 @@ void describeHost(const Program&, ValueFlowBody&);
 
 void runModuleOperation(const ValueFlowStatement&, ValueFlowRuleContext&);
 void runModuleEvaluation(const ValueFlowStatement&, ValueFlowRuleContext&);
+void runNamespaceExports(const ValueFlowStatement&, ValueFlowRuleContext&);
 
 void runHostRoots(const ValueFlowStatement&, ValueFlowRuleContext&);
 void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext&);

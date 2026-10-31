@@ -127,6 +127,11 @@ JS_EXPORT_PRIVATE bool isInRequireCache(JSGlobalObject*, ModuleID);
 // A file that the host starts by itself, as a test runner starts a test file, stays compiled whatever it imports.
 enum class StartedBy : uint8_t { Code, Host };
 JS_EXPORT_PRIVATE bool leavesModuleToHost(JSGlobalObject*, ModuleID, StartedBy = StartedBy::Code);
+// The host calls this when it goes on to load such a module itself.
+JS_EXPORT_PRIVATE void willLoadCopyFromDisk(JSGlobalObject*, ModuleID, LoadByName);
+// ModuleHost::loadsSynchronously: the first load of a file decides for the VM. Where a run goes through several processes, one after another, the host hands what one has decided to the next.
+JS_EXPORT_PRIVATE void forEachFirstLoad(VM&, const ScopedLambda<void(const String& path, bool wasSynchronous)>&);
+JS_EXPORT_PRIVATE void noteFirstLoadInEarlierProcess(VM&, const String& path, bool wasSynchronous);
 JS_EXPORT_PRIVATE void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>&);
 // The files that have run in a program that counts how often its places run: what the compiler said of the file, and the counts by the compiler's numbers. Places past the end have not run.
 JS_EXPORT_PRIVATE void forEachCountedFile(VM&, const ScopedLambda<void(const String& description, std::span<const uint64_t> counts)>&);

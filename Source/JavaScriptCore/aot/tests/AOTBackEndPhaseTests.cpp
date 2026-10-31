@@ -2439,6 +2439,79 @@ static void testRegisterHoldsTmpThatWasDefinedIntoItLast()
     AOT_TEST_CHECK(isSound({ { Entry, Kind::WriteFirst }, { Join, Kind::ReadFirst }, { Join, Kind::Clobber }, { Join, Kind::WriteFirst } }));
 }
 
+// entry > defines > uses > leaves, and entry > calls > leaves. `calls` lies between the two in the layout and never sees the value. Where gaps count as live the value counts as live there, and
+// no register outlives the call, so it is saved around it: out of a register that nothing has written on that path. That is no fault: nobody reads what was saved.
+// Gaps count as live only where liveness is solved in slices, so a long row of blocks follows, each of which hands one value to the next.
+static void testValueThatOnlyCountsAsLiveMayBeSavedOutOfAnyRegister()
+{
+    using namespace B3::Air;
+    constexpr unsigned numberOfBlocksInRow = 8400;
+    static_assert(numberOfBlocksInRow * (numberOfBlocksInRow / 64) > B3::AirLimits::maxWordsPerLivenessMatrix);
+    for (bool countsGapsAsLive : { false, true }) {
+        B3::Policy policy;
+        policy.validation.checksSpillSlots = true;
+        policy.validation.checksAllocatedRegisters = true;
+        if (countsGapsAsLive)
+            policy.limits.set(B3::Limit::MaxBoundaryIndicesPerInst, 0);
+        B3::Procedure proc(policy);
+        proc.setOptLevel(2);
+        Code& code = proc.code();
+        RegisterSet allowed { GPRInfo::argumentGPR0, GPRInfo::argumentGPR1, GPRInfo::argumentGPR2 };
+        for (Reg reg : Vector<Reg>(code.regsInPriorityOrder(B3::GP))) {
+            if (!allowed.contains(reg, IgnoreVectors))
+                code.pinRegister(reg);
+        }
+        Special* special = code.addSpecial(makeUniqueWithoutFastMallocCheck<B3::PatchpointSpecial>());
+
+        B3::Air::BasicBlock* entry = code.addBlock();
+        B3::Air::BasicBlock* defines = code.addBlock(10);
+        B3::Air::BasicBlock* calls = code.addBlock(0.001);
+        B3::Air::BasicBlock* uses = code.addBlock(10);
+        B3::Air::BasicBlock* leaves = code.addBlock();
+        Tmp value = code.newTmp(B3::GP);
+        Tmp sum = code.newTmp(B3::GP);
+
+        entry->append(BranchTest64, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR0), Tmp(GPRInfo::argumentGPR0));
+        entry->setSuccessors(defines, calls);
+        defines->append(Move, nullptr, Arg::addr(Tmp(GPRInfo::callFrameRegister), 16), value);
+        defines->append(Jump, nullptr);
+        defines->setSuccessors(uses);
+        auto* patchpoint = proc.add<B3::PatchpointValue>(B3::Void, B3::Origin());
+        patchpoint->clobberLate(allowed);
+        patchpoint->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
+        calls->appendInst(Inst(Patch, patchpoint, Arg::special(special)));
+        calls->append(Jump, nullptr);
+        calls->setSuccessors(leaves);
+        uses->append(Move, nullptr, value, sum);
+        for (unsigned use = 0; use < 6; ++use)
+            uses->append(Add64, nullptr, value, sum);
+        uses->append(Move, nullptr, sum, Arg::addr(Tmp(GPRInfo::callFrameRegister), 24));
+        uses->append(Jump, nullptr);
+        uses->setSuccessors(leaves);
+        B3::Air::BasicBlock* last = leaves;
+        Tmp handedOn = code.newTmp(B3::GP);
+        last->append(Move, nullptr, Arg::addr(Tmp(GPRInfo::callFrameRegister), 32), handedOn);
+        for (unsigned index = 0; index < numberOfBlocksInRow; ++index) {
+            B3::Air::BasicBlock* next = code.addBlock();
+            last->append(Jump, nullptr);
+            last->setSuccessors(next);
+            Tmp received = handedOn;
+            handedOn = code.newTmp(B3::GP);
+            next->append(Add64, nullptr, Arg::imm(1), received, handedOn);
+            last = next;
+        }
+        last->append(Move, nullptr, handedOn, Arg::addr(Tmp(GPRInfo::callFrameRegister), 32));
+        last->append(RetVoid, nullptr);
+        code.resetReachability();
+
+        allocateRegistersByGreedy(code);
+        AOT_TEST_CHECK(!!proc.report().hitsOf(B3::Limit::MaxBoundaryIndicesPerInst) == countsGapsAsLive);
+        AOT_TEST_CHECK(!proc.report().failure);
+        // The call stands alone unless the value counts as live around it.
+        AOT_TEST_CHECK((calls->size() > 2) == countsGapsAsLive);
+    }
+}
+
 static void testMoveThatRegisterAllocatorLeavesOutIsSeen()
 {
     using MoveLeftOut = B3::MoveLeftOutByRegisterAllocator;
@@ -2629,6 +2702,7 @@ std::span<const NativeTest> backEndPhaseTests()
         { "value-that-changes-in-register-leaves-spill-slot-stale"_s, testValueThatChangesInRegisterLeavesSpillSlotStale },
         { "register-holds-tmp-that-was-defined-into-it-last"_s, testRegisterHoldsTmpThatWasDefinedIntoItLast },
         { "move-that-register-allocator-leaves-out-is-seen"_s, testMoveThatRegisterAllocatorLeavesOutIsSeen },
+        { "value-that-only-counts-as-live-may-be-saved-out-of-any-register"_s, testValueThatOnlyCountsAsLiveMayBeSavedOutOfAnyRegister },
         { "spill-slots-are-judged-by-bytes-of-frame-behind-stack-allocation"_s, testSpillSlotsAreJudgedByBytesOfFrameBehindStackAllocation },
     };
     return tests;

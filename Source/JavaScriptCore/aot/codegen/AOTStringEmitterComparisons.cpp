@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTFunctionAnalyses.h"
+#include "AOTHeat.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStubsStrings.h"
@@ -166,8 +167,13 @@ bool StringEmitter::isSubjectComparedAgain(const ValueContext& value)
 // ProgramIdentifiers::uid().
 StringEmitter::AtomOfName StringEmitter::atomOfName(uint32_t name)
 {
-    if (build().recordedOptions().form() != ImageForm::PositionIndependent)
-        return { offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(image.programIdentifiers)), static_cast<ptrdiff_t>(name) * sizeof(UniquedStringImpl)), std::nullopt };
+    if (build().recordedOptions().form() != ImageForm::PositionIndependent) {
+        // The word is there and the same for as long as compiled code runs. Told so, B3 takes the address out of a loop, and down to the one block that reads it where there is no loop.
+        auto* atoms = m_out.m_block->appendNew<B3::MemoryValue>(m_proc, B3::Load, B3::pointerType(), m_out.origin(), instance().value(), static_cast<int32_t>(AOT_INSTANCE_OFFSET(image.programIdentifiers)), B3::HeapRange());
+        atoms->setControlDependent(false);
+        atoms->setReadsMutability(B3::Mutability::Immutable);
+        return { offsetBy(Pointer(atoms), static_cast<ptrdiff_t>(name) * sizeof(UniquedStringImpl)), std::nullopt };
+    }
     // The header of the atom is made when the text first becomes an atom. Until then its offset is zero, where no header lies.
     Pointer offsets = loadImmutablePointer(AOT_INSTANCE_OFFSET(image.lazyStringHeaderOffsets));
     Word32 offset(m_out.load32(m_out.address(m_heaps.AOTInstance_fieldsFilledOnce, offsets.value(), static_cast<ptrdiff_t>(name) * sizeof(uint32_t))));
@@ -187,27 +193,51 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
     }
 
     build().statistics().count(StatisticID::StringLiteralsComparedInPlace);
+    // A short string out of JSON.parse, a key and a text of the program are atoms. A text that is a name of the image has one atom (ProgramIdentifiers::findAtom()),
+    // so an atom is that text if and only if it is that pointer. A cell whose bit is clear may still hold an atom: the characters answer for it.
+    // Three comparisons of one subject share what they read of its characters, and each one behind the first is a branch or two as it is.
+    // The arm is code at every comparison, and a loop of a cold function is Fast code too. Not isCold(): a loop of a function that runs once may be the hottest code there is.
+    const FunctionInputs& inputs = m_generator.inputs();
+    bool isInColdFunction = inputs.program.heat.of(inputs.program.program, inputs.id).predicted() == HeatClass::Cold;
+    std::optional<uint32_t> name = subjectIsFlat || subjectIsComparedAgain || isInColdFunction ? std::nullopt : build().identifierNumbering().numberOfText(literal);
+    LBasicBlock isAtom = name ? newBlock() : nullptr;
+    bool isAskedForAtom = false;
+    // In a loop, where the atom lies is asked for here, where every subject comes by: from here it leaves the loop. Outside of loops whoever has an atom asks.
+    // So does whoever has an atom to compare with one that is made on demand.
+    bool atomLiesAtFixedPlace = build().recordedOptions().form() != ImageForm::PositionIndependent;
+    bool isInLoop = !!analyses().naturalLoops().innerMostLoopOf(context.block());
+    std::optional<AtomOfName> atom = name && atomLiesAtFixedPlace && isInLoop ? std::optional(atomOfName(*name)) : std::nullopt;
     CellPointer string(subject);
     if (operand == ComparedOperand::Value) {
         Boxed boxed(subject);
         continueIf(isCell(boxed), targets.notTaken);
         string = unboxCell(boxed);
+        if (!everyCellIsString && name) {
+            // The type of a cell and its flags lie side by side, and the strings have one Structure: one comparison says that the cell is a string and holds an atom.
+            constexpr ptrdiff_t offsetInUsefulBytes = JSCell::typeInfoTypeOffset() - JSCell::indexingTypeAndMiscOffset();
+            static_assert(offsetInUsefulBytes > 0 && JSCell::typeInfoFlagsOffset() == JSCell::typeInfoTypeOffset() + 1);
+            constexpr uint32_t typeAndFlagsOfAtom = StringType | (TypeInfo(StringType, JSString::StructureFlags).inlineTypeFlags() | TypeInfoPerCellBit) << 8;
+            LBasicBlock isNoAtom = newBlock();
+            Word32 typeAndFlags(m_out.load16ZeroExt32(m_out.address(string.value(), m_heaps.JSCell_usefulBytes, offsetInUsefulBytes)));
+            branch(equal(typeAndFlags, static_cast<int32_t>(typeAndFlagsOfAtom)), { normalEdge(isAtom), normalEdge(isNoAtom) });
+            m_out.appendTo(isNoAtom);
+            isAskedForAtom = true;
+        }
         if (!everyCellIsString)
             continueIf(hasCellType(string, StringType), targets.notTaken);
     }
-
-    // A short string out of JSON.parse, a key and a text of the program are atoms. A text that is a name of the image has one atom (ProgramIdentifiers::findAtom()),
-    // so an atom is that text if and only if it is that pointer. A cell whose bit is clear may still hold an atom: the characters answer for it.
-    // Three comparisons of one subject share what they read of its characters, and each one behind the first is a branch or two as it is.
-    if (std::optional<uint32_t> name = subjectIsFlat || subjectIsComparedAgain ? std::nullopt : build().identifierNumbering().numberOfText(literal)) {
-        LBasicBlock isAtom = newBlock();
+    if (name) {
         LBasicBlock byCharacters = newBlock();
-        branch(hasBits(loadByte(string, m_heaps.JSCell_typeInfoFlags), TypeInfoPerCellBit), { normalEdge(isAtom), normalEdge(byCharacters) });
+        if (isAskedForAtom)
+            m_out.jump(byCharacters);
+        else
+            branch(hasBits(loadByte(string, m_heaps.JSCell_typeInfoFlags), TypeInfoPerCellBit), { normalEdge(isAtom), normalEdge(byCharacters) });
         m_out.appendTo(isAtom);
-        AtomOfName atom = atomOfName(*name);
-        if (atom.exists)
-            continueIf(*atom.exists, normalEdge(byCharacters));
-        branch(equal(loadField<Pointer>(string, m_heaps.JSString_value), atom.address), targets);
+        if (!atom)
+            atom = atomOfName(*name);
+        if (atom->exists)
+            continueIf(*atom->exists, normalEdge(byCharacters));
+        branch(equal(loadField<Pointer>(string, m_heaps.JSString_value), atom->address), targets);
         m_out.appendTo(byCharacters);
     }
 

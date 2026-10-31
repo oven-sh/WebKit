@@ -53,6 +53,7 @@ namespace Typed {
 class DerivedFunctions;
 class FlowResults;
 class InterningPhases;
+struct OptimizationInputs;
 class StringArena;
 class TypeArena;
 struct InliningSummary;
@@ -67,6 +68,8 @@ struct DerivedFunctionInputs {
     StringArena& strings;
     DerivedFunctions& derivedFunctions;
     BuildContext& build;
+    // Of the schedule that asks, for a builder that runs passes of that schedule over what it builds.
+    const OptimizationInputs* optimization { nullptr };
 };
 
 using DerivedFunctionBuilder = Function (*)(const DerivedFunctionKey&, DerivedFunctionInputs&);
@@ -207,10 +210,11 @@ private:
     struct PhaseState {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(PhaseState);
 
-        PhaseState(Program& program, const FlowResults& flow, InterningPhases& interning)
+        PhaseState(Program& program, const FlowResults& flow, InterningPhases& interning, const OptimizationInputs* optimization)
             : program(program)
             , flow(flow)
             , interning(interning)
+            , optimization(optimization)
         {
         }
 
@@ -223,6 +227,7 @@ private:
         Program& program;
         const FlowResults& flow;
         InterningPhases& interning;
+        const OptimizationInputs* optimization;
         ConcurrentVector<Entry, 64> entries;
         std::atomic<uint32_t> numberOfEntries { 0 };
         std::atomic<uint32_t> numberOfCreatedEntries { 0 };
@@ -294,7 +299,7 @@ class DerivedFunctionPhase {
     WTF_MAKE_NONCOPYABLE(DerivedFunctionPhase);
     WTF_MAKE_NONMOVABLE(DerivedFunctionPhase);
 public:
-    DerivedFunctionPhase(DerivedFunctions&, Program&, const FlowResults&, InterningPhases&);
+    DerivedFunctionPhase(DerivedFunctions&, Program&, const FlowResults&, InterningPhases&, const OptimizationInputs* = nullptr);
     ~DerivedFunctionPhase();
 
     unsigned numberOfRequests() const { return m_table.m_phase->size(); }

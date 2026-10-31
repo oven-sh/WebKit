@@ -2339,8 +2339,9 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
     }
     auto aliveForComparisonsOnly = std::ranges::equal_range(inputs.bodies().valuesAliveForComparisonsOnly(), id, { }, &ValueFlowValueOfFunction::function);
     // The step that finds no further name answers with the empty text, which flow leaves out: nobody reads it.
+    // The names are for flow to follow what is read and stored under them. A read under the name of its own loop is selected as one, which a list of names would take apart.
     auto isNameOfEnumeration = [&](ValueID value) {
-        const Value& definition = function.at(value);
+        const Value& definition = function.at(definitionThroughSameValues(function, value));
         return definition.opcode == Opcode::ResultAt && definition.index() == static_cast<uint32_t>(ForInStepResult::Key) && function.at(definition.resultsOperand()).opcode == Opcode::ForInStep;
     };
     BitVector isAskedForItsChain;
@@ -2447,7 +2448,7 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         if (test.opcode != Opcode::Check || !inputs.build.isEnabled(FlowResultKind::NarrowedTypes, id.index()) || inputs.sets().isEmpty(held))
             continue;
         size_t numberOfClaimsBefore = update.claims.size();
-        if (mayComeFromUnseenCaller(test.operand(0))) {
+        if (mayComeFromUnseenCaller(test.operand(0)) || isNameOfEnumeration(test.operand(0))) {
         } else if (positions.isSurelyInside(held, program.at(test.expectedType().predicted()), test.expectedType().predicted()))
             update.claims.append(FlowClaimUpdate { .claim = observed.test, .isRedundant = true, .holdsInEveryVersion = true });
         else if (hasTypeOfNarrowedLocation(application, function.at(test.operand(0)))) {

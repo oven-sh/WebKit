@@ -208,7 +208,7 @@ public:
                 isSeparated = true;
                 continue;
             }
-            if (!contains(use.block) || isReachedAroundDefinition(definition, use.block))
+            if (!contains(use.block) || isReachedAroundDefinition(definition, use.block) || (!m_separatesFunctions && isReachedBehindExit(definition, use.block)))
                 return false;
         }
         return !isSeparated || canBecomeParameter(definition);

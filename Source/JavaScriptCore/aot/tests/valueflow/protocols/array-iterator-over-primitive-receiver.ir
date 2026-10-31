@@ -5,7 +5,7 @@
 # CHECK: values=f0:v10
 # CHECK: result {{*}} 2 members: primitive0 primitive7
 # CHECK: values=f0:v20
-# CHECK: result {{*}} 4 members: primitive0 primitive4 primitive5 primitive7
+# CHECK: result {{*}} 1 members: primitive7
 # CHECK: values=f0:v25
 # CHECK: result {{*}} 1 members: primitive0
 

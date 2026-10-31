@@ -189,6 +189,8 @@ struct CompileOptions {
     bool isCheckOnly() const { return action == CompileAction::CheckOnly; }
     bool collectsDeclines() const { return hasFlag(reports, ReportSet::Declines); }
     bool collectsAllocationRemarks() const { return hasFlag(reports, ReportSet::Allocations); }
+    // The records of accesses are counted too, and a build that validates compares the two counts.
+    bool countsAccesses() const { return hasFlag(reports, ReportSet::AccessCounts) || hasFlag(reports, ReportSet::Flow) || hasFlag(reports, ReportSet::Functions) || recorded.validates; }
     // Code comes in at any place and at any time, so nothing holds for the program as a whole.
     bool admitsUnseenCode() const { return hasFlag(recorded.admitted(), AdmittedCode::Inspector); }
     // A test run: what a test replaces on a built-in object is unlocked, and the build is told of what it still finds locked.

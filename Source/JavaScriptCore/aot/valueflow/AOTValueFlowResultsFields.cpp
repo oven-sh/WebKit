@@ -2553,6 +2553,15 @@ static void typeAppendedFields(const ValueFlowResultInputs& inputs, const ValueF
     if (!hasAppendedFields)
         return;
 
+    auto hasParentNobodyProves = [&](uint32_t index) {
+        for (size_t steps = 0; steps < application.layouts.size(); ++steps) {
+            const LayoutFlow& flow = application.layouts[index].flow;
+            if (flow.baseState != BaseState::Layout)
+                return flow.baseState == BaseState::Unknown && inputs.program.layouts[index].has(LayoutFlags::HasHeritage);
+            index = flow.base.index();
+        }
+        return false;
+    };
     Vector<BitVector> isDeclaredInFamilies = findAppendedFieldsDeclaredInFamilies(inputs.program, application.layouts, inputs.loops());
     ValueFlowPositionCounts counts(nullptr);
     BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
@@ -2585,7 +2594,9 @@ static void typeAppendedFields(const ValueFlowResultInputs& inputs, const ValueF
                     flow.stability.add(FieldStability::IsNeverStoredWithOtherType);
                 if (flow.location.initialization == InitializationState::SetAtCreation && flow.stability == everyFlagOf<FieldStability>() && !inputs.sets().isEmpty(stored)) {
                     flow.occupancy = Occupancy::AlwaysFilled;
-                    flow.prototypeName = PrototypeNameState::Unknown;
+                    // The store that fills the field asks the classes above for the name. Above a parent nobody proves there is nobody to ask, and only this says that they have none.
+                    if (!hasParentNobodyProves(index))
+                        flow.prototypeName = PrototypeNameState::Unknown;
                 }
             }
         }

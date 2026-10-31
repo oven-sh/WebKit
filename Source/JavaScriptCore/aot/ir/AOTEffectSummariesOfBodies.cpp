@@ -16,6 +16,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeldOperands.h"
 #include "AOTIR.h"
+#include "AOTProgramPasses.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
 #include "AOTTypePropagation.h"
@@ -719,7 +720,9 @@ private:
         bool isUnmatchedCall = value.opcode == Opcode::CallBuiltin && value.builtinCallForm() == BuiltinCallForm::AnyReceiver;
         AOT_THRESHOLD(size_t, mostFunctionsFollowed, 64);
         // More callees than are followed count as unknown code, whatever they do. n calls of one set of n callees do not go through it to find that out.
-        CalleeSetID longSet = longCalleeSetRunBy(program, value);
+        // The function that has the arms for all places is the one call of its set, and each of its arms follows a callee as it is. What it does is what they do: describeByRole().
+        bool isOneCallOfItsSet = isCallWithSharedArms(m_function);
+        CalleeSetID longSet = isOneCallOfItsSet ? CalleeSetID() : longCalleeSetRunBy(program, value);
         bool hasTooManyCallees = longSet && program.at(longSet).written().functions.size() > mostFunctionsFollowed;
         auto describe = [&] {
             return isGivenTypes && isUnmatchedCall ? describeUnmatchedCallByOperandTypes(program, m_function, value) : describeEffects(program, m_function, value);
@@ -736,7 +739,7 @@ private:
             description.leavesOutOwnEffects = false;
             description.addOwn(Effects::unknownCode());
         };
-        if (hasTooManyCallees || description.functions.size() > mostFunctionsFollowed)
+        if (hasTooManyCallees || (!isOneCallOfItsSet && description.functions.size() > mostFunctionsFollowed))
             countAsUnknownCode(description);
         if (hasTooManyCallees && m_analyses.context().build.options().verifiesAfterEveryPass) [[unlikely]] {
             EffectDescription whole = describe();

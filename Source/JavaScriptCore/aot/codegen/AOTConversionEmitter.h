@@ -10,7 +10,9 @@
 #include "AOTOperationEmitter.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTStubsArithmetic.h"
+#include <array>
 #include <limits>
+#include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -84,8 +86,21 @@ public:
 
 private:
     struct ExactInteger;
-    std::optional<ExactInteger> findExactIntegerBehind(LValue number);
-    std::optional<ExactInteger> wholeNumberReadFromStorage(LValue);
+    // What is known of the integer behind a number before any code computes it.
+    struct IntegerBehindNumber {
+        Range range;
+        bool mayBeRounded { false };
+        // The range holds only behind a test: each integer behind the number whose size nothing bounds is an int32.
+        bool isTested { false };
+        int64_t largestSumOfOtherTerms { 0 };
+    };
+    using IntegersBehindNumbers = UncheckedKeyHashMap<LValue, std::optional<IntegerBehindNumber>>;
+    using ExactIntegers = UncheckedKeyHashMap<LValue, std::optional<ExactInteger>>;
+    std::optional<ExactInteger> findExactIntegerBehind(LValue number, bool mayBeTested = true);
+    bool holdsJoinedInteger(LValue number);
+    std::optional<IntegerBehindNumber> describeIntegerBehind(LValue number, bool mayTestWhatWasRead, const IntegersBehindNumbers& operands);
+    ExactInteger computeIntegerBehind(LValue number, const IntegerBehindNumber&, const ExactIntegers& operands);
+    ExactInteger wholeNumberReadFromStorage(LValue);
     Word32 toInt32OfAnyNumber(Number, BitsOfInt32);
     Operand convertMarkers(Operand source, const Type&, Representation to, std::optional<Operand> unmarked = std::nullopt);
     Integer integerPartOf(Operand, const Type&);
@@ -99,6 +114,9 @@ private:
     Operand unboxOptional(Boxed, const Type&, Representation, NumberUnboxing);
 
     std::optional<PlaceOnEdge> m_placeOnEdge;
+    UncheckedKeyHashMap<LValue, bool> m_holdsJoinedInteger;
+    // By whether what was read may be tested.
+    std::array<IntegersBehindNumbers, 2> m_integersBehindNumbers;
 
     using PrimitiveEmitter::compress;
     using PrimitiveEmitter::decode;

@@ -3256,6 +3256,16 @@ std::optional<ModuleID> Modules::firstFileThatLoaderFindsBelow(ModuleID root)
             if (request.isHoisted || request.isRequire || request.isDeferred)
                 continue;
             ModuleID target = request.targetModule();
+            // A statement of a test file that the loader links names a file of this image by its path.
+            if (data(target).isUncompiledCode()) {
+                auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_instance.vm);
+                Identifier key = resolvedKey(target);
+                // Whoever loads the module hears that the name stands for nothing.
+                if (scope.exception()) [[unlikely]]
+                    scope.clearException();
+                else
+                    target = m_table.findByPath(key.string()).value_or(target);
+            }
             if (isCommonJSFileOrFace(target)) {
                 for (ModuleID importer : importers)
                     m_modulesSearchedForFirstFile.quickClear(importer.index());
@@ -3377,6 +3387,12 @@ void Modules::noteLoadOfGraph(ModuleID root)
         m_firstFilesOfLoads.append(*file);
         lookForMainCommonJSModule();
     }
+}
+
+void Modules::didImportFileFromUncompiledCode(ModuleID fileOrFace)
+{
+    noteRequestByLoader(fileOrFace);
+    noteLoadOfGraph(fileOrFace);
 }
 
 JSObject* Modules::moduleObject(ModuleID module)
@@ -3550,12 +3566,40 @@ void Modules::noteRequireOfFile(ModuleID file)
 
 bool Modules::wasLoadedSynchronously(ModuleID file)
 {
+    if (!m_filesWithKnownLoad.set(file.index()))
+        m_filesLoadedSynchronously.set(file.index(), wasFirstLoadedSynchronously(file));
+    return m_filesLoadedSynchronously.get(file.index());
+}
+
+bool Modules::wasFirstLoadedSynchronously(ModuleID file)
+{
     VMState::PartsOfImage& parts = m_instance.vm->aotState().parts[m_instance.program->position()];
-    if (!parts.filesWithKnownFirstLoad.set(file.index())) {
-        bool loadsSynchronously = host().loadsSynchronously && host().loadsSynchronously(m_instance.globalObject, moduleIDForHost(*m_instance.program, file));
-        parts.filesFirstLoadedSynchronously.set(file.index(), loadsSynchronously || m_filesLoadedByRequire.get(file.index()));
-    }
+    if (!parts.filesWithKnownFirstLoad.set(file.index()))
+        parts.filesFirstLoadedSynchronously.set(file.index(), m_filesLoadedByRequire.get(file.index()) || m_instance.vm->synchronousModuleQueue() || hostLoadsSynchronously(file));
     return parts.filesFirstLoadedSynchronously.get(file.index());
+}
+
+bool Modules::hostLoadsSynchronously(ModuleID file)
+{
+    return host().loadsSynchronously && host().loadsSynchronously(m_instance.globalObject, moduleIDForHost(*m_instance.program, file));
+}
+
+// `bun test --isolate` drops the text that it keeps for the realms to come, and keeps that of the next load.
+void Modules::forgetFirstLoad(ModuleID module)
+{
+    ModuleID file = fileOf(module);
+    if (m_instance.vm->aotState().parts[m_instance.program->position()].filesWithKnownFirstLoad.clear(file.index()))
+        m_filesWhoseNextLoadIsFirst.set(file.index());
+}
+
+void Modules::willLoadCopyFromDisk(ModuleID module, LoadByName way)
+{
+    ModuleID file = fileOf(module);
+    if (!m_filesWhoseNextLoadIsFirst.clear(file.index()))
+        return;
+    VMState::PartsOfImage& parts = m_instance.vm->aotState().parts[m_instance.program->position()];
+    parts.filesWithKnownFirstLoad.set(file.index());
+    parts.filesFirstLoadedSynchronously.set(file.index(), way == LoadByName::Require || m_instance.vm->synchronousModuleQueue() || hostLoadsSynchronously(file));
 }
 
 void Modules::findDistanceOfFiles(FilesBeingRun& load)

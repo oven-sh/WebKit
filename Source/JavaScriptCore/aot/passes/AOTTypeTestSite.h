@@ -34,6 +34,7 @@ struct TestCondition {
     Proof proof { Proof::None };
     ValueID subject;
     Vector<MemoryLocation, 2> dependsOn;
+    TestConditionID nextPristineConditionOfSubject;
 
     bool lastsForever() const { return provesForever(proof); }
     bool lastsForStretch() const { return provesForStretch(proof); }
@@ -52,6 +53,22 @@ public:
     TestConditionID add(const Value& test);
     std::optional<TestConditionID> find(const Value& test) const;
 
+    // A passed test also proves every weaker condition on the same value that the same writes end.
+    enum class Strength : uint8_t { Same, Weaker };
+    void forEachConditionProvenBy(const Value& passedTest, NOESCAPE const Invocable<void(TestConditionID, Strength)> auto& functor) const
+    {
+        Value canonical = canonicalize(passedTest);
+        if (std::optional<TestConditionID> own = findCanonical(canonical))
+            functor(*own, Strength::Same);
+        if (canonical.opcode != Opcode::IsPristine)
+            return;
+        for (TestConditionID other = firstPristineConditionOf(canonical.valueOperand()); other; other = at(other).nextPristineConditionOfSubject) {
+            if (isWeakerThan(other, canonical))
+                functor(other, Strength::Weaker);
+        }
+    }
+    bool isWeakerThanAnotherCondition(TestConditionID) const;
+
     const TestCondition& at(TestConditionID id) const LIFETIME_BOUND { return m_conditions[id.index()]; }
     unsigned size() const { return m_conditions.size(); }
 
@@ -62,11 +79,15 @@ public:
 
 private:
     Value canonicalize(const Value& test) const;
+    std::optional<TestConditionID> findCanonical(const Value& canonicalTest) const;
     std::optional<TestConditionID> findCanonical(const Value& canonicalTest, uint32_t hash) const;
+    TestConditionID firstPristineConditionOf(ValueID subject) const;
+    bool isWeakerThan(TestConditionID, const Value& canonicalTest) const;
 
     const ValueIdentities& m_identities;
     Vector<TestCondition> m_conditions;
     HashedIndex m_index;
+    HashedIndex m_firstPristineConditionOfSubject;
     BitVector m_stretchConditions;
     AbstractHeapSet m_heapsDependedOn;
 };

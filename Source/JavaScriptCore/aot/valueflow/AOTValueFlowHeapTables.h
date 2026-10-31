@@ -190,6 +190,8 @@ public:
     ValueSetID openTo(Actor actor) const { return m_openTo[indexOf(actor)]; }
 
     const ValueFlowMembersUnderKey& under(PropertyKeyID key) const LIFETIME_BOUND { return m_membersUnderKey[holdersUnder(key).record]; }
+    // The names in the program's text that begin with the text. They are sorted when somebody first asks.
+    std::span<const PropertyKeyID> namesThatBeginWith(StringID) const LIFETIME_BOUND;
     // Filled when the record of such a name is made.
     const BitVector& featuresGuardingHostClassesWithMethodsCallingStartupLoads() const LIFETIME_BOUND { return m_featuresGuardingHostClassesWithMethodsCallingStartupLoads; }
     ValueSetID objectsDeclaringField(PropertyKeyID key) const { return m_objectsDeclaringField[key.index()]; }
@@ -238,6 +240,8 @@ public:
     std::atomic<uint64_t>& prototypesAtCreationOf(ValueFlowObjectID object) const { return m_prototypesAtCreation[object.index()]; }
 
 private:
+    mutable std::once_flag m_didSortNames;
+    mutable Vector<PropertyKeyID> m_namesInOrderOfText;
     struct HoldersUnderKey {
         std::atomic<bool> isDescribed { false };
         uint32_t record { 0 };

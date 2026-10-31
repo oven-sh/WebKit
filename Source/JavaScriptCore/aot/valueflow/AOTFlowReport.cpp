@@ -267,7 +267,10 @@ FlowReportBodyRecords collectFlowReportBodyRecords(const Program& program, Build
 {
     FlowReportBodyRecords records;
     runTasksInParallel(build.parallelLoops(), {
-        [&] { records.typeTests = collectTypeTestRecords(program, build.parallelLoops()); },
+        [&] {
+            if (build.options().countsAccesses())
+                records.typeTests = collectTypeTestRecords(program, build.parallelLoops());
+        },
         [&] { records.builtinsCalledDirectly = findBuiltinsCalledDirectly(program, build.parallelLoops()); },
         [&] {
             if (program.form() == IRForm::AsRead)
@@ -341,7 +344,7 @@ FlowReport buildFlowReport(const Program& program, const FlowResults& flow, cons
 
     if (keepsAccesses)
         report.accessCounts = countAccesses(program, report.accesses.span(), report.typeTests.span());
-    else {
+    else if (build.options().countsAccesses()) {
         report.accessCounts = countAccessesWithoutRecords(program, flow, sites.levels.span(), report.typeTests.span(), build);
         RELEASE_ASSERT(!build.validates() || report.accessCounts == countAccesses(program, report.accesses.span(), report.typeTests.span()));
     }

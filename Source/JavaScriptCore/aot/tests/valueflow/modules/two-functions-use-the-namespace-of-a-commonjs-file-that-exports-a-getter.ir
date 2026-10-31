@@ -1,0 +1,43 @@
+# main.mjs: import * as library from "./library.cjs"; function first() { return library } function second() { return library } first(); second()
+# library.cjs: module.exports = { get lazy() { return 1 } }
+# RUN: valueflow-results
+# CHECK: indirect f4 - -> f2 Accessor Once
+# CHECK: indirect f5 - -> f2 Accessor Once
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="default" module=m1 declared={type=anything|absent}
+layout L0 name="Exports"
+module m0 path="/app/library.cjs" displayPath="library.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="#1" displayPath="library.cjs" flags=[KeepsError] exportRule=CommonJs body=f1 requests=[{target=m0 kind=Require completes=true}] syntheticExports=[{name="default" variable=g1 isKnownMember=true}]
+module m2 path="/app/main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f3 requests=[{target=m1 completes=true}]
+entry module=m2
+function f0 name="library" module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure function=f2
+    DefineGetter v0, v1 key="lazy"
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f1 name="names of library" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    EvaluateModule module=m0 referrer=m1 [isBare]
+    Return
+}
+function f2 name="lazy" module=m0 kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Integer integer=1
+    Return v1
+}
+function f3 name="main" module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f4
+    v1 = Call v0, -
+    v2 = NewClosure function=f5
+    v3 = Call v2, -
+    Return
+}
+function f4 name="first" module=m2 thisType={type=anything} results=[{type=anything}] {
+    v0 = ModuleNamespace module=m1
+    Return v0
+}
+function f5 name="second" module=m2 thisType={type=anything} results=[{type=anything}] {
+    v0 = ModuleNamespace module=m1
+    Return v0
+}

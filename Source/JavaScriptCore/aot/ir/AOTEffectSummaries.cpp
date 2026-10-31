@@ -869,7 +869,22 @@ static bool isRecursiveCall(const SummaryDependency& ownDependency)
     return ownDependency.source.part == SummaryPart::OnReturn;
 }
 
-FunctionSummary summarizeBody(const EffectContext& context, FunctionID id, FunctionAnalyses& analyses)
+static Effects valueOf(const FunctionSummary& summary, const SummaryNode& node)
+{
+    switch (node.part) {
+    case SummaryPart::OnReturn:
+        return summary.elsewhere.normal;
+    case SummaryPart::OnThrow:
+        return summary.elsewhere.handler;
+    case SummaryPart::Parameter:
+        return effectsOfMemory(summary.parameter(node.parameter).memory);
+    case SummaryPart::UnknownCode:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+FunctionSummary summarizeBody(const EffectContext& context, FunctionID id, FunctionAnalyses& analyses, std::span<const std::pair<FunctionID, FunctionSummary>> versionsOfCallees)
 {
     ASSERT(id);
     BodySummary body = summarizeBodyLocally(context, id, analyses);
@@ -881,7 +896,9 @@ FunctionSummary summarizeBody(const EffectContext& context, FunctionID id, Funct
             ownDependencies.append(dependency);
             continue;
         }
-        Effects source = valueOf(context, dependency.source);
+        auto version = std::ranges::find(versionsOfCallees, dependency.source.function, &std::pair<FunctionID, FunctionSummary>::first);
+        bool hasVersion = dependency.source.part != SummaryPart::UnknownCode && version != versionsOfCallees.end();
+        Effects source = hasVersion ? valueOf(version->second, dependency.source) : valueOf(context, dependency.source);
         mergeInto(body, dependency.target, source);
         if (source.mayCallUnknownCode && !body.unknownCodeWitness)
             body.unknownCodeWitness = witnessOf(context, dependency.source.function);

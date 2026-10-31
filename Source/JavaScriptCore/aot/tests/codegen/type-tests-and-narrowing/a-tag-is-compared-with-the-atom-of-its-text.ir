@@ -1,18 +1,21 @@
 # The program of a-tag-is-compared-without-the-string-cell-of-its-text.ir: `if (shape.kind === "circle")` in a loop over what JSON.parse made.
 # A short string out of JSON.parse is an atom. "circle" is compared in code that runs often, so it is a name of the image: it has one atom, at a place that the image fixes.
-# The cell of a string says whether it holds an atom. The pointer of an atom is compared with that address, and that is the answer. Only a string that is no atom is asked for its length and its characters.
+# The type of a cell and its flags lie side by side: one comparison says that the value is a string and holds an atom. The pointer of an atom is compared with that address, and that is the answer. Only a string that is no atom is asked for its length and its characters.
+# The address is the same in every turn: it is made in front of the loop.
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls image-form=absolute
-# RUN: lower-to-b3 optimized f1
+# RUN: lower-to-b3 optimized loops f1
 # REQUIRES: unsanitized-code
 # CHECK-LABEL: name="radii" role=Source
-# CHECK: = Load8Z({{*}}offset = 6, {{*}}Reads:JSCell_typeInfoFlags, {{*}}:StrictEq)
-# CHECK-NEXT: = BitAnd(
+# CHECK-LABEL: steps by 1
+# CHECK-NOT: = Add({{*}}:StrictEq)
+# CHECK: = Load16Z({{*}}offset = 5, {{*}}Reads:JSCell_usefulBytes, {{*}}:StrictEq)
+# CHECK-NEXT: = Equal(
 # CHECK-NEXT: = Branch(
-# CHECK: = Load({{*}}Reads:AOTInstance_fixedFields, {{*}}:StrictEq)
+# CHECK-NOT: = Add({{*}}:StrictEq)
 # CHECK: = Load({{*}}offset = 8, {{*}}Reads:JSRopeString_fiber0, {{*}}:StrictEq)
 # CHECK-NEXT: = Equal(
 # CHECK-NEXT: = Branch(
 # CHECK: Reads:StringImpl_length
-# CHECK-LABEL: end of function
+# CHECK-LABEL: end of loop
 # PROGRAM-OF: a-tag-is-compared-without-the-string-cell-of-its-text.ir

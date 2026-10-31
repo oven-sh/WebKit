@@ -861,7 +861,7 @@ static std::optional<uint32_t> tryEncodeTableInImage(TableEncoder& encoder, cons
     strings.reserveInitialCapacity(entries.elements.size());
     for (const DataNode& entry : entries.elements) {
         StringID string = (hasValues ? entry.as<DataNode::Array>().elements[0] : entry).as<DataNode::String>().value;
-        keys.append(TableInImage::Key { encoder.stringNumber(string), decodeForImage(encoder.program.strings[string]).hash });
+        keys.append(TableInImage::Key { encoder.stringNumber(string), decodeForImage(encoder.program.strings[string]).hash, encoder.stringConstantNumber(string) });
         strings.append(keys.last().string);
         if (!hasValues)
             continue;
@@ -2164,7 +2164,7 @@ struct RetainedTextRange {
     uint32_t textOffset { 0 };
 };
 
-// See PiecesOfModule. `ranges` are in the order of the text of the module, and apart.
+// See PiecesOfModule. `ranges` are in the order of the text of the module, and none holds a part of another.
 // A piece is followed through its file here as it is where the program runs. Where that does not lead to the lines and columns that the module has for it, the piece is left out, and nothing is found by it.
 static void appendPiecesOfModule(const Program& program, ModuleID id, std::span<const uint8_t> moduleText, std::span<const RetainedTextRange> ranges, Vector<PiecesOfModule>& modules, Vector<uint8_t>& pieces)
 {
@@ -2196,27 +2196,37 @@ static void appendPiecesOfModule(const Program& program, ModuleID id, std::span<
     };
     takeCut();
 
-    uint32_t startOfModule = static_cast<uint32_t>(pieces.size());
-    uint32_t endOfLastPiece = 0;
-    uint32_t lineOfLastPiece = 0;
+    // Not within a character, nor between a carriage return and its line feed.
+    auto endOfPartFrom = [&](uint32_t start, uint32_t endOfWhole) {
+        if (endOfWhole - start < 2 * PiecesOfModule::bytesOfOnePart)
+            return endOfWhole;
+        uint32_t end = start + PiecesOfModule::bytesOfOnePart;
+        while (end < endOfWhole && ((moduleText[end] & 0xC0) == 0x80 || moduleText[end] == '\n'))
+            ++end;
+        return end;
+    };
+
+    bool hasRecord = false;
+    PieceOfKeptText lastPiece;
+    LineColumn startOfLastPiece;
     Vector<uint8_t> cutsOfPiece;
-    for (const RetainedTextRange& range : ranges) {
-        while (nextCut <= range.start)
+    auto appendPart = [&](const RetainedTextRange& whole, uint32_t startOfPart, uint32_t endOfPart) {
+        while (nextCut <= startOfPart)
             takeCut();
         auto placeInFileOf = [&](uint64_t offsetInText, uint64_t sizeOfCut = 0) {
             return program.lineColumnFor(id, static_cast<uint32_t>(offsetInText + sizeOfCutsInFront + sizeOfCut));
         };
-        LineColumn start = placeInFileOf(range.start);
+        LineColumn start = placeInFileOf(startOfPart);
         PlaceOfTextInFile place { start.line, start.column };
-        size_t at = range.start;
+        size_t at = startOfPart;
         auto leadsTo = [&](size_t offsetInText) {
             while (at < offsetInText)
                 at = place.advanceOver(moduleText, at);
             return at == offsetInText && LineColumn { place.line, place.column } == placeInFileOf(offsetInText);
         };
         cutsOfPiece.shrink(0);
-        bool isFollowed = start.line >= lineOfLastPiece;
-        while (isFollowed && nextCut < range.end) {
+        bool isFollowed = start.line > startOfLastPiece.line || (start.line == startOfLastPiece.line && start.column > startOfLastPiece.column);
+        while (isFollowed && nextCut < endOfPart) {
             size_t distance = static_cast<size_t>(nextCut) - at;
             LineColumn behind = placeInFileOf(nextCut, sizeOfNextCut);
             isFollowed = leadsTo(static_cast<size_t>(nextCut)) && (behind.line > place.line || (behind.line == place.line && behind.column >= place.column));
@@ -2231,18 +2241,67 @@ static void appendPiecesOfModule(const Program& program, ModuleID id, std::span<
             place.advanceOverCut(lines, columns);
             takeCut();
         }
-        if (!isFollowed || !leadsTo(range.end))
-            continue;
-        appendVarint(pieces, zigZagEncode(static_cast<int64_t>(range.textOffset) - static_cast<int64_t>(endOfLastPiece)) << 1 | 1);
-        appendVarint(pieces, range.end - range.start);
-        appendVarint(pieces, start.line - lineOfLastPiece);
-        appendVarint(pieces, start.column);
+        if (!isFollowed || !leadsTo(endOfPart))
+            return;
+        if (!hasRecord || pieces.size() - modules.last().start >= PiecesOfModule::bytesOfOneRecord) {
+            modules.append({ id.index(), static_cast<uint32_t>(pieces.size()) });
+            hasRecord = true;
+            lastPiece = { };
+        }
+        uint32_t startInText = whole.textOffset + (startOfPart - whole.start);
+        PieceOfKeptText piece { startInText, startInText + (endOfPart - startOfPart), start.line, start.column, whole.textOffset, whole.textOffset + (whole.end - whole.start) };
+        piece.appendTo(pieces, lastPiece);
         pieces.appendVector(cutsOfPiece);
-        endOfLastPiece = range.textOffset + (range.end - range.start);
-        lineOfLastPiece = start.line;
+        lastPiece = piece;
+        startOfLastPiece = start;
+    };
+    for (const RetainedTextRange& range : ranges) {
+        for (uint32_t start = range.start; start < range.end;) {
+            uint32_t end = endOfPartFrom(start, range.end);
+            appendPart(range, start, end);
+            start = end;
+        }
     }
-    if (pieces.size() > startOfModule)
-        modules.append({ id.index(), startOfModule });
+}
+
+// See markOfDifferences. The front end counts in the file, and the text that an executable keeps has no types. Nothing where a type is cut out of what is copied.
+static std::optional<Vector<uint8_t>> moveDifferences(const TextPrintedInPlace& piece, const Invocable<uint32_t(uint32_t)> auto& inText)
+{
+    std::span<const uint8_t> differences = piece.bytes.subspan(2);
+    auto takeNumber = [&] {
+        uint64_t number = 0;
+        for (unsigned shift = 0; !differences.empty() && shift < 64; shift += 7) {
+            uint8_t byte = differences.front();
+            differences = differences.subspan(1);
+            number |= static_cast<uint64_t>(byte & 0x7f) << shift;
+            if (!(byte & 0x80))
+                break;
+        }
+        return number;
+    };
+    Vector<uint8_t> moved { markOfTextFromPrinter, markOfDifferences };
+    uint64_t endOfCopied = piece.start;
+    while (!differences.empty()) {
+        uint8_t byte = differences.front();
+        differences = differences.subspan(1);
+        moved.append(byte);
+        if (byte == lineBreakWithIndentation)
+            appendVarint(moved, takeNumber());
+        if (byte != copyOfWrittenText && byte != textWithPieceOfItsOwn)
+            continue;
+        uint64_t start = endOfCopied + takeNumber();
+        uint64_t end = start + takeNumber();
+        if (start > piece.end || end > piece.end || end < start)
+            return std::nullopt;
+        uint32_t startInText = inText(static_cast<uint32_t>(start));
+        uint32_t sizeInText = inText(static_cast<uint32_t>(end)) - startInText;
+        if (byte == copyOfWrittenText && sizeInText != end - start)
+            return std::nullopt;
+        appendVarint(moved, startInText - inText(static_cast<uint32_t>(endOfCopied)));
+        appendVarint(moved, sizeInText);
+        endOfCopied = end;
+    }
+    return moved;
 }
 
 // See TextPrintedInPlaceOfModule. The front end counts from the start of the file. Here the pieces move to where the text of the module lies among the text of all functions.
@@ -2290,9 +2349,18 @@ static void appendTextPrintedInPlaceOfModule(const Program& program, ModuleID id
         const Cut& last = *std::prev(next);
         return static_cast<uint32_t>(offsetInFile - last.sizeOfCutsInFront - std::min<uint64_t>(last.size, offsetInFile - last.start));
     };
+    Vector<Vector<uint8_t>> movedDifferences;
     for (TextPrintedInPlace& piece : pieces) {
+        bool isLost = false;
+        if (!cuts.isEmpty() && isFromPrinter(piece) && piece.bytes.size() > 1 && piece.bytes[1] == markOfDifferences) {
+            std::optional<Vector<uint8_t>> moved = moveDifferences(piece, inText);
+            isLost = !moved;
+            movedDifferences.append(moved ? WTF::move(*moved) : Vector<uint8_t>());
+            piece.bytes = movedDifferences.last().span();
+        }
         piece.start = inText(piece.start);
-        piece.end = inText(piece.end);
+        // A piece of no size is not placed.
+        piece.end = isLost ? piece.start : inText(piece.end);
         piece.startOfCopied = inText(piece.startOfCopied);
         piece.endOfCopied = inText(piece.endOfCopied);
     }
@@ -2345,13 +2413,16 @@ static void appendTextPrintedInPlaceOfModule(const Program& program, ModuleID id
     AOT::sortInLine(placed, [](const TextPrintedInPlace& a, const TextPrintedInPlace& b) {
         return a.start != b.start ? a.start < b.start : a.end > b.end;
     });
-    modules.append({ id.index(), static_cast<uint32_t>(bytes.size()) });
     const TextPrintedInPlace* last = nullptr;
+    bool startsRecord = true;
     for (const TextPrintedInPlace& piece : placed) {
         if (last && last->start == piece.start && last->end == piece.end)
             continue;
-        piece.appendTo(bytes, last ? last->start : 0);
+        if (startsRecord)
+            modules.append({ id.index(), static_cast<uint32_t>(bytes.size()) });
+        piece.appendTo(bytes, startsRecord ? 0 : last->start);
         last = &piece;
+        startsRecord = bytes.size() - modules.last().start >= TextPrintedInPlaceOfModule::bytesOfOneRecord;
     }
 }
 
@@ -2370,6 +2441,8 @@ static void appendFunctionTexts(TableEncoder& encoder, std::span<const FunctionT
     Vector<FunctionWithText> functions;
     Vector<ConstructorLineData> constructorLines;
     Vector<Vector<RetainedTextRange>> moduleRanges(program.modules.size());
+    // Where the front end says that a statement of the body begins: what touches there is not one piece.
+    Vector<Vector<uint32_t>> startsOfStatements(program.modules.size());
     bool keepsTextOfBodies = false;
     for (size_t index = 0; !encoder.obfuscates() && index < program.functions.size(); ++index) {
         const Function& function = program.functions[index];
@@ -2431,6 +2504,10 @@ static void appendFunctionTexts(TableEncoder& encoder, std::span<const FunctionT
                     encoder.fail(ProgramTableRule::TableOutOfBounds, { }, program.modules[module].body);
                     break;
                 }
+                if (start == endOfLast) {
+                    startsOfStatements[module].append(static_cast<uint32_t>(start));
+                    continue;
+                }
                 moduleRanges[module].append({ static_cast<uint32_t>(start), static_cast<uint32_t>(endOfLast) });
                 keepsTextOfBodies = true;
             }
@@ -2483,6 +2560,22 @@ static void appendFunctionTexts(TableEncoder& encoder, std::span<const FunctionT
                 ranges[count++] = next;
         }
         ranges.shrink(count);
+        if (!startsOfStatements[module].isEmpty()) {
+            Vector<RetainedTextRange> apart;
+            auto next = startsOfStatements[module].begin();
+            auto end = startsOfStatements[module].end();
+            for (RetainedTextRange range : ranges) {
+                while (next != end && *next <= range.start)
+                    ++next;
+                for (; next != end && *next < range.end; ++next) {
+                    apart.append({ range.start, *next });
+                    range.start = *next;
+                }
+                apart.append(range);
+            }
+            ranges = WTF::move(apart);
+            count = ranges.size();
+        }
         std::span<const uint8_t> moduleText = program.modules[module].functionText;
         Vector<uint8_t> textOfHost;
         if (moduleText.empty() && count) {
@@ -2513,10 +2606,10 @@ static void appendFunctionTexts(TableEncoder& encoder, std::span<const FunctionT
         auto next = std::ranges::upper_bound(moduleRanges[function.module.index()], function.text.start, { }, &RetainedTextRange::start);
         const RetainedTextRange& range = *std::prev(next);
         uint32_t start = range.textOffset + function.text.start - range.start;
-        return FunctionTextEntry { functions[index].entrypoint.index(), start, start + function.text.end - function.text.start };
+        return FunctionTextEntry { Number24(functions[index].entrypoint.index()), Number32(start), Number32(start + function.text.end - function.text.start) };
     });
     AOT::sortInLine(entries, { }, [&](const FunctionTextEntry& entry) {
-        return std::pair { traces[entry.function].sourceFunctionIndex, entry.function };
+        return std::pair { traces[entry.function].sourceFunctionIndex, static_cast<uint32_t>(entry.function) };
     });
 
     uint32_t entriesOffset = encoder.writer.append(entries);
@@ -2936,6 +3029,7 @@ static void appendExports(TableEncoder& encoder, ModuleID id, const Module& modu
         entry.kindBits = static_cast<uint32_t>(moduleExport.kind);
         entry.isDeferred = moduleExport.phase == ImportPhase::Defer;
         entry.isFromStarExport = moduleExport.isFromStarExport;
+        entry.isDroppedWhileEmpty = moduleExport.isDroppedWhileEmpty;
         switch (moduleExport.kind) {
         case ModuleExportKind::Variable:
             entry.variable = isDescribed ? placedVariableSlot(encoder, moduleExport.variable) : ModuleExportData::noSlot;
@@ -2986,7 +3080,7 @@ static ModuleLists collectModuleLists(TableEncoder& encoder)
             if (isNeverEvaluated(program, module))
                 continue;
             if (requiredName.specifier)
-                lists.exportStatements.append({ static_cast<uint32_t>(lists.requiredNames.size()), encoder.shownStringNumber(requiredName.exportName), encoder.shownStringNumber(requiredName.specifier) });
+                lists.exportStatements.append({ static_cast<uint32_t>(lists.requiredNames.size()), encoder.shownStringNumber(requiredName.exportName), requiredName.dropsExportIfAbsent, encoder.shownStringNumber(requiredName.specifier) });
             lists.requiredNames.append({ requiredName.module.index(), requiredName.mayBeAbsent, encoder.identifierNumberOfText(requiredName.name, "what another module must export for"_s, id) });
         }
     }

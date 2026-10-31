@@ -38,6 +38,8 @@ function f0 name="leftEarly" parameters=[{type=object}, {type=anything}] results
 # CHECK: LoopHint
 # CHECK: LoopHint
 # CHECK-NEXT: = CallDirect [[iterator1]], [[next1]] function={{*}} [isNeverInlined]
+# CHECK-NEXT: [[done1]]: boolean = ResultAt {{*}}
+# CHECK-NEXT: Branch [[done1]] -> taken {{*}}, notTaken {{*}}
 # CHECK: = CallDirect [[iterator1]] function=f4 [isNeverInlined]
 # CHECK: role=CleanupHandler frequency=Unlikely:
 # CHECK-NEXT: = CatchException

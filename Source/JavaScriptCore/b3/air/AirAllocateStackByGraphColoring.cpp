@@ -1434,9 +1434,11 @@ private:
 
         BitMatrixLiveness<SpillSlotBoundaryRows> liveness(m_code, actions);
         // A slot that counts as live in a gap keeps its place there, and no more.
-        liveness.countGapsAsLivePast(numberOfPositions * AirLimits::maxBoundaryIndicesPerInst);
+        liveness.countGapsAsLivePast(numberOfPositions * m_code.proc().limit(Limit::MaxBoundaryIndicesPerInst));
         liveness.compute();
         RELEASE_ASSERT(liveness.status() == BitMatrixLivenessStatus::Solved);
+        if (liveness.hasCountedGapsAsLive())
+            m_code.proc().didReachLimit(Limit::MaxBoundaryIndicesPerInst);
 
         Vector<uint32_t> endOfOpenRange(FillWith { }, m_code.stackSlots().size(), noPosition);
         auto isLive = [&](uint32_t slotIndex) {

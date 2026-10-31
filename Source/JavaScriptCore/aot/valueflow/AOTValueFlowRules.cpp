@@ -640,6 +640,8 @@ static void runRuleOnNodesNamed(const ValueFlowStatement& statement, ValueFlowRu
             return runAwaitedValue(statement, context);
         case ValueFlowNameKind::FoundThroughEscapedInstances:
             return runLookupThroughInstances(statement, context);
+        case ValueFlowNameKind::NamespaceExports:
+            return runNamespaceExports(statement, context);
         case ValueFlowNameKind::Property:
         case ValueFlowNameKind::Getter:
         case ValueFlowNameKind::Setter:

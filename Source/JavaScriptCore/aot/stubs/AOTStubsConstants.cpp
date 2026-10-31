@@ -495,6 +495,51 @@ void generateGetGlobalBinding(StubAssembler& jit)
     jit.callOperationAndReturn(operation, { .saves = OperationCall::Saves::CallerSavedRegisters, .secondArgumentIn = number });
 }
 
+// The number and the value arrive where the operation takes them, so a call of the stub is as long as a call of the operation.
+StubSignature signatureOfSetGlobalBinding(StubKey)
+{
+    StubSignature signature = StubSignature::withoutResult({ gprOf(StubRegister::A2) });
+    signature.immediate = gprOf(StubRegister::A1);
+    return signature;
+}
+
+// The record of a store holds the place of a writable property or variable, filed by the operation under the Structure, and the epoch, that it found it under. The test is the one that the operation begins with.
+void generateSetGlobalBinding(StubAssembler& jit)
+{
+    static constexpr Entry operations[] = { Entry::operationAOTSetGlobalBinding, Entry::operationAOTSetGlobalBindingSloppy, Entry::operationAOTSetGlobalObjectBinding, Entry::operationAOTSetGlobalObjectBindingSloppy };
+    static_assert(setGlobalBinding(GlobalBindingScope::ScriptsAndGlobalObject, true).form() == 0 && setGlobalBinding(GlobalBindingScope::GlobalObject, false).form() == 3);
+    const auto scope = static_cast<GlobalBindingScope>(jit.key().form() / 2);
+    const GPRReg value = jit.operand(0);
+    const GPRReg number = jit.immediate();
+    const GPRReg record = jit.allocateScratch(StubRegister::T10);
+    const GPRReg word = jit.allocateScratch(StubRegister::T11);
+    const GPRReg global = jit.allocateScratch(StubRegister::T14);
+    RELEASE_ASSERT(noOverlap(value, number, record, word, global, instanceGPR));
+    JumpList callsOperation;
+
+    static_assert(sizeof(GlobalBinding) == 3 * sizeof(uint64_t));
+    jit.getEffectiveAddress(BaseIndex(number, number, CCallHelpers::TimesTwo), record);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.counters.globalBindings)), word);
+    jit.getEffectiveAddress(BaseIndex(word, record, CCallHelpers::TimesEight), record);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), global);
+    jit.load32(Address(global, JSCell::structureIDOffset()), word);
+    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, Address(record, OBJECT_OFFSETOF(GlobalBinding, structureID))));
+    if (scope == GlobalBindingScope::ScriptsAndGlobalObject) {
+        jit.load32(Address(global, JSGlobalObject::globalLexicalBindingEpochOffset()), word);
+        callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, Address(record, OBJECT_OFFSETOF(GlobalBinding, lexicalBindingEpoch))));
+    }
+    jit.load64(Address(record, OBJECT_OFFSETOF(GlobalBinding, location)), record);
+    Jump isAddress = jit.branch64(CCallHelpers::GreaterThanOrEqual, record, TrustedImm32(0));
+    jit.loadPtr(Address(global, JSObject::butterflyOffset()), word);
+    jit.add64(word, record);
+    isAddress.link(&jit);
+    jit.store64(value, Address(record));
+    returnAfterStoring(jit, global, value);
+
+    callsOperation.link(&jit);
+    jit.callOperationAndReturn(operations[jit.key().form()], { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters, .secondArgumentIn = number, .thirdArgumentIn = value });
+}
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

@@ -5,8 +5,8 @@
 # RUN: lower-to-b3 optimized f1
 # REQUIRES: unsanitized-code
 # CHECK-LABEL: name="radii" role=Source
-# CHECK: = Load8Z({{*}}offset = 6, {{*}}Reads:JSCell_typeInfoFlags, {{*}}:StrictEq)
-# CHECK-NEXT: = BitAnd(
+# CHECK: = Load16Z({{*}}offset = 5, {{*}}Reads:JSCell_usefulBytes, {{*}}:StrictEq)
+# CHECK-NEXT: = Equal(
 # CHECK-NEXT: = Branch(
 # CHECK: = Load({{*}}Reads:AOTInstance_fieldsFilledOnce, {{*}}:StrictEq)
 # CHECK-NEXT: = Load(

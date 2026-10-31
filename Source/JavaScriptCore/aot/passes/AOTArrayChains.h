@@ -111,6 +111,8 @@ struct ArrayMethodCall {
 
 // All but the read of a length, which is the last member of a chain and never the only one: every chain has one of these.
 inline constexpr OpcodeSet arrayMethodCallOpcodes = builtinCallOpcodes | OpcodeSet { Opcode::CallDirect };
+// With ChainOperandProofs::MayStillCome: a method that is still called by its name.
+inline constexpr OpcodeSet opcodesOfArrayMethodCallsWithoutTests = arrayMethodCallOpcodes | OpcodeSet { Opcode::Call };
 
 // Tests prove what the source and the callbacks are. PlaceTypeTests asks before it has placed them.
 enum class ChainOperandProofs : uint8_t { Required, MayStillCome };
@@ -136,15 +138,19 @@ struct ArrayChain {
     bool startsOverAfterThrow { false };
     // By position among the callbacks: the tests at the head of the callback throw instead of running its fallback.
     uint8_t callbacksThatGiveUp { 0 };
+    // Where tests of what a call has answered stand between the calls: from the block of the first call to `block`, each the only way into the next. Else empty.
+    Vector<BlockID, 4> blocksFromFirstCall;
 
+    bool isSplitByTests() const { return !blocksFromFirstCall.isEmpty(); }
     ValueID firstCall() const { return rangeCall ? rangeCall : callbacks.isEmpty() ? lastCall : callbacks[0].call; }
 };
 
 // The body of its callee is about to take the place of a call that is taken alone, so no longer chain will come of it.
-Vector<ArrayChain> findArrayChains(FunctionPassContext&, const BitVector* callsTakenAlone = nullptr, BlockID onlyBlock = { }, ChainOperandProofs = ChainOperandProofs::Required);
+Vector<ArrayChain> findArrayChains(FunctionPassContext&, const BitVector* callsTakenAlone = nullptr, BlockID onlyBlock = { }, ChainOperandProofs = ChainOperandProofs::Required, const BitVector* callsNotJoinedThroughTests = nullptr);
 PassOutcome fuseArrayMethodsTakenAlone(FunctionPassContext&, const BitVector& calls);
 ArrayChainDeclineReason checkInterleaving(FunctionPassContext&, const ArrayChain&, ChainOperandProofs = ChainOperandProofs::Required, bool* startsOverAfterThrow = nullptr, uint8_t* callbacksThatGiveUp = nullptr);
-bool hasEntranceThatCanGiveUp(const Function&);
+// What a version of the function does that throws where the function would do what the program can see, in code that seldom runs. No answer: it would throw in common code, or a handler of its own would catch that.
+std::optional<Effects> effectsOfVersionThatGivesUp(FunctionPassContext&, FunctionID);
 FunctionID findChainTraversal(const Program&);
 
 static_assert(ChainShape::decode(ChainShape { { ChainLinkKind::Filter, ChainLinkKind::Map, ChainLinkKind::None }, ChainEndKind::Reduce, true }.encode()).numberOfLinks() == 2);

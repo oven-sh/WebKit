@@ -1049,7 +1049,7 @@ static bool expandDefinitionsBehindEmptySlots(FunctionPassContext& context, IRBu
     Vector<NamedAccessSite> definitions;
     context.forEachSiteIn(SiteList::Accesses, [&](const ValueSite& site) {
         const Value& access = function.at(site.value);
-        if (access.opcode != Opcode::PrivateDefine || function.at(site.block).frequency.predicted() != BlockFrequency::Normal)
+        if (access.opcode != Opcode::PrivateDefine || !isWorthArms(context, site.block))
             return;
         std::optional<PropertyAccessQuery> query = namedAccessQueryOf(context, access);
         if (!query)
@@ -1125,6 +1125,130 @@ static FunctionID findOnlyGetterCalledAt(FunctionPassContext& context, AccessSit
         getter = call.callee;
     }
     return getter && context.program.at(getter).kind == FunctionKind::Getter && mayBeCalledDirectlyWhereCalleeIsKept(context.program, getter) ? getter : FunctionID();
+}
+
+static Vector<FunctionID, 4> gettersCalledAt(FunctionPassContext& context, AccessSiteID site)
+{
+    Vector<FunctionID, 4> getters;
+    for (const FlowIndirectCall& call : context.inputs.flow.indirectCallsFrom(context.inputs.flow.at(site).function)) {
+        if (call.site != site || call.kind != FlowIndirectCallKind::Accessor || getters.contains(call.callee))
+            continue;
+        // Any other function that answers the name is found by name.
+        if (context.program.at(call.callee).kind == FunctionKind::Getter && mayBeCalledDirectlyWhereCalleeIsKept(context.program, call.callee))
+            getters.append(call.callee);
+    }
+    return getters;
+}
+
+static bool hasParentNobodyProves(const Program& program, LayoutID id)
+{
+    for (size_t steps = 0; id && steps < program.layouts.size(); ++steps) {
+        const Layout& layout = program.at(id);
+        if (layout.flow.baseState == BaseState::Unknown)
+            return layout.has(LayoutFlags::HasHeritage);
+        id = layout.flow.baseState == BaseState::Layout ? layout.flow.base : LayoutID();
+    }
+    return false;
+}
+
+// `made.name`, where `made` is an instance of `class A extends parents[n] {}`: nothing says which object stands above the prototype of A, so no plan finds what the name answers there.
+// Flow has seen which getters the read calls. Each class asks a site of its own, which remembers what it found for the Structure of the object, and the getter that comes is called directly.
+static bool expandReadsOfGettersAboveParentsNobodyProves(FunctionPassContext& context, IRBuilder& builder)
+{
+    struct Read {
+        ValueSite site;
+        LayoutList receivers;
+        Vector<FunctionID, 4> getters;
+    };
+    const Program& program = context.program;
+    const Function& function = context.function;
+    if (!context.inputs.flow.hasResults())
+        return false;
+    size_t maxArms = context.limit(LimitID::MaxDispatchCases);
+    Vector<Read> reads;
+    context.forEachSiteIn(SiteList::Accesses, [&](const ValueSite& site) {
+        const Value& read = function.at(site.value);
+        if (read.opcode != Opcode::PropGet || read.isFreeName() || !read.accessSite() || !isWorthArms(context, site.block))
+            return;
+        const Type& expected = context.types.at(function.at(read.objectOperand()).expectedOrType().predicted());
+        if (!expected.hasOnlyLayouts() || !std::ranges::all_of(membersOf(program, expected), [&](LayoutID layout) { return hasParentNobodyProves(program, layout); }))
+            return;
+        std::optional<PropertyAccessQuery> query = namedAccessQueryOf(context, read);
+        if (!query || query->start != MemberStart::Instance)
+            return;
+        LayoutList receivers = query->receivers.isProven() ? query->receivers.proven : query->receivers.expected.predicted();
+        if (receivers.isEmpty() || receivers.size() > maxArms)
+            return;
+        PropertyAccessContext accessContext { program, &context.inputs.flow };
+        bool nothingIsPlanned = std::ranges::all_of(receivers, [&](LayoutID layout) {
+            if (!hasParentNobodyProves(program, layout))
+                return false;
+            PropertyAccessQuery queryOfOne = *query;
+            queryOfOne.receivers = ReceiverCandidates::underGuard(singleElementSpan(layout));
+            return planPropertyAccess(accessContext, queryOfOne).form == AccessForm::ByName;
+        });
+        if (!nothingIsPlanned)
+            return;
+        Vector<FunctionID, 4> getters = gettersCalledAt(context, read.accessSite());
+        if (!getters.isEmpty() && getters.size() <= maxArms)
+            reads.append({ site, WTF::move(receivers), WTF::move(getters) });
+    });
+    if (reads.isEmpty())
+        return false;
+
+    AOT::sort(reads, std::ranges::greater { }, [](const Read& read) {
+        return std::pair { read.site.block, read.site.index };
+    });
+    SiteExpansion expansion(context, builder);
+    for (const Read& read : reads) {
+        expansion.begin(read.site);
+        ValueID object = expansion.original().objectOperand();
+        PropertyKeyID key = expansion.original().key();
+        AccessSiteID accessSite = expansion.original().accessSite();
+        Expected<BlockFrequency> frequency = expansion.frequency();
+        Expected<BlockFrequency> unlikely = rarerOf(frequency, BlockFrequency::Unlikely);
+        BlockID byName = builder.addBlock(unlikely);
+        auto goOnIfOrAskByName = [&](ValueID test, bool isLast) {
+            IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, OperandIndex::TypeTest::value, frequency, isLast ? unlikely : frequency);
+            if (isLast) {
+                builder.moveToEndOf(branch.notTaken);
+                builder.emitJump(byName);
+            }
+            return branch;
+        };
+        size_t receiversLeft = read.receivers.size();
+        for (LayoutID receiver : read.receivers) {
+            IRBuilder::ProvenBranch isOfClass = goOnIfOrAskByName(builder.appendTypeTest(object, Type::forLayout(receiver, context.types)), !--receiversLeft);
+            builder.moveToEndOf(isOfClass.taken);
+            Value lookup = IRBuilder::make(Opcode::GetCachedGetter, { isOfClass.provenOnTaken });
+            lookup.setKey(key);
+            ValueID found = expansion.append(WTF::move(lookup));
+            size_t gettersLeft = read.getters.size();
+            for (FunctionID getter : read.getters) {
+                IRBuilder::ProvenBranch isGetter = goOnIfOrAskByName(builder.appendTypeTest(found, Type::forFunction(getter)), !--gettersLeft);
+                builder.moveToEndOf(isGetter.taken);
+                Vector<ValueID, 8> captures = appendCaptures(builder, getter, isGetter.provenOnTaken);
+                expansion.finishArm(appendDirectCall(builder, {
+                    .callee = getter,
+                    .captures = captures.span(),
+                    .thisValue = isOfClass.provenOnTaken,
+                    .calleeValue = program.at(getter).has(FunctionFlags::TakesCallee) ? isGetter.provenOnTaken : ValueID(),
+                    .accessSite = accessSite,
+                    .calleeKeptInFrame = keepsCalleeOfAccessor(program, getter) ? isGetter.provenOnTaken : ValueID(),
+                    .calleeIsPredicted = true,
+                }));
+                if (gettersLeft)
+                    builder.moveToEndOf(isGetter.notTaken);
+            }
+            if (receiversLeft)
+                builder.moveToEndOf(isOfClass.notTaken);
+        }
+        builder.moveToEndOf(byName);
+        expansion.finishArm(expansion.appendOriginal());
+        expansion.end();
+    }
+    context.analyses.didChangeValues();
+    return true;
 }
 
 static void expandReadsUnderPrototypesThatMayBeReplaced(FunctionPassContext& context, IRBuilder& builder, Vector<NamedAccessSite>& reads)
@@ -1946,6 +2070,7 @@ PassOutcome resolveAccesses(FunctionPassContext& context)
     didExpand |= holds(Opcode::ToPropertyKey) && askUnderIntegersThemselves(context);
     didExpand |= makesProxies && holds(Opcode::GetInternalField) && forwardReadsOutOfProxiesInSight(context);
     didExpand |= holds(Opcode::PrivateDefine) && expandDefinitionsBehindEmptySlots(context, builder);
+    didExpand |= holds(Opcode::PropGet) && expandReadsOfGettersAboveParentsNobodyProves(context, builder);
     while ((makesProxies && expandAccessesThroughProxies(context, builder)) || expandReadForAnotherReceiver(context, builder))
         didExpand = true;
     if (didExpand)
@@ -3575,7 +3700,17 @@ static bool canSeparateByTest(const Program& program, TypeArena& types, const Ty
 
 namespace {
 
-enum class LoopSplit : uint8_t { NotSplit, Split, OverLimit };
+struct LoopSplit {
+    BlockID header;
+    Edge entry;
+    Vector<BlockID> region { };
+    ValueID receiver { };
+    ValueID narrowestName { };
+    TypeID testedType { };
+    bool restTakesEveryValue { false };
+    Vector<ValueID, 4> names { };
+    Vector<Use, 16> usesInLoop { };
+};
 
 struct PlannedSplit {
     ValueSite site;
@@ -3716,22 +3851,21 @@ static TypeID chooseTestedType(FunctionPassContext& context, ValueID receiver, V
     return { };
 }
 
-static LoopSplit splitLoop(FunctionPassContext& context, const NaturalLoop& loop, BitVector& isFinishedHeader, unsigned numberOfSplitLoops)
+static std::optional<LoopSplit> planSplitOf(FunctionPassContext& context, const NaturalLoop& loop)
 {
-    const Program& program = context.program;
     Function& function = context.function;
     FunctionAnalyses& analyses = context.analyses;
     BlockID header = loop.header();
     if (analyses.blockFrequencies().classOf(header).predicted() != BlockFrequency::Normal || heatClassOf(context, header).predicted() != HeatClass::Hot)
-        return LoopSplit::NotSplit;
+        return std::nullopt;
     bool isLoopOfProgram = std::ranges::any_of(function.at(header).values, [&](ValueID value) {
         return function.at(value).opcode == Opcode::LoopHint;
     });
     if (!isLoopOfProgram)
-        return LoopSplit::NotSplit;
+        return std::nullopt;
     std::optional<Edge> entry = analyses.naturalLoops().findSingleEntry(loop);
     if (!entry)
-        return LoopSplit::NotSplit;
+        return std::nullopt;
 
     Vector<BlockID> region;
     BitVector isInLoop(function.blocks.size());
@@ -3772,29 +3906,53 @@ static LoopSplit splitLoop(FunctionPassContext& context, const NaturalLoop& loop
         break;
     }
     if (!receiver || RegionCloner::checkCanDuplicate(analyses, region.span()) != CloneCheck::CanClone)
-        return LoopSplit::NotSplit;
-    if (context.exceeds(LimitID::MaxSeparatedLoopsPerFunction, numberOfSplitLoops + 1))
-        return LoopSplit::OverLimit;
+        return std::nullopt;
+    return LoopSplit { header, *entry, WTF::move(region), receiver, narrowestName, testedType, restTakesEveryValue };
+}
 
-    // Whatever else names the object in front of the loop is the same object inside it.
-    Vector<ValueID, 4> names;
-    Vector<Use, 16> usesInLoop;
+// Whatever else names the object in front of a loop is the same object inside it. The values of the function, and the uses of each name, are walked once for all the loops, which share no block.
+static void findNamesOfReceivers(FunctionPassContext& context, std::span<LoopSplit> splits)
+{
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    const UseLists& uses = analyses.useLists();
+    constexpr uint32_t inNoLoop = UINT32_MAX;
+    Vector<uint32_t> loopOfBlock(function.blocks.size(), [](size_t) {
+        return inNoLoop;
+    });
+    HashSet<ValueID> receivers;
+    for (uint32_t index = 0; index < splits.size(); ++index) {
+        receivers.add(splits[index].receiver);
+        for (BlockID block : splits[index].region)
+            loopOfBlock[block.index()] = index;
+    }
     for (uint32_t index = 0; index < function.values.size(); ++index) {
         ValueID name(index);
-        if (analyses.identityOf(name) != receiver || uses.locationOf(name).placement == ValuePlacement::Detached || isInLoop.get(uses.blockOf(name).index()))
+        ValueID identity = analyses.identityOf(name);
+        if (!identity || !receivers.contains(identity) || uses.locationOf(name).placement == ValuePlacement::Detached)
             continue;
-        size_t numberOfUsesBefore = usesInLoop.size();
+        uint32_t loopOfName = loopOfBlock[uses.blockOf(name).index()];
         for (const Use& use : uses.usesOf(name)) {
-            if (isInLoop.get(use.block.index()))
-                usesInLoop.append(use);
+            uint32_t loop = loopOfBlock[use.block.index()];
+            if (loop == inNoLoop || loop == loopOfName || splits[loop].receiver != identity)
+                continue;
+            splits[loop].usesInLoop.append(use);
+            if (splits[loop].names.isEmpty() || splits[loop].names.last() != name)
+                splits[loop].names.append(name);
         }
-        if (usesInLoop.size() > numberOfUsesBefore)
-            names.append(name);
     }
+}
 
-    IRBuilder builder(analyses.context(), function, context.types, &analyses);
-    builder.setOrigin(function.at(entry->from).terminator.origin());
-    BlockID front = builder.splitEdge(*entry);
+// It asks nothing about the function as a whole. Whoever has split the last loop repairs what the copies define.
+static std::unique_ptr<RegionCloner> splitLoop(FunctionPassContext& context, IRBuilder& builder, const LoopSplit& split)
+{
+    const Program& program = context.program;
+    Function& function = context.function;
+    const auto& [header, entry, region, receiver, narrowestName, testedType, restTakesEveryValue, names, usesInLoop] = split;
+    UNUSED_VARIABLE(receiver);
+
+    builder.setOrigin(function.at(entry.from).terminator.origin());
+    BlockID front = builder.splitEdge(entry);
     Expected<BlockFrequency> frequency = function.at(front).frequency;
     Arguments arguments(function.at(front).terminator.next().arguments);
     function.edit(front, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
@@ -3807,14 +3965,14 @@ static LoopSplit splitLoop(FunctionPassContext& context, const NaturalLoop& loop
     auto narrows = [&](ValueID proven, ValueID name) {
         return program.typeOf(function, proven).isSubsetOf(program.typeOf(function, name), program);
     };
-    RegionCloner cloner(builder, function);
+    std::unique_ptr<RegionCloner> cloner = makeUniqueWithoutFastMallocCheck<RegionCloner>(builder, function);
     for (ValueID name : names) {
         if (narrows(branch.provenOnTaken, name))
-            cloner.mapValue(name, branch.provenOnTaken);
+            cloner->mapValue(name, branch.provenOnTaken);
     }
-    cloner.cloneBlocks(region.span(), [](ValueID, Value&) { });
+    cloner->cloneBlocks(region.span(), [](ValueID, Value&) { });
     builder.moveToEndOf(branch.taken);
-    builder.emitJump(cloner.cloneOf(header), Arguments(arguments));
+    builder.emitJump(cloner->cloneOf(header), Arguments(arguments));
     builder.moveToEndOf(branch.notTaken);
     builder.emitJump(header, WTF::move(arguments));
     if (!restTakesEveryValue) {
@@ -3823,18 +3981,7 @@ static LoopSplit splitLoop(FunctionPassContext& context, const NaturalLoop& loop
                 replaceUse(function, use, branch.provenOnNotTaken);
         }
     }
-    analyses.didChangeControlFlow();
-    cloner.repairSSA(analyses);
-    analyses.didChangeControlFlow();
-
-    for (BlockID block : region) {
-        isFinishedHeader.set(block.index());
-        isFinishedHeader.set(cloner.cloneOf(block).index());
-    }
-    // The next kind of view gets the next copy.
-    if (restTakesEveryValue)
-        isFinishedHeader.clear(header.index());
-    return LoopSplit::Split;
+    return cloner;
 }
 
 // A loop that takes the elements of one object, which may be of several classes, gets a copy for one class. The class is tested once, in front of the loop.
@@ -3845,10 +3992,10 @@ static bool splitLoops(FunctionPassContext& context)
     // A loop of any size gets its copy. All the copies together may not outgrow the function, or what a few small loops come to.
     AOT_THRESHOLD(size_t, valuesThatCopiesOfLoopsMayAlwaysAdd, 4096);
     const size_t mostValuesWithCopies = context.function.values.size() + std::max(context.function.values.size(), valuesThatCopiesOfLoopsMayAlwaysAdd);
+    FunctionAnalyses& analyses = context.analyses;
+    // A round plans every loop that it can and then splits them all, so the loops, the edges and who uses what are found anew once a round and not once a loop.
     for (;;) {
-        if (context.function.values.size() > mostValuesWithCopies)
-            return numberOfSplitLoops;
-        const NaturalLoops& loops = context.analyses.naturalLoops();
+        const NaturalLoops& loops = analyses.naturalLoops();
         Vector<const NaturalLoop*, 8> candidates;
         for (unsigned index = 0; index < loops.numLoops(); ++index) {
             if (!isFinishedHeader.get(loops.loop(index).header().index()))
@@ -3856,14 +4003,59 @@ static bool splitLoops(FunctionPassContext& context)
         }
         // Outer loops come first: the test stands in front of the widest loop that does not change the object.
         AOT::stableSortInLine(candidates, std::ranges::greater { }, &NaturalLoop::size);
-        LoopSplit result = LoopSplit::NotSplit;
-        for (size_t index = 0; index < candidates.size() && result == LoopSplit::NotSplit; ++index) {
-            isFinishedHeader.set(candidates[index]->header().index());
-            result = splitLoop(context, *candidates[index], isFinishedHeader, numberOfSplitLoops);
+        Vector<LoopSplit> splits;
+        BitVector isCopiedInThisRound(context.function.blocks.size());
+        BitVector entersLoopOfThisRound(context.function.blocks.size());
+        for (const NaturalLoop* loop : candidates) {
+            // A loop inside a loop that is split is done with it.
+            if (isFinishedHeader.get(loop->header().index()))
+                continue;
+            // Where one loop leaves straight into the head of the next, the copy of the first enters the second too, which has one entry no longer. The second waits for the next round.
+            bool waits = false;
+            for (unsigned index = 0; index < loop->size() && !waits; ++index)
+                waits = entersLoopOfThisRound.get(loop->at(index).index());
+            if (waits)
+                continue;
+            std::optional<LoopSplit> split = planSplitOf(context, *loop);
+            if (split && isCopiedInThisRound.get(split->entry.from.index()))
+                continue;
+            isFinishedHeader.set(loop->header().index());
+            if (!split)
+                continue;
+            entersLoopOfThisRound.set(split->entry.from.index());
+            for (BlockID block : split->region) {
+                isCopiedInThisRound.set(block.index());
+                isFinishedHeader.set(block.index());
+            }
+            splits.append(WTF::move(*split));
         }
-        if (result != LoopSplit::Split)
+        if (splits.isEmpty())
             return numberOfSplitLoops;
-        ++numberOfSplitLoops;
+        findNamesOfReceivers(context, splits.mutableSpan());
+
+        IRBuilder builder(analyses.context(), context.function, context.types, &analyses);
+        Vector<std::unique_ptr<RegionCloner>> cloners;
+        for (const LoopSplit& split : splits) {
+            if (context.function.values.size() > mostValuesWithCopies)
+                break;
+            cloners.append(splitLoop(context, builder, split));
+            for (BlockID block : cloners.last()->clonedBlocks())
+                isFinishedHeader.set(block.index());
+            // The next kind of view gets the next copy.
+            if (split.restTakesEveryValue)
+                isFinishedHeader.clear(split.header.index());
+        }
+        if (!cloners.isEmpty()) {
+            analyses.didChangeControlFlow();
+            SSARepair repair(builder, analyses);
+            for (const std::unique_ptr<RegionCloner>& cloner : cloners)
+                cloner->addVariablesTo(repair, analyses);
+            repair.run();
+            analyses.didChangeControlFlow();
+        }
+        numberOfSplitLoops += cloners.size();
+        if (cloners.size() < splits.size())
+            return numberOfSplitLoops;
     }
 }
 

@@ -425,17 +425,6 @@ static ValueFlowNodeID thisParameterOf(ValueFlowRuleContext& context, FunctionID
     return index ? context.nodes().entryParameter(function, *index) : ValueFlowNodeID();
 }
 
-bool walksNamesThatAreReExported(const Function& function, const Value& stepOfEnumeration)
-{
-    namespace At = OperandIndex;
-    if (stepOfEnumeration.opcode != Opcode::ForInStep)
-        return false;
-    ValueID enumerated = definitionThroughTests(function, stepOfEnumeration.operand(At::ForInStep::object));
-    return function.values.containsIf([&](const Value& value) {
-        return value.opcode == Opcode::TryReExportFields && definitionThroughTests(function, value.operand(At::TryReExportFields::source)) == enumerated;
-    });
-}
-
 ValueID definitionThroughTests(const Function& function, ValueID id)
 {
     AOT_THRESHOLD(unsigned, mostTests, 4);

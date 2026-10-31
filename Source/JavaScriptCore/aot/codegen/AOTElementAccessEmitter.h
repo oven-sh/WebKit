@@ -111,6 +111,7 @@ public:
     Integer indexInsideLength(ValueID position);
     // Of storage that has a form. The index of the result is the position only where the test has passed.
     LengthTest testLength(Integer index, const ArrayElements&);
+    LengthTest testLength(const ValueContext&, Integer index, const ArrayElements&);
     Boxed boxedPosition(ValueID position);
 
     Operand readElement(const ValueContext&, const ArrayStorageForm&, const ArrayElements&, Integer index, LBasicBlock isAbsent);

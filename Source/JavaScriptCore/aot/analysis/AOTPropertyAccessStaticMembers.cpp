@@ -194,7 +194,7 @@ MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const Mem
 
     const ModuleExport& entry = program.at(layout.namespaceOf).exports[*field];
     bool mayBeAmbiguous = entry.isFromStarExport && !listsEveryName;
-    if (mayBeAmbiguous)
+    if (mayBeAmbiguous || entry.isDroppedWhileEmpty)
         return MemberAnswer::unknown(UnprovenCause::UnknownObject);
     switch (entry.kind) {
     case ModuleExportKind::Variable:

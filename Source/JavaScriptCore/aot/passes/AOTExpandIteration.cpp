@@ -126,7 +126,7 @@ struct IterationPlan {
     bool hasProtocolArm() const { return !arms.isEmpty() && arms.last().form == IterationForm::Protocol; }
     bool hasClassArm() const { return !arms.isEmpty() && arms.first().form != IterationForm::Protocol; }
     std::span<const IterationArm> classArms() const LIFETIME_BOUND { return arms.span().first(arms.size() - hasProtocolArm()); }
-    void dropArmsThatNobodyExpects() { arms.removeAllMatching([](const IterationArm& arm) { return arm.isExpectedByNobody; }); }
+    size_t numberOfExpectedClassArms() const { return std::ranges::find_if(classArms(), &IterationArm::isExpectedByNobody) - classArms().begin(); }
     bool isExpandedWithoutTest() const { return arms.size() == 1 && armSources.isEmpty() && arms.first().needsNoTest() && arms.first().closingHasNoEffect(); }
 };
 
@@ -1658,8 +1658,7 @@ static void emitStepByCall(IterationExpansion& expansion, const ArmState& state,
 {
     if (state.callsSharedFunctions && request.kind == IteratorKind::Sync && request.mode == ResumeMode::Next && !request.sent && !request.readsValueWhenDone) {
         ValueID step = appendCallOfSharedFunction(expansion, OutlinedIteration::StepIterator, std::array { state.subject, state.nextMethod });
-        ValueID done = expansion.appendResultAt(step, doneResult);
-        expansion.finishStep(done, expansion.appendResultAt(step, valueResult));
+        finishStepWithValueUnlessDone(expansion, expansion.appendResultAt(step, doneResult), false, [&] { return expansion.appendResultAt(step, valueResult); });
         return;
     }
     emitIteratorResultReads(expansion, expansion.appendAwaitIfAsync(request.kind, appendResumeCall(expansion, state, request)), request.readsValueWhenDone);
@@ -2036,7 +2035,7 @@ static void emitCollectionIteratorStep(IterationExpansion& expansion, ValueID it
     IRBuilder::BranchBlocks found = builder.emitBranch(hasEntry);
     appendFieldStore(JSSetIterator::Field::Entry, expansion.appendIncrement(entry, 1));
     builder.append(Opcode::PutCollectionIteratorTable, { iterator, builder.append(Opcode::CollectionTable, { iterated }) });
-    ValueID kind = appendFieldRead(JSSetIterator::Field::Kind);
+    ValueID kind = convertTo(builder, appendFieldRead(JSSetIterator::Field::Kind), DeclaredType(Proven::byPosition(expansion.types.intern(Type::integer(Range { static_cast<int64_t>(JSC::IterationKind::Keys), static_cast<int64_t>(JSC::IterationKind::Entries) })))));
     IRBuilder::BranchBlocks entries = builder.emitBranch(expansion.appendIsEqualToInteger(kind, JSC::IterationKind::Entries));
     expansion.finishStep(builder.appendBoolean(false), expansion.appendPair(key, value));
     builder.moveToEndOf(entries.notTaken);
@@ -2459,21 +2458,25 @@ static bool isLastUseOfOpen(FunctionAnalyses& analyses, ValueID open, const BitV
     return !isLiveAtTail && std::ranges::none_of(useLists.usesOf(open), [&](const Use& use) { return use.kind == Use::Kind::Operand && use.block == close.block && useLists.locationOf(use.user).index > close.index; });
 }
 
-// Whether every arm gets its own copy of the blocks in which the iterator is live. Where it does not, every operation asks which arm was taken.
-// An arm that nobody expects goes where it would cost the others their copies.
-static bool canCopyRegionPerArm(FunctionPassContext& pass, const Iteration& iteration, IterationPlan& plan, std::span<const BlockID> liveRegion)
+// Every arm before the one answered gets its own copy of the blocks in which the iterator is live. The others run in one copy, where every operation asks which arm was taken.
+// An arm that nobody expects costs the others no copy.
+static size_t chooseFirstArmOfLastCopy(FunctionPassContext& pass, const Iteration& iteration, const IterationPlan& plan, std::span<const BlockID> liveRegion)
 {
-    if (plan.arms.size() == 1 || liveRegion.empty())
-        return true;
+    size_t lastArm = plan.arms.size() - 1;
+    if (!lastArm || liveRegion.empty())
+        return lastArm;
     bool canDuplicate = RegionCloner::checkCanDuplicate(pass.analyses, liveRegion) == CloneCheck::CanClone;
     uint64_t bytes = 0;
     for (BlockID block : liveRegion)
         bytes += estimatedCodeBytes(pass.program, pass.function, pass.function.at(block));
-    if (!canDuplicate || bytes * (plan.arms.size() - 1) > pass.limit(LimitID::MaxVersionedIterationBytes))
-        plan.dropArmsThatNobodyExpects();
-    if (plan.arms.size() == 1)
-        return true;
-    return canDuplicate && !pass.exceeds(LimitID::MaxVersionedIterationBytes, bytes * (plan.arms.size() - 1), iteration.open);
+    size_t lastExpectedCopy = std::min(plan.numberOfExpectedClassArms(), lastArm);
+    for (size_t firstArm : { lastArm, lastExpectedCopy }) {
+        if (canDuplicate && bytes * firstArm <= pass.limit(LimitID::MaxVersionedIterationBytes))
+            return firstArm;
+    }
+    if (canDuplicate)
+        pass.exceeds(LimitID::MaxVersionedIterationBytes, bytes * lastExpectedCopy, iteration.open);
+    return 0;
 }
 
 namespace {
@@ -2515,7 +2518,7 @@ struct ArmDispatcher {
     bool storageIsUndecided { false };
     bool mayBeUsedAfterDone { true };
     Vector<ProgramPoint, 2> cutsAfterLastCloses { };
-    bool hasCopyPerArm { true };
+    size_t firstArmOfLastCopy { 0 };
     Vector<PatternRead, 2> patternReads { };
     Vector<ArmCopy, 2> copies { };
     Vector<ValueID> definitionsInRegion { };
@@ -2693,18 +2696,17 @@ struct ArmDispatcher {
         if (!plan.armSources.isEmpty() || !plan.replacedValues.isEmpty() || std::ranges::any_of(nested, [&](uint32_t inner) { return !dispatcherInNest[inner] || !dispatcherInNest[inner]->plan.armSources.isEmpty(); }))
             return false;
         // Each asks the ones right below it, which have their answer by now.
-        if (bytesThatStay(dispatcherInNest) * (plan.arms.size() - 1) > pass.limit(LimitID::MaxVersionedIterationBytes))
-            plan.dropArmsThatNobodyExpects();
         if (plan.arms.size() > 1) {
             // Expanding adds code, so blocks that are too many to copy now are too many then.
-            if (bytesThatStay(dispatcherInNest) * (plan.arms.size() - 1) <= pass.limit(LimitID::MaxVersionedIterationBytes))
+            uint64_t bytesOfExpectedCopies = bytesThatStay(dispatcherInNest) * std::min(plan.numberOfExpectedClassArms(), plan.arms.size() - 1);
+            if (bytesOfExpectedCopies <= pass.limit(LimitID::MaxVersionedIterationBytes))
                 return false;
-            hasCopyPerArm = !pass.exceeds(LimitID::MaxVersionedIterationBytes, bytesThatStay(dispatcherInNest) * (plan.arms.size() - 1), iteration.open);
-            RELEASE_ASSERT(!hasCopyPerArm);
+            RELEASE_ASSERT(pass.exceeds(LimitID::MaxVersionedIterationBytes, bytesOfExpectedCopies, iteration.open));
+            firstArmOfLastCopy = 0;
             patternReads.fill(PatternRead::BySteps, plan.arms.size());
             return true;
         }
-        hasCopyPerArm = true;
+        firstArmOfLastCopy = 0;
         if (!function.at(iteration.open).isDestructuring()) {
             patternReads.append(PatternRead::BySteps);
             return true;
@@ -2724,10 +2726,13 @@ struct ArmDispatcher {
         return true;
     }
 
+    bool sharesLastCopy() const { return firstArmOfLastCopy + 1 < plan.arms.size(); }
+    bool isShared(unsigned copy) const { return copy == firstArmOfLastCopy && sharesLastCopy(); }
+
     void chooseForms()
     {
-        hasCopyPerArm = canCopyRegionPerArm(pass, iteration, plan, region.span());
-        bool readsPattern = function.at(iteration.open).isDestructuring() && hasCopyPerArm;
+        firstArmOfLastCopy = chooseFirstArmOfLastCopy(pass, iteration, plan, region.span());
+        bool readsPattern = function.at(iteration.open).isDestructuring() && !sharesLastCopy();
         for (const IterationArm& arm : plan.arms)
             patternReads.append(readsPattern ? choosePatternRead(pass, iteration, arm, region.span()) : PatternRead::BySteps);
     }
@@ -2748,21 +2753,19 @@ struct ArmDispatcher {
             emitTestsAndOpens();
         else
             emitOpensByArmSource();
-        if (!hasCopyPerArm) {
-            joinArmsByForm();
-            return;
-        }
-        RELEASE_ASSERT(ends.size() == copies.size());
-        for (size_t arm = 0; arm < ends.size(); ++arm) {
+        RELEASE_ASSERT(ends.size() == plan.arms.size() && copies.size() == firstArmOfLastCopy + 1);
+        for (size_t arm = 0; arm < copies.size() - sharesLastCopy(); ++arm) {
             builder.moveToEndOf(ends[arm]);
             builder.emitJump(copies[arm].entry);
         }
+        if (sharesLastCopy())
+            joinArmsByForm();
     }
 
     void cloneRegionPerArm()
     {
         copies.append(ArmCopy { tail, iteration });
-        if (!hasCopyPerArm || plan.arms.size() == 1)
+        if (!firstArmOfLastCopy)
             return;
 
         for (BlockID block : region) {
@@ -2770,7 +2773,7 @@ struct ArmDispatcher {
             definitionsInRegion.append(function.at(block).values.span());
         }
 
-        for (size_t arm = 1; arm < plan.arms.size(); ++arm) {
+        for (size_t arm = 1; arm <= firstArmOfLastCopy; ++arm) {
             if (region.isEmpty()) {
                 copies.append(ArmCopy { tail, { .open = iteration.open, .kind = iteration.kind, .origin = iteration.origin } });
                 continue;
@@ -2915,10 +2918,10 @@ struct ArmDispatcher {
     }
 
     // One block for each arm, entered by the number of the arm.
-    Vector<BlockID, 4> emitSwitchOverArms(ValueID chosenArm, Expected<BlockFrequency> frequency)
+    Vector<BlockID, 4> emitSwitchOverArms(ValueID chosenArm, Expected<BlockFrequency> frequency, size_t firstArm = 0)
     {
         Vector<BlockID, 4> blocks;
-        for (const IterationArm& arm : plan.arms)
+        for (const IterationArm& arm : plan.arms.span().subspan(firstArm))
             blocks.append(builder.addBlock(arm.form == IterationForm::Protocol ? rarerOf(frequency, BlockFrequency::Unlikely) : frequency));
 
         Vector<std::pair<int64_t, Target>> cases;
@@ -2973,20 +2976,20 @@ struct ArmDispatcher {
     {
         static constexpr ValueID ArmState::* joinedValues[] { &ArmState::subject, &ArmState::nextMethod, &ArmState::isSteppedWithoutCall, &ArmState::walkedList };
         BlockID join = builder.addBlock(function.at(head).frequency);
-        form = builder.addParameter(join, pass.types.intern(Type::integer({ 0, static_cast<int64_t>(states.size()) - 1 })));
+        form = builder.addParameter(join, pass.types.intern(Type::integer({ 0, static_cast<int64_t>(states.size() - firstArmOfLastCopy) - 1 })));
 
         Vector<ArmState, 2> joinedStates = states;
-        for (ArmState& state : joinedStates) {
+        for (ArmState& state : joinedStates.mutableSpan().subspan(firstArmOfLastCopy)) {
             for (auto value : joinedValues) {
                 if (state.*value)
                     state.*value = addParameterLike(pass, builder, join, state.*value);
             }
         }
 
-        for (size_t arm = 0; arm < states.size(); ++arm) {
+        for (size_t arm = firstArmOfLastCopy; arm < states.size(); ++arm) {
             builder.moveToEndOf(ends[arm]);
-            Arguments arguments { builder.appendInteger(static_cast<int64_t>(arm)) };
-            for (size_t other = 0; other < states.size(); ++other) {
+            Arguments arguments { builder.appendInteger(static_cast<int64_t>(arm - firstArmOfLastCopy)) };
+            for (size_t other = firstArmOfLastCopy; other < states.size(); ++other) {
                 const ArmState& state = states[other];
                 for (auto value : joinedValues) {
                     if (state.*value)
@@ -3002,7 +3005,7 @@ struct ArmDispatcher {
 
         states = WTF::move(joinedStates);
         builder.moveToEndOf(join);
-        builder.emitJump(tail);
+        builder.emitJump(copies.last().entry);
     }
 
     void collectPatternsReadAtOnce(Vector<PatternInOneRead>& patterns)
@@ -3057,7 +3060,7 @@ struct ArmDispatcher {
             expansion.operation = &operation;
             expansion.held = heldOperandsOf(original);
 
-            bool tracksDone = done && isStep && (!hasCopyPerArm || states[site.copy].patternRead == PatternRead::BySteps);
+            bool tracksDone = done && isStep && (isShared(site.copy) || states[site.copy].patternRead == PatternRead::BySteps);
             if (tracksDone) {
                 IRBuilder::BranchBlocks blocks = builder.emitBranch(done->anyDefinition);
                 expansion.finishStepAsDone();
@@ -3071,13 +3074,13 @@ struct ArmDispatcher {
                 builder.moveToEndOf(blocks.notTaken);
             }
 
-            if (hasCopyPerArm)
+            if (!isShared(site.copy))
                 emitOperation(original, states[site.copy]);
             else {
-                Vector<BlockID, 4> blocks = emitSwitchOverArms(form, function.at(builder.currentBlock()).frequency);
+                Vector<BlockID, 4> blocks = emitSwitchOverArms(form, function.at(builder.currentBlock()).frequency, firstArmOfLastCopy);
                 for (size_t arm = 0; arm < blocks.size(); ++arm) {
                     builder.moveToEndOf(blocks[arm]);
-                    emitOperation(original, states[arm]);
+                    emitOperation(original, states[firstArmOfLastCopy + arm]);
                 }
             }
 
@@ -3196,9 +3199,9 @@ struct ArmDispatcher {
     {
         if (copies[copy].isReadAtOnce)
             return true;
-        if (hasCopyPerArm)
+        if (!isShared(copy))
             return plan.arms[copy].closingHasNoEffect();
-        return std::ranges::all_of(plan.arms, &IterationArm::closingHasNoEffect);
+        return std::ranges::all_of(plan.arms.span().subspan(copy), &IterationArm::closingHasNoEffect);
     }
 
     void findOpenAgain(const BitVector& blocksThatWereCut)

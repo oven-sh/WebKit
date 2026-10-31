@@ -205,7 +205,7 @@ JSValue CompactTable::keyAt(uint32_t entry) const
 {
     RELEASE_ASSERT(entry < used());
     if (isInImage())
-        return stateOfTableInImage().strings->string(vm(), tableInImage().stringAt(entry));
+        return stateOfTableInImage().strings->constant(vm(), tableInImage().stringConstants()[entry]);
     return heapKeyAt(entry);
 }
 
@@ -1548,7 +1548,8 @@ std::optional<Vector<uint8_t>> TableInImage::tryEncode(std::span<const Key> keys
     CompactTable::SlotKind slotKind = CompactTable::slotKindFor(header.capacity);
     size_t sizeOfIndex = static_cast<size_t>(2) << header.keysShift;
     size_t offsetOfStrings = sizeof(TableInImage) + sizeOfIndex;
-    size_t offsetOfValues = offsetOfStrings + sizeof(uint32_t) * header.capacity;
+    size_t offsetOfStringConstants = offsetOfStrings + sizeof(uint32_t) * header.capacity;
+    size_t offsetOfValues = offsetOfStringConstants + sizeof(uint32_t) * header.capacity;
     size_t size = offsetOfValues + (header.hasValues ? sizeof(uint64_t) * header.capacity : 0);
     if (size > std::numeric_limits<uint32_t>::max())
         return std::nullopt;
@@ -1556,11 +1557,13 @@ std::optional<Vector<uint8_t>> TableInImage::tryEncode(std::span<const Key> keys
     memcpy(bytes.mutableSpan().data(), &header, sizeof(header));
     uint8_t* index = bytes.mutableSpan().data() + sizeof(TableInImage);
     uint32_t* strings = reinterpret_cast<uint32_t*>(bytes.mutableSpan().data() + offsetOfStrings);
+    uint32_t* stringConstants = reinterpret_cast<uint32_t*>(bytes.mutableSpan().data() + offsetOfStringConstants);
     if (header.hasValues)
         memcpy(bytes.mutableSpan().data() + offsetOfValues, values.data(), values.size_bytes());
     for (uint32_t entry = 0; entry < header.count; ++entry) {
         RELEASE_ASSERT(keys[entry].hash <= CompactTable::hashMask);
         strings[entry] = keys[entry].string;
+        stringConstants[entry] = keys[entry].stringConstant;
         CompactTable::insertIntoIndex(slotKind, index, indexBits, entry, keys[entry].hash);
     }
     return bytes;

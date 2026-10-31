@@ -410,8 +410,8 @@ A command is registered by the owner of the code it runs, in `aot/**/AOT*TestCom
 - `function-passes <PassID> { <PassID> }` runs the named function passes on one function after the other, all of them with one
   `FunctionPassContext` per function, as a schedule does: what a pass remembers in the context about a function is there for the next.
   It prints `f<n> <PassID>: Changed` or `Unchanged` per run, then the program. Passes that derive functions are refused.
-- `pipeline <PassID>` runs the pipeline from `AsRead` through the first run of that pass, then prints that pass's results, under
-  `OPTIONS: report=Declines` the `decline` lines of all passes that ran, and the program.
+- `pipeline <PassID> [heat]` runs the pipeline from `AsRead` through the first run of that pass, then prints that pass's results, with
+  `heat` the heat as it is then, under `OPTIONS: report=Declines` the `decline` lines of all passes that ran, and the program.
 - `compile` runs the whole build and prints `diagnostic <kind>`, `loss <limit> x<count>`, `image <empty|not empty>` and
   `statistic <name> <value>` lines.
 - `run-in-shell { --<option> } { word }` runs the whole build, then the entry module in `jsc` from the folder of `testaot`. The leading words

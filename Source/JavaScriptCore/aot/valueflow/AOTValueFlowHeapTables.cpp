@@ -704,6 +704,33 @@ std::optional<Vector<ModuleID, 2>> ValueFlowHeapTables::filesThatPathFinds(Modul
     return found;
 }
 
+std::span<const PropertyKeyID> ValueFlowHeapTables::namesThatBeginWith(StringID beginning) const
+{
+    auto textOf = [&](PropertyKeyID key) {
+        return m_program.string(m_program.at(key).text);
+    };
+    auto isBefore = [](std::span<const uint8_t> left, std::span<const uint8_t> right) {
+        return std::ranges::lexicographical_compare(left, right);
+    };
+    std::call_once(m_didSortNames, [&] {
+        for (uint32_t index = 0; index < m_program.types.numberOfPropertyKeys(); ++index) {
+            if (m_program.at(PropertyKeyID(index)).kind == PropertyKeyKind::Text)
+                m_namesInOrderOfText.append(PropertyKeyID(index));
+        }
+        std::ranges::sort(m_namesInOrderOfText, [&](PropertyKeyID left, PropertyKeyID right) {
+            return isBefore(textOf(left), textOf(right));
+        });
+    });
+    std::span<const uint8_t> text = m_program.string(beginning);
+    std::span<const PropertyKeyID> names = m_namesInOrderOfText.span();
+    auto first = std::ranges::lower_bound(names, text, isBefore, textOf);
+    auto last = std::ranges::find_if_not(first, names.end(), [&](PropertyKeyID key) {
+        std::span<const uint8_t> name = textOf(key);
+        return name.size() >= text.size() && equalSpans(name.first(text.size()), text);
+    });
+    return { first, last };
+}
+
 ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlowUniverse& universe, ValueSets& allSets, ValueSetMaker& maker, const ParallelLoops& loops, NOESCAPE const ScopedLambda<void()>& runBesideTables)
     : m_program(program)
     , m_maker(allSets)

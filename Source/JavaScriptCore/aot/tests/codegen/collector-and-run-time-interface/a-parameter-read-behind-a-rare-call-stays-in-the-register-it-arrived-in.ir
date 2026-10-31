@@ -5,8 +5,13 @@
 # declare const input: any;
 # (globalThis as any).answer = put([1.5, 2.5], +input | 0, +input);
 # The slow ways of the store box the number and convert the storage by calls that answer in a register no parameter arrives in, so `list` stays where it arrived.
+# Two of them call operations that keep no register and take an argument where `index` arrived. `index` is carried over those calls in any case, so it leaves its register in front of the moves of their arguments and nowhere else.
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN(X64): lower-to-air f1
+# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# RUN(X64SIZE): lower-to-air size f1
+# REQUIRES(X64SIZE): x86_64 unsanitized-code not-windows
 # RUN(ARM64): lower-to-air f1
 # REQUIRES(ARM64): arm64 unsanitized-code
 # RUN(ARM64SIZE): lower-to-air size f1
@@ -57,6 +62,13 @@ function f1 name="put" module=m0 flags=[IsChecked, HasExplicitName] length=3 thi
     v5 = Convert v1 declared={type=number site=w3} @101
     Return v5 @101
 }
+# X64-LABEL: name="put" role=Source
+# X64-NEXT: BB#0
+# X64-NEXT: Load8 4(%rdi), %rax
+# X64: Move %rsi, %rax
+# X64-NEXT: Ret
+# X64-LABEL: end of function
+# X64SIZE: instructions: 10, patchpoints: 0, rare instructions: 33
 # ARM64-LABEL: name="put" role=Source
 # ARM64-NOT: Move %x0, %x
 # ARM64: Load8 4(%x0)

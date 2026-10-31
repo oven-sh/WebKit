@@ -32,6 +32,7 @@
 #include "DumpContext.h"
 #include "ImmutablePropertyNames.h"
 #include "JSCInlines.h"
+#include "MarkedBlockCage.h"
 #include "PropertyNameArray.h"
 #include "PropertyRun.h"
 #include "PropertyTable.h"
@@ -1314,8 +1315,10 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
     
 #if USE(BUN_JSC_ADDITIONS)
     // Allocate before DeferGC: when the Structure heap is at its limit, this allocation has to be able to trigger a GC.
-    Structure* transition = Structure::create(vm, structure, deferred);
+    Structure* transition = MarkedBlockCage::isRequired() ? Structure::create(vm, structure, deferred) : nullptr;
     DeferGC deferGC(vm);
+    if (!transition) [[likely]]
+        transition = Structure::create(vm, structure, deferred);
 #else
     DeferGC deferGC(vm);
     

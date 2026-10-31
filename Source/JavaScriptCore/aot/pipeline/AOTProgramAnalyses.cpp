@@ -194,6 +194,10 @@ const Heat& ProgramAnalyses::heat(const FlowResults& flow) const
         m_bodyWeights = WTF::move(madeWeights);
         destroyResultsLater(build, keptWeights);
     }
+    if (!m_heat->hasSeenAllFunctionsOf(m_program)) {
+        ProgramCachesWithScratchTypes caches(m_program, m_runner.build());
+        m_heat->takeInFunctionsMadeSince(m_program, flow, m_runner.build());
+    }
     return *m_heat;
 }
 

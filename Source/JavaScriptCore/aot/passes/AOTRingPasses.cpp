@@ -4007,11 +4007,22 @@ struct ConstantSinker {
         return use.kind == Use::Kind::Operand || ((use.kind == Use::Kind::TerminatorOperand || use.kind == Use::Kind::EdgeArgument) && !rewrite.analyses.hasNoEffects(id));
     }
 
+    // An allocation that fails throws where it stands.
+    bool staysUnderItsHandler(ValueID id, BlockID from, BlockID to)
+    {
+        auto effects = rewrite.analyses.effectsOf(id);
+        if (!effects.mayThrow() && !effects.onAnyEdge().mayCollect)
+            return true;
+        const std::optional<Target>& handler = rewrite.at(from).handler;
+        const std::optional<Target>& handlerThere = rewrite.at(to).handler;
+        return !handler || (handlerThere && handlerThere->block == handler->block);
+    }
+
     bool canSink(ValueID id, BlockID definitionBlock, std::span<const Use> uses)
     {
         userBlocks.shrink(0);
         for (const Use& use : uses) {
-            if (!canTakeCopy(use, id) || use.block == definitionBlock)
+            if (!canTakeCopy(use, id) || use.block == definitionBlock || !staysUnderItsHandler(id, definitionBlock, use.block))
                 return false;
             if (rewrite.analyses.isInCycle(use.block) && !rewrite.analyses.blockCycles().isInEveryCycleOf(definitionBlock, use.block))
                 return false;
@@ -4064,7 +4075,7 @@ struct ConstantSinker {
         };
         while (target != definitionBlock && !servesEveryUser(target))
             target = dominators.idom(target);
-        if (target == definitionBlock)
+        if (target == definitionBlock || !staysUnderItsHandler(original, definitionBlock, target))
             return std::nullopt;
         auto firstUseInTarget = std::ranges::find_if(uses, [&](const Use& use) { return use.block == target; });
         return firstUseInTarget != uses.end() ? rewrite.uses().pointOf(*firstUseInTarget) : pointBeforeTerminatorOf(rewrite.function, target);

@@ -1170,6 +1170,11 @@ struct QuotesOfPlaces {
     // An executable has no file for any of its modules: each is asked for once.
     UncheckedKeyHashSet<uint64_t> modulesWithoutFile;
     UncheckedKeyHashMap<const void*, Answer> answers;
+
+    // A place is asked about in several ways, one after the other. Held only while it is.
+    const void* placeInKeptTextIsOf { nullptr };
+    std::optional<PlaceInKeptText> placeInKeptText;
+    Vector<TextPrintedInPlace> textPrintedInPlace;
 };
 
 static QuotesOfPlaces& quotesOfPlaces(VM& vm)
@@ -1600,6 +1605,12 @@ private:
         return m_text[at] == '/' && at + 1 < m_text.size() && (m_text[at + 1] == '/' || m_text[at + 1] == '*');
     }
 
+    // `1 /* Green */`: see markOfPrintedKey.
+    bool isPrintedComment(size_t at) const
+    {
+        return startsComment(at) && at + 2 < m_text.size() && m_text[at + 2] == markOfPrintedKey;
+    }
+
     size_t endOfQuoted(size_t at) const
     {
         if (m_text[at] != '`')
@@ -1742,7 +1753,11 @@ private:
             }
             if (startsComment(at)) {
                 size_t end = endOfComment(at);
-                hasLineBreakInFront |= WTF::find(m_text.subspan(at, end - at), static_cast<Latin1Character>('\n')) != notFound;
+                if (isPrintedComment(at)) {
+                    m_tokens.append({ at, end, Role::Postfix, hasLineBreakInFront });
+                    hasLineBreakInFront = false;
+                } else
+                    hasLineBreakInFront |= WTF::find(m_text.subspan(at, end - at), static_cast<Latin1Character>('\n')) != notFound;
                 at = end;
                 continue;
             }
@@ -1868,8 +1883,9 @@ private:
         case Role::Comma:
             // `[, , a]` has holes.
             return last.role == Role::Comma;
-        case Role::Semicolon:
         case Role::Postfix:
+            return isPrintedComment(token.start);
+        case Role::Semicolon:
         case Role::KeyColon:
             return false;
         case Role::Dot:
@@ -1938,10 +1954,17 @@ private:
             bool isLoneParameter = token.role == Role::Operand && next && is(*next, "=>"_s);
             std::span<const Latin1Character> spelled = m_text.subspan(token.start, token.end - token.start);
             bool isEmptyBody = token.role == Role::Operand && spelled.front() == '{' && spelled.size() > 1 && last && is(*last, ")"_s) && std::ranges::all_of(spelled.subspan(1, spelled.size() - 2), isBlank);
+            // `{ "a": 1 }` is printed `{ a: 1 }`.
+            bool isKeyPrintedAsName = spelled.size() > 2 && isQuote(spelled.front()) && spelled.front() != '`' && spelled.back() == spelled.front() && next && next->role == Role::KeyColon
+                && !isASCIIDigit(spelled[1]) && std::ranges::all_of(spelled.subspan(1, spelled.size() - 2), [](Latin1Character character) {
+                    return isASCII(character) && isPartOfName(character);
+                });
             if (isLoneParameter)
                 printed.append('(');
             if (isEmptyBody)
                 printed.append("{}"_span);
+            else if (isKeyPrintedAsName)
+                printed.append(spelled.subspan(1, spelled.size() - 2));
             else if (spelled.front() != '`')
                 printed.append(spelled);
             else if (!appendTemplate(printed, token))
@@ -2007,9 +2030,13 @@ static String asPrinted(std::span<const Latin1Character> textWithAll, QuotedText
     Vector<std::span<const Latin1Character>, 4> fromPrinter;
     Vector<Latin1Character> rest = withoutTextFromPrinter(textWithAll, fromPrinter);
     std::span<const Latin1Character> text = rest.span();
-    std::optional<Vector<Latin1Character>> withBlanks = quoted == QuotedText::TakesValues ? PrintedBlanks::print(text) : onOneLine(text);
-    if (!withBlanks)
+    std::optional<Vector<Latin1Character>> withBlanks;
+    if (!runsAsWritten)
+        withBlanks = PrintedBlanks::print(text);
+    if (!withBlanks && quoted == QuotedText::TakesValues)
         return { };
+    if (!withBlanks)
+        withBlanks = onOneLine(text);
     Vector<Latin1Character> printed;
     Vector<Latin1Character> withoutTypesAndBlanks = withoutTypes(withBlanks->span());
     appendWithoutIdleBrackets(printed, runsAsWritten ? withoutTypesAndBlanks.span() : withShortLiterals(withoutTypesAndBlanks.span()).span());
@@ -2054,22 +2081,19 @@ static size_t offsetOfColumn(std::span<const Latin1Character> text, size_t lineS
 
 enum class SearchedText : bool { OnlyKnownPlace, WholeFunction };
 
-// `text[from, to)` with blanks for each function and class that the compiler gives as Bun prints it, but for those around `place`.
-// So nothing in them ends what is searched for: not a `]` in a regular expression, not a quote in a template.
-static Vector<Latin1Character> withBlanksForTextFromPrinter(std::span<const Latin1Character> text, size_t from, size_t to, size_t place, std::span<const TextPrintedInPlace> pieces)
+// `text[from, to)` with one long name for each function and class that the compiler gives as Bun prints it, but for those around `place`.
+// So nothing in them ends what is searched for, and `(() => null)().a` is a path. No text holds the byte that the name is made of.
+static Vector<Latin1Character> withNamesForTextFromPrinter(std::span<const Latin1Character> text, size_t from, size_t to, size_t place, std::span<const TextPrintedInPlace> pieces)
 {
-    Vector<Latin1Character> blanked(text.subspan(from, to - from));
-    size_t endOfBlanks = from;
+    Vector<Latin1Character> named(text.subspan(from, to - from));
+    size_t endOfNames = from;
     for (const TextPrintedInPlace& piece : pieces) {
-        if (!isFromPrinter(piece) || piece.start < endOfBlanks || piece.end > to || (piece.start <= place && place < piece.end))
+        if (!isFromPrinter(piece) || piece.start < endOfNames || piece.end > to || (piece.start <= place && place < piece.end))
             continue;
-        for (size_t at = piece.start; at < piece.end; ++at) {
-            if (text[at] != '\n')
-                blanked[at - from] = ' ';
-        }
-        endOfBlanks = piece.end;
+        std::ranges::fill(named.mutableSpan().subspan(piece.start - from, piece.end - piece.start), Latin1Character(0xFF));
+        endOfNames = piece.end;
     }
-    return blanked;
+    return named;
 }
 
 // The lines of the path around `place`. A chain may take several, and the place of what failed in it is a name further up: that of `.c` in `a` / `.b` / `.c` is `b`.
@@ -2116,10 +2140,10 @@ static String findSpelledAround(std::span<const Latin1Character> text, size_t st
         while (lineStart && searched[lineStart - 1] != '\n')
             --lineStart;
         size_t lineEnd = std::min(WTF::find(searched, static_cast<Latin1Character>('\n'), within), searched.size());
-        Vector<Latin1Character> blanked;
+        Vector<Latin1Character> named;
         if (hasTextFromPrinter)
-            blanked = withBlanksForTextFromPrinter(text, startOfSearched, endOfSearched, places[index], pieces);
-        std::span<const Latin1Character> read = hasTextFromPrinter ? blanked.span() : searched;
+            named = withNamesForTextFromPrinter(text, startOfSearched, endOfSearched, places[index], pieces);
+        std::span<const Latin1Character> read = hasTextFromPrinter ? named.span() : searched;
         std::span<const Latin1Character> found;
         if (lineStart < lineEnd && find(read, lineStart, lineEnd, name, within, found) == WrittenReads::Same)
             return asPrinted(text, searched.subspan(found.data() - read.data(), found.size()), pieces, find);
@@ -2155,18 +2179,26 @@ static String findSpelled(VM& vm, const PlaceInFunctionText* place, StringView n
     // An executable has the text of the function alone, and knows where that stood in the file.
     std::span<const Latin1Character> text = functionSourceBytesOfSource(place->function);
     std::span<const Latin1Character> textOfAll = sourceBytesOfAllFunctions();
-    Vector<TextPrintedInPlace> pieces;
-    if (place->module && textOfAll.data())
-        pieces = textPrintedInPlaceOf(place->module, StartOfPrintedText::SourceBytesOfAllFunctions);
     if (place->module && place->position.line && place->position.column) {
-        if (std::optional<PlaceInKeptText> found = findInKeptText(place->function, place->module, place->position)) {
-            if (String quote = findSpelledAround(textOfAll, found->startOfSearched, found->endOfSearched, found->at, pieces.span(), name, find); !quote.isNull())
+        QuotesOfPlaces& quotes = quotesOfPlaces(vm);
+        if (quotes.placeInKeptTextIsOf != place->address) {
+            quotes.placeInKeptTextIsOf = place->address;
+            quotes.placeInKeptText = findInKeptText(place->function, place->module, place->position);
+            quotes.textPrintedInPlace = { };
+            if (quotes.placeInKeptText)
+                quotes.textPrintedInPlace = textPrintedInPlaceOf(place->module, StartOfPrintedText::SourceBytesOfAllFunctions, quotes.placeInKeptText->startOfPiece, quotes.placeInKeptText->endOfPiece);
+        }
+        if (const std::optional<PlaceInKeptText>& found = quotes.placeInKeptText) {
+            if (String quote = findSpelledAround(textOfAll, found->startOfSearched, found->endOfSearched, found->at, quotes.textPrintedInPlace.span(), name, find); !quote.isNull())
                 return quote;
         }
     }
 
     if (searched == SearchedText::OnlyKnownPlace || !text.data())
         return { };
+    Vector<TextPrintedInPlace> pieces;
+    if (place->module)
+        pieces = textPrintedInPlaceOf(place->module, StartOfPrintedText::SourceBytesOfAllFunctions);
 
     // Nothing says where in the text the place is. So this answers only where the line of the place, or else the whole function, has one such place, or spells each of them alike.
     std::span<const Latin1Character> found;
@@ -2314,6 +2346,9 @@ static String findOnce(VM& vm, const PlaceInFunctionText& place, StringView name
         bool holdsForEveryName = find == findWrittenElements;
         String quote = findAt(vm, &place, name, find, holdsForEveryName);
         answer = { find, name.toString(), WTF::move(quote), holdsForEveryName };
+        QuotesOfPlaces& quotes = quotesOfPlaces(vm);
+        quotes.placeInKeptTextIsOf = nullptr;
+        quotes.textPrintedInPlace = { };
     }
     return answer.quote;
 }
@@ -2438,7 +2473,8 @@ static bool isConstruction(const String& source)
 {
     if (!source.startsWith("new "_s))
         return false;
-    std::span<const Latin1Character> text = source.span8();
+    CString bytes = source.utf8();
+    std::span<const Latin1Character> text = byteCast<Latin1Character>(bytes.span());
     std::optional<size_t> open = text.back() == ')' ? findOpeningBracket(text, text.size() - 1) : std::nullopt;
     return !open || WTF::find(text.first(*open), static_cast<Latin1Character>('(')) == notFound;
 }

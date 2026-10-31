@@ -745,6 +745,11 @@ private:
     std::optional<ValueFlowNodeID> findNodeMadeBeforeThisTurn(const ValueFlowNodeKey&) const;
     std::optional<uint32_t> findOrMakeNodesWhereAskedFor(const ValueFlowNodeKey&, uint32_t hash, ValueFlowRoundLog&, ValueSetMaker&) const;
     std::span<const ValueFlowOperand> guardsOf(const ValueFlowStatement& statement) const LIFETIME_BOUND { return m_input.operands.subspan(statement.firstGuard, statement.guardCount); }
+    std::span<const ValueFlowOperand> objectsReadUnderKeyOfStore(const ValueFlowStatement& statement) const LIFETIME_BOUND
+    {
+        size_t number = statement.factsOfText.contains(ValueFlowFactOfText::StoresWhatOneObjectHoldsUnderSameKey) ? 1 : statement.factsOfText.contains(ValueFlowFactOfText::StoresWhatTwoObjectsHoldUnderSameKey) ? 2 : 0;
+        return m_input.operands.subspan(statement.firstOperand + statement.operandCount, number);
+    }
     std::span<const ValueFlowOperand> operandsOf(const ValueFlowStatement& statement) const LIFETIME_BOUND { return m_input.operands.subspan(statement.firstOperand, statement.operandCount); }
     bool isKnownWatcher(ValueFlowNodeID node, ValueSetID within, ValueFlowStatementID statement) const
     {
@@ -1277,7 +1282,6 @@ private:
     mutable ListWithRoomToFill<ValueSetID> m_rememberedByStatement;
     // By object: the object and what a walk up its chain of prototypes has seen above it. The chain of the object begins with that.
     ZeroFilledPages<std::atomic<uint32_t>> m_seenFromObjectUp;
-    std::unique_ptr<std::atomic<uint32_t>[]> m_roundThatTiedNamespace;
 
     Vector<Covering, 2> m_coverings;
     ValueSetID m_takenByRetiredNodes { ValueSets::nothing };

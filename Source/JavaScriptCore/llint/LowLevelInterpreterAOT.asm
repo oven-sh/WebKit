@@ -2125,6 +2125,100 @@ macro loadInstanceOfCompiledCallee(callee, instance, scratch)
     loadp JSGlobalObject::m_aotInstance[instance], instance
 end
 
+if X86_64 or ARM64
+# The prologue and op_enter in one. Every test stands in front of the first store into the frame, so a rare case gives the frame back and enters the ordinary prologue.
+macro aotFunctionPrologue(ordinaryPrologue, checkArity)
+    preserveCallerPCAndCFR()
+    loadp CodeBlock[cfr], t1
+    loadp CodeBlock::m_vm[t1], t2
+    getFrameRegisterSizeForCodeBlock(t1, t0)
+    subp cfr, t0, t0
+    bpa VMTrapAwareSoftStackLimitOffset[t2], t0, .ordinary
+    checkArity(.ordinary)
+    btis CodeBlock::m_numberOfArgumentsToSkipAndCouldBeTainted[t1], .ordinary
+    loadb JSCell::m_cellState[t1], t3
+    bibeq t3, (constexpr (VM::offsetOfHeapBarrierThreshold()))[t2], .ordinary
+    btinz VM::m_threadContext + VMThreadContext::m_traps + VMTraps::m_trapBits[t2], VMTrapsAsyncEvents, .ordinary
+
+    preserveCalleeSavesUsedByLLInt()
+    move sp, t2
+    move t0, sp
+    bpeq t0, t2, .zeroStackDone
+    if ARM64
+    .zeroStackLoop:
+        subp 2 * PtrSize, t2
+        storepairq zr, zr, [t2]
+        bpa t2, t0, .zeroStackLoop
+    else
+        move 0, t3
+        fq2d t3, ft0
+        subp t2, t0, t3
+        btpz t3, 2 * PtrSize, .zeroStackLoop
+        subp 2 * PtrSize, t2
+        storev v0, [t2]
+        bpeq t2, t0, .zeroStackDone
+    .zeroStackLoop:
+        subp 4 * PtrSize, t2
+        storev v0, [t2]
+        storev v0, 2 * PtrSize[t2]
+        bpa t2, t0, .zeroStackLoop
+    end
+.zeroStackDone:
+
+    loadi CodeBlock::m_numVars[t1], t2
+    subq CalleeSaveSpaceAsVirtualRegisters, t2
+    btqz t2, .variablesDone
+    leap -CalleeSaveSpaceAsVirtualRegisters * 8[cfr], t3
+    move ValueUndefined, t0
+    negq t2
+.variablesLoop:
+    storeq t0, [t3, t2, 8]
+    addq 1, t2
+    btqnz t2, .variablesLoop
+.variablesDone:
+    loadis CodeBlock::m_scopeRegister[t1], t2
+    loadp Callee[cfr], t0
+    loadp JSCallee::m_scope[t0], t0
+    storeq t0, [cfr, t2, 8]
+
+    loadp CodeBlock::m_instructionsRawPointer[t1], PB
+    loadp CodeBlock::m_metadata[t1], metadataTable
+    move TagNumber, numberTag
+    addq TagOther, numberTag, notCellMask
+    assert(macro (ok) bbeq [PB], constexpr op_enter, ok end)
+    move (constexpr op_enter_length) + OpcodeIDNarrowSize, PC
+    nextInstruction()
+
+.ordinary:
+    restoreCallerPCAndCFR()
+    jmp ordinaryPrologue
+end
+
+macro aotArityIsNotChecked(ordinary)
+end
+
+macro aotArityIsChecked(ordinary)
+    loadi LowWordOffset + ArgumentCountIncludingThis[cfr], t3
+    bib t3, CodeBlock::m_numParameters[t1], ordinary
+end
+
+op(llint_aot_function_for_call_prologue, macro ()
+    aotFunctionPrologue(_llint_function_for_call_prologue, aotArityIsNotChecked)
+end)
+
+op(llint_aot_function_for_construct_prologue, macro ()
+    aotFunctionPrologue(_llint_function_for_construct_prologue, aotArityIsNotChecked)
+end)
+
+op(llint_aot_function_for_call_arity_check, macro ()
+    aotFunctionPrologue(_llint_function_for_call_arity_check, aotArityIsChecked)
+end)
+
+op(llint_aot_function_for_construct_arity_check, macro ()
+    aotFunctionPrologue(_llint_function_for_construct_arity_check, aotArityIsChecked)
+end)
+end
+
 # A call site that has seen too many callees for a stub. t0: the callee, t2: the CallLinkInfo. The ordinary trampoline needs both, and t1, as they are.
 # AOT::Closure::getCallData() and AOT::SlimClosure::getCallData(). The sign of the word of a closure says that it is a class.
 op(llint_aot_virtual_call_trampoline, macro ()
@@ -2444,5 +2538,12 @@ entry(llint_aot, macro ()
 
     # VM::getCTIVirtualCall() reads the entry of the ordinary trampoline.
     setEntryAddress(constexpr llint_virtual_call_trampoline, _llint_aot_virtual_call_trampoline)
+
+    if X86_64 or ARM64
+        setEntryAddress(constexpr llint_function_for_call_prologue, _llint_aot_function_for_call_prologue)
+        setEntryAddress(constexpr llint_function_for_construct_prologue, _llint_aot_function_for_construct_prologue)
+        setEntryAddress(constexpr llint_function_for_call_arity_check, _llint_aot_function_for_call_arity_check)
+        setEntryAddress(constexpr llint_function_for_construct_arity_check, _llint_aot_function_for_construct_arity_check)
+    end
 end)
 end

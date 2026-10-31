@@ -484,7 +484,8 @@ EffectSummaries computeEffectSummaries(const Program&, const FlowResults&, Build
 // to code outlined from the generic version. Each such callee is read again for each such call, which is too expensive for a build, so only the verifier asks, when a guard is unavailable.
 EffectSummaries computeEffectSummariesByOperandTypes(const Program&, const FlowResults&, BuildContext&);
 void updateEffectSummaries(const Program&, const FlowResults&, BuildContext&, BodySummaries& kept, EffectSummaries&, BodyReferences* = nullptr);
-FunctionSummary summarizeBody(const EffectContext&, FunctionID, FunctionAnalyses&);
+// A callee listed here is read as the summary beside it says.
+FunctionSummary summarizeBody(const EffectContext&, FunctionID, FunctionAnalyses&, std::span<const std::pair<FunctionID, FunctionSummary>> versionsOfCallees = { });
 
 uint64_t stampOfRecord(const Function&);
 uint64_t stampOfRecordForCallers(const Function&);

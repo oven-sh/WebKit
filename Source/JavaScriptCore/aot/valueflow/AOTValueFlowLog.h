@@ -129,7 +129,7 @@ struct ValueFlowNodeKey {
 };
 static_assert(sizeof(ValueFlowNodeKey) == 12);
 
-static_assert(static_cast<uint8_t>(ValueFlowNameKind::NamesOfMethods) < ValueFlowNodeKey::isByNativeWalk);
+static_assert(static_cast<uint8_t>(ValueFlowNameKind::NamespaceExports) < ValueFlowNodeKey::isByNativeWalk);
 
 inline ValueFlowCallGroup callGroupAt(ValueFlowNodeID first)
 {

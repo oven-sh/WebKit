@@ -58,6 +58,8 @@ ValueFlowName foundName(const HeapKey& key, HeapPropertyPart part)
 
 ValueFlowName nameOfLookupForValue(const HeapKey& key)
 {
+    if (key.namesNoPropertyOfEngine)
+        return everyPropertyUnderKeyOfProgramAlone;
     return key.namesEnumerableProperty ? ValueFlowName { ValueFlowNameKind::EveryProperty, 1 } : foundName(key, HeapPropertyPart::Value);
 }
 
@@ -65,6 +67,8 @@ HeapKey keyOfFoundName(ValueFlowName name)
 {
     if (name == nameOfLookupForValue(enumeratedHeapKey))
         return enumeratedHeapKey;
+    if (name == everyPropertyUnderKeyOfProgramAlone)
+        return heapKeyOfProgramAlone;
     if (name.kind == ValueFlowNameKind::Property || name.kind == ValueFlowNameKind::Getter || name.kind == ValueFlowNameKind::Setter || name.kind == ValueFlowNameKind::MemberWritten)
         return { HeapKeyClass::Name, PropertyKeyID(name.payload) };
     if (name.kind == ValueFlowNameKind::Elements || name.kind == ValueFlowNameKind::GetterUnderUnknownKey || name.kind == ValueFlowNameKind::SetterUnderUnknownKey)
@@ -1588,7 +1592,7 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
     readMembers(chain.objects, chain.start, key, result, builtinGetters);
     if (m_findsOwnPropertiesListedAbove)
         readOwnPropertiesListedAbove(chain.objects, result, builtinGetters);
-    if (key.namesEnumerableProperty && holdsAnything(m_context.markedAmong(chain.objects, { ObjectMutation::DeleteField, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype })))
+    if (key.namesEnumerableProperty && !key.namesNoPropertyOfEngine && holdsAnything(m_context.markedAmong(chain.objects, { ObjectMutation::DeleteField, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype })))
         readWhatNamesOfProgramMayHaveHidden(chain, result, builtinGetters);
     if (mayHoldUndeclaredProperty(chain.objects, key)) {
         builtinGetters.append(m_tables.undescribedNativeCode());
@@ -2013,6 +2017,7 @@ void HeapRule::runLookup()
     case ValueFlowNameKind::AddedNames:
     case ValueFlowNameKind::FoundThroughEscapedInstances:
     case ValueFlowNameKind::NamesOfMethods:
+    case ValueFlowNameKind::NamespaceExports:
         RELEASE_ASSERT(splitLookupThroughPlaceholders());
         return;
     }

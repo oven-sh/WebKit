@@ -1,0 +1,66 @@
+# An allocation that fails throws where it stands, so one that stands under a handler goes to its use only where the same handler covers the use.
+# FORM: Prepared
+# RUN: pass SinkConstants
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="callback" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}
+
+function f1 name="usedBehindTheTry" parameters=[{type=boolean}, {type=function}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = NewClosure function=f0
+    Jump -> next b2()
+  b2():
+    v3 = Call v1, -, v2
+    Return v3
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    Return v4
+# CHECK: b1() handler=b3():
+# CHECK-NEXT: v2: f0 = NewClosure function=f0
+# CHECK: b2():
+# CHECK-NEXT: = Call v1, -, v2
+}
+
+function f2 name="usedUnderAnotherHandler" parameters=[{type=boolean}, {type=function}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = NewClosure function=f0
+    Jump -> next b2()
+  b2() handler=b4():
+    v3 = Call v1, -, v2
+    Return v3
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    Return v4
+  b4() role=CatchHandler:
+    v5 = CatchValue
+    Return v1
+# CHECK: b1() handler=b3():
+# CHECK-NEXT: v2: f0 = NewClosure function=f0
+# CHECK: b2() handler=b4():
+# CHECK-NEXT: = Call v1, -, v2
+}
+
+function f3 name="bothUnderOneHandler" parameters=[{type=boolean}, {type=function}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b4():
+    v2 = NewClosure function=f0
+    Branch v0 -> taken b2(), notTaken b3()
+  b2() handler=b4():
+    v3 = Call v1, -, v2
+    Return v3
+  b3():
+    Return v1
+  b4() role=CatchHandler:
+    v4 = CatchValue
+    Return v4
+# CHECK: b1() handler=b4():
+# CHECK-NEXT: Branch v0 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2() handler=b4():
+# CHECK-NEXT: [[copy]]: f0 = NewClosure function=f0
+# CHECK-NEXT: = Call v1, -, [[copy]]
+}

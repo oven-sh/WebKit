@@ -390,9 +390,25 @@ LengthTest ElementAccessEmitter::testLength(Integer index, const ArrayElements& 
     return { below(word, loadField<Word32>(elements.butterfly, m_heaps.Butterfly_publicLength)), zeroExtended(word) };
 }
 
+// The operation names the length that the list has where it stands: nothing is read.
+LengthTest ElementAccessEmitter::testLength(const ValueContext& value, Integer index, const ArrayElements& elements)
+{
+    if (!VariadicOperandPosition::length(value->opcode) || value->lengthOperands().empty())
+        return testLength(index, elements);
+    auto lengths = value->lengthOperands();
+    Operand length = get(lengths[0]);
+    bool isWord = length.representation == Representation::Int32;
+    if (!isWord && length.representation != Representation::Int64)
+        return testLength(index, elements);
+    if (index.value()->opcode() != B3::SExt32)
+        return { below(index, isWord ? zeroExtended(length.as<Word32>()) : length.as<Integer>()), index };
+    Word32 word(index.value()->child(0));
+    return { below(word, isWord ? length.as<Word32>() : low32(length.as<Integer>())), zeroExtended(word) };
+}
+
 Operand ElementAccessEmitter::readElement(const ValueContext& value, const ArrayStorageForm& form, const ArrayElements& elements, Integer index, LBasicBlock isAbsent)
 {
-    LengthTest test = testLength(index, elements);
+    LengthTest test = testLength(value, index, elements);
     branchUnless(test.isInside, isAbsent);
     return readElementInsideLength(value, form, elements, test.indexInside, isAbsent);
 }
@@ -456,7 +472,7 @@ Boxed ElementAccessEmitter::readElementOfExtraProperties(CellPointer object, con
 
 Boxed ElementAccessEmitter::readBoxedElement(const ValueContext& value, const ArrayElements& elements, Integer index, LBasicBlock isAbsent)
 {
-    LengthTest test = testLength(index, elements);
+    LengthTest test = testLength(value, index, elements);
     branchUnless(test.isInside, isAbsent);
     Boxed rawElement = loadBoxedElement(elements, test.indexInside);
     if (!isDense(value->arrayOperand()))
@@ -602,7 +618,7 @@ Boxed ElementAccessEmitter::readOutOfLine(const ValueContext& value, CellPointer
 
 void ElementAccessEmitter::branchOnElementPresence(const ValueContext& value, const ArrayStorageForm* form, const ArrayElements& elements, Integer index, BranchTargets targets)
 {
-    LengthTest test = testLength(index, elements);
+    LengthTest test = testLength(value, index, elements);
     if (isDense(value->arrayOperand()) && !generator().validatesOrChecksProofs()) {
         branch(test.isInside, targets);
         return;

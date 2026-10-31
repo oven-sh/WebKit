@@ -141,6 +141,8 @@ bool hoistLoopInvariantValues(Procedure& proc)
     Dominators& dominators = proc.dominators();
     const bool hoistsOnlyFromLikelyPaths = proc.policy().loops.hoistsOnlyFromLikelyPaths;
     const bool hoistsImmutableLoadsPastWrites = proc.policy().loops.hoistsImmutableLoadsPastWrites;
+    // A loop polls, and what stands in front of a loop is alive at its poll.
+    const bool hoistsVectors = !proc.policy().air.registers.patchpointsKeepOnlyLowerHalvesOfVectors;
     
     // FIXME: We should have a reusable B3::EffectsSet data structure.
     // https://bugs.webkit.org/show_bug.cgi?id=174762
@@ -260,7 +262,7 @@ bool hoistLoopInvariantValues(Procedure& proc)
             // We never hoist write effects or control constructs. A trapping load is allowed
             // through. The fault it reports as a side exit is its own, and the checks below decide
             // whether it may move.
-            if (!effects.mustExecute() || trappingLoad) {
+            if ((!effects.mustExecute() || trappingLoad) && (hoistsVectors || !value->type().isVector())) {
                 // Try outermost loop first.
                 for (unsigned i = blockLoops.size(); i--;) {
                     const NaturalLoop& loop = *blockLoops[i];

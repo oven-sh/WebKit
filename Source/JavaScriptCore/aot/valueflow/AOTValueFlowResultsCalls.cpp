@@ -307,11 +307,15 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
         for (size_t key : privateNamesOfAppendedFields) {
             auto begin = std::ranges::lower_bound(layoutsWithFieldOfKey, static_cast<uint64_t>(key) << 32);
             auto end = std::ranges::lower_bound(begin, layoutsWithFieldOfKey.end(), static_cast<uint64_t>(key + 1) << 32);
-            if (static_cast<uint64_t>(end - begin) > inputs.build.limit(LimitID::MaxLayoutsInType))
+            Vector<LayoutID> allocatedLayouts;
+            for (auto holder = begin; holder != end; ++holder) {
+                LayoutID layout(static_cast<uint32_t>(*holder));
+                if (application.layouts[layout.index()].flow.allocation != AllocationState::NeverAllocated)
+                    allocatedLayouts.append(layout);
+            }
+            if (allocatedLayouts.isEmpty() || allocatedLayouts.size() > inputs.build.limit(LimitID::MaxLayoutsInType))
                 continue;
-            application.layoutsWithPrivateNames.append({ PropertyKeyID(static_cast<uint32_t>(key)), Vector<LayoutID>(static_cast<size_t>(end - begin), [&](size_t index) {
-                return LayoutID(static_cast<uint32_t>(begin[index]));
-            }) });
+            application.layoutsWithPrivateNames.append({ PropertyKeyID(static_cast<uint32_t>(key)), WTF::move(allocatedLayouts) });
         }
     }
     constexpr uint16_t noClass = UINT16_MAX;

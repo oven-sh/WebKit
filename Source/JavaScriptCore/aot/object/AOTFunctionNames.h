@@ -44,6 +44,9 @@ struct PlaceInKeptText {
     size_t startOfSearched;
     size_t endOfSearched;
     size_t at;
+    // The piece of the file that holds it all. What is printed in place of a part of it is a copy of nothing outside it.
+    size_t startOfPiece;
+    size_t endOfPiece;
 };
 std::optional<PlaceInKeptText> findInKeptText(FunctionID, ModuleID, LineColumn);
 // The text of every function, which functionSourceBytes() answers a part of.
@@ -51,6 +54,8 @@ std::span<const Latin1Character> sourceBytesOfAllFunctions();
 // What `bun run` has in place of pieces of the text of the module. Nothing where the image counts from elsewhere than the caller.
 enum class StartOfPrintedText : uint8_t { SourceBytesOfAllFunctions, File };
 Vector<TextPrintedInPlace> textPrintedInPlaceOf(ModuleID, StartOfPrintedText);
+// Those that start in text[from, to), or the one that says that the file runs as it is written.
+Vector<TextPrintedInPlace> textPrintedInPlaceOf(ModuleID, StartOfPrintedText, size_t from, size_t to);
 
 String writtenFunctionName(FunctionID);
 String initialNameProperty(FunctionID);

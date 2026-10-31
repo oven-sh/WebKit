@@ -59,6 +59,7 @@ enum class ValueFlowNameKind : uint8_t {
     AddedNames,
     FoundThroughEscapedInstances,
     NamesOfMethods,
+    NamespaceExports,
 };
 
 enum class ValueFlowNameSort : uint8_t { Value, Getter, Setter, Deletion, Redefinition, PrototypeLink, Copy, Other };
@@ -132,6 +133,7 @@ constexpr ValueFlowNameShape shapeOf(ValueFlowNameKind kind)
     case ValueFlowNameKind::AddedNames:
     case ValueFlowNameKind::FoundThroughEscapedInstances:
     case ValueFlowNameKind::NamesOfMethods:
+    case ValueFlowNameKind::NamespaceExports:
         return { Sort::Other, Reach::NoKey };
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -189,6 +191,7 @@ constexpr bool mayBeTheSameName(ValueFlowNameKind written, ValueFlowNameKind rea
     case ValueFlowNameKind::AddedNames:
     case ValueFlowNameKind::FoundThroughEscapedInstances:
     case ValueFlowNameKind::NamesOfMethods:
+    case ValueFlowNameKind::NamespaceExports:
         return false;
     }
     return false;
@@ -329,8 +332,11 @@ enum class ValueFlowFactOfText : uint8_t {
     HasCopyOfOperation = 1 << 3,
     // Of an ElemGet: `object[name]` in `for (name in object)`.
     ReadsUnderNameOfEnumerationOfSameObject = 1 << 4,
-    // Of a ForInStep: walksNamesThatAreReExported().
-    WalksNamesThatAreReExported = 1 << 5,
+    // Of an ElemSet: objectsReadUnderKeyOfStore() finds one object, or two. They stand behind the operands of the statement.
+    StoresWhatOneObjectHoldsUnderSameKey = 1 << 5,
+    StoresWhatTwoObjectsHoldUnderSameKey = 1 << 6,
+    // Of an IteratorResume: the step of `...rest` in a pattern, which runs once for each place from its own on.
+    StepsRestElement = 1 << 7,
 };
 
 // Of the few operations of which one of these holds, in the order of functions and sites.
@@ -341,6 +347,9 @@ struct ValueFlowRareFactsOfText {
     BuiltinID entryNamed;
     // Of a call whose statement has no key: the member that a longer look at the text finds.
     PropertyKeyID keyOfMemberCalledOnItsHolder;
+    // Of an ElemGet or an ElemSet: `object["$" + name]`: the text that is written in front of the rest of the key.
+    StringID textThatKeyBeginsWith;
+    std::optional<uint8_t> positionInPair { };
 };
 
 // An operation whose rule reads what the operation itself says: a layout and its fields, a module, the kind of an iterator. A Value holds all of that itself. In the order of functions and sites.

@@ -179,10 +179,11 @@ const describeError = (what, action) => {
 
 static void checkInEveryBuild(ASCIILiteral programText, ASCIILiteral statements, ASCIILiteral statementsThatPrintCalls, ASCIILiteral output, ASCIILiteral outputWithCalls)
 {
-    checkOutputOfProgramInShell(programText, outputWithCalls, { "heat=EverythingIsHot"_s }, statementsThatPrintCalls, { "--aotCountsPath=/dev/null"_s });
-    checkOutputOfProgramInShell(programText, output, { }, statements, { "--aotCountsPath=/dev/null"_s });
-    for (ASCIILiteral word : { "validate"_s, "heat=EverythingIsCold"_s })
-        checkOutputOfProgramInShell(programText, output, { word }, statements, { "--aotCountsPath=/dev/null"_s });
+    // A record that answers keeps the run time out of it whatever the heat of the code: the test is in line in hot code and in a stub elsewhere.
+    checkOutputOfProgramInShell(programText, outputWithCalls, { }, statementsThatPrintCalls, { "--aotCountsPath=/dev/null"_s });
+    for (ASCIILiteral word : { "heat=EverythingIsHot"_s, "heat=EverythingIsCold"_s })
+        checkOutputOfProgramInShell(programText, outputWithCalls, { word }, statementsThatPrintCalls, { "--aotCountsPath=/dev/null"_s });
+    checkOutputOfProgramInShell(programText, output, { "validate"_s }, statements, { "--aotCountsPath=/dev/null"_s });
 }
 
 #define CHECK_IN_EVERY_BUILD(programText, STATEMENTS, OUTPUT) \

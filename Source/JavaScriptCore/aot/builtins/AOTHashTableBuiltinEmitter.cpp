@@ -359,7 +359,7 @@ bool HashTableBuiltinEmitter::looksIntoHomeSlot(const InlineCall& call, KeyCompa
     return isKey && hasReceiverThatLeavesLoop(call);
 }
 
-// Reads the table once, out of the loop where B3 can move it. A table in the image, one that is too large and a string without a hash or another cell with the same text go to the stub.
+// Reads the table once, out of the loop where B3 can move it. A table in the image, one that is too large, a string without a hash and a text that must be compared by its characters go to the stub.
 Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPointer owner, Boxed key, KeyComparison comparison, HashTableOwner kindOfOwner, bool returnsValue)
 {
     constexpr ptrdiff_t index = CompactTable::offsetOfIndex();
@@ -387,6 +387,9 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
     LBasicBlock matchAmongNextEight = newBlock();
     LBasicBlock noMatchAmongNextEight = newBlock();
     LBasicBlock goesOnToNextEight = newBlock();
+    LBasicBlock isOtherWord = keysAreWide ? nullptr : newBlock();
+    LBasicBlock isOtherCell = keysAreWide ? nullptr : newBlock();
+    LBasicBlock isOtherString = keysAreWide ? nullptr : newBlock();
     LBasicBlock found = newBlock();
     LBasicBlock absent = newBlock();
     LBasicBlock byStub = newBlock();
@@ -495,6 +498,12 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
         NarrowReference word(m_out.load32(inColumns(m_out.add(keys, m_out.shl(number, m_out.constInt32(2))))));
         return m_out.equal(decode(word).value(), key.value());
     };
+    // Two string cells may hold one text: a name out of Object.keys() and the same name as the program writes it. One place compares what the two cells hold, for every match.
+    Vector<ValueFromBlock, 4> numbersOfOtherWords;
+    auto branchOnStringKeyAt = [&](LValue number) {
+        numbersOfOtherWords.append(m_out.anchor(number));
+        m_out.branch(keyIsAt(number), normalEdge(found), unlikelyEdge(isOtherWord));
+    };
 
     m_out.appendTo(hasHash);
     if (keysAreWide) {
@@ -521,7 +530,10 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
     m_out.appendTo(isUsed);
     LValue numberOfMatch = m_out.lShr(bitOfMatch, m_out.constInt32(3));
     ValueFromBlock numberAmongTags = m_out.anchor(numberOfMatch);
-    m_out.branch(keyIsAt(numberOfMatch), normalEdge(found), unlikelyEdge(byStub));
+    if (keysAreWide)
+        m_out.branch(keyIsAt(numberOfMatch), normalEdge(found), unlikelyEdge(byStub));
+    else
+        branchOnStringKeyAt(numberOfMatch);
 
     m_out.appendTo(hasSlots);
     LValue slot = m_out.bitOr(m_out.zeroExtPtr(hash), bitsAboveSlots);
@@ -541,10 +553,10 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
     auto nextEight = [&](LValue first) { return m_out.bitOr(m_out.add(first, m_out.constInt64(CompactTable::slotsPerGroup)), bitsAboveSlots); };
     Vector<ValueFromBlock, 3> whereToGoOn;
     Vector<ValueFromBlock, 3> tagsToGoOnWith;
-    // One key in 64 has the tag of another. A number is then another key, and the search goes on. Two string cells may hold one text: the stub sorts those out.
+    // One key in 64 has the tag of another. A number is then another key, and the search goes on. Two texts with one tag are left to the stub.
     auto branchOnKeyAt = [&](LValue number, LValue tagBehindHome, NOESCAPE const Invocable<LValue()> auto& firstToGoOnFrom) {
         if (!keysAreWide) {
-            m_out.branch(keyIsAt(number), normalEdge(found), unlikelyEdge(byStub));
+            branchOnStringKeyAt(number);
             return;
         }
         LBasicBlock isOtherKey = newBlock();
@@ -614,7 +626,7 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
     LValue numberAmongNextEight = loadNumber(slotOfFirstMatch(firstOfNext, matchesLeft));
     ValueFromBlock numberOfNextEight = m_out.anchor(numberAmongNextEight);
     if (!keysAreWide)
-        m_out.branch(keyIsAt(numberAmongNextEight), normalEdge(found), unlikelyEdge(byStub));
+        branchOnStringKeyAt(numberAmongNextEight);
     else {
         LBasicBlock isOtherKey = newBlock();
         m_out.branch(keyIsAt(numberAmongNextEight), normalEdge(found), unlikelyEdge(isOtherKey));
@@ -632,8 +644,26 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
     m_out.addIncomingToPhi(firstOfNext, m_out.anchor(nextEight(firstOfNext)));
     m_out.jump(searchesNextEight);
 
+    Vector<ValueFromBlock, 5> numbersFound { numberAmongTags, numberOfHome, numberOfEight, numberOfNextEight };
+    if (!keysAreWide) {
+        m_out.appendTo(isOtherWord);
+        LValue numberOfOtherWord = m_out.phi(B3::Int64, numbersOfOtherWords);
+        NarrowReference word(m_out.load32(inColumns(m_out.add(keys, m_out.shl(numberOfOtherWord, m_out.constInt32(2))))));
+        m_out.branch(isCellReferenceAmongAllWords(word).value(), normalEdge(isOtherCell), unlikelyEdge(byStub));
+
+        m_out.appendTo(isOtherCell);
+        CellPointer candidate = decode(word);
+        m_out.branch(m_out.equal(m_out.load8ZeroExt32(candidate.value(), m_heaps.JSCell_typeInfoType), m_out.constInt32(StringType)), normalEdge(isOtherString), unlikelyEdge(byStub));
+
+        // What the key holds is read again. Kept from the first read it would hold a register through the whole search.
+        m_out.appendTo(isOtherString);
+        numbersFound.append(m_out.anchor(numberOfOtherWord));
+        Pointer implOfKey = loadField<Pointer>(unboxCell(Boxed(m_out.opaque(key.value()))), m_heaps.JSString_value);
+        m_out.branch(m_out.equal(loadField<Pointer>(candidate, m_heaps.JSString_value).value(), implOfKey.value()), normalEdge(found), unlikelyEdge(byStub));
+    }
+
     m_out.appendTo(found);
-    LValue number = m_out.phi(B3::Int64, numberAmongTags, numberOfHome, numberOfEight, numberOfNextEight);
+    LValue number = m_out.phi(B3::Int64, numbersFound);
     if (!returnsValue)
         join.add(boxedConstant(jsBoolean(true)));
     else {

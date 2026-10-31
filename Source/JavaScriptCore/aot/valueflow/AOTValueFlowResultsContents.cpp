@@ -408,6 +408,7 @@ private:
             case ValueFlowNameKind::AddedNames:
             case ValueFlowNameKind::FoundThroughEscapedInstances:
             case ValueFlowNameKind::NamesOfMethods:
+            case ValueFlowNameKind::NamespaceExports:
                 return false;
             }
         });

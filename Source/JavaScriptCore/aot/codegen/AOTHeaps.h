@@ -65,6 +65,7 @@ using B3HeapList = Vector<const B3::AbstractHeap*, 8>;
     v(AOTInstance_mutableFields, 0, RuntimeState) \
     v(AOTInstance_stringCells, 0, AllocatorState) \
     v(AOTInstance_siteCaches, 0, RuntimeState) \
+    v(AOTPropertyCaches_front, 0, RuntimeState) \
     v(AOTInstance_closureCells, 0, RuntimeState) \
     v(AOTInstance_misfit, 0, RuntimeState) \
     v(AOTInstance_globalBindings, 0, RuntimeState) \

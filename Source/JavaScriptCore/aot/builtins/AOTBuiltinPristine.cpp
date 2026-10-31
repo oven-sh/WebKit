@@ -140,10 +140,7 @@ static PristineAspectSet collectProvenAspects(const PristineQuery& query, ValueI
     PristineRequirement asTested = wanted;
     if (asTested.aspects.contains(PristineAspects::NamesKeptBelow))
         asTested.aspects.add(PristineAspects::Names);
-    PristineAspectSet proven = collectAspectsProvenAsTheyAre(query, value, asTested, point);
-    if (proven.contains(PristineAspects::Names))
-        proven.add(PristineAspects::NamesKeptBelow);
-    return proven;
+    return aspectsImpliedBy(collectAspectsProvenAsTheyAre(query, value, asTested, point));
 }
 
 PristineAspectSet aspectsProvenAt(const PristineQuery& query, ValueID value, BuiltinClassID builtinClass, ProgramPoint point)

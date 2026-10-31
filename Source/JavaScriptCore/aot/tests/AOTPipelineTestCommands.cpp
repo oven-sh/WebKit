@@ -137,6 +137,9 @@ static void runPassCommand(TestCommandContext& context)
 
 static void runPipelineCommand(TestCommandContext& context)
 {
+    bool printsHeat = context.arguments.size() == 2 && context.arguments[1] == "heat"_s;
+    if (printsHeat)
+        context.arguments = context.arguments.first(1);
     std::optional<PassID> last = parsePassArgument(context, "pipeline"_s);
     if (!last || !checkFormIsAsRead(context, "pipeline"_s))
         return;
@@ -149,6 +152,8 @@ static void runPipelineCommand(TestCommandContext& context)
     if (context.build.diagnostics().hasErrors())
         return;
     pipeline.dumpResultOf(*last, context.out);
+    if (printsHeat)
+        pipeline.dumpResultOf(PassID::EstimateHeat, context.out);
     printDeclines(context);
     printProgram(context.out, *context.program);
 }

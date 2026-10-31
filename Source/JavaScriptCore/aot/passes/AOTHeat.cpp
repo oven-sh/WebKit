@@ -195,20 +195,138 @@ static bool leadsToBody(const Function& function)
 
 Expected<HeatClass> Heat::classOf(const Program& program, FunctionID id, Expected<double> expectedActivations, Expected<double> expectedFrequencyInFunction) const
 {
-    double activations = expectedActivations.predicted();
-    double frequencyInFunction = expectedFrequencyInFunction.predicted();
+    return classOf(m_entries.of(program, id), program.at(id), expectedActivations.predicted(), expectedFrequencyInFunction.predicted());
+}
+
+Expected<HeatClass> Heat::classOf(const Entry& entry, const Function& function, double activations, double frequencyInFunction) const
+{
     // A share of the program would cut through a handler: its blocks run equally often but for the calls that may throw in between.
-    if (m_thresholds && !m_classOfEverything && frequencyInFunction >= HeatModel::minWeightOfNearlyCertainCall && m_entries.of(program, id).isCalledPerEvent)
+    if (m_thresholds && !m_classOfEverything && frequencyInFunction >= HeatModel::minWeightOfNearlyCertainCall && entry.isCalledPerEvent)
         return HeatClass::Hot;
     double heat = activations * frequencyInFunction;
     HeatClass heatClass = classOf(heat).predicted();
     if (m_hotIsByRank && !m_classOfEverything && !isCold(heatClass).predicted()) {
-        heat = m_entries.of(program, id).rank * frequencyInFunction;
+        heat = entry.rank * frequencyInFunction;
         heatClass = heat >= m_thresholds->hot ? HeatClass::Hot : HeatClass::Warm;
     }
     if (heatClass != HeatClass::Hot || heat >= frequencyConstants.iterationsPerLoop || frequencyInFunction >= HeatModel::minWeightOfCallInLoop)
         return heatClass;
-    return m_entries.of(program, id).isCalledInLoop && !leadsToBody(program.at(id)) ? heatClass : HeatClass::Warm;
+    return entry.isCalledInLoop && !leadsToBody(function) ? heatClass : HeatClass::Warm;
+}
+
+void Heat::takeInFunctionsMadeSince(const Program& program, const FlowResults& flow, BuildContext& build)
+{
+    const unsigned firstAdded = std::max(m_numberOfFunctionsSeen, m_entries.size());
+    const unsigned count = program.functions.size();
+    m_numberOfFunctionsSeen = count;
+    if (!m_entries.size() || !m_thresholds || m_classOfEverything)
+        return;
+
+    Vector<FunctionID> added;
+    for (unsigned index = firstAdded; index < count; ++index) {
+        const Function& function = program.functions[index];
+        if (!function.blocks.isEmpty() && !function.derivation.source)
+            added.append(FunctionID(index));
+    }
+    if (added.isEmpty())
+        return;
+
+    auto findAdded = [&](FunctionID id) -> std::optional<unsigned> {
+        for (; id && id.index() >= firstAdded; id = program.at(id).derivation.source) {
+            auto found = std::ranges::lower_bound(added, id);
+            if (found != added.end() && *found == id)
+                return static_cast<unsigned>(found - added.begin());
+        }
+        return std::nullopt;
+    };
+
+    struct CallSite {
+        unsigned callee;
+        FunctionID caller;
+        BlockID block;
+        double frequency;
+    };
+    Vector<CallSite> sites = collectInParallel<CallSite>(build.parallelLoops(), count, [&](unsigned index, Vector<CallSite>& found) {
+        FunctionID caller(index);
+        const Function& function = program.functions[index];
+        if (function.blocks.isEmpty())
+            return;
+        std::optional<FunctionAnalyses> analyses;
+        forEachDirectCall(program, caller, [&](BlockID block, ValueID, FunctionID target) {
+            if (target.index() < firstAdded)
+                return;
+            auto callee = std::ranges::lower_bound(added, target);
+            if (callee == added.end() || *callee != target)
+                return;
+            if (!analyses)
+                analyses.emplace(AnalysisContext { build, program, &flow, nullptr, caller }, function);
+            found.append(CallSite { static_cast<unsigned>(callee - added.begin()), caller, block, analyses->blockFrequencies().frequencyOf(block).predicted() });
+        });
+    });
+    AOT::sort(sites, [](const CallSite& a, const CallSite& b) {
+        return std::tuple(a.callee, a.caller.index(), a.block.index()) < std::tuple(b.callee, b.caller.index(), b.block.index());
+    });
+
+    Vector<Vector<unsigned, 2>> calleesAmongAdded(added.size());
+    Vector<unsigned> numberOfCallersToCome(FillWith { }, added.size(), 0u);
+    for (const CallSite& site : sites) {
+        std::optional<unsigned> caller = findAdded(site.caller);
+        if (!caller || *caller == site.callee || calleesAmongAdded[*caller].contains(site.callee))
+            continue;
+        calleesAmongAdded[*caller].append(site.callee);
+        ++numberOfCallersToCome[site.callee];
+    }
+
+    Vector<Entry> entries(added.size(), [](size_t) { return Entry { }; });
+    Vector<uint8_t> isFinished(FillWith { }, added.size(), static_cast<uint8_t>(0));
+    Vector<unsigned> ready;
+    auto finish = [&](unsigned position) {
+        Entry entry { 0, HeatClass::Unknown, 0, 0 };
+        auto [first, end] = std::ranges::equal_range(sites, position, { }, &CallSite::callee);
+        for (const CallSite& site : std::span { first, end }) {
+            std::optional<unsigned> addedCaller = findAdded(site.caller);
+            if (addedCaller && !isFinished[*addedCaller])
+                continue;
+            const Entry& caller = addedCaller ? entries[*addedCaller] : m_entries.of(program, site.caller);
+            if (caller.heatClass == HeatClass::Unknown)
+                continue;
+            bool isNearlyCertain = site.frequency >= HeatModel::minWeightOfNearlyCertainCall;
+            entry.heatClass = HeatClass::Cold;
+            entry.activations += (program.at(site.caller).runsOnlyBehindFailedTest() ? 0 : caller.activations) * site.frequency;
+            entry.estimatedActivations += caller.estimatedActivations * site.frequency;
+            entry.rank += caller.rank * site.frequency;
+            entry.percentile = std::max(entry.percentile, caller.percentile);
+            entry.isCalledInLoop |= site.frequency >= HeatModel::minWeightOfCallInLoop || (caller.isCalledInLoop && isNearlyCertain);
+            entry.isCalledPerEvent |= caller.isCalledPerEvent && isNearlyCertain;
+        }
+        if (entry.heatClass != HeatClass::Unknown) {
+            entry.heatClass = classOf(entry, program.at(added[position]), entry.activations, 1).predicted();
+            entries[position] = entry;
+        }
+        isFinished[position] = true;
+        for (unsigned callee : calleesAmongAdded[position]) {
+            if (!--numberOfCallersToCome[callee] && !isFinished[callee])
+                ready.append(callee);
+        }
+    };
+    for (unsigned position = 0; position < added.size(); ++position) {
+        if (!numberOfCallersToCome[position])
+            ready.append(position);
+    }
+    for (unsigned next = 0;; ++next) {
+        while (!ready.isEmpty())
+            finish(ready.takeLast());
+        while (next < added.size() && isFinished[next])
+            ++next;
+        if (next == added.size())
+            break;
+        finish(next);
+    }
+
+    for (unsigned position = 0; position < added.size(); ++position) {
+        if (entries[position].heatClass != HeatClass::Unknown)
+            m_entries.appendEntryOfLaterFunction(added[position], WTF::move(entries[position]));
+    }
 }
 
 Expected<HeatClass> Heat::classOf(Expected<double> expectedHeat) const

@@ -11,6 +11,7 @@
 #include "AOTBlockCycles.h"
 #include "AOTBlockFrequencies.h"
 #include "AOTBodyIndex.h"
+#include "AOTBuiltinPristine.h"
 #include "AOTCFG.h"
 #include "AOTDiagnostics.h"
 #include "AOTEdgeResults.h"
@@ -90,9 +91,51 @@ TestConditionID TestConditions::add(const Value& test)
         m_stretchConditions.set(index);
     }
 
+    if (condition.test.opcode == Opcode::IsPristine) {
+        if (TestConditionID first = firstPristineConditionOf(subject))
+            condition.nextPristineConditionOfSubject = std::exchange(m_conditions[first.index()].nextPristineConditionOfSubject, TestConditionID(index));
+        else
+            m_firstPristineConditionOfSubject.add(computeHash(subject.index()), index);
+    }
     m_conditions.append(WTF::move(condition));
     m_index.add(hash, index);
     return TestConditionID(index);
+}
+
+TestConditionID TestConditions::firstPristineConditionOf(ValueID subject) const
+{
+    std::optional<uint32_t> position = m_firstPristineConditionOfSubject.find(computeHash(subject.index()), [&](uint32_t candidate) {
+        return m_conditions[candidate].subject == subject;
+    });
+    return position ? TestConditionID(*position) : TestConditionID();
+}
+
+static bool areSameLocations(std::span<const MemoryLocation> locations, std::span<const MemoryLocation> others)
+{
+    return std::ranges::equal(locations, others, [](const MemoryLocation& location, const MemoryLocation& other) {
+        if (location.heap() != other.heap() || location.isEntireHeap() != other.isEntireHeap())
+            return false;
+        return location.isEntireHeap() || (location.firstIndex() == other.firstIndex() && location.secondIndex() == other.secondIndex());
+    });
+}
+
+bool TestConditions::isWeakerThan(TestConditionID id, const Value& test) const
+{
+    const TestCondition& condition = at(id);
+    if (condition.test.builtinClass() != test.builtinClass() || condition.test.aspects() == test.aspects() || !aspectsImpliedBy(test.aspects()).containsAll(condition.test.aspects()))
+        return false;
+    return !condition.lastsForStretch() || areSameLocations(condition.dependsOn.span(), locationsReadBy(test).span());
+}
+
+bool TestConditions::isWeakerThanAnotherCondition(TestConditionID id) const
+{
+    if (at(id).test.opcode != Opcode::IsPristine)
+        return false;
+    for (TestConditionID other = firstPristineConditionOf(at(id).subject); other; other = at(other).nextPristineConditionOfSubject) {
+        if (isWeakerThan(id, at(other).test))
+            return true;
+    }
+    return false;
 }
 
 std::optional<TestConditionID> TestConditions::find(const Value& test) const
@@ -119,6 +162,11 @@ Value TestConditions::canonicalize(const Value& test) const
     canonical.representation = Representation::Unchosen;
     canonical.setOrigin({ Instruction::noPosition, 0 });
     return canonical;
+}
+
+std::optional<TestConditionID> TestConditions::findCanonical(const Value& test) const
+{
+    return findCanonical(test, hashOfCanonicalTest(test));
 }
 
 std::optional<TestConditionID> TestConditions::findCanonical(const Value& test, uint32_t hash) const

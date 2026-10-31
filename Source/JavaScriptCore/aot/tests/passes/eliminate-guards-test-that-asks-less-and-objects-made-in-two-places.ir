@@ -1,0 +1,198 @@
+# bytes.subarray(1).length + bytes.byteOffset: one test of `bytes`. The test for `byteOffset` asks less than the one for `subarray`, which has passed, and both places that make the part make a new view.
+# FORM: Prepared
+# RUN: pass EliminateGuards
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="asksLessThanThePassedTest" parameters=[{type=Uint8Array}] results=[{type=anything}] {
+  b0(v0: Uint8Array):
+    v1 = IsPristine v0 builtinClass=Uint8Array aspects=[Names]
+    Branch v1 -> taken b1(), notTaken b3()
+  b1():
+    v2 = IsPristine v0 builtinClass=Uint8Array aspects=[NamesKeptBelow]
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    v3 = CallBuiltin v0 overload=TypedArrayPrototypeByteOffset/0
+    Return v3
+  b3() frequency=Rare:
+    v4 = Undefined
+    Return v4
+}
+# CHECK-LABEL: function f0 name="asksLessThanThePassedTest"
+# CHECK: IsPristine v0 builtinClass=Uint8Array aspects=[Names]
+# CHECK-NOT: IsPristine
+
+function f1 name="asksMoreThanThePassedTest" parameters=[{type=Uint8Array}] results=[{type=anything}] {
+  b0(v0: Uint8Array):
+    v1 = IsPristine v0 builtinClass=Uint8Array aspects=[NamesKeptBelow]
+    Branch v1 -> taken b1(), notTaken b3()
+  b1():
+    v2 = IsPristine v0 builtinClass=Uint8Array aspects=[Names]
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    v3 = CallBuiltin v0 overload=TypedArrayPrototypeByteOffset/0
+    Return v3
+  b3() frequency=Rare:
+    v4 = Undefined
+    Return v4
+}
+# CHECK-LABEL: function f1 name="asksMoreThanThePassedTest"
+# CHECK: IsPristine v0 builtinClass=Uint8Array aspects=[NamesKeptBelow]
+# CHECK: IsPristine v0 builtinClass=Uint8Array aspects=[Names]
+
+function f2 name="asksLessOfAnotherView" parameters=[{type=Uint8Array}, {type=Uint8Array}] results=[{type=anything}] {
+  b0(v0: Uint8Array, v1: Uint8Array):
+    v2 = IsPristine v0 builtinClass=Uint8Array aspects=[Names]
+    Branch v2 -> taken b1(), notTaken b3()
+  b1():
+    v3 = IsPristine v1 builtinClass=Uint8Array aspects=[NamesKeptBelow]
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    v4 = CallBuiltin v1 overload=TypedArrayPrototypeByteOffset/0
+    Return v4
+  b3() frequency=Rare:
+    v5 = Undefined
+    Return v5
+}
+# CHECK-LABEL: function f2 name="asksLessOfAnotherView"
+# CHECK: IsPristine v0 builtinClass=Uint8Array aspects=[Names]
+# CHECK: IsPristine v1 builtinClass=Uint8Array aspects=[NamesKeptBelow]
+
+function f3 name="asksLessBehindUnknownCode" parameters=[{type=Uint8Array}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Uint8Array, v1: anything):
+    v2 = IsPristine v0 builtinClass=Uint8Array aspects=[Names]
+    Branch v2 -> taken b1(), notTaken b3()
+  b1():
+    v3 = Call v1, -, v0
+    v4 = IsPristine v0 builtinClass=Uint8Array aspects=[NamesKeptBelow]
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = CallBuiltin v0 overload=TypedArrayPrototypeByteOffset/0
+    Return v5
+  b3() frequency=Rare:
+    v6 = Undefined
+    Return v6
+}
+# CHECK-LABEL: function f3 name="asksLessBehindUnknownCode"
+# CHECK: IsPristine v0 builtinClass=Uint8Array aspects=[Names]
+# CHECK: IsPristine v0 builtinClass=Uint8Array aspects=[NamesKeptBelow]
+
+function f4 name="madeInTwoPlaces" parameters=[{type=Uint8Array}] results=[{type=anything}] {
+  b0(v0: Uint8Array):
+    v1 = IsPristine v0 builtinClass=Uint8Array aspects=[Names]
+    Branch v1 -> taken b1(), notTaken b6()
+  b1():
+    v2 = Integer integer=1
+    v3 = HasFixedBytes v0
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    v4 = TypedArrayRange v0, v2, v2 valueType=Uint8Array
+    Jump -> next b4(v4)
+  b3() frequency=Unlikely:
+    v5 = CallBuiltin v0, v2 overload=TypedArrayPrototypeSubarray/0 [needsPristineReceiver]
+    Jump -> next b4(v5)
+  b4(v6: Uint8Array):
+    v7 = IsPristine v6 builtinClass=Uint8Array aspects=[NamesKeptBelow]
+    Branch v7 -> taken b5(), notTaken b6()
+  b5():
+    v8 = CallBuiltin v6 overload=TypedArrayPrototypeLength/0
+    Return v8
+  b6() frequency=Rare:
+    v9 = Undefined
+    Return v9
+}
+# CHECK-LABEL: function f4 name="madeInTwoPlaces"
+# CHECK: IsPristine v0 builtinClass=Uint8Array aspects=[Names]
+# CHECK-NOT: IsPristine
+
+function f5 name="madeInOnePlaceAndHandedInAtTheOther" parameters=[{type=Uint8Array}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: Uint8Array, v1: boolean):
+    v2 = Integer integer=1
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = TypedArrayRange v0, v2, v2 valueType=Uint8Array
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v0)
+  b3(v4: Uint8Array):
+    v5 = IsPristine v4 builtinClass=Uint8Array aspects=[NamesKeptBelow]
+    Branch v5 -> taken b4(), notTaken b5()
+  b4():
+    v6 = CallBuiltin v4 overload=TypedArrayPrototypeLength/0
+    Return v6
+  b5() frequency=Rare:
+    v7 = Undefined
+    Return v7
+}
+# CHECK-LABEL: function f5 name="madeInOnePlaceAndHandedInAtTheOther"
+# CHECK: IsPristine v4 builtinClass=Uint8Array aspects=[NamesKeptBelow]
+
+function f6 name="oneOfTheTwoIsShownToUnknownCode" parameters=[{type=Uint8Array}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Uint8Array, v1: boolean, v2: anything):
+    v3 = Integer integer=1
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v4 = TypedArrayRange v0, v3, v3 valueType=Uint8Array
+    Jump -> next b3(v4)
+  b2():
+    v5 = TypedArrayRange v0, v3, v3 valueType=Uint8Array
+    v6 = Call v2, -, v5
+    Jump -> next b3(v5)
+  b3(v7: Uint8Array):
+    v8 = IsPristine v7 builtinClass=Uint8Array aspects=[NamesKeptBelow]
+    Branch v8 -> taken b4(), notTaken b5()
+  b4():
+    v9 = CallBuiltin v7 overload=TypedArrayPrototypeLength/0
+    Return v9
+  b5() frequency=Rare:
+    v10 = Undefined
+    Return v10
+}
+# CHECK-LABEL: function f6 name="oneOfTheTwoIsShownToUnknownCode"
+# CHECK: IsPristine v7 builtinClass=Uint8Array aspects=[NamesKeptBelow]
+
+function f7 name="shownToUnknownCodeWhereTheTwoHaveMet" parameters=[{type=Uint8Array}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Uint8Array, v1: boolean, v2: anything):
+    v3 = Integer integer=1
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v4 = TypedArrayRange v0, v3, v3 valueType=Uint8Array
+    Jump -> next b3(v4)
+  b2():
+    v5 = TypedArrayRange v0, v3, v3 valueType=Uint8Array
+    Jump -> next b3(v5)
+  b3(v6: Uint8Array):
+    v7 = Call v2, -, v6
+    v8 = IsPristine v6 builtinClass=Uint8Array aspects=[NamesKeptBelow]
+    Branch v8 -> taken b4(), notTaken b5()
+  b4():
+    v9 = CallBuiltin v6 overload=TypedArrayPrototypeLength/0
+    Return v9
+  b5() frequency=Rare:
+    v10 = Undefined
+    Return v10
+}
+# CHECK-LABEL: function f7 name="shownToUnknownCodeWhereTheTwoHaveMet"
+# CHECK: IsPristine v6 builtinClass=Uint8Array aspects=[NamesKeptBelow]
+
+function f8 name="aReadReliesOnTheTestOfTheTwo" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything):
+    v2 = Integer integer=0
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewArray v1 contents=anything
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewArray v1, v1 contents=anything
+    Jump -> next b3(v4)
+  b3(v5: Array):
+    v6 = IsPristine v5 builtinClass=Array aspects=[Storage, Names]
+    Branch v6 -> taken b4(| 0), notTaken b5()
+  b4(v7):
+    v8 = GetArrayElement v5, v2, v7 level=Expected
+    Return v8
+  b5() frequency=Rare:
+    v9 = ElemGet v5, v2
+    Return v9
+}
+# CHECK-LABEL: function f8 name="aReadReliesOnTheTestOfTheTwo"
+# CHECK: IsPristine v5 builtinClass=Array aspects=[Storage, Names]

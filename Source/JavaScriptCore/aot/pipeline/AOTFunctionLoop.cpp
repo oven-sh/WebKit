@@ -578,7 +578,7 @@ static void runOnCopies(const ScheduleDescriptor& schedule, Program& programToEd
     unsigned count = program.functions.size();
     auto phases = makeUnique<InterningPhases>(programToEdit, count);
     {
-        DerivedFunctionPhase derived(derivedFunctions, programToEdit, inputs.flow, *phases);
+        DerivedFunctionPhase derived(derivedFunctions, programToEdit, inputs.flow, *phases, &inputs);
         FunctionQueue queue(loops, count);
         // Of the functions that have changed.
         Vector<std::unique_ptr<Function>> optimized(count);

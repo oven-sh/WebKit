@@ -1761,12 +1761,15 @@ void Pipeline::runSelectStage()
         // Whoever only reads a function reads it where it is in the cache: behind its selection, or behind the last step that changes it.
         bool findsOutliningSites = m_build.isEnabled(PassID::OutlineColdOperations, FunctionID());
         OutliningSiteFinder finder(m_program, inputsFor(PassID::OutlineColdOperations), m_build);
-        AccessSiteObserver observer(m_program, flow(), m_build, heatForReport());
+        std::optional<AccessSiteObserver> observer;
+        if (m_build.options().countsAccesses())
+            observer.emplace(m_program, flow(), m_build, heatForReport());
         m_factsOfSelectedBodies = makeUnique<FactsOfSelectedBodies>(*this);
         FactsOfSelectedBodies& facts = *m_factsOfSelectedBodies;
         std::span<const uint8_t> hasOutliningSites = finder.hasSites();
         auto observe = [&](FunctionID id) {
-            observer.observe(id);
+            if (observer)
+                observer->observe(id);
         };
         auto findOutliningSitesOrReadFinishedFunction = [&](FunctionID id) {
             FunctionAnalyses analyses(finder.contextOf(id), std::as_const(m_program).at(id));
@@ -1781,8 +1784,8 @@ void Pipeline::runSelectStage()
         const ReaderOfScheduledFunction* readersOfSelectedFunction[] = { &readers1[0], &readers1[1] };
         stage.run(FunctionSchedule::Select, { .behind = readersOfSelectedFunction });
         advanceTo(IRForm::Selected, wasRunning);
-        if (!m_runner.isStopped())
-            m_output->accessSiteObservations = observer.finish();
+        if (!m_runner.isStopped() && observer)
+            m_output->accessSiteObservations = observer->finish();
         stage.didFinish("observe access sites"_s);
 
         auto noteAddedFunctions = [&] {
@@ -1808,7 +1811,7 @@ void Pipeline::runSelectStage()
         stage.run(FunctionSchedule::Select);
         stage.verifyOnRequest(IRForm::Selected);
         advanceTo(IRForm::Selected, wasRunning);
-        if (!m_runner.isStopped())
+        if (!m_runner.isStopped() && m_build.options().countsAccesses())
             m_output->accessSiteObservations = observeAccessSites(m_program, flow(), m_build, heatForReport());
         stage.didFinish("observe access sites"_s);
         stage.run(PassID::OutlineColdOperations);
@@ -2022,7 +2025,7 @@ void Pipeline::runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLas
             });
         }
         m_output->heat = m_analyses.takeHeat(flow());
-        if (m_output->accessSiteObservations.isEmpty())
+        if (m_output->accessSiteObservations.isEmpty() && m_build.options().countsAccesses())
             m_output->accessSiteObservations = observeAccessSites(m_program, flow(), m_build);
         if (m_build.validates() && !m_runner.isStopped())
             checkEffectSummaries(m_program, flow(), *m_output->effects, m_build);

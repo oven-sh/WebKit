@@ -9,6 +9,7 @@
 #if ENABLE(B3_JIT)
 
 #include "B3BasicBlockInlines.h"
+#include "B3Dominators.h"
 #include "B3InsertionSetInlines.h"
 #include "B3LoopUtilities.h"
 #include "B3NaturalLoops.h"
@@ -18,6 +19,7 @@
 #include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
 #include "B3VariableValue.h"
+#include <wtf/RangeSet.h>
 
 namespace JSC { namespace B3 {
 
@@ -25,9 +27,12 @@ namespace {
 
 class RotateLoops {
 public:
-    RotateLoops(Procedure& proc, const Vector<BasicBlock*>* allowedHeaders)
+    enum class Moves : bool { TestsAtTop, TestsThatAreSameInEveryTurn };
+
+    RotateLoops(Procedure& proc, const Vector<BasicBlock*>* allowedHeaders, Moves moves = Moves::TestsAtTop)
         : m_proc(proc)
         , m_allowedHeaders(allowedHeaders)
+        , m_moves(moves)
     {
     }
 
@@ -35,8 +40,12 @@ public:
     {
         NaturalLoops& loops = m_proc.naturalLoops();
         m_edgesBack.resize(loops.numLoops());
+        m_writes.resize(loops.numLoops());
+        m_proc.resetValueOwners();
         for (unsigned loopIndex = loops.numLoops(); loopIndex--;) {
-            if (!m_allowedHeaders || m_allowedHeaders->contains(loops.loop(loopIndex).header()))
+            if (m_moves == Moves::TestsThatAreSameInEveryTurn)
+                considerTestsThatAreSameInEveryTurn(loops, loops.loop(loopIndex));
+            else if (!m_allowedHeaders || m_allowedHeaders->contains(loops.loop(loopIndex).header()))
                 considerLoop(loops, loops.loop(loopIndex));
         }
         if (m_rotations.isEmpty())
@@ -73,6 +82,11 @@ private:
     struct FoldedTest {
         BasicBlock* block;
         unsigned successorIndex;
+    };
+
+    struct Writes {
+        RangeSet<HeapRange> heaps;
+        bool pinned { false };
     };
 
     struct Rotation {
@@ -219,6 +233,98 @@ private:
         default:
             return std::nullopt;
         }
+    }
+
+    const Writes& writesOf(const NaturalLoop& loop)
+    {
+        std::optional<Writes>& result = m_writes[loop.index()];
+        if (result)
+            return *result;
+        result.emplace();
+        for (unsigned index = loop.size(); index--;) {
+            for (Value* value : *loop.at(index)) {
+                Effects effects = value->effects();
+                effects.writes.addTo(result->heaps);
+                result->pinned |= effects.writesPinned;
+            }
+        }
+        return *result;
+    }
+
+    bool isSameInEveryTurn(NaturalLoops& loops, const NaturalLoop& loop, Value* value, unsigned depth)
+    {
+        if (!loops.belongsTo(value->owner, loop))
+            return true;
+        Effects effects = value->effects();
+        if (!depth || effects.mustExecute() || effects.readsLocalState)
+            return false;
+        if (effects.readsPinned && writesOf(loop).pinned)
+            return false;
+        if (effects.reads && effects.reads.overlaps(writesOf(loop).heaps))
+            return false;
+        for (Value* child : value->children()) {
+            if (!isSameInEveryTurn(loops, loop, child, depth - 1))
+                return false;
+        }
+        return true;
+    }
+
+    // `list[i]` asks in each turn how the list stores its elements, and leaves the loop for another answer. Where no turn writes what the test reads,
+    // a turn that has come to the end of the loop has passed the test, and so will the next.
+    std::optional<unsigned> successorOfTestThatIsSameInEveryTurn(NaturalLoops& loops, const NaturalLoop& loop, const Rotation& rotation, BasicBlock* block)
+    {
+        bool firstStays = loops.belongsTo(block->successorBlock(0), loop);
+        if (firstStays == loops.belongsTo(block->successorBlock(1), loop))
+            return std::nullopt;
+        for (BasicBlock* latch : rotation.latches) {
+            if (!m_proc.dominators().dominates(block, latch))
+                return std::nullopt;
+        }
+        if (!isSameInEveryTurn(loops, loop, block->last()->child(0), 3))
+            return std::nullopt;
+        return firstStays ? 0 : 1;
+    }
+
+    // The tests stay where they are, as the guard of the loop. The edges back go to a copy that does not ask.
+    void considerTestsThatAreSameInEveryTurn(NaturalLoops& loops, const NaturalLoop& loop)
+    {
+        Rotation rotation;
+        rotation.latches = edgesBackOf(loops, loop).likely;
+        if (rotation.latches.isEmpty())
+            return;
+        // The guard is passed once for many turns, so it polls for nobody: the turns keep the poll that they have.
+        rotation.guardKeepsPoll = true;
+        for (const NaturalLoop* outer = loops.innerMostOuterLoop(loop); outer; outer = loops.innerMostOuterLoop(*outer))
+            ++rotation.depth;
+
+        unsigned numberOfCopiedValues = 0;
+        for (BasicBlock* block = loop.header();;) {
+            if (block->last()->opcode() != Branch || loops.innerMostLoopOf(block) != &loop || rotation.latches.contains(block))
+                break;
+            if (block != loop.header() && (block->numPredecessors() != 1 || loops.headerOf(block)))
+                break;
+            bool canCopy = true;
+            for (Value* value : *block) {
+                canCopy &= canCloneForLoop(value) && !isLoopPoll(value);
+                numberOfCopiedValues += emitsInstructions(value);
+            }
+            if (!canCopy || numberOfCopiedValues > m_proc.limit(Limit::MaxCopiedValuesPerRotatedLoop))
+                break;
+            std::optional<unsigned> successorIndex = successorOfTestThatIsSameInEveryTurn(loops, loop, rotation, block);
+            if (!successorIndex)
+                break;
+            const FrequentedBlock& staying = block->successor(*successorIndex);
+            if (staying.isRare() || staying.block() == loop.header() || loops.headerOf(staying.block()))
+                break;
+            rotation.testBlocks.append(block);
+            rotation.testsFoldedOnBackEdges.append({ block, *successorIndex });
+            rotation.body = staying.block();
+            block = staying.block();
+        }
+        if (rotation.testBlocks.isEmpty())
+            return;
+        rotation.induction = findInduction(loop.header());
+        m_rotations.append(WTF::move(rotation));
     }
 
     void addTestsFoldedOnBackEdges(NaturalLoops& loops, const NaturalLoop& loop, Rotation& rotation, unsigned numberOfCopiedValues)
@@ -504,8 +610,10 @@ private:
     Procedure& m_proc;
     bool m_didMergeBackEdges { false };
     const Vector<BasicBlock*>* m_allowedHeaders;
+    Moves m_moves;
     Vector<Rotation> m_rotations;
     Vector<std::optional<EdgesBack>> m_edgesBack;
+    Vector<std::optional<Writes>> m_writes;
     IndexSet<BasicBlock*> m_topsWithPollOnWayBack;
 };
 
@@ -519,6 +627,12 @@ bool rotateLoops(Procedure& proc, const Vector<BasicBlock*>* allowedHeaders, boo
     if (didMergeBackEdges)
         *didMergeBackEdges = rotateLoops.didMergeBackEdges();
     return changed;
+}
+
+bool moveTestsThatAreSameInEveryTurnOutOfLoops(Procedure& proc)
+{
+    PhaseScope phaseScope(proc, "moveTestsThatAreSameInEveryTurnOutOfLoops"_s);
+    return RotateLoops(proc, nullptr, RotateLoops::Moves::TestsThatAreSameInEveryTurn).run();
 }
 
 } } // namespace JSC::B3

@@ -92,6 +92,7 @@ struct PipelineState {
     bool didRotateLoops { false };
     bool didVersionLoops { false };
     bool didMergeBackEdges { false };
+    bool didMoveTestsOutOfLoops { false };
     bool didRunStep { false };
 };
 
@@ -321,6 +322,15 @@ static constexpr Step steps[] = {
         [](Procedure& procedure, PipelineState&) {
             return cleanupsIfChanged(unrollLoops(procedure, procedure.policy().loops.unrolls ? WritesOutTurns::Yes : WritesOutTurns::No), { Cleanup::FixSSA, Cleanup::SimplifyTerminals, Cleanup::EliminateDeadCode });
         } },
+    { "moveTestsThatAreSameInEveryTurnOutOfLoops"_s,
+        [](Procedure& procedure, const PipelineState& state) { return state.hasLoops && procedure.policy().loops.rotates && hoistsInvariantValues(procedure); },
+        [](Procedure& procedure, PipelineState& state) {
+            state.didMoveTestsOutOfLoops = moveTestsThatAreSameInEveryTurnOutOfLoops(procedure);
+            return cleanupsIfChanged(state.didMoveTestsOutOfLoops, { Cleanup::FixSSA, Cleanup::SimplifyTerminals, Cleanup::EliminateDeadCode });
+        } },
+    { "hoistLoopInvariantValues"_s,
+        [](Procedure&, const PipelineState& state) { return state.didMoveTestsOutOfLoops; },
+        runPass<hoistLoopInvariantValues> },
 #if ENABLE(WEBASSEMBLY)
     { "eliminateWasmGCAllocations"_s,
         [](Procedure& procedure, const PipelineState&) { return procedure.optLevel() >= 2 && procedure.usesWasmGCStructAllocations() && procedure.policy().upstream.eliminatesWasmGCAllocations; },

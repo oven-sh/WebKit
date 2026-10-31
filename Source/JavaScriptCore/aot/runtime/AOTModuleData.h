@@ -333,7 +333,9 @@ struct LinkPlanRootData {
 
 struct ModuleExportData {
     uint32_t name : 24;
-    uint32_t kindBits : 4;
+    uint32_t kindBits : 3;
+    // A TypeScript module exports a name of a CommonJS file, and was linked whether or not the file has it. The variable holds what the file had. While it is empty the name is no export.
+    uint32_t isDroppedWhileEmpty : 1;
     // ModuleFlow::exportsClosedToOutside
     uint32_t isClosedToOutside : 1;
     uint32_t isReplaceable : 1;
@@ -381,7 +383,9 @@ struct RequiredNameData {
 // `export { name as exportName } from "specifier"` asks for a required name: what the error of a link that does not find the name quotes. Sorted by the number of the required name.
 struct ExportStatementData {
     uint32_t requiredName;
-    uint32_t exportName;
+    uint32_t exportName : 31;
+    // A link that does not find the required name goes on, and the name that the statement exports is no export.
+    uint32_t dropsExportIfAbsent : 1;
     uint32_t specifier;
 
     StringID exportNameString() const { return StringID(exportName); }

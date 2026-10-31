@@ -25,14 +25,6 @@
 
 #pragma once
 
-#if defined(__cplusplus) && defined(NDEBUG) && defined(_GLIBCXX_ASSERTIONS) && __has_include(<bits/c++config.h>)
-#include <bits/c++config.h>
-#ifdef __glibcxx_assert
-#undef __glibcxx_assert
-#define __glibcxx_assert(condition) do { if (__builtin_expect(!bool(condition), false)) __builtin_trap(); } while (false)
-#endif
-#endif
-
 /* COMPILER() - the compiler being used to build the project */
 #define COMPILER(WTF_FEATURE) (defined WTF_COMPILER_##WTF_FEATURE  && WTF_COMPILER_##WTF_FEATURE)
 

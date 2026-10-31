@@ -50,7 +50,7 @@ static bool probesFreeNameInline(CodeShape shape)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A binding that is no constant is one that the program stores to. The stub behind a read tests the record as code in line does. So does the operation behind a store, in front of everything else.
+// A binding that is no constant is one that the program stores to. The stub behind a read or a store tests the record as code in line does.
 static bool probesBindingLocationInline(CodeShape shape)
 {
     return shape == CodeShape::Fast;
@@ -279,7 +279,8 @@ Boxed AccessEmitter::getByTablesOrNothing(const ValueContext& value)
     static_assert((static_cast<uint8_t>(Slot::Kind::Value) ^ PackedSlot::ownInlineValueBits) == PackedSlot::isOwn);
     static_assert(PackedSlot::offsetOfLocation() == sizeof(uint32_t) && PackedSlot::offsetOfBiasedKindAndFlags() == PackedSlot::offsetOfLocation() + 1 && PackedSlot::offsetOfName() == PackedSlot::offsetOfLocation() + 2 && sizeof(PackedSlot) == sizeof(uint64_t));
     const uint32_t upperHalfOfValueInCell = PackedSlot::upperHalfForOwnInlineValue(static_cast<uint16_t>(*identifier));
-    const B3::AbstractHeap& tables = m_heaps.entire(AbstractHeap::RuntimeState);
+    // One heap, so that a read of it is known again behind a join of paths, none of which wrote it.
+    const B3::AbstractHeap& tables = m_heaps.AOTPropertyCaches_front;
 
     Boxed receiver = in<Boxed>(value->objectOperand());
     LBasicBlock isNotInCell = newBlock();
@@ -761,7 +762,13 @@ void AccessEmitter::generateSetGlobalBinding(const ValueContext& value)
         callVoidOperation(value, operation, { word32(static_cast<int32_t>(binding.index())), stored }, { .isOnRarePath = isOnRarePath });
     };
     if (!probesBindingLocationInline(value.shape())) {
-        storeByOperation(false);
+        // The first store through a record files it, so a store that never comes again has nothing to find there.
+        if (!comesAgain(value)) {
+            storeByOperation(false);
+            return;
+        }
+        GlobalBindingScope scope = seesScriptBindings ? GlobalBindingScope::ScriptsAndGlobalObject : GlobalBindingScope::GlobalObject;
+        callStub(value, AOT::setGlobalBinding(scope, forMode(value->mode(), true, false)), { stored.value() }, { .immediate = binding.index() });
         return;
     }
 

@@ -177,14 +177,17 @@ static void takeKeys(ValueFlowRuleContext& context, ClimbingSet containers, Buil
         target.takeContentsOfSlot(containers, nameOf(iteratorClass == BuiltinClasses::MapIterator ? BuiltinSlots::MapKey : BuiltinSlots::SetElement));
 }
 
-static bool readsKeyOrValueOfPair(ValueFlowRuleContext& context, ClimbingSet containers, std::optional<uint32_t> indexInPattern)
+bool areUnchangedPairsOfKeyAndValue(ValueFlowRuleContext& context, ClimbingSet containers)
 {
-    if (!indexInPattern || *indexInPattern >= 2)
-        return false;
     const ValueFlowProgramNodes& nodes = context.nodes();
     ClimbingSet others = context.membersMissingFrom(nodes.ofHost(ValueFlowHostNode::PairsOfSteps), context.membersMissingFrom(nodes.ofHost(ValueFlowHostNode::PairsOfEntries), containers));
     return !holdsSomething(context, others) && !context.holdsAnyOf(containers, ValueFlowProgramNodes::escaped()) && !context.holdsAnyOf(containers, ValueFlowProgramNodes::lost())
         && !holdsSomething(context, context.markedAmong(containers, OptionSet<ObjectMutation>::all()));
+}
+
+static bool readsKeyOrValueOfPair(ValueFlowRuleContext& context, ClimbingSet containers, std::optional<uint32_t> indexInPattern)
+{
+    return indexInPattern && *indexInPattern < 2 && areUnchangedPairsOfKeyAndValue(context, containers);
 }
 
 static ClimbingSet denseArraysAmong(ValueFlowRuleContext& context, ClimbingSet arrays)
@@ -419,8 +422,9 @@ void runIterationOperation(const ValueFlowStatement& statement, ValueFlowRuleCon
         ValueFlowNodeID values = statement.result ? statement.result : nodeThatNobodyReads(context);
         if (operation.operand(OperandIndex::IteratorResume::sent))
             sendToIterators(context, state, operands[1]);
-        stepIterators(context, state, { operation.iteratorKind(), mode, operation.readsValueWhenDone() || mode != ResumeMode::Next, pairAllocatedAt(statement, context), operation.stepIndex(), !operation.stepIndex() }, values);
-        if (!operation.readsValueWhenDone() && operation.stepIndex() && !readsKeyOrValueOfPair(context, state, operation.stepIndex()))
+        std::optional<uint32_t> indexInPattern = statement.factsOfText.contains(ValueFlowFactOfText::StepsRestElement) ? std::nullopt : operation.stepIndex();
+        stepIterators(context, state, { operation.iteratorKind(), mode, operation.readsValueWhenDone() || mode != ResumeMode::Next, pairAllocatedAt(statement, context), indexInPattern, !operation.stepIndex() }, values);
+        if (!operation.readsValueWhenDone() && operation.stepIndex() && !readsKeyOrValueOfPair(context, state, indexInPattern))
             context.add(values, context.universe().undefinedValue());
         if (mode == ResumeMode::Return && operation.iteratorKind() == IteratorKind::Async)
             connectAwaitedValue(context, operands[1], values);

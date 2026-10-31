@@ -332,7 +332,7 @@ JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKi
         return createYieldStarIteratorWithoutThrowError(globalObject);
     case Typed::RuntimeErrorKind::InvalidPrivateRead:
     case Typed::RuntimeErrorKind::InvalidPrivateWrite:
-        return createInvalidPrivateNameError(globalObject);
+        return createAbsentPrivateNameError(globalObject, createInvalidPrivateNameError);
     case Typed::RuntimeErrorKind::InvalidPrivateBrand:
         return createStaticPrivateBrandError(globalObject);
     case Typed::RuntimeErrorKind::PrivateFieldExists:

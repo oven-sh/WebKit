@@ -307,6 +307,53 @@ NEVER_INLINE AtomStringImpl* ProgramIdentifiers::findAtomSlow(StringView charact
 #endif
 }
 
+// The whole text up to 16 characters, the length and both ends of a longer one.
+static ALWAYS_INLINE uint64_t fingerprintOf(std::span<const Latin1Character> characters)
+{
+    const Latin1Character* data = characters.data();
+    size_t length = characters.size();
+    uint64_t first;
+    uint64_t last;
+    if (length >= sizeof(uint64_t)) {
+        first = unalignedLoad<uint64_t>(data);
+        last = unalignedLoad<uint64_t>(data + length - sizeof(uint64_t));
+    } else if (length >= sizeof(uint32_t)) {
+        first = unalignedLoad<uint32_t>(data);
+        last = unalignedLoad<uint32_t>(data + length - sizeof(uint32_t));
+    } else {
+        first = data[0];
+        last = static_cast<uint64_t>(data[length / 2]) << 8 | data[length - 1];
+    }
+    uint64_t mixed = (first ^ length * 0x9e3779b97f4a7c15ull) * 0xff51afd7ed558ccdull;
+    mixed = ((mixed ^ mixed >> 32) ^ last) * 0xc4ceb9fe1a85ec53ull;
+    return (mixed ^ mixed >> 29) | 1;
+}
+
+// Where the linker puts two literals decides whether they share a place by address, anew in every build. Two that do would put each other out at every turn.
+NEVER_INLINE AtomStringImpl* ProgramIdentifiers::findAtomOfNativeTextByCharacters(std::span<const Latin1Character> characters)
+{
+    static_assert(hasOneBitSet(std::tuple_size_v<decltype(m_nativeTextsByCharacters)>));
+    constexpr unsigned bitsOfSet = std::countr_zero(std::tuple_size_v<decltype(m_nativeTextsByCharacters)>);
+    uint64_t fingerprint = fingerprintOf(characters);
+    std::array<NativeTextFingerprintSet*, 2> sets { &m_nativeTextsByCharacters[fingerprint >> (64 - bitsOfSet)], &m_nativeTextsByCharacters[fingerprint << bitsOfSet >> (64 - bitsOfSet)] };
+    for (NativeTextFingerprintSet* set : sets) {
+        for (const NativeTextFingerprint& known : *set) {
+            if (known.fingerprint != fingerprint)
+                continue;
+            if (!known.atom || (known.atom->length() == characters.size() && WTF::equal(known.atom->span8().data(), characters)))
+                return known.atom;
+        }
+    }
+    countNativeTextHashed(m_vm);
+    AtomStringImpl* atom = findAtom(StringView(characters), StringHasher::computeHashAndMaskTop8Bits(characters));
+    if (atom && !atom->is8Bit())
+        atom = nullptr;
+    NativeTextFingerprintSet& set = sets[0]->back().fingerprint && !sets[1]->back().fingerprint ? *sets[1] : *sets[0];
+    std::move_backward(set.begin(), set.end() - 1, set.end());
+    set.front() = { fingerprint, atom };
+    return atom;
+}
+
 AtomStringImpl* ProgramIdentifiers::findAtomOfNativeText(std::span<const Latin1Character> characters)
 {
     if (characters.empty() || characters.size() > String::MaxLength)
@@ -320,10 +367,7 @@ AtomStringImpl* ProgramIdentifiers::findAtomOfNativeText(std::span<const Latin1C
         if (WTF::equal(recent.atom->span8().data(), characters)) [[likely]]
             return recent.atom;
     }
-    countNativeTextHashed(m_vm);
-    AtomStringImpl* atom = findAtom(StringView(characters), StringHasher::computeHashAndMaskTop8Bits(characters));
-    if (atom && !atom->is8Bit())
-        atom = nullptr;
+    AtomStringImpl* atom = findAtomOfNativeTextByCharacters(characters);
     recent = { characters.data(), characters.size(), atom };
     return atom;
 }

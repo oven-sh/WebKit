@@ -30,6 +30,14 @@ bool canOnlyBeProvenPristine(const BuiltinTable&, BuiltinClassID);
 
 inline constexpr PristineAspectSet aspectsWithoutTest { PristineAspects::AsCreated, PristineAspects::Dense, PristineAspects::Prototype };
 
+// Unchanged names are also unchanged in the class below.
+inline PristineAspectSet aspectsImpliedBy(PristineAspectSet proven)
+{
+    if (proven.contains(PristineAspects::Names))
+        proven.add(PristineAspects::NamesKeptBelow);
+    return proven;
+}
+
 enum class PristineProof : uint8_t { Unknown, Proven };
 
 struct PristineQuery {

@@ -78,6 +78,7 @@ public:
     const Value& operationOf(const ValueFlowStatement&) const;
     const Value& operationAt(FunctionID, ValueID) const;
     std::span<const ValueFlowOperand> operandsOf(const ValueFlowStatement&) LIFETIME_BOUND;
+    std::span<const ValueFlowOperand> objectsReadUnderKeyOfStore(const ValueFlowStatement&) const LIFETIME_BOUND;
     bool canBeReached(const ValueFlowStatement&);
     ClimbingSet setOfKey() const;
     uint32_t numberOfMembersOfKey() const;
@@ -117,7 +118,6 @@ public:
     void addUnlessHeld(ValueFlowNodeID, ValueFlowObjectID);
     static constexpr unsigned numberOfSetsRememberedByThread = 3;
     ClimbingSet membersNewToThread(ClimbingSet, unsigned number);
-    bool isFirstToTieNamespaceInThisRound(ModuleID);
     bool isStatementOfBody() const;
     ClimbingSet markedAmong(ClimbingSet objects, OptionSet<ObjectMutation>);
 

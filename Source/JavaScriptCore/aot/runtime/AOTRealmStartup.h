@@ -56,6 +56,8 @@ bool reportsCreationOfMember(JSObject* holder, UniquedStringImpl* key);
 JS_EXPORT_PRIVATE void hostDidCreateStructure(JSGlobalObject*, Structure*);
 // No name of the realm leads to the object of node:module, and the table locks the hooks of the loader on it.
 JS_EXPORT_PRIVATE void hostDidCreateNodeModule(JSGlobalObject*, JSObject* constructor);
+// For an object that the global object names only from the first read of the name on. It is locked from its creation: there are other ways to it.
+JS_EXPORT_PRIVATE void hostDidCreateObjectOfGlobal(JSGlobalObject*, UniquedStringImpl* key, JSObject*);
 
 } } // namespace JSC::AOT
 

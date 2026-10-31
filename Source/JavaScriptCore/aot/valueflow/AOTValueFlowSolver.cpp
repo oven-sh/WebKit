@@ -6831,8 +6831,6 @@ void ValueFlowSolver::solve()
         m_seedOfSchedule = m_input.build->recordedOptions().has(TestingSwitch::DelayFlowRules) + 2 * m_input.build->recordedOptions().has(TestingSwitch::DelayOtherFlowRules) + 4 * m_input.build->recordedOptions().numberOfFlowSchedule;
     m_stepTimes.isOn = m_input.build && m_input.reportsToBuild && m_input.build->options().logging.logsPhaseTimes;
     m_stepTimes.begin();
-    if (m_input.program)
-        m_roundThatTiedNamespace = std::make_unique<std::atomic<uint32_t>[]>(m_input.program->modules.size() + 1);
     m_graph.addNodes(m_input.numberOfNodes);
     runTasksInParallel(m_loops, {
         [&] {

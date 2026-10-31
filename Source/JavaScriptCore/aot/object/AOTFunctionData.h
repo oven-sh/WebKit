@@ -10,6 +10,7 @@
 #include "AOTRecordTypes.h"
 #include "AOTVarint.h"
 #include "CodeType.h"
+#include "LineColumn.h"
 #include <memory>
 #include <optional>
 #include <span>
@@ -237,15 +238,72 @@ struct FunctionTexts {
 static_assert(sizeof(FunctionTexts) == 24 && isImageRecord<FunctionTexts>);
 
 // The text is pieces of files with the types cut out, so a line and a column of a file lead into it only by way of these. In the order of the modules.
-// The pieces of a module follow one another as in its file. Every number is a varint.
-//   A piece: how far its text starts behind the end of the piece before it (zigzag), doubled, plus one; its size; how many lines it starts below the start of the piece before it; its column.
+// The pieces of a module follow one another as in its file, so a place lies in the last piece that starts at it or in front of it. Every number is a varint.
+//   A piece: how far its text starts behind the end of the piece before it (zigzag), times eight, plus what it is a part of, doubled, plus one; its size;
+//   how many lines it starts below the start of the piece before it; its column. See PieceOfKeptText::PartOf.
 //   A cut in that piece: how far it lies behind the cut before it, or behind the start of the piece, doubled; the columns that are gone, doubled, plus one where lines are gone too; then how many lines.
 //   Where lines are gone, the columns are those in front of what follows the cut on its line.
+// What it takes to find a place does not grow with the file: a module with many pieces has several of these records, each of which counts from nothing as the first does,
+// and the one that holds a place is found by where each starts; and a long piece comes in parts, so that no more than a part is followed character by character.
 struct PiecesOfModule {
+    static constexpr size_t bytesOfOneRecord = 2048;
+    static constexpr uint32_t bytesOfOnePart = 32768;
+
     uint32_t module;
     uint32_t start;
 };
 static_assert(sizeof(PiecesOfModule) == 8 && isImageRecord<PiecesOfModule>);
+
+struct PieceOfKeptText {
+    // Listed: how much of the longer piece lies in front of this part follows, and how much behind it.
+    enum class PartOf : uint8_t { Nothing, LongerPieceThatIsListed, SameAsPieceInFront };
+
+    static PieceOfKeptText read(const uint8_t*& cursor, const PieceOfKeptText& inFront)
+    {
+        uint64_t head = readVarint(cursor);
+        PieceOfKeptText piece;
+        piece.start = static_cast<uint32_t>(inFront.end + zigZagDecode(head >> 3));
+        piece.end = piece.start + static_cast<uint32_t>(readVarint(cursor));
+        piece.line = inFront.line + static_cast<uint32_t>(readVarint(cursor));
+        piece.column = static_cast<uint32_t>(readVarint(cursor));
+        switch (static_cast<PartOf>(head >> 1 & 3)) {
+        case PartOf::LongerPieceThatIsListed:
+            piece.startOfWhole = piece.start - static_cast<uint32_t>(readVarint(cursor));
+            piece.endOfWhole = piece.end + static_cast<uint32_t>(readVarint(cursor));
+            break;
+        case PartOf::SameAsPieceInFront:
+            piece.startOfWhole = inFront.startOfWhole;
+            piece.endOfWhole = inFront.endOfWhole;
+            break;
+        default:
+            piece.startOfWhole = piece.start;
+            piece.endOfWhole = piece.end;
+        }
+        return piece;
+    }
+
+    void appendTo(Vector<uint8_t>& bytes, const PieceOfKeptText& inFront) const
+    {
+        PartOf partOf = startOfWhole == start && endOfWhole == end ? PartOf::Nothing : startOfWhole == inFront.startOfWhole && endOfWhole == inFront.endOfWhole ? PartOf::SameAsPieceInFront : PartOf::LongerPieceThatIsListed;
+        appendVarint(bytes, zigZagEncode(static_cast<int64_t>(start) - static_cast<int64_t>(inFront.end)) << 3 | static_cast<uint64_t>(partOf) << 1 | 1);
+        appendVarint(bytes, end - start);
+        appendVarint(bytes, line - inFront.line);
+        appendVarint(bytes, column);
+        if (partOf == PartOf::LongerPieceThatIsListed) {
+            appendVarint(bytes, start - startOfWhole);
+            appendVarint(bytes, endOfWhole - end);
+        }
+    }
+
+    bool startsBehind(LineColumn place) const { return line > place.line || (line == place.line && column > place.column); }
+
+    uint32_t start { 0 };
+    uint32_t end { 0 };
+    uint32_t line { 0 };
+    uint32_t column { 0 };
+    uint32_t startOfWhole { 0 };
+    uint32_t endOfWhole { 0 };
+};
 
 // Follows a piece of text through the file that it is from. A column counts units of UTF-16, and the text is UTF-8.
 struct PlaceOfTextInFile {
@@ -293,7 +351,10 @@ struct PlaceOfTextInFile {
 // `bun run` runs what Bun's transpiler prints of a file, and an error quotes that: the value in place of the name of a constant, an initializer in place of the
 // only use of a variable, `3` for `1 + 2`. These say what is printed in place of which piece of the text. In the order of the modules, and one more ends the bytes of the last.
 // The first byte of textPrintedInPlace says what a start counts from: 0, the start of the text of all functions; 1, the start of the file, for a test run, which reads the files.
+// A module with many pieces has several of these records, each of which counts from nothing as the first does: what is read for a part of the text does not grow with the file.
 struct TextPrintedInPlaceOfModule {
+    static constexpr size_t bytesOfOneRecord = 2048;
+
     uint32_t module;
     uint32_t start;
 };
@@ -310,6 +371,12 @@ struct TextPrintedInPlace {
     static Vector<TextPrintedInPlace> readAll(std::span<const uint8_t> bytes)
     {
         Vector<TextPrintedInPlace> pieces;
+        appendThoseThatStartIn(pieces, bytes, 0, std::numeric_limits<uint64_t>::max());
+        return pieces;
+    }
+
+    static void appendThoseThatStartIn(Vector<TextPrintedInPlace>& pieces, std::span<const uint8_t> bytes, uint64_t from, uint64_t to)
+    {
         const uint8_t* cursor = bytes.data();
         const uint8_t* end = std::to_address(bytes.end());
         // A number takes ten bytes at the most, and the last piece may be cut short in a file that somebody has written by hand.
@@ -328,7 +395,7 @@ struct TextPrintedInPlace {
             start += readNumber();
             uint64_t size = readNumber();
             uint64_t printed = readNumber();
-            if (start + size > std::numeric_limits<uint32_t>::max())
+            if (start + size > std::numeric_limits<uint32_t>::max() || start >= to)
                 break;
             TextPrintedInPlace piece { static_cast<uint32_t>(start), static_cast<uint32_t>(start + size) };
             if (printed & 1) {
@@ -351,9 +418,9 @@ struct TextPrintedInPlace {
                 piece.bytes = { cursor, static_cast<size_t>(printed >> 1) };
                 cursor += printed >> 1;
             }
-            pieces.append(piece);
+            if (start >= from)
+                pieces.append(piece);
         }
-        return pieces;
     }
 
     void appendTo(Vector<uint8_t>& bytes, uint32_t startOfPieceInFront) const
@@ -379,6 +446,7 @@ struct TextPrintedInPlace {
 };
 
 // In front of what is printed in place of a key, so that nobody takes `a["b"]` for what the program has written: that is printed `a.b`. No text holds this byte, and whoever shows the text takes it out.
+// Behind the `/*` of the name that Bun prints behind the value of a member of an enum, `1 /* Green */`: a comment of the program is not printed.
 static constexpr uint8_t markOfPrintedKey = 1;
 
 // Behind the `[` or `{` of what is printed over several lines: one, and one more for each indentation of the line that holds the bracket. Whoever shows the text takes them out too.
@@ -391,6 +459,71 @@ static constexpr uint8_t markOfTextFromPrinter = 3;
 inline bool isFromPrinter(const TextPrintedInPlace& piece)
 {
     return !piece.isCopy && !piece.bytes.empty() && piece.bytes.front() == markOfTextFromPrinter;
+}
+
+// Behind the first mark may stand markOfDifferences, and then what is printed, a byte for a byte, but for
+//   copyOfWrittenText, how many bytes of the written text are passed over, how many are printed then;
+//   lineBreakWithIndentation, how often the next line is indented;
+//   textWithPieceOfItsOwn, how many bytes of the written text are passed over, in how many a function is written that has a piece of its own.
+// The numbers are varints. There is no mark at the end.
+static constexpr uint8_t markOfDifferences = 4;
+static constexpr uint8_t copyOfWrittenText = 5;
+static constexpr uint8_t lineBreakWithIndentation = 6;
+static constexpr uint8_t textWithPieceOfItsOwn = 7;
+
+template<typename Character>
+void appendTextFromPrinterWithoutMarks(Vector<Character>& printed, std::span<const Character> text, const TextPrintedInPlace& piece, std::span<const TextPrintedInPlace> pieces)
+{
+    if (piece.bytes.size() < 2 || piece.bytes[1] != markOfDifferences) {
+        printed.append(byteCast<Character>(piece.bytes.subspan(1, piece.bytes.size() - std::min<size_t>(piece.bytes.size(), 2))));
+        return;
+    }
+    std::span<const Character> written = text.subspan(piece.start, piece.end - piece.start);
+    std::span<const uint8_t> differences = piece.bytes.subspan(2);
+    auto takeNumber = [&] {
+        uint64_t number = 0;
+        for (unsigned shift = 0; !differences.empty() && shift < 64; shift += 7) {
+            uint8_t byte = differences.front();
+            differences = differences.subspan(1);
+            number |= static_cast<uint64_t>(byte & 0x7f) << shift;
+            if (!(byte & 0x80))
+                break;
+        }
+        return number;
+    };
+    while (!differences.empty()) {
+        uint8_t byte = differences.front();
+        differences = differences.subspan(1);
+        if (byte == copyOfWrittenText || byte == textWithPieceOfItsOwn) {
+            uint64_t passedOver = takeNumber();
+            uint64_t size = takeNumber();
+            if (passedOver > written.size() || size > written.size() - passedOver)
+                break;
+            size_t start = written.data() - text.data() + passedOver;
+            auto inner = std::ranges::lower_bound(pieces, start, { }, &TextPrintedInPlace::start);
+            while (byte == textWithPieceOfItsOwn && inner != pieces.end() && inner->start == start && (inner->end != start + size || !isFromPrinter(*inner) || &*inner == &piece))
+                ++inner;
+            if (byte == textWithPieceOfItsOwn && inner != pieces.end() && inner->start == start)
+                appendTextFromPrinterWithoutMarks(printed, text, *inner, pieces);
+            else
+                printed.append(written.subspan(passedOver, size));
+            written = written.subspan(passedOver + size);
+        } else if (byte == lineBreakWithIndentation) {
+            printed.append(static_cast<Character>('\n'));
+            printed.appendUsingFunctor(std::min<uint64_t>(takeNumber(), text.size()) * 2, [](size_t) {
+                return static_cast<Character>(' ');
+            });
+        } else
+            printed.append(static_cast<Character>(byte));
+    }
+}
+
+template<typename Character>
+void appendTextFromPrinter(Vector<Character>& printed, std::span<const Character> text, const TextPrintedInPlace& piece, std::span<const TextPrintedInPlace> pieces)
+{
+    printed.append(static_cast<Character>(markOfTextFromPrinter));
+    appendTextFromPrinterWithoutMarks(printed, text, piece, pieces);
+    printed.append(static_cast<Character>(markOfTextFromPrinter));
 }
 
 // text[from, to) as `bun run` has it. `pieces` are those of the module, and count from the start of `text`.
@@ -415,8 +548,18 @@ void appendWithTextPrintedInPlace(Vector<Character>& printed, std::span<const Ch
             appendWithTextPrintedInPlace(printed, text, piece.startOfCopied, piece.endOfCopied, pieces);
             if (piece.isInBrackets)
                 printed.append(')');
-        } else
-            printed.append(byteCast<Character>(piece.bytes));
+        } else if (isFromPrinter(piece))
+            appendTextFromPrinter(printed, text, piece, pieces);
+        else {
+            size_t endOfOpening = 0;
+            if (piece.bytes.size() > 4 && piece.bytes[piece.bytes.size() - 2] == '*' && piece.bytes.back() == '/') {
+                for (endOfOpening = piece.bytes.size() - 2; endOfOpening > 1 && (piece.bytes[endOfOpening - 2] != '/' || piece.bytes[endOfOpening - 1] != '*'); --endOfOpening) { }
+            }
+            printed.append(byteCast<Character>(piece.bytes.first(endOfOpening)));
+            if (endOfOpening > 1)
+                printed.append(static_cast<Character>(markOfPrintedKey));
+            printed.append(byteCast<Character>(piece.bytes.subspan(endOfOpening)));
+        }
         at = piece.end;
         // `1.toString` is no program, so `1 .toString` is printed.
         bool isNumber = printed.size() > startOfPrinted && isASCIIDigit(printed[startOfPrinted]) && std::ranges::all_of(printed.subspan(startOfPrinted), [](Character character) {
@@ -430,11 +573,11 @@ void appendWithTextPrintedInPlace(Vector<Character>& printed, std::span<const Ch
 
 // In the order of the sources of the functions, so that both a function and its source lead to the text.
 struct FunctionTextEntry {
-    uint32_t function;
-    uint32_t start;
-    uint32_t end;
+    Number24 function;
+    Number32 start;
+    Number32 end;
 };
-static_assert(sizeof(FunctionTextEntry) == 12 && isImageRecord<FunctionTextEntry>);
+static_assert(sizeof(FunctionTextEntry) == 11 && isImageRecord<FunctionTextEntry>);
 
 // The text of a constructor is that of its class, and the constructor begins at its parameters. This is how many lines of the text stand above them, where there are any.
 // Ascending by the function, which is its own source.

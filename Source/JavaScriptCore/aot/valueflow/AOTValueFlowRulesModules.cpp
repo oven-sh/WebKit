@@ -609,12 +609,22 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
     }
 }
 
-// Whether anything reads the deferred exports makes no difference to what a module like this ties.
-static bool listsAllItsExports(const Module& module)
+static void requestNamespaceExports(ValueFlowRuleContext& context, ModuleID id, DeferredExports deferredExports)
 {
-    return !mayHaveExportsNobodyLists(module) && !module.syntheticExports.containsIf([](const SyntheticExport& entry) {
-        return !entry.variable;
-    });
+    context.lookup(only(context, context.universe().namespaceOf(id)), ValueFlowCellName { ValueFlowNameKind::NamespaceExports, id.index() << 1 | (deferredExports == DeferredExports::AreRead) });
+}
+
+void runNamespaceExports(const ValueFlowStatement&, ValueFlowRuleContext& context)
+{
+    uint32_t payload = context.nameOfKey().payload;
+    ModuleID id(payload >> 1);
+    DeferredExports deferredExports = payload & 1 ? DeferredExports::AreRead : DeferredExports::AreNotRead;
+    context.add(context.nodes().ofHost(ValueFlowHostNode::CreatedNamespaces), only(context, context.universe().namespaceOf(id)));
+    useModule(context, id);
+    Vector<ModuleID, 4> namespacesInside;
+    tieNamespaceToExports(context, id, namespacesInside, deferredExports);
+    for (ModuleID inside : namespacesInside)
+        requestNamespaceExports(context, inside, deferredExports);
 }
 
 ValueFlowSources namespaceOf(ValueFlowRuleContext& context, ModuleID first, ImportPhase phase, DeferredExports deferredExports)
@@ -624,33 +634,7 @@ ValueFlowSources namespaceOf(ValueFlowRuleContext& context, ModuleID first, Impo
     if (program.at(first).kind == ModuleKind::External)
         return sourcesOf(unknownObject(context, sourceOfWhatLoaderMakes(program.at(first))));
 
-    // Only a namespace object that is tied to all its exports needs no second look.
-    bool isOfBody = context.isStatementOfBody();
-    ValueSetID tiedByThisStatement = isOfBody && context.rememberedByStatement() ? context.rememberedByStatement() : ValueSets::nothing;
-    Vector<ValueFlowObjectID, 4> tiedNow;
-    BitVector visited;
-    Vector<ModuleID, 4> pending { first };
-    while (!pending.isEmpty()) {
-        ModuleID id = pending.takeLast();
-        bool isTiedByThisStatement = context.sets().contains(tiedByThisStatement, universe.namespaceOf(id));
-        if (visited.set(id.index()))
-            continue;
-        bool staysForGood = isOfBody && (deferredExports == DeferredExports::AreRead || listsAllItsExports(program.at(id)));
-        if (!isTiedByThisStatement) {
-            // Every use of the namespace may run in one round, and uses times exports is what would reach the edge budget.
-            // Rules over the whole program ask for every module. Within a round values stand still, so the second to ask would tie the same.
-            bool isTiedWholeInThisRound = staysForGood || (!isOfBody && deferredExports == DeferredExports::AreRead);
-            if (isTiedWholeInThisRound && !context.usesGeneralRulesOnly() && !context.isFirstToTieNamespaceInThisRound(id))
-                continue;
-            if (staysForGood)
-                tiedNow.append(universe.namespaceOf(id));
-        }
-        context.add(context.nodes().ofHost(ValueFlowHostNode::CreatedNamespaces), only(context, universe.namespaceOf(id)));
-        useModule(context, id);
-        tieNamespaceToExports(context, id, pending, deferredExports);
-    }
-    if (!tiedNow.isEmpty())
-        context.rememberedByStatement() = context.maker().unite(tiedByThisStatement, context.maker().of(tiedNow.span()));
+    requestNamespaceExports(context, first, deferredExports);
 
     ClimbingSet namespaceObject = only(context, universe.namespaceOf(first));
     switch (phase) {

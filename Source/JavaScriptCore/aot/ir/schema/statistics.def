@@ -81,6 +81,7 @@ enum RuntimeCounterID {
     FieldMovePlansMade AssignmentPlansMade CopiesCollectedByName CopiesByOrdinaryLookups
     CompiledStructuresMade AllocationSiteRecordsFilled
     StarsRecorded StarsCarriedOutLate
+    CompiledModulesWalkedByLoader
     SiteCacheRefills HashedTableEvictions HashedTableGrowths ChainDependentsDropped GlobalBindingNotFiled FirstMissesNotFiled AnswersNotFiled PairsFiledAgain PairsFiledAgainWhilePresent
     StubCannotReadField StubCannotStoreField StubCannotCreateField StubCannotCallGetter StubCannotCallSetter StubCannotGrowStorage
     TypedParsesFellBackPerValue JSONStringifySlowPaths StringBuilderGrowths RegExpsCreatedWithoutRecord ThrownErrorsNotCreated

@@ -1,0 +1,73 @@
+# A passed test proves every weaker condition on the same value, but only while the test itself stays. When the test is removed, whatever proved it takes its place, and that may not
+# stand in for the weaker condition: a read names that condition's guard, and a call named as a guard loses its inline path (eliminate-guards-result-of-a-call-with-an-inline-way.ir).
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass EliminateGuards
+# STATISTIC: GuardsEliminated = 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="strongerTestIsRemoved" parameters=[{type=Array}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=ArrayPrototypeConcat/3
+    v2 = Integer integer=0
+    v3 = IsPristine v1 builtinClass=Array aspects=[Storage, Names]
+    Branch v3 -> taken b1(), notTaken b3()
+  b1():
+    v4 = IsPristine v1 builtinClass=Array aspects=[Storage]
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = GetArrayElement v1, v2, v5 level=Expected
+    Return v6
+  b3() frequency=Unlikely:
+    v7 = ElemGet v1, v2
+    Return v7
+}
+# CHECK-LABEL: function f0 name="strongerTestIsRemoved"
+# CHECK-NOT: aspects=[Storage, Names]
+# CHECK: v4: boolean = IsPristine v1 builtinClass=Array aspects=[Storage]
+# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b3()
+# CHECK: = GetArrayElement v1, v2, v5
+
+# No guard merges what a test proved on one path with what an allocation proved on the other.
+function f1 name="allocationOnOnePathStrongerTestOnTheOther" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Branch v1 -> taken b1(), notTaken b3()
+  b1():
+    v4 = Call v0, -, v2
+    v5 = IsPristine v2 builtinClass=Array aspects=[Storage, Names]
+    Branch v5 -> taken b2(), notTaken b5()
+  b2():
+    Jump -> next b3()
+  b3():
+    v6 = IsPristine v2 builtinClass=Array aspects=[Storage]
+    Branch v6 -> taken b4(| 0), notTaken b5()
+  b4(v7):
+    v8 = GetArrayElement v2, v3, v7 level=Expected
+    Return v8
+  b5() frequency=Unlikely:
+    v9 = ElemGet v2, v3
+    Return v9
+}
+# CHECK-LABEL: function f1 name="allocationOnOnePathStrongerTestOnTheOther"
+# CHECK: v5: boolean = IsPristine v2 builtinClass=Array aspects=[Storage, Names]
+# CHECK: v6: boolean = IsPristine v2 builtinClass=Array aspects=[Storage]
+# CHECK-NEXT: Branch v6 -> taken b4(| 0), notTaken b5()
+
+function f2 name="strongerTestStays" parameters=[{type=Array}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    v2 = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+    Branch v2 -> taken b1(), notTaken b3()
+  b1():
+    v3 = IsPristine v0 builtinClass=Array aspects=[Storage]
+    Branch v3 -> taken b2(| 0), notTaken b3()
+  b2(v4):
+    v5 = GetArrayElement v0, v1, v4 level=Expected
+    Return v5
+  b3() frequency=Unlikely:
+    v6 = ElemGet v0, v1
+    Return v6
+}
+# CHECK-LABEL: function f2 name="strongerTestStays"
+# CHECK: = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+# CHECK-NOT: IsPristine
+# CHECK: = GetArrayElement v0, v1,

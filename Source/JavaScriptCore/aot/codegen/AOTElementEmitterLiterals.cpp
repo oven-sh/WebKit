@@ -46,7 +46,7 @@ void GuardEmitter::generateIsInBounds(const ValueContext& value)
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
     // The test stands behind the test or the proof of a form, as the access that it is for does.
     Integer index = elements.indexOrElse(value->positionOperand(), true, nullptr);
-    defineTest(value, elements.testLength(index, elements.elementsOf(in<CellPointer>(value->arrayOperand()))).isInside);
+    defineTest(value, elements.testLength(value, index, elements.elementsOf(in<CellPointer>(value->arrayOperand()))).isInside);
 }
 
 void GuardEmitter::generateIsElementPresent(const ValueContext& value)

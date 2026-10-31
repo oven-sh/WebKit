@@ -60,6 +60,8 @@ public:
 
     static JSValue readVariable(Instance&, SlotData);
     static JSValue readVariableWithoutAllocating(const Instance&, SlotData);
+    // Nothing has been stored to it. Allocates nothing.
+    static bool isVariableEmpty(const Instance&, SlotData);
     // Null if the variable does not hold a string.
     static String readStringWithoutAllocating(const Instance&, SlotData);
     static void writeVariable(Instance&, SlotData, JSValue);

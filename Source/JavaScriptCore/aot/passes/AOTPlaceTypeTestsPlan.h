@@ -35,6 +35,7 @@ inline constexpr OpcodeSet opcodesPlaceTypeTestsLooksFor = testSiteOpcodes | Opc
 bool mayPlaceTestsOfAccessesByName(const Heat&, FunctionAnalyses&, BlockID);
 // A prediction: what arrives as the receiver in this function has none of the layouts of the program, whatever other callers hand over.
 bool arrivesWithoutLayoutOfProgram(FunctionPassContext&, BlockID, ValueID receiver);
+bool paysToLeaveDataFromOutsideUntested(FunctionPassContext&, BlockID);
 
 enum class PlannedTestPosition : uint8_t { BeforeUse, OnEdge };
 
@@ -92,7 +93,10 @@ struct TestPlacementPlan {
 
 // A guard holds what one test or one case of a switch has proven, wherever that has not ended on any way to the guard.
 enum class ProofsHeldByGuards : uint8_t { AreListed, AreLeftOut };
-Vector<ExistingProof> findExistingProofs(FunctionPassContext&, const TestConditions&, ProofsHeldByGuards = ProofsHeldByGuards::AreListed);
+// A parameter that takes a new object on each edge. No guard holds what the objects prove together.
+enum class ProofsOfAllocationsThatMeet : uint8_t { AreLeftOut, AreListed };
+bool takesAllocationOnSomeEdge(FunctionAnalyses&, ValueID parameter);
+Vector<ExistingProof> findExistingProofs(FunctionPassContext&, const TestConditions&, ProofsHeldByGuards = ProofsHeldByGuards::AreListed, ProofsOfAllocationsThatMeet = ProofsOfAllocationsThatMeet::AreLeftOut);
 ValueID ensureEdgeResult(IRBuilder&, FunctionAnalyses&, Edge, uint32_t proof);
 
 // The `k` of `k < list.length` in front of `list[k]`.

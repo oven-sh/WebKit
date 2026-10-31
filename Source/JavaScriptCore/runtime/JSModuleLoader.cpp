@@ -1637,10 +1637,11 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
                 if (step.task != InternalMicrotask::ModuleLoadStep || uncheckedDowncast<JSPromise>(step.arg0)->status() != JSPromise::Status::Pending)
                     continue;
                 auto* context = uncheckedDowncast<ModuleLoadingContext>(step.arg2);
-                // The step in which the root itself asks for what it imports.
-                if (context->entry() == entry)
-                    return false;
                 auto* load = dynamicDowncast<ModuleGraphLoadingState>(context->payload());
+                // The step in which the root itself asks for what it imports, where an import() has begun the load of the root.
+                // Not where a graph has asked for the root: `bun run` reads the files of a graph on other threads and has taken that step by the time a file of the graph runs.
+                if (!load && context->entry() == entry)
+                    return false;
                 if (load && load->containsVisited(entry->record()))
                     return false;
             }

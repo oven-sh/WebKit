@@ -19,6 +19,7 @@
 #include "AOTTypePropagation.h"
 #include "AOTVector.h"
 #include <array>
+#include <memory>
 #include <optional>
 #include <span>
 #include <wtf/OptionSet.h>
@@ -97,6 +98,8 @@ struct OptimizationInputs {
     OptimizationInputs withEffects(const EffectSummaries& otherEffects LIFETIME_BOUND) const { return { flow, callGraph, heat, inlining, otherEffects, derivedFunctions, callingConventions, slots, placement }; }
 };
 
+struct AnswersAboutCallbacksOfChains;
+
 struct FunctionPassContext {
     const Program& program;
     const OptimizationInputs& inputs;
@@ -144,6 +147,8 @@ struct FunctionPassContext {
     bool lookedOnlyNearby { false };
     // Set by the planner of a site where its answer follows from more than the site, the types of its operands and the program: from where the site stands, or from who else uses a value.
     bool planAsksAboutPlace { false };
+    // The passes that look at a chain of array methods ask the same of its callbacks in every round, and the other functions of the program stay as they are while this one is optimized.
+    std::shared_ptr<AnswersAboutCallbacksOfChains> answersAboutCallbacksOfChains { };
 
     FunctionID derivedFunction(const DerivedFunctionKey&);
 

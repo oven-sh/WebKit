@@ -228,6 +228,10 @@ std::span<const ValueFlowOperand> ValueFlowRuleContext::operandsOf(const ValueFl
     }
     return narrowed.span();
 }
+std::span<const ValueFlowOperand> ValueFlowRuleContext::objectsReadUnderKeyOfStore(const ValueFlowStatement& statement) const
+{
+    return m_operandsInPlace.empty() ? m_solver.objectsReadUnderKeyOfStore(statement) : std::span<const ValueFlowOperand>();
+}
 ValueFlowNodeID ValueFlowRuleContext::markersOf(FunctionID function) { return nodeFor(ValueFlowNodeKey::markersOf(function)); }
 
 bool ValueFlowRuleContext::canBeReached(const ValueFlowStatement& statement)
@@ -527,14 +531,6 @@ ValueSetID& ValueFlowRuleContext::rememberedByStatement()
 }
 
 bool ValueFlowRuleContext::isStatementOfBody() const { return m_statement.index() < m_solver.m_input.statements.size(); }
-
-bool ValueFlowRuleContext::isFirstToTieNamespaceInThisRound(ModuleID module)
-{
-    // Each edge must keep the statement that logs it first, whichever thread runs first.
-    if (m_solver.m_input.remembersWhoLoggedEachEdge)
-        return true;
-    return m_solver.m_roundThatTiedNamespace[module.index()].exchange(m_solver.m_counters.rounds, std::memory_order_relaxed) != m_solver.m_counters.rounds;
-}
 
 ClimbingSet ValueFlowRuleContext::membersNewToThread(ClimbingSet set, unsigned number)
 {

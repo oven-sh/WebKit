@@ -77,6 +77,8 @@ struct PendingStatement {
     uint32_t firstOperand { 0 };
     uint32_t operandCount { 0 };
     bool leavesBody { true };
+    // They stand behind the operands.
+    uint8_t numberOfObjectsReadUnderKeyOfStore { 0 };
 };
 
 struct Guard {
@@ -1116,7 +1118,7 @@ private:
         }
         if (producer.opcode == Opcode::CallDirect && !m_program.at(producer.function()).isUnsplitCoroutine())
             return setNode(id, NodeName::result(producer.function(), value.index()));
-        bool isListedName = value.index() == static_cast<uint32_t>(ForInStepResult::Key) && walksNamesThatAreReExported(m_function, producer);
+        bool isListedName = producer.opcode == Opcode::ForInStep && value.index() == static_cast<uint32_t>(ForInStepResult::Key);
         if (!isListedName && !typeOf(id).hasObjects() && typeOf(id).isJavaScriptValue())
             return setConstant(id, constantOfType(typeOf(id)));
         beginSources(id);
@@ -1415,6 +1417,12 @@ private:
         PendingStatement statement { id, block, static_cast<uint32_t>(m_statementOperands.size()), value.numberOfOperands(), !onlyLooksAtOperands(value) };
         for (uint32_t index = 0; index < statement.operandCount; ++index)
             m_statementOperands.append(value.operand(index));
+        if (value.opcode == Opcode::ElemSet) {
+            if (Vector<ValueID, 2> objects = objectsReadUnderKeyOfStore(m_function, value); objects.size() <= 2) {
+                m_statementOperands.appendVector(objects);
+                statement.numberOfObjectsReadUnderKeyOfStore = objects.size();
+            }
+        }
         m_guardsOfBlock[block.index()].areAskedFor = true;
         m_statements.append(statement);
     }
@@ -2231,6 +2239,14 @@ private:
         }
     }
 
+    bool stepsRestElement(const Value& step)
+    {
+        if (!step.stepIndex())
+            return false;
+        const Value& open = m_function.at(step.operand(OperandIndex::IteratorResume::iterator));
+        return open.opcode != Opcode::IteratorOpen || (open.hasRest() && *step.stepIndex() >= open.elementCount().value_or(0));
+    }
+
     void noteFactsOfText(const Value& value, ValueID site, Body::Statement& statement)
     {
         if (isReadByRules(value.opcode)) {
@@ -2239,8 +2255,8 @@ private:
         }
         if (value.opcode == Opcode::ElemGet && readsUnderNameOfEnumerationOfSameObject(m_function, value))
             statement.factsOfText.add(ValueFlowFactOfText::ReadsUnderNameOfEnumerationOfSameObject);
-        if (walksNamesThatAreReExported(m_function, value))
-            statement.factsOfText.add(ValueFlowFactOfText::WalksNamesThatAreReExported);
+        if (value.opcode == Opcode::IteratorResume && stepsRestElement(value))
+            statement.factsOfText.add(ValueFlowFactOfText::StepsRestElement);
         ValueFlowRareFactsOfText rare { m_body.function, site, { }, { } };
         if (flowRuleOf(value.opcode) == FlowRule::Call) {
             if (value.operand(1))
@@ -2255,7 +2271,13 @@ private:
             if (value.opcode == Opcode::PropGet)
                 rare.entryNamed = entryNamedByOperations(m_program, m_function, site);
         }
-        if (!rare.entryNamed && !rare.keyOfMemberCalledOnItsHolder)
+        if (value.opcode == Opcode::ElemGet || value.opcode == Opcode::ElemSet) {
+            static_assert(OperandIndex::ElemGet::property == OperandIndex::ElemSet::property);
+            rare.textThatKeyBeginsWith = textThatSumBeginsWith(m_program, m_function, value.operand(OperandIndex::ElemGet::property));
+        }
+        if (value.opcode == Opcode::ElemGet)
+            rare.positionInPair = positionInPairWrittenAsKey(m_function, value);
+        if (!rare.entryNamed && !rare.keyOfMemberCalledOnItsHolder && !rare.textThatKeyBeginsWith && !rare.positionInPair)
             return;
         statement.factsOfText.add(ValueFlowFactOfText::HasRareFacts);
         m_body.rareFactsOfText.append(rare);
@@ -2278,6 +2300,10 @@ private:
             const UnobservedFieldDefinition* unobserved = findUnobservedDefinition(pending.site, index);
             m_body.operands.append(unobserved ? valueOf(*unobserved) : operandFormOf(value, index, m_statementOperands[pending.firstOperand + index]));
         }
+        for (uint32_t index = 0; index < pending.numberOfObjectsReadUnderKeyOfStore; ++index)
+            m_body.operands.append(operandFormOf(m_statementOperands[pending.firstOperand + pending.operandCount + index]));
+        if (pending.numberOfObjectsReadUnderKeyOfStore)
+            statement.factsOfText.add(pending.numberOfObjectsReadUnderKeyOfStore == 1 ? ValueFlowFactOfText::StoresWhatOneObjectHoldsUnderSameKey : ValueFlowFactOfText::StoresWhatTwoObjectsHoldUnderSameKey);
         GuardsOfBlock& guards = m_guardsOfBlock[pending.block.index()];
         if (!guards.areWritten) {
             guards.areWritten = true;

@@ -125,6 +125,9 @@ public:
     // Whether code of this heat is cold only because it does not fit MaxWarmCodeValues. Such code is expected to run.
     Expected<bool> isColdByLimitAlone(Expected<double> heat) const { return m_thresholds && heat.predicted() >= m_thresholds->coldWithoutLimit && heat.predicted() < m_thresholds->cold; }
     Expected<std::span<const FunctionID>> hottestFirst() const LIFETIME_BOUND { return m_hottestFirst.span(); }
+    // A function made since the estimate that derives from no other function is entered as often as the blocks that call it run.
+    bool hasSeenAllFunctionsOf(const Program& program) const { return m_numberOfFunctionsSeen >= program.functions.size(); }
+    void takeInFunctionsMadeSince(const Program&, const FlowResults&, BuildContext&);
 
     void dump(PrintStream&, const Program&) const;
 
@@ -143,7 +146,10 @@ private:
         double rank { 0 };
     };
 
+    Expected<HeatClass> classOf(const Entry&, const Function&, double activations, double frequencyInFunction) const;
+
     PerFunction<Entry> m_entries;
+    unsigned m_numberOfFunctionsSeen { 0 };
     bool m_hasWeights { true };
     bool m_hotIsByRank { false };
     std::optional<HeatThresholds> m_thresholds;

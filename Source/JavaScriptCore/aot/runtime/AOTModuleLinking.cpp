@@ -26,6 +26,7 @@
 #include "ExceptionHelpers.h"
 #include "JSCInlines.h"
 #include "PropertyNameArray.h"
+#include "SyntheticModuleRecord.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
 #include <wtf/text/StringView.h>
@@ -59,12 +60,18 @@ void Modules::forEachCapturedExport(ModuleID module, const ScopedLambda<void(con
     }
 }
 
+// The search for a name of such a module can leave the image.
+static bool findsNamesThroughRecords(const ModuleData& exporter)
+{
+    return exporter.isUncompiledCode() || (exporter.hasDynamicStarExport() && !exporter.capturesExports());
+}
+
 StarExportResolution::Type Modules::resolveRequiredName(ModuleID exporter, const Identifier& name)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     const ModuleData& exporterData = data(exporter);
 
-    if (exporterData.isUncompiledCode() || (exporterData.hasDynamicStarExport() && !exporterData.capturesExports())) {
+    if (findsNamesThroughRecords(exporterData)) {
         AbstractModuleRecord* record = recordForResolution(exporter);
         RETURN_IF_EXCEPTION(scope, StarExportResolution::Type::Error);
         RELEASE_AND_RETURN(scope, record->resolveExport(m_instance.globalObject, name).type);
@@ -94,16 +101,19 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules)
                     continue;
                 bool isExported = hasCapturedExport(exporter, identifier(requiredName.name));
                 RETURN_IF_EXCEPTION(scope, void());
-                if (isExported)
+                if (isExported || dropExportThatFindsNothing(module, requiredName))
                     continue;
                 RELEASE_AND_RETURN(scope, throwExportNotFound(requiredName));
             }
             if (data(exporter).hasExportTable()) {
-                // A mock that stands for a whole ES module takes away what the build has found.
-                if (!m_exportsLeftOutByMocks.isEmpty()) [[unlikely]] {
+                // A mock that stands for a whole ES module takes away what the build has found. So does a link that has dropped the export.
+                if (!m_exportsLeftOut.isEmpty()) [[unlikely]] {
                     std::optional<unsigned> index = m_table.findExport(exporter, identifier(requiredName.name).impl());
-                    if (index && isMissingBehindMocks(exporter, *index, TablesBehindStars::HaveName))
+                    if (index && isLeftOut(exporter, *index, TablesBehindStars::HaveName)) {
+                        if (dropExportThatFindsNothing(module, requiredName))
+                            continue;
                         RELEASE_AND_RETURN(scope, throwExportNotFound(requiredName));
+                    }
                 }
                 if (requiredName.mayBeAbsent && !data(exporter).hasDynamicStarExport())
                     continue;
@@ -115,7 +125,7 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules)
                     isExported = hasCapturedExport(exporter, identifier(requiredName.name));
                     RETURN_IF_EXCEPTION(scope, void());
                 }
-                if (isExported)
+                if (isExported || dropExportThatFindsNothing(module, requiredName))
                     continue;
                 RELEASE_AND_RETURN(scope, throwExportNotFound(requiredName));
             }
@@ -132,6 +142,8 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules)
                     continue;
                 // A CommonJS file has `default` from the start, and loses it with its other names.
                 if (isCommonJSFileOrFace(exporter) && identifier(requiredName.name) == m_instance.vm->propertyNames->defaultKeyword && !ensureLoaded(exporter).didDropError && !ensureLoaded(fileOf(exporter)).didDropError && !ensureLoaded(exporter).exportsWhatMockNamesAlone)
+                    continue;
+                if (resolution == StarExportResolution::Type::NotFound && dropExportThatFindsNothing(module, requiredName))
                     continue;
                 RELEASE_AND_RETURN(scope, throwExportNotFound(requiredName));
             }
@@ -898,7 +910,8 @@ bool Modules::tryCaptureFields(ModuleID module, JSValue value)
     const LayoutData& layout = exports->layout();
     if (layout.kind() != LayoutKind::Record)
         return false;
-    RuntimeLayoutTable& layouts = m_state.objects->layouts;
+    // `module.exports = require("dep")`: the object may be of another image, whose table has the names of its fields.
+    RuntimeLayoutTable& layouts = exports->state().objects->layouts;
     for (const FieldData& field : layout.fields()) {
         if (field.isAccessor() || (layouts.hasStringKey(field) && parseIndex(*layouts.nameOf(vm, field))))
             return false;
@@ -958,7 +971,7 @@ JSValue Modules::capturedField(const LoadedModule& loaded, UniquedStringImpl* na
     if (!isOfRuntimeModule && ((isMarked && name == names.__esModule.impl()) || (stars && name == names.constructor.impl())))
         return { };
     const LayoutData& layout = source.layout();
-    const FieldData* field = m_state.objects->layouts.field(vm, layout, name);
+    const FieldData* field = source.state().objects->layouts.field(vm, layout, name);
     JSValue held = field && !field->isPrivate() ? loaded.capturedFields->get(layout.indexOf(*field)) : JSValue();
     if (held && (isOfRuntimeModule || (stars && isMarked)) && field->flags & fieldIsNotEnumerable)
         held = JSValue();
@@ -970,8 +983,9 @@ JSValue Modules::capturedField(const LoadedModule& loaded, UniquedStringImpl* na
 void Modules::makeTableOfCapturedFields(LoadedModule& loaded)
 {
     VM& vm = *m_instance.vm;
-    RuntimeLayoutTable& layouts = m_state.objects->layouts;
-    const LayoutData& layout = uncheckedDowncast<Object>(loaded.sourceOfCapturedFields.get())->layout();
+    Object& source = *uncheckedDowncast<Object>(loaded.sourceOfCapturedFields.get());
+    RuntimeLayoutTable& layouts = source.state().objects->layouts;
+    const LayoutData& layout = source.layout();
     UniquedStringImpl* defaultName = vm.propertyNames->defaultKeyword.impl();
 
     JSObject* captured = createTableOfExports();
@@ -1041,6 +1055,26 @@ bool Modules::findsItsNamesInLibraryAlone(ModuleID module) const
     });
 }
 
+// Compiled code reads a name that is found through records from a namespace object, which fills a deferred export when it is first asked for the name.
+static void fillDeferredExportFoundThroughRecords(JSGlobalObject* realm, AbstractModuleRecord* exporter, const Identifier& name)
+{
+    VM& vm = realm->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    AbstractModuleRecord::Resolution resolution = exporter->resolveExport(realm, name);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (resolution.type != AbstractModuleRecord::Resolution::Type::Resolved || resolution.localName == vm.propertyNames->starNamespacePrivateName)
+        return;
+    auto* compiled = dynamicDowncast<ModuleRecord>(resolution.moduleRecord);
+    if (!compiled)
+        RELEASE_AND_RETURN(scope, SyntheticModuleRecord::materializeLazyExport(realm, resolution.moduleRecord, resolution.localName));
+    // The body of an ES module fills its variables.
+    if (resolution.compiledExportIndex)
+        return;
+    scope.release();
+    compiled->readExport(realm, resolution.localName, std::nullopt);
+}
+
 // The host reads a deferred export when it links a module that binds the name, and later importers get what it read then: SyntheticModuleRecord::materializeLazyExport().
 void Modules::fillDeferredExports(ModuleID importer)
 {
@@ -1050,9 +1084,21 @@ void Modules::fillDeferredExports(ModuleID importer)
         ModuleID exporter = requiredName.exporterModule();
         if (data(exporter).kind == ModuleKind::External) {
             if (auto* inImageBelow = dynamicDowncast<ModuleNamespace>(value(exporter))) {
-                inImageBelow->readDeferredExport(m_instance.globalObject, identifier(requiredName.name));
+                bool isOfLibraryModule = inImageBelow->readDeferredExport(m_instance.globalObject, identifier(requiredName.name));
                 RETURN_IF_EXCEPTION(scope, void());
+                if (isOfLibraryModule)
+                    continue;
             }
+        }
+        if (findsNamesThroughRecords(data(exporter))) {
+            // The check of the names passes over some of them, and the loader may not have come to their exporter.
+            LoadedModule* loaded = loadedIfExists(exporter);
+            if (data(exporter).isUncompiledCode() && (!loaded || !loaded->uncompiledRecord))
+                continue;
+            AbstractModuleRecord* record = recordForResolution(exporter);
+            RETURN_IF_EXCEPTION(scope, void());
+            fillDeferredExportFoundThroughRecords(m_instance.globalObject, record, identifier(requiredName.name));
+            RETURN_IF_EXCEPTION(scope, void());
             continue;
         }
         if (data(exporter).exportRule != SyntheticExportRule::RuntimeModule)

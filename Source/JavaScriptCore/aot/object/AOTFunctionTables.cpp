@@ -41,6 +41,7 @@
 #include <algorithm>
 #include <limits>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <type_traits>
 #include <wtf/MathExtras.h>
@@ -836,7 +837,7 @@ std::span<const Latin1Character> functionSourceBytes(FunctionID function)
 {
     const ProgramTables& tables = programTables();
     std::span entries = functionTextEntriesOfSource(tables, tables.sourceFunctionOf(function.index()));
-    auto entry = std::ranges::find(entries, function.index(), &FunctionTextEntry::function);
+    auto entry = std::ranges::find(entries, function.index(), [](const FunctionTextEntry& entry) -> uint32_t { return entry.function; });
     if (entry == entries.end())
         return { };
     return bytesOf(tables, *entry);
@@ -858,6 +859,53 @@ unsigned linesOfTextAboveSource(FunctionID source)
     return found != constructors.end() && found->function == source.index() ? found->linesOfTextAbove : 0;
 }
 
+// Goes over the characters of text[at, limit) that stand in front of the place, and answers where the first one starts that does not.
+static size_t advanceTo(PlaceOfTextInFile& place, LineColumn wanted, std::span<const uint8_t> text, size_t at, size_t limit)
+{
+    auto isInFront = [&] {
+        return place.line < wanted.line || (place.line == wanted.line && place.column < wanted.column);
+    };
+    auto advanceByCharactersTo = [&](size_t end) {
+        while (at < end && isInFront())
+            at = place.advanceOver(text, at);
+    };
+    std::span characters = byteCast<Latin1Character>(text.first(limit));
+    while (at < limit && isInFront()) {
+        if (place.isBehindCarriageReturn) {
+            at = place.advanceOver(text, at);
+            continue;
+        }
+        // What stands above the line of the place is gone over at once, as far as its line feed or a cut. The column counts for nothing there: each line sets it anew.
+        if (place.line < wanted.line) {
+            size_t lineFeed = std::min(WTF::find(characters, static_cast<Latin1Character>('\n'), at), limit);
+            size_t endOfLine = lineFeed - (lineFeed < limit && lineFeed > at && text[lineFeed - 1] == '\r');
+            std::span line = characters.subspan(at, endOfLine - at);
+            if (WTF::find(line, static_cast<Latin1Character>('\r')) != notFound || WTF::find(line, static_cast<Latin1Character>(0xE2)) != notFound)
+                advanceByCharactersTo(std::min(lineFeed + 1, limit));
+            else if (lineFeed < limit) {
+                place.startLine();
+                at = lineFeed + 1;
+            } else
+                at = limit;
+            continue;
+        }
+        // In the line of the place, each character of ASCII is one column.
+        size_t size = std::min<size_t>({ limit - at, wanted.column - place.column, 64 });
+        uint8_t seen = 0;
+        bool endsLine = false;
+        for (uint8_t byte : text.subspan(at, size)) {
+            seen |= byte;
+            endsLine |= byte == '\n' || byte == '\r';
+        }
+        if (seen < 0x80 && !endsLine) {
+            place.column += static_cast<uint32_t>(size);
+            at += size;
+        } else
+            advanceByCharactersTo(at + size);
+    }
+    return at;
+}
+
 std::optional<PlaceInKeptText> findInKeptText(FunctionID source, ModuleID module, LineColumn wanted)
 {
     const ProgramTables& tables = programTables();
@@ -866,42 +914,58 @@ std::optional<PlaceInKeptText> findInKeptText(FunctionID source, ModuleID module
     std::span entries = functionTextEntriesOfSource(tables, source.index());
     const FunctionTextEntry* entry = entries.empty() ? nullptr : &entries.front();
     const FunctionTexts& texts = tables.functionTexts()[0];
+    const uint8_t* pieces = tables.at<uint8_t>(texts.piecesOffset);
     // The last of them belongs to no module.
-    std::span modules { tables.at<PiecesOfModule>(texts.modulesWithPiecesOffset), texts.numberOfModulesWithPieces + 1 };
-    size_t found = std::ranges::lower_bound(modules, module.index(), { }, &PiecesOfModule::module) - modules.begin();
-    if (modules[found].module != module.index())
+    std::span records { tables.at<PiecesOfModule>(texts.modulesWithPiecesOffset), texts.numberOfModulesWithPieces + 1 };
+    auto recordsOfModule = std::ranges::equal_range(records, module.index(), { }, &PiecesOfModule::module);
+    auto behind = std::ranges::partition_point(recordsOfModule, [&](const PiecesOfModule& record) {
+        const uint8_t* cursor = pieces + record.start;
+        return !PieceOfKeptText::read(cursor, { }).startsBehind(wanted);
+    });
+    if (behind == recordsOfModule.begin())
         return std::nullopt;
 
-    const uint8_t* cursor = tables.at<uint8_t>(texts.piecesOffset) + modules[found].start;
-    const uint8_t* end = tables.at<uint8_t>(texts.piecesOffset) + modules[found + 1].start;
-    uint32_t endOfLastPiece = 0;
-    uint32_t line = 0;
+    const uint8_t* cursor = pieces + std::prev(behind)->start;
+    const uint8_t* end = pieces + behind->start;
+    PieceOfKeptText piece;
+    const uint8_t* cuts = nullptr;
     while (cursor < end) {
-        uint32_t start = static_cast<uint32_t>(endOfLastPiece + zigZagDecode(readVarint(cursor) >> 1));
-        endOfLastPiece = start + static_cast<uint32_t>(readVarint(cursor));
-        line += static_cast<uint32_t>(readVarint(cursor));
-        PlaceOfTextInFile place { line, static_cast<uint32_t>(readVarint(cursor)) };
-        // The same text may stand in the file twice, and is held once. The place lies in one of the two.
-        size_t startOfSearched = entry ? entry->start : start;
-        size_t endOfSearched = entry ? entry->end : endOfLastPiece;
-        bool mayHold = start <= startOfSearched && endOfSearched <= endOfLastPiece;
-        std::span text { tables.at<uint8_t>(texts.textOffset), endOfLastPiece };
-        size_t at = start;
-        for (size_t cut = start;;) {
-            bool hasCut = cursor < end && !(*cursor & 1);
-            cut = hasCut ? cut + static_cast<size_t>(readVarint(cursor) >> 1) : endOfLastPiece;
-            for (size_t limit = std::min(cut, endOfSearched); mayHold && at < limit; at = place.advanceOver(text, at)) {
-                if (place.line == wanted.line && place.column == wanted.column && at >= startOfSearched)
-                    return PlaceInKeptText { startOfSearched, endOfSearched, at };
-                mayHold = place.line < wanted.line || (place.line == wanted.line && place.column < wanted.column);
-            }
-            if (!hasCut)
-                break;
-            uint64_t columns = readVarint(cursor);
-            place.advanceOverCut(columns & 1 ? static_cast<uint32_t>(readVarint(cursor)) : 0, static_cast<uint32_t>(columns >> 1));
+        PieceOfKeptText next = PieceOfKeptText::read(cursor, piece);
+        if (next.startsBehind(wanted))
+            break;
+        piece = next;
+        cuts = cursor;
+        while (cursor < end && !(*cursor & 1)) {
+            readVarint(cursor);
+            if (readVarint(cursor) & 1)
+                readVarint(cursor);
         }
     }
-    return std::nullopt;
+
+    // The same text may stand in the file twice, and is held once.
+    size_t startOfSearched = entry ? entry->start : piece.startOfWhole;
+    size_t endOfSearched = entry ? entry->end : piece.endOfWhole;
+    if (startOfSearched < piece.startOfWhole || endOfSearched > piece.endOfWhole)
+        return std::nullopt;
+    std::span text { tables.at<uint8_t>(texts.textOffset), piece.end };
+    PlaceOfTextInFile place { piece.line, piece.column };
+    cursor = cuts;
+    size_t at = piece.start;
+    for (size_t cut = piece.start;;) {
+        bool hasCut = cursor < end && !(*cursor & 1);
+        cut = hasCut ? cut + static_cast<size_t>(readVarint(cursor) >> 1) : piece.end;
+        size_t limit = std::min(cut, endOfSearched);
+        at = advanceTo(place, wanted, text, at, limit);
+        if (at < limit) {
+            if (place.line == wanted.line && place.column == wanted.column && at >= startOfSearched)
+                return PlaceInKeptText { startOfSearched, endOfSearched, at, piece.startOfWhole, piece.endOfWhole };
+            return std::nullopt;
+        }
+        if (!hasCut)
+            return std::nullopt;
+        uint64_t columns = readVarint(cursor);
+        place.advanceOverCut(columns & 1 ? static_cast<uint32_t>(readVarint(cursor)) : 0, static_cast<uint32_t>(columns >> 1));
+    }
 }
 
 std::span<const Latin1Character> sourceBytesOfAllFunctions()
@@ -916,16 +980,44 @@ std::span<const Latin1Character> sourceBytesOfAllFunctions()
 
 Vector<TextPrintedInPlace> textPrintedInPlaceOf(ModuleID module, StartOfPrintedText start)
 {
+    return textPrintedInPlaceOf(module, start, 0, std::numeric_limits<size_t>::max());
+}
+
+Vector<TextPrintedInPlace> textPrintedInPlaceOf(ModuleID module, StartOfPrintedText start, size_t from, size_t to)
+{
     const ProgramTables& tables = programTables();
-    std::span modules = tables.modulesWithTextPrintedInPlace();
+    std::span records = tables.modulesWithTextPrintedInPlace();
     std::span bytes = tables.textPrintedInPlace();
-    if (modules.empty() || bytes[0] != static_cast<uint8_t>(start))
+    if (records.empty() || bytes[0] != static_cast<uint8_t>(start))
         return { };
     // The last of them belongs to no module.
-    auto found = std::ranges::lower_bound(modules, module.index(), { }, &TextPrintedInPlaceOfModule::module);
-    if (found->module != module.index())
+    auto recordsOfModule = std::ranges::equal_range(records, module.index(), { }, &TextPrintedInPlaceOfModule::module);
+    if (recordsOfModule.empty())
         return { };
-    return TextPrintedInPlace::readAll(bytes.subspan(found->start, std::next(found)->start - found->start));
+    size_t firstRecord = recordsOfModule.begin() - records.begin();
+    size_t endOfRecords = recordsOfModule.end() - records.begin();
+    auto bytesOf = [&](size_t record) {
+        return bytes.subspan(records[record].start, records[record + 1].start - records[record].start);
+    };
+    auto startOfFirstIn = [&](size_t record) {
+        const uint8_t* cursor = bytesOf(record).data();
+        return readVarint(cursor);
+    };
+    Vector<TextPrintedInPlace> pieces;
+    if (endOfRecords - firstRecord == 1) {
+        TextPrintedInPlace::appendThoseThatStartIn(pieces, bytesOf(firstRecord), 0, 1);
+        if (TextPrintedInPlace::sayFileRunsAsWritten(pieces.span()))
+            return pieces;
+        pieces.shrink(0);
+    }
+    size_t record = *std::ranges::partition_point(std::views::iota(firstRecord, endOfRecords), [&](size_t record) {
+        return startOfFirstIn(record) < from;
+    });
+    if (record > firstRecord)
+        --record;
+    for (; record < endOfRecords && startOfFirstIn(record) < to; ++record)
+        TextPrintedInPlace::appendThoseThatStartIn(pieces, bytesOf(record), from, to);
+    return pieces;
 }
 
 JSString* functionSourceText(JSGlobalObject* globalObject, FunctionID function)

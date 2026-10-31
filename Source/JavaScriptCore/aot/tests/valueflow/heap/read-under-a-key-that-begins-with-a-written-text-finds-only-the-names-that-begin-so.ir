@@ -1,0 +1,58 @@
+# table = {}; table.first = one; table.second = two; table["fir" + name]()
+# Of the names that the program writes only `first` begins with "fir": the read finds what lies under it, and not what lies under `second`.
+# other = {}; other.first = one; other.second = two; other["fi" + name] = three; other["fir" + name](): what was stored under a key that nobody knows in full may lie under such a name too.
+# list = {}; list.first = one; list[12] = four; list["1" + name](): "1" + name may be an index, which is no name: the read is not narrowed.
+# RUN: valueflow-solve calls
+# CHECK: f0 v10 -> f1
+# CHECK-NOT: f0 v10 -> f1 f2
+# CHECK: f0 v20 -> f1 f3
+# CHECK-NOT: f0 v20 -> f1 f2
+# CHECK: f0 v29 -> {{*}}f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewDictionary
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="name" [isFreeName]
+    v3 = NewClosure function=f1
+    PropSet v0, v3 key="first" mode=Strict
+    v5 = NewClosure function=f2
+    PropSet v0, v5 key="second" mode=Strict
+    v7 = String string="fir"
+    v8 = Add v7, v2
+    v9 = ElemGet v0, v8
+    v10 = Call v9, v0
+    v11 = NewDictionary
+    PropSet v11, v3 key="first" mode=Strict
+    PropSet v11, v5 key="second" mode=Strict
+    v14 = NewClosure function=f3
+    v15 = String string="fi"
+    v16 = Add v15, v2
+    ElemSet v11, v16, v14 mode=Strict
+    v18 = Add v7, v2
+    v19 = ElemGet v11, v18
+    v20 = Call v19, v11
+    v21 = NewDictionary
+    PropSet v21, v3 key="first" mode=Strict
+    v23 = Integer integer=12
+    v24 = NewClosure function=f4
+    ElemSet v21, v23, v24 mode=Strict
+    v26 = String string="1"
+    v27 = Add v26, v2
+    v28 = ElemGet v21, v27
+    v29 = Call v28, v21
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+    Return
+}
+function f2 name="two" results=[{type=anything}] {
+    Return
+}
+function f3 name="three" results=[{type=anything}] {
+    Return
+}
+function f4 name="four" results=[{type=anything}] {
+    Return
+}

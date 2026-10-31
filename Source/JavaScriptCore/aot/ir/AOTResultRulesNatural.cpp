@@ -28,6 +28,8 @@ constexpr OpcodeSet fractionFreeOperators {
     Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Mod, Opcode::Negate, Opcode::Increment, Opcode::Decrement, Opcode::ToNumber, Opcode::ToNumeric
 };
 
+constexpr OpcodeSet shiftOperators { Opcode::LShift, Opcode::RShift, Opcode::URShift };
+
 } // anonymous namespace
 
 Type naturalTypeFrom(const NaturalType& natural)
@@ -149,20 +151,59 @@ static std::optional<Type> bitwiseResultType(Opcode opcode, Range a, Range b)
             return Type::integer({ std::min(a.minimum, b.minimum), -1 });
         return Type::integer({ mayBeNegative ? std::min(a.minimum, b.minimum) : 0, (int64_t { 1 } << std::bit_width(static_cast<uint64_t>(std::max(a.maximum, b.maximum)))) - 1 });
     }
-    case Opcode::LShift:
-        return Type::integer(Range::int32());
-    case Opcode::RShift: {
-        if (b.minimum != b.maximum)
-            return Type::integer({ std::min<int64_t>(a.minimum, 0), std::max<int64_t>(a.maximum, -1) });
-        int64_t shift = b.minimum & 31;
-        return Type::integer({ a.minimum >> shift, a.maximum >> shift });
-    }
-    case Opcode::URShift: {
-        int64_t shift = b.isSingleValue() ? b.minimum & 31 : 0;
-        return Type::integer({ 0, (a.minimum >= 0 ? a.maximum : Range::uint32().maximum) >> shift });
-    }
     default:
         return std::nullopt;
+    }
+}
+
+static Range shiftCountsOf(const Type& count)
+{
+    constexpr Range everyCount { 0, 31 };
+    if (!count.isInteger() || count.integers.maximum - count.integers.minimum >= everyCount.maximum)
+        return everyCount;
+    Range counts { count.integers.minimum & everyCount.maximum, count.integers.maximum & everyCount.maximum };
+    return counts.minimum <= counts.maximum ? counts : everyCount;
+}
+
+static Range rangeAsInt32(const Type& operand)
+{
+    return operand.isInt32() ? operand.integers : Range::int32();
+}
+
+static Range rangeAsUint32(const Type& operand)
+{
+    constexpr int64_t modulus = Range::uint32().maximum + 1;
+    if (!operand.isInteger())
+        return Range::uint32();
+    if (operand.integers.isSubsetOf(Range::uint32()))
+        return operand.integers;
+    if (operand.integers.isSubsetOf({ -modulus, -1 }))
+        return { operand.integers.minimum + modulus, operand.integers.maximum + modulus };
+    return Range::uint32();
+}
+
+static Type shiftResultType(Opcode opcode, const Type& shifted, const Type& count)
+{
+    Range counts = shiftCountsOf(count);
+    switch (opcode) {
+    case Opcode::URShift: {
+        Range bits = rangeAsUint32(shifted);
+        return Type::integer({ bits.minimum >> counts.maximum, bits.maximum >> counts.minimum });
+    }
+    case Opcode::RShift: {
+        Range bits = rangeAsInt32(shifted);
+        return Type::integer({ bits.minimum >> (bits.minimum < 0 ? counts.minimum : counts.maximum), bits.maximum >> (bits.maximum < 0 ? counts.maximum : counts.minimum) });
+    }
+    case Opcode::LShift: {
+        Range bits = rangeAsInt32(shifted);
+        Range products {
+            bits.minimum * (int64_t { 1 } << (bits.minimum < 0 ? counts.maximum : counts.minimum)),
+            bits.maximum * (int64_t { 1 } << (bits.maximum < 0 ? counts.minimum : counts.maximum))
+        };
+        return Type::integer(products.isSubsetOf(Range::int32()) ? products : Range::int32());
+    }
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
     }
 }
 
@@ -178,19 +219,6 @@ static std::optional<Type> bitwiseResultBoundedByOneOperand(Opcode opcode, Opera
         if (!largest)
             return std::nullopt;
         return Type::integer({ 0, *largest });
-    }
-    case Opcode::URShift: {
-        const Type& count = *operands[1];
-        if (!count.isInteger() || !count.integers.isSingleValue())
-            return std::nullopt;
-        return Type::integer({ 0, Range::uint32().maximum >> (count.integers.minimum & 31) });
-    }
-    case Opcode::RShift: {
-        const Type& count = *operands[1];
-        if (!count.isInteger() || !count.integers.isSingleValue())
-            return std::nullopt;
-        int64_t shift = count.integers.minimum & 31;
-        return Type::integer({ Range::int32().minimum >> shift, Range::int32().maximum >> shift });
     }
     default:
         return std::nullopt;
@@ -232,9 +260,6 @@ static std::optional<Type> binaryIntegerResult(Opcode opcode, Range a, Range b)
     case Opcode::BitAnd:
     case Opcode::BitOr:
     case Opcode::BitXor:
-    case Opcode::LShift:
-    case Opcode::RShift:
-    case Opcode::URShift:
         return bitwiseResultType(opcode, a, b);
     default:
         return std::nullopt;
@@ -255,6 +280,8 @@ static std::optional<Type> numberResultOf(Opcode opcode, OperandTypes operands)
     // false is 0 and true is 1.
     if ((opcode == Opcode::ToNumber || opcode == Opcode::ToNumeric) && operands[0]->isBoolean())
         return Type::integer({ operands[0]->primitives & Primitive::False ? 0 : 1, operands[0]->primitives & Primitive::True ? 1 : 0 });
+    if (shiftOperators.contains(opcode))
+        return shiftResultType(opcode, *operands[0], *operands[1]);
     bool areAllIntegers = std::ranges::all_of(operands, [](const Type* type) {
         return type->isInteger();
     });

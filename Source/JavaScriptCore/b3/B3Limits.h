@@ -58,7 +58,8 @@ enum class LimitPurpose : uint8_t {
     macro(MaxLeavesToRebalance, 32, CompileTime, "the expression tree is not rebalanced"_s) \
     macro(MaxBitTestTargets, 3, CodeSize, "the cases are lowered as a binary search"_s) \
     macro(MaxCompareChainSearchSize, 16, CompileTime, "the condition is not selected as a compare chain"_s) \
-    macro(MaxSlotsForDenseInterference, AirLimits::maxSlotsForDenseInterference, Memory, "the sparse interference graph is built, with the same result"_s)
+    macro(MaxSlotsForDenseInterference, AirLimits::maxSlotsForDenseInterference, Memory, "the sparse interference graph is built, with the same result"_s) \
+    macro(MaxBoundaryIndicesPerInst, AirLimits::maxBoundaryIndicesPerInst, Memory, "a Tmp or a spill slot counts as live in the blocks that lie between those where it is live"_s)
 
 enum class Limit : uint8_t {
 #define B3_LIMIT_ENUMERATOR(name, defaultValue, purpose, degradesTo) name,

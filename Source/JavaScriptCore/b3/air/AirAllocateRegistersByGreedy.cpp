@@ -2316,6 +2316,20 @@ public:
         auto slotOf = [&](Tmp tmp) -> StackSlot* {
             return tmp.isReg() ? nullptr : m_spillSlotTable[m_map[tmp].spillSlotTableIndex];
         };
+        // Where gaps count as live (buildLiveRanges()), a Tmp is saved around a call, or on the way into a loop, also in blocks where it is dead. A predecessor of such a block may lie
+        // outside the live range, so the move reads a register that is somebody else's by then. Nobody reads what it writes: were the Tmp live there, it would be live in every predecessor.
+        auto savesValueThatMayBeDead = [&](Inst& inst) {
+            if (!m_countsGapsAsLive || inst.args().size() != 2 || !inst.args()[0].isTmp() || inst.args()[0].isReg())
+                return false;
+            Tmp tmp = inst.args()[0].tmp();
+            uint32_t slotIndex = m_map[tmp].spillSlotTableIndex;
+            if (!slotIndex || inst.kind.opcode != moveOpcode(tmp))
+                return false;
+            Arg& target = inst.args()[1];
+            if (target.isStack())
+                return target.stackSlot() == m_spillSlotTable[slotIndex];
+            return target.isTmp() && !target.isReg() && m_map[target.tmp()].spillSlotTableIndex == slotIndex;
+        };
         PlacesOfValues places(m_code, PlacesOfValues::Words::OfSlots);
         for (BasicBlock* block : m_code) {
             places.beginBlock(block);
@@ -2345,7 +2359,8 @@ public:
                 if (checksSlots)
                     places.addReadsOfSlots(inst, instIndex);
                 if (checksRegisters) {
-                    addReadsOfRegisters(Arg::isEarlyUse);
+                    if (!savesValueThatMayBeDead(inst))
+                        addReadsOfRegisters(Arg::isEarlyUse);
                     addWritesOfRegisters(Arg::isEarlyDef, isPatch ? inst.extraEarlyClobberedRegs() : RegisterSet());
                     addReadsOfRegisters(Arg::isLateUse);
                     addWritesOfRegisters(Arg::isLateDef, isPatch ? inst.extraClobberedRegs() : RegisterSet());
@@ -2827,10 +2842,12 @@ private:
         }
         BitMatrixLiveness<TmpBoundaryRows> liveness(m_code, BlockFacts { m_blockEnds.span(), m_exposedUses.span(), m_defsInBlocks.span(), m_usesAtTails.span(), m_crossesBoundary.span(), indexToColumn.span(), static_cast<unsigned>(m_columnToIndex.size()) });
         // A Tmp that counts as live in a gap costs a register there, and no more.
-        liveness.countGapsAsLivePast(m_tailPoints[m_code.size() - 1] / PointOffsets::PointsPerInst * AirLimits::maxBoundaryIndicesPerInst);
+        liveness.countGapsAsLivePast(m_tailPoints[m_code.size() - 1] / PointOffsets::PointsPerInst * m_code.proc().limit(Limit::MaxBoundaryIndicesPerInst));
         liveness.compute();
         RELEASE_ASSERT(liveness.status() == BitMatrixLivenessStatus::Solved);
         m_countsGapsAsLive = liveness.hasCountedGapsAsLive();
+        if (m_countsGapsAsLive)
+            m_code.proc().didReachLimit(Limit::MaxBoundaryIndicesPerInst);
 
         Vector<Piece> pieceStore;
         unsigned pieceCapacity = m_numberOfLinearIndices + m_numberOfLinearIndices / 2 + 8 * m_occupancy.numberOfClobberPoints() + 16;
@@ -5402,6 +5419,71 @@ private:
                 numberOfSitesOfBest = numberOfSites;
             }
         }
+        auto holeAround = [&](Interval conflict) {
+            return conflict | lateInterval(positionOfEarly(conflict)) | lateInterval(positionOfEarly(Interval(conflict.end() - 1)));
+        };
+        if (spansStretches && minSplitCost < splitCostLimit) {
+            for (Reg r : { tmpData.preferredReg, tmpData.secondPreferredReg }) {
+                if (!r || r == bestSplitReg || !candidates.contains(r) || minSplitCost >= UseDefCost(tmpData.wishFor(r)))
+                    continue;
+                UseDefCost splitCost(0);
+                size_t numberOfSites = 0;
+                unsigned numberOfMovesKept = 0;
+                bool isHeld = false;
+                size_t liveIndex = 0;
+                auto liveIntervals = tmpData.liveRange.intervals();
+                nextClobberSite = 0;
+                m_occupancy.forEachConflict(r, tmpData.liveRange, width,
+                    [&](auto& conflict) -> IterationStatus {
+                        bool stopsSplit = !conflict.tmp.isReg() || ++numberOfSites > numberOfSitesOfBest;
+                        float cost = 0;
+                        if (!stopsSplit && conflict.interval.distance() == 1) {
+                            ClobberSite site = clobberSiteAt(conflict.interval.begin());
+                            stopsSplit = site.usesOrDefsTmp;
+                            cost = site.cost;
+                        } else if (!stopsSplit) {
+                            isHeld = true;
+                            Interval hole = holeAround(conflict.interval);
+                            BasicBlock* block = findBlockContainingPoint(hole.begin());
+                            while (liveIndex < liveIntervals.size() && liveIntervals[liveIndex].end() <= hole.begin())
+                                ++liveIndex;
+                            stopsSplit = hole.end() - 1 > positionOfTail(block) || liveIndex == liveIntervals.size()
+                                || liveIntervals[liveIndex].begin() > pointAtOffset(hole.begin(), PointOffsets::Pre)
+                                || liveIntervals[liveIndex].end() <= pointAtOffset(hole.end() - 1, PointOffsets::Post);
+                            if (!stopsSplit) {
+                                Point head = positionOfHead(block);
+                                size_t first = this->instIndex(head, hole.begin());
+                                size_t last = this->instIndex(head, hole.end() - 1);
+                                stopsSplit = block->at(last).isTerminal();
+                                for (size_t index = first; index <= last; ++index) {
+                                    Inst& inst = block->at(index);
+                                    inst.forEachTmpFast([&](Tmp useOrDef) {
+                                        stopsSplit |= useOrDef == tmp;
+                                    });
+                                    stopsSplit |= inst.clobbersAtBlockEntry();
+                                }
+                                Inst& move = block->at(first);
+                                if (mayBeCoalescable(move) && move.args()[1].tmp() == Tmp(r) && !move.args()[0].tmp().isReg()) {
+                                    const TmpData& source = m_map[move.args()[0].tmp()];
+                                    numberOfMovesKept += !source.assigned && source.preferredReg == r;
+                                }
+                                cost = adjustedBlockFrequency(block) * 2;
+                            }
+                        }
+                        splitCost += UseDefCost(numberOfSites > AirLimits::clobberSitesWithoutLeastCost ? std::max(cost, leastCostOfSite) : cost);
+                        if (stopsSplit || numberOfMovesKept > 1 || minSplitCost < splitCost) {
+                            splitCost = invalidSplitCost;
+                            return IterationStatus::Done;
+                        }
+                        return IterationStatus::Continue;
+                    });
+                if (!isHeld || minSplitCost < splitCost)
+                    continue;
+                minSplitCost = splitCost;
+                bestSplitReg = r;
+                numberOfSitesOfBest = numberOfSites;
+            }
+        }
         if (minSplitCost >= splitCostLimit && bestSplitRegWithEviction) {
             minSplitCost = minSplitCostWithEviction;
             bestSplitReg = bestSplitRegWithEviction;
@@ -5414,18 +5496,27 @@ private:
             return false;
 
         LiveRange holeRange;
+        Interval lastHole;
         m_occupancy.forEachConflict(bestSplitReg, tmpData.liveRange, width,
             [&](auto& conflict) -> IterationStatus {
                 if (!conflict.tmp.isReg())
                     return IterationStatus::Continue;
-                ASSERT(conflict.interval.distance() == 1);
+                ASSERT(spansStretches || conflict.interval.distance() == 1);
                 // Punched hole should always include the instructions late interval so the
                 // split tmp won't be modeled as conflicting with late defs.
-                Interval hole = conflict.interval | lateInterval(positionOfEarly(conflict.interval));
-                ASSERT(hole.distance() == 1 || hole.distance() == 2);
-                holeRange.append(m_intervalArena, hole);
+                Interval hole = holeAround(conflict.interval);
+                ASSERT(spansStretches || hole.distance() == 1 || hole.distance() == 2);
+                if (lastHole && hole.begin() <= lastHole.end()) {
+                    lastHole |= hole;
+                    return IterationStatus::Continue;
+                }
+                if (lastHole)
+                    holeRange.append(m_intervalArena, lastHole);
+                lastHole = hole;
                 return IterationStatus::Continue;
             });
+        if (lastHole)
+            holeRange.append(m_intervalArena, lastHole);
         if (spansStretches && holeRange.intervals().size() > 1) {
             LiveRange stretches;
             Interval stretch;
