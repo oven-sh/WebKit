@@ -1034,10 +1034,18 @@ private:
     template<FailureAction> bool reserveInitialCapacity(size_t initialCapacity);
     template<FailureAction> bool growCapacityBy(size_t increment);
 
+#if USE(BUN_JSC_ADDITIONS)
+    template<FailureAction> NEVER_INLINE bool expandCapacity(size_t newMinCapacity);
+#else
     template<FailureAction> bool expandCapacity(size_t newMinCapacity);
+#endif
     template<FailureAction> T* expandCapacity(size_t newMinCapacity, T*);
     template<FailureAction, typename U> U* expandCapacity(size_t newMinCapacity, U*);
+#if USE(BUN_JSC_ADDITIONS)
+    template<FailureAction, typename U> NEVER_INLINE bool appendSlowCase(U&&);
+#else
     template<FailureAction, typename U> bool appendSlowCase(U&&);
+#endif
     template<FailureAction> bool appendSlowCaseByValue(T);
     template<FailureAction, typename... Args> bool constructAndAppend(Args&&...);
     template<FailureAction, typename... Args> bool constructAndAppendSlowCase(Args&&...);
