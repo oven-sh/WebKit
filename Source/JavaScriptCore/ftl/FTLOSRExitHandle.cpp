@@ -39,8 +39,9 @@ namespace JSC { namespace FTL {
 void OSRExitHandle::emitExitThunk(State& state, CCallHelpers& jit)
 {
     Profiler::Compilation* compilation = state.graph.compilation();
+    label = jit.label();
+    jit.indirectJumpTarget(); // Bun: genericUnwind() has some of these jumped to.
     CCallHelpers::Label myLabel = jit.label();
-    label = myLabel;
     jit.nearCallThunk(CodeLocationLabel<JITThunkPtrTag>(state.vm().getCTIStub(osrExitGenerationThunkGenerator).code()));
     jit.addLinkTask(
         [index = m_index, myLabel, compilation, &state] (LinkBuffer& linkBuffer) {

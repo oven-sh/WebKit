@@ -451,6 +451,8 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
         labels[block] = label;
         if (auto& sharedLabel = context.blockLabels[block])
             *sharedLabel = label;
+        if (context.blockLabels[block])
+            jit.indirectJumpTarget(); // Bun: a patchpoint has its address, for a jump table for one.
 
         if (emitsFrame)
             context.setFrameIsSetUp(jit, frameStates->atHead(block) == FrameState::SetUp);
@@ -466,6 +468,9 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
             if (disassembler)
                 disassembler->startEntrypoint(jit); 
 
+            // Bun: the first begins with what signs the return address. Where a throw or an OSR entry goes on does not.
+            if (*entrypointIndex)
+                jit.indirectCallTarget();
             code.prologueGeneratorForEntrypoint(*entrypointIndex)->run(jit, code, context);
             noteNewLatePaths();
 

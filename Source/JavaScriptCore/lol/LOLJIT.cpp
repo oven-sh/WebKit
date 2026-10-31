@@ -130,8 +130,13 @@ RefPtr<BaselineJITCode> LOLJIT::compileAndLinkWithoutFinalizing(JITCompilationEf
         m_disassembler->setStartOfCode(entryLabel);
 
     // Just add a little bit of randomness to the codegen
-    if (random() & 1)
+    if (random() & 1) {
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+        indirectCallTarget(); // It does nothing either, and entryLabel is what is called where there is no arity check.
+#else
         nop();
+#endif
+    }
 
     emitFunctionPrologue();
     jitAssertCodeBlockOnCallFrameWithType(regT2, JITType::BaselineJIT);
@@ -190,6 +195,7 @@ RefPtr<BaselineJITCode> LOLJIT::compileAndLinkWithoutFinalizing(JITCompilationEf
     bool requiresArityFixup = m_unlinkedCodeBlock->numParameters() != 1;
     if (m_unlinkedCodeBlock->codeType() == FunctionCode && requiresArityFixup) {
         m_arityCheck = label();
+        indirectCallTarget(); // Bun: a call with too few arguments comes in here.
         RELEASE_ASSERT(m_unlinkedCodeBlock->codeType() == FunctionCode);
 
         unsigned numberOfParameters = m_unlinkedCodeBlock->numParameters();
@@ -275,6 +281,7 @@ void LOLJIT::privateCompileMainPass()
             m_disassembler->setForBytecodeMainPath(m_bytecodeIndex.offset(), label(), toUTF8CString("Allocator State Before: ", m_fastAllocator));
         m_pcToCodeOriginMapBuilder.appendItem(label(), CodeOrigin(m_bytecodeIndex));
         m_labels[m_bytecodeIndex.offset()] = label();
+        indirectJumpTarget(); // Bun: as in JIT::privateCompileMainPass().
 
         if (LOLJITInternal::verbose) {
             dataLogLn("LOL JIT emitting code for ", m_bytecodeIndex, " at offset ", (long)debugOffset(), " allocator before: ", m_fastAllocator);

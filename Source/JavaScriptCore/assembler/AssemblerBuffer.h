@@ -385,7 +385,7 @@ namespace JSC {
             return m_index;
         }
 
-#if !CPU(ARM64)
+#if !CPU(ARM64) || ENABLE(BRANCH_TARGET_IDENTIFICATION)
         void setCodeSize(size_t index)
         {
             // Warning: Only use this if you know exactly what you are doing.

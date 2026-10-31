@@ -233,6 +233,7 @@ void SpeculativeJIT::compileFunction()
     bool requiresArityFixup = m_codeBlock->numParameters() != 1;
     if (requiresArityFixup) {
         arityCheck = label();
+        indirectCallTarget(); // Bun: a call with too few arguments comes in here.
         unsigned numberOfParameters = m_codeBlock->numParameters();
         load32(calleeFrameLowWordSlot(CallFrameSlot::argumentCountIncludingThis).withOffset(sizeof(CallerFrameAndPC) - prologueStackPointerDelta()), GPRInfo::argumentGPR2);
         branch32(AboveOrEqual, GPRInfo::argumentGPR2, TrustedImm32(numberOfParameters)).linkTo(entryLabel, this);
@@ -2104,6 +2105,14 @@ void SpeculativeJIT::compileCurrentBlock()
     ASSERT(m_block->isReachable);
     
     blockHeads()[m_block->index()] = label();
+
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+    bool isIndirectJumpTarget = m_block->isOSRTarget || m_block->isCatchEntrypoint;
+    for (BasicBlock* predecessor : m_block->predecessors)
+        isIndirectJumpTarget |= predecessor->terminal()->op() == Switch;
+    if (isIndirectJumpTarget)
+        indirectJumpTarget();
+#endif
 
     if (!m_block->intersectionOfCFAHasVisited) {
         // Don't generate code for basic blocks that are unreachable according to CFA.

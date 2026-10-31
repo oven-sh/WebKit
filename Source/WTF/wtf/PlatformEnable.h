@@ -1115,6 +1115,34 @@
 #error "The run time of compiled programs is not ready for ENABLE(RETURN_ADDRESS_SIGNING)"
 #endif
 
+/* Where LLInt and the code that the JITs generate can be reached by an indirect branch, they begin with a landing pad (BTI), and
+   the pages that hold them are guarded: an indirect branch to anywhere else in them traps. A landing pad is a hint, which a processor
+   without the feature ignores. C++ gets its landing pads from the compiler (-mbranch-protection=bti), but its pages are guarded only
+   if everything that the executable is linked from has them. */
+#if !defined(ENABLE_BRANCH_TARGET_IDENTIFICATION)
+#define ENABLE_BRANCH_TARGET_IDENTIFICATION 0
+#endif
+
+/* What a function signs its return address with is the landing pad that it begins with. */
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION) && !ENABLE(RETURN_ADDRESS_SIGNING)
+#error "ENABLE(BRANCH_TARGET_IDENTIFICATION) needs ENABLE(RETURN_ADDRESS_SIGNING)"
+#endif
+
+/* What guards the pages is a part of the JIT's allocator, and the C loop has no labels to put a landing pad behind. */
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION) && !ENABLE(JIT)
+#error "ENABLE(BRANCH_TARGET_IDENTIFICATION) needs ENABLE(JIT)"
+#endif
+
+/* startWriting() and finishWriting() would take the guard off the pages of JIT code. */
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION) && ENABLE(MPROTECT_RX_TO_RWX)
+#error "ENABLE(BRANCH_TARGET_IDENTIFICATION) is not for ENABLE(MPROTECT_RX_TO_RWX)"
+#endif
+
+/* ENABLE(RETURN_ADDRESS_SIGNING) refuses this too, for now. This is for when it no longer does. */
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION) && ENABLE(AOT)
+#error "The ahead-of-time compiler and the run time of its programs are not ready for ENABLE(BRANCH_TARGET_IDENTIFICATION)"
+#endif
+
 #if !defined(ENABLE_JIT_SCAN_ASSEMBLER_BUFFER_FOR_ZEROES) && CPU(X86_64) && PLATFORM(MAC)
 #define ENABLE_JIT_SCAN_ASSEMBLER_BUFFER_FOR_ZEROES 1
 #endif

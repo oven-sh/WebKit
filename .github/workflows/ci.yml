@@ -365,6 +365,7 @@ jobs:
       QUICK: ${{ matrix.quick }}
       LABEL: ${{ matrix.label }}
       SIGNS_RETURN_ADDRESSES: ${{ matrix.signs_return_addresses }}
+      HAS_LANDING_PADS: ${{ matrix.has_landing_pads }}
     defaults:
       run:
         # Also on Windows (Git for Windows' bash).
@@ -457,6 +458,7 @@ jobs:
           root="$RUNNER_TEMP/bun-webkit"
           results="$RUNNER_TEMP/jsc-results.json"
           platform=()
+          unguarded=false
           case "$RUNNER_OS" in
             Linux)
               echo "$(nproc) cores, $(free -g | awk '/^Mem:/ {print $2}')GB of memory"
@@ -466,6 +468,17 @@ jobs:
               elif [ "$SIGNS_RETURN_ADDRESSES" = true ]; then echo "::warning::$LABEL signs return addresses, and this runner has no pointer authentication"
               else echo "no pointer authentication"
               fi
+              # Without it no page is guarded, and code that lacks a landing pad (LANDING_PADS in lanes.mjs) runs all the same.
+              if grep -qw bti /proc/cpuinfo; then
+                echo "branch target identification"
+                # The test of the guard crashes by itself where nothing is guarded, so that it passes in every other lane. Here that
+                # would hide that the guard is not there.
+                if [ "$HAS_LANDING_PADS" = true ] && ! "$root/bin/jsc" --useDollarVM=1 -e 'if (!$vm.pagesOfLLIntAreGuarded() || !$vm.pagesOfJITCodeAreGuarded()) throw new Error("not guarded");'; then unguarded=true; fi
+              elif [ "$HAS_LANDING_PADS" = true ]; then echo "::warning::$LABEL has landing pads, and this runner has no branch target identification"
+              else echo "no branch target identification"
+              fi
+              # This one needs no such processor, and finds what no test branches to.
+              if [ "$HAS_LANDING_PADS" = true ]; then export JSC_validateIndirectBranchTargets=1; fi
               ;;
             macOS) echo "$(sysctl -n hw.ncpu) cores, $(($(sysctl -n hw.memsize) / 1073741824))GB of memory" ;;
             Windows)
@@ -517,6 +530,7 @@ jobs:
           # AOTNativeTestsOfHostEntries.inc: bun's CI runs them.
           left_out=$(grep -a -E '^[0-9]+ passed, [0-9]+ failed, [0-9]+ todo' "$RUNNER_TEMP/jsc-tests.log" | tail -n 1 | grep -o -E '[0-9]+ left out' || echo "0 left out")
           if [ -x "$root/bin/testaot" ] && [ "$left_out" != "33 left out" ]; then echo "::error::testaot: $left_out, and 33 are expected"; status=1; fi
+          if [ "$unguarded" = true ]; then echo "::error::$LABEL has landing pads and this runner has branch target identification, but the pages of LLInt or of JIT code are not guarded"; status=1; fi
           # What each failing run printed (exception, stack, exit code), grouped under its name: the part of the full
           # log that is needed to fix a test.
           awk '

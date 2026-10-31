@@ -188,6 +188,7 @@ class Assembler
     end
 
     def putStr(str)
+        putsPendingLandingPad # Bun: this may be an #if, and then what comes next is not there for everyone.
         if $enableDebugAnnotations
             @outp.puts "%-#{$preferredDebugAnnotationColumns}s%s" % ["", str]
         else
@@ -195,8 +196,18 @@ class Assembler
         end
     end
 
+    # Bun: with BRANCH_TARGET_IDENTIFICATION, every label but a local one may be where an indirect branch lands. The labels of one place
+    # share the landing pad, which is what comes behind the last of them. A handler is only ever jumped to. A jump to anything else
+    # has its target in x16 or x17 (arm64.rb), so it may land where a call may.
+    def putsPendingLandingPad
+        return unless @pendingLandingPad
+        @outp.puts(formatDump("    \"hint ##{@pendingLandingPad} \\n\"", ""))
+        @pendingLandingPad = nil
+    end
+
     def puts(*line)
         raise unless @state == :asm
+        putsPendingLandingPad
         @outp.puts(formatDump("    \"" + line.join('') + " \\n\"", lastComment))
     end
     
@@ -214,11 +225,14 @@ class Assembler
 
     def putsLabel(labelName, isGlobal, isExport, isAligned, alignTo)
         raise unless @state == :asm
+        putsPendingLandingPad if alignTo
+        pendingLandingPad, @pendingLandingPad = @pendingLandingPad, nil # What the actions put is no code.
         @deferredNextLabelActions.each {
             | action |
             action.call()
         }
         @deferredNextLabelActions = []
+        @pendingLandingPad = pendingLandingPad
         @numGlobalLabels += 1
         putsNewlineSpacerIfAppropriate(:global)
         @internalComment = $enableLabelCountComments ? "Global Label #{@numGlobalLabels}" : nil
@@ -251,6 +265,10 @@ class Assembler
                 putStr("    \".size #{labelName} , . - #{labelName} \\n\"")
                 putStr("    \".type #{labelName} , function \\n\"")
             }
+        end
+        if $currentSettings and $currentSettings["BRANCH_TARGET_IDENTIFICATION"]
+            isHandler = (alignTo or (not isGlobal and /\Allint_op_/.match(labelName)))
+            @pendingLandingPad = (@pendingLandingPad || 0) | (isHandler ? 36 : 34) # BTI j, BTI c. Both together are 38, BTI jc.
         end
         @newlineSpacerState = :none # After a global label, we can use another spacer.
     end

@@ -3424,6 +3424,7 @@ class YarrGenerator final : public YarrJITInfo {
         {
             if (m_pendingReturns.size()) {
                 MacroAssembler::Label here(generator.m_jit);
+                generator.m_jit.indirectJumpTarget(); // Bun: backtracking comes here by an address in the frame.
                 for (unsigned i = 0; i < m_pendingReturns.size(); ++i)
                     m_backtrackRecords.append(ReturnAddressRecord(m_pendingReturns[i], here));
                 m_pendingReturns.clear();
@@ -3445,6 +3446,15 @@ class YarrGenerator final : public YarrJITInfo {
 
         void linkTo(MacroAssembler::Label label, MacroAssembler* assembler)
         {
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+            if (m_pendingReturns.size()) {
+                // There is no landing pad at the label, and its code is there already.
+                MacroAssembler::JumpList jumps;
+                takeBacktracksToJumpList(jumps, assembler);
+                jumps.linkTo(label, assembler);
+                return;
+            }
+#endif
             if (m_pendingReturns.size()) {
                 for (unsigned i = 0; i < m_pendingReturns.size(); ++i)
                     m_backtrackRecords.append(ReturnAddressRecord(m_pendingReturns[i], label));
@@ -3460,6 +3470,7 @@ class YarrGenerator final : public YarrJITInfo {
         {
             if (m_pendingReturns.size()) {
                 MacroAssembler::Label here(assembler);
+                assembler->indirectJumpTarget(); // Bun: backtracking comes here by an address in the frame.
                 for (unsigned i = 0; i < m_pendingReturns.size(); ++i)
                     m_backtrackRecords.append(ReturnAddressRecord(m_pendingReturns[i], here));
                 m_pendingReturns.clear();
@@ -10021,6 +10032,7 @@ class YarrGenerator final : public YarrJITInfo {
         // something after the group fails): release the claim and continue the
         // chain by falling through to the next element.
         MacroAssembler::Label unwind(m_jit);
+        m_jit.indirectJumpTarget(); // Bun: backtracking comes here by an address in the frame.
         m_backtrackingState.addReturnAddressRecord(returnAddress, unwind);
         mismatch.link(&m_jit);
         if (extraClaim)
@@ -10048,8 +10060,10 @@ class YarrGenerator final : public YarrJITInfo {
 #endif
         for (unsigned index : alternativeIndices) {
             // Bind the previous element's continuations to here.
-            if (!pendingStores.isEmpty())
+            if (!pendingStores.isEmpty()) {
                 m_backtrackingState.addReturnAddressRecord(pendingStores.takeLast(), m_jit.label());
+                m_jit.indirectJumpTarget(); // Bun: backtracking comes here by an address in the frame.
+            }
 #if !defined(YARR_FOR_IMAGE)
             toNextElement.link(&m_jit);
             toNextElement.clear();
@@ -10074,8 +10088,10 @@ class YarrGenerator final : public YarrJITInfo {
         if (pendingStores.isEmpty() && !isInlineLiteralAlternative(*info.disjunction->m_alternatives[alternativeIndices.last()]))
             return head;
 #endif
-        if (!pendingStores.isEmpty())
+        if (!pendingStores.isEmpty()) {
             m_backtrackingState.addReturnAddressRecord(pendingStores.takeLast(), m_jit.label());
+            m_jit.indirectJumpTarget(); // Bun: backtracking comes here by an address in the frame.
+        }
 #if !defined(YARR_FOR_IMAGE)
         toNextElement.link(&m_jit);
 #endif

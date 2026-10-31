@@ -28,6 +28,7 @@
 
 #include "AOTRemovableFeature.h"
 #include "CallLinkInfo.h"
+#include "ExecutableAllocator.h"
 #include "InPlaceInterpreter.h"
 #include "JSCConfig.h"
 #include "LLIntCLoop.h"
@@ -71,6 +72,15 @@ extern "C" void SYSV_ABI llint_bytecode_entry(void*, void*, void*);
 extern "C" void SYSV_ABI llint_aot_entry(void*, void*, void*);
 #endif
 extern "C" void SYSV_ABI llint_webassembly_entry(void*, void*, void*);
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+// The bounds of the three sections that LowLevelInterpreter.cpp puts its code in.
+extern "C" void jsc_llint_begin();
+extern "C" void jsc_llint_end();
+extern "C" void jsc_llint_bytecode_begin();
+extern "C" void jsc_llint_bytecode_end();
+extern "C" void jsc_llint_webassembly_begin();
+extern "C" void jsc_llint_webassembly_end();
+#endif
 
 static NEVER_INLINE void installBytecodeInterpreter(JSC::Opcode* opcodeMap, JSC::Opcode* opcodeMapWide16, JSC::Opcode* opcodeMapWide32)
 {
@@ -486,6 +496,17 @@ void initialize()
 #if ENABLE(JIT)
     if (Options::useJIT())
         g_jscConfig.arityFixupThunk = arityFixupThunk().code().taggedPtr();
+#endif
+
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+    static_assert(CeilingOnPageSize == 65536, "OFFLINE_ASM_ALIGNMENT_OF_BOUND in LowLevelInterpreter.cpp");
+    auto guard = [](void (*begin)(), void (*end)()) {
+        return guardExecutablePages(untagCodePtr<const void*, CFunctionPtrTag>(begin), untagCodePtr<const void*, CFunctionPtrTag>(end), false);
+    };
+    bool trampolinesAreGuarded = guard(jsc_llint_begin, jsc_llint_end);
+    bool bytecodesAreGuarded = guard(jsc_llint_bytecode_begin, jsc_llint_bytecode_end);
+    bool webAssemblyIsGuarded = guard(jsc_llint_webassembly_begin, jsc_llint_webassembly_end);
+    g_jscConfig.pagesOfLLIntAreGuarded = trampolinesAreGuarded && bytecodesAreGuarded && webAssemblyIsGuarded;
 #endif
 
     WTF::compilerFence();
