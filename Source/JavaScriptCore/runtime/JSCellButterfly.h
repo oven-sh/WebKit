@@ -190,6 +190,7 @@ public:
     }
 
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, HeapAnalyzer&);
 
     template<typename Visitor>
     ALWAYS_INLINE static void visitFields(JSCellButterfly* thisObject, Visitor& visitor)

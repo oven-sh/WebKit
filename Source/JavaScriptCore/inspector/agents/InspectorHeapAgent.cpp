@@ -44,6 +44,11 @@ using namespace JSC;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorHeapAgent);
 
+// A reply or an event quotes the snapshot as a JSON string. StringBuilder::appendQuotedJSONString() reserves 6 characters
+// for each one that it quotes, and JSON::Value::toJSONString() aborts when that passes the limit of a String.
+// The 1024 are for the rest of the message.
+static constexpr unsigned maxLengthOfSnapshotInAMessage = (String::MaxLength - 1024) / 6;
+
 InspectorHeapAgent::InspectorHeapAgent(AgentContext& context)
     : InspectorAgentBase("Heap"_s)
     , m_injectedScriptManager(context.injectedScriptManager)
@@ -113,6 +118,9 @@ Protocol::ErrorStringOr<std::tuple<double, Protocol::Heap::HeapSnapshotData>> In
 
     auto timestamp = protect(m_environment)->executionStopwatch().elapsedTime().seconds();
     auto snapshotData = snapshotBuilder.json();
+    // json() returns a null String when the snapshot is too large to hold or to print.
+    if (snapshotData.isNull() || snapshotData.length() > maxLengthOfSnapshotInAMessage)
+        return makeUnexpected("Heap snapshot is too large"_s);
     return { { timestamp, snapshotData } };
 }
 
@@ -124,8 +132,10 @@ Protocol::ErrorStringOr<void> InspectorHeapAgent::startTracking()
     m_tracking = true;
 
     auto result = snapshot();
-    if (!result)
+    if (!result) {
+        m_tracking = false;
         return makeUnexpected(WTF::move(result.error()));
+    }
 
     auto [timestamp, snapshotData] = WTF::move(result.value());
     m_frontendDispatcher->trackingStart(timestamp, snapshotData);
