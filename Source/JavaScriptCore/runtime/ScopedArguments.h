@@ -130,17 +130,17 @@ public:
     
     void initModifiedArgumentsDescriptorIfNecessary(JSGlobalObject* globalObject)
     {
-        GenericArgumentsImpl<ScopedArguments>::initModifiedArgumentsDescriptorIfNecessary(globalObject, m_table->length());
+        GenericArgumentsImpl<ScopedArguments>::initModifiedArgumentsDescriptorIfNecessary(globalObject, m_totalLength);
     }
 
     void setModifiedArgumentDescriptor(JSGlobalObject* globalObject, unsigned index)
     {
-        GenericArgumentsImpl<ScopedArguments>::setModifiedArgumentDescriptor(globalObject, index, m_table->length());
+        GenericArgumentsImpl<ScopedArguments>::setModifiedArgumentDescriptor(globalObject, index, m_totalLength);
     }
 
     bool isModifiedArgumentDescriptor(unsigned index)
     {
-        return GenericArgumentsImpl<ScopedArguments>::isModifiedArgumentDescriptor(index, m_table->length());
+        return GenericArgumentsImpl<ScopedArguments>::isModifiedArgumentDescriptor(index, m_totalLength);
     }
 
     void copyToArguments(JSGlobalObject*, JSValue* firstElementDest, unsigned offset, unsigned length);
@@ -169,7 +169,7 @@ private:
     
     bool m_overrodeThings { false }; // True if length, callee, and caller are fully materialized in the object.
     bool m_hasUnmappedArgument { false };
-    unsigned m_totalLength; // The length of declared plus overflow arguments.
+    unsigned m_totalLength; // The number of arguments passed. It can be smaller than the number of declared parameters.
     WriteBarrier<JSFunction> m_callee;
     WriteBarrier<ScopedArgumentsTable> m_table;
     WriteBarrier<JSLexicalEnvironment> m_scope;
