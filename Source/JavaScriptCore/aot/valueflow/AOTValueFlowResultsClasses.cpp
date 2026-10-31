@@ -72,8 +72,12 @@ struct AssignedValue {
     ValueSetID through;
 };
 
+enum class ReachOfSet : uint8_t { PrototypeObjectsOfOneClass, ObjectsOfOtherKindsToo, PrototypeObjectsOfOtherClassesToo };
+
 struct AnswersAboutSets {
-    UncheckedKeyHashMap<uint32_t, bool, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> reachesOthers;
+    UncheckedKeyHashMap<uint32_t, ReachOfSet, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> reaches;
+    // Derived.prototype = new Base(): each object that the program stores as the prototype object of a constructor function, above the class of the function. Made when somebody asks.
+    std::optional<UncheckedKeyHashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>> objectsStoredAsPrototypeObjects;
     // What each store under a name goes through once flow is at rest, above the key. Made when somebody asks.
     std::optional<UncheckedKeyHashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>> storesAtRest;
 };
@@ -604,26 +608,70 @@ static std::optional<MethodKind> kindOfMemberUnder(ValueFlowNameKind kind)
     return shape.sort == ValueFlowNameSort::Value ? MethodKind::Method : shape.sort == ValueFlowNameSort::Getter ? MethodKind::Getter : MethodKind::Setter;
 }
 
-static bool isWrittenForOtherObjectsToo(const ValueFlowResultInputs& inputs, const LedgerOfClassesAndClosures& ledger, ValueSetID through, AnswersAboutSets& answers)
+static bool isStoredAsPrototypeObjectOf(const ValueFlowResultInputs& inputs, LayoutID classLayout, ValueFlowObjectID object, AnswersAboutSets& answers)
 {
-    auto answer = answers.reachesOthers.add(through.index(), false);
-    if (!answer.isNewEntry)
-        return answer.iterator->value;
+    auto numberOf = [](ValueFlowObjectID object, LayoutID classLayout) {
+        return static_cast<uint64_t>(object.index()) << 32 | classLayout.index();
+    };
+    if (!answers.objectsStoredAsPrototypeObjects) {
+        answers.objectsStoredAsPrototypeObjects.emplace();
+        const Program& program = inputs.program;
+        const ValueFlowUniverse& universe = inputs.universe();
+        const auto* written = inputs.heapIndex->findNodesWrittenUnder(ValueFlowName::property(program.keyOf(BuiltinNames::prototype)));
+        for (size_t index = 0; written && index < written->nodes.size(); ++index) {
+            const auto& node = written->nodes[index];
+            if (ValueSets::isComplement(node.objects))
+                continue;
+            for (ValueSetID stored : { node.value, node.seenValue }) {
+                if (ValueSets::isComplement(stored))
+                    continue;
+                inputs.sets().forEachMember(stored, [&](ValueFlowObjectID member) {
+                    // The ledger knows the first two. The unknown object stands for every object that nobody has seen.
+                    ValueFlowObjectKind kind = universe.kindOf(member);
+                    if (kind == ValueFlowObjectKind::Prototype || kind == ValueFlowObjectKind::Site || kind == ValueFlowObjectKind::UnknownObject || kind == ValueFlowObjectKind::Primitive || kind == ValueFlowObjectKind::Key)
+                        return;
+                    inputs.sets().forEachMember(node.objects, [&](ValueFlowObjectID holder) {
+                        FunctionID function = universe.closureFunction(holder);
+                        LayoutID constructed = function ? program.at(function).constructedClass : LayoutID();
+                        if (constructed && program.at(constructed).has(LayoutFlags::IsConstructorFunction))
+                            answers.objectsStoredAsPrototypeObjects->add(numberOf(member, constructed));
+                    });
+                });
+            }
+        }
+    }
+    return answers.objectsStoredAsPrototypeObjects->contains(numberOf(object, classLayout));
+}
+
+static bool isWrittenForOtherObjectsToo(const ValueFlowResultInputs& inputs, const LedgerOfClassesAndClosures& ledger, LayoutID classListed, ValueSetID through, AnswersAboutSets& answers)
+{
     const ValueFlowUniverse& universe = inputs.universe();
+    auto answer = answers.reaches.add(through.index(), ReachOfSet::PrototypeObjectsOfOneClass);
+    if (answer.isNewEntry) {
+        bool reachesOtherClasses = false;
+        bool reachesOtherKinds = false;
+        LayoutID classWritten;
+        inputs.sets().forEachMember(through, [&](ValueFlowObjectID holder) {
+            ValueFlowObjectKind kind = universe.kindOf(holder);
+            reachesOtherKinds |= kind != ValueFlowObjectKind::Prototype && kind != ValueFlowObjectKind::Site;
+            LayoutID classLayout = universe.classLayoutOf(holder);
+            if (!classLayout)
+                classLayout = ledger.classesOfStoredPrototypeObjects().get(holder.index());
+            if (!classLayout)
+                return;
+            reachesOtherClasses |= classWritten && classWritten != classLayout;
+            classWritten = classLayout;
+        });
+        answer.iterator->value = reachesOtherClasses ? ReachOfSet::PrototypeObjectsOfOtherClassesToo : reachesOtherKinds ? ReachOfSet::ObjectsOfOtherKindsToo : ReachOfSet::PrototypeObjectsOfOneClass;
+    }
+    if (answer.iterator->value != ReachOfSet::ObjectsOfOtherKindsToo)
+        return answer.iterator->value == ReachOfSet::PrototypeObjectsOfOtherClassesToo;
+    // Derived.prototype = new Base(); Derived.prototype.area = ..: the store goes through the instance because it is a prototype object of the class.
     bool reachesOthers = false;
-    LayoutID classWritten;
     inputs.sets().forEachMember(through, [&](ValueFlowObjectID holder) {
         ValueFlowObjectKind kind = universe.kindOf(holder);
-        reachesOthers |= kind != ValueFlowObjectKind::Prototype && kind != ValueFlowObjectKind::Site;
-        LayoutID classLayout = universe.classLayoutOf(holder);
-        if (!classLayout)
-            classLayout = ledger.classesOfStoredPrototypeObjects().get(holder.index());
-        if (!classLayout)
-            return;
-        reachesOthers |= classWritten && classWritten != classLayout;
-        classWritten = classLayout;
+        reachesOthers |= kind != ValueFlowObjectKind::Prototype && kind != ValueFlowObjectKind::Site && !isStoredAsPrototypeObjectOf(inputs, classListed, holder, answers);
     });
-    answer.iterator->value = reachesOthers;
     return reachesOthers;
 }
 
@@ -690,7 +738,7 @@ static Vector<AssignedValue> listWhatIsAssigned(const ValueFlowResultInputs& inp
             return;
         if (!heap)
             heap.emplace(inputs);
-        bool isWrittenForOtherObjectsToo = Typed::isWrittenForOtherObjectsToo(inputs, ledger, write.through, answers);
+        bool isWrittenForOtherObjectsToo = Typed::isWrittenForOtherObjectsToo(inputs, ledger, classLayout, write.through, answers);
         inputs.sets().forEachMember(write.arrives, [&](ValueFlowObjectID source) {
             LayoutID layout = inputs.universe().layoutOf(source);
             if (!layout)
@@ -707,7 +755,7 @@ static Vector<AssignedValue> listWhatIsAssigned(const ValueFlowResultInputs& inp
     auto list = [&](ValueFlowObjectID holder) {
         for (const Write& write : ledger.writesFiledOn(holder)) {
             if (std::optional<MethodKind> kind = kindOfMemberUnder(write.under.kind))
-                assigned.append({ PropertyKeyID(write.under.payload), write.arrives, *kind, isWrittenForOtherObjectsToo(inputs, ledger, write.through, answers), write.through });
+                assigned.append({ PropertyKeyID(write.under.payload), write.arrives, *kind, isWrittenForOtherObjectsToo(inputs, ledger, classLayout, write.through, answers), write.through });
             else if (write.under.kind == ValueFlowNameKind::CopiedFrom)
                 listWhatIsCopied(write);
         }
