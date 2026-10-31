@@ -437,6 +437,9 @@ static void addScriptlessLocaleIfNeeded(LocaleSet& availableLocales, StringView 
     ASSERT(subtags[2].is8Bit() && subtags[2].containsOnlyASCII());
     buffer.append(subtags[2].span8());
 
+    // A static StringImpl is never freed, so do not create one that the set would not keep.
+    if (availableLocales.contains(String::fromLatin1(buffer.span())))
+        return;
     availableLocales.add(StringImpl::createStaticStringImpl(buffer.span()));
 }
 

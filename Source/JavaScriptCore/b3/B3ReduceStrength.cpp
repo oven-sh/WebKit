@@ -3281,6 +3281,9 @@ private:
         case Const128:
         case ConstFloat:
         case ConstDouble: {
+            // A vector that may not be held across a patchpoint stays in the block that asks for it.
+            if (m_value->opcode() == Const128 && m_proc.policy().air.registers.patchpointsKeepOnlyLowerHalvesOfVectors)
+                break;
             ValueKey key = m_value->key();
             auto addResult = m_valueForConstant.add(key, m_value);
             if (!addResult.isNewEntry) {

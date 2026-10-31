@@ -3884,7 +3884,7 @@ private:
             // Sort coalescables for binary search in Coalescables::contains.
             data.coalescables.sort<bank>();
             for (auto& with : data.coalescables) {
-                if (tmp.tmpIndex(bank) < with.tmp.tmpIndex(bank))
+                if (tmp.tmpIndex(bank) < with.tmp.tmpIndex(bank) && m_map.get<bank>(with.tmp).stage == Stage::New)
                     moves.append({ tmp, with.tmp, with.moveCost });
             }
         }

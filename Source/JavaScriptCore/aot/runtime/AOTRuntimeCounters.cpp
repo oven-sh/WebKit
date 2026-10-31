@@ -383,14 +383,22 @@ static String describeLayoutOfAllocation(const Instance& instance, uint32_t allo
 template<typename Functor>
 const String& AllocationCounts::wordsAtAllocatingFrame(VM& vm, FunctionID constructor, Counted kind, uint64_t detail, const Functor& describeCounted)
 {
+    ASSERT(!(detail >> 56));
+    uint64_t counted = static_cast<uint64_t>(kind) << 56 | detail;
+    const void* returnAddress = constructor ? nullptr : CompiledFrameIterator::findReturnAddressInFunctionAtTop(vm);
+    if (returnAddress) {
+        if (auto known = m_wordsOfReturnAddresses.find({ returnAddress, counted }); known != m_wordsOfReturnAddresses.end())
+            return known->value;
+    }
     std::optional<CompiledFrame> frame = findAllocatingFrame(vm, constructor);
     // A call site lies in one function, inlined or not.
     uint64_t site = frame ? (static_cast<uint64_t>(frame->code.index()) + 1) << 32 | frame->callSite.bits() : 0;
-    ASSERT(!(detail >> 56));
-    uint64_t counted = static_cast<uint64_t>(kind) << 56 | detail;
-    return m_wordsOfLines.ensure({ site, counted, imageOf(vm, frame).position() }, [&] {
+    const String& words = m_wordsOfLines.ensure({ site, counted, imageOf(vm, frame).position() }, [&] {
         return makeString(describePlace(vm, frame), ' ', describeCounted());
     }).iterator->value;
+    if (returnAddress)
+        m_wordsOfReturnAddresses.add({ returnAddress, counted }, words);
+    return words;
 }
 
 AllocationCounts& AllocationCounts::ensure(Instance& instance)
@@ -496,15 +504,15 @@ static void addListsInUse(const VMState& state, AllocationCounts::Lines& refills
 
 void AllocationCounts::willRefill(VM& vm, const LocalAllocator& allocator)
 {
-    {
+    AllocationCounts* counts = ensureForFirstInstance(vm);
+    if (!counts || counts->m_listedAllocators.add(&allocator).isNewEntry) {
         Locker locker { allocatorsOfVMsLock };
         allocatorsOfVMs().add(&vm.aotState(), UncheckedKeyHashSet<const LocalAllocator*> { }).iterator->value.add(&allocator);
     }
     if (RuntimeTable* table = vm.aotState().runtimeTable.get())
         table->willRefillAllocator();
     CountedCells list = listOf(&allocator);
-    AllocationCounts* counts = list.bytes ? ensureForFirstInstance(vm) : nullptr;
-    if (counts)
+    if (counts && list.bytes)
         addLine(counts->m_refills, counts->wordsAtAllocatingFrame(vm, { }, Counted::CellsOfAllocator, std::bit_cast<uintptr_t>(&allocator), [&] {
             return describeCellsOf(allocator);
         }), list);

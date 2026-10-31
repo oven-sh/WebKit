@@ -289,6 +289,9 @@ public:
     // framePointer and stackPointer are what the registers hold in the frame that returnAddress runs in. Without stackPointer only a frame that has a record is found.
     JS_EXPORT_PRIVATE static std::optional<CompiledFrameIterator> tryCreate(VM&, CallFrame* framePointer, const void* returnAddress, EntryFrame*, OperationState = OperationState::MayNotHaveCalled, void* stackPointer = nullptr);
     JS_EXPORT_PRIVATE static std::optional<CompiledFrameIterator> tryCreateAtTop(VM&);
+    // The address in the code of a function that the operation on top returns to in the end, by itself or through stubs that are no more than a way there. It alone says what frame() of tryCreateAtTop() answers.
+    // Null where something else lies between.
+    static const void* findReturnAddressInFunctionAtTop(VM&);
     JS_EXPORT_PRIVATE static std::optional<CompiledFrameIterator> tryCreateAtCallerOf(VM&, CallFrame* callee, EntryFrame*);
 
     bool isAtEnd() const { return m_isAtEnd; }

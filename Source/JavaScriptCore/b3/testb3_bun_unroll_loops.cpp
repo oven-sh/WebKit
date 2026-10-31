@@ -540,6 +540,14 @@ static Policy policyThatPollsBetweenStretches()
     return policy;
 }
 
+// The turns of a loop that adds the same integer in every turn are written out, and then other code asks in front of it.
+static Policy policyThatPollsBetweenStretchesAndWritesOutNoTurns()
+{
+    Policy policy = policyThatPollsBetweenStretches();
+    policy.loops.minFrequencyOfUnrolledLoop = std::numeric_limits<double>::infinity();
+    return policy;
+}
+
 static PatchpointValue* appendPollOfShortTurns(Graph& graph, BasicBlock* block, PollState& state)
 {
     PatchpointValue* poll = appendPoll(graph, block, state);
@@ -979,7 +987,7 @@ static void testUnrollLoopsAsksInFrontOfLoopAboutBoundThatStandsInLoop()
 {
     constexpr int64_t stretch = Limits::maxTurnsWithoutPoll;
     constexpr int64_t bound = 3 * stretch;
-    Procedure proc(policyThatPollsBetweenStretches());
+    Procedure proc(policyThatPollsBetweenStretchesAndWritesOutNoTurns());
     Graph graph { proc };
     PollState state;
     BasicBlock* root = proc.addBlock();
@@ -1014,7 +1022,7 @@ static void testUnrollLoopsAsksInFrontOfLoopAboutBoundThatStandsInLoop()
 static void testUnrollLoopsAsksInFrontOfLoopAboutCounterOfCopiedLoop()
 {
     constexpr int64_t stretch = Limits::maxTurnsWithoutPoll;
-    Procedure proc(policyThatPollsBetweenStretches());
+    Procedure proc(policyThatPollsBetweenStretchesAndWritesOutNoTurns());
     Graph graph { proc };
     PollState state;
     BasicBlock* root = proc.addBlock();

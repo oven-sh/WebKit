@@ -1160,16 +1160,29 @@ static LoopWithRarePath buildLoopThatComparesWithBound(B3::Procedure& proc)
     root->append(Move, nullptr, Arg::imm(0), counter);
     root->append(Move, nullptr, Arg::imm(0), sum);
     appendJump(root, loop);
+    // x86 adds a word out of memory. Elsewhere the word is loaded first.
+    auto appendAddOfWord = [&](BasicBlock* block, Arg address, Tmp destination) {
+        if (isX86()) {
+            block->append(Add64, nullptr, address, destination);
+            return;
+        }
+        Tmp loaded = code.newTmp(GP);
+        block->append(Move, nullptr, address, loaded);
+        block->append(Add64, nullptr, loaded, destination);
+    };
     for (Tmp word : words)
-        loop->append(Add64, nullptr, Arg::addr(word), sum);
+        appendAddOfWord(loop, Arg::addr(word), sum);
     loop->append(Add64, nullptr, Arg::imm(1), counter);
-    loop->append(Move, nullptr, counter, lowBits);
-    loop->append(And64, nullptr, Arg::imm(7), lowBits);
+    if (isX86()) {
+        loop->append(Move, nullptr, counter, lowBits);
+        loop->append(And64, nullptr, Arg::imm(7), lowBits);
+    } else
+        loop->append(And64, nullptr, Arg::bitImm64(7), counter, lowBits);
     appendBranchTest(loop, lowBits, test, rarely(rarePath));
     rarePath->append(Move, nullptr, Arg::addr(words[0], static_cast<int32_t>(numberOfWords * sizeof(int64_t))), cell);
     rarePath->append(Move, nullptr, Arg::addr(cell), read);
     rarePath->append(Move, nullptr, Arg::addr(cell, static_cast<int32_t>(sizeof(int64_t))), second);
-    rarePath->append(Add64, nullptr, Arg::addr(cell, static_cast<int32_t>(2 * sizeof(int64_t))), read);
+    appendAddOfWord(rarePath, Arg::addr(cell, static_cast<int32_t>(2 * sizeof(int64_t))), read);
     rarePath->append(Add64, nullptr, second, read);
     rarePath->append(Add64, nullptr, read, sum);
     appendJump(rarePath, test);

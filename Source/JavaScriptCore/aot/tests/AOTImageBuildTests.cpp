@@ -542,7 +542,7 @@ static Vector<CompiledCode> bodiesCallingStub(uint32_t numberOfBodies, size_t bo
     return code;
 }
 
-static constexpr uint32_t numberOfBodiesPastReach = 48;
+static constexpr uint32_t numberOfBodiesPastReach = 48 * scaleOfSharedCode;
 static constexpr size_t sizeOfBodyPastReach = 64 * KB;
 static_assert(numberOfBodiesPastReach * sizeOfBodyPastReach >= 3 * loweredSharedCodeReach);
 
@@ -581,7 +581,7 @@ static void testManySharedCodeCopies()
 {
     constexpr size_t leastNumberOfCopies = 49;
     constexpr size_t bodySize = 256 * KB;
-    constexpr uint32_t numberOfBodies = 400;
+    constexpr uint32_t numberOfBodies = 400 * scaleOfSharedCode;
     static_assert(bodySize < loweredSharedCodeReach);
     static_assert(numberOfBodies * bodySize >= leastNumberOfCopies * 2 * loweredSharedCodeReach, "One copy serves less than the reach on either side.");
     if (AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE)

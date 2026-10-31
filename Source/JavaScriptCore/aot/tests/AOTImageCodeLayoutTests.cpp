@@ -28,7 +28,7 @@ namespace JSC::AOT::ImageTests {
 
 static constexpr uint32_t numberOfFarBodies = 75;
 static constexpr unsigned pinnedUnitsInLargeBody = 16;
-static constexpr uint32_t numberOfLargeBodies = 48;
+static constexpr uint32_t numberOfLargeBodies = 48 * scaleOfSharedCode;
 static_assert(numberOfLargeBodies * pinnedUnitsInLargeBody * wordsInPinnedUnit * sizeof(uint32_t) >= 3 * loweredSharedCodeReach);
 static constexpr uint32_t lastBodyAtEdgeOfReach = 24;
 static constexpr unsigned thunkCallsInBody = 100;

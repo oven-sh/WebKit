@@ -360,9 +360,10 @@ bool ObjectInterpreter::executeBoundsTestOnArgumentList(ValueID id)
         return true;
 
     IRBuilder& builder = cursor().builder();
-    ValueID position = resolve(test.positionOperand());
+    ValueID positionOperand = test.positionOperand();
+    ValueID position = resolve(positionOperand);
     ValueID isInBounds = cursor().emit(IRBuilder::make(Opcode::Less, { position, cursor().emit(makeRestLength(description->firstArgument)) }));
-    if (program().typeOf(function(), test.positionOperand()).integers.minimum < 0) {
+    if (program().typeOf(function(), positionOperand).integers.minimum < 0) {
         ValueID isIndex = cursor().emit(IRBuilder::make(Opcode::GreaterEq, { position, builder.appendInteger(0) }));
         isInBounds = cursor().emitSelection(isIndex, isInBounds, builder.appendBoolean(false), TypeTable::boolean);
     }

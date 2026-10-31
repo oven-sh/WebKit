@@ -616,8 +616,9 @@ unsigned pushToFullVector(VM& vm, JSArray* array, JSValue value)
     if (mode == ArrayWithDouble)
         butterfly->contiguousDouble().at(array, length) = value.asNumber();
     else
-        butterfly->contiguous().at(array, length).set(vm, array, value);
+        butterfly->contiguous().at(array, length).setWithoutWriteBarrier(value);
     butterfly->setPublicLength(length + 1);
+    vm.writeBarrier(array, value);
     return length + 1;
 }
 

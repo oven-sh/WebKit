@@ -502,6 +502,35 @@ std::optional<CompiledFrameIterator> CompiledFrameIterator::tryCreateAtTop(VM& v
     return tryCreateAtCallerOf(vm, vm.topCallFrame, vm.topEntryFrame);
 }
 
+const void* CompiledFrameIterator::findReturnAddressInFunctionAtTop(VM& vm)
+{
+    if (!isTopFrameCompiled(vm))
+        return nullptr;
+    CallFrame* callee = vm.topCallFrame;
+    Cursor cursor { callee->callerFrame(), callee->rawReturnPC(), vm.topEntryFrame, callee, stackPointerOfCaller(callee) };
+    Exit exit;
+    do {
+        const void* pc = removeCodePtrTag(cursor.rawPC);
+        const CallSiteCache::Entry* site = pc ? findReturnSite(vm, pc) : nullptr;
+        if (!site)
+            return nullptr;
+        if (!site->isStubReturnSite())
+            return pc;
+        // Those that findFunctionFrame() passes over and keeps nothing of.
+        switch (site->stubFrameKind) {
+        case StubFrameKind::Plain:
+        case StubFrameKind::ReturnsAfterOperation:
+        case StubFrameKind::BelowSpilledArguments:
+        case StubFrameKind::AtStubEntry:
+            break;
+        default:
+            return nullptr;
+        }
+        enterFrame(cursor, *site);
+    } while (passOverFrame(cursor, exit));
+    return nullptr;
+}
+
 void CompiledFrameIterator::enterFrame(Cursor& cursor, const CallSiteCache::Entry& site)
 {
     cursor.hasFrameRecord = site.frame.hasFrameRecord();
