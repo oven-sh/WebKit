@@ -812,7 +812,7 @@ static ALWAYS_INLINE UGPRPair lookupExceptionHandler(VM& vm, Instance* instance,
         if constexpr (amongImages)
             return unwindRunsOfImages(vm, { callFrame->rawReturnPC(), stackPointerOfCaller(callFrame), callFrame->callerFrame(), callFrame }, vm.topEntryFrame, *vmEntryRecord(vm.topEntryFrame), instanceOfHandler);
         else
-            return unwindRun(vm, { callFrame->rawReturnPC(), stackPointerOfCaller(callFrame), callFrame->callerFrame(), callFrame }, vm.topEntryFrame, *vmEntryRecord(vm.topEntryFrame), false);
+            return unwindRunOfThrow(vm, *instance, { callFrame->rawReturnPC(), stackPointerOfCaller(callFrame), callFrame->callerFrame(), callFrame }, vm.topEntryFrame, *vmEntryRecord(vm.topEntryFrame));
     };
     CompiledUnwindResult found = isTermination ? CompiledUnwindResult { } : unwind();
     bool isHandled = found.status == CompiledUnwindStatus::FoundHandler;

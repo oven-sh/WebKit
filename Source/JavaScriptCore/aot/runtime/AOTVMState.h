@@ -188,10 +188,13 @@ public:
     uintptr_t structureIDBase { 0 };
     Instance* onlyInstance { nullptr };
     uint64_t entriesWithSeveralInstances { 0 };
+    // The frame pointers from lowestFrame to adapterFrame are those of one run.
     struct InstanceOfRun {
         uint64_t entries { 0 };
         void* entryFrame { nullptr };
         Instance* instance { nullptr };
+        const void* lowestFrame { nullptr };
+        const void* adapterFrame { nullptr };
     };
     InstanceOfRun instanceOfRecentRun;
     // The frame of the host function that throws because a class was called without `new`, while it makes the error.

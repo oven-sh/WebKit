@@ -402,9 +402,9 @@ private:
     static void leaveRun(Cursor&, Exit&);
     static bool passOverFrame(Cursor&, Exit&);
     bool passOverMethodReadFrame(Cursor&, Exit&);
-    Instance* findEnclosingAdapterInstance(Cursor) const;
+    Instance* findEnclosingAdapterInstance(Cursor, VMState* stateThatRemembersRun) const;
 public:
-    static Instance* knownInstanceOfRun(const VMState&, EntryFrame*);
+    static Instance* knownInstanceOfRun(const VMState&, EntryFrame*, const CallFrame* framePointer);
 private:
     Instance* tryFindInstance() const;
     Instance* findInstanceAmongSeveral() const;

@@ -151,7 +151,7 @@ static CompiledFrameExit leaveRunAt(CallFrame* outermostFrame, EntryFrame* entry
 
 static NEVER_INLINE Instance* findInstanceOfRun(VM& vm, const ReturnSiteInRun& site, EntryFrame* entryFrame)
 {
-    if (Instance* known = CompiledFrameIterator::knownInstanceOfRun(vm.aotState(), entryFrame))
+    if (Instance* known = CompiledFrameIterator::knownInstanceOfRun(vm.aotState(), entryFrame, site.framePointer))
         return known;
     auto frames = CompiledFrameIterator::tryCreate(vm, site.framePointer, removeCodePtrTag(site.rawPC), entryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, site.stackPointer);
     return frames && !frames->isAtEnd() ? frames->instance() : nullptr;
@@ -216,9 +216,11 @@ static ALWAYS_INLINE CompiledUnwindResult unwindRunOrRuns(VM& vm, const ReturnSi
     CallSiteCache* cacheOfRun = state.callSiteCache.get();
     const int8_t* bufferSlots = bufferSlotsByRegisterIndex();
     if constexpr (!goesOnInOtherImages) {
-        instance = state.onlyInstance;
-        if (!instance) [[unlikely]]
-            instance = findInstanceOfRun(vm, start, entryFrame);
+        if (!instance) {
+            instance = state.onlyInstance;
+            if (!instance) [[unlikely]]
+                instance = findInstanceOfRun(vm, start, entryFrame);
+        }
     }
     ReturnSiteInRun place = start;
     CallFrame* leftFrame = nullptr;
@@ -338,8 +340,14 @@ static ALWAYS_INLINE CompiledUnwindResult unwindRunOrRuns(VM& vm, const ReturnSi
 
 CompiledUnwindResult unwindRun(VM& vm, const ReturnSiteInRun& start, EntryFrame* entryFrame, VMEntryRecord& record, bool isTermination, CallFrame* asyncGeneratorBodyFrameLeft)
 {
-    Instance* instance;
+    Instance* instance = nullptr;
     return unwindRunOrRuns<false>(vm, start, entryFrame, record, isTermination, asyncGeneratorBodyFrameLeft, instance);
+}
+
+CompiledUnwindResult unwindRunOfThrow(VM& vm, Instance& instanceThatThrows, const ReturnSiteInRun& start, EntryFrame* entryFrame, VMEntryRecord& record)
+{
+    Instance* instance = &instanceThatThrows;
+    return unwindRunOrRuns<false>(vm, start, entryFrame, record, false, nullptr, instance);
 }
 
 CompiledUnwindResult unwindRunsOfImages(VM& vm, const ReturnSiteInRun& start, EntryFrame* entryFrame, VMEntryRecord& record, Instance*& instance)
@@ -533,6 +541,12 @@ const void* returnAddressOfInnermostCompiledCall(VM& vm)
     return nullptr;
 }
 
+static bool isAddressInCompiledCode(uint64_t word)
+{
+    std::span<const uint8_t> code = Image::current()->code();
+    return word - std::bit_cast<uintptr_t>(code.data()) < code.size();
+}
+
 // Native code has called the run that the throw leaves, and hands the exception on to its own caller unless it reports it.
 static bool isCaughtByCallersOfNativeCode(VM& vm, CompiledFrameExit exit)
 {
@@ -541,6 +555,9 @@ static bool isCaughtByCallersOfNativeCode(VM& vm, CompiledFrameExit exit)
         return false;
     for (unsigned remainingRuns = Options::exceptionStackTraceLimit(); remainingRuns && exit.callFrame; --remainingRuns) {
         if (exit.callFrame->callerFrameOrEntryFrame() == exit.entryFrame)
+            return false;
+        // So may code of another realm that runs the image.
+        if (exit.returnPC && isAddressInCompiledCode(std::bit_cast<uintptr_t>(removeCodePtrTag(exit.returnPC))))
             return false;
         if (void* taker = vm.aotState().stackPointerOfExceptionTaker; taker && taker < static_cast<void*>(exit.callFrame))
             return false;
@@ -556,12 +573,6 @@ static bool isCaughtByCallersOfNativeCode(VM& vm, CompiledFrameExit exit)
         exit = frames->exit();
     }
     return false;
-}
-
-static bool isAddressInCompiledCode(uint64_t word)
-{
-    std::span<const uint8_t> code = Image::current()->code();
-    return word - std::bit_cast<uintptr_t>(code.data()) < code.size();
 }
 
 Exception* exceptionKeptByCleanup(uint64_t kept, JSValue thrown)
