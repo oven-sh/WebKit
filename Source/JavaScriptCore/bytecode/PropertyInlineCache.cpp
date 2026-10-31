@@ -295,6 +295,9 @@ NEVER_INLINE void PropertyInlineCache::reset(const ConcurrentJSLockerBase& locke
     case AccessType::GetByIdDirect:
         resetGetBy(codeBlock, *this, GetByKind::ByIdDirect);
         break;
+    case AccessType::GetByIdThrowIfNotFound:
+        resetGetBy(codeBlock, *this, GetByKind::ByIdThrowIfNotFound);
+        break;
     case AccessType::GetByVal:
         resetGetBy(codeBlock, *this, GetByKind::ByVal);
         break;
@@ -602,6 +605,8 @@ static CodePtr<OperationPtrTag> LEGACY_NODELETE slowOperationFromUnlinkedPropert
         return operationGetByIdOptimize;
     case AccessType::GetByIdDirect:
         return operationGetByIdDirectOptimize;
+    case AccessType::GetByIdThrowIfNotFound:
+        return operationGetByIdThrowIfNotFoundOptimize;
     case AccessType::GetByIdWithThis:
         return operationGetByIdWithThisOptimize;
     case AccessType::GetByValWithThis:
@@ -697,6 +702,7 @@ PropertyInlineCache::Registers PropertyInlineCache::registers() const
         registers.propertyCacheGPR = BaselineJITRegisters::InById::propertyCacheGPR;
         break;
     case AccessType::GetByIdDirect:
+    case AccessType::GetByIdThrowIfNotFound:
     case AccessType::GetById:
     case AccessType::GetPrivateNameById:
         registers.baseGPR = BaselineJITRegisters::GetById::baseGPR;
