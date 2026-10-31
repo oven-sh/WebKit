@@ -12,6 +12,5 @@ const call = intoJITCode ? $vm.callIntoJITCode : $vm.callIntoLLInt;
 if (!(intoJITCode ? $vm.pagesOfJITCodeAreGuarded() : $vm.pagesOfLLIntAreGuarded()))
     $vm.crash(); // Nothing is guarded here.
 
-call(false);
 call(true);
-quit(); // Not a crash, so the test fails.
+throw new Error("returned from a call past the landing pad");

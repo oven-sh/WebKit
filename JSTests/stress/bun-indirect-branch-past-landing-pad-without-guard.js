@@ -1,4 +1,3 @@
-//@ skip if $hostOS == "windows"
 //@ runDefault("--useBranchTargetIdentification=0")
 //@ runDefault("--useBranchTargetIdentification=0", "--useJIT=0")
 
