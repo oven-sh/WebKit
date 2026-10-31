@@ -4440,7 +4440,7 @@ static bool mayBeInstance(ValueFlowRuleContext& context, const ValueFlowOperand&
     if (context.meet(prototypes, mayBeAnything))
         return true;
     ClimbingSet chain = context.valueOf(context.lookup(objects, prototypeLinkName));
-    return context.meet(chain, mayBeAnything) || context.meet(chain, prototypes);
+    return context.meet(chain, mayBeAnything) || context.contains(chain, universe.builtinTables().heap().undescribedNativeCode()) || context.meet(chain, prototypes);
 }
 
 // The message names the object's class, from the function found under `constructor` or else from Symbol.toStringTag. No getter runs for it.
