@@ -139,6 +139,7 @@ public:
     using List = Vector<BlockID, 4>;
 
     explicit CFG(const Function&);
+    NEVER_INLINE ~CFG() = default;
 
     bool describes(const Function&) const;
 

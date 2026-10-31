@@ -35,6 +35,13 @@ struct Terminator : Instruction {
 
     explicit Terminator(TerminatorKind newKind) { become(newKind); }
 
+    // One destructor in the binary, called, in place of its body at each end of a scope.
+    NEVER_INLINE ~Terminator() = default;
+    Terminator(const Terminator&) = default;
+    Terminator(Terminator&&) = default;
+    Terminator& operator=(const Terminator&) = default;
+    Terminator& operator=(Terminator&&) = default;
+
     void become(TerminatorKind newKind)
     {
         kind = newKind;
