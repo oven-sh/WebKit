@@ -935,9 +935,11 @@ const LayoutData* ClassTable::classOfHolderLeftOut(JSObject* holder, ClassSide& 
             return nullptr;
         JSValue constructor = holder->getDirect(vm, vm.propertyNames->constructor);
         classObject = constructor && constructor.isCell() ? dynamicDowncast<Closure>(constructor.asCell()) : nullptr;
-        if (!classObject || &classObject->state() != &m_state)
+        if (!classObject)
             return nullptr;
     }
+    if (&classObject->state() != &m_state)
+        return nullptr;
     const LayoutData* layout = classObject->classData();
     if (!layout || !isDefinedByClass(*layout) || !watchpointsOf(m_state).hasNoGuardLeft(*layout))
         return nullptr;
@@ -972,7 +974,7 @@ const LayoutData* ClassTable::classLeftToRecordHeldBy(JSObject* holder, ClassSid
         return layout;
     }
     auto* classObject = dynamicDowncast<Closure>(holder);
-    const LayoutData* layout = classObject ? classObject->classData() : nullptr;
+    const LayoutData* layout = classObject && &classObject->state() == &m_state ? classObject->classData() : nullptr;
     if (!layout || !leavesDefinitionToRecord(*layout) || registeredClassObjectOf(m_state, *layout) != classObject)
         return nullptr;
     side = ClassSide::Static;

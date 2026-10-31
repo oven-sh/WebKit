@@ -607,6 +607,8 @@ export const builtinMarks = [
   "IsResolverThatLoaderCalls",
   // The host calls what the program has stored under it for each require() that is answered at run time: on the module object of the file that asks. What it answers is the module.
   "IsRequireThatLoaderCalls",
+  // A prototype object. The host prints the instances below it with code of their own, which asks none of the getters on it.
+  "InstancesArePrintedWithoutTheirGetters",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 

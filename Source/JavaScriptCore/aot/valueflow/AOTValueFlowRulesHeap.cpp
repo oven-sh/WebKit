@@ -386,6 +386,12 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
         // The members of a library class are found by name alone once an instance has escaped. A key nobody knows may be any of their names.
         if (ClimbingSet listed = instancesBelowLibraryClassesListedBesideUnknownObjectInProgram(object, receivers); holdsAnything(listed))
             connect(m_context.lookup(listed, name), m_statement.result);
+        // A value nobody knows stands for what was put into hands nobody sees, and no node lists that beside it: `box.handle = await open(path); box.handle[box.name]()`.
+        if (object.node && mayBeUnknownObject(receivers) && isInProgramCode()) {
+            ClimbingSet carriedOut = m_context.valueOf(m_context.masked(m_context.nodes().ofHost(ValueFlowHostNode::ValuesCarriedOut), m_universe.instancesBelowLibraryClasses()));
+            if (holdsAnything(carriedOut))
+                connect(m_context.lookup(carriedOut, name), m_statement.result);
+        }
         if (holdsNamedOrLoadedBun(object))
             add(m_statement.result, only(ValueFlowUniverse::markOfLoadedBun()));
     }

@@ -841,7 +841,7 @@ void recordLockedWritesUnderNewNames(const Program& program, TypeTable& types, s
 static ProgramInstances countProgramInstances(const ValueFlowResultInputs& inputs)
 {
     const BuiltinTable& builtins = inputs.program.builtins();
-    if (!inputs.build.isEnabledForProgram(FlowResultKind::ReachedFunctions) || inputs.build.options().sharesRealms())
+    if (!inputs.build.isEnabledForProgram(FlowResultKind::ReachedFunctions) || inputs.build.options().sharesRealms() || inputs.build.options().runsInSeveralRealms())
         return ProgramInstances::Unknown;
     bool unseenCodeFindsEveryBuiltin = unseenCodeHasLoader(inputs.solution);
     for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {

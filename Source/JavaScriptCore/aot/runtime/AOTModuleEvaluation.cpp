@@ -3063,12 +3063,16 @@ JSValue Modules::requireThroughCache(ModuleID target, ModuleID referrer)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     LoadedModule& loaded = ensureLoaded(target);
-    if (JSValue kept = loaded.valueInRequireCache)
-        return kept;
+    if (JSValue kept = loaded.valueInRequireCache) {
+        JSValue stored = loaded.objectMadeByRequire ? loaded.objectMadeByRequire->getDirect(*m_instance.vm, m_instance.vm->propertyNames->exports) : JSValue();
+        return stored ? stored : kept;
+    }
     bool isMocked = m_libraryModulesWithMock.get(target.index()) && host().replacesNativeModule && host().replacesNativeModule(m_instance.globalObject, m_table.pathText(target));
     JSValue answered = isMocked ? answerRequireWithMock(target, referrer) : answerRequire(target);
     RETURN_IF_EXCEPTION(scope, { });
-    loaded.valueInRequireCache.set(*this, answered);
+    addToRequireCache(target, answered);
+    if (referrer)
+        ensureLoaded(target).firstRequirer = referrer;
     return answered;
 }
 

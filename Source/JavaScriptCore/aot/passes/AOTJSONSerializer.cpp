@@ -1725,6 +1725,8 @@ Function buildSerializer(const DerivedFunctionKey& key, DerivedFunctionInputs& d
 
     BlockID differs = builder.addBlock(BlockFrequency::Rare);
     builder.emitFailureOfPredictions(Target { differs, { }, { } });
+    // Not the entry where predictions are made to fail: that has ended it with a branch.
+    BlockID tests = builder.currentBlock();
     writer.m_codeMayRunAroundValues = writer.writingRunsCode(Type::forLayout(layout, inputs.types));
 
     // The body comes first: what it opens says how many levels may be open around it. With more the general serializer is asked, which counts them one by one and throws.
@@ -1734,7 +1736,7 @@ Function buildSerializer(const DerivedFunctionKey& key, DerivedFunctionInputs& d
     writer.appendObjectOfLayout(head.parameters[0], layout, differs);
     builder.emitReturn(writer.appendOutcome(JSONOutcome::Parsed));
 
-    builder.moveToEndOf(head.entry);
+    builder.moveToEndOf(tests);
     // Where code may run, the holders are listed. Where none runs, nothing is kept about them until the text has grown long: then the run time asks for those that follow.
     if (!writer.m_codeMayRunAroundValues && writer.mayHoldItself(layout)) {
         IRBuilder::BranchBlocks atEntry = builder.emitBranch(builder.append(Emission::make<&Value::setFailsAtWatchedLevels>(Opcode::JSONHasStackSpace, { }, true)), BlockFrequency::Normal, BlockFrequency::Rare);

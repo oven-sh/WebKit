@@ -759,6 +759,24 @@ bool requireMayAnswerWithMock(const Program& program, const Module& module)
     return importMayAnswerWithMock(module) && !spanHasPrefix(name, byteCast<uint8_t>("node:"_span)) && !equalSpans(name, byteCast<uint8_t>("bun"_span));
 }
 
+bool requireReadsModuleValue(const Program& program, const Module& module)
+{
+    return (module.kind == ModuleKind::RuntimeSource || module.kind == ModuleKind::Runtime) && !module.exportsVariable && !requireMayAnswerWithMock(program, module);
+}
+
+static bool isLibraryModule(const Program& program, const Module& module)
+{
+    return module.kind == ModuleKind::RuntimeSource || module.kind == ModuleKind::Runtime || module.flags.contains(ModuleFlags::IsLibrary) || isBundlerHelperModule(program, module);
+}
+
+bool requireAddsToRequireCache(const Program& program, ModuleID referrer, ModuleID target)
+{
+    if (!referrer || isLibraryModule(program, program.at(referrer)) || !isLibraryModule(program, program.at(target)))
+        return false;
+    std::span<const uint8_t> name = program.string(program.at(target).path);
+    return !spanHasPrefix(name, byteCast<uint8_t>("node:"_span)) && !equalSpans(name, byteCast<uint8_t>("bun"_span)) && !equalSpans(name, byteCast<uint8_t>("bun:test"_span));
+}
+
 BuiltinID functionOfHostThatRequireCallsFor(const Module& module)
 {
     switch (module.kind) {

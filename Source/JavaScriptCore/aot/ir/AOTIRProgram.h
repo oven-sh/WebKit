@@ -302,6 +302,9 @@ BuiltinID functionOfHostThatRequireCallsFor(const Module&);
 bool importMayAnswerWithMock(const Module&);
 // `require` takes a name that starts with `node:` to the registry, where no mock stands, and `require("bun")` is the global `Bun`.
 bool requireMayAnswerWithMock(const Program&, const Module&);
+bool requireReadsModuleValue(const Program&, const Module&);
+// overridableRequire() in CommonJS.ts.
+bool requireAddsToRequireCache(const Program&, ModuleID referrer, ModuleID target);
 // From SplitCoroutines on.
 bool isBodyOfModuleEvaluatedByRequire(const Program&, const Function&);
 

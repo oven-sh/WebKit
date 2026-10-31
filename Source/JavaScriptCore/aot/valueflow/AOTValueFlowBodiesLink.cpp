@@ -1216,6 +1216,12 @@ private:
         universe.m_prototypeObjectsOfLibraryClasses = take();
         for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
             const Layout& layout = m_program.layouts[index];
+            if (layoutIsDefinedByClass(layout) && layout.constructor && layout.module && m_program.at(layout.module).kind == ModuleKind::RuntimeSource)
+                list.append(universe.closureOf(layout.constructor));
+        }
+        universe.m_constructorsOfLibraryClasses = take();
+        for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
+            const Layout& layout = m_program.layouts[index];
             if (layout.kind == LayoutKind::Instance && layout.constructor)
                 list.append(universe.prototypeOf(LayoutID(index)));
         }

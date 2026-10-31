@@ -72,6 +72,12 @@ Boxed ModuleEmitter::loadModuleValue(ModuleID module)
     return Boxed(m_out.load64(emitter<StaticsEmitter>().inStatics(heap, m_placement.moduleValueOffset(module))));
 }
 
+Boxed ModuleEmitter::loadRequireCacheValue(ModuleID module)
+{
+    const B3::AbstractHeap& heap = m_heaps.entire(AbstractHeap::RuntimeState);
+    return Boxed(m_out.load64(emitter<StaticsEmitter>().inStatics(heap, m_placement.requireCacheValueOffset(module))));
+}
+
 void ModuleEmitter::generateModuleNamespace(const ValueContext& value)
 {
     ModuleID module = value->module();
@@ -122,13 +128,14 @@ void ModuleEmitter::generateRequireModule(const ValueContext& value)
         options.calledBuiltin = functionOfHostThatRequireCallsFor(target);
         return callOperation<Boxed>(value, RuntimeOperation::RequireModule, { moduleIndex(module), moduleIndex(value->referrer()) }, options);
     };
-    bool isAnsweredByValueWord = (target.kind == ModuleKind::RuntimeSource || target.kind == ModuleKind::Runtime) && !target.exportsVariable && m_placement.hasModuleValue(module) && !requireMayAnswerWithMock(m_program, target);
+    bool addsToRequireCache = requireAddsToRequireCache(m_program, value->referrer(), module);
+    bool isAnsweredByValueWord = requireReadsModuleValue(m_program, target) && (addsToRequireCache ? m_placement.hasRequireCacheValue(module) : m_placement.hasModuleValue(module));
     if (!isAnsweredByValueWord || value.shape() == CodeShape::Compact) {
         define(value, requireInSlowPath({ }));
         return;
     }
 
-    Boxed stored = loadModuleValue(module);
+    Boxed stored = addsToRequireCache ? loadRequireCacheValue(module) : loadModuleValue(module);
     define(value, either<Boxed>(isNotEmpty(stored), [&] {
         return stored;
     }, [&] {

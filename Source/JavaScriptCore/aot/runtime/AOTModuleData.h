@@ -91,6 +91,7 @@ struct ModuleData {
     uint8_t faceOfFile : 1;
     uint8_t importedByModule : 1;
     // Of a data file the bit says that the loader answers a require() of it with its namespace object.
+    // Of a module of the library without an export table: the word behind `value` answers a require() of the program.
     uint8_t importedWhileItRunsOrAsNamespace : 1;
     uint8_t beginsLoads : 1;
     uint8_t shownByFace : 1;
@@ -131,6 +132,8 @@ struct ModuleData {
     bool isImportedAsNamespace() const { return kind == ModuleKind::SourceText && importedWhileItRunsOrAsNamespace; }
     // A file that stands for a string. `bun build` puts the string where it links a require(), which is what requireResult says. Every other require() goes to the loader, as in `bun run`.
     bool answersLoaderWithNamespace() const { return kind == ModuleKind::Data && importedWhileItRunsOrAsNamespace; }
+    bool hasRequireCacheValue() const { return (kind == ModuleKind::RuntimeSource || kind == ModuleKind::Runtime) && importedWhileItRunsOrAsNamespace; }
+    SlotData requireCacheValue() const { return SlotData::create(value.offset + sizeof(EncodedJSValue), SlotRepresentation::JSValue); }
     // The helpers of the bundler, which have the form of a file of the program and answer to their name like a module of the library.
     bool isLibraryCodeWithFilePath() const { return has(Flag::IsLibraryCodeWithFilePath); }
     // Code of the host, whatever its form.

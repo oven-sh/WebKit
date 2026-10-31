@@ -1086,6 +1086,8 @@ static void checkStaticsExtents(const PlacementCheckContext& context)
         if (offset)
             add(*offset, sizeOfStaticsWord);
     }
+    for (size_t module : context.statics.modulesWithRequireCacheValue)
+        add(*context.statics.moduleValueOffsets[module] + sizeOfStaticsWord, sizeOfStaticsWord);
     for (auto& cell : context.statics.moduleBuiltinCells)
         add(cell.offset, sizeOfStaticsWord);
     for (auto offset : context.statics.moduleNamespaceOffsets) {
@@ -1134,6 +1136,8 @@ static void checkRoots(const PlacementCheckContext& context)
     }
     for (auto offset : context.statics.moduleValueOffsets)
         context.expect(!offset || isRoot(context.statics, *offset), PlacementRule::RootMissing);
+    for (size_t module : context.statics.modulesWithRequireCacheValue)
+        context.expect(isRoot(context.statics, *context.statics.moduleValueOffsets[module] + sizeOfStaticsWord), PlacementRule::RootMissing);
     for (auto& cell : context.statics.moduleBuiltinCells)
         context.expect(isRoot(context.statics, cell.offset), PlacementRule::RootMissing);
     for (auto offset : context.statics.moduleNamespaceOffsets)

@@ -209,6 +209,8 @@ struct CompileOptions {
     bool sharesRealms() const { return hasFlag(output, OutputOptions::SharesRealms); }
     // The image holds the library and nothing else, and is built before any of the runs that it serves is known. So it rests on no lock that a test run can open.
     bool holdsLibraryAlone() const { return hasFlag(output, OutputOptions::HoldsLibraryAlone); }
+    // The host runs the image in one realm of the VM after another, each with an instance of its own, and what it carries from one realm to the next may hold a function of the earlier one.
+    bool runsInSeveralRealms() const { return hasFlag(output, OutputOptions::RunsInSeveralRealms); }
     bool writesCodeSizeMap() const { return !logging.mapFilePath.isNull(); }
 
     JS_EXPORT_PRIVATE static CompileOptions fromWire(const Wire::CompileOptions&, Diagnostics&);

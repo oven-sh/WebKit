@@ -216,6 +216,7 @@ public:
     bool isKeptInRequireCache(ModuleID) const;
     bool isInRequireCache(ModuleID) const;
     void takeOutOfRequireCache(ModuleID);
+    std::span<const ModuleID> libraryModulesInRequireCache() const { return m_libraryModulesInRequireCache.span(); }
     std::optional<ModuleID> formThatMockFinds(StringView path, std::optional<ModuleID> file) const;
     void deferMock(ModuleID);
     void runMockThatWaits(ModuleID);
@@ -305,7 +306,7 @@ public:
     bool isChangedOnDisk(ModuleID file);
     void takeOutOfLoader(ModuleID);
     void forgetFormAnsweredFirst(ModuleID file);
-    JSObject* requireCacheEntry(ModuleID module) { return moduleObjectMadeByRequire(module); }
+    JSObject* requireCacheEntry(ModuleID);
     bool isEvicted(ModuleID module) const { return m_evictedFiles.get(fileOf(module).index()); }
     bool hasRun(ModuleID);
     bool isListedWhileItRuns(ModuleID) const;
@@ -383,6 +384,7 @@ public:
     void captureExportsAgain(ModuleID);
     void exportWhatMockNamesAlone(ModuleID file, bool hasRun);
     bool exportsWhatMockNamesAlone(ModuleID) const;
+    void fillNamesThatMockLacks(ModuleID file);
     void answerRequireWithNamespaceOfMock(ModuleID file);
     void noteLoadBehindMock(ModuleID fileOrFace, bool isRequired);
     // The start of the module is on the stack only to run the files that the module imports.
@@ -660,6 +662,8 @@ private:
     bool mayHandOutModuleObject(ModuleID module) const { return data(module).kind != ModuleKind::CommonJs || data(module).hasValue(); }
     JSValue answerRequire(ModuleID, ModuleID referrer = { }, RequiredBy = RequiredBy::Referrer);
     JSValue settledAnswerOfRequire(ModuleID, RequiredBy) const;
+    void addToRequireCache(ModuleID, JSValue exports);
+    void setRequireCacheValue(ModuleID, JSValue exports);
     JSValue requireThroughCache(ModuleID, ModuleID referrer);
     JSValue answerRequireWithMock(ModuleID, ModuleID referrer);
     JSValue defaultExportOfMockMarkedAsESModule(ModuleID);
@@ -792,6 +796,9 @@ private:
     BitVector m_modulesWithMockToRun;
     BitVector m_modulesWithMockThatWaited;
     BitVector m_modulesLoadedBeforeMockThatWaited;
+    Vector<ModuleID> m_libraryModulesInRequireCache;
+    mutable BitVector m_libraryModulesWithCheckedName;
+    mutable BitVector m_libraryModulesKeptInRequireCache;
     BitVector m_libraryModulesWithMock;
     BitVector m_libraryModulesThatMockReplaces;
     BitVector m_libraryModulesLeftByThrow;

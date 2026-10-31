@@ -41,7 +41,9 @@ enum class MetBy : bool { Program, NativeCode };
 ValueFlowNodeID enumerablePropertiesNobodyWrote(ValueFlowRuleContext&, ClimbingSet holders, MetBy);
 // Whoever goes over the properties of an object nobody knows reads them as a key nobody knows does.
 inline constexpr ValueFlowName everyGetterRunByWalkName { ValueFlowNameKind::EveryMemberRead, 1 };
+inline constexpr ValueFlowName everyGetterRunByPrinterName { ValueFlowNameKind::EveryMemberRead, 2 };
 void runGettersOnObjectsNobodyKnows(ValueFlowRuleContext&);
+void runGettersOnPrintedObjectsNobodyKnows(ValueFlowRuleContext&);
 ClimbingSet objectsRightAbove(ValueFlowRuleContext&, ClimbingSet knownObjects);
 ValueFlowNodeID exportsOfHoldersListedBesideUnknownObject(ValueFlowRuleContext&, const ValueFlowOperand&);
 ValueFlowNodeID exportsOfHoldersIn(ValueFlowRuleContext&, const ValueFlowOperand&);

@@ -34,6 +34,7 @@ public:
 
     bool hasSingleNamespaceInValueWord(ModuleID);
     Boxed loadModuleValue(ModuleID);
+    Boxed loadRequireCacheValue(ModuleID);
 
 private:
     Word32 moduleIndex(ModuleID);

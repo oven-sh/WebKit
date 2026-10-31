@@ -2991,6 +2991,8 @@ static void appendModule(TableEncoder& encoder, ModuleID id, const Module& modul
     entry.hasInstalledPositions = module.flags.contains(ModuleFlags::HasInstalledPositions);
     entry.loadedByLoader = module.flags.contains(ModuleFlags::IsLoadedByLoader);
     entry.importedWhileItRunsOrAsNamespace = module.flags.contains(module.kind == ModuleKind::CommonJs ? ModuleFlags::MayBeImportedWhileItRuns : module.kind == ModuleKind::Data ? ModuleFlags::AnswersLoaderWithNamespace : ModuleFlags::IsImportedAsNamespace);
+    if (module.kind == ModuleKind::RuntimeSource || module.kind == ModuleKind::Runtime)
+        entry.importedWhileItRunsOrAsNamespace = encoder.placement.hasRequireCacheValue(id);
     bool isOfLibrary = module.kind == ModuleKind::RuntimeSource || module.kind == ModuleKind::Runtime || module.flags.contains(ModuleFlags::IsLibrary) || isBundlerHelperModule(program, module);
     entry.evictableOrHeldUnderNameWithoutPrefix = module.flags.contains(isOfLibrary ? ModuleFlags::IsHeldUnderNameWithoutPrefix : ModuleFlags::MayBeEvicted);
     entry.kind = module.kind;

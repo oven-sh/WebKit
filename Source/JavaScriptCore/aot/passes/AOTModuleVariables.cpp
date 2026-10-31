@@ -219,6 +219,24 @@ ConstantLists collectConstantLists(const Program& program, const FlowResults& fl
     return collectListsStoredAlone(program, collectConstantStores(program, flow, build));
 }
 
+// Whatever names a key and is neither a read of it nor a question about it, where its row in the schema lets it write a property or does not bound what it does.
+// An operation that comes into the schema is in here until its row says otherwise.
+static const OpcodeSet& operationsThatMayStoreUnderTheirKey()
+{
+    static const OpcodeSet opcodes = [] {
+        OpcodeSet result;
+        for (Opcode opcode : allMembersOf<Opcode>) {
+            if (!Value::opcodesWithKey.contains(opcode) || accessOf(opcode) == Access::Read || accessOf(opcode) == Access::Has)
+                continue;
+            if (!effectFactsOf(opcode).staysWithinDeclaredBound || declaredBoundOf(opcode).writes.containsAny({ AbstractHeap::ObjectFields, AbstractHeap::NamedProperties }))
+                result.add(opcode);
+        }
+        RELEASE_ASSERT(result.contains(Opcode::PropSet) && result.contains(Opcode::PropDefine) && result.contains(Opcode::SuperSet));
+        return result;
+    }();
+    return opcodes;
+}
+
 static bool isWrittenByAllocationsAlone(const Field& field)
 {
     constexpr OptionSet<FieldFlags> flagsOfOtherFields { FieldFlags::IsMethod, FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsHidden, FieldFlags::IsInherited, FieldFlags::IsAddedLate };
@@ -526,10 +544,12 @@ static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
         constexpr uint32_t isKey = 1u << 31;
         Vector<uint32_t> changed = collectInParallel<uint32_t>(loops, program.functions.size(), [&](unsigned index, Vector<uint32_t>& found) {
             // `{ ...{ f: 7 }, ...{ f: y } }`: the literal lists the first value and defines the member again.
-            forEachListedValue(program, FunctionID(index), { Opcode::PropSet, Opcode::PropDefine }, [&](BlockID, uint32_t, ValueID, const Value& store) {
-                if (!keysWithStoresToLookAt.get(store.key().index()))
+            forEachListedValue(program, FunctionID(index), operationsThatMayStoreUnderTheirKey(), [&](BlockID, uint32_t, ValueID, const Value& store) {
+                if (!store.key() || !keysWithStoresToLookAt.get(store.key().index()))
                     return;
-                auto receivers = store.receivers() ? program.at(store.receivers()).all() : std::nullopt;
+                // A store and a definition say what they store, and into what. Of anything else the name alone is known.
+                bool saysWhatItStores = store.opcode == Opcode::PropSet || store.opcode == Opcode::PropDefine;
+                auto receivers = saysWhatItStores && store.receivers() ? program.at(store.receivers()).all() : std::nullopt;
                 if (!receivers) {
                     found.append(store.key().index() | isKey);
                     return;

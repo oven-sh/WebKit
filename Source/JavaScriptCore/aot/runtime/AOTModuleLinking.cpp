@@ -867,6 +867,14 @@ bool Modules::exportsWhatMockNamesAlone(ModuleID module) const
     return loaded && loaded->exportsWhatMockNamesAlone;
 }
 
+// The table of the mock stands for a capture, so no capture fills the variables. A member that is read off the namespace object is undefined where the mock lacks it, as where the file does.
+void Modules::fillNamesThatMockLacks(ModuleID file)
+{
+    ModuleID module = moduleWithExportsOf(file);
+    if (exportsWhatMockNamesAlone(module))
+        fillCapturedExports(module);
+}
+
 void Modules::answerRequireWithNamespaceOfMock(ModuleID file)
 {
     VM& vm = *m_instance.vm;

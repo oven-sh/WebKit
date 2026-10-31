@@ -613,13 +613,15 @@ bool HeapRule::runsGetterThroughPlaceholder(BuiltinID member, const HeapKey& key
 
 // A read runs getters on the holders where a store runs setters. What they answer is among the values nobody knows.
 // That names no member of the host: native code is there whoever reads it. A getter that is a function of the library, or calls one, is in the image only once it is read.
-void HeapRule::runGettersFoundThroughUnknownObject(const HeapKey& key)
+void HeapRule::runGettersFoundThroughUnknownObject(const HeapKey& key, GettersAreRunBy runBy)
 {
     forEachMemberUnder(holdersFoundThroughUnknownObject(key), key, [&](BuiltinID member, ModuleID) {
         if (!runsGetterThroughPlaceholder(member, key))
             return;
-        openProxiesThatMemberAnswers(m_context, member);
         BuiltinID canonical = m_builtins.canonicalID(member);
+        if (runBy == GettersAreRunBy::Printer && m_builtins.has(BuiltinMark::InstancesArePrintedWithoutTheirGetters, m_builtins.canonicalID(m_builtins.at(canonical).holder)))
+            return;
+        openProxiesThatMemberAnswers(m_context, member);
         bool callsLibrary = !m_builtins.calledFunctionsOf(canonical).empty() || !m_builtins.moduleLoadsOf(canonical).empty();
         for (const BuiltinOverload& overload : m_builtins.overloadsOf(canonical)) {
             if (overload.mode != BuiltinCallMode::Get)
@@ -627,6 +629,8 @@ void HeapRule::runGettersFoundThroughUnknownObject(const HeapKey& key)
             if (callsLibrary || overload.libraryFunction())
                 use(member, BuiltinUse::Read);
             noteInstancesIn(m_context, overload.result.type);
+            if (runBy != GettersAreRunBy::Walk)
+                noteClassesThatAppliedRowNames(m_context, overload.result.type);
         }
     });
 }
@@ -1718,7 +1722,7 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
         });
         add(ValueFlowProgramNodes::escaped(), m_context.maker().of(handedOutAsUnknownObject.span()));
         if (handsOutMembers)
-            runGettersFoundThroughUnknownObject(key);
+            runGettersFoundThroughUnknownObject(key, GettersAreRunBy::Read);
     } else if (chain.holdsUnknownObject) {
         connect(m_context.lookup(unknownObjectAlone(), value), result);
         if (!m_context.isLookupForCall())
@@ -1987,7 +1991,9 @@ void HeapRule::runLookup()
         return;
     case ValueFlowNameKind::EveryMemberRead:
         if (name == everyGetterRunByWalkName)
-            runGettersFoundThroughUnknownObject(unknownHeapKey);
+            runGettersFoundThroughUnknownObject(unknownHeapKey, GettersAreRunBy::Walk);
+        else if (name == everyGetterRunByPrinterName)
+            runGettersFoundThroughUnknownObject(unknownHeapKey, GettersAreRunBy::Printer);
         else
             noteUseOfMembers(unknownHeapKey, BuiltinUse::Read);
         return;
@@ -2087,6 +2093,11 @@ ValueFlowNodeID enumerablePropertiesNobodyWrote(ValueFlowRuleContext& context, C
 void runGettersOnObjectsNobodyKnows(ValueFlowRuleContext& context)
 {
     context.lookup(ClimbingSet(context.universe().unknownObjectAlone()), everyGetterRunByWalkName);
+}
+
+void runGettersOnPrintedObjectsNobodyKnows(ValueFlowRuleContext& context)
+{
+    context.lookup(ClimbingSet(context.universe().unknownObjectAlone()), everyGetterRunByPrinterName);
 }
 
 ClimbingSet objectsRightAbove(ValueFlowRuleContext& context, ClimbingSet knownObjects)

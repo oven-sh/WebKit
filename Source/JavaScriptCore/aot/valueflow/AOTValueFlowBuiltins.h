@@ -109,6 +109,7 @@ void applyEntryDescribing(ValueFlowObjectID closure, ValueFlowCallKind, const Va
 void enterCodeThatEntryDescribes(ValueFlowObjectID closure, ValueFlowRuleContext&);
 void noteCallOfBuiltin(BuiltinID, ValueFlowCallKind, ValueFlowRuleContext&);
 void noteInstancesIn(ValueFlowRuleContext&, BuiltinTypeID);
+void noteClassesThatAppliedRowNames(ValueFlowRuleContext&, BuiltinTypeID);
 void connectEnumerableMembersOf(ClimbingSet hostObjects, ValueFlowNodeID to, ValueFlowRuleContext&);
 // The keys of objects that only the statements of the program have laid a name on: those that they were made with. What was added since is under AddedNames.
 enum class OwnKeys : uint8_t { EnumerableStrings, Strings, All };

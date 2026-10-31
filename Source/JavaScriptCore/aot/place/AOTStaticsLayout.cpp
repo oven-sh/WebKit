@@ -516,8 +516,19 @@ std::pair<StaticsPlan, LiteralSites> placeStatics(const PlacementContext& contex
         }
     };
     auto placeModuleValues = [&] {
-        plan.moduleValueOffsets = Vector<std::optional<uint32_t>>(program.modules.size(), [&](size_t index) {
-            return hasValueWord(context, ModuleID(index)) ? std::optional(allocateRoot()) : std::nullopt;
+        for (const RequireEdgeUse& use : sites.requireEdges) {
+            if (requireReadsModuleValue(program, program.at(use.edge.target)) && requireAddsToRequireCache(program, use.edge.referrer, use.edge.target))
+                plan.modulesWithRequireCacheValue.set(use.edge.target.index());
+        }
+        plan.moduleValueOffsets = Vector<std::optional<uint32_t>>(program.modules.size(), [&](size_t index) -> std::optional<uint32_t> {
+            if (!hasValueWord(context, ModuleID(index)))
+                return std::nullopt;
+            uint32_t offset = allocateRoot();
+            if (plan.modulesWithRequireCacheValue.get(index)) {
+                uint32_t requireCacheValueOffset = allocateRoot();
+                RELEASE_ASSERT(requireCacheValueOffset == offset + staticsWordSize);
+            }
+            return offset;
         });
     };
     auto placeGuardWords = [&] {

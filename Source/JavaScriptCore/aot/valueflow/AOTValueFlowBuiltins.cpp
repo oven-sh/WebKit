@@ -1800,9 +1800,10 @@ private:
         if (m_overload->code.implementation.inlineBuiltin == InlineBuiltin::OwnPropertyKeys && parameter.protocols.contains(Protocol::OwnKeys)) {
             ValueFlowNodeID listed = m_context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfLibraryClassesWhoseOwnKeysAreListed);
             connectOperands(parameter.operand, listed);
-            // A value that nobody knows stands for all that has escaped, and no node lists that beside it: `Reflect.ownKeys(box.held)`.
+            // A value that nobody knows stands for what was put into hands nobody sees, and no node lists that beside it: `Reflect.ownKeys(box.held)`.
+            // A prototype object escapes with an instance, with its constructor, or where a lookup on a value nobody knows finds a member on it. Only one that was carried out comes back as a value.
             if (mayBeUnknownObject(valueAt(parameter.operand)))
-                m_context.connect(m_context.masked(ValueFlowProgramNodes::escaped(), m_universe.prototypeObjectsOfLibraryClasses()), listed);
+                m_context.connect(m_context.masked(valuesCarriedOut(), m_universe.prototypeObjectsOfLibraryClasses()), listed);
         }
         if (parameter.roles.contains(BuiltinOperandRole::DescribedWhenRefused))
             describeRefusedOperands(parameter);
@@ -4277,6 +4278,28 @@ void noteInstancesIn(ValueFlowRuleContext& context, BuiltinTypeID type)
     context.add(context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfInstances), context.maker().of(prototypes.span()));
 }
 
+void noteClassesThatAppliedRowNames(ValueFlowRuleContext& context, BuiltinTypeID type)
+{
+    const BuiltinTable& builtins = context.program().builtins();
+    Vector<ValueFlowObjectID, 16> holders;
+    Vector<BuiltinTypeID, 8> types { type };
+    for (size_t index = 0; index < types.size(); ++index) {
+        if (!types[index])
+            continue;
+        for (const BuiltinTypePart& part : builtins.at(types[index]).parts) {
+            for (BuiltinClassID current = part.builtinClass; current; current = builtins.at(current).parent) {
+                for (BuiltinID holder : { builtins.at(current).constructor, builtins.at(current).prototype }) {
+                    if (holder)
+                        holders.append(context.universe().objectOf(holder));
+                }
+            }
+            for (const BuiltinSlotContents& contents : part.contents)
+                types.appendIfNotContains(contents.type);
+        }
+    }
+    context.add(context.nodes().ofHost(ValueFlowHostNode::HoldersOfClassesThatAppliedRowsName), context.maker().of(holders.span()));
+}
+
 void callOtherCallables(ClimbingSet callees, ValueFlowCallKind kind, const ValueFlowStatement& call, ValueFlowRuleContext& context)
 {
     if (isConstruction(kind) && call.factsOfText.contains(ValueFlowFactOfText::HasSecondOperand))
@@ -4707,6 +4730,32 @@ bool mayBeFoundOnObjectNobodyKnows(ValueFlowRuleContext& context, BuiltinName na
     return context.meet(escapedInstances, ValueSets::anything) && context.meet(context.valueOf(context.lookup(escapedInstances, prototypeLinkName)), withMethodsNotListed);
 }
 
+static bool asksObjectsHowTheyArePrinted(ValueFlowRuleContext& context, const ValueFlowBehavior& behavior)
+{
+    return behavior.protocols.contains(Protocol::CallsNamed) && std::ranges::any_of(behavior.calledMembers, [&](BuiltinName name) {
+        return isCalledWithFunctionsOfStartupModules(context, name);
+    });
+}
+
+static void forEachGetterOfHostClassesAbove(ValueFlowRuleContext& context, ClimbingSet objects, NOESCAPE const Invocable<void(BuiltinName)> auto& functor)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    const ValueFlowHeapTables& heap = universe.builtinTables().heap();
+    const BuiltinTable& builtins = context.program().builtins();
+    ValueSetID madeByNativeCode = context.maker().intersect(context.maker().unite(universe.objectsThatMayBeAnything(), universe.instancesBelowBuiltinClasses()), context.maker().intersect(universe.knownObjects(), ValueSets::complement(universe.builtinObjects())));
+    ClimbingSet instances = context.restrict(objects, madeByNativeCode);
+    if (!context.meet(instances, ValueSets::anything))
+        return;
+    context.forEachMemberInLine(context.restrict(context.valueOf(context.lookup(instances, prototypeLinkName)), heap.prototypeObjectsOfHost()), [&](ValueFlowObjectID prototype) {
+        if (builtins.has(BuiltinMark::InstancesArePrintedWithoutTheirGetters, builtins.canonicalID(universe.builtinOf(prototype))))
+            return;
+        context.sets().forEachMember(heap.membersOf(universe.builtinOf(prototype)).accessorsWithGetEntry, [&](ValueFlowObjectID accessor) {
+            if (builtins.at(universe.builtinOf(accessor)).kind == BuiltinKind::Accessor)
+                functor(builtins.at(universe.builtinOf(accessor)).name);
+        });
+    });
+}
+
 static void callMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeID hub, const ValueFlowBehavior& behavior, ClimbingSet receivers, const ValueFlowOperand& thisValue)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -4754,6 +4803,11 @@ static void callMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeI
     if (behavior.protocols.contains(Protocol::OwnValues)) {
         runGettersOn([&](ClimbingSet holders) {
             return context.unite(holders, withSourcesOfCopies(context, context.restrict(holders, universe.knownObjects())));
+        });
+    }
+    if (behavior.protocols.containsAll({ Protocol::OwnValues, Protocol::PrototypeChain }) && asksObjectsHowTheyArePrinted(context, behavior)) {
+        forEachGetterOfHostClassesAbove(context, objects, [&](BuiltinName name) {
+            take(context.lookup(receivers, property(context, name)));
         });
     }
     if (behavior.protocols.contains(Protocol::ToPrimitive)) {
@@ -5008,7 +5062,9 @@ void runBehavior(const ValueFlowStatement& statement, ValueFlowRuleContext& cont
     callLibraryMethodsOfUnknownReceiver(context, hub, behavior);
     callMethodsOfEscapedLibraryInstances(context, hub, behavior);
     applyBuiltinsThatActOnEscapedReceivers(context, hub, behavior);
-    if (behavior.protocols.contains(Protocol::OwnValues))
+    if (behavior.protocols.contains(Protocol::OwnValues) && asksObjectsHowTheyArePrinted(context, behavior))
+        runGettersOnPrintedObjectsNobodyKnows(context);
+    else if (behavior.protocols.contains(Protocol::OwnValues))
         runGettersOnObjectsNobodyKnows(context);
     if (!behavior.protocols.contains(Protocol::CallsNamed))
         return;

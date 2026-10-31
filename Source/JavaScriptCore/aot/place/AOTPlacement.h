@@ -193,6 +193,8 @@ struct StaticsPlan {
     uint32_t endWordFilledWithFiles { 0 };
     uint32_t offsetOfFilledFiles { 0 };
     Vector<std::optional<uint32_t>> moduleValueOffsets;
+    // The word follows the module's value.
+    BitVector modulesWithRequireCacheValue;
     Vector<std::optional<uint32_t>> freeCellOffsets;
     Vector<ModuleBuiltinCell> moduleBuiltinCells;
     // The namespace object of a module of the run time, whose value word holds what require() answers.
@@ -337,6 +339,8 @@ public:
     uint32_t sizeOfStatics() const { return m_statics.size; }
     bool hasModuleValue(ModuleID id) const { return m_statics.moduleValueOffsets[id.index()].has_value(); }
     uint32_t moduleValueOffset(ModuleID id) const { return m_statics.moduleValueOffsets[id.index()].value(); }
+    bool hasRequireCacheValue(ModuleID id) const { return m_statics.modulesWithRequireCacheValue.get(id.index()); }
+    uint32_t requireCacheValueOffset(ModuleID id) const { return moduleValueOffset(id) + sizeof(EncodedJSValue); }
     std::optional<uint32_t> moduleNamespaceOffset(ModuleID id) const { return m_statics.moduleNamespaceOffsets[id.index()]; }
     std::optional<uint32_t> freeCellOffset(LayoutID id) const { return id.index() < m_statics.freeCellOffsets.size() ? m_statics.freeCellOffsets[id.index()] : std::nullopt; }
     JS_EXPORT_PRIVATE std::optional<uint32_t> moduleBuiltinCellOffset(BuiltinID, ModuleID) const;

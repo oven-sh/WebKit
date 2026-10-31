@@ -34,8 +34,9 @@ namespace JSC { namespace AOT {
 struct HostThreadPool {
     // Calls run(argument) once, on a thread of the pool, and does not wait for it.
     void (*schedule)(void (*run)(void* argument), void* argument);
-    // Gives what the allocator keeps for the current thread, and has no use for, back to the system.
-    void (*giveFreeMemoryOfCurrentThreadBack)();
+    // Gives what the allocator keeps for the current thread, and has no use for, back to the system. One thread at a time. A thread that finds another at it sleeps
+    // until it is its turn, or, where it may not wait, is answered false and has given nothing back.
+    bool (*giveFreeMemoryOfCurrentThreadBack)(bool mayWait);
 };
 
 // Foreground is the critical path of the build.

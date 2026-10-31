@@ -757,6 +757,7 @@ enum class BuiltinMark : uint8_t {
     HoldsPathOfMainModule,
     IsResolverThatLoaderCalls,
     IsRequireThatLoaderCalls,
+    InstancesArePrintedWithoutTheirGetters,
 };
 
 struct BuiltinMarkedEntry {

@@ -148,17 +148,20 @@ BusyThreads::WaitScope::~WaitScope()
 }
 
 // A pool wakes its threads one after the other, each when the one before has found work.
-static std::atomic<void (*)()> s_giveFreeMemoryOfCurrentThreadBack { nullptr };
+static std::atomic<bool (*)(bool)> s_giveFreeMemoryOfCurrentThreadBack { nullptr };
 static std::atomic<uint32_t> s_timesAskedForFreeMemory { 0 };
 static thread_local uint32_t t_timesGaveFreeMemoryBack { 0 };
 
-static void giveFreeMemoryOfCurrentThreadBackIfAsked()
+enum class TurnToGiveBack : bool { IsTakenIfFree, IsWaitedFor };
+
+// A thread with work in hand does not wait: it asks again behind its next step.
+static void giveFreeMemoryOfCurrentThreadBackIfAsked(TurnToGiveBack turn)
 {
     uint32_t timesAsked = s_timesAskedForFreeMemory.load(std::memory_order_seq_cst);
     if (t_timesGaveFreeMemoryBack == timesAsked) [[likely]]
         return;
-    t_timesGaveFreeMemoryBack = timesAsked;
-    s_giveFreeMemoryOfCurrentThreadBack.load(std::memory_order_relaxed)();
+    if (s_giveFreeMemoryOfCurrentThreadBack.load(std::memory_order_relaxed)(turn == TurnToGiveBack::IsWaitedFor))
+        t_timesGaveFreeMemoryBack = timesAsked;
 }
 
 class ParallelLoops::RestingThreads final : public ThreadSafeRefCounted<RestingThreads> {
@@ -311,7 +314,7 @@ private:
 
     static void run(Task task)
     {
-        giveFreeMemoryOfCurrentThreadBackIfAsked();
+        giveFreeMemoryOfCurrentThreadBackIfAsked(TurnToGiveBack::IsTakenIfFree);
         TaskPriority previousPriority = std::exchange(t_currentPriority, task.priority);
         CurrentWorkScope workScope(task.work);
         bool isCounted = InstructionCounts::hasBegun() && !t_isCountedAsBusy;
@@ -345,7 +348,7 @@ private:
             seat.state.store(IsResting);
             m_restingSeats.push(m_seats.get(), *index);
             // Either this thread sees that it was asked, or whoever asked sees this thread in the list.
-            giveFreeMemoryOfCurrentThreadBackIfAsked();
+            giveFreeMemoryOfCurrentThreadBackIfAsked(TurnToGiveBack::IsWaitedFor);
             seat.isInRestingList.store(true, std::memory_order_release);
             switch (rest(seat)) {
             case HasTask:
@@ -450,9 +453,10 @@ void ParallelLoops::giveFreeMemoryBack() const
     askThreadsAtWorkForFreeMemory();
     if (!m_hostPool || !m_hostPool->giveFreeMemoryOfCurrentThreadBack)
         return;
-    RestingThreads::Task task { [](void*) { }, nullptr, TaskPriority::Foreground, InheritedWork::ofCurrentThread() };
+    // They are woken for nothing else.
+    RestingThreads::Task task { [](void*) { giveFreeMemoryOfCurrentThreadBackIfAsked(TurnToGiveBack::IsWaitedFor); }, nullptr, TaskPriority::Foreground, InheritedWork::ofCurrentThread() };
     if (!m_restingThreads->handOverToAll(task))
-        giveFreeMemoryOfCurrentThreadBackIfAsked();
+        giveFreeMemoryOfCurrentThreadBackIfAsked(TurnToGiveBack::IsWaitedFor);
 }
 
 unsigned ParallelLoops::numberOfRestingThreads() const
@@ -646,7 +650,7 @@ NEVER_INLINE void forEachIndexInParallel(const ParallelLoops& loops, unsigned co
                 continue;
             for (unsigned index = first; index < end; ++index)
                 functor(index, worker);
-            giveFreeMemoryOfCurrentThreadBackIfAsked();
+            giveFreeMemoryOfCurrentThreadBackIfAsked(TurnToGiveBack::IsTakenIfFree);
             run = std::min(run * 2, longestRun);
             first = next.load(std::memory_order_relaxed);
         }

@@ -490,14 +490,15 @@ static constexpr HostThreadPool poolThatCountsMemoryGivenBack { [](void (*run)(v
         t_checkThatStartedThread = check;
         run(argument);
     }, ThreadType::Unknown, Thread::defaultQOS, Thread::defaultSchedulingPolicy, StackAllocationSpecification::RequestSize(ParallelLoops::workerStackSize))->detach();
-}, [] {
+}, [](bool) {
     TimesMemoryWasGivenBack& times = timesMemoryWasGivenBack();
     bool isCaller = &Thread::currentSingleton() == times.caller.load();
     if (!isCaller && t_checkThatStartedThread != times.check.load())
-        return;
+        return true;
     times.byAnyThread.fetch_add(1);
     if (isCaller)
         times.byCaller.fetch_add(1);
+    return true;
 } };
 
 static bool callerGivesMemoryBackBesideTheOthersWork()
