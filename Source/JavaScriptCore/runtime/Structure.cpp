@@ -654,7 +654,9 @@ bool Structure::holesMustForwardToPrototypeSlow(JSObject* base) const
 
     while (true) {
         Structure& structure = *object->structure();
-        if (hasIndexedProperties(object->indexingType()) || structure.mayInterceptIndexedAccesses())
+        // A class that answers an indexed read in its own getOwnPropertySlotByIndex (a typed array, an arguments
+        // object, a global proxy) shows neither indexed storage nor the MayHaveIndexedAccessors bit.
+        if (hasIndexedProperties(object->indexingType()) || structure.mayInterceptIndexedAccesses() || structure.typeInfo().interceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero())
             return true;
 #if ENABLE(AOT)
         if (structure.isCompiledStructure() && AOT::PropertyWalk::hasIndexedProperties(object)) [[unlikely]]
