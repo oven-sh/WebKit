@@ -197,7 +197,10 @@ void ModuleEmitter::generateFinishModuleEvaluation(const ValueContext& value)
 {
     ModuleID module = value->module();
     LValue evaluated = m_out.constInt32(static_cast<int32_t>(StoredModuleStatus::Evaluated));
-    if (!m_program.at(module).flags.contains(ModuleFlags::MayBeEvicted)) {
+    OptionSet<ModuleFlags> flags = m_program.at(module).flags;
+    // A module without a start of its own is marked behind the site that requires it, whatever BeginModuleEvaluation has answered there: the loader may hold its status in a record.
+    bool isMarkedWhereRequired = flags.contains(ModuleFlags::IsListedInCache) && !flags.contains(ModuleFlags::EvaluatesItself);
+    if (!flags.contains(ModuleFlags::MayBeEvicted) && !isMarkedWhereRequired) {
         m_out.store32As8(evaluated, statusOf(module));
         return;
     }
