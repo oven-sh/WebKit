@@ -323,7 +323,9 @@ protected:
     VectorBufferBase()
         : m_buffer(nullptr)
         , m_capacity(0)
+#if !USE(BUN_JSC_ADDITIONS)
         , m_isBorrowed(false)
+#endif
         , m_size(0)
     {
     }
@@ -331,7 +333,9 @@ protected:
     VectorBufferBase(T* buffer, size_t capacity, size_t size)
         : m_buffer(buffer)
         , m_capacity(capacity)
+#if !USE(BUN_JSC_ADDITIONS)
         , m_isBorrowed(false)
+#endif
         , m_size(size)
     {
     }
@@ -343,8 +347,14 @@ protected:
     }
 
     T* m_buffer;
+#if USE(BUN_JSC_ADDITIONS)
+    // Nothing in WTF, JavaScriptCore or Bun borrows a vector (wtf/Borrow.h has no user here), so there is no bit to test and to mask.
+    static constexpr bool m_isBorrowed = false;
+    unsigned m_capacity;
+#else
     unsigned m_capacity : 31;
     mutable unsigned m_isBorrowed : 1;
+#endif
     unsigned m_size;
 
     unsigned exchangeCapacity(unsigned newCapacity)
@@ -365,9 +375,14 @@ protected:
 
     bool setIsBorrowed(bool isBorrowed) const
     {
+#if USE(BUN_JSC_ADDITIONS)
+        static_assert(!sizeof(T*), "this build of WTF::Vector has no borrowed bit");
+        return isBorrowed;
+#else
         bool old = m_isBorrowed;
         m_isBorrowed = isBorrowed;
         return old;
+#endif
     }
 
     void crashIfBorrowed() const
