@@ -31,7 +31,7 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v3 = PropGet v2 key="console" [isFreeName] @138
     v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]} @138
     v5 = PropGet v4 key="log" @138
-    v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @138
+    v6 = Convert v5 declared={type=undefined|null|function flags=[IsExpected]} @138
     v7 = Integer integer=7 @156
     v8 = Integer integer=8 @159
     v9 = Call v1, -, v7, v8 calleeName="twice" @150
