@@ -7012,6 +7012,12 @@ private:
         setInt32(from, offset);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    int m_indexOfLastWatchpoint;
+    int m_indexOfTailOfLastWatchpoint;
+    bool m_recordsJumps { false };
+#endif
+
     class X86InstructionFormatter {
         static constexpr int maxInstructionSize = 16;
 
@@ -7806,9 +7812,11 @@ private:
     public:
         AssemblerBuffer m_buffer;
     } m_formatter;
+#if !USE(BUN_JSC_ADDITIONS)
     int m_indexOfLastWatchpoint;
     int m_indexOfTailOfLastWatchpoint;
     bool m_recordsJumps { false };
+#endif
     Vector<X86EmittedJump> m_emittedJumps;
     Vector<X86LinkedJump> m_linkedJumps;
 };
