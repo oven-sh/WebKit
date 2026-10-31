@@ -126,7 +126,7 @@ private:
 
     static constexpr unsigned shardIndexOf(uint32_t hash) { return hash >> (32 - shardBits); }
 
-    std::array<Shard, 1u << shardBits> m_shards;
+    std::array<Shard, 1u << shardBits> m_shards { }; // Zeroed as a whole, not shard by shard.
 };
 
 inline uint32_t hashOfLayouts(std::span<const LayoutID> layouts)
