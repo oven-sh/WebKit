@@ -37,6 +37,12 @@ enum class ModuleLinkErrorSite : uint8_t {
     Import, // an import; the name is the local binding
     IndirectExport, // `export { x } from`, or an import that is exported; the name is the exported one
 };
+
+// Called with a link error before it is thrown. A link error is about one statement of the importing module, and no
+// code of that module is running, so the error has no frame there. The host finds the statement in the source the user
+// wrote, which the text it handed to JavaScriptCore is not when the host transpiles, and gives the error its location.
+// JavaScriptCore's own definition is weak and does nothing.
+extern "C" void Bun__locateModuleLinkError(JSGlobalObject*, AbstractModuleRecord*, ErrorInstance*, ModuleLinkErrorSite, const Identifier&);
 #endif
 
 class CyclicModuleRecord : public AbstractModuleRecord {
