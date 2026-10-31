@@ -174,6 +174,7 @@ JSObject* BuiltinCells::findKnownObject(BuiltinID id) const
 }
 
 static void lockMemberOfLockedHolder(JSGlobalObject*, JSObject* holder, UniquedStringImpl* key, JSObject* member);
+static void lockObjectNamedByGlobalObject(JSGlobalObject*, BuiltinID, JSObject*);
 
 // A holder adds some members when the program first reads them, which shows in the order of its keys. Compiled code that asks for such an object reads nothing:
 // where the image has a word for the read, and it is empty, the object is made beside the holder, which takes it when the read comes.
@@ -594,8 +595,15 @@ void BuiltinCells::didLoadModule(RuntimeModuleID module, JSObject* exports)
 
 void BuiltinCells::didLoadNativeModule(RuntimeModuleID module, JSObject* exports)
 {
-    if (BuiltinID root = BuiltinTable::singleton().namespaceOf(module))
-        didLock(root, exports);
+    const BuiltinTable& table = BuiltinTable::singleton();
+    BuiltinID root = table.namespaceOf(module);
+    if (!root)
+        return;
+    // "node:process" exports the object that the global object names, and a program may come to it by the module first. Only noted as locked it would never be:
+    // whoever comes to lock it finds the note.
+    if (table.isUnder(root, Builtins::GlobalThis))
+        lockObjectNamedByGlobalObject(m_instance.globalObject, root, exports);
+    didLock(root, exports);
 }
 
 void BuiltinCells::didCreateMember(JSObject* holder, UniquedStringImpl* key, JSObject* created)
@@ -1253,6 +1261,14 @@ static void lockMemberOfLockedHolder(JSGlobalObject* realm, JSObject* holder, Un
     });
 }
 
+static void lockObjectNamedByGlobalObject(JSGlobalObject* realm, BuiltinID id, JSObject* object)
+{
+    forEachInstanceThatLocks(realm, [&](Instance& instance) {
+        BuiltinLocker locker(instance);
+        locker.lock(id, object);
+    });
+}
+
 JSObject* takeStaticPropertyMadeAhead(JSObject* holder, UniquedStringImpl* key)
 {
     JSObject* taken = nullptr;
@@ -1282,6 +1298,12 @@ void hostDidCreateStructure(JSGlobalObject* realm, Structure* structure)
         lockPrototypeOfClass(locker, builtinClass, structure->storedPrototypeObject());
         markPristine(realm->vm(), builtinClass, structure);
     });
+}
+
+void hostDidCreateObjectOfGlobal(JSGlobalObject* realm, UniquedStringImpl* key, JSObject* object)
+{
+    if (realm->aotInstance())
+        lockMemberOfLockedHolder(realm, realm, key, object);
 }
 
 void hostDidCreateNodeModule(JSGlobalObject* realm, JSObject* constructor)
