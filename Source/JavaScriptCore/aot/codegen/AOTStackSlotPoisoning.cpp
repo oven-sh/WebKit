@@ -23,7 +23,7 @@
 #include "B3StackmapGenerationParams.h"
 #include "B3ValueInlines.h"
 #include "CCallHelpers.h"
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/HashMap.h>
 #include <wtf/SharedTask.h>
 

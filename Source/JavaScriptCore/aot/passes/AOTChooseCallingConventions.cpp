@@ -38,7 +38,7 @@
 #include <ranges>
 #include <utility>
 #include <wtf/Atomics.h>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/CommaPrinter.h>
 #include <wtf/EnumTraits.h>
 #include <wtf/PrintStream.h>

@@ -12,7 +12,7 @@
 #include "AOTUnitPlacement.h"
 #include <algorithm>
 #include <iterator>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
 

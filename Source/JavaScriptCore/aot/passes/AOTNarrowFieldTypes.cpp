@@ -30,7 +30,7 @@
 #include <algorithm>
 #include <atomic>
 #include <optional>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/HashMap.h>
 #include <wtf/MathExtras.h>
 

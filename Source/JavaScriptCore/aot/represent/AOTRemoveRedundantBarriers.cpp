@@ -18,7 +18,7 @@
 #include "AOTSlotEmitter.h"
 #include <algorithm>
 #include <functional>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/IndexMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {

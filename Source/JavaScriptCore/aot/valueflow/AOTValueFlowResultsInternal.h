@@ -25,7 +25,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>

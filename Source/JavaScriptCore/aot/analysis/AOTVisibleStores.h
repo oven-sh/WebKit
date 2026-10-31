@@ -9,7 +9,7 @@
 
 #include "AOTIRProgram.h"
 #include "AOTVector.h"
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/OptionSet.h>
 #include <wtf/ScopedLambda.h>
 

@@ -26,7 +26,7 @@
 #include "JSCInlines.h"
 #include "ObjectConstructorInlines.h"
 #include <algorithm>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 
 namespace JSC { namespace AOT {
 

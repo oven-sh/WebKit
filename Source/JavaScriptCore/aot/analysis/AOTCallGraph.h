@@ -17,7 +17,7 @@
 #include <algorithm>
 #include <concepts>
 #include <span>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/FastMalloc.h>
 #include <wtf/Forward.h>
 #include <wtf/Noncopyable.h>

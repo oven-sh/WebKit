@@ -15,7 +15,7 @@
 #include "AOTValueSets.h"
 #include "AOTVector.h"
 #include <array>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/HashMap.h>
 #include <wtf/Threading.h>
 #include <wtf/WeakRandom.h>

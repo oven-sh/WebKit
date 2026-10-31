@@ -20,7 +20,7 @@
 #include <functional>
 #include <optional>
 #include <tuple>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {

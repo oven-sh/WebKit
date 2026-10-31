@@ -20,7 +20,7 @@
 #include "ObjectPrototype.h"
 #include "VMInlines.h"
 #include <algorithm>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/DataLog.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

@@ -109,6 +109,7 @@ IRBuilder::IRBuilder(const AnalysisContext& context, Function& function, TypeAre
     RELEASE_ASSERT(!analyses || &analyses->function() == &function);
 }
 
+NEVER_INLINE
 IRBuilder::~IRBuilder()
 {
     RELEASE_ASSERT(m_insertions.isEmpty());

@@ -11,7 +11,7 @@
 #include "AOTModuleGraph.h"
 #include "AOTVector.h"
 #include "JSExportMacros.h"
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/FastBitVector.h>
 
 namespace JSC { namespace AOT {

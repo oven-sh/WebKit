@@ -31,7 +31,7 @@
 #include <algorithm>
 #include <atomic>
 #include <wtf/Atomics.h>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/CycleForest.h>
 #include <wtf/FrequencyEstimator.h>
 #include <wtf/HashMap.h>

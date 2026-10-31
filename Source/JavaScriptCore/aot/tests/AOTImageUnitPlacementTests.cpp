@@ -17,7 +17,7 @@
 #include <initializer_list>
 #include <optional>
 #include <span>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
 

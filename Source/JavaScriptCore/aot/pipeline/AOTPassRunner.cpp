@@ -43,7 +43,7 @@
 #include <numeric>
 #include <optional>
 #include <utility>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/CPUTime.h>
 #include <wtf/DataLog.h>
 #include <wtf/NeverDestroyed.h>

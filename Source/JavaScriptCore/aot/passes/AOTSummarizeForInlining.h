@@ -14,7 +14,7 @@
 #include "AOTVector.h"
 #include <array>
 #include <memory>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/FastMalloc.h>
 #include <wtf/Forward.h>
 #include <wtf/Lock.h>

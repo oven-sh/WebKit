@@ -22,7 +22,7 @@
 #include "VM.h"
 #include <algorithm>
 #include <numbers>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/HashSet.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/MakeString.h>

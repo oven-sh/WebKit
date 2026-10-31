@@ -13,7 +13,7 @@
 #include "JSExportMacros.h"
 #include <memory>
 #include <span>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>

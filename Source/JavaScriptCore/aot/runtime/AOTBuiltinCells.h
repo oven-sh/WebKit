@@ -16,7 +16,7 @@
 #include <expected>
 #include <optional>
 #include <span>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/FastMalloc.h>
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>

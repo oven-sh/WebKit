@@ -16,7 +16,7 @@
 #include <optional>
 #include <span>
 #include <utility>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/StdLibExtras.h>

@@ -16,7 +16,7 @@
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

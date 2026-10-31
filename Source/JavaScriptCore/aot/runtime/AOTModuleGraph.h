@@ -12,7 +12,7 @@
 #include "JSExportMacros.h"
 #include <optional>
 #include <span>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 
 namespace JSC { namespace AOT {
 

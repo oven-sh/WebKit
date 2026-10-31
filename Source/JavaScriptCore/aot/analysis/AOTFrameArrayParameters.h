@@ -11,7 +11,7 @@
 #include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <limits>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 
 namespace JSC { namespace AOT {
 

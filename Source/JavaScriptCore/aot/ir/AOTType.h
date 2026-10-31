@@ -96,6 +96,13 @@ struct Type {
     SortedSet<BuiltinID> builtins;
     SortedSet<RegExpLiteralInType> regExpLiteralSet;
 
+    Type() = default;
+    NEVER_INLINE ~Type() = default;
+    Type(const Type&) = default;
+    Type(Type&&) = default;
+    Type& operator=(const Type&) = default;
+    Type& operator=(Type&&) = default;
+
     static Type never() { return { }; }
     static Type fromPrimitives(uint16_t);
     static Type integer(Range);

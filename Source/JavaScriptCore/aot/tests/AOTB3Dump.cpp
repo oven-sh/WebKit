@@ -25,7 +25,7 @@
 #include "B3ValueInlines.h"
 #include "B3Variable.h"
 #include <cstring>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/CommaPrinter.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>

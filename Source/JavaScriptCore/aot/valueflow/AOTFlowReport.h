@@ -14,7 +14,7 @@
 #include "AOTWire.h"
 #include <memory>
 #include <span>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>
 

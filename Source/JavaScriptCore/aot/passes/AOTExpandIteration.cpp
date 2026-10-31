@@ -53,7 +53,7 @@
 #include <functional>
 #include <memory>
 #include <ranges>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {

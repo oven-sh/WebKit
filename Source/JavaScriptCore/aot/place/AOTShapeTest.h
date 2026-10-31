@@ -16,7 +16,7 @@
 #include <algorithm>
 #include <compare>
 #include <span>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/OptionSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {

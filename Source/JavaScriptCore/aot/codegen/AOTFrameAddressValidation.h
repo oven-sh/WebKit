@@ -11,7 +11,7 @@
 #include "B3Origin.h"
 #include "B3Policy.h"
 #include "JSExportMacros.h"
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 
 namespace JSC { namespace AOT {
 

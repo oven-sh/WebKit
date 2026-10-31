@@ -8,7 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTIR.h"
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/FastMalloc.h>
 #include <wtf/ScopedLambda.h>
 

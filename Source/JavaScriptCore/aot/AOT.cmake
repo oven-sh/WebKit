@@ -171,6 +171,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/stubs/AOTStubsCoroutineFamilies.def
     aot/stubs/AOTStubsPropertyFamilies.def
     aot/stubs/AOTStubsStringFamilies.def
+    aot/support/AOTBitVector.h
     aot/support/AOTCompileOptionWords.h
     aot/support/AOTCompileOptions.h
     aot/support/AOTDiagnostics.h

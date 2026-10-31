@@ -16,7 +16,7 @@
 #include "AOTVector.h"
 #include <array>
 #include <optional>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/EnumSet.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>

@@ -12,7 +12,7 @@
 #include "AOTVector.h"
 #include <optional>
 #include <span>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/IndexMap.h>
 #include <wtf/IndexSet.h>
 #include <wtf/Noncopyable.h>
@@ -139,6 +139,7 @@ public:
     using List = Vector<BlockID, 4>;
 
     explicit CFG(const Function&);
+    NEVER_INLINE ~CFG() = default;
 
     bool describes(const Function&) const;
 

@@ -13,7 +13,7 @@
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include <algorithm>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/Hasher.h>
 #include <wtf/StdLibExtras.h>
 

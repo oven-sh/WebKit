@@ -21,7 +21,7 @@
 #include <array>
 #include <limits>
 #include <utility>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/StringPrintStream.h>
 
 

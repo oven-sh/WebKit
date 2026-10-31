@@ -12460,6 +12460,10 @@ SIMDUTF_POP_DISABLE_WARNINGS
 // initialization.
 //
 // Further reading: https://en.cppreference.com/cpp/language/siof
+#if !defined(SIMDUTF_USE_STATIC_INITIALIZATION) && USE(BUN_JSC_ADDITIONS)
+  // The objects are constant data (no initializer runs), so the order of initialization does not matter.
+  #define SIMDUTF_USE_STATIC_INITIALIZATION 1
+#endif
 #ifndef SIMDUTF_USE_STATIC_INITIALIZATION
   #if SIMDUTF_NO_LIBCXX
     #define SIMDUTF_USE_STATIC_INITIALIZATION 1

@@ -1144,6 +1144,14 @@ inline void WTFCrashWithInfo(int, const char*, const char*)
     CRASH();
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// Nothing reads the arguments above. The return address tells the sites apart.
+NO_RETURN_DUE_TO_CRASH NEVER_INLINE NOT_TAIL_CALLED inline void WTFCrashWithoutInfo()
+{
+    CRASH();
+}
+#endif
+
 #endif
 
 namespace WTF {
@@ -1190,11 +1198,22 @@ inline void compilerFenceForCrash()
         WTFCrashWithInfo(__LINE__, nullptr, nullptr, ##__VA_ARGS__); \
     } while (false)
 #else
+#if USE(BUN_JSC_ADDITIONS)
+#define BUN_CRASH_WITHOUT_ARGUMENTS(...) WTFCrashWithoutInfo()
+#define BUN_CRASH_WITH_ARGUMENTS(...) WTFCrashWithInfo(__LINE__, nullptr, nullptr, __VA_ARGS__)
+#define BUN_CRASH_SELECT(...) PP_THIRD_ARG(__VA_OPT__(,), BUN_CRASH_WITH_ARGUMENTS, BUN_CRASH_WITHOUT_ARGUMENTS, )
+#define CRASH_WITH_INFO(...) do { \
+        WTF::isIntegralOrPointerType(__VA_ARGS__); \
+        compilerFenceForCrash(); \
+        BUN_CRASH_SELECT(__VA_ARGS__)(__VA_ARGS__); \
+    } while (false)
+#else
 #define CRASH_WITH_INFO(...) do { \
         WTF::isIntegralOrPointerType(__VA_ARGS__); \
         compilerFenceForCrash(); \
         WTFCrashWithInfo(__LINE__, nullptr, nullptr __VA_OPT__(,) __VA_ARGS__); \
     } while (false)
+#endif
 #endif
 #elif !VA_OPT_SUPPORTED
 #define CRASH_WITH_INFO(...) do { \

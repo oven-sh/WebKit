@@ -18,7 +18,7 @@
 #include "AOTVector.h"
 #include "B3Procedure.h"
 #include <memory>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
 

@@ -40,7 +40,7 @@
 #include <optional>
 #include <span>
 #include <wtf/Atomics.h>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/HashMap.h>
 #include <wtf/UnionFind.h>
 

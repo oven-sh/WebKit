@@ -14,7 +14,7 @@
 #include <atomic>
 #include <span>
 #include <wtf/Atomics.h>
-#include <wtf/BitVector.h>
+#include "AOTBitVector.h"
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>
