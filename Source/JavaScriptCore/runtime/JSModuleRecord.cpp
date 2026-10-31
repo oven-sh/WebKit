@@ -42,6 +42,7 @@
 #include "JSPromise.h"
 #include "ModuleProgramExecutable.h"
 #include "SourceProfiler.h"
+#include "UnlinkedFunctionExecutableInlines.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "WeakGCMapInlines.h"
 #include <wtf/text/MakeString.h>
@@ -199,17 +200,20 @@ JSValue JSModuleRecord::readFunctionDeclarationSlot(VM& vm, JSModuleEnvironment*
     else
         function = JSFunction::create(vm, globalObject, functionExecutable, environment);
 
+    const Identifier& bindingName = unlinkedExecutable->bindingName(vm);
     InlineWatchpointSet* watchpointSet = nullptr;
     {
         SymbolTable* symbolTable = environment->symbolTable();
         ConcurrentJSLocker locker(symbolTable->m_lock);
-        auto iter = symbolTable->find(locker, unlinkedExecutable->name().impl());
+        auto iter = symbolTable->find(locker, bindingName.impl());
+        // The generator of the module's code found the binding of each of these declarations in this symbol table.
+        ASSERT(iter != symbolTable->end(locker));
         if (iter != symbolTable->end(locker)) {
             ASSERT(iter->value.scopeOffset() == offset);
             watchpointSet = iter->value.watchpointSet();
         }
     }
-    symbolTablePutTouchWatchpointSet(vm, environment, unlinkedExecutable->name(), function, &environment->variableAt(offset), watchpointSet);
+    symbolTablePutTouchWatchpointSet(vm, environment, bindingName, function, &environment->variableAt(offset), watchpointSet);
 
     // An empty slot is one that was never stored to, so each declaration gets here at most once.
     ASSERT(uninstantiated->remaining);
