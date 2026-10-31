@@ -32,6 +32,7 @@
 #include "JSModuleEnvironment.h"
 #include "JSModuleNamespaceObject.h"
 #include "JSONObject.h"
+#include <wtf/Scope.h>
 
 namespace JSC {
 
@@ -199,10 +200,16 @@ void SyntheticModuleRecord::initializeExports(JSGlobalObject* globalObject, cons
     for (auto& exportName : exportNames) {
         auto offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
         exportSymbolTable->add(NoLockingNecessary, exportName.impl(), SymbolTableEntry(VarOffset(offset)));
-        moduleRecord->addExportEntry(ExportEntry::createLocal(exportName, exportName));
     }
 
     JSModuleEnvironment* moduleEnvironment = JSModuleEnvironment::create(vm, globalObject, nullptr, exportSymbolTable, jsTDZValue(), moduleRecord);
+    // A termination can begin at each exception check below, and a record with a deferred generator then makes its
+    // exports again at the next link. So the record keeps nothing of a call that does not get to its end.
+    bool isInitialized = false;
+    auto cleanup = WTF::makeScopeExit([&] {
+        if (!isInitialized)
+            m_moduleEnvironment.clear();
+    });
     moduleRecord->setModuleEnvironment(globalObject, moduleEnvironment);
     RETURN_IF_EXCEPTION(scope, void());
 
@@ -229,10 +236,13 @@ void SyntheticModuleRecord::initializeExports(JSGlobalObject* globalObject, cons
         ASSERT(putResult);
     }
 
+    for (auto& exportName : exportNames)
+        moduleRecord->addExportEntry(ExportEntry::createLocal(exportName, exportName));
 #if USE(BUN_JSC_ADDITIONS)
     if (hasLazyExports)
         moduleRecord->m_lazyExportsSource.set(vm, moduleRecord, lazyExportsSource);
 #endif
+    isInitialized = true;
 }
 
 #if USE(BUN_JSC_ADDITIONS)
