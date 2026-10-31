@@ -1406,6 +1406,14 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
                 entry->setEvaluationError(globalObject, error);
             }
         }
+#if USE(BUN_JSC_ADDITIONS)
+        // loadModule() registered the key when this fetch started, and no source has come for the entry from this load or
+        // another. The key is free again: the next load of it fetches, and moduleLoadTopRejected finds no entry for this error.
+        if (ModuleRegistryEntry* registeredEntry = context->entry(); registeredEntry && registeredEntry->status() == ModuleRegistryEntry::Status::New) {
+            registeredEntry->setFetchError(globalObject, errorValue);
+            context->loader()->removeFailedFetchEntry(registeredEntry);
+        }
+#endif
         intermediatePromise->reject(vm, errorValue);
     }
 }
@@ -1425,8 +1433,9 @@ static void moduleLoadTopRejected(JSGlobalObject* globalObject, VM& vm, std::spa
         const Identifier& specifier = context->moduleRequest().m_specifier;
         auto type = context->moduleRequest().type();
         // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
-        // Only set an error if the entry already exists.
-        if (ModuleRegistryEntry* entry = context->loader()->getRegisteredMayBeNull(specifier, type))
+        // Only set an error if the entry already exists. A New entry holds nothing but the fetch of another load by name
+        // (JSModuleLoader::registerLoadByName()), and the error is not that load's.
+        if (ModuleRegistryEntry* entry = context->loader()->getRegisteredMayBeNull(specifier, type); entry && entry->status() != ModuleRegistryEntry::Status::New)
             entry->setEvaluationError(globalObject, arguments[1]);
         resultPromise->reject(vm, arguments[1]);
     }
@@ -1593,9 +1602,9 @@ static void moduleLoadStoreError(JSGlobalObject* globalObject, std::span<const J
         const Identifier& specifier = context->moduleRequest().m_specifier;
         auto type = context->moduleRequest().type();
         // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
-        // Only set an error if the entry already exists.
+        // Only set an error if the entry already exists, and holds more than the fetch of another load by name.
         ModuleRegistryEntry* entry = context->loader()->getRegisteredMayBeNull(specifier, type);
-        if (!entry)
+        if (!entry || entry->status() == ModuleRegistryEntry::Status::New)
             return;
         if (auto* error = dynamicDowncast<ErrorInstance>(errorValue)) {
             auto failure = JSModuleLoader::getErrorInfo(globalObject, error);

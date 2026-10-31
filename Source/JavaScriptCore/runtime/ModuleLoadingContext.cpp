@@ -63,10 +63,11 @@ ModuleLoadingContext* ModuleLoadingContext::create(VM& vm, JSModuleLoader* loade
     return context;
 }
 
-ModuleLoadingContext::ModuleLoadingContext(VM& vm, Structure* structure, JSModuleLoader* loader, AbstractModuleRecord::ModuleRequest&& moduleRequest, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder)
+ModuleLoadingContext::ModuleLoadingContext(VM& vm, Structure* structure, JSModuleLoader* loader, AbstractModuleRecord::ModuleRequest&& moduleRequest, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder, ModuleRegistryEntry* entry)
     : Base(vm, structure)
     , m_moduleRequest(WTF::move(moduleRequest))
     , m_scriptFetcher(WTF::move(scriptFetcher))
+    , m_entry(entry, WriteBarrierEarlyInit)
     , m_loader(loader, WriteBarrierEarlyInit)
 #if USE(BUN_JSC_ADDITIONS)
     , m_referrerAsyncOrder(referrerAsyncOrder)
@@ -78,10 +79,10 @@ ModuleLoadingContext::ModuleLoadingContext(VM& vm, Structure* structure, JSModul
 #endif
 }
 
-ModuleLoadingContext* ModuleLoadingContext::create(VM& vm, JSModuleLoader* loader, const AbstractModuleRecord::ModuleRequest& moduleRequest, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder)
+ModuleLoadingContext* ModuleLoadingContext::create(VM& vm, JSModuleLoader* loader, const AbstractModuleRecord::ModuleRequest& moduleRequest, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder, ModuleRegistryEntry* entry)
 {
     AbstractModuleRecord::ModuleRequest requestCopy { moduleRequest };
-    auto* context = new (NotNull, allocateCell<ModuleLoadingContext>(vm)) ModuleLoadingContext(vm, vm.moduleLoadingContextStructure.get(), loader, WTF::move(requestCopy), WTF::move(scriptFetcher), flags, referrerAsyncOrder);
+    auto* context = new (NotNull, allocateCell<ModuleLoadingContext>(vm)) ModuleLoadingContext(vm, vm.moduleLoadingContextStructure.get(), loader, WTF::move(requestCopy), WTF::move(scriptFetcher), flags, referrerAsyncOrder, entry);
     context->finishCreation(vm);
     return context;
 }

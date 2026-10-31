@@ -437,9 +437,15 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
         promise = JSPromise::create(vm, globalObject->promiseStructure());
         promise->fulfill(vm, recordInPlaceOfFetch);
     }
+    ModuleRegistryEntry* registeredEntry = nullptr;
     if (!promise) {
         promise = fetch(globalObject, identifierToJSValue(vm, specifier), referrer, WTF::move(parameters), scriptFetcher);
         RETURN_IF_EXCEPTION(scope, nullptr);
+#if USE(BUN_JSC_ADDITIONS)
+        // From here on the registry says that the key is being loaded. The entry stays New until a source comes for it:
+        // nothing waits on it, and another load that comes to it meanwhile fetches for itself.
+        registeredEntry = registerLoadByName(vm, specifier, type);
+#endif
     }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -447,7 +453,7 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
 #else
     AbstractModuleRecord::ModuleRequest request { specifier, ScriptFetchParameters::create(type) };
 #endif
-    auto* context = ModuleLoadingContext::create(vm, this, request, WTF::move(scriptFetcher), flags, referrerAsyncOrder);
+    auto* context = ModuleLoadingContext::create(vm, this, request, WTF::move(scriptFetcher), flags, referrerAsyncOrder, registeredEntry);
 
     JSPromise* intermediatePromise = JSPromise::create(vm, globalObject->promiseStructure());
     intermediatePromise->markAsHandled();
@@ -865,9 +871,9 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
     } else
         resolved = specifier;
 
-    if (mapEntry) {
-        ASSERT(mapEntry->status() != ModuleRegistryEntry::Status::New);
-
+    // An entry is New while the fetch of a load by name is all there is of it (registerLoadByName()). A request that
+    // comes to it then fetches for itself, as it does where nothing is registered.
+    if (mapEntry && mapEntry->status() != ModuleRegistryEntry::Status::New) {
         // Only fetching errors should be checked here, not instantiation or evaluation errors.
         // This allows fetch errors to propagate first because they're required to have priority.
         // To avoid a race condition, instantiation errors need to be checked later, not here.
@@ -968,10 +974,12 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         if (auto file = vm.hasCompiledCode() ? AOT::ModuleRecord::fileToWaitFor(globalObject, resolved) : std::nullopt) [[unlikely]]
             return AOT::ModuleRecord::deferRequest(globalObject, *file, ModuleLoadingContext::create(vm, this, ModuleLoadingContext::Step::Cached, referrer, moduleRequest, payload, nullptr, scriptFetcher), useImportMap);
 #endif
-        mapEntry = ModuleRegistryEntry::create(vm, this, resolved, type, scriptFetcher);
-        Locker locker { cellLock() };
-        m_moduleMap.add(moduleMapKey, WriteBarrier<ModuleRegistryEntry>(vm, this, mapEntry));
-        didAddModuleMapEntry(type);
+        if (!mapEntry) {
+            mapEntry = ModuleRegistryEntry::create(vm, this, resolved, type, scriptFetcher);
+            Locker locker { cellLock() };
+            m_moduleMap.add(moduleMapKey, WriteBarrier<ModuleRegistryEntry>(vm, this, mapEntry));
+            didAddModuleMapEntry(type);
+        }
     }
 
     if (mapEntry->status() == ModuleRegistryEntry::Status::New) {
@@ -1406,6 +1414,26 @@ ModuleRegistryEntry* JSModuleLoader::getRegisteredMayBeNull(const Identifier& ke
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+// The entry of a load by name whose fetch has just started. Null where the key is registered already: the fetch hook
+// can register it, and so can another load whose fetch is still out.
+ModuleRegistryEntry* JSModuleLoader::registerLoadByName(VM& vm, const Identifier& key, ScriptFetchParameters::Type type)
+{
+    ModuleRegistryEntry* entry = nullptr;
+    {
+        // One lookup finds that the key is free and takes it, so the entry is allocated under the lock that a collection
+        // visits the map under. The collection must not start before the lock is released.
+        DeferGC deferGC(vm);
+        Locker locker { cellLock() };
+        m_moduleMap.ensure(ModuleMapKey { key.impl(), type }, [&] {
+            entry = ModuleRegistryEntry::create(vm, this, key, type, nullptr);
+            return WriteBarrier<ModuleRegistryEntry>(vm, this, entry);
+        });
+    }
+    if (entry)
+        didAddModuleMapEntry(type);
+    return entry;
+}
+
 void JSModuleLoader::setPrelinkedModuleGraph(Ref<PrelinkedModuleGraph>&& graph)
 {
     ASSERT(Options::usePrelinkedModuleInfo());

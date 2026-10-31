@@ -288,6 +288,7 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
     void forgetPrelinkedRecordsWithKey(UniquedStringImpl* keyOrNullForAll);
     void pinPrelinkedEdgesOf(AbstractModuleRecord* importer, uint32_t onlyTarget);
+    ModuleRegistryEntry* registerLoadByName(VM&, const Identifier& key, ScriptFetchParameters::Type);
 
     RefPtr<PrelinkedModuleGraph> m_prelinkedGraph;
     Vector<WriteBarrier<AbstractModuleRecord>> m_prelinkedRecords; // visited under cellLock()

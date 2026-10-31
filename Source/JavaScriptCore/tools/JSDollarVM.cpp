@@ -67,6 +67,7 @@
 #include "JSString.h"
 #include "LinkBuffer.h"
 #include "MarkedSpaceInlines.h"
+#include "ModuleRegistryEntry.h"
 #include "NativeCallee.h"
 #include "ObjectConstructor.h"
 #include "ObjectPropertyCondition.h"
@@ -2282,6 +2283,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionEvacuateAuxiliaryBlocks);
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectCount);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateModuleLoader);
 static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderImport);
+static JSC_DECLARE_HOST_FUNCTION(functionModuleRegistryStatus);
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectForObject);
 static JSC_DECLARE_HOST_FUNCTION(functionGetGetterSetter);
 static JSC_DECLARE_HOST_FUNCTION(functionLoadGetterFromGetterSetter);
@@ -4408,6 +4410,42 @@ JSC_DEFINE_HOST_FUNCTION(functionModuleLoaderImport, (JSGlobalObject* globalObje
     RELEASE_AND_RETURN(scope, JSValue::encode(loader->importModule(globalObject, specifier, jsUndefined(), callFrame->callerSourceOrigin(vm), false)));
 }
 
+// $vm.moduleRegistryStatus(specifier, { loader }?): the status of the registry entry of the JavaScript module that
+// import(specifier) in the caller names, in that loader or in the global object's: "New", "Fetching", "Fetched",
+// "FetchFailed", "InstantiationFailed" or "EvaluationFailed". Undefined where the loader has registered nothing.
+JSC_DEFINE_HOST_FUNCTION(functionModuleRegistryStatus, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSModuleLoader* loader = callFrame->argument(1).isUndefined() ? globalObject->moduleLoader() : moduleLoaderFromHolder(vm, callFrame->argument(1));
+    if (!loader)
+        return throwVMTypeError(globalObject, scope, "expected the result of $vm.createModuleLoader()"_s);
+    String specifier = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    Identifier referrer = Identifier::fromString(vm, callFrame->callerSourceOrigin(vm).url().string());
+    Identifier key = loader->resolve(globalObject, Identifier::fromString(vm, specifier), referrer, nullptr, /* useImportMap */ true);
+    RETURN_IF_EXCEPTION(scope, {});
+    ModuleRegistryEntry* entry = loader->getRegisteredMayBeNull(key, ScriptFetchParameters::Type::JavaScript);
+    if (!entry)
+        return JSValue::encode(jsUndefined());
+    switch (entry->status()) {
+    case ModuleRegistryEntry::Status::New:
+        return JSValue::encode(jsNontrivialString(vm, "New"_s));
+    case ModuleRegistryEntry::Status::Fetching:
+        return JSValue::encode(jsNontrivialString(vm, "Fetching"_s));
+    case ModuleRegistryEntry::Status::Fetched:
+        return JSValue::encode(jsNontrivialString(vm, "Fetched"_s));
+    case ModuleRegistryEntry::Status::FetchFailed:
+        return JSValue::encode(jsNontrivialString(vm, "FetchFailed"_s));
+    case ModuleRegistryEntry::Status::InstantiationFailed:
+        return JSValue::encode(jsNontrivialString(vm, "InstantiationFailed"_s));
+    case ModuleRegistryEntry::Status::EvaluationFailed:
+        return JSValue::encode(jsNontrivialString(vm, "EvaluationFailed"_s));
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectForObject, (JSGlobalObject*, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -6193,6 +6231,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "globalObjectCount"_s, functionGlobalObjectCount, 0);
     addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 2);
     addFunction(vm, allowIfNotFuzz, "moduleLoaderImport"_s, functionModuleLoaderImport, 2);
+    addFunction(vm, allowIfNotFuzz, "moduleRegistryStatus"_s, functionModuleRegistryStatus, 2);
     addFunction(vm, allowIfNotFuzz, "globalObjectForObject"_s, functionGlobalObjectForObject, 1);
 
     addFunction(vm, allowIfNotFuzz, "getGetterSetter"_s, functionGetGetterSetter, 2);
