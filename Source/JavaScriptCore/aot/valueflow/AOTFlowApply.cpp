@@ -90,8 +90,11 @@ static void applyLayoutUpdate(Layout& layout, const FlowLayoutUpdate& update)
     for (size_t index = 0; index < layout.fields.size(); ++index) {
         Field& field = layout.fields[index];
         const FlowFieldUpdate& fieldUpdate = update.fields[index];
-        if (!fieldUpdate.accessor.isAccessor())
+        if (!fieldUpdate.accessor.isAccessor()) {
             applyPosition(field.declared, fieldUpdate.position);
+            if (!fieldUpdate.formOfValue.isEmpty())
+                field.form = fieldUpdate.formOfValue;
+        }
         field.flow = fieldUpdate.flow;
         field.typeBeforeNarrowing = { };
         field.flags.remove(FieldFlags::IsCountedWith);
@@ -601,7 +604,7 @@ static Vector<VariableID> createFirstRunMarks(const FlowApplyContext& context, P
 {
     const Program& program = context.program;
     Vector<VariableID> marks(context.application.bodies.size());
-    if (!context.build.validates())
+    if (!context.build.checksClaimsOfFlow())
         return marks;
 
     for (uint32_t index = 0; index < marks.size(); ++index) {
@@ -615,7 +618,7 @@ static Vector<VariableID> createFirstRunMarks(const FlowApplyContext& context, P
 static FlowFirstTimeMarks createFirstTimeMarks(const FlowApplyContext& context, ProgramEditor& editor)
 {
     FlowFirstTimeMarks marks;
-    if (!context.build.validates())
+    if (!context.build.checksClaimsOfFlow())
         return marks;
 
     const Program& program = context.program;
@@ -1034,6 +1037,67 @@ struct ClosureCreation {
     unsigned count { 0 };
 };
 
+struct PositionInBody {
+    FunctionID function;
+    uint32_t block { 0 };
+    uint32_t index { 0 };
+};
+
+class EntriesOfFunctionsThatRunOnce {
+public:
+    EntriesOfFunctionsThatRunOnce(const Program& program, const FlowResults& results)
+        : m_program(program)
+        , m_results(results)
+    {
+    }
+
+    std::optional<PositionInBody> find(FunctionID function)
+    {
+        if (!std::exchange(m_isFilled, true))
+            fill();
+        auto found = m_entries.find(function.index());
+        return found == m_entries.end() ? std::nullopt : std::optional(found->value);
+    }
+
+private:
+    void fill()
+    {
+        BitVector setsGoneThrough;
+        for (uint32_t index = 0; index < m_program.functions.size(); ++index) {
+            FunctionID caller(index);
+            const Function& function = m_program.functions[index];
+            if (!function.isModuleBody() && !m_results.runsAtMostOnce(caller))
+                continue;
+            std::span<const FlowIndirectCall> indirectCalls = m_results.indirectCallsFrom(caller);
+            for (uint32_t block = 0; block < function.blocks.size(); ++block) {
+                const BlockValues& values = function.blocks[block].values;
+                for (uint32_t position = 0; position < values.size(); ++position) {
+                    const Value& value = function.at(values[position]);
+                    auto enter = [&](FunctionID callee) {
+                        if (m_results.runsAtMostOnce(callee))
+                            m_entries.add(callee.index(), PositionInBody { caller, block, position });
+                    };
+                    if (Value::opcodesWithCallees.contains(value.opcode) && value.callees() && !setsGoneThrough.set(value.callees().index())) {
+                        for (FunctionID callee : m_program.at(value.callees()).written().functions)
+                            enter(callee);
+                    }
+                    if (indirectCalls.empty() || !PayloadWord::accessSite(value.opcode) || !value.accessSite())
+                        continue;
+                    for (const FlowIndirectCall& call : indirectCalls) {
+                        if (call.site == value.accessSite())
+                            enter(call.callee);
+                    }
+                }
+            }
+        }
+    }
+
+    const Program& m_program;
+    const FlowResults& m_results;
+    HashMap<uint32_t, PositionInBody, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_entries;
+    bool m_isFilled { false };
+};
+
 class CallWalk {
 public:
     CallWalk(const Program& program, const FlowResults& results, FunctionID target)
@@ -1092,21 +1156,27 @@ private:
 
 } // anonymous namespace
 
-static bool isCreatedBeforeInstances(const Program& program, const FlowResults& results, const ClosureCreation& creation, FunctionID constructor)
+static bool isCreatedBeforeInstances(const Program& program, const FlowResults& results, EntriesOfFunctionsThatRunOnce& entries, const ClosureCreation& creation, FunctionID constructor)
 {
-    if (creation.count != 1 || !program.at(creation.creator).isModuleBody())
+    if (creation.count != 1)
         return false;
-    const Function& creator = program.at(creation.creator);
     CallWalk walk(program, results, constructor);
-    for (uint32_t block = 0; block <= creation.block; ++block) {
-        const BlockValues& values = creator.blocks[block].values;
-        size_t end = block == creation.block ? creation.index : values.size();
-        for (size_t index = 0; index < end; ++index) {
-            if (walk.mayReachTarget(creation.creator, creator.at(values[index])))
-                return false;
+    for (std::optional<PositionInBody> position = PositionInBody { creation.creator, creation.block, creation.index }; position; position = entries.find(position->function)) {
+        const Function& function = program.at(position->function);
+        if (!function.isModuleBody() && !results.runsAtMostOnce(position->function))
+            return false;
+        for (uint32_t block = 0; block <= position->block; ++block) {
+            const BlockValues& values = function.blocks[block].values;
+            size_t end = block == position->block ? position->index : values.size();
+            for (size_t index = 0; index < end; ++index) {
+                if (walk.mayReachTarget(position->function, function.at(values[index])))
+                    return false;
+            }
         }
+        if (function.isModuleBody())
+            return true;
     }
-    return true;
+    return false;
 }
 
 static void expectAccessorsDefinedBeforeInstances(Program& program, const FlowResults& results)
@@ -1181,10 +1251,11 @@ static void expectAccessorsDefinedBeforeInstances(Program& program, const FlowRe
             }
         }
     }
+    EntriesOfFunctionsThatRunOnce entries(program, results);
     for (const Candidate& candidate : candidates) {
         FunctionID constructor = program.at(candidate.field.layout).constructor;
         bool isExpected = !candidate.isDefined && (candidate.isProven || std::ranges::all_of(std::array { candidate.getter, candidate.setter }, [&](FunctionID accessor) {
-            return !accessor || isCreatedBeforeInstances(program, results, creations.get(accessor.index()), constructor);
+            return !accessor || isCreatedBeforeInstances(program, results, entries, creations.get(accessor.index()), constructor);
         }));
         if (isExpected)
             program.at(candidate.field.layout).fields[candidate.field.field].flow.prototypeName = PrototypeNameState::AccessorOnPrototypes;

@@ -30,6 +30,8 @@ enum class ValueFlowMadeNodeKind : uint8_t {
     ReadUnderKind,
     Instance,
 };
+constexpr unsigned numberOfValueFlowMadeNodeKinds = 11;
+static_assert(static_cast<unsigned>(ValueFlowMadeNodeKind::Instance) + 1 == numberOfValueFlowMadeNodeKinds);
 
 enum class ValueFlowRareWrite : uint8_t {
     Accessor,

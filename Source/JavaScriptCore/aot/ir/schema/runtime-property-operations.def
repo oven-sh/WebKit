@@ -7,8 +7,9 @@ runtime GetByIdAndCache : EncodedJSValue (EncodedJSValue base, uint32_t key, Sit
 runtime PutByIdAndCache : void (EncodedJSValue base, EncodedJSValue value, uint32_t key, SiteCache cache, uint32_t putMode) ; unknownCode
 runtime FillSiteCache : void (JSCell* base, uint32_t key, SiteCache cache, uint32_t access) ; reads(all) writes(RuntimeState)
 runtime FindGetterAndFillSiteCache : EncodedJSValue (JSCell* base, uint32_t key, SiteCache cache) ; reads(all) writes(RuntimeState)
+runtime FindAccessorOfMemberAndFillSiteCache : JSCell* (JSCell* base, uint32_t key, SiteCache cache) ; reads(all) writes(RuntimeState)
 runtime ReadValueAndFillSiteCache : EncodedJSValue (JSCell* base, uint32_t key, SiteCache cache) ; reads(all) writes(RuntimeState)
-runtime RecordArrival : void (EncodedJSValue receiver, uint32_t site) ; reads(all) writes(RuntimeState)
+runtime RecordArrival : void (EncodedJSValue receiver, EncodedJSValue keyOrEmpty, uint32_t site) ; reads(all) writes(RuntimeState)
 
 runtime GetFreeName, GetFreeNameForTypeOf : EncodedJSValue (uint32_t key, SiteCache cache) ; unknownCode
 runtime SetFreeName, SetFreeNameSloppy : void (uint32_t key, SiteCache cache, EncodedJSValue value) ; unknownCode

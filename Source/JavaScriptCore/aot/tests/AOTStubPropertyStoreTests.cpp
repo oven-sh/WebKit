@@ -1890,6 +1890,102 @@ static void testFieldsCreatedOutsideTheCellByTheirRecords()
     });
 }
 
+// Behind the first store the tables are emptied, so that a store is made without an operation only where the place of the key and the kinds that the type has accepted answer.
+static void testKeyedStoresAtPlaces()
+{
+    PropertyStores stores;
+    stores.runner.setKeepsKeyedValuePlacesAcrossRuns(true);
+    Instance& instance = stores.runner.instance();
+    FakeObject<sizeof(Symbol)> key;
+    key.setHeader(0, SymbolType);
+    key.at<uint64_t>(Symbol::offsetOfSymbolImpl()) = stores.uidOf(PropertyStores::unboundName);
+    FakeObject<sizeof(Symbol)> otherKey;
+    otherKey.setHeader(0, SymbolType);
+    otherKey.at<uint64_t>(Symbol::offsetOfSymbolImpl()) = stores.uidOf(PropertyStores::boundName);
+    const uint64_t one = bitsOf(jsNumber(1));
+    const uint64_t two = bitsOf(jsNumber(2));
+    const uint64_t half = bitsOf(jsNumber(0.5));
+    const uint64_t quarter = bitsOf(jsNumber(0.25));
+    auto forgetPlaces = [&] {
+        zeroSpan(instance.keyedValuePlaces());
+        zeroSpan(instance.acceptedKindsOfValues());
+        instance.propertyCaches.placesFiledFromSlots = 0;
+        instance.propertyCaches.placesFiledFromSlotsAndCleared = 0;
+    };
+
+    for (PutMode mode : { PutMode::Strict, PutMode::Sloppy }) {
+        StoreCase storeCase { mode, FiledIn::HashedTable, false };
+        auto store = [&](auto& object, auto& underKey, uint64_t value) {
+            return stores.runner.run(putByValCached(mode), { object.address(), underKey.address(), value });
+        };
+
+        for (Slot::Kind kind : { Slot::Kind::Field, Slot::Kind::FieldCreation }) {
+            forgetPlaces();
+            stores.file(storeCase, createFieldSlot(kind, SlotRepresentation::JSValue, PropertyStores::typeOfNumbers));
+            FakeTypedObject object(one);
+            AOT_TEST_CHECK(!store(object, key, two).calledOperation && object.field() == two && instance.propertyCaches.placesFiledFromSlots == 1);
+            stores.clearCaches();
+            AOT_TEST_CHECK(!store(object, key, one).calledOperation && object.field() == one && object.wordAfterFieldIsUntouched());
+            FakeTypedObject twin(two);
+            AOT_TEST_CHECK(!store(twin, key, one).calledOperation && twin.field() == one && object.field() == one);
+
+            // Of another kind: the type has not been asked, or does not accept it.
+            for (uint64_t value : { half, bitsOf(jsBoolean(true)), bitsOf(jsUndefined()), bitsOf(jsNull()), static_cast<uint64_t>(key.address()) })
+                AOT_TEST_CHECK(store(object, key, value).calledOperation && object.field() == one);
+            AOT_TEST_CHECK(store(object, otherKey, two).calledOperation && object.field() == one);
+
+            // The slot is empty, or the object is frozen.
+            FakeTypedObject withoutField(JSValue::ValueEmpty);
+            AOT_TEST_CHECK(store(withoutField, key, two).calledOperation && !withoutField.field());
+            FakeTypedObject frozen(one, orderWordIsFrozen);
+            AOT_TEST_CHECK(store(frozen, key, two).calledOperation && frozen.field() == one);
+
+            // Each kind is asked about once.
+            stores.file(storeCase, createFieldSlot(kind, SlotRepresentation::JSValue, PropertyStores::typeOfNumbers));
+            AOT_TEST_CHECK(!store(object, key, half).calledOperation && object.field() == half);
+            stores.clearCaches();
+            AOT_TEST_CHECK(!store(object, key, quarter).calledOperation && object.field() == quarter);
+            AOT_TEST_CHECK(!store(object, key, two).calledOperation && object.field() == two);
+            AOT_TEST_CHECK(store(object, key, bitsOf(jsBoolean(true))).calledOperation && object.field() == two);
+
+            // What one type has accepted says nothing about another.
+            forgetPlaces();
+            stores.file(storeCase, createFieldSlot(kind, SlotRepresentation::JSValue, PropertyStores::typeOfBooleans));
+            FakeTypedObject flag(bitsOf(jsBoolean(false)));
+            AOT_TEST_CHECK(!store(flag, key, bitsOf(jsBoolean(true))).calledOperation && flag.field() == bitsOf(jsBoolean(true)));
+            stores.clearCaches();
+            AOT_TEST_CHECK(!store(flag, key, bitsOf(jsBoolean(true))).calledOperation);
+            AOT_TEST_CHECK(store(flag, key, bitsOf(jsBoolean(false))).calledOperation && store(flag, key, one).calledOperation && flag.field() == bitsOf(jsBoolean(true)));
+
+            // Once every place has been filled, no store fills one more.
+            forgetPlaces();
+            instance.propertyCaches.placesFiledFromSlots = KeyedValuePlace::numberOfPlacesPerAccess;
+            stores.file(storeCase, createFieldSlot(kind, SlotRepresentation::JSValue, PropertyStores::typeOfNumbers));
+            AOT_TEST_CHECK(!store(object, key, one).calledOperation && object.field() == one && instance.propertyCaches.placesFiledFromSlots == KeyedValuePlace::numberOfPlacesPerAccess);
+            stores.clearCaches();
+            AOT_TEST_CHECK(store(object, key, two).calledOperation && object.field() == one);
+        }
+
+        // A store that adds the name where the storage has room.
+        forgetPlaces();
+        constexpr PropertyOffset offset = 2;
+        constexpr int32_t word = FakePlainObject::firstInlineWord + offset;
+        std::optional<Slot> addition = Slot::tryCreateTransition(toStructureID(PropertyStores::structureID), 0, toStructureID(PropertyStores::structureIDAfterAddition), offset, 0);
+        AOT_TEST_CHECK(addition.has_value());
+        stores.file(storeCase, *addition);
+        FakePlainObject first(PropertyStores::structureID);
+        AOT_TEST_CHECK(!store(first, key, one).calledOperation && first.structureID() == PropertyStores::structureIDAfterAddition && instance.propertyCaches.placesFiledFromSlots == 1);
+        checkOnlyWordChanged(first, word, one);
+        stores.clearCaches();
+        FakePlainObject second(PropertyStores::structureID);
+        AOT_TEST_CHECK(!store(second, key, two).calledOperation && second.structureID() == PropertyStores::structureIDAfterAddition);
+        checkOnlyWordChanged(second, word, two);
+        FakePlainObject third(PropertyStores::structureID);
+        AOT_TEST_CHECK(store(third, otherKey, two).calledOperation && third.structureID() == PropertyStores::structureID);
+        AOT_TEST_CHECK(store(second, key, one).calledOperation && second.word(word) == two);
+    }
+}
+
 std::span<const NativeTest> stubPropertyStoreTests()
 {
     static constexpr NativeTest tests[] = {
@@ -1920,6 +2016,7 @@ std::span<const NativeTest> stubPropertyStoreTests()
         { "stubs/put-by-id/fields-created-outside-the-cell-by-their-records"_s, ImageTests::whenExecutable<testFieldsCreatedOutsideTheCellByTheirRecords> },
         { "stubs/put-by-val/integrity-levels"_s, ImageTests::whenExecutable<testKeyedStoresToObjectsWithIntegrityLevels> },
         { "stubs/put-by-val/symbols-whose-holders-are-prepared"_s, ImageTests::whenExecutable<testKeyedStoresUnderSymbolsWhoseHoldersArePrepared> },
+        { "stubs/put-by-val/stores-at-places"_s, ImageTests::whenExecutable<testKeyedStoresAtPlaces> },
     };
     return tests;
 }

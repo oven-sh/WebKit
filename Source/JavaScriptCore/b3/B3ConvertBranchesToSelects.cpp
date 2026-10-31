@@ -10,11 +10,13 @@
 
 #include "B3BasicBlockInlines.h"
 #include "B3Limits.h"
+#include "B3LoopUtilities.h"
 #include "B3MemoryValue.h"
 #include "B3NaturalLoops.h"
 #include "B3PatchpointValue.h"
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
+#include "B3RegisterPressure.h"
 #include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
 #include <wtf/HashMap.h>
@@ -44,14 +46,18 @@ public:
             if (block->taken().block()->numPredecessors() != 1 && block->notTaken().block()->numPredecessors() != 1)
                 continue;
             bool mayBeMinOrMax = hasOnlyUpsilonsInArms(block) && isOrderingComparison(block->last()->child(0)->opcode());
+            bool mayChooseZeroOrOne = handsOnOnlyZeroOrOneInArms(block);
             const NaturalLoop* loop = loops ? loops->innerMostLoopOf(block) : nullptr;
-            if (!loop && !mayBeMinOrMax)
+            if (!loop && !mayBeMinOrMax && !mayChooseZeroOrOne)
                 continue;
             if (!std::exchange(didResetValueOwners, true))
                 m_proc.resetValueOwners();
-            if ((mayBeMinOrMax && isMinOrMax(block)) || (loop && dependsOnValueLoadedInLoop(*loops, *loop, block->last()->child(0)))) {
+            bool isHardToPredict = (mayBeMinOrMax && isMinOrMax(block)) || (loop && dependsOnValueLoadedInLoop(*loops, *loop, block->last()->child(0)));
+            if (isHardToPredict || (mayChooseZeroOrOne && choosesOnlyZeroOrOne(block))) {
                 heads.append(block);
                 hardToPredictBranches.add(block->last());
+                if (isHardToPredict && loop && keepsEveryRegister(*loops, *loop))
+                    m_branchesInLoopsThatKeepConstantsInRegisters.add(block->last());
             }
         }
         bool changed = false;
@@ -67,7 +73,7 @@ public:
                     break;
                 if (loops && wouldChainRunsOfLoop(*loops, head, region))
                     break;
-                convert(head, region);
+                convert(head, region, m_branchesInLoopsThatKeepConstantsInRegisters.contains(head->last()));
                 changed = true;
             }
         }
@@ -126,6 +132,28 @@ private:
         return true;
     }
 
+    static bool isZeroOrOne(Value* value)
+    {
+        return value->isInt(0) || value->isInt(1);
+    }
+
+    static bool handsOnOnlyZeroOrOneInArms(BasicBlock* head)
+    {
+        for (BasicBlock* successor : head->successorBlocks()) {
+            if (successor->numPredecessors() != 1)
+                continue;
+            if (successor->last()->opcode() != Jump)
+                return false;
+            for (unsigned i = 0; i + 1 < successor->size(); ++i) {
+                Value* value = successor->at(i);
+                bool isAllowed = value->opcode() == Nop || value->opcode() == Const32 || value->opcode() == Const64 || (value->opcode() == Upsilon && isZeroOrOne(value->child(0)));
+                if (!isAllowed)
+                    return false;
+            }
+        }
+        return true;
+    }
+
     static bool isSameValue(Value* a, Value* b)
     {
         return a == b || (a->isConstant() && a->key() == b->key());
@@ -163,6 +191,42 @@ private:
                 return areComparisonOperands(head->last()->child(0), incomingValuesFor(phi, head, region));
         }
         return false;
+    }
+
+    bool keepsEveryRegister(NaturalLoops& loops, const NaturalLoop& loop)
+    {
+        if (m_loopsKeepEveryRegister.isEmpty())
+            m_loopsKeepEveryRegister.resize(loops.numLoops());
+        std::optional<bool>& result = m_loopsKeepEveryRegister[loop.index()];
+        if (result)
+            return *result;
+        RegisterBudget all = allocatableRegisters(m_proc);
+        RegisterBudget kept = all;
+        IndexSet<BasicBlock*> likelyBlocks = findLikelyBlocks(loops, loop);
+        for (unsigned index = loop.size(); index--;) {
+            if (!likelyBlocks.contains(loop.at(index)))
+                continue;
+            for (Value* value : *loop.at(index))
+                kept.restrictTo(registersPreservedBy(m_proc, value));
+        }
+        result = kept.of(GP) == all.of(GP);
+        return *result;
+    }
+
+    bool choosesOnlyZeroOrOne(BasicBlock* head)
+    {
+        Region region;
+        unsigned cost = 0;
+        if (!analyze(head, 0, cost, region) || !region.numberOfSelects)
+            return false;
+        for (Value* phi : *region.join) {
+            if (phi->opcode() != Phi || (!isWrittenInArm(region, 0, phi) && !isWrittenInArm(region, 1, phi)))
+                continue;
+            std::array<Value*, 2> values = incomingValuesFor(phi, head, region);
+            if (!values[0] || !values[1] || !isZeroOrOne(values[0]) || !isZeroOrOne(values[1]))
+                return false;
+        }
+        return true;
     }
 
     // ARM64 has fcsel. x86 has no floating-point conditional move, but minsd and maxsd handle min and max.
@@ -527,12 +591,29 @@ private:
         m_removedBlocks.add(successor);
     }
 
-    void convert(BasicBlock* head, Region& region)
+    Value* appendChoice(BasicBlock* head, Origin origin, Value* condition, Value* taken, Value* notTaken, bool keepsConstantsInRegisters)
+    {
+        if (taken == notTaken)
+            return taken;
+        bool isAnswer = taken->isInt(1) && notTaken->isInt(0);
+        bool isOppositeOfAnswer = taken->isInt(0) && notTaken->isInt(1);
+        if (keepsConstantsInRegisters || (!isAnswer && !isOppositeOfAnswer))
+            return head->appendNew<Value>(m_proc, Select, origin, condition, taken, notTaken);
+        Value* answer = condition;
+        if (Value* opposite = isOppositeOfAnswer ? condition->invertedCompare(m_proc) : nullptr) {
+            head->append(opposite);
+            answer = opposite;
+        } else if (isOppositeOfAnswer || !condition->returnsBool())
+            answer = head->appendNew<Value>(m_proc, isAnswer ? NotEqual : Equal, origin, condition, head->appendIntConstant(m_proc, origin, condition->type(), 0));
+        return taken->type() == Int64 ? head->appendNew<Value>(m_proc, ZExt32, origin, answer) : answer;
+    }
+
+    void convert(BasicBlock* head, Region& region, bool keepsConstantsInRegisters)
     {
         for (unsigned i = 0; i < 2; ++i) {
             if (!region.nested[i])
                 continue;
-            convert(region.arms[i], *region.nested[i]);
+            convert(region.arms[i], *region.nested[i], keepsConstantsInRegisters);
             RELEASE_ASSERT(m_removedBlocks.contains(region.nested[i]->join));
         }
         Value* branch = head->last();
@@ -584,8 +665,7 @@ private:
                 if (upsilon && upsilon->phi() == entry.phi)
                     upsilon->replaceWithNop();
             }
-            Value* chosen = entry.values[0] == entry.values[1] ? entry.values[0] : head->appendNew<Value>(m_proc, Select, origin, condition, entry.values[0], entry.values[1]);
-            head->appendNew<UpsilonValue>(m_proc, origin, chosen, entry.phi);
+            head->appendNew<UpsilonValue>(m_proc, origin, appendChoice(head, origin, condition, entry.values[0], entry.values[1], keepsConstantsInRegisters), entry.phi);
         }
         head->appendNew<Value>(m_proc, Jump, origin);
         head->setSuccessors(FrequentedBlock(region.join));
@@ -596,6 +676,8 @@ private:
 
     Procedure& m_proc;
     IndexSet<BasicBlock*> m_removedBlocks;
+    IndexSet<Value*> m_branchesInLoopsThatKeepConstantsInRegisters;
+    Vector<std::optional<bool>> m_loopsKeepEveryRegister;
 };
 
 } // anonymous namespace

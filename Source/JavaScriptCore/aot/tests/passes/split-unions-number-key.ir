@@ -2,7 +2,7 @@
 # FORM: Prepared
 # RUN: pass SplitUnions
 # RUN(RESOLVED): pass SplitUnions ResolveAccesses
-# STATISTIC: UnionsSplit = 5
+# STATISTIC: UnionsSplit = 6
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
@@ -75,9 +75,11 @@ function f7 name="key-is-the-stored-value" parameters=[{type=Uint8Array}, {type=
     ElemSet v0, v1, v1
     ElemSet v0, v1, v2
     Return
-# The copy for the number knows that much about the value wherever it takes it. Another value that may be undefined needs a conversion, so that store has no element form
-# CHECK-COUNT-1: = TypeTest v1 testedType=int[0, 255]
-# CHECK: ElemSet v0, v1, v2
+# The copy for the number knows that much about the value wherever it takes it. Of another value that may be undefined the number is expected, which is what the array takes: that store has an element form too and is split by its key
+# CHECK: = TypeTest v1 testedType=int[0, 255]
+# CHECK: ([[key]]: int[0, 255]):
+# CHECK-NEXT: ElemSet v0, [[key]], v2
+# CHECK: = TypeTest v1 testedType=int[0, 255]
 # CHECK: ([[byte]]: int[0, 255]):
 # CHECK-NEXT: ElemSet v0, [[byte]], [[byte]]
 # CHECK: ([[noByte]]: undefined) frequency=Unlikely:

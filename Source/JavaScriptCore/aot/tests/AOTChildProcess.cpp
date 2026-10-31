@@ -40,6 +40,7 @@
 #include <unistd.h>
 #if OS(LINUX)
 #include <sys/prctl.h>
+#include <sys/uio.h>
 #endif
 
 extern char** environ;
@@ -432,6 +433,34 @@ static void printToStandardError(const char* format, ...)
     UNUSED_VARIABLE(written);
 }
 
+static void printMemoryBehind(uintptr_t address)
+{
+    std::array<uintptr_t, 8> words;
+    address &= ~(sizeof(uintptr_t) - 1);
+    struct iovec target { words.data(), sizeof(words) };
+    struct iovec source { reinterpret_cast<void*>(address), sizeof(words) };
+    // Fails where a load would fault.
+    if (process_vm_readv(getpid(), &target, 1, &source, 1, 0) != static_cast<ssize_t>(sizeof(words)))
+        return;
+    printToStandardError("0x%llx:", static_cast<unsigned long long>(address));
+    for (uintptr_t word : words)
+        printToStandardError(" %016llx", static_cast<unsigned long long>(word));
+    printToStandardError("\n");
+}
+
+static void printMappings()
+{
+    int file = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
+    if (file < 0)
+        return;
+    std::array<char, 4 * KB> text;
+    for (ssize_t count; (count = read(file, text.data(), text.size())) > 0;) {
+        ssize_t written = write(STDERR_FILENO, text.data(), count);
+        UNUSED_VARIABLE(written);
+    }
+    close(file);
+}
+
 static void reportTrap(int signal, siginfo_t*, void* context)
 {
     constexpr uintptr_t redZoneSize = 128;
@@ -489,6 +518,23 @@ static void reportTrap(int signal, siginfo_t*, void* context)
         auto* words = reinterpret_cast<const uintptr_t*>(address);
         printToStandardError("0x%llx: %016llx %016llx %016llx %016llx\n", static_cast<unsigned long long>(address), static_cast<unsigned long long>(words[0]), static_cast<unsigned long long>(words[1]), static_cast<unsigned long long>(words[2]), static_cast<unsigned long long>(words[3]));
     }
+
+    printToStandardError("memory behind the registers and the words of the stack:\n");
+#if CPU(X86_64)
+    for (size_t index = 0; index < registerNames.size(); ++index)
+        printMemoryBehind(machineContext.gregs[index]);
+#else
+    for (uintptr_t value : machineContext.regs)
+        printMemoryBehind(value);
+#endif
+    for (uintptr_t address = (sp - redZoneSize) & ~(sizeof(uintptr_t) - 1); address < sp + dumpedStackSize && isOnStack(address); address += sizeof(uintptr_t)) {
+        uintptr_t word = *reinterpret_cast<const uintptr_t*>(address);
+        if (!stack.contains(reinterpret_cast<void*>(word)))
+            printMemoryBehind(word);
+    }
+
+    printToStandardError("mappings:\n");
+    printMappings();
 
     struct sigaction defaultAction { };
     defaultAction.sa_handler = SIG_DFL;

@@ -738,6 +738,7 @@ void ObjectInterpreter::keep(ValueID id)
         return;
 
     if (!m_state.objects.isEmpty()) {
+        RELEASE_ASSERT(!m_sinking.checksThatModesAgree() || !m_state.findTest(id));
         // Resolving may append values, which moves the values of the function.
         Function& function = cursor().builder().function();
         Value value = function.at(id);
@@ -1371,8 +1372,10 @@ void ObjectInterpreter::executeStore(ValueID id)
     }
     TypeID typeProvenByFlow;
     if (!canStore(object, *access, *field, stored)) {
-        if ((opcode != Opcode::PropSet && opcode != Opcode::PropDefine) || !canStoreUnprovenValue(object, *access, *field))
+        if ((opcode != Opcode::PropSet && opcode != Opcode::PropDefine) || !canStoreUnprovenValue(object, *access, *field, stored))
             return executeAccessOnCell(id, object);
+        if (m_sinking.storesByNameWaitIn(m_state.block))
+            m_sinking.familyOf(object).didTakeValueOfStoreThatWaits();
         if (!objectOf(stored))
             typeProvenByFlow = typeOfFieldThatStaysInSlot(m_sinking, object, *stateOf(object), *field);
         if (!typeProvenByFlow) {
@@ -1440,14 +1443,36 @@ bool ObjectInterpreter::canStore(VirtualObjectID object, const VirtualFieldAcces
     });
 }
 
-bool ObjectInterpreter::canStoreUnprovenValue(VirtualObjectID object, const VirtualFieldAccess& access, uint32_t namedField) const
+// object.n = object.n + 1. The test behind which such a store goes on keeps what goes round in the form of the slot, turn after turn.
+bool ObjectInterpreter::isComputedFromField(VirtualObjectID object, PropertyKeyID key, ValueID value, unsigned stepsLeft) const
+{
+    constexpr OpcodeSet reads { Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::PropGet };
+    const Value& computed = function().at(value);
+    if (reads.contains(computed.opcode))
+        return computed.key() == key && objectOf(computed.objectOperand()) == object;
+    if (!stepsLeft)
+        return false;
+    bool isComputed = false;
+    computed.forEachOperand([&](ValueID operand, uint32_t) {
+        isComputed = isComputed || (operand && isComputedFromField(object, key, operand, stepsLeft - 1));
+    });
+    return isComputed;
+}
+
+bool ObjectInterpreter::canStoreUnprovenValue(VirtualObjectID object, const VirtualFieldAccess& access, uint32_t namedField, ValueID stored) const
 {
     const VirtualFamily& family = m_sinking.familyOf(object);
-    if (family.refusesUnprovenValues() || m_sinking.storesByNameWaitIn(m_state.block))
+    if (family.refusesUnprovenValues())
+        return false;
+    bool wouldWait = m_sinking.storesByNameWaitIn(m_state.block);
+    constexpr unsigned stepsFromReadToStore = 4;
+    if (wouldWait && (family.letsStoresByNameWait() || m_sinking.inputs().isLargeForItsWork || isComputedFromField(object, access.field.key, stored, stepsFromReadToStore)))
         return false;
     return std::ranges::all_of(stateOf(object)->variants, [&](const ObjectVariant& variant) {
         const VirtualShape& shape = family.at(variant.shape);
         if (shape.kind != VirtualShapeKind::Fields || !canHoldUnprovenValue(program(), family.descriptionOf(shape), access.field))
+            return false;
+        if (wouldWait && !testTellsOnlyWhetherValueFitsSlot(program(), family.descriptionOf(shape), access.field, function().at(stored).type))
             return false;
         bool isPresent = hasStored(shape, namedField) || hasStoredCounterpart(family, shape, namedField);
         return isPresent ? access.whenPresent == PresentField::IsOwnData : access.whenAbsent == AbsentField::FindsNothing;
@@ -2691,6 +2716,8 @@ void ObjectInterpreter::build(VirtualObjectID root, const BuildCause& cause)
             m_sinking.abandon(member);
         if (!cause.admitsStoresByName && hasVariantWithUnprovenField(m_sinking.familyOf(member), state))
             m_sinking.refuseUnprovenValues(member);
+        if (const VirtualFamily& family = m_sinking.familyOf(member); family.tookValueOfStoreThatWaits() && !family.letsStoresByNameWait())
+            m_sinking.letStoresByNameWait(member);
         if (m_sinking.at(member).isJoin && !fitsType(member, function().at(m_sinking.at(member).definition).type))
             m_sinking.abandon(member);
         if (m_mode == SinkingMode::Count && state.hasCell())

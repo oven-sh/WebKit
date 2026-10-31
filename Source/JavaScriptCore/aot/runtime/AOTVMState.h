@@ -43,6 +43,7 @@ struct FunctionTables;
 struct QuotesOfPlaces;
 struct Instance;
 struct MockedModules;
+struct OperationsBeingValidated;
 struct RuntimeCounters;
 
 // Every live Structure whose objects store elements without asking the objects above them.
@@ -230,8 +231,11 @@ public:
     std::unique_ptr<QuotesOfPlaces, void (*)(QuotesOfPlaces*)> quotesOfPlaces { nullptr, nullptr };
     // Modules::holdText().
     uint32_t numberOfTextsThatWait { 0 };
+    uint32_t numberOfCallsThatWaitApart { 0 };
     uint32_t numberOfTextsAskedFor { 0 };
     uint32_t turnOfTexts { 0 };
+    // AOTRuntimeValidation.cpp, which alone knows the type.
+    std::unique_ptr<OperationsBeingValidated, void (*)(OperationsBeingValidated*)> operationsBeingValidated { nullptr, nullptr };
 };
 
 static_assert(sizeof(PartOfRunningImage<RuntimeTable>) == sizeof(void*));

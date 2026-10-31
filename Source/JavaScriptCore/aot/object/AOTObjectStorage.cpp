@@ -258,7 +258,7 @@ void Object::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     Object* object = uncheckedDowncast<Object>(cell);
     JSCell::analyzeHeap(cell, analyzer);
-    const ProgramIdentifiers& identifiers = *cell->vm().aotState().identifiers;
+    const ProgramIdentifiers& identifiers = *identifiersOfRealm(cell->vm(), cell->structure()->realm());
     uintptr_t cageBase = cageBaseOf(object);
     for (const FieldData& field : object->layout().fields()) {
         SlotRepresentation representation = field.slot.representation();

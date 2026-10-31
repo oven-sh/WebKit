@@ -1,0 +1,37 @@
+# Two values that are each an integer, undefined or null are strictly equal where their words are equal: an integer has one word, and so has each marker.
+# They are not made doubles for it. Where one side may hold a fraction both are compared as numbers, as before
+# FORM: Placed
+# OPTIONS: check=validate-back-end
+# RUN: pass ChooseRepresentations
+# RUN(B3): lower-to-b3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="twoElementsOfTypedArrays" parameters=[{type=undefined|i32}, {type=undefined|i32}] results=[{type=boolean}] {
+    v2 = StrictEq v0, v1 form=Numbers
+    Return v2
+}
+# CHECK-LABEL: function f0 name="twoElementsOfTypedArrays"
+# CHECK: b0(v0: undefined|i32 @OptionalInt64, v1: undefined|i32 @OptionalInt64):
+# CHECK-NEXT: = StrictEq v0, v1 form=Numbers
+# B3-LABEL: function f0 name="twoElementsOfTypedArrays"
+# B3-NOT: IToD
+# B3: Equal(
+# B3-NOT: IToD
+
+function f1 name="integerAndElement" parameters=[{type=i32}, {type=undefined|null|int}] results=[{type=boolean}] {
+    v2 = StrictEq v0, v1 form=Numbers
+    Return v2
+}
+# CHECK-LABEL: function f1 name="integerAndElement"
+# B3-LABEL: function f1 name="integerAndElement"
+# B3-NOT: IToD
+# B3: Equal(
+# B3-NOT: IToD
+
+function f2 name="oneSideMayHoldFraction" parameters=[{type=undefined|i32}, {type=undefined|number}] results=[{type=boolean}] {
+    v2 = StrictEq v0, v1 form=Numbers
+    Return v2
+}
+# CHECK-LABEL: function f2 name="oneSideMayHoldFraction"
+# B3-LABEL: function f2 name="oneSideMayHoldFraction"
+# B3: IToD

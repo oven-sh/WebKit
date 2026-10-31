@@ -11,6 +11,7 @@
 #include "AOTClaims.h"
 #include "AOTFlowOrder.h"
 #include "AOTLedger.h"
+#include "AOTPhaseTimes.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueFlowRulesModules.h"
@@ -81,6 +82,7 @@ static void collectOperations(const ValueFlowResultInputs& inputs, FlowOrderInpu
         FlowCall call;
         ModuleID target;
         FlowUseOfFilesAndWay use;
+        bool importsByName { false };
     };
     const Program& program = inputs.program;
     std::atomic<bool> namesModuleAtRunTime { false };
@@ -122,6 +124,8 @@ static void collectOperations(const ValueFlowResultInputs& inputs, FlowOrderInpu
                 break;
             case FlowUseOfFiles::NamesFileAtRunTime:
                 namesModuleAtRunTime.store(true, std::memory_order_relaxed);
+                if (value.opcode == Opcode::ImportDynamic)
+                    rows.append({ { FunctionID(index), ValueID(valueIndex), { } }, { }, { }, true });
                 break;
             case FlowUseOfFiles::BeginsNamedFile:
             case FlowUseOfFiles::NobodyKnows:
@@ -133,7 +137,9 @@ static void collectOperations(const ValueFlowResultInputs& inputs, FlowOrderInpu
         }
     });
     for (const Row& row : rows) {
-        if (!row.target)
+        if (row.importsByName)
+            order.functionsThatImportByName.append(row.call.caller);
+        else if (!row.target)
             order.calls.append(row.call);
         else if (row.use.use == FlowUseOfFiles::NobodyKnows)
             order.modulesNamedByOperationsNobodyKnows.set(row.target.index());
@@ -226,6 +232,9 @@ static void collectModules(const ValueFlowResultInputs& inputs, FlowOrderInputs&
     const BuiltinTable& builtins = program.builtins();
     bool modulesAreNamedAtRunTime = unseenCodeCanRun(inputs.solution) || modulesAreLoadedByName(inputs.solution);
     bool filesOfProgramAreNamedAtRunTime = filesOfProgramAreLoadedByName(inputs.solution);
+    order.namesMadeAtRunTimeAreOnlyImported = !unseenCodeCanRun(inputs.solution)
+        && !isRaised(inputs.solution, ValueFlowHostNode::ModulesAreRequiredByName)
+        && !isRaised(inputs.solution, ValueFlowHostNode::LibraryModulesAreRequiredByName);
     for (uint32_t index = 0; index < program.modules.size(); ++index) {
         const Module& module = program.modules[index];
         if (module.body && inputs.isReached(module.body))
@@ -312,9 +321,13 @@ FlowCallsOfProgram computeOrderResults(const ValueFlowResultInputs& inputs, cons
 {
     const Program& program = inputs.program;
     FlowApplication& application = *tables.application;
+    PhaseTimes times(inputs.build, PassID::AnalyzeFlow);
     FlowOrderInputs orderInputs = collectOrderInputs(inputs, tables);
+    times.didFinish("order: inputs"_s);
     FlowModuleOrder moduleOrder = computeModuleOrder(orderInputs);
+    times.didFinish("order: modules"_s);
     FlowScopeOrders orders = computeScopeOrders(orderInputs, moduleOrder);
+    times.didFinish("order: scopes"_s);
 
     auto apply = [&](LocationFlow& flow, FlowLocationOrder order, uint32_t switchSubject, bool startsAsFunction, bool isStaticField) {
         bool areWritersKnown = flow.writers == WriterState::AllKnown;
@@ -359,6 +372,7 @@ FlowCallsOfProgram computeOrderResults(const ValueFlowResultInputs& inputs, cons
             application.bodies[read.function.index()].readsAfterInitialization.append(read.value);
     }
     tables.wholeProgram.moduleOrder = WTF::move(moduleOrder);
+    times.didFinish("order: applied"_s);
     return { WTF::move(orderInputs.calls), WTF::move(orderInputs.callsOfLists), WTF::move(orderInputs.calleeLists), orderInputs.host() };
 }
 

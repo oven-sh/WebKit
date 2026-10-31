@@ -786,6 +786,8 @@ String lockedObjectErrorMessage(JSGlobalObject*, JSObject* object, UniquedString
     if (!id)
         return { };
     LockedIn lockedIn = instance && admitsReplacedBuiltins(*instance) ? LockedIn::TestRun : LockedIn::Executable;
+    if (change == RejectedWrite::Prototype)
+        return prototypeChangeOfLockedBuiltinMessage(BuiltinTable::singleton().textOf(id), lockedIn);
     VM& vm = object->vm();
     return change == RejectedWrite::Deletion ? deletionFromLockedBuiltinMessage(vm, id, key, lockedIn) : assignmentToLockedBuiltinMessage(vm, id, key, lockedIn);
 }
@@ -882,6 +884,15 @@ static bool isRemovedWithFeature(const BuiltinTable& table, BuiltinID holder)
     });
 }
 
+// The realm is asked for the classes that it has made, and reports each that it makes later. No name need lead to their objects.
+static NEVER_INLINE bool isMadeWithClassOfEngine(const BuiltinTable& table, BuiltinID object)
+{
+    BuiltinClassID builtinClass = table.at(object).instanceClass;
+    if (!builtinClass || !engineNamesInstanceStructureOf(builtinClass))
+        return false;
+    return table.at(builtinClass).prototype == object || table.at(builtinClass).constructor == object;
+}
+
 struct BuiltinsToLock {
     BitVector builtins;
     BitVector holdersThatTellOfWrites;
@@ -891,8 +902,15 @@ static BuiltinsToLock findBuiltinsToLock(const BuiltinTable& table, const Progra
 {
     BuiltinsToLock result { BitVector(table.builtinCount()), BitVector(table.builtinCount()) };
     BitVector& builtins = result.builtins;
-    auto addWithPath = [&](BuiltinID id) {
-        for (; id && !builtins.quickSet(id.index()); id = table.at(id).holder) { }
+    builtins.quickSet(Builtins::GlobalThis.index());
+    // Every start reads each holder on a path, whether or not the program ever comes there.
+    auto addWithPath = [&](BuiltinID id) ALWAYS_INLINE_LAMBDA {
+        while (!builtins.quickSet(id.index())) {
+            BuiltinID holder = table.at(id).holder;
+            if (!holder || builtins.quickGet(holder.index()) || isMadeWithClassOfEngine(table, id))
+                return;
+            id = holder;
+        }
     };
     for (BuiltinID id : table.lockedObjects())
         addWithPath(id);
@@ -996,12 +1014,28 @@ private:
             return findExistingObject(holder, m_vm.propertyNames->prototype.impl());
         if (name == BuiltinNames::constructor)
             return findExistingObject(holder, m_vm.propertyNames->constructor.impl());
+        if (isConstructorOfClassNotMade(table, member))
+            return nullptr;
         Identifier key = table.identifierOf(m_vm, name);
         if (JSObject* existing = findExistingObject(holder, key.impl()))
             return existing;
+        if (m_cells)
+            m_cells->didSeekBuiltinNotMade();
         if (isLockedByTable(table, member) || reportsCreationOfMember(holder, key.impl()))
             return nullptr;
         return findOrCreateObject(m_realm, member);
+    }
+
+    // The prototype object of every class that the realm has made is locked before a holder is asked for a name.
+    bool isConstructorOfClassNotMade(const BuiltinTable& table, BuiltinID member) const
+    {
+        const Builtin& entry = table.at(member);
+        if (!entry.flags.contains(BuiltinFlag::IsLazilyCreated) || !entry.instanceClass || !engineNamesInstanceStructureOf(entry.instanceClass))
+            return false;
+        const BuiltinClass& builtinClass = table.at(entry.instanceClass);
+        if (builtinClass.constructor != member || !builtinClass.prototype)
+            return false;
+        return m_builtinsToLock.quickGet(builtinClass.prototype.index()) && !hasLocked(builtinClass.prototype);
     }
 
     bool noteLocked(BuiltinID id, JSObject* object)

@@ -334,7 +334,8 @@ static void printSite(PrintStream& out, const PropertyAccessContext& context, Fu
     CommaPrinter comma(","_s);
     for (LayoutID layout : description.expected)
         out.print(comma, layout.index());
-    out.println();
+    // The holder is the function as it was read. Several compiled functions come of one: its entrance, its typed body, its generic version, and whoever it was copied into.
+    out.println("\tf", id.index());
 }
 
 static bool isOwnDataPropertyWithTextKey(const Program& program, const Field& field)

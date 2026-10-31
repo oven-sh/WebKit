@@ -134,8 +134,24 @@ ValueID AllocationEmitter::findCopyThatFills(const ValueContext& value)
     return values[index + 1];
 }
 
+// The first object of a constructor function begins its class. That ends a set of guards which held while it spoke of no object of the class, and NewObject declares no write to the guards:
+// without this B3 would read the bit of such a set ahead of the allocation and believe it behind it.
+static void clobberGuardsOfClassThatMayBegin(Output& out, AOTHeaps& heaps, const Program& program, LayoutID classLayout)
+{
+    B3::PatchpointValue* clobber = out.patchpoint(B3::Void);
+    clobber->effects = B3::Effects::none();
+    heaps.decoratePatchpointWrite(&heaps.at(program, MemoryLocation::memberGuards(classLayout)), clobber);
+    clobber->setRunsWithoutFrame(true);
+    clobber->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
+}
+
 void AllocationEmitter::generateNewObject(const ValueContext& value)
 {
+    auto endSetsOfGuards = makeScopeExit([&] {
+        LayoutID classLayout = declaredLayoutOf(m_program, value->layout());
+        if (!value->prototypeOperand() && m_program.at(classLayout).has(LayoutFlags::IsConstructorFunction))
+            clobberGuardsOfClassThatMayBegin(m_out, m_heaps, m_program, classLayout);
+    });
     AllocationID allocation = value->allocation();
     if (!allocation) {
         fail(value, InternalErrorKind::PlacedPayloadMissing);

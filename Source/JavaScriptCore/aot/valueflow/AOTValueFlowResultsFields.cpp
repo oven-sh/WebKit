@@ -1643,15 +1643,37 @@ struct FieldResults {
         }
     }
 
-    // The form in which the objects are observed to get a value under the key. Every other layout has plain fields: what creates their properties does not ask.
-    std::optional<OptionSet<FieldForm>> formOfValueGivenUnder(LayoutID layout, PropertyKeyID key) const
+    // A spread, a rest and Object.assign() bring any name and fill slots without asking for the form of the field.
+    bool getsUndeclaredKeysByNameOnly(LayoutID id) const
     {
-        if (!startsEmptyAndIsFilledByNameOnly(layout))
-            return OptionSet<FieldForm>();
+        return startsEmptyAndIsFilledByNameOnly(id) || (!stores.getsCopiedProperties(id) && !stores.hasObjectPutAboveOthers(id));
+    }
+
+    uint8_t formsOfValuesGivenUnder(LayoutID layout, PropertyKeyID key) const
+    {
+        if (!getsUndeclaredKeysByNameOnly(layout))
+            return ValueForms::of(true, true, true);
         uint8_t forms = stores.formsOfValuesGivenUnder(layout, key);
         if (auto seen = formsOfValuesSeenDefined.find(static_cast<uint64_t>(layout.index()) << 32 | key.index()); seen != formsOfValuesSeenDefined.end())
             forms |= seen->value;
-        return ValueForms::formToPlanFor(forms);
+        if (!startsEmptyAndIsFilledByNameOnly(layout) && !(stores.writersSeenUnder(layout, key) - Actor::Statements).isEmpty())
+            return ValueForms::unknown;
+        return forms;
+    }
+
+    std::optional<OptionSet<FieldForm>> formOfValuesGivenToObjectsBelow(LayoutID layout, PropertyKeyID key) const
+    {
+        std::optional<OptionSet<FieldForm>> form;
+        bool hasOneForm = true;
+        forEachLayoutBelow(layout, [&](LayoutID below) {
+            uint8_t forms = hasOneForm && hasObjects(below) ? formsOfValuesGivenUnder(below, key) : 0;
+            if (!forms)
+                return;
+            std::optional<OptionSet<FieldForm>> formBelow = startsEmptyAndIsFilledByNameOnly(below) ? ValueForms::formToPlanFor(forms) : ValueForms::onlyFormIn(forms);
+            hasOneForm = formBelow && (!form || form == formBelow);
+            form = formBelow;
+        });
+        return hasOneForm ? form : std::nullopt;
     }
 
     void forEachLayoutOfCopyFilledByItsMaker(const Function& function, const ValueFlowStatement& statement, NOESCAPE const Invocable<void(LayoutID, PropertyKeyID)> auto& functor) const
@@ -1723,8 +1745,12 @@ struct FieldResults {
                 continue;
             const ValueFlowOperand& enumerated = inputs.bodies().operandsOf(step)[At::ForInStep::object];
             bool holdsEveryObject;
-            layoutsIn(inputs.possibleValuesOf(maker, enumerated), holdsEveryObject);
-            for (LayoutID source : layoutsIn(inputs.seenValuesOf(maker, enumerated), ignored)) {
+            ValueSetID possible = inputs.possibleValuesOf(maker, enumerated);
+            layoutsIn(possible, holdsEveryObject);
+            ValueSetID seen = inputs.seenValuesOf(maker, enumerated);
+            if (!ValueSets::isComplement(possible))
+                seen = maker.intersect(seen, ValueSets::complement(inputs.solver().membersThatOtherMembersCover(possible, maker)));
+            for (LayoutID source : layoutsIn(seen, ignored)) {
                 for (const Field& field : program.at(source).fields) {
                     if (!field.key || program.at(field.key).kind != PropertyKeyKind::Text || field.flags.containsAny({ FieldFlags::IsMethod, FieldFlags::IsPrivate, FieldFlags::IsBrand }))
                         continue;
@@ -1888,6 +1914,12 @@ struct FieldResults {
             if (startsEmptyAndIsFilledByNameOnly(LayoutID(index))) {
                 uniteSortedKeys(keysByLayout[index], stores.keysOfValuesDefinedIn(LayoutID(index)));
                 uniteSortedKeys(keysByLayout[index], keysGivenToInstancesSeen[index]);
+            } else if (getsUndeclaredKeysByNameOnly(LayoutID(index))) {
+                Vector<PropertyKeyID> defined = stores.keysOfValuesDefinedIn(LayoutID(index));
+                defined.removeAllMatching([&](PropertyKeyID key) {
+                    return !formOfValuesGivenToObjectsBelow(LayoutID(index), key);
+                });
+                uniteSortedKeys(keysByLayout[index], defined);
             }
             keysStoredByMembersAbove[index] = keysStoredIntoThisByMembersAbove(layoutsHandedToObjectCreate, LayoutID(index));
             uniteSortedKeys(keysByLayout[index], keysStoredByMembersAbove[index]);
@@ -1951,6 +1983,9 @@ struct FieldResults {
         for (auto [depth, index] : fromBasesDown) {
             LayoutID layout(index);
             Vector<PropertyKeyID>& keys = keysByLayout[index];
+            // The image that made the objects laid them out: what they gain here is found by name.
+            if (program.at(layout).has(LayoutFlags::IsOfImageBelow))
+                keys.clear();
             if (keys.isEmpty())
                 continue;
             uint64_t numberOfInheritedKeys = 0;
@@ -1990,11 +2025,29 @@ struct FieldResults {
         return keysByLayout;
     }
 
+    // `const target: { hidden?: number } = {}; Object.defineProperty(target, "hidden", { value })`: that a type names the key makes the definition no other than where none does.
+    void planFormsOfDeclaredFields(LayoutID id) const
+    {
+        constexpr OptionSet<FieldFlags> flagsOfOtherFields { FieldFlags::IsRequired, FieldFlags::IsMethod, FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsHidden, FieldFlags::IsInherited };
+        if (!canAppendFieldsTo(id) || startsEmptyAndIsFilledByNameOnly(id) || !getsUndeclaredKeysByNameOnly(id))
+            return;
+        const Layout& layout = program.at(id);
+        for (uint32_t index = 0; index < layout.fields.size(); ++index) {
+            const Field& field = layout.fields[index];
+            FlowFieldUpdate& update = application.layouts[id.index()].fields[index];
+            if (!field.key || !field.form.isEmpty() || field.flags.containsAny(flagsOfOtherFields) || !canNameField(field.key) || update.accessor.isAccessor())
+                continue;
+            if (std::optional<OptionSet<FieldForm>> form = formOfValuesGivenToObjectsBelow(id, field.key))
+                update.formOfValue = *form;
+        }
+    }
+
     void appendFields(const KeysByLayout& keysByLayout, const KeysByLayout& keysFilledByOutsideCreators, ValueFlowFieldContents& contents) const
     {
         ValueSetMakers makers(inputs);
         forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index, unsigned worker) {
             ValueSetMaker& maker = makers.of(worker);
+            planFormsOfDeclaredFields(LayoutID(index));
             for (PropertyKeyID key : keysByLayout[index]) {
                 FlowAppendedField field;
                 field.key = key;
@@ -2010,14 +2063,10 @@ struct FieldResults {
                 bool inheritsNothing = build.isEnabled(FlowResultKind::OwnNames, index);
                 bool isFirst = true;
                 bool isGivenUnknownValues = false;
-                std::optional<OptionSet<FieldForm>> formOfValue;
-                bool hasOneFormOfValue = true;
+                std::optional<OptionSet<FieldForm>> formOfValue = formOfValuesGivenToObjectsBelow(LayoutID(index), key);
                 forEachLayoutBelow(LayoutID(index), [&](LayoutID below) {
                     if (!hasObjects(below))
                         return;
-                    std::optional<OptionSet<FieldForm>> formBelow = formOfValueGivenUnder(below, key);
-                    hasOneFormOfValue &= formBelow && (isFirst || formOfValue == formBelow);
-                    formOfValue = formBelow;
                     ValueSetID above;
                     inheritsNothing = inheritsNothing && inheritsNothingUnder(maker, below, above, key);
                     possible.add(possibleMutationsOf(below));
@@ -2036,7 +2085,7 @@ struct FieldResults {
                     isStoredWithValueBehindLiterals &= constructions.isStoredWithValueBehindLiteral(below, key);
                     uniteAccessors(field.accessor, stores.accessorDefinedUnder(maker, below, key), std::exchange(isFirst, false));
                 });
-                if (hasOneFormOfValue && formOfValue && !field.accessor.isAccessor())
+                if (formOfValue && !field.accessor.isAccessor())
                     field.formOfValue = *formOfValue;
                 // `class B extends either {}`: the constructor of a parent puts its private names on an object of B. Every store under such a name goes to the node of the field that declares it.
                 if (const PropertyKey& name = program.at(key); name.kind == PropertyKeyKind::PrivateName) {

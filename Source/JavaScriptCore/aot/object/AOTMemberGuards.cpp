@@ -46,11 +46,11 @@ struct MemberName {
     UniquedStringImpl* uid()
     {
         if (!knownUid)
-            knownUid = vm.aotState().identifiers->identifier(key).impl();
+            knownUid = identifiers.uid(key);
         return knownUid;
     }
 
-    VM& vm;
+    ProgramIdentifiers& identifiers;
     uint32_t key;
     UniquedStringImpl* knownUid { nullptr };
 };
@@ -773,7 +773,7 @@ static bool tryWatchDeclarer(VM& vm, State& state, const LayoutData& layout, Cla
 static bool tryWatchMember(VM& vm, State& state, const LayoutData& layout, const MemberGuardData& guard, ClassesAbove& classes)
 {
     ASSERT(classes.side() == guard.side() && classes.at(0).classLayout == &layout);
-    MemberName name { vm, guard.name };
+    MemberName name { identifiersOf(state.instance), guard.name };
     std::optional<GuardResolution> resolution = resolveAsDeclared(vm, state, classes, name);
     if (!resolution)
         return false;
@@ -791,7 +791,7 @@ static bool tryWatchMemberPassedByStores(VM& vm, State& state, const LayoutData&
         return false;
     JSGlobalObject* realm = state.instance.globalObject;
     Structure* structureBelow = realm->structureCache().emptyObjectStructureForPrototype(realm, holder, JSFinalObject::defaultInlineCapacity);
-    MemberName name { vm, guard.name };
+    MemberName name { identifiersOf(state.instance), guard.name };
     ChainWalkStart start { realm, structureBelow, nullptr, ChainWalkMode::MayAllocate, ChainWalkUse::KeptForStores };
     ChainWalk walk = walkChain(start, name.uid());
     // A walk that stops at a dictionary and flattens it has found nothing out about the name. An object is flattened once, so each further walk gets past one more.
@@ -807,7 +807,7 @@ static const MemberGuardData* findClearGuardOfStoresUnder(VM& vm, State& state, 
 {
     if (!layout.classData().guardWordsOffsetFor(ClassSide::Prototype) || guardsOf(layout, ClassSide::Prototype, MemberGuardKind::PassedByStores).empty())
         return nullptr;
-    std::optional<uint32_t> key = vm.aotState().identifiers->numberOf(uid);
+    std::optional<uint32_t> key = identifiersOf(state.instance).numberOf(uid);
     const MemberGuardData* guard = key ? findGuard(layout, ClassSide::Prototype, MemberGuardKind::PassedByStores, *key) : nullptr;
     if (!guard || isSet(state, layout, *guard) || watchpointsOf(state).hasEnded(*guard) || layout.evaluation() == EvaluationState::SeenTwice)
         return nullptr;
@@ -829,7 +829,7 @@ static void completeSetsOfGuardOfStores(VM& vm, State& state, const LayoutData& 
 {
     if (!layout.classData().guardWordsOffsetFor(ClassSide::Prototype))
         return;
-    std::optional<uint32_t> key = vm.aotState().identifiers->numberOf(uid);
+    std::optional<uint32_t> key = identifiersOf(state.instance).numberOf(uid);
     const MemberGuardData* guard = key ? findGuard(layout, ClassSide::Prototype, MemberGuardKind::PassedByStores, *key) : nullptr;
     if (!guard || !isSet(state, layout, *guard))
         return;
@@ -892,7 +892,7 @@ void ClassTable::didFindMemberByName(VM& vm, const LayoutData& instanceLayout, U
         return;
     if (holdsFromStart(layout) || !layout.numberOfMemberGuards() || layout.evaluation() == EvaluationState::SeenTwice || !classPrototypeIfExists(layout))
         return;
-    std::optional<uint32_t> key = vm.aotState().identifiers->numberOf(uid);
+    std::optional<uint32_t> key = identifiersOf(m_state.instance).numberOf(uid);
     const MemberGuardData* guard = key ? findGuard(layout, ClassSide::Prototype, MemberGuardKind::Member, *key) : nullptr;
     MemberGuardWatchpoints& watchpoints = watchpointsOf(m_state);
     if (!guard || isSet(m_state, layout, *guard) || watchpoints.hasEnded(*guard) || watchpoints.wasFoundNotToHold(*guard))
@@ -1003,7 +1003,7 @@ static bool appendNamesOfHolder(VM& vm, State& state, const LayoutData& layout, 
     bool isLazy = isLazyHolder(holder, side);
     if (isLazy && hasComputedMemberName(layout, side))
         return false;
-    const ProgramIdentifiers& identifiers = *vm.aotState().identifiers;
+    const ProgramIdentifiers& identifiers = identifiersOf(state.instance);
     auto appendPropertiesOf = [&](JSObject* object) {
         object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
             std::optional<uint32_t> key = identifiers.numberOf(entry.key());
@@ -1038,7 +1038,7 @@ static bool isAsDeclaredOn(VM& vm, State& state, const ChainLevel& level, uint32
     constexpr ClassSide side = ClassSide::Prototype;
     if (!declares(state, *level.classLayout, side, key))
         return false;
-    MemberName name { vm, key };
+    MemberName name { identifiersOf(state.instance), key };
     return holdsAsDeclared(vm, state, *level.classLayout, side, level.holder, name) && tryWatchDeclarer(vm, state, *level.classLayout, side, level.classLayout, level.holder, name);
 }
 
@@ -1154,6 +1154,12 @@ static bool tryArmWholePrototypeSide(VM& vm, State& state, const LayoutData& lay
     }
     for (const MemberGuardData* guard : guardsOfOtherMembers)
         clearSetsContaining(state, layout, *guard, setsThatHeldBelowNewClass(*guard));
+    // Derived.prototype = new Base(): the prototype object has the fields that the constructor of Base stores, as plain values, and a store passes those by.
+    // Nobody may ask later: a store by name to a field of the layout stays in its stub.
+    for (const MemberGuardData* guard : guardsOfOtherMembers) {
+        if (guard->kind() == MemberGuardKind::PassedByStores && tryWatchMemberPassedByStores(vm, state, layout, *guard))
+            setGuardOfStores(state, layout, *guard);
+    }
     return true;
 }
 
@@ -1161,7 +1167,7 @@ static void watchOwnMember(VM& vm, State& state, const LayoutData& layout, Class
 {
     if (!layout.classData().subclassesOffset && !findGuard(layout, side, MemberGuardKind::Member, key))
         return;
-    MemberName name { vm, key };
+    MemberName name { identifiersOf(state.instance), key };
     bool isAsDeclared = (holderState == ClassTable::HolderState::AsDefinitionMadeIt && state.objects->classes.hasOneClassObject(layout)) || holdsAsDeclared(vm, state, layout, side, holder, name);
     ASSERT(isAsDeclared == holdsAsDeclared(vm, state, layout, side, holder, name));
     if (!isAsDeclared || !tryWatchDeclarer(vm, state, layout, side, &layout, holder, name))
@@ -1181,7 +1187,7 @@ static void watchMembersOfHolder(VM& vm, State& state, const LayoutData& layout,
         watchOwnMember(vm, state, layout, side, holder, *implicit.constructor, holderState);
     if (holderState == ClassTable::HolderState::AsDefinitionMadeIt)
         return;
-    const ProgramIdentifiers& identifiers = *vm.aotState().identifiers;
+    const ProgramIdentifiers& identifiers = identifiersOf(state.instance);
     Vector<UniquedStringImpl*, 4> otherNames;
     holder->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
         std::optional<uint32_t> key = identifiers.numberOf(entry.key());
@@ -1266,7 +1272,7 @@ void ClassTable::armMemberGuards(VM& vm, const LayoutData& layout, ClassSide sid
     if (isFirstCall) {
         bool leavesGuardsOfStoresClear = false;
         for (const MemberGuardData& guard : guardsOf(layout, side, MemberGuardKind::PassedByStores)) {
-            if (tryWatchMember(vm, m_state, layout, guard, classesAbove))
+            if (tryWatchMember(vm, m_state, layout, guard, classesAbove) || tryWatchMemberPassedByStores(vm, m_state, layout, guard))
                 set(m_state, layout, guard);
             else {
                 leaveForLater(m_state, layout, guard);
@@ -1310,7 +1316,7 @@ void ClassTable::didChangeMember(const LayoutData& layout, ClassSide side, Uniqu
     if (!layout.numberOfMemberGuards() && !layout.classData().subclassesOffset)
         return;
     MemberGuardWatchpoints::MethodTableUpdate update(m_state);
-    std::optional<uint32_t> key = m_state.instance.vm->aotState().identifiers->numberOf(uid);
+    std::optional<uint32_t> key = identifiersOf(m_state.instance).numberOf(uid);
     if (!key)
         return;
     if (side == ClassSide::Static) {
@@ -1377,7 +1383,7 @@ void ClassTable::didDefineMember(VM& vm, const LayoutData& layout, ClassSide sid
     std::optional<FunctionID> defined = functionOf(function);
     bool isNamedByClosureTable = defined && m_state.objects->closures.hasCellFor(*defined);
     if (!isNamedByClosureTable && holdsFromStart(layout) && !layout.classData().subclassesOffset && m_classSidesByHolder.contains(holder)) {
-        std::optional<uint32_t> key = layout.numberOfMemberGuards() ? vm.aotState().identifiers->numberOf(uid) : std::nullopt;
+        std::optional<uint32_t> key = layout.numberOfMemberGuards() ? identifiersOf(m_state.instance).numberOf(uid) : std::nullopt;
         if (!key || (!findGuard(layout, side, MemberGuardKind::Member, *key) && !findGuard(layout, side, MemberGuardKind::PassedByStores, *key)))
             return;
     }
@@ -1385,7 +1391,7 @@ void ClassTable::didDefineMember(VM& vm, const LayoutData& layout, ClassSide sid
     if (holdsFromStart(layout)) {
         if (!m_classSidesByHolder.contains(holder))
             armMemberGuards(vm, layout, side, holder);
-        std::optional<uint32_t> definedKey = vm.aotState().identifiers->numberOf(uid);
+        std::optional<uint32_t> definedKey = identifiersOf(m_state.instance).numberOf(uid);
         if (definedKey && isCreatedAtDefinition(layout, side, *definedKey) && registeredHolderOf(vm, m_state, layout, side) == holder) {
             if (holdsDeclaredMember(vm, m_state, holder, uid, declaredMember(layout, side, *definedKey)))
                 watchOwnMember(vm, m_state, layout, side, holder, *definedKey);
@@ -1399,7 +1405,7 @@ void ClassTable::didDefineMember(VM& vm, const LayoutData& layout, ClassSide sid
         armMemberGuards(vm, layout, side, holder);
         return;
     }
-    std::optional<uint32_t> key = vm.aotState().identifiers->numberOf(uid);
+    std::optional<uint32_t> key = identifiersOf(m_state.instance).numberOf(uid);
     if (layout.evaluation() == EvaluationState::SeenTwice || registeredHolderOf(vm, m_state, layout, side) != holder)
         return;
     if (side == ClassSide::Prototype && !isLazyHolder(holder, side) && watchpointsOf(m_state).takeMembersLeftUnarmed(layout)) {
@@ -1473,7 +1479,7 @@ void ClassTable::didShadowMember(const LayoutData& instanceLayout, UniquedString
     const LayoutData& layout = classOfInstances(instanceLayout);
     if (!layout.classData().guardWordsOffsetFor(ClassSide::Prototype))
         return;
-    std::optional<uint32_t> key = m_state.instance.vm->aotState().identifiers->numberOf(uid);
+    std::optional<uint32_t> key = identifiersOf(m_state.instance).numberOf(uid);
     const MemberGuardData* guard = key ? findGuard(layout, ClassSide::Prototype, MemberGuardKind::NotHidden, *key) : nullptr;
     if (!guard)
         return;
@@ -1496,7 +1502,7 @@ void ClassTable::didChangeInstancePrototype(VM& vm, const LayoutData& instanceLa
     for (const MemberGuardData& guard : guardsOf(layout, ClassSide::Prototype, MemberGuardKind::InstancePrototype))
         end(m_state, layout, guard);
     for (const MemberGuardData& guard : guardsOf(layout, ClassSide::Prototype, MemberGuardKind::NotHidden)) {
-        MemberName name { vm, guard.name };
+        MemberName name { identifiersOf(m_state.instance), guard.name };
         ChainObjects passed;
         if (holder && isSet(m_state, layout, guard) && passOtherObjects(vm, m_state, prototype, holder, name, passed))
             watchpointsOf(m_state).watchOtherObjects(passed.span(), layout, guard, name.uid());
@@ -1756,7 +1762,7 @@ void MemberGuardWatchpoints::watchOtherObjects(std::span<JSObject* const> object
 static std::pair<const LayoutData&, const MemberGuardData*> findGuardOfDependent(State& state, uint32_t subject, UniquedStringImpl* uid)
 {
     const LayoutData& layout = *state.objects->classes.classWithIndex(subject >> 2);
-    std::optional<uint32_t> key = state.instance.vm->aotState().identifiers->numberOf(uid);
+    std::optional<uint32_t> key = identifiersOf(state.instance).numberOf(uid);
     ClassSide side = static_cast<ClassSide>(subject >> 1 & 1);
     if (!key)
         return { layout, nullptr };

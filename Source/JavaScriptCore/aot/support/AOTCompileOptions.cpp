@@ -316,6 +316,7 @@ public:
 
         options.action = m_wire.action;
         options.widensFlow = m_wire.flowOverride == FlowOverride::Widened;
+        options.seedOfObjectNumbers = m_wire.bisection.flowSchedule.seedOfObjectNumbers;
         options.reports = m_wire.reports;
         options.excludedCode = m_wire.excludedCode;
         recorded.omitsFunctionSource = hasFlag(options.excludedCode, ExcludedCode::FunctionSource);
@@ -450,8 +451,6 @@ private:
             recorded.numberOfFlowSchedule = static_cast<uint8_t>(schedule.number);
         else if (schedule.number)
             reportInvalid(schedule.number);
-        if (schedule.reserved)
-            reportInvalid(schedule.reserved);
         recorded.testing = static_cast<uint16_t>(testing);
     }
 
@@ -466,6 +465,7 @@ private:
         options.checksClaimsToBackEnd = hasFlag(checks, CheckSet::ClaimsToBackEnd);
         options.checksMovedLoads = hasFlag(checks, CheckSet::MovedLoads);
         options.checksDecidedComparisons = hasFlag(checks, CheckSet::DecidedComparisons);
+        options.checksClaimsOfFlow = hasFlag(checks, CheckSet::ClaimsOfFlow);
         options.checksSpillSlots = hasFlag(checks, CheckSet::SpillSlots) || options.recorded.validates || options.validatesBackEnd;
         options.checksAllocatedRegisters = hasFlag(checks, CheckSet::AllocatedRegisters) || options.recorded.validates || options.validatesBackEnd;
         options.checksFlowFixpoint = hasFlag(checks, CheckSet::FlowFixpoint);
@@ -737,10 +737,20 @@ static std::optional<String> applyNumbersOfFailPredictions(Wire::CompileOptions&
     return std::nullopt;
 }
 
+static constexpr ASCIILiteral shuffleObjects = "ShuffleObjects"_s;
+
 static std::optional<String> applyTesting(Wire::CompileOptions& options, const OptionWord& word, StringView value)
 {
     return forEachListedName(word.key, value, [&](StringView written) -> std::optional<String> {
         auto [name, numbers] = splitAtFirst(written, ':');
+        // It changes no code, so no image records it.
+        if (matchesName(name, shuffleObjects)) {
+            auto seed = parseNumber<uint16_t>(numbers.value_or("0"_s));
+            if (!seed)
+                return notANumberSentence(*numbers);
+            options.bisection.flowSchedule.seedOfObjectNumbers = *seed + 1;
+            return std::nullopt;
+        }
         auto testingSwitch = findMember<Wire::TestingSwitch>(name);
         if (!testingSwitch)
             return unknownNameSentence(word.noun, name);
@@ -767,6 +777,7 @@ static void listTestingSwitches(PrintStream& out)
         if (testingSwitch != Wire::TestingSwitch::DropGuard)
             listValue(out, nameOf(testingSwitch));
     }
+    listValue(out, shuffleObjects);
 }
 
 static std::optional<String> applyDropGuard(Wire::CompileOptions& options, const OptionWord& word, StringView value)

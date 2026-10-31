@@ -569,23 +569,40 @@ struct TestState {
     bool isReachable { true };
     // Between the requirements of a site that takes proofs and their end.
     bool lacksProofOfSite { false };
+    bool measuresGaps { false };
     BitVector passed;
-    Vector<uint32_t, 8> bytesSinceUse;
+    // The passed conditions whose last use lies no further back than the largest budget, by number. Every other passed condition lies further back than any budget bridges.
+    struct RecentUse {
+        uint32_t condition;
+        uint32_t bytesSince;
+    };
+    Vector<RecentUse, 8> recentUses;
     uint32_t pendingBytes { 0 };
 
     void addPendingBytes(uint32_t bytes) { pendingBytes = saturatingSum<uint32_t>(pendingBytes, bytes); }
 
+    const RecentUse* findRecentUse(size_t condition) const
+    {
+        auto found = std::ranges::lower_bound(recentUses, condition, { }, &RecentUse::condition);
+        return found != recentUses.end() && found->condition == condition ? &*found : nullptr;
+    }
+
     void markAsPassed(TestConditionID condition)
     {
         passed.set(condition.index());
-        if (!bytesSinceUse.isEmpty())
-            bytesSinceUse[condition.index()] = 0;
+        if (!measuresGaps)
+            return;
+        auto found = std::ranges::lower_bound(recentUses, condition.index(), { }, &RecentUse::condition);
+        if (found != recentUses.end() && found->condition == condition.index())
+            found->bytesSince = 0;
+        else
+            recentUses.insert(found - recentUses.begin(), RecentUse { condition.index(), 0 });
     }
 
     void endAll()
     {
         passed.clearAll();
-        bytesSinceUse.fill(0);
+        recentUses.shrink(0);
         pendingBytes = 0;
     }
 };
@@ -613,8 +630,7 @@ struct TestCoverageProblem {
     State stateAtEntry() const
     {
         State state;
-        if (largestBudget)
-            state.bytesSinceUse.fill(0, events.conditions().size());
+        state.measuresGaps = largestBudget.has_value();
         return state;
     }
 
@@ -629,25 +645,27 @@ struct TestCoverageProblem {
         }
 
         settlePendingBytes(into);
-        bool changed = false;
-        BitVector passedBefore = into.passed;
-        for (size_t condition : passedBefore) {
-            if (!from.passed.get(condition)) {
-                into.passed.clear(condition);
-                if (largestBudget)
-                    into.bytesSinceUse[condition] = 0;
-                changed = true;
-                continue;
-            }
-            if (!largestBudget)
-                continue;
-            uint32_t gap = widenedGap(from.bytesSinceUse[condition], from.pendingBytes);
-            if (gap > into.bytesSinceUse[condition]) {
-                into.bytesSinceUse[condition] = gap;
-                changed = true;
-            }
-        }
+        size_t numberPassedBefore = into.passed.bitCount();
+        into.passed.filter(from.passed);
+        bool changed = into.passed.bitCount() != numberPassedBefore;
+        into.recentUses.removeAllMatching([&](State::RecentUse& use) {
+            if (!into.passed.get(use.condition))
+                return true;
+            uint32_t gap = widenedGap(gapOf(from, use.condition), from.pendingBytes);
+            if (gap <= use.bytesSince)
+                return false;
+            use.bytesSince = gap;
+            changed = true;
+            return gap > *largestBudget;
+        });
         return changed;
+    }
+
+    // Of a condition that has passed.
+    uint32_t gapOf(const State& state, size_t condition) const
+    {
+        const State::RecentUse* use = state.findRecentUse(condition);
+        return use ? use->bytesSince : saturatingSum<uint32_t>(*largestBudget, 1u);
     }
 
     bool isIgnoredFailingEdge(Edge edge) const
@@ -719,7 +737,7 @@ struct TestCoverageProblem {
         if (!state.passed.get(condition.index()))
             return RequirementCoverage::NeedsTest;
         std::optional<uint32_t> budget = cycles.isInCycle(block) ? inputs.budget.insideCycles : inputs.budget.outsideCycles;
-        return budget && state.bytesSinceUse[condition.index()] > *budget ? RequirementCoverage::NeedsTest : RequirementCoverage::Covered;
+        return budget && gapOf(state, condition.index()) > *budget ? RequirementCoverage::NeedsTest : RequirementCoverage::Covered;
     }
 
     void applyEvent(State& state, const TestEvent& event) const
@@ -745,10 +763,9 @@ struct TestCoverageProblem {
             return;
         case TestEvent::Kind::Ending:
             state.passed.exclude(events.endedBy(event));
-            if (largestBudget) {
-                for (size_t condition : events.endedBy(event))
-                    state.bytesSinceUse[condition] = 0;
-            }
+            state.recentUses.removeAllMatching([&](const State::RecentUse& use) {
+                return !state.passed.get(use.condition);
+            });
             return;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -787,8 +804,10 @@ struct TestCoverageProblem {
         uint32_t bytes = std::exchange(state.pendingBytes, 0u);
         if (!largestBudget || !bytes)
             return;
-        for (size_t condition : state.passed)
-            state.bytesSinceUse[condition] = widenedGap(state.bytesSinceUse[condition], bytes);
+        state.recentUses.removeAllMatching([&](State::RecentUse& use) {
+            use.bytesSince = widenedGap(use.bytesSince, bytes);
+            return use.bytesSince > *largestBudget;
+        });
     }
 
     const TestCoverageInputs& inputs;

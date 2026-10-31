@@ -2,7 +2,7 @@
 # FORM: Prepared
 # RUN: pass PlanArrayCapacities
 # RUN(TWICE): pass PlanArrayCapacities PlanArrayCapacities
-# STATISTIC: ArrayGrowthsPlanned = 8
+# STATISTIC: ArrayGrowthsPlanned = 7
 # TWICE: outcome: Changed
 # TWICE-NEXT: outcome: Unchanged
 
@@ -153,9 +153,11 @@ function f6 name="literalMayExceedPlannedCapacity" parameters=[{type=int[0, 1000
     Jump -> next b1(v10)
   b3():
     Return v2
-# CHECK: = NewArray {{*}}capacity=
-# CHECK: = HasSpareArrayCapacity v2
-# CHECK: ReserveArrayCapacity v2,
+# The loop runs nobody's code and ends nowhere but at its test, so it is going to append all of it: the literal gets the room, however much, and each append is told the length, the counter and the bound.
+# CHECK: = NewArray {{*}}capacity={{*}} [isFilledToCapacity]
+# CHECK-NOT: HasSpareArrayCapacity
+# CHECK: AppendElement v2, v1, v4, v4, v0
+# CHECK-NOT: ReserveArrayCapacity
 }
 
 function f7 name="literalWithinPlannedCapacity" parameters=[{type=int[0, 1000]}, {type=anything}] results=[{type=Array<anything>}] {

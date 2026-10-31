@@ -302,6 +302,7 @@ public:
     }
     std::span<const ObjectID> contentsOf(ObjectID object) const LIFETIME_BOUND { return entriesOf(object, m_contents, m_firstContent); }
     std::span<const ObjectID> containersOf(ObjectID object) const LIFETIME_BOUND { return entriesOf(object, m_containers, m_firstContainer); }
+    bool isInLocalHeapWords(ObjectID object) const { return m_objectsInLocalHeapWords.contains(object); }
 
     AliasResult alias(ValueID, ValueID) const;
     bool mayAlias(ValueID, ValueID) const;
@@ -395,6 +396,7 @@ private:
     Vector<StoredSet> m_sets;
     BitVector m_noObjects;
     SparseObjectSet m_emptySet;
+    SparseObjectSet m_objectsInLocalHeapWords;
     mutable Vector<ValueID> m_aliases;
     mutable Vector<uint32_t> m_firstAlias;
     // Two entries per use that the solver recorded: not an escape, then an escape. That is all that differs between the objects of one use.
@@ -423,6 +425,8 @@ private:
 
 // Words of different groups hold different objects.
 bool isFrameWordWithAllocationGroup(const Function&, const Value&);
+// A load or store of a word in a NewHeapWords cell of this function.
+bool accessesLocalHeapWords(const Function&, const Value&);
 
 // False where every allocation that the value may name was read out of an object that is open to others, and so has a use that lets it escape.
 bool mayNameUnescapedAllocation(const Function&, ValueID);

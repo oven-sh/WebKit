@@ -340,24 +340,47 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
     };
 
     isNotInlineValue.link(&jit);
-    if (testsDoublesSecond) {
-        // The doubles are the last operands of the last form.
+    // The doubles are the last operands of the last form.
+    auto readDoubleOrGoOn = [&] {
+        RELEASE_ASSERT(!formsTakenOff);
         constexpr int32_t firstDouble = static_cast<int32_t>((static_cast<uint32_t>(Form::Field) << FieldTableEntry::formShift) + FieldTableEntry::firstDouble);
         Jump isNotDouble = jit.branch32(CCallHelpers::Below, operand, TrustedImm32(firstDouble));
         readDouble(firstDouble);
         isNotDouble.link(&jit);
-    }
+    };
+    // Asked for in their order, with nothing taken off, a form needs its upper bound alone, and the load takes the form off:
+    // one operand of x86-64 holds a base, an index and a distance. Elsewhere the distance costs more than taking the form off.
+#if CPU(X86_64)
+    const bool asksInOrder = !testsOutOfLineValuesSecond;
+#else
+    const bool asksInOrder = false;
+#endif
+    auto branchUnlessNextFormIs = [&](Form form) {
+        if (!asksInOrder)
+            return branchUnlessFormIs(form);
+        RELEASE_ASSERT(!formsTakenOff);
+        return jit.branch32(CCallHelpers::Above, operand, TrustedImm32(static_cast<int32_t>(static_cast<uint32_t>(form) << FieldTableEntry::formShift | FieldTableEntry::maxOperand)));
+    };
+    auto narrowSlot = [&](Form form) {
+        int32_t formInOperand = asksInOrder ? static_cast<int32_t>(static_cast<uint32_t>(form) << FieldTableEntry::formShift) : 0;
+        return BaseIndex(probe.receiver, operand, CCallHelpers::TimesFour, -formInOperand * static_cast<int32_t>(sizeof(uint32_t)));
+    };
+    if (testsDoublesSecond)
+        readDoubleOrGoOn();
     if (testsOutOfLineValuesSecond)
         readOutOfLineValue();
-    Jump isNotInt32 = branchUnlessFormIs(Form::InlineInt32);
-    jit.load32(BaseIndex(probe.receiver, operand, CCallHelpers::TimesFour), word);
+    Jump isNotInt32 = branchUnlessNextFormIs(Form::InlineInt32);
+    jit.load32(narrowSlot(Form::InlineInt32), word);
     slotIsSilent.append(jit.branch32(CCallHelpers::LessThan, word, TrustedImm32(minInlineInt32)));
     boxInt32(jit, word, result);
     finish();
 
     isNotInt32.link(&jit);
-    Jump isNotNarrowCell = branchUnlessFormIs(Form::InlineNarrowCell);
-    jit.load32(BaseIndex(probe.receiver, operand, CCallHelpers::TimesFour), word);
+    const bool testsDoublesThird = asksInOrder && !testsDoublesSecond;
+    if (testsDoublesThird)
+        readDoubleOrGoOn();
+    Jump isNotNarrowCell = branchUnlessNextFormIs(Form::InlineNarrowCell);
+    jit.load32(narrowSlot(Form::InlineNarrowCell), word);
     Jump isNotCell = jit.branch32(CCallHelpers::Below, word, TrustedImm32(minCell32));
     decodeCell32(jit, word, result);
     finish();
@@ -387,14 +410,15 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
 
     isNotEncodedByte.link(&jit);
     Jump isDouble;
-    if (!testsDoublesSecond)
+    const bool testsDoublesLast = !testsDoublesSecond && !testsDoublesThird;
+    if (testsDoublesLast)
         isDouble = jit.branch32(CCallHelpers::AboveOrEqual, operand, TrustedImm32(first(FieldTableEntry::firstDouble)));
     jit.load8(BaseIndex(probe.receiver, operand, CCallHelpers::TimesOne, -first(FieldTableEntry::firstBoolean)), word);
     jit.or32(TrustedImm32(JSValue::ValueFalse), word);
     jit.move(word, result);
     finish();
 
-    if (!testsDoublesSecond) {
+    if (testsDoublesLast) {
         isDouble.link(&jit);
         readDouble(first(FieldTableEntry::firstDouble));
     }

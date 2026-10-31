@@ -97,6 +97,8 @@ JS_EXPORT_PRIVATE void forEachHiddenPrototype(JSGlobalObject*, const ScopedLambd
 void forEachHiddenPrototype(JSGlobalObject*, const ScopedLambda<void(BuiltinClassID, JSObject*)>&);
 JS_EXPORT_PRIVATE void forEachInstanceStructure(JSGlobalObject*, const ScopedLambda<void(BuiltinClassID, Structure*)>&);
 BuiltinClassID findClassWithInstanceStructure(JSGlobalObject*, Structure*);
+// Whether forEachInstanceStructure() knows where a realm keeps the Structure of the instances of a class of the engine. The engine makes that Structure, the prototype object and the constructor in one step: with the realm, or later, and then it reports the step.
+bool engineNamesInstanceStructureOf(BuiltinClassID);
 
 class WritesToBuiltinMembers {
 public:

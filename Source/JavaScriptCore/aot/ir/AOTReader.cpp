@@ -68,7 +68,8 @@ bool Reader::readReplaceableBuiltins()
 bool Reader::readNamesAndFamilies()
 {
     const auto& options = m_build.options();
-    if (options.verifiesProgram || options.isVerifyOnly())
+    // The families take in the records of the images below by the texts of their names.
+    if (options.verifiesProgram || options.isVerifyOnly() || m_build.imagesBelow())
         return readStrings() && readPropertyKeys() && computeFamilies();
 
     bool hasStrings = false;

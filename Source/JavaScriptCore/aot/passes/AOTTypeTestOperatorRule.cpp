@@ -11,6 +11,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTypes.h"
 #include "AOTEdgeResults.h"
+#include "AOTGenericCopy.h"
 #include "AOTInductionVariables.h"
 #include "AOTInlineCopy.h"
 #include "AOTInlineCostModel.h"
@@ -649,6 +650,9 @@ static Expected<CounterForm> formWantedOf(TestSiteReporter& reporter, const Oper
                 continue;
             const Value& user = function.at(use.user);
             if (isCastWithoutTest(user.opcode)) {
+                // A function that takes the counter takes an integer, which flow knows it to be however far it counts. Inlined, its body reckons with integers beyond 32 bits, and with an int32 where the counter is one.
+                if (reporter.typeOf(use.user).isInteger() && !reporter.typeOf(names[index]).isInteger())
+                    return CounterForm::Integer;
                 if (!names.contains(use.user) && names.size() < maxNamesOfCounter)
                     names.append(use.user);
                 continue;
@@ -702,6 +706,30 @@ static Expected<CounterForm> formWantedOf(TestSiteReporter& reporter, const Oper
     return isTakenAsNumber ? CounterForm::Number : CounterForm::Either;
 }
 
+static bool startsAtInt32(TestSiteReporter& reporter, const NaturalLoop& loop, const InductionVariable& counter, const InductionTest& test)
+{
+    if (reporter.typeOf(counter.start).isInt32())
+        return true;
+    const Function& function = reporter.function();
+    FunctionAnalyses& analyses = reporter.analyses();
+    const NaturalLoop* waysBack = findLoopOfWaysBackInto(analyses, loop);
+    ValueLocation join = analyses.useLists().locationOf(analyses.identityOf(counter.start));
+    if (!waysBack || join.placement != ValuePlacement::Parameter || join.block != waysBack->header())
+        return false;
+    BlockID whereBoundIsMade = analyses.useLists().blockOf(analyses.identityOf(test.bound));
+    if (!whereBoundIsMade || analyses.naturalLoops().belongsTo(whereBoundIsMade, *waysBack))
+        return false;
+    return std::ranges::all_of(analyses.cfg().incomingEdges(join.block), [&](Edge edge) {
+        if (edge.isHandlerEdge() || join.index >= numberOfExplicitArguments(function, edge))
+            return false;
+        ValueID entering = analyses.identityOf(valuePassedOn(function, edge, join.index));
+        if (reporter.typeOf(entering).isInt32())
+            return true;
+        BlockID whereCounterIsNamed = entering == counter.parameter ? edge.from : analyses.useLists().blockOf(entering);
+        return findParameterReckonedFrom(reporter, entering) == counter.parameter && dominatesAfterSplit(analyses, test.stayingEdge, whereCounterIsNamed);
+    });
+}
+
 // `i < n; i++` with `n: number`. Below an int32 the counter is one.
 static std::optional<uint32_t> findNumberThatBoundsCounter(TestSiteReporter& reporter, const OperatorSite& site, const Value& comparison)
 {
@@ -724,11 +752,13 @@ static std::optional<uint32_t> findNumberThatBoundsCounter(TestSiteReporter& rep
     }
 
     for (const InductionVariable& variable : reporter.analyses().inductionVariables().of(*loop).variables) {
-        if (variable.step.kind != InductionStepKind::Constant || !variable.start || !reporter.typeOf(variable.start).isInt32())
+        if (variable.step.kind != InductionStepKind::Constant || !variable.start)
             continue;
         for (const InductionTest& test : variable.tests) {
             if (test.comparison != reporter.use() || test.tested != TestedValue::BeforeStep || test.boundKind != LoopBoundKind::Invariant || !isBoundingRelation(test.relation, variable.direction))
                 continue;
+            if (!startsAtInt32(reporter, *loop, variable, test))
+                break;
             ValueID bound = reporter.analyses().identityOf(test.bound);
             bool isLeftBound = reporter.analyses().identityOf(comparison.operand(leftOperand)) == bound;
             bool isRightBound = reporter.analyses().identityOf(comparison.operand(rightOperand)) == bound;

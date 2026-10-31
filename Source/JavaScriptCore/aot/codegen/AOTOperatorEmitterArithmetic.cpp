@@ -714,12 +714,7 @@ std::optional<OperatorEmitter::RemainderLeftToTest> OperatorEmitter::findRemaind
     std::optional<Use> use = analyses().useLists().singleUse(id);
     if (!use || use->kind != Use::Kind::Operand || use->block != analyses().useLists().locationOf(id).block)
         return std::nullopt;
-
-    const Terminator& terminator = m_function.at(use->block).terminator;
-    bool handsOnRemainder = terminator.isConditionalBranch() && terminator.conditionOperand() == use->user && std::ranges::any_of(terminator.targets, [](const Target& target) {
-        return !target.proofs.isEmpty();
-    });
-    if (handsOnRemainder)
+    if (!findNarrowedParameters(m_function, analyses().useLists(), *use).isEmpty())
         return std::nullopt;
 
     RemainderLeftToTest result { remainder.leftOperand(), static_cast<int32_t>(divisor.integer()), std::nullopt };

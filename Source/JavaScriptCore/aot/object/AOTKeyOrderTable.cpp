@@ -202,6 +202,9 @@ struct OrdersOfLayout {
     uint32_t shape;
     uint32_t numberOfAddedOrders;
     AddedOrder** addedOrders;
+    uint16_t heldOrdersFound;
+    uint16_t heldOrdersMadeAfterFindingOne;
+    uint32_t heldOrdersMadeWithoutSearch;
 };
 
 struct Continuation {
@@ -293,7 +296,7 @@ struct KeyOrderTable::Storage {
             return *known;
         }
         ASSERT(layout.numberOfOrders <= maxKeyOrdersPerLayout);
-        OrdersOfLayout& orders = layouts.add({ layout.shape, 0, nullptr });
+        OrdersOfLayout& orders = layouts.add({ layout.shape, 0, nullptr, 0, 0, 0 });
         ordersAskedForLast = &orders;
         if (!layout.numberOfOrders)
             addOrder(orders, { });
@@ -676,6 +679,33 @@ std::optional<uint32_t> KeyOrderTable::orderAfterCreating(const LayoutData& layo
     if (!storage.continuations.find(layout.shape, before, entry))
         storage.continuations.add({ layout.shape, before, entry, static_cast<uint16_t>(orderOf(*result)) });
     return publish(*result);
+}
+
+void KeyOrderTable::didFindHeldOrder(const LayoutData& layout)
+{
+    AOT_THRESHOLD(uint16_t, numberRemembered, 1 << 12);
+    OrdersOfLayout& orders = m_storage->ordersOf(layout);
+    if (++orders.heldOrdersFound < numberRemembered)
+        return;
+    orders.heldOrdersFound /= 2;
+    orders.heldOrdersMadeAfterFindingOne /= 2;
+}
+
+void KeyOrderTable::didMakeHeldOrderAfterFindingOne(const LayoutData& layout)
+{
+    OrdersOfLayout& orders = m_storage->ordersOf(layout);
+    if (orders.heldOrdersMadeAfterFindingOne < orders.heldOrdersFound)
+        ++orders.heldOrdersMadeAfterFindingOne;
+}
+
+bool KeyOrderTable::shouldSearchForHeldOrder(const LayoutData& layout)
+{
+    AOT_THRESHOLD(uint32_t, numberFoundBeforeJudging, 64);
+    AOT_THRESHOLD(uint32_t, ordersMadeBetweenSearches, 16);
+    OrdersOfLayout& orders = m_storage->ordersOf(layout);
+    if (orders.heldOrdersFound < numberFoundBeforeJudging || orders.heldOrdersMadeAfterFindingOne * 8 < orders.heldOrdersFound * 7)
+        return true;
+    return !(++orders.heldOrdersMadeWithoutSearch % ordersMadeBetweenSearches);
 }
 
 // No order continues another from the end of an added one: orderAfterCreating() and orderStartingWith() both make the added order longer there. So nothing is known or published about this step yet.

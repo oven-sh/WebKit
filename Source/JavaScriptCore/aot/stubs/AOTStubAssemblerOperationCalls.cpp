@@ -12,6 +12,7 @@
 #include "AOTStubFrontEnds.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsExceptions.h"
+#include "AOTStubsOperations.h"
 #include "VM.h"
 #include <algorithm>
 #include <iterator>
@@ -60,18 +61,58 @@ void StubAssembler::prepareCallOperation()
 #endif
 }
 
-void StubAssembler::callOperationAndReturn(Entry entry, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn)
+
+void StubAssembler::callOperationAndReturn(Entry entry, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn, SavedRegistersAreRead savedRegistersAreRead)
 {
     // An operation that cannot throw leaves the register that reports an exception undefined.
     bool exceptionIsInRegister = operationCall.returns == OperationCall::Returns::Value || operationCall.returns == OperationCall::Returns::Void;
     RELEASE_ASSERT(!operationCall.checksException || !exceptionIsInRegister || effectsOf(entry).mayThrow);
     OperationCall call = operationCall;
     call.pollsBeforeReturning = mayFailToAllocate(entry, call.firstArgument);
-    emitOperationCallAndReturn(entry, call, beforeReturn);
+    emitOperationCallAndReturn(entry, call, beforeReturn, savedRegistersAreRead);
 }
 
-void StubAssembler::emitOperationCallAndReturn(const CalledOperation& operation, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn)
+// A stub may hand an operand back as its result: then the register comes back by being saved.
+bool StubAssembler::resultsComeFromOperation(const OperationCall& operationCall) const
 {
+    RegisterSet returned;
+    switch (operationCall.returns) {
+    case OperationCall::Returns::Void:
+        break;
+    case OperationCall::Returns::Value:
+        returned.add(operationCall.valueDestination.value_or(GPRInfo::returnValueGPR), IgnoreVectors);
+        break;
+    case OperationCall::Returns::Double:
+        returned.add(FPRInfo::returnValueFPR, IgnoreVectors);
+        break;
+    case OperationCall::Returns::Pair:
+        returned.add(GPRInfo::returnValueGPR, IgnoreVectors);
+        returned.add(GPRInfo::returnValueGPR2, IgnoreVectors);
+        break;
+    }
+    for (Reg result : { m_signature.firstResult, m_signature.secondResult }) {
+        if (result && !returned.contains(result, IgnoreVectors))
+            return false;
+    }
+    return m_signature.result != StubResult::Flags;
+}
+
+bool StubAssembler::resultsInFPRsComeFromOperation(const OperationCall& operationCall) const
+{
+    for (Reg result : { m_signature.firstResult, m_signature.secondResult }) {
+        if (result && result.isFPR() && (operationCall.returns != OperationCall::Returns::Double || result != Reg(FPRInfo::returnValueFPR)))
+            return false;
+    }
+    return true;
+}
+
+void StubAssembler::emitOperationCallAndReturn(const CalledOperation& operation, const OperationCall& givenCall, const ScopedLambda<void()>& beforeReturn, SavedRegistersAreRead savedRegistersAreRead)
+{
+    OperationCall operationCall = givenCall;
+    const bool savesFPRs = operationCall.saves == OperationCall::Saves::CallerSavedRegisters || operationCall.saves == OperationCall::Saves::CallerSavedGPRsAndFewFPRs;
+    const bool savesNoFPRsForCaller = callerKeepsNoFPRs() && savesFPRs && savedRegistersAreRead == SavedRegistersAreRead::ByCallerAlone && resultsInFPRsComeFromOperation(operationCall);
+    if (savesNoFPRsForCaller)
+        operationCall.saves = OperationCall::Saves::CallerSavedGPRs;
     RELEASE_ASSERT(m_savedRegisterStack.isEmpty());
     checkHasNoBorrowedFPRs();
     RELEASE_ASSERT(!operationCall.valueDestination || operationCall.returns == OperationCall::Returns::Value);
@@ -80,13 +121,21 @@ void StubAssembler::emitOperationCallAndReturn(const CalledOperation& operation,
         RELEASE_ASSERT(!operationCall.constantArguments[0] && !operationCall.constantArguments[1]);
         RELEASE_ASSERT(operationCall.spilledArguments->count < numberOfOperationArgumentGPRs);
     }
-    switch (operationCall.saves) {
+    OperationCall::Saves saves = operationCall.saves;
+    if (callerKeepsNoRegisters() && savedRegistersAreRead == SavedRegistersAreRead::ByCallerAlone && !operationCall.spilledArguments && resultsComeFromOperation(operationCall)) {
+        saves = OperationCall::Saves::Nothing;
+        for (unsigned index = 0; index < m_signature.numberOfOperands; ++index) {
+            if (m_signature.operands[index].isGPR())
+                clobberOperand(index);
+        }
+    }
+    switch (saves) {
     case OperationCall::Saves::Nothing:
         emitOperationCallSavingNothing(operation, operationCall, beforeReturn);
         return;
     case OperationCall::Saves::CallerSavedGPRs:
     case OperationCall::Saves::CallerSavedGPRsAndFewFPRs:
-        RELEASE_ASSERT(operationCall.returns != OperationCall::Returns::Double);
+        RELEASE_ASSERT(operationCall.returns != OperationCall::Returns::Double || savesNoFPRsForCaller);
         [[fallthrough]];
     case OperationCall::Saves::CallerSavedRegisters:
         RELEASE_ASSERT(operationCall.returns != OperationCall::Returns::Pair);
@@ -276,26 +325,35 @@ void StubAssembler::emitFramelessCallerEpilogue()
     push(s_scratchRegister);
 }
 
+static constexpr GPRReg gprsSavedAroundOperation[] = { X86Registers::eax, X86Registers::ecx, X86Registers::edx, X86Registers::esi, X86Registers::edi, X86Registers::r8, X86Registers::r9, X86Registers::r10 };
+
+template<typename Functor>
+static void forEachFPRSavedAroundOperation(OperationCall::Saves saves, const Functor& functor)
+{
+    if (saves == OperationCall::Saves::CallerSavedGPRs)
+        return;
+    const RegisterSet unsaved = saves == OperationCall::Saves::CallerSavedGPRsAndFewFPRs ? floatingPointRegistersLostToAccessors(StubCallee::Operation) : RegisterSet();
+    for (unsigned i = 0; i < 16; ++i) {
+        FPRReg fpr = static_cast<FPRReg>(X86Registers::xmm0 + i);
+        if (!unsaved.contains(fpr, IgnoreVectors))
+            functor(fpr, i);
+    }
+}
+
 void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& operation, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn)
 {
     RELEASE_ASSERT(key().callerFrame() != CallerFrame::Frameless);
     constexpr GPRReg sp = stackPointerRegister;
     constexpr GPRReg scratch = s_scratchRegister;
-    constexpr GPRReg saved[] = { X86Registers::eax, X86Registers::ecx, X86Registers::edx, X86Registers::esi, X86Registers::edi, X86Registers::r8, X86Registers::r9, X86Registers::r10 };
+    constexpr auto& saved = gprsSavedAroundOperation;
     constexpr unsigned numberOfGPRs = std::size(saved);
     static_assert(!(numberOfGPRs % 2));
     static_assert(FPRInfo::returnValueFPR == X86Registers::xmm0);
     const bool returnsValue = operationCall.returns == OperationCall::Returns::Value;
     const bool returnsDouble = operationCall.returns == OperationCall::Returns::Double;
     const std::optional<GPRReg> valueDestination = operationCall.valueDestination;
-    const unsigned numberOfFPRs = operationCall.saves == OperationCall::Saves::CallerSavedGPRs ? 0 : 16;
     const unsigned numberOfSpillSlots = operationCall.spilledArguments ? std::max(operationCall.spilledArguments->count, 1u) : 0;
-    auto fpr = [](unsigned i) { return static_cast<FPRReg>(X86Registers::xmm0 + i); };
-    const RegisterSet unsavedFPRs = operationCall.saves == OperationCall::Saves::CallerSavedGPRsAndFewFPRs ? floatingPointRegistersLostToAccessors(StubCallee::Operation) : RegisterSet();
-    auto savesFPR = [&](unsigned i) { return !unsavedFPRs.contains(fpr(i), IgnoreVectors); };
-    auto slot = [&](unsigned i) { return Address(sp, (numberOfSpillSlots + i) * sizeof(CPURegister)); };
     RELEASE_ASSERT(!valueDestination || std::ranges::find(saved, *valueDestination) != std::end(saved));
-
     RegisterSet restored;
     for (GPRReg reg : saved) {
         if (returnsValue && reg == GPRInfo::returnValueGPR && !valueDestination)
@@ -303,21 +361,43 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
         if (reg == valueDestination || !m_recording.clobbered().contains(Reg(reg), IgnoreVectors))
             restored.add(reg);
     }
-    for (unsigned i = returnsDouble; i < numberOfFPRs; ++i) {
-        if (savesFPR(i))
-            restored.add(fpr(i), IgnoreVectors);
-    }
+    forEachFPRSavedAroundOperation(operationCall.saves, [&](FPRReg fpr, unsigned) {
+        if (!returnsDouble || fpr != FPRInfo::returnValueFPR)
+            restored.add(fpr, IgnoreVectors);
+    });
 
+    // The arguments that go in memory lie at the stack pointer, the registers below the frame pointer.
     emitFunctionPrologue();
-    subPtr(TrustedImm32(alignedSizeOfRegisters(numberOfSpillSlots + numberOfGPRs + numberOfFPRs)), sp);
+    // The frame has room for what is saved and for no more: a word that nobody writes holds what an earlier frame left there, and the operation may collect.
+    // The floating-point registers lie nearest: a displacement of one byte reaches sixteen words below the frame pointer, and as many above the stack pointer.
+    std::array<unsigned, 16> indexOfFPR { };
+    std::array<unsigned, numberOfGPRs> indexOfGPR { };
+    unsigned numberOfSlots = 0;
+    forEachFPRSavedAroundOperation(operationCall.saves, [&](FPRReg fpr, unsigned i) {
+        if (restored.contains(fpr, IgnoreVectors))
+            indexOfFPR[i] = numberOfSlots++;
+    });
     for (unsigned i = 0; i < numberOfGPRs; ++i) {
         if (restored.contains(Reg(saved[i]), IgnoreVectors))
-            store64(saved[i], slot(i));
+            indexOfGPR[i] = numberOfSlots++;
     }
-    for (unsigned i = returnsDouble; i < numberOfFPRs; ++i) {
-        if (savesFPR(i))
-            storeDouble(fpr(i), slot(numberOfGPRs + i));
+    const int32_t sizeOfFrame = alignedSizeOfRegisters(numberOfSpillSlots + numberOfSlots);
+    if (sizeOfFrame)
+        subPtr(TrustedImm32(sizeOfFrame), sp);
+    auto slot = [&](unsigned index) {
+        int32_t belowFramePointer = (index + 1) * sizeof(CPURegister);
+        return belowFramePointer <= 128 ? Address(GPRInfo::callFrameRegister, -belowFramePointer) : Address(sp, sizeOfFrame - belowFramePointer);
+    };
+    auto slotOfGPR = [&](unsigned i) { return slot(indexOfGPR[i]); };
+    auto slotOfFPR = [&](unsigned i) { return slot(indexOfFPR[i]); };
+    for (unsigned i = 0; i < numberOfGPRs; ++i) {
+        if (restored.contains(Reg(saved[i]), IgnoreVectors))
+            store64(saved[i], slotOfGPR(i));
     }
+    forEachFPRSavedAroundOperation(operationCall.saves, [&](FPRReg fpr, unsigned i) {
+        if (restored.contains(fpr, IgnoreVectors))
+            storeDouble(fpr, slotOfFPR(i));
+    });
     withSavedRegisters(restored, [&] {
         if (operationCall.spilledArguments) {
             for (unsigned i = 0; i < operationCall.spilledArguments->count; ++i)
@@ -344,16 +424,16 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
         loadPtr(pollIsDueWord(), scratch);
     for (unsigned i = 0; i < numberOfGPRs; ++i) {
         if (saved[i] == valueDestination)
-            store64(GPRInfo::returnValueGPR, slot(i));
+            store64(GPRInfo::returnValueGPR, slotOfGPR(i));
     }
     for (unsigned i = 0; i < numberOfGPRs; ++i) {
         if (restored.contains(Reg(saved[i]), IgnoreVectors))
-            load64(slot(i), saved[i]);
+            load64(slotOfGPR(i), saved[i]);
     }
-    for (unsigned i = returnsDouble; i < numberOfFPRs; ++i) {
-        if (savesFPR(i))
-            loadDouble(slot(numberOfGPRs + i), fpr(i));
-    }
+    forEachFPRSavedAroundOperation(operationCall.saves, [&](FPRReg fpr, unsigned i) {
+        if (restored.contains(fpr, IgnoreVectors))
+            loadDouble(slotOfFPR(i), fpr);
+    });
     if (valueDestination)
         recordClobber(*valueDestination);
     emitFunctionEpilogue();
@@ -383,6 +463,7 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
     pollBeforeReturningFromOperation(afterPoll);
 }
 #else
+
 void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& operation, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn)
 {
     RELEASE_ASSERT(key().callerFrame() != CallerFrame::Frameless);

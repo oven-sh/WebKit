@@ -219,7 +219,7 @@ static void fillStubReturnAddresses(Instance& instance, const Image& image)
     }
 }
 
-static void fillImageWords(Instance& instance, VM& vm, const Image& image)
+static void fillImageWords(Instance& instance, VM& vm, const Image& image, ProgramIdentifiers& identifiers)
 {
     ImageWords& words = instance.image;
     words.code = image.code().data();
@@ -244,7 +244,8 @@ static void fillImageWords(Instance& instance, VM& vm, const Image& image)
     words.stringConstants = image.section<uint32_t>(ImageSection::StringConstants).data();
     words.listedStrings = image.section<uint32_t>(ImageSection::LongStrings).data();
     words.text = image.section<uint8_t>(ImageSection::Text).data();
-    words.programSymbols = &vm.aotState().identifiers->symbols();
+    words.programSymbols = &identifiers.symbols();
+    identifiers.didGainInstance();
     fillStubReturnAddresses(instance, image);
 }
 
@@ -431,7 +432,7 @@ size_t numberOfRunningInstances(const VMState& state)
     });
 }
 
-static Instance* reserveInstanceOfRunningImage(VM& vm, JSGlobalObject* realm)
+static Instance* reserveInstanceOfRunningImage(VM& vm, JSGlobalObject* realm, ProgramIdentifiers& identifiers)
 {
     VMState& vmState = vm.aotState();
     const Image& image = *vmState.image;
@@ -443,7 +444,7 @@ static Instance* reserveInstanceOfRunningImage(VM& vm, JSGlobalObject* realm)
     instance->endOfClosureNumbers = image.header().numbers.endOfClosureNumbers;
     instance->lastShape = image.header().numbers.lastShape;
     fillHeaderAndPrefix(*instance, vm, realm);
-    fillImageWords(*instance, vm, image);
+    fillImageWords(*instance, vm, image, identifiers);
     fillNumberWords(*instance);
     fillAllocationSpaces(*instance, vm);
     vmState.propertyCaches->publishWords(*instance);
@@ -463,12 +464,15 @@ Instance* reserveInstance(JSGlobalObject* realm)
     if (!(vmState.image->programTables().flags & ProgramTables::mayRunInMultipleInstances) && numberOfRunningInstances(vmState))
         return nullptr;
     vmState.identifiers->createEngineSymbols();
+    ProgramIdentifiers* identifiers = vmState.identifiers.get();
+    if (vmState.image->programTables().flags & ProgramTables::mayRunInMultipleInstances)
+        identifiers = new ProgramIdentifiers(vm, *vmState.image, identifiers);
 
-    Instance* first = reserveInstanceOfRunningImage(vm, realm);
+    Instance* first = reserveInstanceOfRunningImage(vm, realm, *identifiers);
     Instance* last = first;
     for (const Image* image = first->program->above(); image; image = image->above()) {
         RunningImageScope scope(vmState, image);
-        last->above = reserveInstanceOfRunningImage(vm, realm);
+        last->above = reserveInstanceOfRunningImage(vm, realm, *identifiers);
         last = last->above;
     }
     realm->setAOTInstance(first);
@@ -668,6 +672,9 @@ Instance* Instance::create(JSGlobalObject* realm)
     instance->state->caches->addClearedEachCollection("copies without frame"_s, asWritableBytes(instance->copiesWithoutFrame()));
     // A place names the cell of a key and a Structure by their addresses, and the address of one that has ended goes to another.
     instance->state->caches->addClearedEachCollection("keyed value places"_s, asWritableBytes(instance->keyedValuePlaces()));
+    instance->state->caches->addClearedEachCollection("places filed from slots"_s, asMutableByteSpan(instance->propertyCaches.placesFiledFromSlots));
+    instance->state->caches->addClearedEachCollection("places filed from slots and cleared"_s, asMutableByteSpan(instance->propertyCaches.placesFiledFromSlotsAndCleared));
+    instance->state->caches->addClearedEachCollection("accepted kinds of values"_s, asWritableBytes(instance->acceptedKindsOfValues()));
     fillInstanceClassInfos(*instance);
     initializeRuntimeWords(*instance, vm);
 
@@ -704,6 +711,9 @@ void Instance::destroy(Instance* instance)
         delete instance->state;
         unregisterStackMirror(instance, vm);
     }
+    ProgramIdentifiers& identifiers = identifiersOf(*instance);
+    if (identifiers.didLoseLastInstance() && identifiers.isOfOneRealm())
+        delete &identifiers;
     releaseMemory(instance);
 }
 

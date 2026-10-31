@@ -237,7 +237,10 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
             atom = atomOfName(*name);
         if (atom->exists)
             continueIf(*atom->exists, normalEdge(byCharacters));
-        branch(equal(loadField<Pointer>(string, m_heaps.JSString_value), atom->address), targets);
+        // Where the subject is the same in every turn of a loop, the word is read in front of the loop and compared in each turn.
+        Condition isAtomOfText = equal(loadField<Pointer>(string, m_heaps.JSString_value), atom->address);
+        ensureStillAliveHere(string);
+        branch(isAtomOfText, targets);
         m_out.appendTo(byCharacters);
     }
 

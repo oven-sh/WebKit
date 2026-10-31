@@ -78,6 +78,9 @@ void mergeArmsWithSameMember(MemberPartition& partition, ArmsToMerge armsToMerge
 
 static bool mayAnswerLikeOtherLayouts(const Layout& layout)
 {
+    // It answers for reads of its fields alone, whatever a layout of this program with the same fields answers.
+    if (layout.has(LayoutFlags::IsOfImageBelow))
+        return false;
     switch (layout.kind) {
     case LayoutKind::Record:
     case LayoutKind::Container:

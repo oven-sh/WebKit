@@ -13,6 +13,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 class ElementAccessEmitter;
+struct ArrayElements;
 
 class ArrayIntrinsicEmitter final : public BuiltinFamilyEmitter {
 public:
@@ -53,6 +54,7 @@ private:
     void newArrayOfHoles(const ValueContext&, Integer length, ValueID source, const ArrayStorageForm&, uint32_t flags);
     bool isFilledByCopyBehind(const ValueContext& allocation) const;
     const ArrayStorageForm& formToConstruct(const ValueContext&) const;
+    Integer lengthOfArrayStoredInto(const ValueContext&, const ArrayElements&);
     CellPointer sourceOrNull(ValueID);
 };
 

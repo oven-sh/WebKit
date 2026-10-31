@@ -68,7 +68,7 @@ void AssignmentPlanCache::dumpCopies(PrintStream& out) const
 
 NEVER_INLINE const ExcludedNameList& AssignmentPlanCache::addExcludedNames(VM& vm, const ExcludedRun& run)
 {
-    ProgramIdentifiers& identifiers = *vm.aotState().identifiers;
+    ProgramIdentifiers& identifiers = identifiersOf(m_state.instance);
     Vector<UniquedStringImpl*> names(run.identifiers.size(), [&](size_t index) {
         return identifiers.identifier(run.identifiers[index]).impl();
     });

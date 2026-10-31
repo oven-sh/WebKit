@@ -1,0 +1,33 @@
+# The empty string and a string of one character are cells that the VM holds from its start to its end: they are marked whoever holds them, and a store of one runs no barrier.
+# A longer string of the text has its barrier, and so has a value that may be any cell.
+# FORM: Selected
+# RUN: generate-code
+# STATISTIC: BarriersEmitted = 2
+# CHECK: f0: size=
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+function f0 name="empty" captures=[{type=env L0}] results=[{type=undefined}] {
+    v1 = String string=""
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    Return
+}
+function f1 name="oneCharacter" captures=[{type=env L0}] results=[{type=undefined}] {
+    v1 = String string="a"
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    Return
+}
+function f2 name="oneCharacterOfLatin1" captures=[{type=env L0}] results=[{type=undefined}] {
+    v1 = String string="é"
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    Return
+}
+function f3 name="longer" captures=[{type=env L0}] results=[{type=undefined}] {
+    v1 = String string="ab"
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    Return
+}
+function f4 name="anyCell" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=undefined}] {
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    Return
+}

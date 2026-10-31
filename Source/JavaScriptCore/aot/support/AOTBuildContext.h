@@ -57,6 +57,7 @@ public:
     const CompileOptions& options() const { return m_options; }
     const RecordedOptions& recordedOptions() const { return m_options.recorded; }
     bool validates() const { return m_options.recorded.validates; }
+    bool checksClaimsOfFlow() const { return validates() || m_options.checksClaimsOfFlow; }
     // A build that reports when unreachable code is reached records which pass marked the code unreachable.
     PassID passToReportForUnreachableCode() const
     {

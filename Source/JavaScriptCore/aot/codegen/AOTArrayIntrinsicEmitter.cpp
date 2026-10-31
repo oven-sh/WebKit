@@ -237,13 +237,21 @@ bool ArrayIntrinsicEmitter::isFilledByCopyBehind(const ValueContext& allocation)
 void ArrayIntrinsicEmitter::newArrayOfHoles(const ValueContext& value, Integer length, ValueID source, const ArrayStorageForm& form, uint32_t flags)
 {
     using ElementsBelowLength = ArrayAllocationEmitter::ElementsBelowLength;
+    using LengthIsSetBy = ArrayAllocationEmitter::LengthIsSetBy;
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);
-    join.add(ArrayAllocationEmitter(generator()).allocateArrayOfHoles(value, length, form, slowPath, isFilledByCopyBehind(value) ? ElementsBelowLength::NotCleared : ElementsBelowLength::Cleared));
+    ArrayAllocationEmitter allocation(generator());
+    bool isFilledByCopy = isFilledByCopyBehind(value);
+    // The operation gives the array this length too, unless the number is its capacity.
+    bool setsLengthBehindJoin = !isFilledByCopy && !(flags & NewArrayWithHolesFlag::lengthIsCapacity);
+    join.add(allocation.allocateArrayOfHoles(value, length, form, slowPath, isFilledByCopy ? ElementsBelowLength::NotCleared : ElementsBelowLength::Cleared, setsLengthBehindJoin ? LengthIsSetBy::Caller : LengthIsSetBy::Allocation));
 
     m_out.appendTo(slowPath);
     join.add(callOperation<CellPointer>(value, RuntimeOperation::NewArrayWithHoles, { sourceOrNull(source), length, word32(form.indexingType), word32(flags) }, { .isOnRarePath = true }));
-    define(value, join.finish());
+    CellPointer array = join.finish();
+    if (setsLengthBehindJoin)
+        allocation.setLengthOfNewArray(array, length);
+    define(value, array);
 }
 
 void ArrayIntrinsicEmitter::newArrayOfForm(const ValueContext& value, const ArrayStorageForm& form)
@@ -266,6 +274,25 @@ void ArrayIntrinsicEmitter::generateNewArrayWithCapacity(const ValueContext& val
     newArrayOfHoles(value, length, value->sourceOperand(), formToConstruct(value), NewArrayWithHolesFlag::lengthIsCapacity);
 }
 
+Integer ArrayIntrinsicEmitter::lengthOfArrayStoredInto(const ValueContext& value, const ArrayElements& storage)
+{
+    if (!value->lengthOperand())
+        return elements().publicLength(storage);
+    Integer length = integerOperand(value->lengthOperand());
+    if (!generator().validatesOrChecksProofs())
+        return length;
+    LBasicBlock isInvalid = newBlock();
+    LBasicBlock isValid = newBlock();
+    branch(equal(length, elements().publicLength(storage)), { normalEdge(isValid), rareEdge(isInvalid) });
+
+    m_out.appendTo(isInvalid);
+    callVoidOperation(value, RuntimeOperation::ReportValidationFailure, { boxCell(storage.array), word32(static_cast<int32_t>(ValidationFailureKind::ValueType)), word32(m_id.index()), word32(value.id().index()) }, { .isOnRarePath = true });
+    m_out.unreachable();
+
+    m_out.appendTo(isValid);
+    return length;
+}
+
 void ArrayIntrinsicEmitter::generateTryPutByValDirect(const ValueContext& value)
 {
     const ArrayStorageForm& form = formToConstruct(value);
@@ -284,7 +311,7 @@ void ArrayIntrinsicEmitter::generateTryPutByValDirect(const ValueContext& value)
     Join<Condition> join(m_out);
     branchUnless(elements().hasWritableShape(elements().indexingMode(array, IndexingShapeAndWritabilityMask), form), otherwise);
     ArrayElements storage = elements().elementsOf(array);
-    branchUnless(below(index, elements().publicLength(storage)), otherwise);
+    branchUnless(below(index, lengthOfArrayStoredInto(value, storage)), otherwise);
     elements().storeRawElement(form, storage, index, *rawElement);
     if (form.holdsCells)
         barrierAfterStore(value, array, *rawElement, typeOf(stored));

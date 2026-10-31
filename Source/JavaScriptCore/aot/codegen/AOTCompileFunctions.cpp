@@ -184,9 +184,12 @@ static std::optional<ForwardingPlan> planForwarding(const CodeGenerationWorker& 
     if (call.opcode != Opcode::CallDirect || !program.at(call.function()).hasBody() || program.typeOf(function, block.values.last()).isNever())
         return std::nullopt;
     std::span<const ValueID> valuesBeforeCall = block.values.span().first(block.values.size() - 1);
+    bool checksProofs = worker.build.recordedOptions().has(TestingSwitch::CheckProofsAtRunTime);
     for (ValueID value : valuesBeforeCall) {
         Opcode opcode = function.at(value).opcode;
         if (opcode != Opcode::GetCapture && opcode != Opcode::AssumeType && !makesFact(opcode) && !isCastThatProvesNothing(opcode))
+            return std::nullopt;
+        if (opcode == Opcode::AssumeType && checksProofs)
             return std::nullopt;
     }
     if (!generatesOnlyWhatTheProgramAsksFor(worker, inputs, id))

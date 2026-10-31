@@ -303,6 +303,15 @@ static void lookUpThroughInstances(ValueFlowRuleContext& context, ValueFlowObjec
     if (mayBeUntrackedObject(context, chain))
         context.add(escapedNode, untrackedObject);
     ClimbingSet objectsOfProgram = context.restrict(known(context, chain), ValueSets::complement(universe.builtinObjects()));
+    // Where a statement has put a value nobody knows above them, they find what stands above the instances of any other family.
+    ValueFlowNodeID belowInstances = context.nodes().ofHost(ValueFlowHostNode::ObjectsPutBelowInstances);
+    LayoutID layoutOfFamily = universe.layoutOf(family);
+    FunctionID constructor = layoutOfFamily ? program.at(layoutOfFamily).constructor : universe.functionOf(family);
+    ClimbingSet putAbove = context.valueOf(context.readWhatWasWritten(context.restrict(objectsOfProgram, ValueSets::complement(instances)), prototypeLinkName));
+    if (constructor)
+        putAbove = context.unite(putAbove, context.valueOf(context.lookup(only(context, universe.closureOf(constructor)), ValueFlowName::property(program.keyOf(BuiltinNames::prototype)))));
+    if (mayBeUnknownObject(context, putAbove))
+        context.add(belowInstances, ClimbingSet(instances));
     ClimbingSet above = context.restrict(objectsOfProgram, ValueSets::complement(instances));
     above = context.unite(above, context.restrict(context.valueOf(context.readWhatWasWritten(ClimbingSet(instances), prototypeLinkName)), instances));
     above = leaveHoldersOfExportsUnsearched(context, above);
@@ -375,6 +384,7 @@ static void lookUpThroughInstances(ValueFlowRuleContext& context, ValueFlowObjec
 
     ValueFlowCallGroup group = context.group(called, ValueFlowCallKind::CallByNativeCode);
     context.connect(context.masked(escapedNode, instances), group.thisValue);
+    context.add(group.thisValue, context.valueWithin(context.valueOf(belowInstances), escapedNode));
     ValueFlowObjectID makersOfProxies[] { universe.objectOf(Builtins::Proxy), universe.objectOf(Builtins::ProxyRevocable) };
     if (holdsSomething(context, context.valueWithin(ClimbingSet(context.maker().of(makersOfProxies)), context.nodes().ofHost(ValueFlowHostNode::RunBuiltins))))
         context.add(group.thisValue, universe.unknownObjectAlone());
@@ -703,6 +713,7 @@ static void runRuleOnNodesNamed(const ValueFlowStatement& statement, ValueFlowRu
         case ValueFlowNameKind::RestArgument:
         case ValueFlowNameKind::AddedNames:
         case ValueFlowNameKind::NamesOfMethods:
+        case ValueFlowNameKind::ReceiversOfCalls:
             return runLookup(statement, context);
         }
     case ValueFlowStatementKind::Behavior:

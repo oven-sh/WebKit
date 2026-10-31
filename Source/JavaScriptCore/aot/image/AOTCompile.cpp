@@ -141,15 +141,25 @@ static GeneratedProgram generateProgram(Typed::PipelineOutput& pipeline, Prepare
     context.giveFreedMemoryBack();
     times.didFinish("put bodies away"_s);
     // Most of encoding the text runs on one thread, so it runs beside code generation, which is longer. So does most of the flow report, which reads what flow has left and no body.
+    auto timed = [&](ASCIILiteral name, const auto& step) {
+        PhaseTimes timesOfStep(context, PassID::GenerateCode);
+        step();
+        timesOfStep.didFinish(name);
+    };
     runTasksInParallel(context.parallelLoops(), {
         [&] {
-            result.tables = Typed::encodeProgramTables({ pipeline, plan.instanceSizes, plan.stringConstants, plan.bodyFactsForTables }, context);
-            if (!context.diagnostics().hasErrors())
+            timed("encode program tables"_s, [&] {
+                result.tables = Typed::encodeProgramTables({ pipeline, plan.instanceSizes, plan.stringConstants, plan.bodyFactsForTables }, context);
+            });
+            if (context.diagnostics().hasErrors())
+                return;
+            timed("encode text"_s, [&] {
                 result.text = encodeText({ *pipeline.program, plan.uses.strings, context.identifierNumbering(), plan.stringConstants, result.tables.namedStrings, &result.tables.stringsOnlyShown }, context);
+            });
         },
-        [&] { result.code = codeGeneration.run(); },
-        [&] { result.regExps = pipeline.takeCompiledRegExps(context); },
-        [&] { buildReport(); },
+        [&] { timed("generate code"_s, [&] { result.code = codeGeneration.run(); }); },
+        [&] { timed("compile regular expressions"_s, [&] { result.regExps = pipeline.takeCompiledRegExps(context); }); },
+        [&] { timed("build the report"_s, [&] { buildReport(); }); },
     });
     times.didFinish("generate code, encode program tables and text, compile regular expressions"_s);
     context.giveFreedMemoryBack();

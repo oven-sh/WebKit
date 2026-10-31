@@ -21,6 +21,7 @@ ValueSetID undescribedValueThatIsNoBuffer(ValueFlowRuleContext&);
 void passNoFurtherArguments(ValueFlowRuleContext&, const ValueFlowCallGroup&, unsigned numberOfArguments, unsigned numberOfPositionsTaken = numberOfGroupedArguments);
 
 ValueFlowObjectsToldApart tellObjectsApart(ValueFlowRuleContext&, ClimbingSet knownObjects);
+void passKnownReceiversToWhatTheyFind(ValueFlowRuleContext&, ClimbingSet receivers, ValueFlowName, ValueFlowNodeID receiversAnswered);
 
 ValueSetID unknownCalleeOfStatement(ValueFlowRuleContext&);
 void forEachPartOfCallees(ValueFlowRuleContext& context, ClimbingSet callees, NOESCAPE const Invocable<void(ClimbingSet)> auto& functor)

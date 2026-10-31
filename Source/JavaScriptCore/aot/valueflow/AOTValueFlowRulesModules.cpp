@@ -969,8 +969,12 @@ void requireModule(const ValueFlowStatement& statement, ValueFlowRuleContext& co
     if (const Module& required = context.program().at(module); statement.result && !required.flags.contains(ModuleFlags::IsLibrary) && (required.kind == ModuleKind::SourceText || required.kind == ModuleKind::Data))
         context.connect(context.nodes().ofHost(ValueFlowHostNode::ExportsOfEntriesStoredInModuleCache), statement.result);
     // Modules::requireThroughCache()
-    if (statement.result && requireAddsToRequireCache(context.program(), context.program().at(statement.function).module, module))
+    if (statement.result && requireAddsToRequireCache(context.program(), context.program().at(statement.function).module, module)) {
         context.connect(context.nodes().ofHost(ValueFlowHostNode::ExportsOfEntriesStoredInModuleCache), statement.result);
+        // Modules::requireCacheEntry(): the entry of a module that a statement has listed holds the namespace object.
+        if (isHostFlagRaised(context, ValueFlowHostNode::EntriesOfModuleCacheAreRead) && libraryModulesListedInRequireCacheForStatements(context.program()).contains(module))
+            connect(context, namespaceOf(context, module), statement.result);
+    }
     // Modules::mockWhatRequireAnswered(): what the factory of a mock gave.
     if (const Module& required = context.program().at(module); statement.result && (required.kind == ModuleKind::SourceText || required.kind == ModuleKind::Data) && !required.runtimeModule && required.flags.contains(ModuleFlags::MayBeMocked)) {
         context.add(statement.result, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));

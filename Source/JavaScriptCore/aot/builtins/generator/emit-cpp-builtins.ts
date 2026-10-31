@@ -256,6 +256,7 @@ function formatClass(builtinClass: ModelClass, pools: ClassPools): string {
       "constructorOnlyReadsPrototypeOfNewTarget",
       formatUnlessFalse(builtinClass.constructorOnlyReadsPrototypeOfNewTarget),
     ],
+    ["constructorAdder", formatName(builtinClass.constructorAdder)],
     ["slots", classSlots.add(builtinClass.slots.map(slot => formatId("BuiltinSlotID", slot)))],
     ["stateHeap", formatHeap(builtinClass.stateHeap)],
   ]);

@@ -2,7 +2,7 @@
 # has pushed, would reserve room for all its turns each time the vector is full. A store to another array's length does not count
 # FORM: Prepared
 # RUN: pass PlanArrayCapacities
-# STATISTIC: ArrayGrowthsPlanned = 1
+# STATISTIC: ArrayGrowthsPlanned = 0
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="emptiedNowAndThen" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int[0, 1000000]}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
@@ -69,5 +69,5 @@ function f2 name="anotherArrayIsEmptied" parameters=[{type=int[0, 1000000]}, {ty
     Return v13
 }
 # CHECK-LABEL: function f2 name="anotherArrayIsEmptied"
-# CHECK: = HasSpareArrayCapacity v2
-# CHECK: ReserveArrayCapacity v2,
+# CHECK: = NewArray {{*}}capacity={{*}} [isFilledToCapacity]
+# CHECK: AppendElement v2, v1, v5, v5, v0

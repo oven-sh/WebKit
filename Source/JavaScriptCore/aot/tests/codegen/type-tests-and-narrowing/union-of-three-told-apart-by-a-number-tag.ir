@@ -150,11 +150,11 @@ function f1 name="evaluate" module=m0 position=133 flags=[IsChecked, HasExplicit
     Return v22
 }
 
-# The tag of three members is one byte, loaded once. The switch names every member, so two comparisons tell the three apart: what is neither the first nor the second is the third, and no arm is left for falling off the end. The tag decides the layout: every field is a plain load with no shape test.
+# The tag of three members is loaded once. The switch names every member, so two comparisons tell the three apart: what is neither the first nor the second is the third, and no arm is left for falling off the end. The tag decides the layout: every field is a plain load with no shape test.
 # CHECK-LABEL: name="evaluate" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NEXT: Int64 b@[[node]] = ArgumentReg(
-# CHECK-NEXT: Int32 b@[[op]] = Load8Z(b@[[node]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Int32 b@[[op]] = Load(b@[[node]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # CHECK: Int32 b@[[isSum]] = Equal(b@[[op]], $1(
 # CHECK: Branch(b@[[isSum]], Terminal
 # CHECK-NEXT: Successors: Then:#[[sum]], Else:#[[others]]

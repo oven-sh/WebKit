@@ -14,6 +14,7 @@
 #include "AOTBuiltinMembers.h"
 #include "AOTCFG.h"
 #include "AOTClaims.h"
+#include "AOTCodeSizeEstimate.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTEntryParameterIndexes.h"
 #include "AOTFlowApply.h"
@@ -25,6 +26,7 @@
 #include "AOTKnownClosures.h"
 #include "AOTLedger.h"
 #include "AOTNarrowFieldTypes.h"
+#include "AOTOperatorForms.h"
 #include "AOTPhaseTimes.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaOperandIndexes.h"
@@ -56,37 +58,6 @@ static constexpr unsigned variablesPerTask = 256;
 static DeadZone deadZoneOf(const LocationFlow& flow)
 {
     return flow.initialization == InitializationState::Unknown ? DeadZone::MayBeObserved : DeadZone::IsNeverObserved;
-}
-
-// At 2 ** 53 a step of one is lost to rounding: 2 ** 53 + 1 lies halfway between two doubles and goes to the even one, 2 ** 53 again. So an integer that a double holds exactly is one still after a step of one.
-// The bound is 2 ** 53 and not the largest safe integer, 2 ** 53 - 1: a step up from there is exact and leaves that range.
-static std::optional<Type> typeAfterStepOfOne(Opcode opcode, std::span<const Type> operands)
-{
-    auto stepIn = [](const Type& type) -> int64_t {
-        bool isStep = type.isInteger() && type.integers.isSingleValue() && std::abs(type.integers.minimum) == 1;
-        return isStep ? type.integers.minimum : 0;
-    };
-    const Type* stepped = &operands[0];
-    int64_t step = 0;
-    if (opcode == Opcode::Increment)
-        step = 1;
-    if (opcode == Opcode::Decrement)
-        step = -1;
-    if (opcode == Opcode::Sub)
-        step = -stepIn(operands[1]);
-    if (opcode == Opcode::Add) {
-        step = stepIn(operands[1]);
-        if (!step) {
-            step = stepIn(operands[0]);
-            stepped = &operands[1];
-        }
-    }
-    if (!step || !stepped->isInteger() || !stepped->integers.isSubsetOf(Range::exact()))
-        return std::nullopt;
-    auto afterStep = [&](int64_t integer) {
-        return std::clamp(integer + step, -maxExactInteger, maxExactInteger);
-    };
-    return Type::integer({ afterStep(stepped->integers.minimum), afterStep(stepped->integers.maximum) });
 }
 
 static bool mayBeStepOfOne(Opcode opcode)
@@ -243,6 +214,8 @@ private:
     Type typeOf(Evaluation&, FunctionID, ValueID, unsigned depth) const;
     Type typeWithoutProof(const DeclaredType& declared) const { return m_inputs.program.at(m_inputs.program.provenTypeOf(declared)); }
     bool typeWritersByRules(TypeArena&, FunctionID, std::span<const uint32_t> writers, Vector<uint32_t>& positionsAsked);
+    bool isParameterOfCallThatStays(uint32_t position) const;
+    bool isOwnParameterHandedOn(FunctionID caller, uint32_t position, ValueID) const;
     bool typeLoopsByRules();
     void assumeIntegersOfCounters();
     BitVector findPlacesTakenAsValues(const BitVector& places) const;
@@ -808,7 +781,7 @@ void NumbersOfPositions::collectWriters(const FlowResultTables& tables)
         if (!function.hasBody() || (!m_inputs.isReached(id) && !isUnsolvedCode(m_inputs, tables, id)))
             return;
         auto add = [&](uint32_t position, ValueID value) {
-            if (m_isFollowed.quickGet(position))
+            if (m_isFollowed.quickGet(position) && !isOwnParameterHandedOn(id, position, value))
                 writers.append({ position, id, value });
         };
         bool holdsWriter = m_inputs.bodies().holdsAnyOf(id, notedOperations({ ValueFlowNotedOperation::StoreToLocation, ValueFlowNotedOperation::NewObject, ValueFlowNotedOperation::NewClosure, ValueFlowNotedOperation::CallDirect }));
@@ -865,7 +838,7 @@ void NumbersOfPositions::collectWriters(const FlowResultTables& tables)
             const Function& callee = program.at(id);
             uint32_t first = m_firstEntryParameter[id.index()] + callee.firstParameterIndex();
             for (uint32_t position = 0; position < std::min<size_t>(arguments.size(), callee.numberOfPositionalParameters()); ++position) {
-                if (m_isFollowed.quickGet(first + position))
+                if (m_isFollowed.quickGet(first + position) && !isOwnParameterHandedOn(call.caller, first + position, arguments[position]))
                     writers.append({ first + position, call.caller, arguments[position] });
             }
         });
@@ -1370,7 +1343,8 @@ Type NumbersOfPositions::typeOf(Evaluation& evaluation, FunctionID id, ValueID v
         operandTypes.append(typeOf(evaluation, id, value.operand(index), depth - 1));
         operandTypes.last().primitives &= ~Primitive::Absent;
     }
-    std::optional<Type> stepped = typeAfterStepOfOne(value.opcode, operandTypes.span());
+    Vector<const Type*, 2> operandTypePointers = WTF::map<2>(operandTypes, [](const Type& type) { return &type; });
+    std::optional<Type> stepped = typeAfterStepOfOne(value.opcode, operandTypePointers.span());
     Type computed = stepped ? *stepped : computeOperatorResultType(TypingContext { program, function, evaluation.arena }, value.opcode, operandTypes.span());
     return isBehindCheck ? computed : withNumbersOf(computed);
 }
@@ -1433,17 +1407,115 @@ bool NumbersOfPositions::typeWritersByRules(TypeArena& arena, FunctionID id, std
     propagation.restartAllValues();
     propagation.solveTypes();
     bool hasFoundSomething = false;
-    for (uint32_t writer : writers) {
+    auto note = [&](uint32_t writer) {
         ValueFlowNumbers typed;
         typed.add(arena.at(copy.at(m_writers[writer].value).type));
         ValueFlowNumbers both = m_numbersByRules[writer].meetWith(typed);
         if (both == m_numbersByRules[writer])
-            continue;
+            return;
         hasFoundSomething = true;
         m_rulesHaveMoved[writer] = 1;
         m_numbersByRules[writer] = both;
+    };
+    for (uint32_t writer : writers)
+        note(writer);
+
+    // `for (let i = 0; i < n; i++) use(i)` with `n: number`: the loop keeps its counter as a double, which takes a step at no cost. What it hands to `use` is an integer all the same, and `use` is better off with one:
+    // the caller holds an int32 wherever `n` is one, and `i % 8`, `list[i]` and `map.get(i)` ask for no conversion. The call assumes the type of the parameter, as it does for whatever else flow alone knows of an argument.
+    // Where the call is inlined no parameter is handed anything: the body reckons with the counter of the loop as the loop keeps it.
+    auto isWholeNumberHandedToCall = [&](uint32_t writer) {
+        const Type& type = arena.at(copy.at(m_writers[writer].value).type);
+        return type.isNumberWithoutFraction() && !type.isInteger() && isParameterOfCallThatStays(m_writers[writer].position);
+    };
+    Vector<uint32_t, 8> wholeNumbers;
+    for (uint32_t writer : writers) {
+        if (isWholeNumberHandedToCall(writer))
+            wholeNumbers.append(writer);
     }
+    if (wholeNumbers.isEmpty())
+        return hasFoundSomething;
+    knownTypes.stepsOfOneStayIntegers = true;
+    TypePropagation withIntegerSteps(TypePropagationInputs { program, id, copy, analyses, arena, m_inputs.build, nullptr, &knownTypes });
+    withIntegerSteps.restartAllValues();
+    withIntegerSteps.solveTypes();
+    for (uint32_t writer : wholeNumbers)
+        note(writer);
     return hasFoundSomething;
+}
+
+// `function walk(i, depth) { if (depth > 0) return walk(i, depth - 1); .. }`: a function that calls itself hands `i` what `i` holds, which is nothing that no other call has handed it.
+bool NumbersOfPositions::isOwnParameterHandedOn(FunctionID caller, uint32_t position, ValueID value) const
+{
+    const Function& function = m_inputs.program.at(caller);
+    uint32_t first = m_firstEntryParameter[caller.index()];
+    if (!value || position < first || position - first >= function.numberOfEntryParameters())
+        return false;
+    return definitionThroughSameValues(function, value) == function.at(entryBlock).parameters[position - first];
+}
+
+bool NumbersOfPositions::isParameterOfCallThatStays(uint32_t position) const
+{
+    if (m_firstResult.isEmpty() || position < m_firstEntryParameter[0] || position >= m_firstResult[0])
+        return false;
+    const Program& program = m_inputs.program;
+    size_t index = std::ranges::upper_bound(m_firstEntryParameter, position) - m_firstEntryParameter.begin() - 1;
+    const Function& callee = program.functions[index];
+    uint32_t first = m_firstEntryParameter[index];
+    if (callee.entryParameterKind(position - first) != EntryParameter::Parameter)
+        return false;
+    // A parameter without a written type, of which an int32 is only expected, arrives as a value of any type, where its tag tells an int32: no double is handed over, and the tests that the expectation gets are what the passes reckon with.
+    const DeclaredType& declared = *callee.declaredEntryParameter(position - first);
+    if (declared.isExpected() && !declared.site)
+        return false;
+
+    // A double takes a sum at no cost and goes into a field of numbers as it is, an integer beyond 32 bits does not. The integer pays where the function does with it what an integer is better for:
+    // an operator that converts a number first and calls if that fails, `i % 8` or `i & 7`, or an element to find, `list[i]`.
+    constexpr OpcodeSet operationsOnElements { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas };
+    constexpr uint32_t positionOperandIndex = 1;
+    // The parameter under all its names: behind casts, and behind the tests that have narrowed it.
+    BitVector isParameter(callee.values.size());
+    isParameter.quickSet(callee.at(entryBlock).parameters[position - first].index());
+    for (bool hasGrown = true; hasGrown;) {
+        hasGrown = false;
+        for (uint32_t value = 0; value < callee.values.size(); ++value) {
+            ValueID sameValue = sameValueOperandOf(callee.values[value]);
+            if (sameValue && isParameter.quickGet(sameValue.index()) && !isParameter.quickSet(value))
+                hasGrown = true;
+        }
+        for (uint32_t block = 0; block < callee.blocks.size(); ++block) {
+            forEachEdgeResult(callee, BlockID(block), [&](const EdgeResult& result, ValueID narrowed) {
+                if (result.kind == EdgeResultKind::NarrowedOperand && result.subject && isParameter.quickGet(result.subject.index()) && !isParameter.quickSet(narrowed.index()))
+                    hasGrown = true;
+            });
+        }
+    }
+    bool isBetterOffWithInteger = std::ranges::any_of(callee.values, [&](const Value& value) {
+        bool findsElement = operationsOnElements.contains(value.opcode);
+        bool convertsNumbers = hasOperatorForm(value.opcode) && isLegalOperatorForm(value.opcode, OperatorForm::Integers) && mayCallRuntime(value.opcode, OperatorForm::Numbers);
+        if (!findsElement && !convertsNumbers)
+            return false;
+        for (uint32_t operandIndex = findsElement ? positionOperandIndex : 0; operandIndex < (findsElement ? positionOperandIndex + 1 : value.numberOfOperands()); ++operandIndex) {
+            if (value.operand(operandIndex) && isParameter.quickGet(value.operand(operandIndex).index()))
+                return true;
+        }
+        return false;
+    });
+    if (!isBetterOffWithInteger)
+        return false;
+
+    // A function that calls itself is inlined nowhere, and neither is one that is larger than what the inliner takes at the one call of a function in a loop, with an allocation that goes.
+    auto begin = std::ranges::lower_bound(m_writers, first, { }, &Writer::position);
+    auto end = std::ranges::lower_bound(m_writers, first + callee.numberOfEntryParameters(), { }, &Writer::position);
+    if (std::any_of(begin, end, [&](const Writer& writer) { return writer.function.index() == index; }))
+        return true;
+    uint64_t mostBytesInlined = m_inputs.build.limit(LimitID::InlineBudgetOnlyCallBytes) + m_inputs.build.limit(LimitID::InlineSunkAllocationBytes);
+    uint64_t bytes = 0;
+    for (const Block& block : callee.blocks) {
+        bytes += estimatedCodeBytes(program, callee, block);
+        if (bytes > mostBytesInlined)
+            return true;
+    }
+    return false;
 }
 
 bool NumbersOfPositions::typeLoopsByRules()
@@ -2465,7 +2537,7 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         }
         const Type& expected = program.at(test.expectedType().predicted());
         ValueSetID seen = inputs.seenValuesOf(maker, observed.operand);
-        if (update.claims.size() == numberOfClaimsBefore && (positions.turnsAwayConstructedObject(seen, expected) || (isObjectBeingMade(test.operand(0)) && positions.turnsAwayObjectMadeForOtherClass(seen, expected)) || positions.turnsAwayEveryObject(held, expected) || positions.turnsAwayEverySeenObject(seen, expected)))
+        if (update.claims.size() == numberOfClaimsBefore && (positions.turnsAwayConstructedObject(seen, expected) || (isObjectBeingMade(test.operand(0)) && positions.turnsAwayObjectMadeForOtherClass(seen, expected)) || positions.turnsAwayEveryObject(held, expected) || (positions.turnsAwayEverySeenObject(seen, expected) && !positions.mayHoldObjectOfProgramThatPasses(held, expected))))
             update.claims.append(FlowClaimUpdate { .claim = observed.test, .mayFail = true });
     }
 

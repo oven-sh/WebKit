@@ -228,12 +228,15 @@ JSC_DEFINE_JIT_OPERATION(operationAOTAppendHole, JSCell*, (Instance* instance, J
     OPERATION_RETURN(scope, array);
 }
 
-void reserveArrayCapacity(VM& vm, JSArray* array, uint64_t additional)
+enum class ReservedElements : bool { ArePredicted, AreGoingToBeAppended };
+
+template<ReservedElements reserved>
+static ALWAYS_INLINE void reserveArrayCapacity(VM& vm, JSArray* array, uint64_t additional)
 {
     IndexingType mode = array->indexingMode();
     if (mode != ArrayWithInt32 && mode != ArrayWithDouble && mode != ArrayWithContiguous)
         return;
-    if (additional > runtimeLimitValue(vm, LimitID::MaxReservedArrayCapacity)) {
+    if (reserved == ReservedElements::ArePredicted && additional > runtimeLimitValue(vm, LimitID::MaxReservedArrayCapacity)) {
         countLimitHit(vm, LimitID::MaxReservedArrayCapacity);
         return;
     }
@@ -248,6 +251,11 @@ void reserveArrayCapacity(VM& vm, JSArray* array, uint64_t additional)
     if (length <= array->butterfly()->vectorLength() || !array->ensureLength(vm, length))
         return;
     array->butterfly()->setPublicLength(publicLength);
+}
+
+void reserveArrayCapacity(VM& vm, JSArray* array, uint64_t additional)
+{
+    reserveArrayCapacity<ReservedElements::ArePredicted>(vm, array, additional);
 }
 
 JSArray* tryCreateArrayWithStorage(VM& vm, Structure* structure, unsigned publicLength, unsigned vectorLength, unsigned propertyRoom)
@@ -277,6 +285,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveArrayCapacity, void, (Insta
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTReserveArrayCapacity);
     reserveArrayCapacity(vm, cellArgument<JSArray>(cell, Entry::operationAOTReserveArrayCapacity), additional);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveWholeArrayCapacity, void, (Instance* instance, JSCell* cell, uint64_t additional))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTReserveWholeArrayCapacity);
+    reserveArrayCapacity<ReservedElements::AreGoingToBeAppended>(vm, cellArgument<JSArray>(cell, Entry::operationAOTReserveWholeArrayCapacity), additional);
 }
 
 // How many of the elements are numbers that Double storage can hold, from the first on. NaN stands for a hole there.
@@ -497,17 +511,23 @@ static void forEachMember(VM& vm, JSSet* set, NOESCAPE const Functor& functor)
     }
 }
 
+// As the first step of a walk does: the next time the stub walks the table.
+static void moveTableOutOfImage(JSGlobalObject* globalObject, VM& vm, JSSet* source)
+{
+    CompactTable* table = source->hasCompactStorage() ? uncheckedDowncast<CompactTable>(source->storage()) : nullptr;
+    if (!table || !table->isLive() || !table->isInImage())
+        return;
+    DeferTerminationForAWhile deferTermination(vm);
+    auto moving = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    CompactTable::tryMoveToHeap(globalObject, source);
+    moving.clearException();
+}
+
 // Of the kind asked for, or of the least kind that takes every member.
 static JSArray* newArrayOfMembers(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSSet* source, IndexingType indexingType)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // As the first step of a walk does: the next list is made by the stub.
-    if (CompactTable* table = source->hasCompactStorage() ? uncheckedDowncast<CompactTable>(source->storage()) : nullptr; table && table->isLive() && table->isInImage()) {
-        DeferTerminationForAWhile deferTermination(vm);
-        auto moving = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        CompactTable::tryMoveToHeap(globalObject, source);
-        moving.clearException();
-    }
+    moveTableOutOfImage(globalObject, vm, source);
     unsigned length = 0;
     static_assert(ArrayWithInt32 < ArrayWithDouble && ArrayWithDouble < ArrayWithContiguous);
     forEachMember(vm, source, [&](JSValue member) {
@@ -558,11 +578,59 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfMembers, JSCell*, (Instance* inst
     OPERATION_RETURN(scope, newArrayOfMembers(instance, globalObject, vm, source, static_cast<IndexingType>(indexingType)));
 }
 
+// Straight into a vector that takes every member: no second list is made, and the table is walked once.
+static bool tryAppendMembersInPlace(VM& vm, JSArray* target, JSSet* source)
+{
+    IndexingType mode = target->indexingMode();
+    if (mode != ArrayWithInt32 && mode != ArrayWithDouble && mode != ArrayWithContiguous)
+        return false;
+    unsigned length = target->butterfly()->publicLength();
+    uint64_t newLength = static_cast<uint64_t>(length) + source->size();
+    // The new places are holes until they are written, and nothing is allocated while they are.
+    if (newLength > MAX_STORAGE_VECTOR_LENGTH || !target->ensureLength(vm, static_cast<unsigned>(newLength)))
+        return false;
+    Butterfly* butterfly = target->butterfly();
+    unsigned index = length;
+    if (mode == ArrayWithContiguous) {
+        forEachMember(vm, source, [&](JSValue member) { butterfly->contiguous().atUnsafe(index++).setWithoutWriteBarrier(member); });
+        vm.writeBarrier(target);
+        return true;
+    }
+
+    bool takesAll = true;
+    if (mode == ArrayWithInt32) {
+        forEachMember(vm, source, [&](JSValue member) {
+            takesAll &= member.isInt32();
+            butterfly->contiguous().atUnsafe(index++).setWithoutWriteBarrier(member);
+        });
+    } else {
+        forEachMember(vm, source, [&](JSValue member) {
+            // NaN would read as a hole.
+            double number = member.isNumber() ? member.asNumber() : PNaN;
+            takesAll &= number == number;
+            butterfly->contiguousDouble().atUnsafe(index++) = number;
+        });
+    }
+    if (takesAll)
+        return true;
+    while (index > length) {
+        if (mode == ArrayWithDouble)
+            butterfly->contiguousDouble().atUnsafe(--index) = PNaN;
+        else
+            butterfly->contiguous().atUnsafe(--index).clear();
+    }
+    butterfly->setPublicLength(length);
+    return false;
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTAppendMembers, void, (Instance* instance, JSCell* cell, JSCell* sourceCell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTAppendMembers);
     JSArray* target = cellArgument<JSArray>(cell, Entry::operationAOTAppendMembers);
     JSSet* source = cellArgument<JSSet>(sourceCell, Entry::operationAOTAppendMembers);
+    moveTableOutOfImage(globalObject, vm, source);
+    if (tryAppendMembersInPlace(vm, target, source))
+        OPERATION_RETURN(scope);
     JSArray* members = newArrayOfMembers(instance, globalObject, vm, source, ArrayWithInt32);
     OPERATION_RETURN_IF_EXCEPTION(scope);
     appendElements(globalObject, vm, target, members);

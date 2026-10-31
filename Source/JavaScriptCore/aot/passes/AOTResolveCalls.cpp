@@ -513,15 +513,20 @@ bool mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(const Program& program, F
     return callee.capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed) && callee.role != FunctionRole::EntryChecks && mayBeCalledDirectlyOrThroughEntrypoint(program, id);
 }
 
-// A function that can leave by a tail call may have another of its function objects run above the call.
+// A function that can leave by a tail call may have another of its function objects run above the call: the function object that the caller keeps in its own frame is not the one that runs there.
+static bool canLeaveByTailCall(const Program& program, FunctionID id)
+{
+    FunctionID source = id;
+    while (FunctionID next = program.at(source).derivation.source)
+        source = next;
+    return !program.at(source).has(FunctionCapabilities::MakesNoTailCall);
+}
+
 bool mayBeCalledDirectlyWhereCalleeIsKept(const Program& program, FunctionID id)
 {
     if (mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(program, id))
         return true;
-    FunctionID source = id;
-    while (FunctionID next = program.at(source).derivation.source)
-        source = next;
-    return program.at(source).has(FunctionCapabilities::MakesNoTailCall) && program.at(id).role != FunctionRole::EntryChecks && mayBeCalledDirectlyOrThroughEntrypoint(program, id);
+    return !canLeaveByTailCall(program, id) && program.at(id).role != FunctionRole::EntryChecks && mayBeCalledDirectlyOrThroughEntrypoint(program, id);
 }
 
 bool mayBeCalledDirectlyOrThroughEntrypoint(const Program& program, FunctionID id)
@@ -540,6 +545,27 @@ bool canCallWithoutClosure(const Program& program, FunctionID id)
     if (isAccessor(callee) && recordsCalleeOnlyOnceRenamed(program, id))
         return false;
     return callee.captures.isEmpty() && !callee.has(FunctionFlags::TakesCallee) && mayBeCalledDirectly(program, id);
+}
+
+static bool canCallAccessorOfMember(const Program& program, const MemberAnswer& answer, FunctionID accessor)
+{
+    if (canCallWithoutClosure(program, accessor))
+        return true;
+    return answer.holder && isEvaluatedOnce(program, program.at(answer.holder)) && mayBeCalledDirectlyWhereCalleeIsKept(program, accessor);
+}
+
+static bool paysToReadClosureOfMember(FunctionPassContext& context, BlockID block)
+{
+    return context.function.at(block).frequency.predicted() == BlockFrequency::Normal && !context.function.runsOnlyBehindFailedTest() && isHot(heatClassOf(context, block)).predicted();
+}
+
+static Value makeReadOfClosureOfMember(TypeArena& types, ValueID receiver, PropertyKeyID key, FunctionID accessor, bool isSetter)
+{
+    Value read = IRBuilder::make(Opcode::GetAccessorOfMember, { receiver });
+    read.setKey(key);
+    read.setValueType(types.intern(Type::forFunction(accessor)));
+    read.setIsSetter(isSetter);
+    return read;
 }
 
 bool canConstructDirectly(const Program& program, FunctionID id)
@@ -903,9 +929,7 @@ Function buildConstructBody(const DerivedFunctionKey& key, DerivedFunctionInputs
     ValueID validation;
     ValueID ownClosure;
     if (closure) {
-        FunctionID closureFunction = key.target;
-        while (FunctionID source = program.at(closureFunction).derivation.source)
-            closureFunction = source;
+        FunctionID closureFunction = program.at(declaredLayoutOf(program, original.constructedClass)).constructor;
         TypeID closureType = inputs.types.intern(Type::forFunction(closureFunction));
         if (inputs.build.validates())
             validation = insertAtHead(makeValidateType(closure, closureType));
@@ -1191,9 +1215,60 @@ static bool isObjectOutsideLayouts(UnionPartKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool mayBelongToOtherInstance(const PropertyAccessContext& context, const ReceiverCandidates& subject)
+// A type that lists layouts counts as a proof of the instance where the value has it from its definition. A test of the shape narrows a value to such a type too, and the objects of every instance of the image pass it.
+bool mayBelongToOtherInstance(FunctionPassContext& context, ValueID subject, const ReceiverCandidates& candidates)
 {
-    return !subject.isProven() && instanceCountOf(context) != InstanceCount::AtMostOne;
+    if (instanceCountOf({ context.program, &context.inputs.flow }) == InstanceCount::AtMostOne)
+        return false;
+    if (!candidates.isProven())
+        return true;
+    context.planAsksAboutPlace = true;
+
+    // Where values join, the type says what they have in common, and one of them may have it from a test: each value that arrives is asked.
+    const Function& function = context.function;
+    BitVector isListed;
+    Vector<ValueID, 8> values;
+    auto add = [&](ValueID value) {
+        // What a declared type says is taken at its word, here as everywhere.
+        for (; isCastOrConversion(function.at(value).opcode); value = function.at(value).operand(0)) {
+            if (function.at(value).opcode == Opcode::Check && context.program.typeOf(function, value).layouts)
+                return;
+        }
+        if (!isListed.set(value.index()))
+            values.append(value);
+    };
+    add(subject);
+    for (size_t position = 0; position < values.size(); ++position) {
+        ValueID value = values[position];
+        if (!context.program.typeOf(function, value).layouts)
+            return true;
+        ValueLocation location = context.analyses.useLists().locationOf(value);
+        if (location.placement != ValuePlacement::Parameter || location.block == entryBlock)
+            continue;
+        for (Edge edge : context.analyses.cfg().incomingEdges(location.block)) {
+            if (edge.isHandlerEdge())
+                return true;
+            ValueID passed = valuePassedOn(function, edge, location.index);
+            if (!passed)
+                return true;
+            add(passed);
+        }
+    }
+    return false;
+}
+
+// An object of another instance stays one, whatever type it has where values join behind the test.
+bool hasFailedInstanceTest(FunctionPassContext& context, ValueID subject, BlockID block)
+{
+    if (instanceCountOf({ context.program, &context.inputs.flow }) == InstanceCount::AtMostOne)
+        return false;
+    context.planAsksAboutPlace = true;
+    return context.analyses.findEarlierTest(makeObjectTest(Proof::OwnInstance, subject, { }), block) == EarlierTest::Failed;
+}
+
+void noteWhetherTypeProvesInstance(FunctionPassContext& context, ReceiverCandidates& candidates, ValueID receiver, BlockID block)
+{
+    candidates.mayBelongToOtherInstance = candidates.proof == ReceiverProof::Type && (mayBelongToOtherInstance(context, receiver, candidates) || hasFailedInstanceTest(context, receiver, block));
 }
 
 static LayoutID classTestedBy(const Program& program, const Function& function, const Value& instanceOf)
@@ -1254,7 +1329,7 @@ static Vector<TestedInstanceOf, 2> planTestedInstanceOf(FunctionPassContext& con
         // undefined and null are instances of nothing, and the tests of an object take an object.
         if (!candidates.isProven() || candidates.mayBeNullish || answers.leavesOutLayouts)
             plan.receiverTest = ReceiverTest::Type;
-        if (mayBelongToOtherInstance(accessContext, candidates))
+        if (mayBelongToOtherInstance(context, subject, candidates))
             plan.requiredProofs.add(Proof::OwnInstance);
         if (answers.testsObjects)
             plan.requiredProofs.add(Proof::PrototypeLinkUnchanged);
@@ -1321,6 +1396,12 @@ static void appendLookupValidation(IRBuilder& builder, FunctionID method, ValueI
     Value validation = IRBuilder::make(Opcode::ValidateLookup, { firstHolder, builder.append(WTF::move(closure)) });
     validation.setKey(key);
     builder.append(WTF::move(validation));
+}
+
+// Every object has a function object of its own under the field, and a stack that is taken before one of them gets its first name is read behind it.
+static bool mayGetNameOfItsOwnOutOfSight(const Program& program, const FlowResults& flow, const PropertyAccessPlan& read)
+{
+    return read.capturesReceiver && recordsCalleeOnlyOnceRenamed(program, read.member.method) && flow.closuresMayBeNamedOutOfSight(read.member.method);
 }
 
 static bool canCallDeferredClosure(const Program& program, TypeArena& types, const PropertyAccessPlan& read)
@@ -1399,6 +1480,7 @@ struct CallArm {
     ValueID closureCreation;
     bool capturesReceiver { false };
     bool keepsCalleeInFrame { false };
+    bool readsClosureOfMember { false };
     LayoutSetID receivers;
     MemberConditions conditions;
 };
@@ -1785,6 +1867,17 @@ struct CallResolver {
         builder.moveToEndOf(branch.taken);
     }
 
+    void branchOnOwnInstance(ValueID receiver, const OriginalCopy& original)
+    {
+        RELEASE_ASSERT(expansion.isOpen());
+        Expected<BlockFrequency> frequency = function.at(builder.currentBlock()).frequency;
+        ValueID belongs = expansion.append(makeObjectTest(Proof::OwnInstance, receiver, { }));
+        IRBuilder::BranchBlocks branch = builder.emitBranch(belongs, frequency, rarerOf(frequency, BlockFrequency::Unlikely));
+        builder.moveToEndOf(branch.notTaken);
+        expansion.finishArm(expansion.appendOriginal(original));
+        builder.moveToEndOf(branch.taken);
+    }
+
     bool seldomRuns(const CallSite& site)
     {
         context.planAsksAboutPlace = true;
@@ -1817,6 +1910,11 @@ struct CallResolver {
         builder.moveToEndOf(branch.notTaken);
         expansion.finishArm(expansion.appendOriginal({ }));
         builder.moveToEndOf(branch.taken);
+    }
+
+    ValueID appendClosureOfMember(ValueID receiver, PropertyKeyID key, FunctionID accessor, bool isSetter)
+    {
+        return expansion.append(makeReadOfClosureOfMember(context.types, receiver, key, accessor, isSetter));
     }
 
     ValueID appendCall(const CallArm& arm, ValueID thisValue, ValueID closure, std::span<const ValueID> arguments)
@@ -1886,6 +1984,8 @@ struct CallResolver {
         case MemberKind::Method:
             if (!isCall || !canTestConditionsInArm(site, answer) || !canCallWithoutClosure(program, answer.method) || !canRetireMemberRead(site, answer.method))
                 return std::nullopt;
+            if (mayBeNamedOutOfSight(answer.method))
+                return originalOperations;
             return directCallArm(answer.method, answer.conditions);
         case MemberKind::Accessor: {
             if (!canTestConditionsInArm(site, answer) || isCall)
@@ -1893,9 +1993,17 @@ struct CallResolver {
             FunctionID accessor = answer.accessorFor(accessOf(site.opcode));
             if (!accessor && site.opcode == Opcode::PropGet)
                 return CallArm { .kind = CallArmKind::Undefined, .conditions = answer.conditions };
-            if (!accessor || !canCallWithoutClosure(program, accessor))
+            if (!accessor || !canCallAccessorOfMember(program, answer, accessor))
                 return std::nullopt;
-            return directCallArm(accessor, answer.conditions);
+            CallArm direct = directCallArm(accessor, answer.conditions);
+            if (!canCallWithoutClosure(program, accessor)) {
+                context.planAsksAboutPlace = true;
+                if (!paysToReadClosureOfMember(context, site.position.block))
+                    return std::nullopt;
+                direct.readsClosureOfMember = true;
+                direct.keepsCalleeInFrame = keepsCalleeOfAccessor(program, accessor);
+            }
+            return direct;
         }
         case MemberKind::Field: {
             if (!isCall)
@@ -1907,7 +2015,7 @@ struct CallResolver {
                 .maxMembers = context.limit(LimitID::MaxAccessPlanMembers),
                 .isOnlyCalled = true,
             });
-            if (!canCallDeferredClosure(program, context.types, read) || !canRetireMemberRead(site, read.member.method))
+            if (!canCallDeferredClosure(program, context.types, read) || mayGetNameOfItsOwnOutOfSight(program, flow, read) || !canRetireMemberRead(site, read.member.method))
                 return originalOperations;
             CallArm direct = directCallArm(read.member.method);
             direct.capturesReceiver = read.capturesReceiver;
@@ -1941,9 +2049,22 @@ struct CallResolver {
         bool checksReceiverAtRead = candidates.mayBeNullish;
         if (checksReceiverAtRead && !isCall)
             return declined;
+        // The members, their bits and the variables of what is entered are this instance's. Rare code stays small, and an object of another instance stays one.
+        if (hasFailedInstanceTest(context, receiver, site.position.block))
+            return declined;
+        bool testsOwnInstance = mayBelongToOtherInstance(context, receiver, candidates);
+        if (testsOwnInstance && isRare(site).predicted())
+            return declined;
 
         MemberPartition partition = partitionMembers(accessContext(), candidates.proven.span(), key, accessOf(access.opcode));
         auto armsOfPartition = partition.arms.map<Vector<std::optional<CallArm>, 4>>([&](const MemberArm& arm) { return planReceiverArm(site, arm); });
+        // `stream.state`, a field of most classes and such an accessor of a few: nothing says that the few come more often, and the arm of the others would be the unlikely one.
+        if (!partition.rest.isEmpty() || armsOfPartition.contains(std::nullopt)) {
+            for (std::optional<CallArm>& arm : armsOfPartition) {
+                if (arm && arm->readsClosureOfMember)
+                    arm = std::nullopt;
+            }
+        }
         if (!armsOfPartition.containsIf([](const std::optional<CallArm>& arm) { return arm && arm->kind != CallArmKind::OriginalOperations; })) {
             if (partition.arms.containsIf([](const MemberArm& arm) { return !arm.answer.needsNoTest(); }))
                 return std::unexpected(CallDeclineReason::NeedsTest);
@@ -1964,7 +2085,7 @@ struct CallResolver {
             split.value = site.memberRead.read().value;
         }
 
-        bool copiesMemberRead = split.hasRest;
+        bool copiesMemberRead = split.hasRest || testsOwnInstance;
         Vector<CallArm, 4> arms;
         for (uint32_t armIndex : dispatch.arms) {
             arms.append(*armsOfPartition[armIndex]);
@@ -1975,7 +2096,7 @@ struct CallResolver {
             return std::unexpected(CallDeclineReason::EffectsBeforeCall);
         LayoutSetID restReceivers = dispatch.hasRest() ? context.types.completeLayoutSet(dispatch.rest.span()) : LayoutSetID();
 
-        return [this, &site, isCall, key, checksReceiverAtRead, restReceivers, split = WTF::move(split), arms = WTF::move(arms)] {
+        return [this, &site, isCall, key, checksReceiverAtRead, testsOwnInstance, restReceivers, split = WTF::move(split), arms = WTF::move(arms)] {
             expansion.begin(site.position);
             if (isCall)
                 retireReads(site.memberRead, checksReceiverAtRead, key);
@@ -1987,12 +2108,14 @@ struct CallResolver {
             auto emitArm = [&](uint32_t armIndex, ValueID narrowed) {
                 const CallArm& arm = arms[armIndex];
                 OriginalCopy copy { receiverOperandIndex, narrowed, arm.receivers, { } };
+                if (testsOwnInstance && arm.kind != CallArmKind::OriginalOperations)
+                    branchOnOwnInstance(narrowed, copy);
                 branchOnConditions(arm.conditions.span(), copy);
                 if (arm.kind == CallArmKind::DirectCall && isCall && context.build.validates())
                     appendLookupValidation(builder, arm.closureFunction, narrowed, key, arm.capturesReceiver ? narrowed : ValueID());
                 switch (arm.kind) {
                 case CallArmKind::DirectCall:
-                    return expansion.finishArm(appendCall(arm, narrowed, { }, arguments));
+                    return expansion.finishArm(appendCall(arm, narrowed, arm.readsClosureOfMember ? appendClosureOfMember(narrowed, key, arm.closureFunction, !!stored) : ValueID(), arguments));
                 case CallArmKind::Undefined:
                     return expansion.finishArm(builder.appendUndefined());
                 case CallArmKind::OriginalOperations:
@@ -2088,7 +2211,7 @@ struct CallResolver {
         FunctionID callee = *entered;
         bool isCall = site.opcode == Opcode::Call;
         bool isStore = site.opcode == Opcode::PropSet || site.opcode == Opcode::SuperSet;
-        if (callee && !canCallWithoutClosure(program, callee))
+        if (callee && (!canCallWithoutClosure(program, callee) || mayBeNamedOutOfSight(callee)))
             return std::unexpected(CallDeclineReason::CalleeNeedsClosure);
         if (isCall && !canRetireMemberRead(site, callee))
             return declined;
@@ -2188,7 +2311,7 @@ struct CallResolver {
             return std::unexpected(CallDeclineReason::NeedsTest);
 
         bool isCall = site.opcode == Opcode::Call;
-        if (isCall && (!function.at(site.position.value).thisValueOperand() || !canCallWithoutClosure(program, answer.method)))
+        if (isCall && (!function.at(site.position.value).thisValueOperand() || !canCallWithoutClosure(program, answer.method) || mayBeNamedOutOfSight(answer.method)))
             return std::unexpected(CallDeclineReason::CalleeNeedsClosure);
         if (!isCall && (!answer.holder || !isEvaluatedOnce(program, program.at(answer.holder))))
             return declined;
@@ -2441,6 +2564,9 @@ struct CallResolver {
             // Reading the captures and keeping the callee takes more bytes than the call of the value.
             if (std::ranges::any_of(arms, &CallArm::keepsCalleeInFrame) && seldomRuns(site))
                 return std::unexpected(CallDeclineReason::CalleeNeedsClosure);
+            // A stack that is taken before the first function object is renamed is read behind it.
+            if (std::ranges::any_of(arms, [&](const CallArm& arm) { return arm.keepsCalleeInFrame && canLeaveByTailCall(program, arm.callee); }))
+                return std::unexpected(CallDeclineReason::CalleeNeedsClosure);
             return [this, &site, proof = candidates.proof(), arms = WTF::move(arms), split = createCalleeSplit(site, candidates, members->span())] {
                 expansion.begin(site.position);
                 const Value& original = expansion.original();
@@ -2595,12 +2721,17 @@ struct CallResolver {
 
     bool recordsCalleeOnlyOnceRenamed(FunctionID callee) { return Typed::recordsCalleeOnlyOnceRenamed(program, callee); }
 
+    bool mayBeNamedOutOfSight(FunctionID callee) { return recordsCalleeOnlyOnceRenamed(callee) && flow.closuresMayBeNamedOutOfSight(callee); }
+
     bool haveFunctionNamesChanged(const CallSite& site) { return hasFailedEarlier(IRBuilder::make(Opcode::AreFunctionNamesUnchanged), site); }
 
     bool isNamedByCallee(const CallSite& site, ValueID closure, FunctionID callee)
     {
-        if (!mayBeCalledDirectly(program, callee))
-            return true;
+        return !mayBeCalledDirectly(program, callee) || isNamedByCalleeOnceRenamed(site, closure, callee);
+    }
+
+    bool isNamedByCalleeOnceRenamed(const CallSite& site, ValueID closure, FunctionID callee)
+    {
         if (!recordsCalleeOnlyOnceRenamed(callee))
             return false;
         context.planAsksAboutPlace = true;
@@ -2641,6 +2772,9 @@ struct CallResolver {
         }
         // A small accessor is inlined, and nothing is left of the call.
         if (keepsCalleeInFrame && !isAccessor(program.at(only)) && seldomRuns(site))
+            return nullptr;
+        // A stack that is taken before the first function object is renamed is read behind it.
+        if (keepsCalleeInFrame && !isAccessor(program.at(only)) && canLeaveByTailCall(program, only))
             return nullptr;
         // appendCall() puts no call where the receiver cannot be what the callee takes.
         if (cannotBeThisOf(program.at(only), call.thisValueOperand()))
@@ -2689,6 +2823,7 @@ struct CallResolver {
         const Value& construct = function.at(site.position.value);
         bool isSuperCall = site.opcode != Opcode::Construct;
         ConstructArm arm { directCallArm(member, { }, candidates.value), { } };
+        arm.call.keepsCalleeInFrame = isNamedByCalleeOnceRenamed(site, candidates.value, member);
 
         ValueID newTarget = construct.newTargetOperand();
         bool isOwnNewTarget = !isSuperCall && (!newTarget || areSameObject(newTarget, construct.operand(constructorOperandIndexOf(site.opcode))));
@@ -2890,7 +3025,7 @@ struct CallResolver {
         LayoutSetID instances = answers.instances.isEmpty() ? LayoutSetID() : context.types.completeLayoutSet(answers.instances.span());
 
         bool hasFailed = instances && !failedTestMeansFalse && (hasFailedEarlier(makeInstanceTest(subject, instances), site)
-            || (mayBelongToOtherInstance(accessContext(), candidates) && hasFailedEarlier(makeObjectTest(Proof::OwnInstance, subject, { }), site)));
+            || (mayBelongToOtherInstance(context, subject, candidates) && hasFailedEarlier(makeObjectTest(Proof::OwnInstance, subject, { }), site)));
         if (hasFailed)
             instances = { };
         else
@@ -2927,7 +3062,7 @@ struct CallResolver {
                 finishArmWithWalk(subject);
             else {
                 Expected<BlockFrequency> frequency = function.at(builder.currentBlock()).frequency;
-                bool testsOwnInstance = mayBelongToOtherInstance(accessContext(), receiverCandidates(program, function, subject));
+                bool testsOwnInstance = mayBelongToOtherInstance(context, subject, receiverCandidates(program, function, subject));
 
                 ValueID test = expansion.append(makeInstanceTest(subject, instances));
                 IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, testedOperandIndex, frequency, frequency);
@@ -4109,12 +4244,13 @@ static std::optional<TestedMemberUse> planTestedAccess(FunctionPassContext& cont
     query->maxMembers = context.limit(LimitID::MaxAccessPlanMembers);
     if (established)
         query->receivers = *established;
+    AccessOperands operands = operandsOfNamedAccess(access);
+    noteWhetherTypeProvesInstance(context, query->receivers, operands.receiver, site.block);
 
     PropertyAccessPlan plan = planPropertyAccess({ context.program, &context.inputs.flow }, *query);
     if (!plan.isResolved())
         return std::nullopt;
 
-    AccessOperands operands = operandsOfNamedAccess(access);
     SlotStamp stamp = createSlotStamp(context, access, plan);
     AccessTests tests = createAccessTests(context, plan, { operands.receiver, operands.stored, stamp });
     return TestedMemberUse { { site, WTF::move(*query), WTF::move(plan) }, operands, stamp, WTF::move(tests) };
@@ -4129,6 +4265,7 @@ static std::optional<TestedMemberUse> planTestedMemberCall(FunctionPassContext& 
     query.access = Access::Read;
     query.key = call.calleeKey();
     query.receivers = established ? *established : receiverCandidates(context.program, context.function, thisValue);
+    noteWhetherTypeProvesInstance(context, query.receivers, thisValue, site.block);
     query.maxMembers = context.limit(LimitID::MaxAccessPlanMembers);
     query.isOnlyCalled = true;
     query.module = context.function.module;
@@ -4176,6 +4313,10 @@ static std::optional<TestedMemberUse> planWithTestsOfEachObject(FunctionPassCont
 static std::optional<TestedMemberUse> planWithoutFailedTests(TestSiteReporter& reporter, TestedMemberUsePlanner plan, const ValueSite& site, bool& hasFailedTest)
 {
     std::optional<TestedMemberUse> use = plan(reporter.context(), site, nullptr);
+    if (use && hasFailedInstanceTest(reporter.context(), use->operands.receiver, site.block)) {
+        hasFailedTest = true;
+        return std::nullopt;
+    }
     while (use && !use->tests.tests.isEmpty()) {
         const Value* receiverTest = use->tests.findReceiverLayoutTest();
         if (!receiverTest || reporter.findEarlierTest(*receiverTest) != EarlierTest::Failed)
@@ -4210,6 +4351,11 @@ static bool canRecreateMethodClosure(const Program& program, const PropertyAcces
     return !method.has(FunctionFlags::TakesCallee) && !method.capabilities.contains(FunctionCapabilities::RecordsCallee) && method.captures.size() == (plan.capturesReceiver ? 1u : 0u);
 }
 
+static bool mayBeNamedOutOfSight(FunctionPassContext& context, FunctionID function)
+{
+    return recordsCalleeOnlyOnceRenamed(context.program, function) && context.inputs.flow.closuresMayBeNamedOutOfSight(function);
+}
+
 // The caller's frame, which keeps the function object it calls, exists for as long as the callee runs.
 static bool keepsFrameOfCaller(TestSiteReporter& reporter)
 {
@@ -4218,8 +4364,10 @@ static bool keepsFrameOfCaller(TestSiteReporter& reporter)
 
 static bool mayBeCalledDirectlyAt(TestSiteReporter& reporter, FunctionID function)
 {
-    if (keepsFrameOfCaller(reporter))
-        return mayBeCalledDirectlyWhereCalleeIsKept(reporter.program(), function);
+    if (keepsFrameOfCaller(reporter)) {
+        bool isKept = recordsCalleeOnlyOnceRenamed(reporter.program(), function) && reporter.context().inputs.flow.closuresMayBeNamedOutOfSight(function);
+        return !(isKept && canLeaveByTailCall(reporter.program(), function)) && mayBeCalledDirectlyWhereCalleeIsKept(reporter.program(), function);
+    }
     // Above a frame that was given up only the entrypoint for calls by value says who runs.
     if (recordsCalleeOnlyOnceRenamed(reporter.program(), function) && reporter.context().inputs.flow.closuresMayBeNamedOutOfSight(function))
         return false;
@@ -4266,7 +4414,7 @@ static bool reportMemberCallTests(TestSiteReporter& reporter, const ValueSite& s
         return false;
 
     const PropertyAccessPlan& plan = use->site.plan;
-    if ((plan.requiredProofs | monotoneObjectProofs) != monotoneObjectProofs) {
+    if ((plan.requiredProofs | monotoneObjectProofs) != monotoneObjectProofs || mayGetNameOfItsOwnOutOfSight(context.program, context.inputs.flow, plan)) {
         refused.willReport();
         if (!mayBeCalledDirectlyAt(reporter, plan.member.method))
             return false;
@@ -4325,7 +4473,7 @@ static void reportMemberAccessTests(TestSiteReporter& reporter, const ValueSite&
         return leavePlan();
 
     if (plan.form == AccessForm::Method) {
-        if (!canRecreateMethodClosure(context.program, plan))
+        if (!canRecreateMethodClosure(context.program, plan) || mayBeNamedOutOfSight(context, plan.member.method))
             return refuse();
         if (canBecomeMethodClosure(context, site.value)) {
             refused.willReport();
@@ -4335,8 +4483,11 @@ static void reportMemberAccessTests(TestSiteReporter& reporter, const ValueSite&
     }
 
     FunctionID accessor = plan.member.accessorFor(use->site.query.access);
-    if (!canCallWithoutClosure(context.program, accessor))
+    if (!canCallAccessorOfMember(context.program, plan.member, accessor))
         return refuse();
+    // What is refused for the place it stands at is not refused for all that looks like it.
+    if (!canCallWithoutClosure(context.program, accessor) && !paysToReadClosureOfMember(context, reporter.point().block))
+        return leavePlan();
     refused.willReport();
     reporter.report(use->tests.tests.span(), effectsOfDirectCall(context, accessor));
     leavePlan();
@@ -4356,7 +4507,7 @@ static TestedSuperAccess planTestedSuperAccess(FunctionPassContext& context, con
     if (answer.level != KnowledgeLevel::Expected || !answer.receiverProofs.isEmpty() || answer.conditions.isEmpty())
         return { };
 
-    if (answer.kind == MemberKind::Method && kind == Access::Read && canCallWithoutClosure(program, answer.method))
+    if (answer.kind == MemberKind::Method && kind == Access::Read && canCallWithoutClosure(program, answer.method) && !mayBeNamedOutOfSight(context, answer.method))
         return { SuperAccessForm::MethodClosure, answer.method, WTF::move(answer.conditions) };
     if (answer.kind != MemberKind::Accessor)
         return { };
@@ -4634,7 +4785,23 @@ void rewriteTestedCall(TestSiteRewriter& rewriter)
             AccessRewriter(context, insert).rewrite(use->site, use->operands);
             break;
         }
-        becomeDirectCall({ .callee = use->site.plan.member.accessorFor(use->site.query.access), .thisValue = use->operands.receiver, .arguments = std::span(&use->operands.stored, use->operands.stored ? 1 : 0), .accessSite = use->stamp.accessSite, .calleeIsPredicted = true });
+        FunctionID accessor = use->site.plan.member.accessorFor(use->site.query.access);
+        ValueID closure;
+        Vector<ValueID, 8> captures;
+        if (!canCallWithoutClosure(context.program, accessor)) {
+            closure = rewriter.insertBeforeUse(makeReadOfClosureOfMember(rewriter.types(), use->operands.receiver, use->site.query.key, accessor, use->site.query.access == Access::Store));
+            captures = insertCaptures(insertion, accessor, closure);
+        }
+        becomeDirectCall({
+            .callee = accessor,
+            .captures = captures.span(),
+            .thisValue = use->operands.receiver,
+            .calleeValue = closure && context.program.at(accessor).has(FunctionFlags::TakesCallee) ? closure : ValueID(),
+            .arguments = std::span(&use->operands.stored, use->operands.stored ? 1 : 0),
+            .accessSite = use->stamp.accessSite,
+            .calleeKeptInFrame = closure && keepsCalleeOfAccessor(context.program, accessor) ? closure : ValueID(),
+            .calleeIsPredicted = true,
+        });
         break;
     }
     case Opcode::SuperGet:

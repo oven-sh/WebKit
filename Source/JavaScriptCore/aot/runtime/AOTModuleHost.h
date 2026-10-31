@@ -100,12 +100,14 @@ struct ModuleHost {
     // Calls deliverTextThatWaits() from its event loop, once for each call: in a later turn, behind every job that waits, and with every job run between two of them. Null in a host without an event loop.
     void (*callInLaterTurn)(JSGlobalObject*);
     // Differs where the file was written since: the build has asked the same of each file that the run may read again. Null in a host that reads no code at run time.
-    uint64_t (*stampOfFile)(const String& path);
+    // The path is UTF-8, and a zero follows it.
+    uint64_t (*stampOfFile)(std::span<const char> path);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);
 
-JS_EXPORT_PRIVATE std::optional<ModuleID> findModule(StringView publicPath);
+JS_EXPORT_PRIVATE std::optional<ModuleID> findModule(StringView publicPath, unsigned hashOfPath);
+inline std::optional<ModuleID> findModule(StringView publicPath) { return findModule(publicPath, publicPath.hash()); }
 // The image holds the file as something that only an import with an attribute gets.
 JS_EXPORT_PRIVATE bool holdsFormThatAttributeAsksFor(StringView publicPath);
 // False: both functions above return false for every path that starts with `start`.
@@ -139,6 +141,9 @@ JS_EXPORT_PRIVATE void forEachFirstLoad(VM&, const ScopedLambda<void(const Strin
 JS_EXPORT_PRIVATE void noteFirstLoadInEarlierProcess(VM&, const String& path, bool wasSynchronous);
 // ModuleHost::callInLaterTurn.
 JS_EXPORT_PRIVATE void deliverTextThatWaits(VM&);
+// The loader fetches the module for an import() in another image. Asked before the record is made.
+JS_EXPORT_PRIVATE bool textOfFetchedModuleComesInLaterTurn(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE void holdTextOfFetchedModule(JSGlobalObject*, ModuleID, JSPromise* fetched, AbstractModuleRecord*);
 JS_EXPORT_PRIVATE void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>&);
 // The files that have run in a program that counts how often its places run: what the compiler said of the file, and the counts by the compiler's numbers. Places past the end have not run.
 JS_EXPORT_PRIVATE void forEachCountedFile(VM&, const ScopedLambda<void(const String& description, std::span<const uint64_t> counts)>&);
@@ -237,6 +242,8 @@ JS_EXPORT_PRIVATE std::optional<ModuleID> formThatMockFinds(JSGlobalObject*, Str
 JS_EXPORT_PRIVATE Vector<ModuleID, 2> formsThatAttributesAskFor(JSGlobalObject*, StringView path);
 JS_EXPORT_PRIVATE void deferMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void runMocksBelow(JSGlobalObject*, ModuleID);
+// Behind runMocksBelow() that threw: it was the factory of the module itself, and an import statement asks for the module.
+JS_EXPORT_PRIVATE bool mockFailedBehindImportStatement(JSGlobalObject*, ModuleID);
 // The loader may answer for a name with another module than before: the next import() of a name that is left to it asks again.
 JS_EXPORT_PRIVATE void didChangePlugins(JSGlobalObject*);
 // Comes before the mockExport() of each name. A module that has not run yet never runs: neither its body nor, for its sake, what it imports. require() answers a CommonJS file with the object.

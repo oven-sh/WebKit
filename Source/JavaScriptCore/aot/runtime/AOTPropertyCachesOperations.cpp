@@ -19,6 +19,7 @@
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
+#include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
 #include "AOTPendingStars.h"
 #include "AOTPropertyCachesKeys.h"
@@ -27,11 +28,34 @@
 #include "AOTStaticFields.h"
 #include "DeferTermination.h"
 #include "ExceptionHelpers.h"
+#include "GetterSetter.h"
 #include "JSCInlines.h"
 #include "NumericStrings.h"
 #include "ProxyObject.h"
 
 namespace JSC { namespace AOT {
+
+static bool findsMemberAbove(const PropertyAnswer& answer)
+{
+    switch (answer.kind) {
+    case PropertyAnswerKind::Value:
+    case PropertyAnswerKind::Accessor:
+    case PropertyAnswerKind::FieldOrInheritedValue:
+    case PropertyAnswerKind::FieldOrInheritedAccessor:
+        return answer.holder;
+    default:
+        return false;
+    }
+}
+
+static void didFindMemberAbove(Instance* instance, JSValue base, const CachedName& name)
+{
+    Object* object = compiledObjectOrNull(base);
+    if (!object)
+        return;
+    ImageOfCellScope imageOfObject(*instance->vm, object);
+    object->state().objects->classes.didFindMemberByName(*instance->vm, object->layout(), name.uid);
+}
 
 static void fileRead(Instance* instance, JSValue base, Structure* structureBefore, const CachedName& name, const PropertySlot& slot, SiteCache site = nullptr)
 {
@@ -56,13 +80,11 @@ static void fileRead(Instance* instance, JSValue base, Structure* structureBefor
             return;
         }
     }
-    bool isFoundAbove = (answer.kind == PropertyAnswerKind::Value || answer.kind == PropertyAnswerKind::Accessor) && answer.holder;
+    bool isFoundAbove = findsMemberAbove(answer);
     instance->state->propertyCaches->cache({ structureBefore, name, SlotAccess::Read, site }, WTF::move(answer));
     ensureStillAliveHere(structureBefore);
-    if (Object* object = isFoundAbove ? compiledObjectOrNull(base) : nullptr) {
-        ImageOfCellScope imageOfObject(*instance->vm, object);
-        object->state().objects->classes.didFindMemberByName(*instance->vm, object->layout(), name.uid);
-    }
+    if (isFoundAbove)
+        didFindMemberAbove(instance, base, name);
 }
 
 // The first object that is given a name becomes a dictionary while it is filled, and the next one gets a Structure. The first object's transition does not recur, so it says nothing about the Structure it started with.
@@ -73,8 +95,12 @@ static bool beganOrEndedAsDictionary(Structure* before, Structure* after)
 
 static void fileStore(Instance* instance, JSObject* base, Structure* structureBefore, const CachedName& name, const PutPropertySlot& slot, PutMode mode, SiteCache site = nullptr)
 {
-    instance->state->propertyCaches->cache({ structureBefore, name, accessFor(mode), site }, classifyStore({ instance->globalObject, base, structureBefore, name.uid, slot, mode }));
+    PropertyAnswer answer = classifyStore({ instance->globalObject, base, structureBefore, name.uid, slot, mode });
+    bool isFoundAbove = findsMemberAbove(answer);
+    instance->state->propertyCaches->cache({ structureBefore, name, accessFor(mode), site }, WTF::move(answer));
     ensureStillAliveHere(structureBefore);
+    if (isFoundAbove)
+        didFindMemberAbove(instance, base, name);
 }
 
 static JSValue tryGetFromPermanentDictionary(Instance* instance, JSValue base, UniquedStringImpl* uid)
@@ -350,7 +376,7 @@ static bool takesAnyValue(const ProgramTables& tables, const LayoutData& layout,
 }
 
 // An empty slot means the object has no such property, unless the field has moved to the extra properties or exists without storage, which the key order says. An extensible object without the property gets a plain data property by filling the slot.
-static bool canCreateFieldInSlot(VM& vm, const Object& object, const FieldData& field)
+bool canCreateFieldInSlot(VM& vm, const Object& object, const FieldData& field)
 {
     constexpr uint16_t flagsLeftToSlowPath = fieldAttributeFlags | fieldIsPrivate | fieldIsBrand;
     if (field.flags & flagsLeftToSlowPath || object.orderWord() & orderWordIntegrityBits)
@@ -473,6 +499,8 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
     }
     access.caches().cache({ structureBefore, access.name(), accessFor(mode), access.site }, answer);
     ensureStillAliveHere(structureBefore);
+    if (findsMemberAbove(answer))
+        didFindMemberAbove(access.instance, cell, access.name());
 }
 
 static bool tryRepeatFieldExit(Instance* instance, JSValue base, uint32_t key, JSValue value, PutMode mode)
@@ -562,6 +590,15 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindGetterAndFillSiteCache, Encode
 {
     LeafOperationScope leaf(*instance->vm);
     return JSValue::encode(instance->state->propertyCaches->findGetterAndFillSiteCache(cache, base, key));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindAccessorOfMemberAndFillSiteCache, JSCell*, (Instance* instance, JSCell* base, uint32_t key, SiteCache cache))
+{
+    LeafOperationScope leaf(*instance->vm);
+    GetterSetter* accessor = instance->state->propertyCaches->findAccessorOfMemberAndFillSiteCache(cache, base, key);
+    if (!accessor) [[unlikely]]
+        crashOnWrongOperand(Entry::operationAOTFindAccessorOfMemberAndFillSiteCache);
+    return accessor;
 }
 
 // What JSObject::hasInstance() refuses, in a message that quotes the expression.
@@ -892,10 +929,14 @@ static void putByValAndCache(Instance* instance, JSValue base, JSValue property,
     else
         Object::ensureStructureForExtraPropertiesIfNeeded(vm, object);
     createClassObjectsOnChain(vm, object, name->impl());
+    bool chainLetsStoresPass = field && !compiledObject->isInSlot(*field) && !(vm.aotState().hasSeveralImages && belongsToOtherImageSlow(vm, object))
+        && caches.tables().addFilterAndCheckStoreCreatesOwnField(globalObject, *compiledObject, field->name);
+    if (chainLetsStoresPass && !shouldFile && !vm.aotState().validatesRuntime && !name->impl()->isSymbol() && canCreateFieldInSlot(vm, *compiledObject, *field) && tryCreateField(vm, compiledObject->state(), *compiledObject, *field, value))
+        return;
     Structure* structureBefore = WTF::opaque(object->structure());
     bool repeatsAddition = compiledObject || repeatsPropertyAddition(structureBefore, name->impl());
     if (compiledObject)
-        Object::putWithKnownField(object, globalObject, *name, value, slot, field);
+        Object::putWithKnownField(object, globalObject, *name, value, slot, field, chainLetsStoresPass);
     else
         base.put(globalObject, *name, value, slot);
     RETURN_IF_EXCEPTION(scope, void());

@@ -6,10 +6,9 @@
 # LOSS: MaxArrayLiteralBatch
 # REQUIRES: unsanitized-code
 # RUN: lower-to-b3 optimized f5
-# CHECK: b@[[storage]] = Load({{*}}Reads:JSArray_butterfly, [[first]]:PutContiguousIndex)
-# CHECK-NEXT: = Load(b@[[storage]], offset = -8, {{*}}Reads:Butterfly_publicLength, [[first]]:PutContiguousIndex)
-# CHECK-NOT: Reads:JSArray_butterfly, {{*}}:PutContiguousIndex)
-# CHECK-NOT: Reads:Butterfly_publicLength, {{*}}:PutContiguousIndex)
+# CHECK: b@[[storage]] = Load({{*}}Reads:JSArray_butterfly, {{*}}:NewContiguousArray)
+# CHECK-NOT: Reads:JSArray_butterfly
+# CHECK-NOT: Reads:Butterfly_publicLength
 # CHECK: end of function f5
 # REQUIRES(FILLED): unsanitized-code
 # RUN(FILLED): lower-to-b3 optimized f5

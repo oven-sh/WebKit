@@ -45,6 +45,8 @@ public:
     ZeroedBy whoZeroesBody(const OperationContext&, AllocationID, unsigned storesOfZero) const;
     CellPointer allocateObjectCopy(const OperationContext&, AllocationID, CellPointer source, unsigned fieldBytes);
     CellPointer allocateInFrame(const OperationContext&, size_t size, const PlannedLayout* = nullptr);
+    // Value::isMadeForOneUse(). Emitted behind the call.
+    void clearCellsMadeFor(const Value& call);
     // In a build that validates or checks proofs at run time, emitted before anything that leaves or saves the frame: the cells that the function kept in the frame end their lifetime here.
     void leaveFrameOfCheckedCells();
 
@@ -65,6 +67,13 @@ private:
     void copyFromBuffer(Word32 count, Pointer buffer, Pointer butterfly, LBasicBlock copyLoop, LBasicBlock copyElement, LBasicBlock copied);
     void zeroBody(CellPointer, AllocationID);
 
+    struct CellMadeForOneUse {
+        B3::Air::StackSlot* slot;
+        unsigned begin;
+        unsigned end;
+    };
+
+    UncheckedKeyHashMap<ValueID, CellMadeForOneUse> m_cellsMadeForOneUse;
     std::optional<bool> m_keepsCellsInFrame;
     B3::Air::StackSlot* m_wordOfFrame { nullptr };
 };

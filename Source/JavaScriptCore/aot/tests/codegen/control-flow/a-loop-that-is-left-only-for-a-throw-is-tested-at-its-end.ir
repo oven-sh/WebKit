@@ -1,0 +1,30 @@
+# The way out of this loop is rare: behind it the function throws. It is the only test that the loop has, so it is the test of the loop, and it stands at the end of a turn as in any other loop:
+# a turn ends with a conditional jump and has no jump back to the test.
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=b3:UnrollLoops
+# RUN: generate-code
+# STATISTIC: LoopsRotated >= 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = BitOr v1, v1
+    v3 = CallDirect v2 function=f1
+    Return v3
+}
+function f1 name="countsUpAndThrows" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Less v2, v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = BitXor v3, v2
+    v7 = Increment v2
+    Jump -> next b1(v7, v6)
+  b3():
+    Throw v3
+}

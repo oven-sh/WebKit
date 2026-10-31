@@ -43,6 +43,8 @@ struct RuntimeCounters {
     uint64_t stackListingsAfterGivenUpCaptures { 0 };
     uint64_t ropesFlattenedForPrefixTests { 0 };
     uint64_t nativeTextsHashed { 0 };
+    uint64_t modulesSoughtForRequireCache { 0 };
+    uint64_t modulesSoughtForWhatHasRun { 0 };
 
     // How often the places of a file ran, in a program that counts them, by the compiler's numbers.
     using CountedFile = Vector<uint64_t>;
@@ -59,6 +61,8 @@ JS_EXPORT_PRIVATE void countLimitHit(VM&, LimitID);
 void countStackListingAfterGivenUpCapture(VM&);
 void countRopeFlattenedForPrefixTest(VM&);
 void countNativeTextHashed(VM&);
+void countModulesSoughtForRequireCache(VM&, size_t);
+void countModulesSoughtForWhatHasRun(VM&, size_t);
 
 JS_EXPORT_PRIVATE uint64_t valueOf(VM&, RuntimeCounterID);
 JS_EXPORT_PRIVATE uint64_t limitHitsOf(VM&, LimitID);
@@ -94,6 +98,9 @@ public:
 
     // Allocates no cell and runs no JavaScript.
     JS_EXPORT_PRIVATE void record(JSValue receiver, uint32_t site);
+    // An access by key: behind what arrived "; <storage of elements>; key:<kind>; <own | inherited | absent | ?>; #<16 bits that tell keys apart>".
+    // It leaves the key as it is: no rope is resolved, no text becomes a name and no hash is kept, so the access behind it meets what it would have met.
+    JS_EXPORT_PRIVATE void record(JSGlobalObject*, JSValue receiver, JSValue key, uint32_t site);
 
     // An access by name whose stub finds its answer calls nothing.
     JS_EXPORT_PRIVATE void didCallOperation(Entry);

@@ -41,7 +41,7 @@ AllocationSinking::AllocationSinking(FunctionAnalyses& analyses, const SinkingPo
     , m_program(analyses.program())
     , m_function(analyses.function())
     , m_policy(policy)
-    , m_objectContext { analyses.program(), analyses.function(), analyses.context().flow, policy.types }
+    , m_objectContext { analyses.program(), analyses.function(), analyses.context().flow, policy.types, &m_constantsBeforeRewriting }
     , m_candidateOfValue(analyses.function().values.size())
     , m_checksShortcuts(analyses.context().build.options().verifiesAfterEveryPass)
     , m_maxWork(limit(LimitID::MaxSinkingWork))
@@ -244,6 +244,7 @@ void AllocationSinking::abandon(VirtualObjectID object, LimitID limit)
     if (candidate.isAbandoned)
         return;
 
+    RELEASE_ASSERT(!m_tables);
     candidate.isAbandoned = true;
     candidate.abandonedBy = limit;
     m_mustSolveAgain = true;

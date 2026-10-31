@@ -1,0 +1,35 @@
+# function Base() { this.z = 1 }; function Derived() { Base.call(this); this.b = 2 }; Derived.prototype = new Base(); new Derived()
+# The oldest way to link two constructor functions. The code of Base runs on the instances of both, and the instances of Base lie above those of Derived.
+# No instance lies above itself, so what lies above each is known while it is made: Derived fills z, then b.
+# Where they do lie above themselves nothing is known: instances-that-lie-above-themselves-have-no-order-of-fields.ir.
+# RUN: valueflow-apply
+# CHECK: layout L1 kind=Instance name="Derived" {{*}}constructorOrders=[{fields=[0, 1]}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1 fields=[{key="z" declared={type=anything}}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Derived" base=L0 constructor=f2 fields=[{key="z" declared={type=anything}}, {key="b" declared={type=anything}}] flags=[IsConstructorFunction]
+variable g0 name="Base" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Derived" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = Construct v0
+    PropSet v1, v2 key="prototype" mode=Strict
+    v4 = Construct v1
+    Return
+}
+function f1 name="Base" flags=[HasThis] thisType={type=L0|L1 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="z" mode=Strict
+    Return
+}
+function f2 name="Derived" flags=[HasThis] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, v0
+    v3 = Integer integer=2
+    PropSet v0, v3 key="b" mode=Strict
+    Return
+}

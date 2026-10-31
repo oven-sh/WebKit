@@ -1,0 +1,41 @@
+# numbers: number[] = [...JSON.parse(text)]    anything = [...JSON.parse(text)]    written: number[] = [mark, 1]
+# What is spread comes from outside, so the copy may hold whatever JSON holds. Where the text declares numbers, the copy keeps the declared elements as what is expected and no storage is proven for it: creator and readers take the storage of numbers, as they do for `list.slice()`.
+# A literal of which nothing is declared, and one whose own elements are written in it, have storage for any value as before.
+# RUN: valueflow-apply
+# CHECK-LABEL: variable g0 name="numbers"
+# CHECK-NOT: Contiguous
+# CHECK-LABEL: variable g1 name="anything"
+# CHECK: proven, Contiguous
+# CHECK-LABEL: variable g2 name="written"
+# CHECK: proven, Contiguous
+# CHECK-LABEL: function f0 name="main"
+# CHECK: = NewArray contents=number allocationSite=
+# CHECK-NOT: arrayStorage=
+# CHECK: AppendSpread
+# CHECK: = NewArray contents={{*}}arrayStorage=Contiguous
+# CHECK: = NewArray v{{*}}arrayStorage=Contiguous
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="m" declared={type=anything}}] ownFieldCount=1
+variable g0 name="numbers" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="anything" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="written" module=m0 declared={type=anything} initialization=Undefined
+data d0 root=Object{layout=L0 members=[{key="m" value=Number{value=4}}]} module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = String string="[1,2]"
+    v1 = Builtin builtin=JSONParse
+    v2 = Call v1, -, v0
+    v3 = NewArray contents=number
+    AppendSpread v3, v2
+    PutModuleVariable v3 variable=g0
+    v6 = NewArray contents=anything
+    AppendSpread v6, v2
+    PutModuleVariable v6 variable=g1
+    v9 = Data data=d0
+    v10 = Integer integer=1
+    v11 = NewArray v9, v10 contents=number
+    PutModuleVariable v11 variable=g2
+    Return
+}

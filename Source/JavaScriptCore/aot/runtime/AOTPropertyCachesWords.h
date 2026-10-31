@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCellFormat.h"
 #include "AOTLayoutData.h"
 #include "AOTRuntimeRecords.h"
 #include <array>
@@ -178,6 +179,11 @@ struct KeyedValuePlace {
     static constexpr uint32_t extraPropertyBits = absenceBit | fieldBit;
     // Of a place for stores under the Structure of globalThis: the StructureID and the word index are those of the global object.
     static constexpr uint32_t globalObjectBit = 1;
+    // Of a place for stores: the objects of the Structure have nothing under the key, a store adds it, and their storage has room. The word index says where the value goes, and
+    // RestOfPlaceForStores which Structure the object has then. It holds for as long as the slot of the hashed table that said so: PropertyCacheWords::placesFiledFromSlots.
+    static constexpr uint32_t additionBit = 4;
+    // Of a place for stores beside the field bit: the slot holds a narrow reference.
+    static constexpr uint32_t narrowReferenceBit = 1u << 31;
 
     // For a compiled object whose Structure identifies the Structure of its extra-property object.
     struct ExtraProperty {
@@ -194,9 +200,52 @@ struct KeyedValuePlace {
         int32_t wordIndex;
         // Beside the field bit: SlotData::bits() of a field that lies in the cell.
         uint32_t slotData;
+        // Beside the field bit in a place for stores: how far into the cell lies the slot of a field, and narrowReferenceBit. The slot is of one of AcceptedKindOfValue::ClassOfSlot.
+        // RestOfPlaceForStores has the type of the field. It holds for as long as the slot of the hashed table that led to the store: PropertyCacheWords::placesFiledFromSlots.
+        uint32_t offsetOfSlot;
         // Beside both bits.
         ExtraProperty extraProperty;
     };
+};
+
+// One for each place for stores, behind them and as far apart as they are, so that a stub reaches it from the place by one distance.
+struct alignas(16) RestOfPlaceForStores {
+    static constexpr ptrdiff_t distanceFromPlace = KeyedValuePlace::numberOfPlacesPerAccess << KeyedValuePlace::sizeShift;
+
+    union {
+        // Beside the addition bit.
+        uint32_t structureIDAfterAddition;
+        // Beside the field bit: AcceptedKindOfValue::type.
+        uint32_t typeOfField;
+    };
+};
+
+// The type of a field has accepted a value of a kind, which was stored in a slot of a class. It accepts every other value of that kind, and every slot of that class holds it in the same way.
+// What the stubs ask of a cell they ask of the type of the cell, which its Structure has, and of the word at offsetOfShapeWord: the shape of a compiled object, the function of a slim closure.
+// Such a word is the kind. In every other cell that word is below them and nothing is asked of it. Of a closure that is a JSFunction the stubs ask for its function, which is its kind.
+// Of any other cell the StructureID is the kind, shifted so that it is below all of these. The kinds of what is no cell lie between.
+struct AcceptedKindOfValue {
+    static constexpr unsigned numberOfEntries = 256;
+    static constexpr unsigned sizeShift = 3;
+    static constexpr uint32_t leastWordThatIsKind = closureWordMarker;
+    // No two Structures begin within as many bytes.
+    static constexpr unsigned structureIDShift = 6;
+    // Added to the number of the function.
+    static constexpr uint32_t kindOfCompiledClosureZero = 1u << 28;
+    static constexpr uint32_t kindOfInt32 = 1u << 29;
+    static constexpr uint32_t kindOfDouble = kindOfInt32 + 1;
+    // undefined, null, true and false: added to the low word of the encoded value.
+    static constexpr uint32_t kindOfImmediateZero = kindOfInt32 + 16;
+    // Of the sum of the type and the kind, so that one type in two classes of slots has two entries for a kind.
+    static constexpr uint32_t indexMask = numberOfEntries - 1;
+
+    // JSValue, Cell: the value as it is. Cell32, OptionalCell32: a cell as a narrow reference, undefined and null as their low words.
+    enum class ClassOfSlot : uint8_t { JSValue, Cell, Cell32, OptionalCell32 };
+    static constexpr uint32_t classesWithNarrowReferences = 2;
+
+    // Slot::FieldPayload::type, with the class of the slot in the two bits that are zero in the offset of a record.
+    uint32_t type;
+    uint32_t kind;
 };
 
 enum class TrapOfProxy : uint8_t { Get, Has, Set };
@@ -252,6 +301,11 @@ struct PropertyCacheWords {
     uint8_t storesToGuardedFields;
     // Reads by a pair that has the place of another Structure, in steps of StringKeyCache::KeyOfPair::stepOfMisses.
     uint8_t missesOfPlacesOfPairs;
+    // How many places for stores were filled, since the places were last cleared, with what a slot of the hashed table said about an addition or a field. Such a place holds until such a slot leaves that table.
+    // Once as many were filled as there are places, one more would only push another out: where a program has that many pairs of a key and a Structure in turns, no place is found again before it is pushed out.
+    uint16_t placesFiledFromSlots;
+    // How many of them were cleared because a slot left the table. Where it is all of them, no place says what a slot said. The count above goes on: only a collection begins it anew.
+    uint16_t placesFiledFromSlotsAndCleared;
     const CustomAccessorRecord* customAccessors;
     uint32_t numberStructureID;
     uint32_t booleanStructureID;
@@ -284,6 +338,15 @@ static_assert(sizeof(AbsenceFilter) == 1u << AbsenceFilter::sizeShift && hasOneB
 static_assert(std::is_trivially_copyable_v<AbsenceFilter> && std::is_aggregate_v<AbsenceFilter>);
 static_assert(sizeof(NameOfText) == 1u << NameOfText::sizeShift && NameOfText::numberOfPairs == 1u << (64 - NameOfText::pairShift));
 static_assert(sizeof(KeyedValuePlace) == 1u << KeyedValuePlace::sizeShift && hasOneBitSet(KeyedValuePlace::numberOfPlacesPerAccess));
+static_assert(KeyedValuePlace::numberOfPlacesPerAccess <= UINT16_MAX);
+// The two counts lie where nothing lay: the words behind them are where they were.
+static_assert(OBJECT_OFFSETOF(PropertyCacheWords, customAccessors) == OBJECT_OFFSETOF(PropertyCacheWords, missesOfEmptySites) + sizeof(void*));
+static_assert(sizeof(RestOfPlaceForStores) == sizeof(KeyedValuePlace));
+static_assert(sizeof(AcceptedKindOfValue) == 1u << AcceptedKindOfValue::sizeShift && hasOneBitSet(AcceptedKindOfValue::numberOfEntries));
+static_assert(AcceptedKindOfValue::leastWordThatIsKind < compiledObjectShapeBit && pointerUpperHalfBits < AcceptedKindOfValue::leastWordThatIsKind && bigIntHashMask < AcceptedKindOfValue::leastWordThatIsKind);
+static_assert(UINT32_MAX >> AcceptedKindOfValue::structureIDShift < AcceptedKindOfValue::kindOfCompiledClosureZero && AcceptedKindOfValue::kindOfImmediateZero + UINT8_MAX < AcceptedKindOfValue::leastWordThatIsKind);
+static_assert(static_cast<uint32_t>(AcceptedKindOfValue::ClassOfSlot::Cell32) & AcceptedKindOfValue::classesWithNarrowReferences && static_cast<uint32_t>(AcceptedKindOfValue::ClassOfSlot::OptionalCell32) & AcceptedKindOfValue::classesWithNarrowReferences);
+static_assert(!(static_cast<uint32_t>(AcceptedKindOfValue::ClassOfSlot::Cell) & AcceptedKindOfValue::classesWithNarrowReferences) && AcceptedKindOfValue::classesWithNarrowReferences << 30 == KeyedValuePlace::narrowReferenceBit);
 static_assert(std::is_trivially_default_constructible_v<PropertyCacheWords>);
 static_assert(OBJECT_OFFSETOF(PropertyCacheWords, hashedSlotOffsetMask) == OBJECT_OFFSETOF(PropertyCacheWords, hashedSlots) + sizeof(void*));
 

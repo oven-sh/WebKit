@@ -136,6 +136,12 @@ static StatisticID statisticOf(B3::Counter counter)
         return StatisticID::ColdUsesKeptThroughSecondSplit;
     case B3::Counter::ColdUsesKeptThroughSecondSplitBetweenDefs:
         return StatisticID::ColdUsesKeptThroughSecondSplitBetweenDefs;
+    case B3::Counter::MovesReadForWidths:
+        return StatisticID::MovesReadForWidths;
+    case B3::Counter::PredecessorsReadForRareBlocks:
+        return StatisticID::PredecessorsReadForRareBlocks;
+    case B3::Counter::StepsToReleaseDeadValues:
+        return StatisticID::StepsToReleaseDeadValues;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

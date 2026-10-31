@@ -1619,10 +1619,10 @@ static void encodeParsedRecordFields(TableEncoder& encoder)
                 rows.shrink(sizeBefore);
                 break;
             }
-            rows.append({ *name, shape });
+            rows.append({ Number24(*name), Number24(shape) });
         }
     }
-    setSortedTable(encoder, ProgramTableIndex::parsedRecordFields, rows);
+    setSortedTable(encoder, ProgramTableIndex::parsedRecordFields, rows, std::less { }, &ParsedRecordFieldData::key);
 }
 
 static void encodeConstructors(TableEncoder& encoder)
@@ -2359,40 +2359,9 @@ static void appendTextPrintedInPlaceOfModule(const Program& program, ModuleID id
         return;
     }
 
-    // See AddedText.
-    struct Cut {
-        uint64_t start;
-        uint64_t size;
-        uint64_t added;
-        uint64_t sizeOfCutsInFront;
-    };
-    Vector<Cut> cuts;
-    std::span<const uint8_t> packedCuts = program.at(id).typesCutFromFunctionText;
-    auto takeNumber = [&] {
-        uint64_t number = 0;
-        for (unsigned shift = 0; !packedCuts.empty() && shift < 64; shift += 7) {
-            uint8_t byte = packedCuts.front();
-            packedCuts = packedCuts.subspan(1);
-            number |= static_cast<uint64_t>(byte & 0x7f) << shift;
-            if (!(byte & 0x80))
-                break;
-        }
-        return number;
-    };
-    for (uint64_t end = 0, sizeOfCutsInFront = 0; !packedCuts.empty();) {
-        uint64_t start = end + takeNumber();
-        uint64_t size = takeNumber();
-        uint64_t added = size ? 0 : takeNumber();
-        cuts.append({ start, size, added, sizeOfCutsInFront });
-        end = start + size;
-        sizeOfCutsInFront += size - added;
-    }
+    CutsFromFunctionText cuts(program.at(id).typesCutFromFunctionText);
     auto inText = [&](uint32_t offsetInFile) {
-        auto next = std::ranges::lower_bound(cuts, static_cast<uint64_t>(offsetInFile), { }, &Cut::start);
-        if (next == cuts.begin())
-            return offsetInFile;
-        const Cut& last = *std::prev(next);
-        return static_cast<uint32_t>(offsetInFile - last.sizeOfCutsInFront - std::min<uint64_t>(last.size, offsetInFile - last.start) + last.added);
+        return cuts.inText(offsetInFile);
     };
     Vector<Vector<uint8_t>> movedDifferences;
     for (TextPrintedInPlace& piece : pieces) {
@@ -2403,11 +2372,10 @@ static void appendTextPrintedInPlaceOfModule(const Program& program, ModuleID id
             movedDifferences.append(moved ? WTF::move(*moved) : Vector<uint8_t>());
             piece.bytes = movedDifferences.last().span();
         }
-        piece.start = inText(piece.start);
+        piece = piece.inText(cuts);
         // A piece of no size is not placed.
-        piece.end = isLost ? piece.start : inText(piece.end);
-        piece.startOfCopied = inText(piece.startOfCopied);
-        piece.endOfCopied = inText(piece.endOfCopied);
+        if (isLost)
+            piece.end = piece.start;
     }
 
     auto findRangeThatHolds = [&](uint32_t start, uint32_t end) -> const RetainedTextRange* {
@@ -2424,12 +2392,14 @@ static void appendTextPrintedInPlaceOfModule(const Program& program, ModuleID id
         const RetainedTextRange* range = findRangeThatHolds(piece.start, piece.end);
         if (!range || piece.start >= piece.end)
             continue;
+        if (piece.copiesAllOfItself() && !piece.isInBrackets)
+            continue;
         // Nothing beneath what is given as bytes is printed. A copy there still says where the place of an error in an initializer leads.
         bool isPrinted = piece.start >= endOfBytes;
         TextPrintedInPlace moved = piece;
         moved.start = range->textOffset + (piece.start - range->start);
         moved.end = range->textOffset + (piece.end - range->start);
-        if (piece.isCopy && findRangeThatHolds(piece.startOfCopied, piece.endOfCopied) == range) {
+        if (piece.isCopy && !piece.copiesAllOfItself() && findRangeThatHolds(piece.startOfCopied, piece.endOfCopied) == range) {
             moved.startOfCopied = range->textOffset + (piece.startOfCopied - range->start);
             moved.endOfCopied = range->textOffset + (piece.endOfCopied - range->start);
         } else if (!isPrinted)
@@ -2468,6 +2438,35 @@ static void appendTextPrintedInPlaceOfModule(const Program& program, ModuleID id
         piece.appendTo(bytes, startsRecord ? 0 : last->start);
         last = &piece;
         startsRecord = bytes.size() - modules.last().start >= TextPrintedInPlaceOfModule::bytesOfOneRecord;
+    }
+}
+
+// See SourcePositions::startsOfStatementsInLongLines. Only what is kept together with the start of its function is of use: a function whose text is not kept is not searched.
+static void appendStartsOfStatements(std::span<const uint8_t> packed, std::span<const RetainedTextRange> ranges, Vector<StartOfStatementData>& starts)
+{
+    auto takeNumber = [&] {
+        uint64_t number = 0;
+        for (unsigned shift = 0; !packed.empty() && shift < 64; shift += 7) {
+            uint8_t byte = packed.front();
+            packed = packed.subspan(1);
+            number |= static_cast<uint64_t>(byte & 0x7f) << shift;
+            if (!(byte & 0x80))
+                break;
+        }
+        return number;
+    };
+    auto range = ranges.begin();
+    for (uint64_t start = 0; !packed.empty();) {
+        start += takeNumber();
+        uint64_t behindFunction = takeNumber();
+        while (range != ranges.end() && range->end <= start)
+            ++range;
+        if (range == ranges.end())
+            return;
+        if (start <= range->start || behindFunction > start - range->start)
+            continue;
+        uint32_t startInText = range->textOffset + static_cast<uint32_t>(start - range->start);
+        starts.append({ behindFunction ? startInText - static_cast<uint32_t>(behindFunction) : StartOfStatementData::isOfBody, startInText });
     }
 }
 
@@ -2583,6 +2582,7 @@ static void appendFunctionTexts(TableEncoder& encoder, std::span<const FunctionT
     }
     if (functions.isEmpty() && !keepsTextOfBodies) {
         encoder.setTable(ProgramTableIndex::functionTexts, Vector<FunctionTexts> { });
+        encoder.setTable(ProgramTableIndex::startsOfStatementsInLongLines, Vector<StartOfStatementData> { });
         setTextPrintedInPlace();
         return;
     }
@@ -2592,6 +2592,7 @@ static void appendFunctionTexts(TableEncoder& encoder, std::span<const FunctionT
     Vector<uint8_t> text;
     Vector<PiecesOfModule> modulesWithPieces;
     Vector<uint8_t> pieces;
+    Vector<StartOfStatementData> startsOfStatementsInLongLines;
     for (size_t module = 0; module < moduleRanges.size(); ++module) {
         Vector<RetainedTextRange>& ranges = moduleRanges[module];
         AOT::sortInLine(ranges, [](const RetainedTextRange& a, const RetainedTextRange& b) {
@@ -2638,11 +2639,16 @@ static void appendFunctionTexts(TableEncoder& encoder, std::span<const FunctionT
             text.append(bytes);
         }
         if (findsPlacesInText) {
+            appendStartsOfStatements(program.modules[module].positions.startsOfStatementsInLongLines, ranges.span(), startsOfStatementsInLongLines);
             appendPiecesOfModule(program, ModuleID(static_cast<uint32_t>(module)), moduleText, ranges.span(), modulesWithPieces, pieces);
             appendTextPrintedInPlaceOfModule(program, ModuleID(static_cast<uint32_t>(module)), moduleText, ranges.span(), modulesWithTextPrintedInPlace, textPrintedInPlace);
         }
     }
     setTextPrintedInPlace();
+    // The same text is held once, and each file that has it may list other statements of it.
+    AOT::sortInLine(startsOfStatementsInLongLines);
+    startsOfStatementsInLongLines.shrink(std::ranges::unique(startsOfStatementsInLongLines).begin() - startsOfStatementsInLongLines.begin());
+    encoder.setTable(ProgramTableIndex::startsOfStatementsInLongLines, startsOfStatementsInLongLines);
     uint32_t numberOfModulesWithPieces = static_cast<uint32_t>(modulesWithPieces.size());
     modulesWithPieces.append({ std::numeric_limits<uint32_t>::max(), static_cast<uint32_t>(pieces.size()) });
 
@@ -3206,9 +3212,14 @@ static void appendTablesOfCompiledModules(TableEncoder& encoder)
         return std::ranges::lexicographical_compare(program.string(program.modules[left].path), program.string(program.modules[right].path));
     });
     encoder.setTable(ProgramTableIndex::modulesByPath, encodeModuleNumbers(encoder, modulesByPath));
+    RELEASE_ASSERT(program.modules.size() < Number24::max);
+    Vector<std::pair<uint32_t, uint32_t>> entriesByHash;
     Vector<uint32_t> hashesOfDirectories;
     for (uint32_t index : modulesByPath) {
         String path = String::fromUTF8(program.string(program.modules[index].path));
+        // The table of modules ends with one more record.
+        ModuleByHashOfPath sought(program.modules.size() + 1, StringView(path).hash());
+        entriesByHash.append({ sought.hash(), sought.entryFor(index) });
         uint32_t hash = HashOfDirectory::ofNoText;
         for (char16_t character : StringView(path).codeUnits()) {
             hash = HashOfDirectory::with(hash, character);
@@ -3227,6 +3238,17 @@ static void appendTablesOfCompiledModules(TableEncoder& encoder)
             directoriesOfModulesByPath[bit / 32] |= 1u << (bit % 32);
         }
     }
+    AOT::sort(entriesByHash);
+    size_t numberOfBuckets = ModuleByHashOfPath::numberOfBuckets(entriesByHash.size());
+    Vector<uint32_t> firstModulesByHashOfPath;
+    for (size_t place = 0; place < entriesByHash.size(); ++place) {
+        while (firstModulesByHashOfPath.size() <= static_cast<uint64_t>(entriesByHash[place].first) * numberOfBuckets >> 32)
+            firstModulesByHashOfPath.append(place);
+    }
+    while (numberOfBuckets && firstModulesByHashOfPath.size() <= numberOfBuckets)
+        firstModulesByHashOfPath.append(entriesByHash.size());
+    encoder.setTable(ProgramTableIndex::modulesByHashOfPath, entriesByHash.map([](const auto& entry) { return entry.second; }));
+    encoder.setTable(ProgramTableIndex::firstModulesByHashOfPath, encodeModuleNumbers(encoder, firstModulesByHashOfPath));
     encoder.setTable(ProgramTableIndex::directoriesOfModulesByPath, directoriesOfModulesByPath);
     setSortedTable(encoder, ProgramTableIndex::compiledRuntimeModules, runtimeModules, std::ranges::less { }, &CompiledRuntimeModuleData::registryID);
 
@@ -3345,7 +3367,7 @@ static void encodeNamedCaptures(TableEncoder& encoder)
         if (!showsVariablesOf(encoder, target.module))
             continue;
         unsigned numberOfReferences = closureCaptureCountsOf(program, target).references;
-        Vector<std::pair<uint32_t, uint32_t>, 8> named;
+        NamedCaptureList named;
         for (unsigned capture = 0; capture < target.captures.size(); ++capture) {
             StringID name = target.captures[capture].variableName;
             if (!name)
@@ -3355,9 +3377,8 @@ static void encodeNamedCaptures(TableEncoder& encoder)
         }
         if (named.isEmpty())
             continue;
-        writer.beginFunction(index, named.size());
-        for (auto [slot, name] : named)
-            writer.append(slot, name);
+        AOT::sort(named);
+        writer.append(index, named);
     }
     encoder.setTable(ProgramTableIndex::namedCaptures, writer.bytes());
 }

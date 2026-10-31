@@ -18,6 +18,12 @@ void callLeafLookup(StubAssembler&, Entry, GPRReg second, std::optional<GPRReg> 
 void rememberAbsenceOfKey(StubAssembler&, GPRReg key, GPRReg header, GPRReg place, GPRReg scratch);
 // The register of the StructureID of the object is overwritten.
 void rememberPlaceOfExtraProperty(StubAssembler&, SlotAccess, const CachedSlot&, GPRReg object, GPRReg key, GPRReg place, GPRReg structureID);
+// PropertyCacheWords::placesFiledFromSlots.
+Jump branchIfEveryPlaceWasFiledFromSlots(StubAssembler&);
+// A slot for stores has said that the object gains the name in the storage that it has.
+void rememberPlaceOfAddition(StubAssembler&, const CachedSlot&, GPRReg object, GPRReg key, GPRReg place, GPRReg scratch);
+// The type of a field has accepted the value, which is stored at the address, in the cell of the object. classOfSlot has the AcceptedKindOfValue::ClassOfSlot. Keeps the object and the value.
+void rememberPlaceOfValueInField(StubAssembler&, GPRReg object, GPRReg key, GPRReg value, GPRReg type, GPRReg address, GPRReg classOfSlot, GPRReg place, GPRReg scratch, GPRReg secondScratch);
 
 static_assert(firstStubOperandRegister == StubRegister::R0 && keyCellRegister == StubRegister::A1 && storedValueByValRegister == StubRegister::A2);
 

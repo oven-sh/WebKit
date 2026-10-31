@@ -419,15 +419,25 @@ Vector<SunkAllocation> predictSinking(FunctionAnalyses& analyses)
     return sinking.outcomes();
 }
 
-Expected<unsigned> sinkableAllocationsAfterInlining(FunctionPassContext& context, BlockID block, ValueID call, NOESCAPE const ScopedLambda<bool()>& calleeReturnsFreshAggregate)
+// The parts of a result are values of their own.
+static bool isResultOnlyInterpreted(FunctionAnalyses& analyses, ValueID call)
+{
+    if (!isOnlyInterpreted(analyses, call))
+        return false;
+    return std::ranges::all_of(analyses.useLists().usesOf(call), [&](const Use& use) {
+        return use.kind != Use::Kind::Operand || analyses.function().at(use.user).opcode != Opcode::ResultAt || isOnlyInterpreted(analyses, use.user);
+    });
+}
+
+Expected<unsigned> sinkableAllocationsAfterInlining(FunctionPassContext& context, BlockID block, ValueID call, NOESCAPE const ScopedLambda<unsigned()>& freshAllocationsReturnedByCallee)
 {
     if (context.function.at(call).opcode != Opcode::CallDirect)
         return 0;
 
     CalleeOfCall callee(context, block, call);
     unsigned count = countAllocationsBuiltOnlyFor(context.analyses, call, callee);
-    if (isOnlyInterpreted(context.analyses, call) && calleeReturnsFreshAggregate())
-        ++count;
+    if (isResultOnlyInterpreted(context.analyses, call))
+        count += freshAllocationsReturnedByCallee();
     return count;
 }
 

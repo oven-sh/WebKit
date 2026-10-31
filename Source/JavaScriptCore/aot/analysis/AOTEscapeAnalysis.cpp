@@ -242,6 +242,7 @@ uint64_t EscapeAnalysis::solve()
     computeUses(results, inputs.useLists, useReasons.span());
     computeStates();
     takeSets(results);
+    m_objectsInLocalHeapWords = WTF::move(results.objectsInLocalHeapWords);
     if (m_tracksOnlyEntryParameters)
         m_liveInstances.fill(LiveInstances::Unknown, m_objects.size());
     m_remembersAnswersFromTypes = inputs.remembersAnswersFromTypes;
@@ -617,6 +618,8 @@ bool mayNameUnescapedAllocation(const Function& function, ValueID value)
         }
         if (definition.opcode != Opcode::GetHeapFrameWord && definingOpcodes.contains(definition.opcode))
             return true;
+        if (accessesLocalHeapWords(function, definition))
+            return true;
         definition.forEachOperand([&](ValueID operand, uint32_t) {
             definitions.appendIfNotContains(operand);
         });
@@ -655,6 +658,8 @@ static BitVector collectWatchedValues(const EscapeAnalysis& escape, std::span<co
 static LiveInstances computeLiveInstancesAt(const EscapeAnalysis& escape, const Liveness::LocalCalc& liveBeforeAllocation, const WatchedObjects& watchedObjects)
 {
     for (ObjectID object : watchedObjects.objects()) {
+        if (escape.isInLocalHeapWords(object))
+            return LiveInstances::Unknown;
         for (ValueID alias : escape.aliasesOf(object)) {
             if (liveBeforeAllocation.isLive(alias))
                 return LiveInstances::Unknown;
@@ -775,7 +780,8 @@ EscapeAnalysis::AllocationSet EscapeAnalysis::allocationSetOf(ValueID value) con
     ValueSetID id = m_setOfValue[value.index()];
     if (!id) {
         // The function that resumes a generator reads the words of the frame before it stores any, and returns behind its stores: what a word holds an earlier run has put there.
-        bool isWordOfOwnFrame = m_function.role == FunctionRole::CoroutineBody && m_function.at(sameObjectThroughCasts(m_function, value).valueInFrontOfFacts()).opcode == Opcode::GetHeapFrameWord;
+        const Value& definition = m_function.at(sameObjectThroughCasts(m_function, value).valueInFrontOfFacts());
+        bool isWordOfOwnFrame = m_function.role == FunctionRole::CoroutineBody && definition.opcode == Opcode::GetHeapFrameWord && !accessesLocalHeapWords(m_function, definition);
         return { m_emptySet, true, isWordOfOwnFrame, nullptr };
     }
     const StoredSet& set = m_sets[id.index()];

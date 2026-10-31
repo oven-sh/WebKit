@@ -60,10 +60,13 @@ enum class Counter : uint8_t {
     TrapsFoldedIntoAccesses,
     ColdUsesKeptThroughSecondSplit,
     ColdUsesKeptThroughSecondSplitBetweenDefs,
+    MovesReadForWidths,
+    PredecessorsReadForRareBlocks,
+    StepsToReleaseDeadValues,
 };
 
-static constexpr unsigned numberOfCounters = 12;
-static_assert(static_cast<unsigned>(Counter::ColdUsesKeptThroughSecondSplitBetweenDefs) + 1 == numberOfCounters);
+static constexpr unsigned numberOfCounters = 15;
+static_assert(static_cast<unsigned>(Counter::StepsToReleaseDeadValues) + 1 == numberOfCounters);
 
 struct LimitHit {
     uint32_t count { 0 };

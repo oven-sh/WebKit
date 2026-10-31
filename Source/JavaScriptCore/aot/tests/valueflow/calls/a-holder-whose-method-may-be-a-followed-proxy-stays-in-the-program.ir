@@ -1,0 +1,33 @@
+# RUN: valueflow-solve unreached
+# CHECK: unreached f2
+# RUN(ESCAPED): valueflow-why escaped=f2 escaped-layout=L0
+# ESCAPED: escaped=f2
+# ESCAPED-NEXT: not held
+# ESCAPED: escaped-layout=L0
+# ESCAPED-NOT: escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Holder" fields=[{key="f" declared={type=anything} flags=[IsRequired]}, {key="held" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Handler"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = NewObject layout=L1 fields=[]
+    v4 = Builtin builtin=Proxy
+    v5 = Construct v4, -, v0, v3
+    PropSet v2, v5 key="f"
+    v7 = Builtin builtin=FunctionPrototypeBind
+    v8 = Call v7, v0
+    PropSet v2, v8 key="f"
+    v10 = PropGet v2 key="f"
+    v11 = Call v10, v2 calleeKey="f"
+    Return
+}
+function f1 name="two" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="held" kind=Arrow results=[{type=anything}] {
+    Return
+}

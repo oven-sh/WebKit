@@ -86,6 +86,7 @@ static Expected<bool> likelyPathsAlwaysComplete(FunctionAnalyses& analyses, cons
 
 HintEmitter::HintEmitter(CodeGenerator& generator)
     : OperationEmitter(generator)
+    , m_entryParameters(m_function)
 {
 }
 
@@ -96,6 +97,15 @@ void HintEmitter::generateLoopHint(const ValueContext& value)
     emitPoll(value);
 }
 
+static constexpr OpcodeSet opcodesThatMaySuspend = [] {
+    OpcodeSet result;
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        if (maySuspend(opcode))
+            result.add(opcode);
+    }
+    return result;
+}();
+
 // `x = null` stores to no place that the collector reads: the object stays in whatever register or stack slot held it until something else is put there.
 void HintEmitter::generateReleaseHint(const ValueContext& value)
 {
@@ -103,6 +113,16 @@ void HintEmitter::generateReleaseHint(const ValueContext& value)
     Operand released = get(value->valueOperand());
     if (!released.value || released.value->type() != B3::Int64 || released.value->hasInt64())
         return;
+    // A parameter that came on the stack is still in the word that the caller stored it to. Nothing reads that word again: this is the store that the program wrote.
+    // A function that was suspended runs on above another frame: the word is then somebody else's.
+    bool mayBeResumed = m_function.role == FunctionRole::CoroutineBody || analyses().opcodesOfValues().intersects(opcodesThatMaySuspend);
+    if (entryConventionOf(m_function) == EntryConvention::Direct && !mayBeResumed) {
+        if (std::optional<uint32_t> parameter = m_entryParameters.indexOf(value->valueOperand())) {
+            ArgumentLocation location = inputs().conventions.locationsOf(m_program, m_id).parameters[*parameter];
+            if (location.kind == ArgumentLocation::Kind::Stack)
+                m_out.store64(m_out.constInt64(0), m_out.address(m_heaps.argumentBuffer, m_out.framePointer(), offsetOfStackWordFromFrame(location.stackIndex)));
+        }
+    }
     B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Void);
     patchpoint->append(released.value, B3::ValueRep::ColdAny);
     patchpoint->effects = B3::Effects::none();

@@ -4,7 +4,6 @@
 # The program runs what its own three objects find. No toString, valueOf, Symbol.iterator or next of any other class is used, whichever rule runs first:
 # the files that end in -with-flow-rules-delayed-<n>.ir are this one under schedules that each gave another list.
 # OPTIONS: limit=MaxValueFlowMembersToldApart:1
-# LOSS: MaxValueFlowMembersToldApart
 # RUN: valueflow-solve used
 # CHECK-NOT: used
 # CHECK: run FunctionPrototypeToString

@@ -175,7 +175,7 @@ static FreshResultShape shapeOfReturns(const AllocationSinking& sinking)
         if (shape.variants.size() > maxVariants && hasVariantOfKind(VirtualShapeKind::Fields))
             return shape;
         if (!returned.object) {
-            if (std::optional<VirtualConstant> constant = virtualConstantOf(sinking.program(), function, returned.value))
+            if (std::optional<VirtualConstant> constant = virtualConstantOf(sinking.objectContext(), returned.value))
                 addVariant({ .kind = VirtualShapeKind::Constant, .constant = *constant });
             else
                 addVariant({ .kind = VirtualShapeKind::Cell });
@@ -277,6 +277,59 @@ bool returnsFreshAggregate(FunctionAnalyses& analyses)
     return function.hasBody() && function.results.size() == 1 && computeShapeOfReturns(analyses).isFresh();
 }
 
+static unsigned countAllocationsThatGoWithResult(FunctionAnalyses& analyses)
+{
+    const Program& program = analyses.program();
+    const Function& function = analyses.function();
+    const UseLists& useLists = analyses.useLists();
+    auto isOnlyHandedToResult = [&](auto& self, ValueID value) -> bool {
+        return std::ranges::all_of(useLists.usesOf(value), [&](const Use& use) {
+            if (use.kind == Use::Kind::TerminatorOperand)
+                return function.at(use.block).terminator.kind == TerminatorKind::Return;
+            if (use.kind != Use::Kind::Operand)
+                return false;
+            const Value& user = function.at(use.user);
+            if (isCast(user.opcode))
+                return self(self, use.user);
+            return user.opcode == Opcode::Results || (user.opcode == Opcode::NewObject && user.variadicOperandIndex(use.operandIndex));
+        });
+    };
+    Vector<ValueID, 8> closures;
+    Vector<ValueID, 2> environments;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            const Value& value = function.at(id);
+            if (value.opcode == Opcode::NewClosure && isOnlyHandedToResult(isOnlyHandedToResult, id))
+                closures.append(id);
+            else if (value.opcode == Opcode::NewObject && program.at(value.layout()).kind == LayoutKind::Environment)
+                environments.append(id);
+        }
+    }
+    if (closures.isEmpty())
+        return 0;
+    size_t numberOfEnvironments = std::ranges::count_if(environments, [&](ValueID environment) {
+        return std::ranges::all_of(useLists.usesOf(environment), [&](const Use& use) {
+            if (use.kind != Use::Kind::Operand)
+                return false;
+            Opcode opcode = function.at(use.user).opcode;
+            if (opcode == Opcode::GetEnvironmentField || opcode == Opcode::PutEnvironmentField)
+                return !use.operandIndex;
+            return closures.contains(use.user);
+        });
+    });
+    return closures.size() + numberOfEnvironments;
+}
+
+unsigned countFreshAllocationsReturned(FunctionAnalyses& analyses)
+{
+    const Function& function = analyses.function();
+    if (!function.hasBody())
+        return 0;
+    if (function.results.size() > 1)
+        return countAllocationsThatGoWithResult(analyses);
+    return returnsFreshAggregate(analyses) ? 1 + countAllocationsThatGoWithResult(analyses) : 0;
+}
+
 bool FreshResultVariant::buildsSameValueAs(const FreshResultVariant& other) const
 {
     auto haveSameFields = [](const auto& a, const auto& b) {
@@ -317,7 +370,7 @@ void ObjectInterpreter::returnParts(const Terminator& terminator)
     ValueID value = terminator.valueOperand();
     VirtualObjectID object = objectOf(value);
     if (!object) {
-        if (std::optional<VirtualConstant> constant = virtualConstantOf(program(), function(), value))
+        if (std::optional<VirtualConstant> constant = virtualConstantOf(m_sinking.objectContext(), value))
             returnVariant(findResultVariant({ }, VirtualShape::ofConstant(*constant)), { }, nullptr, { });
         else
             returnVariant(findResultVariant({ }, VirtualShape { }), { }, nullptr, resolve(value));

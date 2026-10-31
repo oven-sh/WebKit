@@ -578,10 +578,9 @@ static KnownBoolean evaluateTestOfConstant(const ShapeContext& context, VirtualC
     case Opcode::TypeTest:
         return evaluateTypeTest(program, known, program.at(test.testedType()));
     case Opcode::StrictEq: {
-        // The sinker asks again while it rewrites the function, after it has given the casts it keeps new operands.
         const Function& function = context.objects.function;
         ValueID other = operandIndex == OperandIndex::StrictEq::left ? test.rightOperand() : test.leftOperand();
-        if (std::optional<VirtualConstant> otherConstant = virtualConstantOf(program, function, other))
+        if (std::optional<VirtualConstant> otherConstant = virtualConstantOf(context.objects, other))
             return knownBoolean(constant == *otherConstant);
         return program.typeOf(function, other).overlaps(program.at(typeOf(constant)), program) ? KnownBoolean::Unknown : KnownBoolean::False;
     }

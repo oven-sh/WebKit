@@ -1,6 +1,5 @@
 # converting-an-object-that-escapes-meanwhile-uses-no-built-in-by-name.ir under another schedule of the rules. Under this one sixteen valueOf methods were used.
 # OPTIONS: limit=MaxValueFlowMembersToldApart:1 testing=DelayFlowRules:162
-# LOSS: MaxValueFlowMembersToldApart
 # RUN: valueflow-solve used
 # CHECK-NOT: used
 # CHECK: run FunctionPrototypeToString

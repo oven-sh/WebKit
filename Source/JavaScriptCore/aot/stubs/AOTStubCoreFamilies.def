@@ -42,13 +42,13 @@ v(NewDictionary, CalledByCode, (), CountAxis, 0, 13, AllISAs, NoISA, NoChoice, N
 // AOTStubsClosures.cpp
 v(NewClosure, CalledByCode, (), CountAxis, 0, ClosureRequest::maxNumberOfCaptures, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewClosure)
 v(NewSlimClosure, CalledByCode, (Plain, Async), FormAxis | CountAxis, 0, ClosureRequest::maxSlimClosureCaptures, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewSlimClosure)
-v(MakeClosureOfField, CalledByCode, (Plain, Async), FormAxis | CountAxis, 0, 1, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState, RuntimeState) | writes(AllocatorState, ObjectFields), MakeClosureOfField)
+v(MakeClosureOfField, CalledByCode, (Plain, Async), FormAxis | CountAxis, 0, 2, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState, RuntimeState, ObjectFields) | writes(AllocatorState, ObjectFields), MakeClosureOfField)
 v(ClosureOfTable, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(RuntimeState, AllocatorState) | writes(RuntimeState, AllocatorState), ClosureOfTable)
 v(InitializeClosure, CalledByCode, (), CountAxis, 0, ClosureRequest::maxSlimClosureCaptures, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, NoEffects, InitializeClosure)
 v(MaterializeEnvironment, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(EnvironmentFields, AllocatorState) | writes(AllocatorState), MaterializeEnvironment)
 v(ValueEndsItsTailCalls, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, NoEffects, ValueEndsItsTailCalls)
 v(ValueIsClosureOf, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, NoEffects, ValueIsClosureOf)
-v(RecordCallee, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(RuntimeState) | writes(RuntimeState), RecordCallee)
+v(RecordCallee, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, CallsOnlyBookkeeping, ClobbersOnlyScratch, reads(RuntimeState) | writes(RuntimeState), RecordCallee)
 
 // AOTStubsConstants.cpp
 v(CreateConstant, CalledByCode, (String, NewString, Key, FunctionName), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, CreateConstant)

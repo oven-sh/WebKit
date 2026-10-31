@@ -1,12 +1,11 @@
 # `${onlyConverted}`; plain = { held }; plain + 1; odd = { valueOf: somethingNoTableLists, given }; odd + 1
-# one-converted-object-with-an-unknown-method-escapes-alone.ir with more objects in the hub than the analysis tells apart: it tells one apart here, the plain object, which has the first layout.
-# The odd object and the closure are looked at together, and a function nobody knows is among what the two find. Whatever is found beside such a function gets the objects that find it by themselves:
+# one-converted-object-with-an-unknown-method-escapes-alone.ir with more objects in the hub than the analysis tells apart one by one, which is one here: it looks at the objects of one layout together.
+# Each of the three is by itself here, a closure having no layout, and a function nobody knows is what the odd object finds:
 # the odd object is handed to the function nobody knows, so it escapes and what it holds is entered. The closure finds what every function finds: it stays in the program, and nobody enters it.
 # The plain object is looked at by itself: it stays in the program, and nobody enters what it holds.
 # converted-objects-past-those-told-apart-are-handed-to-what-each-of-them-finds.ir with another order of the rules: the answer is the same.
 # OPTIONS: testing=DelayFlowRules,DelayOtherFlowRules
 # OPTIONS: limit=MaxValueFlowMembersToldApart:1
-# LOSS: MaxValueFlowMembersToldApart
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1
 # CHECK-NEXT: unreached f2

@@ -230,6 +230,8 @@ std::span<const ValueFlowOperand> ValueFlowRuleContext::operandsOf(const ValueFl
     }
     return narrowed.span();
 }
+bool ValueFlowRuleContext::isAskedForByName(PropertyKeyID key) const { return m_solver.isAskedForByName(key); }
+
 std::span<const ValueFlowOperand> ValueFlowRuleContext::objectsReadUnderKeyOfStore(const ValueFlowStatement& statement) const
 {
     return m_operandsInPlace.empty() ? m_solver.objectsReadUnderKeyOfStore(statement) : std::span<const ValueFlowOperand>();
@@ -793,6 +795,15 @@ bool ValueFlowRuleContext::mayFindSomethingWritten(ClimbingSet objects, ValueFlo
     if (!write || !m_solver.m_input.nodes || !m_solver.m_input.universe || ValueSets::isComplement(objects.m_set) || meet(objects, universe().placeholdersAlone()))
         return true;
     return holdsAnyOf(objects, rareWriteNode(*write));
+}
+
+// The members for which mayFindSomethingWritten() says yes when each is asked by itself: one question, and one watch, for them all.
+ClimbingSet ValueFlowRuleContext::membersThatMayFindSomethingWritten(ClimbingSet objects, ValueFlowNameKind kind)
+{
+    std::optional<ValueFlowRareWrite> write = rareWriteFoundUnder(kind);
+    if (!write || !m_solver.m_input.nodes || !m_solver.m_input.universe || ValueSets::isComplement(objects.m_set) || meet(objects, universe().placeholdersAlone()))
+        return objects;
+    return valueWithin(objects, rareWriteNode(*write));
 }
 
 ClimbingSet ValueFlowRuleContext::holdersOfLibraryExportsWrittenUnder(PropertyKeyID key)

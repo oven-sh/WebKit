@@ -55,3 +55,18 @@ function f5 name="operatorOnStringBesideWrittenText" parameters=[{type=string}] 
 # CHECK-NOT: StringsAreEqual
 # CHECK: stub StringEqualsLiteral x1
 # CHECK-NOT: StringsAreEqual
+
+# A branch that narrows the text hands its cell to the block behind it.
+function f6 name="branchHandsOnWrittenText" parameters=[{type=anything}] results=[{type=string}] {
+    v1 = String string="GET"
+    v2 = StrictEq v0, v1 form=StringAndValue
+    TestAndBranch v2 -> taken b1(| 1), notTaken b2()
+  b1(v3: string):
+    Return v3
+  b2():
+    v4 = String string="no"
+    Return v4
+}
+# CHECK: f6: size=
+# CHECK-NEXT: stub CreateConstant.String x2
+# CHECK-NEXT: stub ValueEqualsLiteralOfLength{{*}} x1

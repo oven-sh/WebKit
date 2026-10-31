@@ -168,6 +168,57 @@ function f4 name="modeled" results=[{type=anything}] {
 runtimefunction id=$toLocaleString function=f1
 )IR"_s;
 
+// As resolvedCallee, but the model answers undefined or a closure of "modeled": the program has to test the value, so what flow says of it is still there when code is generated.
+static constexpr ASCIILiteral calleeBehindTest = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 name="Source" fields=[{key="toString" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = PropGet v2 key="toLocaleString"
+    v4 = Call v3, v2 calleeKey="toLocaleString"
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="print" [isFreeName]
+    v7 = TypeTest v4 testedType=undefined|null
+    Branch v7 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    v8 = Call v4
+    v9 = Call v6, -, v8
+    Return
+}
+function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="toString"
+    v2 = Call v1, v0 calleeKey="toString"
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="choice" [isFreeName]
+    v5 = ToBoolean v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Undefined
+    Return v6
+  b2():
+    v7 = NewClosure function=f4
+    Return v7
+}
+function f2 name="toString" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = NewClosure function=f3
+    Return v1
+}
+function f3 name="real" results=[{type=anything}] {
+    v0 = String string="real"
+    Return v0
+}
+function f4 name="modeled" results=[{type=anything}] {
+    v0 = String string="modeled"
+    Return v0
+}
+runtimefunction id=$toLocaleString function=f1
+)IR"_s;
+
 // Flow says nothing of a value at which nothing arrives, so no model makes code unreachable. The text does: it ends a block with Unreachable, and the script of the shell decides whether the block is entered.
 static constexpr ASCIILiteral unreachableBlock = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -665,6 +716,24 @@ static void testResolvedCallee()
     checkValidationFails(resolvedCallee, ValidationFailureKind::AssumedType);
 }
 
+static void testCalleeBehindTestInProductionCode()
+{
+    checkValidationFails(calleeBehindTest, ValidationFailureKind::AssumedType, ""_s, { "testing=CheckProofsAtRunTime"_s });
+}
+
+static void checkClaimIsTestedWhereFlowMakesIt(ASCIILiteral programText, ASCIILiteral outputWhenNothingTestsIt)
+{
+    UTF8CString numberedText = withNumbersOfModels(programText);
+    checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), outputWhenNothingTestsIt, { "testing=CheckProofsAtRunTime"_s });
+    checkValidationFails(programText, ValidationFailureKind::AssumedType, ""_s, { "testing=CheckProofsAtRunTime"_s, "check=ClaimsOfFlow"_s });
+}
+
+static void testClaimsSpentBeforeCodeIsGenerated()
+{
+    checkClaimIsTestedWhereFlowMakesIt(foldedTypeTest, "no string\n"_s);
+    checkClaimIsTestedWhereFlowMakesIt(resolvedCallee, "modeled\n"_s);
+}
+
 // Without exact functions in types only the stamp of the call names the callees.
 static void testCalleeOutsideCompleteSet()
 {
@@ -1071,6 +1140,8 @@ std::span<const NativeTest> proofValidationTests()
         { "proof-validation/number-in-arithmetic"_s, testNumberInArithmetic },
         { "proof-validation/layout-at-slot-read"_s, testLayoutAtSlotRead },
         { "proof-validation/resolved-callee"_s, testResolvedCallee },
+        { "proof-validation/callee-behind-test-in-production-code"_s, testCalleeBehindTestInProductionCode },
+        { "proof-validation/claims-spent-before-code-is-generated"_s, testClaimsSpentBeforeCodeIsGenerated },
         { "proof-validation/callee-outside-complete-set"_s, testCalleeOutsideCompleteSet },
         { "proof-validation/unreachable-block-is-entered"_s, testUnreachableBlockIsEntered },
         { "proof-validation/function-that-is-never-reached"_s, testFunctionThatIsNeverReached },

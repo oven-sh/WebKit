@@ -130,7 +130,7 @@ enum ImageForm { Absolute PositionIndependent }
 enum MismatchPolicy { Silent Report }
 enum HeatOverride { None OnlyLoopsAreHot EverythingIsHot EverythingIsCold NothingIsHottest Shuffled ReadOffStructure }
 enum FlowOverride { None Widened }
-flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards FlowFixpoint UsedValuesAreListed ClaimsToBackEnd MovedLoads DecidedComparisons SpillSlots AllocatedRegisters }
+flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards FlowFixpoint UsedValuesAreListed ClaimsToBackEnd MovedLoads DecidedComparisons SpillSlots AllocatedRegisters ClaimsOfFlow }
 flags ReportSet { Flow Declines Symbols Allocations Functions Arrivals AccessCounts }
 flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom DelayFlowRules DelayOtherFlowRules CheckProofsAtRunTime FailPredictions FoldLoadsPastCollections OverwriteDeadValuesAtCollections ShuffleExpectedTypes }
 enum Sabotage {
@@ -141,7 +141,7 @@ enum Sabotage {
     RemovedLoopsMayNotEnd GeneratorHeadsHaveEffects
     ProofsOutlastWritesToEverything ErasedValuesHaveEffects
     WalkedLiteralsAreAsTheyWereMade WalkedKeysStandInTheFirstOrder WrittenRecordsHaveTheirKeysInOneOrder WrittenRecordsStayAsTheyWere TaggedMakersAreOnlyConstructed TaggedMakersAnswerWithTheirOwnObject FusedConversionsRunCode UnfinishedObjectsPassForFinished BirthsEndWithoutALook
-    FunctionPassFailsAssertion FunctionPassReadsBadAddress FunctionPassRunsOutOfStack FunctionPassNeverEnds ProgramPassFailsAssertion FlowAnalysisFailsAssertion CodeGenerationFailsAssertion ImageBuildingFailsAssertion LoweringPanics
+    FunctionPassFailsAssertion FunctionPassReadsBadAddress FunctionPassRunsOutOfStack FunctionPassNeverEnds ProgramPassFailsAssertion FlowAnalysisFailsAssertion CodeGenerationFailsAssertion ImageBuildingFailsAssertion LoweringPanics LoweringOverflowsStack ListsOfPiecesEndInAPiece
     HoistedReadsAreStoredInTheirLoops CarriedVariablesAreWrittenByOthers DelayedStoresAreLeftOut TailCallsSwapTheirLastArguments RememberedReadsOutlastStoresThroughOtherNames RememberedReadsOutlastWrites FusedGeneratorsAreSeenByOthers DelayedStoresPassWhatMayThrow ParsedMembersComeOnce GrowingTextsAreHeldInOneState
     PartsOfViewsEndOneLater
     StoredValuesAreNeverRead
@@ -160,6 +160,7 @@ enum Sabotage {
     LoadsFoldedIntoTheirUsersOutlastWrites PairedLoadsOutlastWrites
     WrittenOutTurnsAlwaysFit
     CallsThatThrowHaveNoSite
+    CallersKeepNoFPRs
     BoundsReadTwiceOutlastWrites
     ChangedClosuresFailEveryTest
     KeysOfStarsAreHeldAsStrings
@@ -176,7 +177,7 @@ flags OutputOptions { Obfuscate SharesRealms HoldsLibraryAlone RunsInSeveralReal
 record SwitchRange abi { firstID: UInt32 count: UInt32 }
 record DroppedGuardWords abi { opcode: UInt32 ordinal: UInt32 }
 record PredictionFailureWords abi { period: UInt32 seed: UInt32 }
-record FlowScheduleWords abi { number: UInt32 reserved: UInt32 }
+record FlowScheduleWords abi { number: UInt32 seedOfObjectNumbers: UInt32 }
 record BisectionSwitches abi {
     disabledFlowResults: UInt64 disabledPasses: UInt64[4] disabledSelectionRules: UInt64 disabledBackEndSwitches: UInt64 switchRange: SwitchRange
     droppedGuard: DroppedGuardWords predictionFailure: PredictionFailureWords flowSchedule: FlowScheduleWords

@@ -309,6 +309,7 @@ function declareClasses({ builder, sorted }: EntryContext): void {
       })),
       namesReadToDescribeInstances: (columns.namesReadToDescribeInstances ?? []).map(text => builder.internComponent(text)),
       constructorOnlyReadsPrototypeOfNewTarget: columns.constructorOnlyReadsPrototypeOfNewTarget ?? false,
+      constructorAdder: columns.constructorAdder === undefined ? null : builder.internComponent(columns.constructorAdder),
       slots: [],
       stateHeap: columns.stateHeap ?? null,
       types: [],

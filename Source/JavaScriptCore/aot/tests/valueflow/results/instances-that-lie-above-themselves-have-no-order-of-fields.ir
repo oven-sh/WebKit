@@ -1,0 +1,24 @@
+# function Point() { this.size = 1; this.more = new.target }; Point.prototype = new Point(); new Point()
+# The function reads new.target, so it makes the object above by itself and no copy of it does: an instance of Point lies above the instances of Point.
+# What the constructor stores into the one above is found by the stores into those below, so nothing is said about the order.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Point" {{*}}constructorOrders=[{}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Point" constructor=f1 fields=[{key="size" declared={type=anything}}, {key="more" declared={type=anything}}] flags=[IsConstructorFunction]
+variable g0 name="Point" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = Construct v0
+    PropSet v0, v1 key="prototype" mode=Strict
+    v3 = Construct v0
+    Return
+}
+function f1 name="Point" flags=[HasThis, HasNewTarget] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=1
+    PropSet v0, v2 key="size" mode=Strict
+    PropSet v0, v1 key="more" mode=Strict
+    Return
+}

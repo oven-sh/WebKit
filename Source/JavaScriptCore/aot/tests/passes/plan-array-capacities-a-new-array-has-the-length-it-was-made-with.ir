@@ -1,0 +1,182 @@
+# A new array has the length it was made with until somebody else has had it
+# FORM: Prepared
+# RUN: pass PlanArrayCapacities
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="filledInALoopAndMeasuredBehindIt" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=number}, {type=int[0, 100]}] results=[{type=anything}] {
+    v4 = NewArrayLike v0, v1
+    v5 = Integer integer=0
+    Jump -> next b1(v5)
+  b1(v6: int[0, 100]):
+    LoopHint
+    v8 = Less v6, v0
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = TryPutByValDirect v4, v6, v2
+    Jump -> next b1(v3)
+  b3():
+    v10 = CallBuiltin v4 overload=ArrayPrototypeLength/0
+    v11 = Call v1, -, v10
+    Return v4
+}
+# CHECK-LABEL: function f0
+# CHECK: v9: {{*}} = TryPutByValDirect v4, v6, v2 length=v0 arrayStorage=Double
+# CHECK: v10: {{*}} = Upcast v0
+# CHECK-NOT: ArrayPrototypeLength
+
+function f1 name="handedToACallFirst" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=number}, {type=anything}] results=[{type=anything}] {
+    v4 = NewArrayLike v0, v1
+    v5 = Call v3, -, v4
+    v6 = Integer integer=0
+    v7 = TryPutByValDirect v4, v6, v2
+    v8 = CallBuiltin v4 overload=ArrayPrototypeLength/0
+    Return v8
+}
+# CHECK-LABEL: function f1
+# CHECK: v7: {{*}} = TryPutByValDirect v4, v6, v2 arrayStorage=Double
+# CHECK: v8: {{*}} = CallBuiltin v4 overload=ArrayPrototypeLength/0
+
+function f2 name="handedToACallAtTheEndOfEachTurn" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=number}, {type=anything}] results=[{type=anything}] {
+    v4 = NewArrayLike v0, v1
+    v5 = Integer integer=0
+    Jump -> next b1(v5)
+  b1(v6: int[0, 100]):
+    LoopHint
+    v8 = Less v6, v0
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = TryPutByValDirect v4, v6, v2
+    v10 = Call v3, -, v4
+    Jump -> next b1(v0)
+  b3():
+    Return v4
+}
+# CHECK-LABEL: function f2
+# CHECK: v9: {{*}} = TryPutByValDirect v4, v6, v2 arrayStorage=Double
+
+function f3 name="storedInFrontOfTheCallAndMeasuredBehindIt" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=number}, {type=anything}] results=[{type=anything}] {
+    v4 = NewArrayLike v0, v1
+    v5 = Integer integer=0
+    v6 = TryPutByValDirect v4, v5, v2
+    v7 = CallBuiltin v4 overload=ArrayPrototypeLength/0
+    v8 = Call v3, -, v4
+    v9 = CallBuiltin v4 overload=ArrayPrototypeLength/0
+    v10 = Add v7, v9
+    Return v10
+}
+# CHECK-LABEL: function f3
+# CHECK: v6: {{*}} = TryPutByValDirect v4, v5, v2 length=v0 arrayStorage=Double
+# CHECK: v7: {{*}} = Upcast v0
+# CHECK: v9: {{*}} = CallBuiltin v4 overload=ArrayPrototypeLength/0
+
+function f4 name="madeAnewInEveryTurnAndHandedOnAtItsEnd" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=number}, {type=anything}] results=[{type=anything}] {
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5: int[0, 100]):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = NewArrayLike v0, v1
+    v9 = TryPutByValDirect v8, v5, v2
+    v10 = Call v3, -, v8
+    Jump -> next b1(v0)
+  b3():
+    Return v4
+}
+# CHECK-LABEL: function f4
+# CHECK: v9: {{*}} = TryPutByValDirect v8, v5, v2 length=v0 arrayStorage=Double
+
+function f5 name="madeWithRoomAndNoLength" parameters=[{type=int[0, 100]}, {type=number}] results=[{type=anything}] {
+    v2 = NewArrayWithCapacity v0
+    v3 = Integer integer=0
+    v4 = TryPutByValDirect v2, v3, v1
+    v5 = CallBuiltin v2 overload=ArrayPrototypeLength/0
+    Return v5
+}
+# CHECK-LABEL: function f5
+# CHECK: v4: {{*}} = TryPutByValDirect v2, v3, v1 arrayStorage=Double
+# CHECK: v5: {{*}} = CallBuiltin v2 overload=ArrayPrototypeLength/0
+
+function f6 name="oneNameForEitherOfTwoArrays" parameters=[{type=boolean}, {type=int[0, 100]}, {type=int[0, 50]}, {type=Array<anything>}, {type=number}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v5 = NewArrayLike v1, v3
+    Jump -> next b3(v5)
+  b2():
+    v6 = NewArrayLike v2, v3
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = Integer integer=0
+    v9 = TryPutByValDirect v7, v8, v4
+    v10 = CallBuiltin v7 overload=ArrayPrototypeLength/0
+    Return v10
+}
+# CHECK-LABEL: function f6
+# CHECK: v9: {{*}} = TryPutByValDirect v7, v8, v4 arrayStorage=Double
+# CHECK: v10: {{*}} = CallBuiltin v7 overload=ArrayPrototypeLength/0
+
+function f7 name="aSecondArrayMadeLikeTheFirst" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=number}] results=[{type=anything}] {
+    v3 = NewArrayLike v0, v1
+    v4 = Integer integer=0
+    v5 = TryPutByValDirect v3, v4, v2
+    v6 = CallBuiltin v3 overload=ArrayPrototypeLength/0
+    v7 = NewArrayLike v6, v3
+    v8 = IsPristine v3 builtinClass=Array aspects=[Storage]
+    Branch v8 -> taken b1(| 0), notTaken b3()
+  b1(v9):
+    v10 = HasArrayStorage v3 arrayStorage=Double
+    Branch v10 -> taken b2(| 0), notTaken b3()
+  b2(v11):
+    v12 = AllGuards v9, v11
+    v13 = HasArrayElement v3, v4, v12 arrayStorage=Double level=Expected [keyIsIntegral]
+    v14 = TryPutByValDirect v7, v4, v2
+    Return v13
+  b3() frequency=Unlikely:
+    Return v7
+}
+# CHECK-LABEL: function f7
+# CHECK: v6: {{*}} = Upcast v0
+# CHECK: v13: {{*}} = HasArrayElement v3, v4, v12, v0 arrayStorage=Double
+# CHECK: v14: {{*}} = TryPutByValDirect v7, v4, v2 length=v6 arrayStorage=Double
+
+function f8 name="aStoreThatIsNotTakenIsMadeByKeyAndTheLoopGoesOn" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=number}, {type=int[0, 100]}] results=[{type=anything}] {
+    v4 = NewArrayLike v0, v1
+    v5 = Integer integer=0
+    Jump -> next b1(v5)
+  b1(v6: int[0, 100]):
+    LoopHint
+    v8 = Less v6, v0
+    Branch v8 -> taken b2(), notTaken b4()
+  b2():
+    v9 = TryPutByValDirect v4, v6, v2
+    Branch v9 -> taken b1(v3), notTaken b3()
+  b3() frequency=Rare:
+    ElemSet v4, v6, v2 [keyIsIntegral]
+    Jump -> next b1(v3)
+  b4():
+    Return v4
+}
+# CHECK-LABEL: function f8
+# CHECK: v9: {{*}} = TryPutByValDirect v4, v6, v2 length=v0 arrayStorage=Double
+
+function f9 name="aStoreByKeyAtAnyPosition" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=number}, {type=int[0, 100]}] results=[{type=anything}] {
+    v4 = NewArrayLike v0, v1
+    v5 = Integer integer=0
+    Jump -> next b1(v5)
+  b1(v6: int[0, 100]):
+    LoopHint
+    v8 = Less v6, v0
+    Branch v8 -> taken b2(), notTaken b4()
+  b2():
+    v9 = TryPutByValDirect v4, v6, v2
+    Branch v9 -> taken b1(v3), notTaken b3()
+  b3() frequency=Rare:
+    ElemSet v4, v3, v2 [keyIsIntegral]
+    Jump -> next b1(v3)
+  b4():
+    Return v4
+}
+# CHECK-LABEL: function f9
+# CHECK: v9: {{*}} = TryPutByValDirect v4, v6, v2 arrayStorage=Double

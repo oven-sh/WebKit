@@ -141,6 +141,7 @@ struct VirtualObjectContext {
     const FlowResults* flow { nullptr };
     // The arena of a pass that rewrites the function. An analysis has none and can only name types that the whole program shares.
     TypeArena* types { nullptr };
+    const Vector<std::optional<VirtualConstant>>* constantsBeforeRewriting { nullptr };
 };
 
 enum class ListedValues : bool { HaveTypesOfFields, MayAlsoBeUndefinedOrNull };
@@ -174,7 +175,7 @@ VirtualFieldAccess lookUpField(const VirtualObjectContext&, const VirtualObjectD
 VirtualFieldAccess lookUpNamedField(const VirtualObjectContext&, const VirtualObjectDescription&, const Value& access);
 VirtualFieldAccess lookUpElement(const VirtualObjectContext&, const VirtualObjectDescription&, const Value& access, ValueID position);
 
-std::optional<VirtualConstant> virtualConstantOf(const Program&, const Function&, ValueID);
+std::optional<VirtualConstant> virtualConstantOf(const VirtualObjectContext&, ValueID);
 TypeID typeOf(VirtualConstant);
 Value makeConstant(VirtualConstant);
 
@@ -198,6 +199,8 @@ Value makeFieldRead(const Program&, const VirtualObjectDescription&, const Virtu
 Value makeFieldStore(const Program&, const VirtualObjectDescription&, const FieldValue&, ValueID cell, ValueID guard);
 // An object that is built lists something that fits the slot, and the store by name comes behind the allocation, as storeUnprovenInitialValues() lays them.
 bool canHoldUnprovenValue(const Program&, const VirtualObjectDescription&, const VirtualField& named);
+// A test of a number that goes into a slot of numbers tells nothing about the number but whether it fits the slot.
+bool testTellsOnlyWhetherValueFitsSlot(const Program&, const VirtualObjectDescription&, const VirtualField& named, TypeID stored);
 Value makeFiller(const Program&, const VirtualObjectDescription&, const VirtualField& unprovenNamed);
 Value makeStoreByName(const FieldValue& unprovenNamed, ValueID cell);
 // `list.keys()`, `list.values()`, `list.entries()` and `list[Symbol.iterator]()` of what is proven to be a list.

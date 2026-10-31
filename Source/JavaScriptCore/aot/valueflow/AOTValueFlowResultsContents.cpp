@@ -408,6 +408,7 @@ private:
             case ValueFlowNameKind::AddedNames:
             case ValueFlowNameKind::FoundThroughEscapedInstances:
             case ValueFlowNameKind::NamesOfMethods:
+            case ValueFlowNameKind::ReceiversOfCalls:
             case ValueFlowNameKind::NamespaceExports:
                 return false;
             }
@@ -1122,6 +1123,15 @@ private:
         });
     }
 
+    bool isEmptyLiteralDeclaredToHoldNumbers(const Container& container) const
+    {
+        const ValueFlowSite* site = universe().siteOf(container.object);
+        if (!site || site->origin != ValueFlowSiteOrigin::Operation)
+            return false;
+        const Value& creation = m_inputs.program.at(universe().functionOf(container.object)).at(site->value);
+        return creation.opcode == Opcode::NewArray && creation.elementsOperands().empty() && creation.holes().empty() && holdsOnlyNumbers(arrayStorageHolding(m_inputs.program.at(creation.contents())));
+    }
+
     void shareStorageWithinComponents()
     {
         for (uint32_t index = 0; index < m_containers.size(); ++index) {
@@ -1168,9 +1178,13 @@ private:
         }
         // Where lists of one component stayed undecided, a reader tests and may convert what arrives: a list that may hold numbers claims no storage of its own.
         BitVector meetsUndecidedList(m_containers.size());
+        BitVector meetsOtherList(m_containers.size());
         for (const Vector<uint32_t>& members : m_membersOfComponent) {
-            if (members.size() > 1 && m_facts[members[0]].arrayStorage == ArrayStorage::Other) {
-                for (uint32_t array : members)
+            if (members.size() <= 1)
+                continue;
+            for (uint32_t array : members) {
+                meetsOtherList.quickSet(array);
+                if (m_facts[members[0]].arrayStorage == ArrayStorage::Other)
                     meetsUndecidedList.quickSet(array);
             }
         }
@@ -1178,6 +1192,14 @@ private:
         for (uint32_t index = 0; index < m_containers.size(); ++index) {
             if (!isArray(index))
                 continue;
+            // The text declares numbers and more cannot be ruled out: creator and readers go by the text, as they do for the result of slice().
+            if (m_facts[index].contentsAreProven && !meetsOtherList.quickGet(index) && arrayStorageHolding(m_types.at(m_facts[index].contents[m_indexOfElements])) == ArrayStorage::Contiguous && isEmptyLiteralDeclaredToHoldNumbers(m_containers[index])) {
+                m_facts[index].contentsAreProven = false;
+                m_facts[index].contents.clear();
+                m_facts[index].arrayStorage = ArrayStorage::Other;
+                m_results.set(m_containers[index].object, ValueFlowContainerFacts(m_facts[index]));
+                continue;
+            }
             if (m_facts[index].arrayStorage == ArrayStorage::Other && m_facts[index].contentsAreProven && m_arrayWrites[index].keepsStorageOfLiteral()) {
                 const Type& elements = m_types.at(m_facts[index].contents[m_indexOfElements]);
                 bool isGivenMoreThanNumbers = m_arrayWrites[index].has(ArrayWrites::IsGivenMoreThanNumbers) && !m_arrayWrites[index].has(ArrayWrites::MeetsObjectThatIsNoArray);

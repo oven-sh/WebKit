@@ -22,7 +22,7 @@ function f0 name="applyWithArray" flags=[HasThis] thisType={type=anything} param
 
 function f1 name="applyWithArgumentsObject" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=Arguments}] results=[{type=anything}] {
     v3 = PropGet v1 key="apply"
-    v4 = Call v3, v1, v0, v2 calleeKey="apply"
+    v4 = Call v3, v1, v0, v2 calleeKey="apply" calleeName="f.apply"
     ReturnCall v4
 # CHECK: = TypeTest v3 testedType=builtin(FunctionPrototypeApply)
 # CHECK: [[list1]]:{{*}}= NewArgumentList v1, v2

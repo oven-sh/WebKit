@@ -309,6 +309,7 @@ public:
     void willCreateField(State&, const FieldData&);
     void didCreateField(State&, const FieldData&, bool withStorage = true);
     void setKeyOrder(VM&, State&, std::span<const uint16_t> keys);
+    bool trySetNumberedKeyOrder(VM&, State&, std::span<const uint16_t> keys);
     struct InitialKeyOrder {
         uint32_t orderAndCount;
         CompiledStructure* structure;
@@ -329,6 +330,7 @@ public:
     // The key that placeOfExtraKey() was last asked for is gone from the extra properties.
     void didRemoveExtraKey(VM&, State&, const PlaceOfExtraKey&);
     void forgetPlacesOfPositionedKeys(State&);
+    void takeKeyOrderOfItsOwn(VM&, State&);
 
     bool tryCopyFieldsOf(VM&, const Object& source);
     static Object* tryCreateCopyOfFields(VM&, const Object& source);
@@ -368,7 +370,6 @@ private:
     std::optional<std::span<const FieldAsProperty>> fieldsInKeyOrderSlow() const;
     void removeExtraKeyFromOrder(VM&, State&, uint32_t ordinal);
     void didRemoveCountedExtraKey(State&);
-    void nameExtraKeysInOrder(VM&, State&);
     bool tryListFieldBehindNamedKey(State&, const FieldData&);
 };
 static_assert(sizeof(Object) == offsetOfOrderWord);

@@ -240,6 +240,7 @@ private:
     uint32_t positionOf(BlockID block) const { return m_cfg.reversePostOrderIndex(block); }
     void decideLocally();
     void removeDecidedObjects();
+    void decideComponentsThatNothingMaterializes();
     void partition();
     static uint64_t mix(uint64_t seen)
     {
@@ -266,6 +267,7 @@ private:
     Vector<Event, 32> m_events;
     Vector<ParameterLink, 8> m_parameterLinks;
     Vector<ObjectUse, 32> m_uses;
+    uint64_t m_numberOfBlocksVisited { 0 };
     Vector<Chunk, 2> m_chunks;
 };
 
@@ -457,7 +459,7 @@ bool AllocationPrefilter::neverFolds(uint32_t object, const Value& store, BlockI
         return false;
     if (admissionOf(m_sinking, description, access.field, { m_function.at(store.valueOperand()).type }) != Admission::Refused)
         return false;
-    return (store.opcode != Opcode::PropSet && store.opcode != Opcode::PropDefine) || m_sinking.storesByNameWaitIn(block) || !canHoldUnprovenValue(m_program, description, access.field);
+    return (store.opcode != Opcode::PropSet && store.opcode != Opcode::PropDefine) || (m_sinking.storesByNameWaitIn(block) && (m_sinking.inputs().isLargeForItsWork || !testTellsOnlyWhetherValueFitsSlot(m_program, description, access.field, m_function.at(store.valueOperand()).type))) || !canHoldUnprovenValue(m_program, description, access.field);
 }
 
 bool AllocationPrefilter::mayBeScalarReplacedBy(uint32_t object, const Use& use, BuiltinCallForm formOfCall)
@@ -1265,6 +1267,7 @@ void AllocationPrefilter::Solver<Mask>::propagateVirtualObjects()
             mustRepeat |= visit(position);
         }
     }
+    m_prefilter.m_numberOfBlocksVisited += m_visitedPositions.size();
     if (m_hasVisitedBlockTwice)
         recountMaterializations();
 }
@@ -1434,6 +1437,47 @@ uint32_t AllocationPrefilter::findComponent(uint32_t object)
     return object;
 }
 
+// A candidate is dropped where it is materialized without paying for it, or abandoned: allocated again while it is virtual, or passed to a join while it goes on living beside the join.
+// Without a cycle, without a use that needs a cell, and with nothing of an object behind the edges that pass it on, none of that can happen to a member of the component, wherever its blocks lie.
+// The solver would carry each such object through every block that it lives across to find that out.
+void AllocationPrefilter::decideComponentsThatNothingMaterializes()
+{
+    if (m_cfg.hasCycle())
+        return;
+    BitVector mayBeDropped(m_objects.size());
+    auto componentOf = [&](uint32_t object) { return findComponent(find(object)); };
+    for (const Event& event : m_events) {
+        if (event.kind == EventKind::Materialization || event.kind == EventKind::StoreFromObject || event.kind == EventKind::Hold)
+            mayBeDropped.quickSet(componentOf(event.object));
+    }
+    Vector<uint32_t, 16> lastPosition(FillWith { }, m_objects.size(), 0u);
+    auto noteUseAt = [&](uint32_t object, uint32_t position) {
+        lastPosition[find(object)] = std::max(lastPosition[find(object)], position);
+    };
+    for (const ObjectUse& use : m_uses)
+        noteUseAt(use.object, use.position);
+    for (const ParameterLink& link : m_parameterLinks)
+        noteUseAt(link.source, link.position);
+    UncheckedKeyHashSet<std::tuple<uint32_t, uint32_t, uint32_t>> entered;
+    for (const ParameterLink& link : m_parameterLinks) {
+        if (find(link.source) == find(link.parameter))
+            continue;
+        bool isFirstIntoParameter = entered.add({ link.edge.from.index() + 1, link.edge.targetIndex + 1, find(link.parameter) + 1 }).isNewEntry;
+        if (link.edge.isHandlerEdge() || link.position != lastPosition[find(link.source)] || !isFirstIntoParameter)
+            mayBeDropped.quickSet(componentOf(link.source));
+    }
+    bool hasDecided = false;
+    for (uint32_t object = 0; object < m_objects.size(); ++object) {
+        Object& root = m_objects[object];
+        if (find(object) != object || root.isDecided || mayBeDropped.quickGet(findComponent(object)))
+            continue;
+        root.isDecided = true;
+        hasDecided = true;
+    }
+    if (hasDecided)
+        removeDecidedObjects();
+}
+
 void AllocationPrefilter::partition()
 {
     constexpr uint32_t bitsInWord = 64;
@@ -1483,6 +1527,7 @@ void AllocationPrefilter::partition()
         if (hasDecided)
             removeDecidedObjects();
     }
+    decideComponentsThatNothingMaterializes();
     for (uint32_t object = 0; object < m_objects.size(); ++object) {
         if (find(object) == object && !m_objects[object].isDecided)
             roots.append({ firstPositionOfComponent[findComponent(object)], findComponent(object), object });
@@ -1558,6 +1603,7 @@ void AllocationPrefilter::run()
         else if (chunk.numberOfBits <= 1024)
             Solver<WidePrefilterMask<16>>(*this, chunk).run();
     }
+    m_sinking.context().build.statistics().count(StatisticID::BlocksVisitedToFindAllocationsThatPay, m_numberOfBlocksVisited);
 }
 
 } // anonymous namespace
@@ -2184,6 +2230,12 @@ void AllocationSinking::refuseUnprovenValues(VirtualObjectID object)
     m_mustSolveAgain = true;
 }
 
+void AllocationSinking::letStoresByNameWait(VirtualObjectID object)
+{
+    familyOf(object).letStoresByNameWait();
+    m_mustSolveAgain = true;
+}
+
 bool AllocationSinking::mayGetTests(BlockID block) const
 {
     BlocksThatMayGetTests& blocks = *m_policy.blocksThatMayGetTests;
@@ -2193,6 +2245,7 @@ bool AllocationSinking::mayGetTests(BlockID block) const
 }
 
 // A store by name waits for PlaceTypeTests: the value that fits then goes on as a value of the field's type, and only the rare arm keeps the store by name.
+// Where the test would tell only that, the wait begins when an object of the family is built: one that is never built has no slot to fit.
 bool AllocationSinking::storesByNameWaitIn(BlockID block) const
 {
     if (m_inputs.isLargeForItsWork)

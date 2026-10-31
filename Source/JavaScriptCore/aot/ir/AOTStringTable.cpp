@@ -13,6 +13,7 @@
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
+#include "SmallStrings.h"
 #include <algorithm>
 #include <unicode/utf16.h>
 #include <utility>
@@ -25,6 +26,15 @@ namespace JSC { namespace AOT { namespace Typed {
 static_assert(StringTable::provisionalBit == ProvisionalStringID::provisionalBit);
 
 static constexpr char32_t minCodePointForLength[] = { 0, 0, 0x80, 0x800, 0x10000 };
+
+bool hasCellOfVM(std::span<const uint8_t> bytes)
+{
+    constexpr size_t maxEncodedSizeOfLatin1Character = 2;
+    if (bytes.size() > maxEncodedSizeOfLatin1Character)
+        return false;
+    Vector<char16_t> units = decodeProgramString(bytes);
+    return units.isEmpty() || (units.size() == 1 && units[0] <= maxSingleCharacterString);
+}
 
 Vector<char16_t> decodeProgramString(std::span<const uint8_t> bytes)
 {

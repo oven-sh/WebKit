@@ -10,6 +10,7 @@
 
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
+#include "AOTEdgeResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTOperatorForms.h"
 #include "AOTStringBuilderAnalysis.h"
@@ -181,6 +182,29 @@ private:
 
 } // anonymous namespace
 
+// `sum += row.amount || 0`, with rows out of JSON.parse(), of which nothing is known: what is found true is tested for a number next, so a number is what the program reckons with.
+static bool isMemberOfOutsideDataTestedForNumberNext(const Program& program, const Function& function, FunctionAnalyses& analyses, BlockID block, ValueID question)
+{
+    ValueID asked = function.at(question).valueOperand();
+    const Value& read = function.at(analyses.identityOf(asked));
+    const Terminator& branch = function.at(block).terminator;
+    if (read.opcode != Opcode::PropGet || !read.asksOnlyTables() || !branch.isConditionalBranch() || branch.conditionOperand() != question)
+        return false;
+    for (uint32_t targetIndex = 0; targetIndex < branch.targets.size(); ++targetIndex) {
+        const Target& target = branch.targets[targetIndex];
+        uint32_t firstParameter = firstEdgeResultParameter(function, block, targetIndex);
+        for (uint32_t index = 0; index < target.proofs.size(); ++index) {
+            if (operandNarrowedOnEdge(function, { block, targetIndex, index }) != asked)
+                continue;
+            for (const Use& use : analyses.useLists().usesOf(function.at(target.block).parameters[firstParameter + index])) {
+                if (use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::TypeTest && program.at(function.at(use.user).testedType()).isNumber())
+                    return true;
+            }
+        }
+    }
+    return false;
+}
+
 void OperatorEmitter::generateToBoolean(const ValueContext& value)
 {
     ValueID tested = value->valueOperand();
@@ -188,7 +212,8 @@ void OperatorEmitter::generateToBoolean(const ValueContext& value)
     switch (value->form()) {
     case OperatorForm::Generic:
         if (value.isBranchCondition()) {
-            truthiness.branchOnTruthiness(value, get(tested), typeOf(tested), value.branchTargets());
+            bool expectsNumbers = isMemberOfOutsideDataTestedForNumberNext(m_program, m_function, analyses(), value.block(), value.id());
+            truthiness.branchOnTruthiness(value, get(tested), typeOf(tested), value.branchTargets(), expectsNumbers ? TruthinessEmitter::Expects::Numbers : TruthinessEmitter::Expects::NothingMore);
             return;
         }
         define(value, Condition(m_out.castToInt32(callStub(value, AOT::toBoolean(), { in<Boxed>(tested).value() }).first)));

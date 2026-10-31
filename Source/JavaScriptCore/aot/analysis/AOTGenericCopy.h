@@ -27,6 +27,7 @@ struct FunctionPassContext;
 Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses&, NOESCAPE const ScopedLambda<bool(ValueID)>& mayCallUnknownCode, NOESCAPE const ScopedLambda<bool(ProgramPoint)>& mayRejoinAt, const BitVector* requestedBlocks = nullptr);
 
 Expected<bool> isClosedOnlyByWaysBack(FunctionAnalyses&, const NaturalLoop&);
+const NaturalLoop* findLoopOfWaysBackInto(FunctionAnalyses&, const NaturalLoop&);
 
 Vector<TypeID, 4> typesOfCountersOnWayBack(FunctionAnalyses&, TypeArena&, BlockID head);
 

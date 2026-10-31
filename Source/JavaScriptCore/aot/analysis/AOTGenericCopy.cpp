@@ -1030,6 +1030,21 @@ Expected<bool> isClosedOnlyByWaysBack(FunctionAnalyses& analyses, const NaturalL
     });
 }
 
+const NaturalLoop* findLoopOfWaysBackInto(FunctionAnalyses& analyses, const NaturalLoop& loop)
+{
+    const NaturalLoops& loops = analyses.naturalLoops();
+    const NaturalLoop* around = loops.innerMostOuterLoop(loop);
+    if (!around || !isClosedOnlyByWaysBack(analyses, *around).predicted())
+        return nullptr;
+    const BlockCycles& cycles = analyses.blockCycles();
+    std::optional<unsigned> cycleOfWaysBack = cycles.innermostCycleOf(around->header());
+    for (unsigned index = 0; index < around->size(); ++index) {
+        if (!loops.belongsTo(around->at(index), loop) && cycles.innermostCycleOf(around->at(index)) != cycleOfWaysBack)
+            return nullptr;
+    }
+    return around;
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

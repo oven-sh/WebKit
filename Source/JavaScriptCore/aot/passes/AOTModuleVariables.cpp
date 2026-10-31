@@ -619,7 +619,7 @@ static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
         if (access.opcode != Opcode::PropGet || !access.operand(0))
             return number;
         const Type& receiver = program.typeOf(function, access.operand(0));
-        if (!receiver.hasOnlyLayouts())
+        if (!receiver.hasOnlyLayouts() || receiver.mayBeUndefinedOrNull())
             return number;
         for (LayoutID id : membersOf(program, receiver)) {
             const ConstantField* found = findConstant(id, access.key());

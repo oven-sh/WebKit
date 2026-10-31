@@ -570,7 +570,7 @@ static void checkArraySummaries(const StubCatalog& catalog)
     const StubSignature& largestLiteral = catalog.summaryOf(arrayLiteral(maxCount)).signature;
     AOT_TEST_CHECK(largestLiteral.numberOfOperands == maxCount);
     for (StubKey key : allStubKeys()) {
-        if (std::ranges::find(creationFamilies, key.family()) != creationFamilies.end())
+        if (std::ranges::find(creationFamilies, key.family()) != creationFamilies.end() && !hasFrameAndKeepsFewerRegisters(key.callerFrame()))
             checkArrayCreationSummary(catalog, key, largestLiteral);
     }
     checkArrayCreationSummary(catalog, newEmptyArrayAtSite(ArrayElementKind::Contiguous), largestLiteral);

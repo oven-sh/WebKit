@@ -30,11 +30,13 @@ static bool isCall(Opcode opcode)
     }
 }
 
-static void printCallees(PrintStream& out, ValueFlowSolution& solution, const ValueFlowStatement& statement, bool printsPrimitives)
+static void printCallees(PrintStream& out, ValueFlowSolution& solution, const ValueFlowStatement& statement, bool printsPrimitives, bool printsWhatIsSeen)
 {
     const ValueFlowUniverse& universe = solution.bodies().universe();
     out.print("f", statement.function.index(), " v", statement.site.index(), " ->");
-    solution.sets().forEachMember(solution.possibleValuesOf(solution.bodies().operandsOf(statement)[0]), [&](ValueFlowObjectID callee) {
+    const ValueFlowOperand& operand = solution.bodies().operandsOf(statement)[0];
+    ValueSetID possible = solution.possibleValuesOf(operand);
+    auto printCallee = [&](ValueFlowObjectID callee) {
         if (callee == ValueFlowUniverse::unknownObject())
             out.print(" unknown");
         else if (callee == ValueFlowUniverse::untrackedObject())
@@ -49,7 +51,14 @@ static void printCallees(PrintStream& out, ValueFlowSolution& solution, const Va
             out.print(" key");
         else if (printsPrimitives)
             out.print(" primitive", callee.index());
-    });
+    };
+    solution.sets().forEachMember(possible, printCallee);
+    if (ValueSetID seen = printsWhatIsSeen && operand.node ? solution.solver().seenValuesOf(operand.node) : ValueSets::nothing; !ValueSets::isComplement(seen)) {
+        solution.sets().forEachMember(seen, [&](ValueFlowObjectID callee) {
+            if (!solution.sets().contains(possible, callee))
+                printCallee(callee);
+        });
+    }
     out.println();
 }
 
@@ -105,6 +114,7 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
     bool printsNodesGivenMore = false;
     bool printsCells = false;
     bool printsWrittenObjects = false;
+    bool printsWhatIsSeen = false;
     ValueFlowSolution::CoveredMembers coveredMembers = ValueFlowSolution::CoveredMembers::StayListed;
     for (const String& word : context.arguments) {
         if (word == "calls"_s)
@@ -129,6 +139,10 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
             printsWrittenObjects = true;
         else if (word == "proofs"_s)
             coveredMembers = ValueFlowSolution::CoveredMembers::AreLeftOut;
+        else if (word == "seen"_s) {
+            printsWhatIsSeen = true;
+            coveredMembers = ValueFlowSolution::CoveredMembers::AreLeftOut;
+        }
         else
             return printBadArgument(context.out, word);
     }
@@ -189,7 +203,7 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
             else
                 ++withSeveral;
             if (printsCalls)
-                printCallees(context.out, solution, statement, printsPrimitives);
+                printCallees(context.out, solution, statement, printsPrimitives, printsWhatIsSeen);
         }
     }
     if (printsUnseenCode) {

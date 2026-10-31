@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTIdentifierNumbering.h"
+#include "AOTImagesBelow.h"
 #include "AOTOrderedInterning.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
@@ -111,20 +113,27 @@ static bool hasFieldsOfObjects(const Wire::Layout& checkedLayout)
     return false;
 }
 
-static Vector<uint32_t> collectNames(const Wire::Sections& checkedSections, uint32_t index)
+static Vector<uint32_t> collectNames(const Wire::Sections& checkedSections, uint32_t index, NOESCAPE const Invocable<bool(uint32_t)> auto& isWanted)
 {
     std::span<const Wire::Layout> layouts = checkedSections.layouts;
     Vector<uint32_t> names;
     size_t remainingBases = layouts.size();
     for (uint32_t current = index; current != Wire::none && remainingBases--; current = layouts[current].base) {
         for (const Wire::Field& field : fieldsOf(checkedSections, layouts[current])) {
-            if (isNamedByProgram(field))
+            if (isNamedByProgram(field) && isWanted(field.key))
                 names.append(field.key);
         }
     }
     AOT::sort(names);
     removeRepeatedElements(names);
     return names;
+}
+
+static Vector<uint32_t> collectNames(const Wire::Sections& checkedSections, uint32_t index)
+{
+    return collectNames(checkedSections, index, [](uint32_t) {
+        return true;
+    });
 }
 
 bool DeclaredNames::lacksRequiredName(LayoutID member, uint32_t type) const
@@ -263,17 +272,33 @@ static Vector<Vector<uint32_t>> findTypesMetByNames(const ParallelLoops& loops, 
     std::span<const Wire::Layout> layouts = checkedSections.layouts;
     unsigned numberOfLayouts = static_cast<unsigned>(layouts.size());
 
+    Vector<Vector<uint32_t>> layoutsWithName(checkedSections.propertyKeys.size());
+    auto forEachRequiredField = [&](uint32_t type, NOESCAPE const Invocable<void(const Wire::Field&)> auto& functor) {
+        for (const Wire::Field& field : fieldsOf(checkedSections, layouts[type])) {
+            if (isNamedByProgram(field) && has(field, FieldFlags::IsRequired) && !has(field, FieldFlags::IsNeverWritten) && field.key < layoutsWithName.size())
+                functor(field);
+        }
+    };
+    BitVector isRequiredBySomeType(layoutsWithName.size());
+    for (uint32_t type = 0; type < numberOfLayouts; ++type) {
+        if (!isStructuralType(layouts[type]))
+            continue;
+        forEachRequiredField(type, [&](const Wire::Field& field) {
+            isRequiredBySomeType.quickSet(field.key);
+        });
+    }
+
     Vector<Vector<uint32_t>> names(numberOfLayouts);
     forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index) {
-        if (hasFieldsOfObjects(layouts[index]) && !has(layouts[index], LayoutFlags::IsNeverAllocated) && !has(layouts[index], LayoutFlags::IsWrittenUnderDictionaryType))
-            names[index] = collectNames(checkedSections, index);
+        if (!hasFieldsOfObjects(layouts[index]) || has(layouts[index], LayoutFlags::IsNeverAllocated) || has(layouts[index], LayoutFlags::IsWrittenUnderDictionaryType))
+            return;
+        names[index] = collectNames(checkedSections, index, [&](uint32_t name) {
+            return name < isRequiredBySomeType.size() && isRequiredBySomeType.quickGet(name);
+        });
     });
-    Vector<Vector<uint32_t>> layoutsWithName(checkedSections.propertyKeys.size());
     Vector<uint64_t> layoutsByName = collectInParallel<uint64_t>(loops, numberOfLayouts, [&](unsigned index, Vector<uint64_t>& found) {
-        for (uint32_t name : names[index]) {
-            if (name < layoutsWithName.size())
-                found.append(pairOf(name, index));
-        }
+        for (uint32_t name : names[index])
+            found.append(pairOf(name, index));
     });
     listSecondsByFirst(singleElementSpan(layoutsByName), layoutsWithName);
 
@@ -283,13 +308,11 @@ static Vector<Vector<uint32_t>> findTypesMetByNames(const ParallelLoops& loops, 
         bool isDeclaredNowhere = layouts[type].name == Wire::none && layouts[type].module == Wire::none;
         Vector<uint32_t, 16> required;
         Vector<uint32_t, 16> requiredFields;
-        for (const Wire::Field& field : fieldsOf(checkedSections, layouts[type])) {
-            if (!isNamedByProgram(field) || !has(field, FieldFlags::IsRequired) || has(field, FieldFlags::IsNeverWritten) || field.key >= layoutsWithName.size())
-                continue;
+        forEachRequiredField(type, [&](const Wire::Field& field) {
             required.append(field.key);
             if (!isDeclaredNowhere || isRequiredField(field))
                 requiredFields.append(field.key);
-        }
+        });
         const Vector<uint32_t>* fewest = nullptr;
         for (uint32_t name : requiredFields) {
             if (!fewest || layoutsWithName[name].size() < fewest->size())
@@ -501,6 +524,196 @@ static BitVector findTypeParametersWithoutFamily(std::span<const Wire::Layout> l
     return result;
 }
 
+// Another image reads the slot as its own code does where nothing is proven: it asks whether the property is there. What stands for a text or a function of that image alone is left to it.
+static bool hasSlotsThatOtherImagesRead(const ImagesBelow& below, const ImagesBelow::Record& record)
+{
+    const LayoutData& layout = *record.layout;
+    if (layout.isDerived || layout.hasExtensionData || layout.hasFieldsWithSymbolKeys || !layout.numberOfFields)
+        return false;
+    constexpr uint16_t flagsOfOtherFields = fieldIsOutOfLine | fieldMayExistWithoutStorage | fieldIsPrivate | fieldIsBrand | fieldAttributeFlags;
+    return std::ranges::all_of(layout.fields(), [&](const FieldData& field) {
+        SlotTraits traits = traitsOf(field.slot.representation());
+        bool isReadByAnyImage = traits.hasAbsent && traits.valueKind != SlotValueKind::LiteralString && traits.valueKind != SlotValueKind::DeferredClosure;
+        return isReadByAnyImage && !(field.flags & flagsOfOtherFields) && !below.textOfName(field.name).isNull();
+    });
+}
+
+// An object that the code of an image below has made comes to a type of this program as one that this program makes: it meets the type by its names.
+void Reader::planLayoutsBelow(Vector<Vector<LayoutID>>& members)
+{
+    const ImagesBelow* below = m_build.imagesBelow();
+    if (!below || m_form != IRForm::AsRead)
+        return;
+
+    struct TypeWithNames {
+        uint32_t type;
+        Vector<uint32_t, 8> numbers;
+        // Nothing in this program writes them. One that no object below has either is a name that no object ever has, as the mark of a branded type: it is asked of nobody.
+        Vector<uint32_t, 8> numbersNeverWrittenHere;
+        // Every name that the type declares, required or not, ascending.
+        Vector<uint32_t, 8> declaredNumbers;
+    };
+    std::span<const Wire::Layout> layouts = m_sections.layouts;
+    Vector<std::optional<std::optional<uint32_t>>> numberOfKey(m_sections.propertyKeys.size());
+    auto numberBelow = [&](uint32_t key) {
+        if (!numberOfKey[key])
+            numberOfKey[key] = numberInImagesBelow(m_program, PropertyKeyID(key), m_program.at(PropertyKeyID(key)).text, *below);
+        return *numberOfKey[key];
+    };
+    Vector<TypeWithNames> types;
+    UncheckedKeyHashMap<uint32_t, Vector<uint32_t>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> recordsWithName;
+    for (uint32_t type = 0; type < layouts.size(); ++type) {
+        // The code below knows nothing of a type that a file of this program declares: it makes no object for it.
+        if (!isStructuralType(layouts[type]) || layouts[type].module != Wire::none)
+            continue;
+        TypeWithNames named { type, { }, { }, { } };
+        bool isMetBelow = true;
+        for (const Wire::Field& field : fieldsOf(m_sections, layouts[type])) {
+            if (!isNamedByProgram(field) || field.key >= numberOfKey.size())
+                continue;
+            std::optional<uint32_t> number = m_program.at(PropertyKeyID(field.key)).kind == PropertyKeyKind::Text ? numberBelow(field.key) : std::nullopt;
+            if (number)
+                named.declaredNumbers.append(*number);
+            if (!has(field, FieldFlags::IsRequired))
+                continue;
+            if (number)
+                (has(field, FieldFlags::IsNeverWritten) ? named.numbersNeverWrittenHere : named.numbers).append(*number);
+            else if (!has(field, FieldFlags::IsNeverWritten)) {
+                isMetBelow = false;
+                break;
+            }
+        }
+        if (!isMetBelow || (named.numbers.isEmpty() && named.numbersNeverWrittenHere.isEmpty()))
+            continue;
+        for (uint32_t number : named.numbers)
+            recordsWithName.add(number, Vector<uint32_t>());
+        for (uint32_t number : named.numbersNeverWrittenHere)
+            recordsWithName.add(number, Vector<uint32_t>());
+        AOT::sort(named.declaredNumbers);
+        types.append(WTF::move(named));
+    }
+    if (types.isEmpty())
+        return;
+
+    Vector<ImagesBelow::Record> records;
+    size_t numberLeftOut = 0;
+    below->forEachRecord([&](const ImagesBelow::Record& record) {
+        bool isAskedFor = false;
+        below->forEachNameOf(record, [&](uint32_t name) {
+            isAskedFor |= recordsWithName.contains(name);
+        });
+        if (!isAskedFor)
+            return;
+        if (!hasSlotsThatOtherImagesRead(*below, record)) {
+            ++numberLeftOut;
+            return;
+        }
+        uint32_t index = static_cast<uint32_t>(records.size());
+        below->forEachNameOf(record, [&](uint32_t name) {
+            auto found = recordsWithName.find(name);
+            if (found != recordsWithName.end() && (found->value.isEmpty() || found->value.last() != index))
+                found->value.append(index);
+        });
+        records.append(record);
+    });
+
+    uint32_t firstLayout = static_cast<uint32_t>(numberOfRecords<LayoutID>());
+    Vector<LayoutID> layoutOfRecord(records.size());
+    for (TypeWithNames& named : types) {
+        for (uint32_t number : named.numbersNeverWrittenHere) {
+            if (!recordsWithName.find(number)->value.isEmpty())
+                named.numbers.append(number);
+        }
+        if (named.numbers.isEmpty())
+            continue;
+        const Vector<uint32_t>* fewest = nullptr;
+        for (uint32_t number : named.numbers) {
+            const Vector<uint32_t>& withName = recordsWithName.find(number)->value;
+            if (!fewest || withName.size() < fewest->size())
+                fewest = &withName;
+        }
+        Vector<uint32_t, 8> met;
+        for (uint32_t record : *fewest) {
+            bool hasEveryName = std::ranges::all_of(named.numbers, [&](uint32_t number) {
+                return below->findsName(records[record], number);
+            });
+            // As a literal is held to the type that it is written for. By its names alone a type of one name is met by every object that has the name, whichever type it was made for:
+            // flow, which in one program says which of them arrive, sees none of the code that makes these.
+            bool hasNoOtherField = std::ranges::all_of(records[record].layout->fields(), [&](const FieldData& field) {
+                return std::ranges::binary_search(named.declaredNumbers, static_cast<uint32_t>(field.name));
+            });
+            if (hasEveryName && hasNoOtherField)
+                met.append(record);
+        }
+        if (met.size() > maxLayoutsMetByNames)
+            continue;
+        for (uint32_t record : met) {
+            if (!layoutOfRecord[record]) {
+                layoutOfRecord[record] = LayoutID(firstLayout + static_cast<uint32_t>(m_program.recordsOfImagesBelow.size()));
+                m_program.recordsOfImagesBelow.append({ layoutOfRecord[record], records[record].image, records[record].firstShape, records[record].numberOfShapes, records[record].layout->isClass(), { } });
+            }
+            members[named.type].append(layoutOfRecord[record]);
+        }
+    }
+    // What such an object holds in a field is an object of that image again. Where the image holds the slot to a set of its layouts, they are taken in as well: the read has a type, and the next read a slot.
+    UncheckedKeyHashMap<uint32_t, LayoutID> layoutByFirstShape;
+    for (const Program::RecordOfImageBelow& taken : m_program.recordsOfImagesBelow)
+        layoutByFirstShape.add(taken.firstShape, taken.layout);
+    // Many fields are held to one set.
+    UncheckedKeyHashMap<uint64_t, std::optional<Vector<ImagesBelow::Record>>> recordsByTest;
+    auto recordsPassing = [&](const ImagesBelow::Record& record, const RuntimeCellTest& test) -> const std::optional<Vector<ImagesBelow::Record>>& {
+        return recordsByTest.ensure(static_cast<uint64_t>(record.image + 1) << 32 | test.shapeTestOffset(), [&] {
+            std::optional<Vector<ImagesBelow::Record>> passing { Vector<ImagesBelow::Record>() };
+            below->forEachShapeIn(record, test, [&](uint32_t shape) {
+                if (!passing || (!passing->isEmpty() && shape < passing->last().firstShape + passing->last().numberOfShapes))
+                    return;
+                std::optional<ImagesBelow::Record> member = below->recordWithShape(shape);
+                if (!member || member->firstShape != shape || passing->size() == maxLayoutsMetByNames || !hasSlotsThatOtherImagesRead(*below, *member))
+                    passing = std::nullopt;
+                else
+                    passing->append(*member);
+            });
+            return passing;
+        }).iterator->value;
+    };
+    for (size_t index = 0; index < m_program.recordsOfImagesBelow.size(); ++index) {
+        ImagesBelow::Record record = below->recordAt(m_program.recordsOfImagesBelow[index].image, m_program.recordsOfImagesBelow[index].firstShape, m_program.recordsOfImagesBelow[index].numberOfShapes);
+        Vector<std::optional<Vector<LayoutID>>> objectsInFields;
+        for (const FieldData& field : record.layout->fields()) {
+            Vector<ImagesBelow::Record, 8> held;
+            bool isListed = true;
+            bool holdsObjects = false;
+            for (const RuntimeCellTest& test : below->typeOf(record, field).cellTests()) {
+                if (test.kind == CellTestKind::IsSymbol)
+                    continue;
+                holdsObjects = true;
+                const std::optional<Vector<ImagesBelow::Record>>* members = test.kind == CellTestKind::ShapeIn ? &recordsPassing(record, test) : nullptr;
+                if (!members || !*members) {
+                    isListed = false;
+                    break;
+                }
+                held.appendVector(**members);
+            }
+            if (!isListed || !holdsObjects || held.size() > maxLayoutsMetByNames) {
+                objectsInFields.append(std::nullopt);
+                continue;
+            }
+            objectsInFields.append(Vector<LayoutID>(held.size(), [&](size_t position) {
+                const ImagesBelow::Record& member = held[position];
+                return layoutByFirstShape.ensure(member.firstShape, [&] {
+                    LayoutID id(firstLayout + static_cast<uint32_t>(m_program.recordsOfImagesBelow.size()));
+                    m_program.recordsOfImagesBelow.append({ id, member.image, member.firstShape, member.numberOfShapes, member.layout->isClass(), { } });
+                    return id;
+                }).iterator->value;
+            }));
+        }
+        m_program.recordsOfImagesBelow[index].objectsInFields = WTF::move(objectsInFields);
+    }
+    m_numberOfDerivedLayouts += m_program.recordsOfImagesBelow.size();
+    if (Options::logAOTPhaseTimes())
+        dataLogLn("AOT records of images below | types that ask ", types.size(), " | records with one of their names ", records.size(), " | and with slots that only their image reads ", numberLeftOut, " | taken in ", m_program.recordsOfImagesBelow.size(), " | of them met by a type ", std::ranges::count_if(layoutOfRecord, [](LayoutID id) { return !!id; }));
+}
+
 bool Reader::computeDeclaredMembers()
 {
     uint32_t numberOfLayouts = static_cast<uint32_t>(m_sections.layouts.size());
@@ -540,6 +753,7 @@ bool Reader::computeDeclaredMembers()
         widenFamilies(conversions, families, WTF::move(outside));
     }
     m_typeParametersWithoutFamily = findTypeParametersWithoutFamily(m_sections.layouts, families);
+    planLayoutsBelow(families.members);
 
     size_t numberOfLayoutIDs = numberOfRecords<LayoutID>();
     m_viewsWithoutLayouts = BitVector(numberOfLayouts);
@@ -590,32 +804,107 @@ static Failure checkFunctionTypes(const Reader& reader, uint32_t index)
     return checker.takeFailure();
 }
 
-static void forEachFunctionTypeAbove(const Wire::Sections& checkedSections, uint32_t start, Vector<uint32_t>& stamps, NOESCAPE const Invocable<void(uint32_t)> auto& visit)
+static std::span<const uint32_t> functionTypesOf(const Wire::Sections& checkedSections, uint32_t index)
 {
-    std::span<const Wire::Function> functions = checkedSections.functions;
+    Wire::Span functionTypes = checkedSections.functions[index].functionTypes;
+    return checkedSections.words.subspan(functionTypes.start, functionTypes.count);
+}
+
+static void forEachFunctionTypeAbove(const Wire::Sections& checkedSections, uint32_t start, Vector<uint32_t>& stamps, const BitVector& leftOut, NOESCAPE const Invocable<void(uint32_t)> auto& visit)
+{
     uint32_t stamp = start + 1;
     Vector<uint32_t, 16> worklist { start };
     while (!worklist.isEmpty()) {
         uint32_t reachedIndex = worklist.takeLast();
         visit(reachedIndex);
-        Wire::Span functionTypes = functions[reachedIndex].functionTypes;
-        for (uint32_t functionType : checkedSections.words.subspan(functionTypes.start, functionTypes.count)) {
-            if (std::exchange(stamps[functionType], stamp) != stamp)
+        for (uint32_t functionType : functionTypesOf(checkedSections, reachedIndex)) {
+            if (std::exchange(stamps[functionType], stamp) != stamp && !leftOut.quickGet(functionType))
                 worklist.append(functionType);
         }
     }
 }
 
-static Vector<Vector<FunctionID>> collectFunctionFamilies(const ParallelLoops& loops, const Wire::Sections& checkedSections)
+// Where every function comes to a function type by one way, the members of the types right below it add up.
+static BitVector findFunctionTypesWithMoreMembersThan(const Wire::Sections& checkedSections, uint64_t maxMembers)
+{
+    std::span<const Wire::Function> functions = checkedSections.functions;
+    uint32_t numberOfFunctions = static_cast<uint32_t>(functions.size());
+    Vector<uint32_t> numberLeftBelow(FillWith { }, numberOfFunctions, 0u);
+    for (uint32_t index = 0; index < numberOfFunctions; ++index) {
+        for (uint32_t functionType : functionTypesOf(checkedSections, index))
+            ++numberLeftBelow[functionType];
+    }
+
+    BitVector result(numberOfFunctions);
+    BitVector isReachedBySeveralWays(numberOfFunctions);
+    Vector<uint32_t> numberOfMembers(FillWith { }, numberOfFunctions, 0u);
+    Vector<uint32_t> worklist;
+    Vector<uint32_t> found;
+    for (uint32_t index = 0; index < numberOfFunctions; ++index) {
+        if (!numberLeftBelow[index])
+            worklist.append(index);
+    }
+    while (!worklist.isEmpty()) {
+        uint32_t index = worklist.takeLast();
+        if (!isSignature(functions[index]))
+            ++numberOfMembers[index];
+        bool isCounted = !isReachedBySeveralWays.quickGet(index);
+        if (isCounted && numberOfMembers[index] > maxMembers) {
+            result.quickSet(index);
+            found.append(index);
+        }
+        std::span<const uint32_t> functionTypes = functionTypesOf(checkedSections, index);
+        for (uint32_t functionType : functionTypes) {
+            if (isCounted && functionTypes.size() == 1)
+                numberOfMembers[functionType] += numberOfMembers[index];
+            else
+                isReachedBySeveralWays.quickSet(functionType);
+            if (!--numberLeftBelow[functionType])
+                worklist.append(functionType);
+        }
+    }
+    while (!found.isEmpty()) {
+        for (uint32_t functionType : functionTypesOf(checkedSections, found.takeLast())) {
+            if (!result.quickSet(functionType))
+                found.append(functionType);
+        }
+    }
+    return result;
+}
+
+static BitVector findFunctionsThatTypesName(const Wire::Sections& sections)
+{
+    BitVector result(sections.functions.size());
+    for (const Wire::Type& type : sections.types) {
+        Wire::Span named = type.functions;
+        if (named.start > sections.words.size() || named.count > sections.words.size() - named.start)
+            continue;
+        for (uint32_t function : sections.words.subspan(named.start, named.count)) {
+            if (function < sections.functions.size())
+                result.quickSet(function);
+        }
+    }
+    return result;
+}
+
+struct FunctionFamilies {
+    Vector<Vector<FunctionID>> membersOfNamed;
+    Vector<uint32_t> numberOfMembers;
+};
+
+static FunctionFamilies collectFunctionFamilies(const ParallelLoops& loops, const Wire::Sections& checkedSections, const BitVector& leftOut)
 {
     constexpr uint32_t functionsPerTask = 512;
     std::span<const Wire::Function> functions = checkedSections.functions;
     uint32_t numberOfFunctions = static_cast<uint32_t>(functions.size());
+    BitVector isNamedByType = findFunctionsThatTypesName(checkedSections);
     Vector<Vector<FunctionID>> families(functions.size());
     Vector<Vector<uint32_t>> stampsOfWorkers(loops.width());
+    Vector<Vector<uint32_t>> countsOfWorkers(loops.width());
     Vector<Vector<uint64_t>> foundByTasks((numberOfFunctions + functionsPerTask - 1) / functionsPerTask);
     forEachIndexInParallel(loops, static_cast<unsigned>(foundByTasks.size()), [&](unsigned task, unsigned worker) {
         Vector<uint32_t>& stamps = stampsOfWorkers[worker];
+        Vector<uint32_t>& counts = countsOfWorkers[worker];
         Vector<uint64_t>& found = foundByTasks[task];
         for (uint32_t index = task * functionsPerTask, end = std::min(numberOfFunctions, index + functionsPerTask); index < end; ++index) {
             if (isSignature(functions[index]))
@@ -623,26 +912,37 @@ static Vector<Vector<FunctionID>> collectFunctionFamilies(const ParallelLoops& l
             families[index] = { FunctionID(index) };
             if (!functions[index].functionTypes.count)
                 continue;
-            if (stamps.isEmpty())
+            if (stamps.isEmpty()) {
                 stamps.fill(0u, functions.size());
-            forEachFunctionTypeAbove(checkedSections, index, stamps, [&](uint32_t reachedIndex) {
-                if (reachedIndex != index)
+                counts.fill(0u, functions.size());
+            }
+            forEachFunctionTypeAbove(checkedSections, index, stamps, leftOut, [&](uint32_t reachedIndex) {
+                if (reachedIndex == index)
+                    return;
+                ++counts[reachedIndex];
+                if (isNamedByType.quickGet(reachedIndex))
                     found.append(pairOf(reachedIndex, index));
             });
         }
     });
     listSecondsByFirst(foundByTasks.span(), families);
-    return families;
+
+    Vector<uint32_t> numberOfMembers(FillWith { }, functions.size(), 0u);
+    for (const Vector<uint32_t>& counts : countsOfWorkers) {
+        for (size_t index = 0; index < counts.size(); ++index)
+            numberOfMembers[index] += counts[index];
+    }
+    return { WTF::move(families), WTF::move(numberOfMembers) };
 }
 
-static Vector<Vector<BuiltinID>> collectBuiltinMembers(const Wire::Sections& checkedSections, std::span<const SortedSet<BuiltinID>> convertedBuiltins)
+static Vector<Vector<BuiltinID>> collectBuiltinMembers(const Wire::Sections& checkedSections, std::span<const SortedSet<BuiltinID>> convertedBuiltins, const BitVector& leftOut)
 {
     Vector<Vector<BuiltinID>> members(convertedBuiltins.size());
     Vector<uint32_t> stamps(FillWith { }, convertedBuiltins.size(), 0u);
     for (uint32_t index = 0; index < convertedBuiltins.size(); ++index) {
-        if (convertedBuiltins[index].isEmpty())
+        if (convertedBuiltins[index].isEmpty() || leftOut.quickGet(index))
             continue;
-        forEachFunctionTypeAbove(checkedSections, index, stamps, [&](uint32_t reachedIndex) {
+        forEachFunctionTypeAbove(checkedSections, index, stamps, leftOut, [&](uint32_t reachedIndex) {
             members[reachedIndex].append(convertedBuiltins[index].span());
         });
     }
@@ -688,14 +988,18 @@ Failure Reader::computeFunctionFamilies()
     if (failureInBuiltins)
         return failureInBuiltins;
 
-    Vector<Vector<FunctionID>> families = collectFunctionFamilies(loops, m_sections);
-    Vector<Vector<BuiltinID>> builtinMembers = collectBuiltinMembers(m_sections, convertedBuiltins.span());
+    uint64_t maxDispatchCases = m_build.limit(LimitID::MaxDispatchCases);
+    m_functionTypesThatNoTypeLists = findFunctionTypesWithMoreMembersThan(m_sections, std::max(m_build.limit(LimitID::MaxFunctionsInType), maxDispatchCases));
+    FunctionFamilies families = collectFunctionFamilies(loops, m_sections, m_functionTypesThatNoTypeLists);
+    Vector<Vector<BuiltinID>> builtinMembers = collectBuiltinMembers(m_sections, convertedBuiltins.span(), m_functionTypesThatNoTypeLists);
     Vector<CalleeSet> sets(numberOfFunctions);
     forEachIndexInParallel(loops, static_cast<unsigned>((numberOfFunctions + functionsPerChunk - 1) / functionsPerChunk), [&](unsigned chunk) {
         for (size_t index = chunk * functionsPerChunk, end = std::min<size_t>(numberOfFunctions, index + functionsPerChunk); index < end; ++index) {
-            if (isSignature(m_sections.functions[index]))
-                m_build.statistics().count(statisticForFamilyOf(families[index].size() + builtinMembers[index].size(), m_build.limit(LimitID::MaxDispatchCases)), 1);
-            sets[index] = CalleeSet::complete(WTF::move(families[index]), WTF::move(builtinMembers[index]));
+            if (m_functionTypesThatNoTypeLists.quickGet(index))
+                m_build.statistics().count(StatisticID::FunctionTypesWithManyMembers, 1);
+            else if (isSignature(m_sections.functions[index]))
+                m_build.statistics().count(statisticForFamilyOf(families.numberOfMembers[index] + builtinMembers[index].size(), maxDispatchCases), 1);
+            sets[index] = CalleeSet::complete(WTF::move(families.membersOfNamed[index]), WTF::move(builtinMembers[index]));
             canonicalize(sets[index]);
         }
     });
@@ -820,7 +1124,7 @@ void Reader::addFunctions(Type& type, std::span<const FunctionID> named) const
     for (FunctionID function : named) {
         type.anyFunction |= isSignature(m_sections.functions[function.index()]);
         Callees family = *m_program.at(m_functionFamilies[function.index()]).all();
-        if (family.isEmpty()) {
+        if (family.isEmpty() || m_functionTypesThatNoTypeLists.quickGet(function.index())) {
             type.anyFunction = true;
             return;
         }
@@ -1097,6 +1401,58 @@ static void internStringTagKeys(Program& program, const ParallelLoops& loops)
         program.types.intern(PropertyKey { .kind = PropertyKeyKind::Text, .text = literal });
 }
 
+// What every store into the slot is held to, by the code of that image and by the run time. A set of objects of that image is no set of this program: it is any object here.
+static TypeID typeInSlotBelow(TypeArena& types, const RuntimeType& recorded, const std::optional<Vector<LayoutID>>& objects)
+{
+    uint16_t primitives = recorded.primitives;
+    if (primitives & Primitive::Unspecified)
+        return TypeTable::anything;
+    if (primitives & Primitive::LiteralString)
+        primitives = (primitives & ~Primitive::LiteralString) | Primitive::String;
+    if (primitives & Primitive::LiteralSymbol)
+        primitives = (primitives & ~Primitive::LiteralSymbol) | Primitive::Symbol;
+    Type type = Type::fromPrimitives(primitives);
+    if (std::optional<std::pair<int64_t, int64_t>> range = recorded.integerRange(); range && primitives & Primitive::Integer)
+        type.integers = Range { range->first, range->second };
+    for (const RuntimeCellTest& test : recorded.cellTests()) {
+        if (test.kind == CellTestKind::IsSymbol) {
+            type.primitives |= Primitive::Symbol;
+            continue;
+        }
+        if (objects)
+            continue;
+        type.anyObject = true;
+        type.anyFunction = true;
+    }
+    if (objects)
+        type.layouts = types.completeLayoutSet(objects->span());
+    return types.intern(WTF::move(type));
+}
+
+static void appendLayoutsBelow(Program& program, BuildContext& build)
+{
+    if (program.recordsOfImagesBelow.isEmpty())
+        return;
+    const ImagesBelow& below = *build.imagesBelow();
+    TypeArena types(program.types);
+    for (const Program::RecordOfImageBelow& planned : program.recordsOfImagesBelow) {
+        ImagesBelow::Record record = below.recordAt(planned.image, planned.firstShape, planned.numberOfShapes);
+        Layout& layout = program.at(planned.layout);
+        layout.kind = LayoutKind::Record;
+        layout.flags = { LayoutFlags::IsOfImageBelow };
+        for (const FieldData& data : record.layout->fields()) {
+            Field field;
+            field.key = program.types.intern(PropertyKey { .kind = PropertyKeyKind::Text, .text = program.strings.intern(below.textOfName(data.name)) });
+            TypeID type = typeInSlotBelow(types, below.typeOf(record, data), planned.objectsInFields[record.layout->indexOf(data)]);
+            field.declared = DeclaredType(Proven::byPosition(type));
+            field.slotType = type;
+            if (data.isRequired())
+                field.flags.add(FieldFlags::IsRequired);
+            layout.fields.append(WTF::move(field));
+        }
+    }
+}
+
 static void appendDerivedLayouts(Program& program, BuildContext& build, std::span<const LayoutSetID> declaredMembers)
 {
     size_t numberOfLayoutsAsRead = program.layouts.size();
@@ -1107,6 +1463,12 @@ static void appendDerivedLayouts(Program& program, BuildContext& build, std::spa
     program.appendBuiltinLayouts();
     program.appendNamespaceLayouts();
     appendTaggedLayouts(program, program.taggedFamilies.span());
+    for (const Program::RecordOfImageBelow& planned : program.recordsOfImagesBelow) {
+        RELEASE_ASSERT(planned.layout.index() == program.layouts.size());
+        program.layouts.append(Layout { });
+        program.setDeclaredMembers(planned.layout, program.types.intern(LayoutSet::complete({ planned.layout })));
+    }
+    appendLayoutsBelow(program, build);
     RELEASE_ASSERT(program.layouts.size() == declaredMembers.size());
 
     for (size_t index = 0; index < numberOfLayoutsAsRead; ++index)
@@ -1130,7 +1492,6 @@ bool Reader::readLayouts()
         return false;
 
     appendDerivedLayouts(m_program, m_build, m_declaredMembers.span());
-    m_program.setFunctionFamilies(WTF::move(m_functionFamilies));
     return checkTypesAgainstLayouts();
 }
 

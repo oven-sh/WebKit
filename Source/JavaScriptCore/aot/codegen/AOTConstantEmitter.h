@@ -53,7 +53,8 @@ public:
         FunctionID function;
         Vector<LayoutID, 2> layouts;
     };
-    CellPointer makeClosureOfField(const OperationContext&, std::span<const DeferredFunction>, CellPointer object, uint32_t offsetOfSlot, bool capturesObject, NOESCAPE const ScopedLambda<CellPointer()>& makeInRunTime);
+    // offsetOfEnvironment: of the hidden field that keeps the environment, for closures over it.
+    CellPointer makeClosureOfField(const OperationContext&, std::span<const DeferredFunction>, CellPointer object, uint32_t offsetOfSlot, bool capturesObject, std::optional<uint32_t> offsetOfEnvironment, NOESCAPE const ScopedLambda<CellPointer()>& makeInRunTime);
     // For a type test, which has no context. Placement has numbered the cell.
     CellPointer keyConstant(PropertyKeyID);
     CellPointer builtinCell(BuiltinID);

@@ -27,7 +27,11 @@ function f1 name="alsoUnknown" parameters=[{type=anything}, {type=anything}] res
 # CHECK-LABEL: function f2 name="appendIterable"
 # CHECK: b0([[array]]: Array, [[iterable]]: anything ~ Array|Generator|Map|Set):
 # CHECK-NEXT: [[isArray]]: boolean = TypeTest [[iterable]] testedType=Array
+# CHECK: = TypeTest {{*}} testedType=Set
 # CHECK: AppendElements [[array]],
+# The members of a Set that the built-in iterator walks are appended at once too.
+# CHECK: = IsPristine {{*}} builtinClass=Set aspects=[Storage, Names]
+# CHECK: AppendMembers [[array]],
 # An array with odd storage keeps the index loop.
 # CHECK: = PropGet {{*}} key="length"
 # CHECK: AppendElement [[array]],
@@ -44,11 +48,11 @@ function f1 name="alsoUnknown" parameters=[{type=anything}, {type=anything}] res
 # ABSENT-NOT: handler=
 # ABSENT-COUNT-1: AppendElements
 # ABSENT-NOT: AppendElements
+# ABSENT-NOT: SetNext
 
 # The loop that follows the protocol also walks a string.
 # LEFT-LABEL: function f2 name="appendIterable"
 # LEFT: = StepGenerator
 # LEFT: = MapNext
-# LEFT: = SetNext
 # LEFT: = GetStringLength
 # LEFT-NOT: function f3

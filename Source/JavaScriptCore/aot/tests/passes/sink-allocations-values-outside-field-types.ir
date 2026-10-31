@@ -5,6 +5,7 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Sized" fields=[{key="n" declared={type=number} flags=[IsRequired]}, {key="label" declared={type=string} flags=[IsRequired]}]
 layout L1 name="Holder" fields=[{key="held" declared={type=L0} flags=[IsRequired]}]
+layout L2 name="Counted" fields=[{key="n" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired]}]
 
 function f0 name="readOnBothArms" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
     v2 = TypeTest v0 testedType=number
@@ -172,4 +173,78 @@ function f8 name="builtAtTheStoreWhereNoLaterPlaceAdmitsIt" parameters=[{type=an
 # CHECK-NEXT: PropSet [[object8]], v0 key="n"
 # CHECK: b2():
 # CHECK-NOT: NewObject
+}
+
+# A test of a number tells only whether it fits a slot of numbers, and this object never has a slot
+function f9 name="numberDoesNotWaitWhereNothingIsBuilt" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    v2 = NewObject -, v1 layout=L2 fields=[0]
+    PropSet v2, v0 key="n" mode=Strict receivers=[L2]
+    v4 = IsSlotFilled v2 key="n" receivers=[L2] level=Expected
+    Branch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5: guard):
+    v6 = GetSlot v2, v5 key="n" receivers=[L2] level=Expected
+    Return v6
+  b2() frequency=Rare:
+    v7 = PropGet v2 key="n" receivers=[L2]
+    Return v7
+# CHECK-NOT: NewObject
+# CHECK-NOT: PropSet
+# CHECK-NOT: PropGet
+# CHECK: Return
+}
+
+function f10 name="numberWaitsWhereTheObjectIsBuilt" parameters=[{type=number}, {type=anything}, {type=L2}, {type=boolean}] results=[{type=anything}] {
+    v4 = IsSlotFilled v2 key="n" receivers=[L2] level=Expected
+    v5 = Integer integer=0
+    v6 = NewObject -, v5 layout=L2 fields=[0]
+    PropSet v6, v0 key="n" mode=Strict receivers=[L2]
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v8 = Call v1, -, v6
+    Return v8
+  b2():
+    v9 = PropGet v6 key="n" receivers=[L2]
+    Return v9
+# CHECK: = NewObject -, v5 layout=L2 fields=[0]
+# CHECK-NEXT: PropSet v6, v0 key="n"
+# CHECK-NEXT: Branch v3
+}
+
+# object.n = object.n + 1: the test keeps what goes round in the form of the slot
+function f11 name="numberComputedFromTheFieldWaits" parameters=[{type=int[0, 100]}, {type=L2}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L2 fields=[0]
+    v3 = PropGet v2 key="n" receivers=[L2]
+    v4 = AssumeType v3 provenType=int[-2147483643, 2147483647]
+    v5 = Increment v4
+    PropSet v2, v5 key="n" mode=Strict receivers=[L2]
+    v7 = IsSlotFilled v2 key="n" receivers=[L2] level=Expected
+    Branch v7 -> taken b1(| 0), notTaken b2()
+  b1(v8: guard):
+    v9 = GetSlot v2, v8 key="n" receivers=[L2] level=Expected
+    Return v9
+  b2() frequency=Rare:
+    v10 = PropGet v2 key="n" receivers=[L2]
+    Return v10
+# CHECK: = NewObject -, v0 layout=L2 fields=[0]
+# CHECK: PropSet v2, v5 key="n"
+}
+
+function f12 name="numberComputedFromTheFieldOfAnotherObjectDoesNotWait" parameters=[{type=int[0, 100]}, {type=L2}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L2 fields=[0]
+    v3 = PropGet v1 key="n" receivers=[L2]
+    v4 = AssumeType v3 provenType=int[-2147483643, 2147483647]
+    v5 = Increment v4
+    PropSet v2, v5 key="n" mode=Strict receivers=[L2]
+    v7 = IsSlotFilled v2 key="n" receivers=[L2] level=Expected
+    Branch v7 -> taken b1(| 0), notTaken b2()
+  b1(v8: guard):
+    v9 = GetSlot v2, v8 key="n" receivers=[L2] level=Expected
+    Return v9
+  b2() frequency=Rare:
+    v10 = PropGet v2 key="n" receivers=[L2]
+    Return v10
+# CHECK-NOT: NewObject
+# CHECK-NOT: PropSet
+# CHECK: Return
 }

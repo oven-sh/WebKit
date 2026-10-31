@@ -10,6 +10,7 @@
 
 #include "AOTCodeGenerator.h"
 #include "AOTFrameAddressValidation.h"
+#include "AOTFunctionCodeGenerator.h"
 #include "AOTImpliedBranchMerging.h"
 #include "AOTIntegerUpdatesInMemory.h"
 #include "AOTMutatorFenceMerging.h"
@@ -2190,6 +2191,33 @@ struct SlotInDiamond {
 
 } // anonymous namespace
 
+// What SeparateUnlikelyLoopPaths leaves: each block of a likely row, a little less frequent than the one before, has a rare edge to its place in a loop.
+static void testLoopEnteredByManyRareEdgesIsFollowedOnce()
+{
+    using namespace B3::Air;
+    constexpr unsigned count = 200;
+    B3::Procedure proc;
+    Code& code = proc.code();
+    Vector<BasicBlock*> likely;
+    Vector<BasicBlock*> rare;
+    for (unsigned index = 0; index < count; ++index)
+        likely.append(code.addBlock(1 - index * 0.001));
+    BasicBlock* leave = code.addBlock(0.5);
+    for (unsigned index = 0; index < count; ++index)
+        rare.append(code.addBlock(0.001));
+    for (unsigned index = 0; index < count; ++index) {
+        likely[index]->append(BranchTest64, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR0), Tmp(GPRInfo::argumentGPR0));
+        likely[index]->setSuccessors(FrequentedBlock(index + 1 < count ? likely[index + 1] : leave), FrequentedBlock(rare[index], B3::FrequencyClass::Rare));
+        rare[index]->append(Jump, nullptr);
+        rare[index]->setSuccessors(rare[(index + 1) % count]);
+    }
+    leave->append(RetVoid, nullptr);
+    code.resetReachability();
+    code.setEntrypoints(WTF::Vector<FrequentedBlock> { FrequentedBlock(likely[0]) });
+    // Each place is entered, and the likeliest entry is followed round the loop.
+    AOT_TEST_CHECK(Typed::countBlocksFollowedBehindRareEdges(code) == 2 * count - 1);
+}
+
 static void testSpillSlotIsWrittenOnEveryPathToRead()
 {
     {
@@ -2697,6 +2725,7 @@ std::span<const NativeTest> backEndPhaseTests()
         { "loads-are-not-paired-across-store-that-may-lie-over-them"_s, testLoadsAreNotPairedAcrossStoreThatMayLieOverThem },
         { "operand-of-call-is-found-when-live-range-is-split-twice"_s, testOperandOfCallIsFoundWhenLiveRangeIsSplitTwice },
         { "check-of-spill-slots-sees-operand-left-behind-by-second-split"_s, testCheckOfSpillSlotsSeesOperandLeftBehindBySecondSplit },
+        { "loop-entered-by-many-rare-edges-is-followed-once"_s, testLoopEnteredByManyRareEdgesIsFollowedOnce },
         { "spill-slot-is-written-on-every-path-to-read"_s, testSpillSlotIsWrittenOnEveryPathToRead },
         { "operands-and-results-of-calls-are-reads-and-writes-of-spill-slots"_s, testOperandsAndResultsOfCallsAreReadsAndWritesOfSpillSlots },
         { "value-that-changes-in-register-leaves-spill-slot-stale"_s, testValueThatChangesInRegisterLeavesSpillSlotStale },

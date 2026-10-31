@@ -979,6 +979,12 @@ void raiseFrequenciesBehind(FunctionAnalyses& analyses, Function& function, Edge
     }
 }
 
+bool canDecideTerminator(const Program& program, const Function& function, TypeArena& types, Edge chosen)
+{
+    return canFollowWithoutTest(function, chosen) && (!hasEdgeResults(function, chosen)
+        || argumentsFitParametersAfterCasts(program, function, types, Target { targetOf(function, chosen).block, argumentsWithoutTest(function, chosen), { } }));
+}
+
 void decideTerminator(IRBuilder& builder, BlockID block, uint32_t targetIndex)
 {
     Function& function = builder.function();

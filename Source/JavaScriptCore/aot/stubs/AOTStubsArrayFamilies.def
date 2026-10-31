@@ -33,6 +33,7 @@ v(ArrayPush, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Ma
 v(ArrayPushOfKnownKind, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayPush)
 v(ArrayPushDouble, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayPushDouble)
 v(AppendElements, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, AppendElements)
+v(AppendMembers, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, AppendMembers)
 
 // AOTStubsArrayStores.cpp
 v(ArrayPutAtIndexFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ArrayPutAtIndexFrontEnd)

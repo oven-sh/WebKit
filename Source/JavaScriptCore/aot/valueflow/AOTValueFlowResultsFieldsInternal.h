@@ -548,6 +548,7 @@ public:
     // ValueForms: the forms in which the call defines a value, if it is an `Object.defineProperty(object, key, descriptor)`.
     uint8_t formsOfValueDefinedByCall(ValueSetMaker&, const ValueFlowStatement&) const;
     bool getsAccessorsUnderKeysNobodyKnows(LayoutID) const;
+    bool hasObjectPutAboveOthers(LayoutID layout) const { return m_inputs.sets().meet(m_layoutsOfObjects.objectsWith(layout), m_objectsPutAboveOthers); }
     void setReceiversOfReads(ListsOfSetsByNumber&&);
     void noteKeyBroughtByCopies(LayoutID target, PropertyKeyID, ValueSetID value);
     bool isAnyKeyReadFrom(LayoutID layout) const { return !m_groupsOfKeysReadFrom[layout.index()].isEmpty(); }

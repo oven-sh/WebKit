@@ -252,6 +252,9 @@ struct FlowBuiltinTables {
     Vector<BuiltinLocationFlow> writesOfLocations;
     BitVector constantMembers;
     BitVector intactHolders;
+    BitVector holdersReachedThroughUnknownObject;
+    BitVector keysWrittenThroughUnknownObject;
+    bool isEveryKeyWrittenThroughUnknownObject { false };
     // The image locks these when the program starts. What is said of them rests on that.
     BitVector membersLockedAtStartUp;
     // Of an image that shares its realm: a write of this program may reach them, so it locks none of them. An image built over this one sees no such write and reads them here.

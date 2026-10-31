@@ -68,6 +68,8 @@ public:
     std::optional<AcceptedValue> accept(const FieldData&, JSValue) const;
     bool passes(const ShapeTestData& test, uint32_t shape) const { return m_tables.passes(test, shape); }
     Object* compiledObject(JSValue) const;
+    // A layout or a function that a type lists is of this instance. Another realm that runs the image has objects of the same shapes and closures of the same numbers.
+    bool isOfThisRealm(const JSCell*) const;
 
     bool hasSymbolKey(const FieldData&) const;
     bool hasStringKey(const FieldData&) const;
@@ -143,7 +145,8 @@ public:
     CompiledStructure* withExtraProperties(VM&, const CompiledStructure&, Structure* extraPropertiesStructureOrNull);
     CompiledStructure* existingWithExtraProperties(const CompiledStructure&, Structure& extraPropertiesStructure);
     CompiledStructure* holdingExtraProperties(VM&, const CompiledStructure&, JSObject* extraProperties);
-    CompiledStructure* withOutOfLineKeyOrder(VM&, const CompiledStructure&, std::span<const uint16_t> entries);
+    enum class HeldKeyOrder : bool { IsFoundByOthers, IsFoundByNobody };
+    CompiledStructure* withOutOfLineKeyOrder(VM&, const CompiledStructure&, std::span<const uint16_t> entries, HeldKeyOrder = HeldKeyOrder::IsFoundByOthers);
     CompiledStructure* withKeyOrderOfOneObject(VM&, const CompiledStructure&, std::span<const uint16_t> entries, std::span<const RefPtr<UniquedStringImpl>> keysNamedByOrder);
     CompiledStructure* withNumberedKeyOrder(VM&, const CompiledStructure&);
 
@@ -192,6 +195,7 @@ private:
     static Variant variantWithKeyOrderOf(const CompiledStructure&);
     // No table lists such a Structure.
     static bool belongsToOneObject(const Variant& variant) { return variant.heldExtraProperties || variant.keysNamedByOrder; }
+    static bool isListed(const Variant& variant) { return !belongsToOneObject(variant) && variant.isFoundByKeyOrder; }
 
     template<typename Appender> void visitUsualStructures(Appender&, size_t begin, size_t end);
     template<typename Appender> void visitRecords(Appender&, size_t begin, size_t end);

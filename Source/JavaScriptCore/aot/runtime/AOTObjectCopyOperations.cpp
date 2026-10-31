@@ -681,6 +681,10 @@ static bool isAssignedAsCopied(VM& vm, JSGlobalObject* globalObject, JSValue sou
         return false;
     if (!source.isObject())
         return true;
+    // Of a source that has room for elements the engine's copy takes names before symbols, and its Object.assign takes both as they were stored.
+    JSObject* holderOfElements = isCompiledObject(asObject(source)) ? PropertyWalk::objectHoldingIndexedProperties(asObject(source)) : asObject(source);
+    if (holderOfElements && hasIndexedProperties(holderOfElements->indexingType()))
+        return false;
     Object* compiled = compiledObjectOrNull(source);
     if (!compiled)
         return hasNoGetterAndNoProto(asObject(source));

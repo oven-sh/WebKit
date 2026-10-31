@@ -475,15 +475,34 @@ CollectionVersions collectionVersionsOf(VM& vm)
     return { space.markingVersion(), space.edenVersion(), space.newlyAllocatedVersion() };
 }
 
-NEVER_INLINE void OperationValidationScope::open(Record& record, VM& vm, Entry entry)
+struct OperationsBeingValidated {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(OperationsBeingValidated);
+
+    struct Record {
+        CollectionVersions collectionVersions;
+        Entry entry;
+        bool mayNotEnterVM;
+        bool mayNotCollect;
+        bool didEnterVMBefore;
+    };
+    Vector<Record, 16> innermostLast;
+};
+
+NEVER_INLINE void OperationValidationScope::open(VM& vm, Entry entry)
 {
+    auto& operations = vm.aotState().operationsBeingValidated;
+    if (!operations) {
+        operations = { new OperationsBeingValidated, [](OperationsBeingValidated* operations) {
+            delete operations;
+        } };
+    }
     OperationPermissions permissions = permissionsOf(entry);
-    new (NotNull, &record) Record { vm, collectionVersionsOf(vm), entry, !permissions.mayEnterVM, !permissions.mayCollect, std::exchange(vm.didEnterVM, false) };
+    operations->innermostLast.append({ collectionVersionsOf(vm), entry, !permissions.mayEnterVM, !permissions.mayCollect, std::exchange(vm.didEnterVM, false) });
 }
 
-NEVER_INLINE void OperationValidationScope::close(Record& record)
+NEVER_INLINE void OperationValidationScope::close(VM& vm)
 {
-    VM& vm = record.vm;
+    OperationsBeingValidated::Record record = vm.aotState().operationsBeingValidated->innermostLast.takeLast();
     bool didEnterVM = record.mayNotEnterVM && vm.didEnterVM;
     // An operation that throws allocates what it throws, and the head of every handler counts on a collection.
     bool didCollect = record.mayNotCollect && !vm.exceptionForInspection() && collectionVersionsOf(vm) != record.collectionVersions;

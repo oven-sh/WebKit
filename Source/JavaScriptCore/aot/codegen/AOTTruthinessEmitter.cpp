@@ -84,16 +84,16 @@ Condition TruthinessEmitter::isTruthy(const OperationContext& context, Operand o
     return boolean(false);
 }
 
-void TruthinessEmitter::branchOnTruthiness(const OperationContext& context, Operand operand, const Type& type, BranchTargets targets)
+void TruthinessEmitter::branchOnTruthiness(const OperationContext& context, Operand operand, const Type& type, BranchTargets targets, Expects expects)
 {
     if (operand.is<Boxed>()) {
-        branchOnTruthinessOfAnyValue(context, operand.as<Boxed>(), type, targets);
+        branchOnTruthinessOfAnyValue(context, operand.as<Boxed>(), type, targets, expects);
         return;
     }
     branch(isTruthy(context, operand, type), targets);
 }
 
-void TruthinessEmitter::branchOnTruthinessOfAnyValue(const OperationContext& context, Boxed value, const Type& type, BranchTargets targets)
+void TruthinessEmitter::branchOnTruthinessOfAnyValue(const OperationContext& context, Boxed value, const Type& type, BranchTargets targets, Expects expects)
 {
     auto branchInStub = [&] {
         LValue operands[] = { value.value() };
@@ -101,19 +101,22 @@ void TruthinessEmitter::branchOnTruthinessOfAnyValue(const OperationContext& con
     };
     bool expectsSmallValues = type.primitives & (Primitive::UndefinedOrNull | Primitive::Boolean);
     bool expectsObjects = type.hasObjects();
+    bool expectsNumbers = expects == Expects::Numbers && type.primitives & Primitive::Number;
     if (context.shape() != CodeShape::Fast || (!expectsSmallValues && !expectsObjects)) {
         branchInStub();
         return;
     }
 
     LBasicBlock otherwise = newBlock();
+    // What is neither a cell nor one of the small values is a number.
+    LBasicBlock isLargeAndNoCell = expectsNumbers && expectsObjects && expectsSmallValues ? newBlock() : nullptr;
     Boxed trueValue = boxedConstant(jsBoolean(true));
     static_assert(JSValue::ValueNull < JSValue::ValueUndefined && JSValue::ValueFalse < JSValue::ValueUndefined && JSValue::ValueTrue < JSValue::ValueUndefined && JSValue::ValueUndefined < JSValue::DoubleEncodeOffset);
     bool expectsFalse = B3::isRarerThan(targets.taken.frequency(), targets.notTaken.frequency());
     bool testsSmallValuesFirst = expectsFalse && expectsSmallValues;
     bool testsSmallValuesLast = !expectsFalse && expectsSmallValues;
     auto edgeToNextTest = [&](bool hasNextTest) {
-        return hasNextTest ? normalEdge(newBlock()) : rareEdge(otherwise);
+        return hasNextTest ? normalEdge(newBlock()) : isLargeAndNoCell ? unlikelyEdge(isLargeAndNoCell) : rareEdge(otherwise);
     };
     if (testsSmallValuesFirst) {
         LBasicBlock isSmallCase = newBlock();
@@ -139,7 +142,17 @@ void TruthinessEmitter::branchOnTruthinessOfAnyValue(const OperationContext& con
         LBasicBlock isNotTrue = newBlock();
         m_out.branch(equal(value, trueValue).value(), targets.taken, normalEdge(isNotTrue));
         m_out.appendTo(isNotTrue);
-        m_out.branch(belowOrEqual(value, undefined()).value(), targets.notTaken, rareEdge(otherwise));
+        m_out.branch(belowOrEqual(value, undefined()).value(), targets.notTaken, edgeToNextTest(false));
+        m_out.appendTo(isLargeAndNoCell ? isLargeAndNoCell : otherwise);
+    }
+    if (isLargeAndNoCell) {
+        LBasicBlock isInt32Case = newBlock();
+        LBasicBlock isDoubleCase = newBlock();
+        m_out.branch(isInt32(value).value(), normalEdge(isInt32Case), normalEdge(isDoubleCase));
+        m_out.appendTo(isInt32Case);
+        branch(isNotZero(low32(value)), targets);
+        m_out.appendTo(isDoubleCase);
+        branch(isNeitherZeroNorNaN(unboxDouble(value)), targets);
         m_out.appendTo(otherwise);
     }
     branchInStub();

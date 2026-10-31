@@ -123,7 +123,7 @@ static bool isDefinedOutside(FunctionAnalyses& analyses, ValueID definition)
     case ValuePlacement::InBlock: {
         const Value& value = analyses.function().at(definition);
         if (value.opcode == Opcode::GetHeapFrameWord)
-            return !isFrameWordWithAllocationGroup(analyses.function(), value);
+            return !isFrameWordWithAllocationGroup(analyses.function(), value) && !accessesLocalHeapWords(analyses.function(), value);
         return !opcodesThatMayGiveOwnObject.contains(value.opcode);
     }
     }

@@ -1127,8 +1127,12 @@ static IterationPlan planIteration(FunctionPassContext& pass, const Iteration& i
             return WTF::move(*ownEntries);
     }
 
+    Arms classArms = findClassArms(pass, planned);
+    // In the function that spreads share, the spread has tested for a Set in front of its loop and has appended the members at once.
+    if (iteration.origin == IterationOrigin::Spread && isOutlinedIteration(function))
+        classArms.removeAllMatching([](const IterationArm& arm) { return arm.form == IterationForm::Set; });
     // The protocol arm of a value that may be a string nobody expected walks the string itself.
-    IterationPlan plan = planWithClassArms(pass, planned.value, findClassArms(pass, planned));
+    IterationPlan plan = planWithClassArms(pass, planned.value, WTF::move(classArms));
     if (isOnlyAskedForNextValue && plan.hasProtocolArm() && isExpectedToBeArraySubclass(pass, planned.value))
         plan.arms.last().alsoWalksLists = true;
     else if (isOnlyAskedForNextValue && plan.hasProtocolArm() && !plan.arms.containsIf([](const IterationArm& arm) { return arm.form == IterationForm::String; }))
@@ -3532,33 +3536,54 @@ static void expandSpread(FunctionPassContext& pass, IRBuilder& builder, const Sp
     ValueID source = loopEntry ? addParameterLike(pass, builder, loopEntry, iterable) : ValueID();
 
     if (plan.hasClassArm()) {
-        const IterationArm& arm = plan.arms.first();
-        RELEASE_ASSERT(arm.form == IterationForm::Array);
-        Value appendElements = IRBuilder::make(Opcode::AppendElements, { original.arrayOperand(), iterable });
-        if (!arm.classIsProven) {
-            IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.appendTypeTest(iterable, arm.testedType), OperandIndex::TypeTest::value, BlockFrequency::Normal, BlockFrequency::Unlikely);
-            appendElements.setSourceOperand(branch.provenOnTaken);
-            builder.moveToEndOf(branch.notTaken);
-            if (loopEntry)
-                builder.emitJump(loopEntry, { branch.provenOnNotTaken });
-            else {
-                builder.append(makeRequireObjectCoercible(branch.provenOnNotTaken, IterationOrigin::Spread));
-                builder.emitUnreachable();
+        std::span<const IterationArm> classArms = plan.classArms();
+        ValueID rest = iterable;
+        for (const IterationArm& arm : classArms) {
+            RELEASE_ASSERT(arm.form == IterationForm::Array || arm.form == IterationForm::Set);
+            Value append = IRBuilder::make(arm.form == IterationForm::Set ? Opcode::AppendMembers : Opcode::AppendElements, { original.arrayOperand(), rest });
+            BlockID whereOfAnotherClass;
+            if (!arm.classIsProven) {
+                IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.appendTypeTest(rest, arm.testedType), OperandIndex::TypeTest::value, BlockFrequency::Normal, BlockFrequency::Unlikely);
+                append.setSourceOperand(branch.provenOnTaken);
+                rest = branch.provenOnNotTaken;
+                if (&arm != &classArms.back())
+                    whereOfAnotherClass = branch.notTaken;
+                else {
+                    builder.moveToEndOf(branch.notTaken);
+                    if (loopEntry)
+                        builder.emitJump(loopEntry, { rest });
+                    else {
+                        builder.append(makeRequireObjectCoercible(rest, IterationOrigin::Spread));
+                        builder.emitUnreachable();
+                    }
+                }
+                builder.moveToEndOf(branch.taken);
             }
-            builder.moveToEndOf(branch.taken);
+            if (!arm.namesAreProven) {
+                RELEASE_ASSERT(loopEntry);
+                ValueID subject = append.sourceOperand();
+                auto leaveForLoopUnlessTaken = [&](BlockID taken, BlockID notTaken) {
+                    builder.moveToEndOf(notTaken);
+                    builder.emitJump(loopEntry, { chooseArgumentOfProtocolEntry(pass, loopEntry, subject, iterable) });
+                    builder.moveToEndOf(taken);
+                };
+                if (!arm.namesOfInstanceAreProven || !arm.methodToWatch) {
+                    IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.append(makePristineTest(subject, arm.builtinClass, { PristineAspects::Storage, PristineAspects::Names })), 0, BlockFrequency::Normal, BlockFrequency::Unlikely);
+                    append.setGuardOperand(branch.provenOnTaken);
+                    leaveForLoopUnlessTaken(branch.taken, branch.notTaken);
+                }
+                if (arm.methodToWatch) {
+                    IRBuilder::BranchBlocks branch = builder.emitBranch(builder.append(makeWith(Opcode::IsBuiltinLocationUnchanged, { }, &Value::setMember, arm.methodToWatch)), BlockFrequency::Normal, BlockFrequency::Unlikely);
+                    leaveForLoopUnlessTaken(branch.taken, branch.notTaken);
+                }
+            }
+            BlockID block = builder.currentBlock();
+            checkAppendElements(block, builder.append(WTF::move(append)));
+            builder.endExpansion(cut, std::span<const ValueID> { });
+            if (!whereOfAnotherClass)
+                break;
+            builder.moveToEndOf(whereOfAnotherClass);
         }
-        if (!arm.namesAreProven) {
-            RELEASE_ASSERT(loopEntry);
-            ValueID subject = appendElements.sourceOperand();
-            IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.append(makePristineTest(subject, BuiltinClasses::Array, { PristineAspects::Storage, PristineAspects::Names })), 0, BlockFrequency::Normal, BlockFrequency::Unlikely);
-            appendElements.setGuardOperand(branch.provenOnTaken);
-            builder.moveToEndOf(branch.notTaken);
-            builder.emitJump(loopEntry, { chooseArgumentOfProtocolEntry(pass, loopEntry, subject, iterable) });
-            builder.moveToEndOf(branch.taken);
-        }
-        BlockID block = builder.currentBlock();
-        checkAppendElements(block, builder.append(WTF::move(appendElements)));
-        builder.endExpansion(cut, std::span<const ValueID> { });
     } else
         builder.emitJump(loopEntry, { iterable });
 
@@ -3634,33 +3659,6 @@ static void emitLoop(FunctionPassContext& pass, IRBuilder& builder, const Spread
     builder.emitJump(header);
 }
 
-// Nothing but casts has read the list that the spread appends to, and it stands in the block of the spread.
-static bool isFirstUseOfEmptyLiteral(FunctionPassContext& pass, const ValueSite& site)
-{
-    const Function& function = pass.function;
-    const UseLists& useLists = pass.analyses.useLists();
-    ValueID list = function.at(site.value).arrayOperand();
-    ValueID cast = function.at(list).opcode == Opcode::AssumeType ? list : ValueID();
-    ValueID id = cast ? function.at(cast).valueOperand() : list;
-    const Value& literal = function.at(id);
-    if (literal.opcode != Opcode::NewArray || literal.capacityOperand() || !literal.elementsOperands().empty() || !literal.holes().empty() || literal.storage() != AllocationStorage::Heap)
-        return false;
-    if (useLists.locationOf(id).block != site.block)
-        return false;
-    auto isReadBehindSpreadOnly = [&](ValueID value) {
-        return std::ranges::all_of(useLists.usesOf(value), [&](const Use& use) {
-            // The end of a block stands behind all its values, and its handler is handed only what is there at its head.
-            if (use.kind != Use::Kind::Operand)
-                return true;
-            if (use.user == cast || use.user == site.value)
-                return true;
-            ValueLocation location = useLists.locationOf(use.user);
-            return location.block != site.block || location.index > site.index;
-        });
-    };
-    return isReadBehindSpreadOnly(id) && (!cast || isReadBehindSpreadOnly(cast));
-}
-
 static PassOutcome expandSpreads(FunctionPassContext& pass, IRBuilder& builder, Vector<ValueID>& opensOfSpreads)
 {
     Vector<SpreadSite> sites;
@@ -3670,8 +3668,9 @@ static PassOutcome expandSpreads(FunctionPassContext& pass, IRBuilder& builder, 
         // An arm's class is proven relative to the tests in front of it, so the other arms go before that is decided.
         arms.removeAllMatching([](const IterationArm& arm) { return arm.form != IterationForm::Array && arm.form != IterationForm::Set; });
         IterationPlan plan = planWithClassArms(pass, iterable, Arms(arms));
-        // `[...set]`: the list is made with the members in it. A list that holds something already has no room for them, and the loop makes room as it goes.
-        if (!plan.hasClassArm() || plan.arms.first().form != IterationForm::Set || !plan.arms.first().needsNoTest() || !isFirstUseOfEmptyLiteral(pass, site)) {
+        // A Set that has to be tested first is tested in the function that all such spreads share. Here the tests would stand at every spread.
+        bool appendsMembers = isOutlinedIteration(pass.function) || (plan.hasClassArm() && plan.arms.first().form == IterationForm::Set && plan.arms.first().needsNoTest());
+        if (!appendsMembers) {
             arms.removeAllMatching([](const IterationArm& arm) { return arm.form != IterationForm::Array; });
             plan = planWithClassArms(pass, iterable, WTF::move(arms));
         }

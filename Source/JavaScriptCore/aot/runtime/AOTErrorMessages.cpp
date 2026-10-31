@@ -41,6 +41,8 @@
 #include "JSFunction.h"
 #include "TopExceptionScope.h"
 #include <algorithm>
+#include <unicode/utf16.h>
+#include <unicode/utf8.h>
 #include <wtf/FileSystem.h>
 #include <wtf/SetForScope.h>
 #include <wtf/text/MakeString.h>
@@ -477,12 +479,17 @@ static bool isQuote(Latin1Character character)
     return character == '"' || character == '\'' || character == '`';
 }
 
+// Where the line of `text[at]` starts.
+static size_t startOfLine(std::span<const Latin1Character> text, size_t at)
+{
+    size_t lineFeed = at ? WTF::reverseFind(text, static_cast<Latin1Character>('\n'), at - 1) : notFound;
+    return lineFeed == notFound ? 0 : lineFeed + 1;
+}
+
 // Where the code of the line in front of the line break `text[lineBreak]` ends: in front of a `//` comment and of the blanks at the end.
 static size_t endOfCodeInFrontOf(std::span<const Latin1Character> text, size_t lineBreak)
 {
-    size_t start = lineBreak;
-    while (start && text[start - 1] != '\n')
-        --start;
+    size_t start = startOfLine(text, lineBreak);
     size_t end = lineBreak;
     for (size_t at = start; at + 1 < lineBreak; ++at) {
         if (isQuote(text[at])) {
@@ -599,8 +606,57 @@ static std::optional<size_t> findClosingBracket(std::span<const Latin1Character>
     return std::nullopt;
 }
 
+// The place of the backtick that closes the template which `text[open]` opens.
+static std::optional<size_t> findEndOfTemplate(std::span<const Latin1Character> text, size_t open)
+{
+    for (size_t at = open + 1; at < text.size(); ++at) {
+        if (text[at] == '\\')
+            ++at;
+        else if (text[at] == '`')
+            return at;
+        else if (text[at] == '$' && at + 1 < text.size() && text[at + 1] == '{') {
+            unsigned depth = 0;
+            for (++at; at < text.size(); ++at) {
+                Latin1Character character = text[at];
+                if (character == '`') {
+                    std::optional<size_t> end = findEndOfTemplate(text, at);
+                    if (!end)
+                        return std::nullopt;
+                    at = *end;
+                } else if (isQuote(character)) {
+                    for (++at; at < text.size() && text[at] != character; ++at)
+                        at += text[at] == '\\';
+                } else if (character == '{')
+                    ++depth;
+                else if (character == '}' && !--depth)
+                    break;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
 // `a.b` of `a.b.c` and `make("x")[0]` of `make("x")[0].c`, where `end` is the place of the last dot or of its `?`: names, dots, and what stands in brackets behind them.
 // Round brackets may stand in front of it all: `(a as T)` of `(a as T).c`, `(a + b)` of `(a + b).c`.
+static bool isHeadOfStatement(std::span<const Latin1Character> text, size_t open)
+{
+    if (text[open] != '(')
+        return false;
+    size_t end = open;
+    while (end && text[end - 1] == ' ')
+        --end;
+    size_t word = end;
+    while (word && isPartOfName(text[word - 1]))
+        --word;
+    if (word && (text[word - 1] == '.' || text[word - 1] == '#'))
+        return false;
+    for (ASCIILiteral keyword : { "if"_s, "while"_s, "for"_s, "with"_s }) {
+        if (equalSpans(text.subspan(word, end - word), byteCast<Latin1Character>(keyword.span())))
+            return true;
+    }
+    return false;
+}
+
 static std::optional<size_t> startOfPathInFrontOf(std::span<const Latin1Character> text, size_t end)
 {
     size_t start = end;
@@ -615,6 +671,9 @@ static std::optional<size_t> startOfPathInFrontOf(std::span<const Latin1Characte
             std::optional<size_t> opening = findOpeningBracket(text, part - 1);
             if (!opening)
                 return std::nullopt;
+            // `if(a)(b || c).d`: the head of a statement is no call of what stands behind it.
+            if (part != start && text[part] == '(' && isHeadOfStatement(text, *opening))
+                return part;
             part = *opening;
             if (part >= 2 && text[part - 1] == '.' && text[part - 2] == '?')
                 part -= 2;
@@ -694,7 +753,69 @@ static size_t skipQuoted(std::span<const Latin1Character> text, size_t at, size_
     return at;
 }
 
+static bool isWordInFrontOfValue(std::span<const Latin1Character> word)
+{
+    for (ASCIILiteral keyword : { "new"_s, "return"_s, "typeof"_s, "await"_s, "void"_s, "delete"_s, "yield"_s, "throw"_s, "case"_s, "in"_s, "instanceof"_s, "of"_s }) {
+        if (equalSpans(word, byteCast<Latin1Character>(keyword.span())))
+            return true;
+    }
+    return false;
+}
+
+// Where `text[at]` opens a text in quotes or a regular expression: the place of what closes it. Otherwise nothing.
+// A slash opens a regular expression where no value stands in front of it: `a = /[;'"]/.test(b)`, and not `a / b`.
+static std::optional<size_t> endOfQuotedOrPattern(std::span<const Latin1Character> text, size_t from, size_t at, size_t to)
+{
+    if (isQuote(text[at]))
+        return skipQuoted(text, at, to);
+    if (text[at] != '/' || (at + 1 < to && (text[at + 1] == '/' || text[at + 1] == '*')))
+        return std::nullopt;
+    size_t inFront = at;
+    while (inFront > from && text[inFront - 1] == ' ')
+        --inFront;
+    if (inFront > from && (isPartOfName(text[inFront - 1]) || text[inFront - 1] == ')' || text[inFront - 1] == ']' || isQuote(text[inFront - 1]))) {
+        size_t word = inFront;
+        while (word > from && isPartOfName(text[word - 1]))
+            --word;
+        if (!isWordInFrontOfValue(text.subspan(word, inFront - word)))
+            return std::nullopt;
+    }
+    bool isInClass = false;
+    for (size_t end = at + 1; end < to && text[end] != '\n'; ++end) {
+        Latin1Character character = text[end];
+        if (character == '\\')
+            ++end;
+        else if (character == '[')
+            isInClass = true;
+        else if (character == ']')
+            isInClass = false;
+        else if (character == '/' && !isInClass)
+            return end;
+    }
+    return std::nullopt;
+}
+
 enum class WrittenReads : uint8_t { None, Same, Differ };
+
+// Goes straight to where a text may spell a name: every place that spells it has these bytes.
+class BytesOfName {
+public:
+    explicit BytesOfName(StringView name)
+    {
+        for (unsigned index = 0; index < name.length(); ++index)
+            m_bytes.append(static_cast<Latin1Character>(name[index]));
+    }
+
+    // The first such place in `text[from, to)`.
+    size_t findIn(std::span<const Latin1Character> text, size_t from, size_t to) const
+    {
+        size_t found = WTF::find(text.subspan(from, to - from), m_bytes.span());
+        return found == notFound ? notFound : from + found;
+    }
+
+private:
+    Vector<Latin1Character, 64> m_bytes;
+};
 
 // `a.b = c + 1` where `end` is behind `a.b`: a store is quoted with the value. Otherwise `end`.
 static size_t endWithStoredValue(std::span<const Latin1Character> text, size_t end)
@@ -735,7 +856,12 @@ static size_t endWithStoredValue(std::span<const Latin1Character> text, size_t e
 // The place of a read that failed lies in what it reads from. Of `a.x.b.x` both reads of `x` hold the place `a`, and the second reads from the first: the first is meant.
 static WrittenReads findWrittenReads(std::span<const Latin1Character> text, size_t from, size_t to, StringView member, std::optional<size_t> within, std::span<const Latin1Character>& found)
 {
-    for (size_t at = from + 1; at + member.length() <= to; ++at) {
+    BytesOfName name(member);
+    // The member stands behind what it is read from, which holds the place.
+    for (size_t at = std::max(from, within.value_or(from)) + 1; at + member.length() <= to; ++at) {
+        at = name.findIn(text, at, to);
+        if (at == notFound)
+            break;
         if (isPartOfName(text[at - 1]) || (at + member.length() < text.size() && isPartOfName(text[at + member.length()])))
             continue;
         if (!equal(member, text.subspan(at, member.length())))
@@ -778,10 +904,8 @@ static WrittenReads findWrittenElements(std::span<const Latin1Character> text, s
     if (!isComputed && !within)
         return WrittenReads::None;
     for (size_t at = from + 1; at < to; ++at) {
-        if (isQuote(text[at])) {
-            Latin1Character quote = text[at];
-            for (++at; at < to && text[at] != quote; ++at)
-                at += text[at] == '\\';
+        if (std::optional<size_t> end = endOfQuotedOrPattern(text, from, at, to)) {
+            at = *end;
             continue;
         }
         if (text[at] != '[')
@@ -814,7 +938,7 @@ static WrittenReads findWrittenElements(std::span<const Latin1Character> text, s
 // Each place in `text[from, to)` that reads a private name: `a.b.#x`.
 static WrittenReads findWrittenPrivateNames(std::span<const Latin1Character> text, size_t from, size_t to, StringView, std::optional<size_t> within, std::span<const Latin1Character>& found)
 {
-    for (size_t at = from + 1; at + 1 < to; ++at) {
+    for (size_t at = std::max(from, within.value_or(from)) + 1; at + 1 < to; ++at) {
         if (text[at - 1] != '.' || text[at] != '#')
             continue;
         size_t end = at + 1;
@@ -874,7 +998,7 @@ static WrittenReads findWrittenIterations(std::span<const Latin1Character> text,
     };
     // `for ([a, b] of v)`: at the list it is the list that was given no list. A head may take several lines, so the `for` may stand on a line in front.
     for (size_t at = text[*within] == '[' ? 0 : *within + 1; at--;) {
-        if (at + 4 >= text.size() || text[at] != 'f' || text[at + 1] != 'o' || text[at + 2] != 'r' || text[at + 3] != ' ' || (at && isPartOfName(text[at - 1])))
+        if (at + 4 >= text.size() || text[at] != 'f' || text[at + 1] != 'o' || text[at + 2] != 'r' || (text[at + 3] != ' ' && text[at + 3] != '(') || (at && isPartOfName(text[at - 1])))
             continue;
         size_t open = WTF::find(text, static_cast<Latin1Character>('('), at);
         std::optional<size_t> close = open != notFound && (open < *within || at == *within) ? findClosingBracket(text, open) : std::nullopt;
@@ -884,8 +1008,10 @@ static WrittenReads findWrittenIterations(std::span<const Latin1Character> text,
             continue;
         }
         for (size_t word = std::max(*within, open); word + 4 < *close; ++word) {
-            if (isBlank(text[word]) && text[word + 1] == 'o' && text[word + 2] == 'f' && isBlank(text[word + 3])) {
-                size_t start = startOfLoopTarget(text, open + 1, word);
+            // `x of v`, and `[a,b]of v` as a minifier leaves it.
+            bool closesPattern = text[word] == ']' || text[word] == '}';
+            if ((isBlank(text[word]) || closesPattern) && text[word + 1] == 'o' && text[word + 2] == 'f' && isBlank(text[word + 3])) {
+                size_t start = startOfLoopTarget(text, open + 1, word + closesPattern);
                 found = text.subspan(start, *close - start);
                 return WrittenReads::Same;
             }
@@ -965,13 +1091,15 @@ static WrittenReads findWrittenKeyTests(std::span<const Latin1Character> text, s
         return character == ' ' || character == '\n' || character == '\r' || character == '\t';
     };
     for (size_t at = from + 1; at + 3 < to; ++at) {
-        if (isQuote(text[at])) {
-            at = skipQuoted(text, at, to);
-            continue;
+        if (std::optional<size_t> end = endOfQuotedOrPattern(text, from, at, to)) {
+            at = *end;
+            if (at + 3 >= to)
+                break;
         }
-        if (text[at] != ' ' || text[at + 1] != 'i' || text[at + 2] != 'n' || !isBlank(text[at + 3]))
+        // `k in a`, and `"k"in a` as a minifier leaves it: `at` is the last place in front of the word.
+        if (text[at + 1] != 'i' || text[at + 2] != 'n' || !isBlank(text[at + 3]) || !(text[at] == ' ' || isQuote(text[at]) || text[at] == ')' || text[at] == ']'))
             continue;
-        size_t endOfKey = at;
+        size_t endOfKey = at + (text[at] != ' ');
         while (endOfKey > from && text[endOfKey - 1] == ' ')
             --endOfKey;
         std::optional<size_t> start = startOfQuotedOrPathInFrontOf(text, from, endOfKey);
@@ -1036,8 +1164,8 @@ static WrittenReads findWrittenInstanceTests(std::span<const Latin1Character> te
 {
     constexpr auto keyword = " instanceof "_span;
     for (size_t at = from; at + keyword.size() < to; ++at) {
-        if (isQuote(text[at])) {
-            at = skipQuoted(text, at, to);
+        if (std::optional<size_t> end = endOfQuotedOrPattern(text, from, at, to)) {
+            at = *end;
             continue;
         }
         if (!equalSpans(text.subspan(at, keyword.size()), byteCast<Latin1Character>(keyword)))
@@ -1084,8 +1212,8 @@ static WrittenReads findWrittenDeletions(std::span<const Latin1Character> text, 
 {
     constexpr auto keyword = "delete "_span;
     for (size_t at = from; at + keyword.size() < to; ++at) {
-        if (isQuote(text[at])) {
-            at = skipQuoted(text, at, to);
+        if (std::optional<size_t> end = endOfQuotedOrPattern(text, from, at, to)) {
+            at = *end;
             continue;
         }
         if (!equalSpans(text.subspan(at, keyword.size()), byteCast<Latin1Character>(keyword)) || (at && (isPartOfName(text[at - 1]) || text[at - 1] == '.')))
@@ -1115,8 +1243,8 @@ static WrittenReads findWrittenCallsOfElements(std::span<const Latin1Character> 
     if (!within)
         return WrittenReads::None;
     for (size_t at = from + 1; at < to; ++at) {
-        if (isQuote(text[at])) {
-            at = skipQuoted(text, at, to);
+        if (std::optional<size_t> end = endOfQuotedOrPattern(text, from, at, to)) {
+            at = *end;
             continue;
         }
         if (text[at] != '[' || !(isPartOfName(text[at - 1]) || text[at - 1] == ')' || text[at - 1] == ']' || text[at - 1] == '!'))
@@ -1130,6 +1258,9 @@ static WrittenReads findWrittenCallsOfElements(std::span<const Latin1Character> 
         if (!close)
             continue;
         start = startWithNew(text, *start, at);
+        // `new a[k]()`
+        if (*start >= 4 && text[*start - 4] == 'n' && text[*start - 3] == 'e' && text[*start - 2] == 'w' && text[*start - 1] == ' ' && (*start == 4 || !isPartOfName(text[*start - 5])))
+            *start -= 4;
         if (*within < *start || *within > *close)
             continue;
         found = text.subspan(*start, *close + 1 - *start);
@@ -1153,6 +1284,25 @@ struct SourceFile {
     uint64_t module { 0 };
     Vector<uint8_t> bytes;
     Vector<size_t> lineStarts;
+
+    // A column is found by following its line. A long line is followed once: these are places in it, a stretch apart.
+    struct PlaceInLine {
+        size_t offset;
+        unsigned column;
+    };
+    size_t lineOfPlaces { notFound };
+    Vector<PlaceInLine> placesInLine;
+
+    // What is quoted is an expression, and no expression holds a `;` or a brace of the block it stands in. A long line is passed over once:
+    // these are its `;`, `{` and `}` outside quoted text, each with the number of braces that are open behind it.
+    struct MarkInLine {
+        enum Kind : uint8_t { EndOfStatement, Open, Close };
+        size_t offset;
+        int32_t openBraces;
+        Kind kind;
+    };
+    size_t lineOfMarks { notFound };
+    Vector<MarkInLine> marksInLine;
 };
 
 // Kept with the VM and not in storage of the thread: every thread of the process would have room for that, whether or not it ever runs a program.
@@ -1188,7 +1338,7 @@ static QuotesOfPlaces& quotesOfPlaces(VM& vm)
     return *quotes;
 }
 
-static const SourceFile* sourceFileOf(VM& vm, ModuleID moduleOfImage)
+static SourceFile* sourceFileOf(VM& vm, ModuleID moduleOfImage)
 {
     QuotesOfPlaces& quotes = quotesOfPlaces(vm);
     SourceFile& lastFile = quotes.lastFile;
@@ -1205,7 +1355,7 @@ static const SourceFile* sourceFileOf(VM& vm, ModuleID moduleOfImage)
         quotes.modulesWithoutFile.add(module);
         return nullptr;
     }
-    lastFile = { module, WTF::move(*bytes), { } };
+    lastFile = { module, WTF::move(*bytes), { }, notFound, { } };
     for (size_t start = 0; start < lastFile.bytes.size(); start = startOfNextLine(byteCast<Latin1Character>(lastFile.bytes.span()), start))
         lastFile.lineStarts.append(start);
     return &lastFile;
@@ -1267,15 +1417,6 @@ static Vector<Latin1Character> withoutTypes(std::span<const Latin1Character> tex
     return kept;
 }
 
-static bool isWordInFrontOfValue(std::span<const Latin1Character> word)
-{
-    for (ASCIILiteral keyword : { "new"_s, "return"_s, "typeof"_s, "await"_s, "void"_s, "delete"_s, "yield"_s, "throw"_s, "case"_s, "in"_s, "instanceof"_s, "of"_s }) {
-        if (equalSpans(word, byteCast<Latin1Character>(keyword.span())))
-            return true;
-    }
-    return false;
-}
-
 // Whether `text[open, close]` are brackets around a value: not those of a call, of parameters, or of `if` and its like.
 static bool areAroundValue(std::span<const Latin1Character> text, size_t open, size_t close)
 {
@@ -1328,14 +1469,18 @@ static void appendWithoutIdleBrackets(Vector<Latin1Character>& printed, std::spa
             size_t end = at + 1;
             while (end < text.size() && text[end] != character)
                 end += 1 + (text[end] == '\\');
+            if (character == '`')
+                end = findEndOfTemplate(text, at).value_or(end);
             end = std::min(end, text.size() - 1);
             // Bun prints a text in double quotes where that leaves nothing to escape.
             // The last character may be a quote that nothing closes.
             std::span<const Latin1Character> inside = text.subspan(at + 1, end > at ? end - at - 1 : 0);
             bool hasNothingToEscape = end > at && text[end] == character && std::ranges::none_of(inside, [](Latin1Character character) {
-                return isQuote(character) || character == '\\' || character == '$';
+                return isQuote(character) || character == '\\' || character == '$' || character == '\n';
             });
-            if (hasNothingToEscape) {
+            // Behind a tag a template stays one.
+            bool hasTag = character == '`' && at && (isPartOfName(text[at - 1]) || text[at - 1] == ')' || text[at - 1] == ']');
+            if (hasNothingToEscape && !hasTag) {
                 printed.append('"');
                 printed.append(inside);
                 printed.append('"');
@@ -1369,6 +1514,12 @@ static void appendWithoutIdleBrackets(Vector<Latin1Character>& printed, std::spa
                 return spanHasPrefix(text.subspan(behindBracket), byteCast<Latin1Character>(token.span()));
             };
             bool isTaken = behindBracket == text.size() ? isTakenAtEnd : standsBehindBracket("."_s) || standsBehindBracket("["_s) || standsBehindBracket("("_s) || standsBehindBracket("`"_s) || standsBehindBracket("?."_s) || standsBehindBracket("**"_s);
+            // `(true && b).c`, where `(d ? e : f)` is printed in place of all between the brackets.
+            if (!inside.empty() && inside.front() == '(' && findClosingBracket(inside, 0) == std::optional<size_t>(inside.size() - 1)) {
+                appendWithoutIdleBrackets(printed, inside, isTaken);
+                at = *close;
+                continue;
+            }
             bool isPath = !inside.empty() && !isASCIIDigit(inside.front()) && startOfPathInFrontOf(inside, inside.size()) == std::optional<size_t>(0);
             // `(a?.b).c` stops elsewhere than `a?.b.c`, and `new (f()).K()` constructs something else than `new f().K()`.
             if (isPath && WTF::find(inside, static_cast<Latin1Character>('?')) == notFound && !(isConstructed && WTF::find(inside, static_cast<Latin1Character>('(')) != notFound)) {
@@ -1507,12 +1658,21 @@ static Vector<Latin1Character> withShortLiterals(std::span<const Latin1Character
             auto is = [&](ASCIILiteral literal) {
                 return !isKey && equalSpans(word, byteCast<Latin1Character>(literal.span()));
             };
+            // What is read from or called stands in brackets: `undefined[0]` is printed `(void 0)[0]`.
+            bool isTaken = end < text.size() && (text[end] == '.' || text[end] == '[' || text[end] == '(' || text[end] == '`' || (text[end] == '?' && end + 1 < text.size() && text[end + 1] == '.'));
+            auto append = [&](ASCIILiteral literal) {
+                if (isTaken)
+                    printed.append('(');
+                printed.append(byteCast<Latin1Character>(literal.span()));
+                if (isTaken)
+                    printed.append(')');
+            };
             if (is("true"_s))
-                printed.append("!0"_span);
+                append("!0"_s);
             else if (is("false"_s))
-                printed.append("!1"_span);
+                append("!1"_s);
             else if (is("undefined"_s))
-                printed.append("void 0"_span);
+                append("void 0"_s);
             else
                 printed.append(word);
             at = end - 1;
@@ -1521,6 +1681,275 @@ static Vector<Latin1Character> withShortLiterals(std::span<const Latin1Character
         printed.append(text[at]);
     }
     return printed;
+}
+
+static void appendEscape(Vector<Latin1Character>& printed, ASCIILiteral head, unsigned digits, uint32_t number, bool isLowercase = false)
+{
+    printed.append(byteCast<Latin1Character>(head.span()));
+    for (unsigned digit = digits; digit--;) {
+        uint8_t nibble = number >> (digit * 4) & 0xF;
+        printed.append(isLowercase ? lowerNibbleToLowercaseASCIIHexDigit(nibble) : lowerNibbleToASCIIHexDigit(nibble));
+    }
+}
+
+// The character of UTF-8 at `at`, which moves behind it. Nothing where there is none.
+static std::optional<char32_t> readCharacter(std::span<const Latin1Character> text, size_t& at)
+{
+    int32_t character;
+    U8_NEXT(text.data(), at, text.size(), character);
+    return character < 0 ? std::nullopt : std::optional<char32_t>(character);
+}
+
+static void appendUnits(Vector<char16_t>& units, char32_t character)
+{
+    if (U_IS_BMP(character))
+        return units.append(static_cast<char16_t>(character));
+    units.append(U16_LEAD(character));
+    units.append(U16_TRAIL(character));
+}
+
+// What the text between two quotes stands for. False where an escape is not one of the language.
+static bool appendValueOfWrittenText(Vector<char16_t>& value, std::span<const Latin1Character> written)
+{
+    auto readHex = [&](size_t& at, size_t digits) -> std::optional<uint32_t> {
+        if (written.size() - at < digits)
+            return std::nullopt;
+        uint32_t number = 0;
+        for (; digits; --digits, ++at) {
+            if (!isASCIIHexDigit(written[at]))
+                return std::nullopt;
+            number = number << 4 | toASCIIHexValue(written[at]);
+        }
+        return number;
+    };
+    for (size_t at = 0; at < written.size();) {
+        if (written[at] != '\\') {
+            std::optional<char32_t> character = readCharacter(written, at);
+            if (!character)
+                return false;
+            // A line of a template ends with a line feed, however the file ends its lines.
+            if (*character == '\r') {
+                at += at < written.size() && written[at] == '\n';
+                character = '\n';
+            }
+            appendUnits(value, *character);
+            continue;
+        }
+        if (++at == written.size())
+            return false;
+        std::optional<char32_t> escaped = readCharacter(written, at);
+        if (!escaped)
+            return false;
+        switch (*escaped) {
+        case 'b':
+            value.append('\b');
+            break;
+        case 'f':
+            value.append('\f');
+            break;
+        case 'n':
+            value.append('\n');
+            break;
+        case 'r':
+            value.append('\r');
+            break;
+        case 't':
+            value.append('\t');
+            break;
+        case 'v':
+            value.append('\v');
+            break;
+        case 'x': {
+            std::optional<uint32_t> number = readHex(at, 2);
+            if (!number)
+                return false;
+            value.append(static_cast<char16_t>(*number));
+            break;
+        }
+        case 'u': {
+            if (at == written.size() || written[at] != '{') {
+                std::optional<uint32_t> number = readHex(at, 4);
+                if (!number)
+                    return false;
+                value.append(static_cast<char16_t>(*number));
+                break;
+            }
+            size_t end = WTF::find(written, static_cast<Latin1Character>('}'), ++at);
+            if (end == notFound || end == at || end - at > 8)
+                return false;
+            std::optional<uint32_t> number = readHex(at, end - at);
+            if (!number || *number > UCHAR_MAX_VALUE)
+                return false;
+            appendUnits(value, *number);
+            ++at;
+            break;
+        }
+        // The text goes on in the next line.
+        case '\r':
+            at += at < written.size() && written[at] == '\n';
+            break;
+        case '\n':
+        case 0x2028:
+        case 0x2029:
+            break;
+        case '0':
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case '7': {
+            uint32_t number = *escaped - '0';
+            for (unsigned more = number < 4 ? 2 : 1; more && at < written.size() && isASCIIOctalDigit(written[at]); --more)
+                number = number << 3 | (written[at++] - '0');
+            value.append(static_cast<char16_t>(number));
+            break;
+        }
+        default:
+            appendUnits(value, *escaped);
+        }
+    }
+    return true;
+}
+
+// best_quote_char_for_string() of Bun's printer.
+static Latin1Character bestQuoteFor(std::span<const char16_t> value, bool allowsBacktick)
+{
+    size_t singleCost = 0;
+    size_t doubleCost = 0;
+    size_t backtickCost = 0;
+    for (size_t at = 0; at < std::min<size_t>(value.size(), 1024); ++at) {
+        switch (value[at]) {
+        case '\'':
+            ++singleCost;
+            break;
+        case '"':
+            ++doubleCost;
+            break;
+        case '`':
+            ++backtickCost;
+            break;
+        case '\n':
+            ++singleCost;
+            ++doubleCost;
+            break;
+        case '\\':
+            ++at;
+            break;
+        case '$':
+            backtickCost += at + 1 < value.size() && value[at + 1] == '{';
+            break;
+        default:
+            break;
+        }
+    }
+    if (allowsBacktick && backtickCost < std::min(singleCost, doubleCost))
+        return '`';
+    return singleCost < doubleCost ? '\'' : '"';
+}
+
+// write_pre_quoted_string() of Bun's printer, which prints nothing but ASCII for Bun to run.
+static void appendTextBetweenQuotes(Vector<Latin1Character>& printed, std::span<const char16_t> value, Latin1Character quote)
+{
+    for (size_t at = 0; at < value.size(); ++at) {
+        char16_t unit = value[at];
+        switch (unit) {
+        case '\b':
+            printed.append("\\b"_span);
+            break;
+        case '\f':
+            printed.append("\\f"_span);
+            break;
+        case '\r':
+            printed.append("\\r"_span);
+            break;
+        case '\v':
+            printed.append("\\v"_span);
+            break;
+        case '\\':
+            printed.append("\\\\"_span);
+            break;
+        case '\n':
+            if (quote == '`')
+                printed.append('\n');
+            else
+                printed.append("\\n"_span);
+            break;
+        case '\t':
+            if (quote == '`')
+                printed.append('\t');
+            else
+                printed.append("\\t"_span);
+            break;
+        case '"':
+        case '\'':
+        case '`':
+            if (unit == quote)
+                printed.append('\\');
+            printed.append(static_cast<Latin1Character>(unit));
+            break;
+        case '$':
+            if (quote == '`' && at + 1 < value.size() && value[at + 1] == '{')
+                printed.append('\\');
+            printed.append('$');
+            break;
+        default:
+            if (unit >= 0x20 && unit <= 0x7E)
+                printed.append(static_cast<Latin1Character>(unit));
+            else if (unit <= 0xFF)
+                appendEscape(printed, "\\x"_s, 2, unit);
+            else
+                appendEscape(printed, "\\u"_s, 4, unit);
+        }
+    }
+}
+
+// `'it\'s'` is printed `"it's"`, a text with a line break in it between backticks, and what is not ASCII as an escape. `written` has its quotes.
+static bool appendTextAsPrinted(Vector<Latin1Character>& printed, std::span<const Latin1Character> written, bool allowsBacktick)
+{
+    Vector<char16_t> value;
+    if (written.size() < 2 || written.back() != written.front() || !appendValueOfWrittenText(value, written.subspan(1, written.size() - 2)))
+        return false;
+    Latin1Character quote = bestQuoteFor(value.span(), allowsBacktick);
+    printed.append(quote);
+    appendTextBetweenQuotes(printed, value.span(), quote);
+    printed.append(quote);
+    return true;
+}
+
+enum class WrittenAs : uint8_t { Name, RegularExpression, TemplateBehindTag };
+
+// For what is not ASCII a name has `\u{5b57}`, and a regular expression and a template behind a tag have `\u5B57`. Above that the last has `\u{1f600}`, and the second two escapes.
+static void appendWithEscapes(Vector<Latin1Character>& printed, std::span<const Latin1Character> written, WrittenAs kind)
+{
+    for (size_t at = 0; at < written.size();) {
+        if (isASCII(written[at])) {
+            printed.append(written[at++]);
+            continue;
+        }
+        size_t start = at;
+        std::optional<char32_t> character = readCharacter(written, at);
+        if (!character) {
+            printed.append(written.subspan(start, at - start));
+            continue;
+        }
+        if (kind == WrittenAs::Name || (kind == WrittenAs::TemplateBehindTag && !U_IS_BMP(*character))) {
+            unsigned digits = 1;
+            while (*character >> (digits * 4))
+                ++digits;
+            appendEscape(printed, "\\u{"_s, digits, *character, true);
+            printed.append('}');
+            continue;
+        }
+        Vector<char16_t, 2> units;
+        if (U_IS_BMP(*character))
+            units.append(static_cast<char16_t>(*character));
+        else
+            units.appendList({ U16_LEAD(*character), U16_TRAIL(*character) });
+        for (char16_t unit : units)
+            appendEscape(printed, "\\u"_s, 4, unit);
+    }
 }
 
 // A token of a quote, for PrintedBlanks.
@@ -1809,25 +2238,54 @@ private:
     }
 
     // `${ a }` is printed `${a}`.
-    bool appendTemplate(Vector<Latin1Character>& printed, const QuotedToken& token) const
+    // What stands between the values is printed like a text between backticks. Behind a tag it stays as it is written.
+    bool appendTemplate(Vector<Latin1Character>& printed, const QuotedToken& token, bool hasTag) const
     {
-        for (size_t at = token.start; at < token.end; ++at) {
+        size_t startOfText = token.start + 1;
+        auto appendText = [&](size_t end) {
+            std::span<const Latin1Character> written = m_text.subspan(startOfText, end - startOfText);
+            Vector<char16_t> value;
+            if (hasTag)
+                appendWithEscapes(printed, written, WrittenAs::TemplateBehindTag);
+            else if (!appendValueOfWrittenText(value, written))
+                printed.append(written);
+            else
+                appendTextBetweenQuotes(printed, value.span(), '`');
+        };
+        bool isClosed = token.end - token.start > 1 && m_text[token.end - 1] == '`';
+        size_t endOfAll = token.end - isClosed;
+        printed.append('`');
+        for (size_t at = startOfText; at < endOfAll; ++at) {
             size_t end = startsWith(at, "${"_s) ? endOfBody(at + 1) : notFound;
             if (end > token.end || m_text[end - 1] != '}') {
-                printed.append(m_text[at]);
-                if (m_text[at] == '\\' && at + 1 < token.end)
-                    printed.append(m_text[++at]);
+                at += m_text[at] == '\\';
                 continue;
             }
             std::optional<Vector<Latin1Character>> value = print(m_text.subspan(at + 2, end - at - 3));
             if (!value)
                 return false;
+            appendText(at);
             printed.append("${"_span);
             printed.appendVector(*value);
             printed.append('}');
             at = end - 1;
+            startOfText = end;
         }
+        appendText(std::max(startOfText, endOfAll));
+        if (isClosed)
+            printed.append('`');
         return true;
+    }
+
+    bool holdsValues(const QuotedToken& token) const
+    {
+        for (size_t at = token.start + 1; at + 1 < token.end; ++at) {
+            if (m_text[at] == '\\')
+                ++at;
+            else if (startsWith(at, "${"_s))
+                return true;
+        }
+        return false;
     }
 
     // `new K()` is printed `new K` where nothing is read from it.
@@ -1965,10 +2423,18 @@ private:
                 printed.append("{}"_span);
             else if (isKeyPrintedAsName)
                 printed.append(spelled.subspan(1, spelled.size() - 2));
-            else if (spelled.front() != '`')
+            else if (isQuote(spelled.front())) {
+                bool hasTag = spelled.front() == '`' && last && last->endsOperand();
+                bool isKey = next && next->role == Role::KeyColon;
+                if (hasTag || (spelled.front() == '`' && holdsValues(token))) {
+                    if (!appendTemplate(printed, token, hasTag))
+                        return std::nullopt;
+                } else if (!appendTextAsPrinted(printed, spelled, !isKey))
+                    printed.append(spelled);
+            } else if (std::ranges::all_of(spelled, isASCII<Latin1Character>))
                 printed.append(spelled);
-            else if (!appendTemplate(printed, token))
-                return std::nullopt;
+            else
+                appendWithEscapes(printed, spelled, spelled.front() == '/' ? WrittenAs::RegularExpression : WrittenAs::Name);
             if (isLoneParameter)
                 printed.append(')');
             if (token.role == Role::Open) {
@@ -2066,17 +2532,108 @@ static String asPrinted(std::span<const Latin1Character> text, std::span<const L
     return asPrinted(printed.span(), quoted);
 }
 
-// A column counts units of UTF-16, and the file is UTF-8.
-static size_t offsetOfColumn(std::span<const Latin1Character> text, size_t lineStart, size_t lineEnd, unsigned column)
+// A column counts units of UTF-16, and the file is UTF-8. Goes on from `text[at]`, which stands in `column`, to the wanted column or to the end of the line.
+static size_t advanceToColumn(std::span<const Latin1Character> text, size_t at, size_t lineEnd, unsigned& column, unsigned wanted)
 {
-    size_t at = lineStart;
-    for (unsigned units = 1; units < column && at < lineEnd;) {
-        Latin1Character lead = text[at];
-        size_t length = lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;
-        units += length == 4 ? 2 : 1;
-        at += length;
+    while (column < wanted && at < lineEnd) {
+        // Each character of ASCII is one unit.
+        size_t size = std::min<size_t>({ lineEnd - at, wanted - column, 64 });
+        uint8_t seen = 0;
+        for (Latin1Character byte : text.subspan(at, size))
+            seen |= byte;
+        if (seen < 0x80) {
+            column += static_cast<unsigned>(size);
+            at += size;
+            continue;
+        }
+        for (size_t end = at + size; column < wanted && at < end;) {
+            Latin1Character lead = text[at];
+            size_t length = lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;
+            column += length == 4 ? 2 : 1;
+            at += length;
+        }
     }
-    return std::min(at, lineEnd);
+    return at;
+}
+
+static size_t offsetOfColumn(SourceFile& file, size_t line, unsigned column)
+{
+    constexpr unsigned columnsOfStretch = 4096;
+    std::span<const Latin1Character> text = byteCast<Latin1Character>(file.bytes.span());
+    size_t lineStart = file.lineStarts[line];
+    size_t lineEnd = line + 1 < file.lineStarts.size() ? file.lineStarts[line + 1] - 1 : text.size();
+    SourceFile::PlaceInLine place { lineStart, 1 };
+    if (column > columnsOfStretch) {
+        if (file.lineOfPlaces != line) {
+            file.lineOfPlaces = line;
+            file.placesInLine.shrink(0);
+            while (place.offset < lineEnd) {
+                file.placesInLine.append(place);
+                place.offset = advanceToColumn(text, place.offset, lineEnd, place.column, place.column + columnsOfStretch);
+            }
+        }
+        auto behind = std::ranges::upper_bound(file.placesInLine, column, { }, &SourceFile::PlaceInLine::column);
+        place = behind == file.placesInLine.begin() ? SourceFile::PlaceInLine { lineStart, 1 } : *std::prev(behind);
+    }
+    return std::min(advanceToColumn(text, place.offset, lineEnd, place.column, column), lineEnd);
+}
+
+// The part of a file that holds every expression around a place in it, of those that belong to the function of the place. All of it, unless the line of the place is long.
+static std::pair<size_t, size_t> findStatementsAround(SourceFile& file, size_t at)
+{
+    constexpr size_t lengthOfLongLine = 4096;
+    using Mark = SourceFile::MarkInLine;
+    std::span<const Latin1Character> text = byteCast<Latin1Character>(file.bytes.span());
+    size_t line = std::ranges::upper_bound(file.lineStarts, at) - file.lineStarts.begin();
+    if (!line)
+        return { 0, text.size() };
+    --line;
+    size_t lineStart = file.lineStarts[line];
+    size_t lineEnd = line + 1 < file.lineStarts.size() ? file.lineStarts[line + 1] - 1 : text.size();
+    if (lineEnd - lineStart <= lengthOfLongLine)
+        return { 0, text.size() };
+    if (file.lineOfMarks != line) {
+        file.lineOfMarks = line;
+        file.marksInLine.shrink(0);
+        int32_t openBraces = 0;
+        for (size_t place = lineStart; place < lineEnd; ++place) {
+            if (std::optional<size_t> end = endOfQuotedOrPattern(text, lineStart, place, lineEnd)) {
+                place = *end;
+                continue;
+            }
+            Latin1Character character = text[place];
+            if (character == '/' && place + 1 < lineEnd && text[place + 1] == '*') {
+                size_t end = place + 2;
+                while (end + 1 < lineEnd && (text[end] != '*' || text[end + 1] != '/'))
+                    ++end;
+                place = end + 1;
+            } else if (character == ';')
+                file.marksInLine.append({ place, openBraces, Mark::EndOfStatement });
+            else if (character == '{')
+                file.marksInLine.append({ place, ++openBraces, Mark::Open });
+            else if (character == '}')
+                file.marksInLine.append({ place, --openBraces, Mark::Close });
+        }
+    }
+    std::span<const Mark> marks = file.marksInLine.span();
+    size_t behind = std::ranges::lower_bound(marks, at, { }, &Mark::offset) - marks.begin();
+    int32_t openBraces = behind ? marks[behind - 1].openBraces : 0;
+    size_t start = lineStart;
+    for (size_t index = behind; index--;) {
+        if (marks[index].openBraces == openBraces && marks[index].kind != Mark::Close) {
+            start = marks[index].offset + 1;
+            break;
+        }
+    }
+    size_t end = lineEnd;
+    for (size_t index = behind; index < marks.size(); ++index) {
+        bool endsStatement = marks[index].kind == Mark::EndOfStatement && marks[index].openBraces == openBraces;
+        if (endsStatement || (marks[index].kind == Mark::Close && marks[index].openBraces < openBraces)) {
+            end = marks[index].offset;
+            break;
+        }
+    }
+    return { start, std::max(end, std::min(at + 1, lineEnd)) };
 }
 
 enum class SearchedText : bool { OnlyKnownPlace, WholeFunction };
@@ -2102,9 +2659,7 @@ static std::pair<size_t, size_t> linesOfPathAround(std::span<const Latin1Charact
     size_t endOfName = place;
     while (endOfName < text.size() && isPartOfName(text[endOfName]))
         ++endOfName;
-    size_t start = std::min(startOfPathInFrontOf(text, endOfName).value_or(place), place);
-    while (start && text[start - 1] != '\n')
-        --start;
+    size_t start = startOfLine(text, std::min(startOfPathInFrontOf(text, endOfName).value_or(place), place));
     // The place may be the last thing in brackets of the path: that of `.b` in `a[k]` / `.b` is `k`.
     size_t end = place;
     while (true) {
@@ -2127,29 +2682,47 @@ static std::pair<size_t, size_t> linesOfPathAround(std::span<const Latin1Charact
     return { start, std::min(WTF::find(text, static_cast<Latin1Character>('\n'), end), text.size()) };
 }
 
+static WrittenReads findWrittenCallOfReplacedNameAt(std::span<const Latin1Character>, size_t from, size_t to, StringView, std::optional<size_t> within, std::span<const Latin1Character>& found);
+
 // What `text[startOfSearched, endOfSearched)` spells around `place`, which counts from the start of `text` as the pieces do.
 // The place of an error lies in what `bun run` has. Of `const r = f(x); return r.y` that is `return f(x).y`, so the place lies in the initializer, and what failed is written around the name.
-static String findSpelledAround(std::span<const Latin1Character> text, size_t startOfSearched, size_t endOfSearched, size_t place, std::span<const TextPrintedInPlace> pieces, StringView name, FindInText find)
+// `findStatementsAround`: the part of the text that holds every expression around a place in it.
+static String findSpelledAround(std::span<const Latin1Character> text, size_t startOfSearched, size_t endOfSearched, size_t place, std::span<const TextPrintedInPlace> pieces, StringView name, FindInText find, const Invocable<std::pair<size_t, size_t>(size_t)> auto& findStatementsAround)
 {
-    std::span<const Latin1Character> searched = text.subspan(startOfSearched, endOfSearched - startOfSearched);
     bool hasTextFromPrinter = std::ranges::any_of(pieces, isFromPrinter);
     Vector<size_t, 4> places { place };
     for (size_t index = 0; index < places.size(); ++index) {
-        size_t within = places[index] - startOfSearched;
-        size_t lineStart = within;
-        while (lineStart && searched[lineStart - 1] != '\n')
-            --lineStart;
+        auto [startOfStatements, endOfStatements] = findStatementsAround(places[index]);
+        std::span<const Latin1Character> searched = text.subspan(startOfStatements, endOfStatements - startOfStatements);
+        size_t within = places[index] - startOfStatements;
+        size_t lineStart = startOfLine(searched, within);
         size_t lineEnd = std::min(WTF::find(searched, static_cast<Latin1Character>('\n'), within), searched.size());
         Vector<Latin1Character> named;
         if (hasTextFromPrinter)
-            named = withNamesForTextFromPrinter(text, startOfSearched, endOfSearched, places[index], pieces);
+            named = withNamesForTextFromPrinter(text, startOfStatements, endOfStatements, places[index], pieces);
         std::span<const Latin1Character> read = hasTextFromPrinter ? named.span() : searched;
         std::span<const Latin1Character> found;
-        if (lineStart < lineEnd && find(read, lineStart, lineEnd, name, within, found) == WrittenReads::Same)
+        auto isAsked = [&, startOfRead = startOfStatements] {
+            if (find != findWrittenCallOfReplacedNameAt)
+                return true;
+            size_t callee = found.data() - read.data() + (spanHasPrefix(found, byteCast<Latin1Character>("new "_span)) ? 4 : 0);
+            // `undefined()`: the compiler has no name for a literal either.
+            size_t endOfCallee = callee;
+            while (endOfCallee < read.size() && isPartOfName(read[endOfCallee]))
+                ++endOfCallee;
+            std::span<const Latin1Character> word = read.subspan(callee, endOfCallee - callee);
+            if (std::ranges::any_of(std::array { "undefined"_s, "null"_s, "true"_s, "false"_s }, [&](ASCIILiteral literal) { return equalSpans(word, byteCast<Latin1Character>(literal.span())); }))
+                return true;
+            // The name may be one that stands for a function as Bun prints it.
+            return isASCII(read[callee]) && std::ranges::any_of(pieces, [&](const TextPrintedInPlace& piece) {
+                return piece.start == startOfRead + callee && !isFromPrinter(piece);
+            });
+        };
+        if (lineStart < lineEnd && find(read, lineStart, lineEnd, name, within, found) == WrittenReads::Same && isAsked())
             return asPrinted(text, searched.subspan(found.data() - read.data(), found.size()), pieces, find);
         auto [firstLineStart, lastLineEnd] = linesOfPathAround(read, within);
         found = { };
-        if ((firstLineStart < lineStart || lastLineEnd > lineEnd) && find(read, firstLineStart, lastLineEnd, name, within, found) == WrittenReads::Same)
+        if ((firstLineStart < lineStart || lastLineEnd > lineEnd) && find(read, firstLineStart, lastLineEnd, name, within, found) == WrittenReads::Same && isAsked())
             return asPrinted(text, searched.subspan(found.data() - read.data(), found.size()), pieces, find);
         for (const TextPrintedInPlace& piece : pieces) {
             bool printsPlace = piece.isCopy && piece.startOfCopied <= places[index] && places[index] <= piece.endOfCopied;
@@ -2165,13 +2738,14 @@ static String findSpelled(VM& vm, const PlaceInFunctionText* place, StringView n
 {
     // A file says which line and column it is, so only what holds that place counts.
     if (place->module && place->position.line && place->position.column) {
-        const SourceFile* file = sourceFileOf(vm, place->module);
+        SourceFile* file = sourceFileOf(vm, place->module);
         if (file && place->position.line <= file->lineStarts.size()) {
             std::span<const Latin1Character> text = byteCast<Latin1Character>(file->bytes.span());
-            size_t lineStart = file->lineStarts[place->position.line - 1];
-            size_t lineEnd = place->position.line < file->lineStarts.size() ? file->lineStarts[place->position.line] - 1 : text.size();
             Vector<TextPrintedInPlace> pieces = textPrintedInPlaceOf(place->module, StartOfPrintedText::File);
-            if (String quote = findSpelledAround(text, 0, text.size(), offsetOfColumn(text, lineStart, lineEnd, place->position.column), pieces.span(), name, find); !quote.isNull())
+            auto findStatementsAround = [&](size_t at) {
+                return AOT::findStatementsAround(*file, at);
+            };
+            if (String quote = findSpelledAround(text, 0, text.size(), offsetOfColumn(*file, place->position.line - 1, place->position.column), pieces.span(), name, find, findStatementsAround); !quote.isNull())
                 return quote;
         }
     }
@@ -2189,7 +2763,10 @@ static String findSpelled(VM& vm, const PlaceInFunctionText* place, StringView n
                 quotes.textPrintedInPlace = textPrintedInPlaceOf(place->module, StartOfPrintedText::SourceBytesOfAllFunctions, quotes.placeInKeptText->startOfPiece, quotes.placeInKeptText->endOfPiece);
         }
         if (const std::optional<PlaceInKeptText>& found = quotes.placeInKeptText) {
-            if (String quote = findSpelledAround(textOfAll, found->startOfSearched, found->endOfSearched, found->at, quotes.textPrintedInPlace.span(), name, find); !quote.isNull())
+            auto findStatementsAround = [&](size_t at) {
+                return AOT::findStatementsAround(*found, at);
+            };
+            if (String quote = findSpelledAround(textOfAll, found->startOfSearched, found->endOfSearched, found->at, quotes.textPrintedInPlace.span(), name, find, findStatementsAround); !quote.isNull())
                 return quote;
         }
     }
@@ -2221,9 +2798,13 @@ static String findSpelled(VM& vm, const PlaceInFunctionText* place, StringView n
 // Each place in `text[from, to)` that calls `name`, which is the callee as it is written or the last of its names. `found` holds the call with its arguments, and `new` in front of it.
 static WrittenReads findWrittenCalls(std::span<const Latin1Character> text, size_t from, size_t to, StringView name, std::optional<size_t> within, std::span<const Latin1Character>& found)
 {
+    BytesOfName bytesOfName(name);
     for (size_t at = from; at + name.length() < to; ++at) {
+        at = bytesOfName.findIn(text, at, to);
+        if (at == notFound || at + name.length() >= to)
+            break;
         size_t open = at + name.length() + (text[at + name.length()] == '!');
-        if (open >= to || text[open] != '(' || (at && (isPartOfName(text[at - 1]) || text[at - 1] == '#')))
+        if (open >= to || (text[open] != '(' && text[open] != '`') || (at && (isPartOfName(text[at - 1]) || text[at - 1] == '#')))
             continue;
         if (!equal(name, text.subspan(at, name.length())))
             continue;
@@ -2237,7 +2818,7 @@ static WrittenReads findWrittenCalls(std::span<const Latin1Character> text, size
                 return WrittenReads::Differ;
             start = *path;
         }
-        std::optional<size_t> close = findClosingBracket(text, open);
+        std::optional<size_t> close = text[open] == '`' ? findEndOfTemplate(text, open) : findClosingBracket(text, open);
         if (!close)
             return WrittenReads::Differ;
         if (start >= 4 && text[start - 4] == 'n' && text[start - 3] == 'e' && text[start - 2] == 'w' && text[start - 1] == ' ' && (start == 4 || !isPartOfName(text[start - 5])))
@@ -2253,10 +2834,12 @@ static WrittenReads findWrittenCalls(std::span<const Latin1Character> text, size
 }
 
 // The call whose callee ends in the name that begins at `within`: that is the column which a stack trace gives for a call.
-static WrittenReads findWrittenCallAt(std::span<const Latin1Character> text, size_t from, size_t to, StringView name, std::optional<size_t> within, std::span<const Latin1Character>& found)
+enum class WrittenCallee : bool { Name, ReplacedName };
+static WrittenReads findWrittenCallAt(std::span<const Latin1Character> text, size_t from, size_t to, StringView name, std::optional<size_t> within, std::span<const Latin1Character>& found, WrittenCallee callee)
 {
     if (!within || *within >= to)
         return WrittenReads::None;
+    bool isReplaced = callee == WrittenCallee::ReplacedName;
     size_t at = *within;
     // `a[k](b)`: the column is that of the key. In `[f()]` and `a[f()]` it is that of `f`.
     if (at > from + 1 && text[at - 1] == '[') {
@@ -2265,14 +2848,22 @@ static WrittenReads findWrittenCallAt(std::span<const Latin1Character> text, siz
     }
     if (!isPartOfName(text[at]) || isASCIIDigit(text[at]) || (at && (isPartOfName(text[at - 1]) || text[at - 1] == '#')))
         return WrittenReads::None;
+    // `new K`: the column is that of `new`.
+    if (isReplaced && spanHasPrefix(text.subspan(at), byteCast<Latin1Character>("new "_span)) && at + 4 < to && isPartOfName(text[at + 4]))
+        at += 4;
     size_t open = at;
     while (open < text.size() && isPartOfName(text[open]))
         ++open;
+    bool followsNew = isReplaced && at >= 4 && spanHasPrefix(text.subspan(at - 4), byteCast<Latin1Character>("new "_span)) && (at == 4 || !isPartOfName(text[at - 5]));
+    if (followsNew && (open >= text.size() || (text[open] != '(' && text[open] != '.' && text[open] != '[' && text[open] != '!' && text[open] != '?' && text[open] != '`'))) {
+        found = text.subspan(at - 4, open - at + 4);
+        return WrittenReads::Same;
+    }
     if (open < text.size() && text[open] == '!')
         ++open;
     if (open + 1 < text.size() && text[open] == '?' && text[open + 1] == '.')
         open += 2;
-    if (open >= text.size() || text[open] != '(')
+    if (open >= text.size() || (text[open] != '(' && (text[open] != '`' || !isReplaced)))
         return WrittenReads::None;
     size_t start = at;
     if (at && text[at - 1] == '.') {
@@ -2284,11 +2875,24 @@ static WrittenReads findWrittenCallAt(std::span<const Latin1Character> text, siz
             return WrittenReads::Differ;
         start = *path;
     }
-    std::optional<size_t> close = findClosingBracket(text, open);
+    std::optional<size_t> close = text[open] == '`' ? findEndOfTemplate(text, open) : findClosingBracket(text, open);
     if (!close)
         return WrittenReads::Differ;
+    if (followsNew && start == at)
+        start -= 4;
     found = text.subspan(start, *close + 1 - start);
     return WrittenReads::Same;
+}
+
+static WrittenReads findWrittenCallAt(std::span<const Latin1Character> text, size_t from, size_t to, StringView name, std::optional<size_t> within, std::span<const Latin1Character>& found)
+{
+    return findWrittenCallAt(text, from, to, name, within, found, WrittenCallee::Name);
+}
+
+// The same, where something else is printed in place of the name: findSpelledAround() sees to that.
+static WrittenReads findWrittenCallOfReplacedNameAt(std::span<const Latin1Character> text, size_t from, size_t to, StringView name, std::optional<size_t> within, std::span<const Latin1Character>& found)
+{
+    return findWrittenCallAt(text, from, to, name, within, found, WrittenCallee::ReplacedName);
 }
 
 // The engine's own C++ refuses what is not an object in a function that the program calls, or where it asks a value for its iterator.
@@ -2323,15 +2927,18 @@ static String findAt(VM& vm, const PlaceInFunctionText* place, StringView name, 
         quote = findSpelled(vm, place, name, findWrittenPrivateNames);
         return quote.isNull() ? findSpelled(vm, place, name, findWrittenIterations) : quote;
     }
-    size_t dot = name.reverseFind('.');
-    if (!quote.isNull() || find != findWrittenCalls || dot == notFound)
+    if (!quote.isNull() || (find != findWrittenCalls && find != findWrittenCallsOfElements))
         return quote;
-    // `(api as T).run()` calls `api.run`. Another `.run()` of the line does not.
-    quote = findSpelled(vm, place, name.substring(dot + 1), find);
-    StringView callee = quote;
-    if (callee.startsWith("new "_s))
-        callee = callee.substring(4);
-    return callee.length() > name.length() && callee.startsWith(name) && callee[name.length()] == '(' ? quote : String();
+    if (size_t dot = name.reverseFind('.'); find == findWrittenCalls && dot != notFound) {
+        // `(api as T).run()` calls `api.run`. Another `.run()` of the line does not.
+        quote = findSpelled(vm, place, name.substring(dot + 1), find);
+        StringView callee = quote;
+        if (callee.startsWith("new "_s))
+            callee = callee.substring(4);
+        return callee.length() > name.length() && callee.startsWith(name) && callee[name.length()] == '(' ? quote : String();
+    }
+    // `const b = null; b(1)`: the compiler's name for the callee is `null`, or it has none. What is written there is printed with `null` in place of `b`.
+    return findSpelled(vm, place, name, findWrittenCallOfReplacedNameAt, SearchedText::OnlyKnownPlace);
 }
 
 // A place asks for one name in one way, so its text is looked through once, however often it throws.
@@ -2476,24 +3083,41 @@ static bool isConstruction(const String& source)
     CString bytes = source.utf8();
     std::span<const Latin1Character> text = byteCast<Latin1Character>(bytes.span());
     std::optional<size_t> open = text.back() == ')' ? findOpeningBracket(text, text.size() - 1) : std::nullopt;
-    return !open || WTF::find(text.first(*open), static_cast<Latin1Character>('(')) == notFound;
+    if (!open)
+        return true;
+    // `new (void 0)(b)` and `new (void 0)`: the first brackets hold what is constructed.
+    if (text[4] == '(' && *open <= findClosingBracket(text, 4).value_or(0) + 1)
+        return true;
+    return WTF::find(text.first(*open), static_cast<Latin1Character>('(')) == notFound;
 }
 
 JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, StringView name)
 {
     String source = name.isEmpty() ? findOnTop(globalObject->vm(), "[]"_s, findWrittenCallsOfElements) : findOnTop(globalObject->vm(), name, findWrittenCalls);
-    if (source.isNull() || isConstruction(source))
+    // `o["a b"]()`, and a key that is printed in brackets though it could stand behind a dot: one with a letter that is not ASCII.
+    if (source.isNull() && !name.isEmpty())
+        source = findOnTop(globalObject->vm(), "[]"_s, findWrittenCallsOfElements);
+    if (source.isNull() || isConstruction(source)) {
         source = name.isNull() ? String() : tryMakeString(name, "()"_s);
+        if (!source.isNull() && !source.containsOnlyASCII()) {
+            Vector<Latin1Character> printed;
+            appendWithEscapes(printed, byteCast<Latin1Character>(source.utf8().span()), WrittenAs::Name);
+            source = String::fromUTF8(printed.span());
+        }
+    }
     return createQuoting(source, JSC::createNotAFunctionError, globalObject, callee);
 }
 
 static String quoteConstruction(VM& vm, StringView name)
 {
-    String source = findOnTop(vm, name, findWrittenCalls);
+    String source = name.isEmpty() ? findOnTop(vm, "()"_s, findWrittenCallOfReplacedNameAt) : findOnTop(vm, name, findWrittenCalls);
+    // As in createNotAFunctionError().
+    if (source.isNull() && !name.isEmpty())
+        source = findOnTop(vm, "[]"_s, findWrittenCallsOfElements);
+    if (source.isNull() || !isConstruction(source))
+        return name.isNull() ? String() : tryMakeString("new "_s, name);
     // Bun's transpiler prints `new K()` as `new K`.
-    if (source.isNull() || !isConstruction(source) || source.endsWith("()"_s))
-        source = name.isNull() ? String() : tryMakeString("new "_s, name);
-    return source;
+    return source.endsWith("()"_s) ? source.left(source.length() - 2) : source;
 }
 
 // A constructor that nobody wrote passes on what it is given.

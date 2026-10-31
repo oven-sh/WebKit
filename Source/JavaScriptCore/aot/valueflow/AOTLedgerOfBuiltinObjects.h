@@ -59,6 +59,8 @@ public:
     Reachers reachersOf(BuiltinID canonicalHolder) const;
 
     bool isCoveredByUnknownObject(BuiltinID canonicalHolder) const { return m_escaped.get(canonicalHolder.index()); }
+    const BitVector& keysWrittenThroughUnknownObject() const LIFETIME_BOUND { return m_keysWritten[m_unknownObject]; }
+    bool isEveryKeyWrittenThroughUnknownObject() const { return writesUnderKeysNobodyKnowsThrough(m_unknownObject); }
     bool operandMayHaveProperty(BuiltinID builtin, BuiltinName property) const { return m_propertiesOfOperands.contains(static_cast<uint64_t>(builtin.index()) << 32 | property.index()); }
 
     void forEachHolderWrittenUnderKeysNobodyKnows(NOESCAPE const Invocable<void(BuiltinID)> auto& functor) const
