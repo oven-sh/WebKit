@@ -175,6 +175,15 @@ static void takeKeys(ValueFlowRuleContext& context, ClimbingSet containers, Buil
         target.takeContentsOfSlot(containers, nameOf(iteratorClass == BuiltinClasses::MapIterator ? BuiltinSlots::MapKey : BuiltinSlots::SetElement));
 }
 
+// The step of `...rest` in a pattern is one IteratorResume in a loop. Its index says from which place on it runs, so it fills no one place of a pair.
+static bool stepsRestElement(const Function& function, const Value& step)
+{
+    if (!step.stepIndex())
+        return false;
+    const Value& open = function.at(step.operand(OperandIndex::IteratorResume::iterator));
+    return open.opcode != Opcode::IteratorOpen || (open.hasRest() && *step.stepIndex() >= open.elementCount().value_or(0));
+}
+
 static bool readsKeyOrValueOfPair(ValueFlowRuleContext& context, ClimbingSet containers, std::optional<uint32_t> indexInPattern)
 {
     if (!indexInPattern || *indexInPattern >= 2)
@@ -394,8 +403,9 @@ void runIterationOperation(const ValueFlowStatement& statement, ValueFlowRuleCon
         ValueFlowNodeID values = statement.result ? statement.result : nodeThatNobodyReads(context);
         if (operation.operand(OperandIndex::IteratorResume::sent))
             sendToIterators(context, state, operands[1]);
-        stepIterators(context, state, { operation.iteratorKind(), mode, operation.readsValueWhenDone() || mode != ResumeMode::Next, pairAllocatedAt(statement, context), operation.stepIndex() }, values);
-        if (!operation.readsValueWhenDone() && operation.stepIndex() && !readsKeyOrValueOfPair(context, state, operation.stepIndex()))
+        std::optional<uint32_t> indexInPattern = stepsRestElement(context.program().at(statement.function), operation) ? std::nullopt : operation.stepIndex();
+        stepIterators(context, state, { operation.iteratorKind(), mode, operation.readsValueWhenDone() || mode != ResumeMode::Next, pairAllocatedAt(statement, context), indexInPattern }, values);
+        if (!operation.readsValueWhenDone() && operation.stepIndex() && !readsKeyOrValueOfPair(context, state, indexInPattern))
             context.add(values, context.universe().undefinedValue());
         if (mode == ResumeMode::Return && operation.iteratorKind() == IteratorKind::Async)
             connectAwaitedValue(context, operands[1], values);
