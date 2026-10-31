@@ -13,6 +13,5 @@ if (!(intoJITCode ? $vm.pagesOfJITCodeAreGuarded() : $vm.pagesOfLLIntAreGuarded(
     $vm.crash(); // Nothing is guarded here.
 
 call(false);
-print("It returns from the landing pad.");
 call(true);
 quit(); // Not a crash, so the test fails.
