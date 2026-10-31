@@ -3022,6 +3022,27 @@ class YarrGenerator final : public YarrJITInfo {
 #endif
     }
 
+    // The capture of a fixed-width loop (ParenthesesSubpatternFixedWidthBegin/End) is always its last
+    // completed iteration, which ends at the current index and is the body's width long.
+    void emitFixedWidthLoopCapture(PatternTerm* term, Checked<unsigned> checkedOffset, MacroAssembler::RegisterID indexTemporary)
+    {
+        ASSERT(term->capture() && shouldRecordSubpatterns());
+        emitCaptureStart(term, checkedOffset, indexTemporary, term->parentheses.disjunction->m_minimumSize);
+        emitCaptureEnd(term, checkedOffset, indexTemporary);
+    }
+
+    void emitClearFixedWidthLoopCapture(PatternTerm* term)
+    {
+        if (!term->capture() || !shouldRecordSubpatterns())
+            return;
+        auto subpatternId = term->parentheses.subpatternId;
+        clearSubpattern(subpatternId);
+        if (m_pattern.m_numDuplicateNamedCaptureGroups) {
+            if (auto duplicateNamedGroupId = m_pattern.m_duplicateNamedGroupForSubpatternId[subpatternId])
+                storeDuplicateNamedGroupSubpatternId(duplicateNamedGroupId, 0);
+        }
+    }
+
     void emitClearAllCaptures()
     {
         if (!shouldRecordSubpatterns())
@@ -3186,6 +3207,9 @@ class YarrGenerator final : public YarrJITInfo {
         // These are only used for non-capturing groups; capturing FixedCount uses ParenthesesSubpatternBegin/End.
         ParenthesesSubpatternFixedCountBegin,
         ParenthesesSubpatternFixedCountEnd,
+        // Used to wrap a Greedy or NonGreedy group marked isFixedWidthLoop (see YarrPattern.cpp).
+        ParenthesesSubpatternFixedWidthBegin,
+        ParenthesesSubpatternFixedWidthEnd,
         // Used to wrap generic captured matches
         ParenthesesSubpatternBegin,
         ParenthesesSubpatternEnd,
@@ -7244,6 +7268,68 @@ class YarrGenerator final : public YarrJITInfo {
                 break;
             }
 
+            // YarrOpCode::ParenthesesSubpatternFixedWidthBegin/End
+            //
+            // A Greedy or NonGreedy group marked isFixedWidthLoop (see YarrPattern.cpp): one
+            // alternative of fixed, non-zero width with nothing to backtrack into and no
+            // captures inside. The frame keeps the index the group was entered at and the
+            // number of iterations completed. Backtracking never re-enters a completed
+            // iteration: a greedy group gives one back by stepping the index back by the
+            // body's width, a non-greedy one runs the body once more. The group's own
+            // capture is the last completed iteration, recomputed from the index. No
+            // ParenContext is allocated, so the number of iterations is not bounded by the
+            // stack.
+            case YarrOpCode::ParenthesesSubpatternFixedWidthBegin: {
+                termMatchTargets.append(MatchTargets());
+
+                PatternTerm* term = op.m_term;
+                unsigned parenthesesFrameLocation = term->frameLocation;
+                ASSERT(op.m_direction == Forward);
+
+                storeToFrame(m_regs.index, parenthesesFrameLocation + BackTrackInfoParenthesesFixedWidth::beginIndex());
+                storeToFrame(MacroAssembler::TrustedImm32(0), parenthesesFrameLocation + BackTrackInfoParenthesesFixedWidth::matchAmountIndex());
+                emitClearFixedWidthLoopCapture(term);
+
+                // A non-greedy group with no minimum runs its body only when what follows has
+                // failed. The jump is linked at the End op, where the group is left.
+                if (term->quantityType == QuantifierType::NonGreedy && !term->quantityMinCount)
+                    op.m_jumps.append(m_jit.jump());
+
+                // Each iteration starts here.
+                defineReentryLabel(op);
+                break;
+            }
+            case YarrOpCode::ParenthesesSubpatternFixedWidthEnd: {
+                YarrOp& beginOp = m_ops[op.m_previousOp];
+                PatternTerm* term = op.m_term;
+                unsigned parenthesesFrameLocation = term->frameLocation;
+
+                termMatchTargets.takeLast();
+
+                if (term->capture() && shouldRecordSubpatterns())
+                    emitFixedWidthLoopCapture(term, op.m_checkedOffset, m_regs.regT0);
+
+                const MacroAssembler::RegisterID countTemporary = m_regs.regT0;
+                loadFromFrame(parenthesesFrameLocation + BackTrackInfoParenthesesFixedWidth::matchAmountIndex(), countTemporary);
+                m_jit.add32(MacroAssembler::TrustedImm32(1), countTemporary);
+                storeToFrame(countTemporary, parenthesesFrameLocation + BackTrackInfoParenthesesFixedWidth::matchAmountIndex());
+
+                // Run another iteration: as many as allowed when greedy, as many as required
+                // when non-greedy.
+                unsigned wanted = term->quantityType == QuantifierType::Greedy ? term->quantityMaxCount : term->quantityMinCount;
+                if (wanted == quantifyInfinite)
+                    m_jit.jump(beginOp.m_reentry);
+                else if (wanted > 1)
+                    m_jit.branch32(MacroAssembler::Below, countTemporary, MacroAssembler::Imm32(wanted)).linkTo(beginOp.m_reentry, &m_jit);
+
+                // The group is left here, with the iterations completed so far. Backtracking
+                // that accepts fewer iterations returns to this point.
+                beginOp.m_jumps.link(&m_jit);
+                beginOp.m_jumps.clear();
+                defineReentryLabel(op);
+                break;
+            }
+
             // YarrOpCode::ParenthesesSubpatternBegin/End
             //
             // These nodes handle capturing subpatterns and non-capturing subpatterns
@@ -8183,6 +8269,80 @@ class YarrGenerator final : public YarrJITInfo {
                 m_backtrackingState.append(op.m_jumps);
                 break;
 
+            // YarrOpCode::ParenthesesSubpatternFixedWidthBegin/End
+            case YarrOpCode::ParenthesesSubpatternFixedWidthBegin: {
+                PatternTerm* term = op.m_term;
+                unsigned parenthesesFrameLocation = term->frameLocation;
+                YarrOp& endOp = m_ops[op.m_nextOp];
+
+                // An iteration failed inside the body. The index is back at the start of that
+                // iteration. For a greedy group that has its minimum, the iterations completed
+                // so far are the match: continue after the group.
+                m_backtrackingState.link(*this, op);
+                if (term->quantityType == QuantifierType::Greedy) {
+                    if (!term->quantityMinCount)
+                        m_jit.jump(endOp.m_reentry);
+                    else {
+                        loadFromFrame(parenthesesFrameLocation + BackTrackInfoParenthesesFixedWidth::matchAmountIndex(), m_regs.regT0);
+                        m_jit.branch32(MacroAssembler::AboveOrEqual, m_regs.regT0, MacroAssembler::Imm32(term->quantityMinCount)).linkTo(endOp.m_reentry, &m_jit);
+                    }
+                }
+
+                // A required iteration failed, or the iteration a non-greedy group was asked for
+                // did, or (from the End op) no other number of iterations is possible: the group
+                // fails. Restore the index and propagate the failure.
+                op.m_jumps.link(&m_jit);
+                op.m_jumps.clear();
+                loadFromFrame(parenthesesFrameLocation + BackTrackInfoParenthesesFixedWidth::beginIndex(), m_regs.index);
+                emitClearFixedWidthLoopCapture(term);
+                m_backtrackingState.fallthrough();
+                break;
+            }
+            case YarrOpCode::ParenthesesSubpatternFixedWidthEnd: {
+                PatternTerm* term = op.m_term;
+                unsigned parenthesesFrameLocation = term->frameLocation;
+                YarrOp& beginOp = m_ops[op.m_previousOp];
+
+                // What follows the group failed.
+                m_backtrackingState.link(*this, op);
+
+                const MacroAssembler::RegisterID countTemporary = m_regs.regT0;
+                loadFromFrame(parenthesesFrameLocation + BackTrackInfoParenthesesFixedWidth::matchAmountIndex(), countTemporary);
+
+                if (term->quantityType == QuantifierType::Greedy) {
+                    // Give the last iteration back and try what follows again, as long as more
+                    // than the minimum were completed.
+                    MacroAssembler::Jump atMinimum = m_jit.branch32(MacroAssembler::BelowOrEqual, countTemporary, MacroAssembler::Imm32(term->quantityMinCount));
+                    m_jit.sub32(MacroAssembler::TrustedImm32(1), countTemporary);
+                    storeToFrame(countTemporary, parenthesesFrameLocation + BackTrackInfoParenthesesFixedWidth::matchAmountIndex());
+                    m_jit.sub32(MacroAssembler::Imm32(term->parentheses.disjunction->m_minimumSize), m_regs.index);
+                    if (term->capture() && shouldRecordSubpatterns()) {
+                        MacroAssembler::Jump noIterationLeft = m_jit.branchTest32(MacroAssembler::Zero, countTemporary);
+                        emitFixedWidthLoopCapture(term, op.m_checkedOffset, m_regs.regT1);
+                        MacroAssembler::Jump captureRecorded = m_jit.jump();
+                        noIterationLeft.link(&m_jit);
+                        emitClearFixedWidthLoopCapture(term);
+                        captureRecorded.link(&m_jit);
+                    }
+                    m_jit.jump(op.m_reentry);
+
+                    atMinimum.link(&m_jit);
+                } else {
+                    // Run the body once more, unless the maximum is reached.
+                    ASSERT(term->quantityType == QuantifierType::NonGreedy);
+                    if (term->quantityMaxCount == quantifyInfinite)
+                        m_jit.jump(beginOp.m_reentry);
+                    else
+                        m_jit.branch32(MacroAssembler::Below, countTemporary, MacroAssembler::Imm32(term->quantityMaxCount)).linkTo(beginOp.m_reentry, &m_jit);
+                }
+
+                // No other number of iterations is possible: the group fails (see the Begin op).
+                beginOp.m_jumps.append(m_jit.jump());
+
+                m_backtrackingState.append(op.m_jumps);
+                break;
+            }
+
             // YarrOpCode::ParenthesesSubpatternBegin/End
             //
             // Capturing or non-capturing subpatterns that need a ParenContext for
@@ -8572,6 +8732,10 @@ class YarrGenerator final : public YarrJITInfo {
             // Select the 'Terminal' nodes.
             parenthesesBeginOpCode = YarrOpCode::ParenthesesSubpatternTerminalBegin;
             parenthesesEndOpCode = YarrOpCode::ParenthesesSubpatternTerminalEnd;
+        } else if (term->parentheses.isFixedWidthLoop) {
+            ASSERT(term->parentheses.disjunction->m_alternatives.size() == 1);
+            parenthesesBeginOpCode = YarrOpCode::ParenthesesSubpatternFixedWidthBegin;
+            parenthesesEndOpCode = YarrOpCode::ParenthesesSubpatternFixedWidthEnd;
         } else {
 #if ENABLE(YARR_JIT_ALL_PARENS_EXPRESSIONS)
             if (term->quantityType == QuantifierType::FixedCount) {
@@ -12922,6 +13086,26 @@ public:
 
         case YarrOpCode::ParenthesesSubpatternFixedCountEnd:
             out.printf("ParenthesesSubpatternFixedCountEnd checked-offset:(%u) ", op.m_checkedOffset.value());
+            if (term->capture())
+                out.printf("capturing pattern #%u", term->parentheses.subpatternId);
+            else
+                out.print("non-capturing");
+            term->dumpQuantifier(out);
+            out.print("\n");
+            return 0;
+
+        case YarrOpCode::ParenthesesSubpatternFixedWidthBegin:
+            out.printf("ParenthesesSubpatternFixedWidthBegin checked-offset:(%u) ", op.m_checkedOffset.value());
+            if (term->capture())
+                out.printf("capturing pattern #%u", term->parentheses.subpatternId);
+            else
+                out.print("non-capturing");
+            term->dumpQuantifier(out);
+            out.printf(" width:%u\n", term->parentheses.disjunction->m_minimumSize);
+            return 0;
+
+        case YarrOpCode::ParenthesesSubpatternFixedWidthEnd:
+            out.printf("ParenthesesSubpatternFixedWidthEnd checked-offset:(%u) ", op.m_checkedOffset.value());
             if (term->capture())
                 out.printf("capturing pattern #%u", term->parentheses.subpatternId);
             else
