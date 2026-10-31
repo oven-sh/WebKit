@@ -138,11 +138,14 @@ WaiterListManager::WaitSyncResult WaiterListManager::waitSyncImpl(VM& vm, ValueT
         MonotonicTime releaseFreeMemoryTime = MonotonicTime::now() + 100_ms;
         bool didReleaseFreeMemory = false;
 #endif
+        // Keep the deadlines monotonic all the way down. A wall-clock copy of one moves when the system
+        // clock is set (a backward step of N seconds made Atomics.wait() block for the timeout plus N),
+        // and ParkingLot re-checks the deadline against its own clock after every wakeup.
         while (syncWaiter->isOnList() && time.now() < time && !shouldStopWaitingForTermination(vm)) {
 #if USE(MIMALLOC)
             if (!didReleaseFreeMemory && releaseFreeMemoryTime < time) {
                 if (MonotonicTime::now() < releaseFreeMemoryTime) {
-                    syncWaiter->condition().waitUntil(list->lock, releaseFreeMemoryTime.approximate<WallTime>());
+                    syncWaiter->condition().waitUntil(list->lock, releaseFreeMemoryTime);
                     continue;
                 }
                 didReleaseFreeMemory = true;
@@ -153,7 +156,7 @@ WaiterListManager::WaitSyncResult WaiterListManager::waitSyncImpl(VM& vm, ValueT
                 continue;
             }
 #endif
-            syncWaiter->condition().waitUntil(list->lock, time.approximate<WallTime>());
+            syncWaiter->condition().waitUntil(list->lock, time);
         }
 
         syncWaiter->setParkedList(nullptr);
