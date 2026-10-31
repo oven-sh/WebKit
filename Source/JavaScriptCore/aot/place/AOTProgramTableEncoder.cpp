@@ -3239,23 +3239,17 @@ static void appendTablesOfCompiledModules(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::compiledRuntimeFunctions, runtimeFunctions);
 }
 
-// A face has the display path of its file, and the file has a rule for what importers see of it.
-// What a bundler's `__commonJS` or `__esm` wraps has the display path of the file around it and no such rule: nobody imports it, and the file around it is no face.
+// The run time finds the file behind a face in the first request that the tables keep.
 static void markFacesOfFiles(const TableEncoder& encoder, ModuleLists& lists)
 {
     const Program& program = encoder.program;
-    // The program has the paths also where the tables leave them out.
-    auto displayPath = [&](const Module& module) {
-        return module.displayPath ? program.string(module.displayPath) : std::span<const uint8_t>();
-    };
     for (size_t index = 0; index < program.modules.size(); ++index) {
+        if (!isFaceOfCommonJSFile(program, program.modules[index]))
+            continue;
         ModuleData& face = lists.modules[index];
         uint32_t firstRequest = face.firstRequest;
-        if (face.kind != ModuleKind::SourceText || firstRequest == lists.modules[index + 1].firstRequest || !lists.requests[firstRequest].isRequire)
-            continue;
-        uint32_t file = lists.requests[firstRequest].target();
-        bool isImported = program.modules[file].exportRule != SyntheticExportRule::None;
-        face.faceOfFile = lists.modules[file].kind == ModuleKind::CommonJs && isImported && std::ranges::equal(displayPath(program.modules[index]), displayPath(program.modules[file]));
+        uint32_t file = program.modules[index].requests[0].target.index();
+        face.faceOfFile = firstRequest != lists.modules[index + 1].firstRequest && lists.requests[firstRequest].isRequire && lists.requests[firstRequest].target() == file;
         lists.modules[file].shownByFace |= face.faceOfFile;
     }
 }

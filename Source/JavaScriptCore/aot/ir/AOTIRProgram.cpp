@@ -801,6 +801,21 @@ bool namesWaysToModuleObjects(const Program& program)
     });
 }
 
+// A face has the display path of its file, and the file has a rule for what importers see of it.
+// What a bundler's `__commonJS` or `__esm` wraps has the display path of the file around it and no such rule: nobody imports it, and the file around it is an ES module like any other.
+bool isFaceOfCommonJSFile(const Program& program, const Module& module)
+{
+    if (module.kind != ModuleKind::SourceText || module.requests.isEmpty() || module.requests[0].kind != ModuleRequestKind::Require)
+        return false;
+    const Module& file = program.at(module.requests[0].target);
+    if (file.kind != ModuleKind::CommonJs || file.exportRule == SyntheticExportRule::None)
+        return false;
+    auto displayPath = [&](const Module& shown) {
+        return shown.displayPath ? program.string(shown.displayPath) : std::span<const uint8_t>();
+    };
+    return std::ranges::equal(displayPath(module), displayPath(file));
+}
+
 bool isBodyOfModuleEvaluatedByRequire(const Program& program, const Function& function)
 {
     return function.kind == FunctionKind::Module && program.at(function.module).flags.contains(ModuleFlags::IsEvaluatedByRequire);

@@ -210,15 +210,6 @@ static bool runsCode(const Program& program, const Module& module)
     return isEvaluatedWithImporter(program, module) && hasCode(program, module) && !onlyReturns(program.at(module.body));
 }
 
-// The body of a face evaluates its file, whether the run time lists the names of the file behind that or the body copies them itself.
-static bool isFaceOfCommonJSFile(const Program& program, const Module& module)
-{
-    if (module.kind != ModuleKind::SourceText || module.requests.isEmpty() || module.requests[0].kind != ModuleRequestKind::Require)
-        return false;
-    const Module& file = program.at(module.requests[0].target);
-    return file.kind == ModuleKind::CommonJs && file.displayPath == module.displayPath;
-}
-
 // The modules that have the property themselves or import, directly or not, a module that has it.
 static BitVector findModulesThatReach(const EvaluationPlan& plan, const StronglyConnectedComponents& components, const Invocable<bool(const Program&, const Module&)> auto& hasProperty)
 {
@@ -242,7 +233,7 @@ static BitVector findModulesThatReach(const EvaluationPlan& plan, const Strongly
     return reachingModules;
 }
 
-// The CommonJS files, and their faces.
+// The CommonJS files, and their faces. The body of a face evaluates its file, whether the run time lists the names of the file behind that or the body copies them itself.
 static BitVector findFilesThatRequireModuleThatAwaits(const EvaluationPlan& plan, const StronglyConnectedComponents& components, const ParallelLoops& loops)
 {
     const Program& program = plan.program;

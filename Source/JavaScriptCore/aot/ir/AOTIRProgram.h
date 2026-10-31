@@ -286,6 +286,8 @@ void forEachFunctionCalledByHost(const Program& program, NOESCAPE const Invocabl
 const RuntimeFunctionEntry* findRuntimeFunction(const Program&, RuntimeFunctionID);
 bool isLibraryCode(const Program&, const Function&);
 bool isBundlerHelperModule(const Program&, const Module&);
+// The ES module through which importers see a CommonJS file. Its first request requires the file.
+bool isFaceOfCommonJSFile(const Program&, const Module&);
 bool isBundlerHelperNamedByProgram(const Program&, ModuleID);
 // The host asks the loader for an entry point. Where the program loads files under names that the build does not follow, it also asks for the files marked IsFoundByName, and for those that a copy from disk may import: MayBeEvicted.
 BitVector modulesThatHostAsksFor(const Program&, bool findsFilesByName, bool beginsModulesOfData = false);
