@@ -478,7 +478,7 @@ jobs:
               else echo "no branch target identification"
               fi
               # This one needs no such processor, and finds what no test branches to.
-              [ "$HAS_LANDING_PADS" = true ] && export JSC_validateIndirectBranchTargets=1
+              if [ "$HAS_LANDING_PADS" = true ]; then export JSC_validateIndirectBranchTargets=1; fi
               ;;
             macOS) echo "$(sysctl -n hw.ncpu) cores, $(($(sysctl -n hw.memsize) / 1073741824))GB of memory" ;;
             Windows)

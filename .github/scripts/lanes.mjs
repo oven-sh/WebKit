@@ -76,12 +76,16 @@ const SIGNED_RETURN_ADDRESSES = " -mbranch-protection=pac-ret -DENABLE_RETURN_AD
 // else traps. The flag is for what the compiler generates. ENABLE(BRANCH_TARGET_IDENTIFICATION) is for LLInt and what the JITs
 // generate, and has JavaScriptCore guard the pages of those by itself (--useBranchTargetIdentification).
 //
+// The flag is needed although the pages of C++ are not guarded. With it the compiler has the target of an indirect tail call in x16
+// or x17, and a jump with its target in any other register may not land on what a function begins with. So whatever calls LLInt or
+// JIT code by an address has to be compiled with it, what an embedder links with these libraries included.
+//
 // The pages of C++ are not guarded. The loader guards an executable if everything that it is linked from says that it has landing
 // pads, and of what the sysroot has (crt1.o, crti.o, crtbeginS.o, libc_nonshared.a, libstdc++.a, libgcc.a) nothing says so or has
 // them. The objects here say so, because the flag makes them, but it is not yet true of them: the functions that are written in
 // assembly in a C++ source (ctiMasmProbeTrampoline, the thunks of defineUnaryDoubleOpWrapper, currentStackPointer) have none.
 //
-// Not with the ahead-of-time compiler, where nobody has tried it: whether an image has landing pads is yet to be decided.
+// Not with the ahead-of-time compiler, which is not ready for it: whether an image has landing pads is yet to be decided.
 //
 // Not "standard": that also says that the code works with a shadow stack (GCS), and what unwinds or replaces frames here does not.
 const LANDING_PADS = " -mbranch-protection=pac-ret+bti -DENABLE_BRANCH_TARGET_IDENTIFICATION=1";
@@ -125,7 +129,7 @@ const variants = {
   "assertions-coverage-aot": { buildType: "Release", mimalloc: true, assertions: true, coverage: true },
   // "aot", "lto" and "lto-aot" with ICU and WebKit compiled with HARDENING, and nothing else changed but for arm64's
   // -mtune (see MARCH_FLAG of Linux). Only what ships has a twin without the compiler, and on arm64 that twin also has
-  // SIGNED_RETURN_ADDRESSES, which the run time of compiled programs is not ready for.
+  // SIGNED_RETURN_ADDRESSES and LANDING_PADS, which the run time of compiled programs is not ready for.
   "hardened-aot": { buildType: "Release", mimalloc: true, hardened: true },
   "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true, signedReturnAddresses: true, landingPads: true, aot: false },
   "lto-hardened-aot": { buildType: "Release", mimalloc: true, lto: true, hardened: true },
