@@ -1017,6 +1017,10 @@ static void loadByUnknownName(const ValueFlowStatement& statement, ValueFlowRule
         letModulesBeLoadedByName(context, answers);
     answerWithWhatLoaderMakesOfData(statement, context, target);
     context.connect(context.nodes().ofHost(answers), target);
+    // A test run loads a native addon that the build has not found, wherever the load is written.
+    ModuleID module = context.program().at(statement.function).module;
+    if (module && context.program().at(module).flags.contains(ModuleFlags::LoadsCompiledFilesAlone))
+        context.add(target, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
 }
 
 static ValueFlowNodeID settledValueOfPromiseAt(const ValueFlowStatement& statement, ValueFlowRuleContext& context)

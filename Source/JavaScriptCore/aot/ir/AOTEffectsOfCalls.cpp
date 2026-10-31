@@ -256,7 +256,7 @@ static void describeCreationOfThis(const Program& program, FunctionID callee, co
     if (operands.newTarget || !constructed)
         description.addOwn(declaredBoundOf(Opcode::NewObject));
     else
-        description.addOwn(hasOnePrototypeObject(program, constructed) ? declaredBoundOf(NamedEffectSet::Allocates) : effectsOfAllocatingWithPrototype(program, constructed));
+        description.addOwn(hasOnePrototypeObject(program, constructed) ? effectsOfAllocatingWithPrototypeOfLayout(program, constructed) : effectsOfAllocatingWithPrototype(program, constructed));
 }
 
 static NEVER_INLINE bool describeEntrypointsOfLongList(const Program& program, std::span<const FunctionID> callees, BuiltinCallMode mode, EffectDescription& description, const EffectSummaries& summaries)

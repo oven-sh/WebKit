@@ -217,9 +217,11 @@ static void testFormForCallersThatKeepNoRegisters()
         AOT_TEST_CHECK(savesNothing(builtinCell()));
         // It hands its operand back, and the register comes back by being saved.
         AOT_TEST_CHECK(!savesNothing(flattenString()));
-        AOT_TEST_CHECK(catalog.summaryOf(builtinCell().withCallerFrame(CallerFrame::KeepsNoFPRs)).clobbered.contains(FPRInfo::argumentFPR1, IgnoreVectors));
-        AOT_TEST_CHECK(!catalog.summaryOf(builtinCell().withCallerFrame(CallerFrame::KeepsNoFPRs)).clobbered.contains(GPRInfo::argumentGPR3, IgnoreVectors));
-        AOT_TEST_CHECK(!catalog.summaryOf(builtinCell()).clobbered.contains(FPRInfo::argumentFPR1, IgnoreVectors));
+        AOT_TEST_CHECK(catalog.summaryOf(integerToString().withCallerFrame(CallerFrame::KeepsNoFPRs)).clobbered.contains(FPRInfo::argumentFPR1, IgnoreVectors));
+        AOT_TEST_CHECK(!catalog.summaryOf(integerToString().withCallerFrame(CallerFrame::KeepsNoFPRs)).clobbered.contains(GPRInfo::argumentGPR3, IgnoreVectors));
+        AOT_TEST_CHECK(!catalog.summaryOf(integerToString()).clobbered.contains(FPRInfo::argumentFPR1, IgnoreVectors));
+        // Its slow path ends once the cell is made.
+        AOT_TEST_CHECK(!exists(builtinCell().withCallerFrame(CallerFrame::KeepsNoFPRs)));
     }
 }
 

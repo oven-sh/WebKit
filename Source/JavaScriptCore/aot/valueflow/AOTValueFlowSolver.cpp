@@ -1114,6 +1114,8 @@ void ValueFlowSolver::takeBackStatementsThatRunOften()
 
 // A set that grows by a member a round runs its readers each round, and each run leaves nodes and edges behind for a set that the next run makes useless:
 // sites times rounds of them. A statement that has run often waits, longer each time, until the set has grown more or nothing else is due.
+// Whoever is let go because nothing else is due has seen all there is, and its waits begin again at one round. What it makes wakes others that have run often; if each of
+// them sat out the long wait that it had come to, nothing else would be due once more: a row of such statements would take as many of those times as it is long.
 // Where functions find one another one by one, the call that finds the next is such a statement, and nothing else is due at every step. A statement that stands for
 // the whole program goes on waiting there while any other can run: it sees in one look what they find in many rounds.
 void ValueFlowSolver::letStatementsThatRunOftenWait()
@@ -1139,6 +1141,8 @@ void ValueFlowSolver::letStatementsThatRunOftenWait()
             (standsForWholeProgram(copyOfStatementAt(statement).kind) ? m_statementsThatRunOften : m_due).append(statement);
         if (m_due.isEmpty())
             m_due = std::exchange(m_statementsThatRunOften, { });
+        for (ValueFlowStatementID statement : m_due)
+            m_timesRunOfStatement[statement.index()] = timesRunWithoutWaiting;
     }
     m_waitsForLaterRound.ensureSize(statements);
     for (ValueFlowStatementID statement : m_statementsThatRunOften)

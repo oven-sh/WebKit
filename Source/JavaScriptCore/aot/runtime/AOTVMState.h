@@ -211,6 +211,8 @@ public:
     void* stackPointerOfImport { nullptr };
     // What is on top of the stack while an import() of compiled code asks the loader. Bytecode calls a host function for that, and its frame is the first that a stack trace skips.
     CallFrame* frameOfImportThatAsksLoader { nullptr };
+    // While the host loads what a file of a test run asked for under a name nobody knows, and an executable would hold the file too.
+    bool askerLoadsCompiledFilesAlone { false };
     std::unique_ptr<PagesOfVM> pages;
     std::unique_ptr<ProgramIdentifiers> identifiers;
     std::unique_ptr<CacheRegistry> caches;

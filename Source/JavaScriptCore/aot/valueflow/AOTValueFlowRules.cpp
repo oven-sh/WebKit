@@ -220,6 +220,17 @@ ValueFlowNodeID heldPrototypeObjectsOfLibraryClasses(ValueFlowRuleContext& conte
     return context.masked(context.nodes().ofHost(ValueFlowHostNode::HoldersOfExportsInEscapedObjects), context.universe().prototypeObjectsOfLibraryClasses());
 }
 
+void notePrototypeObjectsAboveUnknownObject(ValueFlowRuleContext& context)
+{
+    ValueSetID prototypeObjectsOfHost = context.universe().builtinTables().heap().prototypeObjectsOfHost();
+    ValueFlowNodeID withInstances = context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfInstances);
+    ValueFlowNodeID answersThatNoReadLists = context.nodes().ofHost(ValueFlowHostNode::AnswersThatNoReadLists);
+    if (context.holdsAnyOf(ClimbingSet(context.universe().unknownObjectAlone()), withInstances))
+        context.add(answersThatNoReadLists, prototypeObjectsOfHost);
+    else
+        context.connect(context.masked(withInstances, prototypeObjectsOfHost), answersThatNoReadLists);
+}
+
 static void followWhatHasArrived(ValueFlowRuleContext& context, ClimbingSet arrived)
 {
     const ValueFlowUniverse& universe = context.universe();

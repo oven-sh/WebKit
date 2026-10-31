@@ -2071,8 +2071,10 @@ private:
             if (mayBeUnknownObject(objects))
                 functor(m_context.nodes().ofHost(ValueFlowHostNode::ObjectsAboveEscapedInstances));
             // The prototype objects of library classes above escaped instances are held apart. The modules of the run time list the keys of none.
-            if (mayBeUnknownObject(objects) && isCalledByProgramCode())
+            if (mayBeUnknownObject(objects) && isCalledByProgramCode()) {
                 functor(heldPrototypeObjectsOfLibraryClasses(m_context));
+                notePrototypeObjectsAboveUnknownObject(m_context);
+            }
             bool mayBeEndOfChain = m_context.meet(objects, m_universe.placeholdersAlone());
             bool mayBeNamespace = false;
             // Where the table does not say what stands above an object, one stand-in is listed there. It ends the walk, but the object it stands for may have any object above it.

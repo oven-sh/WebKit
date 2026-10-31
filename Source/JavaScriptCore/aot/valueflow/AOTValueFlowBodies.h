@@ -480,10 +480,11 @@ enum class ValueFlowHostNode : uint8_t {
     // The lists written with two elements or more whose first two somebody reads apart, as a key and a value. Only these say them apart: most such lists are no pairs.
     WrittenPairsThatAreRead,
     ObjectsPutBelowInstances,
+    AnswersThatNoReadLists,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 91;
-static_assert(static_cast<unsigned>(ValueFlowHostNode::ObjectsPutBelowInstances) + 1 == numberOfValueFlowHostNodes);
+inline constexpr unsigned numberOfValueFlowHostNodes = 92;
+static_assert(static_cast<unsigned>(ValueFlowHostNode::AnswersThatNoReadLists) + 1 == numberOfValueFlowHostNodes);
 
 class ValueFlowProgramNodes {
 public:

@@ -810,8 +810,36 @@ Effects effectsOfAllocatingWithPrototype(const Program& program, LayoutID alloca
     Effects effects = declaredBoundOf(NamedEffectSet::Allocates);
     if (program.prototypeMaySelectOtherClass(allocated))
         effects.writes.add(AbstractHeap::MemberGuards);
-    else
+    else {
         effects.writes.add(program, MemoryLocation::memberGuards(declaredLayoutOf(program, allocated)));
+        effects.writes.add(program, beginningOfClass(declaredLayoutOf(program, allocated)));
+    }
+    return effects;
+}
+
+Vector<LayoutID, 2> classesWhoseBeginningMayEnd(const Value& testOfMembers)
+{
+    Vector<MemberConditionRecord, 8> conditions;
+    for (MemberConditionRecord condition : testOfMembers.conditions())
+        conditions.append(condition);
+    Vector<LayoutID, 2> classes;
+    for (const MemberConditionRecord& condition : conditions) {
+        LayoutID layout = condition.layout;
+        auto isAboutLayout = [&](const MemberConditionRecord& other) { return other.layout == layout; };
+        if (classes.contains(layout) || std::ranges::all_of(conditions, isAboutLayout))
+            continue;
+        if (std::ranges::none_of(conditions, [&](const MemberConditionRecord& other) { return other.layout == layout && other.side == ClassSide::Static; }))
+            classes.append(layout);
+    }
+    return classes;
+}
+
+Effects effectsOfAllocatingWithPrototypeOfLayout(const Program& program, LayoutID allocated)
+{
+    Effects effects = declaredBoundOf(NamedEffectSet::Allocates);
+    LayoutID classLayout = declaredLayoutOf(program, allocated);
+    if (program.at(classLayout).has(LayoutFlags::IsConstructorFunction))
+        effects.writes.add(program, beginningOfClass(classLayout));
     return effects;
 }
 

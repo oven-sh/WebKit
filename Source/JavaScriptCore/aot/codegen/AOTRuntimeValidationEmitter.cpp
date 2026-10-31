@@ -164,11 +164,11 @@ void RuntimeValidationEmitter::checkGuardIsAvailable(const OperationContext& con
     if (context.valueID() && findReadsKeptForValidation(m_function).get(context.valueID().index()))
         return;
     // The passes removed a test based on the summaries of the time. Since then a call may have replaced operations in a callee's own body, and its summary may cover more than they did.
-    if (inputs().effectsByOperandTypes) {
-        FunctionAnalyses finer(AnalysisContext { build(), m_program, &inputs().flow, inputs().effectsByOperandTypes, m_id }, m_function);
-        if (finer.guardStateAt(guard, use) != GuardState::Unavailable)
-            return;
-    }
+    // These analyses only judge, as the verifier's do.
+    const EffectSummaries* effects = inputs().effectsByOperandTypes ? inputs().effectsByOperandTypes : analyses().context().effects;
+    FunctionAnalyses finer(AnalysisContext { build(), m_program, &inputs().flow, effects, m_id, CallResults::MayAliasOperands, WorkLimits::OfBuild, SavedFrames::AreOutOfReach }, m_function);
+    if (finer.guardStateAt(guard, use) != GuardState::Unavailable)
+        return;
     fail(context, InternalErrorKind::GuardNotAvailable);
 }
 

@@ -4,16 +4,16 @@
  */
 
 // AOTStubsArrayLiterals.cpp
-v(ArrayLiteral, CalledByCode, (), CountAxis, 0, maxArrayElementsInRegisters, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), ArrayLiteral)
-v(FrameArrayLiteral, CalledByCode, (), CountAxis, 0, maxArrayElementsInRegisters, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), FrameArrayLiteral)
-v(ArrayLiteralWithInt32, CalledByCode, (), CountAxis, 1, maxArrayElementsInRegisters, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), ArrayLiteralWithInt32)
+v(ArrayLiteral, CalledByCode, (), CountAxis | SlowPathRecurs, 0, maxArrayElementsInRegisters, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), ArrayLiteral)
+v(FrameArrayLiteral, CalledByCode, (), CountAxis | SlowPathRecurs, 0, maxArrayElementsInRegisters, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), FrameArrayLiteral)
+v(ArrayLiteralWithInt32, CalledByCode, (), CountAxis | SlowPathRecurs, 1, maxArrayElementsInRegisters, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), ArrayLiteralWithInt32)
 v(ArrayLiteralWithDouble, CalledByCode, (), CountAxis, 1, maxArrayElementsInRegisters, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), ArrayLiteralWithDouble)
 v(ArrayLiteralWithDoubleSlow, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), ArrayLiteralWithDoubleSlow)
 v(ArrayOfData, CalledByCode, (Int32, Double, Values, SharedValues), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), ArrayOfData)
-v(NewEmptyArray, CalledByCode, (ContiguousCapacity1, ContiguousCapacity3, DoubleCapacity1, DoubleCapacity3, DoubleDefaultCapacity, Int32DefaultCapacity, ContiguousCapacity1OwnStorage, ContiguousCapacity3OwnStorage), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewEmptyArray)
+v(NewEmptyArray, CalledByCode, (ContiguousCapacity1, ContiguousCapacity3, DoubleCapacity1, DoubleCapacity3, DoubleDefaultCapacity, Int32DefaultCapacity, ContiguousCapacity1OwnStorage, ContiguousCapacity3OwnStorage), FormAxis | SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewEmptyArray)
 
 // AOTStubsArrayHoles.cpp
-v(NewEmptyArrayWithCapacity, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewEmptyArrayWithCapacity)
+v(NewEmptyArrayWithCapacity, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewEmptyArrayWithCapacity)
 v(NewArrayWithLength, CalledByCode, (Int32, Double, Contiguous), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewArrayWithLength)
 v(NewArrayOfLength, CalledByCode, (Int32, Double, Contiguous), FormAxis | CountAxis, 1, maxArrayLengthInStubKey, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewArrayOfLength)
 v(NewArrayOfElements, CalledByCode, (Int32, Double, Contiguous), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState, ArrayStorage, Elements) | writes(AllocatorState), NewArrayOfElements)
@@ -21,10 +21,10 @@ v(NewArrayOfMembers, CalledByCode, (Int32, Double, Contiguous), FormAxis, 0, 0, 
 v(NewArrayOfHolesSlow, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewArrayOfHolesSlow)
 v(NewArrayFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, NewArrayFrontEnd)
 AOT_STUB_FRONT_END(NewArray, NewArrayFrontEnd)
-v(NewEmptyArrayAtSite, CalledByCode, (Int32, Double, Contiguous), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState, RuntimeState) | writes(AllocatorState, RuntimeState), NewEmptyArrayAtSite)
+v(NewEmptyArrayAtSite, CalledByCode, (Int32, Double, Contiguous), FormAxis | SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState, RuntimeState) | writes(AllocatorState, RuntimeState), NewEmptyArrayAtSite)
 
 // AOTStubsArraySlice.cpp
-v(ArraySlice, CalledByCode, (Bounded, Whole, BoundedWithPropertyRoom, WholeWithPropertyRoom, BoundedAsDoubles, WholeAsDoubles), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArraySlice)
+v(ArraySlice, CalledByCode, (Bounded, Whole, BoundedWithPropertyRoom, WholeWithPropertyRoom, BoundedAsDoubles, WholeAsDoubles), FormAxis | SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArraySlice)
 v(CreateArguments, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, CreateArguments)
 v(CreateMappedArguments, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, CreateMappedArguments)
 
@@ -32,7 +32,7 @@ v(CreateMappedArguments, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoic
 v(ArrayPush, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayPush)
 v(ArrayPushOfKnownKind, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayPush)
 v(ArrayPushDouble, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayPushDouble)
-v(AppendElements, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, AppendElements)
+v(AppendElements, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, AppendElements)
 v(AppendMembers, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, AppendMembers)
 
 // AOTStubsArrayStores.cpp
@@ -44,8 +44,8 @@ v(ArrayPutAtIndex, CalledByCode, (Value, Number), FormAxis, 0, 0, AllISAs, NoISA
 v(ArrayPutAtNumber, CalledByCode, (Value, Number), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayPutAtNumber)
 
 // AOTStubsArrayReads.cpp
-v(ArrayGetAtIndex, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayGetAtIndex)
-v(ArrayGetAtNumber, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayGetAtNumber)
-v(ArrayHasAtIndex, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayHasAtIndex)
+v(ArrayGetAtIndex, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayGetAtIndex)
+v(ArrayGetAtNumber, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayGetAtNumber)
+v(ArrayHasAtIndex, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayHasAtIndex)
 v(ArrayHasAtNumber, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayHasAtNumber)
 v(ArrayIndexOfString, CalledByCode, (Values, Strings, ValuesFromStart, StringsFromStart), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ArrayIndexOfString)

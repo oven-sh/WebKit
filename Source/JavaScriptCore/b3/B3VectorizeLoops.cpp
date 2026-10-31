@@ -797,7 +797,7 @@ private:
             if (plan.accessTable[index].falls != plan.lanesRunBackward && !(targetHas(VectorSwizzle, SIMDLane::i8x16) && targetHas(VectorReplaceLane, SIMDLane::i64x2) && targetHas(VectorSplat, SIMDLane::i64x2)))
                 return false;
         }
-        return stores || plan.numberOfSums;
+        return plan.numberOfAccesses && (stores || plan.numberOfSums);
     }
 
     // The address in the first turn.

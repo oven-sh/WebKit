@@ -1004,6 +1004,35 @@ static void testWordsOutsideTheHeapAreReadAgainInFrontOfCollections()
     }
 }
 
+// The bit of a set of guards belongs to no class: its load names the entire heap, and whoever writes one place of the heap writes what it reads. The bit of a class is read at the place of the class alone.
+static void testAWriteOfOnePlaceAmongTheGuardsIsSeenByALoadOfAllOfThem()
+{
+    for (uint32_t numberOfLayouts : { 2u, 40u, 200u }) {
+        for (uint32_t numberOfOtherPlaces : { 0u, 300u }) {
+            HeapFixture fixture;
+            AOTHeaps& heaps = fixture.heaps;
+            for (uint32_t index = 0; index < numberOfOtherPlaces; ++index) {
+                fixture.appendLoad(fixture.at(MemoryLocation::objectField(PropertyKeyID(index))));
+                fixture.appendLoad(fixture.at(MemoryLocation::moduleVariable(VariableID(index))));
+            }
+            B3::MemoryValue* loadOfSet = fixture.appendLoad(fixture.at(MemoryLocation(IRHeap::MemberGuards)));
+            B3::MemoryValue* loadOfFirstClass = fixture.appendLoad(fixture.at(MemoryLocation::memberGuards(LayoutID(0u))));
+            Vector<B3::PatchpointValue*> beginnings;
+            for (uint32_t layout = 0; layout < numberOfLayouts; ++layout) {
+                B3::PatchpointValue* fence = fixture.root->appendNew<B3::PatchpointValue>(fixture.proc, B3::Void, B3::Origin());
+                fence->effects = B3::Effects::none();
+                heaps.decoratePatchpointWrite(&fixture.at(Typed::beginningOfClass(LayoutID(layout))), fence);
+                beginnings.append(fence);
+            }
+            heaps.computeRangesAndDecorateInstructions();
+            for (B3::PatchpointValue* fence : beginnings) {
+                AOT_TEST_CHECK(fence->effects.writes.overlaps(loadOfSet->range()));
+                AOT_TEST_CHECK(!fence->effects.writes.overlaps(loadOfFirstClass->range()));
+            }
+        }
+    }
+}
+
 std::span<const NativeTest> b3HeapTests()
 {
     static constexpr NativeTest tests[] = {
@@ -1024,6 +1053,7 @@ std::span<const NativeTest> b3HeapTests()
         { "b3-heaps/ranges-number-the-leaves-in-order"_s, testRangesNumberTheLeavesInOrder },
         { "b3-heaps/ranges-of-heaps-that-grow-inside-one-another"_s, testRangesOfHeapsThatGrowInsideOneAnother },
         { "b3-heaps/write-sets-exclude-other-heaps"_s, testWriteSetsExcludeOtherHeaps },
+        { "b3-heaps/a-write-of-one-place-among-the-guards-is-seen-by-a-load-of-all-of-them"_s, testAWriteOfOnePlaceAmongTheGuardsIsSeenByALoadOfAllOfThem },
         { "b3-heaps/calls-convert-cells"_s, testCallsConvertCells },
         { "b3-heaps/collections-write-weak-tables-alone"_s, testCollectionsWriteOnlyWeakTables },
         { "b3-heaps/what-cells-own-outside-the-heap"_s, testWhatCellsOwnOutsideTheHeap },

@@ -1053,6 +1053,11 @@ Vector<MemoryLocation, 2> locationsReadBy(const Value& test)
     Vector<MemoryLocation, 2> locations = declaredReadsOf(test, provesOf(test.opcode));
     if (provesOf(test.opcode) == Proof::NotFrozen)
         locations.removeAll(MemoryLocation(AbstractHeap::OrderWords));
+    if (test.opcode == Opcode::AreMembersUnchanged) {
+        for (LayoutID classLayout : classesWhoseBeginningMayEnd(test))
+            locations.append(beginningOfClass(classLayout));
+        AOT::sortInLine(locations);
+    }
     return locations;
 }
 

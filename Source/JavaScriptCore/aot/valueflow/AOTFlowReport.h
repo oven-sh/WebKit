@@ -65,6 +65,7 @@ struct FlowSiteLevel {
     LayoutID layout;
     PropertyKeyID key;
     uint32_t candidatesOfLeftOperation { 0 };
+    bool receiverOfLeftOperationIsClassObject { false };
 };
 static_assert(sizeof(FlowSiteLevel) <= 24);
 

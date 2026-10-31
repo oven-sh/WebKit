@@ -3238,7 +3238,7 @@ LiteralStringTable numberLiteralStrings(const Program& program, const FlowResult
 {
     enum class Source : uint8_t { Program, Anywhere, Parser };
     // A validating build and the report of a mismatch hold every value against its type, also a text that the engine made and no code reads: Object.keys(). They read the texts of the members.
-    bool everyWordHasText = build.validates() || build.recordedOptions().policy() == MismatchPolicy::Report;
+    bool everyWordHasText = build.checksClaimsOfFlow() || build.recordedOptions().policy() == MismatchPolicy::Report;
     size_t numberOfStrings = program.strings.size();
     FastBitVector strings(numberOfStrings);
     // Each gets a word, and its text only if the program spells it.

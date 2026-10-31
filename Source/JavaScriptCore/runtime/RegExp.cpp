@@ -545,8 +545,8 @@ int RegExp::matchWithImageCode(JSGlobalObject* nullOrGlobalObject, VM& vm, Strin
     if (result != static_cast<int>(Yarr::JSRegExpResult::JITCodeFailure))
         return result;
 
-    const AOT::ImageRegExp& record = *imageRecord();
-    if (!s.is8Bit() && record.hasCodeFor8BitSubjectsAlone) {
+    const AOT::ImageRegExp* record = imageRecord();
+    if (record && !s.is8Bit() && record->hasCodeFor8BitSubjectsAlone) {
         std::span<const char16_t> wide = s.span16();
         if (!WTF::charactersAreAllLatin1(wide)) {
             AOT::count(vm, AOT::RuntimeCounterID::RegExpWideSubjectsRefused);
@@ -562,7 +562,7 @@ int RegExp::matchWithImageCode(JSGlobalObject* nullOrGlobalObject, VM& vm, Strin
             return result;
     }
 
-    bool isLongSearch = record.handsLongSearchesOver;
+    bool isLongSearch = record && record->handsLongSearchesOver;
     byteCodeCompileIfNecessary(&vm, isLongSearch ? BytecodeIsFor::LongSearch : BytecodeIsFor::Interpreter);
     if (m_state == ParseError) {
         if (nullOrGlobalObject) {

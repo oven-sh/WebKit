@@ -27,6 +27,10 @@
 #include <utility>
 #include <wtf/DataLog.h>
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT { namespace Typed {
 
 // What each body does with its parameters, as it was when the table of borrowed parameters was last made from this.
@@ -535,5 +539,9 @@ void ProgramAnalyses::destroyResults(OptionSet<ProgramResult> results)
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

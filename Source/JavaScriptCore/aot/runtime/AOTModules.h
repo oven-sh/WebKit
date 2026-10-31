@@ -304,7 +304,8 @@ public:
     bool mainModuleWaitsForItsImport() const { return !!m_capabilityOfMainModule; }
     void runMainModuleThatWaited();
     void failMainModuleThatWaited();
-    bool refusesCodeOutsideImage() const { return !m_admitsCodeOutsideImage; }
+    bool refusesCodeOutsideImage() const { return !m_admitsCodeOutsideImage || m_instance.vm->aotState().askerLoadsCompiledFilesAlone; }
+    bool loadsCompiledFilesAlone(ModuleID) const;
     const String* exchangeAskerOfModule(const String* asker) { return std::exchange(m_askerOfModule, asker); }
     StringView askerOfModule() const { return m_askerOfModule ? StringView(*m_askerOfModule) : StringView(); }
     void evict(ModuleID);

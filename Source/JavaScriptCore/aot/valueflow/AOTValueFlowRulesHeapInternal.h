@@ -134,13 +134,16 @@ private:
     ClimbingSet escapedAmong(ClimbingSet objects) { return m_context.valueWithin(objects, ValueFlowProgramNodes::escaped()); }
     ClimbingSet lostAmong(ClimbingSet objects) { return m_context.valueWithin(objects, ValueFlowProgramNodes::lost()); }
     bool hasEscaped(ClimbingSet objects) { return m_context.holdsAnyOf(objects, ValueFlowProgramNodes::escaped()); }
+    bool isAnswerThatNoReadLists(ClimbingSet objects) { return m_context.holdsAnyOf(objects, m_context.nodes().ofHost(ValueFlowHostNode::AnswersThatNoReadLists)); }
+    void noteAnswersThatNoReadLists(const Members&);
+    void noteAnswersOfReadUnderUnknownKey(ValueFlowObjectID holder);
+    bool answersUnknownObjectUnderUnknownKeys(ValueFlowObjectID holder) { return isNativeModuleThatNobodyNames(holder) || m_builtins.canonicalID(m_universe.builtinOf(holder)) == Builtins::Bun; }
+    bool mayBeAnsweredWithoutBeingListed(BuiltinID member) const { return isObjectKind(m_builtins.at(member).kind) && m_builtins.at(member).kind != BuiltinKind::Prototype; }
     bool mayBeReachedThroughUnknownObject(ClimbingSet objects)
     {
-        if (m_context.meet(objects, m_tables.classes()) || hasEscaped(objects))
+        if (hasEscaped(objects))
             return true;
-        ClimbingSet ofHost = m_context.restrict(objects, m_tables.prototypeObjectsOfHost());
-        ValueFlowNodeID withInstances = m_context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfInstances);
-        return holdsAnything(ofHost) && (m_context.holdsAnyOf(ofHost, withInstances) || m_context.holdsAnyOf(unknownObjectAlone(), withInstances));
+        return isHostFlagRaised(m_context, ValueFlowHostNode::ObjectNobodyKnowsIsWritten) && (m_context.meet(objects, m_tables.classes()) || isAnswerThatNoReadLists(objects));
     }
     bool hasBeenLost(ClimbingSet objects) { return m_context.holdsAnyOf(objects, ValueFlowProgramNodes::lost()); }
     bool hostNodeHoldsUnknownObject(ValueFlowHostNode node, std::optional<bool>& answer)

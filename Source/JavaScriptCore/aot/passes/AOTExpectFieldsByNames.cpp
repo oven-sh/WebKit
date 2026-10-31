@@ -20,6 +20,10 @@
 #include <tuple>
 #include <wtf/HashMap.h>
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT { namespace Typed {
 
 AOT_THRESHOLD(size_t, minNamesAskedOfField, 2);
@@ -289,5 +293,9 @@ void expectFieldsByNamesAsked(Program& program, BuildContext& build)
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

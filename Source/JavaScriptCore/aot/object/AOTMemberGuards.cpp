@@ -1378,6 +1378,9 @@ std::span<const uint64_t> ClassTable::classesBelowWithGuardsNamed(NamedGuardsBel
 
 void ClassTable::didDefineMember(VM& vm, const LayoutData& layout, ClassSide side, JSObject* holder, UniquedStringImpl* uid, JSObject* function)
 {
+    // Where the build has proved that the member stays, a read of it names the closure of the table behind no guard: that is the closure made here.
+    if (std::optional<uint32_t> key = identifiersOf(m_state.instance).numberOf(uid); key && isCreatedAtDefinition(layout, side, *key) && registeredHolderOf(vm, m_state, layout, side) == holder)
+        holdsDeclaredMember(vm, m_state, holder, uid, declaredMember(layout, side, *key));
     if (watchpointsOf(m_state).hasNoGuardLeft(layout))
         return;
     std::optional<FunctionID> defined = functionOf(function);

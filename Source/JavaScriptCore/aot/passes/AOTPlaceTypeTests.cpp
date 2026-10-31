@@ -254,7 +254,9 @@ static void shareConditionsTests(FunctionPassContext& context, TestSites& sites)
         const BlockValues& values = function.at(block).values;
         for (uint32_t index = 0; index < values.size(); ++index) {
             if (rest.empty() || rest.front().point.block != block || rest.front().point.index != index) {
-                if (!testsOfObjects.isEmpty() && mayEndMemberConditions(context.analyses.effectsOf(values[index]).normal))
+                // An object that is asked about is there already, so its class has begun: the first object of another class ends nothing that is said of it.
+                bool onlyBeginsClass = function.at(values[index]).opcode == Opcode::NewObject && !function.at(values[index]).prototypeOperand();
+                if (!testsOfObjects.isEmpty() && !onlyBeginsClass && mayEndMemberConditions(context.analyses.effectsOf(values[index]).normal))
                     shareTestsOfObjects();
                 continue;
             }

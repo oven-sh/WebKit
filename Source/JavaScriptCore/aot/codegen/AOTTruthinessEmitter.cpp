@@ -17,6 +17,10 @@
 #include "JSCJSValueInlines.h"
 #include "JSTypeInfo.h"
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr bool areBitsOfNaN(uint64_t bits)
@@ -216,5 +220,9 @@ Condition TruthinessEmitter::isTruthyBoxed(const OperationContext& context, Boxe
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

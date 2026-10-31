@@ -2943,6 +2943,16 @@ static bool leavesForReadByName(FunctionPassContext& context, const Value& test,
     return read.opcode == Opcode::PropGet && keyOfNamedAccess(context.program, read) == test.key() && context.analyses.identityOf(read.objectOperand()) == context.analyses.identityOf(test.objectOperand());
 }
 
+// The read by name may run a getter, which ends whatever has been tested of any object, and the arm comes back into the code behind the test. So that code may take nothing from a test in front of the read.
+static bool takesProofMadeInFrontOf(FunctionPassContext& context, BlockID filled)
+{
+    for (ValueID live : context.analyses.liveness().liveAtHead(filled)) {
+        if (context.function.at(live).type == TypeTable::guard)
+            return true;
+    }
+    return false;
+}
+
 static Vector<UpdateBehindSlotTest> findUpdatesBehindSlotTests(FunctionPassContext& context)
 {
     const Function& function = context.function;
@@ -2962,7 +2972,7 @@ static Vector<UpdateBehindSlotTest> findUpdatesBehindSlotTests(FunctionPassConte
         if (!leavesWhereEmpty || !filled.arguments.isEmpty() || filled.proofs.size() != 1 || function.at(filled.block).parameters.size() != 1 || !cfg.singleIncomingEdge(filled.block))
             continue;
         ValueID store = findStoreOfWhatIsMadeOfNumberRead(context, test, filled.block);
-        if (store && leavesForReadByName(context, test, leaves))
+        if (store && leavesForReadByName(context, test, leaves) && !takesProofMadeInFrontOf(context, filled.block))
             sites.append({ id, store });
     }
     return sites;

@@ -12,6 +12,7 @@
 #include "AOTObjectWords.h"
 #include "AOTCellFormat.h"
 #include "AOTConstantEmitter.h"
+#include "AOTEffectsOfOperands.h"
 #include "AOTFrameAllocation.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTNarrowFieldTypes.h"
@@ -134,13 +135,13 @@ ValueID AllocationEmitter::findCopyThatFills(const ValueContext& value)
     return values[index + 1];
 }
 
-// The first object of a constructor function begins its class. That ends a set of guards which held while it spoke of no object of the class, and NewObject declares no write to the guards:
-// without this B3 would read the bit of such a set ahead of the allocation and believe it behind it.
+// The first object of a constructor function begins its class. That ends a set of guards which held while it spoke of no object of the class. The stubs that allocate say nothing of the guards:
+// without this B3 would read the bit of such a set ahead of the allocation and believe it behind it. A bit of the class itself may be read ahead: it is clear until the class is there.
 static void clobberGuardsOfClassThatMayBegin(Output& out, AOTHeaps& heaps, const Program& program, LayoutID classLayout)
 {
     B3::PatchpointValue* clobber = out.patchpoint(B3::Void);
     clobber->effects = B3::Effects::none();
-    heaps.decoratePatchpointWrite(&heaps.at(program, MemoryLocation::memberGuards(classLayout)), clobber);
+    heaps.decoratePatchpointWrite(&heaps.at(program, beginningOfClass(classLayout)), clobber);
     clobber->setRunsWithoutFrame(true);
     clobber->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
 }

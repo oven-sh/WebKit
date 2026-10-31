@@ -264,13 +264,17 @@ struct GenericVersionBuilder {
             return false;
         Vector<ValueID, 8> dropped;
         const CompactList<ValueID>& entryParameters = function.at(entryBlock).parameters;
+        ParametersLeftToBody leftToBody(program, function);
         for (const CheckSite& site : sites) {
             const Value& check = function.at(site.check);
-            auto isHandedOnParameter = [&] {
-                return entryParameters.contains(sameObjectThroughCasts(function, check.valueOperand()).valueInFrontOfFacts()) && !isReliedOn(site.check);
+            auto isParameterThatNeedNotPass = [&] {
+                size_t parameter = entryParameters.find(sameObjectThroughCasts(function, check.valueOperand()).valueInFrontOfFacts());
+                if (parameter == notFound)
+                    return false;
+                return !isReliedOn(site.check) || (check.cause() != CheckCause::MayFail && leftToBody.contains(parameter, types.at(check.expectedType().predicted())));
             };
             bool leavesCodeAsItIs = check.cause() != CheckCause::MayFail && !changesCodeWhereProven(types.at(check.expectedType().predicted()));
-            if (leavesCodeAsItIs || isComparedByBitsAtEachUse(site.check) || isListedTextThatIsOnlyCompared(site.check) || isHandedOnParameter())
+            if (leavesCodeAsItIs || isComparedByBitsAtEachUse(site.check) || isListedTextThatIsOnlyCompared(site.check) || isParameterThatNeedNotPass())
                 dropped.append(site.check);
         }
         if (dropped.isEmpty())
@@ -750,6 +754,65 @@ bool mayTurnValueAway(const Program& program, const Function& function, const Va
 bool changesCodeWhereProven(const Type& checked)
 {
     return !checked.anyObject;
+}
+
+bool isMetByOtherObjects(const Program& program, const Type& checked)
+{
+    std::span<const LayoutID> layouts = membersOf(program, checked);
+    return !layouts.empty() && std::ranges::all_of(layouts, [&](LayoutID layout) { return program.at(layout).kind == LayoutKind::Record; });
+}
+
+bool ParametersLeftToBody::contains(size_t entryParameter, const Type& checked)
+{
+    if (m_function.thisParameterIndex() == entryParameter || !isMetByOtherObjects(m_program, checked))
+        return false;
+    if (!m_isFirstValueOfLoopVariable)
+        findFirstValuesOfLoopVariables();
+    return m_isFirstValueOfLoopVariable->get(entryParameter);
+}
+
+void ParametersLeftToBody::findFirstValuesOfLoopVariables()
+{
+    const CompactList<ValueID>& entryParameters = m_function.at(entryBlock).parameters;
+    m_isFirstValueOfLoopVariable.emplace(entryParameters.size());
+    CFG cfg(m_function);
+    if (!cfg.hasCycle())
+        return;
+    auto inFrontOfChecks = [&](ValueID value) {
+        for (;;) {
+            value = sameObjectThroughCasts(m_function, value).valueInFrontOfFacts();
+            if (m_function.at(value).opcode != Opcode::Check)
+                return value;
+            value = m_function.at(value).valueOperand();
+        }
+    };
+    for (BlockID head : cfg.reversePostOrder()) {
+        std::span<const Edge> incomingEdges = cfg.incomingEdges(head);
+        auto comesAround = [&](Edge edge) { return cfg.reversePostOrderIndex(edge.from) >= cfg.reversePostOrderIndex(head); };
+        if (std::ranges::none_of(incomingEdges, comesAround) || std::ranges::any_of(incomingEdges, &Edge::isHandlerEdge))
+            continue;
+        for (uint32_t index = 0; index < m_function.at(head).parameters.size(); ++index) {
+            auto argumentOn = [&](Edge edge) { return inFrontOfChecks(targetOf(m_function, edge).arguments[index]); };
+            // Two of the values that come around tell of any value whether another one does.
+            ValueID comingAround;
+            ValueID anotherComingAround;
+            for (Edge edge : incomingEdges) {
+                ValueID argument = comesAround(edge) ? argumentOn(edge) : ValueID();
+                if (!argument || argument == m_function.at(head).parameters[index] || argument == comingAround)
+                    continue;
+                (comingAround ? anotherComingAround : comingAround) = argument;
+                if (anotherComingAround)
+                    break;
+            }
+            if (!comingAround)
+                continue;
+            for (Edge edge : incomingEdges) {
+                size_t entryParameter = comesAround(edge) ? notFound : entryParameters.find(argumentOn(edge));
+                if (entryParameter != notFound && (anotherComingAround || comingAround != entryParameters[entryParameter]))
+                    m_isFirstValueOfLoopVariable->set(entryParameter);
+            }
+        }
+    }
 }
 
 namespace {

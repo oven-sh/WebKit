@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAddGenericVersion.h"
 #include "AOTBuildContext.h"
 #include "AOTCoroutines.h"
 #include "AOTEdgeResults.h"
@@ -735,12 +736,21 @@ auto GenericCopy::planRejoin(const TestedRejoin& rejoin, const RejoinTypes& rejo
         return std::nullopt;
 
     PropertyAccessContext accessContext { program, &m_context.inputs.flow };
+    auto isEnteredWithoutProofOf = [&](uint32_t parameterIndex, const Type& expected) {
+        const NaturalLoop* loop = m_analyses.cfg().hasCycle() ? m_analyses.naturalLoops().headerOf(rejoin.block) : nullptr;
+        return std::ranges::any_of(m_analyses.cfg().incomingEdges(rejoin.block), [&](Edge edge) {
+            if (edge.isHandlerEdge() || isCopy.get(edge.from.index()) || (loop && m_analyses.naturalLoops().belongsTo(edge.from, *loop)))
+                return false;
+            return !types.at(m_function.at(targetOf(m_function, edge).arguments[parameterIndex]).type).isSubsetOf(expected, program);
+        });
+    };
     auto addTest = [&](std::optional<uint32_t> parameterIndex, ValueID inTypedCode, TypeID typeInCopy) {
         TypeID typeInTypedCode = typeAssumedInTypedCode(inTypedCode, rejoinTypes.ignoringCopy[inTypedCode.index()], isCopy);
         if (parameterIndex && !rejoin.typesOfCounters.isEmpty() && rejoin.typesOfCounters[*parameterIndex])
             typeInTypedCode = types.intersectionOf(typeInTypedCode, rejoin.typesOfCounters[*parameterIndex]);
         if (m_typesTestedOnWayBack == TypesTestedOnWayBack::Expected && m_mayBeNarrowed.get(inTypedCode.index())) {
-            if (TypeID expected = m_function.at(inTypedCode).expected().predicted())
+            // What only meets an interface fails one test in the typed code. Kept out, it would lose all the rest of it at every turn. Where the typed code enters with the type proven, the test keeps that proof.
+            if (TypeID expected = m_function.at(inTypedCode).expected().predicted(); expected && !(parameterIndex && isMetByOtherObjects(program, types.at(expected)) && isEnteredWithoutProofOf(*parameterIndex, types.at(expected))))
                 typeInTypedCode = types.intersectionOf(typeInTypedCode, types.intern(types.at(expected).withoutClassProofs()));
         }
         const Type& given = types.at(typeInCopy);
@@ -791,6 +801,7 @@ auto GenericCopy::planPreheader(BlockID header, bool isTestedRejoin, const BitVe
         if (edge.isHandlerEdge())
             return std::nullopt;
         isEnteredFromCopy |= isFromCopy;
+        plan.takesEdgeOfCopyWithoutTest |= isFromCopy;
         plan.edges.append(edge);
     }
     if (!isEnteredFromCopy)
@@ -910,7 +921,8 @@ void GenericCopy::addWaysBack(std::span<const ValueID> changedValues, TypesTeste
     for (PreheaderPlan& plan : preheaders) {
         m_builder.setOrigin(m_function.at(plan.header).terminator.origin());
         for (ValueID parameter : Vector<ValueID, 4>(m_function.at(plan.header).parameters.span())) {
-            TypeID type = rejoinTypes.ignoringCopy.isEmpty() ? m_function.at(parameter).type : rejoinTypes.ignoringCopy[parameter.index()];
+            // What the copy passes without a test arrives too: the typed code may be cut off by a condition in front of it, `i > 2147483649` for an integer of 32 bits, and be never all through.
+            TypeID type = rejoinTypes.ignoringCopy.isEmpty() || plan.takesEdgeOfCopyWithoutTest ? m_function.at(parameter).type : rejoinTypes.ignoringCopy[parameter.index()];
             ValueID added = m_builder.addParameter(plan.preheader, type);
             m_function.edit(added, ValueEdit::Type).setExpected(m_function.at(parameter).expected());
             plan.parameters.append(added);

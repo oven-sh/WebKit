@@ -2586,6 +2586,7 @@ struct PlannedProperty {
     uint32_t field { 0 };
     VirtualObjectID awaitedObject;
     PropertyInitialization initialization { PropertyInitialization::Listed };
+    bool placeholderIsNull { false };
 };
 
 static bool isStoredInAnyVariant(const VirtualFamily& family, const ObjectState& state, uint32_t field)
@@ -2647,6 +2648,10 @@ static Vector<PlannedProperty, 8> planProperties(const AllocationSinking& sinkin
                 break;
             case LateStore::NeedsUndefinedPlaceholder:
                 planned.initialization = PropertyInitialization::ListedWithPlaceholder;
+                break;
+            case LateStore::NeedsNullPlaceholder:
+                planned.initialization = PropertyInitialization::ListedWithPlaceholder;
+                planned.placeholderIsNull = true;
                 break;
             case LateStore::CreatesProperty:
                 allocationHasEnded = true;
@@ -2918,6 +2923,7 @@ ValueID ObjectInterpreter::emitAllocation(VirtualObjectID object, const VirtualS
     cursor().setOrigin(variant.prototype.origin());
 
     ValueID placeholder;
+    ValueID nullPlaceholder;
     Vector<FieldValue, 8> properties;
     Vector<FieldValue, 2> storedByName;
     for (const PlannedProperty& property : planProperties(m_sinking, m_state, object, variant)) {
@@ -2936,9 +2942,10 @@ ValueID ObjectInterpreter::emitAllocation(VirtualObjectID object, const VirtualS
         late.append(LateFieldStore { object, property.field, property.awaitedObject, knownValue });
         if (property.initialization == PropertyInitialization::StoredLate)
             continue;
-        if (!placeholder)
-            placeholder = emitUndefined();
-        properties.append(FieldValue { field, placeholder });
+        ValueID& listed = property.placeholderIsNull ? nullPlaceholder : placeholder;
+        if (!listed)
+            listed = property.placeholderIsNull ? cursor().emit(Value(Opcode::Null)) : emitUndefined();
+        properties.append(FieldValue { field, listed });
     }
     Vector<FieldValue, 4> parts;
     for (const FreshResultField& part : variant.parts) {
@@ -2950,7 +2957,7 @@ ValueID ObjectInterpreter::emitAllocation(VirtualObjectID object, const VirtualS
     Value allocation = makeAllocation(program(), AllocationRequest { variant.description, variant.prototype, properties.span(), parts.span(), variant.length, absentResult == AbsentResult::IsPossible });
     if (allocation.opcode == Opcode::NewObject) {
         bool mayListPlaceholders = program().at(allocation.layout()).kind != LayoutKind::Record;
-        allocation.setListsOnlyStoredValues(mayListPlaceholders && !placeholder && storedByName.isEmpty() && hasEveryFieldOfBirthStored(m_sinking.shapeContext(object), shape));
+        allocation.setListsOnlyStoredValues(mayListPlaceholders && !placeholder && !nullPlaceholder && storedByName.isEmpty() && hasEveryFieldOfBirthStored(m_sinking.shapeContext(object), shape));
     }
     ValueID cell = cursor().emit(WTF::move(allocation));
     for (const FieldValue& stored : storedByName)

@@ -32,13 +32,6 @@
 #include <cstdlib>
 #include <thread>
 
-#if BASAN_ENABLED && !BOS(DARWIN) && !BOS(WINDOWS)
-#include <sanitizer/lsan_interface.h>
-#define BMALLOC_UNSEEN_BY_LEAK_SANITIZER __lsan::ScopedDisabler unseenByLeakSanitizer
-#else
-#define BMALLOC_UNSEEN_BY_LEAK_SANITIZER
-#endif
-
 #if BENABLE(LIBPAS)
 #include "pas_mte.h"
 #include "pas_system_heap.h"
@@ -174,7 +167,6 @@ SystemHeap::SystemHeap(const LockHolder&)
 
 void* SystemHeap::malloc(size_t size, FailureAction action)
 {
-    BMALLOC_UNSEEN_BY_LEAK_SANITIZER;
     void* result = ::malloc(size);
     RELEASE_BASSERT(action == FailureAction::ReturnNull || result);
     return result;
@@ -182,7 +174,6 @@ void* SystemHeap::malloc(size_t size, FailureAction action)
 
 void* SystemHeap::memalign(size_t alignment, size_t size, FailureAction action)
 {
-    BMALLOC_UNSEEN_BY_LEAK_SANITIZER;
     void* result = ::aligned_alloc(alignment, size);
     RELEASE_BASSERT(action == FailureAction::ReturnNull || result);
     return result;
@@ -190,7 +181,6 @@ void* SystemHeap::memalign(size_t alignment, size_t size, FailureAction action)
 
 void* SystemHeap::realloc(void* object, size_t size, FailureAction action)
 {
-    BMALLOC_UNSEEN_BY_LEAK_SANITIZER;
     void* result = ::realloc(object, size);
     RELEASE_BASSERT(action == FailureAction::ReturnNull || result);
     return result;

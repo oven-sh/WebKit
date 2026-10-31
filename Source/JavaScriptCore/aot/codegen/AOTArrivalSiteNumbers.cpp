@@ -46,6 +46,7 @@ struct ArrivalSiteDescription {
     AccessKind kind { AccessKind::Unknown };
     KnowledgeLevel level { KnowledgeLevel::Unknown };
     ArrivalStamp stamp { ArrivalStamp::None };
+    bool isLeftByPasses { false };
     LayoutList expected;
 };
 
@@ -280,6 +281,12 @@ static ArrivalSiteDescription describe(const Program& program, const Function& f
     bool isProven = candidates.proof == ReceiverProof::Type;
     if (isProven)
         description.level = KnowledgeLevel::Proven;
+    // A list, a view or a collection has no layout. Its class is in the type that the code is generated from, whatever flow knew before the tests were placed.
+    if (!isProven && program.typeOf(function, receiver).isClassObjectOrNullish()) {
+        description.level = KnowledgeLevel::Proven;
+        description.isLeftByPasses = true;
+        return description;
+    }
     description.expected = isProven ? candidates.proven : candidates.expected.predicted();
     return description;
 }
@@ -323,6 +330,8 @@ static void printSite(PrintStream& out, const PropertyAccessContext& context, Fu
         if (description.level != KnowledgeLevel::Proven)
             cause = context.flow->lossOf(description.accessSite).cause;
     }
+    if (description.isLeftByPasses)
+        cause = UnprovenCause::LeftByPasses;
     out.print("S\t", number, "\t", nameOf(description.operation), "\t", nameOf(kind), "\t", nameOf(description.level), "\t", nameOf(cause), "\t", nameOf(description.stamp), "\t");
     if (hasModule(location)) {
         ModuleID module(location.module);

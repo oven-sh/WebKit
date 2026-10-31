@@ -783,8 +783,10 @@ struct Copier {
             return id;
         Vector<LayoutID> members = program.at(id).written();
         bool hasChanged = false;
-        for (LayoutID& member : members)
-            hasChanged |= std::exchange(member, copyOfClass(member)) != member;
+        for (LayoutID& member : members) {
+            LayoutID copy = copyOfClass(member);
+            hasChanged |= std::exchange(member, copy) != copy;
+        }
         if (!hasChanged)
             return id;
         AOT::sort(members);
@@ -797,7 +799,8 @@ struct Copier {
         if (!id)
             return id;
         Type type = program.at(id);
-        bool hasChanged = std::exchange(type.layouts, withCopiedClasses(type.layouts)) != type.layouts;
+        LayoutSetID layouts = withCopiedClasses(type.layouts);
+        bool hasChanged = std::exchange(type.layouts, layouts) != layouts;
         Vector<FunctionID, 8> functions(type.functions.size(), [&](size_t index) {
             return copyOfFunctionOfClass(type.functions[index]);
         });
@@ -806,8 +809,10 @@ struct Copier {
             hasChanged = true;
         }
         for (ClassPart& part : type.classes) {
-            for (TypeID& contents : part.writtenContents)
-                hasChanged |= std::exchange(contents, withCopiedClasses(contents)) != contents;
+            for (TypeID& contents : part.writtenContents) {
+                TypeID copy = withCopiedClasses(contents);
+                hasChanged |= std::exchange(contents, copy) != copy;
+            }
         }
         if (!hasChanged)
             return id;

@@ -99,6 +99,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-NEXT: firstModulesByHashOfPath 2 4
 # CHECK-NEXT: directoriesOfModulesByPath
 # CHECK-NEXT: modulesOfUncompiledCode 0 0
+# CHECK-NEXT: modulesThatLoadCompiledFilesAlone 0 0
 # CHECK-NEXT: importsOfHeldFiles 0 0
 # CHECK-NEXT: namedVariables 0 0
 # CHECK-NEXT: namedCaptures 0 0

@@ -777,9 +777,7 @@ static Vector<ValueFlowWriteUnderNewName> computeBuiltinLocations(const ValueFlo
     tables.constantMembers = BitVector(builtins.builtinCount());
     tables.intactHolders = BitVector(builtins.builtinCount());
     tables.holdersReachedThroughUnknownObject = BitVector(builtins.builtinCount());
-    ValueSetID prototypeObjectsOfInstances = inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfInstances));
-    ValueSetID prototypeObjectsOfHost = inputs.universe().builtinTables().heap().prototypeObjectsOfHost();
-    ValueSetID prototypeObjectsOfHostWithInstances = inputs.sets().contains(prototypeObjectsOfInstances, ValueFlowUniverse::unknownObject()) ? prototypeObjectsOfHost : heap.maker().intersect(prototypeObjectsOfHost, prototypeObjectsOfInstances);
+    ValueSetID answersThatNoReadLists = inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::AnswersThatNoReadLists));
     tables.keysWrittenThroughUnknownObject = holders.keysWrittenThroughUnknownObject();
     tables.isEveryKeyWrittenThroughUnknownObject = holders.isEveryKeyWrittenThroughUnknownObject();
     tables.membersLockedAtStartUp = BitVector(builtins.builtinCount());
@@ -791,7 +789,7 @@ static Vector<ValueFlowWriteUnderNewName> computeBuiltinLocations(const ValueFlo
         BuiltinID canonical = builtins.canonicalID(member);
         bool takesNameFromTests = std::ranges::contains(program.openedNames, canonical, &OpenedName::holder);
         bool hasNamesOfImagesBelow = !builtins.at(canonical).flags.contains(BuiltinFlag::IsLockedObject) && inputs.solver().input().refusedCode.hasImagesBelow;
-        if (builtins.at(member).kind == BuiltinKind::Constructor || (builtins.at(member).kind == BuiltinKind::Prototype && inputs.sets().contains(prototypeObjectsOfHostWithInstances, inputs.universe().objectOf(canonical))))
+        if (builtins.at(member).kind == BuiltinKind::Constructor || (isObjectKind(builtins.at(member).kind) && inputs.sets().contains(answersThatNoReadLists, inputs.universe().objectOf(canonical))))
             tables.holdersReachedThroughUnknownObject.quickSet(index);
         if (isEnabled && !takesNameFromTests && !hasNamesOfImagesBelow && isIntact(holders.writersOfEveryOwnProperty(canonical), holders.writersOfPrototypeLink(canonical)))
             tables.intactHolders.quickSet(index);

@@ -127,6 +127,7 @@ private:
     const Receiver m_unknownObject;
     const Receiver m_untrackedObject;
     BitVector m_escaped;
+    BitVector m_answersThatNoReadLists;
     BitVector m_lost;
     BitVector m_mayBeHeldWithoutBeingListed;
     BitVector m_underKeysNobodyKnows;

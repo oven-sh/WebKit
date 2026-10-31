@@ -2369,6 +2369,7 @@ struct ListFilledByLoop {
     int64_t difference { 0 };
     ValueID bound;
     bool isInLoopThatRunsOtherCode { false };
+    bool isInLoopThatMayThrow { false };
     Vector<ValueID, 2> appends;
 };
 
@@ -2611,6 +2612,29 @@ static unsigned nameLengthsThatCountersCount(FunctionPassContext& context)
         }
         keepListsThatGrowByOneInEveryTurn(context, *lists[first].loop, lists.mutableSpan().subspan(first, end - first), appendedIn, appendedAtHead);
     }
+    // A loop that a throw may end leaves room that was made for all its turns unused.
+    auto mayThrowBesideAppends = [&](const NaturalLoop& loop) {
+        BitVector isAppend;
+        for (const ListFilledByLoop& list : lists) {
+            for (ValueID id : list.appends)
+                isAppend.set(id.index());
+        }
+        for (unsigned i = 0; i < loop.size(); ++i) {
+            if (analyses.effectsOfTerminator(loop.at(i)).onAnyEdge().mayThrowByRule())
+                return true;
+            for (ValueID id : function.at(loop.at(i)).values) {
+                if (!isAppend.get(id.index()) && analyses.effectsOf(id).onAnyEdge().mayThrowByRule())
+                    return true;
+            }
+        }
+        return false;
+    };
+    for (size_t index = 0; index < lists.size(); ++index) {
+        if (lists[index].appends.isEmpty())
+            continue;
+        bool isFirstOfLoop = !index || lists[index - 1].loop != lists[index].loop || lists[index - 1].appends.isEmpty();
+        lists[index].isInLoopThatMayThrow = isFirstOfLoop ? mayThrowBesideAppends(*lists[index].loop) : lists[index - 1].isInLoopThatMayThrow;
+    }
 
     const UseLists& useLists = analyses.useLists();
     IRBuilder builder(analyses.context(), function, context.types, &analyses);
@@ -2632,7 +2656,8 @@ static unsigned nameLengthsThatCountersCount(FunctionPassContext& context)
                 length = builder.insertBefore(point, IRBuilder::make(Opcode::Add, { length, builder.insertBefore(point, makeInteger(list.difference)) }));
             ++numberOfAppendsTold;
             Vector<ValueID, 3> named { length, list.counter, list.bound };
-            function.edit(list.literal, ValueEdit::Definition).setIsFilledToCapacity(true);
+            if (!list.isInLoopThatMayThrow)
+                function.edit(list.literal, ValueEdit::Definition).setIsFilledToCapacity(true);
             if (function.at(id).opcode == Opcode::AppendElement) {
                 function.edit(id, ValueEdit::Definition).setLengthOperands(named.span());
                 continue;

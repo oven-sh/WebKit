@@ -106,6 +106,7 @@ private:
         Vector<Edge, 4> edges;
         BlockID preheader;
         Arguments parameters;
+        bool takesEdgeOfCopyWithoutTest { false };
     };
 
     struct RejoinTypes {

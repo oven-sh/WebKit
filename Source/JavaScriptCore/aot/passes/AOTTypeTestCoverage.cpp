@@ -15,6 +15,7 @@
 #include "AOTSort.h"
 #include <ranges>
 #include <utility>
+#include <wtf/HashMap.h>
 #include <wtf/Hasher.h>
 #include <wtf/SaturatingArithmetic.h>
 #include <wtf/UnionFind.h>
@@ -233,6 +234,7 @@ struct TestEvents::Collector {
     Vector<uint32_t> firstBlockReachedFrom { };
     Vector<uint32_t, 16> conditionsThatMatter { };
     BlockID blockOfConditionsThatMatter { };
+    UncheckedKeyHashMap<uint32_t, Vector<uint32_t, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> endedSetsByHash { };
     uint32_t pendingBytes { 0 };
 
     // Each pass that makes a slow path marks its own blocks, so a block may be marked likelier than all that leads to it.
@@ -374,12 +376,17 @@ struct TestEvents::Collector {
     {
         if (endedConditions.isEmpty())
             return;
-        size_t set = events.m_endedSets.find(endedConditions);
-        if (set == notFound) {
-            set = events.m_endedSets.size();
+        uint64_t hash = 0;
+        for (size_t condition : endedConditions)
+            hash = (hash ^ condition) * 0x9e3779b97f4a7c15ull;
+        Vector<uint32_t, 1>& setsWithHash = endedSetsByHash.add(static_cast<uint32_t>(hash >> 33), Vector<uint32_t, 1>()).iterator->value;
+        auto known = std::ranges::find_if(setsWithHash, [&](uint32_t set) { return events.m_endedSets[set] == endedConditions; });
+        uint32_t set = known != setsWithHash.end() ? *known : events.m_endedSets.size();
+        if (known == setsWithHash.end()) {
+            setsWithHash.append(set);
             events.m_endedSets.append(WTF::move(endedConditions));
         }
-        appendEvent(TestEvent::Kind::Ending, index, static_cast<uint32_t>(set));
+        appendEvent(TestEvent::Kind::Ending, index, set);
     }
 
     BitVector findConditionsEndedBy(ValueID writer, const EffectsOnEdges& effects, std::span<const uint32_t> askedConditions)

@@ -715,6 +715,17 @@ void lockBuiltinsWithoutImage()
     locksBuiltinsWithoutImage = true;
 }
 
+static Vector<std::pair<uint32_t, Vector<uint8_t>>>& namesOpenedWithoutImage()
+{
+    static NeverDestroyed<Vector<std::pair<uint32_t, Vector<uint8_t>>>> names;
+    return names;
+}
+
+void openNameWithoutImage(uint32_t holder, std::span<const uint8_t> name)
+{
+    namesOpenedWithoutImage().append({ holder, Vector<uint8_t>(name) });
+}
+
 static constinit RefusedChangeListener refusedChangeListener = nullptr;
 static constinit Lock namesOfLockedObjectsLock;
 
@@ -1066,7 +1077,7 @@ private:
         Vector<Identifier, 2> openedNames = namesOpenedOn(id);
         bool isWholeObject = table.at(id).flags.contains(BuiltinFlag::IsLockedObject);
         // A test may ask whether Object.prototype can be extended. Locked by its names it answers as in plain Bun, and takes as little.
-        if (isWholeObject && !m_isTestRun) {
+        if (isWholeObject && !m_isTestRun && openedNames.isEmpty()) {
             lockObject(m_vm, id, object);
             if (m_cells)
                 m_cells->didLockEveryPropertyOf(object);
@@ -1194,9 +1205,24 @@ void lockBuiltinsOfTable(JSGlobalObject* realm)
     DeferTerminationForAWhile deferTermination(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     const BuiltinTable& table = BuiltinTable::singleton();
+    auto namesOpenedOn = [&](BuiltinID holder) {
+        Vector<Identifier, 2> names;
+        for (const auto& [opened, name] : namesOpenedWithoutImage()) {
+            if (table.canonicalID(BuiltinID(opened)) == table.canonicalID(holder))
+                names.append(Identifier::fromString(vm, String::fromUTF8(name.span())));
+        }
+        return names;
+    };
+    auto lockByNames = [&](BuiltinID holder, JSObject* object, std::span<const Identifier> openedNames) {
+        if (!object->makePropertiesImmutable(vm, immutablePropertyNamesOf(vm, holder, { }, nullptr, { }, false, openedNames).get())) [[unlikely]]
+            crashOnBuiltinHolder(holder, "cannot be made immutable"_s);
+    };
     for (BuiltinID id : table.lockedObjects()) {
         if (JSObject* object = findOrCreateObject(realm, id)) {
-            lockObject(vm, id, object);
+            if (Vector<Identifier, 2> openedNames = namesOpenedOn(id); !openedNames.isEmpty())
+                lockByNames(id, object, openedNames.span());
+            else
+                lockObject(vm, id, object);
             noteNameOfLockedObject(object, id);
         }
     }
@@ -1204,8 +1230,7 @@ void lockBuiltinsOfTable(JSGlobalObject* realm)
         JSObject* object = findOrCreateObject(realm, holder);
         if (!object)
             return;
-        if (!object->makePropertiesImmutable(vm, immutablePropertyNamesOf(vm, holder).get())) [[unlikely]]
-            crashOnBuiltinHolder(holder, "cannot be made immutable"_s);
+        lockByNames(holder, object, namesOpenedOn(holder).span());
         noteNameOfLockedObject(object, holder);
     });
     scope.assertNoException();

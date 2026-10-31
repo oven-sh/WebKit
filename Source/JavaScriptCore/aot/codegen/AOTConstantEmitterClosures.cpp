@@ -29,6 +29,10 @@
 #include "MarkedSpace.h"
 #include <algorithm>
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr unsigned slimClosureAllocatorIndex(unsigned numberOfCaptures)
@@ -295,5 +299,9 @@ Integer ConstantEmitter::closureWordOf(FunctionID entrypoint)
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

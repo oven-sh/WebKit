@@ -341,7 +341,34 @@ static RegExpCodeOrFailureReason generate(const RegExpCompilerInputs& inputs, co
     return code;
 }
 
-static bool consumesOnly8BitCharacters(const Yarr::PatternDisjunction& disjunction)
+static bool hasReferenceToGroup(const Yarr::PatternDisjunction& disjunction)
+{
+    for (auto& alternative : disjunction.m_alternatives) {
+        for (const Yarr::PatternTerm& term : alternative->m_terms) {
+            switch (term.type) {
+            case Yarr::PatternTerm::Type::NumberedBackReference:
+            case Yarr::PatternTerm::Type::NamedBackReference:
+            case Yarr::PatternTerm::Type::NumberedForwardReference:
+            case Yarr::PatternTerm::Type::NamedForwardReference:
+                return true;
+            case Yarr::PatternTerm::Type::ParenthesesSubpattern:
+            case Yarr::PatternTerm::Type::ParentheticalAssertion:
+                if (hasReferenceToGroup(*term.parentheses.disjunction))
+                    return true;
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    return false;
+}
+
+// An assertion consumes nothing, but a group in it keeps what it has looked at, and a reference to that group consumes it: `^(?=(.*))\1$` matches any subject of one line. So where the pattern
+// has a reference, what is looked at counts as well.
+enum class WhatIsLookedAt : bool { DoesNotCount, Counts };
+
+static bool consumesOnly8BitCharacters(const Yarr::PatternDisjunction& disjunction, WhatIsLookedAt whatIsLookedAt)
 {
     for (auto& alternative : disjunction.m_alternatives) {
         for (const Yarr::PatternTerm& term : alternative->m_terms) {
@@ -349,11 +376,14 @@ static bool consumesOnly8BitCharacters(const Yarr::PatternDisjunction& disjuncti
             case Yarr::PatternTerm::Type::AssertionBOL:
             case Yarr::PatternTerm::Type::AssertionEOL:
             case Yarr::PatternTerm::Type::AssertionWordBoundary:
-            case Yarr::PatternTerm::Type::ParentheticalAssertion:
             case Yarr::PatternTerm::Type::NumberedBackReference:
             case Yarr::PatternTerm::Type::NamedBackReference:
             case Yarr::PatternTerm::Type::NumberedForwardReference:
             case Yarr::PatternTerm::Type::NamedForwardReference:
+                break;
+            case Yarr::PatternTerm::Type::ParentheticalAssertion:
+                if (whatIsLookedAt == WhatIsLookedAt::Counts && !consumesOnly8BitCharacters(*term.parentheses.disjunction, whatIsLookedAt))
+                    return false;
                 break;
             case Yarr::PatternTerm::Type::PatternCharacter:
                 if (term.patternCharacter > 0xff)
@@ -369,7 +399,7 @@ static bool consumesOnly8BitCharacters(const Yarr::PatternDisjunction& disjuncti
                 break;
             }
             case Yarr::PatternTerm::Type::ParenthesesSubpattern:
-                if (!consumesOnly8BitCharacters(*term.parentheses.disjunction))
+                if (!consumesOnly8BitCharacters(*term.parentheses.disjunction, whatIsLookedAt))
                     return false;
                 break;
             case Yarr::PatternTerm::Type::DotStarEnclosure:
@@ -390,7 +420,7 @@ static bool matchesOnlyWhole8BitSubjects(const Yarr::YarrPattern& pattern)
         if (terms.size() < 2 || terms.first().type != Yarr::PatternTerm::Type::AssertionBOL || terms.last().type != Yarr::PatternTerm::Type::AssertionEOL)
             return false;
     }
-    return consumesOnly8BitCharacters(*pattern.m_body);
+    return consumesOnly8BitCharacters(*pattern.m_body, hasReferenceToGroup(*pattern.m_body) ? WhatIsLookedAt::Counts : WhatIsLookedAt::DoesNotCount);
 }
 
 NEVER_INLINE CompiledRegExp compileRegExp(const RegExpCompilerInputs& inputs)

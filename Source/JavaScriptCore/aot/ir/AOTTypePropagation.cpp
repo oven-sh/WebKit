@@ -943,8 +943,13 @@ TypePropagationOutcome TypePropagation::finishWithoutCompacting(Vector<ValueID>&
     replaceUpcastsOfWidenedValues();
     dropExpectedTypesThatSayNothing();
     reportRetypedValues(true);
-    if (mayHaveCodeToCut())
-        cutAfterNeverValues();
+    if (mayHaveCodeToCut()) {
+        parametersBehindRemovedEdges = findParametersLeftAtNever();
+        m_outcome.foundParametersLeftAtNever = !parametersBehindRemovedEdges.isEmpty();
+        // All that was computed from them is never too. Nothing is cut before they are typed.
+        if (!m_outcome.foundParametersLeftAtNever)
+            cutAfterNeverValues();
+    }
 
     if (!m_outcome.cutBlocks) {
         if (m_outcome.didChange())
@@ -986,6 +991,25 @@ bool TypePropagation::mayHaveCodeToCut() const
     return std::ranges::any_of(m_rememberedValues, [&](ValueID id) {
         return function.at(id).type == TypeTable::never || function.at(id).opcode == Opcode::NarrowByField;
     });
+}
+
+// Nothing comes to a block whose parameter is never: by what arrives now. A parameter may have been typed when only code that is never reached led to its block, a copy of a loop for integers of 32 bits
+// behind `i > 2147483649`, and edges from code that runs have been led there since. Whoever did that has not said so if the parameter is still never here.
+Vector<ValueID> TypePropagation::findParametersLeftAtNever()
+{
+    const Function& function = m_inputs.function;
+    TypingContext context = typingContext(TypeLevel::Proven);
+    Vector<ValueID> found;
+    for (BlockID id : m_cfg.reversePostOrder()) {
+        if (id == entryBlock)
+            continue;
+        const CompactList<ValueID>& parameters = function.at(id).parameters;
+        for (uint32_t index = 0; index < parameters.size(); ++index) {
+            if (function.at(parameters[index]).type == TypeTable::never && computeParameter(context, parameters[index], id, index) != TypeTable::never)
+                found.append(parameters[index]);
+        }
+    }
+    return found;
 }
 
 void TypePropagation::cutAfterNeverValues()
@@ -1488,9 +1512,9 @@ TypePropagationOutcome typeUntilNothingIsCut(const TypePropagationInputs& inputs
             propagation.tellWhatIsTyped();
 
         total += outcome;
-        if (!outcome.cutBlocks || parametersBehindRemovedEdges.isEmpty())
+        if ((!outcome.cutBlocks && !outcome.foundParametersLeftAtNever) || parametersBehindRemovedEdges.isEmpty())
             break;
-        if (typedFirst == TypedFirst::PendingValues)
+        if (typedFirst == TypedFirst::PendingValues && !outcome.foundParametersLeftAtNever)
             continue;
         typedFirst = TypedFirst::DependentsOfChangedValues;
         changedValues = parametersBehindRemovedEdges.span();

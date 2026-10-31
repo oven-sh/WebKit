@@ -211,7 +211,7 @@ void setExactReceivers(Value& slotOperation, LayoutID, TypeArena&);
 enum class SpeculativeLoad : uint8_t { Unknown, Safe };
 SpeculativeLoad canLoadSpeculatively(const VirtualObjectContext&, const VirtualObjectDescription&, const VirtualField&);
 
-enum class LateStore : uint8_t { Unknown, NeedsNoPlaceholder, NeedsUndefinedPlaceholder, CreatesProperty };
+enum class LateStore : uint8_t { Unknown, NeedsNoPlaceholder, NeedsUndefinedPlaceholder, NeedsNullPlaceholder, CreatesProperty };
 LateStore canStoreLate(const VirtualObjectContext&, const VirtualObjectDescription&, const VirtualField&);
 
 ASCIILiteral nameOf(VirtualObjectKind);

@@ -3462,6 +3462,12 @@ void encodeModuleTables(TableEncoder& encoder)
         modulesOfUncompiledCode.append({ index, typeAttribute ? encoder.shownStringNumber(typeAttribute) : UncompiledModuleData::noTypeAttribute });
     }
     encoder.setTable(ProgramTableIndex::modulesOfUncompiledCode, modulesOfUncompiledCode);
+    Vector<uint32_t> modulesThatLoadCompiledFilesAlone;
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        if (program.modules[index].flags.contains(ModuleFlags::LoadsCompiledFilesAlone))
+            modulesThatLoadCompiledFilesAlone.append(index);
+    }
+    encoder.setTable(ProgramTableIndex::modulesThatLoadCompiledFilesAlone, modulesThatLoadCompiledFilesAlone);
     encoder.setTable(ProgramTableIndex::modules, lists.modules);
     encoder.setTable(ProgramTableIndex::moduleDirectories, lists.directories);
     encoder.setTable(ProgramTableIndex::moduleDisplayPaths, lists.displayPaths);

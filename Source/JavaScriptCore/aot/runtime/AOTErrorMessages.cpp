@@ -2706,6 +2706,9 @@ static String findSpelledAround(std::span<const Latin1Character> text, size_t st
             if (find != findWrittenCallOfReplacedNameAt)
                 return true;
             size_t callee = found.data() - read.data() + (spanHasPrefix(found, byteCast<Latin1Character>("new "_span)) ? 4 : 0);
+            // `new (make())`: nor for what stands in brackets.
+            if (callee < read.size() && read[callee] == '(')
+                return true;
             // `undefined()`: the compiler has no name for a literal either.
             size_t endOfCallee = callee;
             while (endOfCallee < read.size() && isPartOfName(read[endOfCallee]))
@@ -2826,6 +2829,11 @@ static WrittenReads findWrittenCalls(std::span<const Latin1Character> text, size
         if (within && (*within < start || *within > *close))
             continue;
         std::span<const Latin1Character> call = text.subspan(start, *close + 1 - start);
+        // `f(f(n))`: both calls hold the place of the inner one. The place of a call is the last name of its callee, and that of a construction its `new`.
+        if (within && (*within == at || *within == start)) {
+            found = call;
+            return WrittenReads::Same;
+        }
         if (found.data() && !equalSpans(found, call))
             return WrittenReads::Differ;
         found = call;
@@ -2846,8 +2854,28 @@ static WrittenReads findWrittenCallAt(std::span<const Latin1Character> text, siz
         if (WrittenReads reads = findWrittenCallsOfElements(text, at - 2, to, name, within, found); reads != WrittenReads::None)
             return reads;
     }
+    // `new (make())(b)`: with operands the column is that of the last token in the brackets.
+    if (isReplaced) {
+        size_t end = at;
+        while (end < text.size() && isPartOfName(text[end]))
+            ++end;
+        end += end == at;
+        std::optional<size_t> open = end < text.size() && text[end] == ')' ? findOpeningBracket(text, end) : std::nullopt;
+        if (open && *open >= from + 4 && spanHasPrefix(text.subspan(*open - 4), byteCast<Latin1Character>("new ("_span)))
+            at = *open - 4;
+    }
     if (!isPartOfName(text[at]) || isASCIIDigit(text[at]) || (at && (isPartOfName(text[at - 1]) || text[at - 1] == '#')))
         return WrittenReads::None;
+    // `new (make())(b)`, `new (make())`: what is constructed stands in brackets.
+    if (isReplaced && spanHasPrefix(text.subspan(at), byteCast<Latin1Character>("new ("_span))) {
+        std::optional<size_t> close = findClosingBracket(text, at + 4);
+        if (close && *close + 1 < text.size() && text[*close + 1] == '(')
+            close = findClosingBracket(text, *close + 1);
+        if (!close)
+            return WrittenReads::Differ;
+        found = text.subspan(at, *close + 1 - at);
+        return WrittenReads::Same;
+    }
     // `new K`: the column is that of `new`.
     if (isReplaced && spanHasPrefix(text.subspan(at), byteCast<Latin1Character>("new "_span)) && at + 4 < to && isPartOfName(text[at + 4]))
         at += 4;
@@ -3326,7 +3354,7 @@ String assignmentToLockedBuiltinMessage(const String& property)
     return printForFuzzilli(withAOTErrorNote(makeString("Cannot assign to "_s, property, " because built-in objects are read-only in a compiled executable"_s)));
 }
 
-String assignmentThatBuildDidNotSeeMessage(ASCIILiteral property)
+String assignmentThatBuildDidNotSeeMessage(const String& property)
 {
     return printForFuzzilli(withAOTErrorNote(makeString("Cannot assign to "_s, property, " because built-in objects are read-only in a compiled executable, and the build didn't see your code assign to this one. Spell out the object and the name where it does, as in "_s, property, " = value"_s)));
 }
@@ -3362,6 +3390,11 @@ String assignmentToLockedBuiltinMessage(VM& vm, BuiltinID holder, UniquedStringI
 {
     if (lockedIn == LockedIn::TestRun)
         return refusalInTestRun(vm, "Cannot assign to "_s, holder, key);
+    const BuiltinTable& table = BuiltinTable::singleton();
+    BuiltinName name = table.nameOf(vm, key);
+    bool isNewName = !key->isSymbol() && !parseIndex(*key) && !(name && table.findOwnMember(holder, name));
+    if (isNewName && table.canonicalID(holder) != Builtins::ObjectPrototype && table.canTakeNameInTestRuns(holder, name))
+        return assignmentThatBuildDidNotSeeMessage(memberOfLockedBuiltin(holder, key));
     return assignmentToLockedBuiltinMessage(memberOfLockedBuiltin(holder, key));
 }
 

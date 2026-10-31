@@ -3200,9 +3200,15 @@ JSPromise* Modules::importUncompiled(const Identifier& key, ModuleID referrer, R
         if (std::optional<ModuleID> found = modules->m_table.findByPath(key.string()); found && modules->errorOfLoadEndedByMock(*found))
             RELEASE_AND_RETURN(scope, modules->importDespiteErrorOfLoad(*found, ImportCaller::CompiledCode, askLoader));
     }
+    SetForScope askerLoadsCompiledFilesAlone(vm.aotState().askerLoadsCompiledFilesAlone, loadsCompiledFilesAlone(referrer));
     JSPromise* loaded = askLoader();
     RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
     RELEASE_AND_RETURN(scope, createPromiseOfProgram(realm, loaded));
+}
+
+bool Modules::loadsCompiledFilesAlone(ModuleID module) const
+{
+    return std::ranges::binary_search(m_instance.tables().modulesThatLoadCompiledFilesAlone(), module.index());
 }
 
 static bool isText(StringView path)
@@ -5466,7 +5472,9 @@ auto ModuleRecord::resolveOwnExport(JSGlobalObject* globalObject, const Identifi
 
     retain();
     if (takesNamesFromValue(data)) {
-        bool hasExport = modules.hasCapturedExport(m_module, exportName);
+        // A mock that stands for a CommonJS file lays its names where the ES modules of the image find them: on the face.
+        ModuleID withExports = modules.moduleWithExportsOf(m_module);
+        bool hasExport = modules.hasCapturedExport(modules.exportsWhatMockNamesAlone(withExports) ? withExports : m_module, exportName);
         RETURN_IF_EXCEPTION(scope, Resolution::error());
         return hasExport ? Resolution { Resolution::Type::Resolved, this, exportName } : absent;
     }

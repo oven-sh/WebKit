@@ -1415,6 +1415,8 @@ LateStore canStoreLate(const VirtualObjectContext& context, const VirtualObjectD
         bool hasCountedStores = flowOf(program, { description.layout, *layoutField }).location.stores != StoreCount::Unknown;
         if (!hasCountedStores && program.at(TypeTable::undefined).isSubsetOf(fieldType, program))
             return LateStore::NeedsUndefinedPlaceholder;
+        if (!hasCountedStores && program.at(TypeTable::null).isSubsetOf(fieldType, program))
+            return LateStore::NeedsNullPlaceholder;
         // Flow proves a field filled from the start where every allocation lists it, and placement then gives its slot no absent state for a store to find.
         return isListedByAllocation(context, description, field) ? LateStore::Unknown : LateStore::CreatesProperty;
     }

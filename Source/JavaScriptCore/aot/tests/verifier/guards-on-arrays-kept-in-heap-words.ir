@@ -1,4 +1,4 @@
-# An array stored in a NewHeapWords cell escapes at the first suspension that holds the cell, and a load of a word names what was stored in that word
+# An array stored in a NewHeapWords cell goes nowhere at a suspension that holds the cell: a saved frame is out of the program's reach. It escapes where a call takes it, and a load of a word names what was stored in that word
 # FORM: Prepared
 # RUN: verify
 # DIAGNOSTIC: GuardNotAvailable 5
@@ -78,7 +78,7 @@ function f4 name="badSameArrayInBothWords" role=CoroutineBody flags=[IsAsync] pa
   b2():
     Return v0
 }
-function f5 name="badCallAfterAwait" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f0 parameterMap=[{}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f5 promiseType=Promise promiseParameter=1} {
+function f5 name="goodCallAfterAwait" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f0 parameterMap=[{}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f5 promiseType=Promise promiseParameter=1} {
     v2 = NewHeapWords numberOfWords=2
     v3 = NewArray v0 contents=anything
     PutHeapFrameWord v2, v3 index=1 [remembersFrame]
@@ -123,5 +123,22 @@ function f7 name="badArrayOfEarlierIterationEscaped" role=CoroutineBody flags=[I
     v13 = AwaitBySavingFrame v0, v1, v2
     Jump -> next b1()
   b3():
+    Return v0
+}
+function f8 name="badCallAfterAwaitAndAnotherThatTookTheArray" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f0 parameterMap=[{}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f8 promiseType=Promise promiseParameter=1} {
+    v2 = NewHeapWords numberOfWords=2
+    v3 = NewArray v0 contents=anything
+    PutHeapFrameWord v2, v3 index=1 [remembersFrame]
+    v5 = AwaitBySavingFrame v0, v1, v2
+    v6 = GetHeapFrameWord v2 index=1 valueType=anything
+    v7 = AssumeType v6 provenType=Array
+    v8 = Call v0, -, v7
+    v9 = IsPristine v7 builtinClass=Array aspects=[Storage]
+    Branch v9 -> taken b1(| 0), notTaken b2()
+  b1(v10):
+    v11 = Call v0
+    v12 = GetArrayLength v7, v10
+    Return v12
+  b2():
     Return v0
 }

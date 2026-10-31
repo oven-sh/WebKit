@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTFunctionAnalyses.h"
-#include "AOTHeat.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStubsStrings.h"
@@ -19,6 +18,10 @@
 #include "JSGlobalObjectFunctions.h"
 #include <cmath>
 #include <wtf/text/ASCIIFastPath.h>
+
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -196,10 +199,7 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
     // A short string out of JSON.parse, a key and a text of the program are atoms. A text that is a name of the image has one atom (ProgramIdentifiers::findAtom()),
     // so an atom is that text if and only if it is that pointer. A cell whose bit is clear may still hold an atom: the characters answer for it.
     // Three comparisons of one subject share what they read of its characters, and each one behind the first is a branch or two as it is.
-    // The arm is code at every comparison, and a loop of a cold function is Fast code too. Not isCold(): a loop of a function that runs once may be the hottest code there is.
-    const FunctionInputs& inputs = m_generator.inputs();
-    bool isInColdFunction = inputs.program.heat.of(inputs.program.program, inputs.id).predicted() == HeatClass::Cold;
-    std::optional<uint32_t> name = subjectIsFlat || subjectIsComparedAgain || isInColdFunction ? std::nullopt : build().identifierNumbering().numberOfText(literal);
+    std::optional<uint32_t> name = subjectIsFlat || subjectIsComparedAgain ? std::nullopt : build().identifierNumbering().numberOfText(literal);
     LBasicBlock isAtom = name ? newBlock() : nullptr;
     bool isAskedForAtom = false;
     // In a loop, where the atom lies is asked for here, where every subject comes by: from here it leaves the loop. Outside of loops whoever has an atom asks.
@@ -528,5 +528,9 @@ void StringEmitter::generateStringIndexOfCharacter(const ValueContext& value)
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

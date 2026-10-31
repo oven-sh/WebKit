@@ -20,6 +20,10 @@
 #include <compare>
 #include <wtf/StdLibExtras.h>
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT { namespace Typed {
 
 Reader::Reader(Program& program, IRForm form, BuildContext& build)
@@ -399,5 +403,9 @@ std::unique_ptr<Program> Program::read(std::span<const uint8_t> bytes, BuildCont
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

@@ -291,6 +291,7 @@ void AllocationSinking::letTestsAwaitClassesOfObjectsThatAreNotMade(IRBuilder& b
     }
 
     PropertyKeyID prototype = m_program.keyOf(BuiltinNames::prototype);
+    bool didChangeTest = false;
     for (uint32_t block = 0; block < m_function.blocks.size(); ++block) {
         for (ValueID id : m_function.blocks.span()[block].values) {
             if (m_function.at(id).opcode != Opcode::AreMembersUnchanged)
@@ -313,8 +314,12 @@ void AllocationSinking::letTestsAwaitClassesOfObjectsThatAreNotMade(IRBuilder& b
                 return std::tuple { condition.kind, condition.layout, condition.side, condition.key };
             });
             builder.function().edit(id, ValueEdit::Definition).setConditions(conditions.span());
+            didChangeTest = true;
         }
     }
+    // A test that waits for a class no longer reads where the class begins.
+    if (didChangeTest)
+        m_analyses.didChangeValuesButNotUses();
 }
 
 void AllocationSinking::rewrite(IRBuilder& builder, const FreshResultShape* shape)

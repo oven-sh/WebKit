@@ -69,5 +69,6 @@ function f2 name="anotherArrayIsEmptied" parameters=[{type=int[0, 1000000]}, {ty
     Return v13
 }
 # CHECK-LABEL: function f2 name="anotherArrayIsEmptied"
-# CHECK: = NewArray {{*}}capacity={{*}} [isFilledToCapacity]
+# CHECK: = NewArray {{*}}capacity=
+# CHECK-NOT: isFilledToCapacity
 # CHECK: AppendElement v2, v1, v5, v5, v0

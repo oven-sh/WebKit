@@ -29,6 +29,7 @@ struct Instance;
 bool runsCompiledProgram(JSGlobalObject*);
 bool locksBuiltins(JSGlobalObject*);
 JS_EXPORT_PRIVATE void lockBuiltinsWithoutImage();
+JS_EXPORT_PRIVATE void openNameWithoutImage(uint32_t holder, std::span<const uint8_t> name);
 JS_EXPORT_PRIVATE void lockBuiltinsOfTable(JSGlobalObject*);
 using RefusedChangeListener = void (*)(JSGlobalObject*, const String& refusal);
 JS_EXPORT_PRIVATE void setRefusedChangeListener(RefusedChangeListener);

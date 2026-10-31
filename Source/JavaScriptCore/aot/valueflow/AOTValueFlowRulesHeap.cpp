@@ -395,8 +395,12 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
         if (holdsNamedOrLoadedBun(object))
             add(m_statement.result, only(ValueFlowUniverse::markOfLoadedBun()));
     }
-    if (key.keyClass == HeapKeyClass::Name && key.name == m_program.keyOf(BuiltinNames::__proto__) && mayBeUnknownObject(receivers) && isInProgramCode())
+    if (key.keyClass == HeapKeyClass::Name && key.name == m_program.keyOf(BuiltinNames::__proto__) && mayBeUnknownObject(receivers) && isInProgramCode()) {
         connect(heldPrototypeObjectsOfLibraryClasses(m_context), m_statement.result);
+        notePrototypeObjectsAboveUnknownObject(m_context);
+    }
+    if ((key.keyClass == HeapKeyClass::Unknown || (key.keyClass == HeapKeyClass::Name && key.name == m_tables.prototypeKey())) && mayBeUnknownObject(receivers) && isInProgramCode())
+        notePrototypeObjectsAboveUnknownObject(m_context);
     if (key.keyClass == HeapKeyClass::Name && mayBeUnknownObject(receivers) && m_context.sets().contains(m_tables.under(key.name).holders, m_universe.objectOf(Builtins::Bun))) {
         // A read that a built-in makes for its caller, such as Reflect.get(), has no site.
         const ValueFlowRareFactsOfText* facts = m_statement.opcode == Opcode::PropGet ? m_context.rareFactsOfText(m_statement) : nullptr;

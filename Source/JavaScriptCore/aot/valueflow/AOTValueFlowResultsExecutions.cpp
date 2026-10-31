@@ -15,6 +15,10 @@
 #include <atomic>
 #include <wtf/Atomics.h>
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT { namespace Typed {
 
 // n calls may name one set of n callees, so a set is handed over as it is: whoever goes through it can do so once.
@@ -181,5 +185,9 @@ void computeExecutionResults(const ValueFlowResultInputs& inputs, const ValueFlo
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

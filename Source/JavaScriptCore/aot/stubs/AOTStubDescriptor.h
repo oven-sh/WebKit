@@ -38,6 +38,9 @@ enum class StubAxis : uint8_t {
     Immediate = 16,
     StubFrame = 32,
     NeverReturns = 64,
+    // However long the program runs, its slow path comes again: a block of cells runs out, a number has no text yet. In the other families it ends once a cache holds the answer or the site has run once.
+    // So what the stub saves around the operation is felt, and it has a form for callers that keep no floating-point register. A stub that is needed in two forms has its fast path twice.
+    SlowPathRecurs = 128,
 };
 
 enum class StubISA : uint8_t { X86_64 = 1, ARM64 = 2 };
@@ -188,6 +191,7 @@ inline constexpr OptionSet<StubAxis> OperandRegisterAxis { StubAxis::OperandRegi
 inline constexpr OptionSet<StubAxis> ImmediateAxis { StubAxis::Immediate };
 inline constexpr OptionSet<StubAxis> StubFrameAxis { StubAxis::StubFrame };
 inline constexpr OptionSet<StubAxis> NeverReturns { StubAxis::NeverReturns };
+inline constexpr OptionSet<StubAxis> SlowPathRecurs { StubAxis::SlowPathRecurs };
 
 inline constexpr OptionSet<StubISA> AllISAs { StubISA::X86_64, StubISA::ARM64 };
 inline constexpr OptionSet<StubISA> ARM64Only { StubISA::ARM64 };
@@ -340,8 +344,11 @@ constexpr bool hasCallerFrameVariant(const StubDescriptor& descriptor, StubKey k
         return descriptor.framelessISAs.contains(currentStubISA);
     case CallerFrame::StubFrame:
         return descriptor.axes.contains(StubAxis::StubFrame) && !key.operandRegister();
-    case CallerFrame::KeepsNoRegisters:
     case CallerFrame::KeepsNoFPRs:
+        if (!descriptor.axes.contains(StubAxis::SlowPathRecurs))
+            return false;
+        [[fallthrough]];
+    case CallerFrame::KeepsNoRegisters:
         return descriptor.linkage == StubLinkage::CalledByCode && descriptor.leafness != StubLeafness::Leaf && descriptor.clobbers == StubClobbers::ClobbersOnlyScratch && !key.operandRegister() && isOnlyEntryOfItsBody(descriptor);
     }
     return false;
