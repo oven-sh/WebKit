@@ -1366,6 +1366,14 @@ void ObjectInterpreter::enterJoin(VirtualObjectID join, const IncomingBinding& b
         if (std::optional<VirtualConstant> constant = virtualConstantOf(program(), function(), binding.value))
             shape = m_sinking.familyOf(join).intern(VirtualShape::ofConstant(*constant));
     }
+    if (isRewriting() && shape != cellShape) {
+        const ObjectState* atHead = m_sinking.headOf(outgoing.target)->find(join);
+        bool isKnownAtHead = atHead && atHead->variants.containsIf([&](const ObjectVariant& variant) {
+            return variant.shape == shape;
+        });
+        if (!isKnownAtHead)
+            shape = cellShape;
+    }
     m_enteredEdge.newJoinStates.append(ObjectEntry { join, ObjectState::withShape(shape) });
 }
 
