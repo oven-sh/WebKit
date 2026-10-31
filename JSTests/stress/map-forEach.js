@@ -1,5 +1,3 @@
-// Bun: upstream runs it everywhere. It uses WebAssembly, which a build with ENABLE_WEBASSEMBLY=0 has not.
-//@ skip if !$webAssembly
 //@ memoryHog!
 function startScan() {
     for (let i = 0; i < 5; i++) {

@@ -187,7 +187,7 @@ function shouldThrow(fn, errorMessage)
 }
 
 // WebAssembly modules clone.
-if (typeof WebAssembly !== "undefined") { // Bun: upstream has no condition. A build with ENABLE_WEBASSEMBLY=0 has no such global.
+{
     let source = new WebAssembly.Module(new Uint8Array([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
     let clone = structuredClone(source);
     shouldBe(clone instanceof WebAssembly.Module, true);

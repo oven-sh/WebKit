@@ -114,8 +114,6 @@ const variants = {
   "hardened-aot": { buildType: "Release", mimalloc: true, hardened: true },
   "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true, signedReturnAddresses: true, aot: false },
   "lto-hardened-aot": { buildType: "Release", mimalloc: true, lto: true, hardened: true },
-  // "lto-hardened" with ENABLE_WEBASSEMBLY=0.
-  "lto-hardened-no-webassembly": { buildType: "Release", mimalloc: true, lto: true, hardened: true, signedReturnAddresses: true, webAssembly: false, aot: false },
   // "lto-hardened-aot" with ENABLE_WEBASSEMBLY=0: there is no global of that name, and JavaScriptCore's code for it is not
   // in the libraries.
   "lto-hardened-aot-no-webassembly": { buildType: "Release", mimalloc: true, lto: true, hardened: true, webAssembly: false },
@@ -139,9 +137,9 @@ const withoutAOT = variant => (variant === "aot" ? "release" : variant.replace(/
 //   tested          per architecture, the variants whose jsc shell the `test` job runs the JavaScriptCore tests with,
 //                   and the runner it does that on: a machine of the lane's own platform and architecture. "lto-aot" is
 //                   what bun ships, "lto" is that without the compiler, and nothing else runs "lto-hardened-aot", nor
-//                   arm64's "lto-hardened" and "lto-hardened-no-webassembly", the lanes with SIGNED_RETURN_ADDRESSES. The
-//                   asan lanes are not tested: the tests take 65 to 100 minutes there on Linux and macOS and do not
-//                   finish in 275 on Windows. `quick` is --quick, for a runner with few cores.
+//                   arm64's "lto-hardened", the lane with SIGNED_RETURN_ADDRESSES. The asan lanes are not tested: the
+//                   tests take 65 to 100 minutes there on Linux and macOS and do not finish in 275 on Windows. `quick`
+//                   is --quick, for a runner with few cores.
 //   testPrograms    what a tested lane builds besides what it ships, for the `test` job (the Dockerfile's TEST_PROGRAMS)
 //   fuzzed          per architecture, the variants that are downloaded to be fuzzed. See `programs`.
 //   bunTests        per architecture, the variants bun's CI links and then runs bun's tests with (buildPlatforms and
@@ -157,11 +155,11 @@ const platforms = [
     lanes: {
       amd64: [...ALL, ...FUZZING, ...HARDENED],
       // Nothing asks for the others of FUZZING and HARDENED here.
-      arm64: [...ALL, "assertions-aot", "assertions-coverage-aot", "lto-hardened", "lto-hardened-no-webassembly", "lto-hardened-aot"],
+      arm64: [...ALL, "assertions-aot", "assertions-coverage-aot", "lto-hardened", "lto-hardened-aot"],
     },
     tested: {
       amd64: { on: "linux-x64-gh", variants: ["lto", "lto-aot", "lto-hardened-aot"] },
-      arm64: { on: "linux-arm64-gh", variants: ["lto", "lto-aot", "lto-hardened", "lto-hardened-no-webassembly", "lto-hardened-aot"] },
+      arm64: { on: "linux-arm64-gh", variants: ["lto", "lto-aot", "lto-hardened", "lto-hardened-aot"] },
     },
     testPrograms: ["testb3", "testair", "testmasm", "TestWTF"],
     // Not "asan-aot" of amd64: it has the objects of testaot, for bun's CI.
@@ -476,7 +474,7 @@ if (command === "build") {
   const build = ({ label, sources, runner, image, package_os, package_cpu, test, programs, aot, defines }) => ({ label, sources, runner, image, package_os, package_cpu, test, programs, aot, defines });
   console.log(`build=${matrix(lanes.filter(lane => !lane.test).map(build))}`);
   console.log(`build_tested=${matrix(lanes.filter(lane => lane.test).map(build))}`);
-  console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner, quick: lane.test_quick, signs_return_addresses: lane.defines.includes("ENABLE_RETURN_ADDRESS_SIGNING=1"), webassembly: lane.build_args.ENABLE_WEBASSEMBLY !== "OFF" })))}`);
+  console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner, quick: lane.test_quick, signs_return_addresses: lane.defines.includes("ENABLE_RETURN_ADDRESS_SIGNING=1") })))}`);
   console.log(`labels=${JSON.stringify([...labels, SOURCES.label])}`);
   // Only the toolchain images that are not in the registry yet get an `image` job: normally none.
   const missing = images.filter(({ image }) => {

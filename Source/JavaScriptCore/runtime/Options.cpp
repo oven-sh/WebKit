@@ -731,9 +731,8 @@ static inline void LEGACY_NODELETE disableAllWasmOptions()
 
 static inline void LEGACY_NODELETE disableAllJITOptions()
 {
-#if ENABLE(WEBASSEMBLY) || USE(BUN_JSC_ADDITIONS)
+#if ENABLE(WEBASSEMBLY)
     // This really only makes sense if could use wasm, otherwise we should not override this.
-    // Bun: without the JIT only LLInt runs JavaScript, so a build without WebAssembly overrides it too.
     Options::useLLInt() = true;
 #endif
     Options::useJIT() = false;

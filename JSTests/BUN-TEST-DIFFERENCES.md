@@ -1,6 +1,6 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 133 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 129 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
@@ -141,8 +141,6 @@ Rules for an edit to an upstream test:
 | `wasm/regress/298930.js` | `skip if $asan` | ASan's fake stack moves `ConstExprInterpreter`'s `MarkedArgumentBuffer` off the stack the collector scans |
 | `LayoutTests/.../wasm/core/js/simd/simd_f32x4_cmp.wast.js` | `skip if $asan` | `RunLoopGeneric`: the collector thread starts a timer while it is in `fired()` without the lock; `ASSERTION FAILED: !isScheduled()`. Only assertion builds see it, and of our lanes those are the asan ones |
 | `wasm/stress/memory64-overflow.js` | `slow!` | past the 300 s hard timeout under ASan in `wasm-collect-continuously` |
-| `stress/link-polymorphic-call-can-gc.js`, `stress/map-forEach.js`, `stress/resizable-array-constant-folding.js` | `skip if !$webAssembly` | they use `WebAssembly`, and neither their names nor a directive say so. A lane with `ENABLE_WEBASSEMBLY=0` has no such global |
-| `stress/structured-clone.js` | none; its one block that uses `WebAssembly` runs only where there is such a global | the same |
 | `stress/function-toString-native-one-line.js` | none; test fixed | its walker was a top-level `function`, so a property of `globalThis`, and its own source contains the `[native code]` it looks for. It is a `const` |
 
 `$asan` and `slow!` are fork additions to the runner, see D.
@@ -178,7 +176,6 @@ Upstream's too, and run by the `test` job.
   also runs wherever `--jsc-only` is given (so the JSCOnly port can be tested on macOS and Windows, where `jsc` is
   `<root>/bin/jsc`).
 - `Tools/Scripts/run-jsc-stress-tests`: `--asan` sets `$asan`, for `//@ skip if $asan`.
-- Both: `--without-webassembly`, for a lane with `ENABLE_WEBASSEMBLY=0`. `$webAssembly` is false, for `//@ skip if !$webAssembly`, and so is `$isWasmPlatform`, as on a platform that has none.
 - `Tools/Scripts/webkitdirs.pm`: on Windows the machine's architecture is read from the registry (no `uname`; an emulated
   x64 perl on Windows-on-ARM reports `AMD64`); `ARM64` as cmake on Windows spells it is `arm64`.
 
