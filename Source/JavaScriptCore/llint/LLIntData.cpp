@@ -28,6 +28,7 @@
 
 #include "AOTRemovableFeature.h"
 #include "CallLinkInfo.h"
+#include "ExecutableAllocator.h"
 #include "InPlaceInterpreter.h"
 #include "JSCConfig.h"
 #include "LLIntCLoop.h"
@@ -490,6 +491,12 @@ void initialize()
 
     WTF::compilerFence();
     RELEASE_ASSERT(!scriptingIsForbidden());
+
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+    g_jscConfig.pagesOfLLIntAreGuarded = guardExecutablePages(reinterpret_cast<const void*>(jsc_llint_begin), reinterpret_cast<const void*>(jsc_llint_end), false)
+        & guardExecutablePages(reinterpret_cast<const void*>(jsc_llint_bytecode_begin), reinterpret_cast<const void*>(jsc_llint_bytecode_end), false)
+        & guardExecutablePages(reinterpret_cast<const void*>(jsc_llint_webassembly_begin), reinterpret_cast<const void*>(jsc_llint_webassembly_end), false);
+#endif
 }
 
 } } // namespace JSC::LLInt

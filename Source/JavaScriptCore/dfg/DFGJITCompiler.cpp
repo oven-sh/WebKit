@@ -117,6 +117,17 @@ void JITCompiler::linkOSRExits()
         nearCallThunk(osrExitThunk);
     }
 
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+    for (auto& callSite : m_exceptionHandlerOSRExitCallSites) {
+        OSRExitCompilationInfo& info = callSite.exitInfo;
+        if (!info.m_replacementDestination.isSet())
+            continue;
+        info.m_exceptionHandler = label();
+        indirectJumpTarget();
+        jump().linkTo(info.m_replacementDestination, this);
+    }
+#endif
+
     if (m_graph.m_plan.isUnlinked()) {
         // When jumping to OSR exit handler via exception, we do not have proper callFrameRegister and jitDataRegister.
         // We should reload appropriate callFrameRegister from VM::callFrameForCatch to materialize constants buffer register.
@@ -328,7 +339,11 @@ void JITCompiler::link(LinkBuffer& linkBuffer)
             // i.e, we explicitly emitted an exceptionCheck that we know will be caught in this machine frame.
             // If this *is set*, it means we will be landing at this code location from genericUnwind from an
             // exception thrown in a child call frame.
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+            CodeLocationLabel<ExceptionHandlerPtrTag> catchLabel = linkBuffer.locationOf<ExceptionHandlerPtrTag>(info.m_exceptionHandler);
+#else
             CodeLocationLabel<ExceptionHandlerPtrTag> catchLabel = linkBuffer.locationOf<ExceptionHandlerPtrTag>(info.m_replacementDestination);
+#endif
             HandlerInfo newExceptionHandler = m_exceptionHandlerOSRExitCallSites[i].baselineExceptionHandler;
             CallSiteIndex callSite = m_exceptionHandlerOSRExitCallSites[i].callSiteIndex;
             newExceptionHandler.start = callSite.bits();

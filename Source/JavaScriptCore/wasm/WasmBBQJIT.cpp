@@ -3698,6 +3698,7 @@ void BBQJIT::emitLoopTierUpCheckAndOSREntryData(const ControlData& data, std::sp
     LOG_INDENT();
     result.startBlock(*this, args);
     result.setLoopLabel(m_jit.label());
+    m_jit.indirectJumpTarget(); // Bun: where an OSR entry goes on.
 
     RELEASE_ASSERT(m_compilation->bbqLoopEntrypoints.size() == loopIndex);
     m_compilation->bbqLoopEntrypoints.append(result.loopLabel());
@@ -4095,8 +4096,9 @@ void BBQJIT::prepareForExceptions()
 
         auto labels = WTF::map(targets, [&](auto& target) {
             auto label = Box<CCallHelpers::Label>::create(m_jit.label());
+            m_jit.indirectJumpTarget(); // Bun
             bool isCodeEmitted = currentControlData().addExit(*this, target->targetLocations(), results);
-            if (isCodeEmitted)
+            if (isCodeEmitted || ENABLE_BRANCH_TARGET_IDENTIFICATION)
                 target->addBranch(m_jit.jump());
             else {
                 // It is common that we do not need to emit anything before jumping to the target block.
@@ -4107,6 +4109,7 @@ void BBQJIT::prepareForExceptions()
             return label;
         });
         labels.append(Box<CCallHelpers::Label>::create(m_jit.label()));
+        m_jit.indirectJumpTarget(); // Bun
 
         m_jit.addLinkTask([labels = WTF::move(labels), jumpTable](LinkBuffer& linkBuffer) {
             for (unsigned index = 0; index < labels.size(); ++index)

@@ -664,8 +664,30 @@ def arm64FixSpecialRegisterArithmeticMode(list)
     newList
 end
 
+# Bun: a jump with its target in x16 or x17 may land where a call may, and with it in any other register on nothing but a landing pad
+# for jumps.
+def arm64LowerJumpsForLandingPads(list)
+    newList = []
+    list.each {
+        | node |
+        if node.is_a? Instruction and node.opcode == "jmp" and node.operands.size == 1 and node.operands[0].is_a? RegisterID
+            # Without a tag it goes from one handler of IPInt to another, which are in slots of one size that some of them fill. It stays
+            # one instruction.
+            newList << Instruction.new(node.codeOrigin, "jmpToHandler", node.operands, node.annotation)
+        elsif node.is_a? Instruction and node.opcode == "jmp" and node.operands[0].address?
+            # So that the address is loaded where it has to be. This is how LLInt goes from one bytecode to the next.
+            newList << Instruction.new(node.codeOrigin, "loadp", [node.operands[0], ARM64_EXTRA_GPRS[0]], node.annotation)
+            newList << Instruction.new(node.codeOrigin, "jmp", [ARM64_EXTRA_GPRS[0]])
+        else
+            newList << node
+        end
+    }
+    newList
+end
+
 class Sequence
     def getModifiedListARM64(result = @list)
+        result = arm64LowerJumpsForLandingPads(result) if $currentSettings["BRANCH_TARGET_IDENTIFICATION"]
         result = riscDropTags(result)
         getModifiedListARM64Common(result)
     end
@@ -1451,9 +1473,15 @@ class Instruction
         when "jmp"
             if operands[0].label?
                 $asm.puts "b #{operands[0].asmLabel}"
+            elsif $currentSettings["BRANCH_TARGET_IDENTIFICATION"] and not ["x16", "x17"].include? operands[0].arm64Operand(:quad)
+                # A jump with its target in any other register may not land on what a function begins with.
+                $asm.puts "mov x16, #{operands[0].arm64Operand(:quad)}"
+                $asm.puts "br x16"
             else
                 emitARM64Unflipped("br", operands, :quad)
             end
+        when "jmpToHandler"
+            emitARM64Unflipped("br", operands, :quad)
         when "call"
             if operands[0].label?
                 $asm.puts "bl #{operands[0].asmLabel}"

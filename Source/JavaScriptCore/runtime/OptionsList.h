@@ -580,6 +580,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Double, fireExecutableAllocationFuzzRandomlyProbability, 0.1, Normal, nullptr) \
     v(Bool, verboseExecutableAllocationFuzz, false, Normal, nullptr) \
     v(Bool, zeroExecutableMemoryOnFree, false, Normal, "0 out instructions when freeing JIT memory."_s) \
+    v(Bool, useBranchTargetIdentification, true, Normal, "With ENABLE(BRANCH_TARGET_IDENTIFICATION): guards the pages of LLInt and of JIT code, so that an indirect branch into them traps unless it lands on a landing pad."_s) \
+    v(Bool, validateIndirectBranchTargets, false, Normal, "With ENABLE(BRANCH_TARGET_IDENTIFICATION): crashes where the address of JIT code is taken for an indirect branch and there is no landing pad at it."_s) \
     \
     v(Bool, useOSRExitFuzz, false, Normal, nullptr) \
     v(Unsigned, fireOSRExitFuzzAtStatic, 0, Normal, nullptr) \

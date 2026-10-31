@@ -3272,6 +3272,7 @@ void BBQJIT::emitCatchPrologue()
 void BBQJIT::emitCatchAllImpl(ControlData& dataCatch)
 {
     m_catchEntrypoints.append(m_jit.label());
+    m_jit.indirectJumpTarget(); // Bun
     emitCatchPrologue();
     bind(this->exception(dataCatch), Location::fromGPR(GPRInfo::returnValueGPR));
     Stack emptyStack { };
@@ -3281,6 +3282,7 @@ void BBQJIT::emitCatchAllImpl(ControlData& dataCatch)
 void BBQJIT::emitCatchImpl(ControlData& dataCatch, const RTT& exceptionSignature, ResultList& results)
 {
     m_catchEntrypoints.append(m_jit.label());
+    m_jit.indirectJumpTarget(); // Bun
     emitCatchPrologue();
     bind(this->exception(dataCatch), Location::fromGPR(GPRInfo::returnValueGPR));
     Stack emptyStack { };
@@ -3354,6 +3356,7 @@ void BBQJIT::emitCatchTableImpl(ControlData& entryData, ControlType::TryTableTar
 
     JIT_COMMENT(m_jit, "catch handler");
     m_catchEntrypoints.append(m_jit.label());
+    m_jit.indirectJumpTarget(); // Bun
     m_exceptionHandlers.append({ handlerType, entryData.tryStart(), m_callSiteIndex, 0, m_tryCatchDepth, target.tag });
     emitCatchPrologue();
 

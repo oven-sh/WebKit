@@ -71,6 +71,19 @@ const HARDENING =
 // walks the frame pointers there, as bun's crash handler does, has to take the signatures off too.
 const SIGNED_RETURN_ADDRESSES = " -mbranch-protection=pac-ret -DENABLE_RETURN_ADDRESS_SIGNING=1";
 
+// Goes with SIGNED_RETURN_ADDRESSES, and comes behind it: of two -mbranch-protection the last one counts. Where code can be reached
+// by an indirect branch it begins with a landing pad (BTI), which is a hint too, and in a guarded page an indirect branch to anything
+// else traps. The flag is for what the compiler generates. ENABLE(BRANCH_TARGET_IDENTIFICATION) is for LLInt and what the JITs
+// generate, and has JavaScriptCore guard the pages of those by itself (--useBranchTargetIdentification).
+//
+// The pages of C++ are not guarded. The loader guards an executable if everything that it is linked from says that it has landing
+// pads, and of what the sysroot has (crt1.o, crti.o, crtbeginS.o, libc_nonshared.a, libstdc++.a, libgcc.a) nothing says so or has
+// them. The objects here say so, because the flag makes them, but it is not yet true of them: the functions that are written in
+// assembly in a C++ source (ctiMasmProbeTrampoline, the thunks of defineUnaryDoubleOpWrapper, currentStackPointer) have none.
+//
+// Not "standard": that also says that the code works with a shadow stack (GCS), and what unwinds or replaces frames here does not.
+const LANDING_PADS = " -mbranch-protection=pac-ret+bti -DENABLE_BRANCH_TARGET_IDENTIFICATION=1";
+
 // Which ICU every platform but macOS (which uses the system's) builds and bundles: icu/source.json, and nowhere else.
 const icu = JSON.parse(readFileSync(join(root, "icu/source.json"), "utf8"));
 const ICU = { ICU_VERSION: icu.version, ICU_SHA256: icu.sha256 };
@@ -173,7 +186,7 @@ const platforms = [
       ENABLE_SANITIZERS: v.sanitizers ?? "",
       ENABLE_ASSERTS: v.assertions ? "ON" : "AUTO",
       ENABLE_FUZZILLI: v.coverage ? "ON" : "OFF",
-      HARDENING_FLAGS: v.hardened ? HARDENING + (arch === "arm64" && v.signedReturnAddresses ? SIGNED_RETURN_ADDRESSES : "") : "",
+      HARDENING_FLAGS: v.hardened ? HARDENING + (arch === "arm64" && v.signedReturnAddresses ? SIGNED_RETURN_ADDRESSES + LANDING_PADS : "") : "",
       ENABLE_WEBASSEMBLY: v.webAssembly === false ? "OFF" : "ON",
       // Explicit --target: Ubuntu's clang defaults to x86_64-pc-linux-gnu, while bun's own objects and its Rust code
       // are <arch>-unknown-linux-gnu; with LTO, lld warns about the vendor mismatch once per JavaScriptCore object.
@@ -474,7 +487,7 @@ if (command === "build") {
   const build = ({ label, sources, runner, image, package_os, package_cpu, test, programs, aot, defines }) => ({ label, sources, runner, image, package_os, package_cpu, test, programs, aot, defines });
   console.log(`build=${matrix(lanes.filter(lane => !lane.test).map(build))}`);
   console.log(`build_tested=${matrix(lanes.filter(lane => lane.test).map(build))}`);
-  console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner, quick: lane.test_quick, signs_return_addresses: lane.defines.includes("ENABLE_RETURN_ADDRESS_SIGNING=1") })))}`);
+  console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner, quick: lane.test_quick, signs_return_addresses: lane.defines.includes("ENABLE_RETURN_ADDRESS_SIGNING=1"), has_landing_pads: lane.defines.includes("ENABLE_BRANCH_TARGET_IDENTIFICATION=1") })))}`);
   console.log(`labels=${JSON.stringify([...labels, SOURCES.label])}`);
   // Only the toolchain images that are not in the registry yet get an `image` job: normally none.
   const missing = images.filter(({ image }) => {

@@ -1179,6 +1179,13 @@ public:
     ALWAYS_INLINE void removePtrTag(RegisterID) { }
     ALWAYS_INLINE void validateUntaggedPtr(RegisterID, RegisterID = RegisterID::InvalidGPRReg) { }
 
+    // Bun: ENABLE(BRANCH_TARGET_IDENTIFICATION). What farJump() or call() can reach by an address begins with one of these, or with
+    // tagReturnAddress(). All code begins with indirectCallTarget() by itself. Code that is to replace a part of other code, or that
+    // begins with tagReturnAddress() and cares for one instruction, takes it away before it has any other.
+    ALWAYS_INLINE void indirectJumpTarget() { }
+    ALWAYS_INLINE void indirectCallTarget() { }
+    ALWAYS_INLINE void removeLandingPadAtStart() { }
+
     template<typename... Types>
     void comment(const Types&... values)
     {

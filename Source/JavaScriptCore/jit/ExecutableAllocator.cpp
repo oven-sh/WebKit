@@ -48,6 +48,10 @@
 #include <wtf/UUID.h>
 #include <wtf/WorkQueue.h>
 #include <wtf/posix/POSIXExtras.h>
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+#include <sys/auxv.h>
+#include <sys/mman.h>
+#endif
 
 #if ENABLE(LIBPAS_JIT_HEAP)
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -571,6 +575,27 @@ static void registerJITUnwindInfo(PageReservation& pageReservation, void*& base,
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+#if ENABLE(MPROTECT_RX_TO_RWX)
+#error "startWriting() and finishWriting() take the guard off the pages of JIT code"
+#endif
+
+bool guardExecutablePages(const void* start, const void* end, bool writable)
+{
+    // Newer than the headers that this is compiled with.
+    constexpr unsigned long hwcap2BTI = 1UL << 17;
+    constexpr int protBTI = 0x10;
+
+    if (!Options::useBranchTargetIdentification() || !(getauxval(AT_HWCAP2) & hwcap2BTI))
+        return false;
+    uintptr_t firstPage = WTF::roundUpToMultipleOf(pageSize(), std::bit_cast<uintptr_t>(start));
+    uintptr_t endOfLastPage = WTF::roundDownToMultipleOf(pageSize(), std::bit_cast<uintptr_t>(end));
+    if (firstPage >= endOfLastPage)
+        return false;
+    return !mprotect(std::bit_cast<void*>(firstPage), endOfLastPage - firstPage, PROT_READ | (writable ? PROT_WRITE : 0) | PROT_EXEC | protBTI);
+}
+#endif
+
 static ALWAYS_INLINE JITReservation initializeJITPageReservation()
 {
     JITReservation reservation;
@@ -645,6 +670,9 @@ static ALWAYS_INLINE JITReservation initializeJITPageReservation()
 #endif
 
         void* reservationEnd = static_cast<uint8_t*>(reservation.base) + reservation.size;
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+        g_jscConfig.pagesOfJITCodeAreGuarded = guardExecutablePages(reservation.base, reservationEnd, EXECUTABLE_POOL_WRITABLE);
+#endif
         g_jscConfig.startExecutableMemory = reservation.base;
         g_jscConfig.endExecutableMemory = reservationEnd;
 

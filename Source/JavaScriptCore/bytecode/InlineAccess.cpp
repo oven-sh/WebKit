@@ -45,6 +45,7 @@ void InlineAccess::dumpCacheSizesAndCrash()
     GPRReg resultGPR = baseGPR;
     {
         CCallHelpers jit;
+        jit.removeLandingPadAtStart(); // Bun
 
         GPRReg scratchGPR = valueGPR;
         jit.patchableBranch8(
@@ -68,6 +69,7 @@ void InlineAccess::dumpCacheSizesAndCrash()
 
     {
         CCallHelpers jit;
+        jit.removeLandingPadAtStart(); // Bun
 
         GPRReg scratchGPR = valueGPR;
         jit.load8(CCallHelpers::Address(baseGPR, JSCell::indexingTypeAndMiscOffset()), valueGPR);
@@ -83,6 +85,7 @@ void InlineAccess::dumpCacheSizesAndCrash()
 
     {
         CCallHelpers jit;
+        jit.removeLandingPadAtStart(); // Bun
 
         jit.patchableBranch32(
             MacroAssembler::NotEqual,
@@ -100,6 +103,7 @@ void InlineAccess::dumpCacheSizesAndCrash()
 
     {
         CCallHelpers jit;
+        jit.removeLandingPadAtStart(); // Bun
 
         jit.patchableBranch32(
             MacroAssembler::NotEqual,
@@ -113,6 +117,7 @@ void InlineAccess::dumpCacheSizesAndCrash()
 
     {
         CCallHelpers jit;
+        jit.removeLandingPadAtStart(); // Bun
 
         jit.patchableBranch32(
             MacroAssembler::NotEqual,
@@ -127,6 +132,7 @@ void InlineAccess::dumpCacheSizesAndCrash()
 
     {
         CCallHelpers jit;
+        jit.removeLandingPadAtStart(); // Bun
 
         jit.patchableBranch32(
             MacroAssembler::NotEqual,
@@ -180,6 +186,7 @@ bool InlineAccess::generateSelfPropertyAccess(PropertyInlineCache& propertyCache
         return false;
 
     CCallHelpers jit;
+    jit.removeLandingPadAtStart(); // Bun
 
     GPRReg base = propertyCache.baseGPR();
     GPRReg value = propertyCache.valueGPR();
@@ -249,6 +256,7 @@ bool InlineAccess::generateSelfPropertyReplace(PropertyInlineCache& propertyCach
     ASSERT(canGenerateSelfPropertyReplace(propertyCache, offset));
 
     CCallHelpers jit;
+    jit.removeLandingPadAtStart(); // Bun
 
     GPRReg base = propertyCache.baseGPR();
     GPRReg value = propertyCache.valueGPR();
@@ -301,6 +309,7 @@ bool InlineAccess::generateArrayLength(PropertyInlineCache& propertyCache, JSArr
         return false;
 
     CCallHelpers jit;
+    jit.removeLandingPadAtStart(); // Bun
 
     GPRReg base = propertyCache.baseGPR();
     GPRReg value = propertyCache.valueGPR();
@@ -340,6 +349,7 @@ bool InlineAccess::generateStringLength(PropertyInlineCache& propertyCache)
         return false;
 
     CCallHelpers jit;
+    jit.removeLandingPadAtStart(); // Bun
 
     GPRReg base = propertyCache.baseGPR();
     GPRReg value = propertyCache.valueGPR();
@@ -368,6 +378,7 @@ bool InlineAccess::generateStringLength(PropertyInlineCache& propertyCache)
 bool InlineAccess::generateSelfInAccess(PropertyInlineCache& propertyCache, Structure* structure)
 {
     CCallHelpers jit;
+    jit.removeLandingPadAtStart(); // Bun
 
     if (!hasConstantIdentifier(propertyCache.accessType))
         return false;

@@ -56,6 +56,7 @@ class Assembler
         @numGlobalLabels = 0
         @deferredOSDarwinActions = []
         @deferredNextLabelActions = []
+        @pendingLandingPad = nil
         @count = 0
         @debugAnnotationStr = nil
         @lastDebugAnnotationStr = nil
@@ -74,6 +75,7 @@ class Assembler
     end
     
     def leaveAsm
+        putsPendingLandingPad
         putsLastComment
         if not @deferredOSDarwinActions.size.zero?
             putStr("#if OS(DARWIN)")
@@ -188,6 +190,7 @@ class Assembler
     end
 
     def putStr(str)
+        putsPendingLandingPad # Bun: this may be an #if, and then what comes next is not there for everyone.
         if $enableDebugAnnotations
             @outp.puts "%-#{$preferredDebugAnnotationColumns}s%s" % ["", str]
         else
@@ -195,8 +198,19 @@ class Assembler
         end
     end
 
+    # Bun: with BRANCH_TARGET_IDENTIFICATION, every label but a local one may be where an indirect branch lands. The labels of one place
+    # share the landing pad, which is what comes behind the last of them. A handler is only ever jumped to. A jump to anything else
+    # has its target in x16 or x17 (arm64.rb), so it may land where a call may.
+    def putsPendingLandingPad
+        return unless @pendingLandingPad
+        hint = { :jump => "hint #36", :call => "hint #34", :both => "hint #38" }[@pendingLandingPad] # BTI j, BTI c, BTI jc
+        @pendingLandingPad = nil
+        @outp.puts(formatDump("    \"" + hint + " \\n\"", ""))
+    end
+
     def puts(*line)
         raise unless @state == :asm
+        putsPendingLandingPad
         @outp.puts(formatDump("    \"" + line.join('') + " \\n\"", lastComment))
     end
     
@@ -214,11 +228,14 @@ class Assembler
 
     def putsLabel(labelName, isGlobal, isExport, isAligned, alignTo)
         raise unless @state == :asm
+        putsPendingLandingPad if alignTo
+        pendingLandingPad, @pendingLandingPad = @pendingLandingPad, nil # What the actions put is no code.
         @deferredNextLabelActions.each {
             | action |
             action.call()
         }
         @deferredNextLabelActions = []
+        @pendingLandingPad = pendingLandingPad
         @numGlobalLabels += 1
         putsNewlineSpacerIfAppropriate(:global)
         @internalComment = $enableLabelCountComments ? "Global Label #{@numGlobalLabels}" : nil
@@ -252,11 +269,16 @@ class Assembler
                 putStr("    \".type #{labelName} , function \\n\"")
             }
         end
+        if $currentSettings and $currentSettings["BRANCH_TARGET_IDENTIFICATION"]
+            landingPad = (alignTo or (not isGlobal and /\Allint_op_/.match(labelName))) ? :jump : :call
+            @pendingLandingPad = (@pendingLandingPad and @pendingLandingPad != landingPad) ? :both : landingPad
+        end
         @newlineSpacerState = :none # After a global label, we can use another spacer.
     end
     
     def putsSection(name)
         raise unless @state == :asm
+        putsPendingLandingPad
         @deferredNextLabelActions.each {
             | action |
             action.call()

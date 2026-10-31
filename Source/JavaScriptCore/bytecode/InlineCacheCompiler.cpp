@@ -1348,6 +1348,8 @@ void InlineCacheCompiler::emitDataICPrologue(CCallHelpers& jit)
     // unless the ISA already spilled our return address to the stack (e.g. X86) we don't want to do that spill
     // until we know we have to (i.e. we're going to make a getter/setter/custom call)
 
+    jit.removeLandingPadAtStart(); // Bun: InlineCacheHandler::m_callTarget is tagReturnAddress().
+
 #if ASSERT_ENABLED
     size_t startOffset = jit.debugOffset();
 #endif
@@ -1362,6 +1364,8 @@ void InlineCacheCompiler::emitDataICPrologue(CCallHelpers& jit)
 #endif
 
     ASSERT(prologueSizeInBytesDataIC == (jit.debugOffset() - startOffset));
+
+    jit.indirectJumpTarget(); // Bun: InlineCacheHandler::m_jumpTarget
 }
 
 void InlineCacheCompiler::emitDataICEpilogue(CCallHelpers& jit)
@@ -5169,6 +5173,7 @@ AccessGenerationResult InlineCacheCompiler::compile(const GCSafeConcurrentJSLock
         // Note also that this is not reachable from custom getter/setter. Custom getter/setters will have
         // their own exception handling logic that doesn't go through genericUnwind.
         MacroAssembler::Label makeshiftCatchHandler = jit.label();
+        jit.indirectJumpTarget(); // Bun
         JIT_COMMENT(jit, "exception handler");
 
         InlineCacheCompiler::SpillState spillState = this->spillStateForJSCall();

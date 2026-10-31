@@ -247,6 +247,7 @@ void compile(State& state, Safepoint::Result& safepointResult)
 
     // Emit the exception handler.
     *state.exceptionHandler = jit.label();
+    jit.indirectJumpTarget(); // Bun
     jit.jumpThunk(CodeLocationLabel(vm.getCTIStub(CommonJITThunkID::HandleException).template retaggedCode<NoPtrTag>()));
 
     CCallHelpers::Label mainPathLabel = state.proc->code().entrypointLabel(0);
@@ -261,6 +262,7 @@ void compile(State& state, Safepoint::Result& safepointResult)
             CCallHelpers::JumpList mainPathJumps;
 
             arityCheckLabel = jit.label();
+            jit.indirectCallTarget(); // Bun
             jit.load32(CCallHelpers::calleeFrameLowWordSlot(CallFrameSlot::argumentCountIncludingThis).withOffset(sizeof(CallerFrameAndPC) - prologueStackPointerDelta()), GPRInfo::argumentGPR2);
             mainPathJumps.append(jit.branch32(CCallHelpers::AboveOrEqual, GPRInfo::argumentGPR2, CCallHelpers::TrustedImm32(codeBlock->numParameters())));
 
@@ -299,6 +301,7 @@ void compile(State& state, Safepoint::Result& safepointResult)
         // call to the B3-generated code.
         entryLabel = jit.label();
         arityCheckLabel = entryLabel;
+        jit.indirectJumpTarget(); // Bun
         jit.emitFunctionEpilogue();
         jit.untagReturnAddress();
         jit.jump().linkTo(mainPathLabel, &jit);

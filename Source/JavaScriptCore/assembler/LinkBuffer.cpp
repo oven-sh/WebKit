@@ -78,6 +78,40 @@ LinkBuffer::CodeRef<LinkBufferPtrTag> LinkBuffer::finalizeCodeWithoutDisassembly
     return codeRef;
 }
 
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+void LinkBuffer::validateIndirectBranchTarget(PtrTag tag, const void* address)
+{
+    // All code begins with a landing pad, but for code that replaces a part of other code. Of an address in the middle of code the tag
+    // has to tell: with any other it may be one that code is patched at, or that a direct branch is linked to.
+    ASCIILiteral name = "start of code"_s;
+    if (address != code() || !m_executableMemory) {
+        switch (tag) {
+#define CASE(tagName) case tagName: name = #tagName ""_s; break;
+        CASE(JSEntryPtrTag)
+        CASE(JSEntrySlowPathPtrTag)
+        CASE(JSSwitchPtrTag)
+        CASE(ExceptionHandlerPtrTag)
+        CASE(OSREntryPtrTag)
+        CASE(WasmEntryPtrTag)
+        CASE(YarrBacktrackPtrTag)
+        CASE(JITThunkPtrTag)
+#undef CASE
+        default:
+            return;
+        }
+    }
+
+    constexpr auto hint = [](uint32_t number) { return 0xd503201f | number << 5; };
+    uint32_t instruction = *static_cast<const uint32_t*>(address);
+    if (instruction == hint(27) || instruction == hint(34) || instruction == hint(36)) // PACIBSP, BTI c, BTI j
+        return;
+
+    dataLogLn("No landing pad for a ", name, " at ", RawPointer(address), ", ", static_cast<const char*>(address) - static_cast<const char*>(code()), " bytes into the code: ", RawHex(instruction));
+    WTFReportBacktrace();
+    CRASH();
+}
+#endif
+
 void LinkBuffer::logJITCodeForJITDump(CodeRef<LinkBufferPtrTag>& codeRef, ASCIILiteral simpleName)
 {
     if (!Options::useJITDump() && !Options::useGdbJITInfo()) [[likely]]

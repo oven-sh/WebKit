@@ -77,6 +77,8 @@ struct Config {
     bool vmEntryDisallowed;
 
     bool useFastJITPermissions;
+    bool pagesOfJITCodeAreGuarded; // Bun: ENABLE(BRANCH_TARGET_IDENTIFICATION)
+    bool pagesOfLLIntAreGuarded;
 
     // The following HasBeenCalled flags are for auditing call_once initialization functions.
     bool initializeHasBeenCalled;

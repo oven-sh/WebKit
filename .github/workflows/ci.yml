@@ -365,6 +365,7 @@ jobs:
       QUICK: ${{ matrix.quick }}
       LABEL: ${{ matrix.label }}
       SIGNS_RETURN_ADDRESSES: ${{ matrix.signs_return_addresses }}
+      HAS_LANDING_PADS: ${{ matrix.has_landing_pads }}
     defaults:
       run:
         # Also on Windows (Git for Windows' bash).
@@ -466,6 +467,13 @@ jobs:
               elif [ "$SIGNS_RETURN_ADDRESSES" = true ]; then echo "::warning::$LABEL signs return addresses, and this runner has no pointer authentication"
               else echo "no pointer authentication"
               fi
+              # Without it no page is guarded, and code that lacks a landing pad (LANDING_PADS in lanes.mjs) runs all the same.
+              if grep -qw bti /proc/cpuinfo; then echo "branch target identification"
+              elif [ "$HAS_LANDING_PADS" = true ]; then echo "::warning::$LABEL has landing pads, and this runner has no branch target identification"
+              else echo "no branch target identification"
+              fi
+              # This one needs no such processor, and finds what no test branches to.
+              [ "$HAS_LANDING_PADS" = true ] && export JSC_validateIndirectBranchTargets=1
               ;;
             macOS) echo "$(sysctl -n hw.ncpu) cores, $(($(sysctl -n hw.memsize) / 1073741824))GB of memory" ;;
             Windows)

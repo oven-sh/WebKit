@@ -93,6 +93,9 @@ public:
         , m_cachedMemoryTempRegister(this, memoryTempRegister)
         , m_makeJumpPatchable(false)
     {
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+        indirectCallTarget();
+#endif
     }
 
     typedef Assembler::LinkRecord LinkRecord;
@@ -5592,6 +5595,14 @@ public:
 
     void farJump(RegisterID target, PtrTag)
     {
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+        // A jump with its target in any other register may land on indirectJumpTarget() alone: not on what a function begins with.
+        if (target != dataTempRegister && target != memoryTempRegister) {
+            invalidateAllTempRegisters();
+            m_assembler.mov<64>(dataTempRegister, target);
+            target = dataTempRegister;
+        }
+#endif
         m_assembler.br(target);
     }
 
@@ -5722,6 +5733,25 @@ public:
     ALWAYS_INLINE void validateUntaggedPtr(RegisterID target, RegisterID = InvalidGPRReg)
     {
         m_assembler.ldrb(ARM64Registers::zr, target, 0);
+    }
+#endif
+
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+    ALWAYS_INLINE void indirectJumpTarget()
+    {
+        m_assembler.hint(36); // BTI j
+    }
+
+    // farJump() may land here too: its target is in x16 or x17.
+    ALWAYS_INLINE void indirectCallTarget()
+    {
+        m_assembler.hint(34); // BTI c
+    }
+
+    ALWAYS_INLINE void removeLandingPadAtStart()
+    {
+        RELEASE_ASSERT(m_assembler.buffer().codeSize() == sizeof(uint32_t));
+        m_assembler.buffer().setCodeSize(0);
     }
 #endif
 
