@@ -441,6 +441,9 @@ void TextParser::parseItem(const TextItem& item)
     case ProgramList::ModuleFailures:
         parseLine<Wire::ModuleFailure, ModuleFailure>(*this, &Program::moduleFailures);
         break;
+    case ProgramList::AmbiguousExports:
+        parseLine<Wire::AmbiguousExport, AmbiguousExport>(*this, &Program::ambiguousExports);
+        break;
     case ProgramList::EvalScopes:
         parseLine<Wire::EvalScope, EvalScope>(*this, &Program::evalScopes);
         break;

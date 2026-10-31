@@ -614,6 +614,12 @@ void dumpCounts(VM& vm, PrintStream& out)
     out.println(counters ? counters->stackListingsAfterGivenUpCaptures : 0, "\tmade:StackListingsAfterGivenUpCaptures");
     out.println(counters ? counters->ropesFlattenedForPrefixTests : 0, "\tflattened:RopesForPrefixTests");
     out.println(counters ? counters->nativeTextsHashed : 0, "\thashed:NativeTexts");
+    uint64_t inlineFramesDecoded = 0;
+    for (const VMState::PartsOfImage& parts : vm.aotState().parts) {
+        if (parts.callSiteCache)
+            inlineFramesDecoded += parts.callSiteCache->numberOfInlineFramesDecoded();
+    }
+    out.println(inlineFramesDecoded, "\tdecoded:InlineFrames");
 
     forEachInstance(vm, [&](const Instance& instance) {
         if (!instance.runtime.counters.branchCounts)

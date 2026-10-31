@@ -52,10 +52,15 @@ struct InlineFrameRecord : InlineFrameRow {
     CallSiteIndex callSite;
 };
 
+struct UndecodedInlineFrames {
+    const uint8_t* rows { nullptr };
+    uint64_t count { 0 };
+};
+
 // A stack goes to and fro between a few functions. A reader that outlives one walk puts what it decodes here, and decodes each of them once.
 class DecodedInlineFrames {
 public:
-    unsigned numberOfTimesDecoded() const { return m_numberOfTimesDecoded; }
+    uint64_t numberOfFramesDecoded() const { return m_numberOfFramesDecoded; }
 
 private:
     friend class InlineFrameReader;
@@ -64,12 +69,13 @@ private:
         const Image* image { nullptr };
         uint32_t function { 0 };
         Vector<InlineFrameRecord> frames;
+        UndecodedInlineFrames rest;
     };
     static constexpr size_t numberOfFunctions = 64;
 
     // Empty until a second function is asked for.
     Vector<FramesOfFunction> m_functions;
-    unsigned m_numberOfTimesDecoded { 0 };
+    uint64_t m_numberOfFramesDecoded { 0 };
 };
 
 class InlineFrameReader {
@@ -95,6 +101,7 @@ private:
     const Image* m_image { nullptr };
     std::optional<uint32_t> m_function;
     Vector<InlineFrameRecord, 32> m_frames;
+    UndecodedInlineFrames m_rest;
     DecodedInlineFrames* m_decoded { nullptr };
 };
 

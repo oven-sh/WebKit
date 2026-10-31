@@ -176,14 +176,10 @@ InlineForm chooseFormOfErrorBuiltin(const InlineBuiltinSite& site)
 InlineForm chooseFormOfIntlBuiltin(const InlineBuiltinSite& site)
 {
     switch (site.builtin) {
-    case InlineBuiltin::FormatNumber: {
-        const Type* formatted = argumentTypeOf(site, 0);
-        return callIf(site, !formatted || !formatted->isNumber(), InlineForm::TwoWay);
-    }
+    case InlineBuiltin::FormatNumber:
     case InlineBuiltin::FormatDateTime: {
         const Type* formatted = argumentTypeOf(site, 0);
-        bool hasTimeValue = formatted && (formatted->isNumber() || formatted->isSubsetOf(Type::builtinClass(BuiltinClasses::Date), site.context.program()));
-        return callIf(site, !hasTimeValue, InlineForm::TwoWay);
+        return callIf(site, !formatted || !formatted->isNumber(), InlineForm::TwoWay);
     }
     default:
         RELEASE_ASSERT_NOT_REACHED();

@@ -67,7 +67,7 @@ void GuardEmitter::generateIsInsideView(const ValueContext& value)
     defineTestByBranching(value, [&](BranchTargets targets) {
         LBasicBlock fails = targets.notTaken.block();
         Integer index = elements.indexOrElse(value->positionOperand(), value->keyIsIntegral(), fails);
-        TypedArrayElements view = elements.typedArrayElementsOf(in<CellPointer>(value->viewOperand()), fails);
+        TypedArrayElements view = elements.typedArrayElementsOf(value->viewOperand(), fails);
         branch(below(index, view.length), targets);
     });
 }

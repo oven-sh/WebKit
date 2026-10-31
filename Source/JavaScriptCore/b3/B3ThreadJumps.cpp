@@ -466,6 +466,8 @@ private:
                 if (entry == m_variableOfEarlierLoad.end())
                     continue;
                 entry->value = m_proc.addVariable(value->type());
+                if (m_proc.policy().optimization.keepsOriginsOfDemotedValues)
+                    entry->value->setOrigin(value->origin());
                 insertionSet.insert<VariableValue>(index + 1, Set, value->origin(), entry->value, value)->owner = block;
             }
             insertionSet.execute(block);

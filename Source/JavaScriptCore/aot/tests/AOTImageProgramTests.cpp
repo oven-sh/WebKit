@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCallGraph.h"
 #include "AOTFlowResults.h"
 #include "AOTIRParser.h"
 #include "AOTIdentifierNumbering.h"
@@ -156,7 +157,7 @@ CompiledRequests::CompiledRequests(const Vector<PatternUse>& uses, const TestOpt
 {
     Typed::FlowResults flow;
     Typed::StringArena strings(parsed.program->strings);
-    requests = collectRegExpRequests(*parsed.program, flow, strings, parsed.context);
+    requests = collectRegExpRequests(*parsed.program, flow, Typed::CallGraph(), strings, parsed.context);
     regExps = compileRegExps(*parsed.program, requests, parsed.context);
     AOT_TEST_CHECK(requests.candidates().empty());
     AOT_TEST_CHECK(regExps.results.size() == requests.all().size());

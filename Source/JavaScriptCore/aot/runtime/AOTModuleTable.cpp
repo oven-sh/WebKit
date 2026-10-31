@@ -69,6 +69,19 @@ std::optional<ModuleFailureID> ModuleTable::loadFailure(ModuleID module) const
     return found->failureOfLoad();
 }
 
+std::span<const AmbiguousExportData> ModuleTable::ambiguousExports(ModuleID module) const
+{
+    auto ofModule = std::ranges::equal_range(m_tables->ambiguousExports(), module.index(), { }, &AmbiguousExportData::module);
+    return { ofModule.begin(), ofModule.end() };
+}
+
+bool ModuleTable::isAmbiguousExport(ModuleID module, StringView name) const
+{
+    return std::ranges::any_of(ambiguousExports(module), [&](const AmbiguousExportData& entry) {
+        return ProgramStrings::text(*m_tables, entry.nameString()) == name;
+    });
+}
+
 static std::atomic<uint32_t>& moduleFoundLast(unsigned hashOfPath)
 {
     static std::array<std::atomic<uint32_t>, 256> modulesFoundLast;

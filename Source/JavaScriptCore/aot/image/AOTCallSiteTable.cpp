@@ -272,21 +272,23 @@ void InlineFrameReader::read(const Image& image, uint32_t function, unsigned las
         return;
     }
     auto& functions = m_decoded->m_functions;
-    if (functions.isEmpty() && m_function && (m_image != &image || *m_function != function)) {
+    bool isOtherFunction = m_image != &image || m_function != function;
+    if (functions.isEmpty() && m_function && isOtherFunction) {
         functions.grow(DecodedInlineFrames::numberOfFunctions);
         keep();
     }
-    if (!functions.isEmpty()) {
+    if (isOtherFunction && !functions.isEmpty()) {
         const auto& kept = functions[function % DecodedInlineFrames::numberOfFunctions];
-        if (kept.image == &image && kept.function == function && last <= kept.frames.size()) {
+        if (kept.image == &image && kept.function == function) {
             m_image = &image;
             m_function = function;
             m_frames.shrink(0);
             m_frames.append(kept.frames.span());
-            return;
+            m_rest = kept.rest;
+            if (last <= m_frames.size())
+                return;
         }
     }
-    ++m_decoded->m_numberOfTimesDecoded;
     decode(image, function, last);
     if (!functions.isEmpty())
         keep();
@@ -295,27 +297,42 @@ void InlineFrameReader::read(const Image& image, uint32_t function, unsigned las
 void InlineFrameReader::keep()
 {
     auto& kept = m_decoded->m_functions[*m_function % DecodedInlineFrames::numberOfFunctions];
-    kept.image = m_image;
-    kept.function = *m_function;
-    kept.frames.shrink(0);
-    kept.frames.append(m_frames.span());
+    if (kept.image != m_image || kept.function != *m_function) {
+        kept.image = m_image;
+        kept.function = *m_function;
+        kept.frames.shrink(0);
+    } else if (kept.frames.size() >= m_frames.size())
+        return;
+    kept.frames.append(m_frames.span().subspan(kept.frames.size()));
+    kept.rest = m_rest;
 }
 
 void InlineFrameReader::decode(const Image& image, uint32_t function, unsigned last)
 {
-    std::optional<StreamHead> head = readHead(image, function);
-    RELEASE_ASSERT(head && last && last <= head->numberOfInlineFrames);
-    const uint8_t* cursor = head->inlineFrames.data();
-    m_image = &image;
-    m_function = function;
-    m_frames.shrink(0);
-    m_frames.reserveCapacity(last);
-    for (unsigned frame = 1; frame <= last; ++frame) {
-        InlineFrameRow row = InlineFrameRow::read(cursor);
-        uint32_t callSite = static_cast<uint32_t>(head->numberOfSitesWithoutCode - head->numberOfInlineFrames + frame);
-        RELEASE_ASSERT(row.parent < frame);
-        m_frames.unsafeAppendWithoutCapacityCheck(InlineFrameRecord { row, CallSiteIndex(callSite) });
+    uint32_t callSite = 0;
+    if (m_image == &image && m_function == function)
+        callSite = m_frames.last().callSite.bits();
+    else {
+        std::optional<StreamHead> head = readHead(image, function);
+        RELEASE_ASSERT(head);
+        m_image = &image;
+        m_function = function;
+        m_frames.shrink(0);
+        m_rest = { head->inlineFrames.data(), head->numberOfInlineFrames };
+        callSite = static_cast<uint32_t>(head->numberOfSitesWithoutCode - head->numberOfInlineFrames);
     }
+    unsigned numberOfDecodedFrames = static_cast<unsigned>(m_frames.size());
+    RELEASE_ASSERT(last > numberOfDecodedFrames && last - numberOfDecodedFrames <= m_rest.count);
+    if (last > m_frames.capacity())
+        m_frames.reserveCapacity(std::max<uint64_t>(last, std::min<uint64_t>(2 * m_frames.capacity(), numberOfDecodedFrames + m_rest.count)));
+    for (unsigned frame = numberOfDecodedFrames + 1; frame <= last; ++frame) {
+        InlineFrameRow row = InlineFrameRow::read(m_rest.rows);
+        RELEASE_ASSERT(row.parent < frame);
+        m_frames.unsafeAppendWithoutCapacityCheck(InlineFrameRecord { row, CallSiteIndex(++callSite) });
+    }
+    m_rest.count -= last - numberOfDecodedFrames;
+    if (m_decoded)
+        m_decoded->m_numberOfFramesDecoded += last - numberOfDecodedFrames;
 }
 
 SiteFrames::SiteFrames(const Image& image, uint32_t function)

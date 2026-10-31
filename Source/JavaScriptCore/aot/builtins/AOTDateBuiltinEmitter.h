@@ -17,8 +17,6 @@ public:
 
     FOR_EACH_AOT_INLINE_BUILTIN_IN_DATE_BUILTIN(AOT_DECLARE_INLINE_BUILTIN_GENERATOR)
 
-    Number timeValueOf(CellPointer date);
-
 private:
     struct BitField {
         unsigned offset;
@@ -29,6 +27,7 @@ private:
 
     static BitField bitFieldOf(DateField);
     TypedPointer fieldAt(CellPointer date, ptrdiff_t offset);
+    Number timeValueOf(CellPointer date);
 };
 
 } } } // namespace JSC::AOT::Typed

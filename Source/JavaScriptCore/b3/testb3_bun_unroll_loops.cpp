@@ -746,8 +746,7 @@ static void testUnrollLoopsRunsCopyOfLongTurnInStretches()
                         expected += static_cast<uint64_t>(bound);
                     state = { };
                     CHECK_EQ(invoke<int64_t>(*code, first, bound), static_cast<int64_t>(expected));
-                    if (isX86())
-                        CHECK_EQ(state.numberOfPolls, (turns - 1) / stretch);
+                    CHECK_EQ(state.numberOfPolls, (turns - 1) / stretch);
                 }
             }
         }

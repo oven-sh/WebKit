@@ -480,6 +480,7 @@ void ProgramVerifier::verifyIDs()
     verifyList(m_program.variables);
     verifyList(m_program.modules);
     verifyList(m_program.moduleFailures);
+    verifyList(m_program.ambiguousExports);
     verifyList(m_program.evalScopes);
     verifyList(m_program.data);
     verifyList(m_program.entries);

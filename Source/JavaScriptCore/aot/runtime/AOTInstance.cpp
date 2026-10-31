@@ -1296,6 +1296,7 @@ void VMState::attachImage(VM& vm)
 // The rows of Structures are words of one table of the process, so they are given back while the Structure IDs still belong to this VM.
 void VMState::willShutDownHeap()
 {
+    formatPatternState = nullptr;
     if (propertyCaches)
         propertyCaches->front().clear();
     if (AllocationCounts::isEnabled()) [[unlikely]]

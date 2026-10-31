@@ -333,9 +333,8 @@ static void testCallSitesInlineFramesOfTwoFunctionsInTurn()
     DecodedInlineFrames decoded;
     InlineFrameReader reader(decoded);
     readBothThrice(reader);
-    AOT_TEST_CHECK(decoded.numberOfTimesDecoded() == 2);
+    AOT_TEST_CHECK(decoded.numberOfFramesDecoded() == 5);
 
-    // More of a function's frames than are kept are decoded, and kept from then on.
     DecodedInlineFrames decodedOutwards;
     InlineFrameReader readsOutwards(decodedOutwards);
     for (unsigned turn = 0; turn < 2; ++turn) {
@@ -344,7 +343,7 @@ static void testCallSitesInlineFramesOfTwoFunctionsInTurn()
             checkInlineFrame(readsOutwards, built, 1, siblingFrames[0], 1, 4);
         }
     }
-    AOT_TEST_CHECK(decodedOutwards.numberOfTimesDecoded() == 4);
+    AOT_TEST_CHECK(decodedOutwards.numberOfFramesDecoded() == 4);
 }
 
 static void testCallSitesInlineFrameOfBuiltin()
@@ -380,6 +379,16 @@ static void testCallSitesManyInlineFrames()
     for (unsigned frame : { numberOfFrames, 1u, 255u, 256u, numberOfFrames - 1 })
         checkInlineFrame(reader, built, frame, frames[frame - 1], frame);
     AOT_TEST_CHECK(built.build.statistic(StatisticID::LargestInlineFrameCountInFunction) == numberOfFrames);
+
+    InlineFrameReader readsFromTheFirst;
+    DecodedInlineFrames decoded;
+    InlineFrameReader keepsFromTheFirst(decoded);
+    for (unsigned frame = 1; frame <= numberOfFrames; ++frame) {
+        checkInlineFrame(readsFromTheFirst, built, frame, frames[frame - 1], frame);
+        checkInlineFrame(keepsFromTheFirst, built, frame, frames[frame - 1], frame);
+        checkInlineFrame(keepsFromTheFirst, built, 1 + frame / 2, frames[frame / 2], 1 + frame / 2);
+        AOT_TEST_CHECK(decoded.numberOfFramesDecoded() == frame);
+    }
 }
 
 static void testCallSitesSiteFrames()

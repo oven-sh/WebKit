@@ -226,7 +226,8 @@ public:
     ValueSetID constructedObjects() const { return m_constructedObjects; }
     ValueSetID instancesOfClasses() const { return m_instancesOfClasses; }
     ValueSetID constructorsWithLayouts() const { return m_constructorsWithLayouts; }
-    std::span<const LayoutID> recordsThatTypedCodeTakes() const LIFETIME_BOUND { return m_recordsThatTypedCodeTakes.span(); }
+    std::span<const LayoutID> recordsOfTableThatTypedCodeTakes() const LIFETIME_BOUND { return m_recordsOfTableThatTypedCodeTakes.span(); }
+    ValueSetID objectsOfRecordsThatTypedCodeTakes() const { return m_objectsOfRecordsThatTypedCodeTakes; }
     ValueFlowObjectID objectAllocatedUnder(const Program&, ValueFlowObjectID site, ValueFlowObjectID prototype) const;
     ValueSetID constructorsAnsweringOnlyWhatTheyConstruct() const { return m_constructorsAnsweringOnlyWhatTheyConstruct; }
     ValueFlowPlaceholders placeholders() const { return { untrackedObject(), unknownObject(), m_objectsWithLayoutOfProgram, m_closures }; }
@@ -298,6 +299,8 @@ private:
     BitVector m_isLayoutOfTable;
     BitVector m_isAllocatedByProgram;
     Vector<LayoutID> m_recordsThatTypedCodeTakes;
+    Vector<LayoutID> m_recordsOfTableThatTypedCodeTakes;
+    ValueSetID m_objectsOfRecordsThatTypedCodeTakes;
     ValueSetID m_closures;
     ValueSetID m_objectsThatDefinitionsTellApart;
     ValueSetID m_builtinFunctions;

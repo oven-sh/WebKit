@@ -791,6 +791,8 @@ static void printModules(const TablesContext& context)
         RecordLine(context, "requiredName"_s, index).field("exporter"_s, requiredNames[index].exporterModule()).identifier("name"_s, requiredNames[index].name).flag("mayBeAbsent"_s, requiredNames[index].mayBeAbsent);
     for (const ExportStatementData& statement : tables.exportStatements())
         RecordLine(context, "exportStatement"_s).field("requiredName"_s, statement.requiredName).field("exportName"_s, statement.exportNameString()).field("specifier"_s, statement.specifierString()).flag("dropsExportIfAbsent"_s, statement.dropsExportIfAbsent);
+    for (const AmbiguousExportData& ambiguous : tables.ambiguousExports())
+        RecordLine(context, "ambiguousExport"_s).field("module"_s, ModuleID(ambiguous.module)).field("name"_s, ambiguous.nameString());
     for (const ModuleFailureData& failure : tables.moduleFailures()) {
         if (failure.isLoadOfModule()) {
             RecordLine(context, "loadFailure"_s).field("module"_s, failure.importerModule()).field("failure"_s, failure.failureOfLoad().index());
@@ -987,6 +989,9 @@ static void printRequest(const TablesContext& context, const RequestRecord& reco
         },
         [&](const CollectionDataRecord&) {
             printCollectionDataRequest(context, offset);
+        },
+        [&](const FormatPatternRecord& pattern) {
+            RecordLine(context, "request"_s, offset).word("FormatPattern"_s).field("words"_s, static_cast<uint32_t>(pattern.words.size()));
         });
 }
 

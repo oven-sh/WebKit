@@ -1068,6 +1068,7 @@ void generateCallEngineCallee(StubAssembler& jit)
 void generateResolveCallValue(StubAssembler& jit)
 {
     const unsigned count = jit.key().count();
+    const bool passesStackWords = count > numberOfArgumentGPRs;
     const GPRReg word = jit.result();
     const GPRReg scratch = jit.allocateScratch(StubRegister::T13);
     JumpList isResolvedAtEachCall;
@@ -1084,6 +1085,13 @@ void generateResolveCallValue(StubAssembler& jit)
     isResolvedAtEachCall.append(jit.branchPtr(CCallHelpers::Below, CCallHelpers::stackPointerRegister, StubAssembler::trapAwareSoftStackLimitWord()));
     toCodeAddress(jit, word, scratch, StackIsTested::Yes);
     jit.returnToCaller();
+
+    if (passesStackWords) {
+        isNeither.link(&jit);
+        isResolvedAtEachCall.link(&jit);
+        jit.returnStubAddress(callValueWithCount(jit.callPosition()));
+        return;
+    }
 
     isNeither.link(&jit);
     Jump isNoHostFunction = jit.branch32(CCallHelpers::NotEqual, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.hostFunctionStructureID)));

@@ -64,6 +64,9 @@ public:
     std::span<const RequiredNameData> requiredNames(ModuleID module) const { return listOf(m_tables->requiredNames(), module, &ModuleData::firstRequiredName); }
     // The export statement that asks for the name. An import asks for any other one.
     const ExportStatementData* findExportStatement(const RequiredNameData&) const;
+    // The table of exports has no entry for such a name.
+    std::span<const AmbiguousExportData> ambiguousExports(ModuleID) const;
+    bool isAmbiguousExport(ModuleID, StringView name) const;
     const ModuleFailureData& failure(ModuleFailureID) const;
     // Of a module that imports, itself or through what it imports, a name that the build did not find or a file that is no program.
     std::optional<ModuleFailureID> loadFailure(ModuleID) const;

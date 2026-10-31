@@ -225,7 +225,8 @@ void Heat::takeInFunctionsMadeSince(const Program& program, const FlowResults& f
     Vector<FunctionID> added;
     for (unsigned index = firstAdded; index < count; ++index) {
         const Function& function = program.functions[index];
-        if (!function.blocks.isEmpty() && !function.derivation.source)
+        bool hasEstimateOfItsOwn = function.creator.tryAs<CreatorRecord::Parser>();
+        if (!function.blocks.isEmpty() && !function.derivation.source && !hasEstimateOfItsOwn)
             added.append(FunctionID(index));
     }
     if (added.isEmpty())
@@ -582,17 +583,17 @@ static Vector<uint8_t> findFunctionsCalledPerEvent(const Program& program, const
 }
 
 // A caller that runs once, or that waits between its steps, says nothing about how often the callee runs.
-static unsigned countCallersThatTell(const Program& program, const FlowResults& flow, const HeatGraph& graph, std::span<const HeatNodeID> nodes)
+static unsigned countCallersThatTell(const Program& program, const FlowResults& flow, const HeatGraph& graph, std::span<const HeatNodeID> nodes, FunctionID callee = { })
 {
     return std::ranges::count_if(nodes, [&](HeatNodeID node) {
         FunctionID caller = graph.functionOf(node);
-        return caller && !flow.runsAtMostOnce(program, caller) && !program.at(caller).has(FunctionFlags::IsAsync);
+        return caller && !flow.runsAtMostOnce(program, caller) && !program.at(caller).has(FunctionFlags::IsAsync) && !(callee && graph.isOnlyExpectedToCall(caller, callee));
     });
 }
 
 static bool hasManyCallers(const Program& program, const FlowResults& flow, const HeatGraph& graph, const Vector<unsigned>& callersOfLongSets, FunctionID id)
 {
-    unsigned callers = countCallersThatTell(program, flow, graph, graph.predecessors(graph.nodeOf(id)));
+    unsigned callers = countCallersThatTell(program, flow, graph, graph.predecessors(graph.nodeOf(id)), id);
     for (uint32_t set : graph.longSetsWith(graph.nodeOf(id)))
         callers += callersOfLongSets[set];
     return callers >= HeatModel::callersOfFunctionThatRunsOften;

@@ -12,21 +12,28 @@
 #include "AOTBuiltinCallPlan.h"
 #include "AOTCoroutines.h"
 #include "AOTDescriptorLiteral.h"
+#include "AOTEdgeResults.h"
 #include "AOTEffectsCheck.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfRules.h"
 #include "AOTExpandOwnKeysInternal.h"
+#include "AOTFlowApply.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
+#include "AOTInlineBuiltinForms.h"
 #include "AOTInt32Conversions.h"
 #include "AOTKnownValue.h"
 #include "AOTNarrowFieldTypes.h"
+#include "AOTProgramPasses.h"
 #include "AOTPropertyAccessElements.h"
+#include "AOTResultRules.h"
 #include "AOTSplitUnions.h"
 #include "AOTStringRanges.h"
 #include "AOTThreshold.h"
+#include "AOTTypePropagation.h"
 #include "AOTTypeTestSite.h"
 #include "AOTValueIdentity.h"
+#include "AOTValueSubstitution.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
@@ -959,6 +966,93 @@ static unsigned definePlainPropertiesByName(FunctionPassContext& context, const 
     return static_cast<unsigned>(matches.size());
 }
 
+static bool mayChangeLists(FunctionPassContext& context, ValueID id)
+{
+    Effects effects = context.analyses.effectsOf(id).onAnyEdge();
+    return effects.mayRunOtherCode() || effects.writes.contains(AbstractHeap::ArrayStorage);
+}
+
+static bool standsBehindTestThatListHoldsSomething(FunctionPassContext& context, const ValueSite& call)
+{
+    const Program& program = context.program;
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    std::optional<Edge> entry = analyses.cfg().singleIncomingEdge(call.block);
+    if (!entry || entry->isHandlerEdge() || function.at(entry->from).terminator.kind != TerminatorKind::Branch)
+        return false;
+    const Value& condition = function.at(function.at(entry->from).terminator.conditionOperand());
+    if (condition.opcode != Opcode::ToBoolean && !relationalOperators.contains(condition.opcode))
+        return false;
+    ValueID list = analyses.identityOf(function.at(call.value).receiverOperand());
+    const BlockValues& valuesInFront = function.at(entry->from).values;
+    for (uint32_t operandIndex = 0; operandIndex < condition.numberOfOperands(); ++operandIndex) {
+        ValueID length = analyses.identityOf(condition.operand(operandIndex));
+        std::optional<MeasuredStorage> measured = storageMeasuredBy(program, function.at(length));
+        if (!measured || measured->heap != AbstractHeap::ArrayStorage || analyses.identityOf(measured->owner) != list)
+            continue;
+        Type lengthBehindTest = narrowOperandByTest({ program, function, context.types }, condition, operandIndex, entry->targetIndex ? EdgeSide::NotTaken : EdgeSide::Taken);
+        if (!lengthBehindTest.isInteger() || lengthBehindTest.integers.minimum < 1)
+            continue;
+        size_t indexOfLength = std::ranges::find(valuesInFront, length) - valuesInFront.begin();
+        if (indexOfLength == valuesInFront.size())
+            continue;
+        bool isLeftAlone = std::ranges::none_of(valuesInFront.span().subspan(indexOfLength + 1), [&](ValueID id) {
+            return mayChangeLists(context, id);
+        }) && std::ranges::none_of(function.at(call.block).values.span().first(call.index), [&](ValueID id) {
+            return mayChangeLists(context, id);
+        });
+        if (isLeftAlone)
+            return true;
+    }
+    return false;
+}
+
+static unsigned takeElementsOutOfListsThatHoldSome(FunctionPassContext& context, const BuiltinCallSites& calls)
+{
+    const Program& program = context.program;
+    Function& function = context.function;
+    Vector<ValueSite, 2> matches;
+    for (const ValueSite& site : calls) {
+        const Value& call = function.at(site.value);
+        if (call.opcode != Opcode::CallBuiltin || !call.receiverOperand() || call.needsPristineReceiver() || !(program.at(call.type).primitives & Primitive::Undefined))
+            continue;
+        std::optional<InlineBuiltin> builtin = inlineImplementationOf(program, call);
+        if (builtin != InlineBuiltin::ArrayPop && builtin != InlineBuiltin::ArrayShift)
+            continue;
+        const Type& list = program.typeOf(function, call.receiverOperand());
+        const ClassPart* part = list.singleBuiltinClass();
+        if (!part || list.mayBeUndefinedOrNull() || !part->contentsAreProven || !part->provenPristine.containsAll({ PristineAspects::Storage, PristineAspects::Dense }))
+            continue;
+        if (typeOfContentsRead({ program, function, context.types }, list, ContentsSlot::Element).primitives & Primitive::Undefined)
+            continue;
+        bool isCastAlready = std::ranges::any_of(context.analyses.useLists().usesOf(site.value), [&](const Use& use) {
+            return use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::AssumeType && !(program.typeOf(function, use.user).primitives & Primitive::Undefined);
+        });
+        if (!isCastAlready && standsBehindTestThatListHoldsSomething(context, site))
+            matches.append(site);
+    }
+    if (matches.isEmpty())
+        return 0;
+
+    Vector<Vector<Use, 4>, 2> uses(matches.size(), [&](size_t index) {
+        return Vector<Use, 4>(context.analyses.useLists().usesOf(matches[index].value));
+    });
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    Vector<ValueID, 2> elements;
+    for (const ValueSite& match : matches) {
+        builder.setOrigin(function.at(match.value).origin());
+        elements.append(builder.insertBefore({ match.block, match.index + 1 }, makeAssumeType(match.value, Proven::byConstruction(context.types.withoutPrimitives(function.at(match.value).type, Primitive::Undefined)))));
+    }
+    builder.applyInsertions();
+    for (size_t index = 0; index < matches.size(); ++index) {
+        for (const Use& use : uses[index])
+            replaceUse(function, use, elements[index]);
+    }
+    context.analyses.didChangeValues();
+    narrowValueTypes({ context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo }, elements.span());
+    return static_cast<unsigned>(matches.size());
+}
+
 PassOutcome simplifyBuiltinCalls(FunctionPassContext& context)
 {
     unsigned rewrites = 0;
@@ -1011,10 +1105,12 @@ PassOutcome simplifyBuiltinCalls(FunctionPassContext& context)
     didRewrite(simplifyPromiseAllOfLiterals(context, calls));
     didRewrite(simplifyPromiseResolve(context, calls));
     didRewrite(leaveURLsUnbuilt(context));
+    didRewrite(formatFromPatterns(context));
     didRewrite(leavePairsOfOwnEntriesUnmade(context, calls.span()));
     didRewrite(expandRangesOfViews(context, calls));
     didRewrite(definePlainPropertiesByName(context, calls));
     didRewrite(takeLiteralArgumentsApart(context, calls));
+    didRewrite(takeElementsOutOfListsThatHoldSome(context, calls));
 
     PassOutcome outcome = rewrites ? PassOutcome::Changed : PassOutcome::Unchanged;
     outcome |= expandStringRanges(context, calls);

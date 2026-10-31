@@ -758,6 +758,12 @@ void ProgramVerifier::verifySmallRecords()
             fail({ .kind = InternalErrorKind::PayloadOutOfRange, .count = index });
     }
 
+    for (unsigned index = 0; index < m_program.ambiguousExports.size(); ++index) {
+        const AmbiguousExport& ambiguous = m_program.ambiguousExports[index];
+        if (!ambiguous.module || !ambiguous.name || !rulesOf(m_program.at(ambiguous.module).kind).hasExportTable)
+            fail({ .kind = InternalErrorKind::PayloadOutOfRange, .count = index });
+    }
+
     for (unsigned index = 0; index < m_program.webAssemblyModules.size(); ++index) {
         if (!m_program.webAssemblyModules[index].module)
             fail({ .kind = InternalErrorKind::PayloadOutOfRange, .count = index });

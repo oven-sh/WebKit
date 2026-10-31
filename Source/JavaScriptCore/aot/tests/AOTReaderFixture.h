@@ -40,6 +40,7 @@ variable g3 name="t" module=m0 declared={type=builtin(GlobalThis)|builtin(MathMa
 module m0 path="/a.ts" displayPath="a.ts" body=f0 requests=[{target=m1 completes=true}] exports=[{name="a" variable=g0}, {name="b" kind=Namespace module=m1}] requiredNames=[{module=m1 name="z"}] positions={lineStarts=[0, 12] columnAdjustments=[{offset=4 column=3}] textPrintedInPlace="\x01\x01\x023" textOfBody="\x06\x01" whereThisIsMade=[0, 2]} functionText="a => a\x0a" typesCutFromFunctionText="\x01\x08"
 module m1 path="node:b" displayPath="node:b" kind=CommonJs flags=[IsLibrary] exportRule=CommonJs requireResult=ModuleExports syntheticExports=[{name="y" isKnownMember=true}, {name="z" variable=g1}]
 modulefailure q0 importer=m0 specifier="./q"
+ambiguousexport module=m0 name="c"
 evalscope e0 mode=Sloppy flags=[IsInFunction] bindings=[{name="g" variable=g0}]
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():

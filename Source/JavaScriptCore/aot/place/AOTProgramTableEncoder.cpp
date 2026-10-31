@@ -909,7 +909,8 @@ void encodeDataTable(TableEncoder& encoder)
             },
             [](const NewClassRecord&) { },
             [](const TemplateObjectRecord&) { },
-            [](const DirectEvalRecord&) { });
+            [](const DirectEvalRecord&) { },
+            [](const FormatPatternRecord&) { });
     }
     AOT::sort(placedNodes, { }, &std::pair<uint32_t, DataID>::first);
     placedNodes.shrink(std::ranges::unique(placedNodes).begin() - placedNodes.begin());
@@ -2730,6 +2731,7 @@ struct ModuleLists {
     Vector<SyntheticExportData> syntheticExports;
     Vector<RequiredNameData> requiredNames;
     Vector<ExportStatementData> exportStatements;
+    Vector<AmbiguousExportData> ambiguousExports;
 };
 
 struct EncodedRequestTargets {
@@ -3100,6 +3102,9 @@ static ModuleLists collectModuleLists(TableEncoder& encoder)
     }
     for (size_t index : modulesThatHostAsksFor(program, encoder.flow.findsFilesOfProgramByName(), encoder.flow.hostRunsFilesOutsideImage() || encoder.build.options().sharesRealms()))
         lists.modules[index].add(ModuleData::Flag::IsEntryPoint);
+    for (const AmbiguousExport& ambiguous : program.ambiguousExports)
+        lists.ambiguousExports.append({ ambiguous.module.index(), encoder.shownStringNumber(ambiguous.name) });
+    std::ranges::stable_sort(lists.ambiguousExports, { }, &AmbiguousExportData::module);
     ModuleData endEntry { };
     lists.setListStarts(endEntry);
     lists.modules.append(endEntry);
@@ -3399,6 +3404,7 @@ void encodeModuleTables(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::syntheticExports, lists.syntheticExports);
     encoder.setTable(ProgramTableIndex::requiredNames, lists.requiredNames);
     encoder.setTable(ProgramTableIndex::exportStatements, lists.exportStatements);
+    encoder.setTable(ProgramTableIndex::ambiguousExports, lists.ambiguousExports);
     Vector<ModuleFailureData> moduleFailures;
     Vector<ModuleFailureData> failedLoads;
     moduleFailures.reserveInitialCapacity(program.moduleFailures.size());

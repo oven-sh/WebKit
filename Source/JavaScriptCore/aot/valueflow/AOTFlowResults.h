@@ -312,10 +312,20 @@ struct FlowResultTables {
     std::unique_ptr<FlowApplication, FlowApplicationDeleter> application;
 };
 
+struct ConstantMember {
+    PropertyKeyID key;
+    KnownValue value;
+};
+
 struct ConstantLists {
     struct Entry {
         VariableID variable;
         Vector<KnownValue> elements;
+    };
+    // `const options = { style: "currency", currency: "USD" };`
+    struct ObjectEntry {
+        VariableID variable;
+        Vector<ConstantMember> members;
     };
 
     const Vector<KnownValue>* find(VariableID variable) const LIFETIME_BOUND
@@ -324,7 +334,14 @@ struct ConstantLists {
         return entry != entries.end() && entry->variable == variable ? &entry->elements : nullptr;
     }
 
+    const Vector<ConstantMember>* findObject(VariableID variable) const LIFETIME_BOUND
+    {
+        auto entry = std::ranges::lower_bound(objects, variable, { }, &ObjectEntry::variable);
+        return entry != objects.end() && entry->variable == variable ? &entry->members : nullptr;
+    }
+
     Vector<Entry> entries;
+    Vector<ObjectEntry> objects;
 };
 
 class FlowResults {
@@ -369,12 +386,14 @@ public:
     const BorrowedParameters& borrowedParameters() const { return m_borrowedParameters; }
     void addBorrowedParameters(FunctionID function, uint64_t word) { m_borrowedParameters.add(function, word); }
     bool mayTakeFrameArray(FunctionID function, uint32_t entryParameter) const { return m_frameArrayParameters.mayTake(function, entryParameter); }
+    bool mayTakeFrameArrayWhenCalledByValue(FunctionID function, uint32_t entryParameter) const { return m_frameArrayParameters.mayTakeWhenCalledByValue(function, entryParameter); }
     const FrameArrayParameters& frameArrayParameters() const LIFETIME_BOUND { return m_frameArrayParameters; }
     void setFrameArrayParameters(FrameArrayParameters&& table) { m_frameArrayParameters = WTF::move(table); }
     bool isSiteOfWholeLiterals(AllocationSiteID site) const { return site && m_sitesOfWholeLiterals.get(site.index()); }
     void setSitesOfWholeLiterals(BitVector&& sites) { m_sitesOfWholeLiterals = WTF::move(sites); }
     const FlowProxiesSeenAtSite* findProxiesSeenAt(AccessSiteID) const LIFETIME_BOUND;
     const Vector<KnownValue>* constantListIn(VariableID variable) const LIFETIME_BOUND { return m_constantLists.find(variable); }
+    const Vector<ConstantMember>* constantObjectIn(VariableID variable) const LIFETIME_BOUND { return m_constantLists.findObject(variable); }
     void setConstantLists(ConstantLists&& table) { m_constantLists = WTF::move(table); }
     std::span<const FlowIndirectCall> indirectCalls() const LIFETIME_BOUND { return m_tables.functions.indirectCalls.span(); }
     std::span<const FlowIndirectCall> indirectCallsFrom(FunctionID callerAsRead) const LIFETIME_BOUND;

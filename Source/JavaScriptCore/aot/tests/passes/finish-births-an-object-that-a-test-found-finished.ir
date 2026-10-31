@@ -1,0 +1,77 @@
+# An access behind a test that found the object without its mark: the object is finished, and a store in a loop behind the test does not finish it in every turn.
+# An object that nobody has tested, and one that may get undefined in place of its number, are finished as ever.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass FinishBirths
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Ring" fields=[{key="size" declared={type=number} flow={occupancy=FilledAtBirth}}]
+
+function f0 name="fill" parameters=[{type=L0}] results=[{type=undefined}] {
+    v1 = Undefined
+    Return v1
+}
+
+function f1 name="storesInALoopBehindTheTest" parameters=[{type=boolean}, {type=number}] results=[{type=undefined}] {
+    v2 = Undefined
+    v3 = NewObject layout=L0
+    v4 = CallDirect v3 function=f0
+    v5 = HasBirthFieldsFilled v3
+    Branch v5 -> taken b1(| 0), notTaken b4()
+  b1(v6):
+    Jump -> next b2()
+  b2():
+    LoopHint
+    PutSlot v3, v6, v1 key="size" receivers=[L0] level=Expected
+    Branch v0 -> taken b2(), notTaken b3()
+  b3():
+    Return v2
+  b4():
+    Return v2
+}
+# CHECK-LABEL: name="storesInALoopBehindTheTest"
+# CHECK: PutSlot v3, v6, v1 key="size"
+# CHECK-NEXT: Branch v0 -> taken b2(), notTaken b3()
+
+function f2 name="readsInALoopBehindTheTestAndStoresOnOneWay" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
+    v2 = NewObject layout=L0
+    v3 = CallDirect v2 function=f0
+    v4 = HasBirthFieldsFilled v2
+    Branch v4 -> taken b1(| 0), notTaken b6()
+  b1(v5):
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v7 = GetSlot v2, v5 key="size" receivers=[L0] level=Expected
+    Branch v0 -> taken b3(), notTaken b4()
+  b3():
+    PutSlot v2, v5, v1 key="size" receivers=[L0] level=Expected
+    Jump -> next b5()
+  b4():
+    Jump -> next b5()
+  b5():
+    Branch v0 -> taken b2(), notTaken b6()
+  b6():
+    Return v1
+}
+# CHECK-LABEL: name="readsInALoopBehindTheTestAndStoresOnOneWay"
+# CHECK: PutSlot v2, v5, v1 key="size"
+# CHECK-NEXT: Jump -> next b5()
+# CHECK: b4():
+# CHECK-NEXT: Jump -> next b5()
+
+function f3 name="nobodyHasTested" parameters=[{type=boolean}, {type=number}] results=[{type=undefined}] {
+    v2 = Undefined
+    v3 = NewObject layout=L0
+    v4 = CallDirect v3 function=f0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutSlot v3, v3, v1 key="size" receivers=[L0] level=Expected
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    Return v2
+}
+# CHECK-LABEL: name="nobodyHasTested"
+# CHECK: PutSlot v3, v3, v1 key="size"
+# CHECK-NEXT: FinishBirth v3

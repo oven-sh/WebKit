@@ -706,6 +706,13 @@ JSString* Modules::pathString(ModuleID module)
     return jsString(*m_instance.vm, m_table.pathText(module));
 }
 
+String Modules::pathOfExporterAsLoaderNamesIt(const RequiredNameData& requiredName)
+{
+    ModuleID exporter = m_table.fileBehindFace(requiredName.exporterModule()).value_or(requiredName.exporterModule());
+    // The table has the specifier of a module that is not of this image. The loader names it by its key.
+    return data(exporter).isUncompiledCode() ? resolvedKey(exporter).string() : m_table.pathText(exporter);
+}
+
 void Modules::throwExportNotFound(const RequiredNameData& requiredName)
 {
     JSGlobalObject* realm = m_instance.globalObject;
@@ -720,9 +727,7 @@ void Modules::throwExportNotFound(const RequiredNameData& requiredName)
             throwException(realm, scope, createExportStatementFindsNothingError(realm, ProgramStrings::text(m_table.programTables(), statement->exportNameString()), ProgramStrings::text(m_table.programTables(), statement->specifierString())));
         return;
     }
-    ModuleID exporter = m_table.fileBehindFace(requiredName.exporterModule()).value_or(requiredName.exporterModule());
-    // The table has the specifier of a module that is not of this image. The loader names it by its key.
-    String path = data(exporter).isUncompiledCode() ? resolvedKey(exporter).string() : m_table.pathText(exporter);
+    String path = pathOfExporterAsLoaderNamesIt(requiredName);
     RETURN_IF_EXCEPTION(scope, void());
     throwException(realm, scope, isDefault ? createMissingDefaultExportError(realm, path) : createExportNotFoundError(realm, name.string(), path));
 }
@@ -735,7 +740,9 @@ void Modules::throwExportAmbiguous(const RequiredNameData& requiredName)
         throwException(realm, scope, createExportStatementFindsSeveralError(realm, ProgramStrings::text(m_table.programTables(), statement->exportNameString()), ProgramStrings::text(m_table.programTables(), statement->specifierString())));
         return;
     }
-    throwException(realm, scope, createAmbiguousExportError(realm, identifier(requiredName.name).string(), m_table.pathText(requiredName.exporterModule())));
+    String path = pathOfExporterAsLoaderNamesIt(requiredName);
+    RETURN_IF_EXCEPTION(scope, void());
+    throwException(realm, scope, createAmbiguousExportError(realm, identifier(requiredName.name).string(), path));
 }
 
 JSPromise* Modules::rejectedPromiseWithPendingException(JSGlobalObject* realm, ThrowScope& scope)
@@ -994,10 +1001,10 @@ bool Modules::tryReplaceExportOfUncompiledModule(ModuleID external, UniquedStrin
 
 bool Modules::hasBegunToLoad(ModuleID module) const
 {
-    // Compiled code requires a CommonJS file without a word to the run time: no mock can wait for that.
-    if (data(module).kind == ModuleKind::CommonJs)
-        return true;
     ModuleStatus current = status(module);
+    // The code of a CommonJS file that may be mocked reads its stored status first: deferMock() has that send it to the run time.
+    if (data(module).kind == ModuleKind::CommonJs)
+        return !mayBeMocked(module) || (current != ModuleStatus::Unlinked && current != ModuleStatus::Linked);
     if ((current != ModuleStatus::Unlinked && current != ModuleStatus::Linked) || didCaptureExports(module))
         return true;
     return data(module).isESModuleOfProgram() && wasLoadedWithGraph(module);
@@ -1156,6 +1163,8 @@ void Modules::mockWhatRequireCacheHolds(ModuleID module, JSObject* exports)
 void Modules::deferMock(ModuleID module)
 {
     m_modulesWithMockToRun.set(module.index());
+    if (data(module).kind == ModuleKind::CommonJs)
+        ensureRecord(module);
     if (data(module).isOfLibrary())
         willMockLibraryModule(module);
     if (!data(module).isOfLibrary() && m_table.hasFilePath(module)) {
@@ -4663,6 +4672,8 @@ auto ModuleRecord::resolveOwnExport(JSGlobalObject* globalObject, const Identifi
 
     std::optional<unsigned> index = modules.table().findExport(m_module, exportName.impl());
     const ModuleExportData* entry = index ? &modules.table().exports(m_module)[*index] : nullptr;
+    if (!entry && modules.table().isAmbiguousExport(m_module, exportName.impl()))
+        return Resolution::ambiguous();
     if (!isDefault && (!entry || entry->isFromStarExport)) {
         appendDynamicStarTargets(starTargets);
         RETURN_IF_EXCEPTION(scope, Resolution::error());
@@ -4705,6 +4716,9 @@ void ModuleRecord::collectExportedNames(JSGlobalObject* globalObject, WTF::Vecto
     }
     for (const ModuleExportData& entry : modules.table().exports(m_module))
         names.append(modules.identifier(entry.name));
+    // Whoever exports all of this module has the name from nobody else either: `export * from "./stars"; export * from "./c"`, and c has it too.
+    for (const AmbiguousExportData& entry : modules.table().ambiguousExports(m_module))
+        names.append(Identifier::fromString(globalObject->vm(), ProgramStrings::text(modules.table().programTables(), entry.nameString())));
     RELEASE_AND_RETURN(scope, appendDynamicStarTargets(starTargets));
 }
 

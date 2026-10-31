@@ -1044,6 +1044,9 @@ VirtualFieldAccess lookUpElement(const VirtualObjectContext& context, const Virt
     // A read at an unknown number gives undefined for every number that is no position of an element.
     if (readsUndefinedWhenAbsent && program.typeOf(context.function, position).isNumber())
         return createDynamicElementAccess(position);
+    // Such a key names "true", "false", "null" or "undefined". A list that is not built holds no property of those names, and its prototypes are built-ins, which are read-only in an executable and hold none either.
+    if (const Type& key = program.typeOf(context.function, position); isArray && access.opcode == Opcode::ElemGet && !key.isNever() && key.hasOnlyPrimitives(Primitive::Boolean | Primitive::UndefinedOrNull))
+        return createAbsentAccess();
     // A read of the arguments in the frame makes a list for itself where the key turns out to be no number. No prototype of an array holds a getter of the program's, so nobody else ever sees that list.
     if (description.kind == VirtualObjectKind::ArgumentList && access.opcode == Opcode::ElemGet)
         return createDynamicElementAccess(position);

@@ -643,6 +643,13 @@ void Modules::evaluateModuleInRecord(ModuleID module)
 
 bool Modules::beginModuleInRecord(ModuleID module)
 {
+    // The first load of a CommonJS file that a mock waits for.
+    if (m_modulesWithMockToRun.get(module.index())) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+        m_modulesWithMockToRun.clear(module.index());
+        host().runMock(m_instance.globalObject, moduleIDForHost(*m_instance.program, module));
+        RETURN_IF_EXCEPTION(scope, false);
+    }
     if (m_filesToLoadAgain.get(module.index())) [[unlikely]] {
         loadEvictedFile(module);
         return false;
@@ -906,7 +913,8 @@ std::pair<Modules*, ModuleID> Modules::placeInRealm(ModuleID module)
         files.fill(isNotAsked, m_table.size());
     uint32_t& file = files[module.index()];
     if (file == isNotAsked) {
-        auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+        // Nothing leaves this function but a termination: whoever loads the module hears that the name stands for nothing.
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_instance.vm);
         const Identifier& key = resolvedKey(module);
         if (scope.exception()) [[unlikely]] {
             TRY_CLEAR_EXCEPTION(scope, here);

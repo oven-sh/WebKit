@@ -241,6 +241,7 @@ public:
     // True: the link of the importer goes on, and the name that the statement exports is no export of it.
     bool dropExportThatFindsNothing(ModuleID importer, const RequiredNameData&);
     void throwExportAmbiguous(const RequiredNameData&);
+    String pathOfExporterAsLoaderNamesIt(const RequiredNameData&);
     void didRequestFromHost(ModuleID module)
     {
         if (!m_firstModuleRequestedByHost) [[unlikely]]

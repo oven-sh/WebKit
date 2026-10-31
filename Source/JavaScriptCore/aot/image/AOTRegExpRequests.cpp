@@ -12,6 +12,7 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinCalls.h"
 #include "AOTCFG.h"
+#include "AOTCallGraph.h"
 #include "AOTEdgeResults.h"
 #include "AOTFlowResults.h"
 #include "AOTIR.h"
@@ -109,8 +110,9 @@ public:
         friend bool operator==(const Pattern&, const Pattern&) = default;
     };
 
-    TextsFromConstants(const Typed::Program& program, Typed::StringArena& strings, BuildContext& context)
+    TextsFromConstants(const Typed::Program& program, const Typed::CallGraph& callGraph, Typed::StringArena& strings, BuildContext& context)
         : m_program(program)
+        , m_callGraph(callGraph)
         , m_strings(strings)
         , m_context(context)
     {
@@ -161,6 +163,7 @@ public:
         m_bindings.shrink(0);
         m_loopsFollowed.shrink(0);
         m_valuesInTurn.shrink(0);
+        m_memoriesOfChoices.shrink(0);
         Patterns result;
         explore(call, result);
         return result;
@@ -227,9 +230,28 @@ private:
         Constants alternatives;
     };
 
+    struct Remembered {
+        Constants values;
+        bool sawEverything;
+        std::optional<Split> split;
+    };
+
+    // The calls that lead to a loop, its function and header, and what is asked for among all that it hands from turn to turn.
+    using NameOfCarried = std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>;
+
+    // What has been read since one object was chosen among several, or since a turn of a loop began. It holds for as long as what was chosen and bound then stands.
+    struct MemoryOfChoice {
+        size_t numberOfBindings;
+        size_t numberOfValuesInTurn;
+        size_t numberOfLoopsFollowed;
+        HashMap<MemoKey, std::unique_ptr<Remembered>> values;
+        std::set<NameOfCarried> loopsLeftAlone;
+    };
+
     // Every way round the loop passes the header, which takes what one turn hands to the next as parameters and ends by testing one of them.
     struct Loop {
         Typed::BlockID header;
+        uint32_t testedParameter { 0 };
         uint32_t targetThatStays { 0 };
         // The header, and what runs between two passes of it.
         BitVector turn;
@@ -285,7 +307,9 @@ private:
             }
         }
 
-        if (m_split) {
+        // One object is chosen at a time so that its text stays with its flags. Where every text and all flags have been seen and one of the two has no alternatives, nothing can come apart.
+        bool hasNothingToKeepTogether = sawEveryText && sawAllFlags && (texts.size() == 1 || flagSets.size() == 1);
+        if (m_split && !hasNothingToKeepTogether) {
             Split split = WTF::move(*m_split);
             for (const Constant& alternative : split.alternatives) {
                 if (++m_worlds > maxAlternatives()) {
@@ -293,7 +317,9 @@ private:
                     return;
                 }
                 m_bindings.append({ split.value, alternative });
+                beginMemoryOfChoice();
                 explore(call, result);
+                m_memoriesOfChoices.removeLast();
                 m_bindings.removeLast();
             }
             return;
@@ -395,6 +421,46 @@ private:
     // What is read under the choice of one object, or in one turn of a loop, holds there alone.
     bool holdsForEveryChoice() const { return m_bindings.isEmpty() && m_valuesInTurn.isEmpty(); }
 
+    void beginMemoryOfChoice()
+    {
+        m_memoriesOfChoices.append(makeUniqueWithoutFastMallocCheck<MemoryOfChoice>(MemoryOfChoice { m_bindings.size(), m_valuesInTurn.size(), m_loopsFollowed.size(), { }, { } }));
+    }
+
+    // None where something more has been chosen or bound since the memory began, and none for a value of a loop that has been entered since.
+    MemoryOfChoice* memoryOfChoiceFor(const Activation& activation, const Typed::Function& function, ValueID id)
+    {
+        if (m_memoriesOfChoices.isEmpty())
+            return nullptr;
+        MemoryOfChoice& memory = *m_memoriesOfChoices.last();
+        if (memory.numberOfBindings != m_bindings.size() || memory.numberOfValuesInTurn != m_valuesInTurn.size())
+            return nullptr;
+        return isDefinedInLoopFollowed(activation, function, id, memory.numberOfLoopsFollowed) ? nullptr : &memory;
+    }
+
+    // Where it is noted that a loop cannot be followed, so that it is tried once. Nowhere where that may change with the next thing bound.
+    std::set<NameOfCarried>* loopsLeftAlone()
+    {
+        if (holdsForEveryChoice())
+            return &m_loopsLeftAlone;
+        if (m_memoriesOfChoices.isEmpty())
+            return nullptr;
+        MemoryOfChoice& memory = *m_memoriesOfChoices.last();
+        return memory.numberOfBindings == m_bindings.size() && memory.numberOfValuesInTurn == m_valuesInTurn.size() ? &memory.loopsLeftAlone : nullptr;
+    }
+
+    void beginPartOfLoop(const Activation& activation, const Loop& loop, PartOfLoop part)
+    {
+        m_loopsFollowed.append(LoopFollowed { activation.call, activation.function, &loop, part });
+        if (part == PartOfLoop::Turn)
+            beginMemoryOfChoice();
+    }
+
+    void endPartOfLoop()
+    {
+        if (m_loopsFollowed.takeLast().part == PartOfLoop::Turn)
+            m_memoriesOfChoices.removeLast();
+    }
+
     bool mayFollowAnotherValue()
     {
         if (m_stackCheck.isSafeToRecurse() && ++m_valuesFollowed <= m_budget)
@@ -443,6 +509,14 @@ private:
         MemoKey memoKey { callsLeadingTo(activation), nullptr, activation.function.index(), id.index() };
         if (const Constants* remembered = mayRemember ? recall(memoKey) : nullptr)
             return *remembered;
+        if (MemoryOfChoice* memory = memoryOfChoiceFor(activation, function, id)) {
+            if (auto remembered = memory->values.find(memoKey); remembered != memory->values.end()) {
+                m_sawEverything &= remembered->value->sawEverything;
+                if (remembered->value->split)
+                    m_split = remembered->value->split;
+                return remembered->value->values;
+            }
+        }
 
         unsigned walksCutShortBefore = m_walksCutShort;
         bool sawEverythingBefore = std::exchange(m_sawEverything, true);
@@ -455,6 +529,8 @@ private:
             m_split = Split { { activation.function, id }, result };
         if (mayRemember && m_walksCutShort == walksCutShortBefore && m_valuesFollowed <= maxValuesFollowed)
             m_remembered.add(memoKey, makeUniqueWithoutFastMallocCheck<Remembered>(Remembered { result, m_sawEverything, m_split }));
+        else if (MemoryOfChoice* memory = memoryOfChoiceFor(activation, function, id); memory && m_walksCutShort == walksCutShortBefore && m_valuesFollowed <= m_budget)
+            memory->values.add(memoKey, makeUniqueWithoutFastMallocCheck<Remembered>(Remembered { result, m_sawEverything, m_split }));
         m_sawEverything &= sawEverythingBefore;
         if (!m_split)
             m_split = WTF::move(splitBefore);
@@ -525,14 +601,14 @@ private:
             return resultsOf(activation, value);
         case Typed::Opcode::CallBuiltin:
         case Typed::Opcode::CallInline:
-            return answersOfBuiltin(activation, value, builtinCallOf(m_program, value));
+            return answersOfBuiltin(activation, id, builtinCallOf(m_program, value));
         case Typed::Opcode::Call:
         case Typed::Opcode::CallMethod: {
             Constants answers;
             bool isBuiltin = false;
             forEachBuiltinCall(value, [&](const Typed::BuiltinCall& call) {
                 if (!std::exchange(isBuiltin, true))
-                    answers = answersOfBuiltin(activation, value, call);
+                    answers = answersOfBuiltin(activation, id, call);
             });
             return isBuiltin ? answers : answersOfMethodOfText(activation, function, value);
         }
@@ -1600,7 +1676,10 @@ private:
         const Typed::Value& test = function.at(terminator.conditionOperand());
         if (!testsOfCounters.contains(test.opcode))
             return nullptr;
-        if (!block.parameters.contains(throughChecks(function, test.leftOperand())) && !block.parameters.contains(throughChecks(function, test.rightOperand())))
+        size_t testedParameter = block.parameters.find(throughChecks(function, test.leftOperand()));
+        if (testedParameter == notFound)
+            testedParameter = block.parameters.find(throughChecks(function, test.rightOperand()));
+        if (testedParameter == notFound)
             return nullptr;
         return m_loops.ensure(static_cast<uint64_t>(id.index()) << 32 | header.index(), [&]() -> std::unique_ptr<Loop> {
             BitVector atHeader(function.blocks.size());
@@ -1615,6 +1694,7 @@ private:
             }
             auto loop = makeUniqueWithoutFastMallocCheck<Loop>();
             loop->header = header;
+            loop->testedParameter = static_cast<uint32_t>(testedParameter);
             unsigned targetsThatStay = 0;
             for (uint32_t index = 0; index < 2; ++index) {
                 Typed::BlockID target = terminator.targets[index].block;
@@ -1654,10 +1734,10 @@ private:
     }
 
     // It is read along the part that is followed, and holds for that part alone.
-    bool isDefinedInLoopFollowed(const Activation& activation, const Typed::Function& function, ValueID id)
+    bool isDefinedInLoopFollowed(const Activation& activation, const Typed::Function& function, ValueID id, size_t firstLoop = 0)
     {
         Typed::BlockID block;
-        for (const LoopFollowed& followed : m_loopsFollowed) {
+        for (const LoopFollowed& followed : m_loopsFollowed.span().subspan(std::min(firstLoop, m_loopsFollowed.size()))) {
             if (followed.call != activation.call || followed.function != activation.function)
                 continue;
             if (!block) {
@@ -1688,11 +1768,12 @@ private:
         bool sawEverything { false };
     };
 
-    Vector<ValuesAtHeader, 4> valuesArrivingAtHeader(const Activation& activation, const Typed::Function& function, const Loop& loop, PartOfLoop part)
+    // Of all parameters of the header, or of one alone.
+    Vector<ValuesAtHeader, 4> valuesArrivingAtHeader(const Activation& activation, const Typed::Function& function, const Loop& loop, PartOfLoop part, std::optional<uint32_t> only = std::nullopt)
     {
-        m_loopsFollowed.append(LoopFollowed { activation.call, activation.function, &loop, part });
+        beginPartOfLoop(activation, loop, part);
         Vector<ValuesAtHeader, 4> arriving(function.at(loop.header).parameters.size());
-        for (uint32_t index = 0; index < arriving.size(); ++index) {
+        for (uint32_t index = only.value_or(0); index < (only ? *only + 1 : arriving.size()); ++index) {
             bool sawEverythingBefore = std::exchange(m_sawEverything, true);
             for (Typed::Edge edge : cfgOf(activation.function).incomingEdges(loop.header)) {
                 if (isOffTheWayFollowed(activation, loop.header, edge))
@@ -1703,7 +1784,7 @@ private:
             }
             arriving[index].sawEverything = std::exchange(m_sawEverything, sawEverythingBefore) && !arriving[index].values.isEmpty();
         }
-        m_loopsFollowed.removeLast();
+        endPartOfLoop();
         return arriving;
     }
 
@@ -1719,8 +1800,6 @@ private:
         return std::abs(left[0].primitive.asNumber() - right[0].primitive.asNumber());
     }
 
-    using NameOfCarried = std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>;
-
     NameOfCarried nameOf(const Activation& activation, const Loop& loop, uint32_t carried) { return { callsLeadingTo(activation), activation.function.index(), loop.header.index(), carried }; }
 
     // A loop over a list that the walk knows hands a value from row to row: the value of one turn comes of the value of the turn before and of that turn's row. Each turn is walked as any
@@ -1732,19 +1811,25 @@ private:
             return followed.loop == &loop && followed.call == activation.call;
         });
         NameOfCarried name = nameOf(activation, loop, carried);
-        if (isBeingFollowed || m_loopsLeftAlone.contains(name))
+        std::set<NameOfCarried>* leftAlone = loopsLeftAlone();
+        if (isBeingFollowed || (leftAlone && leftAlone->contains(name)))
             return std::nullopt;
 
         const Typed::Block& header = function.at(loop.header);
         const Typed::Value& test = function.at(header.terminator.conditionOperand());
-        bool holdsForEveryChoiceBefore = holdsForEveryChoice();
         size_t numberOfValuesInTurnBefore = m_valuesInTurn.size();
         bool isLeft = false;
         bool isShortOfBudget = false;
         std::optional<double> distanceBefore;
-        Vector<ValuesAtHeader, 4> arriving = valuesArrivingAtHeader(activation, function, loop, PartOfLoop::WayIn);
+        // Most loops count up to what nobody knows. That shows before anything else that they hand on is looked at.
+        Vector<ValuesAtHeader, 4> arriving = valuesArrivingAtHeader(activation, function, loop, PartOfLoop::WayIn, loop.testedParameter);
+        m_valuesInTurn.append(ValueInTurn { activation.call, { activation.function, header.parameters[loop.testedParameter] }, arriving[loop.testedParameter].values, arriving[loop.testedParameter].sawEverything });
+        bool canAnswerTest = answerOf(activation, function, header.terminator.conditionOperand()) != Typed::KnownBoolean::Unknown;
+        m_valuesInTurn.shrink(numberOfValuesInTurnBefore);
+        if (canAnswerTest)
+            arriving = valuesArrivingAtHeader(activation, function, loop, PartOfLoop::WayIn);
         std::optional<Split> splitBefore = m_split;
-        while (mayFollowAnotherValue()) {
+        while (canAnswerTest && mayFollowAnotherValue()) {
             m_valuesInTurn.shrink(numberOfValuesInTurnBefore);
             for (uint32_t index = 0; index < arriving.size(); ++index)
                 m_valuesInTurn.append(ValueInTurn { activation.call, { activation.function, header.parameters[index] }, arriving[index].values, arriving[index].sawEverything });
@@ -1778,8 +1863,8 @@ private:
             return arriving;
         }
         // Another walk may come here with more left to spend.
-        if (holdsForEveryChoiceBefore && !isShortOfBudget && m_valuesFollowed <= m_budget)
-            m_loopsLeftAlone.insert(name);
+        if (leftAlone && !isShortOfBudget && m_valuesFollowed <= m_budget)
+            leftAlone->insert(name);
         return std::nullopt;
     }
 
@@ -1792,8 +1877,8 @@ private:
         if (!arriving)
             return std::nullopt;
         if (arriving->at(asked).values.isEmpty()) {
-            if (holdsForEveryChoice())
-                m_loopsLeftAlone.insert(nameOf(activation, loop, asked));
+            if (std::set<NameOfCarried>* leftAlone = loopsLeftAlone())
+                leftAlone->insert(nameOf(activation, loop, asked));
             return std::nullopt;
         }
         m_sawEverything &= arriving->at(asked).sawEverything;
@@ -1816,7 +1901,7 @@ private:
             return std::nullopt;
         const Typed::CFG& cfg = cfgOf(activation.function);
         auto textsArrivingAlong = [&](PartOfLoop part, TextsWhereBlocksEnd& remembered) {
-            m_loopsFollowed.append(LoopFollowed { activation.call, activation.function, &loop, part });
+            beginPartOfLoop(activation, loop, part);
             Constants texts;
             for (Typed::Edge edge : cfg.incomingEdges(loop.header)) {
                 if (!cfg.isReachable(edge.from) || isOffTheWayFollowed(activation, loop.header, edge))
@@ -1824,7 +1909,7 @@ private:
                 if (!addAll(texts, textsWhereEdgeBegins(activation, function, builder, edge, loop.header, remembered)))
                     break;
             }
-            m_loopsFollowed.removeLast();
+            endPartOfLoop();
             return texts;
         };
         TextsWhereBlocksEnd rememberedOnWayIn;
@@ -1863,6 +1948,13 @@ private:
             Typed::IncomingValue incoming = incomingValueOf(function, edge, location->index);
             if (incoming.kind == Typed::IncomingValue::Kind::Argument) {
                 if (!addAll(values, evaluate(activation, incoming.argument)))
+                    break;
+                continue;
+            }
+            // Where the inline form of a built-in is done, it has answered what the built-in answers.
+            const Typed::Terminator& terminator = function.at(edge.from).terminator;
+            if (terminator.kind == Typed::TerminatorKind::TryCallInline && !edge.isHandlerEdge() && !edge.targetIndex && !incoming.result.resultIndex) {
+                if (!addAll(values, answersOfBuiltin(activation, ValueID(), builtinCallOf(m_program, terminator))))
                     break;
                 continue;
             }
@@ -1964,8 +2056,8 @@ private:
                 return { };
             return evaluate(*activation.caller, arguments[index]);
         }
-        // Other operations may enter the function too.
-        m_sawEverything = false;
+        // Other operations may enter the function too, unless the call graph has found that nothing but direct calls names it.
+        m_sawEverything &= m_callGraph.entrySet(activation.function) == Typed::EntrySet::DirectCallers;
         Constants values;
         for (const DirectCall& call : std::ranges::equal_range(m_directCalls, activation.function, { }, &DirectCall::callee)) {
             // Nothing can be followed any more, and a function may have thousands of callers.
@@ -2186,7 +2278,7 @@ private:
                 continue;
             for (BuiltinOverloadID overload : table.overloadIDsOf(table.canonicalID(member))) {
                 if (table.at(overload).mode == BuiltinCallMode::Call)
-                    return answersOfBuiltin(activation, call, Typed::BuiltinCall { overload, Typed::BuiltinCallForm::Whole, 0, receiver, call.argumentsOperands() });
+                    return answersOfBuiltin(activation, idOf(activation.function, call), Typed::BuiltinCall { overload, Typed::BuiltinCallForm::Whole, 0, receiver, call.argumentsOperands() });
             }
         }
         return { };
@@ -2431,7 +2523,8 @@ private:
         return summary.sourceIsPattern ? literal.pattern : m_strings.intern(StringView(summary.source));
     }
 
-    Constants answersOfBuiltin(const Activation& activation, const Typed::Value& value, const Typed::BuiltinCall& call)
+    // `id` is the operation that calls. A terminator that calls has none.
+    Constants answersOfBuiltin(const Activation& activation, ValueID id, const Typed::BuiltinCall& call)
     {
         const BuiltinTable& table = m_program.builtins();
         const BuiltinOverload& overload = table.at(call.overload);
@@ -2461,7 +2554,7 @@ private:
         if (callee == Builtins::RegExp)
             return createdBy(activation, call);
         if (overload.mode == BuiltinCallMode::Call && callee == Builtins::ArrayPrototypeMap && !call.arguments.empty())
-            return { literalIn(activation, ValueID(static_cast<uint32_t>(&value - m_program.at(activation.function).values.span().data()))) };
+            return id ? Constants { literalIn(activation, id) } : Constants();
         if (overload.mode == BuiltinCallMode::Call && callee == Builtins::ObjectFreeze && call.arguments.size() == 1)
             return evaluate(activation, call.arguments[0]);
         if (overload.mode == BuiltinCallMode::Call && callee == Builtins::ArrayPrototypeJoin && call.arguments.size() <= 1) {
@@ -2701,18 +2794,13 @@ private:
     }
 
     const Typed::Program& m_program;
+    const Typed::CallGraph& m_callGraph;
     Typed::StringArena& m_strings;
     BuildContext& m_context;
     // The walk summarizes a RegExp that it has put together itself, at whatever depth it stands.
     WTF::StackCheck m_stackCheck { Thread::currentSingleton().stack(), regExpCompilerStackSize + 16 * KB };
     Subject m_subject;
     std::map<std::pair<uint32_t, const Typed::Value*>, uint32_t> m_chainsOfCalls;
-    struct Remembered {
-        Constants values;
-        bool sawEverything;
-        std::optional<Split> split;
-    };
-
     unsigned m_valuesFollowed { 0 };
     unsigned m_walksCutShort { 0 };
     unsigned m_worlds { 0 };
@@ -2722,6 +2810,7 @@ private:
     Vector<std::pair<ValueKey, Constant>, 4> m_bindings;
     Vector<LoopFollowed, 2> m_loopsFollowed;
     Vector<ValueInTurn, 8> m_valuesInTurn;
+    Vector<std::unique_ptr<MemoryOfChoice>, 2> m_memoriesOfChoices;
     HashMap<uint64_t, std::unique_ptr<Loop>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_loops;
     std::set<NameOfCarried> m_loopsLeftAlone;
     Vector<Vector<StringID>> m_listsOfTexts;
@@ -2868,12 +2957,12 @@ static void collectCandidates(CollectionInputs& inputs, const Typed::BuiltinCall
     inputs.callsWithUnknownText.append(CallWithUnknownText { site, block, call.arguments[0], call.arguments.size() > 1 ? call.arguments[1] : ValueID(), WTF::move(flagSets), flags.isComplete });
 }
 
-static void addCandidatesFromConstants(const Typed::Program& program, Typed::StringArena& strings, BuildContext& context, Vector<CallWithUnknownText>&& calls, Vector<FoundRegExp>& found)
+static void addCandidatesFromConstants(const Typed::Program& program, const Typed::CallGraph& callGraph, Typed::StringArena& strings, BuildContext& context, Vector<CallWithUnknownText>&& calls, Vector<FoundRegExp>& found)
 {
     if (calls.isEmpty())
         return;
     AOT::sort(calls, { }, &CallWithUnknownText::site);
-    TextsFromConstants constants(program, strings, context);
+    TextsFromConstants constants(program, callGraph, strings, context);
     for (const CallWithUnknownText& call : calls) {
         TextsFromConstants::Patterns known = constants.patternsOf(call);
         RegExpRequestOrigin origin = known.sawEveryText || known.patterns.size() == 1 ? RegExpRequestOrigin::Evaluated : RegExpRequestOrigin::Candidate;
@@ -2950,7 +3039,7 @@ static void internMetadataStrings(RegExpRequest& request, const Typed::Program& 
     });
 }
 
-RegExpRequests collectRegExpRequests(const Typed::Program& program, const Typed::FlowResults& flow, Typed::StringArena& strings, BuildContext& context)
+RegExpRequests collectRegExpRequests(const Typed::Program& program, const Typed::FlowResults& flow, const Typed::CallGraph& callGraph, Typed::StringArena& strings, BuildContext& context)
 {
     PhaseTimes times(context, PassID::CollectRegExpLiterals);
     CollectionInputs inputs { program, flow, context };
@@ -2958,7 +3047,7 @@ RegExpRequests collectRegExpRequests(const Typed::Program& program, const Typed:
         collectFromFunction(inputs, FunctionID(index), foundInFunction);
     });
     times.didFinish("collect from functions"_s);
-    addCandidatesFromConstants(program, strings, context, WTF::move(inputs.callsWithUnknownText), found);
+    addCandidatesFromConstants(program, callGraph, strings, context, WTF::move(inputs.callsWithUnknownText), found);
     times.didFinish("addCandidatesFromConstants"_s);
     parallelSort(context.parallelLoops(), found.mutableSpan(), [](const FoundRegExp& a, const FoundRegExp& b) {
         return std::tuple { a.origin, a.pattern, a.flags.toRaw(), a.site } < std::tuple { b.origin, b.pattern, b.flags.toRaw(), b.site };

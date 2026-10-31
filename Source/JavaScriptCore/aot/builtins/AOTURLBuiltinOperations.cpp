@@ -301,7 +301,7 @@ static EncodedJSValue listQueryPairs(JSGlobalObject* globalObject, JSValue textV
     VM& vm = globalObject->vm();
     NarrowCopy copy;
     auto text = *latin1SpanWithoutResolving(globalObject, textValue, copy);
-    Structure* structure = globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous);
+    Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
     JSArray* list = JSArray::create(vm, structure, Typed::PlainURL::numberOfPairs(query.asInt32()));
     unsigned index = 0;
     forEachPlainQueryPair(text, [&](auto name, size_t value, size_t end) {

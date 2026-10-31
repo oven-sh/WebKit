@@ -26,6 +26,7 @@ namespace JSC { namespace AOT { namespace Typed {
 static constexpr OpcodeSet birthStoresBySlot { Opcode::PutSlot, Opcode::PutSlotOrAdd };
 static constexpr OpcodeSet birthStoresByName { Opcode::PropSet, Opcode::PropDefine };
 static constexpr OpcodeSet finishingOperations { Opcode::FinishBirth, Opcode::TryFinishBirth };
+static constexpr OpcodeSet slotAccessesBehindGuards { Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::PutSlot, Opcode::PutSlotOrAdd };
 
 static constexpr OpcodeSet operationsThatKeepObjectPrivate {
     Opcode::PutSlot, Opcode::PutSlotOrAdd, Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::IsSlotFilled, Opcode::ShapeTest, Opcode::HasNoExtraProperties, Opcode::HasNoFieldOutsideSlot,
@@ -52,6 +53,7 @@ public:
         collectObjects();
         if (m_objects.isEmpty())
             return PassOutcome::Unchanged;
+        m_marksMayComeBack = storesMarkerInPlaceOfRawValueSomewhere();
 
         Vector<std::optional<States>> atEnd(m_function.blocks.size());
         for (BlockID block : m_cfg.reversePostOrder()) {
@@ -104,6 +106,7 @@ private:
         bool isFinished { false };
         bool isReachableByOthers { true };
         bool wasSeenByOthers { true };
+        bool wasFoundFinishedByTest { false };
 
         void meet(const State& other)
         {
@@ -113,6 +116,7 @@ private:
             mayHoldMoreThanIsListed |= other.mayHoldMoreThanIsListed;
             isAlive &= other.isAlive;
             isFinished &= other.isFinished;
+            wasFoundFinishedByTest = isFinished && (wasFoundFinishedByTest || other.wasFoundFinishedByTest);
             isReachableByOthers |= other.isReachableByOthers;
             wasSeenByOthers |= other.wasSeenByOthers;
         }
@@ -124,6 +128,7 @@ private:
             isFinished = false;
             isReachableByOthers = true;
             wasSeenByOthers = true;
+            wasFoundFinishedByTest = false;
         }
     };
     using States = Vector<State, 4>;
@@ -484,7 +489,7 @@ private:
     {
         BitVector isFinishedOnSomeWay(m_objects.size());
         forEachArrival(block, [&](BlockID predecessor, uint32_t object, uint32_t arriving) {
-            if (atEnd[predecessor.index()] && (*atEnd[predecessor.index()])[arriving].isFinished)
+            if (atEnd[predecessor.index()] && (*atEnd[predecessor.index()])[arriving].isFinished && !(*atEnd[predecessor.index()])[arriving].wasFoundFinishedByTest)
                 isFinishedOnSomeWay.quickSet(object);
         });
         forEachArrival(block, [&](BlockID predecessor, uint32_t object, uint32_t arriving) {
@@ -561,6 +566,26 @@ private:
         return facts.find(Proof::NoFieldOutsideSlot, object) || facts.find(Proof::BirthFieldsFilled, object);
     }
 
+    bool storesMarkerInPlaceOfRawValueSomewhere() const
+    {
+        return std::ranges::any_of(m_cfg.reversePostOrder(), [&](BlockID block) {
+            return std::ranges::any_of(m_function.at(block).values, [&](ValueID id) {
+                return birthStoresBySlot.contains(m_function.at(id).opcode) && mayStoreMarkerInPlaceOfRawValue(m_function.at(id));
+            });
+        });
+    }
+
+    bool isBehindTestThatFoundNoMark(const Value& access) const
+    {
+        ValueID guard = access.guardOperand();
+        if (!guard || m_marksMayComeBack)
+            return false;
+        const GuardFact* fact = m_context.analyses.guardFacts(guard).find(Proof::BirthFieldsFilled, m_context.analyses.identityOf(guardedOperandOf(access)));
+        return fact && !fact->origins.isEmpty() && std::ranges::all_of(fact->origins, [&](const GuardOrigin& origin) {
+            return origin.source == GuardSource::Test && m_function.at(origin.test).opcode == Opcode::HasBirthFieldsFilled;
+        });
+    }
+
     void walk(BlockID id, States& states)
     {
         const Block& block = m_function.at(id);
@@ -568,6 +593,12 @@ private:
             const Value& value = m_function.at(block.values[index]);
             if (std::optional<uint32_t> born = objectDefinedBy(block.values[index]))
                 states[*born] = m_isMadeElsewhere.get(*born) ? stateOfObjectMadeElsewhere() : stateAtBirth(value);
+            if (slotAccessesBehindGuards.contains(value.opcode)) {
+                if (std::optional<uint32_t> object = objectNamedBy(guardedOperandOf(value)); object && !states[*object].isFinished && isBehindTestThatFoundNoMark(value)) {
+                    states[*object].isFinished = true;
+                    states[*object].wasFoundFinishedByTest = true;
+                }
+            }
             Effects effects = m_context.analyses.effectsOf(block.values[index]).onAnyEdge();
             value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
                 std::optional<uint32_t> object = objectNamedBy(operand);
@@ -688,6 +719,7 @@ private:
     Vector<ValueID, 4> m_testsOfUnfinishedObjects;
     ValueID m_allocatedThis;
     bool m_thisMayHaveBeenSeen { false };
+    bool m_marksMayComeBack { false };
 };
 
 } // anonymous namespace

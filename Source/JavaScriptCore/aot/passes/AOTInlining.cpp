@@ -791,6 +791,38 @@ static bool isMadeWheneverFunctionRuns(FunctionAnalyses& analyses, BlockID block
     return analyses.blockFrequencies().frequencyOf(blockOfCall).predicted() >= minFrequency;
 }
 
+struct HeadOfFunction {
+    BitVector blocks;
+    uint32_t bytes { 0 };
+};
+
+static HeadOfFunction findHeadWithin(BuildContext& build, FunctionAnalyses& analyses, const Function& function, const BitVector& blocksBoundToFrame, AbstractHeapSet heapsWrittenTwiceUnseen, NOESCAPE const Invocable<uint32_t(BlockID)> auto& bytesOf, NOESCAPE const Invocable<bool(uint64_t)> auto& isTooLarge)
+{
+    uint32_t admittedBytes = 0;
+    BitVector headBlocks = findHeadBlocks(function, analyses, [&](BlockID id) {
+        const Block& block = function.at(id);
+        if (!canEndHeadBlockOf(block.terminator.kind) || block.handler || blocksBoundToFrame.get(id.index()))
+            return false;
+        bool leavesNoTrace = std::ranges::all_of(block.values, [&](ValueID value) {
+            const Effects& effects = analyses.effectsOf(value).normal;
+            return (!effects.mayRunOtherCode() && effects.writes.containsOnly(heapsWrittenTwiceUnseen)) || build.isSabotaged(Sabotage::HeadsThatAreCopiedLeaveNoTrace);
+        });
+        if (!leavesNoTrace || isTooLarge(uint64_t { admittedBytes } + bytesOf(id)))
+            return false;
+        admittedBytes += bytesOf(id);
+        return true;
+    });
+    bool returns = false;
+    uint32_t headBytes = 0;
+    for (size_t index : headBlocks) {
+        returns |= function.blocks[index].terminator.kind == TerminatorKind::Return;
+        headBytes += bytesOf(BlockID(index));
+    }
+    if (!returns || !headBlocks.get(entryBlock.index()))
+        return { };
+    return { WTF::move(headBlocks), headBytes };
+}
+
 InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, const Function& function, Expected<HeatClass> heat)
 {
     RELEASE_ASSERT(context.flow);
@@ -864,30 +896,13 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
     };
 
     auto findHead = [&] {
-        uint32_t admittedBytes = 0;
-        BitVector headBlocks = findHeadBlocks(function, analyses, [&](BlockID id) {
-            const Block& block = function.at(id);
-            if (!canEndHeadBlockOf(block.terminator.kind) || block.handler || summary.blocksBoundToFrame.get(id.index()))
-                return false;
-            bool leavesNoTrace = std::ranges::all_of(block.values, [&](ValueID value) {
-                const Effects& effects = analyses.effectsOf(value).normal;
-                return (!effects.mayRunOtherCode() && effects.writes.containsOnly(bookkeepingHeaps)) || build.isSabotaged(Sabotage::HeadsThatAreCopiedLeaveNoTrace);
-            });
-            if (!leavesNoTrace || build.exceeds(LimitID::MaxInlineHeadBytes, uint64_t { admittedBytes } + blockBytes[id.index()], analyses.subject()))
-                return false;
-            admittedBytes += blockBytes[id.index()];
-            return true;
+        HeadOfFunction head = findHeadWithin(build, analyses, function, summary.blocksBoundToFrame, bookkeepingHeaps, [&](BlockID id) {
+            return blockBytes[id.index()];
+        }, [&](uint64_t bytes) {
+            return build.exceeds(LimitID::MaxInlineHeadBytes, bytes, analyses.subject());
         });
-        bool returns = false;
-        uint32_t headBytes = 0;
-        for (size_t index : headBlocks) {
-            returns |= function.blocks[index].terminator.kind == TerminatorKind::Return;
-            headBytes += blockBytes[index];
-        }
-        if (!returns || !headBlocks.get(entryBlock.index()))
-            return;
-        summary.headBlocks = WTF::move(headBlocks);
-        summary.headBytes = headBytes;
+        summary.headBlocks = WTF::move(head.blocks);
+        summary.headBytes = head.bytes;
     };
 
     auto findDecidingParameter = [&](ValueID condition) -> std::optional<uint32_t> {
@@ -2148,6 +2163,9 @@ void copyIn(FunctionPassContext& context, IRBuilder& builder, const InlineReques
     case InlinedPart::Head:
         headBlocks = &request.callee.headBlocks;
         break;
+    case InlinedPart::LongHead:
+        headBlocks = request.longHeadBlocks;
+        break;
     }
     copyBodyIn(builder, request.point, nullptr, headBlocks, request.callee.noReturnBlocks, request.deferredResultReads);
     context.analyses.didChangeControlFlow();
@@ -2720,6 +2738,27 @@ static bool standsBesideCallByValue(const FunctionPassContext& context, const Va
     return !call.callsOwnFunctionObject() && !call.calleeIsKeptInFrame() && context.program.at(call.function()).capabilities.containsAll({ FunctionCapabilities::RecordsCallee, FunctionCapabilities::RecordsCalleeOnceRenamed }) && functionAsWritten(context.program, context.id) != functionAsWritten(context.program, call.function());
 }
 
+// What a call costs, a loop around it pays at every turn. There the part of the callee that only reads, tests and returns may be as large as a whole body may be.
+// A callee with a loop of its own spends its time there, and the call costs it little.
+static HeadOfFunction findLongHead(FunctionPassContext& context, const InliningSummary& summary, FunctionID callee, uint64_t allowedBytes)
+{
+    if (summary.barrier != InlineBarrier::None || summary.hasCycle || ProvisionalFunctions::contains(callee) || allowedBytes <= summary.headBytes)
+        return { };
+    const Function& function = context.program.at(callee);
+    if (function.results.size() != 1)
+        return { };
+    FunctionAnalyses analyses(AnalysisContext { context.build, context.program, &context.inputs.flow, &context.inputs.effects, callee }, function);
+    // A rope that the copy has made flat is flat when the function reads it again.
+    HeadOfFunction head = findHeadWithin(context.build, analyses, function, summary.blocksBoundToFrame, bookkeepingHeaps | AbstractHeapSet { AbstractHeap::StringStorage }, [&](BlockID id) {
+        return estimatedCodeBytes(context.program, function, function.at(id));
+    }, [&](uint64_t bytes) {
+        return bytes > allowedBytes;
+    });
+    if (head.bytes <= summary.headBytes)
+        return { };
+    return head;
+}
+
 InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningSummary& summary, BlockID block, ValueID call)
 {
     const Program& program = context.program;
@@ -2858,7 +2897,11 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     bool movesToItsArguments = bytesOfListThatGoes && hasSingleCallSite(context, value.function(), value.inlineFrame, heat);
     if (canInlineWholeBody && !isTooDeep && (isWithinBudget() || movesToItsArguments))
         verdict.decision = InlineDecision::Inline;
-    else if ((isHot(heat).predicted() || runsInLoopAroundCaller) && summary.canInlineHead()) {
+    else if (HeadOfFunction longHead = isRepeatedByCaller ? findLongHead(context, summary, value.function(), uint64_t { verdict.budgetBytes } + verdict.benefitBytes) : HeadOfFunction { }; !longHead.blocks.isEmpty()) {
+        verdict.decision = InlineDecision::InlineHead;
+        verdict.costBytes = longHead.bytes;
+        verdict.longHeadBlocks = WTF::move(longHead.blocks);
+    } else if ((isHot(heat).predicted() || runsInLoopAroundCaller) && summary.canInlineHead()) {
         verdict.decision = InlineDecision::InlineHead;
         verdict.costBytes = summary.headBytes;
     } else if (!canInlineWholeBody)
@@ -2939,7 +2982,9 @@ static bool isAccepted(const InlineSite& site)
 static InlinedPart partToCopy(const InlineSite& site)
 {
     RELEASE_ASSERT(isAccepted(site));
-    return site.verdict.decision == InlineDecision::InlineHead ? InlinedPart::Head : InlinedPart::WholeBody;
+    if (site.verdict.decision != InlineDecision::InlineHead)
+        return InlinedPart::WholeBody;
+    return site.verdict.longHeadBlocks.isEmpty() ? InlinedPart::Head : InlinedPart::LongHead;
 }
 
 // Nothing is gained in rare code by itself. But an object that goes on into code that runs often meets the one which that code has taken apart, and that one is put together for as long as this one is a cell:
@@ -3356,7 +3401,7 @@ static void copyAcceptedSites(FunctionPassContext& context, IRBuilder& builder, 
     for (size_t index = sites.size(); index--;) {
         const InlineSite& site = sites[index];
         if (isAccepted(site))
-            copyIn(context, builder, InlineRequest { { site.block, site.index }, site.call, partToCopy(site), *site.summary, &resultReads });
+            copyIn(context, builder, InlineRequest { { site.block, site.index }, site.call, partToCopy(site), *site.summary, &resultReads, &site.verdict.longHeadBlocks });
     }
     resultReads.finish();
 

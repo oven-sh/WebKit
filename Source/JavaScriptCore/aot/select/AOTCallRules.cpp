@@ -135,7 +135,7 @@ static bool canCallResolvedTarget(SelectionContext& context, ValueID id)
 {
     const Function& function = context.function();
     const Value& call = function.at(id);
-    if (context.isClaimed(id) || context.isOnSlowPath(id) || call.expectedResult() || numberOfArgumentsOf(call) > numberOfArgumentGPRs || argumentsLentBy(function, call))
+    if (context.isClaimed(id) || context.isOnSlowPath(id) || call.expectedResult() || argumentsLentBy(function, call))
         return false;
 
     BlockID block = context.analyses().useLists().blockOf(id);

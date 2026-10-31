@@ -147,7 +147,9 @@ static bool mayHandFrameArrayTo(const Program& program, const FlowResults* flow,
         return false;
     return std::ranges::all_of(functions->value(), [&](FunctionID callee) {
         std::optional<uint32_t> entryParameter = entryParameterOf(program.at(callee), call, operandIndex);
-        return entryParameter && flow->mayTakeFrameArray(callee, *entryParameter);
+        if (!entryParameter)
+            return false;
+        return call.opcode == Opcode::CallDirect ? flow->mayTakeFrameArray(callee, *entryParameter) : flow->mayTakeFrameArrayWhenCalledByValue(callee, *entryParameter);
     });
 }
 

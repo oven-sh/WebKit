@@ -39,6 +39,7 @@ unsigned replaceTemplateObjectsReadByPosition(FunctionPassContext&);
 unsigned simplifyMatches(FunctionPassContext&, const BuiltinCallSites&);
 unsigned simplifyLastPiecesOfSplits(FunctionPassContext&, const BuiltinCallSites&);
 unsigned leaveURLsUnbuilt(FunctionPassContext&);
+unsigned formatFromPatterns(FunctionPassContext&);
 unsigned expandRangesOfViews(FunctionPassContext&, const BuiltinCallSites&);
 unsigned simplifySearchesOfLiterals(FunctionPassContext&);
 unsigned takeConstantListsApart(FunctionPassContext&);

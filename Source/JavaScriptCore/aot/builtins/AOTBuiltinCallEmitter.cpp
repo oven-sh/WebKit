@@ -482,14 +482,6 @@ Boxed BuiltinCallEmitter::callBuiltinFunction(const OperationContext& context, B
         return callCustomGetter(context, id, *receiver, receiverIsMatched);
     }
 
-    // The function that an accessor has bound to the receiver. The accessor is asked for it, whatever the receiver has under the name by now.
-    if (overload.mode == BuiltinCallMode::Call && m_builtins.at(overload.builtin).kind == BuiltinKind::Accessor) {
-        RELEASE_ASSERT(receiver);
-        Boxed holder = boxCell(builtinCell(context, BuiltinCellKey::object(m_builtins.at(overload.builtin).holder)));
-        Boxed bound = callOperation<Boxed>(context, RuntimeOperation::GetSuperPropertyById, { holder, *receiver, identifierNumber(keyOf(overload)) });
-        return emitter<CallEmitter>().callValue(context, { bound, *receiver, arguments });
-    }
-
     bool constructs = overload.mode == BuiltinCallMode::Construct;
     Boxed callee = boxCell(calleeOf(context, overload));
     Boxed thisValue = undefined();
@@ -732,6 +724,41 @@ void BuiltinCallEmitter::generateNewMapFromData(const ValueContext& value)
         return;
     }
     define(value, callOperation<CellPointer>(value, RuntimeOperation::NewMapFromData, { word32(request->value()) }));
+}
+
+void BuiltinCallEmitter::generateNewFormatterWithPattern(const ValueContext& value)
+{
+    std::optional<Request> request = value->request();
+    if (!request) {
+        failAndDefineZero(generator(), value, InternalErrorKind::PlacedPayloadMissing);
+        return;
+    }
+    define(value, callOperation<CellPointer>(value, RuntimeOperation::NewFormatterWithPattern, { word32(request->value()) }));
+}
+
+void BuiltinCallEmitter::generateSetUpFormatterWithOptions(const ValueContext& value)
+{
+    callVoidOperation(value, RuntimeOperation::SetUpFormatterWithOptions, { in<CellPointer>(value->formatterOperand()) });
+}
+
+void BuiltinCallEmitter::generateFormatDateWithPattern(const ValueContext& value)
+{
+    std::optional<Request> request = value->request();
+    if (!request) {
+        failAndDefineZero(generator(), value, InternalErrorKind::PlacedPayloadMissing);
+        return;
+    }
+    define(value, callOperation<Boxed>(value, RuntimeOperation::FormatWithPattern, { word32(request->value()), boxCell(in<CellPointer>(value->dateOperand())) }));
+}
+
+void BuiltinCallEmitter::generateFormatNumberWithPattern(const ValueContext& value)
+{
+    std::optional<Request> request = value->request();
+    if (!request) {
+        failAndDefineZero(generator(), value, InternalErrorKind::PlacedPayloadMissing);
+        return;
+    }
+    define(value, callOperation<Boxed>(value, RuntimeOperation::FormatWithPattern, { word32(request->value()), boxedOperand(value, value->numberOperand()) }));
 }
 
 void BuiltinCallEmitter::generateNewArgumentList(const ValueContext& value)

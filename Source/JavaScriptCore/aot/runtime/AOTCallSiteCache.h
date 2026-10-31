@@ -104,6 +104,7 @@ public:
     std::optional<SourcePosition> positionOf(const Image&, CompiledFunctionID, CallSiteIndex);
     // It remembers the inlined frames of the functions that were asked for lately.
     InlineFrameReader& inlineFrames() { return m_inlineFrames; }
+    uint64_t numberOfInlineFramesDecoded() const { return m_decodedInlineFrames.numberOfFramesDecoded(); }
 
     static constexpr size_t initialNumberOfEntries = 128;
     static constexpr size_t maxNumberOfEntries = 2048;

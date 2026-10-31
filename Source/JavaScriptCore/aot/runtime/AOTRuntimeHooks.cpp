@@ -70,6 +70,12 @@ bool refusesNameOnNativeConstructor(JSGlobalObject* realm, PropertyName name)
     return !name.isPrivateName() && Closure::isNameThatBuiltinFunctionsRefuse(realm->vm(), name.uid()) && locksBuiltins(realm);
 }
 
+void stopBecauseRealmHasABadTime()
+{
+    dataLogLn("AOT: the realm of a compiled program is having a bad time: an indexed accessor or a read-only index has come to lie above its arrays, which its locked built-ins refuse. Compiled code would go on making arrays that pass it by.");
+    CRASH();
+}
+
 void didCreateRealm(JSGlobalObject* realm)
 {
     refuseEvaluationUnlessAdmitted(realm);

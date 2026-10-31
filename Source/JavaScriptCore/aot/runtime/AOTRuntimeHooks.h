@@ -42,6 +42,8 @@ inline bool keepsPrototypeOfNativeConstructors(JSGlobalObject* realm) { return l
 String messageOfNameRefusedOnBuiltinFunction(PropertyName);
 String messageOfPrototypeRefusedOnBuiltinFunction();
 void didCreateRealm(JSGlobalObject*);
+// The stubs of an image ask words of the instance that are written at the start alone: they would go on making arrays with plain storage.
+[[noreturn]] void stopBecauseRealmHasABadTime();
 inline void didChangePrototypeChain(VM& vm, JSObject* changed, UniquedStringImpl* nameOrNull) { didChangeChainObject(vm, changed, nameOrNull); }
 void didFlattenStructure(VM&, Structure*);
 // A native constructor entered by compiled code's `super(..)` creates an object for this new.target and would give it this Structure.

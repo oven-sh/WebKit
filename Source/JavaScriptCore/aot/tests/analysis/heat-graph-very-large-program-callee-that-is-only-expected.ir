@@ -1,0 +1,32 @@
+# In a very large program a call whose callee nobody has proven counts for the functions that the callee is expected to be, as `this.step()` in a method of a class whose objects have escaped
+# FORM: Prepared
+# OPTIONS: limit=MaxWarmCodeValues:1
+# RUN: heat-graph
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="callsInLoop" parameters=[{type=boolean}, {type=f1 flags=[IsExpected]}, {type=f1|f2 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything ~ f1, v2: anything ~ f1|f2, v3: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = Call v1
+    v6 = Call v2
+    v7 = Call v3
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    Return v5
+}
+function f1 name="expectedTwice" results=[{type=undefined}] {
+    Return
+}
+function f2 name="expectedOnce" results=[{type=undefined}] {
+    Return
+}
+function f3 name="expectedByNobody" results=[{type=undefined}] {
+    Return
+}
+# CHECK: f0 size 7 mass 52.000000: f1*15.000000 f2*5.000000 unknown*30.000000
+# CHECK-NEXT: f1 size 1 mass 1.000000:
+# CHECK-NEXT: f2 size 1 mass 1.000000:
+# CHECK-NEXT: f3 size 1 mass 1.000000:

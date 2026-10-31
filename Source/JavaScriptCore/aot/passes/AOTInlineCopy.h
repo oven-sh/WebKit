@@ -35,7 +35,7 @@ void keepFrameBelowTailCalls(Function&, std::span<const BlockID>, uint32_t frame
 
 InlineDecision canInline(const FunctionPassContext&, const InliningSummary& callee, ValueID call);
 
-enum class InlinedPart : uint8_t { WholeBody, Head };
+enum class InlinedPart : uint8_t { WholeBody, Head, LongHead };
 
 struct InlineRequest {
     ProgramPoint point;
@@ -43,6 +43,7 @@ struct InlineRequest {
     InlinedPart part { InlinedPart::WholeBody };
     const InliningSummary& callee;
     IRBuilder::DeferredResultReads* deferredResultReads { nullptr };
+    const BitVector* longHeadBlocks { nullptr };
 };
 
 // Keeps every id of the caller valid. narrowValueTypes() may renumber them, so typing the copy again is left to the caller's last step.

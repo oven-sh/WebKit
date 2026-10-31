@@ -608,8 +608,6 @@ public:
             }
             return !requiresField;
         });
-        if (layouts.size() > m_build.limit(LimitID::MaxLayoutsInType))
-            return { };
         AOT::sort(layouts);
         return layouts;
     }
@@ -1344,6 +1342,14 @@ private:
                 inheritingLayouts.append(objects);
             return isLayoutOfTable.quickGet(index) ? maker.unite(objects, madeByBuiltins) : objects;
         });
+        Vector<ValueSetID> ofRecordsThatTypedCodeTakes;
+        for (LayoutID layout : universe.m_recordsThatTypedCodeTakes) {
+            if (isLayoutOfTable.quickGet(layout.index()))
+                universe.m_recordsOfTableThatTypedCodeTakes.append(layout);
+            else
+                ofRecordsThatTypedCodeTakes.append(universe.m_objectsOfLayout[layout.index()]);
+        }
+        universe.m_objectsOfRecordsThatTypedCodeTakes = maker.uniteAll(ofRecordsThatTypedCodeTakes.span());
         Vector<ValueSetID> ofLayoutsOfProgram;
         universe.m_isAllocatedByProgram.ensureSize(ofLayout.size());
         for (unsigned index = 0; index < ofLayout.size(); ++index) {

@@ -231,6 +231,40 @@ void testReleaseFollowsCopies()
     CHECK(graph.hint->registersToRelease() == RegisterSet(saved.reg()));
 }
 
+void testReleaseFollowsCopiesOutOfPlaceWrittenSince()
+{
+    ReleaseGraph graph;
+    StackSlot* spilled = graph.addSlot(0);
+    Tmp saved = someSavedRegister();
+    // argument 0 > a slot, where the hint finds it. Then argument 0 > the saved register, and argument 0 takes something else.
+    graph.block->append(Move, nullptr, argumentTmp(0), Arg::stack(spilled));
+    graph.block->append(Move, nullptr, argumentTmp(0), saved);
+    graph.block->append(Move, nullptr, argumentTmp(1), argumentTmp(0));
+    graph.appendHint(Arg::stack(spilled));
+    graph.appendPatchpoint();
+    graph.run();
+    CHECK(graph.numberOfClears() == 1);
+    CHECK(graph.clears(Arg::stack(spilled)));
+    CHECK(graph.hintIsThere());
+    CHECK(graph.hint->registersToRelease() == RegisterSet(saved.reg()));
+}
+
+void testReleaseLeavesCopyOutOfPlaceWrittenInBetween()
+{
+    ReleaseGraph graph;
+    StackSlot* spilled = graph.addSlot(0);
+    Tmp saved = someSavedRegister();
+    graph.block->append(Move, nullptr, argumentTmp(0), Arg::stack(spilled));
+    graph.block->append(Move, nullptr, argumentTmp(1), argumentTmp(0));
+    graph.block->append(Move, nullptr, argumentTmp(0), saved);
+    graph.appendHint(Arg::stack(spilled));
+    graph.appendPatchpoint();
+    graph.run();
+    CHECK(graph.numberOfClears() == 1);
+    CHECK(graph.clears(Arg::stack(spilled)));
+    CHECK(!graph.hintIsThere());
+}
+
 void testReleaseLeavesCopyWrittenSince()
 {
     ReleaseGraph graph;
@@ -436,6 +470,8 @@ void testReleaseLeavesCopiesOfArgumentsThatCalleeKeeps()
         RUN(testReleaseKeepsWordWrittenBeforeCollection()); \
         RUN(testReleaseLeavesOtherDeadValues()); \
         RUN(testReleaseFollowsCopies()); \
+        RUN(testReleaseFollowsCopiesOutOfPlaceWrittenSince()); \
+        RUN(testReleaseLeavesCopyOutOfPlaceWrittenInBetween()); \
         RUN(testReleaseLeavesCopyWrittenSince()); \
         RUN(testReleaseLeavesWordThatAnotherSlotTook()); \
         RUN(testReleaseLeavesWordThatHalfSlotTook()); \

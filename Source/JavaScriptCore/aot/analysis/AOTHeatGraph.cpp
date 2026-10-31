@@ -264,6 +264,12 @@ public:
         return found - m_names.begin();
     }
     std::span<const FunctionID> at(size_t position) const LIFETIME_BOUND { return m_functions.span().subspan(m_first[position], m_first[position + 1] - m_first[position]); }
+    std::span<const FunctionID> accessorsAt(size_t position, FunctionKind kind) const LIFETIME_BOUND
+    {
+        uint32_t first = kind == FunctionKind::Getter ? m_firstGetter[position] : m_firstSetter[position];
+        uint32_t end = kind == FunctionKind::Getter ? m_firstSetter[position] : m_firstGetter[position + 1];
+        return m_accessors.span().subspan(first, end - first);
+    }
     bool isUnderSomeName(FunctionID function) const { return m_isUnderSomeName.get(function.index()); }
     // Of these functions, the ones that lie in objects of one layout, under whatever name. No layout stands for the objects whose layout nobody knows.
     static uint32_t holderOf(LayoutID layout) { return layout ? layout.index() + 1 : 0; }
@@ -274,6 +280,9 @@ private:
     Vector<PropertyKeyID> m_names;
     Vector<uint32_t> m_first;
     Vector<FunctionID> m_functions;
+    Vector<uint32_t> m_firstGetter;
+    Vector<uint32_t> m_firstSetter;
+    Vector<FunctionID> m_accessors;
     BitVector m_isUnderSomeName;
     Vector<uint32_t> m_firstInHolder;
     Vector<FunctionID> m_functionsInHolders;
@@ -396,6 +405,16 @@ FunctionsUnderNames::FunctionsUnderNames(const Program& program, const CallGraph
         m_isUnderSomeName.set(static_cast<uint32_t>(stored));
     }
     m_first.append(m_functions.size());
+    for (size_t position = 0; position < m_names.size(); ++position) {
+        for (auto [kind, first] : { std::pair { FunctionKind::Getter, &m_firstGetter }, std::pair { FunctionKind::Setter, &m_firstSetter } }) {
+            first->append(m_accessors.size());
+            for (FunctionID function : at(position)) {
+                if (program.at(function).kind == kind)
+                    m_accessors.append(function);
+            }
+        }
+    }
+    m_firstGetter.append(m_accessors.size());
 }
 
 static bool readsUnderName(Opcode opcode) { return accessOf(opcode) == Access::Read && PayloadWord::key(opcode); }
@@ -436,6 +455,22 @@ static PropertyKeyID nameOfAccessorInDescriptor(const Program& program, const Va
 
 static PropertyKeyID nameOfAccessorInDescriptor(const Program&, const Terminator&) { return { }; }
 
+struct AccessorsReached {
+    PropertyKeyID name;
+    FunctionKind kind { FunctionKind::Getter };
+};
+
+static AccessorsReached accessorsReachedBy(const Value& access)
+{
+    if (!PayloadWord::key(access.opcode) || !access.key())
+        return { };
+    if (accessOf(access.opcode) == Access::Read)
+        return { access.key(), FunctionKind::Getter };
+    return accessOf(access.opcode) == Access::Store ? AccessorsReached { access.key(), FunctionKind::Setter } : AccessorsReached { };
+}
+
+static AccessorsReached accessorsReachedBy(const Terminator&) { return { }; }
+
 static bool constructsUnknownCallee(const Program& program, const Function& function, const Value& value)
 {
     std::optional<unsigned> callee = OperandPosition::callee(value.opcode);
@@ -443,6 +478,20 @@ static bool constructsUnknownCallee(const Program& program, const Function& func
 }
 
 static bool constructsUnknownCallee(const Program&, const Function&, const Terminator&) { return false; }
+
+static std::span<const FunctionID> expectedCalleesOf(const Program& program, const Function& function, const Value& call)
+{
+    std::optional<unsigned> callee = OperandPosition::callee(call.opcode);
+    if (!callee || !call.operand(*callee))
+        return { };
+    ExpectedType expected = function.at(call.operand(*callee)).expected();
+    if (!expected)
+        return { };
+    std::span<const FunctionID> functions = program.at(expected.predicted()).functions.span();
+    return functions.size() > maxFunctionsOfStoredValue ? std::span<const FunctionID>() : functions;
+}
+
+static std::span<const FunctionID> expectedCalleesOf(const Program&, const Function&, const Terminator&) { return { }; }
 
 enum class EnteredAsValueBy : uint8_t { Nothing, Calls, Constructions };
 
@@ -472,6 +521,7 @@ struct SeenCode {
     BitVector isReached;
     BitVector mayBeCalledAsValue;
     BitVector hasSiteThatMayEnter;
+    BitVector isAccessorReachedUnderItsName;
     bool reachesEverything { false };
     bool seesWhatRuns { false };
 
@@ -485,11 +535,12 @@ struct SeenCode {
 static bool isModuleBodyFunction(const Function& function) { return function.module && function.isModuleBody(); }
 
 // A module is loaded by the entry, or by a module that names it. A closure is made by a body that runs. A call of a callee that nobody knows reaches what has been made and may stand there.
-static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph& callGraph, const FlowResults& flow, const HeatGraph& graph, const ParallelArray<CallsOfNode>& calls, const FunctionsUnderNames& names, const Vector<Vector<FunctionID>>& functionsMadeBy, const BitVector& isCalledByHost, const BitVector& hasOnlySeenCallers, const Vector<Vector<uint32_t>>& namesReadBy, const Vector<Vector<uint32_t>>& holdersReadBy, const Vector<Vector<ModuleID>>& modulesLoadedBy, const Vector<uint8_t>& constructsUnknownValue, EstimateOf estimate, bool hasCallersInOtherImages)
+static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph& callGraph, const FlowResults& flow, const HeatGraph& graph, const ParallelArray<CallsOfNode>& calls, const FunctionsUnderNames& names, const Vector<Vector<FunctionID>>& functionsMadeBy, const BitVector& isCalledByHost, const BitVector& hasOnlySeenCallers, const Vector<Vector<uint32_t>>& namesReadBy, const Vector<Vector<FunctionID>>& accessorsReachedFrom, const Vector<Vector<uint32_t>>& holdersReadBy, const Vector<Vector<ModuleID>>& modulesLoadedBy, const Vector<uint8_t>& constructsUnknownValue, EstimateOf estimate, bool hasCallersInOtherImages)
 {
     unsigned count = graph.numberOfFunctions();
     bool isForClasses = estimate == EstimateOf::Classes;
     SeenCode seen;
+    seen.isAccessorReachedUnderItsName = BitVector(count);
     BitVector& isReached = seen.isReached;
     isReached.ensureSize(calls.size());
     Vector<FunctionID> entrypointOf(count);
@@ -652,6 +703,12 @@ static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph&
                 isUnderNameReadAsValue.quickSet(read.index());
                 reachIfCalled(read);
             }
+        }
+        for (FunctionID accessor : accessorsReachedFrom[node]) {
+            if (hasOnlySeenCallers.get(accessor.index()) || seen.isAccessorReachedUnderItsName.quickSet(accessor.index()))
+                continue;
+            isUnderNameThatIsCalled.quickSet(accessor.index());
+            reachIfCalled(accessor);
         }
         for (uint32_t holder : holdersReadBy[node]) {
             if (isReadUnderUnknownKey.quickSet(holder))
@@ -833,6 +890,8 @@ static WeightedCallList collectHostCalls(const Program& program, const CallGraph
     callees.append(callGraph.functionsCalledByUnknownCode());
     for (size_t index : isCalledPerEvent)
         callees.append(FunctionID(index));
+    for (size_t index : seen.isAccessorReachedUnderItsName)
+        callees.append(FunctionID(index));
     sortAndRemoveDuplicates(loops, callees);
 
     auto comesWithEvents = [&](FunctionID callee) {
@@ -962,7 +1021,9 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
         }
         names = FunctionsUnderNames(program, callGraph, loops);
     }
+    Vector<Vector<FunctionID>> calleesOnlyExpectedBy(followsNames ? 0 : count);
     Vector<Vector<uint32_t>> namesReadBy(countWhereNamesAreFollowed);
+    Vector<Vector<FunctionID>> accessorsReachedFrom(countWhereNamesAreFollowed);
     Vector<Vector<uint32_t>> holdersReadBy(countWhereNamesAreFollowed);
     Vector<Vector<ModuleID>> modulesLoadedBy(countWhereNamesAreFollowed);
     Vector<uint8_t> constructsUnknownValue(FillWith { }, countWhereNamesAreFollowed, static_cast<uint8_t>(0));
@@ -1078,8 +1139,20 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
         };
         auto addUnknownCallee = [&](const auto& instruction, double weight) {
             if (!followsNames) {
+                std::span<const FunctionID> expected = expectedCalleesOf(program, function, instruction);
+                for (FunctionID callee : expected)
+                    add(callee, weight / expected.size());
+                calleesOnlyExpectedBy[index].append(expected);
                 addUnknownCode(weight);
                 return;
+            }
+            if (AccessorsReached reached = isCall(instruction) ? AccessorsReached { } : accessorsReachedBy(instruction); reached.name) {
+                if (std::optional<size_t> position = names.find(reached.name)) {
+                    for (FunctionID accessor : names.accessorsAt(*position, reached.kind)) {
+                        if (!accessorsReachedFrom[index].contains(accessor))
+                            accessorsReachedFrom[index].append(accessor);
+                    }
+                }
             }
             PropertyKeyID name = isCall(instruction) ? nameOfCallee(program, function, instruction) : nameOfAccessorInDescriptor(program, instruction);
             if (!name) {
@@ -1472,7 +1545,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
             if (flow.mayRunUnseenCode())
                 calls[graph.unknownCodeNode().index()] = shareAmong(program, flow, graph, isCalledPerEvent, seen, callGraph.functionsCalledByUnknownCode());
         } else
-            seen = findWhatSeenCodeReaches(program, callGraph, flow, graph, calls, names, functionsMadeBy, isCalledByHost, hasOnlySeenCallers, namesReadBy, holdersReadBy, modulesLoadedBy, constructsUnknownValue, estimate, hasCallersInOtherImages);
+            seen = findWhatSeenCodeReaches(program, callGraph, flow, graph, calls, names, functionsMadeBy, isCalledByHost, hasOnlySeenCallers, namesReadBy, accessorsReachedFrom, holdersReadBy, modulesLoadedBy, constructsUnknownValue, estimate, hasCallersInOtherImages);
         Vector<double> eventsOfHandlers(FillWith { }, count, 0.0);
         if (!isForClasses) {
             forEachIndexInParallel(loops, graph.m_numberOfNames, [&](unsigned position) {
@@ -1645,6 +1718,12 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
             AOT::sort(filled.m_predecessors.mutableSpan().subspan(filled.m_firstPredecessor[index], filled.m_firstPredecessor[index + 1] - filled.m_firstPredecessor[index]));
         });
     };
+    for (unsigned caller = 0; caller < calleesOnlyExpectedBy.size(); ++caller) {
+        for (FunctionID callee : calleesOnlyExpectedBy[caller])
+            graph.m_callsOnlyExpected.append(HeatGraph::packedCall(FunctionID(caller), callee));
+    }
+    AOT::sort(graph.m_callsOnlyExpected);
+    removeRepeatedElements(graph.m_callsOnlyExpected);
     addCallsOfNodes(EstimateOf::Ranks);
     fillEdges(graph);
     uint64_t numberOfValues = 0;
@@ -1659,7 +1738,9 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
         fillEdges(*graphOfClasses);
     }
     build.destroyLater(WTF::move(calls));
+    build.destroyLater(WTF::move(calleesOnlyExpectedBy));
     build.destroyLater(WTF::move(namesReadBy));
+    build.destroyLater(WTF::move(accessorsReachedFrom));
     build.destroyLater(WTF::move(holdersReadBy));
     build.destroyLater(WTF::move(modulesLoadedBy));
     build.destroyLater(WTF::move(functionsMadeBy));

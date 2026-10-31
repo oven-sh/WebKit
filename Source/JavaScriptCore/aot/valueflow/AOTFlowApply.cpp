@@ -1143,8 +1143,10 @@ static void expectAccessorsDefinedBeforeInstances(Program& program, const FlowRe
     if (candidates.isEmpty())
         return;
 
+    // `[key] = 2` in a class body defines under whatever the key turns out to be: it counts for every field of the object.
     auto isDefinedBy = [&](const Candidate& candidate, const Function& function, const Value& definition) {
-        if (fieldAt(program, candidate.field).key != definition.key())
+        PropertyKeyID key = fieldAt(program, candidate.field).key;
+        if (definition.opcode == Opcode::PropDefine && key != definition.key())
             return false;
         const Type& object = program.typeOf(function, definition.objectOperand());
         if (object.anyObject)
@@ -1153,7 +1155,7 @@ static void expectAccessorsDefinedBeforeInstances(Program& program, const FlowRe
             return false;
         std::span<const LayoutID> receivers = program.at(object.layouts).completeMembers();
         return std::ranges::any_of(receivers, [&](LayoutID receiver) {
-            std::optional<FieldReference> field = findField(program, receiver, definition.key(), BaseChain::Predicted);
+            std::optional<FieldReference> field = findField(program, receiver, key, BaseChain::Predicted);
             if (!field)
                 return false;
             FieldReference declaration = declarationOf(program, *field);
@@ -1166,7 +1168,7 @@ static void expectAccessorsDefinedBeforeInstances(Program& program, const FlowRe
             const BlockValues& values = function.blocks[block].values;
             for (uint32_t position = 0; position < values.size(); ++position) {
                 const Value& value = function.at(values[position]);
-                if (value.opcode == Opcode::PropDefine) {
+                if (value.opcode == Opcode::PropDefine || value.opcode == Opcode::ElemDefine) {
                     for (Candidate& candidate : candidates)
                         candidate.isDefined |= isDefinedBy(candidate, function, value);
                     continue;

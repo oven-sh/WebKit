@@ -416,18 +416,23 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayOfLengthOrElement, JSCell*, (Instance*
     OPERATION_RETURN(scope, constructArrayWithSizeQuirk(globalObject, nullptr, JSValue::decode(lengthOrElement)));
 }
 
-static JSArray* newArrayOfHoles(Instance* instance, JSGlobalObject* globalObject, VM& vm, unsigned length, unsigned capacity, IndexingType indexingType)
+enum class FilledBy : bool { Runtime, CompiledCode };
+
+static JSArray* newArrayOfHoles(Instance* instance, JSGlobalObject* globalObject, VM& vm, unsigned length, unsigned capacity, IndexingType indexingType, FilledBy filledBy)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     RELEASE_ASSERT(length <= capacity && (indexingType == ArrayWithDouble || indexingType == ArrayWithInt32 || indexingType == ArrayWithContiguous));
-    // The code that asks for an array with elements stores them into plain storage, and converts the array behind that.
-    if (!length && globalObject->isHavingABadTime()) [[unlikely]] {
-        JSArray* array = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType), length);
-        if (!array)
-            throwOutOfMemoryError(globalObject, scope);
-        return array;
+    Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType);
+    if (structure->indexingType() != indexingType) [[unlikely]] {
+        // Compiled code that asks for an array with elements stores them into plain storage, and converts the array behind that.
+        if (!length || filledBy == FilledBy::Runtime) {
+            JSArray* array = JSArray::tryCreate(vm, structure, length);
+            if (!array)
+                throwOutOfMemoryError(globalObject, scope);
+            return array;
+        }
+        structure = globalObject->originalArrayStructureForIndexingType(indexingType);
     }
-    Structure* structure = globalObject->originalArrayStructureForIndexingType(indexingType);
     if (JSArray* array = tryCreateArrayWithStorage(vm, structure, length, capacity)) {
         instance->findMissingShortArrayAllocator(capacity);
         return array;
@@ -454,7 +459,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfHoles, JSCell*, (Instance* instan
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayOfHoles);
     unsigned length = lengthAndCapacity & ((1u << holeArrayCapacityShift) - 1);
     unsigned capacity = lengthAndCapacity >> holeArrayCapacityShift;
-    OPERATION_RETURN(scope, newArrayOfHoles(instance, globalObject, vm, length, capacity, static_cast<IndexingType>(flags)));
+    OPERATION_RETURN(scope, newArrayOfHoles(instance, globalObject, vm, length, capacity, static_cast<IndexingType>(flags), FilledBy::CompiledCode));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfElements, JSCell*, (Instance* instance, JSCell* sourceCell, uint64_t capacityAndIndexingType))
@@ -464,7 +469,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfElements, JSCell*, (Instance* ins
     uint32_t capacity = static_cast<uint32_t>(capacityAndIndexingType);
     IndexingType indexingType = static_cast<IndexingType>(capacityAndIndexingType >> 32);
     RELEASE_ASSERT(capacity <= MAX_STORAGE_VECTOR_LENGTH && (indexingType == ArrayWithInt32 || indexingType == ArrayWithDouble || indexingType == ArrayWithContiguous));
-    JSArray* array = newArrayOfHoles(instance, globalObject, vm, 0, (capacity ? capacity : BASE_CONTIGUOUS_VECTOR_LEN_EMPTY) | 1, indexingType);
+    JSArray* array = newArrayOfHoles(instance, globalObject, vm, 0, (capacity ? capacity : BASE_CONTIGUOUS_VECTOR_LEN_EMPTY) | 1, indexingType, FilledBy::Runtime);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     appendElements(globalObject, vm, array, source);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
@@ -516,7 +521,7 @@ static JSArray* newArrayOfMembers(Instance* instance, JSGlobalObject* globalObje
         throwOutOfMemoryError(globalObject, scope);
         return nullptr;
     }
-    JSArray* array = newArrayOfHoles(instance, globalObject, vm, length, length | 1, indexingType);
+    JSArray* array = newArrayOfHoles(instance, globalObject, vm, length, length | 1, indexingType, FilledBy::Runtime);
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (array->indexingType() != indexingType) [[unlikely]] {
         unsigned index = 0;

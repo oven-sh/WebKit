@@ -766,7 +766,19 @@ static const Effects* effectsOfVersionThatGivesUpAskedOnce(FunctionPassContext& 
     return answers.add(callback, version ? makeUniqueWithoutFastMallocCheck<Effects>(*version) : nullptr).iterator->value.get();
 }
 
-// Each callback made here for this call that can leave what the program would see to the methods as written.
+static ValueID operandOfTraversal(FunctionAnalyses& analyses, ValueID value)
+{
+    return analyses.sameObjectThroughCasts(value).valueInFrontOfFacts();
+}
+
+static bool isClosureMadeHere(FunctionPassContext& context, const ChainCallback& callback)
+{
+    const Value& closure = context.function.at(operandOfTraversal(context.analyses, callback.function));
+    return closure.opcode == Opcode::NewClosure && closure.function() == callback.callee;
+}
+
+// Each callback that can leave what the program would see to the methods as written. Its version is a closure of what the callback has captured:
+// that stands here where the callback is made here, and else the type of the callback says which function it is a closure of, and so where its captures are read.
 static uint8_t callbacksThatCanGiveUp(FunctionPassContext& context, const ArrayChain& chain, std::span<Effects> effectsOfVersions)
 {
     uint8_t found = 0;
@@ -777,8 +789,7 @@ static uint8_t callbacksThatCanGiveUp(FunctionPassContext& context, const ArrayC
         const Function& callee = context.program.at(callback.callee);
         if (callee.capabilities.contains(FunctionCapabilities::RecordsCallee))
             continue;
-        const Value& closure = context.function.at(context.analyses.sameObjectThroughCasts(callback.function).valueInFrontOfFacts());
-        if (closure.opcode != Opcode::NewClosure || closure.function() != callback.callee)
+        if (!isClosureMadeHere(context, callback) && context.program.typeOf(context.function, operandOfTraversal(context.analyses, callback.function)).singleFunction() != callback.callee)
             continue;
         const Effects asWritten = CalleeSummary(context.analyses.effectContext(), callback.callee)->onCall().onAnyEdge();
         if (!canBeObserved(asWritten) && asWritten.alwaysCompletes())
@@ -799,7 +810,15 @@ static bool standsInFrontOf(FunctionAnalyses& analyses, ProgramPoint point, Valu
     return location.placement != ValuePlacement::Detached && analyses.dominators().strictlyDominates(location.block, point.block);
 }
 
-// The traversal of a chain that is split by tests stands in front of the first call. What it is handed stands there too, or is made there once more: a constant, or a closure of what stands there.
+// Not what makes an object: what fills the object are other values.
+static bool onlyReads(FunctionAnalyses& analyses, ValueID value)
+{
+    Effects effects = analyses.effectsOf(value).onAnyEdge();
+    return interpretedOf(analyses.function().at(value).opcode) != Interpretation::Allocation && effects.writes.isEmpty() && !effects.mayRunOtherCode() && !mayStop(effects);
+}
+
+// The traversal of a chain that is split by tests stands in front of the first call. What it is handed stands there too, or is made there once more: a constant, a closure of what stands there,
+// or what is only read from there, as the variable of a function that is declared elsewhere: where the traversal runs to its end, nothing that the program can see has been written since.
 static bool canBeMadeInFrontOf(FunctionAnalyses& analyses, ProgramPoint point, ValueID value)
 {
     if (standsInFrontOf(analyses, point, value))
@@ -807,18 +826,13 @@ static bool canBeMadeInFrontOf(FunctionAnalyses& analyses, ProgramPoint point, V
     const Value& definition = analyses.function().at(value);
     if (isRematerializable(definition))
         return true;
-    if (definition.opcode != Opcode::NewClosure)
+    if (definition.opcode != Opcode::NewClosure && !onlyReads(analyses, value))
         return false;
     bool canBeMade = true;
     definition.forEachOperand([&](ValueID operand, uint32_t) {
         canBeMade &= standsInFrontOf(analyses, point, operand);
     });
     return canBeMade;
-}
-
-static ValueID operandOfTraversal(FunctionAnalyses& analyses, ValueID value)
-{
-    return analyses.sameObjectThroughCasts(value).valueInFrontOfFacts();
 }
 
 static void forEachOperandOfTraversal(const ArrayChain& chain, NOESCAPE const Invocable<void(ValueID)> auto& functor)
@@ -1254,14 +1268,31 @@ static void rewriteArrayChain(FunctionPassContext& context, IRBuilder& builder, 
         if (!value || !behindLastCall)
             return value;
         ValueID definition = operandOfTraversal(context.analyses, value);
-        return isMadeAnewForTraversal.get(definition.index()) ? insert(Value(function.at(definition))) : definition;
+        if (!isMadeAnewForTraversal.get(definition.index()))
+            return definition;
+        // It is the program's own, made a few lines earlier: no part of the traversal, whose frame is that of a body that was put in here.
+        builder.setOrigin(function.at(definition).origin());
+        ValueID madeAnew = insert(Value(function.at(definition)));
+        builder.setOrigin(origin);
+        return madeAnew;
     };
     Vector<ValueID, 3 + 2 * (ChainShape::maxNumberOfLinks + 1) + 1> arguments;
     arguments.append(chain.source);
     arguments.append(chain.from ? forTraversal(chain.from) : insert(makeInteger(0)));
     arguments.append(valueOrUndefined(forTraversal(chain.to)));
     auto closureThatGivesUp = [&](const ChainCallback& callback) {
-        Value closure = function.at(context.analyses.sameObjectThroughCasts(callback.function).valueInFrontOfFacts());
+        Value closure = isClosureMadeHere(context, callback) ? function.at(operandOfTraversal(context.analyses, callback.function)) : IRBuilder::make(Opcode::NewClosure);
+        if (!isClosureMadeHere(context, callback)) {
+            ValueID written = behindLastCall ? forTraversal(callback.function) : operandOfTraversal(context.analyses, callback.function);
+            Vector<ValueID, 8> captures;
+            for (uint32_t index = 0; index < context.program.at(callback.callee).captures.size(); ++index) {
+                Value capture = IRBuilder::make(Opcode::GetCapture, { written });
+                capture.setFunction(callback.callee);
+                capture.setIndex(index);
+                captures.append(insert(WTF::move(capture)));
+            }
+            closure.setCapturesOperands(captures.span());
+        }
         FunctionID checks = context.derivedFunction(derivedFunctionKey(FunctionRole::ChecksThatGiveUp, callback.callee));
         closure.setFunction(checks);
         closure.type = context.types.intern(Type::forFunction(checks));

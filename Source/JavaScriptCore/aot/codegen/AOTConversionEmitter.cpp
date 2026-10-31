@@ -12,6 +12,7 @@
 #include "AOTCheckedFrameCells.h"
 #include "AOTConstantEmitter.h"
 #include "AOTEdgeResults.h"
+#include "AOTFunctionAnalyses.h"
 #include "AOTNumberLiteralStrings.h"
 #include "AOTPureOperations.h"
 #include "AOTRepresentation.h"

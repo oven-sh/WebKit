@@ -174,12 +174,26 @@ private:
         inst.extraClobberedRegs().forEach(visit);
     }
 
+    using CopiesByPlace = UncheckedKeyHashMap<unsigned, BitVector, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
+
+    static BitVector takeCopiesOf(CopiesByPlace& copiesOf, unsigned place)
+    {
+        auto iterator = copiesOf.find(place);
+        if (iterator == copiesOf.end())
+            return { };
+        BitVector copies = WTF::move(iterator->value);
+        copiesOf.remove(iterator);
+        return copies;
+    }
+
     // Walking backward from the hint.
     struct Trail {
         // The places that hold the value here.
         BitVector holds;
         // The places that are written between here and the hint.
         BitVector rewritten;
+        // By a place that is not known to hold the value: the places that still hold at the hint what was copied out of it between here and there.
+        CopiesByPlace copiesOf;
     };
 
     // `found`: the places that hold the value at the hint.
@@ -188,25 +202,38 @@ private:
         auto write = [&](unsigned place) {
             trail.holds.quickClear(place);
             trail.rewritten.quickSet(place);
+            trail.copiesOf.remove(place);
         };
         bool grew = false;
         if (inst.kind.opcode == Move && inst.args().size() >= 2 && placeOf(inst.args()[1])) {
             std::optional<unsigned> source = placeOf(inst.args()[0]);
             unsigned target = *placeOf(inst.args()[1]);
             bool targetHolds = trail.holds.quickGet(target);
-            if (!targetHolds && source && trail.holds.quickGet(*source) && !trail.rewritten.quickGet(target))
-                grew |= !found.quickSet(target);
+            // What the source holds here is at the hint in the target, and wherever the target was copied to.
+            BitVector copies = takeCopiesOf(trail.copiesOf, target);
+            if (!trail.rewritten.quickGet(target)) {
+                copies.ensureSize(m_numberOfPlaces);
+                copies.quickSet(target);
+            }
             write(target);
             if (inst.args().size() == 3) {
                 if (auto scratch = placeOf(inst.args()[2]))
                     write(*scratch);
             }
-            if (targetHolds && source) {
-                trail.holds.quickSet(*source);
-                if (!trail.rewritten.quickGet(*source))
-                    grew |= !found.quickSet(*source);
+            if (!source)
+                return false;
+            if (!targetHolds && !trail.holds.quickGet(*source)) {
+                if (!copies.isEmpty())
+                    trail.copiesOf.add(*source, BitVector()).iterator->value.merge(copies);
+                return false;
             }
-            return grew;
+            copies.merge(takeCopiesOf(trail.copiesOf, *source));
+            trail.holds.quickSet(*source);
+            if (!trail.rewritten.quickGet(*source)) {
+                copies.ensureSize(m_numberOfPlaces);
+                copies.quickSet(*source);
+            }
+            return mergeInto(found, copies);
         }
         forEachClobberedPlace(inst, write);
         inst.forEachArg([&](Arg& arg, Arg::Role role, Bank, Width) {
@@ -243,13 +270,16 @@ private:
                         Trail& known = added.iterator->value;
                         size_t before = known.rewritten.bitCount();
                         known.rewritten.filter(trail.rewritten);
-                        if (!mergeInto(known.holds, trail.holds) && known.rewritten.bitCount() == before)
+                        bool changed = mergeInto(known.holds, trail.holds) || known.rewritten.bitCount() != before;
+                        for (auto& [place, copies] : trail.copiesOf)
+                            changed |= mergeInto(known.copiesOf.add(place, BitVector()).iterator->value, copies);
+                        if (!changed)
                             continue;
                     }
                     worklist.append(predecessor);
                 }
             };
-            walk(hintBlock, hintIndex, Trail { found, BitVector(m_numberOfPlaces) });
+            walk(hintBlock, hintIndex, Trail { found, BitVector(m_numberOfPlaces), { } });
             while (!worklist.isEmpty()) {
                 BasicBlock* block = worklist.takeLast();
                 walk(block, block->size(), atTail.get(block->index()));

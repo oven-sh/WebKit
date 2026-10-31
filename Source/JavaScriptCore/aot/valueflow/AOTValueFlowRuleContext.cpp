@@ -82,6 +82,8 @@ void ValueFlowRuleContext::keepSetsHeld(ValueSets& sets) const
     }
     sets.keep(m_closuresTakingReceiver.closures);
     sets.keep(m_objectsToldApart.objects);
+    sets.keep(m_instancesOfLayouts.objects);
+    sets.keep(m_instancesOfLayouts.instances);
     sets.keep(m_objectsToldApart.answer.rest);
     for (ValueSetID group : m_objectsToldApart.answer.groups)
         sets.keep(group);
@@ -547,6 +549,25 @@ ClimbingSet ValueFlowRuleContext::newSince(ValueFlowNodeID named)
     ValueSetID held = valueOf(node).m_set;
     m_log.valuesShown.append(ValueFlowNodeSet { node, held });
     return ClimbingSet(m_maker.intersect(held, ValueSets::complement(m_solver.valueShownTo(m_statement, node))));
+}
+
+ValueSetID ValueFlowRuleContext::instancesOfLayoutsRememberedOf(ClimbingSet objects)
+{
+    InstancesOfLayouts& known = m_instancesOfLayouts;
+    if (known.objects == objects.m_set)
+        return known.instances;
+    if (!sets().isSubset(known.objects, objects.m_set))
+        known = { };
+    Vector<ValueFlowObjectID, 16> instances;
+    sets().forEachMember(m_maker.intersect(objects.m_set, ValueSets::complement(known.objects)), [&](ValueFlowObjectID object) {
+        if (LayoutID layout = universe().layoutOf(object))
+            instances.append(universe().instanceOf(layout));
+    });
+    AOT::sort(instances);
+    instances.shrink(instances.size() - std::ranges::unique(instances).size());
+    known.instances = m_maker.unite(known.instances, m_maker.of(instances.span()));
+    known.objects = objects.m_set;
+    return known.instances;
 }
 
 ClimbingSet ValueFlowRuleContext::markedAmong(ClimbingSet objects, OptionSet<ObjectMutation> mutations)

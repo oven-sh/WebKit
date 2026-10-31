@@ -2596,14 +2596,27 @@ private:
             || m_context.meet(m_context.markedAmong(ClimbingSet(m_universe.unknownObjectAlone()), ObjectMutation::ReachUnknownJavaScript), ValueSets::anything);
     }
 
+    ClimbingSet thoseThatMayHaveReachedUnknownJavaScriptAmong(ClimbingSet objects)
+    {
+        ClimbingSet marked = m_context.markedAmong(objects, ObjectMutation::ReachUnknownJavaScript);
+        if (!m_context.holdsAnyOf(objects, ValueFlowProgramNodes::escaped()))
+            return marked;
+        bool unknownJavaScriptRuns = m_context.contains(m_context.valueOf(m_context.nodes().ofHost(ValueFlowHostNode::UnseenCodeRuns)), ValueFlowUniverse::unknownObject())
+            || m_context.meet(m_context.markedAmong(ClimbingSet(m_universe.unknownObjectAlone()), ObjectMutation::ReachUnknownJavaScript), ValueSets::anything);
+        return unknownJavaScriptRuns ? m_context.unite(marked, m_context.valueWithin(objects, ValueFlowProgramNodes::escaped())) : marked;
+    }
+
     ValueSetID recordsMadeByParsers()
     {
         Vector<ValueFlowObjectID, 8> made;
-        for (LayoutID layout : m_universe.recordsThatTypedCodeTakes()) {
+        for (LayoutID layout : m_universe.recordsOfTableThatTypedCodeTakes()) {
             if (mayHaveReachedUnknownJavaScript(ClimbingSet(m_universe.objectsWith(layout))))
                 made.append(m_universe.instanceOf(layout));
         }
-        return m_context.withMembersOf(m_context.maker().of(made.span()), m_context.valueOf(m_context.nodes().ofHost(ValueFlowHostNode::RecordsMadeByParsers)));
+        ValueSetID records = m_context.maker().of(made.span());
+        ClimbingSet reached = thoseThatMayHaveReachedUnknownJavaScriptAmong(ClimbingSet(m_universe.objectsOfRecordsThatTypedCodeTakes()));
+        records = m_context.maker().unite(records, m_context.instancesOfLayoutsRememberedOf(reached));
+        return m_context.withMembersOf(records, m_context.valueOf(m_context.nodes().ofHost(ValueFlowHostNode::RecordsMadeByParsers)));
     }
 
     ValueSetID primitivesInsidePlainData(ValueSetID listed) const

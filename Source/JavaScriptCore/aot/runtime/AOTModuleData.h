@@ -392,6 +392,14 @@ struct ExportStatementData {
     StringID specifierString() const { return StringID(specifier); }
 };
 
+// `export * from "./a"; export * from "./b"`, and both export the name: the module does not export it, and whoever outside the image asks for it is told why. Sorted by the module.
+struct AmbiguousExportData {
+    uint32_t module;
+    uint32_t name;
+
+    StringID nameString() const { return StringID(name); }
+};
+
 // A specifier that an importer could not resolve at the build, or a name that a module turned out to lack: then the module stands in the place of the importer and the name in that of the specifier.
 // Where `export { .. as name } from "specifier"` asks for what the module lacks: what the statement is written from stands in the place of the importer, and the name that it exports in that of the specifier.
 // Behind the failures, which code names by their place in the table, stand the modules that cannot load, sorted: each in the place of the importer, and in that of the specifier the number of the failure that its load ends with.
@@ -529,6 +537,7 @@ static_assert(sizeof(IndirectExportData) == 8 && isImageRecord<IndirectExportDat
 static_assert(sizeof(SyntheticExportData) == 8 && isImageRecord<SyntheticExportData>);
 static_assert(sizeof(RequiredNameData) == 8 && isImageRecord<RequiredNameData>);
 static_assert(sizeof(ExportStatementData) == 12 && isImageRecord<ExportStatementData>);
+static_assert(sizeof(AmbiguousExportData) == 8 && isImageRecord<AmbiguousExportData>);
 static_assert(sizeof(ModuleFailureData) == 8 && isImageRecord<ModuleFailureData>);
 static_assert(sizeof(ImportOfHeldFileData) == 8 && isImageRecord<ImportOfHeldFileData>);
 static_assert(sizeof(StateOfLibraryModuleData) == 12 && isImageRecord<StateOfLibraryModuleData>);
@@ -562,6 +571,7 @@ struct HashOfDirectory {
     v(syntheticExports, SyntheticExportData) \
     v(requiredNames, RequiredNameData) \
     v(exportStatements, ExportStatementData) \
+    v(ambiguousExports, AmbiguousExportData) \
     v(moduleFailures, ModuleFailureData) \
     v(modulesByPath, uint16_t) \
     v(directoriesOfModulesByPath, uint32_t) \

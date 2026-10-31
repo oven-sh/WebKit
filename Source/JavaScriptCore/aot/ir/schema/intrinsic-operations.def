@@ -48,6 +48,7 @@ operation PutContiguousIndex (array: Array/inspects+writesContents, position: In
 operation PutDoubleIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Number/inspects) -> none ; reads(ArrayStorage) writes(Elements[Array]) ; flow = Copies ; flowRule = Heap
 operation GetOwnContiguousIndex (array: Array/inspects+readsContents, position: Integer/inspects) -> unknown => declared(array) ; reads(ArrayStorage, Elements[Array]) ; flow = Copies ; flowRule = Heap
 operation GetOwnDoubleIndex (array: Array/inspects+readsContents, position: Integer/inspects) -> natural(number) ; reads(ArrayStorage, Elements[Array]) ; flow = TableProves ; flowRule = Heap
+operation GetOwnInt32Index (array: Array/inspects+readsContents, position: Integer/inspects) -> natural(int32) ; reads(ArrayStorage, Elements[Array]) ; flow = TableProves ; flowRule = Heap
 operation PutOwnContiguousIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Any/retains(array)) -> none ; reads(ArrayStorage) writes(Elements[Array]) ; runsOwnerBarrier = true ; remembersOwner = true ; flow = Copies ; flowRule = Heap
 operation PutOwnDoubleIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Number/inspects) -> none ; reads(ArrayStorage) writes(Elements[Array]) ; flow = Copies ; flowRule = Heap
 operation NewContiguousArray (length: Integer/inspects, engine allocationSite?: AllocationSite) -> allocation(Array) ; Allocates throws ; runtime = NewArrayWithHoles ; allocatesInline = true ; flow = Allocates

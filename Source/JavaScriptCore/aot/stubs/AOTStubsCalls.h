@@ -10,6 +10,7 @@
 #include "AOTStubHelpers.h"
 #include "AOTStubsConstruct.h"
 #include "AOTThreshold.h"
+#include <algorithm>
 #include <initializer_list>
 #include <optional>
 
@@ -33,7 +34,8 @@ constexpr StubKey callNotClosureWithCount(CallPosition position = CallPosition::
 constexpr StubKey callBoundFunction(CallPosition position = CallPosition::Ordinary) { return StubKey(StubFamily::CallBoundFunction).withForm(static_cast<uint8_t>(position)); }
 // The first argument is new.target. The two forms differ in what a callee that is no function of the program is handed to.
 constexpr StubKey constructValue(ConstructSyntax syntax) { return StubKey(StubFamily::ConstructValue).withForm(static_cast<uint8_t>(syntax)); }
-constexpr StubKey resolveCallValue(unsigned count) { return StubKey(StubFamily::ResolveCallValue).withCount(count); }
+// One stub resolves every call that passes more arguments than there are registers: such a call passes its count as well.
+constexpr StubKey resolveCallValue(unsigned count) { return StubKey(StubFamily::ResolveCallValue).withCount(std::min(count, numberOfArgumentGPRs + 1)); }
 constexpr StubKey callResolvedValue() { return StubKey(StubFamily::CallResolvedValue); }
 constexpr StubKey callEngineCallee() { return StubKey(StubFamily::CallEngineCallee); }
 // The callee is a JSFunction: nothing has to ask whether it can be called.

@@ -3922,6 +3922,136 @@ static void propagateTestedType(Rewrite& rewrite, BlockID block)
     });
 }
 
+static BitVector findAddendsOfTestedSums(Rewrite& rewrite)
+{
+    constexpr OpcodeSet sums { Opcode::Increment, Opcode::Decrement, Opcode::Add, Opcode::Sub };
+    BitVector addends(rewrite.function.values.size());
+    for (BlockID block : rewrite.blocks()) {
+        for (ValueID id : rewrite.at(block).values) {
+            const Value& test = rewrite.at(id);
+            if (test.opcode != Opcode::TypeTest || !rewrite.context.types.at(test.testedType()).isInteger())
+                continue;
+            ValueID tested = test.operand(testedOperandIndex);
+            if (!sums.contains(rewrite.at(tested).opcode) || !rewrite.typeOf(tested).isInteger())
+                continue;
+            rewrite.at(tested).forEachOperand([&](ValueID addend, uint32_t) {
+                addends.quickSet(addend.index());
+            });
+        }
+    }
+    if (addends.isEmpty())
+        return addends;
+    BitVector handedOn(rewrite.function.values.size());
+    for (BlockID block : rewrite.blocks()) {
+        for (const Target& target : rewrite.at(block).terminator.targets) {
+            const auto& parameters = rewrite.at(target.block).parameters;
+            for (uint32_t index = 0; index < target.arguments.size(); ++index) {
+                if (addends.quickGet(parameters[index].index()))
+                    handedOn.quickSet(target.arguments[index].index());
+            }
+        }
+    }
+    addends.merge(handedOn);
+    return addends;
+}
+
+static std::optional<Range> rangeOfSum(Rewrite& rewrite, const Value& sum, uint32_t operandIndex, Range operand)
+{
+    switch (sum.opcode) {
+    case Opcode::Increment:
+        return Range { operand.minimum + 1, operand.maximum + 1 };
+    case Opcode::Decrement:
+        return Range { operand.minimum - 1, operand.maximum - 1 };
+    case Opcode::Add:
+    case Opcode::Sub: {
+        const Type& other = rewrite.typeOf(sum.operand(1 - operandIndex));
+        if (!other.isInteger())
+            return std::nullopt;
+        if (sum.opcode == Opcode::Add)
+            return Range { operand.minimum + other.integers.minimum, operand.maximum + other.integers.maximum };
+        if (!operandIndex)
+            return Range { operand.minimum - other.integers.maximum, operand.maximum - other.integers.minimum };
+        return Range { other.integers.minimum - operand.maximum, other.integers.maximum - operand.minimum };
+    }
+    default:
+        return std::nullopt;
+    }
+}
+
+static bool answersTestOfSum(Rewrite& rewrite, const Use& use, Range narrowed)
+{
+    if (use.kind == Use::Kind::EdgeArgument) {
+        BlockID join = targetOf(rewrite.function, use.edge()).block;
+        ValueID parameter = rewrite.at(join).parameters[use.operandIndex];
+        if (!rewrite.typeOf(parameter).isInteger())
+            return false;
+        Range joined = narrowed;
+        for (Edge incoming : rewrite.cfg().incomingEdges(join)) {
+            if (incoming == use.edge())
+                continue;
+            if (incoming.isHandlerEdge() || use.operandIndex >= targetOf(rewrite.function, incoming).arguments.size())
+                return false;
+            const Type& other = rewrite.typeOf(targetOf(rewrite.function, incoming).arguments[use.operandIndex]);
+            if (!other.isInteger())
+                return false;
+            joined = joined.unionWith(other.integers);
+        }
+        if (joined == rewrite.typeOf(parameter).integers)
+            return false;
+        return std::ranges::any_of(rewrite.uses().usesOf(parameter), [&](const Use& useOfParameter) {
+            return useOfParameter.kind == Use::Kind::Operand && answersTestOfSum(rewrite, useOfParameter, joined);
+        });
+    }
+    if (use.kind != Use::Kind::Operand || !rewrite.typeOf(use.user).isInteger())
+        return false;
+    std::optional<Range> sum = rangeOfSum(rewrite, rewrite.at(use.user), use.operandIndex, narrowed);
+    if (!sum)
+        return false;
+    return std::ranges::any_of(rewrite.uses().usesOf(use.user), [&](const Use& useOfSum) {
+        if (useOfSum.kind != Use::Kind::Operand || useOfSum.operandIndex != testedOperandIndex || rewrite.at(useOfSum.user).opcode != Opcode::TypeTest)
+            return false;
+        const Type& tested = rewrite.context.types.at(rewrite.at(useOfSum.user).testedType());
+        return tested.isInteger() && sum->isSubsetOf(tested.integers) && !rewrite.typeOf(use.user).integers.isSubsetOf(tested.integers);
+    });
+}
+
+static void propagateComparedInteger(Rewrite& rewrite, BlockID block)
+{
+    ValueID condition = rewrite.at(block).terminator.conditionOperand();
+    if (std::ranges::count(rewrite.uses().usesOf(condition), Use::Kind::TerminatorOperand, &Use::kind) != 1)
+        return;
+    const Value& comparison = rewrite.at(condition);
+    for (uint32_t operandIndex : { 0u, 1u }) {
+        ValueID compared = comparison.operand(operandIndex);
+        if (!rewrite.typeOf(compared).isInteger() || !rewrite.typeOf(comparison.operand(1 - operandIndex)).isInteger() || rewrite.uses().usesOf(compared).size() < 2)
+            continue;
+        for (Edge edge : { Edge { block, 0 }, Edge { block, 1 } }) {
+            const Target& target = targetOf(rewrite.function, edge);
+            if (rewrite.cfg().singleIncomingEdge(target.block) != edge || target.proofs.contains(operandIndex))
+                continue;
+            Type typeOnEdge = narrowOperandByTest({ rewrite.program, rewrite.function, rewrite.context.types }, comparison, operandIndex, edge.targetIndex ? EdgeSide::NotTaken : EdgeSide::Taken);
+            if (!typeOnEdge.isInteger() || typeOnEdge.integers == rewrite.typeOf(compared).integers)
+                continue;
+            Vector<Use, 4> usesBehindEdge;
+            bool answersTest = false;
+            for (const Use& use : rewrite.uses().usesOf(compared)) {
+                if (!canUseValuesOf(rewrite, target.block, use) || isCheckOfValidatingBuild(rewrite, use))
+                    continue;
+                usesBehindEdge.append(use);
+                answersTest |= answersTestOfSum(rewrite, use, typeOnEdge.integers);
+            }
+            if (!answersTest)
+                continue;
+            rewrite.later([&rewrite, edge, operandIndex, usesBehindEdge = WTF::move(usesBehindEdge)] {
+                ValueID narrowed = rewrite.builder().addEdgeResult(edge, operandIndex);
+                for (const Use& use : usesBehindEdge)
+                    rewrite.replaceUse(use, narrowed);
+                rewrite.retype(narrowed);
+            });
+        }
+    }
+}
+
 PassOutcome propagateBranchConditions(FunctionPassContext& context)
 {
     PassOutcome outcomeOfMerging = mergeRepeatedTruthinessTests(context);
@@ -3931,6 +4061,8 @@ PassOutcome propagateBranchConditions(FunctionPassContext& context)
     BitVector isUndecided(context.function.values.size());
     Vector<ValueID, 16> undecidedConditions;
     Vector<BlockID, 16> branchesOnTypeTests;
+    Vector<BlockID, 16> branchesOnComparisonsOfIntegers;
+    bool testsTypes = context.analyses.opcodesOfValues().contains(Opcode::TypeTest);
     for (BlockID block : rewrite.blocks()) {
         const Terminator& terminator = rewrite.at(block).terminator;
         if (terminator.kind != TerminatorKind::Branch)
@@ -3942,9 +4074,23 @@ PassOutcome propagateBranchConditions(FunctionPassContext& context)
             isUndecided.quickSet(condition.operand(testedOperandIndex).index());
             branchesOnTypeTests.append(block);
         }
+        if (testsTypes && relationalOperators.contains(condition.opcode) && rewrite.typeOf(condition.operand(0)).isInteger() && rewrite.typeOf(condition.operand(1)).isInteger())
+            branchesOnComparisonsOfIntegers.append(block);
         if (isVisited.add(terminator.conditionOperand().index())) {
             isUndecided.quickSet(terminator.conditionOperand().index());
             undecidedConditions.append(terminator.conditionOperand());
+        }
+    }
+    if (!branchesOnComparisonsOfIntegers.isEmpty()) {
+        BitVector isAddendOfTestedSum = findAddendsOfTestedSums(rewrite);
+        branchesOnComparisonsOfIntegers.removeAllMatching([&](BlockID block) {
+            const Value& comparison = rewrite.at(rewrite.at(block).terminator.conditionOperand());
+            return !isAddendOfTestedSum.quickGet(comparison.operand(0).index()) && !isAddendOfTestedSum.quickGet(comparison.operand(1).index());
+        });
+        for (BlockID block : branchesOnComparisonsOfIntegers) {
+            const Value& comparison = rewrite.at(rewrite.at(block).terminator.conditionOperand());
+            isUndecided.quickSet(comparison.operand(0).index());
+            isUndecided.quickSet(comparison.operand(1).index());
         }
     }
     if (undecidedConditions.isEmpty() || (!rewrite.analyses.computed().contains(FunctionAnalysis::UseLists) && !isAnyUsedTwice(rewrite, isUndecided)))
@@ -3953,6 +4099,8 @@ PassOutcome propagateBranchConditions(FunctionPassContext& context)
         propagateCondition(rewrite, condition);
     for (BlockID block : branchesOnTypeTests)
         propagateTestedType(rewrite, block);
+    for (BlockID block : branchesOnComparisonsOfIntegers)
+        propagateComparedInteger(rewrite, block);
     return rewrite.commit() == PassOutcome::Changed ? PassOutcome::Changed : outcomeOfMerging;
 }
 

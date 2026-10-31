@@ -22,7 +22,7 @@ v(CallCellWithCount, CalledByCode, (Ordinary, InTailPosition), FormAxis, 0, 0, A
 v(CallNotClosureWithCount, InternalEntry, (Ordinary, InTailPosition), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallNotClosureWithCount)
 v(CallBoundFunction, InternalEntry, (Ordinary, InTailPosition), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallNotClosureWithCount)
 v(ConstructValue, CalledByCode, (NewExpression, SuperCall), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ConstructValue)
-v(ResolveCallValue, CalledByCode, (), CountAxis, 0, N, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, NoEffects, ResolveCallValue)
+v(ResolveCallValue, CalledByCode, (), CountAxis, 0, N + 1, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, NoEffects, ResolveCallValue)
 v(CallResolvedValue, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallResolvedValue)
 v(ReturnMisfit, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, ReturnMisfit)
 

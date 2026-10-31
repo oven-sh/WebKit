@@ -1793,6 +1793,9 @@ void HeapRule::runOperation()
     case Opcode::GetOwnDoubleIndex:
         add(m_statement.result, kinds(Primitive::Number));
         return;
+    case Opcode::GetOwnInt32Index:
+        add(m_statement.result, kinds(Primitive::Integer));
+        return;
     case Opcode::PutContiguousIndex:
         write(m_context.valueOf(operand(At::PutContiguousIndex::array)), elementsName, operand(At::PutContiguousIndex::value));
         return;

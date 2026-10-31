@@ -24,6 +24,7 @@ public:
     void generateGetContiguousIndex(const ValueContext&);
     void generateGetOwnContiguousIndex(const ValueContext&);
     void generateGetOwnDoubleIndex(const ValueContext&);
+    void generateGetOwnInt32Index(const ValueContext&);
     void generatePutOwnContiguousIndex(const ValueContext&);
     void generatePutOwnDoubleIndex(const ValueContext&);
     void generateGetDoubleIndex(const ValueContext&);

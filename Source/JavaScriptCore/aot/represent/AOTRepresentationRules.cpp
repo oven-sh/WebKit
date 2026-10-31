@@ -256,6 +256,8 @@ static Representation wantedByNumbers(const RepresentationInputs& inputs, const 
         if (type.isNumber() && isBoxedOrUnchosen(chosen))
             return Representation::Unchosen;
     }
+    if (user.opcode == Opcode::ToBoolean && chosen == Representation::OptionalInt64)
+        return Representation::OptionalInt64;
     if (isSumOfBoxedNumbers(user))
         return type.isInt32() ? Representation::Int32 : Representation::JSValue;
     if (takesNumberAsItIs(inputs, user, operand) && (isBoxedOrUnchosen(chosen) || (chosen == Representation::Int32 && type.isInt32())))

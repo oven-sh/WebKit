@@ -105,6 +105,7 @@ public:
     Vector<Variable> variables;
     Vector<Module> modules;
     Vector<ModuleFailure> moduleFailures;
+    Vector<AmbiguousExport> ambiguousExports;
     Vector<EvalScope> evalScopes;
     Vector<Function> functions;
     Vector<Data> data;

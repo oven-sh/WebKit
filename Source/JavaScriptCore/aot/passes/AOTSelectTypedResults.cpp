@@ -478,9 +478,10 @@ static bool isCandidate(const Program& program, const FlowTypedResultCall& call)
 }
 
 // A parsed object is only found in its layout by a type test, so a cold call whose result never reaches code that gets tests gains nothing from a parser.
+// A build that reports mismatches tests the result wherever a declaration names its type.
 void markUnprofitableTypedResults(const Program& program, FlowResults& flow, const Heat& heat, BuildContext& build)
 {
-    if (!build.recordedOptions().usesExpectedTypes())
+    if (!build.recordedOptions().usesExpectedTypes() || build.recordedOptions().policy() == MismatchPolicy::Report)
         return;
     std::span<const FlowTypedResultCall> calls = flow.typedResultCalls();
     Vector<FunctionID, 4> callers;

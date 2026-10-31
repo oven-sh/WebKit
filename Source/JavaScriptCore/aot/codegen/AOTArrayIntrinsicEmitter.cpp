@@ -121,6 +121,13 @@ void ArrayIntrinsicEmitter::generateGetOwnDoubleIndex(const ValueContext& value)
     define(value, elements().loadRawElement(doubles, storage, integerOperand(value->positionOperand())).as<Number>());
 }
 
+void ArrayIntrinsicEmitter::generateGetOwnInt32Index(const ValueContext& value)
+{
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    ArrayElements storage = elements().elementsOf(array);
+    define(value, unboxInt32(Boxed(m_out.load64(elements().elementOfUnknownForm(storage, integerOperand(value->positionOperand()))))));
+}
+
 void ArrayIntrinsicEmitter::generatePutOwnContiguousIndex(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());

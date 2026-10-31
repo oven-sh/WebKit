@@ -3001,6 +3001,11 @@ void JSGlobalObject::fireWatchpointAndMakeAllArrayStructuresSlowPut(VM& vm)
     if (isHavingABadTime())
         return;
 
+#if ENABLE(AOT)
+    if (aotInstance()) [[unlikely]]
+        AOT::RuntimeHooks::stopBecauseRealmHasABadTime();
+#endif
+
     // This must happen first, because the compiler thread may race with haveABadTime.
     // Let R_BT, W_BT <- Read/Fire the watchpoint, R_SC, W_SC <- Read/clear the structure cache.
     // The possible interleavings are:

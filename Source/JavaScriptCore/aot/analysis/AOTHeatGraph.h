@@ -119,12 +119,15 @@ public:
 
     uint32_t sizeOf(FunctionID function) const { return m_sizes[function.index()]; }
     double massOf(FunctionID function) const { return m_masses[function.index()]; }
+    bool isOnlyExpectedToCall(FunctionID caller, FunctionID callee) const { return std::ranges::binary_search(m_callsOnlyExpected, packedCall(caller, callee)); }
     std::span<const HeatBlockGroup> blockGroupsOf(FunctionID function) const LIFETIME_BOUND { return m_blockGroups[function.index()].span(); }
 
     void dump(PrintStream&) const;
 
 private:
     friend HeatGraph buildHeatGraph(const Program&, const CallGraph&, const FlowResults&, const EffectSummaries&, BuildContext&, const BodyReferences*, const BodyWeights*, BodyWeights*, HeatGraph*);
+
+    static uint64_t packedCall(FunctionID caller, FunctionID callee) { return static_cast<uint64_t>(caller.index()) << 32 | callee.index(); }
 
     unsigned m_numberOfNames { 0 };
     Vector<double> m_entriesPerEvent;
@@ -148,6 +151,7 @@ private:
     Vector<HeatCallOfMember> m_otherCallsOfMembers;
     Vector<uint32_t> m_sizes;
     Vector<double> m_masses;
+    Vector<uint64_t> m_callsOnlyExpected;
     ParallelArray<Vector<HeatBlockGroup, 4>> m_blockGroups;
 };
 

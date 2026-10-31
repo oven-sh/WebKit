@@ -88,8 +88,12 @@ void emitDropSpilledArgumentRegisters(CCallHelpers& jit)
 
 void emitReturnDroppingSpilledArgumentRegisters(CCallHelpers& jit)
 {
+#if CPU(X86_64)
+    jit.retAndPop(sizeOfSpilledArgumentRegisters);
+#else
     emitDropSpilledArgumentRegisters(jit);
     jit.ret();
+#endif
 }
 
 void emitDropArgumentListFrames(CCallHelpers& jit, GPRReg scratch)

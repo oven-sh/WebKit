@@ -84,6 +84,7 @@ record ModuleExport wire {
 record SyntheticExport wire { name: String variable: Variable? isKnownMember: Bool isReplaceable: Bool }
 record RequiredName wire { module: Module(Target) name: String mayBeAbsent: Bool exportName: String? specifier: String? dropsExportIfAbsent: Bool }
 record ModuleFailure wire { importer: Module(Referrer) specifier: String exporter: Module(Target)? exportSpecifier: String? endsLoadOf: Module(Referrer)? }
+record AmbiguousExport wire { module: Module(Referrer) name: String }
 record Module wire {
     path: String displayPath: String kind: ModuleKind flags: ModuleFlags exportRule: SyntheticExportRule requireResult: RequireResult
     externalKind: ExternalKind typeAttribute: String? runtimeModule: RuntimeModule? referrer: Module(Referrer)? body: Function(Call)? exportsVariable: Variable? data: Data?
@@ -133,6 +134,7 @@ list syntheticExports : SyntheticExport
 list requiredNames : RequiredName
 list columnAdjustments : ColumnAdjustment
 list moduleFailures : ModuleFailure as modulefailure prefix q
+list ambiguousExports : AmbiguousExport as ambiguousexport
 list evalScopes : EvalScope as evalscope prefix e
 list evalBindings : EvalBinding
 list functions : Function as function prefix f

@@ -676,7 +676,8 @@ private:
         BuiltinID builtin = builtins().canonicalID(application.builtin);
         bool stores = builtin == builtins().canonicalID(Builtins::ArrayPrototypePush) || builtin == builtins().canonicalID(Builtins::ArrayPrototypeUnshift);
         bool takes = builtin == builtins().canonicalID(Builtins::ArrayPrototypePop) || builtin == builtins().canonicalID(Builtins::ArrayPrototypeShift);
-        bool movesElements = builtin == builtins().canonicalID(Builtins::ArrayPrototypeUnshift) || builtin == builtins().canonicalID(Builtins::ArrayPrototypeShift);
+        bool reorders = builtin == builtins().canonicalID(Builtins::ArrayPrototypeSort) || builtin == builtins().canonicalID(Builtins::ArrayPrototypeReverse);
+        bool movesElements = reorders || builtin == builtins().canonicalID(Builtins::ArrayPrototypeUnshift) || builtin == builtins().canonicalID(Builtins::ArrayPrototypeShift);
         auto noteParameter = [&](const BuiltinParameter& parameter) {
             ValueSetID value = application.valueAt(parameter.operand, maker);
             if (parameter.roles.contains(BuiltinOperandRole::ReplacesContents))
@@ -684,7 +685,7 @@ private:
             ValueSetID arrays = parameter.uses.containsAny(usesWritingObject) ? maker.intersect(value, m_arrays) : ValueSets::nothing;
             if (arrays == ValueSets::nothing)
                 return;
-            if (!parameter.operand.isReceiver() || application.mode() != BuiltinCallMode::Call || (!stores && !takes)) {
+            if (!parameter.operand.isReceiver() || application.mode() != BuiltinCallMode::Call || (!stores && !takes && !reorders)) {
                 noteUnknownWriter(walker, arrays);
                 return;
             }

@@ -15,6 +15,7 @@
 #include "AOTRuntimeValidationEmitter.h"
 #include "AOTSlotEmitter.h"
 #include "AOTTypedArrayKinds.h"
+#include "AOTValueIdentity.h"
 #include "JSArrayBufferView.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -51,6 +52,19 @@ Integer TypedArraySupport::lengthOf(CellPointer view)
 TypedArrayElements ElementAccessEmitter::typedArrayElementsOf(CellPointer view, LBasicBlock isNotFixedLength)
 {
     branchUnless(hasNoBits(loadByte(view, m_heaps.JSArrayBufferView_mode), resizabilityAndAutoLengthMask), isNotFixedLength);
+    return { view, loadField<Integer>(view, m_heaps.JSArrayBufferView_length), loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector) };
+}
+
+TypedArrayElements ElementAccessEmitter::typedArrayElementsOf(ValueID id, LBasicBlock isNotFixedLength)
+{
+    CellPointer view = in<CellPointer>(id);
+    const Value& definition = m_function.at(sameObjectThroughCasts(m_function, id));
+    if (definition.opcode != Opcode::CallInline || definition.inlineBuiltin() != InlineBuiltin::TypedArrayWithLength)
+        return typedArrayElementsOf(view, isNotFixedLength);
+    if (generator().validatesOrChecksProofs())
+        branchUnless(hasNoBits(loadByte(view, m_heaps.JSArrayBufferView_mode), resizabilityAndAutoLengthMask), isNotFixedLength);
+    else
+        branchUnless(boolean(true), isNotFixedLength);
     return { view, loadField<Integer>(view, m_heaps.JSArrayBufferView_length), loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector) };
 }
 
@@ -152,7 +166,7 @@ void ElementAccessEmitter::generateGetTypedArrayElement(const ValueContext& valu
     OperandJoin join(m_out, representation);
 
     Integer index = indexOrElse(value->positionOperand(), value->keyIsIntegral(), outside);
-    TypedArrayElements elements = typedArrayElementsOf(view, otherwise);
+    TypedArrayElements elements = typedArrayElementsOf(value->viewOperand(), otherwise);
     branchUnless(below(index, elements.length), outside);
     Operand element = loadTypedArrayElement(elements, index, type);
     join.add(TypedArraySupport(generator()).inRepresentation(value, representation, element, elementTypeOf(type)));
@@ -204,7 +218,7 @@ void ElementAccessEmitter::generatePutTypedArrayElement(const ValueContext& valu
 
     LBasicBlock otherwise = newBlock();
     if (storesInline) {
-        TypedArrayElements elements = typedArrayElementsOf(view, otherwise);
+        TypedArrayElements elements = typedArrayElementsOf(value->viewOperand(), otherwise);
         branchUnless(below(index, elements.length), done);
         storeTypedArrayElement(elements, index, type, elementToStore());
         m_out.jump(done);

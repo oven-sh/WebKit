@@ -1787,6 +1787,7 @@ public:
 
         movesForWidths.grow(precedingInstCount);
         unsigned* nextMoveForWidths = movesForWidths.mutableSpan().data();
+        Vector<unsigned> wholeCopiesOfShuffles;
         m_tmpMoves.grow(precedingInstCount);
         unsigned* nextTmpMove = m_tmpMoves.mutableSpan().data();
 
@@ -1923,6 +1924,8 @@ public:
                         note(mention.tmp, Mentions::traitsOf(mention.role, mention.bank, mention.width));
                     wasDecodedSlowly = Mentions::wasDecodedSlowly;
                 }
+                if (opcode == Shuffle) [[unlikely]]
+                    recordWholeCopiesOfShuffle(inst, firstMention, mentionTraits, wholeCopiesOfShuffles);
 
                 bool hasEarlyDef = argTraits & Mentions::earlyDef;
                 bool hasLateUseOrDef = argTraits & (Mentions::lateUse | Mentions::lateDef);
@@ -1969,6 +1972,7 @@ public:
         instFirstMention[ordinal] = numberOfMentions;
         m_mentions.numberOfInsts = ordinal;
         movesForWidths.shrink(nextMoveForWidths - movesForWidths.mutableSpan().data());
+        movesForWidths.appendVector(wholeCopiesOfShuffles);
         m_tmpMoves.shrink(nextTmpMove - m_tmpMoves.mutableSpan().data());
     }
 
@@ -2003,6 +2007,27 @@ public:
             m_useCounts.fpConstantWidths[fpIndex] = opcode == MoveFloat ? Width32 : opcode == MoveDouble ? Width64 : Width128;
         }
         return traits | Mentions::isDefByConstant;
+    }
+
+    // The mention of the destination follows that of the source, as in a Move.
+    NEVER_INLINE static void recordWholeCopiesOfShuffle(Inst& inst, unsigned mention, uint16_t* mentionTraits, Vector<unsigned>& copies)
+    {
+        auto numberOfTmpsIn = [](Arg& arg) {
+            unsigned result = 0;
+            arg.forEachTmpFast([&](Tmp&) {
+                ++result;
+            });
+            return result;
+        };
+        for (unsigned i = 0; i + 2 < inst.args().size(); i += 3) {
+            Arg& source = inst.args()[i];
+            Arg& destination = inst.args()[i + 1];
+            if (TmpWidth::isCopyOfWholeGeneralRegister(source, destination, inst.args()[i + 2].width())) {
+                copies.append(mention);
+                mentionTraits[mention + 1] |= Mentions::hasNoWidthInformation;
+            }
+            mention += numberOfTmpsIn(source) + numberOfTmpsIn(destination);
+        }
     }
 
     void findWidths(Vector<unsigned>& movesForWidths)

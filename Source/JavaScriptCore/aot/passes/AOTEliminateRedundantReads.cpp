@@ -3620,6 +3620,7 @@ struct LoopPathSeparator : LoopEditor {
         Vector<Edge> leavingEdges { };
         Vector<BlockID> entriesOfCopy { };
         Vector<TypeID> typesOfCarriedValues { };
+        Vector<TypeID, 4> typesOfCounters { };
         BitVector carriedValuesThatMayBeUnspecified { };
         bool letsVariablesBeCarried { false };
         bool onlyLeavesTestWithOneAnswer { false };
@@ -4148,6 +4149,25 @@ struct LoopPathSeparator : LoopEditor {
         return leavesWithPathsThatOnlyCompute;
     }
 
+    // A counter that goes up from an integer is never below it. Tested for no more than 32 bits where it comes back from the copy, it would lose that in the loop as well.
+    Vector<TypeID, 4> typesOfCountersFromStartOn(const NaturalLoop& loop)
+    {
+        const CompactList<ValueID>& parameters = m_function.at(loop.header()).parameters;
+        auto mayBeCounter = [&](ValueID parameter) {
+            return typeOf(parameter).isNumberWithoutFraction() && !typeOf(parameter).isInteger();
+        };
+        if (std::ranges::none_of(parameters, mayBeCounter))
+            return { };
+        Vector<TypeID, 4> result(parameters.size());
+        for (const InductionVariable& counter : m_analyses.inductionVariables().of(loop).variables) {
+            if (!mayBeCounter(counter.parameter) || counter.step.kind != InductionStepKind::Constant || !counter.start || !typeOf(counter.start).isInt32())
+                continue;
+            const Range& start = typeOf(counter.start).integers;
+            result[counter.parameterIndex] = m_context.types.intern(Type::integer(counter.direction == InductionDirection::Increasing ? Range { start.minimum, INT32_MAX } : Range { INT32_MIN, start.maximum }));
+        }
+        return result;
+    }
+
     std::optional<SeparationPlan> planFor(const NaturalLoop& loop, bool mayCarryVariables, PathsThatOnlyCompute pathsThatOnlyCompute, bool paysForLoopInside = false)
     {
         BlockID header = loop.header();
@@ -4160,6 +4180,7 @@ struct LoopPathSeparator : LoopEditor {
         SeparationPlan plan { header };
         for (ValueID parameter : parameters)
             plan.typesOfCarriedValues.append(m_function.at(parameter).type);
+        plan.typesOfCounters = typesOfCountersFromStartOn(loop);
         BitVector isInLoop(m_function.blocks.size());
         uint64_t bytesOfLikelyPaths = 0;
         bool runsLoopInEveryTurn = false;
@@ -4545,6 +4566,11 @@ struct LoopPathSeparator : LoopEditor {
         // A test that moves to where the value is made stands on every edge into the loop in place of once at its head. A loop that is separated for the loop inside it wants nothing for itself.
         testedEveryTurn = plan.standsInForLoopInside ? Vector<TypeID>(numberOfParameters) : findTestsOfEveryTurn(*loop, isInCopy, plan.carriedValuesThatMayBeUnspecified);
         testedTypes = testedEveryTurn;
+        for (size_t index = 0; index < plan.typesOfCounters.size(); ++index) {
+            TypeID fromStartOn = plan.typesOfCounters[index];
+            if (fromStartOn && testedTypes[index] && types.at(fromStartOn).isSubsetOf(types.at(testedTypes[index]), m_program))
+                testedTypes[index] = fromStartOn;
+        }
         typesTakenFromCopy = Vector<TypeID>(numberOfParameters);
         for (size_t index = 0; index < numberOfParameters; ++index) {
             const Type& given = types.at(plan.typesOfCarriedValues[index]);
@@ -4615,6 +4641,14 @@ struct LoopPathSeparator : LoopEditor {
         for (Edge edge : latchEdgesOfCopy)
             builder.redirectEdge(edge, tests, Arguments(targetOf(m_function, edge).arguments));
         testOnEdges(builder, latchEdges.span(), testedEveryTurn.span(), header, headerOfCopy);
+        for (ValueID id : m_function.at(headerOfCopy).values) {
+            const Value& test = m_function.at(id);
+            if (test.opcode != Opcode::TypeTest)
+                continue;
+            size_t index = m_function.at(headerOfCopy).parameters.find(test.operand(0));
+            if (index != notFound && testedEveryTurn[index] == test.testedType() && testedTypes[index] != test.testedType())
+                m_function.edit(id, ValueEdit::Definition).setTestedType(testedTypes[index]);
+        }
 
         builder.moveToEndOf(entry);
         builder.emitJump(header, WTF::move(parametersOfEntry));

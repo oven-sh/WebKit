@@ -8,8 +8,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFormatPatterns.h"
 #include "AOTOperationData.h"
 #include "AOTPlacementSteps.h"
+#include "AOTRemovableFeature.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -42,6 +44,9 @@ uint32_t sizeInBytesOf(const Program& program, const RequestRecord& request)
         },
         [](const CollectionDataRecord&) -> size_t {
             return sizeof(CollectionDataRequest);
+        },
+        [](const FormatPatternRecord& record) -> size_t {
+            return record.words.sizeInBytes();
         });
     RELEASE_ASSERT(size <= UINT32_MAX);
     return static_cast<uint32_t>(size);
@@ -108,7 +113,8 @@ void collectStringConstantsOf(const Program& program, const RequestRecord& reque
         },
         [&](const CollectionDataRecord& record) {
             collectStringConstantsOf(program, program.at(record.data).root, stringConstants);
-        });
+        },
+        [](const FormatPatternRecord&) { });
 }
 
 void collectStringConstantsOf(const Program&, const DataNode& root, BitVector& stringConstants)
@@ -252,6 +258,19 @@ static void encodeRequest(TableEncoder& encoder, const DataRecord& record, std::
     auto& request = consumeAndReinterpretCastTo<DataRequest>(bytes);
     request.root = encoder.dataNodeOf(record.data);
     request.sharedStorageOffset = record.sharedStorageOffset.value_or(DataRequest::noSharedStorage);
+}
+
+static void encodeRequest(TableEncoder&, const FormatPatternRecord& record, std::span<uint8_t>& bytes)
+{
+    std::span<uint8_t> pattern = consumeSpan(bytes, record.words.sizeInBytes());
+    memcpySpan(pattern, asBytes(record.words.span()));
+    bool isNumber = static_cast<FormatPatternKind>(pattern[offsetof(FormatPatternHeader, kind)]) == FormatPatternKind::Number;
+    std::optional<uint64_t> digest = isNumber
+        ? callRemovable<RemovableFeature::IntlNumberFormat, RemovedFeatureStub::Abort, digestOfThisICU>()
+        : callRemovable<RemovableFeature::IntlDateTimeFormat, RemovedFeatureStub::Abort, digestOfThisICU>();
+    // No ICU has the digest 0.
+    uint64_t stamp = digest.value_or(0);
+    memcpySpan(pattern.subspan(offsetof(FormatPatternHeader, digestOfICU), sizeof(stamp)), asByteSpan(stamp));
 }
 
 void encodeRequestTable(TableEncoder& encoder)

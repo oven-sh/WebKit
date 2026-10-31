@@ -162,6 +162,7 @@ public:
         }
         return known.answer;
     }
+    ValueSetID instancesOfLayoutsRememberedOf(ClimbingSet objects);
     bool forEachBlock(ClimbingSet set, NOESCAPE const Invocable<void(uint64_t nameOfBlock)> auto& functor) const
     {
         if (ValueSets::isComplement(set.m_set))
@@ -322,6 +323,11 @@ private:
         ValueFlowObjectsToldApart answer;
     };
     ObjectsToldApart m_objectsToldApart;
+    struct InstancesOfLayouts {
+        ValueSetID objects { ValueSets::nothing };
+        ValueSetID instances { ValueSets::nothing };
+    };
+    InstancesOfLayouts m_instancesOfLayouts;
     RunCache m_edgeCache { };
     RunCache m_addCache { };
     RunCache m_holdsAnyOfCache { };

@@ -28,6 +28,7 @@ struct HandedOnArray {
     FunctionID callee;
     uint32_t entryParameter { 0 };
     uint32_t parameters { 0 };
+    bool isByValue { false };
 };
 
 struct ScannedParameters {
@@ -41,7 +42,55 @@ struct FunctionsThatEndTheirTailCalls {
     BitVector calledByValue;
 };
 
+class GenericEntrypoints {
+public:
+    explicit GenericEntrypoints(const Program& program)
+    {
+        for (unsigned index = 0; index < program.functions.size(); ++index) {
+            const Function& function = program.functions[index];
+            const auto* record = function.creator.tryAs<CreatorRecord::Entrypoint>();
+            if (record && function.role == FunctionRole::GenericEntrypoint && function.hasBody())
+                m_entrypoints.append({ record->target, FunctionID(index) });
+        }
+        AOT::sort(m_entrypoints);
+    }
+
+    auto of(FunctionID target) const { return std::ranges::equal_range(m_entrypoints, target, { }, &std::pair<FunctionID, FunctionID>::first); }
+
+private:
+    Vector<std::pair<FunctionID, FunctionID>> m_entrypoints;
+};
+
 } // anonymous namespace
+
+// An argument that the entrypoint reads from the buffer is numbered on from its last entry parameter.
+static std::optional<uint32_t> placeInEntrypoint(const Function& target, const Function& entrypoint, uint32_t entryParameter)
+{
+    if (entryParameter == target.thisParameterIndex())
+        return entrypoint.thisParameterIndex();
+    uint32_t firstParameter = target.firstParameterIndex();
+    if (entryParameter < firstParameter || entryParameter - firstParameter >= target.numberOfPositionalParameters())
+        return std::nullopt;
+    uint32_t argument = entryParameter - firstParameter;
+    const auto& record = entrypoint.creator.as<CreatorRecord::Entrypoint>();
+    switch (record.arguments) {
+    case ArgumentPassing::Registers:
+        return entrypoint.firstParameterIndex() + argument;
+    case ArgumentPassing::Buffer:
+        return entrypoint.numberOfEntryParameters() + record.takesNewTarget + argument;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static bool forEachPlaceInEntrypoints(const Program& program, const GenericEntrypoints& entrypoints, FunctionID target, uint32_t entryParameter, NOESCAPE const Invocable<bool(FunctionID, uint32_t)> auto& functor)
+{
+    for (const auto& entry : entrypoints.of(target)) {
+        std::optional<uint32_t> place = placeInEntrypoint(program.at(target), program.at(entry.second), entryParameter);
+        if (!place || *place >= maxFrameArrayParameters || !functor(entry.second, *place))
+            return false;
+    }
+    return true;
+}
 
 static bool mayBeHandedArrays(const Function& function)
 {
@@ -99,7 +148,7 @@ static ScannedParameters scanParametersHandedArrays(const Program& program, cons
                 refused |= parameters;
                 return;
             }
-            result.handedOn.append(HandedOnArray { callee, *entryParameter, parameters });
+            result.handedOn.append(HandedOnArray { callee, *entryParameter, parameters, call.opcode != Opcode::CallDirect });
         }
     };
 
@@ -118,6 +167,18 @@ static ScannedParameters scanParametersHandedArrays(const Program& program, cons
 
     for (uint32_t index = 0; index < entryParameters.size() && index < maxFrameArrayParameters; ++index)
         mayBe[entryParameters[index].index()] = asked & 1u << index;
+    if (uint32_t inBuffer = entryParameters.size() < maxFrameArrayParameters ? asked >> entryParameters.size() : 0) {
+        for (BlockID block : cfg.reversePostOrder()) {
+            for (ValueID id : function.at(block).values) {
+                const Value& value = function.at(id);
+                if (value.opcode == Opcode::GetArgument) {
+                    if (value.argumentIndex() < maxFrameArrayParameters)
+                        mayBe[id.index()] = (inBuffer & 1u << value.argumentIndex()) << entryParameters.size() & arrivesIn[block.index()];
+                } else if (Value::opcodesWithFirstArgument.contains(value.opcode) && value.opcode != Opcode::GetRestLength && value.firstArgument() < maxFrameArrayParameters)
+                    refused |= inBuffer >> value.firstArgument() << value.firstArgument() << entryParameters.size();
+            }
+        }
+    }
     for (bool changed = true; changed;) {
         changed = false;
         for (BlockID block : cfg.reversePostOrder()) {
@@ -219,7 +280,7 @@ static void collectQuestions(const Program& program, BuildContext& build, const 
                     callees = calleesOfCall(program, call);
                 for (FunctionID callee : callees->listed().functions) {
                     if (std::optional<uint32_t> entryParameter = entryParameterOf(program.at(callee), call, operandIndex); entryParameter && *entryParameter < maxFrameArrayParameters)
-                        questions.append(HandedOnArray { callee, *entryParameter, 0 });
+                        questions.append(HandedOnArray { callee, *entryParameter, 0, call.opcode != Opcode::CallDirect });
                 }
             });
         }
@@ -353,21 +414,32 @@ FrameArrayParameters computeFrameArrayParameters(const Program& program, BuildCo
     if (questions.isEmpty())
         return table;
 
+    GenericEntrypoints entrypoints(program);
     Vector<ScannedParameters> scanned(numberOfFunctions);
     Vector<uint32_t> asked(FillWith { }, numberOfFunctions, 0);
+    Vector<uint32_t> askedByValue(FillWith { }, numberOfFunctions, 0);
     Vector<FunctionID> everyFunction;
     while (!questions.isEmpty()) {
         Vector<FunctionID> round;
-        for (const HandedOnArray& question : questions) {
-            uint32_t& word = asked[question.callee.index()];
-            if (word >> question.entryParameter & 1)
-                continue;
-            if (word == scanned[question.callee.index()].asked) {
-                round.append(question.callee);
+        auto ask = [&](FunctionID function, uint32_t entryParameter) {
+            uint32_t& word = asked[function.index()];
+            if (word >> entryParameter & 1)
+                return true;
+            if (word == scanned[function.index()].asked) {
+                round.append(function);
                 if (!word)
-                    everyFunction.append(question.callee);
+                    everyFunction.append(function);
             }
+            word |= 1u << entryParameter;
+            return true;
+        };
+        for (const HandedOnArray& question : questions) {
+            ask(question.callee, question.entryParameter);
+            uint32_t& word = askedByValue[question.callee.index()];
+            if (!question.isByValue || word >> question.entryParameter & 1)
+                continue;
             word |= 1u << question.entryParameter;
+            forEachPlaceInEntrypoints(program, entrypoints, question.callee, question.entryParameter, ask);
         }
         questions.shrink(0);
 
@@ -385,16 +457,30 @@ FrameArrayParameters computeFrameArrayParameters(const Program& program, BuildCo
     words.fill(0, numberOfFunctions);
     for (FunctionID id : everyFunction)
         words[id.index()] = scanned[id.index()].asked & ~scanned[id.index()].refused;
+    auto mayTake = [&](FunctionID function, uint32_t entryParameter) -> bool {
+        return words[function.index()] >> entryParameter & 1;
+    };
+    auto everyEntrypointMayTake = [&](FunctionID target, uint32_t entryParameter) {
+        return forEachPlaceInEntrypoints(program, entrypoints, target, entryParameter, mayTake);
+    };
     for (bool changed = true; changed;) {
         changed = false;
         for (FunctionID id : everyFunction) {
             uint32_t& word = words[id.index()];
             for (const HandedOnArray& entry : scanned[id.index()].handedOn) {
-                if (!(word & entry.parameters) || words[entry.callee.index()] >> entry.entryParameter & 1)
+                if (!(word & entry.parameters) || (mayTake(entry.callee, entry.entryParameter) && (!entry.isByValue || everyEntrypointMayTake(entry.callee, entry.entryParameter))))
                     continue;
                 word &= ~entry.parameters;
                 changed = true;
             }
+        }
+    }
+    Vector<uint32_t>& refusedByEntrypoints = table.m_wordsRefusedByEntrypoints;
+    refusedByEntrypoints.fill(0, numberOfFunctions);
+    for (FunctionID id : everyFunction) {
+        for (uint32_t entryParameter = 0; entryParameter < maxFrameArrayParameters; ++entryParameter) {
+            if (mayTake(id, entryParameter) && !(askedByValue[id.index()] >> entryParameter & 1 && everyEntrypointMayTake(id, entryParameter)))
+                refusedByEntrypoints[id.index()] |= 1u << entryParameter;
         }
     }
     return table;

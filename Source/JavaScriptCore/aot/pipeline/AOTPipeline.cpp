@@ -190,7 +190,7 @@ constexpr std::array rows {
     addingOnly({ Opcode::ReleaseEnvironment, Opcode::MarkEnvironmentEscaped }, programPass(ReuseEnvironments, Optional, { Prepared, Prepared }, { Flow, FrameAllocation }, { EnvironmentReuse }, { EffectSummaries })),
     programPass(NumberLiteralStrings, Required, { Prepared, Placed }, { }, { LiteralStrings }, { }),
     addingOnly({ Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData }, programPass(EmbedConstantCollections, Optional, { Prepared, Prepared }, { Flow }, { ConstantCollections }, { })),
-    countingOwnChanges(programPass(CollectRegExpLiterals, Required, { Selected, Selected }, { Flow }, { RegExpRequests }, { })),
+    countingOwnChanges(programPass(CollectRegExpLiterals, Required, { Selected, Selected }, { Flow, CallGraph }, { RegExpRequests }, { })),
     programPass(OutlineColdOperations, Optional, { Selected, Selected }, { Flow, Heat, EffectSummaries, CallingConventions }, { }, resultsAboutBodies),
     programPass(InlineHeads, Optional, { Selected, Selected }, { Flow, Heat, EffectSummaries }, { }, resultsAboutBodies),
     programPass(ElideStackChecks, Optional, { Selected, Selected }, { CallGraph }, { StackChecks }, { }),
@@ -1145,10 +1145,10 @@ PlacementInputs Pipeline::createPlacementInputs(const CallGraph& callGraph)
     };
 }
 
-static RegExpRequests collectRegExpRequestsOf(Program& program, const FlowResults& flow, BuildContext& build)
+static RegExpRequests collectRegExpRequestsOf(Program& program, const FlowResults& flow, const CallGraph& callGraph, BuildContext& build)
 {
     StringArena strings(program.strings);
-    return collectRegExpRequests(program, flow, strings, build);
+    return collectRegExpRequests(program, flow, callGraph, strings, build);
 }
 
 void Pipeline::runSchedule(FunctionSchedule schedule, const StepsAroundSchedule& steps)
@@ -1258,7 +1258,7 @@ const CallGraph& Pipeline::prepareToReadSelectedBodiesBesideNumbering()
 void Pipeline::collectRegExpsAndElideStackChecks(const CallGraph& callGraph)
 {
     *m_output->regExpRequests = m_runner.runAnalysisBeside(PassID::CollectRegExpLiterals, m_program, [&] {
-        return collectRegExpRequestsOf(m_program, flow(), m_build);
+        return collectRegExpRequestsOf(m_program, flow(), callGraph, m_build);
     }, [&] {
         *m_output->stackChecks = m_runner.runAnalysis(PassID::ElideStackChecks, m_program, [&] {
             return elideStackChecks(m_program, callGraph, m_build);
@@ -1477,7 +1477,7 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         });
         return m_runner.lastProgramPassOutcome();
     case PassID::CollectRegExpLiterals:
-        *output.regExpRequests = read(id, collectRegExpRequestsOf, m_program, flow(), m_build);
+        *output.regExpRequests = read(id, collectRegExpRequestsOf, m_program, flow(), inputsFor(id).callGraph, m_build);
         return m_runner.lastProgramPassOutcome();
     case PassID::OutlineColdOperations:
         return outlineColdOperations();

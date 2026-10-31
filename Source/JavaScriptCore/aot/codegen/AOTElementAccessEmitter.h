@@ -129,6 +129,7 @@ public:
     Condition tryStoreElement(const ValueContext& store, CellPointer array, Integer index, ValueID stored);
 
     TypedArrayElements typedArrayElementsOf(CellPointer view, LBasicBlock isNotFixedLength);
+    TypedArrayElements typedArrayElementsOf(ValueID view, LBasicBlock isNotFixedLength);
     Operand loadTypedArrayElement(const TypedArrayElements&, Integer index, TypedArrayType);
     void storeTypedArrayElement(const TypedArrayElements&, Integer index, TypedArrayType, Operand stored);
 
