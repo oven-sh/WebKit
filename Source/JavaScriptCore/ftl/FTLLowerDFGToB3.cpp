@@ -14036,12 +14036,13 @@ IGNORE_CLANG_WARNINGS_END
 
         LValue jsCallee = lowJSValue(m_graph.varArgChild(node, 0));
 
-        if (!isTail) {
-            unsigned frameSize = (CallFrame::headerSizeInRegisters + numAllocatedArgs) * sizeof(EncodedJSValue);
-            unsigned alignedFrameSize = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(frameSize);
+        // A tail call needs this too. The shuffler writes the callee's frame before it moves the stack
+        // pointer, so our frame has to reach at least as low as the callee's: what is below the stack
+        // pointer is overwritten by a signal frame, and is not covered by our stack check.
+        unsigned frameSize = (CallFrame::headerSizeInRegisters + numAllocatedArgs) * sizeof(EncodedJSValue);
+        unsigned alignedFrameSize = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(frameSize);
 
-            m_proc.requestCallArgAreaSizeInBytes(alignedFrameSize);
-        }
+        m_proc.requestCallArgAreaSizeInBytes(alignedFrameSize);
 
         Vector<ConstrainedValue> arguments;
 
