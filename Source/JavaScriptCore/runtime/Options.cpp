@@ -200,6 +200,35 @@ inline static void LEGACY_NODELETE setWasOverridden(Options::ID id)
     g_optionWasOverridden->set(id);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+template<typename Functor>
+static bool withTypedOption(Options::ID id, const Functor& functor)
+{
+    void* address = addressOfOption(id);
+    switch (g_constMetaData[id].type) {
+    case Options::Type::Bool:
+        return functor(*static_cast<OptionsStorage::Bool*>(address));
+    case Options::Type::Unsigned:
+        return functor(*static_cast<OptionsStorage::Unsigned*>(address));
+    case Options::Type::Double:
+        return functor(*static_cast<OptionsStorage::Double*>(address));
+    case Options::Type::Int32:
+        return functor(*static_cast<OptionsStorage::Int32*>(address));
+    case Options::Type::Size:
+        return functor(*static_cast<OptionsStorage::Size*>(address));
+    case Options::Type::OptionRange:
+        return functor(*static_cast<OptionsStorage::OptionRange*>(address));
+    case Options::Type::OptionString:
+        return functor(*static_cast<OptionsStorage::OptionString*>(address));
+    case Options::Type::GCLogLevel:
+        return functor(*static_cast<OptionsStorage::GCLogLevel*>(address));
+    case Options::Type::OSLogType:
+        return functor(*static_cast<OptionsStorage::OSLogType*>(address));
+    }
+    return false;
+}
+#endif
+
 } // namespace OptionsHelper
 
 template<typename T>
@@ -1147,10 +1176,23 @@ void Options::initializeWithOptionsCustomization(NOESCAPE const ScopedLambda<voi
 #endif // PLATFORM(COCOA) || OS(LINUX)
 
 #if !PLATFORM(COCOA)
+#if USE(BUN_JSC_ADDITIONS)
+                for (unsigned index = 0; index < NumberOfOptions; ++index) {
+                    auto& metaData = OptionsHelper::g_constMetaData[index];
+                    auto id = static_cast<Options::ID>(index);
+                    std::array<char, 128> name;
+                    int length = snprintf(name.data(), name.size(), "JSC_%s", metaData.name.characters());
+                    RELEASE_ASSERT(length > 0 && static_cast<size_t>(length) < name.size());
+                    OptionsHelper::withTypedOption(id, [&](auto& option) {
+                        return overrideOptionWithHeuristic(option, id, name.data(), metaData.availability);
+                    });
+                }
+#else
 #define OVERRIDE_OPTION_WITH_HEURISTICS(type_, name_, defaultValue_, availability_, description_) \
                 overrideOptionWithHeuristic(name_(), name_##ID, "JSC_" #name_, Availability::availability_);
                 FOR_EACH_JSC_OPTION(OVERRIDE_OPTION_WITH_HEURISTICS)
 #undef OVERRIDE_OPTION_WITH_HEURISTICS
+#endif
 
 #define OVERRIDE_ALIASED_OPTION_WITH_HEURISTICS(aliasedName_, unaliasedName_, equivalence_) \
                 overrideAliasedOptionWithHeuristic("JSC_" #aliasedName_);
@@ -1302,6 +1344,29 @@ bool Options::setOptionWithoutAlias(const char* arg, bool verify)
 
     const char* valueStr = equalStr + 1;
 
+#if USE(BUN_JSC_ADDITIONS)
+    // One loop over the table of names in place of the same code once for each option.
+    size_t nameLength = equalStr - arg;
+    for (unsigned index = 0; index < NumberOfOptions; ++index) {
+        auto& metaData = OptionsHelper::g_constMetaData[index];
+        if (metaData.name.length() != nameLength || strncasecmp(arg, metaData.name.characters(), nameLength))
+            continue;
+        auto id = static_cast<Options::ID>(index);
+        if (metaData.availability != Availability::Normal && !isAvailable(id, metaData.availability))
+            return false;
+        return OptionsHelper::withTypedOption(id, [&]<typename T>(T& option) {
+            std::optional<T> value = parse<T>(valueStr);
+            if (!value)
+                return false;
+            OptionsHelper::setWasOverridden(id);
+            option = value.value();
+            if (verify)
+                notifyOptionsChanged();
+            return true;
+        });
+    }
+    return false; // No option matched.
+#else
     // For each option, check if the specified arg is a match. If so, set the arg
     // if the value makes sense. Otherwise, move on to checking the next option.
 #define SET_OPTION_IF_MATCH(type_, name_, defaultValue_, availability_, description_) \
@@ -1325,6 +1390,7 @@ bool Options::setOptionWithoutAlias(const char* arg, bool verify)
 #undef SET_OPTION_IF_MATCH
 
     return false; // No option matched.
+#endif
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
