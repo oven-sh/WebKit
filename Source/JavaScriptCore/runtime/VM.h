@@ -1288,7 +1288,11 @@ public:
     ALWAYS_INLINE VMTraps& traps() { return m_threadContext.traps(); }
     ALWAYS_INLINE const VMTraps& traps() const { return m_threadContext.traps(); }
 
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE NEVER_INLINE bool hasExceptionsAfterHandlingTraps();
+#else
     JS_EXPORT_PRIVATE bool hasExceptionsAfterHandlingTraps();
+#endif
 
     CONCURRENT_SAFE void notifyNeedDebuggerBreak() { traps().fireTrap(VMTraps::NeedDebuggerBreak); }
     CONCURRENT_SAFE void notifyNeedShellTimeoutCheck() { traps().fireTrap(VMTraps::NeedShellTimeoutCheck); }
