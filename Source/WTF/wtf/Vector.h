@@ -72,8 +72,16 @@ struct VectorCopier {
         if constexpr (std::is_trivially_copyable_v<T> && std::is_trivially_default_constructible_v<T> && std::same_as<T, U>)
             memcpySpan(dst, src);
         else {
+#if USE(BUN_JSC_ADDITIONS)
+            if (dst.size() < src.size()) [[unlikely]]
+                CRASH();
+            T* to = dst.data();
+            for (const U* from = src.data(), *end = from + src.size(); from != end; ++from, ++to)
+                new (NotNull, to) T(*from);
+#else
             for (size_t i = 0; i < src.size(); ++i)
                 new (NotNull, &dst[i]) T(src[i]);
+#endif
         }
     }
 };
@@ -169,8 +177,16 @@ struct VectorTypeOperations
         if constexpr (VectorTraits<T>::canCopyWithMemcpy)
             memcpySpan(asMutableByteSpan(dst), asByteSpan(src));
         else {
+#if USE(BUN_JSC_ADDITIONS)
+            if (dst.size() < src.size()) [[unlikely]]
+                CRASH();
+            T* to = dst.data();
+            for (const T* from = src.data(), *end = from + src.size(); from != end; ++from, ++to)
+                new (NotNull, to) T(*from);
+#else
             for (size_t i = 0; i < src.size(); ++i)
                 new (NotNull, &dst[i]) T(src[i]);
+#endif
         }
     }
 
@@ -180,8 +196,16 @@ struct VectorTypeOperations
         if constexpr (std::same_as<T, U> && std::is_trivially_copyable_v<T>)
             memcpySpan(destination, source);
         else {
+#if USE(BUN_JSC_ADDITIONS)
+            if (destination.size() < source.size()) [[unlikely]]
+                CRASH();
+            T* to = destination.data();
+            for (U* from = source.data(), *end = from + source.size(); from != end; ++from, ++to)
+                new (NotNull, to) T(WTF::move(*from));
+#else
             for (size_t i = 0; i < source.size(); ++i)
                 new (NotNull, std::addressof(destination[i])) T(WTF::move(source[i]));
+#endif
         }
     }
 
