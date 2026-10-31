@@ -9420,8 +9420,8 @@ void checkFeaturesAboveHost()
     FINALIZE_CODE(linkBuffer, JSEntryPtrTag, nullptr, "testmasm code for every CPU feature");
 }
 
-#if CPU(ARM64)
-// Whatever signs, authenticates or strips here is a hint. NOP is hint 0.
+#if CPU(ARM64) && !CPU(ARM64E)
+// Whatever signs, authenticates or strips here is a hint. NOP is hint 0. Not for ARM64E, which signs whatever the policy says.
 static unsigned numberOfHintsInFunction(const AssemblerPolicy& policy)
 {
     Vector<uint8_t> bytes = emitWithPolicy(policy, [](CCallHelpers& jit) {
@@ -9445,11 +9445,7 @@ static unsigned numberOfHintsInFunction(const AssemblerPolicy& policy)
 static void checkReturnAddressSigningFollowsPolicy()
 {
     CHECK_EQ(numberOfHintsInFunction(AssemblerPolicy::forImage(CPUFeatureSet::host())), 0u);
-#if ENABLE(RETURN_ADDRESS_SIGNING)
-    CHECK_EQ(numberOfHintsInFunction(AssemblerPolicy::forJIT()), 5u);
-#elif !CPU(ARM64E)
-    CHECK_EQ(numberOfHintsInFunction(AssemblerPolicy::forJIT()), 0u);
-#endif
+    CHECK_EQ(numberOfHintsInFunction(AssemblerPolicy::forJIT()), ENABLE_RETURN_ADDRESS_SIGNING ? 5u : 0u);
 }
 #endif
 
@@ -9470,7 +9466,7 @@ void testAssemblerPolicy()
 #if CPU(X86_64)
     checkEncodingsFollowPolicy();
 #endif
-#if CPU(ARM64)
+#if CPU(ARM64) && !CPU(ARM64E)
     checkReturnAddressSigningFollowsPolicy();
 #endif
     checkFeaturesAboveHost();
