@@ -25,6 +25,7 @@
 #include "AOTPassID.h"
 #include "AOTPersistentSortedSet.h"
 #include "AOTPhaseTimes.h"
+#include "AOTPropertyAccessMembers.h"
 #include "AOTSchemaEnums.h"
 #include "AOTSharedPrefixList.h"
 #include "AOTSort.h"
@@ -783,6 +784,38 @@ static void testPersistentSetsHoldWhatSortedSetsHold()
     }
 }
 
+static void testPackedPartitionUnpacksToWhatWasPacked()
+{
+    auto isSame = [](const MemberPartition& a, const MemberPartition& b) {
+        return a.rest == b.rest && std::ranges::equal(a.arms, b.arms, [](const MemberArm& a, const MemberArm& b) {
+            return a.answer == b.answer && a.layouts == b.layouts;
+        });
+    };
+    AOT_TEST_CHECK(isSame(PackedMemberPartition(MemberPartition { }).unpack(), MemberPartition { }));
+
+    MemberCondition unchanged { MemberCondition::Kind::MemberUnchanged, LayoutID(4u), ClassSide::Prototype, PropertyKeyID(9u) };
+    MemberCondition evaluatedOnce { MemberCondition::Kind::ClassEvaluatedOnce, LayoutID(70000u), ClassSide::Static, { } };
+    MemberPartition partition;
+    partition.rest = { LayoutID(3u), LayoutID(900u) };
+    partition.arms.append({ { .kind = MemberKind::Method, .level = KnowledgeLevel::Proven, .holder = LayoutID(7u), .method = FunctionID(0u) }, { LayoutID(7u) } });
+    partition.arms.append({ { .kind = MemberKind::Accessor, .level = KnowledgeLevel::Expected, .holder = LayoutID(8u), .getter = FunctionID(12u), .setter = FunctionID(13u), .receiverProofs = { Proof::PrototypeLinkUnchanged, Proof::NoExtraProperties }, .conditions = { unchanged, evaluatedOnce }, .cause = UnprovenCause::PropertyRedefined }, { LayoutID(8u), LayoutID(9u) } });
+    partition.arms.append({ { .kind = MemberKind::Field, .level = KnowledgeLevel::Proven, .holder = LayoutID(0u), .field = 5 }, { LayoutID(10u), LayoutID(11u), LayoutID(12u), LayoutID(13u), LayoutID(14u), LayoutID(15u) } });
+    partition.arms.append({ { .kind = MemberKind::Field, .level = KnowledgeLevel::Proven }, { LayoutID(16u) } });
+    partition.arms.append({ { .kind = MemberKind::Variable, .level = KnowledgeLevel::Proven, .variable = VariableID(2u) }, { LayoutID(17u) } });
+    partition.arms.append({ { .kind = MemberKind::Namespace, .level = KnowledgeLevel::Proven, .module = ModuleID(1u) }, { LayoutID(18u) } });
+    partition.arms.append({ { .kind = MemberKind::Builtin, .level = KnowledgeLevel::Expected, .builtin = BuiltinID(21u), .conditions = { unchanged } }, { LayoutID(19u) } });
+    partition.arms.append({ { .kind = MemberKind::Absent, .level = KnowledgeLevel::Proven }, { LayoutID(20u) } });
+    AOT_TEST_CHECK(isSame(PackedMemberPartition(partition).unpack(), partition));
+
+    // A thousand classes with a method each.
+    MemberPartition methods;
+    for (uint32_t index = 0; index < 1000; ++index)
+        methods.arms.append({ { .kind = MemberKind::Method, .level = KnowledgeLevel::Proven, .holder = LayoutID(index), .method = FunctionID(index) }, { LayoutID(index) } });
+    PackedMemberPartition packed(methods);
+    AOT_TEST_CHECK(isSame(packed.unpack(), methods));
+    AOT_TEST_CHECK(packed.sizeInBytes() * 4 <= methods.arms.size() * sizeof(MemberArm));
+}
+
 static void testListsShareWhatTheyHeldWhenTheyWereCopied()
 {
     WeakRandom random(1);
@@ -1372,6 +1405,7 @@ std::span<const NativeTest> supportTests()
         { "sorted-lists/short-list-is-looked-for-by-halving"_s, testShortSortedListIsLookedForByHalving },
         { "shared-collections/persistent-sets-hold-what-sorted-sets-hold"_s, testPersistentSetsHoldWhatSortedSetsHold },
         { "shared-collections/lists-share-what-they-held-when-they-were-copied"_s, testListsShareWhatTheyHeldWhenTheyWereCopied },
+        { "property-access/packed-partition-unpacks-to-what-was-packed"_s, testPackedPartitionUnpacksToWhatWasPacked },
         { "vector/holds-what-that-of-wtf-holds"_s, testVectorsHoldWhatThoseOfWTFHold },
         { "enum-names/end-at-the-last-enumerator"_s, testNamesOfEnumeratorsEndAtTheLastOne },
     };

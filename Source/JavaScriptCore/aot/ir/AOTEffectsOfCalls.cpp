@@ -90,10 +90,7 @@ static Effects effectsOfContentsRead(OperandKind kind)
 
 static bool mayEnterTableLookup(const Program& program, LayoutSetID receivers, PropertyKeyID key)
 {
-    MemberPartition partition = partitionMembers({ program, nullptr }, program.at(receivers).completeMembers(), key, Access::Read);
-    return !partition.rest.isEmpty() || std::ranges::any_of(partition.arms, [](const MemberArm& arm) {
-        return arm.answer.kind != MemberKind::Method || !arm.answer.receiverProofs.isEmpty() || !arm.answer.conditions.isEmpty();
-    });
+    return !readsMethodOfEachWithoutTests({ program, nullptr }, program.at(receivers).completeMembers(), key);
 }
 
 // Every table call of one name on one family asks the same, and the answer looks at every class of the family.

@@ -47,7 +47,7 @@ public:
         friend bool operator==(const PartitionKey&, const PartitionKey&) = default;
     };
 
-    using Partition = Answer<PartitionKey, MemberPartition>;
+    using Partition = Answer<PartitionKey, PackedMemberPartition>;
 
     struct FieldArmKey {
         ListID layouts { noList };

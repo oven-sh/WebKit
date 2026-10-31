@@ -45,6 +45,7 @@ struct RuntimeCounters {
     uint64_t nativeTextsHashed { 0 };
     uint64_t modulesSoughtForRequireCache { 0 };
     uint64_t modulesSoughtForWhatHasRun { 0 };
+    uint64_t textPrintedInPlaceDecoded { 0 };
 
     // How often the places of a file ran, in a program that counts them, by the compiler's numbers.
     using CountedFile = Vector<uint64_t>;
@@ -63,6 +64,7 @@ void countRopeFlattenedForPrefixTest(VM&);
 void countNativeTextHashed(VM&);
 void countModulesSoughtForRequireCache(VM&, size_t);
 void countModulesSoughtForWhatHasRun(VM&, size_t);
+void countTextPrintedInPlaceDecoded(VM&, size_t);
 
 JS_EXPORT_PRIVATE uint64_t valueOf(VM&, RuntimeCounterID);
 JS_EXPORT_PRIVATE uint64_t limitHitsOf(VM&, LimitID);

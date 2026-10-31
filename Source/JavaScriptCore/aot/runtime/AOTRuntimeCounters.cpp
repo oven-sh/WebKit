@@ -145,6 +145,12 @@ void countModulesSoughtForWhatHasRun(VM& vm, size_t modules)
         counters->modulesSoughtForWhatHasRun += modules;
 }
 
+void countTextPrintedInPlaceDecoded(VM& vm, size_t pieces)
+{
+    if (RuntimeCounters* counters = vm.aotState().counters.get())
+        counters->textPrintedInPlaceDecoded += pieces;
+}
+
 uint64_t valueOf(VM& vm, RuntimeCounterID counter)
 {
     size_t index = static_cast<size_t>(counter);
@@ -876,6 +882,7 @@ void dumpCounts(VM& vm, PrintStream& out)
             inlineFramesDecoded += parts.callSiteCache->numberOfInlineFramesDecoded();
     }
     out.println(inlineFramesDecoded, "\tdecoded:InlineFrames");
+    out.println(counters ? counters->textPrintedInPlaceDecoded : 0, "\tdecoded:TextPrintedInPlace");
     uint64_t builtinsSoughtNotMade = 0;
     forEachInstance(vm, [&](const Instance& instance) {
         if (instance.state)

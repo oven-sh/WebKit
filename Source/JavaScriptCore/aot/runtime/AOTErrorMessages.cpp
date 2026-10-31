@@ -1284,6 +1284,7 @@ struct SourceFile {
     uint64_t module { 0 };
     Vector<uint8_t> bytes;
     Vector<size_t> lineStarts;
+    Vector<TextPrintedInPlace> textPrintedInPlace;
 
     // A column is found by following its line. A long line is followed once: these are places in it, a stretch apart.
     struct PlaceInLine {
@@ -1324,6 +1325,9 @@ struct QuotesOfPlaces {
     // A place is asked about in several ways, one after the other. Held only while it is.
     const void* placeInKeptTextIsOf { nullptr };
     std::optional<PlaceInKeptText> placeInKeptText;
+    // Of the piece of kept text that was asked about last. A long statement or function is one piece: what is printed in place of its parts is read once, not once for each place in it.
+    uint64_t moduleOfTextPrintedInPlace { 0 };
+    std::pair<size_t, size_t> pieceOfTextPrintedInPlace;
     Vector<TextPrintedInPlace> textPrintedInPlace;
 };
 
@@ -1338,12 +1342,17 @@ static QuotesOfPlaces& quotesOfPlaces(VM& vm)
     return *quotes;
 }
 
+// Never 0, which no file has and a set cannot hold.
+static uint64_t numberAmongAllImages(ModuleID moduleOfImage)
+{
+    return (static_cast<uint64_t>(Image::current()->number()) + 1) << 32 | moduleOfImage.index();
+}
+
 static SourceFile* sourceFileOf(VM& vm, ModuleID moduleOfImage)
 {
     QuotesOfPlaces& quotes = quotesOfPlaces(vm);
     SourceFile& lastFile = quotes.lastFile;
-    // Never 0, which no file has and the set cannot hold.
-    uint64_t module = (static_cast<uint64_t>(Image::current()->number()) + 1) << 32 | moduleOfImage.index();
+    uint64_t module = numberAmongAllImages(moduleOfImage);
     if (lastFile.module == module)
         return &lastFile;
     if (quotes.modulesWithoutFile.contains(module))
@@ -1355,7 +1364,8 @@ static SourceFile* sourceFileOf(VM& vm, ModuleID moduleOfImage)
         quotes.modulesWithoutFile.add(module);
         return nullptr;
     }
-    lastFile = { module, WTF::move(*bytes), { }, notFound, { } };
+    lastFile = { module, WTF::move(*bytes), { }, textPrintedInPlaceOf(moduleOfImage, StartOfPrintedText::File), notFound, { } };
+    countTextPrintedInPlaceDecoded(vm, lastFile.textPrintedInPlace.size());
     for (size_t start = 0; start < lastFile.bytes.size(); start = startOfNextLine(byteCast<Latin1Character>(lastFile.bytes.span()), start))
         lastFile.lineStarts.append(start);
     return &lastFile;
@@ -2744,11 +2754,11 @@ static String findSpelled(VM& vm, const PlaceInFunctionText* place, StringView n
         SourceFile* file = sourceFileOf(vm, place->module);
         if (file && place->position.line <= file->lineStarts.size()) {
             std::span<const Latin1Character> text = byteCast<Latin1Character>(file->bytes.span());
-            Vector<TextPrintedInPlace> pieces = textPrintedInPlaceOf(place->module, StartOfPrintedText::File);
+            std::span<const TextPrintedInPlace> pieces = file->textPrintedInPlace.span();
             auto findStatementsAround = [&](size_t at) {
                 return AOT::findStatementsAround(*file, at);
             };
-            if (String quote = findSpelledAround(text, 0, text.size(), offsetOfColumn(*file, place->position.line - 1, place->position.column), pieces.span(), name, find, findStatementsAround); !quote.isNull())
+            if (String quote = findSpelledAround(text, 0, text.size(), offsetOfColumn(*file, place->position.line - 1, place->position.column), pieces, name, find, findStatementsAround); !quote.isNull())
                 return quote;
         }
     }
@@ -2761,9 +2771,15 @@ static String findSpelled(VM& vm, const PlaceInFunctionText* place, StringView n
         if (quotes.placeInKeptTextIsOf != place->address) {
             quotes.placeInKeptTextIsOf = place->address;
             quotes.placeInKeptText = findInKeptText(place->function, place->module, place->position);
-            quotes.textPrintedInPlace = { };
+            std::pair<size_t, size_t> piece;
             if (quotes.placeInKeptText)
-                quotes.textPrintedInPlace = textPrintedInPlaceOf(place->module, StartOfPrintedText::SourceBytesOfAllFunctions, quotes.placeInKeptText->startOfPiece, quotes.placeInKeptText->endOfPiece);
+                piece = { quotes.placeInKeptText->startOfPiece, quotes.placeInKeptText->endOfPiece };
+            if (quotes.placeInKeptText && (quotes.moduleOfTextPrintedInPlace != numberAmongAllImages(place->module) || quotes.pieceOfTextPrintedInPlace != piece)) {
+                quotes.moduleOfTextPrintedInPlace = numberAmongAllImages(place->module);
+                quotes.pieceOfTextPrintedInPlace = piece;
+                quotes.textPrintedInPlace = textPrintedInPlaceOf(place->module, StartOfPrintedText::SourceBytesOfAllFunctions, piece.first, piece.second);
+                countTextPrintedInPlaceDecoded(vm, quotes.textPrintedInPlace.size());
+            }
         }
         if (const std::optional<PlaceInKeptText>& found = quotes.placeInKeptText) {
             auto findStatementsAround = [&](size_t at) {
@@ -2983,7 +2999,6 @@ static String findOnce(VM& vm, const PlaceInFunctionText& place, StringView name
         answer = { find, name.toString(), WTF::move(quote), holdsForEveryName };
         QuotesOfPlaces& quotes = quotesOfPlaces(vm);
         quotes.placeInKeptTextIsOf = nullptr;
-        quotes.textPrintedInPlace = { };
     }
     return answer.quote;
 }
