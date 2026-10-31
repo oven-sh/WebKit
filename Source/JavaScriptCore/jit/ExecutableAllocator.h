@@ -59,7 +59,8 @@ namespace JSC {
 
 #if ENABLE(BRANCH_TARGET_IDENTIFICATION)
 // Guards the whole pages of [start, end), which are executable already and stay readable, and writable if they are said to be. Says
-// whether it did: it does not without the option, on a processor without the feature, or where there is no whole page.
+// whether all of it is guarded now: nothing is without the option or on a processor without the feature, and what shares a page with
+// something else is not.
 JS_EXPORT_PRIVATE bool guardExecutablePages(const void* start, const void* end, bool writable);
 #endif
 

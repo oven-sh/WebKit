@@ -483,9 +483,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 // start and end of the llint instruction range quickly.
 
 // LLInt::initialize() guards what is between these. What an object file puts in one section stays in one piece. Only whole pages can
-// be guarded, and what shares a page with LLInt may have no landing pads, so the bounds are where the smallest pages begin.
+// be guarded, and what shares a page with LLInt may have no landing pads, so the bounds are where a page begins, of 4, 16 or 64 KB.
 #if ENABLE(BRANCH_TARGET_IDENTIFICATION)
-#define OFFLINE_ASM_ALIGNMENT_OF_BOUND OFFLINE_ASM_ALIGN_TRAP(4096)
+#define OFFLINE_ASM_ALIGNMENT_OF_BOUND OFFLINE_ASM_ALIGN_TRAP(65536)
 #define OFFLINE_ASM_BOUND_OF_SECTIONS(bound) \
     ".section .text.jsc_llint_bytecode,\"ax\",@progbits\n" \
     OFFLINE_ASM_GLOBAL_LABEL_IMPL(jsc_llint_bytecode_##bound, OFFLINE_ASM_NO_ALT_ENTRY_DIRECTIVE, OFFLINE_ASM_ALIGNMENT_OF_BOUND, HIDE_SYMBOL) \

@@ -592,7 +592,8 @@ bool guardExecutablePages(const void* start, const void* end, bool writable)
     uintptr_t endOfLastPage = WTF::roundDownToMultipleOf(pageSize(), std::bit_cast<uintptr_t>(end));
     if (firstPage >= endOfLastPage)
         return false;
-    return !mprotect(std::bit_cast<void*>(firstPage), endOfLastPage - firstPage, PROT_READ | (writable ? PROT_WRITE : 0) | PROT_EXEC | protBTI);
+    bool isAllOfIt = firstPage == std::bit_cast<uintptr_t>(start) && endOfLastPage == std::bit_cast<uintptr_t>(end);
+    return !mprotect(std::bit_cast<void*>(firstPage), endOfLastPage - firstPage, PROT_READ | (writable ? PROT_WRITE : 0) | PROT_EXEC | protBTI) && isAllOfIt;
 }
 #endif
 
