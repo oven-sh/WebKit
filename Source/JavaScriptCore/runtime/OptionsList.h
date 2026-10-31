@@ -286,6 +286,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, forceFencedBarrier, false, Normal, nullptr) \
     v(Bool, verboseVisitRace, false, Normal, nullptr) \
     v(Bool, verboseHeapSnapshotLogging, true, Normal, nullptr) \
+    v(Unsigned, heapSnapshotBuilderEdgeLimitForTesting, 0, Normal, "For testing. If nonzero, HeapSnapshotBuilder takes this many edges and then fails, as it does when the Vector of its edges cannot grow."_s) \
     v(Unsigned, largeHeapSize, 32 * 1024 * 1024, Normal, nullptr) \
     v(Unsigned, mediumHeapSize, 4 * 1024 * 1024, Normal, nullptr) \
     v(Unsigned, smallHeapSize, 1 * 1024 * 1024, Normal, nullptr) \
