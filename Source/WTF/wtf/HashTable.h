@@ -364,7 +364,7 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(HashTable);
     };
 
     template<typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits, typename Malloc>
-    class HashTable {
+    class TRIVIAL_ABI HashTable {
     public:
         using HashTableType = HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Malloc>;
         typedef HashTableIterator<HashTableType, Key, Value, Extractor, HashFunctions, Traits, KeyTraits> iterator;

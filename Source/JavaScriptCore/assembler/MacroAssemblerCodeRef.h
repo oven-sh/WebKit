@@ -57,7 +57,7 @@ protected:
 };
 
 template<PtrTag tag>
-class MacroAssemblerCodeRef : private MacroAssemblerCodeRefBase {
+class TRIVIAL_ABI MacroAssemblerCodeRef : private MacroAssemblerCodeRefBase {
 private:
     // This is private because it's dangerous enough that we want uses of it
     // to be easy to find - hence the static create method below.

@@ -38,7 +38,7 @@ class WeakImpl;
 class WeakHandleOwner;
 class VM;
 
-template<typename T> class Weak {
+template<typename T> class TRIVIAL_ABI Weak {
     WTF_MAKE_NONCOPYABLE(Weak);
 public:
     Weak() = default;

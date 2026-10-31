@@ -40,7 +40,7 @@ template<typename T> struct KeyValuePairKeyExtractor {
 };
 
 template<typename KeyArg, typename MappedArg, typename HashArg, typename KeyTraitsArg, typename MappedTraitsArg, typename TableTraitsArg, ShouldValidateKey shouldValidateKey, typename Malloc>
-class HashMap final {
+class TRIVIAL_ABI HashMap final {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(HashMap);
 private:
     using KeyTraits = KeyTraitsArg;

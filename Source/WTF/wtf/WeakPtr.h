@@ -65,7 +65,7 @@ template<typename, typename = DefaultWeakPtrImpl> class WeakListHashSet;
  * a pointer to a pointer). This can hurt compiler optimizations. Prefer RefPtr
  * or CheckedPtr in performance sensitive code.
  */
-template<typename T, typename WeakPtrImpl, typename PtrTraits> class WeakPtr {
+template<typename T, typename WeakPtrImpl, typename PtrTraits> class TRIVIAL_ABI WeakPtr {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(WeakPtr);
 public:
     WeakPtr() { }
