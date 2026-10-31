@@ -995,6 +995,8 @@ static bool copyLoopWhoseFirstValueIsTheOnlyNumber(FunctionPassContext& context)
         Vector<std::pair<Edge, uint32_t>, 8> worklist { { firstEdge, firstIndex } };
         while (!worklist.isEmpty()) {
             auto [passingEdge, passedIndex] = worklist.takeLast();
+            if (passedIndex >= numberOfExplicitArguments(function, passingEdge))
+                return false;
             ValueID passed = targetOf(function, passingEdge).arguments[passedIndex];
             ValueID value = analyses.identityOf(passed);
             if (value != parameter && value != passed && program.typeOf(function, value).isInt32() && !program.typeOf(function, passed).isInt32()) {
@@ -1037,7 +1039,7 @@ static bool copyLoopWhoseFirstValueIsTheOnlyNumber(FunctionPassContext& context)
         const CompactList<ValueID>& parameters = function.at(header).parameters;
         for (uint32_t index = 0; index < parameters.size() && !parameterIndex; ++index) {
             const Type& type = program.typeOf(function, parameters[index]);
-            if (!type.isNumberWithoutFraction() || type.isInteger())
+            if (!type.isNumberWithoutFraction() || type.isInteger() || index >= numberOfExplicitArguments(function, *entry))
                 continue;
             sameValuesOfNarrowerType.clear();
             bool handsOnInt32 = std::ranges::all_of(analyses.cfg().incomingEdges(header), [&](Edge edge) {
