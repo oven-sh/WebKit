@@ -594,13 +594,14 @@ struct Tally {
 
 } // anonymous namespace
 
-// An integer counter takes each value of its range at most once.
+// An integer counter takes each value of its range at most once. Not 2 ** 53: one more is no double, so a number that has come there stays there.
 static std::optional<int64_t> mostTurnsBehindFirst(FunctionPassContext& context, const LoopInduction& loop)
 {
+    constexpr Range changedByEveryStep { -maxExactInteger + 1, maxExactInteger - 1 };
     std::optional<int64_t> fewest;
     for (const InductionVariable& variable : loop.variables) {
         const Type& type = context.program.typeOf(context.function, variable.parameter);
-        if (!type.isInteger() || !type.integers.isSubsetOf(Range::exact()) || variable.step.kind != InductionStepKind::Constant || !variable.step.constant)
+        if (!type.isInteger() || !type.integers.isSubsetOf(changedByEveryStep) || variable.step.kind != InductionStepKind::Constant || !variable.step.constant)
             continue;
         int64_t turns = (type.integers.maximum - type.integers.minimum) / std::abs(variable.step.constant);
         fewest = fewest ? std::min(*fewest, turns) : turns;
