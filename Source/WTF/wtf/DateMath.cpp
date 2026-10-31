@@ -362,11 +362,12 @@ static inline double ymdhmsToMilliseconds(int year, long mon, long day, long hou
 
     double dateMilliseconds = milliseconds + second * msPerSecond + minute * (secondsPerMinute * msPerSecond) + hour * (secondsPerHour * msPerSecond) + (mday + day - 1 + ydays) * (secondsPerDay * msPerSecond);
 
-    // Clamp to EcmaScript standard (ecma262/#sec-time-values-and-time-range) of
-    //  +/- 100,000,000 days from 01 January, 1970.
-    if (dateMilliseconds < -8640000000000000.0 || dateMilliseconds > 8640000000000000.0)
+    // The callers still subtract the string's UTC offset or the local time offset from this, and the result goes
+    // through timeClip() (ecma262/#sec-date-time-string-format, #sec-utc-t). So a value within a day of the
+    // ECMAScript time range, +/- 100,000,000 days from 01 January, 1970, can still end up inside it.
+    if (std::abs(dateMilliseconds) > maxECMAScriptTime + msPerDay)
         return std::numeric_limits<double>::quiet_NaN();
-    
+
     return dateMilliseconds;
 }
 
@@ -988,10 +989,10 @@ double parseDate(std::span<const Latin1Character> dateString)
     bool isLocalTime;
     double value = parseDate(dateString, isLocalTime);
 
-    if (isLocalTime)
+    if (isLocalTime && std::isfinite(value))
         value -= calculateLocalTimeOffset(value, TimeType::LocalTime).offset;
 
-    return value;
+    return timeClip(value);
 }
 
 // See http://tools.ietf.org/html/rfc2822#section-3.3 for more information.
