@@ -32,8 +32,10 @@ public:
         unsigned size = this->size();
         for (unsigned index = 0; index < size; ++index)
             std::destroy_at(slotAt(index));
-        for (T* segment : m_segments)
-            fastFree(segment);
+        for (unsigned segment = 0; segment < numberOfSegments; ++segment) {
+            if (m_segments[segment])
+                fastFree(m_segments[segment] + (sizeOfFirstSegment << segment));
+        }
     }
 
     unsigned size() const { return m_size.load(std::memory_order_relaxed); }
@@ -111,8 +113,11 @@ private:
 
     T* slotAt(unsigned index) const
     {
-        Place place = placeOf(index);
-        return m_segments[place.segment] + place.offset;
+        // m_segments[n] points sizeOfFirstSegment << n elements before the segment, so that the position is the offset.
+        unsigned position;
+        if (__builtin_add_overflow(index, sizeOfFirstSegment, &position)) [[unlikely]]
+            CRASH();
+        return m_segments[31 - __builtin_clz(position) - shiftOfFirstSegment] + position;
     }
 
     T* ensureSlotAt(unsigned index)
@@ -121,8 +126,8 @@ private:
         Place place = placeOf(index);
         T*& segment = m_segments[place.segment];
         if (!segment)
-            segment = static_cast<T*>(fastMalloc(sizeof(T) * static_cast<size_t>(place.sizeOfSegment)));
-        return segment + place.offset;
+            segment = static_cast<T*>(fastMalloc(sizeof(T) * static_cast<size_t>(place.sizeOfSegment))) - place.sizeOfSegment;
+        return segment + place.offset + place.sizeOfSegment;
     }
 
     std::array<T*, numberOfSegments> m_segments { };
