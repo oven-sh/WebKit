@@ -600,14 +600,14 @@ namespace JSC {
             return emitNodeInTailPosition(nullptr, n);
         }
 
-        RegisterID* emitDefineClassElements(PropertyListNode* n, RegisterID* constructor, RegisterID* prototype, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>& instanceElementDefinitions, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>& staticElementDefinitions)
+        RegisterID* emitDefineClassElements(PropertyListNode* n, RegisterID* constructor, RegisterID* prototype, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>& instanceElementDefinitions, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>& staticElementDefinitions, bool brandPrivateMethods = false)
         {
             ASSERT(constructor->refCount() && prototype->refCount());
             if (!m_vm.isSafeToRecurse()) [[unlikely]]
                 return emitThrowExpressionTooDeepException();
             if (n->needsDebugHook()) [[unlikely]]
                 emitDebugHook(n);
-            return n->emitBytecode(*this, constructor, prototype, &instanceElementDefinitions, &staticElementDefinitions);
+            return n->emitBytecode(*this, constructor, prototype, &instanceElementDefinitions, &staticElementDefinitions, brandPrivateMethods);
         }
 
         RegisterID* emitNodeForProperty(RegisterID* dst, ExpressionNode* node)
