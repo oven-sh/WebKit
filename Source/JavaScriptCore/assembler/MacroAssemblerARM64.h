@@ -5713,6 +5713,8 @@ public:
 
     ALWAYS_INLINE void removePtrTag(RegisterID target)
     {
+        if (!policy().signsReturnAddresses)
+            return;
         // XPACLRI has its operand in the link register.
         RELEASE_ASSERT(target != memoryTempRegister && target != ARM64Registers::lr);
         RegisterID savedLinkRegister = getCachedMemoryTempRegisterIDAndInvalidate();

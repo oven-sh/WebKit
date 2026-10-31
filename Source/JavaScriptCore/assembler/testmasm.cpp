@@ -9430,6 +9430,7 @@ static unsigned numberOfHintsInFunction(const AssemblerPolicy& policy)
         jit.ret();
         jit.tagReturnAddress();
         jit.untagReturnAddress();
+        jit.removePtrTag(GPRInfo::regT0);
         jit.ret();
     });
     unsigned result = 0;
@@ -9445,7 +9446,7 @@ static unsigned numberOfHintsInFunction(const AssemblerPolicy& policy)
 static void checkReturnAddressSigningFollowsPolicy()
 {
     CHECK_EQ(numberOfHintsInFunction(AssemblerPolicy::forImage(CPUFeatureSet::host())), 0u);
-    CHECK_EQ(numberOfHintsInFunction(AssemblerPolicy::forJIT()), ENABLE_RETURN_ADDRESS_SIGNING ? 5u : 0u);
+    CHECK_EQ(numberOfHintsInFunction(AssemblerPolicy::forJIT()), ENABLE_RETURN_ADDRESS_SIGNING ? 6u : 0u);
 }
 #endif
 
