@@ -186,6 +186,7 @@ public:
     ValueSetID eventRaisingLibraryExportHolders() const { return m_eventRaisingLibraryExportHolders; }
     ValueSetID eventRaisingLibraryClosures() const { return m_eventRaisingLibraryClosures; }
     ValueSetID prototypeObjectsOfLibraryClasses() const { return m_prototypeObjectsOfLibraryClasses; }
+    ValueSetID constructorsOfLibraryClasses() const { return m_constructorsOfLibraryClasses; }
     ValueSetID prototypeObjectsOfClasses() const { return m_prototypeObjectsOfClasses; }
     ValueSetID instancesBelowLibraryClasses() const { return m_instancesBelowLibraryClasses; }
     ValueSetID instancesBelowBuiltinClasses() const { return m_instancesBelowBuiltinClasses; }
@@ -200,6 +201,17 @@ public:
     // They store into their receiver, change it, or construct what its `constructor` names. None of that happens to an object because it has escaped.
     ValueSetID builtinFunctionsThatActOnReceiver() const { return m_builtinFunctionsThatActOnReceiver; }
     ValueSetID otherCallables() const { return m_otherCallables; }
+    // An accessor that answers a function bound to its receiver stands for the target of those functions: it lies in their hidden slot and nowhere else, and a call enters its overloads for calls.
+    ValueSetID accessorsThatBindFunctions() const { return m_accessorsThatBindFunctions; }
+    ValueSetID targetsOfBoundFunctionsAmongBuiltins() const { return m_targetsOfBoundFunctionsAmongBuiltins; }
+    ValueSetID targetsOfBoundFunctions() const { return m_targetsOfBoundFunctions; }
+    // One object stands for all the functions that such an accessor has made.
+    bool isFunctionBoundByAccessor(ValueFlowObjectID object) const
+    {
+        if (object.index() < m_firstResultOfBuiltin || object.index() >= m_firstResultOfBuiltin + 2 * m_builtins->builtinCount() || (object.index() - m_firstResultOfBuiltin) % 2)
+            return false;
+        return m_builtins->answersFunctionBoundToReceiver(BuiltinID((object.index() - m_firstResultOfBuiltin) / 2));
+    }
     std::atomic<uint64_t>& rememberedBoundFunctionsBindingNoArgument() const { return m_boundFunctionsBindingNoArgument[0]; }
     ValueSetID arrays() const { return m_arrays; }
     ValueSetID records() const { return m_records; }
@@ -320,6 +332,9 @@ private:
     BitVector m_isCanonicalEntryOfCallableBuiltin;
     HashMap<uint32_t, Vector<ValueFlowObjectID, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_builtinsThatMayBeClosureOf;
     ValueSetID m_otherCallables;
+    ValueSetID m_accessorsThatBindFunctions;
+    ValueSetID m_targetsOfBoundFunctionsAmongBuiltins;
+    ValueSetID m_targetsOfBoundFunctions;
     ValueSetID m_strings;
     ValueSetID m_symbols;
     ValueSetID m_textKeys;
@@ -339,6 +354,7 @@ private:
     ValueSetID m_eventRaisingLibraryExportHolders;
     ValueSetID m_eventRaisingLibraryClosures;
     ValueSetID m_prototypeObjectsOfLibraryClasses;
+    ValueSetID m_constructorsOfLibraryClasses;
     ValueSetID m_prototypeObjectsOfClasses;
     ValueSetID m_objectsOfLibraryFoundByNameAlone;
     ValueSetID m_instancesBelowLibraryClasses;

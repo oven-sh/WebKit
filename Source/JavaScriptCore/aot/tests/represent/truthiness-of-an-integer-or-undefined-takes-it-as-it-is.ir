@@ -5,6 +5,9 @@
 # RUN(B3): lower-to-b3 f0
 # RUN(WIDE): lower-to-b3 f1
 # RUN(NUMBER): lower-to-b3 f2
+# REQUIRES(NUMBER): x86_64
+# RUN(ARM64): lower-to-b3 f2
+# REQUIRES(ARM64): arm64
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="byteOrUndefined" parameters=[{type=undefined|int[0, 255]}] results=[{type=boolean}] {
@@ -36,3 +39,5 @@ function f2 name="numberOrUndefined" parameters=[{type=undefined|number}] result
 # CHECK: b0(v0: undefined|number @OptionalDouble):
 # CHECK-NEXT: boolean @Boolean = ToBoolean v0 form=Numbers
 # NUMBER: = EqualOrUnordered(b@[[number]], $0.000000
+# ARM64: = Abs(b@[[number]], 
+# ARM64-NEXT: = GreaterThan({{*}}, $0.000000

@@ -126,6 +126,9 @@ struct alignas(64) FieldExit {
 static_assert(sizeof(FieldExit) == 1u << FieldExit::sizeShift && std::is_trivially_copyable_v<FieldExit>);
 
 struct VariableData {
+    static constexpr uint32_t noName = UINT32_MAX;
+
+    // The string that a heap snapshot shows.
     uint32_t name;
     SlotData slot;
 };

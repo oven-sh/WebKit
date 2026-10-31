@@ -10,6 +10,7 @@
 
 #include "AOTFlowResults.h"
 #include "AOTRemoveUnreadFields.h"
+#include "AOTTypeRelations.h"
 #include <algorithm>
 #include <wtf/CommaPrinter.h>
 #include <wtf/EnumTraits.h>
@@ -162,7 +163,10 @@ ReceiverCandidates candidatesOf(const Program& program, const Type& receiver, co
 
     result.isMadeByHostAlone = result.hasOtherParts && !receiver.layouts && !receiver.anyObject && !(receiver.primitives & ~Primitive::UndefinedOrNull) && receiver.isJavaScriptValue();
 
-    if (!receiver.layouts && !receiver.anyObject)
+    bool mayBeOfExpectedClassBelow = expected && expected->layouts && !receiver.classes.isEmpty() && std::ranges::all_of(membersOf(program, *expected), [&](LayoutID member) {
+        return mayBeInsideSomeClassPart(program.types, member, receiver);
+    });
+    if (!receiver.layouts && !receiver.anyObject && !mayBeOfExpectedClassBelow)
         return result;
 
     FamilyTables::Candidates members = program.familyTables().candidatesOf(receiver.layouts, expected ? expected->layouts : LayoutSetID(), stamp);

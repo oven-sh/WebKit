@@ -11,7 +11,9 @@
 
 namespace JSC {
 
+class InlineWatchpointSet;
 class JSFunction;
+class ObjectPropertyCondition;
 class PropertyName;
 
 namespace AOT {
@@ -42,6 +44,13 @@ inline bool keepsPrototypeOfNativeConstructors(JSGlobalObject* realm) { return l
 String messageOfNameRefusedOnBuiltinFunction(PropertyName);
 String messageOfPrototypeRefusedOnBuiltinFunction();
 void didCreateRealm(JSGlobalObject*);
+// The built-ins of a realm that runs a program get other Structures when they are locked. What watches them is installed behind that, once.
+enum class DeferredWatchpointKind : bool { Structure, PropertyChange };
+void willWatchBuiltins(JSGlobalObject*);
+void didWatchBuiltins(JSGlobalObject*);
+bool defersWatchpoints(JSGlobalObject*);
+bool deferWatchpoint(JSGlobalObject*, const ObjectPropertyCondition&, InlineWatchpointSet&, DeferredWatchpointKind);
+void installDeferredWatchpoints(JSGlobalObject*);
 // The stubs of an image ask words of the instance that are written at the start alone: they would go on making arrays with plain storage.
 [[noreturn]] void stopBecauseRealmHasABadTime();
 inline void didChangePrototypeChain(VM& vm, JSObject* changed, UniquedStringImpl* nameOrNull) { didChangeChainObject(vm, changed, nameOrNull); }

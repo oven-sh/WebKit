@@ -5,14 +5,14 @@
 # STATISTIC: EnvironmentsPromotedToVariables = 1
 # STATISTIC: CapturesPromotedToVariables = 0
 # CHECK: layout L0 kind=Environment name="once"{{*}}flow={allocation=NeverAllocated
-# CHECK: variable g0 name="counter.0" module=m0 declared={type=int[0, 9007199254740992]} flow={writers=AllKnown initialization=StoredBeforeEveryRead}
-# CHECK: variable g1 name="bump.1" module=m0 declared={type=f2{{*}}flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead reads=OnlyCalled}
+# CHECK: variable g0 name="counter" module=m0 declared={type=int[0, 9007199254740992]} flow={writers=AllKnown initialization=StoredBeforeEveryRead}
+# CHECK: variable g1 name="bump" module=m0 declared={type=f2{{*}}flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead reads=OnlyCalled}
 # CHECK-NOT: variable g2
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-layout L0 kind=Environment name="once" fields=[{key=@"counter.0" declared={type=anything|absent}}, {key=@"bump.1" declared={type=anything}}]
-layout L1 kind=Environment name="twice" fields=[{key=@"counter.0" declared={type=anything}}]
+layout L0 kind=Environment name="once" fields=[{key=@"counter.0" declared={type=anything|absent} variableName="counter"}, {key=@"bump.1" declared={type=anything} variableName="bump"}]
+layout L1 kind=Environment name="twice" fields=[{key=@"counter.0" declared={type=anything} variableName="counter"}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = NewClosure function=f1

@@ -623,8 +623,6 @@ Type ValueFlowPositions::withinLimits(Type&& type)
         type.regExpLiteralSet.clear();
     if (!type.functions.isEmpty() && (!isEnabled(FlowResultKind::ExactFunctions) || type.functions.size() > build.limit(LimitID::MaxFunctionsInType)))
         type.anyFunction = true;
-    if (type.builtins.size() > build.limit(LimitID::MaxBuiltinsInType))
-        type.anyObject = type.anyFunction = true;
     type.canonicalize();
     return WTF::move(type);
 }
@@ -841,14 +839,36 @@ FlowPositionUpdate ValueFlowPositions::updateFor(const DeclaredType& declared, V
     return update;
 }
 
+std::optional<Type> ValueFlowPositions::typeByLayoutsOfClassesBelowBuiltinClasses(ValueSetID set)
+{
+    if (ValueSets::isComplement(set) || !m_inputs.sets().meet(set, m_inputs.objectsMadeForSuperCalls))
+        return std::nullopt;
+    Vector<ValueFlowObjectID, 4> made;
+    Vector<LayoutID, 4> layouts;
+    m_inputs.sets().forEachMember(maker().intersect(set, m_inputs.objectsMadeForSuperCalls), [&](ValueFlowObjectID object) {
+        LayoutID layout = m_inputs.universe().layoutOf(object);
+        if (m_inputs.isLayoutOfDictionaries(layout))
+            return;
+        made.append(object);
+        if (!layouts.contains(layout))
+            layouts.append(layout);
+    });
+    if (layouts.isEmpty())
+        return std::nullopt;
+    return typeOf(maker().intersect(set, ValueSets::complement(maker().of(made.span())))).unionWith(Type::forLayouts(layouts.span(), m_types), m_types);
+}
+
 void ValueFlowPositions::takeWhatArrives(const DeclaredType& declared, ValueFlowNodeID node, FlowPositionUpdate& update)
 {
     const Type& expected = m_inputs.program.at(declared.expected().predicted());
     if (update.isProven || !declared.isExpected() || !expected.layouts)
         return;
-    ValueFlowPositionResult arriving = resultAt(ExpectedType(TypeTable::anything), m_inputs.solver().possibleValuesOf(node));
+    ValueSetID possible = m_inputs.solver().possibleValuesOf(node);
+    ValueFlowPositionResult arriving = resultAt(ExpectedType(TypeTable::anything), possible);
     if (arriving.proof != ValueFlowProof::Proven || !arriving.narrowed || arriving.narrowed->anyObject || arriving.narrowed->primitives & ~expected.primitives)
         return;
+    if (std::optional<Type> byLayouts = typeByLayoutsOfClassesBelowBuiltinClasses(possible))
+        arriving.narrowed = arriving.narrowed->withoutObjects().unionWith(byLayouts->withOnlyObjects(), m_types);
     if (declared.site && !leavesOutOnlyInstancesOfBuiltinClasses(expected, *arriving.narrowed, m_types))
         return;
     update.type = m_types.intern(*arriving.narrowed);

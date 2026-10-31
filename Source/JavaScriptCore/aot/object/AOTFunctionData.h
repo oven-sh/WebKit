@@ -467,12 +467,14 @@ inline bool isFromPrinter(const TextPrintedInPlace& piece)
 // Behind the first mark may stand markOfDifferences, and then what is printed, a byte for a byte, but for
 //   copyOfWrittenText, how many bytes of the written text are passed over, how many are printed then;
 //   lineBreakWithIndentation, how often the next line is indented;
-//   textWithPieceOfItsOwn, how many bytes of the written text are passed over, in how many a function is written that has a piece of its own.
+//   textWithPieceOfItsOwn, how many bytes of the written text are passed over, in how many a function is written that has a piece of its own;
+//   writtenTextAsEscapes, how many bytes of the written text are passed over, how many are printed then, none of them ASCII, each character as Bun's printer escapes it.
 // The numbers are varints. There is no mark at the end.
 static constexpr uint8_t markOfDifferences = 4;
 static constexpr uint8_t copyOfWrittenText = 5;
 static constexpr uint8_t lineBreakWithIndentation = 6;
 static constexpr uint8_t textWithPieceOfItsOwn = 7;
+static constexpr uint8_t writtenTextAsEscapes = 8;
 
 template<typename Character>
 void appendTextFromPrinterWithoutMarks(Vector<Character>& printed, std::span<const Character> text, const TextPrintedInPlace& piece, std::span<const TextPrintedInPlace> pieces)
@@ -510,6 +512,36 @@ void appendTextFromPrinterWithoutMarks(Vector<Character>& printed, std::span<con
                 appendTextFromPrinterWithoutMarks(printed, text, *inner, pieces);
             else
                 printed.append(written.subspan(passedOver, size));
+            written = written.subspan(passedOver + size);
+        } else if (byte == writtenTextAsEscapes) {
+            uint64_t passedOver = takeNumber();
+            uint64_t size = takeNumber();
+            if (passedOver > written.size() || size > written.size() - passedOver)
+                break;
+            auto appendEscape = [&](char letter, unsigned digits, uint32_t number) {
+                printed.append(static_cast<Character>('\\'));
+                printed.append(static_cast<Character>(letter));
+                while (digits--)
+                    printed.append(static_cast<Character>("0123456789ABCDEF"[(number >> (digits * 4)) & 15]));
+            };
+            for (std::span<const Character> escaped = written.subspan(passedOver, size); !escaped.empty();) {
+                uint8_t lead = static_cast<uint8_t>(escaped.front());
+                size_t length = lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;
+                if (lead < 0xC2 || length > escaped.size())
+                    break;
+                uint32_t character = lead & (0xFF >> (length + 1));
+                for (size_t index = 1; index < length; ++index)
+                    character = character << 6 | (static_cast<uint8_t>(escaped[index]) & 0x3F);
+                escaped = escaped.subspan(length);
+                if (character <= 0xFF)
+                    appendEscape('x', 2, character);
+                else if (character <= 0xFFFF)
+                    appendEscape('u', 4, character);
+                else {
+                    appendEscape('u', 4, 0xD800 + ((character - 0x10000) >> 10));
+                    appendEscape('u', 4, 0xDC00 + ((character - 0x10000) & 0x3FF));
+                }
+            }
             written = written.subspan(passedOver + size);
         } else if (byte == lineBreakWithIndentation) {
             printed.append(static_cast<Character>('\n'));

@@ -82,10 +82,14 @@ BuiltinUsePlan planBuiltinUse(const BuiltinUseInputs&, ValueID use, ProgramPoint
 bool mayFindProvenPlan(const BuiltinUseInputs&, const Value& use);
 bool mayFindProvenAccess(const BuiltinUseInputs&, const Value& access);
 bool mayFindProvenCallee(const BuiltinUseInputs&, const Value& call);
+bool mayFindProvenCallOfFunctionBoundToReceiver(const BuiltinUseInputs&, const Value& call);
 
 BuiltinUsePlan planBuiltinRead(const BuiltinUseInputs&, ValueID use, ProgramPoint);
 BuiltinUsePlan planBuiltinStore(const BuiltinUseInputs&, ValueID use, ProgramPoint);
 BuiltinUsePlan planCallOfBuiltin(const BuiltinUseInputs&, ValueID use, ProgramPoint);
+BuiltinUsePlan planCallOfFunctionBoundToReceiver(const BuiltinUseInputs&, ValueID use, ProgramPoint);
+// The read that made the callee: of the called member from the receiver of the call, or of an accessor that answers a function bound to its receiver.
+ValueID findReadOfCallee(const Program&, const Function&, const Value& call);
 BuiltinUsePlan planSuperCallOfBuiltin(const BuiltinUseInputs&, ValueID use, ProgramPoint);
 BuiltinUsePlan planListCallOfBuiltin(const BuiltinUseInputs&, ValueID use, ValueID array, ProgramPoint);
 ValueID findOnlySpreadIntoListOf(const BuiltinUseInputs&, ValueID listCall);

@@ -178,6 +178,7 @@ struct ValueFlowResultInputs {
     const ValueFlowContainerResults* containers { nullptr };
     const BitVector* symbolsCreatedOnce { nullptr };
     const ValueFlowClassesOfBuiltinResults* classesOfBuiltinResults { nullptr };
+    ValueSetID objectsMadeForSuperCalls { ValueSets::nothing };
     const BitVector* layoutsOfDictionaries { nullptr };
     std::span<const std::pair<TypeID, TypeID>> typesBehindDictionaries;
     const BitVector* layoutSetsNamingDictionaries { nullptr };

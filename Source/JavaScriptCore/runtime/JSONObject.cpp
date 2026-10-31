@@ -829,10 +829,11 @@ template<typename CharType, BufferMode bufferMode>
 class FastStringifier {
 public:
     // Returns null string if the fast case fails.
-    static String stringify(JSGlobalObject&, JSValue, JSValue replacer, JSValue space, std::optional<FailureReason>&);
+    // `levelsAround`: the objects and lists that compiled code is writing around the value.
+    static String stringify(JSGlobalObject&, JSValue, JSValue replacer, JSValue space, std::optional<FailureReason>&, unsigned levelsAround = 0);
 #if ENABLE(AOT)
     // False if the fast case fails, and with an exception.
-    static bool tryAppendTo(AOT::StringBuilderStorage&, JSGlobalObject&, JSValue, std::optional<FailureReason>&);
+    static bool tryAppendTo(AOT::StringBuilderStorage&, JSGlobalObject&, JSValue, std::optional<FailureReason>&, unsigned levelsAround);
 #endif
 
     static constexpr unsigned staticBufferSize = bufferMode == BufferMode::StaticBuffer ? 8192 : 8;
@@ -893,6 +894,9 @@ private:
     String firstGetterSetterPropertyName(JSObject&) const;
     void recordFastPropertyEnumerationFailure(JSObject&);
     bool haveFailure() const;
+    template<HasGap hasGap> bool enterHolder();
+    bool startBelow(unsigned levelsAround);
+    template<HasGap hasGap> void leaveHolder();
     bool hasRemainingCapacity(unsigned size = 1);
     bool hasRemainingCapacitySlow(unsigned size);
 #if ENABLE(AOT)
@@ -927,6 +931,7 @@ private:
     std::optional<FailureReason> m_failureReason;
     Vector<CharType, dynamicBufferInlineCapacity, CrashOnOverflow, 16, WTF::StringImplMalloc> m_dynamicBuffer;
     uint8_t* m_stackLimit { nullptr };
+    unsigned m_maxDepth { maximumSideStackRecursion };
 #if ENABLE(AOT)
     uint32_t m_compiledStructureWithoutToJSON; // The bits of a StructureID. Written before m_hasCompiledStructureWithoutToJSON is set.
     // While it watches, m_stackLimit lies above every frame.
@@ -1085,6 +1090,47 @@ inline FastStringifier<CharType, bufferMode>::FastStringifier(JSGlobalObject& gl
         m_capacity = dynamicBufferInlineCapacity;
         m_stackLimit = std::bit_cast<uint8_t*>(m_vm.softStackLimit());
     }
+}
+
+// The general way refuses a value that is nested deeper than maximumSideStackRecursion, on every machine. Here only the stack would say stop, and how deep that
+// is depends on the thread and on the build. So what is nested deeper is left to the general way, which throws. False with a failure.
+// A static buffer is full long before: every level writes a character.
+template<typename CharType, BufferMode bufferMode>
+template<HasGap hasGap>
+ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::enterHolder()
+{
+    static_assert(bufferMode == BufferMode::DynamicBuffer || staticBufferSize < maximumSideStackRecursion);
+    if constexpr (bufferMode == BufferMode::DynamicBuffer) {
+        if (m_depth >= m_maxDepth) [[unlikely]] {
+            recordFailure(FailureReason::StackOverflow, "nested too deep"_s);
+            return false;
+        }
+    }
+    if constexpr (hasGap == HasGap::Yes || bufferMode == BufferMode::DynamicBuffer)
+        ++m_depth;
+    return true;
+}
+
+// False with a failure: a static buffer counts no levels, so it takes no value that could pass the limit before the buffer is full.
+template<typename CharType, BufferMode bufferMode>
+ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::startBelow(unsigned levelsAround)
+{
+    if constexpr (bufferMode == BufferMode::StaticBuffer) {
+        if (levelsAround > maximumSideStackRecursion - staticBufferSize) [[unlikely]] {
+            recordBufferFull();
+            return false;
+        }
+    } else
+        m_maxDepth = maximumSideStackRecursion - std::min(levelsAround, maximumSideStackRecursion);
+    return true;
+}
+
+template<typename CharType, BufferMode bufferMode>
+template<HasGap hasGap>
+ALWAYS_INLINE void FastStringifier<CharType, bufferMode>::leaveHolder()
+{
+    if constexpr (hasGap == HasGap::Yes || bufferMode == BufferMode::DynamicBuffer)
+        --m_depth;
 }
 
 template<typename CharType, BufferMode bufferMode>
@@ -1820,8 +1866,8 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
             recordFailure("object has non-reified static properties"_s);
             return;
         }
-        if constexpr (hasGap == HasGap::Yes)
-            ++m_depth;
+        if (!enterHolder<hasGap>()) [[unlikely]]
+            return;
         const unsigned newLineAndIndent = hasGap == HasGap::Yes ? newLineAndIndentSize() : 0;
         structure.forEachProperty(m_vm, [&](const auto& entry) -> bool {
             if (entry.attributes() & PropertyAttribute::DontEnum) [[unlikely]] {
@@ -1949,8 +1995,7 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
         });
         if (haveFailure()) [[unlikely]]
             return;
-        if constexpr (hasGap == HasGap::Yes)
-            --m_depth;
+        leaveHolder<hasGap>();
         bool needNewLine = hasGap == HasGap::Yes && buffer()[m_length - 1] != '{';
         if (!hasRemainingCapacity(needNewLine ? 1 + newLineAndIndentSize() : 1)) [[unlikely]] {
             recordBufferFull();
@@ -1996,12 +2041,11 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
             return;
         }
         buffer()[m_length++] = '[';
-        if constexpr (hasGap == HasGap::Yes)
-            ++m_depth;
+        if (!enterHolder<hasGap>()) [[unlikely]]
+            return;
 
         auto closeArray = [&] {
-            if constexpr (hasGap == HasGap::Yes)
-                --m_depth;
+            leaveHolder<hasGap>();
             bool needNewLine = hasGap == HasGap::Yes && buffer()[m_length - 1] != '[';
             if (!hasRemainingCapacity(needNewLine ? 1 + newLineAndIndentSize() : 1)) [[unlikely]] {
                 recordBufferFull();
@@ -2202,8 +2246,8 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendCompiledObject(JS
         return;
     }
     buffer()[m_length++] = '{';
-    if constexpr (hasGap == HasGap::Yes)
-        ++m_depth;
+    if (!enterHolder<hasGap>()) [[unlikely]]
+        return;
     const unsigned newLineAndIndent = hasGap == HasGap::Yes ? newLineAndIndentSize() : 0;
     auto appendProperty = [&](UniquedStringImpl& name, JSValue value) ALWAYS_INLINE_LAMBDA -> bool {
         if (name.isSymbol()) [[unlikely]] {
@@ -2303,8 +2347,7 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendCompiledObject(JS
         recordFailure("compiled object has an accessor or an index"_s);
     if (haveFailure()) [[unlikely]]
         return;
-    if constexpr (hasGap == HasGap::Yes)
-        --m_depth;
+    leaveHolder<hasGap>();
     bool needNewLine = hasGap == HasGap::Yes && buffer()[m_length - 1] != '{';
     if (!hasRemainingCapacity(needNewLine ? 1 + newLineAndIndentSize() : 1)) [[unlikely]] {
         recordBufferFull();
@@ -2690,9 +2733,10 @@ ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFields(Curs
             cursor.next += m_gapLength;
         }
     };
+    if (!enterHolder<hasGap>()) [[unlikely]]
+        return false;
     if constexpr (hasGap == HasGap::Yes) {
         // In front of each member a new line and its indent, behind its colon a space; a new line in front of the closing brace.
-        ++m_depth;
         size_t size = reservation + (fields.size() + 1) * static_cast<size_t>(newLineAndIndentSize() + 1) + maxGapLength;
         if (size > std::numeric_limits<unsigned>::max()) [[unlikely]] {
             recordBufferFull();
@@ -2830,8 +2874,8 @@ ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFields(Curs
     }
 
     CharType* brace = buffer() + positionOfBrace;
+    leaveHolder<hasGap>();
     if constexpr (hasGap == HasGap::Yes) {
-        --m_depth;
         if (cursor.next != brace)
             appendNewLineAndIndent();
     }
@@ -2957,7 +3001,7 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendInt32Array(JSArra
 }
 
 template<typename CharType, BufferMode bufferMode>
-inline String FastStringifier<CharType, bufferMode>::stringify(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space, std::optional<FailureReason>& failureReason)
+inline String FastStringifier<CharType, bufferMode>::stringify(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space, std::optional<FailureReason>& failureReason, unsigned levelsAround)
 {
     if (replacer.isObject()) {
         logOutcome("replacer"_s);
@@ -2976,6 +3020,10 @@ inline String FastStringifier<CharType, bufferMode>::stringify(JSGlobalObject& g
             return { };
         }
     }
+    if (!stringifier.startBelow(levelsAround)) [[unlikely]] {
+        failureReason = stringifier.m_failureReason;
+        return { };
+    }
     if (stringifier.m_gapLength)
         stringifier.append<HasGap::Yes>(value);
     else
@@ -2986,10 +3034,11 @@ inline String FastStringifier<CharType, bufferMode>::stringify(JSGlobalObject& g
 
 #if ENABLE(AOT)
 template<typename CharType, BufferMode bufferMode>
-inline bool FastStringifier<CharType, bufferMode>::tryAppendTo(AOT::StringBuilderStorage& builder, JSGlobalObject& globalObject, JSValue value, std::optional<FailureReason>& failureReason)
+inline bool FastStringifier<CharType, bufferMode>::tryAppendTo(AOT::StringBuilderStorage& builder, JSGlobalObject& globalObject, JSValue value, std::optional<FailureReason>& failureReason, unsigned levelsAround)
 {
     FastStringifier stringifier(globalObject);
-    stringifier.template append<HasGap::No>(value);
+    if (stringifier.startBelow(levelsAround)) [[likely]]
+        stringifier.template append<HasGap::No>(value);
     failureReason = stringifier.m_failureReason;
     if (stringifier.haveFailure())
         return false;
@@ -2999,30 +3048,30 @@ inline bool FastStringifier<CharType, bufferMode>::tryAppendTo(AOT::StringBuilde
 #endif
 
 // A fast case that fails has run no code, so the next one starts over. Null if all of them fail.
-static String stringifyAfterFirstFastCaseFailed(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space, std::optional<FailureReason> failureReason)
+static String stringifyAfterFirstFastCaseFailed(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space, std::optional<FailureReason> failureReason, unsigned levelsAround = 0)
 {
     if (failureReason == FailureReason::Found16BitEarly) {
         failureReason = std::nullopt;
-        if (String result = FastStringifier<char16_t, BufferMode::StaticBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
+        if (String result = FastStringifier<char16_t, BufferMode::StaticBuffer>::stringify(globalObject, value, replacer, space, failureReason, levelsAround); !result.isNull())
             return result;
 
         if (failureReason == FailureReason::BufferFull) {
             failureReason = std::nullopt;
-            if (String result = FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
+            if (String result = FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason, levelsAround); !result.isNull())
                 return result;
         }
     } else if (failureReason == FailureReason::BufferFull) {
         failureReason = std::nullopt;
         // Wrongly guessing 16-bit costs a conversion to 8-bit at the end. Wrongly guessing 8-bit costs all of the work done before the first 16-bit character.
         if (stringifyHints.isWide) {
-            if (String result = FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
+            if (String result = FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason, levelsAround); !result.isNull())
                 return result;
-        } else if (String result = FastStringifier<Latin1Character, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
+        } else if (String result = FastStringifier<Latin1Character, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason, levelsAround); !result.isNull())
             return result;
     }
     // However much work is thrown away, retrying with 16-bit characters is still much faster than the generic path.
     if (failureReason == FailureReason::Found16BitLate)
-        return FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason);
+        return FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason, levelsAround);
     return { };
 }
 
@@ -3229,9 +3278,14 @@ bool AOT::appendJSONTextOfProperty(JSGlobalObject* globalObject, StringBuilderSt
             return true;
     }
 
+    // They are levels as those inside the value are.
+    unsigned levelsAround = 0;
+    for (const JSONHolderRecord* record = holders; record; record = record->outer)
+        ++levelsAround;
+
     std::optional<FailureReason> failureReason;
     if (std::bit_cast<uint8_t*>(currentStackPointer()) >= std::bit_cast<uint8_t*>(vm.softStackLimit())) [[likely]] {
-        bool isAppended = FastStringifier<Latin1Character, BufferMode::StaticBuffer>::tryAppendTo(builder, *globalObject, value, failureReason);
+        bool isAppended = FastStringifier<Latin1Character, BufferMode::StaticBuffer>::tryAppendTo(builder, *globalObject, value, failureReason, levelsAround);
         RETURN_IF_EXCEPTION(scope, false);
         if (isAppended)
             return true;
@@ -3250,7 +3304,7 @@ bool AOT::appendJSONTextOfProperty(JSGlobalObject* globalObject, StringBuilderSt
             RETURN_IF_EXCEPTION(scope, false);
             failureReason = std::nullopt;
             if (answer.isNumber() || answer.isBoolean() || answer.isNull() || answer.isString()) {
-                bool isAnswerAppended = FastStringifier<Latin1Character, BufferMode::StaticBuffer>::tryAppendTo(builder, *globalObject, answer, failureReason);
+                bool isAnswerAppended = FastStringifier<Latin1Character, BufferMode::StaticBuffer>::tryAppendTo(builder, *globalObject, answer, failureReason, 0);
                 RETURN_IF_EXCEPTION(scope, false);
                 if (isAnswerAppended)
                     return true;
@@ -3266,7 +3320,7 @@ bool AOT::appendJSONTextOfProperty(JSGlobalObject* globalObject, StringBuilderSt
     }
 
     // Only the general serializer calls toJSON, which is told the key.
-    String text = stringifyAfterFirstFastCaseFailed(*globalObject, value, jsUndefined(), jsUndefined(), failureReason);
+    String text = stringifyAfterFirstFastCaseFailed(*globalObject, value, jsUndefined(), jsUndefined(), failureReason, levelsAround);
     RETURN_IF_EXCEPTION(scope, false);
     if (text.isNull())
         text = stringifyProperty(*globalObject, value, property, holders);

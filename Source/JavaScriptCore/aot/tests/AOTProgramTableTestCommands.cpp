@@ -436,7 +436,7 @@ static void printEnvironmentRecord(const TablesContext& context, const Environme
 {
     RecordLine(context, "environment"_s).field("shape"_s, environment.shape).field("index"_s, LayoutID(environment.index)).field("kind"_s, environment.kind).string("name"_s, environment.name).field("size"_s, environment.size);
     for (const VariableData& variable : environment.describedVariables())
-        RecordLine(context, "  variable"_s).identifier("name"_s, variable.name).field("slot"_s, variable.slot);
+        RecordLine(context, "  variable"_s).string("name"_s, variable.name == VariableData::noName ? context.program.strings.emptyString().index() : variable.name).field("slot"_s, variable.slot);
     printReferences(context, referenceTableOf(environment));
 }
 
@@ -817,6 +817,9 @@ static void printModules(const TablesContext& context)
     }, [&](const NamedVariableData& variable) {
         RecordLine(context, "namedVariable"_s).field("group"_s, moduleWithNamedVariables - 1).field("name"_s, variable.nameString())
             .flag("isNarrow"_s, variable.place() == NamedVariableData::Place::NarrowWord).flag("isClosure"_s, variable.place() == NamedVariableData::Place::Closure);
+    });
+    forEachNamedCapture(tables.namedCaptures(), [&](const NamedCaptureData& capture) {
+        RecordLine(context, "namedCapture"_s).field("function"_s, FunctionID(capture.function)).field("slot"_s, capture.slot).field("name"_s, capture.nameString());
     });
     for (const CompiledRuntimeModuleData& runtimeModule : tables.compiledRuntimeModules())
         RecordLine(context, "runtimeModule"_s).field("id"_s, RuntimeModuleID(runtimeModule.registryID)).field("module"_s, ModuleID(runtimeModule.module));

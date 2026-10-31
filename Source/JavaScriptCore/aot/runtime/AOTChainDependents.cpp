@@ -239,7 +239,7 @@ static void failIfPrototypeNameIsNotListed(VM& vm, State& state, const LayoutDat
     crashOnValidationFailure(vm, { ValidationFailureKind::ImpossibleMutation, { }, { }, JSValue() });
 }
 
-static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, UniquedStringImpl* uidOrNull, bool isFrozen)
+static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, UniquedStringImpl* uidOrNull)
 {
     ClassTable& classes = state.objects->classes;
     ClassSide side;
@@ -253,7 +253,7 @@ static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, Unique
         return;
     }
     // Freezing is reported without a name, behind the change. It changes neither what a name finds nor the prototype, and nothing of a frozen object changes ever again.
-    if (isFrozen)
+    if (changed->isFrozen(vm))
         return;
     classes.didChangeEveryMember(*layout, side);
     classes.didChangePrototypeLink(*layout, side);
@@ -270,7 +270,6 @@ void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNul
         if (realm && changed == realm->objectPrototype() && realm->aotInstance())
             parts.propertyCaches->didChangeObjectPrototype(changed, uidOrNull);
     }
-    bool isFrozen = !uidOrNull && changed->isFrozen(vm);
     for (Instance* instance : vm.aotState().instances) {
         State* state = instance->state;
         if (!state)
@@ -278,7 +277,7 @@ void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNul
         if (state->chainDependents)
             state->chainDependents->didChange(changed, uidOrNull);
         if (state->objects)
-            didChangeClassHolder(vm, *state, changed, uidOrNull, isFrozen);
+            didChangeClassHolder(vm, *state, changed, uidOrNull);
     }
 }
 

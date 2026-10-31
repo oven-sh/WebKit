@@ -183,16 +183,14 @@ static bool widenGrownLists(Type& type, const Type& first, const Type& second, c
         return membersOf(context.types.table(), listed).size();
     };
     bool widensLayouts = hasGrownPast(LimitID::MaxLayoutsInType, numberOfLayouts) && !liesInsideDeclaredFamily(context, type) && exceeds(LimitID::MaxLayoutsInType, numberOfLayouts);
-    bool widensClasses = exceeds(LimitID::MaxClassesInType, sizeOf(&Type::classes));
     bool widensFunctions = exceeds(LimitID::MaxFunctionsInType, sizeOf(&Type::functions));
-    bool widensBuiltins = exceeds(LimitID::MaxBuiltinsInType, sizeOf(&Type::builtins));
     bool widensRegExpLiterals = exceeds(LimitID::MaxRegExpLiteralsInType, sizeOf(&Type::regExpLiteralSet));
 
     if (widensStrings)
         type.primitives |= Primitive::String;
     if (widensSymbols)
         type.primitives |= Primitive::Symbol;
-    if (widensLayouts || widensClasses || widensBuiltins)
+    if (widensLayouts)
         type.anyObject = true;
     if (widensFunctions) {
         type.anyFunction = true;
@@ -200,7 +198,7 @@ static bool widenGrownLists(Type& type, const Type& first, const Type& second, c
     }
     if (widensRegExpLiterals)
         type.regExpLiteralSet.clear();
-    return widensStrings || widensSymbols || widensLayouts || widensClasses || widensFunctions || widensBuiltins || widensRegExpLiterals;
+    return widensStrings || widensSymbols || widensLayouts || widensFunctions || widensRegExpLiterals;
 }
 
 Type Type::unionWideningWith(const Type& other, const WideningContext& context) const

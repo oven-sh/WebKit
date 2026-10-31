@@ -82,6 +82,7 @@ private:
     const ProgramTables& m_tables;
     const bool m_usesWideReferences;
     const uint32_t m_numberOfLiteralStrings;
+    bool m_hasNamedVariablesForHeapSnapshots { false };
     RememberedSlotSet m_constantCells;
     std::array<RefPtr<StringImpl>, 1 << literalStringCacheIndexBits> m_literalStringCacheKeys;
 };

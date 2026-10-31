@@ -365,7 +365,7 @@ struct SyntheticExportData {
     uint32_t name : 24;
     uint32_t absentIsUndefined : 1;
     uint32_t hasVariable : 1;
-    // Of a module of the library: every module that binds the name has it among its required names. Where the host defers the export, the link of the first of them reads it.
+    // Of a module of the library, and not of a name that only a mock takes away: every module that reads the variable without a test has the name among its required names. Where the host defers the export, the link of the first of them reads it.
     uint32_t isBoundByRequiredName : 1;
     uint32_t isReplaceable : 1;
     uint32_t unused : 4;
@@ -500,6 +500,60 @@ bool forEachNamedVariable(std::span<const uint8_t> bytes, NOESCAPE const auto& b
     return cursor == end;
 }
 
+// What a heap snapshot shows under the name of a variable that a closure holds a copy of.
+struct NamedCaptureData {
+    uint32_t function;
+    uint32_t slot;
+    uint32_t name;
+
+    StringID nameString() const { return StringID(name); }
+};
+
+// The table namedCaptures, for each function whose closures hold such copies, in the order of the functions: the function less the one before,
+// how many, then the slot and the name of each. Only a heap snapshot reads it.
+class NamedCapturesWriter {
+public:
+    void beginFunction(uint32_t function, size_t numberOfCaptures)
+    {
+        appendVarint(m_bytes, function - m_lastFunction);
+        appendVarint(m_bytes, numberOfCaptures);
+        m_lastFunction = function;
+    }
+    void append(uint32_t slot, uint32_t name)
+    {
+        appendVarint(m_bytes, slot);
+        appendVarint(m_bytes, name);
+    }
+    const Vector<uint8_t>& bytes() const { return m_bytes; }
+
+private:
+    Vector<uint8_t> m_bytes;
+    uint32_t m_lastFunction { 0 };
+};
+
+// False if the bytes do not end where a function ends.
+bool forEachNamedCapture(std::span<const uint8_t> bytes, NOESCAPE const auto& visit)
+{
+    const uint8_t* cursor = bytes.data();
+    const uint8_t* end = cursor + bytes.size();
+    uint32_t function = 0;
+    while (cursor < end) {
+        function += static_cast<uint32_t>(readVarint(cursor));
+        if (cursor >= end)
+            return false;
+        size_t numberOfCaptures = readVarint(cursor);
+        for (size_t index = 0; index < numberOfCaptures; ++index) {
+            if (cursor >= end)
+                return false;
+            uint32_t slot = static_cast<uint32_t>(readVarint(cursor));
+            if (cursor >= end)
+                return false;
+            visit(NamedCaptureData { function, slot, static_cast<uint32_t>(readVarint(cursor)) });
+        }
+    }
+    return cursor == end;
+}
+
 struct CompiledRuntimeModuleData {
     uint32_t registryID;
     uint32_t module;
@@ -578,6 +632,7 @@ struct HashOfDirectory {
     v(modulesOfUncompiledCode, UncompiledModuleData) \
     v(importsOfHeldFiles, ImportOfHeldFileData) \
     v(namedVariables, uint8_t) \
+    v(namedCaptures, uint8_t) \
     v(compiledRuntimeModules, CompiledRuntimeModuleData) \
     v(stateOfLibraryModules, StateOfLibraryModuleData) \
     v(compiledRuntimeFunctions, CompiledRuntimeFunctionData)

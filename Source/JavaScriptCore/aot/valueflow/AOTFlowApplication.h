@@ -88,6 +88,7 @@ struct FlowValueProof {
     TypeID type;
     // The type is what flow holds of the value, and flow follows what a check turns away. Otherwise it was cut out of the type of the value as read, which may be owed to a check.
     bool holdsInEveryVersion { false };
+    TypeID typeByLayoutsOfClassesBelowBuiltinClasses { };
 };
 
 // A prediction, not a proof: a test guards whatever is made of it.

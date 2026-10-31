@@ -138,7 +138,7 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules)
                 RELEASE_AND_RETURN(scope, throwExportAmbiguous(requiredName));
             case StarExportResolution::Type::NotFound:
             case StarExportResolution::Type::Error:
-                if (requiredName.mayBeAbsent)
+                if (requiredName.mayBeAbsent && data(exporter).exportRule != SyntheticExportRule::RuntimeModule)
                     continue;
                 // A CommonJS file has `default` from the start, and loses it with its other names.
                 if (isCommonJSFileOrFace(exporter) && identifier(requiredName.name) == m_instance.vm->propertyNames->defaultKeyword && !ensureLoaded(exporter).didDropError && !ensureLoaded(fileOf(exporter)).didDropError && !ensureLoaded(exporter).exportsWhatMockNamesAlone)
@@ -829,6 +829,18 @@ void Modules::exportWhatMockNamesAlone(ModuleID file, bool hasRun)
             ensureLoaded(file).answersRequireWithNamespaceOfMock = !loaded.wasRequiredBehindMock;
             return;
         }
+        // Compiled code reads the status of a CommonJS file in line, so nobody hears of a require() that it answers itself. Whoever got the namespace object that way
+        // reads the values of the later mocks through it, under the names that it has.
+        if (JSObject* earlier = namespaceIfCreated(module, ModulePhase::Evaluation)) {
+            auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+            if (!loaded.namespacesOfEarlierMocks) {
+                JSArray* list = constructEmptyArray(m_instance.globalObject, nullptr);
+                RETURN_IF_EXCEPTION(scope, void());
+                loaded.namespacesOfEarlierMocks.set(*this, list);
+            }
+            uncheckedDowncast<JSArray>(loaded.namespacesOfEarlierMocks.get())->push(m_instance.globalObject, earlier);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
         if (data(module).holdsNamespaceInValue() && !m_modulesWithEarlierNamespaceInValue.get(module.index()))
             setValue(module, JSValue());
         loaded.namespaceObject.set(*this, nullptr);
@@ -1082,8 +1094,9 @@ void Modules::fillDeferredExports(ModuleID importer)
 
     for (const RequiredNameData& requiredName : m_table.requiredNames(importer)) {
         ModuleID exporter = requiredName.exporterModule();
-        if (data(exporter).kind == ModuleKind::External) {
-            if (auto* inImageBelow = dynamicDowncast<ModuleNamespace>(value(exporter))) {
+        // The loader may not have come to the exporter: two statements that share a place in it get what the first one made.
+        if (JSValue held = value(exporter); held && data(exporter).kind == ModuleKind::External) {
+            if (auto* inImageBelow = dynamicDowncast<ModuleNamespace>(held)) {
                 bool isOfLibraryModule = inImageBelow->readDeferredExport(m_instance.globalObject, identifier(requiredName.name));
                 RETURN_IF_EXCEPTION(scope, void());
                 if (isOfLibraryModule)

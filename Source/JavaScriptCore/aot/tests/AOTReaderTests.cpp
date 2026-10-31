@@ -59,11 +59,11 @@ void testListCounts()
 {
     ReaderFixture fixture;
     const std::pair<List, uint32_t> counts[] = {
-        { List::ClassParts, 2 }, { List::TypeSites, 1 }, { List::DeclaredTypes, 15 }, { List::ExpectedResults, 1 },
+        { List::ClassParts, 2 }, { List::TypeSites, 1 }, { List::DeclaredTypes, 12 }, { List::ExpectedResults, 1 },
         { List::Layouts, 4 },
         { List::Fields, 4 }, { List::StaticFields, 1 }, { List::Variables, 4 }, { List::Modules, 2 }, { List::ModuleRequests, 1 },
         { List::ModuleExports, 2 }, { List::SyntheticExports, 2 }, { List::RequiredNames, 1 }, { List::ColumnAdjustments, 1 },
-        { List::ModuleFailures, 1 }, { List::AmbiguousExports, 1 }, { List::EvalScopes, 1 }, { List::EvalBindings, 1 },
+        { List::ModuleFailures, 1 }, { List::AmbiguousExports, 1 }, { List::EvalScopes, 1 }, { List::EvalBindings, 1 }, { List::DeclaredCaptures, 3 },
         { List::Functions, 9 }, { List::DataNodes, 2 },
         { List::DataMembers, 2 }, { List::Data, 1 }, { List::Entries, 1 }, { List::HostReads, 1 }, { List::RuntimeFunctions, 2 },
         { List::WebAssemblyModules, 1 }, { List::ReplaceableBuiltins, 1 }, { List::OpenedNames, 1 },

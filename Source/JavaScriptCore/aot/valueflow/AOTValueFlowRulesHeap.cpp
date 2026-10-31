@@ -618,6 +618,16 @@ void HeapRule::noteWrittenMembers(ClimbingSet receivers, const HeapKey& key, boo
         }
     }
     applyEventsOfStore(m_statement, m_context, receivers, key.keyClass == HeapKeyClass::Name ? key.name : PropertyKeyID());
+    // `require.cache[path].exports = other`: the entry of a data file or of an ES module is an object that the run time makes. The next require() of the file answers what was stored.
+    bool mayNameExports = key.keyClass != HeapKeyClass::Name || key.name == m_program.keyOf(m_builtins.at(Builtins::ModuleObjectExports).name);
+    if (!mayNameExports || key.keyClass == HeapKeyClass::Index || !m_context.holdsAnything(m_context.nodes().ofHost(ValueFlowHostNode::EntriesOfModuleCacheAreRead)))
+        return;
+    bool mayBeSuchEntry = mayBeUnknownObject(receivers);
+    forEachMemberUnder(receivers, key, [&](BuiltinID member, ModuleID module) {
+        mayBeSuchEntry |= m_builtins.canonicalID(member) == Builtins::ModuleObjectExports && (!module || !m_program.at(module).exportsVariable);
+    });
+    if (mayBeSuchEntry)
+        add(m_context.nodes().ofHost(ValueFlowHostNode::ExportsOfEntriesStoredInModuleCache), unknownValue(ValueFlowUnknownSource::ContentsOfEscapedObject));
 }
 
 ValueSetID HeapRule::standingForClassAndThoseBelow(BuiltinClassID builtinClass)
@@ -1822,6 +1832,7 @@ void HeapRule::runOperation()
         return;
     case Opcode::PutDoubleIndex:
     case Opcode::PutOwnDoubleIndex:
+    case Opcode::PutOwnInt32Index:
         write(m_context.valueOf(operand(At::PutDoubleIndex::array)), elementsName, operand(At::PutDoubleIndex::value));
         return;
     case Opcode::TruncateNewArray: {

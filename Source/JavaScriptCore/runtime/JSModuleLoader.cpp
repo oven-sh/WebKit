@@ -986,7 +986,8 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
                 promise->rejectWithCaughtException(vm, scope);
             } else if (requested) {
                 promise = JSPromise::create(vm, globalObject->promiseStructure());
-                promise->fulfill(vm, requested);
+                if (!compiled->holdTextOfRequest(promise, requested))
+                    promise->fulfill(vm, requested);
             }
         }
 #endif

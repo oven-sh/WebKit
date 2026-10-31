@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTNativeHelpers.h"
+#include "AOTSort.h"
 #include "AOTVector.h"
 #include "ClassInfo.h"
 #include <algorithm>
@@ -82,7 +83,7 @@ void BuiltinBindings::bindNativeHelpersOfEngine()
     bindNativeHelper(Builtins::CompilerHelpersScanPlainURLWithPlainBase, AOT__scanPlainURLWithPlainBase);
     bindNativeHelper(Builtins::CompilerHelpersScanPlainURLWithBase, AOT__scanPlainURLWithBase);
     bindNativeHelper(Builtins::CompilerHelpersFindPlainQueryValue, AOT__findPlainQueryValue);
-    std::ranges::sort(nativeHelpersOfEngine(), { }, &BuiltinDirectFunctionBinding::overload);
+    AOT::sort(nativeHelpersOfEngine(), { }, &BuiltinDirectFunctionBinding::overload);
 }
 
 bool BuiltinBindings::provides(BuiltinOrigin origin)

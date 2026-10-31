@@ -3546,7 +3546,8 @@ static std::optional<Head> findHead(const AnalysisContext& context)
         // Most functions are turned down by their entry block, and the graph of none of those is made.
         if (analyses.isInCycle(id))
             return false;
-        uint64_t size = block.values.size() + 1;
+        // A switch is as large as its cases are many.
+        uint64_t size = block.values.size() + std::max<uint64_t>(block.terminator.targets.size(), 2) - 1;
         if (context.build.exceeds(LimitID::MaxSelectedHeadBlocks, numberOfBlocks + 1, analyses.subject()) || context.build.exceeds(LimitID::MaxSelectedHeadOperations, operations + size, analyses.subject()))
             return false;
         ++numberOfBlocks;

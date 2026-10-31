@@ -490,6 +490,7 @@ void CodeGenerator::generateNullishCheckBehindFailedTest(BlockID id, ValueID che
 
 void CodeGenerator::finishProcedure()
 {
+    emitter<ConversionEmitter>().placeExactIntegers();
     emitter<RuntimeCallEmitter>().stateWhichCallsChangeWhatOnlyGeneratedCodeReads();
     m_heaps.computeRangesAndDecorateInstructions();
     m_proc.setHeapOfStackSlots(m_heaps.rangeOf(m_heaps.frameSlots));

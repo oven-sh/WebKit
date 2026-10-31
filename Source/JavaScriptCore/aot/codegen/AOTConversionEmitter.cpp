@@ -19,14 +19,21 @@
 #include "AOTRepresentationRules.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStubsStringLiterals.h"
+#include "B3BasicBlockInlines.h"
+#include "B3BasicBlockUtils.h"
+#include "B3Dominators.h"
+#include "B3InsertionSetInlines.h"
 #include "B3IntRange.h"
+#include "B3ProcedureInlines.h"
 #include "B3StackmapGenerationParams.h"
 #include "JSCJSValueInlines.h"
 #include "PureNaN.h"
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <optional>
 #include <span>
+#include <tuple>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -489,14 +496,6 @@ Integer ConversionEmitter::toNearestInteger(Number value)
 }
 #endif
 
-struct ConversionEmitter::ExactInteger {
-    Integer value;
-    bool mayBeRounded { false };
-    std::optional<Word32> word { };
-    // Set where the integer is tested: it is the number only while this holds.
-    Condition holdsWhile { };
-};
-
 // What is added to a product that may be rounded stays far below the 2^53 from which on it is.
 static constexpr Range neverRounded { -(1ll << 51), 1ll << 51 };
 // The product of two int32, with room for those terms within int64.
@@ -589,6 +588,26 @@ bool ConversionEmitter::holdsJoinedInteger(LValue number)
     return m_holdsJoinedInteger.get(number);
 }
 
+// `(sum + row.id + name.length) | 0`: in integers two conversions go, and the test of `row.id` takes one.
+bool ConversionEmitter::convertsSeveralIntegers(LValue number)
+{
+    answerOperandsFirst<ConvertedIntegers>(number, m_convertedIntegers, [&](LValue value) {
+        if (value->opcode() == B3::IToD)
+            return ConvertedIntegers { .first = value };
+        ConvertedIntegers converted;
+        if (!isArithmeticOnNumbers(value))
+            return converted;
+        for (LValue operand : value->children()) {
+            ConvertedIntegers byOperand = m_convertedIntegers.get(operand);
+            converted.areSeveral |= byOperand.areSeveral || (converted.first && byOperand.first && converted.first != byOperand.first);
+            if (!converted.first)
+                converted.first = byOperand.first;
+        }
+        return converted;
+    });
+    return m_convertedIntegers.get(number).areSeveral;
+}
+
 void ConversionEmitter::computeValueCycles()
 {
     const CFG& cfg = analyses().cfg();
@@ -655,6 +674,28 @@ bool ConversionEmitter::isInLoopCarriedIntegerCycle(ValueID id)
     if (!m_valueCycles)
         computeValueCycles();
     return m_valueCycles->isInCycle.get(id.index()) && m_cyclesWithIntegers.get(m_valueCycles->componentOf[id.index()]);
+}
+
+// `sum = (sum + await next()) | 0`, `sum = (sum + parse(lines[i])) | 0`: an iteration that calls a function or suspends takes longer than the three conversions, so the next one does not wait for them.
+bool ConversionEmitter::callsOrSuspendsInLoopOf(ValueID id)
+{
+    BlockID blockOfValue = analyses().useLists().blockOf(id);
+    const NaturalLoop* loop = blockOfValue ? analyses().naturalLoops().innerMostLoopOf(blockOfValue) : nullptr;
+    if (!loop)
+        return false;
+    return m_loopsThatCallOrSuspend.ensure(loop->header().index(), [&] {
+        for (unsigned index = 0; index < loop->size(); ++index) {
+            const Block& block = m_function.at(loop->at(index));
+            if (block.frequency.predicted() != BlockFrequency::Normal)
+                continue;
+            for (ValueID value : block.values) {
+                Opcode opcode = m_function.at(value).opcode;
+                if (effectRuleOf(opcode) == EffectRule::Call || maySuspend(opcode))
+                    return true;
+            }
+        }
+        return false;
+    }).iterator->value;
 }
 
 bool ConversionEmitter::isMadeOutsideLoopOf(LValue user, LValue number)
@@ -804,7 +845,7 @@ ConversionEmitter::ExactInteger ConversionEmitter::computeIntegerBehind(LValue n
 // No code is emitted until it is known that the whole of the arithmetic can be done in integers.
 std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactIntegerBehind(LValue number, ValueID irValue, bool mayBeTested)
 {
-    bool mayTestWhatWasRead = mayBeTested && irValue && holdsJoinedInteger(number) && isInLoopCarriedIntegerCycle(irValue);
+    bool mayTestWhatWasRead = mayBeTested && irValue && holdsJoinedInteger(number) && isInLoopCarriedIntegerCycle(irValue) && (convertsSeveralIntegers(number) || !callsOrSuspendsInLoopOf(irValue));
     IntegersBehindNumbers& known = m_integersBehindNumbers[mayTestWhatWasRead];
     answerOperandsFirst<std::optional<IntegerBehindNumber>>(number, known, [&](LValue value) {
         return describeIntegerBehind(value, mayTestWhatWasRead, known);
@@ -813,14 +854,121 @@ std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactInteg
     if (!knownOfNumber || (knownOfNumber->isTested && !mayBeTested))
         return std::nullopt;
 
-    ExactIntegers computed;
+    ExactIntegers& computed = m_exactIntegers[mayTestWhatWasRead];
     answerOperandsFirst<std::optional<ExactInteger>>(number, computed, [&](LValue value) -> std::optional<ExactInteger> {
         std::optional<IntegerBehindNumber> knownOfValue = known.get(value);
         if (!knownOfValue)
             return std::nullopt;
-        return computeIntegerBehind(value, *knownOfValue, computed);
+        PlaceInBlock start = placeOfNextValue();
+        ExactInteger exact = computeIntegerBehind(value, *knownOfValue, computed);
+        rememberCodeOfExactInteger(value, start);
+        return exact;
     });
-    return computed.get(number);
+    ExactInteger exact = *computed.get(number);
+    useExactInteger(exact.value.value());
+    if (exact.word)
+        useExactInteger(exact.word->value());
+    if (exact.holdsWhile)
+        useExactInteger(exact.holdsWhile.value());
+    return exact;
+}
+
+void ConversionEmitter::rememberCodeOfExactInteger(LValue number, PlaceInBlock start)
+{
+    RELEASE_ASSERT(m_out.m_block == start.block);
+    for (unsigned index = start.index; index < start.block->size(); ++index) {
+        LValue value = start.block->at(index);
+        for (LValue operand : value->children())
+            useExactInteger(operand);
+        m_indexOfCodeOfExactInteger.add(value, static_cast<unsigned>(m_codeOfExactIntegers.size()));
+        m_codeOfExactIntegers.append(CodeOfExactInteger { value, number, { start.block, index } });
+    }
+}
+
+void ConversionEmitter::useExactInteger(LValue value)
+{
+    auto found = m_indexOfCodeOfExactInteger.find(value);
+    if (found == m_indexOfCodeOfExactInteger.end() || m_codeOfExactIntegers[found->value].place.block == m_out.m_block)
+        return;
+    m_usesOfExactIntegersInOtherBlocks.append(UseOfExactInteger { found->value, placeOfNextValue() });
+}
+
+// `if (early) a = sum | 0; b = sum | 0;`: what was emitted in the arm moves in front of the branch.
+void ConversionEmitter::placeExactIntegers()
+{
+    if (m_usesOfExactIntegersInOtherBlocks.isEmpty())
+        return;
+
+    LBasicBlock root = m_proc.at(0);
+    for (LBasicBlock block : m_proc)
+        block->predecessors().shrink(0);
+    B3::updatePredecessorsAfter(root);
+    B3::Dominators dominators(m_proc);
+    auto isReached = [&](LBasicBlock block) {
+        return block == root || block->numPredecessors();
+    };
+
+    Vector<std::optional<PlaceInBlock>> places;
+    places.reserveInitialCapacity(m_codeOfExactIntegers.size());
+    for (const CodeOfExactInteger& code : m_codeOfExactIntegers)
+        places.append(isReached(code.place.block) ? std::optional(code.place) : std::nullopt);
+
+    auto placeInFrontOf = [&](unsigned code, PlaceInBlock use) {
+        std::optional<PlaceInBlock>& place = places[code];
+        if (!place) {
+            place = use;
+            return;
+        }
+        if (place->block == use.block) {
+            place->index = std::min(place->index, use.index);
+            return;
+        }
+        if (dominators.strictlyDominates(place->block, use.block))
+            return;
+        if (dominators.strictlyDominates(use.block, place->block)) {
+            place = use;
+            return;
+        }
+        LBasicBlock blockOfNumber = m_codeOfExactIntegers[code].number->owner;
+        if (!blockOfNumber)
+            blockOfNumber = root;
+        place = PlaceInBlock { blockOfNumber, static_cast<unsigned>(blockOfNumber->size() - 1) };
+    };
+
+    for (const UseOfExactInteger& use : m_usesOfExactIntegersInOtherBlocks) {
+        if (isReached(use.place.block))
+            placeInFrontOf(use.code, use.place);
+    }
+    for (unsigned code = m_codeOfExactIntegers.size(); code--;) {
+        if (!places[code])
+            continue;
+        for (LValue operand : m_codeOfExactIntegers[code].value->children()) {
+            auto found = m_indexOfCodeOfExactInteger.find(operand);
+            if (found != m_indexOfCodeOfExactInteger.end())
+                placeInFrontOf(found->value, *places[code]);
+        }
+    }
+
+    Vector<unsigned> moved;
+    for (unsigned code = 0; code < m_codeOfExactIntegers.size(); ++code) {
+        const PlaceInBlock& emitted = m_codeOfExactIntegers[code].place;
+        if (places[code] && (places[code]->block != emitted.block || places[code]->index != emitted.index))
+            moved.append(code);
+    }
+    std::ranges::sort(moved, [&](unsigned a, unsigned b) {
+        return std::tuple(places[a]->block->index(), places[a]->index, a) < std::tuple(places[b]->block->index(), places[b]->index, b);
+    });
+    for (unsigned code : moved) {
+        const CodeOfExactInteger& emitted = m_codeOfExactIntegers[code];
+        emitted.place.block->values()[emitted.place.index] = m_proc.add<B3::Value>(B3::Nop, B3::Void, emitted.value->origin());
+    }
+    B3::InsertionSet insertionSet(m_proc);
+    for (size_t next = 0; next < moved.size();) {
+        LBasicBlock block = places[moved[next]]->block;
+        for (; next < moved.size() && places[moved[next]]->block == block; ++next)
+            insertionSet.insertValue(places[moved[next]]->index, m_codeOfExactIntegers[moved[next]].value);
+        insertionSet.execute(block);
+    }
 }
 
 std::optional<Integer> ConversionEmitter::exactIntegerBehind(Number number)

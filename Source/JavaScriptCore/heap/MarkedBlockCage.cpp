@@ -7,6 +7,7 @@
 #include "MarkedBlockCage.h"
 
 #include "AOTCellFormat.h"
+#include "AOTHeapHooks.h"
 #include "AddressSpaceBudget.h"
 #include "HeapAnalyzer.h"
 #include "HeapIterationScope.h"
@@ -1078,6 +1079,11 @@ void MarkedBlockCage::willAddArrayBuffer(VM& vm)
         return;
     addExhaustedHeap(ExhaustedHeap::ListOfArrayBuffers);
     vm.traps().setNeedsOutOfMemoryError(true);
+#if ENABLE(AOT)
+    // The heap counts the bytes of the buffer next and may collect there.
+    if (vm.hasCompiledCode() && !vm.heap.isDeferred())
+        AOT::HeapHooks::didFindNoRoomWhereCollectionMayRun(vm);
+#endif
 }
 
 bool MarkedBlockCage::keepsSpareWeakBlocks()

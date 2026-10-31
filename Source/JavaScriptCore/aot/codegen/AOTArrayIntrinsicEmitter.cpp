@@ -16,6 +16,7 @@
 #include "AOTValueIdentity.h"
 #include "JSType.h"
 #include <algorithm>
+#include <bit>
 #include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -125,7 +126,7 @@ void ArrayIntrinsicEmitter::generateGetOwnInt32Index(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
     ArrayElements storage = elements().elementsOf(array);
-    define(value, unboxInt32(Boxed(m_out.load64(elements().elementOfUnknownForm(storage, integerOperand(value->positionOperand()))))));
+    define(value, Word32(m_out.load32(elements().elementOfUnknownForm(storage, integerOperand(value->positionOperand())))));
 }
 
 void ArrayIntrinsicEmitter::generatePutOwnContiguousIndex(const ValueContext& value)
@@ -141,6 +142,14 @@ void ArrayIntrinsicEmitter::generatePutOwnDoubleIndex(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
     elements().storeRawElement(doubles, elements().elementsOf(array), integerOperand(value->positionOperand()), get(value->valueOperand()));
+}
+
+// Over an integer: the upper half of the word is the tag of every int32, and stays.
+void ArrayIntrinsicEmitter::generatePutOwnInt32Index(const ValueContext& value)
+{
+    static_assert(std::endian::native == std::endian::little);
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    m_out.store32(low32(integerOperand(value->valueOperand())).value(), elements().elementOfUnknownForm(elements().elementsOf(array), integerOperand(value->positionOperand())));
 }
 
 void ArrayIntrinsicEmitter::putInBounds(const ValueContext& value, const ArrayStorageForm& form)

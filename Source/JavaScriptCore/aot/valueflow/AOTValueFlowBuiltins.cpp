@@ -1038,6 +1038,10 @@ private:
         m_overload = &overload;
         m_handsOnResult = handsOnResult(overload);
         m_resultObject = m_call.resultObject ? m_call.resultObject : m_universe.resultOf(m_builtin, 0);
+        m_answersFunctionBoundToReceiver = answersFunctionBoundToReceiver(overload);
+        // The receiver keeps the function: two reads may answer the same one, so the place of the read does not tell them apart.
+        if (m_answersFunctionBoundToReceiver)
+            m_resultObject = m_universe.resultOf(m_builtin, 0);
         enterCodeThatRecordsAnswerFor(overload);
         if (BuiltinID canonical = m_builtins.canonicalID(m_builtin); (canonical == Builtins::Proxy && isConstruction(m_call.kind)) || canonical == Builtins::ProxyRevocable) {
             makeProxy();
@@ -1571,6 +1575,14 @@ private:
         });
     }
 
+    bool answersFunctionBoundToReceiver(const BuiltinOverload& overload) const
+    {
+        if (overload.mode != BuiltinCallMode::Get || overload.isUndeclared() || !m_builtins.answersFunctionBoundToReceiver(m_builtins.canonicalID(m_builtin)))
+            return false;
+        const BuiltinType& type = m_builtins.at(overload.result.type);
+        return type.primitives.isEmpty() && type.parts.size() == 1 && type.parts[0].kind == BuiltinTypePartKind::Instance && type.parts[0].builtinClass == BuiltinClasses::BoundFunction;
+    }
+
     bool mayAnswerCallableObject(const BuiltinOverload& overload) const
     {
         return std::ranges::any_of(m_builtins.at(overload.result.type).parts, [&](const BuiltinTypePart& part) {
@@ -1796,9 +1808,10 @@ private:
         if (m_overload->code.implementation.inlineBuiltin == InlineBuiltin::OwnPropertyKeys && parameter.protocols.contains(Protocol::OwnKeys)) {
             ValueFlowNodeID listed = m_context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfLibraryClassesWhoseOwnKeysAreListed);
             connectOperands(parameter.operand, listed);
-            // A value that nobody knows stands for all that has escaped, and no node lists that beside it: `Reflect.ownKeys(box.held)`.
+            // A value that nobody knows stands for what was put into hands nobody sees, and no node lists that beside it: `Reflect.ownKeys(box.held)`.
+            // A prototype object escapes with an instance, with its constructor, or where a lookup on a value nobody knows finds a member on it. Only one that was carried out comes back as a value.
             if (mayBeUnknownObject(valueAt(parameter.operand)))
-                m_context.connect(m_context.masked(ValueFlowProgramNodes::escaped(), m_universe.prototypeObjectsOfLibraryClasses()), listed);
+                m_context.connect(m_context.masked(valuesCarriedOut(), m_universe.prototypeObjectsOfLibraryClasses()), listed);
         }
         if (parameter.roles.contains(BuiltinOperandRole::DescribedWhenRefused))
             describeRefusedOperands(parameter);
@@ -2564,6 +2577,12 @@ private:
                         handChildrenToWhatReplacesTheirList(m_context, valueInSlot(contents.slot, contents.type));
                     break;
                 }
+                if (m_answersFunctionBoundToReceiver && fresh && fresh == m_resultObject) {
+                    allocate(part, fresh, type.freshness);
+                    m_context.add(m_context.written(only(m_context, fresh), nameOf(BuiltinSlots::BoundFunctionTarget)), only(m_context, m_universe.objectOf(m_builtin)));
+                    value = maker.unite(value, maker.of(fresh));
+                    break;
+                }
                 if (type.freshness == BuiltinFreshness::No || !fresh || isCalledInWaysNobodyFollows(part)) {
                     bool mayBeBuffer = part.kind == BuiltinTypePartKind::Instance
                         && (!m_builtins.at(part.builtinClass).prototype || (std::ranges::contains(m_tables.classesAtOrBelow(part.builtinClass), BuiltinClassID(BuiltinClasses::Buffer)) && mayBeOfClassBelow(part.builtinClass, BuiltinClasses::Buffer)) || hasMethodsThatTableDoesNotList(part.builtinClass));
@@ -2712,6 +2731,10 @@ private:
                     if (!part.isOfClassItself)
                         addPrototypesOfClassesBelow(part.builtinClass, prototype);
                 }
+            } else if (m_answersFunctionBoundToReceiver && fresh == m_resultObject) {
+                // Its target is a native function of the realm, and a bound function inherits from what its target inherits from.
+                m_context.add(prototype, only(m_context, m_universe.objectOf(Builtins::FunctionPrototype)));
+                writeOwnPropertiesListedOnPrototypes(part.builtinClass, object);
             } else if (!m_overload->result.prototypeSource || fresh != m_resultObject)
                 m_context.add(prototype, undescribedObject());
             if (freshness == BuiltinFreshness::Unaliased && !listsOwnNamesOf(part.builtinClass, fresh)) {
@@ -2828,6 +2851,9 @@ private:
 
     void fillSlotsThatRowLeavesOut(const BuiltinTypePart& part, ValueFlowObjectID fresh)
     {
+        // It binds the receiver and no argument, and its target is what the overloads for calls describe.
+        if (m_answersFunctionBoundToReceiver && fresh == m_resultObject)
+            return;
         for (BuiltinClassID current = part.builtinClass; current; current = m_builtins.at(current).parent) {
             for (BuiltinSlotID slot : m_builtins.at(current).slots) {
                 if (std::ranges::contains(part.contents, slot, &BuiltinSlotContents::slot) || (fresh == m_resultObject && isFilledByRecord(slot)))
@@ -3389,6 +3415,7 @@ private:
     ClimbingSet m_proxiesAskedAboutOwnProperty;
     const BuiltinOverload* m_overload { nullptr };
     bool m_handsOnResult { false };
+    bool m_answersFunctionBoundToReceiver { false };
     bool m_makesNoObjectOfHost { false };
     ValueFlowObjectID m_resultObject;
     ValueFlowObjectID m_contentsObject;
@@ -4001,6 +4028,8 @@ bool raisesEventWhenCalled(const BuiltinTable& builtins, BuiltinID builtin)
 
 bool bindsNoArgument(const ValueFlowUniverse& universe, ValueFlowObjectID boundFunction)
 {
+    if (universe.isFunctionBoundByAccessor(boundFunction))
+        return true;
     const ValueFlowSite* site = universe.siteOf(boundFunction);
     return site && site->origin == ValueFlowSiteOrigin::BuiltinResult && !site->ordinal && site->isAnswerOfCallWithOneArgumentAtMost;
 }
@@ -4058,7 +4087,7 @@ static ClimbingSet targetsOf(ClimbingSet boundFunctions, const ValueFlowBuiltinC
     auto holds = [&](BuiltinSlotID id) {
         return lists({ slot(id), ValueSets::nothing, ValueSets::anything });
     };
-    ClimbingSet targets = context.restrict(context.valueOf(slot(BuiltinSlots::BoundFunctionTarget)), context.universe().callables());
+    ClimbingSet targets = context.restrict(context.valueOf(slot(BuiltinSlots::BoundFunctionTarget)), context.universe().targetsOfBoundFunctions());
     if (!context.contains(targets, ValueFlowUniverse::unknownObject()))
         return targets;
     if (!holds(BuiltinSlots::BoundFunctionBoundThis) && !holds(BuiltinSlots::BoundFunctionBoundArguments) && !std::ranges::any_of(description.arguments, lists) && !lists(description.laterArguments) && !lists(description.otherArguments))
@@ -4077,7 +4106,7 @@ static void callTargetsWithoutBoundArguments(ClimbingSet callees, const ValueFlo
     onBoundThis.kind = ValueFlowCallKind::CallByNativeCode;
     onBoundThis.thisValue = { slot(BuiltinSlots::BoundFunctionBoundThis), ValueSets::nothing, ValueSets::anything };
     Vector<ValueFlowObjectID, 4> applied;
-    context.forEachMember(context.restrict(targets, universe.builtinFunctions()), [&](ValueFlowObjectID target) {
+    context.forEachMember(context.restrict(targets, universe.targetsOfBoundFunctionsAmongBuiltins()), [&](ValueFlowObjectID target) {
         if (raisesEventWhenCalled(context.program().builtins(), universe.builtinOf(target)))
             return;
         applied.append(target);
@@ -4830,7 +4859,8 @@ static void callLibraryMethodsOfUnknownReceiver(ValueFlowRuleContext& context, V
     ValueFlowBuiltinCall call = useByEscapedReceiver(context, ValueFlowCallKind::CallByNativeCode);
     auto find = [&](BuiltinName name) {
         ClimbingSet prototypes(universe.builtinTables().heap().under(context.program().keyOf(name)).prototypeObjects);
-        ClimbingSet ofClassesWithInstances = context.unite(context.valueWithin(prototypes, context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)), context.valueWithin(prototypes, ValueFlowProgramNodes::escaped()));
+        ClimbingSet escapedPrototypes = context.valueWithin(prototypes, ValueFlowProgramNodes::escaped());
+        ClimbingSet ofClassesWithInstances = context.unite(context.valueWithin(prototypes, context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)), escapedPrototypes);
         ClimbingSet aboveEscapedObjects = holdersAboveEscapedObjects(context, name);
         ofClassesWithInstances = context.unite(ofClassesWithInstances, aboveEscapedObjects);
         context.forEachMemberInLine(ofClassesWithInstances, [&](ValueFlowObjectID prototype) {
@@ -4844,7 +4874,7 @@ static void callLibraryMethodsOfUnknownReceiver(ValueFlowRuleContext& context, V
                 methods.append(universe.objectOf(method));
             else if (mayUnknownCodeWrite(context) && context.contains(aboveEscapedObjects, prototype) && !raisesEventWhenCalled(builtins, method))
                 BuiltinApplication(method, call, context).run();
-            else
+            else if (context.contains(aboveEscapedObjects, prototype) || context.contains(escapedPrototypes, prototype))
                 context.use(method, BuiltinUse::Called);
         });
     };
@@ -4945,8 +4975,6 @@ void runBehavior(const ValueFlowStatement& statement, ValueFlowRuleContext& cont
 
     ValueSetID mask = everythingButUnknownObject(context);
     ClimbingSet receivers = context.restrict(context.valueOf(hub), mask);
-    if (!mayUnknownCodeWrite(context))
-        receivers = context.unite(receivers, context.coveredByUnknownObjectAmong(context.valueWithin(ClimbingSet(context.universe().knownObjects()), hub)));
     // Whoever sends a proxy here to be listed has asked it by its traps.
     if (onlyLists(behavior)) {
         mask = context.maker().intersect(mask, ValueSets::complement(context.withMembersOf(ValueSets::nothing, context.followedProxiesAmong(receivers))));

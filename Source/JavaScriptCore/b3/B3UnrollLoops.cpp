@@ -91,6 +91,11 @@ private:
         Value* summand { nullptr };
         // Set where the summand does not change from turn to turn and has been moved out of the loop.
         Value* integerInFront { nullptr };
+        // Whether it is an integer of 32 bits is asked in front of the first stretch.
+        Value* numberInFront { nullptr };
+        std::optional<int32_t> constant;
+
+        bool changesFromTurnToTurn() const { return !integerInFront && !numberInFront && !constant; }
     };
 
     struct Plan {
@@ -137,7 +142,6 @@ private:
         PatchpointValue* poll { nullptr };
         // The turns that are written out poll once together and run in no stretches: only the loop itself, which takes fewer turns than are written out, goes without its poll.
         bool pollsOnceForAllWrittenOutTurns { false };
-        bool mayBeEnteredAgainBehindRareEdge { false };
         bool firstTurnIsTestedInFront { false };
     };
 
@@ -164,6 +168,8 @@ private:
             name(sum.start);
             if (sum.integerInFront)
                 name(sum.integerInFront);
+            if (sum.numberInFront)
+                name(sum.numberInFront);
         }
     }
 
@@ -448,18 +454,67 @@ private:
         return *m_phiChildren;
     }
 
+    static bool isConvertedInteger(Value* value) { return value->opcode() == IToD && value->child(0)->type() == Int32; }
+
     static Value* summandOf(Value* sum, Value* phi)
     {
-        auto isConvertedInteger = [](Value* value) {
-            return value->opcode() == IToD && value->child(0)->type() == Int32;
-        };
         if (sum->type() != Double || (sum->opcode() != Add && sum->opcode() != Sub))
             return nullptr;
-        if (sum->child(0) == phi && isConvertedInteger(sum->child(1)))
+        if (sum->child(0) == phi && sum->child(1) != phi)
             return sum->child(1);
-        if (sum->opcode() == Add && sum->child(1) == phi && isConvertedInteger(sum->child(0)))
+        if (sum->opcode() == Add && sum->child(1) == phi)
             return sum->child(0);
         return nullptr;
+    }
+
+    // A quotient or a root is seldom whole. Of a number that is handed in or read nothing is known.
+    static bool mayWellBeWhole(PhiChildren& phiChildren, Value* value, unsigned timeToLive)
+    {
+        value = value->foldIdentity();
+        if (value->hasDouble())
+            return std::trunc(value->asDouble()) == value->asDouble();
+        if (!timeToLive)
+            return true;
+        auto mayBe = [&](Value* operand) {
+            return mayWellBeWhole(phiChildren, operand, timeToLive - 1);
+        };
+        switch (value->opcode()) {
+        case Div:
+        case Sqrt:
+        case FloatToDouble:
+            return false;
+        case Add:
+        case Sub:
+        case Mul:
+        case Mod:
+        case FMin:
+        case FMax:
+            return mayBe(value->child(0)) && mayBe(value->child(1));
+        case Neg:
+        case Abs:
+            return mayBe(value->child(0));
+        case Select:
+            return mayBe(value->child(1)) || mayBe(value->child(2));
+        case Phi:
+            for (UpsilonValue* upsilon : phiChildren[value]) {
+                if (mayBe(upsilon->child(0)))
+                    return true;
+            }
+            return false;
+        default:
+            return true;
+        }
+    }
+
+    // -0 is no integer: -0 + -0 is -0, and 0 + -0 is 0.
+    static std::optional<int32_t> integerOf(double number)
+    {
+        if (!(std::abs(number) < greatestSummand))
+            return std::nullopt;
+        int32_t integer = static_cast<int32_t>(number);
+        if (std::bit_cast<int64_t>(static_cast<double>(integer)) != std::bit_cast<int64_t>(number))
+            return std::nullopt;
+        return integer;
     }
 
     // A fast version still holds the paths behind the comparisons that were decided for it. Nothing takes them.
@@ -503,11 +558,21 @@ private:
             sum.summand = summandOf(sum.sum, phi);
             if (!sum.summand)
                 continue;
-            if (!plan.blocks.contains(sum.summand->owner)) {
+            if (Value* number = sum.summand->foldIdentity(); number->hasDouble()) {
+                sum.constant = integerOf(number->asDouble());
+                if (!sum.constant)
+                    continue;
+            } else if (!plan.blocks.contains(sum.summand->owner)) {
                 if (!m_proc.dominators().dominates(sum.summand->owner, plan.preHeader))
                     continue;
-                sum.integerInFront = sum.summand->child(0);
-            }
+                if (isConvertedInteger(sum.summand))
+                    sum.integerInFront = sum.summand->child(0);
+                else if (mayWellBeWhole(phiChildren, sum.summand, Limits::maxDepthOfAddressInUnrolledLoop))
+                    sum.numberInFront = sum.summand;
+                else
+                    continue;
+            } else if (!isConvertedInteger(sum.summand))
+                continue;
             plan.sums.append(sum);
         }
         if (plan.sums.isEmpty())
@@ -519,10 +584,60 @@ private:
                 plan.sums.removeAllMatching([&](const SumOfIntegers& sum) {
                     if (child == sum.phi)
                         return value != sum.sum;
-                    return child == sum.sum && value->opcode() != Upsilon && plan.blocks.contains(value->owner);
+                    if (child != sum.sum || !plan.blocks.contains(value->owner))
+                        return false;
+                    auto* upsilon = value->as<UpsilonValue>();
+                    return !upsilon || upsilon->phi() != sum.phi;
                 });
             }
         }
+    }
+
+    static bool hasSumKeptAsInteger(PhiChildren& phiChildren, const Plan& plan)
+    {
+        auto isWidenedInteger = [](Value* value) {
+            return value->opcode() == SExt32 || value->opcode() == ZExt32;
+        };
+        return std::ranges::any_of(*plan.header, [&](Value* phi) {
+            if (phi->opcode() != Phi || phi->type() != Int64 || phi == plan.counter)
+                return false;
+            Value* sum = nullptr;
+            for (UpsilonValue* upsilon : phiChildren[phi]) {
+                if (upsilon->owner == plan.preHeader)
+                    continue;
+                Value* input = upsilon->child(0)->foldIdentity();
+                if (!plan.blocks.contains(upsilon->owner) || (sum && sum != input))
+                    return false;
+                sum = input;
+            }
+            if (!sum || !plan.blocks.contains(sum->owner) || (sum->opcode() != Add && sum->opcode() != Sub))
+                return false;
+            return (sum->child(0) == phi && isWidenedInteger(sum->child(1))) || (sum->opcode() == Add && sum->child(1) == phi && isWidenedInteger(sum->child(0)));
+        });
+    }
+
+    // The additions of the turns that are written out fold into one.
+    static bool addsSameIntegerInEveryTurn(PhiChildren& phiChildren, const Plan& plan)
+    {
+        auto staysTheSame = [&](Value* value) {
+            return value->isConstant() || !plan.blocks.contains(value->owner);
+        };
+        for (Value* phi : *plan.header) {
+            if (phi->opcode() != Phi || !phi->type().isInt() || phi == plan.counter)
+                continue;
+            bool isSum = true;
+            for (UpsilonValue* upsilon : phiChildren[phi]) {
+                if (upsilon->owner == plan.preHeader)
+                    continue;
+                Value* next = upsilon->child(0)->foldIdentity();
+                bool addsToPhi = (next->opcode() == Add || next->opcode() == Sub) && next->child(0) == phi && staysTheSame(next->child(1));
+                addsToPhi |= next->opcode() == Add && next->child(1) == phi && staysTheSame(next->child(0));
+                isSum &= addsToPhi && plan.blocks.contains(upsilon->owner);
+            }
+            if (isSum)
+                return true;
+        }
+        return false;
     }
 
     static bool changesFromTurnToTurn(const Plan& plan, Value* value, unsigned timeToLive)
@@ -676,10 +791,12 @@ private:
             m_proc.didReachLimit(Limit::MaxValuesPerUnrolledLoop, plan.header->at(0)->origin());
             return;
         }
-        if (storesWords && !std::ranges::any_of(*plan.header, [](Value* value) { return value->opcode() == Phi && value->type() == Double; }))
+        if (storesWords && !std::ranges::any_of(*plan.header, [](Value* value) { return value->opcode() == Phi && (value->type() == Double || value->type() == Int64); }))
             return;
         PhiChildren& phiChildren = prepareToReadCounters();
-        if (plan.header->frequency() < m_proc.policy().loops.minFrequencyOfUnrolledLoop)
+        // Every branch in front of a loop halves what is estimated for it. A turn that waits for the sum of the turn before gains the most.
+        bool runsOften = plan.header->frequency() >= m_proc.policy().loops.minFrequencyOfUnrolledLoop;
+        if (!runsOften && plan.header->frequency() * Limits::frequencyLostToBranchesInFrontOfLoop < m_proc.policy().loops.minFrequencyOfUnrolledLoop)
             return;
         numberOfValues -= shareAddressesOfRepeatedLoads(plan);
         Dominators& dominators = m_proc.dominators();
@@ -704,7 +821,7 @@ private:
                 return;
             findSumsOfIntegers(phiChildren, plan);
             // A loop that walks nothing and sums nothing up would only test less often. One that stores words is written out only for its sums.
-            if (plan.sums.isEmpty() && (storesWords || !walksData(plan)))
+            if (plan.sums.isEmpty() && (!runsOften || (!hasSumKeptAsInteger(phiChildren, plan) && (storesWords || (!walksData(plan) && !addsSameIntegerInEveryTurn(phiChildren, plan))))))
                 return;
             if (plan.sums.isEmpty()) {
                 Plan withSidePaths = plan;
@@ -760,7 +877,7 @@ private:
 
     // A loop that goes on where the counter of a loop around it stands is that loop without some of its paths. Where such a path is not rare, the loop may be left and entered
     // again on every turn, and each time it would ask anew how many turns are left.
-    static bool mayBeEnteredOnAnyTurnOfLoopAround(const NaturalLoops& loops, const NaturalLoop& loop, const Plan& plan, RareEdges rareEdges)
+    static bool mayBeEnteredOnAnyTurnOfLoopAround(const NaturalLoops& loops, const NaturalLoop& loop, const Plan& plan)
     {
         Value* start = plan.start->foldIdentity();
         if (start->opcode() != Phi)
@@ -772,7 +889,7 @@ private:
                 if (block == plan.test)
                     continue;
                 for (const FrequentedBlock& successor : block->successors()) {
-                    if (successor.isRare() && rareEdges == RareEdges::EndTheWalk)
+                    if (successor.isRare())
                         continue;
                     if (!loops.belongsTo(successor.block(), loop) && loops.belongsTo(successor.block(), *outer))
                         return true;
@@ -833,9 +950,8 @@ private:
                 runsEveryTurn &= !blocksThatCanRun.contains(predecessor) || dominators.dominates(block, predecessor);
             if (!runsEveryTurn || endsMostlyElsewhere(block) || (!readTest(loops, loop, blocksThatCanRun, block, phiChildren, plan, TurnsAre::Counted) && !readTestOfCountersThatMeet(loops, loop, blocksThatCanRun, block, phiChildren, plan)))
                 continue;
-            if (mayBeEnteredOnAnyTurnOfLoopAround(loops, loop, plan, RareEdges::EndTheWalk))
+            if (mayBeEnteredOnAnyTurnOfLoopAround(loops, loop, plan))
                 return;
-            plan.mayBeEnteredAgainBehindRareEdge = mayBeEnteredOnAnyTurnOfLoopAround(loops, loop, plan, RareEdges::AreFollowed);
             plan.firstTurnIsTestedInFront = isTestedInFront(plan);
             m_plansOfCopiesThatPoll.append(WTF::move(plan));
             return;
@@ -1000,22 +1116,10 @@ private:
     void leavePollToCopy(RegionCloner& cloner, const Plan& plan)
     {
         if (!fitsOneStretch(plan)) {
-            // The end of the stretch takes a register. Where a comparison reads memory in place, a long turn has none to spare, and the end lives in the frame.
-            // Where it reads registers alone there are twice as many of them, and a load in every turn would cost half of what the poll does.
-            // A loop that a rare path leaves for the loop around it begins a stretch each time it is entered again. That costs more than the poll of a long turn, which is one instruction of many,
-            // unless the choice of loop has computed the end of the first stretch anyway. A store of it would be one instruction more at every entry, so there it lives in a register.
-            unsigned numberOfValues = 0;
-            for (BasicBlock* block : plan.blocks) {
-                for (Value* value : *block)
-                    numberOfValues += countsTowardsSize(value);
-            }
             // What another block reads too, or holds, the cloner has put into a variable by now, for every reader: the branch then names a Get, which has no operands.
             bool branchStillNamesComparison = plan.testedOperandOfBranch && plan.test->last()->child(0) == plan.comparison;
-            bool isShortTurn = numberOfValues <= Limits::maxValuesPerTurnRunInStretches;
-            bool isEnteredAgainForNothing = plan.mayBeEnteredAgainBehindRareEdge && choiceOfLoopYieldsEndOfFirstStretch(plan);
-            bool comparisonReadsMemoryInPlace = isX86();
-            if (plan.sideTests.isEmpty() && branchStillNamesComparison && (isShortTurn || isEnteredAgainForNothing || !plan.mayBeEnteredAgainBehindRareEdge))
-                runCopyInStretches(cloner, plan, isShortTurn || isEnteredAgainForNothing || !comparisonReadsMemoryInPlace ? EndOfStretchLives::InRegister : EndOfStretchLives::InFrame);
+            if (plan.sideTests.isEmpty() && branchStillNamesComparison)
+                runCopyInStretches(cloner, plan);
             else {
                 BasicBlock* headerOfCopy = cloner.cloneBlocks(plan.blocks.span()).get(plan.header);
                 m_proc.deleteValue(plan.preHeader->values().takeLast());
@@ -1025,42 +1129,18 @@ private:
         removePolls(plan);
     }
 
-    enum class EndOfStretchLives : bool { InRegister, InFrame };
-
-    void runCopyInStretches(RegionCloner& cloner, const Plan& plan, EndOfStretchLives endOfStretchLives)
+    // The end of the stretch is one value more than the loop has. Where no register is left for it, the allocator keeps it in the frame, and a comparison that reads memory reads it there in place.
+    void runCopyInStretches(RegionCloner& cloner, const Plan& plan)
     {
         Origin origin = plan.test->last()->origin();
         Type type = plan.tested->type();
         unsigned testedOperand = *plan.testedOperandOfBranch;
-        Air::StackSlot* slotOfEnd = endOfStretchLives == EndOfStretchLives::InFrame ? m_proc.addStackSlot(sizeofType(type)) : nullptr;
-        if (slotOfEnd)
-            slotOfEnd->setIsDeadAtSuspensions(true);
-        Variable* endOfStretch = slotOfEnd ? nullptr : m_proc.addVariable(type);
+        Variable* endOfStretch = m_proc.addVariable(type);
         auto appendEnd = [&](BasicBlock* block) -> Value* {
-            if (slotOfEnd)
-                return block->appendNew<MemoryValue>(m_proc, Load, type, origin, block->appendNew<SlotBaseValue>(m_proc, origin, slotOfEnd), 0, m_proc.heapOfStackSlots());
             return block->appendNew<VariableValue>(m_proc, Get, origin, endOfStretch);
         };
         auto setEnd = [&](BasicBlock* block, Value* end) {
-            if (slotOfEnd)
-                block->appendNew<MemoryValue>(m_proc, Store, origin, end, block->appendNew<SlotBaseValue>(m_proc, origin, slotOfEnd), 0, m_proc.heapOfStackSlots());
-            else
-                block->appendNew<VariableValue>(m_proc, Set, origin, endOfStretch, end);
-        };
-        // One value at a time is alive here beside those of the loop: what this needed beyond the registers left over would be taken from them, for all of their turns.
-        auto storeEndOfStretchFrom = [&](BasicBlock* block, Value* from, BasicBlock* next) {
-            bool rises = plan.step > 0;
-            BasicBlock* endIsNearer = m_proc.addBlock(block->frequency());
-            BasicBlock* boundIsNearer = m_proc.addBlock(block->frequency());
-            Value* distance = rises ? block->appendNew<Value>(m_proc, Sub, origin, plan.bound, from) : block->appendNew<Value>(m_proc, Sub, origin, from, plan.bound);
-            block->appendNew<Value>(m_proc, Branch, origin, block->appendNew<Value>(m_proc, Above, origin, distance, block->appendIntConstant(m_proc, origin, type, lengthOfStretch(plan, type))));
-            block->setSuccessors(FrequentedBlock(endIsNearer), FrequentedBlock(boundIsNearer));
-            setEnd(endIsNearer, endIsNearer->appendNew<Value>(m_proc, rises ? Add : Sub, origin, from, endIsNearer->appendIntConstant(m_proc, origin, type, lengthOfStretch(plan, type))));
-            endIsNearer->appendNew<Value>(m_proc, Jump, origin);
-            endIsNearer->setSuccessors(FrequentedBlock(next));
-            setEnd(boundIsNearer, plan.bound);
-            boundIsNearer->appendNew<Value>(m_proc, Jump, origin);
-            boundIsNearer->setSuccessors(FrequentedBlock(next));
+            block->appendNew<VariableValue>(m_proc, Set, origin, endOfStretch, end);
         };
 
         RegionCloner::BlockMap copies = cloner.cloneBlocks(plan.blocks.span());
@@ -1072,23 +1152,14 @@ private:
         }
 
         BasicBlock* entered = m_proc.addBlock(plan.preHeader->frequency());
-        if (slotOfEnd) {
-            BasicBlock* boundLiesBeyond = m_proc.addBlock(plan.preHeader->frequency());
-            setEnd(entered, plan.bound);
-            entered->appendNew<Value>(m_proc, Branch, origin, entered->appendNew<Value>(m_proc, plan.relation, origin, plan.start, plan.bound));
-            entered->setSuccessors(FrequentedBlock(boundLiesBeyond), FrequentedBlock(copies.get(plan.header)));
-            storeEndOfStretchFrom(boundLiesBeyond, plan.start, copies.get(plan.header));
-        }
         m_proc.deleteValue(plan.preHeader->values().takeLast());
-        const bool yieldsEndOfFirstStretch = !slotOfEnd && choiceOfLoopYieldsEndOfFirstStretch(plan);
+        const bool yieldsEndOfFirstStretch = choiceOfLoopYieldsEndOfFirstStretch(plan);
         Value* endOfFirstStretch = appendChoiceOfLoop(plan, plan.preHeader, plan.start, plan.bound, entered, yieldsEndOfFirstStretch);
-        if (!slotOfEnd) {
-            if (yieldsEndOfFirstStretch && !endOfFirstStretch)
-                endOfFirstStretch = entered->appendNew<Value>(m_proc, plan.step > 0 ? Add : Sub, origin, plan.start, entered->appendIntConstant(m_proc, origin, type, lengthOfStretch(plan, type)));
-            setEnd(entered, endOfFirstStretch ? endOfFirstStretch : appendBoundOfStretch(m_proc, entered, origin, { plan.start, plan.bound, plan.relation, plan.step, BoundLiesBeyond::No }));
-            entered->appendNew<Value>(m_proc, Jump, origin);
-            entered->setSuccessors(FrequentedBlock(copies.get(plan.header)));
-        }
+        if (yieldsEndOfFirstStretch && !endOfFirstStretch)
+            endOfFirstStretch = entered->appendNew<Value>(m_proc, plan.step > 0 ? Add : Sub, origin, plan.start, entered->appendIntConstant(m_proc, origin, type, lengthOfStretch(plan, type)));
+        setEnd(entered, endOfFirstStretch ? endOfFirstStretch : appendBoundOfStretch(m_proc, entered, origin, { plan.start, plan.bound, plan.relation, plan.step, BoundLiesBeyond::No }));
+        entered->appendNew<Value>(m_proc, Jump, origin);
+        entered->setSuccessors(FrequentedBlock(copies.get(plan.header)));
 
         BasicBlock* test = copies.get(plan.test);
         BasicBlock* stays = test->successorBlock(plan.stayingSuccessorIndex);
@@ -1106,11 +1177,6 @@ private:
 
         // The next stretch is counted from the end of this one, which the counter has reached or passed by less than a step: whoever counted from the counter would keep it alive beside its successor, at the price of a move in every turn.
         polls->append(m_proc.clone(plan.poll));
-        if (slotOfEnd) {
-            // The end in the frame is not read here: the load of the test would serve this reader too, and could no longer be part of the comparison. Opaque keeps the sum from being folded onto the counter.
-            storeEndOfStretchFrom(polls, polls->appendNew<Value>(m_proc, Opaque, origin, reached), stays);
-            return;
-        }
         setEnd(polls, appendBoundOfStretch(m_proc, polls, origin, { appendEnd(polls), plan.bound, plan.relation, plan.step, BoundLiesBeyond::Yes }));
         polls->appendNew<Value>(m_proc, Jump, origin);
         polls->setSuccessors(FrequentedBlock(stays));
@@ -1554,6 +1620,7 @@ private:
     }
 
     static constexpr int64_t greatestSumOfIntegers = 1ll << 52;
+    static constexpr double greatestSummand = 0x1p31;
     static constexpr int64_t turnsOfStretch = Limits::maxTurnsWithoutPoll;
     // So many integers of 32 bits add up to less than 2^52, with the turns that are written out once more.
     static_assert(turnsOfStretch <= 1ll << 20);
@@ -1566,10 +1633,12 @@ private:
         BasicBlock* begins { nullptr };
         // Where the first stretch is entered: behind the tests, or at the question in front of them whether every sum starts at zero.
         BasicBlock* entered { nullptr };
+        BasicBlock* asksAboutSummands { nullptr };
         BasicBlock* next { nullptr };
         Variable* farBoundVariable { nullptr };
         Vector<Variable*, 1> firstSums;
         Vector<Value*, 1> sumsInFront;
+        Vector<Variable*, 1> summandsInFront;
         Value* farBound { nullptr };
     };
 
@@ -1621,6 +1690,7 @@ private:
 
     static constexpr double roundingOfSums = 1.5 * static_cast<double>(greatestSumOfIntegers);
     static constexpr double greatestStartOfSum = static_cast<double>(greatestSumOfIntegers / 2);
+    static_assert(!static_cast<uint32_t>(std::bit_cast<uint64_t>(roundingOfSums)));
 
     static bool startPassesTests(const SumOfIntegers& sum)
     {
@@ -1640,6 +1710,7 @@ private:
         BasicBlock* tests = stretch.tests;
         BasicBlock* begins = stretch.begins;
         BasicBlock* entered = stretch.entered;
+        BasicBlock* enteredFirst = stretch.asksAboutSummands ? stretch.asksAboutSummands : entered;
         // Where the lower end of what the counter walks is not below zero, the two ends lie nearer to each other than the upper end lies to zero:
         // that the upper end lies within a stretch of zero needs no subtraction to be told.
         BasicBlock* first = stretch.first;
@@ -1652,7 +1723,7 @@ private:
             first->appendNew<VariableValue>(m_proc, Set, origin, stretch.farBoundVariable, farBound);
             first->appendNew<Value>(m_proc, Branch, origin, first->appendNew<Value>(m_proc, Above, origin, upperEnd, farthest));
             BasicBlock* liesFarther = m_proc.addBlock();
-            first->setSuccessors(FrequentedBlock(liesFarther, FrequencyClass::Rare), FrequentedBlock(entered));
+            first->setSuccessors(FrequentedBlock(liesFarther, FrequencyClass::Rare), FrequentedBlock(enteredFirst));
             first = liesFarther;
             // A few turns far from zero are one stretch as well, which ends at the far bound. The bound lies beyond the far bound by the room, and is at hand.
             if (lowerEndMayLieFartherThanStretch(plan, bounds)) {
@@ -1662,11 +1733,11 @@ private:
                 Value* farthestWithRoom = liesFarther->appendIntConstant(m_proc, origin, type, lengthOfStretch(plan, type) + (rises ? room : -room));
                 liesFarther->appendNew<Value>(m_proc, Branch, origin, liesFarther->appendNew<Value>(m_proc, Above, origin, distance, farthestWithRoom));
                 first = m_proc.addBlock();
-                liesFarther->setSuccessors(FrequentedBlock(first, FrequencyClass::Rare), FrequentedBlock(entered));
+                liesFarther->setSuccessors(FrequentedBlock(first, FrequencyClass::Rare), FrequentedBlock(enteredFirst));
             }
         }
         // A test at the bottom is reached only where there is room for the turns that are written out. A test at the top asks that by itself.
-        appendFarBoundOfStretch(plan, stretch, bounds, first, variableOfCounter(plan), plan.testsCounterBeforeStep ? BoundLiesBeyond::No : BoundLiesBeyond::Yes, entered);
+        appendFarBoundOfStretch(plan, stretch, bounds, first, variableOfCounter(plan), plan.testsCounterBeforeStep ? BoundLiesBeyond::No : BoundLiesBeyond::Yes, enteredFirst);
         appendPoll(plan, stretch.next);
         // The counter has passed the end of the last stretch by less than the turns that are written out. Nothing but the test of those turns looks at the counter here, so it stays in one register.
         // Every stretch comes in by one block, so that the stretches are a loop with one way in.
@@ -1676,6 +1747,28 @@ private:
             tests->appendNew<Value>(m_proc, Jump, origin);
             tests->setSuccessors(FrequentedBlock(unrolledHeader));
             return;
+        }
+        if (BasicBlock* asks = stretch.asksAboutSummands) {
+            Value* areIntegers = nullptr;
+            for (unsigned index = 0; index < plan.sums.size(); ++index) {
+                Value* number = plan.sums[index].numberInFront;
+                if (!number)
+                    continue;
+                // The low bits of the rounded sum are the integer. The bits are compared so that -0 does not pass.
+                Value* shifted = asks->appendNew<Value>(m_proc, Add, origin, number, asks->appendNew<ConstDoubleValue>(m_proc, origin, roundingOfSums));
+                Value* integer = asks->appendNew<Value>(m_proc, Trunc, origin, asks->appendNew<Value>(m_proc, BitwiseCast, origin, shifted));
+                Value* bitsOfInteger = asks->appendNew<Value>(m_proc, BitwiseCast, origin, asks->appendNew<Value>(m_proc, IToD, origin, integer));
+                Value* isInteger = asks->appendNew<Value>(m_proc, Equal, origin, bitsOfInteger, asks->appendNew<Value>(m_proc, BitwiseCast, origin, number));
+                areIntegers = areIntegers ? asks->appendNew<Value>(m_proc, BitAnd, origin, areIntegers, isInteger) : isInteger;
+                asks->appendNew<VariableValue>(m_proc, Set, origin, stretch.summandsInFront[index], asks->appendNew<Value>(m_proc, SExt32, origin, integer));
+            }
+            BasicBlock* otherwise = headerOfLoopThatPolls;
+            if (otherwise != plan.header) {
+                otherwise = m_proc.addBlock();
+                appendChoiceOfLoop(plan, otherwise, plan.start, bounds.bound, headerOfLoopThatPolls);
+            }
+            asks->appendNew<Value>(m_proc, Branch, origin, areIntegers);
+            asks->setSuccessors(FrequentedBlock(entered), FrequentedBlock(otherwise, FrequencyClass::Unlikely));
         }
         // Most sums start at zero, which passes every test and is told by its bits. Where the start is no constant, as where a rare path hands a sum back in front of the loop, that is asked first.
         if (entered != begins) {
@@ -1797,10 +1890,12 @@ private:
         Vector<Variable*, 1> integers;
         Vector<Vector<Value*, 8>, 1> placesInTurns;
         Vector<Value*, 1> widenedInFront;
+        Vector<Variable*, 1> summandsInFront;
         for (const SumOfIntegers& sum : plan.sums) {
             m_proc.count(B3::Counter::SumsKeptAsIntegers);
             integers.append(m_proc.addVariable(Int64));
-            Value* place = sum.integerInFront ? sum.sum : sum.summand;
+            summandsInFront.append(sum.numberInFront ? m_proc.addVariable(Int64) : nullptr);
+            Value* place = sum.changesFromTurnToTurn() ? sum.summand : sum.sum;
             size_t index = place->owner->values().find(place);
             RELEASE_ASSERT(index != notFound);
             Vector<Value*, 8> places;
@@ -1816,6 +1911,9 @@ private:
             if (sum.integerInFront) {
                 widened = m_proc.add<Value>(SExt32, origin, sum.integerInFront);
                 plan.preHeader->appendNonTerminal(widened);
+            } else if (sum.constant) {
+                widened = m_proc.addIntConstant(origin, Int64, *sum.constant);
+                plan.preHeader->appendNonTerminal(widened);
             }
             widenedInFront.append(widened);
         }
@@ -1824,7 +1922,9 @@ private:
                 Value* before = insertBehind(place, m_proc.add<VariableValue>(Get, origin, integers[index]));
                 Value* wide = widenedInFront[index];
                 Value* last = before;
-                if (!wide)
+                if (Variable* summandInFront = summandsInFront[index])
+                    last = wide = insertBehind(before, m_proc.add<VariableValue>(Get, origin, summandInFront));
+                else if (!wide)
                     last = wide = insertBehind(before, m_proc.add<Value>(SExt32, origin, place->child(0)));
                 Value* after = insertBehind(last, m_proc.add<Value>(plan.sums[index].sum->opcode(), origin, before, wide));
                 insertBehind(after, m_proc.add<VariableValue>(Set, origin, integers[index], after));
@@ -1839,6 +1939,9 @@ private:
             stretch.tests = m_proc.addBlock();
             stretch.begins = plan.sums.isEmpty() ? stretch.tests : m_proc.addBlock();
             stretch.entered = plan.sums.isEmpty() || std::ranges::all_of(plan.sums, startPassesTests) ? stretch.begins : m_proc.addBlock();
+            if (std::ranges::any_of(plan.sums, [](const SumOfIntegers& sum) { return !!sum.numberInFront; }))
+                stretch.asksAboutSummands = m_proc.addBlock();
+            stretch.summandsInFront = summandsInFront;
             stretch.next = m_proc.addBlock();
             stretch.farBoundVariable = m_proc.addVariable(plan.tested->type());
             headerBehindRest = m_proc.addBlock();
@@ -1848,7 +1951,7 @@ private:
             }
         }
         BasicBlock* unrolledHeader = stretch.first ? stretch.first : turns[0].get(plan.header);
-        Bounds bounds = appendBoundsAndEnter(plan, unrolledHeader, { stretch.entered, stretch.farBoundVariable });
+        Bounds bounds = appendBoundsAndEnter(plan, unrolledHeader, { stretch.asksAboutSummands ? stretch.asksAboutSummands : stretch.entered, stretch.farBoundVariable });
         if (stretch.tests) {
             appendStartOfStretch(plan, stretch, integers.span(), bounds, turns[0].get(plan.header), headerOfLoopThatPolls);
             BasicBlock* asks = headerBehindRest;

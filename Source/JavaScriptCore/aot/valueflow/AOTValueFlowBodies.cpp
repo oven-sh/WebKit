@@ -358,6 +358,20 @@ private:
         return constantOf(m_body.constants[first].primitives | m_body.constants[second].primitives, objects.span());
     }
 
+    uint32_t uniteConstants(std::span<const uint32_t> constants)
+    {
+        uint16_t primitives = 0;
+        Vector<ObjectName, 16> objects;
+        for (uint32_t constant : constants) {
+            if (!constant)
+                continue;
+            primitives |= m_body.constants[constant].primitives;
+            objects.appendVector(m_body.constants[constant].objects);
+        }
+        sortAndRemoveRepeats(objects);
+        return constantOf(primitives, objects.span());
+    }
+
     uint32_t internMask(Body::Mask&& mask)
     {
         if (mask.admitsEverything())
@@ -1740,10 +1754,18 @@ private:
                 joins.append({ joinedForm[position], position });
         }
         AOT::sort(joins);
-        for (auto [index, other] : joins) {
-            if (!forms[index].node)
-                forms[index].node = forms[other].node;
-            forms[index].constant = uniteConstants(forms[index].constant, forms[other].constant);
+        Vector<uint32_t, 16> constants;
+        for (size_t begin = 0; begin < joins.size();) {
+            uint32_t index = joins[begin].first;
+            constants.shrink(0);
+            constants.append(forms[index].constant);
+            for (; begin < joins.size() && joins[begin].first == index; ++begin) {
+                uint32_t other = joins[begin].second;
+                if (!forms[index].node)
+                    forms[index].node = forms[other].node;
+                constants.append(forms[other].constant);
+            }
+            forms[index].constant = uniteConstants(constants.span());
         }
         keepFormsAt(forms, [&](uint32_t position) {
             return joinedForm[position] == position;
@@ -1975,7 +1997,46 @@ private:
             staysAsNode = operandReaders || forms.size() * readers > forms.size() + readers;
         if (staysAsNode)
             forms = { makeNode(head, forms) };
+        else if (readers)
+            gatherLongListInNode(head, forms);
         m_forms[head.index()] = WTF::move(forms);
+    }
+
+    AOT_CLASS_THRESHOLD(size_t, mostCarriedFromOnePassingValueToTheNext, 32);
+
+    size_t sizeCarriedIn(const Forms& forms) const
+    {
+        size_t size = forms.size();
+        for (const OperandForm& form : forms) {
+            if (form.constant)
+                size += m_body.constants[form.constant].objects.size();
+        }
+        return size;
+    }
+
+    void gatherLongListInNode(ValueID head, Forms& forms)
+    {
+        if (sizeCarriedIn(forms) <= mostCarriedFromOnePassingValueToTheNext)
+            return;
+        if (forms.size() == 1) {
+            forms = { makeNode(head, forms) };
+            return;
+        }
+        Forms gathered;
+        Forms ofParameters;
+        for (const OperandForm& form : forms) {
+            if (!operandOfCallerAt(throughSharedFilters(form).node)) {
+                gathered.append(form);
+                continue;
+            }
+            ofParameters.append({ form.node, 0, form.mask });
+            if (form.constant)
+                gathered.append({ { }, form.constant, form.mask });
+        }
+        if (sizeCarriedIn(gathered) <= mostCarriedFromOnePassingValueToTheNext)
+            return;
+        forms = { makeNode(head, gathered) };
+        forms.appendVector(ofParameters);
     }
 
     void resolveCycleThroughMasks(std::span<const ValueID> members)

@@ -699,7 +699,7 @@ Vector<ArrayChain> findArrayChains(FunctionPassContext& context, const BitVector
         const CFG& cfg = analyses.cfg();
         for (BlockID block : cfg.reversePostOrder() | std::views::reverse)
             searchBlock(block);
-        std::ranges::stable_sort(chains, { }, [&](const ArrayChain& chain) {
+        AOT::stableSort(chains, { }, [&](const ArrayChain& chain) {
             return cfg.reversePostOrderIndex(chain.block);
         });
     }

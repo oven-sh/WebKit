@@ -733,6 +733,12 @@ static PassOutcome moveReleaseHintsInFrontOfSuspensions(FunctionPassContext& con
 
     const CFG& cfg = analyses.cfg();
     const UseLists& useLists = analyses.useLists();
+    // A join that only hints read, itself or through other such joins, reads what flows into it for nobody's sake.
+    BitVector isRead(function.values.size());
+    auto flowsIntoJoinThatIsRead = [&](const Target& target, size_t argumentIndex) {
+        const CompactList<ValueID>& parameters = function.at(target.block).parameters;
+        return argumentIndex >= parameters.size() || isRead.get(parameters[argumentIndex].index());
+    };
     auto isReadBy = [&](const Value& value, ValueID released) {
         bool isRead = false;
         value.forEachOperand([&](ValueID operand, uint32_t) { isRead |= operand == released; });
@@ -741,7 +747,10 @@ static PassOutcome moveReleaseHintsInFrontOfSuspensions(FunctionPassContext& con
     auto isReadAtEndOf = [&](const Block& block, ValueID released) {
         bool isRead = block.subject == released;
         block.terminator.Instruction::forEachChild([&](ValueID operand) { isRead |= operand == released; });
-        block.forEachTarget([&](const Target& target) { isRead |= target.arguments.contains(released); });
+        block.forEachTarget([&](const Target& target) {
+            for (size_t index = 0; index < target.arguments.size(); ++index)
+                isRead |= target.arguments[index] == released && flowsIntoJoinThatIsRead(target, index);
+        });
         return isRead;
     };
     // The blocks at whose heads something other than a hint has yet to read the value.
@@ -753,8 +762,11 @@ static PassOutcome moveReleaseHintsInFrontOfSuspensions(FunctionPassContext& con
                 worklist.append(block);
         };
         for (const Use& use : useLists.usesOf(released)) {
-            if (use.kind != Use::Kind::Operand || function.at(use.user).opcode != Opcode::ReleaseHint)
-                add(use.block);
+            if (use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::ReleaseHint)
+                continue;
+            if (use.isEdgeUse() && !flowsIntoJoinThatIsRead(targetOf(function, use.edge()), use.operandIndex))
+                continue;
+            add(use.block);
         }
         while (!worklist.isEmpty()) {
             for (BlockID predecessor : cfg.predecessors(worklist.takeLast()))
@@ -823,8 +835,6 @@ static PassOutcome moveReleaseHintsInFrontOfSuspensions(FunctionPassContext& con
         return way;
     };
 
-    // A join that only hints read, itself or through other such joins, reads what flows into it for nobody's sake.
-    BitVector isRead(function.values.size());
     for (BlockID id : cfg.reversePostOrder()) {
         const Block& block = function.at(id);
         for (ValueID value : block.values) {
@@ -859,6 +869,41 @@ static PassOutcome moveReleaseHintsInFrontOfSuspensions(FunctionPassContext& con
     auto behindCaughtValues = [&](ProgramPoint point) {
         return ProgramPoint { point.block, std::max(point.index, indexAfterCaughtValues(function, function.at(point.block))) };
     };
+    auto moveTo = [&](const WayBack& way, ValueID released, const BitVector& isInFrontOfReads, Origin origin) {
+        for (ProgramPoint point : way.behindLastReads)
+            moved.append(MovedHint { behindCaughtValues(point), released, origin });
+        for (BlockID entered : way.enteredFromReaders) {
+            // A hint there is read on every way into the block.
+            if (!walkBackToLastReads(released, ProgramPoint::atHeadOf(entered), &isInFrontOfReads, Asked::WhetherSuspended).isSuspended)
+                moved.append(MovedHint { behindCaughtValues(ProgramPoint::atHeadOf(entered)), released, origin });
+        }
+    };
+    // Such a join goes, and the hint with it. What flowed into it is let go of where it was last read.
+    BitVector joinsLetGo;
+    auto letGoOfWhatFlowsInto = [&](ValueID join, Origin origin) {
+        Vector<ValueID, 4> worklist { join };
+        while (!worklist.isEmpty()) {
+            ValueID parameter = worklist.takeLast();
+            ValueLocation location = useLists.locationOf(parameter);
+            if (location.placement != ValuePlacement::Parameter || joinsLetGo.set(parameter.index()))
+                continue;
+            for (const Edge& edge : cfg.incomingEdges(location.block)) {
+                const Target& target = targetOf(function, edge);
+                if (edge.isHandlerEdge() || location.index >= target.arguments.size())
+                    continue;
+                ValueID argument = target.arguments[location.index];
+                if (!isRead.get(argument.index())) {
+                    worklist.append(argument);
+                    continue;
+                }
+                BitVector isInFrontOfReads = blocksInFrontOfReads(argument);
+                if (isReadBehindEndOf(edge.from, argument, &isInFrontOfReads))
+                    continue;
+                ProgramPoint end { edge.from, static_cast<uint32_t>(function.at(edge.from).values.size()) };
+                moveTo(walkBackToLastReads(argument, end, &isInFrontOfReads, Asked::WholeWay), argument, isInFrontOfReads, origin);
+            }
+        }
+    };
     BitVector dropped;
     for (BlockID block : cfg.reversePostOrder()) {
         const BlockValues& values = function.at(block).values;
@@ -869,6 +914,7 @@ static PassOutcome moveReleaseHintsInFrontOfSuspensions(FunctionPassContext& con
             ValueID released = value.valueOperand();
             if (!isRead.get(released.index())) {
                 dropped.set(values[index].index());
+                letGoOfWhatFlowsInto(released, value.origin());
                 continue;
             }
             if (!walkBackToLastReads(released, ProgramPoint { block, index }, nullptr, Asked::WhetherSuspended).isSuspended)
@@ -887,13 +933,7 @@ static PassOutcome moveReleaseHintsInFrontOfSuspensions(FunctionPassContext& con
             if (!way.isSuspended)
                 continue;
             dropped.set(values[index].index());
-            for (ProgramPoint point : way.behindLastReads)
-                moved.append(MovedHint { behindCaughtValues(point), released, value.origin() });
-            for (BlockID entered : way.enteredFromReaders) {
-                // A hint there is read on every way into the block.
-                if (!walkBackToLastReads(released, ProgramPoint::atHeadOf(entered), &isInFrontOfReads, Asked::WhetherSuspended).isSuspended)
-                    moved.append(MovedHint { behindCaughtValues(ProgramPoint::atHeadOf(entered)), released, value.origin() });
-            }
+            moveTo(way, released, isInFrontOfReads, value.origin());
         }
     }
     if (dropped.isEmpty())

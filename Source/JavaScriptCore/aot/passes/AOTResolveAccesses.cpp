@@ -459,7 +459,7 @@ void AccessRewriter::rewrite(const NamedAccessSite& site, const AccessOperands& 
         break;
     case AccessForm::Method: {
         FunctionID method = plan.member.method;
-        const Vector<DeclaredType>& captures = program.at(method).captures;
+        const auto& captures = program.at(method).captures;
         RELEASE_ASSERT(captures.size() == (plan.capturesReceiver ? 1u : 0u));
 
         ValueID capturedReceiver;
@@ -603,60 +603,82 @@ void AccessRewriter::rewrite(const ElementAccessSite& site, const AccessOperands
     finishRewrittenAccess(context, site.site, replaced);
 }
 
+namespace {
+
+constexpr uint32_t noPlace = std::numeric_limits<uint32_t>::max();
+
+struct NewObjectInBlock {
+    uint32_t place { 0 };
+    // Where the block names the object or what finishes it, in order.
+    Vector<uint32_t, 6> uses;
+};
+
+// The places are those of the block as it was. It is put together anew once all its objects have been looked at: to reorder it for each of them would pass over, and move,
+// all that stands between an allocation and its last store, which for literals nested in one another is the rest of the block each time.
+struct BlockWithNewObjects {
+    BlockID block;
+    Vector<NewObjectInBlock> objects;
+    BitVector hasLeftItsPlace;
+    // For a value that has left its place: the place of the last listed store of the object that took it along.
+    Vector<uint32_t> placeTakenTo;
+    // By the place of the last listed store: what stands there instead.
+    Vector<std::pair<uint32_t, Vector<ValueID, 4>>> valuesAtPlacesOfLastStores;
+};
+
+} // anonymous namespace
+
 // `{ __proto__: null, first: f(), second() { } }`, and `const made = { }; made.first = f(); made.second = g();`.
 // `numberOfStores`: at most this many stores name the object or what finishes it.
-// The places in the block that the listed stores leave are filled with no value, in front of what was reordered, and `numberOfGaps` counts them: to close them at once would move the rest of the
-// block for each of thousands of literals.
-static bool listFirstStoresAtAllocation(FunctionPassContext& context, IRBuilder& builder, BlockID block, uint32_t allocationIndex, uint32_t numberOfStores, uint32_t& numberOfGaps)
+// The allocation comes to stand where its last listed store stood, with whatever else named it until then behind it. All that does not name the object stays as it is, and so comes in front.
+static bool listFirstStoresAtAllocation(FunctionPassContext& context, IRBuilder& builder, BlockWithNewObjects& state, std::span<const uint32_t> objectNamedBy, uint32_t numberOfObject, uint32_t numberOfStores)
 {
     const Program& program = context.program;
     Function& function = context.function;
-    const BlockValues& values = function.at(block).values;
-    ValueID allocationID = values[allocationIndex];
+    const BlockValues& values = function.at(state.block).values;
+    const NewObjectInBlock& object = state.objects[numberOfObject];
+    ValueID allocationID = values[object.place];
     const Layout& layout = program.at(function.at(allocationID).layout());
 
     Vector<uint32_t, 16> fields(function.at(allocationID).fields());
     Vector<ValueID, 16> listedValues(function.at(allocationID).variadicOperands());
     Vector<PropertyKeyID, 16> writtenNames;
-    Vector<ValueID, 2> names { allocationID };
-    // What stands between the allocation and the last store that is listed: what does not name the object comes in front of the allocation.
-    Vector<ValueID, 32> reordered;
-    Vector<ValueID, 4> movedBehindAllocation;
-    Vector<ValueID, 32> passed;
-    Vector<ValueID, 4> waiting;
+    Vector<uint32_t, 16> listedStores;
+    Vector<uint32_t, 4> movedBehindAllocation;
+    Vector<uint32_t, 4> waiting;
     Vector<std::pair<size_t, Value>, 4> fillers;
     size_t numberOfFieldsToList = fields.size();
     size_t numberOfFillersToList = 0;
     bool hasOtherPrototype = !!function.at(allocationID).operand(OperandIndex::NewObject::prototype);
-    std::optional<uint32_t> lastListedStore;
+    // An object in front of this one may have taken along a value that names this one. It names it from where it stands now.
+    uint32_t placeOfOtherUse = noPlace;
 
     static_assert(OperandIndex::PropDefine::object == OperandIndex::PropSet::object && OperandIndex::PropDefine::object == OperandIndex::SetLiteralPrototype::object && OperandIndex::PropDefine::object == OperandIndex::FinishObject::object);
     // Nothing is listed after the last store: one of thousands of literals in the list that holds them all is next named at the end of the block.
-    for (uint32_t index = allocationIndex + 1; index < values.size() && numberOfStores; ++index) {
+    for (uint32_t index : object.uses) {
+        if (!numberOfStores || index > placeOfOtherUse)
+            break;
+        if (state.hasLeftItsPlace.quickGet(index)) {
+            placeOfOtherUse = std::min(placeOfOtherUse, state.placeTakenTo[index]);
+            continue;
+        }
         const Value& user = function.at(values[index]);
         unsigned numberOfUses = 0;
         bool isReceiver = false;
         uint32_t operandIndex = 0;
         for (ValueID operand : user.operands()) {
-            if (names.contains(operand)) {
+            if (operand && operand.index() < objectNamedBy.size() && objectNamedBy[operand.index()] == numberOfObject) {
                 ++numberOfUses;
                 isReceiver = operandIndex == OperandIndex::PropDefine::object;
             }
             ++operandIndex;
         }
-        if (!numberOfUses) {
-            passed.append(values[index]);
-            continue;
-        }
         // Nothing is listed behind the first use that is no store into the object.
         if (!isReceiver || numberOfUses > 1)
             break;
         if (user.opcode == Opcode::FinishObject || user.opcode == Opcode::SetLiteralPrototype) {
-            if (user.opcode == Opcode::FinishObject)
-                names.append(values[index]);
-            else
+            if (user.opcode == Opcode::SetLiteralPrototype)
                 hasOtherPrototype = true;
-            waiting.append(values[index]);
+            waiting.append(index);
             continue;
         }
         static_assert(accessesToResolve.contains(Opcode::PropDefine) && accessesToResolve.contains(Opcode::PropSet));
@@ -694,7 +716,7 @@ static bool listFirstStoresAtAllocation(FunctionPassContext& context, IRBuilder&
                 fields.append(*field);
                 listedValues.append(ValueID());
             }
-            waiting.append(values[index]);
+            waiting.append(index);
             continue;
         }
         if (isListed)
@@ -703,40 +725,41 @@ static bool listFirstStoresAtAllocation(FunctionPassContext& context, IRBuilder&
             fields.append(*field);
             listedValues.append(user.valueOperand());
         }
-        reordered.appendVector(std::exchange(passed, { }));
+        listedStores.append(index);
         movedBehindAllocation.appendVector(std::exchange(waiting, { }));
-        lastListedStore = index;
         numberOfFieldsToList = fields.size();
         numberOfFillersToList = fillers.size();
     }
-    if (!lastListedStore)
+    if (listedStores.isEmpty())
         return false;
     fields.shrink(numberOfFieldsToList);
     listedValues.shrink(numberOfFieldsToList);
     fillers.shrink(numberOfFillersToList);
 
-    BlockValues& editedValues = function.edit(block, BlockEdit::Values).values;
+    uint32_t placeOfLastStore = listedStores.last();
+    Vector<ValueID, 4> valuesAtPlace;
     builder.setOrigin(function.at(allocationID).origin());
     for (auto& [listedAt, filler] : fillers) {
         listedValues[listedAt] = builder.addDetached(WTF::move(filler));
-        reordered.append(listedValues[listedAt]);
+        valuesAtPlace.append(listedValues[listedAt]);
     }
-    reordered.append(allocationID);
-    reordered.appendVector(movedBehindAllocation);
-    size_t numberReplaced = *lastListedStore - allocationIndex + 1;
-    if (reordered.size() <= numberReplaced) {
-        numberOfGaps = static_cast<uint32_t>(numberReplaced - reordered.size());
-        std::ranges::fill(editedValues.mutableSpan().subspan(allocationIndex, numberOfGaps), ValueID());
-        std::ranges::copy(reordered, editedValues.mutableSpan().subspan(allocationIndex + numberOfGaps).begin());
-    } else {
-        editedValues.removeAt(allocationIndex, numberReplaced);
-        editedValues.insertVector(allocationIndex, reordered);
+    valuesAtPlace.append(allocationID);
+    auto leavePlace = [&](uint32_t index) {
+        state.hasLeftItsPlace.quickSet(index);
+        state.placeTakenTo[index] = placeOfLastStore;
+    };
+    leavePlace(object.place);
+    for (uint32_t index : listedStores)
+        leavePlace(index);
+    for (uint32_t index : movedBehindAllocation) {
+        valuesAtPlace.append(function.at(state.block).values[index]);
+        leavePlace(index);
     }
+    state.valuesAtPlacesOfLastStores.append({ placeOfLastStore, WTF::move(valuesAtPlace) });
 
     Value& allocation = function.edit(allocationID);
     allocation.setFields(fields.span());
     allocation.setVariadicOperands(listedValues.span());
-    context.analyses.didChangeValues();
     return true;
 }
 
@@ -769,27 +792,61 @@ static bool listFirstStoresAtAllocations(FunctionPassContext& context, IRBuilder
         if (addAllocationsBehind(addAllocationsBehind, store.operand(OperandIndex::PropDefine::object)) && (blocksWithStoreIntoNewObject.isEmpty() || blocksWithStoreIntoNewObject.last() != site.block))
             blocksWithStoreIntoNewObject.append(site.block);
     }
+    if (blocksWithStoreIntoNewObject.isEmpty())
+        return false;
 
     bool didChange = false;
+    // The number, in its block, of the object that a value is or finishes.
+    Vector<uint32_t> objectNamedBy(FillWith { }, function.values.size(), noPlace);
+    // What fills a slot until its store comes is made on the way, and names no object.
+    auto numberOfObjectNamedBy = [&](ValueID id) {
+        return id && id.index() < objectNamedBy.size() ? objectNamedBy[id.index()] : noPlace;
+    };
     for (BlockID block : blocksWithStoreIntoNewObject) {
-        // An allocation that has moved down is looked at again where it stands now, and finds nothing more.
-        bool leftGaps = false;
-        for (uint32_t index = 0; index < function.at(block).values.size(); ++index) {
+        BlockWithNewObjects state { .block = block };
+        uint32_t numberOfValues = static_cast<uint32_t>(function.at(block).values.size());
+        for (uint32_t index = 0; index < numberOfValues; ++index) {
             ValueID id = function.at(block).values[index];
             const Value& value = function.at(id);
+            for (ValueID operand : value.operands()) {
+                uint32_t named = numberOfObjectNamedBy(operand);
+                if (named != noPlace && (state.objects[named].uses.isEmpty() || state.objects[named].uses.last() != index))
+                    state.objects[named].uses.append(index);
+            }
+            if (value.opcode == Opcode::FinishObject)
+                objectNamedBy[id.index()] = numberOfObjectNamedBy(value.operand(OperandIndex::FinishObject::object));
             if (value.opcode != Opcode::NewObject || !isStoredInto.get(id.index()) || value.fields().size() != value.numberOfVariadicOperands())
                 continue;
-            uint32_t numberOfGaps = 0;
-            didChange |= listFirstStoresAtAllocation(context, builder, block, index, numberOfStoresInto[id.index()], numberOfGaps);
-            // What was reordered begins behind the gaps, and the walk goes on behind the first of it.
-            index += numberOfGaps;
-            leftGaps |= !!numberOfGaps;
+            objectNamedBy[id.index()] = static_cast<uint32_t>(state.objects.size());
+            state.objects.append(NewObjectInBlock { .place = index });
         }
-        if (leftGaps) {
-            function.edit(block, BlockEdit::Values).values.removeAllMatching([](ValueID id) {
-                return !id;
-            });
+        state.hasLeftItsPlace.ensureSize(numberOfValues);
+        state.placeTakenTo.fill(noPlace, numberOfValues);
+        for (uint32_t number = 0; number < state.objects.size(); ++number)
+            listFirstStoresAtAllocation(context, builder, state, objectNamedBy.span(), number, numberOfStoresInto[function.at(block).values[state.objects[number].place].index()]);
+        // The numbers count within a block.
+        for (ValueID id : function.at(block).values) {
+            if (id.index() < objectNamedBy.size())
+                objectNamedBy[id.index()] = noPlace;
         }
+        if (state.valuesAtPlacesOfLastStores.isEmpty())
+            continue;
+
+        AOT::sort(state.valuesAtPlacesOfLastStores, { }, [](const auto& entry) { return entry.first; });
+        Vector<ValueID> reordered;
+        reordered.reserveInitialCapacity(numberOfValues);
+        size_t next = 0;
+        for (uint32_t index = 0; index < numberOfValues; ++index) {
+            if (next < state.valuesAtPlacesOfLastStores.size() && state.valuesAtPlacesOfLastStores[next].first == index)
+                reordered.appendVector(state.valuesAtPlacesOfLastStores[next++].second);
+            else if (!state.hasLeftItsPlace.quickGet(index))
+                reordered.append(function.at(block).values[index]);
+        }
+        BlockValues& editedValues = function.edit(block, BlockEdit::Values).values;
+        editedValues.shrink(0);
+        editedValues.append(reordered.span());
+        context.analyses.didChangeValues();
+        didChange = true;
     }
     return didChange;
 }
@@ -2628,6 +2685,9 @@ static Vector<AccessBehindSlotTest> findAccessesBehindSlotTests(FunctionPassCont
         const Value& test = function.at(block.values.last());
         if (test.opcode != Opcode::IsSlotFilled || test.holdsDeclaredType() || block.terminator.conditionOperand() != block.values.last())
             continue;
+        // An object whose slot is empty lacks the private name, and every access to it throws.
+        if (context.program.at(test.key()).kind == PropertyKeyKind::PrivateName)
+            continue;
         const Target& filled = block.terminator.taken();
         bool leavesWhereEmpty = isRarerThan(function.at(block.terminator.notTaken().block).frequency, block.frequency).predicted();
         if (!leavesWhereEmpty || !filled.arguments.isEmpty() || !cfg.singleIncomingEdge(filled.block))
@@ -2987,9 +3047,6 @@ PassOutcome planAccessesBehindSlotTestsForProvenReceivers(FunctionPassContext& c
         ValueID testID = function.at(site.test).values.last();
         const Value& access = function.at(site.access.value);
         bool isStore = access.opcode == Opcode::PutSlot;
-        if (program.at(access.key()).kind == PropertyKeyKind::PrivateName)
-            continue;
-
         Value named = isStore ? IRBuilder::make(Opcode::PropSet, { access.objectOperand(), access.valueOperand() }) : IRBuilder::make(Opcode::PropGet, { access.objectOperand() });
         named.setKey(access.key());
         named.setAccessSite(access.accessSite());

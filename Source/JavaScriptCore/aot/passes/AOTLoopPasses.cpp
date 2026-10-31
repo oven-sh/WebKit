@@ -29,10 +29,14 @@
 #include "AOTOperatorForms.h"
 #include "AOTProgramPasses.h"
 #include "AOTRegionCloner.h"
+#include "AOTResolveCallsCallees.h"
+#include "AOTResolveCallsDirectCall.h"
 #include "AOTSSARepair.h"
 #include "AOTSort.h"
 #include "AOTStringBuilderAnalysis.h"
+#include "AOTSummarizeForInlining.h"
 #include "AOTThreshold.h"
+#include "AOTTypeTestSite.h"
 #include "AOTUseEffectHistory.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
@@ -308,6 +312,18 @@ static std::optional<CounterCandidate> findCandidateTestedAheadOfStep(FunctionPa
     return std::nullopt;
 }
 
+// The first turn of a loop may stand in front of it. Below an int32 bound its counter is still an int32 one step later, as in the loop.
+static bool stepsBeyondInt32Behind(FunctionPassContext& context, Edge edge, ValueID tested)
+{
+    FunctionAnalyses& analyses = context.analyses;
+    return std::ranges::any_of(analyses.useLists().usesOf(tested), [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand || !isNumberBeyondInt32(context.program.typeOf(context.function, use.user)) || !dominatesAfterSplit(analyses, edge, use.block))
+            return false;
+        std::optional<SumWithCounter> sum = findSumWithConstant(context, use.user);
+        return sum && sum->counterIndex == use.operandIndex;
+    });
+}
+
 static Vector<CounterCandidate, 4> findCounterCandidates(FunctionPassContext& context, BitVector& parametersOverStepLimit)
 {
     const Function& function = context.function;
@@ -353,7 +369,9 @@ static Vector<CounterCandidate, 4> findCounterCandidates(FunctionPassContext& co
             continue;
         for (uint32_t operandIndex = 0; operandIndex < comparison.numberOfOperands(); ++operandIndex) {
             const Type& tested = typeOf(comparison.operand(operandIndex));
-            if (!tested.isNumberWithoutFraction() || tested.isInt32() || (!testsForTruth && !typeOf(comparison.operand(1 - operandIndex)).isInteger()))
+            if (!tested.isNumberWithoutFraction() || (!testsForTruth && !typeOf(comparison.operand(1 - operandIndex)).isInteger()))
+                continue;
+            if (tested.isInt32() && (testsForTruth || terminator.taken().proofs.contains(operandIndex) || !stepsBeyondInt32Behind(context, Edge { block, 0 }, comparison.operand(operandIndex))))
                 continue;
             // `while (++i < n)`: what a turn has counted up is tested as often as what it is about to.
             ValueID number = sameNumberThroughConversions(context, comparison.operand(operandIndex));
@@ -542,13 +560,22 @@ struct TallyFinder {
     std::optional<unsigned> cycle { context.analyses.blockCycles().innermostCycleOf(loop.header) };
     unsigned numberOfValues { 0 };
 
-    std::optional<ChangeInTurn> plus(ValueID base, std::optional<int64_t> constant, bool isSubtracted)
+    std::optional<Range> stepOf(ValueID id)
     {
-        std::optional<ChangeInTurn> change = constant && Range::int32().contains(*constant) ? changeOf(base) : std::nullopt;
+        if (std::optional<int64_t> constant = integerConstantThroughCasts(context.program, context.function, id))
+            return Range::int32().contains(*constant) ? std::optional(Range::one(*constant)) : std::nullopt;
+        const Type& type = context.program.typeOf(context.function, id);
+        return type.isInt32() ? std::optional(type.integers) : std::nullopt;
+    }
+
+    std::optional<ChangeInTurn> plus(ValueID base, std::optional<Range> step, bool isSubtracted)
+    {
+        std::optional<ChangeInTurn> change = step ? changeOf(base) : std::nullopt;
         if (!change)
             return std::nullopt;
-        int64_t step = isSubtracted ? -*constant : *constant;
-        return ChangeInTurn { change->least + step, change->most + step };
+        if (isSubtracted)
+            return ChangeInTurn { change->least - step->maximum, change->most - step->minimum };
+        return ChangeInTurn { change->least + step->minimum, change->most + step->maximum };
     }
 
     std::optional<ChangeInTurn> changeOfJoin(ValueLocation location)
@@ -576,15 +603,16 @@ struct TallyFinder {
             return std::nullopt;
         const Function& function = context.function;
         const Value& value = function.at(id);
-        auto constant = [&](uint32_t index) { return integerConstantThroughCasts(context.program, function, value.operand(index)); };
         if (value.opcode == Opcode::Parameter)
             return changeOfJoin(context.analyses.useLists().locationOf(id));
         if (value.opcode == Opcode::Increment || value.opcode == Opcode::Decrement)
-            return plus(value.operand(0), 1, value.opcode == Opcode::Decrement);
-        if (value.opcode == Opcode::Add)
-            return constant(1) ? plus(value.operand(0), constant(1), false) : plus(value.operand(1), constant(0), false);
+            return plus(value.operand(0), Range::one(1), value.opcode == Opcode::Decrement);
+        if (value.opcode == Opcode::Add) {
+            std::optional<ChangeInTurn> change = plus(value.operand(0), stepOf(value.operand(1)), false);
+            return change ? change : plus(value.operand(1), stepOf(value.operand(0)), false);
+        }
         if (value.opcode == Opcode::Sub)
-            return plus(value.operand(0), constant(1), true);
+            return plus(value.operand(0), stepOf(value.operand(1)), true);
         // `count++` of a variable without a declared type converts it first.
         bool isConversionOfNumber = (value.opcode == Opcode::ToNumber || value.opcode == Opcode::ToNumeric) && context.program.typeOf(function, value.operand(0)).isNumber();
         return isCastWithoutTest(value.opcode) || isConversionOfNumber ? changeOf(value.operand(0)) : std::nullopt;
@@ -1378,10 +1406,29 @@ static bool comparesNoVariableInCycle(FunctionPassContext& context)
     });
 }
 
+// A counter that became an integer closed the path for where it is none. While that path stood, it handed the loop a tally of any size.
+static PassOutcome convertTalliesBehindConvertedCounters(FunctionPassContext& context)
+{
+    if (!context.analyses.cfg().hasCycle() || !countNumbersCarriedByLoops(context))
+        return PassOutcome::Unchanged;
+    IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
+    uint64_t numberOfTallies = 0;
+    for (Vector<Tally, 2> tallies = findTallies(context); !tallies.isEmpty(); tallies = findTallies(context)) {
+        Vector<ValueID, 4> bounded = boundTallies(context, builder, tallies.span());
+        numberOfTallies += tallies.size();
+        narrowValueTypes({ context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo }, bounded.span());
+    }
+    if (!numberOfTallies)
+        return PassOutcome::Unchanged;
+    context.build.statistics().count(StatisticID::CountersConverted, numberOfTallies);
+    context.keptAnalyses = allAnalyses;
+    return PassOutcome::Changed;
+}
+
 PassOutcome convertCountersToIntegers(FunctionPassContext& context)
 {
     if (context.isBehindRounds && std::exchange(context.hasConvertedCountersBehindRounds, true) && !std::exchange(context.hasBoundsTestedBehindRounds, false))
-        return PassOutcome::Unchanged;
+        return convertTalliesBehindConvertedCounters(context);
     if (!context.analyses.cfg().hasCycle() || (!hasNumberParameter(context.program, context.function) && !hasIntegerBeyondInt32(context.program, context.function)))
         return PassOutcome::Unchanged;
 
@@ -2996,9 +3043,140 @@ static PassOutcome takeFirstTurnsThatInitializeOutOfLoops(FunctionPassContext& c
     return PassOutcome::Changed;
 }
 
+namespace {
+
+struct LoopThatCallsOneValue {
+    ShortLoop loop;
+    ValueID callee;
+    Vector<FunctionID, 4> functions;
+    bool everyListedFunctionHasCopy { true };
+};
+
+} // anonymous namespace
+
+// The functions that the type of the value lists, where the loop calls a value that it was handed. Those that a test in front of the loop has ruled out are not asked for again.
+static std::optional<LoopThatCallsOneValue> findLoopThatCallsOneValue(FunctionPassContext& context, const NaturalLoop& loop)
+{
+    const Program& program = context.program;
+    const Function& function = context.function;
+    NaturalLoops& loops = context.analyses.naturalLoops();
+    if (function.at(loop.header()).frequency.predicted() != BlockFrequency::Normal || function.runsOnlyBehindFailedTest())
+        return std::nullopt;
+    for (unsigned index = 0; index < loop.size(); ++index) {
+        const Block& block = function.at(loop.at(index));
+        if (block.frequency.predicted() != BlockFrequency::Normal)
+            continue;
+        for (ValueID id : block.values) {
+            const Value& call = function.at(id);
+            if (call.opcode != Opcode::Call || call.isTailCall)
+                continue;
+            CalleeCandidates candidates = calleeCandidates(program, function, call.calleeOperand());
+            if (!candidates.isProven() || candidates.only() || loops.belongsTo(context.analyses.useLists().blockOf(candidates.value), loop))
+                continue;
+            if (!isExpectedToRun(context, loop).predicted())
+                return std::nullopt;
+            // A copy pays where the function stands in line in it: what InlineCalls takes at a call as hot as this one.
+            uint64_t mostBytesInLine = context.build.limit(isHot(heatClassOf(context, loop.at(index))).predicted() ? LimitID::InlineBudgetHotBytes : LimitID::InlineBudgetWarmBytes);
+            LoopThatCallsOneValue found { { }, candidates.value, { }, true };
+            unsigned numberOfListedFunctions = 0;
+            uint64_t bytesInLine = 0;
+            for (FunctionID listed : candidates.listed().predicted()) {
+                // A function without a body is one that nothing enters.
+                if (!program.at(listed).hasBody())
+                    continue;
+                if (context.analyses.findEarlierTest(makeTypeTest(candidates.value, context.types.intern(Type::forFunction(listed))), loop.header()) == EarlierTest::Failed)
+                    continue;
+                ++numberOfListedFunctions;
+                const InliningSummary& summary = context.inputs.inlining.of(program, listed);
+                if (mayBeCalledDirectlyWhereCalleeIsKept(program, listed) && summary.canInlineWholeBody() && summary.codeBytes <= mostBytesInLine) {
+                    found.functions.append(listed);
+                    bytesInLine += summary.codeBytes;
+                } else
+                    found.everyListedFunctionHasCopy = false;
+            }
+            // One function gets its test from ResolveCalls or PlaceTypeTests, where the call stands.
+            if (found.functions.isEmpty() || numberOfListedFunctions < 2 || found.functions.size() > context.build.limit(LimitID::MaxTurnsOfUnrolledLoop) || bytesInLine > context.build.limit(LimitID::MaxBytesOfUnrolledLoop))
+                continue;
+            std::optional<ShortLoop> plan = planTurnsInFrontOf(context, loop, found.functions.size());
+            if (!plan || plan->entries.size() != 1)
+                return std::nullopt;
+            found.loop = WTF::move(*plan);
+            return found;
+        }
+    }
+    return std::nullopt;
+}
+
+// `for (const item of items) total += priceOf(item)` with `priceOf` handed in: every turn calls the same function, and the type of the value lists the few that it may be.
+// A call of a value boxes what it passes and what it returns, lays a rest list into the frame, and the loop tests what comes back, in every turn. So the loop asks once, in front of its first turn,
+// which function it was handed, and stands in the function once more for each of them. In its copy the function is known: it is called directly or stands in line.
+// Whatever else the value is goes through the loop as it was.
+static PassOutcome copyLoopsForFunctionsTheyCall(FunctionPassContext& context)
+{
+    if (!context.analyses.cfg().hasCycle() || !context.analyses.opcodesOfValues().contains(Opcode::Call))
+        return PassOutcome::Unchanged;
+
+    Function& function = context.function;
+    PassOutcome outcome = PassOutcome::Unchanged;
+    // A copy renumbers nothing, yet it changes the loops: each search asks the function as it stands.
+    for (;;) {
+        std::optional<LoopThatCallsOneValue> found;
+        NaturalLoops& loops = context.analyses.naturalLoops();
+        for (unsigned index = 0; index < loops.numLoops() && !found; ++index)
+            found = findLoopThatCallsOneValue(context, loops.loop(index));
+        if (!found)
+            return outcome;
+
+        IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+        Edge entry = found->loop.entries[0];
+        builder.setOrigin(function.at(entry.from).terminator.origin());
+        BlockID front = builder.splitEdge(entry);
+        Expected<BlockFrequency> frequency = function.at(front).frequency;
+        Arguments arguments(function.at(front).terminator.next().arguments);
+        function.edit(front, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
+        builder.moveToEndOf(front);
+        Vector<std::unique_ptr<RegionCloner>, 8> copies;
+        ValueID whatIsLeft = found->callee;
+        for (FunctionID callee : found->functions) {
+            ValueID test = builder.appendTypeTest(whatIsLeft, Type::forFunction(callee));
+            // Behind the last test the value is none of the functions that the program was seen to put there.
+            bool leavesNoListedFunction = callee == found->functions.last() && found->everyListedFunctionHasCopy;
+            IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, OperandIndex::TypeTest::value, frequency, leavesNoListedFunction ? rarerOf(frequency, BlockFrequency::Unlikely) : frequency);
+            copies.append(makeUniqueWithoutFastMallocCheck<RegionCloner>(builder, function));
+            copies.last()->mapValue(found->callee, branch.provenOnTaken);
+            copies.last()->cloneBlocks(found->loop.region.span(), [](ValueID, Value&) { });
+            builder.moveToEndOf(branch.taken);
+            builder.emitJump(copies.last()->cloneOf(found->loop.header), Arguments(arguments));
+            builder.moveToEndOf(branch.notTaken);
+            whatIsLeft = branch.provenOnNotTaken;
+        }
+        builder.emitJump(found->loop.header, WTF::move(arguments));
+        context.analyses.didChangeControlFlow();
+        RegionCloner::repairSSA(context.analyses, copies.span());
+        context.analyses.didChangeControlFlow();
+        // The loop as it was is entered behind the last test alone: in it the value is what the tests have left.
+        Vector<Use, 4> usesInLoop;
+        for (const Use& use : context.analyses.useLists().usesOf(found->callee)) {
+            if (found->loop.region.contains(use.block))
+                usesInLoop.append(use);
+        }
+        for (const Use& use : usesInLoop)
+            replaceUse(function, use, whatIsLeft);
+        context.analyses.didChangeValues();
+        if (found->everyListedFunctionHasCopy) {
+            for (BlockID block : found->loop.region)
+                function.edit(block, BlockEdit::Rest).frequency = rarerOf(function.at(block).frequency, BlockFrequency::Unlikely);
+            context.analyses.didChangeControlFlow();
+        }
+        outcome = PassOutcome::Changed;
+    }
+}
+
 PassOutcome unrollShortLoops(FunctionPassContext& context)
 {
     PassOutcome outcome = takeFirstTurnsThatInitializeOutOfLoops(context);
+    if (copyLoopsForFunctionsTheyCall(context) == PassOutcome::Changed)
+        outcome = PassOutcome::Changed;
     const CFG& cfg = context.analyses.cfg();
     bool mayHaveShortLoop = std::ranges::any_of(cfg.reversePostOrder(), [&](BlockID block) {
         return mayBeHeaderOfShortLoop(context.program, context.function, context.function.at(block)) && std::ranges::any_of(cfg.incomingEdges(block), [&](Edge edge) {

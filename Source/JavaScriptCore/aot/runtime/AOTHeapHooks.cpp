@@ -187,6 +187,11 @@ void willCollectForExhaustedCage(VM& vm)
     vm.aotState().returnAddressOfCallThatCollected = returnAddressOfInnermostCompiledCall(vm);
 }
 
+void didFindNoRoomWhereCollectionMayRun(VM& vm)
+{
+    vm.aotState().returnAddressOfCallThatCollected = returnAddressOfInnermostCompiledCall(vm);
+}
+
 bool isModuleEnvironment(JSCell* cell)
 {
     return cell->classInfo() == ModuleEnvironment::info();

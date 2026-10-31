@@ -1142,6 +1142,10 @@ private:
         universe.m_builtinFunctions = builtinObjectsWhere(OfModules::Yes, [&](BuiltinID builtin) {
             return isCallableBuiltin(builtins, builtin);
         });
+        universe.m_accessorsThatBindFunctions = builtinObjectsWhere(OfModules::No, [&](BuiltinID builtin) {
+            return builtins.canonicalID(builtin) == builtin && builtins.answersFunctionBoundToReceiver(builtin);
+        });
+        universe.m_targetsOfBoundFunctionsAmongBuiltins = maker.unite(universe.m_builtinFunctions, universe.m_accessorsThatBindFunctions);
 
         BitVector isFunctionOfProtocol(builtins.builtinCount());
         for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
@@ -1210,6 +1214,12 @@ private:
                 list.append(universe.prototypeOf(LayoutID(index)));
         }
         universe.m_prototypeObjectsOfLibraryClasses = take();
+        for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
+            const Layout& layout = m_program.layouts[index];
+            if (layoutIsDefinedByClass(layout) && layout.constructor && layout.module && m_program.at(layout.module).kind == ModuleKind::RuntimeSource)
+                list.append(universe.closureOf(layout.constructor));
+        }
+        universe.m_constructorsOfLibraryClasses = take();
         for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
             const Layout& layout = m_program.layouts[index];
             if (layout.kind == LayoutKind::Instance && layout.constructor)
@@ -1421,6 +1431,7 @@ private:
         ValueSetID knownObjectsThatMayBeAnything = maker.intersect(universe.m_objectsThatMayBeAnything, universe.m_knownObjects);
         universe.m_otherCallables = maker.unite(maker.uniteAll(callableInstances.span()), knownObjectsThatMayBeAnything);
         universe.m_callables = maker.uniteAll({ { universe.m_builtinFunctions, universe.m_closures, universe.m_otherCallables, universe.m_placeholdersAlone } });
+        universe.m_targetsOfBoundFunctions = maker.unite(universe.m_callables, universe.m_accessorsThatBindFunctions);
 
         universe.m_numberOfRememberedLayoutSets = m_program.types.numberOfLayoutSets();
         universe.m_objectsSurelyWithLayoutIn = std::make_unique<std::atomic<uint32_t>[]>(universe.m_numberOfRememberedLayoutSets);

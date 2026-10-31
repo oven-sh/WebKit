@@ -1982,7 +1982,8 @@ static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID 
         auto resultWith = [&](ValueSetID held) {
             return positions.resultAt(declared, startsAbsent ? maker.unite(held, maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Absent))) : held);
         };
-        ValueFlowPositionResult result = resultWith(stored);
+        bool isReadAsUndefined = inputs.sets().isEmpty(stored) && (asRead.primitives & Primitive::Undefined) && !field.flags.contains(FieldFlags::IsRequired) && !asRead.isAnything() && field.form.isEmpty() && flow.prototypeName == PrototypeNameState::AbsentOnPrototypes && !field.flags.contains(FieldFlags::IsInherited) && !layout.flow.observedUses.contains(ObservedUse::ReachesTypedParse);
+        ValueFlowPositionResult result = resultWith(isReadAsUndefined ? inputs.universe().undefinedValue() : stored);
         bool hasUnobservedDefinition = fieldsWithUnobservedDefinition.get(index);
         const Type& proven = result.narrowed ? *result.narrowed : asRead;
         if (hasUnobservedDefinition && result.proof == ValueFlowProof::Proven && !(proven.primitives & Primitive::Undefined) && !findValueHeldAnyway(program, proven)) {
@@ -2388,8 +2389,10 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         std::optional<uint32_t> parameter = entryParameters.find(function, value);
         const Vector<FlowPositionUpdate>& parameters = application.signatures[id.index()].entryParameters;
         bool isSaidByPosition = parameter && *parameter < parameters.size() && parameters[*parameter].type && !parameters[*parameter].replacesExpectation && types.at(parameters[*parameter].type).isSubsetOf(*narrowed, program);
-        if (!isSaidByPosition || inputs.build.validates())
-            update.proofs.append(FlowValueProof { value, types.intern(*narrowed), result.isWhatFlowHolds });
+        if (!isSaidByPosition || inputs.build.validates()) {
+            std::optional<Type> byLayouts = positions.typeByLayoutsOfClassesBelowBuiltinClasses(held);
+            update.proofs.append(FlowValueProof { value, types.intern(*narrowed), result.isWhatFlowHolds, byLayouts ? types.intern(*byLayouts) : TypeID() });
+        }
     };
     // One thing flow does take from the types as read: an object that it does not follow counts as one of the objects of the type, behind a check and where an operation looks through it.
     Vector<ValueID, 8> valuesTakenForTheirTypes;

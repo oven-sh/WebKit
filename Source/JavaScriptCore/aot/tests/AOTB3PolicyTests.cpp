@@ -147,6 +147,7 @@ static void checkRegisterAndSplitPolicy(const B3::Air::Policy& air)
     AOT_TEST_CHECK(air.splitting.splitsAroundClobbersEarly);
     AOT_TEST_CHECK(air.splitting.splitsAroundClobbersThatRead);
     AOT_TEST_CHECK(air.splitting.keepsUnusedTmpsOnStackThroughLoops);
+    AOT_TEST_CHECK(air.splitting.spillsTmpsReadInPlaceFirst == isX86());
     AOT_TEST_CHECK(air.splitting.spansStretchesOfClobbers);
     AOT_TEST_CHECK(air.splitting.leastCostOfSplitAroundClobber > 0);
     AOT_TEST_CHECK(air.splitting.splitsIntoClustersOverBlocks);

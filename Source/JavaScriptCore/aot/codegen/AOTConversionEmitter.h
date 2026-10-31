@@ -79,6 +79,9 @@ public:
     // Answers with the place that was set before.
     std::optional<PlaceOnEdge> setPlaceOnEdge(std::optional<PlaceOnEdge> place) { return std::exchange(m_placeOnEdge, place); }
 
+    // Once the whole function is emitted.
+    void placeExactIntegers();
+
     LiteralStringWord literalStringConstant(StringID);
     LiteralStringWord toLiteralString(CellPointer string);
     LiteralStringWord toLiteralString(Operand, const Type&);
@@ -86,7 +89,13 @@ public:
     Condition isStringCell(LiteralStringWord);
 
 private:
-    struct ExactInteger;
+    struct ExactInteger {
+        Integer value;
+        bool mayBeRounded { false };
+        std::optional<Word32> word { };
+        // Set where the integer is tested: it is the number only while this holds.
+        Condition holdsWhile { };
+    };
     // What is known of the integer behind a number before any code computes it.
     struct IntegerBehindNumber {
         Range range;
@@ -99,12 +108,35 @@ private:
     using ExactIntegers = UncheckedKeyHashMap<LValue, std::optional<ExactInteger>>;
     std::optional<ExactInteger> findExactIntegerBehind(LValue number, ValueID irValue, bool mayBeTested = true);
     bool holdsJoinedInteger(LValue number);
+    struct ConvertedIntegers {
+        LValue first { nullptr };
+        bool areSeveral { false };
+    };
+    bool convertsSeveralIntegers(LValue number);
     bool isInLoopCarriedIntegerCycle(ValueID);
+    bool callsOrSuspendsInLoopOf(ValueID);
     bool isMadeOutsideLoopOf(LValue user, LValue number);
     void computeValueCycles();
     std::optional<IntegerBehindNumber> describeIntegerBehind(LValue number, bool mayTestWhatWasRead, const IntegersBehindNumbers& operands);
     ExactInteger computeIntegerBehind(LValue number, const IntegerBehindNumber&, const ExactIntegers& operands);
     ExactInteger wholeNumberReadFromStorage(LValue);
+    // In front of the value that has this index in the block.
+    struct PlaceInBlock {
+        LBasicBlock block { nullptr };
+        unsigned index { 0 };
+    };
+    struct CodeOfExactInteger {
+        LValue value { nullptr };
+        LValue number { nullptr };
+        PlaceInBlock place;
+    };
+    struct UseOfExactInteger {
+        unsigned code { 0 };
+        PlaceInBlock place;
+    };
+    PlaceInBlock placeOfNextValue() const { return { m_out.m_block, static_cast<unsigned>(m_out.m_block->size()) }; }
+    void rememberCodeOfExactInteger(LValue number, PlaceInBlock start);
+    void useExactInteger(LValue);
     Word32 toInt32OfAnyNumber(Number, BitsOfInt32);
     Operand convertMarkers(Operand source, const Type&, Representation to, std::optional<Operand> unmarked = std::nullopt);
     Integer integerPartOf(Operand, const Type&);
@@ -119,10 +151,16 @@ private:
 
     std::optional<PlaceOnEdge> m_placeOnEdge;
     UncheckedKeyHashMap<LValue, bool> m_holdsJoinedInteger;
+    UncheckedKeyHashMap<LValue, ConvertedIntegers> m_convertedIntegers;
     std::optional<StronglyConnectedComponents> m_valueCycles;
     BitVector m_cyclesWithIntegers;
+    UncheckedKeyHashMap<uint32_t, bool, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_loopsThatCallOrSuspend;
     // By whether what was read may be tested.
     std::array<IntegersBehindNumbers, 2> m_integersBehindNumbers;
+    std::array<ExactIntegers, 2> m_exactIntegers;
+    Vector<CodeOfExactInteger> m_codeOfExactIntegers;
+    UncheckedKeyHashMap<LValue, unsigned> m_indexOfCodeOfExactInteger;
+    Vector<UseOfExactInteger> m_usesOfExactIntegersInOtherBlocks;
 
     using PrimitiveEmitter::compress;
     using PrimitiveEmitter::decode;

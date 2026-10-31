@@ -9,6 +9,7 @@ enum MethodKind { Method Getter Setter }
 enum ClassSide { Prototype Static }
 record Field wire {
     key: PropertyKey? computedKey: UInt32? declared: DeclaredType flags: FieldFlags form: FieldForm originLayout: Layout? originField: UInt32?
+    variableName: String?
     | engine flow: FieldFlow slotType: Type? setterType: Type? typeBeforeNarrowing: Type?
 }
 record StaticField wire { key: PropertyKey? computedKey: UInt32? variable: Variable }
@@ -41,9 +42,10 @@ enum EntryParameter (presentWith: FunctionFlags) {
 }
 record SourceRange wire { start: UInt32 end: UInt32 }
 record Body wire customEngine customText { code: Span<CodeWord> blockCount: UInt32 valueCount: UInt32 }
+record DeclaredCapture wire handwrittenStruct { type: Type site: TypeSite? flags: PositionFlags variableName: String? }
 record Function wire extendedEngine {
     name: String? module: Module(Referrer) position: UInt32 text: SourceRange kind: FunctionKind role: FunctionRole flags: FunctionFlags length: UInt32 syntax: FunctionSyntax
-    enclosingRuntimeFunction: RuntimeFunction? captures: Span<DeclaredType> thisType: DeclaredType parameters: Span<DeclaredType>
+    enclosingRuntimeFunction: RuntimeFunction? captures: Span<DeclaredCapture> thisType: DeclaredType parameters: Span<DeclaredType>
     results: Span<DeclaredType> body: Body functionTypes: Span<Function(Dispatch)> sorted builtinMembers: Span<Builtin> sorted
     | engine capabilities: FunctionCapabilities derivation: Derivation creator: CreatorRecord constructedClass: Layout? inlineFrames: List<InlineFrame>
 }
@@ -137,6 +139,7 @@ list moduleFailures : ModuleFailure as modulefailure prefix q
 list ambiguousExports : AmbiguousExport as ambiguousexport
 list evalScopes : EvalScope as evalscope prefix e
 list evalBindings : EvalBinding
+list declaredCaptures : DeclaredCapture
 list functions : Function as function prefix f
 list code : CodeWord
 list dataNodes : DataNode

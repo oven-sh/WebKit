@@ -239,6 +239,8 @@ static B3::Air::LiveRangeSplitPolicy liveRangeSplitPolicy()
     splitting.splitsAroundClobbersEarly = true;
     splitting.splitsAroundClobbersThatRead = true;
     splitting.keepsUnusedTmpsOnStackThroughLoops = true;
+    // Elsewhere nothing but a move reads the stack.
+    splitting.spillsTmpsReadInPlaceFirst = isX86();
     splitting.spansStretchesOfClobbers = true;
     splitting.leastCostOfSplitAroundClobber = 1.0f / 1024;
     splitting.splitsIntoClustersOverBlocks = true;

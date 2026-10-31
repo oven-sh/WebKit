@@ -217,3 +217,26 @@ function f9 name="letsGoInACatchThatIsEnteredFromAReader" flags=[IsAsync] thisTy
 # CHECK-NEXT: ReleaseHint v3 @230
 # CHECK-NEXT: Await {{*}} @220
 # CHECK-NOT: ReleaseHint
+
+function f10 name="letsGoOfWhatTwoWaysMade" flags=[IsAsync] thisType={type=anything} parameters=[{type=object}, {type=boolean}, {type=number}] results=[{type=Promise}] {
+  b0(v0: object, v1: boolean, v2: number):
+    v3 = NewArray v2 contents=number
+    v4 = ElemGet v3, v2
+    Branch v1 -> taken b1(), notTaken b2(v3)
+  b1():
+    v5 = NewArray v2 contents=number
+    v6 = ElemGet v5, v2
+    Jump -> next b2(v5)
+  b2(v7):
+    v8 = Await v0 @300
+    ReleaseHint v7 @310
+    Return v8
+}
+# Only the hint reads the join. It goes, and each of the two is let go of behind its own last read.
+# CHECK-LABEL: function f10 name="letsGoOfWhatTwoWaysMade"
+# CHECK: ElemGet v3, v2
+# CHECK-NEXT: ReleaseHint v3 @310
+# CHECK: ElemGet v6, v2
+# CHECK-NEXT: ReleaseHint v6 @310
+# CHECK: Await {{*}} @300
+# CHECK-NOT: ReleaseHint

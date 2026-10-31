@@ -1197,7 +1197,7 @@ static void testLoopGoesOnFromCounterOfCopiedLoop()
         B3::fixSSA(proc);
         B3::validate(proc);
 
-        AOT_TEST_CHECK(B3::unrollLoops(proc));
+        AOT_TEST_CHECK(B3::unrollLoops(proc, writesOutTurns ? B3::WritesOutTurns::Yes : B3::WritesOutTurns::No));
         AOT_TEST_CHECK(proc.report().countOf(B3::Counter::LoopPollsRemoved) == 2);
         AOT_TEST_CHECK(proc.report().countOf(B3::Counter::LoopsUnrolled) == (writesOutTurns ? 2u : 0u));
         B3::fixSSA(proc);

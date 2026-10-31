@@ -532,7 +532,7 @@ void Environment::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
         if (!traitsOf(variable.slot.representation()).holdsCell)
             continue;
         JSCell* target = cellInSlot(variable.slot.representation(), &environment->at<uint8_t>(variable.slot.offset), cageBase);
-        UniquedStringImpl* name = target ? identifiers.tryGetIdentifierConcurrently(variable.name) : nullptr;
+        UniquedStringImpl* name = target ? identifiers.nameInHeapSnapshots(&variable) : nullptr;
         if (name)
             analyzer.analyzeVariableNameEdge(environment, target, name);
     }

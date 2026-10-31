@@ -718,7 +718,7 @@ std::span<const PropertyKeyID> ValueFlowHeapTables::namesThatBeginWith(StringID 
             if (m_program.at(PropertyKeyID(index)).kind == PropertyKeyKind::Text)
                 m_namesInOrderOfText.append(PropertyKeyID(index));
         }
-        std::ranges::sort(m_namesInOrderOfText, [&](PropertyKeyID left, PropertyKeyID right) {
+        AOT::sort(m_namesInOrderOfText, [&](PropertyKeyID left, PropertyKeyID right) {
             return isBefore(textOf(left), textOf(right));
         });
     });

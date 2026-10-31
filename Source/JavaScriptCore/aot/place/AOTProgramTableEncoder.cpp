@@ -1099,6 +1099,15 @@ static uint32_t appendKeyOrders(TableEncoder& encoder, LayoutID id)
     return orders.isEmpty() ? 0 : encoder.writer.append(orders);
 }
 
+// A heap snapshot names the variables of the files of the program.
+static bool showsVariablesOf(const TableEncoder& encoder, ModuleID id)
+{
+    if (encoder.obfuscates() || !id)
+        return false;
+    const Module& module = encoder.program.at(id);
+    return isProgramModuleOf(module.kind) && !module.flags.contains(ModuleFlags::IsLibrary);
+}
+
 static uint32_t appendEnvironment(TableEncoder& encoder, LayoutID id, uint32_t shape)
 {
     PartWithoutNames part(encoder);
@@ -1107,6 +1116,7 @@ static uint32_t appendEnvironment(TableEncoder& encoder, LayoutID id, uint32_t s
     const Layout& layout = encoder.program.at(id);
     const PlannedLayout& planned = encoder.slots.layout(id);
     RELEASE_ASSERT(layout.isEnvironment());
+    bool showsVariables = showsVariablesOf(encoder, layout.module);
     Vector<VariableData> described;
     for (FieldIndex index = 0; index < planned.numberOfFields(); ++index) {
         const PlacedSlot& slot = encoder.slots.slot(id, index);
@@ -1115,8 +1125,8 @@ static uint32_t appendEnvironment(TableEncoder& encoder, LayoutID id, uint32_t s
             continue;
         if (slot.isOutOfLine())
             encoder.fail(ProgramTableRule::TableOutOfBounds, id);
-        PropertyKeyID key = layout.fields[index].key;
-        described.append({ key ? encoder.identifiers.numberOf(key).value_or(0) : 0, slot.data() });
+        StringID name = layout.fields[index].variableName;
+        described.append({ showsVariables && name && traits.holdsCell ? encoder.shownStringNumber(name) : VariableData::noName, slot.data() });
     }
     uint32_t referencesOffset = appendReferences(encoder, id);
 
@@ -1259,7 +1269,7 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
 
     LayoutID environment;
     if (layout.constructor) {
-        const Vector<DeclaredType>& captures = program.at(layout.constructor).captures;
+        const auto& captures = program.at(layout.constructor).captures;
         if (captures.size() == 1 && captures[0].written())
             environment = program.at(captures[0].written()).environment;
     }
@@ -2181,19 +2191,41 @@ static void appendPiecesOfModule(const Program& program, ModuleID id, std::span<
         }
         return number;
     };
-    // Where the next cut lies in the text, its size in the file, and the size of all those in front of it.
+    // A cut of no size says that the text has something there that the file lacks, the value of a define behind its name, and how much follows it.
+    // That has no place in the file, so a part ends in front of it and the next part starts behind it.
+    struct AddedText {
+        uint64_t start;
+        uint64_t end;
+    };
+    Vector<AddedText> addedTexts;
+    for (uint64_t at = 0; !cuts.empty();) {
+        at += takeNumber();
+        if (takeNumber())
+            continue;
+        uint64_t size = takeNumber();
+        addedTexts.append({ at, at + size });
+        at += size;
+    }
+    cuts = program.at(id).typesCutFromFunctionText;
+
+    // Where the next cut lies in the text, its size in the file, and how much longer the file is than the text in front of it.
     uint64_t nextCut = 0;
     uint64_t sizeOfNextCut = 0;
+    uint64_t addedAtNextCut = 0;
     uint64_t sizeOfCutsInFront = 0;
     auto takeCut = [&] {
-        sizeOfCutsInFront += sizeOfNextCut;
+        sizeOfCutsInFront += sizeOfNextCut - addedAtNextCut;
+        nextCut += addedAtNextCut;
         sizeOfNextCut = 0;
+        addedAtNextCut = 0;
         if (cuts.empty()) {
             nextCut = std::numeric_limits<uint64_t>::max();
             return;
         }
         nextCut += takeNumber();
         sizeOfNextCut = takeNumber();
+        if (!sizeOfNextCut)
+            addedAtNextCut = takeNumber();
     };
     takeCut();
 
@@ -2256,11 +2288,20 @@ static void appendPiecesOfModule(const Program& program, ModuleID id, std::span<
         lastPiece = piece;
         startOfLastPiece = start;
     };
+    size_t nextAdded = 0;
     for (const RetainedTextRange& range : ranges) {
         for (uint32_t start = range.start; start < range.end;) {
+            while (nextAdded < addedTexts.size() && addedTexts[nextAdded].end <= start)
+                ++nextAdded;
             uint32_t end = endOfPartFrom(start, range.end);
-            appendPart(range, start, end);
-            start = end;
+            uint32_t startOfNext = end;
+            if (nextAdded < addedTexts.size() && addedTexts[nextAdded].start < end) {
+                end = static_cast<uint32_t>(std::max<uint64_t>(start, addedTexts[nextAdded].start));
+                startOfNext = static_cast<uint32_t>(std::min<uint64_t>(range.end, addedTexts[nextAdded].end));
+            }
+            if (start < end)
+                appendPart(range, start, end);
+            start = startOfNext;
         }
     }
 }
@@ -2288,7 +2329,7 @@ static std::optional<Vector<uint8_t>> moveDifferences(const TextPrintedInPlace& 
         moved.append(byte);
         if (byte == lineBreakWithIndentation)
             appendVarint(moved, takeNumber());
-        if (byte != copyOfWrittenText && byte != textWithPieceOfItsOwn)
+        if (byte != copyOfWrittenText && byte != textWithPieceOfItsOwn && byte != writtenTextAsEscapes)
             continue;
         uint64_t start = endOfCopied + takeNumber();
         uint64_t end = start + takeNumber();
@@ -2296,7 +2337,7 @@ static std::optional<Vector<uint8_t>> moveDifferences(const TextPrintedInPlace& 
             return std::nullopt;
         uint32_t startInText = inText(static_cast<uint32_t>(start));
         uint32_t sizeInText = inText(static_cast<uint32_t>(end)) - startInText;
-        if (byte == copyOfWrittenText && sizeInText != end - start)
+        if (byte != textWithPieceOfItsOwn && sizeInText != end - start)
             return std::nullopt;
         appendVarint(moved, startInText - inText(static_cast<uint32_t>(endOfCopied)));
         appendVarint(moved, sizeInText);
@@ -2318,9 +2359,11 @@ static void appendTextPrintedInPlaceOfModule(const Program& program, ModuleID id
         return;
     }
 
+    // See AddedText.
     struct Cut {
         uint64_t start;
         uint64_t size;
+        uint64_t added;
         uint64_t sizeOfCutsInFront;
     };
     Vector<Cut> cuts;
@@ -2339,16 +2382,17 @@ static void appendTextPrintedInPlaceOfModule(const Program& program, ModuleID id
     for (uint64_t end = 0, sizeOfCutsInFront = 0; !packedCuts.empty();) {
         uint64_t start = end + takeNumber();
         uint64_t size = takeNumber();
-        cuts.append({ start, size, sizeOfCutsInFront });
+        uint64_t added = size ? 0 : takeNumber();
+        cuts.append({ start, size, added, sizeOfCutsInFront });
         end = start + size;
-        sizeOfCutsInFront += size;
+        sizeOfCutsInFront += size - added;
     }
     auto inText = [&](uint32_t offsetInFile) {
         auto next = std::ranges::lower_bound(cuts, static_cast<uint64_t>(offsetInFile), { }, &Cut::start);
         if (next == cuts.begin())
             return offsetInFile;
         const Cut& last = *std::prev(next);
-        return static_cast<uint32_t>(offsetInFile - last.sizeOfCutsInFront - std::min<uint64_t>(last.size, offsetInFile - last.start));
+        return static_cast<uint32_t>(offsetInFile - last.sizeOfCutsInFront - std::min<uint64_t>(last.size, offsetInFile - last.start) + last.added);
     };
     Vector<Vector<uint8_t>> movedDifferences;
     for (TextPrintedInPlace& piece : pieces) {
@@ -3104,14 +3148,14 @@ static ModuleLists collectModuleLists(TableEncoder& encoder)
         lists.modules[index].add(ModuleData::Flag::IsEntryPoint);
     for (const AmbiguousExport& ambiguous : program.ambiguousExports)
         lists.ambiguousExports.append({ ambiguous.module.index(), encoder.shownStringNumber(ambiguous.name) });
-    std::ranges::stable_sort(lists.ambiguousExports, { }, &AmbiguousExportData::module);
+    AOT::stableSort(lists.ambiguousExports, { }, &AmbiguousExportData::module);
     ModuleData endEntry { };
     lists.setListStarts(endEntry);
     lists.modules.append(endEntry);
 
     for (const RequiredNameData& requiredName : lists.requiredNames) {
         const ModuleData& exporter = lists.modules[requiredName.exporter];
-        if (exporter.exportRule != SyntheticExportRule::RuntimeModule)
+        if (exporter.exportRule != SyntheticExportRule::RuntimeModule || requiredName.mayBeAbsent)
             continue;
         uint32_t end = lists.modules[requiredName.exporter + 1].firstSyntheticExport;
         for (uint32_t index = exporter.firstSyntheticExport; index < end; ++index) {
@@ -3256,13 +3300,10 @@ static void encodeNamedVariables(TableEncoder& encoder)
     const Program& program = encoder.program;
     const Vector<PlacedVariable>& placedVariables = encoder.placement.statics().variables;
     Vector<NamedVariable> named;
-    for (unsigned index = 0; !encoder.obfuscates() && index < placedVariables.size(); ++index) {
+    for (unsigned index = 0; index < placedVariables.size(); ++index) {
         const PlacedVariable& placed = placedVariables[index];
         const Variable& variable = program.variables[index];
-        if (placed.storage == VariableStorage::None || !variable.name || !variable.module || variable.owner)
-            continue;
-        const Module& module = program.at(variable.module);
-        if (!isProgramModuleOf(module.kind) || module.flags.contains(ModuleFlags::IsLibrary))
+        if (placed.storage == VariableStorage::None || !variable.name || variable.owner || !showsVariablesOf(encoder, variable.module))
             continue;
         if (placed.storage == VariableStorage::ClosureTable) {
             // Without that entry point nothing ever makes the closure.
@@ -3290,6 +3331,35 @@ static void encodeNamedVariables(TableEncoder& encoder)
         writer.append(named[index].data);
     }
     encoder.setTable(ProgramTableIndex::namedVariables, writer.bytes());
+}
+
+static void encodeNamedCaptures(TableEncoder& encoder)
+{
+    const Program& program = encoder.program;
+    ClosureFunctionRange range = encoder.placement.closureFunctions();
+    NamedCapturesWriter writer;
+    for (uint32_t index = range.first.index(); index < range.end.index(); ++index) {
+        if (program.at(FunctionID(index)).role != FunctionRole::GenericEntrypoint)
+            continue;
+        const Function& target = program.at(closureTargetOf(program, FunctionID(index)));
+        if (!showsVariablesOf(encoder, target.module))
+            continue;
+        unsigned numberOfReferences = closureCaptureCountsOf(program, target).references;
+        Vector<std::pair<uint32_t, uint32_t>, 8> named;
+        for (unsigned capture = 0; capture < target.captures.size(); ++capture) {
+            StringID name = target.captures[capture].variableName;
+            if (!name)
+                continue;
+            if (unsigned slot = closureCaptureSlotOf(program, target, capture); slot < numberOfReferences)
+                named.append({ slot, encoder.shownStringNumber(name) });
+        }
+        if (named.isEmpty())
+            continue;
+        writer.beginFunction(index, named.size());
+        for (auto [slot, name] : named)
+            writer.append(slot, name);
+    }
+    encoder.setTable(ProgramTableIndex::namedCaptures, writer.bytes());
 }
 
 static bool isReadAsItStarts(const Program& program, const Variable& variable, const PlacedVariable& placed)
@@ -3347,6 +3417,7 @@ void encodeModuleTables(TableEncoder& encoder)
     if (!rest.isWritten())
         return;
     encodeNamedVariables(encoder);
+    encodeNamedCaptures(encoder);
     encodeStateOfLibraryModules(encoder);
     markFacesOfFiles(encoder, lists);
     computeModuleFlags(lists.modules.mutableSpan(), lists.requests.span());

@@ -113,6 +113,8 @@ struct SolvedConstruction {
     ConstructionNames selfReferenceNames;
     Vector<ConstructionName> initialOrder;
     ConstructionNames namesInInitialOrder;
+    // What follows the order of the function that the object is first passed on to.
+    Vector<ConstructionName> ownPartOfInitialOrder;
 };
 
 struct ResolvedConstructionEvent {
@@ -1518,24 +1520,6 @@ struct InitialOrderBuilder {
     ConstructionNames acceptedNames { };
 };
 
-void solveConstructions(ConstructionGraph& graph, const BitVector* nodesThatAreRead = nullptr)
-{
-    StronglyConnectedComponents components = computeStronglyConnectedComponents(graph.nodes.size(), [&](unsigned node) -> const Vector<uint32_t>& {
-        return graph.nodes[node].callees;
-    });
-    for (uint32_t index : components.members) {
-        if (nodesThatAreRead && !nodesThatAreRead->quickGet(index))
-            continue;
-        ConstructionNode& node = graph.nodes[index];
-        if (components.isInCycle.get(index))
-            node.summary = nullptr;
-        if (!node.summary)
-            continue;
-        solveStoredNames(graph, node);
-        InitialOrderBuilder { graph, node }.build();
-    }
-}
-
 size_t parentOrderLength(const ConstructionGraph& graph, const ConstructionNode& node)
 {
     if (!node.summary)
@@ -1549,10 +1533,50 @@ size_t parentOrderLength(const ConstructionGraph& graph, const ConstructionNode&
     return std::min(graph.nodes[node.resolvedEvents[rootEvent - events.begin()].callees[0]].solved.initialOrder.size(), node.solved.initialOrder.size());
 }
 
-std::pair<FieldOrder, bool> ownOrderOf(const Program& program, const ConstructionGraph& graph, const ConstructionNode& node, LayoutID layout)
+void solveConstructions(ConstructionGraph& graph, const BitVector* nodesThatAreRead = nullptr)
+{
+    StronglyConnectedComponents components = computeStronglyConnectedComponents(graph.nodes.size(), [&](unsigned node) -> const Vector<uint32_t>& {
+        return graph.nodes[node].callees;
+    });
+    // A constructor holds the names of all the constructors above it, several times over. Most of that is read by its callers alone, while they are solved, so it goes with the last of them:
+    // kept, a row of classes that extend one another would hold a number of names that grows with the square of its length.
+    Vector<uint32_t> numberOfCallersToCome(FillWith { }, graph.nodes.size(), 0u);
+    for (const ConstructionNode& node : graph.nodes) {
+        for (uint32_t callee : node.callees)
+            ++numberOfCallersToCome[callee];
+    }
+    auto releaseWhatCallersRead = [](SolvedConstruction& solved) {
+        solved.storedAtExit = { };
+        solved.readBeforeStore = { };
+        solved.readNames = { };
+        solved.selfReferenceNames = { };
+        solved.initialOrder = { };
+        solved.namesInInitialOrder = { };
+    };
+    for (uint32_t index : components.members) {
+        ConstructionNode& node = graph.nodes[index];
+        if (!nodesThatAreRead || nodesThatAreRead->quickGet(index)) {
+            if (components.isInCycle.get(index))
+                node.summary = nullptr;
+            if (node.summary) {
+                solveStoredNames(graph, node);
+                InitialOrderBuilder { graph, node }.build();
+                node.solved.ownPartOfInitialOrder = Vector<ConstructionName>(node.solved.initialOrder.span().subspan(parentOrderLength(graph, node)));
+            }
+        }
+        for (uint32_t callee : node.callees) {
+            if (!--numberOfCallersToCome[callee])
+                releaseWhatCallersRead(graph.nodes[callee].solved);
+        }
+        if (!numberOfCallersToCome[index])
+            releaseWhatCallersRead(node.solved);
+    }
+}
+
+std::pair<FieldOrder, bool> ownOrderOf(const Program& program, const ConstructionNode& node, LayoutID layout)
 {
     FieldOrder order;
-    for (ConstructionName name : node.solved.initialOrder.span().subspan(parentOrderLength(graph, node))) {
+    for (ConstructionName name : node.solved.ownPartOfInitialOrder) {
         std::optional<uint32_t> field = name.key ? program.at(layout).findField(name.key) : name.field.layout == layout ? std::optional(name.field.field) : std::nullopt;
         if (!field)
             return { WTF::move(order), false };
@@ -2120,7 +2144,7 @@ ValueFlowConstructions computeConstructions(const ValueFlowResultInputs& inputs,
         bool createsFieldsOnlyInListedOrders = true;
         for (uint32_t maker : makers) {
             const ConstructionNode& node = graph.nodes[maker];
-            auto [order, isComplete] = ownOrderOf(program, graph, node, LayoutID(index));
+            auto [order, isComplete] = ownOrderOf(program, node, LayoutID(index));
             createsFieldsOnlyInListedOrders &= !node.solved.mayLeak && node.solved.storesOnlyInInitialOrder && isComplete;
             if (!construction.orders.contains(order))
                 construction.orders.append(WTF::move(order));

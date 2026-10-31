@@ -950,6 +950,9 @@ void requireModule(const ValueFlowStatement& statement, ValueFlowRuleContext& co
     connect(context, requiredValueOf(context, module, asker), statement.result);
     if (statement.result && context.program().at(module).flags.contains(ModuleFlags::MayBeEvicted))
         context.add(statement.result, unknownValue(context, ValueFlowUnknownSource::UnseenCode));
+    // Modules::answerRequire(): what the program has stored as the `exports` of the entry that the run time made for the file.
+    if (const Module& required = context.program().at(module); statement.result && !required.flags.contains(ModuleFlags::IsLibrary) && (required.kind == ModuleKind::SourceText || required.kind == ModuleKind::Data))
+        context.connect(context.nodes().ofHost(ValueFlowHostNode::ExportsOfEntriesStoredInModuleCache), statement.result);
     // Modules::mockWhatRequireAnswered(): what the factory of a mock gave.
     if (const Module& required = context.program().at(module); statement.result && required.kind == ModuleKind::SourceText && !required.runtimeModule && required.flags.contains(ModuleFlags::MayBeMocked))
         context.add(statement.result, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));

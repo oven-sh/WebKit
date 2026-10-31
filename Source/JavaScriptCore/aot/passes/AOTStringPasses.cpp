@@ -3251,16 +3251,16 @@ LiteralStringTable numberLiteralStrings(const Program& program, const FlowResult
         for (StringID string : program.at(id).stringLiterals)
             members.atomicSetAndCheck(string.index(), true);
     };
-    auto collectLiteralsOfAll = [&](std::span<const DeclaredType> positions, Source source) {
+    auto collectLiteralsOfAll = [&](const auto& positions, Source source) {
         for (const DeclaredType& declared : positions)
             collectLiteralsOf(declared.written(), source);
     };
     auto collectStringsOfFunction = [&](FunctionID id, Source sourceOfArguments) {
         const Function& function = program.at(id);
-        collectLiteralsOfAll(function.captures.span(), Source::Program);
+        collectLiteralsOfAll(function.captures, Source::Program);
         collectLiteralsOf(function.thisType.written(), sourceOfArguments);
-        collectLiteralsOfAll(function.parameters.span(), sourceOfArguments);
-        collectLiteralsOfAll(function.results.span(), Source::Program);
+        collectLiteralsOfAll(function.parameters, sourceOfArguments);
+        collectLiteralsOfAll(function.results, Source::Program);
 
         auto collectFromValue = [&](const Value& value) {
             if (value.opcode != Opcode::String)

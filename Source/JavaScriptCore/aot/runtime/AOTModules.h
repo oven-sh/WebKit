@@ -74,11 +74,13 @@ struct LinkContext {
     macro(JSObject*, importMeta) \
     macro(JSObject*, requirer) \
     macro(JSObject*, objectMadeByRequire) \
+    macro(JSValue, exportsGivenToObjectMadeByRequire) \
     macro(JSObject*, firstRequirerOfOtherImage) \
     macro(JSValue, requireFunction) \
     macro(JSValue, requiredValue) \
     macro(JSValue, valueInRequireCache) \
     macro(JSObject*, exportsOfMock) \
+    macro(JSObject*, namespacesOfEarlierMocks) \
     macro(JSValue, errorKeptByLoader) \
     macro(JSObject*, exportsWhileRequired) \
     macro(JSObject*, capturedExports) \
@@ -457,6 +459,12 @@ public:
     enum class ImportCaller : bool { CompiledCode, Host };
     JSPromise* startImport(ModuleID, std::optional<int64_t> referrerAsyncOrder, ImportCaller = ImportCaller::CompiledCode);
     JSPromise* importDynamic(JSValue specifier, JSValue options, ModuleID referrer);
+    // `bun run` reads the text of a file that is imported on another thread, and hears of it in a later turn of the event loop: every job that waits runs first, and so does what is left of a graph
+    // that has all its texts. A program sees that where a file that runs while a graph is loaded calls import(). From that call until the last text has come, each text comes in a turn of its own, in the order in which they were asked for.
+    bool holdTextOfRequest(JSPromise* fetched, ModuleRecord* requested, ModuleID);
+    std::optional<uint64_t> placeOfFirstTextThatWaits() const { return m_textsThatWait.isEmpty() ? std::nullopt : std::optional(m_textsThatWait.first().place); }
+    // False: nobody is left to hear of it.
+    bool deliverFirstTextThatWaits();
     void continueImport(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder);
     void resolveWithNamespace(JSPromise* importPromise, ModuleID);
     void finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID, JSValue error);
@@ -947,6 +955,21 @@ private:
         Strong<JSPromise> promise;
     };
     Vector<DeferredImport> m_deferredImports;
+    struct TextThatWaits {
+        // The turn in which it was asked for, then whether an import() asked, then the order of the calls. There each text comes with a turn to itself, so a module that came ahead of the file
+        // that calls import() has asked for what it imports by then. Here the texts of a level come together, and that module asks a few jobs behind the file.
+        uint64_t place;
+        // Of the program for an import(), of the loader's fetch for a request of a module.
+        Strong<JSPromise> promise;
+        ModuleID module;
+        // Null for an import().
+        Strong<JSCell> requestedRecord { };
+        std::optional<int64_t> referrerAsyncOrder { };
+    };
+    Vector<TextThatWaits> m_textsThatWait;
+    bool isTextReadOnOtherThread(ModuleID file);
+    bool textOfImportComesInLaterTurn(ModuleID);
+    void holdText(JSPromise*, ModuleID, JSCell* requestedRecord, std::optional<int64_t> referrerAsyncOrder);
     ModuleID fileOf(ModuleID fileOrFace) const { return m_table.fileBehindFace(fileOrFace).value_or(fileOrFace); }
     bool importsEvictedFile(ModuleID, BitVector& seen);
     std::pair<Modules*, ModuleID> ownerOfRequiredModule(ModuleID);
@@ -1042,7 +1065,7 @@ ALWAYS_INLINE JSValue Modules::settledAnswerOfRequire(ModuleID target, RequiredB
     if (requiredBy != RequiredBy::Referrer || !m_modulesWithMockToRun.isEmpty() || !m_evictedFiles.isEmpty() || m_otherImageHasEvictedFiles)
         return { };
     const LoadedModule* loaded = loadedIfExists(target);
-    if (!loaded || !loaded->requiredValue || loaded->isBeingRequired || storedStatus(target) != StoredModuleStatus::Evaluated || data(target).isOfLibrary())
+    if (!loaded || !loaded->requiredValue || loaded->isBeingRequired || loaded->objectMadeByRequire || storedStatus(target) != StoredModuleStatus::Evaluated || data(target).isOfLibrary())
         return { };
     return loaded->requiredValue.get();
 }

@@ -588,11 +588,10 @@ Type ResultRules::declared(const Value& value, FunctionID function, uint32_t res
 {
     const Function& callee = recordOf(context.program, function);
     bool readsCapture = value.opcode == Opcode::GetCapture;
-    const Vector<DeclaredType>& positions = readsCapture ? callee.captures : callee.results;
     uint32_t index = readsCapture ? value.index() : resultIndex;
-    if (index >= positions.size())
+    if (index >= (readsCapture ? callee.captures.size() : callee.results.size()))
         return Type::anything();
-    return context.types.adopt(context.typeOf(positions[index]));
+    return context.types.adopt(context.typeOf(readsCapture ? callee.captures[index] : callee.results[index]));
 }
 
 Type ResultRules::declared(const Value&, LayoutID layout)
@@ -932,11 +931,10 @@ struct ResultRulesWithoutType {
     {
         const Function& callee = recordOf(context.program, function);
         bool readsCapture = value.opcode == Opcode::GetCapture;
-        const Vector<DeclaredType>& positions = readsCapture ? callee.captures : callee.results;
         uint32_t index = readsCapture ? value.index() : resultIndex;
-        if (index >= positions.size())
+        if (index >= (readsCapture ? callee.captures.size() : callee.results.size()))
             return TypeTable::anything;
-        return idInArena(context.typeIDOf(positions[index]));
+        return idInArena(context.typeIDOf(readsCapture ? callee.captures[index] : callee.results[index]));
     }
 
     TypeID declared(const Value& value, LayoutID layout, uint32_t field)

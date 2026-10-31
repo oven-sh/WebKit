@@ -745,7 +745,12 @@ static void testAddressesInLargeBlob()
         StubCatalog catalog(options, StubPolicy { policy });
         StubBlob blob = buildBlob(catalog, keys.span(), { });
         AOT_TEST_CHECK(blob.code.bytes.size() > 8 * MB);
-        AOT_TEST_CHECK(std::max(*blob.offsetOf(callMethodById(2)), *blob.offsetOf(callValueCell(2))) < 1 * MB);
+        uint32_t furtherOfTheTwo = std::max(*blob.offsetOf(callMethodById(2)), *blob.offsetOf(callValueCell(2)));
+        for (StubKey key : keys.span().subspan(1))
+            AOT_TEST_CHECK(furtherOfTheTwo < *blob.offsetOf(key));
+        // With assertions the bodies in front of them are larger.
+        if (!ASSERT_ENABLED)
+            AOT_TEST_CHECK(furtherOfTheTwo < 1 * MB);
     }
 }
 

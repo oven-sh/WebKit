@@ -201,7 +201,7 @@ public:
     JSCell* newTargetOfSuperCall { nullptr };
     // In the innermost native code that has asked for the Exception of what it calls, and so may list the frames of the throw.
     void* stackPointerOfExceptionTaker { nullptr };
-    // Of the innermost call in compiled code when the heap was last full and collected.
+    // Of the innermost call in compiled code when the heap was last full and collected, or could have.
     const void* returnAddressOfCallThatCollected { nullptr };
     // While an import() runs a module that `bun run` runs from a job: no stack trace lists the frames from here on down.
     void* stackPointerOfImport { nullptr };
@@ -225,6 +225,10 @@ public:
     PolledInstances polledInstances;
     // What error messages have quoted so far: AOTErrorMessages.cpp, which alone knows the type.
     std::unique_ptr<QuotesOfPlaces, void (*)(QuotesOfPlaces*)> quotesOfPlaces { nullptr, nullptr };
+    // Modules::holdText().
+    uint32_t numberOfTextsThatWait { 0 };
+    uint32_t numberOfTextsAskedFor { 0 };
+    uint32_t turnOfTexts { 0 };
 };
 
 static_assert(sizeof(PartOfRunningImage<RuntimeTable>) == sizeof(void*));

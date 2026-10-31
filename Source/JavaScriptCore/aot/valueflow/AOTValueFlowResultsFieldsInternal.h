@@ -605,7 +605,7 @@ private:
         OptionSet<Actor> writers;
         ValueSetID value;
         ValueFlowNumbers numbers;
-        // The numbers are those that these objects hold under the key, and `numbers` is empty.
+        // The numbers are `numbers` and those that these objects hold under the key.
         ValueSetID objectsRead;
         uint32_t keyRead;
 
@@ -645,6 +645,7 @@ private:
     };
 
     void findReceiversBehindChecks();
+    void findValuesBehindStoredParameters();
     static constexpr uint32_t isStatementInListOfWrites = 1u << 31;
 
     LayoutSetID familyOfReceiverOf(const ValueFlowStatement&) const;
@@ -687,6 +688,7 @@ private:
     void unite(ValueSetID& into, ValueSetID value) { into = m_heap.maker().unite(into, value); }
     bool spellsKey(ValueSetMaker&, const Writer&, ValueFlowName) const;
     void note(ValueSetMaker&, StoresIntoObjects&, ValueFlowName, ValueSetID value, bool isAllocation, bool isNamedByOperation);
+    ValueFlowNumbers numbersOf(FunctionID, ValueID) const;
     ValueFlowNumbers numbersStoredBy(const Writer&, ValueFlowName) const;
     ValueFlowNumbers numbersInData(LayoutID, ValueFlowName) const;
     void noteNumbers(StoresIntoObjects&, ValueFlowName, const ValueFlowNumbers&);
@@ -698,7 +700,7 @@ private:
     std::optional<CopiedObjects> objectsCopiedOnto(ValueSetMaker&, LayoutID) const;
     std::optional<CopiedObjects> withLayoutsIfFollowed(ValueSetMaker&, ValueSetID objects) const;
     void followCopiedProperties();
-    std::optional<ReadOfFields> readOfFieldsStoredBy(ValueSetMaker&, const Writer&, ValueFlowName) const;
+    std::optional<ReadOfFields> readOfFieldsStoredBy(ValueSetMaker&, const Writer&, ValueFlowName, ValueFlowNumbers& numbersBesideReads) const;
     std::optional<CopiedObjects> objectsReadUnder(ValueSetMaker&, ValueSetID objects, PropertyKeyID) const;
     void followReadsOfFields();
     void forEachSourceOf(LayoutID, ObjectsOfLayout, NOESCAPE const Invocable<void(const StoresIntoObjects&)> auto&) const;
@@ -744,6 +746,12 @@ private:
     BitVector m_isLostClass;
     Vector<NameStoredThroughDeclaredReceiver> m_namesStoredThroughDeclaredReceivers;
     Vector<BitVector> m_valuesBehindChecks;
+    struct ValuesBehindParameter {
+        ValueID parameter;
+        Vector<ValueID, 2> reads;
+        Vector<ValueID, 2> others;
+    };
+    Vector<Vector<ValuesBehindParameter>> m_valuesBehindStoredParameters;
     Vector<uint8_t> m_hasChecksNotLookedAt;
     Vector<uint32_t> m_writes;
     BitVector m_hasObjectOfCodeWithoutSolve;

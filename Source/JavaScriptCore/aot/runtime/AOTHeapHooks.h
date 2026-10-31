@@ -56,6 +56,8 @@ private:
 void didChangeBarrierThreshold(VM&, unsigned threshold, bool mutatorShouldBeFenced);
 void willAnalyzeHeap(VM&);
 void willCollectForExhaustedCage(VM&);
+// No collection runs because it would find no memory for itself. The call in compiled code that led here throws the error that is owed, as after a collection.
+void didFindNoRoomWhereCollectionMayRun(VM&);
 String nameOfCompiledCallee(JSCell*);
 bool isModuleEnvironment(JSCell*);
 [[noreturn]] void crashOnCellVisitMismatch(VM&, const JSCell*);

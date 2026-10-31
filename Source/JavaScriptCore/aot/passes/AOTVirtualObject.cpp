@@ -546,7 +546,7 @@ TypeID typeOfField(const VirtualObjectContext& context, const VirtualObjectDescr
     case VirtualFieldKind::Capture: {
         if (!description.function)
             return TypeTable::never;
-        const Vector<DeclaredType>& captures = program.at(description.function).captures;
+        const auto& captures = program.at(description.function).captures;
         if (field.index >= captures.size())
             return TypeTable::never;
         return program.provenTypeOf(captures[field.index]);

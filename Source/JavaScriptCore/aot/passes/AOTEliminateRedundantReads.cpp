@@ -3861,6 +3861,61 @@ struct LoopPathSeparator : LoopEditor {
         return false;
     }
 
+    ValueID findObjectPassedOnEveryEdge(ValueID parameter)
+    {
+        Vector<ValueID, 8> parameters { parameter };
+        ValueID object;
+        for (size_t next = 0; next < parameters.size(); ++next) {
+            ValueLocation location = m_analyses.useLists().locationOf(parameters[next]);
+            if (location.placement != ValuePlacement::Parameter || location.block == m_analyses.cfg().root())
+                return { };
+            for (Edge edge : m_analyses.cfg().incomingEdges(location.block)) {
+                if (edge.isHandlerEdge())
+                    return { };
+                IncomingValue incoming = incomingValueOf(m_function, edge, location.index);
+                if (incoming.kind != IncomingValue::Kind::Argument || !incoming.argument)
+                    return { };
+                ValueID source = m_analyses.sameObjectThroughCasts(incoming.argument).valueInFrontOfFacts();
+                if (m_function.at(source).opcode == Opcode::Parameter) {
+                    if (!parameters.contains(source))
+                        parameters.append(source);
+                    continue;
+                }
+                if (object && object != source)
+                    return { };
+                object = source;
+            }
+        }
+        return object;
+    }
+
+    // The likely paths make an object in every turn, and they and a leaving path each name it by a cast of their own. Where the two meet, the likely paths read it through a parameter, and what they have read of it ahead is read again.
+    bool leavesObjectUnderOneName(const BitVector& isInLoop, const BitVector& leaves)
+    {
+        const UseLists& uses = m_analyses.useLists();
+        for (size_t index : isInLoop) {
+            if (leaves.get(index) || m_function.blocks[index].parameters.isEmpty())
+                continue;
+            bool isJoinedByLeavingPath = std::ranges::any_of(m_analyses.cfg().incomingEdges(BlockID(index)), [&](Edge edge) {
+                return leaves.get(edge.from.index());
+            });
+            if (!isJoinedByLeavingPath)
+                continue;
+            for (ValueID parameter : m_function.blocks[index].parameters) {
+                bool isRead = typeOf(parameter).isObject() && std::ranges::any_of(uses.usesOf(parameter), [](const Use& use) {
+                    return use.kind != Use::Kind::EdgeArgument;
+                });
+                ValueID object = isRead ? findObjectPassedOnEveryEdge(parameter) : ValueID();
+                if (!object || resultRuleOf(m_function.at(object).opcode) != ResultRule::Allocation)
+                    continue;
+                BlockID madeIn = uses.blockOf(object);
+                if (madeIn && isInLoop.get(madeIn.index()) && !leaves.get(madeIn.index()))
+                    return true;
+            }
+        }
+        return false;
+    }
+
     bool leavesReadsUnwritten(const BitVector& isInLoop, const BitVector& leaves)
     {
         LocationMasks readsOfLikelyPaths;
@@ -4217,9 +4272,14 @@ struct LoopPathSeparator : LoopEditor {
         });
         bool paysToMoveTest = movesTest && (paysForLoopInside || !runsLoopInEveryTurn || !onlyChoosesBetweenFormsOfLoopInside(loop, isInLoop, leaves, testsOfEveryTurn.span()));
         bool paysByItself = paysToMoveTest || plan.letsVariablesBeCarried || narrowsParameter(isInLoop, leaves) || (isShort && leavesAllocationAlone(isInLoop, leaves)) || leavesReadsFromTablesAlone(leaves);
+        bool onlyLeavesObjectUnderOneName = !paysByItself && leavesObjectUnderOneName(isInLoop, leaves);
+        paysByItself |= onlyLeavesObjectUnderOneName;
         if (!paysByItself && !(isShort && (paysForLoopInside || leavesTestWithOneAnswer(isInLoop, leaves))))
             return std::nullopt;
         plan.onlyLeavesTestWithOneAnswer = !paysByItself && !movesTest;
+        // The back end takes a loop with rare paths that come back for one of few turns.
+        if (onlyLeavesObjectUnderOneName)
+            plan.emptyPathsThatStay.clearAll();
 
         BitVector isEntryOfCopy(m_function.blocks.size());
         for (size_t index : leaves) {

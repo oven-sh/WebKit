@@ -39,7 +39,7 @@
 # CHECK-LABEL: end of function
 
 # The arm of the first turn leads to the block that reads the second character.
-# X64: instructions: 58, patchpoints: 8, rare instructions: 13, {{*}} steps by 8
+# X64: instructions: 42, patchpoints: 8, rare instructions: 13, {{*}} steps by 8
 # X64: Load8 ({{*}}), %
 # X64: Branch32 Equal, {{*}}, $9
 # X64-NEXT: Successors: Unlikely:#[[second]], #{{*}}
@@ -48,7 +48,7 @@
 # X64: BB#[[second]]:
 # X64-NEXT: Predecessors:
 # X64-NEXT: Load8 1({{*}}),
-# ARM64: instructions: 52, patchpoints: 8, {{*}} steps by 8
+# ARM64: instructions: 44, patchpoints: 8, {{*}} steps by 8
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0

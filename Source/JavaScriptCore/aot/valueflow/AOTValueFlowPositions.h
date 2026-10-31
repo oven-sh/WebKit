@@ -110,6 +110,7 @@ public:
     FlowPositionUpdate updateFrom(const ValueFlowPositionResult&, const Type& family);
     FlowPositionUpdate updateFor(const DeclaredType&, ValueFlowNodeID, DeadZone = DeadZone::MayBeObserved, const ValueFlowNumbers* = nullptr);
     void takeWhatArrives(const DeclaredType&, ValueFlowNodeID, FlowPositionUpdate&);
+    std::optional<Type> typeByLayoutsOfClassesBelowBuiltinClasses(ValueSetID);
 
     std::optional<LayoutSet> receiversAt(ValueSetID);
     std::optional<CalleeSet> calleesAt(ValueSetID possible, ValueSetID seen, const ValueFlowOperand* calleeOfConstruction);

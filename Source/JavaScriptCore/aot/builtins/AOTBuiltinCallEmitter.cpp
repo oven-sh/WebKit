@@ -482,6 +482,14 @@ Boxed BuiltinCallEmitter::callBuiltinFunction(const OperationContext& context, B
         return callCustomGetter(context, id, *receiver, receiverIsMatched);
     }
 
+    // The function that an accessor has bound to the receiver. The accessor is asked for it, whatever the receiver has under the name by now.
+    if (overload.mode == BuiltinCallMode::Call && m_builtins.at(overload.builtin).kind == BuiltinKind::Accessor) {
+        RELEASE_ASSERT(receiver);
+        Boxed holder = boxCell(builtinCell(context, BuiltinCellKey::object(m_builtins.at(overload.builtin).holder)));
+        Boxed bound = callOperation<Boxed>(context, RuntimeOperation::GetSuperPropertyById, { holder, *receiver, identifierNumber(keyOf(overload)) });
+        return emitter<CallEmitter>().callValue(context, { bound, *receiver, arguments });
+    }
+
     bool constructs = overload.mode == BuiltinCallMode::Construct;
     Boxed callee = boxCell(calleeOf(context, overload));
     Boxed thisValue = undefined();

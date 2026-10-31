@@ -283,7 +283,8 @@ public:
         add(declared.writtenFlags().toRaw());
     }
 
-    void add(const Vector<DeclaredType>& types)
+    template<typename Position>
+    void add(const Vector<Position>& types)
     {
         add(types.size());
         for (const DeclaredType& declared : types)

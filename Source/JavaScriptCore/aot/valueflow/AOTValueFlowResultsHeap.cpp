@@ -1014,12 +1014,12 @@ static BuiltinsToApply builtinsToApplyAmong(const ValueFlowResultInputs& inputs,
             objects.append(object);
     });
     ValueSetID among = maker.of(objects.span());
-    return { maker.intersect(universe.builtinFunctions(), among), maker.intersect(universe.builtinObjects(), among) };
+    return { maker.intersect(universe.targetsOfBoundFunctionsAmongBuiltins(), among), maker.intersect(universe.builtinObjects(), among) };
 }
 
 void forEachBuiltinApplication(const ValueFlowResultInputs& inputs, ValueFlowHeapView& heap, NOESCAPE const ValueFlowBuiltinApplicationFunctor& functor)
 {
-    forEachBuiltinApplicationAmong(inputs, heap, { inputs.universe().builtinFunctions(), inputs.universe().builtinObjects() }, ValueSets::anything, functor);
+    forEachBuiltinApplicationAmong(inputs, heap, { inputs.universe().targetsOfBoundFunctionsAmongBuiltins(), inputs.universe().builtinObjects() }, ValueSets::anything, functor);
 }
 
 void forEachBuiltinApplication(const ValueFlowResultInputs& inputs, ValueFlowHeapView& heap, const BitVector& onlyOfBuiltins, NOESCAPE const ValueFlowBuiltinApplicationFunctor& functor)

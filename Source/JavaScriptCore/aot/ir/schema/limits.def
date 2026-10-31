@@ -33,9 +33,7 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxLayoutsInType(Any, CompileTime, WiderType, 1024, 1024, 3, "object shapes in one inferred type")
     MaxLiteralsInType(Any, CompileTime, WiderType, 1024, 1024, 3, "string literals in one inferred type")
     MaxSymbolLiteralsInType(Any, CompileTime, WiderType, 256, 256, 0, "symbols in one inferred type")
-    MaxClassesInType(Any, CompileTime, WiderType, 64, 64, 3, "built-in classes in one inferred type")
     MaxFunctionsInType(Any, CompileTime, WiderType, 1024, 1024, 3, "functions in one inferred type")
-    MaxBuiltinsInType(Any, CompileTime, WiderType, 256, 256, 0, "built-in objects in one inferred type")
     MaxRegExpLiteralsInType(Any, CompileTime, WiderType, 64, 64, 0, "regular expression literals in one inferred type")
     MaxWorkers(Any, BitWidth, FewerThreads, 2047, 2047, 0, "compiler threads")
     MaxInt32ProofWork(ReadAndVerify, CompileTime, NotOptimized, 10000, 10000, 0, "values visited to explain an unproven int32")
@@ -48,9 +46,9 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
 
     MaxValueFlowSetMembers(AnalyzeFlow, CompileTime, DeclaredType, 16777216, 16777216, 16777216, "shapes and callees tracked per value")
     MaxValueFlowMembersToldApart(AnalyzeFlow, CompileTime, NotOptimized, 64, 64, 0, "receivers of a method call or names of a computed key looked at one by one")
-    MaxValueFlowObjectsListedByMember(AnalyzeFlow, CompileTime, NotOptimized, 1024, 1024, 1024, "objects of one receiver that whole-program analysis links one by one")
+    MaxValueFlowObjectsListedByMember(AnalyzeFlow, CompileTime, NotOptimized, 1024, 1024, 1024, "objects of one receiver that whole-program analysis links one by one; more are linked through the parts they share, with the same result: a choice of method, nothing is given up")
     MaxObjectsOfTypedResult(AnalyzeFlow, CompileTime, GenericPath, 256, 256, 0, "object and array types reachable from the type that one call parses by")
-    MaxAppendedFieldsPerLayout(AnalyzeFlow, Memory, OutOfLineStorage, 96, 96, 0, "properties added to an object type after creation")
+    MaxAppendedFieldsPerLayout(AnalyzeFlow, Memory, OutOfLineStorage, 96, 96, 0, "properties added to an object type after creation that get a place in every object of the type; the rest are stored outside it: a choice between the size of each object and the speed of those properties")
 
     MaxOptimizationRounds(Optimize, CompileTime, NotOptimized, 8, 8, 0, "optimization passes over a function")
     MaxOptimizationWork(Optimize, CompileTime, NotOptimized, 50000000, 50000000, 0, "values walked by the optimization passes over a function")

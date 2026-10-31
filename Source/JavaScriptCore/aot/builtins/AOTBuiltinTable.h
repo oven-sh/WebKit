@@ -1012,6 +1012,8 @@ public:
     // Of the engine or of the host. A realm that locks its built-ins gives every native function one structure, which keeps the prototype.
     bool isNativeFunction(BuiltinID) const;
     JS_EXPORT_PRIVATE bool isFunctionOfEngine(BuiltinID) const;
+    // `formatter.format`: the accessor answers a function that it has bound to the receiver, the same at every read. What a call of that function does stands among the overloads of the accessor.
+    bool answersFunctionBoundToReceiver(BuiltinID member) const { return at(member).kind == BuiltinKind::Accessor && dispatchOf(member, BuiltinCallMode::Call); }
     bool hasLockedPrototypeLink(BuiltinID holder) const { return at(holder).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::HasLockedMembers }) || isFunctionOfEngine(holder) || closesOnlyNamesOfCalls(holder); }
     bool closesOnlyNamesOfCalls(BuiltinID holder) const { return at(holder).kind == BuiltinKind::Constructor && !at(holder).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::HasLockedMembers }) && !closedKeysOf(holder).empty(); }
     bool closesIndexKeys(BuiltinID holder) const { return at(holder).flags.contains(BuiltinFlag::IsLockedObject) || (at(holder).flags.contains(BuiltinFlag::HasLockedMembers) && at(holder).kind == BuiltinKind::Prototype); }

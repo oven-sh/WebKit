@@ -827,7 +827,7 @@ void Reader::addFunctions(Type& type, std::span<const FunctionID> named) const
         members.append(family.functions);
         builtinMembers.append(family.builtins);
     }
-    if (members.size() > m_build.limit(LimitID::MaxFunctionsInType) || builtinMembers.size() > m_build.limit(LimitID::MaxBuiltinsInType)) {
+    if (members.size() > m_build.limit(LimitID::MaxFunctionsInType)) {
         type.anyFunction = true;
         return;
     }

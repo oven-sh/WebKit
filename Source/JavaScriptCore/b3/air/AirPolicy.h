@@ -49,6 +49,7 @@ struct LiveRangeSplitPolicy {
     AIR_POLICY_OF_CLIENT(bool, splitsAroundClobbersEarly, false);
     AIR_POLICY_OF_CLIENT(bool, splitsAroundClobbersThatRead, false);
     AIR_POLICY_OF_CLIENT(bool, keepsUnusedTmpsOnStackThroughLoops, false);
+    AIR_POLICY_OF_CLIENT(bool, spillsTmpsReadInPlaceFirst, false);
     AIR_POLICY_OF_CLIENT(bool, spansStretchesOfClobbers, false);
     // A live range that is split around a call gets two moves there. However rarely they run, they take room, and the allocator a value of its own for each call.
     // So past the first few (AirLimits::clobberSitesWithoutLeastCost) a call costs at least this much, in uses at the frequency of the entry. Without it a value with two uses

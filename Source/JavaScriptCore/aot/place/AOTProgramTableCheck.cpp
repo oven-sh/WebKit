@@ -249,6 +249,11 @@ static void checkSortedTables(const TableCheck& check)
             everyVariableExists &= variable.offset() + (variable.place() == NamedVariableData::Place::NarrowWord ? sizeof(uint32_t) : sizeof(uint64_t)) <= check.tables.instanceSizes.sizeOfStatics;
     });
     check.expect(endsWhereAModuleEnds && everyVariableExists, ProgramTableRule::TableOutOfBounds);
+    bool everyCaptureExists = true;
+    bool endsWhereAFunctionEnds = forEachNamedCapture(check.tables.namedCaptures(), [&](const NamedCaptureData& capture) {
+        everyCaptureExists &= capture.name < check.program.strings.size() && capture.function >= check.tables.closureFunctions.first && capture.function < check.tables.closureFunctions.end;
+    });
+    check.expect(endsWhereAFunctionEnds && everyCaptureExists, ProgramTableRule::TableOutOfBounds);
     checkAscending(check.tables.compiledRuntimeModules(), &CompiledRuntimeModuleData::registryID);
     checkAscending(check.tables.stateOfLibraryModules(), [](const StateOfLibraryModuleData& state) { return static_cast<uint64_t>(state.moduleAndKind) << 32 | state.first; });
     check.expect(std::ranges::all_of(check.tables.stateOfLibraryModules(), [&](const StateOfLibraryModuleData& state) {

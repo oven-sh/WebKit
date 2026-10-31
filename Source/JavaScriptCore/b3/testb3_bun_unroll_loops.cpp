@@ -634,7 +634,7 @@ static void testUnrollLoopsLeavesPollToCopyOfLoopThatIsNotWrittenOut()
     }
 }
 
-// A rare way out asks about the counter and comes back in front of the loop, where the way from above has asked too: both ways know that the first turn runs, so a long turn takes no poll on each turn.
+// A rare way out comes back in front of the loop, whether or not it asks about the counter as the way from above has: a long turn takes no poll on each turn.
 static void testUnrollLoopsRunsCopyInStretchesWhereEveryWayInHasAskedAboutTheCounter()
 {
     constexpr int64_t stretch = Limits::maxTurnsWithoutPoll;
@@ -693,7 +693,7 @@ static void testUnrollLoopsRunsCopyInStretchesWhereEveryWayInHasAskedAboutTheCou
             CHECK_EQ(invoke<int64_t>(*code, first, bound, rareAt), static_cast<int64_t>(expected));
             int64_t turnsBehindWayBack = takesWayBack ? turns - 3 : turns;
             int64_t pollsInStretches = (turnsBehindWayBack - 1) / stretch;
-            CHECK_EQ(state.numberOfPolls, turnsBehindWayBack <= stretch ? 0 : wayBackAsks ? pollsInStretches : turns);
+            CHECK_EQ(state.numberOfPolls, turnsBehindWayBack <= stretch ? 0 : pollsInStretches);
         }
     }
 }

@@ -651,6 +651,22 @@ bool Modules::beginModuleInRecord(ModuleID module)
         RETURN_IF_EXCEPTION(scope, false);
     }
     if (m_filesToLoadAgain.get(module.index())) [[unlikely]] {
+        // A load that began before the file was taken out of the program has come to it. Under `bun run` it is the loader that evaluates the file then: once, for every import()
+        // that waits for it, and a failure stays with the loader. What require() finds behind that is the host's own affair.
+        JSGlobalObject* realm = m_instance.globalObject;
+        auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+        JSPromise* loaded = nullptr;
+        {
+            SetForScope isAskingHost(m_isAskingHost, true);
+            loaded = loader()->loadModuleSync(realm, keyWithoutForm(module), nullptr, nullptr);
+        }
+        RETURN_IF_EXCEPTION(scope, false);
+        if (loaded->status() == JSPromise::Status::Rejected) {
+            loaded->markAsHandled();
+            throwException(realm, scope, loaded->result());
+            return false;
+        }
+        scope.release();
         loadEvictedFile(module);
         return false;
     }
@@ -2428,6 +2444,9 @@ void Modules::captureNoExports(ModuleID file)
 // Of a file whose body has just thrown. The file ran in front of every ES module that imports it, so one that has begun was loaded by the file itself.
 bool Modules::wasImportedWhileItRan(ModuleID file) const
 {
+    // The run that the marks tell of is out of the program. What throws now is the host's load of the file, and the host's loader keeps the error.
+    if (isEvicted(file))
+        return false;
     if (LoadedModule* loaded = loadedIfExists(file); loaded && (loaded->wasLoadedWhileItRan || loaded->wasReachedBySecondLoad))
         return true;
     return std::ranges::any_of(m_table.importsOfHeldFile(file), [&](const ImportOfHeldFileData& import) {
@@ -3143,10 +3162,17 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         }
     }
     auto answer = [&](JSValue answered) {
-        if (wasBeingRequired && loaded.isKeptByRequire && loaded.objectMadeByRequire) [[unlikely]]
+        if (wasBeingRequired && loaded.isKeptByRequire && loaded.objectMadeByRequire) [[unlikely]] {
             loaded.objectMadeByRequire->putDirect(vm, vm.propertyNames->exports, answered);
+            loaded.exportsGivenToObjectMadeByRequire.set(*this, answered);
+        }
         return answered;
     };
+    // `require.cache[path].exports = other`: require() answers what the program has stored in the entry of the file. A mock changes the answer and leaves the entry as it is.
+    if (!wasBeingRequired && loaded.requiredValue && loaded.objectMadeByRequire) [[unlikely]] {
+        if (JSValue held = loaded.objectMadeByRequire->getDirect(vm, vm.propertyNames->exports); held && held != loaded.exportsGivenToObjectMadeByRequire.get())
+            return held;
+    }
     if (JSValue answered = loaded.requiredValue; answered && !isAnsweredAsByLoader)
         return answer(answered);
 
@@ -3453,6 +3479,7 @@ JSObject* Modules::moduleObjectMadeByRequire(ModuleID module)
     RETURN_IF_EXCEPTION(scope, nullptr);
     objects.module->putDirect(vm, vm.propertyNames->exports, answered);
     ensureLoaded(module).objectMadeByRequire.set(*this, objects.module);
+    ensureLoaded(module).exportsGivenToObjectMadeByRequire.set(*this, answered);
     return objects.module;
 }
 

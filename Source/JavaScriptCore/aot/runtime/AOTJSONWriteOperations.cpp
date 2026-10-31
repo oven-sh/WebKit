@@ -274,7 +274,7 @@ static NEVER_INLINE bool isListOfBoxedNumbers(const JSCell& cell)
         return false;
     const JSArray& list = *uncheckedDowncast<JSArray>(&cell);
     return std::ranges::all_of(std::span { list.butterfly()->contiguous().data(), list.length() }, [](const WriteBarrier<Unknown>& element) {
-        return !element || element.get().isNumber();
+        return !element || element.get().isNumber() || element.get().isUndefined();
     });
 }
 
@@ -307,7 +307,7 @@ static Latin1Character* appendBoxedNumbersWithCommas(Latin1Character* cursor, co
     const WriteBarrier<Unknown>* numbers = list.butterfly()->contiguous().data();
     for (unsigned index = begin; index < end; ++index) {
         JSValue number = numbers[index].get();
-        cursor = number ? appendJSONNumber(cursor, number.asNumber()) : appendJSONLiteral(cursor, "null"_s);
+        cursor = number && number.isNumber() ? appendJSONNumber(cursor, number.asNumber()) : appendJSONLiteral(cursor, "null"_s);
         *cursor++ = ',';
     }
     return cursor;

@@ -329,12 +329,11 @@ static InitializationState variableInitializationFor(InitializationState fieldIn
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static Variable createFieldVariable(const Program& program, ModuleID module, const Field& field)
+static Variable createFieldVariable(ModuleID module, const Field& field)
 {
     const LocationFlow& location = field.flow.location;
     Variable variable;
-    if (field.key)
-        variable.name = program.at(field.key).text;
+    variable.name = field.variableName;
     variable.module = module;
     variable.declared = field.declared;
     if (field.flags.contains(FieldFlags::IsImmutable))
@@ -350,10 +349,11 @@ static Variable createFieldVariable(const Program& program, ModuleID module, con
 }
 
 // Where the type of the value rests on a check, the generic version of the function stores what the check has turned away.
-static Variable createValueVariable(const Function& function, const PredictedValues& predicted, ValueID id, const DeclaredType& capture)
+static Variable createValueVariable(const Function& function, const PredictedValues& predicted, ValueID id, const DeclaredType& capture, StringID name)
 {
     const Value& value = function.at(id);
     Variable variable;
+    variable.name = name;
     variable.module = function.module;
     // A position has one type. What is expected of a value is worth keeping where nothing is proven of it.
     bool isOnlyExpected = value.type == TypeTable::anything && value.expected().predicted();
@@ -526,7 +526,7 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
         plan.promotedLayouts.set(layoutID.index());
         plan.firstVariables[layoutID.index()] = VariableID(program.variables.size() + plan.variables.size());
         for (const Field& field : layout.fields)
-            addVariable(createFieldVariable(program, module, field));
+            addVariable(createFieldVariable(module, field));
         isEdited.set(function.index());
     }
     for (auto [function, capture] : collectInParallel<std::pair<FunctionID, uint32_t>>(loops, numberOfFunctions, [&](unsigned index, Vector<std::pair<FunctionID, uint32_t>>& found) {
@@ -592,7 +592,7 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
     };
     UncheckedKeyHashMap<uint64_t, VariableID, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> variablesByValue;
     UncheckedKeyHashMap<uint32_t, std::unique_ptr<PredictedValues>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> predictedValuesOfFunctions;
-    auto ensureVariable = [&](const PromotedCaptureSource& source, const DeclaredType& capture) {
+    auto ensureVariable = [&](const PromotedCaptureSource& source, const DeclaredType& capture, StringID name) {
         if (source.variable)
             return source.variable;
         return variablesByValue.ensure(static_cast<uint64_t>(source.function.index()) << 32 | source.value.index(), [&] {
@@ -600,7 +600,7 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
             const PredictedValues& predicted = *predictedValuesOfFunctions.ensure(source.function.index(), [&] {
                 return makeUniqueWithoutFastMallocCheck<PredictedValues>(function, CFG(function));
             }).iterator->value;
-            VariableID variable = addVariable(createValueVariable(function, predicted, source.value, capture));
+            VariableID variable = addVariable(createValueVariable(function, predicted, source.value, capture, name));
             plan.storedValues.append({ variable, source.function, source.value });
             return variable;
         }).iterator->value;
@@ -628,7 +628,7 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
                 PromotedCaptureSource source = findCommonSource(closureFunction, capture, suppliersOfFunction);
                 if (!source || !fitsCapture(source, closureFunction, capture))
                     continue;
-                plannedCapture(closureFunction, capture) = { true, ensureVariable(source, captures[capture]), { } };
+                plannedCapture(closureFunction, capture) = { true, ensureVariable(source, captures[capture], captures[capture].variableName), { } };
                 ++plan.numberOfPromotedCaptures;
                 didChange = true;
             }
@@ -1825,6 +1825,7 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
                     const Field& fieldOfClosure = program.at(layout).fields[candidates.fields[member.candidate].field];
                     Field field;
                     field.declared = wanted.declared;
+                    field.variableName = declaredCaptures[index].variableName;
                     field.flags = fieldOfClosure.flags | OptionSet<FieldFlags> { FieldFlags::IsHidden, FieldFlags::IsAddedLate };
                     field.flow.location.writers = writerStateOf(writersOfFieldThatPassAdds()).state;
                     field.flow.location.stores = fieldOfClosure.flow.location.stores;

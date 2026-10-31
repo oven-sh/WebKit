@@ -8,7 +8,7 @@
 # CHECK-NEXT: [[made]]: Map ~ L0 = AssumeType v3 provenType=Map
 # CHECK-NEXT: : L0 = Check [[made]] expectedType=L0
 # CHECK-LABEL: function f3 name="look"
-# CHECK: [[given]]: L1|Map = AssumeType v0 provenType=L1|Map
+# CHECK: [[given]]: L1|Map ~ L0|L1 = AssumeType v0 provenType=L1|Map
 # CHECK-NEXT: : L0|L1 = Check [[given]] expectedType=L0|L1
 # CHECK-LABEL: function f4 name="only"
 # CHECK-NOT: = Check

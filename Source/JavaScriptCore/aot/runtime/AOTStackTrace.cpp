@@ -1616,7 +1616,7 @@ LineColumn obfuscatedPositionOf(const TraceFrame& frame)
 
 String sourceURLOf(ModuleID module)
 {
-    return module ? modulePath(module) : emptyString();
+    return module ? pathOfFileOfModule(module) : emptyString();
 }
 
 String sourceProviderURLOf(ModuleID module)

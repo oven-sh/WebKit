@@ -32,7 +32,12 @@ class CheckedFrameCells {
     WTF_MAKE_NONCOPYABLE(CheckedFrameCells);
 public:
     // Generated code tells a pointer into the range by its upper half.
+#if ASAN_ENABLED
+    // The allocator of the address sanitizer reserves the four terabytes in which the other address lies.
+    static constexpr uintptr_t startOfRange = 0x200000000000;
+#else
     static constexpr uintptr_t startOfRange = 0x7e0000000000;
+#endif
     static constexpr unsigned bitsOfOffsetInRange = 32;
 
     struct Allocation {

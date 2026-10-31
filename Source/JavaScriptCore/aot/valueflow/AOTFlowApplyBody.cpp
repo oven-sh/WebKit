@@ -262,7 +262,7 @@ static void expectWhatArrives(const FlowCastInsertion& insertion, std::span<cons
     const UseLists& useLists = insertion.analyses.useLists();
     Vector<ValueID, 8> worklist;
     for (const FlowValueProof& proof : proofs) {
-        const Type& arriving = types.at(proof.type);
+        const Type& arriving = types.at(proof.typeByLayoutsOfClassesBelowBuiltinClasses ? proof.typeByLayoutsOfClassesBelowBuiltinClasses : proof.type);
         if (!arriving.hasObjects() || arriving.anyObject || arriving.anyFunction)
             continue;
         if (TypeID expected = function.at(proof.value).expected().predicted(); expected && leavesOutOnlyInstancesOfBuiltinClasses(types.at(expected), arriving, types))

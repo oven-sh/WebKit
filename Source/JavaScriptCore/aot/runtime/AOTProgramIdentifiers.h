@@ -16,6 +16,7 @@
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/text/AtomString.h>
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/UniquedStringImpl.h>
@@ -77,6 +78,21 @@ public:
     JS_EXPORT_PRIVATE std::optional<uint32_t> numberOf(UniquedStringImpl*) const;
     void createEngineSymbols();
 
+    // Under what a heap snapshot shows a variable of an environment, by its record in the image, and what a closure holds, by the number of the closure and the slot.
+    // The thread of the VM names them before the snapshot. The collector's threads read the names while it is taken.
+    void nameForHeapSnapshots(const void* variable, const AtomString& name) { m_namesOfVariables.set(variable, name); }
+    void nameForHeapSnapshots(uint32_t closureNumber, uint32_t slot, const AtomString& name) { m_namesOfCaptures.set(keyOfCapture(closureNumber, slot), name); }
+    UniquedStringImpl* nameInHeapSnapshots(const void* variable) const
+    {
+        auto entry = m_namesOfVariables.find(variable);
+        return entry == m_namesOfVariables.end() ? nullptr : entry->value.impl();
+    }
+    UniquedStringImpl* nameInHeapSnapshots(uint32_t closureNumber, uint32_t slot) const
+    {
+        auto entry = m_namesOfCaptures.find(keyOfCapture(closureNumber, slot));
+        return entry == m_namesOfCaptures.end() ? nullptr : entry->value.impl();
+    }
+
     static String textOf(const Image&, uint32_t number);
     // What the atom table asks before it makes an atom. Text made at run time that equals a name of the image is that name.
     static AtomStringImpl* findAtom(StringView, unsigned hash);
@@ -95,6 +111,7 @@ private:
     };
     using NativeTextFingerprintSet = std::array<NativeTextFingerprint, 4>;
 
+    static uint64_t keyOfCapture(uint32_t closureNumber, uint32_t slot) { return static_cast<uint64_t>(closureNumber) << 32 | slot; }
     AtomStringImpl* findAtomOfNativeTextByCharacters(std::span<const Latin1Character>);
     JS_EXPORT_PRIVATE UniquedStringImpl* uidSlowCase(uint32_t number);
     Identifier create(uint32_t number) const;
@@ -115,6 +132,8 @@ private:
     ProgramSymbols m_symbols;
     mutable Lock m_symbolsLock;
     UncheckedKeyHashMap<UniquedStringImpl*, uint32_t> m_numbersOfSymbols WTF_GUARDED_BY_LOCK(m_symbolsLock);
+    UncheckedKeyHashMap<const void*, AtomString> m_namesOfVariables;
+    UncheckedKeyHashMap<uint64_t, AtomString, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesOfCaptures;
     std::array<NativeText, 128> m_recentNativeTexts;
     std::array<NativeTextFingerprintSet, 32> m_nativeTextsByCharacters;
 };

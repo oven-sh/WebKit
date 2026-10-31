@@ -21,6 +21,7 @@
 #include "AOTLayoutData.h"
 #include "AOTModuleTable.h"
 #include "AOTObjectModel.h"
+#include "AOTProgramIdentifiers.h"
 #include "AOTProgramStrings.h"
 #include "AOTPropertyWalk.h"
 #include "AOTRuntimeValidation.h"
@@ -64,10 +65,16 @@ static ALWAYS_INLINE void validateIsNotInFrame(VM& vm, const JSCell* closure)
         validateFunctionCellIsNotInFrame(vm, closure);
 }
 
-static void analyzeCaptures(JSCell* cell, std::span<const uint64_t> captures, unsigned numberOfReferences, HeapAnalyzer& analyzer)
+static void analyzeCaptures(JSCell* cell, uint32_t closureNumber, std::span<const uint64_t> captures, unsigned numberOfReferences, HeapAnalyzer& analyzer)
 {
+    const ProgramIdentifiers& identifiers = *cell->vm().aotState().identifiers;
     for (unsigned i = 0; i < numberOfReferences; ++i) {
-        if (JSValue reference = JSValue::decode(captures[i]); reference && reference.isCell())
+        JSValue reference = JSValue::decode(captures[i]);
+        if (!reference || !reference.isCell())
+            continue;
+        if (UniquedStringImpl* name = identifiers.nameInHeapSnapshots(closureNumber, i))
+            analyzer.analyzeVariableNameEdge(cell, reference.asCell(), name);
+        else
             analyzer.analyzeIndexEdge(cell, reference.asCell(), i);
     }
 }
@@ -140,7 +147,7 @@ void Closure::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
     Closure* closure = uncheckedDowncast<Closure>(cell);
     if (closure->m_entry)
-        analyzeCaptures(cell, closure->captures(), closure->numberOfReferences(), analyzer);
+        analyzeCaptures(cell, closure->closureNumber(), closure->captures(), closure->numberOfReferences(), analyzer);
 }
 
 JSC_DEFINE_HOST_FUNCTION(callClassConstructor, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -938,14 +945,14 @@ void SlimClosure::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     SlimClosure* closure = uncheckedDowncast<SlimClosure>(cell);
     JSCell::analyzeHeap(cell, analyzer);
     if (closure->m_word)
-        analyzeCaptures(cell, closure->captures(), closure->numberOfReferences(), analyzer);
+        analyzeCaptures(cell, closure->closureNumber(), closure->captures(), closure->numberOfReferences(), analyzer);
 }
 
 void ReifiedSlimClosure::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     ReifiedSlimClosure* closure = uncheckedDowncast<ReifiedSlimClosure>(cell);
     Base::analyzeHeap(cell, analyzer);
-    analyzeCaptures(cell, closure->captures(), closure->numberOfReferences(), analyzer);
+    analyzeCaptures(cell, closure->closureNumber(), closure->captures(), closure->numberOfReferences(), analyzer);
 }
 
 size_t SlimClosure::estimatedSize(JSCell* cell, VM&)

@@ -608,7 +608,7 @@ static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph&
     BitVector isUnderNameThatIsCalled(count);
     BitVector isUnderNameReadAsValue(count);
     auto mayStandWhereValueIsCalled = [&](FunctionID function) {
-        return hasEscaped.quickGet(function.index()) && (hasCallersInOtherImages || !names.isUnderSomeName(function) || isUnderNameReadAsValue.quickGet(function.index()) || (evaluatesText && !isLibraryCode(program, program.at(function))));
+        return hasEscaped.quickGet(function.index()) && (hasCallersInOtherImages || !names.isUnderSomeName(function) || isUnderNameReadAsValue.quickGet(function.index()) || seen.isAccessorReachedUnderItsName.quickGet(function.index()) || (evaluatesText && !isLibraryCode(program, program.at(function))));
     };
     bool constructsValue = false;
     Vector<Vector<FunctionID>> functionsWaitingFor(program.modules.size());

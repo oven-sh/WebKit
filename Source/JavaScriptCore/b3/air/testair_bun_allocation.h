@@ -24,6 +24,7 @@
         RUN(testValuesLiveAcross32And33Calls()); \
         RUN(testValueReadByRareClobberStaysInRegisterInLoop()); \
         RUN(testCursorsOfRareLoopTakeRegistersOfWordsThatPassThrough()); \
+        RUN(testBoundThatLoopComparesWithLeavesItsRegisterToValuesOfRarePath()); \
         RUN(testBlocksWithoutSuccessorsMoveToEnd()); \
         RUN(testDeadDefSurvivesAllocation()); \
         RUN(testClobberValidationSeesDeadClobbers()); \
@@ -1120,6 +1121,92 @@ void testCursorsOfRareLoopTakeRegistersOfWordsThatPassThrough()
             std::array<int64_t, 4> walked = walks ? std::array<int64_t, 4> { 1, 3, 6, 0 } : std::array<int64_t, 4> { 1, 2, 3, 0 };
             for (unsigned index = 0; index < walked.size(); ++index)
                 CHECK(memory[numberOfWords + 1 + index] == walked[index]);
+        }
+    }
+}
+
+struct LoopWithRarePath {
+    BasicBlock* test;
+    BasicBlock* rarePath;
+    unsigned numberOfWords;
+};
+
+// do { for each word: sum += *word; if (!(++counter & 7)) { cell = words[0][numberOfWords]; sum += cell[0] + cell[1] + cell[2]; } } while (counter < bound);
+// The addresses of the words, the sum, the counter and the bound leave two registers. The rare path needs three.
+static LoopWithRarePath buildLoopThatComparesWithBound(B3::Procedure& proc)
+{
+    proc.setOptLevel(2);
+    Code& code = proc.code();
+    unsigned numberOfWords = code.regsInPriorityOrder(GP).size() - 5;
+
+    BasicBlock* root = code.addBlock();
+    BasicBlock* loop = code.addBlock(10);
+    BasicBlock* rarePath = code.addBlock(0.01);
+    BasicBlock* test = code.addBlock(10);
+    BasicBlock* done = code.addBlock();
+    Tmp bound = code.newTmp(GP);
+    Tmp counter = code.newTmp(GP);
+    Tmp sum = code.newTmp(GP);
+    Tmp lowBits = code.newTmp(GP);
+    Tmp cell = code.newTmp(GP);
+    Tmp read = code.newTmp(GP);
+    Tmp second = code.newTmp(GP);
+    Vector<Tmp> words;
+    for (unsigned index = 0; index < numberOfWords; ++index) {
+        words.append(code.newTmp(GP));
+        root->append(Add64, nullptr, Arg::imm(static_cast<int32_t>(index * sizeof(int64_t))), argumentTmp(0), words.last());
+    }
+    root->append(Move, nullptr, argumentTmp(1), bound);
+    root->append(Move, nullptr, Arg::imm(0), counter);
+    root->append(Move, nullptr, Arg::imm(0), sum);
+    appendJump(root, loop);
+    for (Tmp word : words)
+        loop->append(Add64, nullptr, Arg::addr(word), sum);
+    loop->append(Add64, nullptr, Arg::imm(1), counter);
+    loop->append(Move, nullptr, counter, lowBits);
+    loop->append(And64, nullptr, Arg::imm(7), lowBits);
+    appendBranchTest(loop, lowBits, test, rarely(rarePath));
+    rarePath->append(Move, nullptr, Arg::addr(words[0], static_cast<int32_t>(numberOfWords * sizeof(int64_t))), cell);
+    rarePath->append(Move, nullptr, Arg::addr(cell), read);
+    rarePath->append(Move, nullptr, Arg::addr(cell, static_cast<int32_t>(sizeof(int64_t))), second);
+    rarePath->append(Add64, nullptr, Arg::addr(cell, static_cast<int32_t>(2 * sizeof(int64_t))), read);
+    rarePath->append(Add64, nullptr, second, read);
+    rarePath->append(Add64, nullptr, read, sum);
+    appendJump(rarePath, test);
+    test->append(Branch64, nullptr, Arg::relCond(MacroAssembler::LessThan), counter, bound);
+    test->setSuccessors(loop, done);
+    done->append(Move, nullptr, sum, returnTmp());
+    appendReturn(done);
+    code.resetReachability();
+    return { test, rarePath, numberOfWords };
+}
+
+void testBoundThatLoopComparesWithLeavesItsRegisterToValuesOfRarePath()
+{
+    for (bool spillsTmpsReadInPlaceFirst : { false, true }) {
+        B3::Policy policy;
+        enableAllAllocatorFields(policy.air);
+        policy.air.registers.chargesForCalleeSaves = false;
+        policy.air.splitting.spillsTmpsReadInPlaceFirst = spillsTmpsReadInPlaceFirst;
+        if (isX86()) {
+            B3::Procedure proc(policy);
+            LoopWithRarePath built = buildLoopThatComparesWithBound(proc);
+            allocateRegistersByGreedy(proc.code());
+            CHECK(namesStackSlot(built.test) == spillsTmpsReadInPlaceFirst);
+            CHECK(namesStackSlot(built.rarePath) == !spillsTmpsReadInPlaceFirst);
+        }
+        for (int64_t turns : { 1, 7, 8, 100 }) {
+            B3::Procedure proc(policy);
+            unsigned numberOfWords = buildLoopThatComparesWithBound(proc).numberOfWords;
+            Vector<int64_t> memory;
+            int64_t sumOfWords = 0;
+            for (unsigned index = 0; index < numberOfWords; ++index) {
+                memory.append(1000003 + index);
+                sumOfWords += memory.last();
+            }
+            memory.appendList({ 0, 70001, 900007, 11 });
+            memory[numberOfWords] = std::bit_cast<int64_t>(&memory[numberOfWords + 1]);
+            CHECK(compileAndRun<int64_t>(proc, memory.span().data(), turns) == turns * sumOfWords + (turns / 8) * (70001 + 900007 + 11));
         }
     }
 }

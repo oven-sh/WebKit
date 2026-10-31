@@ -439,6 +439,13 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         inputs.nodesAskedFor = nodesAskedFor.get();
         solution->letGoOfRecordsAskedFor();
         inputs.classesOfBuiltinResults = &classesOfBuiltinResults;
+        Vector<ValueFlowObjectID> madeForSuperCalls;
+        for (auto [object, builtinClass] : classesOfBuiltinResults) {
+            if (builtinClass && !program.builtins().at(builtinClass).hasClosureInstances && inputs.universe().layoutOf(ValueFlowObjectID(object)))
+                madeForSuperCalls.append(ValueFlowObjectID(object));
+        }
+        BorrowedValueSetMaker maker(inputs.makerPool());
+        inputs.objectsMadeForSuperCalls = maker.get().of(madeForSuperCalls.span());
         inputs.layoutsOfSites = &layoutsOfSites;
     });
     auto ledgerOfClosures = add("ledger: classes and closures"_s, { firstResults }, [&](PhaseTimes&) {

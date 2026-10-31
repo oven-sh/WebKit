@@ -1420,6 +1420,7 @@ void hostDidCreateRealm(JSGlobalObject* realm)
         Instance::forEachOf(realm, [](Instance& instance) {
             didInstallBuiltins(instance);
         });
+        RuntimeHooks::installDeferredWatchpoints(realm);
     } else if (locksBuiltins(realm))
         lockBuiltinsOfTable(realm);
 }

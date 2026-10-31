@@ -1,4 +1,5 @@
 # error = new Error; somethingNoTableLists.held = error; `${somethingNoTableLists}`; `${error}`
+# TODO: row 3380: where no unknown code writes, what an escaped object finds above it goes by the order of the rules of flow
 # RUN: valueflow-solve used
 # CHECK: used ErrorPrototypeMessage
 # CHECK: used ErrorPrototypeName

@@ -98,6 +98,8 @@ struct ModuleHost {
     // A graph has come to a module with a mock whose factory has not run. Null in a host without mocks.
     void (*runMock)(JSGlobalObject*, ModuleID);
     bool (*loadsSynchronously)(JSGlobalObject*, ModuleID);
+    // Calls deliverTextThatWaits() from its event loop, once for each call: in a later turn, behind every job that waits, and with every job run between two of them. Null in a host without an event loop.
+    void (*callInLaterTurn)(JSGlobalObject*);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);
@@ -109,6 +111,8 @@ JS_EXPORT_PRIVATE bool holdsFormThatAttributeAsksFor(StringView publicPath);
 JS_EXPORT_PRIVATE bool mayHoldPathStartingWith(StringView start);
 JS_EXPORT_PRIVATE bool isLeftToCodeOutsideImage(StringView specifier, StringView directoryOfImporter);
 JS_EXPORT_PRIVATE String modulePath(ModuleID);
+// What a stack trace names: modulePath() without the query that the module was asked for with.
+String pathOfFileOfModule(ModuleID);
 // The URL of the source provider that the engine would run the module from. A text that the program evaluates, `new Function(text)`, has none.
 String sourceProviderURL(ModuleID);
 JS_EXPORT_PRIVATE bool entryPointIsCommonJS(JSGlobalObject*);
@@ -132,6 +136,8 @@ JS_EXPORT_PRIVATE void willLoadCopyFromDisk(JSGlobalObject*, ModuleID, LoadByNam
 // ModuleHost::loadsSynchronously: the first load of a file decides for the VM. Where a run goes through several processes, one after another, the host hands what one has decided to the next.
 JS_EXPORT_PRIVATE void forEachFirstLoad(VM&, const ScopedLambda<void(const String& path, bool wasSynchronous)>&);
 JS_EXPORT_PRIVATE void noteFirstLoadInEarlierProcess(VM&, const String& path, bool wasSynchronous);
+// ModuleHost::callInLaterTurn.
+JS_EXPORT_PRIVATE void deliverTextThatWaits(VM&);
 JS_EXPORT_PRIVATE void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>&);
 // The files that have run in a program that counts how often its places run: what the compiler said of the file, and the counts by the compiler's numbers. Places past the end have not run.
 JS_EXPORT_PRIVATE void forEachCountedFile(VM&, const ScopedLambda<void(const String& description, std::span<const uint64_t> counts)>&);

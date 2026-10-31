@@ -89,6 +89,7 @@ void Policy::disable(PolicySwitch policySwitch)
         air.splitting.splitsAroundClobbersEarly = false;
         air.splitting.splitsAroundClobbersThatRead = false;
         air.splitting.keepsUnusedTmpsOnStackThroughLoops = false;
+        air.splitting.spillsTmpsReadInPlaceFirst = false;
         air.splitting.spansStretchesOfClobbers = false;
         air.splitting.leastCostOfSplitAroundClobber = 0;
         air.splitting.splitsIntoClustersOverBlocks = false;

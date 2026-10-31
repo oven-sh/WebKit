@@ -482,6 +482,7 @@ void TextParser::parseItem(const TextItem& item)
     case ProgramList::Types:
     case ProgramList::ClassParts:
     case ProgramList::DeclaredTypes:
+    case ProgramList::DeclaredCaptures:
     case ProgramList::Fields:
     case ProgramList::StaticFields:
     case ProgramList::ModuleRequests:
