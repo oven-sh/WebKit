@@ -178,8 +178,8 @@ void MarkedMicrotaskDeque::visitAggregateImpl(Visitor& visitor)
 }
 DEFINE_VISIT_AGGREGATE(MarkedMicrotaskDeque);
 
-// Kept out of line so drainImpl's frame has no rarely written slots. The conservative scan would keep whatever stale pointer
-// such a slot holds alive for as long as the drain loop runs.
+// Kept out of line so drainImpl's frame has no rarely written slots. A stale copy of a pointer left in such a slot keeps its
+// object alive for as long as the drain loop runs.
 static NEVER_INLINE void dequeueWithoutRunning(MarkedMicrotaskDeque& queue, MarkedMicrotaskDeque& toKeep, QueuedTask::Result result)
 {
     auto task = queue.dequeue();

@@ -16,6 +16,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTLayout.h"
 #include "AOTLedger.h"
+#include "AOTSharedPrefixList.h"
 #include "AOTSort.h"
 #include "AOTSortedSet.h"
 #include "AOTStronglyConnectedComponents.h"
@@ -41,16 +42,6 @@ namespace JSC { namespace AOT { namespace Typed {
 namespace {
 
 template<typename Key, typename Mapped> using MapByNumber = HashMap<Key, Mapped, IntHash<Key>, WTF::UnsignedWithZeroKeyHashTraits<Key>>;
-
-struct ConstructionName {
-    PropertyKeyID key;
-    FieldReference field;
-    bool standsForValue { false };
-
-    friend auto operator<=>(const ConstructionName&, const ConstructionName&) = default;
-};
-
-using ConstructionNames = SortedSet<ConstructionName>;
 
 enum class ConstructionEventKind : uint8_t { Store, Read, Leak, Call, Exit };
 
@@ -111,7 +102,7 @@ struct SolvedConstruction {
     ConstructionNames readBeforeStore;
     ConstructionNames readNames;
     ConstructionNames selfReferenceNames;
-    Vector<ConstructionName> initialOrder;
+    SharedPrefixList<ConstructionName> initialOrder;
     ConstructionNames namesInInitialOrder;
     // What follows the order of the function that the object is first passed on to.
     Vector<ConstructionName> ownPartOfInitialOrder;
@@ -1449,7 +1440,7 @@ struct InitialOrderBuilder {
         if (createsOwnKey(point) && !isAccepted(nameAt(point)))
             return false;
         return std::ranges::all_of(resolvedAt(point).callees, [&](uint32_t callee) {
-            return solvedOf(callee).storesOnlyInInitialOrder && std::ranges::all_of(solvedOf(callee).initialOrder, isAccepted);
+            return solvedOf(callee).storesOnlyInInitialOrder && solvedOf(callee).initialOrder.allOf(isAccepted);
         });
     }
 
@@ -1492,9 +1483,13 @@ struct InitialOrderBuilder {
         });
         if (!calleesAgree)
             return false;
-        for (const ConstructionName& name : first.initialOrder) {
-            if (!acceptedNames.contains(name))
-                node.solved.initialOrder.append(name);
+        if (acceptedNames.isEmpty())
+            node.solved.initialOrder = first.initialOrder;
+        else {
+            first.initialOrder.forEach([&](const ConstructionName& name) {
+                if (!acceptedNames.contains(name))
+                    node.solved.initialOrder.append(name);
+            });
         }
         acceptedNames.unite(first.namesInInitialOrder);
         return first.storesOnlyInInitialOrder;
@@ -1561,7 +1556,10 @@ void solveConstructions(ConstructionGraph& graph, const BitVector* nodesThatAreR
             if (node.summary) {
                 solveStoredNames(graph, node);
                 InitialOrderBuilder { graph, node }.build();
-                node.solved.ownPartOfInitialOrder = Vector<ConstructionName>(node.solved.initialOrder.span().subspan(parentOrderLength(graph, node)));
+                node.solved.initialOrder.allOfFrom(parentOrderLength(graph, node), [&](const ConstructionName& name) {
+                    node.solved.ownPartOfInitialOrder.append(name);
+                    return true;
+                });
             }
         }
         for (uint32_t callee : node.callees) {
@@ -1773,20 +1771,25 @@ Vector<uint32_t, 2> findMakers(const ValueFlowResultInputs& inputs, const Constr
     return makers;
 }
 
-void listNamesStoredByEveryMaker(const ConstructionGraph& graph, std::span<const uint32_t> makers, Vector<PropertyKeyID>& keys, Vector<FieldReference>& fields, Vector<PropertyKeyID>* keysStoredWithValue)
+ConstructionNames namesStoredByEveryMaker(const ConstructionGraph& graph, std::span<const uint32_t> makers)
 {
     ConstructionNames stored = graph.nodes[makers[0]].solved.storedBeforeLeak;
     for (uint32_t maker : makers.subspan(1))
         stored.intersect(graph.nodes[maker].solved.storedBeforeLeak);
-    for (ConstructionName name : stored) {
+    return stored;
+}
+
+void listNamesStoredByEveryMaker(const ConstructionGraph& graph, std::span<const uint32_t> makers, Vector<PropertyKeyID>& keys, Vector<FieldReference>& fields, Vector<PropertyKeyID>& keysStoredWithValue)
+{
+    namesStoredByEveryMaker(graph, makers).forEach([&](const ConstructionName& name) {
         if (name.standsForValue) {
-            if (name.key && keysStoredWithValue)
-                keysStoredWithValue->append(name.key);
+            if (name.key)
+                keysStoredWithValue.append(name.key);
         } else if (name.key)
             keys.append(name.key);
         else
             fields.append(name.field);
-    }
+    });
 }
 
 // `const table = {}; table.a = 1; table.b = 2;` in the body of a file, and what tsc emits for an enum or a namespace: `(function (E) { E[E["A"] = 0] = "A"; })(E || (E = {}));`.
@@ -2157,7 +2160,7 @@ ValueFlowConstructions computeConstructions(const ValueFlowResultInputs& inputs,
             continue;
         construction.isFollowed = true;
         construction.createsFieldsOnlyInListedOrders = createsFieldsOnlyInListedOrders;
-        listNamesStoredByEveryMaker(graph, makers.span(), construction.keysStoredBeforeObjectLeaks, construction.fieldsStoredBeforeObjectLeaks, nullptr);
+        construction.namesStoredBeforeObjectLeaks = namesStoredByEveryMaker(graph, makers.span());
     }
 
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
@@ -2203,7 +2206,7 @@ ValueFlowConstructions computeConstructions(const ValueFlowResultInputs& inputs,
     solveConstructions(graphUnderGuards, &nodesThatAreRead);
     for (auto& [index, makers] : makersOfLayouts) {
         ValueFlowConstructions::OfLayout& construction = result.layouts[index];
-        listNamesStoredByEveryMaker(graphUnderGuards, makers.span(), construction.keysStoredAtBirth, construction.fieldsStoredAtBirth, &construction.keysStoredWithValueAtBirth);
+        listNamesStoredByEveryMaker(graphUnderGuards, makers.span(), construction.keysStoredAtBirth, construction.fieldsStoredAtBirth, construction.keysStoredWithValueAtBirth);
     }
     addBirthsOfLiterals(inputs, tables, result);
     for (const TaggedFamily& family : program.taggedFamilies) {
@@ -2212,8 +2215,7 @@ ValueFlowConstructions computeConstructions(const ValueFlowResultInputs& inputs,
             ValueFlowConstructions::OfLayout& construction = result.layouts[member.layout.index()];
             construction.isFollowed = maker.isFollowed;
             construction.isNewTargetOfOtherFunctions = maker.isNewTargetOfOtherFunctions;
-            construction.keysStoredBeforeObjectLeaks = maker.keysStoredBeforeObjectLeaks;
-            construction.fieldsStoredBeforeObjectLeaks = maker.fieldsStoredBeforeObjectLeaks;
+            construction.namesStoredBeforeObjectLeaks = maker.namesStoredBeforeObjectLeaks;
             construction.keysStoredAtBirth = maker.keysStoredAtBirth;
             construction.keysStoredWithValueAtBirth = maker.keysStoredWithValueAtBirth;
         }

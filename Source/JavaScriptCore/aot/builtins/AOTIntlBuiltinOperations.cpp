@@ -477,6 +477,7 @@ static ALWAYS_INLINE JSCell* newFormatterWithPattern(JSGlobalObject* globalObjec
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* formatter = Formatter::create(vm, structure);
     bindFormatToPattern(globalObject, *formatter, function, header, isMadeByThisICU(*header) && readsOptionsAsBuildDid(globalObject, *header));
+    scope.releaseAssertNoException();
     if (!header->readsOptions)
         setUpFromArguments(globalObject, *formatter, *header);
     scope.releaseAssertNoException();

@@ -80,7 +80,7 @@ layout L3 name="Item" fields=[{key="x" declared={type=number}}] flow={constructo
 # CHECK-NEXT: = StringBuilderAppendJSON v1, [[object2]], [[i2]], [[isListed2]]
 # CHECK: ([[object2]]: object ~ L3):
 # CHECK-NEXT: [[shape2]]: boolean = ShapeTest [[object2]] layouts=[L3]
-# CHECK: [[outcome2]]:{{*}}= CallDirect [[object2]], v1 function=[[serializerOfItem]]
+# CHECK: [[outcome2]]:{{*}}= CallDirect [[object2]], v1, {{*}} function=[[serializerOfItem]]
 # CHECK-NEXT: Switch [[outcome2]] cases=[1] -> case [[written2]](), otherwise [[unknown2]]()
 # CHECK: [[unknown2]]() frequency=Rare:
 # CHECK-NEXT: Jump -> next [[gaveUp2]]()

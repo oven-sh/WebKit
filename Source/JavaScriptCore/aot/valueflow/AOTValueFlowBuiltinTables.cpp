@@ -155,8 +155,7 @@ bool mayBeInstanceOf(const BuiltinTable& builtins, BuiltinClassID madeAs, Builti
     return false;
 }
 
-ValueFlowBuiltinTables::ValueFlowBuiltinTables(const BuiltinTable& builtins, uint64_t mostObjectsOfTypedResult)
-    : m_mostObjectsOfTypedResult(mostObjectsOfTypedResult)
+ValueFlowBuiltinTables::ValueFlowBuiltinTables(const BuiltinTable& builtins)
 {
     m_classesAtOrBelow.grow(builtins.classCount());
     for (uint32_t index = 0; index < builtins.classCount(); ++index) {

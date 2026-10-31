@@ -645,7 +645,7 @@ void Heap::deprecatedReportExtraMemorySlowCase(size_t size)
 
 #if USE(MEMORY_FOOTPRINT_API) && USE(BUN_JSC_ADDITIONS)
 // Kept out of line. Link-time optimization would otherwise inline this, down to the struct that WTF::memoryFootprint() fills, into collectNow() and the
-// allocation slow path. Their frames are on the stack during a collection, and the conservative scan would read whatever stale pointers lie in that struct's unwritten slots.
+// allocation slow path. Their frames are on the stack during a collection, and a stale copy of a pointer left in an unwritten word of that struct keeps its object alive.
 static NEVER_INLINE bool isOverCriticalMemoryThreshold()
 {
     return WTF::percentAvailableMemoryInUse() > Options::criticalGCMemoryThreshold();
@@ -2145,7 +2145,7 @@ NEVER_INLINE void Heap::collectInMutatorThreadUntilDone()
 }
 
 // Kept out of line so waitForCollector's frame has no rarely written slots. When the mutator runs the collection itself it does so
-// below that frame and never parks, and the conservative scan would keep whatever stale pointers the slots hold alive.
+// below that frame and never parks, and a stale copy of a pointer left in such a slot keeps its object alive.
 static NEVER_INLINE void parkWhileWorldStateIs(Atomic<unsigned>& worldState, unsigned expected)
 {
     ParkingLot::compareAndPark(&worldState, expected);

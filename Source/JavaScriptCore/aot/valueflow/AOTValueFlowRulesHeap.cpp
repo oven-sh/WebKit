@@ -1673,13 +1673,8 @@ void HeapRule::runOperation()
     case Opcode::NewArray: {
         ClimbingSet array(only(m_universe.siteObject(m_statement)));
         ValueFlowNodeID contents = m_context.written(array, elementsName);
-        std::span<const ValueFlowOperand> elements = m_operands.subspan(At::NewArray::elements);
-        for (const ValueFlowOperand& element : elements)
+        for (const ValueFlowOperand& element : m_operands.subspan(At::NewArray::elements))
             connect(element, contents);
-        if (m_universe.siteOf(m_universe.siteObject(m_statement))->isPairLiteral) {
-            connect(elements[0], m_context.written(array, keyOfEntriesPair));
-            connect(elements[1], m_context.written(array, valueOfEntriesPair));
-        }
         return;
     }
     case Opcode::NewTemplateObject: {
@@ -1708,7 +1703,6 @@ void HeapRule::runOperation()
         struct Pending {
             const DataNode* node;
             ValueFlowNodeID holder;
-            ValueFlowNodeID partOfPair { };
         };
         auto textOf = [&](const DataNode& node) {
             std::optional<PropertyKeyID> key = m_program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = node.as<DataNode::String>().value });
@@ -1716,33 +1710,26 @@ void HeapRule::runOperation()
         };
         Vector<Pending, 32> pending { Pending { &m_program.at(operation().data()).root, { } } };
         for (uint32_t ordinal = 0; !pending.isEmpty(); ++ordinal) {
-            auto [node, holder, partOfPair] = pending.takeLast();
-            auto give = [&](auto values) {
-                add(holder, values);
-                if (partOfPair)
-                    add(partOfPair, values);
-            };
+            auto [node, holder] = pending.takeLast();
             switch (node->kind()) {
             case DataNode::Kind::Array: {
                 ClimbingSet array(only(m_universe.siteObject(m_statement, ordinal)));
-                give(array);
+                add(holder, array);
                 ValueFlowNodeID contents = m_context.written(array, elementsName);
                 const Vector<DataNode>& items = node->as<DataNode::Array>().elements;
                 Members texts;
-                bool isPair = m_universe.siteOf(m_universe.siteObject(m_statement, ordinal))->isPairLiteral;
                 for (size_t index = items.size(); index--;) {
                     bool isText = items[index].kind() == DataNode::Kind::String;
                     if (isText)
                         texts.append(textOf(items[index]));
-                    ValueFlowNodeID part = isPair && index < 2 ? m_context.written(array, index ? valueOfEntriesPair : keyOfEntriesPair) : ValueFlowNodeID();
-                    pending.append({ &items[index], isText ? ValueFlowNodeID() : contents, part });
+                    pending.append({ &items[index], isText ? ValueFlowNodeID() : contents });
                 }
                 add(contents, m_context.maker().of(texts.span()));
                 break;
             }
             case DataNode::Kind::Object: {
                 ClimbingSet object(only(m_universe.siteObject(m_statement, ordinal)));
-                give(object);
+                add(holder, object);
                 const Vector<DataMember>& members = node->as<DataNode::Object>().members;
                 for (size_t index = members.size(); index--;)
                     pending.append({ &members[index].value, m_context.written(object, writtenName(keyNamed(members[index].key), HeapPropertyPart::Value)) });
@@ -1750,23 +1737,23 @@ void HeapRule::runOperation()
             }
             case DataNode::Kind::Undefined:
             case DataNode::Kind::Hole:
-                give(m_universe.undefinedValue());
+                add(holder, m_universe.undefinedValue());
                 break;
             case DataNode::Kind::Null:
-                give(kinds(Primitive::Null));
+                add(holder, kinds(Primitive::Null));
                 break;
             case DataNode::Kind::Boolean:
-                give(kinds(node->as<DataNode::Boolean>().value ? Primitive::True : Primitive::False));
+                add(holder, kinds(node->as<DataNode::Boolean>().value ? Primitive::True : Primitive::False));
                 break;
             case DataNode::Kind::Number:
-                give(kinds(static_cast<uint16_t>(primitiveOfNumber(node->as<DataNode::Number>().value))));
+                add(holder, kinds(static_cast<uint16_t>(primitiveOfNumber(node->as<DataNode::Number>().value))));
                 break;
             case DataNode::Kind::String:
-                if (holder || partOfPair)
-                    give(only(textOf(*node)));
+                if (holder)
+                    add(holder, only(textOf(*node)));
                 break;
             case DataNode::Kind::BigInt:
-                give(kinds(Primitive::BigInt));
+                add(holder, kinds(Primitive::BigInt));
                 break;
             }
         }

@@ -14,6 +14,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <wtf/DataLog.h>
 #include <wtf/FileSystem.h>
 #include <wtf/Lock.h>
 #include <wtf/MonotonicTime.h>
@@ -56,6 +57,7 @@ static constexpr Seconds silenceLimit = 100_s;
 #endif
 
 static Lock spawnLock;
+static bool printsLineAfterEachChildProcess;
 
 using OutputBuffer = std::array<uint8_t, 16 * KB>;
 
@@ -543,7 +545,15 @@ ChildProcessResult ChildProcessLauncher::run(std::span<const String> arguments) 
         commandLine.append(argument);
     for (const String& argument : m_sharedArguments)
         commandLine.append(argument);
-    return runProcess(commandLine);
+    ChildProcessResult result = runProcess(commandLine);
+    if (printsLineAfterEachChildProcess)
+        dataLogLn(lineAfterChildProcess);
+    return result;
+}
+
+void printLineAfterEachChildProcess()
+{
+    printsLineAfterEachChildProcess = true;
 }
 
 } } // namespace JSC::AOT

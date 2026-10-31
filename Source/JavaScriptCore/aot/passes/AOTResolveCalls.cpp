@@ -494,15 +494,6 @@ static bool canPassRestArguments(const Program& program, const Function& callee)
     return rest.anyObject || rest.findClassPart(BuiltinClasses::Array);
 }
 
-// Flow lost sight of the closures of such a function, so it cannot tell whether a statement renames one. Once one is renamed, only a call by value records which closure runs.
-static bool recordsCalleeOnlyOnceRenamed(const Program& program, FunctionID callee)
-{
-    FunctionID source = callee;
-    while (FunctionID next = program.at(source).derivation.source)
-        source = next;
-    return program.at(source).has(FunctionCapabilities::RecordsCalleeOnceRenamed) && !program.at(source).has(FunctionCapabilities::RecordsCallee);
-}
-
 bool keepsCalleeOfAccessor(const Program& program, FunctionID accessor)
 {
     return !mayBeCalledDirectly(program, accessor) || recordsCalleeOnlyOnceRenamed(program, accessor);
@@ -2458,23 +2449,20 @@ struct CallResolver {
                 });
             };
         }
-        // Until then, how a function was entered is not observable.
-        bool calleeEscapes = false;
-        bool calleeMayHaveRenamedSibling = false;
         PropertyAccessCache::NamesOfCallees names = namesOfCallees(candidates);
         if (names.someRecordsCalleeOnlyOnceRenamed) {
             context.planAsksAboutPlace = true;
             if (haveFunctionNamesChanged(site))
                 return std::unexpected(CallDeclineReason::CalleeNeedsClosure);
-            calleeEscapes = std::ranges::any_of(candidates.listed().predicted(), [&](FunctionID member) { return recordsCalleeOnlyOnceRenamed(member) && callsOwnClosureThatEscapes(site, candidates.value, member); });
-            calleeMayHaveRenamedSibling = std::ranges::any_of(candidates.listed().predicted(), [&](FunctionID member) { return recordsCalleeOnlyOnceRenamed(member) && flow.closuresMayBeNamedOutOfSight(member); });
+            // A stack that is taken before the first name is given is read behind it, and above a frame that was given up only the entrypoint for calls by value says who runs.
+            bool mayGetNameOutOfSight = std::ranges::any_of(candidates.listed().predicted(), [&](FunctionID member) {
+                return recordsCalleeOnlyOnceRenamed(member) && (flow.closuresMayBeNamedOutOfSight(member) || callsOwnClosureThatEscapes(site, candidates.value, member));
+            });
+            if (mayGetNameOutOfSight)
+                return std::unexpected(CallDeclineReason::CalleeNeedsClosure);
         }
-        bool needsTestOfNames = calleeEscapes || calleeMayHaveRenamedSibling;
-        auto isEnteredByValueOnceRenamed = [&](FunctionID member) { return (needsTestOfNames || !mayBeCalledDirectly(program, member)) && mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(program, member); };
-        bool someIsEnteredByValueOnceRenamed = needsTestOfNames ? names.someIsCalledDirectlyWhileNamesAreUnchanged : names.someIsCalledDirectlyOnlyWhileNamesAreUnchanged;
-        bool mayTestNames = someIsEnteredByValueOnceRenamed && (calleeEscapes || paysToTestFunctionNames(site));
-        if (needsTestOfNames && !mayTestNames)
-            return std::unexpected(CallDeclineReason::CalleeNeedsClosure);
+        auto isEnteredByValueOnceRenamed = [&](FunctionID member) { return !mayBeCalledDirectly(program, member) && mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(program, member); };
+        bool mayTestNames = names.someIsCalledDirectlyOnlyWhileNamesAreUnchanged && paysToTestFunctionNames(site);
         auto members = chooseDispatchedCallees(site, candidates, mayTestNames ? mayBeCalledDirectlyWhileFunctionNamesAreUnchanged : mayBeCalledDirectly);
         if (!members)
             return std::unexpected(members.error());
@@ -4230,15 +4218,18 @@ static bool keepsFrameOfCaller(TestSiteReporter& reporter)
 
 static bool mayBeCalledDirectlyAt(TestSiteReporter& reporter, FunctionID function)
 {
-    return keepsFrameOfCaller(reporter) ? mayBeCalledDirectlyWhereCalleeIsKept(reporter.program(), function) : mayBeCalledDirectly(reporter.program(), function);
+    if (keepsFrameOfCaller(reporter))
+        return mayBeCalledDirectlyWhereCalleeIsKept(reporter.program(), function);
+    // Above a frame that was given up only the entrypoint for calls by value says who runs.
+    if (recordsCalleeOnlyOnceRenamed(reporter.program(), function) && reporter.context().inputs.flow.closuresMayBeNamedOutOfSight(function))
+        return false;
+    return mayBeCalledDirectly(reporter.program(), function);
 }
 
 static void reportClosureTest(TestSiteReporter& reporter, ValueID callee, FunctionID function)
 {
     bool isCall = reporter.useValue().opcode == Opcode::Call;
     Vector<Value, 2> tests { makeClosureTest(callee, function) };
-    if (isCall && !keepsFrameOfCaller(reporter) && recordsCalleeOnlyOnceRenamed(reporter.program(), function) && reporter.context().inputs.flow.closuresMayBeNamedOutOfSight(function))
-        tests.append(IRBuilder::make(Opcode::AreFunctionNamesUnchanged));
     reporter.report(tests.span(), isCall ? effectsOfDirectCall(reporter.context(), function) : reporter.analyses().effectsOf(reporter.use()).normal);
 }
 
@@ -4586,7 +4577,7 @@ void rewriteTestedCall(TestSiteRewriter& rewriter)
         bool isNeverInlined = call.isNeverInlined();
         bool isTailCall = call.isTailCall;
         bool calleeIsPredicted = isCallWithSharedArms(context.function) || !isFollowedTo(context.program, call, function);
-        // reportClosureTest() only checks the names where the caller's frame is given up.
+        // reportMemberCallTests() checks the names where the function object is not read.
         bool isNamedByCallee = !mayBeCalledDirectly(context.program, function) || (recordsCalleeOnlyOnceRenamed(context.program, function) && context.inputs.flow.closuresMayBeNamedOutOfSight(function));
         bool testsNames = std::ranges::any_of(rewriter.tests(), [](const Value& test) { return test.opcode == Opcode::AreFunctionNamesUnchanged; });
         Vector<ValueID, 8> arguments(call.variadicOperands());

@@ -2725,6 +2725,14 @@ private:
         return m_tmpWidth.useWidth(tmp);
     }
 
+    static constexpr size_t maxValidationFailuresListed = 8;
+
+    void reportValidationFailuresNotListed(size_t failureCount)
+    {
+        if (failureCount > maxValidationFailuresListed)
+            dataLogLn("AIR GREEDY VALIDATION: ", failureCount - maxValidationFailuresListed, " more failures are not listed");
+    }
+
     // Debug code to verify that the results of register allocation and finalization fixup is valid.
     // That is, no two Tmps simultaneously alive share the same register (unless they were coalesced).
     template<Bank bank>
@@ -2735,14 +2743,15 @@ private:
         // A move that is left out on purpose is there for the checks that report what they find. This one stops the process.
         if (!leavesOut(MoveLeftOutByRegisterAllocator::None)) [[unlikely]]
             return;
-        bool anyFailures = false;
+        size_t failureCount = 0;
 
         auto fail = [&](BasicBlock* block, Tmp a, Tmp b) {
+            if (failureCount++ >= maxValidationFailuresListed)
+                return;
             dataLogLn("AIR GREEDY REGISTER ALLOCATION VALIDATION FAILURE");
             dataLogLn("   In BB", *block);
             dataLogLn("     tmp = ", a, " : ", m_map[a]);
             dataLogLn("     tmp = ", b, " : ", m_map[b]);
-            anyFailures = true;
         };
 
         auto checkConflicts = [&](BasicBlock* block, const typename TmpLiveness<bank>::LocalCalc& localCalc) {
@@ -2792,10 +2801,11 @@ private:
         };
 
         auto failAtClobber = [&](BasicBlock* block, Inst& patch, Tmp tmp) {
+            if (failureCount++ >= maxValidationFailuresListed)
+                return;
             dataLogLn("AIR GREEDY REGISTER ALLOCATION VALIDATION FAILURE");
             dataLogLn("   In BB", *block, " at ", patch);
             dataLogLn("     clobbers the register of tmp = ", tmp, " : ", m_map[tmp]);
-            anyFailures = true;
         };
 
         auto checkClobbers = [&](BasicBlock* block, Inst& patch, const Vector<Tmp>& liveAfter, const typename TmpLiveness<bank>::LocalCalc& liveBefore) {
@@ -2855,7 +2865,8 @@ private:
             }
             checkConflicts(block, localCalc);
         }
-        if (anyFailures) {
+        if (failureCount) {
+            reportValidationFailuresNotListed(failureCount);
             dataLogLn("IR:\n", m_code);
             dataLogLn("State:\n", *this);
             RELEASE_ASSERT_NOT_REACHED();
@@ -3975,7 +3986,7 @@ private:
     {
         if (!Options::airValidateGreedRegAlloc())
             return;
-        bool anyFailures = false;
+        size_t failureCount = 0;
 
         auto isSameGroupMove = [&](Inst& inst) {
             if (!mayBeCoalescable(inst))
@@ -4003,13 +4014,12 @@ private:
                 for (Tmp live : localCalc.live()) {
                     if (live == tmp || live.isReg())
                         continue;
-                    if (tmpToGroup[live] == groupIdx) {
+                    if (tmpToGroup[live] == groupIdx && failureCount++ < maxValidationFailuresListed) {
                         dataLogLn("AIR GREEDY COALESCING VALIDATION FAILURE");
                         dataLogLn("   In BB", *block, " at inst ", instIndex, ": ", inst);
                         dataLogLn("   Non-move ", earlyDefs ? "early" : "late", " def of group member ", tmp);
                         dataLogLn("   But group member ", live, " is simultaneously live");
                         dataLogLn("   Group: ", groups[groupIdx]);
-                        anyFailures = true;
                     }
                 }
             });
@@ -4026,7 +4036,8 @@ private:
                 checkDefs(block, instIndex, localCalc, true);
             }
         }
-        if (anyFailures) {
+        if (failureCount) {
+            reportValidationFailuresNotListed(failureCount);
             dataLogLn("IR:\n", m_code);
             dataLogLn("State:\n", *this);
             RELEASE_ASSERT_NOT_REACHED();
@@ -6986,20 +6997,22 @@ private:
         std::ranges::sort(moves, [](const MoveAroundClobber& a, const MoveAroundClobber& b) {
             return std::tuple(a.blockIndex, a.index, a.isAfterClobber) < std::tuple(b.blockIndex, b.index, b.isAfterClobber);
         });
-        bool anyFailures = false;
+        size_t failureCount = 0;
         for (size_t begin = 0, end; begin < moves.size(); begin = end) {
             for (end = begin + 1; end < moves.size() && moves[end].blockIndex == moves[begin].blockIndex && moves[end].index == moves[begin].index && moves[end].isAfterClobber == moves[begin].isAfterClobber; ++end) { }
             for (size_t i = begin; i < end; ++i) {
                 for (size_t j = begin; j < end; ++j) {
                     if (i == j || !moves[i].source || moves[i].source != moves[j].destination)
                         continue;
+                    if (failureCount++ >= maxValidationFailuresListed)
+                        continue;
                     dataLogLn("AIR GREEDY REGISTER ALLOCATION VALIDATION FAILURE: MOVES AROUND A CLOBBER");
                     dataLogLn("   In BB#", moves[i].blockIndex, moves[i].isAfterClobber ? " after the clobber," : " before the clobber,", " index ", moves[i].index, ": ", moves[i].source, " -> ", moves[i].destination, " and ", moves[j].source, " -> ", moves[j].destination);
-                    anyFailures = true;
                 }
             }
         }
-        if (anyFailures) {
+        if (failureCount) {
+            reportValidationFailuresNotListed(failureCount);
             dataLogLn("IR:\n", m_code);
             RELEASE_ASSERT_NOT_REACHED();
         }

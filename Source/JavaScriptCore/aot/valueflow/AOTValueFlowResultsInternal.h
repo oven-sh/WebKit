@@ -12,6 +12,7 @@
 #include "AOTFlowApplication.h"
 #include "AOTFlowOrder.h"
 #include "AOTLayout.h"
+#include "AOTPersistentSortedSet.h"
 #include "AOTSharedMemo.h"
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
@@ -870,13 +871,27 @@ ValueSetID objectsThatMayBeEnumerated(const ValueFlowUsesOfHeap&);
 ValueSetID objectsWithAllKeysShown(const ValueFlowUsesOfHeap&);
 ValueSetID objectsWithEnumerableKeysShown(const ValueFlowUsesOfHeap&);
 
+struct ConstructionName {
+    PropertyKeyID key;
+    FieldReference field;
+    bool standsForValue { false };
+
+    friend auto operator<=>(const ConstructionName&, const ConstructionName&) = default;
+};
+
+inline void add(Hasher& hasher, const ConstructionName& name)
+{
+    addArgs(hasher, name.key, name.field.layout, name.field.field, name.standsForValue);
+}
+
+using ConstructionNames = PersistentSortedSet<ConstructionName>;
+
 struct ValueFlowConstructions {
     struct OfLayout {
         bool isFollowed { false };
         bool isNewTargetOfOtherFunctions { false };
         bool createsFieldsOnlyInListedOrders { false };
-        Vector<PropertyKeyID> keysStoredBeforeObjectLeaks;
-        Vector<FieldReference> fieldsStoredBeforeObjectLeaks;
+        ConstructionNames namesStoredBeforeObjectLeaks;
         Vector<PropertyKeyID> keysStoredAtBirth;
         Vector<PropertyKeyID> keysStoredWithValueAtBirth;
         Vector<FieldReference> fieldsStoredAtBirth;
@@ -893,10 +908,7 @@ struct ValueFlowConstructions {
     const Vector<FieldOrder>& ordersOf(LayoutID layout) const LIFETIME_BOUND { return layouts[layout.index()].orders; }
     bool isStoredBeforeObjectLeaks(LayoutID layout, PropertyKeyID key, FieldReference declaration) const
     {
-        const OfLayout& construction = layouts[layout.index()];
-        if (key)
-            return std::ranges::binary_search(construction.keysStoredBeforeObjectLeaks, key);
-        return std::ranges::binary_search(construction.fieldsStoredBeforeObjectLeaks, declaration);
+        return layouts[layout.index()].namesStoredBeforeObjectLeaks.contains(key ? ConstructionName { key, { } } : ConstructionName { { }, declaration });
     }
     bool mayBeKeptFromCreatingInheritedField(LayoutID layout, PropertyKeyID key) const { return key && std::ranges::binary_search(layouts[layout.index()].inheritedKeysThatStoresMayNotCreate, key); }
     bool isStoredAtBirth(LayoutID layout, PropertyKeyID key, FieldReference declaration) const

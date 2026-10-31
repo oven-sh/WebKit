@@ -15,6 +15,7 @@
 #include "AOTPropertyAccessMembers.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTVector.h"
+#include "AOTWrittenFunction.h"
 #include <algorithm>
 #include <wtf/Hasher.h>
 
@@ -226,13 +227,14 @@ CalleeList calleesThatBoundEffectsOf(const Program& program, const Value& call)
     return calleesOfCall(program, call);
 }
 
-static void describeEntrypoint(const Function& callee, BuiltinCallMode mode, EffectDescription& description)
+static void describeEntrypoint(const Program& program, FunctionID id, BuiltinCallMode mode, EffectDescription& description)
 {
+    const Function& callee = program.at(id);
     if (throwsBeforeEntry(callee, mode))
         description.addThrow();
     if (callee.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest }))
         description.addOwn(declaredBoundOf(Opcode::CreateRest));
-    if (callee.has(FunctionCapabilities::RecordsCallee))
+    if (callee.has(FunctionCapabilities::RecordsCallee) || recordsCalleeOnlyOnceRenamed(program, id))
         description.addOwn(declaredBoundOf(Opcode::RecordCallee));
     if (callee.capabilities.containsAll({ FunctionCapabilities::RecordsCallee, FunctionCapabilities::RecordsCalleeOnceRenamed }))
         description.addOwn(declaredBoundOf(Opcode::AreFunctionNamesUnchanged));
@@ -265,7 +267,7 @@ static NEVER_INLINE bool describeEntrypointsOfLongList(const Program& program, s
     description.own.merge(answers->effectsOfEntering(callees, static_cast<uint64_t>(mode), [&] {
         EffectDescription entrypoints;
         for (FunctionID callee : callees)
-            describeEntrypoint(program.at(callee), mode, entrypoints);
+            describeEntrypoint(program, callee, mode, entrypoints);
         return entrypoints.own;
     }));
     return true;
@@ -279,7 +281,7 @@ void describeCallees(const Program& program, const CalleeList& callees, BuiltinC
     bool isLongList = summaries && !constructs && listed.functions.size() >= AnswersForCalleeLists::fewestCallees;
     if (!isLongList || !describeEntrypointsOfLongList(program, listed.functions, mode, description, *summaries)) {
         for (FunctionID callee : listed.functions) {
-            describeEntrypoint(program.at(callee), mode, description);
+            describeEntrypoint(program, callee, mode, description);
             if (constructs)
                 describeCreationOfThis(program, callee, operands, description);
         }

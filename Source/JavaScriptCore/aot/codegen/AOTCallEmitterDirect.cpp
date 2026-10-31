@@ -17,6 +17,7 @@
 #include "AOTPlacement.h"
 #include "AOTShapeTestEmitter.h"
 #include "AOTVector.h"
+#include "AOTWrittenFunction.h"
 #include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
 #include <array>
@@ -104,7 +105,9 @@ void CallEmitter::generateCallDirect(const ValueContext& value)
     }
 
     PlacedArguments placed = placeArguments(function, locations, arguments.span(), OmittedArguments::MayBeOmitted);
-    CallOptions options { .keptCalleePlusOne = value->calleeIsKeptInFrame() ? m_records.sites.addKeptCallee(m_function, value->position, value->inlineFrame) : 0, .constructs = value->isConstruction(), .callsOwnFunctionObject = value->callsOwnFunctionObject(), .hasLandingOfMisfit = generator().calleeTestsResultOf(value), .callerSuspendsAtReturn = value.isAwaitedAtOnce() };
+    // A call that enters such a function without its function object records nothing, and an earlier call by value from this frame may have recorded another function object of the function.
+    bool entersWithoutFunctionObject = !value->calleeIsKeptInFrame() && recordsCalleeOnlyOnceRenamed(m_program, function) && writtenFunctionOf(m_program, function) != writtenFunctionOf(m_program, value->inlineFrame ? m_function.inlineFrames[value->inlineFrame].callee : m_id);
+    CallOptions options { .keptCalleePlusOne = value->calleeIsKeptInFrame() ? m_records.sites.addKeptCallee(m_function, value->position, value->inlineFrame) : 0, .constructs = value->isConstruction(), .callsOwnFunctionObject = value->callsOwnFunctionObject() || entersWithoutFunctionObject, .hasLandingOfMisfit = generator().calleeTestsResultOf(value), .callerSuspendsAtReturn = value.isAwaitedAtOnce() };
     if (const Function& callee = m_program.at(function); options.constructs && callee.kind == FunctionKind::Plain && callee.role != FunctionRole::ConstructBody)
         options.constructedCallee = function;
     B3::PatchpointValue* call = emitCall(value, CallTarget::function(function, placed.entry), placed, locations.results.span(), options);

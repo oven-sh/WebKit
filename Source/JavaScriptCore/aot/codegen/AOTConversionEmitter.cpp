@@ -676,18 +676,22 @@ bool ConversionEmitter::isInLoopCarriedIntegerCycle(ValueID id)
     return m_valueCycles->isInCycle.get(id.index()) && m_cyclesWithIntegers.get(m_valueCycles->componentOf[id.index()]);
 }
 
-// `sum = (sum + await next()) | 0`, `sum = (sum + parse(lines[i])) | 0`: an iteration that calls a function or suspends takes longer than the three conversions, so the next one does not wait for them.
-bool ConversionEmitter::callsOrSuspendsInLoopOf(ValueID id)
+// `sum = (sum + await next()) | 0`, `sum = (sum + parse(lines[i])) | 0`, `sum = (sum + totalOf(rows)) | 0` with the loops of totalOf() in line:
+// an iteration that calls a function, suspends or runs a loop of its own takes longer than the three conversions, so the next one does not wait for them.
+bool ConversionEmitter::isInLoopWithLongIterations(ValueID id)
 {
+    const NaturalLoops& loops = analyses().naturalLoops();
     BlockID blockOfValue = analyses().useLists().blockOf(id);
-    const NaturalLoop* loop = blockOfValue ? analyses().naturalLoops().innerMostLoopOf(blockOfValue) : nullptr;
+    const NaturalLoop* loop = blockOfValue ? loops.innerMostLoopOf(blockOfValue) : nullptr;
     if (!loop)
         return false;
-    return m_loopsThatCallOrSuspend.ensure(loop->header().index(), [&] {
+    return m_loopsWithLongIterations.ensure(loop->header().index(), [&] {
         for (unsigned index = 0; index < loop->size(); ++index) {
             const Block& block = m_function.at(loop->at(index));
             if (block.frequency.predicted() != BlockFrequency::Normal)
                 continue;
+            if (loops.innerMostLoopOf(loop->at(index)) != loop)
+                return true;
             for (ValueID value : block.values) {
                 Opcode opcode = m_function.at(value).opcode;
                 if (effectRuleOf(opcode) == EffectRule::Call || maySuspend(opcode))
@@ -845,7 +849,7 @@ ConversionEmitter::ExactInteger ConversionEmitter::computeIntegerBehind(LValue n
 // No code is emitted until it is known that the whole of the arithmetic can be done in integers.
 std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactIntegerBehind(LValue number, ValueID irValue, bool mayBeTested)
 {
-    bool mayTestWhatWasRead = mayBeTested && irValue && holdsJoinedInteger(number) && isInLoopCarriedIntegerCycle(irValue) && (convertsSeveralIntegers(number) || !callsOrSuspendsInLoopOf(irValue));
+    bool mayTestWhatWasRead = mayBeTested && irValue && holdsJoinedInteger(number) && isInLoopCarriedIntegerCycle(irValue) && (convertsSeveralIntegers(number) || !isInLoopWithLongIterations(irValue));
     IntegersBehindNumbers& known = m_integersBehindNumbers[mayTestWhatWasRead];
     answerOperandsFirst<std::optional<IntegerBehindNumber>>(number, known, [&](LValue value) {
         return describeIntegerBehind(value, mayTestWhatWasRead, known);

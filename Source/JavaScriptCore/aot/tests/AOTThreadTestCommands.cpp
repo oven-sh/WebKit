@@ -463,6 +463,7 @@ struct TimesMemoryWasGivenBack {
     std::atomic<unsigned> byAnyThread { 0 };
     std::atomic<unsigned> byCaller { 0 };
     std::atomic<Thread*> caller { nullptr };
+    std::atomic<unsigned> check { 0 };
 };
 
 static TimesMemoryWasGivenBack& timesMemoryWasGivenBack()
@@ -471,19 +472,38 @@ static TimesMemoryWasGivenBack& timesMemoryWasGivenBack()
     return times;
 }
 
-static constexpr HostThreadPool poolThatCountsMemoryGivenBack { poolOfNewThreads.schedule, [] {
-    timesMemoryWasGivenBack().byAnyThread.fetch_add(1);
-    if (&Thread::currentSingleton() == timesMemoryWasGivenBack().caller.load())
-        timesMemoryWasGivenBack().byCaller.fetch_add(1);
+// A helper of an earlier check may come late, and whoever is asked is asked in every pool. Only the caller and the threads that this check starts count.
+static thread_local unsigned t_checkThatStartedThread { 0 };
+
+static TimesMemoryWasGivenBack& countMemoryGivenBackFromNowOn()
+{
+    TimesMemoryWasGivenBack& times = timesMemoryWasGivenBack();
+    times.check.fetch_add(1);
+    times.byAnyThread = 0;
+    times.byCaller = 0;
+    times.caller = &Thread::currentSingleton();
+    return times;
+}
+
+static constexpr HostThreadPool poolThatCountsMemoryGivenBack { [](void (*run)(void*), void* argument) {
+    Thread::create("AOT test helper"_s, [run, argument, check = timesMemoryWasGivenBack().check.load()] {
+        t_checkThatStartedThread = check;
+        run(argument);
+    }, ThreadType::Unknown, Thread::defaultQOS, Thread::defaultSchedulingPolicy, StackAllocationSpecification::RequestSize(ParallelLoops::workerStackSize))->detach();
+}, [] {
+    TimesMemoryWasGivenBack& times = timesMemoryWasGivenBack();
+    bool isCaller = &Thread::currentSingleton() == times.caller.load();
+    if (!isCaller && t_checkThatStartedThread != times.check.load())
+        return;
+    times.byAnyThread.fetch_add(1);
+    if (isCaller)
+        times.byCaller.fetch_add(1);
 } };
 
 static bool callerGivesMemoryBackBesideTheOthersWork()
 {
     constexpr unsigned width = 4;
-    TimesMemoryWasGivenBack& times = timesMemoryWasGivenBack();
-    times.byAnyThread = 0;
-    times.byCaller = 0;
-    times.caller = &Thread::currentSingleton();
+    TimesMemoryWasGivenBack& times = countMemoryGivenBackFromNowOn();
     ParallelLoops loops(width, &poolThatCountsMemoryGivenBack, Seconds::infinity());
     loops.giveFreeMemoryBack();
     bool doesItAtOnceWhereNobodyRests = times.byAnyThread.load() == 1 && times.byCaller.load() == 1;
@@ -495,8 +515,34 @@ static bool callerGivesMemoryBackBesideTheOthersWork()
     while (times.byAnyThread.load() < before + width - 1)
         Thread::yield();
     bool othersDidItAtOnce = times.byCaller.load() == 1;
+    // A loop that finds one of them still on its way to rest asks the pool for a new thread, which gives memory back as well.
+    waitForRestingThreads(loops, width - 1);
     runLoopThatNeedsEveryThread(loops);
     return doesItAtOnceWhereNobodyRests && leavesItForLater && othersDidItAtOnce && times.byCaller.load() == 2 && times.byAnyThread.load() == before + width;
+}
+
+static bool threadAtWorkGivesMemoryBackBeforeItRests()
+{
+    struct Work {
+        std::atomic<bool> hasBegun { false };
+        std::atomic<bool> mayEnd { false };
+    } work;
+    TimesMemoryWasGivenBack& times = countMemoryGivenBackFromNowOn();
+    ParallelLoops loops(2, &poolThatCountsMemoryGivenBack, Seconds::infinity());
+    loops.schedule(TaskPriority::Foreground, [](void* argument) {
+        Work& work = *static_cast<Work*>(argument);
+        work.hasBegun = true;
+        while (!work.mayEnd.load())
+            Thread::yield();
+    }, &work);
+    while (!work.hasBegun.load())
+        Thread::yield();
+    unsigned before = times.byAnyThread.load();
+    loops.giveFreeMemoryBack();
+    bool callerDidItAtOnce = times.byAnyThread.load() == before + 1 && times.byCaller.load() == 1;
+    work.mayEnd = true;
+    waitForRestingThreads(loops, 1);
+    return callerDidItAtOnce && times.byAnyThread.load() == before + 2 && times.byCaller.load() == 1;
 }
 
 static bool restingThreadsGoBackToThePool()
@@ -679,6 +725,7 @@ void runParallelLoopsTestCommand(TestCommandContext& context)
     printCheck(out, "resting threads take the next loop"_s, restingThreadsTakeTheNextLoop());
     printCheck(out, "resting threads go back to the pool"_s, restingThreadsGoBackToThePool());
     printCheck(out, "the caller gives memory back beside the others' work"_s, callerGivesMemoryBackBesideTheOthersWork());
+    printCheck(out, "a thread at work gives memory back before it rests"_s, threadAtWorkGivesMemoryBackBeforeItRests());
     printCheck(out, "pending tasks run by priority"_s, pendingTasksRunByPriority());
     printCheck(out, "a background loop yields to foreground loops"_s, backgroundLoopYieldsToForegroundLoop(words->threads));
     printCheck(out, "tasks run after their dependencies"_s, tasksRunAfterTheirDependencies(loops));

@@ -793,6 +793,8 @@ static void printModules(const TablesContext& context)
         RecordLine(context, "exportStatement"_s).field("requiredName"_s, statement.requiredName).field("exportName"_s, statement.exportNameString()).field("specifier"_s, statement.specifierString()).flag("dropsExportIfAbsent"_s, statement.dropsExportIfAbsent);
     for (const AmbiguousExportData& ambiguous : tables.ambiguousExports())
         RecordLine(context, "ambiguousExport"_s).field("module"_s, ModuleID(ambiguous.module)).field("name"_s, ambiguous.nameString());
+    for (const SourceStampData& stamp : tables.sourceStamps())
+        RecordLine(context, "sourceStamp"_s).field("module"_s, ModuleID(stamp.module)).field("low"_s, stamp.low).field("high"_s, stamp.high);
     for (const ModuleFailureData& failure : tables.moduleFailures()) {
         if (failure.isLoadOfModule()) {
             RecordLine(context, "loadFailure"_s).field("module"_s, failure.importerModule()).field("failure"_s, failure.failureOfLoad().index());

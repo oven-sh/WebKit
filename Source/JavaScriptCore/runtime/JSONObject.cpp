@@ -120,7 +120,7 @@ public:
     static String stringify(JSGlobalObject&, JSValue, JSValue replacer, JSValue space);
 #if ENABLE(AOT)
     enum class ToJSONStep : bool { Pending, Done };
-    static String stringifyProperty(JSGlobalObject&, JSValue, const PropertyNameForFunctionCall&, std::span<JSCell* const> outerHolders, ToJSONStep = ToJSONStep::Pending);
+    static String stringifyProperty(JSGlobalObject&, JSValue, const PropertyNameForFunctionCall&, std::span<JSCell* const> outerHolders, unsigned levelsAround, ToJSONStep = ToJSONStep::Pending);
 #endif
 
 private:
@@ -182,6 +182,8 @@ private:
 #if ENABLE(AOT)
     // The objects and arrays around the value, where compiled code writes them and this writes a part.
     std::span<JSCell* const> m_outerHolders;
+    // All that is open around the value. Compiled code around which no code runs shows none of its holders and says how many they are.
+    unsigned m_levelsAround { 0 };
 #endif
 };
 
@@ -334,7 +336,7 @@ String Stringifier::stringify(JSGlobalObject& globalObject, JSValue value, JSVal
 }
 
 #if ENABLE(AOT)
-String Stringifier::stringifyProperty(JSGlobalObject& globalObject, JSValue value, const PropertyNameForFunctionCall& propertyName, std::span<JSCell* const> outerHolders, ToJSONStep toJSONStep)
+String Stringifier::stringifyProperty(JSGlobalObject& globalObject, JSValue value, const PropertyNameForFunctionCall& propertyName, std::span<JSCell* const> outerHolders, unsigned levelsAround, ToJSONStep toJSONStep)
 {
     VM& vm = globalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -342,6 +344,7 @@ String Stringifier::stringifyProperty(JSGlobalObject& globalObject, JSValue valu
     Stringifier stringifier(&globalObject, jsUndefined(), jsUndefined());
     RETURN_IF_EXCEPTION(scope, { });
     stringifier.m_outerHolders = outerHolders;
+    stringifier.m_levelsAround = levelsAround;
 
     StringBuilder result(OverflowPolicy::RecordOverflow);
     Holder root(Holder::RootHolder, nullptr);
@@ -513,7 +516,7 @@ ALWAYS_INLINE Stringifier::StringifyResult Stringifier::appendValueBehindToJSON(
         throwTypeError(m_globalObject, scope, "JSON.stringify cannot serialize cyclic structures."_s);
         return StringifyFailed;
     }
-    if (m_holderStack.size() + m_outerHolders.size() >= maximumSideStackRecursion) [[unlikely]] {
+    if (m_holderStack.size() + m_levelsAround >= maximumSideStackRecursion) [[unlikely]] {
         throwStackOverflowError(m_globalObject, scope);
         return StringifyFailed;
     }
@@ -3106,6 +3109,19 @@ static NEVER_INLINE String stringify(JSGlobalObject& globalObject, JSValue value
 }
 
 #if ENABLE(AOT)
+// A record that holds a number stands for that many holders, which nobody lists: all that are open around those in front of it.
+static unsigned numberOfLevels(const AOT::JSONHolderRecord* innermostHolder)
+{
+    unsigned number = 0;
+    for (const AOT::JSONHolderRecord* record = innermostHolder; record; record = record->outer) {
+        JSValue holder = JSValue::decode(record->holder);
+        if (holder.isInt32())
+            return number + holder.asInt32();
+        ++number;
+    }
+    return number;
+}
+
 static String stringifyProperty(JSGlobalObject& globalObject, JSValue value, JSValue property, const AOT::JSONHolderRecord* innermostHolder, Stringifier::ToJSONStep toJSONStep = Stringifier::ToJSONStep::Pending)
 {
     VM& vm = globalObject.vm();
@@ -3118,14 +3134,17 @@ static String stringifyProperty(JSGlobalObject& globalObject, JSValue value, JSV
     }
     // The frames of the compiled code keep the holders alive.
     Vector<JSCell*, 16> holders;
-    for (const AOT::JSONHolderRecord* record = innermostHolder; record; record = record->outer)
-        holders.append(JSValue::decode(record->holder).asCell());
+    for (const AOT::JSONHolderRecord* record = innermostHolder; record; record = record->outer) {
+        if (JSValue holder = JSValue::decode(record->holder); holder.isCell())
+            holders.append(holder.asCell());
+    }
+    unsigned levelsAround = numberOfLevels(innermostHolder);
 
     if (property.isNumber())
-        RELEASE_AND_RETURN(scope, Stringifier::stringifyProperty(globalObject, value, PropertyNameForFunctionCall(static_cast<unsigned>(property.asNumber())), holders.span(), toJSONStep));
+        RELEASE_AND_RETURN(scope, Stringifier::stringifyProperty(globalObject, value, PropertyNameForFunctionCall(static_cast<unsigned>(property.asNumber())), holders.span(), levelsAround, toJSONStep));
     Identifier name = asString(property)->toIdentifier(&globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, Stringifier::stringifyProperty(globalObject, value, PropertyNameForFunctionCall(name.impl()), holders.span(), toJSONStep));
+    RELEASE_AND_RETURN(scope, Stringifier::stringifyProperty(globalObject, value, PropertyNameForFunctionCall(name.impl()), holders.span(), levelsAround, toJSONStep));
 }
 
 static std::optional<size_t> roomForListedScalars(JSGlobalObject& globalObject, const JSObject& object, JSObject* extraProperties, const AOT::CachedPropertyList& list, unsigned index)
@@ -3279,9 +3298,7 @@ bool AOT::appendJSONTextOfProperty(JSGlobalObject* globalObject, StringBuilderSt
     }
 
     // They are levels as those inside the value are.
-    unsigned levelsAround = 0;
-    for (const JSONHolderRecord* record = holders; record; record = record->outer)
-        ++levelsAround;
+    unsigned levelsAround = numberOfLevels(holders);
 
     std::optional<FailureReason> failureReason;
     if (std::bit_cast<uint8_t*>(currentStackPointer()) >= std::bit_cast<uint8_t*>(vm.softStackLimit())) [[likely]] {

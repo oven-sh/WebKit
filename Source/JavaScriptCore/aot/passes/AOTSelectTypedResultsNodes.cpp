@@ -647,14 +647,14 @@ TypeID findTypeOfTypedResultTarget(const Program& program, const Function& funct
     return mostSpecific;
 }
 
-TypedResultTarget findTypedResultTarget(const Program& program, const Function& function, const UseLists& uses, ValueID call, size_t maxNumberOfLayouts, const HeadLayoutsOfFamilies* headLayouts)
+TypedResultTarget findTypedResultTarget(const Program& program, const Function& function, const UseLists& uses, ValueID call, const HeadLayoutsOfFamilies* headLayouts)
 {
     TypedResultTarget target { findTypeOfTypedResultTarget(program, function, uses, call), { } };
     if (!target)
         return { };
     auto append = [&](LayoutID layout) {
         target.layouts.append(layout);
-        return target.layouts.size() > maxNumberOfLayouts ? IterationStatus::Done : IterationStatus::Continue;
+        return IterationStatus::Continue;
     };
     forEachLayoutReachedBy(program, target.type, headLayouts, ScopedLambda<IterationStatus(LayoutID)>(append));
     AOT::sort(target.layouts);

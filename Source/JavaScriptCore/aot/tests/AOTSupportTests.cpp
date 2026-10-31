@@ -23,8 +23,10 @@
 #include "AOTLosses.h"
 #include "AOTNativeTest.h"
 #include "AOTPassID.h"
+#include "AOTPersistentSortedSet.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSchemaEnums.h"
+#include "AOTSharedPrefixList.h"
 #include "AOTSort.h"
 #include "AOTSortedSet.h"
 #include "AOTStatistics.h"
@@ -718,6 +720,102 @@ static void testShortSortedListIsLookedForByHalving()
     }
 }
 
+static void testPersistentSetsHoldWhatSortedSetsHold()
+{
+    WeakRandom random(1);
+    auto valuesOf = [](const PersistentSortedSet<uint32_t>& set) {
+        Vector<uint32_t> values;
+        set.forEach([&](uint32_t value) {
+            values.append(value);
+        });
+        return values;
+    };
+    auto holdSame = [&](const PersistentSortedSet<uint32_t>& set, const SortedSet<uint32_t>& expected) {
+        return set.size() == expected.size() && std::ranges::equal(valuesOf(set), expected.span());
+    };
+    for (uint32_t numberOfValues : { 1, 4, 40, 3000 }) {
+        Vector<std::pair<PersistentSortedSet<uint32_t>, SortedSet<uint32_t>>> sets(1);
+        for (unsigned step = 0; step < 600; ++step) {
+            auto [set, expected] = sets[random.getUint32(sets.size())];
+            const auto& [other, expectedOther] = sets[random.getUint32(sets.size())];
+            switch (random.getUint32(6)) {
+            case 0:
+                AOT_TEST_CHECK(set.unite(other) == expected.unite(expectedOther));
+                break;
+            case 1:
+                set.intersect(other);
+                expected.intersect(expectedOther);
+                break;
+            case 2:
+                set.subtract(other);
+                expected.subtract(expectedOther);
+                break;
+            default:
+                for (unsigned count = random.getUint32(8); count--;) {
+                    uint32_t value = random.getUint32(numberOfValues);
+                    AOT_TEST_CHECK(set.contains(value) == expected.contains(value));
+                    AOT_TEST_CHECK(set.add(value) == expected.add(value));
+                }
+                break;
+            }
+            AOT_TEST_CHECK(holdSame(set, expected));
+            AOT_TEST_CHECK(holdSame(other, expectedOther));
+            AOT_TEST_CHECK(set.overlaps(other) == expected.overlaps(expectedOther));
+            AOT_TEST_CHECK((set == other) == (expected == expectedOther));
+            PersistentSortedSet<uint32_t> builtAnew;
+            for (uint32_t value : expected)
+                builtAnew.add(value);
+            AOT_TEST_CHECK(builtAnew == set);
+            sets.append({ WTF::move(set), WTF::move(expected) });
+        }
+    }
+
+    constexpr uint32_t numberOfSets = 300000;
+    Vector<PersistentSortedSet<uint32_t>> row(numberOfSets);
+    for (uint32_t index = 1; index < numberOfSets; ++index) {
+        row[index] = row[index - 1];
+        row[index].add(index);
+    }
+    PersistentSortedSet<uint32_t> common = row.last();
+    for (uint32_t index : { numberOfSets - 1, numberOfSets / 2, 7u }) {
+        common.intersect(row[index]);
+        AOT_TEST_CHECK(common == row[index] && common.size() == index && common.contains(index) && !common.contains(index + 1));
+    }
+}
+
+static void testListsShareWhatTheyHeldWhenTheyWereCopied()
+{
+    WeakRandom random(1);
+    Vector<std::pair<SharedPrefixList<uint32_t>, Vector<uint32_t>>> lists(1);
+    for (unsigned step = 0; step < 400; ++step) {
+        auto [list, expected] = lists[random.getUint32(lists.size())];
+        for (unsigned count = random.getUint32(4); count--;) {
+            uint32_t value = random.getUint32(3);
+            list.append(value);
+            expected.append(value);
+        }
+        AOT_TEST_CHECK(list.size() == expected.size() && list.isEmpty() == expected.isEmpty());
+        size_t first = random.getUint32(expected.size() + 2);
+        Vector<uint32_t> seen;
+        AOT_TEST_CHECK(list.allOfFrom(first, [&](uint32_t value) {
+            seen.append(value);
+            return true;
+        }));
+        AOT_TEST_CHECK(std::ranges::equal(seen, expected.span().subspan(std::min(first, expected.size()))));
+        AOT_TEST_CHECK(list.allOf([](uint32_t value) { return value < 2; }) == !expected.contains(2u));
+        for (const auto& [other, expectedOther] : lists)
+            AOT_TEST_CHECK((list == other) == (expected == expectedOther));
+        lists.append({ WTF::move(list), WTF::move(expected) });
+    }
+
+    SharedPrefixList<uint32_t> longest;
+    for (uint32_t index = 0; index < 1000000; ++index) {
+        SharedPrefixList<uint32_t> copy = longest;
+        longest.append(index);
+    }
+    AOT_TEST_CHECK(longest.size() == 1000000);
+}
+
 static void testHeapSortBehindTooManyPartitions()
 {
     using Record = SortedRecord<2>;
@@ -1228,6 +1326,8 @@ std::span<const NativeTest> supportTests()
         { "sort/integers-and-ids"_s, testSortOfIntegersAndIDs },
         { "sort/heap-sort-behind-too-many-partitions"_s, testHeapSortBehindTooManyPartitions },
         { "sorted-lists/short-list-is-looked-for-by-halving"_s, testShortSortedListIsLookedForByHalving },
+        { "shared-collections/persistent-sets-hold-what-sorted-sets-hold"_s, testPersistentSetsHoldWhatSortedSetsHold },
+        { "shared-collections/lists-share-what-they-held-when-they-were-copied"_s, testListsShareWhatTheyHeldWhenTheyWereCopied },
         { "vector/holds-what-that-of-wtf-holds"_s, testVectorsHoldWhatThoseOfWTFHold },
         { "enum-names/end-at-the-last-enumerator"_s, testNamesOfEnumeratorsEndAtTheLastOne },
     };

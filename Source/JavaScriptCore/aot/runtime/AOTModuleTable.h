@@ -67,6 +67,8 @@ public:
     // The table of exports has no entry for such a name.
     std::span<const AmbiguousExportData> ambiguousExports(ModuleID) const;
     bool isAmbiguousExport(ModuleID, StringView name) const;
+    bool hasSourceStamps() const { return !m_tables->sourceStamps().empty(); }
+    std::optional<uint64_t> sourceStamp(ModuleID) const;
     const ModuleFailureData& failure(ModuleFailureID) const;
     // Of a module that imports, itself or through what it imports, a name that the build did not find or a file that is no program.
     std::optional<ModuleFailureID> loadFailure(ModuleID) const;

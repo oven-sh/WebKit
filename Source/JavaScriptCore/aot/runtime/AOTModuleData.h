@@ -400,6 +400,15 @@ struct AmbiguousExportData {
     StringID nameString() const { return StringID(name); }
 };
 
+// What ModuleHost::stampOfFile() said of the file when the build read it. Of a file that the run may read again from disk. Sorted by the module.
+struct SourceStampData {
+    uint32_t module;
+    uint32_t low;
+    uint32_t high;
+
+    uint64_t stamp() const { return static_cast<uint64_t>(high) << 32 | low; }
+};
+
 // A specifier that an importer could not resolve at the build, or a name that a module turned out to lack: then the module stands in the place of the importer and the name in that of the specifier.
 // Where `export { .. as name } from "specifier"` asks for what the module lacks: what the statement is written from stands in the place of the importer, and the name that it exports in that of the specifier.
 // Behind the failures, which code names by their place in the table, stand the modules that cannot load, sorted: each in the place of the importer, and in that of the specifier the number of the failure that its load ends with.
@@ -592,6 +601,7 @@ static_assert(sizeof(SyntheticExportData) == 8 && isImageRecord<SyntheticExportD
 static_assert(sizeof(RequiredNameData) == 8 && isImageRecord<RequiredNameData>);
 static_assert(sizeof(ExportStatementData) == 12 && isImageRecord<ExportStatementData>);
 static_assert(sizeof(AmbiguousExportData) == 8 && isImageRecord<AmbiguousExportData>);
+static_assert(sizeof(SourceStampData) == 12 && isImageRecord<SourceStampData>);
 static_assert(sizeof(ModuleFailureData) == 8 && isImageRecord<ModuleFailureData>);
 static_assert(sizeof(ImportOfHeldFileData) == 8 && isImageRecord<ImportOfHeldFileData>);
 static_assert(sizeof(StateOfLibraryModuleData) == 12 && isImageRecord<StateOfLibraryModuleData>);
@@ -626,6 +636,7 @@ struct HashOfDirectory {
     v(requiredNames, RequiredNameData) \
     v(exportStatements, ExportStatementData) \
     v(ambiguousExports, AmbiguousExportData) \
+    v(sourceStamps, SourceStampData) \
     v(moduleFailures, ModuleFailureData) \
     v(modulesByPath, uint16_t) \
     v(directoriesOfModulesByPath, uint32_t) \

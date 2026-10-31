@@ -36,6 +36,11 @@ String temporaryFolder();
 // Before this process dies of a trap, it prints the thread, the registers, the return addresses and the top of the stack.
 void installTrapReporter();
 
+inline constexpr ASCIILiteral lineAfterChildProcess = "a child process has ended"_s;
+
+// Whoever waits for the output of this process takes a long silence for a hang. A test that starts many processes in a row prints nothing of its own.
+void printLineAfterEachChildProcess();
+
 class ChildProcessLauncher {
 public:
     ChildProcessLauncher(String&& program, Vector<String>&& sharedArguments);

@@ -80,6 +80,7 @@ struct LinkContext {
     macro(JSValue, requiredValue) \
     macro(JSValue, valueInRequireCache) \
     macro(JSObject*, exportsOfMock) \
+    macro(JSObject*, exportsAddedByMock) \
     macro(JSObject*, namespacesOfEarlierMocks) \
     macro(JSValue, errorKeptByLoader) \
     macro(JSObject*, exportsWhileRequired) \
@@ -151,6 +152,7 @@ public:
     std::optional<bool> tryReplaceExportInImageBelow(ModuleID external, UniquedStringImpl* name, JSValue);
     bool tryReplaceExportOfUncompiledModule(ModuleID external, UniquedStringImpl* name, JSValue);
     bool tryReplaceCapturedExport(ModuleID, UniquedStringImpl* name, JSValue);
+    bool tryReplaceExportAddedByMock(ModuleID, UniquedStringImpl* name, JSValue);
     struct SyntheticExportPlace {
         ModuleID module;
         uint32_t name;
@@ -164,6 +166,8 @@ public:
     // A mock that comes before the body of an ES module has run stands for the whole module: the loader of `bun run` takes what the factory answers for the module itself.
     // So a name that the factory leaves out is no export: no key of the namespace object. See fillExportsOfBodyThatNeverRuns() for whoever reads the variable.
     void leaveOutWhatMockLacks(ModuleID, JSObject* exportsOfMock);
+    // And a name that the factory gives and the module lacks is an export: a key of the namespace object, where it is read. The names are settled once the module is loaded.
+    void takeWhatMockAdds(ModuleID, bool comesAheadOfLoad);
     // The build keeps a name in every table that a link searches for it. Of any other name it drops the entries that nothing reads.
     enum class TablesBehindStars : bool { MayLackName, HaveName };
     // Whoever imports the name from the module finds it nowhere: such a mock leaves it out, the link of the module has dropped it, or every `export *` that hands it on leads to a module of which that holds.
@@ -214,6 +218,7 @@ public:
     void takeOutOfRequireCache(ModuleID);
     std::optional<ModuleID> formThatMockFinds(StringView path, std::optional<ModuleID> file) const;
     void deferMock(ModuleID);
+    void runMockThatWaits(ModuleID);
     // `build.module("dep", ..)` of a plugin: from now on the loader answers for the name with another module. A file that is linked keeps what it has.
     void forgetWhatNamesResolvedTo();
     void willMockLibraryModule(ModuleID);
@@ -296,6 +301,8 @@ public:
         return (file.kind != ModuleKind::SourceText && file.kind != ModuleKind::CommonJs) || file.mayBeEvicted();
     }
     void leaveToHostUnlessItHasRun(ModuleID);
+    // `bun test` reads a file when something first loads it. A test may have written it anew since the build read it.
+    bool isChangedOnDisk(ModuleID file);
     void takeOutOfLoader(ModuleID);
     void forgetFormAnsweredFirst(ModuleID file);
     JSObject* requireCacheEntry(ModuleID module) { return moduleObjectMadeByRequire(module); }
@@ -305,7 +312,11 @@ public:
     void keepObjectMadeByRequire(ModuleID, JSObject* moduleObject);
     void forgetObjectMadeByRequire(ModuleID);
     bool isLeftToHost(ModuleID);
-    void didEvictFromOtherImage() { m_otherImageHasEvictedFiles = true; }
+    void didEvictFromOtherImage()
+    {
+        m_otherImageHasEvictedFiles = true;
+        m_filesAboveNoEvictedFile.clearAll();
+    }
     // The text of a data: URL that the program imports under a constant name is part of the program.
     bool isTextNamedByProgram(StringView url) const;
     bool refusesLoadsByName() const { return !m_loadsModulesByName && !m_isAskingHost && !m_runsUncompiledCode; }
@@ -529,6 +540,7 @@ private:
         bool bindsEarlierCapture { false };
         bool didDropError { false };
         bool exportsWhatMockNamesAlone { false };
+        bool takesNamesThatMockAdds { false };
         bool answersRequireWithNamespaceOfMock { false };
         bool wasLoadedBehindMock { false };
         bool wasRequiredBehindMock { false };
@@ -650,6 +662,7 @@ private:
     JSValue settledAnswerOfRequire(ModuleID, RequiredBy) const;
     JSValue requireThroughCache(ModuleID, ModuleID referrer);
     JSValue answerRequireWithMock(ModuleID, ModuleID referrer);
+    JSValue defaultExportOfMockMarkedAsESModule(ModuleID);
     JSValue loadEvictedFile(ModuleID);
     JSValue readExportForRequire(JSObject* namespaceObject, const Identifier& name);
     void willRequireESModule(ModuleID);
@@ -767,6 +780,8 @@ private:
     std::optional<UncheckedKeyHashMap<uint32_t, SyntheticExportPlace, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> m_syntheticExportsByVariable;
     UncheckedKeyHashMap<ModuleID, BitVector> m_exportsLeftOut;
     BitVector m_evictedFiles;
+    // isLeftToHost() has walked what they import and found nothing evicted, and nothing has been evicted since.
+    BitVector m_filesAboveNoEvictedFile;
     // Of the realm. A module of this image may import the file.
     bool m_otherImageHasEvictedFiles { false };
     bool m_runsCopyFromDisk { false };

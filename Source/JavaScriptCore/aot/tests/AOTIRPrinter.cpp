@@ -228,6 +228,9 @@ static void printLinesOf(IRPrinter& printer, ProgramList list)
     case ProgramList::AmbiguousExports:
         printLines(printer, list, program.ambiguousExports);
         return;
+    case ProgramList::SourceStamps:
+        printLines(printer, list, program.sourceStamps);
+        return;
     case ProgramList::EvalScopes:
         printLines(printer, list, program.evalScopes);
         return;

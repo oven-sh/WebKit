@@ -510,9 +510,7 @@ private:
         const ClassPart* classPart = type.singleBuiltinClass();
         const Value& value = m_function.at(id);
         bool isDenseArrayLiteral = value.opcode == Opcode::NewArray && value.holes().empty();
-        ValueFlowSite site { ValueFlowSiteOrigin::Operation, id, 0, type.singleLayout(m_program), classPart ? classPart->builtinClass : BuiltinClassID(), false, false, isDenseArrayLiteral };
-        site.isPairLiteral = isDenseArrayLiteral && value.numberOfOperands() >= OperandIndex::NewArray::elements + 2u;
-        return addSite(site);
+        return addSite({ ValueFlowSiteOrigin::Operation, id, 0, type.singleLayout(m_program), classPart ? classPart->builtinClass : BuiltinClassID(), false, false, isDenseArrayLiteral });
     }
 
     void addInterface()
@@ -1331,9 +1329,7 @@ private:
             case DataNode::Kind::Array: {
                 const Vector<DataNode>& elements = node.as<DataNode::Array>().elements;
                 bool hasHole = std::ranges::any_of(elements, [](const DataNode& element) { return element.kind() == DataNode::Kind::Hole; });
-                ValueFlowSite description { ValueFlowSiteOrigin::DataNode, id, ordinal, { }, BuiltinClasses::Array, false, false, !hasHole };
-                description.isPairLiteral = !hasHole && elements.size() >= 2;
-                site = addSite(description);
+                site = addSite({ ValueFlowSiteOrigin::DataNode, id, ordinal, { }, BuiltinClasses::Array, false, false, !hasHole });
                 for (size_t index = elements.size(); index--;)
                     stack.append(&elements[index]);
                 break;

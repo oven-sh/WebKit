@@ -154,7 +154,7 @@ static thread_local uint32_t t_timesGaveFreeMemoryBack { 0 };
 
 static void giveFreeMemoryOfCurrentThreadBackIfAsked()
 {
-    uint32_t timesAsked = s_timesAskedForFreeMemory.load(std::memory_order_acquire);
+    uint32_t timesAsked = s_timesAskedForFreeMemory.load(std::memory_order_seq_cst);
     if (t_timesGaveFreeMemoryBack == timesAsked) [[likely]]
         return;
     t_timesGaveFreeMemoryBack = timesAsked;
@@ -183,6 +183,18 @@ public:
     bool tryHandOver(Task task)
     {
         return !hasPendingTaskAbove(task.priority) && wakeOne(HasTask, task);
+    }
+
+    // Every seat leaves the list before the first thread is woken. A thread that has run the task and rests again would otherwise get it a second time, and another thread never.
+    bool handOverToAll(Task task)
+    {
+        Vector<uint32_t, 64> seats;
+        while (std::optional<uint32_t> index = m_restingSeats.pop(m_seats.get()))
+            seats.append(*index);
+        bool hasWokenThread = false;
+        for (uint32_t index : seats)
+            hasWokenThread |= wake(index, HasTask, task);
+        return hasWokenThread;
     }
 
     void addPendingTask(Task task)
@@ -332,6 +344,8 @@ private:
             seat.isInRestingList.store(false, std::memory_order_relaxed);
             seat.state.store(IsResting);
             m_restingSeats.push(m_seats.get(), *index);
+            // Either this thread sees that it was asked, or whoever asked sees this thread in the list.
+            giveFreeMemoryOfCurrentThreadBackIfAsked();
             seat.isInRestingList.store(true, std::memory_order_release);
             switch (rest(seat)) {
             case HasTask:
@@ -347,16 +361,24 @@ private:
         }
     }
 
+    // Of a seat that was taken out of the list of resting seats.
+    bool wake(uint32_t index, State newState, Task task)
+    {
+        Seat& seat = m_seats[index];
+        seat.task = task;
+        if (seat.state.compareExchangeStrong(IsResting, newState) == IsResting) {
+            ParkingLot::unparkOne(&seat.state);
+            return true;
+        }
+        m_freeSeats.push(m_seats.get(), index);
+        return false;
+    }
+
     bool wakeOne(State newState, Task task)
     {
         while (std::optional<uint32_t> index = m_restingSeats.pop(m_seats.get())) {
-            Seat& seat = m_seats[*index];
-            seat.task = task;
-            if (seat.state.compareExchangeStrong(IsResting, newState) == IsResting) {
-                ParkingLot::unparkOne(&seat.state);
+            if (wake(*index, newState, task))
                 return true;
-            }
-            m_freeSeats.push(m_seats.get(), *index);
         }
         return false;
     }
@@ -420,7 +442,7 @@ void ParallelLoops::askThreadsAtWorkForFreeMemory() const
     if (!m_hostPool || !m_hostPool->giveFreeMemoryOfCurrentThreadBack)
         return;
     s_giveFreeMemoryOfCurrentThreadBack.store(m_hostPool->giveFreeMemoryOfCurrentThreadBack, std::memory_order_relaxed);
-    s_timesAskedForFreeMemory.fetch_add(1, std::memory_order_release);
+    s_timesAskedForFreeMemory.fetch_add(1, std::memory_order_seq_cst);
 }
 
 void ParallelLoops::giveFreeMemoryBack() const
@@ -429,10 +451,7 @@ void ParallelLoops::giveFreeMemoryBack() const
     if (!m_hostPool || !m_hostPool->giveFreeMemoryOfCurrentThreadBack)
         return;
     RestingThreads::Task task { [](void*) { }, nullptr, TaskPriority::Foreground, InheritedWork::ofCurrentThread() };
-    bool hasWokenThread = false;
-    for (unsigned left = numberOfRestingThreads(); left && m_restingThreads->tryHandOver(task); --left)
-        hasWokenThread = true;
-    if (!hasWokenThread)
+    if (!m_restingThreads->handOverToAll(task))
         giveFreeMemoryOfCurrentThreadBackIfAsked();
 }
 

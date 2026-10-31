@@ -100,6 +100,8 @@ struct ModuleHost {
     bool (*loadsSynchronously)(JSGlobalObject*, ModuleID);
     // Calls deliverTextThatWaits() from its event loop, once for each call: in a later turn, behind every job that waits, and with every job run between two of them. Null in a host without an event loop.
     void (*callInLaterTurn)(JSGlobalObject*);
+    // Differs where the file was written since: the build has asked the same of each file that the run may read again. Null in a host that reads no code at run time.
+    uint64_t (*stampOfFile)(const String& path);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);

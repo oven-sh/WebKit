@@ -85,8 +85,6 @@ struct ValueFlowSite {
     bool isDenseArrayLiteral { false };
     // Of what a built-in function answers: f(), f(a). So f.bind(receiver) binds no argument.
     bool isAnswerOfCallWithOneArgumentAtMost { false };
-    // An array written with a first and a second element: `["a", 1]`. It says what new Map() takes as a key and a value.
-    bool isPairLiteral { false };
 
     friend bool operator==(const ValueFlowSite&, const ValueFlowSite&) = default;
 };
@@ -186,7 +184,6 @@ public:
     ValueSetID eventRaisingLibraryExportHolders() const { return m_eventRaisingLibraryExportHolders; }
     ValueSetID eventRaisingLibraryClosures() const { return m_eventRaisingLibraryClosures; }
     ValueSetID prototypeObjectsOfLibraryClasses() const { return m_prototypeObjectsOfLibraryClasses; }
-    ValueSetID constructorsOfLibraryClasses() const { return m_constructorsOfLibraryClasses; }
     ValueSetID prototypeObjectsOfClasses() const { return m_prototypeObjectsOfClasses; }
     ValueSetID instancesBelowLibraryClasses() const { return m_instancesBelowLibraryClasses; }
     ValueSetID instancesBelowBuiltinClasses() const { return m_instancesBelowBuiltinClasses; }
@@ -225,7 +222,6 @@ public:
     ValueSetID sureInstancesOf(BuiltinClassID builtinClass) const { return m_sureInstancesOfClass[builtinClass.index()]; }
     ValueSetID proxiesFromNamedConstructor() const { return m_proxiesFromNamedConstructor; }
     ValueSetID denseArrayLiterals() const { return m_denseArrayLiterals; }
-    ValueSetID pairLiterals() const { return m_pairLiterals; }
     // By what an object was made as, whether or not compiled code has a test for the class.
     ValueSetID objectsThatMayBeMadeAs(BuiltinClassID builtinClass) const { return m_objectsThatMayBeMadeAs[builtinClass.index()]; }
     ValueSetID objectsMadeAs(BuiltinClassID builtinClass) const { return m_objectsMadeAs[builtinClass.index()]; }
@@ -295,7 +291,6 @@ private:
     Vector<ValueSetID> m_sureInstancesOfClass;
     ValueSetID m_proxiesFromNamedConstructor { ValueSets::nothing };
     ValueSetID m_denseArrayLiterals { ValueSets::nothing };
-    ValueSetID m_pairLiterals { ValueSets::nothing };
     Vector<ValueSetID> m_objectsThatMayBeMadeAs;
     Vector<ValueSetID> m_objectsMadeAs;
     ValueSetID m_objectsAllocatedAsIterators;
@@ -354,7 +349,6 @@ private:
     ValueSetID m_eventRaisingLibraryExportHolders;
     ValueSetID m_eventRaisingLibraryClosures;
     ValueSetID m_prototypeObjectsOfLibraryClasses;
-    ValueSetID m_constructorsOfLibraryClasses;
     ValueSetID m_prototypeObjectsOfClasses;
     ValueSetID m_objectsOfLibraryFoundByNameAlone;
     ValueSetID m_instancesBelowLibraryClasses;
@@ -467,10 +461,11 @@ enum class ValueFlowHostNode : uint8_t {
     PathOfMainModuleIsStored,
     LoaderFunctionsSeenToBeStored,
     BuiltinObjectsAboveEscapedObjects,
+    MemberNobodyKnowsIsCalled,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 88;
-static_assert(static_cast<unsigned>(ValueFlowHostNode::BuiltinObjectsAboveEscapedObjects) + 1 == numberOfValueFlowHostNodes);
+inline constexpr unsigned numberOfValueFlowHostNodes = 89;
+static_assert(static_cast<unsigned>(ValueFlowHostNode::MemberNobodyKnowsIsCalled) + 1 == numberOfValueFlowHostNodes);
 
 class ValueFlowProgramNodes {
 public:

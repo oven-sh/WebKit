@@ -659,7 +659,12 @@ static NEVER_INLINE void prepareToCopyWordsOfStack()
     s_copiedWords = static_cast<uintptr_t*>(fastMalloc(numberOfWordsCopied * sizeof(uintptr_t)));
 }
 
-SUPPRESS_ASAN static ALWAYS_INLINE void copyWordsOfStack(void* stackPointer)
+#if ASAN_ENABLED
+// Inlined, its loads would be checked as those of its caller are.
+SUPPRESS_ASAN static NEVER_INLINE void copyWordsOfStack(void* stackPointer)
+#else
+static ALWAYS_INLINE void copyWordsOfStack(void* stackPointer)
+#endif
 {
     s_stackPointerAtPoll = std::bit_cast<uintptr_t*>(std::bit_cast<uintptr_t>(stackPointer) & ~(sizeof(uintptr_t) - 1));
     s_lowestCopiedWord = static_cast<size_t>(s_stackPointerAtPoll - s_endOfStack) > numberOfWordsCopiedUnderPoll ? s_stackPointerAtPoll - numberOfWordsCopiedUnderPoll : s_endOfStack;

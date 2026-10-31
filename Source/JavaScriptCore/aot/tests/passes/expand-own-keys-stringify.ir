@@ -24,7 +24,8 @@ function f0 name="expectedLayout" parameters=[{type=object}] results=[{type=anyt
 # CHECK-NEXT: [[original0]]: undefined|string = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
 # CHECK-NEXT: Jump -> next [[done0]]([[original0]])
 # CHECK: [[call0]]({{*}}: guard):
-# CHECK-NEXT: [[outcome0]]: int[0, 2] = CallDirect v0, [[builder0]] function=[[serializerOfPoint]]
+# CHECK-NEXT: [[levels0]]: 0 = Integer
+# CHECK-NEXT: [[outcome0]]: int[0, 2] = CallDirect v0, [[builder0]], [[levels0]] function=[[serializerOfPoint]]
 # CHECK-NEXT: Switch [[outcome0]] cases=[1] -> case
 # CHECK-NOT: StringBuilderReserve
 # CHECK-NOT: StringBuilderCheckpoint
@@ -87,7 +88,7 @@ function f5 name="arrayOfLayout" parameters=[{type=Array<object>}] results=[{typ
 # CHECK: = JSONAppendToken [[builder5]], {{*}} jsonToken=OpenArray
 # CHECK: LoopHint
 # CHECK: = ShapeTest [[element5]] layouts=[L0]
-# CHECK: = CallDirect [[element5]], [[builder5]] function=[[serializerOfPoint]]
+# CHECK: = CallDirect [[element5]], [[builder5]], {{*}} function=[[serializerOfPoint]]
 # CHECK: = JSONAppendToken [[builder5]], {{*}} jsonToken=CloseArray
 # CHECK-NEXT: JSONLeaveHolder [[builder5]], [[holders5]]
 # CHECK: = StringBuilderFinish [[builder5]]
@@ -103,9 +104,9 @@ function f6 name="unionOfTwoLayouts" parameters=[{type=object}] results=[{type=a
 # CHECK: StringBuilderDiscard [[builder6]]
 # CHECK-NEXT: = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
 # CHECK: = ShapeTest v0 layouts=[L1]
-# CHECK: = CallDirect v0, [[builder6]] function=[[serializerOfPoint]]
+# CHECK: = CallDirect v0, [[builder6]], {{*}} function=[[serializerOfPoint]]
 # CHECK: = StringBuilderFinish [[builder6]]
-# CHECK: = CallDirect v0, [[builder6]] function=[[serializerOfOther]]
+# CHECK: = CallDirect v0, [[builder6]], {{*}} function=[[serializerOfOther]]
 }
 
 function f7 name="oneArgument" parameters=[{type=number}] results=[{type=anything}] {

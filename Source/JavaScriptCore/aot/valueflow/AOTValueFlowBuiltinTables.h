@@ -40,7 +40,7 @@ class ValueFlowBuiltinTables {
     WTF_MAKE_NONCOPYABLE(ValueFlowBuiltinTables);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowBuiltinTables);
 public:
-    ValueFlowBuiltinTables(const BuiltinTable&, uint64_t mostObjectsOfTypedResult);
+    explicit ValueFlowBuiltinTables(const BuiltinTable&);
     void makeSets(const Program&, const ValueFlowUniverse&, ValueSets&, const ParallelLoops&, NOESCAPE const ScopedLambda<void()>& runBesideSets);
 
     ValueSetID maskOf(BuiltinTypeID type) const { return m_maskOfType[type.index()]; }
@@ -76,7 +76,6 @@ public:
     bool hasTypedResult(BuiltinID function) const { return m_functionsWithTypedResults.get(function.index()); }
     std::span<const BuiltinName> namesOfFunctionsWithTypedResults() const LIFETIME_BOUND { return m_namesOfFunctionsWithTypedResults.span(); }
     const HeadLayoutsOfFamilies& headLayoutsOfFamilies() const LIFETIME_BOUND { return m_headLayoutsOfFamilies; }
-    uint64_t mostObjectsOfTypedResult() const { return m_mostObjectsOfTypedResult; }
 
     bool holdsValueFromLibrary(BuiltinID entry) const { return m_entriesHoldingValueFromLibrary.get(entry.index()); }
     ValueSetID closuresThatEntriesDescribe() const { return m_closuresThatEntriesDescribe; }
@@ -119,7 +118,6 @@ private:
     Vector<std::pair<ValueFlowObjectID, BuiltinID>> m_describedClosures;
     ValueSetID m_closuresThatEntriesDescribe;
     HeadLayoutsOfFamilies m_headLayoutsOfFamilies;
-    uint64_t m_mostObjectsOfTypedResult;
     std::unique_ptr<ValueFlowHeapTables> m_heap;
 };
 

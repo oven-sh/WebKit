@@ -646,8 +646,7 @@ bool Modules::beginModuleInRecord(ModuleID module)
     // The first load of a CommonJS file that a mock waits for.
     if (m_modulesWithMockToRun.get(module.index())) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-        m_modulesWithMockToRun.clear(module.index());
-        host().runMock(m_instance.globalObject, moduleIDForHost(*m_instance.program, module));
+        runMockThatWaits(module);
         RETURN_IF_EXCEPTION(scope, false);
     }
     if (m_filesToLoadAgain.get(module.index())) [[unlikely]] {
@@ -3082,19 +3081,31 @@ JSValue Modules::answerRequireWithMock(ModuleID target, ModuleID referrer)
     // The loader, which holds what stands in place of the module, asks nobody.
     if (referrer && m_libraryModulesThatMockReplaces.get(target.index()))
         RELEASE_AND_RETURN(scope, requireSpecifier(pathString(target), referrer, true));
-    // The factory of a mock may not have settled.
-    if (JSObject* exports = ensureLoaded(target).exportsOfMock) {
-        JSValue esModule = exports->getIfPropertyExists(realm, vm.propertyNames->__esModule);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (esModule && esModule.toBoolean(realm)) {
-            JSValue defaultExport = exports->getIfPropertyExists(realm, vm.propertyNames->defaultKeyword);
-            RETURN_IF_EXCEPTION(scope, { });
-            if (defaultExport && !defaultExport.isUndefined())
-                return defaultExport;
-        }
-    }
+    JSValue defaultExport = defaultExportOfMockMarkedAsESModule(target);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (defaultExport)
+        return defaultExport;
     // An import had loaded the module when it was mocked. There the loader holds it as an ES module, so require() gets the namespace object, with the mock in it.
     RELEASE_AND_RETURN(scope, moduleNamespace(target, ModulePhase::Evaluation));
+}
+
+// `mock.module(path, () => ({ __esModule: true, default: value }))`: require() answers `value`. Nothing: the mock is not such a one.
+JSValue Modules::defaultExportOfMockMarkedAsESModule(ModuleID target)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // The factory of a mock may not have settled.
+    JSObject* exports = ensureLoaded(target).exportsOfMock;
+    if (!exports)
+        return { };
+    JSValue esModule = exports->getIfPropertyExists(realm, vm.propertyNames->__esModule);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!esModule || !esModule.toBoolean(realm))
+        return { };
+    JSValue defaultExport = exports->getIfPropertyExists(realm, vm.propertyNames->defaultKeyword);
+    RETURN_IF_EXCEPTION(scope, { });
+    return defaultExport && !defaultExport.isUndefined() ? defaultExport : JSValue();
 }
 
 JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy requiredBy)
@@ -3144,7 +3155,8 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
     }
     // The calls that the build has bound and the loader each keep their own answer: LoadedModule::requiredValue is that of the calls, and the namespace object is made once.
     bool isAnsweredAsByLoader = requiredBy == RequiredBy::Program && targetData.answersLoaderWithNamespace();
-    bool answersDefaultExport = !isAnsweredAsByLoader && (targetData.requireResult == RequireResult::DefaultExport || (targetData.requireResult == RequireResult::NamespaceIfImported && !loaded.requiredValue && !isHeldForImport(target)));
+    // What stands in the place of a file of data is a module like any other: the first require() behind the mock gets its namespace object.
+    bool answersDefaultExport = !isAnsweredAsByLoader && !isMocked(target) && (targetData.requireResult == RequireResult::DefaultExport || (targetData.requireResult == RequireResult::NamespaceIfImported && !loaded.requiredValue && !isHeldForImport(target)));
     if (loaded.isKeptByRequire && loaded.requiredValue && !isAnsweredAsByLoader && status(target) == ModuleStatus::Failed) [[unlikely]]
         return loaded.requiredValue.get();
     bool wasBeingRequired = false;
@@ -3177,7 +3189,12 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         return answer(answered);
 
     JSValue result;
-    if (answersDefaultExport) {
+    if (isMocked(target)) [[unlikely]] {
+        result = defaultExportOfMockMarkedAsESModule(target);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    if (result) {
+    } else if (answersDefaultExport) {
         std::optional<unsigned> index = m_table.findExport(target, vm.propertyNames->defaultKeyword.impl());
         RELEASE_ASSERT(index);
         result = readExport(target, *index);

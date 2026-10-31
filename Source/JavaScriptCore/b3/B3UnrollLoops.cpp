@@ -593,29 +593,6 @@ private:
         }
     }
 
-    static bool hasSumKeptAsInteger(PhiChildren& phiChildren, const Plan& plan)
-    {
-        auto isWidenedInteger = [](Value* value) {
-            return value->opcode() == SExt32 || value->opcode() == ZExt32;
-        };
-        return std::ranges::any_of(*plan.header, [&](Value* phi) {
-            if (phi->opcode() != Phi || phi->type() != Int64 || phi == plan.counter)
-                return false;
-            Value* sum = nullptr;
-            for (UpsilonValue* upsilon : phiChildren[phi]) {
-                if (upsilon->owner == plan.preHeader)
-                    continue;
-                Value* input = upsilon->child(0)->foldIdentity();
-                if (!plan.blocks.contains(upsilon->owner) || (sum && sum != input))
-                    return false;
-                sum = input;
-            }
-            if (!sum || !plan.blocks.contains(sum->owner) || (sum->opcode() != Add && sum->opcode() != Sub))
-                return false;
-            return (sum->child(0) == phi && isWidenedInteger(sum->child(1))) || (sum->opcode() == Add && sum->child(1) == phi && isWidenedInteger(sum->child(0)));
-        });
-    }
-
     // The additions of the turns that are written out fold into one.
     static bool addsSameIntegerInEveryTurn(PhiChildren& phiChildren, const Plan& plan)
     {
@@ -791,7 +768,7 @@ private:
             m_proc.didReachLimit(Limit::MaxValuesPerUnrolledLoop, plan.header->at(0)->origin());
             return;
         }
-        if (storesWords && !std::ranges::any_of(*plan.header, [](Value* value) { return value->opcode() == Phi && (value->type() == Double || value->type() == Int64); }))
+        if (storesWords && !std::ranges::any_of(*plan.header, [](Value* value) { return value->opcode() == Phi && value->type() == Double; }))
             return;
         PhiChildren& phiChildren = prepareToReadCounters();
         // Every branch in front of a loop halves what is estimated for it. A turn that waits for the sum of the turn before gains the most.
@@ -821,7 +798,7 @@ private:
                 return;
             findSumsOfIntegers(phiChildren, plan);
             // A loop that walks nothing and sums nothing up would only test less often. One that stores words is written out only for its sums.
-            if (plan.sums.isEmpty() && (!runsOften || (!hasSumKeptAsInteger(phiChildren, plan) && (storesWords || (!walksData(plan) && !addsSameIntegerInEveryTurn(phiChildren, plan))))))
+            if (plan.sums.isEmpty() && (!runsOften || storesWords || (!walksData(plan) && !addsSameIntegerInEveryTurn(phiChildren, plan))))
                 return;
             if (plan.sums.isEmpty()) {
                 Plan withSidePaths = plan;

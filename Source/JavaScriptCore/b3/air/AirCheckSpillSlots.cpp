@@ -9,6 +9,7 @@
 #if ENABLE(B3_JIT)
 
 #include "AirCode.h"
+#include "AirDominators.h"
 #include "AirInstInlines.h"
 #include "AirPhaseScope.h"
 #include "B3Procedure.h"
@@ -196,6 +197,9 @@ bool PlacesOfValues::check(ASCIILiteral where)
     unsigned stamp = 0;
     size_t nextLastWrite = 0;
     std::optional<unsigned> placeOfStamp;
+    size_t firstLastWriteOfPlace = 0;
+    bool isEnteredAtOnePlace = m_code.numEntrypoints() <= 1 && m_code.isEntrypoint(m_code[0]);
+    std::unique_ptr<Dominators> dominators;
     for (size_t first = 0; first < readsFromOutside.size();) {
         unsigned place = readsFromOutside[first].place;
         Holder holder = readsFromOutside[first].holder;
@@ -204,9 +208,24 @@ bool PlacesOfValues::check(ASCIILiteral where)
             ++stampOfPlace;
             while (nextLastWrite < lastWrites.size() && lastWrites[nextLastWrite].first < place)
                 ++nextLastWrite;
+            firstLastWriteOfPlace = nextLastWrite;
             for (; nextLastWrite < lastWrites.size() && lastWrites[nextLastWrite].first == place; ++nextLastWrite) {
                 stampOfLastWrite[lastWrites[nextLastWrite].second.blockIndex] = stampOfPlace;
                 lastWriteOf[lastWrites[nextLastWrite].second.blockIndex] = lastWrites[nextLastWrite].second;
+            }
+        }
+        // A place that one block alone writes, as a value that is computed and stored right behind is. Where that block dominates the block of a read and is another block, every path from the
+        // entry to the read runs it whole, in whichever turn of a loop, and nothing else writes the place: going back, its last write is met first. This only ever says yes: the rest is walked.
+        if (nextLastWrite - firstLastWriteOfPlace == 1 && isEnteredAtOnePlace && lastWrites[firstLastWriteOfPlace].second.holder == holder) {
+            if (!dominators)
+                dominators = makeUnique<Dominators>(m_code);
+            BasicBlock* blockOfWrite = m_code[lastWrites[firstLastWriteOfPlace].second.blockIndex];
+            size_t end = first;
+            while (end < readsFromOutside.size() && readsFromOutside[end].place == place && readsFromOutside[end].holder == holder && dominators->strictlyDominates(blockOfWrite, m_code[readsFromOutside[end].blockIndex]))
+                ++end;
+            if (end == readsFromOutside.size() || readsFromOutside[end].place != place || readsFromOutside[end].holder != holder) {
+                first = end;
+                continue;
             }
         }
         ++stamp;

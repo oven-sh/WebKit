@@ -234,18 +234,8 @@ static void followWhatHasArrived(ValueFlowRuleContext& context, ClimbingSet arri
     });
     ClimbingSet others = context.restrict(arrived, ValueSets::complement(context.maker().of(instances.span())));
 
-    // What an object holds is in the hands that hold the object. The constructor of a library class also escapes where a lookup on a value nobody knows finds a member on it, and then it
-    // is in nobody's hands: its `prototype` escapes with it. runEscape() carries out the `prototype` of a constructor that was itself carried out.
-    ClimbingSet constructorsOfLibrary = context.restrict(arrived, universe.constructorsOfLibraryClasses());
-    ClimbingSet otherHolders = context.restrict(arrived, ValueSets::complement(universe.constructorsOfLibraryClasses()));
-    for (ValueFlowNameKind kind : kindsOfMembers) {
-        carryOut(context, context.readWhatWasWritten(otherHolders, { kind, 0 }));
-        if (!holdsSomething(context, constructorsOfLibrary))
-            continue;
-        ValueFlowNodeID held = context.readWhatWasWritten(constructorsOfLibrary, { kind, 0 });
-        carryOut(context, context.masked(held, ValueSets::complement(universe.prototypeObjectsOfLibraryClasses())));
-        context.connect(context.masked(held, universe.prototypeObjectsOfLibraryClasses()), escapedNode);
-    }
+    for (ValueFlowNameKind kind : kindsOfMembers)
+        carryOut(context, context.readWhatWasWritten(arrived, { kind, 0 }));
     context.connect(context.masked(context.readWhatWasWritten(arrived, { ValueFlowNameKind::CopiedFrom, 0 }), ValueSets::complement(universe.builtinTables().heap().objectsHoldingOnlyWhatWasWritten())), escapedNode);
     context.connect(context.masked(context.readWhatWasWritten(others, prototypeLinkName), ValueSets::complement(universe.builtinTables().heap().objectsThatLetInUnseenCode())), escapedNode);
     context.connect(context.masked(context.readWhatWasWritten(others, prototypeLinkName), universe.builtinTables().heap().namespacesNotedWhenCarriedOut()), context.nodes().ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues));
@@ -483,6 +473,19 @@ static void handOutMembersOfModules(ValueFlowRuleContext& context, ClimbingSet m
     }
 }
 
+static void readBunUnderNamesThatHaveEscaped(ValueFlowRuleContext& context)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    ValueFlowNodeID escapedNode = ValueFlowProgramNodes::escaped();
+    ClimbingSet names(universe.builtinTables().heap().keysOfMembersOfBun());
+    if (!holdsSomething(context, names) || !context.holdsAnyOf(only(context, ValueFlowUniverse::markOfNamedBun()), escapedNode) || !holdsSomething(context, context.membersMissingFrom(escapedNode, names)))
+        return;
+    ClimbingSet bun = only(context, universe.objectOf(Builtins::Bun));
+    context.forEachMember(context.valueWithin(names, escapedNode), [&](ValueFlowObjectID name) {
+        context.connect(context.lookup(bun, ValueFlowName::property(context.program(), universe.keyOf(name))), escapedNode);
+    });
+}
+
 static void runEscape(const ValueFlowStatement&, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -496,10 +499,7 @@ static void runEscape(const ValueFlowStatement&, ValueFlowRuleContext& context)
 
     if (holdsSomething(context, arrived))
         followWhatHasArrived(context, arrived);
-    if (ClimbingSet constructors = context.newSince(context.masked(context.nodes().ofHost(ValueFlowHostNode::ValuesCarriedOut), universe.constructorsOfLibraryClasses())); holdsSomething(context, constructors)) {
-        for (ValueFlowNameKind kind : kindsOfMembers)
-            carryOut(context, context.masked(context.readWhatWasWritten(constructors, { kind, 0 }), universe.prototypeObjectsOfLibraryClasses()));
-    }
+    readBunUnderNamesThatHaveEscaped(context);
     if (ClimbingSet carriedOut = context.newSince(context.nodes().ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues)); holdsSomething(context, carriedOut)) {
         if (ClimbingSet namespaces = context.restrict(carriedOut, universe.builtinTables().heap().namespacesWhoseHoldersListThem()); holdsSomething(context, namespaces))
             connectEnumerableMembersOf(namespaces, escapedNode, context);

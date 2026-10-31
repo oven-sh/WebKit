@@ -525,7 +525,8 @@ static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
         // A store of the same constant changes nothing, whenever it runs. A store to nobody knows which objects is listed by its key, with this bit.
         constexpr uint32_t isKey = 1u << 31;
         Vector<uint32_t> changed = collectInParallel<uint32_t>(loops, program.functions.size(), [&](unsigned index, Vector<uint32_t>& found) {
-            forEachListedValue(program, FunctionID(index), { Opcode::PropSet }, [&](BlockID, uint32_t, ValueID, const Value& store) {
+            // `{ ...{ f: 7 }, ...{ f: y } }`: the literal lists the first value and defines the member again.
+            forEachListedValue(program, FunctionID(index), { Opcode::PropSet, Opcode::PropDefine }, [&](BlockID, uint32_t, ValueID, const Value& store) {
                 if (!keysWithStoresToLookAt.get(store.key().index()))
                     return;
                 auto receivers = store.receivers() ? program.at(store.receivers()).all() : std::nullopt;

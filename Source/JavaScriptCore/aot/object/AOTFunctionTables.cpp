@@ -356,7 +356,8 @@ void FunctionTables::recordCallee(VM& vm, const void* stackPointer, JSObject* cl
 
 bool FunctionTables::framesAreNamedByCallee(FunctionID function)
 {
-    return recordsCalleesOf(function) || FunctionDescription(function).recordsCallee();
+    FunctionDescription description(function);
+    return description.recordsCallee() || description.recordsCalleeOnceRenamed();
 }
 
 void FunctionTables::recordCalleesOf(VM& vm, FunctionID closureFunction)
@@ -387,36 +388,29 @@ void FunctionTables::recordCalleesOf(VM& vm, FunctionID closureFunction)
 
 // In the lowest bit of the function object: a collection has left the entry in the table. The call that writes the entry anew takes the mark away.
 static constexpr uintptr_t markOfCollection = 1;
-// In the next bit: the function object lies in a frame. The collector visits what is recorded, so the function as it is written stands above the two bits in its place.
-static constexpr uintptr_t markOfClosureInFrame = 2;
-static constexpr unsigned numberOfMarks = 2;
 
-static bool liesInFrame(const RecordedCallee& entry)
+// Compiled code records whatever it was entered through. The collector visits what is recorded, and nobody has seen a function object that lies in a frame.
+static bool liesInFrame(VM& vm, const RecordedCallee& entry)
 {
-    return std::bit_cast<uintptr_t>(entry.closure) & markOfClosureInFrame;
+    return !vm.heap.cage().contains(entry.closure);
 }
 
-static JSObject* closureOnHeapOf(const RecordedCallee& entry)
+static JSObject* closureOnHeapOf(VM& vm, const RecordedCallee& entry)
 {
-    return liesInFrame(entry) ? nullptr : std::bit_cast<JSObject*>(std::bit_cast<uintptr_t>(entry.closure) & ~markOfCollection);
+    return liesInFrame(vm, entry) ? nullptr : std::bit_cast<JSObject*>(std::bit_cast<uintptr_t>(entry.closure) & ~markOfCollection);
 }
 
-static FunctionID sourceFunctionOf(const RecordedCallee& entry)
-{
-    if (liesInFrame(entry))
-        return FunctionID(safeCast<uint32_t>(std::bit_cast<uintptr_t>(entry.closure) >> numberOfMarks));
-    return sourceFunctionOf(*functionOf(closureOnHeapOf(entry)));
-}
-
-std::optional<JSObject*> FunctionTables::recordedCalleeOfCallFrom(const void* stackPointer, FunctionID sourceFunction)
+std::optional<JSObject*> FunctionTables::recordedCalleeOfCallFrom(VM& vm, const void* stackPointer, FunctionID sourceFunction)
 {
     if (!hasRecordedCallees())
         return std::nullopt;
     uintptr_t stackPointerOfCaller = std::bit_cast<uintptr_t>(stackPointer);
     const RecordedCallee& entry = entryOfCallFrom(recordedCalleeStorage.mutableSpan(), stackPointerOfCaller);
-    if (entry.stackPointerOfCaller != stackPointerOfCaller || sourceFunctionOf(entry) != sourceFunction)
+    if (entry.stackPointerOfCaller != stackPointerOfCaller)
         return std::nullopt;
-    JSObject* closure = closureOnHeapOf(entry);
+    JSObject* closure = closureOnHeapOf(vm, entry);
+    if (closure && sourceFunctionOf(*functionOf(closure)) != sourceFunction)
+        return std::nullopt;
     // What bind makes of a closure is a closure too, of a function that is written where the target is. No frame is listed for it: the frames are the target's, whatever it was renamed to.
     if (closure && functionKindData(*functionOf(closure)).isBound())
         return std::nullopt;
@@ -469,7 +463,7 @@ void FunctionTables::visitRecordedCallees(VM& vm, Visitor& visitor, uint64_t pha
     Locker locker { recordedCalleesLock };
     std::span<const RecordedCallee> entries = recordedCallees();
     auto visit = [&](const RecordedCallee& entry) {
-        if (JSObject* closure = closureOnHeapOf(entry); closure && !hasReturned(vm, *this, entry))
+        if (JSObject* closure = closureOnHeapOf(vm, entry); closure && !hasReturned(vm, *this, entry))
             visitor.appendUnbarriered(closure);
     };
     // The GC verifier marks on its own and leaves the state of the real collection alone.
@@ -497,7 +491,7 @@ void FunctionTables::finalizeRecordedCallees(VM& vm, uint64_t phaseOfCollector)
     auto finalize = [&](RecordedCallee& entry) {
         if (!entry.closure)
             return;
-        if (hasReturned(vm, *this, entry) || (!liesInFrame(entry) && !vm.heap.isMarked(closureOnHeapOf(entry)))) {
+        if (hasReturned(vm, *this, entry) || (!liesInFrame(vm, entry) && !vm.heap.isMarked(closureOnHeapOf(vm, entry)))) {
             entry = { 0, nullptr };
             return;
         }

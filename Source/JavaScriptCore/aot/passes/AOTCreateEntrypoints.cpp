@@ -223,7 +223,7 @@ static void markFunctionsThatRecordTheirCallee(ProgramEditor& editor, const Flow
         editor.at(id).capabilities.add(FunctionCapabilities::RecordsCalleeOnceRenamed);
         editor.at(written).capabilities.add(FunctionCapabilities::RecordsCalleeOnceRenamed);
     }
-    // Without RecordsCallee: the calls by value do the same, and nothing in compiled code asks.
+    // Without RecordsCallee: the entrypoint for calls by value records from the start, and nothing else in compiled code asks.
     for (FunctionID written : writtenWithClosuresOutOfSight) {
         if (!program.at(written).has(FunctionCapabilities::RecordsCallee))
             editor.at(written).capabilities.add(FunctionCapabilities::RecordsCalleeOnceRenamed);

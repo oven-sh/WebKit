@@ -41,6 +41,7 @@ module m0 path="/a.ts" displayPath="a.ts" body=f0 requests=[{target=m1 completes
 module m1 path="node:b" displayPath="node:b" kind=CommonJs flags=[IsLibrary] exportRule=CommonJs requireResult=ModuleExports syntheticExports=[{name="y" isKnownMember=true}, {name="z" variable=g1}]
 modulefailure q0 importer=m0 specifier="./q"
 ambiguousexport module=m0 name="c"
+sourcestamp module=m0 low=7 high=9
 evalscope e0 mode=Sloppy flags=[IsInFunction] bindings=[{name="g" variable=g0}]
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():

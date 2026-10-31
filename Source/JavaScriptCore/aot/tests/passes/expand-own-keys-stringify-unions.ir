@@ -26,8 +26,8 @@ function f0 name="provenUnion" parameters=[{type=string|L0|L1|Array<number>}] re
 # CHECK: = StringBuilderFinish [[builder0]]
 # CHECK: = ShapeTest [[object0]] layouts=[L1]
 # CHECK: = ShapeTest [[object0]] layouts=[L0]
-# CHECK: = CallDirect [[object0]], [[builder0]] function=[[serializerOfOther]]
-# CHECK: = CallDirect [[object0]], [[builder0]] function=[[serializerOfPoint]]
+# CHECK: = CallDirect [[object0]], [[builder0]], {{*}} function=[[serializerOfOther]]
+# CHECK: = CallDirect [[object0]], [[builder0]], {{*}} function=[[serializerOfPoint]]
 }
 
 function f1 name="expectedUnion" parameters=[{type=undefined|number|string|L0|Array<L1> flags=[IsExpected]}] results=[{type=anything}] {
@@ -54,9 +54,9 @@ function f1 name="expectedUnion" parameters=[{type=undefined|number|string|L0|Ar
 # CHECK-NEXT: = TypeTest [[remaining1]] testedType=object
 # CHECK: = JSONEnterHolder [[builder1]], [[narrowed1]]
 # CHECK: = ShapeTest [[element1]] layouts=[L1]
-# CHECK: = CallDirect [[element1]], [[builder1]] function=[[serializerOfOther]]
+# CHECK: = CallDirect [[element1]], [[builder1]], {{*}} function=[[serializerOfOther]]
 # CHECK: = ShapeTest [[object1]] layouts=[L0]
-# CHECK: = CallDirect [[object1]], [[builder1]] function=[[serializerOfPoint]]
+# CHECK: = CallDirect [[object1]], [[builder1]], {{*}} function=[[serializerOfPoint]]
 }
 
 function f2 name="arrayOrMap" parameters=[{type=Array<number>|Map}] results=[{type=anything}] {

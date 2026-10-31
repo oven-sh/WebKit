@@ -114,7 +114,7 @@ private:
     };
     bool convertsSeveralIntegers(LValue number);
     bool isInLoopCarriedIntegerCycle(ValueID);
-    bool callsOrSuspendsInLoopOf(ValueID);
+    bool isInLoopWithLongIterations(ValueID);
     bool isMadeOutsideLoopOf(LValue user, LValue number);
     void computeValueCycles();
     std::optional<IntegerBehindNumber> describeIntegerBehind(LValue number, bool mayTestWhatWasRead, const IntegersBehindNumbers& operands);
@@ -154,7 +154,7 @@ private:
     UncheckedKeyHashMap<LValue, ConvertedIntegers> m_convertedIntegers;
     std::optional<StronglyConnectedComponents> m_valueCycles;
     BitVector m_cyclesWithIntegers;
-    UncheckedKeyHashMap<uint32_t, bool, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_loopsThatCallOrSuspend;
+    UncheckedKeyHashMap<uint32_t, bool, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_loopsWithLongIterations;
     // By whether what was read may be tested.
     std::array<IntegersBehindNumbers, 2> m_integersBehindNumbers;
     std::array<ExactIntegers, 2> m_exactIntegers;

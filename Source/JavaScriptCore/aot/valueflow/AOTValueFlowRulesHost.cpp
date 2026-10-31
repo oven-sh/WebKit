@@ -1399,7 +1399,7 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
         else if (isHostFlagRaised(context, ValueFlowHostNode::LibraryModulesAreRequiredByName))
             handLibraryModulesTo(context, context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode));
     }
-    if (callsWhateverHasEscaped)
+    if (callsWhateverHasEscaped || isHostFlagRaised(context, ValueFlowHostNode::MemberNobodyKnowsIsCalled))
         callBuiltinsThatReadSpecies(context, context.restrict(escaped, universe.builtinFunctionsThatReadSpecies()));
     ClimbingSet escapedOfLanguage(context.maker().of(escapedObjectsOfLanguage.span()));
     ClimbingSet used = context.unite(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)), escapedOfLanguage);

@@ -1298,20 +1298,12 @@ private:
             return false;
         ClimbingSet entries = m_context.restrict(valueAt(BuiltinPlace { .kind = BuiltinPlaceKind::IteratedValues, .operand = BuiltinOperand::argument(0) }), m_universe.objects());
         constexpr OptionSet<ObjectMutation> mutationsOfContents { ObjectMutation::StoreAfterCreation, ObjectMutation::AddProperty, ObjectMutation::RedefineProperty, ObjectMutation::DeleteField, ObjectMutation::ChangePrototype };
-        // A pair that the program writes says what it holds until something changes it, and any change counts: `pair.pop()` takes a value away.
-        ClimbingSet pairLiterals = m_context.restrict(entries, m_universe.pairLiterals());
-        ClimbingSet otherEntries = m_context.restrict(entries, ValueSets::complement(m_universe.pairLiterals()));
-        bool someEntryIsOtherwise = holdsAnything(m_context.membersMissingFrom(m_context.nodes().ofHost(ValueFlowHostNode::PairsOfEntries), otherEntries))
-            || holdsAnything(m_context.markedAmong(pairLiterals, OptionSet<ObjectMutation>::all()))
-            || m_context.holdsAnyOf(pairLiterals, m_context.nodes().ofHost(ValueFlowHostNode::ArraysThatMayHaveHoles))
+        bool someEntryIsOtherwise = holdsAnything(m_context.membersMissingFrom(m_context.nodes().ofHost(ValueFlowHostNode::PairsOfEntries), entries))
             || m_context.holdsAnyOf(entries, escaped()) || m_context.holdsAnyOf(entries, ValueFlowProgramNodes::lost()) || holdsAnything(m_context.markedAmong(entries, mutationsOfContents));
         if (someEntryIsOtherwise) {
             m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::MapsFilledAsRecordsSay), only(m_context, m_resultObject));
             return false;
         }
-        // The numbers in a Map are followed from the objects that Object.entries() is given. A pair that the program writes is not one of them.
-        if (holdsAnything(pairLiterals))
-            m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::MapsFilledAsRecordsSay), only(m_context, m_resultObject));
         m_context.add(m_context.written(only(m_context, m_resultObject), entriesPairsOfMap), entries);
         for (const BuiltinTransfer& transfer : m_overload->flow.transfers) {
             RELEASE_ASSERT(transfer.to.kind == BuiltinPlaceKind::ResultSlot);
@@ -1808,10 +1800,9 @@ private:
         if (m_overload->code.implementation.inlineBuiltin == InlineBuiltin::OwnPropertyKeys && parameter.protocols.contains(Protocol::OwnKeys)) {
             ValueFlowNodeID listed = m_context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfLibraryClassesWhoseOwnKeysAreListed);
             connectOperands(parameter.operand, listed);
-            // A value that nobody knows stands for what was put into hands nobody sees, and no node lists that beside it: `Reflect.ownKeys(box.held)`.
-            // A prototype object escapes with an instance, with its constructor, or where a lookup on a value nobody knows finds a member on it. Only one that was carried out comes back as a value.
+            // A value that nobody knows stands for all that has escaped, and no node lists that beside it: `Reflect.ownKeys(box.held)`.
             if (mayBeUnknownObject(valueAt(parameter.operand)))
-                m_context.connect(m_context.masked(valuesCarriedOut(), m_universe.prototypeObjectsOfLibraryClasses()), listed);
+                m_context.connect(m_context.masked(ValueFlowProgramNodes::escaped(), m_universe.prototypeObjectsOfLibraryClasses()), listed);
         }
         if (parameter.roles.contains(BuiltinOperandRole::DescribedWhenRefused))
             describeRefusedOperands(parameter);

@@ -764,6 +764,11 @@ void ProgramVerifier::verifySmallRecords()
             fail({ .kind = InternalErrorKind::PayloadOutOfRange, .count = index });
     }
 
+    for (unsigned index = 0; index < m_program.sourceStamps.size(); ++index) {
+        if (!m_program.sourceStamps[index].module)
+            fail({ .kind = InternalErrorKind::PayloadOutOfRange, .count = index });
+    }
+
     for (unsigned index = 0; index < m_program.webAssemblyModules.size(); ++index) {
         if (!m_program.webAssemblyModules[index].module)
             fail({ .kind = InternalErrorKind::PayloadOutOfRange, .count = index });

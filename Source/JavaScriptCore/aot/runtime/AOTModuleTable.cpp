@@ -82,6 +82,13 @@ bool ModuleTable::isAmbiguousExport(ModuleID module, StringView name) const
     });
 }
 
+std::optional<uint64_t> ModuleTable::sourceStamp(ModuleID module) const
+{
+    std::span<const SourceStampData> stamps = m_tables->sourceStamps();
+    auto found = std::ranges::lower_bound(stamps, module.index(), { }, &SourceStampData::module);
+    return found != stamps.end() && found->module == module.index() ? std::optional(found->stamp()) : std::nullopt;
+}
+
 static std::atomic<uint32_t>& moduleFoundLast(unsigned hashOfPath)
 {
     static std::array<std::atomic<uint32_t>, 256> modulesFoundLast;

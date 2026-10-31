@@ -176,9 +176,8 @@ struct FunctionTables {
     // Where compiled code finds an entry from further out. The table grows until every call that may not have returned has a place of its own.
     void recordCallee(VM&, const void* stackPointerOfCaller, JSObject* closure);
     bool hasRecordedCallees() const { return !recordedCalleeStorage.isEmpty(); }
-    // A function whose function objects nobody is seen to rename pays nothing for its frames. The run time marks the function object that it sees get a name, and a marked one is entered through the adapter, whose frame holds it.
+    // A function whose function objects nobody is seen to rename records them where it is called by value, and keeps the function objects that are never made, made on demand or lie in a frame. The run time marks the function object that it sees get a name, and a marked one is entered through the adapter, whose frame holds it.
     // From the first such name on a tail call by value comes by the run time: it gives up the frame above whatever holds the callee, so the holder is told who runs there now.
-    // A frame that was entered before the name was given has no holder.
     void recordCalleesOf(VM&, FunctionID closureFunction);
     bool recordsCalleesOfCallsByValue() const { return !!isRenamedAtRunTime.load(std::memory_order_acquire); }
     bool recordsCalleesOf(FunctionID function) const
@@ -192,7 +191,7 @@ struct FunctionTables {
     bool framesAreNamedByCallee(FunctionID);
     std::span<RecordedCallee> recordedCallees() { return recordedCalleeStorage.mutableSpan().subspan(hasRecordedCallees() ? 1 : 0); }
     // Nothing unless the last call made from there recorded a function object of the function. Null: one that lies in a frame.
-    std::optional<JSObject*> recordedCalleeOfCallFrom(const void* stackPointerOfCaller, FunctionID sourceFunction);
+    std::optional<JSObject*> recordedCalleeOfCallFrom(VM&, const void* stackPointerOfCaller, FunctionID sourceFunction);
     // For a call that enters the function without its function object: the caller keeps the function object, or the environment that holds it, in a word of its own frame. Returns nullopt unless a function object of the function is found there, and null for one that lives in a frame or was never created.
     std::optional<JSObject*> calleeKeptInFrame(VM&, const void* frameRecordOfCaller, CalleeOfSite, FunctionID sourceFunction);
     // Those of calls that may not have returned. The others leave the table.

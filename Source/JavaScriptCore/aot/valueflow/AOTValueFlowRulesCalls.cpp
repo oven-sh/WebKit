@@ -626,11 +626,7 @@ static void callMemberNobodyKnows(const ValueFlowStatement& statement, ValueFlow
         applyBuiltinFoundThroughUnknownObject(context.universe().builtinOf(member), statement, context);
     });
     // A built-in that the program has stored under the name escaped with the store, and no row lists it under that name. Escape covers what it does to its operands, but for the species that it reads.
-    if (ValueFlowNodeID callee = context.operandsOf(statement)[0].node) {
-        context.forEachMember(context.valueWithin(ClimbingSet(context.universe().builtinFunctionsThatReadSpecies()), callee), [&](ValueFlowObjectID stored) {
-            readSpeciesOfUnknownObject(context.universe().builtinOf(stored), context);
-        });
-    }
+    raiseHostFlag(context, ValueFlowHostNode::MemberNobodyKnowsIsCalled);
 
     letUnknownCodeWrite(context);
     // A proxy answers any name with what its trap returns.

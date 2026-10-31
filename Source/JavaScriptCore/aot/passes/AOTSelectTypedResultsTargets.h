@@ -50,7 +50,7 @@ private:
 };
 
 TypeID findTypeOfTypedResultTarget(const Program&, const Function&, const UseLists&, ValueID call);
-TypedResultTarget findTypedResultTarget(const Program&, const Function&, const UseLists&, ValueID call, size_t maxNumberOfLayouts, const HeadLayoutsOfFamilies*);
+TypedResultTarget findTypedResultTarget(const Program&, const Function&, const UseLists&, ValueID call, const HeadLayoutsOfFamilies*);
 void forEachLayoutReachedBy(const Program&, TypeID, const HeadLayoutsOfFamilies*, const ScopedLambda<IterationStatus(LayoutID)>&);
 void markUnprofitableTypedResults(const Program&, FlowResults&, const Heat&, BuildContext&);
 

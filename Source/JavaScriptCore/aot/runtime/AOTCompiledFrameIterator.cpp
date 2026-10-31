@@ -822,10 +822,13 @@ std::optional<JSObject*> CompiledFrameIterator::recordedCallee()
     RunEnd runEnd;
     const void* stackPointer = callerStackPointer();
     while (const CallSiteCache::Entry* entry = findCallerFunctionFrame(cursor, exit, runEnd)) {
-        if (entry->hasRecordedCallee)
-            return calleeSaidBy(*m_image->calleeOfSiteAt(entry->code.index(), entry->site.callSite), cursor.callFrame);
+        if (entry->hasRecordedCallee) {
+            // What was called there may have left by a tail call by value, which has a record of its own.
+            std::optional<JSObject*> kept = calleeSaidBy(*m_image->calleeOfSiteAt(entry->code.index(), entry->site.callSite), cursor.callFrame);
+            return kept ? kept : tables.recordedCalleeOfCallFrom(*m_vm, stackPointer, source);
+        }
         // A function object of the same function that is called by value in tail position has a record of its own.
-        if (!isEntrypointOf(entry->innermostFunction, source) && (!isFormThatLeftByTailCall(entry->innermostFunction, source, entry->site.isTailCall()) || tables.recordedCalleeOfCallFrom(stackPointer, source)))
+        if (!isEntrypointOf(entry->innermostFunction, source) && (!isFormThatLeftByTailCall(entry->innermostFunction, source, entry->site.isTailCall()) || tables.recordedCalleeOfCallFrom(*m_vm, stackPointer, source)))
             break;
         LogicalFrame caller { entry->innermostFunction, entry->site.callSite, entry->site.inlineFrame, entry->innermostIsInlinedConstructCall, false };
         if (std::optional<CalleeOfSite> callee = calleeOfCopiedFrame(*m_image, m_inlineFrames, entry->code, caller))
@@ -842,7 +845,7 @@ std::optional<JSObject*> CompiledFrameIterator::recordedCallee()
         std::optional<FunctionID> function = functionOf(callee);
         return function && sourceFunctionOf(*function) == source && !functionKindData(*function).isBound() ? std::optional(callee) : std::nullopt;
     }
-    return tables.recordedCalleeOfCallFrom(stackPointer, source);
+    return tables.recordedCalleeOfCallFrom(*m_vm, stackPointer, source);
 }
 
 bool isOperationFrameRecord(VM& vm, const CallFrame* frameRecord)
@@ -1148,8 +1151,7 @@ static void noteFramesRecordingCallees(const Image& image, InlineFrameReader& re
         FunctionDescription description(frame.function);
         if (!frame.isOfCalledBuiltin && description.visibility() != TraceVisibility::Hidden) {
             FunctionDescription written(description.sourceFunction());
-            entry.hasFrameRecordingCallee |= description.recordsCallee() || written.recordsCallee();
-            entry.hasFrameRecordingCalleeOnceRenamed |= description.recordsCalleeOnceRenamed() || written.recordsCalleeOnceRenamed();
+            entry.hasFrameRecordingCallee |= description.recordsCallee() || written.recordsCallee() || description.recordsCalleeOnceRenamed() || written.recordsCalleeOnceRenamed();
         }
         if (!frame.hasCallerInMachineFrame())
             return;
@@ -1188,6 +1190,12 @@ static CallSiteCache::Entry createFunctionEntry(const Image& image, InlineFrameR
     return entry;
 }
 
+static bool isNamedByCallee(FunctionID sourceFunction)
+{
+    FunctionDescription description(sourceFunction);
+    return description.recordsCallee() || description.recordsCalleeOnceRenamed();
+}
+
 const CallSiteCache::CalleesOfFrames& CallSiteCache::calleesOfFramesAt(const Image& image, const Entry& entry)
 {
     ASSERT(!entry.isStubReturnSite());
@@ -1207,12 +1215,12 @@ const CallSiteCache::CalleesOfFrames& CallSiteCache::calleesOfFramesAt(const Ima
             FunctionID sourceFunction = description.sourceFunction();
             if (std::optional<CalleeOfSite> callee = calleeOfCopiedFrame(image, m_inlineFrames, entry.code, frame)) {
                 if (!callee->isOwnFunctionObject())
-                    callees->keptInFrame.append({ frame.inlineFrame, sourceFunction, *callee, FunctionDescription(sourceFunction).recordsCallee() });
+                    callees->keptInFrame.append({ frame.inlineFrame, sourceFunction, *callee, isNamedByCallee(sourceFunction) });
             } else if (!callees->sourceFunctionEntered && hasOnlyEntrypointsBelow(image, m_inlineFrames, entry.code, frame, sourceFunction)) {
                 // A frame below it through which it was entered is listed only where nothing above is.
                 callees->sourceFunctionEntered = sourceFunction;
                 callees->inlineFrameEntered = frame.inlineFrame;
-                callees->enteredRecordsCallee = FunctionDescription(sourceFunction).recordsCallee();
+                callees->enteredRecordsCallee = isNamedByCallee(sourceFunction);
             }
         }
         if (!frame.hasCallerInMachineFrame())

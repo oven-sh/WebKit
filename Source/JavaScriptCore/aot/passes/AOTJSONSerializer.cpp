@@ -40,6 +40,10 @@ namespace JSC { namespace AOT { namespace Typed {
 static constexpr uint16_t primitivesWithJSONText = Primitive::String | Primitive::Number | Primitive::Boolean | Primitive::Null;
 static constexpr uint16_t primitivesWithoutJSONText = Primitive::Undefined | Primitive::Absent | Primitive::AnySymbol;
 static constexpr uint32_t cursorResultOfJSONAppendValue = 1;
+// maximumSideStackRecursion of runtime/JSONObject.cpp: JSON.stringify throws at one more object or list inside one another, on every machine.
+static constexpr int64_t maxJSONLevels = 40000;
+// A function opens fewer than this by itself: each is written in its text.
+static constexpr int64_t maxJSONLevelsOpenedByOneFunction = 1 << 16;
 static constexpr ProofSet proofsTestedBySerializers { Proof::NoExtraProperties, Proof::PrototypeLinkUnchanged };
 static constexpr OptionSet<PristineAspects> serializedArrayAspects { PristineAspects::Storage, PristineAspects::Names };
 
@@ -903,9 +907,37 @@ struct JSONTextWriter final : Emission {
         mergeIfAnyArmLeftFor(done);
     }
 
+    void noteLevels(size_t numberOfLevels)
+    {
+        RELEASE_ASSERT(numberOfLevels < maxJSONLevelsOpenedByOneFunction);
+        m_mostLevelsOpened = std::max<int64_t>(m_mostLevelsOpened, numberOfLevels);
+    }
+
+    // The objects and lists that are open around what is written here.
+    ValueID appendLevelsAround()
+    {
+        ValueID openedHere = builder().appendInteger(m_holders.size());
+        return m_levelsAroundFunction ? builder().append(Opcode::Add, { m_levelsAroundFunction, openedHere }) : openedHere;
+    }
+
+    // A serializer around which no code runs lists no holders, so the host would count only those of this function. It is told the number of the others, in the
+    // place of the outermost holder.
+    ValueID tellHostLevelsAroundFunction()
+    {
+        if (!m_levelsAroundFunction || m_codeMayRunAroundValues)
+            return { };
+        return builder().append(Opcode::JSONEnterHolder, { m_stringBuilder, m_levelsAroundFunction });
+    }
+
+    void takeBackLevelsAroundFunction(ValueID told)
+    {
+        if (told)
+            builder().append(Opcode::JSONLeaveHolder, { m_stringBuilder, told });
+    }
+
     ValueID appendCallOfSerializer(FunctionID serializer, ValueID object)
     {
-        ValueID outcome = appendCallOf(serializer, { object, m_stringBuilder });
+        ValueID outcome = appendCallOf(serializer, { object, m_stringBuilder, appendLevelsAround() });
         builder().function().edit(outcome).setCalledBuiltin(m_calledBuiltin);
         return outcome;
     }
@@ -925,10 +957,12 @@ struct JSONTextWriter final : Emission {
         }
         commit();
         RELEASE_ASSERT(!m_holders.isEmpty());
+        ValueID levelsAround = tellHostLevelsAroundFunction();
         ListedHolders listed = listHolders(m_holders.size() - 1);
         ValueID innermostHolder = m_holders.last().listed ? builder().append(Opcode::Undefined, { }) : m_holders.last().value;
         ValueID hasText = builder().append(make<&Value::setCalledBuiltin>(Opcode::StringBuilderAppendJSON, { m_stringBuilder, value, property, innermostHolder }, m_calledBuiltin));
         unlistHolders(listed);
+        takeBackLevelsAroundFunction(levelsAround);
         BlockID hasNoText = builder().emitBranch(hasText).notTaken;
         appendCommaOf(position);
         jumpTo(done);
@@ -1074,6 +1108,7 @@ struct JSONTextWriter final : Emission {
             arm.numberOfOwnMembers = order.numberOfOwnMembers;
 
             m_holders.append(Holder { tested.object });
+            noteLevels(m_holders.size());
             if (std::ranges::any_of(arm.members, [&](const Member& member) { return callsSerializerThatRunsCode(member.plan); }))
                 arm.listedHolders = listHolders(m_holders.size());
 
@@ -1148,6 +1183,7 @@ struct JSONTextWriter final : Emission {
         }
 
         m_holders.append(Holder { object });
+        noteLevels(m_holders.size());
         ListedHolders listed;
         if (std::ranges::any_of(members, [&](const Member& member) { return callsSerializerThatRunsCode(member.plan); }))
             listed = listHolders(m_holders.size());
@@ -1228,10 +1264,12 @@ struct JSONTextWriter final : Emission {
         if (remainder) {
             builder().moveToEndOf(remainder);
             ValueID names = builder().append(make<&Value::setLayout>(Opcode::GetKeyNamesInOrder, { order, builder().append(Opcode::Add, { hasKey.provenOnTaken, builder().appendInteger(1) }) }, layout));
+            ValueID levelsAround = tellHostLevelsAroundFunction();
             ListedHolders listedForHost = listHolders(m_holders.size() - 1);
             ValueID innermostHolder = m_holders.last().listed ? builder().append(Opcode::Undefined, { }) : object;
             ValueID hasText = builder().append(make<&Value::setCalledBuiltin>(Opcode::StringBuilderAppendJSONMembers, { m_stringBuilder, object, names, builder().appendInteger(0), innermostHolder }, m_calledBuiltin));
             unlistHolders(listedForHost);
+            takeBackLevelsAroundFunction(levelsAround);
             BlockID hasNoText = builder().emitBranch(hasText).notTaken;
             appendText(appendString("}"_s));
             appendLeaveHolders(listed);
@@ -1417,10 +1455,12 @@ struct JSONTextWriter final : Emission {
             builder().append(make<&Value::setKey, &Value::setMode>(Opcode::PropSet, { keys, arm.numberOfOwnMembers }, program().keyOf(BuiltinNames::length), ECMAMode::Strict));
 
         RELEASE_ASSERT(m_holders.last().value == arm.object.object);
+        ValueID levelsAround = tellHostLevelsAroundFunction();
         ListedHolders listed = listHolders(m_holders.size() - 1);
         ValueID innermostHolder = m_holders.last().listed ? builder().append(Opcode::Undefined, { }) : arm.object.object;
         ValueID hasText = builder().append(make<&Value::setCalledBuiltin>(Opcode::StringBuilderAppendJSONMembers, { m_stringBuilder, arm.object.object, keys, firstMember, innermostHolder }, m_calledBuiltin));
         unlistHolders(listed);
+        takeBackLevelsAroundFunction(levelsAround);
         BlockID hasNoText = builder().emitBranch(hasText).notTaken;
         appendText(appendString("}"_s));
         appendLeaveHolders(arm.listedHolders);
@@ -1456,6 +1496,8 @@ struct JSONTextWriter final : Emission {
 
         ValueID pristine = emitProvenBranch(builder().append(makePristineTest(array, BuiltinClasses::Array, serializedArrayAspects)), generic);
         ValueID length = builder().append(Opcode::GetArrayLength, { array, pristine });
+        // A list without elements is a level too.
+        noteLevels(m_holders.size() + 1);
         ValueID isEmpty = builder().append(Opcode::StrictEq, { length, builder().appendInteger(0) });
         BlockID hasElements = builder().emitBranch(isEmpty).notTaken;
         appendKeyOf(position);
@@ -1612,6 +1654,9 @@ struct JSONTextWriter final : Emission {
     BlockID m_whenThereIsNoText;
     // The outermost first.
     Vector<Holder, 4> m_holders;
+    // In a serializer: how many objects and lists its callers have open around its object. None around the value that the program hands to JSON.stringify.
+    ValueID m_levelsAroundFunction;
+    int64_t m_mostLevelsOpened { 0 };
     bool m_codeMayRunAroundValues { false };
     // False while a plan is made only to ask something about it: the plan that is written reports what it leaves out.
     mutable bool m_reportsLimits { true };
@@ -1664,7 +1709,8 @@ void JSONSerializerBuilder::appendRoot(ValueID value, BlockID whenThereIsNoText)
 
 DerivedSignature signatureOfSerializer(const EmissionInputs& inputs)
 {
-    return { { TypeTable::object, inputs.opaqueType(OpaqueKind::StringBuilder) }, { inputs.outcomeType() } };
+    TypeID levelsAround = inputs.types.intern(Type::integer({ 0, maxJSONLevels + maxJSONLevelsOpenedByOneFunction }));
+    return { { TypeTable::object, inputs.opaqueType(OpaqueKind::StringBuilder), levelsAround }, { inputs.outcomeType() } };
 }
 
 Function buildSerializer(const DerivedFunctionKey& key, DerivedFunctionInputs& derived)
@@ -1680,6 +1726,15 @@ Function buildSerializer(const DerivedFunctionKey& key, DerivedFunctionInputs& d
     BlockID differs = builder.addBlock(BlockFrequency::Rare);
     builder.emitFailureOfPredictions(Target { differs, { }, { } });
     writer.m_codeMayRunAroundValues = writer.writingRunsCode(Type::forLayout(layout, inputs.types));
+
+    // The body comes first: what it opens says how many levels may be open around it. With more the general serializer is asked, which counts them one by one and throws.
+    BlockID body = builder.addBlock(BlockFrequency::Normal);
+    writer.m_levelsAroundFunction = builder.addParameter(body, inputs.types.intern(Type::integer({ 0, maxJSONLevels })));
+    builder.moveToEndOf(body);
+    writer.appendObjectOfLayout(head.parameters[0], layout, differs);
+    builder.emitReturn(writer.appendOutcome(JSONOutcome::Parsed));
+
+    builder.moveToEndOf(head.entry);
     // Where code may run, the holders are listed. Where none runs, nothing is kept about them until the text has grown long: then the run time asks for those that follow.
     if (!writer.m_codeMayRunAroundValues && writer.mayHoldItself(layout)) {
         IRBuilder::BranchBlocks atEntry = builder.emitBranch(builder.append(Emission::make<&Value::setFailsAtWatchedLevels>(Opcode::JSONHasStackSpace, { }, true)), BlockFrequency::Normal, BlockFrequency::Rare);
@@ -1692,8 +1747,11 @@ Function buildSerializer(const DerivedFunctionKey& key, DerivedFunctionInputs& d
         builder.moveToEndOf(atEntry.taken);
     } else
         writer.emitJumpUnless(builder.append(Opcode::JSONHasStackSpace, { }), differs);
-    writer.appendObjectOfLayout(head.parameters[0], layout, differs);
-    builder.emitReturn(writer.appendOutcome(JSONOutcome::Parsed));
+    ValueID hasRoom = builder.append(Opcode::Less, { head.parameters[2], builder.appendInteger(maxJSONLevels - writer.m_mostLevelsOpened + 1) });
+    IRBuilder::ProvenBranch whenThereIsRoom = builder.emitBranchWithProof(hasRoom, 0, BlockFrequency::Normal, BlockFrequency::Rare);
+    builder.emitJump(body, { whenThereIsRoom.provenOnTaken });
+    builder.moveToEndOf(whenThereIsRoom.notTaken);
+    builder.emitJump(differs);
 
     builder.moveToEndOf(differs);
     builder.emitReturn(writer.appendOutcome(JSONOutcome::Unknown));

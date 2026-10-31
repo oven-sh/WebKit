@@ -519,10 +519,14 @@ void noteSubclassesOfBuiltinClasses(Program& program, const ParallelLoops& loops
         Layout& layout = program.layouts[index];
         if (!layout.base || layout.writtenBuiltinBase)
             continue;
+        bool isBelowConstructorFunction = layout.has(LayoutFlags::IsConstructorFunction);
         LayoutID highest = layout.base;
-        for (size_t steps = 0; program.at(highest).base && steps < program.layouts.size(); ++steps)
+        for (size_t steps = 0; program.at(highest).base && steps < program.layouts.size(); ++steps) {
+            isBelowConstructorFunction |= program.at(highest).has(LayoutFlags::IsConstructorFunction);
             highest = program.at(highest).base;
+        }
         layout.writtenBuiltinBase = program.at(highest).writtenBuiltinBase;
+        layout.mayBeOrdinaryObject = layout.writtenBuiltinBase && isBelowConstructorFunction;
         classWithoutBrandAbove[index] = classWithoutBrandAbove[highest.index()];
     }
     if (hasClassWithoutBrand)
@@ -633,6 +637,7 @@ Layout createDerivedLayout(const Program& program, LayoutID base)
     layout.position = declared.position;
     layout.flags = LayoutFlags::IsDerived;
     layout.writtenBuiltinBase = declared.writtenBuiltinBase;
+    layout.mayBeOrdinaryObject = declared.mayBeOrdinaryObject;
     layout.flow.baseState = BaseState::Layout;
     layout.flow.base = base;
     return layout;

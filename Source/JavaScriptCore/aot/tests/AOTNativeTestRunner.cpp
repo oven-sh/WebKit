@@ -127,6 +127,7 @@ static SelectedNativeTests selectNativeTests(const NativeTestRequest& request)
 
 static NativeTestSummary runInThisProcess(NativeTestList tests, PrintStream& out)
 {
+    printLineAfterEachChildProcess();
     for (const NativeTest* test : tests) {
         out.println(test->name);
         out.flush();

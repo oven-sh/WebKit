@@ -560,22 +560,13 @@ struct TallyFinder {
     std::optional<unsigned> cycle { context.analyses.blockCycles().innermostCycleOf(loop.header) };
     unsigned numberOfValues { 0 };
 
-    std::optional<Range> stepOf(ValueID id)
+    std::optional<ChangeInTurn> plus(ValueID base, std::optional<int64_t> constant, bool isSubtracted)
     {
-        if (std::optional<int64_t> constant = integerConstantThroughCasts(context.program, context.function, id))
-            return Range::int32().contains(*constant) ? std::optional(Range::one(*constant)) : std::nullopt;
-        const Type& type = context.program.typeOf(context.function, id);
-        return type.isInt32() ? std::optional(type.integers) : std::nullopt;
-    }
-
-    std::optional<ChangeInTurn> plus(ValueID base, std::optional<Range> step, bool isSubtracted)
-    {
-        std::optional<ChangeInTurn> change = step ? changeOf(base) : std::nullopt;
+        std::optional<ChangeInTurn> change = constant && Range::int32().contains(*constant) ? changeOf(base) : std::nullopt;
         if (!change)
             return std::nullopt;
-        if (isSubtracted)
-            return ChangeInTurn { change->least - step->maximum, change->most - step->minimum };
-        return ChangeInTurn { change->least + step->minimum, change->most + step->maximum };
+        int64_t step = isSubtracted ? -*constant : *constant;
+        return ChangeInTurn { change->least + step, change->most + step };
     }
 
     std::optional<ChangeInTurn> changeOfJoin(ValueLocation location)
@@ -603,16 +594,15 @@ struct TallyFinder {
             return std::nullopt;
         const Function& function = context.function;
         const Value& value = function.at(id);
+        auto constant = [&](uint32_t index) { return integerConstantThroughCasts(context.program, function, value.operand(index)); };
         if (value.opcode == Opcode::Parameter)
             return changeOfJoin(context.analyses.useLists().locationOf(id));
         if (value.opcode == Opcode::Increment || value.opcode == Opcode::Decrement)
-            return plus(value.operand(0), Range::one(1), value.opcode == Opcode::Decrement);
-        if (value.opcode == Opcode::Add) {
-            std::optional<ChangeInTurn> change = plus(value.operand(0), stepOf(value.operand(1)), false);
-            return change ? change : plus(value.operand(1), stepOf(value.operand(0)), false);
-        }
+            return plus(value.operand(0), 1, value.opcode == Opcode::Decrement);
+        if (value.opcode == Opcode::Add)
+            return constant(1) ? plus(value.operand(0), constant(1), false) : plus(value.operand(1), constant(0), false);
         if (value.opcode == Opcode::Sub)
-            return plus(value.operand(0), stepOf(value.operand(1)), true);
+            return plus(value.operand(0), constant(1), true);
         // `count++` of a variable without a declared type converts it first.
         bool isConversionOfNumber = (value.opcode == Opcode::ToNumber || value.opcode == Opcode::ToNumeric) && context.program.typeOf(function, value.operand(0)).isNumber();
         return isCastWithoutTest(value.opcode) || isConversionOfNumber ? changeOf(value.operand(0)) : std::nullopt;
@@ -627,13 +617,14 @@ struct Tally {
 
 } // anonymous namespace
 
-// An integer counter takes each value of its range at most once.
+// An integer counter takes each value of its range at most once. Not 2 ** 53: one more is no double, so a number that has come there stays there.
 static std::optional<int64_t> mostTurnsBehindFirst(FunctionPassContext& context, const LoopInduction& loop)
 {
+    constexpr Range changedByEveryStep { -maxExactInteger + 1, maxExactInteger - 1 };
     std::optional<int64_t> fewest;
     for (const InductionVariable& variable : loop.variables) {
         const Type& type = context.program.typeOf(context.function, variable.parameter);
-        if (!type.isInteger() || !type.integers.isSubsetOf(Range::exact()) || variable.step.kind != InductionStepKind::Constant || !variable.step.constant)
+        if (!type.isInteger() || !type.integers.isSubsetOf(changedByEveryStep) || variable.step.kind != InductionStepKind::Constant || !variable.step.constant)
             continue;
         int64_t turns = (type.integers.maximum - type.integers.minimum) / std::abs(variable.step.constant);
         fewest = fewest ? std::min(*fewest, turns) : turns;
@@ -1406,29 +1397,10 @@ static bool comparesNoVariableInCycle(FunctionPassContext& context)
     });
 }
 
-// A counter that became an integer closed the path for where it is none. While that path stood, it handed the loop a tally of any size.
-static PassOutcome convertTalliesBehindConvertedCounters(FunctionPassContext& context)
-{
-    if (!context.analyses.cfg().hasCycle() || !countNumbersCarriedByLoops(context))
-        return PassOutcome::Unchanged;
-    IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
-    uint64_t numberOfTallies = 0;
-    for (Vector<Tally, 2> tallies = findTallies(context); !tallies.isEmpty(); tallies = findTallies(context)) {
-        Vector<ValueID, 4> bounded = boundTallies(context, builder, tallies.span());
-        numberOfTallies += tallies.size();
-        narrowValueTypes({ context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo }, bounded.span());
-    }
-    if (!numberOfTallies)
-        return PassOutcome::Unchanged;
-    context.build.statistics().count(StatisticID::CountersConverted, numberOfTallies);
-    context.keptAnalyses = allAnalyses;
-    return PassOutcome::Changed;
-}
-
 PassOutcome convertCountersToIntegers(FunctionPassContext& context)
 {
     if (context.isBehindRounds && std::exchange(context.hasConvertedCountersBehindRounds, true) && !std::exchange(context.hasBoundsTestedBehindRounds, false))
-        return convertTalliesBehindConvertedCounters(context);
+        return PassOutcome::Unchanged;
     if (!context.analyses.cfg().hasCycle() || (!hasNumberParameter(context.program, context.function) && !hasIntegerBeyondInt32(context.program, context.function)))
         return PassOutcome::Unchanged;
 

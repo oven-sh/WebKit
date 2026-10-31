@@ -15,7 +15,9 @@ layout L2 name="Shelf" fields=[{key="crate" declared={type=L1} flow={location={w
 # CHECK-NEXT: = CatchValue
 # CHECK-NEXT: JSONRestoreHolders v1, [[listed1]]
 # CHECK: handler=[[threw1]]():
-# CHECK-NEXT: = CallDirect {{*}}, v1 function=
+# CHECK-NEXT: [[opened1]]: 1 = Integer integer=1
+# CHECK-NEXT: [[levels1]]:{{*}}= Add {{*}}, [[opened1]]
+# CHECK-NEXT: = CallDirect {{*}}, v1, [[levels1]] function=
 
 # CHECK: function {{*}}creator=Serializer{layout=L2}
 # CHECK: [[entered2]]: jsonholders = JSONEnterHolder v1, v0
@@ -24,5 +26,7 @@ layout L2 name="Shelf" fields=[{key="crate" declared={type=L1} flow={location={w
 # CHECK-NEXT: = CatchValue
 # CHECK-NEXT: JSONRestoreHolders v1, [[entered2]]
 # CHECK: handler=[[threw2]]():
-# CHECK-NEXT: = CallDirect {{*}}, v1 function=
+# CHECK-NEXT: [[opened2]]: 1 = Integer integer=1
+# CHECK-NEXT: [[levels2]]:{{*}}= Add {{*}}, [[opened2]]
+# CHECK-NEXT: = CallDirect {{*}}, v1, [[levels2]] function=
 # CHECK: JSONLeaveHolder v1, [[entered2]]

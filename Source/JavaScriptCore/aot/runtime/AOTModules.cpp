@@ -441,7 +441,17 @@ void Modules::leaveToHostUnlessItHasRun(ModuleID module)
 void Modules::leaveToHost(ModuleID file)
 {
     m_evictedFiles.set(file.index());
+    m_filesAboveNoEvictedFile.clearAll();
     m_runsCopyFromDisk = true;
+}
+
+bool Modules::isChangedOnDisk(ModuleID file)
+{
+    std::optional<uint64_t> stampOfBuild = m_table.sourceStamp(file);
+    if (!stampOfBuild || !host().stampOfFile)
+        return false;
+    count(m_instance, RuntimeCounterID::FilesComparedWithDisk);
+    return host().stampOfFile(m_table.pathText(file)) != *stampOfBuild;
 }
 
 bool Modules::importsEvictedFile(ModuleID module, BitVector& seen)
@@ -449,9 +459,21 @@ bool Modules::importsEvictedFile(ModuleID module, BitVector& seen)
     ModuleID file = fileOf(module);
     if (m_evictedFiles.get(file.index()))
         return true;
+    if (m_filesAboveNoEvictedFile.get(file.index()))
+        return false;
     if (m_otherImageHasEvictedFiles && data(file).isUncompiledCode() && namesFileEvictedFromOtherImage(file))
         return true;
-    if (seen.set(file.index()) || !isLoadedWithRequests(file) || status(file) >= ModuleStatus::Evaluating || hasRun(file))
+    if (seen.set(file.index()) || status(file) >= ModuleStatus::Evaluating || hasRun(file))
+        return false;
+    if (isChangedOnDisk(file)) [[unlikely]] {
+        leaveToHostUnlessItHasRun(file);
+        for (Instance* instance = m_instance.globalObject->aotInstance(); instance; instance = instance->above) {
+            if (Modules* modules = instance->state->modules.get(); modules && modules != this)
+                modules->didEvictFromOtherImage();
+        }
+        return true;
+    }
+    if (!isLoadedWithRequests(file))
         return false;
     return std::ranges::any_of(m_table.imports(file), [&](const ModuleRequestData& request) {
         return importsEvictedFile(request.targetModule(), seen);
@@ -481,14 +503,17 @@ bool Modules::namesFileEvictedFromOtherImage(ModuleID external)
 // A module that has not run yet is bound to what its imports name when it runs. Behind an eviction that is an instance from disk, which only code from disk imports.
 bool Modules::isLeftToHost(ModuleID module)
 {
-    if (m_evictedFiles.isEmpty() && !m_otherImageHasEvictedFiles)
+    if (m_evictedFiles.isEmpty() && !m_otherImageHasEvictedFiles && !m_table.hasSourceStamps())
         return false;
     // The host has it anyway.
     if (data(module).isUncompiledCode())
         return false;
     BitVector seen;
-    if (!importsEvictedFile(module, seen))
+    if (!importsEvictedFile(module, seen)) {
+        // The loader asks for all that a module imports before any of it runs, and what lies below them is largely the same.
+        m_filesAboveNoEvictedFile.merge(seen);
         return false;
+    }
     leaveToHost(fileOf(module));
     return true;
 }
@@ -1052,8 +1077,7 @@ bool Modules::letMockStandInPlaceOfLibraryModule(ModuleID module)
         return false;
     // An earlier mock that still waits for the first load comes first: code outside the image may have loaded it from the host. This one is laid over it.
     if (m_modulesWithMockToRun.get(module.index())) {
-        m_modulesWithMockToRun.clear(module.index());
-        host().runMock(m_instance.globalObject, moduleIDForHost(*m_instance.program, module));
+        runMockThatWaits(module);
         RETURN_IF_EXCEPTION(scope, false);
     }
     if (exportsWhatMockNamesAlone(module))
@@ -1081,6 +1105,39 @@ void Modules::leaveOutWhatMockLacks(ModuleID module, JSObject* exportsOfMock)
             leftOut.quickSet(index);
     }
     m_exportsLeftOut.set(module, WTF::move(leftOut));
+}
+
+void Modules::takeWhatMockAdds(ModuleID module, bool comesAheadOfLoad)
+{
+    if (!comesAheadOfLoad) {
+        if (LoadedModule* loaded = loadedIfExists(module))
+            loaded->takesNamesThatMockAdds = false;
+        return;
+    }
+    LoadedModule& loaded = ensureLoaded(module);
+    loaded.takesNamesThatMockAdds = true;
+    loaded.exportsAddedByMock.set(*this, createTableOfExports());
+}
+
+bool Modules::tryReplaceExportAddedByMock(ModuleID module, UniquedStringImpl* name, JSValue value)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    LoadedModule& loaded = ensureLoaded(module);
+    JSObject* added = loaded.exportsAddedByMock;
+    if (!added)
+        return false;
+    Identifier key = Identifier::fromUid(vm, name);
+    if (!loaded.takesNamesThatMockAdds && !storedValue(realm, added, key))
+        return false;
+    added->putDirectMayBeIndex(realm, key, value);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (JSObject* namespaceObject = namespaceIfCreated(module, ModulePhase::Evaluation)) {
+        uncheckedDowncast<ModuleNamespace>(namespaceObject)->replaceCapturedValue(realm, key, value);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return true;
 }
 
 bool Modules::dropExportThatFindsNothing(ModuleID importer, const RequiredNameData& requiredName)
@@ -1151,8 +1208,9 @@ bool Modules::isLeftOut(ModuleID module, unsigned index, TablesBehindStars table
 
 void Modules::mockWhatRequireAnswered(ModuleID module, JSObject* exports)
 {
-    LoadedModule* loaded = loadedIfExists(module);
-    if (!loaded || !loaded->requiredValue)
+    LoadedModule* loaded = &ensureLoaded(module);
+    loaded->exportsOfMock.set(*this, exports);
+    if (!loaded->requiredValue)
         return;
     loaded->requiredValue.set(*this, exports);
     // In plain Bun the mock stores what its factory gave in the entry of the file.
@@ -1186,6 +1244,16 @@ void Modules::deferMock(ModuleID module)
     }
 }
 
+// It does not wait while its factory runs, which may load the module. A factory that fails leaves nothing in place of the module: the next load asks the mock again, as under `bun test`.
+void Modules::runMockThatWaits(ModuleID module)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    m_modulesWithMockToRun.clear(module.index());
+    host().runMock(m_instance.globalObject, moduleIDForHost(*m_instance.program, module));
+    if (scope.exception()) [[unlikely]]
+        m_modulesWithMockToRun.set(module.index());
+}
+
 void Modules::runMocksBelow(ModuleID root)
 {
     if (m_modulesWithMockToRun.isEmpty()) [[likely]]
@@ -1205,8 +1273,7 @@ void Modules::runMocksBelow(ModuleID root)
         if (reached.quickSet(module.index()))
             continue;
         if (m_modulesWithMockToRun.get(module.index())) {
-            m_modulesWithMockToRun.clear(module.index());
-            host().runMock(m_instance.globalObject, moduleIDForHost(*m_instance.program, module));
+            runMockThatWaits(module);
             RETURN_IF_EXCEPTION(scope, void());
         }
         if (isMocked(module))
@@ -1261,9 +1328,9 @@ bool Modules::tryReplaceCapturedExport(ModuleID module, UniquedStringImpl* name,
     bool isListed = found != syntheticExports.end();
     if (isListed ? !found->isReplaceable : !data(m_table.fileBehindFace(module).value_or(module)).mayBeMocked())
         return false;
-    // An ES module captures nothing: a name that it does not export stays out of it.
+    // An ES module captures nothing: a name that it does not export stays out of it, unless a mock stands in place of the module.
     if (!isListed && data(module).hasExportTable() && !m_table.fileBehindFace(module))
-        return false;
+        RELEASE_AND_RETURN(scope, tryReplaceExportAddedByMock(module, name, value));
 
     Identifier key = Identifier::fromUid(vm, name);
     JSObject* captured = capturedExports(module);
@@ -1757,6 +1824,9 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
         if (const ScriptFetchParameters* attributes = fetchParameters->get()) {
             ModuleID file = fileOf(module);
             Identifier key = keyWithoutForm(file);
+            // A statement that the loader links, or code from disk, has asked for the file first: the loader has what that made, for every type of the same kind.
+            if (registryEntry(key, attributes)) [[unlikely]]
+                RELEASE_AND_RETURN(scope, importUncompiled(key, referrer, WTF::move(*fetchParameters)));
             if (std::optional<ModuleID> form = findWithAttributes(key, attributes))
                 module = m_table.faceOfFile(*form).value_or(*form);
             else
@@ -4464,10 +4534,13 @@ void willMockModule(JSGlobalObject* realm, ModuleID moduleOfHost, JSObject* expo
     }
     modules.willMock(module);
     if (modules.data(module).kind != ModuleKind::CommonJs) {
-        if (ModuleStatus status = modules.status(module); (status == ModuleStatus::Unlinked || status == ModuleStatus::Linked) && !modules.wasLoadedWhenMockWasMade(module)) {
+        ModuleStatus status = modules.status(module);
+        bool comesAheadOfLoad = (status == ModuleStatus::Unlinked || status == ModuleStatus::Linked) && !modules.wasLoadedWhenMockWasMade(module);
+        if (comesAheadOfLoad) {
             modules.fillExportsOfBodyThatNeverRuns(module);
             modules.leaveOutWhatMockLacks(module, exports);
         }
+        modules.takeWhatMockAdds(module, comesAheadOfLoad);
         modules.mockWhatRequireAnswered(module, exports);
         return;
     }
@@ -4483,8 +4556,10 @@ void willMockModule(JSGlobalObject* realm, ModuleID moduleOfHost, JSObject* expo
 void didMockModule(JSGlobalObject* realm, ModuleID moduleOfHost)
 {
     ModuleFromHost module(realm, moduleOfHost);
-    if (Modules* modules = modulesOf(realm))
+    if (Modules* modules = modulesOf(realm)) {
         modules->answerRequireWithNamespaceOfMock(module);
+        modules->takeWhatMockAdds(module, false);
+    }
 }
 
 bool hasESModuleMarker(JSCell* moduleNamespace)

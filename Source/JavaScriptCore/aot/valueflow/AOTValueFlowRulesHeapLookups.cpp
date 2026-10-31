@@ -1145,11 +1145,19 @@ void HeapRule::readMembers(ClimbingSet objects, ClimbingSet start, const HeapKey
             }
             return;
         }
-        if (isNativeModuleThatNobodyNames(holder) || m_builtins.canonicalID(m_universe.builtinOf(holder)) == Builtins::Bun) {
+        bool isBun = m_builtins.canonicalID(m_universe.builtinOf(holder)) == Builtins::Bun;
+        if (isNativeModuleThatNobodyNames(holder) || isBun) {
             add(result, unknownValue(ValueFlowUnknownSource::UndescribedNativeResult));
             for (BuiltinID member : m_builtins.membersOf(m_universe.builtinOf(holder))) {
                 openProxiesThatMemberAnswers(m_context, member);
                 exposeObjectsOfModulesReturnedBy(m_context, member);
+            }
+            // A key nobody knows may be a name that has escaped.
+            ClimbingSet names(m_tables.keysOfMembersOfBun());
+            if (isBun && !key.namesEnumerableProperty && !m_context.isNativeWalk() && holdsAnything(m_context.membersMissingFrom(ValueFlowProgramNodes::escaped(), names))) {
+                m_context.forEachMember(escapedAmong(names), [&](ValueFlowObjectID name) {
+                    readMembers(ClimbingSet(only(holder)), start, keyNamed(m_universe.keyOf(name)), result, getters);
+                });
             }
             return;
         }

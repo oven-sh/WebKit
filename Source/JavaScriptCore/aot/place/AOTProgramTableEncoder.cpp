@@ -2776,6 +2776,7 @@ struct ModuleLists {
     Vector<RequiredNameData> requiredNames;
     Vector<ExportStatementData> exportStatements;
     Vector<AmbiguousExportData> ambiguousExports;
+    Vector<SourceStampData> sourceStamps;
 };
 
 struct EncodedRequestTargets {
@@ -3149,6 +3150,9 @@ static ModuleLists collectModuleLists(TableEncoder& encoder)
     for (const AmbiguousExport& ambiguous : program.ambiguousExports)
         lists.ambiguousExports.append({ ambiguous.module.index(), encoder.shownStringNumber(ambiguous.name) });
     AOT::stableSort(lists.ambiguousExports, { }, &AmbiguousExportData::module);
+    for (const SourceStamp& stamp : program.sourceStamps)
+        lists.sourceStamps.append({ stamp.module.index(), stamp.low, stamp.high });
+    AOT::stableSort(lists.sourceStamps, { }, &SourceStampData::module);
     ModuleData endEntry { };
     lists.setListStarts(endEntry);
     lists.modules.append(endEntry);
@@ -3476,6 +3480,7 @@ void encodeModuleTables(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::requiredNames, lists.requiredNames);
     encoder.setTable(ProgramTableIndex::exportStatements, lists.exportStatements);
     encoder.setTable(ProgramTableIndex::ambiguousExports, lists.ambiguousExports);
+    encoder.setTable(ProgramTableIndex::sourceStamps, lists.sourceStamps);
     Vector<ModuleFailureData> moduleFailures;
     Vector<ModuleFailureData> failedLoads;
     moduleFailures.reserveInitialCapacity(program.moduleFailures.size());
@@ -3808,7 +3813,7 @@ EncodedProgramTables encodeProgramTables(const ProgramTableInputs& inputs, Build
     ClosureFunctionRange closureFunctions = encoder.placement.closureFunctions();
     header.magic = ProgramTables::expectedMagic;
     header.flags = (encoder.flow.programInstances() == ProgramInstances::AtMostOne ? 0 : ProgramTables::mayRunInMultipleInstances) | (encoder.flow.mayReadLegacyRegExpStatics() ? 0 : ProgramTables::neverReadsLegacyRegExpStatics)
-        | (std::ranges::any_of(encoder.program.functions, [](const Function& function) { return function.has(FunctionCapabilities::MakesNoTailCall); }) ? ProgramTables::callersKeepCallees : 0);
+        | (std::ranges::any_of(encoder.program.functions, [](const Function& function) { return function.capabilities.containsAny({ FunctionCapabilities::MakesNoTailCall, FunctionCapabilities::RecordsCalleeOnceRenamed }); }) ? ProgramTables::callersKeepCallees : 0);
     header.instanceSizes = inputs.instanceSizes;
     header.numberOfShapes = shapes.numberOfShapes();
     header.firstEnvironmentShape = shapes.firstEnvironmentShape();

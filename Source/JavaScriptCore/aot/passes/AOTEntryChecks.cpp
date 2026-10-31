@@ -37,6 +37,7 @@
 #include "AOTTypePropagation.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
+#include "AOTWrittenFunction.h"
 #include <algorithm>
 #include <optional>
 #include <ranges>
@@ -1326,7 +1327,9 @@ Function createGenericEntrypoint(const AnalysisContext& context, TypeArena& type
     if (object && typing.typeOf(object).castTo(typing.typeOf(target.thisType), types).isNever())
         emitEntryThatNothingEnters(builder, target, closure, strings);
     else {
-        if (target.capabilities.contains(FunctionCapabilities::RecordsCallee) && !target.capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed)) {
+        bool isSeenToBeRenamed = target.capabilities.contains(FunctionCapabilities::RecordsCallee) && !target.capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed);
+        // A stack that is taken before the first name is given out of sight is read behind it.
+        if (isSeenToBeRenamed || recordsCalleeOnlyOnceRenamed(context.program, request.target)) {
             Value record = IRBuilder::make(Opcode::RecordCallee);
             record.setClosureOperand(closure);
             builder.append(WTF::move(record));

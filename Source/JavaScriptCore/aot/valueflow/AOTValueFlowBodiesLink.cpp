@@ -632,7 +632,7 @@ public:
             times.didFinish(phase);
         };
 
-        m_result.m_universe.m_builtinTables = makeUnique<ValueFlowBuiltinTables>(m_program.builtins(), m_build.limit(LimitID::MaxObjectsOfTypedResult));
+        m_result.m_universe.m_builtinTables = makeUnique<ValueFlowBuiltinTables>(m_program.builtins());
         const ValueFlowBuiltinTables& tables = *m_result.m_universe.m_builtinTables;
         if (m_result.m_notedOperations.isEmpty()) {
             m_result.m_notedOperations.fill(0, m_numberOfFunctions);
@@ -1216,12 +1216,6 @@ private:
         universe.m_prototypeObjectsOfLibraryClasses = take();
         for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
             const Layout& layout = m_program.layouts[index];
-            if (layoutIsDefinedByClass(layout) && layout.constructor && layout.module && m_program.at(layout.module).kind == ModuleKind::RuntimeSource)
-                list.append(universe.closureOf(layout.constructor));
-        }
-        universe.m_constructorsOfLibraryClasses = take();
-        for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
-            const Layout& layout = m_program.layouts[index];
             if (layout.kind == LayoutKind::Instance && layout.constructor)
                 list.append(universe.prototypeOf(LayoutID(index)));
         }
@@ -1270,7 +1264,6 @@ private:
         }
         Vector<ValueFlowObjectID> proxiesFromNamedConstructor;
         Vector<ValueFlowObjectID> denseArrayLiterals;
-        Vector<ValueFlowObjectID> pairLiterals;
         for (uint32_t site = 0; site < universe.m_sites.size(); ++site) {
             ValueFlowObjectID object = universe.m_objectOfSite[site];
             if (LayoutID layout = universe.m_sites[site].layout)
@@ -1279,8 +1272,6 @@ private:
                 proxiesFromNamedConstructor.append(object);
             if (universe.m_sites[site].isDenseArrayLiteral)
                 denseArrayLiterals.append(object);
-            if (universe.m_sites[site].isPairLiteral)
-                pairLiterals.append(object);
             if (universe.m_sites[site].origin == ValueFlowSiteOrigin::BuiltinResult)
                 continue;
             if (BuiltinClassID builtinClass = universe.m_sites[site].builtinClass)
@@ -1290,7 +1281,6 @@ private:
         }
         universe.m_proxiesFromNamedConstructor = maker.of(proxiesFromNamedConstructor.span());
         universe.m_denseArrayLiterals = maker.of(denseArrayLiterals.span());
-        universe.m_pairLiterals = maker.of(pairLiterals.span());
         fileAllocationsOfBaseClassesUnderClassesBelow(maker, ofLayout);
         universe.m_objectsWithAnyLayout = maker.unite(take(), universe.m_placeholdersAlone);
         for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {

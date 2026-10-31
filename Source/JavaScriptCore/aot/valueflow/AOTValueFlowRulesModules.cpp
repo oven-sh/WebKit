@@ -149,7 +149,7 @@ static bool isEvaluatedWithImporter(ValueFlowRuleContext& context, const ModuleR
 
 static bool mayHaveExportsNobodyLists(const Module& module)
 {
-    if (module.kind != ModuleKind::SourceText || module.exportRule != SyntheticExportRule::None)
+    if (module.kind != ModuleKind::SourceText || module.exportRule != SyntheticExportRule::None || module.flags.contains(ModuleFlags::MayBeMocked))
         return true;
     return module.requests.containsIf([](const ModuleRequest& request) {
         return request.isDynamicStarExport;
@@ -954,8 +954,12 @@ void requireModule(const ValueFlowStatement& statement, ValueFlowRuleContext& co
     if (const Module& required = context.program().at(module); statement.result && !required.flags.contains(ModuleFlags::IsLibrary) && (required.kind == ModuleKind::SourceText || required.kind == ModuleKind::Data))
         context.connect(context.nodes().ofHost(ValueFlowHostNode::ExportsOfEntriesStoredInModuleCache), statement.result);
     // Modules::mockWhatRequireAnswered(): what the factory of a mock gave.
-    if (const Module& required = context.program().at(module); statement.result && required.kind == ModuleKind::SourceText && !required.runtimeModule && required.flags.contains(ModuleFlags::MayBeMocked))
+    if (const Module& required = context.program().at(module); statement.result && (required.kind == ModuleKind::SourceText || required.kind == ModuleKind::Data) && !required.runtimeModule && required.flags.contains(ModuleFlags::MayBeMocked)) {
         context.add(statement.result, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
+        // Modules::answerRequire(): the first call behind the mock of a file of data.
+        if (required.kind == ModuleKind::Data)
+            connect(context, namespaceOf(context, module), statement.result);
+    }
     if (requireMayAnswerWithMock(context.program(), context.program().at(module)) && isWrittenInProgram(context.program().at(statement.function))) {
         enterLoaderOfHost(context);
         askLoaderFunctionsOfProgram(context, context.program().at(statement.function).module, RequestAtRunTime::Require);

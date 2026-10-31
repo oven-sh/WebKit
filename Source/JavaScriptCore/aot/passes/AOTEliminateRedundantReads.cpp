@@ -4560,28 +4560,42 @@ struct LoopPathSeparator : LoopEditor {
     }
 
     // Emits at the end of the builder's block.
-    void emitTests(IRBuilder& builder, const Arguments& carried, std::span<const TypeID> tested, BlockID whenPassed, BlockID whenFailed, Expected<BlockFrequency> whenPassedFrequency)
+    void emitTests(IRBuilder& builder, const Arguments& carried, std::span<const TypeID> tested, BlockID whenPassed, BlockID whenFailed, Expected<BlockFrequency> whenPassedFrequency, bool nothingElseEntersWhenFailed = false)
     {
         auto argumentsWhenFailed = [&] {
             Arguments arguments;
             arguments.append(carried.span().first(m_function.at(whenFailed).parameters.size()));
             return arguments;
         };
+        auto isAsked = [&](size_t index) {
+            return tested[index] && !hasType(carried[index], tested[index]);
+        };
+        size_t numberOfTests = 0;
+        for (size_t index = 0; index < tested.size(); ++index)
+            numberOfTests += isAsked(index);
+        BlockID failed = nothingElseEntersWhenFailed && numberOfTests > 1 ? builder.addBlock(m_function.at(whenFailed).frequency) : BlockID();
+        auto targetWhenFailed = [&] {
+            return failed ? Target { failed, { }, { } } : Target { whenFailed, argumentsWhenFailed(), { } };
+        };
         Arguments narrowed = carried;
-        bool isFirstTest = true;
+        if (numberOfTests)
+            builder.emitFailureOfPredictions(targetWhenFailed());
         for (size_t index = 0; index < tested.size(); ++index) {
-            if (!tested[index] || hasType(carried[index], tested[index]))
+            if (!isAsked(index))
                 continue;
-            if (std::exchange(isFirstTest, false))
-                builder.emitFailureOfPredictions(Target { whenFailed, argumentsWhenFailed(), { } });
             ValueID test = builder.appendTypeTest(carried[index], tested[index]);
             IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, OperandIndex::TypeTest::value, whenPassedFrequency, m_function.at(whenFailed).frequency);
             narrowed[index] = branch.provenOnTaken;
             builder.moveToEndOf(branch.notTaken);
-            builder.emitJump(whenFailed, argumentsWhenFailed());
+            Target target = targetWhenFailed();
+            builder.emitJump(target.block, WTF::move(target.arguments));
             builder.moveToEndOf(branch.taken);
         }
         builder.emitJump(whenPassed, WTF::move(narrowed));
+        if (failed) {
+            builder.moveToEndOf(failed);
+            builder.emitJump(whenFailed, argumentsWhenFailed());
+        }
     }
 
     void testOnEdges(IRBuilder& builder, std::span<const Edge> edges, std::span<const TypeID> tested, BlockID header, BlockID headerOfCopy)
@@ -4700,6 +4714,9 @@ struct LoopPathSeparator : LoopEditor {
             m_function.edit(tests, BlockEdit::Rest).frequency = frequencyOfLoop;
         for (Edge edge : latchEdgesOfCopy)
             builder.redirectEdge(edge, tests, Arguments(targetOf(m_function, edge).arguments));
+        bool onlyWayBackEntersHeaderOfCopy = !plan.letsVariablesBeCarried && std::ranges::all_of(latchEdges, [&](Edge edge) {
+            return passesTests(targetOf(m_function, edge).arguments, testedEveryTurn.span());
+        });
         testOnEdges(builder, latchEdges.span(), testedEveryTurn.span(), header, headerOfCopy);
         for (ValueID id : m_function.at(headerOfCopy).values) {
             const Value& test = m_function.at(id);
@@ -4713,7 +4730,7 @@ struct LoopPathSeparator : LoopEditor {
         builder.moveToEndOf(entry);
         builder.emitJump(header, WTF::move(parametersOfEntry));
         builder.moveToEndOf(tests);
-        emitTests(builder, carried, testedTypes.span(), entry, headerOfCopy, m_function.at(tests).frequency);
+        emitTests(builder, carried, testedTypes.span(), entry, headerOfCopy, m_function.at(tests).frequency, onlyWayBackEntersHeaderOfCopy);
 
         for (BlockID block : { entry, tests })
             m_isFinishedHeader.set(block.index());

@@ -1136,6 +1136,11 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
     auto scope = DECLARE_THROW_SCOPE(vm);
     const ModuleData& moduleData = data(module);
     Vector<DynamicExport> result;
+    auto sortByName = [](Vector<DynamicExport>& exports) {
+        AOT::sort(exports, [](const DynamicExport& a, const DynamicExport& b) {
+            return codePointCompare(StringView(*a.name.impl()), StringView(*b.name.impl())) < 0;
+        });
+    };
 
     if (moduleData.capturesExports() || moduleData.kind == ModuleKind::CommonJs) {
         forEachCapturedExport(module, [&](const Identifier& name, JSValue value) {
@@ -1143,8 +1148,18 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
         });
         RETURN_IF_EXCEPTION(scope, { });
     } else {
-        if (!moduleData.hasDynamicStarExport())
+        if (LoadedModule* loaded = loadedIfExists(module); loaded && loaded->exportsAddedByMock) {
+            JSObject* added = loaded->exportsAddedByMock;
+            PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+            JSObject::getOwnPropertyNames(added, realm, names, DontEnumPropertiesMode::Include);
+            RETURN_IF_EXCEPTION(scope, { });
+            for (const Identifier& name : names)
+                result.append({ name, storedValue(realm, added, name) });
+        }
+        if (!moduleData.hasDynamicStarExport()) {
+            sortByName(result);
             return result;
+        }
         // The namespace object of a module behind the stars may ask for this one.
         if (!vm.isSafeToRecurse()) [[unlikely]] {
             throwStackOverflowError(realm, scope);
@@ -1224,9 +1239,7 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
         }
     }
 
-    AOT::sort(result, [](const DynamicExport& a, const DynamicExport& b) {
-        return codePointCompare(StringView(*a.name.impl()), StringView(*b.name.impl())) < 0;
-    });
+    sortByName(result);
     return result;
 }
 

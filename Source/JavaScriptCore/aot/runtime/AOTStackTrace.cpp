@@ -549,11 +549,11 @@ static NEVER_INLINE void captureCalleesKeptInFrame(VM& vm, const RunWalk& walk, 
     FunctionTables& tables = FunctionTables::of(vm);
     const CallSiteCache::CalleesOfFrames& callees = vm.aotState().callSiteCache->calleesOfFramesAt(walk.image(), walk.site());
     for (const auto& kept : callees.keptInFrame) {
-        if (kept.recordsCallee || tables.recordsCalleesOf(kept.sourceFunction))
+        if (kept.recordsCallee)
             calleesOfRun.append(returnAddress, kept.inlineFrame, tables.calleeKeptInFrame(vm, walk.machineFrame(), kept.callee, kept.sourceFunction));
     }
     // A frame through which the frame above was entered is not listed below it.
-    if (!entered && callees.sourceFunctionEntered && (callees.enteredRecordsCallee || tables.recordsCalleesOf(callees.sourceFunctionEntered)))
+    if (!entered && callees.sourceFunctionEntered && callees.enteredRecordsCallee)
         entered = EnteredFrameNamedByCallee { callees.sourceFunctionEntered, callees.inlineFrameEntered, returnAddress, walk.position(), walk.callerStackPointer() };
 }
 
@@ -566,11 +566,15 @@ static NEVER_INLINE bool captureCalleeOfEnteredFrame(VM& vm, RunWalk& walk, Call
         calleesOfRun.append(entered.returnAddress, entered.inlineFrame, callee);
         return true;
     };
-    auto isKeptInFrame = [&](CalleeOfSite callee) {
-        return isSaid(callee.isOwnFunctionObject() ? nullptr : tables.calleeKeptInFrame(vm, walk.machineFrame(), callee, sourceFunction));
-    };
     auto isRecorded = [&] {
-        return isSaid(tables.recordedCalleeOfCallFrom(entered.callerStackPointer, sourceFunction));
+        return isSaid(tables.recordedCalleeOfCallFrom(vm, entered.callerStackPointer, sourceFunction));
+    };
+    auto isKeptInFrame = [&](CalleeOfSite callee) {
+        if (callee.isOwnFunctionObject())
+            return isSaid(nullptr);
+        // What was called there may have left by a tail call by value, which has a record of its own.
+        std::optional<JSObject*> kept = tables.calleeKeptInFrame(vm, walk.machineFrame(), callee, sourceFunction);
+        return kept ? isSaid(kept) : isRecorded();
     };
     auto askWalkOfItsOwn = [&] {
         isSaid(findRecordedCallee(vm, entered.position, entered.inlineFrame));
@@ -595,7 +599,7 @@ static NEVER_INLINE bool captureCalleeOfEnteredFrame(VM& vm, RunWalk& walk, Call
     bool isOfSameFunction = ofCaller.sourceFunctionOfInnermost == sourceFunction;
     bool isEntrypoint = isOfSameFunction && caller.innermostVisibility != TraceVisibility::Visible;
     bool isFormThatLeftByTailCall = isOfSameFunction && caller.site.isTailCall();
-    if (!isEntrypoint && (!isFormThatLeftByTailCall || tables.recordedCalleeOfCallFrom(entered.callerStackPointer, sourceFunction)))
+    if (!isEntrypoint && (!isFormThatLeftByTailCall || tables.recordedCalleeOfCallFrom(vm, entered.callerStackPointer, sourceFunction)))
         return isRecorded();
     if (ofCaller.calleeOfInnermost)
         return isKeptInFrame(*ofCaller.calleeOfInnermost);
@@ -676,7 +680,7 @@ static ALWAYS_INLINE void captureRun(VM& vm, RunWalk& walk, CapturedRun& run, Ca
             codeAbove = outermostCode;
         // Whoever keeps the callee of a frame, only a function that is named by its callee needs it.
         if constexpr (namesFramesByCallee) {
-            if (site.hasFrameRecordingCallee || (site.hasFrameRecordingCalleeOnceRenamed && FunctionTables::of(vm).recordsCalleesOfCallsByValue()))
+            if (site.hasFrameRecordingCallee)
                 captureCalleesKeptInFrame(vm, walk, run.returnAddresses.size(), *callees, entered);
         }
 
@@ -1416,9 +1420,11 @@ static ALWAYS_INLINE bool forEachShownFrameOfRun(VM& vm, RunWalk& walk, bool cal
             TraceFrame& frame = *lister.frameNotHandedOn();
             if (caller.hasRecordedCallee) {
                 CalleeOfSite callee = *walk.image().calleeOfSiteAt(caller.code.index(), caller.site.callSite);
-                setCallee(frame, callee.isOwnFunctionObject() ? nullptr : tables.calleeKeptInFrame(vm, walk.machineFrame(), callee, FunctionDescription(frame.function).sourceFunction()));
+                FunctionID sourceFunction = FunctionDescription(frame.function).sourceFunction();
+                std::optional<JSObject*> kept = callee.isOwnFunctionObject() ? nullptr : tables.calleeKeptInFrame(vm, walk.machineFrame(), callee, sourceFunction);
+                setCallee(frame, kept ? kept : tables.recordedCalleeOfCallFrom(vm, callerStackPointer, sourceFunction));
             } else if (caller.innermostVisibility == TraceVisibility::Visible && !caller.site.isTailCall())
-                setCallee(frame, tables.recordedCalleeOfCallFrom(callerStackPointer, FunctionDescription(frame.function).sourceFunction()));
+                setCallee(frame, tables.recordedCalleeOfCallFrom(vm, callerStackPointer, FunctionDescription(frame.function).sourceFunction()));
         }
         if (caller.site.isConstruct() && !didFindConstructSite())
             return false;

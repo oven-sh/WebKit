@@ -50,9 +50,8 @@ public:
         bool hasRecordedCallee : 1 { false };
         // Image::constructedCalleeAt() has an answer.
         bool namesConstructedCallee : 1 { false };
-        // Of the frames at the site that a stack trace may list: FunctionDescription::recordsCallee() holds of the function of one, as it is written or in the form that runs; recordsCalleeOnceRenamed() holds of one.
+        // Of the frames at the site that a stack trace may list: FunctionDescription::recordsCallee() or recordsCalleeOnceRenamed() holds of the function of one, as it is written or in the form that runs.
         bool hasFrameRecordingCallee : 1 { false };
-        bool hasFrameRecordingCalleeOnceRenamed : 1 { false };
         // leavesByTailCall(site.calledBuiltin): the frame of the built-in is listed only while its callee has not been entered.
         bool namesTailCallingBuiltin : 1 { false };
         // Once the callee of the site has been entered.
@@ -76,7 +75,7 @@ public:
             unsigned inlineFrame;
             FunctionID sourceFunction;
             CalleeOfSite callee;
-            // FunctionDescription::recordsCallee().
+            // FunctionDescription::recordsCallee() or recordsCalleeOnceRenamed().
             bool recordsCallee;
         };
         // calleeOfCopiedFrame() of the frames that a stack trace may list, but for CalleeOfSite::ownFunctionObject().

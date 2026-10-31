@@ -43,6 +43,9 @@ struct Layout : LayoutRecord {
 
     uint32_t appendField(Field&&);
 
+    // `function F() {}` whose prototype object inherits from the one of `class A extends Array`, and every class below F: `new F()` makes an ordinary object, `Reflect.construct(A, [], F)` an array.
+    bool mayBeOrdinaryObject { false };
+
 private:
     struct IndexedField {
         PropertyKeyID key;
