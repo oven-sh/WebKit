@@ -914,13 +914,13 @@ Subject CodeGenerator::subjectOf(const OperationContext& context) const
     return { .function = m_inputs.id, .block = context.block(), .value = context.valueID(), .location = function().locationOf(context.origin()) };
 }
 
-void CodeGenerator::fail(const OperationContext& context, InternalErrorKind kind)
+void CodeGenerator::fail(const OperationContext& context, InternalErrorKind kind, const String& detail)
 {
     if (m_hasFailed)
         return;
     m_hasFailed = true;
     Subject subject = subjectOf(context);
-    build().diagnostics().add(InternalError { .kind = kind, .function = subject.function, .block = subject.block, .value = subject.value, .location = subject.location });
+    build().diagnostics().add(InternalError { .kind = kind, .function = subject.function, .block = subject.block, .value = subject.value, .location = subject.location, .detail = detail });
 }
 
 void CodeGenerator::failAtLimit(const OperationContext& context, LimitID limit, uint64_t needed)

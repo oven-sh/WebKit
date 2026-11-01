@@ -252,10 +252,8 @@ Boxed HashTableBuiltinEmitter::lookUpAmongTags(const InlineCall& call, CellPoint
     LValue values = returnsValue ? m_out.add(table, m_out.shl(m_out.zeroExtPtr(m_out.castToInt32(kinds)), m_out.constInt32(2))) : nullptr;
     LValue valuesAreNarrow = returnsValue ? m_out.equal(m_out.bitAnd(m_out.lShr(kinds, m_out.constInt32(48)), m_out.constInt64(0xff)), m_out.constInt64(static_cast<int64_t>(CompactTable::Width::Narrow))) : nullptr;
     // The type says which characters the key has, not which object it is: a text that was joined or cut out of another one may still be a rope. What is written here is flat.
-    ValueID written = call.argument(0);
-    while (resultRuleOf(m_function.at(written).opcode) == ResultRule::Cast)
-        written = m_function.at(written).valueOperand();
-    bool isWrittenHere = m_function.at(written).opcode == Opcode::String;
+    std::optional<FlatStringCell> writtenHere = emitter<StringEmitter>().flatStringWrittenHere(call.argument(0), key);
+    bool isWrittenHere = !!writtenHere;
     build().statistics().count(isWrittenHere ? StatisticID::TagLookupsWithConstantKeys : StatisticID::TagLookupsWithOtherKeys);
     if (!isWrittenHere) {
         Subject subject = analyses().subject();
@@ -263,7 +261,7 @@ Boxed HashTableBuiltinEmitter::lookUpAmongTags(const InlineCall& call, CellPoint
         subject.location = m_function.locationOf(call.context().origin());
         build().addDecline({ .kind = Wire::DeclineKind::TagLookupKeyNotConstant, .witness = witnessOf(subject) });
     }
-    Pointer impl = isWrittenHere ? emitter<StringEmitter>().implOfFlatString(key) : loadField<Pointer>(key, m_heaps.JSString_value);
+    Pointer impl = writtenHere ? emitter<StringEmitter>().implOfFlatString(*writtenHere) : loadField<Pointer>(key, m_heaps.JSString_value);
     if (!isWrittenHere) {
         LBasicBlock isFlat = newBlock();
         m_out.branch(hasNoBits(impl, JSString::isRopeInPointer).value(), normalEdge(isFlat), unlikelyEdge(byStub));

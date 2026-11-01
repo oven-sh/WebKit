@@ -175,6 +175,7 @@ enum InternalErrorKind (stage: Stage, message: Text) {
 
     UnsupportedConversion(ChooseRepresentations, "no conversion between the two representations")
     OpcodeWithoutCode(GenerateCode, "the operation has no code generator in this form")
+    EmitterAssumesFlatString(GenerateCode, "{function}: in the code of {value} the emitter assumes a flat string here")
     FrameMapNotEncodable(GenerateCode, "the frame map of the suspension cannot be encoded")
     AbsoluteAddressInProcedure(GenerateCode, "{function}: a process address reached B3 at {value}")
     RelocationNotLowered(GenerateCode, "{function}: no lowering for the address at {value}")
