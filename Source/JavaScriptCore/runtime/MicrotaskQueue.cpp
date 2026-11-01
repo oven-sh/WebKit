@@ -209,6 +209,33 @@ static NEVER_INLINE void runThroughDispatcher(MarkedMicrotaskDeque& queue, Marke
     }
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// A job ended with a termination, so the checkpoint ends here and what the queue holds is dropped. The jobs of the
+// module loader stay, on the queue of the VM: a load whose jobs are gone leaves registry entries and module records
+// with promises that nothing settles, and an embedder can withdraw the termination (VM::cancelTermination()) and load
+// the same modules again. The jobs run at the next checkpoint and go on with the loads that were in flight, so modules
+// are evaluated and import() promises are settled then. JSModuleLoader::drainSynchronousModuleQueue() hands back the
+// rest of its queue for the same reason.
+NEVER_INLINE void MicrotaskQueue::clearAfterTermination(VM& vm)
+{
+    if (this != &vm.defaultMicrotaskQueue()) {
+        clear();
+        return;
+    }
+
+    Deque<QueuedTask> kept;
+    for (auto* tasks : { &m_toKeep, &m_queue }) {
+        for (auto& task : tasks->m_queue) {
+            if (isModuleLoaderInternalMicrotask(task.job()))
+                kept.append(task);
+        }
+        tasks->clear();
+    }
+    // performMicrotaskCheckpoint() makes m_toKeep the queue when it returns.
+    m_toKeep.m_queue.swap(kept);
+}
+#endif
+
 template<bool useCallOnEachMicrotask>
 ALWAYS_INLINE std::pair<JSGlobalObject*, bool> MicrotaskQueue::drainImpl(JSGlobalObject* currentGlobalObject, VM& vm, TopExceptionScope& catchScope)
 {
@@ -234,7 +261,11 @@ ALWAYS_INLINE std::pair<JSGlobalObject*, bool> MicrotaskQueue::drainImpl(JSGloba
             auto task = m_queue.dequeue();
             auto arguments = task.arguments();
             if (!runMicrotask(globalObject, catchScope, vm, task.job(), task.payload(), arguments[0], arguments[1], arguments[2] BUN_MICROTASK_ARGUMENT3_OF(arguments), &microtaskCallCache)) [[unlikely]] {
+#if USE(BUN_JSC_ADDITIONS)
+                clearAfterTermination(vm);
+#else
                 clear();
+#endif
                 return { nullptr, true };
             }
         } else {
@@ -247,7 +278,11 @@ ALWAYS_INLINE std::pair<JSGlobalObject*, bool> MicrotaskQueue::drainImpl(JSGloba
             runThroughDispatcher(m_queue, m_toKeep, globalObject, jsMicrotaskDispatcher);
 
             if (!catchScope.clearExceptionExceptTermination()) [[unlikely]] {
+#if USE(BUN_JSC_ADDITIONS)
+                clearAfterTermination(vm);
+#else
                 clear();
+#endif
                 return { nullptr, true };
             }
         }
@@ -255,7 +290,11 @@ ALWAYS_INLINE std::pair<JSGlobalObject*, bool> MicrotaskQueue::drainImpl(JSGloba
         if constexpr (useCallOnEachMicrotask) {
             vm.callOnEachMicrotaskTick();
             if (!catchScope.clearExceptionExceptTermination()) [[unlikely]] {
+#if USE(BUN_JSC_ADDITIONS)
+                clearAfterTermination(vm);
+#else
                 clear();
+#endif
                 return { nullptr, true };
             }
         }

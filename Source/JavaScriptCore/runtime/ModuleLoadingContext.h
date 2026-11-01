@@ -79,6 +79,7 @@ public:
     bool dynamic() const { return m_flags.contains(ModuleLoadFlag::Dynamic); }
     bool useImportMap() const { return m_flags.contains(ModuleLoadFlag::UseImportMap); }
     bool deferred() const { return m_flags.contains(ModuleLoadFlag::Deferred); }
+    OptionSet<ModuleLoadFlag> flags() const { return m_flags; }
 #if USE(BUN_JSC_ADDITIONS)
     int64_t referrerAsyncOrder() const { return m_referrerAsyncOrder; }
 #endif

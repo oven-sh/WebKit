@@ -42,6 +42,7 @@ class JSPromise;
 class JSModuleNamespaceObject;
 class JSModuleRecord;
 class JSSourceCode;
+class ModuleLoadingContext;
 class ModuleRegistryEntry;
 class SourceOrigin;
 
@@ -183,6 +184,19 @@ public:
     JSPromise* makeModule(JSGlobalObject*, const Identifier& moduleKey, JSValue moduleData);
 #if USE(BUN_JSC_ADDITIONS)
     void fetchSynchronously(JSGlobalObject*, JSPromise* fetchPromise, const Identifier& key, const String& referrer, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&);
+
+    // A termination can end a load step at any exception check: JSPromise::rejectWithCaughtException() leaves the
+    // termination pending and the promise of the step pending. An embedder can withdraw the termination
+    // (VM::cancelTermination()) and load again with this loader. So the step that was cut ends its own load here,
+    // and a later load of the same modules takes its own steps and does not wait for a promise that nothing settles.
+    // The termination stays pending. What waited for the step is abandoned with it (abandonLoadsWaitingFor()).
+    void makeModuleWasCutShort(ModuleRegistryEntry*, JSPromise* modulePromise);
+    void loadRequestedModulesWasCutShort(ModuleRegistryEntry*, JSPromise* loadPromise);
+    bool loadStepSettlesAfterTermination();
+    // The value that abandonLoadsWaitingFor() rejects a promise with is the loader. Script cannot have it.
+    static JSModuleLoader* loaderOfAbandonedLoad(JSValue reason) { return dynamicDowncast<JSModuleLoader>(reason); }
+    void askAgainForAbandonedLoad(JSGlobalObject*, ModuleLoadingContext*, JSPromise* loadPromise);
+    void loadAgainAfterAbandonedLoad(JSGlobalObject*, ModuleLoadingContext*, JSPromise* resultPromise);
 #endif
 
     static ErrorInstance* duplicateTypeError(JSGlobalObject*, ErrorInstance*);
@@ -286,6 +300,12 @@ private:
     void finishCreation(JSGlobalObject*, VM&);
 
 #if USE(BUN_JSC_ADDITIONS)
+    void removeEntryIfRegistered(ModuleRegistryEntry*);
+    void abandonLoadsWaitingFor(JSPromise*);
+    AbstractModuleRecord* forgetLoadPromise(ModuleRegistryEntry*, JSPromise* loadPromise);
+    void removeFromRealmLoadedModules(std::span<AbstractModuleRecord* const>);
+    static void handBackSynchronousModuleQueue(JSGlobalObject*, size_t first, size_t except);
+    static void handBackQueueOfSynchronousLoadThatDidNotRun(JSGlobalObject*, const Identifier& moduleName, JSPromise* result);
     void forgetPrelinkedRecordsWithKey(UniquedStringImpl* keyOrNullForAll);
     void pinPrelinkedEdgesOf(AbstractModuleRecord* importer, uint32_t onlyTarget);
 

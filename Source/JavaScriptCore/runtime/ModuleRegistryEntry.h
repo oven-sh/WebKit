@@ -103,6 +103,9 @@ public:
     // loadPromise(), materializing it first for an entry that was markLoaded().
     JSPromise* loadedPromise(JSGlobalObject*);
     void replaceRecord(JSGlobalObject*, AbstractModuleRecord*);
+    // The load that owned the load promise ended without settling it. Whoever asks for the entry next takes its own
+    // load steps from the module promise, as for an entry that was never asked for.
+    void clearLoadPromise() { m_loadPromise.clear(); }
 #endif
 
 private:

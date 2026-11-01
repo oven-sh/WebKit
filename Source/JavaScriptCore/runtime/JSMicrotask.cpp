@@ -1073,6 +1073,50 @@ static void asyncModuleExecutionResume(JSGlobalObject* globalObject, VM& vm, JSM
     asyncModuleResolveEvaluation(globalObject, vm, scope, module, result);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// For the jobs that settle a promise which a registry entry or a graph loading state answers with. After a termination
+// has ended such a job, no later load can wait for that promise: it is settled, or nothing answers with it any more.
+// An exit that misses this leaves a later import() of the module pending, which shows only several loads later.
+static ALWAYS_INLINE void assertCutLoadJobLeftNoPromiseToWaitFor(VM& vm, ThrowScope& scope, InternalMicrotask task, uint8_t payload, JSValue argument0, JSValue argument2)
+{
+#if ASSERT_ENABLED
+    Exception* exception = scope.exception();
+    if (!exception || !vm.isTerminationException(exception))
+        return;
+#if ENABLE(AOT)
+    // JSModuleLoader.cpp, loadsBelongToCompiledProgram().
+    if (vm.hasCompiledCode())
+        return;
+#endif
+    switch (task) {
+    case InternalMicrotask::ModuleRegistryFetchSettled: {
+        auto* entry = uncheckedDowncast<ModuleRegistryEntry>(argument2);
+        ASSERT(uncheckedDowncast<JSPromise>(argument0)->status() != JSPromise::Status::Pending || entry->loader()->getRegisteredMayBeNull(entry->key(), entry->moduleType()) != entry);
+        break;
+    }
+    case InternalMicrotask::ModuleLoadStep: {
+        auto* loadPromise = uncheckedDowncast<JSPromise>(argument0);
+        ModuleRegistryEntry* entry = uncheckedDowncast<ModuleLoadingContext>(argument2)->entry();
+        ASSERT(loadPromise->status() != JSPromise::Status::Pending || !entry || entry->loadPromise() != loadPromise);
+        break;
+    }
+    case InternalMicrotask::ModuleGraphLoadingError:
+        ASSERT(static_cast<JSPromise::Status>(payload) != JSPromise::Status::Rejected || uncheckedDowncast<ModuleGraphLoadingState>(argument2)->promise()->status() != JSPromise::Status::Pending);
+        break;
+    default:
+        break;
+    }
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(scope);
+    UNUSED_PARAM(task);
+    UNUSED_PARAM(payload);
+    UNUSED_PARAM(argument0);
+    UNUSED_PARAM(argument2);
+#endif
+}
+#endif
+
 static void moduleRegistryFetchSettled(JSGlobalObject* globalObject, VM& vm, ThrowScope& scope, std::span<const JSValue, maxMicrotaskArguments> arguments, uint8_t payload)
 {
     // arguments[0] = pre-created modulePromise
@@ -1091,7 +1135,12 @@ static void moduleRegistryFetchSettled(JSGlobalObject* globalObject, VM& vm, Thr
         auto moduleData = arguments[1];
         JSPromise* makeModulePromise = entry->loader()->makeModule(globalObject, entry->key(), moduleData);
         if (scope.exception()) {
+#if USE(BUN_JSC_ADDITIONS)
+            if (!modulePromise->rejectWithCaughtException(vm, scope)) [[unlikely]]
+                entry->loader()->makeModuleWasCutShort(entry, modulePromise);
+#else
             modulePromise->rejectWithCaughtException(vm, scope);
+#endif
             return;
         }
         makeModulePromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleRegistryModuleSettled, modulePromise, entry);
@@ -1149,9 +1198,30 @@ static void moduleGraphLoadingError(JSGlobalObject* globalObject, VM& vm, ThrowS
     if (status == JSPromise::Status::Rejected) {
         auto* state = uncheckedDowncast<ModuleGraphLoadingState>(arguments[2]);
         JSValue errorValue = arguments[1];
+#if USE(BUN_JSC_ADDITIONS)
+        // The load of a request was abandoned before this state began to wait for it (abandonLoadsWaitingFor()).
+        // The state ends, and the step that waits for the state asks again.
+        if (JSModuleLoader::loaderOfAbandonedLoad(errorValue)) [[unlikely]] {
+            state->endAbandonedLoad();
+            if (state->promise()->status() == JSPromise::Status::Pending)
+                state->promise()->reject(vm, errorValue);
+            return;
+        }
+#endif
         if (auto* error = dynamicDowncast<ErrorInstance>(errorValue)) {
-            errorValue = JSModuleLoader::maybeDuplicateFetchError(globalObject, error);
+            JSValue duplicate = JSModuleLoader::maybeDuplicateFetchError(globalObject, error);
+#if USE(BUN_JSC_ADDITIONS)
+            // A termination that begins in the copy leaves the load failed all the same, with the error itself.
+            // Nothing else rejects the promise of the state, and the load of the importer waits for it.
+            if (Exception* exception = scope.exception()) [[unlikely]] {
+                if (!vm.isTerminationException(exception))
+                    return;
+            } else
+                errorValue = duplicate;
+#else
             RETURN_IF_EXCEPTION(scope, void());
+            errorValue = duplicate;
+#endif
         }
 #if ENABLE(AOT)
         if (vm.hasCompiledCode()) {
@@ -1192,6 +1262,9 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
     if (status == JSPromise::Status::Rejected) {
         if (CyclicModuleRecord* referrer = context->referrer().getModule())
             referrer->removeResolvedRequest(context->moduleRequest());
+        // The load that this step waits for was abandoned before the step began to wait.
+        if (JSModuleLoader::loaderOfAbandonedLoad(arguments[1])) [[unlikely]]
+            RELEASE_AND_RETURN(scope, context->loader()->askAgainForAbandonedLoad(globalObject, context, loadPromise));
     }
 #endif
 
@@ -1207,7 +1280,12 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
 #endif
             JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher());
             if (scope.exception()) {
+#if USE(BUN_JSC_ADDITIONS)
+                if (!loadPromise->rejectWithCaughtException(vm, scope)) [[unlikely]]
+                    context->loader()->loadRequestedModulesWasCutShort(context->entry(), loadPromise);
+#else
                 loadPromise->rejectWithCaughtException(vm, scope);
+#endif
                 return;
             }
             context->setStep(ModuleLoadingContext::Step::Requested);
@@ -1251,8 +1329,14 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
 #endif
             context->loader()->finishLoadingImportedModule(globalObject, context->referrer(), context->moduleRequest(), context->payload(), module, context->scriptFetcher());
             if (scope.exception()) {
+#if USE(BUN_JSC_ADDITIONS)
+                // After a termination the step still settles its own promise below: the module is loaded.
+                if (loadPromise->rejectWithCaughtException(vm, scope) || !context->loader()->loadStepSettlesAfterTermination())
+                    return;
+#else
                 loadPromise->rejectWithCaughtException(vm, scope);
                 return;
+#endif
             }
 
             // setEntryRecord logic
@@ -1280,8 +1364,14 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
             auto* module = downcast<AbstractModuleRecord>(arguments[1]);
             context->loader()->finishLoadingImportedModule(globalObject, context->referrer(), context->moduleRequest(), context->payload(), module, context->scriptFetcher());
             if (scope.exception()) {
+#if USE(BUN_JSC_ADDITIONS)
+                // As in the Requested step.
+                if (loadPromise->rejectWithCaughtException(vm, scope) || !context->loader()->loadStepSettlesAfterTermination())
+                    return;
+#else
                 loadPromise->rejectWithCaughtException(vm, scope);
                 return;
+#endif
             }
             loadPromise->fulfill(vm, module);
         } else {
@@ -1413,9 +1503,22 @@ static void moduleLoadTopRejected(JSGlobalObject* globalObject, VM& vm, std::spa
     else {
         const Identifier& specifier = context->moduleRequest().m_specifier;
         auto type = context->moduleRequest().type();
+#if USE(BUN_JSC_ADDITIONS)
+        // A load that this one waited for was abandoned before this one began to wait (abandonLoadsWaitingFor()).
+        if (JSModuleLoader::loaderOfAbandonedLoad(arguments[1])) [[unlikely]] {
+            context->loader()->loadAgainAfterAbandonedLoad(globalObject, context, resultPromise);
+            return;
+        }
+#endif
         // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
         // Only set an error if the entry already exists.
+#if USE(BUN_JSC_ADDITIONS)
+        // Not on an entry that got no fetch (a fetch hook that threw, or a termination behind it, leaves one in
+        // hostLoadImportedModule()): the error is of this load, and the next load of the module starts the fetch.
+        if (ModuleRegistryEntry* entry = context->loader()->getRegisteredMayBeNull(specifier, type); entry && entry->status() != ModuleRegistryEntry::Status::New)
+#else
         if (ModuleRegistryEntry* entry = context->loader()->getRegisteredMayBeNull(specifier, type))
+#endif
             entry->setEvaluationError(globalObject, arguments[1]);
         resultPromise->reject(vm, arguments[1]);
     }
@@ -1579,6 +1682,11 @@ static void moduleLoadStoreError(JSGlobalObject* globalObject, std::span<const J
     if (status == JSPromise::Status::Rejected) {
         auto* context = uncheckedDowncast<ModuleLoadingContext>(arguments[2]);
         JSValue errorValue = arguments[1];
+#if USE(BUN_JSC_ADDITIONS)
+        // Not an error of the module: see moduleLoadTopRejected().
+        if (JSModuleLoader::loaderOfAbandonedLoad(errorValue)) [[unlikely]]
+            return;
+#endif
         const Identifier& specifier = context->moduleRequest().m_specifier;
         auto type = context->moduleRequest().type();
         // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
@@ -1629,6 +1737,12 @@ static void dynamicImportLoadSettled(JSGlobalObject* globalObject, VM& vm, Throw
     auto* capabilityPromise = dynamicPayload->promise();
     auto status = static_cast<JSPromise::Status>(payload);
     if (status != JSPromise::Status::Fulfilled) {
+#if USE(BUN_JSC_ADDITIONS)
+        // The loads that the module waited for were abandoned before this import() began to wait for them
+        // (JSModuleLoader::abandonLoadsWaitingFor()). The import() asks for the requests of the module again.
+        if (JSModuleLoader* loader = JSModuleLoader::loaderOfAbandonedLoad(arguments[1])) [[unlikely]]
+            RELEASE_AND_RETURN(scope, loader->continueDynamicImport(globalObject, dynamicPayload, module, nullptr));
+#endif
         // Step-4 rejectedClosure
         // 4.a. Perform ! Call(promiseCapability.[[Reject]], undefined, « reason »).
         capabilityPromise->reject(vm, arguments[1]);
@@ -2488,6 +2602,9 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 
     case InternalMicrotask::ModuleRegistryFetchSettled: {
         moduleRegistryFetchSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
+#if USE(BUN_JSC_ADDITIONS)
+        assertCutLoadJobLeftNoPromiseToWaitFor(vm, scope, task, payload, argument0, argument2);
+#endif
         return;
     }
 
@@ -2498,11 +2615,17 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 
     case InternalMicrotask::ModuleGraphLoadingError: {
         moduleGraphLoadingError(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
+#if USE(BUN_JSC_ADDITIONS)
+        assertCutLoadJobLeftNoPromiseToWaitFor(vm, scope, task, payload, argument0, argument2);
+#endif
         return;
     }
 
     case InternalMicrotask::ModuleLoadStep: {
         moduleLoadStep(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
+#if USE(BUN_JSC_ADDITIONS)
+        assertCutLoadJobLeftNoPromiseToWaitFor(vm, scope, task, payload, argument0, argument2);
+#endif
         return;
     }
 
