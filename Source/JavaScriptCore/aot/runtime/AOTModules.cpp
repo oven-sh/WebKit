@@ -1054,6 +1054,50 @@ void Modules::fillExportsOfBodyThatNeverRuns(ModuleID module)
     }
 }
 
+Vector<ModuleID, 8> Modules::filesImportedByImagesAbove(ImportersAbove which) const
+{
+    Vector<ModuleID, 8> files;
+    if (!m_instance.vm->aotState().hasSeveralImages) [[likely]]
+        return files;
+    for (Instance* above = m_instance.above; above; above = above->above) {
+        const Modules* modules = above->state ? above->state->modules.get() : nullptr;
+        if (!modules)
+            continue;
+        const ModuleTable& table = modules->m_table;
+        BitVector seen(table.size());
+        Vector<ModuleID, 32> work;
+        for (uint32_t index = 0; index < table.size(); ++index) {
+            ModuleStatus current = modules->status(ModuleID(index));
+            bool isImporter = which == ImportersAbove::HaveBegun ? current > ModuleStatus::Linked : current == ModuleStatus::Evaluating || current == ModuleStatus::EvaluatingAsync;
+            if (isImporter) {
+                seen.quickSet(index);
+                work.append(ModuleID(index));
+            }
+        }
+        while (!work.isEmpty()) {
+            ModuleID importer = work.takeLast();
+            // What only a mocked module imports is not loaded.
+            if (modules->isMocked(importer))
+                continue;
+            if (modules->data(importer).isUncompiledCode()) {
+                // The loader has resolved what it has fetched.
+                const LoadedModule* loaded = modules->loadedIfExists(importer);
+                std::optional<ModuleID> file = loaded && !loaded->resolvedKey.isNull() ? findByKey(loaded->resolvedKey) : std::nullopt;
+                if (file)
+                    files.append(m_table.faceOfFile(*file).value_or(*file));
+                continue;
+            }
+            for (const ModuleRequestData& request : table.requests(importer)) {
+                if (request.isHoisted || request.isRequire || request.isDeferred)
+                    continue;
+                if (!seen.quickSet(request.target()))
+                    work.append(request.targetModule());
+            }
+        }
+    }
+    return files;
+}
+
 bool Modules::wasLoadedWithImporter(ModuleID module) const
 {
     BitVector seen(m_table.size());
@@ -1064,6 +1108,12 @@ bool Modules::wasLoadedWithImporter(ModuleID module) const
             seen.quickSet(index);
             work.append(ModuleID(index));
         }
+    }
+    for (ModuleID file : filesImportedByImagesAbove(ImportersAbove::HaveBegun)) {
+        if (file == module)
+            return true;
+        if (!seen.quickSet(file.index()))
+            work.append(file);
     }
     while (!work.isEmpty()) {
         ModuleID importer = work.takeLast();
@@ -1240,6 +1290,12 @@ void Modules::runBodyOfLinkedModuleAheadOfMock(ModuleID module)
             ModuleStatus current = status(ModuleID(index));
             if (current == ModuleStatus::Evaluating || current == ModuleStatus::EvaluatingAsync)
                 importers.append(ModuleID(index));
+        }
+        for (ModuleID file : filesImportedByImagesAbove(ImportersAbove::AreUnderEvaluation)) {
+            if (file == module)
+                return true;
+            if (hasYetToRun(file) && !isMocked(file) && !m_modulesWithMockToRun.get(file.index()))
+                importers.append(file);
         }
         while (!importers.isEmpty()) {
             ModuleID importer = importers.takeLast();

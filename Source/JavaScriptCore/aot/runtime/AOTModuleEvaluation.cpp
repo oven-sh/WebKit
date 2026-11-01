@@ -1828,10 +1828,42 @@ bool Modules::isNotLoaded(ModuleID module)
 }
 
 // What lies below a root whose evaluation has begun was loaded with it.
+void Modules::noteFilesOfImagesBelowLoadedWith(ModuleID root)
+{
+    BitVector seen(m_table.size());
+    seen.quickSet(root.index());
+    Vector<ModuleID, 32> work { root };
+    while (!work.isEmpty()) {
+        ModuleID importer = work.takeLast();
+        if (data(importer).isUncompiledCode()) {
+            // The loader has resolved what it has fetched.
+            const LoadedModule* loaded = loadedIfExists(importer);
+            if (!loaded || loaded->resolvedKey.isNull())
+                continue;
+            for (Instance* below = m_instance.globalObject->aotInstance(); below && below != &m_instance; below = below->above) {
+                Modules* modules = below->state ? below->state->modules.get() : nullptr;
+                std::optional<ModuleID> file = modules ? modules->findByKey(loaded->resolvedKey) : std::nullopt;
+                if (!file)
+                    continue;
+                modules->noteModulesLoadedWith(*file);
+                break;
+            }
+            continue;
+        }
+        for (const ModuleRequestData& request : m_table.requests(importer)) {
+            if (!request.isRequire && !request.isHoisted && !request.isDeferred && !seen.quickSet(request.target()))
+                work.append(request.targetModule());
+        }
+    }
+}
+
 void Modules::noteModulesLoadedWith(ModuleID root)
 {
     if (!data(root).isESModuleOfProgram() || data(root).isFaceOfFile() || wasLoadedWithGraph(root))
         return;
+    // The loader has fetched the whole graph of a test file, the files of the layers below among it, before a body of it runs.
+    if (m_instance.vm->aotState().hasSeveralImages) [[unlikely]]
+        noteFilesOfImagesBelowLoadedWith(root);
     m_buildHasSeenWhoNamesModules &= data(root).mayBeginLoad();
     std::optional<bool> isInPreload = host().isInPreload ? host().isInPreload(m_instance.globalObject) : std::nullopt;
     uint32_t moment = isInPreload ? ++m_instance.vm->aotState().momentOfLoads : 0;

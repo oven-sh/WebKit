@@ -154,6 +154,9 @@ public:
     bool wasLoadedWithImporter(ModuleID) const;
     // The factory of a mock that waits runs when the first importer is linked, and that importer has begun to load by then: what was loaded when the mock was made decides.
     bool wasLoadedWhenMockWasMade(ModuleID);
+    // A file imports from its own image and from those below. The files of this image that the import statements of an image above lead to, from modules there that have begun, or whose evaluation is under way.
+    enum class ImportersAbove : bool { HaveBegun, AreUnderEvaluation };
+    Vector<ModuleID, 8> filesImportedByImagesAbove(ImportersAbove) const;
     bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars);
     bool tryReplaceExportBehindStars(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars);
     std::optional<bool> tryReplaceExportInImageBelow(ModuleID external, UniquedStringImpl* name, JSValue);
@@ -1131,6 +1134,7 @@ private:
     BitVector m_filesLoadedSynchronously;
     BitVector m_filesWhoseNextLoadIsFirst;
     void noteModulesLoadedWith(ModuleID root);
+    void noteFilesOfImagesBelowLoadedWith(ModuleID root);
     // A bit for each module, read for the heads of groups.
     Vector<uint64_t> m_loadedGroups;
     // The groups are those of a program in which the build has seen whoever names a module. Code from outside the image names what it likes: what is loaded from then on has a bit of its own.
