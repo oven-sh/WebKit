@@ -165,7 +165,8 @@ JS_EXPORT_PRIVATE bool imagesHoldFile(std::span<const std::span<const uint8_t>> 
 // Code: what the host would have to interpret or link at run time. Data files load in every executable.
 JS_EXPORT_PRIVATE bool refusesCodeOutsideImage(JSGlobalObject*, StringView path);
 // The host loads the text of a file of the program once more, as an instance of its own. It names the files of the program as the compiled file does.
-JS_EXPORT_PRIVATE void willRunCopyFromDisk(JSGlobalObject*);
+// False: the build reckoned with no such copy, ImageFlag::RefusesOriginalsBesideMocks, and the host must not run it.
+JS_EXPORT_PRIVATE bool willRunCopyFromDisk(JSGlobalObject*);
 // A file whose loader answers an object of the host, a database or a page.
 JS_EXPORT_PRIVATE bool refusesHostObjectsOutsideImage(JSGlobalObject*);
 

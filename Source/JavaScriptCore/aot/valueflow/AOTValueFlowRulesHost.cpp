@@ -1594,7 +1594,7 @@ static void connectWhatCopiesOfFilesReach(ValueFlowRuleContext& context)
     BitVector isReached = mayRunAsCopy;
     bool hasOriginals = false;
     for (const Variable& variable : program.variables) {
-        if (variable.flags.contains(VariableFlags::HoldsMock) && !program.at(variable.module).runtimeModule) {
+        if (variable.flags.contains(VariableFlags::OriginalMayRun) && !program.at(variable.module).runtimeModule) {
             mayRunAsCopy.quickSet(variable.module.index());
             hasOriginals = true;
         }

@@ -2685,7 +2685,8 @@ ValueFlowBody makeHostBody(const Program& program, const ValueFlowBuiltinTables&
             if (variable.flags.contains(VariableFlags::HoldsMock)) {
                 body.seedsOnceReached.append({ node, static_cast<uint32_t>(body.constants.size()), 0 });
                 // The original beside the mock of a file is the file once more, from disk: `vi.importActual()`, the parameter of a factory, a mock without a factory.
-                if (!program.at(variable.module).runtimeModule)
+                // The front end says whether anything in the run may ask for one.
+                if (variable.flags.contains(VariableFlags::OriginalMayRun) && !program.at(variable.module).runtimeModule)
                     body.seedsOnceReached.append({ ValueFlowNodeName::ofHost(ValueFlowHostNode::UnseenCopiesOfFilesMayRun), static_cast<uint32_t>(body.constants.size()), 0 });
                 body.constants.append({ 0, { ValueFlowObjectName { ValueFlowObjectKind::UnknownObject, 0, { } } } });
             }

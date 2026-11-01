@@ -21,7 +21,7 @@ record Layout wire extendedEngine {
 }
 
 enum VariableInitialization { Uninitialized Undefined Function }
-flags VariableFlags { IsImmutable IsReplaceable HoldsMock }
+flags VariableFlags { IsImmutable IsReplaceable HoldsMock OriginalMayRun }
 record Variable wire {
     name: String? module: Module(Referrer) declared: DeclaredType initialization: VariableInitialization function: Function(Closure)? owner: Layout?
     flags: VariableFlags

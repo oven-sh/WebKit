@@ -221,6 +221,7 @@ Modules::Modules(State& state)
     , m_storesPathOfMainModule(state.instance.vm->aotState().image->storesPathOfMainModule())
     , m_loadsModulesByName(state.instance.vm->aotState().image->loadsModulesByName())
     , m_findsDataFilesByName(state.instance.vm->aotState().image->findsDataFilesByName())
+    , m_refusesOriginalsBesideMocks(state.instance.vm->aotState().image->refusesOriginalsBesideMocks())
     , m_buildHasSeenWhoNamesModules(!m_admitsInspector)
 {
     m_instance.modules.status = state.tableArena.allocate<uint8_t>(m_table.size());
@@ -5518,14 +5519,16 @@ bool refusesCodeOutsideImage(JSGlobalObject* realm, StringView path)
     return image && !hasFlag(image->header().options.admitted(), AdmittedCode::Inspector) && !image->loadsCodeOutsideImage();
 }
 
-void willRunCopyFromDisk(JSGlobalObject* realm)
+bool willRunCopyFromDisk(JSGlobalObject* realm)
 {
     if (!realm->aotInstance())
-        return;
+        return true;
+    bool isAdmitted = true;
     Instance::forEachOf(realm, [&](Instance&) {
         if (Modules* modules = modulesOf(realm))
-            modules->willRunCopyFromDisk();
+            isAdmitted &= modules->willRunCopyFromDisk();
     });
+    return isAdmitted;
 }
 
 bool refusesHostObjectsOutsideImage(JSGlobalObject* realm)
