@@ -322,6 +322,7 @@ public:
     void oweLibraryModuleToImagesAbove(ModuleID);
     void handLibraryModuleToImagesAbove(ModuleID);
     void handFileToImagesAbove(ModuleID file);
+    void takeNamesBehindFollowedStarsAnew();
     void keepWhatMockIsLaidOver(ModuleID);
     void didLayMock() { m_moduleWithMockBeingLaid = std::nullopt; }
     void endMockLaidOverFile(ModuleID);

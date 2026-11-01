@@ -991,6 +991,8 @@ void Modules::handLibraryModuleToImagesAbove(ModuleID module)
                 modules->fillDeferredExports(importer);
                 RETURN_IF_EXCEPTION(scope, void());
             }
+            modules->takeNamesBehindFollowedStarsAnew();
+            RETURN_IF_EXCEPTION(scope, void());
         }
     }
 }
@@ -1013,6 +1015,10 @@ void Modules::handFileToImagesAbove(ModuleID file)
             RETURN_IF_EXCEPTION(scope, void());
             if (!namesFile)
                 continue;
+            // The record that answered by the mock goes on doing so: letGoOfRecordThatAnswersByMock(). The file has another.
+            AbstractModuleRecord* record = recordForResolution(file);
+            RETURN_IF_EXCEPTION(scope, void());
+            loaded->uncompiledRecord.set(*modules, record);
             RunningImageScope imageAbove(m_instance.vm->aotState(), above->program);
             modules->setNamespace(external, ModulePhase::Evaluation, nullptr);
             JSObject* namespaceObject = modules->uncompiledNamespace(external, ModulePhase::Evaluation, modules->data(external).isUncompiledCodeImportedAsNamespace() ? NamespaceUse::IsShownToProgram : NamespaceUse::CarriesBindings);
@@ -1027,7 +1033,25 @@ void Modules::handFileToImagesAbove(ModuleID file)
                 modules->fillDeferredExports(importer);
                 RETURN_IF_EXCEPTION(scope, void());
             }
+            modules->takeNamesBehindFollowedStarsAnew();
+            RETURN_IF_EXCEPTION(scope, void());
         }
+    }
+}
+
+// A module whose `export *` took its names from a run listed those of the mock, and whoever imported its namespace object holds that object.
+void Modules::takeNamesBehindFollowedStarsAnew()
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    for (uint32_t index = 0; index < m_table.size(); ++index) {
+        ModuleID module(index);
+        auto* held = data(module).hasDynamicStarExport() ? dynamicDowncast<ModuleNamespace>(namespaceIfCreated(module, ModulePhase::Evaluation)) : nullptr;
+        if (!held)
+            continue;
+        ModuleNamespace::DynamicExports exportsOfModule;
+        createDynamicExports(module, exportsOfModule.names, exportsOfModule.capturedValues, exportsOfModule.liveSources);
+        RETURN_IF_EXCEPTION(scope, void());
+        held->replaceDynamicExports(*m_instance.vm, exportsOfModule);
     }
 }
 
@@ -1657,6 +1681,7 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
         }
 
         BitVector& ambiguousExports = ensureLoaded(module).ambiguousExports;
+        ambiguousExports.clearAll();
         std::span<const ModuleExportData> exports = m_table.exports(module);
         for (unsigned index = 0; index < exports.size(); ++index) {
             if (!exports[index].isFromStarExport)
