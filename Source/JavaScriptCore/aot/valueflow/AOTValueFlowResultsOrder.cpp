@@ -76,6 +76,54 @@ static FlowUseOfFilesAndWay useOfFilesBy(const Value& value)
     }
 }
 
+static BitVector findImportsAwaitedAtOnceOnEveryWay(const Function& body)
+{
+    BitVector imports(body.values.size());
+    Vector<uint32_t> numberOfPredecessors(FillWith { }, body.blocks.size(), 0u);
+    for (const Block& block : body.blocks) {
+        block.forEachTarget([&](const Target& target) {
+            ++numberOfPredecessors[target.block.index()];
+        });
+    }
+    for (BlockID id = entryBlock;;) {
+        const Block& block = body.at(id);
+        if (block.handler)
+            break;
+        ValueID previous;
+        for (ValueID value : block.values) {
+            if (previous && body.at(previous).opcode == Opcode::ImportModule && body.at(value).opcode == Opcode::Await && body.at(value).operand(0) == previous)
+                imports.quickSet(previous.index());
+            previous = value;
+        }
+        if (block.terminator.kind != TerminatorKind::Jump)
+            break;
+        id = block.terminator.targets[0].block;
+        if (numberOfPredecessors[id.index()] != 1)
+            break;
+    }
+    if (imports.isEmpty())
+        return imports;
+
+    Vector<uint32_t> numberOfUses(FillWith { }, body.values.size(), 0u);
+    auto use = [&](ValueID operand) {
+        if (operand && operand.index() < numberOfUses.size())
+            ++numberOfUses[operand.index()];
+    };
+    for (const Block& block : body.blocks) {
+        for (ValueID value : block.values)
+            std::ranges::for_each(body.at(value).operands(), use);
+        std::ranges::for_each(block.terminator.operands(), use);
+        block.forEachTarget([&](const Target& target) {
+            std::ranges::for_each(target.arguments, use);
+        });
+    }
+    for (uint32_t value = 0; value < numberOfUses.size(); ++value) {
+        if (numberOfUses[value] != 1)
+            imports.quickClear(value);
+    }
+    return imports;
+}
+
 static void collectOperations(const ValueFlowResultInputs& inputs, FlowOrderInputs& order, const Vector<ModuleID>& moduleOfRuntimeModule, bool& libraryLoadsItsModulesByName)
 {
     struct Row {
@@ -83,6 +131,7 @@ static void collectOperations(const ValueFlowResultInputs& inputs, FlowOrderInpu
         ModuleID target;
         FlowUseOfFilesAndWay use;
         bool importsByName { false };
+        bool isAwaitedAtOnceInBodyOfFile { false };
     };
     const Program& program = inputs.program;
     std::atomic<bool> namesModuleAtRunTime { false };
@@ -90,12 +139,15 @@ static void collectOperations(const ValueFlowResultInputs& inputs, FlowOrderInpu
         if (!order.reachedFunctions.quickGet(index) || !inputs.bodies().holdsAnyOf(FunctionID(index), notedOperations({ ValueFlowNotedOperation::CallDirect, ValueFlowNotedOperation::Builtin, ValueFlowNotedOperation::ModuleOperation })))
             return;
         const Function& function = program.functions[index];
+        BitVector importsAwaitedAtOnce;
+        if (function.isModuleBody())
+            importsAwaitedAtOnce = findImportsAwaitedAtOnceOnEveryWay(function);
         for (uint32_t valueIndex = 0; valueIndex < function.values.size(); ++valueIndex) {
             const Value& value = function.values[valueIndex];
             FlowUseOfFilesAndWay use = useOfFilesBy(value);
             auto load = [&](ModuleID target, FlowUseOfFilesAndWay use) {
                 if (target)
-                    rows.append({ { FunctionID(index), ValueID(valueIndex), { } }, target, use });
+                    rows.append({ { FunctionID(index), ValueID(valueIndex), { } }, target, use, false, use.way == FlowWayIntoFile::ImportCall && importsAwaitedAtOnce.get(valueIndex) });
             };
             auto loadRuntimeModule = [&](RuntimeModuleID module) {
                 if (module && module.index() < moduleOfRuntimeModule.size())
@@ -144,7 +196,7 @@ static void collectOperations(const ValueFlowResultInputs& inputs, FlowOrderInpu
         else if (row.use.use == FlowUseOfFiles::NobodyKnows)
             order.modulesNamedByOperationsNobodyKnows.set(row.target.index());
         else
-            order.moduleLoads.append({ .function = row.call.caller, .target = row.target, .way = row.use.way });
+            order.moduleLoads.append({ .function = row.call.caller, .target = row.target, .way = row.use.way, .isAwaitedAtOnceInBodyOfFile = row.isAwaitedAtOnceInBodyOfFile });
     }
     libraryLoadsItsModulesByName = namesModuleAtRunTime.load(std::memory_order_relaxed);
 }

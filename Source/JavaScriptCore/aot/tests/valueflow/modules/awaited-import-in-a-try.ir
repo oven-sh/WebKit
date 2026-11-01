@@ -1,0 +1,59 @@
+# main.mjs: await import("./x.mjs"); try { await import("./x2.mjs") } catch {}
+# x.mjs: import { v } from "./y.mjs"; export var seen = v        y.mjs: export var v = 1; require("./z.mjs")        x2.mjs and y2.mjs: the same with w        z.mjs: export {}
+# The `require` of an ES module runs the jobs of the loader while y.mjs runs. main.mjs goes on behind its `await` when all that the import loads has run to its end, so x.mjs begins once, behind the call: `v` is stored before every read.
+# The file goes on where the import has thrown, and x2.mjs may not have run to its end.
+# RUN: valueflow-apply
+# CHECK: variable g0 name="v" {{*}}initialization=StoredBeforeEveryRead
+# CHECK-NOT: variable g2 name="w" {{*}}initialization=StoredBeforeEveryRead
+
+variable g0 name="v" module=m2 declared={type=anything} initialization=Undefined
+variable g1 name="seen" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="w" module=m5 declared={type=anything} initialization=Undefined
+variable g3 name="seen2" module=m4 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.mjs" displayPath="main.mjs" flags=[HasTopLevelAwait, KeepsError] body=f0
+module m1 path="/app/x.mjs" displayPath="x.mjs" flags=[KeepsError] body=f1 requests=[{target=m2 completes=true}] exports=[{name="seen" variable=g1}]
+module m2 path="/app/y.mjs" displayPath="y.mjs" flags=[KeepsError] body=f2 exports=[{name="v" variable=g0}]
+module m3 path="/app/z.mjs" displayPath="z.mjs" flags=[KeepsError] body=f3
+module m4 path="/app/x2.mjs" displayPath="x2.mjs" flags=[KeepsError] body=f4 requests=[{target=m5 completes=true}] exports=[{name="seen2" variable=g3}]
+module m5 path="/app/y2.mjs" displayPath="y2.mjs" flags=[KeepsError] body=f5 exports=[{name="w" variable=g2}]
+entry module=m0
+function f0 name="main" module=m0 kind=Module flags=[IsAsync] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ImportModule module=m1 referrer=m0
+    v1 = Await v0
+    Jump -> next b1()
+  b1() handler=b2():
+    v2 = ImportModule module=m4 referrer=m0
+    v3 = Await v2
+    Jump -> next b3()
+  b2() role=CatchHandler:
+    v4 = CatchValue
+    Jump -> next b3()
+  b3():
+    Return
+}
+function f1 name="x" module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f2 name="y" module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    v2 = RequireModule module=m3 referrer=m2 specifier="./z.mjs"
+    Return
+}
+function f3 name="z" module=m3 kind=Module thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f4 name="x2" module=m4 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g2
+    PutModuleVariable v0 variable=g3
+    Return
+}
+function f5 name="y2" module=m5 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g2
+    v2 = RequireModule module=m3 referrer=m5 specifier="./z.mjs"
+    Return
+}
