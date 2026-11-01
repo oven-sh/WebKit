@@ -51,6 +51,7 @@ const attributeWords = new Map<string, WordMeaning>([
   ["ClassStructure", { kind: "DataProperty", valueColumn: "Data", isLazilyCreated: true, isAddedAtFirstRead: true }],
   ["CellProperty", { kind: "DataProperty", valueColumn: "Data", isAddedAtFirstRead: true }],
   ["ConstantInteger", { kind: "DataProperty", valueColumn: "Data" }],
+  ["CustomValue", { kind: "DataProperty", valueColumn: "Getter" }],
   ["CustomAccessor", { kind: "Accessor", valueColumn: "Getter" }],
   ["Accessor", { kind: "Accessor", valueColumn: "Getter" }],
   ["DOMJITAttribute", { kind: "Accessor", valueColumn: "Getter" }],
