@@ -701,7 +701,8 @@ static Value* appendClampedBound(FastPreHeader& front, const RangeCheckPlan& pla
         front.appendGuard(origin, BelowEqual, limit, constant(maxLimit));
         Value* last = front.append(origin, Sub, limit, constant(rangeCheckBound.maxOffset + loop.includesEqual()));
         front.appendGuard(origin, GreaterEqual, last, constant(0));
-        clamped = select(LessThan, last, clamped);
+        if (!proc.policy().validation.omitsLimitOfClampedBound)
+            clamped = select(LessThan, last, clamped);
     }
     if (!loop.isTopTested)
         front.appendGuard(origin, loop.relation, widen(startInPreHeader, loop.signedness()), clamped);

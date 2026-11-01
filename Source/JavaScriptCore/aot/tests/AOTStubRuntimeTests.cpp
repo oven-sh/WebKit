@@ -1164,6 +1164,13 @@ static void testFramesOfSlowPathsHaveNoWordThatNobodyWrote()
     if (runner.wordsNobodyWrote() > wordsThatAlignFrame)
         dataLogLn("a read by a key that keeps the registers of its caller: nobody wrote ", runner.wordsNobodyWrote(), " words of its frame");
     AOT_TEST_CHECK(runner.wordsNobodyWrote() <= wordsThatAlignFrame);
+
+    // It stores every register for the operation that makes the Error, and goes on to the handler.
+    runner.countWordsNobodyWroteAndLeaveStubAtCallsOf(Entry::operationAOTThrowAtSite);
+    AOT_TEST_CHECK(runner.run(throwAtSite(ThrowSiteSource::WordInRegister, CallerFrame::HasFrame), { 0 }).calledOperation);
+    if (runner.wordsNobodyWrote() > wordsThatAlignFrame)
+        dataLogLn("a throw at a site: nobody wrote ", runner.wordsNobodyWrote(), " words of its frame");
+    AOT_TEST_CHECK(runner.wordsNobodyWrote() <= wordsThatAlignFrame);
 }
 
 std::span<const NativeTest> stubRuntimeTests()

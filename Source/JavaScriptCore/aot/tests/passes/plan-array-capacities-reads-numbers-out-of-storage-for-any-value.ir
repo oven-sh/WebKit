@@ -2,6 +2,8 @@
 # and comes back with the number in front of the addition. An element that is no number leaves where an absent one does
 # FORM: Prepared
 # RUN: pass PlanArrayCapacities
+# STATISTIC: ReadsCopiedForOtherStorage = 1
+# STATISTIC: CopiesOfReadsTakenBack = 0
 
 module m0 path="main.js" displayPath="main.js"
 

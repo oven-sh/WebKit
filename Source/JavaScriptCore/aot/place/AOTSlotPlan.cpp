@@ -780,6 +780,10 @@ BitVector findVariablesDescribedToRunTime(const Program& program, const FlowResu
         for (auto& field : layout.staticFields)
             add(field.variable);
     }
+    for (unsigned index = 0; index < program.variables.size(); ++index) {
+        if (program.variables[index].flags.contains(VariableFlags::HoldsMock))
+            described.quickSet(index);
+    }
     return described;
 }
 

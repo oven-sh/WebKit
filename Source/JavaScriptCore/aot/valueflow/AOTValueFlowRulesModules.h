@@ -96,6 +96,7 @@ bool usesFeatureAmong(ValueFlowRuleContext&, ClimbingSet entries, const BitVecto
 
 bool refusesAllSourceText(const BuiltinTable&, BuiltinID canonicalEntry, RefusedCode);
 std::optional<UnseenCodeCause> eventOfCalling(const BuiltinTable&, BuiltinID, RefusedCode);
+void appendLoadersAndEvaluatorsReturnedBy(const ValueFlowUniverse&, const BuiltinTable&, BuiltinID, Vector<ValueFlowObjectID, 32>&);
 bool loadsCodeOnceRead(const BuiltinTable&, BuiltinID, RefusedCode);
 
 void raiseHostFlag(ValueFlowRuleContext&, ValueFlowHostNode);

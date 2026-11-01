@@ -310,7 +310,7 @@ CellPointer CellAllocationEmitter::allocateInFrame(const OperationContext& conte
     m_out.appendTo(hasCounters);
     TypedPointer counter = m_out.address(heap, checkedCells, CheckedFrameCells::offsetOfBirthsAt(m_id.index(), context.valueID().index()));
     LValue births = m_out.load32(counter);
-    LValue isLeftOut = m_out.bitAnd(m_out.aboveOrEqual(births, CheckedFrameCells::numberOfBirthsThatAreAllChecked), m_out.notZero32(m_out.bitAnd(births, CheckedFrameCells::intervalOfCheckedBirths - 1)));
+    LValue isLeftOut = m_out.bitAnd(m_out.aboveOrEqual(births, CheckedFrameCells::numberOfBirthsThatAreAllChecked(m_options.recorded.validates)), m_out.above(m_out.bitAnd(births, CheckedFrameCells::intervalOfCheckedBirths - 1), m_out.constInt32(1)));
     m_out.branch(isLeftOut, normalEdge(staysInFrame), rareEdge(mayBeChecked));
 
     m_out.appendTo(staysInFrame);

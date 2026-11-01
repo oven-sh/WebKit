@@ -280,6 +280,7 @@ static void appendClientPhases(B3::Policy& policy, const Program& program, const
     policy.clientPhases.append(carryWholeNumbersAsIntegersBeforeOptimization());
     policy.clientPhases.append(mergeImpliedBranchesAfterOptimization(program, function));
     policy.clientPhases.append(keepListLengthsInRegistersAfterOptimization());
+    policy.loops.isTakenOutOfLoopsByClient = isLengthOfList;
     policy.clientPhases.append(narrowTruncatedPhisAfterOptimization());
     policy.clientPhases.append(updateIntegersInMemoryAfterOptimization(program, function));
     if (traits.savesFrameOnSuspend)

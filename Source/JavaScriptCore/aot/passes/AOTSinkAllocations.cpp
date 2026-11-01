@@ -449,6 +449,26 @@ void AllocationSinking::buildUnderHandler(VirtualObjectID object)
     m_mustSolveAgain = true;
 }
 
+// Cutting a piece out of a string flattens the string, and memory may run out. That error belongs to the handler that covers the cutting, or to none:
+// what is declared to throw is not put off to a place that another handler covers.
+bool AllocationSinking::leaveMakingsThatMayThrowUnderTheirHandlers(VirtualObjectID object, BlockID whereNeeded)
+{
+    if (!m_analyses.cfg().hasHandlers())
+        return false;
+    VirtualFamilyID family = at(object).family;
+    bool hasLeftSome = false;
+    for (uint32_t index = 0; index < m_candidates.size(); ++index) {
+        const Candidate& candidate = m_candidates[index];
+        if (candidate.isLeftOut || candidate.isJoin || candidate.family != family || handlerOf(candidate.block) == handlerOf(whereNeeded))
+            continue;
+        if (!m_analyses.effectsOf(candidate.definition).onAnyEdge().mayThrow)
+            continue;
+        abandon(VirtualObjectID(index));
+        hasLeftSome = true;
+    }
+    return hasLeftSome;
+}
+
 bool AllocationSinking::buildCycleBeforeBranches(const SinkingState& state, VirtualObjectID holder, VirtualObjectID held)
 {
     Candidate& holding = at(holder);

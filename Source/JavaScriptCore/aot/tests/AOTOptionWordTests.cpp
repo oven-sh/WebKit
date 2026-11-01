@@ -304,6 +304,9 @@ static constexpr OptionWordCase optionWordCases[] = {
     { "references=narrow"_s, [](WireOptions& options) { options.target.referenceWidth = Wire::ReferenceWidth::Narrow; } },
     { "image-form=position-independent"_s, [](WireOptions& options) { options.target.imageForm = Wire::ImageForm::PositionIndependent; } },
     { "image-form=absolute"_s, [](WireOptions& options) { options.target.imageForm = Wire::ImageForm::Absolute; } },
+#if CPU(ARM64)
+    { "cpu=apple-m1"_s, [](WireOptions& options) { options.target.features = (1u << numberOfCPUFeatures) - 1; } },
+#endif
     { "type-errors=log"_s, [](WireOptions& options) { options.mismatchPolicy = Wire::MismatchPolicy::Report; } },
     { "layout-seed=9"_s, [](WireOptions& options) { options.layoutSeed = 9; } },
     { "threads=3"_s, [](WireOptions& options) { options.threadCount = 3; } },
@@ -352,6 +355,8 @@ static constexpr ASCIILiteral rejectedWords[] = {
     "drop-guard=TypeTest"_s,
     "references=tiny"_s,
     "image-form=relative"_s,
+    "cpu=apple"_s,
+    "cpu"_s,
     "type-errors=ignore"_s,
     "layout-seed=-1"_s,
     "threads=many"_s,

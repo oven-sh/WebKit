@@ -416,6 +416,11 @@ static void reportModules(const ValueFlowResultInputs& inputs, std::span<const M
             locations.note(locations.of(program.at(captured).exportsVariable), ReadNoted::ByLoader);
     }
 
+    for (uint32_t index = 0; index < program.variables.size(); ++index) {
+        if (program.variables[index].flags.contains(VariableFlags::HoldsMock))
+            locations.leaveOpen(locations.of(VariableID(index)), Actor::NativeCode);
+    }
+
     for (size_t index : modulesThatHostAsksFor(program, filesOfProgramAreLoadedByName(inputs.solution))) {
         if (VariableID exports = program.modules[index].exportsVariable)
             locations.note(locations.of(exports), ReadNoted::ByLoader);
@@ -450,7 +455,7 @@ struct ObjectAccess {
 };
 
 static constexpr EnumSet<ValueFlowNameKind> namesOfValues { ValueFlowNameKind::Property, ValueFlowNameKind::Elements, ValueFlowNameKind::UnknownKey, ValueFlowNameKind::EveryProperty };
-static constexpr EnumSet<ValueFlowNameKind> namesOfValuesAndAccessors = namesOfValues | EnumSet<ValueFlowNameKind> { ValueFlowNameKind::Getter, ValueFlowNameKind::Setter, ValueFlowNameKind::GetterUnderUnknownKey, ValueFlowNameKind::SetterUnderUnknownKey };
+static constexpr EnumSet<ValueFlowNameKind> namesOfValuesAndAccessors = namesOfValues | EnumSet<ValueFlowNameKind> { ValueFlowNameKind::Getter, ValueFlowNameKind::Setter, ValueFlowNameKind::GetterUnderUnknownKey, ValueFlowNameKind::GetterUnderNameOfEnumeration, ValueFlowNameKind::SetterUnderUnknownKey };
 
 static constexpr EnumSet<ValueFlowNameKind> namesOfRemovalsAndRedefinitions { ValueFlowNameKind::DeletedMember, ValueFlowNameKind::DeletedMemberUnderUnknownKey, ValueFlowNameKind::RedefinedMember, ValueFlowNameKind::RedefinedMemberUnderUnknownKey };
 

@@ -87,7 +87,7 @@ static bool mayAnswerLikeOtherLayouts(const Layout& layout)
     case LayoutKind::Container:
         return true;
     case LayoutKind::Instance:
-        return layout.isDerived();
+        return true;
     case LayoutKind::Environment:
     case LayoutKind::Closure:
     case LayoutKind::CoroutineFrame:
@@ -189,6 +189,7 @@ static auto withAnswersFor(const PropertyAccessContext& context, std::span<const
         LayoutKind kind;
         LayoutID declaredClass;
         BuiltinClassID builtinBase;
+        bool comesToObjectPrototypeWithoutNote;
         bool mayGainOwnProperty;
         bool mayChangePrototype;
 
@@ -205,9 +206,23 @@ static auto withAnswersFor(const PropertyAccessContext& context, std::span<const
     std::optional<std::pair<BuiltinClassID, MemberAnswer>> fieldAnswer;
     Vector<AnswerPastFields, maxAnswersPastFields> answersPastFields;
     size_t oldestAnswerPastFields = 0;
+    AOT_THRESHOLD(unsigned, mostClassesInRowAskedInVain, 4);
+    unsigned classesInRowThatHaveName = 0;
 
     auto findLikeOtherLayouts = [&](LayoutID id) -> MemberAnswer {
         const Layout& layout = program.at(id);
+        // The layout that a class declares answers like that of another class only where neither has the name: a thousand classes asked for a method of one of them.
+        bool isDeclaredByClass = layout.kind == LayoutKind::Instance && !layout.isDerived();
+        if (isDeclaredByClass) {
+            // Where one class after another has the name, most have: to ask each whether it lacks the name is asking twice.
+            bool lacksName = classesInRowThatHaveName < mostClassesInRowAskedInVain && !layout.has(LayoutFlags::HasHeritage) && !findField(program, id, query.key, BaseChain::Proven)
+                && walkComesToObjectPrototypeWithoutNote(program, declaredLayoutOf(program, id), query.key, query.access);
+            if (!lacksName) {
+                ++classesInRowThatHaveName;
+                return findMember(context, query);
+            }
+            classesInRowThatHaveName = 0;
+        }
         BuiltinClassID builtinBase = builtinBaseClassOf(program, id);
 
         std::optional<FieldReference> field;
@@ -235,8 +250,9 @@ static auto withAnswersFor(const PropertyAccessContext& context, std::span<const
 
         LookupPastFields lookup {
             layout.kind,
-            layout.kind == LayoutKind::Instance ? declaredLayoutOf(program, id) : LayoutID(),
+            layout.kind == LayoutKind::Instance && !isDeclaredByClass ? declaredLayoutOf(program, id) : LayoutID(),
             builtinBase,
+            isDeclaredByClass,
             ownPropertyGainOf(program, id, query.key) != OwnPropertyGain::Impossible,
             !receiverStateOf(program, id).cannot(ObjectMutation::ChangePrototype),
         };
@@ -259,6 +275,7 @@ static auto withAnswersFor(const PropertyAccessContext& context, std::span<const
             return findMember(context, query);
         MemberAnswer answer = findLikeOtherLayouts(layout);
         ASSERT(answer == findMember(context, query));
+        RELEASE_ASSERT(!program.propertyAccessCache() || !program.propertyAccessCache()->checksAnswers || answer == findMember(context, query));
         return answer;
     });
 }

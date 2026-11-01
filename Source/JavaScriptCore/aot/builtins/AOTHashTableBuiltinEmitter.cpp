@@ -624,7 +624,7 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
     m_out.jump(goesOn);
 
     // Every match, and every eight up to the first free slot, as CompactTable::nextSlotWithTag() goes: a table that is nearly full has many eights without a free slot.
-    // No slot is ever freed, so a key lies ahead of the first free slot, and an index always has one.
+    // Among eight slots that are all taken none is ever freed, so a key lies ahead of the first eight with a free slot, and an index always has one.
     m_out.appendTo(goesOn);
     ValueFromBlock firstToGoOnWith = m_out.anchor(m_out.phi(B3::Int64, whereToGoOn));
     LValue tagToGoOnWith = m_out.phi(B3::Int64, tagsToGoOnWith);

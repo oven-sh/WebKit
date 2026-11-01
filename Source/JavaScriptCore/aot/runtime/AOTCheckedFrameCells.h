@@ -51,7 +51,7 @@ public:
     };
 
     static constexpr uint32_t numberOfCountersOfBirths = 4096;
-    static constexpr uint32_t numberOfBirthsThatAreAllChecked = 1024;
+    static constexpr uint32_t numberOfBirthsThatAreAllChecked(bool validates) { return validates ? 1024 : 64; }
     static constexpr uint32_t intervalOfCheckedBirths = 64;
     static_assert(hasOneBitSet(intervalOfCheckedBirths));
     static ptrdiff_t offsetOfBirthsAt(uint32_t function, uint32_t value) { return OBJECT_OFFSETOF(CheckedFrameCells, m_numberOfBirths) + sizeof(uint32_t) * (pairIntHash(function, value) % numberOfCountersOfBirths); }

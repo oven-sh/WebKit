@@ -23,6 +23,7 @@
 #include "MarkedBlockCage.h"
 #include "Options.h"
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <wtf/ASCIICType.h>
@@ -795,6 +796,37 @@ static std::optional<String> applyDropGuard(Wire::CompileOptions& options, const
     addFlag(options.testing, Wire::TestingSwitch::DropGuard);
     options.bisection.droppedGuard = { .opcode = static_cast<uint32_t>(*opcode), .ordinal = *ordinal };
     return std::nullopt;
+}
+
+// An image is compiled for the CPU that the engine itself is compiled for. On ARM64 that is the oldest one on Linux and the M1 on macOS, which has instructions
+// that change what is emitted for the commonest operations. With this word a Linux machine that has them compiles and runs what a Mac does.
+struct NamedCPU {
+    ASCIILiteral name;
+    CPUFeatureSet features;
+};
+#if CPU(ARM64)
+static constexpr NamedCPU namedCPUs[] = {
+    { "apple-m1"_s, CPUFeatureSet().with(CPUFeature::LSE).with(CPUFeature::JSCVT).with(CPUFeature::Float16).with(CPUFeature::FRINT).with(CPUFeature::SHA3).with(CPUFeature::DotProd) },
+};
+#else
+static constexpr std::array<NamedCPU, 0> namedCPUs { };
+#endif
+
+static std::optional<String> applyCPU(Wire::CompileOptions& options, const OptionWord& word, StringView value)
+{
+    for (const NamedCPU& cpu : namedCPUs) {
+        if (value != cpu.name)
+            continue;
+        options.target.features = cpu.features.unionWith(CPUFeatureSet::buildTarget()).bits();
+        return std::nullopt;
+    }
+    return unknownNameSentence(word.noun, value);
+}
+
+static void listCPUs(PrintStream& out)
+{
+    for (const NamedCPU& cpu : namedCPUs)
+        listValue(out, cpu.name);
 }
 
 #include "AOTSchemaOptionWords.inc"

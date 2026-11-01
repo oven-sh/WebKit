@@ -82,7 +82,12 @@ struct FunctionTraceData {
     uint16_t recordsCalleeOnceRenamed : 1;
 
     TraceVisibility visibility() const { return static_cast<TraceVisibility>(visibilityBits); }
-    StackTraceBuiltinKind builtinKind() const { return static_cast<StackTraceBuiltinKind>(builtinKindBits); }
+    // A function that is written inside a helper of the compiler implements no built-in. No other function that implements none has the kind of a constructor.
+    static constexpr uint16_t kindBitsInsideHelperOfCompiler = 2;
+    bool isInsideHelperOfCompiler() const { return !implementsBuiltin && builtinKindBits == kindBitsInsideHelperOfCompiler; }
+    // Plain Bun keeps it in a module of its own, and a stack trace lists it like any other function.
+    bool isHelperOfCompiler() const { return implementsBuiltin ? !builtinKindBits : isInsideHelperOfCompiler(); }
+    StackTraceBuiltinKind builtinKind() const { return static_cast<StackTraceBuiltinKind>(isInsideHelperOfCompiler() ? 0 : builtinKindBits); }
     CodeType codeType() const { return static_cast<CodeType>(codeTypeBits); }
 };
 static_assert(sizeof(FunctionTraceData) == 2 && isImageRecord<FunctionTraceData>);

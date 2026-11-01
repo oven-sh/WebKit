@@ -114,14 +114,47 @@ struct RandomLoopOverWords {
         loop.endBody(block);
     }
 
+    static constexpr int64_t reported = 0x7e57ed0ddba11ll;
+
+    // With the pass, every load that a phase has moved or given way for is read again where it stood.
     static Policy policyFor(bool promotes)
     {
         Policy policy = optimizingPolicy();
         policy.loops.promotesMemory = promotes;
+        if (!promotes)
+            return policy;
+        policy.validation.logsMovedLoads = true;
+        policy.clientPhases.append(ClientPhase {
+            ClientPhase::Point::AfterSinking,
+            "checkMovedLoads"_s,
+            createSharedTask<bool(Procedure&)>([](Procedure& proc) {
+                return proc.movedLoadLog().insertChecks(proc, createSharedTask<void(CCallHelpers&, const MovedLoad&, GPRReg, GPRReg)>([](CCallHelpers& jit, const MovedLoad&, GPRReg, GPRReg) {
+                    jit.move(CCallHelpers::TrustedImm64(reported), GPRInfo::returnValueGPR);
+                    jit.emitFunctionEpilogue();
+                    jit.ret();
+                }));
+            })
+        });
         return policy;
     }
 
     static HeapRange heapOf(unsigned word) { return !word ? firstHeap : word == 1 ? secondHeap : thirdHeap; }
+    // The heap that the word lies in, or one that holds that heap and more.
+    HeapRange heapNamedFor(unsigned word)
+    {
+        if (isInArmThatNeverRuns)
+            return heapOf(random.getUint32(numberOfWords));
+        if (!chance(35))
+            return heapOf(word);
+        return word < 2 && chance(50) ? bothHeaps : allHeaps;
+    }
+    // The words under another name: nothing tells the compiler that the two are one.
+    Value* base(BasicBlock* block)
+    {
+        if (!chance(25))
+            return loop.pointer;
+        return graph.make(block, Add, loop.pointer, graph.make(block, BitAnd, loop.extra, graph.int64(block, 1ll << 62)));
+    }
     bool chance(unsigned percent) { return random.getUint32(100) < percent; }
     Value* index(BasicBlock* block) { return graph.get(block, loop.index); }
 
@@ -134,7 +167,7 @@ struct RandomLoopOverWords {
     Value* read(BasicBlock* block)
     {
         unsigned word = random.getUint32(numberOfWords);
-        return graph.load(block, Int64, loop.pointer, word * 8, heapOf(word));
+        return graph.load(block, Int64, base(block), word * 8, heapNamedFor(word));
     }
 
     Value* someValue(BasicBlock* block)
@@ -159,7 +192,8 @@ struct RandomLoopOverWords {
         if (kind < 40) {
             unsigned word = random.getUint32(numberOfWords);
             B3::Opcode opcode = chance(50) ? Add : chance(50) ? BitXor : Sub;
-            graph.store(block, graph.make(block, opcode, graph.load(block, Int64, loop.pointer, word * 8, heapOf(word)), someValue(block)), loop.pointer, word * 8, heapOf(word));
+            Value* address = base(block);
+            graph.store(block, graph.make(block, opcode, graph.load(block, Int64, address, word * 8, heapNamedFor(word)), someValue(block)), address, word * 8, heapNamedFor(word));
             return;
         }
         if (kind < 52) {
@@ -172,7 +206,7 @@ struct RandomLoopOverWords {
         }
         if (kind < 64) {
             unsigned word = random.getUint32(numberOfWords);
-            graph.store(block, someValue(block), loop.pointer, word * 8, heapOf(word));
+            graph.store(block, someValue(block), base(block), word * 8, heapNamedFor(word));
             return;
         }
         if (kind < 67) {
@@ -189,8 +223,31 @@ struct RandomLoopOverWords {
             block->appendNew<MemoryValue>(proc, chance(50) ? Store8 : Store16, Origin(), graph.make(block, Trunc, someValue(block)), loop.pointer, static_cast<int32_t>(word * 8 + 2 * random.getUint32(4)), heapOf(word));
             return;
         }
-        if (kind < 78) {
+        if (kind < 76) {
             appendPoll(graph, block, pollState);
+            return;
+        }
+        if (kind < 80 && !isInArmThatNeverRuns) {
+            // One word under two names. It is read and written under a heap that holds more than its own, written by the other name under its own,
+            // and read under a heap that is not its own behind a test that no run passes.
+            unsigned word = random.getUint32(2);
+            BasicBlock* never = proc.addBlock();
+            BasicBlock* join = proc.addBlock();
+            bool testComesFirst = chance(50);
+            auto appendTest = [&] {
+                graph.branch(block, graph.make(block, Equal, loop.extra, graph.int64(block, -1)), never, join);
+                graph.increase(never, loop.sum, graph.load(never, Int64, loop.pointer, word * 8, heapOf(1 - word)));
+                graph.jump(never, join);
+                block = join;
+            };
+            if (testComesFirst)
+                appendTest();
+            graph.store(block, graph.make(block, Add, graph.load(block, Int64, loop.pointer, word * 8, bothHeaps), index(block)), loop.pointer, word * 8, bothHeaps);
+            Value* otherName = graph.make(block, Add, loop.pointer, graph.make(block, BitAnd, loop.extra, graph.int64(block, 1ll << 62)));
+            graph.store(block, someValue(block), otherName, word * 8, heapOf(word));
+            if (!testComesFirst)
+                appendTest();
+            graph.increase(block, loop.sum, graph.load(block, Int64, loop.pointer, word * 8, bothHeaps));
             return;
         }
         if (depth >= 2) {
@@ -200,9 +257,15 @@ struct RandomLoopOverWords {
         if (kind < 90) {
             BasicBlock* arm = proc.addBlock();
             BasicBlock* join = proc.addBlock();
-            graph.branch(block, graph.make(block, BitAnd, index(block), graph.int64(block, 1 + random.getUint32(3))), arm, join);
+            // What no run comes to may name any heap: nothing holds of it.
+            bool neverRuns = !isInArmThatNeverRuns && chance(40);
+            Value* condition = neverRuns ? graph.make(block, Equal, loop.extra, graph.int64(block, -1)) : graph.make(block, BitAnd, index(block), graph.int64(block, 1 + random.getUint32(3)));
+            graph.branch(block, condition, arm, join);
+            isInArmThatNeverRuns |= neverRuns;
             for (unsigned count = 1 + random.getUint32(2); count--;)
                 appendStatement(arm, depth + 1);
+            if (neverRuns)
+                isInArmThatNeverRuns = false;
             graph.jump(arm, join);
             block = join;
             return;
@@ -224,6 +287,7 @@ struct RandomLoopOverWords {
     Graph graph { proc };
     TopTestedLoop loop;
     WeakRandom random;
+    bool isInArmThatNeverRuns { false };
     PollState pollState;
 };
 
@@ -386,20 +450,59 @@ static void testPromoteLoopMemorySkipsWordThatTurnChooses()
     CHECK(!promoteLoopMemoryAndValidate(loop.proc));
 }
 
-// The word lies in every heap that an access to it names: what writes outside one of them does not write the word.
-static void testPromoteLoopMemoryGoesByNarrowestHeapThatIsNamedForWord()
+// What is written under a heap apart from the one that a load names is not what that load reads. The heap that a store names says nothing of that.
+static void testPromoteLoopMemoryGoesByHeapsThatLoadsOfWordName()
 {
-    enum class Other : uint8_t { None, InHeapOfStoreAlone, InHeapOfBoth };
+    enum class Other : uint8_t { None, InSecondHeap, InFirstHeap };
     for (bool storeNamesMore : { false, true }) {
-        for (Other other : { Other::None, Other::InHeapOfStoreAlone, Other::InHeapOfBoth }) {
+        for (Other other : { Other::None, Other::InSecondHeap, Other::InFirstHeap }) {
             LoopOverWords loop;
             loop.setWord(loop.graph.make(loop.body(), Add, loop.word(0, storeNamesMore ? firstHeap : bothHeaps), loop.index()), 0, storeNamesMore ? bothHeaps : firstHeap);
             if (other != Other::None)
-                loop.graph.store(loop.body(), loop.index(), loop.addressOfWordThatTurnChooses(), 8, other == Other::InHeapOfBoth ? firstHeap : secondHeap);
+                loop.graph.store(loop.body(), loop.index(), loop.addressOfWordThatTurnChooses(), 8, other == Other::InFirstHeap ? firstHeap : secondHeap);
             loop.finish();
-            CHECK_EQ(promoteLoopMemoryAndValidate(loop.proc), other != Other::InHeapOfBoth);
+            CHECK_EQ(promoteLoopMemoryAndValidate(loop.proc), other == Other::None || (storeNamesMore && other == Other::InSecondHeap));
         }
     }
+}
+
+// An access that no turn comes to says nothing about where the word lies.
+static void testPromoteLoopMemoryGoesByNoHeapOfAnAccessThatNeverRuns()
+{
+    LoopOverWords loop;
+    Graph& graph = loop.graph;
+    BasicBlock* never = loop.proc.addBlock();
+    BasicBlock* next = loop.proc.addBlock();
+    loop.setWord(graph.make(loop.body(), Add, loop.word(0, bothHeaps), loop.index()), 0, bothHeaps);
+    graph.store(loop.body(), graph.int64(loop.body(), 100), loop.loop.extra, 0, secondHeap);
+    graph.branch(loop.body(), graph.make(loop.body(), LessThan, loop.index(), graph.int64(loop.body(), 0)), never, next);
+    graph.increase(never, loop.loop.sum, graph.load(never, Int64, loop.loop.pointer, 0, firstHeap));
+    graph.jump(never, next);
+    graph.increase(next, loop.loop.sum, graph.load(next, Int64, loop.loop.pointer, 0, bothHeaps));
+    loop.finish(next);
+    CHECK(!promoteLoopMemoryAndValidate(loop.proc));
+    auto code = compileProc(loop.proc);
+    for (int64_t bound : { 0, 1, 2, 5 }) {
+        int64_t words[1] = { 5 };
+        CHECK_EQ(run(*code, bound, words, std::bit_cast<int64_t>(&words[0])), 100 * bound);
+    }
+}
+
+// It runs whether or not a turn comes to the load that it was made from, so it names every heap that is named for the word.
+static void testPromoteLoopMemoryReadsAheadOfLoopUnderEveryHeapThatIsNamedForWord()
+{
+    LoopOverWords loop;
+    loop.setWord(loop.graph.make(loop.body(), Add, loop.word(0, firstHeap), loop.index()), 0, bothHeaps);
+    loop.finish();
+    CHECK(promoteLoopMemoryAndValidate(loop.proc));
+    unsigned numberOfLoads = 0;
+    for (Value* value : loop.proc.values()) {
+        if (value->opcode() != Load)
+            continue;
+        ++numberOfLoads;
+        CHECK(value->as<MemoryValue>()->range() == bothHeaps);
+    }
+    CHECK_EQ(numberOfLoads, 1u);
 }
 
 static void testPromoteLoopMemorySkipsWordThatIsSaidNeverToChange()
@@ -561,6 +664,134 @@ static void testPromoteLoopMemoryReadsEachAccessAFewTimes()
     }
 }
 
+// Why a word stays in memory is counted, so that a build can say what the pass finds in a program.
+static void testPromoteLoopMemorySaysWhyWordsAreLeft()
+{
+    auto check = [](Counter reason, const auto& fillBody) {
+        LoopOverWords loop;
+        fillBody(loop);
+        CHECK(!promoteLoopMemoryAndValidate(loop.proc));
+        CHECK_EQ(loop.proc.report().countOf(Counter::LoopsSearchedForWordsToCarry), 1u);
+        CHECK_EQ(loop.proc.report().countOf(Counter::WordsReadAndWrittenInLoops), 1u);
+        CHECK_EQ(loop.proc.report().countOf(reason), 1u);
+    };
+    check(Counter::WordsLeftForWritesOnLikelyPaths, [](LoopOverWords& loop) {
+        loop.addIndexToWord();
+        appendPatchpointThatWrites(loop, firstHeap);
+        loop.finish();
+    });
+    check(Counter::WordsLeftForWritesOnRarePaths, [](LoopOverWords& loop) {
+        loop.addIndexToWord();
+        BasicBlock* rare = loop.proc.addBlock();
+        BasicBlock* next = loop.proc.addBlock();
+        loop.graph.branch(loop.body(), loop.loop.extra, rarely(rare), FrequentedBlock(next));
+        loop.graph.emptyPatchpoint(rare)->effects.writes = firstHeap;
+        loop.graph.jump(rare, next);
+        loop.finish(next);
+    });
+    check(Counter::WordsLeftForStoresUnderOtherAddresses, [](LoopOverWords& loop) {
+        loop.addIndexToWord();
+        loop.graph.store(loop.body(), loop.index(), loop.loop.extra, 0, firstHeap);
+        loop.finish();
+    });
+    auto addIndexToWordAt = [](LoopOverWords& loop, Value* address) {
+        loop.graph.store(loop.body(), loop.graph.make(loop.body(), Add, loop.graph.load(loop.body(), Int64, address, 0, firstHeap), loop.index()), address, 0, firstHeap);
+        loop.finish();
+    };
+    check(Counter::WordsLeftForAddressThatChangesWithTurns, [&](LoopOverWords& loop) {
+        addIndexToWordAt(loop, loop.addressOfWordThatTurnChooses());
+    });
+    check(Counter::WordsLeftForAddressReadInLoop, [&](LoopOverWords& loop) {
+        addIndexToWordAt(loop, loop.graph.make(loop.body(), Add, loop.word(0, secondHeap), loop.graph.int64(loop.body(), 8)));
+    });
+    check(Counter::WordsLeftForAddressNotMovedOutOfLoop, [&](LoopOverWords& loop) {
+        addIndexToWordAt(loop, loop.graph.make(loop.body(), Add, loop.loop.pointer, loop.loop.extra));
+    });
+    check(Counter::WordsLeftBesideCallsOnLikelyPaths, [](LoopOverWords& loop) {
+        loop.addIndexToWord();
+        loop.graph.callLikePatchpoint(loop.body());
+        loop.finish();
+    });
+    check(Counter::WordsLeftThatMayNotBeTouched, [](LoopOverWords& loop) {
+        PatchpointValue* exit = loop.graph.emptyPatchpoint(loop.body());
+        exit->effects.exitsSideways = true;
+        exit->effects.reads = HeapRange::top();
+        loop.addIndexToWord();
+        loop.finish();
+    });
+}
+
+static void testPromoteLoopMemoryCarriesWordBesideCallBehindRareEdge()
+{
+    LoopOverWords loop;
+    loop.addIndexToWord();
+    BasicBlock* rare = loop.proc.addBlock();
+    BasicBlock* next = loop.proc.addBlock();
+    loop.graph.branch(loop.body(), loop.loop.extra, rarely(rare), FrequentedBlock(next));
+    loop.graph.callLikePatchpoint(rare);
+    loop.graph.jump(rare, next);
+    loop.finish(next);
+    CHECK(promoteLoopMemoryAndValidate(loop.proc));
+    CHECK_EQ(valueCountInLoops(loop.proc, Load), 0u);
+    auto code = compileProc(loop.proc);
+    for (int64_t takesRareWay : { 0, 1 }) {
+        int64_t words[1] = { 5 };
+        run(*code, 100, words, takesRareWay);
+        CHECK_EQ(words[0], 5 + sumBelow(100));
+    }
+}
+
+static void testPromoteLoopMemoryLeavesWordsThatClientTakesOutOfLoops()
+{
+    for (HeapRange heap : { firstHeap, secondHeap }) {
+        Policy policy = promotingPolicy();
+        policy.loops.isTakenOutOfLoopsByClient = [](Procedure&, const MemoryValue& memory) {
+            return memory.range() == firstHeap;
+        };
+        LoopOverWords loop { policy };
+        loop.setWord(loop.graph.make(loop.body(), Add, loop.word(0, heap), loop.index()), 0, heap);
+        loop.finish();
+        CHECK_EQ(promoteLoopMemoryAndValidate(loop.proc), heap == secondHeap);
+        CHECK_EQ(loop.proc.report().countOf(Counter::WordsLeftToPhasesOfClient), heap == firstHeap ? 1u : 0u);
+    }
+}
+
+// As with every phase that gives the users of a load another value: the word is read again where the load stood.
+static void testPromoteLoopMemoryLogsLoadsThatGiveWay()
+{
+    constexpr int64_t reported = -42;
+    struct Case {
+        bool storesUnderOtherAddress;
+        bool overlooksStore;
+    };
+    for (auto [storesUnderOtherAddress, overlooksStore] : { Case { false, false }, Case { true, false }, Case { true, true } }) {
+        Policy policy = promotingPolicy();
+        policy.validation.logsMovedLoads = true;
+        policy.validation.overlooksWritesToWordsCarriedAroundLoops = overlooksStore;
+        LoopOverWords loop { policy };
+        loop.addIndexToWord();
+        if (storesUnderOtherAddress)
+            loop.graph.store(loop.body(), loop.graph.int64(loop.body(), 1000), loop.loop.extra, 0, firstHeap);
+        loop.finish();
+        bool isCarried = !storesUnderOtherAddress || overlooksStore;
+        CHECK_EQ(promoteLoopMemoryAndValidate(loop.proc), isCarried);
+        bool isChecked = loop.proc.movedLoadLog().insertChecks(loop.proc, createSharedTask<void(CCallHelpers&, const MovedLoad&, GPRReg, GPRReg)>([](CCallHelpers& jit, const MovedLoad&, GPRReg, GPRReg) {
+            jit.move(CCallHelpers::TrustedImm64(reported), GPRInfo::returnValueGPR);
+            jit.emitFunctionEpilogue();
+            jit.ret();
+        }));
+        CHECK_EQ(isChecked, isCarried);
+        auto code = compileProc(loop.proc);
+        for (bool isSameWord : { false, true }) {
+            for (int64_t bound : { 0, 1, 2, 9 }) {
+                int64_t words[2] = { 5, 6 };
+                int64_t result = run(*code, bound, words, std::bit_cast<int64_t>(&words[isSameWord ? 0 : 1]));
+                CHECK_EQ(result == reported, overlooksStore && isSameWord && bound >= 2);
+            }
+        }
+    }
+}
+
 static void testPromoteLoopMemoryOverlooksOtherWritesOnlyWhereToldTo()
 {
     Policy policy = promotingPolicy();
@@ -629,7 +860,9 @@ void addBunLoopMemoryTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testPromoteLoopMemorySkipsPartsOfWords());
     RUN(testPromoteLoopMemorySkipsAccessesThatTrap());
     RUN(testPromoteLoopMemorySkipsWordThatTurnChooses());
-    RUN(testPromoteLoopMemoryGoesByNarrowestHeapThatIsNamedForWord());
+    RUN(testPromoteLoopMemoryGoesByHeapsThatLoadsOfWordName());
+    RUN(testPromoteLoopMemoryGoesByNoHeapOfAnAccessThatNeverRuns());
+    RUN(testPromoteLoopMemoryReadsAheadOfLoopUnderEveryHeapThatIsNamedForWord());
     RUN(testPromoteLoopMemorySkipsWordThatIsSaidNeverToChange());
     RUN(testPromoteLoopMemorySkipsFencesAndAtomics());
     RUN(testPromoteLoopMemorySkipsWordThatMayNotBeTouched());
@@ -637,6 +870,10 @@ void addBunLoopMemoryTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testPromoteLoopMemoryCarriesWordThatOneWayStores());
     RUN(testPromoteLoopMemoryReadsInFrontOfOutermostLoop());
     RUN(testPromoteLoopMemoryReadsEachAccessAFewTimes());
+    RUN(testPromoteLoopMemorySaysWhyWordsAreLeft());
+    RUN(testPromoteLoopMemoryCarriesWordBesideCallBehindRareEdge());
+    RUN(testPromoteLoopMemoryLeavesWordsThatClientTakesOutOfLoops());
+    RUN(testPromoteLoopMemoryLogsLoadsThatGiveWay());
     RUN(testPromoteLoopMemoryOverlooksOtherWritesOnlyWhereToldTo());
     RUN(testPromoteLoopMemoryOnRandomLoops());
     RUN(testPipelinePromotesLoopMemoryOnlyWhereAsked());

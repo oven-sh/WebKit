@@ -578,6 +578,22 @@ static MemberAnswer walkPrototypes(const PropertyAccessContext& context, const M
     return MemberAnswer::unknown(UnprovenCause::UnknownBase);
 }
 
+bool walkComesToObjectPrototypeWithoutNote(const Program& program, LayoutID declaredClass, PropertyKeyID key, Access access)
+{
+    if (TypeTable::isProvisional(declaredClass) || keyLookupOf(program, key) != KeyLookup::Ordinary || program.nameClassOf(key) == NameClass::Constructor)
+        return false;
+    const Layout& layout = program.at(declaredClass);
+    if (layout.kind != LayoutKind::Instance || !layout.constructor || !layout.classFlow.prototypeNamesAreComplete)
+        return false;
+    if (access == Access::Store && layout.classFlow.evaluations == ExecutionCount::AtMostOnce)
+        return false;
+    DeclaredMember member = findDeclaredMember(layout.classFlow, ClassSide::Prototype, key);
+    if (member.isDeclared() || member.isListedWithoutDefinition() || member.isWritableData || commonAncestorIfNoClassBetweenHasMember(program, layout, key))
+        return false;
+    MemberConditions conditions;
+    return nextHolderOf(program, declaredClass, ClassSide::Prototype, conditions).step == ChainStep::NoBase && conditions.isEmpty();
+}
+
 MemberAnswer findPrototypeMember(const PropertyAccessContext& context, const MemberQuery& query)
 {
     ClassesPassed passed { TypeTable::isProvisional(query.key) ? nullptr : context.program.propertyAccessCache(), { } };

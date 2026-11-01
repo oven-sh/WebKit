@@ -925,6 +925,7 @@ const LayoutData* ClassTable::classHeldBy(JSObject* holder, ClassSide& side) con
 }
 
 // Nothing can change or remove the prototype property of a class object, so a class object that names the holder as its prototype proves what the holder is.
+// The holder's own `constructor` is the program's to delete, redefine or overwrite with that of another class, as a mixin does: it says nothing.
 const LayoutData* ClassTable::classOfHolderLeftOut(JSObject* holder, ClassSide& side) const
 {
     VM& vm = *m_state.instance.vm;
@@ -933,8 +934,8 @@ const LayoutData* ClassTable::classOfHolderLeftOut(JSObject* holder, ClassSide& 
     if (!classObject) {
         if (holder->type() != FinalObjectType)
             return nullptr;
-        JSValue constructor = holder->getDirect(vm, vm.propertyNames->constructor);
-        classObject = constructor && constructor.isCell() ? dynamicDowncast<Closure>(constructor.asCell()) : nullptr;
+        JSValue named = holder->getDirect(vm, PropertyName(m_classObjectOfHolderLeftOut.get()));
+        classObject = named ? dynamicDowncast<Closure>(named.asCell()) : nullptr;
         if (!classObject)
             return nullptr;
     }
@@ -949,10 +950,13 @@ const LayoutData* ClassTable::classOfHolderLeftOut(JSObject* holder, ClassSide& 
     return layout;
 }
 
-bool ClassTable::tryLeaveHoldersOut(VM& vm, const LayoutData& layout, JSObject* prototype)
+bool ClassTable::tryLeaveHoldersOut(VM& vm, const LayoutData& layout, Closure* classObject, JSObject* prototype)
 {
     if (!watchpointsOf(m_state).hasNoGuardLeft(layout))
         return false;
+    if (!m_classObjectOfHolderLeftOut)
+        m_classObjectOfHolderLeftOut = PrivateSymbolImpl::create(*StringImpl::create("class"_span8).ptr());
+    prototype->putDirect(vm, PropertyName(m_classObjectOfHolderLeftOut.get()), classObject, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
     prototype->didBecomePrototype(vm);
     m_hasHoldersLeftOut = true;
     return true;

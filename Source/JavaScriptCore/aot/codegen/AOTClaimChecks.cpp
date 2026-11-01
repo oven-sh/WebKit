@@ -10,6 +10,7 @@
 
 #include "AOTCellFormat.h"
 #include "AOTCodeGenerator.h"
+#include "AOTCompactTable.h"
 #include "AOTConvention.h"
 #include "AOTHeaps.h"
 #include "AOTInstance.h"
@@ -303,6 +304,15 @@ void checkMovedLoadsAtRunTime(B3::Policy& policy, Typed::FunctionID function, co
         }
         if (isIn(heaps.entire(Typed::AbstractHeap::MemberGuards)))
             return saysWhatCountsOfGuardByte(guardTests, moved);
+        // A walk that has taken an entry marks the table of the Map or the Set, and writes the mark under a heap of its own so that reads of the byte may move across it. Only clear() asks for the mark, in the run time.
+        // What compiled code asks of the byte, or of the word that holds it, are the bits beside the mark; and whoever finds the mark clear sets it.
+        if (isIn(heaps.entire(Typed::AbstractHeap::CollectionStorage)) || isIn(heaps.entire(Typed::AbstractHeap::AllocatorState))) {
+            constexpr unsigned shiftInHeaderWord = (CompactTable::offsetOfKeysShift() - CompactTable::offsetOfCapacity()) * 8;
+            if ((load.opcode() == B3::Load8Z || load.opcode() == B3::Load8S) && load.offset() == CompactTable::offsetOfKeysShift())
+                moved.bitsThatMayGetSet = CompactTable::wasWalked;
+            else if (load.opcode() == B3::Load && load.type() == B3::Int64 && load.offset() == CompactTable::offsetOfCapacity())
+                moved.bitsThatMayGetSet = static_cast<uint64_t>(CompactTable::wasWalked) << shiftInHeaderWord;
+        }
         return saysWhatCountsOfUnchangingWord(heaps, load, moved);
     });
     policy.clientPhases.append(B3::ClientPhase {

@@ -2134,8 +2134,10 @@ void AllocationSinking::computeInputs()
     m_inputs.mergeBlocks.ensureSize(numberOfBlocks);
     m_inputs.blocksWithCandidates.ensureSize(numberOfBlocks);
     m_inputs.handlers = Vector<BlockID>(numberOfBlocks, [&](size_t index) {
-        const std::optional<Target>& handler = m_function.at(BlockID(index)).handler;
-        return handler ? handler->block : BlockID();
+        BlockID block(index);
+        while (m_function.at(block).handler && onlyMakesStoresAndRethrows(m_function, m_function.at(block).handler->block))
+            block = m_function.at(block).handler->block;
+        return m_function.at(block).handler ? m_function.at(block).handler->block : BlockID();
     });
 
     m_preparedBlocks.ensureSize(numberOfBlocks);

@@ -1,0 +1,33 @@
+# The image names the variable that holds a mock in one entry behind the exports of its module, which has no name and is no export. A module that no test mocks has none.
+# RUN: tables modules
+# CHECK: export 0 name="add" kind=Variable
+# CHECK-NEXT: wordOfMock 1 variable=
+# CHECK-NOT: wordOfMock
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="mocked.js" displayPath="mocked.js" flags=[MayBeMocked] body=f1 exports=[{name="add" variable=g0}]
+entry module=m0
+variable g0 name="add" module=m1 declared={type=anything} initialization=Function function=f2 flags=[IsReplaceable]
+variable g1 module=m1 declared={type=anything|absent} flags=[IsReplaceable, HoldsMock]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g1
+    v1 = TypeTest v0 testedType=absent
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = GetModuleVariable variable=g0
+    Jump -> next b3(v2)
+  b2():
+    v3 = PropGet v0 key="add"
+    Jump -> next b3(v3)
+  b3(v4: anything):
+    v5 = Integer integer=1
+    v6 = Call v4, -, v5
+    Return v6
+}
+function f1 name="mocked" module=m1 kind=Module results=[{type=anything}] {
+    Return
+}
+function f2 name="add" module=m1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

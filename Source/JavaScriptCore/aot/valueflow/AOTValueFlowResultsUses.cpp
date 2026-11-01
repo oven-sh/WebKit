@@ -67,20 +67,6 @@ static bool looksAtObjects(const BuiltinOverload& overload)
     });
 }
 
-static void uniteTakenAtOperand(const ValueFlowBuiltinTables& tables, ValueSetMaker& maker, const BuiltinParameter& parameter, auto& takenAtOperands)
-{
-    ValueSetID taken = parameter.accepted ? tables.membersSurelyOf(parameter.accepted) : ValueSets::anything;
-    if (parameter.converted)
-        taken = maker.unite(taken, tables.membersSurelyOf(parameter.converted));
-    size_t position = takenAtOperands.findIf([&](const auto& entry) {
-        return entry.operand == parameter.operand;
-    });
-    if (position == notFound)
-        takenAtOperands.append({ parameter.operand, taken });
-    else
-        takenAtOperands[position].taken = maker.unite(takenAtOperands[position].taken, taken);
-}
-
 static ShownKeys keysShownBy(const BuiltinTable& builtins, BuiltinID function, const BuiltinParameter& parameter)
 {
     if (!parameter.protocols.contains(Protocol::OwnKeys))
@@ -190,7 +176,6 @@ UsesOfObjects::UsesOfObjects(const ValueFlowResultInputs& inputs, const ValueFlo
             m_notes[0].enumerated.add(inputs.solver().possibleValuesOf(inputs.bodies().nodes().result(module.body, 0)));
     }
     m_exportedByCommonJSModules = exportedByCommonJSModules.takeExpanded(heap, makers.of(0));
-    findHostFunctionsThatProgramHasStored(makers);
     times.didFinish("uses of the heap: operations, behaviors, modules"_s);
     forEachBuiltinApplicationInParallel(inputs, heap, makers, m_builtinsThatLookAtObjects, ValueFlowBuiltinApplicationOnWorkerFunctor([&](unsigned worker, const ValueFlowBuiltinApplication& application) {
         noteApplication(noterOf(makers, worker), application);
@@ -381,8 +366,10 @@ void UsesOfObjects::noteRead(Noter noter, const ValueFlowNodeKey& key, Reader re
     case ValueFlowNameKind::Elements:
     case ValueFlowNameKind::UnknownKey:
     case ValueFlowNameKind::GetterUnderUnknownKey:
+    case ValueFlowNameKind::GetterUnderNameOfEnumeration:
     case ValueFlowNameKind::SetterUnderUnknownKey:
     case ValueFlowNameKind::EveryGetter:
+    case ValueFlowNameKind::GetterOutsideEnumerations:
     case ValueFlowNameKind::EverySetter:
     case ValueFlowNameKind::PrototypeLink:
     case ValueFlowNameKind::CopiedFrom:
@@ -655,88 +642,10 @@ void UsesOfObjects::noteOperationsWithoutStatement()
         m_notes[0].enumerated.add(ValueSets::anything);
 }
 
-void UsesOfObjects::findHostFunctionsThatProgramHasStored(ValueSetMakers& makers)
-{
-    const Program& program = m_inputs.program;
-    const ValueSets& sets = m_inputs.sets();
-    const BuiltinTable& builtins = program.builtins();
-    Vector<ValueFlowObjectID> functionsThatRefuseReceivers;
-    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
-        if (builtins.at(BuiltinID(index)).origin != BuiltinOrigin::Host)
-            continue;
-        bool refusesReceivers = std::ranges::any_of(builtins.overloadsOf(BuiltinID(index)), [&](const BuiltinOverload& overload) {
-            return overload.receiver && overload.receiver->accepted && !builtins.at(overload.receiver->accepted).isAnything();
-        });
-        if (refusesReceivers)
-            functionsThatRefuseReceivers.append(m_inputs.universe().objectOf(BuiltinID(index)));
-    }
-    ValueSetID builtinFunctions = makers.of(0).intersect(makers.of(0).of(functionsThatRefuseReceivers.span()), m_inputs.universe().builtinFunctions());
-    std::span<const ValueFlowStatement> statements = m_inputs.bodies().statements();
-    Vector<uint32_t> keys;
-    for (const ValueFlowHeapIndex::CallOfValue& call : m_heap.index().callsThatMayApplyBuiltins()) {
-        const ValueFlowStatement& statement = statements[call.statement];
-        if ((statement.opcode != Opcode::Call && statement.opcode != Opcode::CallList) || !sets.meet(call.callees, builtinFunctions))
-            continue;
-        if (PropertyKeyID key = program.at(statement.function).at(statement.site).calleeKey())
-            keys.append(key.index());
-    }
-    AOT::sort(keys);
-    removeRepeatedElements(keys);
-
-    Vector<ValueSetID> stored(FillWith { }, keys.size(), ValueSets::nothing);
-    forEachIndexInParallel(m_inputs.loops(), keys.size(), [&](unsigned position, unsigned worker) {
-        UnionOfSets values;
-        m_heap.forEachNodeWrittenUnder(ValueFlowName::property(program, PropertyKeyID(keys[position])), [&](ValueSetID, ValueSetID value) {
-            if (sets.meet(value, builtinFunctions))
-                values.add(value);
-        });
-        stored[position] = makers.of(worker).intersect(values.take(makers.of(worker)), builtinFunctions);
-    });
-    for (size_t position = 0; position < keys.size(); ++position) {
-        if (stored[position] != ValueSets::nothing)
-            m_hostFunctionsStoredUnderKey.add(keys[position], stored[position]);
-    }
-}
-
-void UsesOfObjects::noteRefusedOperands(Noter noter, const ValueFlowBuiltinApplication& application)
-{
-    const BuiltinTable& builtins = m_inputs.program.builtins();
-    if (builtins.at(application.builtin).origin != BuiltinOrigin::Host)
-        return;
-    const ValueFlowBuiltinTables& tables = m_inputs.universe().builtinTables();
-    Vector<NotesOfBuiltins::RefusedOperand, 8> takenAtOperands;
-    bool mayRunOnObjectOfProgram = application.function && application.kind == ValueFlowCallKind::CallByNativeCode;
-    if (PropertyKeyID key = application.function && application.kind == ValueFlowCallKind::Call ? m_inputs.program.at(application.function).at(application.site).calleeKey() : PropertyKeyID()) {
-        const ValueFlowUniverse& universe = m_inputs.universe();
-        ValueFlowObjectID function = universe.objectOf(application.builtin);
-        auto stored = m_hostFunctionsStoredUnderKey.find(key.index());
-        if (stored != m_hostFunctionsStoredUnderKey.end() && m_inputs.sets().contains(stored->value, function)) {
-            ValueSetID found = m_foundAboveReceivers.ensure(static_cast<uint64_t>(application.thisValue.index()) << 32 | key.index(), [&] {
-                ValueSetID ofProgram = noter.maker.intersect(application.thisValue, noter.maker.intersect(universe.knownObjects(), ValueSets::complement(universe.builtinObjects())));
-                return ofProgram == ValueSets::nothing ? ValueSets::nothing : m_heap.writtenUnder(noter.maker, m_heap.chainOf(noter.maker, ofProgram), ValueFlowName::property(m_inputs.program, key));
-            });
-            mayRunOnObjectOfProgram = m_inputs.sets().contains(found, function);
-        }
-    }
-    for (const BuiltinOverload& overload : builtins.overloadsOf(application.builtin)) {
-        if (overload.mode != application.mode())
-            continue;
-        if (overload.receiver && mayRunOnObjectOfProgram)
-            uniteTakenAtOperand(tables, noter.maker, *overload.receiver, takenAtOperands);
-        for (const BuiltinParameter& parameter : overload.parameters)
-            uniteTakenAtOperand(tables, noter.maker, parameter, takenAtOperands);
-    }
-    for (const NotesOfBuiltins::RefusedOperand& entry : takenAtOperands) {
-        if (entry.taken != ValueSets::anything)
-            noter.notes.enumerated.add(noter.maker.intersect(application.valueAt(entry.operand, noter.maker), ValueSets::complement(entry.taken)));
-    }
-}
-
 void UsesOfObjects::noteApplication(Noter noter, const ValueFlowBuiltinApplication& application)
 {
     if (!m_builtinsThatLookAtObjects.quickGet(application.builtin.index()))
         return;
-    noteRefusedOperands(noter, application);
     forEachLookAtOperands(m_inputs, application.builtin, application.mode(), [&](std::optional<BuiltinOperand> operand, ShownKeys shown) {
         ValueSetID objects = operand ? application.valueAt(*operand, noter.maker) : ValueSets::anything;
         noter.notes.enumerated.add(objects);
@@ -779,25 +688,11 @@ auto UsesOfObjects::findNotesOf(ValueSetMaker& maker, ValueSetID builtinFunction
         });
         if (builtins.at(builtin).origin != BuiltinOrigin::Host)
             return;
-        Vector<NotesOfBuiltins::RefusedOperand, 8> takenAtOperands;
         for (const BuiltinOverload& overload : builtins.overloadsOf(builtin)) {
             if (overload.mode != mode)
                 continue;
-            for (const BuiltinParameter& parameter : overload.parameters) {
+            for (const BuiltinParameter& parameter : overload.parameters)
                 notes->areToldApart |= parameter.operand.isReceiver();
-                uniteTakenAtOperand(m_inputs.universe().builtinTables(), maker, parameter, takenAtOperands);
-            }
-        }
-        for (const NotesOfBuiltins::RefusedOperand& entry : takenAtOperands) {
-            if (entry.taken == ValueSets::anything)
-                continue;
-            size_t position = notes->refusedOperands.findIf([&](const NotesOfBuiltins::RefusedOperand& known) {
-                return known.operand == entry.operand;
-            });
-            if (position == notFound)
-                notes->refusedOperands.append(entry);
-            else
-                notes->refusedOperands[position].taken = maker.intersect(notes->refusedOperands[position].taken, entry.taken);
         }
     });
     return notes;
@@ -849,17 +744,6 @@ void UsesOfObjects::noteApplicationOfAll(Noter noter, const ValueFlowBuiltinAppl
         (test.looksAtOwnPropertyAlone ? noter.notes.observedUnderKey : noter.notes.startsOfTestsUnderKey).add(test.key, application.valueAt(test.object, noter.maker));
     for (const NotesOfBuiltins::TestUnderOperand& test : notes.testsUnderOperands)
         noteTestUnderKeys(noter, application, test.object, test.key, test.looksAtOwnPropertyAlone);
-    for (const NotesOfBuiltins::RefusedOperand& refused : notes.refusedOperands)
-        noter.notes.enumerated.add(noter.maker.intersect(application.valueAt(refused.operand, noter.maker), ValueSets::complement(refused.taken)));
-
-    PropertyKeyID key = application.kind == ValueFlowCallKind::Call ? m_inputs.program.at(application.function).at(application.site).calleeKey() : PropertyKeyID();
-    auto stored = key ? m_hostFunctionsStoredUnderKey.find(key.index()) : m_hostFunctionsStoredUnderKey.end();
-    if (stored == m_hostFunctionsStoredUnderKey.end())
-        return;
-    m_inputs.sets().forEachMember(noter.maker.intersect(builtinCallees, stored->value), [&](ValueFlowObjectID callee) {
-        applicationOfOne.builtin = m_inputs.universe().builtinOf(callee);
-        noteRefusedOperands(noter, applicationOfOne);
-    });
 }
 
 } } } // namespace JSC::AOT::Typed

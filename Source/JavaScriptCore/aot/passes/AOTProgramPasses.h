@@ -109,8 +109,14 @@ constexpr OpcodeSet opcodesExpandedIn(OptionSet<ExpansionStep> steps)
 // ExpandIteration has nothing to do in a function without any of the first, ExpandProvenIterations in one without any of the second.
 inline constexpr OpcodeSet expandedOpcodes = opcodesExpandedIn({ ExpansionStep::ForInPositions, ExpansionStep::ArrayIteratorSteps, ExpansionStep::Spreads, ExpansionStep::Iterations });
 inline constexpr OpcodeSet iterationOpcodes = opcodesExpandedIn(ExpansionStep::Iterations);
+// Where a text of the library calls the `next` of an iterator itself, it requires the answer to be an object.
+inline constexpr OpcodeSet opcodesExpandIterationLooksFor = [] {
+    OpcodeSet opcodes = expandedOpcodes;
+    opcodes.add(Opcode::RequireObject);
+    return opcodes;
+}();
 
-enum class OutlinedIteration : uint32_t { AppendIterable = 1, OpenIterator, CloseIterator, CloseIteratorAfterThrow, OpenWrappedIterator, OpenStringOrIterator, StepString, CloseStringOrIterator, CloseStringOrIteratorAfterThrow, CallWithElements, CallWithSharedArms, StepIterator };
+enum class OutlinedIteration : uint32_t { AppendIterable = 1, OpenIterator, CloseIterator, CloseIteratorAfterThrow, OpenWrappedIterator, OpenStringOrIterator, StepString, CloseStringOrIterator, CloseStringOrIteratorAfterThrow, CallWithElements, CallWithSharedArms, StepIterator, CallNextOfIterator };
 
 bool isOutlinedIteration(const Function&);
 // Calls the declared function of a variable with the elements of an unchanged array. One for all the places that spread a list into a call of that function.

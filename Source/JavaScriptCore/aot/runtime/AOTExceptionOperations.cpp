@@ -506,9 +506,13 @@ JSValue valueOfDecodedReference(const Instance* instance, uint64_t bits)
 
 static JSValue throwSiteValue(const Instance* instance, const uint64_t* registers, const DecodedThrowSite& decoded)
 {
+    // Such a site names no register: ThrowSiteWord::isCallSite().
+    if (static_cast<Typed::Representation>(decoded.word.representation) == Typed::Representation::Void)
+        return jsUndefined();
     unsigned number = decoded.word.registerNumber;
+    RELEASE_ASSERT(number < ThrowSiteWord::numberOfStoredFPRs);
     uint64_t bits = registers[number];
-    uint64_t floatingPointBits = registers[ThrowSiteWord::numberOfRegistersPerBank + number];
+    uint64_t floatingPointBits = registers[ThrowSiteWord::numberOfStoredGPRs + number];
     JSValue value;
     switch (static_cast<Typed::Representation>(decoded.word.representation)) {
     case Typed::Representation::Void:

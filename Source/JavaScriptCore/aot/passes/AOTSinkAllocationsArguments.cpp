@@ -1011,6 +1011,7 @@ void ObjectInterpreter::executeBuiltinResult(ValueID call, VirtualObjectID objec
     builder.function().edit(call, ValueEdit::Definition).setBuiltinCallForm(form);
     if (isPrefix)
         builder.function().edit(call, ValueEdit::Definition).setPrefixLength(prefixLength);
+    m_sinking.context().build.statistics().count(isPrefix ? StatisticID::ListsOfBuiltinsNeverBuilt : StatisticID::ObjectsOfBuiltinsNeverBuilt);
     keep(call);
     retypeProducer(program(), builder, call);
     m_state.add(object, WTF::move(state));

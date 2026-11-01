@@ -303,7 +303,7 @@ auto StoresByLayout::withLayoutsIfFollowed(ValueSetMaker& maker, ValueSetID sour
     auto isStoredUnder = [&](ValueFlowName name) {
         return m_heap.writtenUnder(maker, sources, name) != ValueSets::nothing;
     };
-    constexpr std::array namesNobodyLists { ValueFlowNameKind::UnknownKey, ValueFlowNameKind::Elements, ValueFlowNameKind::GetterUnderUnknownKey, ValueFlowNameKind::SetterUnderUnknownKey };
+    constexpr std::array namesNobodyLists { ValueFlowNameKind::UnknownKey, ValueFlowNameKind::Elements, ValueFlowNameKind::GetterUnderUnknownKey, ValueFlowNameKind::GetterUnderNameOfEnumeration, ValueFlowNameKind::SetterUnderUnknownKey };
     if (std::ranges::any_of(namesNobodyLists, [&](ValueFlowNameKind kind) { return isStoredUnder(ValueFlowName::of(kind)); }))
         return std::nullopt;
     for (LayoutID layout : layouts) {
@@ -333,6 +333,7 @@ void StoresByLayout::followCopiedProperties()
         const CopiedObjects& sources = *sourcesOfTargets[position];
         StoresIntoObjects& stores = m_storesOfLayout[targets[position].index()];
         stores.getsCopiedProperties = false;
+        stores.getsCopyThatDefines = false;
         for (LayoutID source : sources.layouts) {
             for (PropertyKeyID key : keysStoredInto(source, ObjectsOfLayout::Followed)) {
                 if (stores.keysLeftOutOfEveryCopy && stores.keysLeftOutOfEveryCopy->contains(key))
@@ -432,7 +433,7 @@ auto StoresByLayout::objectsReadUnder(ValueSetMaker& maker, ValueSetID objects, 
     // A locked object holds what the table lists, whatever reaches it.
     if (sets.meet(maker.intersect(above, ValueSets::complement(m_inputs.universe().lockedObjects())), objectsNotFollowed) || sets.meet(above, m_inputs.universe().builtinTables().heap().holdersThatAnswerUnder(key)))
         return std::nullopt;
-    for (ValueFlowName name : { ValueFlowName::property(m_inputs.program, key), ValueFlowName::getter(m_inputs.program, key), ValueFlowName::of(ValueFlowNameKind::UnknownKey), ValueFlowName::of(ValueFlowNameKind::GetterUnderUnknownKey) }) {
+    for (ValueFlowName name : { ValueFlowName::property(m_inputs.program, key), ValueFlowName::getter(m_inputs.program, key), ValueFlowName::of(ValueFlowNameKind::UnknownKey), ValueFlowName::of(ValueFlowNameKind::GetterUnderUnknownKey), ValueFlowName::of(ValueFlowNameKind::GetterUnderNameOfEnumeration) }) {
         if (m_heap.writtenUnder(maker, above, name) != ValueSets::nothing)
             return std::nullopt;
     }
@@ -854,7 +855,7 @@ void StoresIntoObjects::uniteWhatWaits(ValueSetMaker& maker)
     }
 }
 
-void StoresByLayout::note(ValueSetMaker& maker, StoresIntoObjects& stores, ValueFlowName name, ValueSetID value, bool isAllocation, bool isNamedByOperation)
+void StoresByLayout::note(ValueSetMaker& maker, StoresIntoObjects& stores, ValueFlowName name, ValueSetID value, bool isAllocation, bool isNamedByOperation, bool definesOverWhatIsThere)
 {
     switch (name.kind) {
     case ValueFlowNameKind::Property: {
@@ -878,14 +879,17 @@ void StoresByLayout::note(ValueSetMaker& maker, StoresIntoObjects& stores, Value
         stores.isStoredUnderIndex = true;
         return;
     case ValueFlowNameKind::GetterUnderUnknownKey:
+    case ValueFlowNameKind::GetterUnderNameOfEnumeration:
     case ValueFlowNameKind::SetterUnderUnknownKey:
         stores.getsAccessorUnderUnknownKey = true;
         return;
     case ValueFlowNameKind::CopiedFrom:
         stores.getsCopiedProperties = true;
+        stores.getsCopyThatDefines |= definesOverWhatIsThere;
         return;
     case ValueFlowNameKind::EveryProperty:
     case ValueFlowNameKind::EveryGetter:
+    case ValueFlowNameKind::GetterOutsideEnumerations:
     case ValueFlowNameKind::EverySetter:
     case ValueFlowNameKind::PrototypeLink:
     case ValueFlowNameKind::DeletedMember:
@@ -1064,6 +1068,15 @@ static bool callsDefineProperty(const Program& program, const ValueFlowStatement
     return builtin == Builtins::ObjectDefineProperty || builtin == Builtins::ReflectDefineProperty;
 }
 
+static bool callsObjectAssign(const Program& program, const ValueFlowStatement& statement)
+{
+    if (statement.opcode != Opcode::Call)
+        return false;
+    const Function& function = program.at(statement.function);
+    const Value& callee = function.at(definitionThroughUpcasts(function, function.at(statement.site).calleeOperand()));
+    return callee.opcode == Opcode::Builtin && program.builtins().canonicalID(callee.builtin()) == Builtins::ObjectAssign;
+}
+
 std::optional<ValueSetID> StoresByLayout::descriptorsWrittenOutIn(ValueSetMaker& maker, const ValueFlowStatement& statement) const
 {
     constexpr size_t positionOfDescriptor = OperandIndex::Call::arguments + 2;
@@ -1231,6 +1244,7 @@ auto StoresByLayout::describeWrite(ValueSetMaker& maker, StoreUnderName& store, 
     bool leavesOutKeys = isCopyIntoLiteral && !m_inputs.program.at(statement.function).at(statement.site).excludedKeys().empty();
     bool fillsResult = fillsTypedResult(m_inputs, writer, key.set);
     bool isNamedByOperation = !fillsResult && store.spellsKey;
+    bool storesThroughSetters = isOperation && (statement.opcode == Opcode::PropSet || statement.opcode == Opcode::ElemSet || callsObjectAssign(m_inputs.program, statement));
     return {
         .set = key.set.index(),
         .payload = key.payload,
@@ -1250,6 +1264,8 @@ auto StoresByLayout::describeWrite(ValueSetMaker& maker, StoreUnderName& store, 
         .hasValueOnlyOfDescriptorsOfBuiltins = store.hasValueOnlyOfDescriptorsOfBuiltins,
         .isAssignment = isOperation && statement.opcode == Opcode::PropSet,
         .isOtherThanAssignment = !isOperation || statement.opcode != Opcode::PropSet,
+        .definesOverWhatIsThere = !storesThroughSetters,
+        .definesAccessorAfterCreation = store.accessorForms && statement.opcode != Opcode::DefineGetter && statement.opcode != Opcode::DefineSetter,
         .leavesOutComputedKey = isCopyIntoLiteral && !m_inputs.program.at(statement.function).at(statement.site).excludedOperands().empty(),
         .copyLeavingOutKeys = leavesOutKeys ? static_cast<uint64_t>(statement.function.index()) << 32 | statement.site.index() : noCopyLeavingOutKeys,
         .accessorForms = store.accessorForms,
@@ -1280,6 +1296,8 @@ auto StoresByLayout::collectWrites(ValueSetMakers& makers) const -> ParallelArra
         merged.hasValueOnlyOfDescriptorsOfBuiltins &= write.hasValueOnlyOfDescriptorsOfBuiltins;
         merged.isAssignment |= write.isAssignment;
         merged.isOtherThanAssignment |= write.isOtherThanAssignment;
+        merged.definesOverWhatIsThere |= write.definesOverWhatIsThere;
+        merged.definesAccessorAfterCreation |= write.definesAccessorAfterCreation;
         merged.leavesOutComputedKey |= write.leavesOutComputedKey;
         merged.accessorForms |= write.accessorForms;
         merged.formsOfDefinedValues |= write.formsOfDefinedValues;
@@ -1384,7 +1402,7 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, StoresIntoObjects& sto
     }
     if (writes.familyOfReceiver != UINT32_MAX && !admits(m_inputs.program.at(LayoutSetID(writes.familyOfReceiver)).completeMembers(), layout))
         return;
-    note(maker, stores, name, writes.value, !writes.isStoredAfterCreation, writes.isNamedByOperation);
+    note(maker, stores, name, writes.value, !writes.isStoredAfterCreation, writes.isNamedByOperation, writes.definesOverWhatIsThere);
     noteWriters(stores, writes);
     if (name.kind == ValueFlowNameKind::Property || name.kind == ValueFlowNameKind::Getter || name.kind == ValueFlowNameKind::Setter) {
         StoredUnderKey& stored = stores.underKey.add(name.payload, StoredUnderKey { }).iterator->value;
@@ -1427,17 +1445,19 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, StoresIntoObjects& sto
         if (!writes.hasValueOnlyOfDescriptorsOfBuiltins)
             stores.unite(maker, stores.valueFromOperationsUnderUnknownKey, SetsToUnite::underUnknownKey | SetsToUnite::ValueFromOperations, writes.value);
         stores.isGivenValueByOperationUnderUnknownKey |= writes.givesValueItself;
+        stores.isDefinedByOperationUnderUnknownKey |= writes.definesOverWhatIsThere;
     }
     if (!writes.accessorForms)
         return;
-    if (name.kind == ValueFlowNameKind::GetterUnderUnknownKey || name.kind == ValueFlowNameKind::SetterUnderUnknownKey) {
+    if (name.kind == ValueFlowNameKind::GetterUnderUnknownKey || name.kind == ValueFlowNameKind::GetterUnderNameOfEnumeration || name.kind == ValueFlowNameKind::SetterUnderUnknownKey) {
         stores.formsOfAccessorsUnderUnknownKey |= writes.accessorForms;
-        if (name.kind == ValueFlowNameKind::GetterUnderUnknownKey)
+        if (name.kind != ValueFlowNameKind::SetterUnderUnknownKey)
             stores.unite(maker, stores.gettersUnderUnknownKey, SetsToUnite::underUnknownKey | SetsToUnite::Getters, writes.value);
         return;
     }
     StoredUnderKey& stored = stores.underKey.add(name.payload, StoredUnderKey { }).iterator->value;
     stored.accessorForms |= writes.accessorForms;
+    stored.isAccessorDefinedAfterCreation |= writes.definesAccessorAfterCreation;
     if (name.kind == ValueFlowNameKind::Getter)
         stores.unite(maker, stored.getters, SetsToUnite::under(name.payload, SetsToUnite::Getters), writes.value);
     else
@@ -1488,7 +1508,7 @@ void StoresByLayout::noteWrites()
     // noteWritesInto() puts the forms of an accessor down under a key unless the name says that nobody knows the key.
     auto touchesNoKey = [&](const WritesThroughSet& write) {
         ValueFlowNameKind kind = write.name().kind;
-        return !liesUnderKey(write) && (!write.accessorForms || kind == ValueFlowNameKind::GetterUnderUnknownKey || kind == ValueFlowNameKind::SetterUnderUnknownKey);
+        return !liesUnderKey(write) && (!write.accessorForms || kind == ValueFlowNameKind::GetterUnderUnknownKey || kind == ValueFlowNameKind::GetterUnderNameOfEnumeration || kind == ValueFlowNameKind::SetterUnderUnknownKey);
     };
 
     auto isNotedInTables = [](ValueFlowNameKind kind) {
@@ -2158,6 +2178,27 @@ bool StoresByLayout::hasAllocationListing(LayoutID layout, PropertyKeyID key) co
     return isListed;
 }
 
+// A slot for an accessor serves the reads that start at the object. From an heir the run time finds an accessor faster among the extra properties of the object above.
+bool StoresByLayout::isReadFromHeirs(ValueSetMaker& maker, LayoutID layout, PropertyKeyID key) const
+{
+    auto receivers = m_receiversOfReads.find(key.index());
+    if (receivers == m_receiversOfReads.end())
+        return false;
+    const ValueSets& sets = m_inputs.sets();
+    ValueSetID objects = m_layoutsOfObjects.objectsWith(layout);
+    bool isHeldByUnknownCode = m_hasEscapedObject.quickGet(layout.index());
+    ValueSetID walked = ValueSets::nothing;
+    ValueSetID below = maker.uniteAll(receivers->value.span());
+    while (below != ValueSets::nothing) {
+        ValueSetID above = std::as_const(m_heap).writtenUnder(maker, below, prototypeLinkName);
+        if (sets.meet(above, objects) || (isHeldByUnknownCode && sets.meet(above, m_inputs.universe().unknownObjectAlone())))
+            return true;
+        walked = maker.unite(walked, below);
+        below = maker.intersect(above, ValueSets::complement(walked));
+    }
+    return false;
+}
+
 FlowAccessorField StoresByLayout::accessorDefinedUnder(ValueSetMaker& maker, LayoutID layout, PropertyKeyID key) const
 {
     const StoresIntoObjects& stores = m_storesOfLayout[layout.index()];
@@ -2167,25 +2208,34 @@ FlowAccessorField StoresByLayout::accessorDefinedUnder(ValueSetMaker& maker, Lay
     bool mayBeDefinedUnderUnknownKey = declaring.fields.isEmpty() || (field && !declaring.fields[*field].flags.containsAny({ FieldFlags::IsRequired, FieldFlags::IsRequiredUntilDeleted }));
     ValueSetID getters = mayBeDefinedUnderUnknownKey ? stores.gettersUnderUnknownKey : ValueSets::nothing;
     ValueSetID setters = ValueSets::nothing;
-    ValueSetID values = stores.valueFromOperationsUnderUnknownKey;
     uint8_t forms = stores.formsOfAccessorsUnderUnknownKey;
-    bool isGivenValue = stores.isGivenValueByOperationUnderUnknownKey;
+    bool isDefinedAfterCreation = forms;
+    bool getsCopy = false;
+    bool getsCopyThatDefines = false;
     ValueSetID valuesUnderKey = ValueSets::nothing;
     bool isGivenValueByOperation = false;
     bool isGivenValueByDefinition = false;
     forEachTableOfKnownObjects(layout, [&](const StoresIntoObjects& table) {
         // A copy lays down a value under every name that it brings, and one whose sources nobody lists may bring any name.
-        isGivenValue |= table.getsCopiedProperties && !(table.keysLeftOutOfEveryCopy && table.keysLeftOutOfEveryCopy->contains(key));
+        bool mayBringKey = !(table.keysLeftOutOfEveryCopy && table.keysLeftOutOfEveryCopy->contains(key));
+        getsCopy |= table.getsCopiedProperties && mayBringKey;
+        getsCopyThatDefines |= table.getsCopyThatDefines && mayBringKey;
         auto found = table.underKey.find(key.index());
         if (found == table.underKey.end())
             return;
         getters = maker.unite(getters, found->value.getters);
         setters = maker.unite(setters, found->value.setters);
         forms |= found->value.accessorForms;
+        isDefinedAfterCreation |= found->value.isAccessorDefinedAfterCreation;
         valuesUnderKey = maker.unite(valuesUnderKey, found->value.valueFromOperations);
         isGivenValueByOperation |= found->value.isGivenValueByOperation;
         isGivenValueByDefinition |= found->value.isGivenValueByDefinition;
     });
+    // A store under a key that nobody knows, and a copy that stores, go through the accessor that is there: it stays one.
+    bool isThereBeforeEveryStore = !isDefinedAfterCreation;
+    bool isLaidDownUnderUnknownKey = !isThereBeforeEveryStore || stores.isDefinedByOperationUnderUnknownKey;
+    ValueSetID values = isLaidDownUnderUnknownKey ? stores.valueFromOperationsUnderUnknownKey : ValueSets::nothing;
+    bool isGivenValue = (isLaidDownUnderUnknownKey && stores.isGivenValueByOperationUnderUnknownKey) || (isThereBeforeEveryStore ? getsCopyThatDefines : getsCopy);
     if (setters == ValueSets::nothing) {
         values = maker.unite(values, valuesUnderKey);
         isGivenValue |= isGivenValueByOperation;
@@ -2196,7 +2246,7 @@ FlowAccessorField StoresByLayout::accessorDefinedUnder(ValueSetMaker& maker, Lay
     std::optional<OptionSet<FieldForm>> form = AccessorForms::onlyFormIn(forms);
     if (!form)
         return { };
-    if (sets.meet(m_layoutsOfObjects.objectsWith(layout), m_objectsPutAboveOthers) || hasAllocationListing(layout, key))
+    if (hasAllocationListing(layout, key) || (sets.meet(m_layoutsOfObjects.objectsWith(layout), m_objectsPutAboveOthers) && isReadFromHeirs(maker, layout, key)))
         return { };
 
     FlowAccessorField accessor { *form, { }, { } };

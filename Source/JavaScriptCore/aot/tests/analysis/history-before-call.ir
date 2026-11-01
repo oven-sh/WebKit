@@ -1,9 +1,11 @@
 # An object has not escaped before the call that takes it, and may have escaped after that call and around a loop
+# The verifier looks closer: round the loop only if a value that is live at the end of the turn may still name it: in f1 the second object is handed to the next turn, the first is out of sight
 # FORM: AsRead
 # RUN: analyses escape-history history-points function=f0
 # RUN(WRITES): analyses history-points function=f0 history-uses=WritesContents
 # RUN(IGNORED): analyses history-points function=f0 ignored-blocks=b2
 # RUN(FRESH): analyses history-points function=f1
+# RUN(JUDGED): analyses history-points function=f1 as-the-verifier
 
 module m0 path="main.js" displayPath="main.js"
 entry module=m0
@@ -91,3 +93,9 @@ function f1 name="escapesEachIteration" parameters=[{type=anything}] results=[{t
 # FRESH: b2:3 unknown: []
 # FRESH: b2:4 occurred: [o0 o1 o2]
 # FRESH: b3:0 occurred: [o0 o1 o2]
+# JUDGED: function f1
+# JUDGED: history-points:
+# JUDGED: b1:0 occurred: [o0 o2]
+# JUDGED: b2:0 occurred: [o0 o2]
+# JUDGED: b2:4 occurred: [o0 o1 o2]
+# JUDGED: b3:0 occurred: [o0 o2]

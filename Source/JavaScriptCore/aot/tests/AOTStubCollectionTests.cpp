@@ -201,6 +201,19 @@ public:
         });
     }
 
+    // In a table that has slots.
+    uint32_t slotOf(uint32_t entry, unsigned hash) const
+    {
+        for (uint32_t slot = 0; slot < 1u << m_indexBits; ++slot) {
+            if (CompactTable::hasTag(index()[slot], CompactTable::tagOfSlot(hash)) && CompactTable::entryAt(slotKind(), index(), m_indexBits, slot) == entry)
+                return slot;
+        }
+        AOT_TEST_CHECK(false);
+        return CompactTable::noSlot;
+    }
+    bool canFreeSlot(uint32_t slot) const { return CompactTable::canFreeSlot(index(), slot); }
+    uint8_t tagAt(uint32_t slot) const { return index()[slot]; }
+
     uint64_t keyAt(uint32_t entry) const { return load(m_offsetOfKeys, m_keyWidth, entry); }
     uint64_t valueAt(uint32_t entry) const { return load(m_offsetOfValues, m_valueWidth, entry); }
 
@@ -1111,8 +1124,12 @@ static void checkDeletedEntry(Collections& collections, KeyComparison comparison
     uint32_t alive = table.alive();
     std::optional<uint32_t> position = table.find(entry.key, entry.hash);
     AOT_TEST_CHECK(position.has_value());
+    bool hasSlots = table.slotKind() != SlotKind::Tag;
+    uint32_t slot = hasSlots ? table.slotOf(*position, entry.hash) : 0;
+    uint8_t tagBehindDeletion = hasSlots && !table.canFreeSlot(slot) ? table.tagAt(slot) : 0;
 
     checkAnswer(collections, deletionStub(comparison, hasValues), owner, keyWithSameValue, bitsOf(jsBoolean(true)));
+    AOT_TEST_CHECK(!hasSlots || table.tagAt(slot) == tagBehindDeletion);
     AOT_TEST_CHECK(table.used() == used && table.alive() == alive - 1);
     AOT_TEST_CHECK(!table.keyAt(*position) && (!hasValues || !table.valueAt(*position)) && !table.find(entry.key, entry.hash));
     checkAnswer(collections, deletionStub(comparison, hasValues), owner, keyWithSameValue, bitsOf(jsBoolean(false)));

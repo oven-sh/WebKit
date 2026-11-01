@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTBuiltinPristine.h"
 #include "AOTResolveBuiltinsInternal.h"
 #include "AOTTypeTestSite.h"
 #include "AOTVector.h"
@@ -28,6 +29,25 @@ static bool callsMemberReadUnderTest(const TestSiteReporter& reporter, const Val
         return false;
     ValueID read = sameObjectThroughCasts(reporter.function(), call.calleeOperand()).valueInFrontOfFacts();
     return reporter.function().at(read).opcode == Opcode::PropGet && reporter.isClaimed(read);
+}
+
+// `f.apply(..)`: a test of the receiver was to say what the read of the member gives. Where that test has failed only the value itself tells, and the arm behind the failed test may ask it.
+// Only for a function: the test asks for a closure as it was created, so a bound or a native function never passes, and its `apply` is the built-in all the same. An instance of another class fails
+// its test when somebody has meddled with it, and the arm stays generic code.
+static void findFailedTestsOfMemberRead(TestSiteReporter& reporter, const BuiltinUseInputs& inputs, const Value& call)
+{
+    if (call.opcode != Opcode::Call || !call.calleeKey())
+        return;
+    ValueID read = sameObjectThroughCasts(reporter.function(), call.calleeOperand()).valueInFrontOfFacts();
+    if (reporter.function().at(read).opcode != Opcode::PropGet || reporter.analyses().useLists().locationOf(read).placement != ValuePlacement::InBlock)
+        return;
+    BuiltinUsePlan plan = planBuiltinUse(inputs, read, reporter.analyses().useLists().pointOf(read));
+    if (!plan || plan.isProven())
+        return;
+    for (const Value& test : createTestsOf(plan)) {
+        if (test.opcode == Opcode::IsPristine && pristineTestOf(reporter.program().builtins(), test.builtinClass()) == PristineTest::ClosureAsCreated)
+            reporter.findEarlierTest(test);
+    }
 }
 
 void reportBuiltinUseTests(TestSiteReporter& reporter)
@@ -55,6 +75,7 @@ void reportBuiltinUseTests(TestSiteReporter& reporter)
         if (hasFailedTest)
             return;
 
+        findFailedTestsOfMemberRead(reporter, inputs, candidate);
         reporter.report(tests.span(), effectsWhenApplied(inputs, plan));
     });
 }

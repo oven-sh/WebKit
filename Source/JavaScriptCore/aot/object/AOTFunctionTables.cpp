@@ -400,6 +400,42 @@ static JSObject* closureOnHeapOf(VM& vm, const RecordedCallee& entry)
     return liesInFrame(vm, entry) ? nullptr : std::bit_cast<JSObject*>(std::bit_cast<uintptr_t>(entry.closure) & ~markOfCollection);
 }
 
+// A frame gets the name from it that it gets from a function object that lies in a frame, which nobody has seen.
+static bool namesFramesAsWhenCreated(VM& vm, JSObject* closure)
+{
+    if (auto* slim = dynamicDowncast<SlimClosure>(closure); slim && !slim->nameWasLookedFor())
+        return true;
+    auto* full = dynamicDowncast<Closure>(closure);
+    if (full && full->classData())
+        return false;
+    if (full && !full->nameWasLookedFor() && !(full->entry() >> ClosureWord::isRenamedBit & 1) && full->hasStructureOfNewClosure(vm))
+        return true;
+    ImageOfCellScope imageOfCell(closure);
+    std::optional<FunctionID> function = functionOf(closure);
+    if (!function)
+        return false;
+    FunctionDescription description(*function);
+    return functionName(vm, description, NameForm::InFrames, closure) == functionName(vm, description, NameForm::InFrames, nullptr, true)
+        && functionName(vm, description, NameForm::CalculatedDisplayName, closure) == functionName(vm, description, NameForm::CalculatedDisplayName, nullptr, true);
+}
+
+// In place of a function object that named frames so when the last thing that referred to it went. It lies outside the cage, so the entry reads as one whose function object lies in a frame.
+static constexpr uintptr_t markOfFunctionObjectThatWent = 2;
+
+// The number says the same in every image. Which function has it is the word of the image that runs when somebody asks, as it is for a function object.
+static JSObject* inPlaceOfFunctionObjectWithNumber(uint32_t closureNumber)
+{
+    return std::bit_cast<JSObject*>(static_cast<uintptr_t>(closureNumber) << 2 | markOfFunctionObjectThatWent);
+}
+
+static std::optional<uint32_t> closureNumberOfObjectThatWent(VM& vm, const RecordedCallee& entry)
+{
+    uintptr_t bits = std::bit_cast<uintptr_t>(entry.closure);
+    if (!(bits & markOfFunctionObjectThatWent) || bits >> 2 > std::numeric_limits<uint32_t>::max() || !liesInFrame(vm, entry))
+        return std::nullopt;
+    return static_cast<uint32_t>(bits >> 2);
+}
+
 std::optional<JSObject*> FunctionTables::recordedCalleeOfCallFrom(VM& vm, const void* stackPointer, FunctionID sourceFunction)
 {
     if (!hasRecordedCallees())
@@ -409,10 +445,18 @@ std::optional<JSObject*> FunctionTables::recordedCalleeOfCallFrom(VM& vm, const 
     if (entry.stackPointerOfCaller != stackPointerOfCaller)
         return std::nullopt;
     JSObject* closure = closureOnHeapOf(vm, entry);
-    if (closure && sourceFunctionOf(*functionOf(closure)) != sourceFunction)
+    std::optional<uint32_t> closureNumber = closure ? closureNumberOf(closure) : closureNumberOfObjectThatWent(vm, entry);
+    std::optional<FunctionID> function;
+    if (closureNumber) {
+        // A closure of another image of the realm is like a function that no build has seen.
+        if (!programTables().hasClosureNumber(*closureNumber)) [[unlikely]]
+            return std::nullopt;
+        function = closureFunctionWithNumber(*closureNumber);
+    }
+    if (function && sourceFunctionOf(*function) != sourceFunction)
         return std::nullopt;
     // What bind makes of a closure is a closure too, of a function that is written where the target is. No frame is listed for it: the frames are the target's, whatever it was renamed to.
-    if (closure && functionKindData(*functionOf(closure)).isBound())
+    if (function && functionKindData(*function).isBound())
         return std::nullopt;
     return closure;
 }
@@ -463,7 +507,8 @@ void FunctionTables::visitRecordedCallees(VM& vm, Visitor& visitor, uint64_t pha
     Locker locker { recordedCalleesLock };
     std::span<const RecordedCallee> entries = recordedCallees();
     auto visit = [&](const RecordedCallee& entry) {
-        if (JSObject* closure = closureOnHeapOf(vm, entry); closure && !hasReturned(vm, *this, entry))
+        // A function object that nothing else refers to gets no name any more.
+        if (JSObject* closure = closureOnHeapOf(vm, entry); closure && !hasReturned(vm, *this, entry) && !namesFramesAsWhenCreated(vm, closure))
             visitor.appendUnbarriered(closure);
     };
     // The GC verifier marks on its own and leaves the state of the real collection alone.
@@ -491,9 +536,17 @@ void FunctionTables::finalizeRecordedCallees(VM& vm, uint64_t phaseOfCollector)
     auto finalize = [&](RecordedCallee& entry) {
         if (!entry.closure)
             return;
-        if (hasReturned(vm, *this, entry) || (!liesInFrame(vm, entry) && !vm.heap.isMarked(closureOnHeapOf(vm, entry)))) {
+        if (hasReturned(vm, *this, entry)) {
             entry = { 0, nullptr };
             return;
+        }
+        if (JSObject* closure = closureOnHeapOf(vm, entry); closure && !vm.heap.isMarked(closure)) {
+            std::optional<uint32_t> closureNumber = closureNumberOf(closure);
+            if (!closureNumber) {
+                entry = { 0, nullptr };
+                return;
+            }
+            entry.closure = inPlaceOfFunctionObjectWithNumber(*closureNumber);
         }
         entry.closure = std::bit_cast<JSObject*>(std::bit_cast<uintptr_t>(entry.closure) | markOfCollection);
         isInUse = true;

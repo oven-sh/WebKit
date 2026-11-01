@@ -610,7 +610,7 @@ static Representation wantedByOperation(const RepresentationInputs& inputs, cons
         return Representation::Void;
     if (forwardsOperand(opcode))
         return isForwardedOperand(user, operandIndex) ? user.representation : Representation::Unchosen;
-    if (opcode == Opcode::TypeTest || opcode == Opcode::ReportMismatch || familyOf(opcode) == OperationFamily::RuntimeValidation || isRepresentationConversion(opcode))
+    if (opcode == Opcode::TypeTest || opcode == Opcode::ReportMismatch || opcode == Opcode::ReleaseHint || familyOf(opcode) == OperationFamily::RuntimeValidation || isRepresentationConversion(opcode))
         return Representation::Unchosen;
     if (hasOperatorForm(opcode))
         return wantedByOperator(inputs, user, operandIndex);

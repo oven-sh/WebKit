@@ -553,10 +553,8 @@ void generateNewGenerator(StubAssembler& jit)
 
     if (isAsync)
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.asyncGeneratorAllocator)), allocator);
-    else {
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), allocator);
-        jit.loadPtr(Address(allocator, CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(sizeof(Generator)) * sizeof(Allocator)), allocator);
-    }
+    else
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.generatorAllocator)), allocator);
     slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
     const AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, generator, allocator, scratch, slowCases);
     jit.emitStoreStructureWithTypeInfo(structure, generator, scratch);
@@ -588,14 +586,11 @@ void generateNewGenerator(StubAssembler& jit)
     else {
         static_assert(Generator::offsetOfTakesPrototypeFromFunction() == Generator::offsetOfState() + 5);
         slowCases.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(closure, JSObject::butterflyOffset())));
+        static_assert(numberOfStatesOfGeneratorFunctions == 256);
+        jit.load8(Address(closure, offsetOfClosureEntry + ClosureWord::functionShift / 8), scratch);
+        slowCases.append(jit.branch8(CCallHelpers::NotEqual, BaseIndex(instanceGPR, scratch, CCallHelpers::TimesOne, AOT_INSTANCE_OFFSET(coroutines.statesOfGeneratorFunctions)), TrustedImm32(static_cast<int32_t>(GeneratorFunctionState::MakesGeneratorsWithoutPrototype))));
         jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.headerOfGeneratorsWithoutPrototype)), structure);
-        slowCases.append(jit.branchTest64(CCallHelpers::Zero, structure));
-        jit.load32(Address(closure, offsetOfClosureEntry + ClosureWord::functionShift / 8), scratch);
-        jit.and32(TrustedImm32(numberOfStatesOfGeneratorFunctions - 1), scratch);
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.statesOfGeneratorFunctions)), allocator);
-        slowCases.append(jit.branch8(CCallHelpers::NotEqual, BaseIndex(allocator, scratch, CCallHelpers::TimesOne), TrustedImm32(static_cast<int32_t>(GeneratorFunctionState::MakesGeneratorsWithoutPrototype))));
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), allocator);
-        jit.loadPtr(Address(allocator, CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(sizeof(Generator)) * sizeof(Allocator)), allocator);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.generatorAllocator)), allocator);
         slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
         const AssemblyHelpers::FreeListRefill refillForFunction = allocateCellWithLateRefill(jit, generator, allocator, scratch, slowCases);
         jit.store64(structure, Address(generator, JSCell::structureIDOffset()));

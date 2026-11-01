@@ -307,16 +307,16 @@ static void emitInsert(StubAssembler& jit, CompactTableOwner owner)
     });
 }
 
-// Answers whether the table has the key. emitAtEntry() falls through.
-static void emitTestForKey(StubAssembler& jit, bool searchesTablesInImage, Entry operation, const Invocable<void(const HashTableRegisters&)> auto& emitAtEntry)
+// Answers whether the table has the key. emitAtEntry() falls through, or leaves the key to the operation.
+static void emitTestForKey(StubAssembler& jit, bool searchesTablesInImage, bool keepsSlot, Entry operation, const Invocable<void(const HashTableRegisters&, JumpList& leftToOperation)> auto& emitAtEntry)
 {
     const HashTableRegisters registers = HashTableRegisters::take(jit);
     HashTableExits exits;
-    emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .searchesTablesInImage = searchesTablesInImage }, exits);
+    emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .searchesTablesInImage = searchesTablesInImage, .keepsSlot = keepsSlot }, exits);
     exits.foundInCompactTable.append(exits.foundAmongNarrowKeys);
     exits.foundInCompactTable.append(exits.foundAmongWideKeys);
     emitAtExit(jit, exits.foundInCompactTable, [&] {
-        emitAtEntry(registers);
+        emitAtEntry(registers, exits.unknown);
         returnConstant(jit, jsBoolean(true));
     });
     emitAtExit(jit, exits.absent, [&] {
@@ -329,7 +329,7 @@ static void emitTestForKey(StubAssembler& jit, bool searchesTablesInImage, Entry
 
 static void emitHas(StubAssembler& jit, Entry operation)
 {
-    emitTestForKey(jit, true, operation, [](const HashTableRegisters&) { });
+    emitTestForKey(jit, true, false, operation, [](const HashTableRegisters&, JumpList&) { });
 }
 
 static void emitLookupInWeakTable(StubAssembler& jit, WeakTableLookup lookup)
@@ -416,7 +416,31 @@ void generateSetAdd(StubAssembler& jit) { emitInsert(jit, CompactTableOwner::Set
 static void emitDelete(StubAssembler& jit, CompactTableOwner owner)
 {
     const bool hasValues = owner == CompactTableOwner::Map;
-    emitTestForKey(jit, false, hasValues ? Entry::operationAOTMapDelete : Entry::operationAOTSetDelete, [&](const HashTableRegisters& registers) {
+    emitTestForKey(jit, false, true, hasValues ? Entry::operationAOTMapDelete : Entry::operationAOTSetDelete, [&](const HashTableRegisters& registers, JumpList& leftToOperation) {
+        // CompactTable::isMostlyDeleted() of the table without this entry: the operation lets such a table go.
+        const GPRReg fourTimesAlive = registers.hash;
+        const GPRReg used = registers.candidate;
+        jit.load32(Address(registers.table, CompactTable::offsetOfAliveCount()), fourTimesAlive);
+        jit.load32(Address(registers.table, CompactTable::offsetOfUsed()), used);
+        jit.lshift32(TrustedImm32(2), fourTimesAlive);
+        jit.add32(TrustedImm32(4), used);
+        Jump keepsTable = jit.branch32(CCallHelpers::AboveOrEqual, fourTimesAlive, used);
+        leftToOperation.append(jit.branch32(CCallHelpers::AboveOrEqual, used, TrustedImm32(CompactTable::minUsedToShrink + 4)));
+        keepsTable.link(&jit);
+
+        // CompactTable::canFreeSlot().
+        const GPRReg eightTags = registers.hash;
+        const BaseIndex tagOfSlot(registers.table, registers.cursor, CCallHelpers::TimesOne, CompactTable::offsetOfIndex());
+        JumpList keepsSlot;
+        keepsSlot.append(jit.branchTest8(CCallHelpers::Zero, Address(registers.table, CompactTable::offsetOfIndexBits()), TrustedImm32(0xff)));
+        keepsSlot.append(jit.branchTest8(CCallHelpers::NonZero, tagOfSlot, TrustedImm32(CompactTable::keyLeftHomeSlot)));
+        jit.and32(TrustedImm32(~static_cast<int32_t>(CompactTable::slotsPerGroup - 1)), registers.cursor, eightTags);
+        jit.load64(BaseIndex(registers.table, eightTags, CCallHelpers::TimesOne, CompactTable::offsetOfIndex()), eightTags);
+        jit.not64(eightTags);
+        keepsSlot.append(jit.branchTest64(CCallHelpers::Zero, eightTags, TrustedImm64(CompactTable::onesOfTags << 7)));
+        jit.store8(TrustedImm32(0), tagOfSlot);
+        keepsSlot.link(&jit);
+
         emitClearInColumn(jit, branchIfKeysAreWide(jit, registers), registers.keys, registers.entry);
         if (hasValues) {
             const GPRReg values = registers.keys;

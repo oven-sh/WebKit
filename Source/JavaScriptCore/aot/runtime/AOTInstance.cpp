@@ -159,7 +159,7 @@ static void copyMethodTable(Instance* instance, const Image& image)
 
 static Instance* reserveMemory(PagesOfVM& pages, const Image& image)
 {
-    RELEASE_ASSERT(!(InstanceLayout::granuleBelowInstance % WTF::pageSize()) && !(InstanceLayout::granuleAboveInstance % WTF::pageSize()));
+    RELEASE_ASSERT(!(InstanceLayout::largestPageSize % WTF::pageSize()));
     auto [below, above] = reservationSizes(image);
     auto* instance = reinterpret_cast<Instance*>(static_cast<char*>(pages.allocate(below + above)) + below);
     copyMethodTable(instance, image);
@@ -1313,10 +1313,22 @@ void VMState::willShutDownHeap()
         AllocationCounts::willShutDownHeap(*this);
 }
 
+void VMState::countWithoutImage(VM& vm)
+{
+    RELEASE_ASSERT(!hasCompiledCode && !image);
+    counters = makeUniqueWithoutFastMallocCheck<RuntimeCounters>();
+    reporter = makeUniqueWithoutFastMallocCheck<RuntimeReporter>(vm);
+}
+
 void VMState::releaseImage(VM& vm)
 {
-    if (!hasCompiledCode)
+    if (!hasCompiledCode) {
+        if (reporter)
+            reporter->writeAtExit();
+        reporter = nullptr;
+        counters = nullptr;
         return;
+    }
     ASSERT(vm.heap.isShuttingDown());
 
     reporter->writeAtExit();

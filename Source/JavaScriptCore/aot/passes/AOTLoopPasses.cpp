@@ -1660,6 +1660,14 @@ static bool readsWhatMayChangeBehindHeader(FunctionPassContext& context, const N
     });
 }
 
+static bool mayThrowBehindHeader(FunctionPassContext& context, const NaturalLoop& loop)
+{
+    BlockID behindHeader = findBlockBehindHeader(context, loop);
+    return behindHeader && std::ranges::any_of(context.function.at(behindHeader).values, [&](ValueID id) {
+        return !!context.analyses.effectsOf(id).onAnyEdge().mayThrow;
+    });
+}
+
 // The read goes ahead of the fact that it names, so the word it finds may be anything. The cast that stays names the fact.
 static ValueID readAheadAndAssumeInPlace(FunctionPassContext& context, IRBuilder& builder, BlockValues& remaining, ValueID id)
 {
@@ -1912,7 +1920,15 @@ static unsigned tellTestsLengthInFrontOfLoop(FunctionPassContext& context, const
     return numberOfTestsTold;
 }
 
-static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop& loop, Vector<BlockID>& definingBlock, const BitVector& headersWhoseTestHoldsOnEntry, const BitVector& lengthsLeftAlone, Vector<ValueID, 4>& lengthsThatLeftLoop, Vector<Edge, 2>& entriesFromBranches)
+// What may throw and is the same in every turn, in the block behind the test of a header that may fail at once.
+struct WorkBehindEntryTest {
+    BlockID header;
+    BlockID behindHeader;
+    Edge entry;
+    Vector<ValueID, 2> operations;
+};
+
+static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop& loop, Vector<BlockID>& definingBlock, const BitVector& headersWhoseTestHoldsOnEntry, const BitVector& headersOfLoopsThatTurnOnce, const BitVector& lengthsLeftAlone, Vector<ValueID, 4>& lengthsThatLeftLoop, Vector<Edge, 2>& entriesFromBranches, Vector<WorkBehindEntryTest, 2>& workBehindEntryTests)
 {
     const Program& program = context.program;
     Function& function = context.function;
@@ -1972,13 +1988,14 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
         return value.opcode == Opcode::GetModuleVariable && factsOfFirstTurn.contains(value.factOperand());
     };
     BlockID behindHeader = headersWhoseTestHoldsOnEntry.get(header.index()) ? findBlockBehindHeader(context, loop) : BlockID();
-    auto canHoist = [&](ValueID id, BlockID block, const LoopClobbers& clobbersBeforeRead) {
+    BlockID blockBehindHeader = findBlockBehindHeader(context, loop);
+    BlockID runsInFirstTurn = headersOfLoopsThatTurnOnce.get(header.index()) ? blockBehindHeader : BlockID();
+    bool firstTurnMayHaveLeft = false;
+    WorkBehindEntryTest behindEntryTest { header, blockBehindHeader, *entry, { } };
+    auto staysTheSameInEveryTurn = [&](ValueID id, BlockID block, const LoopClobbers& clobbersBeforeRead) {
         const Value& value = function.at(id);
-        if (testsOfValuesThemselves.contains(value.opcode)) {
-            // A comparison is declared to throw where it flattens a rope and memory runs out: it does not leave its handler.
-            bool staysUnderItsHandler = function.at(block).handler == function.at(preheader).handler || !context.analyses.effectsOf(id).normal.mayThrow;
-            return staysUnderItsHandler && !keptReads.get(id.index()) && hasInvariantOperands(value);
-        }
+        if (testsOfValuesThemselves.contains(value.opcode))
+            return !keptReads.get(id.index()) && hasInvariantOperands(value);
         // A look-up that runs no code and cannot throw finds the same in every turn while nothing that it reads is written, and nobody sees it where no turn asks.
         if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode)) {
             if (keptReads.get(id.index()) || !hasInvariantOperands(value))
@@ -2022,6 +2039,24 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
             return false;
         return hasInvariantOperands(value) || namesFactOfFirstTurn(value) || canGoAheadOfItsFact(value);
     };
+    auto canHoist = [&](ValueID id, BlockID block, const LoopClobbers& clobbersBeforeRead) {
+        const Terminator& terminator = function.at(block).terminator;
+        if (terminator.isConditionalBranch() && terminator.conditionOperand() == id && std::ranges::any_of(terminator.targets, [](const Target& target) { return !target.proofs.isEmpty(); }))
+            return false;
+        // A comparison or a look-up in a collection is declared to throw where it flattens a rope and memory runs out.
+        // What may throw does not leave its handler, and it runs ahead of the loop only where the first turn is sure to run it: a loop that makes no turn throws nothing.
+        bool mayThrow = !!context.analyses.effectsOf(id).onAnyEdge().mayThrow;
+        if (mayThrow && function.at(block).handler != function.at(preheader).handler)
+            return false;
+        if (!staysTheSameInEveryTurn(id, block, clobbersBeforeRead))
+            return false;
+        if (!mayThrow || (!firstTurnMayHaveLeft && (block == header || block == runsInFirstTurn)))
+            return true;
+        // Behind a test that may fail at once, it waits for a copy of that test where the loop is entered.
+        if (!firstTurnMayHaveLeft && block == blockBehindHeader)
+            behindEntryTest.operations.append(id);
+        return false;
+    };
 
     unsigned numberOfHoistedReads = 0;
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
@@ -2039,11 +2074,15 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
             continue;
         }
         bool followsEntry = blockID == header || blockID == behindHeader;
+        bool isSureToRun = blockID == header || blockID == blockBehindHeader;
         unsigned numberOfReadsBefore = numberOfHoistedReads;
         BlockValues remaining;
         remaining.reserveInitialCapacity(function.at(blockID).values.size());
         for (ValueID id : function.at(blockID).values) {
             if (!canHoist(id, blockID, followsEntry ? clobbersSinceEntry : clobbers)) {
+                // A poll is no operation of the program.
+                if (isSureToRun && function.at(id).opcode != Opcode::LoopHint)
+                    firstTurnMayHaveLeft |= context.analyses.effectsOf(id).onAnyEdge().mayExitSideways();
                 if (followsEntry) {
                     addClobbers(context, id, clobbersSinceEntry);
                     firstTurnGetsHere &= !mayLeaveOrStoreToVariable(context.analyses.effectsOf(id).onAnyEdge());
@@ -2088,10 +2127,96 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
         while (definingBlock.size() < function.values.size())
             definingBlock.append(blockID);
     }
+    if (!behindEntryTest.operations.isEmpty()) {
+        if (isEnteredFromBranch)
+            entriesFromBranches.append(*entry);
+        else
+            workBehindEntryTests.append(WTF::move(behindEntryTest));
+    }
     return numberOfHoistedReads;
 }
 
-static unsigned hoistReadsOutOfLoops(FunctionPassContext& context, Vector<Edge, 2>& entriesFromBranches)
+// `for (let i = 0; i < list.length; i++) { if (a === b) .. }`: the comparison is the same in every turn, and the loop may make none.
+// The test of the header is asked once more where the loop is entered, about what the entry hands over, and the work stands behind it: there the first turn is sure to run.
+// On the other side nothing is made, and the loop is left at its first test. The two sides join in one block, which is all that enters the loop.
+static bool hoistBehindCopyOfEntryTest(FunctionPassContext& context, const WorkBehindEntryTest& work)
+{
+    Function& function = context.function;
+    BlockID preheader = work.entry.from;
+    if (function.at(preheader).terminator.kind != TerminatorKind::Jump || !function.at(work.header).terminator.isConditionalBranch())
+        return false;
+    bool canAskAgain = std::ranges::all_of(function.at(work.header).values, [&](ValueID id) {
+        return function.at(id).opcode == Opcode::LoopHint || context.analyses.effectsOf(id).onAnyEdge().isUnobservable();
+    });
+    if (!canAskAgain || function.at(work.header).parameters.size() != function.at(preheader).terminator.targets[0].arguments.size())
+        return false;
+
+    Arguments handedOver = function.at(preheader).terminator.targets[0].arguments;
+    HashMap<ValueID, ValueID> onEntry;
+    for (uint32_t index = 0; index < handedOver.size(); ++index)
+        onEntry.set(function.at(work.header).parameters[index], handedOver[index]);
+    auto whereLoopIsEntered = [&](ValueID value) {
+        return value ? onEntry.getOptional(value).value_or(value) : value;
+    };
+
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    Expected<BlockFrequency> frequency = function.at(preheader).frequency;
+    builder.setHandler(function.at(preheader).handler);
+    function.edit(preheader, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
+    builder.moveToEndOf(preheader);
+    Vector<ValueID, 8> asked(function.at(work.header).values.span());
+    for (ValueID id : asked) {
+        if (function.at(id).opcode == Opcode::LoopHint)
+            continue;
+        Value copy(function.at(id));
+        copy.forEachOperand([&](ValueID& operand, uint32_t) {
+            operand = whereLoopIsEntered(operand);
+        });
+        builder.setOrigin(copy.origin());
+        onEntry.set(id, builder.append(WTF::move(copy)));
+    }
+    const Terminator& test = function.at(work.header).terminator;
+    bool turnsWhenTaken = test.taken().block == work.behindHeader;
+    builder.setOrigin(test.origin());
+    IRBuilder::BranchBlocks sides = builder.emitBranch(whereLoopIsEntered(test.operand(0)), frequency, frequency);
+    BlockID join = builder.addBlock(frequency);
+
+    Arguments made;
+    Arguments notMade;
+    Vector<ValueID, 2> results;
+    builder.moveToEndOf(turnsWhenTaken ? sides.taken : sides.notTaken);
+    for (ValueID id : work.operations) {
+        builder.setOrigin(function.at(id).origin());
+        made.append(builder.append(Value(function.at(id))));
+        results.append(builder.addParameter(join, context.types.intern(context.types.at(function.at(id).type).withPrimitives(Primitive::Unspecified))));
+    }
+    builder.emitJump(join, WTF::move(made));
+    builder.moveToEndOf(turnsWhenTaken ? sides.notTaken : sides.taken);
+    for (ValueID id : work.operations) {
+        Value unspecified = IRBuilder::make(Opcode::Unspecified);
+        unspecified.setValueType(function.at(id).type);
+        notMade.append(builder.append(WTF::move(unspecified)));
+    }
+    builder.emitJump(join, WTF::move(notMade));
+    builder.moveToEndOf(join);
+    builder.emitJump(work.header, WTF::move(handedOver));
+
+    for (size_t index = 0; index < work.operations.size(); ++index) {
+        ValueID id = work.operations[index];
+        size_t position = function.at(work.behindHeader).values.find(id);
+        RELEASE_ASSERT(position != notFound);
+        builder.setOrigin(function.at(id).origin());
+        ValueID fact = builder.insertBefore({ work.behindHeader, static_cast<uint32_t>(position) }, IRBuilder::make(Opcode::Specified));
+        Value& value = function.edit(id, ValueEdit::Definition);
+        value.becomeAssumeType(results[index], Proven::behindFact(value.type));
+        value.setFactOperand(fact);
+    }
+    builder.applyInsertions();
+    context.analyses.didChangeControlFlow();
+    return true;
+}
+
+static unsigned hoistReadsOutOfLoops(FunctionPassContext& context, Vector<Edge, 2>& entriesFromBranches, Vector<WorkBehindEntryTest, 2>& workBehindEntryTests)
 {
     const Function& function = context.function;
     CFG& cfg = context.analyses.cfg();
@@ -2117,9 +2242,12 @@ static unsigned hoistReadsOutOfLoops(FunctionPassContext& context, Vector<Edge, 
 
     // Whether a loop turns once is asked before anything moves: the answer follows the uses of values.
     BitVector headersWhoseTestHoldsOnEntry;
+    BitVector headersOfLoopsThatTurnOnce;
     for (const NaturalLoop* loop : loopsInnermostFirst) {
         if (readsWhatMayChangeBehindHeader(context, *loop) && staysBehindFirstTest(context, *loop))
             headersWhoseTestHoldsOnEntry.set(loop->header().index());
+        if (mayThrowBehindHeader(context, *loop) && staysBehindFirstTest(context, *loop))
+            headersOfLoopsThatTurnOnce.set(loop->header().index());
     }
 
     std::optional<UseEffectHistory> captures;
@@ -2130,7 +2258,7 @@ static unsigned hoistReadsOutOfLoops(FunctionPassContext& context, Vector<Edge, 
     unsigned numberOfHoistedReads = 0;
     for (unsigned i = 0; i < loopsInnermostFirst.size(); ++i) {
         Vector<ValueID, 4> lengthsThatLeftLoop;
-        numberOfHoistedReads += hoistReadsOutOf(context, *loopsInnermostFirst[i], definingBlock, headersWhoseTestHoldsOnEntry, listsLeftAlone[i].lengths, lengthsThatLeftLoop, entriesFromBranches);
+        numberOfHoistedReads += hoistReadsOutOf(context, *loopsInnermostFirst[i], definingBlock, headersWhoseTestHoldsOnEntry, headersOfLoopsThatTurnOnce, listsLeftAlone[i].lengths, lengthsThatLeftLoop, entriesFromBranches, workBehindEntryTests);
         numberOfHoistedReads += tellTestsLengthInFrontOfLoop(context, *loopsInnermostFirst[i], lengthsThatLeftLoop.span(), listsLeftAlone[i]);
     }
     if (numberOfHoistedReads)
@@ -2416,16 +2544,20 @@ PassOutcome hoistLoopInvariantReads(FunctionPassContext& context)
         return PassOutcome::Unchanged;
 
     Vector<Edge, 2> entriesFromBranches;
+    Vector<WorkBehindEntryTest, 2> workBehindEntryTests;
     unsigned numberOfChanges = markStepsOfKeyPreservingLoops(context);
-    numberOfChanges += hoistReadsOutOfLoops(context, entriesFromBranches);
+    numberOfChanges += hoistReadsOutOfLoops(context, entriesFromBranches, workBehindEntryTests);
     if (!entriesFromBranches.isEmpty()) {
         IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
         for (Edge entry : entriesFromBranches)
             builder.splitEdge(entry);
         numberOfChanges += entriesFromBranches.size();
         entriesFromBranches.clear();
-        numberOfChanges += hoistReadsOutOfLoops(context, entriesFromBranches);
+        workBehindEntryTests.clear();
+        numberOfChanges += hoistReadsOutOfLoops(context, entriesFromBranches, workBehindEntryTests);
     }
+    for (const WorkBehindEntryTest& work : workBehindEntryTests)
+        numberOfChanges += hoistBehindCopyOfEntryTest(context, work);
     if (!numberOfChanges)
         return PassOutcome::Unchanged;
 

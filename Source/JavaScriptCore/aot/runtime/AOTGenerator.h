@@ -29,8 +29,10 @@ public:
     using ResumeMode = Typed::ResumeMode;
     static constexpr DestructionMode needsDestruction = DoesNotNeedDestruction;
 
-    template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* subspaceFor(VM& vm) { return &vm.cellSpace(); }
+    // Generators lie by themselves, so that whoever has to find some of them looks at generators alone: CoroutineTable::willMakePrototypeOfGeneratorFunction().
+    static constexpr uint8_t numberOfLowerTierPreciseCells = 0;
+    template<typename CellType, SubspaceAccess mode>
+    static GCClient::IsoSubspace* subspaceFor(VM& vm) { return vm.aotGeneratorSpace<mode>(); }
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
     static Generator* create(VM&, Structure*);

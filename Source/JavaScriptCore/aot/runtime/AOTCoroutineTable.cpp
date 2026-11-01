@@ -39,6 +39,7 @@
 #include "MicrotaskQueueInlines.h"
 #include "ObjectConstructor.h"
 #include "SlotVisitorInlines.h"
+#include "SubspaceInlines.h"
 #include "VMInlines.h"
 #include <wtf/CompactPointerTuple.h>
 #include <wtf/Threading.h>
@@ -78,8 +79,6 @@ Structure* CoroutineTable::structureOfGeneratorsWithoutPrototypeOf(VM& vm, JSObj
         m_state.immortalCells->add(m_standInForPrototypes);
         m_structureOfGeneratorsWithoutPrototype = Generator::createStructureWithoutPrototype(vm, globalObject, m_standInForPrototypes);
         m_state.immortalCells->add(m_structureOfGeneratorsWithoutPrototype);
-        m_statesOfGeneratorFunctions.fill(GeneratorFunctionState::HasMadeNoGeneratorWithoutPrototype, numberOfStatesOfGeneratorFunctions);
-        m_instance.coroutines.statesOfGeneratorFunctions = reinterpret_cast<uint8_t*>(m_statesOfGeneratorFunctions.mutableSpan().data());
         m_instance.coroutines.headerOfGeneratorsWithoutPrototype = cellHeaderFor(m_structureOfGeneratorsWithoutPrototype);
     }
     uint8_t& state = m_instance.coroutines.statesOfGeneratorFunctions[placeOfGeneratorFunctionState(uncheckedDowncast<Closure>(function)->closureNumber())];
@@ -97,7 +96,7 @@ JSValue CoroutineTable::prototypeOfGeneratorsOf(VM& vm, JSObject* function)
 }
 
 // An empty object that nobody has seen cannot be told from the one that stands for it. So where the `prototype` of a function is made while generators of that function may stand on the stand-in, each of
-// them is given its own first, and the closures of that function make their generators with theirs from then on: one walk for a place in the table at most. JSGlobalObject::haveABadTime() is the model.
+// them is given its own first, and the closures of that function make their generators with theirs from then on: one walk over the generators for a place in the table at most.
 void CoroutineTable::willMakePrototypeOfGeneratorFunction(VM& vm, JSObject* function)
 {
     if (!m_structureOfGeneratorsWithoutPrototype)
@@ -111,17 +110,14 @@ void CoroutineTable::willMakePrototypeOfGeneratorFunction(VM& vm, JSObject* func
     Vector<Generator*> found;
     {
         HeapIterationScope iterationScope(vm.heap);
-        vm.heap.objectSpace().forEachLiveCell(iterationScope, [&](HeapCell* cell, HeapCell::Kind kind) {
-            if (!isJSCellKind(kind) || static_cast<JSCell*>(cell)->classInfo() != Generator::info())
-                return IterationStatus::Continue;
+        vm.heap.aotGeneratorSpace<SubspaceAccess::OnMainThread>()->forEachLiveCell([&](HeapCell* cell, HeapCell::Kind) {
             auto* generator = uncheckedDowncast<Generator>(static_cast<JSCell*>(cell));
             // One without a frame was left behind where the stack ran out in front of the body that makes the frame. Nobody has it.
             if (!generator->takesPrototypeFromFunction() || !generator->savedFrame() || generator->structure()->realm() != m_instance.globalObject)
-                return IterationStatus::Continue;
+                return;
             // Each image of the realm has a table of its own.
             if (placeOfGeneratorFunctionState(generator->closureNumberOfFunction()) == place && generator->instanceOfFunction() == &m_instance)
                 found.append(generator);
-            return IterationStatus::Continue;
         });
     }
     for (Generator* generator : found)

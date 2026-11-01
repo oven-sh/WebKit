@@ -91,7 +91,7 @@ static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::ResolveAccesses, { .opcodes = accessesToResolve } },
     { PassID::SplitUnions, { .opcodes = accessesByNameOrKey } },
     { PassID::PlaceTypeTests, { .opcodes = opcodesPlaceTypeTestsLooksFor } },
-    { PassID::ExpandIteration, { .opcodes = expandedOpcodes } },
+    { PassID::ExpandIteration, { .opcodes = opcodesExpandIterationLooksFor } },
     { PassID::ExpandProvenIterations, { .opcodes = iterationOpcodes } },
     { PassID::ExpandOwnKeys, { .opcodes = ownKeyExpansionOpcodes } },
     { PassID::SelectTypedResults, { .opcodes = typedResultCallOpcodes } },
@@ -497,13 +497,14 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::RetypeValues, InPlaceOfOperation::NothingBecauseNothingComesHere, true, TakesHandlersAway::No, { } },
     { PassID::Select, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
     { PassID::SeparateUnlikelyLoopPaths, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
-    { PassID::SinkAllocations, InPlaceOfOperation::NothingByProofOfThePass, true, TakesHandlersAway::No, { } },
     { PassID::SplitBehindEntryChecks, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
     { PassID::MoveGeneratorFramesToHeap, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
     { PassID::SplitCoroutines, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
     { PassID::SplitFreshResults, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::SplitUnions, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
     { PassID::StartGeneratorsAtFirstStep, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    // What it lets go stores to, reads from or casts an object or a list that it holds itself, and that nobody else has seen.
+    { PassID::SinkAllocations, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::AppendElement, Opcode::AppendElements, Opcode::AppendHole, Opcode::AppendSpread, Opcode::CheckInitialized, Opcode::CopyDataProperties, Opcode::DestructureIterable, Opcode::ElemGet, Opcode::ElemSet, Opcode::PrivateDefine, Opcode::PrivateSet, Opcode::PropDefine, Opcode::PropGet, Opcode::PropSet, Opcode::PutArrayElement, Opcode::RequireObjectCoercible, Opcode::SetLiteralPrototype } },
     { PassID::CreateStringBuilders, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::Add, Opcode::Strcat } },
     { PassID::DeferClosuresInFields, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Call } },
     { PassID::DeferDefinitions, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CheckInitialized, Opcode::DefineMethod, Opcode::NewClass } },
@@ -511,11 +512,31 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::EmbedConstantCollections, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CallBuiltin, Opcode::PropDefine } },
     { PassID::FoldConstants, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::PropHas } },
     { PassID::FuseConcatenations, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::Add, Opcode::Strcat } },
+    { PassID::HoistTestsIntoPredecessors, InPlaceOfOperation::TheSameOperationElsewhere, false, TakesHandlersAway::No, { Opcode::Less } },
+    { PassID::PlanCollectionCapacities, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::CallBuiltin } },
+    { PassID::RemoveUnreadExports, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Call, Opcode::Construct } },
+    { PassID::SelectTypedResults, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::CallBuiltin, Opcode::Await, Opcode::AwaitBySavingFrame } },
     { PassID::GuardTaintedPositions, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::ElemGet, Opcode::PropHas } },
     { PassID::RemoveUnusedParameters, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Add } },
     { PassID::SimplifyCasts, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CheckInitialized, Opcode::RequireObject, Opcode::RequireObjectCoercible } },
     { PassID::SimplifyBuiltinCalls, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CallBuiltin, Opcode::AwaitBySavingFrame } },
 };
+
+// The sabotage that shows whether a row of the table is narrow: behind the pass, a call whose result nobody reads is taken out of its block.
+static PassOutcome dropCallThatNobodyReads(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    for (uint32_t index = 0; index < function.blocks.size(); ++index) {
+        for (ValueID id : function.at(BlockID(index)).values) {
+            if ((function.at(id).opcode != Opcode::Call && function.at(id).opcode != Opcode::CallDirect) || context.analyses.useLists().useCount(id))
+                continue;
+            function.edit(BlockID(index), BlockEdit::Values).values.removeFirst(id);
+            context.analyses.didChangeValues();
+            return PassOutcome::Changed;
+        }
+    }
+    return PassOutcome::Unchanged;
+}
 
 // A pass that runs inside another one, on a function that the other has edited, answers for the other one too.
 static String findOperationNobodyAnswersFor(PassID id, const Vector<OperationThatWent>& operations, ReasonsForOperationsThatWent* listenerOutside = nullptr)
@@ -924,6 +945,8 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
     }
     currentWork().setPass(id);
     PassOutcome outcome = descriptor.run(context);
+    if (m_build.isSabotaged(Sabotage::PassesDropCalls)) [[unlikely]]
+        outcome |= dropCallThatNobodyReads(context);
     if (reasons) [[unlikely]]
         context.function.setListenerForOperationsThatGo(reasons->outer());
     auto stopWhereThereIsOne = [&](const String& problem) {

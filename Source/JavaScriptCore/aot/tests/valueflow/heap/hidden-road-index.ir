@@ -1,0 +1,22 @@
+# unknown = somethingNoTableLists; unknown[1] = one; Math[1]()
+# No road leads from the unknown object to `Math`. Nobody counts such roads, so what a statement stores at an index through the unknown object is found there too.
+# RUN: valueflow-solve calls
+# CHECK: f0 v8 -> f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Double number=1
+    ElemSet v1, v3, v2 mode=Strict
+    v5 = Builtin builtin=Math
+    v6 = PropGet v5 key="PI"
+    v7 = ElemGet v5, v3
+    v8 = Call v7, v5
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+    Return
+}

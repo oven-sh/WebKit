@@ -967,6 +967,12 @@ private:
 
 } // anonymous namespace
 
+bool isLengthOfList(B3::Procedure& proc, const B3::MemoryValue& memory)
+{
+    AOTHeaps& heaps = AOTHeaps::of(proc);
+    return memory.range() == heaps.rangeOf(heaps.Butterfly_publicLength);
+}
+
 B3::ClientPhase keepListLengthsInRegistersAfterOptimization()
 {
     return {

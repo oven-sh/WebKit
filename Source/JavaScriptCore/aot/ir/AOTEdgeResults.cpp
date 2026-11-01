@@ -230,7 +230,18 @@ static Type narrowByStrictEquality(const TypingContext& context, const Type& sou
     if (side == EdgeSide::NotTaken)
         return other.isSingleValue() ? source.without(other, context.types) : source;
     Type common = zeroesJoined(other).intersectWith(source, context.types);
-    return common.isSubsetOf(source, context.program) ? common : source;
+    if (!common.isSubsetOf(source, context.program))
+        return source;
+    const BuiltinTable& builtins = context.program.builtins();
+    auto isToldByTest = [&](const ClassPart& part) {
+        return builtins.at(part.builtinClass).instanceTest != BuiltinInstanceTest::None;
+    };
+    if (std::ranges::all_of(common.classes, isToldByTest))
+        return common;
+    Type objectsOfOther = source.intersectWith(other, context.types).withOnlyObjects();
+    if (!std::ranges::all_of(objectsOfOther.classes, isToldByTest))
+        return common;
+    return common.withoutObjects().unionWith(objectsOfOther, context.types);
 }
 
 static Type narrowByLooseEquality(const TypingContext& context, const Type& source, const Type& other, EdgeSide side)

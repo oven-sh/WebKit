@@ -379,9 +379,11 @@ private:
             case ValueFlowNameKind::Getter:
             case ValueFlowNameKind::Setter:
             case ValueFlowNameKind::GetterUnderUnknownKey:
+            case ValueFlowNameKind::GetterUnderNameOfEnumeration:
             case ValueFlowNameKind::SetterUnderUnknownKey:
             case ValueFlowNameKind::EveryProperty:
             case ValueFlowNameKind::EveryGetter:
+            case ValueFlowNameKind::GetterOutsideEnumerations:
             case ValueFlowNameKind::EverySetter:
             case ValueFlowNameKind::CopiedFrom:
             case ValueFlowNameKind::DeletedMember:

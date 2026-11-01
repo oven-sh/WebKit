@@ -409,6 +409,8 @@ struct Copier {
     unsigned numberOfValuesAsRead { 0 };
     unsigned numberOfValuesInCopiesOfFactories { 0 };
     unsigned numberOfValuesInCopiesOfMakers { 0 };
+    uint64_t numberOfValuesReadForClassesBelowCopies { 0 };
+    uint64_t numberOfMembersReadForTypesOfCopies { 0 };
 
     bool isConstantOfModule(VariableID variable) const { return program.at(variable).flags.contains(VariableFlags::IsImmutable) && program.at(variable).module; }
 
@@ -782,6 +784,7 @@ struct Copier {
         if (!id)
             return id;
         Vector<LayoutID> members = program.at(id).written();
+        numberOfMembersReadForTypesOfCopies += members.size();
         bool hasChanged = false;
         for (LayoutID& member : members) {
             LayoutID copy = copyOfClass(member);
@@ -799,6 +802,7 @@ struct Copier {
         if (!id)
             return id;
         Type type = program.at(id);
+        numberOfMembersReadForTypesOfCopies += type.functions.size();
         LayoutSetID layouts = withCopiedClasses(type.layouts);
         bool hasChanged = std::exchange(type.layouts, layouts) != layouts;
         Vector<FunctionID, 8> functions(type.functions.size(), [&](size_t index) {
@@ -952,23 +956,40 @@ struct Copier {
         return result;
     }
 
+    // The classes that a function evaluates below each of its values, in its own order. Giving calls their copies moves none of them.
+    using ClassesBelowValues = UncheckedKeyHashMap<uint32_t, Vector<LayoutID, 1>>;
+
+    ClassesBelowValues findClassesBelowValues(const Function& function)
+    {
+        ClassesBelowValues classes;
+        forEachValueOf(function, [&](ProgramPoint, ValueID, const Value& value) {
+            ++numberOfValuesReadForClassesBelowCopies;
+            if (value.opcode == Opcode::NewClass && value.heritageOperand())
+                classes.add(definitionBehindDeadZoneChecks(function, value.heritageOperand()).index() + 1, Vector<LayoutID, 1>()).iterator->value.append(value.layout());
+        });
+        return classes;
+    }
+
     // `class A extends Mixin(Base) { .. }`   The class below was read as a class below the one that every call of the function evaluates.
-    void putClassesBelowCopy(const Function& caller, const CallToCopyFor& call)
+    void putClassesBelowCopy(const Function& caller, const CallToCopyFor& call, std::optional<ClassesBelowValues>& classesBelowValues)
     {
         LayoutID copy = classesReturnedByCopies.get(call.copy.index() + 1);
         LayoutID original = classReturnedBy(program.at(call.callee));
         if (!copy || !original)
             return;
-        forEachValueOf(caller, [&](ProgramPoint, ValueID, const Value& value) {
-            if (value.opcode != Opcode::NewClass || !value.heritageOperand() || definitionBehindDeadZoneChecks(caller, value.heritageOperand()) != call.call)
-                return;
+        if (!classesBelowValues)
+            classesBelowValues = findClassesBelowValues(caller);
+        auto classesBelowCall = classesBelowValues->find(call.call.index() + 1);
+        if (classesBelowCall == classesBelowValues->end())
+            return;
+        for (LayoutID id : classesBelowCall->value) {
             // Where the function has a declared result, the class below was read as a class below nothing that is known.
-            LayoutID baseAsRead = program.at(value.layout()).base;
+            LayoutID baseAsRead = program.at(id).base;
             if (baseAsRead && baseAsRead != original)
-                return;
-            Layout& below = editor.at(value.layout());
+                continue;
+            Layout& below = editor.at(id);
             below.base = copy;
-            classesPutBelowOthers.append({ value.layout(), copy });
+            classesPutBelowOthers.append({ id, copy });
             for (LayoutID& supertype : below.supertypes) {
                 if (supertype == original)
                     supertype = copy;
@@ -976,7 +997,7 @@ struct Copier {
             if (!below.supertypes.contains(copy))
                 below.supertypes.append(copy);
             AOT::sort(below.supertypes);
-        });
+        }
     }
 
     // `Mixin(Base)`   The copy is handed one class, which the caller names: what it evaluates is read as a class below that one, as if it were written so.
@@ -1352,6 +1373,7 @@ struct Copier {
         FunctionAnalyses analyses(context, caller);
         IRBuilder builder(context, caller, types, &analyses);
         UncheckedKeyHashMap<uint32_t, LayoutID> classesMadeByCalls;
+        std::optional<ClassesBelowValues> classesBelowValues;
         for (const CallToCopyFor& call : calls) {
             if (!call.copy)
                 continue;
@@ -1379,7 +1401,7 @@ struct Copier {
             edited.setOperand(OperandIndex::Call::callee, created);
             // The copy has this one call, so its body moves here and is no second copy.
             edited.setIsAlwaysInlined(true);
-            putClassesBelowCopy(caller, call);
+            putClassesBelowCopy(caller, call, classesBelowValues);
             putCopyBelowClassItIsHanded(caller, call, classesMadeByCalls);
         }
         builder.applyInsertions();
@@ -2145,6 +2167,8 @@ struct Copier {
             nameClassesWhereClassesAboveAreNamed();
             editor.indexClassesAndNames(build.parallelLoops());
         }
+        build.statistics().count(StatisticID::ValuesReadForClassesBelowCopies, numberOfValuesReadForClassesBelowCopies);
+        build.statistics().count(StatisticID::MembersReadForTypesOfCopies, numberOfMembersReadForTypesOfCopies);
         return WTF::move(copies);
     }
 };

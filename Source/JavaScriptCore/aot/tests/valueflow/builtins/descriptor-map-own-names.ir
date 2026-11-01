@@ -1,0 +1,42 @@
+# made = Object.create(above, { constructor: { value: named } }); made.constructor()
+# Object.defineProperties(defined, { valueOf: { value: named } }); defined.valueOf()
+# The map is an object literal that goes nowhere but into the call: a name that it was written with is a property of its own, so what Object.prototype holds under that name does not answer for it.
+# Taken for a descriptor, the built-in `Object` gives what it holds under `value`: undefined (primitive 0) here, in a program a value that nobody knows. What the reads find beside `named` stands above their receivers.
+# RUN: valueflow-why values=f0:v12 values=f0:v22
+# CHECK: values=f0:v12
+# CHECK: operand 0 {{*}} 2 members: Object f1
+# CHECK: values=f0:v22
+# CHECK: operand 0 {{*}} 2 members: ObjectPrototypeValueOf f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="PropertyDescriptor" fields=[{key="get" declared={type=anything}}, {key="set" declared={type=anything}}, {key="value" declared={type=anything}}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Null
+    v4 = NewDictionary
+    v5 = NewDictionary
+    v6 = NewObject layout=L0
+    PropDefine v6, v0 key="value"
+    v8 = FinishObject v6
+    PropDefine v5, v8 key="constructor"
+    v10 = Call v2, v1, v4, v5
+    v11 = PropGet v10 key="constructor"
+    v12 = Call v11, v10 calleeKey="constructor"
+    v13 = NewDictionary
+    v14 = NewDictionary
+    v15 = NewObject layout=L0
+    PropDefine v15, v0 key="value"
+    v17 = FinishObject v15
+    PropDefine v14, v17 key="valueOf"
+    v19 = Builtin builtin=ObjectDefineProperties
+    v20 = Call v19, v1, v13, v14
+    v21 = PropGet v13 key="valueOf"
+    v22 = Call v21, v13 calleeKey="valueOf"
+    Return
+}
+function f1 name="named" module=m0 results=[{type=anything}] {
+    Return
+}

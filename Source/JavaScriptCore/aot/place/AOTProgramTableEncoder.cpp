@@ -3014,7 +3014,8 @@ static void appendModule(TableEncoder& encoder, ModuleID id, const Module& modul
         entry.value = SlotData::create(encoder.checkedOffset(encoder.placement.moduleValueOffset(id)), SlotRepresentation::JSValue);
     const std::pair<bool, Flag> flags[] = {
         { module.kind == ModuleKind::CommonJs && module.syntheticExports.isEmpty(), Flag::CapturesOnDemand },
-        { module.flags.contains(ModuleFlags::HasTopLevelAwait), Flag::HasTopLevelAwait },
+        { module.kind != ModuleKind::CommonJs && module.flags.contains(ModuleFlags::HasTopLevelAwait), Flag::HasTopLevelAwait },
+        { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::RunsAgain), Flag::RunsAgainAfterThrow },
         { module.kind != ModuleKind::CommonJs || module.flags.contains(ModuleFlags::KeepsError), Flag::KeepsError },
         { module.flags.contains(ModuleFlags::EvaluatesItself) && entry.bodyFunction(), Flag::EvaluatesItself },
         { module.exportsVariable || encoder.placement.hasModuleValue(id), Flag::HasValue },
@@ -3086,7 +3087,7 @@ static bool isAnsweredByCode(const TableEncoder& encoder, ModuleID requester, co
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void appendExports(TableEncoder& encoder, ModuleID id, const Module& module, ModuleLists& lists)
+static void appendExports(TableEncoder& encoder, ModuleID id, const Module& module, VariableID variableThatHoldsMock, ModuleLists& lists)
 {
     for (const ModuleExport& moduleExport : module.exports) {
         // Where the host runs files that the build has not seen, the name of an export that the build has let go of stays, so that the run time can say so to a file that asks for it.
@@ -3115,6 +3116,13 @@ static void appendExports(TableEncoder& encoder, ModuleID id, const Module& modu
         }
         lists.exports.append(entry);
     }
+    // ModuleTable::wordOfMock(). No program without such a module has such an entry.
+    if (variableThatHoldsMock) {
+        ModuleExportData entry { };
+        entry.kindBits = ModuleExportData::kindBitsOfWordOfMock;
+        entry.variable = placedVariableSlot(encoder, variableThatHoldsMock);
+        lists.exports.append(entry);
+    }
 }
 
 static ModuleLists collectModuleLists(TableEncoder& encoder)
@@ -3122,6 +3130,11 @@ static ModuleLists collectModuleLists(TableEncoder& encoder)
     const Program& program = encoder.program;
     ModuleLists lists;
     BitVector modulesNotWorthVisiting = findModulesNotWorthVisiting(encoder);
+    UncheckedKeyHashMap<uint32_t, VariableID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> variablesThatHoldMocks;
+    for (uint32_t index = 0; index < program.variables.size(); ++index) {
+        if (program.variables[index].flags.contains(VariableFlags::HoldsMock))
+            variablesThatHoldMocks.add(program.variables[index].module.index(), VariableID(index));
+    }
     lists.modules.reserveInitialCapacity(program.modules.size() + 1);
     for (size_t index = 0; index < program.modules.size(); ++index) {
         ModuleID id(index);
@@ -3135,7 +3148,7 @@ static ModuleLists collectModuleLists(TableEncoder& encoder)
                 continue;
             lists.requests.append(ModuleRequestData::create(request.target.index(), request.phase == ImportPhase::Defer, request.isDynamicStarExport, isRequire, request.isHoisted));
         }
-        appendExports(encoder, id, module, lists);
+        appendExports(encoder, id, module, variablesThatHoldMocks.get(id.index()), lists);
         for (const SyntheticExport& syntheticExport : module.syntheticExports) {
             SyntheticExportData entry { };
             entry.name = encoder.identifierNumberOfText(syntheticExport.name, "an export that the run time fills for"_s, id);

@@ -42,6 +42,7 @@ constexpr Number24 optionalNumber24(uint32_t word)
 struct ModuleData {
     enum class Flag : uint16_t {
         HasTopLevelAwait = 1 << 0,
+        RunsAgainAfterThrow = 1 << 0,
         IsSynchronous = 1 << 1,
         IsSimple = 1 << 2,
         NeedsLink = 1 << 3,
@@ -101,7 +102,8 @@ struct ModuleData {
 
     bool has(Flag flag) const { return OptionSet<Flag>::fromRaw(flags).contains(flag); }
     void add(Flag flag) { flags |= static_cast<uint16_t>(flag); }
-    bool hasTopLevelAwait() const { return has(Flag::HasTopLevelAwait); }
+    bool hasTopLevelAwait() const { return kind != ModuleKind::CommonJs && has(Flag::HasTopLevelAwait); }
+    bool runsAgainAfterThrow() const { return kind == ModuleKind::CommonJs && has(Flag::RunsAgainAfterThrow); }
     bool isSynchronous() const { return has(Flag::IsSynchronous); }
     bool isSimple() const { return has(Flag::IsSimple); }
     bool needsLink() const { return has(Flag::NeedsLink); }
@@ -144,6 +146,7 @@ struct ModuleData {
     bool hasExportTable() const;
     bool isESModuleOfProgram() const { return kind == ModuleKind::SourceText && !isOfLibrary(); }
     bool isUncompiledCode() const { return kind == ModuleKind::External && externalKind == ExternalKind::UncompiledCode; }
+    bool isUncompiledCodeImportedAsNamespace() const { return isUncompiledCode() && importedWhileItRunsOrAsNamespace; }
     bool isHostValue() const { return kind == ModuleKind::External && externalKind == ExternalKind::HostValue; }
     static constexpr ExternalKind mayBeMockedBit = static_cast<ExternalKind>(1);
     bool mayBeMocked() const { return kind != ModuleKind::External && externalKind == mayBeMockedBit; }
@@ -352,6 +355,8 @@ struct ModuleExportData {
 
     // Of a variable that the build let go of. The entry is there for its name, and isClosedToOutside.
     static constexpr SlotData noSlot { SlotData::maxOffset, 0 };
+    // No export: the last entry of a module that a test may mock ahead of its load. Its variable holds what stands in place of the module, and is empty while nothing does.
+    static constexpr uint32_t kindBitsOfWordOfMock = 3;
 
     ModuleExportKind kind() const { return static_cast<ModuleExportKind>(kindBits); }
     ModuleID targetModule() const { return ModuleID(module); }

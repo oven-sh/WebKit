@@ -756,7 +756,7 @@ static void writeHeader(ImageHeader& header, const ImageWriterInputs& parts, con
     };
     if (Typed::namesWaysToModuleObjects(*parts.inputs.pipeline.program))
         flags.add(ImageFlag::ShowsWaysBetweenModuleObjects);
-    if (std::ranges::any_of(parts.inputs.pipeline.program->modules, [](const Typed::Module& module) { return module.flags.contains(Typed::ModuleFlags::RunsAgain); }))
+    if (std::ranges::any_of(parts.inputs.pipeline.program->modules, [](const Typed::Module& module) { return module.kind != Typed::ModuleKind::CommonJs && module.flags.contains(Typed::ModuleFlags::RunsAgain); }))
         flags.add(ImageFlag::RunsEntryPointsAgain);
     header.flags = flags.toRaw();
     for (size_t entry : parts.entriesUsed)

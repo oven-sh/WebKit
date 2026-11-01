@@ -1402,7 +1402,7 @@ bool PointsToSolver::isContentsStore(const UserOperand& operand) const
 }
 
 // An object gets to a value that makes none and is no parameter of a block from an operand: the value may be the operand, refer to it, or be read out of it.
-std::optional<Vector<ValueID, 8>> findMakersOfObjectsBehind(FunctionAnalyses& analyses, ValueID value)
+std::optional<Vector<ValueID, 8>> findMakersOfObjectsBehind(FunctionAnalyses& analyses, ValueID value, OpcodeSet* opcodesBehind)
 {
     constexpr size_t maxDefinitions = 64;
     AOT_THRESHOLD(size_t, maxMakers, 8);
@@ -1419,6 +1419,8 @@ std::optional<Vector<ValueID, 8>> findMakersOfObjectsBehind(FunctionAnalyses& an
     for (size_t next = 0; next < definitions.size(); ++next) {
         ValueID id = definitions[next];
         const Value& definition = function.at(id);
+        if (opcodesBehind)
+            opcodesBehind->add(definition.opcode);
         if (definition.opcode != Opcode::Parameter) {
             // As findObjects() tells them apart. What stands in a new object from the start is found in the object.
             if (definingOpcodes.contains(definition.opcode)) {
@@ -1464,6 +1466,17 @@ std::optional<Vector<ValueID, 8>> findMakersOfObjectsBehind(FunctionAnalyses& an
             return std::nullopt;
     }
     return makers;
+}
+
+bool namesOnlyWhatCodeOutsideReaches(FunctionAnalyses& analyses, ValueID value)
+{
+    static constexpr OpcodeSet opcodesThatGiveWhatWasPutAway { Opcode::GetHeapFrameWord, Opcode::CatchValue, Opcode::CatchException };
+
+    if (!analyses.context().onlyJudges() || analyses.function().role == FunctionRole::CoroutineBody)
+        return false;
+    OpcodeSet opcodesBehind;
+    std::optional<Vector<ValueID, 8>> makers = findMakersOfObjectsBehind(analyses, value, &opcodesBehind);
+    return makers && makers->isEmpty() && !opcodesBehind.intersects(opcodesThatGiveWhatWasPutAway);
 }
 
 // The reasons that solveOperandUse() and solveTerminatorOperandUse() add whatever the sets hold, and what record() and EscapeAnalysis::computeUses() leave out.

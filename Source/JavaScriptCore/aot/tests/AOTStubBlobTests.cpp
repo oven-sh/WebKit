@@ -664,7 +664,7 @@ static void checkCollectionOperations(const StubCatalog& catalog)
     AOT_TEST_CHECK(refersToBody(catalog, mapSet(KeyComparison::Bits), newCompactTable(CompactTableOwner::Map)) && refersToBody(catalog, setAdd(KeyComparison::String), newCompactTable(CompactTableOwner::Set)));
     AOT_TEST_CHECK(operationsCalledBy(catalog, newCompactTable(CompactTableOwner::Map)) == entrySetOf({ Entry::operationAOTMapSet }));
     AOT_TEST_CHECK(operationsCalledBy(catalog, newCompactTable(CompactTableOwner::Set)) == entrySetOf({ Entry::operationAOTSetAdd }));
-    AOT_TEST_CHECK(operationsCalledBy(catalog, mapDelete(KeyComparison::Bits)).isEmpty());
+    AOT_TEST_CHECK(operationsCalledBy(catalog, mapDelete(KeyComparison::Bits)) == entrySetOf({ Entry::operationAOTMapDelete }));
     AOT_TEST_CHECK(operationsCalledBy(catalog, setDelete(KeyComparison::String)) == entrySetOf({ Entry::operationAOTSetDelete, Entry::operationAOTStringImplsAreEqual, Entry::operationAOTHashStringImpl }));
     AOT_TEST_CHECK(operationsCalledBy(catalog, writeBarrier()).get(indexOf(Entry::operationAOTBarrierSlow)));
     AOT_TEST_CHECK(operationsCalledBy(catalog, weakMapGet()).isEmpty());

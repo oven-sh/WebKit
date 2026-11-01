@@ -724,6 +724,10 @@ static void printModuleRecords(const TablesContext& context)
 
 static void printModuleExportRecord(const TablesContext& context, uint32_t index, const ModuleExportData& moduleExport)
 {
+    if (moduleExport.kindBits == ModuleExportData::kindBitsOfWordOfMock) {
+        RecordLine(context, "wordOfMock"_s, index).field("variable"_s, moduleExport.variable);
+        return;
+    }
     RecordLine line(context, "export"_s, index);
     line.identifier("name"_s, moduleExport.name).field("kind"_s, moduleExport.kind());
     switch (moduleExport.kind()) {

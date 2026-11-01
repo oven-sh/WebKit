@@ -109,6 +109,8 @@ public:
     };
 
     void attachImage(VM&);
+    // A Worker whose file is in no image runs apart from them. What it interprets is counted like everybody's.
+    void countWithoutImage(VM&);
     JS_EXPORT_PRIVATE void run(const Image&);
     // The engine jumps to an adapter from many places. Where images share realms, the adapter itself sees to it that its image runs, and that the one before runs again when its frame is left.
     // It does both in place, and calls only for room to note one more frame.
@@ -216,6 +218,8 @@ public:
     CallFrame* frameOfImportThatAsksLoader { nullptr };
     // While the host loads what a file of a test run asked for under a name nobody knows, and an executable would hold the file too.
     bool askerLoadsCompiledFilesAlone { false };
+    // An import() of compiled code asks the host what its name stands for.
+    bool isResolvingImportCall { false };
     std::unique_ptr<PagesOfVM> pages;
     std::unique_ptr<ProgramIdentifiers> identifiers;
     std::unique_ptr<CacheRegistry> caches;

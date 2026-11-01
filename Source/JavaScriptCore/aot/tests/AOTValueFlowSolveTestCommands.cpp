@@ -11,7 +11,10 @@
 #include "AOTAddGenericVersion.h"
 #include "AOTSupportTestCommands.h"
 #include "AOTValueFlowAnalysis.h"
+#include "AOTValueFlowResults.h"
 #include "AOTValueFlowResultsUnseenCode.h"
+#include <wtf/StringPrintStream.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -94,6 +97,121 @@ static void printProtocols(PrintStream& out, ValueFlowSolution& solution)
     }
 }
 
+static void printUnseenCode(PrintStream& out, ValueFlowSolution& solution)
+{
+    for (const UnseenCodeRecord& record : unseenCodeRecordsOf(solution)) {
+        out.print("unseen ", nameOf(record.cause), " ");
+        if (record.builtin != Wire::none)
+            out.print(solution.program().builtins().tokenOf(BuiltinID(record.builtin)), " ");
+        if (record.witness.function != Wire::none)
+            out.print("f", record.witness.function);
+        if (record.witness.value != Wire::none)
+            out.print(":v", record.witness.value);
+        out.println();
+    }
+    out.println("unseen-code ", unseenCodeCanRun(solution) ? "yes" : "no");
+    out.println("modules-by-name ", modulesAreLoadedByName(solution) ? "yes" : "no");
+    for (FunctionID function : functionsHeldButNotCalled(solution))
+        out.println("held f", function.index());
+}
+
+static void printUnseenCodeInEveryOrder(TestCommandContext& context)
+{
+    constexpr unsigned numberOfOrders = 512;
+    Vector<std::pair<String, Vector<unsigned>>> answers;
+    for (unsigned order = 0; order < numberOfOrders; ++order) {
+        uint32_t seed = 1 + order / 256 + 4 * (order % 256);
+        ValueFlowSolution solution(*context.program, context.build, ValueFlowSolver::Rounds::Due, ValueFlowSolution::Witnesses::None, UINT32_MAX, { }, ValueFlowSolution::WaysOfValues::AreNotAskedFor, ValueFlowSolution::CoveredMembers::StayListed, ValueFlowSolution::Reports::AreLeftOut, { .seedOfSchedule = seed });
+        StringPrintStream out;
+        printUnseenCode(out, solution);
+        String answer = out.toString();
+        size_t index = answers.findIf([&](const auto& known) { return known.first == answer; });
+        if (index == notFound) {
+            index = answers.size();
+            answers.append({ answer, { } });
+        }
+        answers[index].second.append(order);
+    }
+    context.out.println("orders ", numberOfOrders, " answers ", answers.size());
+    for (const auto& [answer, orders] : answers) {
+        context.out.print("in ", orders.size(), " orders, the first ", orders.first(), ":\n", answer);
+    }
+}
+
+static void printFeaturesInEveryOrder(TestCommandContext& context)
+{
+    constexpr unsigned numberOfOrders = 128;
+    constexpr unsigned isListed = UINT_MAX;
+    struct StateOfPlace {
+        BuiltinLocationState state;
+        unsigned order;
+    };
+    Vector<std::pair<Vector<uint32_t>, Vector<unsigned>>> answers;
+    HashMap<uint64_t, StateOfPlace> statesOfPlaces;
+    Vector<String> flips;
+    auto nameOfState = [](BuiltinLocationState state) { return state == BuiltinLocationState::Constant ? "Constant"_s : "Unknown"_s; };
+    for (unsigned order = 0; order < numberOfOrders; ++order) {
+        Wire::CompileOptions options = *context.options;
+        options.testing = static_cast<Wire::TestingSwitch>(static_cast<uint32_t>(options.testing) | static_cast<uint32_t>(Wire::TestingSwitch::DelayFlowRules));
+        options.bisection.flowSchedule.number = order;
+        options.threadCount = 1;
+        BuildContext build(options);
+        FlowResults results = analyzeValueFlow(*context.program, context.program->types, build);
+        Vector<uint32_t> features;
+        for (const FeatureUseRecord& use : results.featureUses())
+            features.append(static_cast<uint32_t>(use.feature));
+        std::ranges::sort(features);
+        features.shrink(std::ranges::unique(features).begin() - features.begin());
+        size_t index = answers.findIf([&](const auto& known) { return known.first == features; });
+        if (index == notFound) {
+            index = answers.size();
+            answers.append({ WTF::move(features), { } });
+        }
+        answers[index].second.append(order);
+        for (const BuiltinLocationFlow& location : results.builtinLocations()) {
+            uint64_t place = (static_cast<uint64_t>(location.holder.index()) << 32 | location.key.index()) + 1;
+            StateOfPlace& seen = statesOfPlaces.add(place, StateOfPlace { location.state, order }).iterator->value;
+            if (seen.state == location.state || seen.order == isListed)
+                continue;
+            flips.append(makeString("flip "_s, context.program->builtins().tokenOf(location.holder), " key"_s, location.key.index(), ' ', nameOfState(seen.state), " under "_s, seen.order, ", "_s, nameOfState(location.state), " under "_s, order));
+            seen.order = isListed;
+        }
+    }
+    context.out.println("orders ", numberOfOrders, " features ", answers.size());
+    for (const auto& [features, orders] : answers) {
+        context.out.print("in ", orders.size(), " orders, the first ", orders.first(), ": ", features.size(), " features:");
+        for (uint32_t feature : features)
+            context.out.print(" ", feature);
+        context.out.println();
+    }
+    context.out.println("orders ", numberOfOrders, " flips ", flips.size());
+    for (const String& flip : flips)
+        context.out.println(flip);
+}
+
+static void printLostWithEdgesLetGo(PrintStream& out, ValueFlowSolution& solution)
+{
+    const ValueFlowSolver& solver = solution.solver();
+    auto print = [&](ValueFlowNodeID node) {
+        if (const ValueFlowNodeKey* key = solver.keyOfMadeNode(node))
+            out.print("made kind ", static_cast<unsigned>(key->kind), " detail ", key->detail, " payload ", key->payload);
+        else
+            out.print("no made node");
+    };
+    for (const ValueFlowSolver::LostWithEdgeLetGo& entry : solver.lostWithEdgesLetGo()) {
+        out.print("let-go from ");
+        print(entry.from);
+        out.print(" to ");
+        print(entry.to);
+        out.print(" loses");
+        solution.sets().forEachMember(entry.lost, [&](ValueFlowObjectID member) {
+            out.print(" ", member.index());
+        });
+        out.println();
+    }
+    out.println("let-go-loses ", solver.lostWithEdgesLetGo().size());
+}
+
 void prepareForFlow(TestCommandContext& context)
 {
     if (context.program->form() == IRForm::AsRead)
@@ -115,9 +233,18 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
     bool printsCells = false;
     bool printsWrittenObjects = false;
     bool printsWhatIsSeen = false;
+    bool printsLostWithEdgesLetGo = false;
     ValueFlowSolution::CoveredMembers coveredMembers = ValueFlowSolution::CoveredMembers::StayListed;
     for (const String& word : context.arguments) {
-        if (word == "calls"_s)
+        if (word == "every-order"_s) {
+            printUnseenCodeInEveryOrder(context);
+            if (context.options)
+                printFeaturesInEveryOrder(context);
+            return;
+        }
+        if (word == "let-go"_s)
+            printsLostWithEdgesLetGo = true;
+        else if (word == "calls"_s)
             printsCalls = true;
         else if (word == "primitives"_s)
             printsPrimitives = true;
@@ -147,7 +274,7 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
             return printBadArgument(context.out, word);
     }
 
-    ValueFlowSolution solution(*context.program, context.build, ValueFlowSolver::Rounds::Due, ValueFlowSolution::Witnesses::None, UINT32_MAX, { }, ValueFlowSolution::WaysOfValues::AreAskedFor, coveredMembers);
+    ValueFlowSolution solution(*context.program, context.build, ValueFlowSolver::Rounds::Due, ValueFlowSolution::Witnesses::None, UINT32_MAX, { }, ValueFlowSolution::WaysOfValues::AreAskedFor, coveredMembers, ValueFlowSolution::Reports::GoToBuild, { .looksAtEdgesLetGo = printsLostWithEdgesLetGo });
     const ValueFlowSolver& solver = solution.solver();
     const ValueFlowBodies& bodies = solution.bodies();
     const ValueFlowSolver::Counters& counters = solver.counters();
@@ -206,22 +333,10 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
                 printCallees(context.out, solution, statement, printsPrimitives, printsWhatIsSeen);
         }
     }
-    if (printsUnseenCode) {
-        for (const UnseenCodeRecord& record : unseenCodeRecordsOf(solution)) {
-            context.out.print("unseen ", nameOf(record.cause), " ");
-            if (record.builtin != Wire::none)
-                context.out.print(program.builtins().tokenOf(BuiltinID(record.builtin)), " ");
-            if (record.witness.function != Wire::none)
-                context.out.print("f", record.witness.function);
-            if (record.witness.value != Wire::none)
-                context.out.print(":v", record.witness.value);
-            context.out.println();
-        }
-        context.out.println("unseen-code ", unseenCodeCanRun(solution) ? "yes" : "no");
-        context.out.println("modules-by-name ", modulesAreLoadedByName(solution) ? "yes" : "no");
-        for (FunctionID function : functionsHeldButNotCalled(solution))
-            context.out.println("held f", function.index());
-    }
+    if (printsUnseenCode)
+        printUnseenCode(context.out, solution);
+    if (printsLostWithEdgesLetGo)
+        printLostWithEdgesLetGo(context.out, solution);
     if (printsUsedBuiltins) {
         ValueSetID run = solver.possibleValuesOf(bodies.nodes().ofHost(ValueFlowHostNode::RunBuiltins));
         solution.sets().forEachMember(solver.possibleValuesOf(bodies.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)), [&](ValueFlowObjectID object) {
@@ -262,7 +377,7 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
     }
     if (printsCells)
         context.out.println("names-with-several-cells ", counters.namesWithSeveralCells);
-    if (printsCalls || printsUnreachedFunctions || printsUnseenCode || printsUsedBuiltins || printsLibraryFunctionsLacked || printsProtocols || printsNodesGivenMore || printsCells || printsWrittenObjects)
+    if (printsLostWithEdgesLetGo || printsCalls || printsUnreachedFunctions || printsUnseenCode || printsUsedBuiltins || printsLibraryFunctionsLacked || printsProtocols || printsNodesGivenMore || printsCells || printsWrittenObjects)
         return;
 
     context.out.println("functions ", functionsWithBody, " reached ", functionsReached);

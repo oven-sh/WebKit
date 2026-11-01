@@ -67,10 +67,26 @@ enum class Counter : uint8_t {
     RangesHeldAgainstStackCells,
     ClobberPointsReadForCalls,
     AccessesReadForWordsCarriedAroundLoops,
+    LoopsSearchedForWordsToCarry,
+    LoopsWithNoBlockAheadToReadWordsIn,
+    LoopsWithFencesSearchedForWords,
+    WordsReadAndWrittenInLoops,
+    WordsOnlyReadInLoops,
+    WordsLeftForAddressThatChangesWithTurns,
+    WordsLeftForAddressReadInLoop,
+    WordsLeftForAddressNotMovedOutOfLoop,
+    WordsLeftForWritesOnRarePaths,
+    WordsLeftForWritesOnLikelyPaths,
+    WordsLeftForStoresUnderOtherAddresses,
+    WordsLeftThatMayNotBeTouched,
+    WordsLeftThatAreSaidNeverToChange,
+    WordsLeftBesideCallsOnLikelyPaths,
+    WordsLeftToPhasesOfClient,
+    StepsToCommonLikelyDominators,
 };
 
-static constexpr unsigned numberOfCounters = 19;
-static_assert(static_cast<unsigned>(Counter::AccessesReadForWordsCarriedAroundLoops) + 1 == numberOfCounters);
+static constexpr unsigned numberOfCounters = 35;
+static_assert(static_cast<unsigned>(Counter::StepsToCommonLikelyDominators) + 1 == numberOfCounters);
 
 struct LimitHit {
     uint32_t count { 0 };

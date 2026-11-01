@@ -262,7 +262,7 @@ NEVER_INLINE void setEntrypoint(CodeBlock* codeBlock)
 {
     JSC_REMOVABLE_DEFINITION(Interpreter, setEntrypoint);
 #if ENABLE(AOT)
-    if (codeBlock->vm().hasCompiledCode() || Options::crashIfInterpreterIsUsed())
+    if (codeBlock->vm().hasCompiledCode() || codeBlock->vm().aotState().counters || Options::crashIfInterpreterIsUsed())
         AOT::willRunInInterpreter(codeBlock);
 #endif
 

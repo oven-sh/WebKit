@@ -313,7 +313,7 @@ struct SinkingInputs {
     BitVector mergeBlocks;
     BitVector blocksWithCandidates;
     BitVector blocksWithJoins;
-    // Each block's handler block, as the function was read.
+    // Each block's handler block, as the function was read. A handler that only makes stores and throws the error again stands for the handler that gets the error from it.
     Vector<BlockID> handlers;
     bool hasOperationsOnSlots { false };
     bool hasObjectsGivenPrototypes { false };
@@ -605,6 +605,7 @@ public:
     void didBuildAfterMerge(VirtualObjectID, BlockID mergeBlock);
     bool buildCycleBeforeBranches(const SinkingState&, VirtualObjectID holder, VirtualObjectID held);
     void buildUnderHandler(VirtualObjectID);
+    bool leaveMakingsThatMayThrowUnderTheirHandlers(VirtualObjectID, BlockID whereNeeded);
     BlockID handlerOf(BlockID block) const { return m_inputs.handlers[block.index()]; }
     bool mayBeListOfNumbers(VirtualObjectID) const;
     void didTestListThatMayNotFit(ValueID literal) { m_testedListsThatMayNotFit.appendIfNotContains(literal); }

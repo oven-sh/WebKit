@@ -2896,6 +2896,9 @@ struct ControlFlowSimplifier {
         std::optional<uint32_t> decidedTarget = decidedTargetOf(terminator, knownValueOf(program, function, subject));
         if (decidedTarget && canDecide(Edge { block, *decidedTarget })) {
             decideTerminator(builder, block, *decidedTarget);
+            // The value is known through casts. The type of the subject may say less than the case did.
+            castArgumentsToParameters(builder, block, context.build.validates());
+            builder.applyInsertions();
             return true;
         }
 
@@ -3257,8 +3260,7 @@ struct ControlFlowSimplifier {
             // Nobody learns where an operation stands that does nothing but compute: the arms may be copies of one text made for two callers.
             return a.opcode == b.opcode && a.type == b.type && a.expected().predicted() == b.expected().predicted() && haveSameOperands(a, b, !analyses.effectsOf(inFirst).onAnyEdge().isPure());
         });
-        // Two arms that hold nothing are left to collapseTestsThatDecideNothing(), which also erases what computed the test.
-        if (!haveSameOperations || !haveSameOperands(first.terminator, second.terminator, first.terminator.kind != TerminatorKind::Jump || firstOperations.isEmpty()))
+        if (!haveSameOperations || !haveSameOperands(first.terminator, second.terminator, first.terminator.kind != TerminatorKind::Jump))
             return false;
         return std::ranges::equal(first.terminator.targets, second.terminator.targets, [&](const Target& a, const Target& b) {
             if (a.block != b.block || a.proofs != b.proofs || !std::ranges::equal(a.arguments, b.arguments, isSameValue))
@@ -3294,6 +3296,9 @@ struct ControlFlowSimplifier {
         for (Edge edge : kept)
             raiseFrequenciesBehind(analyses, function, edge);
         for (Edge edge : kept) {
+            // What was tested stays where it is, for whoever knows whether it may go. The sabotage is about a pass that does not ask.
+            if (analyses.context().build.isSabotaged(Sabotage::ErasedValuesHaveEffects))
+                valuesTestedForNothing.append(function.at(edge.from).terminator.conditionOperand());
             decideTerminator(builder, edge.from, edge.targetIndex);
             // The arm now takes what either edge narrowed, so what its casts said of the value no longer holds.
             const Target& next = function.at(edge.from).terminator.next();

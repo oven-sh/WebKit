@@ -235,7 +235,15 @@ static bool needsCellOnlyFor(FunctionAnalyses& analyses, ObjectID object, ValueI
         else if (needsCell(analyses.program(), analyses.function(), objectUse))
             return false;
     }
-    return !passedAs.isEmpty() && (!isBuiltApart || callee.onlyInterpretsAllInLikelyCode(passedAs.span()));
+    if (passedAs.isEmpty() || !isBuiltApart)
+        return !passedAs.isEmpty();
+    // `seen.push([a])` in one loop and `show(kept)` for each of `seen` in the next: what the call takes out of a holder was stored there first, and is whole whatever becomes of the call.
+    ValueID definition = analyses.escape().at(object).definition;
+    bool isHandedTheAllocationItself = std::ranges::all_of(passedAs, [&](uint32_t index) {
+        std::optional<Vector<ValueID, 8>> makers = findMakersOfObjectsBehind(analyses, analyses.function().at(call).operand(index));
+        return makers && makers->contains(definition);
+    });
+    return isHandedTheAllocationItself && callee.onlyInterpretsAllInLikelyCode(passedAs.span());
 }
 
 enum class SeenOfAllocation : uint8_t { Nothing, NeedsCellElsewhere, Escapes, NeedsCellOnlyForCall };

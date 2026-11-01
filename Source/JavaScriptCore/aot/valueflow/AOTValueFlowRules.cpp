@@ -204,6 +204,7 @@ static ClimbingSet leaveHoldersOfExportsUnsearched(ValueFlowRuleContext& context
     constexpr std::pair<ValueFlowNameKind, ValueFlowHostNode> membersUnderUnknownKey[] {
         { ValueFlowNameKind::UnknownKey, ValueFlowHostNode::ValuesUnderUnknownKeyInHeldHoldersOfExports },
         { ValueFlowNameKind::GetterUnderUnknownKey, ValueFlowHostNode::GettersUnderUnknownKeyInHeldHoldersOfExports },
+        { ValueFlowNameKind::GetterUnderNameOfEnumeration, ValueFlowHostNode::GettersUnderUnknownKeyInHeldHoldersOfExports },
         { ValueFlowNameKind::SetterUnderUnknownKey, ValueFlowHostNode::SettersUnderUnknownKeyInHeldHoldersOfExports },
     };
     for (auto [kind, node] : membersUnderUnknownKey) {
@@ -226,6 +227,7 @@ void notePrototypeObjectsAboveUnknownObject(ValueFlowRuleContext& context)
     ValueFlowNodeID withInstances = context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfInstances);
     ValueFlowNodeID answersThatNoReadLists = context.nodes().ofHost(ValueFlowHostNode::AnswersThatNoReadLists);
     context.add(answersThatNoReadLists, context.universe().builtinTables().heap().prototypeObjectsOfLanguage());
+    context.connect(context.nodes().ofHost(ValueFlowHostNode::BuiltinObjectsAboveEscapedObjects), answersThatNoReadLists);
     if (context.holdsAnyOf(ClimbingSet(context.universe().unknownObjectAlone()), withInstances))
         context.add(answersThatNoReadLists, prototypeObjectsOfHost);
     else
@@ -698,9 +700,11 @@ static void runRuleOnNodesNamed(const ValueFlowStatement& statement, ValueFlowRu
         case ValueFlowNameKind::Elements:
         case ValueFlowNameKind::UnknownKey:
         case ValueFlowNameKind::GetterUnderUnknownKey:
+        case ValueFlowNameKind::GetterUnderNameOfEnumeration:
         case ValueFlowNameKind::SetterUnderUnknownKey:
         case ValueFlowNameKind::EveryProperty:
         case ValueFlowNameKind::EveryGetter:
+        case ValueFlowNameKind::GetterOutsideEnumerations:
         case ValueFlowNameKind::EverySetter:
         case ValueFlowNameKind::PrototypeLink:
         case ValueFlowNameKind::CopiedFrom:

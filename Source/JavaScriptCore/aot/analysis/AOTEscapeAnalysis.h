@@ -310,7 +310,8 @@ public:
     bool mayAlias(ValueID, ValueID) const;
 
     bool hasLiveInstances() const { return m_hasLiveInstances; }
-    void computeLiveInstances(const CFG&, const UseLists&, const ScopedLambda<const BlockCycles&()>&);
+    enum class OutOfSight : bool { NotAsked, Asked };
+    void computeLiveInstances(const CFG&, const UseLists&, const ScopedLambda<const BlockCycles&()>&, OutOfSight);
     LiveInstances liveInstancesOf(ObjectID object) const
     {
         RELEASE_ASSERT(m_hasLiveInstances);
@@ -324,6 +325,20 @@ public:
     {
         RELEASE_ASSERT(m_hasLiveInstances);
         return object.index() < m_objectsRenewedAtMakers.size() ? m_objectsRenewedAtMakers[object.index()] : m_noObjects;
+    }
+
+    // The allocations in cycles that escape and lie in no local heap word. Of those, about a block of a cycle: the ones of which a value that is live in front of the terminator may name an instance, or an instance of a closed object that holds one.
+    const BitVector& allocationsThatMayGoOutOfSight() const LIFETIME_BOUND
+    {
+        RELEASE_ASSERT(m_hasLiveInstances);
+        return m_allocationsThatMayGoOutOfSight;
+    }
+    std::optional<std::span<const ObjectID>> allocationsInSightAtEndOf(BlockID block) const LIFETIME_BOUND
+    {
+        RELEASE_ASSERT(m_hasLiveInstances);
+        if (block.index() >= m_allocationsInSightAtEnd.size() || !m_allocationsInSightAtEnd[block.index()])
+            return std::nullopt;
+        return m_allocationsInSightAtEnd[block.index()]->span();
     }
 
     // Types and expected types have changed, and nothing else. Answers whether the solver would be told all that it was told: then it would find what it has found.
@@ -421,6 +436,8 @@ private:
     Vector<ObjectID> m_containers;
     Vector<uint32_t> m_firstContainer;
     Vector<BitVector> m_objectsRenewedAtMakers;
+    BitVector m_allocationsThatMayGoOutOfSight;
+    Vector<std::optional<Vector<ObjectID, 2>>> m_allocationsInSightAtEnd;
     Vector<AnswerFromTypes> m_answersFromTypes;
     Vector<TypesOfValue> m_typesWhenAnswered;
 };
@@ -433,7 +450,9 @@ bool accessesLocalHeapWords(const Function&, const Value&);
 // False where every allocation that the value may name was read out of an object that is open to others, and so has a use that lets it escape.
 bool mayNameUnescapedAllocation(const Function&, ValueID);
 // Seen without the solve too, through the parameters of blocks as well: the values that make the objects which the value may name, or out of which what it names may have been read, however many objects lie between.
-std::optional<Vector<ValueID, 8>> findMakersOfObjectsBehind(FunctionAnalyses&, ValueID);
+std::optional<Vector<ValueID, 8>> findMakersOfObjectsBehind(FunctionAnalyses&, ValueID, OpcodeSet* opcodesBehind = nullptr);
+// True where nothing that the function makes lies behind the value: it names only what code outside reaches too, and an object made here gets there by a use of a value that has its maker behind it.
+bool namesOnlyWhatCodeOutsideReaches(FunctionAnalyses&, ValueID);
 
 // What the solve says of a use of a value for every object that the value names, seen from the use alone.
 enum class UseSeenAlone : uint8_t {

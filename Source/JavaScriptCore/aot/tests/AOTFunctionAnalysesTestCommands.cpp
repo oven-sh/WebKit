@@ -442,6 +442,7 @@ void runAnalyses(TestCommandContext& context)
     CommandWords words(context);
     FlowPreparation preparation = prepareFlow(context, words);
     std::optional<FunctionID> onlyFunction = words.parseOptional("function"_s, functionParser(program));
+    SavedFrames savedFrames = words.parseFlag("as-the-verifier"_s) ? SavedFrames::AreOutOfReach : SavedFrames::AreUnknownMemory;
     if (words.hasFailed())
         return;
 
@@ -450,7 +451,7 @@ void runAnalyses(TestCommandContext& context)
         if (!program.at(id).hasBody() || (onlyFunction && *onlyFunction != id))
             continue;
 
-        Session session(context, id, preparation.flowOrNull(), preparation.effectsOrNull());
+        Session session(context, id, preparation.flowOrNull(), preparation.effectsOrNull(), savedFrames);
         CommandWords optionWords = words;
         AnalysisOptions options = parseAnalysisOptions(optionWords, session.function);
         Vector<bool> isRequested;

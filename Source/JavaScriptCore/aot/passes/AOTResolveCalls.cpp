@@ -11,6 +11,7 @@
 #include "AOTArrayStorageForms.h"
 #include "AOTBlockCycles.h"
 #include "AOTBuildContext.h"
+#include "AOTBuiltinCallPlan.h"
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinPristine.h"
@@ -2002,11 +2003,26 @@ struct CallResolver {
         });
     }
 
-    ValueID appendTestThatListFits(ValueID list, uint64_t numberOfOtherArguments)
+    // An Array holds its length itself, and reading it runs nothing. A read by name says so only once it is resolved, and until then the tests of the list that stand in front of it hold for nothing behind it.
+    ValueID appendLengthOfList(ValueID list)
     {
+        TypingContext typing { program, function, context.types };
+        BuiltinOperandTypes operands = operandTypesOf(typing, list, { });
+        OverloadMatch match = matchOverload({ typing, Builtins::ArrayPrototypeLength, BuiltinCallMode::Get, operands, operands });
+        if (match.state == BuiltinMatchState::Proven && match.requirements.isEmpty()) {
+            Value lengthRead = makeBuiltinCall(match.overload, BuiltinCallForm::Whole, { list, { } }, { });
+            // A test that the plan adds, like the test that the list is as it was made: it stands for none of the operations that go.
+            if (overloadTakesOperands(typing, lengthRead))
+                return builder.append(WTF::move(lengthRead));
+        }
         Value lengthRead = IRBuilder::make(Opcode::PropGet, { list });
         lengthRead.setKey(program.keyOf(BuiltinNames::length));
-        ValueID length = expansion.append(IRBuilder::make(Opcode::ToLength, { expansion.append(WTF::move(lengthRead)) }));
+        return expansion.append(IRBuilder::make(Opcode::ToLength, { expansion.append(WTF::move(lengthRead)) }));
+    }
+
+    ValueID appendTestThatListFits(ValueID list, uint64_t numberOfOtherArguments)
+    {
+        ValueID length = appendLengthOfList(list);
         uint64_t limit = context.build.limit(LimitID::MaxReservedStackArguments);
         return expansion.append(IRBuilder::make(Opcode::LessEq, { length, builder.appendInteger(limit - std::min(limit, numberOfOtherArguments)) }));
     }

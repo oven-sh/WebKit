@@ -69,7 +69,7 @@ public:
     std::span<const BlockID> copiedBlocks() const { return m_cloner ? m_cloner->clonedBlocks() : std::span<const BlockID> { }; }
 
     enum class TypesTestedOnWayBack : uint8_t { Proven, Expected };
-    void addWaysBack(std::span<const ValueID> changedValues, TypesTestedOnWayBack = TypesTestedOnWayBack::Proven);
+    void addWaysBack(Vector<ValueID>& changedValues, TypesTestedOnWayBack = TypesTestedOnWayBack::Proven);
     unsigned numberOfWaysBack() const { return m_numberOfWaysBack; }
 
     void addVariablesTo(SSARepair&);

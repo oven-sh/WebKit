@@ -569,6 +569,39 @@ static void testWideOperationWithWideUserStaysWide()
     }
 }
 
+static void testLowWordOfSumBehindDoublesIsNarrowSum()
+{
+    for (B3::Opcode opcode : { Add, Sub }) {
+        for (bool isClient : { true, false }) {
+            Procedure proc(isClient ? strengthReductionPolicy() : Policy());
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            auto words = cCallArgumentValues<int32_t, int32_t>(proc, root);
+            Value* sum = graph.make(root, opcode, graph.make(root, IToD, words[0]), graph.make(root, IToD, words[1]));
+            PatchpointValue* truncated = root->appendNew<PatchpointValue>(proc, Int64, Origin());
+            truncated->append(sum, ValueRep::SomeRegister);
+            truncated->effects = Effects::none();
+            truncated->pureFunction = PureFunction { 1, true, true };
+            truncated->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
+            });
+            graph.ret(root, graph.make(root, Trunc, truncated));
+            resetAndValidate(proc);
+            reduceStrengthOnce(proc);
+            CHECK_EQ(numberOfValues(proc, Patchpoint), isClient ? 0u : 1u);
+            CHECK_EQ(numberOfValues(proc, IToD), isClient ? 0u : 2u);
+            CHECK_EQ(numberOfWideValues(proc, opcode), 0u);
+            CHECK_EQ(numberOfValues(proc, opcode), 1u);
+
+            auto code = compileProc(proc);
+            for (int32_t a : wordsToCombine) {
+                for (int32_t b : wordsToCombine)
+                    CHECK_EQ(invoke<int32_t>(*code, a, b), lowWordOf(opcode, a, b));
+            }
+        }
+    }
+}
+
 static void testLowWordOfWideShiftAndDivisionStayWide()
 {
     for (B3::Opcode opcode : { Shl, SShr, ZShr, Div }) {
@@ -1477,6 +1510,7 @@ void addBunReductionTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testLowWordOfWideOperationIsNarrowOperation());
     RUN(testLowWordOfNestedWideOperations());
     RUN(testWideOperationWithWideUserStaysWide());
+    RUN(testLowWordOfSumBehindDoublesIsNarrowSum());
     RUN(testLowWordOfWideShiftAndDivisionStayWide());
     RUN(testChainOfAssociativeOperationsStaysChain());
     RUN(testChainOfAssociativeOperationsCombinesLeaves());

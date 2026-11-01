@@ -217,6 +217,8 @@ void CheckedFrameCells::didChangeLiveGranules()
     m_vm.aotState().lowestFrameOfCheckedCells = m_liveGranules.isEmpty() ? nullptr : s_range.granules[m_liveGranules.last()].wordOfFrame;
 }
 
+static_assert(!(CheckedFrameCells::numberOfBirthsThatAreAllChecked(false) % CheckedFrameCells::intervalOfCheckedBirths) && !(CheckedFrameCells::numberOfBirthsThatAreAllChecked(true) % CheckedFrameCells::intervalOfCheckedBirths));
+
 void* CheckedFrameCells::make(void* slot, const void* wordOfFrame, size_t size, const Allocation& allocation)
 {
     const Range& range = AOT::range();
@@ -238,7 +240,7 @@ void* CheckedFrameCells::make(void* slot, const void* wordOfFrame, size_t size, 
     if (size > range.roomForCell() || !range.numberOfGranules || range.numberOfLiveCells.load(std::memory_order_relaxed) >= maxNumberOfLiveCells)
         return slot;
     uint32_t birth = m_numberOfBirths[pairIntHash(allocation.function, allocation.value) % m_numberOfBirths.size()]++;
-    if (birth >= numberOfBirthsThatAreAllChecked && birth % intervalOfCheckedBirths)
+    if (birth >= numberOfBirthsThatAreAllChecked(m_image.header().options.validates) && birth % intervalOfCheckedBirths)
         return slot;
     for (uint32_t attempt = 0; attempt < range.numberOfGranules; ++attempt) {
         uint32_t index = s_range.next.fetch_add(1, std::memory_order_relaxed) % range.numberOfGranules;

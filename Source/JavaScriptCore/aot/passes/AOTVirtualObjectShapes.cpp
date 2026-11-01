@@ -678,8 +678,8 @@ static KnownBoolean evaluateArrayStorageTest(const ShapeContext& context, const 
 
 static KnownBoolean evaluateBoundsTest(const ShapeContext& context, const VirtualShape& shape, const Value& test)
 {
-    // How many arguments a frame holds is known when it runs.
-    if (!isArray(context.family.descriptionOf(shape)) || context.family.descriptionOf(shape).kind == VirtualObjectKind::ArgumentList)
+    // How many arguments a frame holds, and how long the list of a built-in is, is known when it runs: the shape of such a list counts the elements that are kept apart.
+    if (context.family.descriptionOf(shape).kind != VirtualObjectKind::Array)
         return KnownBoolean::Unknown;
     KnownValue position = knownValueOf(context.objects.program, context.objects.function, test.positionOperand());
     if (position.kind() == KnownValue::Kind::Integer)

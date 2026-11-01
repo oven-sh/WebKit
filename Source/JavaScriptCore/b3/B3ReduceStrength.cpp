@@ -324,6 +324,7 @@ public:
             m_dominators = &m_proc.dominators(); // Recompute if necessary.
             m_layeredCSE.clear();
             findValuesUsedForLowWord();
+            m_integersMadeBehindDoubles.clear();
             m_valueOwnersAreCurrent = false;
             if (m_proc.optLevel() >= 1 && m_proc.policy().optimization.redundancyElimination == RedundancyElimination::MemoryNumbering) {
                 m_numbering.emplace(m_proc);
@@ -2405,6 +2406,19 @@ private:
                 break;
             }
 
+            if (m_narrowsIntegers && m_integersMadeBehindDoubles.contains(m_value->child(0))) {
+                Value* wide = m_value->child(0);
+                auto isMadeOfLowWord = [](Value* value) {
+                    return value->opcode() == SExt32 || value->opcode() == ZExt32 || value->hasInt64();
+                };
+                if (isMadeOfLowWord(wide->child(0)) && isMadeOfLowWord(wide->child(1))) {
+                    Value* left = lowWordOf(wide->child(0));
+                    Value* right = lowWordOf(wide->child(1));
+                    replaceWithNew<Value>(wide->opcode(), m_value->origin(), left, right);
+                    break;
+                }
+            }
+
             // Turn this: Trunc(Op(value, constant))
             //     where !(constant & 0xffffffff)
             //       and Op is Add, Sub, BitOr, or BitXor
@@ -4462,6 +4476,7 @@ private:
         if (!right)
             return false;
         Value* sum = m_insertionSet.insert<Value>(m_index, m_value->opcode(), m_value->origin(), left, right);
+        m_integersMadeBehindDoubles.add(sum);
         replaceWithNew<Value>(IToD, m_value->origin(), sum);
         return true;
     }
@@ -6053,6 +6068,7 @@ private:
     const bool m_mergesBlocksAfterForwardingJumps { m_proc.policy().optimization.mergesBlocksAfterForwardingJumps };
     BitVector m_isUsedForLowWord;
     UncheckedKeyHashMap<Value*, Value*> m_lowWords;
+    UncheckedKeyHashSet<Value*> m_integersMadeBehindDoubles;
     std::optional<MemoryNumbering> m_numbering;
     DominatingConditionStack m_conditions;
     const bool m_validatesIRAtEachPhase { shouldValidateIRAtEachPhase(m_proc) };

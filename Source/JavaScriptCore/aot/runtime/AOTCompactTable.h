@@ -64,6 +64,10 @@ public:
 
     static constexpr uint32_t initialCapacity = 4;
     static constexpr uint32_t maxCapacityWithTags = 8;
+    // A table of whose entries three in four are deleted is let go for a smaller one, as the engine's own table is: a walk costs what the collection holds, and the memory goes back.
+    // The smaller one has room for as many entries again, so a collection that swings about one size keeps its table.
+    static constexpr uint32_t minUsedToShrink = 32;
+    static constexpr bool isMostlyDeleted(uint32_t alive, uint32_t used) { return used >= minUsedToShrink && alive * 4 < used; }
     AOT_CLASS_THRESHOLD(uint32_t, maxCapacityEmptiedByClear, 32);
     static constexpr uint32_t maxCapacityWithShortSlots = 254;
     static constexpr uint32_t maxCapacityWithLongSlots = 3 << 22;
@@ -90,13 +94,15 @@ public:
 
     // The index of a table with more than eight entries: a tag byte for each slot, and behind all the tags the number of the entry in each slot. A key that the table lacks is mostly known from its tag, without asking how wide the numbers are.
     // A tag is six bits of the hash under a set bit, and 0 in a free slot. A key goes into its home slot if that is free, else into the first free slot of the eight that the home slot lies among,
-    // else of the following eight, and so on. No slot is ever freed. So a free slot among eight that were searched says that the key is absent: one word compare looks at all eight tags.
+    // else of the following eight, and so on. So a free slot among eight that were searched says that the key is absent: one word compare looks at all eight tags.
     // The lowest bit of a tag belongs to the slot, not to the key in it: it is set once a key that has this slot for its home went elsewhere. While it is clear, a key that is not in its home slot is absent,
     // which is how most lookups of absent keys end, however full the index is.
     static constexpr unsigned slotsPerGroup = 8;
     static constexpr unsigned tagShiftOfSlots = hashBits - 6;
     static constexpr uint8_t takenSlot = 0x80;
     static constexpr uint8_t keyLeftHomeSlot = 0x01;
+    // The slot of a deleted entry is freed where no search can miss it, see canFreeSlot(): `map.delete(key); map.set(key, value)`, again and again, would else leave a slot behind each time,
+    // all with one tag, in the way of every search for the key. Eight slots that are all taken stay so: a key may have gone on to the next eight.
     static constexpr uint8_t tagOfSlot(unsigned hash) { return static_cast<uint8_t>(takenSlot | hash >> tagShiftOfSlots << 1); }
     static constexpr bool hasTag(uint8_t tagInSlot, uint8_t tag) { return static_cast<uint8_t>(tagInSlot ^ tag) <= keyLeftHomeSlot; }
 
@@ -364,6 +370,11 @@ public:
         return (difference - belowDifferenceOfOtherTags) & ~difference & onesOfTags << 7;
     }
 
+    static ALWAYS_INLINE bool canFreeSlot(const uint8_t* tags, uint32_t slot)
+    {
+        return !(tags[slot] & keyLeftHomeSlot) && freeSlotsAmong(WTF::unalignedLoad<uint64_t>(tags + (slot & ~(slotsPerGroup - 1))));
+    }
+
     static constexpr uint32_t noSlot = std::numeric_limits<uint32_t>::max();
     // The next slot behind `previous`, from the eight of the home slot on, whose tag may be this one. The home slot has been looked at. Keys are mostly in their home slot, so this is out of line.
     static uint32_t nextSlotWithTag(const uint8_t* tags, unsigned indexBits, uint8_t tag, uint32_t homeSlot, uint32_t previous);
@@ -469,6 +480,7 @@ public:
 
     static bool add(JSGlobalObject*, JSObject* owner, JSValue key, JSValue value);
     static bool remove(JSGlobalObject*, JSObject* owner, JSValue key);
+    JS_EXPORT_PRIVATE uint32_t numberOfTakenSlots() const;
     static void clear(JSGlobalObject*, JSObject* owner);
     static CompactStorage::Position next(VM&, JSCell* storage, uint32_t entry);
     // The keys, or the values, that a walk by next() from the entry on finds. Of the other column nothing is made.
@@ -568,6 +580,7 @@ private:
     std::optional<uint32_t> findInImage(JSGlobalObject*, JSString*) const;
     JS_EXPORT_PRIVATE JSValue valueInImage(uint32_t entry) const;
     void addToIndex(uint32_t entry, unsigned hash);
+    void removeFromIndex(uint32_t entry, unsigned hash);
     void fillIndex(uint32_t count);
     uint32_t copyAliveEntriesTo(CompactTable&) const;
     template<SlotKind> uint32_t fillWithHashedStrings(uintptr_t cageBase, std::span<const WriteBarrier<Unknown>>);
@@ -581,6 +594,7 @@ private:
     std::optional<unsigned> hashIfAbsent(JSValue normalizedKey) const;
     CompactTable* copyWithAbsentKey(VM&, JSValue key, unsigned hash, JSValue) const;
     void becomeObsolete(VM&, Status, JSCell* successor);
+    static void shrink(JSGlobalObject*, JSObject* owner);
     void skipObsoleteSuccessors();
     void removeAllEntries();
 

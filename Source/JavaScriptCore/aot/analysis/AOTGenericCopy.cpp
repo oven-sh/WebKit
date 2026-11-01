@@ -849,7 +849,7 @@ void GenericCopy::keepWaysBackWithinSizeOfCopy(Vector<RejoinPlan, 4>& rejoins) c
     });
 }
 
-void GenericCopy::addWaysBack(std::span<const ValueID> changedValues, TypesTestedOnWayBack typesTested)
+void GenericCopy::addWaysBack(Vector<ValueID>& changedValues, TypesTestedOnWayBack typesTested)
 {
     RELEASE_ASSERT(m_cloner);
     m_typesTestedOnWayBack = typesTested;
@@ -863,7 +863,7 @@ void GenericCopy::addWaysBack(std::span<const ValueID> changedValues, TypesTeste
     RejoinTypes rejoinTypes;
     Vector<RejoinPlan, 4> rejoins;
     if (!m_testedRejoins.isEmpty()) {
-        rejoinTypes.ignoringCopy = computeTypesIgnoringCopy(changedValues);
+        rejoinTypes.ignoringCopy = computeTypesIgnoringCopy(changedValues.span());
         rejoinTypes.ofOtherDefinitions = Vector<TypeID>(m_function.values.size());
         for (const OtherDefinition& other : m_otherDefinitions) {
             TypeID& joined = rejoinTypes.ofOtherDefinitions[other.inTypedCode.index()];
@@ -928,6 +928,8 @@ void GenericCopy::addWaysBack(std::span<const ValueID> changedValues, TypesTeste
             ValueID added = m_builder.addParameter(plan.preheader, type);
             m_function.edit(added, ValueEdit::Type).setExpected(m_function.at(parameter).expected());
             plan.parameters.append(added);
+            if (type != m_function.at(parameter).type)
+                changedValues.append(added);
         }
     }
 
