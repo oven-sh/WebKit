@@ -1824,13 +1824,15 @@ void Modules::runMocksBelow(ModuleID root, RootOfLoad rootOfLoad)
         mayComeToOne |= !isMocked(ModuleID(module)) || !mocks.hides(ModuleID(module));
     if (!mayComeToOne)
         return;
+    // An import() of a CommonJS file begins at the face of the file.
+    std::optional<ModuleID> fileOfRoot = m_table.fileBehindFace(root);
     BitVector reached(m_table.size());
     Vector<ModuleID, 32> work { root };
     while (!work.isEmpty()) {
         ModuleID module = work.takeLast();
         if (reached.quickSet(module.index()))
             continue;
-        bool isImportedByStatement = module != root || rootOfLoad == RootOfLoad::IsImportedByStatement;
+        bool isImportedByStatement = (module != root && module != fileOfRoot) || rootOfLoad == RootOfLoad::IsImportedByStatement;
         JSValue kept = errorOfLoadEndedByMock(module);
         if (!kept && isImportedByStatement && m_mockedModulesWithErrorKeptByLoader.get(module.index()))
             kept = loadedIfExists(module)->errorOfMockKeptByLoader.get();
