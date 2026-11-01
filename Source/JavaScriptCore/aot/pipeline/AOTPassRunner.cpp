@@ -481,7 +481,7 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::DeferInitializers, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::EliminateTailRecursion, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::CallDirect } },
     { PassID::ExpandIteration, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
-    { PassID::ExpandOwnKeys, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::ExpandOwnKeys, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, opcodesOfWalks },
     { PassID::ExpandProvenIterations, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
     { PassID::InlineCalls, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
     { PassID::InlineHeads, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
