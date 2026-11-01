@@ -657,6 +657,8 @@ static std::optional<int64_t> mostTurnsBehindFirst(FunctionPassContext& context,
         if (!type.isInteger() || !type.integers.isSubsetOf(changedByEveryStep) || variable.step.kind != InductionStepKind::Constant || !variable.step.constant)
             continue;
         int64_t turns = (type.integers.maximum - type.integers.minimum) / std::abs(variable.step.constant);
+        if (context.build.isSabotaged(Sabotage::TalliesOutrunTheirCounters))
+            turns /= 4;
         fewest = fewest ? std::min(*fewest, turns) : turns;
     }
     return fewest;
@@ -1580,6 +1582,7 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
             Vector<ValueID, 4> bounded = boundTallies(context, builder, tallies.span());
             outcome = PassOutcome::Changed;
             numberOfConvertedCounters += tallies.size();
+            context.build.statistics().count(StatisticID::TalliesBounded, tallies.size());
             if (narrowValueTypes({ context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo }, bounded.span()).didChangeControlFlow())
                 parametersOverStepLimit.clearAll();
             continue;
