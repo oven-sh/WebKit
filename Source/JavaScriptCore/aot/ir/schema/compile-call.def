@@ -176,7 +176,7 @@ enum Sabotage {
     AssignmentsPutOffAskNobodyAbove WhatInitializersTakeNeverChanges
     ListsOfBuiltinsEndWithWhatIsKept DelayedStoresAreSeenByOthers SlotsNeedNoAbsentState CopiesNameNoFile
     FusedCallsEnterOnlyUnknownCode
-    StoresOfConstantsAlwaysLand ConstantFieldsAreStoredOnce DefinitionsPutOffHaveNoDeadZone ClosuresInFieldsCaptureTheirHolder
+    StoresOfConstantsAlwaysLand ConstantFieldsAreStoredOnce DefinitionsPutOffHaveNoDeadZone ClosuresInFieldsCaptureTheirHolder LiteralsOfConstantsAreNeverToldApart
     GetsBehindHasOutlastWrites ObjectsWithTheTagOfAnotherAreAbsent
     TalliesOutrunTheirCounters
 }

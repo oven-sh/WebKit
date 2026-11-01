@@ -2146,7 +2146,7 @@ static std::optional<UnwrittenLiteral> tryReadUnwrittenLiteral(const AnalysisCon
     if (!allocationClass || !context.flow->at(allocationClass).impossibleMutations.contains(ObjectMutation::StoreAfterCreation))
         return std::nullopt;
 
-    UnwrittenLiteral result { id, DataNode(DataNode::Undefined { }), { }, context.flow->identityIsNeverObserved(site) };
+    UnwrittenLiteral result { id, DataNode(DataNode::Undefined { }), { }, context.flow->identityIsNeverObserved(site) || context.build.isSabotaged(Sabotage::LiteralsOfConstantsAreNeverToldApart) };
     // Only the literal uses such a list.
     auto tryReadListInside = [&](ValueID element) -> std::optional<DataNode> {
         if (!result.isNeverToldApart)
