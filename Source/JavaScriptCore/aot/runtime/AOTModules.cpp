@@ -6939,7 +6939,7 @@ bool ModuleRecord::throwIfExportWasLeftOut(JSGlobalObject* globalObject, Abstrac
     if (missingExportListener)
         missingExportListener(name.string(), exporter->moduleKey().string(), importer->moduleKey().string());
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    throwTypeError(globalObject, scope, makeString('\'', name.string(), "' was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun."_s));
+    throwSyntaxError(globalObject, scope, makeString("Export named '"_s, name.string(), "' not found in module '"_s, exporter->moduleKey().string(), "'. The build keeps only the exports that something refers to: if the module exports it, this is a bug in Bun."_s));
     return true;
 }
 
