@@ -81,6 +81,11 @@ NEVER_INLINE void HeapSnapshotBuilder::buildSnapshot()
     {
         Locker locker { m_buildingNodeMutex };
         m_appendedCells.clear();
+        // Nothing prints a snapshot that lacks edges, so the profiler does not get its nodes to keep.
+        if (hasOverflowed()) {
+            m_snapshot = nullptr;
+            return;
+        }
         m_snapshot->finalize();
     }
     m_profiler.appendSnapshot(WTF::move(m_snapshot));
@@ -91,6 +96,9 @@ void HeapSnapshotBuilder::analyzeNode(JSCell* cell)
     ASSERT(m_profiler.activeHeapAnalyzer() == this);
 
     ASSERT(m_profiler.vm().heap.isMarked(cell));
+
+    if (hasOverflowed()) [[unlikely]]
+        return;
 
     NodeIdentifier identifier;
     if (previousSnapshotHasNodeForCell(cell, identifier))
@@ -103,6 +111,19 @@ void HeapSnapshotBuilder::analyzeNode(JSCell* cell)
     m_snapshot->appendNode(HeapSnapshotNode(cell, getNextObjectIdentifier()));
 }
 
+// Vector::append aborts when the Vector cannot grow, which a heap of tens of millions of edges reaches. The first edge
+// that does not fit ends the recording: the markers report until the collection ends, and every analyze function
+// returns at once from then on. The Vector of the nodes needs no such check. A cell reports the edge to its Structure
+// before it becomes a node, so the edges run out first.
+void HeapSnapshotBuilder::appendEdge(HeapSnapshotEdge&& edge)
+{
+    if (hasOverflowed()) [[unlikely]]
+        return;
+    unsigned limitForTesting = Options::heapSnapshotBuilderEdgeLimitForTesting();
+    if ((limitForTesting && m_edges.size() >= limitForTesting) || !m_edges.tryAppend(WTF::move(edge))) [[unlikely]]
+        m_hasOverflowed = true;
+}
+
 void HeapSnapshotBuilder::analyzeEdge(JSCell* from, JSCell* to, RootMarkReason rootMarkReason)
 {
     ASSERT(m_profiler.activeHeapAnalyzer() == this);
@@ -110,6 +131,9 @@ void HeapSnapshotBuilder::analyzeEdge(JSCell* from, JSCell* to, RootMarkReason r
 
     // Avoid trivial edges.
     if (from == to)
+        return;
+
+    if (hasOverflowed()) [[unlikely]]
         return;
 
     Locker locker { m_buildingEdgeMutex };
@@ -125,7 +149,7 @@ void HeapSnapshotBuilder::analyzeEdge(JSCell* from, JSCell* to, RootMarkReason r
         }).iterator->value.markReason = rootMarkReason;
     }
 
-    m_edges.append(HeapSnapshotEdge(from, to));
+    appendEdge(HeapSnapshotEdge(from, to));
 }
 
 void HeapSnapshotBuilder::analyzePropertyNameEdge(JSCell* from, JSCell* to, UniquedStringImpl* propertyName)
@@ -133,9 +157,12 @@ void HeapSnapshotBuilder::analyzePropertyNameEdge(JSCell* from, JSCell* to, Uniq
     ASSERT(m_profiler.activeHeapAnalyzer() == this);
     ASSERT(to);
 
+    if (hasOverflowed()) [[unlikely]]
+        return;
+
     Locker locker { m_buildingEdgeMutex };
 
-    m_edges.append(HeapSnapshotEdge(from, to, EdgeType::Property, propertyName));
+    appendEdge(HeapSnapshotEdge(from, to, EdgeType::Property, propertyName));
 }
 
 void HeapSnapshotBuilder::analyzeVariableNameEdge(JSCell* from, JSCell* to, UniquedStringImpl* variableName)
@@ -143,9 +170,12 @@ void HeapSnapshotBuilder::analyzeVariableNameEdge(JSCell* from, JSCell* to, Uniq
     ASSERT(m_profiler.activeHeapAnalyzer() == this);
     ASSERT(to);
 
+    if (hasOverflowed()) [[unlikely]]
+        return;
+
     Locker locker { m_buildingEdgeMutex };
 
-    m_edges.append(HeapSnapshotEdge(from, to, EdgeType::Variable, variableName));
+    appendEdge(HeapSnapshotEdge(from, to, EdgeType::Variable, variableName));
 }
 
 void HeapSnapshotBuilder::analyzeIndexEdge(JSCell* from, JSCell* to, uint32_t index)
@@ -153,14 +183,17 @@ void HeapSnapshotBuilder::analyzeIndexEdge(JSCell* from, JSCell* to, uint32_t in
     ASSERT(m_profiler.activeHeapAnalyzer() == this);
     ASSERT(to);
 
+    if (hasOverflowed()) [[unlikely]]
+        return;
+
     Locker locker { m_buildingEdgeMutex };
 
-    m_edges.append(HeapSnapshotEdge(from, to, index));
+    appendEdge(HeapSnapshotEdge(from, to, index));
 }
 
 void HeapSnapshotBuilder::setOpaqueRootReachabilityReasonForCell(JSCell* cell, ASCIILiteral reason)
 {
-    if (reason.isEmpty() || m_snapshotType != SnapshotType::GCDebuggingSnapshot)
+    if (reason.isEmpty() || m_snapshotType != SnapshotType::GCDebuggingSnapshot || hasOverflowed())
         return;
 
     Locker locker { m_buildingEdgeMutex };
@@ -172,6 +205,8 @@ void HeapSnapshotBuilder::setOpaqueRootReachabilityReasonForCell(JSCell* cell, A
 
 void HeapSnapshotBuilder::setWrappedObjectForCell(JSCell* cell, void* wrappedPtr)
 {
+    if (hasOverflowed()) [[unlikely]]
+        return;
     m_wrappedObjectPointers.set(cell, wrappedPtr);
 }
 
@@ -310,6 +345,8 @@ static ASCIILiteral snapshotTypeToString(HeapSnapshotBuilder::SnapshotType type)
 
 void HeapSnapshotBuilder::setLabelForCell(JSCell* cell, const String& label)
 {
+    if (hasOverflowed()) [[unlikely]]
+        return;
     m_cellLabels.set(cell, label);
 }
 
@@ -345,6 +382,12 @@ String HeapSnapshotBuilder::json()
 NEVER_INLINE void HeapSnapshotBuilder::dumpToStream(PrintStream& out)
 {
     JSC_REMOVABLE_DEFINITION(Profilers, &HeapSnapshotBuilder::dumpToStream);
+    // Some edges are missing. A document printed from the others would read as a whole snapshot.
+    if (hasOverflowed()) {
+        out.print("Overflowed, aborting.");
+        return;
+    }
+
     VM& vm = m_profiler.vm();
     DeferGCForAWhile deferGC(vm);
 
