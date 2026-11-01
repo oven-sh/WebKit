@@ -251,7 +251,17 @@ Boxed HashTableBuiltinEmitter::lookUpAmongTags(const InlineCall& call, CellPoint
     LValue bitsOfUsedTags = m_out.shl(m_out.zeroExtPtr(m_out.load32(inHeader(table, CompactTable::offsetOfUsed()))), m_out.constInt32(3));
     LValue values = returnsValue ? m_out.add(table, m_out.shl(m_out.zeroExtPtr(m_out.castToInt32(kinds)), m_out.constInt32(2))) : nullptr;
     LValue valuesAreNarrow = returnsValue ? m_out.equal(m_out.bitAnd(m_out.lShr(kinds, m_out.constInt32(48)), m_out.constInt64(0xff)), m_out.constInt64(static_cast<int64_t>(CompactTable::Width::Narrow))) : nullptr;
-    Pointer impl = emitter<StringEmitter>().implOfFlatString(key);
+    // The type says which characters the key has, not which object it is: a text that was joined or cut out of another one may still be a rope. What is written here is flat.
+    ValueID written = call.argument(0);
+    while (resultRuleOf(m_function.at(written).opcode) == ResultRule::Cast)
+        written = m_function.at(written).valueOperand();
+    bool isWrittenHere = m_function.at(written).opcode == Opcode::String;
+    Pointer impl = isWrittenHere ? emitter<StringEmitter>().implOfFlatString(key) : loadField<Pointer>(key, m_heaps.JSString_value);
+    if (!isWrittenHere) {
+        LBasicBlock isFlat = newBlock();
+        m_out.branch(hasNoBits(impl, JSString::isRopeInPointer).value(), normalEdge(isFlat), unlikelyEdge(byStub));
+        m_out.appendTo(isFlat);
+    }
     LValue hashAndFlags = loadField<Word32>(impl, m_heaps.StringImpl_hashAndFlags).value();
     m_out.branch(m_out.aboveOrEqual(hashAndFlags, m_out.constInt32(1 << StringImpl::s_flagCount)), normalEdge(isHashed), unlikelyEdge(byStub));
 
