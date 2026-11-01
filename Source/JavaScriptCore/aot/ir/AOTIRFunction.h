@@ -56,6 +56,7 @@ public:
 
 private:
     friend struct Function;
+    friend struct FunctionBody;
 
     BodyTable(BodyTable&&) = default;
     BodyTable& operator=(const BodyTable&) = default;
@@ -127,12 +128,15 @@ struct ConstructionStart {
     bool isShownAtStart { false };
 };
 
-struct Function : FunctionRecord {
+struct FunctionBody {
     using Blocks = BodyTable<Block, 2>;
     using Values = BodyTable<Value, 4>;
 
     Blocks blocks;
     Values values;
+};
+
+struct Function : FunctionBody, FunctionRecord {
     // Sorted by value. A value's position is where an error is reported; only a value that the source text has elsewhere is listed.
     Vector<WrittenPosition> writtenPositions;
     Vector<ConstructionStart> constructionStarts;

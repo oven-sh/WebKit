@@ -335,7 +335,9 @@ private:
     void invalidateCodeBlocksOnStack(CallFrame*) { }
 #endif
 
+#if !USE(BUN_JSC_ADDITIONS)
     StackManager m_stack;
+#endif
     Atomic<BitField> m_trapBits { 0 };
     unsigned m_deferTerminationCount { 0 };
     bool m_needToInvalidateCodeBlocks { false };
@@ -353,6 +355,9 @@ private:
     // Prevents dispatching multiple idle stop handlers for a single stop cycle.
     Atomic<bool> m_hasDispatchedIdleStopHandler { false };
 
+#if USE(BUN_JSC_ADDITIONS)
+    StackManager m_stack;
+#endif
     Box<Lock> m_trapSignalingLock;
     Box<Condition> m_condition;
 

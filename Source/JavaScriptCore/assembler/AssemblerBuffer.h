@@ -244,8 +244,13 @@ namespace JSC {
 
         bool isInlineBuffer() const { return m_buffer == m_inlineBuffer; }
         char* m_buffer;
+#if USE(BUN_JSC_ADDITIONS)
+        unsigned m_capacity;
+        char m_inlineBuffer[InlineCapacity];
+#else
         char m_inlineBuffer[InlineCapacity];
         unsigned m_capacity;
+#endif
     };
 
 #if ENABLE(JIT_SIGN_ASSEMBLER_BUFFER)
@@ -531,8 +536,13 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
         friend LinkBuffer;
 
+#if USE(BUN_JSC_ADDITIONS)
+        unsigned m_index { 0 };
+        AssemblerData m_storage;
+#else
         AssemblerData m_storage;
         unsigned m_index { 0 };
+#endif
 #if ENABLE(JIT_SIGN_ASSEMBLER_BUFFER)
         ARM64EHash<ShouldSign::Yes> m_hash;
         AssemblerHashes m_hashes;

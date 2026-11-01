@@ -48,13 +48,21 @@ using namespace B3;
 
 #if ENABLE(FTL_JIT)
 Output::Output(State& state)
+#if USE(BUN_JSC_ADDITIONS)
+    : OutputPosition { *state.proc }
+#else
     : m_proc(*state.proc)
+#endif
 {
 }
 #endif
 
 Output::Output(B3::Procedure& proc)
+#if USE(BUN_JSC_ADDITIONS)
+    : OutputPosition { proc }
+#else
     : m_proc(proc)
+#endif
     , m_blockLinks { BlockLink { } }
 {
 }

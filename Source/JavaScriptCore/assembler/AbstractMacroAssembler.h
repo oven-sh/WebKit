@@ -1196,6 +1196,10 @@ protected:
         invalidateAllTempRegisters();
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned m_tempRegistersValidBits;
+    bool m_allowScratchRegister { true };
+#endif
 public:
     AssemblerType m_assembler;
 protected:
@@ -1299,8 +1303,10 @@ protected:
     friend class AllowMacroScratchRegisterUsage;
     friend class AllowMacroScratchRegisterUsageIf;
     template<typename T> friend class DisallowMacroScratchRegisterUsage;
+#if !USE(BUN_JSC_ADDITIONS)
     unsigned m_tempRegistersValidBits;
     bool m_allowScratchRegister { true };
+#endif
 
     Vector<std::pair<Label, String>> m_comments;
 
