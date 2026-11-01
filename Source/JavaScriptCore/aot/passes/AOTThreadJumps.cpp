@@ -744,85 +744,6 @@ struct EdgeThreader : Rewrite {
 
     bool isSeldomTaken(Edge edge) const { return at(edge.from).frequency.predicted() == BlockFrequency::Rare; }
 
-    // The one object that the likely ways make and pass, where an unlikely way passes something else: by itself the object need not be made.
-    ValueID findObjectMadeButOnUnlikelyWays(const CFG& cfg, BlockID id, size_t position) const
-    {
-        ValueID passedOnLikelyWays;
-        bool isPassedOnUnlikelyWay = false;
-        for (Edge edge : cfg.incomingEdges(id)) {
-            const Arguments& arguments = targetOf(function, edge).arguments;
-            if (edge.isHandlerEdge() || position >= arguments.size())
-                return { };
-            if (at(edge.from).frequency.predicted() != BlockFrequency::Normal) {
-                if (!canRedirect(edge))
-                    return { };
-                isPassedOnUnlikelyWay = true;
-                continue;
-            }
-            if (passedOnLikelyWays && passedOnLikelyWays != arguments[position])
-                return { };
-            passedOnLikelyWays = arguments[position];
-        }
-        if (!isPassedOnUnlikelyWay || !passedOnLikelyWays)
-            return { };
-        const Value& made = at(passedOnLikelyWays);
-        return made.opcode == Opcode::NewObject && !made.prototypeOperand() ? passedOnLikelyWays : ValueID();
-    }
-
-    // Where a test of the members of a class has failed the object is made by another road, and the object of the likely way would be joined with that one and made in every turn.
-    // The next test of that class, which the join ends in, asks about no value, and its failing side relies on nothing: whoever takes the test for failed is right. So the unlikely way gets the block for itself and goes on there.
-    PassOutcome sendUnlikelyWaysPastTestsOfMembers()
-    {
-        bool hasCandidates = chooseMergePoints([&](const CFG& cfg, BlockID id) {
-            const Block& block = at(id);
-            if (block.terminator.kind != TerminatorKind::Branch || block.parameters.isEmpty() || block.frequency.predicted() != BlockFrequency::Normal)
-                return false;
-            ValueID condition = block.terminator.conditionOperand();
-            if (at(condition).opcode != Opcode::AreMembersUnchanged || !block.values.contains(condition))
-                return false;
-            if (isLoopHeader(cfg, id) || block.isHandlerBlock() || hasEdgeTo(block.terminator, id))
-                return false;
-            const Target& failed = block.terminator.notTaken();
-            if (!failed.proofs.isEmpty() || hasEdgeResults(function, Edge { id, 1 }) || at(failed.block).frequency.predicted() == BlockFrequency::Normal)
-                return false;
-            bool leavesObjectAlone = false;
-            for (size_t position = 0; position < block.parameters.size() && !leavesObjectAlone; ++position) {
-                ValueID made = findObjectMadeButOnUnlikelyWays(cfg, id, position);
-                leavesObjectAlone = made && std::ranges::any_of(at(condition).conditions(), [&](MemberConditionRecord asked) {
-                    return asked.layout == declaredLayoutOf(program, at(made).layout());
-                });
-            }
-            if (!leavesObjectAlone)
-                return false;
-            size_t numberOfCopies = std::ranges::count_if(cfg.incomingEdges(id), [&](Edge edge) { return at(edge.from).frequency.predicted() != BlockFrequency::Normal; });
-            if (context.exceeds(LimitID::MaxThreadedBlockValues, block.values.size() * numberOfCopies, condition))
-                return false;
-            return RegionCloner::checkCanDuplicate(analyses, singleElementSpan(id)) == CloneCheck::CanClone;
-        });
-        if (!hasCandidates)
-            return PassOutcome::Unchanged;
-
-        Vector<Edge, 8> unlikelyEdges;
-        for (BlockID candidate : candidates) {
-            for (Edge edge : incomingEdges[candidate]) {
-                if (at(edge.from).frequency.predicted() != BlockFrequency::Normal)
-                    unlikelyEdges.append(edge);
-            }
-        }
-        Vector<Expected<BlockFrequency>, 8> frequencies;
-        for (Edge edge : unlikelyEdges)
-            frequencies.append(at(edge.from).frequency);
-        Vector<BlockID, 8> copies = copyTargetsOf(unlikelyEdges.span());
-        for (size_t index = 0; index < copies.size(); ++index) {
-            builder().function().edit(copies[index], BlockEdit::Rest).frequency = frequencies[index];
-            decideTerminator(builder(), copies[index], 1);
-        }
-        for (BlockID copy : copies)
-            castArgumentsToParameters(builder(), copy, context.build.validates());
-        builder().applyInsertions();
-        return finish();
-    }
-
     // What an edge passes decides the test, but the block does more than test: it reads a variable that the code below uses, or may throw. No edge can skip that, and a copy of it costs less than the test and the merge.
     // A slow path that comes back knows nothing of what it passes. It keeps the block, and with it the test, which the other edges no longer pay for.
     // Only behind the rounds: PlaceTypeTests would copy the code below the join once more for the type that the copy knows.
@@ -1309,7 +1230,6 @@ PassOutcome threadJumps(FunctionPassContext& context)
     }
     PassOutcome outcome = EdgeThreader(context).threadBranchesOnParameters();
     outcome |= EdgeThreader(context).threadDecidedBranches();
-    outcome |= EdgeThreader(context).sendUnlikelyWaysPastTestsOfMembers();
     EdgeThreader joinCopier(context);
     PassOutcome copiedSmallJoins = joinCopier.copySmallJoins();
     // A phase that has chosen no merge point has kept nothing but what it noted for the next one. Where it has copied a block, that is out of date, and the pass runs again.
