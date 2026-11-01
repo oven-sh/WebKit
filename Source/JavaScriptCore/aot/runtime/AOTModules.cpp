@@ -6695,7 +6695,7 @@ void runBodyOfRequiredFileAheadOfMock(JSGlobalObject* realm, ModuleID moduleOfHo
         return;
     MockDoor door(modules, module, "runBodyOfRequiredFileAheadOfMock"_s);
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
-    modules->didEndMock(module);
+    modules->forgetMockThatWaits(module);
     RETURN_IF_EXCEPTION(scope, void());
     scope.release();
     modules->require(module, ModuleID(), Modules::RequiredBy::Program);
