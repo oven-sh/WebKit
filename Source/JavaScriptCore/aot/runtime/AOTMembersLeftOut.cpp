@@ -12,6 +12,8 @@
 #include "AOTVector.h"
 #include "Error.h"
 #include "Exception.h"
+#include "FunctionPrototype.h"
+#include "InternalFunction.h"
 #include "JSCInlines.h"
 #include "JSNativeStdFunction.h"
 #include "ObjectConstructor.h"
@@ -77,6 +79,69 @@ JSC_DEFINE_HOST_FUNCTION(constructStandIn, (JSGlobalObject* realm, CallFrame* ca
     return uncheckedDowncast<JSNativeStdFunction>(callFrame->jsCallee())->function()(realm, callFrame);
 }
 
+bool throwMessageOfStandIn(JSGlobalObject* realm, JSCell* standIn)
+{
+    String message;
+    {
+        Locker locker { membersLock };
+        for (const StandIn& known : membersByVM().find(&realm->vm())->value.standIns) {
+            if (known.function.get() == standIn)
+                message = known.message;
+        }
+    }
+    auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    throwException(realm, scope, createError(realm, message));
+    return false;
+}
+
+JSC_DECLARE_HOST_FUNCTION(useStandInForValue);
+
+JSC_DEFINE_HOST_FUNCTION(useStandInForValue, (JSGlobalObject* realm, CallFrame* callFrame))
+{
+    throwMessageOfStandIn(realm, callFrame->jsCallee());
+    return encodedJSValue();
+}
+
+// What was left out may be an object that the program has under another name. A write to what stands in for it would never arrive there, so it is refused as a call is.
+class StandInForValue final : public InternalFunction {
+public:
+    using Base = InternalFunction;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesPut | ProhibitsPropertyCaching;
+
+    static StandInForValue* create(VM& vm, JSGlobalObject* realm, const String& name)
+    {
+        Structure* structure = Structure::create(vm, realm, realm->functionPrototype(), TypeInfo(InternalFunctionType, StructureFlags), info());
+        auto* standIn = new (NotNull, allocateCell<StandInForValue>(vm)) StandInForValue(vm, structure);
+        standIn->finishCreation(vm, 0, name);
+        return standIn;
+    }
+
+    DECLARE_INFO;
+
+    static bool put(JSCell* cell, JSGlobalObject* realm, PropertyName name, JSValue value, PutPropertySlot& slot)
+    {
+        // An object below it takes the store itself.
+        if (slot.thisValue() != JSValue(cell))
+            return Base::put(cell, realm, name, value, slot);
+        return throwMessageOfStandIn(realm, cell);
+    }
+    static bool putByIndex(JSCell* cell, JSGlobalObject* realm, unsigned, JSValue, bool) { return throwMessageOfStandIn(realm, cell); }
+    static bool deleteProperty(JSCell* cell, JSGlobalObject* realm, PropertyName, DeletePropertySlot&) { return throwMessageOfStandIn(realm, cell); }
+    static bool deletePropertyByIndex(JSCell* cell, JSGlobalObject* realm, unsigned) { return throwMessageOfStandIn(realm, cell); }
+    static bool defineOwnProperty(JSObject* object, JSGlobalObject* realm, PropertyName, const PropertyDescriptor&, bool) { return throwMessageOfStandIn(realm, object); }
+    static bool setPrototype(JSObject* object, JSGlobalObject* realm, JSValue, bool) { return throwMessageOfStandIn(realm, object); }
+    static bool preventExtensions(JSObject* object, JSGlobalObject* realm) { return throwMessageOfStandIn(realm, object); }
+
+private:
+    StandInForValue(VM& vm, Structure* structure)
+        : Base(vm, structure, useStandInForValue, useStandInForValue)
+    {
+    }
+};
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(StandInForValue, InternalFunction);
+
+const ClassInfo StandInForValue::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(StandInForValue) };
+
 } // namespace
 
 void noteErrorOfCodeLeftOut(JSGlobalObject* realm, JSObject* error)
@@ -130,9 +195,11 @@ static JSValue standInThatThrows(JSGlobalObject* realm, String&& message, const 
         auto throwScope = DECLARE_THROW_SCOPE(caller->vm());
         return throwVMError(caller, throwScope, createError(caller, message));
     };
-    bool canBeConstructed = !function || function->canBeConstructed;
-    JSObject* standIn = JSNativeStdFunction::create(vm, realm, function ? function->length : 0, nameOfMember, WTF::move(throwsWhenCalled), NoIntrinsic, canBeConstructed ? NativeFunction(constructStandIn) : NativeFunction(callHostFunctionAsConstructor));
-    if (function && canBeConstructed)
+    bool canBeConstructed = function && function->canBeConstructed;
+    JSObject* standIn = function
+        ? static_cast<JSObject*>(JSNativeStdFunction::create(vm, realm, function->length, nameOfMember, WTF::move(throwsWhenCalled), NoIntrinsic, canBeConstructed ? NativeFunction(constructStandIn) : NativeFunction(callHostFunctionAsConstructor)))
+        : StandInForValue::create(vm, realm, nameOfMember);
+    if (canBeConstructed)
         standIn->putDirect(vm, vm.propertyNames->prototype, constructEmptyObject(realm), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
 
     Locker locker { membersLock };
