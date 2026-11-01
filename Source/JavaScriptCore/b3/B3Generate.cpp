@@ -417,6 +417,18 @@ static constexpr Step steps[] = {
         NeededEstimate::BlockFrequencies },
 };
 
+#if ASSERT_ENABLED
+void poisonStaleValueOwners(Procedure& procedure)
+{
+    for (BasicBlock* block : procedure) {
+        for (Value* value : *block) {
+            if (value->owner != block)
+                value->owner = std::bit_cast<BasicBlock*>(static_cast<uintptr_t>(0xbadbeef0));
+        }
+    }
+}
+#endif
+
 void runCleanups(std::span<Procedure* const> procedures, std::span<PipelineState> states)
 {
     struct CleanupPass {
@@ -434,8 +446,12 @@ void runCleanups(std::span<Procedure* const> procedures, std::span<PipelineState
     for (const CleanupPass& cleanupPass : cleanupPasses) {
         for (size_t index = 0; index < procedures.size(); ++index) {
             Procedure& procedure = *procedures[index];
-            if (states[index].pendingCleanups.contains(cleanupPass.cleanup) && !procedure.report().failure)
+            if (states[index].pendingCleanups.contains(cleanupPass.cleanup) && !procedure.report().failure) {
+#if ASSERT_ENABLED
+                poisonStaleValueOwners(procedure);
+#endif
                 cleanupPass.run(procedure);
+            }
         }
     }
 
@@ -460,6 +476,9 @@ void runSteps(std::span<Procedure* const> procedures, const StepObserver* observ
                 procedure.updateEdgeClasses();
             else if (step.neededEstimate == NeededEstimate::BlockFrequencies)
                 procedure.updateFrequencies();
+#if ASSERT_ENABLED
+            poisonStaleValueOwners(procedure);
+#endif
             state.pendingCleanups = step.run(procedure, state);
             hasPendingCleanups |= !state.pendingCleanups.isEmpty();
         }
