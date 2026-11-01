@@ -3160,7 +3160,7 @@ struct TestPlacer {
         emitTests();
         rewriteUses();
         if (copy)
-            copy->addWaysBack(changedValues.span(), GenericCopy::TypesTestedOnWayBack::Expected);
+            copy->addWaysBack(changedValues, GenericCopy::TypesTestedOnWayBack::Expected);
         enterCopyBeforeRepeatableCode();
         repairProofs();
         replaceDominatedUses();

@@ -260,6 +260,8 @@ struct FlowBuiltinTables {
     Vector<BuiltinLocationFlow> locations;
     // One record for each place in the source that writes a location, by holder, key and place.
     Vector<BuiltinLocationFlow> writesOfLocations;
+    // A place that writes to a built-in object with locked members under a name that flow cannot list. No key. Constant: the key is a number, and the object takes nothing at an index.
+    Vector<BuiltinLocationFlow> writesUnderUnreadNames;
     BitVector constantMembers;
     BitVector intactHolders;
     BitVector holdersReachedThroughUnknownObject;
@@ -428,6 +430,7 @@ public:
     const BitVector& builtinMembersLockedAtStartUp() const LIFETIME_BOUND { return m_tables.builtins.membersLockedAtStartUp; }
     const BitVector& builtinMembersWrittenInSharedRealm() const LIFETIME_BOUND { return m_tables.builtins.membersWrittenInSharedRealm; }
     std::span<const BuiltinLocationFlow> writesOfBuiltinLocations() const LIFETIME_BOUND { return m_tables.builtins.writesOfLocations.span(); }
+    std::span<const BuiltinLocationFlow> writesOfBuiltinsUnderUnreadNames() const LIFETIME_BOUND { return m_tables.builtins.writesUnderUnreadNames.span(); }
 
     std::span<const AccessSite> accessSites() const LIFETIME_BOUND { return m_tables.sites.accessSites.span(); }
     std::span<const AllocationSite> allocationSites() const LIFETIME_BOUND { return m_tables.sites.allocationSites.span(); }

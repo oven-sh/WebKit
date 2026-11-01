@@ -148,7 +148,7 @@ operation CatchException () -> natural(Exception) ; UsesRuntime collects ; runti
 
 family Hint AsRead..Placed
 operation LoopHint () [| engine isVersioned replacesTailCalls throwsOwedError leavesOwedError] -> none ; UsesRuntime throws terminates collects ; runtime = PollSlow ; flow = TableProves ; flowsWithoutRule = true
-operation ReleaseHint (value: Any/inspects) -> none ; writes(ExternalState) ; boundTo = Function ; flow = TableProves ; flowsWithoutRule = true
+operation ReleaseHint (value: Any/inspects) [| engine isBehindCopiedBody] -> none ; writes(ExternalState) ; boundTo = Function ; flow = TableProves ; flowsWithoutRule = true
 
 family Control AsRead..Placed
 terminator Jump () -> next ; none ; canEndInteriorBlock = true ; canEndHeadBlock = true ; canEndBlockOfHead = true

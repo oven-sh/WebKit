@@ -31,11 +31,23 @@ private:
     bool isIterationEnd(const NaturalLoop&, BasicBlock*) const;
     void walkLikelyEdges(const NaturalLoop&);
     void computeImmediateDominators(const NaturalLoop&);
-    BasicBlock* nearestCommonDominator(BasicBlock*, BasicBlock*) const;
+    BasicBlock* nearestCommonDominator(BasicBlock*, BasicBlock*);
+    BasicBlock* meetByWaysUp(BasicBlock*, BasicBlock*);
+    void linkToImmediateDominator(BasicBlock*);
 
+    Procedure& m_proc;
     const NaturalLoops& m_loops;
     IndexMap<BasicBlock*, std::optional<unsigned>> m_postOrderNumber;
     IndexMap<BasicBlock*, BasicBlock*> m_immediateDominator;
+    struct WayUp {
+        unsigned depth { 0 };
+        BasicBlock* farAncestor { nullptr };
+    };
+    IndexMap<BasicBlock*, WayUp> m_wayUp;
+    bool m_mayHaveWaysUp { false };
+    unsigned m_firstBlockWithFinalDominator { 0 };
+    unsigned m_firstBlockWithWayUp { 0 };
+    uint64_t m_stepsToCommonDominators { 0 };
     Vector<BasicBlock*, 32> m_postOrder;
     Vector<BasicBlock*, 8> m_iterationEnds;
 };

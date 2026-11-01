@@ -238,9 +238,15 @@ static bool appendArrayLike(JSGlobalObject* globalObject, VM& vm, MarkedArgument
         return false;
     }
     JSObject* object = asObject(list);
+    // A mapped arguments object of which nothing was overridden has its length and its elements as plain data.
+    auto* mapped = dynamicDowncast<DirectArguments>(object);
+    if (mapped && mapped->overrodeThings())
+        mapped = nullptr;
     uint64_t length;
     if (auto* array = dynamicDowncast<JSArray>(object)) [[likely]]
         length = array->length();
+    else if (mapped)
+        length = mapped->internalLength();
     else {
         length = toLength(globalObject, object);
         RETURN_IF_EXCEPTION(scope, false);
@@ -249,9 +255,14 @@ static bool appendArrayLike(JSGlobalObject* globalObject, VM& vm, MarkedArgument
         throwStackOverflowError(globalObject, scope);
         return false;
     }
-    for (uint64_t index = 0; index < length; ++index) {
-        arguments.append(object->getIndex(globalObject, index));
-        RETURN_IF_EXCEPTION(scope, false);
+    if (mapped) {
+        for (uint32_t index = 0; index < length; ++index)
+            arguments.append(mapped->getIndexQuickly(index));
+    } else {
+        for (uint64_t index = 0; index < length; ++index) {
+            arguments.append(object->getIndex(globalObject, index));
+            RETURN_IF_EXCEPTION(scope, false);
+        }
     }
     if (arguments.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
@@ -457,6 +468,29 @@ static JSArray* tryCopyUnmappedArguments(Instance* instance, JSValue arrayLike)
     return list;
 }
 
+// So has a mapped one of which nothing was overridden.
+static JSArray* tryCopyMappedArguments(Instance* instance, JSValue arrayLike)
+{
+    AOT_THRESHOLD(uint32_t, maxLengthCopied, 64);
+    VM& vm = *instance->vm;
+    auto* arguments = arrayLike.isCell() ? dynamicDowncast<DirectArguments>(arrayLike.asCell()) : nullptr;
+    if (!arguments || arguments->overrodeThings() || arguments->internalLength() > maxLengthCopied)
+        return nullptr;
+    uint32_t count = arguments->internalLength();
+    for (uint32_t i = 0; i < count; ++i) {
+        if (!arguments->getIndexQuickly(i))
+            return nullptr;
+    }
+    ObjectInitializationScope initializationScope(vm);
+    JSArray* list = JSArray::tryCreateUninitializedRestricted(initializationScope, instance->globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), count);
+    if (!list)
+        return nullptr;
+    for (uint32_t i = 0; i < count; ++i)
+        list->initializeIndexWithoutBarrier(initializationScope, i, arguments->getIndexQuickly(i), ArrayWithContiguous);
+    ensureStillAliveHere(arguments);
+    return list;
+}
+
 // Function.prototype.apply up to the call: the callee is tested before the list is read.
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArgumentList, JSCell*, (Instance* instance, EncodedJSValue callee, EncodedJSValue arrayLike))
 {
@@ -466,6 +500,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArgumentList, JSCell*, (Instance* instan
     if (!function.isCallable())
         OPERATION_RETURN(scope, constructEmptyArray(globalObject, nullptr));
     if (JSArray* list = tryCopyUnmappedArguments(instance, JSValue::decode(arrayLike)))
+        OPERATION_RETURN(scope, list);
+    if (JSArray* list = tryCopyMappedArguments(instance, JSValue::decode(arrayLike)))
         OPERATION_RETURN(scope, list);
     MarkedArgumentBuffer arguments;
     bool didAppend = appendArrayLike(globalObject, vm, arguments, JSValue::decode(arrayLike));

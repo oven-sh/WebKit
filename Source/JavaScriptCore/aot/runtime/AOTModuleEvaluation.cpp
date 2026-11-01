@@ -576,13 +576,47 @@ JSValue Modules::callBodyUnderOwnMark(ModuleID module, bool bodyStoresStatus, bo
     return result;
 }
 
-// No body runs again. Where the module does not keep the error, whoever asks for it later gets what it had exported when it threw.
+void Modules::forgetRunThatThrew(ModuleID file)
+{
+    VM& vm = *m_instance.vm;
+    if (LoadedModule* loaded = loadedIfExists(file)) {
+        if (loaded->requirer && data(file).hasValue())
+            loaded->requirer->putDirect(vm, vm.propertyNames->exports, commonJSExports(file));
+        loaded->requirer.set(*this, nullptr);
+        loaded->requireFunction.set(*this, JSValue());
+        loaded->requiredValue.set(*this, JSValue());
+        loaded->requiredModules.clear();
+        loaded->numberOfChildrenShown = 0;
+        loaded->firstRequirer = std::nullopt;
+        loaded->synchronousLoadCountAtStart = std::nullopt;
+    }
+    m_recordedRequires.removeIf([&](const auto& recorded) {
+        return static_cast<uint32_t>(recorded.key) == file.index();
+    });
+    m_modulesFirstRequiredByCallsInProgress.removeAll(file);
+    setStatus(file, ModuleStatus::Linked);
+}
+
+// An import() that was called ahead of the require() has asked the loader for the file, waits for its text, or has queued its first job.
+bool Modules::isAwaitedByImport(ModuleID file)
+{
+    for (ModuleID fileOrFace : { file, m_table.faceOfFile(file).value_or(file) }) {
+        if (m_modulesOfQueuedImports.get(fileOrFace.index()) || std::ranges::contains(m_loadsInFlight, fileOrFace, &LoadInFlight::root) || std::ranges::contains(textsThatWait(), fileOrFace, &TextThatWaits::module))
+            return true;
+    }
+    return false;
+}
+
+// Where the module does not keep the error, whoever asks for it later gets what it had exported when it threw.
 void Modules::didThrowInBody(ModuleID module, JSValue error)
 {
     // `bun run` takes a CommonJS file whose body throws out of require.cache, and the next require() runs it again. A test run loads it again from disk where its build
     // has compiled the code that asks for the file for a file that may load twice.
-    if (data(module).kind == ModuleKind::CommonJs && mayBeEvicted(module) && status(module) == ModuleStatus::Evaluating && !loaderHasFileThatThrew(module)) [[unlikely]] {
-        evict(module);
+    if (data(module).kind == ModuleKind::CommonJs && (mayBeEvicted(module) || (data(module).runsAgainAfterThrow() && !isAwaitedByImport(module))) && status(module) == ModuleStatus::Evaluating && !loaderHasFileThatThrew(module)) [[unlikely]] {
+        if (mayBeEvicted(module))
+            evict(module);
+        else
+            forgetRunThatThrew(module);
         return;
     }
     if (data(module).keepsError())
@@ -2702,6 +2736,74 @@ void Modules::evaluateWithOwnStack(ModuleID root)
         capability->reject(vm, exception->value());
 }
 
+// No walk of an evaluation goes below a module that has run. This one does, and runs what a mock kept from running, when a graph comes by that holds an importer of it.
+void Modules::evaluateModulesOwedBelow(ModuleID root)
+{
+    VM& vm = *m_instance.vm;
+    // A file imports from its own image and from those below.
+    bool isOwedInImageBelow = false;
+    if (vm.aotState().hasSeveralImages) [[unlikely]] {
+        for (Instance* instance = m_instance.globalObject->aotInstance(); instance && instance != &m_instance; instance = instance->above) {
+            Modules* modules = instance->state ? instance->state->modules.get() : nullptr;
+            isOwedInImageBelow |= modules && !modules->m_modulesOwedToImportersThatRan.isEmpty();
+        }
+    }
+    if (m_modulesOwedToImportersThatRan.isEmpty() && !isOwedInImageBelow) [[likely]]
+        return;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    BitVector isSeen(m_table.size());
+    Vector<ModuleID, 16> toVisit { root };
+    Vector<ModuleID, 4> owed;
+    Vector<Identifier, 4> filesOfImagesBelow;
+    while (!toVisit.isEmpty()) {
+        ModuleID module = toVisit.takeLast();
+        if (isSeen.quickSet(module.index()))
+            continue;
+        if (isOwedInImageBelow && data(module).isUncompiledCode()) {
+            filesOfImagesBelow.append(resolvedKey(module));
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        // An importer that has yet to run brings the module along in its own turn.
+        ModuleStatus statusOfImporter = status(module);
+        bool hasRun = statusOfImporter == ModuleStatus::Evaluated || statusOfImporter == ModuleStatus::EvaluatingAsync;
+        for (const ModuleRequestData& request : m_table.imports(module)) {
+            if (request.isDeferred)
+                continue;
+            toVisit.append(request.targetModule());
+            if (hasRun && m_modulesOwedToImportersThatRan.get(request.target()))
+                owed.append(request.targetModule());
+        }
+    }
+    for (ModuleID module : owed) {
+        if (!m_modulesOwedToImportersThatRan.get(module.index()))
+            continue;
+        m_modulesOwedToImportersThatRan.clear(module.index());
+        if (status(module) >= ModuleStatus::Evaluating || mockInPlace(module))
+            continue;
+        JSPromise* evaluation = evaluate(module, std::nullopt, nullptr);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (evaluation->status() == JSPromise::Status::Rejected) {
+            evaluation->markAsHandled();
+            throwException(m_instance.globalObject, scope, evaluation->result());
+            return;
+        }
+    }
+    if (filesOfImagesBelow.isEmpty())
+        return;
+    // The graph goes on in the image that holds the file.
+    Instance::forEachOf(m_instance.globalObject, [&](Instance& instance) {
+        Modules* modules = instance.state ? instance.state->modules.get() : nullptr;
+        if (!modules || instance.program->position() >= m_instance.program->position() || scope.exception())
+            return;
+        for (const Identifier& key : filesOfImagesBelow) {
+            if (std::optional<ModuleID> file = modules->findByKey(key))
+                modules->evaluateModulesOwedBelow(*file);
+            if (scope.exception()) [[unlikely]]
+                return;
+        }
+    });
+}
+
 JSPromise* Modules::evaluate(ModuleID root, std::optional<int64_t> referrerAsyncOrder, JSPromise* importPromise, const ModuleLinkWalk* linkWalk, bool isLinked)
 {
     JSGlobalObject* realm = m_instance.globalObject;
@@ -3373,6 +3475,7 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
 
     if (targetData.isUncompiledCode()) {
         m_runsCopyFromDisk |= m_table.pathText(target).contains('?');
+        m_uncompiledNamespacesNotShownYet.clear(target.index());
         RELEASE_AND_RETURN(scope, requireSpecifier(pathString(target), *targetData.referrerModule(), true));
     }
     if (!targetData.hasExportTable()) {
@@ -4068,11 +4171,16 @@ JSValue Modules::resolveDynamic(JSValue specifier, ModuleID referrer, ResolvedSp
 // Compiled code creates the object on first use, so the first require() decides here.
 void Modules::willRequireESModule(ModuleID module)
 {
-    if (m_modulesWithMarkOfRequire.get(module.index()) || namespaceIfCreated(module, ModulePhase::Evaluation))
+    if (m_modulesWithMarkOfRequire.get(module.index()))
+        return;
+    JSObject* created = namespaceIfCreated(module, ModulePhase::Evaluation);
+    if (created && !m_namespacesThatOnlyImagesAboveHold.get(module.index()))
         return;
     if (data(module).isImportedAsNamespace() && !isNotLoaded(module))
         return;
     m_modulesWithExtensibleNamespace.set(module.index());
+    if (created)
+        created->setStructure(*m_instance.vm, namespaceStructure(false));
 }
 
 // From the first require() on, the namespace object of a module without an export `__esModule` reads `true` under that name, for everybody who holds it.

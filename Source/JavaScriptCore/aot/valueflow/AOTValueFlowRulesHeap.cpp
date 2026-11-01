@@ -774,6 +774,10 @@ void HeapRule::define(const ValueFlowOperand& object, const HeapKey& key, HeapPr
         write(holders, writtenName(key, part), value);
         noteWrittenMembers(holders, key, true);
     }
+    if (ClimbingSet given = builtinObjectsGivenByReadsUnderKeysNobodyKnows(object, receivers, key); holdsAnything(given)) {
+        writeToListedObjects(given, writtenName(key, part), value);
+        noteWrittenMembers(given, key, true);
+    }
     if (ClimbingSet prototypes = prototypeObjectsListedBesideUnknownObject(object, receivers, key); holdsAnything(prototypes))
         write(prototypes, writtenName(key, part), value);
     notePrototypeObjectsThatWriteMayReach(object, receivers, key);
@@ -961,6 +965,15 @@ ClimbingSet HeapRule::unlockedObjectsListedBesideUnknownObject(const ValueFlowOp
     return holdsAnything(listed) ? m_context.valueWithin(listed, m_context.nodes().ofHost(ValueFlowHostNode::BuiltinObjectsThatStatementsWrite)) : ClimbingSet();
 }
 
+// `Object.defineProperty(globalThis[holder], key, ..)`, `delete globalThis[holder][key]`: the read has given one of the host's objects, and the key may be the name of any member of it.
+ClimbingSet HeapRule::builtinObjectsGivenByReadsUnderKeysNobodyKnows(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey& key)
+{
+    if (key.keyClass != HeapKeyClass::Unknown || !isInProgramCode())
+        return { };
+    ClimbingSet listed = builtinObjectsListedBesideUnknownObject(object, receivers, key);
+    return holdsAnything(listed) ? m_context.valueWithin(listed, m_context.nodes().ofHost(ValueFlowHostNode::AnswersThatNoReadLists)) : ClimbingSet();
+}
+
 // `Point.prototype.norm = ..` where Point has escaped: the receiver is the prototype object beside the unknown object. A receiver shows that object only until it has escaped itself, and the members of a class are read off what is written on it, so whether the rule ran before or after must not decide.
 ClimbingSet HeapRule::prototypeObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey& key)
 {
@@ -1102,6 +1115,11 @@ void HeapRule::remove(const ValueFlowOperand& object, const HeapKey& key)
     if (ClimbingSet holders = holdersOfReplaceableMemberThatUnknownObjectMayBe(object, receivers, key); holdsAnything(holders)) {
         noteWrittenMembers(holders, key, true);
         noteDeletedMembers(holders, key);
+    }
+    if (ClimbingSet given = builtinObjectsGivenByReadsUnderKeysNobodyKnows(object, receivers, key); holdsAnything(given)) {
+        noteWrittenMembers(given, key, true);
+        noteMembersLookedForBeforeChange(given, key, true);
+        noteDeletedMembers(given, key);
     }
     notePrototypeObjectsThatWriteMayReach(object, receivers, key);
     m_context.mark(m_context.restrict(receivers, m_universe.objects()), ObjectMutation::DeleteField);

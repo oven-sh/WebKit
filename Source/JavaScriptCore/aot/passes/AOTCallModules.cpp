@@ -329,7 +329,7 @@ static void findSites(const EvaluationPlan& plan, const Vector<ModuleID>& module
             bool isFlagged = value.opcode == Opcode::EvaluateModule && value.isBare() && evaluated && value.referrer() == evaluated && !block.handler;
             // The walk comes to a module once, so of two bare sites the first alone calls it. `require("./a.cjs"); delete require.cache[path]; require("./a.cjs")` runs the file at both:
             // each site asks the status of the file.
-            isFlagged = isFlagged && !plan.program.at(site.target).flags.contains(ModuleFlags::MayBeEvicted);
+            isFlagged = isFlagged && !plan.program.at(site.target).flags.containsAny({ ModuleFlags::MayBeEvicted, ModuleFlags::RunsAgain });
             if (isFlagged && plan.isCalledWhereRequired.quickGet(site.target.index()))
                 flagged.append({ BlockID(blockIndex), site });
             else
@@ -884,13 +884,25 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
         }
     }
     // A module that runs again comes once more to what it imports, and reads from the state that it has run.
+    // In place of a module that was evicted its text from disk runs, and asks the loader for what it imports.
     for (size_t index = 0; index < modules.size(); ++index) {
-        if (!modules[index].flags.contains(ModuleFlags::RunsAgain))
+        if (!modules[index].flags.containsAny({ ModuleFlags::RunsAgain, ModuleFlags::MayBeEvicted }))
             continue;
+        if (modules[index].kind == ModuleKind::CommonJs && modules[index].flags.contains(ModuleFlags::RunsAgain))
+            isStart.quickSet(index);
         for (const ModuleRequest& request : modules[index].requests)
             isStart.quickSet(request.target.index());
         for (const ModuleCallSite& site : plan.bareSites[index])
             isStart.quickSet(site.target.index());
+    }
+    // What `require` answers for a file of data goes by whether a module that imports the file has been loaded, which is read from the state of that module: Modules::isHeldForImport().
+    for (size_t index = 0; index < modules.size(); ++index) {
+        if (modules[index].kind != ModuleKind::SourceText)
+            continue;
+        for (const ModuleRequest& request : modules[index].requests) {
+            if (request.kind == ModuleRequestKind::Import && program.at(request.target).requireResult == RequireResult::NamespaceIfImported)
+                isStart.quickSet(index);
+        }
     }
     plan.hasNoState = findModulesWithoutState(plan, isStart);
 

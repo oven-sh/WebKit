@@ -2941,6 +2941,8 @@ PassOutcome planArrayCapacities(FunctionPassContext& context)
 
     if (constructed)
         context.analyses.invalidate(valueAnalyses - analysesThatReadNoTypes);
+    if (readsHaveOtherTypes)
+        retypeValues(context);
     context.keptAnalyses = allAnalyses - FunctionAnalysis::Effects;
     // The length that stands in place of an append, or of a read of the length, has another type than the call had, and so has what uses it.
     if (!literalsWithAppends && !readsHaveOtherTypes && !appendsTold && !lengthsTold)

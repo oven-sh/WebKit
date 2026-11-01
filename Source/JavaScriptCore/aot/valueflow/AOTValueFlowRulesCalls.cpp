@@ -655,6 +655,13 @@ static bool findsValueNobodyKnowsThatProgramHasStored(ValueFlowRuleContext& cont
     return context.contains(context.valueOf(context.readWhatWasWritten(inHandsOfProgram, ValueFlowName::property(context.program(), key))), ValueFlowUniverse::unknownObject());
 }
 
+// Reflect.set, Object.assign, Object.defineProperty: called as a value nobody knows, it writes into an operand that may be an object nobody knows either.
+static void letEscapedFunctionsChangeUnknownObject(ValueFlowRuleContext& context)
+{
+    if (context.holdsAnyOf(ClimbingSet(context.universe().builtinTables().heap().functionsThatChangeOperand()), ValueFlowProgramNodes::escaped()))
+        context.add(context.nodes().ofHost(ValueFlowHostNode::ObjectNobodyKnowsIsWritten), context.universe().unknownObjectAlone());
+}
+
 static void callMemberNobodyKnows(const ValueFlowStatement& statement, ValueFlowRuleContext& context, PropertyKeyID key, bool receiversAreToldApart)
 {
     context.forEachMemberInLine(context.restrict(escapedMembersUnder(context, key), context.universe().builtinFunctions()), [&](ValueFlowObjectID member) {
@@ -664,6 +671,7 @@ static void callMemberNobodyKnows(const ValueFlowStatement& statement, ValueFlow
     raiseHostFlag(context, ValueFlowHostNode::MemberNobodyKnowsIsCalled);
 
     letUnknownCodeWrite(context);
+    letEscapedFunctionsChangeUnknownObject(context);
     // A proxy answers any name with what its trap returns.
     if (context.holdsAnyOf(ClimbingSet(context.universe().builtinTables().heap().objectsThatLetInUnseenCode()), ValueFlowProgramNodes::escaped()))
         letWhateverHasEscapedBeCalled(context);
@@ -840,7 +848,7 @@ static bool mayLookAtReceiver(ValueFlowRuleContext& context, ClimbingSet callees
 // What lets in unseen code stays listed beside a value nobody knows, so once it has escaped every callee nobody knows lists it.
 // Where such a callee is called, runUsedBuiltins() calls the functions of the host that have escaped, with operands nobody knows, once for the whole program. The operands of this call escape with it.
 // Applied here as well, a function that reads a hundred options would read them off the operands of every such call.
-static ClimbingSet withoutFunctionsOfHostThatWhoeverCallsWhatHasEscapedCalls(ValueFlowRuleContext& context, ClimbingSet callees)
+static ClimbingSet withoutFunctionsOfHostThatWhoeverCallsWhatHasEscapedCalls(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ClimbingSet callees)
 {
     const ValueFlowUniverse& universe = context.universe();
     const BuiltinTable& builtins = context.program().builtins();
@@ -849,13 +857,18 @@ static ClimbingSet withoutFunctionsOfHostThatWhoeverCallsWhatHasEscapedCalls(Val
         return callees;
     ClimbingSet called = context.valueWithin(context.valueWithin(listed, ValueFlowProgramNodes::escaped()), context.nodes().ofHost(ValueFlowHostNode::FunctionsOfHostTakenFromKnownHolders));
     Vector<ValueFlowObjectID, 8> ofHost;
+    Vector<ValueFlowObjectID, 32> returned;
     context.forEachMember(called, [&](ValueFlowObjectID function) {
-        if (builtins.at(universe.builtinOf(function)).origin == BuiltinOrigin::Host)
-            ofHost.append(function);
+        if (builtins.at(universe.builtinOf(function)).origin != BuiltinOrigin::Host)
+            return;
+        ofHost.append(function);
+        appendLoadersAndEvaluatorsReturnedBy(universe, builtins, builtins.canonicalID(universe.builtinOf(function)), returned);
     });
     if (ofHost.isEmpty())
         return callees;
     letWhateverHasEscapedBeCalled(context);
+    if (statement.result && !returned.isEmpty())
+        context.add(statement.result, ClimbingSet(context.maker().of(returned.span())));
     return context.restrict(callees, ValueSets::complement(context.maker().of(ofHost.span())));
 }
 
@@ -932,7 +945,7 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
         }
     }
     if (context.contains(callees, ValueFlowUniverse::unknownObject()))
-        listedCallees = withoutFunctionsOfHostThatWhoeverCallsWhatHasEscapedCalls(context, listedCallees);
+        listedCallees = withoutFunctionsOfHostThatWhoeverCallsWhatHasEscapedCalls(statement, context, listedCallees);
     callListedBuiltins(statement, context, listedCallees, kind, receiversFollowedBehindUnknownObject);
     allocateRowsOfQuery(statement, context);
     if (context.contains(callees, ValueFlowUniverse::unknownObject())) {
@@ -1242,6 +1255,7 @@ void runCallGroup(const ValueFlowStatement& statement, ValueFlowRuleContext& con
         return;
 
     letUnknownCodeWrite(context);
+    letEscapedFunctionsChangeUnknownObject(context);
     handOperandsToCodeNobodySees();
 }
 

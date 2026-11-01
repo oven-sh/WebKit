@@ -31,8 +31,19 @@ struct InstanceSizes {
 static_assert(sizeof(InstanceSizes) == 16 && isImageRecord<InstanceSizes>);
 
 struct InstanceLayout {
-    static constexpr size_t bytesReservedForPrefixAndPollPage = 1 * MB;
-    static constexpr size_t bytesReservedForLoopPollPage = 16 * KB;
+    // What is protected or mapped by itself begins at a page. A kernel for Linux on ARM64 may have pages of 64 KB, and a poll reaches only 32 KB up from the instance.
+    // So the instance does not begin at a page there: it ends 16 KB in front of one, and that page is the page of the polls.
+#if CPU(ARM64) && OS(LINUX) && !defined(BUN_HARDENED)
+    static constexpr size_t largestPageSize = 64 * KB;
+    static constexpr size_t distanceToPageEdge = 16 * KB;
+#else
+    static constexpr size_t largestPageSize = 16 * KB;
+    static constexpr size_t distanceToPageEdge = 0;
+#endif
+    static constexpr size_t bytesReservedForLoopPollPage = largestPageSize;
+    static constexpr size_t bytesReservedForPrefixAndPollPage = 1 * MB + (distanceToPageEdge ? largestPageSize - distanceToPageEdge : 0);
+    // The tables above the page of the polls lie this much higher than where that page has 16 KB.
+    static constexpr size_t shiftAboveLoopPollPage = largestPageSize - 16 * KB;
     static constexpr size_t granuleBelowInstance = 64 * KB;
     static constexpr size_t granuleAboveInstance = 16 * KB;
     static constexpr unsigned cardShift = 8;
@@ -40,7 +51,7 @@ struct InstanceLayout {
     // One card says whether a cell was written among this many bytes of string cells.
     static constexpr unsigned stringCellCardShift = 7;
     static constexpr size_t sizeOfSiteCache = 16;
-    static constexpr size_t offsetOfStringCells = 384 * KB;
+    static constexpr size_t offsetOfStringCells = 384 * KB + shiftAboveLoopPollPage;
 #if defined(BUN_HARDENED)
     // From here to the key order steps: what nothing writes once the instance has been created. The pages are read-only from then on.
     static constexpr size_t offsetOfWordsWrittenOnce = 16 * KB;
@@ -57,12 +68,12 @@ struct InstanceLayout {
     static constexpr ptrdiff_t offsetOfCopiesWithoutFrame = -static_cast<ptrdiff_t>(48 * KB);
     static constexpr size_t bytesReservedForCopiesWithoutFrame = 16 * KB;
     // Between the instance and the string cells.
-    static constexpr size_t offsetOfKeyOrderSteps = 32 * KB;
+    static constexpr size_t offsetOfKeyOrderSteps = 32 * KB + shiftAboveLoopPollPage;
     // Small tables of which compiled code reads one word at a time.
-    static constexpr size_t offsetOfBuiltinLocationStates = 64 * KB;
-    static constexpr size_t offsetOfGlobalBindings = 80 * KB;
-    static constexpr size_t offsetOfBuiltinCells = 128 * KB;
-    static constexpr size_t offsetOfBuiltinValues = 256 * KB;
+    static constexpr size_t offsetOfBuiltinLocationStates = 64 * KB + shiftAboveLoopPollPage;
+    static constexpr size_t offsetOfGlobalBindings = 80 * KB + shiftAboveLoopPollPage;
+    static constexpr size_t offsetOfBuiltinCells = 128 * KB + shiftAboveLoopPollPage;
+    static constexpr size_t offsetOfBuiltinValues = 256 * KB + shiftAboveLoopPollPage;
 
 #if CPU(ARM64) && !defined(BUN_HARDENED)
     // A poll is one load, and the immediate offset of a load reaches from the instance to 32 KB above it: the page lies between the instance and the key order steps.
@@ -87,8 +98,9 @@ struct InstanceLayout {
     static constexpr size_t offsetOfSiteCaches(InstanceSizes sizes) { return offsetOfStringCells + roundUpToMultipleOf<granuleAboveInstance>(sizes.numberOfStringCells * sizeOfStringCell); }
     static constexpr size_t offsetOfSiteCache(InstanceSizes sizes, uint32_t number) { return offsetOfSiteCaches(sizes) + number * sizeOfSiteCache; }
     // The instance's own copy of the method table: a copy-on-write clone of the section of the image, so it begins at a page.
-    static constexpr size_t offsetOfMethodTable(InstanceSizes sizes) { return offsetOfSiteCaches(sizes) + roundUpToMultipleOf<granuleAboveInstance>(sizes.numberOfSiteCaches * sizeOfSiteCache); }
-    static constexpr size_t bytesReservedForMethodTable(InstanceSizes sizes) { return roundUpToMultipleOf<granuleAboveInstance>(sizes.sizeOfMethodTable); }
+    static constexpr size_t offsetOfMethodTable(InstanceSizes sizes) { return roundUpToMultipleOf<largestPageSize>(offsetOfSiteCaches(sizes) + sizes.numberOfSiteCaches * sizeOfSiteCache - distanceToPageEdge) + distanceToPageEdge; }
+    static constexpr size_t bytesReservedForMethodTable(InstanceSizes sizes) { return roundUpToMultipleOf<largestPageSize>(sizes.sizeOfMethodTable); }
+    static constexpr bool beginsAtPage(ptrdiff_t offset) { return !((offset - static_cast<ptrdiff_t>(distanceToPageEdge)) % static_cast<ptrdiff_t>(largestPageSize)); }
     static constexpr size_t bytesReservedFromInstance(InstanceSizes sizes) { return offsetOfMethodTable(sizes) + bytesReservedForMethodTable(sizes); }
 
     static constexpr bool isAddressable(InstanceSizes sizes)
@@ -101,7 +113,8 @@ private:
     static constexpr size_t bytesReservedForStatics(InstanceSizes sizes) { return roundUpToMultipleOf<granuleBelowInstance>(std::max<size_t>(sizes.sizeOfStatics, 1)); }
 };
 
-static_assert(!(InstanceLayout::bytesReservedForPrefixAndPollPage % InstanceLayout::granuleBelowInstance));
+static_assert(InstanceLayout::largestPageSize <= InstanceLayout::granuleBelowInstance && !(InstanceLayout::largestPageSize % InstanceLayout::granuleAboveInstance));
+static_assert(InstanceLayout::beginsAtPage(-static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForPrefixAndPollPage)) && InstanceLayout::beginsAtPage(InstanceLayout::offsetOfLoopPollPage()));
 static_assert(!(InstanceLayout::offsetOfStringCells % InstanceLayout::granuleAboveInstance));
 #if defined(BUN_HARDENED)
 static_assert(!(InstanceLayout::offsetOfWordsWrittenOnce % InstanceLayout::granuleAboveInstance) && !(InstanceLayout::offsetOfKeyOrderSteps % InstanceLayout::granuleAboveInstance));

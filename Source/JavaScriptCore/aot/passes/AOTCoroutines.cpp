@@ -720,7 +720,9 @@ static void eraseEverywhere(IRBuilder&, const BitVector& marked);
 // `x = null` lets go of what x held. Where the function may be suspended between its last read of that value and the hint, the hint would be the one reader for whose
 // sake the suspended function holds the value. The registers and stack slots that hold it are those of the run that read it last, and the next run may lie at the same
 // addresses and never write them: a loop that steps a generator. So such a hint moves up to where the value was last read.
-static PassOutcome moveReleaseHintsInFrontOfSuspensions(FunctionPassContext& context)
+enum class HintsMoved : uint8_t { InFrontOfSuspensions, BehindLastReads };
+
+static PassOutcome moveReleaseHints(FunctionPassContext& context, HintsMoved hintsMoved)
 {
     Function& function = context.function;
     FunctionAnalyses& analyses = context.analyses;
@@ -728,7 +730,7 @@ static PassOutcome moveReleaseHintsInFrontOfSuspensions(FunctionPassContext& con
         return PassOutcome::Unchanged;
     // A function that is never suspended holds nothing for a hint's sake, and the pass is not started in its body.
     constexpr OpcodeSet suspensions { Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::IteratorResume, Opcode::IteratorClose };
-    if (!analyses.opcodesOfValues().intersects(suspensions))
+    if (hintsMoved == HintsMoved::InFrontOfSuspensions && !analyses.opcodesOfValues().intersects(suspensions))
         return PassOutcome::Unchanged;
 
     const CFG& cfg = analyses.cfg();
@@ -739,17 +741,21 @@ static PassOutcome moveReleaseHintsInFrontOfSuspensions(FunctionPassContext& con
         const CompactList<ValueID>& parameters = function.at(target.block).parameters;
         return argumentIndex >= parameters.size() || isRead.get(parameters[argumentIndex].index());
     };
+    // Under the name of a cast the value is read on: behind a copied body most reads are of that kind.
+    auto inFrontOfCasts = [&](ValueID value) {
+        return value && hintsMoved == HintsMoved::BehindLastReads ? sameObjectThroughCasts(function, value).valueInFrontOfFacts() : value;
+    };
     auto isReadBy = [&](const Value& value, ValueID released) {
         bool isRead = false;
-        value.forEachOperand([&](ValueID operand, uint32_t) { isRead |= operand == released; });
+        value.forEachOperand([&](ValueID operand, uint32_t) { isRead |= inFrontOfCasts(operand) == released; });
         return isRead && value.opcode != Opcode::ReleaseHint;
     };
     auto isReadAtEndOf = [&](const Block& block, ValueID released) {
-        bool isRead = block.subject == released;
-        block.terminator.Instruction::forEachChild([&](ValueID operand) { isRead |= operand == released; });
+        bool isRead = inFrontOfCasts(block.subject) == released;
+        block.terminator.Instruction::forEachChild([&](ValueID operand) { isRead |= inFrontOfCasts(operand) == released; });
         block.forEachTarget([&](const Target& target) {
             for (size_t index = 0; index < target.arguments.size(); ++index)
-                isRead |= target.arguments[index] == released && flowsIntoJoinThatIsRead(target, index);
+                isRead |= inFrontOfCasts(target.arguments[index]) == released && flowsIntoJoinThatIsRead(target, index);
         });
         return isRead;
     };
@@ -761,12 +767,17 @@ static PassOutcome moveReleaseHintsInFrontOfSuspensions(FunctionPassContext& con
             if (block != useLists.blockOf(released) && !blocks.set(block.index()))
                 worklist.append(block);
         };
-        for (const Use& use : useLists.usesOf(released)) {
-            if (use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::ReleaseHint)
-                continue;
-            if (use.isEdgeUse() && !flowsIntoJoinThatIsRead(targetOf(function, use.edge()), use.operandIndex))
-                continue;
-            add(use.block);
+        Vector<ValueID, 4> names { released };
+        for (size_t index = 0; index < names.size(); ++index) {
+            for (const Use& use : useLists.usesOf(names[index])) {
+                if (use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::ReleaseHint)
+                    continue;
+                if (use.isEdgeUse() && !flowsIntoJoinThatIsRead(targetOf(function, use.edge()), use.operandIndex))
+                    continue;
+                if (use.kind == Use::Kind::Operand && use.user != released && inFrontOfCasts(use.user) == released)
+                    names.append(use.user);
+                add(use.block);
+            }
         }
         while (!worklist.isEmpty()) {
             for (BlockID predecessor : cfg.predecessors(worklist.takeLast()))
@@ -804,12 +815,14 @@ static PassOutcome moveReleaseHintsInFrontOfSuspensions(FunctionPassContext& con
             for (uint32_t index = end; index--;) {
                 bool maySuspend = canHoldOperands(function.at(block.values[index]).opcode) && analyses.maySuspend(block.values[index]);
                 if (block.values[index] == released || isReadBy(function.at(block.values[index]), released)) {
+                    // A call lets go of its arguments by itself: a hint behind it would hold the value for as long as the callee runs.
+                    bool isHandedToCall = hintsMoved == HintsMoved::BehindLastReads && block.values[index] != released && effectRuleOf(function.at(block.values[index]).opcode) == EffectRule::Call;
                     // Behind `await x` the function has been suspended.
-                    if (!maySuspend)
+                    if (!maySuspend && !isHandedToCall)
                         way.behindLastReads.append(ProgramPoint { id, index + 1 });
                     return;
                 }
-                way.isSuspended |= maySuspend;
+                way.isSuspended |= maySuspend || (hintsMoved == HintsMoved::BehindLastReads && function.at(block.values[index]).opcode != Opcode::ReleaseHint);
                 if (way.isSuspended && asked == Asked::WhetherSuspended)
                     return;
             }
@@ -911,13 +924,18 @@ static PassOutcome moveReleaseHintsInFrontOfSuspensions(FunctionPassContext& con
             const Value& value = function.at(values[index]);
             if (value.opcode != Opcode::ReleaseHint)
                 continue;
-            ValueID released = value.valueOperand();
+            // What the program wrote stands where the program let go.
+            if (hintsMoved == HintsMoved::BehindLastReads && !value.isBehindCopiedBody())
+                continue;
+            ValueID released = inFrontOfCasts(value.valueOperand());
             if (!isRead.get(released.index())) {
                 dropped.set(values[index].index());
-                letGoOfWhatFlowsInto(released, value.origin());
+                // The hints that the program wrote stay, and what they name with them.
+                if (hintsMoved == HintsMoved::InFrontOfSuspensions)
+                    letGoOfWhatFlowsInto(released, value.origin());
                 continue;
             }
-            if (!walkBackToLastReads(released, ProgramPoint { block, index }, nullptr, Asked::WhetherSuspended).isSuspended)
+            if (hintsMoved == HintsMoved::InFrontOfSuspensions && !walkBackToLastReads(released, ProgramPoint { block, index }, nullptr, Asked::WhetherSuspended).isSuspended)
                 continue;
             // Under another name the value may be read on.
             BitVector isInFrontOfReads = blocksInFrontOfReads(released);
@@ -930,7 +948,7 @@ static PassOutcome moveReleaseHintsInFrontOfSuspensions(FunctionPassContext& con
             }
             WayBack way = walkBackToLastReads(released, ProgramPoint { block, index }, &isInFrontOfReads, Asked::WholeWay);
             // What is read on another way behind the suspension is held for that read.
-            if (!way.isSuspended)
+            if (hintsMoved == HintsMoved::InFrontOfSuspensions && !way.isSuspended)
                 continue;
             dropped.set(values[index].index());
             moveTo(way, released, isInFrontOfReads, value.origin());
@@ -952,7 +970,7 @@ static PassOutcome moveReleaseHintsInFrontOfSuspensions(FunctionPassContext& con
         builder.applyInsertions();
         eraseEverywhere(builder, dropped);
         for (BlockID id : cfg.reversePostOrder()) {
-            if (id == entryBlock)
+            if (id == entryBlock || hintsMoved == HintsMoved::BehindLastReads)
                 continue;
             // What an edge itself answers stands behind the arguments.
             size_t numberOfArguments = std::numeric_limits<size_t>::max();
@@ -974,13 +992,18 @@ static PassOutcome moveReleaseHintsInFrontOfSuspensions(FunctionPassContext& con
     return PassOutcome::Changed;
 }
 
+PassOutcome moveReleaseHintsBehindLastReads(FunctionPassContext& context)
+{
+    return moveReleaseHints(context, HintsMoved::BehindLastReads);
+}
+
 static PassOutcome listLiveValues(FunctionPassContext& context)
 {
     Function& function = context.function;
     PassOutcome outcome = PassOutcome::Unchanged;
     if (!function.isUnsplitCoroutine())
         return outcome;
-    outcome = moveReleaseHintsInFrontOfSuspensions(context);
+    outcome = moveReleaseHints(context, HintsMoved::InFrontOfSuspensions);
     // What the function still captures when it is split it holds until it ends.
     BitVector isHeldUntilTheEnd;
     const CompactList<ValueID>& entryParameters = function.at(entryBlock).parameters;
@@ -2998,27 +3021,41 @@ static void markGeneratorsThatGetHeapFrames(ProgramEditor& editor, BuildContext&
         auto arguments = call.argumentsOperands();
         return std::max(calleeParameter, generatorParameter) < arguments.size() && arguments[calleeParameter] == function.at(generator).calleeOperand() && arguments[generatorParameter] == generator;
     };
-    auto forEachMarked = [&](const Function& function, NOESCAPE const Invocable<void(ValueID)> auto& visit) {
+    struct Found {
+        Vector<ValueID, 2> generatorsThatGetHeapFrames;
+        // Of a generator that is made here with its prototype: nobody looks for the function in them.
+        Vector<ValueID, 2> framesThatNeedNoFunction;
+    };
+    auto find = [&](const Function& function) {
+        Found found;
         if (!function.hasBody())
-            return;
+            return found;
         for (const Block& block : function.blocks) {
             for (ValueID id : block.values) {
                 if (function.at(id).opcode == Opcode::NewGenerator && function.at(id).calleeOperand() && getsHeapFrame(function, block, id))
-                    visit(id);
+                    found.generatorsThatGetHeapFrames.append(id);
             }
         }
+        for (const Block& block : function.blocks) {
+            for (ValueID id : block.values) {
+                const Value& value = function.at(id);
+                if (value.opcode == Opcode::NewHeapFrame && value.calleeOperand() && function.at(value.generatorOperand()).opcode == Opcode::NewGenerator && !found.generatorsThatGetHeapFrames.contains(value.generatorOperand()))
+                    found.framesThatNeedNoFunction.append(id);
+            }
+        }
+        return found;
     };
     Vector<uint32_t> makers = findIndicesInParallel(build.parallelLoops(), program.functions.size(), [&](unsigned index) {
-        bool hasOne = false;
-        forEachMarked(program.functions[index], [&](ValueID) { hasOne = true; });
-        return hasOne;
+        Found found = find(program.functions[index]);
+        return !found.generatorsThatGetHeapFrames.isEmpty() || !found.framesThatNeedNoFunction.isEmpty();
     });
     Vector<FunctionID> ids = makers.map([](uint32_t index) { return FunctionID(index); });
     editFunctionsInParallel(editor, build, ids.span(), [&](unsigned, FunctionID, Function& function, TaskArenas&) {
-        Vector<ValueID, 2> marked;
-        forEachMarked(function, [&](ValueID id) { marked.append(id); });
-        for (ValueID id : marked)
+        Found found = find(function);
+        for (ValueID id : found.generatorsThatGetHeapFrames)
             function.edit(id, ValueEdit::Definition).setGetsHeapFrame(true);
+        for (ValueID id : found.framesThatNeedNoFunction)
+            function.edit(id, ValueEdit::Definition).setCalleeOperand(ValueID());
     });
 }
 

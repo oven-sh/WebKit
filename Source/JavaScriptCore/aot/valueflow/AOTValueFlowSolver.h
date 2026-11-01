@@ -76,6 +76,8 @@ struct ValueFlowSolverInput {
     uint32_t mostRounds { UINT32_MAX };
     // With a seed, nodes of the bodies that are reached are given more than the program brings them: whatIsGivenTo() says which and what.
     std::optional<uint32_t> seedOfWidening;
+    std::optional<uint32_t> seedOfSchedule;
+    bool looksAtEdgesLetGo { false };
     EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut;
     RefusedCode refusedCode;
     std::array<uint64_t, 8> removedFeatures { };
@@ -509,6 +511,12 @@ public:
     std::optional<ValueFlowNodeID> findMadeNode(const ValueFlowNodeKey&) const;
     std::optional<ValueFlowNodeID> markersOf(FunctionID function) const { return m_markersOfFunctions.getOptional(function.index()); }
     Subject subjectOf(ValueFlowNodeID) const;
+    struct LostWithEdgeLetGo {
+        ValueFlowNodeID from;
+        ValueFlowNodeID to;
+        ValueSetID lost;
+    };
+    const Vector<LostWithEdgeLetGo>& lostWithEdgesLetGo() const LIFETIME_BOUND { return m_lostWithEdgesLetGo; }
     const ValueFlowNodeKey* keyOfMadeNode(ValueFlowNodeID node) const LIFETIME_BOUND { return node.index() < m_input.numberOfNodes ? nullptr : &m_madeNodes[m_madeNodesOfNode[node.index() - m_input.numberOfNodes]].key; }
 
     void forEachKindOfStatementRun(NOESCAPE const Invocable<void(ValueFlowStatementKind, Opcode, const RunsAndEdges&)> auto& functor) const
@@ -946,6 +954,7 @@ private:
     ValueSetID findFamilyObjectsOf(ValueSetID mask, ValueSetMaker&) const;
     bool maySaturate(ValueFlowNodeID) const;
     bool isMadeForUnknownObject(ValueFlowNodeID) const;
+    void lookAtEdgesLetGo();
     bool takesArgumentsOfCallGroup(ValueFlowNodeID) const;
     bool hasTooManyLayoutsAndCallees(ValueSetID);
     void saturate(std::span<const ValueFlowNodeID> moved);
@@ -1147,6 +1156,7 @@ private:
     Vector<ValueFlowStatementID> m_dearStatements;
     Vector<ValueFlowStatementID> m_due;
     uint32_t m_seedOfSchedule { 0 };
+    Vector<LostWithEdgeLetGo> m_lostWithEdgesLetGo;
     uint32_t m_numberOfNodesGivenMore { 0 };
     Vector<ValueFlowStatementID> m_dueStatementsThatWait;
     Vector<ValueFlowStatementID> m_statementsThatRunOften;
@@ -1154,6 +1164,9 @@ private:
     void takeBackStatementsThatRunOften();
     Vector<uint8_t> m_timesRunOfStatement;
     HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_roundOfNextRun;
+    uint64_t questionAskedBy(ValueFlowStatementID) const;
+    HashSet<uint64_t> m_questionsAsked;
+    BitVector m_isHeldForQuestion;
     void findStatementsWithLongRowsBehindThem();
     void letLongRowsGoFirst();
     bool hasLongRowBehindIt(ValueFlowStatementID statement) const { return m_hasLongRows && statement.index() < m_input.statements.size() && m_hasLongRowBehindIt.quickGet(statement.index()); }

@@ -1053,6 +1053,9 @@ void ObjectInterpreter::executeRead(ValueID id)
             EnumSet<VirtualObjectKind> kindsOfRange = virtualKindsOf(m_sinking.familyOf(range), *stateOf(range));
             if (!stateOf(range)->isVirtual() || !kindsOfRange.hasExactlyOneBitSet() || !kindsOfRange.contains(VirtualObjectKind::StringRange))
                 return executeAccessOnCell(id, object);
+            // A read through the range flattens the base, as making the range does.
+            if (!isRewriting() && m_sinking.leaveMakingsThatMayThrowUnderTheirHandlers(range, m_state.block))
+                return executeAccessOnCell(id, object);
             ranges.append(range);
         }
         if (ranges.isEmpty())
@@ -2732,6 +2735,8 @@ void ObjectInterpreter::build(VirtualObjectID root, const BuildCause& cause)
             m_sinking.didBuildAfterMerge(member, state.cellJoinedAt);
         if (!isRewriting() && !m_sinking.handlerOf(m_state.block))
             m_sinking.buildUnderHandler(member);
+        if (!isRewriting())
+            m_sinking.leaveMakingsThatMayThrowUnderTheirHandlers(member, m_state.block);
     }
 
     if (!isRewriting()) {

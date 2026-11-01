@@ -186,6 +186,23 @@ static void valueSetsAgreeWithPlainSets()
     AOT_TEST_CHECK(!sets.onlyMember(maker.unite(single, maker.of(ValueFlowObjectID(1u)))));
 }
 
+static void makersRememberMoreOfLargeUniversesWhereAsked()
+{
+    ValueSets small(1u << 10);
+    ValueSets large(1u << 21);
+    size_t usual = ValueSetMaker(small).numberOfResultsRemembered();
+    AOT_TEST_CHECK(ValueSetMaker(large).numberOfResultsRemembered() == usual);
+    AOT_TEST_CHECK(ValueSetMaker(small, ValueSetMaker::Remembers::ByTheSizeOfTheUniverse).numberOfResultsRemembered() == usual);
+    ValueSetMaker maker(large, ValueSetMaker::Remembers::ByTheSizeOfTheUniverse);
+    AOT_TEST_CHECK(maker.numberOfResultsRemembered() >= 8 * usual);
+    ValueSetID first = maker.unite(maker.of(ValueFlowObjectID(1u)), maker.of(ValueFlowObjectID(70000u)));
+    ValueSetID second = maker.unite(maker.of(ValueFlowObjectID(70000u)), maker.of(ValueFlowObjectID(2000000u)));
+    ValueSetID shared = maker.intersect(first, second);
+    maker.remember(ValueSetMaker::Remembers::AsUsual);
+    AOT_TEST_CHECK(maker.numberOfResultsRemembered() == usual);
+    AOT_TEST_CHECK(maker.intersect(first, second) == shared);
+}
+
 static void valueSetsOfFewAndOfManyBlocksAgreeWithPlainSets()
 {
     constexpr uint32_t sizeOfUniverse = 64 * ValueSets::membersPerBlock;
@@ -1831,7 +1848,7 @@ static void anEdgeTakenOutOfTheGraphCarriesNoMore()
 
 #define FOR_EACH_AOT_VALUE_FLOW_CORE_TEST(v) \
     v(numbersTakenOutOfListsAreGoneAndTheOthersStay) v(anEdgeTakenOutOfTheGraphCarriesNoMore) \
-    v(valueSetsAgreeWithPlainSets) v(valueSetsOfFewAndOfManyBlocksAgreeWithPlainSets) v(valueSetsOfSeveralGroupsOfBlocksAgreeWithPlainSets) v(valueSetsOfBothFormsAgreeWithPlainSets) v(valueSetsAreTheSameFromEveryThread) v(sampleOfBlocksDependsOnTheMembersAlone) v(valueFlowGraphFindsTheLeastSolution) v(whatTheGraphHoldsDoesNotHangOnTheOrderOfTheEdges) v(rowsOfNodesInsideOneShardAreWalkedInOneWave) \
+    v(valueSetsAgreeWithPlainSets) v(makersRememberMoreOfLargeUniversesWhereAsked) v(valueSetsOfFewAndOfManyBlocksAgreeWithPlainSets) v(valueSetsOfSeveralGroupsOfBlocksAgreeWithPlainSets) v(valueSetsOfBothFormsAgreeWithPlainSets) v(valueSetsAreTheSameFromEveryThread) v(sampleOfBlocksDependsOnTheMembersAlone) v(valueFlowGraphFindsTheLeastSolution) v(whatTheGraphHoldsDoesNotHangOnTheOrderOfTheEdges) v(rowsOfNodesInsideOneShardAreWalkedInOneWave) \
     v(masksTreatPlaceholdersByTheirKind) v(nodesThatPlaceholdersCoverAreRetired) v(theCallerMayConnectWhatLeadsIntoRetiredNodes) v(whatACoveredNodeHoldsIsNotSentToItAgain) \
     v(valueFlowGraphSolvesLongChainsAndWideLevelsOnThreads) v(valueFlowRoundsAgreeWithAnAnalysisObjectByObject) v(whatATurnMakesAndReachesRunsInThatTurn) \
     v(valueFlowSolverFindsObjectsOutsideDeclaredTypes) v(whatAShorterWayOfARuleLeavesOutIsFound) v(whatIsAskedLastIsAnsweredWhenNothingElseIsDue) v(aNodeMayHoldAllOfTheLowestObjects) v(aStatementThatMakesManyConnectionsWaitsLikeAnyOtherThatRunsOften) v(numbersByKeyAgreeWithAHashMap) v(aMakerThatIsGivenBackWaitsForItsThread)

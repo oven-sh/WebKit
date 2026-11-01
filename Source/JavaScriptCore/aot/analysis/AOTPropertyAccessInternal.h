@@ -34,6 +34,8 @@ struct NextHolder {
 };
 
 NextHolder nextHolderOf(const Program&, LayoutID classLayout, ClassSide, MemberConditions&);
+// A walk under the name from the prototype object of the class comes to Object.prototype and has noted nothing by then. It answers what a walk from there answers, whichever class it is.
+bool walkComesToObjectPrototypeWithoutNote(const Program&, LayoutID declaredClass, PropertyKeyID, Access);
 
 void setDeclaredMember(MemberAnswer&, const DeclaredMember&, LayoutID holder);
 void setLevel(MemberAnswer&);

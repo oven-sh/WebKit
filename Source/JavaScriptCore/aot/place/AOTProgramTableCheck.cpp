@@ -149,7 +149,12 @@ static void checkModuleTables(const TableCheck& check)
     if (!check.expect(modules.size() == numberOfModules + 1, ProgramTableRule::TableOutOfBounds))
         return;
     for (size_t index = 0; index < numberOfModules; ++index) {
-        checkModuleNames(check, check.tables.moduleExports(), modules[index].firstExport, modules[index + 1].firstExport);
+        // The entry behind the exports of a module that may be mocked ahead of its load has no name.
+        std::span<const ModuleExportData> exports = check.tables.moduleExports();
+        uint32_t endOfExports = modules[index + 1].firstExport;
+        if (endOfExports > modules[index].firstExport && endOfExports <= exports.size() && exports[endOfExports - 1].kindBits == ModuleExportData::kindBitsOfWordOfMock)
+            --endOfExports;
+        checkModuleNames(check, exports, modules[index].firstExport, endOfExports);
         checkModuleNames(check, check.tables.syntheticExports(), modules[index].firstSyntheticExport, modules[index + 1].firstSyntheticExport);
     }
     auto everyModuleExists = [&](ModuleNumbers list) {

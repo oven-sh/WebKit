@@ -668,7 +668,7 @@ static LiveInstances computeLiveInstancesAt(const EscapeAnalysis& escape, const 
     return LiveInstances::AtMostOne;
 }
 
-void EscapeAnalysis::computeLiveInstances(const CFG& cfg, const UseLists& useLists, const ScopedLambda<const BlockCycles&()>& cycles)
+void EscapeAnalysis::computeLiveInstances(const CFG& cfg, const UseLists& useLists, const ScopedLambda<const BlockCycles&()>& cycles, OutOfSight outOfSight)
 {
     RELEASE_ASSERT(!m_hasLiveInstances);
     m_hasLiveInstances = true;
@@ -746,6 +746,49 @@ void EscapeAnalysis::computeLiveInstances(const CFG& cfg, const UseLists& useLis
             }
         }
     }
+
+    if (outOfSight == OutOfSight::NotAsked)
+        return;
+    BitVector mayGoOutOfSight(m_objects.size());
+    for (const AllocationInCycle& candidate : candidates) {
+        if (!candidate.isMadeOnEdge && m_objects[candidate.object.index()].state == EscapeState::Escapes && !isInLocalHeapWords(candidate.object))
+            mayGoOutOfSight.quickSet(candidate.object.index());
+    }
+    if (mayGoOutOfSight.isEmpty())
+        return;
+    m_allocationsInSightAtEnd.grow(cfg.numNodes());
+    BitVector isInSight(m_objects.size());
+    Vector<ObjectID, 16> inSight;
+    auto add = [&](ObjectID object) {
+        if (!isInSight.quickSet(object.index()))
+            inSight.append(object);
+    };
+    for (BlockID block : cfg.reversePostOrder()) {
+        if (!isInCycle(block))
+            continue;
+        Liveness::LocalCalc live(liveness, block);
+        live.forEachLive([&](ValueID value) {
+            for (ObjectID object : pointsTo(value).objects)
+                add(object);
+        });
+        for (size_t next = 0; next < inSight.size(); ++next) {
+            ObjectID container = inSight[next];
+            if (isOpenContainer(m_objects[container.index()]))
+                continue;
+            for (ObjectID content : contentsOf(container))
+                add(content);
+        }
+        Vector<ObjectID, 2> allocations;
+        for (ObjectID object : inSight) {
+            isInSight.quickClear(object.index());
+            if (mayGoOutOfSight.quickGet(object.index()))
+                allocations.append(object);
+        }
+        inSight.shrink(0);
+        AOT::sortInLine(allocations);
+        m_allocationsInSightAtEnd[block.index()] = WTF::move(allocations);
+    }
+    m_allocationsThatMayGoOutOfSight = WTF::move(mayGoOutOfSight);
 }
 
 std::optional<ObjectID> EscapeAnalysis::objectDefinedBy(ValueID value) const

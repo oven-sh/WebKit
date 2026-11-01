@@ -64,6 +64,7 @@ struct ValidationPolicy {
     bool overlooksWritesOnUnlikelyPaths { false };
     bool overlooksWritesBetweenReadsOfBound { false };
     bool omitsStridedLimitGuard { false };
+    bool omitsLimitOfClampedBound { false };
     bool overlooksWritesBehindWordsReadAgain { false };
     bool overlooksWritesToWhatLoopsReadAgain { false };
     bool overlooksWritesToWordsCarriedAroundLoops { false };
@@ -157,6 +158,7 @@ struct LoopPolicy {
     bool vectorizes { false };
     bool unrolls { false };
     bool promotesMemory { false };
+    bool (*isTakenOutOfLoopsByClient)(Procedure&, const MemoryValue&) { nullptr };
     double minFrequencyOfUnrolledLoop { 1 };
     bool hoistsOnlyFromLikelyPaths { false };
     bool hoistsImmutableLoadsPastWrites { false };

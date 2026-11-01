@@ -256,7 +256,7 @@ static Vector<std::unique_ptr<ValueSetMaker>> makeMakers(ValueSets& sets, const 
 {
     Vector<std::unique_ptr<ValueSetMaker>> makers(loops.width());
     forEachIndexInParallel(loops, makers.size(), [&](unsigned index) {
-        makers[index] = makeUnique<ValueSetMaker>(sets);
+        makers[index] = makeUnique<ValueSetMaker>(sets, ValueSetMaker::Remembers::ByTheSizeOfTheUniverse);
     });
     return makers;
 }
@@ -1110,6 +1110,33 @@ static bool standsForWholeProgram(ValueFlowStatementKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+uint64_t ValueFlowSolver::questionAskedBy(ValueFlowStatementID asking) const
+{
+    if (isMadeByRule(asking))
+        return 0;
+    const ValueFlowStatement& statement = m_input.statements[asking.index()];
+    uint64_t question = static_cast<uint64_t>(statement.kind) << 56 | static_cast<uint64_t>(statement.opcode) << 40 | static_cast<uint64_t>(statement.factsOfText.toRaw()) << 32 | statement.key.index();
+    auto add = [&](uint64_t more) {
+        question = (question ^ more) * 0x9e3779b97f4a7c15ull;
+        question ^= question >> 29;
+    };
+    add(static_cast<uint64_t>(statement.operandCount) << 40 | static_cast<uint64_t>(statement.guardsOfOperands) << 8 | statement.isOnlyCalledOnItsHolder << 2 | statement.isOnlyReceiverOfCalls << 1 | statement.isOnlyTested);
+    auto addSet = [&](ValueSetID set) {
+        add(set ? m_sets.hashOfMembers(set) : 0);
+    };
+    auto addAll = [&](std::span<const ValueFlowOperand> operands) {
+        for (const ValueFlowOperand& operand : operands) {
+            addSet(operand.node ? withoutWhatOtherMembersCover(operand.node, *m_makers[0]) : ValueSetID());
+            addSet(operand.constant);
+            addSet(operand.mask);
+            add(static_cast<uint64_t>(operand.maskKind));
+        }
+    };
+    addAll(operandsOf(statement));
+    addAll(guardsOf(statement));
+    return (question | 1) >> 1 | 1;
+}
+
 void ValueFlowSolver::takeBackStatementsThatRunOften()
 {
     for (ValueFlowStatementID statement : m_statementsThatRunOften)
@@ -1135,19 +1162,50 @@ void ValueFlowSolver::letStatementsThatRunOftenWait()
     uint32_t round = m_counters.rounds;
     size_t numberThatRun = 0;
     for (ValueFlowStatementID statement : m_due) {
-        if (m_timesRunOfStatement[statement.index()] > timesRunWithoutWaiting && m_roundOfNextRun.get(statement.index()) > round)
+        if (m_timesRunOfStatement[statement.index()] > timesRunWithoutWaiting && (m_roundOfNextRun.get(statement.index()) > round || m_isHeldForQuestion.get(statement.index())))
             m_statementsThatRunOften.append(statement);
         else
             m_due[numberThatRun++] = statement;
     }
     m_due.shrink(numberThatRun);
     if (m_due.isEmpty()) {
-        for (ValueFlowStatementID statement : std::exchange(m_statementsThatRunOften, { }))
-            (standsForWholeProgram(copyOfStatementAt(statement).kind) ? m_statementsThatRunOften : m_due).append(statement);
+        Vector<ValueFlowStatementID> askWhatHasBeenAsked;
+        Vector<std::pair<uint64_t, ValueFlowStatementID>> askSomethingNew;
+        HashMap<uint64_t, uint32_t> firstToAsk;
+        for (ValueFlowStatementID statement : std::exchange(m_statementsThatRunOften, { })) {
+            if (standsForWholeProgram(copyOfStatementAt(statement).kind)) {
+                m_statementsThatRunOften.append(statement);
+                continue;
+            }
+            uint64_t question = questionAskedBy(statement);
+            if (!question)
+                m_due.append(statement);
+            else if (m_questionsAsked.contains(question))
+                askWhatHasBeenAsked.append(statement);
+            else {
+                askSomethingNew.append({ question, statement });
+                auto first = firstToAsk.add(question, statement.index());
+                first.iterator->value = std::min(first.iterator->value, statement.index());
+            }
+        }
+        for (auto [question, statement] : askSomethingNew)
+            (firstToAsk.get(question) == statement.index() ? m_due : askWhatHasBeenAsked).append(statement);
+        for (uint64_t question : firstToAsk.keys())
+            m_questionsAsked.add(question);
+        if (m_due.isEmpty()) {
+            m_due = WTF::move(askWhatHasBeenAsked);
+            m_questionsAsked.clear();
+        } else {
+            for (ValueFlowStatementID statement : askWhatHasBeenAsked)
+                m_isHeldForQuestion.set(statement.index());
+            m_statementsThatRunOften.appendVector(askWhatHasBeenAsked);
+        }
         if (m_due.isEmpty())
             m_due = std::exchange(m_statementsThatRunOften, { });
-        for (ValueFlowStatementID statement : m_due)
+        for (ValueFlowStatementID statement : m_due) {
             m_timesRunOfStatement[statement.index()] = timesRunWithoutWaiting;
+            m_isHeldForQuestion.clear(statement.index());
+        }
     }
     m_waitsForLaterRound.ensureSize(statements);
     for (ValueFlowStatementID statement : m_statementsThatRunOften)
@@ -1351,9 +1409,9 @@ private:
     {
         const ValueFlowNodeKey& key = at(number).key;
         bool isRead = key.kind == ValueFlowMadeNodeKind::Read;
-        const KindOfNames& kind = m_solver.m_kindsOfNames[static_cast<unsigned>(key.name().kind)];
+        const KindOfNames& kind = m_solver.m_kindsOfNames[static_cast<unsigned>(key.kindThatStandsForName())];
         if (isRead ? kind.writtenKindsItMayFind && m_solver.mayBeComputedKey(key.name()) : kind.readKindsThatMayFindIt && m_solver.isFoundUnderComputedKey(key.name()))
-            wishes.append(Wish { number, ValueFlowNodeKey::underKind(isRead ? ValueFlowMadeNodeKind::ReadUnderKind : ValueFlowMadeNodeKind::WrittenUnderKind, key.set, key.name().kind) });
+            wishes.append(Wish { number, ValueFlowNodeKey::underKind(isRead ? ValueFlowMadeNodeKind::ReadUnderKind : ValueFlowMadeNodeKind::WrittenUnderKind, key.set, key.kindThatStandsForName()) });
     }
 
     uint32_t makeNodes(const ValueFlowNodeKey& key)
@@ -2407,9 +2465,9 @@ std::optional<uint32_t> ValueFlowSolver::makeNodesWhereAskedFor(const ValueFlowN
     case ValueFlowMadeNodeKind::Read:
     case ValueFlowMadeNodeKind::Written: {
         bool isRead = key.kind == ValueFlowMadeNodeKind::Read;
-        const KindOfNames& kind = m_kindsOfNames[static_cast<unsigned>(key.name().kind)];
+        const KindOfNames& kind = m_kindsOfNames[static_cast<unsigned>(key.kindThatStandsForName())];
         if (isRead ? kind.writtenKindsItMayFind && mayBeComputedKey(key.name()) : kind.readKindsThatMayFindIt && isFoundUnderComputedKey(key.name()))
-            join(ValueFlowNodeKey::underKind(isRead ? ValueFlowMadeNodeKind::ReadUnderKind : ValueFlowMadeNodeKind::WrittenUnderKind, key.set, key.name().kind));
+            join(ValueFlowNodeKey::underKind(isRead ? ValueFlowMadeNodeKind::ReadUnderKind : ValueFlowMadeNodeKind::WrittenUnderKind, key.set, key.kindThatStandsForName()));
         break;
     }
     case ValueFlowMadeNodeKind::Lookup:
@@ -3473,7 +3531,8 @@ void ValueFlowSolver::letGoOf(Vector<uint32_t>&& records, WhatIsLetGo whatIsLetG
             ++share.numberOfNodesPutToRest;
             MadeNodes& madeNodes = m_madeNodes[number];
             madeNodes.set(MadeNodes::HasBeenAtRest);
-            m_graph.putToRest(madeNodes.first, madeNodes.key.numberOfNodes());
+            if (!m_input.looksAtEdgesLetGo)
+                m_graph.putToRest(madeNodes.first, madeNodes.key.numberOfNodes());
             for (uint32_t offset = 0; offset < madeNodes.key.numberOfNodes(); ++offset) {
                 ValueFlowNodeID node(madeNodes.first.index() + offset);
                 if (readersOf(node))
@@ -3539,7 +3598,7 @@ void ValueFlowSolver::letGoOf(Vector<uint32_t>&& records, WhatIsLetGo whatIsLetG
     forgetReadersOf(nodesWithReaders.span());
     // Here, in front of the next turn: a run leaves out the edges that it finds in the graph. An edge between two of the records is listed by both.
     m_graph.removeEdges(edgesLaidByRules.span());
-    if (m_input.remembersWhoLoggedEachEdge || m_input.isAskedHowValuesCame) {
+    if (m_input.remembersWhoLoggedEachEdge || m_input.isAskedHowValuesCame || m_input.looksAtEdgesLetGo) {
         for (ValueFlowEdge edge : edgesLaidByRules)
             m_sourcesOfRemovedEdges.add(edge.to.index(), Vector<ValueFlowNodeID, 1>()).iterator->value.appendIfNotContains(edge.from);
     }
@@ -3654,13 +3713,12 @@ void ValueFlowSolver::noteNodesAskedFor()
         Vector<uint32_t> askedForAnew;
         Vector<uint32_t> askedForBefore;
         Vector<uint32_t> nodesWithFirstUser;
-        Vector<uint64_t> namesOfReadsTakenUp;
     };
     Vector<ShareOfRuns> sharesOfRuns;
     for (unsigned index = 0; index < m_threads.size(); ++index) {
         size_t endOfRuns = m_threads[index]->log.runs.size();
         for (size_t firstRun = m_threads[index]->numberOfRunsTaken; firstRun < endOfRuns; firstRun += runsPerShare)
-            sharesOfRuns.append(ShareOfRuns { index, firstRun, std::min(endOfRuns, firstRun + runsPerShare), { }, { }, { }, { }, { } });
+            sharesOfRuns.append(ShareOfRuns { index, firstRun, std::min(endOfRuns, firstRun + runsPerShare), { }, { }, { }, { } });
     }
     forEachIndexInParallel(m_loops, sharesOfRuns.size(), [&](unsigned index, unsigned worker) {
         ShareOfRuns& share = sharesOfRuns[index];
@@ -3741,11 +3799,8 @@ void ValueFlowSolver::noteNodesAskedFor()
                 if (next + distance < share.askedForAnew.size())
                     __builtin_prefetch(&m_numberOfUsers[share.askedForAnew[next + distance]], 1);
                 uint32_t number = share.askedForAnew[next];
-                if (!WTF::atomicExchangeAdd(&m_numberOfUsers[number], 1u, std::memory_order_relaxed)) {
+                if (!WTF::atomicExchangeAdd(&m_numberOfUsers[number], 1u, std::memory_order_relaxed))
                     share.nodesWithFirstUser.append(number);
-                    if (isReadMadeOfParts(m_madeNodes[number]))
-                        share.namesOfReadsTakenUp.append(NodeMaker::nameOf(m_madeNodes[number].key));
-                }
                 room[position] = number;
             }
             if (!numberOfEarlierUses)
@@ -3758,9 +3813,6 @@ void ValueFlowSolver::noteNodesAskedFor()
         thread.numberOfRunsTaken = share.endOfRuns;
         thread.numberOfNodesAskedForTaken = thread.log.runs[share.endOfRuns - 1].endOfNodesAskedFor;
         for (const Thread::RunThatAsksAnew& asksAnew : share.runsThatAskAnew) {
-            // Only such a run was shown values.
-            if (!asksAnew.addsToEarlierRuns)
-                continue;
             const ValueFlowRoundLog::Run& run = thread.log.runs[asksAnew.run];
             for (; thread.numberOfValuesShownTaken < run.endOfValuesShown; ++thread.numberOfValuesShownTaken) {
                 ValueFlowNodeSet shown = thread.log.valuesShown[thread.numberOfValuesShownTaken];
@@ -3777,22 +3829,16 @@ void ValueFlowSolver::noteNodesAskedFor()
         }
     }
 
-    size_t numberWithFirstUser = 0;
-    size_t numberAskedForBefore = 0;
-    for (const ShareOfRuns& share : sharesOfRuns) {
-        numberWithFirstUser += share.nodesWithFirstUser.size();
-        numberAskedForBefore += share.askedForBefore.size();
-    }
     Vector<uint32_t> nodesWithFirstUser;
     Vector<uint32_t> askedForBefore;
-    nodesWithFirstUser.reserveInitialCapacity(numberWithFirstUser);
-    askedForBefore.reserveInitialCapacity(numberAskedForBefore);
-    HashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> namesOfReadsTakenUp;
     for (const ShareOfRuns& share : sharesOfRuns) {
         nodesWithFirstUser.appendVector(share.nodesWithFirstUser);
         askedForBefore.appendVector(share.askedForBefore);
-        for (uint64_t name : share.namesOfReadsTakenUp)
-            namesOfReadsTakenUp.add(name);
+    }
+    HashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> namesOfReadsTakenUp;
+    for (uint32_t number : nodesWithFirstUser) {
+        if (isReadMadeOfParts(m_madeNodes[number]))
+            namesOfReadsTakenUp.add(NodeMaker::nameOf(m_madeNodes[number].key));
     }
     takeUpPartsOfNodesWithFirstUser(WTF::move(nodesWithFirstUser));
     letGoOf(WTF::move(askedForBefore), WhatIsLetGo::Records);
@@ -4063,99 +4109,52 @@ bool ValueFlowSolver::merge()
     });
 
     m_stepTimes.didFinish("merge: edges of the logs copied"_s);
-    parallelSort(m_loops, m_bodiesReachedInRound.mutableSpan(), std::less<uint32_t> { });
-    // Each share of the bodies puts its edges and seeds where one thread that took the bodies in order would have put them.
-    constexpr size_t bodiesPerShare = 128;
-    struct ShareOfBodies {
-        size_t numberOfEdges { 0 };
-        size_t firstEdge { 0 };
-        size_t firstSeed { 0 };
-        Vector<ValueFlowNodeSet> seeds;
-        Vector<ValueFlowNodeID> nodesGivenMore;
-    };
-    Vector<ShareOfBodies> shares((m_bodiesReachedInRound.size() + bodiesPerShare - 1) / bodiesPerShare);
-    auto bodiesOf = [&](unsigned share) {
-        return m_bodiesReachedInRound.subspan(share * bodiesPerShare, std::min(bodiesPerShare, m_bodiesReachedInRound.size() - share * bodiesPerShare));
-    };
-    const bool leavesOutUnknown = !m_input.unknownSourcesLeftOut.isEmpty() && m_input.placeholders.unknown;
-    const ValueSetID allButUnknown = leavesOutUnknown ? ValueSets::complement(m_makers[0]->of(m_input.placeholders.unknown)) : ValueSetID();
-    forEachIndexInParallel(m_loops, shares.size(), [&](unsigned index, unsigned worker) {
-        ShareOfBodies& share = shares[index];
-        for (uint32_t body : bodiesOf(index)) {
-            const ValueFlowBodyRange& range = m_input.ranges[body];
-            const ValueFlowBodyRange& end = m_input.ranges[body + 1];
-            if (m_input.seedOfWidening) [[unlikely]] {
-                for (uint32_t node = m_input.nodes->firstNodeOf(FunctionID(body)); node < m_input.nodes->endOfNodesOf(FunctionID(body)); ++node) {
-                    if (whatIsGivenTo(ValueFlowNodeID(node)) != GivenToNode::Nothing)
-                        share.nodesGivenMore.append(ValueFlowNodeID(node));
-                }
-            }
-            share.numberOfEdges += end.edgeOnceReached - range.edgeOnceReached;
-            for (const ValueFlowNodeSet& seed : m_input.seedsOnceReached.subspan(range.seedOnceReached, end.seedOnceReached - range.seedOnceReached)) {
-                ValueSetID set = seed.set;
-                if (leavesOutUnknown)
-                    set = m_makers[worker]->intersect(set, allButUnknown);
-                if (set == ValueSets::nothing)
-                    continue;
-                if (m_input.seedOfWidening && m_input.build->isSabotaged(Sabotage::WhatIsGivenTakesThePlaceOfWhatComes) && whatIsGivenTo(seed.node) != GivenToNode::Nothing) [[unlikely]]
-                    continue;
-                share.seeds.append(ValueFlowNodeSet { seed.node, set });
-            }
-        }
-    });
-    size_t numberOfEdges = m_edgesOfRound.size();
-    size_t numberOfSeeds = 0;
+    AOT::sort(m_bodiesReachedInRound);
+    Vector<ValueFlowNodeSet> seeds;
+    Vector<KeyToMake> constantsToMake;
+    HashMap<uint32_t, ValueFlowNodeID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> holding;
     Vector<ValueFlowNodeID> nodesGivenMore;
-    for (ShareOfBodies& share : shares) {
-        share.firstEdge = std::exchange(numberOfEdges, numberOfEdges + share.numberOfEdges);
-        share.firstSeed = std::exchange(numberOfSeeds, numberOfSeeds + share.seeds.size());
-        nodesGivenMore.appendVector(share.nodesGivenMore);
-    }
-    makeRoomByDoubling(m_edgesOfRound, numberOfEdges - m_edgesOfRound.size() + numberOfSeeds);
-    m_edgesOfRound.grow(numberOfEdges);
-    Vector<uint32_t> sets(numberOfSeeds);
-    forEachIndexInParallel(m_loops, shares.size(), [&](unsigned index) {
-        const ShareOfBodies& share = shares[index];
-        size_t position = share.firstEdge;
-        for (uint32_t body : bodiesOf(index)) {
-            uint32_t first = m_input.ranges[body].edgeOnceReached;
-            std::span<const ValueFlowEdge> edges = m_input.edgesOnceReached.subspan(first, m_input.ranges[body + 1].edgeOnceReached - first);
-            std::ranges::copy(edges, m_edgesOfRound.mutableSpan().subspan(position).begin());
-            position += edges.size();
+    for (uint32_t body : m_bodiesReachedInRound) {
+        const ValueFlowBodyRange& range = m_input.ranges[body];
+        const ValueFlowBodyRange& end = m_input.ranges[body + 1];
+        if (m_input.seedOfWidening) [[unlikely]] {
+            for (uint32_t node = m_input.nodes->firstNodeOf(FunctionID(body)); node < m_input.nodes->endOfNodesOf(FunctionID(body)); ++node) {
+                if (whatIsGivenTo(ValueFlowNodeID(node)) != GivenToNode::Nothing)
+                    nodesGivenMore.append(ValueFlowNodeID(node));
+            }
         }
-        for (size_t seed = 0; seed < share.seeds.size(); ++seed)
-            sets[share.firstSeed + seed] = share.seeds[seed].set.index();
-    });
-    m_bodiesReachedInRound.shrink(0);
-    sortAndRemoveDuplicates(m_loops, sets);
-    constexpr size_t setsPerShare = 256;
-    Vector<ValueFlowNodeID> holding(sets.size());
-    Vector<KeyToMake> constantsToMake = collectInParallel<KeyToMake>(m_loops, (sets.size() + setsPerShare - 1) / setsPerShare, [&](unsigned share, Vector<KeyToMake>& toMake) {
-        for (size_t index = share * setsPerShare; index < std::min(sets.size(), (share + 1) * setsPerShare); ++index) {
-            ValueSetID set(sets[index]);
+        m_edgesOfRound.append(m_input.edgesOnceReached.subspan(range.edgeOnceReached, end.edgeOnceReached - range.edgeOnceReached));
+        for (const ValueFlowNodeSet& seed : m_input.seedsOnceReached.subspan(range.seedOnceReached, end.seedOnceReached - range.seedOnceReached)) {
+            ValueSetID set = seed.set;
+            if (!m_input.unknownSourcesLeftOut.isEmpty() && m_input.placeholders.unknown)
+                set = m_makers[0]->intersect(set, ValueSets::complement(m_makers[0]->of(m_input.placeholders.unknown)));
+            if (set == ValueSets::nothing)
+                continue;
+            if (m_input.seedOfWidening && m_input.build->isSabotaged(Sabotage::WhatIsGivenTakesThePlaceOfWhatComes) && whatIsGivenTo(seed.node) != GivenToNode::Nothing) [[unlikely]]
+                continue;
+            seeds.append(ValueFlowNodeSet { seed.node, set });
+            auto added = holding.add(set.index(), ValueFlowNodeID());
+            if (!added.isNewEntry)
+                continue;
             if (std::optional<ValueFlowNodeID> existing = findMadeNode(ValueFlowNodeKey::constant(set)))
-                holding[index] = *existing;
+                added.iterator->value = *existing;
             else
-                toMake.append(KeyToMake { ValueFlowNodeKey::constant(set), m_sets.hashOfMembers(set) });
+                constantsToMake.append(KeyToMake { ValueFlowNodeKey::constant(set), m_sets.hashOfMembers(set) });
         }
-    });
-    parallelSort(m_loops, constantsToMake.mutableSpan(), [](const KeyToMake& first, const KeyToMake& second) {
+    }
+    m_bodiesReachedInRound.shrink(0);
+    AOT::sortInLine(constantsToMake, [](const KeyToMake& first, const KeyToMake& second) {
         return std::tuple { first.hashOfMembers, first.key.set.index() } < std::tuple { second.hashOfMembers, second.key.set.index() };
     });
-    m_stepTimes.didFinish("merge: bodies reached: edges and seeds listed"_s);
+    constantsToMake.shrink(std::unique(constantsToMake.begin(), constantsToMake.end(), [](const KeyToMake& first, const KeyToMake& second) {
+        return first.key == second.key;
+    }) - constantsToMake.begin());
+    m_stepTimes.didFinish("merge: bodies reached: edges and seeds listed (one thread)"_s);
     makeNodesOf(constantsToMake.mutableSpan());
-    auto holderOf = [&](ValueSetID set) -> ValueFlowNodeID& {
-        return holding[std::ranges::lower_bound(sets, set.index()) - sets.begin()];
-    };
     for (const KeyToMake& made : constantsToMake)
-        holderOf(made.key.set) = m_madeNodes[made.madeNodes].first;
-    size_t firstEdgeOfSeeds = m_edgesOfRound.size();
-    growBy(m_edgesOfRound, numberOfSeeds);
-    forEachIndexInParallel(m_loops, shares.size(), [&](unsigned index) {
-        const ShareOfBodies& share = shares[index];
-        for (size_t seed = 0; seed < share.seeds.size(); ++seed)
-            m_edgesOfRound[firstEdgeOfSeeds + share.firstSeed + seed] = ValueFlowEdge { holderOf(share.seeds[seed].set), share.seeds[seed].node };
-    });
+        holding.set(made.key.set.index(), m_madeNodes[made.madeNodes].first);
+    for (const ValueFlowNodeSet& seed : seeds)
+        m_edgesOfRound.append(ValueFlowEdge { holding.get(seed.set.index()), seed.node });
     for (ValueFlowNodeID node : nodesGivenMore) {
         GivenToNode what = whatIsGivenTo(node);
         if (what == GivenToNode::WhatAnotherNodeOfBodyHolds) {
@@ -6527,6 +6526,24 @@ void ValueFlowSolver::findClosuresFollowedToConstructions()
     }
 }
 
+void ValueFlowSolver::lookAtEdgesLetGo()
+{
+    ValueSetMaker& maker = *m_makers[0];
+    for (auto& [to, sources] : m_sourcesOfRemovedEdges) {
+        ValueFlowNodeID target(to);
+        if (keyOfMadeNode(target) && !m_numberOfUsers[m_madeNodesOfNode[to - m_input.numberOfNodes]])
+            continue;
+        for (ValueFlowNodeID from : sources) {
+            if (m_graph.hasAdded(ValueFlowEdge { from, target }))
+                continue;
+            ValueSetID carried = maker.intersect(maker.intersect(m_graph.valueOf(from), m_graph.maskOf(target)), m_takenByRetiredNodes);
+            ValueSetID lost = maker.intersect(carried, ValueSets::complement(m_graph.valueOf(target)));
+            if (lost != ValueSets::nothing)
+                m_lostWithEdgesLetGo.append({ from, target, lost });
+        }
+    }
+}
+
 bool ValueFlowSolver::isMadeForUnknownObject(ValueFlowNodeID node) const
 {
     const ValueFlowNodeKey* key = keyOfMadeNode(node);
@@ -6955,6 +6972,8 @@ void ValueFlowSolver::solve()
 {
     if (m_input.build)
         m_seedOfSchedule = m_input.build->recordedOptions().has(TestingSwitch::DelayFlowRules) + 2 * m_input.build->recordedOptions().has(TestingSwitch::DelayOtherFlowRules) + 4 * m_input.build->recordedOptions().numberOfFlowSchedule;
+    if (m_input.seedOfSchedule)
+        m_seedOfSchedule = *m_input.seedOfSchedule;
     m_stepTimes.isOn = m_input.build && m_input.reportsToBuild && m_input.build->options().logging.logsPhaseTimes;
     m_stepTimes.begin();
     m_graph.addNodes(m_input.numberOfNodes);
@@ -7040,9 +7059,11 @@ void ValueFlowSolver::solve()
         MonotonicTime start = MonotonicTime::now();
         m_stepTimes.begin();
         m_numberOfNodesBeforeRound = m_numberOfNodesMade;
-        if (isFullRound)
+        if (isFullRound) {
             takeBackStatementsThatRunOften();
-        else
+            m_isHeldForQuestion.clearAll();
+            m_questionsAsked.clear();
+        } else
             letStatementsThatRunOftenWait();
         if (m_due.isEmpty() && m_dueBehindLongRows.isEmpty()) {
             for (ValueFlowStatementID statement : std::exchange(m_dueLast, { })) {
@@ -7206,6 +7227,8 @@ void ValueFlowSolver::solve()
         if (countsReadersAndEdges)
             dumpEdgesByEnds();
     }
+    if (m_input.looksAtEdgesLetGo)
+        lookAtEdgesLetGo();
     m_counters.readers = numberOfReaders();
     m_stepTimes.begin();
     fillNumbersThatNobodyGave();
@@ -7225,8 +7248,10 @@ void ValueFlowSolver::solve()
         };
         releaseInOrder(m_threads, m_readerShards, m_watchShards, m_hasSetWatchedForCoverOfMember, m_firstSetWatchedForCoverOfMember, m_setsWatchedForCoverOfMembers, m_isWatched, m_listenersOfNode, m_readersOfFunction, m_valuesShownToStatement, m_readersOfWorker, m_newMembersOfWorker, m_watchesToTestOfWorker, m_newMembers, m_nodesOfManyObjects, m_rememberedByStatement, m_linkShards, m_edgesOfRound, m_edgesInFrontOfLinks, m_readToLink, m_writtenToLink,
             m_readersOfNode, m_coveringStateOfShownView, m_names, m_numberOfName, m_kindsOfNames, m_partsOfMadeNodes, m_isTooLarge,
-            m_statementsWaitingForNodes, m_nextStatementWaiting, m_timesRunOfStatement, m_roundOfNextRun, m_isDue, m_isDueLast, m_hasRunInTurn, m_hasLongRowBehindIt, m_isDear, m_usesOfThreads, m_uncoveredAtLastReaderWake, m_readToInsert);
+            m_statementsWaitingForNodes, m_nextStatementWaiting, m_timesRunOfStatement, m_roundOfNextRun, m_questionsAsked, m_isHeldForQuestion, m_isDue, m_isDueLast, m_hasRunInTurn, m_hasLongRowBehindIt, m_isDear, m_usesOfThreads, m_uncoveredAtLastReaderWake, m_readToInsert);
     }
+    for (const std::unique_ptr<ValueSetMaker>& maker : m_makers)
+        maker->remember(ValueSetMaker::Remembers::AsUsual);
     m_stepTimes.didFinish("behind the rounds: what only the rounds read let go of"_s);
     if (m_allButMarks != ValueSets::anything) {
         m_graph.removeFromEveryNode({ ValueFlowUniverse::markOfNamedBun(), ValueFlowUniverse::markOfMemberLeftOut(), ValueFlowUniverse::markOfLoadedBun() });

@@ -48,6 +48,7 @@ public:
     constexpr operator bool() const { return m_mayThrow; }
     constexpr bool otherThanStackOverflow() const { return m_mayThrowOtherThanStackOverflow; }
     constexpr bool byRule() const { return m_mayThrowByRule || (m_mayThrowOtherThanStackOverflow && !std::is_constant_evaluated() && lackOfMemoryThrowsByRule); }
+    constexpr bool isDeclaredByRule() const { return m_mayThrowByRule; }
     constexpr bool isDeclaredOnlyForLackOfMemory() const { return m_mayThrowOtherThanStackOverflow && !m_mayThrowByRule; }
 
     constexpr ThrowEffect& operator|=(ThrowEffect other)

@@ -205,8 +205,13 @@ MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const Mem
     if (mayBeAmbiguous || mayBeLeftOut || entry.isDroppedWhileEmpty)
         return MemberAnswer::unknown(UnprovenCause::UnknownObject);
     switch (entry.kind) {
-    case ModuleExportKind::Variable:
+    case ModuleExportKind::Variable: {
+        // While a mock stands in place of the module that declares the variable, nothing fills it, and the namespace object asks the mock: also the object of a module that only passes the export on.
+        const Variable& variable = program.at(entry.variable);
+        if (variable.flags.contains(VariableFlags::IsReplaceable) && program.at(variable.module).flags.contains(ModuleFlags::MayBeMocked))
+            return MemberAnswer::unknown(UnprovenCause::UnknownObject);
         return { .kind = MemberKind::Variable, .level = KnowledgeLevel::Proven, .holder = query.layout, .field = *field, .variable = entry.variable };
+    }
     case ModuleExportKind::Namespace:
         if (entry.phase != ImportPhase::Evaluation)
             return MemberAnswer::unknown(UnprovenCause::Unknown);

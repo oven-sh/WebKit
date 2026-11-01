@@ -197,8 +197,10 @@ public:
             }
         }
         BitVector allocations = *m_allocationsNotConfined;
-        for (ValueID operand : operandsWrittenThrough(written))
-            escape.pointsTo(operand).objects.addTo(allocations);
+        for (ValueID operand : operandsWrittenThrough(written)) {
+            if (mayBeMadeHere(operand))
+                escape.pointsTo(operand).objects.addTo(allocations);
+        }
         return allocations;
     }
 
@@ -296,8 +298,13 @@ private:
 
         ObjectSet objects = escape.pointsTo(subject).objects;
         return std::ranges::any_of(operandsWrittenThrough(written), [&](ValueID operand) {
-            return escape.pointsTo(operand).objects.overlaps(objects);
+            return escape.pointsTo(operand).objects.overlaps(objects) && mayBeMadeHere(operand);
         });
+    }
+
+    bool mayBeMadeHere(ValueID operand)
+    {
+        return !m_analyses.context().onlyJudges() || !m_writer || m_analyses.escape().pointsTo(operand).objects.isEmpty() || !namesOnlyWhatCodeOutsideReaches(m_analyses, operand);
     }
 
     bool namesOnlyObjectsOfKind(ObjectKind kind, ValueID value)
@@ -371,7 +378,7 @@ private:
             return use.kind == Use::Kind::TerminatorOperand && use.block == m_point.block;
         };
         return std::ranges::any_of(m_analyses.escape().usesOf(object), [&](const ObjectUse& objectUse) {
-            return objectUse.isEscape && isUseByWriter(objectUse.use);
+            return objectUse.isEscape && isUseByWriter(objectUse.use) && (!m_writer || mayBeMadeHere(m_function.at(m_writer).operand(objectUse.use.operandIndex)));
         });
     }
 
@@ -405,7 +412,8 @@ private:
             m_operandObjects.emplace();
             const EscapeAnalysis& escape = m_analyses.escape();
             auto addObjectsOf = [&](ValueID operand) {
-                escape.pointsTo(operand).objects.addTo(*m_operandObjects);
+                if (mayBeMadeHere(operand))
+                    escape.pointsTo(operand).objects.addTo(*m_operandObjects);
             };
             if (m_writer)
                 m_function.at(m_writer).forEachChild(addObjectsOf);

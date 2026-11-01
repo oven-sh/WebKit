@@ -730,6 +730,7 @@ static void testBackEndReportStatistics()
     raw.counters[static_cast<size_t>(B3::Counter::StepsToReleaseDeadValues)] = 17;
     raw.counters[static_cast<size_t>(B3::Counter::RangesHeldAgainstStackCells)] = 18;
     raw.counters[static_cast<size_t>(B3::Counter::ClobberPointsReadForCalls)] = 19;
+    raw.counters[static_cast<size_t>(B3::Counter::StepsToCommonLikelyDominators)] = 20;
     AOT_TEST_CHECK(!program.report(build, program.functionAsRead(), raw));
 
     expected.count(StatisticID::LoopsVersioned, 4);
@@ -750,6 +751,7 @@ static void testBackEndReportStatistics()
     expected.count(StatisticID::StepsToReleaseDeadValues, 17);
     expected.count(StatisticID::RangesHeldAgainstStackCells, 18);
     expected.count(StatisticID::ClobberPointsReadForCalls, 19);
+    expected.count(StatisticID::StepsToCommonLikelyDominators, 20);
     AOT_TEST_CHECK(build.statistics().values() == expected.values());
     AOT_TEST_CHECK(build.takeLosses(&program.program()).isEmpty());
 }

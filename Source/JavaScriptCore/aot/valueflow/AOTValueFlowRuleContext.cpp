@@ -703,6 +703,8 @@ ValueFlowNodeID ValueFlowRuleContext::readWhatWasWritten(ClimbingSet objects, Va
         objects = objectsThatMayHoldSomethingUnder(name, objects);
     if (objects.m_set == ValueSets::nothing)
         return holdingNothing();
+    if (use == ReadUse::OutsideEnumerations && name.kind == ValueFlowNameKind::Getter)
+        return nodeFor(ValueFlowNodeKey::readOutsideEnumerations(objects.m_set, name));
     return nodeFor(use == ReadUse::OnlyWhatLetsInUnseenCode ? ValueFlowNodeKey::readOfWhatLetsInUnseenCode(objects.m_set, name) : ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Read, objects.m_set, name));
 }
 

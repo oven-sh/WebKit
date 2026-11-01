@@ -543,6 +543,9 @@ static bool isCalledByPrograms(const BuiltinTable& builtins, const Function& sou
 
 static StackTraceBuiltinKind builtinKindOf(const BuiltinTable& builtins, const Function& source, std::optional<BuiltinID> builtin)
 {
+    static_assert(FunctionTraceData::kindBitsInsideHelperOfCompiler == static_cast<uint16_t>(StackTraceBuiltinKind::JSBuiltinConstructor) && !static_cast<uint16_t>(StackTraceBuiltinKind::None));
+    if (!builtin && source.syntax.contains(FunctionSyntax::IsShownInModuleOfHelpers))
+        return StackTraceBuiltinKind::JSBuiltinConstructor;
     if (!builtin)
         return isInsideBuiltinFunction(builtins, source) ? StackTraceBuiltinKind::JSBuiltin : StackTraceBuiltinKind::None;
     // The host has what it does as a function of a module of its own, and a stack trace lists that like any other function: FunctionDescription::isHelperOfCompiler().

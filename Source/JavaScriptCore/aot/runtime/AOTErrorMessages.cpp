@@ -640,7 +640,7 @@ static std::optional<size_t> findEndOfTemplate(std::span<const Latin1Character> 
 }
 
 // `a.b` of `a.b.c` and `make("x")[0]` of `make("x")[0].c`, where `end` is the place of the last dot or of its `?`: names, dots, and what stands in brackets behind them.
-// Round brackets may stand in front of it all: `(a as T)` of `(a as T).c`, `(a + b)` of `(a + b).c`.
+// Round brackets may stand in front of it all: `(a as T)` of `(a as T).c`, `(a + b)` of `(a + b).c`. So may an array literal: `[a, b][1]` of `[a, b][1].c`.
 static bool isHeadOfStatement(std::span<const Latin1Character> text, size_t open)
 {
     if (text[open] != '(')
@@ -686,7 +686,7 @@ static std::optional<size_t> startOfPathInFrontOf(std::span<const Latin1Characte
         while (name && isPartOfName(text[name - 1]))
             --name;
         if (name == part) {
-            if (part != start && text[part] == '(')
+            if (part != start && (text[part] == '(' || text[part] == '['))
                 return part;
             return std::nullopt;
         }
@@ -923,6 +923,9 @@ static WrittenReads findWrittenElements(std::span<const Latin1Character> text, s
                 continue;
             return WrittenReads::Differ;
         }
+        // An array literal is an object: in `[a, b][1][0]` it is not `[a, b][1]` that failed.
+        if (text[*start] == '[' && findClosingBracket(text, *start) == std::optional<size_t>(at - 1))
+            continue;
         start = startWithNew(text, *start, at);
         if (within && (*within < *start || *within > at))
             continue;
@@ -3411,41 +3414,36 @@ static String refusalInTestRun(VM& vm, ASCIILiteral change, BuiltinID holder, Un
 
 bool isWrittenByFileOfProduct(VM& vm)
 {
-    // Compiled code calls a built-in function itself, or through an operation that enters the VM. A refusal is rare, so the walk that lists every kind of frame will do.
-    constexpr size_t framesLookedAt = 32;
-    Vector<StackFrame> frames;
-    vm.interpreter.getStackTrace(nullptr, frames, 0, framesLookedAt);
-    for (const StackFrame& frame : frames) {
-        // Code from disk writes for itself.
-        if (frame.codeBlock())
-            return false;
-        if (!frame.isCompiledFrame() || frame.representsHostFunction())
-            continue;
-        ImageOfTraceFrameScope imageOfFrame(frame.compiledFrame());
-        std::optional<SourcePosition> position = frame.compiledPosition();
-        if (!position || !position->source)
-            continue;
-        if (std::optional<bool> answer = findsBuiltinsReadOnly(position->source))
-            return *answer;
-    }
-    return false;
+    // Compiled code writes itself, or calls a built-in function that does. Code from disk writes for itself: no compiled frame is on top then.
+    std::optional<bool> answer;
+    forEachShownFrameOfRunAtTop(vm, [&](const TraceFrame& frame) {
+        ImageOfTraceFrameScope imageOfFrame(frame);
+        std::optional<SourcePosition> position = positionOf(frame);
+        // Bun's own code writes for whoever has called it.
+        if (position && position->source)
+            answer = findsBuiltinsReadOnly(position->source);
+        return answer ? IterationStatus::Done : IterationStatus::Continue;
+    });
+    return answer.value_or(false);
 }
 
 String assignmentToLockedBuiltinMessage(VM& vm, BuiltinID holder, UniquedStringImpl* key, LockedIn lockedIn)
 {
-    if (lockedIn == LockedIn::TestRun && !isWrittenByFileOfProduct(vm))
+    if (lockedIn == LockedIn::TestRun)
         return refusalInTestRun(vm, "Cannot assign to "_s, holder, key);
     const BuiltinTable& table = BuiltinTable::singleton();
     BuiltinName name = table.nameOf(vm, key);
-    bool isNewName = !key->isSymbol() && !parseIndex(*key) && !(name && table.findOwnMember(holder, name));
-    if (isNewName && table.canonicalID(holder) != Builtins::ObjectPrototype && table.canTakeNameInTestRuns(holder, name))
+    BuiltinID found = name ? table.findOwnMember(holder, name) : BuiltinID();
+    bool isNewName = !key->isSymbol() && !parseIndex(*key) && !found;
+    bool isOpenWhereBuildSeesWrite = found ? table.at(found).mutability == BuiltinMutability::ConstantUnlessWritten : isNewName && table.canonicalID(holder) != Builtins::ObjectPrototype && table.canTakeNameInTestRuns(holder, name);
+    if (isOpenWhereBuildSeesWrite)
         return assignmentThatBuildDidNotSeeMessage(memberOfLockedBuiltin(holder, key));
     return assignmentToLockedBuiltinMessage(memberOfLockedBuiltin(holder, key));
 }
 
 String deletionFromLockedBuiltinMessage(VM& vm, BuiltinID holder, UniquedStringImpl* key, LockedIn lockedIn)
 {
-    if (lockedIn == LockedIn::TestRun && !isWrittenByFileOfProduct(vm))
+    if (lockedIn == LockedIn::TestRun)
         return refusalInTestRun(vm, "Cannot delete "_s, holder, key);
     return deletionFromLockedBuiltinMessage(memberOfLockedBuiltin(holder, key));
 }

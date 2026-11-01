@@ -229,7 +229,7 @@ StackTraceBuiltinKind FunctionDescription::builtinKind() const
 
 bool FunctionDescription::isHelperOfCompiler() const
 {
-    return m_record->implementsBuiltin && builtinKind() == StackTraceBuiltinKind::None;
+    return m_record->isHelperOfCompiler();
 }
 
 std::optional<SourcePosition> FunctionDescription::definition() const
@@ -1523,6 +1523,26 @@ IterationStatus appendShownFramesOfRun(VM& vm, CompiledFrameIterator& frames, Sh
         return IterationStatus::Done;
     frames.leaveRunAt(walk.exit(), walk.runEnd());
     return IterationStatus::Continue;
+}
+
+void forEachShownFrameOfRunAtTop(VM& vm, const ScopedLambda<IterationStatus(const TraceFrame&)>& functor)
+{
+    AssertNoGC assertNoGC;
+    if (!vm.hasCompiledCode() || !vm.topCallFrame || vm.aotState().stackPointerOfImport)
+        return;
+    std::optional<RunStart> start = findRunAtTop(vm);
+    bool isBelowHostFunction = !start;
+    if (isBelowHostFunction)
+        start = findRunBelowHostFunction(vm, FrameOnTop::IsListed);
+    if (!start)
+        return;
+    RunWalk walk(vm.aotState(), *start);
+    if (walk.isAtEnd())
+        return;
+    ShownFrameFilter filter(isBelowHostFunction);
+    forEachShownFrameOfRun(vm, walk, start->calleeWasEntered, filter, [&](const ShownFrameOfRun& shown) {
+        return functor(shown.frame);
+    });
 }
 
 bool tryGetStackTrace(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& results, size_t framesToSkip, size_t maxStackSize, const ScopedLambda<bool(const StackFrame&)>* wanted)

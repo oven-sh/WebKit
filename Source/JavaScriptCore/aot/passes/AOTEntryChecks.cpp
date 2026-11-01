@@ -544,6 +544,30 @@ static Function createTypedBody(const Program& program, Function&& body, std::sp
     return WTF::move(body);
 }
 
+// Beside a class that no test tells from it, a class loses in a cast what is proven of it: `Array<int, proven>|Object` cast to `Array` is `Array`. A check goes with the other checks and its operand says the rest.
+// The claim that stands in its place stays, so it says itself what its operand has proven.
+static bool sayWhatOperandsOfFormerChecksHaveProven(const Program& program, Function& body, TypeArena& types, std::span<const EntryCheck> checks)
+{
+    TypingContext typing { program, body, types };
+    bool hasChanged = false;
+    for (const EntryCheck& check : checks) {
+        if (body.at(check.check).opcode != Opcode::AssumeType)
+            continue;
+        TypeID claimed = body.at(check.check).provenType();
+        TypeID source = body.at(body.at(check.check).valueOperand()).type;
+        if (types.at(claimed).isSubsetOf(types.at(source), program))
+            continue;
+        TypeID kept = types.intersectionOf(claimed, source);
+        if (kept == claimed)
+            continue;
+        Value& proven = body.edit(check.check);
+        proven.becomeAssumeType(proven.valueOperand(), Proven::byPosition(kept));
+        proven.type = computeResultTypeID(typing, proven);
+        hasChanged = true;
+    }
+    return hasChanged;
+}
+
 // A cast between a parameter and its check holds what is left of the type that the parameter has behind the tests.
 static void typeCastsAheadOfChecks(const Program& program, Function& body, TypeArena& types, std::span<const EntryCheck> checks)
 {
@@ -606,11 +630,16 @@ static void emitEntrance(const AnalysisContext& context, TypeArena& types, Funct
     for (unsigned index = 0; index < function.numberOfEntryParameters(); ++index)
         arguments.append(builder.addParameter(entry, declaredEntryTypeOf(typing, function, index)));
 
-    BlockID failed = entrance.tests.isEmpty() ? BlockID() : builder.addBlock(BlockFrequency::Unlikely);
+    bool isSabotaged = context.build.isSabotaged(Sabotage::EntryChecksAlwaysPass);
+    BlockID failed = entrance.tests.isEmpty() || isSabotaged ? BlockID() : builder.addBlock(BlockFrequency::Unlikely);
     if (failed)
         builder.emitFailureOfPredictions(Target { failed, { }, { } });
     Vector<ValueID, 8> testedArguments = arguments;
     for (const EntryTest& check : entrance.tests) {
+        if (isSabotaged) {
+            testedArguments[check.entryParameter] = builder.append(makeAssumeType(arguments[check.entryParameter], Proven::byRulesWithoutChecks(check.type)));
+            continue;
+        }
         ValueID test = builder.appendTypeTest(arguments[check.entryParameter], check.type);
         IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, 0, BlockFrequency::Normal, BlockFrequency::Unlikely);
         testedArguments[check.entryParameter] = branch.provenOnTaken;
@@ -744,8 +773,16 @@ void splitBehindEntryChecks(ProgramEditor& editor, const Heat* heat, BuildContex
         if (!splits[index].checkedEntryValues.isEmpty()) {
             FunctionAnalyses analyses(context, body);
             typeValuesFromNever(TypePropagationInputs { program, id, body, analyses, arenas.types, build });
-        } else
+            if (sayWhatOperandsOfFormerChecksHaveProven(program, body, arenas.types, splits[index].checks.span()))
+                typeValuesFromNever(TypePropagationInputs { program, id, body, analyses, arenas.types, build });
+        } else {
             typeCastsAheadOfChecks(program, body, arenas.types, splits[index].checks.span());
+            // What reads a claim is typed by it.
+            if (sayWhatOperandsOfFormerChecksHaveProven(program, body, arenas.types, splits[index].checks.span())) {
+                FunctionAnalyses analyses(context, body);
+                typeValuesFromNever(TypePropagationInputs { program, id, body, analyses, arenas.types, build });
+            }
+        }
         // While the tests at its head were checks, the function waited for its generic version and kept what stands behind a value of type never. A body without a check waits for nothing.
         if (!waitsForGenericVersion(program, body)) {
             FunctionAnalyses analyses(context, body);

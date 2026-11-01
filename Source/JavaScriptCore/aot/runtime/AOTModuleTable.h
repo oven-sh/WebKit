@@ -60,7 +60,16 @@ public:
     };
     std::optional<LinkPlanOfRoot> linkPlanOfRoot(ModuleID) const;
     std::span<const ImportOfHeldFileData> importsOfHeldFile(ModuleID) const;
-    std::span<const ModuleExportData> exports(ModuleID module) const { return listOf(m_tables->moduleExports(), module, &ModuleData::firstExport); }
+    std::span<const ModuleExportData> exports(ModuleID module) const
+    {
+        std::span<const ModuleExportData> entries = listOf(m_tables->moduleExports(), module, &ModuleData::firstExport);
+        return !entries.empty() && entries.back().kindBits == ModuleExportData::kindBitsOfWordOfMock ? entries.first(entries.size() - 1) : entries;
+    }
+    std::optional<SlotData> wordOfMock(ModuleID module) const
+    {
+        std::span<const ModuleExportData> entries = listOf(m_tables->moduleExports(), module, &ModuleData::firstExport);
+        return !entries.empty() && entries.back().kindBits == ModuleExportData::kindBitsOfWordOfMock ? std::optional(entries.back().variable) : std::nullopt;
+    }
     const IndirectExportData& indirectExport(const ModuleExportData&) const;
     std::span<const SyntheticExportData> syntheticExports(ModuleID module) const { return listOf(m_tables->syntheticExports(), module, &ModuleData::firstSyntheticExport); }
     std::span<const RequiredNameData> requiredNames(ModuleID module) const { return listOf(m_tables->requiredNames(), module, &ModuleData::firstRequiredName); }

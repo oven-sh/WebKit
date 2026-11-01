@@ -75,7 +75,6 @@ private:
     Structure* m_generatorStructure { nullptr };
     Structure* m_structureOfGeneratorsWithoutPrototype { nullptr };
     JSObject* m_standInForPrototypes { nullptr };
-    Vector<GeneratorFunctionState> m_statesOfGeneratorFunctions;
     Structure* m_savedFrameStructure { nullptr };
     Vector<SavedFrame*> m_savedFramesForValidation;
     std::array<ListOfVisitedFrames, 16> m_visitedFramesWithDeadWords;

@@ -36,6 +36,8 @@ struct AnalysisContext {
     WorkLimits workLimits { WorkLimits::OfBuild };
     SavedFrames savedFrames { SavedFrames::AreUnknownMemory };
 
+    // The analyses of the verifier and of the emitter of run-time validation. They look closer at what has escaped than a pass does: every build would pay for that look, and only a build that checks itself asks for it.
+    bool onlyJudges() const { return savedFrames == SavedFrames::AreOutOfReach; }
     uint64_t limit(LimitID) const;
 };
 

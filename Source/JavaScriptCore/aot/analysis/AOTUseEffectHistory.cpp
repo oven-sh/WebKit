@@ -169,6 +169,19 @@ UseEffectHistory::UseEffectHistory(FunctionAnalyses& analyses, const UseEffectHi
             }
         }
     }
+    enum class Origin : uint8_t { NotAsked, Outside, PerhapsMadeHere };
+    Vector<Origin> originOfValue;
+    auto isUseOfWhatCodeOutsideReaches = [&](const Use& use) {
+        if (!analyses.context().onlyJudges() || !options.uses.isEmpty() || use.kind != Use::Kind::Operand)
+            return false;
+        if (originOfValue.isEmpty())
+            originOfValue.fill(Origin::NotAsked, m_function.values.size());
+        ValueID value = m_function.at(use.user).operand(use.operandIndex);
+        Origin& origin = originOfValue[value.index()];
+        if (origin == Origin::NotAsked)
+            origin = namesOnlyWhatCodeOutsideReaches(analyses, value) ? Origin::Outside : Origin::PerhapsMadeHere;
+        return origin == Origin::Outside;
+    };
     Vector<PendingAction> pendingActions;
     auto addAction = [&](BlockID block, uint32_t index, ObjectID object, ActionKind kind) {
         pendingActions.append(PendingAction { m_cfg.reversePostOrderIndex(block), Action { index, object, kind } });
@@ -206,6 +219,8 @@ UseEffectHistory::UseEffectHistory(FunctionAnalyses& analyses, const UseEffectHi
                 continue;
             if (savedFramesAreOutOfReach && goesIntoSavedFramesAlone(objectUse))
                 continue;
+            if (!isFreshAtEntry && isUseOfWhatCodeOutsideReaches(use))
+                continue;
             if (std::optional<uint32_t> index = actionIndexOf(m_function, useLists, use))
                 addAction(use.block, *index, object, ActionKind::Event);
             else
@@ -228,6 +243,25 @@ UseEffectHistory::UseEffectHistory(FunctionAnalyses& analyses, const UseEffectHi
         if (escape.liveInstancesOf(object) != LiveInstances::AtMostOne || allocation.placement != ValuePlacement::InBlock || isSkipped(allocation.block))
             continue;
         addAction(allocation.block, allocation.index, object, ActionKind::Reset);
+    }
+
+    if (options.uses.isEmpty() && !escape.allocationsThatMayGoOutOfSight().isEmpty()) {
+        Vector<uint64_t, 8> mayGoOutOfSight;
+        mayGoOutOfSight.fill(0, m_wordsPerBlock);
+        for (size_t objectIndex : escape.allocationsThatMayGoOutOfSight()) {
+            if (!m_isUnknown.quickGet(objectIndex))
+                mayGoOutOfSight[wordIndexOf(ObjectID(objectIndex))] |= maskOf(ObjectID(objectIndex));
+        }
+        m_outOfSightAtEnd.fill(0, numberOfBlocks * m_wordsPerBlock);
+        for (BlockID block : m_cfg.reversePostOrder()) {
+            std::optional<std::span<const ObjectID>> inSight = escape.allocationsInSightAtEndOf(block);
+            if (!inSight || isSkipped(block))
+                continue;
+            std::span<uint64_t> outOfSight = m_outOfSightAtEnd.mutableSubspan(static_cast<size_t>(m_cfg.reversePostOrderIndex(block)) * m_wordsPerBlock, m_wordsPerBlock);
+            memcpySpan(outOfSight, mayGoOutOfSight.span());
+            for (ObjectID object : *inSight)
+                outOfSight[wordIndexOf(object)] &= ~maskOf(object);
+        }
     }
 
     AOT::sortInLine(pendingActions, { }, [](const PendingAction& pending) {
@@ -270,6 +304,11 @@ void UseEffectHistory::computeStateLeaving(BlockID block, Leaves leaves, std::sp
             break;
         }
     }
+    if (leaves == Leaves::ToHandler || m_outOfSightAtEnd.isEmpty())
+        return;
+    std::span<const uint64_t> outOfSight = m_outOfSightAtEnd.subspan(static_cast<size_t>(m_cfg.reversePostOrderIndex(block)) * m_wordsPerBlock, m_wordsPerBlock);
+    for (size_t word = 0; word < state.size(); ++word)
+        state[word] &= ~outOfSight[word];
 }
 
 void UseEffectHistory::computeHeads(StartsAt startsAt)

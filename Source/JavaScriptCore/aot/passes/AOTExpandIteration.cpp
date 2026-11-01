@@ -193,6 +193,7 @@ struct ArmState {
     ValueID subject;
     ValueID nextMethod;
     ValueID isSteppedWithoutCall;
+    ValueID nextIsOfEngine;
     ValueID walkedList;
     bool callsSharedFunctions { false };
     bool storageIsUndecided { false };
@@ -1506,6 +1507,17 @@ static OpenedIterator openAsyncIterator(IterationExpansion& expansion, ValueID i
     return { iterator, next, isSteppedWithoutCall };
 }
 
+// Asked once, where the iterator is opened. The shared function that steps an iterator asks the rest.
+static ValueID appendIsNextOfEngine(IterationExpansion& expansion, ValueID next)
+{
+    if (expansion.origin != IterationOrigin::Spread || expansion.isMakingSharedFunction())
+        return { };
+    Type ownMethods = Type::forBuiltin(Builtins::MapIteratorPrototypeNext);
+    for (BuiltinID method : { Builtins::SetIteratorPrototypeNext, Builtins::ArrayIteratorPrototypeNext, Builtins::GeneratorPrototypeNext })
+        ownMethods = ownMethods.unionWith(Type::forBuiltin(method), expansion.types);
+    return expansion.builder.appendTypeTest(next, ownMethods);
+}
+
 static void emitProtocolOpen(IterationExpansion& expansion, ArmState& state, IteratorKind kind)
 {
     IRBuilder& builder = expansion.builder;
@@ -1529,6 +1541,8 @@ static void emitProtocolOpen(IterationExpansion& expansion, ArmState& state, Ite
         state.nextMethod = opened.next;
         state.isSteppedWithoutCall = opened.isSteppedWithoutCall;
         state.callsSharedFunctions = opened.isOpenedBySharedFunction;
+        if (kind == IteratorKind::Sync)
+            state.nextIsOfEngine = appendIsNextOfEngine(expansion, opened.next);
         return;
     }
 
@@ -1550,14 +1564,18 @@ static void emitProtocolOpen(IterationExpansion& expansion, ArmState& state, Ite
     ValueID subject = builder.addParameter(merge, expansion.types.unionOf(TypeTable::object, TypeTable::string));
     IRBuilder::ProvenBranch branch = expansion.branchOnType(state.subject, TypeTable::string);
     ValueID nextOfString = builder.appendUndefined();
+    ValueID stringHasNoNext = builder.appendBoolean(false);
     builder.emitJump(merge, { branch.provenOnTaken });
 
     builder.moveToEndOf(branch.notTaken);
     OpenedIterator opened = openSyncIterator(expansion, branch.provenOnNotTaken);
+    state.nextIsOfEngine = appendIsNextOfEngine(expansion, opened.next);
     builder.emitJump(merge, { opened.iterator });
 
     // For a second parameter the builder looks for the edges into the block, which computes the control flow graph of the whole function at every open.
     expansion.define(expansion.addVariable(opened.next), nextOfString);
+    if (state.nextIsOfEngine)
+        expansion.define(expansion.addVariable(state.nextIsOfEngine), stringHasNoNext);
 
     builder.moveToEndOf(merge);
     state.subject = subject;
@@ -1658,14 +1676,28 @@ static ValueID appendResumeCall(IterationExpansion& expansion, const ArmState& s
     return expansion.appendCall(branch.provenOnNotTaken, state.subject, singleElementSpan(sent));
 }
 
+static void emitCallOfNext(IterationExpansion& expansion, const ArmState& state, const StepRequest& request)
+{
+    emitIteratorResultReads(expansion, expansion.appendAwaitIfAsync(request.kind, appendResumeCall(expansion, state, request)), request.readsValueWhenDone);
+}
+
 static void emitStepByCall(IterationExpansion& expansion, const ArmState& state, const StepRequest& request)
 {
-    if (state.callsSharedFunctions && request.kind == IteratorKind::Sync && request.mode == ResumeMode::Next && !request.sent && !request.readsValueWhenDone) {
+    bool asksForNextValue = request.kind == IteratorKind::Sync && request.mode == ResumeMode::Next && !request.sent && !request.readsValueWhenDone;
+    if (state.callsSharedFunctions && asksForNextValue) {
         ValueID step = appendCallOfSharedFunction(expansion, OutlinedIteration::StepIterator, std::array { state.subject, state.nextMethod });
         finishStepWithValueUnlessDone(expansion, expansion.appendResultAt(step, doneResult), false, [&] { return expansion.appendResultAt(step, valueResult); });
         return;
     }
-    emitIteratorResultReads(expansion, expansion.appendAwaitIfAsync(request.kind, appendResumeCall(expansion, state, request)), request.readsValueWhenDone);
+    // `[...iterator]`, `f(...iterator)`. What a spread says of an answer that is no object is its own, and a `next` of the engine answers with an object or throws.
+    if (asksForNextValue && state.nextIsOfEngine) {
+        expansion.pass->build.statistics().count(StatisticID::IteratorsSteppedWithoutCall);
+        IRBuilder::BranchBlocks blocks = expansion.builder.emitBranch(state.nextIsOfEngine);
+        ValueID step = appendCallOfSharedFunction(expansion, OutlinedIteration::StepIterator, std::array { state.subject, state.nextMethod });
+        finishStepWithValueUnlessDone(expansion, expansion.appendResultAt(step, doneResult), false, [&] { return expansion.appendResultAt(step, valueResult); });
+        expansion.builder.moveToEndOf(blocks.notTaken);
+    }
+    emitCallOfNext(expansion, state, request);
 }
 
 static void emitProtocolStep(IterationExpansion& expansion, const ArmState& state, const StepRequest& request)
@@ -1908,7 +1940,7 @@ static void emitStepOfAnyIterator(IterationExpansion& expansion, ValueID iterato
     builder.emitJump(byCall);
 
     builder.moveToEndOf(byCall);
-    emitStepByCall(expansion, ArmState { .subject = iterator, .nextMethod = next }, StepRequest { });
+    emitCallOfNext(expansion, ArmState { .subject = iterator, .nextMethod = next }, StepRequest { });
 }
 
 Function buildOutlinedIteration(const DerivedFunctionKey& key, DerivedFunctionInputs& inputs)
@@ -1960,6 +1992,10 @@ Function buildOutlinedIteration(const DerivedFunctionKey& key, DerivedFunctionIn
     case OutlinedIteration::StepIterator:
         return buildSharedFunction(inputs, "stepIterator"_s, { TypeTable::object, TypeTable::anything }, { TypeTable::boolean, TypeTable::anything }, [&](IterationExpansion& expansion, Parameters parameters) {
             emitStepOfAnyIterator(expansion, parameters[0], parameters[1]);
+        });
+    case OutlinedIteration::CallNextOfIterator:
+        return buildSharedFunction(inputs, "callNextOfIterator"_s, { TypeTable::object, TypeTable::anything }, { TypeTable::object }, [&](IterationExpansion& expansion, Parameters parameters) {
+            expansion.builder.emitReturn(expansion.appendRequireObject(expansion.appendCall(parameters[1], parameters[0], { }), RuntimeErrorKind::IteratorResultNotObject));
         });
     case OutlinedIteration::CloseStringOrIterator:
         return buildClose("closeStringOrIterator"_s, inputs.types.unionOf(TypeTable::object, TypeTable::string), IteratorCompletion::Normal);
@@ -2079,6 +2115,87 @@ static PassOutcome expandArrayIteratorSteps(FunctionPassContext& pass, IRBuilder
             emitCollectionIteratorStep(expansion, original.iteratorOperand(), original.opcode == Opcode::StepMapIterator);
     }
     resultReads.finish();
+    builder.setHandler(std::nullopt);
+    return PassOutcome::Changed;
+}
+
+// `@iteratorGenericNext(next, iterator)` in the texts of the library: Iterator.prototype.reduce, some, find, the helpers. Nobody knows the iterator there.
+// For an iterator of the engine they call one function. Where its `next` is the engine's too, that one has it stepped by the function that loops share, and puts the step into an answer as `next` makes it.
+static bool callsNextOfIterator(const Function& function)
+{
+    return isOutlinedIteration(function) && kindOfOutlinedBody(function.derivation.node) == OutlinedIteration::CallNextOfIterator;
+}
+
+static Vector<ProgramPoint, 2> findCallsOfNextOfAnyIterator(FunctionPassContext& pass)
+{
+    Vector<ProgramPoint, 2> calls;
+    const Function& function = pass.function;
+    if (!pass.analyses.opcodesOfValues().contains(Opcode::RequireObject) || !isLibraryCode(pass.program, function) || (isOutlinedIteration(function) && !callsNextOfIterator(function)))
+        return calls;
+    // Flow has decided what the tests for the layout of an answer say.
+    if (pass.program.at(pass.program.layoutOf(BuiltinLayouts::IteratorResult)).flow.allocation == AllocationState::NeverAllocated)
+        return calls;
+    forEachValueSite(pass.analyses, function, { Opcode::RequireObject }, [&](const ValueSite& site) {
+        const Value& check = function.at(site.value);
+        if (check.runtimeError() != RuntimeErrorKind::IteratorResultNotObject || !site.index)
+            return;
+        ValueID answer = function.at(site.block).values[site.index - 1];
+        const Value& call = function.at(answer);
+        if (answer != check.valueOperand() || call.opcode != Opcode::Call || !call.thisValueOperand() || !call.argumentsOperands().empty())
+            return;
+        // `return` is read by its name in front of its call.
+        const Value& method = function.at(pass.analyses.identityOf(call.calleeOperand()));
+        if (method.opcode == Opcode::PropGet && method.key() != pass.program.keyOf(BuiltinNames::next))
+            return;
+        calls.append(ProgramPoint { site.block, site.index - 1 });
+    });
+    return calls;
+}
+
+static PassOutcome stepIteratorsOfEngineWithoutCall(FunctionPassContext& pass, IRBuilder& builder, Vector<ProgramPoint, 2>&& calls)
+{
+    AOT::sort(calls, std::ranges::greater { }, blockAndIndexOf);
+    SSARepair repair(builder, pass.analyses);
+    IterationExpansion expansion { &pass, pass.program, pass.function, pass.types, builder, &repair };
+    for (const ProgramPoint& point : calls) {
+        Value call = pass.function.at(pass.function.at(point.block).values[point.index]);
+        builder.setOrigin(call.origin());
+        IRBuilder::Expansion cut = builder.beginExpansion(point);
+        BlockID byCall = expansion.addSiblingBlock();
+
+        if (callsNextOfIterator(pass.function)) {
+            Type ownMethods = Type::forBuiltin(Builtins::MapIteratorPrototypeNext).unionWith(Type::forBuiltin(Builtins::SetIteratorPrototypeNext), pass.types).unionWith(Type::forBuiltin(Builtins::ArrayIteratorPrototypeNext), pass.types);
+            IRBuilder::BranchBlocks nextIsOfEngine = builder.emitBranch(builder.appendTypeTest(call.calleeOperand(), ownMethods));
+            ValueID step = appendCallOfSharedFunction(expansion, OutlinedIteration::StepIterator, std::array { call.thisValueOperand(), call.calleeOperand() });
+            ValueID done = expansion.appendResultAt(step, doneResult);
+            builder.endExpansion(cut, builder.append(makeIteratorResultObject(pass.program, expansion.appendResultAt(step, valueResult), done)));
+            builder.moveToEndOf(nextIsOfEngine.notTaken);
+            builder.emitJump(byCall);
+            builder.moveToEndOf(byCall);
+            builder.endExpansion(cut, builder.append(WTF::move(call)));
+            continue;
+        }
+
+        IRBuilder::ProvenBranch isObject = expansion.branchOnType(call.thisValueOperand(), TypeTable::object);
+        BlockID isIteratorOfEngine = expansion.addSiblingBlock();
+        for (CheckedJSType type : { CheckedJSType::JSMapIteratorType, CheckedJSType::JSSetIteratorType, CheckedJSType::JSArrayIteratorType }) {
+            Value hasType = makeWith(Opcode::HasJSType, { isObject.provenOnTaken }, &Value::setFirst, type);
+            hasType.setLast(type);
+            IRBuilder::BranchBlocks blocks = builder.emitBranch(builder.append(WTF::move(hasType)));
+            builder.emitJump(isIteratorOfEngine);
+            builder.moveToEndOf(blocks.notTaken);
+        }
+        builder.emitJump(byCall);
+        builder.moveToEndOf(isObject.notTaken);
+        builder.emitJump(byCall);
+
+        builder.moveToEndOf(isIteratorOfEngine);
+        builder.endExpansion(cut, appendCallOfSharedFunction(expansion, OutlinedIteration::CallNextOfIterator, std::array { isObject.provenOnTaken, call.calleeOperand() }));
+
+        builder.moveToEndOf(byCall);
+        builder.endExpansion(cut, builder.append(WTF::move(call)));
+        pass.build.statistics().count(StatisticID::IteratorsSteppedWithoutCall);
+    }
     builder.setHandler(std::nullopt);
     return PassOutcome::Changed;
 }
@@ -3747,11 +3864,16 @@ static PassOutcome callGeneratorMethods(FunctionPassContext& pass, IRBuilder& bu
 PassOutcome expandIteration(FunctionPassContext& pass)
 {
     OptionSet<ExpansionStep> steps = findStepsWithWork(pass);
-    if (steps.isEmpty())
+    Vector<ProgramPoint, 2> callsOfNext = findCallsOfNextOfAnyIterator(pass);
+    if (steps.isEmpty() && callsOfNext.isEmpty())
         return PassOutcome::Unchanged;
 
     IRBuilder builder(pass.analyses.context(), pass.function, pass.types, &pass.analyses);
-    PassOutcome outcome = builder.emptyUnreachableBlocks() ? PassOutcome::Changed : PassOutcome::Unchanged;
+    PassOutcome outcome = PassOutcome::Unchanged;
+    if (!callsOfNext.isEmpty())
+        outcome |= stepIteratorsOfEngineWithoutCall(pass, builder, WTF::move(callsOfNext));
+    if (builder.emptyUnreachableBlocks())
+        outcome = PassOutcome::Changed;
     if (steps.contains(ExpansionStep::ForInPositions))
         outcome |= threadForInPositions(pass, builder);
     if (steps.contains(ExpansionStep::ArrayIteratorSteps))

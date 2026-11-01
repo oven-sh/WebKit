@@ -87,6 +87,7 @@ private:
     Vector<Action> m_actions;
     Vector<uint32_t> m_firstAction;
     Vector<uint64_t> m_head;
+    Vector<uint64_t> m_outOfSightAtEnd;
 };
 
 } } } // namespace JSC::AOT::Typed

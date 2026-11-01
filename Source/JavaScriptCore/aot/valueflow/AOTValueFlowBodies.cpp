@@ -2681,6 +2681,14 @@ ValueFlowBody makeHostBody(const Program& program, const ValueFlowBuiltinTables&
         switch (variable.initialization) {
         case VariableInitialization::Uninitialized:
             body.seedsOnceReached.append({ node, absentValue, 0 });
+            // The host stores an object of its own there, whether or not the body of the module ever runs.
+            if (variable.flags.contains(VariableFlags::HoldsMock)) {
+                body.seedsOnceReached.append({ node, static_cast<uint32_t>(body.constants.size()), 0 });
+                // The original beside the mock of a file is the file once more, from disk: `vi.importActual()`, the parameter of a factory, a mock without a factory.
+                if (!program.at(variable.module).runtimeModule)
+                    body.seedsOnceReached.append({ ValueFlowNodeName::ofHost(ValueFlowHostNode::UnseenCopiesOfFilesMayRun), static_cast<uint32_t>(body.constants.size()), 0 });
+                body.constants.append({ 0, { ValueFlowObjectName { ValueFlowObjectKind::UnknownObject, 0, { } } } });
+            }
             break;
         case VariableInitialization::Undefined:
             if (!startsWithoutValueInSolve(program, variable) && !(unobservedDefinitions && unobservedDefinitions->isStoredAheadOfEveryRead(VariableID(index))))

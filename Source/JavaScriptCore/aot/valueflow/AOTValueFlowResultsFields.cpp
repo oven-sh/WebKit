@@ -2553,7 +2553,9 @@ ValueFlowFieldContents computeFieldResults(const ValueFlowResultInputs& inputs, 
     runTasksInParallel(inputs.loops(), {
         [&] {
             usesOfHeap.stores->noteListedWrites();
+            PhaseTimes timesOfReceivers(inputs.build, PassID::AnalyzeFlow);
             usesOfHeap.stores->setReceiversOfReads(usesOfHeap.uses.takeReceiversOfReads());
+            timesOfReceivers.didFinish("stores by layout: receivers of reads"_s);
             times.didFinish("fields: stores by layout"_s);
         },
         [&] {

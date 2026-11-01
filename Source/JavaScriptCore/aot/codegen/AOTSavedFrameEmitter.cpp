@@ -393,7 +393,7 @@ CellPointer SavedFrameEmitter::allocateGenerator(std::optional<CellPointer> clos
     }
 
     CellAllocationEmitter& cells = emitter<CellAllocationEmitter>();
-    Pointer allocator = cells.allocatorForSize(loadImmutablePointer(AOT_INSTANCE_OFFSET(allocation.cellSpace)), sizeof(Generator));
+    Pointer allocator(m_out.loadPtr(mutableInstanceField(AOT_INSTANCE_OFFSET(coroutines.generatorAllocator))));
     branchUnless(Condition(m_out.notNull(allocator.value())), slowPath);
     CellPointer result = cells.allocateHeapCell(allocator, sizeof(Generator), slowPath);
     {
@@ -417,19 +417,16 @@ CellPointer SavedFrameEmitter::allocateGenerator(std::optional<CellPointer> clos
 CellPointer SavedFrameEmitter::allocateGeneratorWithoutPrototype(CellPointer closure, LBasicBlock wasAsked, LBasicBlock slowPath)
 {
     static_assert(Generator::offsetOfTakesPrototypeFromFunction() == Generator::offsetOfHasOtherPrototype() + 1 && Generator::offsetOfHasOtherPrototype() + 4 == sizeof(Generator));
-    Pointer taggedRareData = loadField<Pointer>(closure, m_heaps.JSFunction_executableOrRareData);
-    branchUnless(Condition(m_out.testIsZeroPtr(taggedRareData.value(), m_out.constIntPtr(JSFunction::rareDataTag))), wasAsked);
+    static_assert(numberOfStatesOfGeneratorFunctions == 256);
+    // What a function owns lies outside its cell: without that storage it has no `prototype`, whatever else it remembers.
     branchUnless(Condition(m_out.isNull(m_out.loadPtr(closure.value(), m_heaps.JSObject_butterfly))), wasAsked);
-    // Zero until the first of them is made.
-    Integer header(m_out.load64(mutableInstanceField(AOT_INSTANCE_OFFSET(coroutines.headerOfGeneratorsWithoutPrototype))));
-    branchUnless(isNotZero(header), wasAsked);
-    LValue states = m_out.loadPtr(mutableInstanceField(AOT_INSTANCE_OFFSET(coroutines.statesOfGeneratorFunctions)));
-    LValue place = m_out.bitAnd(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::InternalFields), closure.value(), offsetOfClosureEntry + ClosureWord::functionShift / 8)), m_out.constInt32(numberOfStatesOfGeneratorFunctions - 1));
-    LValue state = m_out.load8ZeroExt32(m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), m_out.add(states, m_out.zeroExtPtr(place)), 0));
+    LValue place = m_out.load8ZeroExt32(m_out.address(m_heaps.entire(AbstractHeap::InternalFields), closure.value(), offsetOfClosureEntry + ClosureWord::functionShift / 8));
+    LValue state = m_out.load8ZeroExt32(m_out.address(m_heaps.AOTInstance_mutableFields, m_out.add(m_instance, m_out.zeroExtPtr(place)), AOT_INSTANCE_OFFSET(coroutines.statesOfGeneratorFunctions)));
     branchUnless(Condition(m_out.equal(state, m_out.constInt32(static_cast<int32_t>(GeneratorFunctionState::MakesGeneratorsWithoutPrototype)))), wasAsked);
+    Integer header(m_out.load64(mutableInstanceField(AOT_INSTANCE_OFFSET(coroutines.headerOfGeneratorsWithoutPrototype))));
 
     CellAllocationEmitter& cells = emitter<CellAllocationEmitter>();
-    Pointer allocator = cells.allocatorForSize(loadImmutablePointer(AOT_INSTANCE_OFFSET(allocation.cellSpace)), sizeof(Generator));
+    Pointer allocator(m_out.loadPtr(mutableInstanceField(AOT_INSTANCE_OFFSET(coroutines.generatorAllocator))));
     branchUnless(Condition(m_out.notNull(allocator.value())), slowPath);
     CellPointer result = cells.allocateHeapCell(allocator, sizeof(Generator), slowPath);
     {

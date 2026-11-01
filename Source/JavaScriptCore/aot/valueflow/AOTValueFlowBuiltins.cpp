@@ -1735,20 +1735,29 @@ private:
         SetForScope everyReceiver(m_receiversAccepted, ValueSets::anything);
         ValueFlowNodeID description = m_context.hub(m_tables.descriptionOfRefusedOperands());
         bool takesAnyObject = !parameter.accepted || parameter.conversion == BuiltinConversion::Dictionary || m_builtins.at(parameter.accepted).flags.containsAny({ BuiltinTypeFlag::IsAnything, BuiltinTypeFlag::HasAnyObject, BuiltinTypeFlag::HasPlainData });
+        // What a call of a built-in has made stands among the functions until the solve says what it was made as: `Object.create(Blob.prototype, {})`. It is described as any other object.
+        ValueSetID functions = m_context.maker().intersect(m_universe.callables(), ValueSets::complement(m_context.maker().intersect(m_universe.objectsThatMayBeAnything(), m_universe.knownObjects())));
         if (!takesAnyObject) {
             ValueSetID refused = ValueSets::complement(m_context.maker().unite(m_universe.callables(), m_tables.membersSurelyOf(parameter.accepted)));
+            // Of those, what was allocated as none of the classes that the parameter names. An iterator that one of two calls made is let through by the `next` of one of them.
+            refused = m_context.maker().unite(refused, allocatedByBuiltinsAsNoneOf(parameter.operand, m_tables.classesNamedBy(parameter.accepted)));
             if (parameter.operand.isReceiver() && m_call.isFoundOnReceiver)
                 return describeReceiversThatAnswer(refused, description);
             forEachOperandAt(parameter.operand, [&](ValueFlowOperand operand) {
                 operand.mask = m_context.maker().intersect(operand.mask, refused);
                 m_context.connect(operand, description);
             });
-            return;
+            // `Buffer.concat([{ }])`: the list is taken and what lies in it is refused. A type that says what the list holds is chosen for no other list.
+            bool saysWhatIsHeld = std::ranges::any_of(m_builtins.at(parameter.accepted).parts, [](const BuiltinTypePart& part) {
+                return !part.contents.empty();
+            });
+            if (saysWhatIsHeld)
+                return;
         }
 
-        ValueSetID allButFunctions = ValueSets::complement(m_universe.callables());
+        ValueSetID allButFunctions = ValueSets::complement(functions);
         ValueFlowBehaviorID behavior = m_tables.behaviorOf(parameter);
-        if (behavior && m_tables.at(behavior).isTransitive) {
+        if (takesAnyObject && behavior && m_tables.at(behavior).isTransitive) {
             // An object is what the parameter takes: the message describes what is read out of it, and out of that.
             ClimbingSet holders = m_context.restrict(m_context.valueOf(m_context.hub(behavior)), m_universe.objects());
             auto describe = [&](ValueFlowNodeID read) {
@@ -1758,7 +1767,7 @@ private:
             describe(m_context.lookup(m_context.restrict(holders, m_context.maker().intersect(m_universe.knownObjects(), ValueSets::complement(m_universe.builtinObjects()))), elementsName));
             for (BuiltinName name : parameter.namedMembers)
                 describe(m_context.lookup(holders, property(m_context, name)));
-        } else {
+        } else if (takesAnyObject) {
             for (BuiltinName name : parameter.namedMembers)
                 m_context.connect(m_context.masked(m_context.lookup(valueAt(parameter.operand), property(m_context, name)), allButFunctions), description);
         }
@@ -1934,7 +1943,7 @@ private:
             m_context.mark(made, ObjectMutation::StoreOfOtherType);
             m_context.add(m_context.written(made, elementsName), unknownValue(m_context, ValueFlowUnknownSource::ContentsOfEscapedObject));
             m_context.add(m_context.written(made, property(m_context, BuiltinNames::length)), m_universe.anyPrimitive());
-            bool mayHaveAccessorUnderIndex = std::ranges::any_of(std::array { ValueFlowNameKind::GetterUnderUnknownKey, ValueFlowNameKind::SetterUnderUnknownKey }, [&](ValueFlowNameKind kind) {
+            bool mayHaveAccessorUnderIndex = std::ranges::any_of(std::array { ValueFlowNameKind::GetterUnderUnknownKey, ValueFlowNameKind::GetterUnderNameOfEnumeration, ValueFlowNameKind::SetterUnderUnknownKey }, [&](ValueFlowNameKind kind) {
                 return holdsAnything(m_context.valueOf(m_context.readWhatWasWritten(made, ValueFlowName::of(kind))));
             });
             if (mayHaveAccessorUnderIndex)
@@ -3191,7 +3200,7 @@ private:
         auto applyWith = [&](const ValueFlowOperand& value, ValueFlowNodeID target) {
             forEachOperandAt(action.object, [&](const ValueFlowOperand& object) {
                 forEachKeyOperand(action.key, [&](const ValueFlowOperand& key) {
-                    Typed::applyPropertyAction(m_context, action, { object, key, value, target, m_call.thrown });
+                    Typed::applyPropertyAction(m_context, action, { object, key, value, target, m_call.thrown, std::nullopt, false, m_call.operation });
                 });
             });
             // Without a trap for it, what stands above a proxy is what stands above its target.
@@ -3326,6 +3335,14 @@ private:
         if (reader != Builtins::ObjectGetOwnPropertyDescriptor && reader != Builtins::ReflectGetOwnPropertyDescriptor)
             return std::nullopt;
         if (definitionThroughTests(function, function.at(read).operand(numberOfOperandsBeforeArguments + 1)) != definitionThroughTests(function, definition.operand(keyIndex)))
+            return std::nullopt;
+        // Each of the two calls converts a key that is an object anew, and may get another name for it.
+        ValueSetID convertedByCode = m_context.maker().intersect(m_universe.objects(), ValueSets::complement(m_universe.symbols()));
+        bool isConvertedByCode = false;
+        forEachKeyOperand(action.key, [&](const ValueFlowOperand& key) {
+            isConvertedByCode |= m_context.meet(m_context.valueOf(key), convertedByCode);
+        });
+        if (isConvertedByCode)
             return std::nullopt;
 
         ValueFlowObjectID descriptor;

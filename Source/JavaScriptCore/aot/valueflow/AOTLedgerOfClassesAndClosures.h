@@ -22,9 +22,11 @@ constexpr bool looksIntoObject(ValueFlowNameKind kind)
     case ValueFlowNameKind::Elements:
     case ValueFlowNameKind::UnknownKey:
     case ValueFlowNameKind::GetterUnderUnknownKey:
+    case ValueFlowNameKind::GetterUnderNameOfEnumeration:
     case ValueFlowNameKind::SetterUnderUnknownKey:
     case ValueFlowNameKind::EveryProperty:
     case ValueFlowNameKind::EveryGetter:
+    case ValueFlowNameKind::GetterOutsideEnumerations:
     case ValueFlowNameKind::EverySetter:
     case ValueFlowNameKind::PrototypeLink:
     case ValueFlowNameKind::CopiedFrom:

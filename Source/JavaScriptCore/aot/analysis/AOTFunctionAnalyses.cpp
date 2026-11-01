@@ -914,7 +914,7 @@ const EscapeAnalysis& FunctionAnalyses::escapeWithLiveInstances()
     if (!m_values.escape->hasLiveInstances()) {
         m_values.escape->computeLiveInstances(cfg(), useLists(), [&]() -> const BlockCycles& {
             return blockCycles();
-        });
+        }, m_context.onlyJudges() ? EscapeAnalysis::OutOfSight::Asked : EscapeAnalysis::OutOfSight::NotAsked);
     }
     return *m_values.escape;
 }

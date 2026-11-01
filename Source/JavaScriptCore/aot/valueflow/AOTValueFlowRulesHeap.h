@@ -56,6 +56,7 @@ struct ValueFlowPropertyActionOperands {
     ValueFlowNodeID thrown;
     std::optional<std::span<const PropertyKeyID>> namesInMap { };
     bool mapHasComputedNames { false };
+    const ValueFlowStatement* operation { nullptr };
 };
 void applyPropertyAction(ValueFlowRuleContext&, const BuiltinPropertyAction&, const ValueFlowPropertyActionOperands&);
 

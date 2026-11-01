@@ -367,7 +367,7 @@ AccessorsUnderUnknownKeys::AccessorsUnderUnknownKeys(const ValueFlowResultInputs
         });
         return holders;
     };
-    m_holdersOfGettersUnderUnknownKey = findHolders(ValueFlowNameKind::GetterUnderUnknownKey);
+    m_holdersOfGettersUnderUnknownKey = maker.unite(findHolders(ValueFlowNameKind::GetterUnderUnknownKey), findHolders(ValueFlowNameKind::GetterUnderNameOfEnumeration));
     m_holdersOfSettersUnderUnknownKey = findHolders(ValueFlowNameKind::SetterUnderUnknownKey);
 }
 
@@ -383,10 +383,13 @@ ValueSetID AccessorsUnderUnknownKeys::findOn(ValueSetMaker& maker, ValueSetID ob
     if (findsValue)
         return ValueSets::nothing;
     ValueSetID accessors = ValueSets::nothing;
-    forEachNodeWrittenUnder(ValueFlowName::of(isRead ? ValueFlowNameKind::GetterUnderUnknownKey : ValueFlowNameKind::SetterUnderUnknownKey), [&](const WrittenNode& node) {
+    auto take = [&](const WrittenNode& node) {
         if (m_sets.meet(node.objects, objects))
             accessors = maker.unite(accessors, maker.intersect(node.value, m_universe.closures()));
-    });
+    };
+    forEachNodeWrittenUnder(ValueFlowName::of(isRead ? ValueFlowNameKind::GetterUnderUnknownKey : ValueFlowNameKind::SetterUnderUnknownKey), take);
+    if (isRead)
+        forEachNodeWrittenUnder(ValueFlowName::of(ValueFlowNameKind::GetterUnderNameOfEnumeration), take);
     return accessors;
 }
 

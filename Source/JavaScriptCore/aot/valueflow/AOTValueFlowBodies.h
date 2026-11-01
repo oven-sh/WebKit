@@ -481,10 +481,11 @@ enum class ValueFlowHostNode : uint8_t {
     WrittenPairsThatAreRead,
     ObjectsPutBelowInstances,
     AnswersThatNoReadLists,
+    GettersAreFoundUnderNamesOfEnumerations,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 92;
-static_assert(static_cast<unsigned>(ValueFlowHostNode::AnswersThatNoReadLists) + 1 == numberOfValueFlowHostNodes);
+inline constexpr unsigned numberOfValueFlowHostNodes = 93;
+static_assert(static_cast<unsigned>(ValueFlowHostNode::GettersAreFoundUnderNamesOfEnumerations) + 1 == numberOfValueFlowHostNodes);
 
 class ValueFlowProgramNodes {
 public:

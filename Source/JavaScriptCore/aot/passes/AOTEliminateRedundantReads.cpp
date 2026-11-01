@@ -3457,7 +3457,7 @@ struct VariableCarrier : LoopEditor {
         return changed;
     }
 
-    // An operation that only throws when out of memory need not see the variables' current values.
+    // An operation that only throws when out of memory lets the stores wait: a handler makes them where it throws.
     Effects effectsOnDelayedStores(ValueID value)
     {
         Effects effects = m_analyses.effectsOf(value).onAnyEdge();
@@ -3505,6 +3505,7 @@ struct VariableCarrier : LoopEditor {
         }
 
         Vector<Edge, 8> leavingEdges;
+        Vector<ProgramPoint, 4> pointsThatMayRunOutOfMemory;
         for (unsigned position = 0; position < loop.size(); ++position) {
             BlockID id = loop.at(position);
             const Block& block = m_function.at(id);
@@ -3534,6 +3535,10 @@ struct VariableCarrier : LoopEditor {
                 }
                 if (!look(effectsOnDelayedStores(value)))
                     return false;
+                // A poll throws what an allocation has left owed. Under a handler the back end no longer takes it for the poll of a loop.
+                Effects effects = m_analyses.effectsOf(value).onAnyEdge();
+                if (effects.mayThrow && !effects.mayThrowByRule() && m_function.at(value).opcode != Opcode::LoopHint)
+                    pointsThatMayRunOutOfMemory.append({ id, index });
             }
             if (!look(m_analyses.effectsOfTerminator(id).onAnyEdge()))
                 return false;
@@ -3546,12 +3551,39 @@ struct VariableCarrier : LoopEditor {
             return candidate.isSeenByOthers || candidate.stores.isEmpty();
         });
 
-        // The store on a leaving edge is a copy of the first store, and it stores any definition of the variable. Each definition needs the type that the first store requires.
-        // Only accesses by slot can differ in that type: each names its own set of layouts.
-        TypingContext typing { m_program, m_function, m_context.types };
         auto storeAt = [&](ProgramPoint point) -> const Value& {
             return m_function.at(m_function.at(point.block).values[point.index]);
         };
+        // The store on a leaving edge is a copy of the first store. What that names beside the stored value has to be there on every way out: a cast of the object, or a fact,
+        // that is made on one path through the loop is not.
+        auto isThereOnEveryWayOut = [&](ValueID operand) {
+            return std::ranges::all_of(leavingEdges, [&](Edge edge) {
+                return m_analyses.dominates(operand, pointBeforeTerminatorOf(m_function, edge.from));
+            }) && std::ranges::all_of(pointsThatMayRunOutOfMemory, [&](ProgramPoint point) {
+                return m_analyses.dominates(operand, point);
+            });
+        };
+        auto canBeCopiedToEveryWayOut = [&](ProgramPoint point) {
+            const Value& store = storeAt(point);
+            uint32_t storedOperandIndex = memoryAccessOf(m_function, store).storedOperandIndex;
+            for (uint32_t index = 0; index < store.numberOfOperands(); ++index) {
+                ValueID operand = store.operand(index);
+                if (index != storedOperandIndex && operand && !isThereOnEveryWayOut(operand))
+                    return false;
+            }
+            return true;
+        };
+        delayed.removeAllMatching([&](DelayedVariable& candidate) {
+            auto found = std::ranges::find_if(candidate.stores, canBeCopiedToEveryWayOut);
+            if (found == candidate.stores.end())
+                return true;
+            std::swap(candidate.stores.first(), *found);
+            return false;
+        });
+
+        // It stores any definition of the variable. Each definition needs the type that the first store requires.
+        // Only accesses by slot can differ in that type: each names its own set of layouts.
+        TypingContext typing { m_program, m_function, m_context.types };
         delayed.removeAllMatching([&](DelayedVariable& candidate) {
             const Value& first = storeAt(candidate.stores.first());
             if (!Value::opcodesWithReceivers.contains(first.opcode))
@@ -3574,9 +3606,40 @@ struct VariableCarrier : LoopEditor {
             return false;
 
         IRBuilder builder = makeBuilder();
-        Vector<BlockID, 8> blocksOnLeavingEdges;
+        // An error for lack of memory can be caught, and whoever catches it reads the variables. So each operation that may throw one stands alone in a block,
+        // under a handler that makes the stores with what the variables hold there and throws the error again. The header keeps no handler.
+        bool eachStandsAlone = std::ranges::all_of(pointsThatMayRunOutOfMemory, [&](ProgramPoint point) {
+            return point.block != header && m_function.at(point.block).values.size() == 1;
+        });
+        if (!eachStandsAlone) {
+            // Last to first: what stands in front of a split keeps its place.
+            for (ProgramPoint point : pointsThatMayRunOutOfMemory | std::views::reverse) {
+                Vector<uint32_t, 2> indexes;
+                if (point.index || point.block == header)
+                    indexes.append(point.index);
+                if (point.index + 1 < m_function.at(point.block).values.size())
+                    indexes.append(point.index + 1);
+                if (!indexes.isEmpty())
+                    builder.splitBlock(point.block, indexes.span());
+            }
+            m_analyses.didChangeControlFlow();
+            if (const NaturalLoop* sameLoop = m_analyses.naturalLoops().headerOf(header))
+                delayStoresIn(*sameLoop, variables);
+            return true;
+        }
+
+        Vector<ProgramPoint, 8> pointsOfStores;
         for (Edge edge : leavingEdges)
-            blocksOnLeavingEdges.append(builder.splitEdge(edge));
+            pointsOfStores.append({ builder.splitEdge(edge), 0 });
+        for (ProgramPoint point : pointsThatMayRunOutOfMemory) {
+            builder.setOrigin(m_function.at(m_function.at(point.block).values.first()).origin());
+            builder.setHandler(std::nullopt);
+            BlockID failed = builder.addHandlerBlock(BlockRole::CleanupHandler, ValueID());
+            m_function.edit(point.block, { BlockEdit::Edges, BlockEdit::Arguments }).handler = Target { failed, { }, { } };
+            builder.moveToEndOf(failed);
+            builder.emitRethrow(builder.append(Opcode::CatchException, { }));
+            pointsOfStores.append({ failed, 1 });
+        }
 
         Vector<Vector<ValueID, 4>, 4> definitionsOfVariables(delayed.size());
         Vector<ValueID, 4> delayedStores;
@@ -3597,12 +3660,12 @@ struct VariableCarrier : LoopEditor {
                 definitions.append(insertCopy(builder, { point.block, point.index + 1 }, memoryAccessOf(m_function, m_function.at(delayedStore)).stored));
                 delayedStores.append(delayedStore);
             }
-            for (BlockID block : blocksOnLeavingEdges) {
+            for (ProgramPoint point : pointsOfStores) {
                 if (m_context.build.isSabotaged(Sabotage::DelayedStoresAreLeftOut))
                     break;
                 Value storeOnEdge = store;
                 storeOnEdge.setOperand(storedOperandIndex, definitions.first());
-                builder.insertBefore({ block, 0 }, WTF::move(storeOnEdge));
+                builder.insertBefore(point, WTF::move(storeOnEdge));
             }
         }
         builder.applyInsertions();
@@ -5245,6 +5308,19 @@ struct LoopVersioner : LoopEditor {
             builder.redirectEdge(endOfFirstTurn, current, Arguments(targetOf(m_function, endOfFirstTurn).arguments));
         }
 
+        // A branch both of whose sides leave the loop stays in it, and its edges go on handing over what its test proves: the condition stays that test.
+        BitVector conditionsThatStay(m_function.values.size());
+        for (BlockID block : plan.region) {
+            const Terminator& terminator = m_function.at(block).terminator;
+            if (terminator.kind != TerminatorKind::Branch || (terminator.taken().proofs.isEmpty() && terminator.notTaken().proofs.isEmpty()))
+                continue;
+            bool becomesJump = std::ranges::any_of(plan.steps, [&](const Step& step) {
+                return step.kind == Step::Kind::Test && step.block == block;
+            });
+            if (!becomesJump)
+                conditionsThatStay.set(terminator.conditionOperand().index());
+        }
+
         HashMap<ValueID, ValueID> askedAhead;
         auto aheadOfLoop = [&](ValueID value) {
             return value ? askedAhead.getOptional(value).value_or(value) : value;
@@ -5274,8 +5350,7 @@ struct LoopVersioner : LoopEditor {
                 builder.setOrigin(m_function.at(step.value).origin());
                 ValueID asked = builder.append(WTF::move(copy));
                 askedAhead.set(step.value, asked);
-                // A test stays the condition of its branch: the edges of a branch that both leave the loop go on handing over what it proves.
-                if (typeOf(step.value).isJavaScriptValue() && provesOf(m_function.at(step.value).opcode) == Proof::None)
+                if (typeOf(step.value).isJavaScriptValue() && !conditionsThatStay.get(step.value.index()))
                     becomeUpcast(m_function, step.value, asked);
                 break;
             }

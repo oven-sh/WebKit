@@ -319,7 +319,11 @@ static OwnProperties readOwnProperties(ValueFlowRuleContext& context, ClimbingSe
 
     OwnProperties properties;
     properties.held = sourcesOf(context.readWhatWasWritten(holders, valueName));
-    ClimbingSet getters = context.valueOf(context.readWhatWasWritten(holders, getterName));
+    ClimbingSet getters = context.valueOf(context.readWhatWasWritten(holders, getterName, ValueFlowRuleContext::ReadUse::OutsideEnumerations));
+    if (getterName.kind == ValueFlowNameKind::Getter && isHostFlagRaised(context, ValueFlowHostNode::GettersAreFoundUnderNamesOfEnumerations)) {
+        ClimbingSet sources = context.restrict(context.valueOf(context.readWhatWasWritten(holders, gettersCopiedFromName)), universe.knownObjects());
+        getters = context.unite(getters, context.valueOf(context.lookup(sources, valueName)));
+    }
     auto readWhatIsStoredThrough = [&](ValueSetID placeholder, ValueFlowNodeID covered) {
         if (!context.holdsAnyOf(holders, covered))
             return;
@@ -808,9 +812,6 @@ static void passOperandsOfBody(ValueFlowRuleContext& context, const Module& modu
 
     ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
     context.connect(nodes.thrown(body), escaped);
-    // What is thrown or what a promise is rejected with ends at the host where nobody catches it. The host prints it the way console.error does, whatever lies inside it too.
-    if (!isHostFlagRaised(context, ValueFlowHostNode::HostChoosesOperands) && mayProgramHaveStoredMethodThatHostLooksFor(context))
-        letHostChooseOperands(context);
     if (function.isUnsplitCoroutine()) {
         context.add(escaped, only(context, universe.coroutineResultOf(body)));
         for (unsigned index = 0; index < function.results.size(); ++index)

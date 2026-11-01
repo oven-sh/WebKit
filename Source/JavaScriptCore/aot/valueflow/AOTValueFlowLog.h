@@ -97,6 +97,8 @@ struct ValueFlowNodeKey {
     bool isLookupForCall() const { return kind == ValueFlowMadeNodeKind::Lookup && (detail & isForCall); }
     bool isLookupByNativeWalk() const { return kind == ValueFlowMadeNodeKind::Lookup && (detail & isByNativeWalk); }
     bool readsOnlyWhatLetsInUnseenCode() const { return kind == ValueFlowMadeNodeKind::Read && (detail & isOfWhatLetsInUnseenCode); }
+    static ValueFlowNodeKey readOutsideEnumerations(ValueSetID set, ValueFlowName name) { return { ValueFlowMadeNodeKind::Read, static_cast<uint8_t>(static_cast<uint8_t>(name.kind) | isOutsideEnumerations), name.payload, set }; }
+    ValueFlowNameKind kindThatStandsForName() const { return kind == ValueFlowMadeNodeKind::Read && (detail & isOutsideEnumerations) ? ValueFlowNameKind::GetterOutsideEnumerations : name().kind; }
     ValueFlowCallKind callKind() const { return static_cast<ValueFlowCallKind>(detail); }
     ValueFlowObjectID markerOfCallGroup() const { return payload ? ValueFlowObjectID(payload - 1) : ValueFlowObjectID(); }
     bool isInstanceOfNode() const { return kind == ValueFlowMadeNodeKind::Instance && !detail; }
@@ -120,6 +122,7 @@ struct ValueFlowNodeKey {
     static constexpr uint8_t isForCall = 0x80;
     static constexpr uint8_t isByNativeWalk = 0x40;
     static constexpr uint8_t isOfWhatLetsInUnseenCode = isForCall;
+    static constexpr uint8_t isOutsideEnumerations = isByNativeWalk;
 
     ValueFlowMadeNodeKind kind { ValueFlowMadeNodeKind::Constant };
     uint8_t detail { 0 };
@@ -132,6 +135,7 @@ struct ValueFlowNodeKey {
 static_assert(sizeof(ValueFlowNodeKey) == 12);
 
 static_assert(static_cast<uint8_t>(ValueFlowNameKind::NamespaceExports) < ValueFlowNodeKey::isByNativeWalk);
+static_assert(static_cast<uint8_t>(ValueFlowNameKind::GetterOutsideEnumerations) < ValueFlowNodeKey::isByNativeWalk);
 
 inline ValueFlowCallGroup callGroupAt(ValueFlowNodeID first)
 {

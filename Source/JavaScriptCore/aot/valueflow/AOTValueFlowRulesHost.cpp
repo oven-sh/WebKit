@@ -677,6 +677,9 @@ void runHostRoots(const ValueFlowStatement& statement, ValueFlowRuleContext& con
     const ValueFlowUniverse& universe = context.universe();
     if (!partOf(statement)) {
         letImagesBelowMakeRecords(context);
+        // What is thrown or what a promise is rejected with ends at the host where nobody catches it. The host prints it the way console.error does, whatever lies inside it too.
+        if (!isHostFlagRaised(context, ValueFlowHostNode::HostChoosesOperands) && mayProgramHaveStoredMethodThatHostLooksFor(context))
+            letHostChooseOperands(context);
         // `Object.values(require.cache)[0].exports`: whoever gets at an entry of the table has all that its file exports, whether or not a `require` of the program keeps its answer.
         for (uint32_t index = 0; index < program.modules.size(); ++index) {
             if (program.modules[index].flags.contains(ModuleFlags::IsShownByEntryOfCache))
@@ -1360,6 +1363,16 @@ static void passUnknownOperandsTo(ValueFlowRuleContext& context, BuiltinID funct
     }
 }
 
+void appendLoadersAndEvaluatorsReturnedBy(const ValueFlowUniverse& universe, const BuiltinTable& builtins, BuiltinID builtin, Vector<ValueFlowObjectID, 32>& returned)
+{
+    for (const BuiltinOverload& overload : builtins.overloadsOf(builtin)) {
+        for (const BuiltinTypePart& part : builtins.at(overload.result.type).parts) {
+            if (part.kind == BuiltinTypePartKind::Builtin && builtins.letsInUnseenCodeWhenCalled(builtins.canonicalID(part.builtin)))
+                universe.appendObjectsOf(builtins.canonicalID(part.builtin), returned);
+        }
+    }
+}
+
 // No node lists what has escaped beside a value nobody knows. Where such a value is called, a loader or an evaluator that has escaped is called, with operands nobody knows.
 static void callWhatLetsInUnseenCode(ValueFlowRuleContext& context, ValueFlowObjectID callee)
 {
@@ -1369,12 +1382,7 @@ static void callWhatLetsInUnseenCode(ValueFlowRuleContext& context, ValueFlowObj
     if (!cause) {
         // createRequire() returns a require function.
         Vector<ValueFlowObjectID, 32> returned;
-        for (const BuiltinOverload& overload : builtins.overloadsOf(builtin)) {
-            for (const BuiltinTypePart& part : builtins.at(overload.result.type).parts) {
-                if (part.kind == BuiltinTypePartKind::Builtin && builtins.letsInUnseenCodeWhenCalled(builtins.canonicalID(part.builtin)))
-                    context.universe().appendObjectsOf(builtins.canonicalID(part.builtin), returned);
-            }
-        }
+        appendLoadersAndEvaluatorsReturnedBy(context.universe(), builtins, builtin, returned);
         context.add(ValueFlowProgramNodes::escaped(), ClimbingSet(context.maker().of(returned.span())));
         context.add(context.nodes().ofHost(ValueFlowHostNode::LoadersAndEvaluatorsThatProgramNames), ClimbingSet(context.maker().of(returned.span())));
         return;
@@ -1573,10 +1581,20 @@ static void connectWhatCopiesOfFilesReach(ValueFlowRuleContext& context)
             }
         }
     }
+    // The original beside a mock runs as a copy while the compiled file and its importers stay what they are. `jest.requireActual()` goes through the loader of the host.
+    BitVector isReached = mayRunAsCopy;
+    bool hasOriginals = false;
+    for (const Variable& variable : program.variables) {
+        if (variable.flags.contains(VariableFlags::HoldsMock) && !program.at(variable.module).runtimeModule) {
+            mayRunAsCopy.quickSet(variable.module.index());
+            hasOriginals = true;
+        }
+    }
+    if (hasOriginals)
+        enterLoaderOfHost(context);
     // A copy reads the names of the global scope as the compiled file does, and calls what the program has laid there. It comes in by the entry that everybody may use.
     if (!mayRunAsCopy.isEmpty())
         context.add(ValueFlowProgramNodes::escaped(), only(context, context.universe().objectOf(Builtins::GlobalThis)));
-    BitVector isReached = mayRunAsCopy;
     for (size_t index : mayRunAsCopy) {
         for (const ModuleRequest& request : program.modules[index].requests) {
             if (isWrittenByProgram(program, program.at(request.target)))

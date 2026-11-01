@@ -115,6 +115,7 @@ private:
     macro(ValueSetID, objectsThatLetInUnseenCode) \
     macro(ValueSetID, objectsThatLetInUnseenCodeWhenCalled) \
     macro(ValueSetID, functionsThatCallOrBindOperand) \
+    macro(ValueSetID, functionsThatChangeOperand) \
     macro(ValueSetID, objectsOfNativeModules) \
     macro(ValueSetID, objectsOfPublicModules) \
     macro(ValueSetID, holdersWithMembers) \

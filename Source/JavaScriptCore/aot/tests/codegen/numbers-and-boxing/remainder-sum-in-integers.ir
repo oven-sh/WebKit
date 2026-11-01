@@ -1,4 +1,4 @@
-# The remainder of whole numbers by a divisor that may be zero: zero goes to a rare arm, in front of the loop where the divisor stays the same. What is left is one division, and the sum that a list of 32-bit numbers takes is made in integers.
+# The remainder of whole numbers by a divisor that may be zero: zero goes to a rare arm, in front of the loop where the divisor stays the same. What is left is one division, and the sum that a list of 32-bit numbers takes is one 32-bit addition.
 # -- source: remainder-sum-in-integers.js
 # function sum(u, n) {
 #   const a = new Int32Array(4);
@@ -15,9 +15,8 @@
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
 # CHECK: function
 # CHECK: Int32 {{*}} = Mod({{*}}:Mod)
-# CHECK-NOT: IToD
-# CHECK-NOT: Patchpoint({{*}}:Mod)
-# CHECK: Void {{*}} = Store({{*}}Writes:TypedArrayElements
+# CHECK-NEXT: Int32 {{*}} = Add({{*}}:PutTypedArrayElement)
+# CHECK-NEXT: Void {{*}} = Store({{*}}Writes:TypedArrayElements
 # RUN(RUNS): run-in-shell
 # RUNS: 19500
 # RUNS-NEXT: 0

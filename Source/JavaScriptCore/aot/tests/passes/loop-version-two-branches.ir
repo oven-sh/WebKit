@@ -1,0 +1,92 @@
+# One test over what the loop never changes is the condition of two branches. The first becomes a jump in the fast version. The second stays, with one side that returns and an unlikely side
+# that takes what the test narrowed: so the test stays a test. What is spared goes by the branch, not by the value.
+# FORM: Prepared
+# RUN: pass SeparateUnlikelyLoopPaths
+# STATISTIC: LoopsEnteredByAnswers = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Source" fields=[{key="take" declared={type=undefined|null|function|f1|f2 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired] flow={occupancy=FilledAtBirth}}]
+layout L1 fields=[{key="done" declared={type=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsEnforced]}, {key="at" declared={type=number} flags=[IsRequired, IsEnforced]}]
+layout L2 fields=[{key="item" declared={type=anything flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsEnforced] flow={occupancy=FilledAtBirth}}, {key="at" declared={type=number} flags=[IsRequired, IsEnforced] flow={occupancy=FilledAtBirth}}]
+
+function f0 name="collect" flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Buffer flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=number flags=[IsExpected]}, {type=undefined|number flags=[IsExpected]}, {type=undefined|Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> flags=[OmitsNull]}] results=[{type=L1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+  b0(v0: anything ~ undefined|null|Buffer, v1: anything ~ undefined|null|L0, v2: anything ~ number, v3: anything ~ undefined|number, v4: undefined|Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>):
+    Jump -> next b12(v3, v4)
+  b1():
+    v5: 0 = Integer
+    Jump -> next b3(v5)
+  b2(v6: null|boolean|number|string|symbol|bigint|object ~ number):
+    Jump -> next b3(v6)
+  b3(v7: null|boolean|number|string|symbol|bigint|object ~ number):
+    v8: boolean = TypeTest v35 testedType=undefined
+    Branch v8 -> taken b4(), notTaken b5(| 0)
+  b4():
+    v9: Array<anything, Contiguous> = NewArray contents=anything arrayStorage=Contiguous [contentsAreProven]
+    v10: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v9 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
+    Jump -> next b6(v10)
+  b5(v11: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>):
+    Jump -> next b6(v11)
+  b6(v12: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>):
+    v13: int[0, 4294967295] = CallBuiltin v12 overload=ArrayPrototypeLength/0
+    v14: boolean = StrictEq v13, v2
+    Branch v14 -> taken b7(), notTaken b8()
+  b7():
+    v15: 0 = Integer
+    v16: L1 = NewObject -, v12, v15 layout=L1 fields=[0, 1]
+    PropSet v16, v7 key="at"
+    v18: L1 = FinishObject v16
+    Return v18
+  b8():
+    v19: boolean|number|string|symbol|bigint|object ~ L0 = RequireObjectCoercible v1 name="take"
+    v20: anything ~ undefined|null|function|f1|f2 = PropGet v19 key="take"
+    v21: boolean = TypeTest v20 testedType=f2
+    Branch v21 -> taken b13(), notTaken b15(| 0)
+  b9():
+    v22: 0 = Integer
+    v23: L1 = NewObject -, v12, v22 layout=L1 fields=[0, 1]
+    PropSet v23, v7 key="at"
+    v25: L1 = FinishObject v23
+    Return v25
+  b10(v26: anything):
+    v27: boolean|number|string|symbol|bigint|object = RequireObjectCoercible v26 name="at"
+    v28: anything = PropGet v27 key="at"
+    v29: Array<anything, Contiguous> = NewArray contents=anything arrayStorage=Contiguous [contentsAreProven]
+    v30: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v29 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
+    AppendElements v30, v12
+    v32: anything = PropGet v27 key="item"
+    AppendElement v30, v32
+    Jump -> next b12(v28, v30)
+  b11():
+    Unreachable
+  b12(v34: anything ~ undefined|number, v35: undefined|Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>):
+    LoopHint [replacesTailCalls]
+    v37: boolean = TypeTest v34 testedType=undefined
+    Branch v37 -> taken b1(), notTaken b2(| 0)
+  b13():
+    v38: boolean = StrictEq v13, v7
+    Branch v38 -> taken b14(), notTaken b16()
+  b14():
+    Jump -> next b12(v7, v12)
+  b15(v39: anything ~ undefined|null|function|f1) frequency=Unlikely:
+    v40: anything = Call v39, v19, v0, v7 calleeKey="take"
+    v41: anything ~ "stop" = Upcast v40 castType=anything
+    v42: "stop" = String string="stop"
+    v43: boolean ~ true = StrictEq v41, v42
+    Branch v43 -> taken b9(), notTaken b10(| 0)
+  b16():
+    Branch v21 -> taken b9(), notTaken b17(| 0)
+  b17(v44: anything ~ undefined|null|function|f1) frequency=Unlikely:
+    v45: anything = Call v44, v19, v0, v7 calleeKey="take"
+    Jump -> next b12(v45, v12)
+}
+
+
+function f1 name="some" kind=Arrow parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    Return v2
+}
+function f2 name="never" kind=Arrow results=[{type=anything}] {
+    v0 = String string="stop"
+    Return v0
+}

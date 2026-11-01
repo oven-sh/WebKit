@@ -44,6 +44,10 @@ public:
 
     ModuleID module() const { return m_module; }
     bool isDeferred() const { return m_isDeferred; }
+    // A mock that came ahead of the load stands in place of the module: no cache answers for the object.
+    bool isAnsweredByMock() const;
+    JSObject* mockInPlace() const;
+    AbstractModuleRecord* recordForResolution();
     // A read of a deferred namespace object may evaluate the module, so that object does not have the module's namespace layout.
     // Image::position() of the image that has the module.
     unsigned imagePosition() const { return m_imagePosition; }
@@ -88,6 +92,7 @@ private:
     bool isOrdinaryKey(PropertyName) const;
     bool isDynamicExport(UniquedStringImpl*) const;
     JSValue readDynamicExport(JSGlobalObject*, PropertyName);
+    bool getOwnPropertySlotOfMock(JSGlobalObject*, JSObject* mock, PropertyName, PropertySlot&);
     bool evaluateIfNeeded(JSGlobalObject*);
 
     WriteBarrier<JSCellButterfly> m_dynamicExportNames;

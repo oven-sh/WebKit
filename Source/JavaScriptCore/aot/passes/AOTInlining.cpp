@@ -1993,7 +1993,7 @@ static void forgetLayoutsSeenAtReadsOfParameters(Function& caller, const Functio
 }
 
 // Copies the body that is given, or else the body of the function that the call names: the head blocks that are given, or else all of it.
-static void copyBodyIn(IRBuilder& builder, ProgramPoint point, const Function* body, const BitVector* headBlocks, const BitVector& noReturnBlocks, IRBuilder::DeferredResultReads* resultReads)
+static void copyBodyIn(IRBuilder& builder, ProgramPoint point, const Function* body, const BitVector* headBlocks, const BitVector& noReturnBlocks, IRBuilder::DeferredResultReads* resultReads, std::span<const ValueID> argumentsLetGoBehindBody = { })
 {
     const Program& program = builder.context().program;
     Function& caller = builder.function();
@@ -2077,6 +2077,12 @@ static void copyBodyIn(IRBuilder& builder, ProgramPoint point, const Function* b
     auto replaceReturn = [&](BlockID block) {
         ValueID returned = std::exchange(caller.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator, Terminator { }).valueOperand();
         builder.moveToEndOf(block);
+        // A call lets go of its arguments by itself: the frame of the callee ends. At each way out, not where they meet: what stands there is often a test of the result alone, which goes to the ways out.
+        for (ValueID argument : siteReturnCall ? std::span<const ValueID> { } : argumentsLetGoBehindBody) {
+            Value hint = IRBuilder::make(Opcode::ReleaseHint, { argument });
+            hint.setIsBehindCopiedBody(true);
+            builder.append(WTF::move(hint));
+        }
         if (callee.results.size() == 1) {
             builder.endExpansion(expansion, returned ? returned : builder.appendUndefined());
             return;
@@ -2193,7 +2199,7 @@ void copyIn(FunctionPassContext& context, IRBuilder& builder, const InlineReques
         headBlocks = request.longHeadBlocks;
         break;
     }
-    copyBodyIn(builder, request.point, nullptr, headBlocks, request.callee.noReturnBlocks, request.deferredResultReads);
+    copyBodyIn(builder, request.point, nullptr, headBlocks, request.callee.noReturnBlocks, request.deferredResultReads, request.argumentsLetGoBehindBody);
     context.analyses.didChangeControlFlow();
 }
 
@@ -3412,7 +3418,8 @@ static bool onlyHandsOnFunction(FunctionPassContext& context, const InlineSite& 
     return false;
 }
 
-static void copyAcceptedSites(FunctionPassContext& context, IRBuilder& builder, std::span<const InlineSite> sites)
+// Says whether a hint was put behind a copied body.
+static bool copyAcceptedSites(FunctionPassContext& context, IRBuilder& builder, std::span<const InlineSite> sites)
 {
     Function& caller = context.function;
     uint32_t firstCopiedValue = static_cast<uint32_t>(caller.values.size());
@@ -3422,18 +3429,34 @@ static void copyAcceptedSites(FunctionPassContext& context, IRBuilder& builder, 
             changedValues.append(sites[index].call);
     }
 
+    Vector<Vector<ValueID, 2>> argumentsLetGo(sites.size());
+    const UseLists& useLists = context.analyses.useLists();
+    for (size_t index = 0; index < sites.size(); ++index) {
+        if (!isAccepted(sites[index]) || partToCopy(sites[index]) != InlinedPart::WholeBody)
+            continue;
+        const Value& call = caller.at(sites[index].call);
+        call.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            if (call.operandKind(operandIndex) == OperandKind::Guard || !useLists.singleUse(operand) || !context.program.typeOf(caller, operand).isObject())
+                return;
+            // What was read out of an object is still named by that object. What a call has handed back may be named by nothing else.
+            if (effectRuleOf(caller.at(sameObjectThroughCasts(caller, operand).valueInFrontOfFacts()).opcode) == EffectRule::Call)
+                argumentsLetGo[index].append(operand);
+        });
+    }
+
     // From the last site to the first: what stands in front of a site stays where it is.
     IRBuilder::DeferredResultReads resultReads(builder, changedValues.span());
     for (size_t index = sites.size(); index--;) {
         const InlineSite& site = sites[index];
         if (isAccepted(site))
-            copyIn(context, builder, InlineRequest { { site.block, site.index }, site.call, partToCopy(site), *site.summary, &resultReads, &site.verdict.longHeadBlocks });
+            copyIn(context, builder, InlineRequest { { site.block, site.index }, site.call, partToCopy(site), *site.summary, &resultReads, &site.verdict.longHeadBlocks, argumentsLetGo[index].span() });
     }
     resultReads.finish();
 
     for (uint32_t index = static_cast<uint32_t>(caller.values.size()); index-- > firstCopiedValue;)
         changedValues.append(ValueID(index));
     narrowValueTypes(TypePropagationInputs { context.program, context.id, caller, context.analyses, context.types, context.build, &context.typingMemo }, changedValues.span());
+    return std::ranges::any_of(argumentsLetGo, [](const auto& arguments) { return !arguments.isEmpty(); });
 }
 
 PassOutcome inlineCalls(FunctionPassContext& context)
@@ -3443,6 +3466,7 @@ PassOutcome inlineCalls(FunctionPassContext& context)
     PassOutcome outcome = PassOutcome::Unchanged;
     // A copied body has calls of its own. The frames of a copy are new, and they keep their numbers where typing cuts the copy and numbers the values again.
     uint32_t firstUndecidedFrame = 0;
+    bool hasNewHints = false;
     while (true) {
         Vector<InlineSite> sites = findInlineSites(context, firstUndecidedFrame);
         outcome |= markNoReturnCallBlocks(context);
@@ -3502,10 +3526,13 @@ PassOutcome inlineCalls(FunctionPassContext& context)
             break;
         }
         firstUndecidedFrame = static_cast<uint32_t>(inlineFrameCountOf(caller));
-        copyAcceptedSites(context, builder, sites.span());
+        hasNewHints |= copyAcceptedSites(context, builder, sites.span());
         outcome = PassOutcome::Changed;
     }
     outcome |= cutBehindCallsThatOnlyThrow(context);
+    // A body that lets go of its parameter early has let go of the argument there, not at its end.
+    if (hasNewHints)
+        outcome |= moveReleaseHintsBehindLastReads(context);
     // Every analysis is dropped behind a copied body, those that look into a call behind the choice of a callee version, the frequencies behind the mark on a block.
     if (outcome == PassOutcome::Changed)
         context.keptAnalyses = allAnalyses - FunctionAnalysis::Effects;

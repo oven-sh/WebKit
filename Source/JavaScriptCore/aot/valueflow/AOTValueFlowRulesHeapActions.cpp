@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTValueFlowRulesHeapInternal.h"
+#include "AOTKnownClosures.h"
 
 #if ENABLE(AOT)
 
@@ -97,6 +98,7 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
         storeThrough(untrackedObjectAlone(), ValueFlowHostNode::SourcesOfCopiesIntoUntrackedObject);
     if (mayBeUnknownObject(targets)) {
         connect(storeThrough(unknownObjectAlone(), ValueFlowHostNode::SourcesOfCopiesIntoUnknownObject), ValueFlowProgramNodes::escaped());
+        add(m_context.nodes().ofHost(ValueFlowHostNode::ObjectNobodyKnowsIsWritten), m_universe.unknownObjectAlone());
         connect(m_context.readWhatWasWritten(known(sources), copiedFromName), ValueFlowProgramNodes::escaped());
         if (keepsAccessors) {
             connect(m_context.readWhatWasWritten(allSources, everyGetter), ValueFlowProgramNodes::escaped());
@@ -258,7 +260,65 @@ bool HeapRule::saysOnlyWhetherPrototypeOfFunctionIsWritable(const ValueFlowOpera
     return true;
 }
 
-void HeapRule::defineAsDescribed(const ValueFlowOperand& object, const HeapKey& key, ClimbingSet descriptors, DefinedObject definedObject)
+bool HeapRule::definesGettersUnderNamesOfEnumeratedParameter(const ValueFlowOperand& object, const ValueFlowStatement* operation)
+{
+    namespace At = OperandIndex;
+    if (!operation || !operation->function || operation->opcode != Opcode::Call)
+        return false;
+    FunctionID id = operation->function;
+    const Function& function = m_context.functionWithBody(id);
+    auto arguments = m_context.operationOf(*operation).variadicOperands();
+    if (arguments.size() != 3)
+        return false;
+    ValueID nameOfTurn = definitionThroughTests(function, arguments[1]);
+    const Value& name = function.at(nameOfTurn);
+    if (name.opcode != Opcode::ResultAt || name.index() != 1)
+        return false;
+    const Value& step = function.at(name.operand(At::ResultAt::results));
+    if (step.opcode != Opcode::ForInStep)
+        return false;
+    ValueID source = definitionThroughTests(function, step.operand(At::ForInStep::object));
+    if (function.at(source).opcode != Opcode::Parameter)
+        return false;
+    std::optional<unsigned> position;
+    unsigned next = 0;
+    for (ValueID parameter : function.at(BlockID(0u)).parameters) {
+        if (parameter == source)
+            position = next;
+        ++next;
+    }
+    if (!position)
+        return false;
+    ValueID descriptor = definitionThroughSameValues(function, arguments[2]);
+    if (function.at(descriptor).opcode == Opcode::FinishObject)
+        descriptor = definitionThroughSameValues(function, function.at(descriptor).operand(At::FinishObject::object));
+    if (function.at(descriptor).opcode != Opcode::NewObject)
+        return false;
+    bool hasGetter = false;
+    for (const Value& value : function.values) {
+        if (value.opcode != Opcode::PropDefine || definitionThroughSameValues(function, value.operand(At::PropDefine::object)) != descriptor)
+            continue;
+        if (value.key() == m_program.keyOf(BuiltinNames::value))
+            return false;
+        if (value.key() != m_program.keyOf(BuiltinNames::get))
+            continue;
+        const Value& read = function.at(definitionThroughTests(function, value.operand(At::PropDefine::value)));
+        if (read.opcode != Opcode::ElemGet || definitionThroughTests(function, read.operand(At::ElemGet::object)) != source || definitionThroughTests(function, read.operand(At::ElemGet::property)) != nameOfTurn)
+            return false;
+        hasGetter = true;
+    }
+    if (!hasGetter)
+        return false;
+    ClimbingSet targets = m_context.valueOf(object);
+    ClimbingSet sources = m_context.valueOf(m_context.nodes().entryParameter(id, *position));
+    if (mayBeUnknownObject(targets) || mayBeUnknownObject(sources) || m_context.contains(targets, ValueFlowUniverse::untrackedObject()) || m_context.contains(sources, ValueFlowUniverse::untrackedObject()))
+        return false;
+    raiseHostFlag(m_context, ValueFlowHostNode::GettersAreFoundUnderNamesOfEnumerations);
+    add(m_context.written(known(targets), gettersCopiedFromName), known(sources));
+    return true;
+}
+
+void HeapRule::defineAsDescribed(const ValueFlowOperand& object, const HeapKey& key, ClimbingSet descriptors, DefinedObject definedObject, bool gettersAreFoundByName)
 {
     if (definedObject == DefinedObject::MayHoldProperty)
         noteNameDefinedThroughObjectsNobodyFollows(object, key);
@@ -273,7 +333,10 @@ void HeapRule::defineAsDescribed(const ValueFlowOperand& object, const HeapKey& 
             compareWithPropertyThatIsThere(operandOf(described));
     };
     define(HeapPropertyPart::Value, BuiltinNames::value);
-    define(HeapPropertyPart::Getter, BuiltinNames::get);
+    if (gettersAreFoundByName)
+        connect(m_context.lookup(descriptors, ValueFlowName::property(m_program, m_program.keyOf(BuiltinNames::get))), m_context.written(known(m_context.valueOf(object)), ValueFlowName::of(ValueFlowNameKind::GetterUnderNameOfEnumeration)));
+    else
+        define(HeapPropertyPart::Getter, BuiltinNames::get);
     define(HeapPropertyPart::Setter, BuiltinNames::set);
     markRedefinition(m_context.valueOf(object), key);
 }
@@ -341,6 +404,12 @@ void HeapRule::runPropertyAction(const BuiltinPropertyAction& action, const Valu
 {
     const ValueFlowOperand& object = operands.object;
     const ValueFlowOperand& value = operands.value;
+    // A name that the literal at the operand was written with is a property of its own that holds a value: nothing above the literal answers for it, not `Object.prototype.constructor` either.
+    auto ownValueOfLiteral = [&](const ValueFlowOperand& literal, const HeapKey& key) {
+        if (key.keyClass != HeapKeyClass::Name)
+            return m_context.lookup(m_context.valueOf(literal), foundName(key, HeapPropertyPart::Value));
+        return m_context.readWhatWasWritten(known(m_context.valueOf(literal)), foundName(key, HeapPropertyPart::Value));
+    };
     auto forEachKey = [&](NOESCAPE const Invocable<void(const HeapKey&)> auto& functor, const ValueFlowOperand* stored = nullptr) {
         forEachKeyOfAction(action.key, operands.key, functor, { &object, stored, false, action.kind == BuiltinPropertyActionKind::ReadsByKey });
     };
@@ -426,19 +495,19 @@ void HeapRule::runPropertyAction(const BuiltinPropertyAction& action, const Valu
         copyProperties(object, value, CopiedProperties::AreDefinedAsTheyStand);
         return;
     case BuiltinPropertyActionKind::TakesDescriptor:
-        forEachKey([&](const HeapKey& key) {
-            defineAsDescribed(object, key, m_context.valueOf(value), DefinedObject::MayHoldProperty);
+        forEachKey([&, gettersAreFoundByName = definesGettersUnderNamesOfEnumeratedParameter(object, operands.operation)](const HeapKey& key) {
+            defineAsDescribed(object, key, m_context.valueOf(value), DefinedObject::MayHoldProperty, gettersAreFoundByName);
         }, &value);
         return;
     case BuiltinPropertyActionKind::TakesDescriptorMap:
     case BuiltinPropertyActionKind::DescribesResult: {
-        auto defineUnder = [&](const HeapKey& key) {
-            defineAsDescribed(object, key, m_context.valueOf(m_context.lookup(m_context.valueOf(value), foundName(key, HeapPropertyPart::Value))), action.kind == BuiltinPropertyActionKind::DescribesResult ? DefinedObject::IsNew : DefinedObject::MayHoldProperty);
+        auto defineUnder = [&](const HeapKey& key, ValueFlowNodeID descriptors) {
+            defineAsDescribed(object, key, m_context.valueOf(descriptors), action.kind == BuiltinPropertyActionKind::DescribesResult ? DefinedObject::IsNew : DefinedObject::MayHoldProperty);
         };
         for (PropertyKeyID name : operands.namesInMap.value_or(std::span<const PropertyKeyID>()))
-            defineUnder(keyNamed(name));
+            defineUnder(keyNamed(name), ownValueOfLiteral(value, keyNamed(name)));
         if (!operands.namesInMap || operands.mapHasComputedNames)
-            defineUnder(unknownHeapKey);
+            defineUnder(unknownHeapKey, m_context.lookup(m_context.valueOf(value), foundName(unknownHeapKey, HeapPropertyPart::Value)));
         return;
     }
     case BuiltinPropertyActionKind::ChangesIntegrity:

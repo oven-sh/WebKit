@@ -61,6 +61,9 @@ inline ValueID findMakerOfHeapFrameBehind(const Program& program, const Function
     return { };
 }
 
+// A hint reads what it names, so the value is held up to the hint. Each hint goes to where the value was last read, on every way to it.
+PassOutcome moveReleaseHintsBehindLastReads(FunctionPassContext&);
+
 // Whether ResolveAwaitedCalls, as the function stands, makes this direct call of a ramp and the await of its result enter the callee without a promise.
 bool willEnterAwaitedCalleeWithoutPromise(FunctionPassContext&, ValueID call);
 

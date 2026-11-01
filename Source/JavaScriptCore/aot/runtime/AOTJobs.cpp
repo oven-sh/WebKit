@@ -878,6 +878,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewGenerator, JSCell*, (Instance* 
     constexpr Entry entry = Entry::operationAOTNewGenerator;
     AOT_OPERATION_BEGIN(instance, entry);
     DeferTerminationForAWhile deferTermination(vm);
+    if (!isAsync && !instance->coroutines.generatorAllocator)
+        instance->coroutines.generatorAllocator = subspaceFor<Generator>(vm)->allocatorFor(sizeof(Generator), AllocatorForMode::EnsureAllocator).localAllocator();
     if (!closure) {
         RELEASE_ASSERT(!isAsync);
         return Generator::create(vm, instance->state->coroutines->generatorStructure());

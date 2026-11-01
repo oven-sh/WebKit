@@ -799,6 +799,90 @@ static void testFindByCharacters(LoadedProgram& program)
     AOT_TEST_CHECK(!set.has(jsString(program.realm(), jsString(vm, String("al"_s)), jsString(vm, String("ph"_s)))));
 }
 
+static void testATableThatIsMostlyDeletedIsLetGo(LoadedProgram& program)
+{
+    for (Collection::Kind kind : { Collection::Kind::Set, Collection::Kind::Map }) {
+        for (unsigned count : { CompactTable::minUsedToShrink, 100u, 5000u }) {
+            Collection collection(program, kind);
+            for (unsigned number = 0; number < count; ++number)
+                collection.add(jsNumber(number), jsNumber(number));
+            CompactTable* full = collection.table();
+            unsigned removed = 0;
+            while ((count - removed) * 4 >= count) {
+                AOT_TEST_CHECK(collection.table() == full && full->isLive());
+                AOT_TEST_CHECK(collection.remove(jsNumber(removed++)));
+            }
+            AOT_TEST_CHECK(collection.table() != full && !full->isLive());
+            AOT_TEST_CHECK(collection.table()->size() == count - removed && collection.table()->capacity() < count && collection.table()->capacity() >= 2 * (count - removed));
+            Vector<JSValue> keys = collection.keysInOrder();
+            AOT_TEST_CHECK(keys.size() == count - removed);
+            for (unsigned number = 0; number < count; ++number)
+                AOT_TEST_CHECK(collection.has(jsNumber(number)) == (number >= removed) && (number < removed || keys[number - removed] == jsNumber(number)));
+            // Whoever stands in the table that was let go goes on at the same entry.
+            CompactStorage::Position position = CompactTable::next(program.vm(), full, removed + 1);
+            AOT_TEST_CHECK(position.storage == collection.table() && position.key == jsNumber(removed + 1));
+            while (removed < count)
+                AOT_TEST_CHECK(collection.remove(jsNumber(removed++)));
+            AOT_TEST_CHECK(!collection.table()->size() && collection.table()->capacity() < 2 * CompactTable::minUsedToShrink);
+        }
+    }
+}
+
+static void testACollectionThatSwingsAboutOneSizeKeepsItsTable(LoadedProgram& program)
+{
+    for (unsigned size : { 8u, 9u, 40u, 1000u }) {
+        Collection map(program, Collection::Kind::Map);
+        for (unsigned number = 0; number < 4 * size; ++number)
+            map.add(jsNumber(number), jsNumber(number));
+        unsigned first = 0;
+        while (first < 3 * size)
+            AOT_TEST_CHECK(map.remove(jsNumber(first++)));
+        unsigned numberOfTables = 0;
+        constexpr unsigned turnsForEachEntry = 50;
+        CompactTable* last = map.table();
+        for (unsigned number = 4 * size; number < (4 + turnsForEachEntry) * size; ++number) {
+            AOT_TEST_CHECK(map.remove(jsNumber(first++)));
+            map.add(jsNumber(number), jsNumber(number));
+            if (map.table() != std::exchange(last, map.table()))
+                ++numberOfTables;
+        }
+        AOT_TEST_CHECK(map.table()->size() == size && numberOfTables <= 3 * turnsForEachEntry);
+    }
+}
+
+static void testAKeyThatIsDeletedAndAddedAgainKeepsOneSlot(LoadedProgram& program)
+{
+    for (bool keysAreNumbers : { false, true }) {
+        auto keyAt = [&](unsigned number) { return keysAreNumbers ? jsNumber(number) : numberedString(program, "key"_s, number); };
+        Collection map(program, Collection::Kind::Map);
+        constexpr unsigned count = 1000;
+        for (unsigned number = 0; number < count; ++number)
+            map.add(keyAt(number), jsNumber(number));
+        CompactTable* table = map.table();
+        AOT_TEST_CHECK(table->numberOfTakenSlots() == count && table->capacity() > count + 100);
+        for (unsigned turn = 0; turn < 100; ++turn) {
+            AOT_TEST_CHECK(map.remove(keyAt(7)) && !map.has(keyAt(7)));
+            map.add(keyAt(7), jsNumber(turn));
+            // One slot may stay behind for good: the one that a key has left, or the last of its eight.
+            AOT_TEST_CHECK(map.table() == table && table->numberOfTakenSlots() <= count + 2 && map.get(keyAt(7)) == jsNumber(turn));
+        }
+        for (unsigned number = 0; number < count; ++number)
+            AOT_TEST_CHECK(map.has(keyAt(number)));
+        AOT_TEST_CHECK(map.keysInOrder().last() == keyAt(7) || textOf(map.keysInOrder().last()) == "key7"_s);
+
+        // Every third key goes and comes back, then every key is set again: all are found, and no slot is taken twice.
+        for (unsigned round = 0; round < 3; ++round) {
+            for (unsigned number = round; number < count; number += 3)
+                AOT_TEST_CHECK(map.remove(keyAt(number)));
+            for (unsigned number = 0; number < count; ++number)
+                map.add(keyAt(number), jsNumber(number + round));
+            AOT_TEST_CHECK(map.table()->size() == count && map.table()->numberOfTakenSlots() <= count + count / 3);
+            for (unsigned number = 0; number < count; ++number)
+                AOT_TEST_CHECK(map.get(keyAt(number)) == jsNumber(number + round));
+        }
+    }
+}
+
 static void testCopyIsIndependent(LoadedProgram& program)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(program.vm());
@@ -1032,6 +1116,11 @@ std::span<const NativeTest> compactTableTests()
         { "compact-table/clearing-a-table-that-nobody-has-walked-empties-it-wide"_s, wide<testClearingATableThatNobodyHasWalkedEmptiesIt> },
         { "compact-table/find-by-characters"_s, narrow<testFindByCharacters> },
         { "compact-table/copy-is-independent"_s, narrow<testCopyIsIndependent> },
+        { "compact-table/mostly-deleted-is-let-go"_s, narrow<testATableThatIsMostlyDeletedIsLetGo> },
+        { "compact-table/wide-references/mostly-deleted-is-let-go"_s, wide<testATableThatIsMostlyDeletedIsLetGo> },
+        { "compact-table/swing-keeps-its-table"_s, narrow<testACollectionThatSwingsAboutOneSizeKeepsItsTable> },
+        { "compact-table/readded-key-keeps-one-slot"_s, narrow<testAKeyThatIsDeletedAndAddedAgainKeepsOneSlot> },
+        { "compact-table/wide-references/readded-key-keeps-one-slot"_s, wide<testAKeyThatIsDeletedAndAddedAgainKeepsOneSlot> },
         { "compact-table/out-of-memory-throws-and-leaves-the-table-usable"_s, narrow<testOutOfMemoryThrowsAndLeavesTheTableUsable> },
         { "compact-table/keys-survive-collections"_s, narrow<testKeysSurviveCollections> },
         { "compact-table/wide-references/start-wide"_s, wide<testWideReferencesStartWide> },
