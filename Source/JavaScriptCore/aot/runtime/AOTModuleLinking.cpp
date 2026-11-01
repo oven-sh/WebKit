@@ -376,6 +376,7 @@ void Modules::willMock(ModuleID mocked)
 {
     if (isMocked(mocked))
         return;
+    m_importersAskedAboutOriginal.clear();
     momentOfFirstMockInTestFile(mocked);
     BitVector modules = m_mocks ? m_mocks->modules : BitVector(m_table.size());
     modules.quickSet(mocked.index());
@@ -429,6 +430,7 @@ void Modules::didEndMock(ModuleID mocked)
 {
     if (!isMocked(mocked))
         return;
+    m_importersAskedAboutOriginal.clear();
     BitVector others = m_mocks->modules;
     others.quickClear(mocked.index());
     m_mocks = nullptr;

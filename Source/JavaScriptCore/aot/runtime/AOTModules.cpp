@@ -1930,6 +1930,7 @@ bool Modules::setMockInPlaceOfLibraryModule(ModuleID module, JSObject* mock, JSV
     } else if (!stoodInPlace)
         return false;
     m_numberOfMocksInPlace += !!mock - stoodInPlace;
+    m_importersAskedAboutOriginal.clear();
     m_modulesWithMockInPlace.set(module.index(), !!mock);
     ensureLoaded(module).mockInPlace.set(*this, mock);
     if (!mock)
@@ -1961,6 +1962,7 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
     takeNamesOfMockInPlace(module, mock);
     RETURN_IF_EXCEPTION(scope, false);
     m_numberOfMocksInPlace += !!mock - stoodInPlace;
+    m_importersAskedAboutOriginal.clear();
     m_modulesWithMockInPlace.set(fileOrModule.index(), !!mock);
     if (mock)
         willMock(fileOrModule);
@@ -1998,8 +2000,13 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
     // The body ran beside the mock, for an importer that got the original. What it exported is the file's from here on, and it does not run again.
     JSValue original = isFile ? loaded.exportsOfOriginalBesideMock.get() : JSValue();
     loaded.exportsOfOriginalBesideMock.set(*this, JSValue());
+    // The same for a module.
+    bool ranBesideMock = m_modulesThatRanBesideMock.get(module.index());
+    m_modulesThatRanBesideMock.clear(module.index());
     // An evaluation that came by has marked the module as evaluated. Its body has yet to run, behind a link of its own.
     for (ModuleID each : { fileOrModule, module }) {
+        if (ranBesideMock) [[unlikely]]
+            continue;
         if (status(each) == ModuleStatus::Evaluated && (!original || each != fileOrModule))
             setStatus(each, ModuleStatus::Unlinked);
         m_modulesOwedToImportersThatRan.set(each.index());
@@ -2315,8 +2322,24 @@ bool Modules::willLeaveModuleAlone(ModuleID module, bool onlyIfLoadedInPreload, 
     return true;
 }
 
+// The host's own loader gives a package the module itself where a test mocks it as Vitest does.
+bool Modules::importsOriginalBesideMock(ModuleID mocked, ModuleID importer) const
+{
+    if (!isMocked(mocked) || !host().givesOriginalBesideMock || !importer || !m_table.hasFilePath(mocked) || !m_table.hasFilePath(importer))
+        return false;
+    // TODO(bun): a CommonJS file has one variable for its exports, and what an import reads of it is taken by the mock.
+    if (!data(mocked).isESModuleOfProgram() || data(mocked).isFaceOfFile())
+        return false;
+    auto asked = m_importersAskedAboutOriginal.add(static_cast<uint64_t>(mocked.index()) << 32 | importer.index(), false);
+    if (asked.isNewEntry)
+        asked.iterator->value = host().givesOriginalBesideMock(m_instance.globalObject, m_table.pathText(mocked), m_table.pathText(importer), true);
+    return asked.iterator->value;
+}
+
 bool Modules::seesMockOf(ModuleID mocked, ModuleID importer) const
 {
+    if (importsOriginalBesideMock(mocked, importer)) [[unlikely]]
+        return false;
     if (m_mocksOverModulesThatHaveRun.isEmpty()) [[likely]]
         return true;
     auto mock = m_mocksOverModulesThatHaveRun.find(m_table.fileBehindFace(mocked).value_or(mocked));
@@ -2387,6 +2410,7 @@ bool Modules::setMockOverModuleThatHasRun(ModuleID module, JSObject* mock, JSVal
     kept.exportsLeftOutBefore = WTF::move(exportsLeftOutBefore);
     kept.exportsHiddenBefore = WTF::move(exportsHiddenBefore);
     ++m_numberOfMocksInPlace;
+    m_importersAskedAboutOriginal.clear();
     m_modulesWithMockInPlace.set(module.index());
     loaded.requiredValueBeforeMockInPlace.set(*this, loaded.requiredValue.get());
     // The body has run: whoever gets the original beside the mock gets what it exported.
@@ -2446,6 +2470,7 @@ void Modules::endMockOverModuleThatHasRun(ModuleID module)
     loaded.mockInPlace.set(*this, nullptr);
     exporting.mockInPlace.set(*this, nullptr);
     --m_numberOfMocksInPlace;
+    m_importersAskedAboutOriginal.clear();
     m_modulesWithMockInPlace.clear(module.index());
     ProgramStatics::writeVariable(m_instance, *m_table.wordOfMock(module), JSValue());
     loaded.requiredValue.set(*this, loaded.requiredValueBeforeMockInPlace.get());

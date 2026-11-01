@@ -214,6 +214,7 @@ public:
     bool setMockOverModuleThatHasRun(ModuleID, JSObject* mock, JSValue whatRequireAnswers);
     void endMockOverModuleThatHasRun(ModuleID);
     bool seesMockOf(ModuleID mocked, ModuleID importer) const;
+    bool importsOriginalBesideMock(ModuleID mocked, ModuleID importer) const;
     JSObject* namespaceOfModuleItself(ModuleID);
     bool isHiddenInModuleItself(ModuleID, unsigned index) const;
     JSValue readExportOfModuleItself(ModuleID, unsigned index);
@@ -907,6 +908,10 @@ private:
     bool checkIsSettledForLinks(ModuleID) const;
     unsigned m_linkEpoch { 0 };
     unsigned m_numberOfMocksInPlace { 0 };
+    // What the host's rule said, by (mocked, importer). Emptied where a mock is laid or ends.
+    mutable UncheckedKeyHashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_importersAskedAboutOriginal;
+    // The body ran beside the mock that stands in place of the module, for an importer that gets the module itself. It does not run again.
+    BitVector m_modulesThatRanBesideMock;
     // The files and the modules of the library that such a mock stands in place of. A module of the library is none of the mocked files.
     BitVector m_modulesWithMockInPlace;
     mutable Vector<uint64_t> m_modulesSettledForLinks;

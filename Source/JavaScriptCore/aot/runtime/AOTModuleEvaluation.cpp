@@ -264,6 +264,20 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
         context.stack.insert(frame.stackPosition, static_cast<AbstractModuleRecord*>(record));
     };
 
+    // What only a mocked module imports runs where the module itself does.
+    BitVector isBelowModuleThatRunsBesideMock;
+    auto isHidden = [&](ModuleID module) {
+        if (!mocks.hides(module)) [[likely]]
+            return false;
+        if (frames.isEmpty())
+            return true;
+        unsigned importer = frames.last().module.index();
+        if (!m_modulesThatRanBesideMock.get(importer) && !isBelowModuleThatRunsBesideMock.get(importer))
+            return true;
+        isBelowModuleThatRunsBesideMock.set(module.index());
+        return false;
+    };
+
     auto recordOfImporter = [&] {
         EvaluationFrame& importer = frames.last();
         if (!importer.record)
@@ -272,7 +286,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
     };
 
     auto enter = [&](ModuleID module) {
-        if (mocks.hides(module)) [[unlikely]]
+        if (isHidden(module)) [[unlikely]]
             return false;
         const ModuleData& moduleData = data(module);
         if (moduleData.kind == ModuleKind::CommonJs) {
@@ -282,6 +296,11 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
         // A module of the library ran when its importer was linked.
         if (!moduleData.hasExportTable())
             return false;
+
+        bool runsBesideMock = isMocked(module) && !frames.isEmpty() && !m_modulesThatRanBesideMock.get(module.index()) && importsOriginalBesideMock(module, frames.last().module);
+        // An importer that sees the mock came by first.
+        if (runsBesideMock && status(module) == ModuleStatus::Evaluated) [[unlikely]]
+            setStatus(module, ModuleStatus::Unlinked);
 
         // What a linked module requests was linked with it. No status says so for a module without work in a link.
         ModuleStatus moduleStatus = status(module);
@@ -297,10 +316,12 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
             throwEvaluationError(module);
         if (moduleStatus != ModuleStatus::Linked)
             return false;
-        if (isMocked(module)) [[unlikely]] {
+        if (isMocked(module) && !runsBesideMock) [[unlikely]] {
             setStatus(module, ModuleStatus::Evaluated);
             return false;
         }
+        if (runsBesideMock) [[unlikely]]
+            m_modulesThatRanBesideMock.set(module.index());
 
         ModuleRecord* record = recordIfExists(module);
         if (!record && moduleData.evaluatesItself()) {
@@ -438,14 +459,16 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
                 target = frame.evaluationList->at(frame.next++);
             else {
                 ModuleID required(requests[frame.next++]);
+                // enter() runs the module itself.
+                bool runsBesideMock = isMocked(required) && !m_modulesThatRanBesideMock.get(required.index()) && importsOriginalBesideMock(required, frame.module);
                 StoredModuleStatus stored = storedStatus(required);
-                if (stored == StoredModuleStatus::Evaluated)
+                if (stored == StoredModuleStatus::Evaluated && !runsBesideMock)
                     continue;
-                if (mocks.hides(required)) [[unlikely]]
+                if (isHidden(required)) [[unlikely]]
                     continue;
                 const ModuleData& requiredData = data(required);
                 // It was linked with its importer, whether or not a status was stored for it.
-                bool isLinked = stored == StoredModuleStatus::Linked || stored == StoredModuleStatus::Unlinked;
+                bool isLinked = !runsBesideMock && (stored == StoredModuleStatus::Linked || stored == StoredModuleStatus::Unlinked);
                 if (isLinked && isMocked(required)) [[unlikely]] {
                     setStoredStatus(required, StoredModuleStatus::Evaluated);
                     continue;
@@ -496,7 +519,7 @@ JSValue Modules::callBody(ModuleID module)
 {
     const ModuleData& moduleData = data(module);
     std::optional<FunctionID> body = moduleData.bodyFunction();
-    if (!body || (isMocked(module) && !m_filesWhoseOriginalRuns.get(module.index())))
+    if (!body || (isMocked(module) && !m_filesWhoseOriginalRuns.get(module.index()) && !m_modulesThatRanBesideMock.get(module.index())))
         return jsUndefined();
 
     VM& vm = *m_instance.vm;
