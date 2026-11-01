@@ -2534,9 +2534,7 @@ private:
 
 void Modules::deferMock(ModuleID module, AfterFailure afterFailure)
 {
-    // Whoever was linked against the earlier mock of a module of the library reads it until the load that this one waits for.
-    if (!data(module).isOfLibrary() && m_table.hasFilePath(module))
-        letGoOfMockThatEnded(module);
+    // Whoever was linked against the earlier mock reads it until the load that this one waits for.
     m_modulesWithMockToRun.set(module.index());
     m_modulesWithMockThatAsksAgain.set(module.index(), afterFailure == AfterFailure::AsksAgain);
     dropErrorsOfLoadsEndedByMockOf(module);

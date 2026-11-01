@@ -2869,6 +2869,12 @@ void Modules::evaluateModulesOwedBelowSlow(ModuleID root, bool hasImporterAboveT
     for (ModuleID module : owed) {
         if (!m_modulesOwedToImportersThatRan.get(module.index()))
             continue;
+        // The mock that waits for the module comes in place of the body, which stays owed for when that mock ends.
+        if (ModuleID file = m_table.fileBehindFace(module).value_or(module); m_modulesWithMockToRun.get(file.index())) {
+            runMocksBelow(file, RootOfLoad::IsImportedByStatement);
+            RETURN_IF_EXCEPTION(scope, void());
+            continue;
+        }
         m_modulesOwedToImportersThatRan.clear(module.index());
         if (status(module) >= ModuleStatus::Evaluating || mockInPlace(module))
             continue;
