@@ -194,6 +194,12 @@ public:
     bool willLeaveModuleAlone(ModuleID, bool onlyIfLoadedInPreload, std::optional<ModuleID> askingAsHostNamesIt);
     uint32_t placeOfMomentOfLoad(ModuleID) const;
     uint32_t momentOfFirstMockInTestFile(ModuleID);
+    // The life of the mock of a module: R:launch-doors-stores-and-defines/THE-LIFE-OF-A-MOCK.md. Computed from what the sets and flags below say. NoneOfThem: together they say what no state of the table is.
+    enum class MockState : uint8_t { None, Waits, Runs, InPlace, InPlaceOverModuleThatHasRun, LaidOver, Failed, Ended, LeftToHost, NoneOfThem };
+    MockState mockState(ModuleID);
+    // For the counts alone: the state, the status of the body, and, for NoneOfThem, what is set.
+    String describeMockState(ModuleID);
+    void countMockStates(ASCIILiteral door, const String& before, ModuleID);
     bool isLeftAloneByMock(ModuleID module) const { return !m_mocksOverModulesThatHaveRun.isEmpty() && m_mocksOverModulesThatHaveRun.contains(module); }
     bool setMockOverModuleThatHasRun(ModuleID, JSObject* mock, JSValue whatRequireAnswers);
     void endMockOverModuleThatHasRun(ModuleID);

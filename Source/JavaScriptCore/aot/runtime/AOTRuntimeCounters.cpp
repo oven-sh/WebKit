@@ -109,6 +109,19 @@ void countReasonForSlowStringify(VM& vm, ASCIILiteral reason)
     });
 }
 
+void countMockTransition(VM& vm, const String& transition)
+{
+    if (!Options::aotCountsPath()) [[likely]]
+        return;
+    AtomString name(transition);
+    bool isCounted = false;
+    forEachInstance(vm, [&](Instance& instance) {
+        if (std::exchange(isCounted, true) || !instance.state)
+            return;
+        instance.state->propertyCaches->countNamed("mock"_s, name.impl());
+    });
+}
+
 void countLimitHit(VM& vm, LimitID limit)
 {
     if (RuntimeCounters* counters = vm.aotState().counters.get())

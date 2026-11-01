@@ -2258,6 +2258,107 @@ void Modules::endMockOverModuleThatHasRun(ModuleID module)
     }
 }
 
+auto Modules::mockState(ModuleID module) -> MockState
+{
+    LoadedModule* loaded = loadedIfExists(module);
+    bool waits = m_modulesWithMockToRun.get(module.index());
+    bool isInPlace = m_modulesWithMockInPlace.get(module.index());
+    bool isLaidOver = loaded && loaded->hasMockLaidOver;
+    bool isOverModuleThatHasRun = isLeftAloneByMock(module);
+    bool isToBeLetGo = m_modulesWithMockToLetGo.get(module.index());
+    bool hasWaited = m_modulesWithMockThatWaited.get(module.index());
+    bool hasKeptError = m_modulesWithLoadEndedByMock.get(module.index()) || m_mockedModulesWithErrorKeptByLoader.get(module.index());
+    bool isOfLibrary = data(module).isOfLibrary();
+    ModuleStatus body = status(module);
+    bool hasBegun = body != ModuleStatus::Unlinked && body != ModuleStatus::Linking && body != ModuleStatus::Linked;
+    if (isLeftToHost(module))
+        return waits || isInPlace || isLaidOver || isToBeLetGo ? MockState::NoneOfThem : MockState::LeftToHost;
+    if (waits + isInPlace + isLaidOver > 1 && !(isOverModuleThatHasRun && !isLaidOver))
+        return MockState::NoneOfThem;
+    if (isToBeLetGo)
+        return isInPlace ? MockState::Ended : MockState::NoneOfThem;
+    if (waits) {
+        if ((!isMocked(module) && !isOfLibrary) || (hasBegun && !isOverModuleThatHasRun && !isOfLibrary && data(module).kind != ModuleKind::CommonJs))
+            return MockState::NoneOfThem;
+        return hasKeptError ? MockState::Failed : MockState::Waits;
+    }
+    if (isInPlace) {
+        if (isOverModuleThatHasRun)
+            return MockState::InPlaceOverModuleThatHasRun;
+        return body == ModuleStatus::Evaluating || body == ModuleStatus::EvaluatingAsync ? MockState::NoneOfThem : MockState::InPlace;
+    }
+    if (isLaidOver)
+        return hasBegun ? MockState::LaidOver : MockState::NoneOfThem;
+    if (isOverModuleThatHasRun)
+        return MockState::Runs;
+    if (isMocked(module))
+        return hasWaited || isOfLibrary || m_modulesWhoseFactoryRuns.get(module.index()) ? MockState::Runs : MockState::NoneOfThem;
+    if (hasKeptError)
+        return MockState::Failed;
+    return hasWaited ? MockState::NoneOfThem : MockState::None;
+}
+
+String Modules::describeMockState(ModuleID module)
+{
+    static constexpr std::array<ASCIILiteral, 10> names { "none"_s, "waits"_s, "runs"_s, "in place"_s, "in place over a module that has run"_s, "laid over"_s, "failed"_s, "ended"_s, "left to the host"_s, "NONE OF THEM"_s };
+    static constexpr std::array<ASCIILiteral, 7> bodies { "unlinked"_s, "linking"_s, "linked"_s, "evaluating"_s, "awaiting"_s, "evaluated"_s, "failed"_s };
+    MockState state = mockState(module);
+    ASCIILiteral kind = data(module).isOfLibrary() ? "library"_s : data(module).kind == ModuleKind::CommonJs ? "CommonJS"_s : data(module).isFaceOfFile() ? "face"_s : data(module).isESModuleOfProgram() ? "ES"_s : "other"_s;
+    StringBuilder text;
+    text.append(kind, ' ', names[static_cast<size_t>(state)], " (body "_s, bodies[static_cast<size_t>(status(module)) - static_cast<size_t>(ModuleStatus::Unlinked)], ')');
+    if (state == MockState::NoneOfThem) {
+        LoadedModule* loaded = loadedIfExists(module);
+        auto say = [&](bool isSet, ASCIILiteral what) {
+            if (isSet)
+                text.append(' ', what);
+        };
+        text.append(" ["_s);
+        say(isMocked(module), "mocked"_s);
+        say(m_modulesWithMockToRun.get(module.index()), "to-run"_s);
+        say(m_modulesWithMockThatWaited.get(module.index()), "waited"_s);
+        say(m_modulesWithMockThatAsksAgain.get(module.index()), "asks-again"_s);
+        say(m_modulesWithMockInPlace.get(module.index()), "in-place"_s);
+        say(m_modulesWithMockToLetGo.get(module.index()), "to-let-go"_s);
+        say(loaded && loaded->hasMockLaidOver, "laid-over"_s);
+        say(isLeftAloneByMock(module), "over-run"_s);
+        say(m_modulesWithLoadEndedByMock.get(module.index()), "load-ended"_s);
+        say(m_mockedModulesWithErrorKeptByLoader.get(module.index()), "error-kept"_s);
+        say(isLeftToHost(module), "left-to-host"_s);
+        text.append(" ]"_s);
+    }
+    return text.toString();
+}
+
+void Modules::countMockStates(ASCIILiteral door, const String& before, ModuleID module)
+{
+    countMockTransition(*m_instance.vm, makeString(before, " > "_s, door, " > "_s, describeMockState(module)));
+}
+
+// Counts what a door between the host and the engine does to the state of a mock, where the counts are asked for.
+class MockDoor {
+public:
+    MockDoor(Modules* modules, ModuleID module, ASCIILiteral door)
+        : m_modules(Options::aotCountsPath() ? modules : nullptr)
+        , m_module(module)
+        , m_door(door)
+    {
+        if (m_modules) [[unlikely]]
+            m_before = m_modules->describeMockState(module);
+    }
+
+    ~MockDoor()
+    {
+        if (m_modules) [[unlikely]]
+            m_modules->countMockStates(m_door, m_before, m_module);
+    }
+
+private:
+    Modules* m_modules;
+    ModuleID m_module;
+    ASCIILiteral m_door;
+    String m_before;
+};
+
 void Modules::deferMock(ModuleID module, AfterFailure afterFailure)
 {
     // Whoever was linked against the earlier mock of a module of the library reads it until the load that this one waits for.
@@ -2292,6 +2393,7 @@ void Modules::forgetMockThatWaits(ModuleID module)
 void Modules::runMockThatWaits(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    MockDoor door(this, module, "runMock"_s);
     m_modulesWithMockToRun.clear(module.index());
     bool ranAlready = m_modulesWhoseFactoryRuns.set(module.index());
     host().runMock(m_instance.globalObject, moduleIDForHost(*m_instance.program, module));
@@ -6449,6 +6551,7 @@ bool setMock(JSGlobalObject* realm, ModuleID moduleOfHost, JSObject* mock, JSVal
 {
     ModuleFromHost module(realm, moduleOfHost);
     Modules* modules = modulesOf(realm);
+    MockDoor door(modules, module, mock ? "setMock"_s : "setMock, none"_s);
     if (modules && mock && modules->isLeftAloneByMock(module))
         return modules->setMockOverModuleThatHasRun(module, mock, whatRequireAnswers);
     return modules && modules->setMockInPlace(module, mock, whatRequireAnswers);
@@ -6569,6 +6672,7 @@ void runBodyOfRequiredFileAheadOfMock(JSGlobalObject* realm, ModuleID moduleOfHo
     Modules* modules = modulesOf(realm);
     if (!modules)
         return;
+    MockDoor door(modules, module, "runBodyOfRequiredFileAheadOfMock"_s);
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
     modules->didEndMock(module);
     RETURN_IF_EXCEPTION(scope, void());
@@ -6579,14 +6683,18 @@ void runBodyOfRequiredFileAheadOfMock(JSGlobalObject* realm, ModuleID moduleOfHo
 void runBodyOfLinkedModuleAheadOfMock(JSGlobalObject* realm, ModuleID moduleOfHost)
 {
     ModuleFromHost module(realm, moduleOfHost);
-    if (Modules* modules = modulesOf(realm))
+    Modules* modules = modulesOf(realm);
+    MockDoor door(modules, module, "the mock call"_s);
+    if (modules)
         modules->runBodyOfLinkedModuleAheadOfMock(module);
 }
 
 void deferMock(JSGlobalObject* realm, ModuleID moduleOfHost, AfterFailure afterFailure)
 {
     ModuleFromHost module(realm, moduleOfHost);
-    if (Modules* modules = modulesOf(realm))
+    Modules* modules = modulesOf(realm);
+    MockDoor door(modules, module, afterFailure == AfterFailure::AsksAgain ? "deferMock, asks again"_s : "deferMock"_s);
+    if (modules)
         modules->deferMock(module, afterFailure);
 }
 
@@ -6594,6 +6702,7 @@ JSValue exportsBeforeMock(JSGlobalObject* realm, ModuleID moduleOfHost)
 {
     ModuleFromHost module(realm, moduleOfHost);
     Modules* modules = modulesOf(realm);
+    MockDoor door(modules, module, "exportsBeforeMock"_s);
     return modules ? modules->exportsBeforeMock(module) : JSValue();
 }
 
@@ -6603,6 +6712,7 @@ void didEndMock(JSGlobalObject* realm, ModuleID moduleOfHost)
     Modules* modules = modulesOf(realm);
     if (!modules)
         return;
+    MockDoor door(modules, module, "didEndMock"_s);
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
     bool wasLoadedAsMock = modules->mockInPlace(module) && !modules->hasMockThatEnded(module);
     if (wasLoadedAsMock || modules->hasMockLaidOver(module))
@@ -6658,7 +6768,9 @@ JSPromise* factoryThatWaitsBelow(JSGlobalObject* realm, ModuleID moduleOfHost, J
 void runMocksBelow(JSGlobalObject* realm, ModuleID moduleOfHost)
 {
     ModuleFromHost module(realm, moduleOfHost);
-    if (Modules* modules = modulesOf(realm))
+    Modules* modules = modulesOf(realm);
+    MockDoor door(modules, module, "the loader fetches it"_s);
+    if (modules)
         modules->runMocksBelowModuleThatLoaderFetches(module);
 }
 
@@ -6676,6 +6788,7 @@ void willMockModule(JSGlobalObject* realm, ModuleID moduleOfHost, JSObject* expo
     Modules* found = modulesOf(realm);
     if (!found)
         return;
+    MockDoor door(found, module, "willMockModule"_s);
     Modules& modules = *found;
     if (modules.data(module).isOfLibrary() || !modules.table().hasFilePath(module)) {
         auto scope = DECLARE_THROW_SCOPE(realm->vm());
@@ -6736,6 +6849,7 @@ void didMockModule(JSGlobalObject* realm, ModuleID moduleOfHost)
     Modules* modules = modulesOf(realm);
     if (!modules)
         return;
+    MockDoor door(modules, module, "didMockModule"_s);
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
     modules->fillNamesThatMockLacks(module);
     RETURN_IF_EXCEPTION(scope, void());
