@@ -3,6 +3,7 @@ import type {
   DumpedClass,
   DumpedEntry,
   DumpedHandlerCall,
+  DumpedHostObject,
   DumpedImplementation,
   DumpedKey,
   DumpedLayout,
@@ -25,6 +26,7 @@ import {
   type ModelCallback,
   type ModelClass,
   type ModelHandlerCall,
+  type ModelHostObject,
   type ModelImplementation,
   type ModelKey,
   type ModelLayout,
@@ -388,10 +390,26 @@ function dumpLayout(layout: ModelLayout): DumpedLayout {
   };
 }
 
+function dumpHostObject(object: ModelHostObject): DumpedHostObject {
+  return {
+    cell: object.cell.text,
+    function: object.function?.token ?? null,
+    prototype: object.prototype?.token ?? null,
+    fields: object.fields.map(field => ({
+      name: field.name === null ? null : spellingOf(field.name),
+      value: dumpPlace(field.value),
+    })),
+    keepsStringsOfStoredValues: object.keepsStringsOfStoredValues,
+    nativeAccessors: object.nativeAccessors.map(spellingOf),
+    platforms: inListOrder(targetPlatforms, object.platforms),
+  };
+}
+
 export function dumpOf(model: TableModel): TableDump {
   return {
     entries: model.builtins.map(dumpEntry),
     classes: model.classes.map(dumpClass),
     layouts: model.layouts.map(dumpLayout),
+    hostObjects: model.hostObjects.map(dumpHostObject),
   };
 }
