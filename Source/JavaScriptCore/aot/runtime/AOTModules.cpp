@@ -3497,9 +3497,10 @@ void deliverTextThatWaits(VM& vm)
         if (!first)
             return;
         isDelivered = first->deliverFirstTextThatWaits();
+        // Only a request to terminate is left behind, and the jobs find it.
+        if (scope.exception()) [[unlikely]]
+            return;
     }
-    // Only a request to terminate is left behind, and the jobs find it.
-    static_cast<void>(scope.exception());
 }
 
 static JSC_DECLARE_HOST_FUNCTION(importBehindFactories);
@@ -7561,20 +7562,24 @@ bool ModuleNamespace::putByIndex(JSCell* cell, JSGlobalObject* globalObject, uns
 bool ModuleNamespace::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot& slot)
 {
     ImageOfCellScope imageOfCell(globalObject->vm(), cell);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto* thisObject = uncheckedDowncast<ModuleNamespace>(cell);
     if (thisObject->isSymbolLikeKey(name.uid()) && name != globalObject->vm().propertyNames->toStringTagSymbol)
-        return Base::deleteProperty(thisObject, globalObject, name, slot);
-    if (!thisObject->isSymbolLikeKey(name.uid()) && !thisObject->evaluateIfNeeded(globalObject))
-        return false;
+        RELEASE_AND_RETURN(scope, Base::deleteProperty(thisObject, globalObject, name, slot));
+    if (!thisObject->isSymbolLikeKey(name.uid())) {
+        bool isEvaluated = thisObject->evaluateIfNeeded(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!isEvaluated)
+            return false;
+    }
     if (JSObject* mock = thisObject->isSymbolLikeKey(name.uid()) ? nullptr : thisObject->modules().mockInPlace(thisObject->m_module)) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         if (!canAskMock(globalObject, scope)) [[unlikely]]
             return false;
         // Not the caller's slot: the mock would mark it cacheable for the Structure of this object, which never changes.
         DeletePropertySlot slotOfMock;
         RELEASE_AND_RETURN(scope, mock->methodTable()->deleteProperty(mock, globalObject, name, slotOfMock));
     }
-    return !thisObject->hasExport(name.uid()) && name != globalObject->vm().propertyNames->toStringTagSymbol;
+    RELEASE_AND_RETURN(scope, !thisObject->hasExport(name.uid()) && name != globalObject->vm().propertyNames->toStringTagSymbol);
 }
 
 bool ModuleNamespace::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index)
