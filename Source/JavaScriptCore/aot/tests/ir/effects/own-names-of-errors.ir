@@ -1,0 +1,38 @@
+# Where an error is asked for a name of its own, or for all of them, or is frozen, its stack is made, and the program's Error.prepareStackTrace runs for that in the middle of the call.
+# So an object of a class below an error class, however far, is asked by unknown code, as an error is. An object that the program or another built-in class makes is asked by none
+# FORM: Prepared
+# RUN: effects f5
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Plain" constructor=f0 flow={baseState=None members=[L0]}
+layout L1 kind=Instance name="Failure" constructor=f1 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Error members=[L1, L2]}
+layout L2 kind=Instance name="BelowFailure" base=L1 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L1 members=[L2]}
+layout L3 kind=Instance name="Mismatch" constructor=f3 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=TypeError members=[L3]}
+layout L4 kind=Instance name="Registry" constructor=f4 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Map members=[L4]}
+function f0 name="Plain" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}]
+function f1 name="Failure" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=object}]
+function f2 name="BelowFailure" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=object}]
+function f3 name="Mismatch" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=object}]
+function f4 name="Registry" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=object}]
+function f5 name="asks" parameters=[{type=L0}, {type=L1}, {type=L2}, {type=L3}, {type=L4}, {type=string}] results=[{type=undefined}] {
+  b0(v0: L0, v1: L1, v2: L2, v3: L3, v4: L4, v5: string):
+    v6 = CallBuiltin -, v0 overload=ReflectOwnKeys/0
+    v7 = CallBuiltin -, v1 overload=ReflectOwnKeys/0
+    v8 = CallBuiltin -, v2 overload=ReflectOwnKeys/0
+    v9 = CallBuiltin -, v3 overload=ReflectOwnKeys/0
+    v10 = CallBuiltin -, v4 overload=ReflectOwnKeys/0
+    v11 = CallBuiltin -, v0 overload=ObjectFreeze/0
+    v12 = CallBuiltin -, v1 overload=ObjectFreeze/0
+    v13 = CallBuiltin -, v0, v5 overload=ObjectHasOwn/0
+    v14 = CallBuiltin -, v1, v5 overload=ObjectHasOwn/0
+    Return
+}
+# CHECK: v6 CallBuiltin: reads(
+# CHECK-NEXT: v7 CallBuiltin: unknownCode
+# CHECK-NEXT: v8 CallBuiltin: unknownCode
+# CHECK-NEXT: v9 CallBuiltin: unknownCode
+# CHECK-NEXT: v10 CallBuiltin: reads(
+# CHECK-NEXT: v11 CallBuiltin: reads(
+# CHECK-NEXT: v12 CallBuiltin: unknownCode
+# CHECK-NEXT: v13 CallBuiltin: reads(
+# CHECK-NEXT: v14 CallBuiltin: unknownCode

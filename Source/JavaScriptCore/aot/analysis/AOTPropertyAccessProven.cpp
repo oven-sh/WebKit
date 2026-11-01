@@ -527,11 +527,18 @@ ProvenAccess provenLookupUnderAnyKey(const Program& program, const Type& receive
     return { .isComplete = true, .isLookupByKey = true };
 }
 
+// Where an error is asked for a name of its own, or for all of them, its stack is made, and the program's Error.prepareStackTrace runs for that.
+static bool isError(const Program& program, LayoutID layout)
+{
+    BuiltinClassID base = builtinBaseClassOf(program, layout);
+    return base && program.builtins().isSameOrSubclassOf(base, BuiltinClasses::Error);
+}
+
 static bool addStepOnLayout(const Program& program, LayoutID layout, Protocol keylessProtocol, ProvenAccess& result)
 {
     switch (keylessProtocol) {
     case Protocol::OwnKeys:
-        return !hasFieldUnderSymbolCreatedByLibrary(program, program.at(layout));
+        return !isError(program, layout) && !hasFieldUnderSymbolCreatedByLibrary(program, program.at(layout));
     case Protocol::OwnValues:
         return !hasFieldUnderSymbolCreatedByLibrary(program, program.at(layout)) && addOwnValues(program, layout, result);
     case Protocol::PrototypeChain:
