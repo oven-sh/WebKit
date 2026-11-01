@@ -484,7 +484,7 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::ExpandOwnKeys, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, opcodesOfWalks },
     { PassID::ExpandProvenIterations, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
     { PassID::InlineCalls, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
-    { PassID::InlineHeads, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
+    { PassID::InlineHeads, InPlaceOfOperation::TheSameOperationElsewhere, false, TakesHandlersAway::No, { Opcode::CallDirect } },
     { PassID::OutlineColdOperations, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::PlaceTypeTests, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
     { PassID::PlanArrayCapacities, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::AppendElement, Opcode::AppendElements, Opcode::AppendHole, Opcode::AppendMembers, Opcode::CallBuiltin, Opcode::ElemSet, Opcode::PutArrayElement } },
