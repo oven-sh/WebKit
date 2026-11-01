@@ -377,9 +377,29 @@ private:
                 return use.kind == Use::Kind::Operand && use.user == m_writer;
             return use.kind == Use::Kind::TerminatorOperand && use.block == m_point.block;
         };
-        return std::ranges::any_of(m_analyses.escape().usesOf(object), [&](const ObjectUse& objectUse) {
-            return objectUse.isEscape && isUseByWriter(objectUse.use) && (!m_writer || mayBeMadeHere(m_function.at(m_writer).operand(objectUse.use.operandIndex)));
-        });
+        // The uses of an object stand in the order of the function, so those at one place stand together.
+        const UseLists& useLists = m_analyses.useLists();
+        const CFG& cfg = m_analyses.cfg();
+        auto placeOf = [&](ProgramPoint point) {
+            return std::pair { cfg.reversePostOrderIndex(point.block), point.index };
+        };
+        auto placeOfWriter = placeOf(m_writer ? useLists.pointOf(m_writer) : pointBeforeTerminatorOf(m_function, m_point.block));
+        ObjectUses uses = m_analyses.escape().usesOf(object);
+        AOT_THRESHOLD(size_t, fewestUsesSearched, 16);
+        size_t first = 0;
+        for (size_t end = uses.size() < fewestUsesSearched ? 0 : uses.size(); first < end;) {
+            size_t middle = first + (end - first) / 2;
+            if (placeOf(useLists.pointOf(uses[middle].use)) < placeOfWriter)
+                first = middle + 1;
+            else
+                end = middle;
+        }
+        bool escapes = false;
+        for (size_t index = first; !escapes && index < uses.size() && (uses.size() < fewestUsesSearched || placeOf(useLists.pointOf(uses[index].use)) == placeOfWriter); ++index) {
+            const ObjectUse& objectUse = uses[index];
+            escapes = objectUse.isEscape && isUseByWriter(objectUse.use) && (!m_writer || mayBeMadeHere(m_function.at(m_writer).operand(objectUse.use.operandIndex)));
+        }
+        return escapes;
     }
 
     std::span<const WrittenOperand> writtenOperands()

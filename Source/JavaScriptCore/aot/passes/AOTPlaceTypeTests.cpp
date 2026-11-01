@@ -4458,14 +4458,70 @@ struct TestPlacer {
             return UseInTree { uses[index].identity, dominators.numberOf(uses[index].use.block), static_cast<uint32_t>(index) };
         });
         AOT::sortInLine(usesInTree, { }, [](const UseInTree& use) { return std::tuple { use.identity, use.numberOfBlock, use.index }; });
+        // A binary tree over the uses in that order: node n has the children 2 n and 2 n + 1, the uses are its last leaves. A node holds a bit for each type that a use below it names a value of now.
+        // The types beyond the first 63 share the last bit, which says nothing about them.
+        constexpr unsigned bitOfFurtherTypes = 63;
+        Vector<TypeID, 16> typeOfBit;
+        UncheckedKeyHashMap<uint32_t, uint8_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> bitOfKnownType;
+        auto bitOf = [&](TypeID type) -> uint64_t {
+            if (!type)
+                return 1ull << bitOfFurtherTypes;
+            auto result = bitOfKnownType.add(type.index(), bitOfFurtherTypes);
+            if (result.isNewEntry && typeOfBit.size() < bitOfFurtherTypes) {
+                result.iterator->value = typeOfBit.size();
+                typeOfBit.append(type);
+            }
+            return 1ull << result.iterator->value;
+        };
+        AOT_THRESHOLD(size_t, fewestUsesKeptInTree, 256);
+        const bool hasTree = usesInTree.size() >= fewestUsesKeptInTree;
+        const size_t numberOfLeaves = hasTree ? std::bit_ceil(usesInTree.size()) : 0;
+        Vector<uint64_t> typesNamedBelow(FillWith { }, 2 * numberOfLeaves, 0ull);
+        Vector<uint32_t> placeInTree(hasTree ? uses.size() : 0);
+        for (size_t place = 0; hasTree && place < usesInTree.size(); ++place) {
+            placeInTree[usesInTree[place].index] = place;
+            typesNamedBelow[numberOfLeaves + place] = bitOf(function.at(usedValueOf(function, uses[usesInTree[place].index].use)).type);
+        }
+        for (size_t node = numberOfLeaves; node > 1;) {
+            --node;
+            typesNamedBelow[node] = typesNamedBelow[2 * node] | typesNamedBelow[2 * node + 1];
+        }
+        auto didReplaceUse = [&](uint32_t index, ValueID replacement) {
+            if (!hasTree)
+                return;
+            size_t node = numberOfLeaves + placeInTree[index];
+            typesNamedBelow[node] = bitOf(function.at(replacement).type);
+            while (node >>= 1)
+                typesNamedBelow[node] = typesNamedBelow[2 * node] | typesNamedBelow[2 * node + 1];
+        };
+        auto allTypesBut = [&](TypeID type) { return hasTree ? ~bitOf(type) | 1ull << bitOfFurtherTypes : ~0ull; };
+
         Vector<uint32_t, 16> dominatedUses;
-        auto findUsesDominatedBy = [&](BlockID block, ValueID identity) -> std::span<const uint32_t> {
+        auto listUsesThatName = [&](auto& self, size_t node, size_t nodeBegin, size_t nodeEnd, size_t begin, size_t end, uint64_t types) -> void {
+            if (end <= nodeBegin || nodeEnd <= begin || !(typesNamedBelow[node] & types))
+                return;
+            if (nodeEnd - nodeBegin == 1) {
+                dominatedUses.append(usesInTree[nodeBegin].index);
+                return;
+            }
+            size_t middle = nodeBegin + (nodeEnd - nodeBegin) / 2;
+            self(self, 2 * node, nodeBegin, middle, begin, end, types);
+            self(self, 2 * node + 1, middle, nodeEnd, begin, end, types);
+        };
+        // Those that name a value of one of the given types.
+        auto findUsesDominatedBy = [&](BlockID block, ValueID identity, uint64_t types) -> std::span<const uint32_t> {
             dominatedUses.shrink(0);
             if (!cfg.isReachable(block))
                 return { };
             auto first = std::ranges::lower_bound(usesInTree, std::pair { identity, dominators.numberOf(block) }, { }, [](const UseInTree& use) { return std::pair { use.identity, use.numberOfBlock }; });
-            for (uint32_t last = dominators.lastNumberBelow(block); first != usesInTree.end() && first->identity == identity && first->numberOfBlock <= last; ++first)
-                dominatedUses.append(first->index);
+            auto end = std::ranges::upper_bound(usesInTree, std::pair { identity, dominators.lastNumberBelow(block) }, { }, [](const UseInTree& use) { return std::pair { use.identity, use.numberOfBlock }; });
+            if (hasTree)
+                listUsesThatName(listUsesThatName, 1, 0, numberOfLeaves, first - usesInTree.begin(), end - usesInTree.begin(), types);
+            else {
+                for (; first != end; ++first)
+                    dominatedUses.append(first->index);
+            }
+            context.build.statistics().count(StatisticID::UsesListedBehindTests, dominatedUses.size());
             AOT::sort(dominatedUses);
             return dominatedUses.span();
         };
@@ -4509,7 +4565,7 @@ struct TestPlacer {
             narrowings.shrink(0);
 
             RELEASE_ASSERT(cfg.singleIncomingEdge(target) == edge);
-            for (uint32_t index : findUsesDominatedBy(target, analyses.identityOf(subject))) {
+            for (uint32_t index : findUsesDominatedBy(target, analyses.identityOf(subject), allTypesBut(provenTypeID))) {
                 NarrowableUse& narrowable = uses[index];
                 // A use that gets a cast will name none of the values that were listed.
                 if (narrowable.alias == proven || narrowable.getsCast)
@@ -4531,6 +4587,7 @@ struct TestPlacer {
                 Narrowing& narrowing = narrowings[found];
                 if (narrowing.holdsProvenType) {
                     replace(use, proven);
+                    didReplaceUse(index, proven);
                     isInUse.set(proven.index());
                     continue;
                 }
@@ -4559,6 +4616,22 @@ struct TestPlacer {
         }
 
         // Code that two tests of one value lead to is behind neither of them. What passed either comes there as a parameter.
+        struct TypesThatHold {
+            uint64_t types { 0 };
+            unsigned numberOfTypesJudged { 0 };
+        };
+        UncheckedKeyHashMap<uint32_t, TypesThatHold, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> typesThatHoldType;
+        auto otherTypesThatHold = [&](TypeID typeID, const Type& type) {
+            if (!hasTree)
+                return ~0ull;
+            TypesThatHold& known = typesThatHoldType.add(typeID.index(), TypesThatHold { }).iterator->value;
+            for (; known.numberOfTypesJudged < typeOfBit.size(); ++known.numberOfTypesJudged) {
+                TypeID other = typeOfBit[known.numberOfTypesJudged];
+                if (other != typeID && type.isSubsetOf(types.at(other), context.program))
+                    known.types |= 1ull << known.numberOfTypesJudged;
+            }
+            return known.types | 1ull << bitOfFurtherTypes;
+        };
         for (size_t index = 0; index < numberOfListedValues; ++index) {
             ValueID joined(index);
             ValueID identity = identityOfListedValue[index];
@@ -4569,7 +4642,7 @@ struct TestPlacer {
                 continue;
             TypeID joinedTypeID = function.at(joined).type;
             Type joinedType = types.at(joinedTypeID);
-            for (uint32_t index : findUsesDominatedBy(location.block, identity)) {
+            for (uint32_t index : findUsesDominatedBy(location.block, identity, otherTypesThatHold(joinedTypeID, joinedType))) {
                 NarrowableUse& narrowable = uses[index];
                 const Use& use = narrowable.use;
                 if (narrowable.getsCast || (use.kind != Use::Kind::Operand && use.kind != Use::Kind::TerminatorOperand && use.kind != Use::Kind::EdgeArgument))
@@ -4580,8 +4653,10 @@ struct TestPlacer {
                 TypeID currentTypeID = function.at(current).type;
                 if (current == joined || currentTypeID == joinedTypeID)
                     continue;
-                if (joinedType.isSubsetOf(types.at(currentTypeID), context.program))
+                if (joinedType.isSubsetOf(types.at(currentTypeID), context.program)) {
                     replace(use, joined);
+                    didReplaceUse(index, joined);
+                }
             }
         }
 

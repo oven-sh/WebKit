@@ -965,17 +965,19 @@ void raiseFrequenciesBehind(FunctionAnalyses& analyses, Function& function, Edge
             jumpsToRarerBlocks.append(Edge { block, 0 });
     };
     // Past a block as frequent as the test, rare blocks are the failing sides of other tests.
-    BitVector isReachedThroughRareBlocks(function.blocks.size());
-    isReachedThroughRareBlocks.quickSet(target.index());
-    Vector<BlockID, 16> worklist { target };
-    while (!worklist.isEmpty()) {
-        for (BlockID next : analyses.cfg().successors(worklist.takeLast())) {
-            if (isRarerThan(function.at(next).frequency, actual).predicted() && !isReachedThroughRareBlocks.quickSet(next.index()))
-                worklist.append(next);
+    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> isReachedThroughRareBlocks;
+    isReachedThroughRareBlocks.add(target.index());
+    Vector<BlockID, 16> reachedThroughRareBlocks { target };
+    for (size_t index = 0; index < reachedThroughRareBlocks.size(); ++index) {
+        for (BlockID next : analyses.cfg().successors(reachedThroughRareBlocks[index])) {
+            if (isRarerThan(function.at(next).frequency, actual).predicted() && isReachedThroughRareBlocks.add(next.index()).isNewEntry)
+                reachedThroughRareBlocks.append(next);
         }
     }
-    for (BlockID block : analyses.cfg().reversePostOrder()) {
-        if (isReachedThroughRareBlocks.quickGet(block.index()) && function.at(block).frequency.isSamePredictionAs(expected) && analyses.dominators().dominates(target, block))
+    AOT::sortInLine(reachedThroughRareBlocks, { }, [&](BlockID block) { return analyses.cfg().reversePostOrderIndex(block); });
+    analyses.context().build.statistics().count(StatisticID::BlocksReadToRaiseFrequencies, reachedThroughRareBlocks.size());
+    for (BlockID block : reachedThroughRareBlocks) {
+        if (function.at(block).frequency.isSamePredictionAs(expected) && analyses.dominators().dominates(target, block))
             raise(block);
     }
     // What a block always goes on to runs as often as the block. The way behind a failed test often joins one that is rarer still. What lies behind the tests there stays as it is until they are decided too.
