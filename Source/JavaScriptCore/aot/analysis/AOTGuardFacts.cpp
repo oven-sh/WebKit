@@ -861,9 +861,10 @@ static ValueID valueStoredDirectlyBehind(FunctionAnalyses& analyses, ValueID all
         bool storesIntoObject = (value.opcode == Opcode::PutSlot || value.opcode == Opcode::PutSlotOrAdd) && value.objectOperand() == allocation;
         if (storesIntoObject && value.key() == key)
             return value.valueOperand();
-        // A closure that is made takes the object along and looks at nothing: nobody calls it before the stores have run.
-        bool makesClosure = value.opcode == Opcode::NewClosure && !analyses.context().build.isSabotaged(Sabotage::ClosuresMadeBehindAllocationsHaveEffects);
-        if (!storesIntoObject && !makesClosure && !analyses.hasNoEffects(values[index]))
+        // A closure that is made takes the object along and looks at nothing: nobody calls it before the stores have run. The end of the birth takes a mark off the object and leaves its slots alone.
+        bool endsBirth = (value.opcode == Opcode::FinishBirth || value.opcode == Opcode::TryFinishBirth) && value.objectOperand() == allocation;
+        bool leavesSlotsAlone = (value.opcode == Opcode::NewClosure || endsBirth) && !analyses.context().build.isSabotaged(Sabotage::ClosuresMadeBehindAllocationsHaveEffects);
+        if (!storesIntoObject && !leavesSlotsAlone && !analyses.hasNoEffects(values[index]))
             return { };
     }
     return { };
