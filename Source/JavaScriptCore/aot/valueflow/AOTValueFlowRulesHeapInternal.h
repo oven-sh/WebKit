@@ -272,6 +272,7 @@ private:
     bool namesObjectOfAccess() const;
     bool findsOnGlobalObjectWhatStatementsStore(const HeapKey&) const;
     ClimbingSet accessorsFoundFrom(ClimbingSet start, const HeapKey&, HeapPropertyPart);
+    ClimbingSet settersOfProgramLaidAbove(ClimbingSet start, const HeapKey&);
     ClimbingSet gettersOfEnumerableProperties(ClimbingSet holders);
     // The images below have run first: what a preload of theirs has stored on the global object no statement of this program shows.
     bool holdsGlobalObjectOnlyWhatStatementsHaveStored() { return !m_context.refusedCode().hasImagesBelow && !doesUnseenCodeRun() && !m_context.holdsAnyOf(ClimbingSet(only(m_universe.objectOf(Builtins::ProcessDlopen))), m_context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)); }

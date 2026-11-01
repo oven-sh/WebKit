@@ -178,12 +178,16 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
     }
     // A getter nobody knows is entered with the source that holds it, whichever others are copied beside it.
     HeapReceiver readSources { nullptr, holdsAnything(proxies) ? m_context.unite(sources, m_context.valueOf(m_context.read(proxies, proxyItselfName))) : sources, { } };
+    Vector<std::pair<ClimbingSet, ClimbingSet>, 4> sourcesWithGettersOfTheirOwn;
     if (!keepsAccessors && mayBeAccessorNobodyKnows(getters)) {
         ValueFlowObjectsToldApart toldApart = tellObjectsApart(m_context, m_context.membersMissingFrom(ValueFlowProgramNodes::escaped(), known(sources)));
         ClimbingSet holdingSuchGetter(toldApart.rest);
         for (ValueSetID group : toldApart.groups) {
-            if (mayBeAccessorNobodyKnows(gettersOfEnumerableProperties(withSourcesOfCopies(m_context, ClimbingSet(group)))))
+            ClimbingSet gettersOfGroup = gettersOfEnumerableProperties(withSourcesOfCopies(m_context, ClimbingSet(group)));
+            if (mayBeAccessorNobodyKnows(gettersOfGroup))
                 holdingSuchGetter = m_context.unite(holdingSuchGetter, ClimbingSet(group));
+            else if (holdsAnything(gettersOfGroup))
+                sourcesWithGettersOfTheirOwn.append({ ClimbingSet(group), gettersOfGroup });
         }
         readSources.belowAccessorNobodyKnows = holdingSuchGetter;
     }
@@ -194,6 +198,8 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
             add(node, m_universe.anyPrimitive());
         if (!keepsAccessors)
             callAccessors(getters, ValueFlowCallKind::Get, readSources, nullptr, node);
+        for (const auto& [group, gettersOfGroup] : sourcesWithGettersOfTheirOwn)
+            callAccessors(gettersOfGroup, ValueFlowCallKind::Get, HeapReceiver { nullptr, group, { } }, nullptr, node);
     }
     // The arguments of a strict function hold an accessor of native code under `callee`.
     bool copiesArguments = m_context.meet(allSources, m_tables.argumentsObjects());

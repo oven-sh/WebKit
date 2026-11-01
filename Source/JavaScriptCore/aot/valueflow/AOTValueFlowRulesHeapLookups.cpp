@@ -1079,6 +1079,17 @@ void HeapRule::callAccessors(ClimbingSet functions, ValueFlowCallKind kind, cons
         functions = m_context.restrict(functions, ValueSets::complement(m_universe.closures()));
     }
     enter(functions, receiver.set);
+
+    if (kind != ValueFlowCallKind::Set || receiver.operand || !receiver.keyLookedUp || !mayBeUnknownObject(functions))
+        return;
+    ClimbingSet notCovered = m_context.membersMissingNowFrom(ValueFlowProgramNodes::escaped(), known(receiver.set));
+    if (!holdsAnything(notCovered))
+        return;
+    ValueFlowObjectsToldApart receivers = tellObjectsApart(m_context, notCovered);
+    if (receivers.rest != ValueSets::nothing)
+        receivers.groups.append(receivers.rest);
+    for (ValueSetID toldApart : receivers.groups)
+        enter(settersOfProgramLaidAbove(ClimbingSet(toldApart), *receiver.keyLookedUp), ClimbingSet(toldApart));
 }
 
 void HeapRule::handOutPrototypeObjectsAtCreation(ClimbingSet receivers, const HeapKey& key, ValueFlowNodeID result)

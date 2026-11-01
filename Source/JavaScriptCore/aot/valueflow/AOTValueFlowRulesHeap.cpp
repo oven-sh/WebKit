@@ -824,6 +824,14 @@ ClimbingSet HeapRule::accessorsFoundFrom(ClimbingSet start, const HeapKey& key, 
     return holdsAnything(others) ? m_context.unite(accessors, m_context.valueOf(m_context.lookup(others, name))) : accessors;
 }
 
+ClimbingSet HeapRule::settersOfProgramLaidAbove(ClimbingSet start, const HeapKey& key)
+{
+    if (key.keyClass != HeapKeyClass::Name)
+        return { };
+    ValueFlowNodeID laid = readWhereWritten(chainFrom(start, key).objects, foundName(key, HeapPropertyPart::Setter));
+    return laid ? m_context.valueWithin(ClimbingSet(m_universe.closures()), laid) : ClimbingSet();
+}
+
 bool HeapRule::replaceMembersThroughSettersFoundFrom(ClimbingSet receivers, const HeapKey& key, PropertySearch search, const ValueFlowOperand* value, bool isGivenAnyValue)
 {
     bool isFound = false;
