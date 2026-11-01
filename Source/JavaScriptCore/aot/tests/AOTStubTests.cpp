@@ -906,6 +906,24 @@ static void testTrapsEndListenerForBreakpoints()
     AOT_TEST_CHECK(breakpoint.size() == codeOffsetUnit && MacroAssembler::isBreakpoint(breakpoint.mutableSpan().data()));
 }
 
+static void testAlignmentOfStubsIsPadding()
+{
+    StubCatalog catalog(StubOptions { }, StubPolicy { });
+    StubAssembler jit(catalog.options(), catalog);
+    jit.generateForTesting(findStubPreserving(catalog, gprOf(StubRegister::T12)), [](StubAssembler& jit) {
+        jit.returnToCaller();
+        jit.align();
+        jit.returnToCaller();
+    });
+    ImageLinkBuffer buffer(jit, LinkBuffer::Profile::Thunk);
+    AOT_TEST_CHECK(!buffer.didFailToAllocate());
+    buffer.finalize(false, "stub with an aligned part"_s);
+    std::span<uint8_t> bytes = buffer.bytes();
+    AOT_TEST_CHECK(bytes.size() > 16);
+    for (size_t offset = 0; offset < bytes.size(); offset += codeOffsetUnit)
+        AOT_TEST_CHECK(!MacroAssembler::isBreakpoint(bytes.subspan(offset).data()));
+}
+
 #endif // OS(UNIX)
 
 static void testRegistersLiveAcrossReads()
@@ -948,6 +966,7 @@ std::span<const NativeTest> stubTests()
 #if OS(UNIX)
         { "stubs/validated-calls"_s, testValidatedCalls },
         { "stubs/traps-end-listener-for-breakpoints"_s, testTrapsEndListenerForBreakpoints },
+        { "stubs/alignment-is-padding"_s, testAlignmentOfStubsIsPadding },
 #endif
         { "stubs/registers-live-across-reads"_s, testRegistersLiveAcrossReads },
     };
