@@ -7,6 +7,9 @@
 # but a local one may be where one lands, so offlineasm puts a landing pad behind each (asm.rb), and this checks that it is there: a
 # label without one is found by a test only if the test gets there, on a processor that has the feature. What the JITs generate is not
 # in the binary: --validateIndirectBranchTargets checks that as it is generated.
+#
+# A jump in a guarded page may land where a call may only if it has its target in x16 or x17. All have (arm64.rb) but those from one
+# handler of IPInt to the next.
 import re
 import subprocess
 import sys
@@ -23,6 +26,7 @@ landing_pad = re.compile(r'bti\s+(?:c|j|jc)|paci[ab]sp')
 # The handlers of IPInt are in slots, and such a label is where a slot begins. The jump from one to the next has its target in any
 # register (arm64LowerJumpsForLandingPads in arm64.rb), and nothing calls one.
 landing_pad_of_slot = re.compile(r'bti\s+j')
+jump_to_slot = re.compile(r'br\s+x(?!1[67]$)\d+')
 
 errors = []
 
@@ -46,6 +50,7 @@ bounds = {f'{section}_{bound}' for section in sections for bound in ('begin', 'e
 labels = 0
 slots = 0
 without = []
+jumps = []
 for section in sections:
     if f'{section}_begin' not in address_of or f'{section}_end' not in address_of:
         errors.append(f'{section} has no bounds: is this an ARM64 binary with its symbols, built with ENABLE(BRANCH_TARGET_IDENTIFICATION)?')
@@ -56,6 +61,8 @@ for section in sections:
         m = instruction.match(line)
         if m:
             instructions[int(m.group(1), 16)] = m.group(2).strip()
+    if section != 'jsc_llint_webassembly':
+        jumps += [f'{address:#x}: {text}' for address, text in instructions.items() if jump_to_slot.fullmatch(text)]
     for address, name in symbols:
         # $x and $d are the assembler's own, for where code and data begin.
         if not begin <= address < end or name in bounds or name.startswith('$'):
@@ -73,6 +80,8 @@ if not slots:
     errors.append('LLInt has no slot: are the labels of IPInt\'s handlers still called _validate?')
 if without:
     errors.append(f'{len(without)} labels of LLInt do not have the landing pad that they need behind them:\n' + '\n'.join(f'    {line}' for line in without[:200]))
+if jumps:
+    errors.append(f'{len(jumps)} jumps outside IPInt have their target in a register other than x16 and x17:\n' + '\n'.join(f'    {line}' for line in jumps[:200]))
 print(f'LLInt has {labels} labels, {slots} of them slots. {labels - len(without)} have the landing pad that they need behind them.')
 for error in errors:
     print(f'error: {error}')
