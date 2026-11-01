@@ -324,11 +324,18 @@ public:
         , m_universe(context.universe())
         , m_tables(m_universe.builtinTables())
         , m_undefined(operandHolding(m_universe.undefinedValue()))
+        , m_globalObject(operandHolding(context.maker().of(m_universe.objectOf(Builtins::GlobalThis))))
         , m_asksProxiesInReceiverByTheirTraps(m_builtins.canonicalID(builtin) == Builtins::FunctionPrototypeBind || m_builtins.canonicalID(builtin) == Builtins::FunctionPrototypeSymbolHasInstance)
     {
         for (BuiltinOperand operand : { BuiltinOperand::receiver(), BuiltinOperand::argument(0), BuiltinOperand::argument(3) }) {
             if (modeAndUseOf(call.kind).first == BuiltinCallMode::Call && asksOperandAboutOwnProperty(m_builtins, builtin, operand))
                 m_operandAskedAboutOwnProperty = operand;
+        }
+        for (const BuiltinOverload& overload : m_builtins.overloadsOf(builtin)) {
+            for (const BuiltinParameter& parameter : overload.parameters) {
+                if (isGlobalObjectAlone(parameter.accepted))
+                    m_operandOfGlobalObject = parameter.operand;
+            }
         }
     }
 
@@ -649,6 +656,21 @@ private:
         });
     }
 
+    bool isGlobalObjectAlone(BuiltinTypeID id) const
+    {
+        const BuiltinType& type = m_builtins.at(id);
+        return type.flags.isEmpty() && type.primitives.isEmpty() && type.stringLiterals.empty() && type.parts.size() == 1
+            && type.parts.front().kind == BuiltinTypePartKind::Builtin && m_builtins.canonicalID(type.parts.front().builtin) == m_builtins.canonicalID(Builtins::GlobalThis);
+    }
+
+    bool standsForGlobalObject(BuiltinOperand position) const
+    {
+        if (position != m_operandOfGlobalObject || !m_overload) [[likely]]
+            return false;
+        auto parameter = std::ranges::find(m_overload->parameters, position, &BuiltinParameter::operand);
+        return parameter != m_overload->parameters.end() && isGlobalObjectAlone(parameter->accepted);
+    }
+
     void forEachOperandWithProxiesAt(BuiltinOperand position, NOESCAPE const Invocable<void(const ValueFlowOperand&)> auto& functor) const
     {
         auto hand = [&](const ValueFlowOperand& operand) {
@@ -667,6 +689,8 @@ private:
             return;
         }
         case BuiltinOperand::Kind::Argument:
+            if (standsForGlobalObject(position))
+                return functor(m_globalObject);
             if (position.argumentIndex() < m_call.arguments.size()) {
                 hand(m_call.arguments[position.argumentIndex()]);
                 if (!m_call.argumentsMayBeAbsent)
@@ -781,6 +805,8 @@ private:
         case BuiltinOperand::Kind::Receiver:
             return mayHold(isPassed(m_call.thisValue) ? m_call.thisValue : m_undefined);
         case BuiltinOperand::Kind::Argument: {
+            if (position == m_operandOfGlobalObject && mayHold(m_globalObject)) [[unlikely]]
+                return true;
             unsigned index = position.argumentIndex();
             if (index < m_call.arguments.size() && (mayHold(m_call.arguments[index]) || !m_call.argumentsMayBeAbsent))
                 return mayHold(m_call.arguments[index]);
@@ -3513,8 +3539,10 @@ private:
     const ValueFlowUniverse& m_universe;
     const ValueFlowBuiltinTables& m_tables;
     ValueFlowOperand m_undefined;
+    ValueFlowOperand m_globalObject;
     bool m_asksProxiesInReceiverByTheirTraps;
     std::optional<BuiltinOperand> m_operandAskedAboutOwnProperty;
+    std::optional<BuiltinOperand> m_operandOfGlobalObject;
     ClimbingSet m_proxiesAskedAboutOwnProperty;
     const BuiltinOverload* m_overload { nullptr };
     bool m_handsOnResult { false };
