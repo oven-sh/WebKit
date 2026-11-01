@@ -5660,17 +5660,20 @@ void didEndMock(JSGlobalObject* realm, ModuleID moduleOfHost)
     Modules* modules = modulesOf(realm);
     if (!modules)
         return;
+    auto scope = DECLARE_THROW_SCOPE(realm->vm());
     // Nothing of a module that a mock stood in place of was filled or laid over.
     bool stoodInPlace = modules->mockInPlace(module);
-    if (stoodInPlace)
+    if (stoodInPlace) {
         modules->setMockInPlace(module, nullptr, { });
+        RETURN_IF_EXCEPTION(scope, void());
+    }
     modules->forgetMockThatWaits(module);
     // `bun test` takes the importers out of its loader with the mock, and with them the error of a factory that ended their load.
     modules->dropErrorsOfLoadsEndedByMockOf(module);
     if (modules->data(module).isOfLibrary() || !modules->table().hasFilePath(module))
-        modules->endMockOfLibraryModule(module);
-    else if (!stoodInPlace)
-        modules->endMockLaidOverFile(module);
+        RELEASE_AND_RETURN(scope, modules->endMockOfLibraryModule(module));
+    if (!stoodInPlace)
+        RELEASE_AND_RETURN(scope, modules->endMockLaidOverFile(module));
 }
 
 void didChangePlugins(JSGlobalObject* realm)
