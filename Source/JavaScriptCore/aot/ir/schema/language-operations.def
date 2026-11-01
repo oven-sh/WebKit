@@ -43,6 +43,7 @@ operation EvaluateModule (module: Module(Target), referrer: Module(Referrer)) [i
 operation RecordRequire (module: Module(Target), referrer: Module(Referrer)) -> none ; unknownCode ; runtime = RecordRequire ; flow = Copies ; flowsWithoutRule = true
 operation WasLoadedSynchronously (module: Module(Referrer)) -> natural(boolean) ; reads(ExternalState) writes(ExternalState) ; runtime = WasLoadedSynchronously ; flow = TableProves
 operation SeesMockOf (module: Module(Target), referrer: Module(Referrer)) -> natural(boolean) ; reads(ExternalState) writes(ExternalState) ; runtime = SeesMockOf ; flow = TableProves
+operation MockSeenBy (module: Module(Target), referrer: Module(Referrer)) -> unknown ; reads(ExternalState) writes(ExternalState) ; runtime = MockSeenBy ; flow = Unsound
 operation AreLoaderFunctionsStored () -> natural(boolean) ; reads(ExternalState) ; runtime = AreLoaderFunctionsStored ; flow = TableProves
 operation CountExecution (module: Module(Referrer), description: String, counter: UInt32) -> none ; writes(ExternalState) ; runtime = CountExecution ; flow = TableProves ; flowsWithoutRule = true
 operation ResolveModule (module: Module(Referrer), referrer: Module(Referrer), specifier: String) [isURL] -> unknown ; unknownCode ; runtime = ResolveModule ; flow = Unsound

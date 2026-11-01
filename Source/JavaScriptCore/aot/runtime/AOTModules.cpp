@@ -1959,6 +1959,12 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
     m_modulesWithMockToLetGo.clear(fileOrModule.index());
     if (!mock && !stoodInPlace)
         return false;
+    JSObject* endedMock = mock ? nullptr : mockInPlace(fileOrModule);
+    // A mock that comes into the place of one that stands reaches whoever reads that one, and goes from them again when it ends.
+    if (mock) {
+        std::optional<MomentMockWasLaid> waiting = m_momentsWaitingMocksWereLaid.takeOptional(fileOrModule);
+        m_momentsStandingMocksWereLaid.set(fileOrModule, waiting && !stoodInPlace ? *waiting : momentOfNow());
+    }
     takeNamesOfMockInPlace(module, mock);
     RETURN_IF_EXCEPTION(scope, false);
     m_numberOfMocksInPlace += !!mock - stoodInPlace;
@@ -1974,9 +1980,18 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
         else if (ModuleRecord* record = m_records.get(each))
             letRecordAnswerByMock(record, mock);
     }
+    if (endedMock) {
+        if (std::optional<MomentMockWasLaid> laid = m_momentsStandingMocksWereLaid.takeOptional(fileOrModule))
+            keepEndedMock(fileOrModule, endedMock, *laid);
+        // Whoever holds the object that was made under the mock keeps the mock.
+        for (ModuleID each : { fileOrModule, module }) {
+            if (auto* object = dynamicDowncast<ModuleNamespace>(namespaceIfCreated(each, ModulePhase::Evaluation)))
+                object->setMockOfView(*m_instance.vm, endedMock);
+        }
+    }
     // Compiled code that imports a name of the module looks here first.
     if (std::optional<SlotData> word = m_table.wordOfMock(fileOrModule))
-        ProgramStatics::writeVariable(m_instance, *word, mock ? JSValue(mock) : JSValue());
+        ProgramStatics::writeVariable(m_instance, *word, mock ? JSValue(mock) : wordWhereNoMockStands(fileOrModule));
 
     LoadedModule& loaded = ensureLoaded(fileOrModule);
     bool originalRuns = isFile && m_filesWhoseOriginalRuns.get(fileOrModule.index());
@@ -2337,7 +2352,117 @@ bool Modules::importsOriginalBesideMock(ModuleID mocked, ModuleID importer) cons
     auto asked = m_importersAskedAboutOriginal.add(static_cast<uint64_t>(mocked.index()) << 32 | importer.index(), false);
     if (asked.isNewEntry)
         asked.iterator->value = host().givesOriginalBesideMock(m_instance.globalObject, m_table.pathText(mocked), m_table.pathText(importer), true);
+    // It was never linked to the mock, and isn't once the mock has ended and the host has forgotten it.
+    if (asked.iterator->value)
+        m_importersThatGotOriginal.add(asked.iterator->key);
     return asked.iterator->value;
+}
+
+auto Modules::momentOfNow() -> MomentMockWasLaid
+{
+    std::optional<bool> isInPreload = host().isInPreload ? host().isInPreload(m_instance.globalObject) : std::nullopt;
+    return { ++m_instance.vm->aotState().momentOfLoads, isInPreload.value_or(false) };
+}
+
+void Modules::keepEndedMock(ModuleID fileOrModule, JSObject* mock, MomentMockWasLaid laid)
+{
+    // No moment of a load is noted outside a test run.
+    if (m_momentsOfLoads.isEmpty())
+        return;
+    VMState& state = m_instance.vm->aotState();
+    Vector<EndedMock, 2>& ended = m_endedMocks.add(fileOrModule, Vector<EndedMock, 2>()).iterator->value;
+    // One moment, one mock: it stood again, and has ended again.
+    if (!ended.isEmpty() && ended.last().momentLaid == laid.moment) {
+        ended.last().momentEnded = ++state.momentOfLoads;
+        ended.last().momentOfTestFile = state.momentOfTestFile;
+        return;
+    }
+    LoadedModule& loaded = ensureLoaded(fileOrModule);
+    if (!loaded.endedMocks)
+        loaded.endedMocks.set(*this, createTableOfExports());
+    loaded.endedMocks.get()->putDirectMayBeIndex(m_instance.globalObject, Identifier::from(*m_instance.vm, static_cast<unsigned>(ended.size())), mock);
+    ended.append({ laid.moment, ++state.momentOfLoads, state.momentOfTestFile, laid.isInPreload });
+}
+
+uint32_t Modules::momentLinked(ModuleID importer) const
+{
+    if (m_momentsOfLoads.isEmpty())
+        return 0;
+    uint32_t moment = m_momentsOfLoads[placeOfMomentOfLoad(importer)];
+    if (auto anew = m_momentsLoadedAnew.find(importer); anew != m_momentsLoadedAnew.end())
+        moment = std::max(moment, anew->value.moment);
+    return moment;
+}
+
+JSObject* Modules::endedMockSeenAt(ModuleID fileOrModule, uint32_t moment) const
+{
+    auto found = m_endedMocks.find(fileOrModule);
+    if (!moment || found == m_endedMocks.end())
+        return nullptr;
+    uint32_t momentOfTestFile = m_instance.vm->aotState().momentOfTestFile;
+    const Vector<EndedMock, 2>& ended = found->value;
+    for (unsigned index = 0; index < ended.size(); ++index) {
+        if (moment < ended[index].momentLaid || moment >= ended[index].momentEnded || (ended[index].momentOfTestFile != momentOfTestFile && !ended[index].wasLaidInPreload))
+            continue;
+        JSValue mock = storedValue(m_instance.globalObject, loadedIfExists(fileOrModule)->endedMocks.get(), Identifier::from(*m_instance.vm, index));
+        return mock ? asObject(mock) : nullptr;
+    }
+    return nullptr;
+}
+
+JSObject* Modules::mockSeenBy(ModuleID mocked, ModuleID importer) const
+{
+    ModuleID fileOrModule = m_table.fileBehindFace(mocked).value_or(mocked);
+    if (!m_endedMocks.isEmpty() && !m_importersThatGotOriginal.contains(static_cast<uint64_t>(fileOrModule.index()) << 32 | importer.index())) [[unlikely]] {
+        if (JSObject* ended = endedMockSeenAt(fileOrModule, momentLinked(importer)))
+            return ended;
+    }
+    JSObject* standing = mockInPlace(fileOrModule);
+    return standing && seesMockOf(fileOrModule, importer) ? standing : nullptr;
+}
+
+// `bun test` takes whoever imports a mock out of its loader when the mock ends: a load that comes to such an importer makes it anew, linked to what stands then. Here its body has run: it is linked anew.
+void Modules::linkAnewWhoeverReadsEndedMockBelow(ModuleID root)
+{
+    VMState& state = m_instance.vm->aotState();
+    BitVector seen(m_table.size());
+    seen.quickSet(root.index());
+    Vector<ModuleID, 32> work { root };
+    while (!work.isEmpty()) {
+        ModuleID module = work.takeLast();
+        bool isLoaded = status(module) > ModuleStatus::Linked;
+        for (const ModuleRequestData& request : m_table.imports(module)) {
+            ModuleID target = request.targetModule();
+            if (isLoaded && endedMockSeenAt(m_table.fileBehindFace(target).value_or(target), momentLinked(module)))
+                m_momentsLoadedAnew.set(module, FirstMockInTestFile { ++state.momentOfLoads, state.momentOfTestFile });
+            if (!request.isHoisted && !request.isDeferred && !seen.quickSet(target.index()))
+                work.append(target);
+        }
+    }
+}
+
+// Compiled code asks who sees what only where the word of the module holds something.
+JSValue Modules::wordWhereNoMockStands(ModuleID fileOrModule) const
+{
+    const LoadedModule* loaded = m_endedMocks.contains(fileOrModule) ? loadedIfExists(fileOrModule) : nullptr;
+    return loaded && loaded->endedMocks ? JSValue(loaded->endedMocks.get()) : JSValue();
+}
+
+void Modules::forgetEndedMocksOfEarlierTestFiles()
+{
+    m_importersThatGotOriginal.clear();
+    Vector<ModuleID, 8> emptied;
+    for (auto& entry : m_endedMocks) {
+        // The places in the list name the objects: a list goes whole.
+        if (std::ranges::none_of(entry.value, [](const EndedMock& ended) { return ended.wasLaidInPreload; }))
+            emptied.append(entry.key);
+    }
+    for (ModuleID fileOrModule : emptied) {
+        m_endedMocks.remove(fileOrModule);
+        ensureLoaded(fileOrModule).endedMocks.set(*this, nullptr);
+        if (std::optional<SlotData> word = m_table.wordOfMock(fileOrModule); word && !mockInPlace(fileOrModule))
+            ProgramStatics::writeVariable(m_instance, *word, JSValue());
+    }
 }
 
 bool Modules::seesMockOf(ModuleID mocked, ModuleID importer) const
@@ -2471,12 +2596,14 @@ void Modules::endMockOverModuleThatHasRun(ModuleID module)
         exporting.capturedExports.set(*this, own);
         exporting.capturedExportsBeforeMockInPlace.set(*this, nullptr);
     }
+    m_momentsWaitingMocksWereLaid.remove(module);
+    keepEndedMock(module, loaded.mockInPlace.get(), { kept.momentThisWasLaid, false });
     loaded.mockInPlace.set(*this, nullptr);
     exporting.mockInPlace.set(*this, nullptr);
     --m_numberOfMocksInPlace;
     m_importersAskedAboutOriginal.clear();
     m_modulesWithMockInPlace.clear(module.index());
-    ProgramStatics::writeVariable(m_instance, *m_table.wordOfMock(module), JSValue());
+    ProgramStatics::writeVariable(m_instance, *m_table.wordOfMock(module), wordWhereNoMockStands(module));
     loaded.requiredValue.set(*this, loaded.requiredValueBeforeMockInPlace.get());
     loaded.requiredValueBeforeMockInPlace.set(*this, JSValue());
     if (isFile) {
@@ -2692,6 +2819,7 @@ void Modules::deferMock(ModuleID module, AfterFailure afterFailure)
         m_modulesWithMockThatWaited.set(module.index());
         m_modulesLoadedBeforeMockThatWaited.set(module.index(), wasLoadedWithImporter(module));
         willMock(module);
+        m_momentsWaitingMocksWereLaid.set(module, momentOfNow());
     }
 }
 
@@ -2892,6 +3020,8 @@ bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
         evaluateModulesOwedBelow(root);
         RETURN_IF_EXCEPTION(scope, false);
     }
+    if (!m_endedMocks.isEmpty()) [[unlikely]]
+        linkAnewWhoeverReadsEndedMockBelow(root);
     if (m_modulesWithMockToRun.isEmpty()) [[likely]]
         return false;
     // The walk does nothing where it comes to none of them.
@@ -5510,7 +5640,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAreLoaderFunctionsStored, size_t, 
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSeesMockOf, size_t, (Instance* instance, uint32_t module, uint32_t referrer))
 {
-    return modulesOf(*instance).seesMockOf(ModuleID(module), ModuleID(referrer));
+    return !!modulesOf(*instance).mockSeenBy(ModuleID(module), ModuleID(referrer));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMockSeenBy, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t referrer))
+{
+    return JSValue::encode(modulesOf(*instance).mockSeenBy(ModuleID(module), ModuleID(referrer)));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTWasLoadedSynchronously, size_t, (Instance* instance, uint32_t module))
@@ -6959,6 +7094,10 @@ void didBeginTestFile(JSGlobalObject* realm)
 {
     VMState& state = realm->vm().aotState();
     state.momentOfTestFile = ++state.momentOfLoads;
+    for (Instance* instance = realm->aotInstance(); instance; instance = instance->above) {
+        if (Modules* modules = instance->state ? instance->state->modules.get() : nullptr)
+            modules->forgetEndedMocksOfEarlierTestFiles();
+    }
 }
 
 JSObject* mockInPlaceBehind(JSCell* moduleNamespace)
