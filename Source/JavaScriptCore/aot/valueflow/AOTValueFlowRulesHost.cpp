@@ -880,7 +880,7 @@ static void handLoadedModulesToNativeCode(ValueFlowRuleContext& context)
     raiseHostFlag(context, ValueFlowHostNode::LoadedModulesAreHandedToNativeCode);
 }
 
-// Text has import() and process.getBuiltinModule() and no require of a file. The loader answers it with an entry point under any name,
+// Text has import(), and process.getBuiltinModule("module") makes it a require() of its own. The loader answers both with an entry point under any name,
 // and with another file of the image only where the program itself loads files by name.
 static void handLoadableModulesToText(ValueFlowRuleContext& context, bool filesOfProgramAreLoadedByName)
 {

@@ -1,0 +1,33 @@
+# first.js: import { value } from "./inner.js"; value        inner.js: new Function(input)(); export let value = 1        types.js: export type Port = number        built with two entry points, first.js and types.js
+# types.js runs nothing and loads nothing, so no realm runs code before first.js has begun: first.js is not begun again in the middle of inner.js, and the variable is stored before every read.
+# evaluated-text-loads-a-second-entry-point.ir has a second entry point that runs
+# RUN: valueflow-apply
+# CHECK: variable g0 name="value" {{*}}initialization=StoredBeforeEveryRead
+# RUN(RESULTS): valueflow-results
+# RESULTS: unseen-code EvaluatesText
+
+module m0 path="first.js" displayPath="first.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="inner.js" displayPath="inner.js" body=f1
+module m2 path="types.js" displayPath="types.js" body=f2
+entry module=m0
+entry module=m2
+variable g0 name="value" module=m1 declared={type=anything|absent} initialization=Uninitialized
+function f0 name="first" module=m0 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="value"
+    Return
+}
+function f1 name="inner" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Builtin builtin=Function
+    v3 = Construct v2, -, v1
+    v4 = Call v3
+    v5 = Integer integer=1
+    PutModuleVariable v5 variable=g0
+    Return
+}
+function f2 name="types" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+}

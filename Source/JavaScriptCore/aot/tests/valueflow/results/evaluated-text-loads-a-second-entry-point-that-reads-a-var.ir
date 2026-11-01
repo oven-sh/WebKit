@@ -1,0 +1,33 @@
+# first.js: import "./inner.js"        inner.js: new Function(input)(); export var limit = 10        second.js: import { limit } from "./inner.js"; limit        built with two entry points, first.js and second.js
+# The text in inner.js begins second.js while inner.js runs. A `var` answers undefined until its store has run, so second.js reads undefined or 10.
+# two-entry-points-one-reads-a-var-without-evaluated-text.ir has no text: there the read is 10
+# RUN: valueflow-apply
+# CHECK-LABEL: function f2 name="second"
+# CHECK: [[read]]: undefined|10 = GetModuleVariable variable=g0
+# RUN(RESULTS): valueflow-results
+# RESULTS: unseen-code EvaluatesText
+
+module m0 path="first.js" displayPath="first.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="inner.js" displayPath="inner.js" body=f1
+module m2 path="second.js" displayPath="second.js" body=f2 requests=[{target=m1 completes=true}]
+entry module=m0
+entry module=m2
+variable g0 name="limit" module=m1 declared={type=anything} initialization=Undefined
+function f0 name="first" module=m0 kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="inner" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Builtin builtin=Function
+    v3 = Construct v2, -, v1
+    v4 = Call v3
+    v5 = Integer integer=10
+    PutModuleVariable v5 variable=g0
+    Return
+}
+function f2 name="second" module=m2 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="use" [isFreeName]
+    Return
+}

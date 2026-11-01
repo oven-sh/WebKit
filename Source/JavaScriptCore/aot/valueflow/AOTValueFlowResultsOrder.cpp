@@ -301,12 +301,18 @@ static void collectModules(const ValueFlowResultInputs& inputs, FlowOrderInputs&
     order.namesMadeAtRunTimeAreOnlyImported = !unseenCodeCanRun(inputs.solution)
         && !isRaised(inputs.solution, ValueFlowHostNode::ModulesAreRequiredByName)
         && !isRaised(inputs.solution, ValueFlowHostNode::LibraryModulesAreRequiredByName);
+    // Code that the build has not compiled begins one of these while a module that another file has begun still runs.
+    BitVector modulesNamedByUnseenCode(program.modules.size());
+    if (unseenCodeCanRun(inputs.solution))
+        modulesNamedByUnseenCode = modulesThatUnseenCodeNames(program, filesOfProgramAreNamedAtRunTime || inputs.solver().input().refusedCode.hostRunsFilesOutsideImage, inputs.build.options().admitsUnseenCode());
     for (uint32_t index = 0; index < program.modules.size(); ++index) {
         const Module& module = program.modules[index];
         if (module.body && inputs.isReached(module.body))
             order.evaluatedModules.quickSet(index);
         bool isEntryPoint = std::ranges::contains(program.entries, ModuleID(index), &Entry::module);
         if ((isEntryPoint || answersOnlyToLoadsOfProgram(program, ModuleID(index)) ? filesOfProgramAreNamedAtRunTime : modulesAreNamedAtRunTime) && mayAnswerToName(program, ModuleID(index)))
+            order.modulesLoadedByName.quickSet(index);
+        if (modulesNamedByUnseenCode.quickGet(index))
             order.modulesLoadedByName.quickSet(index);
         if (libraryLoadsItsModulesByName && module.kind == ModuleKind::RuntimeSource)
             order.modulesLoadedByHost.quickSet(index);
