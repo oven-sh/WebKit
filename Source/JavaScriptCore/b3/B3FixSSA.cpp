@@ -670,6 +670,8 @@ void fixSSAGlobally(Procedure& proc, IndexSet<Value*>& valuesToDelete)
             auto reachingDef = [&](Variable* variable, unsigned valueIndex, Origin origin) -> Value* {
                 if (Value* def = reachingDefs[variable->index()])
                     return def;
+                if (proc.policy().optimization.checksVariablesAreSet)
+                    proc.fail(FailureKind::VariableReadBeforeSet, origin);
                 Value* bottom = insertionSet.insertBottom(valueIndex, origin, variable->type());
                 setReachingDef(variable, bottom);
                 return bottom;
