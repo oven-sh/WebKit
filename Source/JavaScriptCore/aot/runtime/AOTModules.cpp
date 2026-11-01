@@ -2070,7 +2070,7 @@ bool Modules::willLeaveModuleAlone(ModuleID module, bool onlyIfLoadedInPreload, 
     const ModuleData& moduleData = data(module);
     if (!moduleData.isESModuleOfProgram() || moduleData.isFaceOfFile() || !m_table.hasFilePath(module) || !m_table.wordOfMock(module))
         return false;
-    if (status(module) != ModuleStatus::Evaluated || isMocked(module) || mockInPlace(module) || isEvicted(module) || m_momentsOfLoads.isEmpty())
+    if (!hasRun(module) || isMocked(module) || mockInPlace(module) || isEvicted(module) || m_momentsOfLoads.isEmpty())
         return false;
     if (onlyIfLoadedInPreload && !m_loadedInPreload.get(placeOfMomentOfLoad(module)))
         return false;
