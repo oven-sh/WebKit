@@ -1087,8 +1087,13 @@ ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowR
             });
             if (builtinCallees != ValueSets::nothing && inputs.sets().isSubset(builtinCallees, maker.of(universe.objectOf(builtins.canonicalID(Builtins::ObjectEntries)))))
                 found.append({ universe.siteObject(call, 1), BuiltinClasses::Array });
+            // `new Promise(executor)`: the rule for the construction hands the executor the second object of the call as the resolve function (applyConstructionOfPromise).
+            if (*mode == BuiltinCallMode::Construct && builtinCallees != ValueSets::nothing && inputs.sets().isSubset(builtinCallees, maker.of(universe.objectOf(builtins.canonicalID(Builtins::Promise)))))
+                found.append({ universe.siteObject(call, 1), BuiltinClasses::PromiseResolvingFunction });
         }
     });
+    // The reject function of every construction, and both functions where the construction has no site, are one object (applyConstructionOfPromise).
+    noted.append({ universe.resolvingFunctionOfPromises(), BuiltinClasses::PromiseResolvingFunction });
     // One object a built-in stands for all that it makes where native code calls it. The constructor of a typed array answers nothing else, and each allocation has noted its class there.
     if (written) {
         HashMap<uint32_t, BuiltinClassID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> classMadeAs;
