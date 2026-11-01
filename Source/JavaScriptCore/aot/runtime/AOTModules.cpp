@@ -2134,6 +2134,9 @@ void Modules::letGoOfMockThatEndedSlow(ModuleID module)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_instance.vm);
     setMockInPlace(module, nullptr, { });
     scope.assertNoExceptionExceptTermination();
+    // The next mock waits already: deferMock().
+    if (m_modulesWithMockToRun.get(module.index()))
+        willMock(module);
 }
 
 void Modules::letGoOfMocksThatEnded()
