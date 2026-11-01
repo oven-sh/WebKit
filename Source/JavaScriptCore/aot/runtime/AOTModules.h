@@ -383,6 +383,8 @@ public:
     void dropErrorsOfLoadsEndedByMockOf(ModuleID mocked);
     void dropErrorOfMockKeptByLoader(ModuleID);
     void dropErrorsOfLoadsThatCameTo(const ScopedLambda<bool(ModuleID)>& isMocked);
+    bool hasMockOfLibraryModule(ModuleID module) const { return m_libraryModulesWithMock.get(module.index()); }
+    void takeFailedLoadsOutOfLoader(const ScopedLambda<bool(ModuleID)>& isMocked);
     bool standsForFileWithKey(ModuleID, const Identifier& key);
     JSValue errorOfLoadEndedByMock(ModuleID module) const { return m_modulesWithLoadEndedByMock.get(module.index()) ? loadedIfExists(module)->errorKeptByLoader.get() : JSValue(); }
     JSObject* capturedExports(ModuleID);
@@ -632,6 +634,7 @@ public:
     bool wasImportedWhileItRan(ModuleID file) const;
     bool loaderHasFileThatThrew(ModuleID file);
     bool isAwaitedByImport(ModuleID file);
+    bool isAwaitedByImportFromBeforeItRan(ModuleID file);
     void dropErrorOfFile(ModuleID fileOrFace);
     void didLoseErrorOfModule(const Identifier& key);
     void evaluateCommonJSForLoader(ModuleID file);
@@ -768,6 +771,8 @@ private:
         bool wasRequiredBehindMock { false };
         // Of a CommonJS file: didLoseErrorOfModule().
         bool wasReachedBySecondLoad { false };
+        // Of a CommonJS file that a require() runs: the first import() of it was called meanwhile.
+        bool wasFirstImportedByCallWhileItRan { false };
         bool isBeingLoadedByLoader { false };
         BitVector ambiguousExports;
         std::unique_ptr<SourceOrigin> sourceOrigin;
@@ -1083,6 +1088,8 @@ private:
     // A statement came to them when the factory failed, so the loader keeps their records too: the next statement gets the error, and the factory is not asked. An import() of such a module drops the
     // record and asks the factory; a require() asks the factory and leaves the record.
     BitVector m_mockedModulesWithErrorKeptByLoader;
+    bool m_loaderMayHoldLoadsThatFactoryEnded { false };
+    std::optional<ModuleID> m_moduleThatProgramImportsNow;
     BitVector m_modulesWithMockThatWaited;
     // A mock stood in place of the module while its importers ran, and has ended. They read the names of the module itself now, whose body has yet to run.
     BitVector m_modulesOwedToImportersThatRan;

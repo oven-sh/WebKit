@@ -614,6 +614,7 @@ void Modules::forgetRunThatThrew(ModuleID file)
         loaded->numberOfChildrenShown = 0;
         loaded->firstRequirer = std::nullopt;
         loaded->synchronousLoadCountAtStart = std::nullopt;
+        loaded->wasFirstImportedByCallWhileItRan = false;
     }
     m_recordedRequires.removeIf([&](const auto& recorded) {
         return static_cast<uint32_t>(recorded.key) == file.index();
@@ -623,6 +624,13 @@ void Modules::forgetRunThatThrew(ModuleID file)
 }
 
 // An import() that was called ahead of the require() has asked the loader for the file, waits for its text, or has queued its first job.
+// One that was called while the file ran comes to the file when it has thrown, and runs it again.
+bool Modules::isAwaitedByImportFromBeforeItRan(ModuleID file)
+{
+    LoadedModule* loaded = loadedIfExists(file);
+    return isAwaitedByImport(file) && !(loaded && loaded->wasFirstImportedByCallWhileItRan);
+}
+
 bool Modules::isAwaitedByImport(ModuleID file)
 {
     for (ModuleID fileOrFace : { file, m_table.faceOfFile(file).value_or(file) }) {
@@ -640,7 +648,7 @@ void Modules::didThrowInBody(ModuleID module, JSValue error)
         return;
     // `bun run` takes a CommonJS file whose body throws out of require.cache, and the next require() runs it again. A test run loads it again from disk where its build
     // has compiled the code that asks for the file for a file that may load twice.
-    if (data(module).kind == ModuleKind::CommonJs && (mayBeEvicted(module) || (data(module).runsAgainAfterThrow() && !isAwaitedByImport(module))) && status(module) == ModuleStatus::Evaluating && !loaderHasFileThatThrew(module)) [[unlikely]] {
+    if (data(module).kind == ModuleKind::CommonJs && (mayBeEvicted(module) || (data(module).runsAgainAfterThrow() && !isAwaitedByImportFromBeforeItRan(module))) && status(module) == ModuleStatus::Evaluating && !loaderHasFileThatThrew(module)) [[unlikely]] {
         if (mayBeEvicted(module))
             evict(module);
         else
@@ -2862,6 +2870,9 @@ void Modules::evaluateModulesOwedBelowSlow(ModuleID root, bool hasImporterAboveT
         m_modulesOwedToImportersThatRan.clear(module.index());
         if (status(module) >= ModuleStatus::Evaluating || mockInPlace(module))
             continue;
+        // The importers were linked while the mock stood, so no link has seen to it that the names are taken behind the body.
+        if (data(module).capturesExportsBehindEvaluation())
+            captureExportsBehindEvaluation(module);
         // The mock kept the loader from what the module imports from outside the image.
         if (status(module) == ModuleStatus::Unlinked && data(module).reachesUncompiledCode() && !data(module).hasTopLevelAwait()) {
             evaluateSynchronously(module, SynchronousEvaluationReason::Require);

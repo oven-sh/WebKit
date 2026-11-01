@@ -3020,6 +3020,7 @@ bool Modules::runMockThatWaitsSlow(ModuleID module)
         m_modulesWhoseFactoryRuns.clear(module.index());
     if (Exception* exception = scope.exception()) [[unlikely]] {
         m_modulesWithMockToRun.set(module.index());
+        m_loaderMayHoldLoadsThatFactoryEnded = true;
         if (m_importsMadeByOwnFactory.contains(module) && !m_instance.vm->isTerminationException(exception)) {
             m_mockedModulesWithErrorKeptByLoader.set(module.index());
             ensureLoaded(module).errorOfMockKeptByLoader.set(*this, exception->value());
@@ -3107,13 +3108,55 @@ void Modules::dropErrorsOfLoadsEndedByMockOf(ModuleID mocked)
 {
     dropErrorOfMockKeptByLoader(mocked);
     dropErrorsOfLoadsThatCameTo([&](ModuleID module) { return module == mocked; });
+    // A factory that failed waits anew in the middle of the load that it ended: what else of that load asks for the module shares the error.
+    bool loaderMayHoldLoads = m_loaderMayHoldLoadsThatFactoryEnded && !m_modulesWhoseFactoryRuns.get(mocked.index()) && !isLoaderInMiddleOfGraph();
+    if (loaderMayHoldLoads) [[unlikely]] {
+        m_loaderMayHoldLoadsThatFactoryEnded = false;
+        takeFailedLoadsOutOfLoader([&](ModuleID module) { return module == mocked; });
+    }
     if (!m_instance.vm->aotState().hasSeveralImages) [[likely]]
         return;
     Identifier key = moduleKey(mocked);
     for (Instance* instance = m_instance.above; instance; instance = instance->above) {
-        if (Modules* modules = instance->state->modules.get())
-            modules->dropErrorsOfLoadsThatCameTo([&](ModuleID module) { return modules->standsForFileWithKey(module, key); });
+        Modules* modules = instance->state->modules.get();
+        if (!modules)
+            continue;
+        modules->dropErrorsOfLoadsThatCameTo([&](ModuleID module) { return modules->standsForFileWithKey(module, key); });
+        if (loaderMayHoldLoads) [[unlikely]]
+            modules->takeFailedLoadsOutOfLoader([&](ModuleID module) { return modules->standsForFileWithKey(module, key); });
     }
+}
+
+// Where the loader itself was asked for the graph, its entries hold the error.
+void Modules::takeFailedLoadsOutOfLoader(const ScopedLambda<bool(ModuleID)>& isMocked)
+{
+    Vector<Identifier, 4> failed;
+    for (auto& entry : loader()->moduleMap().values()) {
+        if (entry->status() < ModuleRegistryEntry::Status::FetchFailed)
+            continue;
+        std::optional<ModuleID> root = findByKey(entry->key());
+        if (!root) {
+            m_loaderMayHoldLoadsThatFactoryEnded = true;
+            continue;
+        }
+        bool cameToMock = false;
+        BitVector seen(m_table.size());
+        Vector<ModuleID, 16> work { *root };
+        while (!work.isEmpty() && !cameToMock) {
+            ModuleID module = work.takeLast();
+            cameToMock = isMocked(module);
+            for (const ModuleRequestData& request : m_table.imports(module)) {
+                if (!request.isHoisted && !seen.quickSet(request.target()))
+                    work.append(request.targetModule());
+            }
+        }
+        if (cameToMock)
+            failed.append(entry->key());
+        else
+            m_loaderMayHoldLoadsThatFactoryEnded = true;
+    }
+    for (const Identifier& key : failed)
+        loader()->removeEntry(key);
 }
 
 void Modules::dropErrorsOfLoadsThatCameTo(const ScopedLambda<bool(ModuleID)>& isMocked)
@@ -3341,7 +3384,7 @@ bool Modules::runMocksBelowInImages(ModuleID root, RootOfLoad rootOfLoad)
         JSValue kept = errorOfLoadEndedByMock(module);
         if (!kept && isImportedByStatement && m_mockedModulesWithErrorKeptByLoader.get(module.index()))
             kept = loadedIfExists(module)->errorOfMockKeptByLoader.get();
-        if (!kept && !isImportedByStatement && m_mockedModulesWithErrorKeptByLoader.get(module.index()) && m_importsMadeByOwnFactory.removeFirst(module)) [[unlikely]]
+        if (!kept && !isImportedByStatement && m_moduleThatProgramImportsNow != module && m_mockedModulesWithErrorKeptByLoader.get(module.index()) && m_importsMadeByOwnFactory.removeFirst(module)) [[unlikely]]
             kept = loadedIfExists(module)->errorOfMockKeptByLoader.get();
         if (kept) [[unlikely]] {
             keepErrorOfLoad(root, kept, [&](ModuleID each) { return each == module; });
@@ -4035,7 +4078,11 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
         m_importsMadeByOwnFactory.append(module);
     else if (!m_importsMadeByOwnFactory.contains(module)) [[likely]]
         dropErrorOfMockKeptByLoader(module);
-    walkStopped = runMocksBelow(module);
+    {
+        // The error that is kept is for the call that the factory made, which goes on in a later job.
+        SetForScope moduleThatProgramImportsNow(m_moduleThatProgramImportsNow, m_modulesWhoseFactoryRuns.get(module.index()) ? std::nullopt : std::optional(module));
+        walkStopped = runMocksBelow(module);
+    }
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     auto fetchParameters = JSModuleLoader::fetchParametersFromImportOptions(realm, options);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
@@ -4062,8 +4109,15 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
         return start(module);
     }
 
-    const Identifier& key = resolvedKey(module);
+    const LoadedModule* loadedBefore = loadedIfExists(module);
+    bool hasAskedLoader = loadedBefore && !loadedBefore->resolvedKey.isNull();
+    Identifier key = resolvedKey(module);
     RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
+    // The loader resolves the name at every call: a plugin is asked each time, and may answer otherwise.
+    if (hasAskedLoader) {
+        key = loader()->resolve(realm, pathString(module), pathString(*data(module).referrerModule()), nullptr, true);
+        RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
+    }
     // The build has left the call to the loader, with its type.
     if (std::optional<ModuleID> found = findWithAttributes(key, fetchParameters->get(), FormWithoutAttributes::IsAnotherModule))
         return start(*found);
@@ -4657,6 +4711,11 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         return promiseOfCaller ? promiseOfCaller : JSPromise::create(*m_instance.vm, realm->promiseStructure());
     };
 
+    if (isCommonJSFileOrFace(module)) {
+        if (ModuleID file = fileOf(module); data(file).runsAgainAfterThrow() && status(file) == ModuleStatus::Evaluating && !isAwaitedByImport(file)) [[unlikely]]
+            ensureLoaded(file).wasFirstImportedByCallWhileItRan = true;
+    }
+
     bool walkStopped = answerOfWalkAlreadyMade ? *answerOfWalkAlreadyMade : runMocksBelow(module);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     if (m_innermostFilesBeingRun) [[unlikely]] {
@@ -4710,6 +4769,11 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         VM& vm = *m_instance.vm;
         bool isBuiltinModuleThatLoaderHas = isBuiltinModule && !isBuiltinModuleNewToLoader(module);
         bool isCalledByProgram = caller == ImportCaller::CompiledCode;
+        // A call is no part of the graph that a require() loads: its steps are jobs, not steps of that load, and what it names runs when the require() has returned.
+        // What has begun, and a file that may be imported while it runs, still go the way of `bun run`, inside the require().
+        bool hasBegun = status(module) >= ModuleStatus::Evaluating || status(fileOf(module)) >= ModuleStatus::Evaluating;
+        bool isNoPartOfLoad = isCalledByProgram && !hasBegun && !(isCommonJSFileOrFace(module) && data(fileOf(module)).mayBeImportedWhileItRuns());
+        SetForScope noSynchronousLoad(vm.m_synchronousModuleQueueSetAside, isNoPartOfLoad ? vm.m_synchronousModuleQueue : vm.m_synchronousModuleQueueSetAside);
         uint32_t jobsWaited = std::exchange(m_jobsThatCallHasWaited, 0);
         bool isOfGraphThatRan = std::exchange(m_isCallMadeAgainOfGraphThatRan, false);
         if (isCalledByProgram && (!isBuiltinModule || isBuiltinModuleThatLoaderHas) && loaderOnlyHandsOverNamespace(module)) {
@@ -8054,6 +8118,8 @@ void didEndMock(JSGlobalObject* realm, ModuleID moduleOfHost)
     // The call of a mock that ends before it is laid counts for nothing that comes later.
     modules->forgetCallOfMock(module);
     bool wasLoadedAsMock = modules->mockInPlace(module) && !modules->hasMockThatEnded(module);
+    // An image above was linked to the record that the loader had of the mock. Nothing stands in place of the module here.
+    wasLoadedAsMock |= realm->vm().aotState().hasSeveralImages && modules->hasMockOfLibraryModule(module);
     if (wasLoadedAsMock || modules->hasMockLaidOver(module))
         modules->letGoOfImportersOf(module, Modules::ImportersLetGo::All);
     if (modules->isLeftAloneByMock(module)) {
