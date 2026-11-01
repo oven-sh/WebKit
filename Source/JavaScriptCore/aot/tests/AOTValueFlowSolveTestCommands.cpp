@@ -13,6 +13,8 @@
 #include "AOTValueFlowAnalysis.h"
 #include "AOTValueFlowResults.h"
 #include "AOTValueFlowResultsUnseenCode.h"
+#include <wtf/StringPrintStream.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
