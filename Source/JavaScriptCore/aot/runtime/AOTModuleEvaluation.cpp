@@ -3543,6 +3543,8 @@ JSValue Modules::answerOfRequireToMock(ModuleID target)
     JSObject* exports = ensureLoaded(target).exportsOfMock;
     if (!exports)
         return { };
+    if (ensureLoaded(target).exportsOfMockAreOfCommonJSModule)
+        return exports;
     JSValue esModule = exports->getIfPropertyExists(realm, vm.propertyNames->__esModule);
     RETURN_IF_EXCEPTION(scope, { });
     if (!esModule || !esModule.toBoolean(realm))

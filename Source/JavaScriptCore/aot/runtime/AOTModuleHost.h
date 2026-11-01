@@ -345,7 +345,8 @@ JS_EXPORT_PRIVATE void didChangePlugins(JSGlobalObject*);
 // A mock that comes ahead of the load of a module stands in place of it. The body of the module does not run. Every import of a name, the namespace object and whoever links to the module ask `mock`,
 // by the object's own methods, at each use: nothing is copied. require() answers `whatRequireAnswers`. Null lets go of the mock: nothing of the module was filled, so it is as it was, and loads when it is next asked for.
 // False: the mock is not taken, and goes by willMockModule(): over a built-in module that an import of the program had loaded when its first mock was made, the values are laid as over a file that has run.
-JS_EXPORT_PRIVATE bool setMock(JSGlobalObject*, ModuleID, JSObject* mock, JSValue whatRequireAnswers);
+// `leavesEarlierMockToItsImporters`: as vi.mock() in a test file leaves the mock of a preload. jest.mock() and mock.module() reach whoever reads the mock that stands.
+JS_EXPORT_PRIVATE bool setMock(JSGlobalObject*, ModuleID, JSObject* mock, JSValue whatRequireAnswers, bool leavesEarlierMockToItsImporters = false);
 // A mock comes over an ES module that has run, and `bun test` leaves such a module as it is: whoever was linked to it before, in this test file or ahead of all of them, keeps it, and whoever is
 // linked from now on gets the mock. deferMock() and setMock() come behind a yes, and didEndMock() leaves the module as it was: its body does not run again. False: the mock is laid over the module.
 // The host does not see who loads a compiled module. Where only a load ahead of the test files leaves a module alone, it says so and the run time decides.
@@ -366,7 +367,8 @@ JS_EXPORT_PRIVATE JSObject* mockInPlaceBehind(JSCell* moduleNamespace);
 JS_EXPORT_PRIVATE bool hasWordOfMock(JSGlobalObject*, ModuleID);
 // Comes before the mockExport() of each name. A module that has not run yet never runs: neither its body nor, for its sake, what it imports. require() answers a CommonJS file with the object.
 // The body of a module of the library still runs for the library itself, which no mock reaches.
-JS_EXPORT_PRIVATE void willMockModule(JSGlobalObject*, ModuleID, JSObject* exports);
+// `exportsAreOfCommonJSModule`: require() answers the object as it is. Any other object that holds `__esModule` and `default` it answers with the `default`.
+JS_EXPORT_PRIVATE void willMockModule(JSGlobalObject*, ModuleID, JSObject* exports, bool exportsAreOfCommonJSModule = false);
 JS_EXPORT_PRIVATE void didMockModule(JSGlobalObject*, ModuleID);
 // Stores one export of the mock. A name that the module does not export is passed over.
 JS_EXPORT_PRIVATE void mockExport(JSGlobalObject*, ModuleID, UniquedStringImpl* name, JSValue);

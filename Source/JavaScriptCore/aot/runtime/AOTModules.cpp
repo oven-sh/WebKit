@@ -1677,6 +1677,11 @@ bool Modules::isLeftOut(ModuleID module, unsigned index, TablesBehindStars table
     return answer;
 }
 
+void Modules::setExportsOfMockAreOfCommonJSModule(ModuleID module, bool areOfCommonJSModule)
+{
+    ensureLoaded(module).exportsOfMockAreOfCommonJSModule = areOfCommonJSModule;
+}
+
 void Modules::mockWhatRequireAnswered(ModuleID module, JSObject* exports)
 {
     LoadedModule* loaded = &ensureLoaded(module);
@@ -1947,7 +1952,7 @@ bool Modules::setMockInPlaceOfLibraryModule(ModuleID module, JSObject* mock, JSV
     return true;
 }
 
-bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue whatRequireAnswers)
+bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue whatRequireAnswers, bool leavesEarlierMockToItsImporters)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     if (data(fileOrModule).isOfLibrary() || !m_table.hasFilePath(fileOrModule))
@@ -1967,7 +1972,22 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
     // A mock that comes into the place of one that stands reaches whoever reads that one, and goes from them again when it ends.
     if (mock) {
         std::optional<MomentMockWasLaid> waiting = m_momentsWaitingMocksWereLaid.takeOptional(fileOrModule);
-        m_momentsStandingMocksWereLaid.set(fileOrModule, waiting && !stoodInPlace ? *waiting : momentOfNow());
+        // Only over the mock of a preload that the preload has also loaded: `bun test` patches what a test file was the first to load, and a second vi.mock() of a test file reaches whoever reads its first.
+        if (JSObject* earlier = leavesEarlierMockToItsImporters ? mockInPlace(fileOrModule) : nullptr; earlier && earlier != mock && earlier == ensureLoaded(fileOrModule).mockLaidInPreload.get() && m_loadedInPreload.get(placeOfMomentOfLoad(fileOrModule))) {
+            // Whoever was linked since the call of this mock waited for it.
+            if (std::optional<MomentMockWasLaid> laid = m_momentsStandingMocksWereLaid.takeOptional(fileOrModule))
+                keepEndedMock(fileOrModule, earlier, *laid, waiting ? waiting->moment : 0);
+        }
+        MomentMockWasLaid laid = waiting && !stoodInPlace ? *waiting : momentOfNow();
+        // The mock of a preload comes back behind each test file that had one of its own. Whoever the preload linked to it was linked to it then.
+        LoadedModule& held = ensureLoaded(fileOrModule);
+        if (held.mockLaidInPreload.get() == mock)
+            laid = m_momentsMocksOfPreloadWereLaid.get(fileOrModule);
+        else if (laid.isInPreload) {
+            held.mockLaidInPreload.set(*this, mock);
+            m_momentsMocksOfPreloadWereLaid.set(fileOrModule, laid);
+        }
+        m_momentsStandingMocksWereLaid.set(fileOrModule, laid);
     }
     takeNamesOfMockInPlace(module, mock);
     RETURN_IF_EXCEPTION(scope, false);
@@ -1985,8 +2005,24 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
             letRecordAnswerByMock(record, mock);
     }
     if (endedMock) {
-        if (std::optional<MomentMockWasLaid> laid = m_momentsStandingMocksWereLaid.takeOptional(fileOrModule))
+        // A mock that ended with its test file is let go at a load of the next one, where nobody is left who was linked to it but what a preload loaded.
+        std::optional<uint32_t> testFileOfEnd = m_testFilesInWhichMocksEnded.takeOptional(fileOrModule);
+        bool endedInThisTestFile = !testFileOfEnd || *testFileOfEnd == m_instance.vm->aotState().momentOfTestFile;
+        std::optional<MomentMockWasLaid> laid = m_momentsStandingMocksWereLaid.takeOptional(fileOrModule);
+        if (laid && (endedInThisTestFile || laid->isInPreload))
             keepEndedMock(fileOrModule, endedMock, *laid);
+        // Whoever holds the object that was made under the mock, a user in an image above among them, keeps the mock until the test file ends.
+        for (ModuleID each : { fileOrModule, module }) {
+            auto* object = endedInThisTestFile && !m_momentsOfLoads.isEmpty() ? dynamicDowncast<ModuleNamespace>(namespaceIfCreated(each, ModulePhase::Evaluation)) : nullptr;
+            if (!object)
+                continue;
+            object->setMockOfView(*m_instance.vm, endedMock);
+            LoadedModule& held = ensureLoaded(fileOrModule);
+            if (!held.namespacesOfEndedMocks)
+                held.namespacesOfEndedMocks.set(*this, createTableOfExports());
+            unsigned& number = m_numbersOfNamespacesOfEndedMocks.add(fileOrModule, 0).iterator->value;
+            held.namespacesOfEndedMocks.get()->putDirectMayBeIndex(m_instance.globalObject, Identifier::from(*m_instance.vm, number++), object);
+        }
     }
     // Compiled code that imports a name of the module looks here first.
     if (std::optional<SlotData> word = m_table.wordOfMock(fileOrModule))
@@ -2109,6 +2145,7 @@ void Modules::letGoOfMockAtNextLoad(ModuleID module)
         return;
     }
     m_modulesWithMockToLetGo.set(module.index());
+    m_testFilesInWhichMocksEnded.set(module, m_instance.vm->aotState().momentOfTestFile);
     // The loader asks for the module anew, and so comes by.
     if (ModuleRecord* record = recordIfExists(module); record && record->hasLiveExports())
         loader()->removeEntryOfRecord(record);
@@ -2388,16 +2425,18 @@ auto Modules::momentOfNow() -> MomentMockWasLaid
     return { ++m_instance.vm->aotState().momentOfLoads, isInPreload.value_or(false) };
 }
 
-void Modules::keepEndedMock(ModuleID fileOrModule, JSObject* mock, MomentMockWasLaid laid)
+void Modules::keepEndedMock(ModuleID fileOrModule, JSObject* mock, MomentMockWasLaid laid, uint32_t momentEnded)
 {
     // No moment of a load is noted outside a test run.
     if (m_momentsOfLoads.isEmpty())
         return;
     VMState& state = m_instance.vm->aotState();
+    if (!momentEnded)
+        momentEnded = ++state.momentOfLoads;
     Vector<EndedMock, 2>& ended = m_endedMocks.add(fileOrModule, Vector<EndedMock, 2>()).iterator->value;
     // One moment, one mock: it stood again, and has ended again.
     if (!ended.isEmpty() && ended.last().momentLaid == laid.moment) {
-        ended.last().momentEnded = ++state.momentOfLoads;
+        ended.last().momentEnded = momentEnded;
         ended.last().momentOfTestFile = state.momentOfTestFile;
         return;
     }
@@ -2405,7 +2444,7 @@ void Modules::keepEndedMock(ModuleID fileOrModule, JSObject* mock, MomentMockWas
     if (!loaded.endedMocks)
         loaded.endedMocks.set(*this, createTableOfExports());
     loaded.endedMocks.get()->putDirectMayBeIndex(m_instance.globalObject, Identifier::from(*m_instance.vm, static_cast<unsigned>(ended.size())), mock);
-    ended.append({ laid.moment, ++state.momentOfLoads, state.momentOfTestFile, laid.isInPreload });
+    ended.append({ laid.moment, momentEnded, state.momentOfTestFile, laid.isInPreload });
 }
 
 uint32_t Modules::momentLinked(ModuleID importer) const
@@ -2454,7 +2493,8 @@ void Modules::linkAnewWhoeverReadsEndedMockBelow(ModuleID root)
     Vector<ModuleID, 32> work { root };
     while (!work.isEmpty()) {
         ModuleID module = work.takeLast();
-        bool isLoaded = status(module) > ModuleStatus::Linked;
+        // Nothing loads a module of a preload again.
+        bool isLoaded = status(module) > ModuleStatus::Linked && !m_loadedInPreload.get(placeOfMomentOfLoad(module));
         for (const ModuleRequestData& request : m_table.imports(module)) {
             ModuleID target = request.targetModule();
             if (isLoaded && endedMockSeenAt(m_table.fileBehindFace(target).value_or(target), momentLinked(module)))
@@ -2474,11 +2514,35 @@ JSValue Modules::wordWhereNoMockStands(ModuleID fileOrModule) const
 
 void Modules::forgetEndedMocksOfEarlierTestFiles()
 {
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    for (auto& entry : m_numbersOfNamespacesOfEndedMocks) {
+        LoadedModule& held = ensureLoaded(entry.key);
+        for (unsigned index = 0; index < entry.value; ++index)
+            uncheckedDowncast<ModuleNamespace>(asObject(storedValue(realm, held.namespacesOfEndedMocks.get(), Identifier::from(vm, index))))->clearMockOfView();
+        held.namespacesOfEndedMocks.set(*this, nullptr);
+    }
+    m_numbersOfNamespacesOfEndedMocks.clear();
     Vector<ModuleID, 8> emptied;
     for (auto& entry : m_endedMocks) {
-        // The places in the list name the objects: a list goes whole.
-        if (std::ranges::none_of(entry.value, [](const EndedMock& ended) { return ended.wasLaidInPreload; }))
+        // The places in the list name the objects.
+        Vector<EndedMock, 2> kept;
+        JSObject* before = ensureLoaded(entry.key).endedMocks.get();
+        JSObject* objects = nullptr;
+        for (unsigned index = 0; index < entry.value.size(); ++index) {
+            if (!entry.value[index].wasLaidInPreload)
+                continue;
+            if (!objects)
+                objects = createTableOfExports();
+            objects->putDirectMayBeIndex(realm, Identifier::from(vm, static_cast<unsigned>(kept.size())), storedValue(realm, before, Identifier::from(vm, index)));
+            kept.append(entry.value[index]);
+        }
+        if (kept.isEmpty()) {
             emptied.append(entry.key);
+            continue;
+        }
+        ensureLoaded(entry.key).endedMocks.set(*this, objects);
+        entry.value = WTF::move(kept);
     }
     for (ModuleID fileOrModule : emptied) {
         m_endedMocks.remove(fileOrModule);
@@ -7345,14 +7409,14 @@ bool mayBeMocked(JSGlobalObject* realm, ModuleID moduleOfHost)
     return modules && modules->mayBeMocked(module);
 }
 
-bool setMock(JSGlobalObject* realm, ModuleID moduleOfHost, JSObject* mock, JSValue whatRequireAnswers)
+bool setMock(JSGlobalObject* realm, ModuleID moduleOfHost, JSObject* mock, JSValue whatRequireAnswers, bool leavesEarlierMockToItsImporters)
 {
     ModuleFromHost module(realm, moduleOfHost);
     Modules* modules = modulesOf(realm);
     MockDoor door(modules, module, mock ? "setMock"_s : "setMock, none"_s);
     if (modules && mock && modules->isLeftAloneByMock(module))
         return modules->setMockOverModuleThatHasRun(module, mock, whatRequireAnswers);
-    return modules && modules->setMockInPlace(module, mock, whatRequireAnswers);
+    return modules && modules->setMockInPlace(module, mock, whatRequireAnswers, leavesEarlierMockToItsImporters);
 }
 
 bool willLeaveModuleAlone(JSGlobalObject* realm, ModuleID moduleOfHost, bool onlyIfLoadedInPreload, std::optional<ModuleID> asking)
@@ -7515,6 +7579,9 @@ bool runBodyOfLinkedModuleAheadOfMock(JSGlobalObject* realm, ModuleID moduleOfHo
     ModuleFromHost module(realm, moduleOfHost);
     Modules* modules = modulesOf(realm);
     MockDoor door(modules, module, "the mock call"_s);
+    // A mock without a factory is made of the original, and may come into its place long behind its call.
+    if (modules)
+        modules->noteCallOfMock(module);
     return modules && modules->runBodyOfLinkedModuleAheadOfMock(module);
 }
 
@@ -7566,6 +7633,8 @@ void didEndMock(JSGlobalObject* realm, ModuleID moduleOfHost)
         return;
     MockDoor door(modules, module, "didEndMock"_s);
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    // The call of a mock that ends before it is laid counts for nothing that comes later.
+    modules->forgetCallOfMock(module);
     bool wasLoadedAsMock = modules->mockInPlace(module) && !modules->hasMockThatEnded(module);
     if (wasLoadedAsMock || modules->hasMockLaidOver(module))
         modules->letGoOfImportersOf(module, Modules::ImportersLetGo::All);
@@ -7631,7 +7700,7 @@ bool mockFailedBehindImportStatement(JSGlobalObject* realm, ModuleID moduleOfHos
     return modules && modules->mockFailedBehindImportStatement(module);
 }
 
-void willMockModule(JSGlobalObject* realm, ModuleID moduleOfHost, JSObject* exports)
+void willMockModule(JSGlobalObject* realm, ModuleID moduleOfHost, JSObject* exports, bool exportsAreOfCommonJSModule)
 {
     ModuleFromHost module(realm, moduleOfHost);
     // Bun finds the module in the image, whatever the realm.
@@ -7640,6 +7709,7 @@ void willMockModule(JSGlobalObject* realm, ModuleID moduleOfHost, JSObject* expo
         return;
     MockDoor door(found, module, "willMockModule"_s);
     Modules& modules = *found;
+    modules.setExportsOfMockAreOfCommonJSModule(module, exportsAreOfCommonJSModule);
     if (modules.data(module).isOfLibrary() || !modules.table().hasFilePath(module)) {
         auto scope = DECLARE_THROW_SCOPE(realm->vm());
         modules.letGoOfMockThatEnded(module);
@@ -7781,8 +7851,13 @@ unsigned ModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Modul
     EvaluationContext context { stack, index, referrerAsyncOrder < 0 ? std::nullopt : std::optional(referrerAsyncOrder), dynamicImportPromise };
     modules().innerModuleEvaluation(m_module, context);
     // The module may be evaluated and off the stack by now, so a request to terminate waits for the next check.
-    RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, invalidIndex);
-    return context.index;
+    Exception* exception = scope.exception();
+    if (!exception) [[likely]]
+        return context.index;
+    // evaluate() files what was thrown on the records of the stack. A request to terminate is raised behind the body too, where getters of the program run: the record has left the stack by then, or never stood on it, and takes the request here. Nothing else is filed: whoever reads an error takes the module for failed.
+    if (globalObject->vm().isTerminationException(exception) && status() == Status::Evaluated && !evaluationError())
+        setEvaluationError(globalObject->vm(), exception->value());
+    return invalidIndex;
 }
 
 void ModuleRecord::willLoadRequests(ModuleGraphLoadingState& load)

@@ -52,6 +52,7 @@ public:
     bool keepsToModule() const { return m_keepsToModule; }
     // What is made for whoever asks under such a mock is the object of that mock, for good.
     void setMockOfView(VM& vm, JSObject* mock) { m_mockOfView.set(vm, this, mock); }
+    void clearMockOfView() { m_mockOfView.clear(); }
     AbstractModuleRecord* recordForResolution();
     // A read of a deferred namespace object may evaluate the module, so that object does not have the module's namespace layout.
     // Image::position() of the image that has the module.

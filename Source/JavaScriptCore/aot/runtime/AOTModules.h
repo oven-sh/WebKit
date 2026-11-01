@@ -90,6 +90,8 @@ struct LinkContext {
     macro(JSObject*, namespaceBeforeMockInPlace) \
     macro(JSObject*, capturedExportsBeforeMockInPlace) \
     macro(JSObject*, endedMocks) \
+    macro(JSObject*, namespacesOfEndedMocks) \
+    macro(JSObject*, mockLaidInPreload) \
     macro(JSValue, requiredValueBeforeMockInPlace) \
     macro(JSValue, exportsOfOriginalBesideMock) \
     macro(JSValue, answerOfMockWhileOriginalRuns) \
@@ -192,7 +194,7 @@ public:
         return loaded ? loaded->mockInPlace.get() : nullptr;
     }
     bool someMockStandsInPlace() const { return m_numberOfMocksInPlace; }
-    bool setMockInPlace(ModuleID, JSObject* mock, JSValue whatRequireAnswers);
+    bool setMockInPlace(ModuleID, JSObject* mock, JSValue whatRequireAnswers, bool leavesEarlierMockToItsImporters = false);
     void letGoOfMockAtNextLoad(ModuleID);
     void letGoOfMockThatEnded(ModuleID);
     void letGoOfMockThatEndedSlow(ModuleID);
@@ -223,6 +225,8 @@ public:
     JSObject* endedMockSeenAt(ModuleID fileOrModule, uint32_t moment) const;
     uint32_t momentLinked(ModuleID importer) const;
     void forgetEndedMocksOfEarlierTestFiles();
+    void noteCallOfMock(ModuleID fileOrModule) { m_momentsWaitingMocksWereLaid.set(fileOrModule, momentOfNow()); }
+    void forgetCallOfMock(ModuleID fileOrModule) { m_momentsWaitingMocksWereLaid.remove(fileOrModule); }
     void linkAnewWhoeverReadsEndedMockBelow(ModuleID root);
     bool importsOriginalBesideMock(ModuleID mocked, ModuleID importer) const;
     JSObject* namespaceOfModuleItself(ModuleID);
@@ -252,6 +256,7 @@ public:
     // A mock that comes before the body of an ES module has run stands for the whole module: the loader of `bun run` takes what the factory answers for the module itself.
     // So a name that the factory leaves out is no export: no key of the namespace object. See fillExportsOfBodyThatNeverRuns() for whoever reads the variable.
     void leaveOutWhatMockLacks(ModuleID, JSObject* exportsOfMock);
+    void setExportsOfMockAreOfCommonJSModule(ModuleID, bool);
     // And a name that the factory gives and the module lacks is an export: a key of the namespace object, where it is read. The names are settled once the module is loaded.
     void takeWhatMockAdds(ModuleID, bool comesAheadOfLoad);
     bool isAddedByMock(ModuleID, const Identifier&);
@@ -746,6 +751,7 @@ private:
         bool exportsWhatMockNamesAlone { false };
         bool takesNamesThatMockAdds { false };
         bool isYetToBeRequiredBehindMock { false };
+        bool exportsOfMockAreOfCommonJSModule { false };
         bool wasLoadedBehindMock { false };
         bool wasRequiredBehindMock { false };
         // Of a CommonJS file: didLoseErrorOfModule().
@@ -1292,8 +1298,14 @@ private:
     };
     UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_momentsWaitingMocksWereLaid;
     UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_momentsStandingMocksWereLaid;
+    // VMState::momentOfTestFile when a mock ended that is let go later.
+    UncheckedKeyHashMap<ModuleID, uint32_t> m_testFilesInWhichMocksEnded;
+    // How many objects LoadedModule::namespacesOfEndedMocks holds.
+    UncheckedKeyHashMap<ModuleID, unsigned> m_numbersOfNamespacesOfEndedMocks;
+    // Of LoadedModule::mockLaidInPreload.
+    UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_momentsMocksOfPreloadWereLaid;
     MomentMockWasLaid momentOfNow();
-    void keepEndedMock(ModuleID fileOrModule, JSObject* mock, MomentMockWasLaid);
+    void keepEndedMock(ModuleID fileOrModule, JSObject* mock, MomentMockWasLaid, uint32_t momentEnded = 0);
     JSValue wordWhereNoMockStands(ModuleID fileOrModule) const;
     // A file ran before the loader came to it and queued jobs. They are queued where the loader comes to the file, as under `bun run`.
     std::optional<ModuleID> m_fileWhoseJobsWaitForLoader;
