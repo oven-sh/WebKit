@@ -158,12 +158,17 @@ bool mayRefuseChangedClosures(const Type& typeOfTestedValue)
     return typeOfTestedValue.anyFunction || typeOfTestedValue.anyObject;
 }
 
-static bool mayRefuseChangedClosures(FunctionAnalyses& analyses, const Value& test)
+static OptionSet<FalseRefusal> falseRefusalsOf(FunctionAnalyses& analyses, const Value& test)
 {
     const Program& program = analyses.program();
-    if (analyses.context().build.isSabotaged(Sabotage::ChangedClosuresFailEveryTest))
-        return false;
-    return !program.at(test.testedType()).functions.isEmpty() && mayRefuseChangedClosures(program.typeOf(analyses.function(), test.valueOperand()));
+    const Type& tested = program.at(test.testedType());
+    const Type& typeOfTestedValue = program.typeOf(analyses.function(), test.valueOperand());
+    OptionSet<FalseRefusal> refusals;
+    if (!tested.functions.isEmpty() && mayRefuseChangedClosures(typeOfTestedValue) && !analyses.context().build.isSabotaged(Sabotage::ChangedClosuresFailEveryTest))
+        refusals.add(FalseRefusal::ChangedClosure);
+    if (mayRefuseUntestableBuiltins(program, typeOfTestedValue, tested))
+        refusals.add(FalseRefusal::UntestableBuiltin);
+    return refusals;
 }
 
 void keepRepeatedTests(FunctionAnalyses& analyses, Vector<BranchOnTypeTest>& branches)
@@ -190,7 +195,7 @@ TypeTestBranches::TypeTestBranches(FunctionAnalyses& analyses)
             m_branchesByOperand.append(BranchOnValue { operand, block });
         });
         if (const Value* test = typeTestBranchedOn(function, function.at(block))) {
-            m_branches.append({ test->valueOperand(), test->testedType(), block, mayRefuseChangedClosures(analyses, *test) });
+            m_branches.append({ test->valueOperand(), test->testedType(), block, falseRefusalsOf(analyses, *test) });
             m_blocksThatBranchOnTypeTest.append(block);
         }
     }
@@ -207,38 +212,42 @@ TypeTestBranches::TypeTestBranches(FunctionAnalyses& analyses)
 
 static Vector<KnownBoolean> outcomesOfFrequentTests(FunctionAnalyses& analyses, std::span<const BranchOnTypeTest> branches)
 {
-    // Two groups for a test: an even one for the branches that refuse only what is none of the functions, and the next for the others.
+    // A group of a test for each set of false refusals.
+    static constexpr uint32_t groupsOfTest = 4;
+    static_assert(OptionSet<FalseRefusal> { FalseRefusal::ChangedClosure, FalseRefusal::UntestableBuiltin }.toRaw() == groupsOfTest - 1);
     Vector<uint32_t> groupOfBlock(FillWith { }, analyses.cfg().numNodes(), noGroup);
     uint32_t numberOfGroups = 0;
     forEachRunOfEqualKeys(branches, &BranchOnTypeTest::test, [&](std::span<const BranchOnTypeTest> branchesOnTest) {
         if (branchesOnTest.size() <= maxComparedBranches)
             return;
         for (const BranchOnTypeTest& branch : branchesOnTest)
-            groupOfBlock[branch.block.index()] = numberOfGroups + branch.mayRefuseChangedClosures;
-        numberOfGroups += 2;
+            groupOfBlock[branch.block.index()] = numberOfGroups + branch.falseRefusals.toRaw();
+        numberOfGroups += groupsOfTest;
     });
     return outcomesBehindOutermostEdges(analyses, numberOfGroups, [&](BlockID block, KnownBoolean outcome, const ScopedLambda<void(uint32_t)>& functor) {
         uint32_t group = groupOfBlock[block.index()];
         if (group == noGroup)
             return;
-        functor(group | 1);
-        if (!(group & 1) || outcome == KnownBoolean::True)
-            functor(group & ~1u);
+        uint32_t refusals = group % groupsOfTest;
+        for (uint32_t refusalsOfAsked = 0; refusalsOfAsked < groupsOfTest; ++refusalsOfAsked) {
+            if (outcome == KnownBoolean::True || !(refusals & ~refusalsOfAsked))
+                functor(group - refusals + refusalsOfAsked);
+        }
     }, [&](BlockID block) {
         return groupOfBlock[block.index()];
     });
 }
 
-// What a value is tested for never changes, so behind an edge of one test every other test of the value for the same type has the same outcome. A test that may refuse a changed closure decides by its refusal only tests that may do so too.
+// What a value is tested for never changes, so behind an edge of one test every other test of the value for the same type has the same outcome. A test that may refuse what it is for decides by its refusal only tests that may refuse the same.
 KnownBoolean TypeTestBranches::outcomeFromDominatingTest(BlockID block) const
 {
     const Value* test = m_repeatsTest.get(block.index()) ? typeTestBranchedOn(m_analyses.function(), m_analyses.function().at(block)) : nullptr;
     if (!test)
         return KnownBoolean::Unknown;
     std::tuple tested { m_analyses.identityOf(test->valueOperand()).index(), test->testedType().index() };
-    bool everyRefusalDecides = m_branches[m_indexOfBranch[block.index()]].mayRefuseChangedClosures;
+    OptionSet<FalseRefusal> falseRefusals = m_branches[m_indexOfBranch[block.index()]].falseRefusals;
     auto refusalDecides = [&](const BranchOnTypeTest& branch) {
-        return everyRefusalDecides || !branch.mayRefuseChangedClosures;
+        return falseRefusals.containsAll(branch.falseRefusals);
     };
     return outcomeBehindEdges(m_analyses, std::ranges::equal_range(m_branches, tested, { }, &BranchOnTypeTest::test), block, m_outcomesOfFrequentTests, refusalDecides, [&] {
         return outcomesOfFrequentTests(m_analyses, m_branches.span());
@@ -264,7 +273,7 @@ KnownBoolean TypeTestBranches::outcomeOnEveryWay(BlockID block) const
         return KnownBoolean::Unknown;
 
     const size_t firstBranchOnTest = branchesOnTest.begin() - m_branches.begin();
-    bool everyRefusalDecides = m_branches[m_indexOfBranch[block.index()]].mayRefuseChangedClosures;
+    OptionSet<FalseRefusal> falseRefusals = m_branches[m_indexOfBranch[block.index()]].falseRefusals;
     auto branchesOnSameTest = [&](BlockID from) {
         return m_repeatsTest.get(from.index()) && m_indexOfBranch[from.index()] - firstBranchOnTest < branchesOnTest.size();
     };
@@ -281,7 +290,7 @@ KnownBoolean TypeTestBranches::outcomeOnEveryWay(BlockID block) const
                 KnownBoolean onEdge = outcomeOnEdge(edge);
                 if (onEdge == KnownBoolean::Unknown || (outcome != KnownBoolean::Unknown && outcome != onEdge))
                     return KnownBoolean::Unknown;
-                if (onEdge == KnownBoolean::False && !everyRefusalDecides && m_branches[m_indexOfBranch[edge.from.index()]].mayRefuseChangedClosures)
+                if (onEdge == KnownBoolean::False && !falseRefusals.containsAll(m_branches[m_indexOfBranch[edge.from.index()]].falseRefusals))
                     return KnownBoolean::Unknown;
                 outcome = onEdge;
                 continue;
