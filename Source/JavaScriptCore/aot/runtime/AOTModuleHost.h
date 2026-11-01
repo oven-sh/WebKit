@@ -225,6 +225,14 @@ JS_EXPORT_PRIVATE void willSetRequireCacheEntry(JSGlobalObject*, ModuleID, JSVal
 JS_EXPORT_PRIVATE void willSetRequireCacheEntryUnderName(JSGlobalObject*, ModuleID, const String& name);
 // The host admits code from disk: the next load of the file takes it from there, as a new instance. An executable has its files in no cache.
 JS_EXPORT_PRIVATE void didDeleteRequireCacheEntry(JSGlobalObject*, ModuleID);
+// A test runner hands each test file what ran before the first of them: where a test file resets the modules, the next one finds the instances of that time again.
+// The host calls the first when the last of those files has run, the second for each file that a reset takes out, as it would call didDeleteRequireCacheEntry(),
+// and the third between two test files: it names each file that is back, of which the host may hold a copy from disk.
+JS_EXPORT_PRIVATE void keepFilesThatHaveRun(JSGlobalObject*);
+JS_EXPORT_PRIVATE void didResetModule(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE void bringBackKeptFiles(JSGlobalObject*, const WTF::Function<void(const String&)>&);
+// The file was taken out of the program and is not back: whoever has bound it keeps it as it is, and every load of it is the host's.
+JS_EXPORT_PRIVATE bool isEvictedFile(JSGlobalObject*, ModuleID);
 // Whether didDeleteRequireCacheEntry() would throw: the file has run, and the code that imports it was compiled for a file that loads once.
 JS_EXPORT_PRIVATE bool refusesToLoadAgain(JSGlobalObject*, ModuleID);
 // The host admits code from disk, and the program stores a falsy value over the entry, which the host's require() takes for no entry. The store leaves the modules that imports have made

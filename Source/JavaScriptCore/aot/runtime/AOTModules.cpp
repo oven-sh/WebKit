@@ -367,13 +367,15 @@ void Modules::takeOutOfLoader(ModuleID module)
     }
 }
 
-void Modules::evict(ModuleID module)
+void Modules::evict(ModuleID module, bool isUndoneForKeptFiles)
 {
     ModuleID file = fileOf(module);
     // The loader keeps the error of a CommonJS file that threw while an import loaded it, until the file is taken out of require.cache: didThrowInBody().
     bool hasThrown = data(file).kind == ModuleKind::CommonJs && (status(file) == ModuleStatus::Failed || status(moduleWithExportsOf(file)) == ModuleStatus::Failed);
     if (!wouldBeEvicted(file) && !hasThrown)
         return;
+    if (isUndoneForKeptFiles && !isEvicted(file) && m_keptFiles.get(file.index()))
+        m_filesToBringBack.set(file.index());
     leaveToHost(file);
     m_admitsCodeOutsideImage = true;
     if (data(file).kind != ModuleKind::CommonJs)
@@ -381,11 +383,57 @@ void Modules::evict(ModuleID module)
     // The module object of the file reads `exports` from a variable of the program, which will hold what the next load exports.
     // `const entry = require.cache[path]; delete require.cache[path]`: whoever holds the object goes on seeing the exports of this load. A body that still runs may yet store others.
     VM& vm = *m_instance.vm;
-    if (LoadedModule* loaded = loadedIfExists(file); loaded && loaded->requirer && data(file).hasValue() && status(file) == ModuleStatus::Evaluated)
+    // The variable of a file that comes back stays the file's.
+    if (LoadedModule* loaded = loadedIfExists(file); loaded && loaded->requirer && data(file).hasValue() && status(file) == ModuleStatus::Evaluated && !m_filesToBringBack.get(file.index()))
         loaded->requirer->putDirect(vm, vm.propertyNames->exports, commonJSExports(file));
     // A file that is still running keeps the mark when it ends.
     m_filesToLoadAgain.set(file.index());
     setStoredStatus(file, StoredModuleStatus::InRecord);
+}
+
+void Modules::keepFilesThatHaveRun()
+{
+    if (std::exchange(m_hasKeptFiles, true))
+        return;
+    bool importsAreFollowed = false;
+    for (unsigned index = 0; index < m_table.size(); ++index) {
+        ModuleID module(index);
+        if (!data(module).isOfLibrary() && fileOf(module) == module && mayBeEvicted(module) && !isEvicted(module) && hasRun(module, importsAreFollowed))
+            m_keptFiles.set(index);
+    }
+}
+
+// The reverse of evict(). A file that has not run yet and was left to the host for what it imports is the program's again, unless it still imports an evicted file.
+void Modules::bringBackKeptFiles(const WTF::Function<void(const String&)>& functor)
+{
+    if (m_filesToBringBack.isEmpty())
+        return;
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    Vector<ModuleID, 16> back;
+    for (size_t index : std::exchange(m_filesToBringBack, { }))
+        back.append(ModuleID(index));
+    for (ModuleID file : back)
+        m_evictedFiles.clear(file.index());
+    BitVector evictedWithImports = std::exchange(m_filesEvictedWithImports, { });
+    m_evictedFiles.exclude(evictedWithImports);
+    m_filesAboveEvictedFile.clearAll();
+    m_filesAboveNoEvictedFile.clearAll();
+    ++m_linkEpoch;
+    for (size_t index : evictedWithImports)
+        isLeftToHost(ModuleID(index));
+    for (ModuleID file : back) {
+        functor(m_table.pathText(file));
+        if (data(file).kind != ModuleKind::CommonJs)
+            continue;
+        bool wasLoadedAgain = !m_filesToLoadAgain.get(file.index());
+        m_filesToLoadAgain.clear(file.index());
+        if (!recordIfExists(file))
+            setStoredStatus(file, StoredModuleStatus::Evaluated);
+        if (wasLoadedAgain) {
+            captureExportsAgain(file);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+    }
 }
 
 // The next load of the module runs its body again. Its code keeps what the body declares in objects that each run makes anew, so whatever an earlier run left behind goes on with its own.
@@ -557,7 +605,8 @@ bool Modules::isLeftToHost(ModuleID module)
     if (!importsEvictedFile(module))
         return false;
     // No file that was settled since the last eviction imports this one: its walk would have come to the same evicted file.
-    m_evictedFiles.set(fileOf(module).index());
+    if (!m_evictedFiles.set(fileOf(module).index()))
+        m_filesEvictedWithImports.set(fileOf(module).index());
     m_runsCopyFromDisk = true;
     return true;
 }
@@ -4874,7 +4923,8 @@ static void throwLoaderChangeRefused(JSGlobalObject* realm, LoaderChange change,
     throwException(realm, scope, createLoaderChangeRefusedError(realm, change, changed));
 }
 
-enum class TakenOutBy : uint8_t { Deletion, FalsyStore, EntryOfProgram };
+// Reset: a deletion that bringBackKeptFiles() undoes.
+enum class TakenOutBy : uint8_t { Deletion, Reset, FalsyStore, EntryOfProgram };
 
 static void evictFromItsImage(JSGlobalObject* realm, ModuleID moduleOfHost, TakenOutBy takenOutBy)
 {
@@ -4890,7 +4940,8 @@ static void evictFromItsImage(JSGlobalObject* realm, ModuleID moduleOfHost, Take
         return modules->takeOutOfRequireCache(module);
     }
     modules->forgetObjectMadeByRequire(module);
-    if (takenOutBy == TakenOutBy::Deletion) {
+    bool isDeleted = takenOutBy == TakenOutBy::Deletion || takenOutBy == TakenOutBy::Reset;
+    if (isDeleted) {
         modules->forgetFirstLoad(module);
         modules->dropErrorOfLoadEndedByMock(module);
     }
@@ -4904,8 +4955,8 @@ static void evictFromItsImage(JSGlobalObject* realm, ModuleID moduleOfHost, Take
         return;
     }
     modules->forgetFormAnsweredFirst(module);
-    modules->evict(module);
-    if (takenOutBy == TakenOutBy::Deletion && modules->isEvicted(module))
+    modules->evict(module, takenOutBy == TakenOutBy::Reset);
+    if (isDeleted && modules->isEvicted(module))
         modules->takeOutOfLoader(module);
     if (standsInPlaceOfFile)
         modules->leaveToHostUnlessItHasRun(module);
@@ -4962,6 +5013,41 @@ void willRunEntryPointAgain(JSGlobalObject* realm, ModuleID moduleOfHost)
 void didDeleteRequireCacheEntry(JSGlobalObject* realm, ModuleID moduleOfHost)
 {
     evictFromEveryImage(realm, moduleOfHost, TakenOutBy::Deletion);
+}
+
+void didResetModule(JSGlobalObject* realm, ModuleID moduleOfHost)
+{
+    evictFromEveryImage(realm, moduleOfHost, TakenOutBy::Reset);
+}
+
+bool isEvictedFile(JSGlobalObject* realm, ModuleID moduleOfHost)
+{
+    ModuleFromHost module(realm, moduleOfHost);
+    Modules* modules = modulesOf(realm);
+    return modules && modules->isEvicted(module);
+}
+
+void keepFilesThatHaveRun(JSGlobalObject* realm)
+{
+    if (!realm->aotInstance())
+        return;
+    Instance::forEachOf(realm, [&](Instance&) {
+        if (Modules* modules = modulesOf(realm))
+            modules->keepFilesThatHaveRun();
+    });
+}
+
+void bringBackKeptFiles(JSGlobalObject* realm, const WTF::Function<void(const String&)>& functor)
+{
+    if (!realm->aotInstance())
+        return;
+    auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    Instance::forEachOf(realm, [&](Instance&) {
+        if (scope.exception()) [[unlikely]]
+            return;
+        if (Modules* modules = modulesOf(realm))
+            modules->bringBackKeptFiles(functor);
+    });
 }
 
 bool refusesToLoadAgain(JSGlobalObject* realm, ModuleID moduleOfHost)

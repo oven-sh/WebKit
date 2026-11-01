@@ -355,7 +355,9 @@ public:
     const String* exchangeAskerOfModule(const String* asker) { return std::exchange(m_askerOfModule, asker); }
     StringView askerOfModule() const { return m_askerOfModule ? StringView(*m_askerOfModule) : StringView(); }
     void forEachFileAwaitingAtTopLevel(const WTF::Function<void(int64_t turn, const String& key)>&);
-    void evict(ModuleID);
+    void evict(ModuleID, bool isUndoneForKeptFiles = false);
+    void keepFilesThatHaveRun();
+    void bringBackKeptFiles(const WTF::Function<void(const String&)>&);
     void forgetEvaluation(ModuleID);
     void forgetRunThatThrew(ModuleID);
     void forgetRunOfLibraryModule(ModuleID);
@@ -907,8 +909,13 @@ private:
     BitVector m_evictedFiles;
     // A walk has found nothing evicted in what they import, and nothing has been evicted since.
     BitVector m_filesAboveNoEvictedFile;
-    // No evicted file is ever put back.
     BitVector m_filesAboveEvictedFile;
+    // See keepFilesThatHaveRun().
+    BitVector m_keptFiles;
+    bool m_hasKeptFiles { false };
+    BitVector m_filesToBringBack;
+    // They have not run, and are among the evicted files only for what they import: isLeftToHost().
+    BitVector m_filesEvictedWithImports;
     ModuleTable::PathsForSystem m_pathsForSystem;
     // Of the realm. A module of this image may import the file.
     bool m_otherImageHasEvictedFiles { false };
