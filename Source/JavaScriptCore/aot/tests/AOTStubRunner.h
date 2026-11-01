@@ -413,6 +413,8 @@ inline void StubRunner::emitLandingThatCountsWordsNobodyWrote(CCallHelpers& jit,
     jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::returnValueGPR2);
     if (leavesStub)
         jit.emitFunctionEpilogue();
+    // This is not code of an image, so its ret() authenticates. What the epilogue pops is what the stub saved, without a signature.
+    jit.tagReturnAddress();
     jit.ret();
 }
 
