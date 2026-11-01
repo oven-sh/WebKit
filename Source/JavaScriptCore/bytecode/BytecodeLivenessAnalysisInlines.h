@@ -94,6 +94,23 @@ inline void BytecodeLivenessPropagation::stepOverBytecodeIndexUseInExceptionHand
     }
 }
 
+// Exception handler ranges begin and end on basic-block boundaries (computePreciseJumpTargets
+// adds every handler's start, end, and target as jump targets), so every instruction in a given
+// block resolves to the same innermost handler. Looking the handler block's live-in set up once
+// here avoids a handlerForBytecodeIndex scan per instruction.
+template<typename CodeBlockType>
+inline const FastBitVector* BytecodeLivenessPropagation::handlerLiveInForBlock(CodeBlockType* codeBlock, BytecodeGraph& graph, JSBytecodeBasicBlock& block)
+{
+    if (block.isEntryBlock() || block.isExitBlock())
+        return nullptr;
+    auto* handler = codeBlock->handlerForBytecodeIndex(BytecodeIndex(block.leaderOffset()));
+    if (!handler)
+        return nullptr;
+    auto* handlerBlock = graph.findBasicBlockWithLeaderOffset(handler->target);
+    ASSERT(handlerBlock);
+    return &handlerBlock->in();
+}
+
 // Simplified interface to bytecode use/def, which determines defs first and then uses, and includes
 // exception handlers in the uses.
 template<typename CodeBlockType, typename UseFunctor, typename DefFunctor>
@@ -120,6 +137,26 @@ inline void BytecodeLivenessPropagation::stepOverBytecodeIndex(CodeBlockType* co
 }
 
 template<typename CodeBlockType>
+inline void BytecodeLivenessPropagation::stepOverInstructionWithinBlock(CodeBlockType* codeBlock, const JSInstructionStream& instructions, BytecodeGraph& graph, BytecodeIndex bytecodeIndex, const FastBitVector* handlerLiveIn, FastBitVector& out)
+{
+    // The caller already folded handlerLiveIn into `out` once for this block. Every instruction in
+    // the block shares that handler (see handlerLiveInForBlock), so we keep it folded in by refusing
+    // to clear a local that the handler keeps live, rather than re-applying `out |= handlerLiveIn`
+    // after every def. That lets the per-instruction step touch only the handful of locals this
+    // instruction reads or writes.
+    auto numberOfCheckpoints = instructions.at(bytecodeIndex)->numberOfCheckpoints();
+    for (Checkpoint checkpoint = numberOfCheckpoints; checkpoint--;) {
+        stepOverBytecodeIndexDef(codeBlock, instructions, graph, bytecodeIndex.withCheckpoint(checkpoint), [&] (unsigned bitIndex) {
+            if (!handlerLiveIn || !(*handlerLiveIn)[bitIndex])
+                out[bitIndex] = false;
+        });
+        stepOverBytecodeIndexUse(codeBlock, instructions, graph, bytecodeIndex.withCheckpoint(checkpoint), [&] (unsigned bitIndex) {
+            out[bitIndex] = true;
+        });
+    }
+}
+
+template<typename CodeBlockType>
 inline void BytecodeLivenessPropagation::stepOverInstruction(CodeBlockType* codeBlock, const JSInstructionStream& instructions, BytecodeGraph& graph, BytecodeIndex bytecodeIndex, FastBitVector& out)
 {
     auto numberOfCheckpoints = instructions.at(bytecodeIndex)->numberOfCheckpoints();
@@ -138,7 +175,7 @@ inline void BytecodeLivenessPropagation::stepOverInstruction(CodeBlockType* code
 }
 
 template<typename CodeBlockType, typename Instructions>
-inline bool BytecodeLivenessPropagation::computeLocalLivenessForInstruction(CodeBlockType* codeBlock, const Instructions& instructions, BytecodeGraph& graph, JSBytecodeBasicBlock& block, BytecodeIndex targetIndex, FastBitVector& result)
+inline bool BytecodeLivenessPropagation::computeLocalLivenessForInstruction(CodeBlockType* codeBlock, const Instructions& instructions, BytecodeGraph& graph, JSBytecodeBasicBlock& block, const FastBitVector* handlerLiveIn, BytecodeIndex targetIndex, FastBitVector& result)
 {
     ASSERT(!block.isExitBlock());
     ASSERT(!block.isEntryBlock());
@@ -146,24 +183,27 @@ inline bool BytecodeLivenessPropagation::computeLocalLivenessForInstruction(Code
 
     FastBitVector out = block.out();
 
+    if (handlerLiveIn)
+        out |= *handlerLiveIn;
+
     unsigned cursor = block.totalLength();
     for (unsigned i = block.delta().size(); i--;) {
         cursor -= block.delta()[i];
         BytecodeIndex bytecodeIndex = BytecodeIndex(block.leaderOffset() + cursor);
         if (targetIndex.offset() > bytecodeIndex.offset())
             break;
-        stepOverInstruction(codeBlock, instructions, graph, bytecodeIndex, out);
+        stepOverInstructionWithinBlock(codeBlock, instructions, graph, bytecodeIndex, handlerLiveIn, out);
     }
 
     return result.setAndCheck(out);
 }
 
 template<typename CodeBlockType, typename Instructions>
-inline bool BytecodeLivenessPropagation::computeLocalLivenessForBlock(CodeBlockType* codeBlock, const Instructions& instructions, BytecodeGraph& graph, JSBytecodeBasicBlock& block)
+inline bool BytecodeLivenessPropagation::computeLocalLivenessForBlock(CodeBlockType* codeBlock, const Instructions& instructions, BytecodeGraph& graph, JSBytecodeBasicBlock& block, const FastBitVector* handlerLiveIn)
 {
     if (block.isExitBlock() || block.isEntryBlock())
         return false;
-    return computeLocalLivenessForInstruction(codeBlock, instructions, graph, block, BytecodeIndex(block.leaderOffset()), block.in());
+    return computeLocalLivenessForInstruction(codeBlock, instructions, graph, block, handlerLiveIn, BytecodeIndex(block.leaderOffset()), block.in());
 }
 
 template<typename CodeBlockType, typename Instructions>
@@ -176,7 +216,7 @@ inline FastBitVector BytecodeLivenessPropagation::getLivenessInfoAtInstruction(C
     ASSERT(!block->isExitBlock());
     FastBitVector out;
     out.resize(block->out().numBits());
-    computeLocalLivenessForInstruction(codeBlock, instructions, graph, *block, bytecodeIndex, out);
+    computeLocalLivenessForInstruction(codeBlock, instructions, graph, *block, handlerLiveInForBlock(codeBlock, graph, *block), bytecodeIndex, out);
     return out;
 }
 
@@ -184,11 +224,16 @@ template<typename CodeBlockType, typename Instructions>
 inline void BytecodeLivenessPropagation::runLivenessFixpoint(CodeBlockType* codeBlock, const Instructions& instructions, BytecodeGraph& graph)
 {
     unsigned numberOfVariables = codeBlock->numCalleeLocals();
+    // One handlerForBytecodeIndex lookup per block, up front, so the fixpoint doesn't re-scan
+    // the exception handler table per block per iteration.
+    Vector<const FastBitVector*, 16> handlerLiveIns;
+    handlerLiveIns.fill(nullptr, graph.size());
     for (auto& block : graph) {
         block.in().resize(numberOfVariables);
         block.out().resize(numberOfVariables);
         block.in().clearAll();
         block.out().clearAll();
+        handlerLiveIns[block.index()] = handlerLiveInForBlock(codeBlock, graph, block);
     }
 
     bool changed;
@@ -206,7 +251,7 @@ inline void BytecodeLivenessPropagation::runLivenessFixpoint(CodeBlockType* code
                 newOut |= successor.in();
             }
             block.out() = newOut;
-            changed |= computeLocalLivenessForBlock(codeBlock, instructions, graph, block);
+            changed |= computeLocalLivenessForBlock(codeBlock, instructions, graph, block, handlerLiveIns[block.index()]);
         }
     } while (changed);
 }
