@@ -292,7 +292,7 @@ private:
         if (!isConfined(subject)) {
             bool wasThereAtEntry = namesOnlyObjectsOfKind(ObjectKind::EntryParameter, subject);
             return mayWriteBeyondOperands(written) || std::ranges::any_of(operandsWrittenThrough(written), [&](ValueID operand) {
-                return escape.mayAlias(operand, subject) && !(wasThereAtEntry && namesOnlyObjectsOfKind(ObjectKind::Allocation, operand));
+                return escape.mayAlias(operand, subject) && !(wasThereAtEntry && namesOnlyObjectsOfKind(ObjectKind::Allocation, operand)) && !wasThereBeforeWhatIsNamedBy(operand, subject);
             });
         }
 
@@ -300,6 +300,25 @@ private:
         return std::ranges::any_of(operandsWrittenThrough(written), [&](ValueID operand) {
             return escape.pointsTo(operand).objects.overlaps(objects) && mayBeMadeHere(operand);
         });
+    }
+
+    // What was computed once, ahead of every allocation that the operand names, is none of those objects. Only what judges finished code is told: told to the passes it moves code.
+    bool wasThereBeforeWhatIsNamedBy(ValueID operand, ValueID subject)
+    {
+        if (!m_analyses.context().onlyJudges() || !namesOnlyObjectsOfKind(ObjectKind::Allocation, operand))
+            return false;
+        ValueLocation computed = m_analyses.useLists().locationOf(m_analyses.identityOf(subject));
+        if (computed.placement != ValuePlacement::InBlock || m_analyses.isInCycle(computed.block))
+            return false;
+        const EscapeAnalysis& escape = m_analyses.escape();
+        for (ObjectID object : escape.pointsTo(operand).objects) {
+            ValueLocation allocation = m_analyses.useLists().locationOf(escape.at(object).definition);
+            if (allocation.placement != ValuePlacement::InBlock)
+                return false;
+            if (allocation.block == computed.block ? allocation.index <= computed.index : !m_analyses.dominators().dominates(computed.block, allocation.block))
+                return false;
+        }
+        return true;
     }
 
     bool mayBeMadeHere(ValueID operand)
