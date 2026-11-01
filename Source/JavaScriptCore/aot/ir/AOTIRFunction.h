@@ -153,7 +153,7 @@ struct Function : FunctionRecord {
 
     Value& edit(ValueID id, OptionSet<ValueEdit> edits = anyValueEdit)
     {
-        ASSERT(id.index() < values.size());
+        RELEASE_ASSERT(id.index() < values.size());
         Value& value = values.m_storage.mutableSpan().data()[id.index()];
         m_changes.didEdit();
         if (m_changes.log)
@@ -162,7 +162,7 @@ struct Function : FunctionRecord {
     }
     Block& edit(BlockID id, OptionSet<BlockEdit> edits = anyBlockEdit)
     {
-        ASSERT(id.index() < blocks.size());
+        RELEASE_ASSERT(id.index() < blocks.size());
         Block& block = blocks.m_storage.mutableSpan().data()[id.index()];
         m_changes.didEdit();
         if (m_changes.log) {
