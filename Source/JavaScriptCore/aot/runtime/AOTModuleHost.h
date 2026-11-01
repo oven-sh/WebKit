@@ -328,6 +328,8 @@ JS_EXPORT_PRIVATE bool wasLetGoByLoader(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didBeginTestFile(JSGlobalObject*);
 // A later mock of such a module takes the place of the earlier one.
 JS_EXPORT_PRIVATE bool hasMockInPlace(JSGlobalObject*, ModuleID);
+// The mock that stood in place of the module has ended. True: whoever reads the module next loads it, so the factory of the next mock can wait for that load.
+JS_EXPORT_PRIVATE bool loadComesToModuleWhoseMockEnded(JSGlobalObject*, ModuleID);
 // didEndMock() leaves a mock that stands in place of an ES module to whoever was linked against it, until a load comes to the module. The test file ends: nobody reads it any more.
 JS_EXPORT_PRIVATE void letGoOfMocksThatEnded(JSGlobalObject*);
 // The `mock` that the namespace object of a compiled module asks now. Null: no mock stands in place of its module, or the cell is no such object.

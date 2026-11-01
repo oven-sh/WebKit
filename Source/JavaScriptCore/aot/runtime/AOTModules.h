@@ -190,6 +190,7 @@ public:
     bool letGoOfMockOfLibraryModuleAtNextLoad(ModuleID);
     void letGoOfMocksThatEnded();
     bool hasMockThatEnded(ModuleID module) const { return m_modulesWithMockToLetGo.get(module.index()); }
+    bool loadComesToModuleWhoseMockEnded(ModuleID) const;
     bool setMockInPlaceOfLibraryModule(ModuleID, JSObject* mock, JSValue whatRequireAnswers);
     bool willLeaveModuleAlone(ModuleID, bool onlyIfLoadedInPreload, std::optional<ModuleID> askingAsHostNamesIt);
     uint32_t placeOfMomentOfLoad(ModuleID) const;

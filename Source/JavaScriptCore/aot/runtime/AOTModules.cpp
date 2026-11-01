@@ -1992,6 +1992,12 @@ bool Modules::isImportedByModuleThatRequireAnswered(ModuleID imported) const
     return false;
 }
 
+// The code of a CommonJS file whose mock was let go asks the run time for its status again.
+bool Modules::loadComesToModuleWhoseMockEnded(ModuleID module) const
+{
+    return hasMockThatEnded(module) || (data(module).kind == ModuleKind::CommonJs && !isImportedByModuleThatRequireAnswered(module));
+}
+
 // Compiled code calls the body of a CommonJS file by itself once the status says so, and asks nobody.
 void Modules::letGoOfMockAtNextLoad(ModuleID module)
 {
@@ -6588,6 +6594,13 @@ JSObject* mockInPlaceBehind(JSCell* moduleNamespace)
 {
     auto* object = dynamicDowncast<ModuleNamespace>(moduleNamespace);
     return object ? object->mockInPlace() : nullptr;
+}
+
+bool loadComesToModuleWhoseMockEnded(JSGlobalObject* realm, ModuleID moduleOfHost)
+{
+    ModuleFromHost module(realm, moduleOfHost);
+    Modules* modules = modulesOf(realm);
+    return modules && modules->loadComesToModuleWhoseMockEnded(module);
 }
 
 bool hasMockInPlace(JSGlobalObject* realm, ModuleID moduleOfHost)
