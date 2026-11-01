@@ -86,8 +86,15 @@ StarExportResolution::Type Modules::resolveRequiredName(ModuleID exporter, const
 }
 
 // Of a module of this image, or of the module of another image that a record of this one stands for.
-bool Modules::isMockedInItsImage(ModuleID module)
+bool Modules::isMockedInItsImage(ModuleID module, MocksAskedFor which)
 {
+    // A mock that is laid over an ES module that has run replaces what its names stand for and adds none.
+    auto counts = [&](ModuleID each) {
+        if (!isMocked(each))
+            return false;
+        const LoadedModule* loaded = which == MocksAskedFor::ThoseThatAddNames && data(each).isESModuleOfProgram() ? loadedIfExists(each) : nullptr;
+        return !loaded || !loaded->hasMockLaidOver;
+    };
     // `export * from` a mocked module passes on what nobody can list. Stars lead round in rings and meet again behind a fork: each module is asked once.
     BitVector seen(m_table.size());
     Vector<ModuleID, 8> toAsk { module };
@@ -102,7 +109,7 @@ bool Modules::isMockedInItsImage(ModuleID module)
                 return true;
             continue;
         }
-        if (isMocked(fileOf(asked)) || isMocked(asked))
+        if (counts(fileOf(asked)) || counts(asked))
             return true;
         if (!data(asked).hasDynamicStarExport())
             continue;
@@ -162,7 +169,7 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules)
             case StarExportResolution::Type::Error:
                 if (requiredName.mayBeAbsent && data(exporter).exportRule != SyntheticExportRule::RuntimeModule)
                     continue;
-                if (isMockedInItsImage(exporter))
+                if (isMockedInItsImage(exporter, MocksAskedFor::ThoseThatAddNames))
                     continue;
                 // A name that a mock of a module of the library leaves out is undefined.
                 if (resolution == StarExportResolution::Type::NotFound && data(exporter).isOfLibrary() && exportsWhatMockNamesAlone(exporter))

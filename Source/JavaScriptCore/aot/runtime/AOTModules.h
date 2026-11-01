@@ -205,7 +205,8 @@ public:
         ModuleID mocked;
     };
     std::optional<AnswerOfMock> mockThatAnswersFor(ModuleID passingOn, const ModuleExportData& passedOn) const;
-    bool isMockedInItsImage(ModuleID);
+    enum class MocksAskedFor : uint8_t { All, ThoseThatAddNames };
+    bool isMockedInItsImage(ModuleID, MocksAskedFor = MocksAskedFor::All);
     // A mock that comes before the body of an ES module has run stands for the whole module: the loader of `bun run` takes what the factory answers for the module itself.
     // So a name that the factory leaves out is no export: no key of the namespace object. See fillExportsOfBodyThatNeverRuns() for whoever reads the variable.
     void leaveOutWhatMockLacks(ModuleID, JSObject* exportsOfMock);
