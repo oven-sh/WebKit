@@ -17,7 +17,7 @@ import { emitCppRuntimeOperations } from "./emit-cpp-runtime-operations.ts";
 import { emitCppVerifier } from "./emit-cpp-verifier.ts";
 import { emitCppWalkers } from "./emit-cpp-walkers.ts";
 import { emitCppWire } from "./emit-cpp-wire.ts";
-import { emitRustAbi } from "./emit-rust-abi.ts";
+import { emitRustAbi, modulesOfCompileCallEnums } from "./emit-rust-abi.ts";
 import { emitRustBuilder } from "./emit-rust-builder.ts";
 import { emitRustChecks } from "./emit-rust-checks.ts";
 import { emitRustEntries } from "./emit-rust-entries.ts";
@@ -169,7 +169,7 @@ const filesOfOtherCrates: readonly RustCrateFile[] = [
   {
     name: "aot_schema_interface.rs",
     parent: "bun_aot_interface::ir::generated",
-    modules: ["compile_call_enums", "diagnostics", "limits", "statistics"],
+    modules: [...modulesOfCompileCallEnums, "diagnostics", "limits", "statistics"],
   },
 ];
 const rustFileName = "aot_schema.rs";
