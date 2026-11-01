@@ -1,0 +1,127 @@
+# function make(below) { const created = Object.create(below); created.items = 8; return created; }
+# function leaf(below) { const created = Object.create(below); created.extra = 1; return created; }
+# function tell(created) { report(created.items); report(created.extra); report(Object.getPrototypeOf(created) === null); }
+# const first = make(null);
+# const second = leaf(make(null));
+# const third = make(Object.getPrototypeOf(second));
+# const fourth = make(second);
+# tell(first);
+# tell(second);
+# tell(third);
+# tell(fourth);
+# report(Object.getPrototypeOf(third) === Object.getPrototypeOf(second));
+# report(Object.getPrototypeOf(fourth) === second);
+# report("end");
+# A place of Object.create is handed an object that it made itself and that another place has since made an object below, and then what the other place made.
+# At the end the shell runs the same text itself: every answer is the same.
+# FORM: AsRead
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function make(below) { const created = Object.create(below); created.items = 8; return created; } function leaf(below) { const created = Object.create(below); created.extra = 1; return created; } function tell(created) { report(created.items); report(created.extra); report(Object.getPrototypeOf(created) === null); } const first = make(null); const second = leaf(make(null)); const third = make(Object.getPrototypeOf(second)); const fourth = make(second); tell(first); tell(second); tell(third); tell(fourth); report(Object.getPrototypeOf(third) === Object.getPrototypeOf(second)); report(Object.getPrototypeOf(fourth) === second); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 15 of 15 of 15
+# CHECK-NEXT: exited with 0
+
+module m0 path="object-create-places-handed-each-others-objects.js" displayPath="object-create-places-handed-each-others-objects.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = Null @337
+    v7 = Call v1, -, v6 calleeName="make" @332
+    v8 = Convert v7 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @332
+    v9 = Convert v8 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @332
+    v10 = Null @369
+    v11 = Call v1, -, v10 calleeName="make" @364
+    v12 = Convert v11 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @364
+    v13 = Call v3, -, v12 calleeName="leaf" @359
+    v14 = Convert v13 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @359
+    v15 = Convert v14 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @359
+    v16 = Builtin builtin=Object @396
+    v17 = Builtin builtin=ObjectGetPrototypeOf @396
+    v18 = Call v17, v16, v15 calleeName="Object.getPrototypeOf" @403
+    v19 = Convert v18 declared={type=undefined|null|object flags=[IsExpected]} @396
+    v20 = Call v1, -, v19 calleeName="make" @391
+    v21 = Convert v20 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @391
+    v22 = Convert v21 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @391
+    v23 = Call v1, -, v15 calleeName="make" @443
+    v24 = Convert v23 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @443
+    v25 = Convert v24 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @443
+    v26 = Call v5, -, v9 calleeName="tell" @457
+    v27 = Call v5, -, v15 calleeName="tell" @470
+    v28 = Call v5, -, v22 calleeName="tell" @484
+    v29 = Call v5, -, v25 calleeName="tell" @497
+    v30 = Builtin builtin=GlobalThis @511
+    v31 = PropGet v30 key="report" [isFreeName] @511
+    v32 = Builtin builtin=Object @518
+    v33 = Builtin builtin=ObjectGetPrototypeOf @518
+    v34 = Call v33, v32, v22 calleeName="Object.getPrototypeOf" @525
+    v35 = Builtin builtin=Object @551
+    v36 = Builtin builtin=ObjectGetPrototypeOf @551
+    v37 = Call v36, v35, v15 calleeName="Object.getPrototypeOf" @558
+    v38 = StrictEq v34, v37 @518
+    v39 = Call v31, -, v38 calleeName="report" @511
+    v40 = Builtin builtin=GlobalThis @583
+    v41 = PropGet v40 key="report" [isFreeName] @583
+    v42 = Builtin builtin=Object @590
+    v43 = Builtin builtin=ObjectGetPrototypeOf @590
+    v44 = Call v43, v42, v25 calleeName="Object.getPrototypeOf" @597
+    v45 = StrictEq v44, v15 @590
+    v46 = Call v41, -, v45 calleeName="report" @583
+    v47 = Builtin builtin=GlobalThis @633
+    v48 = PropGet v47 key="report" [isFreeName] @633
+    v49 = String string="end" @640
+    v50 = Call v48, -, v49 calleeName="report" @633
+    v51 = Undefined @633
+    Return v51 @633
+}
+function f1 name="make" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object):
+    Jump -> next b1() @0
+  b1():
+    v1 = Builtin builtin=Object @39
+    v2 = Builtin builtin=ObjectCreate @39
+    v3 = Call v2, v1, v0 calleeName="Object.create" @46
+    v4 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @39
+    v5 = Integer integer=8 @77
+    PropSet v4, v5 key="items" @61
+    Return v4 @87
+}
+function f2 name="leaf" module=m0 position=98 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object):
+    Jump -> next b1() @98
+  b1():
+    v1 = Builtin builtin=Object @137
+    v2 = Builtin builtin=ObjectCreate @137
+    v3 = Call v2, v1, v0 calleeName="Object.create" @144
+    v4 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @137
+    v5 = Integer integer=1 @175
+    PropSet v4, v5 key="extra" @159
+    Return v4 @185
+}
+function f3 name="tell" module=m0 position=196 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object):
+    Jump -> next b1() @196
+  b1():
+    v1 = Builtin builtin=GlobalThis @221
+    v2 = PropGet v1 key="report" [isFreeName] @221
+    v3 = PropGet v0 key="items" @228
+    v4 = Call v2, -, v3 calleeName="report" @221
+    v5 = Builtin builtin=GlobalThis @244
+    v6 = PropGet v5 key="report" [isFreeName] @244
+    v7 = PropGet v0 key="extra" @251
+    v8 = Call v6, -, v7 calleeName="report" @244
+    v9 = Builtin builtin=GlobalThis @267
+    v10 = PropGet v9 key="report" [isFreeName] @267
+    v11 = Builtin builtin=Object @274
+    v12 = Builtin builtin=ObjectGetPrototypeOf @274
+    v13 = Call v12, v11, v0 calleeName="Object.getPrototypeOf" @281
+    v14 = TypeTest v13 testedType=null @274
+    v15 = Call v10, -, v14 calleeName="report" @267
+    v16 = Undefined @267
+    Return v16 @267
+}

@@ -1,0 +1,45 @@
+# const root = { r: 0 }   function one(below) { const created = Object.create(below); created.a = 1; return created }   function two(below) { const created = Object.create(below); created.b = 2; return created }   const second = two(one(root)); print(second.a, second.b, second.r)
+# The place `one` is handed a literal, and the place `two` is handed what `one` makes. The row of places above each ends, so each is a class, and the class of `one` is the class above
+# the class of `two`. Beside it: places whose classes would stand above each other are no classes (places-of-object-create-above-each-other-are-no-classes.ir).
+# FORM: AsRead
+# RUN(FLOW): pipeline ApplyFlowResults
+# RUN: run-in-shell
+# FLOW: layout L1 {{*}}key="a" {{*}}IsOfCreatedObject{{*}}classFlow={evaluations=AtMostOnce}
+# FLOW: layout L2 {{*}}key="b" {{*}}IsOfCreatedObject{{*}}classFlow={evaluations=AtMostOnce prototypeBase=L1}
+# CHECK: 1 2 0
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="r" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=0
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v2, -, v1
+    v5 = Call v3, -, v4
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="print" [isFreeName]
+    v8 = PropGet v5 key="a"
+    v9 = PropGet v5 key="b"
+    v10 = PropGet v5 key="r"
+    v11 = Call v7, -, v8, v9, v10
+    Return
+}
+function f1 name="one" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=1
+    PropSet v3, v4 key="a"
+    Return v3
+}
+function f2 name="two" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=2
+    PropSet v3, v4 key="b"
+    Return v3
+}

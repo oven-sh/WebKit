@@ -1,0 +1,11 @@
+# the classes above the classes of what Object.create makes form no ring: flow names each, the run time registers a prototype object for each, and its walks over the classes above and below a class have no bound.
+# A row of such classes that ends is valid
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidLayout 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="goodTop" flags=[IsOfCreatedObject] flow={baseState=None} classFlow={evaluations=AtMostOnce}
+layout L1 kind=Instance name="goodBelow" flags=[IsOfCreatedObject] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeBase=L0}
+layout L2 kind=Instance name="badFirst" flags=[IsOfCreatedObject] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeBase=L3}
+layout L3 kind=Instance name="badSecond" flags=[IsOfCreatedObject] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeBase=L2}

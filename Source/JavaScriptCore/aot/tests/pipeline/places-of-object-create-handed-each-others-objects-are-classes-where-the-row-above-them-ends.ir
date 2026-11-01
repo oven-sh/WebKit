@@ -1,0 +1,63 @@
+# const root = { r: 0 }   function one(below) { .. created.a = 1 .. }   function two(below) { .. created.b = 2 .. }   function three(below) { .. created.c = 3 .. }
+# const low = two(root); const middle = one(low); const leaf = three(middle); const again = two(middle); low.late = 4; print(again.a, again.b, again.r, again.late, leaf.late)
+# `one` is handed what `two` makes and `two` is handed what `one` makes, and all three places are classes. What `one` makes is also handed to `three`, which is handed nothing else,
+# so it is the prototype object of the class of `three` and not of `two`: the class above `two` is none, the class above `one` is that of `two`, and the class above `three` is that of `one`.
+# The row ends. What decides is the row of bases, not who is handed whose objects (places-of-object-create-above-each-other-are-no-classes.ir).
+# FORM: AsRead
+# RUN(FLOW): pipeline ApplyFlowResults
+# RUN: run-in-shell
+# FLOW: layout L1 {{*}}key="a" {{*}}IsOfCreatedObject{{*}}classFlow={evaluations=AtMostOnce prototypeBase=L2}
+# FLOW: layout L2 {{*}}key="b" {{*}}IsOfCreatedObject{{*}}classFlow={evaluations=AtMostOnce}
+# FLOW: layout L3 {{*}}key="c" {{*}}IsOfCreatedObject{{*}}classFlow={evaluations=AtMostOnce prototypeBase=L1}
+# CHECK: 1 2 0 4 4
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="r" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=0
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v3, -, v1
+    v6 = Call v2, -, v5
+    v7 = Call v4, -, v6
+    v8 = Call v3, -, v6
+    v9 = Integer integer=4
+    PropSet v5, v9 key="late"
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="print" [isFreeName]
+    v13 = PropGet v8 key="a"
+    v14 = PropGet v8 key="b"
+    v15 = PropGet v8 key="r"
+    v16 = PropGet v8 key="late"
+    v17 = PropGet v7 key="late"
+    v18 = Call v12, -, v13, v14, v15, v16, v17
+    Return
+}
+function f1 name="one" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=1
+    PropSet v3, v4 key="a"
+    Return v3
+}
+function f2 name="two" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=2
+    PropSet v3, v4 key="b"
+    Return v3
+}
+function f3 name="three" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=3
+    PropSet v3, v4 key="c"
+    Return v3
+}

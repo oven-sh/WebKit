@@ -1,0 +1,67 @@
+# function one(below) { const created = Object.create(below); created.a = 1; return created }   function two(below) { .. created.b = 2 .. }   function three(below) { .. created.c = 3 .. }
+# const first = one(null); const second = two(first); const third = three(second); const again = one(third); Object.setPrototypeOf(second, { other: 5 }); print(again.a, again.b, again.c, again.other)
+# Each place is handed what the one before it makes, and the first is handed what the last makes: no place hands itself anything, and the row of places above each still has no end.
+# None of the three is a class, and the new prototype of `second`, which lies above two of the other objects, is found from `again`.
+# FORM: AsRead
+# RUN(FLOW): pipeline ApplyFlowResults
+# STATISTIC: CopyClosureFactoriesChanges = 0
+# RUN: run-in-shell
+# FLOW: layout L1 {{*}}IsOfCreatedObject
+# FLOW-NOT: classFlow
+# FLOW: layout L2 {{*}}IsOfCreatedObject
+# FLOW-NOT: classFlow
+# FLOW: layout L3 {{*}}IsOfCreatedObject
+# FLOW-NOT: classFlow
+# FLOW: function f0
+# CHECK: 1 2 3 5
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="other" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Null
+    v4 = Call v0, -, v3
+    v5 = Call v1, -, v4
+    v6 = Call v2, -, v5
+    v7 = Call v0, -, v6
+    v8 = Integer integer=5
+    v9 = NewObject -, v8 layout=L0 fields=[0]
+    v10 = Builtin builtin=ObjectSetPrototypeOf
+    v11 = Call v10, -, v5, v9
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="print" [isFreeName]
+    v14 = PropGet v7 key="a"
+    v15 = PropGet v7 key="b"
+    v16 = PropGet v7 key="c"
+    v17 = PropGet v7 key="other"
+    v18 = Call v13, -, v14, v15, v16, v17
+    Return
+}
+function f1 name="one" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=1
+    PropSet v3, v4 key="a"
+    Return v3
+}
+function f2 name="two" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=2
+    PropSet v3, v4 key="b"
+    Return v3
+}
+function f3 name="three" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=3
+    PropSet v3, v4 key="c"
+    Return v3
+}

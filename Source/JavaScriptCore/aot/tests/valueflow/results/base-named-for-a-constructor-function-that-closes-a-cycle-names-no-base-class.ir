@@ -1,0 +1,37 @@
+# function F() {}   class X extends (() => F)() {}   F.prototype = Object.create(X.prototype); new F()
+# Flow proves that X extends F, and the front end names X as the base of F, because the prototype object of F is made below that of X. Each alone is legal.
+# A walk up the expected bases of a layout has to end, so the base that is named for the constructor function is dropped, as one that the program links is
+# (set-prototype-of-cycle-names-no-base-class.ir). The base that flow has proven stays
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="X" {{*}}baseState=Layout base=L1
+# CHECK: layout L1 kind=Instance name="F"
+# CHECK-NOT: prototypeBase
+# CHECK: function f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="X" constructor=f2 flags=[HasHeritage]
+layout L1 kind=Instance name="F" base=L0 constructor=f1 flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = ResolveHeritage v0
+    v3 = NewClass v1, v0, v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = PropGet v4 key="prototype"
+    v6 = Builtin builtin=ObjectCreate
+    v7 = Call v6, -, v5
+    PropSet v0, v7 key="prototype" mode=Strict
+    v9 = Construct v0
+    Return
+}
+function f1 name="F" flags=[HasThis] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="X" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L0
+    Return v3
+}

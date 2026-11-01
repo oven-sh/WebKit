@@ -1,0 +1,10 @@
+# a ring of expected bases is valid only where every base in it is as read. Here flow has proven the base of one class, and the base as read of the class above it leads back
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidLayout 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="goodAsReadFirst" base=L1 flags=[HasHeritage]
+layout L1 kind=Instance name="goodAsReadSecond" base=L0 flags=[HasHeritage]
+layout L2 kind=Instance name="badAsRead" base=L3 flags=[HasHeritage]
+layout L3 kind=Instance name="badProven" flags=[HasHeritage] flow={baseState=Layout base=L2}

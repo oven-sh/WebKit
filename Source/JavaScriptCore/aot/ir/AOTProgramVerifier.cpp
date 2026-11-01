@@ -351,20 +351,30 @@ std::optional<InternalError> findLayoutFlowError(const Program& program, LayoutI
     return std::nullopt;
 }
 
-template<typename Step>
-std::optional<LayoutID> findCyclicLayoutChain(const Program& program, const Step& stepOf)
+// The run time walks the expected bases of a class, and the classes below it, without a bound. A program as read may hold a ring of bases all the same: a base as read is
+// what the type of the heritage predicts. Nothing here tells which of those classes a program defines, so a ring is refused only where flow names a base on it.
+std::optional<LayoutID> findLayoutWhoseBaseFromFlowClosesRing(const Program& program)
 {
     enum class WalkState : uint8_t { Unvisited, OnPath, Done };
 
     auto& layouts = program.layouts;
+    auto stepOf = [&](LayoutID id) {
+        return expectedBaseOf(program.at(id));
+    };
     Vector<WalkState> states(FillWith { }, layouts.size(), WalkState::Unvisited);
     for (uint32_t index = 0; index < layouts.size(); ++index) {
         LayoutID id(index);
-        for (; id && states[id.index()] == WalkState::Unvisited; id = stepOf(layouts[id.index()]))
+        for (; id && states[id.index()] == WalkState::Unvisited; id = stepOf(id))
             states[id.index()] = WalkState::OnPath;
-        if (id && states[id.index()] == WalkState::OnPath)
-            return id;
-        for (LayoutID walked(index); walked && states[walked.index()] == WalkState::OnPath; walked = stepOf(layouts[walked.index()]))
+        if (id && states[id.index()] == WalkState::OnPath) {
+            LayoutID member = id;
+            do {
+                if (program.at(member).flow.baseState != BaseState::Unknown)
+                    return member;
+                member = stepOf(member);
+            } while (member != id);
+        }
+        for (LayoutID walked(index); walked && states[walked.index()] == WalkState::OnPath; walked = stepOf(walked))
             states[walked.index()] = WalkState::Done;
     }
     return std::nullopt;
@@ -564,7 +574,7 @@ void ProgramVerifier::verifyLayouts()
     if (hasFailed())
         return;
 
-    std::optional<LayoutID> cyclicLayout = findCyclicLayoutChain(m_program, [](const Layout& layout) { return layout.flow.base; });
+    std::optional<LayoutID> cyclicLayout = findLayoutWhoseBaseFromFlowClosesRing(m_program);
     if (cyclicLayout)
         fail({ .kind = InternalErrorKind::InvalidLayout, .layout = *cyclicLayout });
 }

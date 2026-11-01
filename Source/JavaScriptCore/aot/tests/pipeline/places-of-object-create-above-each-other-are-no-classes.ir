@@ -1,0 +1,52 @@
+# function one(below) { const created = Object.create(below); created.a = 1; return created }   function two(below) { const created = Object.create(below); created.b = 2; return created }   const first = one(null); const again = one(two(first)); first.late = 4; print(again.a, again.b, again.late)
+# The place `two` is handed what `one` makes, and `one` is handed what `two` makes. Were both classes, each would be the class above the other: the run time would register a prototype object
+# for each, and its walk over the classes below a class whose prototype object changes would go round the two without end.
+# A place is a class only where the row of bases above it ends in a class. Neither is one here, and the store into `first`, which lies above the two other objects, returns.
+# The pass that copies makers for each call leaves these two alone: a copy for each call would be a place of its own, and there would be no ring.
+# FORM: AsRead
+# RUN(FLOW): pipeline ApplyFlowResults
+# STATISTIC: CopyClosureFactoriesChanges = 0
+# RUN: run-in-shell
+# FLOW: layout L0 {{*}}IsOfCreatedObject
+# FLOW-NOT: classFlow
+# FLOW: layout L1 {{*}}IsOfCreatedObject
+# FLOW-NOT: classFlow
+# FLOW: function f0
+# CHECK: 1 2 4
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Null
+    v3 = Call v0, -, v2
+    v4 = Call v1, -, v3
+    v5 = Call v0, -, v4
+    v6 = Integer integer=4
+    PropSet v3, v6 key="late"
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="print" [isFreeName]
+    v10 = PropGet v5 key="a"
+    v11 = PropGet v5 key="b"
+    v12 = PropGet v5 key="late"
+    v13 = Call v9, -, v10, v11, v12
+    Return
+}
+function f1 name="one" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=1
+    PropSet v3, v4 key="a"
+    Return v3
+}
+function f2 name="two" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=2
+    PropSet v3, v4 key="b"
+    Return v3
+}
