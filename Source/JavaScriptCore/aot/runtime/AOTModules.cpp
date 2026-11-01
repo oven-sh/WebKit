@@ -1273,10 +1273,18 @@ bool Modules::tryReplaceNamespaceHandedOn(ModuleID handedOn, JSValue value)
 {
     if (!m_moduleWithMockBeingLaid)
         return false;
-    Vector<ModuleID>& replaced = ensureLoaded(*m_moduleWithMockBeingLaid).namespacesReplacedByMock;
-    if (!replaced.contains(handedOn))
-        replaced.append(handedOn);
-    ensureLoaded(handedOn).handedOnInPlaceOfNamespace.set(*this, value);
+    LoadedModule& mocked = ensureLoaded(*m_moduleWithMockBeingLaid);
+    LoadedModule& target = ensureLoaded(handedOn);
+    if (!mocked.namespacesReplacedByMock.contains(handedOn)) {
+        mocked.namespacesReplacedByMock.append(handedOn);
+        // Another mock, over another module that hands the object on, may have given a value. The end of this one gives that back.
+        if (JSValue before = target.handedOnInPlaceOfNamespace) {
+            if (!mocked.handedOnBeforeMock)
+                mocked.handedOnBeforeMock.set(*this, createTableOfExports());
+            mocked.handedOnBeforeMock.get()->putDirectMayBeIndex(m_instance.globalObject, Identifier::from(*m_instance.vm, handedOn.index()), before);
+        }
+    }
+    target.handedOnInPlaceOfNamespace.set(*this, value);
     m_namespacesReplacedByMock.set(handedOn.index());
     didReplaceNamespaceHandedOn(handedOn);
     return true;
@@ -2290,7 +2298,6 @@ void Modules::letGoOfImportersOf(const BitVector& mocked, BitVector&& gone, cons
 {
     bool hasSeveralImages = m_instance.vm->aotState().hasSeveralImages;
     if (!m_momentsOfLoads.isEmpty() && images == ImagesSearched::All) {
-        uint32_t momentOfTestFile = m_instance.vm->aotState().momentOfTestFile;
         if (m_importersByStatement.isEmpty()) {
             m_importersByStatement.grow(m_table.size());
             for (uint32_t importer = 0; importer < m_table.size(); ++importer) {

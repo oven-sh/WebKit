@@ -1122,9 +1122,12 @@ void Modules::endMockLaidOverFile(ModuleID file)
         RETURN_IF_EXCEPTION(scope, void());
     }
 
+    JSObject* handedOnBefore = loaded.handedOnBeforeMock;
+    loaded.handedOnBeforeMock.set(*this, nullptr);
     for (ModuleID handedOn : std::exchange(loaded.namespacesReplacedByMock, { })) {
-        ensureLoaded(handedOn).handedOnInPlaceOfNamespace.set(*this, JSValue());
-        m_namespacesReplacedByMock.clear(handedOn.index());
+        JSValue before = handedOnBefore ? storedValue(realm, handedOnBefore, Identifier::from(vm, handedOn.index())) : JSValue();
+        ensureLoaded(handedOn).handedOnInPlaceOfNamespace.set(*this, before);
+        m_namespacesReplacedByMock.set(handedOn.index(), !!before);
         didReplaceNamespaceHandedOn(handedOn);
     }
     if (JSObject* variables = loaded.variablesBeforeMock) {

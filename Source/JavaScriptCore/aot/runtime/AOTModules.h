@@ -97,6 +97,7 @@ struct LinkContext {
     macro(JSValue, answerOfMockWhileOriginalRuns) \
     macro(JSObject*, exportsAddedByMock) \
     macro(JSValue, handedOnInPlaceOfNamespace) \
+    macro(JSObject*, handedOnBeforeMock) \
     macro(JSValue, errorKeptByLoader) \
     macro(JSObject*, exportsWhileRequired) \
     macro(JSObject*, capturedExports) \
