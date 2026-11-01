@@ -118,6 +118,17 @@ Function buildCalleeVersion(const DerivedFunctionKey& key, DerivedFunctionInputs
             return !isCallableBuiltin(program.builtins(), builtin);
         });
         type = received.intersectWith(type, inputs.types);
+        // So is an object of a class whose objects may be functions, a Proxy. It keeps the name that it has in the type of the body.
+        if (type.anyFunction && !type.isSubsetOf(received, program)) {
+            type.anyFunction = false;
+            for (const ClassPart& part : received.classes) {
+                if (!isFunctionClass(program.builtins(), part.builtinClass))
+                    continue;
+                Type named;
+                named.classes.append(part);
+                type = type.unionWith(named, inputs.types);
+            }
+        }
     }
     parameter.type = inputs.types.intern(type);
     parameter.setExpected({ });
