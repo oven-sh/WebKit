@@ -1695,6 +1695,9 @@ void Modules::didFailToLoadGraph(ModuleID root)
 {
     if (!m_waysThroughRealm.isEmpty()) [[unlikely]]
         takeUpWayThroughRealm(root);
+    for (LoadInFlight& load : m_loadsInFlight)
+        load.isLoaded |= load.root == root;
+    resumeImportsBehindLoad(root);
     if (m_rootWhoseFilesRanAhead != root)
         return;
     m_rootWhoseFilesRanAhead = std::nullopt;
@@ -1712,6 +1715,7 @@ void Modules::didLoadGraph(ModuleID root)
     }
     for (LoadInFlight& load : m_loadsInFlight)
         load.isLoaded |= load.root == root;
+    resumeImportsBehindLoad(root);
 }
 
 unsigned Modules::numberOfGraphsBeingLoaded()
@@ -1825,6 +1829,7 @@ void Modules::didStartLoad(JSPromise* load, ModuleID root)
         return earlier.promise->status() != JSPromise::Status::Pending && m_rootWhoseFilesRanAhead != earlier.root;
     });
     m_loadsInFlight.append(LoadInFlight { Strong<JSPromise>(*m_instance.vm, load), root });
+    queueJobOfRound(root);
 }
 
 // `bun run` loads the graph of a required ES module in steps, all of them before require() returns. A program can tell only where the steps of another graph come due among them.
@@ -3137,10 +3142,10 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     // The build has not seen this require(), or the root would be loaded by the loader. Under `bun run` the loader has the graph of the root in its hands while the file runs, and this load
     // gives it the file, which is what that graph waits for.
     bool givesLoaderFileThatRunsAhead = reason == SynchronousEvaluationReason::Require && m_innermostFilesBeingRun && importsFileThatRunsAhead(module);
-    bool needsLoader = needsLoaderForRequire(module);
     // As in JSModuleLoader::loadModuleSync(): the steps of the loader run before require() returns, those that a file of the graph asks for among them. One of them resumes a module whose awaited promise is settled.
     // A read of a deferred namespace evaluates the module and takes no step of the loader: an import() that the module calls is loaded in later jobs.
     bool runsStepsOfLoader = reason == SynchronousEvaluationReason::Require;
+    bool needsLoader = runsStepsOfLoader && needsLoaderForRequire(module);
     std::optional<VM::SynchronousModuleQueueScope> queue;
     if (runsStepsOfLoader)
         queue.emplace(*m_instance.vm);

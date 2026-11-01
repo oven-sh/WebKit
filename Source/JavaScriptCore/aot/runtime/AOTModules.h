@@ -564,6 +564,7 @@ public:
     void handGraphsToLoader();
     void didLoadGraph(ModuleID root);
     void didFailToLoadGraph(ModuleID root);
+    void resumeImportsBehindLoad(ModuleID root);
     void evaluateFilesOfLevel(ModuleID moduleOnWay, bool runsWhenLoaded);
     void runFileThatWaitsForItsTurn(ModuleID);
     bool isAskedForBehindLoadInFlight(ModuleID fileOrFace);
@@ -680,6 +681,7 @@ public:
     enum class AskedBy : bool { Loader, Import };
     bool textOfImportComesInLaterTurn(ModuleID, AskedBy);
     bool hasTextAtHand() const;
+    void didBeginTurn() { m_isInJobsBehindDelivery = false; }
     bool isFirstTextThatWaitsOnlyDelayed() const { return !m_textsThatWait.isEmpty() && m_textsThatWait[m_numberOfTextsThatHaveCome].isOnlyDelayed; }
     // No text of the program is read, and all of the program is one image.
     bool loadsAsExecutableDoes() const;
@@ -1137,6 +1139,12 @@ private:
         bool isWalked { false };
         bool hasMarksBelowRoot { false };
         bool isLoaded { false };
+        // The loader has begun with the root: the call came in an earlier job.
+        bool isAskedForRequests { false };
+        // Jobs of the call were counted before the loader was asked.
+        bool isOfEarlierJob { false };
+        // A job has run since the call.
+        bool hasSeenJob { false };
         RefPtr<PlanOfLoad> planWithoutMarks;
     };
     Vector<LoadInFlight, 2> m_loadsInFlight;
@@ -1202,7 +1210,12 @@ private:
         CountedImport* outerInOwnJob { nullptr };
         // All the jobs in which the loader would load the graph have passed.
         bool isLoaded { false };
+        // Jobs that passed while the call waited behind another, and are not counted yet.
+        uint32_t jobsOfWaitLeft { 0 };
+        // The graph is none whose jobs are counted: the loader is asked in the first job, and catches up.
+        bool isForLoader { false };
     };
+    void catchUpWithWait(CountedImport&);
     void decideHowCountedImportGoesOn(CountedImport&);
     uint32_t findJobOfNextNativeModule(PlanOfLoad&, uint32_t currentJob) const;
     void forgetCountedImport(const CountedImport&);
@@ -1339,6 +1352,27 @@ private:
         Strong<JSPromise> promise;
     };
     Vector<DeferredImport> m_deferredImports;
+    // The loader has only the root of a graph in its hands, so it cannot tell that a module belongs to a graph that was asked for earlier.
+    struct ImportBehindLoad {
+        ModuleID root;
+        ModuleID module;
+        std::optional<int64_t> referrerAsyncOrder;
+        Strong<JSPromise> promise;
+        uint32_t roundAtCall;
+        // The module runs with the graph that the call waits for: the call has nothing of its own to load, and settles behind that one.
+        bool isOfGraph;
+    };
+    Vector<ImportBehindLoad> m_importsBehindLoads;
+    void holdImportBehindLoad(ModuleID root, ModuleID, std::optional<int64_t> referrerAsyncOrder, JSPromise*, uint32_t jobsWaited);
+    // A call that waits behind another loses no time: it is made again as a call that has run the jobs that passed meanwhile.
+    uint32_t m_jobsThatCallHasWaited { 0 };
+    bool m_isCallMadeAgainOfGraphThatRan { false };
+    uint32_t m_roundsOfJobs { 0 };
+    LoadInFlight* findEarlierLoadAbove(ModuleID);
+    bool leadsTo(ModuleID from, ModuleID to);
+    bool shareCycleLeftToRun(ModuleID root, std::span<const ModuleID> otherRoots, ModuleID* whichOther = nullptr);
+    std::optional<ModuleID> findCountedImportOfEarlierJobThatSharesGraph(ModuleID root);
+    void resumeImportsBehindLoadWhenItSettles(JSPromise* load, ModuleID root);
     struct TextThatWaits {
         // The turn in which it was asked for, then whether an import() asked, then the order of the calls. There each text comes with a turn to itself, so a module that came ahead of the file
         // that calls import() has asked for what it imports by then. Here the texts of a level come together, and that module asks a few jobs behind the file.
@@ -1357,7 +1391,7 @@ private:
         // It waits for a turn and for nothing else: the calls of one turn are made again together, in their order.
         bool isOnlyDelayed { false };
         // How many jobs behind the first such call of its turn it was made: it is made again as many jobs behind that one.
-        uint8_t jobsBehindFirstCall { 0 };
+        uint32_t jobsBehindFirstCall { 0 };
     };
     // One job in each round of the queue, for as long as somebody has to know that a round has passed.
     Strong<JSPromise> m_promiseOfJobOfRound;
@@ -1366,8 +1400,8 @@ private:
     // What the jobs behind a delivery call for is not delayed a second time: the run lies one turn behind the executable's, once.
     bool m_isInJobsBehindDelivery { false };
     void queueJobOfRound(ModuleID moduleOfJob);
-    // That job is nobody who could tell in how many jobs a graph is loaded.
-    bool doOtherJobsWait() const { return m_instance.vm->defaultMicrotaskQueue().size() > (m_isJobOfRoundQueued ? 1u : 0u); }
+    // That job is nobody who could tell in how many jobs a graph is loaded. It may stand in a queue that the jobs were moved to.
+    bool doOtherJobsWait() const;
     void runJobOfRound(ModuleID moduleOfJob);
     Vector<TextThatWaits, 2> m_callsToMakeAgain;
     bool makeCallAgain(JSPromise*);

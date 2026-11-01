@@ -4440,7 +4440,7 @@ void Modules::holdText(JSPromise* promise, ModuleID module, JSCell* requestedRec
     size_t index = m_textsThatWait.size();
     while (index > m_numberOfTextsThatHaveCome && m_textsThatWait[index - 1].place > place)
         --index;
-    m_textsThatWait.insert(index, TextThatWaits { place, Strong<JSPromise>(vm, promise), module, Strong<JSCell>(vm, requestedRecord), referrerAsyncOrder, waitsApart, levelsAddedToPlace, caller, waitsAlone, isOnlyDelayed, static_cast<uint8_t>(isOnlyDelayed ? std::min<uint32_t>(m_jobsBehindFirstCall, 255) : 0) });
+    m_textsThatWait.insert(index, TextThatWaits { place, Strong<JSPromise>(vm, promise), module, Strong<JSCell>(vm, requestedRecord), referrerAsyncOrder, waitsApart, levelsAddedToPlace, caller, waitsAlone, isOnlyDelayed, isOnlyDelayed ? m_jobsBehindFirstCall : 0 });
     host().callInLaterTurn(m_instance.globalObject);
 }
 
@@ -4506,13 +4506,12 @@ bool Modules::deliverFirstTextThatWaits()
         promise->fulfill(vm, text.requestedRecord.get());
         return true;
     }
-    if (text.isOnlyDelayed) {
-        m_isInJobsBehindDelivery = true;
-        queueJobOfRound(text.module);
-    }
-    if (uint8_t jobs = text.jobsBehindFirstCall) {
-        queueStepOfImport(promise, moduleForJob(text.module), jobs);
+    // The next turn ends it: no job of the run time's own stands among those of the program meanwhile.
+    if (text.isOnlyDelayed && !std::exchange(m_isInJobsBehindDelivery, true))
+        host().callInLaterTurn(m_instance.globalObject);
+    if (text.jobsBehindFirstCall) {
         m_callsToMakeAgain.append(WTF::move(text));
+        makeCallAgain(promise);
         return true;
     }
     scope.release();
@@ -4541,6 +4540,12 @@ bool Modules::makeCallAgain(JSPromise* promise)
     size_t index = m_callsToMakeAgain.findIf([&](const TextThatWaits& text) { return text.promise.get() == promise; });
     if (index == notFound)
         return false;
+    // A step counts its jobs in a byte.
+    if (uint32_t jobs = std::min<uint32_t>(m_callsToMakeAgain[index].jobsBehindFirstCall, 255)) {
+        m_callsToMakeAgain[index].jobsBehindFirstCall -= jobs;
+        queueStepOfImport(promise, moduleForJob(m_callsToMakeAgain[index].module), jobs);
+        return true;
+    }
     TextThatWaits text = WTF::move(m_callsToMakeAgain[index]);
     m_callsToMakeAgain.removeAt(index);
     makeCallAgain(text);
@@ -4549,7 +4554,7 @@ bool Modules::makeCallAgain(JSPromise* promise)
 
 void Modules::queueJobOfRound(ModuleID moduleOfJob)
 {
-    if (std::exchange(m_isJobOfRoundQueued, true))
+    if (!loadsAsExecutableDoes() || std::exchange(m_isJobOfRoundQueued, true))
         return;
     VM& vm = *m_instance.vm;
     if (!m_promiseOfJobOfRound)
@@ -4557,15 +4562,25 @@ void Modules::queueJobOfRound(ModuleID moduleOfJob)
     queueStepOfImport(m_promiseOfJobOfRound.get(), moduleForJob(moduleOfJob), 1);
 }
 
+bool Modules::doOtherJobsWait() const
+{
+    MicrotaskQueue& queue = m_instance.vm->defaultMicrotaskQueue();
+    if (!m_isJobOfRoundQueued)
+        return !queue.isEmpty();
+    return !queue.allOf([&](const QueuedTask& task) {
+        return task.arguments()[0] == JSValue(m_promiseOfJobOfRound.get());
+    });
+}
+
 void Modules::runJobOfRound(ModuleID moduleOfJob)
 {
     m_isJobOfRoundQueued = false;
     ++m_jobsBehindFirstCall;
-    if (m_instance.vm->defaultMicrotaskQueue().isEmpty()) {
-        m_isInJobsBehindDelivery = false;
-        return;
-    }
-    if (m_instance.vm->aotState().numberOfCallsThatWaitApart || m_isInJobsBehindDelivery)
+    ++m_roundsOfJobs;
+    // Whoever calls from here on calls in a later job than they did.
+    for (LoadInFlight& load : m_loadsInFlight)
+        load.hasSeenJob = true;
+    if ((m_instance.vm->aotState().numberOfCallsThatWaitApart || !m_importsBehindLoads.isEmpty()) && !m_instance.vm->defaultMicrotaskQueue().isEmpty())
         queueJobOfRound(moduleOfJob);
 }
 
@@ -4574,6 +4589,10 @@ void deliverTextThatWaits(VM& vm)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     VMState& state = vm.aotState();
     ++state.turnOfTexts;
+    for (Instance* instance : state.instances) {
+        if (Modules* modules = instance->state ? instance->state->modules.get() : nullptr)
+            modules->didBeginTurn();
+    }
     bool isDelivered = false;
     while (!isDelivered && (state.numberOfTextsThatWait || state.numberOfCallsThatWaitApart)) {
         Modules* first = nullptr;
@@ -4600,6 +4619,7 @@ void deliverTextThatWaits(VM& vm)
 
 static JSC_DECLARE_HOST_FUNCTION(importBehindFactories);
 static JSC_DECLARE_HOST_FUNCTION(importFromOtherImageBehindFactories);
+static JSC_DECLARE_HOST_FUNCTION(resumeImportsBehindSettledLoad);
 
 // Another load may have come to the mock first: `await Promise.all([import("./a"), import("./b")])`.
 JSPromise* Modules::factoryThatWaitsBelow(ModuleID root, FactoryAskedForBy askedBy, JSValue& state)
@@ -4690,14 +4710,23 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         VM& vm = *m_instance.vm;
         bool isBuiltinModuleThatLoaderHas = isBuiltinModule && !isBuiltinModuleNewToLoader(module);
         bool isCalledByProgram = caller == ImportCaller::CompiledCode;
+        uint32_t jobsWaited = std::exchange(m_jobsThatCallHasWaited, 0);
+        bool isOfGraphThatRan = std::exchange(m_isCallMadeAgainOfGraphThatRan, false);
         if (isCalledByProgram && (!isBuiltinModule || isBuiltinModuleThatLoaderHas) && loaderOnlyHandsOverNamespace(module)) {
             JSPromise* promise = promiseForCaller();
             if (promise->isThenFastAndNonObservable()) [[likely]] {
-                queueStepOfImport(promise, moduleForJob(module), std::size(jobsOfImportOfEvaluatedModule));
+                // A call that waited for the graph with which its module ran settles right behind the call for that graph.
+                queueStepOfImport(promise, moduleForJob(module), isOfGraphThatRan ? numberOfJobsBehindEvaluation + 1 : std::size(jobsOfImportOfEvaluatedModule));
                 return promise;
             }
         }
         if (isCalledByProgram && isFile && canCountJobsOfImport(module)) {
+            // The earlier call goes on as it would alone, and this one is made again when its graph has run.
+            if (std::optional<ModuleID> earlier = findCountedImportOfEarlierJobThatSharesGraph(module)) {
+                JSPromise* promise = promiseForCaller();
+                holdImportBehindLoad(*earlier, module, referrerAsyncOrder, promise, jobsWaited);
+                return promise;
+            }
             // What the graph needs of the library is loaded at the call, as where the loader is asked.
             std::unique_ptr<ModuleLinkWalk> linkWalk = takeLinkWalk(module);
             {
@@ -4710,6 +4739,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
             if (promise->isThenFastAndNonObservable()) [[likely]] {
                 uint32_t serial = m_serialOfNextCountedImport++;
                 m_countedImports.append(CountedImport { Strong<JSPromise>(vm, promise), module, referrerAsyncOrder, serial });
+                m_countedImports.last().jobsOfWaitLeft = jobsWaited;
                 ++m_numberOfCountedImports;
                 if (!m_orderOfCountedJobs.isEmpty()) {
                     m_orderOfCountedJobs.append(serial);
@@ -4721,6 +4751,15 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         }
         handCountedImportsToLoader();
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+        // `import("./a.mjs")`, and in a later job `import("./c.mjs")`, where a imports c: the graph that was asked for first runs first, so a cycle of the two is entered at a.
+        if (!m_innermostFilesBeingRun && !vm.aotState().numberOfTextsThatWait && loadsAsExecutableDoes() && isCalledByProgram && isFile) {
+            if (LoadInFlight* earlier = findEarlierLoadAbove(module)) {
+                JSPromise* promise = promiseForCaller();
+                holdImportBehindLoad(earlier->root, module, referrerAsyncOrder, promise, jobsWaited);
+                resumeImportsBehindLoadWhenItSettles(earlier->promise.get(), earlier->root);
+                return promise;
+            }
+        }
         // A call is no part of the graph that a require() loads: it waits for the file as it does where nothing is loaded synchronously.
         bool isCalledUnderRequire = vm.synchronousModuleQueue() && isCommonJSFileOrFace(module) && isEvaluatedByLoader(fileOf(module));
         if (isCalledUnderRequire || (asyncLoadMustWaitFor(module) && !loader()->registryEntry(moduleKey(module)))) [[unlikely]] {
@@ -4734,6 +4773,20 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
             RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
             if (ModuleRegistryEntry* entry = loader()->registryEntry(record->moduleKey()); entry && entry->record() == record)
                 entry->markLoaded();
+        }
+        if (jobsWaited && isCalledByProgram && isFile && promiseOfCaller && promiseOfCaller->isThenFastAndNonObservable()) {
+            noteOrderAndModulesOfOnlyCountedImport();
+            uint32_t serial = m_serialOfNextCountedImport++;
+            m_countedImports.append(CountedImport { Strong<JSPromise>(vm, promiseOfCaller), module, referrerAsyncOrder, serial });
+            m_countedImports.last().jobsOfWaitLeft = jobsWaited;
+            m_countedImports.last().isForLoader = true;
+            ++m_numberOfCountedImports;
+            if (!m_orderOfCountedJobs.isEmpty()) {
+                m_orderOfCountedJobs.append(serial);
+                m_modulesOfCountedImports.set(module.index());
+            }
+            queueImportJob(realm, promiseOfCaller, module, referrerAsyncOrder);
+            return promiseOfCaller;
         }
         JSPromise* loaded = askLoaderForImport(module, referrerAsyncOrder, isCalledByProgram ? nullptr : promiseOfCaller);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
@@ -4762,6 +4815,150 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     m_modulesOfQueuedImports.set(module.index());
     queueImportJob(realm, importPromise, module, referrerAsyncOrder);
     return importPromise;
+}
+
+void Modules::holdImportBehindLoad(ModuleID root, ModuleID module, std::optional<int64_t> referrerAsyncOrder, JSPromise* promise, uint32_t jobsWaited)
+{
+    m_importsBehindLoads.append(ImportBehindLoad { root, module, referrerAsyncOrder, Strong<JSPromise>(*m_instance.vm, promise), m_roundsOfJobs - std::min(jobsWaited, m_roundsOfJobs), root == module || leadsTo(root, module) });
+    queueJobOfRound(module);
+}
+
+// Compiled code may come to the root first, by a road on which the loader links nothing.
+void Modules::resumeImportsBehindLoadWhenItSettles(JSPromise* load, ModuleID root)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    JSFunction* resume = JSFunction::create(vm, realm, 2, String(), resumeImportsBehindSettledLoad, ImplementationVisibility::Private);
+    load->performPromiseThenWithContext(vm, realm, resume, resume, jsUndefined(), jsNumber(moduleIDForHost(*m_instance.program, root).index()));
+}
+
+// `const first = import("./a.mjs"); await null; import("./b.mjs")`, where a imports b: the jobs of two graphs are counted side by side only where they share nothing that is left to run.
+std::optional<ModuleID> Modules::findCountedImportOfEarlierJobThatSharesGraph(ModuleID root)
+{
+    if (!m_numberOfCountedImports || m_innermostFilesBeingRun || !loadsAsExecutableDoes())
+        return std::nullopt;
+    Vector<ModuleID, 2> earlier;
+    forEachCountedImport([&](CountedImport& import) {
+        if (!import.jobsOfLoader && import.jobsRun)
+            earlier.append(import.module);
+    });
+    ModuleID found;
+    if (earlier.isEmpty() || !shareCycleLeftToRun(root, earlier.span(), &found))
+        return std::nullopt;
+    return found;
+}
+
+// A cycle is entered where the first call enters it. What two graphs share outside of a cycle runs the same whichever of them comes to it first, and the loader's own timing decides.
+bool Modules::shareCycleLeftToRun(ModuleID root, std::span<const ModuleID> otherRoots, ModuleID* whichOther)
+{
+    const uint32_t markOfRoot = takeMarkOfSearch();
+    std::span<uint32_t> placesSeen = m_placesSeenByPlans.mutableSpan();
+    Vector<ModuleID, 8> shared;
+    auto walk = [&](ModuleID start, uint32_t mark, std::optional<uint32_t> markOfOther) {
+        if (markOfOther && placesSeen[start.index()] == *markOfOther)
+            shared.append(start);
+        placesSeen[start.index()] = mark;
+        Vector<ModuleID, 16> modules { start };
+        while (!modules.isEmpty()) {
+            for (const ModuleRequestData& request : m_table.requests(modules.takeLast())) {
+                if (request.isHoisted || request.isRequire)
+                    continue;
+                ModuleID target = request.targetModule();
+                if (status(target) >= ModuleStatus::Evaluating)
+                    continue;
+                uint32_t seen = std::exchange(placesSeen[target.index()], mark);
+                if (markOfOther && seen == *markOfOther)
+                    shared.append(target);
+                if (seen != mark)
+                    modules.append(target);
+            }
+        }
+    };
+    for (ModuleID other : otherRoots) {
+        shared.shrink(0);
+        walk(root, markOfRoot, std::nullopt);
+        walk(other, takeMarkOfSearch(), markOfRoot);
+        for (ModuleID module : shared) {
+            if (!leadsTo(module, module))
+                continue;
+            if (whichOther)
+                *whichOther = other;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Modules::leadsTo(ModuleID from, ModuleID to)
+{
+    const uint32_t isSeen = takeMarkOfSearch();
+    std::span<uint32_t> placesSeen = m_placesSeenByPlans.mutableSpan();
+    placesSeen[from.index()] = isSeen;
+    Vector<ModuleID, 16> modules { from };
+    while (!modules.isEmpty()) {
+        for (const ModuleRequestData& request : m_table.requests(modules.takeLast())) {
+            if (request.isHoisted || request.isRequire)
+                continue;
+            ModuleID target = request.targetModule();
+            if (target == to)
+                return true;
+            if (std::exchange(placesSeen[target.index()], isSeen) != isSeen && status(target) < ModuleStatus::Evaluating)
+                modules.append(target);
+        }
+    }
+    return false;
+}
+
+Modules::LoadInFlight* Modules::findEarlierLoadAbove(ModuleID module)
+{
+    if (status(module) >= ModuleStatus::Evaluating)
+        return nullptr;
+    // The loader has come to the module for a graph, and has not run it.
+    bool isInHandsOfLoader = storedStatus(module) == StoredModuleStatus::InRecord;
+    for (LoadInFlight& load : m_loadsInFlight) {
+        if (load.isLoaded || load.promise->status() != JSPromise::Status::Pending)
+            continue;
+        if (load.root == module) {
+            if (load.isAskedForRequests || load.isOfEarlierJob)
+                return &load;
+            continue;
+        }
+        // The call for that graph came in an earlier job.
+        if ((isInHandsOfLoader || load.isOfEarlierJob || load.hasSeenJob) && shareCycleLeftToRun(module, std::span<const ModuleID>(&load.root, 1)))
+            return &load;
+    }
+    return nullptr;
+}
+
+// The loader evaluates the root in the job in which it links it, and a call that is made now comes to its graph later than that.
+void Modules::resumeImportsBehindLoad(ModuleID root)
+{
+    if (m_importsBehindLoads.isEmpty()) [[likely]]
+        return;
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Vector<ImportBehindLoad, 2> due;
+    m_importsBehindLoads.removeAllMatching([&](ImportBehindLoad& import) {
+        if (import.root != root)
+            return false;
+        due.append(WTF::move(import));
+        return true;
+    });
+    for (ImportBehindLoad& import : due) {
+        JSPromise* promise = import.promise.get();
+        // The job of this round is among them. It is spent in a job of the call's own: the graph it waited for may not have run yet.
+        SetForScope jobsWaited(m_jobsThatCallHasWaited, import.isOfGraph ? 0 : m_roundsOfJobs - import.roundAtCall + 1);
+        SetForScope isOfGraphThatRan(m_isCallMadeAgainOfGraphThatRan, import.isOfGraph);
+        JSPromise* loaded = startImport(import.module, import.referrerAsyncOrder, ImportCaller::CompiledCode, TextOfImport::HasCome, promise);
+        if (scope.exception()) [[unlikely]] {
+            if (vm.isTerminationException(scope.exception()))
+                return;
+            promise->rejectWithCaughtException(vm, scope);
+            continue;
+        }
+        if (loaded != promise)
+            settleAsLoaderDoes(m_instance.globalObject, promise, loaded);
+    }
 }
 
 void Modules::resumeDeferredImports(ModuleID file, uint8_t jobsUntilLoaded)
@@ -4939,6 +5136,10 @@ void Modules::handCountedImportsToLoader()
         if (!import.jobsOfLoader) {
             import.jobsOfLoader = MicrotaskQueue::create(vm);
             JSPromise* loaded = askLoaderForImport(import.module, import.referrerAsyncOrder);
+            for (LoadInFlight& load : m_loadsInFlight)
+                load.isOfEarlierJob |= load.root == import.module && import.jobsRun;
+            if (loaded && m_importsBehindLoads.containsIf([&](const ImportBehindLoad& behind) { return behind.root == import.module; }))
+                resumeImportsBehindLoadWhenItSettles(loaded, import.module);
             if (scope.exception()) [[unlikely]] {
                 import.promise->rejectWithCaughtException(vm, scope);
                 // The reactions of the rejected promise are jobs of the program, not steps of the loader.
@@ -4989,6 +5190,10 @@ bool Modules::continueCountedImport(JSPromise* importPromise, JSValue module, JS
         counted.jobsRun = job;
         if (!m_orderOfCountedJobs.isEmpty())
             m_orderOfCountedJobs.append(counted.serial);
+        if (counted.jobsOfWaitLeft) {
+            --counted.jobsOfWaitLeft;
+            return continueCountedImport(importPromise, module, referrerAsyncOrder);
+        }
         constexpr uint8_t unusedPayload = 0;
         m_instance.globalObject->queueMicrotask(*m_instance.vm, InternalMicrotask::CompiledModuleImport, unusedPayload, importPromise, module, referrerAsyncOrder);
         return true;
@@ -5034,6 +5239,25 @@ void Modules::forgetCountedImport(const CountedImport& import)
         m_modulesOfCountedImports.clear(found.module.index());
 }
 
+// The steps that the hand-over lets the loader take run no code of the program: they end in front of the job in which it links and evaluates.
+void Modules::catchUpWithWait(CountedImport& import)
+{
+    uint32_t most = jobInWhichLoaderAsksRoot - 1;
+    RefPtr<PlanOfLoad> plan;
+    if (import.jobsOfWaitLeft > most && planLevelsOfLoad(import.module, &plan)) {
+        uint32_t jobsOfLevels = plan->stepsOfWholeGraph;
+        for (uint32_t level = 1; !plan->stepsOfWholeGraph && level < plan->levels.size(); ++level)
+            jobsOfLevels = std::max(jobsOfLevels, level * PlanOfLoad::jobsOfLevel + plan->levels[level].laterRequests);
+        import.jobOfEvaluation = jobInWhichLoaderAsksRoot + jobsOfLevels + 2;
+        import.plan = WTF::move(plan);
+        most = import.jobOfEvaluation - 1;
+    }
+    uint32_t jobs = std::min(std::exchange(import.jobsOfWaitLeft, 0), most);
+    if (!m_orderOfCountedJobs.isEmpty())
+        m_orderOfCountedJobs.appendUsingFunctor(jobs, [&](size_t) { return import.serial; });
+    import.jobsRun = jobs;
+}
+
 void Modules::decideHowCountedImportGoesOn(CountedImport& import)
 {
     VM& vm = *m_instance.vm;
@@ -5056,7 +5280,9 @@ void Modules::decideHowCountedImportGoesOn(CountedImport& import)
         scope.release();
         runJobsThatAreDue(vm, *import.jobsOfLoader);
     };
-    if (import.jobsOfLoader || isLeftToHost(module))
+    if (import.isForLoader && !import.jobsOfLoader)
+        catchUpWithWait(import);
+    if (import.jobsOfLoader || isLeftToHost(module) || import.isForLoader)
         return goOnWithLoader();
 
     // Where no job waits none will run before the graph has run: nobody can tell in how many jobs it is loaded, unless the host does something of its own behind a job.
@@ -5128,10 +5354,19 @@ void Modules::decideHowCountedImportGoesOn(CountedImport& import)
         import.jobsRun = job;
         if (!m_orderOfCountedJobs.isEmpty())
             m_orderOfCountedJobs.append(import.serial);
-        queueImportJob(m_instance.globalObject, importPromise, module, import.referrerAsyncOrder);
+        bool spendsWait = import.jobsOfWaitLeft;
+        if (spendsWait)
+            --import.jobsOfWaitLeft;
+        else
+            queueImportJob(m_instance.globalObject, importPromise, module, import.referrerAsyncOrder);
+        std::optional<int64_t> referrerAsyncOrder = import.referrerAsyncOrder;
         didLeaveJob.release();
         m_innermostCountedImportInOwnJob = std::exchange(import.outerInOwnJob, nullptr);
         m_countedImports.append(WTF::move(import));
+        if (spendsWait) {
+            scope.release();
+            continueCountedImport(importPromise, moduleForJob(module), referrerAsyncOrder ? jsNumber(static_cast<double>(*referrerAsyncOrder)) : jsUndefined());
+        }
         return;
     }
     if (m_innermostEvaluation || importsFileBeingEvaluated(module)) [[unlikely]]
@@ -5173,6 +5408,8 @@ void Modules::decideHowCountedImportGoesOn(CountedImport& import)
     noteFilesThatLoaderHasComeTo();
     constexpr bool isLinked = true;
     JSPromise* evaluation = evaluate(module, import.referrerAsyncOrder, importPromise, nullptr, isLinked);
+    RETURN_IF_EXCEPTION(scope, void());
+    resumeImportsBehindLoad(module);
     RETURN_IF_EXCEPTION(scope, void());
     switch (evaluation->status()) {
     case JSPromise::Status::Fulfilled:
@@ -5549,6 +5786,8 @@ bool Modules::canTellHowGraphIsLoaded(ModuleID root)
     return !vm.defaultMicrotaskQueue().allOf([&](const QueuedTask& task) {
         if (task.job() >= InternalMicrotask::ModuleRegistryFetchSettled && task.job() <= InternalMicrotask::ImportModuleNamespace)
             return true;
+        if (m_isJobOfRoundQueued && task.arguments()[0] == JSValue(m_promiseOfJobOfRound.get()))
+            return true;
         return task.job() == InternalMicrotask::PromiseResolveThenableJobFast && m_loadsInFlight.containsIf([&](const LoadInFlight& load) {
             return !load.isLoaded && task.arguments()[0] == JSValue(load.promise.get());
         });
@@ -5612,6 +5851,8 @@ ModuleRegistryEntry* Modules::registryEntry(const Identifier& key, const ScriptF
 void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record, ModuleGraphLoadingState& load)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    for (LoadInFlight& known : m_loadsInFlight)
+        known.isAskedForRequests |= known.root == module;
     if (!isLoadedWithRequests(module) || !record->requestedModules().isEmpty())
         return;
     // What only a mocked module imports is not loaded.
@@ -7340,6 +7581,13 @@ void holdTextOfFetchedModule(JSGlobalObject* realm, ModuleID moduleOfHost, JSPro
 bool isCompiledModuleRecord(AbstractModuleRecord* record)
 {
     return record->inherits<ModuleRecord>();
+}
+
+JSC_DEFINE_HOST_FUNCTION(resumeImportsBehindSettledLoad, (JSGlobalObject* realm, CallFrame* callFrame))
+{
+    ModuleFromHost root(realm, ModuleID(callFrame->argument(1).asUInt32()));
+    modulesOf(realm)->resumeImportsBehindLoad(root);
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(continueImportWithModuleItself, (JSGlobalObject* realm, CallFrame* callFrame))
