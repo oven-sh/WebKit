@@ -1129,7 +1129,7 @@ public:
 
     JS_EXPORT_PRIVATE void whenIdle(Function<void()>&&);
 
-    // While > 1, LLInt->Baseline and Baseline->DFG compile thresholds behave as if multiplied by this.
+    // While > 1, LLInt->Baseline, Baseline->DFG and DFG->FTL compile thresholds behave as if multiplied by this.
     // Mutator-only (tier-up slow paths). Set from Options::startupJITDeferralScale or by the embedder.
     double startupJITDeferralScale() const { return m_startupJITDeferralScale; }
     JS_EXPORT_PRIVATE void setStartupJITDeferralScale(double); // <= 1 ends the window

@@ -30,6 +30,7 @@
 
 #include "CodeBlock.h"
 #include "FTLForOSREntryJITCode.h"
+#include "JITWorklist.h"
 #include "JumpTable.h"
 
 namespace JSC { namespace DFG {
@@ -323,7 +324,22 @@ RegisterSet JITCode::liveRegistersToPreserveAtExceptionHandlingCallSite(CodeBloc
 bool JITCode::checkIfOptimizationThresholdReached(CodeBlock* codeBlock)
 {
     ASSERT(codeBlock->jitType() == JITType::DFGJIT);
-    return codeBlock->dfgJITData()->tierUpCounter().checkIfThresholdCrossedAndSet(codeBlock);
+    VM& vm = codeBlock->vm();
+    double startupDeferralScale = vm.startupJITDeferralScale();
+    if (startupDeferralScale != 1) [[unlikely]] {
+        // A finished FTL compile forces this slow path (ToFTLDeferredCompilationCallback) so that the
+        // caller installs it. The scaled check below would not see that as a crossing, so mirror the
+        // worklist guard of CodeBlock::checkIfOptimizationThresholdReached. The only caller
+        // (shouldTriggerFTLCompile) already skips this check once an FTL replacement exists, so the
+        // hasOptimizedReplacement() case of that function needs no counterpart here.
+        if (JITWorklist* worklist = JITWorklist::existingGlobalWorklistOrNull()) {
+            if (worklist->compilationState(vm, JITCompilationKey(codeBlock->baselineVersion(), JITCompilationMode::FTL)) == JITWorklist::Compiled) {
+                optimizeNextInvocation(codeBlock);
+                return true;
+            }
+        }
+    }
+    return codeBlock->dfgJITData()->tierUpCounter().checkIfThresholdCrossedAndSet(codeBlock, startupDeferralScale);
 }
 
 void JITCode::optimizeNextInvocation(CodeBlock* codeBlock)

@@ -445,7 +445,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Double, dfgThresholdScaleForFewPerformanceCores, 2.0, Normal, "On Apple silicon Macs with few Super and Performance cores, scale the DFG tier-up thresholds (thresholdForOptimize*) by this factor."_s) \
     v(Double, ftlThresholdScaleForFewPerformanceCores, 1.5, Normal, "On Apple silicon Macs with few Super and Performance cores, scale the FTL tier-up thresholds (thresholdForFTLOptimize*) by this factor."_s) \
     v(Bool, forceEagerCompilation, false, Normal, nullptr) \
-    v(Double, startupJITDeferralScale, 1, Normal, "While the VM's startup window is active, LLInt->Baseline and Baseline->DFG tier-up require this multiple of the normal execution-count threshold (1 = off)."_s) \
+    v(Double, startupJITDeferralScale, 1, Normal, "While the VM's startup window is active, LLInt->Baseline, Baseline->DFG and DFG->FTL tier-up require this multiple of the normal execution-count threshold (1 = off)."_s) \
     v(Int32, thresholdForJITAfterWarmUp, 500, Normal, nullptr) \
     v(Int32, thresholdForJITSoon, 100, Normal, nullptr) \
     \
