@@ -1662,15 +1662,57 @@ auto Modules::mockThatAnswersFor(ModuleID passingOn, const ModuleExportData& pas
         }
         return false;
     };
+    // The tables name the variable, not the module that a statement names: of what a module names itself, the one that exports the variable is where it has it from. None: it declares it. Two: nobody knows.
+    auto comesThroughMock = [&](ModuleID module, ModuleID mocked, ModuleID faceOfMocked) {
+        BitVector seen(m_table.size());
+        while (!seen.quickSet(module.index())) {
+            std::optional<ModuleID> from;
+            for (const ModuleRequestData& request : m_table.requests(module)) {
+                ModuleID named = request.targetModule();
+                // In a ring a module that the walk came by has the variable from here.
+                if (request.isRequire || seen.quickGet(named.index()) || named == from)
+                    continue;
+                auto exportsVariable = [&](const ModuleExportData& entry) { return entry.kind() == ModuleExportKind::Variable && entry.variable == passedOn.variable; };
+                if (named != mocked && named != faceOfMocked && !std::ranges::any_of(m_table.exports(named), exportsVariable))
+                    continue;
+                if (from)
+                    return false;
+                from = named;
+            }
+            if (!from)
+                return false;
+            if (from == mocked || from == faceOfMocked)
+                return true;
+            module = *from;
+        }
+        return false;
+    };
+    auto reaches = [&](ModuleID from, ModuleID to) {
+        BitVector seen(m_table.size());
+        seen.quickSet(from.index());
+        Vector<ModuleID, 16> work { from };
+        while (!work.isEmpty()) {
+            for (const ModuleRequestData& request : m_table.requests(work.takeLast())) {
+                if (request.targetModule() == to)
+                    return true;
+                if (!request.isRequire && !seen.quickSet(request.target()))
+                    work.append(request.targetModule());
+            }
+        }
+        return false;
+    };
     for (size_t index : m_modulesWithMockInPlace) {
         JSObject* mock = mockInPlace(ModuleID(index));
         if (!mock || !seesMockOf(ModuleID(index), passingOn))
             continue;
         ModuleID declaring = moduleWithExportsOf(ModuleID(index));
         for (const ModuleExportData& entry : m_table.exports(declaring)) {
-            if (entry.kind() != ModuleExportKind::Variable || entry.isFromStarExport || entry.variable != passedOn.variable)
+            if (entry.kind() != ModuleExportKind::Variable || entry.variable != passedOn.variable)
                 continue;
-            if (takesFromAnotherModule(declaring))
+            // The mocked module has the name by a star from the module that asks, which declares it or has it by name.
+            if (entry.isFromStarExport && !passedOn.isFromStarExport && reaches(declaring, passingOn))
+                continue;
+            if (takesFromAnotherModule(declaring) && !comesThroughMock(passingOn, ModuleID(index), declaring))
                 break;
             return AnswerOfMock { mock, identifier(entry.name), ModuleID(index) };
         }
