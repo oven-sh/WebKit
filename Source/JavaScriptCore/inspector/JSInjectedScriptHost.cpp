@@ -1057,33 +1057,40 @@ public:
         profiler.vm().heap.collectNow(Sync, CollectionScope::Full);
         profiler.setActiveHeapAnalyzer(nullptr);
 
-        UncheckedKeyHashSet<JSCell*> queue;
+        // A Vector, and a cell enters it once: HashSet::takeAny() reads every bucket that was emptied before it, so a
+        // set that holds the 100,000 elements of one array at a time takes a few billion reads to drain.
+        Vector<JSCell*> queue;
 
         // Filter `m_holders` based on whether they're reachable from a non-Debugger root.
         UncheckedKeyHashSet<JSCell*> visited;
+        auto visit = [&](JSCell* cell) {
+            if (!m_rootsToIgnore.contains(cell) && visited.add(cell).isNewEntry)
+                queue.append(cell);
+        };
         for (auto* root : m_rootsToInclude)
-            queue.add(root);
-        while (auto* from = queue.takeAny()) {
-            if (m_rootsToIgnore.contains(from))
+            visit(root);
+        while (!queue.isEmpty()) {
+            auto successors = m_successors.find(queue.takeLast());
+            if (successors == m_successors.end())
                 continue;
-            if (!visited.add(from).isNewEntry)
-                continue;
-            for (auto* to : m_successors.get(from))
-                queue.add(to);
+            for (auto* to : successors->value)
+                visit(to);
         }
 
         // If a known holder is not an object, also consider all of the holder's holders.
         for (auto* holder : m_holders)
-            queue.add(holder);
-        while (auto* holder = queue.takeAny()) {
+            queue.append(holder);
+        while (!queue.isEmpty()) {
+            auto* holder = queue.takeLast();
             if (holder->isObject())
                 continue;
 
-            for (auto* from : m_predecessors.get(holder)) {
-                if (!m_holders.contains(from)) {
-                    m_holders.add(from);
-                    queue.add(from);
-                }
+            auto predecessors = m_predecessors.find(holder);
+            if (predecessors == m_predecessors.end())
+                continue;
+            for (auto* from : predecessors->value) {
+                if (m_holders.add(from).isNewEntry)
+                    queue.append(from);
             }
         }
 
