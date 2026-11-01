@@ -201,6 +201,13 @@ struct ArmState {
     std::optional<StateVariable> table;
 };
 
+template<typename State>
+static auto definitionsOfOpenedArm(State& state)
+{
+    auto& [arm, patternRead, subject, nextMethod, isSteppedWithoutCall, nextIsOfEngine, walkedList, callsSharedFunctions, storageIsUndecided, position, table] = state;
+    return std::pair { std::array { &subject, &nextMethod, &isSteppedWithoutCall, &nextIsOfEngine, &walkedList }, std::array { &position, &table } };
+}
+
 struct StepRequest {
     IteratorKind kind { IteratorKind::Sync };
     ResumeMode mode { ResumeMode::Next };
@@ -3095,15 +3102,14 @@ struct ArmDispatcher {
 
     void joinArmsByForm()
     {
-        static constexpr ValueID ArmState::* joinedValues[] { &ArmState::subject, &ArmState::nextMethod, &ArmState::isSteppedWithoutCall, &ArmState::nextIsOfEngine, &ArmState::walkedList };
         BlockID join = builder.addBlock(function.at(head).frequency);
         form = builder.addParameter(join, pass.types.intern(Type::integer({ 0, static_cast<int64_t>(states.size() - firstArmOfLastCopy) - 1 })));
 
         Vector<ArmState, 2> joinedStates = states;
         for (ArmState& state : joinedStates.mutableSpan().subspan(firstArmOfLastCopy)) {
-            for (auto value : joinedValues) {
-                if (state.*value)
-                    state.*value = addParameterLike(pass, builder, join, state.*value);
+            for (ValueID* value : definitionsOfOpenedArm(state).first) {
+                if (*value)
+                    *value = addParameterLike(pass, builder, join, *value);
             }
         }
 
@@ -3111,14 +3117,14 @@ struct ArmDispatcher {
             builder.moveToEndOf(ends[arm]);
             Arguments arguments { builder.appendInteger(static_cast<int64_t>(arm - firstArmOfLastCopy)) };
             for (size_t other = firstArmOfLastCopy; other < states.size(); ++other) {
-                const ArmState& state = states[other];
-                for (auto value : joinedValues) {
-                    if (state.*value)
-                        arguments.append(other == arm ? state.*value : expansion.appendUnspecifiedLike(state.*value));
+                auto [values, variables] = definitionsOfOpenedArm(states[other]);
+                for (const ValueID* value : values) {
+                    if (*value)
+                        arguments.append(other == arm ? *value : expansion.appendUnspecifiedLike(*value));
                 }
-                for (const std::optional<StateVariable>& variable : { state.position, state.table }) {
-                    if (variable && other != arm)
-                        expansion.define(*variable, expansion.appendUnspecifiedLike(variable->anyDefinition));
+                for (const std::optional<StateVariable>* variable : variables) {
+                    if (*variable && other != arm)
+                        expansion.define(**variable, expansion.appendUnspecifiedLike((*variable)->anyDefinition));
                 }
             }
             builder.emitJump(join, WTF::move(arguments));
