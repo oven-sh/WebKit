@@ -823,8 +823,8 @@ static bool hasUnlocked(const Instance& instance, BuiltinID member)
 // Over layers a realm runs several images, and each knows the objects that it has locked itself.
 bool isMemberUnlockedForTests(JSObject* object, UniquedStringImpl* key)
 {
-    Instance* first = instanceOfRealmOf(object);
-    if (!first)
+    Instance* running = instanceOfRealmOf(object);
+    if (!running)
         return false;
     const BuiltinTable& table = BuiltinTable::singleton();
     BuiltinName name = table.nameOf(object->vm(), key);
@@ -842,9 +842,9 @@ bool isMemberUnlockedForTests(JSObject* object, UniquedStringImpl* key)
     });
     if (isKnown)
         return isUnlockedByAll;
-    BuiltinID holder = builtinOfLockedObject(first, object);
+    BuiltinID holder = builtinOfLockedObject(running, object);
     BuiltinID member = holder ? table.findOwnMember(holder, name) : BuiltinID();
-    return member && hasUnlocked(*first, member);
+    return member && hasUnlocked(*running, member);
 }
 
 static bool admitsReplacedBuiltins(const Instance& instance)
