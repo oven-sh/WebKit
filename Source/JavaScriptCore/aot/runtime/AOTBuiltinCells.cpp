@@ -870,6 +870,22 @@ static BuiltinID builtinOfFunctionByIdentity(BuiltinCells& cells, JSObject* obje
     return { };
 }
 
+// Of such a property the table says that it is there and no more, so compiled code reads it wherever the program does. A declared type would be trusted.
+static bool isReadEveryTime(const BuiltinTable& table, BuiltinID member)
+{
+    if (table.at(member).kind != BuiltinKind::DataProperty)
+        return false;
+    bool hasRead = false;
+    for (const BuiltinOverload& overload : table.overloadsOf(member)) {
+        if (overload.mode != BuiltinCallMode::Get)
+            continue;
+        if (!table.at(overload.result.type).isAnything())
+            return false;
+        hasRead = true;
+    }
+    return hasRead;
+}
+
 bool isMemberTakenForConstant(JSObject* object, UniquedStringImpl* key)
 {
     JSGlobalObject* realm = object->realm();
@@ -889,7 +905,7 @@ bool isMemberTakenForConstant(JSObject* object, UniquedStringImpl* key)
         if (!holder)
             holder = builtinOfFunctionByIdentity(*cells, object);
         BuiltinID member = holder ? table.findOwnMember(holder, name) : BuiltinID();
-        if (member && isImmutableLocation(table, instance->tables(), member))
+        if (member && isImmutableLocation(table, instance->tables(), member) && !isReadEveryTime(table, member))
             return true;
     }
     return false;
