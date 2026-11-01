@@ -7,7 +7,7 @@ import * as assert from '../assert.js';
 // JS module links while the wasm module has no environment yet, so its imports cannot be compared
 // with another record's then: it links code of its own, which later records are compared with
 // once that is possible.
-const executableOf = f => /->(0x[0-9a-f]+),/.exec($vm.codeBlockFor(f))[1];
+const executableOf = f => /->(0x[0-9a-fA-F]+),/.exec($vm.codeBlockFor(f))[1];
 const sameCode = (f, g) => executableOf(f) === executableOf(g);
 const jsRoot = () => $vm.moduleLoaderImport($vm.createModuleLoader(), "./js-wasm-cycle/entry-function.js");
 async function wasmRoot() {
