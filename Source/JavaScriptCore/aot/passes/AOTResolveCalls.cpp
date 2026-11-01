@@ -228,7 +228,23 @@ static PropertyKeyID keyThatCalleeWasReadUnder(FunctionPassContext& context, Val
 
 // Also expects the bound function where flow saw the result of one kind of bind reach the call.
 // It stops expecting the bind's target and every function that an earlier test has ruled out: `this.m = this.m.bind(this)` hides the method behind the result.
-static CalleeCandidates calleeCandidatesOf(FunctionPassContext& context, const Value& operation, ValueID callee, BlockID block)
+static ValueID findArgumentThatCannotBeTaken(const Program& program, const Function& function, const Value& operation, std::span<const ValueID> arguments, FunctionID closureFunction, FunctionID candidate)
+{
+    if (isFollowedTo(program, operation, closureFunction))
+        return { };
+    const Function& callee = program.at(candidate);
+    for (size_t index = 0; index < std::min<size_t>(arguments.size(), callee.numberOfPositionalParameters()); ++index) {
+        const ClassPart* part = program.at(program.provenTypeOf(callee.parameters[index])).singleBuiltinClass();
+        if (!part || !part->contentsAreProven || !holdsOnlyNumbers(part->arrayStorage))
+            continue;
+        const Value& array = function.at(sameObjectThroughCasts(function, arguments[index]).valueInFrontOfFacts());
+        if (array.opcode == Opcode::NewArray && array.arrayStorage() != part->arrayStorage)
+            return arguments[index];
+    }
+    return { };
+}
+
+static CalleeCandidates calleeCandidatesWhateverIsHandedOver(FunctionPassContext& context, const Value& operation, ValueID callee, BlockID block)
 {
     const Program& program = context.program;
     const FlowResults& flow = context.inputs.flow;
@@ -276,6 +292,27 @@ static CalleeCandidates calleeCandidatesOf(FunctionPassContext& context, const V
     expected.add(bound);
     result.expect(WTF::move(expected));
     return result;
+}
+
+static CalleeCandidates calleeCandidatesOf(FunctionPassContext& context, const Value& operation, ValueID callee, BlockID block)
+{
+    CalleeCandidates result = calleeCandidatesWhateverIsHandedOver(context, operation, callee, block);
+    if (operation.opcode != Opcode::Call || result.proof() != CalleeProof::Test)
+        return result;
+    auto cannotBeCalled = [&](FunctionID candidate) { return !!findArgumentThatCannotBeTaken(context.program, context.function, operation, operation.variadicOperands(), candidate, candidate); };
+    if (std::ranges::none_of(result.expected().predicted(), cannotBeCalled)) [[likely]]
+        return result;
+    FunctionList left;
+    for (FunctionID candidate : result.expected().predicted()) {
+        if (!cannotBeCalled(candidate))
+            left.add(candidate);
+    }
+    CalleeCandidates filtered;
+    filtered.value = result.value;
+    filtered.mayBeNullish = result.mayBeNullish;
+    filtered.arriveOnWaysOfTheirOwn = result.arriveOnWaysOfTheirOwn;
+    filtered.expect(WTF::move(left));
+    return filtered;
 }
 
 static ValueID findClosureCreation(const Function& function, ValueID closure, FunctionID closureFunction)
@@ -1995,6 +2032,8 @@ struct CallResolver {
     ValueID appendCallOfArm(const CallArm& arm, ValueID thisValue, ValueID closure, std::span<const ValueID> arguments, ValueID newTarget = { }, ValueID restArray = { })
     {
         const Value& original = expansion.original();
+        if (ValueID argument = newTarget ? ValueID() : findArgumentThatCannotBeTaken(program, function, original, arguments, arm.closureFunction, arm.callee))
+            return expansion.append(makeAssumeType(argument, Proven::byRulesWithoutChecks(TypeTable::never)));
         Vector<ValueID, 8> captures = capturesOf(arm, closure, thisValue);
         return appendDirectCall(builder, {
             .callee = arm.callee,
@@ -2916,7 +2955,7 @@ struct CallResolver {
         if (keepsCalleeInFrame && !isAccessor(program.at(only)) && canLeaveByTailCall(program, only))
             return nullptr;
         // appendCall() puts no call where the receiver cannot be what the callee takes.
-        if (cannotBeThisOf(program.at(only), call.thisValueOperand()))
+        if (cannotBeThisOf(program.at(only), call.thisValueOperand()) || findArgumentThatCannotBeTaken(program, function, call, call.variadicOperands(), only, only))
             return nullptr;
         TypeID result = TypingContext { program, function, context.types }.typeIDOf(program.at(only).result());
         if (TypeTable::isProvisional(result) || result == TypeTable::never || !program.at(result).isSubsetOf(typeOf(site.position.value), program))
