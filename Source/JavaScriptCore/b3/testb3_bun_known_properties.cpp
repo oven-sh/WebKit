@@ -11,6 +11,7 @@
 #include "B3CheckKnownProperties.h"
 #include "B3CheckValue.h"
 #include "B3ExtractValue.h"
+#include "B3FoldPathConstants.h"
 #include "B3HoistLoopInvariantValues.h"
 #include "B3InductionRecords.h"
 #include "B3IntRange.h"
@@ -518,6 +519,74 @@ static void testHoistsKnownDereferenceableLoadAboveGuard()
     }
 }
 
+static void testKnownPropertiesDieWithOperandOfPath()
+{
+    // for (index = 0; index < bound; ++index) sum += pointer ? 1 : *copy(pointer + 8). The side on which the pointer is null never runs, and is the likely one.
+    for (bool foldsImpliedComparisons : { true, false }) {
+        for (bool isCompiled : { true, false }) {
+            Policy policy = optimizingPolicy();
+            if (!foldsImpliedComparisons)
+                policy.disable(PolicySwitch::FoldImpliedComparisons);
+            Procedure proc(policy);
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            BasicBlock* header = proc.addBlock();
+            BasicBlock* body = proc.addBlock();
+            BasicBlock* isNull = proc.addBlock();
+            BasicBlock* isNotNull = proc.addBlock();
+            BasicBlock* latch = proc.addBlock();
+            BasicBlock* exit = proc.addBlock();
+            Variable* index = proc.addVariable(Int64);
+            Variable* sum = proc.addVariable(Int64);
+            auto arguments = cCallArgumentValues<int64_t, int64_t*, int64_t>(proc, root).eager();
+            Value* pointer = arguments[1];
+            graph.set(root, index, graph.int64(root, 0));
+            graph.set(root, sum, graph.int64(root, 0));
+            graph.jump(root, header);
+            graph.branch(header, graph.make(header, LessThan, graph.get(header, index), arguments[0]), body, exit);
+            graph.branch(body, pointer, rarely(isNotNull), FrequentedBlock(isNull));
+            Value* address = graph.make(isNull, Add, pointer, graph.int64(isNull, 8));
+            PatchpointValue* copy = isNull->appendNew<PatchpointValue>(proc, Int64, Origin());
+            copy->effects = Effects::none();
+            copy->appendSomeRegister(address);
+            copy->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                jit.move(params[1].gpr(), params[0].gpr());
+            });
+            MemoryValue* load = graph.load(isNull, Int64, copy, 0, firstHeap);
+            proc.setKnownDereferenceableBytes(pointer, 256);
+            proc.setKnownDereferenceableBytes(address, 248);
+            proc.setKnownDereferenceableBytes(copy, 248);
+            proc.setKnownRange(load, IntRange(0, 100));
+            graph.increase(isNull, sum, load);
+            graph.jump(isNull, latch);
+            graph.increase(isNotNull, sum, 1);
+            graph.jump(isNotNull, latch);
+            graph.increase(latch, index, 1);
+            graph.jump(latch, header);
+            graph.ret(exit, graph.get(exit, sum));
+            proc.resetReachability();
+            validate(proc);
+
+            if (isCompiled) {
+                auto code = compileProc(proc, 2);
+                int64_t memory[32] = { };
+                CHECK_EQ(invoke<int64_t>(*code, static_cast<int64_t>(10), memory, static_cast<int64_t>(3)), 10);
+                continue;
+            }
+            fixSSA(proc);
+            foldPathConstants(proc);
+            validate(proc);
+            CHECK(address->child(0)->isInt64(0));
+            CHECK_EQ(proc.knownDereferenceableBytes(pointer), 256u);
+            CHECK(!proc.knownDereferenceableBytes(address));
+            CHECK(!proc.knownDereferenceableBytes(copy));
+            // The load stays where it is, so what it gives is what it always gave.
+            CHECK(proc.effectsOf(load).controlDependent);
+            CHECK(proc.knownRange(load) == IntRange(0, 100));
+        }
+    }
+}
+
 static void testInductionRecordFollowsIdentity()
 {
     Procedure proc(trustingPolicy());
@@ -941,6 +1010,7 @@ void addBunKnownPropertyTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testUntrustedPropertiesAreNotStored());
     RUN(testSubstitutedOperandIsAskedAgain());
     RUN(testHoistsKnownDereferenceableLoadAboveGuard());
+    RUN(testKnownPropertiesDieWithOperandOfPath());
     RUN(testInductionRecordFollowsIdentity());
     RUN(testInductionRecordDiesWithPhi());
     RUN(testInductionRecordDiesWithNext());
