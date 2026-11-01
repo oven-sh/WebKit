@@ -16,6 +16,7 @@
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTProgramFile.h"
+#include "AOTSchemaRuntimeOperations.h"
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
 #include "AOTThreads.h"
@@ -31,6 +32,7 @@
 #include "TopExceptionScope.h"
 #include <stdlib.h>
 #include <wtf/DataLog.h>
+#include <wtf/SetForScope.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -905,6 +907,43 @@ static void noteDeletedPrefix(Collection& collection)
         ++deletedPrefix;
 }
 
+static void testAnOrdinaryTableHasNoDeletedPrefix(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    for (Collection::Kind kind : { Collection::Kind::Set, Collection::Kind::Map }) {
+        Collection collection(program, kind);
+        {
+            SetForScope asBesideNoCompiledCode(vm.aotState().hasCompiledCode, false);
+            collection.add(jsNumber(0), jsNumber(0));
+        }
+        auto hasCompactStorage = [&] {
+            return kind == Collection::Kind::Set ? uncheckedDowncast<JSSet>(collection.owner())->hasCompactStorage() : uncheckedDowncast<JSMap>(collection.owner())->hasCompactStorage();
+        };
+        auto firstKey = [&] {
+            EncodedJSValue results[2];
+            UGPRPair answer = kind == Collection::Kind::Set ? operationAOTSetNext(&program.instance(), collection.owner(), JSValue::encode(jsNull()), 0, results) : operationAOTMapNext(&program.instance(), collection.owner(), JSValue::encode(jsNull()), 0, results);
+            size_t hasEntry;
+            size_t entry;
+            decodeResult(answer, hasEntry, entry);
+            return hasEntry ? JSValue::decode(results[0]) : JSValue();
+        };
+        AOT_TEST_CHECK(!hasCompactStorage());
+        unsigned next = 1;
+        while (next < 100)
+            collection.add(jsNumber(next++), jsNumber(0));
+        for (unsigned oldest = 0; oldest < 2000; ++oldest) {
+            AOT_TEST_CHECK(firstKey() == jsNumber(oldest) && !CompactTable::deletedPrefixOf(collection.owner()));
+            AOT_TEST_CHECK(collection.remove(jsNumber(oldest)));
+            collection.add(jsNumber(next++), jsNumber(0));
+        }
+        for (unsigned oldest = 2000; oldest + 1 < next; ++oldest) {
+            AOT_TEST_CHECK(firstKey() == jsNumber(oldest));
+            AOT_TEST_CHECK(collection.remove(jsNumber(oldest)));
+        }
+        AOT_TEST_CHECK(firstKey() == jsNumber(next - 1) && !hasCompactStorage() && !CompactTable::deletedPrefixOf(collection.owner()));
+    }
+}
+
 static void testTheDeletedPrefixEndsWithItsTable(LoadedProgram& program)
 {
     for (Collection::Kind kind : { Collection::Kind::Set, Collection::Kind::Map }) {
@@ -1199,6 +1238,7 @@ std::span<const NativeTest> compactTableTests()
         { "compact-table/wide-references/mostly-deleted-is-let-go"_s, wide<testATableThatIsMostlyDeletedIsLetGo> },
         { "compact-table/swing-keeps-its-table"_s, narrow<testACollectionThatSwingsAboutOneSizeKeepsItsTable> },
         { "compact-table/deleted-prefix"_s, narrow<testTheDeletedPrefixEndsWithItsTable> },
+        { "compact-table/ordinary-table-has-no-prefix"_s, narrow<testAnOrdinaryTableHasNoDeletedPrefix> },
         { "compact-table/wide-references/deleted-prefix"_s, wide<testTheDeletedPrefixEndsWithItsTable> },
         { "compact-table/readded-key-keeps-one-slot"_s, narrow<testAKeyThatIsDeletedAndAddedAgainKeepsOneSlot> },
         { "compact-table/wide-references/readded-key-keeps-one-slot"_s, wide<testAKeyThatIsDeletedAndAddedAgainKeepsOneSlot> },
