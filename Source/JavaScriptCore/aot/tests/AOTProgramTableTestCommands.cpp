@@ -575,6 +575,8 @@ static void printFunctions(const TablesContext& context)
     RecordLine(context, "closures"_s).field("first"_s, range.first).field("end"_s, range.end).field("omittedWords"_s, range.omittedWordCount);
     for (uint32_t index = 0; index < tables.numberOfFunctions(); ++index)
         printFunctionRecord(context, index);
+    for (uint32_t function : tables.asyncFunctionsWithoutAwait())
+        RecordLine(context, "asyncWithoutAwait"_s).field("function"_s, FunctionID(function));
     for (const ConstructorData& constructor : tables.constructors())
         RecordLine(context, "constructor"_s).field("function"_s, FunctionID(constructor.function)).field("layout"_s, LayoutID(constructor.layoutIndex));
     for (const BoundFunctionData& bound : tables.boundFunctions()) {

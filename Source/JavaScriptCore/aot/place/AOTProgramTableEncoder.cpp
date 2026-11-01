@@ -3501,6 +3501,12 @@ void encodeModuleTables(TableEncoder& encoder)
         }
     }
     encoder.setTable(ProgramTableIndex::modulesReachedUnderOtherNames, modulesReachedUnderOtherNames);
+    Vector<uint32_t> asyncFunctionsWithoutAwait;
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        if (firstSourceOf(program, FunctionID(index)).index() == index && isAsyncFunctionWithoutAwait(program, program.functions[index]))
+            asyncFunctionsWithoutAwait.append(index);
+    }
+    encoder.setTable(ProgramTableIndex::asyncFunctionsWithoutAwait, asyncFunctionsWithoutAwait);
     encoder.setTable(ProgramTableIndex::modules, lists.modules);
     encoder.setTable(ProgramTableIndex::moduleDirectories, lists.directories);
     encoder.setTable(ProgramTableIndex::moduleDisplayPaths, lists.displayPaths);

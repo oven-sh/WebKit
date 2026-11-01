@@ -277,6 +277,16 @@ bool isInRuntimeModule(const Program& program, const Function& function)
     return function.module && program.at(function.module).kind == ModuleKind::RuntimeSource;
 }
 
+// The parser of the engine says the same of a function that it compiles: AsyncFunctionWithoutAwaitFeature. An `await` of a function that is written inside does not count.
+bool isAsyncFunctionWithoutAwait(const Program& program, const Function& source)
+{
+    if (!source.has(FunctionFlags::IsAsync) || source.has(FunctionFlags::IsGenerator))
+        return false;
+    // What the front end says of the syntax stays with the body.
+    auto& written = source.role == FunctionRole::CoroutineRamp ? program.at(source.creator.as<CreatorRecord::Coroutine>().body) : source;
+    return !written.syntax.contains(FunctionSyntax::HasWrittenAwait);
+}
+
 static FunctionKindData functionKindOf(const Program& program, const SlotPlan& slots, FunctionID id)
 {
     FunctionID targetID = closureTargetOf(program, id);
