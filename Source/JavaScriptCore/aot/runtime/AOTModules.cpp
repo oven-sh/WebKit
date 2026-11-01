@@ -4540,7 +4540,9 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         }
         handCountedImportsToLoader();
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
-        if (asyncLoadMustWaitFor(module) && !loader()->registryEntry(moduleKey(module))) [[unlikely]] {
+        // A call is no part of the graph that a require() loads: it waits for the file as it does where nothing is loaded synchronously.
+        bool isCalledUnderRequire = vm.synchronousModuleQueue() && isCommonJSFileOrFace(module) && isEvaluatedByLoader(fileOf(module));
+        if (isCalledUnderRequire || (asyncLoadMustWaitFor(module) && !loader()->registryEntry(moduleKey(module)))) [[unlikely]] {
             JSPromise* promise = promiseForCaller();
             m_deferredImports.append(DeferredImport { fileOf(module), Strong<JSPromise>(vm, promise) });
             return promise;
