@@ -4169,7 +4169,9 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
                 return;
             if (!modules->m_modulesWhoseFactoryRuns.get(file->index()) && !modules->m_importsMadeByOwnFactory.contains(*file))
                 modules->dropErrorOfMockKeptByLoader(*file);
-            modules->runMocksBelow(*file);
+            // The factories of one load take turns: behind one that has not settled, the loader's fetch walks on.
+            if (!walkStopped)
+                walkStopped = modules->runMocksBelow(*file);
         });
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     }
