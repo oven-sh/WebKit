@@ -15,6 +15,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <wtf/Function.h>
 #include <wtf/PrintStream.h>
 #include <wtf/text/ASCIILiteral.h>
 #include <wtf/text/StringView.h>
@@ -31,6 +32,7 @@ struct TestCommandContext {
     Vector<Wire::LossRecord> losses { };
     bool isOptimizing { false };
     const Wire::CompileOptions* options { nullptr };
+    WTF::Function<std::unique_ptr<Program>(BuildContext&)> readProgramAgain { };
 };
 
 enum class ProgramAsRead : uint8_t { AsParsed, WithLibrary, TypedAndVerified };

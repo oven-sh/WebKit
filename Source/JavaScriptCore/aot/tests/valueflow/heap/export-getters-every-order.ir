@@ -1,5 +1,7 @@
 # RUN: valueflow-solve every-order
 # CHECK: orders 512 answers 1
+# CHECK: orders 128 | proofs: answers 1 | predictions: answers 1
+# CHECK: threads 1 2 4 16 | answers 1
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

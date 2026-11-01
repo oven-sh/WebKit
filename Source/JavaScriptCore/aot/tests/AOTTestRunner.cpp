@@ -233,6 +233,15 @@ static CommandResult runCommand(const TestCommand& command, const TestFile& file
     TestCommandContext context { WTF::move(program), form, run.arguments.span(), out, build };
     context.isOptimizing = file.isOptimizing;
     context.options = &options;
+    context.readProgramAgain = [&](BuildContext& other) -> std::unique_ptr<Program> {
+        if (!command.defaultForm)
+            return nullptr;
+        bool needsLibrary = form == IRForm::AsRead && command.programAsRead != ProgramAsRead::AsParsed;
+        std::unique_ptr<Program> again = parseProgram(needsLibrary ? withStandInLibrary(file.text) : file.text, form, other, VerifierInputs { .isOptimizing = file.isOptimizing });
+        if (again && form == IRForm::AsRead && command.programAsRead == ProgramAsRead::TypedAndVerified && !runReadStage(*again, other))
+            return nullptr;
+        return again;
+    };
     command.run(context);
     build.diagnostics().finish(context.program.get());
     Vector<Wire::LossRecord> losses = WTF::move(context.losses);
