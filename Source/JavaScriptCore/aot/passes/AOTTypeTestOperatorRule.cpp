@@ -746,10 +746,14 @@ static std::optional<uint32_t> findNumberThatBoundsCounter(TestSiteReporter& rep
     if (!loop)
         return std::nullopt;
     // The test pays in front of the loop alone. Its proof has to last around the loop then, through code that the copy holds too, and a loop in there is more than a copy may hold.
-    for (unsigned index = 0; index < loop->size(); ++index) {
-        if (loops.innerMostLoopOf(loop->at(index)) != loop)
-            return std::nullopt;
-    }
+    auto holdsLoop = [&] {
+        reporter.context().build.statistics().count(StatisticID::BlocksReadForLoopsInsideLoops, loop->size());
+        for (unsigned index = 0; index < loop->size(); ++index) {
+            if (loops.innerMostLoopOf(loop->at(index)) != loop)
+                return true;
+        }
+        return false;
+    };
 
     for (const InductionVariable& variable : reporter.analyses().inductionVariables().of(*loop).variables) {
         if (variable.step.kind != InductionStepKind::Constant || !variable.start)
@@ -757,6 +761,8 @@ static std::optional<uint32_t> findNumberThatBoundsCounter(TestSiteReporter& rep
         for (const InductionTest& test : variable.tests) {
             if (test.comparison != reporter.use() || test.tested != TestedValue::BeforeStep || test.boundKind != LoopBoundKind::Invariant || !isBoundingRelation(test.relation, variable.direction))
                 continue;
+            if (holdsLoop())
+                return std::nullopt;
             if (!startsAtInt32(reporter, *loop, variable, test))
                 break;
             ValueID bound = reporter.analyses().identityOf(test.bound);
