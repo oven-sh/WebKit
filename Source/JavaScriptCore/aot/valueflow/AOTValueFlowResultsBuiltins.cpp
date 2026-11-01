@@ -653,6 +653,29 @@ static bool mayWriteLockedLocationUnderKeyNobodyKnows(const BuiltinTable& builti
     return mayWrite;
 }
 
+static bool writesLockedNameOfHostObject(const ValueFlowResultInputs& inputs, ValueFlowHeapView& heap)
+{
+    const Program& program = inputs.program;
+    std::span<const BuiltinHostObject> hostObjects = program.builtins().hostObjects();
+    bool writes = false;
+    for (uint32_t index = 0; index < hostObjects.size(); ++index) {
+        if (hostObjects[index].lockedNames.empty())
+            continue;
+        ValueSetID object = heap.maker().of(inputs.universe().hostObject(index));
+        for (BuiltinName name : hostObjects[index].lockedNames) {
+            PropertyKeyID key = program.keyOf(name);
+            if (!key)
+                continue;
+            for (ValueFlowName written : { ValueFlowName::property(program, key), ValueFlowName::getter(program, key), ValueFlowName::setter(program, key), ValueFlowName { ValueFlowNameKind::DeletedMember, key.index() }, ValueFlowName { ValueFlowNameKind::RedefinedMember, key.index() } }) {
+                heap.forEachNodeWrittenUnder(written, [&](ValueSetID objects, ValueSetID) {
+                    writes |= heap.reaches(objects, object);
+                });
+            }
+        }
+    }
+    return writes;
+}
+
 static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const ValueFlowResultInputs& inputs, const LedgerOfBuiltinObjects& holders, ValueFlowHeapView& heap, bool writesLockedLocation, Vector<BuiltinLocationFlow>& locations, Vector<BuiltinLocationFlow>& underUnreadNames)
 {
     const Program& program = inputs.program;
@@ -693,6 +716,17 @@ static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const V
     };
     auto spelledOutTextsOf = [&](FunctionID function, ValueID keyValue) -> std::span<const StringID> {
         return keyValue ? program.typeOf(program.at(function), keyValue).stringLiterals.span() : std::span<const StringID>();
+    };
+    // One object stands for all that native code makes in a cell, so it counts among those that may be anything. What lies under a locked name of it is known all the same.
+    std::span<const BuiltinHostObject> hostObjects = builtins.hostObjects();
+    auto noteOnHostObject = [&](const Notes& notes, ValueSetID receivers, PropertyKeyID key, const Witness& witness) {
+        if (ValueSets::isComplement(receivers) || sets.size(receivers) != 1)
+            return;
+        for (uint32_t index = 0; index < hostObjects.size(); ++index) {
+            const BuiltinHostObject& hostObject = hostObjects[index];
+            if (std::ranges::any_of(hostObject.lockedNames, [&](BuiltinName name) { return program.keyOf(name) == key; }) && sets.contains(receivers, universe.hostObject(index)))
+                notes.writes.append({ hostObject.holder, key, { }, witness });
+        }
     };
     auto note = [&](const Notes& notes, ValueSetID receivers, PropertyKeyID key, const Witness& witness) {
         if (notes.changesPrototypeUnderItsName && key == keyOfPrototypeLink) {
@@ -779,14 +813,21 @@ static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const V
             Notes notes { maker, found, statement.opcode == Opcode::PropSet || statement.opcode == Opcode::ElemSet };
             std::optional<unsigned> object = statement.kind == ValueFlowStatementKind::Operation && statement.site && !modeOfCallOperation(statement.opcode) ? OperandPosition::object(statement.opcode) : std::nullopt;
             std::span<const ValueFlowOperand> operands = bodies.operandsOf(statement);
-            if (!object || !listsItsObjects(heap.possibleValuesOf(maker, operands[*object])))
+            if (!object)
                 continue;
+            bool listsReceivers = listsItsObjects(heap.possibleValuesOf(maker, operands[*object]));
             Witness witness = witnessOfStatement(program, statement);
             ValueFlowStatementID id(static_cast<uint32_t>(&statement - bodies.statements().data()));
             inputs.forEachMadeNodeAskedForBy(id, kindsOfMadeNodes({ ValueFlowMadeNodeKind::Written }), false, [&](const ValueFlowNodeKey& key, ValueFlowStatementID) {
-                if (shapeOf(key.name().kind).reach == ValueFlowNameReach::OneKey)
+                if (shapeOf(key.name().kind).reach != ValueFlowNameReach::OneKey)
+                    return;
+                if (listsReceivers)
                     note(notes, key.set, PropertyKeyID(key.payload), witness);
+                else
+                    noteOnHostObject(notes, key.set, PropertyKeyID(key.payload), witness);
             });
+            if (!listsReceivers)
+                continue;
             const Value& operation = program.at(statement.function).at(statement.site);
             if (operation.opcode == Opcode::PropSet && operation.key() == keyOfPrototypeLink)
                 note(notes, heap.possibleValuesOf(maker, operands[*object]), keyOfPrototypeLink, witness);
@@ -946,6 +987,7 @@ static Vector<ValueFlowWriteUnderNewName> computeBuiltinLocations(const ValueFlo
         } else if (!findOwnMember(program, holder, key))
             tables.locations.append(BuiltinLocationFlow { holder, key, BuiltinLocationState::Unknown, noWitness });
     });
+    writesLockedLocation = writesLockedLocation || writesLockedNameOfHostObject(inputs, heap);
     Vector<ValueFlowWriteUnderNewName> underNewNames = collectWritesOfLockedLocations(inputs, holders, heap, writesLockedLocation, tables.locations, tables.writesUnderUnreadNames);
     tables.writesOfLocations = mergeWrites(WTF::move(tables.writesOfLocations), tables.locations.span());
     sortAndMergeLocations(tables.locations);

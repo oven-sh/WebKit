@@ -666,6 +666,9 @@ struct BuiltinHostObject {
     bool keepsStringsOfStoredValues { false };
     // For each of these names the object has an accessor whose getter and setter are native code.
     std::span<const BuiltinName> nativeAccessors { };
+    // The build reads what lies under these names, so native code locks them in a compiled program. The holder is the member that hands out the object.
+    std::span<const BuiltinName> lockedNames { };
+    BuiltinID holder { };
     // The systems on which native code makes the object.
     OptionSet<BuiltinPlatform> platforms { everyBuiltinPlatform };
 };

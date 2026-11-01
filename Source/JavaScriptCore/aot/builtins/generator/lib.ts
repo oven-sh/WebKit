@@ -1507,6 +1507,8 @@ export interface HostObjectOptions {
   keepsStringsOfStoredValues?: boolean;
   /** The names under which native code lays an accessor of its own. Whoever asks for the description of one gets two functions of native code. */
   nativeAccessors?: readonly string[];
+  /** The build reads what lies under these names, so native code locks them in a compiled program. `holder`: the member that hands out the object. */
+  locked?: { holder: BuiltinPath; names: readonly string[] };
   /** By the index of an internal field: what native code does with what code of the library stores there. */
   internalFields?: Readonly<Record<number, readonly HostUseSpec[]>>;
   /** The systems on which native code makes the object. Without it: all of them. */
@@ -1533,6 +1535,8 @@ export const hostObject = (cell: string, options: HostObjectOptions): Declaratio
       })),
       keepsStringsOfStoredValues: options.keepsStringsOfStoredValues ?? false,
       nativeAccessors: options.nativeAccessors ?? [],
+      lockedNames: options.locked?.names ?? [],
+      holder: options.locked?.holder ?? null,
       platforms: options.platforms ?? targetPlatforms,
     },
   ];
@@ -1565,6 +1569,8 @@ export function hostFunction(
       internalFields: [],
       keepsStringsOfStoredValues: false,
       nativeAccessors: [],
+      lockedNames: [],
+      holder: null,
       platforms: targetPlatforms,
     },
   ];
