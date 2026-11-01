@@ -57,16 +57,17 @@ RegExpLiteralConstants StubPolicy::regExpLiteral(std::optional<uint32_t> record,
     return constants;
 }
 
-StubPolicy chooseStubPolicy(const KeyUses& uses, const IdentifierNumbering& numbering, BuildContext&)
+StubPolicy chooseStubPolicy(const KeyUses& uses, const IdentifierNumbering& numbering, BuildContext& build)
 {
     static constexpr std::array accessesWithBoundStubs { Typed::Access::Read, Typed::Access::Store, Typed::Access::Define };
 
+    uint64_t minUses = build.limit(LimitID::MinUsesForOwnStub);
     StubPolicy policy;
     for (size_t key = 0; key < uses.byKey.size(); ++key) {
         const KeyUse& use = uses.byKey[key];
         for (Typed::Access access : accessesWithBoundStubs) {
             size_t accessIndex = static_cast<size_t>(access);
-            if (use.usesByAccess[accessIndex] < StubPolicy::minUsesForOwnStub)
+            if (use.usesByAccess[accessIndex] < minUses)
                 continue;
             if (std::optional<uint32_t> number = numbering.numberOf(PropertyKeyID(key)); number && RowDisplacementTable::hasColumn(*number))
                 policy.namesWithOwnStubByAccess[accessIndex].set(*number);
