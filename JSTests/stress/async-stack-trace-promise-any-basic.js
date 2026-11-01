@@ -78,12 +78,12 @@ function shouldThrowAsync(run, errorType) {
     shouldBe(aggregateError.errors.length, 1);
     testStack(aggregateError.errors[0],
       [
-        ["thrower", "68:59"],
-        ["async run", "69:43"],
-        ["async test", "74:18"],
+        ["thrower", "68:50"], // Bun: upstream has 68:59, where the token ends
+        ["async run", "69:40"], // Bun: upstream has 69:43, where the token ends
+        ["async test", "74:15"], // Bun: upstream has 74:18, where the token ends
         ["drainMicrotasks", "[native code]"],
-        ["shouldThrowAsync", "56:18"],
-        ["global code", "72:44"]
+        ["shouldThrowAsync", "56:3"], // Bun: upstream has 56:18, where the token ends
+        ["global code", "72:28"] // Bun: upstream has 72:44, where the token ends
       ]
     );
   }
@@ -116,32 +116,32 @@ function shouldThrowAsync(run, errorType) {
     shouldBe(aggregateError.errors.length, 3);
     testStack(aggregateError.errors[0],
       [
-        ["task1", "97:20"],
-        ["async run", "107:43"],
-        ["async test", "112:18"],
+        ["task1", "97:11"], // Bun: upstream has 97:20, where the token ends
+        ["async run", "107:40"], // Bun: upstream has 107:43, where the token ends
+        ["async test", "112:15"], // Bun: upstream has 112:18, where the token ends
         ["drainMicrotasks", "[native code]"],
-        ["shouldThrowAsync", "56:18"],
-        ["global code", "110:44"]
+        ["shouldThrowAsync", "56:3"], // Bun: upstream has 56:18, where the token ends
+        ["global code", "110:28"] // Bun: upstream has 110:44, where the token ends
       ]
     );
     testStack(aggregateError.errors[1],
       [
-        ["task2", "104:20"],
-        ["async run", "107:43"],
-        ["async test", "112:18"],
+        ["task2", "104:11"], // Bun: upstream has 104:20, where the token ends
+        ["async run", "107:40"], // Bun: upstream has 107:43, where the token ends
+        ["async test", "112:15"], // Bun: upstream has 112:18, where the token ends
         ["drainMicrotasks", "[native code]"],
-        ["shouldThrowAsync", "56:18"],
-        ["global code", "110:44"]
+        ["shouldThrowAsync", "56:3"], // Bun: upstream has 56:18, where the token ends
+        ["global code", "110:28"] // Bun: upstream has 110:44, where the token ends
       ]
     );
     testStack(aggregateError.errors[2],
       [
-        ["task3", "106:52"],
-        ["async run", "107:43"],
-        ["async test", "112:18"],
+        ["task3", "106:43"], // Bun: upstream has 106:52, where the token ends
+        ["async run", "107:40"], // Bun: upstream has 107:43, where the token ends
+        ["async test", "112:15"], // Bun: upstream has 112:18, where the token ends
         ["drainMicrotasks", "[native code]"],
-        ["shouldThrowAsync", "56:18"],
-        ["global code", "110:44"]
+        ["shouldThrowAsync", "56:3"], // Bun: upstream has 56:18, where the token ends
+        ["global code", "110:28"] // Bun: upstream has 110:44, where the token ends
       ]
     );
   }

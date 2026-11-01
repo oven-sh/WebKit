@@ -652,111 +652,111 @@ for (let i = 0; i < count; i++) {
             await level1();
         }, Error, "error",
         [
-            ["problematicFunction", "645:20"],
-            ["level101", "632:30"],
-            ["async level100", "620:19"],
-            ["async level99", "615:19"],
-            ["async level98", "610:18"],
-            ["async level97", "604:18"],
-            ["async level96", "599:18"],
-            ["async level95", "593:18"],
-            ["async level94", "588:18"],
-            ["async level93", "581:18"],
-            ["async level92", "577:18"],
-            ["async level91", "570:18"],
-            ["async level90", "565:18"],
-            ["async level89", "560:18"],
-            ["async level88", "554:18"],
-            ["async level87", "549:18"],
-            ["async level86", "543:18"],
-            ["async level85", "538:18"],
-            ["async level84", "531:18"],
-            ["async level83", "527:18"],
-            ["async level82", "520:18"],
-            ["async level81", "515:18"],
-            ["async level80", "510:18"],
-            ["async level79", "504:18"],
-            ["async level78", "499:18"],
-            ["async level77", "493:18"],
-            ["async level76", "488:18"],
-            ["async level75", "481:18"],
-            ["async level74", "477:18"],
-            ["async level73", "470:18"],
-            ["async level72", "465:18"],
-            ["async level71", "460:18"],
-            ["async level70", "454:18"],
-            ["async level69", "449:18"],
-            ["async level68", "443:18"],
-            ["async level67", "438:18"],
-            ["async level66", "431:18"],
-            ["async level65", "427:18"],
-            ["async level64", "420:18"],
-            ["async level63", "415:18"],
-            ["async level62", "410:18"],
-            ["async level61", "404:18"],
-            ["async level60", "399:18"],
-            ["async level59", "393:18"],
-            ["async level58", "388:18"],
-            ["async level57", "381:18"],
-            ["async level56", "377:18"],
-            ["async level55", "370:18"],
-            ["async level54", "365:18"],
-            ["async level53", "360:18"],
-            ["async level52", "354:18"],
-            ["async level51", "349:18"],
-            ["async level50", "343:18"],
-            ["async level49", "338:18"],
-            ["async level48", "331:18"],
-            ["async level47", "327:18"],
-            ["async level46", "320:18"],
-            ["async level45", "315:18"],
-            ["async level44", "310:18"],
-            ["async level43", "304:18"],
-            ["async level42", "299:18"],
-            ["async level41", "293:18"],
-            ["async level40", "288:18"],
-            ["async level39", "281:18"],
-            ["async level38", "277:18"],
-            ["async level37", "270:18"],
-            ["async level36", "265:18"],
-            ["async level35", "260:18"],
-            ["async level34", "254:18"],
-            ["async level33", "249:18"],
-            ["async level32", "243:18"],
-            ["async level31", "238:18"],
-            ["async level30", "231:18"],
-            ["async level29", "227:18"],
-            ["async level28", "220:18"],
-            ["async level27", "215:18"],
-            ["async level26", "210:18"],
-            ["async level25", "204:18"],
-            ["async level24", "199:18"],
-            ["async level23", "193:18"],
-            ["async level22", "188:18"],
-            ["async level21", "181:18"],
-            ["async level20", "177:18"],
-            ["async level19", "170:18"],
-            ["async level18", "165:18"],
-            ["async level17", "160:18"],
-            ["async level16", "154:18"],
-            ["async level15", "150:18"],
-            ["async level14", "142:18"],
-            ["async level13", "137:18"],
-            ["async level12", "131:18"],
-            ["async level11", "126:18"],
-            ["async level10", "121:18"],
-            ["async level9", "116:18"],
-            ["async level8", "111:17"],
-            ["async level7", "107:17"],
-            ["async level6", "100:17"],
-            ["async level5", "95:17"],
-            ["async level4", "89:17"],
-            ["async level3", "79:17"],
-            ["async level2", "73:17"],
-            ["async level1", "67:17"],
+            ["problematicFunction", "645:11"], // Bun: upstream has 645:20, where the token ends
+            ["level101", "632:11"], // Bun: upstream has 632:30, where the token ends
+            ["async level100", "620:11"], // Bun: upstream has 620:19, where the token ends
+            ["async level99", "615:11"], // Bun: upstream has 615:19, where the token ends
+            ["async level98", "610:11"], // Bun: upstream has 610:18, where the token ends
+            ["async level97", "604:11"], // Bun: upstream has 604:18, where the token ends
+            ["async level96", "599:11"], // Bun: upstream has 599:18, where the token ends
+            ["async level95", "593:11"], // Bun: upstream has 593:18, where the token ends
+            ["async level94", "588:11"], // Bun: upstream has 588:18, where the token ends
+            ["async level93", "581:11"], // Bun: upstream has 581:18, where the token ends
+            ["async level92", "577:11"], // Bun: upstream has 577:18, where the token ends
+            ["async level91", "570:11"], // Bun: upstream has 570:18, where the token ends
+            ["async level90", "565:11"], // Bun: upstream has 565:18, where the token ends
+            ["async level89", "560:11"], // Bun: upstream has 560:18, where the token ends
+            ["async level88", "554:11"], // Bun: upstream has 554:18, where the token ends
+            ["async level87", "549:11"], // Bun: upstream has 549:18, where the token ends
+            ["async level86", "543:11"], // Bun: upstream has 543:18, where the token ends
+            ["async level85", "538:11"], // Bun: upstream has 538:18, where the token ends
+            ["async level84", "531:11"], // Bun: upstream has 531:18, where the token ends
+            ["async level83", "527:11"], // Bun: upstream has 527:18, where the token ends
+            ["async level82", "520:11"], // Bun: upstream has 520:18, where the token ends
+            ["async level81", "515:11"], // Bun: upstream has 515:18, where the token ends
+            ["async level80", "510:11"], // Bun: upstream has 510:18, where the token ends
+            ["async level79", "504:11"], // Bun: upstream has 504:18, where the token ends
+            ["async level78", "499:11"], // Bun: upstream has 499:18, where the token ends
+            ["async level77", "493:11"], // Bun: upstream has 493:18, where the token ends
+            ["async level76", "488:11"], // Bun: upstream has 488:18, where the token ends
+            ["async level75", "481:11"], // Bun: upstream has 481:18, where the token ends
+            ["async level74", "477:11"], // Bun: upstream has 477:18, where the token ends
+            ["async level73", "470:11"], // Bun: upstream has 470:18, where the token ends
+            ["async level72", "465:11"], // Bun: upstream has 465:18, where the token ends
+            ["async level71", "460:11"], // Bun: upstream has 460:18, where the token ends
+            ["async level70", "454:11"], // Bun: upstream has 454:18, where the token ends
+            ["async level69", "449:11"], // Bun: upstream has 449:18, where the token ends
+            ["async level68", "443:11"], // Bun: upstream has 443:18, where the token ends
+            ["async level67", "438:11"], // Bun: upstream has 438:18, where the token ends
+            ["async level66", "431:11"], // Bun: upstream has 431:18, where the token ends
+            ["async level65", "427:11"], // Bun: upstream has 427:18, where the token ends
+            ["async level64", "420:11"], // Bun: upstream has 420:18, where the token ends
+            ["async level63", "415:11"], // Bun: upstream has 415:18, where the token ends
+            ["async level62", "410:11"], // Bun: upstream has 410:18, where the token ends
+            ["async level61", "404:11"], // Bun: upstream has 404:18, where the token ends
+            ["async level60", "399:11"], // Bun: upstream has 399:18, where the token ends
+            ["async level59", "393:11"], // Bun: upstream has 393:18, where the token ends
+            ["async level58", "388:11"], // Bun: upstream has 388:18, where the token ends
+            ["async level57", "381:11"], // Bun: upstream has 381:18, where the token ends
+            ["async level56", "377:11"], // Bun: upstream has 377:18, where the token ends
+            ["async level55", "370:11"], // Bun: upstream has 370:18, where the token ends
+            ["async level54", "365:11"], // Bun: upstream has 365:18, where the token ends
+            ["async level53", "360:11"], // Bun: upstream has 360:18, where the token ends
+            ["async level52", "354:11"], // Bun: upstream has 354:18, where the token ends
+            ["async level51", "349:11"], // Bun: upstream has 349:18, where the token ends
+            ["async level50", "343:11"], // Bun: upstream has 343:18, where the token ends
+            ["async level49", "338:11"], // Bun: upstream has 338:18, where the token ends
+            ["async level48", "331:11"], // Bun: upstream has 331:18, where the token ends
+            ["async level47", "327:11"], // Bun: upstream has 327:18, where the token ends
+            ["async level46", "320:11"], // Bun: upstream has 320:18, where the token ends
+            ["async level45", "315:11"], // Bun: upstream has 315:18, where the token ends
+            ["async level44", "310:11"], // Bun: upstream has 310:18, where the token ends
+            ["async level43", "304:11"], // Bun: upstream has 304:18, where the token ends
+            ["async level42", "299:11"], // Bun: upstream has 299:18, where the token ends
+            ["async level41", "293:11"], // Bun: upstream has 293:18, where the token ends
+            ["async level40", "288:11"], // Bun: upstream has 288:18, where the token ends
+            ["async level39", "281:11"], // Bun: upstream has 281:18, where the token ends
+            ["async level38", "277:11"], // Bun: upstream has 277:18, where the token ends
+            ["async level37", "270:11"], // Bun: upstream has 270:18, where the token ends
+            ["async level36", "265:11"], // Bun: upstream has 265:18, where the token ends
+            ["async level35", "260:11"], // Bun: upstream has 260:18, where the token ends
+            ["async level34", "254:11"], // Bun: upstream has 254:18, where the token ends
+            ["async level33", "249:11"], // Bun: upstream has 249:18, where the token ends
+            ["async level32", "243:11"], // Bun: upstream has 243:18, where the token ends
+            ["async level31", "238:11"], // Bun: upstream has 238:18, where the token ends
+            ["async level30", "231:11"], // Bun: upstream has 231:18, where the token ends
+            ["async level29", "227:11"], // Bun: upstream has 227:18, where the token ends
+            ["async level28", "220:11"], // Bun: upstream has 220:18, where the token ends
+            ["async level27", "215:11"], // Bun: upstream has 215:18, where the token ends
+            ["async level26", "210:11"], // Bun: upstream has 210:18, where the token ends
+            ["async level25", "204:11"], // Bun: upstream has 204:18, where the token ends
+            ["async level24", "199:11"], // Bun: upstream has 199:18, where the token ends
+            ["async level23", "193:11"], // Bun: upstream has 193:18, where the token ends
+            ["async level22", "188:11"], // Bun: upstream has 188:18, where the token ends
+            ["async level21", "181:11"], // Bun: upstream has 181:18, where the token ends
+            ["async level20", "177:11"], // Bun: upstream has 177:18, where the token ends
+            ["async level19", "170:11"], // Bun: upstream has 170:18, where the token ends
+            ["async level18", "165:11"], // Bun: upstream has 165:18, where the token ends
+            ["async level17", "160:11"], // Bun: upstream has 160:18, where the token ends
+            ["async level16", "154:11"], // Bun: upstream has 154:18, where the token ends
+            ["async level15", "150:11"], // Bun: upstream has 150:18, where the token ends
+            ["async level14", "142:11"], // Bun: upstream has 142:18, where the token ends
+            ["async level13", "137:11"], // Bun: upstream has 137:18, where the token ends
+            ["async level12", "131:11"], // Bun: upstream has 131:18, where the token ends
+            ["async level11", "126:11"], // Bun: upstream has 126:18, where the token ends
+            ["async level10", "121:11"], // Bun: upstream has 121:18, where the token ends
+            ["async level9", "116:11"], // Bun: upstream has 116:18, where the token ends
+            ["async level8", "111:11"], // Bun: upstream has 111:17, where the token ends
+            ["async level7", "107:11"], // Bun: upstream has 107:17, where the token ends
+            ["async level6", "100:11"], // Bun: upstream has 100:17, where the token ends
+            ["async level5", "95:11"], // Bun: upstream has 95:17, where the token ends
+            ["async level4", "89:11"], // Bun: upstream has 89:17, where the token ends
+            ["async level3", "79:11"], // Bun: upstream has 79:17, where the token ends
+            ["async level2", "73:11"], // Bun: upstream has 73:17, where the token ends
+            ["async level1", "67:11"], // Bun: upstream has 67:17, where the token ends
             ["drainMicrotasks", "[native code]"],
-            ["shouldThrowAsync", "20:20"],
-            ["global code", "650:21"]
+            ["shouldThrowAsync", "20:5"], // Bun: upstream has 20:20, where the token ends
+            ["global code", "650:5"] // Bun: upstream has 650:21, where the token ends
         ],
     );
     drainMicrotasks();
