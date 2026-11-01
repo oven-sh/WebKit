@@ -558,7 +558,7 @@ static void sayWhatStoresBehindFormerChecksHold(const AnalysisContext& context, 
         if (claim.opcode == Opcode::AssumeType && !types.at(claim.provenType()).isSubsetOf(types.at(body.at(claim.valueOperand()).type), program))
             claims.append(check.check);
     }
-    if (claims.isEmpty())
+    if (claims.isEmpty() || build.isSabotaged(Sabotage::StoresBehindFormerEntryChecksSayNothing))
         return;
 
     FunctionAnalyses analyses(context, body);

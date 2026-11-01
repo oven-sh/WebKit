@@ -185,6 +185,7 @@ enum Sabotage {
     NothingClimbsAboveInstances
     ListsThatAreKeptLieInFrames EnvironmentsThatAreKeptAreHandedBack MakersKeepEnvironmentsThatWereCopied
     ReceiversThatLeaveAreInstances
+    StoresBehindFormerEntryChecksSayNothing
 }
 flags Instrumentation { CountBranches CountArrivals }
 flags AdmittedCode { Inspector ReplacedBuiltins FilesRunByHost }
