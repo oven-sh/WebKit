@@ -6438,6 +6438,12 @@ void ModuleNamespace::ensureOwnStructure(VM& vm)
     m_hasOwnStructure = true;
 }
 
+// The caches file what they know of an object with a Structure of its own under that Structure: classifyNamespaceRead(). Such an object never shares one again.
+void ModuleNamespace::becomeExtensible(VM& vm, Structure* sharedByExtensibleObjects)
+{
+    setStructure(vm, m_hasOwnStructure ? createStructure(vm, realm(), structure()->storedPrototype(), false) : sharedByExtensibleObjects);
+}
+
 template<typename Visitor>
 void ModuleNamespace::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {

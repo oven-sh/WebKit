@@ -4193,7 +4193,7 @@ void Modules::willRequireESModule(ModuleID module)
         return;
     m_modulesWithExtensibleNamespace.set(module.index());
     if (created)
-        created->setStructure(*m_instance.vm, namespaceStructure(false));
+        uncheckedDowncast<ModuleNamespace>(created)->becomeExtensible(*m_instance.vm, namespaceStructure(false));
 }
 
 // From the first require() on, the namespace object of a module without an export `__esModule` reads `true` under that name, for everybody who holds it.
