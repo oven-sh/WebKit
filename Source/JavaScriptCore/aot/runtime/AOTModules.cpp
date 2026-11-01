@@ -2563,27 +2563,9 @@ JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase, bool shou
     if (JSObject* createdMeanwhile = ranCode ? namespaceIfCreated(module, phase) : nullptr)
         return createdMeanwhile;
 
-    Vector<DynamicExport> dynamicExports = collectDynamicExports(module);
-    RETURN_IF_EXCEPTION(scope, nullptr);
     ModuleNamespace::DynamicExports exportObjects;
-    if (!dynamicExports.isEmpty()) {
-        exportObjects.capturedValues = createTableOfExports();
-        exportObjects.names = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, dynamicExports.size());
-    }
-    for (unsigned i = 0; i < dynamicExports.size(); ++i) {
-        const DynamicExport& dynamicExport = dynamicExports[i];
-        if (dynamicExport.liveSource) {
-            if (!exportObjects.liveSources)
-                exportObjects.liveSources = createTableOfExports();
-            exportObjects.liveSources->putDirectMayBeIndex(realm, dynamicExport.name, dynamicExport.liveSource);
-        } else if (dynamicExport.capturedValue)
-            exportObjects.capturedValues->putDirectMayBeIndex(realm, dynamicExport.name, dynamicExport.capturedValue);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        JSString* text = jsString(vm, dynamicExport.name.string());
-        text->toIdentifier(realm);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        exportObjects.names->setIndex(vm, i, text);
-    }
+    createDynamicExports(module, exportObjects.names, exportObjects.capturedValues, exportObjects.liveSources);
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     bool isRequired = phase == ModulePhase::Evaluation && m_modulesWithMarkOfRequire.get(module.index());
     if (phase == ModulePhase::Evaluation && m_modulesWithExtensibleNamespace.get(module.index()))
@@ -2593,6 +2575,33 @@ JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase, bool shou
         namespaceObject->setESModuleMarker(true);
     setNamespace(module, phase, namespaceObject);
     return namespaceObject;
+}
+
+void Modules::createDynamicExports(ModuleID module, JSCellButterfly*& names, JSObject*& capturedValues, JSObject*& liveSources)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Vector<DynamicExport> dynamicExports = collectDynamicExports(module);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!dynamicExports.isEmpty()) {
+        capturedValues = createTableOfExports();
+        names = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, dynamicExports.size());
+    }
+    for (unsigned i = 0; i < dynamicExports.size(); ++i) {
+        const DynamicExport& dynamicExport = dynamicExports[i];
+        if (dynamicExport.liveSource) {
+            if (!liveSources)
+                liveSources = createTableOfExports();
+            liveSources->putDirectMayBeIndex(realm, dynamicExport.name, dynamicExport.liveSource);
+        } else if (dynamicExport.capturedValue)
+            capturedValues->putDirectMayBeIndex(realm, dynamicExport.name, dynamicExport.capturedValue);
+        RETURN_IF_EXCEPTION(scope, void());
+        JSString* text = jsString(vm, dynamicExport.name.string());
+        text->toIdentifier(realm);
+        RETURN_IF_EXCEPTION(scope, void());
+        names->setIndex(vm, i, text);
+    }
 }
 
 Structure* Modules::namespaceStructure(bool shouldPreventExtensions)
@@ -7221,6 +7230,14 @@ void ModuleNamespace::replaceCapturedValue(JSGlobalObject* globalObject, const I
     if (JSObject* capturedValues = m_capturedValues.get())
         capturedValues->putDirectMayBeIndex(globalObject, name, value);
     leaveStructureThatCachesKnow(globalObject->vm());
+}
+
+void ModuleNamespace::replaceDynamicExports(VM& vm, const DynamicExports& dynamicExports)
+{
+    m_dynamicExportNames.setMayBeNull(vm, this, dynamicExports.names);
+    m_capturedValues.setMayBeNull(vm, this, dynamicExports.capturedValues);
+    m_liveSources.setMayBeNull(vm, this, dynamicExports.liveSources);
+    leaveStructureThatCachesKnow(vm);
 }
 
 void ModuleNamespace::leaveStructureThatCachesKnow(VM& vm)

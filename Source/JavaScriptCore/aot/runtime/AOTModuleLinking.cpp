@@ -924,12 +924,25 @@ void Modules::endMockOfLibraryModule(ModuleID module)
     loaded.sourceOfCapturedFields.set(*this, nullptr);
     m_modulesSettledForLinks[module.index() / 64] &= ~(1ull << (module.index() % 64));
     ++m_linkEpoch;
-    if (namespaceIfCreated(module, ModulePhase::Evaluation)) {
-        if (data(module).holdsNamespaceInValue() && !m_modulesWithEarlierNamespaceInValue.get(module.index()))
-            setValue(module, JSValue());
-        loaded.namespaceObject.set(*this, nullptr);
-    }
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     captureExports(module);
+    RETURN_IF_EXCEPTION(scope, void());
+    // An importer that was linked under the mock stays linked. The host reads a deferred export where it links whoever binds the name, and no link comes any more.
+    for (const SyntheticExportData& syntheticExport : m_table.syntheticExports(module)) {
+        const Identifier& name = identifier(syntheticExport.name);
+        if (!syntheticExport.hasVariable || !syntheticExport.isBoundByRequiredName || !isDeferredExport(loaded, name))
+            continue;
+        JSValue found = capturedValue(module, name);
+        RETURN_IF_EXCEPTION(scope, void());
+        ProgramStatics::writeVariable(m_instance, syntheticExport.variable, found ? found : jsUndefined());
+    }
+    // It also holds the namespace object, which listed the names of the mock.
+    if (auto* held = dynamicDowncast<ModuleNamespace>(namespaceIfCreated(module, ModulePhase::Evaluation))) {
+        ModuleNamespace::DynamicExports exportsOfModule;
+        createDynamicExports(module, exportsOfModule.names, exportsOfModule.capturedValues, exportsOfModule.liveSources);
+        RETURN_IF_EXCEPTION(scope, void());
+        held->replaceDynamicExports(*m_instance.vm, exportsOfModule);
+    }
 }
 
 // Whoever was linked against the mock goes on reading it until the test file ends, as in `bun test`: a test may have ended the mock.

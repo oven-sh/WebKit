@@ -289,6 +289,8 @@ public:
     void deferMock(ModuleID, AfterFailure);
     void forgetMockThatWaits(ModuleID);
     void endMockOfLibraryModule(ModuleID);
+    // What ModuleNamespace::DynamicExports holds.
+    void createDynamicExports(ModuleID, JSCellButterfly*& names, JSObject*& capturedValues, JSObject*& liveSources);
     void oweLibraryModuleToImagesAbove(ModuleID);
     void handLibraryModuleToImagesAbove(ModuleID);
     void keepWhatMockIsLaidOver(ModuleID);

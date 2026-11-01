@@ -60,6 +60,8 @@ public:
     bool tryReadExports(JSGlobalObject*, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values);
 
     void replaceCapturedValue(JSGlobalObject*, const Identifier& name, JSValue);
+    // A mock that gave the object its names has ended, and whoever was linked meanwhile goes on holding the object.
+    void replaceDynamicExports(VM&, const DynamicExports&);
     // The value of an export that was captured when its file had run, as every export of a CommonJS file is, or nothing. It stays until replaceCapturedValue(), which gives the object another Structure.
     // Nothing is allocated.
     JSValue capturedValueWithoutAllocating(UniquedStringImpl*) const;
