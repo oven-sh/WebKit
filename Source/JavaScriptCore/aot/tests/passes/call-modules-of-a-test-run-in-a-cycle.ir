@@ -1,0 +1,37 @@
+# require.cache of a test run lists the files that have run, and a module of a cycle of imports has run when the member of the cycle that was entered first has ended.
+# A module that runs as a part of another keeps no status, and whoever evaluates it stores the status behind it: in a cycle the run time is asked there as at the end of a start.
+# FORM: Prepared
+# RUN: pass CallModules
+# STATISTIC: ModulesWithState = 1
+# CHECK: outcome: Changed
+
+variable g0 name="counted" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="countedBelow" module=m2 declared={type=anything} initialization=Undefined
+module m0 path="/one.test.ts" displayPath="one.test.ts" flags=[IsListedInCache] body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/counts.ts" displayPath="counts.ts" flags=[IsListedInCache] body=f1 requests=[{target=m2 completes=true}] exports=[{name="counted" variable=g0}]
+module m2 path="/counts-below.ts" displayPath="counts-below.ts" flags=[IsListedInCache] body=f2 requests=[{target=m1 completes=true}] exports=[{name="countedBelow" variable=g1}]
+entry module=m0
+
+function f0 name="test" module=m0 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    Return
+# CHECK-NEXT: b0():
+# CHECK-NEXT: EvaluateRequiredModule module=m1
+}
+function f1 name="counts" module=m1 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g1
+    PutModuleVariable v0 variable=g0
+    Return
+# CHECK-NEXT: b0():
+# CHECK-NEXT: [[begins]]: boolean = BeginModuleEvaluation module=m1
+# CHECK: = CallDirect function=f2
+# CHECK-NEXT: = BeginModuleEvaluation module=m2
+# CHECK-NEXT: FinishCycleMemberEvaluation module=m2
+# CHECK-NEXT: = CallDirect function=f3
+# CHECK-NEXT: FinishCycleMemberEvaluation module=m1
+}
+function f2 name="countsBelow" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g1
+    Return
+}

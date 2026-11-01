@@ -19,7 +19,6 @@
 #include "AOTProgramStatics.h"
 #include "AOTRuntimeHooks.h"
 #include "AOTState.h"
-#include "AOTStronglyConnectedComponents.h"
 #include "AOTStubEntrypoints.h"
 #include "ExceptionHelpers.h"
 #include "GlobalObjectMethodTable.h"
@@ -515,21 +514,6 @@ JSValue Modules::callBody(ModuleID module)
     return callCompiledCode(realm, closures.createClosureForOneCall(vm, *body), jsUndefined(), ArgList());
 }
 
-Vector<ModuleID, 8> Modules::modulesThatEvaluationWillBegin(ModuleID root)
-{
-    Vector<ModuleID, 8> found;
-    found.append(root);
-    for (size_t next = 0; next < found.size(); ++next) {
-        for (const ModuleRequestData& request : m_table.requests(found[next])) {
-            ModuleID target = request.targetModule();
-            if (request.isRequire || request.isDeferred || storedStatus(target) >= StoredModuleStatus::InRecord || found.contains(target))
-                continue;
-            found.append(target);
-        }
-    }
-    return found;
-}
-
 // A body that stores the status of its module stores it in the table. The status of a module with a record is in the record, and whoever gave it the record goes by that: for the time of the call the table has it.
 JSValue Modules::callBodyUnderOwnMark(ModuleID module, bool bodyStoresStatus, bool runsImportedFilesAlone)
 {
@@ -542,10 +526,6 @@ JSValue Modules::callBodyUnderOwnMark(ModuleID module, bool bodyStoresStatus, bo
         setStoredStatus(module, StoredModuleStatus::Linked);
     uint32_t outerMark = m_instance.modules.evaluatingMark;
     uint8_t mark = static_cast<uint8_t>(std::min<uint32_t>(outerMark + 1, UINT8_MAX));
-    bool isUnderAnotherEvaluation = outerMark != static_cast<uint32_t>(StoredModuleStatus::Evaluating);
-    Vector<ModuleID, 8> begunHere;
-    if (isUnderAnotherEvaluation && bodyStoresStatus && !data(module).isSimple()) [[unlikely]]
-        begunHere = modulesThatEvaluationWillBegin(module);
     m_instance.modules.evaluatingMark = mark;
     if (ModuleID file = m_table.fileBehindFace(module).value_or(module); data(file).mayBeImportedWhileItRuns()) [[unlikely]]
         ensureLoaded(file).synchronousLoadCountAtStart = m_synchronousLoadCount;
@@ -555,12 +535,14 @@ JSValue Modules::callBodyUnderOwnMark(ModuleID module, bool bodyStoresStatus, bo
         setStoredStatus(module, StoredModuleStatus::InRecord);
     Exception* exception = scope.exception();
     if (!exception) [[likely]] {
-        for (ModuleID begun : begunHere)
-            m_modulesEvaluatedUnderAnotherEvaluation.set(begun.index());
+        // Every start that began under the mark has ended, and with the first of them whatever waited for one of them.
+        ASSERT(m_modulesThatWaitForTheirCycle.isEmpty() || m_modulesThatWaitForTheirCycle.last().mark != mark);
         return result;
     }
 
-    // What was being evaluated when a body threw has failed with it.
+    // What was being evaluated when a body threw has failed with it. A module that waits for the first member of its cycle is being evaluated, and has the mark.
+    while (!m_modulesThatWaitForTheirCycle.isEmpty() && m_modulesThatWaitForTheirCycle.last().mark == mark)
+        m_placesBehindModulesThatWaitForTheirCycle[m_modulesThatWaitForTheirCycle.takeLast().module.index()] = 0;
     Vector<ModuleID, 16> failedModules;
     for (unsigned index = 0; index < m_storedStatuses.size(); ++index) {
         if (m_storedStatuses[index] == mark)
@@ -568,10 +550,6 @@ JSValue Modules::callBodyUnderOwnMark(ModuleID module, bool bodyStoresStatus, bo
     }
     for (ModuleID failed : failedModules)
         didThrowInBody(failed, exception->value());
-    // Whoever gave the module its record stores the error there.
-    if (isInRecord)
-        failedModules.append(module);
-    failEvaluatedModulesOfUnfinishedCycles(failedModules.span(), exception->value());
     return result;
 }
 
@@ -598,38 +576,153 @@ void Modules::abandonEvaluation(ModuleID module, JSValue error)
     if (storedStatus(module) < StoredModuleStatus::Evaluating)
         return;
     didThrowInBody(module, error);
-    failEvaluatedModulesOfUnfinishedCycles(std::span<const ModuleID>(&module, 1), error);
 }
 
-// A module of a cycle of imports is evaluated for good when the first module of the cycle that was entered is. A require() makes no such cycle, and what it evaluates is evaluated for good when it returns.
-void Modules::failEvaluatedModulesOfUnfinishedCycles(std::span<const ModuleID> failedModules, JSValue error)
+// A module of a cycle of imports is evaluated when the member of the cycle that was entered first is: innerModuleEvaluation() of a record tells by the index of an ancestor, which a start does not keep.
+// When the code of a module has run, every start that its imports lead to has begun, and one that has not ended is a start around this one. Then the module waits for it, with the mark of its evaluation
+// in the table as while its code ran, so whoever asks finds it being evaluated and a throw fails it. The search passes through the modules that store no status, whose code the start of another module runs,
+// and through the modules that wait. What has another status is evaluated, or belongs to another evaluation: a `require` makes no cycle.
+// Answers the start that has not ended, and where among the requests of the module the search came to it.
+ModuleID Modules::findStartThatHasNotEnded(ModuleID ending, uint8_t mark, uint32_t& requestWhereSearchStopped)
 {
-    bool hasCycle = std::ranges::any_of(failedModules, [&](ModuleID module) {
-        return data(module).hasExportTable() && !data(module).isSimple();
-    });
-    if (!hasCycle)
-        return;
-
-    struct ImportTargets {
-        std::span<const ModuleRequestData> requests;
-        uint32_t importer;
-
-        size_t size() const { return requests.size(); }
-        uint32_t operator[](size_t index) const { return requests[index].isRequire ? importer : requests[index].target(); }
+    struct Searched {
+        ModuleID module;
+        uint32_t nextRequest;
+        uint32_t endOfRequests;
+        // Of a module that waits: one more than its place among them.
+        uint32_t placeBehindModuleThatWaits;
     };
-    Typed::StronglyConnectedComponents components = Typed::computeStronglyConnectedComponents(m_table.size(), [&](unsigned index) {
-        return ImportTargets { m_table.requests(ModuleID(index)), index };
-    });
-    BitVector unfinishedComponents(components.numberOfComponents);
-    for (ModuleID module : failedModules) {
-        if (data(module).hasExportTable())
-            unfinishedComponents.quickSet(components.componentOf[module.index()]);
+    std::span<const ModuleRequestData> requests = m_table.allRequests();
+    Vector<Searched, 16> path;
+    path.append(Searched { ending, data(ending).firstRequest, m_table.endOfRequests(ending), 0 });
+    UncheckedKeyHashSet<ModuleID> modulesWithoutStatusSeen;
+    if (!++m_serialOfSearchForStart) [[unlikely]] {
+        for (ModuleThatWaitsForCycle& waiting : m_modulesThatWaitForTheirCycle)
+            waiting.searchedBy = 0;
+        m_serialOfSearchForStart = 1;
     }
-    for (unsigned index = 0; index < m_table.size(); ++index) {
-        ModuleID module(index);
-        if (unfinishedComponents.quickGet(components.componentOf[index]) && storedStatus(module) == StoredModuleStatus::Evaluated && !m_modulesEvaluatedUnderAnotherEvaluation.get(index))
-            setFailed(module, error);
+
+    // A module that waits keeps what it waited for and the request at which its search stopped. What it waited for comes first: its own requests are searched on only when nothing is left to wait for there.
+    auto search = [&](ModuleID target) -> ModuleID {
+        while (target != ending) {
+            uint8_t status = m_storedStatuses[target.index()];
+            if (status != mark) {
+                const ModuleData& targetData = data(target);
+                // Where the loader gave a record to a module without a start of its own, the record has a status, and says that the module has not begun: no start stores there.
+                bool hasNoStatus = status < static_cast<uint8_t>(StoredModuleStatus::InRecord)
+                    || (status == static_cast<uint8_t>(StoredModuleStatus::InRecord) && !targetData.evaluatesItself() && m_records.get(target)->status() < CyclicModuleRecord::Status::Evaluating);
+                if (hasNoStatus && targetData.isESModuleOfProgram() && modulesWithoutStatusSeen.add(target).isNewEntry)
+                    path.append(Searched { target, targetData.firstRequest, m_table.endOfRequests(target), 0 });
+                return { };
+            }
+            uint32_t placeBehind = placeBehindModuleThatWaitsForItsCycle(target);
+            if (!placeBehind)
+                return target;
+            ModuleThatWaitsForCycle& waiting = m_modulesThatWaitForTheirCycle[placeBehind - 1];
+            if (waiting.searchedBy == m_serialOfSearchForStart)
+                return { };
+            waiting.searchedBy = m_serialOfSearchForStart;
+            path.append(Searched { target, waiting.nextRequest, m_table.endOfRequests(target), placeBehind });
+            target = waiting.waitsFor;
+        }
+        return { };
+    };
+
+    while (!path.isEmpty()) {
+        size_t depth = path.size();
+        uint32_t nextRequest = path.last().nextRequest;
+        uint32_t endOfRequests = path.last().endOfRequests;
+        ModuleID start;
+        // What a request leads to is searched first, and the request is passed when that search has come to its end.
+        for (; nextRequest != endOfRequests; ++nextRequest) {
+            const ModuleRequestData& request = requests[nextRequest];
+            if (request.isRequire || request.isDeferred)
+                continue;
+            start = search(request.targetModule());
+            if (start || path.size() != depth)
+                break;
+        }
+        path[depth - 1].nextRequest = nextRequest;
+        if (start) {
+            // Everything on the way leads to that start. A module that is searched again is searched from the request that led there.
+            for (const Searched& onWay : path) {
+                if (!onWay.placeBehindModuleThatWaits)
+                    continue;
+                ModuleThatWaitsForCycle& waiting = m_modulesThatWaitForTheirCycle[onWay.placeBehindModuleThatWaits - 1];
+                waiting.waitsFor = start;
+                waiting.nextRequest = onWay.nextRequest;
+            }
+            requestWhereSearchStopped = path.first().nextRequest;
+            return start;
+        }
+        if (path.size() != depth)
+            continue;
+        // Nothing that it leads to has still to end, but the module that ends now.
+        if (uint32_t placeBehind = path.last().placeBehindModuleThatWaits) {
+            ModuleThatWaitsForCycle& waiting = m_modulesThatWaitForTheirCycle[placeBehind - 1];
+            waiting.waitsFor = ending;
+            waiting.nextRequest = endOfRequests;
+        }
+        path.removeLast();
     }
+    return { };
+}
+
+void Modules::finishCycleMember(ModuleID member)
+{
+    uint8_t mark = m_storedStatuses[member.index()];
+    // A record has the status. Or the module has no start of its own and waits already: every start that comes to such a module finishes it.
+    if (mark < static_cast<uint8_t>(StoredModuleStatus::Evaluating) || placeBehindModuleThatWaitsForItsCycle(member))
+        return;
+    // Past the last mark an evaluation has the mark of the one around it, so a module that the other one began looks like a start of this one. Nothing waits there: the module is evaluated when its code has run.
+    if (mark == UINT8_MAX) [[unlikely]] {
+        setStoredStatus(member, StoredModuleStatus::Evaluated);
+        return;
+    }
+
+    uint32_t requestWhereSearchStopped = 0;
+    if (ModuleID start = findStartThatHasNotEnded(member, mark, requestWhereSearchStopped)) {
+        if (m_placesBehindModulesThatWaitForTheirCycle.isEmpty())
+            m_placesBehindModulesThatWaitForTheirCycle.fill(0, m_table.size());
+        m_modulesThatWaitForTheirCycle.append(ModuleThatWaitsForCycle { member, start, requestWhereSearchStopped, 0, mark });
+        m_placesBehindModulesThatWaitForTheirCycle[member.index()] = m_modulesThatWaitForTheirCycle.size();
+        return;
+    }
+
+    // The module was entered first among the members of its cycle, which is evaluated with it. What waits for it ended behind its beginning, so behind everything that waits for a start around it.
+    size_t firstOfCycle = m_modulesThatWaitForTheirCycle.size();
+    while (firstOfCycle) {
+        const ModuleThatWaitsForCycle& waiting = m_modulesThatWaitForTheirCycle[firstOfCycle - 1];
+        if (waiting.mark != mark || (waiting.waitsFor != member && !placeBehindModuleThatWaitsForItsCycle(waiting.waitsFor)))
+            break;
+        --firstOfCycle;
+    }
+    setStoredStatus(member, StoredModuleStatus::Evaluated);
+    ModuleRecord* recordOfFirstMember = nullptr;
+    for (size_t place = firstOfCycle; place < m_modulesThatWaitForTheirCycle.size(); ++place) {
+        ModuleID evaluated = m_modulesThatWaitForTheirCycle[place].module;
+        m_placesBehindModulesThatWaitForTheirCycle[evaluated.index()] = 0;
+        ModuleRecord* record = m_records.get(evaluated);
+        if (!record) {
+            setStoredStatus(evaluated, StoredModuleStatus::Evaluated);
+            continue;
+        }
+        // Something has asked for the module while it was being evaluated, and its record says so. The record takes the status with the root of its cycle, as the walk of the records gives it:
+        // whoever evaluates the module again is answered by the first member of its cycle.
+        ASSERT(!record->holdsStatus());
+        if (!recordOfFirstMember) {
+            recordOfFirstMember = ensureRecord(member);
+            if (!recordOfFirstMember->isRetained()) {
+                recordOfFirstMember->setIsHeldByLoader(true);
+                m_modulesWhoseRecordsLoaderHolds.append(member);
+            }
+        }
+        record->setHoldsStatus();
+        record->setStatus(CyclicModuleRecord::Status::Evaluated);
+        record->setCycleRoot(*m_instance.vm, recordOfFirstMember);
+        setStoredStatus(evaluated, StoredModuleStatus::InRecord);
+    }
+    m_modulesThatWaitForTheirCycle.shrink(firstOfCycle);
 }
 
 void Modules::evaluateModuleInRecord(ModuleID module)

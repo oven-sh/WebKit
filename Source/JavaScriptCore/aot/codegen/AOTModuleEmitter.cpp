@@ -238,6 +238,12 @@ void ModuleEmitter::generateFinishModuleEvaluation(const ValueContext& value)
     });
 }
 
+// The run time knows whether a start that the module leads to has still to end: AOTCallModules.cpp says which starts ask.
+void ModuleEmitter::generateFinishCycleMemberEvaluation(const ValueContext& value)
+{
+    callVoidOperation(value, RuntimeOperation::FinishCycleMemberEvaluation, { moduleIndex(value->module()) });
+}
+
 // Whatever queues a job calls the run time, so the words of the queue are run-time state.
 void ModuleEmitter::generateStopLoadingBehindFile(const ValueContext& value)
 {

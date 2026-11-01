@@ -88,6 +88,8 @@ struct EvaluationPlan {
     Vector<Vector<ModuleCallees>> calleesAtBareSites;
     // For a module with a state: what evaluates all that it imports.
     Vector<ModuleCallees> steps;
+    // Code stores its status, and so does code of another module of its component of imports: it is evaluated when the member of its cycle that was entered first has ended, which the run time knows.
+    BitVector isEvaluatedWithCycle;
 };
 
 } // anonymous namespace
@@ -495,7 +497,12 @@ static Value makeModuleOperation(Opcode opcode, ModuleID module)
     return value;
 }
 
-static void addStep(const Program& program, const ModuleStep& step, BuiltinID calledBuiltin, NOESCAPE const Invocable<ValueID(Value&&)> auto& add)
+static Opcode opcodeThatFinishes(const BitVector& isEvaluatedWithCycle, ModuleID module)
+{
+    return isEvaluatedWithCycle.get(module.index()) ? Opcode::FinishCycleMemberEvaluation : Opcode::FinishModuleEvaluation;
+}
+
+static void addStep(const Program& program, const BitVector& isEvaluatedWithCycle, const ModuleStep& step, BuiltinID calledBuiltin, NOESCAPE const Invocable<ValueID(Value&&)> auto& add)
 {
     if (step.callee) {
         addCallOfModule(program, step.callee, calledBuiltin, add);
@@ -503,11 +510,11 @@ static void addStep(const Program& program, const ModuleStep& step, BuiltinID ca
     }
     // The loader may hold the status in a record, and the run time takes it from there.
     add(makeModuleOperation(Opcode::BeginModuleEvaluation, step.moduleThatHasRun));
-    add(makeModuleOperation(Opcode::FinishModuleEvaluation, step.moduleThatHasRun));
+    add(makeModuleOperation(opcodeThatFinishes(isEvaluatedWithCycle, step.moduleThatHasRun), step.moduleThatHasRun));
 }
 
 // To evaluate a module with a state is to call this function: it evaluates what the module imports, in the order of the requests, and then runs the code of the module.
-static void buildStart(const AnalysisContext& context, Function& start, const ModuleToStart& module, const ModuleCallees& steps, TypeArena& types)
+static void buildStart(const AnalysisContext& context, Function& start, const ModuleToStart& module, const ModuleCallees& steps, const BitVector& isEvaluatedWithCycle, TypeArena& types)
 {
     const Function& code = context.program.at(module.code);
     IRBuilder builder(context, start, types);
@@ -522,7 +529,7 @@ static void buildStart(const AnalysisContext& context, Function& start, const Mo
     builder.moveToEndOf(entry);
     auto appendCallsOf = [&](std::span<const ModuleStep> callees) {
         for (const ModuleStep& callee : callees) {
-            addStep(context.program, callee, { }, [&](Value&& value) {
+            addStep(context.program, isEvaluatedWithCycle, callee, { }, [&](Value&& value) {
                 return builder.append(WTF::move(value));
             });
         }
@@ -575,7 +582,7 @@ static void buildStart(const AnalysisContext& context, Function& start, const Mo
     if (!onlyReturns(code))
         builder.append(makeCall(module.code, arguments.span()));
     if (begins)
-        builder.append(makeModuleOperation(Opcode::FinishModuleEvaluation, module.module));
+        builder.append(makeModuleOperation(opcodeThatFinishes(isEvaluatedWithCycle, module.module), module.module));
     builder.emitReturn(builder.appendUndefined());
     if (!begins)
         return;
@@ -696,9 +703,9 @@ static void replaceSites(const EvaluationPlan& plan, NOESCAPE const Invocable<bo
                 return builder.insertBefore(point, WTF::move(added));
             };
             for (const ModuleStep& callee : callees)
-                addStep(program, callee, calledBuiltin, insert);
+                addStep(program, plan.isEvaluatedWithCycle, callee, calledBuiltin, insert);
             if (last.callee || last.moduleThatHasRun)
-                addStep(program, last, calledBuiltin, insert);
+                addStep(program, plan.isEvaluatedWithCycle, last, calledBuiltin, insert);
         }
     }
     builder.applyInsertions();
@@ -755,6 +762,11 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
     }
     BitVector leadsToCode = findModulesThatReach(plan, components, runsCode);
     BitVector needsLink = findModulesThatReach(plan, components, hasLinkWorkItself);
+    // A member of a cycle of imports waits for the member that was entered first, and not for a module of another evaluation. A `require` begins an evaluation of its own:
+    // the run time gives it a mark of its own, which a start that code calls where the `require` stands would not have.
+    BitVector leadsToCycle = findModulesThatReach(plan, components, [&](const Program& program, const Module& module) {
+        return components.membersOf(components.componentOf[&module - program.modules.span().data()]).size() > 1;
+    });
 
     // A module that only passes the walk on is being evaluated while what it imports runs, as any other.
     plan.isWalkedByCode.ensureSize(modules.size());
@@ -773,7 +785,7 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
         // A file that the loader has asked for has no parent, and the run time knows which of several files it has asked for.
         bool loaderIsSeenToAsk = somebodyAsksWhoRequiredWhom && module.requests.size() > 1 && module.requests[1].isHoisted;
         bool isListedFromRequireOn = module.kind == ModuleKind::SourceText && module.flags.contains(ModuleFlags::IsListedInCache);
-        if (!needsLink.quickGet(index) && isRequiredBetweenLoads && !loaderIsSeenToAsk && !isListedFromRequireOn)
+        if (!needsLink.quickGet(index) && isRequiredBetweenLoads && !loaderIsSeenToAsk && !isListedFromRequireOn && !leadsToCycle.quickGet(index))
             plan.isCalledWhereRequired.quickSet(index);
         if (!hasCode(program, module))
             continue;
@@ -968,6 +980,37 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
             starts.last().filesRunWhileLoaded.append(step.callee ? moduleWithBody[step.callee.index()] : ModuleID());
     }
 
+    // With one status in a component, the module that stores it begins in front of every other member and ends behind them all.
+    BitVector storesStatus(modules.size());
+    for (const ModuleToStart& module : starts) {
+        if (!module.beginsInCode)
+            storesStatus.quickSet(module.module.index());
+    }
+    auto noteListedModules = [&](const ModuleCallees& callees) {
+        for (const ModuleStep& step : callees) {
+            if (step.moduleThatHasRun)
+                storesStatus.quickSet(step.moduleThatHasRun.index());
+        }
+    };
+    for (size_t index = 0; index < modules.size(); ++index) {
+        noteListedModules(plan.steps[index]);
+        for (const ModuleCallees& callees : plan.calleesAtBareSites[index])
+            noteListedModules(callees);
+    }
+    for (const ModuleCallSite& site : sites) {
+        size_t target = site.target.index();
+        if (site.kind == SiteKind::Late && plan.isCalledWhereRequired.quickGet(target) && !plan.startsItself.quickGet(target) && modules[target].flags.contains(ModuleFlags::IsListedInCache))
+            storesStatus.quickSet(target);
+    }
+    Vector<uint32_t> statusesOfComponent(FillWith { }, components.numberOfComponents, 0u);
+    for (size_t index : storesStatus)
+        ++statusesOfComponent[components.componentOf[index]];
+    plan.isEvaluatedWithCycle.ensureSize(modules.size());
+    for (size_t index : storesStatus) {
+        if (statusesOfComponent[components.componentOf[index]] > 1)
+            plan.isEvaluatedWithCycle.quickSet(index);
+    }
+
     Vector<FunctionID> codeOfModule(modules.size());
     Vector<Function> codes(starts.size());
     forEachIndexInParallel(loops, starts.size(), [&](unsigned index) {
@@ -1000,7 +1043,7 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
         return module.start;
     });
     editFunctionsInParallel(editor, build, startIDs.span(), [&](unsigned index, FunctionID id, Function& function, TaskArenas& arenas) {
-        buildStart({ build, program, nullptr, nullptr, id }, function, starts[index], plan.steps[starts[index].module.index()], arenas.types);
+        buildStart({ build, program, nullptr, nullptr, id }, function, starts[index], plan.steps[starts[index].module.index()], plan.isEvaluatedWithCycle, arenas.types);
     });
     for (const ModuleToStart& module : starts) {
         if (isStart.quickGet(module.module.index())) {

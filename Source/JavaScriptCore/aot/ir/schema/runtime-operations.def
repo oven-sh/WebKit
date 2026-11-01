@@ -238,3 +238,4 @@ runtime AbandonModuleEvaluation : void (uint32_t module, JSCell* exception) ; re
 runtime ImportDynamic : EncodedJSValue (EncodedJSValue specifier, EncodedJSValue options, uint32_t referrer) ; unknownCode
 runtime RequireDynamic : EncodedJSValue (EncodedJSValue specifier, uint32_t referrer) ; unknownCode
 runtime ResolveDynamic : EncodedJSValue (EncodedJSValue specifier, uint32_t referrer, uint32_t isURL, uint32_t isForRequire) ; unknownCode
+runtime FinishCycleMemberEvaluation : void (uint32_t module) ; reads(all) writes(ExternalState, AllocatorState, RuntimeState) collects

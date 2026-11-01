@@ -330,6 +330,7 @@ public:
     bool refusesRequestFromHost(ModuleID module) const { return !m_admitsInspector && !m_isAskingHost && !data(module).isEntryPoint() && (data(module).kind != ModuleKind::Data || !m_findsDataFilesByName) && m_table.hasFilePath(module) && !data(module).isLibraryCodeWithFilePath() && !m_runsCopyFromDisk; }
     void admitCodeNamedBy(JSValue specifier);
     void abandonEvaluation(ModuleID, JSValue error);
+    void finishCycleMember(ModuleID);
     template<typename Visitor> void visitRoots(Visitor&);
 
     bool loadRuntimeModules(ModuleID root);
@@ -653,10 +654,21 @@ private:
     void markModulesOfPlan(const PlanOfLoad&);
     JSValue callBody(ModuleID);
     JSValue callBodyUnderOwnMark(ModuleID, bool bodyStoresStatus, bool runsImportedFilesAlone = false);
-    Vector<ModuleID, 8> modulesThatEvaluationWillBegin(ModuleID root);
     void evaluateByCallingBody(ModuleID module) { callBodyUnderOwnMark(module, true); }
     void didThrowInBody(ModuleID, JSValue error);
-    void failEvaluatedModulesOfUnfinishedCycles(std::span<const ModuleID> failedModules, JSValue error);
+    // The code of the module has run, and a start that it leads to through its imports had still to end. The table keeps the mark of its evaluation for it, as while its code ran.
+    struct ModuleThatWaitsForCycle {
+        ModuleID module;
+        // A start that had not ended when the search from the module stopped. Behind a search that came to its end: the module whose end that search was made for.
+        ModuleID waitsFor;
+        // The request of the module at which the search stopped. No request in front of it leads to a start that has not ended.
+        uint32_t nextRequest;
+        // The number of the search that came to the module last: a search comes to a module once.
+        uint32_t searchedBy;
+        uint8_t mark;
+    };
+    ModuleID findStartThatHasNotEnded(ModuleID ending, uint8_t mark, uint32_t& requestWhereSearchStopped);
+    uint32_t placeBehindModuleThatWaitsForItsCycle(ModuleID module) const { return m_modulesThatWaitForTheirCycle.isEmpty() ? 0 : m_placesBehindModulesThatWaitForTheirCycle[module.index()]; }
     void recordEvaluationIfNothingIsLeftToRun(ModuleID);
     bool isLeftToStartsOfImporters(ModuleID) const;
     bool isPassedOverByEvaluationInProgress(ModuleID) const;
@@ -788,7 +800,11 @@ private:
     BitVector m_modulesWithMarkOfRequire;
     BitVector m_modulesWithExtensibleNamespace;
     BitVector m_modulesWithEarlierNamespaceInValue;
-    BitVector m_modulesEvaluatedUnderAnotherEvaluation;
+    // In the order in which their code ended. What waits for a module stands in front of that module, so a cycle that ends takes its members from the end.
+    Vector<ModuleThatWaitsForCycle> m_modulesThatWaitForTheirCycle;
+    // By module: one more than its place among them. Made when the first module waits.
+    Vector<uint32_t> m_placesBehindModulesThatWaitForTheirCycle;
+    uint32_t m_serialOfSearchForStart { 0 };
     Box<MockedModules> m_mocks;
     unsigned m_numberOfMockedSets { 0 };
     bool m_isAnsweringRequireOfMock { false };

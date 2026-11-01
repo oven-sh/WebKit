@@ -29,6 +29,7 @@ public:
     void generateResolveDynamic(const ValueContext&);
     void generateBeginModuleEvaluation(const ValueContext&);
     void generateFinishModuleEvaluation(const ValueContext&);
+    void generateFinishCycleMemberEvaluation(const ValueContext&);
     void generateStopLoadingBehindFile(const ValueContext&);
     void generateEvaluateRequiredModule(const ValueContext&);
     void generateAbandonModuleEvaluation(const ValueContext&);

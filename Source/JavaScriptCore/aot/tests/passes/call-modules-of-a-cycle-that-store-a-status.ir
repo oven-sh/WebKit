@@ -1,0 +1,91 @@
+# A module of a cycle of imports is evaluated when the member of the cycle that was entered first has ended. Where two modules of a cycle store a status, the start of each
+# asks the run time at its end whether a start that it leads to has still to end. Where one module of a cycle stores a status, it begins in front of the others and ends behind them,
+# and stores the status itself. So does a module that leads into a cycle and is no member of it.
+# FORM: Prepared
+# RUN: pass CallModules
+# STATISTIC: ModulesWithState = 4
+# STATISTIC: ModulesWithoutState = 1
+# CHECK: outcome: Changed
+
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/first.js" displayPath="first.js" body=f1 requests=[{target=m2 completes=true}]
+module m2 path="/second.js" displayPath="second.js" body=f2 requests=[{target=m1 completes=true}]
+module m3 path="/above.js" displayPath="above.js" body=f3 requests=[{target=m1 completes=true}]
+module m4 path="/alone.js" displayPath="alone.js" body=f4 requests=[{target=m5 completes=true}]
+module m5 path="/inside.js" displayPath="inside.js" body=f5 requests=[{target=m4 completes=true}]
+entry module=m0
+# CHECK: module m1 {{*}}flags=[EvaluatesItself] body=f1
+# CHECK: module m2 {{*}}flags=[EvaluatesItself] body=f2
+# CHECK: module m3 {{*}}flags=[EvaluatesItself] body=f3
+# CHECK: module m4 {{*}}flags=[EvaluatesItself] body=f4
+# CHECK: module m5 path="/inside.js" displayPath="inside.js" requests=
+
+# An import() names each of them but inside.js, which only the start of alone.js comes to.
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    PutModuleVariable v0 variable=g0
+    v2 = ImportModule module=m2 referrer=m0
+    PutModuleVariable v2 variable=g0
+    v4 = ImportModule module=m3 referrer=m0
+    PutModuleVariable v4 variable=g0
+    v6 = ImportModule module=m4 referrer=m0
+    PutModuleVariable v6 variable=g0
+    Return
+# CHECK-NOT: ModuleEvaluation
+}
+# Whichever of the two an import() names first is entered first, and the other ends in front of it.
+function f1 name="first" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    Return
+# CHECK-NEXT: b0():
+# CHECK-NEXT: [[begins]]: boolean = BeginModuleEvaluation module=m1
+# CHECK-NEXT: Branch [[begins]]
+# CHECK-NEXT: b1():
+# CHECK-NEXT: = CallDirect function=f2
+# CHECK-NEXT: = CallDirect function=f6
+# CHECK-NEXT: FinishCycleMemberEvaluation module=m1
+}
+function f2 name="second" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=2
+    PutModuleVariable v0 variable=g0
+    Return
+# CHECK-NEXT: b0():
+# CHECK-NEXT: [[begins]]: boolean = BeginModuleEvaluation module=m2
+# CHECK-NEXT: Branch [[begins]]
+# CHECK-NEXT: b1():
+# CHECK-NEXT: = CallDirect function=f1
+# CHECK-NEXT: = CallDirect function=f7
+# CHECK-NEXT: FinishCycleMemberEvaluation module=m2
+}
+function f3 name="above" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=3
+    PutModuleVariable v0 variable=g0
+    Return
+# CHECK-NEXT: b0():
+# CHECK-NEXT: [[begins]]: boolean = BeginModuleEvaluation module=m3
+# CHECK-NEXT: Branch [[begins]]
+# CHECK-NEXT: b1():
+# CHECK-NEXT: = CallDirect function=f1
+# CHECK-NEXT: = CallDirect function=f8
+# CHECK-NEXT: FinishModuleEvaluation module=m3
+}
+function f4 name="alone" module=m4 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=4
+    PutModuleVariable v0 variable=g0
+    Return
+# CHECK-NEXT: b0():
+# CHECK-NEXT: [[begins]]: boolean = BeginModuleEvaluation module=m4
+# CHECK-NEXT: Branch [[begins]]
+# CHECK-NEXT: b1():
+# CHECK-NEXT: = CallDirect function=f5
+# CHECK-NEXT: = CallDirect function=f9
+# CHECK-NEXT: FinishModuleEvaluation module=m4
+}
+function f5 name="inside" module=m5 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=5
+    PutModuleVariable v0 variable=g0
+    Return
+# CHECK-NOT: ModuleEvaluation
+}

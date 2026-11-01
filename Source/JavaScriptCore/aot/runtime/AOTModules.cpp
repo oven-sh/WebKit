@@ -564,8 +564,8 @@ ModuleRecord* Modules::ensureRecord(ModuleID module)
         return record;
 
     ModuleStatus moduleStatus = status(module);
-    // Compiled code began the module, and stores the status in the table when the body ends. The record takes the status when it is asked for again.
-    if (moduleStatus == ModuleStatus::Evaluating && (data(module).evaluatesItself() || !data(module).bodyFunction())) {
+    // Compiled code began the module, and stores the status in the table when the body ends, or when the first member of its cycle does. The record takes the status when it is asked for again.
+    if (moduleStatus == ModuleStatus::Evaluating && (data(module).evaluatesItself() || !data(module).bodyFunction() || placeBehindModuleThatWaitsForItsCycle(module))) {
         record->setStatus(CyclicModuleRecord::Status::Evaluating);
         return record;
     }
@@ -3554,6 +3554,14 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAbandonModuleEvaluation, void, (In
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTAbandonModuleEvaluation);
     DeferTerminationForAWhile deferTermination(vm);
     modulesOf(*instance).abandonEvaluation(ModuleID(module), cellArgument<Exception>(exception, Entry::operationAOTAbandonModuleEvaluation)->value());
+    scope.assertNoException();
+}
+
+// From the start of a module of a cycle of imports, behind its code. The start does not say by itself that the module is evaluated: see Modules::finishCycleMember().
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFinishCycleMemberEvaluation, void, (Instance* instance, uint32_t module))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTFinishCycleMemberEvaluation);
+    modulesOf(*instance).finishCycleMember(ModuleID(module));
     scope.assertNoException();
 }
 

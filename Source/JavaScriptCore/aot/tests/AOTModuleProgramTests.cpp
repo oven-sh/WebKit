@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <wtf/DataLog.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 
 namespace JSC { namespace AOT {
 
@@ -505,12 +506,423 @@ function f10 name="importLast" results=[{type=anything}] {
 }
 )IR"_s;
 
+// first.js and second.js import each other, and main.js requires first.js. second.js requires imports-back.js, which calls import() on second.js while it runs. first.js calls import() on second.js behind the end of second.js.
+static constexpr ASCIILiteral laterImportOfCycleMember = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/first.js" displayPath="first.js" body=f1 requests=[{target=m2 completes=true}]
+module m2 path="/second.js" displayPath="second.js" body=f2 requests=[{target=m1 completes=true}]
+module m3 path="/imports-back.js" displayPath="imports-back.js" body=f3
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = RequireModule module=m1 referrer=m0 specifier="./first.js"
+    v3 = String string="ends"
+    v4 = String string="main.js"
+    v5 = Call v1, -, v3, v4
+    Return
+}
+function f1 name="first" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="first.js"
+    v3 = String string="begins"
+    v4 = Call v1, -, v3, v2
+    v5 = ImportModule module=m2 referrer=m1
+    v6 = PropGet v0 key="keep" [isFreeName]
+    v7 = String string="the later import() of second.js"
+    v8 = Call v6, -, v7, v5
+    v9 = String string="ends"
+    v10 = Call v1, -, v9, v2
+    Return
+}
+function f2 name="second" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="second.js"
+    v3 = String string="begins"
+    v4 = Call v1, -, v3, v2
+    v5 = RequireModule module=m3 referrer=m2 specifier="./imports-back.js"
+    v6 = String string="ends"
+    v7 = Call v1, -, v6, v2
+    Return
+}
+function f3 name="importsBack" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="imports-back.js"
+    v4 = Call v1, -, v2, v3
+    v5 = ImportModule module=m2 referrer=m3
+    v6 = PropGet v0 key="keep" [isFreeName]
+    v7 = String string="the import() of second.js while it runs"
+    v8 = Call v6, -, v7, v5
+    Return
+}
+)IR"_s;
+
+// throws.js and ended.js import each other, and imports-cycle.js imports throws.js. The script calls the closure of main.js, which requires imports-cycle.js. throws.js calls import() on ended.js, whose code has run, and throws.
+static constexpr ASCIILiteral importOfMemberOfRequiredCycleThatFails = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/imports-cycle.js" displayPath="imports-cycle.js" body=f1 requests=[{target=m2 completes=true}]
+module m2 path="/throws.js" displayPath="throws.js" body=f2 requests=[{target=m3 completes=true}]
+module m3 path="/ended.js" displayPath="ended.js" body=f3 requests=[{target=m2 completes=true}]
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f4
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+function f1 name="importsCycle" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="imports-cycle.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f2 name="throws" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="begins"
+    v3 = String string="throws.js"
+    v4 = Call v1, -, v2, v3
+    v5 = ImportModule module=m3 referrer=m2
+    v6 = PropGet v0 key="keep" [isFreeName]
+    v7 = String string="the import() of ended.js"
+    v8 = Call v6, -, v7, v5
+    v9 = String string="thrown by throws.js"
+    Throw v9
+}
+function f3 name="ended" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="ended.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f4 name="requireCycle" results=[{type=anything}] {
+    v0 = RequireModule module=m1 referrer=m0 specifier="./imports-cycle.js"
+    Return v0
+}
+)IR"_s;
+
+// The same cycle with no require(): the script calls the closure of main.js, which calls import() on throws.js.
+static constexpr ASCIILiteral importOfMemberOfImportedCycleThatFails = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/throws.js" displayPath="throws.js" body=f1 requests=[{target=m2 completes=true}]
+module m2 path="/ended.js" displayPath="ended.js" body=f2 requests=[{target=m1 completes=true}]
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f3
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+function f1 name="throws" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="begins"
+    v3 = String string="throws.js"
+    v4 = Call v1, -, v2, v3
+    v5 = ImportModule module=m2 referrer=m1
+    v6 = PropGet v0 key="keep" [isFreeName]
+    v7 = String string="the import() of ended.js"
+    v8 = Call v6, -, v7, v5
+    v9 = String string="thrown by throws.js"
+    Throw v9
+}
+function f2 name="ended" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="ended.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f3 name="importCycle" results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    Return v0
+}
+)IR"_s;
+
+// root.js and member.js import each other, and main.js requires root.js. While root.js runs it requires imports-member.js, which calls import() on member.js, whose code has run. Behind that root.js calls import() on member.js itself.
+static constexpr ASCIILiteral importOfEndedCycleMemberWhileRootRuns = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/root.js" displayPath="root.js" body=f1 requests=[{target=m2 completes=true}]
+module m2 path="/member.js" displayPath="member.js" body=f2 requests=[{target=m1 completes=true}]
+module m3 path="/imports-member.js" displayPath="imports-member.js" body=f3
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = RequireModule module=m1 referrer=m0 specifier="./root.js"
+    v3 = String string="ends"
+    v4 = String string="main.js"
+    v5 = Call v1, -, v3, v4
+    Return
+}
+function f1 name="root" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="root.js"
+    v3 = String string="begins"
+    v4 = Call v1, -, v3, v2
+    v5 = RequireModule module=m3 referrer=m1 specifier="./imports-member.js"
+    v6 = ImportModule module=m2 referrer=m1
+    v7 = PropGet v0 key="keep" [isFreeName]
+    v8 = String string="the import() of member.js behind the cycle"
+    v9 = Call v7, -, v8, v6
+    v10 = String string="ends"
+    v11 = Call v1, -, v10, v2
+    Return
+}
+function f2 name="member" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="member.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f3 name="importsMember" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="imports-member.js"
+    v4 = Call v1, -, v2, v3
+    v5 = ImportModule module=m2 referrer=m3
+    v6 = PropGet v0 key="keep" [isFreeName]
+    v7 = String string="the import() of member.js while its root runs"
+    v8 = Call v6, -, v7, v5
+    Return
+}
+)IR"_s;
+
+// first.js, behind.js and evaluated.js import each other in a ring. first.js imports requires.js in front of behind.js, and requires.js requires evaluated.js: a require() evaluates it for good.
+// So behind.js leads to nothing that still runs when its code has run, though first.js, which is of the same ring, does.
+static constexpr ASCIILiteral cycleMemberBehindEvaluatedMember = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/first.js" displayPath="first.js" body=f1 requests=[{target=m2 completes=true}, {target=m3 completes=true}]
+module m2 path="/requires.js" displayPath="requires.js" body=f2
+module m3 path="/behind.js" displayPath="behind.js" body=f3 requests=[{target=m4 completes=true}]
+module m4 path="/evaluated.js" displayPath="evaluated.js" body=f4 requests=[{target=m1 completes=true}]
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f5
+    v1 = NewClosure function=f6
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="registerImports" [isFreeName]
+    v4 = Call v3, -, v0, v1, v1
+    Return
+}
+function f1 name="first" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="begins"
+    v3 = String string="first.js"
+    v4 = Call v1, -, v2, v3
+    v5 = ImportModule module=m3 referrer=m1
+    v6 = PropGet v0 key="keep" [isFreeName]
+    v7 = String string="the import() of behind.js"
+    v8 = Call v6, -, v7, v5
+    v9 = String string="thrown by first.js"
+    Throw v9
+}
+function f2 name="requires" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="requires.js"
+    v3 = String string="begins"
+    v4 = Call v1, -, v3, v2
+    v5 = RequireModule module=m4 referrer=m2 specifier="./evaluated.js"
+    v6 = String string="ends"
+    v7 = Call v1, -, v6, v2
+    Return
+}
+function f3 name="behind" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="behind.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f4 name="evaluated" module=m4 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="evaluated.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f5 name="importFirst" results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    Return v0
+}
+function f6 name="importBehind" results=[{type=anything}] {
+    v0 = ImportModule module=m3 referrer=m0
+    Return v0
+}
+)IR"_s;
+
+// Two cycles under one evaluation: outer.js and waits.js, and below them root.js and member.js. The inner cycle is evaluated when root.js ends, while waits.js still waits for outer.js, which throws.
+static constexpr ASCIILiteral twoCyclesUnderOneEvaluation = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/outer.js" displayPath="outer.js" body=f1 requests=[{target=m2 completes=true}, {target=m3 completes=true}]
+module m2 path="/waits.js" displayPath="waits.js" body=f2 requests=[{target=m1 completes=true}]
+module m3 path="/between.js" displayPath="between.js" body=f3 requests=[{target=m4 completes=true}]
+module m4 path="/root.js" displayPath="root.js" body=f4 requests=[{target=m5 completes=true}]
+module m5 path="/member.js" displayPath="member.js" body=f5 requests=[{target=m4 completes=true}]
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f6
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+function f1 name="outer" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="begins"
+    v3 = String string="outer.js"
+    v4 = Call v1, -, v2, v3
+    v5 = PropGet v0 key="keep" [isFreeName]
+    v6 = ImportModule module=m2 referrer=m1
+    v7 = String string="the import() of waits.js"
+    v8 = Call v5, -, v7, v6
+    v9 = ImportModule module=m5 referrer=m1
+    v10 = String string="the import() of member.js"
+    v11 = Call v5, -, v10, v9
+    v12 = String string="thrown by outer.js"
+    Throw v12
+}
+function f2 name="waits" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="waits.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f3 name="between" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="between.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f4 name="root" module=m4 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="root.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f5 name="member" module=m5 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="member.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f6 name="importOuter" results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    Return v0
+}
+)IR"_s;
+
+// first.js, calls.js and member.js are a cycle that a require() of the script runs, and no import() is in the program. calls.js calls a closure of main.js that requires required.js, which imports member.js:
+// that require() begins an evaluation of its own, and member.js is evaluated with it while first.js, which throws later, still runs.
+static constexpr ASCIILiteral moduleRequiredWhileCycleRuns = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}, {target=m3 kind=Require completes=true}, {target=m4 kind=Require completes=true}]
+module m1 path="/first.js" displayPath="first.js" body=f1 requests=[{target=m2 completes=true}, {target=m3 completes=true}]
+module m2 path="/calls.js" displayPath="calls.js" body=f2 requests=[{target=m1 completes=true}]
+module m3 path="/member.js" displayPath="member.js" body=f3 requests=[{target=m1 completes=true}]
+module m4 path="/required.js" displayPath="required.js" body=f4 requests=[{target=m3 completes=true}]
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f5
+    v1 = NewClosure function=f6
+    v2 = NewClosure function=f7
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="registerImports" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return
+}
+function f1 name="first" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="begins"
+    v3 = String string="first.js"
+    v4 = Call v1, -, v2, v3
+    v5 = String string="thrown by first.js"
+    Throw v5
+}
+function f2 name="calls" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="calls.js"
+    v3 = String string="begins"
+    v4 = Call v1, -, v3, v2
+    v5 = PropGet v0 key="importLast" [isFreeName]
+    v6 = Call v5
+    v7 = String string="ends"
+    v8 = Call v1, -, v7, v2
+    Return
+}
+function f3 name="member" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="member.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f4 name="required" module=m4 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="required.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f5 name="requireFirst" module=m0 results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m0
+    Return
+}
+function f6 name="requireMember" module=m0 results=[{type=anything}] {
+    EvaluateModule module=m3 referrer=m0
+    Return
+}
+function f7 name="requireRequired" module=m0 results=[{type=anything}] {
+    EvaluateModule module=m4 referrer=m0
+    Return
+}
+)IR"_s;
+
 static constexpr ASCIILiteral scriptStart = R"js(
 globalThis.report = (label, value) => print(label + ": " + value);
 globalThis.id = value => value;
 globalThis.input = 1;
 globalThis.register = closure => { globalThis.registered = closure; };
 globalThis.registerImports = (first, second, last) => Object.assign(globalThis, { importFirst: first, importSecond: second, importLast: last });
+globalThis.kept = [];
+globalThis.keep = (label, promise) => { kept.push({ label, promise }); };
+globalThis.reportKept = async () => {
+    for (let turn = 0; turn < 32; ++turn)
+        await null;
+    const states = [];
+    for (let index = 0; index < kept.length; ++index) {
+        states.push("pending");
+        kept[index].promise.then(() => { states[index] = "fulfilled"; }, error => { states[index] = "rejected with " + error; });
+    }
+    for (let turn = 0; turn < 32; ++turn)
+        await null;
+    for (let index = 0; index < states.length; ++index)
+        report(kept[index].label, states[index]);
+};
 )js"_s;
 
 static constexpr ASCIILiteral scriptEnd = R"js(.then(() => {
@@ -687,6 +1099,174 @@ later import: fulfilled
 )js"_s);
 }
 
+// In each of these the start of a member of a cycle of imports stores the status of the member. What the promises of keep() come to is what JavaScriptCore's own loader makes of the same modules.
+static void testLaterImportOfCycleMember()
+{
+    checkShellOutput(laterImportOfCycleMember, { "validate"_s }, R"(begins: second.js
+runs: imports-back.js
+ends: second.js
+begins: first.js
+ends: first.js
+ends: main.js
+the import() of second.js while it runs: pending
+the later import() of second.js: fulfilled
+)"_s, R"js(.then(reportKept).catch(error => print("the script threw " + error));
+)js"_s);
+}
+
+static void testImportOfMemberOfRequiredCycleThatFails()
+{
+    checkShellOutput(importOfMemberOfRequiredCycleThatFails, { "validate"_s }, R"(runs: ended.js
+begins: throws.js
+require() threw: thrown by throws.js
+the import() of ended.js: rejected with thrown by throws.js
+)"_s, R"js(.then(() => {
+    try {
+        registered();
+        report("require()", "returned");
+    } catch (error) {
+        report("require() threw", error);
+    }
+    return reportKept();
+}).catch(error => print("the script threw " + error));
+)js"_s);
+}
+
+static void testImportOfMemberOfImportedCycleThatFails()
+{
+    checkShellOutput(importOfMemberOfImportedCycleThatFails, { "validate"_s }, R"(runs: ended.js
+begins: throws.js
+the import() of throws.js: rejected with thrown by throws.js
+the import() of ended.js: rejected with thrown by throws.js
+)"_s, R"js(.then(() => {
+    keep("the import() of throws.js", registered());
+    return reportKept();
+}).catch(error => print("the script threw " + error));
+)js"_s);
+}
+
+static void testImportOfEndedCycleMemberWhileRootRuns()
+{
+    checkShellOutput(importOfEndedCycleMemberWhileRootRuns, { "validate"_s }, R"(runs: member.js
+begins: root.js
+runs: imports-member.js
+ends: root.js
+ends: main.js
+the import() of member.js while its root runs: pending
+the import() of member.js behind the cycle: fulfilled
+)"_s, R"js(.then(reportKept).catch(error => print("the script threw " + error));
+)js"_s);
+}
+
+// A member that leads to no start that still runs is evaluated when its own code has run, whatever else of its ring still runs: the member that was entered first throws, and the other stays evaluated.
+static void testCycleMemberBehindEvaluatedMember()
+{
+    checkShellOutput(cycleMemberBehindEvaluatedMember, { "validate"_s }, R"(begins: requires.js
+runs: evaluated.js
+ends: requires.js
+runs: behind.js
+begins: first.js
+the import() of first.js: rejected with thrown by first.js
+the import() of behind.js: fulfilled
+the later import() of behind.js: fulfilled
+)"_s, R"js(.then(async () => {
+    keep("the import() of first.js", importFirst());
+    await reportKept();
+    kept.length = 0;
+    keep("the later import() of behind.js", importSecond());
+    await reportKept();
+}).catch(error => print("the script threw " + error));
+)js"_s);
+}
+
+static void testTwoCyclesUnderOneEvaluation()
+{
+    checkShellOutput(twoCyclesUnderOneEvaluation, { "validate"_s }, R"(runs: waits.js
+runs: member.js
+runs: root.js
+runs: between.js
+begins: outer.js
+the import() of outer.js: rejected with thrown by outer.js
+the import() of waits.js: rejected with thrown by outer.js
+the import() of member.js: fulfilled
+)"_s, R"js(.then(() => {
+    keep("the import() of outer.js", registered());
+    return reportKept();
+}).catch(error => print("the script threw " + error));
+)js"_s);
+}
+
+// Each module of a chain requires the next from its code, so more evaluations are in progress at once than there are marks, and the last of them have one mark. The last module of the chain requires outer.js,
+// which requires first.js. first.js and second.js import each other, and first.js imports outer.js, which is being evaluated with the mark that the cycle has.
+static String cycleBelowMoreEvaluationsThanMarks()
+{
+    static constexpr unsigned lengthOfChain = 256;
+    unsigned outer = lengthOfChain + 1;
+    unsigned first = lengthOfChain + 2;
+    unsigned second = lengthOfChain + 3;
+    StringBuilder modules;
+    StringBuilder functions;
+    modules.append("module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n"_s);
+    functions.append("function f0 name=\"main\" kind=Module results=[{type=anything}] {\n    v0 = Builtin builtin=GlobalThis\n    v1 = RequireModule module=m1 referrer=m0 specifier=\"./link1.js\"\n    v2 = ImportModule module=m"_s, second,
+        " referrer=m0\n    v3 = PropGet v0 key=\"keep\" [isFreeName]\n    v4 = String string=\"the import() of second.js behind the chain\"\n    v5 = Call v3, -, v4, v2\n    Return\n}\n"_s);
+    for (unsigned link = 1; link <= lengthOfChain; ++link) {
+        ASCIILiteral nameOfNext = link == lengthOfChain ? "outer"_s : "link"_s;
+        modules.append("module m"_s, link, " path=\"/link"_s, link, ".js\" displayPath=\"link"_s, link, ".js\" body=f"_s, link, '\n');
+        functions.append("function f"_s, link, " name=\"link"_s, link, "\" module=m"_s, link, " kind=Module results=[{type=anything}] {\n    v0 = RequireModule module=m"_s, link + 1, " referrer=m"_s, link, " specifier=\"./"_s, nameOfNext);
+        if (link != lengthOfChain)
+            functions.append(link + 1);
+        functions.append(".js\"\n    Return\n}\n"_s);
+    }
+    modules.append("module m"_s, outer, " path=\"/outer.js\" displayPath=\"outer.js\" body=f"_s, outer, '\n');
+    modules.append("module m"_s, first, " path=\"/first.js\" displayPath=\"first.js\" body=f"_s, first, " requests=[{target=m"_s, second, " completes=true}, {target=m"_s, outer, " completes=true}]\n"_s);
+    modules.append("module m"_s, second, " path=\"/second.js\" displayPath=\"second.js\" body=f"_s, second, " requests=[{target=m"_s, first, " completes=true}]\nentry module=m0\n"_s);
+    functions.append("function f"_s, outer, " name=\"outer\" module=m"_s, outer, " kind=Module results=[{type=anything}] {\n    v0 = Builtin builtin=GlobalThis\n    v1 = PropGet v0 key=\"report\" [isFreeName]\n    v2 = RequireModule module=m"_s, first, " referrer=m"_s, outer,
+        " specifier=\"./first.js\"\n    v3 = String string=\"ends\"\n    v4 = String string=\"outer.js\"\n    v5 = Call v1, -, v3, v4\n    Return\n}\n"_s);
+    auto appendBodyThatReports = [&](unsigned module, ASCIILiteral name) {
+        functions.append("function f"_s, module, " name=\""_s, name, "\" module=m"_s, module, " kind=Module results=[{type=anything}] {\n    v0 = Builtin builtin=GlobalThis\n    v1 = PropGet v0 key=\"report\" [isFreeName]\n    v2 = String string=\"runs\"\n    v3 = String string=\""_s, name,
+            ".js\"\n    v4 = Call v1, -, v2, v3\n    Return\n}\n"_s);
+    };
+    appendBodyThatReports(first, "first"_s);
+    appendBodyThatReports(second, "second"_s);
+    return makeString(modules.toString(), functions.toString());
+}
+
+static void testCycleBelowMoreEvaluationsThanMarks()
+{
+    checkShellOutput(cycleBelowMoreEvaluationsThanMarks(), { "validate"_s }, R"(runs: second.js
+runs: first.js
+ends: outer.js
+the import() of second.js behind the chain: fulfilled
+)"_s, R"js(.then(reportKept).catch(error => print("the script threw " + error));
+)js"_s);
+}
+
+static void testModuleRequiredWhileCycleRuns()
+{
+    checkShellOutput(moduleRequiredWhileCycleRuns, { "validate"_s }, R"(begins: calls.js
+runs: member.js
+runs: required.js
+ends: calls.js
+begins: first.js
+the require() of first.js: threw thrown by first.js
+the later require() of member.js: returned
+the later require() of required.js: returned
+)"_s, R"js(.then(() => {
+    const outcome = require => {
+        try {
+            require();
+            return "returned";
+        } catch (error) {
+            return "threw " + error;
+        }
+    };
+    report("the require() of first.js", outcome(importFirst));
+    report("the later require() of member.js", outcome(importSecond));
+    report("the later require() of required.js", outcome(importLast));
+}).catch(error => print("the script threw " + error));
+)js"_s);
+}
+
 std::span<const NativeTest> moduleProgramTests()
 {
     static constexpr NativeTest tests[] = {
@@ -698,6 +1278,14 @@ std::span<const NativeTest> moduleProgramTests()
         { "module-programs/import-meta-passed-on"_s, testImportMetaPassedOn },
         { "module-programs/module-builtins-in-every-position"_s, testModuleBuiltinsInEveryPosition },
         { "module-programs/termination-during-import-handoff"_s, testTerminationDuringImportHandoff },
+        { "module-programs/later-import-of-cycle-member"_s, testLaterImportOfCycleMember },
+        { "module-programs/import-of-member-of-required-cycle-that-fails"_s, testImportOfMemberOfRequiredCycleThatFails },
+        { "module-programs/import-of-member-of-imported-cycle-that-fails"_s, testImportOfMemberOfImportedCycleThatFails },
+        { "module-programs/import-of-ended-cycle-member-while-root-runs"_s, testImportOfEndedCycleMemberWhileRootRuns },
+        { "module-programs/cycle-member-behind-evaluated-member"_s, testCycleMemberBehindEvaluatedMember },
+        { "module-programs/two-cycles-under-one-evaluation"_s, testTwoCyclesUnderOneEvaluation },
+        { "module-programs/module-required-while-cycle-runs"_s, testModuleRequiredWhileCycleRuns },
+        { "module-programs/cycle-below-more-evaluations-than-marks"_s, testCycleBelowMoreEvaluationsThanMarks },
     };
     return tests;
 }
