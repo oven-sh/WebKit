@@ -67,6 +67,7 @@ enum class Counter : uint8_t {
     RangesComparedWithStackCells,
     ClobberPointsVisitedForCalls,
     PhiPlacementSteps,
+    BlocksVisitedToPassTmpsOnStack,
     MemoryPromotionAccessesVisited,
     LoopsConsideredForMemoryPromotion,
     LoopsWithoutPreheader,
@@ -86,7 +87,7 @@ enum class Counter : uint8_t {
     LikelyDominatorWalkSteps,
 };
 
-static constexpr unsigned numberOfCounters = 36;
+static constexpr unsigned numberOfCounters = 37;
 static_assert(static_cast<unsigned>(Counter::LikelyDominatorWalkSteps) + 1 == numberOfCounters);
 
 struct LimitHit {

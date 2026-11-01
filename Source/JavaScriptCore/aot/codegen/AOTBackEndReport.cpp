@@ -152,6 +152,8 @@ static StatisticID statisticOf(B3::Counter counter)
         return StatisticID::ClobberPointsVisitedForCalls;
     case B3::Counter::PhiPlacementSteps:
         return StatisticID::PhiPlacementSteps;
+    case B3::Counter::BlocksVisitedToPassTmpsOnStack:
+        return StatisticID::BlocksVisitedToPassTmpsOnStack;
     case B3::Counter::MemoryPromotionAccessesVisited:
         return StatisticID::MemoryPromotionAccessesVisited;
     case B3::Counter::LoopsConsideredForMemoryPromotion:

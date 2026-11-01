@@ -2457,6 +2457,7 @@ public:
         fixSpillsAfterTerminals(m_code);
 
         m_code.proc().count(Counter::ClobberPointsVisitedForCalls, static_cast<uint32_t>(std::min<uint64_t>(m_occupancy.clobberPointsReadForCalls(), std::numeric_limits<uint32_t>::max())));
+        m_code.proc().count(Counter::BlocksVisitedToPassTmpsOnStack, static_cast<uint32_t>(std::min<uint64_t>(m_blocksVisitedToPassTmpsOnStack, std::numeric_limits<uint32_t>::max())));
         m_stats[GP].didSpill += m_didSpill[GP];
         m_stats[FP].didSpill += m_didSpill[FP];
         m_stats[GP].numTmpsOut = m_code.numTmps(GP);
@@ -5103,9 +5104,57 @@ private:
         return endsInLoneJump(from) || to->numPredecessors() == 1 ? frequency : 2 * frequency;
     }
 
-    // The blocks of `blocks`, which are in the order of the code, that `other` is live in. Nothing where it is named in one of them, or the moves cost `limit` or more.
+    // The blocks of a cycle plus the blocks that a live range overlaps. The union is enumerated on demand, because a walk over it usually ends early.
+    struct BlocksOfCycleAndLiveRange {
+        std::span<const unsigned> blocksOfCycle;
+        const BitVector& isInCycle;
+        // Null if the live range lies within the cycle.
+        const LiveRange* liveRange;
+    };
+
+    bool contains(const BlocksOfCycleAndLiveRange& blocks, unsigned blockIndex)
+    {
+        if (blocks.isInCycle.quickGet(blockIndex))
+            return true;
+        if (!blocks.liveRange)
+            return false;
+        auto intervals = blocks.liveRange->intervals().span();
+        auto first = std::ranges::upper_bound(intervals, positionOfHead(m_code[blockIndex]), { }, [](const Interval& interval) {
+            return interval.end();
+        });
+        return first != intervals.end() && first->begin() <= m_tailPoints[blockIndex];
+    }
+
+    void forEachBlockInCodeOrder(const BlocksOfCycleAndLiveRange& blocks, NOESCAPE const Invocable<IterationStatus(unsigned)> auto& func)
+    {
+        size_t nextInCycle = 0;
+        auto visitBlocksOfCycleBelow = [&](unsigned end) {
+            while (nextInCycle < blocks.blocksOfCycle.size() && blocks.blocksOfCycle[nextInCycle] < end) {
+                if (func(blocks.blocksOfCycle[nextInCycle++]) == IterationStatus::Done)
+                    return IterationStatus::Done;
+            }
+            return IterationStatus::Continue;
+        };
+        if (blocks.liveRange) {
+            bool isDone = false;
+            unsigned lastOutsideCycle = UINT_MAX;
+            forEachBlockInLiveRange(*blocks.liveRange, [&](BasicBlock* block) {
+                unsigned blockIndex = block->index();
+                bool isInCycle = blocks.isInCycle.quickGet(blockIndex);
+                isDone = visitBlocksOfCycleBelow(blockIndex + isInCycle) == IterationStatus::Done;
+                if (!isDone && !isInCycle && std::exchange(lastOutsideCycle, blockIndex) != blockIndex)
+                    isDone = func(blockIndex) == IterationStatus::Done;
+                return isDone ? IterationStatus::Done : IterationStatus::Continue;
+            });
+            if (isDone)
+                return;
+        }
+        visitBlocksOfCycleBelow(UINT_MAX);
+    }
+
+    // Returns the blocks among `blocks` in which `other` is live, or nothing if one of them names it or the moves at the borders cost `limit` or more.
     template<Bank bank>
-    std::optional<Vector<unsigned, 8>> findBlocksToPassOnStack(Tmp other, std::span<const unsigned> blocks, const BitVector& isAmongBlocks, float limit, float& cost)
+    std::optional<Vector<unsigned, 8>> findBlocksToPassOnStack(Tmp other, const BlocksOfCycleAndLiveRange& blocks, float limit, float& cost)
     {
         TmpData& otherData = m_map.get<bank>(other);
         auto intervals = otherData.liveRange.intervals().span();
@@ -5113,38 +5162,42 @@ private:
         size_t intervalIndex = 0;
         size_t useDefIndex = 0;
         Vector<unsigned, 8> result;
-        for (unsigned blockIndex : blocks) {
+        bool isPossible = true;
+        auto impossible = [&] {
+            isPossible = false;
+            return IterationStatus::Done;
+        };
+        forEachBlockInCodeOrder(blocks, [&](unsigned blockIndex) {
+            ++m_blocksVisitedToPassTmpsOnStack;
             BasicBlock* block = m_code[blockIndex];
             Point head = positionOfHead(block);
             Point tail = positionOfTail(block);
             while (intervalIndex < intervals.size() && intervals[intervalIndex].end() <= head)
                 ++intervalIndex;
             if (intervalIndex == intervals.size())
-                break;
+                return IterationStatus::Done;
             if (intervals[intervalIndex].begin() > tail)
-                continue;
+                return IterationStatus::Continue;
             if (intervals[intervalIndex].begin() > head || intervals[intervalIndex].end() <= tail)
-                return std::nullopt;
+                return impossible();
             while (useDefIndex < useDefs.size() && useDefs[useDefIndex] < head)
                 ++useDefIndex;
             if (useDefIndex < useDefs.size() && useDefs[useDefIndex] <= tail)
-                return std::nullopt;
+                return impossible();
             result.append(blockIndex);
-        }
-        for (unsigned blockIndex : result) {
-            BasicBlock* block = m_code[blockIndex];
             for (BasicBlock* predecessor : block->predecessors()) {
-                if (!isAmongBlocks.quickGet(predecessor->index()))
+                if (!contains(blocks, predecessor->index()))
                     cost += costOfMoveBetween(predecessor, block);
             }
             BasicBlock* previous = nullptr;
             for (BasicBlock* successor : block->successorBlocks()) {
-                if (successor != std::exchange(previous, successor) && !isAmongBlocks.quickGet(successor->index()) && containsPoint(otherData.liveRange, positionOfHead(successor)))
+                if (successor != std::exchange(previous, successor) && !contains(blocks, successor->index()) && containsPoint(otherData.liveRange, positionOfHead(successor)))
                     cost += costOfMoveBetween(block, successor);
             }
-            if (cost >= limit)
-                return std::nullopt;
-        }
+            return cost >= limit ? impossible() : IterationStatus::Continue;
+        });
+        if (!isPossible)
+            return std::nullopt;
         return result;
     }
 
@@ -5272,36 +5325,14 @@ private:
         if (cycle == m_cycles->forest.none)
             return false;
 
-        std::span<const unsigned> blocks;
-        const BitVector* isAmongBlocks = nullptr;
-        Vector<unsigned, 16> blocksOfCycleAndLiveRange;
-        BitVector isInCycleOrLiveRange;
+        std::optional<BlocksOfCycleAndLiveRange> blocks;
         auto findBlocks = [&] {
-            if (isAmongBlocks)
+            if (blocks)
                 return;
             bool livesOnlyInCycle = std::ranges::all_of(tmpData.liveRange.intervals(), [&](const Interval& interval) {
                 return m_cycles->holdsEveryBlockBetween(cycle, findBlockIndexContainingPoint(interval.begin()), findBlockIndexContainingPoint(interval.end() - 1));
             });
-            if (livesOnlyInCycle) {
-                blocks = m_cycles->blocks[cycle].span();
-                isAmongBlocks = &m_cycles->bitsOf(cycle);
-                return;
-            }
-            isInCycleOrLiveRange.ensureSize(m_code.size());
-            for (unsigned blockIndex : m_cycles->blocks[cycle]) {
-                isInCycleOrLiveRange.quickSet(blockIndex);
-                blocksOfCycleAndLiveRange.append(blockIndex);
-            }
-            size_t numberOfBlocksInCycle = blocksOfCycleAndLiveRange.size();
-            forEachBlockInLiveRange(tmpData.liveRange, [&](BasicBlock* block) {
-                if (!isInCycleOrLiveRange.quickSet(block->index()))
-                    blocksOfCycleAndLiveRange.append(block->index());
-                return IterationStatus::Continue;
-            });
-            std::ranges::inplace_merge(blocksOfCycleAndLiveRange, blocksOfCycleAndLiveRange.begin() + numberOfBlocksInCycle);
-            ASSERT(std::ranges::is_sorted(blocksOfCycleAndLiveRange));
-            blocks = blocksOfCycleAndLiveRange.span();
-            isAmongBlocks = &isInCycleOrLiveRange;
+            blocks.emplace(m_cycles->blocks[cycle].span(), m_cycles->bitsOf(cycle), livesOnlyInCycle ? nullptr : &tmpData.liveRange);
         };
         auto passesThroughBlockWhereTheyMeet = [&](Tmp other, const Interval& intervalOfOther) {
             TmpData& otherData = m_map.get<bank>(other);
@@ -5346,7 +5377,7 @@ private:
                     m_visited.add(index);
                     if (passesThroughBlockWhereTheyMeet(conflict.tmp, conflict.interval)) {
                         findBlocks();
-                        if (auto blocksOnStack = findBlocksToPassOnStack<bank>(conflict.tmp, blocks, *isAmongBlocks, leastCost, cost)) {
+                        if (auto blocksOnStack = findBlocksToPassOnStack<bank>(conflict.tmp, *blocks, leastCost, cost)) {
                             others.append({ conflict.tmp, WTF::move(*blocksOnStack) });
                             return IterationStatus::Continue;
                         }
@@ -7734,6 +7765,7 @@ private:
     Vector<BlocksOnStack> m_blocksOnStack;
     Vector<MoveAtBorderOfLoop> m_movesAtBordersOfLoops;
     std::optional<Cycles> m_cycles;
+    uint64_t m_blocksVisitedToPassTmpsOnStack { 0 };
     Vector<BordersOfCycle> m_bordersOfCycles;
     std::array<Vector<std::optional<CostOfSpill>>, numBanks> m_costsOfSpill;
     HashMap<std::pair<unsigned, unsigned>, float> m_frequencyIfSpilledInCycle;
