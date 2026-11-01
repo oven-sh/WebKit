@@ -1159,6 +1159,18 @@ JSValue Modules::exportsBeforeMock(ModuleID file)
         return { };
     JSObject* variables = isLaidOver ? loaded->variablesBeforeMock.get() : nullptr;
 
+    // A name of a CommonJS file is kept where the file has it: tryReplaceCapturedExport().
+    auto keptBy = [&](ModuleID holder, const Identifier& name) -> JSValue {
+        LoadedModule* held = isLaidOver ? loadedIfExists(holder) : nullptr;
+        JSObject* before = held ? held->exportsBeforeMock.get() : nullptr;
+        if (!before)
+            return { };
+        JSValue value = storedValue(realm, before, name);
+        if (value != JSValue(before))
+            return value;
+        JSObject* source = held->deferredExportsSource;
+        RELEASE_AND_RETURN(scope, source ? source->get(realm, name) : jsUndefined());
+    };
     // A chain of re-exports ends at the module that declares the variable.
     auto keptValueOf = [&](ModuleID module, UniquedStringImpl* name) -> JSValue {
         for (unsigned steps = 0; steps <= m_table.size(); ++steps) {
@@ -1168,6 +1180,8 @@ JSValue Modules::exportsBeforeMock(ModuleID file)
             const ModuleExportData& moduleExport = m_table.exports(module)[*index];
             switch (moduleExport.kind()) {
             case ModuleExportKind::Variable:
+                if (const SyntheticExportPlace* origin = syntheticExportKeptIn(moduleExport.variable))
+                    return keptBy(origin->module, identifier(origin->name));
                 return variables ? storedValue(realm, variables, Identifier::from(vm, moduleExport.variable.encoded())) : JSValue();
             case ModuleExportKind::Namespace:
                 return { };
@@ -1189,10 +1203,15 @@ JSValue Modules::exportsBeforeMock(ModuleID file)
     RETURN_IF_EXCEPTION(scope, { });
     JSObject* exports = constructEmptyObject(realm);
     for (const Identifier& name : names) {
-        // A name that the mock alone has is none of the file's.
-        if (!m_table.findExport(file, name.impl()))
+        // A name that the mock alone has is none of the file's. The table lacks what comes through `export *` from a module whose names only the run knows.
+        if (!m_table.findExport(file, name.impl()) && (!data(file).hasDynamicStarExport() || isAddedByMock(file, name)))
             continue;
         JSValue value = keptValueOf(file, name.impl());
+        RETURN_IF_EXCEPTION(scope, { });
+        for (unsigned index = 0; !value && isLaidOver && index < loaded->modulesBehindStarsUnderMock.size(); ++index) {
+            value = keptBy(loaded->modulesBehindStarsUnderMock[index], name);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
         if (!value) {
             value = namespaceObject->get(realm, name);
             RETURN_IF_EXCEPTION(scope, { });
