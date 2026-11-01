@@ -1,10 +1,10 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 129 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 154 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
-1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A10 list every such behavior, how to
+1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A11 list every such behavior, how to
    recognize it in a failure, and the fork code that causes it. If a failure matches one of these and the fork code is
    still there, the test is the thing to change.
 2. **The test cannot pass in a mode or build we run.** Skip it in that mode only, with the reason. Section B.
@@ -127,6 +127,35 @@ Rules for an edit to an upstream test:
 - `stress/intl-extended-timezone-names.js`: CLDR 49 removed zh-Hant's short names for America/Los_Angeles: `PDT` → `GMT-7`,
   `PT` → `洛杉磯時間`.
 
+### A11. A frame is where its token starts: a name, a spread, `new X(args)`, a call of a name
+
+- Upstream reports these four where the token ends: a name behind the name, a spread behind its `...`, `new X(args)` and
+  a call behind the callee. The fork reports them where the token starts: at the name, at the `...`, at the `new`, and,
+  for a call whose callee ends in a name (`f()`, `a.b()`, `a.#b()`) or is `super`, at that name. V8 has all four there.
+- Not changed: a member is at its `.` or `[`, a tagged template at its backquote, `new X` at its `new`, and a call of
+  anything else behind its callee (`a?.()` behind the `?.`, `(f)()` behind the `)`, `a[b]()` behind the `]`).
+- Why: Bun maps a frame of the text that its transpiler prints back to the source through a source map, which knows
+  tokens by where they start. Where a token ends the next one starts, so a position there names two tokens, and on a
+  line of the source other than the one that was meant once the two were written on two lines.
+- Fork code: `bytecompiler/NodesCodegen.cpp`, where a name is recorded (`ResolveNode::emitBytecode` and the nodes that
+  call, tag, increment or assign to a name: `nameEnd` is the end of the range, and no longer the divot), and
+  `parser/Parser.cpp` (`parseMemberExpression`: `new` with arguments, and `callDivot`; the five places that parse `...`).
+- Recognize: the line is the same unless the name or callee and what follows it are on two lines. The column is smaller
+  by the length of the name, or is that of the `new`. The message, and the text it quotes, do not change.
+- Files (33). Only positions change in each, and in the baselines only columns:
+  - `stress/async-stack-trace-basic.js`, `-bound-functions-basic`, `-nested`, `-nested-deep`, `-promise-all-basic`,
+    `-promise-allSettled-basic`, `-promise-any-basic`, `-promise-race-basic`, `-switch`: 212 frames
+  - `stress/multiline-token-error-column.js` (both columns), `stress/get-property-cache-error.js` (the column)
+  - `ChakraCore/test/`: `Basics/bug650104`, `Error/NativeErrors_v4`, `Error/inlineSameFunc`,
+    `Error/validate_line_column`, `LetConst/defer2`, `LetConst/defer5`, `Object/forIn.error`,
+    `StackTrace/ErrorPrototype`, `StackTrace/FunctionName.js`, `es6/unicode_blue_533163_utf8`, `fieldopts/fieldhoist6`,
+    `6b`, `7`, `_negzero`, `_nullfieldhoist`, `_undefined_global`, `_unreachable` (all `.baseline-jsc`): 75 positions
+  - `LayoutTests/js/stack-trace-expected.txt`: 284 positions
+  - `LayoutTests/imported/w3c/web-platform-tests/wasm/core/`: `call_ref`, `return_call_indirect`, `return_call_ref`,
+    `unreached-invalid` (all `.wast.js-expected.txt`): the 207 positions in the stacks of their expected failures
+- The fork's own `stress/bytecode-optimizer-exceptions.js` has 24 of these positions in `__expect`. To record them
+  again, run the file with `--useBytecodeOptimizer=0`.
+
 ---
 
 ## B. The test cannot pass in a mode or build we run: narrowed, not changed
@@ -199,6 +228,7 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 | file | what it holds the engine to |
 |---|---|
 | `stress/bun-async-context-propagation.js` | the embedder's async-context slot is captured when a job is scheduled and current while it runs |
+| `stress/bun-frame-is-where-its-token-starts.js` | A11: the line, the column and the message of a frame at a name, a spread, `new X(args)` and a call of a name, and of the frames that are where upstream has them: a member, an optional call, a call of a callee in parentheses, of an index and of a function expression, a tagged template |
 | `stress/bun-aot-builtins-table.js` | the ahead-of-time compiler's table of built-ins (`Source/JavaScriptCore/aot/builtins/*.builtins.ts`) agrees with the engine. **After a sync that removes, renames, moves or reimplements a built-in that the table knows this fails, and each line it prints names the entry to fix.** |
 | `stress/sort-scratch-double-pivot.js` | double arithmetic in the comparator of an inlined sort stores no double into an Int32 array |
 | `stress/array-sort-inline-int32-double-comparator.js` | an earlier, smaller test for the sort fix |
@@ -244,7 +274,7 @@ the programs that test ahead-of-time compilation are in Bun's `test/aot`.
 
 ## E. After a sync: a failing test, step by step
 
-1. Does the difference match A1–A10 exactly (same text, same shape)? Check that the fork code named there is still in the
+1. Does the difference match A1–A11 exactly (same text, same shape)? Check that the fork code named there is still in the
    tree, then update the expectation with a `// Bun:` comment and add the file to its list here.
 2. Does it fail only in one mode or only with ASan, for a reason in the test and not the engine (it counts JIT compiles,
    depends on allocation never failing, needs more than 300 s)? Narrow it as in B.

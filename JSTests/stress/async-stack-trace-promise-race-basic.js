@@ -70,12 +70,12 @@ function shouldThrowAsync(run, errorType, message, stackFunctions) {
       async function test() {
         await run();
       }, Error, 'error', [
-        ["thrower", "65:59"],
-        ["async run", "66:44"],
-        ["async test", "71:18"],
+        ["thrower", "65:50"], // Bun: upstream has 65:59, where the token ends
+        ["async run", "66:40"], // Bun: upstream has 66:44, where the token ends
+        ["async test", "71:15"], // Bun: upstream has 71:18, where the token ends
         ["drainMicrotasks", "[native code]"],
-        ["shouldThrowAsync", "19:20"],
-        ["global code", "69:21"]
+        ["shouldThrowAsync", "19:5"], // Bun: upstream has 19:20, where the token ends
+        ["global code", "69:5"] // Bun: upstream has 69:21, where the token ends
       ] 
     );
     drainMicrotasks();
@@ -104,12 +104,12 @@ function shouldThrowAsync(run, errorType, message, stackFunctions) {
       async function test() {
         await run();
       }, Error, 'error from task1' , [
-        ["task1", "90:20"],
-        ["async run", "100:44"],
-        ["async test", "105:18"],
+        ["task1", "90:11"], // Bun: upstream has 90:20, where the token ends
+        ["async run", "100:40"], // Bun: upstream has 100:44, where the token ends
+        ["async test", "105:15"], // Bun: upstream has 105:18, where the token ends
         ["drainMicrotasks", "[native code]"],
-        ["shouldThrowAsync", "19:20"],
-        ["global code", "103:21"]
+        ["shouldThrowAsync", "19:5"], // Bun: upstream has 19:20, where the token ends
+        ["global code", "103:5"] // Bun: upstream has 103:21, where the token ends
       ]
     );
     drainMicrotasks();

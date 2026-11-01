@@ -1013,7 +1013,8 @@ static WrittenReads findWrittenIterations(std::span<const Latin1Character> text,
                 break;
             continue;
         }
-        for (size_t word = std::max(*within, open); word + 4 < *close; ++word) {
+        // The place lies in front of the `of`, or is the `of` itself where that starts a line of the head.
+        for (size_t word = std::max(*within ? *within - 1 : 0, open); word + 4 < *close; ++word) {
             // `x of v`, and `[a,b]of v` as a minifier leaves it.
             bool closesPattern = text[word] == ']' || text[word] == '}';
             if ((isBlank(text[word]) || closesPattern) && text[word + 1] == 'o' && text[word + 2] == 'f' && isBlank(text[word + 3])) {
