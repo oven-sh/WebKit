@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinFamilyEmitter.h"
+#include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
 #include "AOTOperatorEmitter.h"
@@ -105,10 +106,9 @@ void StringBuiltinEmitter::generateIndexedRead(const InlineCall& call, InlineBui
         return inRepresentation(context, representation, natural, type);
     };
     auto finishWith = [&](const Type& insideType, const auto& readInside, const Type& outsideType, const auto& readOutside) {
-        // A representation without room for the result of a position outside the string comes from a type that rules such a position out.
-        bool mayBeOutside = representation == Representation::Void || isLegalRepresentation(outsideType, representation);
-        if (!mayBeOutside) {
-            finishInlineCall(call, inResultRepresentation(readInside(), insideType));
+        if (representation != Representation::Void && !isLegalRepresentation(outsideType, representation)) {
+            generator().fail(context, InternalErrorKind::OpcodeWithoutCode);
+            finishInlineCall(call, emitter<ConstantEmitter>().zeroOf(representation));
             return;
         }
         LBasicBlock inside = newBlock();

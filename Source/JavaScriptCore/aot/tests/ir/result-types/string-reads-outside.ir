@@ -1,0 +1,39 @@
+# A read of a string at a position has room for the answer to a position outside the string. A type without that room is refused, so no such read is compiled without a test of its position.
+# FORM: Selected
+# RUN: verify
+# DIAGNOSTIC: TypeOutOfDate 6
+# DIAGNOSTIC: EdgeArgumentMismatch 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="codeUnit" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=int[0, 65535]}] {
+    v2: int[0, 65535] = StringRangeCodeUnitOrNaN v0, -, -, v1
+    Return v2
+}
+function f1 name="codePoint" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=int[0, 1114111]}] {
+    v2: int[0, 1114111] = StringRangeCodePointOrUndefined v0, -, -, v1
+    Return v2
+}
+function f2 name="character" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=string}] {
+    v2: string = StringRangeCharacterOrUndefined v0, -, -, v1
+    Return v2
+}
+function f3 name="substring" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=string}] {
+    v2: string = StringRangeSubstringOrUndefined v0, v1, v1
+    Return v2
+}
+function f4 name="charCodeAt" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=int[0, 65535]}] {
+    v2: int[0, 65535] = CallInline v0, v1 inlineBuiltin=StringCharCodeAt overload=StringPrototypeCharCodeAt/0
+    Return v2
+}
+function f5 name="at" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=string}] {
+    v2: string = CallInline v0, v1 inlineBuiltin=StringAt overload=StringPrototypeAt/0
+    Return v2
+}
+function f6 name="atWithMissEdge" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=anything}] {
+    TryCallInline v0, v1 inlineBuiltin=StringAt overload=StringPrototypeAt/0 -> done b1(), miss b2()
+  b1(v2: string):
+    Return v2
+  b2():
+    v3 = Undefined
+    Return v3
+}
