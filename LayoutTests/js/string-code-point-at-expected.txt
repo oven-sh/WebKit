@@ -34,7 +34,7 @@ PASS "".codePointAt.call(Math.PI, 3) is 52
 PASS "".codePointAt.call(true, 3) is 101
 PASS "".codePointAt.call(false, 3) is 115
 PASS "".codePointAt.call(new Object, 3) is 106
-PASS "".codePointAt.call(Symbol("WebKit"), 3) threw exception TypeError: Cannot convert a symbol to a string.
+PASS "".codePointAt.call(Symbol("WebKit"), 3) threw exception TypeError: Cannot convert a Symbol value to a string.
 PASS "".codePointAt.call(objectWithCustomToString, 0) is 248
 PASS "".codePointAt.call(objectThrowingOnToString, 0) threw exception Hehe.
 PASS "".codePointAt.call(objectCountingToString, 0) is 49
@@ -42,7 +42,7 @@ PASS objectCountingToString.counter is 1
 PASS "abcde".codePointAt(objectWithCustomValueOf) is 98
 PASS "".codePointAt.call(null, objectRecordsValueOf) threw exception TypeError: Type error.
 PASS "".codePointAt.call(undefined, objectRecordsValueOf) threw exception TypeError: Type error.
-PASS "".codePointAt.call(Symbol("WebKit"), objectRecordsValueOf) threw exception TypeError: Cannot convert a symbol to a string.
+PASS "".codePointAt.call(Symbol("WebKit"), objectRecordsValueOf) threw exception TypeError: Cannot convert a Symbol value to a string.
 PASS "".codePointAt.call(objectThrowingOnToString, objectRecordsValueOf) threw exception Hehe.
 PASS objectRecordsValueOf.valueOfEvaluated is false
 PASS "".codePointAt.call(evaluationOrderRecorder, evaluationOrderRecorder) is 114
