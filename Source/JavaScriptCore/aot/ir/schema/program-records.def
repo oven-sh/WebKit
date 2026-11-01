@@ -123,6 +123,7 @@ enum RuntimeErrorKind {
     DerivedConstructorResult StaticPrototypeKey IteratorResultNotObject IteratorWithoutThrowMethod IteratorIsNotAnObject InvalidPrivateRead
     InvalidPrivateWrite InvalidPrivateBrand PrivateFieldExists PrivateMethodWrite PrivateAccessorWithoutGetter PrivateAccessorWithoutSetter PrivateStaticTestOfNonObject
     SpreadResultNotObject LeftOutOfExecutable FunctionNotCompiled NoSyncIteratorForAsyncIteration SyncIteratorForAsyncIterationIsNotAnObject
+    | engine PrototypeIsNeitherObjectNorNull
 }
 flags RegExpFlags { HasIndices Global IgnoreCase Multiline DotAll Unicode UnicodeSets Sticky }
 

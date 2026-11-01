@@ -130,6 +130,7 @@ engine operation ReportMismatch (value: Any/inspects, expectedType: Type as Expe
 operation CheckInitialized (value: Any/returns, name: String) -> cast ; throws ; interpreted = Cast ; flow = Checks ; hasKnownValueRule = true
 operation RequireObjectCoercible (value: Any/returns, nullishAccess: NullishAccess, name?: String) -> cast ; throws ; interpreted = Cast ; flow = Checks ; runsBeforeCallee = true ; hasKnownValueRule = true
 operation RequireObject (value: Any/returns, runtimeError: RuntimeErrorKind) -> cast ; throws ; interpreted = Cast ; flow = Checks ; hasKnownValueRule = true
+engine operation RequireType (value: Any/returns, requiredType: Type, runtimeError: RuntimeErrorKind, calledBuiltin?: Builtin) -> cast(requiredType) ; throws ; Prepared..Placed ; interpreted = Cast ; hasKnownValueRule = true
 operation TypeTest (value: Any/inspects, testedType: Type) -> natural(boolean) ; none ; proves = TestedType ; branches = May ; interpreted = Test ; flow = Checks ; hasKnownValueRule = true ; hasOwnFoldingRule = true
 
 family Call AsRead..Placed

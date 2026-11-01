@@ -1,0 +1,33 @@
+# A RequireType runs its test, as a check does: what only a proof tells apart is not in its type, and neither is what is no value of the language.
+# The refusal of a prototype lets through an object or null and nothing else: Select hands it back to a link, and the link refuses just that.
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: PayloadOutOfRange 5
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="badBuiltinThatNoTestTellsApart" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = RequireType v0 requiredType=builtin(ImportMeta) runtimeError=IteratorResultNotObject
+    Return v0
+}
+function f1 name="badProvenContents" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = RequireType v0 requiredType=Array<number, proven> runtimeError=IteratorResultNotObject
+    Return v0
+}
+function f2 name="badValueOfTheEngine" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = RequireType v0 requiredType=guard runtimeError=IteratorResultNotObject
+    Unreachable
+}
+function f3 name="badRefusalOfPrototypeThatRefusesObjects" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = RequireType v0 requiredType=null runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    Return v0
+}
+function f4 name="badRefusalOfPrototypeThatTakesNumbers" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = RequireType v0 requiredType=null|number|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    Return v0
+}
+function f5 name="good" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = RequireType v0 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v2 = RequireType v0 requiredType=object runtimeError=IteratorResultNotObject
+    v3 = RequireType v0 requiredType=Array<number> runtimeError=IteratorResultNotObject
+    Return v1
+}

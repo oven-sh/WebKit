@@ -1,0 +1,219 @@
+# Object.create refuses what is neither an object nor null before anything behind the call runs, and the link to the prototype does that for the call. An allocation that lists its first stores
+# goes behind the values of those stores, and the link goes along. Where the program can see something of what they pass, a test stays where the link stood and the link refuses nothing.
+# Where it sees nothing of it, where the prototype is an object or null for sure, and below a literal, whose link refuses nothing, all is as it was.
+# What another object takes along is that object's own affair, but for its refusal.
+# FORM: Prepared
+# RUN: pass ResolveAccesses
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Options" fields=[{key="first" declared={type=number}}, {key="second" declared={type=number}}, {key="third" declared={type=number}}]
+layout L1 name="Holder" fields=[{key="first" declared={type=number}}, {key="held" declared={type=L0}}, {key="third" declared={type=number}}]
+layout L2 name="Above" fields=[{key="kind" declared={type=number}}]
+function f0 name="somebody" parameters=[{type=anything}] results=[{type=number}]
+
+function f1 name="a-call-is-passed" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    SetLiteralPrototype v2, v1 [refusesOtherValues]
+    v4 = FinishObject v2
+    v5 = CallDirect v0 function=f0
+    PropDefine v4, v5 key="second"
+    Return v4
+# CHECK-NEXT: b0(v0: number, v1: anything):
+# CHECK-NEXT: {{*}}: null|object = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+# CHECK-NEXT: v5: number = CallDirect v0 function=f0
+# CHECK-NEXT: v2: L0 = NewObject -, v0, v5 layout=L0 fields=[0, 1]
+# CHECK-NEXT: SetLiteralPrototype v2, v1
+# CHECK-NOT: refusesOtherValues
+# CHECK: v4: L0 = FinishObject v2
+# CHECK-NEXT: Return v4
+}
+
+function f2 name="nothing-that-the-program-sees-is-passed" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    SetLiteralPrototype v2, v1 [refusesOtherValues]
+    v4 = FinishObject v2
+    v5 = Add v0, v0
+    PropDefine v4, v5 key="second"
+    Return v4
+# CHECK-NEXT: b0(v0: number, v1: anything):
+# CHECK-NEXT: v5: number = Add v0, v0
+# CHECK-NEXT: v2: L0 = NewObject -, v0, v5 layout=L0 fields=[0, 1]
+# CHECK-NEXT: SetLiteralPrototype v2, v1 [refusesOtherValues]
+# CHECK-NEXT: v4: L0 = FinishObject v2
+# CHECK-NEXT: Return v4
+}
+
+function f3 name="the-prototype-is-an-object-or-null" parameters=[{type=number}, {type=null|L2}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    SetLiteralPrototype v2, v1 [refusesOtherValues]
+    v4 = FinishObject v2
+    v5 = CallDirect v0 function=f0
+    PropDefine v4, v5 key="second"
+    Return v4
+# CHECK-NEXT: b0(v0: number, v1: null|L2):
+# CHECK-NEXT: v5: number = CallDirect v0 function=f0
+# CHECK-NEXT: v2: L0 = NewObject -, v0, v5 layout=L0 fields=[0, 1]
+# CHECK-NEXT: SetLiteralPrototype v2, v1 [refusesOtherValues]
+# CHECK-NEXT: v4: L0 = FinishObject v2
+}
+
+function f4 name="the-link-of-a-literal" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    SetLiteralPrototype v2, v1
+    v4 = FinishObject v2
+    v5 = CallDirect v0 function=f0
+    PropDefine v4, v5 key="second"
+    Return v4
+# CHECK-NEXT: b0(v0: number, v1: anything):
+# CHECK-NEXT: v5: number = CallDirect v0 function=f0
+# CHECK-NEXT: v2: L0 = NewObject -, v0, v5 layout=L0 fields=[0, 1]
+# CHECK-NEXT: SetLiteralPrototype v2, v1
+# CHECK-NOT: refusesOtherValues
+# CHECK: v4: L0 = FinishObject v2
+}
+
+function f5 name="the-refusals-of-two-creations-stay-in-their-order" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = NewObject layout=L1
+    SetLiteralPrototype v3, v1 [refusesOtherValues]
+    v5 = FinishObject v3
+    v6 = NewObject -, v0 layout=L0 fields=[0]
+    SetLiteralPrototype v6, v2 [refusesOtherValues]
+    v8 = FinishObject v6
+    PropDefine v5, v0 key="first"
+    PropDefine v5, v8 key="held"
+    Return v5
+# The second link stays where it is, and the first one would come to stand behind it.
+# CHECK-NEXT: b0(v0: number, v1: anything, v2: anything):
+# CHECK-NEXT: {{*}}: null|object = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+# CHECK-NEXT: v6: L0 = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: SetLiteralPrototype v6, v2 [refusesOtherValues]
+# CHECK-NEXT: v8: L0 = FinishObject v6
+# CHECK-NEXT: v3: L1 = NewObject -, v0, v8 layout=L1 fields=[0, 1]
+# CHECK-NEXT: SetLiteralPrototype v3, v1
+# CHECK-NOT: refusesOtherValues
+# CHECK: v5: L1 = FinishObject v3
+}
+
+function f6 name="what-another-object-takes-along-is-its-own" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject layout=L1
+    SetLiteralPrototype v2, v1 [refusesOtherValues]
+    v4 = FinishObject v2
+    v5 = NewObject layout=L0
+    v6 = FinishObject v5
+    PropDefine v6, v0 key="first"
+    PropDefine v4, v0 key="first"
+    PropDefine v4, v6 key="held"
+    Return v4
+# The literal between the link and its last store lists its own store: nobody has seen that object.
+# CHECK-NEXT: b0(v0: number, v1: anything):
+# CHECK-NEXT: v5: L0 = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: v6: L0 = FinishObject v5
+# CHECK-NEXT: v2: L1 = NewObject -, v0, v6 layout=L1 fields=[0, 1]
+# CHECK-NEXT: SetLiteralPrototype v2, v1 [refusesOtherValues]
+# CHECK-NEXT: v4: L1 = FinishObject v2
+}
+
+function f7 name="a-store-into-an-object-that-somebody-has-seen-is-passed" parameters=[{type=number}, {type=anything}, {type=L0}] results=[{type=anything}] {
+    v3 = NewObject layout=L1
+    SetLiteralPrototype v3, v1 [refusesOtherValues]
+    v5 = FinishObject v3
+    PropSet v2, v0 key="third"
+    PropDefine v5, v0 key="first"
+    Return v5
+# CHECK-NEXT: b0(v0: number, v1: anything, v2: L0):
+# CHECK-NEXT: {{*}}: null|object = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+# CHECK: v3: L1 = NewObject -, v0 layout=L1 fields=[0]
+# CHECK-NEXT: SetLiteralPrototype v3, v1
+# CHECK-NOT: refusesOtherValues
+# CHECK: v5: L1 = FinishObject v3
+}
+
+function f8 name="the-link-of-another-creation-comes-to-stand-in-front" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = NewObject layout=L1
+    SetLiteralPrototype v3, v1 [refusesOtherValues]
+    v5 = FinishObject v3
+    v6 = NewObject layout=L0
+    SetLiteralPrototype v6, v2 [refusesOtherValues]
+    v8 = FinishObject v6
+    PropDefine v8, v0 key="first"
+    PropDefine v5, v0 key="first"
+    PropDefine v5, v8 key="held"
+    Return v5
+# Both links go along. The second one lands in front of the first, and still refuses.
+# CHECK-NEXT: b0(v0: number, v1: anything, v2: anything):
+# CHECK-NEXT: {{*}}: null|object = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+# CHECK-NEXT: v6: L0 = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: SetLiteralPrototype v6, v2 [refusesOtherValues]
+# CHECK-NEXT: v8: L0 = FinishObject v6
+# CHECK-NEXT: v3: L1 = NewObject -, v0, v8 layout=L1 fields=[0, 1]
+# CHECK-NEXT: SetLiteralPrototype v3, v1
+# CHECK-NOT: refusesOtherValues
+# CHECK: v5: L1 = FinishObject v3
+}
+
+function f9 name="the-test-of-another-creation-stays-in-front" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = NewObject layout=L1
+    SetLiteralPrototype v3, v1 [refusesOtherValues]
+    v5 = FinishObject v3
+    v6 = NewObject layout=L0
+    SetLiteralPrototype v6, v2 [refusesOtherValues]
+    v8 = FinishObject v6
+    PropDefine v5, v0 key="first"
+    v10 = CallDirect v0 function=f0
+    PropDefine v8, v10 key="first"
+    Return v5
+# The second link passes a call, so its test stays where it stood. The first link has passed that place: its test stays too, in front.
+# CHECK-NEXT: b0(v0: number, v1: anything, v2: anything):
+# CHECK-NEXT: {{*}}: null|object = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+# CHECK-NEXT: {{*}}: null|object = RequireType v2 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+# CHECK-NEXT: v3: L1 = NewObject -, v0 layout=L1 fields=[0]
+# CHECK-NEXT: SetLiteralPrototype v3, v1
+# CHECK-NOT: refusesOtherValues
+# CHECK: v5: L1 = FinishObject v3
+# CHECK-NEXT: v10: number = CallDirect v0 function=f0
+# CHECK-NEXT: v6: L0 = NewObject -, v10 layout=L0 fields=[0]
+# CHECK-NEXT: SetLiteralPrototype v6, v2
+# CHECK-NOT: refusesOtherValues
+# CHECK: v8: L0 = FinishObject v6
+}
+
+function f10 name="two-links-go-along-and-keep-their-order" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = NewObject layout=L1
+    SetLiteralPrototype v3, v1 [refusesOtherValues]
+    v5 = FinishObject v3
+    v6 = NewObject layout=L0
+    SetLiteralPrototype v6, v2 [refusesOtherValues]
+    v8 = FinishObject v6
+    PropDefine v5, v0 key="first"
+    PropDefine v8, v0 key="first"
+    Return v5
+# CHECK-NEXT: b0(v0: number, v1: anything, v2: anything):
+# CHECK-NEXT: v3: L1 = NewObject -, v0 layout=L1 fields=[0]
+# CHECK-NEXT: SetLiteralPrototype v3, v1 [refusesOtherValues]
+# CHECK-NEXT: v5: L1 = FinishObject v3
+# CHECK-NEXT: v6: L0 = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: SetLiteralPrototype v6, v2 [refusesOtherValues]
+# CHECK-NEXT: v8: L0 = FinishObject v6
+}
+
+function f11 name="the-link-of-a-literal-is-passed" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = NewObject layout=L1
+    SetLiteralPrototype v3, v1 [refusesOtherValues]
+    v5 = FinishObject v3
+    v6 = NewObject -, v0 layout=L0 fields=[0]
+    SetLiteralPrototype v6, v2
+    v8 = FinishObject v6
+    PropDefine v5, v0 key="first"
+    PropDefine v5, v8 key="held"
+    Return v5
+# The link of a literal refuses nothing: the program sees nothing of it.
+# CHECK-NEXT: b0(v0: number, v1: anything, v2: anything):
+# CHECK-NEXT: v6: L0 = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: SetLiteralPrototype v6, v2
+# CHECK-NOT: refusesOtherValues
+# CHECK: v8: L0 = FinishObject v6
+# CHECK-NEXT: v3: L1 = NewObject -, v0, v8 layout=L1 fields=[0, 1]
+# CHECK-NEXT: SetLiteralPrototype v3, v1 [refusesOtherValues]
+# CHECK-NEXT: v5: L1 = FinishObject v3
+}

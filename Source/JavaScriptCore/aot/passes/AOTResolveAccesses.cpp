@@ -627,8 +627,16 @@ struct BlockWithNewObjects {
     BitVector hasLeftItsPlace;
     // For a value that has left its place: the place of the last listed store of the object that took it along.
     Vector<uint32_t> placeTakenTo;
-    // By the place of the last listed store: what stands there instead.
+    // By the place of the last listed store: what stands there instead. By the place of a link that has left its refusal behind: the test.
     Vector<std::pair<uint32_t, Vector<ValueID, 4>>> valuesAtPlacesOfLastStores;
+    // A link that may refuse its prototype and has gone along with its allocation: where it stood, and the place of the last listed store.
+    struct RefusingLink {
+        uint32_t place;
+        uint32_t placeOfLastStore;
+    };
+    Vector<RefusingLink, 1> refusingLinksTakenAlong;
+    // For a block that holds such a link, asked before anything is edited: a link is seen where it may refuse, anything else where it is not removable when unused.
+    BitVector isSeenByProgram;
 };
 
 } // anonymous namespace
@@ -761,6 +769,8 @@ static bool listFirstStoresAtAllocation(FunctionPassContext& context, IRBuilder&
     for (uint32_t index : movedBehindAllocation) {
         valuesAtPlace.append(function.at(state.block).values[index]);
         leavePlace(index);
+        if (const Value& moved = function.at(values[index]); moved.opcode == Opcode::SetLiteralPrototype && mayRefuseItsPrototype(program, function, moved))
+            state.refusingLinksTakenAlong.append({ index, placeOfLastStore });
     }
     state.valuesAtPlacesOfLastStores.append({ placeOfLastStore, WTF::move(valuesAtPlace) });
 
@@ -768,6 +778,45 @@ static bool listFirstStoresAtAllocation(FunctionPassContext& context, IRBuilder&
     allocation.setFields(fields.span());
     allocation.setVariadicOperands(listedValues.span());
     return true;
+}
+
+// Object.create refuses what is neither an object nor null before anything behind the call runs, and its link does that for it. A link that has gone along with its allocation refuses behind all
+// that the allocation has passed. Where the program can see something of that, a test stays where the link stood, and the link refuses nothing.
+// What has left its place is an object's own affair until the function hands the object on: nobody sees it, but for another refusal.
+static void leaveRefusalsInFrontOfWhatProgramSees(FunctionPassContext& context, IRBuilder& builder, BlockWithNewObjects& state)
+{
+    if (state.refusingLinksTakenAlong.isEmpty())
+        return;
+
+    Function& function = context.function;
+    const BlockValues& values = function.at(state.block).values;
+    TypeID objectOrNull = context.types.intern(Type::object().withPrimitives(Primitive::Null));
+    // From the last link to the first: all that a link passes stands behind where it stood, and so does a test that another link leaves there.
+    AOT::sort(state.refusingLinksTakenAlong, std::ranges::greater { }, &BlockWithNewObjects::RefusingLink::place);
+    // Behind the link that is looked at, the first place where something stays that the program sees, and the first place to which another such link has gone: that link refuses there.
+    uint32_t firstSeenPlace = noPlace;
+    uint32_t firstPlaceOfOtherLink = noPlace;
+    uint32_t placesLeft = static_cast<uint32_t>(values.size());
+    for (const auto& link : state.refusingLinksTakenAlong) {
+        while (placesLeft > link.place + 1) {
+            --placesLeft;
+            if (!state.hasLeftItsPlace.quickGet(placesLeft) && state.isSeenByProgram.quickGet(placesLeft))
+                firstSeenPlace = placesLeft;
+        }
+        bool passesWhatProgramSees = std::min(firstSeenPlace, firstPlaceOfOtherLink) < link.placeOfLastStore;
+        firstPlaceOfOtherLink = std::min(firstPlaceOfOtherLink, link.placeOfLastStore);
+        if (!passesWhatProgramSees)
+            continue;
+        ValueID id = values[link.place];
+        Value test = IRBuilder::make(Opcode::RequireType, { function.at(id).prototypeOperand() });
+        test.setRequiredType(objectOrNull);
+        test.setRuntimeError(RuntimeErrorKind::PrototypeIsNeitherObjectNorNull);
+        test.setCalledBuiltin(Builtins::ObjectCreate);
+        builder.setOrigin(function.at(id).origin());
+        state.valuesAtPlacesOfLastStores.append({ link.place, { builder.addDetached(WTF::move(test)) } });
+        function.edit(id, ValueEdit::Definition).setRefusesOtherValues(false);
+        firstSeenPlace = link.place;
+    }
 }
 
 static bool listFirstStoresAtAllocations(FunctionPassContext& context, IRBuilder& builder)
@@ -809,9 +858,21 @@ static bool listFirstStoresAtAllocations(FunctionPassContext& context, IRBuilder
     auto numberOfObjectNamedBy = [&](ValueID id) {
         return id && id.index() < objectNamedBy.size() ? objectNamedBy[id.index()] : noPlace;
     };
+    bool holdsLinks = context.analyses.opcodesOfValues().contains(Opcode::SetLiteralPrototype);
     for (BlockID block : blocksWithStoreIntoNewObject) {
         BlockWithNewObjects state { .block = block };
         uint32_t numberOfValues = static_cast<uint32_t>(function.at(block).values.size());
+        bool holdsRefusingLink = holdsLinks && std::ranges::any_of(function.at(block).values, [&](ValueID id) {
+            return function.at(id).opcode == Opcode::SetLiteralPrototype && mayRefuseItsPrototype(context.program, function, function.at(id));
+        });
+        if (holdsRefusingLink) {
+            state.isSeenByProgram.ensureSize(numberOfValues);
+            for (uint32_t index = 0; index < numberOfValues; ++index) {
+                ValueID id = function.at(block).values[index];
+                const Value& value = function.at(id);
+                state.isSeenByProgram.quickSet(index, value.opcode == Opcode::SetLiteralPrototype ? mayRefuseItsPrototype(context.program, function, value) : !context.analyses.isRemovableWhenUnused(id));
+            }
+        }
         for (uint32_t index = 0; index < numberOfValues; ++index) {
             ValueID id = function.at(block).values[index];
             const Value& value = function.at(id);
@@ -831,6 +892,7 @@ static bool listFirstStoresAtAllocations(FunctionPassContext& context, IRBuilder
         state.placeTakenTo.fill(noPlace, numberOfValues);
         for (uint32_t number = 0; number < state.objects.size(); ++number)
             listFirstStoresAtAllocation(context, builder, state, objectNamedBy.span(), number, numberOfStoresInto[function.at(block).values[state.objects[number].place].index()]);
+        leaveRefusalsInFrontOfWhatProgramSees(context, builder, state);
         // The numbers count within a block.
         for (ValueID id : function.at(block).values) {
             if (id.index() < objectNamedBy.size())

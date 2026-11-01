@@ -486,6 +486,8 @@ KnownValue evaluateOperation(const Program& program, const Function& function, c
         return left.isNullish() ? KnownValue() : left;
     case Opcode::RequireObject:
         return left.isObject() ? left : KnownValue();
+    case Opcode::RequireType:
+        return evaluateTypeTest(program, left, program.at(value.requiredType())) == KnownBoolean::True ? left : KnownValue();
     case Opcode::ToBoolean:
         return toKnownValue(left.toBoolean(program));
     case Opcode::LogicalNot:

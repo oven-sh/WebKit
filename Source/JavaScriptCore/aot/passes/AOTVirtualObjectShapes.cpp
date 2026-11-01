@@ -837,6 +837,16 @@ CastOutcome evaluateCast(const ShapeContext& context, const VirtualShape& shape,
         return isNullish(shape) ? CastOutcome::Throws : CastOutcome::Passes;
     case Opcode::RequireObject:
         return shape.kind == VirtualShapeKind::Fields && context.family.descriptionOf(shape).hasIdentity ? CastOutcome::Passes : CastOutcome::Throws;
+    case Opcode::RequireType:
+        switch (evaluateTypeTestOfShape(context, shape, context.objects.program.at(cast.requiredType()))) {
+        case KnownBoolean::True:
+            return CastOutcome::Passes;
+        case KnownBoolean::False:
+            return CastOutcome::Throws;
+        case KnownBoolean::Unknown:
+            return CastOutcome::Unknown;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }

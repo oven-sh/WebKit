@@ -219,6 +219,9 @@ unsigned estimatedCodeBytes(const Program& program, const Function& function, co
         return 0;
     if (opcode == Opcode::RequireObjectCoercible && !program.typeOf(function, value.valueOperand()).mayBeUndefinedOrNull())
         return 0;
+    // The link was charged nothing for what it refuses, and a function is worth what it was worth before the refusal stood in front of the link.
+    if (isRefusalOfPrototype(value))
+        return 0;
     if (isCast(opcode) || provesForStretch(provesOf(opcode)) || provesOf(opcode) == Proof::TestedType)
         return CodeSize::typeCheck;
     if (opcode == Opcode::ToBoolean)

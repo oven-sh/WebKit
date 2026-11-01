@@ -14,6 +14,7 @@
 #include "AOTBuiltinUses.h"
 #include "AOTCodeShapes.h"
 #include "AOTIRBuilder.h"
+#include "AOTObservableOperations.h"
 #include "AOTPredictedValues.h"
 #include "AOTResolveAccesses.h"
 #include "AOTResultRules.h"
@@ -183,11 +184,66 @@ static bool returnTestedValues(Function& function)
     return didChange;
 }
 
+// Where a link that refuses its prototype went behind something that the program sees, a test stands in its place and the link refuses nothing (listFirstStoresAtAllocations). What stood between
+// them may be gone by now, or leave no trace. Then the link refuses again, on the path that it takes for a prototype that it has not met: a test that passes costs nothing there.
+static PassOutcome leaveRefusalsToPrototypeLinks(FunctionPassContext& pass)
+{
+    Function& function = pass.function;
+    FunctionAnalyses& analyses = pass.analyses;
+    if (!analyses.opcodesOfValues().contains(Opcode::RequireType))
+        return PassOutcome::Unchanged;
+
+    struct Refusal {
+        BlockID block;
+        uint32_t indexOfTest;
+        ValueID link;
+    };
+    Vector<Refusal, 2> refusals;
+    for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+        BlockID block { blockIndex };
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            const Value& test = function.at(values[index]);
+            if (!isRefusalOfPrototype(test) || analyses.useLists().useCount(values[index]))
+                continue;
+            ValueID handed = analyses.identityOf(test.valueOperand());
+            for (uint32_t next = index + 1; next < values.size(); ++next) {
+                const Value& link = function.at(values[next]);
+                // The link of the same call: it is handed the same value at the same place of the program.
+                if (link.opcode == Opcode::SetLiteralPrototype && !link.refusesOtherValues() && link.origin() == test.origin() && analyses.identityOf(link.prototypeOperand()) == handed) {
+                    refusals.append({ block, index, values[next] });
+                    break;
+                }
+                if (!analyses.isRemovableWhenUnused(values[next]))
+                    break;
+            }
+        }
+    }
+    if (refusals.isEmpty())
+        return PassOutcome::Unchanged;
+
+    IRBuilder builder(analyses.context(), function, pass.types, &analyses);
+    for (size_t first = 0; first < refusals.size();) {
+        BitVector tests;
+        size_t next = first;
+        for (; next < refusals.size() && refusals[next].block == refusals[first].block; ++next) {
+            explainOperationThatGoes(function, function.at(refusals[next].block).values[refusals[next].indexOfTest], InPlaceOfOperation::TheSameOperationElsewhere);
+            function.edit(refusals[next].link, ValueEdit::Definition).setRefusesOtherValues(true);
+            tests.set(refusals[next].indexOfTest);
+        }
+        builder.eraseValues(refusals[first].block, tests);
+        first = next;
+    }
+    analyses.didChangeValues();
+    return PassOutcome::Changed;
+}
+
 PassOutcome select(FunctionPassContext& pass)
 {
     PassOutcome outcome = noteExpectedElements(pass.program, pass.function);
     outcome |= clearExpectedTypes(pass.function);
     outcome |= callWithAnyReceiverWhereTypesAreLost(pass);
+    outcome |= leaveRefusalsToPrototypeLinks(pass);
     outcome |= chooseCodeShapes(pass, ChosenShapes::ChooseAgain);
     outcome |= makeDescriptorLiteralsBehindJoins(pass);
     outcome |= addCasesOfFieldsWithoutStorage(pass);

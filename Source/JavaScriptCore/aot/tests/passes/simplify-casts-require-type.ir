@@ -1,0 +1,92 @@
+# A RequireType of a value whose type lies inside the required type goes, and a second one of the same value is the first.
+# Nobody reads what the refusal of a link to a prototype lets through: an access by name and a later cast of the value keep the value as it arrived, with what the names that are read from
+# it come to say of it, and the test stays without a reader for Select to hand back to its link.
+# It is a test of the language: it stays while a check stands in front of its operand, and the generic version has it. What the value was in front of the check may answer it all the
+# same, and then it goes.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass SimplifyCasts VerifyProgram
+# CHECK: outcome: Changed
+# RUN(VERSIONS): pass SimplifyCasts AddGenericVersion SimplifyCasts VerifyProgram
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+typesite w0 module=m0 position=10 kind=Assertion
+layout L0 name="Above" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="operandIsObject" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = RequireType v0 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    Return v1
+# CHECK: b0(v0: L0):
+# CHECK-NEXT: Return v0
+}
+
+function f1 name="operandIsNull" results=[{type=anything}] {
+    v0 = Null
+    v1 = RequireType v0 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    Return v1
+# CHECK: v0: null = Null
+# CHECK-NEXT: Return v0
+}
+
+function f2 name="operandIsAnything" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = RequireType v0 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    Return v1
+# CHECK: v1: null|object = RequireType v0 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+# CHECK-NEXT: Return v1
+}
+
+function f3 name="operandMayBeANumber" parameters=[{type=number|L0}] results=[{type=anything}] {
+    v1 = RequireType v0 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    Return v1
+# CHECK: v1: L0 = RequireType v0 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+# CHECK-NEXT: Return v1
+}
+
+function f4 name="repeated" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = RequireType v0 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v2 = RequireType v0 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v3 = StrictEq v1, v2
+    Return v3
+# CHECK: v1: null|object = RequireType v0
+# CHECK-NEXT: = StrictEq v1, v1
+# CHECK-NOT: RequireType
+}
+
+function f5 name="accessBehindIt" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = RequireType v0 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v2 = PropGet v0 key="x"
+    Return v2
+# CHECK: = RequireType v0
+# CHECK-NEXT: = PropGet v0 key="x"
+}
+
+function f6 name="laterCastOfTheSameValue" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = RequireType v0 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v2 = RequireObjectCoercible v0 nullishAccess=Read name="x"
+    v3 = PropGet v0 key="x"
+    Return v3
+# CHECK: = RequireType v0
+# CHECK-NEXT: = RequireObjectCoercible v0 name="x"
+# CHECK-NEXT: = PropGet v2 key="x"
+}
+
+function f7 name="behindCheck" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=object site=w0 cause=MayFail
+    v2 = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    Return v2
+# CHECK: v1: object = Check v0 expectedType=object site=w0
+# CHECK-NEXT: v2: object = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+# CHECK-NEXT: Return v2
+}
+
+function f8 name="answeredInFrontOfCheck" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=L0 site=w0 cause=MayFail
+    v2 = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    Return v2
+# CHECK: v1: L0 = Check v0 expectedType=L0 site=w0
+# CHECK-NEXT: Return v1
+}
+# VERSIONS-LABEL: function f7 name="behindCheck"
+# VERSIONS-NOT: = Check
+# VERSIONS: = RequireType v0 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate

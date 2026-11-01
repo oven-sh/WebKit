@@ -360,6 +360,8 @@ JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKi
         return createTypeError(globalObject, "iterable should have an iterator symbol"_s);
     case Typed::RuntimeErrorKind::SyncIteratorForAsyncIterationIsNotAnObject:
         return createTypeError(globalObject, "iterator method should return an object"_s);
+    case Typed::RuntimeErrorKind::PrototypeIsNeitherObjectNorNull:
+        return createTypeError(globalObject, "Object prototype may only be an Object or null."_s);
     case Typed::RuntimeErrorKind::LeftOutOfExecutable:
         if (checksClaimsAboutObjects(globalObject->vm()))
             crashOnValidationFailure(globalObject->vm(), { ValidationFailureKind::UnreachableValue, { }, { }, JSValue() });

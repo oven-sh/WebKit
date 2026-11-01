@@ -26,9 +26,17 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr OpcodeSet repeatableCasts { Opcode::Check, Opcode::CheckInitialized, Opcode::RequireObjectCoercible, Opcode::RequireObject };
+// The casts that test: a check, and what the language asks of a value. The same test of the same value passes wherever it has passed.
+static constexpr OpcodeSet repeatableCasts = [] {
+    OpcodeSet opcodes;
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        if (simplifiableCasts.contains(opcode) && !isCastWithoutTest(opcode))
+            opcodes.add(opcode);
+    }
+    return opcodes;
+}();
 
-static_assert((simplifiableCasts | repeatableCasts) == simplifiableCasts);
+static_assert(repeatableCasts.contains(Opcode::Check) && !repeatableCasts.contains(Opcode::Upcast));
 static_assert(simplifiableCasts.contains(Opcode::AssumeType));
 
 namespace {
@@ -440,6 +448,10 @@ struct CastSimplification : Rewrite {
         auto addDominatingCast = [&](ValueID id) {
             passed.add(keyOf(id), id);
             addedCasts.append(id);
+            // Nobody reads what the refusal of a link has let through: the link takes the value as it arrived, and so does an access, with what the names that are read from it come to say of it.
+            // Select hands a test that nobody reads back to its link (leaveRefusalsToPrototypeLinks).
+            if (isRefusalOfPrototype(at(id)))
+                return;
             ValueID object = analyses.sameObjectThroughCasts(id).valueInFrontOfFacts();
             ValueID before = narrowestCast[object.index()];
             if (before && typeOf(before).isSubsetOf(typeOf(id), program))

@@ -10,6 +10,8 @@
 # CHECK-NEXT: v9: undefined|number
 # CHECK-NEXT: v10: number
 # CHECK-NEXT: v11: object
+# CHECK-NEXT: v12: null|object
+# CHECK-NEXT: v13: Array<i32>
 
 module m0 path="main.js" displayPath="main.js"
 typesite w0 kind=Assertion
@@ -23,5 +25,7 @@ function f0 name="c" parameters=[{type=i32}, {type=anything}, {type=Array<i32>}]
     v9 = CheckInitialized v8 name="x"
     v10 = RequireObjectCoercible v9 nullishAccess=Iterate
     v11 = RequireObject v1 runtimeError=IteratorResultNotObject
+    v12 = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v13 = RequireType v2 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
     Return
 }
