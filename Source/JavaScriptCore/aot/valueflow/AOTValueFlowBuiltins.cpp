@@ -932,7 +932,7 @@ private:
             });
             if (testsNames)
                 mutations.add(ObjectMutation::AddProperty);
-            ClimbingSet changed = m_context.markedAmong(m_context.restrict(valueAt(node.operand), whilePristine), mutations);
+            ClimbingSet changed = m_context.markedThemselvesOrThroughUnknownObjectAmong(m_context.restrict(valueAt(node.operand), whilePristine), mutations);
             if (!m_context.meet(changed, ValueSets::anything))
                 stillTested = m_context.maker().intersect(stillTested, ValueSets::complement(whilePristine));
         }
