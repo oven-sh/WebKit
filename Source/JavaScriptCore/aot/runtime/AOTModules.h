@@ -179,6 +179,7 @@ public:
     void didEndMock(ModuleID);
     void markEvaluated(ModuleID module) { setStatus(module, ModuleStatus::Evaluated); }
     bool isMocked(ModuleID module) const { return m_mocks && m_mocks->modules.get(module.index()); }
+    bool hasMockEndedThatWalksPassedOver() const;
     // The object of the host that stands in place of a module that was mocked ahead of its load. Of a CommonJS file or of its face.
     JSObject* mockInPlace(ModuleID module) const
     {
@@ -1026,6 +1027,8 @@ private:
     BitVector m_modulesOwedToImportersThatRan;
     // evaluateModulesOwedBelow() has been there since the last module came to be owed.
     BitVector m_modulesWithNothingOwedBelow;
+    // It passed over these, which were mocked. What it found holds for as long as they are.
+    Vector<ModuleID, 4> m_mockedModulesPassedOverByWalks;
     // The host has ended the mock that stands in place of the module. Whoever was linked against the mock goes on reading it, as under `bun test`, until a load comes to the module.
     BitVector m_modulesWithMockToLetGo;
     BitVector m_modulesLoadedBeforeMockThatWaited;
@@ -1385,9 +1388,18 @@ ALWAYS_INLINE auto Modules::loadedIfExists(ModuleID module) const -> LoadedModul
 // What answerRequire() comes to at its end for a module of the program that has run and has answered before, where each of its steps up to there does nothing:
 // no mock waits to run, no file was evicted, no require() of the module is under way. Empty: it has to take the steps.
 // A step that is added to answerRequire() and can do something in that state needs its test here.
+inline bool Modules::hasMockEndedThatWalksPassedOver() const
+{
+    for (ModuleID module : m_mockedModulesPassedOverByWalks) {
+        if (!isMocked(module) && !mockInPlace(module))
+            return true;
+    }
+    return false;
+}
+
 ALWAYS_INLINE JSValue Modules::settledAnswerOfRequire(ModuleID target, RequiredBy requiredBy) const
 {
-    if (requiredBy != RequiredBy::Referrer || !m_modulesWithMockToRun.isEmpty() || !m_modulesWithMockToLetGo.isEmpty() || (!m_modulesOwedToImportersThatRan.isEmpty() && !m_modulesWithNothingOwedBelow.get(target.index())) || !m_evictedFiles.isEmpty() || m_otherImageHasEvictedFiles)
+    if (requiredBy != RequiredBy::Referrer || !m_modulesWithMockToRun.isEmpty() || !m_modulesWithMockToLetGo.isEmpty() || (!m_modulesOwedToImportersThatRan.isEmpty() && (!m_modulesWithNothingOwedBelow.get(target.index()) || hasMockEndedThatWalksPassedOver())) || !m_evictedFiles.isEmpty() || m_otherImageHasEvictedFiles)
         return { };
     const LoadedModule* loaded = loadedIfExists(target);
     if (!loaded || !loaded->requiredValue || loaded->isBeingRequired || loaded->objectMadeByRequire || storedStatus(target) != StoredModuleStatus::Evaluated || data(target).isOfLibrary())

@@ -2831,6 +2831,11 @@ void Modules::evaluateModulesOwedBelowSlow(ModuleID root, bool hasImporterAboveT
     auto scope = DECLARE_THROW_SCOPE(vm);
     letGoOfMockThatEnded(root);
     RETURN_IF_EXCEPTION(scope, void());
+    // What lay behind the mock may be owed.
+    if (hasMockEndedThatWalksPassedOver()) {
+        m_modulesWithNothingOwedBelow.clearAll();
+        m_mockedModulesPassedOverByWalks.clear();
+    }
     BitVector isSeen(m_table.size());
     Vector<ModuleID, 16> toVisit { root };
     Vector<ModuleID, 4> owed;
@@ -2849,8 +2854,11 @@ void Modules::evaluateModulesOwedBelowSlow(ModuleID root, bool hasImporterAboveT
         if (isSeen.quickSet(module.index()))
             continue;
         // What only a mocked module imports is not loaded.
-        if (isMocked(module) || mockInPlace(module))
+        if (isMocked(module) || mockInPlace(module)) {
+            if (!m_mockedModulesPassedOverByWalks.contains(module))
+                m_mockedModulesPassedOverByWalks.append(module);
             continue;
+        }
         if (isOwedInImageBelow && data(module).isUncompiledCode()) {
             filesOfImagesBelow.append({ resolvedKey(module), module });
             RETURN_IF_EXCEPTION(scope, void());
