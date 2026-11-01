@@ -25,6 +25,7 @@
 #include "AOTLayoutData.h"
 #include "AOTLiteralStringDigest.h"
 #include "AOTModuleGraph.h"
+#include "AOTModuleHost.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTNumberLiteralStrings.h"
 #include "AOTObjectVisiting.h"
@@ -3487,6 +3488,21 @@ void encodeModuleTables(TableEncoder& encoder)
             modulesThatFindBuiltinsReadOnly.append(index);
     }
     encoder.setTable(ProgramTableIndex::modulesThatFindBuiltinsReadOnly, modulesThatFindBuiltinsReadOnly);
+    Vector<uint32_t> modulesReachedUnderOtherNames;
+    constexpr std::pair<ModuleFlags, OtherNameOfModule> otherNames[] = {
+        { ModuleFlags::IsReachedWithoutExtension, OtherNameOfModule::WithoutExtension },
+        { ModuleFlags::IsReachedUnderAnotherExtension, OtherNameOfModule::UnderAnotherExtension },
+        { ModuleFlags::IsReachedAsFolder, OtherNameOfModule::AsFolder },
+    };
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        if (!program.modules[index].flags.contains(ModuleFlags::MayBeMocked))
+            continue;
+        for (auto [flag, name] : otherNames) {
+            if (program.modules[index].flags.contains(flag))
+                modulesReachedUnderOtherNames.append(moduleReachedUnder(index, name));
+        }
+    }
+    encoder.setTable(ProgramTableIndex::modulesReachedUnderOtherNames, modulesReachedUnderOtherNames);
     encoder.setTable(ProgramTableIndex::modules, lists.modules);
     encoder.setTable(ProgramTableIndex::moduleDirectories, lists.directories);
     encoder.setTable(ProgramTableIndex::moduleDisplayPaths, lists.displayPaths);

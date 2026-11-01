@@ -5284,6 +5284,14 @@ std::optional<bool> findsBuiltinsReadOnly(ModuleID moduleOfHost)
     return std::ranges::binary_search(Image::current()->programTables().modulesThatFindBuiltinsReadOnly(), ModuleID(module).index());
 }
 
+bool isReachedUnder(ModuleID moduleOfHost, OtherNameOfModule name)
+{
+    ModuleFromHost module(moduleOfHost);
+    if (!currentModuleTable())
+        return false;
+    return std::ranges::binary_search(Image::current()->programTables().modulesReachedUnderOtherNames(), moduleReachedUnder(ModuleID(module).index(), name));
+}
+
 bool isDataFile(ModuleID moduleOfHost)
 {
     ModuleFromHost module(moduleOfHost);

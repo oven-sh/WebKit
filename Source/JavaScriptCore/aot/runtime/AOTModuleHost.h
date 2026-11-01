@@ -137,6 +137,10 @@ JS_EXPORT_PRIVATE bool isESModule(ModuleID);
 JS_EXPORT_PRIVATE bool isDataFile(ModuleID);
 // A file of a test run that an executable holds too: ModuleFlags::FindsBuiltinsReadOnly. Nothing for a module of Bun's own code, which writes for whoever has called it.
 std::optional<bool> findsBuiltinsReadOnly(ModuleID);
+// A relative name under which a file of a test run loads a module, where it is not the path of the module: "../a" and "../a.js" for a.ts, "../a" for a/index.ts.
+enum class OtherNameOfModule : uint8_t { WithoutExtension, UnderAnotherExtension, AsFolder };
+// Of a module that a test may mock: some file of its image loads it under such a name.
+JS_EXPORT_PRIVATE bool isReachedUnder(ModuleID, OtherNameOfModule);
 // The loader of `bun run` would have the file in its registry: an import of it has settled, or a module that imports it has been loaded.
 JS_EXPORT_PRIVATE bool isHeldForImport(JSGlobalObject*, ModuleID);
 // Of what findModule() answers: the host makes the module, and the image holds its number alone.
