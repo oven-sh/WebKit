@@ -1167,6 +1167,18 @@ void Modules::endMockLaidOverFile(ModuleID file)
 }
 
 // keepWhatMockIsLaidOver() and tryReplaceExport() have kept what the values of the mock replaced.
+// `bun test` loads the original with all that it imports. A walk from the module itself ends at once: it counts as mocked.
+void Modules::evaluateModulesOwedBelowOriginal(ModuleID file)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    for (const ModuleRequestData& request : m_table.imports(file)) {
+        if (request.isDeferred)
+            continue;
+        evaluateModulesOwedBelow(request.targetModule(), true);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
 JSValue Modules::exportsBeforeMock(ModuleID file)
 {
     VM& vm = *m_instance.vm;
@@ -1178,13 +1190,8 @@ JSValue Modules::exportsBeforeMock(ModuleID file)
             JSValue original = ensureLoaded(file).exportsOfOriginalBesideMock.get();
             return original ? original : commonJSExports(file);
         }
-        // `bun test` loads it with all that it imports. A walk from the module itself ends at once: it counts as mocked.
-        for (const ModuleRequestData& request : m_table.imports(file)) {
-            if (request.isDeferred)
-                continue;
-            evaluateModulesOwedBelow(request.targetModule(), true);
-            RETURN_IF_EXCEPTION(scope, { });
-        }
+        evaluateModulesOwedBelowOriginal(file);
+        RETURN_IF_EXCEPTION(scope, { });
         RELEASE_AND_RETURN(scope, namespaceOfModuleItself(file));
     }
     // What runs in place of a file that was taken out of the loader is the loader's.

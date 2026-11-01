@@ -6811,7 +6811,16 @@ JSObject* moduleNamespace(JSGlobalObject* realm, ModuleID moduleOfHost)
 {
     ModuleFromHost module(realm, moduleOfHost);
     Modules* modules = modulesOrThrow(realm, module);
-    return modules ? modules->moduleNamespace(module, Modules::ModulePhase::Evaluation) : nullptr;
+    if (!modules)
+        return nullptr;
+    // A mock without a factory is made of what the module exports.
+    if (modules->isLeftAloneByMock(module)) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(realm->vm());
+        modules->evaluateModulesOwedBelowOriginal(module);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, modules->moduleNamespace(module, Modules::ModulePhase::Evaluation));
+    }
+    return modules->moduleNamespace(module, Modules::ModulePhase::Evaluation);
 }
 
 bool mayExport(JSGlobalObject* realm, ModuleID moduleOfHost, UniquedStringImpl* name)

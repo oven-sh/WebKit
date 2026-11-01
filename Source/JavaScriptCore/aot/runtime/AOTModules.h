@@ -330,6 +330,7 @@ public:
     void didLayMock() { m_moduleWithMockBeingLaid = std::nullopt; }
     void endMockLaidOverFile(ModuleID);
     JSValue exportsBeforeMock(ModuleID);
+    void evaluateModulesOwedBelowOriginal(ModuleID);
     bool runMockThatWaits(ModuleID);
     bool runMockThatWaitsSlow(ModuleID);
     // `build.module("dep", ..)` of a plugin: from now on the loader answers for the name with another module. A file that is linked keeps what it has.
