@@ -428,13 +428,11 @@ public:
     bool isAskingHost() const { return m_isAskingHost; }
     // A name that the build did not follow finds an entry point and no other file of the image with code.
     bool refusesRequestFromHost(ModuleID module) const { return !m_admitsInspector && !m_isAskingHost && !data(module).isEntryPoint() && (data(module).kind != ModuleKind::Data || !m_findsDataFilesByName) && m_table.hasFilePath(module) && !data(module).isLibraryCodeWithFilePath() && !m_runsCopyFromDisk; }
-    bool willRunCopyFromDisk()
+    bool refusesOriginalsBesideMocks() const { return m_refusesOriginalsBesideMocks; }
+    void willRunCopyFromDisk()
     {
-        if (m_refusesOriginalsBesideMocks)
-            return false;
         m_runsCopyFromDisk = true;
         m_hostRunsCopiesFromDisk = true;
-        return true;
     }
     void admitCodeNamedBy(JSValue specifier);
     void abandonEvaluation(ModuleID, JSValue error);

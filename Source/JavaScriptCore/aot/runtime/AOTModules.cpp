@@ -5830,9 +5830,15 @@ bool willRunCopyFromDisk(JSGlobalObject* realm)
     bool isAdmitted = true;
     Instance::forEachOf(realm, [&](Instance&) {
         if (Modules* modules = modulesOf(realm))
-            isAdmitted &= modules->willRunCopyFromDisk();
+            isAdmitted &= !modules->refusesOriginalsBesideMocks();
     });
-    return isAdmitted;
+    if (!isAdmitted)
+        return false;
+    Instance::forEachOf(realm, [&](Instance&) {
+        if (Modules* modules = modulesOf(realm))
+            modules->willRunCopyFromDisk();
+    });
+    return true;
 }
 
 bool refusesHostObjectsOutsideImage(JSGlobalObject* realm)
