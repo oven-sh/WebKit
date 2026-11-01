@@ -1020,11 +1020,35 @@ void Modules::endMockLaidOverFile(ModuleID file)
         found->hasMockLaidOver = false;
     ModuleID module = moduleWithExportsOf(file);
     LoadedModule* withExports = loadedIfExists(module);
-    if (!found || !(found->variablesBeforeMock || found->valueBeforeMock || (withExports && withExports->exportsBeforeMock)))
+    if (!found || !(found->variablesBeforeMock || found->valueBeforeMock || !found->modulesBehindStarsUnderMock.isEmpty() || (withExports && withExports->exportsBeforeMock)))
         return;
     LoadedModule& loaded = *found;
     didEndMock(file);
     loaded.exportsOfMock.set(*this, nullptr);
+    auto giveBackExports = [&](ModuleID holder) {
+        LoadedModule* held = loadedIfExists(holder);
+        JSObject* before = held ? held->exportsBeforeMock.get() : nullptr;
+        if (!before)
+            return;
+        held->exportsBeforeMock.set(*this, nullptr);
+        PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        JSObject::getOwnPropertyNames(before, realm, names, DontEnumPropertiesMode::Include);
+        RETURN_IF_EXCEPTION(scope, void());
+        for (const Identifier& name : names) {
+            JSValue value = storedValue(realm, before, name);
+            if (value == JSValue(before)) {
+                JSObject* source = held->deferredExportsSource;
+                value = source ? source->get(realm, name) : jsUndefined();
+                RETURN_IF_EXCEPTION(scope, void());
+            }
+            tryReplaceCapturedExport(holder, name.impl(), value);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+    };
+    for (ModuleID behindStars : std::exchange(loaded.modulesBehindStarsUnderMock, { })) {
+        giveBackExports(behindStars);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
 
     if (JSObject* variables = loaded.variablesBeforeMock) {
         loaded.variablesBeforeMock.set(*this, nullptr);
@@ -1073,23 +1097,7 @@ void Modules::endMockLaidOverFile(ModuleID file)
         }
         RELEASE_AND_RETURN(scope, captureExports(module));
     }
-    JSObject* before = withExports ? withExports->exportsBeforeMock.get() : nullptr;
-    if (!before)
-        return;
-    withExports->exportsBeforeMock.set(*this, nullptr);
-    PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    JSObject::getOwnPropertyNames(before, realm, names, DontEnumPropertiesMode::Include);
-    RETURN_IF_EXCEPTION(scope, void());
-    for (const Identifier& name : names) {
-        JSValue value = storedValue(realm, before, name);
-        if (value == JSValue(before)) {
-            JSObject* source = withExports->deferredExportsSource;
-            value = source ? source->get(realm, name) : jsUndefined();
-            RETURN_IF_EXCEPTION(scope, void());
-        }
-        tryReplaceCapturedExport(module, name.impl(), value);
-        RETURN_IF_EXCEPTION(scope, void());
-    }
+    RELEASE_AND_RETURN(scope, giveBackExports(module));
 }
 
 // keepWhatMockIsLaidOver() and tryReplaceExport() have kept what the values of the mock replaced.

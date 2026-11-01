@@ -667,6 +667,8 @@ private:
         // From keepWhatMockIsLaidOver() to endMockLaidOverFile(). A file may be taken for loaded while its body has yet to run.
         bool hasMockLaidOver { false };
         bool hadRunWhenMockWasLaid { false };
+        // `export * from "./leaf.cjs"`: the values of the mock went over names of these, which keep what was replaced.
+        Vector<ModuleID> modulesBehindStarsUnderMock;
         bool capturedFieldsAreOfESModule { false };
         bool capturedFieldsAreOfRuntimeModule { false };
         Identifier resolvedKey;

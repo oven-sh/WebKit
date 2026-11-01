@@ -2447,6 +2447,11 @@ bool Modules::tryReplaceCapturedExport(ModuleID module, UniquedStringImpl* name,
     if ((m_libraryModulesWithMock.get(module.index()) || m_moduleWithMockBeingLaid) && !loaded.exportsWhatMockNamesAlone) {
         if (!loaded.exportsBeforeMock)
             loaded.exportsBeforeMock.set(*this, createTableOfExports());
+        if (m_moduleWithMockBeingLaid && moduleWithExportsOf(*m_moduleWithMockBeingLaid) != module) {
+            Vector<ModuleID>& behindStars = ensureLoaded(*m_moduleWithMockBeingLaid).modulesBehindStarsUnderMock;
+            if (!behindStars.contains(module))
+                behindStars.append(module);
+        }
         JSObject* before = loaded.exportsBeforeMock;
         JSValue replaced = storedValue(realm, captured, key);
         if (replaced && !storedValue(realm, before, key)) {
