@@ -944,16 +944,16 @@ static void testCurrentWorkNamesFunctionAndStep()
         {
             CurrentWorkScope scope(*program, FunctionID(1u));
             currentWork().setPass(PassID::EliminateDeadCode);
-            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling second (a.ts:1) in EliminateDeadCode.\nTo build without that step, add --aot-disable=pass:EliminateDeadCode.\n"_s);
+            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling second (a.ts:1) in EliminateDeadCode.\nTo build without that step, add --aot-disable=pass:EliminateDeadCode.\nAn earlier step may be at fault: --aot-check=verify-each-pass names it.\n"_s);
             AOT_TEST_CHECK(textOf(describeWhatThreadsAreCompiling) == "Still compiling second (a.ts:1) in EliminateDeadCode for 0 s.\n"_s);
             currentWork().startInSeconds.store(MonotonicTime::now().secondsSinceEpoch().value() - 90.5, std::memory_order_relaxed);
             AOT_TEST_CHECK(textOf(describeWhatThreadsAreCompiling) == "Still compiling second (a.ts:1) in EliminateDeadCode for 90 s.\nA build that stays this long in one function is stuck, which is a bug in Bun. Please report it with these lines: https://github.com/oven-sh/bun/issues\nTo build without that step, add --aot-disable=pass:EliminateDeadCode.\n"_s);
             // A pass that every build needs has no way around it.
             currentWork().setPass(PassID::GenerateCode);
-            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling second (a.ts:1) in GenerateCode.\n"_s);
+            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling second (a.ts:1) in GenerateCode.\nAn earlier step may be at fault: --aot-check=verify-each-pass names it.\n"_s);
             // A number that no function has.
             currentWork().setFunction(FunctionID(1000u));
-            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling in GenerateCode.\n"_s);
+            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling in GenerateCode.\nAn earlier step may be at fault: --aot-check=verify-each-pass names it.\n"_s);
         }
         times.didFinish("the first part"_s);
         AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling in Optimize (after: the first part).\n"_s);
@@ -979,14 +979,14 @@ static void testCurrentWorkNamesPhaseOfBackEnd()
     currentWork().setPass(PassID::GenerateCode);
     {
         B3::PhaseScope phase(second, "someB3Phase"_s);
-        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling second (a.ts:1) in GenerateCode (someB3Phase).\n"_s);
+        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling second (a.ts:1) in GenerateCode (someB3Phase).\nAn earlier step may be at fault: --aot-check=verify-each-pass names it.\n"_s);
     }
     {
         B3::PhaseScope phase(first, "anotherB3Phase"_s);
-        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling first (a.ts:1) in GenerateCode (anotherB3Phase).\n"_s);
+        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling first (a.ts:1) in GenerateCode (anotherB3Phase).\nAn earlier step may be at fault: --aot-check=verify-each-pass names it.\n"_s);
     }
     currentWork().leaveBackEnd();
-    AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling first (a.ts:1) in GenerateCode.\n"_s);
+    AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling first (a.ts:1) in GenerateCode.\nAn earlier step may be at fault: --aot-check=verify-each-pass names it.\n"_s);
 }
 
 static void testCurrentWorkOfPoolThreads()
