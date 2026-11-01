@@ -1,30 +1,30 @@
-@validate_line_column.js:17:9
-foo@validate_line_column.js:10:17
-global code@validate_line_column.js:16:4
-@validate_line_column.js:21:11
-foo@validate_line_column.js:10:17
-global code@validate_line_column.js:20:4
+@validate_line_column.js:17:7
+foo@validate_line_column.js:10:9
+global code@validate_line_column.js:16:1
+@validate_line_column.js:21:9
+foo@validate_line_column.js:10:9
+global code@validate_line_column.js:20:1
 @validate_line_column.js:26:23
-foo@validate_line_column.js:10:17
-global code@validate_line_column.js:24:4
-@validate_line_column.js:30:14
-foo@validate_line_column.js:10:17
-global code@validate_line_column.js:29:4
-@validate_line_column.js:35:7
-foo@validate_line_column.js:10:17
-global code@validate_line_column.js:33:4
-@validate_line_column.js:40:7
-foo@validate_line_column.js:10:17
-global code@validate_line_column.js:38:4
-@validate_line_column.js:45:7
-foo@validate_line_column.js:10:17
-global code@validate_line_column.js:43:4
-@validate_line_column.js:50:7
-foo@validate_line_column.js:10:17
-global code@validate_line_column.js:48:4
-@validate_line_column.js:55:7
-foo@validate_line_column.js:10:17
-global code@validate_line_column.js:53:4
-@validate_line_column.js:60:9
-foo@validate_line_column.js:10:17
-global code@validate_line_column.js:58:4
+foo@validate_line_column.js:10:9
+global code@validate_line_column.js:24:1
+@validate_line_column.js:30:13
+foo@validate_line_column.js:10:9
+global code@validate_line_column.js:29:1
+@validate_line_column.js:35:6
+foo@validate_line_column.js:10:9
+global code@validate_line_column.js:33:1
+@validate_line_column.js:40:6
+foo@validate_line_column.js:10:9
+global code@validate_line_column.js:38:1
+@validate_line_column.js:45:6
+foo@validate_line_column.js:10:9
+global code@validate_line_column.js:43:1
+@validate_line_column.js:50:6
+foo@validate_line_column.js:10:9
+global code@validate_line_column.js:48:1
+@validate_line_column.js:55:6
+foo@validate_line_column.js:10:9
+global code@validate_line_column.js:53:1
+@validate_line_column.js:60:8
+foo@validate_line_column.js:10:9
+global code@validate_line_column.js:58:1

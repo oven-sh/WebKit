@@ -106,10 +106,9 @@ using ShownFunctions = Vector<ShownFunction, 4>;
 } // anonymous namespace
 
 static constexpr LineColumn hostFunctionPosition { 0, 0 };
-static constexpr LineColumn superCallOfDefaultConstructor { 1, 28 };
-static_assert(sizeof("(function (...args) { super") == superCallOfDefaultConstructor.column, "JSC makes a default constructor from a text of its own");
-static constexpr LineColumn startOfSuperCallOfDefaultConstructor { 1, 23 };
-static_assert(sizeof("(function (...args) { ") == startOfSuperCallOfDefaultConstructor.column);
+// Where its `super` starts, which is where a call of `super` is reported.
+static constexpr LineColumn superCallOfDefaultConstructor { 1, 23 };
+static_assert(sizeof("(function (...args) { ") == superCallOfDefaultConstructor.column, "JSC makes a default constructor from a text of its own");
 
 static void reportUndeclaredTrap(const DescribedFunction& described, ValueID value)
 {
@@ -254,12 +253,6 @@ static void describeConstructionStart(const Program& program, const ShownFunctio
 {
     if (!site.origin.isPartOfConstruction && !isConstructOf(site.kind))
         return;
-    const Function& owner = program.at(shown.id);
-    if (owner.kind == FunctionKind::DerivedConstructor && isDefaultConstructor(program, owner)) {
-        position.constructionStartLine = startOfSuperCallOfDefaultConstructor.line;
-        position.constructionStartColumn = startOfSuperCallOfDefaultConstructor.column;
-        return;
-    }
     if (shown.positionInBuiltin)
         return;
     ModuleID module = program.at(shown.id).module;
