@@ -2406,11 +2406,6 @@ private:
                 break;
             }
 
-            // Turn this: Trunc(Op(a, b))
-            //     where Op is Add, Sub, Mul, BitAnd, BitOr, or BitXor
-            //       and a and b are each SExt32, ZExt32, or a constant
-            //       and this walk made Op(a, b) out of doubles, so that findValuesUsedForLowWord() has not seen it
-            // Into this: Op(Trunc(a), Trunc(b))
             if (m_narrowsIntegers && m_integersConvertedFromDoubles.contains(m_value->child(0))) {
                 Value* wide = m_value->child(0);
                 auto isExtendedFrom32Bits = [](Value* value) {

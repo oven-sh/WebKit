@@ -358,8 +358,6 @@ private:
         return true;
     }
 
-    // Walks backward block by block until the walks in this procedure have cost about as much as building the skip tables, which is roughly one pass over the
-    // procedure. After that it skips up the dominator tree.
     bool findLiveBlocks(unsigned budget, const BlockList& setBlocks)
     {
         auto markLiveAtTail = [&](BasicBlock* block) {
@@ -389,7 +387,6 @@ private:
                     markLiveAtTail(predecessor);
                 steps += block->numPredecessors();
             } else {
-                // All other predecessors are in the skipped region.
                 for (auto edge = std::ranges::lower_bound(m_backEdges, number, { }, &BackEdge::to); edge != m_backEdges.end() && edge->to == number; ++edge) {
                     markLiveAtTail(m_blockByNumber[edge->from]);
                     ++steps;
@@ -405,7 +402,6 @@ private:
     static constexpr unsigned skipCost = 8;
     static constexpr unsigned skipTableCostPerBlock = 4;
 
-    // Blocks are identified by their dominator tree preorder numbers. 0 is a sentinel above the root.
     void buildDominatorSkipTables(const BlockList& setBlocks)
     {
         if (std::exchange(m_setNumbersEpoch, m_epoch) != m_epoch) {
@@ -441,8 +437,6 @@ private:
             m_lastDominatedByNumber[number] = m_lastDominated[block];
         }
 
-        // An edge into a join exits the dominator subtree of every block between its source and its anchor. The anchor is the join itself for a back edge, and the
-        // join's immediate dominator otherwise. Each block records the deepest anchor among the edges that exit its subtree.
         struct ExitEdge {
             unsigned anchor;
             unsigned from;
@@ -474,11 +468,6 @@ private:
         }
     }
 
-    // Given that the variable is live at the head of `start`, returns the highest dominator D of `start` such that, within D's subtree excluding D itself:
-    // - no edge enters from start's subtree, other than edges that stay inside start's subtree, and
-    // - every Set is either in start's subtree, or does not dominate `start` and has no edge entering from its own subtree, other than edges that stay inside it.
-    // The variable is then live at the head of D too. The region between D and `start`, outside those subtrees, contains no Set and can be reached from a Set only
-    // through D, so it contains no join in the iterated dominance frontier of the Sets and nothing in it needs to be visited.
     unsigned highestDominatorWithSameLiveness(unsigned start)
     {
         unsigned deepestExitAnchor = m_deepestExitAnchor[start];

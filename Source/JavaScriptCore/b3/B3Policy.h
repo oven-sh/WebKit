@@ -56,13 +56,12 @@ struct ValidationPolicy {
     bool checksKnownPropertiesAtRunTime { false };
     bool logsMovedLoads { false };
     bool logsDecidedComparisons { false };
+    // Every read of a spill slot sees the value that the slot stands for, and every read of a register the Tmp that it is read for: AirCheckSpillSlots.h. They change no code.
     bool reportsOfMovedLoadsComeBack { false };
     bool keepsOriginsOfTrappingAccesses { false };
-    // Verify that every read of a spill slot sees the value the slot represents, and every read of a register sees the Tmp it is read for. See AirCheckSpillSlots.h.
-    // These do not change the generated code.
     bool checksSpillSlots { false };
     bool checksAllocatedRegisters { false };
-    // Fault injection: each of these deliberately breaks a phase so that tests can verify that the checks catch it.
+    // These break a phase on purpose, for the tests of the checks.
     bool ignoresWritesOnRarePaths { false };
     bool ignoresWritesBetweenLoadsOfBound { false };
     bool skipsStridedLimitGuard { false };
@@ -160,7 +159,6 @@ struct LoopPolicy {
     bool vectorizes { false };
     bool unrolls { false };
     bool promotesMemory { false };
-    // Returns true for a location that one of the client's own phases already hoists out of loops. Promoting it here as well would duplicate that work.
     bool (*clientHoistsOutOfLoops)(Procedure&, const MemoryValue&) { nullptr };
     double minFrequencyOfUnrolledLoop { 1 };
     bool hoistsOnlyFromLikelyPaths { false };

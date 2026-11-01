@@ -58,7 +58,6 @@ private:
         Variable* variable { nullptr };
     };
 
-    // A narrow store leaves part of the location unchanged, and a narrow load extends what it reads.
     static bool isPromotableAccess(const MemoryValue* memory)
     {
         if (memory->opcode() != Load && memory->opcode() != Store)
@@ -75,7 +74,6 @@ private:
 
     enum class AddressKind : uint8_t { LoopInvariant, LoadedInLoop, LoopVariant };
 
-    // Visits each value in the loop once, no matter how many addresses are computed from it.
     static Counter reasonAddressIsNotHoisted(const NaturalLoops& loops, const NaturalLoop& loop, Value* address, UncheckedKeyHashMap<Value*, AddressKind>& addressKinds)
     {
         Vector<Value*, 16> path { address };
@@ -170,13 +168,11 @@ private:
             size_t numberBeginningAfter = sortedBegins.end() - std::ranges::lower_bound(sortedBegins, range.end());
             return sortedBegins.size() - numberEndingBefore - numberBeginningAfter;
         };
-        // Groups the accesses to each location together.
         std::ranges::sort(accesses, { }, [](const MemoryValue* access) {
             return std::tuple { access->lastChild()->index(), access->offset(), access->accessType().kind(), access->range().begin(), access->range().end(), access->index() };
         });
 
         Dominators& dominators = m_proc.dominators();
-        // Such an access executes whenever the loop is entered, so the preheader load reads nothing that the program would not have accessed anyway.
         auto alwaysExecutes = [&](const MemoryValue* access) {
             Effects effects = access->effects();
             if (!effects.controlDependent || !m_proc.effectsOf(access).controlDependent)
@@ -196,7 +192,6 @@ private:
             bool isPromotable = true;
             bool isGuaranteedToExecute = false;
             for (MemoryValue* access : accessesToLocation) {
-                // An outer loop that promoted this location has already claimed all of its accesses.
                 isPromotable &= !m_locationIndexOfAccess.contains(access) && access->range();
                 if (access->isStore()) {
                     ownStoreBegins.append(access->range().begin());
@@ -225,8 +220,6 @@ private:
                 m_proc.count(reasonAddressIsNotHoisted(loops, loop, load->lastChild(), addressKinds));
                 continue;
             }
-            // A load that executes cannot observe a write to a heap range disjoint from its own, so each replaced load is checked against its own range.
-            // The range of another access proves nothing about this load: that access may never execute, in which case its range need not be accurate.
             std::ranges::sort(ownStoreEnds);
             enum class Clobber : uint8_t { None, EffectsOnRarePaths, MayAliasStores, EffectsOnLikelyPaths };
             auto clobberOf = [&](const HeapRange& range) {
@@ -257,14 +250,12 @@ private:
                 m_proc.count(Counter::NotPromotedNotGuaranteedToExecute);
                 continue;
             }
-            // Next to a call a load is cheap, and the promoted value would have to stay live across the call on every iteration.
             if (callsOnLikelyPaths) {
                 m_proc.count(Counter::NotPromotedCallsOnLikelyPaths);
                 continue;
             }
 
             unsigned location = m_promotedLocations.size();
-            // The preheader load executes no matter which of the accesses the iterations reach.
             MemoryValue* preheaderLoad = m_proc.clone(load)->as<MemoryValue>();
             preheaderLoad->setRange(unionOfRanges);
             m_promotedLocations.append({ preheader, preheaderLoad, m_proc.addVariable(load->type()) });

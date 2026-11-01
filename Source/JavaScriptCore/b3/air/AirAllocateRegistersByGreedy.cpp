@@ -5104,11 +5104,9 @@ private:
         return endsInLoneJump(from) || to->numPredecessors() == 1 ? frequency : 2 * frequency;
     }
 
-    // The blocks of a cycle plus the blocks that a live range overlaps. The union is enumerated on demand, because a walk over it usually ends early.
     struct BlocksOfCycleAndLiveRange {
         std::span<const unsigned> blocksOfCycle;
         const BitVector& isInCycle;
-        // Null if the live range lies within the cycle.
         const LiveRange* liveRange;
     };
 
@@ -5152,7 +5150,6 @@ private:
         visitBlocksOfCycleBelow(UINT_MAX);
     }
 
-    // Returns the blocks among `blocks` in which `other` is live, or nothing if one of them names it or the moves at the borders cost `limit` or more.
     template<Bank bank>
     std::optional<Vector<unsigned, 8>> findBlocksToPassOnStack(Tmp other, const BlocksOfCycleAndLiveRange& blocks, float limit, float& cost)
     {

@@ -1348,7 +1348,6 @@ private:
             auto next = m_rangesToCome.lower_bound({ cell, 0, 0 });
             return next != m_rangesToCome.end() && std::get<0>(*next) == cell ? std::get<1>(*next) : noPosition;
         }
-        // `ranges` are in order and do not meet each other. Each side skips what lies in front of the other's next range.
         bool meetsRangeToCome(uint32_t cell, std::span<const std::pair<uint32_t, uint32_t>> ranges, uint64_t& rangesRead) const
         {
             while (!ranges.empty()) {

@@ -110,7 +110,6 @@ void LikelyPathAnalysis::walkLikelyEdges(const NaturalLoop& loop)
     }
 }
 
-// As in Myers' list with random access: the far ancestor of a block lies twice as far as its parent's where the parent's two jumps are equally long.
 void LikelyPathAnalysis::linkToImmediateDominator(BasicBlock* block)
 {
     BasicBlock* parent = m_immediateDominator[block];
@@ -132,7 +131,6 @@ void LikelyPathAnalysis::computeImmediateDominators(const NaturalLoop& loop)
         changed = false;
         for (unsigned i = m_postOrder.size(); i--;) {
             BasicBlock* block = m_postOrder[i];
-            // Without back edges, every edge into a block is visited before the block itself, so its dominator is final by the time its own edges are visited.
             m_firstBlockWithFinalDominator = i;
             FrequencyClass likeliestClass = likeliestSuccessorClass(block);
             for (const FrequentedBlock& successor : block->successors()) {

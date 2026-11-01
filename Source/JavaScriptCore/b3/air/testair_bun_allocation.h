@@ -1126,9 +1126,6 @@ void testCursorsOfRareLoopTakeRegistersOfWordsThatPassThrough()
     }
 }
 
-// One loop with many blocks. Each block adds to its own loop-carried sum and can exit the loop to where the sums are dead. A few heavily used values are live through the
-// loop and at those exits, but are not named in the loop.
-// Each sum that does not get a register asks what it would cost to keep one of those values on the stack in the loop. The answer must not take a walk over the whole loop.
 static uint32_t blocksVisitedToPassTmpsOnStackInLoopOf(unsigned numberOfSums)
 {
     B3::Policy policy;
