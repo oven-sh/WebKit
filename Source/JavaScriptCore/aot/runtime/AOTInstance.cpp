@@ -458,6 +458,7 @@ Instance* reserveInstance(JSGlobalObject* realm)
     RELEASE_ASSERT(static_cast<ptrdiff_t>(AOT_INSTANCE_OFFSET(vm)) == JSWebAssemblyInstance::offsetOfVM());
 #endif
     Instance::destroyDeadInstances(vm);
+    forgetUnfinishedLoadsOfRetiredRealms(vm);
     VMState& vmState = vm.aotState();
     RunningImageScope firstImage(vmState, &vmState.image->first());
     if (!(vmState.image->programTables().flags & ProgramTables::mayRunInMultipleInstances) && numberOfRunningInstances(vmState))

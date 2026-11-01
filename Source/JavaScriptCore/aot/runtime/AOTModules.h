@@ -129,6 +129,7 @@ public:
 
     explicit Modules(State&);
     ~Modules();
+    void forgetUnfinishedLoads();
 
     Instance& instance() { return m_instance; }
     const ModuleTable& table() const { return m_table; }
@@ -1303,6 +1304,7 @@ private:
 
 Modules& modulesOf(Instance&);
 Modules* modulesOf(JSGlobalObject*);
+void forgetUnfinishedLoadsOfRetiredRealms(VM&);
 // The host holds the numbers of modules of every image of a realm.
 ModuleID moduleIDForHost(const Image&, ModuleID);
 std::optional<ModuleID> moduleOfImage(const Image&, std::optional<ModuleID> fromHost);

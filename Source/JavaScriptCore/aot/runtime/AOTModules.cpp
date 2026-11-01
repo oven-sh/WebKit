@@ -234,12 +234,40 @@ Modules::Modules(State& state)
 
 Modules::~Modules()
 {
+    forgetUnfinishedLoads();
+}
+
+void Modules::forgetUnfinishedLoads()
+{
     VMState& state = m_instance.vm->aotState();
     for (const TextThatWaits& text : textsThatWait()) {
         if (text.waitsApart)
             --state.numberOfCallsThatWaitApart;
         else
             --state.numberOfTextsThatWait;
+    }
+    m_textsThatWait.clear();
+    m_numberOfTextsThatHaveCome = 0;
+    m_synchronousLoadsHandedToLoader.clear();
+    m_evaluationOfImportOfMainModule.clear();
+    m_capabilityOfMainModule.clear();
+    m_loadsInFlight.clear();
+    m_countedImports.clear();
+    m_levelsOfLoads.clear();
+    m_filesAskedForOnBehalfOfRoot.clear();
+    m_deferredRequests.clear();
+    m_deferredImports.clear();
+}
+
+void forgetUnfinishedLoadsOfRetiredRealms(VM& vm)
+{
+    VMState& state = vm.aotState();
+    Locker locker { state.instancesLock };
+    for (Instance* instance : state.instances) {
+        if (!instance->globalObject || instance->globalObject->microtaskRunnability() != QueuedTaskResult::Discard)
+            continue;
+        if (instance->state && instance->state->modules)
+            instance->state->modules->forgetUnfinishedLoads();
     }
 }
 
