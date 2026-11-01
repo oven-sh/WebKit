@@ -21,6 +21,7 @@
 #include <limits>
 #include <tuple>
 #include <utility>
+#include <wtf/HashMap.h>
 #include <wtf/Scope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -460,6 +461,7 @@ void SSARepair::run()
 
     if (!m_builder.m_insertions.isEmpty())
         m_builder.applyInsertions();
+    gatherEdges();
     m_analyses.didChangeValuesButNotUses();
     m_builder.setOrigin(savedOrigin);
 
@@ -910,13 +912,87 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
                 ValueID parameter = m_builder.addParameter(block, data.type, numberOfParametersForEdgeResults(block));
                 function.edit(parameter, ValueEdit::Type).setExpected(ExpectedType(data.expected));
                 data.definitions.append(Definition { block, headOrder, parameter });
-                addedParameters.append({ block, indexOfVariable, numberOfArguments });
-                numberOfArguments += cfg.incomingEdges(block).size();
+                addedParameters.append({ block, indexOfVariable, 0 });
                 definingBlocksToVisit.append(block);
             }
         }
     }
     firstAddedParameter.append(addedParameters.size());
+
+    // Every edge into a join carries an argument for each of its parameters. Where many tests fail into one place, hundreds of edges carry what was alive in front of the first of them: the same
+    // values on each, edges times values. The definition that reaches the tail of a block stands in the nearest block at or above it that defines the variable, so two blocks with the same
+    // nearest block that defines any of the variables joined there are reached by the same definitions of them. Their edges are gathered: they lead to one block that only jumps, and that jump
+    // carries the arguments.
+    AOT_THRESHOLD(size_t, fewestEdgesGathered, 16);
+    constexpr uint32_t notGathered = std::numeric_limits<uint32_t>::max();
+    struct GatheredJoin {
+        Vector<uint32_t> columnOfEdge;
+        Vector<uint32_t> firstEdgeOfColumn;
+    };
+    Vector<GatheredJoin> gatheredJoins;
+    Vector<uint32_t> gatheredJoinOf(FillWith { }, cfg.numNodes(), notGathered);
+    HashMap<uint32_t, Vector<uint32_t>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> variablesJoinedAt;
+    for (const AddedParameter& added : addedParameters) {
+        if (cfg.incomingEdges(added.block).size() >= fewestEdgesGathered && !numberOfParametersForEdgeResults(added.block))
+            variablesJoinedAt.add(added.block.index(), Vector<uint32_t>()).iterator->value.append(added.indexOfVariable);
+    }
+    Vector<BlockID> nearestBlockThatDefines(FillWith { }, variablesJoinedAt.isEmpty() ? 0 : cfg.numNodes(), BlockID());
+    auto gatherEdgesInto = [&](BlockID join, const Vector<uint32_t>& joinedVariables) {
+        std::span<const Edge> incoming = cfg.incomingEdges(join);
+        BitVector defines(cfg.numNodes());
+        for (uint32_t indexOfVariable : joinedVariables) {
+            for (const Definition& definition : m_variables[variables[indexOfVariable]].definitions)
+                defines.set(definition.block.index());
+        }
+        for (BlockID block : cfg.reversePostOrder()) {
+            BlockID above = dominators.idom(block);
+            nearestBlockThatDefines[block.index()] = defines.get(block.index()) || !above ? block : nearestBlockThatDefines[above.index()];
+        }
+        GatheredJoin gathered;
+        HashMap<uint32_t, Vector<uint32_t, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> columnsBelow;
+        for (uint32_t indexOfEdge = 0; indexOfEdge < incoming.size(); ++indexOfEdge) {
+            Edge edge = incoming[indexOfEdge];
+            const Target& target = targetOf(function, edge);
+            uint32_t column = notGathered;
+            Vector<uint32_t, 1>* columns = nullptr;
+            if (!edge.isHandlerEdge() && target.proofs.isEmpty()) {
+                columns = &columnsBelow.add(nearestBlockThatDefines[edge.from.index()].index(), Vector<uint32_t, 1>()).iterator->value;
+                for (uint32_t known : *columns) {
+                    if (targetOf(function, incoming[gathered.firstEdgeOfColumn[known]]).arguments == target.arguments)
+                        column = known;
+                }
+            }
+            if (column == notGathered) {
+                column = gathered.firstEdgeOfColumn.size();
+                gathered.firstEdgeOfColumn.append(indexOfEdge);
+                if (columns)
+                    columns->append(column);
+            }
+            gathered.columnOfEdge.append(column);
+        }
+        if (gathered.firstEdgeOfColumn.size() == incoming.size())
+            return;
+        gatheredJoinOf[join.index()] = gatheredJoins.size();
+        gatheredJoins.append(WTF::move(gathered));
+    };
+    auto forEachEdgeWithArguments = [&](BlockID join, NOESCAPE const Invocable<void(uint32_t column, Edge)> auto& functor) {
+        std::span<const Edge> incoming = cfg.incomingEdges(join);
+        if (uint32_t gathered = gatheredJoinOf[join.index()]; gathered != notGathered) {
+            const Vector<uint32_t>& firstEdges = gatheredJoins[gathered].firstEdgeOfColumn;
+            for (uint32_t column = 0; column < firstEdges.size(); ++column)
+                functor(column, incoming[firstEdges[column]]);
+            return;
+        }
+        for (uint32_t indexOfEdge = 0; indexOfEdge < incoming.size(); ++indexOfEdge)
+            functor(indexOfEdge, incoming[indexOfEdge]);
+    };
+    for (auto& [join, joinedVariables] : variablesJoinedAt)
+        gatherEdgesInto(BlockID(join), joinedVariables);
+    for (AddedParameter& added : addedParameters) {
+        added.firstArgument = numberOfArguments;
+        uint32_t gathered = gatheredJoinOf[added.block.index()];
+        numberOfArguments += gathered != notGathered ? gatheredJoins[gathered].firstEdgeOfColumn.size() : cfg.incomingEdges(added.block).size();
+    }
 
     Vector<ValueID> arguments(FillWith { }, numberOfArguments, ValueID());
     Vector<std::pair<uint32_t, uint32_t>> questionsOfArguments;
@@ -940,15 +1016,14 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
         }
         questionsOfArguments.shrink(0);
         for (const AddedParameter& added : addedParameters.span().subspan(firstAddedParameter[indexOfVariable], firstAddedParameter[indexOfVariable + 1] - firstAddedParameter[indexOfVariable])) {
-            uint32_t argument = added.firstArgument;
-            for (Edge edge : cfg.incomingEdges(added.block)) {
+            forEachEdgeWithArguments(added.block, [&](uint32_t column, Edge edge) {
+                uint32_t argument = added.firstArgument + column;
                 const Definition* definitionAtHead = edge.kind == EdgeKind::Handler ? findLastDefinitionBefore(data, edge.from, firstValueOrder) : nullptr;
                 if (definitionAtHead)
                     arguments[argument] = definitionAtHead->value;
                 else
                     questionsOfArguments.append({ argument, edge.kind == EdgeKind::Handler ? nearest.askAtHead(edge.from) : nearest.askAtTail(edge.from) });
-                ++argument;
-            }
+            });
         }
         nearest.solve();
 
@@ -987,18 +1062,51 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
         auto added = addedIn(block);
         if (added.empty())
             continue;
-        uint32_t indexOfEdge = 0;
-        for (Edge edge : cfg.incomingEdges(block)) {
+        forEachEdgeWithArguments(block, [&](uint32_t column, Edge edge) {
             for (uint32_t index : added)
-                m_builder.appendArgument(edge, arguments[addedParameters[index].firstArgument + indexOfEdge], numberOfParametersForEdgeResults(block));
-            ++indexOfEdge;
-        }
+                m_builder.appendArgument(edge, arguments[addedParameters[index].firstArgument + column], numberOfParametersForEdgeResults(block));
+        });
     }
     for (Edge edge : m_analyses.edgesFromUnreachableBlocks()) {
         BlockID target = targetOf(function, edge).block;
         for (uint32_t index : addedIn(target))
             m_builder.appendArgument(edge, m_variables[variables[addedParameters[index].indexOfVariable]].values.first(), numberOfParametersForEdgeResults(target));
     }
+
+    // The first edge of each column has the arguments by now.
+    Vector<EdgesToGather>& columnsToGather = m_edgesToGather;
+    for (unsigned index = 0; index < cfg.numNodes(); ++index) {
+        if (gatheredJoinOf[index] == notGathered)
+            continue;
+        const GatheredJoin& gathered = gatheredJoins[gatheredJoinOf[index]];
+        std::span<const Edge> incoming = cfg.incomingEdges(BlockID(index));
+        size_t first = columnsToGather.size();
+        for (uint32_t firstEdge : gathered.firstEdgeOfColumn)
+            columnsToGather.append({ BlockID(index), { incoming[firstEdge] } });
+        for (uint32_t indexOfEdge = 0; indexOfEdge < incoming.size(); ++indexOfEdge) {
+            if (gathered.firstEdgeOfColumn[gathered.columnOfEdge[indexOfEdge]] != indexOfEdge)
+                columnsToGather[first + gathered.columnOfEdge[indexOfEdge]].edges.append(incoming[indexOfEdge]);
+        }
+    }
+}
+
+void SSARepair::gatherEdges()
+{
+    Function& function = m_builder.function();
+    std::optional<Target> handlerOfBuilder = m_builder.handler();
+    m_builder.setHandler(std::nullopt);
+    for (const EdgesToGather& column : m_edgesToGather) {
+        if (column.edges.size() == 1)
+            continue;
+        BlockID gathering = m_builder.addBlock(function.at(column.join).frequency);
+        Terminator& jump = function.edit(gathering, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
+        jump.become(TerminatorKind::Jump);
+        jump.targets.append(Target { column.join, Arguments(targetOf(function, column.edges.first()).arguments), { } });
+        jump.setOrigin(function.at(column.edges.first().from).terminator.origin());
+        for (Edge edge : column.edges)
+            m_builder.redirectEdge(edge, gathering, { });
+    }
+    m_builder.setHandler(WTF::move(handlerOfBuilder));
 }
 
 ValueID SSARepair::findLocalDefinition(const VariableData& data, const RecordedUse& recorded)

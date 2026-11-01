@@ -58,6 +58,7 @@ private:
 
     void rematerializeConstants(std::span<const Variable>);
     void insertParameters(std::span<const Variable>);
+    void gatherEdges();
     bool isInOrderAsItStands(const VariableData&);
 
     static ValueID findLocalDefinition(const VariableData&, const RecordedUse&);
@@ -67,6 +68,11 @@ private:
     IRBuilder& m_builder;
     FunctionAnalyses& m_analyses;
     Vector<VariableData> m_variables;
+    struct EdgesToGather {
+        BlockID join;
+        Vector<Edge> edges;
+    };
+    Vector<EdgesToGather> m_edgesToGather;
     BitVector m_isDefinition;
     Vector<std::pair<ValueID, Variable>, 8> m_definitions;
     // Of the first of them, once somebody asks and they are many.

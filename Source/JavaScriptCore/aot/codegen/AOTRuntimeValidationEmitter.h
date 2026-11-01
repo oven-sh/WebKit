@@ -91,12 +91,13 @@ private:
     void branchOnType(Operand, const TypeTestPlan&, BranchTargets);
     void failUnless(Condition, ValidationFailureKind, Operand found, ValueID);
     void failUnlessHasType(Operand, const TypeTestPlan&, ValidationFailureKind, ValueID, TypeID typeThatRunTimeTests);
-    void askOperationUnless(Condition, ValidationFailureKind, Operand found, ValueID);
+    void askOperationUnless(Condition, std::span<const ValidationFailureKind>, Operand found, ValueID);
     void reportFailure(ValidationFailureKind, Operand found, ValueID);
     void callReport(ValidationFailureKind, Operand found, ValueID);
     Word32 reportedFailure(ValidationFailureKind, Operand found);
     Boxed reportedValueOf(Operand found);
 
+    bool mayBeEmptyWhereMade(const Value& definition);
     void checkValue(ValueID, Operand);
     void checkIsSpecified(ValueID);
     void checkNumberIsSpecified(ValueID);

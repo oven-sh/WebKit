@@ -4344,13 +4344,34 @@ struct LoopPathSeparator : LoopEditor {
         if (onlyLeavesObjectUnderOneName)
             plan.emptyPathsThatStay.clearAll();
 
+        // Many tests may fail into one block that holds nothing and goes on into a path that leaves. Entered from the loop and from its copy, the copy of that block would join every value that is
+        // alive there, and each of its edges would carry them all: tests times values. The block stays, and the one edge behind it leaves in place of theirs.
+        AOT_THRESHOLD(size_t, fewestEdgesGathered, 16);
+        BitVector staysToGatherEdges(m_function.blocks.size());
+        for (size_t index : leaves) {
+            const Block& block = m_function.blocks[index];
+            std::span<const Edge> incoming = m_analyses.cfg().incomingEdges(BlockID(index));
+            if (incoming.size() < fewestEdgesGathered || !block.values.isEmpty() || !block.parameters.isEmpty() || block.isHandlerBlock() || block.handler || block.terminator.kind != TerminatorKind::Jump)
+                continue;
+            const Target& next = block.terminator.next();
+            if (!next.proofs.isEmpty() || !leaves.get(next.block.index()))
+                continue;
+            bool isEnteredOnlyFromPathsThatStay = std::ranges::all_of(incoming, [&](Edge edge) {
+                return !edge.isHandlerEdge() && !leaves.get(edge.from.index()) && targetOf(m_function, edge).proofs.isEmpty();
+            });
+            if (isEnteredOnlyFromPathsThatStay)
+                staysToGatherEdges.set(index);
+        }
+
         BitVector isEntryOfCopy(m_function.blocks.size());
         for (size_t index : leaves) {
             BlockID block(index);
+            if (staysToGatherEdges.get(index))
+                continue;
             for (Edge edge : m_analyses.cfg().incomingEdges(block)) {
                 if (edge.isHandlerEdge())
                     return std::nullopt;
-                if (leaves.get(edge.from.index()))
+                if (leaves.get(edge.from.index()) && !staysToGatherEdges.get(edge.from.index()))
                     continue;
                 // The copy is entered here from the loop and from its own blocks. A guard speaks of the operands of one test, so two of them do not join.
                 uint32_t numberOfResults = numberOfEdgeResults(m_function, edge.from, edge.targetIndex);
