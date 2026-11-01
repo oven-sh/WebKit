@@ -2381,8 +2381,8 @@ void Modules::runMocksBelow(ModuleID root, RootOfLoad rootOfLoad)
             continue;
         // Depth first, in the order of the text: what is taken first is appended last.
         for (const ModuleRequestData& request : m_table.requests(module) | std::views::reverse) {
-            // The load of a module that keeps the module itself does not come to the mock.
-            if (!request.isHoisted && seesMockOf(request.targetModule(), module))
+            // The load of a module that keeps the module itself does not come to the mock. A require() runs the factory of its own file where it stands; the face of a CommonJS file asks for the file as an import does.
+            if (!request.isHoisted && (!request.isRequire || data(module).isFaceOfFile()) && seesMockOf(request.targetModule(), module))
                 work.append(request.targetModule());
         }
     }
@@ -6408,6 +6408,19 @@ Vector<ModuleID, 2> formsThatAttributesAskFor(JSGlobalObject* realm, StringView 
         return IterationStatus::Continue;
     });
     return forms;
+}
+
+void runBodyOfRequiredFileAheadOfMock(JSGlobalObject* realm, ModuleID moduleOfHost)
+{
+    ModuleFromHost module(realm, moduleOfHost);
+    Modules* modules = modulesOf(realm);
+    if (!modules)
+        return;
+    auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    modules->didEndMock(module);
+    RETURN_IF_EXCEPTION(scope, void());
+    scope.release();
+    modules->require(module, ModuleID(), Modules::RequiredBy::Program);
 }
 
 void runBodyOfLinkedModuleAheadOfMock(JSGlobalObject* realm, ModuleID moduleOfHost)
