@@ -3945,6 +3945,7 @@ void deliverTextThatWaits(VM& vm)
 }
 
 static JSC_DECLARE_HOST_FUNCTION(importBehindFactories);
+static JSC_DECLARE_HOST_FUNCTION(importFromOtherImageBehindFactories);
 
 // Another load may have come to the mock first: `await Promise.all([import("./a"), import("./b")])`.
 JSPromise* Modules::factoryThatWaitsBelow(ModuleID root, FactoryAskedForBy askedBy, JSValue& state)
@@ -4702,7 +4703,7 @@ JSPromise* Modules::importDynamic(JSValue specifier, JSValue options, ModuleID r
     RELEASE_AND_RETURN(scope, importUncompiled(key, referrer, WTF::move(*fetchParameters)));
 }
 
-JSPromise* Modules::importUncompiled(const Identifier& key, ModuleID referrer, RefPtr<ScriptFetchParameters>&& fetchParameters)
+JSPromise* Modules::importUncompiled(const Identifier& key, ModuleID referrer, RefPtr<ScriptFetchParameters>&& fetchParameters, JSValue stateOfWait)
 {
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -4719,6 +4720,27 @@ JSPromise* Modules::importUncompiled(const Identifier& key, ModuleID referrer, R
             continue;
         if (std::optional<ModuleID> found = modules->m_table.findByPath(key.string()); found && modules->errorOfLoadEndedByMock(*found))
             RELEASE_AND_RETURN(scope, modules->rejectImportWithErrorOfLoad(*found, ImportCaller::CompiledCode));
+    }
+    // A fetch of the loader waits for the factories that it starts alone: nothing says there who called. Here it shows, so the call waits as one for a file of its own image does in startImport().
+    for (Instance* instance = fetchParameters || !vm.aotState().hasSeveralImages ? nullptr : realm->aotInstance(); instance; instance = instance->above) {
+        Modules* modules = instance->state->modules.get();
+        std::optional<ModuleID> found = modules ? modules->m_table.findByPath(key.string()) : std::nullopt;
+        if (!found)
+            continue;
+        JSPromise* factories = modules->factoryThatWaitsBelow(*found, FactoryAskedForBy::ImportCall, stateOfWait);
+        RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+        if (!factories)
+            break;
+        JSPromise* promise = JSPromise::create(vm, realm->promiseStructure());
+        JSFunction* goOn = JSFunction::create(vm, realm, 2, String(), importFromOtherImageBehindFactories, ImplementationVisibility::Private);
+        MarkedArgumentBuffer call;
+        call.append(jsString(vm, key.string()));
+        call.append(jsNumber(moduleIDForHost(*m_instance.program, referrer).index()));
+        call.append(stateOfWait);
+        JSArray* heldCall = constructArray(realm, static_cast<ArrayAllocationProfile*>(nullptr), call);
+        RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+        factories->performPromiseThenWithContext(vm, realm, goOn, jsUndefined(), promise, heldCall);
+        return promise;
     }
     SetForScope askerLoadsCompiledFilesAlone(vm.aotState().askerLoadsCompiledFilesAlone, loadsCompiledFilesAlone(referrer));
     JSPromise* loaded = askLoader();
@@ -6594,6 +6616,14 @@ JSC_DEFINE_HOST_FUNCTION(importBehindFactories, (JSGlobalObject* realm, CallFram
     std::optional<int64_t> referrerAsyncOrder = order.isUndefined() ? std::nullopt : std::optional(static_cast<int64_t>(order.asNumber()));
     auto caller = heldCall->getIndexQuickly(2).asBoolean() ? Modules::ImportCaller::Host : Modules::ImportCaller::CompiledCode;
     return JSValue::encode(modulesOf(realm)->startImport(module, referrerAsyncOrder, caller, static_cast<Modules::TextOfImport>(heldCall->getIndexQuickly(3).asUInt32()), nullptr, heldCall->getIndexQuickly(4)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(importFromOtherImageBehindFactories, (JSGlobalObject* realm, CallFrame* callFrame))
+{
+    JSArray* heldCall = asArray(callFrame->argument(1));
+    ModuleFromHost referrer(realm, ModuleID(heldCall->getIndexQuickly(1).asUInt32()));
+    Identifier key = Identifier::fromString(realm->vm(), asString(heldCall->getIndexQuickly(0))->tryGetValue());
+    return JSValue::encode(modulesOf(realm)->importUncompiled(key, referrer, nullptr, heldCall->getIndexQuickly(2)));
 }
 
 JSPromise* importModule(JSGlobalObject* realm, ModuleID moduleOfHost, std::optional<int64_t> referrerAsyncOrder)

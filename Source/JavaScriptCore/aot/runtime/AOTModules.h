@@ -631,6 +631,8 @@ public:
     JSPromise* startImport(ModuleID, std::optional<int64_t> referrerAsyncOrder, ImportCaller = ImportCaller::CompiledCode, TextOfImport = TextOfImport::MayComeLater, JSPromise* promiseOfCaller = nullptr, JSValue stateOfWait = JSValue());
     JSPromise* rejectImportWithErrorOfLoad(ModuleID, ImportCaller);
     JSPromise* importDynamic(JSValue specifier, JSValue options, ModuleID referrer);
+    // `stateOfWait`: as for startImport().
+    JSPromise* importUncompiled(const Identifier& key, ModuleID referrer, RefPtr<ScriptFetchParameters>&&, JSValue stateOfWait = { });
     // `bun run` reads the text of a file that is imported on another thread, and hears of it in a later turn of the event loop: every job that waits runs first, and so does what is left of a graph
     // that has all its texts. Where a file that runs while a graph is loaded calls import(), each text comes in a turn of its own from that call until the last text has come, in the order in which they were asked for.
     // So it is where two calls wait at once. A call outside a load that waits alone is made again in a later turn, and settles the promise that the program has.
@@ -859,7 +861,6 @@ private:
     void willRequireESModule(ModuleID);
     void markNamespaceAsRequired(ModuleID);
 
-    JSPromise* importUncompiled(const Identifier& key, ModuleID referrer, RefPtr<ScriptFetchParameters>&&);
     std::optional<ModuleID> findByName(const Identifier& key);
     // The loader has one place for a file without a type and another for it with a type, so they are two modules. The image may hold the first alone.
     enum class FormWithoutAttributes : bool { MayAnswer, IsAnotherModule };
