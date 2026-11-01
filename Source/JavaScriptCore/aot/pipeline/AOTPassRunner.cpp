@@ -521,16 +521,24 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::SimplifyBuiltinCalls, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CallBuiltin, Opcode::AwaitBySavingFrame } },
 };
 
-// The sabotage that shows whether a row of the table is narrow: behind the pass, a call whose result nobody reads is taken out of its block.
-static PassOutcome dropCallThatNobodyReads(FunctionPassContext& context)
+// The sabotages that show whether a row of the table is narrow: behind the pass, an operation whose result nobody reads is taken out of its block.
+static OpcodeSet operationsThatSabotageDrops(const BuildContext& build)
 {
-    Function& function = context.function;
+    if (build.isSabotaged(Sabotage::PassesDropCalls))
+        return { Opcode::Call, Opcode::CallDirect };
+    if (build.isSabotaged(Sabotage::PassesDropStores))
+        return { Opcode::PropSet };
+    return { };
+}
+
+static PassOutcome dropOperationThatNobodyReads(Function& function, FunctionAnalyses& analyses, OpcodeSet dropped)
+{
     for (uint32_t index = 0; index < function.blocks.size(); ++index) {
         for (ValueID id : function.at(BlockID(index)).values) {
-            if ((function.at(id).opcode != Opcode::Call && function.at(id).opcode != Opcode::CallDirect) || context.analyses.useLists().useCount(id))
+            if (!dropped.contains(function.at(id).opcode) || analyses.useLists().useCount(id))
                 continue;
             function.edit(BlockID(index), BlockEdit::Values).values.removeFirst(id);
-            context.analyses.didChangeValues();
+            analyses.didChangeValues();
             return PassOutcome::Changed;
         }
     }
@@ -626,8 +634,18 @@ void PassRunner::endProgramPass(PassID id, const Program& program, PassTimer tim
             function.setListenerForOperationsThatGo(nullptr);
         EffectSummaries noSummaries;
         size_t count = std::min(program.functions.size(), timer.bodiesBefore->functions.size());
-        for (size_t index = 0; index < count && outcome == PassOutcome::Changed; ++index) {
-            String problem = findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ program, noSummaries }, timer.bodiesBefore->functions[index], program.functions[index], timer.bodiesBefore->reasons[index]));
+        // The program is not the runner's to edit: the sabotage shows the check a copy of the first body that has such an operation, without it.
+        OpcodeSet dropped = operationsThatSabotageDrops(m_build);
+        std::optional<Function> sabotaged;
+        for (size_t index = 0; index < count && (outcome == PassOutcome::Changed || !dropped.isEmpty()); ++index) {
+            const Function* after = &program.functions[index];
+            if (!dropped.isEmpty() && !sabotaged && after->hasBody()) [[unlikely]] {
+                Function copy = *after;
+                FunctionAnalyses analyses(AnalysisContext { m_build, program, nullptr, nullptr, FunctionID(index) }, copy);
+                if (dropOperationThatNobodyReads(copy, analyses, dropped) == PassOutcome::Changed)
+                    after = &sabotaged.emplace(WTF::move(copy));
+            }
+            String problem = findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ program, noSummaries }, timer.bodiesBefore->functions[index], *after, timer.bodiesBefore->reasons[index]));
             if (problem.isNull())
                 continue;
             InternalError failure = InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = findFunctionAsRead(&program, FunctionID(index)), .pass = id, .detail = problem };
@@ -1007,8 +1025,8 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
     }
     currentWork().setPass(id);
     PassOutcome outcome = descriptor.run(context);
-    if (m_build.isSabotaged(Sabotage::PassesDropCalls)) [[unlikely]]
-        outcome |= dropCallThatNobodyReads(context);
+    if (m_build.recordedOptions().sabotage) [[unlikely]]
+        outcome |= dropOperationThatNobodyReads(context.function, context.analyses, operationsThatSabotageDrops(m_build));
     if (m_build.isSabotaged(Sabotage::PassesChangeNothing)) [[unlikely]]
         outcome = PassOutcome::Unchanged;
     if (reasons) [[unlikely]]
