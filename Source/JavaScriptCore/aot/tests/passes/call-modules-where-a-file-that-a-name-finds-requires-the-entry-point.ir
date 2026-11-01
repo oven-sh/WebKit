@@ -1,0 +1,24 @@
+# main.mjs: require(name); eval(text)        plugin.mjs: require("./main.mjs")        built with one entry point, main.mjs. A name made at run time finds plugin.mjs
+# A realm may begin with plugin.mjs, as the realm of `new Worker(name)` does: there the require() evaluates main.mjs, and a text may import main.mjs while it runs. So the site asks the run time,
+# though main.mjs is the one entry point. call-modules-where-text-may-import-the-entry-point-that-is-required.ir has no other file that a realm begins with
+# FORM: AsRead
+# RUN: pipeline CallModules
+# STATISTIC: RequireSitesBound = 0
+
+module m0 path="/main.mjs" displayPath="main.mjs" body=f0
+module m1 path="/plugin.mjs" displayPath="plugin.mjs" flags=[IsFoundByName] body=f1 requests=[{target=m0 kind=Require completes=true}]
+entry module=m0
+evalscope e0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = RequireDynamic v1 referrer=m0
+    v3 = String string="text"
+    v4 = Undefined
+    v5 = DirectEval v3, v4 evalScope=e0
+    Return
+}
+function f1 name="plugin" module=m1 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m0 referrer=m1 [isBare]
+    Return
+}

@@ -1,0 +1,36 @@
+# main.mjs: require(name); require("./running.mjs")        running.mjs: import "./imported.mjs"; eval(text)        built with one entry point, main.mjs. A name made at run time finds running.mjs
+# The program loads files by name, so the run time answers an import() of a text with running.mjs too, also while the require() evaluates it. That require() asks the run time,
+# as in call-modules-where-text-may-import-a-required-entry-point.ir. call-modules-where-text-finds-a-required-file-by-no-name.ir has no load by a name.
+# FORM: AsRead
+# RUN: pipeline CallModules
+# STATISTIC: ModulesWithState = 1
+# STATISTIC: RequireSitesBound = 0
+# CHECK: module m1 {{*}}flags=[IsFoundByName, EvaluatesItself] body=f1
+
+module m0 path="/main.mjs" displayPath="main.mjs" body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/running.mjs" displayPath="running.mjs" flags=[IsFoundByName] body=f1 requests=[{target=m2 completes=true}]
+module m2 path="/imported.mjs" displayPath="imported.mjs" body=f2
+entry module=m0
+evalscope e0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = RequireDynamic v1 referrer=m0
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    Return
+# CHECK: = RequireDynamic
+# CHECK-NEXT: EvaluateRequiredModule module=m1 referrer=m0 specifier="/running.mjs"
+# CHECK-NEXT: Return
+}
+function f1 name="running" module=m1 kind=Module results=[{type=anything}] {
+    v0 = String string="text"
+    v1 = Undefined
+    v2 = DirectEval v0, v1 evalScope=e0
+    Return
+}
+function f2 name="imported" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = Call v1
+    Return
+}

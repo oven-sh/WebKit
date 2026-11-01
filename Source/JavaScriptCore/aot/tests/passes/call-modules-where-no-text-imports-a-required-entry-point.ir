@@ -1,0 +1,33 @@
+# main.mjs: require("./running.mjs")        running.mjs: import "./imported.mjs"; report()        built with two entry points, main.mjs and running.mjs
+# The build has read all the code that runs, and none of it calls import(): nothing asks the loader for running.mjs while the require() evaluates it, and the site calls its start.
+# call-modules-where-text-may-import-a-required-entry-point.ir is the same program with a text
+# FORM: AsRead
+# RUN: pipeline CallModules
+# STATISTIC: ModulesWithState = 1
+# STATISTIC: RequireSitesBound = 1
+# CHECK: module m1 {{*}}flags=[EvaluatesItself] body=f1
+
+module m0 path="/main.mjs" displayPath="main.mjs" body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/running.mjs" displayPath="running.mjs" body=f1 requests=[{target=m2 completes=true}]
+module m2 path="/imported.mjs" displayPath="imported.mjs" body=f2
+entry module=m0
+entry module=m1
+function f0 name="main" kind=Module results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    Return
+# CHECK-NEXT: b0():
+# CHECK-NEXT: = CallDirect function=f1
+# CHECK-NEXT: Return
+}
+function f1 name="running" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = Call v1
+    Return
+}
+function f2 name="imported" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = Call v1
+    Return
+}

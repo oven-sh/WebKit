@@ -940,12 +940,380 @@ function f3 name="importsBack" module=m3 kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
+// main.js requires running.js where every run of its body comes once, and no import() is compiled: the build would call the start of running.js there. running.js is an entry point too, so a name finds it.
+// It requires imports-back.js through the run time, and imports-back.js evaluates a text that calls import() with the name of running.js: the steps of the loader run before that require() returns.
+static constexpr ASCIILiteral importByTextOfEntryPointThatRequireRuns = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/running.js" displayPath="running.js" body=f1 requests=[{target=m2 completes=true}] exports=[{name="ended" variable=g0}]
+module m2 path="/imported.js" displayPath="imported.js" body=f2
+module m3 path="/imports-back.js" displayPath="imports-back.js" body=f3
+entry module=m0
+entry module=m1
+evalscope e0
+variable g0 name="ended" module=m1 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    v3 = String string="ends"
+    v4 = String string="main.js"
+    v5 = Call v1, -, v3, v4
+    Return
+}
+function f1 name="running" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="running.js"
+    v3 = String string="begins"
+    v4 = Call v1, -, v3, v2
+    v5 = RequireModule module=m3 referrer=m1 specifier="./imports-back.js"
+    v6 = String string="ends"
+    v7 = Call v1, -, v6, v2
+    v8 = Boolean boolean=true
+    PutModuleVariable v8 variable=g0
+    Return
+}
+function f2 name="imported" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="imported.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f3 name="importsBack" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="imports-back.js"
+    v4 = Call v1, -, v2, v3
+    v5 = String string="import('/running.js')"
+    v6 = Undefined
+    v7 = DirectEval v5, v6 evalScope=e0
+    v8 = PropGet v0 key="register" [isFreeName]
+    v9 = Call v8, -, v7
+    Return
+}
+)IR"_s;
+
+// The same, where the require() stands under a handler, running.js throws behind its own require(), and main.js catches the error.
+static constexpr ASCIILiteral importByTextOfEntryPointThatThrowsBehindRequire = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require}]
+module m1 path="/running.js" displayPath="running.js" body=f1 requests=[{target=m2 completes=true}] exports=[{name="ended" variable=g0}]
+module m2 path="/imported.js" displayPath="imported.js" body=f2
+module m3 path="/imports-back.js" displayPath="imports-back.js" body=f3
+entry module=m0
+entry module=m1
+evalscope e0
+variable g0 name="ended" module=m1 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1() handler=b3():
+    EvaluateModule module=m1 referrer=m0
+    Jump -> next b2()
+  b2():
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="report" [isFreeName]
+    v3 = String string="ends"
+    v4 = String string="main.js"
+    v5 = Call v2, -, v3, v4
+    Return
+  b3() role=CatchHandler:
+    v6 = CatchValue
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="report" [isFreeName]
+    v9 = String string="main.js caught"
+    v10 = Call v8, -, v9, v6
+    Jump -> next b2()
+}
+function f1 name="running" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="running.js"
+    v3 = String string="begins"
+    v4 = Call v1, -, v3, v2
+    v5 = RequireModule module=m3 referrer=m1 specifier="./imports-back.js"
+    v6 = String string="running.js failed"
+    Throw v6
+}
+function f2 name="imported" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="imported.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f3 name="importsBack" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="imports-back.js"
+    v4 = Call v1, -, v2, v3
+    v5 = String string="import('/running.js')"
+    v6 = Undefined
+    v7 = DirectEval v5, v6 evalScope=e0
+    v8 = PropGet v0 key="register" [isFreeName]
+    v9 = Call v8, -, v7
+    Return
+}
+)IR"_s;
+
+// main.js requires outer.js, which requires inner.js, and both are entry points. inner.js requires imports-back.js through the run time, and the text there calls import() with the names of both.
+static constexpr ASCIILiteral importsByTextOfNestedEntryPointsThatRequireRuns = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/outer.js" displayPath="outer.js" body=f1 requests=[{target=m2 kind=Require completes=true}] exports=[{name="ended" variable=g0}]
+module m2 path="/inner.js" displayPath="inner.js" body=f2 exports=[{name="ended" variable=g1}]
+module m3 path="/imports-back.js" displayPath="imports-back.js" body=f3
+entry module=m0
+entry module=m1
+entry module=m2
+evalscope e0
+variable g0 name="ended" module=m1 declared={type=anything}
+variable g1 name="ended" module=m2 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    v3 = String string="ends"
+    v4 = String string="main.js"
+    v5 = Call v1, -, v3, v4
+    Return
+}
+function f1 name="outer" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="outer.js"
+    v3 = String string="begins"
+    v4 = Call v1, -, v3, v2
+    EvaluateModule module=m2 referrer=m1 [isBare]
+    v6 = String string="ends"
+    v7 = Call v1, -, v6, v2
+    v8 = String string="outer"
+    PutModuleVariable v8 variable=g0
+    Return
+}
+function f2 name="inner" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="inner.js"
+    v3 = String string="begins"
+    v4 = Call v1, -, v3, v2
+    v5 = RequireModule module=m3 referrer=m2 specifier="./imports-back.js"
+    v6 = String string="ends"
+    v7 = Call v1, -, v6, v2
+    v8 = String string="inner"
+    PutModuleVariable v8 variable=g1
+    Return
+}
+function f3 name="importsBack" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = String string="[import('/outer.js'), import('/inner.js')]"
+    v2 = Undefined
+    v3 = DirectEval v1, v2 evalScope=e0
+    v4 = PropGet v0 key="register" [isFreeName]
+    v5 = Call v4, -, v3
+    Return
+}
+)IR"_s;
+
+// main.js requires root.js, which imports running.js, an entry point. The text calls import() with the name of running.js while running.js runs.
+// running.js is not what the require() evaluates: it runs as an import of root.js. Plain Bun leaves the promise of such an import() pending, and that of each later one, and so does the run time here.
+static constexpr ASCIILiteral importByTextOfEntryPointThatRequiredModuleImports = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/root.js" displayPath="root.js" body=f1 requests=[{target=m2 completes=true}]
+module m2 path="/running.js" displayPath="running.js" body=f2 exports=[{name="ended" variable=g0}]
+module m3 path="/imports-back.js" displayPath="imports-back.js" body=f3
+entry module=m0
+entry module=m2
+evalscope e0
+variable g0 name="ended" module=m2 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    v3 = String string="ends"
+    v4 = String string="main.js"
+    v5 = Call v1, -, v3, v4
+    Return
+}
+function f1 name="root" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="root.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f2 name="running" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="running.js"
+    v3 = String string="begins"
+    v4 = Call v1, -, v3, v2
+    v5 = RequireModule module=m3 referrer=m2 specifier="./imports-back.js"
+    v6 = String string="ends"
+    v7 = Call v1, -, v6, v2
+    v8 = Boolean boolean=true
+    PutModuleVariable v8 variable=g0
+    Return
+}
+function f3 name="importsBack" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="imports-back.js"
+    v4 = Call v1, -, v2, v3
+    v5 = String string="import('/running.js')"
+    v6 = Undefined
+    v7 = DirectEval v5, v6 evalScope=e0
+    v8 = PropGet v0 key="register" [isFreeName]
+    v9 = Call v8, -, v7
+    Return
+}
+)IR"_s;
+
+// main.js requires running.js, an entry point, and the text in running.js calls import() with the name of running.js and runs the waiting jobs itself, as a require() that the text makes for itself does.
+// No require() of the program asks the run time in between.
+static constexpr ASCIILiteral importByTextThatRunsWaitingJobsOfEntryPointThatRequireRuns = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/running.js" displayPath="running.js" body=f1 exports=[{name="ended" variable=g0}]
+entry module=m0
+entry module=m1
+evalscope e0
+variable g0 name="ended" module=m1 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    v3 = String string="ends"
+    v4 = String string="main.js"
+    v5 = Call v1, -, v3, v4
+    Return
+}
+function f1 name="running" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="running.js"
+    v3 = String string="begins"
+    v4 = Call v1, -, v3, v2
+    v5 = String string="[import('/running.js'), drainMicrotasks()][0]"
+    v6 = Undefined
+    v7 = DirectEval v5, v6 evalScope=e0
+    v8 = PropGet v0 key="register" [isFreeName]
+    v9 = Call v8, -, v7
+    v10 = String string="ends"
+    v11 = Call v1, -, v10, v2
+    v12 = Boolean boolean=true
+    PutModuleVariable v12 variable=g0
+    Return
+}
+)IR"_s;
+
+// main.js is the one entry point. A name made at run time finds plugin.js, and a realm begins with it, as the realm of `new Worker(name)` does: plugin.js requires main.js there.
+// main.js requires imports-back.js, whose text calls import() with the name of main.js while the require() of plugin.js still evaluates main.js.
+static constexpr ASCIILiteral importByTextOfEntryPointThatFileFoundByNameRequires = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m2 kind=Require completes=true}] exports=[{name="ended" variable=g0}]
+module m1 path="/plugin.js" displayPath="plugin.js" flags=[IsFoundByName] body=f1 requests=[{target=m0 kind=Require completes=true}]
+module m2 path="/imports-back.js" displayPath="imports-back.js" flags=[IsFoundByName] body=f2
+module m3 path="/imported.js" displayPath="imported.js" flags=[IsFoundByName] body=f3
+entry module=m0
+evalscope e0
+variable g0 name="ended" module=m0 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="main.js"
+    v3 = String string="begins"
+    v4 = Call v1, -, v3, v2
+    v5 = String string="/imported.js"
+    v6 = RequireDynamic v5 referrer=m0
+    EvaluateModule module=m2 referrer=m0 [isBare]
+    v8 = String string="ends"
+    v9 = Call v1, -, v8, v2
+    v10 = Boolean boolean=true
+    PutModuleVariable v10 variable=g0
+    Return
+}
+function f1 name="plugin" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="plugin.js"
+    v3 = String string="begins"
+    v4 = Call v1, -, v3, v2
+    EvaluateModule module=m0 referrer=m1 [isBare]
+    v6 = String string="ends"
+    v7 = Call v1, -, v6, v2
+    Return
+}
+function f2 name="importsBack" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = String string="import('/main.js')"
+    v2 = Undefined
+    v3 = DirectEval v1, v2 evalScope=e0
+    v4 = PropGet v0 key="register" [isFreeName]
+    v5 = Call v4, -, v3
+    Return
+}
+function f3 name="imported" module=m3 kind=Module results=[{type=anything}] {
+    Return
+}
+)IR"_s;
+
+// Built for a host that runs files which the build has not seen. first.js, the one entry point, imports helpers.js and main.js. helpers.js requires drains.js and stores its variable behind that.
+// A name finds drains.js and main.js. The text in drains.js calls import() with the name of main.js. The require() of drains.js asks the run time, so the steps of the loader run before it returns:
+// main.js runs while helpers.js runs, and its read of the variable throws. The module order knows of the same names as the require() does.
+static constexpr ASCIILiteral importByTextOfFileFoundByNameWhileRequiredFileFoundByNameRuns = R"IR(module m0 path="/first.js" displayPath="first.js" body=f0 requests=[{target=m1 completes=true}, {target=m3 completes=true}]
+module m1 path="/helpers.js" displayPath="helpers.js" body=f1 requests=[{target=m2 kind=Require completes=true}] exports=[{name="mode" variable=g0}]
+module m2 path="/drains.js" displayPath="drains.js" flags=[IsFoundByName] body=f2
+module m3 path="/main.js" displayPath="main.js" flags=[IsFoundByName] body=f3 requests=[{target=m1 completes=true}]
+entry module=m0
+evalscope e0
+variable g0 name="mode" module=m1 declared={type=anything|absent} initialization=Uninitialized
+function f0 name="first" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="ends"
+    v3 = String string="first.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f1 name="helpers" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="begins"
+    v3 = String string="helpers.js"
+    v4 = Call v1, -, v2, v3
+    EvaluateModule module=m2 referrer=m1 [isBare]
+    v6 = PropGet v0 key="config" [isFreeName]
+    PutModuleVariable v6 variable=g0
+    v8 = String string="ends"
+    v9 = Call v1, -, v8, v3
+    Return
+}
+function f2 name="drains" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = String string="import('/main.js')"
+    v2 = Undefined
+    v3 = DirectEval v1, v2 evalScope=e0
+    v4 = PropGet v0 key="register" [isFreeName]
+    v5 = Call v4, -, v3
+    Return
+}
+function f3 name="main" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = GetModuleVariable variable=g0
+    v3 = CheckInitialized v2 name="mode"
+    v4 = PropGet v3 key="port"
+    v5 = String string="main.js reads port"
+    v6 = Call v1, -, v5, v4
+    Return
+}
+)IR"_s;
+
 static constexpr ASCIILiteral scriptStart = R"js(
 globalThis.report = (label, value) => print(label + ": " + value);
 globalThis.id = value => value;
 globalThis.input = 1;
 globalThis.register = closure => { globalThis.registered = closure; };
 globalThis.importByHost = name => import(name);
+globalThis.config = { port: 8080 };
 globalThis.registerImports = (first, second, last) => Object.assign(globalThis, { importFirst: first, importSecond: second, importLast: last });
 )js"_s;
 
@@ -977,7 +1345,8 @@ static std::unique_ptr<CompileOutput> compileOnThisThread(const String& programT
     return output;
 }
 
-static String runInShell(const String& programText, ASCIILiteral referencesWord, OptionWords optionWords, ASCIILiteral scriptAfterEntryPoint = scriptEnd)
+// A realm begins with the first entry point, or with a file that a name finds: `new Worker(name)`.
+static String runInShell(const String& programText, ASCIILiteral referencesWord, OptionWords optionWords, ASCIILiteral scriptAfterEntryPoint = scriptEnd, ASCIILiteral fileThatRealmBeginsWith = { })
 {
     std::unique_ptr<CompileOutput> output;
     runOnBuildThread([&] {
@@ -987,7 +1356,7 @@ static String runInShell(const String& programText, ASCIILiteral referencesWord,
     Vector<String> arguments {
         makeString("--aotImagePath="_s, image.path()),
         String("-e"_s),
-        makeString(scriptStart, "runCompiledEntryPoint("_s, output->entryModuleIDs[0], ')', scriptAfterEntryPoint),
+        fileThatRealmBeginsWith.isNull() ? makeString(scriptStart, "runCompiledEntryPoint("_s, output->entryModuleIDs[0], ')', scriptAfterEntryPoint) : makeString(scriptStart, "import(\""_s, fileThatRealmBeginsWith, "\")"_s, scriptAfterEntryPoint),
     };
 
     String shell = shellPath();
@@ -998,10 +1367,10 @@ static String runInShell(const String& programText, ASCIILiteral referencesWord,
     return makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s);
 }
 
-static void checkShellOutput(const String& programText, OptionWords optionWords, ASCIILiteral expectedOutput, ASCIILiteral scriptAfterEntryPoint = scriptEnd)
+static void checkShellOutput(const String& programText, OptionWords optionWords, ASCIILiteral expectedOutput, ASCIILiteral scriptAfterEntryPoint = scriptEnd, ASCIILiteral fileThatRealmBeginsWith = { })
 {
     for (ASCIILiteral referencesWord : { "references=wide"_s, "references=narrow"_s }) {
-        String output = runInShell(programText, referencesWord, optionWords, scriptAfterEntryPoint);
+        String output = runInShell(programText, referencesWord, optionWords, scriptAfterEntryPoint, fileThatRealmBeginsWith);
         if (output != expectedOutput)
             dataLog("with ", referencesWord, " the shell printed\n", output, "expected\n", expectedOutput);
         AOT_TEST_CHECK(output == expectedOutput);
@@ -1234,6 +1603,140 @@ import() of running.js: rejected with thrown by running.js
 )"_s, reportImportOfRunningModule);
 }
 
+// Behind the entry point each import() gets 64 turns of the job queue, and then says how it has settled. The second one is called here, when running.js has run.
+// A script of the shell calls no built-in that is written in JavaScript: the image carries a library that stands in for them.
+static constexpr ASCIILiteral reportImportOfRunningModuleAndLaterOne = R"js(.then(async () => {
+    let first = "pending";
+    let later = "pending";
+    registered.then(names => { first = "fulfilled, ended: " + names.ended; }, error => { first = "rejected with " + error; });
+    import("/running.js").then(names => { later = "fulfilled, ended: " + names.ended; }, error => { later = "rejected with " + error; });
+    for (let turn = 0; turn < 64; ++turn)
+        await null;
+    report("import() of running.js", first);
+    report("a later import() of running.js", later);
+}).catch(error => print("the script threw " + error));
+)js"_s;
+
+static constexpr ASCIILiteral reportImportsOfOuterAndInnerModule = R"js(.then(async () => {
+    let outer = "pending";
+    let inner = "pending";
+    registered[0].then(names => { outer = "fulfilled, ended: " + names.ended; }, error => { outer = "rejected with " + error; });
+    registered[1].then(names => { inner = "fulfilled, ended: " + names.ended; }, error => { inner = "rejected with " + error; });
+    for (let turn = 0; turn < 64; ++turn)
+        await null;
+    report("import() of outer.js", outer);
+    report("import() of inner.js", inner);
+}).catch(error => print("the script threw " + error));
+)js"_s;
+
+static constexpr ASCIILiteral reportImportOfMainModule = R"js(.then(async () => {
+    let outcome = "pending";
+    registered.then(names => { outcome = "fulfilled, ended: " + names.ended; }, error => { outcome = "rejected with a " + error.constructor.name; });
+    for (let turn = 0; turn < 64; ++turn)
+        await null;
+    report("import() of main.js", outcome);
+}).catch(error => print("the script threw " + error));
+)js"_s;
+
+static uint64_t numberOfRequireSitesBound(const String& programText)
+{
+    std::unique_ptr<CompileOutput> output;
+    runOnBuildThread([&] {
+        output = compileOnThisThread(programText, "references=wide"_s, { });
+    });
+    return output->statistics.values()[static_cast<size_t>(StatisticID::RequireSitesBound)];
+}
+
+static void testImportByTextOfEntryPointThatRequireRuns()
+{
+    // The require() of running.js asks the run time, which settles the promise where the evaluation ends.
+    AOT_TEST_CHECK(!numberOfRequireSitesBound(importByTextOfEntryPointThatRequireRuns));
+    checkShellOutput(importByTextOfEntryPointThatRequireRuns, { "validate"_s }, R"(runs: imported.js
+begins: running.js
+runs: imports-back.js
+ends: running.js
+ends: main.js
+import() of running.js: fulfilled, ended: true
+a later import() of running.js: fulfilled, ended: true
+)"_s, reportImportOfRunningModuleAndLaterOne);
+}
+
+static void testImportByTextOfEntryPointThatThrowsBehindRequire()
+{
+    checkShellOutput(importByTextOfEntryPointThatThrowsBehindRequire, { "validate"_s }, R"(runs: imported.js
+begins: running.js
+runs: imports-back.js
+main.js caught: running.js failed
+ends: main.js
+import() of running.js: rejected with running.js failed
+a later import() of running.js: rejected with running.js failed
+)"_s, reportImportOfRunningModuleAndLaterOne);
+}
+
+static void testImportsByTextOfNestedEntryPointsThatRequireRuns()
+{
+    checkShellOutput(importsByTextOfNestedEntryPointsThatRequireRuns, { "validate"_s }, R"(begins: outer.js
+begins: inner.js
+ends: inner.js
+ends: outer.js
+ends: main.js
+import() of outer.js: fulfilled, ended: outer
+import() of inner.js: fulfilled, ended: inner
+)"_s, reportImportsOfOuterAndInnerModule);
+}
+
+static void testImportByTextOfEntryPointThatRequiredModuleImports()
+{
+    checkShellOutput(importByTextOfEntryPointThatRequiredModuleImports, { "validate"_s }, R"(begins: running.js
+runs: imports-back.js
+ends: running.js
+runs: root.js
+ends: main.js
+import() of running.js: pending
+a later import() of running.js: pending
+)"_s, reportImportOfRunningModuleAndLaterOne);
+}
+
+static void testImportByTextThatRunsWaitingJobsOfEntryPointThatRequireRuns()
+{
+    AOT_TEST_CHECK(!numberOfRequireSitesBound(importByTextThatRunsWaitingJobsOfEntryPointThatRequireRuns));
+    checkShellOutput(importByTextThatRunsWaitingJobsOfEntryPointThatRequireRuns, { "validate"_s }, R"(begins: running.js
+ends: running.js
+ends: main.js
+import() of running.js: fulfilled, ended: true
+a later import() of running.js: fulfilled, ended: true
+)"_s, reportImportOfRunningModuleAndLaterOne);
+}
+
+static void testImportByTextOfEntryPointThatFileFoundByNameRequires()
+{
+    // The one entry point is not what every realm begins with.
+    AOT_TEST_CHECK(!numberOfRequireSitesBound(importByTextOfEntryPointThatFileFoundByNameRequires));
+    checkShellOutput(importByTextOfEntryPointThatFileFoundByNameRequires, { "validate"_s }, R"(begins: plugin.js
+begins: main.js
+ends: main.js
+ends: plugin.js
+import() of main.js: fulfilled, ended: true
+)"_s, reportImportOfMainModule, "/plugin.js"_s);
+}
+
+static void testImportByTextOfFileFoundByNameWhileRequiredFileFoundByNameRuns()
+{
+    checkShellOutput(importByTextOfFileFoundByNameWhileRequiredFileFoundByNameRuns, { "validate"_s, "admit=FilesRunByHost"_s }, R"(begins: helpers.js
+ends: helpers.js
+first.js failed with a: ReferenceError
+the import(): rejected with a ReferenceError
+)"_s, R"js(.then(() => report("first.js", "ended"), async error => {
+    report("first.js failed with a", error.constructor.name);
+    let outcome = "pending";
+    registered.then(() => { outcome = "fulfilled"; }, error => { outcome = "rejected with a " + error.constructor.name; });
+    for (let turn = 0; turn < 64; ++turn)
+        await null;
+    report("the import()", outcome);
+}).catch(error => print("the script threw " + error));
+)js"_s, "/first.js"_s);
+}
+
 std::span<const NativeTest> moduleProgramTests()
 {
     static constexpr NativeTest tests[] = {
@@ -1253,6 +1756,13 @@ std::span<const NativeTest> moduleProgramTests()
         { "module-programs/closure-factory-of-module-that-runs-while-text-loads-its-importer"_s, testClosureFactoryOfModuleThatRunsWhileTextLoadsItsImporter },
         { "module-programs/entry-point-that-text-loads-and-runs-with-waiting-jobs"_s, testEntryPointThatTextLoadsAndRunsWithWaitingJobs },
         { "module-programs/closure-factory-that-text-calls-for-with-waiting-jobs"_s, testClosureFactoryThatTextCallsForWithWaitingJobs },
+        { "module-programs/import-by-text-of-entry-point-that-require-runs"_s, testImportByTextOfEntryPointThatRequireRuns },
+        { "module-programs/import-by-text-of-entry-point-that-throws-behind-require"_s, testImportByTextOfEntryPointThatThrowsBehindRequire },
+        { "module-programs/imports-by-text-of-nested-entry-points-that-require-runs"_s, testImportsByTextOfNestedEntryPointsThatRequireRuns },
+        { "module-programs/import-by-text-of-entry-point-that-required-module-imports"_s, testImportByTextOfEntryPointThatRequiredModuleImports },
+        { "module-programs/import-by-text-that-runs-waiting-jobs-of-entry-point-that-require-runs"_s, testImportByTextThatRunsWaitingJobsOfEntryPointThatRequireRuns },
+        { "module-programs/import-by-text-of-entry-point-that-file-found-by-name-requires"_s, testImportByTextOfEntryPointThatFileFoundByNameRequires },
+        { "module-programs/import-by-text-of-file-found-by-name-while-required-file-found-by-name-runs"_s, testImportByTextOfFileFoundByNameWhileRequiredFileFoundByNameRuns },
     };
     return tests;
 }
