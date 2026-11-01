@@ -634,9 +634,12 @@ void HeapRule::noteWrittenMembers(ClimbingSet receivers, const HeapKey& key, boo
     if (!mayNameExports || key.keyClass == HeapKeyClass::Index || !m_context.holdsAnything(m_context.nodes().ofHost(ValueFlowHostNode::EntriesOfModuleCacheAreRead)))
         return;
     bool mayBeSuchEntry = mayBeUnknownObject(receivers);
-    forEachMemberUnder(receivers, key, [&](BuiltinID member, ModuleID module) {
-        mayBeSuchEntry |= m_builtins.canonicalID(member) == Builtins::ModuleObjectExports && (!module || !m_program.at(module).exportsVariable);
-    });
+    if (!mayBeSuchEntry) {
+        // Only the member of that name is asked about, whatever else the key may name.
+        forEachMemberUnder(receivers, HeapKey { HeapKeyClass::Name, m_program.keyOf(m_builtins.at(Builtins::ModuleObjectExports).name) }, [&](BuiltinID member, ModuleID module) {
+            mayBeSuchEntry |= m_builtins.canonicalID(member) == Builtins::ModuleObjectExports && (!module || !m_program.at(module).exportsVariable);
+        });
+    }
     if (mayBeSuchEntry)
         add(m_context.nodes().ofHost(ValueFlowHostNode::ExportsOfEntriesStoredInModuleCache), unknownValue(ValueFlowUnknownSource::ContentsOfEscapedObject));
 }
