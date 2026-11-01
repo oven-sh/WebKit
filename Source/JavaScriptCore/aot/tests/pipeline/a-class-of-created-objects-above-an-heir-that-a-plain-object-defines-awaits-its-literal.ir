@@ -1,0 +1,68 @@
+# const base = { get size() { return this.items } }   function mid(below) { const made = Object.create(below); made.items = 7; return made }   function leaf(below) { const made = Object.create(below); made.extra = 1; return made }   function read(made) { return made.size }   function readMid(made) { return made.size }   register(mid, leaf, read, base, readMid)   readMid(mid(base)); read(leaf(mid(base)))
+# Two places: the second makes objects below what the first makes. The second place is handed a plain object first, which defines its class. What lies above that object is Object.prototype,
+# and the definition hands it on to the class of the first place. Object.prototype defines no class: the class of the first place awaits its prototype object as before, and the literal
+# defines it when the first place is handed it. From then on an object of the first place below the literal asks the run time nothing, and an object below Object.prototype has no getter.
+# FORM: AsRead
+# RUN(FLOW): pipeline ApplyFlowResults
+# RUN: run-in-shell --aotCountsPath=/dev/null globalThis.register = (mid, leaf, read, base, readMid) => { const asked = () => aotOperationCount("operationAOTFillSiteCache") + aotOperationCount("operationAOTGetByIdAndCache"); const plain = { items: 5 }; const heir = leaf(plain); print("heir:", read(heir), Object.getPrototypeOf(heir) === plain); const middle = mid(base); const before = asked(); let wrong = 0; for (let turn = 0; turn < 1000; turn++) wrong += readMid(mid(base)) !== 7; print("below the literal:", readMid(middle), wrong, asked() - before); const early = mid(Object.prototype); print("below Object.prototype:", readMid(early), Object.getPrototypeOf(early) === Object.prototype); print("below an object below the literal:", read(leaf(middle)), read(heir)); Object.defineProperty(base, "size", { get() { return "redefined"; }, configurable: true }); print("redefined:", readMid(middle), readMid(mid(base)), readMid(early), read(heir)); };
+# FLOW: layout L1 {{*}}IsOfCreatedObject{{*}}classFlow={evaluations=AtMostOnce members=[{key="size" kind=Getter
+# FLOW: layout L2 {{*}}IsOfCreatedObject{{*}}classFlow={evaluations=AtMostOnce prototypeBase=L1}
+# CHECK: heir: undefined true
+# CHECK-NEXT: below the literal: 7 0 0
+# CHECK-NEXT: below Object.prototype: undefined true
+# CHECK-NEXT: below an object below the literal: 7 undefined
+# CHECK-NEXT: redefined: redefined redefined undefined undefined
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="size" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="base" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f4
+    DefineGetter v0, v1 key="size"
+    v3 = FinishObject v0
+    PutModuleVariable v3 variable=g0
+    v5 = NewClosure function=f1
+    v6 = NewClosure function=f2
+    v7 = NewClosure function=f3
+    v8 = NewClosure function=f5
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="register" [isFreeName]
+    v11 = Call v10, -, v5, v6, v7, v3, v8
+    v12 = Call v5, -, v3
+    v13 = Call v8, -, v12
+    v14 = Call v5, -, v3
+    v15 = Call v6, -, v14
+    v16 = Call v7, -, v15
+    Return
+}
+function f1 name="mid" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=7
+    PropSet v3, v4 key="items"
+    Return v3
+}
+function f2 name="leaf" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=1
+    PropSet v3, v4 key="extra"
+    Return v3
+}
+function f3 name="read" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+function f4 name="size" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="items"
+    Return v1
+}
+function f5 name="readMid" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="size"
+    Return v1
+}

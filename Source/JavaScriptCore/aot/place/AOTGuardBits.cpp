@@ -132,6 +132,8 @@ bool isAwaitedBeforeClassExists(const Program& program, const PlacedGuardBit& pl
 }
 
 // The class of a constructor function is defined by the first allocation that is carried out, so a set that speaks of one holds only once somebody has looked. So does a set with a guard that is waited for.
+// A set that holds while clear may speak of a class of created objects, and then it holds before the class has its prototype object. That is right only because the run time hears of
+// every object that Object.create makes there below anything else, from the first one on: StructureTable::usualVariantOf().
 bool setHoldsWhileClear(const Program& program, const GuardBitTable& table, std::span<const GuardBitID> members)
 {
     return std::ranges::none_of(members, [&](GuardBitID member) {

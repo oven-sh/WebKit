@@ -1,0 +1,64 @@
+# const base = { get size() { return this.items } }   function mid(below) { const made = Object.create(below); made.items = 7; return made }   function leaf(below) { const made = Object.create(below); made.extra = 1; return made }   function read(made) { return made.size }   register(mid, leaf, read, base)   read(mid(base)); read(leaf(mid(base)))
+# Two places: the second makes objects below what the first makes. The first call at the first place is handed a number and throws, so the class of that place awaits its prototype object as
+# before, and the layout keeps the Structure that the object was born with, through a collection. Then the second place is handed an object below the literal: it defines the class of the
+# second place, and through it the class of the first. From then on the first place makes its objects below the literal, and it hears of an object below Object.prototype: read() finds no
+# getter above that one, and none above an object that is moved below Object.prototype later.
+# FORM: AsRead
+# RUN(FLOW): pipeline ApplyFlowResults
+# RUN: run-in-shell --aotCountsPath=/dev/null globalThis.register = (mid, leaf, read, base) => { const calls = () => aotOperationCount("operationAOTSetLiteralPrototype"); try { mid(1); print("no error"); } catch (error) { print(error instanceof TypeError); } gc(); const heir = leaf(Object.setPrototypeOf({}, base)); print(read(heir), Object.getPrototypeOf(Object.getPrototypeOf(heir)) === base); gc(); const early = mid(Object.prototype); const middle = mid(base); print(read(early), read(middle), Object.getPrototypeOf(early) === Object.prototype, Object.getPrototypeOf(middle) === base); Object.setPrototypeOf(middle, Object.prototype); print(read(middle), Object.getPrototypeOf(middle) === Object.prototype); print(read(leaf(mid(base))), read(leaf(early))); let wrong = 0; const before = calls(); for (let turn = 0; turn < 2000; turn++) { if (turn === 1000) gc(); wrong += read(turn % 2 ? mid(base) : mid(Object.prototype)) !== (turn % 2 ? 7 : undefined); } print(wrong, calls() - before < 10 ? "a few objects asked the run time" : calls() - before); };
+# FLOW-COUNT-2: IsOfCreatedObject{{*}}classFlow={evaluations=AtMostOnce
+# CHECK: true
+# CHECK-NEXT: undefined true
+# CHECK-NEXT: undefined 7 true true
+# CHECK-NEXT: undefined true
+# CHECK-NEXT: 7 undefined
+# CHECK-NEXT: 0 a few objects asked the run time
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="size" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="base" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f4
+    DefineGetter v0, v1 key="size"
+    v3 = FinishObject v0
+    PutModuleVariable v3 variable=g0
+    v5 = NewClosure function=f1
+    v6 = NewClosure function=f2
+    v7 = NewClosure function=f3
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="register" [isFreeName]
+    v10 = Call v9, -, v5, v6, v7, v3
+    v11 = Call v5, -, v3
+    v12 = Call v7, -, v11
+    v13 = Call v5, -, v3
+    v14 = Call v6, -, v13
+    v15 = Call v7, -, v14
+    Return
+}
+function f1 name="mid" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=7
+    PropSet v3, v4 key="items"
+    Return v3
+}
+function f2 name="leaf" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=1
+    PropSet v3, v4 key="extra"
+    Return v3
+}
+function f3 name="read" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+function f4 name="size" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="items"
+    Return v1
+}

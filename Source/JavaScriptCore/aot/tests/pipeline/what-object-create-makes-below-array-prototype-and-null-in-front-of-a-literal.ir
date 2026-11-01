@@ -1,0 +1,126 @@
+# const members = { get size() { return this.items } }, others = { get size() { return this.items } }
+# function make(below) { const made = Object.create(below); made.items = 7; return made }   function makeOther(below) { const made = Object.create(below); made.items = 7; return made }
+# function read(made) { return made.size }   function readOther(made) { return made.size }
+# register([() => make(Array.prototype), () => make(Object.prototype), () => make(members), read, members], [() => makeOther(null), () => makeOther(Object.prototype), () => makeOther(others), readOther, others])
+# read(make(members)); readOther(makeOther(others))
+# Two places hand Object.create what is no prototype object of a class before they hand it their literal. Array.prototype is no object that a class of created objects is made of: the first
+# place has no class from then on, and its objects are read by name whatever they are made below. An object below null has no class and leaves the second place its class: the literal defines
+# it when it comes. At either place only the first object below each of the three asks the run time.
+# FORM: AsRead
+# RUN(FLOW): pipeline ApplyFlowResults
+# RUN: run-in-shell --aotCountsPath=/dev/null globalThis.register = (...places) => { const calls = () => aotOperationCount("operationAOTSetLiteralPrototype"); for (const [belowFirst, belowObjectPrototype, belowLiteral, read, literal] of places) { const before = calls(); const first = belowFirst(); const second = belowObjectPrototype(); print(read(first), read(second), Object.getPrototypeOf(second) === Object.prototype, Object.keys(second).join()); let wrong = 0; for (let turn = 0; turn < 1000; turn++) wrong += read(turn % 2 ? belowFirst() : belowObjectPrototype()) !== undefined; const third = belowLiteral(); print(read(first), read(second), read(third), Object.getPrototypeOf(third) === literal, wrong); for (let turn = 0; turn < 1500; turn++) wrong += read([belowFirst, belowObjectPrototype, belowLiteral][turn % 3]()) !== (turn % 3 === 2 ? 7 : undefined); print(read(first), read(second), read(third), wrong, calls() - before < 10 ? "a few objects asked the run time" : calls() - before); Object.defineProperty(literal, "size", { get() { return "redefined"; }, configurable: true }); print(read(first), read(second), read(third), read(belowLiteral()), read(belowObjectPrototype()), read(belowFirst())); } };
+# FLOW-COUNT-2: IsOfCreatedObject{{*}}classFlow={evaluations=AtMostOnce members=[{key="size" kind=Getter function=
+# CHECK: undefined undefined true items
+# CHECK-NEXT: undefined undefined 7 true 0
+# CHECK-NEXT: undefined undefined 7 0 a few objects asked the run time
+# CHECK-NEXT: undefined undefined redefined redefined undefined undefined
+# CHECK-NEXT: undefined undefined true items
+# CHECK-NEXT: undefined undefined 7 true 0
+# CHECK-NEXT: undefined undefined 7 0 a few objects asked the run time
+# CHECK-NEXT: undefined undefined redefined redefined undefined undefined
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="size" declared={type=anything} flags=[IsRequired]}]
+layout L1 fields=[{key="size" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="members" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g1 name="others" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f11
+    DefineGetter v0, v1 key="size"
+    v3 = FinishObject v0
+    PutModuleVariable v3 variable=g0
+    v5 = NewObject layout=L1
+    v6 = NewClosure function=f12
+    DefineGetter v5, v6 key="size"
+    v8 = FinishObject v5
+    PutModuleVariable v8 variable=g1
+    v10 = NewClosure function=f1
+    v11 = NewClosure function=f2
+    v12 = NewClosure function=f3
+    v13 = NewClosure function=f4
+    v14 = NewArray v10, v11, v12, v13, v3
+    v15 = NewClosure function=f5
+    v16 = NewClosure function=f6
+    v17 = NewClosure function=f7
+    v18 = NewClosure function=f8
+    v19 = NewArray v15, v16, v17, v18, v8
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="register" [isFreeName]
+    v22 = Call v21, -, v14, v19
+    v23 = Call v12, -
+    v24 = Call v13, -, v23
+    v25 = Call v17, -
+    v26 = Call v18, -, v25
+    Return
+}
+function f1 name="belowArrayPrototype" results=[{type=anything}] {
+    v0 = NewClosure function=f9
+    v1 = Builtin builtin=ArrayPrototype
+    v2 = Call v0, -, v1
+    Return v2
+}
+function f2 name="belowObjectPrototype" results=[{type=anything}] {
+    v0 = NewClosure function=f9
+    v1 = Builtin builtin=ObjectPrototype
+    v2 = Call v0, -, v1
+    Return v2
+}
+function f3 name="belowMembers" results=[{type=anything}] {
+    v0 = NewClosure function=f9
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v0, -, v1
+    Return v2
+}
+function f4 name="read" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+function f5 name="belowNull" results=[{type=anything}] {
+    v0 = NewClosure function=f10
+    v1 = Null
+    v2 = Call v0, -, v1
+    Return v2
+}
+function f6 name="otherBelowObjectPrototype" results=[{type=anything}] {
+    v0 = NewClosure function=f10
+    v1 = Builtin builtin=ObjectPrototype
+    v2 = Call v0, -, v1
+    Return v2
+}
+function f7 name="belowOthers" results=[{type=anything}] {
+    v0 = NewClosure function=f10
+    v1 = GetModuleVariable variable=g1
+    v2 = Call v0, -, v1
+    Return v2
+}
+function f8 name="readOther" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+function f9 name="make" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=7
+    PropSet v3, v4 key="items"
+    Return v3
+}
+function f10 name="makeOther" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=7
+    PropSet v3, v4 key="items"
+    Return v3
+}
+function f11 name="size" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="items"
+    Return v1
+}
+function f12 name="size" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="items"
+    Return v1
+}

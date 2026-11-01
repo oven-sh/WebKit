@@ -439,13 +439,15 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetLiteralPrototype, void, (Instance* insta
     }
     if (Object* compiled = instance->state->objects->layouts.compiledObject(object)) {
         ObjectModel& objects = *instance->state->objects;
-        const LayoutData& layout = compiled->compiledStructure().layout();
-        if (layout.isClass() && prototype.isObject() && objects.classes.defineClassOfCreatedObjects(vm, objects.classes.classOfInstances(layout), asObject(prototype))) {
-            objects.structures.forgetStructuresOf(objects.classes.classOfInstances(layout));
+        const CompiledStructure& atBirth = compiled->compiledStructure();
+        const LayoutData& layout = atBirth.layout();
+        // The first object of a class of created objects is born below an object that stands for the prototype object that the class awaits, so it gets here whatever it is handed.
+        // It leaves that Structure here: for the one of its class if it defines the class, else for one of its own.
+        if (layout.isClass() && prototype.isObject() && objects.classes.defineClassOfCreatedObjects(vm, objects.classes.classOfInstances(layout), asObject(prototype)))
             compiled->setStructure(vm, objects.structures.objectStructure(vm, layout.shape));
-            OPERATION_RETURN(scope);
-        }
-        if (compiled->getPrototypeDirect() != prototype)
+        else if (objects.structures.isBelowAwaitedPrototype(atBirth))
+            compiled->setStructure(vm, objects.structures.leaveAwaitedPrototype(vm, atBirth, prototype));
+        else if (compiled->getPrototypeDirect() != prototype)
             compiled->setPrototypeAtCreation(vm, prototype);
         OPERATION_RETURN(scope);
     }

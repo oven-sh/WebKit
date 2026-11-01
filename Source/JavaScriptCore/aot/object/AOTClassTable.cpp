@@ -379,13 +379,20 @@ bool ClassTable::defineClassOfCreatedObjects(VM& vm, const LayoutData& classLayo
 {
     if (!awaitsPrototypeOfCreatedObjects(classLayout))
         return false;
+    bool mayBeDefined = classLayout.evaluation() == EvaluationState::ProvenOnce;
+    // An object below Object.prototype has no class, as an object below null has none: a class that an object may define awaits that object as before.
+    if (mayBeDefined && prototype == m_state.instance.globalObject->objectPrototype())
+        return false;
     ClassSide sideOfOtherClass;
-    if (classLayout.evaluation() != EvaluationState::ProvenOnce || (prototype->type() != FinalObjectType && !isCompiledObject(prototype)) || classHeldBy(prototype, sideOfOtherClass)) {
+    if (!mayBeDefined || (prototype->type() != FinalObjectType && !isCompiledObject(prototype)) || classHeldBy(prototype, sideOfOtherClass)) {
         m_constructorFunctionsWithoutClass.add(classLayout.index);
         disarmMemberGuards(classLayout);
         return false;
     }
 
+    // The objects that follow are born below the prototype object, whether a call of Object.create at the place of the class defines it or the definition of a class below it. From here on
+    // such a call may leave the operation out where it is handed the prototype object, so no record may name what the objects were born with before.
+    m_state.objects->structures.forgetStructuresOfCreatedObjects(vm, classLayout);
     MemberGuardWatchpoints::MethodTableUpdate update(m_state);
     registerClassPrototype(classLayout, prototype);
     const LayoutData* base = assumedBaseOf(classLayout);
