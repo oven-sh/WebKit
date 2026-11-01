@@ -225,9 +225,10 @@ JS_EXPORT_PRIVATE void willSetRequireCacheEntry(JSGlobalObject*, ModuleID, JSVal
 JS_EXPORT_PRIVATE void willSetRequireCacheEntryUnderName(JSGlobalObject*, ModuleID, const String& name);
 // The host admits code from disk: the next load of the file takes it from there, as a new instance. An executable has its files in no cache.
 JS_EXPORT_PRIVATE void didDeleteRequireCacheEntry(JSGlobalObject*, ModuleID);
-// A test runner hands each test file what ran before the first of them: where a test file resets the modules, the next one finds the instances of that time again.
-// The host calls the first when the last of those files has run, the second for each file that a reset takes out, as it would call didDeleteRequireCacheEntry(),
-// and the third between two test files: it names each file that is back, of which the host may hold a copy from disk.
+// A test runner hands each test file what its setup code has loaded: where a test file resets the modules, the next one finds those instances again.
+// The host calls the first two round each piece of that code, and what runs between them is kept; the third for each file that a reset takes out, as it would call
+// didDeleteRequireCacheEntry(); and the fourth between two test files: it names each file that is back, of which the host may hold a copy from disk.
+JS_EXPORT_PRIVATE void willRunCodeThatKeepsFiles(JSGlobalObject*);
 JS_EXPORT_PRIVATE void keepFilesThatHaveRun(JSGlobalObject*);
 JS_EXPORT_PRIVATE void didResetModule(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void bringBackKeptFiles(JSGlobalObject*, const WTF::Function<void(const String&)>&);

@@ -357,6 +357,7 @@ public:
     StringView askerOfModule() const { return m_askerOfModule ? StringView(*m_askerOfModule) : StringView(); }
     void forEachFileAwaitingAtTopLevel(const WTF::Function<void(int64_t turn, const String& key)>&);
     void evict(ModuleID, bool isUndoneForKeptFiles = false);
+    void willRunCodeThatKeepsFiles();
     void keepFilesThatHaveRun();
     void bringBackKeptFiles(const WTF::Function<void(const String&)>&);
     void forgetEvaluation(ModuleID);
@@ -389,6 +390,8 @@ public:
     bool isListedWhileItRuns(ModuleID) const;
     void keepObjectMadeByRequire(ModuleID, JSObject* moduleObject);
     void forgetObjectMadeByRequire(ModuleID);
+    bool holdsCodeThatMayBeEvicted();
+    BitVector modulesThatHaveRun();
     bool isLeftToHost(ModuleID);
     void didEvictFromOtherImage()
     {
@@ -913,7 +916,8 @@ private:
     BitVector m_filesAboveEvictedFile;
     // See keepFilesThatHaveRun().
     BitVector m_keptFiles;
-    bool m_hasKeptFiles { false };
+    BitVector m_modulesThatRanBeforeCodeThatKeepsFiles;
+    std::optional<bool> m_holdsCodeThatMayBeEvicted;
     BitVector m_filesToBringBack;
     // They have not run, and are among the evicted files only for what they import: isLeftToHost().
     BitVector m_filesEvictedWithImports;

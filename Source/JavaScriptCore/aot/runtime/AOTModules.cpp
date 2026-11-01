@@ -391,14 +391,43 @@ void Modules::evict(ModuleID module, bool isUndoneForKeptFiles)
     setStoredStatus(file, StoredModuleStatus::InRecord);
 }
 
+// False: the build has seen nothing that resets the modules.
+bool Modules::holdsCodeThatMayBeEvicted()
+{
+    if (!m_holdsCodeThatMayBeEvicted) {
+        m_holdsCodeThatMayBeEvicted = false;
+        for (unsigned index = 0; index < m_table.size() && !*m_holdsCodeThatMayBeEvicted; ++index) {
+            const ModuleData& file = data(ModuleID(index));
+            m_holdsCodeThatMayBeEvicted = !file.isOfLibrary() && (file.kind == ModuleKind::SourceText || file.kind == ModuleKind::CommonJs) && file.mayBeEvicted();
+        }
+    }
+    return *m_holdsCodeThatMayBeEvicted;
+}
+
+// The two are called round every hook of a setup file, once or more for each test: where nothing has run since the last question, this compares the stored statuses and copies two sets.
+BitVector Modules::modulesThatHaveRun()
+{
+    followImportsOfModulesThatHaveRun();
+    BitVector modules = m_modulesSeenToHaveRun;
+    modules.merge(m_modulesThatRanWithImporters);
+    return modules;
+}
+
+void Modules::willRunCodeThatKeepsFiles()
+{
+    if (holdsCodeThatMayBeEvicted())
+        m_modulesThatRanBeforeCodeThatKeepsFiles = modulesThatHaveRun();
+}
+
 void Modules::keepFilesThatHaveRun()
 {
-    if (std::exchange(m_hasKeptFiles, true))
+    if (!holdsCodeThatMayBeEvicted())
         return;
-    bool importsAreFollowed = false;
-    for (unsigned index = 0; index < m_table.size(); ++index) {
+    BitVector modules = modulesThatHaveRun();
+    modules.exclude(std::exchange(m_modulesThatRanBeforeCodeThatKeepsFiles, { }));
+    for (size_t index : modules) {
         ModuleID module(index);
-        if (!data(module).isOfLibrary() && fileOf(module) == module && mayBeEvicted(module) && !isEvicted(module) && hasRun(module, importsAreFollowed))
+        if (!data(module).isOfLibrary() && fileOf(module) == module && mayBeEvicted(module) && !isEvicted(module))
             m_keptFiles.set(index);
     }
 }
@@ -5087,6 +5116,16 @@ bool isEvictedFile(JSGlobalObject* realm, ModuleID moduleOfHost)
     return modules && modules->isEvicted(module);
 }
 
+void willRunCodeThatKeepsFiles(JSGlobalObject* realm)
+{
+    if (!realm->aotInstance())
+        return;
+    Instance::forEachOf(realm, [&](Instance&) {
+        if (Modules* modules = modulesOf(realm))
+            modules->willRunCodeThatKeepsFiles();
+    });
+}
+
 void keepFilesThatHaveRun(JSGlobalObject* realm)
 {
     if (!realm->aotInstance())
@@ -5108,6 +5147,7 @@ void bringBackKeptFiles(JSGlobalObject* realm, const WTF::Function<void(const St
         if (Modules* modules = modulesOf(realm))
             modules->bringBackKeptFiles(functor);
     });
+    RETURN_IF_EXCEPTION(scope, void());
 }
 
 bool refusesToLoadAgain(JSGlobalObject* realm, ModuleID moduleOfHost)
