@@ -76,6 +76,8 @@ struct ValueFlowSolverInput {
     uint32_t mostRounds { UINT32_MAX };
     // With a seed, nodes of the bodies that are reached are given more than the program brings them: whatIsGivenTo() says which and what.
     std::optional<uint32_t> seedOfWidening;
+    std::optional<uint32_t> seedOfSchedule;
+    bool looksAtEdgesLetGo { false };
     EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut;
     RefusedCode refusedCode;
     std::array<uint64_t, 8> removedFeatures { };
@@ -127,8 +129,9 @@ public:
     {
         if (!more)
             return;
+        // Room for half as much again: a list that got exactly what a large round asked for is full, and the next few elements would copy all of it. A page that nobody writes to costs nothing.
         if (m_size + more > capacity())
-            m_elements.realloc(std::max<size_t>({ 1024, capacity() * 2, m_size + more }) * sizeof(T));
+            m_elements.realloc(std::max<size_t>({ 1024, capacity() * 2, m_size + more + (m_size + more) / 2 }) * sizeof(T));
         m_size += more;
     }
 
@@ -410,6 +413,7 @@ public:
     // Everything that may reach the node. A proof reads this. A member that another member covers is left out.
     ValueSetID possibleValuesOf(ValueFlowNodeID node) const { return m_graph.valueOf(node); }
     // What the program itself brings to the node. A prediction reads this: it may name too few, so nothing is proven from it.
+    ValueSetID membersThatOtherMembersCover(ValueSetID value, ValueSetMaker& maker) const { return maker.intersect(value, ValueSets::complement(withoutWhatOtherMembersCover(value, maker))); }
     ValueSetID seenValuesOf(ValueFlowNodeID node) const
     {
         if (size_t share = node.index() / nodesPerShareOfListed; share < m_listedWithCoveredMembers.size()) {
@@ -507,6 +511,12 @@ public:
     std::optional<ValueFlowNodeID> findMadeNode(const ValueFlowNodeKey&) const;
     std::optional<ValueFlowNodeID> markersOf(FunctionID function) const { return m_markersOfFunctions.getOptional(function.index()); }
     Subject subjectOf(ValueFlowNodeID) const;
+    struct LostWithEdgeLetGo {
+        ValueFlowNodeID from;
+        ValueFlowNodeID to;
+        ValueSetID lost;
+    };
+    const Vector<LostWithEdgeLetGo>& lostWithEdgesLetGo() const LIFETIME_BOUND { return m_lostWithEdgesLetGo; }
     const ValueFlowNodeKey* keyOfMadeNode(ValueFlowNodeID node) const LIFETIME_BOUND { return node.index() < m_input.numberOfNodes ? nullptr : &m_madeNodes[m_madeNodesOfNode[node.index() - m_input.numberOfNodes]].key; }
 
     void forEachKindOfStatementRun(NOESCAPE const Invocable<void(ValueFlowStatementKind, Opcode, const RunsAndEdges&)> auto& functor) const
@@ -745,6 +755,8 @@ private:
     std::optional<ValueFlowNodeID> findNodeMadeBeforeThisTurn(const ValueFlowNodeKey&) const;
     std::optional<uint32_t> findOrMakeNodesWhereAskedFor(const ValueFlowNodeKey&, uint32_t hash, ValueFlowRoundLog&, ValueSetMaker&) const;
     std::span<const ValueFlowOperand> guardsOf(const ValueFlowStatement& statement) const LIFETIME_BOUND { return m_input.operands.subspan(statement.firstGuard, statement.guardCount); }
+    // Whether an operation of the program names the key, be it a read or a store, or native code asks for it by name. Any other name stands in literals alone, and what lies under it is found under keys alone.
+    bool isAskedForByName(PropertyKeyID key) const { return m_namesAskedFor.get(key.index()); }
     std::span<const ValueFlowOperand> objectsReadUnderKeyOfStore(const ValueFlowStatement& statement) const LIFETIME_BOUND
     {
         size_t number = statement.factsOfText.contains(ValueFlowFactOfText::StoresWhatOneObjectHoldsUnderSameKey) ? 1 : statement.factsOfText.contains(ValueFlowFactOfText::StoresWhatTwoObjectsHoldUnderSameKey) ? 2 : 0;
@@ -942,6 +954,7 @@ private:
     ValueSetID findFamilyObjectsOf(ValueSetID mask, ValueSetMaker&) const;
     bool maySaturate(ValueFlowNodeID) const;
     bool isMadeForUnknownObject(ValueFlowNodeID) const;
+    void lookAtEdgesLetGo();
     bool takesArgumentsOfCallGroup(ValueFlowNodeID) const;
     bool hasTooManyLayoutsAndCallees(ValueSetID);
     void saturate(std::span<const ValueFlowNodeID> moved);
@@ -1143,6 +1156,7 @@ private:
     Vector<ValueFlowStatementID> m_dearStatements;
     Vector<ValueFlowStatementID> m_due;
     uint32_t m_seedOfSchedule { 0 };
+    Vector<LostWithEdgeLetGo> m_lostWithEdgesLetGo;
     uint32_t m_numberOfNodesGivenMore { 0 };
     Vector<ValueFlowStatementID> m_dueStatementsThatWait;
     Vector<ValueFlowStatementID> m_statementsThatRunOften;
@@ -1150,6 +1164,9 @@ private:
     void takeBackStatementsThatRunOften();
     Vector<uint8_t> m_timesRunOfStatement;
     HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_roundOfNextRun;
+    uint64_t questionAskedBy(ValueFlowStatementID) const;
+    HashSet<uint64_t> m_questionsAsked;
+    BitVector m_isHeldForQuestion;
     void findStatementsWithLongRowsBehindThem();
     void letLongRowsGoFirst();
     bool hasLongRowBehindIt(ValueFlowStatementID statement) const { return m_hasLongRows && statement.index() < m_input.statements.size() && m_hasLongRowBehindIt.quickGet(statement.index()); }
@@ -1282,6 +1299,7 @@ private:
     mutable ListWithRoomToFill<ValueSetID> m_rememberedByStatement;
     // By object: the object and what a walk up its chain of prototypes has seen above it. The chain of the object begins with that.
     ZeroFilledPages<std::atomic<uint32_t>> m_seenFromObjectUp;
+    BitVector m_namesAskedFor;
 
     Vector<Covering, 2> m_coverings;
     ValueSetID m_takenByRetiredNodes { ValueSets::nothing };

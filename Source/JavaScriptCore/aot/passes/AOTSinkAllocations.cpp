@@ -41,9 +41,10 @@ AllocationSinking::AllocationSinking(FunctionAnalyses& analyses, const SinkingPo
     , m_program(analyses.program())
     , m_function(analyses.function())
     , m_policy(policy)
-    , m_objectContext { analyses.program(), analyses.function(), analyses.context().flow, policy.types }
+    , m_objectContext { analyses.program(), analyses.function(), analyses.context().flow, policy.types, &m_constantsBeforeRewriting }
     , m_candidateOfValue(analyses.function().values.size())
     , m_checksShortcuts(analyses.context().build.options().verifiesAfterEveryPass)
+    , m_checksThatModesAgree(m_checksShortcuts || analyses.context().build.validates())
     , m_maxWork(limit(LimitID::MaxSinkingWork))
 {
 }
@@ -244,6 +245,7 @@ void AllocationSinking::abandon(VirtualObjectID object, LimitID limit)
     if (candidate.isAbandoned)
         return;
 
+    RELEASE_ASSERT(!m_tables);
     candidate.isAbandoned = true;
     candidate.abandonedBy = limit;
     m_mustSolveAgain = true;
@@ -445,6 +447,26 @@ void AllocationSinking::buildUnderHandler(VirtualObjectID object)
             at(VirtualObjectID(index)).willBeBuiltUnderHandler = true;
     }
     m_mustSolveAgain = true;
+}
+
+// Cutting a piece out of a string flattens the string, and memory may run out. That error belongs to the handler that covers the cutting, or to none:
+// what is declared to throw is not put off to a place that another handler covers.
+bool AllocationSinking::leaveMakingsThatMayThrowUnderTheirHandlers(VirtualObjectID object, BlockID whereNeeded)
+{
+    if (!m_analyses.cfg().hasHandlers())
+        return false;
+    VirtualFamilyID family = at(object).family;
+    bool hasLeftSome = false;
+    for (uint32_t index = 0; index < m_candidates.size(); ++index) {
+        const Candidate& candidate = m_candidates[index];
+        if (candidate.isLeftOut || candidate.isJoin || candidate.family != family || handlerOf(candidate.block) == handlerOf(whereNeeded))
+            continue;
+        if (!m_analyses.effectsOf(candidate.definition).onAnyEdge().mayThrow)
+            continue;
+        abandon(VirtualObjectID(index));
+        hasLeftSome = true;
+    }
+    return hasLeftSome;
 }
 
 bool AllocationSinking::buildCycleBeforeBranches(const SinkingState& state, VirtualObjectID holder, VirtualObjectID held)
@@ -736,10 +758,8 @@ static PassOutcome sinkAllocations(FunctionPassContext& context, SinkingRun run)
     }
     PassOutcome lent = lendCopiesOfEnvironmentsToRareCalls(context);
     BlocksThatMayGetTests blocksThatMayGetTests { context.inputs.heat };
-    SinkingPolicy policy { .leavesWhenNoAllocationPays = true, .followsUndefinedAndNullInFields = true, .blocksThatMayGetTests = &blocksThatMayGetTests, .types = &context.types };
+    SinkingPolicy policy { .leavesWhenNoAllocationPays = true, .followsUndefinedAndNullInFields = true, .blocksThatMayGetTests = &blocksThatMayGetTests, .tracesOfFruitlessAllocations = &context.tracesOfAllocationsNotWorthSinking, .types = &context.types };
     policy.recordsLosses = run == SinkingRun::OfThePass;
-    if (!context.build.options().verifiesAfterEveryPass)
-        policy.tracesOfFruitlessAllocations = &context.tracesOfAllocationsNotWorthSinking;
     PassOutcome outcome = lent;
     std::optional<SinkingFindings> findingsBeforeSplitting;
     bool hasGivenUp = false;

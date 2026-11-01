@@ -1,0 +1,24 @@
+# typeof define === "function" && define(made)        given(made)
+# A program asks `typeof` of a bare name that may be missing. Such a name is a property of the global object like `globalThis.define`: under a name that no table lists
+# it finds what statements have stored, here nothing. So nothing is called, and what would have been handed over stays in sight.
+# A bare name that the program only reads is left to whoever defines it.
+# RUN: valueflow-solve calls
+# CHECK-NOT: f0 v4 -> unknown
+# CHECK: f0 v6 -> unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = PropGet v0 key="define" [isFreeName, isForTypeOf]
+    v3 = PropGet v0 key="define" [isFreeName]
+    v4 = Call v3, -, v1
+    v5 = PropGet v0 key="given" [isFreeName]
+    v6 = Call v5, -
+    Return v6
+}
+function f1 name="made" module=m0 results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}

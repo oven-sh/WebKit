@@ -87,6 +87,11 @@ void RuntimeValidationEmitter::validateOperandsOf(const OperationContext& contex
         }
         if (operand != ownedValue && generator().isValidatedWhereLookedAt(operand) && user.operandUses(operandIndex).contains(OperandUse::Inspects))
             checkIsSpecified(operand);
+        // The result of a cast that says so is tested where it is made, and a pointer that is not there fails that test. A number passes it whatever its bits.
+        if constexpr (std::is_same_v<User, Value>) {
+            if (user.opcode == Opcode::AssumeType && operandIndex == OperandIndex::AssumeType::value && typeOf(operand).mayBeUnspecified() && !m_program.at(user.provenType()).mayBeUnspecified() && hasRegister(representationOf(operand)))
+                checkNumberIsSpecified(operand);
+        }
         if (operand == ownedValue || generator().isValidatedWhereLookedAt(operand) || isDeferredClosure(m_function, operand) || emitter<AccessEmitter>().leavesKeyToRead(operand))
             return;
         // The bits of a value are those it was made with, and they were looked at there. What its type says about the heap may have changed since.
@@ -136,13 +141,52 @@ void RuntimeValidationEmitter::checkSlotAccessWithoutGuard(const OperationContex
         validateSlotAccess(context, access);
 }
 
+void RuntimeValidationEmitter::forgetPassedTypeTestsBehind(const OperationContext& context)
+{
+    Effects effects = context.effects().onAnyEdge();
+    if (effects.mayRunOtherCode() || !effects.writes.containsOnly(heapsUnrelatedToClassProofs))
+        m_passedTypeTests.shrink(0);
+}
+
+void RuntimeValidationEmitter::runOutOfMemoryWhenCounted(const ValueContext& value)
+{
+    Effects effects = value.effects().onAnyEdge();
+    if (!effects.mayThrow.isDeclaredOnlyForLackOfMemory() || effects.mayRunOtherCode() || value.opcode() == Opcode::LoopHint)
+        return;
+    Wire::SourceLocation location = m_function.locationOf(value.id());
+    ModuleID module(location.module);
+    LineColumn lineColumn = module ? m_program.lineColumnFor(module, location.position) : LineColumn { };
+    auto count = [&](CountedLackOfMemory event) {
+        callVoidOperation(value, RuntimeOperation::RunOutOfMemoryWhenCounted, { word32(static_cast<int32_t>(event)), word32(static_cast<int32_t>(location.module)), word32(static_cast<int32_t>(lineColumn.line)), word32(static_cast<int32_t>(lineColumn.column)) });
+    };
+    count(CountedLackOfMemory::Operation);
+    // A text is flattened once, by whichever operation first needs its characters. A part of a flat text is left out: not every build makes it.
+    value->forEachOperand([&](ValueID operand, uint32_t) {
+        if (!typeOf(operand).isString() || typeOf(operand).isOpaque(OpaqueKind::FlatString))
+            return;
+        LBasicBlock isRope = newBlock();
+        LBasicBlock isConcatenation = newBlock();
+        LBasicBlock continuation = newBlock();
+        Pointer fiber = loadField<Pointer>(in<CellPointer>(operand), m_heaps.JSString_value);
+        m_out.branch(hasNoBits(fiber, JSString::isRopeInPointer).value(), normalEdge(continuation), unlikelyEdge(isRope));
+        m_out.appendTo(isRope);
+        m_out.branch(hasNoBits(fiber, JSRopeString::isSubstringInPointer).value(), normalEdge(isConcatenation), normalEdge(continuation));
+        m_out.appendTo(isConcatenation);
+        count(CountedLackOfMemory::Flattening);
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+    });
+}
+
 void RuntimeValidationEmitter::checkAssumedType(const ValueContext& value)
 {
     ValueID source = value->valueOperand();
     const Type& type = m_program.at(value->provenType());
-    if (type.isNever() || !hasTestableBits(source) || type.opaque || type.environment || !type.functions.isEmpty())
+    if (type.isNever() || !hasTestableBits(source) || type.opaque || type.environment)
         return;
+    m_blockOfAssumedType = value.block();
     checkHasType(value.id(), get(source), value->provenType(), ValidationFailureKind::AssumedType, source);
+    m_blockOfAssumedType = { };
 }
 
 // The shape comes first: the slot of an object that is no receiver holds anything.
@@ -164,11 +208,11 @@ void RuntimeValidationEmitter::checkGuardIsAvailable(const OperationContext& con
     if (context.valueID() && findReadsKeptForValidation(m_function).get(context.valueID().index()))
         return;
     // The passes removed a test based on the summaries of the time. Since then a call may have replaced operations in a callee's own body, and its summary may cover more than they did.
-    if (inputs().effectsByOperandTypes) {
-        FunctionAnalyses finer(AnalysisContext { build(), m_program, &inputs().flow, inputs().effectsByOperandTypes, m_id }, m_function);
-        if (finer.guardStateAt(guard, use) != GuardState::Unavailable)
-            return;
-    }
+    // These analyses only judge, as the verifier's do.
+    const EffectSummaries* effects = inputs().effectsByOperandTypes ? inputs().effectsByOperandTypes : analyses().context().effects;
+    FunctionAnalyses finer(AnalysisContext { build(), m_program, &inputs().flow, effects, m_id, CallResults::MayAliasOperands, WorkLimits::OfBuild, SavedFrames::AreOutOfReach }, m_function);
+    if (finer.guardStateAt(guard, use) != GuardState::Unavailable)
+        return;
     fail(context, InternalErrorKind::GuardNotAvailable);
 }
 
@@ -235,9 +279,11 @@ bool RuntimeValidationEmitter::refusesFrameArray(const Value& user, ValueID oper
     return mayBeArray(typeOf(operand)) && !mayBeGivenFrameArray(m_program, &inputs().flow, m_function, user, operandIndex);
 }
 
-bool RuntimeValidationEmitter::refusesFrameArray(const Terminator& user, ValueID operand, uint32_t)
+// A branch or a switch looks at the value and hands it to nobody.
+bool RuntimeValidationEmitter::refusesFrameArray(const Terminator& user, ValueID operand, uint32_t operandIndex)
 {
-    return m_function.role != FunctionRole::OutlinedBody && mayBeArray(typeOf(operand)) && !numberOfResultsOf(m_program, m_function, m_function.at(operand)) && user.kind != TerminatorKind::ReturnCall;
+    return m_function.role != FunctionRole::OutlinedBody && mayBeArray(typeOf(operand)) && !numberOfResultsOf(m_program, m_function, m_function.at(operand)) && user.kind != TerminatorKind::ReturnCall
+        && mayLeakFramePointer(m_program, &inputs().flow, m_function, user, operandIndex);
 }
 
 void RuntimeValidationEmitter::validateResult(const ValueContext& value)
@@ -485,7 +531,7 @@ void RuntimeValidationEmitter::failUnlessHasType(Operand operand, const TypeTest
         failUnless(*condition, kind, operand, id);
         return;
     }
-    if (typeThatRunTimeTests) {
+    if (typeThatRunTimeTests && !generator().checksProofs()) {
         Integer hasType = callWithoutSite<Integer>(RuntimeOperation::ValueHasType, { reportedValueOf(operand), word32(static_cast<int32_t>(typeThatRunTimeTests.index())) });
         failUnless(isNotZero(hasType), kind, operand, id);
         return;

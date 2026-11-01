@@ -60,6 +60,9 @@ enum class ValueFlowNameKind : uint8_t {
     FoundThroughEscapedInstances,
     NamesOfMethods,
     NamespaceExports,
+    ReceiversOfCalls,
+    GetterUnderNameOfEnumeration,
+    GetterOutsideEnumerations,
 };
 
 enum class ValueFlowNameSort : uint8_t { Value, Getter, Setter, Deletion, Redefinition, PrototypeLink, Copy, Other };
@@ -90,6 +93,7 @@ constexpr ValueFlowNameShape shapeOf(ValueFlowNameKind kind)
     case ValueFlowNameKind::UnknownKey:
         return { Sort::Value, Reach::UnknownKey };
     case ValueFlowNameKind::GetterUnderUnknownKey:
+    case ValueFlowNameKind::GetterUnderNameOfEnumeration:
         return { Sort::Getter, Reach::UnknownKey };
     case ValueFlowNameKind::SetterUnderUnknownKey:
         return { Sort::Setter, Reach::UnknownKey };
@@ -97,6 +101,8 @@ constexpr ValueFlowNameShape shapeOf(ValueFlowNameKind kind)
         return { Sort::Value, Reach::EveryKey };
     case ValueFlowNameKind::EveryGetter:
         return { Sort::Getter, Reach::EveryKey };
+    case ValueFlowNameKind::GetterOutsideEnumerations:
+        return { Sort::Getter, Reach::OneKey };
     case ValueFlowNameKind::EverySetter:
         return { Sort::Setter, Reach::EveryKey };
     case ValueFlowNameKind::PrototypeLink:
@@ -133,6 +139,7 @@ constexpr ValueFlowNameShape shapeOf(ValueFlowNameKind kind)
     case ValueFlowNameKind::AddedNames:
     case ValueFlowNameKind::FoundThroughEscapedInstances:
     case ValueFlowNameKind::NamesOfMethods:
+    case ValueFlowNameKind::ReceiversOfCalls:
     case ValueFlowNameKind::NamespaceExports:
         return { Sort::Other, Reach::NoKey };
     }
@@ -146,6 +153,8 @@ constexpr bool mayBeTheSameName(ValueFlowNameKind written, ValueFlowNameKind rea
     case ValueFlowNameKind::Elements:
         return written == ValueFlowNameKind::UnknownKey;
     case ValueFlowNameKind::Getter:
+        return written == ValueFlowNameKind::GetterUnderUnknownKey || written == ValueFlowNameKind::GetterUnderNameOfEnumeration;
+    case ValueFlowNameKind::GetterOutsideEnumerations:
         return written == ValueFlowNameKind::GetterUnderUnknownKey;
     case ValueFlowNameKind::Setter:
         return written == ValueFlowNameKind::SetterUnderUnknownKey;
@@ -153,7 +162,7 @@ constexpr bool mayBeTheSameName(ValueFlowNameKind written, ValueFlowNameKind rea
         return written == ValueFlowNameKind::Property || written == ValueFlowNameKind::Elements || written == ValueFlowNameKind::UnknownKey || written == ValueFlowNameKind::Slot
             || written == ValueFlowNameKind::InternalFields || written == ValueFlowNameKind::SteppedValues || written == ValueFlowNameKind::ReturnedValue;
     case ValueFlowNameKind::EveryGetter:
-        return written == ValueFlowNameKind::Getter || written == ValueFlowNameKind::GetterUnderUnknownKey;
+        return written == ValueFlowNameKind::Getter || written == ValueFlowNameKind::GetterUnderUnknownKey || written == ValueFlowNameKind::GetterUnderNameOfEnumeration;
     case ValueFlowNameKind::EverySetter:
         return written == ValueFlowNameKind::Setter || written == ValueFlowNameKind::SetterUnderUnknownKey;
     case ValueFlowNameKind::DeletedMember:
@@ -164,8 +173,10 @@ constexpr bool mayBeTheSameName(ValueFlowNameKind written, ValueFlowNameKind rea
         return written == ValueFlowNameKind::InternalFields;
     case ValueFlowNameKind::InternalFields:
         return written == ValueFlowNameKind::Slot;
-    case ValueFlowNameKind::UnknownKey:
     case ValueFlowNameKind::GetterUnderUnknownKey:
+        return written == ValueFlowNameKind::GetterUnderNameOfEnumeration;
+    case ValueFlowNameKind::UnknownKey:
+    case ValueFlowNameKind::GetterUnderNameOfEnumeration:
     case ValueFlowNameKind::SetterUnderUnknownKey:
     case ValueFlowNameKind::PrototypeLink:
     case ValueFlowNameKind::CopiedFrom:
@@ -191,6 +202,7 @@ constexpr bool mayBeTheSameName(ValueFlowNameKind written, ValueFlowNameKind rea
     case ValueFlowNameKind::AddedNames:
     case ValueFlowNameKind::FoundThroughEscapedInstances:
     case ValueFlowNameKind::NamesOfMethods:
+    case ValueFlowNameKind::ReceiversOfCalls:
     case ValueFlowNameKind::NamespaceExports:
         return false;
     }
@@ -243,6 +255,7 @@ inline constexpr ValueFlowName everyPropertyName = ValueFlowName::of(ValueFlowNa
 inline constexpr ValueFlowName everyOwnPropertyName { ValueFlowNameKind::EveryProperty, 3 };
 inline constexpr ValueFlowName everyGetterName = ValueFlowName::of(ValueFlowNameKind::EveryGetter);
 inline constexpr ValueFlowName copiedFromName = ValueFlowName::of(ValueFlowNameKind::CopiedFrom);
+inline constexpr ValueFlowName gettersCopiedFromName = ValueFlowName { ValueFlowNameKind::CopiedFrom, 1 };
 inline constexpr ValueFlowName prototypeLinkName = ValueFlowName::of(ValueFlowNameKind::PrototypeLink);
 inline constexpr ValueFlowName chainWithoutCopiesOntoRealmName { ValueFlowNameKind::PrototypeLink, 1 };
 inline constexpr ValueFlowCellName allocatedAsName { ValueFlowNameKind::AllocatedAs };
@@ -413,6 +426,8 @@ struct ValueFlowCallGroup {
 
     ValueFlowNodeID argument(unsigned index) const { return ValueFlowNodeID(firstArgument.index() + index); }
     ValueFlowNodeID argumentAt(unsigned position) const { return position < numberOfGroupedArguments ? argument(position) : laterArguments; }
+    // A call has no new.target. In a group of calls by native code that node holds undefined once a caller does not say which arguments it leaves out: then any parameter may be undefined.
+    ValueFlowNodeID anyArgumentLeftOut() const { return newTarget; }
 };
 
 } } } // namespace JSC::AOT::Typed

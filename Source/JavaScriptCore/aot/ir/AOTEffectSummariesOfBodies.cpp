@@ -17,6 +17,7 @@
 #include "AOTHeldOperands.h"
 #include "AOTIR.h"
 #include "AOTProgramPasses.h"
+#include "AOTSchemaRuntimeColumns.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
 #include "AOTTypePropagation.h"
@@ -50,6 +51,7 @@ namespace {
 
 struct FactsOfRows {
     OpcodeSet opcodesThatMayThrow;
+    OpcodeSet opcodesThatThrowThoughTheirRowDoesNot;
     OpcodeSet opcodesThatMaySuspend;
     TerminatorKindSet terminatorKindsThatMayThrow;
 };
@@ -62,8 +64,14 @@ static const FactsOfRows& factsOfRows()
         FactsOfRows result;
         for (Opcode opcode : allMembersOf<Opcode>) {
             Effects bound = declaredBoundOf(opcode);
+            std::optional<RuntimeOperation> operation = runtimeOf(opcode);
+            // EmbedConstantCollections makes a Data of a NewDictionary.
             if (rowMayThrow(opcode, bound))
                 result.opcodesThatMayThrow.add(opcode);
+            else if ((operation && declaredBoundOf(*operation).mayThrow) || opcode == Opcode::NewDictionary) {
+                result.opcodesThatMayThrow.add(opcode);
+                result.opcodesThatThrowThoughTheirRowDoesNot.add(opcode);
+            }
             if (bound.maySuspend)
                 result.opcodesThatMaySuspend.add(opcode);
         }
@@ -207,25 +215,36 @@ static bool isEmpty(const EffectDescription& description)
     return description.own == EffectsOnEdges::none() && description.functions.isEmpty() && description.slowPathFunctions.isEmpty() && !description.callsUnknownCode && !description.followsFieldsOfOperands;
 }
 
+// The block returns what the call returns and does nothing else of its own: a ReturnCall, or what IRBuilder::demoteReturnCall() makes of one
+// where caller and callee were given different conventions.
+static bool returnsWhatCallReturns(const Block& block, const Value& call)
+{
+    if (block.handler)
+        return false;
+    return block.terminator.kind == TerminatorKind::ReturnCall || (block.terminator.kind == TerminatorKind::Return && call.isTailCall);
+}
+
 static FunctionID genericVersionThatBodyRestartsIn(const Program& program, const Function& function)
 {
     if (function.role != FunctionRole::Source || !function.derivation.source || function.blocks.isEmpty())
         return { };
+    // The body that the record names, or what a pass made of it: a copy without a parameter takes its place at every call and the record keeps the old name.
     const auto* record = program.at(function.derivation.source).creator.tryAs<CreatorRecord::EntryChecks>();
-    if (!record || &program.at(record->body) != &function)
+    if (!record)
         return { };
     const Function& generic = program.at(record->fallback);
     if (generic.role != FunctionRole::GenericVersion || generic.blocks.isEmpty())
         return { };
-    std::span<const ValueID> parameters = function.at(entryBlock).parameters.span();
-    if (parameters.size() != generic.at(entryBlock).parameters.size())
-        return { };
+    // The body may take fewer parameters than the generic version: a value that every caller passes is made in the body.
+    size_t numberOfParameters = generic.at(entryBlock).parameters.size();
     bool isEntered = std::ranges::any_of(function.blocks, [&](const Block& block) {
-        if (block.values.size() != 1 || block.handler || block.terminator.kind != TerminatorKind::ReturnCall)
+        if (block.values.size() != 1)
             return false;
         const Value& call = function.at(block.values[0]);
+        if (!returnsWhatCallReturns(block, call))
+            return false;
         // A pass may have put another name of a parameter in its place: what RequireObjectCoercible hands on, a cast.
-        return call.opcode == Opcode::CallDirect && call.function() == record->fallback && call.variadicOperands().size() == parameters.size();
+        return call.opcode == Opcode::CallDirect && call.function() == record->fallback && call.variadicOperands().size() == numberOfParameters;
     });
     return isEntered ? record->fallback : FunctionID();
 }
@@ -597,7 +616,7 @@ private:
         case ReadAs::Itself:
             return false;
         case ReadAs::ItselfAndCalleesByOperandTypes:
-            return value.function() == m_genericVersionEntered && !m_function.at(block).handler && m_function.at(block).terminator.kind == TerminatorKind::ReturnCall;
+            return value.function() == m_genericVersionEntered && returnsWhatCallReturns(m_function.at(block), value);
         case ReadAs::GenericVersionGivenTypes:
             return callee.role == FunctionRole::OutlinedBody;
         case ReadAs::OutlinedBodyGivenTypes:
@@ -733,6 +752,10 @@ private:
             m_references->read(value, description);
         if (value.opcode == Opcode::Check && !program.typeOf(m_function, value.valueOperand()).isSubsetOf(program.at(value.expectedType().predicted()), program))
             description.callsUnknownCode = true;
+        if (factsOfRows().opcodesThatThrowThoughTheirRowDoesNot.contains(value.opcode) && !description.own.normal.mayThrow) {
+            description.own.normal.mayThrow = ThrowEffect::onlyForLackOfMemory();
+            description.own.handler = description.own.normal;
+        }
         auto countAsUnknownCode = [](EffectDescription& description) {
             description.functions.clear();
             description.callsUnknownCode = true;

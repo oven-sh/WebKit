@@ -15,6 +15,7 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTHeldOperands.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
@@ -146,6 +147,30 @@ struct ArrivedObjects {
     WordsOfObjects words;
 };
 
+struct HeapWordAccess {
+    uint32_t word;
+    ValueID access;
+};
+
+// A NewHeapWords cell that only this function's loads, stores and suspensions touch.
+struct LocalHeapWords {
+    std::span<const HeapWordAccess> loadsOf(uint32_t word) const LIFETIME_BOUND { return accessesOf(loads, word); }
+    std::span<const HeapWordAccess> storesOf(uint32_t word) const LIFETIME_BOUND { return accessesOf(stores, word); }
+
+    ValueID cell;
+    Vector<Use, 4> suspensionUses;
+    Vector<HeapWordAccess> loads;
+    Vector<HeapWordAccess> stores;
+    SparseObjectSet objects;
+
+private:
+    static std::span<const HeapWordAccess> accessesOf(const Vector<HeapWordAccess>& accesses LIFETIME_BOUND, uint32_t word)
+    {
+        auto found = std::ranges::equal_range(accesses, word, { }, &HeapWordAccess::word);
+        return accesses.subspan(found.begin() - accesses.begin(), found.size());
+    }
+};
+
 struct NarrowedCopy {
     ValueID subject;
     ValueID parameter;
@@ -251,6 +276,11 @@ private:
 
     void findObjects();
     void findNarrowedCopies();
+    void addLocalHeapWords(ValueID cell);
+    LocalHeapWords* localHeapWordsOf(const Value& access);
+    const LocalHeapWords* localHeapWordsOf(const Value& access) const { return const_cast<PointsToSolver*>(this)->localHeapWordsOf(access); }
+    const LocalHeapWords* localHeapWordsLoadedBy(ValueID) const;
+    const LocalHeapWords* localHeapWordsStoredBy(const Use&) const;
     void addObject(ValueID definition, ObjectKind);
     void addObjectSharingItsValue(ValueID);
     bool makesObjectOnEdge(BlockID from) const;
@@ -272,6 +302,7 @@ private:
     void solveOperandWith(const ArrivedObjects&, const Use&, const OperandSummary&);
     void solveOperandUse(SolvedUse&, const ArrivedObjects&, const UserOperand&, OperandUse);
     void solveRetainedOperand(SolvedUse&, const ArrivedObjects&, const UserOperand&);
+    void solveStoreToLocalHeapWord(LocalHeapWords&, uint32_t word, const ArrivedObjects&);
     Vector<ValueID, 4> operandsStoredIn(ValueID user, const UserOperand&);
     void addStoredOperands(ObjectID container, const Value& user, std::span<const ValueID> storedOperands);
     bool isContentsStore(const UserOperand&) const;
@@ -318,6 +349,7 @@ private:
     PointsToResults m_results;
     mutable Vector<AnswerFromTypes> m_answersFromTypes;
     Vector<NarrowedCopy> m_narrowedCopies;
+    Vector<LocalHeapWords, 1> m_localHeapWords;
     Vector<OptionSet<ValueFlag>> m_valueFlags;
     struct SetState {
         SparseObjectSet objects;
@@ -403,6 +435,21 @@ bool isFrameWordWithAllocationGroup(const Function& function, const Value& value
         return false;
     std::span<const ValueID> entryParameters = function.at(entryBlock).parameters.span();
     return std::ranges::find(entryParameters, value.frameOperand()) != entryParameters.end();
+}
+
+bool accessesLocalHeapWords(const Function& function, const Value& value)
+{
+    return (value.opcode == Opcode::GetHeapFrameWord || value.opcode == Opcode::PutHeapFrameWord) && function.at(value.frameOperand()).opcode == Opcode::NewHeapWords;
+}
+
+static bool isOnlyUsedAsLocalHeapWords(const Function& function, const UseLists& useLists, ValueID cell)
+{
+    return std::ranges::all_of(useLists.usesOf(cell), [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        const Value& user = function.at(use.user);
+        return isHeldOperand(user, use.operandIndex) || (accessesLocalHeapWords(function, user) && use.operandIndex == OperandPosition::frame(user.opcode));
+    });
 }
 
 const OpcodeSet& opcodesThatMayDefineObjects()
@@ -665,6 +712,10 @@ PointsToResults PointsToSolver::solve()
     else {
         computeMayBeUntracked();
         collectContents();
+        for (const LocalHeapWords& words : m_localHeapWords) {
+            for (const SparseObjectSet::Entry& entry : words.objects.entries())
+                m_results.objectsInLocalHeapWords.add(entry);
+        }
     }
     takeSets();
     if (m_results.gaveUp)
@@ -869,6 +920,8 @@ void PointsToSolver::findObjects()
     for (BlockID block : m_cfg.reversePostOrder()) {
         for (ValueID id : m_function.at(block).values) {
             const Value& value = m_function.at(id);
+            if (value.opcode == Opcode::NewHeapWords)
+                addLocalHeapWords(id);
             if (!definingOpcodes.contains(value.opcode))
                 continue;
             if (resultMayBeFresh(value.opcode) && ask(AnswerFromTypes::Question::HasFreshResult, id.index()).isTrue)
@@ -906,6 +959,47 @@ void PointsToSolver::findObjects()
     m_calledObjects.fill(0, (m_results.objects.size() + objectsPerWord - 1) / objectsPerWord);
     if (!m_results.objects.isEmpty())
         m_results.uses.reserveInitialCapacity(m_function.values.size());
+}
+
+void PointsToSolver::addLocalHeapWords(ValueID cell)
+{
+    if (!isOnlyUsedAsLocalHeapWords(m_function, m_useLists, cell))
+        return;
+    LocalHeapWords words;
+    words.cell = cell;
+    for (const Use& use : m_useLists.usesOf(cell)) {
+        const Value& user = m_function.at(use.user);
+        if (isHeldOperand(user, use.operandIndex))
+            words.suspensionUses.append(use);
+        else
+            (user.opcode == Opcode::GetHeapFrameWord ? words.loads : words.stores).append({ user.index(), use.user });
+    }
+    auto byWord = [](const HeapWordAccess& access) { return std::pair { access.word, access.access }; };
+    AOT::sortInLine(words.loads, { }, byWord);
+    AOT::sortInLine(words.stores, { }, byWord);
+    m_localHeapWords.append(WTF::move(words));
+}
+
+LocalHeapWords* PointsToSolver::localHeapWordsOf(const Value& access)
+{
+    if (m_localHeapWords.isEmpty() || (access.opcode != Opcode::GetHeapFrameWord && access.opcode != Opcode::PutHeapFrameWord))
+        return nullptr;
+    auto found = std::ranges::find(m_localHeapWords, access.frameOperand(), &LocalHeapWords::cell);
+    return found != m_localHeapWords.end() ? &*found : nullptr;
+}
+
+const LocalHeapWords* PointsToSolver::localHeapWordsLoadedBy(ValueID value) const
+{
+    const Value& load = m_function.at(value);
+    return load.opcode == Opcode::GetHeapFrameWord ? localHeapWordsOf(load) : nullptr;
+}
+
+const LocalHeapWords* PointsToSolver::localHeapWordsStoredBy(const Use& use) const
+{
+    if (use.kind != Use::Kind::Operand)
+        return nullptr;
+    const Value& store = m_function.at(use.user);
+    return store.opcode == Opcode::PutHeapFrameWord && use.operandIndex == OperandPosition::value(store.opcode) ? localHeapWordsOf(store) : nullptr;
 }
 
 void PointsToSolver::addObject(ValueID definition, ObjectKind kind)
@@ -1209,6 +1303,10 @@ void PointsToSolver::solveRetainedOperand(SolvedUse& solved, const ArrivedObject
 {
     switch (operand.summary.retainedIn) {
     case RetainedIn::UnknownMemory:
+        if (localHeapWordsStoredBy(solved.use)) {
+            solveStoreToLocalHeapWord(*localHeapWordsOf(operand.user), operand.user.index(), arrived);
+            return;
+        }
         solved.reasons.add(isSummarizedCall(operand.user) ? EscapeReason::RetainedByCallee : EscapeReason::StoredInUnknownMemory);
         return;
     case RetainedIn::Result:
@@ -1230,6 +1328,25 @@ void PointsToSolver::solveRetainedOperand(SolvedUse& solved, const ArrivedObject
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+// A suspension that holds the cell holds everything stored in it.
+void PointsToSolver::solveStoreToLocalHeapWord(LocalHeapWords& words, uint32_t word, const ArrivedObjects& arrived)
+{
+    for (const HeapWordAccess& load : words.loadsOf(word))
+        addAll(load.access, arrived);
+
+    SparseObjectSet added;
+    words.objects.add(arrived.words, added);
+    if (added.isEmpty())
+        return;
+    Vector<ObjectID, 16> addedObjects;
+    forEachObjectIn(added.entries(), [&](ObjectID object) {
+        addedObjects.append(object);
+    });
+    ArrivedObjects stored { addedObjects.span(), added.entries() };
+    for (const Use& use : words.suspensionUses)
+        solveUse(stored, words.cell, use);
 }
 
 Vector<ValueID, 4> PointsToSolver::operandsStoredIn(ValueID userID, const UserOperand& operand)
@@ -1285,7 +1402,7 @@ bool PointsToSolver::isContentsStore(const UserOperand& operand) const
 }
 
 // An object gets to a value that makes none and is no parameter of a block from an operand: the value may be the operand, refer to it, or be read out of it.
-std::optional<Vector<ValueID, 8>> findMakersOfObjectsBehind(FunctionAnalyses& analyses, ValueID value)
+std::optional<Vector<ValueID, 8>> findMakersOfObjectsBehind(FunctionAnalyses& analyses, ValueID value, OpcodeSet* opcodesBehind)
 {
     constexpr size_t maxDefinitions = 64;
     AOT_THRESHOLD(size_t, maxMakers, 8);
@@ -1302,6 +1419,8 @@ std::optional<Vector<ValueID, 8>> findMakersOfObjectsBehind(FunctionAnalyses& an
     for (size_t next = 0; next < definitions.size(); ++next) {
         ValueID id = definitions[next];
         const Value& definition = function.at(id);
+        if (opcodesBehind)
+            opcodesBehind->add(definition.opcode);
         if (definition.opcode != Opcode::Parameter) {
             // As findObjects() tells them apart. What stands in a new object from the start is found in the object.
             if (definingOpcodes.contains(definition.opcode)) {
@@ -1315,6 +1434,8 @@ std::optional<Vector<ValueID, 8>> findMakersOfObjectsBehind(FunctionAnalyses& an
                     continue;
                 else if (isFrameWordWithAllocationGroup(function, definition))
                     continue;
+                else if (accessesLocalHeapWords(function, definition))
+                    return std::nullopt;
             }
             addOperandsOf(definition);
         } else {
@@ -1347,6 +1468,17 @@ std::optional<Vector<ValueID, 8>> findMakersOfObjectsBehind(FunctionAnalyses& an
     return makers;
 }
 
+bool namesOnlyWhatCodeOutsideReaches(FunctionAnalyses& analyses, ValueID value)
+{
+    static constexpr OpcodeSet opcodesThatGiveWhatWasPutAway { Opcode::GetHeapFrameWord, Opcode::CatchValue, Opcode::CatchException };
+
+    if (!analyses.context().onlyJudges() || analyses.function().role == FunctionRole::CoroutineBody)
+        return false;
+    OpcodeSet opcodesBehind;
+    std::optional<Vector<ValueID, 8>> makers = findMakersOfObjectsBehind(analyses, value, &opcodesBehind);
+    return makers && makers->isEmpty() && !opcodesBehind.intersects(opcodesThatGiveWhatWasPutAway);
+}
+
 // The reasons that solveOperandUse() and solveTerminatorOperandUse() add whatever the sets hold, and what record() and EscapeAnalysis::computeUses() leave out.
 UseSeenAlone classifyUseAlone(FunctionAnalyses& analyses, const Use& use)
 {
@@ -1372,6 +1504,8 @@ UseSeenAlone classifyUseAlone(FunctionAnalyses& analyses, const Use& use)
     }
 
     const Value& user = function.at(use.user);
+    if (user.opcode == Opcode::PutHeapFrameWord && accessesLocalHeapWords(function, user))
+        return UseSeenAlone::Unknown;
     OperandSummary summary = summarizeOperand(analyses.effectContext(), function, user, use.operandIndex);
     bool userMayHoldReference = mayBeReference(program.typeOf(function, use.user)) || numberOfResultsOf(program, function, user).has_value();
     if (!userMayHoldReference)
@@ -1441,6 +1575,7 @@ static void verifySameResults(const PointsToResults& results, const PointsToResu
             RELEASE_ASSERT(set->mayBeUntracked == other->mayBeUntracked && set->objects == other->objects);
     }
 
+    RELEASE_ASSERT(results.objectsInLocalHeapWords == repeated.objectsInLocalHeapWords);
     RELEASE_ASSERT(results.objectsOfUses.size() == repeated.objectsOfUses.size());
     Vector<UseOfObject> uses = sortedByObjectAndUse(results);
     Vector<UseOfObject> otherUses = sortedByObjectAndUse(repeated);
@@ -1748,7 +1883,7 @@ bool PointsToSolver::isExactCapable(ValueID value) const
     case ValuePlacement::Parameter:
         return location.block != m_cfg.root();
     case ValuePlacement::InBlock:
-        return isCastOrConversion(m_function.at(value).opcode) || isSharedByObjects(value);
+        return isCastOrConversion(m_function.at(value).opcode) || isSharedByObjects(value) || localHeapWordsLoadedBy(value);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -1804,6 +1939,11 @@ bool PointsToSolver::hasUntrackedSource(ValueID value) const
 {
     ValueLocation location = m_useLists.locationOf(value);
     if (location.placement == ValuePlacement::InBlock) {
+        if (const LocalHeapWords* words = localHeapWordsLoadedBy(value)) {
+            return std::ranges::any_of(words->storesOf(m_function.at(value).index()), [&](const HeapWordAccess& store) {
+                return mayBeUntracked(m_function.at(store.access).valueOperand());
+            });
+        }
         bool hasUntrackedOperand = false;
         m_function.at(value).forEachOperand([&](ValueID operand, uint32_t operandIndex) {
             hasUntrackedOperand |= handsOperandOn(value, operandIndex) && mayBeUntracked(operand);
@@ -1842,6 +1982,10 @@ void PointsToSolver::forEachExactAlias(ValueID value, const Use& use, NOESCAPE c
     case Use::Kind::Operand:
         if (handsOperandOn(use.user, use.operandIndex))
             functor(use.user);
+        else if (const LocalHeapWords* words = localHeapWordsStoredBy(use)) {
+            for (const HeapWordAccess& load : words->loadsOf(m_function.at(use.user).index()))
+                functor(load.access);
+        }
         return;
     case Use::Kind::EdgeArgument:
     case Use::Kind::HandlerArgument:

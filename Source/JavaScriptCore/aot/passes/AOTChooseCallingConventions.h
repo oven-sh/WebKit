@@ -88,8 +88,23 @@ CallingConventions chooseCallingConventions(ProgramEditor&, const OptimizationIn
 
 Representation declaredRepresentationOf(const Program&, const DeclaredType&);
 
-// Which parameter of the function a value is, behind casts and behind the tests that have narrowed it.
-std::optional<uint32_t> entryParameterIndexOf(const Function&, ValueID);
+// Which parameter of the function a value is, behind casts and behind the tests that have narrowed it. One finder serves a function: it reads the edges once.
+class EntryParameterFinder {
+public:
+    explicit EntryParameterFinder(const Function& function)
+        : m_function(function)
+    {
+    }
+
+    std::optional<uint32_t> indexOf(ValueID);
+
+private:
+    void findNarrowedCopies();
+
+    const Function& m_function;
+    UncheckedKeyHashMap<uint32_t, ValueID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_subjectOfNarrowedCopy;
+    bool m_didFindNarrowedCopies { false };
+};
 
 } } } // namespace JSC::AOT::Typed
 

@@ -13,6 +13,7 @@
 #include "AOTFlowApplication.h"
 #include "AOTFlowBuiltinLocations.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTKnownClosures.h"
 #include "AOTPropertyAccessElements.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -231,7 +232,24 @@ static std::optional<LiteralProperties> propertiesOfLiteralArgument(const Progra
     return properties;
 }
 
-static bool mayLeaveMemberAsItIs(const Program& program, const Function& function, const CFG& cfg, ValueID id, BuiltinID callee, BuiltinID member)
+enum class DescriptorFields : bool { InEveryDescriptor, InSomeDescriptor };
+
+static bool describesSameMember(const Program& program, const Function& function, std::span<const ValueID> argumentsOfDefinition)
+{
+    const Value& descriptor = function.at(definitionThroughSameValues(function, argumentsOfDefinition[2]));
+    if (descriptor.opcode != Opcode::Call || descriptor.argumentsOperands().size() < 2)
+        return false;
+    BuiltinID reader = program.typeOf(function, descriptor.calleeOperand()).singleBuiltin();
+    if (reader != Builtins::ObjectGetOwnPropertyDescriptor && reader != Builtins::ReflectGetOwnPropertyDescriptor)
+        return false;
+    auto isSame = [&](unsigned index, auto single) {
+        auto read = single(program.typeOf(function, descriptor.argumentsOperands()[index]));
+        return read && read == single(program.typeOf(function, argumentsOfDefinition[index]));
+    };
+    return isSame(0, [](const Type& type) { return type.singleBuiltin(); }) && isSame(1, [](const Type& type) { return type.singleStringLiteral(); });
+}
+
+static bool mayLeaveMemberAsItIs(const Program& program, const Function& function, const CFG& cfg, ValueID id, BuiltinID callee, BuiltinID member, DescriptorFields fields)
 {
     const Value& write = function.at(id);
     if (write.opcode != Opcode::Call || !member)
@@ -244,7 +262,7 @@ static bool mayLeaveMemberAsItIs(const Program& program, const Function& functio
     const Type& descriptorType = program.typeOf(function, arguments[2]);
     LayoutID layout = descriptorType.primitives ? LayoutID() : descriptorType.singleLayout(program);
     if (!literal && !layout)
-        return true;
+        return fields == DescriptorFields::InEveryDescriptor || descriptorType.layouts || describesSameMember(program, function, arguments);
     auto typeUnder = [&](BuiltinName name) -> const Type* {
         PropertyKeyID key = program.keyOf(name);
         if (literal) {
@@ -258,14 +276,21 @@ static bool mayLeaveMemberAsItIs(const Program& program, const Function& functio
         if (!index)
             return nullptr;
         const Field& field = program.at(layout).fields[*index];
-        return field.flags.containsAll({ FieldFlags::IsRequired, FieldFlags::IsEnforced }) ? &program.at(field.declared.expected().predicted()) : nullptr;
+        bool mayBeThere = fields == DescriptorFields::InSomeDescriptor && field.flow.stability.contains(FieldStability::IsNeverDeleted);
+        bool isRead = field.flags.contains(FieldFlags::IsEnforced) && (mayBeThere || field.flags.contains(FieldFlags::IsRequired));
+        return isRead ? &program.at(field.declared.expected().predicted()) : nullptr;
     };
-    bool hasAccessorFunction = typeUnder(BuiltinNames::get) || typeUnder(BuiltinNames::set);
+    const Type* getter = typeUnder(BuiltinNames::get);
+    const Type* setter = typeUnder(BuiltinNames::set);
+    bool hasAccessorFunction = getter || setter;
+    auto isNoBuiltinFunction = [](const Type* type) {
+        return type && !type->anyObject && !type->anyFunction && type->builtins.isEmpty();
+    };
     const Type* value = typeUnder(BuiltinNames::value);
     const BuiltinTable& table = program.builtins();
     switch (table.at(member).kind) {
     case BuiltinKind::Accessor:
-        return !value;
+        return !value && !isNoBuiltinFunction(getter) && !isNoBuiltinFunction(setter);
     case BuiltinKind::DataProperty:
     case BuiltinKind::Constant:
         return !hasAccessorFunction && (!value || value->primitives || mayHoldObject(table, member));
@@ -318,7 +343,52 @@ static bool isAnsweredByReplacedAccessor(const Program& program, const FlowResul
     return isStore && accessor && accessor->state != BuiltinLocationState::Constant;
 }
 
-static void reportWrite(const Program& program, const FlowResults& results, BuildContext& build, const BitVector& alwaysEvaluatedModules, const BuiltinLocationFlow& location)
+// The front end shows nobody a place in Bun's own library.
+static bool reportCallsThatNameLocation(const Program& program, BuildContext& build, const BuiltinLocationFlow& location, UncheckedKeyHashSet<uint64_t>& reportedCalls)
+{
+    const BuiltinTable& table = program.builtins();
+    const PropertyKey& key = program.at(location.key);
+    if (key.kind != PropertyKeyKind::Text)
+        return false;
+    bool isNamed = false;
+    for (unsigned index = 0; index < program.functions.size(); ++index) {
+        const Function& function = program.functions[index];
+        if (!function.hasBody() || isLibraryCode(program, function))
+            continue;
+        for (unsigned block = 0; block < function.blocks.size(); ++block) {
+            for (ValueID id : function.blocks[block].values) {
+                const Value& call = function.at(id);
+                if (call.opcode != Opcode::Call)
+                    continue;
+                std::span<const ValueID> arguments = call.argumentsOperands();
+                bool namesHolder = std::ranges::any_of(arguments, [&](ValueID argument) {
+                    BuiltinID builtin = program.typeOf(function, argument).singleBuiltin();
+                    return builtin && table.canonicalID(builtin) == table.canonicalID(location.holder);
+                });
+                bool namesKey = std::ranges::any_of(arguments, [&](ValueID argument) {
+                    return program.typeOf(function, argument).singleStringLiteral() == key.text;
+                });
+                if (!namesHolder || !namesKey)
+                    continue;
+                isNamed = true;
+                if (reportedCalls.add((static_cast<uint64_t>(index) << 32 | id.index()) + 1).isNewEntry)
+                    build.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::LockedBuiltinWriteMayRun, .function = FunctionID(index), .block = BlockID(block), .value = id, .location = function.locationOf(id) });
+            }
+        }
+    }
+    return isNamed;
+}
+
+static bool copiesProperties(const BuiltinTable& table, BuiltinID callee)
+{
+    return callee && std::ranges::any_of(table.overloadsOf(callee), [](const BuiltinOverload& overload) {
+        return std::ranges::any_of(overload.flow.propertyActions, [](BuiltinPropertyActionKind kind) {
+            return kind == BuiltinPropertyActionKind::AssignsFrom || kind == BuiltinPropertyActionKind::TakesDescriptorMap || kind == BuiltinPropertyActionKind::DefinesFrom;
+        }, &BuiltinPropertyAction::kind);
+    });
+}
+
+static void reportWrite(const Program& program, const FlowResults& results, BuildContext& build, const BitVector& alwaysEvaluatedModules, const BuiltinLocationFlow& location, UncheckedKeyHashSet<uint64_t>& reportedCalls)
 {
     const BuiltinTable& table = program.builtins();
     const Witness& witness = location.witness;
@@ -343,9 +413,11 @@ static void reportWrite(const Program& program, const FlowResults& results, Buil
     const Type* stored = member && value.opcode == Opcode::PropSet ? &program.typeOf(function, value.operand(*storedOf(value.opcode))) : nullptr;
     if (stored && !stored->primitives && stored->singleBuiltin() == member)
         return;
-    if (mayLeaveMemberAsItIs(program, function, analyses.cfg(), write->value, callee, member) || keepsPrototype(program, results, function, value, callee, location))
+    if (keepsPrototype(program, results, function, value, callee, location) || isAnsweredByReplacedAccessor(program, results, value, callee, location))
         return;
-    if (isAnsweredByReplacedAccessor(program, results, value, callee, location))
+    if (isLibraryCode(program, function) && reportCallsThatNameLocation(program, build, location, reportedCalls))
+        return;
+    if (mayLeaveMemberAsItIs(program, function, analyses.cfg(), write->value, callee, member, DescriptorFields::InSomeDescriptor))
         return;
 
     bool isInSloppyCode = Value::opcodesWithMode.contains(value.opcode) && value.mode() == ECMAMode::Sloppy;
@@ -353,6 +425,10 @@ static void reportWrite(const Program& program, const FlowResults& results, Buil
         if (isCall ? callee && table.at(callee).holder == Builtins::Reflect : isInSloppyCode && refusalInSloppyCode(table, member) == RefusalInSloppyCode::IsLikelySilent)
             return UserDiagnosticKind::LockedBuiltinWriteIsIgnored;
         if (stored && mayStore(*stored, member))
+            return UserDiagnosticKind::LockedBuiltinWriteMayRun;
+        if (copiesProperties(table, callee))
+            return UserDiagnosticKind::LockedBuiltinWriteMayRun;
+        if (mayLeaveMemberAsItIs(program, function, analyses.cfg(), write->value, callee, member, DescriptorFields::InEveryDescriptor))
             return UserDiagnosticKind::LockedBuiltinWriteMayRun;
         if (isInSloppyCode && refusalInSloppyCode(table, member) != RefusalInSloppyCode::Throws)
             return UserDiagnosticKind::LockedBuiltinWriteMayRun;
@@ -368,6 +444,29 @@ static void reportWrite(const Program& program, const FlowResults& results, Buil
     });
 }
 
+static void reportWritesUnderUnreadNames(const Program& program, const FlowResults& results, BuildContext& build)
+{
+    UncheckedKeyHashSet<uint64_t> reportedPlaces;
+    for (const BuiltinLocationFlow& write : results.writesOfBuiltinsUnderUnreadNames()) {
+        FunctionID id(write.witness.function);
+        const Function& function = program.at(id);
+        if (!function.hasBody() || isLibraryCode(program, function) || !reportedPlaces.add((static_cast<uint64_t>(write.witness.function) << 32 | write.witness.value) + 1).isNewEntry)
+            continue;
+        FunctionAnalyses analyses(AnalysisContext { .build = build, .program = program, .flow = &results, .id = id }, function);
+        std::optional<LockedWrite> found = findWrite(results, function, analyses.cfg(), write.witness.location);
+        if (!found)
+            continue;
+        bool isRefusedUnderEveryName = write.state == BuiltinLocationState::Constant || program.builtins().at(write.holder).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::IsClosedToOtherNames });
+        build.diagnostics().add(UserDiagnostic {
+            .kind = isRefusedUnderEveryName ? UserDiagnosticKind::LockedBuiltinWriteMayRun : UserDiagnosticKind::LockedBuiltinWriteUnderUnreadName,
+            .function = id,
+            .block = found->block,
+            .value = found->value,
+            .location = write.witness.location,
+        });
+    }
+}
+
 void checkLockedBuiltinWrites(const Program& program, const FlowResults& results, BuildContext& build)
 {
     PropertyKeyID keyOfPrototypeLink = program.keyOf(BuiltinNames::__proto__);
@@ -378,13 +477,15 @@ void checkLockedBuiltinWrites(const Program& program, const FlowResults& results
         const BuiltinLocationFlow* location = results.findBuiltinLocation(write.holder, write.key);
         return location && location->state == BuiltinLocationState::Constant;
     };
+    reportWritesUnderUnreadNames(program, results, build);
     if (std::ranges::none_of(results.writesOfBuiltinLocations(), isLockedWrite))
         return;
 
     BitVector alwaysEvaluatedModules = findAlwaysEvaluatedModules(program);
+    UncheckedKeyHashSet<uint64_t> reportedCalls;
     for (const BuiltinLocationFlow& write : results.writesOfBuiltinLocations()) {
         if (isLockedWrite(write))
-            reportWrite(program, results, build, alwaysEvaluatedModules, write);
+            reportWrite(program, results, build, alwaysEvaluatedModules, write, reportedCalls);
     }
 }
 

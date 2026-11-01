@@ -20,6 +20,10 @@
 #include <compare>
 #include <wtf/StdLibExtras.h>
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT { namespace Typed {
 
 Reader::Reader(Program& program, IRForm form, BuildContext& build)
@@ -61,6 +65,8 @@ bool Reader::readReplaceableBuiltins()
         members.shrink(members.size() - std::ranges::unique(members, { }, &ReplaceableBuiltin::member).size());
     }
     m_program.takesAnyNameFromTests = m_build.options().holdsLibraryAlone();
+    if (bool byRule = m_build.recordedOptions().isSabotaged(Sabotage::MemoryRunsOutWhenCountedByRule); byRule != lackOfMemoryThrowsByRule) [[unlikely]]
+        lackOfMemoryThrowsByRule = byRule;
     m_program.unlockReplaceableBuiltins();
     return true;
 }
@@ -68,7 +74,8 @@ bool Reader::readReplaceableBuiltins()
 bool Reader::readNamesAndFamilies()
 {
     const auto& options = m_build.options();
-    if (options.verifiesProgram || options.isVerifyOnly())
+    // The families take in the records of the images below by the texts of their names.
+    if (options.verifiesProgram || options.isVerifyOnly() || m_build.imagesBelow())
         return readStrings() && readPropertyKeys() && computeFamilies();
 
     bool hasStrings = false;
@@ -398,5 +405,9 @@ std::unique_ptr<Program> Program::read(std::span<const uint8_t> bytes, BuildCont
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

@@ -1,0 +1,139 @@
+# for (i = 0; i < bound; i++) { up(i, 2); remainder(i % 10, 2); kept = i; onlyAdded(i, 2); small(i); behindTest(i, 2) }
+# for (i = 5; i > bound; i--) down(i, 2)   for (i = 0; i < bound; i += 2) byTwo(i, 2)   for (i = 0.5; i < bound; i++) fromFraction(i, 2)
+# function up(i, depth) { if (depth > 0) return up(i, depth - 1); return i % 8 }   and so the others, but for
+# function onlyAdded(i, depth) { .. return i + 8 }   function small(i) { return i % 8 }   function behindTest(i, depth) { .. if (i < 3) return 0; return i % 8 }
+# `bound` is a number of which nothing is known. At 2 ** 53 a step of one is lost to rounding, so a counter that starts at an integer and goes by steps of one is an integer from -2 ** 53 to 2 ** 53 however long the loop runs.
+# The loop keeps its counter as it was, a number without a fraction: a double takes a step at no cost. What it hands to a function that stays a function, and that does with it what an integer is better for,
+# arrives as an integer, and so does what is reckoned from it.
+# A function that calls itself is inlined nowhere. It hands its parameter what the parameter holds: nothing that no other call has handed it.
+# A step of two leaves the range, and a fraction was never in it. These stay as they were: a variable that is stored the counter; the parameter of a function that only adds to it, which a double takes at no cost;
+# the parameter of a function that is small enough to be inlined, whose body reckons with the counter as the loop keeps it.
+# RUN: valueflow-apply
+# CHECK: variable g0 name="kept" {{*}}declared={type=int|whole}
+# CHECK-LABEL: name="main"
+# CHECK: : int|whole):
+# CHECK: : int|whole{{*}} = Increment
+# CHECK: function f1 name="up" {{*}}parameters=[{type=int[0, 9007199254740992]},
+# CHECK: function f2 name="remainder" {{*}}parameters=[{type=int[0, 9]},
+# CHECK: function f3 name="down" {{*}}parameters=[{type=int[-9007199254740992, 5]},
+# CHECK: function f4 name="byTwo" {{*}}parameters=[{type=int|whole},
+# CHECK: function f5 name="fromFraction" {{*}}parameters=[{type=number},
+# CHECK: function f6 name="onlyAdded" {{*}}parameters=[{type=int|whole},
+# CHECK: function f7 name="small" {{*}}parameters=[{type=int|whole}]
+# CHECK: function f8 name="behindTest" {{*}}parameters=[{type=int[0, 9007199254740992]},
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=number} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer
+    v1 = Builtin builtin=MathRandom
+    v2 = Call v1
+    v3 = ToNumber v2
+    v4 = NewClosure function=f1
+    v5 = NewClosure function=f2
+    v6 = NewClosure function=f3
+    v7 = NewClosure function=f4
+    v8 = NewClosure function=f5
+    v9 = NewClosure function=f6
+    v10 = NewClosure function=f7
+    v11 = NewClosure function=f8
+    v12 = Integer integer=2
+    PutModuleVariable v0 variable=g0
+    Jump -> next b1(v0)
+  b1(v14):
+    LoopHint
+    v16 = Less v14, v3
+    Branch v16 -> taken b2(| 0), notTaken b3()
+  b2(v17):
+    v18 = Call v4, -, v17, v12
+    v19 = Integer integer=10
+    v20 = Mod v17, v19
+    v21 = Call v5, -, v20, v12
+    PutModuleVariable v17 variable=g0
+    v23 = Call v9, -, v17, v12
+    v24 = Call v10, -, v17
+    v25 = Call v11, -, v17, v12
+    v26 = Increment v17
+    Jump -> next b1(v26)
+  b3():
+    v27 = Integer integer=5
+    Jump -> next b4(v27)
+  b4(v28):
+    LoopHint
+    v30 = Greater v28, v3
+    Branch v30 -> taken b5(| 0), notTaken b6()
+  b5(v31):
+    v32 = Call v6, -, v31, v12
+    v33 = Decrement v31
+    Jump -> next b4(v33)
+  b6():
+    Jump -> next b7(v0)
+  b7(v34):
+    LoopHint
+    v36 = Less v34, v3
+    Branch v36 -> taken b8(| 0), notTaken b9()
+  b8(v37):
+    v38 = Call v7, -, v37, v12
+    v39 = Integer integer=2
+    v40 = Add v37, v39
+    Jump -> next b7(v40)
+  b9():
+    v41 = Double number=0.5
+    Jump -> next b10(v41)
+  b10(v42):
+    LoopHint
+    v44 = Less v42, v3
+    Branch v44 -> taken b11(| 0), notTaken b12()
+  b11(v45):
+    v46 = Call v8, -, v45, v12
+    v47 = Increment v45
+    Jump -> next b10(v47)
+  b12():
+    v48 = GetModuleVariable variable=g0
+    Return v48
+}
+# REPEAT: i = 1..6 ; name = up remainder down byTwo fromFraction onlyAdded ; operator = Mod Mod Mod Mod Mod Add
+function f%(i) name="%(name)" parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0, v1):
+    v2 = Integer
+    v3 = Greater v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = NewClosure function=f%(i)
+    v5 = Decrement v1
+    v6 = Call v4, -, v0, v5
+    Return v6
+  b2():
+    v7 = Integer integer=8
+    v8 = %(operator) v0, v7
+    Return v8
+}
+# END REPEAT
+function f7 name="small" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0):
+    v1 = Integer integer=8
+    v2 = Mod v0, v1
+    Return v2
+}
+function f8 name="behindTest" parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0, v1):
+    v2 = Integer
+    v3 = Greater v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = NewClosure function=f8
+    v5 = Decrement v1
+    v6 = Call v4, -, v0, v5
+    Return v6
+  b2():
+    v7 = Integer integer=3
+    v8 = Less v0, v7
+    Branch v8 -> taken b3(), notTaken b4(| 0)
+  b3():
+    Return v2
+  b4(v9):
+    v10 = Integer integer=8
+    v11 = Mod v9, v10
+    Return v11
+}

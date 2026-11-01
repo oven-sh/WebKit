@@ -230,11 +230,19 @@ void generateStoreSlot(StubAssembler& jit)
             jit.returnToCaller();
     };
     auto emitAdditionInStorage = [&] {
-        const GPRReg newStructureID = T10;
+        // Its low word is the first word of the payload.
+        const GPRReg newStructureID = traits.form == SlotForm::Slot ? operands.payload : operands.header;
         const GPRReg wordIndex = T11;
-        slot.loadFirstPayloadWord(jit, newStructureID);
+        const GPRReg storage = T14;
         slot.loadOwnWordIndex(jit, wordIndex);
-        storeInStorageOf(receiver, wordIndex);
+        Jump isOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
+        jit.store64(value, BaseIndex(receiver, wordIndex, CCallHelpers::TimesEight));
+        jit.store32(newStructureID, Address(receiver, JSCell::structureIDOffset()));
+        jit.jumpToStub(writeBarrier());
+
+        isOutOfLine.link(&jit);
+        jit.loadPtr(Address(receiver, JSObject::butterflyOffset()), storage);
+        jit.store64(value, BaseIndex(storage, wordIndex, CCallHelpers::TimesEight));
         jit.store32(newStructureID, Address(receiver, JSCell::structureIDOffset()));
         jit.jumpToStub(writeBarrier());
     };
@@ -329,7 +337,19 @@ void generateStoreSlot(StubAssembler& jit)
             remembersNothing.link(&jit);
         }
         Label hasAddress = jit.label();
-        storeField(jit, r, FieldStoreEnd::ReturnAfterBarrier, FieldTypeTest::IsEmittedForSlot, nullptr, exits);
+        auto emitRememberingOfStore = [&](GPRReg classOfSlot) {
+            const GPRReg key = r.field.representation;
+            JumpList isNotRemembered;
+            isNotRemembered.append(slot.branchIfFlag(jit, Slot::isOutOfLine));
+            isNotRemembered.append(jit.branchTest32(CCallHelpers::Zero, r.type));
+            jit.moveDoubleTo64(arm.savedName, key);
+            rememberPlaceOfValueInField(jit, receiver, key, value, r.type, r.field.address, classOfSlot, jit.clobberOperand(payloadOperand), r.scratch, jit.clobberOperand(headerOperand));
+            isNotRemembered.link(&jit);
+        };
+        const ScopedLambda<void(GPRReg)> rememberStore(emitRememberingOfStore);
+        // Of a field of another image the slot has bits in place of the type, and what they do not accept the lookup may.
+        const bool remembersStores = origin == SlotOrigin::ByVal && accessOf(traits.operation) == SlotAccess::Store && !jit.options().sharesRealms;
+        storeField(jit, r, FieldStoreEnd::ReturnAfterBarrier, FieldTypeTest::IsEmittedForSlot, nullptr, exits, remembersStores ? &rememberStore : nullptr);
 
         isOutOfLine.link(&jit);
         slot.loadHiddenWordOffset(jit, r.field.extensionWordOffset);
@@ -441,6 +461,8 @@ void generateStoreSlot(StubAssembler& jit)
     }
     case Slot::Kind::Transition: {
         Jump growsStorage = slot.branchIfFlag(jit, Slot::growsStorage);
+        if (origin == SlotOrigin::ByVal && accessOf(traits.operation) == SlotAccess::Store)
+            rememberPlaceOfAddition(jit, slot, receiver, operands.keyCell, T10, T11);
         emitAdditionInStorage();
 
         growsStorage.link(&jit);

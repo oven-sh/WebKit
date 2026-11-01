@@ -624,7 +624,7 @@ ValueFlowInstancedFunctions::ValueFlowInstancedFunctions(const Program& program,
     }
 }
 
-ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, ValueFlowSolver::Rounds rounds, Witnesses witnesses, uint32_t mostRounds, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut, WaysOfValues waysOfValues, CoveredMembers coveredMembers, Reports reports)
+ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, ValueFlowSolver::Rounds rounds, Witnesses witnesses, uint32_t mostRounds, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut, WaysOfValues waysOfValues, CoveredMembers coveredMembers, Reports reports, ForTests forTests)
     : m_program(program)
     , m_bodies(reduceBodiesBehindKeys(program, build, m_positionOfKey))
     , m_maker(m_bodies.sets())
@@ -657,6 +657,8 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         .leavesOutWhatIsCovered = coveredMembers == CoveredMembers::AreLeftOut,
         .reportsToBuild = reports == Reports::GoToBuild,
         .mostRounds = mostRounds,
+        .seedOfSchedule = forTests.seedOfSchedule,
+        .looksAtEdgesLetGo = forTests.looksAtEdgesLetGo,
         .unknownSourcesLeftOut = unknownSourcesLeftOut,
         .refusedCode = { .evaluatedText = build.options().excludesEvaluatedText(), .hostEvaluatedText = build.options().excludesHostEvaluatedText(), .codeOutsideImage = build.options().excludesCodeOutsideImage(), .hostRunsFilesOutsideImage = build.options().admitsFilesRunByHost(), .hasImagesBelow = !!build.imagesBelow() },
         .removedFeatures = build.options().removedFeatures,

@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTAsyncResumption.h"
+#include "AOTClosure.h"
 #include "AOTCompiledCall.h"
 #include "AOTCoroutineTable.h"
 #include "AOTCoroutineWords.h"
@@ -871,16 +872,24 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPromiseAll, JSCell*, (Instance* instance, u
     OPERATION_RETURN(scope, promiseAllOfElements(globalObject, std::span { elements, count }, directCalls));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewGenerator, JSCell*, (Instance* instance, EncodedJSValue closure, uint32_t isAsync))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewGenerator, JSCell*, (Instance* instance, EncodedJSValue closure, uint32_t kind))
 {
+    bool isAsync = kind == static_cast<uint32_t>(NewGeneratorKind::Async);
     constexpr Entry entry = Entry::operationAOTNewGenerator;
     AOT_OPERATION_BEGIN(instance, entry);
     DeferTerminationForAWhile deferTermination(vm);
+    if (!isAsync && !instance->coroutines.generatorAllocator)
+        instance->coroutines.generatorAllocator = subspaceFor<Generator>(vm)->allocatorFor(sizeof(Generator), AllocatorForMode::EnsureAllocator).localAllocator();
     if (!closure) {
         RELEASE_ASSERT(!isAsync);
         return Generator::create(vm, instance->state->coroutines->generatorStructure());
     }
     JSObject* generatorFunction = objectArgument(closure, entry);
+    // A function keeps what it owns outside its cell: without that storage it has no `prototype` yet. The stub asks the same.
+    if (kind == static_cast<uint32_t>(NewGeneratorKind::SyncWithHeapFrame) && isCompiledClosure(generatorFunction) && generatorFunction->structure()->realm() == globalObject && !generatorFunction->butterfly() && !uncheckedDowncast<Closure>(generatorFunction)->rareData()) {
+        if (Structure* withoutPrototype = instance->state->coroutines->structureOfGeneratorsWithoutPrototypeOf(vm, generatorFunction))
+            return Generator::createWithoutPrototype(vm, withoutPrototype);
+    }
     JSObject* generator = createGenerator(globalObject, *instance, generatorFunction, isAsync ? CoroutineKind::AsyncGenerator : CoroutineKind::Generator);
     // The prototype property of a generator function is a data property that cannot be reconfigured, so reading it runs no code.
     scope.releaseAssertNoException();

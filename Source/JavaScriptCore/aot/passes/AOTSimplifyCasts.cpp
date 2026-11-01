@@ -48,6 +48,20 @@ struct CastSimplification : Rewrite {
     {
         unsigned changed = static_cast<unsigned>(moveCastsToEdges());
         for (;;) {
+            unsigned removed = removeCastsUntilNoneGoes();
+            changed += removed;
+            // A cast that has gone may have stood between a join and the cast behind it, which can go to the edges now.
+            unsigned moved = removed ? static_cast<unsigned>(moveCastsToEdges()) : 0;
+            if (!moved)
+                return changed;
+            changed += moved;
+        }
+    }
+
+    unsigned removeCastsUntilNoneGoes()
+    {
+        unsigned changed = 0;
+        for (;;) {
             changed += removeCasts();
             // What has gone may have been the last way from a check to such a claim.
             while (std::exchange(hasTakenValuesFromBehindChecksInThisTurn, false) && hasKeptClaimThatNoCheckHolds())

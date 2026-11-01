@@ -159,7 +159,7 @@ static void copyMethodTable(Instance* instance, const Image& image)
 
 static Instance* reserveMemory(PagesOfVM& pages, const Image& image)
 {
-    RELEASE_ASSERT(!(InstanceLayout::granuleBelowInstance % WTF::pageSize()) && !(InstanceLayout::granuleAboveInstance % WTF::pageSize()));
+    RELEASE_ASSERT(!(InstanceLayout::largestPageSize % WTF::pageSize()));
     auto [below, above] = reservationSizes(image);
     auto* instance = reinterpret_cast<Instance*>(static_cast<char*>(pages.allocate(below + above)) + below);
     copyMethodTable(instance, image);
@@ -219,7 +219,7 @@ static void fillStubReturnAddresses(Instance& instance, const Image& image)
     }
 }
 
-static void fillImageWords(Instance& instance, VM& vm, const Image& image)
+static void fillImageWords(Instance& instance, VM& vm, const Image& image, ProgramIdentifiers& identifiers)
 {
     ImageWords& words = instance.image;
     words.code = image.code().data();
@@ -244,7 +244,8 @@ static void fillImageWords(Instance& instance, VM& vm, const Image& image)
     words.stringConstants = image.section<uint32_t>(ImageSection::StringConstants).data();
     words.listedStrings = image.section<uint32_t>(ImageSection::LongStrings).data();
     words.text = image.section<uint8_t>(ImageSection::Text).data();
-    words.programSymbols = &vm.aotState().identifiers->symbols();
+    words.programSymbols = &identifiers.symbols();
+    identifiers.didGainInstance();
     fillStubReturnAddresses(instance, image);
 }
 
@@ -346,9 +347,8 @@ static void fillInstanceClassInfos(Instance& instance)
 CONCURRENT_SAFE void setPollsEnabled(Instance& instance, bool enabled)
 {
     WTF::atomicStore(&instance.pollIsDue, static_cast<uintptr_t>(enabled), std::memory_order_relaxed);
-#if CPU(X86_64) && (OS(LINUX) || OS(WINDOWS))
-    OSAllocator::protect(reinterpret_cast<char*>(&instance) + InstanceLayout::offsetOfLoopPollPage(), WTF::pageSize(), !enabled, !enabled);
-#endif
+    if constexpr (hasFaultingLoopPolls)
+        OSAllocator::protect(reinterpret_cast<char*>(&instance) + InstanceLayout::offsetOfLoopPollPage(), WTF::pageSize(), !enabled, !enabled);
 }
 
 void makeTailCallsByValuePoll(Instance& instance, const uint8_t* isRenamedAtRunTime)
@@ -431,7 +431,7 @@ size_t numberOfRunningInstances(const VMState& state)
     });
 }
 
-static Instance* reserveInstanceOfRunningImage(VM& vm, JSGlobalObject* realm)
+static Instance* reserveInstanceOfRunningImage(VM& vm, JSGlobalObject* realm, ProgramIdentifiers& identifiers)
 {
     VMState& vmState = vm.aotState();
     const Image& image = *vmState.image;
@@ -443,7 +443,7 @@ static Instance* reserveInstanceOfRunningImage(VM& vm, JSGlobalObject* realm)
     instance->endOfClosureNumbers = image.header().numbers.endOfClosureNumbers;
     instance->lastShape = image.header().numbers.lastShape;
     fillHeaderAndPrefix(*instance, vm, realm);
-    fillImageWords(*instance, vm, image);
+    fillImageWords(*instance, vm, image, identifiers);
     fillNumberWords(*instance);
     fillAllocationSpaces(*instance, vm);
     vmState.propertyCaches->publishWords(*instance);
@@ -463,12 +463,15 @@ Instance* reserveInstance(JSGlobalObject* realm)
     if (!(vmState.image->programTables().flags & ProgramTables::mayRunInMultipleInstances) && numberOfRunningInstances(vmState))
         return nullptr;
     vmState.identifiers->createEngineSymbols();
+    ProgramIdentifiers* identifiers = vmState.identifiers.get();
+    if (vmState.image->programTables().flags & ProgramTables::mayRunInMultipleInstances)
+        identifiers = new ProgramIdentifiers(vm, *vmState.image, identifiers);
 
-    Instance* first = reserveInstanceOfRunningImage(vm, realm);
+    Instance* first = reserveInstanceOfRunningImage(vm, realm, *identifiers);
     Instance* last = first;
     for (const Image* image = first->program->above(); image; image = image->above()) {
         RunningImageScope scope(vmState, image);
-        last->above = reserveInstanceOfRunningImage(vm, realm);
+        last->above = reserveInstanceOfRunningImage(vm, realm, *identifiers);
         last = last->above;
     }
     realm->setAOTInstance(first);
@@ -659,6 +662,7 @@ Instance* Instance::create(JSGlobalObject* realm)
     initializeCollectorWords(vm, *instance);
     initializeStubWords(*instance);
     initializeIterationWords(*instance);
+    instance->scratch.landingsOfMisfits.entries = &instance->scratch.landingsOfMisfits.empty;
 
     State::create(*instance);
     instance->state->caches->addClearedEachCollection("short young arrays converted"_s, asMutableByteSpan(instance->arrays.shortYoungArraysConverted));
@@ -668,6 +672,9 @@ Instance* Instance::create(JSGlobalObject* realm)
     instance->state->caches->addClearedEachCollection("copies without frame"_s, asWritableBytes(instance->copiesWithoutFrame()));
     // A place names the cell of a key and a Structure by their addresses, and the address of one that has ended goes to another.
     instance->state->caches->addClearedEachCollection("keyed value places"_s, asWritableBytes(instance->keyedValuePlaces()));
+    instance->state->caches->addClearedEachCollection("places filed from slots"_s, asMutableByteSpan(instance->propertyCaches.placesFiledFromSlots));
+    instance->state->caches->addClearedEachCollection("places filed from slots and cleared"_s, asMutableByteSpan(instance->propertyCaches.placesFiledFromSlotsAndCleared));
+    instance->state->caches->addClearedEachCollection("accepted kinds of values"_s, asWritableBytes(instance->acceptedKindsOfValues()));
     fillInstanceClassInfos(*instance);
     initializeRuntimeWords(*instance, vm);
 
@@ -704,6 +711,9 @@ void Instance::destroy(Instance* instance)
         delete instance->state;
         unregisterStackMirror(instance, vm);
     }
+    ProgramIdentifiers& identifiers = identifiersOf(*instance);
+    if (identifiers.didLoseLastInstance() && identifiers.isOfOneRealm())
+        delete &identifiers;
     releaseMemory(instance);
 }
 
@@ -1303,10 +1313,22 @@ void VMState::willShutDownHeap()
         AllocationCounts::willShutDownHeap(*this);
 }
 
+void VMState::countWithoutImage(VM& vm)
+{
+    RELEASE_ASSERT(!hasCompiledCode && !image);
+    counters = makeUniqueWithoutFastMallocCheck<RuntimeCounters>();
+    reporter = makeUniqueWithoutFastMallocCheck<RuntimeReporter>(vm);
+}
+
 void VMState::releaseImage(VM& vm)
 {
-    if (!hasCompiledCode)
+    if (!hasCompiledCode) {
+        if (reporter)
+            reporter->writeAtExit();
+        reporter = nullptr;
+        counters = nullptr;
         return;
+    }
     ASSERT(vm.heap.isShuttingDown());
 
     reporter->writeAtExit();

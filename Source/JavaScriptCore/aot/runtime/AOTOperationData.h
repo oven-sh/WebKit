@@ -327,6 +327,14 @@ struct ThrowSiteWord {
     static constexpr uint32_t maxNarrowA = narrowNone - 1;
     static constexpr unsigned numberOfRegistersPerBank = 32;
     static constexpr unsigned maxMethodReadColumnDelta = numberOfRegistersPerBank - 2;
+    // What the stub stores for the operation: the general registers that a value may be in, by their numbers, and behind them the floating-point registers, by theirs.
+#if CPU(X86_64)
+    static constexpr unsigned numberOfStoredGPRs = 16;
+    static constexpr unsigned numberOfStoredFPRs = 16;
+#else
+    static constexpr unsigned numberOfStoredGPRs = 30;
+    static constexpr unsigned numberOfStoredFPRs = 32;
+#endif
 #if CPU(X86_64)
     // Behind a call each word is the immediate of a `test eax, imm32` that nothing executes: whoever decodes the code in order finds instructions alone, and the next one where it begins.
     static constexpr uint8_t opcodeInFrontOfWordBehindCall = 0xa9;

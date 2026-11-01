@@ -286,7 +286,7 @@ static Value createNamedAccess(const Value& elementAccess, Opcode namedOperation
     return named;
 }
 
-const ProvenAccess& provenAccessOf(const Program& program, const Function& function, const Value& access, ProvenAccess& storage)
+const ProvenAccess& provenAccessOf(const Program& program, const Function& function, const Value& access, ProvenAccess& storage, UntestedStorage untestedStorage)
 {
     std::optional<Access> elementAccess = elementAccessOf(access.opcode);
     if (!elementAccess)
@@ -302,6 +302,9 @@ const ProvenAccess& provenAccessOf(const Program& program, const Function& funct
             return provenNamedAccessOf(program, function, createNamedAccess(access, plan->operation, key), storage);
         break;
     case ElementAccessForm::Array:
+        if (*elementAccess == Access::Read && untestedStorage == UntestedStorage::LeavesReadKnown)
+            plan->testsArrayStorage = false;
+        [[fallthrough]];
     case ElementAccessForm::TypedArray:
         if (!plan->needsNoTest())
             return storage = ProvenAccess::unknown();

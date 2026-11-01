@@ -30,6 +30,7 @@ struct TestCommandContext {
     BuildContext& build;
     Vector<Wire::LossRecord> losses { };
     bool isOptimizing { false };
+    const Wire::CompileOptions* options { nullptr };
 };
 
 enum class ProgramAsRead : uint8_t { AsParsed, WithLibrary, TypedAndVerified };

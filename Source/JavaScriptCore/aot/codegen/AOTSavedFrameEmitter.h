@@ -45,11 +45,13 @@ public:
 private:
     CoroutineKind kindOfFunction() const;
     CellPointer allocateGenerator(std::optional<CellPointer> closure, LBasicBlock slowPath);
+    CellPointer allocateGeneratorWithoutPrototype(CellPointer closure, LBasicBlock wasAsked, LBasicBlock slowPath);
     LValue cellOrZero(ValueID driver);
     LValue driverAsPassed(ValueID driver);
     TypedPointer stateOf(CellPointer generator);
     Pointer framePointerAtThisPoint();
-    StubCallResult suspend(const ValueContext&, StubKey, std::initializer_list<LValue> operandsInFrontOfSiteWord, ValueID driver);
+    enum class RunsCodeOfAwaited : bool { InFrameOfFunction, BehindFunction };
+    StubCallResult suspend(const ValueContext&, StubKey, std::initializer_list<LValue> operandsInFrontOfSiteWord, ValueID driver, RunsCodeOfAwaited = RunsCodeOfAwaited::InFrameOfFunction);
     void suspendGenerator(const ValueContext&, GeneratorSuspension);
     void defineValueAndWord(const ValueContext&, StubCallResult);
     void branchUnlessUnmodifiedGenerator(Operand, const Type&, LBasicBlock otherwise);

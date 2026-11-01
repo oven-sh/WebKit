@@ -1124,6 +1124,16 @@ public:
     }
 
     size_t numberOfClobberPoints() const { return m_clobberPoints.size(); }
+    std::span<const Point> clobberPoints() const { return m_clobberPoints.span(); }
+    bool hasClobberAtInstOf(Point point) const
+    {
+        size_t ordinal = point / PointOffsets::PointsPerInst;
+        if (ordinal >= m_instFirstClobber.size())
+            return false;
+        unsigned first = m_instFirstClobber[ordinal];
+        return first < m_clobberPoints.size() && m_clobberPoints[first] / PointOffsets::PointsPerInst == ordinal;
+    }
+    uint64_t clobberPointsReadForCalls() const { return m_clobberPointsReadForCalls; }
     uint64_t allClobberedRegs() const { return m_allClobberedRegs; }
 
     ALWAYS_INLINE Candidates candidatesFor(TmpData& tmpData, FailureMemo memo, Clobbers clobbers)
@@ -1213,15 +1223,67 @@ public:
         return count;
     }
 
-    bool hasPointClobberingAll(uint64_t regs, Interval interval) const
+    double costOfDeadClobbers(Reg reg, const LiveRange& range, std::span<const float> costs, double enough)
     {
+        if (!(m_regsWithDeadClobbers & bitOf(reg)))
+            return 0;
+        std::span<const unsigned> own = deadClobbersOf(reg);
+        if (m_costInFrontOfDeadClobber.isEmpty()) {
+            m_costInFrontOfDeadClobber.grow(m_regDeadClobbers.size() + 1);
+            double sum = 0;
+            for (size_t i = 0; i < m_regDeadClobbers.size(); ++i) {
+                m_costInFrontOfDeadClobber[i] = sum;
+                sum += costs[m_regDeadClobbers[i]];
+            }
+            m_costInFrontOfDeadClobber.last() = sum;
+        }
+        const double* inFront = m_costInFrontOfDeadClobber.span().data() + (own.data() - m_regDeadClobbers.span().data());
+        double sum = 0;
+        for (auto& interval : range.intervals()) {
+            auto first = std::ranges::lower_bound(own, firstClobberNotBefore(interval.begin()));
+            auto end = std::ranges::lower_bound(first, own.end(), firstClobberNotBefore(interval.end()));
+            sum += inFront[end - own.begin()] - inFront[first - own.begin()];
+            if (sum >= enough)
+                break;
+        }
+        return sum;
+    }
+
+    bool hasPointClobberingAll(uint64_t regs, Interval interval)
+    {
+        if (!m_clobberedRegsInChunk.isEmpty()) [[unlikely]] {
+            ++m_clobberPointsReadForCalls;
+            std::span<const Point> points = pointsClobberingAll(regs);
+            auto first = std::ranges::lower_bound(points, interval.begin());
+            return first != points.end() && *first < interval.end();
+        }
         auto clobberPoints = m_clobberPoints.span();
         size_t index = std::ranges::lower_bound(clobberPoints, interval.begin()) - clobberPoints.begin();
         for (; index < clobberPoints.size() && clobberPoints[index] < interval.end(); ++index) {
+            ++m_clobberPointsReadForCalls;
             if ((m_clobberedRegsAtPoint[index] & regs) == regs)
                 return true;
         }
         return false;
+    }
+
+    void forEachPointClobberingAll(uint64_t regs, Interval interval, NOESCAPE const Invocable<void(Point)> auto& func)
+    {
+        if (!m_clobberedRegsInChunk.isEmpty()) [[unlikely]] {
+            std::span<const Point> points = pointsClobberingAll(regs);
+            for (auto point = std::ranges::lower_bound(points, interval.begin()); point != points.end() && *point < interval.end(); ++point) {
+                ++m_clobberPointsReadForCalls;
+                func(*point);
+            }
+            return;
+        }
+        auto clobberPoints = m_clobberPoints.span();
+        size_t index = std::ranges::lower_bound(clobberPoints, interval.begin()) - clobberPoints.begin();
+        for (; index < clobberPoints.size() && clobberPoints[index] < interval.end(); ++index) {
+            ++m_clobberPointsReadForCalls;
+            if ((m_clobberedRegsAtPoint[index] & regs) == regs)
+                func(clobberPoints[index]);
+        }
     }
 
     ALWAYS_INLINE void add(Tmp tmp, TmpData& tmpData, Reg reg)
@@ -1261,6 +1323,22 @@ private:
             return 0;
         }
         RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    NEVER_INLINE std::span<const Point> pointsClobberingAll(uint64_t regs)
+    {
+        for (const auto& known : m_pointsClobberingAll) {
+            if (known.regs == regs)
+                return known.points.span();
+        }
+        m_pointsClobberingAll.append({ regs, { } });
+        Vector<Point>& points = m_pointsClobberingAll.last().points;
+        m_clobberPointsReadForCalls += m_clobberPoints.size();
+        for (size_t index = 0; index < m_clobberPoints.size(); ++index) {
+            if ((m_clobberedRegsAtPoint[index] & regs) == regs)
+                points.append(m_clobberPoints[index]);
+        }
+        return points.span();
     }
 
     unsigned firstClobberNotBefore(Point point) const
@@ -1358,10 +1436,17 @@ private:
     uint64_t m_allClobberedRegs { 0 };
     Vector<unsigned> m_instFirstClobber;
     Vector<uint64_t> m_clobberedRegsInChunk;
+    struct PointsClobberingAll {
+        uint64_t regs;
+        Vector<Point> points;
+    };
+    Vector<PointsClobberingAll, 2> m_pointsClobberingAll;
+    uint64_t m_clobberPointsReadForCalls { 0 };
     Vector<uint64_t> m_deadClobbersAtPoint;
     uint64_t m_regsWithDeadClobbers { 0 };
     Vector<unsigned> m_regFirstDeadClobber;
     Vector<unsigned> m_regDeadClobbers;
+    Vector<double> m_costInFrontOfDeadClobber;
     uint64_t m_freshCalleeSaves { 0 };
     uint64_t m_calleeSavesClobberedAtSuspensions { 0 };
     std::array<unsigned, numBanks> m_numberOfFreshCalleeSaves { };
@@ -2074,9 +2159,11 @@ public:
         unsigned* moves = movesForWidths.mutableSpan().data();
         size_t numberOfMoves = movesForWidths.size();
         const Width widest = conservativeWidths[GP];
-        while (changed) {
+        uint64_t movesRead = 0;
+        for (unsigned sweep = 0; changed && sweep < 4; ++sweep) {
             changed = false;
             goesDown = !goesDown;
+            movesRead += numberOfMoves;
             size_t keptMoveCount = 0;
             for (size_t step = 0; step < numberOfMoves; ++step) {
                 unsigned mention = moves[goesDown ? step : numberOfMoves - 1 - step];
@@ -2096,7 +2183,59 @@ public:
             if (goesDown)
                 numberOfMoves = keptMoveCount;
         }
+        if (changed)
+            movesRead += followMovesForWidths(widths, movesForWidths.span().first(numberOfMoves));
+        m_code.proc().count(Counter::MovesReadForWidths, static_cast<uint32_t>(std::min<uint64_t>(movesRead, std::numeric_limits<uint32_t>::max())));
         m_tmpWidth.finish(m_gpIndicesEnd);
+    }
+
+    uint64_t followMovesForWidths(TmpWidths::Widths* widths, std::span<const unsigned> moves)
+    {
+        const unsigned* tmps = m_mentions.tmps.span().data();
+        const unsigned numberOfTmps = m_gpIndicesEnd + Tmp::absoluteIndexEnd(m_code, FP);
+        Vector<unsigned> firstMoveFrom(FillWith { }, numberOfTmps + 2, 0u);
+        Vector<unsigned> firstMoveInto(FillWith { }, numberOfTmps + 2, 0u);
+        for (unsigned mention : moves) {
+            ++firstMoveFrom[tmps[mention] + 2];
+            ++firstMoveInto[tmps[mention + 1] + 2];
+        }
+        for (unsigned index = 3; index < numberOfTmps + 2; ++index) {
+            firstMoveFrom[index] += firstMoveFrom[index - 1];
+            firstMoveInto[index] += firstMoveInto[index - 1];
+        }
+        Vector<unsigned> movesFrom(FillWith { }, moves.size(), 0u);
+        Vector<unsigned> movesInto(FillWith { }, moves.size(), 0u);
+        Vector<unsigned> pending(FillWith { }, moves.size(), 0u);
+        Vector<uint8_t> isPending(FillWith { }, moves.size(), static_cast<uint8_t>(1));
+        for (unsigned index = 0; index < moves.size(); ++index) {
+            movesFrom[firstMoveFrom[tmps[moves[index]] + 1]++] = index;
+            movesInto[firstMoveInto[tmps[moves[index] + 1] + 1]++] = index;
+            pending[index] = index;
+        }
+        auto lookAgainAt = [&](const Vector<unsigned>& movesOfTmps, const Vector<unsigned>& firstMove, unsigned tmp) {
+            for (unsigned at = firstMove[tmp]; at < firstMove[tmp + 1]; ++at) {
+                unsigned index = movesOfTmps[at];
+                if (!std::exchange(isPending[index], 1))
+                    pending.append(index);
+            }
+        };
+        uint64_t movesRead = 0;
+        while (!pending.isEmpty()) {
+            unsigned index = pending.takeLast();
+            isPending[index] = 0;
+            ++movesRead;
+            unsigned source = tmps[moves[index]];
+            unsigned destination = tmps[moves[index] + 1];
+            if (widths[destination].def < widths[source].def) {
+                widths[destination].def = widths[source].def;
+                lookAgainAt(movesFrom, firstMoveFrom, destination);
+            }
+            if (widths[source].use < widths[destination].use) {
+                widths[source].use = widths[destination].use;
+                lookAgainAt(movesInto, firstMoveInto, source);
+            }
+        }
+        return movesRead;
     }
 
     void countUsesAndDefs()
@@ -2317,6 +2456,7 @@ public:
         assignRegisters();
         fixSpillsAfterTerminals(m_code);
 
+        m_code.proc().count(Counter::ClobberPointsReadForCalls, static_cast<uint32_t>(std::min<uint64_t>(m_occupancy.clobberPointsReadForCalls(), std::numeric_limits<uint32_t>::max())));
         m_stats[GP].didSpill += m_didSpill[GP];
         m_stats[FP].didSpill += m_didSpill[FP];
         m_stats[GP].numTmpsOut = m_code.numTmps(GP);
@@ -4678,13 +4818,28 @@ private:
         }
         if (tmpData.isOnlyReadAtSomeClobber && trySplitAroundClobbers<bank>(tmp, tmpData, true, ClobbersThatRead::AreSplitAround))
             return true;
-        if (trySplitAroundLoop<bank>(tmp, tmpData))
+        const bool restGoesToStack = !isConstDef<bank>(tmp) && tryKeepRegisterInLoopsThatWrite(tmp);
+        if (!restGoesToStack) {
+            if (trySplitAroundLoop<bank>(tmp, tmpData))
+                return true;
+            if (tryTakeRegisterOfTmpsCheaperOnStack<bank>(tmp, tmpData))
+                return true;
+            if (tryTakeRegisterOfUnusedTmps<bank>(tmp, tmpData))
+                return true;
+        }
+        TmpData& rest = m_map.get<bank>(tmp);
+        if (trySplitIntraBlock<bank>(tmp, rest))
             return true;
-        if (tryTakeRegisterOfTmpsCheaperOnStack<bank>(tmp, tmpData))
-            return true;
-        if (tryTakeRegisterOfUnusedTmps<bank>(tmp, tmpData))
-            return true;
-        return trySplitIntraBlock<bank>(tmp, tmpData);
+        if (restGoesToStack)
+            spill(tmp, rest);
+        return restGoesToStack;
+    }
+
+    static void sortByBegin(std::span<Interval> intervals)
+    {
+        std::ranges::sort(intervals, { }, [](const Interval& interval) {
+            return interval.begin();
+        });
     }
 
     void analyzeLoop(const NaturalLoop& loop)
@@ -4733,9 +4888,7 @@ private:
             auto block = loop.at(i);
             loopIntervals.constructAndAppend(positionOfHead(block), positionOfTail(block) + 1);
         }
-        std::ranges::sort(loopIntervals, [](const Interval& a, const Interval& b) {
-            return a.begin() < b.begin();
-        });
+        sortByBegin(loopIntervals.mutableSpan());
         LiveRange& loopRange = loopData.range;
         for (auto& interval : loopIntervals)
             loopRange.append(m_intervalArena, interval);
@@ -4790,6 +4943,34 @@ private:
             return IterationStatus::Continue;
         });
         return { resultLoop, WTF::move(resultNonLoopRange) };
+    }
+
+    bool renameMentionsInLiveRangeOf(Tmp loopTmp, Tmp tmp)
+    {
+        TmpData& loopData = m_map[loopTmp];
+        UseDefList& loopUseDefs = m_newTmpUseDefLists.ensure(loopTmp, [] {
+            return UseDefList();
+        }).iterator->value;
+        bool loopHasDef = false;
+        for (Interval interval : loopData.liveRange.intervals()) {
+            auto useDefs = useDefsOf(tmp);
+            size_t cursor = std::ranges::lower_bound(useDefs, pointAtOffset(interval.begin(), PointOffsets::Pre)) - useDefs.begin();
+            do {
+                interval = forEachUseDefWithin(tmp, interval, cursor, [&](Point point, Inst& inst, BasicBlock& block) {
+                    forEachMention(tmp, point, inst, [&](Tmp& t, Arg::Role role) {
+                        t = loopTmp;
+                        if (Arg::isAnyDef(role))
+                            loopHasDef = true;
+                        if (Arg::isColdUse(role))
+                            loopData.hasColdUse = true;
+                        else
+                            loopData.useDefCost += UseDefCost(block.frequency());
+                        loopUseDefs.add(point);
+                    });
+                });
+            } while (interval);
+        }
+        return loopHasDef;
     }
 
     template<Bank bank>
@@ -4848,28 +5029,7 @@ private:
         loopData.setLiveRange(LiveRange::subtract(m_intervalArena, originalData.liveRange, nonLoopRange));
         ASSERT(loopData.liveRange.size());
 
-        UseDefList& loopUseDefs = m_newTmpUseDefLists.ensure(loopTmp, [] {
-            return UseDefList();
-        }).iterator->value;
-
-        bool loopHasDef = false;
-        size_t cursor = 0;
-        for (Interval interval : loopData.liveRange.intervals()) {
-            do {
-                interval = forEachUseDefWithin(tmp, interval, cursor, [&](Point point, Inst& inst, BasicBlock& block) {
-                    forEachMention(tmp, point, inst, [&](Tmp& t, Arg::Role role) {
-                        t = loopTmp;
-                        if (Arg::isAnyDef(role))
-                            loopHasDef = true;
-                        if (Arg::isColdUse(role))
-                            loopData.hasColdUse = true;
-                        else
-                            loopData.useDefCost += UseDefCost(block.frequency());
-                        loopUseDefs.add(point);
-                    });
-                });
-            } while (interval);
-        }
+        bool loopHasDef = renameMentionsInLiveRangeOf(loopTmp, tmp);
 
         // originalTmp no longer live within the loop.
         originalData.setLiveRange(WTF::move(nonLoopRange));
@@ -5026,26 +5186,33 @@ private:
         bool isLikelyInItsCycle(Code& code, BasicBlock* block)
         {
             unsigned cycle = forest.innermost(block);
-            if (cycle == forest.none)
-                return false;
-            BitVector& likely = likelyBlocks[cycle];
+            return cycle != forest.none && isLikelyIn(code, cycle, block);
+        }
+
+        bool isLikelyIn(Code& code, unsigned cycle, BasicBlock* block)
+        {
+            Vector<unsigned>& likely = likelyBlocks[cycle];
             if (!hasLikelyBlocks.get(cycle)) {
                 hasLikelyBlocks.set(cycle);
-                likely.ensureSize(code.size());
+                isReached.ensureSize(code.size());
                 Vector<BasicBlock*, 8> worklist { forest[cycle].header() };
-                likely.quickSet(worklist[0]->index());
+                isReached.quickSet(worklist[0]->index());
                 while (!worklist.isEmpty()) {
                     BasicBlock* from = worklist.takeLast();
+                    likely.append(from->index());
                     unsigned inner = forest.innermost(from);
                     bool everyEdgeIsRare = std::ranges::all_of(from->successors(), [](const FrequentedBlock& successor) { return successor.isRare(); });
                     for (FrequentedBlock& successor : from->successors()) {
                         bool leavesCycleInside = inner != cycle && !forest.contains(inner, successor.block());
-                        if ((!successor.isRare() || everyEdgeIsRare || leavesCycleInside) && forest.contains(cycle, successor.block()) && !likely.quickSet(successor.block()->index()))
+                        if ((!successor.isRare() || everyEdgeIsRare || leavesCycleInside) && forest.contains(cycle, successor.block()) && !isReached.quickSet(successor.block()->index()))
                             worklist.append(successor.block());
                     }
                 }
+                for (unsigned index : likely)
+                    isReached.quickClear(index);
+                std::ranges::sort(likely);
             }
-            return likely.quickGet(block->index());
+            return std::ranges::binary_search(likely, block->index());
         }
 
         struct NamedTmps {
@@ -5058,8 +5225,9 @@ private:
         WTF::CycleForest<CFG> forest;
         Vector<Vector<unsigned>> blocks;
         Vector<NamedTmps> namedTmps;
-        Vector<BitVector> likelyBlocks;
+        Vector<Vector<unsigned>> likelyBlocks;
         BitVector hasLikelyBlocks;
+        BitVector isReached;
     };
 
     // In a loop a Tmp competes with Tmps that the loop never names, and they bring the weight of their uses elsewhere.
@@ -5175,9 +5343,241 @@ private:
         return true;
     }
 
+    struct Edge {
+        BasicBlock* from;
+        BasicBlock* to;
+        float costOfMove;
+    };
+
+    struct BordersOfCycle {
+        Vector<Edge, 2> entries;
+        Vector<Edge, 2> exits;
+        LiveRange range;
+        std::array<std::optional<float>, numBanks> costOfCalls;
+        std::array<bool, numBanks> hasLikelyCall { };
+        std::array<unsigned, numBanks> numberOfLoopTmpsLiveAtHeader { };
+        bool isKnown { false };
+
+        struct {
+            float costOfSpill { 0 };
+            bool isMentioned { false };
+            bool isWritten { false };
+            bool isWrittenInLikelyBlock { false };
+            bool isInTakenCycle { false };
+        } tmp;
+    };
+
+    struct MoveAtBorderOfLoop {
+        Tmp loopTmp;
+        Edge edge;
+        bool isStore;
+    };
+
+    BordersOfCycle& bordersOf(unsigned cycle, Bank bank, uint64_t clobberedAtCalls)
+    {
+        BordersOfCycle& borders = m_bordersOfCycles[cycle];
+        const auto& forest = m_cycles->forest;
+        if (!std::exchange(borders.isKnown, true)) {
+            Vector<unsigned, 8> blocksBehindExits;
+            for (unsigned blockIndex : m_cycles->blocks[cycle]) {
+                BasicBlock* block = m_code[blockIndex];
+                borders.range.append(m_intervalArena, Interval(positionOfHead(block), positionOfTail(block) + 1));
+                for (BasicBlock* predecessor : block->predecessors()) {
+                    if (!forest.contains(cycle, predecessor))
+                        borders.entries.append({ predecessor, block, costOfMoveBetween(predecessor, block) });
+                }
+                for (BasicBlock* successor : block->successorBlocks()) {
+                    if (!forest.contains(cycle, successor))
+                        blocksBehindExits.append(successor->index());
+                }
+            }
+            std::ranges::sort(blocksBehindExits);
+            removeRepeatedElements(blocksBehindExits);
+            for (unsigned blockIndex : blocksBehindExits) {
+                for (BasicBlock* predecessor : m_code[blockIndex]->predecessors()) {
+                    if (forest.contains(cycle, predecessor))
+                        borders.exits.append({ predecessor, m_code[blockIndex], costOfMoveBetween(predecessor, m_code[blockIndex]) });
+                }
+            }
+        }
+        if (!borders.costOfCalls[bank]) {
+            float cost = 0;
+            for (const Interval& interval : borders.range.intervals()) {
+                m_occupancy.forEachPointClobberingAll(clobberedAtCalls, interval, [&](Point point) {
+                    BasicBlock* block = findBlockContainingPoint(point);
+                    cost += 2 * adjustedBlockFrequency(block);
+                    borders.hasLikelyCall[bank] = borders.hasLikelyCall[bank] || m_cycles->isLikelyIn(m_code, cycle, block);
+                });
+            }
+            borders.costOfCalls[bank] = cost;
+        }
+        return borders;
+    }
+
+    void forEachEdgeToWhereLive(const Vector<Edge, 2>& edges, const LiveRange& range, NOESCAPE const Invocable<void(const Edge&)> auto& func)
+    {
+        if (edges.size() <= range.intervals().size()) {
+            for (const Edge& edge : edges) {
+                if (containsPoint(range, positionOfHead(edge.to)))
+                    func(edge);
+            }
+            return;
+        }
+        for (const Interval& interval : range.intervals()) {
+            auto edge = std::ranges::lower_bound(edges, interval.begin(), { }, [&](const Edge& candidate) {
+                return positionOfHead(candidate.to);
+            });
+            for (; edge != edges.end() && positionOfHead(edge->to) < interval.end(); ++edge)
+                func(*edge);
+        }
+    }
+
+    LiveRange partWithin(const LiveRange& range, const LiveRange& bounds)
+    {
+        LiveRange result;
+        auto intervals = range.intervals().span();
+        auto next = intervals.begin();
+        for (const Interval& bound : bounds.intervals()) {
+            next = std::ranges::upper_bound(next, intervals.end(), bound.begin(), { }, [](const Interval& interval) {
+                return interval.end();
+            });
+            for (auto interval = next; interval != intervals.end() && interval->begin() < bound.end(); ++interval)
+                result.append(m_intervalArena, Interval(std::max(interval->begin(), bound.begin()), std::min(interval->end(), bound.end())));
+        }
+        return result;
+    }
+
+    bool tryKeepRegisterInLoopsThatWrite(Tmp tmp)
+    {
+        const Bank bank = tmp.bank();
+        {
+            TmpData& tmpData = m_map[tmp];
+            if (!m_splitPolicy.keepsUnusedTmpsOnStackThroughLoops || tmpData.spillability != TmpData::Spillability::Spillable)
+                return false;
+            if (tmpData.isOnStackInSomeBlocks || tmpData.splitAroundClobbersMetadataIndex || tmpData.splitFrom || tmpData.spansStretch)
+                return false;
+        }
+        const uint64_t clobberedAtCalls = regsClobberedAtCalls(bank);
+        uint64_t allowedRegisters = 0;
+        for (Reg reg : m_allowedRegistersInPriorityOrder[bank])
+            allowedRegisters |= 1ULL << reg.index();
+        if (!clobberedAtCalls || clobberedAtCalls != allowedRegisters)
+            return false;
+        bool livesPastCall = std::ranges::any_of(m_map[tmp].liveRange.intervals(), [&](const Interval& interval) {
+            return m_occupancy.hasPointClobberingAll(clobberedAtCalls, interval);
+        });
+        if (!livesPastCall)
+            return false;
+        ensureUseDefLists();
+        if (!m_cycles)
+            m_cycles.emplace(m_code);
+        const auto& forest = m_cycles->forest;
+        if (m_bordersOfCycles.isEmpty())
+            m_bordersOfCycles.grow(forest.size());
+
+        Vector<unsigned, 16> cycles;
+        for (Point point : useDefsOf(tmp)) {
+            BasicBlock* block = findBlockContainingPoint(point);
+            unsigned innermost = forest.innermost(block);
+            if (innermost == forest.none)
+                continue;
+            Inst& inst = block->at(instIndex(positionOfHead(block), point));
+            if (isLargeInst(inst))
+                continue;
+            unsigned loadsAndStores = 0;
+            bool isWritten = false;
+            inst.forEachArg([&](Arg& arg, Arg::Role role, Bank, Width) {
+                if (!arg.isTmp())
+                    loadsAndStores |= arg.usesTmp(tmp);
+                else if (arg.tmp() == tmp && !Arg::isColdUse(role)) {
+                    isWritten |= Arg::isAnyDef(role);
+                    if (!admitsStack(inst, arg))
+                        loadsAndStores |= (Arg::isAnyUse(role) ? 1 : 0) | (Arg::isAnyDef(role) ? 2 : 0);
+                }
+            });
+            float cost = std::popcount(loadsAndStores) * adjustedBlockFrequency(block);
+            for (unsigned cycle = innermost; cycle != forest.none; cycle = forest[cycle].parent) {
+                auto& about = m_bordersOfCycles[cycle].tmp;
+                if (!std::exchange(about.isMentioned, true))
+                    cycles.append(cycle);
+                about.costOfSpill += cost;
+                about.isWritten |= isWritten;
+                about.isWrittenInLikelyBlock = about.isWrittenInLikelyBlock || (isWritten && m_cycles->isLikelyIn(m_code, cycle, block));
+            }
+        }
+        std::ranges::sort(cycles);
+
+        struct TakenCycle {
+            unsigned cycle;
+            unsigned endOfMoves;
+        };
+        Vector<TakenCycle, 4> taken;
+        Vector<MoveAtBorderOfLoop, 8> moves;
+        for (unsigned cycle : cycles) {
+            auto& about = m_bordersOfCycles[cycle].tmp;
+            unsigned parent = forest[cycle].parent;
+            about.isInTakenCycle = parent != forest.none && m_bordersOfCycles[parent].tmp.isInTakenCycle;
+            if (about.isInTakenCycle || !about.isWritten)
+                continue;
+            BordersOfCycle& borders = bordersOf(cycle, bank, clobberedAtCalls);
+            const LiveRange& liveRange = m_map[tmp].liveRange;
+            bool isLiveAtHeader = containsPoint(liveRange, positionOfHead(forest[cycle].header()));
+            if (isLiveAtHeader && borders.numberOfLoopTmpsLiveAtHeader[bank] >= m_allowedRegistersInPriorityOrder[bank].size())
+                continue;
+            bool paysInEveryTurn = about.isWrittenInLikelyBlock && !borders.hasLikelyCall[bank];
+            float cost = *borders.costOfCalls[bank];
+            if (!paysInEveryTurn && cost >= about.costOfSpill)
+                continue;
+            const size_t numberOfMovesBefore = moves.size();
+            for (bool isStore : { false, true }) {
+                forEachEdgeToWhereLive(isStore ? borders.exits : borders.entries, liveRange, [&](const Edge& edge) {
+                    cost += edge.costOfMove;
+                    moves.append({ Tmp(), edge, isStore });
+                });
+            }
+            if (moves.size() == numberOfMovesBefore || cost == std::numeric_limits<float>::infinity() || (!paysInEveryTurn && cost >= about.costOfSpill)) {
+                dataLogLnIf(verbose(), "No register in a loop alone: ", tmp, " in the loop at BB", *forest[cycle].header(), " cost = ", cost, " limit = ", about.costOfSpill);
+                moves.shrink(numberOfMovesBefore);
+                continue;
+            }
+            about.isInTakenCycle = true;
+            borders.numberOfLoopTmpsLiveAtHeader[bank] += isLiveAtHeader;
+            taken.append({ cycle, static_cast<unsigned>(moves.size()) });
+        }
+        for (unsigned cycle : cycles)
+            m_bordersOfCycles[cycle].tmp = { };
+        if (taken.isEmpty())
+            return false;
+
+        Vector<Interval, 16> intervalsInLoops;
+        unsigned nextMove = 0;
+        for (const TakenCycle& entry : taken) {
+            Tmp loopTmp = addSplitTmp(tmp, UseDefCost(0), { });
+            TmpData& loopData = m_map[loopTmp];
+            loopData.setLiveRange(partWithin(m_map[tmp].liveRange, m_bordersOfCycles[entry.cycle].range));
+            intervalsInLoops.appendRange(loopData.liveRange.intervals().begin(), loopData.liveRange.intervals().end());
+            renameMentionsInLiveRangeOf(loopTmp, tmp);
+            m_map[tmp].useDefCost.subtractSaturating(loopData.useDefCost);
+            for (; nextMove < entry.endOfMoves; ++nextMove)
+                moves[nextMove].loopTmp = loopTmp;
+            dataLogLnIf(verbose(), "A register in a loop alone: ", tmp, " is ", loopTmp, " in the loop at BB", *forest[entry.cycle].header());
+            setStageAndEnqueue(loopTmp, loopData, Stage::TryAllocate);
+        }
+        m_movesAtBordersOfLoops.appendVector(moves);
+        sortByBegin(intervalsInLoops.mutableSpan());
+        LiveRange rangeInLoops;
+        for (const Interval& interval : intervalsInLoops)
+            rangeInLoops.append(m_intervalArena, interval);
+        TmpData& tmpData = m_map[tmp];
+        LiveRange rest = LiveRange::subtract(m_intervalArena, tmpData.liveRange, rangeInLoops);
+        if (rest.size())
+            tmpData.setLiveRange(WTF::move(rest));
+        return true;
+    }
+
     void insertMovesOfTmpsOnStack(BlockInsertionSet& blockInsertionSet)
     {
-        if (m_blocksOnStack.isEmpty())
+        if (m_blocksOnStack.isEmpty() && m_movesAtBordersOfLoops.isEmpty())
             return;
 
         struct MoveOnEdge {
@@ -5221,6 +5621,16 @@ private:
                     loads.append({ block, successor, Inst(move, block->last().origin, Arg::stack(slot), tmp) });
                 }
             }
+        }
+
+        for (const MoveAtBorderOfLoop& entry : m_movesAtBordersOfLoops) {
+            TmpData& tmpData = m_map[entry.loopTmp];
+            if (tmpData.stage == Stage::Spilled)
+                continue;
+            RELEASE_ASSERT(tmpData.stage == Stage::Assigned && m_spillSlotTable[tmpData.spillSlotTableIndex]);
+            Arg slot = Arg::stack(m_spillSlotTable[tmpData.spillSlotTableIndex]);
+            Arg tmp = entry.loopTmp;
+            (entry.isStore ? stores : loads).append({ entry.edge.from, entry.edge.to, Inst(moveOpcode(entry.loopTmp), entry.edge.from->last().origin, entry.isStore ? tmp : slot, entry.isStore ? slot : tmp) });
         }
 
         // Where one Tmp leaves a register to the stack and another comes back into that register, the store is first.
@@ -5491,6 +5901,34 @@ private:
         return true;
     }
 
+    std::span<const float> leastCostsOfClobberPoints()
+    {
+        std::span<const Point> points = m_occupancy.clobberPoints();
+        if (m_leastCostsOfClobberPoints.isEmpty()) {
+            m_leastCostsOfClobberPoints.grow(points.size());
+            for (size_t index = 0; index < points.size();) {
+                BasicBlock* block = findBlockContainingPoint(points[index]);
+                float cost = std::max(adjustedBlockFrequency(block) * 2, m_splitPolicy.leastCostOfSplitAroundClobber);
+                for (Point tail = positionOfTail(block); index < points.size() && points[index] <= tail; ++index)
+                    m_leastCostsOfClobberPoints[index] = cost;
+            }
+        }
+        return m_leastCostsOfClobberPoints.span();
+    }
+    Vector<float> m_leastCostsOfClobberPoints;
+
+    bool mayBeNamedAtSomeClobber(Tmp tmp)
+    {
+        if (!m_hasUseDefLists)
+            return true;
+        unsigned list = tmp.isGP() ? AbsoluteTmpMapper<GP>::absoluteIndex(tmp) : m_gpUseDefListsEnd + AbsoluteTmpMapper<FP>::absoluteIndex(tmp);
+        if ((tmp.isGP() && list >= m_gpUseDefListsEnd) || list >= m_useDefsEnd.size())
+            return true;
+        return std::ranges::any_of(useDefsOf(tmp), [&](Point point) {
+            return m_occupancy.hasClobberAtInstOf(point);
+        });
+    }
+
     bool splitIsWorthItsSize(Tmp tmp, UseDefCost splitCost, size_t numberOfSites)
     {
         CostOfSpill ifSpilled = costOfSpill(tmp);
@@ -5581,15 +6019,37 @@ private:
         size_t numberOfSitesOfBestWithEviction = 0;
         Width width = widthForConflicts<bank>(tmp);
         auto candidates = m_occupancy.candidatesFor(tmpData, RegisterOccupancy::FailureMemo::None, RegisterOccupancy::Clobbers::Ignore);
+        const bool isNamedAtNoClobber = m_occupancy.numberOfClobberPoints() >= AirLimits::minClobberPointsToCountPerRegister && !mayBeNamedAtSomeClobber(tmp);
         for (Reg r : m_allowedRegistersInPriorityOrder[bank]) {
             if (!candidates.contains(r))
                 continue;
+            auto isHeld = [&] {
+                bool isHeld = false;
+                unsigned conflictsLookedAt = 0;
+                m_occupancy.forEachTmpConflict(r, tmpData.liveRange, width, [&](auto& conflict) -> IterationStatus {
+                    if (conflict.tmp.isReg())
+                        isHeld = conflict.interval.distance() != 1;
+                    else if (!mayEvict)
+                        isHeld = true;
+                    else {
+                        auto cost = m_map.get<bank>(conflict.tmp).spillCost();
+                        isHeld = cost == unspillableCost || cost == maxSpillableSpillCost || !(cost < tmpData.spillCost());
+                    }
+                    return isHeld || ++conflictsLookedAt == AirLimits::maxConflictsLookedAtForHeldRegister ? IterationStatus::Done : IterationStatus::Continue;
+                });
+                return isHeld;
+            };
             // A register with too many sites for what each costs at least is found by counting. Walking them would take the sites of the range for each value and register.
             if (leastCostOfSite > 0 && m_occupancy.numberOfClobberPoints() >= AirLimits::minClobberPointsToCountPerRegister) {
                 double mostSites = std::max(minSplitCost, minSplitCostWithEviction).value() / leastCostOfSite;
                 size_t tooManySites = mostSites < static_cast<double>(sitesLeft) ? std::min(static_cast<size_t>(mostSites * 1.01) + 2 + AirLimits::clobberSitesWithoutLeastCost, sitesLeft + 1) : sitesLeft + 1;
                 if (m_occupancy.numberOfDeadClobbers(r, tmpData.liveRange, tooManySites) >= tooManySites)
                     continue;
+                if (isNamedAtNoClobber && mostSites <= AirLimits::maxClobberSitesJudgedBySum) {
+                    double tooMuch = (mostSites * 1.01 + AirLimits::clobberSitesWithoutLeastCost) * leastCostOfSite;
+                    if (m_occupancy.costOfDeadClobbers(r, tmpData.liveRange, leastCostsOfClobberPoints(), tooMuch) >= tooMuch)
+                        continue;
+                }
             }
             UseDefCost splitCost(0);
             size_t numberOfSites = 0;
@@ -5604,7 +6064,7 @@ private:
                 [&](auto& conflict) -> IterationStatus {
                     if (conflict.tmp.isReg() && conflict.interval.distance() == 1) {
                         ClobberSite site = clobberSiteAt(conflict.interval.begin());
-                        if (site.usesOrDefsTmp || ++numberOfSites > sitesLeft) {
+                        if (site.usesOrDefsTmp || ++numberOfSites > sitesLeft || (numberOfSites == AirLimits::clobberSitesWalkedBeforeAskingWhetherHeld && isNamedAtNoClobber && isHeld())) {
                             // If the inst that clobbers regs also use/def the tmp trying to be split, then
                             // can't split the tmp around this clobber.
                             // FIXME: could allow uses, but then we'd have to make split tmp conflict with any
@@ -6255,9 +6715,7 @@ private:
             // Likewise, if the cluster defs Tmp then a store to Tmp's spill slot will be needed after the final def point.
             if (groups[i].lastDefPoint)
                 ownPiece |= Interval(pointAtOffset(groups[i].lastDefPoint, PointOffsets::Post));
-            std::ranges::sort(pieces[i], { }, [](Interval interval) {
-                return interval.begin();
-            });
+            sortByBegin(pieces[i].mutableSpan());
             Tmp clusterTmp = addSplitTmp(tmp, UseDefCost(groups[i].weight), { });
             TmpData& clusterData = m_map.get<bank>(clusterTmp);
             Interval current = pieces[i][0];
@@ -7236,7 +7694,9 @@ private:
     Vector<IntraBlockSplitMetadata> m_intraBlockMetadata;
     Vector<AroundLoopSplitMetadata> m_aroundLoopMetadata;
     Vector<BlocksOnStack> m_blocksOnStack;
+    Vector<MoveAtBorderOfLoop> m_movesAtBordersOfLoops;
     std::optional<Cycles> m_cycles;
+    Vector<BordersOfCycle> m_bordersOfCycles;
     std::array<Vector<std::optional<CostOfSpill>>, numBanks> m_costsOfSpill;
     HashMap<std::pair<unsigned, unsigned>, float> m_frequencyIfSpilledInCycle;
     Vector<StackSlot*> m_spillSlotTable;

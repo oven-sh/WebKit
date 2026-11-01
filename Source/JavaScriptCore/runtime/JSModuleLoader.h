@@ -125,7 +125,7 @@ public:
     JSPromise* loadModule(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1, const String& referrer = { }, AbstractModuleRecord* recordInPlaceOfFetch = nullptr);
     JSPromise* linkAndEvaluateModule(JSGlobalObject*, const Identifier& moduleKey, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
     JSPromise* requestImportModule(JSGlobalObject*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1);
-    JS_EXPORT_PRIVATE JSPromise* requestImportModuleForKey(JSGlobalObject*, const Identifier& resolvedKey, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1, AbstractModuleRecord* recordInPlaceOfFetch = nullptr);
+    JS_EXPORT_PRIVATE JSPromise* requestImportModuleForKey(JSGlobalObject*, const Identifier& resolvedKey, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1, AbstractModuleRecord* recordInPlaceOfFetch = nullptr, JSPromise* resultPromise = nullptr);
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE int64_t asyncEvaluationOrderForKey(const Identifier& key);
 #endif

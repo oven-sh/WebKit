@@ -39,7 +39,15 @@ static void emitFaultingLoad(CCallHelpers& jit, const B3::StackmapGenerationPara
     bool isFrameless = !params.context().frameIsSetUp;
     CCallHelpers::Label label = jit.labelIgnoringWatchpoints();
     size_t start = jit.m_assembler.codeSize();
-    jit.load32(CCallHelpers::Address(instanceGPR, InstanceLayout::offsetOfLoopPollPage() + (isFrameless ? offsetOfLeafPollInLoopPollPage : 0) + (leavesOwedError ? offsetOfPollLeavingOwedErrorInLoopPollPage : 0)), jit.scratchRegister());
+    ptrdiff_t offset = InstanceLayout::offsetOfLoopPollPage() + (isFrameless ? offsetOfLeafPollInLoopPollPage : 0) + (leavesOwedError ? offsetOfPollLeavingOwedErrorInLoopPollPage : 0);
+#if CPU(ARM64)
+    // Nobody wants the word. The stub that the handler of the fault enters comes back through a scratch register.
+    static_assert(sizeOfWordLoadedByLoopPoll == sizeof(uint64_t));
+    RELEASE_ASSERT(ARM64Assembler::canEncodePImmOffset<64>(static_cast<int32_t>(offset)));
+    jit.m_assembler.ldr<64>(ARM64Registers::zr, instanceGPR, static_cast<unsigned>(offset));
+#else
+    jit.load32(CCallHelpers::Address(instanceGPR, offset), jit.scratchRegister());
+#endif
     RELEASE_ASSERT(jit.m_assembler.codeSize() - start == sizeOfLoopPoll);
     jit.addLinkTask([=](LinkBuffer& linkBuffer) {
         records->traps.pollSites.append(PollSite { linkBuffer.offsetOf(label), isFrameless, OptionalIndex { site } });
@@ -86,6 +94,7 @@ static Expected<bool> likelyPathsAlwaysComplete(FunctionAnalyses& analyses, cons
 
 HintEmitter::HintEmitter(CodeGenerator& generator)
     : OperationEmitter(generator)
+    , m_entryParameters(m_function)
 {
 }
 
@@ -96,6 +105,15 @@ void HintEmitter::generateLoopHint(const ValueContext& value)
     emitPoll(value);
 }
 
+static constexpr OpcodeSet opcodesThatMaySuspend = [] {
+    OpcodeSet result;
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        if (maySuspend(opcode))
+            result.add(opcode);
+    }
+    return result;
+}();
+
 // `x = null` stores to no place that the collector reads: the object stays in whatever register or stack slot held it until something else is put there.
 void HintEmitter::generateReleaseHint(const ValueContext& value)
 {
@@ -103,6 +121,16 @@ void HintEmitter::generateReleaseHint(const ValueContext& value)
     Operand released = get(value->valueOperand());
     if (!released.value || released.value->type() != B3::Int64 || released.value->hasInt64())
         return;
+    // A parameter that came on the stack is still in the word that the caller stored it to. Nothing reads that word again: this is the store that the program wrote.
+    // A function that was suspended runs on above another frame: the word is then somebody else's.
+    bool mayBeResumed = m_function.role == FunctionRole::CoroutineBody || analyses().opcodesOfValues().intersects(opcodesThatMaySuspend);
+    if (entryConventionOf(m_function) == EntryConvention::Direct && !mayBeResumed) {
+        if (std::optional<uint32_t> parameter = m_entryParameters.indexOf(value->valueOperand())) {
+            ArgumentLocation location = inputs().conventions.locationsOf(m_program, m_id).parameters[*parameter];
+            if (location.kind == ArgumentLocation::Kind::Stack)
+                m_out.store64(m_out.constInt64(0), m_out.address(m_heaps.argumentBuffer, m_out.framePointer(), offsetOfStackWordFromFrame(location.stackIndex)));
+        }
+    }
     B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Void);
     patchpoint->append(released.value, B3::ValueRep::ColdAny);
     patchpoint->effects = B3::Effects::none();
@@ -138,7 +166,7 @@ void HintEmitter::emitPoll(const ValueContext& value)
     const NaturalLoop* loop = analyses().naturalLoops().innerMostLoopOf(value.block());
     patchpoint->iterationsAreShort = loop && likelyPathsAlwaysComplete(analyses(), *loop).predicted();
     Effects effects = value.effects().onAnyEdge();
-    RELEASE_ASSERT(effects.mayBeTerminated && effects.mayThrow && !effects.mayThrowByRule());
+    RELEASE_ASSERT(effects.mayBeTerminated && effects.mayThrow.isDeclaredOnlyForLackOfMemory());
     // Handling a trap stops the thread for the collector or ends it. It looks at no object of the program, runs none of its code and looks no name up:
     // of the state of the run time that generated code reads, a poll that comes back has changed what a collection changes.
     effects.writes.remove(AbstractHeapSet { AbstractHeap::RuntimeState });
@@ -148,7 +176,9 @@ void HintEmitter::emitPoll(const ValueContext& value)
 
     bool leavesOwedError = value->leavesOwedError();
     if (hasFaultingLoopPolls) {
-        patchpoint->setRunsWithoutFrame(true);
+        // Without the poll's need, a frame that a block in the loop needs is set up in that block wherever the way back to the head of the loop has a rare edge,
+        // as the way out of an inner loop has: in every turn. On ARM64 the frame stays around the loop, as it was while the poll was a call.
+        patchpoint->setRunsWithoutFrame(!isARM64());
         patchpoint->setGenerator([records = &m_records, site, leavesOwedError](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
             emitFaultingLoad(jit, params, records, site, leavesOwedError);
         });

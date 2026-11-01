@@ -169,7 +169,16 @@ FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
                 break;
             case FlowWayIntoFile::NameMadeAtRunTime:
                 for (size_t module : inputs.modulesLoadedByName)
-                    begins(anyTime, ModuleID(static_cast<uint32_t>(module)));
+                    begins(inputs.namesMadeAtRunTimeAreOnlyImported ? whereJobsRun : anyTime, ModuleID(static_cast<uint32_t>(module)));
+                if (inputs.namesMadeAtRunTimeAreOnlyImported) {
+                    for (FunctionID holder : inputs.functionsThatImportByName) {
+                        ModuleID file = program.at(holder).module;
+                        if (!file || !program.at(file).flags.contains(ModuleFlags::HasTopLevelAwait))
+                            continue;
+                        for (size_t module : inputs.modulesLoadedByName)
+                            beginsInsideFilesOf(FlowModuleLoad { holder, ModuleID(static_cast<uint32_t>(module)) }, file, moduleWithBody[holder.index()]);
+                    }
+                }
                 for (size_t module : inputs.modulesNamedByOperationsNobodyKnows)
                     begins(anyTime, ModuleID(static_cast<uint32_t>(module)));
                 break;
@@ -196,7 +205,7 @@ FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
                 });
                 break;
             case FlowRunnerOfJobs::NameMadeAtRunTime:
-                if (!inputs.modulesLoadedByName.isEmpty() || !inputs.modulesNamedByOperationsNobodyKnows.isEmpty())
+                if ((!inputs.modulesLoadedByName.isEmpty() && !inputs.namesMadeAtRunTimeAreOnlyImported) || !inputs.modulesNamedByOperationsNobodyKnows.isEmpty())
                     runsJobs(anyTime);
                 break;
             case FlowRunnerOfJobs::Builtin:

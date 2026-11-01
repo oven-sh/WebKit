@@ -2,12 +2,14 @@
 # function read(h: Host) { return h.name; }
 # function readBy(o: Reader, h: Host) { return o.read(h); }
 # const reader = unknownCode({ read }); unknownCode({ name: "host" }); readBy(reader, { more: 1, name: "no" });
-# A check may fail where every object with a layout that the program is seen to bring to it is turned away, also where other code may bring objects that pass.
-# readBy() hands on what its own check turns away, through a receiver that came out of unknown code: only the values seen to arrive at read() tell.
+# A check may fail where every object with a layout that the program is seen to bring to it is turned away, unless an object of the program that passes may arrive all the same.
+# The host was handed to unknown code, which also has read(): it may arrive there, so the check of read() is an ordinary one. In a large program whose objects have escaped, what is seen to arrive is a few strays:
+# taken for the better guess, they kept 17,230 checks of TypeScript's compiler from a test at the entrance, 5% of its run. Nothing brings a host to readBy(): its check may fail.
 # FORM: AsRead
 # RUN: valueflow-apply
 # CHECK-LABEL: function f1 name="read"
-# CHECK: = Check v0 expectedType=L0 cause=MayFail
+# CHECK: = Check v0 expectedType=L0
+# CHECK-NOT: MayFail
 # CHECK-LABEL: function f2 name="readBy"
 # CHECK: = Check {{*}}expectedType=L1
 # CHECK-NOT: MayFail

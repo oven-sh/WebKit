@@ -120,9 +120,19 @@ void EnvironmentEmitter::generateRecordCallee(const ValueContext& value)
     CellPointer closure = in<CellPointer>(value->closureOperand());
     unsigned spilledBytes = inputs().conventions.of(m_program, m_id).spillsArgumentRegisters ? sizeOfSpilledArgumentRegisters : 0;
     std::optional<uint32_t> words = stackWordsOfHandOverFromListFrame();
-    // On arm64 the stub takes fewer instructions than the record in line, which moves the arguments out of its way. On x64 it takes as many, and a few cycles more.
+    // On arm64 the stub takes fewer instructions than the record in line, which moves the arguments out of its way. On x64 it takes as many, and a few cycles more. There its caller needs no frame: an entrypoint that does nothing else goes in front of the function.
     if ((isARM64() || value.shape() != CodeShape::Fast) && !spilledBytes && !words) {
-        callStub(value, recordCallee(), { closure.value() }, { .accessesCollectorState = true });
+        // Whoever names the frame pointer has a frame. Where the function has none, nothing lies on the stack but what the call by value left there.
+        B3::PatchpointValue* stackPointerOfCaller = m_out.patchpoint(B3::pointerType());
+        stackPointerOfCaller->effects = B3::Effects::none();
+        stackPointerOfCaller->setRunsWithoutFrame(true);
+        stackPointerOfCaller->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+            if (params.context().frameIsSetUp)
+                jit.lea64(params.code().addressInFrame(sizeof(CallerFrameAndPC)), params[0].gpr());
+            else
+                jit.addPtr(CCallHelpers::TrustedImm32(isX86_64() ? sizeof(void*) : 0), CCallHelpers::stackPointerRegister, params[0].gpr());
+        });
+        callStub(value, recordCallee(), { closure.value(), stackPointerOfCaller }, { .accessesCollectorState = true });
         return;
     }
     LValue stackPointerOfCaller;

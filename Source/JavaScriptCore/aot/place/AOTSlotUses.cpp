@@ -773,17 +773,29 @@ private:
         }, [](auto) { }));
     }
 
-    void noteKeyDefinedByDescriptor(const Type& key)
+    // A field that is planned in the form of its definitions is filled by them as another is by its stores.
+    void noteKeyDefinedByDescriptor(BlockID block, const Type& key, const Type* object)
     {
         ConstantKey constant = constantKeyOf(m_program, key);
         std::optional<PropertyKeyID> known = constant.kind == ConstantKeyKind::Symbol ? std::optional(constant.symbol)
             : constant.kind == ConstantKeyKind::Text ? m_program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = constant.text }) : std::nullopt;
-        if (known)
-            setBit(m_shared.keysDefinedByDescriptor, known->index());
+        if (!known)
+            return;
+        setBit(m_shared.keysDefinedByDescriptor, known->index());
+        if (!object || !object->layouts)
+            return;
+        for (LayoutID layout : m_program.at(object->layouts).written()) {
+            std::optional<uint32_t> field = m_program.at(layout).findField(*known);
+            if (!field)
+                continue;
+            OptionSet<FieldForm> form = fieldAt(m_program, declarationOf(m_program, { layout, *field })).form;
+            if (!form.isEmpty() && !form.contains(FieldForm::IsAccessor))
+                m_uses.fills.append({ m_rows.rowOf(layout, FieldIndex(*field)), heatOf(block) });
+        }
     }
 
     // The names under which the text gives some object an accessor, or a property by a descriptor.
-    void scanDefinitionsByDescriptor(const Value& value)
+    void scanDefinitionsByDescriptor(BlockID block, const Value& value)
     {
         std::span<const ValueID> arguments = value.argumentsOperands();
         auto typeOfArgument = [&](const std::optional<BuiltinOperand>& operand) -> const Type* {
@@ -794,7 +806,7 @@ private:
         for (const BuiltinPropertyAction& action : m_program.builtins().at(value.overload()).flow.propertyActions) {
             if (action.kind == BuiltinPropertyActionKind::TakesDescriptor && action.key.kind == BuiltinKeyKind::Operand) {
                 if (const Type* key = typeOfArgument(action.key.operand))
-                    noteKeyDefinedByDescriptor(*key);
+                    noteKeyDefinedByDescriptor(block, *key, typeOfArgument(action.object));
             } else if (action.kind == BuiltinPropertyActionKind::TakesDescriptorMap && action.value.kind == BuiltinPlaceKind::Operand) {
                 const Type* map = typeOfArgument(action.value.operand);
                 if (!map || !map->layouts)
@@ -837,7 +849,7 @@ private:
         if ((opcode == Opcode::DefineGetter || opcode == Opcode::DefineSetter) && value.key())
             setBit(m_shared.keysDefinedByDescriptor, value.key().index());
         if (opcode == Opcode::CallBuiltin)
-            scanDefinitionsByDescriptor(value);
+            scanDefinitionsByDescriptor(block, value);
         if (opcode == Opcode::NewClosure && value.isLent())
             m_uses.functionsWithLentClosures.append(value.function());
         if (opcode == Opcode::CallDirect)
@@ -865,8 +877,6 @@ private:
         if (opcode == Opcode::GetModuleVariable && m_inputs.zeroEncodingCandidates.quickGet(value.variable().index()))
             m_readsZeroEncodingCandidate = true;
         scanNames(value);
-        if (value.opcode == Opcode::ElemGet)
-            setBit(m_shared.readsByKeyFoundAtRunTime, 0);
     }
 
     struct LastStore {
@@ -1355,7 +1365,6 @@ SlotUses collectSlotUses(const SlotPlanContext& context)
             uses.keysNamed = FastBitVector(program.types.numberOfPropertyKeys());
             uses.keysDefinedByDescriptor = FastBitVector(program.types.numberOfPropertyKeys());
             uses.stringsNamed = FastBitVector(program.strings.size());
-            uses.readsByKeyFoundAtRunTime = FastBitVector(1);
         },
         [&] { timed("findLayoutsNamedBelow"_s, [&] { inputs.layoutsNamedBelow = findLayoutsNamedBelow(context); }); },
         [&] { timed("findObjectsUnderConstruction"_s, [&] { inputs.objectsUnderConstruction = findObjectsUnderConstruction(context); }); },

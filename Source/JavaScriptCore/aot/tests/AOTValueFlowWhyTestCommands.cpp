@@ -210,13 +210,9 @@ static void printObject(PrintStream& out, ValueFlowSolution& solution, ValueFlow
 
 static void printValue(PrintStream& out, ValueFlowSolution& solution, ValueSetID value)
 {
-    constexpr unsigned numberOfMembersPrinted = 24;
     const ValueFlowUniverse& universe = solution.bodies().universe();
-    unsigned printed = 0;
     out.print(solution.sets().size(value), " members:");
     solution.sets().forEachMember(value, [&](ValueFlowObjectID member) {
-        if (++printed > numberOfMembersPrinted)
-            return;
         out.print(" ");
         if (universe.isObject(member))
             printObject(out, solution, member);
@@ -225,7 +221,7 @@ static void printValue(PrintStream& out, ValueFlowSolution& solution, ValueSetID
         else
             out.print("primitive", member.index());
     });
-    out.println(printed > numberOfMembersPrinted ? " .." : "");
+    out.println();
 }
 
 static void printTimeline(PrintStream& out, ValueFlowSolution& solution)

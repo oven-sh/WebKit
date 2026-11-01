@@ -14,12 +14,17 @@
 #include "AOTFrameAllocationPointers.h"
 #include "AOTInstance.h"
 #include "AOTRuntimeValidation.h"
+#include "AOTStringTable.h"
 #include "AOTStubsBarriers.h"
 #include "CellState.h"
 #include "JSCell.h"
 #include "RememberedSlot.h"
 #include "StoredCellLog.h"
 #include <algorithm>
+
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -39,6 +44,24 @@ bool BarrierEmitter::hasSingleStoredCell(const Value& store) const
         count += typeOf(operand).hasCells();
     });
     return count == 1;
+}
+
+// The VM marks them whoever holds them. To RemoveRedundantBarriers such a store stores no cell.
+bool BarrierEmitter::storesOnlyStringsOfVM(const Value& store) const
+{
+    if (!runsOwnerBarrierOf(store.opcode))
+        return false;
+    bool storesString = false;
+    bool storesOtherCell = false;
+    forEachStoredOperand(store, [&](ValueID operand) {
+        if (!typeOf(operand).hasCells())
+            return;
+        const Value& stored = m_function.at(operand);
+        bool isOfVM = stored.opcode == Opcode::String && hasCellOfVM(m_program.string(stored.string()));
+        storesString |= isOfVM;
+        storesOtherCell |= !isOfVM;
+    });
+    return storesString && !storesOtherCell;
 }
 
 const Type* BarrierEmitter::storedTypeOf(const Value& store) const
@@ -124,7 +147,7 @@ bool BarrierEmitter::shouldEmitBarrier(const ValueContext& store, bool mayStoreC
 
 void BarrierEmitter::barrierAfterStore(const ValueContext& store, CellPointer owner, Operand stored, const Type& storedType)
 {
-    if (!shouldEmitBarrier(store, storedType.hasCells()))
+    if (!shouldEmitBarrier(store, storedType.hasCells() && !storesOnlyStringsOfVM(store.value())))
         return;
     if (!storedType.hasLiteralStrings() || stored.representation != Representation::LiteralString || !hasSingleStoredCell(store.value())) {
         barrier(store, owner);
@@ -145,7 +168,7 @@ void BarrierEmitter::barrierAfterStores(const ValueContext& store, CellPointer o
     bool mayStoreCell = std::ranges::any_of(stored, [&](ValueID value) {
         return typeOf(value).hasCells();
     });
-    if (shouldEmitBarrier(store, mayStoreCell))
+    if (shouldEmitBarrier(store, mayStoreCell && !storesOnlyStringsOfVM(store.value())))
         barrier(store, owner);
 }
 
@@ -313,5 +336,9 @@ void BarrierEmitter::failValidationIf(const OperationContext& context, Condition
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

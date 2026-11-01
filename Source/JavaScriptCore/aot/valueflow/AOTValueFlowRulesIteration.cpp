@@ -180,9 +180,17 @@ static void takeKeys(ValueFlowRuleContext& context, ClimbingSet containers, Buil
 bool areUnchangedPairsOfKeyAndValue(ValueFlowRuleContext& context, ClimbingSet containers)
 {
     const ValueFlowProgramNodes& nodes = context.nodes();
-    ClimbingSet others = context.membersMissingFrom(nodes.ofHost(ValueFlowHostNode::PairsOfSteps), context.membersMissingFrom(nodes.ofHost(ValueFlowHostNode::PairsOfEntries), containers));
-    return !holdsSomething(context, others) && !context.holdsAnyOf(containers, ValueFlowProgramNodes::escaped()) && !context.holdsAnyOf(containers, ValueFlowProgramNodes::lost())
-        && !holdsSomething(context, context.markedAmong(containers, OptionSet<ObjectMutation>::all()));
+    // A pair that the program writes holds both elements until something changes it, and the marks below say so.
+    ClimbingSet written = context.restrict(containers, context.universe().pairLiterals());
+    ClimbingSet unwritten = context.restrict(containers, ValueSets::complement(context.universe().pairLiterals()));
+    ClimbingSet others = context.membersMissingFrom(nodes.ofHost(ValueFlowHostNode::PairsOfSteps), context.membersMissingFrom(nodes.ofHost(ValueFlowHostNode::PairsOfEntries), unwritten));
+    if (holdsSomething(context, others) || context.holdsAnyOf(written, nodes.ofHost(ValueFlowHostNode::ArraysThatMayHaveHoles)) || context.holdsAnyOf(containers, ValueFlowProgramNodes::escaped())
+        || context.holdsAnyOf(containers, ValueFlowProgramNodes::lost()) || holdsSomething(context, context.markedAmong(containers, OptionSet<ObjectMutation>::all())))
+        return false;
+    // It says its key and its value apart only once a reader has asked.
+    if (holdsSomething(context, written))
+        context.add(nodes.ofHost(ValueFlowHostNode::WrittenPairsThatAreRead), written);
+    return true;
 }
 
 static bool readsKeyOrValueOfPair(ValueFlowRuleContext& context, ClimbingSet containers, std::optional<uint32_t> indexInPattern)

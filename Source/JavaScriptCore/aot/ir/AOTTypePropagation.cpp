@@ -23,6 +23,7 @@
 #include <ranges>
 #include <tuple>
 #include <utility>
+#include <wtf/Scope.h>
 #include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -355,6 +356,12 @@ void TypePropagation::restoreTypes()
     }
 }
 
+static uint64_t positionOf(const CFG& cfg, const ValueLocation& location)
+{
+    uint64_t isInBlock = location.placement == ValuePlacement::InBlock;
+    return static_cast<uint64_t>(cfg.reversePostOrderIndex(location.block)) << 33 | isInBlock << 32 | location.index;
+}
+
 void TypePropagation::listFromLastToFirst(std::span<const ValueID> values)
 {
     Vector<std::pair<uint64_t, ValueID>, 64> positions;
@@ -362,8 +369,7 @@ void TypePropagation::listFromLastToFirst(std::span<const ValueID> values)
         ValueLocation location = m_uses->locationOf(id);
         if (location.placement == ValuePlacement::Detached)
             continue;
-        uint64_t isInBlock = location.placement == ValuePlacement::InBlock;
-        positions.append({ static_cast<uint64_t>(m_cfg.reversePostOrderIndex(location.block)) << 33 | isInBlock << 32 | location.index, id });
+        positions.append({ positionOf(m_cfg, location), id });
     }
     AOT::sortInLine(positions, std::ranges::greater { }, &std::pair<uint64_t, ValueID>::first);
     for (auto [position, id] : positions)
@@ -943,8 +949,13 @@ TypePropagationOutcome TypePropagation::finishWithoutCompacting(Vector<ValueID>&
     replaceUpcastsOfWidenedValues();
     dropExpectedTypesThatSayNothing();
     reportRetypedValues(true);
-    if (mayHaveCodeToCut())
-        cutAfterNeverValues();
+    if (mayHaveCodeToCut()) {
+        parametersBehindRemovedEdges = findParametersLeftAtNever();
+        m_outcome.foundParametersLeftAtNever = !parametersBehindRemovedEdges.isEmpty();
+        // All that was computed from them is never too. Nothing is cut before they are typed.
+        if (!m_outcome.foundParametersLeftAtNever)
+            cutAfterNeverValues();
+    }
 
     if (!m_outcome.cutBlocks) {
         if (m_outcome.didChange())
@@ -986,6 +997,25 @@ bool TypePropagation::mayHaveCodeToCut() const
     return std::ranges::any_of(m_rememberedValues, [&](ValueID id) {
         return function.at(id).type == TypeTable::never || function.at(id).opcode == Opcode::NarrowByField;
     });
+}
+
+// Nothing comes to a block whose parameter is never: by what arrives now. A parameter may have been typed when only code that is never reached led to its block, a copy of a loop for integers of 32 bits
+// behind `i > 2147483649`, and edges from code that runs have been led there since. Whoever did that has not said so if the parameter is still never here.
+Vector<ValueID> TypePropagation::findParametersLeftAtNever()
+{
+    const Function& function = m_inputs.function;
+    TypingContext context = typingContext(TypeLevel::Proven);
+    Vector<ValueID> found;
+    for (BlockID id : m_cfg.reversePostOrder()) {
+        if (id == entryBlock)
+            continue;
+        const CompactList<ValueID>& parameters = function.at(id).parameters;
+        for (uint32_t index = 0; index < parameters.size(); ++index) {
+            if (function.at(parameters[index]).type == TypeTable::never && computeParameter(context, parameters[index], id, index) != TypeTable::never)
+                found.append(parameters[index]);
+        }
+    }
+    return found;
 }
 
 void TypePropagation::cutAfterNeverValues()
@@ -1177,20 +1207,28 @@ void TypePropagation::typePendingValues(PendingTyping& pending)
         willRestartValues();
     std::ranges::reverse(m_worklist);
 
-    // To type a value costs a look at each of its operands. One with many operands waits until nothing else is left to type, and is then typed once for all of its operands that have changed.
-    AOT_THRESHOLD(uint32_t, fewestOperandsOfValueThatWaits, 32);
-    Vector<ValueID, 8> valuesThatWait;
-    size_t nextValueThatWaits = 0;
+    using ValueAtPosition = std::pair<uint64_t, ValueID>;
+    Vector<ValueAtPosition, 16> valuesFromFirstToLast;
     auto takeNextValue = [&] {
+        if (!m_uses)
+            return m_worklist.isEmpty() ? ValueID() : m_worklist.takeLast();
         while (!m_worklist.isEmpty()) {
             ValueID id = m_worklist.takeLast();
-            if (function.at(id).numberOfOperands() < fewestOperandsOfValueThatWaits)
-                return id;
-            valuesThatWait.append(id);
+            ValueLocation location = m_uses->locationOf(id);
+            bool isListed = location.placement != ValuePlacement::Detached && m_cfg.isReachable(location.block);
+            valuesFromFirstToLast.append({ isListed ? positionOf(m_cfg, location) : 0, id });
+            std::ranges::push_heap(valuesFromFirstToLast, std::ranges::greater { }, &ValueAtPosition::first);
         }
-        return nextValueThatWaits < valuesThatWait.size() ? valuesThatWait[nextValueThatWaits++] : ValueID();
+        if (valuesFromFirstToLast.isEmpty())
+            return ValueID();
+        std::ranges::pop_heap(valuesFromFirstToLast, std::ranges::greater { }, &ValueAtPosition::first);
+        return valuesFromFirstToLast.takeLast().second;
     };
 
+    uint64_t numberOfValuesTyped = 0;
+    auto countValuesTyped = makeScopeExit([&] {
+        m_inputs.build.statistics().count(StatisticID::ValuesTypedFromChanges, numberOfValuesTyped);
+    });
     while (true) {
         while (ValueID id = takeNextValue()) {
             m_marks[id.index()].isQueued = false;
@@ -1211,6 +1249,7 @@ void TypePropagation::typePendingValues(PendingTyping& pending)
                 continue;
             }
 
+            ++numberOfValuesTyped;
             rememberState(id);
             Value& value = m_inputs.function.editAndReportLater(id);
             TypeID type = value.type;
@@ -1488,9 +1527,9 @@ TypePropagationOutcome typeUntilNothingIsCut(const TypePropagationInputs& inputs
             propagation.tellWhatIsTyped();
 
         total += outcome;
-        if (!outcome.cutBlocks || parametersBehindRemovedEdges.isEmpty())
+        if ((!outcome.cutBlocks && !outcome.foundParametersLeftAtNever) || parametersBehindRemovedEdges.isEmpty())
             break;
-        if (typedFirst == TypedFirst::PendingValues)
+        if (typedFirst == TypedFirst::PendingValues && !outcome.foundParametersLeftAtNever)
             continue;
         typedFirst = TypedFirst::DependentsOfChangedValues;
         changedValues = parametersBehindRemovedEdges.span();
@@ -1630,21 +1669,31 @@ PendingTyping PendingTyping::forCopyWith(const ChangeLog& logOfCopy, const Chang
     return copy;
 }
 
-static ValueID findValueTypedWider(const TypePropagationInputs& inputs, const Function& typedFromNever)
+static bool listsSameValuesInSameBlocks(const Function& function, const Function& other)
+{
+    return function.values.size() == other.values.size() && std::ranges::equal(function.blocks, other.blocks, [](const Block& block, const Block& otherBlock) {
+        return block.parameters == otherBlock.parameters && block.values == otherBlock.values && block.terminator.kind == otherBlock.terminator.kind && block.terminator.targets == otherBlock.terminator.targets;
+    });
+}
+
+static ValueID findValueTypedWider(const TypePropagationInputs& inputs, const Function& typedFromNever, TypeArena& types)
 {
     const Function& function = inputs.function;
     ValueID found;
-    if (function.values.size() != typedFromNever.values.size())
+    // Whichever typing cuts code numbers the values anew.
+    if (!listsSameValuesInSameBlocks(function, typedFromNever))
         return found;
     forEachListedValue(function, inputs.analyses.cfg(), [&](ValueID id) {
-        TypeID type = function.at(id).type;
+        if (found)
+            return;
+        TypeID type = types.adopt(function.at(id).type);
         TypeID fromNever = typedFromNever.at(id).type;
-        if (found || type == fromNever || inputs.types.at(type).isSubsetOf(inputs.types.at(fromNever), inputs.program))
+        if (type == fromNever || types.at(type).isSubsetOf(types.at(fromNever), inputs.program))
             return;
         // How far the range of a variable of a loop is widened depends on the steps by which it grew, and they are other steps from never than from what changed.
-        Type withRangeFromNever = inputs.types.at(type);
-        withRangeFromNever.integers = inputs.types.at(fromNever).integers;
-        if (!withRangeFromNever.isSubsetOf(inputs.types.at(fromNever), inputs.program))
+        Type withRangeFromNever = types.at(type);
+        withRangeFromNever.integers = types.at(fromNever).integers;
+        if (!withRangeFromNever.isSubsetOf(types.at(fromNever), inputs.program))
             found = id;
     });
     return found;
@@ -1671,18 +1720,21 @@ TypePropagationOutcome typeChangedValues(const TypePropagationInputs& inputs)
             pending->didTypeEverything(log);
     } else {
         std::optional<Function> typedFromNever;
+        std::optional<ScratchTypeArena> typesFromNever;
         // Where the rounds ran out, values stay above their rules until every value is typed again.
         if (inputs.build.options().verifiesAfterEveryPass && !pending->holdsTypesLeftWhenRoundsRanOut()) {
             typedFromNever = inputs.function;
+            typesFromNever.emplace(inputs.program.types);
+            adoptIDs(*typedFromNever, *typesFromNever);
             FunctionAnalyses analyses(inputs.analyses.context(), *typedFromNever);
             // Where the rounds run out or a range stays, the types depend on the types that typing began with.
-            if (typeValuesFromNever({ inputs.program, inputs.id, *typedFromNever, analyses, inputs.types, inputs.build }).dependsOnTypesBefore())
+            if (typeValuesFromNever({ inputs.program, inputs.id, *typedFromNever, analyses, *typesFromNever, inputs.build }).dependsOnTypesBefore())
                 typedFromNever = std::nullopt;
         }
         outcome = typeUntilNothingIsCut(inputs, TypedFirst::PendingValues);
         statistics.count(outcome.didChange() ? StatisticID::FunctionsTypedFromChanges : StatisticID::FunctionsTypedAsBefore);
         // Where the log ran full while this typing wrote into it, every value is pending again.
-        if (ValueID value = typedFromNever && !outcome.dependsOnTypesBefore() && !pending->isEverythingPending(log) ? findValueTypedWider(inputs, *typedFromNever) : ValueID())
+        if (ValueID value = typedFromNever && !outcome.dependsOnTypesBefore() && !pending->isEverythingPending(log) ? findValueTypedWider(inputs, *typedFromNever, *typesFromNever) : ValueID())
             inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = inputs.analyses.subject().function, .value = value, .detail = "typed from what changed it is wider than typed from nothing"_s });
     }
     if (pending->isEmpty(log)) {

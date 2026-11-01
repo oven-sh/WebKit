@@ -99,6 +99,9 @@ static LayoutStorage storageFor(const Program& program, LayoutID id)
     const Layout& layout = program.at(id);
     // The constructor of a built-in class makes the instances of the classes below it: cells of that class, which have no slots.
     bool mayBeAllocated = layout.flow.allocation != AllocationState::NeverAllocated && !builtinBaseClassOf(program, id);
+    // Its slots are given: readLayoutsBelow().
+    if (layout.has(LayoutFlags::IsOfImageBelow))
+        return LayoutStorage::None;
     switch (layout.kind) {
     case LayoutKind::Record:
     case LayoutKind::Instance:
@@ -232,6 +235,9 @@ static Vector<PlannedLayout> planLayouts(const SlotPlanContext& context, const S
     reserveEmptySlotsInPadding(context, uses, packed);
     if (!finishStep("reserveEmptySlotsInPadding"_s))
         return { };
+    widenSlotsIntoPadding(context, uses, joinedRows, claims.span(), WidenedRepresentations::SmallIntegers, packed);
+    if (!finishStep("widenSlotsIntoPadding(SmallIntegers)"_s))
+        return { };
 
     Vector<PlannedLayout> layouts = createPlannedLayouts(context, WTF::move(packed));
     times.didFinish("createPlannedLayouts"_s);
@@ -277,6 +283,38 @@ static BitVector findKeysDefinedByDescriptor(const Program& program, const SlotU
     return keys;
 }
 
+// The objects lie as the image that makes them has laid them out.
+static void readLayoutsBelow(const Program& program, BuildContext& build, Vector<PlannedLayout>& layouts)
+{
+    if (program.recordsOfImagesBelow.isEmpty())
+        return;
+    for (const Program::RecordOfImageBelow& found : program.recordsOfImagesBelow) {
+        ImagesBelow::Record record = build.imagesBelow()->recordAt(found.image, found.firstShape, found.numberOfShapes);
+        const Layout& layout = program.at(found.layout);
+        PlannedLayout& planned = layouts[found.layout.index()];
+        planned = { };
+        if (layout.flow.allocation == AllocationState::NeverAllocated)
+            continue;
+        planned.storage = LayoutStorage::CompiledObject;
+        planned.size = record.layout->size;
+        planned.slots = Vector<PlacedSlot>(layout.fields.size() + numberOfHiddenWords);
+        std::span<const FieldData> fields = record.layout->fields();
+        RELEASE_ASSERT(fields.size() <= layout.fields.size());
+        for (size_t index = 0; index < fields.size(); ++index) {
+            PlacedSlot& slot = planned.slots[index];
+            slot.representation = fields[index].slot.representation();
+            slot.storage = SlotStorage::Inline;
+            slot.offset = fields[index].slot.offset;
+        }
+        if (std::optional<SlotData> extraProperties = record.layout->extraPropertiesSlot()) {
+            PlacedSlot& slot = planned.slots[planned.extraPropertiesWordIndex()];
+            slot.representation = extraProperties->representation();
+            slot.storage = SlotStorage::Inline;
+            slot.offset = extraProperties->offset;
+        }
+    }
+}
+
 SlotPlan planSlots(const Program& program, const SlotPlanInputs& inputs, BuildContext& build)
 {
     PhaseTimes times(build, PassID::PlanSlots);
@@ -316,6 +354,7 @@ SlotPlan planSlots(const Program& program, const SlotPlanInputs& inputs, BuildCo
     });
     if (build.diagnostics().hasErrors())
         return { };
+    readLayoutsBelow(program, build, plan.m_layouts);
     return plan;
 }
 
@@ -740,6 +779,10 @@ BitVector findVariablesDescribedToRunTime(const Program& program, const FlowResu
     for (auto& layout : program.layouts) {
         for (auto& field : layout.staticFields)
             add(field.variable);
+    }
+    for (unsigned index = 0; index < program.variables.size(); ++index) {
+        if (program.variables[index].flags.contains(VariableFlags::HoldsMock))
+            described.quickSet(index);
     }
     return described;
 }

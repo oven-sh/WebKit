@@ -268,8 +268,13 @@ static Effects refinedEffectsOf(const Program& program, const Function& function
     if (std::optional<Effects> lookup = effectsOfLookupFromBase(program, function, value))
         return *lookup;
     if (value.opcode == Opcode::NewObject)
-        return value.prototypeOperand() ? effectsOfAllocatingWithPrototype(program, value.layout()) : declaredBoundOf(NamedEffectSet::Allocates);
+        return value.prototypeOperand() ? effectsOfAllocatingWithPrototype(program, value.layout()) : effectsOfAllocatingWithPrototypeOfLayout(program, value.layout());
     Effects effects = declared;
+    if (value.opcode == Opcode::AreMembersUnchanged) {
+        for (LayoutID classLayout : classesWhoseBeginningMayEnd(value))
+            effects.reads.add(program, beginningOfClass(classLayout));
+        return effects;
+    }
     if (readsPrototypePropertyWithoutRunningCode(program, function, value) || joinsTextsThatFitInString(program, function, value))
         effects.mayThrow = ThrowEffect::onlyForLackOfMemory();
     if (resolvesNoRope(program, function, value, declared)) {
@@ -320,6 +325,7 @@ bool isRefinedByValue(Opcode opcode, const Effects& bound)
         || opcode == Opcode::ReportMismatch
         || opcode == Opcode::ModuleNamespace
         || opcode == Opcode::GetConstructPrototype
+        || opcode == Opcode::AreMembersUnchanged
         || !heapsWrittenForOptionalOperands(opcode).isEmpty()
         || opcode == Opcode::StringBuilderAppendJSON
         || opcode == Opcode::Strcat
@@ -341,7 +347,7 @@ static bool isDescribedByRowAlone(Opcode opcode)
     return opcodes.contains(opcode);
 }
 
-static void describeEffectsInto(const Program& program, const Function& function, const Value& value, EffectDescription& description, const EffectSummaries* summaries = nullptr)
+static void describeEffectsInto(const Program& program, const Function& function, const Value& value, EffectDescription& description, const EffectSummaries* summaries = nullptr, UntestedStorage untestedStorage = UntestedStorage::MakesReadUnknown)
 {
     Effects declared = declaredEffectsOf(program, value);
     if (isDescribedByRowAlone(value.opcode)) {
@@ -356,7 +362,7 @@ static void describeEffectsInto(const Program& program, const Function& function
         describeOperator(program, function, value, declared, description);
         break;
     case EffectRule::Access:
-        describeAccess(program, function, value, declared, description);
+        describeAccess(program, function, value, declared, description, untestedStorage);
         break;
     case EffectRule::Call:
         describeCall(program, function, value, declared, description, summaries);
@@ -392,10 +398,10 @@ static void describeEffectsInto(const Program& program, const Function& function
     }
 }
 
-EffectDescription describeEffects(const Program& program, const Function& function, const Value& value, const EffectSummaries* summaries)
+EffectDescription describeEffects(const Program& program, const Function& function, const Value& value, const EffectSummaries* summaries, UntestedStorage untestedStorage)
 {
     EffectDescription description;
-    describeEffectsInto(program, function, value, description, summaries);
+    describeEffectsInto(program, function, value, description, summaries, untestedStorage);
     return description;
 }
 

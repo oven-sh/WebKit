@@ -230,6 +230,8 @@ std::span<const ValueFlowOperand> ValueFlowRuleContext::operandsOf(const ValueFl
     }
     return narrowed.span();
 }
+bool ValueFlowRuleContext::isAskedForByName(PropertyKeyID key) const { return m_solver.isAskedForByName(key); }
+
 std::span<const ValueFlowOperand> ValueFlowRuleContext::objectsReadUnderKeyOfStore(const ValueFlowStatement& statement) const
 {
     return m_operandsInPlace.empty() ? m_solver.objectsReadUnderKeyOfStore(statement) : std::span<const ValueFlowOperand>();
@@ -701,6 +703,8 @@ ValueFlowNodeID ValueFlowRuleContext::readWhatWasWritten(ClimbingSet objects, Va
         objects = objectsThatMayHoldSomethingUnder(name, objects);
     if (objects.m_set == ValueSets::nothing)
         return holdingNothing();
+    if (use == ReadUse::OutsideEnumerations && name.kind == ValueFlowNameKind::Getter)
+        return nodeFor(ValueFlowNodeKey::readOutsideEnumerations(objects.m_set, name));
     return nodeFor(use == ReadUse::OnlyWhatLetsInUnseenCode ? ValueFlowNodeKey::readOfWhatLetsInUnseenCode(objects.m_set, name) : ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Read, objects.m_set, name));
 }
 
@@ -793,6 +797,15 @@ bool ValueFlowRuleContext::mayFindSomethingWritten(ClimbingSet objects, ValueFlo
     if (!write || !m_solver.m_input.nodes || !m_solver.m_input.universe || ValueSets::isComplement(objects.m_set) || meet(objects, universe().placeholdersAlone()))
         return true;
     return holdsAnyOf(objects, rareWriteNode(*write));
+}
+
+// The members for which mayFindSomethingWritten() says yes when each is asked by itself: one question, and one watch, for them all.
+ClimbingSet ValueFlowRuleContext::membersThatMayFindSomethingWritten(ClimbingSet objects, ValueFlowNameKind kind)
+{
+    std::optional<ValueFlowRareWrite> write = rareWriteFoundUnder(kind);
+    if (!write || !m_solver.m_input.nodes || !m_solver.m_input.universe || ValueSets::isComplement(objects.m_set) || meet(objects, universe().placeholdersAlone()))
+        return objects;
+    return valueWithin(objects, rareWriteNode(*write));
 }
 
 ClimbingSet ValueFlowRuleContext::holdersOfLibraryExportsWrittenUnder(PropertyKeyID key)
@@ -902,12 +915,15 @@ const ValueFlowRareFactsOfText* ValueFlowRuleContext::rareFactsOfText(const Valu
     return &*found;
 }
 
-ValueFlowCallGroup ValueFlowRuleContext::group(ClimbingSet callees, ValueFlowCallKind kind, ValueFlowCalleeOrigin origin)
+ValueFlowCallGroup ValueFlowRuleContext::group(ClimbingSet callees, ValueFlowCallKind kind, ValueFlowCalleeOrigin origin, ValueFlowArgumentsLeftOut leftOut)
 {
     bool mayBeWhateverHasEscaped = origin == ValueFlowCalleeOrigin::Value && kind != ValueFlowCallKind::Get && kind != ValueFlowCallKind::Set;
     if (mayBeWhateverHasEscaped && m_solver.m_input.nodes && m_solver.m_input.universe && sets().contains(callees.m_set, ValueFlowUniverse::unknownObject()))
         add(nodes().ofHost(ValueFlowHostNode::ValueNobodyKnowsIsCalled), ClimbingSet(leavesOutSomeUnknownSource() ? universe().undefinedValue() : universe().unknownObjectAlone()));
-    return callGroupAt(nodeFor(ValueFlowNodeKey::callGroup(callees.m_set, kind, m_markerEntered)));
+    ValueFlowCallGroup group = callGroupAt(nodeFor(ValueFlowNodeKey::callGroup(callees.m_set, kind, m_markerEntered)));
+    if (kind == ValueFlowCallKind::CallByNativeCode && leftOut == ValueFlowArgumentsLeftOut::AnyOfThem && m_solver.m_input.universe)
+        add(group.anyArgumentLeftOut(), ClimbingSet(universe().undefinedValue()));
+    return group;
 }
 
 ValueFlowNodeID ValueFlowRuleContext::hub(ValueFlowBehaviorID behavior)

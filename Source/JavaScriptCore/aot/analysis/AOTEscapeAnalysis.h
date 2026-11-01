@@ -289,6 +289,8 @@ public:
     std::optional<ObjectID> objectDefinedBy(ValueID) const;
 
     PointsToSet pointsTo(ValueID) const LIFETIME_BOUND;
+    // The allocations of the function that the value may be, where it can be nothing else. Two values with such sets that share no member are never one object.
+    std::optional<ObjectSet> allocationsIfNothingElse(ValueID) const LIFETIME_BOUND;
     std::optional<ObjectID> singleObject(ValueID) const;
     bool isExactUse(ObjectID, const Use&) const;
     bool isOnlyOperandHolding(ObjectID, const Use&) const;
@@ -302,12 +304,14 @@ public:
     }
     std::span<const ObjectID> contentsOf(ObjectID object) const LIFETIME_BOUND { return entriesOf(object, m_contents, m_firstContent); }
     std::span<const ObjectID> containersOf(ObjectID object) const LIFETIME_BOUND { return entriesOf(object, m_containers, m_firstContainer); }
+    bool isInLocalHeapWords(ObjectID object) const { return m_objectsInLocalHeapWords.contains(object); }
 
     AliasResult alias(ValueID, ValueID) const;
     bool mayAlias(ValueID, ValueID) const;
 
     bool hasLiveInstances() const { return m_hasLiveInstances; }
-    void computeLiveInstances(const CFG&, const UseLists&, const ScopedLambda<const BlockCycles&()>&);
+    enum class OutOfSight : bool { NotAsked, Asked };
+    void computeLiveInstances(const CFG&, const UseLists&, const ScopedLambda<const BlockCycles&()>&, OutOfSight);
     LiveInstances liveInstancesOf(ObjectID object) const
     {
         RELEASE_ASSERT(m_hasLiveInstances);
@@ -321,6 +325,20 @@ public:
     {
         RELEASE_ASSERT(m_hasLiveInstances);
         return object.index() < m_objectsRenewedAtMakers.size() ? m_objectsRenewedAtMakers[object.index()] : m_noObjects;
+    }
+
+    // The allocations in cycles that escape and lie in no local heap word. Of those, about a block of a cycle: the ones of which a value that is live in front of the terminator may name an instance, or an instance of a closed object that holds one.
+    const BitVector& allocationsThatMayGoOutOfSight() const LIFETIME_BOUND
+    {
+        RELEASE_ASSERT(m_hasLiveInstances);
+        return m_allocationsThatMayGoOutOfSight;
+    }
+    std::optional<std::span<const ObjectID>> allocationsInSightAtEndOf(BlockID block) const LIFETIME_BOUND
+    {
+        RELEASE_ASSERT(m_hasLiveInstances);
+        if (block.index() >= m_allocationsInSightAtEnd.size() || !m_allocationsInSightAtEnd[block.index()])
+            return std::nullopt;
+        return m_allocationsInSightAtEnd[block.index()]->span();
     }
 
     // Types and expected types have changed, and nothing else. Answers whether the solver would be told all that it was told: then it would find what it has found.
@@ -395,6 +413,7 @@ private:
     Vector<StoredSet> m_sets;
     BitVector m_noObjects;
     SparseObjectSet m_emptySet;
+    SparseObjectSet m_objectsInLocalHeapWords;
     mutable Vector<ValueID> m_aliases;
     mutable Vector<uint32_t> m_firstAlias;
     // Two entries per use that the solver recorded: not an escape, then an escape. That is all that differs between the objects of one use.
@@ -417,17 +436,23 @@ private:
     Vector<ObjectID> m_containers;
     Vector<uint32_t> m_firstContainer;
     Vector<BitVector> m_objectsRenewedAtMakers;
+    BitVector m_allocationsThatMayGoOutOfSight;
+    Vector<std::optional<Vector<ObjectID, 2>>> m_allocationsInSightAtEnd;
     Vector<AnswerFromTypes> m_answersFromTypes;
     Vector<TypesOfValue> m_typesWhenAnswered;
 };
 
 // Words of different groups hold different objects.
 bool isFrameWordWithAllocationGroup(const Function&, const Value&);
+// A load or store of a word in a NewHeapWords cell of this function.
+bool accessesLocalHeapWords(const Function&, const Value&);
 
 // False where every allocation that the value may name was read out of an object that is open to others, and so has a use that lets it escape.
 bool mayNameUnescapedAllocation(const Function&, ValueID);
 // Seen without the solve too, through the parameters of blocks as well: the values that make the objects which the value may name, or out of which what it names may have been read, however many objects lie between.
-std::optional<Vector<ValueID, 8>> findMakersOfObjectsBehind(FunctionAnalyses&, ValueID);
+std::optional<Vector<ValueID, 8>> findMakersOfObjectsBehind(FunctionAnalyses&, ValueID, OpcodeSet* opcodesBehind = nullptr);
+// True where nothing that the function makes lies behind the value: it names only what code outside reaches too, and an object made here gets there by a use of a value that has its maker behind it.
+bool namesOnlyWhatCodeOutsideReaches(FunctionAnalyses&, ValueID);
 
 // What the solve says of a use of a value for every object that the value names, seen from the use alone.
 enum class UseSeenAlone : uint8_t {
@@ -466,6 +491,19 @@ inline PointsToSet EscapeAnalysis::pointsTo(ValueID value) const
         return { ObjectSet(m_emptySet), true };
     const StoredSet& set = m_sets[id.index()];
     return { ObjectSet(set.objects), set.mayBeUntracked };
+}
+
+inline std::optional<ObjectSet> EscapeAnalysis::allocationsIfNothingElse(ValueID value) const
+{
+    solveIfWaiting();
+    RELEASE_ASSERT(value.index() < m_setOfValue.size());
+    ValueSetID id = m_setOfValue[value.index()];
+    if (!id)
+        return std::nullopt;
+    const StoredSet& set = m_sets[id.index()];
+    if (set.mayBeUntracked || set.holdsEntryParameter)
+        return std::nullopt;
+    return ObjectSet(set.objects);
 }
 
 inline std::optional<ObjectID> EscapeAnalysis::singleObject(ValueID value) const

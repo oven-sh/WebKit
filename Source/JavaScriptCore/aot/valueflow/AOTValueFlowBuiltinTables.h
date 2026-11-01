@@ -56,6 +56,8 @@ public:
     ValueSetID membersOfWhilePristine(BuiltinTypeID type) const { return m_membersOfTypeWhilePristine[type.index()]; }
     ValueFlowObjectID objectStandingFor(BuiltinClassID builtinClass) const { return m_objectStandingForClass[builtinClass.index()]; }
     ValueSetID classesSurelyOf(BuiltinTypeID type) const { return m_classesSurelyOfType[type.index()]; }
+    // The classes that the type names and those below them, whatever it says of what their instances hold: what the host's test for the class lets through.
+    ValueSetID classesNamedBy(BuiltinTypeID type) const { return m_classesNamedByType[type.index()]; }
     ValueSetID classesOfWhilePristine(BuiltinTypeID type) const { return m_classesOfTypeWhilePristine[type.index()]; }
     // An object passes the test for the type only if it was made as one of these. `anything` where the class that an object was made as does not decide the test.
     ValueSetID classesThatMayBeOf(BuiltinTypeID type) const { return m_classesThatMayBeOfType[type.index()]; }
@@ -94,6 +96,7 @@ private:
     Vector<ValueSetID> m_membersOfTypeWhilePristine;
     Vector<ValueFlowObjectID> m_objectStandingForClass;
     Vector<ValueSetID> m_classesSurelyOfType;
+    Vector<ValueSetID> m_classesNamedByType;
     Vector<ValueSetID> m_classesOfTypeWhilePristine;
     Vector<ValueSetID> m_classesThatMayBeOfType;
     ValueSetID m_objectsStandingForClasses;

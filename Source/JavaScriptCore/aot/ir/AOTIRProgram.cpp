@@ -186,14 +186,12 @@ void Program::setDeclaredMembers(LayoutID id, LayoutSetID set)
 
 std::span<const LayoutID> Program::layoutsBelow(LayoutID id) const
 {
-    const Vector<Vector<LayoutID>>& layoutsBelow = m_derivedTables.layoutsBelow;
-    return id.index() < layoutsBelow.size() ? layoutsBelow[id.index()].span() : std::span<const LayoutID> { };
+    return m_derivedTables.layoutsBelow[id.index()];
 }
 
 std::span<const LayoutID> Program::layoutsExpectedBelow(LayoutID id) const
 {
-    const Vector<Vector<LayoutID>>& layoutsExpectedBelow = m_derivedTables.layoutsExpectedBelow;
-    return id.index() < layoutsExpectedBelow.size() ? layoutsExpectedBelow[id.index()].span() : std::span<const LayoutID> { };
+    return m_derivedTables.layoutsExpectedBelow[id.index()];
 }
 
 static bool isDefinedByClass(const Layout& layout)
@@ -208,38 +206,17 @@ bool Program::prototypeMaySelectOtherClass(LayoutID id) const
 
 void Program::indexClasses()
 {
-    auto layoutAbove = [&](LayoutID id) {
-        return nearestLayoutAlwaysAbove(at(id).flow);
+    uint32_t numberOfLayouts = static_cast<uint32_t>(layouts.size());
+    auto isAllocated = [&](LayoutID id) {
+        return at(id).flow.allocation != AllocationState::NeverAllocated;
     };
-
-    Vector<Vector<LayoutID>>& layoutsBelow = m_derivedTables.layoutsBelow;
-    layoutsBelow.clear();
-    layoutsBelow.grow(layouts.size());
-    Vector<Vector<LayoutID>>& layoutsExpectedBelow = m_derivedTables.layoutsExpectedBelow;
-    layoutsExpectedBelow.clear();
-    layoutsExpectedBelow.grow(layouts.size());
-    m_derivedTables.numberOfClasses = 0;
-    for (size_t index = 0; index < layouts.size(); ++index) {
-        LayoutID id(index);
-        const Layout& layout = at(id);
-        m_derivedTables.numberOfClasses += isDefinedByClass(layout);
-        if (layout.flow.allocation == AllocationState::NeverAllocated)
-            continue;
-        for (LayoutID base = layoutAbove(id); base && base != id; base = layoutAbove(base)) {
-            Vector<LayoutID>& below = layoutsBelow[base.index()];
-            bool isOnCycle = !below.isEmpty() && below.last() == id;
-            if (isOnCycle)
-                break;
-            below.append(id);
-        }
-        for (LayoutID base = expectedBaseOf(layout); base && base != id; base = expectedBaseOf(at(base))) {
-            Vector<LayoutID>& below = layoutsExpectedBelow[base.index()];
-            bool isOnCycle = !below.isEmpty() && below.last() == id;
-            if (isOnCycle)
-                break;
-            below.append(id);
-        }
-    }
+    m_derivedTables.layoutsBelow = ListsBelow<LayoutID>(numberOfLayouts, isAllocated, [&](LayoutID id) {
+        return nearestLayoutAlwaysAbove(at(id).flow);
+    });
+    m_derivedTables.layoutsExpectedBelow = ListsBelow<LayoutID>(numberOfLayouts, isAllocated, [&](LayoutID id) {
+        return expectedBaseOf(at(id));
+    });
+    m_derivedTables.numberOfClasses = static_cast<unsigned>(std::ranges::count_if(layouts, isDefinedByClass));
     m_familyTables->didChangeLayouts();
 }
 
@@ -755,8 +732,7 @@ bool importMayAnswerWithMock(const Module& module)
 
 bool requireMayAnswerWithMock(const Program& program, const Module& module)
 {
-    std::span<const uint8_t> name = program.string(module.path);
-    return importMayAnswerWithMock(module) && !spanHasPrefix(name, byteCast<uint8_t>("node:"_span)) && !equalSpans(name, byteCast<uint8_t>("bun"_span));
+    return importMayAnswerWithMock(module) && !equalSpans(program.string(module.path), byteCast<uint8_t>("bun"_span));
 }
 
 bool requireReadsModuleValue(const Program& program, const Module& module)
@@ -775,6 +751,23 @@ bool requireAddsToRequireCache(const Program& program, ModuleID referrer, Module
         return false;
     std::span<const uint8_t> name = program.string(program.at(target).path);
     return !spanHasPrefix(name, byteCast<uint8_t>("node:"_span)) && !equalSpans(name, byteCast<uint8_t>("bun"_span)) && !equalSpans(name, byteCast<uint8_t>("bun:test"_span));
+}
+
+Vector<ModuleID> libraryModulesListedInRequireCacheForStatements(const Program& program)
+{
+    Vector<ModuleID> listed;
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        const Module& importer = program.modules[index];
+        if (importer.kind != ModuleKind::SourceText)
+            continue;
+        for (const ModuleRequest& request : importer.requests) {
+            if (request.kind != ModuleRequestKind::Import || request.phase != ImportPhase::Evaluation || !requireAddsToRequireCache(program, ModuleID(index), request.target))
+                continue;
+            if (!spanHasPrefix(program.string(program.at(request.target).path), byteCast<uint8_t>("bun:"_span)) && !listed.contains(request.target))
+                listed.append(request.target);
+        }
+    }
+    return listed;
 }
 
 BuiltinID functionOfHostThatRequireCallsFor(const Module& module)

@@ -130,6 +130,15 @@ struct RemovedParameters {
     Vector<BitVector> constants;
 };
 
+struct HandedOn {
+    friend auto operator<=>(const HandedOn&, const HandedOn&) = default;
+
+    uint32_t callee;
+    uint32_t calleeParameter;
+    uint32_t function;
+    uint32_t parameter;
+};
+
 } // anonymous namespace
 
 static RemovedParameters findUnusedParameters(const Program& program, const CallGraph& callGraph, BuildContext& build)
@@ -166,26 +175,37 @@ static RemovedParameters findUnusedParameters(const Program& program, const Call
                 unused[index].set(i);
         }
     });
-    Vector<unsigned> forwardingFunctions;
+    uint64_t numberOfEntriesRead = 0;
+    Vector<std::pair<uint32_t, uint32_t>> foundToBeRead;
+    auto noteThatCalleeReads = [&](const HandedOn& handedOn) {
+        ++numberOfEntriesRead;
+        if (!unused[handedOn.function].get(handedOn.parameter))
+            return;
+        if (hasOnlyValue[handedOn.function].get(handedOn.parameter)) {
+            constants[handedOn.function].set(handedOn.parameter);
+            return;
+        }
+        unused[handedOn.function].clear(handedOn.parameter);
+        foundToBeRead.append({ handedOn.function, handedOn.parameter });
+    };
+    Vector<HandedOn> waitingByCallee;
     for (unsigned index = 0; index < count; ++index) {
-        if (!forwarded[index].isEmpty())
-            forwardingFunctions.append(index);
-    }
-    for (bool changed = true; changed;) {
-        changed = false;
-        for (unsigned index : forwardingFunctions) {
-            for (auto& forwardedParameter : forwarded[index]) {
-                if (!unused[index].get(forwardedParameter.parameter) || unused[forwardedParameter.callee.index()].get(forwardedParameter.calleeParameter))
-                    continue;
-                if (hasOnlyValue[index].get(forwardedParameter.parameter)) {
-                    constants[index].set(forwardedParameter.parameter);
-                    continue;
-                }
-                unused[index].clear(forwardedParameter.parameter);
-                changed = true;
-            }
+        for (auto& forwardedParameter : forwarded[index]) {
+            HandedOn handedOn { static_cast<uint32_t>(forwardedParameter.callee.index()), forwardedParameter.calleeParameter, index, forwardedParameter.parameter };
+            if (unused[handedOn.callee].get(handedOn.calleeParameter))
+                waitingByCallee.append(handedOn);
+            else
+                noteThatCalleeReads(handedOn);
         }
     }
+    if (!foundToBeRead.isEmpty())
+        AOT::sort(waitingByCallee);
+    while (!foundToBeRead.isEmpty()) {
+        auto [function, parameter] = foundToBeRead.takeLast();
+        for (auto handedOn = std::ranges::lower_bound(waitingByCallee, HandedOn { function, parameter, 0, 0 }); handedOn != waitingByCallee.end() && handedOn->callee == function && handedOn->calleeParameter == parameter; ++handedOn)
+            noteThatCalleeReads(*handedOn);
+    }
+    build.statistics().count(StatisticID::ParametersHandedOnRead, numberOfEntriesRead);
     return { WTF::move(unused), WTF::move(constants) };
 }
 

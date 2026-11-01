@@ -200,7 +200,8 @@ ShapeVariants chooseShapeVariants(const PlacementContext& context, const PlacedS
             variants.ordered.quickSet(index);
             continue;
         }
-        if (!context.isCompiledObject(id))
+        // A layout of an image below has its numbers: numberShapes().
+        if (!context.isCompiledObject(id) || context.program.at(id).has(LayoutFlags::IsOfImageBelow))
             continue;
         bool someOrdered = !context.slots().layout(id).keysAreNeverEnumerated;
         bool someUnordered = !someOrdered || (std::ranges::any_of(context.program.at(id).flow.allocationClasses, [&](AllocationClassID allocationClass) {
@@ -796,7 +797,7 @@ private:
             }
         }
         for (unsigned i = 0; i < m_numberOfLayouts; ++i) {
-            if (m_context.isCompiledObject(LayoutID(i)) && !m_leafOfLayout[i])
+            if (m_context.isCompiledObject(LayoutID(i)) && !m_leafOfLayout[i] && !m_context.program.at(LayoutID(i)).has(LayoutFlags::IsOfImageBelow))
                 m_layoutsTestedAlone.append(i);
         }
         AOT::stableSortInLine(m_layoutsTestedAlone, [&](uint32_t a, uint32_t b) {
@@ -1068,7 +1069,12 @@ private:
 
 ShapeNumbering numberShapes(const PlacementContext& context, const ShapeTestCandidates& candidates, const ShapeVariants& variants)
 {
-    return ShapeNumberer(context, candidates, variants).run();
+    ShapeNumbering numbering = ShapeNumberer(context, candidates, variants).run();
+    for (const Program::RecordOfImageBelow& below : context.program.recordsOfImagesBelow) {
+        if (context.isCompiledObject(below.layout))
+            numbering.shapesOfLayout[below.layout.index()] = ShapeRange { below.firstShape, below.numberOfShapes };
+    }
+    return numbering;
 }
 
 static ShapeTest shortenForKnownShapes(const ShapeTest& general, std::span<const uint32_t> tested, std::span<const uint32_t> known)
@@ -1298,7 +1304,8 @@ ShapeTable deriveShapeTests(const PlacementContext& context, const PlacedSites& 
     parts.shapesBelow = shapesOfImagesBelow(context.build);
     std::ranges::fill(parts.shapeCountPrefixSums.mutableSpan().subspan(1, parts.shapesBelow), 1);
     for (unsigned index = 0; index < numbering.shapesOfLayout.size(); ++index) {
-        if (!numbering.shapesOfLayout[index].isEmpty())
+        // The image that makes the objects describes their shapes.
+        if (!numbering.shapesOfLayout[index].isEmpty() && !context.program.layouts[index].has(LayoutFlags::IsOfImageBelow))
             describeShapes(context, variants, LayoutID(index), numbering.shapesOfLayout[index], parts);
     }
     for (uint32_t shape = 1; shape <= numbering.numberOfShapes; ++shape)

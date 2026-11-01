@@ -2108,14 +2108,17 @@ static bool hasFormWithoutAbsentElement(FunctionPassContext& context, const Pres
     return array.opcode != Opcode::CallBuiltin || !program.builtins().at(array.overload()).code.prefixForm;
 }
 
+// The read keeps its type less undefined, which has to admit the NaN. An operand of any other type is tested by its operator in the same round, and a test is no conversion.
+static bool hasTypesToReadHolesAsNaN(FunctionPassContext& context, const PresenceQuery& query)
+{
+    const Type& type = context.program.typeOf(context.function, query.access);
+    return query.arrayStorage == ArrayStorage::Double && query.keyIsInteger && type.isNumberOrNullish() && type.mayBeNaN();
+}
+
 // That a hole reads as undefined is a fact about the prototypes, whose test pays only in front of a loop.
 static bool canReadHolesAsNaN(FunctionPassContext& context, const PresenceQuery& query)
 {
-    // The read keeps its type less undefined, which has to admit the NaN. An operand of any other type is tested by its operator in the same round, and a test is no conversion.
-    const Type& type = context.program.typeOf(context.function, query.access);
-    if (query.arrayStorage != ArrayStorage::Double || !query.keyIsInteger || !type.isNumberOrNullish() || !type.mayBeNaN())
-        return false;
-    return isMadeInFrontOfLoopAround(context, query.receiver, query.block) && everyUseConvertsToNumber(context.program, context.analyses, query.access);
+    return hasTypesToReadHolesAsNaN(context, query) && isMadeInFrontOfLoopAround(context, query.receiver, query.block) && everyUseConvertsToNumber(context.program, context.analyses, query.access);
 }
 
 // Nothing where the access keeps its arm for an absent element.
@@ -2156,6 +2159,16 @@ static TypeID testedTypeOfKey(const TestSiteReporter& reporter, ValueID key)
     return mayBeIndex ? TypeTable::int32 : TypeID();
 }
 
+static TypeID testedTypeOfStoredValue(const TestSiteReporter& reporter, ValueID value, const ElementAccessPlan& plan)
+{
+    if (TypeID tested = testedTypeOfPrimitive(reporter, value))
+        return tested;
+    if (plan.form != ElementAccessForm::TypedArray || reporter.function().at(value).expected().predicted())
+        return { };
+    Type number = reporter.typeOf(value).withoutPrimitives(Primitive::UndefinedOrNull);
+    return number.isNumber() ? testedNumberTypeContaining(number) : TypeID();
+}
+
 static std::optional<ElementAccessTests> createTests(const TestSiteReporter& reporter, ArrayUses& arrays, const Value& use, const ElementAccessPlan& plan)
 {
     ValueID receiver = use.objectOperand();
@@ -2185,7 +2198,7 @@ static std::optional<ElementAccessTests> createTests(const TestSiteReporter& rep
     };
     if (plan.testsKeyIsNumber && !appendTestOfPrimitive(key, testedTypeOfKey(reporter, key)))
         return std::nullopt;
-    if (plan.testsStoredValue && !appendTestOfPrimitive(use.valueOperand(), testedTypeOfPrimitive(reporter, use.valueOperand())))
+    if (plan.testsStoredValue && !appendTestOfPrimitive(use.valueOperand(), testedTypeOfStoredValue(reporter, use.valueOperand(), plan)))
         return std::nullopt;
     if (plan.testsInBounds)
         tests.append(makeBoundsTest(receiver, key));
@@ -2378,6 +2391,8 @@ void reportElementAccessTests(TestSiteReporter& reporter)
         reporter.report(tests->span(), plan.isCharacterReadAfterTests() ? declaredBoundOf(Opcode::StringRangeCharacterOrUndefined) : effectsAfterRewrite(plan, keyTypeAfterTests(reporter, use, plan)));
         if (expectsPresentElement)
             countPresenceTest(reporter);
+        if (plan.readsHoleAsNaN && reporter.didReport())
+            reporter.noteThatHoleMayBeReadAsNaN();
     });
 }
 
@@ -2444,13 +2459,14 @@ void rewriteTestedElementAccess(TestSiteRewriter& rewriter)
     // The plan is made again here and knows nothing of what was expected of the position when the tests were reported.
     if (plan.isPresent || (plan.receiverIsNeverPristine && plan.operation == Opcode::PutArrayElement && hasArrayStorageForm(plan.arrayStorage)))
         plan.requiredAspects = { };
-    // A comparison with the length also puts the test of the bounds, so the test alone does not say what was expected of a hole.
+    // A comparison with the length also puts the test of the bounds, so the test alone does not say what was expected of a hole. The site does. What the tests have found since is asked here:
+    // nothing that takes the lists of uses, which every rewrite before this one has made stale.
     plan.readsHoleAsNaN = false;
-    if (plan.operation == Opcode::GetArrayElement && plan.isInBounds) {
+    if (plan.operation == Opcode::GetArrayElement && plan.isInBounds && rewriter.mayReadHoleAsNaN()) {
         const Value& read = rewriter.useValue();
         const Type& receiver = rewriter.program().typeOf(rewriter.function(), read.objectOperand());
         PresenceQuery query = presenceQueryOf(rewriter.use(), point.block, read, plan, receiver, rewriter.program().typeOf(rewriter.function(), read.propertyOperand()));
-        plan.readsHoleAsNaN = choosePresenceTest(rewriter.context(), query) == PresenceTest::InBoundsWithHolesAsNaN;
+        plan.readsHoleAsNaN = !query.isNeverPristine && !query.isDense && hasTypesToReadHolesAsNaN(rewriter.context(), query);
     }
     ASSERT(plan.needsNoTest());
     if (!plan.needsNoTest())

@@ -297,6 +297,7 @@ static bool narrowsWithoutTest(Opcode opcode)
 
 static Vector<EntryCheck, 4> findEntryChecksThatMayFail(const Program& program, const Function& function)
 {
+    ParametersLeftToBody leftToBody(program, function);
     Vector<EntryCheck, 4> checks;
     const Block& entry = function.at(entryBlock);
     if (entry.handler)
@@ -322,7 +323,7 @@ static Vector<EntryCheck, 4> findEntryChecksThatMayFail(const Program& program, 
             continue;
         if (!given.overlaps(checked, program))
             return { };
-        if (!changesCodeWhereProven(checked))
+        if (!changesCodeWhereProven(checked) || leftToBody.contains(entryParameter, checked))
             continue;
         checks.append(EntryCheck { id, static_cast<unsigned>(entryParameter), value.expectedType().predicted(), value.site() });
     }
@@ -339,6 +340,7 @@ static Vector<EntryCheck, 4> findEntryChecksThatMayFail(const Program& program, 
 // The declared type of a parameter belongs to the variable, which the body may assign to.
 static Vector<CheckedEntryValue, 2> findCheckedEntryValues(const Program& program, const Function& function, std::span<const EntryCheck> entryChecks)
 {
+    ParametersLeftToBody leftToBody(program, function);
     Vector<CheckedEntryValue, 8> entryValues;
     // Each name of the value of a parameter, with the position of the parameter in the list above.
     Vector<std::pair<ValueID, unsigned>, 8> sameValues;
@@ -422,7 +424,7 @@ static Vector<CheckedEntryValue, 2> findCheckedEntryValues(const Program& progra
             continue;
         const Type& given = program.typeOf(function, entry.parameters[entryValue.entryParameter]);
         const Type& checked = program.at(entryValue.type);
-        if (given.isSubsetOf(checked, program) || !given.overlaps(checked, program) || !changesCodeWhereProven(checked))
+        if (given.isSubsetOf(checked, program) || !given.overlaps(checked, program) || !changesCodeWhereProven(checked) || leftToBody.contains(entryValue.entryParameter, checked))
             continue;
         if (entryValue.entryCheck && !checked.isSubsetOf(program.at(entryChecks[*entryValue.entryCheck].type), program))
             continue;
@@ -542,6 +544,31 @@ static Function createTypedBody(const Program& program, Function&& body, std::sp
     return WTF::move(body);
 }
 
+// Beside a class that no test tells from it, a class loses in a cast what is proven of it: `Array<int, proven>|Object` cast to `Array` is `Array`. A check goes with the other checks and its operand says the rest.
+// The claim that stands in its place stays, so it says itself what its operand has proven.
+static bool sayWhatOperandsOfFormerChecksHaveProven(const Program& program, Function& body, TypeArena& types, std::span<const EntryCheck> checks)
+{
+    TypingContext typing { program, body, types };
+    bool hasChanged = false;
+    for (const EntryCheck& check : checks) {
+        RELEASE_ASSERT(check.check.index() < body.values.size());
+        if (body.at(check.check).opcode != Opcode::AssumeType)
+            continue;
+        TypeID claimed = body.at(check.check).provenType();
+        TypeID source = body.at(body.at(check.check).valueOperand()).type;
+        if (types.at(claimed).isSubsetOf(types.at(source), program))
+            continue;
+        TypeID kept = types.intersectionOf(claimed, source);
+        if (kept == claimed)
+            continue;
+        Value& proven = body.edit(check.check);
+        proven.becomeAssumeType(proven.valueOperand(), Proven::byPosition(kept));
+        proven.type = computeResultTypeID(typing, proven);
+        hasChanged = true;
+    }
+    return hasChanged;
+}
+
 // A cast between a parameter and its check holds what is left of the type that the parameter has behind the tests.
 static void typeCastsAheadOfChecks(const Program& program, Function& body, TypeArena& types, std::span<const EntryCheck> checks)
 {
@@ -604,11 +631,16 @@ static void emitEntrance(const AnalysisContext& context, TypeArena& types, Funct
     for (unsigned index = 0; index < function.numberOfEntryParameters(); ++index)
         arguments.append(builder.addParameter(entry, declaredEntryTypeOf(typing, function, index)));
 
-    BlockID failed = entrance.tests.isEmpty() ? BlockID() : builder.addBlock(BlockFrequency::Unlikely);
+    bool isSabotaged = context.build.isSabotaged(Sabotage::EntryChecksAlwaysPass);
+    BlockID failed = entrance.tests.isEmpty() || isSabotaged ? BlockID() : builder.addBlock(BlockFrequency::Unlikely);
     if (failed)
         builder.emitFailureOfPredictions(Target { failed, { }, { } });
     Vector<ValueID, 8> testedArguments = arguments;
     for (const EntryTest& check : entrance.tests) {
+        if (isSabotaged) {
+            testedArguments[check.entryParameter] = builder.append(makeAssumeType(arguments[check.entryParameter], Proven::byRulesWithoutChecks(check.type)));
+            continue;
+        }
         ValueID test = builder.appendTypeTest(arguments[check.entryParameter], check.type);
         IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, 0, BlockFrequency::Normal, BlockFrequency::Unlikely);
         testedArguments[check.entryParameter] = branch.provenOnTaken;
@@ -741,9 +773,27 @@ void splitBehindEntryChecks(ProgramEditor& editor, const Heat* heat, BuildContex
         // A parameter that is tested for less than it was declared with has another type, and so has every cast that stands between it and the checks that were taken in.
         if (!splits[index].checkedEntryValues.isEmpty()) {
             FunctionAnalyses analyses(context, body);
-            typeValuesFromNever(TypePropagationInputs { program, id, body, analyses, arenas.types, build });
-        } else
+            // Where typing cuts code that nothing reaches any more, the values that stay get other numbers.
+            Renumbering renumbering;
+            TypePropagationInputs typing { program, id, body, analyses, arenas.types, build };
+            typing.renumbering = &renumbering;
+            typeValuesFromNever(typing);
+            Vector<EntryCheck, 4> checks = splits[index].checks;
+            if (!renumbering.values.isEmpty()) {
+                checks.removeAllMatching([&](EntryCheck& check) {
+                    return !(check.check = renumbering.newIDOf(check.check));
+                });
+            }
+            if (sayWhatOperandsOfFormerChecksHaveProven(program, body, arenas.types, checks.span()))
+                typeValuesFromNever(TypePropagationInputs { program, id, body, analyses, arenas.types, build });
+        } else {
             typeCastsAheadOfChecks(program, body, arenas.types, splits[index].checks.span());
+            // What reads a claim is typed by it.
+            if (sayWhatOperandsOfFormerChecksHaveProven(program, body, arenas.types, splits[index].checks.span())) {
+                FunctionAnalyses analyses(context, body);
+                typeValuesFromNever(TypePropagationInputs { program, id, body, analyses, arenas.types, build });
+            }
+        }
         // While the tests at its head were checks, the function waited for its generic version and kept what stands behind a value of type never. A body without a check waits for nothing.
         if (!waitsForGenericVersion(program, body)) {
             FunctionAnalyses analyses(context, body);

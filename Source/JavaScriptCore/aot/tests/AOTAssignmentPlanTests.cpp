@@ -16,6 +16,7 @@
 #include "AOTObjectModelCaches.h"
 #include "AOTOperationCallScope.h"
 #include "AOTProgramIdentifiers.h"
+#include "AOTPropertyCaches.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTVector.h"
@@ -642,6 +643,80 @@ static void testCopiesWithoutFrameFillEmptyObjectsAndAreForgottenAtEachCollectio
     AOT_TEST_CHECK(!tryCopy(prototype, source) && enumerableKeysOf(program, prototype).isEmpty());
 }
 
+// `Object.defineProperty(this, key, { .. })` in a constructor, under a key that is made when the program runs.
+static void testNameThatNoFieldHasIsAddedToTheNextObjectAsToTheLast(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    State& state = program.state();
+    Identifier name = Identifier::fromString(vm, "madeWhenTheProgramRuns"_s);
+    Identifier second = Identifier::fromString(vm, "madeBehindIt"_s);
+    constexpr unsigned hidden = PropertyAttribute::DontEnum | PropertyAttribute::DontDelete;
+    auto holds = [&](Object* object, const Identifier& key, int32_t value, unsigned attributes) {
+        unsigned found = 0;
+        JSValue held = object->extraProperties() ? object->extraProperties()->getDirect(vm, key, found) : JSValue();
+        return held == jsNumber(value) && found == attributes;
+    };
+    for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full }) {
+        Object* first = createPoint(program, 1, 2);
+        StructureID before = first->structureID();
+        AOT_TEST_CHECK(!state.propertyCaches->findAddedExtraProperty(before, name.impl()));
+        AOT_TEST_CHECK(first->tryAddAbsentExtraProperty(vm, name, jsNumber(3), hidden) && holds(first, name, 3, hidden));
+        const AddedExtraProperty* remembered = state.propertyCaches->findAddedExtraProperty(before, name.impl());
+        AOT_TEST_CHECK(remembered && remembered->attributes == hidden && !remembered->extraPropertiesBefore && remembered->structureAfter == first->structureID());
+        AddedExtraProperty added = *remembered;
+
+        Object* next = createPoint(program, 4, 5);
+        AOT_TEST_CHECK(next->tryRepeat(vm, added, jsNumber(6)) && holds(next, name, 6, hidden));
+        AOT_TEST_CHECK(next->structureID() == first->structureID() && next->orderWord() == first->orderWord() && next->extraProperties()->structureID() == first->extraProperties()->structureID());
+        AOT_TEST_CHECK(hasKeys(program, next, { "x"_s, "y"_s }));
+
+        // A descriptor that is an object says the same in other words.
+        PropertyDescriptor described(jsNumber(12), hidden);
+        Object* byDescriptor = createPoint(program, 4, 5);
+        AOT_TEST_CHECK(byDescriptor->tryDefineAsOnTheLastObject(vm, name, described) && holds(byDescriptor, name, 12, hidden) && byDescriptor->structureID() == first->structureID());
+        AOT_TEST_CHECK(!byDescriptor->tryDefineAsOnTheLastObject(vm, name, described) && holds(byDescriptor, name, 12, hidden));
+        AOT_TEST_CHECK(!createPoint(program, 4, 5)->tryDefineAsOnTheLastObject(vm, name, PropertyDescriptor(jsNumber(12), 0)));
+        AOT_TEST_CHECK(!createPoint(program, 4, 5)->tryDefineAsOnTheLastObject(vm, second, described));
+        PropertyDescriptor accessor;
+        accessor.setGetter(jsUndefined());
+        AOT_TEST_CHECK(!createPoint(program, 4, 5)->tryDefineAsOnTheLastObject(vm, name, accessor));
+        PropertyDescriptor withoutValue;
+        withoutValue.setWritable(true);
+        Object* undefinedByDescriptor = createPoint(program, 4, 5);
+        AOT_TEST_CHECK(undefinedByDescriptor->tryDefineAsOnTheLastObject(vm, name, withoutValue) && undefinedByDescriptor->extraProperties()->getDirect(vm, name).isUndefined());
+
+        // An object in any other state is left as it is.
+        AOT_TEST_CHECK(!next->tryRepeat(vm, added, jsNumber(7)) && holds(next, name, 6, hidden));
+        Object* closed = createPoint(program, 1, 2);
+        closed->setIntegrity(program.realm(), Object::Integrity::NotExtensible);
+        AOT_TEST_CHECK(!closed->tryRepeat(vm, added, jsNumber(7)) && !closed->tryAddAbsentExtraProperty(vm, name, jsNumber(7), hidden) && !closed->extraProperties());
+        Object* withOtherName = createPoint(program, 1, 2);
+        AOT_TEST_CHECK(withOtherName->tryAddAbsentExtraProperty(vm, second, jsNumber(8), 0) && !withOtherName->tryRepeat(vm, added, jsNumber(7)));
+        AOT_TEST_CHECK(!createCopy(program)->tryRepeat(vm, added, jsNumber(7)));
+
+        // The second name of an object is remembered under the state that the first has left.
+        StructureID withOne = first->structureID();
+        AOT_TEST_CHECK(first->tryAddAbsentExtraProperty(vm, second, jsNumber(9), 0) && holds(first, second, 9, 0));
+        AOT_TEST_CHECK(next->tryAddAbsentExtraProperty(vm, second, jsNumber(10), 0) && holds(next, second, 10, 0) && holds(next, name, 6, hidden));
+        AOT_TEST_CHECK(next->structureID() == first->structureID() && next->extraProperties()->structureID() == first->extraProperties()->structureID());
+        AOT_TEST_CHECK(hasKeys(program, next, { "x"_s, "y"_s, "madeBehindIt"_s }));
+        if (const AddedExtraProperty* behind = state.propertyCaches->findAddedExtraProperty(withOne, second.impl()))
+            AOT_TEST_CHECK(behind->extraPropertiesBefore && !behind->attributes);
+
+        // Other attributes make another object of it.
+        Object* listed = createPoint(program, 1, 2);
+        AOT_TEST_CHECK(listed->tryAddAbsentExtraProperty(vm, name, jsNumber(11), 0) && holds(listed, name, 11, 0) && hasKeys(program, listed, { "x"_s, "y"_s, "madeWhenTheProgramRuns"_s }));
+
+        vm.heap.collectSync(scope);
+        AOT_TEST_CHECK(!state.propertyCaches->findAddedExtraProperty(before, name.impl()));
+    }
+
+    Object* prototype = createPoint(program, 1, 2);
+    prototype->didBecomePrototype(vm);
+    StructureID ofPrototype = prototype->structureID();
+    AOT_TEST_CHECK(prototype->tryAddAbsentExtraProperty(vm, name, jsNumber(1), hidden) && !state.propertyCaches->findAddedExtraProperty(ofPrototype, name.impl()));
+}
+
 // Where a later move fails, a field that the target lists keeps what the copy has stored there, which whoever copies in another way stores again.
 static void testCopiesWithoutFrameOverwriteFieldsThatTheTargetLists(LoadedProgram& program)
 {
@@ -777,6 +852,7 @@ std::span<const NativeTest> assignmentPlanTests()
         { "assignment-plans/plans-outlive-collections-while-their-structures-live"_s, withPoints<testPlansOutliveCollectionsWhileTheirStructuresLive> },
         { "assignment-plans/copies-without-frame-fill-empty-objects-and-are-forgotten-at-each-collection"_s, withPoints<testCopiesWithoutFrameFillEmptyObjectsAndAreForgottenAtEachCollection> },
         { "assignment-plans/copies-without-frame-overwrite-fields-that-the-target-lists"_s, withPoints<testCopiesWithoutFrameOverwriteFieldsThatTheTargetLists> },
+        { "assignment-plans/a-name-that-no-field-has-is-added-to-the-next-object-as-to-the-last"_s, withPoints<testNameThatNoFieldHasIsAddedToTheNextObjectAsToTheLast> },
         { "assignment-plans/integers-move-into-slots-that-may-hold-none"_s, testIntegersMoveIntoSlotsThatMayHoldNone },
         { "assignment-plans/literal-strings-move-into-slots-of-references"_s, testLiteralStringsMoveIntoSlotsOfReferences },
     };

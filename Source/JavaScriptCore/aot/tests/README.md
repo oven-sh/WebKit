@@ -219,7 +219,8 @@ With or without an architecture, `REQUIRES` takes these words, for output that d
 - `not-windows`: on Windows, x86-64 code follows another calling convention.
 - `windows`: the other half of `not-windows`. A count of instructions may differ there on either architecture: B3 numbers temporaries in the order in which
   the arguments of its calls are evaluated, a compiler for Windows evaluates them from the right, and the register allocator breaks ties by those numbers.
-- `faulting-loop-polls`: a loop poll is a load that faults (x86-64 Linux). Elsewhere it is a comparison with a call on its slow path.
+- `faulting-loop-polls`: a loop poll is a load that faults (on Linux, macOS and Windows; not in a hardened engine for ARM64).
+- `calling-loop-polls`: the other half of `faulting-loop-polls`: a loop poll is a comparison with a call on its slow path.
 - `no-jscvt`: a number is converted to an int32 by a truncation, a test and a slow path. ARM64 with FEAT_JSCVT (macOS) has one instruction for it.
 - `code-outside-image`: the engine may run code that is not in the image. A hardened engine never does.
 
@@ -444,7 +445,7 @@ A command is registered by the owner of the code it runs, in `aot/**/AOT*TestCom
   `loop #<header>, instructions: <n>, patchpoints: <n>`, then `, rare instructions: <n>` if the loop has blocks that only a rare edge leads to, then
   `, <register> steps by <n>` for each register that one `Add` or `Sub` of a constant defines and nothing else in the loop does. `instructions` counts
   the Air instructions but `Patch` in the other blocks, the ones an iteration is expected to run. It needs no hardware counter and no run, and it moves
-  when a spill, a copy or an address computation gets into the loop. `, entered rarely` ends the line of a
+  when a spill, a copy or an address computation gets into the loop. `, fragments: <n>` follows if other blocks are emitted between those blocks, which then lie in `<n>` separate runs. `, entered rarely` ends the line of a
   loop whose header only a rare edge of the function leads to: the copy of a loop that keeps its checks. `size` prints the count for the whole function and nothing
   else, and `size loops` that line and the first line of each loop.
 - `list-passes` prints the pass table: id, scope, necessity, forms.

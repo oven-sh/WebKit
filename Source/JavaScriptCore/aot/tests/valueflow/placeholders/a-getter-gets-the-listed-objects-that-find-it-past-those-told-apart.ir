@@ -1,8 +1,7 @@
 # plain = {}; first = { get a() {} }; second = { get b() {} }; bare = { held }; Object.values(plain); Object.values(first); Object.values(second); Object.values(bare)
-# More objects in the hub of what has its values listed than the analysis tells apart: it tells one apart here, the plain object, which has the first layout. The three others come together.
-# Object.values runs the getters of its operand with the operand as `this`. Each getter gets the object that finds it, not the ones that came together with that object.
+# More objects in the hub of what has its values listed than the analysis tells apart one by one, which is one here: it looks at the objects of one layout together, and the first and the second have one layout.
+# Object.values runs the getters of its operand with the operand as `this`. Each getter gets the object that finds it, not the one that came together with it.
 # OPTIONS: limit=MaxValueFlowMembersToldApart:1
-# LOSS: MaxValueFlowMembersToldApart
 # RUN: valueflow-why values=f1:v1 values=f2:v1
 # CHECK: values=f1:v1
 # CHECK: operand 0 {{*}} 1 members: [[first]]@f0
@@ -12,21 +11,20 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Plain"
-layout L1 name="First"
-layout L2 name="Second"
-layout L3 name="Bare" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="WithGetter"
+layout L2 name="Bare" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = NewObject layout=L0 fields=[]
     v1 = NewObject layout=L1
     v2 = FinishObject v1
     v3 = NewClosure function=f1
     DefineGetter v2, v3 key="a"
-    v5 = NewObject layout=L2
+    v5 = NewObject layout=L1
     v6 = FinishObject v5
     v7 = NewClosure function=f2
     DefineGetter v6, v7 key="b"
     v9 = Integer integer=1
-    v10 = NewObject -, v9 layout=L3 fields=[0]
+    v10 = NewObject -, v9 layout=L2 fields=[0]
     v11 = Builtin builtin=ObjectValues
     v12 = Call v11, -, v0
     v13 = Call v11, -, v2

@@ -30,6 +30,7 @@ namespace AOT {
 
 class CacheRegistry;
 class CallSiteCache;
+class CheckedFrameCells;
 class Image;
 class Modules;
 class PagesOfVM;
@@ -43,6 +44,8 @@ struct FunctionTables;
 struct QuotesOfPlaces;
 struct Instance;
 struct MockedModules;
+struct OperationsBeingValidated;
+struct RecheckedCells;
 struct RuntimeCounters;
 
 // Every live Structure whose objects store elements without asking the objects above them.
@@ -106,6 +109,8 @@ public:
     };
 
     void attachImage(VM&);
+    // A Worker whose file is in no image runs apart from them. What it interprets is counted like everybody's.
+    void countWithoutImage(VM&);
     JS_EXPORT_PRIVATE void run(const Image&);
     // The engine jumps to an adapter from many places. Where images share realms, the adapter itself sees to it that its image runs, and that the one before runs again when its frame is left.
     // It does both in place, and calls only for room to note one more frame.
@@ -177,6 +182,7 @@ public:
     ImageBelowAdapter* endOfRoomForImagesBelowAdapters { nullptr };
     UniqueArray<ImageBelowAdapter> imagesBelowAdapters;
     bool validatesRuntime { false };
+    bool didFinishCollection { false };
     // Some object has become a dictionary for the names that it is being given.
     bool hasObjectsBeingFilled { false };
     // It is marked as a prototype when it is created, but nothing inherits from it until the class definition ends. Only compared with.
@@ -210,11 +216,18 @@ public:
     void* stackPointerOfImport { nullptr };
     // What is on top of the stack while an import() of compiled code asks the loader. Bytecode calls a host function for that, and its frame is the first that a stack trace skips.
     CallFrame* frameOfImportThatAsksLoader { nullptr };
+    // While the host loads what a file of a test run asked for under a name nobody knows, and an executable would hold the file too.
+    bool askerLoadsCompiledFilesAlone { false };
+    // An import() of compiled code asks the host what its name stands for.
+    bool isResolvingImportCall { false };
     std::unique_ptr<PagesOfVM> pages;
     std::unique_ptr<ProgramIdentifiers> identifiers;
     std::unique_ptr<CacheRegistry> caches;
     std::unique_ptr<RuntimeCounters> counters;
     std::unique_ptr<RuntimeReporter> reporter;
+    std::unique_ptr<RecheckedCells> recheckedCells;
+    CheckedFrameCells* checkedFrameCells { nullptr };
+    const void* lowestFrameOfCheckedCells { nullptr };
     std::unique_ptr<FormatPatternState, FormatPatternStateDeleter> formatPatternState;
     // By Image::position(). Its size never changes while the VM runs code, so the collector's threads may read it.
     Vector<PartsOfImage, 1> parts;
@@ -230,8 +243,11 @@ public:
     std::unique_ptr<QuotesOfPlaces, void (*)(QuotesOfPlaces*)> quotesOfPlaces { nullptr, nullptr };
     // Modules::holdText().
     uint32_t numberOfTextsThatWait { 0 };
+    uint32_t numberOfCallsThatWaitApart { 0 };
     uint32_t numberOfTextsAskedFor { 0 };
     uint32_t turnOfTexts { 0 };
+    // AOTRuntimeValidation.cpp, which alone knows the type.
+    std::unique_ptr<OperationsBeingValidated, void (*)(OperationsBeingValidated*)> operationsBeingValidated { nullptr, nullptr };
 };
 
 static_assert(sizeof(PartOfRunningImage<RuntimeTable>) == sizeof(void*));

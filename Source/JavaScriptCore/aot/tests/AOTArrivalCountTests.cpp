@@ -95,6 +95,35 @@ globalThis.publish = (makePoint, makeSize, readX) => {
 )JS" ""_s);
 }
 
+static void testNamesWhatChangedAnObject()
+{
+    checkOutputOfProgramInShell(programText,
+        "layout:0 extra-properties 3\n"
+        "layout:0 frozen,sealed,not-extensible 1\n"
+        "layout:0 other-prototype 1\n"
+        "layout:0 cell-marked,field-outside-slot,extra-properties 2\n"
+        "rows 4\n"_s,
+        { "count-arrivals"_s, withoutTypeTests }, R"JS(
+globalThis.publish = (makePoint, makeSize, readX) => {
+    readX(makePoint(0));
+    const withExtraProperty = makePoint(1);
+    withExtraProperty.extra = 2;
+    for (let i = 0; i < 3; i++) readX(withExtraProperty);
+    readX(Object.freeze(makePoint(2)));
+    readX(Object.setPrototypeOf(makePoint(3), null));
+    const withGetter = Object.defineProperty(makePoint(4), "y", { get() { return 5; }, configurable: true, enumerable: true });
+    for (let i = 0; i < 2; i++) readX(withGetter);
+    const counts = new Map();
+    for (const [count, name, state] of aotRuntimeCounters().split("\n").map(line => line.split("\t"))) {
+        if (name && name.startsWith("state:"))
+            counts.set(state, (counts.get(state) || 0) + Number(count));
+    }
+    for (const state of ["layout:0 extra-properties", "layout:0 frozen,sealed,not-extensible", "layout:0 other-prototype", "layout:0 cell-marked,field-outside-slot,extra-properties"]) print(state + " " + (counts.get(state) || 0));
+    print("rows " + counts.size);
+};
+)JS" ""_s);
+}
+
 static void testCountsForeignObjectWithItsNames()
 {
     checkOutputOfProgramInShell(programText,
@@ -235,6 +264,75 @@ function f0 name="readX" module=m0 parameters=[{type=L0|L2 flags=[IsExpected]}, 
 }
 )IR"_s;
 
+static void testAccessByKeySaysWhatTheKeyWas()
+{
+    Realms realms;
+    JSGlobalObject* realm = realms.plain();
+    ArrivalCounts counts;
+    uint32_t site = 0;
+    auto record = [&](ASCIILiteral receiver, ASCIILiteral key) {
+        counts.record(realm, realms.evaluate(realm, receiver), realms.evaluate(realm, key), site++);
+    };
+    record("[1, 2]"_s, "1"_s);
+    record("[1.5]"_s, "3"_s);
+    record("[{}]"_s, "0.5"_s);
+    record("[1, 2]"_s, "'1'"_s);
+    record("[1, 2]"_s, "-1"_s);
+    record("'ab'"_s, "1"_s);
+    record("new Uint8Array(2)"_s, "2"_s);
+    record("({ ab: 1 })"_s, "'ab'"_s);
+    record("({ ab: 1 })"_s, "String.fromCharCode(97, 98)"_s);
+    record("Object.create({ ab: 1 })"_s, "'ab'"_s);
+    record("({ ab: 1 })"_s, "String.fromCharCode(122, 113, 120, 119, 106)"_s);
+    record("({ ab: 1 })"_s, "(() => { const left = String.fromCharCode(97, 98, 99); return left + String.fromCharCode(100, 101, 102); })()"_s);
+    record("({ ab: 1 })"_s, "Symbol()"_s);
+    record("({ ab: 1 })"_s, "null"_s);
+    record("[1, 2]"_s, "'length'"_s);
+    record("new Proxy({ ab: 1 }, {})"_s, "'ab'"_s);
+
+    StringBuilder withoutMarks;
+    for (StringView line : StringView(dumped(counts)).split('\n'))
+        withoutMarks.append(line.left(line.reverseFind("; #"_s)), '\n');
+    AOT_TEST_CHECK(withoutMarks.toString() ==
+        "1\tarrival:0\tclass:Array; int32; key:index; own\n"
+        "1\tarrival:1\tclass:Array; double; key:index; past the end\n"
+        "1\tarrival:2\tclass:Array; contiguous; key:number that is no index; ?\n"
+        "1\tarrival:3\tclass:Array; int32; key:text of an index; own\n"
+        "1\tarrival:4\tclass:Array; int32; key:negative integer; ?\n"
+        "1\tarrival:5\tstring; -; key:index; own\n"
+        "1\tarrival:6\tclass:Uint8Array; none; key:index; absent\n"
+        "1\tarrival:7\tobject{ab}; none; key:name; own\n"
+        "1\tarrival:8\tobject{ab}; none; key:text made anew; own\n"
+        "1\tarrival:9\tobject{}; none; key:name; inherited\n"
+        "1\tarrival:10\tobject{ab}; none; key:text made anew; absent\n"
+        "1\tarrival:11\tobject{ab}; none; key:rope; ?\n"
+        "1\tarrival:12\tobject{ab}; none; key:symbol; absent\n"
+        "1\tarrival:13\tobject{ab}; none; key:other; ?\n"
+        "1\tarrival:14\tclass:Array; int32; key:name; own\n"
+        "1\tarrival:15\tclass:ProxyObject; none; key:name; ?\n"_s);
+}
+
+static void testKeyIsLeftAsItWasAndEqualKeysAreOneArrival()
+{
+    Realms realms;
+    JSGlobalObject* realm = realms.plain();
+    ArrivalCounts counts;
+    JSValue object = realms.evaluate(realm, "({ ab: 1 })"_s);
+    JSValue anew = realms.evaluate(realm, "String.fromCharCode(97, 98)"_s);
+    JSValue rope = realms.evaluate(realm, "(() => { const left = String.fromCharCode(97, 98, 99); return left + String.fromCharCode(100, 101, 102); })()"_s);
+    for (unsigned i = 0; i < 3; ++i) {
+        counts.record(realm, object, anew, 0);
+        counts.record(realm, object, realms.evaluate(realm, "String.fromCharCode(97, 98)"_s), 0);
+        counts.record(realm, object, rope, 1);
+    }
+    AOT_TEST_CHECK(!asString(anew)->tryGetValueImpl()->isAtom());
+    AOT_TEST_CHECK(!asString(anew)->tryGetValueImpl()->hasHash());
+    AOT_TEST_CHECK(asString(rope)->isRope());
+    String lines = dumped(counts);
+    AOT_TEST_CHECK(lines.startsWith("6\tarrival:0\tobject{ab}; none; key:text made anew; own; #"_s));
+    AOT_TEST_CHECK(lines.contains("\n3\tarrival:1\tobject{ab}; none; key:rope; ?; #0000\n"_s));
+}
+
 static void testReportListsSitesAndLayouts()
 {
     Wire::CompileOptions options = makeDefaultCompileOptions();
@@ -248,8 +346,8 @@ static void testReportListsSitesAndLayouts()
     Vector<String> lines = String::fromUTF8(Typed::describeArrivalSites({ *program }, numbers, build).span()).split('\n');
 
     AOT_TEST_CHECK(lines.size() >= 4);
-    AOT_TEST_CHECK(lines[0].startsWith("S\t0\tPropGet\tRead\tUnknown\tUnknown\tOpen\tmain.js\t"_s) && lines[0].endsWith("\treadX\t0,2"_s));
-    AOT_TEST_CHECK(lines[1].startsWith("S\t1\tPropSet\tStore\tUnknown\tUnknown\tNone\tmain.js\t"_s) && lines[1].endsWith("\treadX\t"_s));
+    AOT_TEST_CHECK(lines[0].startsWith("S\t0\tPropGet\tRead\tUnknown\tUnknown\tOpen\tmain.js\t"_s) && lines[0].endsWith("\treadX\t0,2\tf0"_s));
+    AOT_TEST_CHECK(lines[1].startsWith("S\t1\tPropSet\tStore\tUnknown\tUnknown\tNone\tmain.js\t"_s) && lines[1].endsWith("\treadX\t\tf0"_s));
     // An environment is no receiver. The layouts that the engine adds to every program come after those of the text.
     AOT_TEST_CHECK(lines[2] == "L\t0\tRecord\tPoint\t\tx,label?"_s);
     AOT_TEST_CHECK(lines[3] == "L\t2\tRecord\t\t\tx"_s);
@@ -272,11 +370,14 @@ std::span<const NativeTest> arrivalCountTests()
     static constexpr NativeTest tests[] = {
         { "arrival-counts/programs/counts-layout-that-was-not-expected"_s, testCountsLayoutThatWasNotExpected },
         { "arrival-counts/programs/counts-object-that-left-its-shape"_s, testCountsObjectThatLeftItsShape },
+        { "arrival-counts/programs/names-what-changed-an-object"_s, testNamesWhatChangedAnObject },
         { "arrival-counts/programs/counts-foreign-object-with-its-names"_s, testCountsForeignObjectWithItsNames },
         { "arrival-counts/programs/counts-nothing-without-the-option"_s, testCountsNothingWithoutTheOption },
         { "arrival-counts/lines-are-sorted-by-site-then-by-count"_s, testLinesAreSortedBySiteThenByCount },
         { "arrival-counts/first-operation-behind-an-arrival-is-where-its-site-left"_s, testFirstOperationBehindArrivalIsWhereItsSiteLeft },
         { "arrival-counts/objects-with-the-same-names-are-one-arrival"_s, testObjectsWithTheSameNamesAreOneArrival },
+        { "arrival-counts/an-access-by-key-says-what-the-key-was"_s, testAccessByKeySaysWhatTheKeyWas },
+        { "arrival-counts/the-key-is-left-as-it-was-and-equal-keys-are-one-arrival"_s, testKeyIsLeftAsItWasAndEqualKeysAreOneArrival },
         { "arrival-counts/report-lists-sites-and-layouts"_s, testReportListsSitesAndLayouts },
         { "arrival-counts/report-is-empty-without-the-option"_s, testReportIsEmptyWithoutTheOption },
     };

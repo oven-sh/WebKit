@@ -235,9 +235,100 @@ bool AllocationSinking::splitEdgesNeedingCode(IRBuilder& builder)
     return true;
 }
 
+// The class of a constructor function begins with its first object, and until then a set of guards takes what it says of that class to speak of no object. An object that is not made begins no class.
+// So a test that names the class waits for it wherever its answer may be believed while such an object is not made: where that is so, and on every way there. The guard of the function's `prototype`
+// holds from the definition of the class on. Where the test fails the object is wanted, and made.
+void AllocationSinking::letTestsAwaitClassesOfObjectsThatAreNotMade(IRBuilder& builder)
+{
+    struct ClassNotBegun {
+        LayoutID layout;
+        BitVector blocks;
+    };
+    Vector<ClassNotBegun, 2> classes;
+    Vector<Vector<uint32_t, 1>> classesOfFamilies;
+    for (const Candidate& candidate : m_candidates) {
+        if (candidate.isJoin || candidate.isAbandoned)
+            continue;
+        const Value& made = m_function.at(candidate.definition);
+        if (made.opcode != Opcode::NewObject || !m_program.at(made.layout()).has(LayoutFlags::IsConstructorFunction))
+            continue;
+        size_t index = classes.findIf([&](const ClassNotBegun& entry) {
+            return entry.layout == made.layout();
+        });
+        if (index == notFound) {
+            index = classes.size();
+            classes.append({ made.layout(), BitVector(m_function.blocks.size()) });
+        }
+        classes[index].blocks.set(candidate.block.index());
+        if (classesOfFamilies.size() <= candidate.family.index())
+            classesOfFamilies.grow(candidate.family.index() + 1);
+        classesOfFamilies[candidate.family.index()].appendIfNotContains(static_cast<uint32_t>(index));
+    }
+    if (classes.isEmpty())
+        return;
+    for (uint32_t block = 0; block < m_function.blocks.size(); ++block) {
+        const SinkingState* head = headOf(BlockID(block));
+        if (!head)
+            continue;
+        for (const ObjectEntry& entry : head->objects) {
+            size_t family = at(entry.object).family.index();
+            if (entry.state.isCell() || family >= classesOfFamilies.size())
+                continue;
+            for (uint32_t index : classesOfFamilies[family])
+                classes[index].blocks.set(block);
+        }
+    }
+    for (ClassNotBegun& entry : classes) {
+        Vector<BlockID, 16> worklist;
+        for (size_t block : entry.blocks)
+            worklist.append(BlockID(block));
+        while (!worklist.isEmpty()) {
+            for (Edge edge : m_analyses.cfg().incomingEdges(worklist.takeLast())) {
+                if (!entry.blocks.set(edge.from.index()))
+                    worklist.append(edge.from);
+            }
+        }
+    }
+
+    PropertyKeyID prototype = m_program.keyOf(BuiltinNames::prototype);
+    bool didChangeTest = false;
+    for (uint32_t block = 0; block < m_function.blocks.size(); ++block) {
+        for (ValueID id : m_function.blocks.span()[block].values) {
+            if (m_function.at(id).opcode != Opcode::AreMembersUnchanged)
+                continue;
+            Vector<MemberConditionRecord, 8> conditions;
+            for (MemberConditionRecord condition : m_function.at(id).conditions())
+                conditions.append(condition);
+            size_t numberOfConditions = conditions.size();
+            for (size_t index = 0; index < numberOfConditions; ++index) {
+                MemberConditionRecord awaited { .kind = MemberConditionKind::MemberUnchanged, .layout = conditions[index].layout, .side = ClassSide::Static, .key = prototype };
+                bool isAwaited = std::ranges::any_of(classes, [&](const ClassNotBegun& entry) {
+                    return entry.layout == awaited.layout && entry.blocks.get(block);
+                });
+                if (isAwaited && !conditions.contains(awaited))
+                    conditions.append(awaited);
+            }
+            if (conditions.size() == numberOfConditions)
+                continue;
+            AOT::sortInLine(conditions, { }, [](const MemberConditionRecord& condition) {
+                return std::tuple { condition.kind, condition.layout, condition.side, condition.key };
+            });
+            builder.function().edit(id, ValueEdit::Definition).setConditions(conditions.span());
+            didChangeTest = true;
+        }
+    }
+    // A test that waits for a class no longer reads where the class begins.
+    if (didChangeTest)
+        m_analyses.didChangeValuesButNotUses();
+}
+
 void AllocationSinking::rewrite(IRBuilder& builder, const FreshResultShape* shape)
 {
+    letTestsAwaitClassesOfObjectsThatAreNotMade(builder);
     m_resultShape = shape;
+    m_constantsBeforeRewriting = Vector<std::optional<VirtualConstant>>(m_function.values.size(), [&](size_t index) {
+        return virtualConstantOf(m_objectContext, ValueID(index));
+    });
     findWhetherObjectsAreBuiltBeforeBranches();
     RewriteTables& tables = m_tables.emplace();
     tables.headValues.grow(m_function.blocks.size());
@@ -262,8 +353,11 @@ void AllocationSinking::rewrite(IRBuilder& builder, const FreshResultShape* shap
 
     addHeadParameters(builder);
     tables.enteredBlocks.set(entryBlock.index());
+    m_mustSolveAgain = false;
+    m_decisions.takeDidChange();
     for (BlockID block : tables.order)
         rewriteBlock(block);
+    RELEASE_ASSERT(!m_mustSolveAgain && !m_decisions.takeDidChange());
     builder.function().edit(entryBlock, BlockEdit::Values).values.insertVector(0, tables.entryConstants);
     builder.emptyUnreachableBlocks();
     removeBoundParameters(builder);
@@ -467,6 +561,34 @@ void AllocationSinking::rewriteBlock(BlockID block)
     m_cursor->builder().emitTerminator(WTF::move(terminator));
 }
 
+static uint64_t keyOf(Edge edge)
+{
+    return (static_cast<uint64_t>(edge.from.index()) << 32 | static_cast<uint64_t>(edge.targetIndex) << 1 | edge.isHandlerEdge()) + 1;
+}
+
+void AllocationSinking::setObjectsDeadOnEdge(Edge edge, Vector<VirtualObjectID, 4>&& objects)
+{
+    m_objectsDeadOnEdges.set(keyOf(edge), WTF::move(objects));
+}
+
+bool AllocationSinking::isDeadOnEdge(Edge edge, VirtualObjectID object) const
+{
+    auto found = m_objectsDeadOnEdges.find(keyOf(edge));
+    return found != m_objectsDeadOnEdges.end() && found->value.contains(object);
+}
+
+static bool bringsOnlyShapesOfHead(const AllocationSinking& sinking, Edge taken, const SinkingState& edge, const SinkingState& head)
+{
+    return std::ranges::all_of(edge.objects, [&](const ObjectEntry& entry) {
+        const ObjectState* atHead = head.find(entry.object);
+        return !atHead || sinking.isDeadOnEdge(taken, entry.object) || std::ranges::all_of(entry.state.variants, [&](const ObjectVariant& variant) {
+            return atHead->variants.containsIf([&](const ObjectVariant& other) {
+                return other.shape == variant.shape;
+            });
+        });
+    });
+}
+
 void AllocationSinking::rewriteEdge(ObjectInterpreter& interpreter, Terminator& terminator, const OutgoingEdge& outgoing)
 {
     const SinkingState* head = headOf(outgoing.target);
@@ -479,6 +601,7 @@ void AllocationSinking::rewriteEdge(ObjectInterpreter& interpreter, Terminator& 
     ObjectValueMap edgeValues = interpreter.values();
     ObjectInterpreter edge(*this, SinkingMode::Rewrite, edgeState, &edgeValues);
     edge.enterEdge(outgoing, &terminator, head);
+    RELEASE_ASSERT(!checksThatModesAgree() || !edgeState.isReachable || bringsOnlyShapesOfHead(*this, outgoing.edge, edgeState, *head));
 
     Target& target = terminator.targets[outgoing.edge.targetIndex];
     if (testIsInterpreted)

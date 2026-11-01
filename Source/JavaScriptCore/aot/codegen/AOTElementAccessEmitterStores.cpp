@@ -89,12 +89,14 @@ ArrayStorageFormList ElementAccessEmitter::candidateFormsFor(ValueID stored, Arr
     return forms;
 }
 
-void ElementAccessEmitter::forEachFormByShape(Word32 mode, ShapeTest hasShapeOf, const ArrayStorageFormList& forms, LBasicBlock hasNoForm, const ScopedLambda<void(const ArrayStorageForm&)>& emitArm)
+void ElementAccessEmitter::forEachFormByShape(Word32 mode, ShapeTest hasShapeOf, const ArrayStorageFormList& forms, LBasicBlock hasNoForm, const ScopedLambda<void(const ArrayStorageForm&)>& emitArm, FirstForm firstForm)
 {
     for (const ArrayStorageForm* form : forms) {
         LBasicBlock hasForm = newBlock();
         LBasicBlock hasOtherForm = newBlock();
-        m_out.branch((this->*hasShapeOf)(mode, *form).value(), normalEdge(hasForm), form == forms.last() ? rareEdge(hasOtherForm) : normalEdge(hasOtherForm));
+        // The back end makes one switch of tests that follow each other over ordinary edges, and a switch asks for the kinds in the order of their numbers, whichever is expected.
+        bool othersAreRare = form == forms.last() || (firstForm == FirstForm::IsExpected && form == forms.first());
+        m_out.branch((this->*hasShapeOf)(mode, *form).value(), normalEdge(hasForm), othersAreRare ? rareEdge(hasOtherForm) : normalEdge(hasOtherForm));
         m_out.appendTo(hasForm);
         emitArm(*form);
         m_out.appendTo(hasOtherForm);
@@ -295,9 +297,37 @@ void ElementAccessEmitter::storeOutOfLine(const ValueContext& value, CellPointer
     callStub(value, arrayPutAtIndex(storedValue), { array.value(), boxedValue.value(), integerOf(position).value() });
 }
 
+Integer ElementAccessEmitter::lengthNamedOrRead(const ValueContext& value, const ArrayElements& elements)
+{
+    if (value->lengthOperands().empty())
+        return publicLength(elements);
+    Operand length = get(value->lengthOperands()[0]);
+    bool isWord = length.representation == Representation::Int32;
+    if (!isWord && length.representation != Representation::Int64)
+        return publicLength(elements);
+    Integer result = isWord ? zeroExtended(length.as<Word32>()) : length.as<Integer>();
+    if (generator().validatesOrChecksProofs())
+        emitter<RuntimeValidationEmitter>().checkPrecondition(value, equal(result, publicLength(elements)));
+    return result;
+}
+
+// counter < bound, so length = counter + (length - counter) < bound + (length - counter) <= capacity.
+Condition ElementAccessEmitter::hasRoomBehindLength(const ValueContext& value, const ArrayElements& elements, Integer length)
+{
+    auto named = value->lengthOperands();
+    if (named.size() == 3 && representationOf(named[0]) == Representation::Int32 && representationOf(named[1]) == Representation::Int32 && representationOf(named[2]) == Representation::Int32) {
+        Word32 counter = in<Word32>(named[1]);
+        Word32 bound = in<Word32>(named[2]);
+        Integer lengthInTheEnd = add(signExtended(bound), sub(length, signExtended(counter)));
+        return logicalAnd(belowOrEqual(lengthInTheEnd, vectorLength(elements)), lessThan(counter, bound));
+    }
+    return below(length, vectorLength(elements));
+}
+
 void ElementAccessEmitter::appendElement(const ValueContext& store, CellPointer array, ValueID element)
 {
-    if (store.shape() != CodeShape::Fast) {
+    bool isToldLength = !store->lengthOperands().empty();
+    if (isToldLength ? store.shape() == CodeShape::Compact : store.shape() != CodeShape::Fast) {
         appendOutOfLine(store, array, element);
         return;
     }
@@ -310,6 +340,32 @@ void ElementAccessEmitter::appendElement(const ValueContext& store, CellPointer 
         forms.shrink(1);
     LBasicBlock slowPath = newBlock();
     LBasicBlock continuation = newBlock();
+    if (isToldLength) {
+        LBasicBlock isStored = newBlock();
+        ArrayElements elements = elementsOf(array);
+        Integer length = lengthNamedOrRead(store, elements);
+        branchUnless(hasRoomBehindLength(store, elements, length), slowPath);
+        Word32 mode = indexingMode(array, IndexingShapeAndWritabilityMask);
+        bool needsBarrier = typeOf(element).hasCells() && emitter<BarrierEmitter>().needsBarrierAfterStore(store);
+        forEachFormByShape(mode, &ElementAccessEmitter::hasWritableShape, forms, slowPath, [&](const ArrayStorageForm& form) {
+            Operand rawElement = *rawElementToStore(form, element, slowPath);
+            if (form.holdsCells && needsBarrier)
+                branchUnless(emitter<BarrierEmitter>().isBeyondBarrierThreshold(array), slowPath);
+            storeRawElement(form, elements, length, rawElement);
+            m_out.jump(isStored);
+        });
+
+        m_out.appendTo(isStored);
+        setPublicLength(elements, add(length, integer(1)));
+        m_out.jump(continuation);
+
+        m_out.appendTo(slowPath);
+        appendOutOfLine(store, array, element);
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation);
+        return;
+    }
     Word32 mode = indexingMode(array, IndexingShapeAndWritabilityMask);
     ArrayElements elements = elementsOf(array);
     forEachFormByShape(mode, &ElementAccessEmitter::hasWritableShape, forms, slowPath, [&](const ArrayStorageForm& form) {
@@ -441,7 +497,14 @@ void ElementAccessEmitter::generateAppendMembers(const ValueContext& value)
     ValueID list = sameObjectThroughCasts(m_function, value->arrayOperand()).valueInFrontOfFacts();
     if (ArrayAllocationEmitter(generator()).membersThatFillLiteral(value.block(), list) == value.id())
         return;
-    callVoidOperation(value, RuntimeOperation::AppendMembers, { in<CellPointer>(value->arrayOperand()), in<CellPointer>(value->sourceOperand()) });
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    CellPointer source = in<CellPointer>(value->sourceOperand());
+    // Behind a test that is expected to fail, as in the function that spreads of anything share: the stub does not come into the image for a call that may never run.
+    if (m_function.at(value.block()).frequency.predicted() != BlockFrequency::Normal) {
+        callVoidOperation(value, RuntimeOperation::AppendMembers, { array, source });
+        return;
+    }
+    callStub(value, appendMembers(), { array.value(), source.value() });
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -195,13 +195,13 @@ public:
 private:
     uint32_t m_numberOfFields;
     UniquedStringImpl* m_lastKeyInFront { nullptr };
-    Vector<uint16_t> m_entries;
+    CompiledStructure::KeyOrderEntries m_entries;
     Vector<RefPtr<UniquedStringImpl>> m_namedKeys;
 };
 
 } // anonymous namespace
 
-void Object::nameExtraKeysInOrder(VM& vm, State& state)
+void Object::takeKeyOrderOfItsOwn(VM& vm, State& state)
 {
     ASSERT(!hasKeyOrderOfItsOwn() && !layout().keysAreNeverEnumerated);
     forgetPlacesOfPositionedKeys(state);
@@ -233,12 +233,15 @@ bool Object::tryListFieldBehindNamedKey(State& state, const FieldData& field)
     if (field.flags & fieldMayExistWithoutStorage && isInKeyOrder(state, field))
         return true;
     VM& vm = this->vm();
-    const PropertyTable& table = *extra->structure()->propertyTableInOrderOfAddition(vm);
-    UniquedStringImpl* lastKey = lastExtraKeyUpTo(state, *this, table, table.numberOfEntriesWithRemovedOnes());
+    UniquedStringImpl* lastKey = nullptr;
+    if (extra) {
+        const PropertyTable& table = *extra->structure()->propertyTableInOrderOfAddition(vm);
+        lastKey = lastExtraKeyUpTo(state, *this, table, table.numberOfEntriesWithRemovedOnes());
+    }
     if (!namesKeys) {
         if (!lastKey)
             return false;
-        nameExtraKeysInOrder(vm, state);
+        takeKeyOrderOfItsOwn(vm, state);
     }
     const CompiledStructure& structure = compiledStructure();
     std::span<const RefPtr<UniquedStringImpl>> namedKeys = structure.keysNamedByOrder();
@@ -306,7 +309,7 @@ Object::PlaceOfExtraKey Object::placeOfExtraKey(PropertyName name)
             return { };
         if (!extra->structure()->isDictionary())
             return { extraKeyOrdinal(state, *this, *extra, name, counts, places), std::nullopt, nullptr, true };
-        nameExtraKeysInOrder(vm(), state);
+        takeKeyOrderOfItsOwn(vm(), state);
     }
     std::span<const RefPtr<UniquedStringImpl>> namedKeys = compiledStructure().keysNamedByOrder();
     for (uint32_t index = 0; index < namedKeys.size(); ++index) {
@@ -494,9 +497,9 @@ static AddedEntries entriesPositioningExtraKeys(State& state, const Object& obje
     return entries;
 }
 
-static void storeKeyOrderOutOfLine(VM& vm, State& state, Object& object, std::span<const uint16_t> keys)
+static void storeKeyOrderOutOfLine(VM& vm, State& state, Object& object, std::span<const uint16_t> keys, StructureTable::HeldKeyOrder heldKeyOrder = StructureTable::HeldKeyOrder::IsFoundByOthers)
 {
-    object.JSCell::setStructure(vm, state.objects->structures.withOutOfLineKeyOrder(vm, object.compiledStructure(), keys));
+    object.JSCell::setStructure(vm, state.objects->structures.withOutOfLineKeyOrder(vm, object.compiledStructure(), keys, heldKeyOrder));
     object.setOrderAndCount(outOfLineOrderWordFor(keys.size()));
     count(object.instance(), RuntimeCounterID::KeyOrdersStoredOutOfLine);
 }
@@ -517,6 +520,23 @@ static bool tryStepInOutOfLineKeyOrder(Object& object, std::span<const uint16_t>
     return true;
 }
 
+static ALWAYS_INLINE bool trySearchForHeldKeyOrder(VM& vm, State& state, Object& object, std::span<const uint16_t> keys)
+{
+    KeyOrderTable& keyOrders = state.objects->keyOrders;
+    const LayoutData& layout = object.layout();
+    bool leavesNumberedOrder = !object.hasOutOfLineKeyOrder();
+    if (leavesNumberedOrder && !keyOrders.shouldSearchForHeldOrder(layout))
+        return false;
+    bool leavesOrderThatItFound = !leavesNumberedOrder && object.compiledStructure().keyOrderWasFoundAgain();
+    storeKeyOrderOutOfLine(vm, state, object, keys);
+    bool didFind = object.compiledStructure().keyOrderWasFoundAgain();
+    if (leavesNumberedOrder && didFind)
+        keyOrders.didFindHeldOrder(layout);
+    else if (leavesOrderThatItFound && !didFind)
+        keyOrders.didMakeHeldOrderAfterFindingOne(layout);
+    return true;
+}
+
 // For an order that has no number. No order with a number starts with it, and the table takes no other order once it has refused one, so what is longer has no number either.
 static void appendEntriesToUnnumberedKeyOrder(VM& vm, State& state, Object& object, std::span<const uint16_t> added)
 {
@@ -525,7 +545,39 @@ static void appendEntriesToUnnumberedKeyOrder(VM& vm, State& state, Object& obje
     Object::KeyOrderStorage storage;
     Vector<uint16_t, 32> entries(object.keyOrder(state, storage));
     entries.append(added);
-    storeKeyOrderOutOfLine(vm, state, object, entries.span());
+    if (!trySearchForHeldKeyOrder(vm, state, object, entries.span()))
+        storeKeyOrderOutOfLine(vm, state, object, entries.span(), StructureTable::HeldKeyOrder::IsFoundByNobody);
+}
+
+// The object has nothing but fields in their slots, and shares what says their order with every object that has the same keys.
+static ALWAYS_INLINE bool sharesStepsOfKeyOrder(const Object& object)
+{
+    return !object.hasFlagsInOrderWord() && !object.hasKeyOrderOfItsOwn();
+}
+
+static bool tryRepeatStepOfKeyOrder(VM& vm, State& state, Object& object, uint16_t field, StructureTable::KindOfStep kind)
+{
+    const StructureTable::StepOfKeyOrder* step = state.objects->structures.findStepOfKeyOrder(object.structureID(), object.orderWord() & orderAndCountMask, field, kind);
+    if (!step)
+        return false;
+    // The first object that took the step asked for a number and was refused one. So is this one.
+    if (isOrderStoredOutOfLine(step->orderAndCountAfter) && (kind == StructureTable::KindOfStep::Removes || !object.hasOutOfLineKeyOrder()))
+        countLimitHit(vm, LimitID::KeyOrdersPerLayout);
+    if (step->after != object.structureID()) {
+        auto* after = uncheckedDowncast<CompiledStructure>(step->after.decode());
+        // Removing from an order that no second object has asked for gives the object an order of its own.
+        if (after->hasOutOfLineKeyOrder())
+            after->didFindKeyOrderAgain();
+        object.JSCell::setStructure(vm, after);
+    }
+    object.setOrderAndCount(step->orderAndCountAfter);
+    return true;
+}
+
+static void rememberStepOfKeyOrder(State& state, const Object& object, StructureID before, uint32_t orderAndCountBefore, uint16_t field, StructureTable::KindOfStep kind)
+{
+    if (sharesStepsOfKeyOrder(object))
+        state.objects->structures.rememberStepOfKeyOrder(before, orderAndCountBefore, field, kind, object.structureID(), object.orderWord() & orderAndCountMask);
 }
 
 void Object::willCreateField(State&, const FieldData& field)
@@ -563,6 +615,13 @@ void Object::didCreateField(State& stateAtHand, const FieldData& field, bool wit
             return;
         }
     }
+    bool sharesStep = sharesStepsOfKeyOrder(*this) && !(field.flags & fieldMayExistWithoutStorage);
+    StructureID structureBefore = structureID();
+    if (sharesStep) {
+        uint16_t index = indexOf(field);
+        if (tryStepInOutOfLineKeyOrder(*this, singleElementSpan(index)) || tryRepeatStepOfKeyOrder(vm(), state, *this, index, StructureTable::KindOfStep::Creates))
+            return;
+    }
     // The order needs the number of the keys in front of the field, so stars go on waiting.
     std::optional<uint32_t> numberOfKeysOfStars = numberOfKeysOfPendingStars(vm(), *this);
     if (!numberOfKeysOfStars && tryListFieldBehindNamedKey(state, field))
@@ -590,21 +649,28 @@ void Object::didCreateField(State& stateAtHand, const FieldData& field, bool wit
         }
     }
     appendEntriesToUnnumberedKeyOrder(vm(), state, *this, added.span());
+    if (sharesStep)
+        rememberStepOfKeyOrder(state, *this, structureBefore, before, indexOf(field), StructureTable::KindOfStep::Creates);
+}
+
+ALWAYS_INLINE bool Object::trySetNumberedKeyOrder(VM& vm, State& state, std::span<const uint16_t> keys)
+{
+    const LayoutData& layout = this->layout();
+    ASSERT(!layout.keysAreNeverEnumerated && !hasKeyOrderOfItsOwn());
+    auto numbered = state.objects->keyOrders.orderStartingWith(layout, keys);
+    if (!numbered)
+        return false;
+    bool wasOutOfLine = hasOutOfLineKeyOrder();
+    setOrderAndCount(*numbered);
+    if (wasOutOfLine)
+        JSCell::setStructure(vm, state.objects->structures.withNumberedKeyOrder(vm, compiledStructure()));
+    return true;
 }
 
 void Object::setKeyOrder(VM& vm, State& state, std::span<const uint16_t> keys)
 {
-    const LayoutData& layout = this->layout();
-    ASSERT(!layout.keysAreNeverEnumerated && !hasKeyOrderOfItsOwn());
-    StructureTable& structures = state.objects->structures;
-    if (auto numbered = state.objects->keyOrders.orderStartingWith(layout, keys)) {
-        bool wasOutOfLine = hasOutOfLineKeyOrder();
-        setOrderAndCount(*numbered);
-        if (wasOutOfLine)
-            JSCell::setStructure(vm, structures.withNumberedKeyOrder(vm, compiledStructure()));
-        return;
-    }
-    storeKeyOrderOutOfLine(vm, state, *this, keys);
+    if (!trySetNumberedKeyOrder(vm, state, keys))
+        storeKeyOrderOutOfLine(vm, state, *this, keys);
 }
 
 void Object::removeExtraKeyFromOrder(VM& vm, State& state, uint32_t ordinal)
@@ -639,12 +705,22 @@ void removeFieldFromKeyOrder(VM& vm, State& state, Object& object, const FieldDa
         return;
     object.forgetPlacesOfPositionedKeys(state);
     uint16_t index = object.indexOf(field);
-    if (object.hasKeyOrderOfItsOwn()) {
+    bool sharesStep = sharesStepsOfKeyOrder(object);
+    if (sharesStep && tryRepeatStepOfKeyOrder(vm, state, object, index, StructureTable::KindOfStep::Removes))
+        return;
+    StructureID structureBefore = object.structureID();
+    uint32_t orderAndCountBefore = object.orderWord() & orderAndCountMask;
+    auto removeFromOrderOfItsOwn = [&] {
         rebuildKeyOrderOfOneObject(object, [&](uint16_t other) {
             return other != index;
         }, [](size_t, UniquedStringImpl* key) {
             return key;
         });
+    };
+    if (object.hasOutOfLineKeyOrder() && !object.hasKeyOrderOfItsOwn() && !object.compiledStructure().keyOrderWasFoundAgain() && !hasPendingStars(object))
+        object.takeKeyOrderOfItsOwn(vm, state);
+    if (object.hasKeyOrderOfItsOwn()) {
+        removeFromOrderOfItsOwn();
         return;
     }
     uint32_t numberOfFields = object.layout().numberOfFields;
@@ -662,7 +738,17 @@ void removeFieldFromKeyOrder(VM& vm, State& state, Object& object, const FieldDa
     });
     while (!remaining.isEmpty() && countsExtraKeys(remaining.last()))
         remaining.removeLast();
-    object.setKeyOrder(vm, state, remaining.span());
+    if (object.trySetNumberedKeyOrder(vm, state, remaining.span()) || trySearchForHeldKeyOrder(vm, state, object, remaining.span())) {
+        if (sharesStep)
+            rememberStepOfKeyOrder(state, object, structureBefore, orderAndCountBefore, index, StructureTable::KindOfStep::Removes);
+        return;
+    }
+    if (hasPendingStars(object)) {
+        storeKeyOrderOutOfLine(vm, state, object, remaining.span());
+        return;
+    }
+    object.takeKeyOrderOfItsOwn(vm, state);
+    removeFromOrderOfItsOwn();
 }
 
 static bool hasNumberedKeyOrder(const Object& object)
@@ -733,7 +819,7 @@ bool Object::forEachFieldAsProperty(const ScopedLambda<bool(UniquedStringImpl&, 
     return true;
 }
 
-static NEVER_INLINE void writeJSONKeys(VM& vm, CachedPropertyList& list)
+NEVER_INLINE void writeJSONKeys(VM& vm, CachedPropertyList& list)
 {
     size_t size = FieldAsProperty::jsonKeyBlockSize;
     bool areWrittenAsTheyAre = true;
@@ -835,7 +921,6 @@ CachedPropertyList* cachedPropertyList(VM& vm, const Object& object)
         properties.append(extraKeys[nextExtraKey]);
     auto& newEntry = propertyLists.entryFor(structure->id(), shapeWord, orderAndCount);
     newEntry = { structure->id(), shapeWord, orderAndCount, nullptr, WTF::move(properties) };
-    writeJSONKeys(vm, newEntry);
     return &newEntry;
 }
 

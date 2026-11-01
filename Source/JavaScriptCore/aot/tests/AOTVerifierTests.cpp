@@ -13,6 +13,7 @@
 #include "AOTEffectsCache.h"
 #include "AOTEffectsCheck.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTFunctionData.h"
 #include "AOTIR.h"
 #include "AOTIRTestSupport.h"
 #include "AOTNativeTest.h"
@@ -580,6 +581,104 @@ void testInvalidModuleFailure()
     });
 }
 
+// `["a", , "c"][1]`: a front end once took the hole to end in front of its start, and wrote a copy and a piece of 4,294,967,295 bytes.
+void testPieceThatReachesOutOfFileIsLeftOutAlone()
+{
+    static constexpr uint8_t bytes[] = {
+        0x20, 0x12, 0x0d, 0x0b,
+        0x2a, 0x0f, 0xfd, 0xff, 0xff, 0xff, 0x3f, 0x0b,
+        0x06, 0xff, 0xff, 0xff, 0xff, 0x0f, 0x0c, 'v', 'o', 'i', 'd', ' ', '0',
+        0x23, 0x12, 0x06, '"', 'q', '"',
+        0x01, 0x81,
+    };
+    Vector<TextPrintedInPlace> pieces;
+    auto broken = TextPrintedInPlace::appendThoseThatStartIn(pieces, bytes, 0, std::numeric_limits<uint64_t>::max());
+    AOT_TEST_CHECK(broken && broken->index == 1 && broken->isCutShort && broken->start == 74);
+    AOT_TEST_CHECK(pieces.size() == 2);
+    AOT_TEST_CHECK(pieces[0].start == 32 && pieces[0].end == 50 && pieces[0].isCopy && pieces[0].startOfCopied == 38 && pieces[0].endOfCopied == 41);
+    AOT_TEST_CHECK(pieces[1].start == 115 && pieces[1].end == 133 && pieces[1].bytes.size() == 3);
+}
+
+String printInPlace(ASCIILiteral text, const TextPrintedInPlace& piece)
+{
+    Vector<Latin1Character> printed;
+    appendWithTextPrintedInPlace(printed, text.span8(), 0, text.length(), singleElementSpan(piece));
+    return String(printed.span());
+}
+
+// Whoever follows the pieces comes to an end with every list, also with one that no reader has seen.
+void testCopyThatBreaksRuleIsPassedOver()
+{
+    auto copy = [](uint32_t start, uint32_t end, uint32_t startOfCopied, uint32_t endOfCopied) {
+        return TextPrintedInPlace { .start = start, .end = end, .isCopy = true, .startOfCopied = startOfCopied, .endOfCopied = endOfCopied };
+    };
+    AOT_TEST_CHECK(printInPlace("abcdef"_s, copy(4, 5, 0, 2)) == "abcdabf"_s);
+    AOT_TEST_CHECK(printInPlace("abcdef"_s, copy(1, 5, 2, 3)) == "acf"_s);
+    for (TextPrintedInPlace wrong : { copy(2, 3, 0, 6), copy(2, 4, 2, 4), copy(0, 1, 2, 4), copy(2, 4, 1, 3), copy(4, 5, 2, 1), copy(4, 5, 0, 7) })
+        AOT_TEST_CHECK(printInPlace("abcdef"_s, wrong) == "abcdef"_s);
+}
+
+void testPieceWithoutSizeIsPassedOver()
+{
+    static constexpr uint8_t printed[] = { 'x' };
+    AOT_TEST_CHECK(printInPlace("abcdef"_s, { .start = 2, .end = 3, .bytes = printed }) == "abxdef"_s);
+    AOT_TEST_CHECK(printInPlace("abcdef"_s, { .start = 2, .end = 2, .bytes = printed }) == "abcdef"_s);
+    AOT_TEST_CHECK(printInPlace("abcdef"_s, { .start = 4, .end = 2, .bytes = printed }) == "abcdef"_s);
+    AOT_TEST_CHECK(printInPlace("abcdef"_s, { .start = 2, .end = 2, .isCopy = true, .startOfCopied = 0, .endOfCopied = 1 }) == "abcdef"_s);
+}
+
+// Each of the two says that the text has a piece of its own.
+void testPiecesFromPrinterOfOneTextDoNotFollowEachOther()
+{
+    static constexpr uint8_t hasPieceOfItsOwn[] = { markOfTextFromPrinter, markOfDifferences, textWithPieceOfItsOwn, 0, 6 };
+    TextPrintedInPlace twice[] = { { .start = 0, .end = 6, .bytes = hasPieceOfItsOwn }, { .start = 0, .end = 6, .bytes = hasPieceOfItsOwn } };
+    for (const TextPrintedInPlace& piece : twice) {
+        Vector<Latin1Character> printed;
+        appendTextFromPrinterWithoutMarks(printed, "abcdef"_s.span8(), piece, std::span<const TextPrintedInPlace>(twice));
+        AOT_TEST_CHECK(String(printed.span()) == "abcdef"_s);
+    }
+}
+
+// How deep the pieces of a program stand in one another is up to the program.
+constexpr uint32_t sizeOfDeepText = 300000;
+
+Vector<Latin1Character> makeDeepText()
+{
+    return Vector<Latin1Character>(sizeOfDeepText, [](size_t index) {
+        return Latin1Character(index ? 'b' : 'a');
+    });
+}
+
+// Every byte is printed as the byte in front of it is.
+void testCopiesAreFollowedOffTheStack()
+{
+    Vector<Latin1Character> text = makeDeepText();
+    Vector<TextPrintedInPlace> copies;
+    for (uint32_t at = 1; at < sizeOfDeepText; ++at)
+        copies.append(TextPrintedInPlace { .start = at, .end = at + 1, .isCopy = true, .startOfCopied = at - 1, .endOfCopied = at });
+    Vector<Latin1Character> printed;
+    appendWithTextPrintedInPlace(printed, std::span<const Latin1Character>(text.span()), sizeOfDeepText - 1, sizeOfDeepText, copies.span());
+    AOT_TEST_CHECK(printed.size() == 1 && printed[0] == 'a');
+}
+
+// Every piece is a byte and the piece of all that follows it.
+void testPiecesFromPrinterAreFollowedOffTheStack()
+{
+    Vector<Latin1Character> text = makeDeepText();
+    Vector<Vector<uint8_t>> differences;
+    for (uint32_t at = 0; at + 1 < sizeOfDeepText; ++at) {
+        Vector<uint8_t> bytes { markOfTextFromPrinter, markOfDifferences, copyOfWrittenText, 0, 1, textWithPieceOfItsOwn, 0 };
+        appendVarint(bytes, sizeOfDeepText - at - 1);
+        differences.append(WTF::move(bytes));
+    }
+    Vector<TextPrintedInPlace> pieces;
+    for (uint32_t at = 0; at + 1 < sizeOfDeepText; ++at)
+        pieces.append(TextPrintedInPlace { .start = at, .end = sizeOfDeepText, .bytes = differences[at].span() });
+    Vector<Latin1Character> printed;
+    appendTextFromPrinterWithoutMarks(printed, std::span<const Latin1Character>(text.span()), pieces[0], pieces.span());
+    AOT_TEST_CHECK(equalSpans(printed.span(), text.span()));
+}
+
 void testRequiredIDsOfRecords()
 {
     expectProgramFailure(Kind::InvalidModule, [](Program& program) {
@@ -862,6 +961,12 @@ std::span<const NativeTest> verifierTests()
         { "verifier/handler-argument-types"_s, testHandlerArgumentTypes },
         { "verifier/placed-table-sizes"_s, testPlacedTableSizes },
         { "verifier/invalid-module-failure"_s, testInvalidModuleFailure },
+        { "verifier/a-piece-that-reaches-out-of-the-file-is-left-out-alone"_s, testPieceThatReachesOutOfFileIsLeftOutAlone },
+        { "verifier/a-copy-that-breaks-the-rule-is-passed-over"_s, testCopyThatBreaksRuleIsPassedOver },
+        { "verifier/a-piece-without-size-is-passed-over"_s, testPieceWithoutSizeIsPassedOver },
+        { "verifier/pieces-from-the-printer-of-one-text-do-not-follow-each-other"_s, testPiecesFromPrinterOfOneTextDoNotFollowEachOther },
+        { "verifier/copies-are-followed-off-the-stack"_s, testCopiesAreFollowedOffTheStack },
+        { "verifier/pieces-from-the-printer-are-followed-off-the-stack"_s, testPiecesFromPrinterAreFollowedOffTheStack },
         { "verifier/required-ids-of-records"_s, testRequiredIDsOfRecords },
         { "verifier/record-id-out-of-range"_s, testRecordIDOutOfRange },
         { "verifier/effects-exceed-replaced-group"_s, testEffectsExceedReplacedGroup },

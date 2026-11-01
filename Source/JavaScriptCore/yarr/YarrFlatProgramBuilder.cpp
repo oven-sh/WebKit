@@ -71,6 +71,7 @@ public:
             program->endAnchoredFixedSize = m_pattern.m_endAnchoredFixedSize;
         program->triesOnlyOnce = m_pattern.sticky();
         program->decodesSurrogatePairs = m_decodesSurrogatePairs;
+        program->isInUnicodeMode = m_pattern.eitherUnicode();
         program->countsTurns = m_countsTurns;
 
         auto& alternatives = m_pattern.m_body->m_alternatives;

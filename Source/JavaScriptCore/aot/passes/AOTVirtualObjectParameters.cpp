@@ -264,7 +264,7 @@ AliasUse ParameterPromoter::classifyTest(const Value& test, uint32_t operandInde
 {
     if (test.opcode == Opcode::StrictEq) {
         uint32_t otherIndex = operandIndex == OperandIndex::StrictEq::left ? OperandIndex::StrictEq::right : OperandIndex::StrictEq::left;
-        std::optional<VirtualConstant> other = virtualConstantOf(m_context.program, m_function, test.operand(otherIndex));
+        std::optional<VirtualConstant> other = virtualConstantOf({ m_context.program, m_function }, test.operand(otherIndex));
         bool isComparedWithNullish = other == VirtualConstant::Undefined || other == VirtualConstant::Null;
         return isComparedWithNullish ? AliasUse::Test : AliasUse::Unknown;
     }

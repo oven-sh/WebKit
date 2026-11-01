@@ -326,6 +326,8 @@ inline bool isLookupOfCalleeByCall(const ValueFlowResultInputs& inputs, const Va
 {
     if (statement.kind != ValueFlowStatementKind::Operation || (statement.opcode != Opcode::Call && statement.opcode != Opcode::CallList) || key.kind != ValueFlowMadeNodeKind::Lookup)
         return false;
+    if (key.name().kind == ValueFlowNameKind::ReceiversOfCalls)
+        return true;
     PropertyKeyID calleeKey = inputs.program.at(statement.function).at(statement.site).calleeKey();
     return calleeKey && key.name() == ValueFlowName::property(inputs.program, calleeKey) && inputs.sets().onlyMember(key.set);
 }
@@ -885,6 +887,12 @@ inline void add(Hasher& hasher, const ConstructionName& name)
 }
 
 using ConstructionNames = PersistentSortedSet<ConstructionName>;
+
+// The store that fills a field asks the class for the name. A class answers only where it lists every name of its prototype object and keeps what stands above that object.
+inline bool classCannotAnswerForNames(const Layout& layout, const ClassFlow& classFlow)
+{
+    return layout.kind == LayoutKind::Instance && layout.constructor && (!classFlow.prototypeNamesAreComplete || classFlow.prototypeLink != MemberMutability::Fixed);
+}
 
 struct ValueFlowConstructions {
     struct OfLayout {

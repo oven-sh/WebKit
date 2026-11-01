@@ -12724,6 +12724,7 @@ public:
     bool hasUnusedFrame() const { return m_frameMode == FrameMode::Allocated && m_callFrameSizeInBytes && !m_didUseFrame; }
     bool didUseFrame() const { return m_didUseFrame; }
     unsigned classTableLimitHits() const { return m_classTableLimitHits; }
+    bool handsLongSearchesOver() const { return m_handsLongSearchesOver; }
 #endif
 
     const char* variant() final
@@ -13355,6 +13356,11 @@ CodeAddressing& GeneratedCode::addressing()
 bool GeneratedCode::hasElidedFrame() const
 {
     return m_attempt->generator->frameMode() == FrameMode::Omitted;
+}
+
+bool GeneratedCode::handsLongSearchesOver() const
+{
+    return m_attempt->generator->handsLongSearchesOver();
 }
 
 unsigned GeneratedCode::classTableLimitHits() const

@@ -1577,12 +1577,21 @@ static PassOutcome expandForInLoop(FunctionPassContext& context, Emission& emiss
         };
         return value.opcode == Opcode::StrictEq && (comparesInThisOrder(value.operand(0), value.operand(1)) || comparesInThisOrder(value.operand(1), value.operand(0)));
     };
+    // `target[name] = source[name]`: in a copy for one name these go by that name, and to a slot where the layouts of the object are known.
+    auto accessesSlotUnderName = [&](const Value& value) {
+        if (value.opcode != Opcode::ElemGet && value.opcode != Opcode::ElemSet)
+            return false;
+        const Value& name = function.at(sameObjectThroughCasts(function, value.propertyOperand()).valueInFrontOfFacts());
+        return name.opcode == Opcode::ResultAt && name.index() == 1 && name.operand(OperandIndex::ResultAt::results) == step && program.typeOf(function, value.objectOperand()).hasOnlyLayouts();
+    };
     uint64_t bytesOfRegion = 0;
     for (BlockID block : region) {
         bytesOfRegion += estimatedCodeBytes(program, function, function.at(block));
         for (ValueID id : function.at(block).values) {
             if (comparesNameWithText(function.at(id)))
                 bytesOfRegion -= estimatedCodeBytes(program, function, function.at(id));
+            else if (accessesSlotUnderName(function.at(id)))
+                bytesOfRegion -= estimatedCodeBytes(program, function, function.at(id)) - std::min(estimatedCodeBytes(program, function, function.at(id)), estimatedSlotAccessBytes());
         }
     }
     // The arms that fit are expanded, and the objects of the others take the loop as written.

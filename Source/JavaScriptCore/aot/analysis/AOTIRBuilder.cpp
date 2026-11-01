@@ -401,6 +401,16 @@ ValueID IRBuilder::insertBefore(ProgramPoint point, Value&& value)
     return id;
 }
 
+ValueID IRBuilder::insertUntypedBefore(ProgramPoint point, Value&& value)
+{
+    RELEASE_ASSERT(m_context.program.form() == IRForm::AsRead && point.index <= m_function.at(point.block).values.size());
+    value.setOrigin(m_origin);
+    ValueID id = addValue(WTF::move(value));
+    m_insertions.append(QueuedInsertion { point, id });
+    didAddDetachedValue(id);
+    return id;
+}
+
 void IRBuilder::applyInsertions()
 {
     if (m_insertions.isEmpty()) {

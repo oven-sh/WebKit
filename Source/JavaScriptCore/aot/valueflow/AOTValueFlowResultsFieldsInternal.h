@@ -30,9 +30,11 @@
 #include "AOTValueFlowRules.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
+#include "Options.h"
 #include <algorithm>
 #include <atomic>
 #include <wtf/Atomics.h>
+#include <wtf/DataLog.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
@@ -312,9 +314,13 @@ struct StoredUnderKey {
     bool mayBeAccessor : 1 { false };
     bool isGivenValueByOperation : 1 { false };
     bool isGivenValueByDefinition : 1 { false };
+    // Some definition takes a descriptor that a built-in made, beside those that the program writes out. The layout plans for the written ones.
+    bool mayBeDefinedInFormNobodyPlansFor : 1 { false };
     // `object.key = value`, which first checks the prototype chain for a setter. Any other write under the key may define it on the object itself, whatever the chain holds.
     bool isAssigned : 1 { false };
     bool isWrittenOtherThanByAssignment : 1 { false };
+    // `Object.defineProperty(made, "name", { get })`. An accessor that a literal or a class writes out is there before anybody can store into the object.
+    bool isAccessorDefinedAfterCreation : 1 { false };
     bool isNamedByOperation : 1 { false };
     bool isStoredByConstructor : 1 { false };
     bool mayBeOtherThanIntegers : 1 { false };
@@ -458,7 +464,37 @@ struct ReadOfFields {
     ValueSetID objects;
 };
 
+// A long set that takes in a short one is interned anew, all of it that changes. Where very many sets are walked for one table, what arrives for a place of the table
+// waits here, and the place takes all of it in at once. Nobody reads the places during the walk, and a union does not hang on the order.
+struct SetsToUnite {
+    enum Place : uint64_t { Value, ValueFromOperations, Getters, Setters };
+    static constexpr unsigned bitsOfPlace = 2;
+    static constexpr uint64_t underUnknownKey = 1ull << 40;
+    static uint64_t under(uint32_t key, Place place) { return static_cast<uint64_t>(key) << bitsOfPlace | place; }
+
+    void add(uint64_t place, ValueSetID set)
+    {
+        if (set == ValueSets::nothing)
+            return;
+        Vector<ValueSetID, 8>& sets = waiting.add(place, Vector<ValueSetID, 8>()).iterator->value;
+        if (sets.isEmpty() || sets.last() != set)
+            sets.append(set);
+    }
+
+    HashMap<uint64_t, Vector<ValueSetID, 8>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> waiting;
+};
+
 struct StoresIntoObjects {
+    void unite(ValueSetMaker& maker, ValueSetID& into, uint64_t place, ValueSetID set)
+    {
+        if (setsToUnite)
+            setsToUnite->add(place, set);
+        else
+            into = maker.unite(into, set);
+    }
+    void uniteWhatWaits(ValueSetMaker&);
+
+    SetsToUnite* setsToUnite { nullptr };
     StoresUnderKeys underKey;
     Vector<ReadOfFields> readsOfFields;
     ValueSetID underUnknownKey { ValueSets::nothing };
@@ -467,10 +503,15 @@ struct StoresIntoObjects {
     bool getsAccessorUnderUnknownKey { false };
     bool getsCopiedProperties { false };
     bool getsCopyWithoutComputedKey { false };
+    // `{ ...source }` lays a value down whatever is there. `Object.assign(target, source)` stores, and a store leaves an accessor an accessor.
+    bool getsCopyThatDefines { false };
     // `const { secret, ...visible } = record`: the names that every copy into such an object leaves out.
     std::optional<Vector<PropertyKeyID, 2>> keysLeftOutOfEveryCopy;
     ValueSetID valueFromOperationsUnderUnknownKey { ValueSets::nothing };
     bool isGivenValueByOperationUnderUnknownKey { false };
+    // `{ [key]: value }`, not `object[key] = value`.
+    bool isDefinedByOperationUnderUnknownKey { false };
+    bool mayBeDefinedInFormNobodyPlansForUnderUnknownKey { false };
     ValueSetID gettersUnderUnknownKey { ValueSets::nothing };
     uint8_t formsOfAccessorsUnderUnknownKey { 0 };
     // Who wrote under a name that nobody lists: an unknown key, an accessor under one, a copy.
@@ -487,6 +528,7 @@ struct StoresIntoObjects {
         getsAccessorUnderUnknownKey |= other.getsAccessorUnderUnknownKey;
         getsCopiedProperties |= other.getsCopiedProperties;
         getsCopyWithoutComputedKey |= other.getsCopyWithoutComputedKey;
+        getsCopyThatDefines |= other.getsCopyThatDefines;
         if (other.keysLeftOutOfEveryCopy && !keysLeftOutOfEveryCopy)
             keysLeftOutOfEveryCopy = other.keysLeftOutOfEveryCopy;
         else if (other.keysLeftOutOfEveryCopy) {
@@ -496,6 +538,8 @@ struct StoresIntoObjects {
         }
         valueFromOperationsUnderUnknownKey = maker.unite(valueFromOperationsUnderUnknownKey, other.valueFromOperationsUnderUnknownKey);
         isGivenValueByOperationUnderUnknownKey |= other.isGivenValueByOperationUnderUnknownKey;
+        isDefinedByOperationUnderUnknownKey |= other.isDefinedByOperationUnderUnknownKey;
+        mayBeDefinedInFormNobodyPlansForUnderUnknownKey |= other.mayBeDefinedInFormNobodyPlansForUnderUnknownKey;
         gettersUnderUnknownKey = maker.unite(gettersUnderUnknownKey, other.gettersUnderUnknownKey);
         formsOfAccessorsUnderUnknownKey |= other.formsOfAccessorsUnderUnknownKey;
         writersUnderNamesNobodyLists.add(other.writersUnderNamesNobodyLists);
@@ -528,6 +572,7 @@ public:
     Vector<PropertyKeyID> keysStoredInto(LayoutID, ObjectsOfLayout = ObjectsOfLayout::All) const;
     Vector<PropertyKeyID> keysStoredIntoKnownObjects(LayoutID) const;
     bool isOnlyAssignedByStatements(LayoutID, PropertyKeyID) const;
+    bool mayBeDefinedInFormNobodyPlansFor(LayoutID, PropertyKeyID) const;
     Vector<PropertyKeyID> keysNamedByStoresIntoKnownObjects(LayoutID) const;
     bool isStoredByConstructor(LayoutID, PropertyKeyID) const;
     const Vector<PropertyKeyID>& keysStoredThroughPlaceholders() const LIFETIME_BOUND { return m_keysThroughPlaceholders; }
@@ -548,6 +593,7 @@ public:
     // ValueForms: the forms in which the call defines a value, if it is an `Object.defineProperty(object, key, descriptor)`.
     uint8_t formsOfValueDefinedByCall(ValueSetMaker&, const ValueFlowStatement&) const;
     bool getsAccessorsUnderKeysNobodyKnows(LayoutID) const;
+    bool hasObjectPutAboveOthers(LayoutID layout) const { return m_inputs.sets().meet(m_layoutsOfObjects.objectsWith(layout), m_objectsPutAboveOthers); }
     void setReceiversOfReads(ListsOfSetsByNumber&&);
     void noteKeyBroughtByCopies(LayoutID target, PropertyKeyID, ValueSetID value);
     bool isAnyKeyReadFrom(LayoutID layout) const { return !m_groupsOfKeysReadFrom[layout.index()].isEmpty(); }
@@ -596,8 +642,12 @@ private:
         bool givesValueItself;
         bool isWrittenByCallOfBuiltin;
         bool definesValue;
+        bool takesDescriptorsOfBuiltins;
+        bool hasValueOnlyOfDescriptorsOfBuiltins;
         bool isAssignment;
         bool isOtherThanAssignment;
+        bool definesOverWhatIsThere;
+        bool definesAccessorAfterCreation;
         bool leavesOutComputedKey;
         uint64_t copyLeavingOutKeys;
         uint8_t accessorForms;
@@ -627,6 +677,8 @@ private:
         bool spellsKey { false };
         bool isIntoThisOfConstructor { false };
         bool definesValue { false };
+        bool takesDescriptorsOfBuiltins { false };
+        bool hasValueOnlyOfDescriptorsOfBuiltins { false };
         uint8_t accessorForms { 0 };
         uint8_t formsOfDefinedValues { 0 };
         uint32_t familyDeclaredForReceiver { UINT32_MAX };
@@ -667,6 +719,7 @@ private:
     const Vector<LayoutID>& layoutsAdmittedBy(LayoutSetID familyOfReceiver);
     uint32_t familyDeclaredForReceiverOf(const Writer&) const;
     std::optional<ValueSetID> descriptorsWrittenOutIn(ValueSetMaker&, const ValueFlowStatement&) const;
+    ValueSetID descriptorsOfProgramAmong(ValueSetMaker&, ValueSetID descriptors) const;
     uint8_t formsOfAccessorDefinedBy(ValueSetMaker&, const Writer&, ValueFlowName) const;
     bool definesValue(ValueSetMaker&, const Writer&, ValueFlowName) const;
     WritesThroughSet describeWrite(ValueSetMaker&, StoreUnderName&, const Writer&, const ValueFlowNodeKey&, ValueSetID value) const;
@@ -683,11 +736,12 @@ private:
     }
     void forEachTableOfKnownObjects(LayoutID, NOESCAPE const Invocable<void(const StoresIntoObjects&)> auto&) const;
     bool hasAllocationListing(LayoutID, PropertyKeyID) const;
+    bool isReadFromHeirs(ValueSetMaker&, LayoutID, PropertyKeyID) const;
     void noteNamesStoredThroughDeclaredReceivers();
     using AccessesByKeyAndLayout = HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
     void unite(ValueSetID& into, ValueSetID value) { into = m_heap.maker().unite(into, value); }
     bool spellsKey(ValueSetMaker&, const Writer&, ValueFlowName) const;
-    void note(ValueSetMaker&, StoresIntoObjects&, ValueFlowName, ValueSetID value, bool isAllocation, bool isNamedByOperation);
+    void note(ValueSetMaker&, StoresIntoObjects&, ValueFlowName, ValueSetID value, bool isAllocation, bool isNamedByOperation, bool definesOverWhatIsThere = true);
     ValueFlowNumbers numbersOf(FunctionID, ValueID) const;
     ValueFlowNumbers numbersStoredBy(const Writer&, ValueFlowName) const;
     ValueFlowNumbers numbersInData(LayoutID, ValueFlowName) const;
@@ -812,7 +866,6 @@ private:
     void noteOperations(ValueSetMakers&);
     void noteOperationsWithoutStatement();
     void noteApplication(Noter, const ValueFlowBuiltinApplication&);
-    void noteRefusedOperands(Noter, const ValueFlowBuiltinApplication&);
 
     struct NotesOfBuiltins {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(NotesOfBuiltins);
@@ -831,10 +884,6 @@ private:
 
             friend bool operator==(const TestUnderOperand&, const TestUnderOperand&) = default;
         };
-        struct RefusedOperand {
-            BuiltinOperand operand;
-            ValueSetID taken;
-        };
 
         bool areToldApart { false };
         bool enumeratesAnything { false };
@@ -844,7 +893,6 @@ private:
         Vector<BuiltinOperand, 4> observedUnderAnyKey;
         Vector<TestUnderName, 4> testsUnderNames;
         Vector<TestUnderOperand, 2> testsUnderOperands;
-        Vector<RefusedOperand, 4> refusedOperands;
     };
     class NotesOfSetsOfBuiltins {
     public:
@@ -873,7 +921,6 @@ private:
     std::unique_ptr<NotesOfBuiltins> findNotesOf(ValueSetMaker&, ValueSetID builtinFunctions, BuiltinCallMode) const;
     void noteApplicationOfAll(Noter, const ValueFlowBuiltinApplication&, ValueSetID builtinCallees);
     void noteTestUnderKeys(Noter, const ValueFlowBuiltinApplication&, BuiltinOperand object, BuiltinOperand key, bool looksAtOwnPropertyAlone);
-    void findHostFunctionsThatProgramHasStored(ValueSetMakers&);
     void goOnToPrototypes(ValueSetMakers&);
 
     const ValueFlowResultInputs& m_inputs;
@@ -888,10 +935,8 @@ private:
     SetsByNumber m_accessedUnderKey;
     ListsOfSetsByNumber m_receiversOfReads;
     Vector<Notes> m_notes;
-    ValueFlowAnswersAboutSets m_foundAboveReceivers;
     NotesOfSetsOfBuiltins m_notesOfSetsOfBuiltins;
     BitVector m_builtinsThatLookAtObjects;
-    SetsByNumber m_hostFunctionsStoredUnderKey;
 };
 
 struct ValueFlowUsesOfHeap {
@@ -975,15 +1020,21 @@ void StoresByLayout::forEachWriteInParallel(NOESCAPE const Invocable<void(unsign
 {
     constexpr size_t writesPerIndex = 2048;
     std::span<const uint32_t> writes = m_writes.span();
-    auto firstOfRun = [&](size_t run) {
-        size_t first = std::min(run * writesPerIndex, writes.size());
-        while (first < writes.size() && !(writes[first] & isStatementInListOfWrites))
-            ++first;
-        return first;
-    };
-    forEachIndexInParallel(m_inputs.loops(), static_cast<unsigned>((writes.size() + writesPerIndex - 1) / writesPerIndex), [&](unsigned run, unsigned worker) {
-        size_t first = firstOfRun(run);
-        forEachWriteAmong(writes.subspan(first, firstOfRun(run + 1) - first), [&](const Writer& writer, const ValueFlowNodeKey& key, ValueSetID value) {
+    unsigned numberOfRuns = static_cast<unsigned>((writes.size() + writesPerIndex - 1) / writesPerIndex);
+    // One statement may have more writes than many runs hold: the starts are found in one pass.
+    Vector<size_t> firstOfRun(numberOfRuns + 1);
+    size_t first = 0;
+    uint64_t writesRead = 0;
+    for (size_t run = 0; run <= numberOfRuns; ++run) {
+        first = std::max(first, std::min(run * writesPerIndex, writes.size()));
+        for (; first < writes.size() && !(writes[first] & isStatementInListOfWrites); ++first)
+            ++writesRead;
+        firstOfRun[run] = first;
+    }
+    if (Options::logAOTPhaseTimes())
+        dataLogLn("AOT flow tables | writes read for the starts of runs ", writesRead);
+    forEachIndexInParallel(m_inputs.loops(), numberOfRuns, [&](unsigned run, unsigned worker) {
+        forEachWriteAmong(writes.subspan(firstOfRun[run], firstOfRun[run + 1] - firstOfRun[run]), [&](const Writer& writer, const ValueFlowNodeKey& key, ValueSetID value) {
             functor(worker, writer, key, value);
         });
     });

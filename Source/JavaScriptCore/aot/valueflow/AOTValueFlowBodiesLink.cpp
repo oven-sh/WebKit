@@ -7,6 +7,7 @@
 #include "AOTValueFlowBodies.h"
 #include "AOTValueFlowBuiltins.h"
 #include "AOTKnownClosures.h"
+#include "AOTLayoutSetTails.h"
 #include "AOTValueFlowRules.h"
 #include "AOTValueFlowRulesModules.h"
 
@@ -23,6 +24,7 @@
 #include "AOTValueSets.h"
 #include <algorithm>
 #include <wtf/MonotonicTime.h>
+#include <wtf/WeakRandom.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -372,13 +374,40 @@ static ValueSetID rememberedSetOr(std::atomic<uint32_t>* remembered, NOESCAPE co
     return set;
 }
 
+ValueSetID ValueFlowUniverse::rememberedSetOfLayouts(ValueSetMaker& maker, const Program& program, std::atomic<uint32_t>* remembered, LayoutSetID layouts, NOESCAPE const Invocable<ValueSetID(std::span<const LayoutID>)> auto& make) const
+{
+    if (layouts.index() >= m_numberOfRememberedLayoutSets)
+        return make(program.at(layouts).completeMembers().value());
+
+    Vector<LayoutSetID, 8> setsBehindFirstMember;
+    ValueSetID result;
+    for (LayoutSetID current = layouts;; current = m_layoutSetsWithoutFirstMember[current.index()]) {
+        if (uint32_t setPlusOne = remembered[current.index()].load(std::memory_order_acquire)) {
+            result = ValueSetID(setPlusOne - 1);
+            break;
+        }
+        if (!m_layoutSetsWithoutFirstMember[current.index()]) {
+            result = make(program.at(current).completeMembers().value());
+            remembered[current.index()].store(result.index() + 1, std::memory_order_release);
+            break;
+        }
+        setsBehindFirstMember.append(current);
+    }
+    while (!setsBehindFirstMember.isEmpty()) {
+        LayoutSetID current = setsBehindFirstMember.takeLast();
+        result = maker.unite(result, make(program.at(current).completeMembers().value().first(1)));
+        remembered[current.index()].store(result.index() + 1, std::memory_order_release);
+    }
+    return result;
+}
+
 ValueSetID ValueFlowUniverse::objectsWithLayoutIn(ValueSetMaker& maker, const Program& program, LayoutSetID layouts) const
 {
     if (!layouts)
         return ValueSets::nothing;
-    return rememberedSetOr(layouts.index() < m_numberOfRememberedLayoutSets ? &m_objectsWithLayoutIn[layouts.index()] : nullptr, [&] {
+    return rememberedSetOfLayouts(maker, program, m_objectsWithLayoutIn.get(), layouts, [&](std::span<const LayoutID> members) {
         Vector<ValueSetID, 8> objectsOfLayouts;
-        for (LayoutID layout : program.at(layouts).completeMembers())
+        for (LayoutID layout : members)
             objectsOfLayouts.append(m_objectsOfLayout[layout.index()]);
         return maker.uniteAll(objectsOfLayouts.span());
     });
@@ -464,9 +493,9 @@ ValueSetID ValueFlowUniverse::objectsSurelyWithLayoutIn(ValueSetMaker& maker, co
 {
     if (!layouts)
         return ValueSets::nothing;
-    return rememberedSetOr(layouts.index() < m_numberOfRememberedLayoutSets ? &m_objectsSurelyWithLayoutIn[layouts.index()] : nullptr, [&] {
+    return rememberedSetOfLayouts(maker, program, m_objectsSurelyWithLayoutIn.get(), layouts, [&](std::span<const LayoutID> members) {
         Vector<ValueSetID, 4> objectsOfLayouts;
-        for (LayoutID layout : program.at(layouts).completeMembers()) {
+        for (LayoutID layout : members) {
             if (!m_isLayoutOfTable.quickGet(layout.index()))
                 objectsOfLayouts.append(m_objectsOfLayout[layout.index()]);
         }
@@ -653,7 +682,7 @@ public:
             [&] {
                 m_bodies = ParallelArray<ValueFlowBody>(m_loops, m_numberOfFunctions + 1, largestFirst.span(), [&](unsigned index) {
                     if (index == m_numberOfFunctions)
-                        return makeHostBody(m_program, tables, m_result.m_notedOperations.span());
+                        return makeHostBody(m_program, tables, m_result.m_notedOperations.span(), &m_result.m_unobservedDefinitions);
                     return reduceBody(m_program, tables, FunctionID(index), &m_result.m_unobservedDefinitions);
                 });
             },
@@ -842,12 +871,28 @@ private:
         universe.m_siteOfObject.grow(numberOfSiteObjects);
         uint32_t nextSite = universe.m_firstSite;
         uint32_t nextBuiltinResultSite = universe.m_firstBuiltinResultSite;
+        Vector<uint32_t> otherNumbers;
+        if (uint32_t seed = m_build.options().seedOfObjectNumbers) [[unlikely]] {
+            otherNumbers = Vector<uint32_t>(numberOfSiteObjects, [&](size_t position) {
+                return universe.m_firstSite + static_cast<uint32_t>(position);
+            });
+            WeakRandom random(seed);
+            auto shuffle = [&](std::span<uint32_t> numbers) {
+                for (size_t remaining = numbers.size(); remaining > 1; --remaining)
+                    std::swap(numbers[remaining - 1], numbers[random.getUint32(static_cast<unsigned>(remaining))]);
+            };
+            size_t numberOfOthers = universe.m_firstBuiltinResultSite - universe.m_firstSite;
+            shuffle(otherNumbers.mutableSpan().first(numberOfOthers));
+            shuffle(otherNumbers.mutableSpan().subspan(numberOfOthers));
+        }
         for (uint32_t site = 0; site < numberOfSites; ++site) {
             if (siteWithObjectOf[site] != site) {
                 universe.m_objectOfSite[site] = universe.m_objectOfSite[siteWithObjectOf[site]];
                 continue;
             }
             uint32_t object = isBuiltinResult(universe.m_sites[site]) ? nextBuiltinResultSite++ : nextSite++;
+            if (!otherNumbers.isEmpty()) [[unlikely]]
+                object = otherNumbers[object - universe.m_firstSite];
             universe.m_objectOfSite[site] = ValueFlowObjectID(object);
             universe.m_siteOfObject[object - universe.m_firstSite] = site;
         }
@@ -1080,372 +1125,418 @@ private:
     {
         ValueFlowUniverse& universe = m_result.m_universe;
         const BuiltinTable& builtins = m_program.builtins();
-        m_makers.grow(std::max(1u, m_loops.width()) + 1);
+        // The loops take the first makers. What runs beside a loop has one that no loop takes.
+        unsigned firstMakerBesideLoops = std::max(1u, m_loops.width()) + 1;
+        m_makers.grow(firstMakerBesideLoops + 3);
         m_setsOfType.grow(m_makers.size());
-        ValueSetMaker& maker = makerOf(0);
 
-        Vector<ValueFlowObjectID> list;
-        auto take = [&] {
-            ValueSetID set = maker.of(list.span());
-            list.shrink(0);
-            return set;
-        };
-        auto rangeOf = [&](uint32_t first, uint32_t end) {
-            return maker.ofRange(ValueFlowObjectID(first), ValueFlowObjectID(end));
-        };
-        enum class OfModules : bool { No, Yes };
-        auto builtinObjectsWhere = [&](OfModules ofModules, NOESCAPE const Invocable<bool(BuiltinID)> auto& holds) {
-            for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
-                if (holds(BuiltinID(index)))
-                    list.append(ValueFlowObjectID(universe.m_firstBuiltin + index));
-            }
-            for (uint32_t index = 0; ofModules == OfModules::Yes && index < universe.m_moduleBuiltins.size(); ++index) {
-                if (holds(universe.m_moduleBuiltins[index].builtin))
-                    list.append(ValueFlowObjectID(universe.m_firstModuleBuiltin + index));
-            }
-            return take();
+        auto withMaker = [&](unsigned number, NOESCAPE const auto& makeMasks) {
+            ValueSetMaker& maker = makerOf(firstMakerBesideLoops + number);
+            Vector<ValueFlowObjectID> list;
+            auto take = [&] {
+                ValueSetID set = maker.of(list.span());
+                list.shrink(0);
+                return set;
+            };
+            auto rangeOf = [&](uint32_t first, uint32_t end) {
+                return maker.ofRange(ValueFlowObjectID(first), ValueFlowObjectID(end));
+            };
+            makeMasks(maker, list, take, rangeOf);
         };
 
-        for (uint16_t rest = Primitive::All & ~(Primitive::LiteralString | Primitive::LiteralSymbol); rest; rest &= rest - 1)
-            list.append(ValueFlowObjectID(static_cast<uint32_t>(std::countr_zero(rest))));
-        universe.m_anyPrimitive = take();
-        universe.m_keys = rangeOf(universe.m_firstKey, universe.m_numberOfObjects);
-        universe.m_primitives = maker.unite(rangeOf(0, ValueFlowUniverse::numberOfPrimitiveKinds), universe.m_keys);
-        universe.m_undefinedValue = maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Undefined));
-        universe.m_unknownObjectAlone = maker.of(ValueFlowUniverse::unknownObject());
-        universe.m_untrackedObjectAlone = maker.of(ValueFlowUniverse::untrackedObject());
-        universe.m_placeholdersAlone = maker.unite(universe.m_unknownObjectAlone, universe.m_untrackedObjectAlone);
-        universe.m_objects = ValueSets::complement(universe.m_primitives);
-        universe.m_knownObjects = maker.intersect(universe.m_objects, ValueSets::complement(maker.unite(universe.m_placeholdersAlone, maker.unite(maker.of(ValueFlowUniverse::markOfNamedBun()), maker.unite(maker.of(ValueFlowUniverse::markOfMemberLeftOut()), maker.of(ValueFlowUniverse::markOfLoadedBun()))))));
-        universe.m_constructedObjects = rangeOf(universe.m_firstConstructedObject, universe.m_firstSite);
-        universe.m_builtinObjects = rangeOf(universe.m_firstBuiltin, universe.m_firstNamespace);
-        universe.m_namespaces = rangeOf(universe.m_firstNamespace, universe.m_firstLayoutObject);
-        universe.m_closures = rangeOf(universe.m_firstClosure, universe.m_firstCoroutineResult);
-
-        Vector<ValueFlowObjectID> symbolKeys;
-        for (uint32_t index = 0; index < m_program.types.numberOfPropertyKeys(); ++index) {
-            PropertyKeyKind kind = m_program.at(PropertyKeyID(index)).kind;
-            if (kind == PropertyKeyKind::Text)
-                continue;
-            list.append(universe.keyConstant(PropertyKeyID(index)));
-            if (isSymbolKind(kind))
-                symbolKeys.append(universe.keyConstant(PropertyKeyID(index)));
-        }
-        universe.m_textKeys = maker.intersect(universe.m_keys, ValueSets::complement(take()));
-        universe.m_symbolKeys = maker.of(symbolKeys.span());
-        forEachEmbeddedFilePath(m_program, [&](ModuleID, StringID path) {
-            if (std::optional<PropertyKeyID> key = m_program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = path }))
-                list.append(universe.keyConstant(*key));
-        });
-        universe.m_embeddedFilePaths = take();
-
-        universe.m_builtinFunctions = builtinObjectsWhere(OfModules::Yes, [&](BuiltinID builtin) {
-            return isCallableBuiltin(builtins, builtin);
-        });
-        universe.m_accessorsThatBindFunctions = builtinObjectsWhere(OfModules::No, [&](BuiltinID builtin) {
-            return builtins.canonicalID(builtin) == builtin && builtins.answersFunctionBoundToReceiver(builtin);
-        });
-        universe.m_targetsOfBoundFunctionsAmongBuiltins = maker.unite(universe.m_builtinFunctions, universe.m_accessorsThatBindFunctions);
-
-        BitVector isFunctionOfProtocol(builtins.builtinCount());
-        for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
-            BuiltinName name = builtins.at(BuiltinID(index)).name;
-            bool isNameOfProtocol = name == BuiltinNames::iteratorSymbol || name == BuiltinNames::asyncIteratorSymbol || name == BuiltinNames::next || name == BuiltinNames::returnKeyword
-                || name == BuiltinNames::throwKeyword || name == BuiltinNames::then;
-            if (isNameOfProtocol && isCallableBuiltin(builtins, BuiltinID(index)))
-                isFunctionOfProtocol.quickSet(builtins.canonicalID(BuiltinID(index)).index());
-        }
-        universe.m_builtinFunctionsOfProtocols = builtinObjectsWhere(OfModules::Yes, [&](BuiltinID builtin) {
-            return isFunctionOfProtocol.quickGet(builtins.canonicalID(builtin).index());
-        });
-        auto readsSpecies = [](const BuiltinParameter& parameter) {
-            return parameter.uses != OperandUses::all() && parameter.protocols.contains(Protocol::Species);
-        };
-        universe.m_builtinFunctionsThatReadSpecies = builtinObjectsWhere(OfModules::Yes, [&](BuiltinID builtin) {
-            return isCallableBuiltin(builtins, builtin) && std::ranges::any_of(builtins.overloadsOf(builtins.canonicalID(builtin)), [&](const BuiltinOverload& overload) {
-                if (overload.code.model || !doRecordsDescribe(builtins, overload))
-                    return false;
-                return (overload.receiver && readsSpecies(*overload.receiver)) || std::ranges::any_of(overload.parameters, readsSpecies);
-            });
-        });
-        constexpr OperandUses usesChangingObject = operandWritingUses | OperandUses { OperandUse::DefinesName, OperandUse::TakesDescriptor, OperandUse::ChangesPrototype, OperandUse::BecomesPrototype };
-        universe.m_builtinFunctionsThatActOnReceiver = builtinObjectsWhere(OfModules::Yes, [&](BuiltinID builtin) {
-            return isCallableBuiltin(builtins, builtin) && std::ranges::any_of(builtins.overloadsOf(builtins.canonicalID(builtin)), [&](const BuiltinOverload& overload) {
-                if (overload.mode != BuiltinCallMode::Call || !overload.receiver || overload.code.model || !doRecordsDescribe(builtins, overload))
-                    return false;
-                return readsSpecies(*overload.receiver) || overload.receiver->uses.containsAny(usesChangingObject);
-            });
+        withMaker(0, [&](ValueSetMaker& maker, Vector<ValueFlowObjectID>& list, auto& take, auto& rangeOf) {
+            for (uint16_t rest = Primitive::All & ~(Primitive::LiteralString | Primitive::LiteralSymbol); rest; rest &= rest - 1)
+                list.append(ValueFlowObjectID(static_cast<uint32_t>(std::countr_zero(rest))));
+            universe.m_anyPrimitive = take();
+            universe.m_keys = rangeOf(universe.m_firstKey, universe.m_numberOfObjects);
+            universe.m_primitives = maker.unite(rangeOf(0, ValueFlowUniverse::numberOfPrimitiveKinds), universe.m_keys);
+            universe.m_undefinedValue = maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Undefined));
+            universe.m_unknownObjectAlone = maker.of(ValueFlowUniverse::unknownObject());
+            universe.m_untrackedObjectAlone = maker.of(ValueFlowUniverse::untrackedObject());
+            universe.m_placeholdersAlone = maker.unite(universe.m_unknownObjectAlone, universe.m_untrackedObjectAlone);
+            universe.m_objects = ValueSets::complement(universe.m_primitives);
+            universe.m_knownObjects = maker.intersect(universe.m_objects, ValueSets::complement(maker.unite(universe.m_placeholdersAlone, maker.unite(maker.of(ValueFlowUniverse::markOfNamedBun()), maker.unite(maker.of(ValueFlowUniverse::markOfMemberLeftOut()), maker.of(ValueFlowUniverse::markOfLoadedBun()))))));
+            universe.m_constructedObjects = rangeOf(universe.m_firstConstructedObject, universe.m_firstSite);
+            universe.m_builtinObjects = rangeOf(universe.m_firstBuiltin, universe.m_firstNamespace);
+            universe.m_namespaces = rangeOf(universe.m_firstNamespace, universe.m_firstLayoutObject);
+            universe.m_closures = rangeOf(universe.m_firstClosure, universe.m_firstCoroutineResult);
         });
 
-        universe.m_isCanonicalEntryOfCallableBuiltin = BitVector(builtins.builtinCount());
-        for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
-            BuiltinID builtin(index);
-            if (!isCallableBuiltin(builtins, builtin))
-                continue;
-            universe.m_isCanonicalEntryOfCallableBuiltin.quickSet(builtins.canonicalID(builtin).index());
-            LibraryClosuresOfBuiltin closures = libraryClosuresOf(m_program.types, builtin);
-            if (closures.mayBeAnyFunctionOfLibrary) {
-                list.append(universe.objectOf(builtin));
-                continue;
-            }
-            for (FunctionID function : closures.functions)
-                universe.m_builtinsThatMayBeClosureOf.add(function.index(), Vector<ValueFlowObjectID, 2>()).iterator->value.append(universe.objectOf(builtin));
-        }
-        universe.m_builtinsThatMayBeAnyLibraryClosure = take();
+        // Each of these reads what stands above and what it makes itself.
+        runTasksInParallel(m_loops, {
+            [&] {
+                withMaker(0, [&](ValueSetMaker& maker, Vector<ValueFlowObjectID>& list, auto& take, auto&) {
+                    enum class OfModules : bool { No, Yes };
+                    auto builtinObjectsWhere = [&](OfModules ofModules, NOESCAPE const Invocable<bool(BuiltinID)> auto& holds) {
+                        for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+                            if (holds(BuiltinID(index)))
+                                list.append(ValueFlowObjectID(universe.m_firstBuiltin + index));
+                        }
+                        for (uint32_t index = 0; ofModules == OfModules::Yes && index < universe.m_moduleBuiltins.size(); ++index) {
+                            if (holds(universe.m_moduleBuiltins[index].builtin))
+                                list.append(ValueFlowObjectID(universe.m_firstModuleBuiltin + index));
+                        }
+                        return take();
+                    };
 
-        universe.m_objectsOfRealm = builtinObjectsWhere(OfModules::No, [&](BuiltinID builtin) {
-            return builtins.at(builtin).scope == BuiltinScope::Realm;
-        });
-        universe.m_lockedObjects = builtinObjectsWhere(OfModules::No, [&](BuiltinID builtin) {
-            return builtins.at(builtin).flags.contains(BuiltinFlag::IsLockedObject);
-        });
-        universe.m_objectsWithLockedPrototypeLink = builtinObjectsWhere(OfModules::No, [&](BuiltinID builtin) {
-            return builtins.hasLockedPrototypeLink(builtin);
-        });
-        for (uint32_t index = 0; index < m_program.modules.size(); ++index)
-            list.append(universe.namespaceOf(ModuleID(index)));
-        universe.m_objectsBornWithoutPrototype = builtinObjectsWhere(OfModules::Yes, [&](BuiltinID builtin) {
-            return builtins.at(builtin).prototypeLink != BuiltinPrototypeLink::Builtin && builtins.canonicalID(builtin) != Builtins::ObjectPrototype;
+                    Vector<ValueFlowObjectID> symbolKeys;
+                    for (uint32_t index = 0; index < m_program.types.numberOfPropertyKeys(); ++index) {
+                        PropertyKeyKind kind = m_program.at(PropertyKeyID(index)).kind;
+                        if (kind == PropertyKeyKind::Text)
+                            continue;
+                        list.append(universe.keyConstant(PropertyKeyID(index)));
+                        if (isSymbolKind(kind))
+                            symbolKeys.append(universe.keyConstant(PropertyKeyID(index)));
+                    }
+                    universe.m_textKeys = maker.intersect(universe.m_keys, ValueSets::complement(take()));
+                    universe.m_symbolKeys = maker.of(symbolKeys.span());
+                    forEachEmbeddedFilePath(m_program, [&](ModuleID, StringID path) {
+                        if (std::optional<PropertyKeyID> key = m_program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = path }))
+                            list.append(universe.keyConstant(*key));
+                    });
+                    universe.m_embeddedFilePaths = take();
+
+                    universe.m_builtinFunctions = builtinObjectsWhere(OfModules::Yes, [&](BuiltinID builtin) {
+                        return isCallableBuiltin(builtins, builtin);
+                    });
+                    universe.m_accessorsThatBindFunctions = builtinObjectsWhere(OfModules::No, [&](BuiltinID builtin) {
+                        return builtins.canonicalID(builtin) == builtin && builtins.answersFunctionBoundToReceiver(builtin);
+                    });
+                    universe.m_targetsOfBoundFunctionsAmongBuiltins = maker.unite(universe.m_builtinFunctions, universe.m_accessorsThatBindFunctions);
+
+                    BitVector isFunctionOfProtocol(builtins.builtinCount());
+                    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+                        BuiltinName name = builtins.at(BuiltinID(index)).name;
+                        bool isNameOfProtocol = name == BuiltinNames::iteratorSymbol || name == BuiltinNames::asyncIteratorSymbol || name == BuiltinNames::next || name == BuiltinNames::returnKeyword
+                            || name == BuiltinNames::throwKeyword || name == BuiltinNames::then;
+                        if (isNameOfProtocol && isCallableBuiltin(builtins, BuiltinID(index)))
+                            isFunctionOfProtocol.quickSet(builtins.canonicalID(BuiltinID(index)).index());
+                    }
+                    universe.m_builtinFunctionsOfProtocols = builtinObjectsWhere(OfModules::Yes, [&](BuiltinID builtin) {
+                        return isFunctionOfProtocol.quickGet(builtins.canonicalID(builtin).index());
+                    });
+                    auto readsSpecies = [](const BuiltinParameter& parameter) {
+                        return parameter.uses != OperandUses::all() && parameter.protocols.contains(Protocol::Species);
+                    };
+                    universe.m_builtinFunctionsThatReadSpecies = builtinObjectsWhere(OfModules::Yes, [&](BuiltinID builtin) {
+                        return isCallableBuiltin(builtins, builtin) && std::ranges::any_of(builtins.overloadsOf(builtins.canonicalID(builtin)), [&](const BuiltinOverload& overload) {
+                            if (overload.code.model || !doRecordsDescribe(builtins, overload))
+                                return false;
+                            return (overload.receiver && readsSpecies(*overload.receiver)) || std::ranges::any_of(overload.parameters, readsSpecies);
+                        });
+                    });
+                    constexpr OperandUses usesChangingObject = operandWritingUses | OperandUses { OperandUse::DefinesName, OperandUse::TakesDescriptor, OperandUse::ChangesPrototype, OperandUse::BecomesPrototype };
+                    universe.m_builtinFunctionsThatActOnReceiver = builtinObjectsWhere(OfModules::Yes, [&](BuiltinID builtin) {
+                        return isCallableBuiltin(builtins, builtin) && std::ranges::any_of(builtins.overloadsOf(builtins.canonicalID(builtin)), [&](const BuiltinOverload& overload) {
+                            if (overload.mode != BuiltinCallMode::Call || !overload.receiver || overload.code.model || !doRecordsDescribe(builtins, overload))
+                                return false;
+                            return readsSpecies(*overload.receiver) || overload.receiver->uses.containsAny(usesChangingObject);
+                        });
+                    });
+
+                    universe.m_isCanonicalEntryOfCallableBuiltin = BitVector(builtins.builtinCount());
+                    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+                        BuiltinID builtin(index);
+                        if (!isCallableBuiltin(builtins, builtin))
+                            continue;
+                        universe.m_isCanonicalEntryOfCallableBuiltin.quickSet(builtins.canonicalID(builtin).index());
+                        LibraryClosuresOfBuiltin closures = libraryClosuresOf(m_program.types, builtin);
+                        if (closures.mayBeAnyFunctionOfLibrary) {
+                            list.append(universe.objectOf(builtin));
+                            continue;
+                        }
+                        for (FunctionID function : closures.functions)
+                            universe.m_builtinsThatMayBeClosureOf.add(function.index(), Vector<ValueFlowObjectID, 2>()).iterator->value.append(universe.objectOf(builtin));
+                    }
+                    universe.m_builtinsThatMayBeAnyLibraryClosure = take();
+
+                    universe.m_objectsOfRealm = builtinObjectsWhere(OfModules::No, [&](BuiltinID builtin) {
+                        return builtins.at(builtin).scope == BuiltinScope::Realm;
+                    });
+                    universe.m_lockedObjects = builtinObjectsWhere(OfModules::No, [&](BuiltinID builtin) {
+                        return builtins.at(builtin).flags.contains(BuiltinFlag::IsLockedObject);
+                    });
+                    universe.m_objectsWithLockedPrototypeLink = builtinObjectsWhere(OfModules::No, [&](BuiltinID builtin) {
+                        return builtins.hasLockedPrototypeLink(builtin);
+                    });
+                    for (uint32_t index = 0; index < m_program.modules.size(); ++index)
+                        list.append(universe.namespaceOf(ModuleID(index)));
+                    universe.m_objectsBornWithoutPrototype = builtinObjectsWhere(OfModules::Yes, [&](BuiltinID builtin) {
+                        return builtins.at(builtin).prototypeLink != BuiltinPrototypeLink::Builtin && builtins.canonicalID(builtin) != Builtins::ObjectPrototype;
+                    });
+
+                    for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
+                        const Layout& layout = m_program.layouts[index];
+                        if (layoutIsDefinedByClass(layout) && layout.module && m_program.at(layout.module).kind == ModuleKind::RuntimeSource)
+                            list.append(universe.prototypeOf(LayoutID(index)));
+                    }
+                    universe.m_prototypeObjectsOfLibraryClasses = take();
+                    for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
+                        const Layout& layout = m_program.layouts[index];
+                        if (layoutIsDefinedByClass(layout) && layout.constructor && layout.module && m_program.at(layout.module).kind == ModuleKind::RuntimeSource)
+                            list.append(universe.closureOf(layout.constructor));
+                    }
+                    universe.m_constructorsOfLibraryClasses = take();
+                    for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
+                        const Layout& layout = m_program.layouts[index];
+                        if (layout.kind == LayoutKind::Instance && layout.constructor)
+                            list.append(universe.prototypeOf(LayoutID(index)));
+                    }
+                    universe.m_prototypeObjectsOfClasses = take();
+                    universe.m_holdersOfExportsOfModule.fill(ValueSets::nothing, m_program.modules.size());
+                    universe.m_holdersOfLibraryExports = ValueSets::nothing;
+                    universe.m_holdersOfPublicLibraryExports = ValueSets::nothing;
+                    universe.m_holdersOfLibraryExportsThatRaiseNoEvent = ValueSets::nothing;
+                    universe.m_eventRaisingLibraryExportHolders = ValueSets::nothing;
+                    BitVector mayRaiseEvents = libraryModulesThatMayRaiseEvents();
+                    for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
+                        if (m_program.modules[index].kind != ModuleKind::RuntimeSource)
+                            continue;
+                        appendHoldersOfExports(list, ModuleID(index));
+                        universe.m_holdersOfExportsOfModule[index] = take();
+                        universe.m_holdersOfLibraryExports = maker.unite(universe.m_holdersOfLibraryExports, universe.m_holdersOfExportsOfModule[index]);
+                        if (mayAnswerToName(m_program, ModuleID(index)))
+                            universe.m_holdersOfPublicLibraryExports = maker.unite(universe.m_holdersOfPublicLibraryExports, universe.m_holdersOfExportsOfModule[index]);
+                        ValueSetID& holders = mayRaiseEvents.get(index) ? universe.m_eventRaisingLibraryExportHolders : universe.m_holdersOfLibraryExportsThatRaiseNoEvent;
+                        holders = maker.unite(holders, universe.m_holdersOfExportsOfModule[index]);
+                    }
+                    if (!m_build.options().excludesLibraryText())
+                        universe.m_holdersOfPublicLibraryExports = universe.m_holdersOfLibraryExports;
+                    for (uint32_t index = 0; index < m_program.functions.size(); ++index) {
+                        if (ModuleID module = m_program.functions[index].module; module && mayRaiseEvents.get(module.index()))
+                            list.append(universe.closureOf(FunctionID(index)));
+                    }
+                    universe.m_eventRaisingLibraryClosures = take();
+                    universe.m_objectsOfLibraryFoundByNameAlone = maker.unite(universe.m_holdersOfLibraryExports, universe.m_prototypeObjectsOfLibraryClasses);
+
+                    list.append(ValueFlowUniverse::primitive(PrimitiveSet::String));
+                    universe.m_strings = maker.unite(take(), universe.m_textKeys);
+                    list.append(ValueFlowUniverse::primitive(PrimitiveSet::Symbol));
+                    universe.m_symbols = maker.unite(take(), universe.m_symbolKeys);
+                });
+            },
+            [&] {
+                withMaker(1, [&](ValueSetMaker& maker, Vector<ValueFlowObjectID>& list, auto& take, auto& rangeOf) {
+                    Vector<Vector<ValueFlowObjectID>> ofLayout(m_program.layouts.size());
+                    Vector<Vector<ValueFlowObjectID>> ofClass(builtins.classCount());
+                    for (unsigned index = 0; index < m_program.layouts.size(); ++index) {
+                        ofLayout[index].append(universe.instanceOf(LayoutID(index)));
+                        if (ModuleID module = m_program.layouts[index].namespaceOf; module && m_program.layoutOfWholeNamespace(module))
+                            ofLayout[index].append(universe.namespaceOf(module));
+                    }
+                    for (unsigned index = 0; index < m_numberOfFunctions; ++index) {
+                        if (BuiltinClassID builtinClass = universe.m_classOfCoroutineResult[index])
+                            ofClass[builtinClass.index()].append(universe.coroutineResultOf(FunctionID(index)));
+                    }
+                    Vector<ValueFlowObjectID> proxiesFromNamedConstructor;
+                    Vector<ValueFlowObjectID> denseArrayLiterals;
+                    Vector<ValueFlowObjectID> pairLiterals;
+                    // The sites of one piece of data follow one another, the root first.
+                    ValueFlowObjectID rootOfData;
+                    size_t firstPairInData = 0;
+                    auto endData = [&] {
+                        if (rootOfData && firstPairInData < pairLiterals.size())
+                            universe.m_pairLiteralsInData.add(rootOfData.index(), maker.of(pairLiterals.span().subspan(firstPairInData)));
+                        rootOfData = { };
+                    };
+                    for (uint32_t site = 0; site < universe.m_sites.size(); ++site) {
+                        ValueFlowObjectID object = universe.m_objectOfSite[site];
+                        if (universe.m_sites[site].origin != ValueFlowSiteOrigin::DataNode || !universe.m_sites[site].ordinal) {
+                            endData();
+                            if (universe.m_sites[site].origin == ValueFlowSiteOrigin::DataNode) {
+                                rootOfData = object;
+                                firstPairInData = pairLiterals.size();
+                            }
+                        }
+                        if (LayoutID layout = universe.m_sites[site].layout)
+                            ofLayout[layout.index()].append(object);
+                        if (universe.m_sites[site].isProxyFromNamedConstructor)
+                            proxiesFromNamedConstructor.append(object);
+                        if (universe.m_sites[site].isDenseArrayLiteral)
+                            denseArrayLiterals.append(object);
+                        if (universe.m_sites[site].isPairLiteral)
+                            pairLiterals.append(object);
+                        if (universe.m_sites[site].origin == ValueFlowSiteOrigin::BuiltinResult)
+                            continue;
+                        if (BuiltinClassID builtinClass = universe.m_sites[site].builtinClass)
+                            ofClass[builtinClass.index()].append(object);
+                        else if (!universe.m_sites[site].layout)
+                            list.append(object);
+                    }
+                    universe.m_proxiesFromNamedConstructor = maker.of(proxiesFromNamedConstructor.span());
+                    universe.m_denseArrayLiterals = maker.of(denseArrayLiterals.span());
+                    endData();
+                    universe.m_pairLiterals = maker.of(pairLiterals.span());
+                    fileAllocationsOfBaseClassesUnderClassesBelow(maker, ofLayout);
+                    universe.m_objectsWithAnyLayout = maker.unite(take(), universe.m_placeholdersAlone);
+                    ValueSetID madeByBuiltins = maker.unite(rangeOf(universe.m_firstResultOfBuiltin, universe.m_firstClosure), rangeOf(universe.m_firstBuiltinResultSite, universe.m_firstKey));
+                    universe.m_objectsThatMayBeAnything = maker.unite(universe.m_objectsWithAnyLayout, madeByBuiltins);
+                    BitVector isLayoutOfTable(m_program.layouts.size());
+                    for (uint32_t index = 0; index < builtins.layoutCount(); ++index) {
+                        if (LayoutID layout = m_program.layoutOf(BuiltinLayoutID(index)))
+                            isLayoutOfTable.quickSet(layout.index());
+                    }
+
+                    auto mayBeAllocatedByBuiltin = [&](LayoutID layout) {
+                        for (size_t steps = 0; steps < m_program.layouts.size() && layout; ++steps) {
+                            if (!m_program.at(layout).has(LayoutFlags::HasHeritage))
+                                return false;
+                            layout = predictedHeritageOf(m_program.at(layout));
+                        }
+                        return true;
+                    };
+                    Vector<ValueSetID> allocatedWithLayout(ofLayout.size());
+                    forEachIndexInParallel(m_loops, ofLayout.size(), [&](unsigned index, unsigned worker) {
+                        allocatedWithLayout[index] = makerOf(worker).of(ofLayout[index].span());
+                    });
+                    auto standsBelowLibraryClass = [&](LayoutID layout) {
+                        for (size_t steps = 0; steps < m_program.layouts.size() && layout; ++steps) {
+                            const Layout& above = m_program.at(layout);
+                            if (layoutIsDefinedByClass(above) && above.module && m_program.at(above.module).kind == ModuleKind::RuntimeSource)
+                                return true;
+                            if (!above.has(LayoutFlags::HasHeritage))
+                                return false;
+                            layout = predictedHeritageOf(above);
+                        }
+                        return false;
+                    };
+                    Vector<ValueSetID> belowLibraryClasses;
+                    for (uint32_t index = 0; index < ofLayout.size(); ++index) {
+                        if (standsBelowLibraryClass(LayoutID(index)))
+                            belowLibraryClasses.append(allocatedWithLayout[index]);
+                    }
+                    universe.m_instancesBelowLibraryClasses = maker.uniteAll(belowLibraryClasses.span());
+                    Vector<ValueSetID> inheritingLayouts;
+                    universe.m_objectsOfLayout = Vector<ValueSetID>(ofLayout.size(), [&](size_t index) {
+                        ValueSetID objects = allocatedWithLayout[index];
+                        if (mayBeAllocatedByBuiltin(LayoutID(static_cast<uint32_t>(index))))
+                            inheritingLayouts.append(objects);
+                        return isLayoutOfTable.quickGet(index) ? maker.unite(objects, madeByBuiltins) : objects;
+                    });
+                    Vector<ValueSetID> ofRecordsThatTypedCodeTakes;
+                    for (LayoutID layout : universe.m_recordsThatTypedCodeTakes) {
+                        if (isLayoutOfTable.quickGet(layout.index()))
+                            universe.m_recordsOfTableThatTypedCodeTakes.append(layout);
+                        else
+                            ofRecordsThatTypedCodeTakes.append(universe.m_objectsOfLayout[layout.index()]);
+                    }
+                    universe.m_objectsOfRecordsThatTypedCodeTakes = maker.uniteAll(ofRecordsThatTypedCodeTakes.span());
+                    Vector<ValueSetID> ofLayoutsOfProgram;
+                    universe.m_isAllocatedByProgram.ensureSize(ofLayout.size());
+                    for (unsigned index = 0; index < ofLayout.size(); ++index) {
+                        if (isLayoutOfTable.quickGet(index))
+                            continue;
+                        ofLayoutsOfProgram.append(universe.m_objectsOfLayout[index]);
+                        if (ofLayout[index].size() > 1 || m_program.layouts[index].constructor)
+                            universe.m_isAllocatedByProgram.quickSet(index);
+                    }
+                    universe.m_objectsWithLayoutOfProgram = maker.uniteAll(ofLayoutsOfProgram.span());
+                    universe.m_isLayoutOfTable = WTF::move(isLayoutOfTable);
+                    universe.m_instancesBelowBuiltinClasses = maker.uniteAll(inheritingLayouts.span());
+                    ValueSetID inEveryClassButNoBuiltinObject = maker.unite(universe.m_instancesBelowBuiltinClasses, universe.m_objectsThatMayBeAnything);
+                    ValueSetID inEveryClass = maker.unite(inEveryClassButNoBuiltinObject, universe.m_builtinObjects);
+
+                    Vector<ValueSetID> allocatedAs = ofClass.map([&](const Vector<ValueFlowObjectID>& members) {
+                        return maker.of(members.span());
+                    });
+                    ValueSetID& allocatedAsArray = allocatedAs[BuiltinClasses::Array.index()];
+                    allocatedAsArray = maker.unite(allocatedAsArray, rangeOf(universe.m_firstRestArray, universe.m_firstFunctionPrototype));
+                    ValueSetID& allocatedAsObject = allocatedAs[BuiltinClasses::Object.index()];
+                    allocatedAsObject = maker.unite(allocatedAsObject, rangeOf(universe.m_firstFunctionPrototype, universe.m_firstSite));
+                    Vector<ValueSetID> parts;
+                    Vector<ValueSetID> callableInstances;
+                    universe.m_objectsOfClass = Vector<ValueSetID>(builtins.classCount(), [&](size_t index) {
+                        BuiltinClassID tested(static_cast<uint32_t>(index));
+                        bool hasCallableInstances = Type::builtinClass(tested).overlaps(Type::function(), m_program);
+                        if (hasCallableInstances)
+                            callableInstances.append(allocatedAs[index]);
+
+                        parts.shrink(0);
+                        parts.append(tested == BuiltinClasses::Promise ? inEveryClassButNoBuiltinObject : inEveryClass);
+                        if (hasCallableInstances && tested != BuiltinClasses::BoundFunction)
+                            parts.append(universe.m_closures);
+                        for (uint32_t other = 0; other < builtins.classCount(); ++other) {
+                            if (allocatedAs[other] != ValueSets::nothing && mayBeInstanceOf(builtins, BuiltinClassID(other), tested))
+                                parts.append(allocatedAs[other]);
+                        }
+                        return maker.uniteAll(parts.span());
+                    });
+                    universe.m_objectsThatMayBeMadeAs = universe.m_objectsOfClass;
+                    for (uint32_t index = 0; index < builtins.classCount(); ++index) {
+                        if (builtins.at(BuiltinClassID(index)).instanceTest == BuiltinInstanceTest::None)
+                            universe.m_objectsOfClass[index] = universe.m_objects;
+                    }
+                    universe.m_sureInstancesOfClass = Vector<ValueSetID>(builtins.classCount(), [&](size_t index) {
+                        BuiltinClassID tested(static_cast<uint32_t>(index));
+                        parts.shrink(0);
+                        for (uint32_t other = 0; other < builtins.classCount(); ++other) {
+                            if (allocatedAs[other] != ValueSets::nothing && builtins.isSameOrSubclassOf(BuiltinClassID(other), tested))
+                                parts.append(allocatedAs[other]);
+                        }
+                        return maker.uniteAll(parts.span());
+                    });
+                    universe.m_objectsMadeAs = universe.m_sureInstancesOfClass;
+                    universe.m_objectsThatDefinitionsTellApart = maker.unite(universe.m_closures, universe.m_sureInstancesOfClass[BuiltinClasses::Array.index()]);
+                    for (uint32_t index = 0; index < builtins.classCount(); ++index) {
+                        if (builtins.at(BuiltinClassID(index)).instanceTest == BuiltinInstanceTest::None)
+                            universe.m_sureInstancesOfClass[index] = ValueSets::nothing;
+                    }
+                    parts.shrink(0);
+                    for (uint32_t index = 0; index < builtins.classCount(); ++index) {
+                        if (builtins.isSameOrSubclassOf(BuiltinClassID(index), BuiltinClasses::Iterator) || builtins.isSameOrSubclassOf(BuiltinClassID(index), BuiltinClasses::AsyncIterator))
+                            parts.append(allocatedAs[index]);
+                    }
+                    universe.m_objectsAllocatedAsIterators = maker.uniteAll(parts.span());
+                    universe.m_arrays = universe.m_objectsOfClass[BuiltinClasses::Array.index()];
+
+                    ValueSetID knownObjectsThatMayBeAnything = maker.intersect(universe.m_objectsThatMayBeAnything, universe.m_knownObjects);
+                    universe.m_otherCallables = maker.unite(maker.uniteAll(callableInstances.span()), knownObjectsThatMayBeAnything);
+                });
+            },
+            [&] {
+                withMaker(2, [&](ValueSetMaker&, Vector<ValueFlowObjectID>& list, auto& take, auto&) {
+                    for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
+                        if (m_program.layouts[index].kind == LayoutKind::Record)
+                            list.append(universe.instanceOf(LayoutID(index)));
+                    }
+                    for (uint32_t position = 0; position < universe.m_siteOfObject.size(); ++position) {
+                        LayoutID layout = universe.m_sites[universe.m_siteOfObject[position]].layout;
+                        if (layout && m_program.at(layout).kind == LayoutKind::Record)
+                            list.append(ValueFlowObjectID(universe.m_firstSite + position));
+                    }
+                    universe.m_records = take();
+                    for (unsigned index = 0; index < m_numberOfFunctions; ++index) {
+                        if (m_bodies[index].answersOnlyWhatItConstructs)
+                            list.append(universe.closureOf(FunctionID(index)));
+                    }
+                    universe.m_constructorsAnsweringOnlyWhatTheyConstruct = take();
+                });
+            },
+            [&] {
+                universe.m_numberOfRememberedLayoutSets = m_program.types.numberOfLayoutSets();
+                universe.m_layoutSetsWithoutFirstMember = findLayoutSetsWithoutFirstMember(m_program);
+                universe.m_objectsSurelyWithLayoutIn = std::make_unique<std::atomic<uint32_t>[]>(universe.m_numberOfRememberedLayoutSets);
+                universe.m_objectsWithLayoutIn = std::make_unique<std::atomic<uint32_t>[]>(universe.m_numberOfRememberedLayoutSets);
+                universe.m_closuresCalledDirectlyBy = std::make_unique<std::atomic<uint32_t>[]>(m_program.functions.size());
+                universe.m_numberOfRememberedFunctions = m_program.functions.size();
+                for (uint32_t index = m_program.modules.size(); index--;) {
+                    RuntimeModuleID runtimeModule = m_program.modules[index].runtimeModule;
+                    if (!runtimeModule)
+                        continue;
+                    if (universe.m_moduleOfRuntimeModule.size() <= runtimeModule.index())
+                        universe.m_moduleOfRuntimeModule.grow(runtimeModule.index() + 1);
+                    universe.m_moduleOfRuntimeModule[runtimeModule.index()] = ModuleID(index);
+                }
+                static_assert(!ValueSets::nothing.index());
+                universe.m_boundFunctionsBindingNoArgument = std::make_unique<std::atomic<uint64_t>[]>(1);
+                universe.m_numberOfRememberedTypes = m_program.types.size();
+                universe.m_membersSurelyInsideType = std::make_unique<std::atomic<uint32_t>[]>(universe.m_numberOfRememberedTypes);
+            },
         });
 
-        for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
-            const Layout& layout = m_program.layouts[index];
-            if (layoutIsDefinedByClass(layout) && layout.module && m_program.at(layout.module).kind == ModuleKind::RuntimeSource)
-                list.append(universe.prototypeOf(LayoutID(index)));
-        }
-        universe.m_prototypeObjectsOfLibraryClasses = take();
-        for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
-            const Layout& layout = m_program.layouts[index];
-            if (layoutIsDefinedByClass(layout) && layout.constructor && layout.module && m_program.at(layout.module).kind == ModuleKind::RuntimeSource)
-                list.append(universe.closureOf(layout.constructor));
-        }
-        universe.m_constructorsOfLibraryClasses = take();
-        for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
-            const Layout& layout = m_program.layouts[index];
-            if (layout.kind == LayoutKind::Instance && layout.constructor)
-                list.append(universe.prototypeOf(LayoutID(index)));
-        }
-        universe.m_prototypeObjectsOfClasses = take();
-        universe.m_holdersOfExportsOfModule.fill(ValueSets::nothing, m_program.modules.size());
-        universe.m_holdersOfLibraryExports = ValueSets::nothing;
-        universe.m_holdersOfPublicLibraryExports = ValueSets::nothing;
-        universe.m_holdersOfLibraryExportsThatRaiseNoEvent = ValueSets::nothing;
-        universe.m_eventRaisingLibraryExportHolders = ValueSets::nothing;
-        BitVector mayRaiseEvents = libraryModulesThatMayRaiseEvents();
-        for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
-            if (m_program.modules[index].kind != ModuleKind::RuntimeSource)
-                continue;
-            appendHoldersOfExports(list, ModuleID(index));
-            universe.m_holdersOfExportsOfModule[index] = take();
-            universe.m_holdersOfLibraryExports = maker.unite(universe.m_holdersOfLibraryExports, universe.m_holdersOfExportsOfModule[index]);
-            if (mayAnswerToName(m_program, ModuleID(index)))
-                universe.m_holdersOfPublicLibraryExports = maker.unite(universe.m_holdersOfPublicLibraryExports, universe.m_holdersOfExportsOfModule[index]);
-            ValueSetID& holders = mayRaiseEvents.get(index) ? universe.m_eventRaisingLibraryExportHolders : universe.m_holdersOfLibraryExportsThatRaiseNoEvent;
-            holders = maker.unite(holders, universe.m_holdersOfExportsOfModule[index]);
-        }
-        if (!m_build.options().excludesLibraryText())
-            universe.m_holdersOfPublicLibraryExports = universe.m_holdersOfLibraryExports;
-        for (uint32_t index = 0; index < m_program.functions.size(); ++index) {
-            if (ModuleID module = m_program.functions[index].module; module && mayRaiseEvents.get(module.index()))
-                list.append(universe.closureOf(FunctionID(index)));
-        }
-        universe.m_eventRaisingLibraryClosures = take();
-        universe.m_objectsOfLibraryFoundByNameAlone = maker.unite(universe.m_holdersOfLibraryExports, universe.m_prototypeObjectsOfLibraryClasses);
-
-        list.append(ValueFlowUniverse::primitive(PrimitiveSet::String));
-        universe.m_strings = maker.unite(take(), universe.m_textKeys);
-        list.append(ValueFlowUniverse::primitive(PrimitiveSet::Symbol));
-        universe.m_symbols = maker.unite(take(), universe.m_symbolKeys);
-
-        Vector<Vector<ValueFlowObjectID>> ofLayout(m_program.layouts.size());
-        Vector<Vector<ValueFlowObjectID>> ofClass(builtins.classCount());
-        for (unsigned index = 0; index < m_program.layouts.size(); ++index) {
-            ofLayout[index].append(universe.instanceOf(LayoutID(index)));
-            if (ModuleID module = m_program.layouts[index].namespaceOf; module && m_program.layoutOfWholeNamespace(module))
-                ofLayout[index].append(universe.namespaceOf(module));
-        }
-        for (unsigned index = 0; index < m_numberOfFunctions; ++index) {
-            if (BuiltinClassID builtinClass = universe.m_classOfCoroutineResult[index])
-                ofClass[builtinClass.index()].append(universe.coroutineResultOf(FunctionID(index)));
-        }
-        Vector<ValueFlowObjectID> proxiesFromNamedConstructor;
-        Vector<ValueFlowObjectID> denseArrayLiterals;
-        for (uint32_t site = 0; site < universe.m_sites.size(); ++site) {
-            ValueFlowObjectID object = universe.m_objectOfSite[site];
-            if (LayoutID layout = universe.m_sites[site].layout)
-                ofLayout[layout.index()].append(object);
-            if (universe.m_sites[site].isProxyFromNamedConstructor)
-                proxiesFromNamedConstructor.append(object);
-            if (universe.m_sites[site].isDenseArrayLiteral)
-                denseArrayLiterals.append(object);
-            if (universe.m_sites[site].origin == ValueFlowSiteOrigin::BuiltinResult)
-                continue;
-            if (BuiltinClassID builtinClass = universe.m_sites[site].builtinClass)
-                ofClass[builtinClass.index()].append(object);
-            else if (!universe.m_sites[site].layout)
-                list.append(object);
-        }
-        universe.m_proxiesFromNamedConstructor = maker.of(proxiesFromNamedConstructor.span());
-        universe.m_denseArrayLiterals = maker.of(denseArrayLiterals.span());
-        fileAllocationsOfBaseClassesUnderClassesBelow(maker, ofLayout);
-        universe.m_objectsWithAnyLayout = maker.unite(take(), universe.m_placeholdersAlone);
-        for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
-            if (m_program.layouts[index].kind == LayoutKind::Record)
-                list.append(universe.instanceOf(LayoutID(index)));
-        }
-        for (uint32_t position = 0; position < universe.m_siteOfObject.size(); ++position) {
-            LayoutID layout = universe.m_sites[universe.m_siteOfObject[position]].layout;
-            if (layout && m_program.at(layout).kind == LayoutKind::Record)
-                list.append(ValueFlowObjectID(universe.m_firstSite + position));
-        }
-        universe.m_records = take();
-        for (unsigned index = 0; index < m_numberOfFunctions; ++index) {
-            if (m_bodies[index].answersOnlyWhatItConstructs)
-                list.append(universe.closureOf(FunctionID(index)));
-        }
-        universe.m_constructorsAnsweringOnlyWhatTheyConstruct = take();
-        ValueSetID madeByBuiltins = maker.unite(rangeOf(universe.m_firstResultOfBuiltin, universe.m_firstClosure), rangeOf(universe.m_firstBuiltinResultSite, universe.m_firstKey));
-        universe.m_objectsThatMayBeAnything = maker.unite(universe.m_objectsWithAnyLayout, madeByBuiltins);
-        BitVector isLayoutOfTable(m_program.layouts.size());
-        for (uint32_t index = 0; index < builtins.layoutCount(); ++index) {
-            if (LayoutID layout = m_program.layoutOf(BuiltinLayoutID(index)))
-                isLayoutOfTable.quickSet(layout.index());
-        }
-
-        auto mayBeAllocatedByBuiltin = [&](LayoutID layout) {
-            for (size_t steps = 0; steps < m_program.layouts.size() && layout; ++steps) {
-                if (!m_program.at(layout).has(LayoutFlags::HasHeritage))
-                    return false;
-                layout = predictedHeritageOf(m_program.at(layout));
-            }
-            return true;
-        };
-        Vector<ValueSetID> allocatedWithLayout(ofLayout.size());
-        forEachIndexInParallel(m_loops, ofLayout.size(), [&](unsigned index, unsigned worker) {
-            allocatedWithLayout[index] = makerOf(worker).of(ofLayout[index].span());
-        });
-        auto standsBelowLibraryClass = [&](LayoutID layout) {
-            for (size_t steps = 0; steps < m_program.layouts.size() && layout; ++steps) {
-                const Layout& above = m_program.at(layout);
-                if (layoutIsDefinedByClass(above) && above.module && m_program.at(above.module).kind == ModuleKind::RuntimeSource)
-                    return true;
-                if (!above.has(LayoutFlags::HasHeritage))
-                    return false;
-                layout = predictedHeritageOf(above);
-            }
-            return false;
-        };
-        Vector<ValueSetID> belowLibraryClasses;
-        for (uint32_t index = 0; index < ofLayout.size(); ++index) {
-            if (standsBelowLibraryClass(LayoutID(index)))
-                belowLibraryClasses.append(allocatedWithLayout[index]);
-        }
-        universe.m_instancesBelowLibraryClasses = maker.uniteAll(belowLibraryClasses.span());
-        Vector<ValueSetID> inheritingLayouts;
-        universe.m_objectsOfLayout = Vector<ValueSetID>(ofLayout.size(), [&](size_t index) {
-            ValueSetID objects = allocatedWithLayout[index];
-            if (mayBeAllocatedByBuiltin(LayoutID(static_cast<uint32_t>(index))))
-                inheritingLayouts.append(objects);
-            return isLayoutOfTable.quickGet(index) ? maker.unite(objects, madeByBuiltins) : objects;
-        });
-        Vector<ValueSetID> ofRecordsThatTypedCodeTakes;
-        for (LayoutID layout : universe.m_recordsThatTypedCodeTakes) {
-            if (isLayoutOfTable.quickGet(layout.index()))
-                universe.m_recordsOfTableThatTypedCodeTakes.append(layout);
-            else
-                ofRecordsThatTypedCodeTakes.append(universe.m_objectsOfLayout[layout.index()]);
-        }
-        universe.m_objectsOfRecordsThatTypedCodeTakes = maker.uniteAll(ofRecordsThatTypedCodeTakes.span());
-        Vector<ValueSetID> ofLayoutsOfProgram;
-        universe.m_isAllocatedByProgram.ensureSize(ofLayout.size());
-        for (unsigned index = 0; index < ofLayout.size(); ++index) {
-            if (isLayoutOfTable.quickGet(index))
-                continue;
-            ofLayoutsOfProgram.append(universe.m_objectsOfLayout[index]);
-            if (ofLayout[index].size() > 1 || m_program.layouts[index].constructor)
-                universe.m_isAllocatedByProgram.quickSet(index);
-        }
-        universe.m_objectsWithLayoutOfProgram = maker.uniteAll(ofLayoutsOfProgram.span());
-        universe.m_isLayoutOfTable = WTF::move(isLayoutOfTable);
-        universe.m_instancesBelowBuiltinClasses = maker.uniteAll(inheritingLayouts.span());
-        ValueSetID inEveryClassButNoBuiltinObject = maker.unite(universe.m_instancesBelowBuiltinClasses, universe.m_objectsThatMayBeAnything);
-        ValueSetID inEveryClass = maker.unite(inEveryClassButNoBuiltinObject, universe.m_builtinObjects);
-
-        Vector<ValueSetID> allocatedAs = ofClass.map([&](const Vector<ValueFlowObjectID>& members) {
-            return maker.of(members.span());
-        });
-        ValueSetID& allocatedAsArray = allocatedAs[BuiltinClasses::Array.index()];
-        allocatedAsArray = maker.unite(allocatedAsArray, rangeOf(universe.m_firstRestArray, universe.m_firstFunctionPrototype));
-        ValueSetID& allocatedAsObject = allocatedAs[BuiltinClasses::Object.index()];
-        allocatedAsObject = maker.unite(allocatedAsObject, rangeOf(universe.m_firstFunctionPrototype, universe.m_firstSite));
-        Vector<ValueSetID> parts;
-        Vector<ValueSetID> callableInstances;
-        universe.m_objectsOfClass = Vector<ValueSetID>(builtins.classCount(), [&](size_t index) {
-            BuiltinClassID tested(static_cast<uint32_t>(index));
-            bool hasCallableInstances = Type::builtinClass(tested).overlaps(Type::function(), m_program);
-            if (hasCallableInstances)
-                callableInstances.append(allocatedAs[index]);
-
-            parts.shrink(0);
-            parts.append(tested == BuiltinClasses::Promise ? inEveryClassButNoBuiltinObject : inEveryClass);
-            if (hasCallableInstances && tested != BuiltinClasses::BoundFunction)
-                parts.append(universe.m_closures);
-            for (uint32_t other = 0; other < builtins.classCount(); ++other) {
-                if (allocatedAs[other] != ValueSets::nothing && mayBeInstanceOf(builtins, BuiltinClassID(other), tested))
-                    parts.append(allocatedAs[other]);
-            }
-            return maker.uniteAll(parts.span());
-        });
-        universe.m_objectsThatMayBeMadeAs = universe.m_objectsOfClass;
-        for (uint32_t index = 0; index < builtins.classCount(); ++index) {
-            if (builtins.at(BuiltinClassID(index)).instanceTest == BuiltinInstanceTest::None)
-                universe.m_objectsOfClass[index] = universe.m_objects;
-        }
-        universe.m_sureInstancesOfClass = Vector<ValueSetID>(builtins.classCount(), [&](size_t index) {
-            BuiltinClassID tested(static_cast<uint32_t>(index));
-            parts.shrink(0);
-            for (uint32_t other = 0; other < builtins.classCount(); ++other) {
-                if (allocatedAs[other] != ValueSets::nothing && builtins.isSameOrSubclassOf(BuiltinClassID(other), tested))
-                    parts.append(allocatedAs[other]);
-            }
-            return maker.uniteAll(parts.span());
-        });
-        universe.m_objectsMadeAs = universe.m_sureInstancesOfClass;
-        universe.m_objectsThatDefinitionsTellApart = maker.unite(universe.m_closures, universe.m_sureInstancesOfClass[BuiltinClasses::Array.index()]);
-        for (uint32_t index = 0; index < builtins.classCount(); ++index) {
-            if (builtins.at(BuiltinClassID(index)).instanceTest == BuiltinInstanceTest::None)
-                universe.m_sureInstancesOfClass[index] = ValueSets::nothing;
-        }
-        parts.shrink(0);
-        for (uint32_t index = 0; index < builtins.classCount(); ++index) {
-            if (builtins.isSameOrSubclassOf(BuiltinClassID(index), BuiltinClasses::Iterator) || builtins.isSameOrSubclassOf(BuiltinClassID(index), BuiltinClasses::AsyncIterator))
-                parts.append(allocatedAs[index]);
-        }
-        universe.m_objectsAllocatedAsIterators = maker.uniteAll(parts.span());
-        universe.m_arrays = universe.m_objectsOfClass[BuiltinClasses::Array.index()];
-
-        ValueSetID knownObjectsThatMayBeAnything = maker.intersect(universe.m_objectsThatMayBeAnything, universe.m_knownObjects);
-        universe.m_otherCallables = maker.unite(maker.uniteAll(callableInstances.span()), knownObjectsThatMayBeAnything);
+        ValueSetMaker& maker = makerOf(firstMakerBesideLoops);
         universe.m_callables = maker.uniteAll({ { universe.m_builtinFunctions, universe.m_closures, universe.m_otherCallables, universe.m_placeholdersAlone } });
         universe.m_targetsOfBoundFunctions = maker.unite(universe.m_callables, universe.m_accessorsThatBindFunctions);
-
-        universe.m_numberOfRememberedLayoutSets = m_program.types.numberOfLayoutSets();
-        universe.m_objectsSurelyWithLayoutIn = std::make_unique<std::atomic<uint32_t>[]>(universe.m_numberOfRememberedLayoutSets);
-        universe.m_objectsWithLayoutIn = std::make_unique<std::atomic<uint32_t>[]>(universe.m_numberOfRememberedLayoutSets);
-        universe.m_closuresCalledDirectlyBy = std::make_unique<std::atomic<uint32_t>[]>(m_program.functions.size());
-        universe.m_numberOfRememberedFunctions = m_program.functions.size();
-        for (uint32_t index = m_program.modules.size(); index--;) {
-            RuntimeModuleID runtimeModule = m_program.modules[index].runtimeModule;
-            if (!runtimeModule)
-                continue;
-            if (universe.m_moduleOfRuntimeModule.size() <= runtimeModule.index())
-                universe.m_moduleOfRuntimeModule.grow(runtimeModule.index() + 1);
-            universe.m_moduleOfRuntimeModule[runtimeModule.index()] = ModuleID(index);
-        }
-        static_assert(!ValueSets::nothing.index());
-        universe.m_boundFunctionsBindingNoArgument = std::make_unique<std::atomic<uint64_t>[]>(1);
-        universe.m_numberOfRememberedTypes = m_program.types.size();
-        universe.m_membersSurelyInsideType = std::make_unique<std::atomic<uint32_t>[]>(universe.m_numberOfRememberedTypes);
     }
 
     void layOutLists()

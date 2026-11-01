@@ -39,6 +39,12 @@ enum class BrokenClaim : uint32_t {
     CounterStepsAsTold,
 };
 
+// What a build under Sabotage::MemoryRunsOutWhenCounted counts.
+enum class CountedLackOfMemory : uint32_t {
+    Operation,
+    Flattening,
+};
+
 #if ASAN_ENABLED && CPU(X86_64) && OS(LINUX)
 #define AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE 1
 #define FOR_EACH_AOT_OPERATION_FOR_ASAN(v) \

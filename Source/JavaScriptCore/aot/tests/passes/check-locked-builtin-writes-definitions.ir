@@ -1,6 +1,8 @@
 # Object.defineProperty(Array.prototype, "includes", { value: Array.prototype.includes }); (.., "indexOf", { writable: false }); (.., "join", descriptorFromElsewhere); (.., "map", { value: replacement })
-# The run time accepts a definition that repeats what a locked member is or only takes from what it admits, so the build says nothing of the first three. The fourth spells out another value: an error
+# The run time accepts a definition that repeats what a locked member is or only takes from what it admits, so the build says nothing of the first two. Nobody knows what the third's descriptor holds: a warning.
+# The fourth spells out another value: an error
 # RUN: pipeline CheckLockedBuiltinWrites
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
 # DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 1
 
 module m0 path="main.js" displayPath="main.js" body=f0

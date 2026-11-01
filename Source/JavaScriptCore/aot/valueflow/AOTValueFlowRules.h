@@ -21,6 +21,7 @@ ValueSetID undescribedValueThatIsNoBuffer(ValueFlowRuleContext&);
 void passNoFurtherArguments(ValueFlowRuleContext&, const ValueFlowCallGroup&, unsigned numberOfArguments, unsigned numberOfPositionsTaken = numberOfGroupedArguments);
 
 ValueFlowObjectsToldApart tellObjectsApart(ValueFlowRuleContext&, ClimbingSet knownObjects);
+void passKnownReceiversToWhatTheyFind(ValueFlowRuleContext&, ClimbingSet receivers, ValueFlowName, ValueFlowNodeID receiversAnswered);
 
 ValueSetID unknownCalleeOfStatement(ValueFlowRuleContext&);
 void forEachPartOfCallees(ValueFlowRuleContext& context, ClimbingSet callees, NOESCAPE const Invocable<void(ClimbingSet)> auto& functor)
@@ -75,6 +76,7 @@ struct ValueFlowProtocolCall {
 void callInProtocol(ValueFlowRuleContext&, const ValueFlowProtocolCall&);
 ClimbingSet escapedMembersUnder(ValueFlowRuleContext&, PropertyKeyID);
 ValueFlowNodeID heldPrototypeObjectsOfLibraryClasses(ValueFlowRuleContext&);
+void notePrototypeObjectsAboveUnknownObject(ValueFlowRuleContext&);
 
 void runIterationOperation(const ValueFlowStatement&, ValueFlowRuleContext&);
 void runStepOfLibrary(const ValueFlowStatement&, ValueFlowRuleContext&);

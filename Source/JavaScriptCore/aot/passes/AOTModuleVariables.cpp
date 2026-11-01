@@ -619,7 +619,7 @@ static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
         if (access.opcode != Opcode::PropGet || !access.operand(0))
             return number;
         const Type& receiver = program.typeOf(function, access.operand(0));
-        if (!receiver.hasOnlyLayouts())
+        if (!receiver.hasOnlyLayouts() || receiver.mayBeUndefinedOrNull())
             return number;
         for (LayoutID id : membersOf(program, receiver)) {
             const ConstantField* found = findConstant(id, access.key());
@@ -1625,6 +1625,8 @@ struct MovableCode {
             }
         }
         auto isUnchanging = [&](const Value& value) {
+            if (context.runner.build().isSabotaged(Sabotage::WhatInitializersTakeNeverChanges))
+                return true;
             const Type& type = arenas.types.at(value.type);
             if (type.hasOnlyLayouts() && std::ranges::all_of(membersOf(program, type), [&](LayoutID id) { return program.at(id).flow.impossibleMutations.containsAll(mutationsOfContents); }))
                 return true;
@@ -1868,6 +1870,15 @@ struct MovableCode {
         return answer;
     }
 
+    // An assignment asks the objects above the one it stores to. A built-in object takes no other value under a name it has, but the name may be made read-only at any time:
+    // Object.freeze(Object.prototype). And it takes a name that the build has seen the program give it, which may be an accessor.
+    bool assignmentAsksNobodyAbove(PropertyKeyID key, std::initializer_list<BuiltinID> above) const
+    {
+        if (context.runner.build().isSabotaged(Sabotage::AssignmentsPutOffAskNobodyAbove))
+            return true;
+        return std::ranges::all_of(above, [&](BuiltinID holder) { return !findOwnMember(program, holder, key) && isClosedKey(program, holder, key); });
+    }
+
     // A store to an object that the initializer has made and that no accessor, no lock and no other prototype stands in the way of.
     bool storeMayMove(FunctionAnalyses& analyses, const Knowledge& known, const Value& value)
     {
@@ -1890,6 +1901,10 @@ struct MovableCode {
                 return true;
             bool isLikeAnyOtherName = hasName && (defines || std::ranges::none_of(type.functions, [&](FunctionID id) { return isClassConstructorFunction(program.at(id)); }))
                 && std::ranges::none_of(namesWithRules, [&](ASCIILiteral name) { return isText(value.key(), name); });
+            // Another object stands between a coroutine and Function.prototype.
+            if (isLikeAnyOtherName && setsName
+                && (std::ranges::any_of(type.functions, [&](FunctionID id) { return isCoroutine(id); }) || !assignmentAsksNobodyAbove(value.key(), { Builtins::FunctionPrototype, Builtins::ObjectPrototype })))
+                return false;
             StringID name = isLikeAnyOtherName ? program.at(value.key()).text : StringID();
             if (!name)
                 return isLikeAnyOtherName;
@@ -1915,11 +1930,10 @@ struct MovableCode {
             if (!hasOnlyPlainObjects || (!std::ranges::all_of(membersOf(program, type), isKnownToStayPlain) && !isOnlyFilledHere(analyses, known, object)))
                 return false;
         }
-        // The setter of __proto__ does nothing with what is neither an object nor null.
-        const Type& stored = typeOf(function, value.valueOperand());
-        if (defines || (!stored.hasObjects() && !(stored.primitives & Primitive::Null)))
+        if (defines)
             return true;
-        return hasName ? !isText(value.key(), "__proto__"_s) : typeOf(function, value.propertyOperand()).isNumber();
+        // No built-in object has or takes an index. A text in brackets may spell any name.
+        return hasName ? assignmentAsksNobodyAbove(value.key(), { Builtins::ObjectPrototype }) : typeOf(function, value.propertyOperand()).isNumber();
     }
 
     // Object.defineProperty(made, constant key, { value: .. }) where the object has no such property yet, or one that can be redefined.

@@ -14,6 +14,7 @@
 #include "AOTOperationData.h"
 #include "AOTPrimitives.h"
 #include "AOTRuntimeRecords.h"
+#include "AOTStubsKeyed.h"
 #include "AOTStubsStrings.h"
 #include "JSCJSValue.h"
 #include <algorithm>
@@ -54,8 +55,16 @@ struct Marker {
 
 } // namespace
 
-void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd end, FieldTypeTest typeTest, JumpList* stored, FieldStoreExits& exits)
+void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd end, FieldTypeTest typeTest, JumpList* stored, FieldStoreExits& exits, const ScopedLambda<void(GPRReg classOfSlot)>* rememberStore)
 {
+    using ClassOfSlot = AcceptedKindOfValue::ClassOfSlot;
+    RELEASE_ASSERT(!rememberStore || (end == FieldStoreEnd::ReturnAfterBarrier && typeTest != FieldTypeTest::HasPassed));
+    std::array<JumpList, 4> storedInSlotOfClass;
+    auto branchIfStoreIsRemembered = [&](ClassOfSlot classOfSlot) {
+        Jump wouldPushAnotherOut = branchIfEveryPlaceWasFiledFromSlots(jit);
+        storedInSlotOfClass[static_cast<size_t>(classOfSlot)].append(jit.jump());
+        wouldPushAnotherOut.link(&jit);
+    };
     RELEASE_ASSERT(noOverlap(r.field.object, r.field.address, r.field.representation, r.value, r.type, r.scratch, r.secondScratch, instanceGPR));
     RELEASE_ASSERT((end == FieldStoreEnd::JoinList) == !!stored);
     const GPRReg value = r.value;
@@ -108,7 +117,7 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
         }
         RELEASE_ASSERT_NOT_REACHED();
     };
-    auto storeUndefinedOrNull = [&](const SlotTraits& traits) {
+    auto storeUndefinedOrNull = [&](const SlotTraits& traits, std::optional<ClassOfSlot> remembered = std::nullopt) {
         const Marker markers[] = {
             { traits.hasUndefined, JSValue::ValueUndefined, traits.undefinedBits },
             { traits.hasNull, JSValue::ValueNull, traits.nullBits },
@@ -118,6 +127,8 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
                 continue;
             Jump isOtherValue = jit.branch64(CCallHelpers::NotEqual, value, TrustedImm32(marker.encodedValue));
             storeBits(traits.width, marker.bits);
+            if (remembered)
+                branchIfStoreIsRemembered(*remembered);
             didStore(StoredValue::IsNotCell);
             isOtherValue.link(&jit);
         }
@@ -131,12 +142,27 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
             jit.store64(value, slot);
         didStore(StoredValue::IsCell);
     };
-    auto storeCellField = [&](const SlotTraits& traits) {
+    auto storeCellField = [&](const SlotTraits& traits, SlotRepresentation representation) {
         Jump isNotCell = jit.branchIfNotCell(value);
-        storeCell(traits);
+        if (!rememberStore) {
+            storeCell(traits);
+
+            isNotCell.link(&jit);
+            storeUndefinedOrNull(traits);
+            return;
+        }
+        const ClassOfSlot classOfSlot = representation == SlotRepresentation::Cell ? ClassOfSlot::Cell : representation == SlotRepresentation::Cell32 ? ClassOfSlot::Cell32 : ClassOfSlot::OptionalCell32;
+        RELEASE_ASSERT(classOfSlot != ClassOfSlot::OptionalCell32 || representation == SlotRepresentation::OptionalCell32);
+        if (traits.isNarrowReference) {
+            encodeCellOfProgram(jit, value, r.scratch);
+            jit.store32(r.scratch, slot);
+        } else
+            jit.store64(value, slot);
+        branchIfStoreIsRemembered(classOfSlot);
+        didStore(StoredValue::IsCell);
 
         isNotCell.link(&jit);
-        storeUndefinedOrNull(traits);
+        storeUndefinedOrNull(traits, classOfSlot);
     };
     auto storeLiteralStringField = [&](const SlotTraits& traits) {
         const GPRReg word = r.type;
@@ -275,10 +301,14 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
         switch (traits.valueKind) {
         case SlotValueKind::Boxed:
             jit.store64(value, slot);
+            if (rememberStore) {
+                RELEASE_ASSERT(representation == SlotRepresentation::JSValue);
+                branchIfStoreIsRemembered(ClassOfSlot::JSValue);
+            }
             didStore(StoredValue::MayBeCell);
             return;
         case SlotValueKind::Cell:
-            storeCellField(traits);
+            storeCellField(traits, representation);
             return;
         case SlotValueKind::LiteralString:
             storeLiteralStringField(traits);
@@ -308,7 +338,9 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
     };
     // branchUnlessTypeAccepts() takes three scratch registers and reads only bits 0 to 31 of type, so bits 32 to 63 carry the representation across it.
     auto branchUnlessFieldTypeAccepts = [&](JumpList& isNotAccepted) {
-        jit.zeroExtend32ToWord(r.type, r.type);
+        // Out of a Slot the type comes by a shift, which leaves nothing above it.
+        if (typeTest != FieldTypeTest::IsEmittedForSlot)
+            jit.zeroExtend32ToWord(r.type, r.type);
         jit.lshift64(TrustedImm32(representationShift), r.field.representation);
         jit.or64(r.field.representation, r.type);
         branchUnlessTypeAccepts(jit, { value, r.type, r.field.representation, r.scratch, r.secondScratch }, isNotAccepted, isNotAccepted);
@@ -328,7 +360,11 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
         Jump someFieldTakesNoMarker = jit.branchTest32(CCallHelpers::NonZero, Address(r.scratch), TrustedImm32(static_cast<int32_t>(hasSlotWithUnusedMarkers)));
         jit.move(TrustedImm32(static_cast<int32_t>(representationsWithUndefinedAndNull)), r.scratch);
         jit.urshift32(r.field.representation, r.scratch);
-        jit.branchTest32(CCallHelpers::NonZero, r.scratch, TrustedImm32(1)).linkTo(isAdmitted, &jit);
+        Jump hasNoMarkers = jit.branchTest32(CCallHelpers::Zero, r.scratch, TrustedImm32(1));
+        if (rememberStore)
+            jit.move(TrustedImm32(0), r.type);
+        jit.jump().linkTo(isAdmitted, &jit);
+        hasNoMarkers.link(&jit);
         someFieldTakesNoMarker.link(&jit);
         cellHasNoMark.link(&jit);
         isNeitherUndefinedNorNull.link(&jit);
@@ -384,6 +420,18 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
     Label isAdmitted = jit.label();
     bitsOfTypeAccept.link(&jit);
     emitDispatchOnRepresentation(jit, r.field.representation, storeWithRepresentation);
+
+    if (rememberStore) {
+        JumpList hasClass;
+        for (size_t classOfSlot = 0; classOfSlot < storedInSlotOfClass.size(); ++classOfSlot) {
+            storedInSlotOfClass[classOfSlot].link(&jit);
+            jit.move(TrustedImm32(static_cast<int32_t>(classOfSlot)), r.secondScratch);
+            hasClass.append(jit.jump());
+        }
+        hasClass.link(&jit);
+        (*rememberStore)(r.secondScratch);
+        didStore(StoredValue::MayBeCell);
+    }
 
     switch (end) {
     case FieldStoreEnd::JoinList:

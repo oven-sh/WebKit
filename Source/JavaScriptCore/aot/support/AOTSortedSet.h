@@ -69,6 +69,13 @@ public:
     {
     }
     explicit SortedSet(std::span<const T> unsortedValues);
+    static SortedSet fromAscending(std::span<const T> values)
+    {
+        ASSERT(std::ranges::adjacent_find(values, std::ranges::greater_equal { }) == values.end());
+        SortedSet set;
+        set.m_values = Values(values);
+        return set;
+    }
 
     size_t size() const { return m_values.size(); }
     bool isEmpty() const { return m_values.isEmpty(); }

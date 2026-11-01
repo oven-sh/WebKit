@@ -47,8 +47,11 @@ struct PlaceInKeptText {
     // The piece of the file that holds it all. What is printed in place of a part of it is a copy of nothing outside it.
     size_t startOfPiece;
     size_t endOfPiece;
+    bool isInBody;
 };
 std::optional<PlaceInKeptText> findInKeptText(FunctionID, ModuleID, LineColumn);
+// The part of what is searched that holds every expression around text[at]. In a long line that is a few statements. See StartOfStatementData.
+std::pair<size_t, size_t> findStatementsAround(const PlaceInKeptText&, size_t at);
 // The text of every function, which functionSourceBytes() answers a part of.
 std::span<const Latin1Character> sourceBytesOfAllFunctions();
 // What `bun run` has in place of pieces of the text of the module. Nothing where the image counts from elsewhere than the caller.

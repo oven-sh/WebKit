@@ -1,0 +1,46 @@
+# The lie: sabotage=CopiedReadsKeepTheirProof has the pass keep the copy of second-name-store.ir. The verifier refuses the read behind the store
+# FORM: Prepared
+# OPTIONS: sabotage=CopiedReadsKeepTheirProof check=VerifyEachPass
+# RUN: pass PlanArrayCapacities
+# DIAGNOSTIC: GuardNotAvailable 1
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="sum" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=Array<double, proven, pristine[Storage, Names]>}, {type=double}] results=[{type=anything}] {
+    v3 = Integer
+    v4 = Double number=0.5
+    v5 = Integer integer=5
+    Jump -> next b1(v4, v3)
+  b1(v6: number, v7: int[0, 5]):
+    LoopHint
+    v9 = Less v7, v5
+    Branch v9 -> taken b2(| 0), notTaken b8()
+  b2(v10):
+    v11 = HasArrayStorage v0 arrayStorage=Contiguous
+    Branch v11 -> taken b3(| 0), notTaken b7()
+  b3(v12):
+    v13 = IsElementPresent v0, v5, v12 arrayStorage=Contiguous [keyIsIntegral]
+    Branch v13 -> taken b4(| 0), notTaken b7()
+  b4(v14):
+    v15 = AllGuards v12, v14
+    v16 = GetArrayElement v0, v5, v15 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+    v17 = HasArrayStorage v1 arrayStorage=Double [isWritable]
+    Branch v17 -> taken b5(| 0), notTaken b7()
+  b5(v18):
+    PutArrayElement v1, v10, v2, v18 arrayStorage=Double level=Expected [keyIsIntegral]
+    v20 = IsElementPresent v0, v5, v12 arrayStorage=Contiguous [keyIsIntegral]
+    Branch v20 -> taken b6(| 0), notTaken b7()
+  b6(v21):
+    v22 = AllGuards v12, v21
+    v23 = GetArrayElement v0, v5, v22 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+    v24 = Add v16, v23
+    v25 = Add v6, v24
+    v26 = Increment v10
+    Jump -> next b1(v25, v26)
+  b7() frequency=Rare:
+    v27 = ElemGet v0, v5 [keyIsIntegral]
+    Return v27
+  b8():
+    Return v6
+}

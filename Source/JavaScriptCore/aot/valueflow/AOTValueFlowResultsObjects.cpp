@@ -302,6 +302,9 @@ static ObjectsOfLayouts collectObjectsOfLayouts(const ValueFlowResultInputs& inp
             return inputs.hasEscaped(object) || inputs.isLost(object);
         });
     };
+    // The code that makes them and holds them is out of sight.
+    for (const Program::RecordOfImageBelow& record : program.recordsOfImagesBelow)
+        objects.add(record.layout, allObjectMutations, true);
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         FunctionID constructor = program.layouts[index].constructor;
         bool isUnsolved = constructor && isUnsolvedCode(inputs, tables, constructor);

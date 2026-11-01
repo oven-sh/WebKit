@@ -367,7 +367,7 @@ AccessorsUnderUnknownKeys::AccessorsUnderUnknownKeys(const ValueFlowResultInputs
         });
         return holders;
     };
-    m_holdersOfGettersUnderUnknownKey = findHolders(ValueFlowNameKind::GetterUnderUnknownKey);
+    m_holdersOfGettersUnderUnknownKey = maker.unite(findHolders(ValueFlowNameKind::GetterUnderUnknownKey), findHolders(ValueFlowNameKind::GetterUnderNameOfEnumeration));
     m_holdersOfSettersUnderUnknownKey = findHolders(ValueFlowNameKind::SetterUnderUnknownKey);
 }
 
@@ -383,10 +383,13 @@ ValueSetID AccessorsUnderUnknownKeys::findOn(ValueSetMaker& maker, ValueSetID ob
     if (findsValue)
         return ValueSets::nothing;
     ValueSetID accessors = ValueSets::nothing;
-    forEachNodeWrittenUnder(ValueFlowName::of(isRead ? ValueFlowNameKind::GetterUnderUnknownKey : ValueFlowNameKind::SetterUnderUnknownKey), [&](const WrittenNode& node) {
+    auto take = [&](const WrittenNode& node) {
         if (m_sets.meet(node.objects, objects))
             accessors = maker.unite(accessors, maker.intersect(node.value, m_universe.closures()));
-    });
+    };
+    forEachNodeWrittenUnder(ValueFlowName::of(isRead ? ValueFlowNameKind::GetterUnderUnknownKey : ValueFlowNameKind::SetterUnderUnknownKey), take);
+    if (isRead)
+        forEachNodeWrittenUnder(ValueFlowName::of(ValueFlowNameKind::GetterUnderNameOfEnumeration), take);
     return accessors;
 }
 
@@ -1061,6 +1064,86 @@ static Vector<FlowBoundFunctionAtSite> findBoundFunctionsAtSites(const ValueFlow
     return result;
 }
 
+// Finds the calls of bind that can only bind undefined and no argument to one built-in function, and the calls that no other bound function can reach as the callee.
+static Vector<FlowBuiltinBoundAtSite> findBuiltinsBoundAtSites(const ValueFlowResultInputs& inputs, const FlowAccessSiteNumbering& accessSites)
+{
+    const Program& program = inputs.program;
+    const ValueFlowUniverse& universe = inputs.universe();
+    BuiltinID bindFunction = program.builtins().canonicalID(Builtins::FunctionPrototypeBind);
+    if (!inputs.solver().usesOf(bindFunction).contains(BuiltinUse::Called))
+        return { };
+
+    struct MadeByBind {
+        ValueFlowObjectID object;
+        BuiltinID target;
+    };
+    auto forEachCallIn = [&](unsigned index, NOESCAPE const Invocable<void(const ValueFlowStatement&)> auto& functor) {
+        if (!inputs.isReached(FunctionID(index)) || !inputs.build.isEnabled(FlowResultKind::CalleeSets, index))
+            return;
+        for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
+            if (statement.kind == ValueFlowStatementKind::Operation && statement.opcode == Opcode::Call)
+                functor(statement);
+        }
+    };
+    ValueFlowObjectID bind = universe.objectOf(bindFunction);
+    Vector<MadeByBind> made = collectInParallel<MadeByBind>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<MadeByBind>& found) {
+        forEachCallIn(index, [&](const ValueFlowStatement& statement) {
+            std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
+            ValueFlowObjectID result = universe.siteObject(statement);
+            if (!result || operands.size() > 3 || !mayHold(inputs, operands[0], bind) || !bindsNoArgument(universe, result))
+                return;
+            BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
+            ValueSetMaker& maker = borrowedMaker.get();
+            if (inputs.sets().onlyMember(inputs.possibleValuesOf(maker, operands[0])) != bind)
+                return;
+            ValueFlowObjectID target = inputs.sets().onlyMember(inputs.possibleValuesOf(maker, operands[1]));
+            if (!target || !inputs.sets().contains(universe.builtinFunctions(), target))
+                return;
+            if (operands.size() == 3 && inputs.sets().meet(inputs.possibleValuesOf(maker, operands[2]), ValueSets::complement(universe.undefinedValue())))
+                return;
+            found.append({ result, universe.builtinOf(target) });
+        });
+    });
+    if (made.isEmpty())
+        return { };
+
+    AOT::sort(made, { }, &MadeByBind::object);
+    Vector<ValueFlowObjectID> objects(made.size(), [&](size_t index) {
+        return made[index].object;
+    });
+    ValueSetID everyObject = BorrowedValueSetMaker(inputs.makerPool()).get().of(objects.span());
+    ValueSetID otherBoundFunctions = BorrowedValueSetMaker(inputs.makerPool()).get().intersect(universe.objectsThatMayBeMadeAs(BuiltinClasses::BoundFunction), ValueSets::complement(everyObject));
+    ValueFlowObjectID apply = universe.objectOf(program.builtins().canonicalID(Builtins::FunctionPrototypeApply));
+    ValueFlowObjectID call = universe.objectOf(program.builtins().canonicalID(Builtins::FunctionPrototypeCall));
+    Vector<FlowBuiltinBoundAtSite> result = collectInParallel<FlowBuiltinBoundAtSite>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<FlowBuiltinBoundAtSite>& found) {
+        forEachCallIn(index, [&](const ValueFlowStatement& statement) {
+            std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
+            BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
+            ValueSetMaker& maker = borrowedMaker.get();
+            // `f.apply(..)` and `f.call(..)` become calls of f where they stand.
+            ValueFlowObjectID method = inputs.sets().onlyMember(inputs.possibleValuesOf(maker, operands[0]));
+            const ValueFlowOperand& operand = operands[method && (method == apply || method == call) ? 1 : 0];
+            if (!operand.node || !inputs.sets().meet(inputs.solver().possibleValuesOf(operand.node), everyObject))
+                return;
+            ValueSetID callees = inputs.possibleValuesOf(maker, operand);
+            if (ValueSets::isComplement(callees) || inputs.sets().meet(callees, otherBoundFunctions))
+                return;
+            BuiltinID onlyTarget;
+            bool hasSeveral = false;
+            inputs.sets().forEachMember(maker.intersect(callees, everyObject), [&](ValueFlowObjectID callee) {
+                BuiltinID target = std::ranges::lower_bound(made, callee, { }, &MadeByBind::object)->target;
+                hasSeveral |= onlyTarget && onlyTarget != target;
+                onlyTarget = target;
+            });
+            if (onlyTarget && !hasSeveral)
+                found.append({ accessSites.siteOfValue(FunctionID(index), statement.site), onlyTarget });
+        });
+    });
+    AOT::sort(result, { }, &FlowBuiltinBoundAtSite::site);
+    result.shrink(std::ranges::unique(result).begin() - result.begin());
+    return result;
+}
+
 // `on("close", listener)` stores under a parameter, and `emit("close")` calls what it reads under one. Flow follows the first once for each key that its callers spell, so it knows what lies under "close".
 // The call in the second has one stamp for all keys. A copy of it in a caller that spells the key asks here.
 static Vector<FlowClosureStoredUnderKey> findClosuresStoredUnderKeys(const ValueFlowResultInputs& inputs)
@@ -1153,6 +1236,7 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
 
     tables.functions.boundFunctionUses = findBoundFunctionsOnlyCalled(inputs);
     tables.sites.boundFunctionsAtSites = findBoundFunctionsAtSites(inputs, application.accessSites);
+    tables.sites.builtinsBoundAtSites = findBuiltinsBoundAtSites(inputs, application.accessSites);
     tables.sites.closuresStoredUnderKeys = findClosuresStoredUnderKeys(inputs);
 
     BitVector isNamedByTable(numberOfFunctions);
@@ -1202,7 +1286,7 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
         if (entries.mayBeIntoAnyFunction)
             return;
         flow.callers = CallerState::AllKnown;
-        if (inputs.build.isEnabled(FlowResultKind::ObjectUses, index) && isOnlyCalled(inputs, closure))
+        if (inputs.build.isEnabled(FlowResultKind::ObjectUses, index) && isOnlyCalled(inputs, closure) && !inputs.universe().builtinTables().entryDescribing(closure))
             flow.closureUse = ClosureUse::CalledOnly;
         OptionSet<FunctionCapabilities>& capabilities = application.signatures[index].provenCapabilities;
         capabilities.add(FunctionCapabilities::IsNeverCalledByHost);

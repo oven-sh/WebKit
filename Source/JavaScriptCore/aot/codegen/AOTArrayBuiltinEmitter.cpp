@@ -85,6 +85,13 @@ ArrayStorageFormList ArrayBuiltinEmitter::candidateFormsOf(const InlineCall& cal
     return forms;
 }
 
+// A list that may hold anything is as likely to have one kind of storage as another, and a loop in rare code pays for every turn.
+ElementAccessEmitter::FirstForm ArrayBuiltinEmitter::firstCandidateFormOf(const InlineCall& call)
+{
+    Type contents = typeOfContentsRead({ m_program, m_function, types(), TypeLevel::Expected }, typeOf(call.receiver()), ContentsSlot::Element);
+    return contents.isAnything() ? ElementAccessEmitter::FirstForm::IsLikeTheOthers : ElementAccessEmitter::FirstForm::IsExpected;
+}
+
 void ArrayBuiltinEmitter::forEachFormOrMiss(const InlineCall& call, CellPointer array, IndexingType mask, const ScopedLambda<void(const ArrayStorageForm&)>& functor)
 {
     // The storage kind does not tell whether the storage is shared with a literal.
@@ -92,7 +99,7 @@ void ArrayBuiltinEmitter::forEachFormOrMiss(const InlineCall& call, CellPointer 
         return functor(*proven);
     ElementAccessEmitter::ShapeTest test = mask == IndexingShapeAndWritabilityMask ? &ElementAccessEmitter::hasWritableShape : &ElementAccessEmitter::hasShape;
     Word32 mode = elements().indexingMode(array, mask);
-    elements().forEachFormByShape(mode, test, candidateFormsOf(call), missBlockOf(call), functor);
+    elements().forEachFormByShape(mode, test, candidateFormsOf(call), missBlockOf(call), functor, firstCandidateFormOf(call));
 }
 
 void ArrayBuiltinEmitter::generateArrayIterator(const InlineCall& call)

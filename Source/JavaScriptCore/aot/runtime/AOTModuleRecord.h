@@ -48,6 +48,7 @@ public:
     DECLARE_EXPORT_INFO;
 
     ModuleID module() const { return m_module; }
+    bool isMocked() const;
     JSGlobalObject* instanceRealm() const;
     // A realm may run several images. To the modules of one, a record of another is a record of code that its build has not seen.
     bool isOf(const Instance& instance) const { return &m_instance == &instance; }
@@ -108,6 +109,8 @@ public:
     // Answers what it was.
     static bool setIsAskingHost(JSGlobalObject*, bool);
     void didAskHostForRequest(uint8_t flagsBefore);
+    // The host threw in place of an answer.
+    void didFailToFetchRequest(const Identifier& key, Exception*);
     // What the host answers when it is asked to fetch the module under a key that this record requests. Null where the host has to be asked.
     AbstractModuleRecord* recordOfRequest(JSGlobalObject*, const Identifier& key);
     // True: the promise of the fetch is fulfilled with the record in a later turn of the event loop.
@@ -123,6 +126,7 @@ public:
     void collectExportedNames(JSGlobalObject*, WTF::Vector<Identifier>&, StarExportTargets&);
     JSValue readExport(JSGlobalObject*, const Identifier& exportName, std::optional<unsigned> exportIndex);
     JSObject* moduleNamespaceObject(JSGlobalObject*, ModulePhase);
+    JSObject* moduleNamespaceObjectForImageAbove(ModulePhase);
     static bool isSameBinding(const Resolution&, const Resolution&);
 
     void gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, VisitedModuleRecords& seen);

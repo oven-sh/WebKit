@@ -169,6 +169,14 @@ public:
     }
 
     // A set that holds a callee nobody follows lists none of the callees that one stands for. A receiver that finds one of those and no callee nobody follows names it.
+    ClimbingSet whatListedReceiversFind() const
+    {
+        ClimbingSet found;
+        for (const Known& known : m_known)
+            found = m_context.unite(found, known.found);
+        return found;
+    }
+
     ClimbingSet withCalleesFoundAlone(ClimbingSet callees) const
     {
         if (!m_context.meet(callees, m_context.universe().placeholdersAlone()))
@@ -224,13 +232,11 @@ private:
     ValueFlowOperand m_others;
 };
 
-static void callFromNativeCode(ValueFlowRuleContext& context, ClimbingSet members, const ValueFlowOperand& thisValue, ValueSetID arguments, ValueFlowNodeID result, NOESCAPE const Invocable<ClimbingSet(ClimbingSet)> auto& find)
+static void callFromNativeCode(ValueFlowRuleContext& context, ClimbingSet members, const ReceiversByWhatTheyFind& receivers, ValueSetID arguments, ValueFlowNodeID result)
 {
     const ValueFlowUniverse& universe = context.universe();
     if (!context.meet(members, universe.callables()))
         return;
-    ReceiversByWhatTheyFind receivers(context, thisValue, find);
-    members = receivers.withCalleesFoundAlone(members);
 
     // A built-in is applied to the operands of this call and answers to this call alone, whoever else calls it.
     ValueFlowBuiltinCall description { .kind = ValueFlowCallKind::CallByNativeCode, .argumentsMayBeAbsent = true, .otherArguments = operandHolding(arguments), .result = result, .thrown = ValueFlowProgramNodes::escaped(), .isFoundOnReceiver = true };
@@ -256,6 +262,14 @@ static void callFromNativeCode(ValueFlowRuleContext& context, ClimbingSet member
         if (result)
             context.connect(group.result, result);
     });
+}
+
+static void callFromNativeCode(ValueFlowRuleContext& context, ClimbingSet members, const ValueFlowOperand& thisValue, ValueSetID arguments, ValueFlowNodeID result, NOESCAPE const Invocable<ClimbingSet(ClimbingSet)> auto& find)
+{
+    if (!context.meet(members, context.universe().callables()))
+        return;
+    ReceiversByWhatTheyFind receivers(context, thisValue, find);
+    callFromNativeCode(context, receivers.withCalleesFoundAlone(members), receivers, arguments, result);
 }
 
 void passOperandsOf(const ValueFlowBuiltinCall& call, const ValueFlowCallGroup& group, ValueFlowRuleContext& context)
@@ -1298,11 +1312,21 @@ private:
             return false;
         ClimbingSet entries = m_context.restrict(valueAt(BuiltinPlace { .kind = BuiltinPlaceKind::IteratedValues, .operand = BuiltinOperand::argument(0) }), m_universe.objects());
         constexpr OptionSet<ObjectMutation> mutationsOfContents { ObjectMutation::StoreAfterCreation, ObjectMutation::AddProperty, ObjectMutation::RedefineProperty, ObjectMutation::DeleteField, ObjectMutation::ChangePrototype };
-        bool someEntryIsOtherwise = holdsAnything(m_context.membersMissingFrom(m_context.nodes().ofHost(ValueFlowHostNode::PairsOfEntries), entries))
+        // A pair that the program writes says what it holds until something changes it, and any change counts: `pair.pop()` takes a value away.
+        ClimbingSet pairLiterals = m_context.restrict(entries, m_universe.pairLiterals());
+        ClimbingSet otherEntries = m_context.restrict(entries, ValueSets::complement(m_universe.pairLiterals()));
+        bool someEntryIsOtherwise = holdsAnything(m_context.membersMissingFrom(m_context.nodes().ofHost(ValueFlowHostNode::PairsOfEntries), otherEntries))
+            || holdsAnything(m_context.markedAmong(pairLiterals, OptionSet<ObjectMutation>::all()))
+            || m_context.holdsAnyOf(pairLiterals, m_context.nodes().ofHost(ValueFlowHostNode::ArraysThatMayHaveHoles))
             || m_context.holdsAnyOf(entries, escaped()) || m_context.holdsAnyOf(entries, ValueFlowProgramNodes::lost()) || holdsAnything(m_context.markedAmong(entries, mutationsOfContents));
         if (someEntryIsOtherwise) {
             m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::MapsFilledAsRecordsSay), only(m_context, m_resultObject));
             return false;
+        }
+        // The numbers in a Map are followed from the objects that Object.entries() is given. A pair that the program writes is not one of them.
+        if (holdsAnything(pairLiterals)) {
+            m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::MapsFilledAsRecordsSay), only(m_context, m_resultObject));
+            m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::WrittenPairsThatAreRead), pairLiterals);
         }
         m_context.add(m_context.written(only(m_context, m_resultObject), entriesPairsOfMap), entries);
         for (const BuiltinTransfer& transfer : m_overload->flow.transfers) {
@@ -1711,20 +1735,29 @@ private:
         SetForScope everyReceiver(m_receiversAccepted, ValueSets::anything);
         ValueFlowNodeID description = m_context.hub(m_tables.descriptionOfRefusedOperands());
         bool takesAnyObject = !parameter.accepted || parameter.conversion == BuiltinConversion::Dictionary || m_builtins.at(parameter.accepted).flags.containsAny({ BuiltinTypeFlag::IsAnything, BuiltinTypeFlag::HasAnyObject, BuiltinTypeFlag::HasPlainData });
+        // What a call of a built-in has made stands among the functions until the solve says what it was made as: `Object.create(Blob.prototype, {})`. It is described as any other object.
+        ValueSetID functions = m_context.maker().intersect(m_universe.callables(), ValueSets::complement(m_context.maker().intersect(m_universe.objectsThatMayBeAnything(), m_universe.knownObjects())));
         if (!takesAnyObject) {
             ValueSetID refused = ValueSets::complement(m_context.maker().unite(m_universe.callables(), m_tables.membersSurelyOf(parameter.accepted)));
+            // Of those, what was allocated as none of the classes that the parameter names. An iterator that one of two calls made is let through by the `next` of one of them.
+            refused = m_context.maker().unite(refused, allocatedByBuiltinsAsNoneOf(parameter.operand, m_tables.classesNamedBy(parameter.accepted)));
             if (parameter.operand.isReceiver() && m_call.isFoundOnReceiver)
                 return describeReceiversThatAnswer(refused, description);
             forEachOperandAt(parameter.operand, [&](ValueFlowOperand operand) {
                 operand.mask = m_context.maker().intersect(operand.mask, refused);
                 m_context.connect(operand, description);
             });
-            return;
+            // `Buffer.concat([{ }])`: the list is taken and what lies in it is refused. A type that says what the list holds is chosen for no other list.
+            bool saysWhatIsHeld = std::ranges::any_of(m_builtins.at(parameter.accepted).parts, [](const BuiltinTypePart& part) {
+                return !part.contents.empty();
+            });
+            if (saysWhatIsHeld)
+                return;
         }
 
-        ValueSetID allButFunctions = ValueSets::complement(m_universe.callables());
+        ValueSetID allButFunctions = ValueSets::complement(functions);
         ValueFlowBehaviorID behavior = m_tables.behaviorOf(parameter);
-        if (behavior && m_tables.at(behavior).isTransitive) {
+        if (takesAnyObject && behavior && m_tables.at(behavior).isTransitive) {
             // An object is what the parameter takes: the message describes what is read out of it, and out of that.
             ClimbingSet holders = m_context.restrict(m_context.valueOf(m_context.hub(behavior)), m_universe.objects());
             auto describe = [&](ValueFlowNodeID read) {
@@ -1734,7 +1767,7 @@ private:
             describe(m_context.lookup(m_context.restrict(holders, m_context.maker().intersect(m_universe.knownObjects(), ValueSets::complement(m_universe.builtinObjects()))), elementsName));
             for (BuiltinName name : parameter.namedMembers)
                 describe(m_context.lookup(holders, property(m_context, name)));
-        } else {
+        } else if (takesAnyObject) {
             for (BuiltinName name : parameter.namedMembers)
                 m_context.connect(m_context.masked(m_context.lookup(valueAt(parameter.operand), property(m_context, name)), allButFunctions), description);
         }
@@ -1910,7 +1943,7 @@ private:
             m_context.mark(made, ObjectMutation::StoreOfOtherType);
             m_context.add(m_context.written(made, elementsName), unknownValue(m_context, ValueFlowUnknownSource::ContentsOfEscapedObject));
             m_context.add(m_context.written(made, property(m_context, BuiltinNames::length)), m_universe.anyPrimitive());
-            bool mayHaveAccessorUnderIndex = std::ranges::any_of(std::array { ValueFlowNameKind::GetterUnderUnknownKey, ValueFlowNameKind::SetterUnderUnknownKey }, [&](ValueFlowNameKind kind) {
+            bool mayHaveAccessorUnderIndex = std::ranges::any_of(std::array { ValueFlowNameKind::GetterUnderUnknownKey, ValueFlowNameKind::GetterUnderNameOfEnumeration, ValueFlowNameKind::SetterUnderUnknownKey }, [&](ValueFlowNameKind kind) {
                 return holdsAnything(m_context.valueOf(m_context.readWhatWasWritten(made, ValueFlowName::of(kind))));
             });
             if (mayHaveAccessorUnderIndex)
@@ -2061,8 +2094,10 @@ private:
             if (mayBeUnknownObject(objects))
                 functor(m_context.nodes().ofHost(ValueFlowHostNode::ObjectsAboveEscapedInstances));
             // The prototype objects of library classes above escaped instances are held apart. The modules of the run time list the keys of none.
-            if (mayBeUnknownObject(objects) && isCalledByProgramCode())
+            if (mayBeUnknownObject(objects) && isCalledByProgramCode()) {
                 functor(heldPrototypeObjectsOfLibraryClasses(m_context));
+                notePrototypeObjectsAboveUnknownObject(m_context);
+            }
             bool mayBeEndOfChain = m_context.meet(objects, m_universe.placeholdersAlone());
             bool mayBeNamespace = false;
             // Where the table does not say what stands above an object, one stand-in is listed there. It ends the walk, but the object it stands for may have any object above it.
@@ -2229,7 +2264,7 @@ private:
                 if (part.operand != callback.callee)
                     continue;
                 forEachPartOfCallees(m_context, m_context.restrict(valueAt(callback.callee), m_universe.callables()), [&](ClimbingSet callees) {
-                    ValueFlowNodeID result = m_context.group(callees, callback.constructs ? ValueFlowCallKind::ConstructByNativeCode : ValueFlowCallKind::CallByNativeCode, originOfOperands()).result;
+                    ValueFlowNodeID result = m_context.group(callees, callback.constructs ? ValueFlowCallKind::ConstructByNativeCode : ValueFlowCallKind::CallByNativeCode, originOfOperands(), ValueFlowArgumentsLeftOut::SaidByCaller).result;
                     functor(part.isSettled ? m_context.lookup(m_context.valueOf(result), awaitedValueName) : result);
                     if (ValueFlowNodeID listedBun = part.isSettled ? findNodeOfListedBun(m_context, operandOfBuiltinAt(result)) : ValueFlowNodeID())
                         functor(listedBun);
@@ -2708,6 +2743,26 @@ private:
         }
     }
 
+    bool callConstructorAdder(const BuiltinClass& builtinClass, ClimbingSet newObject)
+    {
+        if (!builtinClass.constructorAdder)
+            return false;
+        ClimbingSet adders = m_context.valueOf(m_context.lookup(newObject, property(m_context, builtinClass.constructorAdder)));
+        if (m_context.meet(adders, m_universe.placeholdersAlone()))
+            return false;
+        if (m_context.meet(adders, ValueSets::complement(m_context.maker().unite(m_universe.builtinFunctions(), m_universe.anyPrimitive()))))
+            m_context.mark(newObject, { ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript });
+        forEachPartOfCallees(m_context, m_context.restrict(adders, m_universe.callables()), [&](ClimbingSet callees) {
+            ValueFlowCallGroup group = m_context.group(callees, ValueFlowCallKind::CallByNativeCode);
+            m_context.add(group.thisValue, newObject);
+            for (BuiltinSlotID slot : builtinClass.slots)
+                m_context.connect(m_context.written(newObject, nameOf(slot)), group.otherArguments);
+            if (m_call.thrown)
+                m_context.connect(group.thrown, m_call.thrown);
+        });
+        return true;
+    }
+
     void allocate(const BuiltinTypePart& part, ValueFlowObjectID fresh, BuiltinFreshness freshness)
     {
         ClimbingSet object = only(m_context, fresh);
@@ -2737,7 +2792,7 @@ private:
                 m_context.connect(m_context.lookup(m_context.valueOf(m_call.thisValue), property(m_context, BuiltinNames::prototype)), prototype);
                 ClimbingSet classesOfProgram = m_context.restrict(m_context.valueOf(m_call.thisValue), ValueSets::complement(m_universe.builtinObjects()));
                 bool mayCallMembersOfNewObject = m_overload->effects.capability == BuiltinCapability::JS && !m_builtins.at(part.builtinClass).constructorOnlyReadsPrototypeOfNewTarget;
-                if (holdsAnything(classesOfProgram) && mayCallMembersOfNewObject) {
+                if (holdsAnything(classesOfProgram) && mayCallMembersOfNewObject && !callConstructorAdder(m_builtins.at(part.builtinClass), object)) {
                     m_context.add(escaped(), object);
                     m_context.add(escaped(), classesOfProgram);
                 }
@@ -2915,7 +2970,26 @@ private:
         return m_context.meet(m_context.valueOf(m_context.readWhatWasWritten(m_context.restrict(chain, m_universe.knownObjects()), key ? ValueFlowName::property(m_program, key) : unknownKeyName)), m_universe.callables());
     }
 
-    void passArguments(const ValueFlowCallGroup& group, std::span<const BuiltinPlace> arguments)
+    // The positions that parameters of the callees take, where all of them are functions of typed text and few enough to look at. What lies behind them reaches a rest parameter, which holds
+    // what is passed and nothing for what is not.
+    std::optional<unsigned> positionsOfParametersOf(ClimbingSet callees)
+    {
+        AOT_THRESHOLD(unsigned, mostCalleesLookedAt, 4);
+        if (m_context.numberOfMembers(callees) > mostCalleesLookedAt)
+            return std::nullopt;
+        std::optional<unsigned> positions = 0;
+        m_context.forEachMemberInLine(callees, [&](ValueFlowObjectID closure) {
+            FunctionID function = m_universe.closureFunction(closure);
+            if (!function || m_context.sets().contains(m_tables.closuresThatEntriesDescribe(), closure) || !m_context.program().at(function).has(FunctionFlags::IsChecked))
+                positions = std::nullopt;
+            else if (positions)
+                positions = std::min(numberOfGroupedArguments, std::max(*positions, m_context.program().at(function).numberOfPositionalParameters()));
+        });
+        return positions;
+    }
+
+    // With `positionsOfParameters` the caller says what it leaves out: those positions get undefined, and no other.
+    void passArguments(const ValueFlowCallGroup& group, std::span<const BuiltinPlace> arguments, std::optional<unsigned> positionsOfParameters = std::nullopt)
     {
         unsigned next = 0;
         bool positionIsKnown = true;
@@ -2923,9 +2997,24 @@ private:
             unsigned index = next++;
             return positionIsKnown ? group.argumentAt(index) : group.otherArguments;
         };
+        // What a declaration takes out of an operand may be missing there: an index without an element, an operand that is left out. A primitive that the built-in makes is always passed.
+        auto isPrimitiveMadeByBuiltin = [&](const BuiltinPlace& argument) {
+            if (argument.kind != BuiltinPlaceKind::NewValue || !argument.newValueType)
+                return false;
+            if (std::ranges::any_of(m_builtins.at(argument.newValueType).parts, [](const BuiltinTypePart& part) { return part.kind == BuiltinTypePartKind::CallbackResult; }))
+                return false;
+            ValueSetID made = valueOfType(argument.newValueType, m_contentsObject);
+            return !m_context.sets().isEmpty(made) && m_context.sets().isSubset(made, m_universe.primitives());
+        };
+        unsigned numberOfPositionsListed = 0;
         for (const BuiltinPlace& argument : arguments) {
             bool isRest = argument.kind == BuiltinPlaceKind::Operand && !argument.isSettled && argument.operand->kind() == BuiltinOperand::Kind::ArgumentsFrom;
             if (!isRest) {
+                if (positionsOfParameters && positionIsKnown) {
+                    if (next < *positionsOfParameters && !isPrimitiveMadeByBuiltin(argument))
+                        m_context.add(group.argument(next), m_universe.undefinedValue());
+                    numberOfPositionsListed = next + 1;
+                }
                 connectFrom(argument, takeTarget());
                 continue;
             }
@@ -2940,6 +3029,8 @@ private:
             }
             positionIsKnown = false;
         }
+        if (positionsOfParameters)
+            passNoFurtherArguments(m_context, group, numberOfPositionsListed, *positionsOfParameters);
     }
 
     void useResult(const ValueFlowCallGroup& group, BuiltinCallbackResultUse use, const BuiltinPlace& resultTo)
@@ -3019,11 +3110,21 @@ private:
         return applied.isEmpty() ? callees : m_context.restrict(callees, ValueSets::complement(m_context.maker().of(applied.span())));
     }
 
+    bool namesHolderOfReplaceableMembers(const BuiltinPlace& place)
+    {
+        bool namesHolder = false;
+        forEachOperandAt(place, [&](const ValueFlowOperand& operand) {
+            namesHolder |= !operand.node && m_context.meet(ClimbingSet(operand.constant), m_universe.builtinTables().heap().holdersOfReplaceableMembers());
+        });
+        return namesHolder;
+    }
+
     void applyCallback(const BuiltinCallback& callback)
     {
         describeObjectsRefusedAsFunctions(m_context, valueAt(callback.callee));
         forEachPartOfCallees(m_context, applyBuiltinsCalledInPlace(callback, calleesOf(callback)), [&](ClimbingSet callees) {
-            ValueFlowCallGroup group = m_context.group(callees, callback.constructs ? ValueFlowCallKind::ConstructByNativeCode : ValueFlowCallKind::CallByNativeCode, originOfOperands());
+            std::optional<unsigned> positionsOfParameters = callback.spreadArguments.kind == BuiltinPlaceKind::None ? positionsOfParametersOf(callees) : std::nullopt;
+            ValueFlowCallGroup group = m_context.group(callees, callback.constructs ? ValueFlowCallKind::ConstructByNativeCode : ValueFlowCallKind::CallByNativeCode, originOfOperands(), positionsOfParameters ? ValueFlowArgumentsLeftOut::SaidByCaller : ValueFlowArgumentsLeftOut::AnyOfThem);
             if (callback.constructs) {
                 if (callback.newTarget.kind == BuiltinPlaceKind::None)
                     m_context.add(group.newTarget, callees);
@@ -3034,11 +3135,12 @@ private:
             } else if (callback.thisValue.kind == BuiltinPlaceKind::None)
                 m_context.add(group.thisValue, m_universe.undefinedValue());
             else {
-                connectFrom(callback.thisValue, group.thisValue);
+                if (!namesHolderOfReplaceableMembers(callback.thisValue) || mayBeUnknownObject(callees) || isHostFlagRaised(m_context, ValueFlowHostNode::AllElseIsAtRest))
+                    connectFrom(callback.thisValue, group.thisValue);
                 if (mayBeUnknownObject(callees) && isCalledByProgramCode())
                     connectFrom(callback.thisValue, valuesCarriedOut());
             }
-            passArguments(group, callback.arguments);
+            passArguments(group, callback.arguments, positionsOfParameters);
             connectFrom(callback.spreadArguments, group.otherArguments);
             useResult(group, callback.resultUse, callback.resultTo);
             connectThrown(group, callback.times);
@@ -3098,7 +3200,7 @@ private:
         auto applyWith = [&](const ValueFlowOperand& value, ValueFlowNodeID target) {
             forEachOperandAt(action.object, [&](const ValueFlowOperand& object) {
                 forEachKeyOperand(action.key, [&](const ValueFlowOperand& key) {
-                    Typed::applyPropertyAction(m_context, action, { object, key, value, target, m_call.thrown });
+                    Typed::applyPropertyAction(m_context, action, { object, key, value, target, m_call.thrown, std::nullopt, false, m_call.operation });
                 });
             });
             // Without a trap for it, what stands above a proxy is what stands above its target.
@@ -3233,6 +3335,14 @@ private:
         if (reader != Builtins::ObjectGetOwnPropertyDescriptor && reader != Builtins::ReflectGetOwnPropertyDescriptor)
             return std::nullopt;
         if (definitionThroughTests(function, function.at(read).operand(numberOfOperandsBeforeArguments + 1)) != definitionThroughTests(function, definition.operand(keyIndex)))
+            return std::nullopt;
+        // Each of the two calls converts a key that is an object anew, and may get another name for it.
+        ValueSetID convertedByCode = m_context.maker().intersect(m_universe.objects(), ValueSets::complement(m_universe.symbols()));
+        bool isConvertedByCode = false;
+        forEachKeyOperand(action.key, [&](const ValueFlowOperand& key) {
+            isConvertedByCode |= m_context.meet(m_context.valueOf(key), convertedByCode);
+        });
+        if (isConvertedByCode)
             return std::nullopt;
 
         ValueFlowObjectID descriptor;
@@ -4982,9 +5092,11 @@ static void applyBuiltinsThatActOnEscapedReceivers(ValueFlowRuleContext& context
         ValueSetID passed = isPassedOnlyPrimitives(context, behavior, name) ? universe.anyPrimitive() : unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult);
         // A value that comes back out of native code is the unknown object alone. It may be any escaped instance of a class below a built-in class.
         ClimbingSet escapedInstances = context.valueWithin(ClimbingSet(universe.instancesBelowBuiltinClasses()), ValueFlowProgramNodes::escaped());
-        forEachReceiverToldApart(context, context.unite(context.valueWithin(ClimbingSet(universe.knownObjects()), hub), escapedInstances), { }, [&](ClimbingSet receivers, const ValueFlowOperand& thisValue) {
-            callFromNativeCode(context, find(receivers), thisValue, passed, behavior.isTransitive ? hub : ValueFlowProgramNodes::escaped(), find);
-        });
+        // The call hands each built-in the receivers that find it, so nobody tells them apart in front of it.
+        ValueSetID receivers = context.withMembersOf(ValueSets::nothing, context.unite(context.valueWithin(ClimbingSet(universe.knownObjects()), hub), escapedInstances));
+        // Each is asked by itself: a lookup for all of them would be another one whenever one more arrives.
+        ReceiversByWhatTheyFind found(context, operandHolding(receivers), find);
+        callFromNativeCode(context, found.whatListedReceiversFind(), found, passed, behavior.isTransitive ? hub : ValueFlowProgramNodes::escaped());
     });
 }
 

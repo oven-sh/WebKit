@@ -37,7 +37,7 @@ static bool givesOperandBack(const Value& user, uint32_t operandIndex)
 static bool storesBackIntoVariable(const Program& program, const Value& user, uint32_t operandIndex)
 {
     if (user.opcode == Opcode::PutModuleVariable)
-        return holdsDeclaredTypeOnlyBehindEntry(program.at(user.variable()).flow);
+        return program.at(user.variable()).owner || holdsDeclaredTypeOnlyBehindEntry(program.at(user.variable()).flow);
     return user.opcode == Opcode::PutEnvironmentField && operandIndex == OperandIndex::PutEnvironmentField::value && holdsDeclaredTypeOnlyBehindEntry(flowOf(program, { user.layout(), user.field() }).location);
 }
 

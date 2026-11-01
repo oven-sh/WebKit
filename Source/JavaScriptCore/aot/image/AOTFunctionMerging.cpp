@@ -83,8 +83,8 @@ static void trimPadding(CompiledCode& code, const CodeTemplates& templates)
     body.paddingStart = safeCast<uint32_t>(size);
 }
 
-// Code without a frame that calls nothing, faults nowhere and is described by nothing but its bytes and the jumps in them.
-static bool leavesOnlyByJumps(const CompiledCode& code)
+// Code without a frame that faults nowhere and is described by nothing but its bytes and what they jump to and call.
+static bool isDescribedByBytesAndRelocations(const CompiledCode& code)
 {
     const CodeBody& body = code.body;
     const SiteDescription& sites = code.sites;
@@ -92,23 +92,50 @@ static bool leavesOnlyByJumps(const CompiledCode& code)
         return false;
     if (body.relocations.isEmpty() || body.entries.size() != 1)
         return false;
-    if (!body.returnSites.isEmpty() || !body.firstReadSites.isEmpty() || !body.constants.isEmpty() || !body.jumpTables.isEmpty())
+    if (!body.firstReadSites.isEmpty() || !body.constants.isEmpty() || !body.jumpTables.isEmpty())
         return false;
-    if (sites.positions.size() != 1 || sites.numberOfSitesWithoutCode
-        || !sites.inlineFrames.isEmpty() || !sites.flaggedSites.isEmpty() || !sites.handlers.isEmpty()
-        || !sites.faultingAccesses.isEmpty() || !sites.pollSites.isEmpty() || !sites.frameMapWords.isEmpty())
+    return sites.positions.size() == 1 && !sites.numberOfSitesWithoutCode
+        && sites.inlineFrames.isEmpty() && sites.flaggedSites.isEmpty() && sites.handlers.isEmpty()
+        && sites.faultingAccesses.isEmpty() && sites.pollSites.isEmpty() && sites.frameMapWords.isEmpty();
+}
+
+static bool isJumpToFunction(const Relocation& relocation)
+{
+    return relocation.kind == RelocationKind::Jump && relocation.space == SymbolSpace::Function && relocation.entry == primaryEntry;
+}
+
+// And it calls nothing.
+static bool leavesOnlyByJumps(const CompiledCode& code)
+{
+    return isDescribedByBytesAndRelocations(code) && code.body.returnSites.isEmpty() && std::ranges::all_of(code.body.relocations, isJumpToFunction);
+}
+
+static std::span<const Relocation> callsInFrontOfJump(const CodeBody& body)
+{
+    return body.relocations.span().first(body.relocations.size() - 1);
+}
+
+// A stub that code without a frame calls walks no stack, and a call without a site says nothing of where it stands: it may stand in another body.
+static bool callsOnlyStubsWithoutSite(const CodeBody& body, const Relocation& jump)
+{
+    std::span<const Relocation> calls = callsInFrontOfJump(body);
+    if (body.returnSites.size() != calls.size() || !body.argumentMoves.isEmpty())
         return false;
-    return std::ranges::all_of(body.relocations, [](const Relocation& jump) {
-        return jump.kind == RelocationKind::Jump && jump.space == SymbolSpace::Function && jump.entry == primaryEntry;
+    return std::ranges::all_of(calls, [&](const Relocation& call) {
+        return call.kind == RelocationKind::Call && call.space == SymbolSpace::Stub && call.offset < jump.offset;
+    }) && std::ranges::none_of(body.returnSites, [](const ReturnSite& site) {
+        return !!site.site;
     });
 }
 
 static OptionalIndex findJumpTarget(const CompiledCode& code, uint32_t position, const CodeIndex& index)
 {
     const CodeBody& body = code.body;
-    if (!leavesOnlyByJumps(code) || body.relocations.size() != 1 || !body.localSites.isEmpty())
+    if (!isDescribedByBytesAndRelocations(code) || !body.localSites.isEmpty())
         return { };
-    const Relocation& jump = body.relocations[0];
+    const Relocation& jump = body.relocations.last();
+    if (!isJumpToFunction(jump) || !callsOnlyStubsWithoutSite(body, jump))
+        return { };
     if (jump.offset + sizeOfJump != body.bytes.size())
         return { };
     RELEASE_ASSERT(body.primaryEntryOffset() <= jump.offset);
@@ -120,7 +147,7 @@ static OptionalIndex findJumpTarget(const CompiledCode& code, uint32_t position,
 
 static bool isOneJump(const LinkedFunctions& functions, const Vector<OptionalIndex>& jumpsTo, uint32_t position)
 {
-    return jumpsTo[position] && !functions[position].body.relocations[0].offset;
+    return jumpsTo[position] && !functions[position].body.relocations.last().offset;
 }
 
 static Vector<OptionalIndex> findChainEnds(const LinkedFunctions& functions, const Vector<OptionalIndex>& jumpsTo)
@@ -222,6 +249,25 @@ static RemovedBodies createAliases(LinkedFunctions& functions, const Vector<Opti
     return result;
 }
 
+static void appendCallsOfStubs(const CodeBody& from, uint32_t distance, CodeBody& to, Vector<Relocation>& calls, Vector<ReturnSite>& returnSites)
+{
+    for (Relocation call : callsInFrontOfJump(from)) {
+        StubKey stub = from.stubKeys[call.symbol];
+        size_t symbol = to.stubKeys.find(stub);
+        if (symbol == notFound) {
+            symbol = to.stubKeys.size();
+            to.stubKeys.append(stub);
+        }
+        call.symbol = safeCast<uint32_t>(symbol);
+        call.offset += distance;
+        calls.append(call);
+    }
+    for (ReturnSite site : from.returnSites) {
+        site.offset += distance;
+        returnSites.append(site);
+    }
+}
+
 static void prependHead(CompiledCode& target, const CompiledCode& removed, const Relocation& jump, EntryAlias& alias)
 {
     constexpr size_t alignment = imageFunctionAlignment;
@@ -241,6 +287,11 @@ static void prependHead(CompiledCode& target, const CompiledCode& removed, const
     body.bytes.insertFill(0, 0, shift);
     memcpySpan(body.bytes.mutableSpan(), head);
     fillWithNops(body.bytes.mutableSubspan(head.size(), pad));
+    Vector<Relocation> calls;
+    Vector<ReturnSite> returnSites;
+    appendCallsOfStubs(removed.body, 0, body, calls, returnSites);
+    body.relocations.insertVector(0, calls);
+    body.returnSites.insertVector(0, returnSites);
     alias.start = 0;
     alias.prefixSize = prefixSize;
 }
@@ -261,7 +312,8 @@ static void appendBody(CodeBody& host, const CompiledCode& guest, FunctionID tar
     alias.prefixSize = guestEntry;
     host.bytes.appendVector(guest.body.bytes);
     appendPinnedUnit(host, hostEnd);
-    Relocation jump = guest.body.relocations[0];
+    appendCallsOfStubs(guest.body, alias.start, host, host.relocations, host.returnSites);
+    Relocation jump = guest.body.relocations.last();
     jump.offset += alias.start;
     size_t callee = host.callees.find(target);
     if (callee == notFound) {
@@ -351,7 +403,7 @@ void removeJumpOnlyFunctions(LinkedFunctions& functions, Vector<EntryAlias>& ali
     forEachIndexInParallel(loops, removed.prependedHeads.size(), [&](unsigned number) {
         MovedBody head = removed.prependedHeads[number];
         const CompiledCode& source = functions[head.position];
-        prependHead(functions[head.target], source, source.body.relocations[0], aliases[head.alias]);
+        prependHead(functions[head.target], source, source.body.relocations.last(), aliases[head.alias]);
     });
     forEachIndexInParallel(loops, removed.hosts.size(), [&](unsigned number) {
         HostBody host = removed.hosts[number];

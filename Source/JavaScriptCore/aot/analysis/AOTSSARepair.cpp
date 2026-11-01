@@ -15,6 +15,8 @@
 #include "AOTTypeArena.h"
 #include "AOTValueSubstitution.h"
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <iterator>
 #include <limits>
 #include <tuple>
@@ -148,7 +150,7 @@ public:
 
     void solve()
     {
-        AOT::sort(m_events);
+        sortEvents();
         m_stack.shrink(0);
         for (uint64_t event : m_events) {
             uint32_t number = static_cast<uint32_t>(event >> numberShift);
@@ -164,7 +166,7 @@ public:
 
     void solveAndKeepDefinitions()
     {
-        AOT::sort(m_events);
+        sortEvents();
         m_keptDefinitions.shrink(0);
         uint32_t nearest = none;
         for (uint64_t event : m_events) {
@@ -213,6 +215,34 @@ private:
     static constexpr unsigned kindShift = 32;
     static constexpr unsigned numberShift = 34;
 
+    // The events of one block and kind are added in the order of their indices, so a stable sort by block and kind is the sort by the whole word. There is a list for each variable,
+    // as long as the variable has places that ask.
+    void sortEvents()
+    {
+        AOT_THRESHOLD(size_t, fewestEventsSortedByDigits, 512);
+        if (m_events.size() < fewestEventsSortedByDigits) {
+            AOT::sort(m_events);
+            return;
+        }
+        constexpr unsigned bitsOfDigit = 10;
+        const unsigned endOfBits = numberShift + std::bit_width(static_cast<uint64_t>(m_cfg.numNodes()));
+        m_eventsBeingSorted.resize(m_events.size());
+        for (unsigned shift = kindShift; shift < endOfBits; shift += bitsOfDigit) {
+            std::array<uint32_t, 1u << bitsOfDigit> next { };
+            auto digitOf = [&](uint64_t event) ALWAYS_INLINE_LAMBDA {
+                return static_cast<unsigned>(event >> shift) & ((1u << bitsOfDigit) - 1);
+            };
+            for (uint64_t event : m_events)
+                ++next[digitOf(event)];
+            uint32_t place = 0;
+            for (uint32_t& entry : next)
+                place += std::exchange(entry, place);
+            for (uint64_t event : m_events)
+                m_eventsBeingSorted[next[digitOf(event)]++] = event;
+            std::swap(m_events, m_eventsBeingSorted);
+        }
+    }
+
     void addEvent(BlockID block, Kind kind, size_t index)
     {
         m_events.append(static_cast<uint64_t>(m_dominators.numberOf(block)) << numberShift | static_cast<uint64_t>(kind) << kindShift | static_cast<uint32_t>(index));
@@ -230,6 +260,7 @@ private:
     const CFG& m_cfg;
     const Dominators& m_dominators;
     Vector<uint64_t> m_events;
+    Vector<uint64_t> m_eventsBeingSorted;
     Vector<DefinitionAtTail> m_definitions;
     Vector<DefinitionAtTail, 16> m_stack;
     Vector<uint32_t> m_answers;

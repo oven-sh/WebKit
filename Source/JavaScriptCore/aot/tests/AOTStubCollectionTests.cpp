@@ -201,6 +201,19 @@ public:
         });
     }
 
+    // In a table that has slots.
+    uint32_t slotOf(uint32_t entry, unsigned hash) const
+    {
+        for (uint32_t slot = 0; slot < 1u << m_indexBits; ++slot) {
+            if (CompactTable::hasTag(index()[slot], CompactTable::tagOfSlot(hash)) && CompactTable::entryAt(slotKind(), index(), m_indexBits, slot) == entry)
+                return slot;
+        }
+        AOT_TEST_CHECK(false);
+        return CompactTable::noSlot;
+    }
+    bool canFreeSlot(uint32_t slot) const { return CompactTable::canFreeSlot(index(), slot); }
+    uint8_t tagAt(uint32_t slot) const { return index()[slot]; }
+
     uint64_t keyAt(uint32_t entry) const { return load(m_offsetOfKeys, m_keyWidth, entry); }
     uint64_t valueAt(uint32_t entry) const { return load(m_offsetOfValues, m_valueWidth, entry); }
 
@@ -360,6 +373,7 @@ static void checkStringLookups(Collections& collections, uint64_t map, uint64_t 
     for (KeyComparison comparison : comparisonsOfStrings) {
         for (uint64_t cell : cellsWithSameText) {
             checkAnswer(collections, mapGet(comparison), map, cell, key.value);
+            checkAnswer(collections, mapFind(comparison), map, cell, key.value);
             checkAnswer(collections, mapHas(comparison), map, cell, bitsOf(jsBoolean(true)));
             checkAnswer(collections, setHas(comparison), set, cell, bitsOf(jsBoolean(true)));
             checkAnswer(collections, setAdd(comparison), set, cell, set);
@@ -377,14 +391,17 @@ static void checkAbsentStrings(Collections& collections, uint64_t map, uint64_t 
 
     for (KeyComparison comparison : comparisonsOfStrings) {
         checkAnswer(collections, mapGet(comparison), map, absent, bitsOf(jsUndefined()));
+        checkAnswer(collections, mapFind(comparison), map, absent, bitsOf(JSValue()));
         checkAnswer(collections, mapHas(comparison), map, absent, bitsOf(jsBoolean(false)));
         checkAnswer(collections, setHas(comparison), set, absent, bitsOf(jsBoolean(false)));
         checkAnswer(collections, mapGet(comparison), map, heap.createStringWithoutHash(absentText), bitsOf(jsUndefined()));
+        checkAnswer(collections, mapFind(comparison), map, heap.createStringWithoutHash(absentText), bitsOf(JSValue()));
         checkAnswer(collections, mapHas(comparison), map, heap.createStringWithoutHash(absentText), bitsOf(jsBoolean(false)));
         checkAnswer(collections, setHas(comparison), set, heap.createStringWithoutHash(absentText), bitsOf(jsBoolean(false)));
         checkLeftToOperation(collections, mapGet(comparison), Entry::operationAOTMapGet, map, rope);
         checkLeftToOperation(collections, mapHas(comparison), Entry::operationAOTMapHas, map, rope);
-        checkLeftToOperation(collections, setHas(comparison), Entry::operationAOTSetHas, set, rope);
+        checkLeftToOperation(collections, mapFind(comparison), Entry::operationAOTMapFind, map, rope);
+        checkLeftToOperation(collections, setHas(comparison), Entry::operationAOTMapHas, set, rope);
         checkLeftToOperation(collections, setAdd(comparison), Entry::operationAOTSetAdd, set, rope);
     }
 }
@@ -498,12 +515,14 @@ static void checkKeysComparedByBits(Collections& collections, const TableSize& s
     for (KeyComparison comparison : comparisonsOfBits) {
         for (size_t i = 0; i < keys.size(); ++i) {
             checkAnswer(collections, mapGet(comparison), map, keys[i], bitsOf(jsNumber(static_cast<int32_t>(i))));
+            checkAnswer(collections, mapFind(comparison), map, keys[i], bitsOf(jsNumber(static_cast<int32_t>(i))));
             checkAnswer(collections, mapHas(comparison), map, keys[i], bitsOf(jsBoolean(true)));
             checkAnswer(collections, setHas(comparison), set, keys[i], bitsOf(jsBoolean(true)));
             checkAnswer(collections, setAdd(comparison), set, keys[i], set);
         }
         for (uint64_t absent : absentKeys) {
             checkAnswer(collections, mapGet(comparison), map, absent, bitsOf(jsUndefined()));
+            checkAnswer(collections, mapFind(comparison), map, absent, bitsOf(JSValue()));
             checkAnswer(collections, mapHas(comparison), map, absent, bitsOf(jsBoolean(false)));
             checkAnswer(collections, setHas(comparison), set, absent, bitsOf(jsBoolean(false)));
         }
@@ -1105,8 +1124,12 @@ static void checkDeletedEntry(Collections& collections, KeyComparison comparison
     uint32_t alive = table.alive();
     std::optional<uint32_t> position = table.find(entry.key, entry.hash);
     AOT_TEST_CHECK(position.has_value());
+    bool hasSlots = table.slotKind() != SlotKind::Tag;
+    uint32_t slot = hasSlots ? table.slotOf(*position, entry.hash) : 0;
+    uint8_t tagBehindDeletion = hasSlots && !table.canFreeSlot(slot) ? table.tagAt(slot) : 0;
 
     checkAnswer(collections, deletionStub(comparison, hasValues), owner, keyWithSameValue, bitsOf(jsBoolean(true)));
+    AOT_TEST_CHECK(!hasSlots || table.tagAt(slot) == tagBehindDeletion);
     AOT_TEST_CHECK(table.used() == used && table.alive() == alive - 1);
     AOT_TEST_CHECK(!table.keyAt(*position) && (!hasValues || !table.valueAt(*position)) && !table.find(entry.key, entry.hash));
     checkAnswer(collections, deletionStub(comparison, hasValues), owner, keyWithSameValue, bitsOf(jsBoolean(false)));

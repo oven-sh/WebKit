@@ -510,7 +510,9 @@ private:
         const ClassPart* classPart = type.singleBuiltinClass();
         const Value& value = m_function.at(id);
         bool isDenseArrayLiteral = value.opcode == Opcode::NewArray && value.holes().empty();
-        return addSite({ ValueFlowSiteOrigin::Operation, id, 0, type.singleLayout(m_program), classPart ? classPart->builtinClass : BuiltinClassID(), false, false, isDenseArrayLiteral });
+        ValueFlowSite site { ValueFlowSiteOrigin::Operation, id, 0, type.singleLayout(m_program), classPart ? classPart->builtinClass : BuiltinClassID(), false, false, isDenseArrayLiteral };
+        site.isPairLiteral = isDenseArrayLiteral && value.numberOfOperands() >= OperandIndex::NewArray::elements + 2u;
+        return addSite(site);
     }
 
     void addInterface()
@@ -687,21 +689,26 @@ private:
     }
 
     // Among the blocks that are entered only through this one. A guard delays what stands behind it, and in the order of flow's rules that moves other answers, so a test of the program is read only where it decides this much.
+    // Found for all blocks at once, each from those behind it: a block that is entered through one edge alone comes behind the block of that edge in the order.
     bool leadsToLoadOfModule(BlockID first) const
     {
-        Vector<BlockID, 16> blocks { first };
-        for (size_t index = 0; index < blocks.size(); ++index) {
-            for (ValueID id : m_function.at(blocks[index]).values) {
-                Opcode opcode = m_function.at(id).opcode;
-                if (opcode == Opcode::EvaluateModule || opcode == Opcode::ImportModule)
-                    return true;
+        if (!m_leadsToLoadOfModule) {
+            BitVector leads(m_function.blocks.size());
+            auto order = m_cfg.reversePostOrder();
+            for (size_t index = order.size(); index--;) {
+                BlockID block = order[index];
+                bool found = std::ranges::any_of(m_function.at(block).values, [&](ValueID id) {
+                    Opcode opcode = m_function.at(id).opcode;
+                    return opcode == Opcode::EvaluateModule || opcode == Opcode::ImportModule;
+                }) || std::ranges::any_of(m_cfg.successors(block), [&](BlockID successor) {
+                    return m_cfg.incomingEdges(successor).size() == 1 && leads.quickGet(successor.index());
+                });
+                if (found)
+                    leads.quickSet(block.index());
             }
-            for (BlockID successor : m_cfg.successors(blocks[index])) {
-                if (m_cfg.incomingEdges(successor).size() == 1)
-                    blocks.append(successor);
-            }
+            m_leadsToLoadOfModule = WTF::move(leads);
         }
-        return false;
+        return m_leadsToLoadOfModule->quickGet(first.index());
     }
 
     // `if (DEBUG) require("./big")`: a flag of another module decides what this one loads.
@@ -740,7 +747,9 @@ private:
             return;
         }
         if (test.opcode == Opcode::StrictEq) {
-            if (leadsToLoadOfModule(block))
+            // No other comparison gets a guard there.
+            bool comparesExportOfAnotherModule = isExportOfAnotherModule(test.operand(0)) || isExportOfAnotherModule(test.operand(1));
+            if (comparesExportOfAnotherModule && leadsToLoadOfModule(block))
                 addGuardsOfComparison(guards, test, side);
             return;
         }
@@ -918,7 +927,10 @@ private:
                 const Value& test = m_function.at(result.test);
                 if (test.opcode == Opcode::TypeTest)
                     mask = intersectMasks(mask, maskOutside(test.testedType()));
-                else if (test.opcode == Opcode::StrictEq) {
+                else if (test.opcode == Opcode::IsClosureOf) {
+                    if (std::optional<TypeID> closures = m_program.types.find(Type::forFunction(test.function())))
+                        mask = intersectMasks(mask, maskOutside(*closures));
+                } else if (test.opcode == Opcode::StrictEq) {
                     ValueID other = test.operand(result.operandIndex ? 0 : 1);
                     if (!isBehindCheck(other) && typeOf(other).isSingleValue())
                         mask = intersectMasks(mask, maskOutside(m_function.at(other).type));
@@ -1329,7 +1341,9 @@ private:
             case DataNode::Kind::Array: {
                 const Vector<DataNode>& elements = node.as<DataNode::Array>().elements;
                 bool hasHole = std::ranges::any_of(elements, [](const DataNode& element) { return element.kind() == DataNode::Kind::Hole; });
-                site = addSite({ ValueFlowSiteOrigin::DataNode, id, ordinal, { }, BuiltinClasses::Array, false, false, !hasHole });
+                ValueFlowSite description { ValueFlowSiteOrigin::DataNode, id, ordinal, { }, BuiltinClasses::Array, false, false, !hasHole };
+                description.isPairLiteral = !hasHole && elements.size() >= 2;
+                site = addSite(description);
                 for (size_t index = elements.size(); index--;)
                     stack.append(&elements[index]);
                 break;
@@ -2500,6 +2514,7 @@ private:
     FunctionID m_id;
     const Function& m_function;
     CFG m_cfg;
+    mutable std::optional<BitVector> m_leadsToLoadOfModule;
     std::optional<UseLists> m_uses;
     std::optional<Dominators> m_dominators;
     std::optional<BitVector> m_patternsSteppedPlaceAfterPlace;
@@ -2652,7 +2667,7 @@ bool startsWithoutValueInSolve(const Program& program, const Variable& variable)
     return variable.initialization == VariableInitialization::Undefined && variable.flags.contains(VariableFlags::IsImmutable) && variable.module && program.at(variable.module).kind == ModuleKind::RuntimeSource;
 }
 
-ValueFlowBody makeHostBody(const Program& program, const ValueFlowBuiltinTables& tables, std::span<const uint64_t> operationsOfFunctions)
+ValueFlowBody makeHostBody(const Program& program, const ValueFlowBuiltinTables& tables, std::span<const uint64_t> operationsOfFunctions, const UnobservedFieldDefinitions* unobservedDefinitions)
 {
     ValueFlowBody body = makeBodyWithoutOperations({ }, 0, 0, false);
 
@@ -2666,9 +2681,17 @@ ValueFlowBody makeHostBody(const Program& program, const ValueFlowBuiltinTables&
         switch (variable.initialization) {
         case VariableInitialization::Uninitialized:
             body.seedsOnceReached.append({ node, absentValue, 0 });
+            // The host stores an object of its own there, whether or not the body of the module ever runs.
+            if (variable.flags.contains(VariableFlags::HoldsMock)) {
+                body.seedsOnceReached.append({ node, static_cast<uint32_t>(body.constants.size()), 0 });
+                // The original beside the mock of a file is the file once more, from disk: `vi.importActual()`, the parameter of a factory, a mock without a factory.
+                if (!program.at(variable.module).runtimeModule)
+                    body.seedsOnceReached.append({ ValueFlowNodeName::ofHost(ValueFlowHostNode::UnseenCopiesOfFilesMayRun), static_cast<uint32_t>(body.constants.size()), 0 });
+                body.constants.append({ 0, { ValueFlowObjectName { ValueFlowObjectKind::UnknownObject, 0, { } } } });
+            }
             break;
         case VariableInitialization::Undefined:
-            if (!startsWithoutValueInSolve(program, variable))
+            if (!startsWithoutValueInSolve(program, variable) && !(unobservedDefinitions && unobservedDefinitions->isStoredAheadOfEveryRead(VariableID(index))))
                 body.seedsOnceReached.append({ node, undefinedValue, 0 });
             break;
         case VariableInitialization::Function:

@@ -25,6 +25,7 @@
 #include <span>
 #include <wtf/BitSet.h>
 #include <wtf/FastMalloc.h>
+#include <wtf/HashMap.h>
 #include <wtf/Hasher.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Variant.h>
@@ -70,6 +71,7 @@ struct RegExpCode {
     PCRelativeReach reach { PCRelativeReach::Near };
     unsigned analysisLimitHits { 0 };
     bool hasElidedFrame { false };
+    bool handsLongSearchesOver { false };
 };
 
 using RegExpCodeOrFailureReason = std::expected<std::unique_ptr<RegExpCode>, Yarr::JITFailureReason>;
@@ -102,6 +104,7 @@ private:
     PCRelativeReach m_reach;
     BuildContext* m_context;
     Vector<RegExpSymbol> m_symbols;
+    HashMap<uint32_t, Vector<uint32_t, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_symbolsByHash;
     std::shared_ptr<bool> m_returnAddressesAreInReach;
 };
 

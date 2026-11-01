@@ -100,12 +100,21 @@ struct ModuleHost {
     // Calls deliverTextThatWaits() from its event loop, once for each call: in a later turn, behind every job that waits, and with every job run between two of them. Null in a host without an event loop.
     void (*callInLaterTurn)(JSGlobalObject*);
     // Differs where the file was written since: the build has asked the same of each file that the run may read again. Null in a host that reads no code at run time.
-    uint64_t (*stampOfFile)(const String& path);
+    // The path is UTF-8, and a zero follows it.
+    uint64_t (*stampOfFile)(std::span<const char> path);
+    // The program has registered something with the host that loads the file at the path in its own way. Asked about a name that the run time has resolved. Null in a host where nothing can be registered.
+    bool (*loadsFileItself)(JSGlobalObject*, const String& path);
+    // An import() in compiled code has begun. The promise is the loader's own where the loader is asked, or else the one that the program gets. The path is null for a file that nothing may mock. Null in a host where nothing waits for imports.
+    void (*didStartImport)(JSGlobalObject*, JSPromise*, const String& path);
+    // Factories that runMock() has called have answered promises that have not settled: a promise that is fulfilled once each has settled and its mock is laid, and rejected with what one has thrown.
+    // Null where none waits, and in a host without mocks.
+    JSPromise* (*factoriesThatWait)(JSGlobalObject*);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);
 
-JS_EXPORT_PRIVATE std::optional<ModuleID> findModule(StringView publicPath);
+JS_EXPORT_PRIVATE std::optional<ModuleID> findModule(StringView publicPath, unsigned hashOfPath);
+inline std::optional<ModuleID> findModule(StringView publicPath) { return findModule(publicPath, publicPath.hash()); }
 // The image holds the file as something that only an import with an attribute gets.
 JS_EXPORT_PRIVATE bool holdsFormThatAttributeAsksFor(StringView publicPath);
 // False: both functions above return false for every path that starts with `start`.
@@ -119,10 +128,14 @@ String sourceProviderURL(ModuleID);
 JS_EXPORT_PRIVATE bool entryPointIsCommonJS(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool isESModule(ModuleID);
 JS_EXPORT_PRIVATE bool isDataFile(ModuleID);
+// A file of a test run that an executable holds too: ModuleFlags::FindsBuiltinsReadOnly. Nothing for a module of Bun's own code, which writes for whoever has called it.
+std::optional<bool> findsBuiltinsReadOnly(ModuleID);
 // The loader of `bun run` would have the file in its registry: an import of it has settled, or a module that imports it has been loaded.
 JS_EXPORT_PRIVATE bool isHeldForImport(JSGlobalObject*, ModuleID);
 // Of what findModule() answers: the host makes the module, and the image holds its number alone.
 JS_EXPORT_PRIVATE bool isNativeModule(ModuleID);
+// A module of Bun's own code.
+JS_EXPORT_PRIVATE bool isOfLibrary(ModuleID);
 JS_EXPORT_PRIVATE bool mayHoldEntryOfProgramInRequireCache(ModuleID);
 // A mock stands in place of a module of the library, and the loader of the host has it.
 JS_EXPORT_PRIVATE bool hostAnswersInPlaceOf(JSGlobalObject*, ModuleID, LoadByName);
@@ -139,6 +152,9 @@ JS_EXPORT_PRIVATE void forEachFirstLoad(VM&, const ScopedLambda<void(const Strin
 JS_EXPORT_PRIVATE void noteFirstLoadInEarlierProcess(VM&, const String& path, bool wasSynchronous);
 // ModuleHost::callInLaterTurn.
 JS_EXPORT_PRIVATE void deliverTextThatWaits(VM&);
+// The loader fetches the module for an import() in another image. Asked before the record is made.
+JS_EXPORT_PRIVATE bool textOfFetchedModuleComesInLaterTurn(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE void holdTextOfFetchedModule(JSGlobalObject*, ModuleID, JSPromise* fetched, AbstractModuleRecord*);
 JS_EXPORT_PRIVATE void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>&);
 // The files that have run in a program that counts how often its places run: what the compiler said of the file, and the counts by the compiler's numbers. Places past the end have not run.
 JS_EXPORT_PRIVATE void forEachCountedFile(VM&, const ScopedLambda<void(const String& description, std::span<const uint64_t> counts)>&);
@@ -148,6 +164,8 @@ JS_EXPORT_PRIVATE void forEachFilePathStartingWith(StringView start, const Scope
 JS_EXPORT_PRIVATE bool imagesHoldFile(std::span<const std::span<const uint8_t>> images, StringView path);
 // Code: what the host would have to interpret or link at run time. Data files load in every executable.
 JS_EXPORT_PRIVATE bool refusesCodeOutsideImage(JSGlobalObject*, StringView path);
+// The host loads the text of a file of the program once more, as an instance of its own. It names the files of the program as the compiled file does.
+JS_EXPORT_PRIVATE void willRunCopyFromDisk(JSGlobalObject*);
 // A file whose loader answers an object of the host, a database or a page.
 JS_EXPORT_PRIVATE bool refusesHostObjectsOutsideImage(JSGlobalObject*);
 
@@ -164,6 +182,8 @@ JS_EXPORT_PRIVATE JSObject* parentModuleObject(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool forEachNewChild(JSGlobalObject*, ModuleID, const ScopedLambda<void(JSObject*)>&);
 // The host calls this with every name that a function object of the program is given to load: require, module.require, Module._load, process.getBuiltinModule.
 JS_EXPORT_PRIVATE void willLoadByName(JSGlobalObject*, JSValue specifier, LoadByName = LoadByName::Require);
+// In the host's resolve step: an import() of compiled code asks, which does not come by the host's own hook for import().
+JS_EXPORT_PRIVATE bool isResolvingImportCall(VM&);
 // The host calls this with the file of the image that such a name has resolved to, before it looks into a cache of its own. It throws for a file that is no entry point.
 JS_EXPORT_PRIVATE void willAnswerWithModule(JSGlobalObject*, ModuleID, LoadByName = LoadByName::Require);
 class Modules;
@@ -181,6 +201,8 @@ private:
 
 JS_EXPORT_PRIVATE AbstractModuleRecord* moduleRecord(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isCompiledModuleRecord(AbstractModuleRecord*);
+// Of the namespace object of a compiled module: the record to ask by AbstractModuleRecord::resolveExport(). Null for any other cell.
+JS_EXPORT_PRIVATE AbstractModuleRecord* moduleRecordOfNamespace(JSGlobalObject*, JSCell* moduleNamespace);
 JS_EXPORT_PRIVATE JSPromise* importModule(JSGlobalObject*, ModuleID, std::optional<int64_t> referrerAsyncOrder);
 JS_EXPORT_PRIVATE void evaluateModuleSynchronously(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSObject* moduleNamespace(JSGlobalObject*, ModuleID);
@@ -201,6 +223,8 @@ JS_EXPORT_PRIVATE void willSetRequireCacheEntry(JSGlobalObject*, ModuleID, JSVal
 JS_EXPORT_PRIVATE void willSetRequireCacheEntryUnderName(JSGlobalObject*, ModuleID, const String& name);
 // The host admits code from disk: the next load of the file takes it from there, as a new instance. An executable has its files in no cache.
 JS_EXPORT_PRIVATE void didDeleteRequireCacheEntry(JSGlobalObject*, ModuleID);
+// Whether didDeleteRequireCacheEntry() would throw: the file has run, and the code that imports it was compiled for a file that loads once.
+JS_EXPORT_PRIVATE bool refusesToLoadAgain(JSGlobalObject*, ModuleID);
 // The host admits code from disk, and the program stores a falsy value over the entry, which the host's require() takes for no entry. The store leaves the modules that imports have made
 // where they are, and the host's require() looks there next: a file that an import has loaded stays.
 JS_EXPORT_PRIVATE void willClearRequireCacheEntry(JSGlobalObject*, ModuleID);
@@ -235,10 +259,29 @@ JS_EXPORT_PRIVATE bool hasBegunToLoad(JSGlobalObject*, ModuleID);
 // `a.txt?text` is a form of `a.txt`: what an import attribute makes of the file. A mock of the path replaces the form that has been loaded, and waits for all of them if none has. `file`: the module under the path itself, if the image holds it.
 JS_EXPORT_PRIVATE std::optional<ModuleID> formThatMockFinds(JSGlobalObject*, StringView path, std::optional<ModuleID> file);
 JS_EXPORT_PRIVATE Vector<ModuleID, 2> formsThatAttributesAskFor(JSGlobalObject*, StringView path);
-JS_EXPORT_PRIVATE void deferMock(JSGlobalObject*, ModuleID);
+// AfterFailure::AsksAgain: a factory that takes importOriginal. `bun test` loads the original first and lays the mock over it, so where the factory fails the loader keeps no record with the
+// error: the next load asks the factory again, and whoever imports the module loads then.
+enum class AfterFailure : bool { KeepsError, AsksAgain };
+JS_EXPORT_PRIVATE void deferMock(JSGlobalObject*, ModuleID, AfterFailure = AfterFailure::KeepsError);
+// The mock has ended: its test file is over, or the program has taken it back. The next load finds the module itself, and whoever has imported a module of the library reads its own names again.
+JS_EXPORT_PRIVATE void didEndMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void runMocksBelow(JSGlobalObject*, ModuleID);
+// Behind runMocksBelow() that threw: it was the factory of the module itself, and an import statement asks for the module.
+JS_EXPORT_PRIVATE bool mockFailedBehindImportStatement(JSGlobalObject*, ModuleID);
 // The loader may answer for a name with another module than before: the next import() of a name that is left to it asks again.
 JS_EXPORT_PRIVATE void didChangePlugins(JSGlobalObject*);
+// A mock that comes ahead of the load of a module stands in place of it. The body of the module does not run. Every import of a name, the namespace object and whoever links to the module ask `mock`,
+// by the object's own methods, at each use: nothing is copied. require() answers `whatRequireAnswers`. Null lets go of the mock: nothing of the module was filled, so it is as it was, and loads when it is next asked for.
+// False: the mock is not taken, and goes by willMockModule(): over a built-in module that an import of the program had loaded when its first mock was made, the values are laid as over a file that has run.
+JS_EXPORT_PRIVATE bool setMock(JSGlobalObject*, ModuleID, JSObject* mock, JSValue whatRequireAnswers);
+// A later mock of such a module takes the place of the earlier one.
+JS_EXPORT_PRIVATE bool hasMockInPlace(JSGlobalObject*, ModuleID);
+// didEndMock() leaves a mock that stands in place of an ES module to whoever was linked against it, until a load comes to the module. The test file ends: nobody reads it any more.
+JS_EXPORT_PRIVATE void letGoOfMocksThatEnded(JSGlobalObject*);
+// The `mock` that the namespace object of a compiled module asks now. Null: no mock stands in place of its module, or the cell is no such object.
+JS_EXPORT_PRIVATE JSObject* mockInPlaceBehind(JSCell* moduleNamespace);
+// The build has seen that a mock may name the module, and its importers look for one. No mock stands in place of any other module: setMock() is not for it.
+JS_EXPORT_PRIVATE bool hasWordOfMock(JSGlobalObject*, ModuleID);
 // Comes before the mockExport() of each name. A module that has not run yet never runs: neither its body nor, for its sake, what it imports. require() answers a CommonJS file with the object.
 // The body of a module of the library still runs for the library itself, which no mock reaches.
 JS_EXPORT_PRIVATE void willMockModule(JSGlobalObject*, ModuleID, JSObject* exports);

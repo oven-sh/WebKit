@@ -36,6 +36,8 @@ public:
     struct Operand {
         KnownValue primitive;
         std::optional<RegExpLiteralInType> regExp;
+        // An array of the realm is made of them, anew for each call.
+        std::optional<std::span<const StringID>> listOfTexts { };
     };
 
     // The text is set for a string. It is a copy that no table of the realm knows.
@@ -61,8 +63,26 @@ public:
         m_vm = nullptr;
     }
 
+    // How long the answer of a built-in can be where a number among its operands sets that: asked before the answer is made. A number is a place in a text everywhere else, and the answer is
+    // measured when it is there. `bytesOfOperands`: of the receiver and the texts among the arguments. `number`: the first argument.
+    static double bytesOfAnswerSetByNumber(BuiltinID function, uint64_t bytesOfOperands, double number)
+    {
+        if (!(number > 1))
+            return static_cast<double>(bytesOfOperands);
+        if (function == Builtins::StringPrototypeRepeat)
+            return static_cast<double>(bytesOfOperands) * number;
+        if (function == Builtins::StringPrototypePadStart || function == Builtins::StringPrototypePadEnd)
+            return std::max(static_cast<double>(bytesOfOperands), number * sizeof(char16_t));
+        return static_cast<double>(bytesOfOperands);
+    }
+
     // An answer that is a list of strings is given to whoever names a place for it, and is no answer for anybody else.
     std::optional<Answer> call(const Program& program, BuiltinID function, KnownValue receiver, std::span<const Operand> arguments, Vector<String>* listOfTexts = nullptr)
+    {
+        return call(program, function, Operand { receiver, std::nullopt }, arguments, listOfTexts);
+    }
+
+    std::optional<Answer> call(const Program& program, BuiltinID function, const Operand& receiver, std::span<const Operand> arguments, Vector<String>* listOfTexts = nullptr)
     {
         VM& vm = *m_vm;
         JSLockHolder locker(vm);
@@ -80,17 +100,33 @@ public:
             return std::nullopt;
 
         MarkedArgumentBuffer list;
+        auto valueOf = [&](const Operand& operand) -> JSValue {
+            if (operand.regExp)
+                return createRegExp(program, *operand.regExp);
+            if (!operand.listOfTexts)
+                return toJSValue(program, operand.primitive);
+            MarkedArgumentBuffer texts;
+            for (StringID text : *operand.listOfTexts)
+                texts.append(toJSValue(program, KnownValue::string(text)));
+            if (texts.hasOverflowed())
+                return { };
+            JSValue array = constructArray(realm, static_cast<ArrayAllocationProfile*>(nullptr), texts);
+            return scope.exception() ? JSValue() : array;
+        };
         for (const Operand& operand : arguments) {
-            JSValue argument = operand.regExp ? createRegExp(program, *operand.regExp) : toJSValue(program, operand.primitive);
+            JSValue argument = valueOf(operand);
             if (!argument)
                 return std::nullopt;
             list.append(argument);
         }
         if (list.hasOverflowed())
             return std::nullopt;
+        JSValue thisValue = valueOf(receiver);
+        if (!thisValue)
+            return std::nullopt;
 
         NakedPtr<Exception> exception;
-        JSValue result = JSC::call(realm, *callee, callData, toJSValue(program, receiver), list, exception);
+        JSValue result = JSC::call(realm, *callee, callData, thisValue, list, exception);
         if (exception)
             return std::nullopt;
 

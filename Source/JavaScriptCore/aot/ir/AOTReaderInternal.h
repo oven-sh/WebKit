@@ -127,6 +127,7 @@ private:
     bool computeFamilies();
     bool computeDeclaredMembers();
     void planTaggedLayouts(Vector<Vector<LayoutID>>& members, const TellingFields&);
+    void planLayoutsBelow(Vector<Vector<LayoutID>>& members);
     Failure computeFunctionFamilies();
     void makeRoomForFunctions();
     bool readTypes();
@@ -179,6 +180,7 @@ private:
     BitVector m_typeParametersWithoutFamily;
     BitVector m_viewsWithoutLayouts;
     Vector<CalleeSetID> m_functionFamilies;
+    BitVector m_functionTypesThatNoTypeLists;
     uint32_t m_numberOfDerivedLayouts { 0 };
     TypeCompletion m_completeType;
     bool m_keepsLayoutsAsWritten { false };

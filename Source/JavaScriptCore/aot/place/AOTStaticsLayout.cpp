@@ -204,11 +204,12 @@ static void chooseFilesFilledWhenEntered(const PlacementContext& context, Static
     hasWords.exclude(isBroughtByFirstEntryPoint);
     if (hasWords.isEmpty())
         return;
+    Vector<uint32_t> functionsThatEnterFiles = findIndicesInParallel(context.build.parallelLoops(), program.functions.size(), [&](unsigned index) {
+        return entersFile(program, program.functions[index]);
+    });
     BitVector isEntered(numberOfModules);
-    for (const Function& function : program.functions) {
-        if (entersFile(program, function))
-            isEntered.quickSet(function.module.index());
-    }
+    for (uint32_t index : functionsThatEnterFiles)
+        isEntered.quickSet(program.functions[index].module.index());
     hasWords.filter(isEntered);
     if (hasWords.isEmpty())
         return;
@@ -344,10 +345,8 @@ static void chooseFilesFilledWhenEntered(const PlacementContext& context, Static
         });
     };
     plan.functionsThatEnterFiles = BitVector(program.functions.size());
-    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+    for (uint32_t index : functionsThatEnterFiles) {
         const Function& function = program.functions[index];
-        if (!entersFile(program, function))
-            continue;
         std::optional<uint32_t> entered = plan.groupOfFile[function.module.index()];
         if (entered && !isEnteredBehindFill(FunctionID(index), *entered))
             plan.functionsThatEnterFiles.quickSet(index);

@@ -1,0 +1,40 @@
+# The edge of a Branch that passes a proof names an operand of the test, so the test stays the condition of that Branch, in its block.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass HoistLoopInvariantReads
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="inTheHeader" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = StrictEq v0, v1
+    Branch v3 -> taken b2(| 0), notTaken b3()
+  b2(v4: anything):
+    Jump -> next b1()
+  b3():
+    Return v0
+# CHECK: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v3: boolean = StrictEq v0, v1
+# CHECK-NEXT: Branch v3 -> taken b2(| 0), notTaken b3()
+}
+
+function f1 name="behindATestThatMayFailAtOnce" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v2 -> taken b2(), notTaken b4()
+  b2():
+    v4 = StrictEq v0, v1
+    Branch v4 -> taken b3(| 0), notTaken b5()
+  b3(v5: anything):
+    Jump -> next b1()
+  b4():
+    Return v0
+  b5():
+    Jump -> next b1()
+# CHECK: b2():
+# CHECK-NEXT: v4: boolean = StrictEq v0, v1
+# CHECK-NEXT: Branch v4 -> taken b3(| 0), notTaken b5()
+}

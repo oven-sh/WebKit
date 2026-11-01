@@ -1,0 +1,14 @@
+# How many of a site's first cells in a frame are all checked goes by the mode: 64 where proofs are checked in the product's code, 1,024 in a validating build.
+# FORM: Selected
+# OPTIONS: heat=EverythingIsHot validate
+# RUN: lower-to-b3 f0
+# CHECK-LABEL: name="inTheFrame"
+# CHECK: AboveEqual({{*}}$1024(
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Node" fields=[{key="next" declared={type=anything} flags=[IsRequired]}]
+function f0 name="inTheFrame" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0] storage=Frame
+    v2 = GetSlotOrUndefined v1 key="next" receivers=[L0] level=Proven
+    Return v2
+}

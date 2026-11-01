@@ -202,8 +202,16 @@ public:
         , m_placesAfterGuards(m_placesInGaps && code.policy().layout.placesRareBlocksAfterGuards && code.numEntrypoints() == 1 && code.entrypoint(0).block() == code[0])
         , m_makesGaps(m_placesInGaps && code.policy().layout.makesGapsForRareBlocks && code.numEntrypoints() == 1 && code.entrypoint(0).block() == code[0])
     {
+        if (m_placesInGaps)
+            m_predecessorsThatHavePassed.resize(code.size());
         if (m_placesAfterGuards || m_makesGaps)
             findBlocksInCycles();
+    }
+
+    ~RareBlockPlacer()
+    {
+        if (m_placesInGaps)
+            m_code.proc().count(Counter::PredecessorsReadForRareBlocks, static_cast<uint32_t>(std::min<uint64_t>(m_predecessorsRead, std::numeric_limits<uint32_t>::max())));
     }
 
     bool isEnabled() const { return m_placesInGaps; }
@@ -340,9 +348,11 @@ private:
 
     static bool isSmall(BasicBlock* rare) { return estimatedBytes(rare) <= AirLimits::maxBytesOfRareBlockNearGuard; }
 
-    bool hasOnlyRarePredecessors(BasicBlock* block) const
+    bool hasOnlyRarePredecessors(BasicBlock* block)
     {
-        for (BasicBlock* predecessor : block->predecessors()) {
+        for (unsigned& passed = m_predecessorsThatHavePassed[block]; passed < block->numPredecessors(); ++passed) {
+            ++m_predecessorsRead;
+            BasicBlock* predecessor = block->predecessor(passed);
             if (m_placedInGaps.contains(predecessor))
                 continue;
             if (!m_done.contains(predecessor))
@@ -419,8 +429,10 @@ private:
     const bool m_makesGaps;
     IndexSet<BasicBlock*> m_placedInGaps;
     IndexSet<BasicBlock*> m_blocksInCycles;
+    IndexMap<BasicBlock*, unsigned> m_predecessorsThatHavePassed;
     Vector<WaitingBlock, 8> m_waitingForGap;
     unsigned m_placedBytes { 0 };
+    uint64_t m_predecessorsRead { 0 };
 };
 
 } // anonymous namespace
@@ -668,6 +680,77 @@ static bool appendSuccessorsByEdgeFrequency(BasicBlock* block, ChainWorklist& wo
     return true;
 }
 
+static bool isUnlikelyEdge(BasicBlock* block, const FrequentedBlock& edge)
+{
+    if (!edge.isRare())
+        return false;
+    for (FrequentedBlock& successor : block->successors()) {
+        if (!successor.isRare())
+            return true;
+    }
+    return false;
+}
+
+namespace {
+
+class UnplacedLikelyCFG {
+public:
+    using Node = BasicBlock*;
+
+    UnplacedLikelyCFG(Code& code, const IndexSet<BasicBlock*>& placed)
+        : m_code(code)
+        , m_placed(placed)
+    {
+    }
+
+    Node root() const { return m_code[0]; }
+    unsigned numNodes() const { return m_code.size(); }
+    unsigned index(Node node) const { return node->index(); }
+
+    Node node(unsigned index) const
+    {
+        BasicBlock* block = m_code[index];
+        return block && !m_placed.contains(block) ? block : nullptr;
+    }
+
+    Vector<Node, 2> successors(Node node) const
+    {
+        Vector<Node, 2> result;
+        if (m_placed.contains(node))
+            return result;
+        for (FrequentedBlock& successor : node->successors()) {
+            if (!m_placed.contains(successor.block()) && !isUnlikelyEdge(node, successor))
+                result.append(successor.block());
+        }
+        return result;
+    }
+
+    BasicBlock::PredecessorList& predecessors(Node node) const { return node->predecessors(); }
+
+private:
+    Code& m_code;
+    const IndexSet<BasicBlock*>& m_placed;
+};
+
+IndexSet<BasicBlock*> findRareLoopBlocks(Code& code, const IndexSet<BasicBlock*>& placed)
+{
+    IndexSet<BasicBlock*> result;
+    UnplacedLikelyCFG graph(code, placed);
+    constexpr unsigned outermostDepth = 1;
+    WTF::CycleForest<UnplacedLikelyCFG> loops(graph, [](std::span<BasicBlock* const> members, const auto&, const auto&) {
+        return members[0];
+    }, outermostDepth);
+    if (!loops.size())
+        return result;
+    for (BasicBlock* block : code) {
+        if (loops.isInCycle(block))
+            result.add(block);
+    }
+    return result;
+}
+
+} // anonymous namespace
+
 Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
 {
     Vector<BasicBlock*> blocksInOrder;
@@ -740,8 +823,39 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
     placer.fillGapsBeforeGuards();
     if (code.policy().layout.recordsRareCodeStart) [[unlikely]]
         code.setNumberOfBlocksInChains(blocksInOrder.size());
+
+    IndexSet<BasicBlock*> rareLoopBlocks;
+    if (placer.isEnabled())
+        rareLoopBlocks = findRareLoopBlocks(code, done);
+
     BlockWorklist slowWorklist;
+    BlockWorklist rareLoopWorklist;
+    SortedSuccessors sortedRareLoopSuccessors;
     sortedSlowSuccessors.process(slowWorklist);
+
+    auto staysInRareLoop = [&](BasicBlock* block, const FrequentedBlock& successor) {
+        return rareLoopBlocks.contains(block) && rareLoopBlocks.contains(successor.block()) && !isUnlikelyEdge(block, successor);
+    };
+    auto pushSuccessors = [&](BasicBlock* block) {
+        for (FrequentedBlock& successor : block->successors()) {
+            if (staysInRareLoop(block, successor))
+                sortedRareLoopSuccessors.append(successor.block());
+            else
+                sortedSlowSuccessors.append(successor.block());
+        }
+        sortedRareLoopSuccessors.process(rareLoopWorklist);
+        sortedSlowSuccessors.process(slowWorklist);
+    };
+    auto mostFrequentUnplacedSuccessor = [&](BasicBlock* block, bool mustStayInRareLoop) {
+        BasicBlock* result = nullptr;
+        for (FrequentedBlock& successor : block->successors()) {
+            if (done.contains(successor.block()) || (mustStayInRareLoop && !staysInRareLoop(block, successor)))
+                continue;
+            if (!result || successor.block()->frequency() > result->frequency())
+                result = successor.block();
+        }
+        return result;
+    };
 
     while (BasicBlock* block = slowWorklist.pop()) {
         // We might have already processed this block.
@@ -753,23 +867,22 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
             blocksInOrder.append(block);
         }
         while (placer.isEnabled()) {
-            BasicBlock* next = nullptr;
-            for (BasicBlock* successor : block->successorBlocks()) {
-                if (!done.contains(successor) && (!next || successor->frequency() > next->frequency()))
-                    next = successor;
+            BasicBlock* next = mostFrequentUnplacedSuccessor(block, rareLoopBlocks.contains(block));
+            pushSuccessors(block);
+            while (!next && rareLoopWorklist.notEmpty()) {
+                next = rareLoopWorklist.pop();
+                if (done.contains(next))
+                    next = nullptr;
             }
             if (!next)
+                next = mostFrequentUnplacedSuccessor(block, false);
+            if (!next)
                 break;
-            for (BasicBlock* successor : block->successorBlocks())
-                sortedSlowSuccessors.append(successor);
-            sortedSlowSuccessors.process(slowWorklist);
             block = next;
             done.add(block);
             blocksInOrder.append(block);
         }
-        for (BasicBlock* successor : block->successorBlocks())
-            sortedSlowSuccessors.append(successor);
-        sortedSlowSuccessors.process(slowWorklist);
+        pushSuccessors(block);
     }
 
     ASSERT(chainWorklist.isEmpty());
@@ -857,10 +970,15 @@ void optimizeBlockOrder(Code& code)
     // Finally, flip any branches that we recognize. It's most optimal if the taken successor does not point
     // at the next block.
     const bool extendsSelection = code.proc().policy().selection.extendsInstructionSelection;
+    const bool branchesToLikelySuccessor = code.policy().layout.placesRareBlocksInGaps;
     for (BasicBlock* block : code) {
         if (!extendsSelection && isInvertedOnlyWithExtendedSelection(block->last().kind.opcode))
             continue;
-        if (canInvertBranch(block->last()) && code.findNextBlock(block) == block->successorBlock(0))
+        if (!canInvertBranch(block->last()))
+            continue;
+        BasicBlock* next = code.findNextBlock(block);
+        bool jumpsToLikelySuccessor = branchesToLikelySuccessor && next != block->successorBlock(1) && block->successor(0).isRare() && !block->successor(1).isRare();
+        if (next == block->successorBlock(0) || jumpsToLikelySuccessor)
             invertBranch(block);
     }
 }

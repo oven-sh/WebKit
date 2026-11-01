@@ -68,7 +68,7 @@ Identifier enginePrivateName(VM& vm, const String& text)
 }
 
 // The VM makes this object before it makes a name of its own, so from its first atom on a text that the image has is the atom of the image.
-ProgramIdentifiers::ProgramIdentifiers(VM& vm, const Image& image)
+ProgramIdentifiers::ProgramIdentifiers(VM& vm, const Image& image, ProgramIdentifiers* ofVM)
     : m_vm(vm)
     , m_image(image)
     , m_count(image.last().text().numberOfIdentifiers())
@@ -77,7 +77,9 @@ ProgramIdentifiers::ProgramIdentifiers(VM& vm, const Image& image)
 #else
     , m_atoms(image.text().identifierAtoms())
 #endif
-    , m_symbols(createSymbols(std::max(minNumberOfSymbolPlaces, WTF::roundUpToPowerOfTwo(static_cast<uint32_t>(image.programTables().identifiersOfEngineSymbols().size()) * 2 + 2))))
+    , m_ofVM(ofVM)
+    , m_realmsCreateTheirSymbols(!ofVM && image.programTables().flags & ProgramTables::mayRunInMultipleInstances)
+    , m_symbols(createSymbols(ofVM ? minNumberOfSymbolPlaces : std::max(minNumberOfSymbolPlaces, WTF::roundUpToPowerOfTwo(static_cast<uint32_t>(image.programTables().identifiersOfEngineSymbols().size()) * 2 + 2))))
 {
     RELEASE_ASSERT(&image == Image::current() && &image == &image.first());
     AtomStringTable::setReadOnlyAtomLookup(findAtom);
@@ -111,7 +113,9 @@ NEVER_INLINE UniquedStringImpl* ProgramIdentifiers::uidSlowCase(uint32_t number)
 #endif
     if (UniquedStringImpl* uid = m_symbols.find(number))
         return uid;
-    Identifier created = create(number);
+    bool isOfRealm = isCreatedSymbol(number);
+    RELEASE_ASSERT(!isOfRealm || !m_realmsCreateTheirSymbols);
+    Identifier created = m_ofVM && !isOfRealm ? m_ofVM->identifier(number) : create(number);
     if (created.isNull()) {
         RELEASE_ASSERT(!number);
         return nullptr;
@@ -135,6 +139,11 @@ void ProgramIdentifiers::addSymbol(uint32_t number, UniquedStringImpl* uid)
     insert(m_symbols, { number, uid });
     if (uid->isSymbol())
         m_numbersOfSymbols.add(uid, number);
+}
+
+bool ProgramIdentifiers::isCreatedSymbol(uint32_t number) const
+{
+    return m_image.holderOfStringHeader(number).text().identifier(number).kind() == PropertyKeyKind::CreatedSymbol;
 }
 
 Identifier ProgramIdentifiers::create(uint32_t number) const
@@ -182,8 +191,12 @@ UniquedStringImpl* ProgramIdentifiers::tryGetIdentifierConcurrently(uint32_t num
 #endif
     if (!number)
         return nullptr;
-    Locker locker { m_symbolsLock };
-    return m_symbols.find(number);
+    {
+        Locker locker { m_symbolsLock };
+        if (UniquedStringImpl* uid = m_symbols.find(number))
+            return uid;
+    }
+    return m_ofVM ? m_ofVM->tryGetIdentifierConcurrently(number) : nullptr;
 }
 
 std::optional<uint32_t> ProgramIdentifiers::numberOf(UniquedStringImpl* uid) const
@@ -201,9 +214,9 @@ std::optional<uint32_t> ProgramIdentifiers::numberOf(UniquedStringImpl* uid) con
     if (uid->isSymbol()) {
         Locker locker { m_symbolsLock };
         auto found = m_numbersOfSymbols.find(uid);
-        if (found == m_numbersOfSymbols.end())
-            return std::nullopt;
-        return found->value;
+        if (found != m_numbersOfSymbols.end())
+            return found->value;
+        return m_ofVM ? m_ofVM->numberOf(uid) : std::nullopt;
     }
     // The empty name is no atom of an image. Whichever image is the first to have it has numbered it.
     if (!uid->length()) {
@@ -370,6 +383,13 @@ AtomStringImpl* ProgramIdentifiers::findAtomOfNativeText(std::span<const Latin1C
     AtomStringImpl* atom = findAtomOfNativeTextByCharacters(characters);
     recent = { characters.data(), characters.size(), atom };
     return atom;
+}
+
+ProgramIdentifiers* identifiersOfRealm(VM& vm, JSGlobalObject* realm)
+{
+    if (Instance* instance = realm ? realm->aotInstance() : nullptr)
+        return &identifiersOf(*instance);
+    return vm.aotState().identifiers.get();
 }
 
 namespace PropertyWalk {

@@ -28,6 +28,7 @@
 #include "AOTPhiNarrowing.h"
 #include "AOTPrimitiveEmitter.h"
 #include "AOTRepresentationRules.h"
+#include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTStubAssembler.h"
 #include "AOTThrowEmitter.h"
@@ -115,8 +116,62 @@ static BitVector findAirBlocksReachedWithoutRareEdge(const B3::Air::Code& code)
     return reachedBlocks;
 }
 
+struct RareAirBlocks {
+    double frequencyOf(const B3::Air::BasicBlock* block) const { return block->frequency() * (factorsOfLoops.isEmpty() ? 1 : factorsOfLoops[block->index()]); }
+
+    BitVector rare;
+    Vector<double> factorsOfLoops;
+    uint64_t blocksFollowed { 0 };
+};
+
+// The estimate takes the share of every rare edge on the way to a loop off each of its turns. A call that enters the loop runs them all:
+// there the loop is entered as often as the last block on the way that no rare edge leads to.
+static Vector<double> findFactorsOfLoopsBehindRareEdges(const B3::Air::Code& code, const BitVector& reachedBlocks, const StronglyConnectedComponents& components, uint64_t& blocksFollowed)
+{
+    Vector<double> frequenciesInFront(FillWith { }, code.size(), 0.0);
+    Vector<B3::Air::BasicBlock*, 16> worklist;
+    auto follow = [&](double frequency, B3::Air::BasicBlock* block) {
+        if (reachedBlocks.quickGet(block->index()) || frequenciesInFront[block->index()] >= frequency)
+            return;
+        frequenciesInFront[block->index()] = frequency;
+        worklist.append(block);
+        ++blocksFollowed;
+    };
+    for (B3::Air::BasicBlock* block : code) {
+        if (!reachedBlocks.quickGet(block->index()))
+            continue;
+        for (B3::Air::BasicBlock* successor : block->successorBlocks())
+            follow(block->frequency(), successor);
+    }
+    // The highest is followed first and as far as it leads, so nothing is followed once more with a higher one. The copy of a separated loop is entered at each of its unlikely paths.
+    AOT::sort(worklist, { }, [&](const B3::Air::BasicBlock* block) {
+        return frequenciesInFront[block->index()];
+    });
+    while (!worklist.isEmpty()) {
+        B3::Air::BasicBlock* block = worklist.takeLast();
+        for (B3::Air::BasicBlock* successor : block->successorBlocks())
+            follow(frequenciesInFront[block->index()], successor);
+    }
+
+    Vector<double> frequenciesWhereEntered(FillWith { }, components.numberOfComponents, 0.0);
+    for (B3::Air::BasicBlock* block : code) {
+        for (B3::Air::BasicBlock* successor : block->successorBlocks()) {
+            uint32_t component = components.componentOf[successor->index()];
+            if (components.isInCycle.quickGet(successor->index()) && components.componentOf[block->index()] != component)
+                frequenciesWhereEntered[component] = std::max<double>(frequenciesWhereEntered[component], successor->frequency());
+        }
+    }
+    Vector<double> factors(FillWith { }, code.size(), 1.0);
+    for (size_t blockIndex : components.isInCycle) {
+        double frequencyWhereEntered = frequenciesWhereEntered[components.componentOf[blockIndex]];
+        if (frequencyWhereEntered > 0)
+            factors[blockIndex] = std::max(1.0, frequenciesInFront[blockIndex] * frequencyConstants.iterationsPerLoop / frequencyWhereEntered);
+    }
+    return factors;
+}
+
 // A loop behind a rare edge is entered rarely and then runs as often as any other loop, so it is not rare code.
-static BitVector findRareAirBlocks(const B3::Air::Code& code)
+static RareAirBlocks findRareAirBlocks(const B3::Air::Code& code)
 {
     BitVector rareBlocks(code.size());
     BitVector reachedBlocks = findAirBlocksReachedWithoutRareEdge(code);
@@ -138,7 +193,7 @@ static BitVector findRareAirBlocks(const B3::Air::Code& code)
         });
     }
     if (!mayHaveCycle)
-        return rareBlocks;
+        return { WTF::move(rareBlocks), { } };
 
     Vector<Vector<uint32_t, 2>> likelySuccessors(code.size());
     for (size_t blockIndex : rareBlocks) {
@@ -150,7 +205,14 @@ static BitVector findRareAirBlocks(const B3::Air::Code& code)
         return likelySuccessors[block];
     });
     rareBlocks.exclude(components.isInCycle);
-    return rareBlocks;
+    uint64_t blocksFollowed = 0;
+    Vector<double> factors = findFactorsOfLoopsBehindRareEdges(code, reachedBlocks, components, blocksFollowed);
+    return { WTF::move(rareBlocks), WTF::move(factors), blocksFollowed };
+}
+
+uint64_t countBlocksFollowedBehindRareEdges(const B3::Air::Code& code)
+{
+    return findRareAirBlocks(code).blocksFollowed;
 }
 
 BlockColdnessRule::BlockColdnessRule(const CodeGenerationInputs& inputs, FunctionID id)
@@ -178,10 +240,10 @@ BlockColdness BlockColdnessRule::of(double frequency, bool isRare) const
 ColdAirBlocks findColdAirBlocks(const CodeGenerationInputs& inputs, FunctionID id, const B3::Air::Code& code)
 {
     BlockColdnessRule rule(inputs, id);
-    BitVector rareBlocks = findRareAirBlocks(code);
+    RareAirBlocks blocks = findRareAirBlocks(code);
     ColdAirBlocks result { BitVector(code.size()), BitVector(code.size()) };
     for (B3::Air::BasicBlock* block : code) {
-        BlockColdness coldness = rule.of(block->frequency(), rareBlocks.quickGet(block->index()));
+        BlockColdness coldness = rule.of(blocks.frequencyOf(block), blocks.rare.quickGet(block->index()));
         if (coldness.isCold)
             result.cold.quickSet(block->index());
         if (coldness.isRarelyRun)
@@ -218,6 +280,7 @@ static void appendClientPhases(B3::Policy& policy, const Program& program, const
     policy.clientPhases.append(carryWholeNumbersAsIntegersBeforeOptimization());
     policy.clientPhases.append(mergeImpliedBranchesAfterOptimization(program, function));
     policy.clientPhases.append(keepListLengthsInRegistersAfterOptimization());
+    policy.loops.isTakenOutOfLoopsByClient = isLengthOfList;
     policy.clientPhases.append(narrowTruncatedPhisAfterOptimization());
     policy.clientPhases.append(updateIntegersInMemoryAfterOptimization(program, function));
     if (traits.savesFrameOnSuspend)

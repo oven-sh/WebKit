@@ -852,6 +852,35 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringLocaleCompare, size_t, (Instance* ins
 using LetterCase = StringKeyCache::LetterCase;
 
 template<LetterCase letterCase>
+static ALWAYS_INLINE auto asciiLettersOfOtherCase(auto characters)
+{
+    return SIMD::lessThan(SIMD::sub(characters, SIMD::splat<uint8_t>(letterCase == LetterCase::Lower ? 'A' : 'a')), SIMD::splat<uint8_t>(26));
+}
+
+static ALWAYS_INLINE auto accentedCapitals(auto characters)
+{
+    auto inRange = SIMD::lessThan(SIMD::sub(characters, SIMD::splat<uint8_t>(0xc0)), SIMD::splat<uint8_t>(0xdf - 0xc0));
+    return SIMD::bitAnd(inRange, SIMD::bitNot(SIMD::equal(characters, SIMD::splat<uint8_t>(0xd7))));
+}
+
+template<LetterCase letterCase>
+static ALWAYS_INLINE bool isLetterOfOtherCase(Latin1Character character)
+{
+    if constexpr (letterCase == LetterCase::Lower)
+        return isASCIIUpper(character) || (character >= 0xc0 && character <= 0xde && character != 0xd7);
+    else
+        return isASCIILower(character);
+}
+
+template<LetterCase letterCase>
+static ALWAYS_INLINE Latin1Character inCase(Latin1Character character)
+{
+    if (!isLetterOfOtherCase<letterCase>(character))
+        return character;
+    return static_cast<Latin1Character>(letterCase == LetterCase::Lower ? character + 0x20 : character - 0x20);
+}
+
+template<LetterCase letterCase>
 static ALWAYS_INLINE JSString* convertCase(JSGlobalObject* globalObject, VM& vm, StringKeyCache& keys, JSString* string)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -860,25 +889,44 @@ static ALWAYS_INLINE JSString* convertCase(JSGlobalObject* globalObject, VM& vm,
     {
         auto view = string->view(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        auto convertIfASCII = [&](auto span) ALWAYS_INLINE_LAMBDA -> JSString* {
+        auto convertInPlaceOfLetters = [&](auto span) ALWAYS_INLINE_LAMBDA -> JSString* {
             auto* characters = span.data();
             size_t length = span.size();
             unsigned isNotASCII = 0;
             unsigned changes = 0;
-            for (size_t i = 0; i < length; ++i) {
-                isNotASCII |= characters[i] & ~0x7f;
-                changes |= letterCase == LetterCase::Lower ? isASCIIUpper(characters[i]) : isASCIILower(characters[i]);
+            constexpr size_t stride = SIMD::stride<uint8_t>;
+            size_t lengthInStrides = length - length % stride;
+            if (lengthInStrides) {
+                auto seen = SIMD::splat<uint8_t>(0);
+                auto changed = SIMD::splat<uint8_t>(0);
+                for (size_t i = 0; i < lengthInStrides; i += stride) {
+                    auto loaded = SIMD::load(byteCast<uint8_t>(characters) + i);
+                    seen = SIMD::bitOr(seen, loaded);
+                    changed = SIMD::bitOr(changed, asciiLettersOfOtherCase<letterCase>(loaded));
+                }
+                isNotASCII = SIMD::isNonZero(SIMD::bitAnd(seen, SIMD::splat<uint8_t>(0x80)));
+                changes = SIMD::isNonZero(changed);
             }
-            if (isNotASCII)
+            for (size_t i = lengthInStrides; i < length; ++i) {
+                isNotASCII |= characters[i] & ~0x7f;
+                changes |= isLetterOfOtherCase<letterCase>(characters[i]);
+            }
+            if (isNotASCII && letterCase == LetterCase::Upper)
                 return nullptr;
+            if (isNotASCII && !changes) {
+                auto changed = SIMD::splat<uint8_t>(0);
+                for (size_t i = 0; i < lengthInStrides; i += stride)
+                    changed = SIMD::bitOr(changed, accentedCapitals(SIMD::load(byteCast<uint8_t>(characters) + i)));
+                changes = SIMD::isNonZero(changed);
+            }
             if (!changes)
                 return string;
             if (length == 1)
-                return vm.smallStrings.singleCharacterString(static_cast<Latin1Character>(letterCase == LetterCase::Lower ? toASCIILower(characters[0]) : toASCIIUpper(characters[0])));
+                return vm.smallStrings.singleCharacterString(inCase<letterCase>(characters[0]));
             if (length <= StringKeyCache::maxCaseConvertedStringLength) {
                 std::array<Latin1Character, StringKeyCache::maxCaseConvertedStringLength> converted;
                 for (size_t i = 0; i < length; ++i)
-                    converted[i] = static_cast<Latin1Character>(letterCase == LetterCase::Lower ? toASCIILower(characters[i]) : toASCIIUpper(characters[i]));
+                    converted[i] = inCase<letterCase>(characters[i]);
                 JSString* result = keys.caseConvertedString(vm, std::span<const Latin1Character> { converted }.first(length));
                 keys.cacheCaseConversion(vm, string, letterCase, result);
                 return result;
@@ -886,11 +934,27 @@ static ALWAYS_INLINE JSString* convertCase(JSGlobalObject* globalObject, VM& vm,
             std::span<Latin1Character> buffer;
             Ref impl = StringImpl::createUninitialized(length, buffer);
             Latin1Character* converted = buffer.data();
-            for (size_t i = 0; i < length; ++i)
-                converted[i] = static_cast<Latin1Character>(letterCase == LetterCase::Lower ? toASCIILower(characters[i]) : toASCIIUpper(characters[i]));
+            auto convertStrides = [&](auto lettersOfOtherCase) ALWAYS_INLINE_LAMBDA {
+                for (size_t i = 0; i < lengthInStrides; i += stride) {
+                    auto loaded = SIMD::load(byteCast<uint8_t>(characters) + i);
+                    auto difference = SIMD::bitAnd(lettersOfOtherCase(loaded), SIMD::splat<uint8_t>(0x20));
+                    SIMD::store(letterCase == LetterCase::Lower ? SIMD::bitOr(loaded, difference) : SIMD::sub(loaded, difference), byteCast<uint8_t>(converted) + i);
+                }
+            };
+            if (isNotASCII) {
+                convertStrides([](auto loaded) ALWAYS_INLINE_LAMBDA {
+                    return SIMD::bitOr(asciiLettersOfOtherCase<letterCase>(loaded), accentedCapitals(loaded));
+                });
+            } else {
+                convertStrides([](auto loaded) ALWAYS_INLINE_LAMBDA {
+                    return asciiLettersOfOtherCase<letterCase>(loaded);
+                });
+            }
+            for (size_t i = lengthInStrides; i < length; ++i)
+                converted[i] = inCase<letterCase>(characters[i]);
             return jsString(vm, String { WTF::move(impl) });
         };
-        if (JSString* converted = view->is8Bit() ? convertIfASCII(view->span8()) : nullptr)
+        if (JSString* converted = view->is8Bit() ? convertInPlaceOfLetters(view->span8()) : nullptr)
             return converted;
     }
     auto characters = string->value(globalObject);

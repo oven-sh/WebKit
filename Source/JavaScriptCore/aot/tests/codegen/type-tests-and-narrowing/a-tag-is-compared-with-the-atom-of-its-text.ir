@@ -2,6 +2,7 @@
 # A short string out of JSON.parse is an atom. "circle" is compared in code that runs often, so it is a name of the image: it has one atom, at a place that the image fixes.
 # The type of a cell and its flags lie side by side: one comparison says that the value is a string and holds an atom. The pointer of an atom is compared with that address, and that is the answer. Only a string that is no atom is asked for its length and its characters.
 # The address is the same in every turn: it is made in front of the loop.
+# The string is kept up to the branch: a pointer that is the same in every turn is read in front of the loop too, and compared in each turn.
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls image-form=absolute
 # RUN: lower-to-b3 optimized loops f1
@@ -15,6 +16,7 @@
 # CHECK-NOT: = Add({{*}}:StrictEq)
 # CHECK: = Load({{*}}offset = 8, {{*}}Reads:JSRopeString_fiber0, {{*}}:StrictEq)
 # CHECK-NEXT: = Equal(
+# CHECK-NEXT: = Patchpoint({{*}}:ColdAny, {{*}}:StrictEq)
 # CHECK-NEXT: = Branch(
 # CHECK: Reads:StringImpl_length
 # CHECK-LABEL: end of loop

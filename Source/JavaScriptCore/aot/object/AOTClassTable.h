@@ -22,6 +22,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/text/SymbolImpl.h>
 #include <wtf/text/UniquedStringImpl.h>
 
 namespace JSC {
@@ -132,7 +133,7 @@ public:
     // AsDefinitionMadeIt: the definition has made the holder an ordinary object just now, and the holder has what the record says it creates and nothing else.
     enum class HolderState : uint8_t { Unknown, AsDefinitionMadeIt, NotTouched };
     void armMemberGuards(VM&, const LayoutData&, ClassSide, JSObject* holder, HolderState = HolderState::Unknown);
-    bool tryLeaveHoldersOut(VM&, const LayoutData&, JSObject* prototype);
+    bool tryLeaveHoldersOut(VM&, const LayoutData&, Closure* classObject, JSObject* prototype);
     static bool leavesDefinitionToRecord(const LayoutData& classLayout) { return classLayout.createsMembersLazily && classLayout.createsClassObjectOnMutation && classLayout.classData().guardsHoldWhileClear; }
     void didCreatePrototypeLeftToRecord(const LayoutData&);
     void disarmMemberGuards(const LayoutData&);
@@ -278,6 +279,8 @@ private:
     UncheckedKeyHashMap<JSObject*, Structure*> m_classObjectStructures;
     UncheckedKeyHashMap<JSObject*, uint32_t> m_classSidesByHolder;
     bool m_hasHoldersLeftOut { false };
+    // Under it a prototype object that was left out names its class object. No program can name it, so none can take it away, change it or copy it.
+    RefPtr<PrivateSymbolImpl> m_classObjectOfHolderLeftOut;
     RememberedSlotSet m_writes;
     Vector<JSObject*> m_declaredMemberHolders;
     ByIndex m_declaredMemberLocations;

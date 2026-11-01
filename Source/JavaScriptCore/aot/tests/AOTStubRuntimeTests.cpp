@@ -24,6 +24,7 @@
 #include "AOTStubsArithmetic.h"
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsClosures.h"
+#include "AOTStubsElements.h"
 #include "AOTStubsOperations.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTVector.h"
@@ -1137,6 +1138,41 @@ static void testInstructionsOfOperationCall()
 #endif
 }
 
+// The frame of a slow path has room for what it saves and for no more: a word that nobody writes holds what an earlier frame left there, and the operation may collect.
+static void testFramesOfSlowPathsHaveNoWordThatNobodyWrote()
+{
+    constexpr Entry operation = Entry::operationAOTValueAdd;
+    constexpr uint64_t wordsThatAlignFrame = 1;
+    WTF::Vector<StubKey> heads;
+    for (uint8_t form = 0; form < std::size(preservingCallShapes); ++form) {
+        if (preservingCallShapes[form].returns != OperationCall::Returns::Double)
+            heads.append(StubKey(StubFamily::CallOperationPreservingRegisters).withForm(form).withImmediate(offsetInRuntimeTable(operation)));
+    }
+    StubRunner runner(StubPolicy { }, heads.span());
+    runner.countWordsNobodyWroteAtCallsOf(operation);
+    for (StubKey head : heads) {
+        AOT_TEST_CHECK(runner.runOperationCall(head, { }).calledOperation);
+        if (runner.wordsNobodyWrote() > wordsThatAlignFrame)
+            dataLogLn("form ", head.form(), " of the call that preserves registers: nobody wrote ", runner.wordsNobodyWrote(), " words of its frame");
+        AOT_TEST_CHECK(runner.wordsNobodyWrote() <= wordsThatAlignFrame);
+    }
+
+    // It saves few of the floating-point registers.
+    const uint64_t notCell = JSValue::encode(jsNumber(7));
+    runner.countWordsNobodyWroteAtCallsOf(Entry::operationAOTGetByVal);
+    AOT_TEST_CHECK(runner.run(getByValKeepingRegisters(), { notCell, notCell }).calledOperation);
+    if (runner.wordsNobodyWrote() > wordsThatAlignFrame)
+        dataLogLn("a read by a key that keeps the registers of its caller: nobody wrote ", runner.wordsNobodyWrote(), " words of its frame");
+    AOT_TEST_CHECK(runner.wordsNobodyWrote() <= wordsThatAlignFrame);
+
+    // It stores every register for the operation that makes the Error, and goes on to the handler.
+    runner.countWordsNobodyWroteAndLeaveStubAtCallsOf(Entry::operationAOTThrowAtSite);
+    AOT_TEST_CHECK(runner.run(throwAtSite(ThrowSiteSource::WordInRegister, CallerFrame::HasFrame), { 0 }).calledOperation);
+    if (runner.wordsNobodyWrote() > wordsThatAlignFrame)
+        dataLogLn("a throw at a site: nobody wrote ", runner.wordsNobodyWrote(), " words of its frame");
+    AOT_TEST_CHECK(runner.wordsNobodyWrote() <= wordsThatAlignFrame);
+}
+
 std::span<const NativeTest> stubRuntimeTests()
 {
     static constexpr NativeTest tests[] = {
@@ -1151,6 +1187,7 @@ std::span<const NativeTest> stubRuntimeTests()
         { "stubs/binary-operations-on-numbers"_s, ImageTests::whenExecutable<testBinaryOperationsOnNumbers> },
         { "stubs/unary-operations"_s, ImageTests::whenExecutable<testUnaryOperations> },
         { "stubs/instructions-of-an-operation-call"_s, ImageTests::whenExecutable<testInstructionsOfOperationCall> },
+        { "stubs/frames-of-slow-paths-have-no-word-that-nobody-wrote"_s, ImageTests::whenExecutable<testFramesOfSlowPathsHaveNoWordThatNobodyWrote> },
         { "stubs/boxed-call-handlers"_s, testBoxedCallHandlers },
         { "stubs/boxed-call-table"_s, runNativeTestWithLoadedProgram<stubRuntimeTests, emptyProgramText, testBoxedCallTable> },
     };

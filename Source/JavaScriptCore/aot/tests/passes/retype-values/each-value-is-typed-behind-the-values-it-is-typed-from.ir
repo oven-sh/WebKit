@@ -1,0 +1,54 @@
+# SimplifyControlFlow removes the branch, so v4 is 0 and no longer any integer, and the typing behind it starts from that change. Every sum below is typed from the two values in front of it.
+# A value is typed behind every waiting value that it is typed from: each sum once. Typed in the order in which the changes reach them, the last of thirty sums is typed over a million times.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: function-passes RetypeValues SimplifyControlFlow RetypeValues
+# LOSS: MaxInlineHeadBytes x1 f0
+# STATISTIC: FunctionsTypedFromNever = 1
+# STATISTIC: FunctionsTypedFromChanges = 1
+# STATISTIC: ValuesTypedFromChanges <= 40
+
+module m0 path="main.js" displayPath="main.js"
+
+# CHECK: f0 SimplifyControlFlow: Changed
+# CHECK-NEXT: f0 RetypeValues: Changed
+
+function f0 name="sums" parameters=[{type=i32}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=1
+    v3 = Boolean boolean=true
+    Branch v3 -> taken b1(v1), notTaken b1(v0)
+  b1(v4):
+    v5 = Add v4, v2
+    v6 = Add v2, v5
+    v7 = Add v5, v6
+    v8 = Add v6, v7
+    v9 = Add v7, v8
+    v10 = Add v8, v9
+    v11 = Add v9, v10
+    v12 = Add v10, v11
+    v13 = Add v11, v12
+    v14 = Add v12, v13
+    v15 = Add v13, v14
+    v16 = Add v14, v15
+    v17 = Add v15, v16
+    v18 = Add v16, v17
+    v19 = Add v17, v18
+    v20 = Add v18, v19
+    v21 = Add v19, v20
+    v22 = Add v20, v21
+    v23 = Add v21, v22
+    v24 = Add v22, v23
+    v25 = Add v23, v24
+    v26 = Add v24, v25
+    v27 = Add v25, v26
+    v28 = Add v26, v27
+    v29 = Add v27, v28
+    v30 = Add v28, v29
+    v31 = Add v29, v30
+    v32 = Add v30, v31
+    v33 = Add v31, v32
+    v34 = Add v32, v33
+    Return v34
+# CHECK: v34: 1346269 = Add
+}

@@ -1,11 +1,10 @@
 # plain = { held }; plain + 1; first = { valueOf: Date.prototype[Symbol.toPrimitive] }; first.valueOf = somethingNoTableLists; first + 1; second = { given }; second + 1
-# More objects lie in the hub of conversions than the analysis tells apart: it tells the plain object apart, and looks at the other two together. The first finds a built-in that calls valueOf of its receiver
+# More objects lie in the hub of conversions than the analysis tells apart one by one, which is one here: it looks at the objects of one layout together, and each of the three has its own. The first finds a built-in that calls valueOf of its receiver
 # and hands on what that answers, and later a function nobody knows. The second finds Object.prototype.valueOf, which answers its receiver to the conversion alone.
 # The built-in gets the object that finds it, whether or not the function nobody knows has arrived by then: the second object stays in the program, and nobody enters what it holds.
 # built-in-that-one-converted-object-finds-gets-no-other-past-those-told-apart.ir with another order of the rules: the answer is the same.
 # OPTIONS: testing=DelayOtherFlowRules
 # OPTIONS: limit=MaxValueFlowMembersToldApart:1
-# LOSS: MaxValueFlowMembersToldApart
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1
 # CHECK-NEXT: unreached f2

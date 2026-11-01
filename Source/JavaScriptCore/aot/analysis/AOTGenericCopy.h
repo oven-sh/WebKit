@@ -27,6 +27,7 @@ struct FunctionPassContext;
 Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses&, NOESCAPE const ScopedLambda<bool(ValueID)>& mayCallUnknownCode, NOESCAPE const ScopedLambda<bool(ProgramPoint)>& mayRejoinAt, const BitVector* requestedBlocks = nullptr);
 
 Expected<bool> isClosedOnlyByWaysBack(FunctionAnalyses&, const NaturalLoop&);
+const NaturalLoop* findLoopOfWaysBackInto(FunctionAnalyses&, const NaturalLoop&);
 
 Vector<TypeID, 4> typesOfCountersOnWayBack(FunctionAnalyses&, TypeArena&, BlockID head);
 
@@ -68,7 +69,7 @@ public:
     std::span<const BlockID> copiedBlocks() const { return m_cloner ? m_cloner->clonedBlocks() : std::span<const BlockID> { }; }
 
     enum class TypesTestedOnWayBack : uint8_t { Proven, Expected };
-    void addWaysBack(std::span<const ValueID> changedValues, TypesTestedOnWayBack = TypesTestedOnWayBack::Proven);
+    void addWaysBack(Vector<ValueID>& changedValues, TypesTestedOnWayBack = TypesTestedOnWayBack::Proven);
     unsigned numberOfWaysBack() const { return m_numberOfWaysBack; }
 
     void addVariablesTo(SSARepair&);
@@ -105,6 +106,7 @@ private:
         Vector<Edge, 4> edges;
         BlockID preheader;
         Arguments parameters;
+        bool takesEdgeOfCopyWithoutTest { false };
     };
 
     struct RejoinTypes {

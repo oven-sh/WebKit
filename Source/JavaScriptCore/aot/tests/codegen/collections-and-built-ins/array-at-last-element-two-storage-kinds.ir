@@ -136,14 +136,15 @@ function f1 name="last" module=m0 flags=[IsChecked, HasExplicitName] length=1 th
 # CHECK-NEXT: Int32 b@[[inside]] = Above(b@[[wide]], b@[[index]])
 # CHECK: Branch(b@[[inside]], Terminal)
 # CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#
-# The kind of storage is compared with integers first, and that arm is one load of the element.
+# A list of numbers is expected to have storage for doubles: that kind is asked first, the other kinds stand behind a rare edge, and its arm is one load of the element.
 # CHECK: Int32 b@[[byte]] = Load8Z(b@[[list]], offset = 4, ControlDependent|Reads:JSArray_indexingTypeAndMisc)
 # CHECK: Int32 b@[[kind]] = BitAnd(b@[[byte]], $14(b@{{*}}))
-# CHECK: Int32 b@[[isIntegers]] = Equal(b@[[kind]], $4(b@{{*}}))
-# CHECK: Branch(b@[[isIntegers]], Terminal)
-# CHECK: Int64 b@{{*}} = Load(b@{{*}}, offset = -8, ControlDependent|Reads:indexedInt32Properties)
-# CHECK: Int32 b@{{*}} = Equal(b@[[kind]], $6(b@{{*}}))
+# CHECK: Int32 b@[[isDoubles]] = Equal(b@[[kind]], $6(b@{{*}}))
+# CHECK: Branch(b@[[isDoubles]], Terminal)
+# CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#
 # CHECK: Double b@{{*}} = Load(b@{{*}}, offset = -8, ControlDependent|Reads:indexedDoubleProperties)
+# CHECK: Int32 b@{{*}} = Equal(b@[[kind]], $4(b@{{*}}))
+# CHECK: Int64 b@{{*}} = Load(b@{{*}}, offset = -8, ControlDependent|Reads:indexedInt32Properties)
 # CHECK: Int32 b@{{*}} = Equal(b@[[kind]], $8(b@{{*}}))
 # CHECK: Int64 b@{{*}} = Load(b@{{*}}, offset = -8, ControlDependent|Reads:indexedContiguousProperties)
 # CHECK-LABEL: end of function
@@ -160,5 +161,5 @@ function f1 name="last" module=m0 flags=[IsChecked, HasExplicitName] length=1 th
 # ONCE-NOT: ExitsSideways
 # ONCE-LABEL: end of function
 # The counts hold a call, whose moves follow the calling convention: not for Windows.
-# X64: instructions: 29, patchpoints: 1, rare instructions: 18
-# ARM64: instructions: 32, patchpoints: 2, rare instructions: 21
+# X64: instructions: 14, patchpoints: 0, rare instructions: 34
+# ARM64: instructions: 17, patchpoints: 0, rare instructions: 38

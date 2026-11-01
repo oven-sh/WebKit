@@ -31,6 +31,7 @@ ClaimResult tryClaimWithoutOperand(SelectionContext&, SelectionRuleID, Selection
 
 bool isOrdinaryKey(const Program&, PropertyKeyID);
 bool hasEffectsOfUnknownCode(SelectionContext&, ValueID);
+bool hasOnlyEffectsOfUnknownCode(SelectionContext&, ValueID);
 
 const BuiltinOverload& overloadOf(const Program&, const Value& builtinCall);
 

@@ -321,6 +321,13 @@ bool ValueFlowPositions::turnsAwayEverySeenObject(ValueSetID seen, const Type& t
     return !m_inputs.sets().isEmpty(objects) && !m_inputs.sets().meet(objects, universe.maskOf(maker(), m_inputs.program, type));
 }
 
+bool ValueFlowPositions::mayHoldObjectOfProgramThatPasses(ValueSetID held, const Type& type)
+{
+    const ValueFlowUniverse& universe = m_inputs.universe();
+    ValueSetID passing = maker().intersect(universe.placeholders().objectsWithLayoutOfProgram, universe.maskOf(maker(), m_inputs.program, type));
+    return !m_inputs.sets().isEmpty(passing) && m_inputs.sets().meet(m_inputs.solver().withWhatMembersCover(held, maker()), passing);
+}
+
 // The contents of many instances are merged one instance at a time. A list of strings over the limit would be rewritten at every step, one string longer.
 bool ValueFlowPositions::keepContentStringsWithinLimit(ClassParts& parts)
 {
@@ -483,9 +490,10 @@ BuiltinClassID ValueFlowPositions::addUnlessInstanceOfClass(Type& type, Vector<L
         return { };
     }
     case ValueFlowObjectKind::FunctionPrototype:
-    case ValueFlowObjectKind::ConstructedObject:
         type.anyObject = true;
         return { };
+    case ValueFlowObjectKind::ConstructedObject:
+        return universe.classOf(member);
     case ValueFlowObjectKind::Namespace:
         if (LayoutID layout = program.layoutOfWholeNamespace(universe.moduleOf(member))) {
             layouts.append(layout);

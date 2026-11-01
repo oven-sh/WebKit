@@ -198,13 +198,15 @@ static std::optional<LineColumn> positionInBuiltin(const Program& program, Funct
         return owner.kind == FunctionKind::DerivedConstructor ? superCallOfDefaultConstructor : startOfBuiltinFunction;
     if (owner.syntax.contains(FunctionSyntax::IsShownAsNativeCode))
         return program.lineColumnFor(owner.module, owner.position);
+    // The text of the module that its frames name is the host's.
+    if (owner.syntax.contains(FunctionSyntax::IsShownInModuleOfHelpers))
+        return startOfBuiltinFunction;
     if (!owner.enclosingRuntimeFunction)
         return std::nullopt;
     switch (program.builtins().at(owner.enclosingRuntimeFunction).role) {
     case RuntimeFunctionRole::CompilerFunction: {
         auto trace = functionTraceOf(program, shown);
-        // The text of the module that its frames name is the host's.
-        if (trace.implementsBuiltin && trace.builtinKind() == StackTraceBuiltinKind::None)
+        if (trace.isHelperOfCompiler())
             return startOfBuiltinFunction;
         return positionOfImplementedBuiltin(trace.builtinKind());
     }

@@ -299,11 +299,46 @@ static std::optional<Type> numberResultOf(Opcode opcode, OperandTypes operands)
     return std::nullopt;
 }
 
+// At 2 ** 53 a step of one is lost to rounding: 2 ** 53 + 1 lies halfway between two doubles and goes to the even one, 2 ** 53 again. So an integer that a double holds exactly is one still after a step of one.
+// The bound is 2 ** 53 and not the largest safe integer, 2 ** 53 - 1: a step up from there is exact and leaves that range.
+std::optional<Type> typeAfterStepOfOne(Opcode opcode, std::span<const Type* const> operands)
+{
+    auto stepIn = [](const Type& type) -> int64_t {
+        bool isStep = type.isInteger() && type.integers.isSingleValue() && std::abs(type.integers.minimum) == 1;
+        return isStep ? type.integers.minimum : 0;
+    };
+    const Type* stepped = operands[0];
+    int64_t step = 0;
+    if (opcode == Opcode::Increment)
+        step = 1;
+    if (opcode == Opcode::Decrement)
+        step = -1;
+    if (opcode == Opcode::Sub)
+        step = -stepIn(*operands[1]);
+    if (opcode == Opcode::Add) {
+        step = stepIn(*operands[1]);
+        if (!step) {
+            step = stepIn(*operands[0]);
+            stepped = operands[1];
+        }
+    }
+    if (!step || !stepped->isInteger() || !stepped->integers.isSubsetOf(Range::exact()))
+        return std::nullopt;
+    auto afterStep = [&](int64_t integer) {
+        return std::clamp(integer + step, -maxExactInteger, maxExactInteger);
+    };
+    return Type::integer({ afterStep(stepped->integers.minimum), afterStep(stepped->integers.maximum) });
+}
+
 static Type naturalTypeOfOperands(const TypingContext& context, Opcode opcode, NaturalTable table, OperandTypes operands)
 {
     RELEASE_ASSERT(operands.size() == numberOfOperandsOf(table));
     if (hasNever(operands))
         return Type::never();
+    if (context.knownPositions && context.knownPositions->stepsOfOneStayIntegers) {
+        if (std::optional<Type> stepped = typeAfterStepOfOne(opcode, operands))
+            return WTF::move(*stepped);
+    }
     Vector<OperandClass, 2> classes;
     for (const Type* type : operands)
         classes.append(classOf(*type));

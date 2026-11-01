@@ -75,12 +75,13 @@ static_assert(sizeof(AddedNameData) == 8 && isImageRecord<AddedNameData>);
 
 // Sorted.
 struct ParsedRecordFieldData {
-    uint32_t name;
-    uint32_t shape;
+    Number24 name;
+    Number24 shape;
 
-    friend auto operator<=>(const ParsedRecordFieldData&, const ParsedRecordFieldData&) = default;
+    uint32_t nameNumber() const { return name; }
+    uint64_t key() const { return static_cast<uint64_t>(nameNumber()) << 24 | shape; }
 };
-static_assert(sizeof(ParsedRecordFieldData) == 8 && isImageRecord<ParsedRecordFieldData>);
+static_assert(sizeof(ParsedRecordFieldData) == 6 && isImageRecord<ParsedRecordFieldData>);
 
 struct MethodTableData {
     static constexpr uint32_t noFunction = std::numeric_limits<uint32_t>::max();

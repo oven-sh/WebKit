@@ -90,6 +90,8 @@ struct FlowOrderInputs {
     BitVector reachedFunctions;
     BitVector evaluatedModules;
     BitVector modulesLoadedByName;
+    bool namesMadeAtRunTimeAreOnlyImported { false };
+    Vector<FunctionID> functionsThatImportByName;
     BitVector modulesLoadedByHost;
     BitVector modulesNamedByOperationsNobodyKnows;
     bool hostRunsWaitingJobs { false };

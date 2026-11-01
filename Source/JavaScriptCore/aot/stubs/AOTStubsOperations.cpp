@@ -185,41 +185,44 @@ void generateCallOperationPreservingRegisters(StubAssembler& jit)
 
 static_assert(MacroAssembler::numberOfRegisters() <= ThrowSiteWord::numberOfRegistersPerBank && MacroAssembler::numberOfFPRegisters() <= ThrowSiteWord::numberOfRegistersPerBank);
 
+// The frame has room for what is saved and for no more: a word that nobody writes holds what an earlier frame left there, and the operation may collect.
 static void storeRegisterBanks(StubAssembler& jit)
 {
     constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
-    constexpr unsigned numberOfRegistersPerBank = ThrowSiteWord::numberOfRegistersPerBank;
-    jit.subPtr(TrustedImm32(2 * numberOfRegistersPerBank * 8), sp);
+    constexpr unsigned numberOfStoredGPRs = ThrowSiteWord::numberOfStoredGPRs;
+    static_assert(!((numberOfStoredGPRs + ThrowSiteWord::numberOfStoredFPRs) % 2));
+    jit.subPtr(TrustedImm32((numberOfStoredGPRs + ThrowSiteWord::numberOfStoredFPRs) * 8), sp);
 #if CPU(ARM64)
-    for (unsigned i = 0; i < 30; i += 2) {
+    for (unsigned i = 0; i < numberOfStoredGPRs; i += 2) {
+        // No stub names x18, and no value is in it.
         if (i == 18)
-            jit.store64(ARM64Registers::x19, Address(sp, 19 * 8));
+            jit.storePair64(ARM64Registers::x19, ARM64Registers::x19, sp, TrustedImm32(i * 8));
         else
             jit.storePair64(static_cast<GPRReg>(ARM64Registers::x0 + i), static_cast<GPRReg>(ARM64Registers::x0 + i + 1), sp, TrustedImm32(i * 8));
     }
     for (unsigned i = 0; i < 32; i += 2)
-        jit.storePairDouble(static_cast<FPRReg>(ARM64Registers::q0 + i), static_cast<FPRReg>(ARM64Registers::q0 + i + 1), Address(sp, (numberOfRegistersPerBank + i) * 8));
+        jit.storePairDouble(static_cast<FPRReg>(ARM64Registers::q0 + i), static_cast<FPRReg>(ARM64Registers::q0 + i + 1), Address(sp, (numberOfStoredGPRs + i) * 8));
 #else
     for (unsigned i = 0; i < 16; ++i)
         jit.store64(static_cast<GPRReg>(X86Registers::eax + i), Address(sp, i * 8));
     for (unsigned i = 0; i < 16; ++i)
-        jit.storeDouble(static_cast<FPRReg>(X86Registers::xmm0 + i), Address(sp, (numberOfRegistersPerBank + i) * 8));
+        jit.storeDouble(static_cast<FPRReg>(X86Registers::xmm0 + i), Address(sp, (numberOfStoredGPRs + i) * 8));
 #endif
 }
 
 static void loadRegisterBanks(StubAssembler& jit)
 {
     constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
-    constexpr unsigned numberOfRegistersPerBank = ThrowSiteWord::numberOfRegistersPerBank;
+    constexpr unsigned numberOfStoredGPRs = ThrowSiteWord::numberOfStoredGPRs;
 #if CPU(ARM64)
-    for (unsigned i = 0; i < 30; i += 2) {
+    for (unsigned i = 0; i < numberOfStoredGPRs; i += 2) {
         if (i == 18)
             jit.load64(Address(sp, 19 * 8), ARM64Registers::x19);
         else
             jit.loadPair64(sp, TrustedImm32(i * 8), static_cast<GPRReg>(ARM64Registers::x0 + i), static_cast<GPRReg>(ARM64Registers::x0 + i + 1));
     }
     for (unsigned i = 0; i < 32; i += 2)
-        jit.loadPairDouble(Address(sp, (numberOfRegistersPerBank + i) * 8), static_cast<FPRReg>(ARM64Registers::q0 + i), static_cast<FPRReg>(ARM64Registers::q0 + i + 1));
+        jit.loadPairDouble(Address(sp, (numberOfStoredGPRs + i) * 8), static_cast<FPRReg>(ARM64Registers::q0 + i), static_cast<FPRReg>(ARM64Registers::q0 + i + 1));
 #else
     for (unsigned i = 0; i < 16; ++i) {
         GPRReg reg = static_cast<GPRReg>(X86Registers::eax + i);
@@ -227,7 +230,7 @@ static void loadRegisterBanks(StubAssembler& jit)
             jit.load64(Address(sp, i * 8), reg);
     }
     for (unsigned i = 0; i < 16; ++i)
-        jit.loadDouble(Address(sp, (numberOfRegistersPerBank + i) * 8), static_cast<FPRReg>(X86Registers::xmm0 + i));
+        jit.loadDouble(Address(sp, (numberOfStoredGPRs + i) * 8), static_cast<FPRReg>(X86Registers::xmm0 + i));
 #endif
 }
 

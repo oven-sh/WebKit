@@ -53,11 +53,11 @@ static KeyComparison keyComparisonOf(const Type& key)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static StubKey lookupStubFor(HashTableOwner owner, bool returnsValue, KeyComparison comparison)
+static StubKey lookupStubFor(HashTableOwner owner, LookupAnswer answer, KeyComparison comparison)
 {
     switch (owner) {
     case HashTableOwner::Map:
-        return returnsValue ? mapGet(comparison) : mapHas(comparison);
+        return answer == LookupAnswer::IsPresent ? mapHas(comparison) : answer == LookupAnswer::Value ? mapGet(comparison) : mapFind(comparison);
     case HashTableOwner::Set:
         return setHas(comparison);
     }
@@ -199,8 +199,22 @@ Integer HashTableBuiltinEmitter::sizeOf(CellPointer table, HashTableOwner owner)
 
 // A table of at most eight entries keeps a byte of each key's hash in one word. The stub takes every other table, a key without a hash, and a key whose characters must be compared.
 // What depends on the table alone is read from a header that is always there, so those loads can leave a loop.
-Boxed HashTableBuiltinEmitter::lookUpAmongTags(const InlineCall& call, CellPointer owner, CellPointer key, StubKey stub, bool returnsValue)
+static JSValue answerWhenAbsent(LookupAnswer answer)
 {
+    switch (answer) {
+    case LookupAnswer::IsPresent:
+        return jsBoolean(false);
+    case LookupAnswer::Value:
+        return jsUndefined();
+    case LookupAnswer::ValueOrNothing:
+        return JSValue();
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+Boxed HashTableBuiltinEmitter::lookUpAmongTags(const InlineCall& call, CellPointer owner, CellPointer key, StubKey stub, LookupAnswer answer, ValueID valueRead)
+{
+    const bool returnsValue = answer != LookupAnswer::IsPresent;
     constexpr ptrdiff_t offsetOfTags = CompactTable::offsetOfIndex();
     constexpr ptrdiff_t offsetOfKeys = offsetOfTags + CompactTable::maxCapacityWithTags;
     // The word at the capacity holds the capacity, the index bits, the flags of the keys and the width of the values.
@@ -274,7 +288,7 @@ Boxed HashTableBuiltinEmitter::lookUpAmongTags(const InlineCall& call, CellPoint
         LBasicBlock isNarrow = newBlock();
         LBasicBlock isWide = newBlock();
         // A narrow column holds no number.
-        bool expectsNumbers = typeOf(call.context().valueID()).primitives & Primitive::Number;
+        bool expectsNumbers = typeOf(valueRead).primitives & Primitive::Number;
         m_out.branch(valuesAreNarrow, expectsNumbers ? unlikelyEdge(isNarrow) : normalEdge(isNarrow), expectsNumbers ? normalEdge(isWide) : unlikelyEdge(isWide));
 
         m_out.appendTo(isNarrow);
@@ -286,7 +300,7 @@ Boxed HashTableBuiltinEmitter::lookUpAmongTags(const InlineCall& call, CellPoint
     }
 
     m_out.appendTo(absent);
-    join.add(boxedConstant(returnsValue ? jsUndefined() : jsBoolean(false)));
+    join.add(boxedConstant(answerWhenAbsent(answer)));
 
     m_out.appendTo(byStub);
     join.add(Boxed(callStub(call.context(), stub, { owner.value(), key.value() }).first));
@@ -346,19 +360,22 @@ bool HashTableBuiltinEmitter::looksIntoHomeSlot(const InlineCall& call, KeyCompa
 {
     ValueID key = call.argument(0);
     const Type& type = typeOf(key);
-    bool isKey = comparison == KeyComparison::String ? !makersOfStrings.contains(m_function.at(key).opcode) : comparison == KeyComparison::Bits && type.isNumber();
+    bool isKey = comparison == KeyComparison::String ? !makersOfStrings.contains(m_function.at(key).opcode) : comparison == KeyComparison::Bits && (type.isNumber() || type.withoutNullish().isObject());
     return isKey && hasReceiverThatLeavesLoop(call);
 }
 
 // Reads the table once, out of the loop where B3 can move it. A table in the image, one that is too large, a string without a hash and a text that must be compared by its characters go to the stub.
-Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPointer owner, Boxed key, KeyComparison comparison, HashTableOwner kindOfOwner, bool returnsValue)
+Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPointer owner, Boxed key, KeyComparison comparison, HashTableOwner kindOfOwner, LookupAnswer answer, ValueID valueRead)
 {
+    const bool returnsValue = answer != LookupAnswer::IsPresent;
     constexpr ptrdiff_t index = CompactTable::offsetOfIndex();
     constexpr uint64_t imageFlag = static_cast<uint64_t>(CompactTable::keysAreInImage) << 40;
     constexpr uint64_t wideFlag = static_cast<uint64_t>(CompactTable::keysAreWide) << 40;
     constexpr uint64_t indexBitsMask = 0xffull << 32;
     constexpr uint64_t ones = 0x0101010101010101;
-    const bool keysAreWide = comparison == KeyComparison::Bits;
+    // A number never fits a narrow key, and a table of objects has narrow keys: what is looked for says which of the two widths is searched here.
+    const bool comparesTexts = comparison == KeyComparison::String;
+    const bool keysAreWide = !comparesTexts && typeOf(call.argument(0)).isNumber();
     auto inHeader = [&](LValue table, ptrdiff_t offset) { return m_out.address(m_heaps.AOTCompactTable_lookupHeader, table, offset); };
     auto inColumns = [&](LValue address) { return m_out.address(m_heaps.entire(AbstractHeap::CollectionEntries), address, 0); };
 
@@ -378,9 +395,9 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
     LBasicBlock matchAmongNextEight = newBlock();
     LBasicBlock noMatchAmongNextEight = newBlock();
     LBasicBlock goesOnToNextEight = newBlock();
-    LBasicBlock isOtherWord = keysAreWide ? nullptr : newBlock();
-    LBasicBlock isOtherCell = keysAreWide ? nullptr : newBlock();
-    LBasicBlock isOtherString = keysAreWide ? nullptr : newBlock();
+    LBasicBlock isOtherWord = comparesTexts ? newBlock() : nullptr;
+    LBasicBlock isOtherCell = comparesTexts ? newBlock() : nullptr;
+    LBasicBlock isOtherString = comparesTexts ? newBlock() : nullptr;
     LBasicBlock found = newBlock();
     LBasicBlock absent = newBlock();
     LBasicBlock byStub = newBlock();
@@ -450,6 +467,13 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
         // What lies above the bits of the hash stays: the mask of the slots and the tests of the tags leave it out.
         hash = hashOfBitsByOneMultiplication(key).value();
         m_out.jump(hasHash);
+    } else if (!comparesTexts) {
+        build().statistics().count(StatisticID::ObjectKeysSearchedInLine);
+        LBasicBlock isCell = newBlock();
+        m_out.branch(m_out.testIsZero64(key.value(), bitsOfNoCell), normalEdge(isCell), unlikelyEdge(byStub));
+        m_out.appendTo(isCell);
+        hash = hashOfBitsByOneMultiplication(key).value();
+        m_out.jump(hasHash);
     } else {
         LBasicBlock isCell = newBlock();
         LBasicBlock isFlat = newBlock();
@@ -466,7 +490,7 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
         m_out.jump(hasHash);
     }
 
-    auto lowByte = [&](LValue word) { return keysAreWide ? m_out.bitAnd(word, m_out.constInt32(0xff)) : word; };
+    auto lowByte = [&](LValue word) { return comparesTexts ? word : m_out.bitAnd(word, m_out.constInt32(0xff)); };
     auto loadNumber = [&](LValue slot) {
         LBasicBlock isLong = newBlock();
         LBasicBlock isShort = newBlock();
@@ -491,7 +515,12 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
     };
     // Two string cells may hold one text: a name out of Object.keys() and the same name as the program writes it. One place compares what the two cells hold, for every match.
     Vector<ValueFromBlock, 4> numbersOfOtherWords;
+    // One object in 64 has the tag of another: the stub goes on from there.
     auto branchOnStringKeyAt = [&](LValue number) {
+        if (!comparesTexts) {
+            m_out.branch(keyIsAt(number), normalEdge(found), unlikelyEdge(byStub));
+            return;
+        }
         numbersOfOtherWords.append(m_out.anchor(number));
         m_out.branch(keyIsAt(number), normalEdge(found), unlikelyEdge(isOtherWord));
     };
@@ -595,7 +624,7 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
     m_out.jump(goesOn);
 
     // Every match, and every eight up to the first free slot, as CompactTable::nextSlotWithTag() goes: a table that is nearly full has many eights without a free slot.
-    // No slot is ever freed, so a key lies ahead of the first free slot, and an index always has one.
+    // Among eight slots that are all taken none is ever freed, so a key lies ahead of the first eight with a free slot, and an index always has one.
     m_out.appendTo(goesOn);
     ValueFromBlock firstToGoOnWith = m_out.anchor(m_out.phi(B3::Int64, whereToGoOn));
     LValue tagToGoOnWith = m_out.phi(B3::Int64, tagsToGoOnWith);
@@ -636,7 +665,7 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
     m_out.jump(searchesNextEight);
 
     Vector<ValueFromBlock, 5> numbersFound { numberAmongTags, numberOfHome, numberOfEight, numberOfNextEight };
-    if (!keysAreWide) {
+    if (comparesTexts) {
         m_out.appendTo(isOtherWord);
         LValue numberOfOtherWord = m_out.phi(B3::Int64, numbersOfOtherWords);
         NarrowReference word(m_out.load32(inColumns(m_out.add(keys, m_out.shl(numberOfOtherWord, m_out.constInt32(2))))));
@@ -661,7 +690,7 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
         LBasicBlock isNarrow = newBlock();
         LBasicBlock isWide = newBlock();
         // A narrow column holds no number.
-        bool expectsNumbers = typeOf(call.context().valueID()).primitives & Primitive::Number;
+        bool expectsNumbers = typeOf(valueRead).primitives & Primitive::Number;
         m_out.branch(keysAreWide ? valuesAreNarrow : m_out.testNonZero64(bitsOfNoCell, m_out.constInt64(narrowValues)), expectsNumbers ? unlikelyEdge(isNarrow) : normalEdge(isNarrow), expectsNumbers ? normalEdge(isWide) : unlikelyEdge(isWide));
 
         m_out.appendTo(isNarrow);
@@ -673,10 +702,10 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
     }
 
     m_out.appendTo(absent);
-    join.add(boxedConstant(returnsValue ? jsUndefined() : jsBoolean(false)));
+    join.add(boxedConstant(answerWhenAbsent(answer)));
 
     m_out.appendTo(byStub);
-    join.add(Boxed(callStub(call.context(), lookupStubFor(kindOfOwner, returnsValue, comparison), { owner.value(), key.value() }).first));
+    join.add(Boxed(callStub(call.context(), lookupStubFor(kindOfOwner, answer, comparison), { owner.value(), key.value() }).first));
     return join.finish();
 }
 
@@ -706,19 +735,102 @@ CellPointer HashTableBuiltinEmitter::moveTableToHeap(const OperationContext& con
     return join.finish();
 }
 
-void HashTableBuiltinEmitter::lookUp(const InlineCall& call, HashTableOwner owner, bool returnsValue)
+// `map.has(key) ? map.get(key) : ..`: the get that control comes to from the edge on which the key is present, where nothing in between writes to a table.
+ValueID HashTableBuiltinEmitter::findGetBehindHas(const InlineCall& has, InlineBuiltin get)
 {
-    RELEASE_ASSERT(owner == HashTableOwner::Map || !returnsValue);
+    constexpr uint32_t isPresentTargetIndex = 0;
+    if (!has.value())
+        return { };
+    auto behindCasts = [&](ValueID id) {
+        while (resultRuleOf(m_function.at(id).opcode) == ResultRule::Cast)
+            id = m_function.at(id).valueOperand();
+        return id;
+    };
+    auto isLookup = [&](const Value& value) {
+        return value.opcode == Opcode::MoveTableToHeap || (value.opcode == Opcode::CallInline && (value.inlineBuiltin() == InlineBuiltin::MapGet || value.inlineBuiltin() == InlineBuiltin::MapHas || value.inlineBuiltin() == InlineBuiltin::SetHas));
+    };
+    auto writesTables = [](const Effects& effects) {
+        return effects.writes.isTop() || effects.writes.contains(AbstractHeap::CollectionStorage) || effects.writes.contains(AbstractHeap::CollectionEntries);
+    };
+    ValueID receiver = behindCasts(has.receiver());
+    ValueID key = behindCasts(has.argument(0));
+    BlockID block = has.context().block();
+    const Terminator& branch = m_function.at(block).terminator;
+    if (!branch.isConditionalBranch() || branch.conditionOperand() != has.value()->id())
+        return { };
+
+    const BlockValues& valuesBesideHas = m_function.at(block).values;
+    size_t next = valuesBesideHas.find(has.value()->id());
+    RELEASE_ASSERT(next != notFound);
+    ++next;
+    while (true) {
+        const BlockValues& values = m_function.at(block).values;
+        for (; next < values.size(); ++next) {
+            const Value& value = m_function.at(values[next]);
+            if (value.opcode == Opcode::CallInline && value.inlineBuiltin() == get && value.receiverOperand() && behindCasts(value.receiverOperand()) == receiver && value.argumentsOperands().size() == 1 && behindCasts(value.argumentsOperands()[0]) == key)
+                return block == has.context().block() ? ValueID() : values[next];
+            if (!isLookup(value) && writesTables(analyses().effectsOf(values[next]).onAnyEdge()))
+                return { };
+        }
+        const Terminator& terminator = m_function.at(block).terminator;
+        bool isBranchOnHas = block == has.context().block();
+        if ((!isBranchOnHas && terminator.kind != TerminatorKind::Jump) || writesTables(analyses().effectsOfTerminator(block).onAnyEdge()))
+            return { };
+        block = terminator.targets[isBranchOnHas ? isPresentTargetIndex : 0].block;
+        // Both edges of a branch may lead to one block.
+        if (analyses().cfg().incomingEdges(block).size() != 1)
+            return { };
+        next = 0;
+    }
+}
+
+void HashTableBuiltinEmitter::didFindValueFor(ValueID get, Boxed valueOrNothing)
+{
+    m_valuesFoundByHas.append({ get, valueOrNothing.value() });
+    build().statistics().count(StatisticID::GetsAnsweredByHas);
+}
+
+std::optional<Boxed> HashTableBuiltinEmitter::valueFoundFor(ValueID get)
+{
+    size_t found = m_valuesFoundByHas.findIf([&](const auto& entry) { return entry.first == get; });
+    if (found == notFound)
+        return std::nullopt;
+    return Boxed(m_valuesFoundByHas[found].second);
+}
+
+void HashTableBuiltinEmitter::lookUp(const InlineCall& call, HashTableOwner owner, LookupAnswer answer)
+{
+    RELEASE_ASSERT(owner == HashTableOwner::Map || answer == LookupAnswer::IsPresent);
+    ValueID valueRead = call.context().valueID();
+    if (std::optional<Boxed> found = answer == LookupAnswer::Value ? valueFoundFor(valueRead) : std::nullopt) {
+        finish(call, *found);
+        return;
+    }
+    ValueID getBehindHas = owner == HashTableOwner::Map && answer == LookupAnswer::IsPresent ? findGetBehindHas(call, InlineBuiltin::MapGet) : ValueID();
+    if (getBehindHas) {
+        answer = LookupAnswer::ValueOrNothing;
+        valueRead = getBehindHas;
+    }
+
     CellPointer table = cellOperand(call.receiver());
     KeyComparison comparison = keyComparisonOf(typeOf(call.argument(0)));
     Boxed key = normalizedKey(call.context(), call.argument(0));
-    StubKey stub = lookupStubFor(owner, returnsValue, comparison);
-    Boxed answer = looksAmongTags(call) ? lookUpAmongTags(call, table, unboxCell(key), stub, returnsValue) : looksIntoHomeSlot(call, comparison) ? lookUpInHomeSlot(call, table, key, comparison, owner, returnsValue) : Boxed(callStub(call.context(), stub, { table.value(), key.value() }).first);
+    StubKey stub = lookupStubFor(owner, answer, comparison);
+    Boxed found = looksAmongTags(call) ? lookUpAmongTags(call, table, unboxCell(key), stub, answer, valueRead) : looksIntoHomeSlot(call, comparison) ? lookUpInHomeSlot(call, table, key, comparison, owner, answer, valueRead) : Boxed(callStub(call.context(), stub, { table.value(), key.value() }).first);
     emitter<RuntimeCallEmitter>().setCallsOnlyMoveTables(false);
-    if (returnsValue)
-        finish(call, answer);
-    else
-        finish(call, unboxBoolean(answer));
+    switch (answer) {
+    case LookupAnswer::IsPresent:
+        finish(call, unboxBoolean(found));
+        return;
+    case LookupAnswer::Value:
+        finish(call, found);
+        return;
+    case LookupAnswer::ValueOrNothing:
+        didFindValueFor(getBehindHas, found);
+        finish(call, Condition(m_out.notZero64(found.value())));
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 void HashTableBuiltinEmitter::insert(const InlineCall& call, HashTableOwner owner)
@@ -763,17 +875,17 @@ void HashTableBuiltinEmitter::generateNewSet(const InlineCall& call)
 
 void HashTableBuiltinEmitter::generateMapGet(const InlineCall& call)
 {
-    lookUp(call, HashTableOwner::Map, true);
+    lookUp(call, HashTableOwner::Map, LookupAnswer::Value);
 }
 
 void HashTableBuiltinEmitter::generateMapHas(const InlineCall& call)
 {
-    lookUp(call, HashTableOwner::Map, false);
+    lookUp(call, HashTableOwner::Map, LookupAnswer::IsPresent);
 }
 
 void HashTableBuiltinEmitter::generateSetHas(const InlineCall& call)
 {
-    lookUp(call, HashTableOwner::Set, false);
+    lookUp(call, HashTableOwner::Set, LookupAnswer::IsPresent);
 }
 
 void HashTableBuiltinEmitter::generateMapSet(const InlineCall& call)

@@ -39,7 +39,7 @@ function f1 name="counts" role=CoroutineBody flags=[IsGenerator, TakesCallee] pa
     Return v1
 }
 # CHECK: function f1 name="counts"
-# CHECK: [[frame]]: anything = NewHeapFrame v2 function=f2 numberOfWords=2 @10
+# CHECK: [[frame]]: anything = NewHeapFrame v2, v0 function=f2 numberOfWords=2 @10
 # CHECK-NEXT: PutHeapFrameWord [[frame]], v2 @10
 # CHECK-NEXT: PutHeapFrameWord [[frame]], v1 index=1 @10
 # CHECK-NEXT: SuspendInHeapFrame v2, [[frame]] [isFirstRun] @10

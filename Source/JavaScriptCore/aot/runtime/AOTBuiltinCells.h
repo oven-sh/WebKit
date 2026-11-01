@@ -76,6 +76,9 @@ public:
     // A validating build asks each of these behind every collection, and to lock an object allocates. So an object is listed once it is locked.
     void didLockEveryPropertyOf(JSObject* object) { m_objectsWithEveryPropertyLocked.append(object); }
     bool hasLocked(BuiltinID id) const { return m_lockedBuiltins.get(id.index()); }
+    // A holder was asked by name for an object that is to be locked, and the realm has not made it.
+    void didSeekBuiltinNotMade() { ++m_numberOfBuiltinsSoughtNotMade; }
+    uint32_t numberOfBuiltinsSoughtNotMade() const { return m_numberOfBuiltinsSoughtNotMade; }
     BuiltinID builtinOfLockedObject(JSObject*) const;
     // The realm keeps the prototype object of a class for as long as it lives.
     void awaitConstructor(JSObject* prototype, BuiltinID constructor) { m_awaitedConstructors.append({ prototype, constructor }); }
@@ -90,7 +93,7 @@ public:
     }
     std::span<JSObject* const> objectsWithEveryPropertyLocked() const { return m_objectsWithEveryPropertyLocked.span(); }
 
-    // The built-ins that are locked once the realm has created them, and the holders on the paths to them.
+    // The built-ins that are locked once the realm has created them, and the holders on the paths to them. No path leads to a class that the engine reports when it makes it.
     const BitVector& builtinsToLock() const { return m_builtinsToLock; }
     // Among them, the holders of members that the program may replace.
     const BitVector& holdersThatTellOfWrites() const { return m_holdersThatTellOfWrites; }
@@ -154,6 +157,7 @@ private:
     Vector<CellAwaitingModule> m_cellsAwaitingModules;
     ObjectsByBuiltin m_lockedObjects;
     BitVector m_lockedBuiltins;
+    uint32_t m_numberOfBuiltinsSoughtNotMade { 0 };
     UncheckedKeyHashMap<JSObject*, uint32_t> m_builtinsOfLockedObjects;
     BitVector m_builtinsToLock;
     BitVector m_holdersThatTellOfWrites;

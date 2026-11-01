@@ -71,6 +71,8 @@ public:
     ValueID appendDouble(double);
 
     ValueID insertBefore(ProgramPoint, Value&&);
+    // In a program as read no value has a type yet, and the type of a read goes by that of its receiver.
+    ValueID insertUntypedBefore(ProgramPoint, Value&&);
     bool hasInsertions() const { return !m_insertions.isEmpty(); }
     void applyInsertions();
     void eraseValues(BlockID, const BitVector& indexes);

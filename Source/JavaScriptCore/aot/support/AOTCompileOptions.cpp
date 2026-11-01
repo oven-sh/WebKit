@@ -23,6 +23,7 @@
 #include "MarkedBlockCage.h"
 #include "Options.h"
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <wtf/ASCIICType.h>
@@ -316,6 +317,7 @@ public:
 
         options.action = m_wire.action;
         options.widensFlow = m_wire.flowOverride == FlowOverride::Widened;
+        options.seedOfObjectNumbers = m_wire.bisection.flowSchedule.seedOfObjectNumbers;
         options.reports = m_wire.reports;
         options.excludedCode = m_wire.excludedCode;
         recorded.omitsFunctionSource = hasFlag(options.excludedCode, ExcludedCode::FunctionSource);
@@ -450,8 +452,6 @@ private:
             recorded.numberOfFlowSchedule = static_cast<uint8_t>(schedule.number);
         else if (schedule.number)
             reportInvalid(schedule.number);
-        if (schedule.reserved)
-            reportInvalid(schedule.reserved);
         recorded.testing = static_cast<uint16_t>(testing);
     }
 
@@ -466,6 +466,7 @@ private:
         options.checksClaimsToBackEnd = hasFlag(checks, CheckSet::ClaimsToBackEnd);
         options.checksMovedLoads = hasFlag(checks, CheckSet::MovedLoads);
         options.checksDecidedComparisons = hasFlag(checks, CheckSet::DecidedComparisons);
+        options.checksClaimsOfFlow = hasFlag(checks, CheckSet::ClaimsOfFlow);
         options.checksSpillSlots = hasFlag(checks, CheckSet::SpillSlots) || options.recorded.validates || options.validatesBackEnd;
         options.checksAllocatedRegisters = hasFlag(checks, CheckSet::AllocatedRegisters) || options.recorded.validates || options.validatesBackEnd;
         options.checksFlowFixpoint = hasFlag(checks, CheckSet::FlowFixpoint);
@@ -737,10 +738,20 @@ static std::optional<String> applyNumbersOfFailPredictions(Wire::CompileOptions&
     return std::nullopt;
 }
 
+static constexpr ASCIILiteral shuffleObjects = "ShuffleObjects"_s;
+
 static std::optional<String> applyTesting(Wire::CompileOptions& options, const OptionWord& word, StringView value)
 {
     return forEachListedName(word.key, value, [&](StringView written) -> std::optional<String> {
         auto [name, numbers] = splitAtFirst(written, ':');
+        // It changes no code, so no image records it.
+        if (matchesName(name, shuffleObjects)) {
+            auto seed = parseNumber<uint16_t>(numbers.value_or("0"_s));
+            if (!seed)
+                return notANumberSentence(*numbers);
+            options.bisection.flowSchedule.seedOfObjectNumbers = *seed + 1;
+            return std::nullopt;
+        }
         auto testingSwitch = findMember<Wire::TestingSwitch>(name);
         if (!testingSwitch)
             return unknownNameSentence(word.noun, name);
@@ -767,6 +778,7 @@ static void listTestingSwitches(PrintStream& out)
         if (testingSwitch != Wire::TestingSwitch::DropGuard)
             listValue(out, nameOf(testingSwitch));
     }
+    listValue(out, shuffleObjects);
 }
 
 static std::optional<String> applyDropGuard(Wire::CompileOptions& options, const OptionWord& word, StringView value)
@@ -784,6 +796,37 @@ static std::optional<String> applyDropGuard(Wire::CompileOptions& options, const
     addFlag(options.testing, Wire::TestingSwitch::DropGuard);
     options.bisection.droppedGuard = { .opcode = static_cast<uint32_t>(*opcode), .ordinal = *ordinal };
     return std::nullopt;
+}
+
+// An image is compiled for the CPU that the engine itself is compiled for. On ARM64 that is the oldest one on Linux and the M1 on macOS, which has instructions
+// that change what is emitted for the commonest operations. With this word a Linux machine that has them compiles and runs what a Mac does.
+struct NamedCPU {
+    ASCIILiteral name;
+    CPUFeatureSet features;
+};
+#if CPU(ARM64)
+static constexpr NamedCPU namedCPUs[] = {
+    { "apple-m1"_s, CPUFeatureSet().with(CPUFeature::LSE).with(CPUFeature::JSCVT).with(CPUFeature::Float16).with(CPUFeature::FRINT).with(CPUFeature::SHA3).with(CPUFeature::DotProd) },
+};
+#else
+static constexpr std::array<NamedCPU, 0> namedCPUs { };
+#endif
+
+static std::optional<String> applyCPU(Wire::CompileOptions& options, const OptionWord& word, StringView value)
+{
+    for (const NamedCPU& cpu : namedCPUs) {
+        if (value != cpu.name)
+            continue;
+        options.target.features = cpu.features.unionWith(CPUFeatureSet::buildTarget()).bits();
+        return std::nullopt;
+    }
+    return unknownNameSentence(word.noun, value);
+}
+
+static void listCPUs(PrintStream& out)
+{
+    for (const NamedCPU& cpu : namedCPUs)
+        listValue(out, cpu.name);
 }
 
 #include "AOTSchemaOptionWords.inc"

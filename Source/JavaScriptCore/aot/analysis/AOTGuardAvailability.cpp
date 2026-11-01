@@ -165,6 +165,61 @@ public:
         return mayEndProofAbout(subject, written);
     }
 
+    // Code that runs other code writes beyond its operands whatever it writes, and is no store that leaves a slot or a storage as it was tested: writtenOf() reads nothing of it but its effects on the edge.
+    bool isJudgedByEffectsAlone(EdgeKind edge)
+    {
+        if (!m_writer || !m_effects.normal.mayRunOtherCode())
+            return false;
+        const Effects& effects = effectsOn(m_effects, edge);
+        if (!effects.mayRunOtherCode() || effects.writes.isSubsetOf(declaredBoundOf(Opcode::PutSlotOrAdd).writes))
+            return false;
+        if (!m_exactAccess)
+            m_exactAccess = memoryAccessOf(m_function, m_function.at(m_writer));
+        return m_exactAccess->kind == MemoryAccess::Kind::NotExact;
+    }
+
+    std::optional<BitVector> allocationsWhoseProofsEnd(WrittenLocations& written)
+    {
+        const EscapeAnalysis& escape = m_analyses.escape();
+        if (written.extent != WriteExtent::AboutSomeObjects || written.isLeftByPropertiesBesideFields || escape.tracksOnlyEntryParameters() || !mayWriteBeyondOperands(written))
+            return std::nullopt;
+        if (!m_allocationsNotConfined) {
+            if (!m_history)
+                m_history.emplace(m_analyses.escapeHistory(), m_point);
+            if (m_history->isUnknown())
+                return std::nullopt;
+            m_allocationsNotConfined.emplace();
+            m_history->addObjectsThatMayHaveOccurredTo(*m_allocationsNotConfined);
+            m_allocationsNotConfined->merge(objectsInsideOperands());
+            for (size_t object : operandObjects()) {
+                if (escapesAtWriter(ObjectID(object)))
+                    m_allocationsNotConfined->set(object);
+            }
+        }
+        BitVector allocations = *m_allocationsNotConfined;
+        for (ValueID operand : operandsWrittenThrough(written)) {
+            if (mayBeMadeHere(operand))
+                escape.pointsTo(operand).objects.addTo(allocations);
+        }
+        return allocations;
+    }
+
+    std::optional<Vector<ObjectID, 4>> allocationsWithinReach()
+    {
+        if (!m_beyondOperands)
+            m_beyondOperands = m_writer ? effectsBeyondOperands(m_analyses.effectContext(), m_function, m_function.at(m_writer), m_effects) : m_effects;
+        if (!m_beyondOperands->onAnyEdge().writes.restrictedTo(perObjectHeaps).isEmpty())
+            return std::nullopt;
+        Vector<ObjectID, 4> objects;
+        for (const WrittenOperand& operand : writtenOperands()) {
+            std::optional<Vector<ObjectID, 4>> objectsOfOperand = GuardWriter::allocationsOf(m_analyses, operand.operand);
+            if (!objectsOfOperand)
+                return std::nullopt;
+            objects.appendVector(*objectsOfOperand);
+        }
+        return objects;
+    }
+
     bool reachesObjects(WrittenLocations& written)
     {
         return mayWriteBeyondOperands(written) || !operandsWrittenThrough(written).empty();
@@ -243,8 +298,13 @@ private:
 
         ObjectSet objects = escape.pointsTo(subject).objects;
         return std::ranges::any_of(operandsWrittenThrough(written), [&](ValueID operand) {
-            return escape.pointsTo(operand).objects.overlaps(objects);
+            return escape.pointsTo(operand).objects.overlaps(objects) && mayBeMadeHere(operand);
         });
+    }
+
+    bool mayBeMadeHere(ValueID operand)
+    {
+        return !m_analyses.context().onlyJudges() || !m_writer || m_analyses.escape().pointsTo(operand).objects.isEmpty() || !namesOnlyWhatCodeOutsideReaches(m_analyses, operand);
     }
 
     bool namesOnlyObjectsOfKind(ObjectKind kind, ValueID value)
@@ -318,7 +378,7 @@ private:
             return use.kind == Use::Kind::TerminatorOperand && use.block == m_point.block;
         };
         return std::ranges::any_of(m_analyses.escape().usesOf(object), [&](const ObjectUse& objectUse) {
-            return objectUse.isEscape && isUseByWriter(objectUse.use);
+            return objectUse.isEscape && isUseByWriter(objectUse.use) && (!m_writer || mayBeMadeHere(m_function.at(m_writer).operand(objectUse.use.operandIndex)));
         });
     }
 
@@ -352,7 +412,8 @@ private:
             m_operandObjects.emplace();
             const EscapeAnalysis& escape = m_analyses.escape();
             auto addObjectsOf = [&](ValueID operand) {
-                escape.pointsTo(operand).objects.addTo(*m_operandObjects);
+                if (mayBeMadeHere(operand))
+                    escape.pointsTo(operand).objects.addTo(*m_operandObjects);
             };
             if (m_writer)
                 m_function.at(m_writer).forEachChild(addObjectsOf);
@@ -397,6 +458,7 @@ private:
     std::optional<Vector<WrittenOperand, 4>> m_writtenOperands;
     std::optional<BitVector> m_operandObjects;
     std::optional<BitVector> m_objectsInsideOperands;
+    std::optional<BitVector> m_allocationsNotConfined;
     std::optional<UseEffectHistory::AtPoint> m_history;
     ValueID m_lastSubject;
     bool m_isLastSubjectConfined { false };
@@ -460,6 +522,38 @@ auto GuardWriter::writtenOf(const DependedLocations& depended) -> WrittenDepende
         return { written.extent, 0 };
     m_query->written.append(WTF::move(written));
     return { EndedProofs::AboutSomeObjects, static_cast<uint32_t>(m_query->written.size() - 1) };
+}
+
+std::optional<BitVector> GuardWriter::allocationsWhoseProofsEnd(const WrittenDependencies& dependencies)
+{
+    if (!m_query || dependencies.endedProofs != EndedProofs::AboutSomeObjects)
+        return std::nullopt;
+    return m_query->query.allocationsWhoseProofsEnd(m_query->written[dependencies.index]);
+}
+
+std::optional<Vector<ObjectID, 4>> GuardWriter::allocationsWithinReach()
+{
+    if (!m_query)
+        return std::nullopt;
+    return m_query->query.allocationsWithinReach();
+}
+
+// Two values with one root are one object whatever their sets say, so the root's members are among the answer, and there is at least one.
+std::optional<Vector<ObjectID, 4>> GuardWriter::allocationsOf(FunctionAnalyses& analyses, ValueID value)
+{
+    const EscapeAnalysis& escape = analyses.escape();
+    std::optional<ObjectSet> own = escape.allocationsIfNothingElse(value);
+    std::optional<ObjectSet> ofRoot = escape.allocationsIfNothingElse(analyses.sameObjectThroughCasts(value).valueInFrontOfFacts());
+    if (!own || !ofRoot || ofRoot->isEmpty())
+        return std::nullopt;
+    Vector<ObjectID, 4> objects;
+    for (ObjectID object : *ofRoot)
+        objects.append(object);
+    for (ObjectID object : *own) {
+        if (!ofRoot->contains(object))
+            objects.append(object);
+    }
+    return objects;
 }
 
 bool GuardWriter::mayEndProofAbout(ValueID subject, bool subjectComesFromOutside, const WrittenDependencies& dependencies)
@@ -926,6 +1020,7 @@ void GuardAvailability::collectKills(const BitVector& wantedKillClasses) const
         BitVector all;
         BitVector withoutSubject;
         BitVector aboutObjectsFromOutside;
+        BitVector aboutObjectsNeverConfined;
     };
     struct ClassAboutSubject {
         uint32_t killClass { 0 };
@@ -934,7 +1029,10 @@ void GuardAvailability::collectKills(const BitVector& wantedKillClasses) const
         bool comesFromOutside { false };
     };
     Vector<ClassesOfLocations, 8> groups;
-    Vector<ClassAboutSubject, 16> classesAboutSubjects;
+    // A write beyond the operands of its writer ends every proof about an object from outside, and about one that is confined nowhere. Only the others are asked about at each such writer.
+    Vector<ClassAboutSubject, 16> classesAboutSubjectsFromOutside;
+    Vector<ClassAboutSubject, 16> classesAboutSubjectsNeverConfined;
+    Vector<ClassAboutSubject, 16> classesAboutOtherSubjects;
     {
         constexpr uint32_t noGroup = UINT32_MAX;
         Vector<uint32_t, 16> groupOfLocations(FillWith { }, m_dependedLocations.size(), noGroup);
@@ -960,9 +1058,47 @@ void GuardAvailability::collectKills(const BitVector& wantedKillClasses) const
             classes.hasSubjects = true;
             if (lastSubjectComesFromOutside)
                 classes.aboutObjectsFromOutside.set(index);
-            classesAboutSubjects.append(ClassAboutSubject { index, group, lastSubject, lastSubjectComesFromOutside });
+            (lastSubjectComesFromOutside ? classesAboutSubjectsFromOutside : classesAboutOtherSubjects).append(ClassAboutSubject { index, group, lastSubject, lastSubjectComesFromOutside });
         }
     }
+
+    // Where KillQuery::isConfined() says no at every writer, and no writer defines a property beside the fields of the subject or as its layout declares: those speak of an object that the subject itself allocates.
+    bool didFindSubjectsNeverConfined = false;
+    auto findSubjectsNeverConfined = [&] {
+        if (std::exchange(didFindSubjectsNeverConfined, true) || classesAboutOtherSubjects.isEmpty())
+            return;
+        const EscapeAnalysis& escape = m_analyses.escape();
+        std::optional<ValueID> freshEntryParameter = findFreshEntryParameter(m_function, m_analyses.cfg());
+        auto isNeverConfined = [&](ValueID subject) {
+            const Value& definition = m_function.at(subject);
+            if (Value::opcodesWithLayout.contains(definition.opcode) && definition.layout() && allocatesOwnLayout(m_analyses.program(), definition))
+                return false;
+            if (escape.tracksOnlyEntryParameters())
+                return true;
+            PointsToSet set = escape.pointsTo(subject);
+            if (set.mayBeUntracked)
+                return true;
+            for (ObjectID object : set.objects) {
+                const TrackedObject& tracked = escape.at(object);
+                if (tracked.kind == ObjectKind::EntryParameter && tracked.definition != freshEntryParameter)
+                    return true;
+            }
+            return false;
+        };
+        ValueID lastSubject;
+        bool lastSubjectIsNeverConfined = false;
+        classesAboutOtherSubjects.removeAllMatching([&](const ClassAboutSubject& entry) {
+            if (entry.subject != lastSubject) {
+                lastSubject = entry.subject;
+                lastSubjectIsNeverConfined = isNeverConfined(lastSubject);
+            }
+            if (!lastSubjectIsNeverConfined)
+                return false;
+            groups[entry.group].aboutObjectsNeverConfined.set(entry.killClass);
+            classesAboutSubjectsNeverConfined.append(entry);
+            return true;
+        });
+    };
 
     auto findKilledClassesOneByOne = [&](KillQuery& query, EdgeKind edge) -> BitVector {
         Vector<std::optional<WrittenLocations>, 8> writtenOfLocations(m_dependedLocations.size());
@@ -978,14 +1114,65 @@ void GuardAvailability::collectKills(const BitVector& wantedKillClasses) const
         return killed;
     };
 
+    // A large body has thousands of calls and a few dozen different effects.
+    struct AnswerForEffects {
+        Effects effects;
+        // But for the proofs about the other subjects.
+        BitVector killed;
+        bool hangsOnObjects { false };
+        Vector<WrittenLocations, 8> writtenOfGroups;
+    };
+    Vector<AnswerForEffects, 8> answersForEffects;
+
     Vector<WrittenLocations, 8> writtenOfGroups;
+    uint64_t numberOfQuestions = 0;
     auto findKilledClasses = [&](KillQuery& query, const Effects& effects, EdgeKind edge) -> BitVector {
+        ++numberOfQuestions;
         if (effects.maySuspend)
             return added;
 
         BitVector killed;
+        auto askAbout = [&](std::span<const ClassAboutSubject> entries, NOESCAPE const Invocable<bool(WrittenLocations&)> auto& isDecided) {
+            numberOfQuestions += entries.size();
+            for (const ClassAboutSubject& entry : entries) {
+                WrittenLocations& written = writtenOfGroups[entry.group];
+                if (written.extent != WriteExtent::AboutSomeObjects || isDecided(written))
+                    continue;
+                if (query.mayEndProofAbout(entry.subject, entry.comesFromOutside, written))
+                    killed.set(entry.killClass);
+            }
+        };
+        auto askAboutOtherSubjects = [&] {
+            askAbout(classesAboutOtherSubjects.span(), [](WrittenLocations&) {
+                return false;
+            });
+        };
+        auto checked = [&](BitVector&& result) {
+            if (m_analyses.context().build.options().verifiesAfterEveryPass) [[unlikely]]
+                RELEASE_ASSERT(result == findKilledClassesOneByOne(query, edge));
+            return WTF::move(result);
+        };
+
+        const bool isJudgedByEffectsAlone = query.isJudgedByEffectsAlone(edge);
+        if (isJudgedByEffectsAlone) {
+            for (const AnswerForEffects& answer : answersForEffects) {
+                if (answer.effects != effects)
+                    continue;
+                killed = answer.killed;
+                if (answer.hangsOnObjects && !classesAboutOtherSubjects.isEmpty()) {
+                    writtenOfGroups = answer.writtenOfGroups;
+                    for (WrittenLocations& written : writtenOfGroups)
+                        written.edge = edge;
+                    askAboutOtherSubjects();
+                }
+                return checked(WTF::move(killed));
+            }
+        }
+
         bool hangsOnObjects = false;
+        bool asksAboutObjectsThatWritesBeyondOperandsReach = false;
         writtenOfGroups.shrink(0);
+        numberOfQuestions += groups.size();
         for (const ClassesOfLocations& classes : groups) {
             writtenOfGroups.append(query.writtenOf(m_dependedLocations[classes.locations], edge));
             WrittenLocations& written = writtenOfGroups.last();
@@ -1001,24 +1188,30 @@ void GuardAvailability::collectKills(const BitVector& wantedKillClasses) const
                     written.extent = WriteExtent::None;
                     break;
                 }
-                if (query.mayWriteBeyondOperands(written))
+                findSubjectsNeverConfined();
+                if (query.mayWriteBeyondOperands(written)) {
                     killed.merge(classes.aboutObjectsFromOutside);
+                    killed.merge(classes.aboutObjectsNeverConfined);
+                } else
+                    asksAboutObjectsThatWritesBeyondOperandsReach = true;
                 hangsOnObjects = true;
                 break;
             }
         }
-        if (hangsOnObjects) {
-            for (const ClassAboutSubject& entry : classesAboutSubjects) {
-                WrittenLocations& written = writtenOfGroups[entry.group];
-                if (written.extent != WriteExtent::AboutSomeObjects || (entry.comesFromOutside && query.mayWriteBeyondOperands(written)))
-                    continue;
-                if (query.mayEndProofAbout(entry.subject, entry.comesFromOutside, written))
-                    killed.set(entry.killClass);
-            }
+        if (isJudgedByEffectsAlone) {
+            RELEASE_ASSERT(!asksAboutObjectsThatWritesBeyondOperandsReach);
+            answersForEffects.append(AnswerForEffects { effects, killed, hangsOnObjects, writtenOfGroups });
         }
-        if (m_analyses.context().build.options().verifiesAfterEveryPass) [[unlikely]]
-            RELEASE_ASSERT(killed == findKilledClassesOneByOne(query, edge));
-        return killed;
+        if (asksAboutObjectsThatWritesBeyondOperandsReach) {
+            auto isDecided = [&](WrittenLocations& written) {
+                return query.mayWriteBeyondOperands(written);
+            };
+            askAbout(classesAboutSubjectsFromOutside.span(), isDecided);
+            askAbout(classesAboutSubjectsNeverConfined.span(), isDecided);
+        }
+        if (hangsOnObjects)
+            askAboutOtherSubjects();
+        return checked(WTF::move(killed));
     };
 
     const CFG& cfg = m_analyses.cfg();
@@ -1040,13 +1233,14 @@ void GuardAvailability::collectKills(const BitVector& wantedKillClasses) const
         }
         if (mayKillOnThrow) {
             BitVector killed = findKilledClasses(query, effects.handler, EdgeKind::Handler);
-            for (size_t killClass : killed)
-                solution.killedOnThrow[block.index()].merge(m_killClasses[killClass].components);
+            if (!killed.isEmpty())
+                solution.killedOnThrow[block.index()].merge(solution.killSets[ensureKillSet(WTF::move(killed))].components);
         }
     }
+    m_analyses.context().build.statistics().count(StatisticID::QuestionsAboutWhoEndsGuards, numberOfQuestions);
 }
 
-void GuardAvailability::addKill(BlockID block, uint32_t index, BitVector&& killClasses) const
+uint32_t GuardAvailability::ensureKillSet(BitVector&& killClasses) const
 {
     Solution& solution = m_solution;
     uint32_t hash = killClasses.hash();
@@ -1061,9 +1255,13 @@ void GuardAvailability::addKill(BlockID block, uint32_t index, BitVector&& killC
         solution.killSets.append(KillSet { WTF::move(killClasses), WTF::move(components) });
         solution.killSetIndex.add(hash, *killSet);
     }
+    return *killSet;
+}
 
-    Kill kill { index, *killSet };
-    Vector<Kill>& kills = solution.killsOfBlock[block.index()];
+void GuardAvailability::addKill(BlockID block, uint32_t index, BitVector&& killClasses) const
+{
+    Kill kill { index, ensureKillSet(WTF::move(killClasses)) };
+    Vector<Kill>& kills = m_solution.killsOfBlock[block.index()];
     if (kills.isEmpty() || kills.last().index <= index) {
         kills.append(kill);
         return;

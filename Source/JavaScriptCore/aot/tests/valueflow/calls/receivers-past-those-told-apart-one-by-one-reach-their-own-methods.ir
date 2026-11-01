@@ -1,15 +1,14 @@
 # class A { m() { this.x } }  class B { m() { this.x } }  class C { m() { this.x } }  function run(o) { o.m() }  run(new A()); run(new B()); run(new C())
-# as-many-receivers-as-are-told-apart-reach-their-own-methods.ir with one receiver more than the analysis tells apart. The loss is that one receiver: the first two are told apart as before,
-# so no method sees an instance of A or of B but their own, and the instance of C, which is past the limit, is passed to every callee.
+# as-many-receivers-as-are-told-apart-reach-their-own-methods.ir with one receiver more than the analysis tells apart one by one. From there on it looks at the receivers of one layout together,
+# and each of the three has a layout to itself: nothing is lost, and no method sees an instance but its own.
 # OPTIONS: limit=MaxValueFlowMembersToldApart:2
-# LOSS: MaxValueFlowMembersToldApart x1 f7 v2
 # RUN: valueflow-why values=f7:v2 values=f2:v1 values=f4:v1 values=f6:v1
 # CHECK: values=f7:v2
 # CHECK: operand 1 {{*}} 3 members: [[a]] [[b]] [[c]]
 # CHECK: values=f2:v1
-# CHECK: operand 0 {{*}} 2 members: [[a]] [[c]]
+# CHECK: operand 0 {{*}} 1 members: [[a]]
 # CHECK: values=f4:v1
-# CHECK: operand 0 {{*}} 2 members: [[b]] [[c]]
+# CHECK: operand 0 {{*}} 1 members: [[b]]
 # CHECK: values=f6:v1
 # CHECK: operand 0 {{*}} 1 members: [[c]]
 

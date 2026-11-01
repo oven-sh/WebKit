@@ -238,9 +238,15 @@ static bool appendArrayLike(JSGlobalObject* globalObject, VM& vm, MarkedArgument
         return false;
     }
     JSObject* object = asObject(list);
+    // A mapped arguments object of which nothing was overridden has its length and its elements as plain data.
+    auto* mapped = dynamicDowncast<DirectArguments>(object);
+    if (mapped && mapped->overrodeThings())
+        mapped = nullptr;
     uint64_t length;
     if (auto* array = dynamicDowncast<JSArray>(object)) [[likely]]
         length = array->length();
+    else if (mapped)
+        length = mapped->internalLength();
     else {
         length = toLength(globalObject, object);
         RETURN_IF_EXCEPTION(scope, false);
@@ -249,9 +255,14 @@ static bool appendArrayLike(JSGlobalObject* globalObject, VM& vm, MarkedArgument
         throwStackOverflowError(globalObject, scope);
         return false;
     }
-    for (uint64_t index = 0; index < length; ++index) {
-        arguments.append(object->getIndex(globalObject, index));
-        RETURN_IF_EXCEPTION(scope, false);
+    if (mapped) {
+        for (uint32_t index = 0; index < length; ++index)
+            arguments.append(mapped->getIndexQuickly(index));
+    } else {
+        for (uint64_t index = 0; index < length; ++index) {
+            arguments.append(object->getIndex(globalObject, index));
+            RETURN_IF_EXCEPTION(scope, false);
+        }
     }
     if (arguments.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
@@ -457,6 +468,29 @@ static JSArray* tryCopyUnmappedArguments(Instance* instance, JSValue arrayLike)
     return list;
 }
 
+// So has a mapped one of which nothing was overridden.
+static JSArray* tryCopyMappedArguments(Instance* instance, JSValue arrayLike)
+{
+    AOT_THRESHOLD(uint32_t, maxLengthCopied, 64);
+    VM& vm = *instance->vm;
+    auto* arguments = arrayLike.isCell() ? dynamicDowncast<DirectArguments>(arrayLike.asCell()) : nullptr;
+    if (!arguments || arguments->overrodeThings() || arguments->internalLength() > maxLengthCopied)
+        return nullptr;
+    uint32_t count = arguments->internalLength();
+    for (uint32_t i = 0; i < count; ++i) {
+        if (!arguments->getIndexQuickly(i))
+            return nullptr;
+    }
+    ObjectInitializationScope initializationScope(vm);
+    JSArray* list = JSArray::tryCreateUninitializedRestricted(initializationScope, instance->globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), count);
+    if (!list)
+        return nullptr;
+    for (uint32_t i = 0; i < count; ++i)
+        list->initializeIndexWithoutBarrier(initializationScope, i, arguments->getIndexQuickly(i), ArrayWithContiguous);
+    ensureStillAliveHere(arguments);
+    return list;
+}
+
 // Function.prototype.apply up to the call: the callee is tested before the list is read.
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArgumentList, JSCell*, (Instance* instance, EncodedJSValue callee, EncodedJSValue arrayLike))
 {
@@ -466,6 +500,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArgumentList, JSCell*, (Instance* instan
     if (!function.isCallable())
         OPERATION_RETURN(scope, constructEmptyArray(globalObject, nullptr));
     if (JSArray* list = tryCopyUnmappedArguments(instance, JSValue::decode(arrayLike)))
+        OPERATION_RETURN(scope, list);
+    if (JSArray* list = tryCopyMappedArguments(instance, JSValue::decode(arrayLike)))
         OPERATION_RETURN(scope, list);
     MarkedArgumentBuffer arguments;
     bool didAppend = appendArrayLike(globalObject, vm, arguments, JSValue::decode(arrayLike));
@@ -776,6 +812,33 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Instance* i
     OPERATION_RETURN(scope);
 }
 
+static bool tryListLandingOfMisfit(LandingsOfMisfits& landings, const LandingOfMisfit& listed)
+{
+    if ((landings.numberOfEntriesFilled + 1) * 2 > landings.numberOfPlaces())
+        return false;
+    LandingOfMisfit* entry = landings.placeOf(listed.returnAddress);
+    while (entry->returnAddress)
+        ++entry;
+    if (entry == landings.entries + 2 * landings.numberOfPlaces() - 1)
+        return false;
+    *entry = listed;
+    ++landings.numberOfEntriesFilled;
+    return true;
+}
+
+static void listLandingOfMisfit(Instance& instance, const LandingOfMisfit& listed)
+{
+    LandingsOfMisfits& landings = instance.scratch.landingsOfMisfits;
+    while (!tryListLandingOfMisfit(landings, listed)) {
+        std::span former = unsafeMakeSpan(landings.entries, landings.numberOfEntriesFilled ? 2 * landings.numberOfPlaces() : 0);
+        for (size_t numberOfPlaces = std::max(LandingsOfMisfits::leastNumberOfPlaces, 2 * landings.numberOfPlaces());; numberOfPlaces *= 2) {
+            landings = { instance.state->tableArena.allocate<LandingOfMisfit>(2 * numberOfPlaces), (numberOfPlaces - 1) << LandingsOfMisfits::shiftOfAddress, 0, { } };
+            if (std::ranges::all_of(former, [&](const LandingOfMisfit& entry) { return !entry.returnAddress || tryListLandingOfMisfit(landings, entry); }))
+                break;
+        }
+    }
+}
+
 // A caller that relies on the type has a landing for what is not of it. Any other caller takes whatever is returned, at its return address.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindLandingOfMisfit, void*, (Instance* instance, void* returnAddress, EncodedJSValue misfit))
 {
@@ -783,10 +846,14 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindLandingOfMisfit, void*, (Insta
     const CallSiteCache::Entry* site = state.callSiteCache->find(returnAddress);
     if (!site)
         site = state.callSiteCache->resolve(*state.image, returnAddress);
-    if (!site || site->isStubReturnSite() || !site->handler || site->handler->catchesExceptions())
-        return returnAddress;
-    instance->scratch.misfit = misfit;
-    return const_cast<uint8_t*>(state.image->codeOf(site->code.index())) + site->handler->codeOffset;
+    void* landing = returnAddress;
+    if (site && !site->isStubReturnSite() && site->handler && !site->handler->catchesExceptions()) {
+        instance->scratch.misfit = misfit;
+        landing = const_cast<uint8_t*>(state.image->codeOf(site->code.index())) + site->handler->codeOffset;
+    }
+    // The stub finds it there the next time.
+    listLandingOfMisfit(*instance, { returnAddress, landing });
+    return landing;
 }
 
 // `amongImages`: in a VM that runs several images, where the handler may be in a frame of another image than the throw. A program of one image pays nothing for that.

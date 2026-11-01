@@ -13,6 +13,7 @@
 #include "AOTIRForm.h"
 #include "AOTIRFunction.h"
 #include "AOTLayout.h"
+#include "AOTListsBelow.h"
 #include "AOTProvisionalFunctions.h"
 #include "AOTSchemaRecords.h"
 #include "AOTStringTable.h"
@@ -93,6 +94,23 @@ public:
     Vector<ExpectedResult> expectedResults;
     Vector<Layout> layouts;
     Vector<TaggedFamily> taggedFamilies;
+    // A record that the code of an image below makes and that meets a type of this program. Its slots and its shapes are those that the image gives it. By rising layout, one behind the other.
+    struct RecordOfImageBelow {
+        LayoutID layout;
+        unsigned image { 0 };
+        uint32_t firstShape { 0 };
+        uint32_t numberOfShapes { 0 };
+        bool isInstanceOfClass { false };
+        // By field: the layouts of the objects that the image lets into the slot, where it lets in no other object and each of them is listed here too.
+        Vector<std::optional<Vector<LayoutID>>> objectsInFields;
+    };
+    Vector<RecordOfImageBelow> recordsOfImagesBelow;
+    const RecordOfImageBelow* findRecordOfImageBelow(LayoutID id) const
+    {
+        if (recordsOfImagesBelow.isEmpty() || id.index() < recordsOfImagesBelow.first().layout.index() || id.index() > recordsOfImagesBelow.last().layout.index())
+            return nullptr;
+        return &recordsOfImagesBelow[id.index() - recordsOfImagesBelow.first().layout.index()];
+    }
     // A parameter whose declared type is a function type with known parameter types. Sorted.
     struct DeclaredCallback {
         FunctionID function;
@@ -184,8 +202,6 @@ public:
     LayoutSetID declaredMembersOf(LayoutID id) const { return m_derivedTables.declaredMembers[id.index()]; }
     bool hasDeclaredMembers(LayoutID id) const { return id.index() < m_derivedTables.declaredMembers.size() && m_derivedTables.declaredMembers[id.index()]; }
     void setDeclaredMembers(LayoutID, LayoutSetID);
-    CalleeSetID familyOf(FunctionID asRead) const { return m_derivedTables.functionFamilies[asRead.index()]; }
-    void setFunctionFamilies(Vector<CalleeSetID>&& families) { m_derivedTables.functionFamilies = WTF::move(families); }
     const Vector<PropertyKeyID>* keysStoredThroughUnknownReceivers() const { return m_keysStoredThroughUnknownReceivers ? &*m_keysStoredThroughUnknownReceivers : nullptr; }
     void setKeysStoredThroughUnknownReceivers(Vector<PropertyKeyID>&& ascendingKeys) { m_keysStoredThroughUnknownReceivers = WTF::move(ascendingKeys); }
     bool mayBeStoredThroughUnknownReceiver(PropertyKeyID) const;
@@ -234,9 +250,8 @@ private:
     struct DerivedTables {
         Vector<LayoutID> builtinLayouts;
         Vector<LayoutSetID> declaredMembers;
-        Vector<CalleeSetID> functionFamilies;
-        Vector<Vector<LayoutID>> layoutsBelow;
-        Vector<Vector<LayoutID>> layoutsExpectedBelow;
+        ListsBelow<LayoutID> layoutsBelow;
+        ListsBelow<LayoutID> layoutsExpectedBelow;
         Vector<uint32_t> firstLayoutWithName;
         Vector<LayoutID> layoutsWithName;
         Vector<LayoutID> declarersOfName;
@@ -307,6 +322,8 @@ bool requireMayAnswerWithMock(const Program&, const Module&);
 bool requireReadsModuleValue(const Program&, const Module&);
 // overridableRequire() in CommonJS.ts.
 bool requireAddsToRequireCache(const Program&, ModuleID referrer, ModuleID target);
+// createRequireCache() in CommonJS.ts also lists what the loader holds, unless the name begins with `node:` or `bun:`. Modules::libraryModulesInRequireCache().
+Vector<ModuleID> libraryModulesListedInRequireCacheForStatements(const Program&);
 // From SplitCoroutines on.
 bool isBodyOfModuleEvaluatedByRequire(const Program&, const Function&);
 

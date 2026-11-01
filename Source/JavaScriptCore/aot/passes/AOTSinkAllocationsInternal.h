@@ -223,6 +223,7 @@ enum class ReturnedObjects : uint8_t { AreBuilt, StayVirtual };
 
 // An analysis goes through the function about this often: the solver until its decisions stand, a count, and both again for each round of candidates given up.
 inline constexpr uint64_t expectedNumberOfSweeps = 16;
+inline constexpr uint64_t timesTheWorkThatOneSweepMayTake = 4;
 
 class Heat;
 
@@ -312,7 +313,7 @@ struct SinkingInputs {
     BitVector mergeBlocks;
     BitVector blocksWithCandidates;
     BitVector blocksWithJoins;
-    // Each block's handler block, as the function was read.
+    // Each block's handler block, as the function was read. A handler that only makes stores and throws the error again stands for the handler that gets the error from it.
     Vector<BlockID> handlers;
     bool hasOperationsOnSlots { false };
     bool hasObjectsGivenPrototypes { false };
@@ -463,6 +464,7 @@ public:
     bool duplicateLiveRange(IRBuilder&);
     bool testElementsOfLists(IRBuilder&);
     void rewrite(IRBuilder&, const FreshResultShape* = nullptr);
+    void letTestsAwaitClassesOfObjectsThatAreNotMade(IRBuilder&);
     void raiseFrequenciesBehindDecidedBranches();
     void recordLosses();
     void countStatistics();
@@ -540,11 +542,16 @@ public:
         return !edge.isHandlerEdge() && m_ignoredEdges.isEmpty() && !m_names.terminatorsMentioningNames.quickGet(edge.from.index()) && !m_names.blocksBindingNames.quickGet(target.index());
     }
     bool checksShortcuts() const { return m_checksShortcuts; }
+    bool checksThatModesAgree() const { return m_checksThatModesAgree; }
+    // For that check: what the analysis last found dead on an edge. The other modes keep it where the head has it from another edge.
+    void setObjectsDeadOnEdge(Edge, Vector<VirtualObjectID, 4>&&);
+    bool isDeadOnEdge(Edge, VirtualObjectID) const;
     const BitVector& loadableFieldsOf(VirtualObjectID);
     bool storesByNameWaitIn(BlockID) const;
     bool mayGetTests(BlockID) const;
     // The object has to be built where no store by name may stand. It is built where the store stands instead, in the rare arm, as an object that takes no such value always was.
     void refuseUnprovenValues(VirtualObjectID);
+    void letStoresByNameWait(VirtualObjectID);
     void didStoreUndefinedOrNull(VirtualObjectID, uint32_t field);
     const SinkingState* headOf(BlockID) const;
     // What can be said of the state at a head without making one for a block that is entered with nothing.
@@ -583,6 +590,7 @@ public:
     void startWorkOver() { m_work = 0; }
     void didCarry(VirtualObjectID object) { ++m_blocksCarrying[object.index()]; }
     bool hasSpentItsWork() const { return m_work > m_maxWork; }
+    bool hasSpentMoreThanOneSweepMayTake() const { return m_work > m_maxWork * timesTheWorkThatOneSweepMayTake; }
     bool hasStartedOverWithFewerCandidates() const { return m_hasStartedOverWithFewerCandidates; }
     bool exceeds(LimitID, uint64_t amount, ValueID);
     void abandon(VirtualObjectID, LimitID = LimitID::None);
@@ -597,6 +605,7 @@ public:
     void didBuildAfterMerge(VirtualObjectID, BlockID mergeBlock);
     bool buildCycleBeforeBranches(const SinkingState&, VirtualObjectID holder, VirtualObjectID held);
     void buildUnderHandler(VirtualObjectID);
+    bool leaveMakingsThatMayThrowUnderTheirHandlers(VirtualObjectID, BlockID whereNeeded);
     BlockID handlerOf(BlockID block) const { return m_inputs.handlers[block.index()]; }
     bool mayBeListOfNumbers(VirtualObjectID) const;
     void didTestListThatMayNotFit(ValueID literal) { m_testedListsThatMayNotFit.appendIfNotContains(literal); }
@@ -676,6 +685,7 @@ private:
     const Program& m_program;
     const Function& m_function;
     const SinkingPolicy m_policy;
+    Vector<std::optional<VirtualConstant>> m_constantsBeforeRewriting;
     const VirtualObjectContext m_objectContext;
     Vector<Candidate> m_candidates;
     Vector<VirtualObjectID> m_candidateOfValue;
@@ -704,6 +714,8 @@ private:
     };
     Vector<LoadableFields> m_loadableFields;
     const bool m_checksShortcuts;
+    const bool m_checksThatModesAgree;
+    UncheckedKeyHashMap<uint64_t, Vector<VirtualObjectID, 4>> m_objectsDeadOnEdges;
     bool m_buildsSomeObjectBeforeBranches { false };
     bool isEnteredWithNothing(BlockID block) const { return m_blocksEnteredWithNothing.get(block.index()); }
 

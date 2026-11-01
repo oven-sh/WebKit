@@ -71,7 +71,7 @@ StubRecording StubAssembler::generateBody(StubKey body, const ScopedLambda<void(
 
     m_key = body;
     m_callPosition = CallPosition::Ordinary;
-    m_signature = signatureOf(body);
+    m_signature = signatureOf(key());
     m_recording = { };
     m_recording.body = body;
     m_allocated = RegisterSet();
@@ -497,6 +497,9 @@ void StubAssembler::callStub(StubKey target)
 
 void StubAssembler::linkToStub(Jump jump, StubKey target)
 {
+    // The stub that is jumped to returns to the same caller.
+    if (hasFrameAndKeepsFewerRegisters(m_key.callerFrame()) && target.callerFrame() == CallerFrame::HasFrame && exists(target.withCallerFrame(m_key.callerFrame())))
+        target = target.withCallerFrame(m_key.callerFrame());
     addReference(target, StubReference::Kind::Jump);
     m_pendingJumps.append({ jump, target });
 }
@@ -546,7 +549,7 @@ void StubAssembler::callThroughHandlerTable(BaseIndex tableEntry, std::span<cons
 
 void StubAssembler::bindEntryAt(StubKey entry, Label location)
 {
-    if (!exists(entry) || bodyOf(entry) != key())
+    if (!exists(entry) || bodyOf(entry) != m_key)
         crashWhileGenerating("it binds an entry of another body"_s);
     if (!m_entryLabels.add(entry.bits(), location).isNewEntry)
         crashWhileGenerating("an entry is bound twice"_s);

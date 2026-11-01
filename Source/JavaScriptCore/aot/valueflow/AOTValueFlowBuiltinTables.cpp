@@ -21,6 +21,10 @@
 #include "AOTVector.h"
 #include <algorithm>
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr Protocols protocolsWithoutHub { Protocol::OwnKeys, Protocol::PrototypeChain, Protocol::Species };
@@ -530,7 +534,10 @@ void ValueFlowBuiltinTables::makeSets(const Program& program, const ValueFlowUni
         ValueSetID whilePristine = ValueSets::nothing;
         ValueSetID classesSurelyOfType = ValueSets::nothing;
         ValueSetID classesWhilePristine = ValueSets::nothing;
+        ValueSetID classesNamedByType = ValueSets::nothing;
         for (const BuiltinTypePart& part : type.parts) {
+            if (part.kind == BuiltinTypePartKind::Instance)
+                classesNamedByType = maker.unite(classesNamedByType, standingForClassAndThoseBelow(part.builtinClass));
             if (part.kind != BuiltinTypePartKind::Instance || !part.contents.empty())
                 continue;
             if (part.pristine.isEmpty())
@@ -542,6 +549,7 @@ void ValueFlowBuiltinTables::makeSets(const Program& program, const ValueFlowUni
         }
         m_membersOfTypeWhilePristine.append(whilePristine);
         m_classesSurelyOfType.append(classesSurelyOfType);
+        m_classesNamedByType.append(classesNamedByType);
         m_classesOfTypeWhilePristine.append(classesWhilePristine);
         m_classesThatMayBeOfType.append(classesThatMayBeOf(type));
 
@@ -560,5 +568,9 @@ void ValueFlowBuiltinTables::makeSets(const Program& program, const ValueFlowUni
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

@@ -1,0 +1,23 @@
+# const rule = { pattern: 1 }; Object.defineProperty(rule, "regex", { value: 2, enumerable: false }); rule.regex
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Rule" fields=[{key="pattern" {{*}}{key="regex" {{*}}flags=[IsAddedLate{{*}}form=[IsReadOnly, IsNotEnumerable, IsNotConfigurable]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Rule" fields=[{key="pattern" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="PropertyDescriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}, {key="enumerable" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectDefineProperty
+    v5 = String string="regex"
+    v6 = Integer integer=2
+    v7 = Boolean
+    v8 = NewObject -, v6, v7 layout=L1 fields=[0, 1]
+    v9 = FinishObject v8
+    v10 = Call v4, v3, v2, v5, v9
+    v11 = PropGet v2 key="regex"
+    Return
+}

@@ -1286,7 +1286,7 @@ FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
         body.function.setValuesAreTypedAsDefined();
     // insertRuntimeValidation() validates every claim that it finds.
     assumeTypesOfPositionsAtStores(body.program, body.function, body.types, analyses, builder, ValidatesClaims::No);
-    if (body.build.validates())
+    if (body.build.checksClaimsOfFlow())
         insertRuntimeValidation(insertion);
 
     counts.remainingChecks = countChecks(body.function);

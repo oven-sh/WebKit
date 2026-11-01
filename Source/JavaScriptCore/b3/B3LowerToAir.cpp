@@ -7313,7 +7313,7 @@ private:
             Value* phi = m_value->as<UpsilonValue>()->phi();
             if (value->type().isNumeric()) {
                 Arg source = immOrTmpOrZeroReg(value);
-                if (source.isTmp() && m_phisKeptZeroExtended.contains(phi) && mayHaveUpperHalf(value)) {
+                if (m_phisKeptZeroExtended.contains(phi) && (source.isZeroReg() || (source.isTmp() && mayHaveUpperHalf(value)))) {
                     append(Move32, source, m_phiToTmp[phi]);
                     return;
                 }

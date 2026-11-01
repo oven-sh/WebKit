@@ -2080,9 +2080,10 @@ struct OutliningScan {
     }
 
     // In cold code an access by key or by name, a comparison, a test for truth and a call of a value are the moves of their operands and one call of a stub: what a call of a function is. As a function of its own it gets a frame and two more jumps each time it runs.
+    // So is the append of a list or of the members of a set, and away from the literal that it fills the list is no longer made with them in it.
     bool isOneCallOfStub(const OutliningSite& site)
     {
-        static constexpr OpcodeSet callsOfOneStub { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemDelete, Opcode::PropGet, Opcode::PropSet, Opcode::StrictEq, Opcode::ToBoolean };
+        static constexpr OpcodeSet callsOfOneStub { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemDelete, Opcode::PropGet, Opcode::PropSet, Opcode::StrictEq, Opcode::ToBoolean, Opcode::AppendElements, Opcode::AppendMembers };
         if (site.isRegion())
             return false;
         auto passesConstantThatTakesCode = [&](const Value& call) {

@@ -8,7 +8,7 @@
 # NEVER-NOT: index=L1 kind=Instance
 # NEVER: class index=L1 shape=0 base=-
 # SLOTS: L0 CompiledObject
-# SLOTS-NEXT: .0 "y" Optional
+# SLOTS-NEXT: .0 "y" JSValue
 # SLOTS-NOT: L1 CompiledObject
 
 module m0 path="main.js" displayPath="main.js" body=f0

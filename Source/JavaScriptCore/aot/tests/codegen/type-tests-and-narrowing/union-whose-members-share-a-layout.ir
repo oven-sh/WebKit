@@ -152,11 +152,11 @@ function f1 name="evaluate" module=m0 position=131 flags=[IsChecked, HasExplicit
     Return v28
 }
 
-# Two of the three members have the same fields, so they are one layout, and the tag tells all three apart. It is one byte, loaded once and compared twice. No arm tests the shape, and every field is a plain load.
+# Two of the three members have the same fields, so they are one layout, and the tag tells all three apart. It is loaded once and compared twice. No arm tests the shape, and every field is a plain load.
 # CHECK-LABEL: name="evaluate" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NEXT: Int64 b@[[node]] = ArgumentReg(
-# CHECK-NEXT: Int32 b@[[op]] = Load8Z(b@[[node]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Int32 b@[[op]] = Load(b@[[node]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # CHECK: Int32 b@[[isSum]] = Equal(b@[[op]], $1(
 # CHECK-NEXT: Branch(b@[[isSum]], Terminal
 # CHECK-NEXT: Successors: Then:#[[sum]], Else:#[[others]]

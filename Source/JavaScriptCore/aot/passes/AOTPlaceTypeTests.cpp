@@ -254,7 +254,9 @@ static void shareConditionsTests(FunctionPassContext& context, TestSites& sites)
         const BlockValues& values = function.at(block).values;
         for (uint32_t index = 0; index < values.size(); ++index) {
             if (rest.empty() || rest.front().point.block != block || rest.front().point.index != index) {
-                if (!testsOfObjects.isEmpty() && mayEndMemberConditions(context.analyses.effectsOf(values[index]).normal))
+                // An object that is asked about is there already, so its class has begun: the first object of another class ends nothing that is said of it.
+                bool onlyBeginsClass = function.at(values[index]).opcode == Opcode::NewObject && !function.at(values[index]).prototypeOperand();
+                if (!testsOfObjects.isEmpty() && !onlyBeginsClass && mayEndMemberConditions(context.analyses.effectsOf(values[index]).normal))
                     shareTestsOfObjects();
                 continue;
             }
@@ -672,8 +674,10 @@ static TestSites collectTestSites(FunctionPassContext& context)
         if (ValueID receiver = findReceiverWithGuessedLayout(context, sites, site); receiver && arrivesWithoutLayoutOfProgram(context, site.point.block, receiver))
             return true;
         // What a plain function without a layout constructs arrives as the receiver. A test for a layout would turn it away, and what stands behind the test would run in the copy.
+        // Behind a test that has turned it away already, it arrives no more.
         const Value& use = context.function.at(site.use);
-        if (PayloadWord::accessSite(use.opcode) && use.accessSite() && context.inputs.flow.lossOf(use.accessSite()).seesConstructedObject && asksOnlyForLayouts(context, sites, site))
+        bool isTurnedAwayInFront = receiverOf(use.opcode) && context.program.typeOf(context.function, use.operand(*receiverOf(use.opcode))).hasOnlyLayouts();
+        if (PayloadWord::accessSite(use.opcode) && use.accessSite() && context.inputs.flow.lossOf(use.accessSite()).seesConstructedObject && asksOnlyForLayouts(context, sites, site) && !isTurnedAwayInFront)
             return true;
         // Tests that say nothing of the member pass for the objects that lack it alone, and whoever reads a name expects an object that has it.
         if (holdsMemberUnderSymbolOfProgram(context.program, sites.testsOf(site)) ? !paysToTestMembersUnderSymbolsOfProgram(context, site.point.block) : readsMemberUnderSymbolOfProgram(context, use).predicted())
@@ -921,6 +925,15 @@ static Vector<HoistedTest> findHoistedTests(FunctionPassContext& context, const 
         return operands;
     };
 
+    auto boundsCounterThatEntersBy = [&](ValueID comparison, const NaturalLoop& loop, BlockID join) {
+        return std::ranges::any_of(analyses.inductionVariables().of(loop).variables, [&](const InductionVariable& counter) {
+            if (!counter.start || !std::ranges::contains(counter.tests, comparison, &InductionTest::comparison))
+                return false;
+            ValueLocation start = useLists.locationOf(analyses.identityOf(counter.start));
+            return start.placement == ValuePlacement::Parameter && start.block == join;
+        });
+    };
+
     BitVector isOffered;
     Vector<HoistedTest> hoistedTests;
     for (uint32_t first = 0, end = 0; first < requirements.size(); first = end) {
@@ -928,9 +941,12 @@ static Vector<HoistedTest> findHoistedTests(FunctionPassContext& context, const 
             ++end;
         std::span<const TestRequirement> site = requirements.subspan(first, end - first);
         BlockID useBlock = site.front().point.block;
+        const NaturalLoop* loopInside = nullptr;
         for (const NaturalLoop* loop = loops.innerMostLoopOf(useBlock); loop; loop = loops.innerMostOuterLoop(*loop)) {
-            if (isClosedOnlyByWaysBack(analyses, *loop).predicted())
+            bool isClosedByWaysBack = isClosedOnlyByWaysBack(analyses, *loop).predicted();
+            if (isClosedByWaysBack && (!loopInside || !boundsCounterThatEntersBy(sites.sites[site.front().site].use, *loopInside, loop->header()) || findLoopOfWaysBackInto(analyses, *loopInside) != loop))
                 continue;
+            loopInside = loop;
             SiteOperands operands;
             bool canLeaveLoop = false;
             for (uint32_t index = 0; index < site.size(); ++index) {
@@ -945,6 +961,8 @@ static Vector<HoistedTest> findHoistedTests(FunctionPassContext& context, const 
             for (uint32_t edgeIndex = 0; edgeIndex < entry.edges.size(); ++edgeIndex) {
                 size_t firstBit = static_cast<size_t>(entry.firstEdgeNumber + edgeIndex) * conditions.size();
                 for (uint32_t index = 0; index < site.size(); ++index) {
+                    if (isClosedByWaysBack && !conditions.at(site[index].condition).lastsForever())
+                        continue;
                     if (operands[index] && isOffered.add(firstBit + site[index].condition.index()))
                         hoistedTests.append(HoistedTest { entry.edges[edgeIndex], first + index, site[index].condition, *operands[index] });
                 }
@@ -3142,7 +3160,7 @@ struct TestPlacer {
         emitTests();
         rewriteUses();
         if (copy)
-            copy->addWaysBack(changedValues.span(), GenericCopy::TypesTestedOnWayBack::Expected);
+            copy->addWaysBack(changedValues, GenericCopy::TypesTestedOnWayBack::Expected);
         enterCopyBeforeRepeatableCode();
         repairProofs();
         replaceDominatedUses();
@@ -5440,6 +5458,9 @@ static PassOutcome testLoopParametersInFrontOfLoops(FunctionPassContext& context
         // Other passes fold what follows from the failed question into its arm: from then on the arm is the generic turn only for values that fail that question.
         bool isArmAsPlaced = testsPlacedInThisRun.get(header.terminator.conditionOperand().index());
         for (uint32_t parameterIndex = 0; parameterIndex < header.parameters.size(); ++parameterIndex) {
+            // In the loop the test stands behind the fact that the cast names. In front of the loop it would read through whatever the word holds.
+            if (typeOf(header.parameters[parameterIndex]).mayBeUnspecified())
+                continue;
             std::optional<TestInFrontOfLoop> test = findTestOfLoopParameter(context, loop, parameterIndex);
             if (!test || !(isArmAsPlaced || test->isQuestionOfHeader))
                 continue;

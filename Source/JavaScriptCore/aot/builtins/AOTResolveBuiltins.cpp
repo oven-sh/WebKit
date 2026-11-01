@@ -148,8 +148,9 @@ Vector<BuiltinSite> BuiltinResolver::collectSites()
         std::optional<TailCallRequirement> tailCall = tailCallRequirementOf(m_function, site.block, site.value);
         if (!tailCall && !mayFindProvenPlan(inputs, value)) {
             if (checksScreen) [[unlikely]] {
+                ScratchTypeArena types(m_context.program.types);
                 inputs.asksOnlyForProvenPlans = true;
-                RELEASE_ASSERT(!planBuiltinUse(inputs, site.value, site.point()).isProven());
+                RELEASE_ASSERT(!planBuiltinUse(inputs.withTypes(types), site.value, site.point()).isProven());
             }
             continue;
         }

@@ -1,0 +1,33 @@
+# Math.list = one; unknown = somethingNoTableLists; unknown[aKeyNoTableLists] = two; Math.list(); Math.other()
+# No road leads from the unknown object to `Math`. Nobody counts such roads. Where the program itself lays a name on the object, what a statement stores through the unknown object under a key nobody knows
+# may lie under that name too: two kinds of value would meet in one place. A name that the program never lays there stays empty.
+# RUN: valueflow-solve calls
+# CHECK: f0 v10 -> f1 f2
+# CHECK-NEXT: f0 v12 ->
+# RUN(NOTHING): valueflow-solve calls
+# NOTHING-NOT: f0 v12 -> {{*}}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
+    v0 = Builtin builtin=Math
+    v1 = NewClosure function=f1
+    PropSet v0, v1 key="list" mode=Strict
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="somethingThatNoTableLists" [isFreeName]
+    v5 = PropGet v3 key="aKeyThatNoTableLists" [isFreeName]
+    v6 = NewClosure function=f2
+    ElemSet v4, v5, v6 mode=Strict
+    v8 = PropGet v0 key="PI"
+    v9 = PropGet v0 key="list"
+    v10 = Call v9, v0
+    v11 = PropGet v0 key="other"
+    v12 = Call v11, v0
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+    Return
+}
+function f2 name="two" results=[{type=anything}] {
+    Return
+}

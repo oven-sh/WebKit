@@ -192,7 +192,7 @@ bool mayFindNameIn(const ValueFlowResultInputs& inputs, const ValueFlowHeapView&
     const ValueFlowMembersUnderKey& members = universe.builtinTables().heap().under(key);
     if (inputs.sets().meet(objects, members.holders) || inputs.sets().meet(objects, members.holdersOfUndeclaredProperties))
         return true;
-    for (ValueFlowName name : { ValueFlowName::property(program, key), ValueFlowName::getter(program, key), ValueFlowName::setter(program, key), unknownKeyName, ValueFlowName::of(ValueFlowNameKind::GetterUnderUnknownKey), ValueFlowName::of(ValueFlowNameKind::SetterUnderUnknownKey), copiedFromName }) {
+    for (ValueFlowName name : { ValueFlowName::property(program, key), ValueFlowName::getter(program, key), ValueFlowName::setter(program, key), unknownKeyName, ValueFlowName::of(ValueFlowNameKind::GetterUnderUnknownKey), ValueFlowName::of(ValueFlowNameKind::GetterUnderNameOfEnumeration), ValueFlowName::of(ValueFlowNameKind::SetterUnderUnknownKey), copiedFromName }) {
         if (heap.writtenUnder(maker, objects, name) != ValueSets::nothing)
             return true;
     }
