@@ -5926,7 +5926,7 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
         AOT_THRESHOLD(uint32_t, maxFoundAtOnce, 1 << 15);
         Vector<Vector<FoundStep>> foundInShare;
         auto findOnAllThreadsAndDo = [&](uint32_t count, const Invocable<void(uint32_t, unsigned, Vector<FoundStep>&)> auto& find, const Invocable<void(uint32_t)> auto& findAndDo) {
-            if (count < minFoundForAllThreads || m_makers.size() == 1) {
+            if (count < minFoundForAllThreads) {
                 for (uint32_t index = 0; index < count; ++index)
                     findAndDo(index);
                 return;
