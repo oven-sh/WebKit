@@ -71,7 +71,8 @@ public:
     AOT_CLASS_THRESHOLD(uint32_t, maxCapacityEmptiedByClear, 32);
     static constexpr uint32_t maxCapacityWithShortSlots = 254;
     static constexpr uint32_t maxCapacityWithLongSlots = 3 << 22;
-    static constexpr uint32_t maxCapacity = (1 << 28) - 2;
+    // Compiled code makes the size of the index in 32 bits: TableReader::keysOf().
+    static constexpr uint32_t maxCapacity = 3 << 26;
     static constexpr uint8_t keysAreWide = 0x80;
     static constexpr uint8_t keysAreInImage = 0x40;
     // Somebody may stand behind an entry of the table: an iterator or a loop that has taken one. Until then whoever holds the table has yet to take its first entry.
