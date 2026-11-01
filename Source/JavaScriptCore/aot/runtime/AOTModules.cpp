@@ -1200,10 +1200,11 @@ bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue
 
 bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue value, BitVector& seenBehindStars)
 {
-    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    // A scope stands in the two arms that call what may throw, and each leaves the function. One over the whole function would owe the callers a look where an export is merely not replaceable.
     // A chain of re-exports ends at the module that declares the variable. A ring of them names nothing.
     for (unsigned steps = 0; steps <= m_table.size(); ++steps) {
         if (m_instance.state->sharesRealm && data(module).isUncompiledCode()) [[unlikely]] {
+            auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
             keepExportOfOtherImageBeforeMock(module, name);
             RETURN_IF_EXCEPTION(scope, false);
             std::optional<bool> isReplaced = tryReplaceExportInImageBelow(module, name, value);
@@ -1214,6 +1215,7 @@ bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue
         }
         std::optional<unsigned> index = m_table.findExport(module, name);
         if (!index) {
+            auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
             if (data(module).hasDynamicStarExport() && !standsForWholeModule(module)) {
                 bool isReplaced = tryReplaceExportBehindStars(module, name, value, seenBehindStars);
                 RETURN_IF_EXCEPTION(scope, false);
@@ -1229,17 +1231,15 @@ bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue
                 return false;
             // `export { add } from "a-commonjs-package"` exports the variable that the name of the package is kept in, and the name stands in two more places.
             if (const SyntheticExportPlace* origin = syntheticExportKeptIn(moduleExport.variable))
-                RELEASE_AND_RETURN(scope, tryReplaceCapturedExport(origin->module, identifier(origin->name).impl(), value));
+                return tryReplaceCapturedExport(origin->module, identifier(origin->name).impl(), value);
             if (m_moduleWithMockBeingLaid) {
                 LoadedModule& mocked = ensureLoaded(*m_moduleWithMockBeingLaid);
                 if (!mocked.variablesBeforeMock)
                     mocked.variablesBeforeMock.set(*this, createTableOfExports());
                 Identifier place = Identifier::from(*m_instance.vm, moduleExport.variable.encoded());
                 JSValue replaced = ProgramStatics::readVariable(m_instance, moduleExport.variable);
-                if (replaced && !storedValue(m_instance.globalObject, mocked.variablesBeforeMock, place)) {
+                if (replaced && !storedValue(m_instance.globalObject, mocked.variablesBeforeMock, place))
                     mocked.variablesBeforeMock.get()->putDirectMayBeIndex(m_instance.globalObject, place, replaced);
-                    RETURN_IF_EXCEPTION(scope, false);
-                }
             }
             ProgramStatics::writeVariable(m_instance, moduleExport.variable, value);
             return true;
