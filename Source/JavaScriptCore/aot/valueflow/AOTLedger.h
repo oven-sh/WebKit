@@ -28,6 +28,7 @@ inline Actor actorOf(const ValueFlowStatement& statement, ValueFlowName name, bo
             return Actor::KeysNobodyKnows;
         return statement.kind == ValueFlowStatementKind::Operation && flowOf(statement.opcode) == ValueFlowEdgeClass::Allocates ? Actor::Creation : Actor::Statements;
     case ValueFlowStatementKind::Behavior:
+    case ValueFlowStatementKind::WalkOfBehavior:
     case ValueFlowStatementKind::UsedBuiltins:
         return Actor::Table;
     case ValueFlowStatementKind::Escape:

@@ -2734,6 +2734,10 @@ ValueFlowBody makeHostBody(const Program& program, const ValueFlowBuiltinTables&
         body.nodes.append({ ValueFlowBodyNodeKind::Merge, { }, 0 });
         body.statements.append({ { }, { }, 0, 0, ValueFlowNodeName::hub(ValueFlowBehaviorID(index)), { }, ValueFlowStatementKind::Behavior });
     }
+    for (uint32_t index = 0; index < tables.numberOfBehaviors(); ++index) {
+        if (tables.at(ValueFlowBehaviorID(index)).isTransitive && !tables.at(ValueFlowBehaviorID(index)).describesRefusedOperands)
+            body.statements.append({ { }, { }, 0, 0, ValueFlowNodeName::hub(ValueFlowBehaviorID(index)), { }, ValueFlowStatementKind::WalkOfBehavior });
+    }
     return body;
 }
 

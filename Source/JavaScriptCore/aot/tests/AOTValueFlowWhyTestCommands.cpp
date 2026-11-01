@@ -34,6 +34,8 @@ ASCIILiteral nameOf(ValueFlowStatementKind kind)
         return "CallGroup"_s;
     case ValueFlowStatementKind::Behavior:
         return "Behavior"_s;
+    case ValueFlowStatementKind::WalkOfBehavior:
+        return "WalkOfBehavior"_s;
     case ValueFlowStatementKind::Escape:
         return "Escape"_s;
     case ValueFlowStatementKind::ModuleEvaluation:
@@ -136,7 +138,7 @@ static void printStatement(PrintStream& out, const ValueFlowSolver& solver, Valu
     out.print(nameOf(statement.kind));
     if (statement.function)
         out.print(" f", statement.function.index());
-    if (statement.kind == ValueFlowStatementKind::Behavior)
+    if (statement.kind == ValueFlowStatementKind::Behavior || statement.kind == ValueFlowStatementKind::WalkOfBehavior)
         out.print(" n", statement.result.index());
     if (solver.isMadeByRule(id) && statement.kind != ValueFlowStatementKind::Escape) {
         out.print(" ");
