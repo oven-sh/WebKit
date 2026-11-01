@@ -1097,10 +1097,10 @@ static void parkedBodyKeepsWordsThatDifferByEverySize()
             for (unsigned index = 0; index < numberOfValues; ++index) {
                 visit(values[index].type, TypeID(nextWord()));
                 for (unsigned operand = 0; operand < index % 9; ++operand)
-                    visit(values[index], operand + 2, ValueID(nextWord()));
+                    visit(values[index], operand + 2, ValueID::fromBits(nextWord()));
             }
             for (Block& block : blocks)
-                visit(block.subject, ValueID(nextWord()));
+                visit(block.subject, ValueID::fromBits(nextWord()));
         };
         Function::Blocks::Storage blocks;
         Function::Values::Storage values;

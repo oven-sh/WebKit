@@ -45,7 +45,7 @@ static void idReservesAbsentAndDeletedValues()
 
 static void idHashIsIntegerHashOfIndex()
 {
-    for (uint32_t index : { 0u, 1u, 350000u, ValueID::hashTableDeletedIndex - 1 })
+    for (uint32_t index : { 0u, 1u, 350000u, ValueID::largestIndex })
         AOT_TEST_CHECK(DefaultHash<ValueID>::hash(ValueID(index)) == IntHash<uint32_t>::hash(index));
 }
 
