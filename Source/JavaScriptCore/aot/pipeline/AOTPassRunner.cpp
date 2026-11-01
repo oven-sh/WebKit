@@ -662,6 +662,8 @@ static String describeError(const InternalError& error, const Function& verified
         if (error.value.index() < verifiedBody.values.size())
             description.append(" ("_s, nameOf(verifiedBody.at(error.value).opcode), ')');
     }
+    if (!error.detail.isEmpty())
+        description.append("; "_s, error.detail);
     return description.toString();
 }
 
