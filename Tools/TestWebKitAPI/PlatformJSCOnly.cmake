@@ -10,3 +10,11 @@ if (LOWERCASE_EVENT_LOOP_TYPE STREQUAL "glib")
         GLib::Gio
     )
 endif ()
+
+get_directory_property(TestJavaScriptCore_AOT_PROGRAM_SOURCES
+    DIRECTORY "${JAVASCRIPTCORE_DIR}" DEFINITION JavaScriptCore_AOT_PROGRAM_SOURCES)
+list(TRANSFORM TestJavaScriptCore_AOT_PROGRAM_SOURCES PREPEND "${JAVASCRIPTCORE_DIR}/")
+list(APPEND TestJavaScriptCore_SOURCES ${TestJavaScriptCore_AOT_PROGRAM_SOURCES})
+if (ENABLE_STATIC_JSC)
+    list(APPEND TestJavaScriptCore_SOURCES $<TARGET_OBJECTS:aot-builtin-table-obj>)
+endif ()
