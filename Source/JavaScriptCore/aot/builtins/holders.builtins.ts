@@ -511,6 +511,7 @@ export default b.declarations(
   }),
   b.class("%MapIterator%", {
     ...lockedIteratorColumns,
+    jsType: "JSMapIteratorType",
     proto: { next: libraryStep("MapIteratorPrototype", "next", iteratorResult) },
   }),
   b.class("%SetIterator%", {

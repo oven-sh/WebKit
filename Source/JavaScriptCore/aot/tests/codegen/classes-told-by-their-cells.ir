@@ -1,0 +1,31 @@
+# The test for a class goes by the type of the cell: it passes for every instance, whoever made it and whatever it inherits from, and for nothing else.
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = (name, test, make) => { const map = new Map([[1, 2]]), set = new Set([1]); const values = { MapIterator: make => [map.entries(), map.keys(), map.values(), map[Symbol.iterator](), Object.setPrototypeOf(map.entries(), null), new (class extends Map {})().entries(), make(map)], others: () => [Object.create(Object.getPrototypeOf(map.entries())), Object.getPrototypeOf(map.entries()), "a"[Symbol.iterator](), map, set, {}, [], () => 1, 1, "a", null, undefined] }; let all = 0, passed = 0, passedWrongly = 0; for (const key in values) { const list = values[key](key === name ? make : id); for (let index = 0; index < list.length; index++) { if (key === name) all++; if (test(list[index])) key === name ? passed++ : passedWrongly++; } } print(name, passed, "of", all, "and", passedWrongly, "others"); };
+# CHECK: MapIterator 7 of 7 and 0 others
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = String string="MapIterator"
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    v5 = Call v1, -, v2, v3, v4
+    Return
+}
+function f1 name="isMapIterator" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=MapIterator
+    Return v1
+}
+function f2 name="makeMapIterator" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=Map
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="entries"
+    v4 = Call v3, v2
+    Return v4
+  b2():
+    Return
+}

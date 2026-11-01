@@ -1,0 +1,12 @@
+# A class whose instances have a type of cell of their own meets no other class.
+# RUN: intersect
+# CHECK: t0 & t1 = never
+# CHECK: t0 & t2 = never
+# CHECK: t0 & t3 = MapIterator
+# CHECK: t1 & t0 = never
+# CHECK: t2 & t0 = never
+# CHECK: t3 & t0 = MapIterator
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=MapIterator}, {type=Map}, {type=Array}, {type=Array|MapIterator}] results=[{type=undefined}]
