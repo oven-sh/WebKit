@@ -159,6 +159,7 @@ aot/ir/AOTEffectsOfOperators.cpp
 aot/ir/AOTEffectsOfProtocols.cpp
 aot/ir/AOTEffectsOfRules.cpp
 aot/ir/AOTFieldValueNarrowing.cpp
+aot/ir/AOTForwardWalk.cpp
 aot/ir/AOTIRFunction.cpp
 aot/ir/AOTIRProgram.cpp
 aot/ir/AOTKnownClosures.cpp
