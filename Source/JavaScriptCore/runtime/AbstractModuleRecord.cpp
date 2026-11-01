@@ -1388,7 +1388,7 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
                 auto addResult = uniqueBindings.add(exportName, candidate);
                 if (!addResult.isNewEntry && !addResult.iterator->value.isSameBinding(candidate)) {
                     slowPathNames.add(exportName);
-                    uniqueBindings.remove(addResult.iterator);
+                    uniqueBindings.remove(uniqueBindings.iteratorAt(addResult.iterator));
                 }
             }
             continue;
@@ -1448,7 +1448,7 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
             auto addResult = uniqueBindings.add(exportName, candidate);
             if (!addResult.isNewEntry && !addResult.iterator->value.isSameBinding(candidate)) {
                 slowPathNames.add(exportName);
-                uniqueBindings.remove(addResult.iterator);
+                uniqueBindings.remove(uniqueBindings.iteratorAt(addResult.iterator));
             }
         }
 
