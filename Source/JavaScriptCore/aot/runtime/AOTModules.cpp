@@ -2703,13 +2703,13 @@ void Modules::forgetMockThatWaits(ModuleID module)
 }
 
 // It does not wait while its factory runs, which may load the module. A factory that fails leaves nothing in place of the module: the next load asks the mock again, as under `bun test`.
-void Modules::runMockThatWaitsSlow(ModuleID module)
+bool Modules::runMockThatWaitsSlow(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     MockDoor door(this, module, "runMock"_s);
     m_modulesWithMockToRun.clear(module.index());
     bool ranAlready = m_modulesWhoseFactoryRuns.set(module.index());
-    host().runMock(m_instance.globalObject, moduleIDForHost(*m_instance.program, module));
+    bool factoryHasNotSettled = host().runMock(m_instance.globalObject, moduleIDForHost(*m_instance.program, module));
     if (!ranAlready)
         m_modulesWhoseFactoryRuns.clear(module.index());
     if (Exception* exception = scope.exception()) [[unlikely]] {
@@ -2718,9 +2718,10 @@ void Modules::runMockThatWaitsSlow(ModuleID module)
             m_mockedModulesWithErrorKeptByLoader.set(module.index());
             ensureLoaded(module).errorOfMockKeptByLoader.set(*this, exception->value());
         }
-        return;
+        return false;
     }
     m_importsMadeByOwnFactory.removeAll(module);
+    return factoryHasNotSettled;
 }
 
 void Modules::keepErrorOfLoad(ModuleID root, JSValue error, const ScopedLambda<bool(ModuleID)>& endedLoad)
@@ -2840,18 +2841,18 @@ bool Modules::isFetchedForImportStatement(ModuleID module)
     return entry && entry->status() == ModuleRegistryEntry::Status::New;
 }
 
-void Modules::runMocksBelowModuleThatLoaderFetchesSlow(ModuleID module)
+bool Modules::runMocksBelowModuleThatLoaderFetchesSlow(ModuleID module)
 {
     MockDoor door(this, module, "the loader fetches it"_s);
     if (m_modulesWithMockToRun.isEmpty()) [[likely]] {
         evaluateModulesOwedBelow(module);
-        return;
+        return false;
     }
     // The entry that a statement left when the factory failed is still there.
     bool isAskedForByImportCall = m_instance.vm->aotState().frameOfImportThatAsksLoader;
     if (isAskedForByImportCall)
         dropErrorOfMockKeptByLoader(module);
-    runMocksBelow(module, !isAskedForByImportCall && isFetchedForImportStatement(module) ? RootOfLoad::IsImportedByStatement : RootOfLoad::BeginsLoad);
+    return runMocksBelow(module, !isAskedForByImportCall && isFetchedForImportStatement(module) ? RootOfLoad::IsImportedByStatement : RootOfLoad::BeginsLoad);
 }
 
 bool Modules::mockFailedBehindImportStatement(ModuleID module)
@@ -2862,11 +2863,11 @@ bool Modules::mockFailedBehindImportStatement(ModuleID module)
 const MockOperations& Modules::mockOperations()
 {
     static constexpr MockOperations operations {
-        .runMocksBelow = [](Modules& modules, ModuleID root, RootOfLoad rootOfLoad) { modules.runMocksBelowSlow(root, rootOfLoad); },
-        .runMocksBelowModuleThatLoaderFetches = [](Modules& modules, ModuleID module) { modules.runMocksBelowModuleThatLoaderFetchesSlow(module); },
+        .runMocksBelow = [](Modules& modules, ModuleID root, RootOfLoad rootOfLoad) { return modules.runMocksBelowSlow(root, rootOfLoad); },
+        .runMocksBelowModuleThatLoaderFetches = [](Modules& modules, ModuleID module) { return modules.runMocksBelowModuleThatLoaderFetchesSlow(module); },
         .evaluateModulesOwedBelow = [](Modules& modules, ModuleID root, bool hasImporterAboveThatRan) { modules.evaluateModulesOwedBelowSlow(root, hasImporterAboveThatRan); },
         .letGoOfMockThatEnded = [](Modules& modules, ModuleID module) { modules.letGoOfMockThatEndedSlow(module); },
-        .runMockThatWaits = [](Modules& modules, ModuleID module) { modules.runMockThatWaitsSlow(module); },
+        .runMockThatWaits = [](Modules& modules, ModuleID module) { return modules.runMockThatWaitsSlow(module); },
         .mockThatAnswersFor = [](const Modules& modules, ModuleID passingOn, const ModuleExportData& passedOn) { return modules.mockThatAnswersForSlow(passingOn, passedOn); },
         .isMockedInItsImage = [](Modules& modules, ModuleID module, MocksAskedFor which) { return modules.isMockedInItsImageSlow(module, which); },
         .answerRequireWithOriginal = [](Modules& modules, ModuleID file) { return modules.answerRequireWithOriginalSlow(file); },
@@ -2879,23 +2880,23 @@ const MockOperations* mockOperations()
     return &Modules::mockOperations();
 }
 
-void Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
+bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!m_modulesOwedToImportersThatRan.isEmpty() || !m_modulesWithMockToLetGo.isEmpty() || !m_modulesThatLoaderLetGo.isEmpty() || vm.aotState().hasSeveralImages) [[unlikely]] {
         evaluateModulesOwedBelow(root);
-        RETURN_IF_EXCEPTION(scope, void());
+        RETURN_IF_EXCEPTION(scope, false);
     }
     if (m_modulesWithMockToRun.isEmpty()) [[likely]]
-        return;
+        return false;
     // The walk does nothing where it comes to none of them.
     MocksBelowRoot mocks = mocksBelow(root);
     bool mayComeToOne = false;
     for (size_t module : m_modulesWithMockToRun)
         mayComeToOne |= !isMocked(ModuleID(module)) || !mocks.hides(ModuleID(module));
     if (!mayComeToOne)
-        return;
+        return false;
     // An import() of a CommonJS file begins at the face of the file.
     std::optional<ModuleID> fileOfRoot = m_table.fileBehindFace(root);
     BitVector reached(m_table.size());
@@ -2913,20 +2914,22 @@ void Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
         if (kept) [[unlikely]] {
             keepErrorOfLoad(root, kept, [&](ModuleID each) { return each == module; });
             throwException(m_instance.globalObject, scope, kept);
-            return;
+            return false;
         }
         if (m_modulesWithMockToRun.get(module.index())) {
-            runMockThatWaits(module);
+            bool factoryHasNotSettled = runMockThatWaits(module);
             if (Exception* exception = scope.exception()) [[unlikely]] {
                 if (vm.isTerminationException(exception) || m_modulesWithMockThatAsksAgain.get(module.index()))
-                    return;
+                    return false;
                 keepErrorOfLoad(root, exception->value(), [&](ModuleID each) { return each == module; });
                 if (isImportedByStatement) {
                     m_mockedModulesWithErrorKeptByLoader.set(module.index());
                     ensureLoaded(module).errorOfMockKeptByLoader.set(*this, exception->value());
                 }
-                return;
+                return false;
             }
+            if (factoryHasNotSettled)
+                return true;
         }
         if (isMocked(module))
             continue;
@@ -2937,6 +2940,7 @@ void Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
                 work.append(request.targetModule());
         }
     }
+    return false;
 }
 
 // Asked where a test replaces an export, which few realms do: the list is made at the first one.
@@ -3557,8 +3561,10 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
 
+    ModuleID walkedBelow = module;
+    bool walkStopped = false;
     auto start = [&](ModuleID started) -> JSPromise* {
-        JSPromise* promise = startImport(started, asyncEvaluationOrder(referrer));
+        JSPromise* promise = startImport(started, asyncEvaluationOrder(referrer), ImportCaller::CompiledCode, TextOfImport::MayComeLater, nullptr, JSValue(), started == walkedBelow ? std::optional(walkStopped) : std::nullopt);
         RETURN_IF_EXCEPTION(scope, promise);
         ModuleID file = fileOf(started);
         scope.release();
@@ -3572,7 +3578,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
         m_importsMadeByOwnFactory.append(module);
     else if (!m_importsMadeByOwnFactory.contains(module)) [[likely]]
         dropErrorOfMockKeptByLoader(module);
-    runMocksBelow(module);
+    walkStopped = runMocksBelow(module);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     auto fetchParameters = JSModuleLoader::fetchParametersFromImportOptions(realm, options);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
@@ -4110,7 +4116,7 @@ JSPromise* Modules::factoryThatWaitsBelow(ModuleID root, FactoryAskedForBy asked
 }
 
 // `stateOfWait`: ModuleHost::factoryThatWaits' state, where a call that was held behind a factory goes on.
-JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrerAsyncOrder, ImportCaller caller, TextOfImport text, JSPromise* promiseOfCaller, JSValue stateOfWait)
+JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrerAsyncOrder, ImportCaller caller, TextOfImport text, JSPromise* promiseOfCaller, JSValue stateOfWait, std::optional<bool> answerOfWalkAlreadyMade)
 {
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -4118,7 +4124,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         return promiseOfCaller ? promiseOfCaller : JSPromise::create(*m_instance.vm, realm->promiseStructure());
     };
 
-    runMocksBelow(module);
+    bool walkStopped = answerOfWalkAlreadyMade ? *answerOfWalkAlreadyMade : runMocksBelow(module);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     if (m_innermostFilesBeingRun) [[unlikely]] {
         handGraphsToLoader();
@@ -4129,8 +4135,16 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         }
     }
     // The loader of `bun run` waits for a factory before it goes on with the graph.
-    JSPromise* factories = factoryThatWaitsBelow(module, text == TextOfImport::MayComeLater || stateOfWait ? FactoryAskedForBy::ImportCall : FactoryAskedForBy::ImportCallBehindItsText, stateOfWait);
+    FactoryAskedForBy askedBy = text == TextOfImport::MayComeLater || stateOfWait ? FactoryAskedForBy::ImportCall : FactoryAskedForBy::ImportCallBehindItsText;
+    JSPromise* factories = factoryThatWaitsBelow(module, askedBy, stateOfWait);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+    // The factory has settled meanwhile, or whoever asks was called from it.
+    while (!factories && walkStopped) [[unlikely]] {
+        walkStopped = runMocksBelow(module);
+        RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+        factories = factoryThatWaitsBelow(module, askedBy, stateOfWait);
+        RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+    }
     if (factories) [[unlikely]] {
         VM& vm = *m_instance.vm;
         JSPromise* promise = promiseForCaller();
@@ -7155,11 +7169,11 @@ JSPromise* factoryThatWaitsBelow(JSGlobalObject* realm, ModuleID moduleOfHost, J
     return modules ? modules->factoryThatWaitsBelow(module, FactoryAskedForBy::Loader, state) : nullptr;
 }
 
-void runMocksBelow(JSGlobalObject* realm, ModuleID moduleOfHost)
+bool runMocksBelow(JSGlobalObject* realm, ModuleID moduleOfHost)
 {
     ModuleFromHost module(realm, moduleOfHost);
-    if (Modules* modules = modulesOf(realm))
-        modules->runMocksBelowModuleThatLoaderFetches(module);
+    Modules* modules = modulesOf(realm);
+    return modules && modules->runMocksBelowModuleThatLoaderFetches(module);
 }
 
 bool mockFailedBehindImportStatement(JSGlobalObject* realm, ModuleID moduleOfHost)

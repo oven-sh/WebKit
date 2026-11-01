@@ -330,19 +330,20 @@ public:
     void didLayMock() { m_moduleWithMockBeingLaid = std::nullopt; }
     void endMockLaidOverFile(ModuleID);
     JSValue exportsBeforeMock(ModuleID);
-    void runMockThatWaits(ModuleID);
-    void runMockThatWaitsSlow(ModuleID);
+    bool runMockThatWaits(ModuleID);
+    bool runMockThatWaitsSlow(ModuleID);
     // `build.module("dep", ..)` of a plugin: from now on the loader answers for the name with another module. A file that is linked keeps what it has.
     void forgetWhatNamesResolvedTo();
     void willMockLibraryModule(ModuleID);
     bool letMockStandInPlaceOfLibraryModule(ModuleID);
     enum class RootOfLoad : bool { BeginsLoad, IsImportedByStatement };
-    void runMocksBelow(ModuleID root, RootOfLoad = RootOfLoad::BeginsLoad);
-    void runMocksBelowSlow(ModuleID root, RootOfLoad);
+    // The factories that one load calls run one at a time. True: the walk has called one that has not settled, and has stopped there. Whoever walks waits for it and walks again.
+    bool runMocksBelow(ModuleID root, RootOfLoad = RootOfLoad::BeginsLoad);
+    bool runMocksBelowSlow(ModuleID root, RootOfLoad);
     static const MockOperations& mockOperations();
     JSPromise* factoryThatWaitsBelow(ModuleID root, FactoryAskedForBy, JSValue& state);
-    void runMocksBelowModuleThatLoaderFetches(ModuleID);
-    void runMocksBelowModuleThatLoaderFetchesSlow(ModuleID);
+    bool runMocksBelowModuleThatLoaderFetches(ModuleID);
+    bool runMocksBelowModuleThatLoaderFetchesSlow(ModuleID);
     bool mockFailedBehindImportStatement(ModuleID);
     void didFailToFetchRequest(ModuleID requester, const Identifier& key, JSValue error);
     void dropErrorOfLoadEndedByMock(ModuleID);
@@ -630,7 +631,7 @@ public:
     // The host hands what it gets to import() in code that is not compiled, which gives the program a promise of its own.
     enum class ImportCaller : bool { CompiledCode, Host };
     enum class TextOfImport : uint8_t { MayComeLater, HasCome, HasComeWithCallInFront };
-    JSPromise* startImport(ModuleID, std::optional<int64_t> referrerAsyncOrder, ImportCaller = ImportCaller::CompiledCode, TextOfImport = TextOfImport::MayComeLater, JSPromise* promiseOfCaller = nullptr, JSValue stateOfWait = JSValue());
+    JSPromise* startImport(ModuleID, std::optional<int64_t> referrerAsyncOrder, ImportCaller = ImportCaller::CompiledCode, TextOfImport = TextOfImport::MayComeLater, JSPromise* promiseOfCaller = nullptr, JSValue stateOfWait = JSValue(), std::optional<bool> answerOfWalkAlreadyMade = std::nullopt);
     JSPromise* rejectImportWithErrorOfLoad(ModuleID, ImportCaller);
     JSPromise* importDynamic(JSValue specifier, JSValue options, ModuleID referrer);
     // `stateOfWait`: as for startImport().
@@ -1455,26 +1456,24 @@ ALWAYS_INLINE ModuleRecord* Modules::recordIfExists(ModuleID module) const
 
 // ModuleHost::mockOperations. Each does nothing in a program where no mock was ever laid.
 struct MockOperations {
-    void (*runMocksBelow)(Modules&, ModuleID root, Modules::RootOfLoad);
-    void (*runMocksBelowModuleThatLoaderFetches)(Modules&, ModuleID);
+    bool (*runMocksBelow)(Modules&, ModuleID root, Modules::RootOfLoad);
+    bool (*runMocksBelowModuleThatLoaderFetches)(Modules&, ModuleID);
     void (*evaluateModulesOwedBelow)(Modules&, ModuleID root, bool hasImporterAboveThatRan);
     void (*letGoOfMockThatEnded)(Modules&, ModuleID);
-    void (*runMockThatWaits)(Modules&, ModuleID);
+    bool (*runMockThatWaits)(Modules&, ModuleID);
     std::optional<Modules::AnswerOfMock> (*mockThatAnswersFor)(const Modules&, ModuleID passingOn, const ModuleExportData& passedOn);
     bool (*isMockedInItsImage)(Modules&, ModuleID, Modules::MocksAskedFor);
     JSValue (*answerRequireWithOriginal)(Modules&, ModuleID file);
 };
 
-ALWAYS_INLINE void Modules::runMocksBelow(ModuleID root, RootOfLoad rootOfLoad)
+ALWAYS_INLINE bool Modules::runMocksBelow(ModuleID root, RootOfLoad rootOfLoad)
 {
-    if (m_mockOperations)
-        m_mockOperations->runMocksBelow(*this, root, rootOfLoad);
+    return m_mockOperations && m_mockOperations->runMocksBelow(*this, root, rootOfLoad);
 }
 
-ALWAYS_INLINE void Modules::runMocksBelowModuleThatLoaderFetches(ModuleID module)
+ALWAYS_INLINE bool Modules::runMocksBelowModuleThatLoaderFetches(ModuleID module)
 {
-    if (m_mockOperations)
-        m_mockOperations->runMocksBelowModuleThatLoaderFetches(*this, module);
+    return m_mockOperations && m_mockOperations->runMocksBelowModuleThatLoaderFetches(*this, module);
 }
 
 ALWAYS_INLINE void Modules::evaluateModulesOwedBelow(ModuleID root, bool hasImporterAboveThatRan)
@@ -1490,9 +1489,9 @@ ALWAYS_INLINE void Modules::letGoOfMockThatEnded(ModuleID module)
 }
 
 // Whoever calls it has seen that a mock waits.
-ALWAYS_INLINE void Modules::runMockThatWaits(ModuleID module)
+ALWAYS_INLINE bool Modules::runMockThatWaits(ModuleID module)
 {
-    m_mockOperations->runMockThatWaits(*this, module);
+    return m_mockOperations->runMockThatWaits(*this, module);
 }
 
 ALWAYS_INLINE auto Modules::mockThatAnswersFor(ModuleID passingOn, const ModuleExportData& passedOn) const -> std::optional<AnswerOfMock>
