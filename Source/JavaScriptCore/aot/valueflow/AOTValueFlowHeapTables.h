@@ -118,6 +118,7 @@ private:
     macro(ValueSetID, functionsThatChangeOperand) \
     macro(ValueSetID, objectsOfNativeModules) \
     macro(ValueSetID, objectsOfPublicModules) \
+    macro(ValueSetID, objectsOfPublicModulesWithoutLocks) \
     macro(ValueSetID, holdersWithMembers) \
     macro(ValueSetID, holdersWithMembersUnderNumericNames) \
     macro(ValueSetID, holdersOfMembersThatHostMakes) \
