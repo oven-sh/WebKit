@@ -5489,11 +5489,12 @@ static PassOutcome askOnlyNumbersWhetherTheyEqualThemselves(FunctionPassContext&
     FunctionAnalyses& analyses = context.analyses;
     if (!analyses.opcodesOfValues().contains(Opcode::StrictEq))
         return PassOutcome::Unchanged;
-    Vector<ValueID, 4> comparisons;
+    Vector<std::pair<ValueID, ProgramPoint>, 4> comparisons;
     for (BlockID block : analyses.cfg().reversePostOrder()) {
         if (function.at(block).frequency.predicted() == BlockFrequency::Rare)
             continue;
-        for (ValueID id : function.at(block).values) {
+        for (uint32_t index = 0; index < function.at(block).values.size(); ++index) {
+            ValueID id = function.at(block).values[index];
             const Value& value = function.at(id);
             if (value.opcode != Opcode::StrictEq || value.leftOperand() != value.rightOperand())
                 continue;
@@ -5503,19 +5504,25 @@ static PassOutcome askOnlyNumbersWhetherTheyEqualThemselves(FunctionPassContext&
             });
             const Type& type = context.program.typeOf(function, value.leftOperand());
             if ((type.primitives & Primitive::Number) && !type.isNumber() && !isTestOfBranchWithProofs)
-                comparisons.append(id);
+                comparisons.append({ id, ProgramPoint { block, index } });
         }
     }
     if (comparisons.isEmpty())
         return PassOutcome::Unchanged;
 
     IRBuilder builder(analyses.context(), function, context.types, &analyses);
-    for (ValueID id : comparisons) {
-        ValueLocation location = analyses.useLists().locationOf(id);
+    // What stood behind a cut stands in the continuation, from its first place on. The use lists would make the graph of the whole function anew behind each cut to say so.
+    ProgramPoint lastCut;
+    BlockID behindLastCut;
+    for (auto [id, found] : comparisons) {
+        ProgramPoint point = found.block == lastCut.block ? ProgramPoint { behindLastCut, found.index - lastCut.index - 1 } : found;
+        RELEASE_ASSERT(function.at(point.block).values[point.index] == id);
         ValueID compared = function.at(id).leftOperand();
-        Expected<BlockFrequency> frequency = function.at(location.block).frequency;
+        Expected<BlockFrequency> frequency = function.at(point.block).frequency;
         builder.setOrigin(function.at(id).origin());
-        IRBuilder::Expansion expansion = builder.beginExpansion(ProgramPoint { location.block, location.index });
+        IRBuilder::Expansion expansion = builder.beginExpansion(point);
+        lastCut = found;
+        behindLastCut = expansion.continuation;
         IRBuilder::ProvenBranch isNumber = builder.emitBranchWithProof(builder.appendTypeTest(compared, TypeTable::number), OperandIndex::TypeTest::value, frequency, frequency);
         builder.moveToEndOf(isNumber.taken);
         builder.endExpansion(expansion, builder.append(Opcode::StrictEq, { isNumber.provenOnTaken, isNumber.provenOnTaken }));

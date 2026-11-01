@@ -120,6 +120,7 @@ static bool actsForNobodyKnown(const ValueFlowSolver& solver, ValueFlowStatement
     case ValueFlowStatementKind::CallGroup:
         return ValueSets::isComplement(solver.keyOf(id).set) || solver.sets().contains(solver.keyOf(id).set, ValueFlowUniverse::unknownObject()) || solver.sets().contains(solver.keyOf(id).set, ValueFlowUniverse::untrackedObject());
     case ValueFlowStatementKind::Behavior:
+    case ValueFlowStatementKind::WalkOfBehavior:
     case ValueFlowStatementKind::Escape:
         return true;
     case ValueFlowStatementKind::Operation:

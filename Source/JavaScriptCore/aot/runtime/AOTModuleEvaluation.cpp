@@ -2551,7 +2551,8 @@ void Modules::evaluateLoadedCommonJSFile(ModuleID module)
         RELEASE_AND_RETURN(scope, noteLoadOfFile(module));
     // A require() started the file, and its face has not begun.
     noteLoadOfFile(module);
-    RETURN_IF_EXCEPTION(scope, void());
+    // An entry point has run by now, and its record is evaluated and on no stack: nobody could file a request to terminate on it. The request waits for the next check.
+    RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, void());
     // Another load comes to the file before the loader has heard that the file threw. The file does not run again, and the record is made of what it has left.
     if (statusAtStart == ModuleStatus::Failed && loader()->isMakingRecordInline(moduleKey(module)))
         return;
@@ -2668,7 +2669,7 @@ void Modules::evaluateCommonJSForLoader(ModuleID file)
             m_filesLoadedWithoutLoader.set(face->index());
             bool wasImportedBack = !hadCapturedExports && didCaptureExports(*face);
             evaluateLoadedCommonJSFile(*face);
-            RETURN_IF_EXCEPTION(scope, void());
+            RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, void());
             if (wasImportedBack) [[unlikely]]
                 RELEASE_AND_RETURN(scope, copyExportsOfFinishedFile(*face));
         }
@@ -3191,6 +3192,23 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
 }
 
 // No loader has the graph of the root: its evaluation runs the files first. What is left of it runs here, and the evaluation that waits for the file finds it done.
+bool Modules::runBodyOfImportedModuleAheadOfMock(ModuleID module)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    if (!data(module).isESModuleOfProgram() || data(module).isFaceOfFile() || hasBegunToLoad(module))
+        return false;
+    VisitedModuleRecords seen;
+    bool isReady = readyForSyncExecution(module, seen);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!isReady)
+        return false;
+    forgetMockThatWaits(module);
+    RETURN_IF_EXCEPTION(scope, false);
+    evaluateSynchronously(module, SynchronousEvaluationReason::Require);
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
+}
+
 void Modules::evaluateRootThatWaitedForFile()
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);

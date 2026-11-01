@@ -88,6 +88,7 @@ struct LinkContext {
     macro(JSObject*, recordBeforeMockInPlace) \
     macro(JSObject*, namespaceBeforeMockInPlace) \
     macro(JSObject*, capturedExportsBeforeMockInPlace) \
+    macro(JSObject*, endedMocks) \
     macro(JSValue, requiredValueBeforeMockInPlace) \
     macro(JSValue, exportsOfOriginalBesideMock) \
     macro(JSValue, answerOfMockWhileOriginalRuns) \
@@ -214,6 +215,12 @@ public:
     bool setMockOverModuleThatHasRun(ModuleID, JSObject* mock, JSValue whatRequireAnswers);
     void endMockOverModuleThatHasRun(ModuleID);
     bool seesMockOf(ModuleID mocked, ModuleID importer) const;
+    // What compiled code reads a name of `mocked` from: the mock that stood when the importer was linked, else the one that stands, else nothing.
+    JSObject* mockSeenBy(ModuleID mocked, ModuleID importer) const;
+    JSObject* endedMockSeenAt(ModuleID fileOrModule, uint32_t moment) const;
+    uint32_t momentLinked(ModuleID importer) const;
+    void forgetEndedMocksOfEarlierTestFiles();
+    void linkAnewWhoeverReadsEndedMockBelow(ModuleID root);
     bool importsOriginalBesideMock(ModuleID mocked, ModuleID importer) const;
     JSObject* namespaceOfModuleItself(ModuleID);
     bool isHiddenInModuleItself(ModuleID, unsigned index) const;
@@ -319,6 +326,7 @@ public:
     std::optional<ModuleID> formThatMockFinds(StringView path, std::optional<ModuleID> file) const;
     void deferMock(ModuleID, AfterFailure);
     void forgetMockThatWaits(ModuleID);
+    bool runBodyOfImportedModuleAheadOfMock(ModuleID);
     void endMockOfLibraryModule(ModuleID);
     // What ModuleNamespace::DynamicExports holds.
     void createDynamicExports(ModuleID, JSCellButterfly*& names, JSObject*& capturedValues, JSObject*& liveSources);
@@ -1245,6 +1253,25 @@ private:
     UncheckedKeyHashMap<ModuleID, FirstMockInTestFile> m_firstMocksInTestFile;
     // An importer that the loader had let go, and that somebody has imported since: `bun test` loads it anew and links it to what stands then.
     UncheckedKeyHashMap<ModuleID, FirstMockInTestFile> m_momentsLoadedAnew;
+    // Whoever holds a module of `bun test` that was linked to a mock keeps that mock. The objects: LoadedModule::endedMocks, by their place in the list.
+    struct EndedMock {
+        uint32_t momentLaid;
+        uint32_t momentEnded;
+        uint32_t momentOfTestFile;
+        bool wasLaidInPreload;
+    };
+    UncheckedKeyHashMap<ModuleID, Vector<EndedMock, 2>> m_endedMocks;
+    // The keys of m_importersAskedAboutOriginal that were answered with yes in this test file.
+    mutable UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_importersThatGotOriginal;
+    struct MomentMockWasLaid {
+        uint32_t moment;
+        bool isInPreload;
+    };
+    UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_momentsWaitingMocksWereLaid;
+    UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_momentsStandingMocksWereLaid;
+    MomentMockWasLaid momentOfNow();
+    void keepEndedMock(ModuleID fileOrModule, JSObject* mock, MomentMockWasLaid);
+    JSValue wordWhereNoMockStands(ModuleID fileOrModule) const;
     // A file ran before the loader came to it and queued jobs. They are queued where the loader comes to the file, as under `bun run`.
     std::optional<ModuleID> m_fileWhoseJobsWaitForLoader;
     std::optional<ModuleID> m_rootWhoseFilesRun;

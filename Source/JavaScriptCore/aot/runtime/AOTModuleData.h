@@ -754,6 +754,7 @@ private:
     v(modulesThatLoadCompiledFilesAlone, uint32_t) \
     v(modulesThatFindBuiltinsReadOnly, uint32_t) \
     v(modulesReachedUnderOtherNames, uint32_t) \
+    v(asyncFunctionsWithoutAwait, uint32_t) \
     v(importsOfHeldFiles, ImportOfHeldFileData) \
     v(namedVariables, uint8_t) \
     v(namedCaptures, uint8_t) \

@@ -102,6 +102,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-NEXT: modulesThatLoadCompiledFilesAlone 0 0
 # CHECK-NEXT: modulesThatFindBuiltinsReadOnly 0 0
 # CHECK-NEXT: modulesReachedUnderOtherNames 0 0
+# CHECK-NEXT: asyncFunctionsWithoutAwait 0 0
 # CHECK-NEXT: importsOfHeldFiles 0 0
 # CHECK-NEXT: namedVariables 0 0
 # CHECK-NEXT: namedCaptures 0 0

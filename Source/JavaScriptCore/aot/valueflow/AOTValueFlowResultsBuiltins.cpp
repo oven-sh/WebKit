@@ -371,6 +371,13 @@ static bool isLoadUnderConstantName(const Program& program, const Witness& witne
     return function.at(definitionThroughSameValues(function, load.specifierOperand())).opcode == Opcode::String;
 }
 
+// `import(new URL("./a.js", import.meta.url))`: the front end has read every name and answers each in front of the load, which stays for a path that is spelled otherwise.
+static bool isLoadBehindEveryName(const Program& program, const Witness& witness)
+{
+    const Value& load = program.at(FunctionID(witness.function)).at(ValueID(witness.value));
+    return (load.opcode == Opcode::ImportDynamic || load.opcode == Opcode::RequireDynamic) && load.allNamesAreKnown();
+}
+
 // `for (const name of ["os", "./plugin.ts"]) await import(name)`: the build knows every name, and each finds a module of the image.
 static bool findsModuleUnderEveryName(const ValueFlowResultInputs& inputs, const Witness& witness, bool isCallOfLoader)
 {
@@ -425,6 +432,8 @@ static void warnAboutLoadsUnderComputedNames(const ValueFlowResultInputs& inputs
             continue;
         }
         if (isCallOfLoader ? !isCallOfProgramUnderComputedName(program, record.witness) : isLoadUnderConstantName(program, record.witness))
+            continue;
+        if (!isCallOfLoader && isLoadBehindEveryName(program, record.witness))
             continue;
         if (findsModuleUnderEveryName(inputs, record.witness, isCallOfLoader))
             continue;

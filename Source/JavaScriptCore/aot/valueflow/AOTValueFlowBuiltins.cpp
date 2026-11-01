@@ -4658,20 +4658,33 @@ static void readNamedMembersAboveEscapedObjects(ValueFlowRuleContext& context, V
         context.add(context.hub(universe.builtinTables().conversionToPrimitive()), unknownValue(context, ValueFlowUnknownSource::ContentsOfEscapedObject));
 }
 
-static void readMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeID hub, const ValueFlowBehavior& behavior, ClimbingSet receivers)
+static ClimbingSet objectsWalkedAmong(ValueFlowRuleContext& context, const ValueFlowBehavior& behavior, ClimbingSet receivers)
 {
-    const ValueFlowUniverse& universe = context.universe();
-    ValueSetID walked = walkedWhereFunctionsAreOnlyNamed(context, behavior.namesFunctionsOnly);
-    ClimbingSet objects = context.restrict(withWhatUntrackedObjectCovers(context, context.restrict(receivers, universe.objects())), walked);
+    ClimbingSet objects = context.restrict(withWhatUntrackedObjectCovers(context, context.restrict(receivers, context.universe().objects())), walkedWhereFunctionsAreOnlyNamed(context, behavior.namesFunctionsOnly));
     // Of a proxy the test against a constructor reads names alone.
     if (behavior.protocols == Protocols { Protocol::HasInstance })
         objects = context.restrict(objects, ValueSets::complement(context.withMembersOf(ValueSets::nothing, context.followedProxiesAmong(objects))));
-    if (behavior.isTransitive) {
-        context.connect(context.readWhatWasWritten(objects, everyPropertyName), hub);
-        context.connect(enumerablePropertiesNobodyWrote(context, objects, MetBy::NativeCode), hub);
-        context.connect(context.readWhatWasWritten(objects, copiedFromName), hub);
-        context.connect(context.lookup(context.restrict(objects, context.maker().intersect(universe.knownObjects(), ValueSets::complement(universe.builtinObjects()))), elementsName), hub);
-    }
+    return objects;
+}
+
+static void walkInto(ValueFlowRuleContext& context, ValueFlowNodeID hub, ClimbingSet objects)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    context.connect(context.readWhatWasWritten(objects, everyPropertyName), hub);
+    context.connect(enumerablePropertiesNobodyWrote(context, objects, MetBy::NativeCode), hub);
+    context.connect(context.readWhatWasWritten(objects, copiedFromName), hub);
+    context.connect(context.lookup(context.restrict(objects, context.maker().intersect(universe.knownObjects(), ValueSets::complement(universe.builtinObjects()))), elementsName), hub);
+}
+
+enum class WalkIsDone : bool { Here, ByItsOwnStatement };
+
+static void readMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeID hub, const ValueFlowBehavior& behavior, ClimbingSet receivers, WalkIsDone walkIsDone = WalkIsDone::Here)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    ValueSetID walked = walkedWhereFunctionsAreOnlyNamed(context, behavior.namesFunctionsOnly);
+    ClimbingSet objects = objectsWalkedAmong(context, behavior, receivers);
+    if (behavior.isTransitive && walkIsDone == WalkIsDone::Here)
+        walkInto(context, hub, objects);
     if (behavior.isTransitive && behavior.protocols.contains(Protocol::HasInstance))
         context.connect(context.read(objects, ValueFlowCellName { ValueFlowNameKind::HiddenSlot, BuiltinSlots::BoundFunctionTarget.index() }), hub);
     if (behavior.isTransitive && behavior.protocols.containsAll({ Protocol::OwnValues, Protocol::PrototypeChain }))
@@ -5141,6 +5154,19 @@ static void describeRefusedOperands(ValueFlowRuleContext& context, ValueFlowNode
     });
 }
 
+// The hub of a behavior that walks grows by what the walk finds, a level of the objects a round. The behavior's own statement looks at all that the hub holds, and waits
+// while anything else can run: so what feeds the hub is no part of it.
+void runWalkOfBehavior(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
+{
+    ValueFlowNodeID hub = statement.result;
+    const ValueFlowBehavior& behavior = context.universe().builtinTables().at(context.nodes().behaviorOf(hub));
+    ValueFlowRuleContext::NativeWalk walk(context);
+    ClimbingSet receivers = context.restrict(context.valueOf(hub), everythingButUnknownObject(context));
+    if (onlyLists(behavior) || serializes(behavior) || behavior.printsTargetsOfProxies)
+        receivers = context.restrict(receivers, ValueSets::complement(context.withMembersOf(ValueSets::nothing, context.followedProxiesAmong(receivers))));
+    walkInto(context, hub, objectsWalkedAmong(context, behavior, receivers));
+}
+
 void runBehavior(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     ValueFlowNodeID hub = statement.result;
@@ -5173,7 +5199,7 @@ void runBehavior(const ValueFlowStatement& statement, ValueFlowRuleContext& cont
         mask = context.maker().intersect(mask, ValueSets::complement(context.withMembersOf(ValueSets::nothing, proxies)));
         receivers = context.restrict(receivers, mask);
     }
-    readMembersOfReceivers(context, hub, behavior, receivers);
+    readMembersOfReceivers(context, hub, behavior, receivers, WalkIsDone::ByItsOwnStatement);
     // A walk reads the unknown object off a receiver that unknown code may have written to, and that covers the receiver here.
     if (behavior.isTransitive && mayUnknownCodeWrite(context)) {
         const ValueFlowUniverse& universe = context.universe();

@@ -335,6 +335,7 @@ enum class ValueFlowStatementKind : uint8_t {
     UsedBuiltins,
     UnseenCode,
     ModulesLoadedByName,
+    WalkOfBehavior,
 };
 
 // What rules ask of the text of an operation. It is the same in every round, so it is read once, and no rule opens the body of the function for it.

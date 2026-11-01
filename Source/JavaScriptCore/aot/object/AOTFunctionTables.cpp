@@ -1349,6 +1349,15 @@ DeclaredAs declaredAs(JSCell* cell)
     return kindData.isAsync ? DeclaredAs::AsyncFunction : DeclaredAs::Function;
 }
 
+bool awaitsByItself(JSCell* cell)
+{
+    if (declaredAs(cell) != DeclaredAs::AsyncFunction)
+        return false;
+    ImageOfCellScope imageOfCell(cell);
+    std::optional<FunctionID> function = functionOf(cell);
+    return function && !std::ranges::binary_search(programTables().asyncFunctionsWithoutAwait(), sourceFunctionOf(*function).index());
+}
+
 String closureDeclaredName(JSObject* object)
 {
     ImageOfCellScope imageOfCell(object);

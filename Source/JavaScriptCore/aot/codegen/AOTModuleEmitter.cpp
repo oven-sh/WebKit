@@ -172,6 +172,11 @@ void ModuleEmitter::generateSeesMockOf(const ValueContext& value)
     defineTest(value, callWithoutSite<Condition>(RuntimeOperation::SeesMockOf, { moduleIndex(value->module()), moduleIndex(value->referrer()) }));
 }
 
+void ModuleEmitter::generateMockSeenBy(const ValueContext& value)
+{
+    define(value, callWithoutSite<Boxed>(RuntimeOperation::MockSeenBy, { moduleIndex(value->module()), moduleIndex(value->referrer()) }));
+}
+
 void ModuleEmitter::generateCountExecution(const ValueContext& value)
 {
     Operand arguments[] { moduleIndex(value->module()), word32(static_cast<int32_t>(value->description().index())), word32(static_cast<int32_t>(value->counter())) };

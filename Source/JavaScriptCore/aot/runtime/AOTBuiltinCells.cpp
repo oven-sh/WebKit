@@ -895,6 +895,10 @@ bool isMemberUnlockedForTests(JSObject* object, UniquedStringImpl* key)
     BuiltinName name = table.nameOf(object->vm(), key);
     if (!name)
         return false;
+    // No image takes a member that changes on its own for what it was, so none lists it.
+    auto isOpenIn = [&](const Instance& instance, BuiltinID member) {
+        return member && (table.at(member).mutability == BuiltinMutability::ChangesOnItsOwn || hasUnlocked(instance, member));
+    };
     bool isKnown = false;
     bool isUnlockedByAll = true;
     forEachInstanceOf(object->realm(), [&](Instance& instance) {
@@ -902,14 +906,12 @@ bool isMemberUnlockedForTests(JSObject* object, UniquedStringImpl* key)
         if (!holder)
             return;
         isKnown = true;
-        BuiltinID member = table.findOwnMember(holder, name);
-        isUnlockedByAll &= member && hasUnlocked(instance, member);
+        isUnlockedByAll &= isOpenIn(instance, table.findOwnMember(holder, name));
     });
     if (isKnown)
         return isUnlockedByAll;
     BuiltinID holder = builtinOfLockedObject(running, object);
-    BuiltinID member = holder ? table.findOwnMember(holder, name) : BuiltinID();
-    return member && hasUnlocked(*running, member);
+    return isOpenIn(*running, holder ? table.findOwnMember(holder, name) : BuiltinID());
 }
 
 // Compiled code reads a property without a declared type wherever the program does. A declared type would be trusted.

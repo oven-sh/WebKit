@@ -215,6 +215,7 @@ public:
                 functor(operand, operandIndex);
             ++operandIndex;
         }
+        touchForAddressSanitizer(this);
     }
 
     template<typename Functor>
@@ -226,6 +227,7 @@ public:
                 functor(operand, operandIndex);
             ++operandIndex;
         }
+        touchForAddressSanitizer(this);
     }
 
     template<typename Functor>
@@ -235,6 +237,7 @@ public:
             if (operand)
                 functor(operand);
         }
+        touchForAddressSanitizer(this);
     }
 
     template<typename Functor>
@@ -244,6 +247,7 @@ public:
             if (operand)
                 functor(operand);
         }
+        touchForAddressSanitizer(this);
     }
 
     bool hasPosition() const { return position != noPosition; }

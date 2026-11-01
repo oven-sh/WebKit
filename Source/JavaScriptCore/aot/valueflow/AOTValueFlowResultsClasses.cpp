@@ -509,6 +509,7 @@ static ValueSetID findClosuresTakenOutOfMembers(const ValueFlowResultInputs& inp
         }
         case ValueFlowStatementKind::CallGroup:
         case ValueFlowStatementKind::Behavior:
+        case ValueFlowStatementKind::WalkOfBehavior:
         case ValueFlowStatementKind::Escape:
         case ValueFlowStatementKind::ModuleEvaluation:
         case ValueFlowStatementKind::Coroutine:

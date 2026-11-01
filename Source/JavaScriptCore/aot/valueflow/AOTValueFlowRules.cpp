@@ -752,6 +752,8 @@ static void runRuleOnNodesNamed(const ValueFlowStatement& statement, ValueFlowRu
         }
     case ValueFlowStatementKind::Behavior:
         return runBehavior(statement, context);
+    case ValueFlowStatementKind::WalkOfBehavior:
+        return runWalkOfBehavior(statement, context);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

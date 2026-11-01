@@ -1098,6 +1098,7 @@ static bool standsForWholeProgram(ValueFlowStatementKind kind)
     case ValueFlowStatementKind::CallGroup:
     case ValueFlowStatementKind::ModuleEvaluation:
     case ValueFlowStatementKind::Coroutine:
+    case ValueFlowStatementKind::WalkOfBehavior:
         return false;
     case ValueFlowStatementKind::Behavior:
     case ValueFlowStatementKind::Escape:
@@ -1134,6 +1135,8 @@ uint64_t ValueFlowSolver::questionAskedBy(ValueFlowStatementID asking) const
     };
     addAll(operandsOf(statement));
     addAll(guardsOf(statement));
+    if (statement.kind == ValueFlowStatementKind::WalkOfBehavior)
+        addSet(withoutWhatOtherMembersCover(statement.result, *m_makers[0]));
     return (question | 1) >> 1 | 1;
 }
 
