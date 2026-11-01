@@ -308,6 +308,7 @@ public:
     void createDynamicExports(ModuleID, JSCellButterfly*& names, JSObject*& capturedValues, JSObject*& liveSources);
     void oweLibraryModuleToImagesAbove(ModuleID);
     void handLibraryModuleToImagesAbove(ModuleID);
+    void handFileToImagesAbove(ModuleID file);
     void keepWhatMockIsLaidOver(ModuleID);
     void didLayMock() { m_moduleWithMockBeingLaid = std::nullopt; }
     void endMockLaidOverFile(ModuleID);
@@ -778,7 +779,7 @@ private:
     Vector<DynamicExport> collectDynamicExports(ModuleID);
 
     void evaluateWithOwnStack(ModuleID root);
-    void evaluateModulesOwedBelow(ModuleID root);
+    void evaluateModulesOwedBelow(ModuleID root, bool hasImporterAboveThatRan = false);
     void bringBackWhatLoaderLetGoBelow(ModuleID root);
     size_t numberOfJobsThatWouldWait(JobsOfImportedFiles) const;
     void holdJobsBehind(size_t numberOfJobs, ModuleID file, JobsOfImportedFiles = JobsOfImportedFiles::WaitForLoader);

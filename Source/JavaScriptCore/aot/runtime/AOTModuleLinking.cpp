@@ -995,6 +995,42 @@ void Modules::handLibraryModuleToImagesAbove(ModuleID module)
     }
 }
 
+// The file has run again behind the end of a mock. An image above took the namespace object of the file when it was linked, and no body of that image runs again.
+void Modules::handFileToImagesAbove(ModuleID file)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    String path = m_table.pathText(file);
+    for (Instance* above = m_instance.above; above; above = above->above) {
+        Modules* modules = above->state->modules.get();
+        if (!modules)
+            continue;
+        for (const UncompiledModuleData& row : modules->m_table.modulesOfUncompiledCode()) {
+            ModuleID external(row.module);
+            LoadedModule* loaded = modules->loadedIfExists(external);
+            if (!loaded || !loaded->uncompiledRecord)
+                continue;
+            bool namesFile = modules->resolvedKey(external).string() == path;
+            RETURN_IF_EXCEPTION(scope, void());
+            if (!namesFile)
+                continue;
+            RunningImageScope imageAbove(m_instance.vm->aotState(), above->program);
+            modules->setNamespace(external, ModulePhase::Evaluation, nullptr);
+            JSObject* namespaceObject = modules->uncompiledNamespace(external, ModulePhase::Evaluation, modules->data(external).isUncompiledCodeImportedAsNamespace() ? NamespaceUse::IsShownToProgram : NamespaceUse::CarriesBindings);
+            RETURN_IF_EXCEPTION(scope, void());
+            modules->setValue(external, namespaceObject);
+            for (uint32_t index = 0; index < modules->m_table.size(); ++index) {
+                ModuleID importer(index);
+                if (modules->status(importer) == ModuleStatus::Unlinked)
+                    continue;
+                if (!std::ranges::any_of(modules->m_table.requiredNames(importer), [&](const RequiredNameData& name) { return name.exporterModule() == external; }))
+                    continue;
+                modules->fillDeferredExports(importer);
+                RETURN_IF_EXCEPTION(scope, void());
+            }
+        }
+    }
+}
+
 // A file of the program had run when the mock came: the values of the mock are stored over its own. What they replace is kept from here until didLayMock().
 void Modules::keepWhatMockIsLaidOver(ModuleID file)
 {

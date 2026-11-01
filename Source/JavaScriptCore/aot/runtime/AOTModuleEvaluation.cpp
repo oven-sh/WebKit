@@ -2810,7 +2810,7 @@ void Modules::bringBackWhatLoaderLetGoBelow(ModuleID root)
 }
 
 // No walk of an evaluation goes below a module that has run. This one does, and runs what a mock kept from running, when a graph comes by that holds an importer of it.
-void Modules::evaluateModulesOwedBelow(ModuleID root)
+void Modules::evaluateModulesOwedBelow(ModuleID root, bool hasImporterAboveThatRan)
 {
     VM& vm = *m_instance.vm;
     bringBackWhatLoaderLetGoBelow(root);
@@ -2830,7 +2830,16 @@ void Modules::evaluateModulesOwedBelow(ModuleID root)
     BitVector isSeen(m_table.size());
     Vector<ModuleID, 16> toVisit { root };
     Vector<ModuleID, 4> owed;
-    Vector<Identifier, 4> filesOfImagesBelow;
+    Vector<std::pair<Identifier, ModuleID>, 4> filesOfImagesBelow;
+    BitVector hasImporterThatRan(m_table.size());
+    // The importer lies in an image above. A CommonJS file runs before the module that takes its exports.
+    if (hasImporterAboveThatRan) {
+        for (ModuleID each : { root, moduleWithExportsOf(root) }) {
+            if (m_modulesOwedToImportersThatRan.get(each.index()))
+                owed.append(each);
+        }
+    }
+    bool isRootOwed = !owed.isEmpty();
     while (!toVisit.isEmpty()) {
         ModuleID module = toVisit.takeLast();
         if (isSeen.quickSet(module.index()))
@@ -2839,7 +2848,7 @@ void Modules::evaluateModulesOwedBelow(ModuleID root)
         if (isMocked(module) || mockInPlace(module))
             continue;
         if (isOwedInImageBelow && data(module).isUncompiledCode()) {
-            filesOfImagesBelow.append(resolvedKey(module));
+            filesOfImagesBelow.append({ resolvedKey(module), module });
             RETURN_IF_EXCEPTION(scope, void());
         }
         // An importer that has yet to run brings the module along in its own turn.
@@ -2851,6 +2860,8 @@ void Modules::evaluateModulesOwedBelow(ModuleID root)
             toVisit.append(request.targetModule());
             letGoOfMockThatEnded(request.targetModule());
             RETURN_IF_EXCEPTION(scope, void());
+            if (hasRun)
+                hasImporterThatRan.quickSet(request.target());
             if (hasRun && m_modulesOwedToImportersThatRan.get(request.target()))
                 owed.append(request.targetModule());
         }
@@ -2875,6 +2886,10 @@ void Modules::evaluateModulesOwedBelow(ModuleID root)
             return;
         }
     }
+    if (isRootOwed) {
+        handFileToImagesAbove(root);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
     m_modulesWithNothingOwedBelow.set(root.index());
     if (filesOfImagesBelow.isEmpty())
         return;
@@ -2883,9 +2898,9 @@ void Modules::evaluateModulesOwedBelow(ModuleID root)
         Modules* modules = instance.state ? instance.state->modules.get() : nullptr;
         if (!modules || instance.program->position() >= m_instance.program->position() || scope.exception())
             return;
-        for (const Identifier& key : filesOfImagesBelow) {
+        for (auto& [key, external] : filesOfImagesBelow) {
             if (std::optional<ModuleID> file = modules->findByKey(key))
-                modules->evaluateModulesOwedBelow(*file);
+                modules->evaluateModulesOwedBelow(*file, hasImporterThatRan.get(external.index()));
             if (scope.exception()) [[unlikely]]
                 return;
         }
