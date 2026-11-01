@@ -1424,7 +1424,7 @@ static TypeID typeInSlotBelow(TypeArena& types, const RuntimeType& recorded, con
         type.anyObject = true;
         type.anyFunction = true;
     }
-    if (objects)
+    if (objects && !objects->isEmpty())
         type.layouts = types.completeLayoutSet(objects->span());
     return types.intern(WTF::move(type));
 }
