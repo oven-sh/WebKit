@@ -685,7 +685,7 @@ public:
     enum class AskedBy : bool { Loader, Import };
     bool textOfImportComesInLaterTurn(ModuleID, AskedBy);
     bool hasTextAtHand() const;
-    void didBeginTurn() { m_isInJobsBehindDelivery = false; }
+    void didRunJobsBehindDelivery() { m_isInJobsBehindDelivery = false; }
     bool isFirstTextThatWaitsOnlyDelayed() const { return !m_textsThatWait.isEmpty() && m_textsThatWait[m_numberOfTextsThatHaveCome].isOnlyDelayed; }
     // No text of the program is read, and all of the program is one image.
     bool loadsAsExecutableDoes() const;

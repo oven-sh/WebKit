@@ -4598,9 +4598,8 @@ bool Modules::deliverFirstTextThatWaits()
         promise->fulfill(vm, text.requestedRecord.get());
         return true;
     }
-    // The next turn ends it: no job of the run time's own stands among those of the program meanwhile.
-    if (text.isOnlyDelayed && !std::exchange(m_isInJobsBehindDelivery, true))
-        host().callInLaterTurn(m_instance.globalObject);
+    // The host says when they have run: no job of the run time's own stands among those of the program meanwhile.
+    m_isInJobsBehindDelivery |= text.isOnlyDelayed;
     if (text.jobsBehindFirstCall) {
         m_callsToMakeAgain.append(WTF::move(text));
         makeCallAgain(promise);
@@ -4681,10 +4680,6 @@ void deliverTextThatWaits(VM& vm)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     VMState& state = vm.aotState();
     ++state.turnOfTexts;
-    for (Instance* instance : state.instances) {
-        if (Modules* modules = instance->state ? instance->state->modules.get() : nullptr)
-            modules->didBeginTurn();
-    }
     bool isDelivered = false;
     while (!isDelivered && (state.numberOfTextsThatWait || state.numberOfCallsThatWaitApart)) {
         Modules* first = nullptr;
@@ -4706,6 +4701,14 @@ void deliverTextThatWaits(VM& vm)
             if (scope.exception()) [[unlikely]]
                 return;
         }
+    }
+}
+
+void didRunJobsBehindDelivery(VM& vm)
+{
+    for (Instance* instance : vm.aotState().instances) {
+        if (Modules* modules = instance->state ? instance->state->modules.get() : nullptr)
+            modules->didRunJobsBehindDelivery();
     }
 }
 
