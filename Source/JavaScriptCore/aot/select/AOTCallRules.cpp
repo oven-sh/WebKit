@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTConvention.h"
 #include "AOTEffectsOfRules.h"
 #include "AOTFrameAllocationPointers.h"
