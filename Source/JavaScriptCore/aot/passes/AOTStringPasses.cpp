@@ -3260,6 +3260,11 @@ LiteralStringTable numberLiteralStrings(const Program& program, const FlowResult
     FastBitVector typesHandedOnToVisit = typesToVisit;
 
     auto add = [&](StringID string) { strings.atomicSetAndCheck(string.index(), true); };
+    // A walk hands out the names of what it walks, `for (entry.kind in { text: 1 })`, and flow knows each by its text: the name of a field, and a name that an operation spells, is spelled as a constant is.
+    auto addName = [&](PropertyKeyID name) {
+        if (name && program.at(name).kind == PropertyKeyKind::Text)
+            constantsOfCode.atomicSetAndCheck(program.at(name).text.index(), true);
+    };
     // A string from outside the program gets its word where it comes in, so every member has one there. Where the program hands its own values on, a member that it spells nowhere does not occur.
     // A parse by type compares what it reads with the texts of the members.
     auto collectLiteralsOf = [&](TypeID id, Source source) {
@@ -3287,6 +3292,8 @@ LiteralStringTable numberLiteralStrings(const Program& program, const FlowResult
                 collectLiteralsOf(value.type, operationsHandingOnValues.contains(value.opcode) ? Source::Program : Source::Anywhere);
             else
                 constantsOfCode.atomicSetAndCheck(value.string().index(), true);
+            if (Value::opcodesWithKey.contains(value.opcode))
+                addName(value.key());
             forEachType(value, [&](TypeID type) {
                 collectLiteralsOf(type, Source::Anywhere);
             });
@@ -3338,8 +3345,10 @@ LiteralStringTable numberLiteralStrings(const Program& program, const FlowResult
     for (const Layout& layout : program.layouts) {
         bool isParsedByType = layout.flow.observedUses.contains(ObservedUse::IsParsedByType);
         bool isFilledByNativeCode = layout.flow.observedUses.contains(ObservedUse::ReachesTypedParse);
-        for (const Field& field : layout.fields)
+        for (const Field& field : layout.fields) {
             collectLiteralsOf(field.declared.written(), isParsedByType ? Source::Parser : !isFilledByNativeCode && field.flow.location.writers == WriterState::AllKnown ? Source::Program : Source::Anywhere);
+            addName(field.key);
+        }
     }
     BitVector described = findVariablesDescribedToRunTime(program, flow);
     for (unsigned index = 0; index < program.variables.size(); ++index) {
