@@ -765,6 +765,7 @@ enum class BuiltinMark : uint8_t {
     IsResolverThatLoaderCalls,
     IsRequireThatLoaderCalls,
     InstancesArePrintedWithoutTheirGetters,
+    MayTerminateProcess,
 };
 
 struct BuiltinMarkedEntry {
