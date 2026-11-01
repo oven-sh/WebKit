@@ -2868,16 +2868,17 @@ void Modules::evaluateModulesOwedBelowSlow(ModuleID root, bool hasImporterAboveT
         }
         // An importer that has yet to run brings the module along in its own turn.
         ModuleStatus statusOfImporter = status(module);
-        bool hasRun = statusOfImporter == ModuleStatus::Evaluated || statusOfImporter == ModuleStatus::EvaluatingAsync;
+        // A module with nothing to run keeps no status. It has run with its importer.
+        bool importerHasRun = statusOfImporter == ModuleStatus::Evaluated || statusOfImporter == ModuleStatus::EvaluatingAsync || hasRun(module);
         for (const ModuleRequestData& request : m_table.imports(module)) {
             if (request.isDeferred)
                 continue;
             toVisit.append(request.targetModule());
             letGoOfMockThatEnded(request.targetModule());
             RETURN_IF_EXCEPTION(scope, void());
-            if (hasRun)
+            if (importerHasRun)
                 hasImporterThatRan.quickSet(request.target());
-            if (hasRun && m_modulesOwedToImportersThatRan.get(request.target()))
+            if (importerHasRun && m_modulesOwedToImportersThatRan.get(request.target()))
                 owed.append(request.targetModule());
         }
     }
