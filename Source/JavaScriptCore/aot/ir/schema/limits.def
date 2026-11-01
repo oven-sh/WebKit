@@ -93,6 +93,7 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxIntegerRelationSteps(Optimize, CompileTime, NotOptimized, 64, 64, 0, "work per integer range query")
     MaxFrameEnvironmentFields(Optimize, Memory, HeapAllocation, 32, 32, 0, "variables of a stack-allocated closure environment")
     MaxFrameArrayLength(Optimize, Memory, HeapAllocation, 8, 8, 0, "elements of a stack-allocated array")
+    MaxBytesOfCellsInFrame(Optimize, BitWidth, HeapAllocation, 524288, 524288, 0, "bytes of the objects, closures and arrays that lie in one stack frame")
     MaxSuspensionsCrossedOnStack(Optimize, CompileTime, HeapAllocation, 16, 16, 0, "awaits and yields that a value lives across in the stack frame")
     MaxValuesOnStackAcrossSuspension(Optimize, Memory, HeapAllocation, 256, 256, 0, "values that live across one await or yield in the stack frame")
 

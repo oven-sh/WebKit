@@ -10,6 +10,8 @@
 
 #include "AOTBorrowedParameters.h"
 #include "AOTBuildContext.h"
+#include "AOTCellFormat.h"
+#include "AOTClosure.h"
 #include "AOTCodeShapes.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsDescription.h"
@@ -119,6 +121,7 @@ private:
     bool mayHoldCells(ObjectID) const;
     void findCellsMadeForOneUse();
     void checkReturnCalls();
+    void checkRoomInFrame();
     void checkHolders();
     std::optional<ObjectID> findHolder(const Use&) const;
     bool dieTogether(ObjectID holder, ObjectID held) const;
@@ -136,6 +139,7 @@ private:
     const EscapeAnalysis& m_escape;
     BitVector m_isCandidate;
     Vector<FrameDecision> m_decisions;
+    uint64_t m_bytesAlreadyInFrame { 0 };
     FramePlan m_plan;
 
     // What the callees of a call do with an operand is the same for every object that may arrive there.
@@ -169,6 +173,7 @@ static constexpr OperandUses usesChangingFrameCells {
     OperandUse::ChangesIntegrity,
     OperandUse::ChangesPrototype,
 };
+static constexpr size_t mostBytesOfCellWithoutElements = 32;
 static constexpr OperandUses usesOfSharedLists { OperandUse::Inspects, OperandUse::ReadsContents, OperandUse::RetainsContents };
 
 static LimitID reachedLimitOf(const EscapeAnalysis& escape)
@@ -336,6 +341,7 @@ FramePlan FramePlanner::run()
         checkUsesOfArrays();
         checkSuspensions();
         checkReturnCalls();
+        checkRoomInFrame();
         checkHolders();
         checkMaterialization();
         findCellsMadeForOneUse();
@@ -424,6 +430,19 @@ bool FramePlanner::isHiddenRestOfEveryCallee(const Use& use) const
     });
 }
 
+// The slots of an object are placed later. No slot is wider than a value.
+static uint64_t estimateBytesInFrame(const Program& program, const BuildContext& build, const Value& allocation)
+{
+    size_t bytes = 0;
+    if (allocation.opcode == Opcode::NewObject)
+        bytes = offsetOfFirstField + (program.at(allocation.layout()).fields.size() + 1) * sizeof(EncodedJSValue);
+    else if (allocation.opcode == Opcode::NewClosure)
+        bytes = Closure::allocationSize(allocation.capturesOperands().size());
+    else
+        bytes = mostBytesOfCellWithoutElements + build.limit(LimitID::MaxFrameArrayLength) * sizeof(EncodedJSValue);
+    return roundUpToMultipleOf<MarkedSpace::sizeStep>(bytes);
+}
+
 void FramePlanner::collectCandidates()
 {
     for (BlockID block : m_analyses.cfg().reversePostOrder()) {
@@ -441,8 +460,10 @@ void FramePlanner::collectCandidates()
                 m_plan.count(StatisticID::EmptyArgumentListsShared);
                 continue;
             }
-            if (value.storage() != AllocationStorage::Heap)
+            if (value.storage() != AllocationStorage::Heap) {
+                m_bytesAlreadyInFrame += estimateBytesInFrame(m_program, m_build, value);
                 continue;
+            }
             if (arrayAllocationsWithStorage.contains(value.opcode) && !canLieInFrame(m_program, m_build, value))
                 continue;
             m_isCandidate.quickSet(object->index());
@@ -1110,6 +1131,55 @@ void FramePlanner::checkReturnCalls()
         });
         if (keepsFrame)
             m_plan.demotedReturnCalls.append(block);
+    }
+}
+
+// A stack slot of a cell is shared with nothing, so the cells of a function take the sum of their sizes, and the frame has a widest size.
+// Wherever a cell lies, a word of the frame may have to name it.
+void FramePlanner::checkRoomInFrame()
+{
+    uint64_t numberOfCandidates = m_isCandidate.bitCount();
+    uint64_t widestFrame = m_build.limit(LimitID::MaxFrameSizeInBytes);
+    uint64_t bytesForTheRest = widestFrame / 16 + numberOfCandidates * sizeof(EncodedJSValue);
+    uint64_t room = std::min<uint64_t>(m_build.limit(LimitID::MaxBytesOfCellsInFrame), widestFrame - std::min(widestFrame, bytesForTheRest));
+    uint64_t mostBytesOfCell = offsetOfFirstField + (std::max<uint64_t>(m_build.limit(LimitID::MaxFrameEnvironmentFields), m_build.limit(LimitID::MaxCaptures)) + 1) * sizeof(EncodedJSValue) + sizeof(Closure) + MarkedSpace::sizeStep;
+    if (m_bytesAlreadyInFrame + numberOfCandidates * mostBytesOfCell <= room)
+        return;
+
+    struct Cell {
+        ObjectID object;
+        double frequency;
+        uint64_t bytes;
+    };
+    Vector<Cell> cells;
+    uint64_t bytes = m_bytesAlreadyInFrame;
+    const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
+    for (BlockID block : m_analyses.cfg().reversePostOrder()) {
+        for (ValueID id : m_function.at(block).values) {
+            std::optional<ObjectID> object = hasStorageChoice(m_function.at(id)) ? m_escape.objectDefinedBy(id) : std::nullopt;
+            if (!object || !isCandidate(*object) || !mayBeInFrame(*object))
+                continue;
+            cells.append({ *object, frequencies.frequencyOf(block).predicted(), estimateBytesInFrame(m_program, m_build, m_function.at(id)) });
+            bytes += cells.last().bytes;
+        }
+    }
+    if (bytes <= room)
+        return;
+
+    AOT::stableSort(cells, [](const Cell& a, const Cell& b) {
+        return a.frequency != b.frequency ? a.frequency > b.frequency : a.bytes < b.bytes;
+    });
+    LimitID limit = LimitID::None;
+    uint64_t taken = m_bytesAlreadyInFrame;
+    for (const Cell& cell : cells) {
+        if (taken + cell.bytes <= room) {
+            taken += cell.bytes;
+            continue;
+        }
+        if (limit == LimitID::None)
+            limit = m_build.gaveUp(LimitID::MaxBytesOfCellsInFrame, m_analyses.subject(allocationOf(cell.object))).limit;
+        moveToHeap(cell.object, AllocationHeapCause::ExceedsLimit, std::nullopt, limit);
+        m_plan.count(StatisticID::CellsWithoutRoomInFrames);
     }
 }
 
