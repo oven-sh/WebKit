@@ -235,7 +235,7 @@ public:
     JSObject* namespaceOfModuleItself(ModuleID);
     JSValue importModuleItselfBesideMock(ModuleID, JSValue answerOfImport);
     bool isHiddenInModuleItself(ModuleID, unsigned index) const;
-    JSValue readExportOfModuleItself(ModuleID, unsigned index);
+    JSValue readExportOfModuleItself(ModuleID, unsigned index, bool neverReadsMock = false);
     // `bun test` takes whoever imports a module out of its loader when a mock of the module ends, and when a mock is laid over what an earlier test file loaded. A mock of such an importer
     // comes ahead of its load, though the body has run here.
     enum class ImportersLetGo : bool { All, AllButThoseThatThisTestFileLinkedToModule };
@@ -1311,6 +1311,7 @@ private:
     void setAsideNamespaceUnderMock(ModuleID);
     bool m_makesNamespaceOfModuleItself { false };
     std::optional<ModuleID> m_moduleReadPastItsMock;
+    bool m_mockNeverAnswersForModuleReadPast { false };
     UncheckedKeyHashMap<ModuleID, MockOverModuleThatHasRun> m_mocksOverModulesThatHaveRun;
     struct FirstMockInTestFile {
         uint32_t moment;

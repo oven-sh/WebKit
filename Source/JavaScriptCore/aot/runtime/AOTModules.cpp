@@ -1854,6 +1854,8 @@ auto Modules::mockThatAnswersForSlow(ModuleID passingOn, const ModuleExportData&
     };
     for (size_t index : m_modulesWithMockInPlace) {
         JSObject* mock = mockInPlace(ModuleID(index));
+        if (m_mockNeverAnswersForModuleReadPast && m_moduleReadPastItsMock && (ModuleID(index) == *m_moduleReadPastItsMock || moduleWithExportsOf(ModuleID(index)) == *m_moduleReadPastItsMock))
+            continue;
         if (!mock || !seesMockOf(ModuleID(index), passingOn))
             continue;
         ModuleID declaring = moduleWithExportsOf(ModuleID(index));
@@ -2708,6 +2710,34 @@ bool Modules::setMockOverModuleThatHasRun(ModuleID module, JSObject* mock, JSVal
     if (isFile)
         loaded.exportsOfOriginalBesideMock.set(*this, commonJSExports(module));
     answerRequire();
+    // An importer of an image above reads the file through the object in its own module of the file. Where it was linked ahead of the mock in this test file, the mock never answers for that object,
+    // whichever test file loaded the file.
+    for (Instance* instance = m_instance.above; instance; instance = instance->above) {
+        Modules* above = instance->state ? instance->state->modules.get() : nullptr;
+        if (!above)
+            continue;
+        for (const UncompiledModuleData& entry : above->m_table.modulesOfUncompiledCode()) {
+            ModuleID row(entry.module);
+            const Identifier* key = above->resolvedKeyIfKnown(row);
+            std::optional<ModuleID> file = key ? findByKey(*key) : std::nullopt;
+            if (!file || (*file != module && *file != withExports) || !above->value(row).isCell())
+                continue;
+            auto* held = dynamicDowncast<ModuleNamespace>(above->value(row).asCell());
+            if (!held || !held->keepsToModule())
+                continue;
+            bool isHeldFromAheadOfMock = false;
+            bool isSeenBySomeImporter = false;
+            for (uint32_t importer = 0; importer < above->m_table.size(); ++importer) {
+                for (const ModuleRequestData& request : above->m_table.imports(ModuleID(importer))) {
+                    if (request.targetModule() != row || request.isHoisted || request.isDeferred || above->status(ModuleID(importer)) <= ModuleStatus::Linked)
+                        continue;
+                    (isMockSeenFrom(module, *above, ModuleID(importer)) ? isSeenBySomeImporter : isHeldFromAheadOfMock) = true;
+                }
+            }
+            if (isHeldFromAheadOfMock && !isSeenBySomeImporter)
+                held->setNeverReadsMock();
+        }
+    }
     return true;
 }
 
@@ -2873,8 +2903,9 @@ bool Modules::isHiddenInModuleItself(ModuleID module, unsigned index) const
     return (m_table.exports(module)[index].isFromStarExport && isExportAmbiguous(module, index)) || isLeftOut(module, index, TablesBehindStars::MayLackName);
 }
 
-JSValue Modules::readExportOfModuleItself(ModuleID module, unsigned index)
+JSValue Modules::readExportOfModuleItself(ModuleID module, unsigned index, bool neverReadsMock)
 {
+    SetForScope never(m_mockNeverAnswersForModuleReadPast, neverReadsMock);
     SetForScope readsPast(m_moduleReadPastItsMock, module);
     return readExportFromOutside(module, index);
 }
@@ -9188,7 +9219,7 @@ bool ModuleNamespace::getOwnPropertySlot(JSObject* object, JSGlobalObject* globa
     JSValue value = jsUndefined();
     if (method != InternalMethodType::HasProperty) {
         if (index && thisObject->m_keepsToModule) [[unlikely]]
-            value = thisObject->modules().readExportOfModuleItself(thisObject->m_module, *index);
+            value = thisObject->modules().readExportOfModuleItself(thisObject->m_module, *index, thisObject->m_neverReadsMock);
         else
             value = index ? thisObject->modules().readExportFromOutside(thisObject->m_module, *index) : thisObject->readDynamicExport(globalObject, name);
         RETURN_IF_EXCEPTION(scope, false);

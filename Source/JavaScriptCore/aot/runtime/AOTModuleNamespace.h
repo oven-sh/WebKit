@@ -48,8 +48,13 @@ public:
     bool isAnsweredByMock() const;
     JSObject* mockInPlace() const;
     // `vi.doMock()` over a module that has run leaves the module alone. Whoever held its object keeps it, and it answers for the module while the mock stands.
-    void setKeepsToModule(bool keepsToModule) { m_keepsToModule = keepsToModule; }
+    void setKeepsToModule(bool keepsToModule)
+    {
+        m_keepsToModule = keepsToModule;
+        m_neverReadsMock = false;
+    }
     bool keepsToModule() const { return m_keepsToModule; }
+    void setNeverReadsMock() { m_neverReadsMock = true; }
     // What is made for whoever asks under such a mock is the object of that mock, for good.
     void setMockOfView(VM& vm, JSObject* mock) { m_mockOfView.set(vm, this, mock); }
     void clearMockOfView() { m_mockOfView.clear(); }
@@ -117,6 +122,7 @@ private:
     bool m_hasESModuleMarker { false };
     bool m_hasOwnStructure { false };
     bool m_keepsToModule { false };
+    bool m_neverReadsMock { false };
 };
 
 } } // namespace JSC::AOT
