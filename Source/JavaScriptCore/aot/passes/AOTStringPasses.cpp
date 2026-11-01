@@ -2859,24 +2859,31 @@ PassOutcome fuseConcatenations(FunctionPassContext& context)
             Vector<ValueID, 16> operands;
             operands.append(function.at(id).operands());
             Vector<ValueID, 16> parts;
+            Vector<std::optional<StringID>, 16> joinedTexts;
             for (ValueID part : operands) {
                 std::optional<StringID> right = textOf(part);
-                std::optional<StringID> left = parts.isEmpty() || !right ? std::nullopt : textOf(parts.last());
+                std::optional<StringID> left = parts.isEmpty() || !right ? std::nullopt : joinedTexts.last() ? joinedTexts.last() : textOf(parts.last());
                 // How a text is held follows its literal, so a narrow one and a wide one stay apart.
                 if (!left || isWide(*left) != isWide(*right) || program.string(*left).size() + program.string(*right).size() > maxBytesOfJoinedTexts) {
                     parts.append(part);
+                    joinedTexts.append(std::nullopt);
                     continue;
                 }
                 Vector<char16_t> leftBuffer;
                 Vector<char16_t> rightBuffer;
-                Value joined = IRBuilder::make(Opcode::String);
                 String text = makeString(program.strings.viewOf(*left, leftBuffer), program.strings.viewOf(*right, rightBuffer));
-                joined.setString(context.strings.intern(StringView(text)));
-                parts.last() = builder.insertBefore({ block, index }, WTF::move(joined));
+                joinedTexts.last() = context.strings.intern(StringView(text));
             }
             // A concatenation of one part would be a conversion, and FoldConstants has already asked for what is wholly known.
             if (parts.size() < 2 || parts.size() == operands.size())
                 continue;
+            for (size_t partIndex = 0; partIndex < parts.size(); ++partIndex) {
+                if (!joinedTexts[partIndex])
+                    continue;
+                Value joined = IRBuilder::make(Opcode::String);
+                joined.setString(*joinedTexts[partIndex]);
+                parts[partIndex] = builder.insertBefore({ block, index }, WTF::move(joined));
+            }
             becomeConcatenationOf(id, parts.span());
             didJoinTexts = true;
         }

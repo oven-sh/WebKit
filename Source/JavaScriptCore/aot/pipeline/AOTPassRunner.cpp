@@ -830,6 +830,30 @@ static String findEditWithoutEntry(const Function& before, const Function& after
     return { };
 }
 
+static bool isSameButForScopeOfProof(const Value& before, const Value& after)
+{
+    if (before.opcode != Opcode::AssumeType || after.opcode != Opcode::AssumeType)
+        return false;
+    Value settled = before;
+    settled.setIsBehindChecks(after.isBehindChecks());
+    return !editsBetween(settled, after);
+}
+
+static String findEditOfIdleRun(const Function& before, const Function& after)
+{
+    if (after.blocks.size() != before.blocks.size())
+        return makeString("the pass says that it changed nothing, and the function has "_s, after.blocks.size(), " blocks where it had "_s, before.blocks.size());
+    for (size_t index = 0; index < before.blocks.size(); ++index) {
+        if (OptionSet<BlockEdit> edits = editsBetween(before.blocks[index], after.blocks[index]))
+            return makeString("the pass says that it changed nothing, and b"_s, index, " was edited ("_s, edits.toRaw(), ')');
+    }
+    for (size_t index = 0; index < before.values.size(); ++index) {
+        if (OptionSet<ValueEdit> edits = editsBetween(before.values[index], after.values[index]); edits && !isSameButForScopeOfProof(before.values[index], after.values[index]))
+            return makeString("the pass says that it changed nothing, and v"_s, index, " was edited ("_s, edits.toRaw(), ')');
+    }
+    return { };
+}
+
 auto PassRunner::PassClock::now() -> PassClock
 {
     return { CPUTime::forCurrentThread(), InstructionCounts::ofCurrentThread() };
@@ -985,6 +1009,8 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
     PassOutcome outcome = descriptor.run(context);
     if (m_build.isSabotaged(Sabotage::PassesDropCalls)) [[unlikely]]
         outcome |= dropCallThatNobodyReads(context);
+    if (m_build.isSabotaged(Sabotage::PassesChangeNothing)) [[unlikely]]
+        outcome = PassOutcome::Unchanged;
     if (reasons) [[unlikely]]
         context.function.setListenerForOperationsThatGo(reasons->outer());
     auto stopWhereThereIsOne = [&](const String& problem) {
@@ -1002,6 +1028,8 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
         stopWhereThereIsOne(findEditWithoutEntry(*functionBeforeRun, context.function, context.changes, logBeforeRun));
         if (outcome == PassOutcome::Changed)
             stopWhereThereIsOne(findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ context.program, context.inputs.effects }, *functionBeforeRun, context.function, *reasons), &*reasons));
+        else
+            stopWhereThereIsOne(findEditOfIdleRun(*functionBeforeRun, context.function));
     }
     if (isTimed) {
         if (outcome == PassOutcome::Unchanged && !context.analyses.computed().containsAll(analysesBefore))

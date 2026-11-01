@@ -1,0 +1,14 @@
+# A concatenation of texts alone would become one part, which is a conversion: it stays as it is, and no joined text is left behind.
+# FORM: Prepared
+# RUN: pass FuseConcatenations
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="texts" parameters=[] results=[{type=anything}] {
+    v0 = String string="a"
+    v1 = String string="b"
+    v2 = Strcat v0, v1
+    Return v2
+# CHECK-NOT: string="ab"
+}
