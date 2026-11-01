@@ -1748,47 +1748,19 @@ static std::optional<Vector<ValueID, 4>> findPresenceTestsThatLostTheirRead(Func
     return tests;
 }
 
-// The blocks that the list comes to from `from` on without passing a test that finds it in the storage that `storageTest` asks for.
-static BitVector blocksReachedWithoutPassing(FunctionPassContext& context, const Value& storageTest, BlockID from)
-{
-    const Function& function = context.function;
-    FunctionAnalyses& analyses = context.analyses;
-    ValueID array = analyses.identityOf(storageTest.arrayOperand());
-    BitVector reached(function.blocks.size());
-    reached.set(from.index());
-    Vector<BlockID, 16> worklist { from };
-    while (!worklist.isEmpty()) {
-        BlockID block = worklist.takeLast();
-        const Terminator& terminator = function.at(block).terminator;
-        const Value* test = findStorageTestBranchedOnBy(function, block);
-        bool asksTheSame = test && test->arrayStorage() == storageTest.arrayStorage() && analyses.identityOf(test->arrayOperand()) == array;
-        for (BlockID successor : analyses.cfg().successors(block)) {
-            if (asksTheSame && successor == terminator.taken().block && successor != terminator.notTaken().block)
-                continue;
-            if (!reached.set(successor.index()))
-                worklist.append(successor);
-        }
-    }
-    return reached;
-}
-
 // A test of the bounds names no kind of storage, so it does not say whose read it has lost. There is no copy where a read may have relied on such a test together with the proof.
-// Nor does it say behind which proof it stands. A loop that asked each element for undefined is a loop that counts, and the general loop beside it asks for Double storage at each turn and goes on in that one:
-// this proof no longer holds there and another one does, which nobody is handed. The copy leaves into the code behind the proof, with a list that may hold undefined.
-// So it may come to no such test but one that is right for any list: one that a list comes to from the head of the function without having been found in Double storage.
+// And there is none for a list that may hold undefined. The copy leaves into the code behind the proof, where `list[i] === undefined` was answered by the storage.
+// What is left of that question cannot be gone by: it may stand under another name of the list, behind a parameter of a block, and nothing at all is left of a loop that only counted and went.
+// Of a list that holds numbers alone every answer that the proof gave follows from the type.
 static bool mayHaveLostReadBehindBoundsTest(FunctionPassContext& context, BlockID tested, const Value& storageTest, const ReadsBehindStorageTest& found, const Vector<ValueID, 8>& testsInFrontOfReads)
 {
     const Function& function = context.function;
     FunctionAnalyses& analyses = context.analyses;
+    if (!holdsOnly(context, storageTest.arrayOperand(), Primitive::Number))
+        return true;
     if (!analyses.opcodesOfValues().contains(Opcode::IsInBounds))
         return false;
     ValueID array = analyses.identityOf(storageTest.arrayOperand());
-    bool mayHoldUndefined = !holdsOnly(context, storageTest.arrayOperand(), Primitive::Number);
-    // What is compared with a kind of storage proves the kind as a test does.
-    if (mayHoldUndefined && analyses.opcodesOfValues().contains(Opcode::ArrayStorageKind))
-        return true;
-    BitVector reachedByCopy = mayHoldUndefined ? blocksReachedWithoutPassing(context, storageTest, found.passed) : BitVector();
-    BitVector reachedInAnyStorage = mayHoldUndefined ? blocksReachedWithoutPassing(context, storageTest, entryBlock) : BitVector();
     for (BlockID block : analyses.cfg().reversePostOrder()) {
         const Terminator& terminator = function.at(block).terminator;
         if (!terminator.isConditionalBranch() || testsInFrontOfReads.contains(terminator.conditionOperand()))
@@ -1802,8 +1774,6 @@ static bool mayHaveLostReadBehindBoundsTest(FunctionPassContext& context, BlockI
             if (!numberOfEdgeResults(function, block, 0) || analyses.guards().stateAt(function.at(inBounds).parameters.last(), ProgramPoint::atHeadOf(found.passed)) != GuardState::Unavailable)
                 return true;
         } else if (analyses.dominators().dominates(found.passed, block) && analyses.guards().stateAt(found.guard, ProgramPoint::atHeadOf(inBounds)) != GuardState::Unavailable)
-            return true;
-        else if (mayHoldUndefined && reachedByCopy.get(block.index()) && !reachedInAnyStorage.get(block.index()))
             return true;
     }
     return false;

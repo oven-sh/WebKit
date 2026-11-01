@@ -1,4 +1,4 @@
-# A loop sums a list that is proven to hold numbers and undefined, and expects Double storage. A list whose storage holds any value is read in a copy of the reads, which asks of each element whether it is a number
+# A loop sums a list that is proven to hold numbers, and expects Double storage. A list whose storage holds any value is read in a copy of the reads, which asks of each element whether it is a number
 # and comes back with the number in front of the addition. An element that is no number leaves where an absent one does
 # FORM: Prepared
 # RUN: pass PlanArrayCapacities
@@ -7,7 +7,7 @@
 
 module m0 path="main.js" displayPath="main.js"
 
-function f0 name="sum" parameters=[{type=Array<undefined|number, proven>}] results=[{type=anything}] {
+function f0 name="sum" parameters=[{type=Array<number, proven>}] results=[{type=anything}] {
     v1 = Integer
     v2 = Double number=0.5
     Jump -> next b1(v2, v1)
@@ -36,7 +36,7 @@ function f0 name="sum" parameters=[{type=Array<undefined|number, proven>}] resul
 # CHECK: ConvertToDoubleStorage v0
 # CHECK: HasArrayStorage v0 arrayStorage=Contiguous
 # CHECK: IsElementPresent v0, v8, {{*}} arrayStorage=Contiguous [keyIsIntegral]
-# CHECK: [[element]]: undefined|number = GetArrayElement v0, v8, {{*}} arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+# CHECK: [[element]]: number = GetArrayElement v0, v8, {{*}} arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
 # CHECK-NEXT: TypeTest [[element]] testedType=number
 # CHECK-NOT: Add v3
 }

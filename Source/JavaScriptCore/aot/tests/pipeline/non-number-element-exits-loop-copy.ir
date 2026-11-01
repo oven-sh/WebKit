@@ -1,7 +1,7 @@
 # function sum(x) { const list = [1.5, x]; let s = 0; for (let i = 0; i < list.length; i++) s += list[i]; return s }  report(sum())
-# PlaceTypeTests puts the test of the position in front of the read. PlanArrayCapacities copies the loop for storage that holds any value, and there an element that is no number leaves along the failing arm of that test.
-# So the arm is entered though the index stays below the length: the second element is there, and it is undefined.
-# The list is kept for it: SinkAllocations would take it apart, and no loop would be left to copy.
+# The second element is there, and it is undefined: the list has storage that holds any value. PlanArrayCapacities copies the reads of a loop for such storage only where the list is proven to hold nothing but numbers:
+# the copy leaves into code that stands behind the test for Double storage, where a question such as `list[i] === undefined` may have been answered with nothing left of its read. So this list goes where the test fails.
+# The list is kept for it: SinkAllocations would take it apart, and no loop would be left.
 # FORM: AsRead
 # OPTIONS: disable=pass:SinkAllocations
 # RUN: run-in-shell globalThis.report = value => { print(String(value)); };
@@ -9,15 +9,8 @@
 # CHECK-NEXT: exited with 0
 # RUN(ARM): pipeline PlanArrayCapacities
 # ARM-LABEL: function f1 name="sum"
-# ARM: [[inside]]: boolean = IsInBounds
-# ARM-NEXT: Branch [[inside]] -> taken {{*}}, notTaken [[outside]](
-# ARM: [[outside]]({{*}}:
-# ARM-NEXT: = ElemGet
-# ARM: = GetArrayElement {{*}} arrayStorage=Contiguous
-# ARM-NEXT: [[isNumber]]: boolean = TypeTest {{*}} testedType=number
-# ARM-NEXT: Branch [[isNumber]] -> taken {{*}}, notTaken [[noNumber]](
-# ARM: [[noNumber]]({{*}}:
-# ARM-NEXT: Jump -> next [[outside]](
+# ARM: HasArrayStorage {{*}} arrayStorage=Double
+# ARM-NOT: arrayStorage=Contiguous
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
