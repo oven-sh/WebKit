@@ -2415,9 +2415,6 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
             else
                 callMicrotask(globalObject, job, jsUndefined(), jobCell, "performMicrotask is not a function"_s, microtaskCallCache);
 
-            // Restore async context before error reporting
-            asyncContextScope.restoreEarly();
-
             if (auto* exception = catchScope.exception()) [[unlikely]] {
                 // A TerminationException is not an error to report. It stays pending so that
                 // runMicrotask() stops the checkpoint, as it does for every other job kind. Clearing
@@ -2427,6 +2424,11 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
                     scope.release();
                     return;
                 }
+                // The embedder's error handlers read the async context that is current during the
+                // report. That is the one the job was queued in, also where the job has left another
+                // one in the slot (AsyncLocalStorage.enterWith()). The scope puts back the previous
+                // one after the report.
+                asyncContextScope.reenter(argument1);
                 reportErrorOfMicrotask(globalObject, exception);
             }
         }
