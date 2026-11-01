@@ -1,0 +1,41 @@
+# Object.defineProperties(Object.prototype, Object.getOwnPropertyDescriptors({ get extra() { .. } })), as the front end writes the pair; the same with `set other(v)`; Object.assign(Array.prototype, { get at() { .. } })
+# An accessor of the source is a name that the copy writes, as a property is: a name that the holder lacks, and one of its members.
+# RUN: pipeline CheckLockedBuiltinWrites
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Source"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject layout=L0 fields=[]
+    DefineGetter v1, v0 key="extra"
+    v3 = FinishObject v1
+    v4 = Builtin builtin=ObjectPrototype
+    v5 = Builtin builtin=CompilerHelpersDescribeUnlessOrdinary
+    v6 = Call v5, -, v3
+    v7 = Builtin builtin=CompilerHelpersDefinePropertiesFrom
+    v8 = Call v7, -, v4, v6, v3 @10
+    v9 = NewClosure function=f2
+    v10 = NewObject layout=L0 fields=[]
+    DefineSetter v10, v9 key="other"
+    v12 = FinishObject v10
+    v13 = Call v5, -, v12
+    v14 = Call v7, -, v4, v13, v12 @20
+    v15 = NewClosure function=f1
+    v16 = NewObject layout=L0 fields=[]
+    DefineGetter v16, v15 key="at"
+    v18 = FinishObject v16
+    v19 = Builtin builtin=ObjectAssign
+    v20 = Builtin builtin=Object
+    v21 = Builtin builtin=ArrayPrototype
+    v22 = Call v19, v20, v21, v18 @30
+    Return
+}
+function f1 name="read" results=[{type=anything}] {
+    v0 = Integer integer=41
+    Return v0
+}
+function f2 name="store" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
