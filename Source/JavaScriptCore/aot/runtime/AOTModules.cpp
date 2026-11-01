@@ -7468,7 +7468,7 @@ void willStorePathOfMainModule(JSGlobalObject* realm)
         // In a test run the runner itself stores there, for each test file in its turn.
         if (hasFlag(instance->options().admitted(), AdmittedCode::FilesRunByHost) || hasFlag(instance->options().admitted(), AdmittedCode::ReplacedBuiltins))
             return;
-        isDecidedInCode |= !instance->program->holdsLibraryAlone() && !instance->program->storesPathOfMainModule();
+        isDecidedInCode |= !instance->program->storesPathOfMainModule();
     }
     if (!isDecidedInCode)
         return;

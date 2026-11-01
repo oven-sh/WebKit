@@ -967,8 +967,7 @@ static Vector<ValueFlowWriteUnderNewName> computeBuiltinLocations(const ValueFlo
         bool isUnlocked = program.isUnlocked(member);
         if (isEnabled && !isStoredThroughUnknownReceiver && !isUnlocked && isWorthLockingAtStartUp(builtins, member, uses, withoutLocks).predicted())
             tables.membersLockedAtStartUp.quickSet(index);
-        // An image that holds the library alone takes every member for unlocked, and still has to say which of them it writes itself.
-        if (inputs.build.options().sharesRealms() && (!isUnlocked || inputs.build.options().holdsLibraryAlone()) && canLockAtStartUp(builtins, member) && (isStoredThroughUnknownReceiver || !isNoWriteFollowedTo(builtins, member, uses, withoutLocks).predicted()))
+        if (inputs.build.options().sharesRealms() && !isUnlocked && canLockAtStartUp(builtins, member) && (isStoredThroughUnknownReceiver || !isNoWriteFollowedTo(builtins, member, uses, withoutLocks).predicted()))
             tables.membersWrittenInSharedRealm.quickSet(index);
         BuiltinLocationClaim claim = isEnabled || Locks::byTable(builtins, member) ? stateOfLocation(holders.behindLocks(member, withoutLocks)) : unknownLocation(UnprovenCause::ResultDisabled);
         if (isStoredThroughUnknownReceiver || isUnlocked)

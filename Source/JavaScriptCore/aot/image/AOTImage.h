@@ -117,7 +117,6 @@ public:
 
     // Images that share their realms stand in a list, in the order in which they were built. An image that shares none is a list of one.
     bool sharesRealms() const { return header().has(ImageFlag::SharesRealms); }
-    bool holdsLibraryAlone() const { return header().has(ImageFlag::HoldsLibraryAlone); }
     const Image& first() const { return *m_first; }
     const Image* above() const { return m_above.load(std::memory_order_acquire); }
     const Image& last() const;

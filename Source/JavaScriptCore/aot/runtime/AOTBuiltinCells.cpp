@@ -1120,13 +1120,6 @@ static bool isLockedByTable(const BuiltinTable& table, BuiltinID holder)
     return hasMemberLockedByTable(table, holder) || table.at(holder).flags.contains(BuiltinFlag::IsLockedObject);
 }
 
-// The lowest program of the realm whose build knew the run. An image that holds the library alone was built for every run: it rests on no lock that a run can open, and says nothing about what this one opens.
-static Instance* firstInstanceOfRun(JSGlobalObject* realm)
-{
-    Instance* first = realm->aotInstance();
-    return first && first->program->holdsLibraryAlone() && first->above ? first->above : first;
-}
-
 namespace {
 
 // Locks a built-in object that the realm has created, and what hangs on it and is there already.
@@ -1226,7 +1219,7 @@ private:
             }
         };
         appendNamesOf(m_instance);
-        if (const Instance* first = firstInstanceOfRun(m_realm); first && first != &m_instance)
+        if (const Instance* first = m_realm->aotInstance(); first && first != &m_instance)
             appendNamesOf(*first);
         return names;
     }
@@ -1339,12 +1332,8 @@ static void lockBuiltins(Instance& instance)
     }
     BuiltinCells& cells = *instance.state->builtinCells;
     // What the first program of the realm leaves open stays open: its build knows of every file that the programs share and of Bun's own code, which a later build does not see.
-    Instance* first = firstInstanceOfRun(realm);
-    if (instance.program->holdsLibraryAlone()) {
-        // It locks what that program locks, which comes behind it.
-        if (first != &instance)
-            cells.setMembersUnlockedInRealm(Vector<uint32_t>(first->tables().unlockedBuiltinMembers()));
-    } else if (first && first != &instance && first->state) {
+    Instance* first = realm->aotInstance();
+    if (first && first != &instance && first->state) {
         toLock.builtins.filter(first->state->builtinCells->builtinsToLock());
         Vector<uint32_t> unlocked(instance.tables().unlockedBuiltinMembers());
         unlocked.append(first->tables().unlockedBuiltinMembers());

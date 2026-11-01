@@ -138,8 +138,6 @@ enum class ImageFlag : uint32_t {
     SharesRealms = 1 << 7,
     // The host may start an ES module that is an entry point once more in the same realm: ModuleFlags::RunsAgain.
     RunsEntryPointsAgain = 1 << 8,
-    // CompileOptions::holdsLibraryAlone(). It knows nothing of the run: the image above it is the first that does, and says what the realm locks.
-    HoldsLibraryAlone = 1 << 9,
     StoresPathOfMainModule = 1 << 10,
     // FlowResults::reachedFunctionsCountUnreadCode(). Without it whatever runs beside the code of the image is a copy of a file of the image.
     RunsUnreadCode = 1 << 11,
