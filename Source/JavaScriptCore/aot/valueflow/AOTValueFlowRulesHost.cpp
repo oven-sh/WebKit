@@ -1448,7 +1448,7 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
             attachments.addClassesAnsweredBy(builtin);
     });
     // Whoever calls a loader gets the object of any module of Bun's own by its name. Any text finds process.getBuiltinModule on the global object.
-    if (callsLoaderThatHasEscaped || membersFollowHolders)
+    if ((callsLoaderThatHasEscaped || membersFollowHolders) && !context.isSabotaged(Sabotage::ObjectsOfModulesCountAsLocked))
         context.add(context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed), universe.builtinTables().heap().objectsOfPublicModulesWithoutLocks());
     if (callsLoaderThatHasEscaped) {
         if (isHostFlagRaised(context, ValueFlowHostNode::ModulesAreRequiredByName) || isHostFlagRaised(context, ValueFlowHostNode::ModulesAreImportedByName))
