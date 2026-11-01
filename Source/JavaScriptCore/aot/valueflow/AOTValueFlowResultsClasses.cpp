@@ -1090,7 +1090,7 @@ static void noteClassesOfCreatedObjects(const ValueFlowResultInputs& inputs, Val
     const ValueFlowUniverse& universe = inputs.universe();
     if (handedToObjectCreate.isEmpty())
         return;
-    enum class State : uint8_t { Unseen, Known, Unknown };
+    enum class State : uint8_t { Unseen, Known, Unknown, OnPath, IsClass };
     Vector<State> states(FillWith { }, program.layouts.size(), State::Unseen);
     Vector<LayoutID> bases(program.layouts.size());
     for (const auto& [layout, handed] : handedToObjectCreate) {
@@ -1110,16 +1110,20 @@ static void noteClassesOfCreatedObjects(const ValueFlowResultInputs& inputs, Val
             }
         });
     }
-    for (bool changed = true; std::exchange(changed, false);) {
-        for (uint32_t index = 0; index < program.layouts.size(); ++index) {
-            if (states[index] == State::Known && bases[index] && (states[bases[index].index()] != State::Known || bases[index].index() == index)) {
-                states[index] = State::Unknown;
-                changed = true;
-            }
-        }
+    // The run time walks the expected bases of a class, and the classes below it, without a bound: a place is a class only where the row of bases above it ends in a class.
+    for (const auto& entry : handedToObjectCreate) {
+        LayoutID place = entry.first;
+        LayoutID top = place;
+        for (; states[top.index()] == State::Known && bases[top.index()]; top = bases[top.index()])
+            states[top.index()] = State::OnPath;
+        bool ends = states[top.index()] == State::Known || states[top.index()] == State::IsClass;
+        if (ends)
+            states[top.index()] = State::IsClass;
+        for (LayoutID passed = place; states[passed.index()] == State::OnPath; passed = bases[passed.index()])
+            states[passed.index()] = ends ? State::IsClass : State::Unknown;
     }
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
-        if (states[index] != State::Known || !inputs.build.isEnabled(FlowResultKind::ClassEvaluations, index))
+        if (states[index] != State::IsClass || !inputs.build.isEnabled(FlowResultKind::ClassEvaluations, index))
             continue;
         ClassFlow& flow = application.layouts[index].classFlow;
         flow.evaluations = ExecutionCount::AtMostOnce;
@@ -1127,7 +1131,7 @@ static void noteClassesOfCreatedObjects(const ValueFlowResultInputs& inputs, Val
         listAssignedMembers(inputs, maker, listWhatIsAssigned(inputs, ledger, LayoutID(index), answers).span(), flow, StoresUnderAccessors::RunSetters);
     }
     for (const auto& [holder, classLayout] : holders) {
-        if (!classLayout || states[classLayout.index()] != State::Known)
+        if (!classLayout || states[classLayout.index()] != State::IsClass)
             continue;
         LayoutID layout = universe.layoutOf(ValueFlowObjectID(holder));
         if (!layout)
@@ -1224,14 +1228,14 @@ static LayoutID expectedBaseIn(const Program& program, const FlowApplication& ap
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Every walk up the expected bases must end, so a linked base that closes a cycle is dropped.
-static void dropLinkedBasesInCycles(const Program& program, std::span<const LayoutID> basesLinkedByProgram, FlowApplication& application)
+// Every walk up the expected bases must end, so the base of a constructor function that closes a cycle is dropped, whether the program links it or the front end names it.
+static void dropBasesOfConstructorFunctionsInCycles(const Program& program, FlowApplication& application)
 {
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
-        LayoutID linked = basesLinkedByProgram[index];
-        if (!linked || program.layouts[index].base || application.layouts[index].classFlow.prototypeBase != linked)
+        LayoutID base = application.layouts[index].classFlow.prototypeBase;
+        if (!base || !program.layouts[index].has(LayoutFlags::IsConstructorFunction))
             continue;
-        LayoutID current = linked;
+        LayoutID current = base;
         for (size_t steps = 0; current && steps <= program.layouts.size(); ++steps)
             current = expectedBaseIn(program, application, current);
         if (current)
@@ -1311,7 +1315,7 @@ void computeClassResults(const ValueFlowResultInputs& inputs, FlowResultTables& 
             noteWhatConstructorFunctionKeeps(inputs, LayoutID(index), ledger, listsEveryName, flow);
         }
     }
-    dropLinkedBasesInCycles(program, basesLinkedByProgram.span(), application);
+    dropBasesOfConstructorFunctionsInCycles(program, application);
 }
 
 namespace {

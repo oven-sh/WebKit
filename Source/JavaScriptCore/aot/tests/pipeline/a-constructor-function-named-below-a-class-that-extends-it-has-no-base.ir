@@ -1,0 +1,48 @@
+# function F() {}   class X extends (() => F)() {}   F.prototype = Object.create(X.prototype); const made = new F(); F.prototype.late = 4; print(made instanceof X, made.late)
+# X extends F, and the prototype object of F is made below that of X, so the front end names X as the base of F. No object lies below itself: the object below X.prototype is a new one,
+# and the prototype object that X.prototype lies below is the one that F had first. Were X the class above F and F the class above X, the run time's walk over the classes below a class
+# whose prototype object changes would go round the two without end. The base of the constructor function is dropped, and the store into its prototype object returns.
+# FORM: AsRead
+# RUN(FLOW): pipeline ApplyFlowResults
+# RUN: run-in-shell
+# FLOW: layout L0 kind=Instance name="X" {{*}}baseState=Layout base=L1
+# FLOW: layout L1 kind=Instance name="F"
+# FLOW-NOT: prototypeBase
+# FLOW: function f0
+# CHECK: true 4
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="X" constructor=f2 flags=[HasHeritage]
+layout L1 kind=Instance name="F" base=L0 constructor=f1 flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = ResolveHeritage v0
+    v3 = NewClass v1, v0, v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = PropGet v4 key="prototype"
+    v6 = Builtin builtin=ObjectCreate
+    v7 = Call v6, -, v5
+    PropSet v0, v7 key="prototype" mode=Strict
+    v9 = Construct v0
+    v10 = PropGet v0 key="prototype"
+    v11 = Integer integer=4
+    PropSet v10, v11 key="late" mode=Strict
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="print" [isFreeName]
+    v15 = InstanceOf v9, v4
+    v16 = PropGet v9 key="late"
+    v17 = Call v14, -, v15, v16
+    Return
+}
+function f1 name="F" flags=[HasThis] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="X" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L0
+    Return v3
+}
