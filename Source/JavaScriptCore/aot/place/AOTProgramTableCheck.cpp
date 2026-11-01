@@ -526,9 +526,6 @@ static ExpectedRuntimeType computeExpectedRuntimeType(const TableEncoder& encode
         });
         // In a plan, String says that some string passes. In a record it says that every string passes.
         uint16_t primitives = plan.stringLiterals.isEmpty() ? plan.passingPrimitives : (plan.passingPrimitives & ~Primitive::String) | Primitive::LiteralString;
-        plan.stringLiterals.removeAllMatching([&](StringID literal) {
-            return encoder.inputs.pipeline.literalStrings->isLeftOut(literal);
-        });
         return { .id = id, .primitives = primitives, .integers = plan.integers, .cellTests = WTF::move(plan.cellTests), .literalStrings = WTF::move(plan.stringLiterals) };
     }
     RELEASE_ASSERT_NOT_REACHED();

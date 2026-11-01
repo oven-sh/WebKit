@@ -3250,7 +3250,7 @@ LiteralStringTable numberLiteralStrings(const Program& program, const FlowResult
     FastBitVector strings(numberOfStrings);
     // Each gets a word, and its text only if the program spells it.
     FastBitVector membersFromOutside(numberOfStrings);
-    // Each gets a word only if the program spells it.
+    // As those: what the engine makes of a value no constant spells, `seen[flag] = 1` names "true", and a walk hands that name out as a string from outside comes in.
     FastBitVector membersHandedOn(numberOfStrings);
     FastBitVector constantsOfCode(numberOfStrings);
     FastBitVector variablesNamedByCode(program.variables.size());
@@ -3379,19 +3379,15 @@ LiteralStringTable numberLiteralStrings(const Program& program, const FlowResult
 
     LiteralStringTable table;
     table.m_withoutText = BitVector(numberOfStrings);
-    table.m_leftOut = BitVector(numberOfStrings);
     membersFromOutside.forEachSetBit([&](size_t index) {
         if (!strings.at(index) && !constantsOfCode.at(index))
             table.m_withoutText.quickSet(index);
         strings[index] = true;
     });
     membersHandedOn.forEachSetBit([&](size_t index) {
-        if (strings.at(index))
-            return;
-        if (constantsOfCode.at(index))
-            strings[index] = true;
-        else
-            table.m_leftOut.quickSet(index);
+        if (!strings.at(index) && !constantsOfCode.at(index))
+            table.m_withoutText.quickSet(index);
+        strings[index] = true;
     });
 
     StringID emptyString = program.strings.emptyString();
