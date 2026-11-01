@@ -420,43 +420,57 @@ static ValueFlowNodeID thisParameterOf(ValueFlowRuleContext& context, FunctionID
     return index ? context.nodes().entryParameter(function, *index) : ValueFlowNodeID();
 }
 
-ValueID definitionThroughTests(const Function& function, ValueID id)
+void DefinitionsThroughTests::makeTables()
+{
+    m_hasTables = true;
+    m_numberOfBlocksRead += m_function.blocks.size();
+    m_ownerOfParameter.fill(BlockID(), m_function.values.size());
+    m_waysIn.fill(WaysIn { }, m_function.blocks.size());
+    for (uint32_t index = m_function.blocks.size(); index--;) {
+        const Block& block = m_function.blocks[index];
+        for (ValueID parameter : block.parameters)
+            m_ownerOfParameter[parameter.index()] = BlockID(index);
+        const auto& targets = block.terminator.targets;
+        for (uint32_t targetIndex = 0; targetIndex < targets.size(); ++targetIndex) {
+            WaysIn& ways = m_waysIn[targets[targetIndex].block.index()];
+            ++ways.count;
+            ways.from = index;
+            ways.targetIndex = targetIndex;
+        }
+    }
+}
+
+ValueID DefinitionsThroughTests::of(ValueID id)
 {
     AOT_THRESHOLD(unsigned, mostTests, 4);
     for (unsigned steps = 0; steps < mostTests; ++steps) {
-        id = definitionThroughSameValues(function, id);
-        if (function.at(id).opcode != Opcode::Parameter)
+        id = definitionThroughSameValues(m_function, id);
+        if (m_function.at(id).opcode != Opcode::Parameter)
             return id;
-        if (function.at(entryBlock).parameters.contains(id))
+        if (m_function.at(entryBlock).parameters.contains(id))
             return id;
-        BlockID owner;
-        size_t parameterIndex = notFound;
-        for (uint32_t block = 0; block < function.blocks.size() && !owner; ++block) {
-            parameterIndex = function.blocks[block].parameters.find(id);
-            if (parameterIndex != notFound)
-                owner = BlockID(block);
-        }
+        if (!m_hasTables)
+            makeTables();
+        BlockID owner = m_ownerOfParameter[id.index()];
         if (!owner)
             return id;
-        unsigned numberOfEdges = 0;
-        ValueID passed;
-        for (uint32_t from = 0; from < function.blocks.size(); ++from) {
-            const auto& targets = function.blocks[from].terminator.targets;
-            for (uint32_t targetIndex = 0; targetIndex < targets.size(); ++targetIndex) {
-                const Target& target = targets[targetIndex];
-                if (target.block != owner)
-                    continue;
-                if (++numberOfEdges > 1)
-                    return id;
-                passed = parameterIndex < target.arguments.size() ? target.arguments[parameterIndex]
-                    : operandNarrowedOnEdge(function, { BlockID(from), targetIndex, static_cast<uint32_t>(parameterIndex - target.arguments.size()) });
-            }
-        }
-        if (numberOfEdges != 1 || !passed)
+        const WaysIn& ways = m_waysIn[owner.index()];
+        if (ways.count != 1)
+            return id;
+        size_t parameterIndex = m_function.at(owner).parameters.find(id);
+        const Target& target = m_function.blocks[ways.from].terminator.targets[ways.targetIndex];
+        ValueID passed = parameterIndex < target.arguments.size() ? target.arguments[parameterIndex]
+            : operandNarrowedOnEdge(m_function, { BlockID(ways.from), ways.targetIndex, static_cast<uint32_t>(parameterIndex - target.arguments.size()) });
+        if (!passed)
             return id;
         id = passed;
     }
     return id;
+}
+
+ValueID definitionThroughTests(const Function& function, ValueID id)
+{
+    return DefinitionsThroughTests(function).of(id);
 }
 
 static PropertyKeyID keyOfMemberCalledOnItsHolder(ValueFlowRuleContext& context, const ValueFlowStatement& statement)

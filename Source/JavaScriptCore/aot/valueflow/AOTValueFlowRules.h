@@ -36,6 +36,32 @@ void forEachPartOfCallees(ValueFlowRuleContext& context, ClimbingSet callees, NO
         functor(ClimbingSet(unknownCalleeOfStatement(context)));
 }
 
+class DefinitionsThroughTests {
+public:
+    explicit DefinitionsThroughTests(const Function& function)
+        : m_function(function)
+    {
+    }
+
+    ValueID of(ValueID);
+    uint64_t numberOfBlocksRead() const { return m_numberOfBlocksRead; }
+
+private:
+    struct WaysIn {
+        uint32_t count { 0 };
+        uint32_t from { 0 };
+        uint32_t targetIndex { 0 };
+    };
+
+    void makeTables();
+
+    const Function& m_function;
+    bool m_hasTables { false };
+    uint64_t m_numberOfBlocksRead { 0 };
+    Vector<BlockID, 128> m_ownerOfParameter;
+    Vector<WaysIn, 32> m_waysIn;
+};
+
 ValueID definitionThroughTests(const Function&, ValueID);
 BuiltinID entryNamedByOperations(const Program&, const Function&, ValueID);
 PropertyKeyID keyOfMemberCalledOnItsHolderByText(const Program&, const Function&, const Value& call);

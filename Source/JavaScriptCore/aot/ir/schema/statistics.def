@@ -31,6 +31,7 @@ enum StatisticID {
     FunctionPassRunsSkipped
     EffectsComputed EffectsKept
     HandedOnReferencesRead CallOperandsSummarizedForFrames FunctionsBelowEntrancesInCyclesVisited ValuesReadForClassesBelowCopies MembersReadForTypesOfCopies
+    BlocksReadForDefinitionsThroughTests BlocksVisitedForCyclesAvoidingBlocks
     StackChecksCoveredByCallers StackChecksDeferredToCallee TailRecursionsEliminated ReturnCallsDemoted ResultsBoxedForTailCalls SecondaryEntries
     StretchesGuarded TypeTestsPlaced StretchesNotClonable GuardsEliminated QuestionsAboutWhoEndsGuards UnionsSplit LoopParametersTestedInFrontOfLoops
     RestartsInGenericVersion ChecksReplacedByGuards

@@ -40,8 +40,9 @@ static std::optional<unsigned> positionOfParameter(const Function& function, Val
     return position < function.numberOfPositionalParameters() ? std::optional(position) : std::nullopt;
 }
 
-Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Program& program, const ParallelLoops& loops, Vector<TextPassed>& textsPassed, Vector<StringID>& relativePaths, Vector<ValueFlowNotedOperations>& notedOperations)
+Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Program& program, BuildContext& build, Vector<TextPassed>& textsPassed, Vector<StringID>& relativePaths, Vector<ValueFlowNotedOperations>& notedOperations)
 {
+    const ParallelLoops& loops = build.parallelLoops();
     notedOperations.fill(0, program.functions.size());
     struct Argument {
         uint32_t index;
@@ -84,6 +85,7 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
             positionOfKey[index] = std::min<uint32_t>(positionOfKey[index], position);
         };
         Vector<std::pair<ValueID, FunctionID>, 2> definedAsGet;
+        DefinitionsThroughTests definitions(function);
         for (const Block& block : function.blocks) {
             for (ValueID id : block.values) {
                 const Value& value = function.at(id);
@@ -103,7 +105,7 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
                     for (ValueID called : { value.calleeOperand(), value.thisValueOperand() }) {
                         if (!called || !hasInstances)
                             continue;
-                        const Value& read = function.at(definitionThroughTests(function, called));
+                        const Value& read = function.at(definitions.of(called));
                         if (std::optional<unsigned> position = read.opcode == Opcode::ElemGet ? positionOfParameter(function, read.operand(OperandIndex::ElemGet::property)) : std::nullopt)
                             note(*position);
                     }
@@ -171,6 +173,7 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
                     body.calls.append({ index, callee, nameOfCallee, static_cast<uint32_t>(body.arguments.size()) });
             }
         }
+        build.statistics().count(StatisticID::BlocksReadForDefinitionsThroughTests, definitions.numberOfBlocksRead());
     };
     constexpr unsigned functionsInChunk = 256;
     unsigned numberOfFunctions = program.functions.size();
@@ -572,7 +575,7 @@ static ValueFlowBodies reduceBodiesBehindKeys(Program& program, BuildContext& bu
     Vector<ValueFlowInstancedFunctions::TextPassed> textsPassed;
     Vector<StringID> relativePaths;
     Vector<ValueFlowNotedOperations> notedOperations;
-    positionOfKey = ValueFlowInstancedFunctions::findParametersThatAreKeys(program, build.parallelLoops(), textsPassed, relativePaths, notedOperations);
+    positionOfKey = ValueFlowInstancedFunctions::findParametersThatAreKeys(program, build, textsPassed, relativePaths, notedOperations);
     makeKeysOfTextsThatCallsPass(program, positionOfKey.span(), textsPassed.span());
     internKeysOfDeclaredStringLiterals(program, build.parallelLoops());
     internEmbeddedFilePaths(program);
