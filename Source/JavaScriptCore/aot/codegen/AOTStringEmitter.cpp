@@ -100,7 +100,7 @@ static String describeAsString(const Type& type)
 
 std::optional<FlatStringCell> StringEmitter::flatStringByType(ValueID string)
 {
-    if (!typeOf(string).isOpaque(OpaqueKind::FlatString))
+    if (!typeOf(string).isOpaque(OpaqueKind::FlatString) && !build().recordedOptions().isSabotaged(Sabotage::RopesPassForFlatStrings))
         return std::nullopt;
     return FlatStringCell(in<CellPointer>(string));
 }
@@ -131,6 +131,9 @@ Pointer StringEmitter::implOfFlatString(FlatStringCell flatString)
     if (auto opened = m_openedStrings.find(flat.value()); opened != m_openedStrings.end())
         return opened->value.impl;
     Pointer impl(markImmutable(m_out.loadPtr(asPointer(flat).value(), m_heaps.JSString_value)));
+    checkClaim(flat, [&] {
+        return hasNoBits(impl, JSString::isRopeInPointer);
+    });
     m_proc.setKnownDereferenceableBytes(impl.value(), smallestStringImplSize);
     return impl;
 }
