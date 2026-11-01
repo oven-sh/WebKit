@@ -162,6 +162,7 @@ public:
     Vector<ModuleID, 8> filesImportedByImagesAbove(ImportersAbove) const;
     bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars);
     bool tryReplaceExportBehindStars(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars);
+    void keepExportOfOtherImageBeforeMock(ModuleID external, UniquedStringImpl* name);
     std::optional<bool> tryReplaceExportInImageBelow(ModuleID external, UniquedStringImpl* name, JSValue);
     bool tryReplaceExportOfUncompiledModule(ModuleID external, UniquedStringImpl* name, JSValue);
     bool tryReplaceCapturedExport(ModuleID, UniquedStringImpl* name, JSValue);

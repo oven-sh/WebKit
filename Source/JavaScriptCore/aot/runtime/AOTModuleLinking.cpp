@@ -1077,7 +1077,10 @@ void Modules::endMockLaidOverFile(ModuleID file)
                 value = source ? source->get(realm, name) : jsUndefined();
                 RETURN_IF_EXCEPTION(scope, void());
             }
-            tryReplaceCapturedExport(holder, name.impl(), value);
+            if (data(holder).isUncompiledCode())
+                tryReplaceExport(holder, name.impl(), value);
+            else
+                tryReplaceCapturedExport(holder, name.impl(), value);
             RETURN_IF_EXCEPTION(scope, void());
         }
     };

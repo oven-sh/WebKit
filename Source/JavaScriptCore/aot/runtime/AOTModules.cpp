@@ -1199,6 +1199,8 @@ bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue
     // A chain of re-exports ends at the module that declares the variable. A ring of them names nothing.
     for (unsigned steps = 0; steps <= m_table.size(); ++steps) {
         if (m_instance.state->sharesRealm && data(module).isUncompiledCode()) [[unlikely]] {
+            keepExportOfOtherImageBeforeMock(module, name);
+            RETURN_IF_EXCEPTION(scope, false);
             std::optional<bool> isReplaced = tryReplaceExportInImageBelow(module, name, value);
             RETURN_IF_EXCEPTION(scope, false);
             if (isReplaced)
@@ -1278,6 +1280,37 @@ bool Modules::tryReplaceExportBehindStars(ModuleID module, UniquedStringImpl* na
             return true;
     }
     return false;
+}
+
+// The variable lies in another image, whose modules know nothing of the mock that is being laid in this one. The module that stands for the file here keeps the value, and the file
+// under the mock gives it back by the same way: endMockLaidOverFile().
+void Modules::keepExportOfOtherImageBeforeMock(ModuleID external, UniquedStringImpl* name)
+{
+    if (!m_moduleWithMockBeingLaid)
+        return;
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* namespaceObject = uncompiledNamespace(external, ModulePhase::Evaluation, NamespaceUse::CarriesBindings);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!dynamicDowncast<ModuleNamespace>(namespaceObject))
+        return;
+    Vector<ModuleID>& behindStars = ensureLoaded(*m_moduleWithMockBeingLaid).modulesBehindStarsUnderMock;
+    if (!behindStars.contains(external))
+        behindStars.append(external);
+    Identifier key = Identifier::fromUid(vm, name);
+    LoadedModule& held = ensureLoaded(external);
+    if (held.exportsBeforeMock && storedValue(realm, held.exportsBeforeMock, key))
+        return;
+    JSValue before = namespaceObject->get(realm, key);
+    // The body of the file has yet to fill the name, on a ring through the file under the mock: there is no value to come back to.
+    if (scope.exception()) [[unlikely]] {
+        scope.tryClearException();
+        return;
+    }
+    if (!held.exportsBeforeMock)
+        held.exportsBeforeMock.set(*this, createTableOfExports());
+    held.exportsBeforeMock.get()->putDirectMayBeIndex(realm, key, before);
 }
 
 // The chain goes on in the image that holds the file. Nothing where the module stands for no file of an image below.
