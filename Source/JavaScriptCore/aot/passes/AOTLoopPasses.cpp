@@ -1243,16 +1243,48 @@ static bool testFirstValuesInFrontOfLoops(FunctionPassContext& context)
         });
         if (!canHandOn)
             continue;
+        // The head may look at its parameter through casts, and a cast may name a fact of the head: that the word has been filled. In front of such a cast the word may be anything.
+        // Whoever takes the entry comes to the head with nothing in between, so what holds there holds in front of the loop: the first value is asked through copies of what the head asks through.
+        HashMap<ValueID, ValueID> inFrontOfLoop;
+        for (uint32_t index = 0; index < parameters.size(); ++index)
+            inFrontOfLoop.set(parameters[index], first[index]);
+        BitVector leadsToTest(function.values.size());
+        Vector<ValueID, 4> worklist { test.valueOperand() };
+        while (!worklist.isEmpty()) {
+            ValueID id = worklist.takeLast();
+            ValueLocation location = analyses.useLists().locationOf(id);
+            if (location.block != header || location.placement != ValuePlacement::InBlock || leadsToTest.quickSet(id.index()))
+                continue;
+            function.at(id).forEachOperand([&](ValueID operand, uint32_t) {
+                worklist.append(operand);
+            });
+        }
+        Vector<ValueID, 4> askedThrough;
+        for (ValueID id : function.at(header).values) {
+            if (leadsToTest.quickGet(id.index()))
+                askedThrough.append(id);
+        }
 
         TypeID testedType = test.testedType();
+        ValueID askedOfHead = test.valueOperand();
         Expected<BlockFrequency> frequencyWhenFailed = function.at(whenFailed).frequency;
         IRBuilder builder(analyses.context(), function, context.types, &analyses);
         builder.setOrigin(test.origin());
+        Origin originOfTest = test.origin();
         BlockID front = builder.splitEdge(*entry);
         Expected<BlockFrequency> frequency = function.at(front).frequency;
         function.edit(front, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
         builder.moveToEndOf(front);
-        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.appendTypeTest(first[parameterIndex], testedType), OperandIndex::TypeTest::value, frequency, frequencyWhenFailed);
+        for (ValueID id : askedThrough) {
+            Value copy(function.at(id));
+            copy.forEachOperand([&](ValueID& operand, uint32_t) {
+                operand = inFrontOfLoop.getOptional(operand).value_or(operand);
+            });
+            builder.setOrigin(copy.origin());
+            inFrontOfLoop.set(id, builder.append(WTF::move(copy)));
+        }
+        builder.setOrigin(originOfTest);
+        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.appendTypeTest(inFrontOfLoop.getOptional(askedOfHead).value_or(first[parameterIndex]), testedType), OperandIndex::TypeTest::value, frequency, frequencyWhenFailed);
         builder.moveToEndOf(branch.notTaken);
         for (ValueID poll : polls) {
             builder.setOrigin(function.at(poll).origin());

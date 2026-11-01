@@ -1,0 +1,42 @@
+# The head of a loop tests its parameter behind a cast that names a fact: the word has been filled. The first value is asked in front of the loop through copies of the fact and the cast, not as the entry hands it on
+# FORM: Prepared
+# RUN: pass ConvertCountersToIntegers
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="k" parameters=[{type=boolean}, {type=int|object}, {type=number}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1, v2)
+  b2():
+    v3 = Unspecified valueType=int|object
+    Jump -> next b3(v3, v2)
+  b3(v4, v5):
+    Jump -> next b4(v4)
+  b4(v6):
+    LoopHint
+    v8 = Specified
+    v9 = AssumeType v6, v8 provenType=int|object
+    v10 = TypeTest v9 testedType=object
+    Branch v10 -> taken b5(| 0), notTaken b6()
+  b5(v11):
+    v12 = StrictEq v11, v11
+    Branch v12 -> taken b7(), notTaken b8()
+  b6() frequency=Rare:
+    Return v5
+  b7():
+    Return v11
+  b8():
+    v13 = NewArray v11 contents=anything
+    Jump -> next b4(v13)
+}
+# CHECK: b3(v4: int|object|unspecified, v5: number):
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b4(v6: object):
+# CHECK: b9():
+# CHECK-NEXT: v14: fact = Specified
+# CHECK-NEXT: v15: int|object = AssumeType v4, v14 provenType=int|object
+# CHECK-NEXT: v16: boolean = TypeTest v15 testedType=object
+# CHECK-NEXT: Branch v16 -> taken b10(| 0), notTaken b11(| 0)
+# CHECK-NEXT: b10(v17: object):
+# CHECK-NEXT: Jump -> next b4(v17)
