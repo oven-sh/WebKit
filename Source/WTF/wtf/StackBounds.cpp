@@ -153,13 +153,27 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 static void* endOfMainThreadStack()
 {
     auto* path = reinterpret_cast<const char*>(getauxval(AT_EXECFN));
+    // Before glibc 2.36 getauxval() finds nothing on arm64 when ld.so is run as a command (glibc bug 23293). The first string of the environment stands in.
+    if (!path && environ)
+        path = *environ;
     // The pointers to the environment lie above every frame and below the strings, of which the path is the last; execve() takes 6 MB of strings at the most.
-    // A path that lies elsewhere was written into the auxiliary vector by a tracer or an emulator (PRoot keeps it below the first frame) and says nothing about the mapping.
+    // A path that lies elsewhere was written into the auxiliary vector by a tracer or an emulator and says nothing about the mapping.
     auto* environment = reinterpret_cast<const char*>(environ);
     if (!path || environment < currentStackPointer() || path < environment || static_cast<size_t>(path - environment) > 8 * MB)
         return nullptr;
+    // glibc's ld.so, run as a command, and PRoot point AT_EXECFN to argv[0], the lowest of the program's strings. The last of the environment is then the closest to the end.
+    // execve() packs the strings. One that does not start where the previous one ends is from setenv() or putenv() and can lie anywhere.
+    auto* lastString = path;
+    auto* previous = path;
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    for (char** variable = environ; *variable; ++variable) {
+        if (*variable > lastString && *variable == previous + strlen(previous) + 1)
+            lastString = *variable;
+        previous = *variable;
+    }
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     uintptr_t pageSize = static_cast<uintptr_t>(sysconf(_SC_PAGESIZE));
-    uintptr_t end = reinterpret_cast<uintptr_t>(path) + strlen(path) + 1;
+    uintptr_t end = reinterpret_cast<uintptr_t>(lastString) + strlen(lastString) + 1;
     return reinterpret_cast<void*>((end + pageSize - 1) & ~(pageSize - 1));
 }
 #endif
