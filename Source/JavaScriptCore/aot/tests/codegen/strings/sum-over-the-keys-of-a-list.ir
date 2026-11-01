@@ -1,5 +1,4 @@
 # function total(list: number[]): number {
-# TODO: row-4719: the clamp of loop bounds is switched off, and what rests on it is lost: fast versions of counted loops without range checks, their vectors and written-out turns
 #   let sum = 0;
 #   for (const key in list) sum += list[key];
 #   return sum;

@@ -1,5 +1,4 @@
 # function checksum(a) { let s = 0; for (let i = 0; i < a.length; ++i) s = (s * 31 + a[i]) % 65521; return s; }
-# TODO: row-4719: the clamp of loop bounds is switched off, and what rests on it is lost: fast versions of counted loops without range checks, their vectors and written-out turns
 # function zeroThirty(a) { for (var j = 0; j < 30; ++j) a[j] = 0; return a[3]; }
 # function onesToLength(a) { for (let j = 0; j < a.length; ++j) a[j] = 1; }
 # function fillInt8(a, n, v) { for (let j = 0; j < n; ++j) a[j] = v; }

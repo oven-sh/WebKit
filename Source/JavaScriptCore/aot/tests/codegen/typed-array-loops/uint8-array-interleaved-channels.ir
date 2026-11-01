@@ -1,5 +1,4 @@
 # function toGray(pixels: Uint8Array, gray: Uint8Array): void {
-# TODO: row-4719: the clamp of loop bounds is switched off, and what rests on it is lost: fast versions of counted loops without range checks, their vectors and written-out turns
 #   for (let k = 0; k < gray.length; k++) gray[k] = (pixels[4 * k]! + pixels[4 * k + 1]! + pixels[4 * k + 2]!) >> 2;
 # }
 # declare const input: any;

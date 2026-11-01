@@ -308,8 +308,7 @@ static void testRandomProgramPolicyCoversSwitches()
         bool isLeftOff = fields.policySwitch == PolicySwitch::PinnedConstants
             || fields.policySwitch == PolicySwitch::ShrinkWrapFrame
             || fields.policySwitch == PolicySwitch::OmitFrameRecord
-            || fields.policySwitch == PolicySwitch::DuplicateReturns
-            || fields.policySwitch == PolicySwitch::ClampLoopBounds;
+            || fields.policySwitch == PolicySwitch::DuplicateReturns;
         if (fields.areEqual(policy, disabledPolicy) == isLeftOff)
             continue;
         crashLock.lock();

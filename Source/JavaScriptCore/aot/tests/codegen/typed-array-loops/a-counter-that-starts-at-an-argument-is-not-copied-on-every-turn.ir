@@ -1,5 +1,4 @@
 # The counter has 32 bits and is widened for the address of every element. It starts at an argument, which arrives in a register of 64 bits whose upper half says nothing.
-# TODO: row-4719: the clamp of loop bounds is switched off, and what rests on it is lost: fast versions of counted loops without range checks, their vectors and written-out turns
 # The start is handed to the counter by a move of 32 bits, once in front of the loop. From there on every value of the counter has zeros in its upper half,
 # the counter and its widened form share one register, and no turn copies one to the other.
 #

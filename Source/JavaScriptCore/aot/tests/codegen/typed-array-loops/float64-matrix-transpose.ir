@@ -1,5 +1,4 @@
 # const side = 16;
-# TODO: row-4719: the clamp of loop bounds is switched off, and what rests on it is lost: fast versions of counted loops without range checks, their vectors and written-out turns
 # const table = new Float64Array(side * side);
 # const turned = new Float64Array(side * side);
 # function turn(i: number): number {

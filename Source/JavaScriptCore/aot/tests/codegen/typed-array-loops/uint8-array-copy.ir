@@ -1,5 +1,4 @@
 # const from = new Uint8Array(512);
-# TODO: row-4719: the clamp of loop bounds is switched off, and what rests on it is lost: fast versions of counted loops without range checks, their vectors and written-out turns
 # const to = new Uint8Array(512);
 # function turn(i: number): number {
 #   for (let k = 0; k < from.length; k++) to[k] = from[k]!;

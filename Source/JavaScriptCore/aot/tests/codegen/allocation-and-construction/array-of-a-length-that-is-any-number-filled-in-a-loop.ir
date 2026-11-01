@@ -1,5 +1,4 @@
 # function squares(count: number): number[] {
-# TODO: row-4719: the clamp of loop bounds is switched off, and what rests on it is lost: fast versions of counted loops without range checks, their vectors and written-out turns
 #   const list = new Array<number>(count);
 #   for (let k = 0; k < count; k++) list[k] = k * k;
 #   return list;

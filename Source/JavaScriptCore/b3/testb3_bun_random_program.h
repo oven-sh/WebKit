@@ -193,7 +193,6 @@ inline Policy randomProgramPolicy(RelocationLowering& lowering)
 {
     Policy policy = optimizingPolicy();
 
-    policy.loops.clampsLoopBounds = false;
     policy.allocation.keepsValuesAfterLowering = true;
 
     policy.upstream.allowsSIMD = true;

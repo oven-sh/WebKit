@@ -1,5 +1,4 @@
 # function copy(from: Float64Array, to: Float64Array): void {
-# TODO: row-4719: the clamp of loop bounds is switched off, and what rests on it is lost: fast versions of counted loops without range checks, their vectors and written-out turns
 #   for (let k = 0; k < from.length; k++) to[k] = from[k];
 # }
 # declare const input: any;

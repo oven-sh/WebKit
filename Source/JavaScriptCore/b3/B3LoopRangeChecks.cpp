@@ -374,6 +374,8 @@ static void findRangeChecks(const RangeCheckInputs& inputs, RangeCheckPlan& plan
     const LoopInvariance& invariance = inputs.invariance;
     if (!inputs.canClampBound)
         return;
+    if (!loop.increases() && loop.isUnsigned())
+        return;
     Int128 maxStart = intervalFor(proc, loop.counterOnEntry(), Signedness::Signed).max;
     for (BasicBlock* block : inputs.region.blocks) {
         if (loop.isTopTested && inputs.blocksBeforeTopTest.contains(block))

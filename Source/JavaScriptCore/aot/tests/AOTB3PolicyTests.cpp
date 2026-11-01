@@ -114,7 +114,7 @@ static void checkOptimizationPolicy(const B3::Policy& policy)
     AOT_TEST_CHECK(policy.loops.rotates);
     AOT_TEST_CHECK(policy.loops.foldsComparisonsWithBounds);
     AOT_TEST_CHECK(policy.loops.versions);
-    AOT_TEST_CHECK(!policy.loops.clampsLoopBounds);
+    AOT_TEST_CHECK(policy.loops.clampsLoopBounds);
     AOT_TEST_CHECK(policy.loops.pollsBetweenStretches);
     AOT_TEST_CHECK(!policy.loops.vectorizes);
     AOT_TEST_CHECK(!policy.loops.unrolls);

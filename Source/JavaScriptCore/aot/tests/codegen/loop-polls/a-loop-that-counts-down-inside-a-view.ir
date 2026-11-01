@@ -1,5 +1,4 @@
 # The test of a counter against the extent of a view is made once in front of the loop, whichever way the loop counts. A view may hold billions of elements, so the loop that is left without the test
-# TODO: row-4719: the clamp of loop bounds is switched off, and what rests on it is lost: fast versions of counted loops without range checks, their vectors and written-out turns
 # runs in stretches of a bounded number of turns and polls between them: one poll. The loop as it was written takes over where the counter is outside the view, and polls on every turn: the second.
 # A turn outside the view comes back in front of both loops and polls on the way back: the third. What enters the loops from outside polls nowhere: the ten patchpoints that are reached without a rare edge are none of them polls.
 # FORM: Placed
