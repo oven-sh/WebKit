@@ -1367,7 +1367,8 @@ bool Modules::hasBegunToLoad(ModuleID module) const
 }
 
 // A graph is loaded before a module of it begins, so a helper that mocks finds what its importer imports beside it linked. The body does not run ahead of an import whose own body is up the stack.
-void Modules::runBodyOfLinkedModuleAheadOfMock(ModuleID module)
+// True: the module is linked and no load has come to it: whatever imports it met a mock in its own place.
+bool Modules::runBodyOfLinkedModuleAheadOfMock(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     auto hasYetToRun = [&](ModuleID each) {
@@ -1375,7 +1376,7 @@ void Modules::runBodyOfLinkedModuleAheadOfMock(ModuleID module)
         return current == ModuleStatus::Unlinked || current == ModuleStatus::Linked;
     };
     if (!data(module).isESModuleOfProgram() || data(module).isFaceOfFile() || !hasYetToRun(module) || isMocked(module) || m_modulesWithMockToRun.get(module.index()))
-        return;
+        return false;
     // Only a graph whose evaluation is under way, or was ended by an error, has linked what it did not come to. A load that met a mock in place of the module never fetched it.
     auto isImportedByGraphUnderEvaluation = [&] {
         BitVector isReached(m_table.size());
@@ -1408,7 +1409,7 @@ void Modules::runBodyOfLinkedModuleAheadOfMock(ModuleID module)
         return false;
     };
     if (!isImportedByGraphUnderEvaluation())
-        return;
+        return !hasRun(module) && !didCaptureExports(module);
     BitVector isSeen(m_table.size());
     Vector<ModuleID, 16> toVisit { module };
     while (!toVisit.isEmpty()) {
@@ -1419,17 +1420,18 @@ void Modules::runBodyOfLinkedModuleAheadOfMock(ModuleID module)
             if (request.isDeferred)
                 continue;
             if (status(request.targetModule()) == ModuleStatus::Evaluating)
-                return;
+                return false;
             if (hasYetToRun(request.targetModule()))
                 toVisit.append(request.targetModule());
         }
     }
     JSPromise* evaluation = evaluate(module, std::nullopt, nullptr);
-    RETURN_IF_EXCEPTION(scope, void());
+    RETURN_IF_EXCEPTION(scope, false);
     if (evaluation->status() == JSPromise::Status::Rejected) {
         evaluation->markAsHandled();
         throwException(m_instance.globalObject, scope, evaluation->result());
     }
+    return false;
 }
 
 // A mock names a path. The loader of `bun run` looks there as JSModuleLoader::registryEntry() does: for the file as no attribute asks for it, then as a type of the host's own, then as JSON. It holds only what has been loaded.
@@ -6089,6 +6091,9 @@ void Modules::followImportsOfModulesThatHaveRun()
         for (const ModuleRequestData& request : m_table.requests(importer)) {
             if (request.isDeferred || request.isRequire)
                 continue;
+            // A mock stood in its place while the importer ran, and has ended: its body has yet to run, and so has what it alone imports.
+            if (m_modulesOwedToImportersThatRan.get(request.target()) || m_modulesWithMockToLetGo.get(request.target()))
+                continue;
             if (!m_modulesThatRanWithImporters.quickSet(request.target()))
                 toFollow.append(request.targetModule());
         }
@@ -6881,13 +6886,12 @@ void runBodyOfRequiredFileAheadOfMock(JSGlobalObject* realm, ModuleID moduleOfHo
     modules->require(module, ModuleID(), Modules::RequiredBy::Program);
 }
 
-void runBodyOfLinkedModuleAheadOfMock(JSGlobalObject* realm, ModuleID moduleOfHost)
+bool runBodyOfLinkedModuleAheadOfMock(JSGlobalObject* realm, ModuleID moduleOfHost)
 {
     ModuleFromHost module(realm, moduleOfHost);
     Modules* modules = modulesOf(realm);
     MockDoor door(modules, module, "the mock call"_s);
-    if (modules)
-        modules->runBodyOfLinkedModuleAheadOfMock(module);
+    return modules && modules->runBodyOfLinkedModuleAheadOfMock(module);
 }
 
 void deferMock(JSGlobalObject* realm, ModuleID moduleOfHost, AfterFailure afterFailure)

@@ -299,7 +299,7 @@ JS_EXPORT_PRIVATE bool mayBeMocked(JSGlobalObject*, ModuleID);
 // The module has not begun to load: the factory of the mock runs when a graph comes to it (ModuleHost::runMock).
 JS_EXPORT_PRIVATE bool hasBegunToLoad(JSGlobalObject*, ModuleID);
 // Under `bun test` the body of a module that is linked when it is mocked runs then and there: left for later, it would assign over what the mock stores.
-JS_EXPORT_PRIVATE void runBodyOfLinkedModuleAheadOfMock(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool runBodyOfLinkedModuleAheadOfMock(JSGlobalObject*, ModuleID);
 // Asked from runMock(), for a CommonJS file that a require() has come to: what deferMock() did is taken back and the body of the file runs. The mock is laid over it.
 JS_EXPORT_PRIVATE void runBodyOfRequiredFileAheadOfMock(JSGlobalObject*, ModuleID);
 // `a.txt?text` is a form of `a.txt`: what an import attribute makes of the file. A mock of the path replaces the form that has been loaded, and waits for all of them if none has. `file`: the module under the path itself, if the image holds it.
