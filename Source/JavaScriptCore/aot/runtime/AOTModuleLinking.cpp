@@ -929,6 +929,8 @@ void Modules::keepWhatMockIsLaidOver(ModuleID file)
 {
     m_moduleWithMockBeingLaid = file;
     LoadedModule& loaded = ensureLoaded(file);
+    if (!std::exchange(loaded.hasMockLaidOver, true))
+        loaded.hadRunWhenMockWasLaid = status(file) == ModuleStatus::Evaluated;
     if (loaded.valueBeforeMock)
         return;
     if (JSValue value = data(file).kind == ModuleKind::CommonJs ? commonJSExports(file) : JSValue(loaded.requiredValue))
@@ -943,6 +945,8 @@ void Modules::endMockLaidOverFile(ModuleID file)
     auto scope = DECLARE_THROW_SCOPE(vm);
     m_moduleWithMockBeingLaid = std::nullopt;
     LoadedModule* found = loadedIfExists(file);
+    if (found)
+        found->hasMockLaidOver = false;
     ModuleID module = moduleWithExportsOf(file);
     LoadedModule* withExports = loadedIfExists(module);
     if (!found || !(found->variablesBeforeMock || found->valueBeforeMock || (withExports && withExports->exportsBeforeMock)))
@@ -993,6 +997,73 @@ void Modules::endMockLaidOverFile(ModuleID file)
         tryReplaceCapturedExport(module, name.impl(), value);
         RETURN_IF_EXCEPTION(scope, void());
     }
+}
+
+// keepWhatMockIsLaidOver() and tryReplaceExport() have kept what the values of the mock replaced.
+JSValue Modules::exportsBeforeMock(ModuleID file)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // What runs in place of a file that was taken out of the loader is the loader's.
+    if (mockInPlace(file) || isEvicted(file) || isLeftToHost(file))
+        return { };
+    LoadedModule* loaded = loadedIfExists(file);
+    bool isLaidOver = loaded && loaded->hasMockLaidOver;
+    // The factory of a mock runs before anything is laid: the file still exports its own.
+    bool hadRun = isLaidOver ? loaded->hadRunWhenMockWasLaid : !isMocked(file) && status(file) == ModuleStatus::Evaluated;
+    if (!hadRun)
+        return { };
+    if (data(file).kind == ModuleKind::CommonJs) {
+        JSValue kept = isLaidOver ? loaded->valueBeforeMock.get() : JSValue();
+        return kept ? kept : commonJSExports(file);
+    }
+    if (!data(file).hasExportTable())
+        return { };
+    JSObject* variables = isLaidOver ? loaded->variablesBeforeMock.get() : nullptr;
+
+    // A chain of re-exports ends at the module that declares the variable.
+    auto keptValueOf = [&](ModuleID module, UniquedStringImpl* name) -> JSValue {
+        for (unsigned steps = 0; steps <= m_table.size(); ++steps) {
+            std::optional<unsigned> index = m_table.findExport(module, name);
+            if (!index)
+                return { };
+            const ModuleExportData& moduleExport = m_table.exports(module)[*index];
+            switch (moduleExport.kind()) {
+            case ModuleExportKind::Variable:
+                return variables ? storedValue(realm, variables, Identifier::from(vm, moduleExport.variable.encoded())) : JSValue();
+            case ModuleExportKind::Namespace:
+                return { };
+            case ModuleExportKind::Indirect: {
+                const IndirectExportData& indirectExport = m_table.indirectExport(moduleExport);
+                module = indirectExport.targetModule();
+                name = identifier(indirectExport.importName).impl();
+                break;
+            }
+            }
+        }
+        return { };
+    };
+
+    JSObject* namespaceObject = moduleNamespace(file, ModulePhase::Evaluation);
+    RETURN_IF_EXCEPTION(scope, { });
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    namespaceObject->methodTable()->getOwnPropertyNames(namespaceObject, realm, names, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSObject* exports = constructEmptyObject(realm);
+    for (const Identifier& name : names) {
+        // A name that the mock alone has is none of the file's.
+        if (!m_table.findExport(file, name.impl()))
+            continue;
+        JSValue value = keptValueOf(file, name.impl());
+        if (!value) {
+            value = namespaceObject->get(realm, name);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        exports->putDirectMayBeIndex(realm, name, value);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return exports;
 }
 
 void Modules::exportWhatMockNamesAlone(ModuleID file, bool hasRun)

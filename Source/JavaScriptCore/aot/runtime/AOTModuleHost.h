@@ -270,6 +270,9 @@ enum class AfterFailure : bool { KeepsError, AsksAgain };
 JS_EXPORT_PRIVATE void deferMock(JSGlobalObject*, ModuleID, AfterFailure = AfterFailure::KeepsError);
 // The mock has ended: its test file is over, or the program has taken it back. The next load finds the module itself, and whoever has imported a module of the library reads its own names again.
 JS_EXPORT_PRIVATE void didEndMock(JSGlobalObject*, ModuleID);
+// What a file of the program that has run exported before a mock was laid over it: `module.exports` of a CommonJS file, a new object with the names of an ES module.
+// So too while the factory runs and nothing is laid yet. Empty for a file that never ran: the mock stands in its place.
+JS_EXPORT_PRIVATE JSValue exportsBeforeMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void runMocksBelow(JSGlobalObject*, ModuleID);
 // Behind runMocksBelow() that threw: it was the factory of the module itself, and an import statement asks for the module.
 JS_EXPORT_PRIVATE bool mockFailedBehindImportStatement(JSGlobalObject*, ModuleID);

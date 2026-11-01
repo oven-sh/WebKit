@@ -268,6 +268,7 @@ public:
     void keepWhatMockIsLaidOver(ModuleID);
     void didLayMock() { m_moduleWithMockBeingLaid = std::nullopt; }
     void endMockLaidOverFile(ModuleID);
+    JSValue exportsBeforeMock(ModuleID);
     void runMockThatWaits(ModuleID);
     // `build.module("dep", ..)` of a plugin: from now on the loader answers for the name with another module. A file that is linked keeps what it has.
     void forgetWhatNamesResolvedTo();
@@ -625,6 +626,9 @@ private:
 #undef AOT_DECLARE_REFERENCE
         bool isBeingRequired { false };
         bool isKeptByRequire { false };
+        // From keepWhatMockIsLaidOver() to endMockLaidOverFile(). A file may be taken for loaded while its body has yet to run.
+        bool hasMockLaidOver { false };
+        bool hadRunWhenMockWasLaid { false };
         bool capturedFieldsAreOfESModule { false };
         bool capturedFieldsAreOfRuntimeModule { false };
         Identifier resolvedKey;

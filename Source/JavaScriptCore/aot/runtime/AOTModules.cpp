@@ -5798,6 +5798,13 @@ void deferMock(JSGlobalObject* realm, ModuleID moduleOfHost, AfterFailure afterF
         modules->deferMock(module, afterFailure);
 }
 
+JSValue exportsBeforeMock(JSGlobalObject* realm, ModuleID moduleOfHost)
+{
+    ModuleFromHost module(realm, moduleOfHost);
+    Modules* modules = modulesOf(realm);
+    return modules ? modules->exportsBeforeMock(module) : JSValue();
+}
+
 void didEndMock(JSGlobalObject* realm, ModuleID moduleOfHost)
 {
     ModuleFromHost module(realm, moduleOfHost);
