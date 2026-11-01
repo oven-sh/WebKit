@@ -1715,10 +1715,11 @@ struct FieldResults {
     // `for (var name in defaults) options[name] = ..`: the store names what the enumerated objects list. A prediction: whatever else the enumeration shows is stored as a name that no field has.
     // `copy[key] = clone(value[key])` fills an object that holds other names each time, and flow follows few of the objects that are copied. So an object that the program names no field of
     // gets the names only where flow holds every object that is enumerated, and nothing lists the names of the object itself.
-    void forEachKeyOfEnumerationStoredUnder(ValueSetMaker& maker, const Function& function, uint32_t body, const ValueFlowStatement& store, size_t mostLayouts, NOESCAPE const Invocable<void(LayoutID, PropertyKeyID)> auto& functor) const
+    void forEachKeyOfEnumerationStoredUnder(ValueSetMaker& maker, DefinitionsThroughTests& definitions, uint32_t body, const ValueFlowStatement& store, size_t mostLayouts, NOESCAPE const Invocable<void(LayoutID, PropertyKeyID)> auto& functor) const
     {
         namespace At = OperandIndex;
-        const Value& name = function.at(definitionThroughTests(function, function.at(store.site).operand(At::ElemSet::property)));
+        const Function& function = definitions.function();
+        const Value& name = function.at(definitions.of(function.at(store.site).operand(At::ElemSet::property)));
         if (name.opcode != Opcode::ResultAt || name.index() != static_cast<uint32_t>(ForInStepResult::Key) || function.at(name.resultsOperand()).opcode != Opcode::ForInStep)
             return;
         auto layoutsIn = [&](ValueSetID set, bool& everyObjectHasLayout) {
@@ -1814,6 +1815,7 @@ struct FieldResults {
             for (uint32_t index = share * functionsPerShare; index < std::min<uint32_t>(program.functions.size(), (share + 1) * functionsPerShare); ++index) {
                 if (!inputs.isReached(FunctionID(index)))
                     continue;
+                DefinitionsThroughTests definitions(program.functions[index]);
                 for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
                     if (statement.kind != ValueFlowStatementKind::Operation)
                         continue;
@@ -1821,7 +1823,7 @@ struct FieldResults {
                         keysNamedInShare[share].append({ &keysGivenToInstancesSeen, layout, key, forms });
                     });
                     if (statement.opcode == Opcode::ElemSet) {
-                        forEachKeyOfEnumerationStoredUnder(makers.of(worker), program.functions[index], index, statement, mostLayoutsEnumerated, [&](LayoutID layout, PropertyKeyID key) {
+                        forEachKeyOfEnumerationStoredUnder(makers.of(worker), definitions, index, statement, mostLayoutsEnumerated, [&](LayoutID layout, PropertyKeyID key) {
                             keysNamedInShare[share].append({ &keysOfEnumerationsCopied, layout, key, 0 });
                         });
                     }
@@ -1859,6 +1861,8 @@ struct FieldResults {
                     if (ValueSetID seen = inputs.solver().seenValuesOf(receiver); seen != inputs.solver().possibleValuesOf(receiver))
                         nameFieldOfLayoutsIn(seen, isMadeHere ? maxLayoutsFollowedToStore : maxLayoutsFollowedToStoreIntoGivenObject, isMadeHere, isMadeHere ? keysNamedAtFollowedUses : keysNamedAtFollowedUsesOfGivenObjects);
                 }
+                if (definitions.numberOfBlocksRead())
+                    build.statistics().count(StatisticID::BlocksReadForDefinitionsThroughTests, definitions.numberOfBlocksRead());
             }
         });
         for (const Vector<KeyNamed>& keysNamed : keysNamedInShare) {

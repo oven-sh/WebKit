@@ -43,6 +43,7 @@ public:
     {
     }
 
+    const Function& function() const { return m_function; }
     ValueID of(ValueID);
     uint64_t numberOfBlocksRead() const { return m_numberOfBlocksRead; }
 
@@ -62,10 +63,9 @@ private:
     Vector<WaysIn, 32> m_waysIn;
 };
 
-ValueID definitionThroughTests(const Function&, ValueID);
-BuiltinID entryNamedByOperations(const Program&, const Function&, ValueID);
-PropertyKeyID keyOfMemberCalledOnItsHolderByText(const Program&, const Function&, const Value& call);
-bool readsUnderNameOfEnumerationOfSameObject(const Function&, const Value& read);
+BuiltinID entryNamedByOperations(const Program&, DefinitionsThroughTests&, ValueID);
+PropertyKeyID keyOfMemberCalledOnItsHolderByText(const Program&, DefinitionsThroughTests&, const Value& call);
+bool readsUnderNameOfEnumerationOfSameObject(DefinitionsThroughTests&, const Value& read);
 std::optional<uint8_t> positionInPairWrittenAsKey(const Function&, const Value& read);
 bool areUnchangedPairsOfKeyAndValue(ValueFlowRuleContext&, ClimbingSet containers);
 // `"$" + name`, `"on" + kind + suffix`: the text on the left, where it is written out, is not empty and is ASCII.

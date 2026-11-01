@@ -713,9 +713,10 @@ static void findDifferenceOfParameters(const Function& function, InliningSummary
         return;
     ValueID first = function.at(entryBlock).parameters[function.firstParameterIndex()];
     ValueID second = function.at(entryBlock).parameters[function.firstParameterIndex() + 1];
+    DefinitionsThroughTests definitions(function);
     auto orderOf = [&](ValueID left, ValueID right) {
-        left = definitionThroughTests(function, left);
-        right = definitionThroughTests(function, right);
+        left = definitions.of(left);
+        right = definitions.of(right);
         if (left == first && right == second)
             return Difference::FirstMinusSecond;
         return left == second && right == first ? Difference::SecondMinusFirst : Difference::None;
@@ -753,7 +754,7 @@ static void findDifferenceOfParameters(const Function& function, InliningSummary
             ValueID returned = block.terminator.kind == TerminatorKind::Return ? block.terminator.valueOperand() : block.terminator.operand(0);
             if (!returned)
                 return;
-            Opcode opcode = function.at(definitionThroughTests(function, returned)).opcode;
+            Opcode opcode = function.at(definitions.of(returned)).opcode;
             if (opcode != Opcode::Sub && opcode != Opcode::CallDirect)
                 return;
             break;

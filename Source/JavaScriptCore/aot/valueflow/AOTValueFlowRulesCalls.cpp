@@ -468,11 +468,6 @@ ValueID DefinitionsThroughTests::of(ValueID id)
     return id;
 }
 
-ValueID definitionThroughTests(const Function& function, ValueID id)
-{
-    return DefinitionsThroughTests(function).of(id);
-}
-
 static PropertyKeyID keyOfMemberCalledOnItsHolder(ValueFlowRuleContext& context, const ValueFlowStatement& statement)
 {
     if (PropertyKeyID key = statement.key)
@@ -481,17 +476,18 @@ static PropertyKeyID keyOfMemberCalledOnItsHolder(ValueFlowRuleContext& context,
     return facts ? facts->keyOfMemberCalledOnItsHolder : PropertyKeyID();
 }
 
-PropertyKeyID keyOfMemberCalledOnItsHolderByText(const Program& program, const Function& function, const Value& call)
+PropertyKeyID keyOfMemberCalledOnItsHolderByText(const Program& program, DefinitionsThroughTests& definitions, const Value& call)
 {
+    const Function& function = definitions.function();
     if (constructs(call.opcode))
         return { };
     ValueID receiver = call.thisValueOperand();
     if (!receiver)
         return { };
-    const Value& read = function.at(definitionThroughTests(function, call.calleeOperand()));
+    const Value& read = function.at(definitions.of(call.calleeOperand()));
     // A member of the namespace object of a module of the library is read out of the variable of the export.
     if (read.opcode == Opcode::GetModuleVariable) {
-        const Value& holder = function.at(definitionThroughTests(function, receiver));
+        const Value& holder = function.at(definitions.of(receiver));
         if (holder.opcode != Opcode::ModuleNamespace)
             return { };
         for (const SyntheticExport& entry : program.at(holder.module()).syntheticExports) {
@@ -502,7 +498,7 @@ PropertyKeyID keyOfMemberCalledOnItsHolderByText(const Program& program, const F
     }
     if (read.opcode != Opcode::PropGet || read.isFreeName() || program.isIndexLike(read.key()))
         return { };
-    return definitionThroughTests(function, read.objectOperand()) == definitionThroughTests(function, receiver) ? read.key() : PropertyKeyID();
+    return definitions.of(read.objectOperand()) == definitions.of(receiver) ? read.key() : PropertyKeyID();
 }
 
 // What a module of the library has stored in the object that it exports reaches that object by itself: as a receiver the object is handed to nobody new.
@@ -737,23 +733,25 @@ static ClimbingSet passOperandsToInstances(ValueFlowRuleContext& context, const 
     return context.restrict(closures, ValueSets::complement(context.maker().of(entered.span())));
 }
 
-static ValueID builtinResolvedAndAwaited(const Program& program, const Function& function, ValueID id)
+static ValueID builtinResolvedAndAwaited(const Program& program, DefinitionsThroughTests& definitions, ValueID id)
 {
+    const Function& function = definitions.function();
     const Value& awaited = function.at(id);
     if (awaited.opcode != Opcode::Await)
         return { };
     const Value& resolved = function.at(definitionThroughSameValues(function, awaited.operand(0)));
     if (resolved.opcode != Opcode::Call || resolved.numberOfOperands() != 3 || !resolved.operand(2))
         return { };
-    BuiltinID callee = entryNamedByOperations(program, function, resolved.calleeOperand());
+    BuiltinID callee = entryNamedByOperations(program, definitions, resolved.calleeOperand());
     if (!callee || program.builtins().canonicalID(callee) != program.builtins().canonicalID(Builtins::PromiseResolve))
         return { };
     ValueID holder = definitionThroughSameValues(function, resolved.operand(2));
     return function.at(holder).opcode == Opcode::Builtin ? holder : ValueID();
 }
 
-BuiltinID entryNamedByOperations(const Program& program, const Function& function, ValueID value)
+BuiltinID entryNamedByOperations(const Program& program, DefinitionsThroughTests& definitions, ValueID value)
 {
+    const Function& function = definitions.function();
     constexpr unsigned mostReads = 4;
     Vector<PropertyKeyID, mostReads> keys;
     auto followReads = [&](NOESCAPE const Invocable<ValueID(ValueID)> auto& definitionOf) {
@@ -777,8 +775,8 @@ BuiltinID entryNamedByOperations(const Program& program, const Function& functio
             return { };
         if (keys.isEmpty() && function.at(entryBlock).parameters.contains(id))
             return { };
-        id = builtinResolvedAndAwaited(program, function, followReads([&](ValueID read) {
-            return definitionThroughTests(function, read);
+        id = builtinResolvedAndAwaited(program, definitions, followReads([&](ValueID read) {
+            return definitions.of(read);
         }));
         if (!id)
             return { };

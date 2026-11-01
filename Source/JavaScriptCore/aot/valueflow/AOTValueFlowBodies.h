@@ -716,7 +716,7 @@ struct ValueFlowBody {
     std::span<const Operand> operandsOf(const Statement& statement) const LIFETIME_BOUND { return operands.subspan(statement.firstOperand, statement.operandCount); }
 };
 
-ValueFlowBody reduceBody(const Program&, const ValueFlowBuiltinTables&, FunctionID, const UnobservedFieldDefinitions* = nullptr);
+ValueFlowBody reduceBody(const Program&, const ValueFlowBuiltinTables&, FunctionID, const UnobservedFieldDefinitions* = nullptr, uint64_t* numberOfBlocksReadForDefinitions = nullptr);
 ValueFlowBody makeHostBody(const Program&, const ValueFlowBuiltinTables&, std::span<const uint64_t> notedOperations = { }, const UnobservedFieldDefinitions* = nullptr);
 bool startsWithoutValueInSolve(const Program&, const Variable&);
 

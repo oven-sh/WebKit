@@ -279,14 +279,15 @@ bool HeapRule::definesGettersUnderNamesOfEnumeratedParameter(const ValueFlowOper
     auto arguments = m_context.operationOf(*operation).variadicOperands();
     if (arguments.size() != 3)
         return false;
-    ValueID nameOfTurn = definitionThroughTests(function, arguments[1]);
+    DefinitionsThroughTests definitions(function);
+    ValueID nameOfTurn = definitions.of(arguments[1]);
     const Value& name = function.at(nameOfTurn);
     if (name.opcode != Opcode::ResultAt || name.index() != 1)
         return false;
     const Value& step = function.at(name.operand(At::ResultAt::results));
     if (step.opcode != Opcode::ForInStep)
         return false;
-    ValueID source = definitionThroughTests(function, step.operand(At::ForInStep::object));
+    ValueID source = definitions.of(step.operand(At::ForInStep::object));
     if (function.at(source).opcode != Opcode::Parameter)
         return false;
     std::optional<unsigned> position;
@@ -311,8 +312,8 @@ bool HeapRule::definesGettersUnderNamesOfEnumeratedParameter(const ValueFlowOper
             return false;
         if (value.key() != m_program.keyOf(BuiltinNames::get))
             continue;
-        const Value& read = function.at(definitionThroughTests(function, value.operand(At::PropDefine::value)));
-        if (read.opcode != Opcode::ElemGet || definitionThroughTests(function, read.operand(At::ElemGet::object)) != source || definitionThroughTests(function, read.operand(At::ElemGet::property)) != nameOfTurn)
+        const Value& read = function.at(definitions.of(value.operand(At::PropDefine::value)));
+        if (read.opcode != Opcode::ElemGet || definitions.of(read.operand(At::ElemGet::object)) != source || definitions.of(read.operand(At::ElemGet::property)) != nameOfTurn)
             return false;
         hasGetter = true;
     }

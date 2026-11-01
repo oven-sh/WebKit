@@ -683,7 +683,11 @@ public:
                 m_bodies = ParallelArray<ValueFlowBody>(m_loops, m_numberOfFunctions + 1, largestFirst.span(), [&](unsigned index) {
                     if (index == m_numberOfFunctions)
                         return makeHostBody(m_program, tables, m_result.m_notedOperations.span(), &m_result.m_unobservedDefinitions);
-                    return reduceBody(m_program, tables, FunctionID(index), &m_result.m_unobservedDefinitions);
+                    uint64_t numberOfBlocksRead = 0;
+                    ValueFlowBody body = reduceBody(m_program, tables, FunctionID(index), &m_result.m_unobservedDefinitions, &numberOfBlocksRead);
+                    if (numberOfBlocksRead)
+                        m_build.statistics().count(StatisticID::BlocksReadForDefinitionsThroughTests, numberOfBlocksRead);
+                    return body;
                 });
             },
         });
@@ -1074,11 +1078,11 @@ private:
             if (!mayRaiseEvents.set(module))
                 worklist.append(module);
         };
-        auto entryNamedBy = [&](const Function& function, ValueID id) {
-            const Value& value = function.at(id);
+        auto entryNamedBy = [&](DefinitionsThroughTests& definitions, ValueID id) {
+            const Value& value = definitions.function().at(id);
             if (value.opcode == Opcode::Builtin || value.opcode == Opcode::NativeBinding)
                 return builtins.canonicalID(value.builtin());
-            BuiltinID named = value.opcode == Opcode::PropGet ? entryNamedByOperations(m_program, function, id) : BuiltinID();
+            BuiltinID named = value.opcode == Opcode::PropGet ? entryNamedByOperations(m_program, definitions, id) : BuiltinID();
             return named ? builtins.canonicalID(named) : BuiltinID();
         };
         auto ask = [&](ModuleID asking, ModuleID asked) {
@@ -1094,13 +1098,14 @@ private:
         for (const Function& function : m_program.functions) {
             if (!isOfLibrary(function.module))
                 continue;
+            DefinitionsThroughTests definitions(function);
             for (uint32_t index = 0; index < function.values.size(); ++index) {
                 const Value& value = function.values[index];
-                BuiltinID named = entryNamedBy(function, ValueID(index));
+                BuiltinID named = entryNamedBy(definitions, ValueID(index));
                 if (named && builtins.at(named).origin == BuiltinOrigin::Host && raisesEventWhenCalled(builtins, named))
                     raise(function.module.index());
                 if (flowRuleOf(value.opcode) == FlowRule::Call && value.numberOfOperands() && value.operand(0)) {
-                    BuiltinID callee = entryNamedBy(function, definitionThroughSameValues(function, value.operand(0)));
+                    BuiltinID callee = entryNamedBy(definitions, definitionThroughSameValues(function, value.operand(0)));
                     if (callee && raisesEventWhenCalled(builtins, callee))
                         raise(function.module.index());
                 }

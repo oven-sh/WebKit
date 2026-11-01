@@ -3325,7 +3325,8 @@ private:
         if (definition.opcode != Opcode::Call || descriptorIndex >= definition.numberOfOperands() || keyIndex >= definition.numberOfOperands())
             return std::nullopt;
 
-        ValueID read = definitionThroughTests(function, definition.operand(descriptorIndex));
+        DefinitionsThroughTests definitions(function);
+        ValueID read = definitions.of(definition.operand(descriptorIndex));
         if (function.at(read).opcode != Opcode::Call || function.at(read).numberOfOperands() != numberOfOperandsBeforeArguments + 2)
             return std::nullopt;
         const Value& callee = function.at(sameObjectThroughCasts(function, function.at(read).operand(0)));
@@ -3334,7 +3335,7 @@ private:
         BuiltinID reader = m_builtins.canonicalID(callee.builtin());
         if (reader != Builtins::ObjectGetOwnPropertyDescriptor && reader != Builtins::ReflectGetOwnPropertyDescriptor)
             return std::nullopt;
-        if (definitionThroughTests(function, function.at(read).operand(numberOfOperandsBeforeArguments + 1)) != definitionThroughTests(function, definition.operand(keyIndex)))
+        if (definitions.of(function.at(read).operand(numberOfOperandsBeforeArguments + 1)) != definitions.of(definition.operand(keyIndex)))
             return std::nullopt;
         // Each of the two calls converts a key that is an object anew, and may get another name for it.
         ValueSetID convertedByCode = m_context.maker().intersect(m_universe.objects(), ValueSets::complement(m_universe.symbols()));
