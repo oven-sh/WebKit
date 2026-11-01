@@ -2192,6 +2192,9 @@ void Modules::letGoOfImportersOf(ModuleID mocked, ImportersLetGo which)
             if (!isLoaded || m_loadedInPreload.get(placeOfMomentOfLoad(importer)) || (mockInPlace(importer) && !isLeftAloneByMock(importer)))
                 continue;
             m_modulesThatLoaderLetGo.set(index);
+            // `bun test` lets go of what was linked to the mock. Whoever kept the module under a mock that left it alone stays as it is.
+            if (isMockedItself ? !isLeftAloneByMock(mocked) || seesMockOf(mocked, importer) : m_importersOfMockThatEnded.get(imported.index()))
+                m_importersOfMockThatEnded.set(index);
             work.append(importer);
         }
     }
@@ -2250,7 +2253,8 @@ bool Modules::willLeaveModuleAlone(ModuleID module, bool onlyIfLoadedInPreload, 
         }
     }
     VMState& state = m_instance.vm->aotState();
-    m_mocksOverModulesThatHaveRun.set(module, MockOverModuleThatHasRun { momentOfFirstMockInTestFile(module), state.momentOfTestFile, !!namespaceIfCreated(module, ModulePhase::Evaluation) });
+    auto laid = m_mocksOverModulesThatHaveRun.set(module, MockOverModuleThatHasRun { momentOfFirstMockInTestFile(module), state.momentOfTestFile, !!namespaceIfCreated(module, ModulePhase::Evaluation) });
+    laid.iterator->value.momentThisWasLaid = ++state.momentOfLoads;
     // Whoever holds the record of the module, code from disk that was linked to it, keeps it. The loader forgets it: a load by name from now on fetches the module anew, and so comes to the mock.
     if (ModuleRecord* record = m_records.get(module)) {
         loader()->removeEntryOfRecord(record);
@@ -2269,6 +2273,8 @@ bool Modules::seesMockOf(ModuleID mocked, ModuleID importer) const
         return true;
     auto mock = m_mocksOverModulesThatHaveRun.find(mocked);
     if (mock == m_mocksOverModulesThatHaveRun.end())
+        return true;
+    if (auto anew = m_momentsLoadedAnew.find(importer); anew != m_momentsLoadedAnew.end() && anew->value.momentOfTestFile == mock->value.momentOfTestFile && anew->value.moment > mock->value.momentThisWasLaid) [[unlikely]]
         return true;
     uint32_t place = placeOfMomentOfLoad(importer);
     uint32_t momentLoaded = m_momentsOfLoads[place];

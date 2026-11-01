@@ -1031,6 +1031,7 @@ private:
     BitVector m_modulesLoadedBeforeMockThatWaited;
     // A load that comes by brings them back.
     BitVector m_modulesThatLoaderLetGo;
+    BitVector m_importersOfMockThatEnded;
     Vector<Vector<uint32_t, 2>> m_importersByStatement;
     Vector<ModuleID> m_libraryModulesInRequireCache;
     BitVector m_libraryModulesTakenFromLoader;
@@ -1219,6 +1220,8 @@ private:
         std::optional<BitVector> exportsLeftOutBefore { };
         // What the object of the module does not show, as it was when the mock came.
         BitVector exportsHiddenBefore { };
+        // When this mock was laid. momentLaid: the first of the test file.
+        uint32_t momentThisWasLaid { 0 };
     };
     void setAsideNamespaceUnderMock(ModuleID);
     bool m_makesNamespaceOfModuleItself { false };
@@ -1229,6 +1232,8 @@ private:
         uint32_t momentOfTestFile;
     };
     UncheckedKeyHashMap<ModuleID, FirstMockInTestFile> m_firstMocksInTestFile;
+    // An importer that the loader had let go, and that somebody has imported since: `bun test` loads it anew and links it to what stands then.
+    UncheckedKeyHashMap<ModuleID, FirstMockInTestFile> m_momentsLoadedAnew;
     // A file ran before the loader came to it and queued jobs. They are queued where the loader comes to the file, as under `bun run`.
     std::optional<ModuleID> m_fileWhoseJobsWaitForLoader;
     std::optional<ModuleID> m_rootWhoseFilesRun;

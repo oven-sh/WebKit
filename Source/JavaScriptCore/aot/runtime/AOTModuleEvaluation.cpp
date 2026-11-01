@@ -2799,6 +2799,10 @@ void Modules::bringBackWhatLoaderLetGoBelow(ModuleID root)
         bool wasLetGo = m_modulesThatLoaderLetGo.clear(module.index());
         if (!wasLetGo && status(module) > ModuleStatus::Linked)
             continue;
+        if (wasLetGo && m_importersOfMockThatEnded.clear(module.index())) {
+            VMState& state = m_instance.vm->aotState();
+            m_momentsLoadedAnew.set(module, FirstMockInTestFile { ++state.momentOfLoads, state.momentOfTestFile });
+        }
         // What only a mocked module imports is not loaded.
         if (isMocked(module) || mockInPlace(module))
             continue;
