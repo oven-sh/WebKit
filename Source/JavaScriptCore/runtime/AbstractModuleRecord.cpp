@@ -717,7 +717,7 @@ static NEVER_INLINE bool isSettledByMock(VM& vm, bool someRecordHasLiveExports, 
         auto* compiled = dynamicDowncast<AOT::ModuleRecord>(found.moduleRecord);
         return (compiled && compiled->standsForMock()) || (someRecordHasLiveExports && found.isLiveExport(vm));
     };
-    return !first.isSameBinding(second) && (isOfMock(first) || isOfMock(second));
+    return (isOfMock(first) || isOfMock(second)) && !first.isSameBinding(second);
 }
 #endif
 

@@ -1114,8 +1114,8 @@ static void parkedBodyKeepsWordsThatDifferByEverySize()
         parked.takeInto(blocks, values);
         AOT_TEST_CHECK(values.size() == numberOfValues && blocks.size() == numberOfValues / 3 + 1);
         forEachWord(blocks, values, WTF::makeVisitor(
-            [](auto& field, auto id) { AOT_TEST_CHECK(field == id); },
-            [](Value& value, unsigned operand, ValueID id) { AOT_TEST_CHECK(value.operand(operand) == id); }));
+            [](auto& field, auto id) { AOT_TEST_CHECK(field.bits() == id.bits()); },
+            [](Value& value, unsigned operand, ValueID id) { AOT_TEST_CHECK(value.operand(operand).bits() == id.bits()); }));
     }
 }
 

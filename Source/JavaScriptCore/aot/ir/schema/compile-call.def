@@ -172,7 +172,7 @@ enum Sabotage {
     MemoryRunsOutWhenCounted MemoryRunsOutWhenCountedByRule
     EntryChecksAlwaysPass
     WordsCarriedAroundLoopsOutlastWrites
-    PassesDropCalls PassesChangeNothing
+    PassesDropCalls PassesChangeNothing IdlePassesAddValuesToNoBlock IdlePassesLoseValuesOfNoBlock
     AssignmentsPutOffAskNobodyAbove WhatInitializersTakeNeverChanges
     GetsBehindHasOutlastWrites ObjectsWithTheTagOfAnotherAreAbsent
     ListsOfBuiltinsEndWithWhatIsKept

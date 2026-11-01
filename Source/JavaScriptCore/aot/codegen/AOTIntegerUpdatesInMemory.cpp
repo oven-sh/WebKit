@@ -642,7 +642,7 @@ static bool updateIntegersInMemory(B3::Procedure& proc, const Source& source)
                 }
                 // Applying an update changes the graph of blocks, so the exit is kept while the dominators hold.
                 if (B3::BasicBlock* exit = child == update.sum ? findExitDominating(proc, update, user) : nullptr) {
-                    if (!update.sumUsersOnExits.containsIf([&](const Update::UserOnExit& known) { return known.user == user; }))
+                    if (update.sumUsersOnExits.isEmpty() || update.sumUsersOnExits.last().user != user)
                         update.sumUsersOnExits.append({ user, exit });
                 } else
                     isRejected.quickSet(found->value);

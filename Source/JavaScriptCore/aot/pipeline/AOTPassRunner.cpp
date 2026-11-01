@@ -860,6 +860,8 @@ static String findEditOfIdleRun(const Function& before, const Function& after)
 {
     if (after.blocks.size() != before.blocks.size())
         return makeString("the pass says that it changed nothing, and the function has "_s, after.blocks.size(), " blocks where it had "_s, before.blocks.size());
+    if (after.values.size() != before.values.size())
+        return makeString("the pass says that it changed nothing, and the function has "_s, after.values.size(), " values where it had "_s, before.values.size());
     for (size_t index = 0; index < before.blocks.size(); ++index) {
         if (OptionSet<BlockEdit> edits = editsBetween(before.blocks[index], after.blocks[index]))
             return makeString("the pass says that it changed nothing, and b"_s, index, " was edited ("_s, edits.toRaw(), ')');
@@ -1011,6 +1013,8 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
     context.opcodesWhereRunBegins = hasTriggers(id) ? &run.contentsOf(context.function, context.changes).opcodes : nullptr;
     if (id == PassID::SimplifyControlFlow)
         run.mayDecideTestsAcrossBlocks = false;
+    if (m_build.isSabotaged(Sabotage::IdlePassesLoseValuesOfNoBlock)) [[unlikely]]
+        context.function.add(Value(Opcode::Undefined));
     std::optional<Function> functionBeforeRun;
     ChangeLog::Cursor logBeforeRun;
     if (m_build.options().verifiesAfterEveryPass && !isVerifiedElsewhere(context)) [[unlikely]]
@@ -1028,6 +1032,14 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
         outcome |= dropOperationThatNobodyReads(context.function, context.analyses, operationsThatSabotageDrops(m_build));
     if (m_build.isSabotaged(Sabotage::PassesChangeNothing)) [[unlikely]]
         outcome = PassOutcome::Unchanged;
+    if (outcome == PassOutcome::Unchanged && m_build.isSabotaged(Sabotage::IdlePassesAddValuesToNoBlock)) [[unlikely]] {
+        context.function.add(Value(Opcode::Undefined));
+        context.changes.forget();
+    }
+    if (outcome == PassOutcome::Unchanged && m_build.isSabotaged(Sabotage::IdlePassesLoseValuesOfNoBlock)) [[unlikely]] {
+        context.function.storageOfValues().removeLast();
+        context.changes.forget();
+    }
     if (reasons) [[unlikely]]
         context.function.setListenerForOperationsThatGo(reasons->outer());
     auto stopWhereThereIsOne = [&](const String& problem) {
