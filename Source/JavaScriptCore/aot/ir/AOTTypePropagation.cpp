@@ -479,6 +479,31 @@ void TypePropagation::enqueueUsersOf(ValueID id)
     }
 }
 
+AOT_THRESHOLD(size_t, fewestEdgesOfWideJoin, 16);
+
+// A block may have as many incoming edges as the function has statements. Taken behind each source that moves, its parameter would be joined over all of them that many times:
+// it goes back below the queued values that lie in front of the last of its sources. It waits for a value that is typed when it is taken, never for another that waits as it does:
+// so it is not taken again before that value is.
+NEVER_INLINE bool TypePropagation::letParameterOfWideJoinWait(ValueID parameter, BlockID block)
+{
+    uint32_t lastSource = 0;
+    for (Edge edge : m_cfg.incomingEdges(block))
+        lastSource = std::max(lastSource, m_cfg.reversePostOrderIndex(edge.from));
+    bool waitsForValueThatIsTyped = false;
+    size_t index = m_worklist.size();
+    for (; index; --index) {
+        ValueLocation location = locationForRule(m_worklist[index - 1]);
+        if (location.placement != ValuePlacement::Detached && m_cfg.isReachable(location.block) && m_cfg.reversePostOrderIndex(location.block) > lastSource)
+            break;
+        waitsForValueThatIsTyped |= location.placement != ValuePlacement::Parameter || m_cfg.incomingEdges(location.block).size() < fewestEdgesOfWideJoin;
+    }
+    if (!waitsForValueThatIsTyped)
+        return false;
+    m_worklist.insert(index, parameter);
+    m_marks[parameter.index()].isQueued = true;
+    return true;
+}
+
 void TypePropagation::propagate(TypeLevel level, Direction direction)
 {
     TypingContext context = typingContext(level);
@@ -499,6 +524,8 @@ void TypePropagation::propagate(TypeLevel level, Direction direction)
             forEachSourceOfParameter(location.block, location.index, markIfNotTaken);
         else if (!isTakenAgain)
             forEachSourceOf(id, markIfNotTaken);
+        else if (location.placement == ValuePlacement::Parameter && m_cfg.incomingEdges(location.block).size() >= fewestEdgesOfWideJoin && letParameterOfWideJoinWait(id, location.block))
+            continue;
         marks.lastWalkThatTookIt = m_numberOfWalks;
         TypeID computed = compute(context, id, location);
         if (level == TypeLevel::Expected)
