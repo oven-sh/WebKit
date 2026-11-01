@@ -941,7 +941,9 @@ void TypePropagation::replaceUpcastsOfWidenedValues()
             return false;
         const Type& typeBefore = types.at(before);
         const Type& type = types.at(now);
-        return (type.anyObject && !typeBefore.anyObject) || (type.anyFunction && !typeBefore.anyFunction) || (type.primitives & ~typeBefore.primitives) || !type.integers.isSubsetOf(typeBefore.integers);
+        // What a test leaves of a type need not lie inside the type: beside a class that no test tells, a class part loses its proofs.
+        return (type.anyObject && !typeBefore.anyObject) || (type.anyFunction && !typeBefore.anyFunction) || (type.primitives & ~typeBefore.primitives) || !type.integers.isSubsetOf(typeBefore.integers)
+            || type.classes != typeBefore.classes || type.layouts != typeBefore.layouts;
     };
     // A cast hands on what stands in front of its operand whichever cast it is, so the marks hold while casts are replaced.
     std::optional<PredictedValues> predicted;
