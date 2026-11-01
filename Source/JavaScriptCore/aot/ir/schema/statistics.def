@@ -77,6 +77,7 @@ enum StatisticID {
     RegExpTextsLostToBudget RegExpTextsLostToOperation RegExpTextsLostToUnknownCode RegExpTextsLostToBuiltin RegExpTextsLostToParameter RegExpTextsLostToResultOfFunction
     RegExpTextsLostToVariable RegExpTextsLostToAlternatives RegExpTextsLostToList RegExpTextsLostToLoop RegExpTextsLostToFlags
     WasmFunctionsCompiled WasmFunctionsInterpreted WebAssemblyModulesFoundInText WebAssemblyModulesInTextDeclined
+    StoresLeftInLoopsForOthers SlotsWithAbsentState
 }
 extend StatisticID with LimitID suffix Hits as hits
 extend StatisticID with PassID suffix Changes as changes

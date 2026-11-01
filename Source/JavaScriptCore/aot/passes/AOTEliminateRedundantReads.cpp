@@ -3547,8 +3547,13 @@ struct VariableCarrier : LoopEditor {
                     leavingEdges.append(Edge { id, targetIndex });
             }
         }
-        delayed.removeAllMatching([](const DelayedVariable& candidate) {
-            return candidate.isSeenByOthers || candidate.stores.isEmpty();
+        bool overlooksOthers = m_context.build.isSabotaged(Sabotage::DelayedStoresAreSeenByOthers);
+        delayed.removeAllMatching([&](const DelayedVariable& candidate) {
+            if (candidate.stores.isEmpty())
+                return true;
+            if (candidate.isSeenByOthers)
+                m_context.build.statistics().count(StatisticID::StoresLeftInLoopsForOthers);
+            return candidate.isSeenByOthers && !overlooksOthers;
         });
 
         auto storeAt = [&](ProgramPoint point) -> const Value& {
