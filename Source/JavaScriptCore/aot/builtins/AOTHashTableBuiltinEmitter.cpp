@@ -518,7 +518,7 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
     // One object in 64 has the tag of another: the stub goes on from there.
     auto branchOnStringKeyAt = [&](LValue number) {
         if (!comparesTexts) {
-            m_out.branch(keyIsAt(number), normalEdge(found), unlikelyEdge(byStub));
+            m_out.branch(keyIsAt(number), normalEdge(found), unlikelyEdge(build().isSabotaged(Sabotage::ObjectsWithTheTagOfAnotherAreAbsent) ? absent : byStub));
             return;
         }
         numbersOfOtherWords.append(m_out.anchor(number));
@@ -749,7 +749,9 @@ ValueID HashTableBuiltinEmitter::findGetBehindHas(const InlineCall& has, InlineB
     auto isLookup = [&](const Value& value) {
         return value.opcode == Opcode::MoveTableToHeap || (value.opcode == Opcode::CallInline && (value.inlineBuiltin() == InlineBuiltin::MapGet || value.inlineBuiltin() == InlineBuiltin::MapHas || value.inlineBuiltin() == InlineBuiltin::SetHas));
     };
-    auto writesTables = [](const Effects& effects) {
+    auto writesTables = [&](const Effects& effects) {
+        if (build().isSabotaged(Sabotage::GetsBehindHasOutlastWrites)) [[unlikely]]
+            return false;
         return effects.writes.isTop() || effects.writes.contains(AbstractHeap::CollectionStorage) || effects.writes.contains(AbstractHeap::CollectionEntries);
     };
     ValueID receiver = behindCasts(has.receiver());
