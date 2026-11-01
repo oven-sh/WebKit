@@ -195,10 +195,10 @@ void FunctionVerifier::verifyOwnType(BlockID block, ValueID id, const Value& val
     if ((!isAsStored && (!isOptimizing() || !computed.isSubsetOf(stored, m_program))) || !hasExpectedTypeInsideType(m_program, value)) {
         fail(InternalErrorKind::TypeOutOfDate, block, id);
         m_errors.last().detail = describeDifference(m_program, typing().types.adopt(stored), computed);
-        if (printerOfTypesForVerifier && value.numberOfOperands()) {
+        if (printerOfTypesForVerifier && value.numberOfOperands() && value.operand(0)) {
             const Value& definition = m_function.at(value.operand(0));
             m_errors.last().detail = makeString(m_errors.last().detail, "; its first operand is v"_s, value.operand(0).index(), " ("_s, nameOf(definition.opcode), "): "_s, printerOfTypesForVerifier(m_program, typeOf(value.operand(0))),
-                definition.numberOfOperands() ? makeString(", made of v"_s, definition.operand(0).index(), ": "_s, printerOfTypesForVerifier(m_program, typeOf(definition.operand(0)))) : String());
+                definition.numberOfOperands() && definition.operand(0) ? makeString(", made of v"_s, definition.operand(0).index(), ": "_s, printerOfTypesForVerifier(m_program, typeOf(definition.operand(0)))) : String());
         }
         return;
     }
