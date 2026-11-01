@@ -980,6 +980,28 @@ void Modules::endMockLaidOverFile(ModuleID file)
         // Nothing had required the file when the mock came. What a require() behind the mock was answered is the mock's: the next one asks anew.
         loaded.requiredValue.set(*this, JSValue());
     }
+    // No import had come to the file when the mock came, so its names are those of the mock alone: exportWhatMockNamesAlone(). They are taken from the file anew, as in endMockOfLibraryModule().
+    if (withExports && withExports->exportsWhatMockNamesAlone) {
+        withExports->exportsBeforeMock.set(*this, nullptr);
+        withExports->exportsWhatMockNamesAlone = false;
+        withExports->takesNamesThatMockAdds = false;
+        withExports->wasLoadedBehindMock = false;
+        withExports->wasRequiredBehindMock = false;
+        loaded.isYetToBeRequiredBehindMock = false;
+        withExports->capturedExports.set(*this, nullptr);
+        withExports->deferredExportsSource.set(*this, nullptr);
+        withExports->capturedFields.set(*this, nullptr);
+        withExports->capturedStars.set(*this, nullptr);
+        withExports->sourceOfCapturedFields.set(*this, nullptr);
+        m_modulesSettledForLinks[module.index() / 64] &= ~(1ull << (module.index() % 64));
+        ++m_linkEpoch;
+        if (namespaceIfCreated(module, ModulePhase::Evaluation)) {
+            if (data(module).holdsNamespaceInValue() && !m_modulesWithEarlierNamespaceInValue.get(module.index()))
+                setValue(module, JSValue());
+            withExports->namespaceObject.set(*this, nullptr);
+        }
+        RELEASE_AND_RETURN(scope, captureExports(module));
+    }
     JSObject* before = withExports ? withExports->exportsBeforeMock.get() : nullptr;
     if (!before)
         return;
