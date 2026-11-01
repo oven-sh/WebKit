@@ -3610,6 +3610,20 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     // The build has left the call to the loader, with its type.
     if (std::optional<ModuleID> found = findWithAttributes(key, fetchParameters->get(), FormWithoutAttributes::IsAnotherModule))
         return start(*found);
+    if (m_instance.vm->aotState().hasSeveralImages) [[unlikely]] {
+        Instance::forEachOf(realm, [&](Instance& instance) {
+            Modules* modules = instance.state ? instance.state->modules.get() : nullptr;
+            if (!modules || instance.program->position() >= m_instance.program->position() || scope.exception())
+                return;
+            std::optional<ModuleID> file = modules->findByKey(key);
+            if (!file)
+                return;
+            if (!modules->m_modulesWhoseFactoryRuns.get(file->index()) && !modules->m_importsMadeByOwnFactory.contains(*file))
+                modules->dropErrorOfMockKeptByLoader(*file);
+            modules->runMocksBelow(*file);
+        });
+        RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+    }
     // The loader answers with the object that carries the bindings.
     if (m_uncompiledNamespacesNotShownYet.get(module.index())) [[unlikely]] {
         uncompiledNamespace(module, ModulePhase::Evaluation, NamespaceUse::IsShownToProgram);
