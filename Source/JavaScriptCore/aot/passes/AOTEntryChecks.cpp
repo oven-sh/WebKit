@@ -802,7 +802,7 @@ void splitBehindEntryChecks(ProgramEditor& editor, const Heat* heat, BuildContex
         static_cast<FunctionRecord&>(headers[index]) = function;
         editor.replaceFunctionLike(added[count + index], id, withParametersOf(id, createFallback(function, added[index])));
         // The listener would go away with the body, and hear nothing of what takes its place.
-        if (ReasonsForOperationsThatWent* listener = function.listenerForOperationsThatGo()) [[unlikely]]
+        if (ReasonsForOperationsThatWent* listener = function.listenerForOperationsThatGo(); listener && !build.isSabotaged(Sabotage::MovedBodiesAreNotAnnounced)) [[unlikely]]
             didReplaceBody(*listener);
         editor.replaceFunctionLike(added[index], id, withParametersOf(id, createTypedBody(program, WTF::move(function), splits[index].checks.span())));
         function = headers[index];

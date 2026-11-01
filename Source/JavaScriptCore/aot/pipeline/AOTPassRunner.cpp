@@ -629,10 +629,16 @@ void PassRunner::endProgramPass(PassID id, const Program& program, PassTimer tim
     didCompute(descriptor.outputs);
 
     if (timer.bodiesBefore) [[unlikely]] {
+        size_t count = std::min(program.functions.size(), timer.bodiesBefore->functions.size());
+        // A body that a pass moves into another function takes its listener along, so nobody hears what is then stored in its place. The pass says so first, with didReplaceBody().
+        BitVector wasMovedUnannounced(count);
+        for (size_t index = 0; index < count; ++index) {
+            if (program.functions[index].listenerForOperationsThatGo() != &timer.bodiesBefore->reasons[index] && !timer.bodiesBefore->reasons[index].hasLostTrack())
+                wasMovedUnannounced.quickSet(index);
+        }
         for (const Function& function : program.functions)
             function.setListenerForOperationsThatGo(nullptr);
         EffectSummaries noSummaries;
-        size_t count = std::min(program.functions.size(), timer.bodiesBefore->functions.size());
         // The program is not the runner's to edit: the sabotage shows the check a copy of the first body that has such an operation, without it.
         OpcodeSet dropped = operationsThatSabotageDrops(m_build);
         std::optional<Function> sabotaged;
@@ -644,7 +650,7 @@ void PassRunner::endProgramPass(PassID id, const Program& program, PassTimer tim
                 if (dropOperationThatNobodyReads(copy, analyses, dropped) == PassOutcome::Changed)
                     after = &sabotaged.emplace(WTF::move(copy));
             }
-            String problem = findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ program, noSummaries }, timer.bodiesBefore->functions[index], *after, timer.bodiesBefore->reasons[index]));
+            String problem = wasMovedUnannounced.quickGet(index) ? String("its body was moved into another function, and the listener with it, and the pass did not say so: the function went unwatched"_s) : findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ program, noSummaries }, timer.bodiesBefore->functions[index], *after, timer.bodiesBefore->reasons[index]));
             if (problem.isNull())
                 continue;
             InternalError failure = InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = findFunctionAsRead(&program, FunctionID(index)), .pass = id, .detail = problem };
