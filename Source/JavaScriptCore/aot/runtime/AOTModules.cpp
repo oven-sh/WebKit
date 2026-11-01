@@ -1282,13 +1282,13 @@ void Modules::runBodyOfLinkedModuleAheadOfMock(ModuleID module)
     };
     if (!data(module).isESModuleOfProgram() || data(module).isFaceOfFile() || !hasYetToRun(module) || isMocked(module) || m_modulesWithMockToRun.get(module.index()))
         return;
-    // Only a graph whose evaluation is under way has linked what it has yet to come to. A load that met a mock in place of the module never fetched it.
+    // Only a graph whose evaluation is under way, or was ended by an error, has linked what it did not come to. A load that met a mock in place of the module never fetched it.
     auto isImportedByGraphUnderEvaluation = [&] {
         BitVector isReached(m_table.size());
         Vector<ModuleID, 16> importers;
         for (unsigned index = 0; index < m_table.size(); ++index) {
             ModuleStatus current = status(ModuleID(index));
-            if (current == ModuleStatus::Evaluating || current == ModuleStatus::EvaluatingAsync)
+            if (current == ModuleStatus::Evaluating || current == ModuleStatus::EvaluatingAsync || current == ModuleStatus::Failed)
                 importers.append(ModuleID(index));
         }
         for (ModuleID file : filesImportedByImagesAbove(ImportersAbove::AreUnderEvaluation)) {
