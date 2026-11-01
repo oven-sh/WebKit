@@ -194,6 +194,9 @@ void ModuleRegistryEntry::setLoadPromise(VM& vm, JSPromise* promise)
 void ModuleRegistryEntry::setFetchError(JSGlobalObject* globalObject, JSValue error)
 {
     ASSERT(error);
+#if USE(BUN_JSC_ADDITIONS)
+    ASSERT(!JSModuleLoader::loaderOfAbandonedLoad(error));
+#endif
     VM& vm = globalObject->vm();
     m_error.set(vm, this, error);
     if (m_status == Status::New && m_fetchPromise)
@@ -204,6 +207,9 @@ void ModuleRegistryEntry::setFetchError(JSGlobalObject* globalObject, JSValue er
 void ModuleRegistryEntry::setInstantiationError(JSGlobalObject* globalObject, JSValue error)
 {
     ASSERT(error);
+#if USE(BUN_JSC_ADDITIONS)
+    ASSERT(!JSModuleLoader::loaderOfAbandonedLoad(error));
+#endif
     if (m_status == Status::FetchFailed)
         return;
     VM& vm = globalObject->vm();
@@ -214,6 +220,9 @@ void ModuleRegistryEntry::setInstantiationError(JSGlobalObject* globalObject, JS
 void ModuleRegistryEntry::setEvaluationError(JSGlobalObject* globalObject, JSValue error)
 {
     ASSERT(error);
+#if USE(BUN_JSC_ADDITIONS)
+    ASSERT(!JSModuleLoader::loaderOfAbandonedLoad(error));
+#endif
     if (m_status == Status::FetchFailed)
         return;
     VM& vm = globalObject->vm();

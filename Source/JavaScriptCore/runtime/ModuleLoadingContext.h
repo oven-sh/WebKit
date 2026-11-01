@@ -80,6 +80,7 @@ public:
     bool useImportMap() const { return m_flags.contains(ModuleLoadFlag::UseImportMap); }
     bool deferred() const { return m_flags.contains(ModuleLoadFlag::Deferred); }
 #if USE(BUN_JSC_ADDITIONS)
+    OptionSet<ModuleLoadFlag> flags() const { return m_flags; }
     int64_t referrerAsyncOrder() const { return m_referrerAsyncOrder; }
 #endif
 
