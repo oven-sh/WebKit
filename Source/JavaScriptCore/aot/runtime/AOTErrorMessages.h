@@ -13,6 +13,7 @@
 #include <span>
 #include <wtf/text/WTFString.h>
 #include <wtf/ScopedLambda.h>
+#include <wtf/Vector.h>
 
 namespace JSC {
 
@@ -20,6 +21,7 @@ class Identifier;
 class JSFunction;
 class JSGlobalObject;
 class JSObject;
+class StackFrame;
 class VM;
 
 namespace AOT {
@@ -102,6 +104,9 @@ JSObject* createHasInstanceNotAFunctionError(JSGlobalObject*, JSValue constructo
 JSObject* createBuiltinModulesUnavailableError(JSGlobalObject*);
 JSObject* createNativeBindingsUnavailableError(JSGlobalObject*);
 JSObject* createBuiltinWithoutPathError(JSGlobalObject*);
+// An error whose sentence says that compiled code does not do what `bun run` does. With Options::aotCountsPath() it is counted where it is made, so also where a `catch` swallows it and the program takes another road.
+JS_EXPORT_PRIVATE bool isRefusal(const String& message);
+JS_EXPORT_PRIVATE void countRefusal(VM&, const String& message, const WTF::Vector<StackFrame>*);
 JSObject* createBuiltinNotCompiledError(JSGlobalObject*, const String& builtin);
 JSObject* createBuiltinFunctionNotCompiledError(JSGlobalObject*, const String& functionName);
 JSObject* createBuiltinsNotCompiledError(JSGlobalObject*, std::span<const String> builtins);
