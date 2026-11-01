@@ -93,13 +93,13 @@ function shouldThrowAsync(run, errorType, message, stackFunctions) {
                 await foo(1);
             }, Error, "error from baz",
             [
-                ["baz", "87:24"],
+                ["baz", "87:15"], // Bun: upstream has 87:24, where the token ends
                 ["async bar", "80:29"],
                 ["async foo", "71:29"],
-                ["async test", "93:26"],
+                ["async test", "93:23"], // Bun: upstream has 93:26, where the token ends
                 ["drainMicrotasks", "[native code]"],
-                ["shouldThrowAsync", "19:20"],
-                ["global code", "91:25"]
+                ["shouldThrowAsync", "19:5"], // Bun: upstream has 19:20, where the token ends
+                ["global code", "91:9"] // Bun: upstream has 91:25, where the token ends
             ],
         );
         drainMicrotasks();
