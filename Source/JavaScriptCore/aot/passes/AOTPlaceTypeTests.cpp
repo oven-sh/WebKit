@@ -36,6 +36,7 @@
 #include "AOTSplitUnions.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueSubstitution.h"
+#include <wtf/Scope.h>
 #include <algorithm>
 #include <limits>
 #include <ranges>
@@ -5017,8 +5018,18 @@ static bool isBelowLengthOfList(FunctionPassContext& context, IntegerRelations& 
     return !isEmpty;
 }
 
+// The blocks of the uses of a list that may give it another length. Whether a use may does not hang on who asks, so they are looked for once for a list and the number that stands for its length.
+struct UsesThatMayChangeLengths {
+    struct OfList {
+        ValueID length;
+        Vector<BlockID, 2> blocks;
+    };
+    HashMap<uint32_t, Vector<OfList, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> ofLists;
+    uint64_t numberOfBlocksWalked { 0 };
+};
+
 // `new Array(n)` has the length n until something changes it. Nothing has where every use of the list that may come in front of the block only reads it or stores below n.
-static bool hasLengthItWasMadeWith(FunctionPassContext& context, IntegerRelations& relations, ValueID creation, ValueID length, BlockID at)
+static bool hasLengthItWasMadeWith(FunctionPassContext& context, IntegerRelations& relations, UsesThatMayChangeLengths& known, ValueID creation, ValueID length, BlockID at)
 {
     static constexpr OpcodeSet reads { Opcode::HasArrayStorage, Opcode::IsInBounds, Opcode::IsElementPresent, Opcode::GetArrayElement, Opcode::GetArrayLength, Opcode::AllGuards };
     const Function& function = context.function;
@@ -5026,7 +5037,40 @@ static bool hasLengthItWasMadeWith(FunctionPassContext& context, IntegerRelation
     const EscapeAnalysis& escape = analyses.escape();
     std::optional<ObjectID> object = escape.gaveUp() ? std::nullopt : escape.objectDefinedBy(creation);
     BlockID blockOfCreation = analyses.useLists().blockOf(creation);
+    ++known.numberOfBlocksWalked;
     if (!object || !analyses.dominators().dominates(blockOfCreation, at))
+        return false;
+
+    auto mayChangeLength = [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand)
+            return true;
+        const Value& user = function.at(use.user);
+        if (isCast(user.opcode) || reads.contains(user.opcode) || storageMeasuredBy(context.program, user))
+            return false;
+        bool isKeyed = (user.opcode == Opcode::ElemGet || user.opcode == Opcode::ElemSet) && use.operandIndex == OperandIndex::ElemGet::object && user.keyIsIntegral();
+        static_assert(OperandIndex::ElemGet::object == OperandIndex::ElemSet::object);
+        if (isKeyed && user.opcode == Opcode::ElemGet)
+            return false;
+        ValueID position = isKeyed ? user.propertyOperand() : user.opcode == Opcode::PutArrayElement && use.operandIndex == OperandIndex::PutArrayElement::array ? user.positionOperand() : ValueID();
+        if (!position || relations.isAtLeast(position, 0, use.block) != IntegerRelations::Answer::Proven)
+            return true;
+        return !isBelowLengthOfList(context, relations, *object, position, length, use.block);
+    };
+    Vector<UsesThatMayChangeLengths::OfList, 1>& ofList = known.ofLists.add(creation.index(), Vector<UsesThatMayChangeLengths::OfList, 1>()).iterator->value;
+    size_t index = ofList.findIf([&](const UsesThatMayChangeLengths::OfList& entry) { return entry.length == length; });
+    if (index == notFound) {
+        index = ofList.size();
+        ofList.append({ length, { } });
+        for (const ObjectUse& objectUse : escape.usesOf(*object)) {
+            if (!objectUse.use.isEdgeUse() && !ofList[index].blocks.contains(objectUse.use.block) && mayChangeLength(objectUse.use))
+                ofList[index].blocks.append(objectUse.use.block);
+        }
+    }
+    const Vector<BlockID, 2>& blocksThatMayChangeLength = ofList[index].blocks;
+    if (blocksThatMayChangeLength.isEmpty())
+        return true;
+    // What dominates the block lies on every way to it, and the last stretch from there does not pass the creation: a way that did could leave the dominator out.
+    if (std::ranges::any_of(blocksThatMayChangeLength, [&](BlockID block) { return analyses.dominators().dominates(block, at); }))
         return false;
 
     // Whoever passes the creation goes on with another list.
@@ -5035,6 +5079,7 @@ static bool hasLengthItWasMadeWith(FunctionPassContext& context, IntegerRelation
     comesInFront.set(at.index());
     while (!worklist.isEmpty()) {
         BlockID block = worklist.takeLast();
+        ++known.numberOfBlocksWalked;
         if (block == blockOfCreation)
             continue;
         for (BlockID predecessor : analyses.cfg().predecessors(block)) {
@@ -5042,26 +5087,7 @@ static bool hasLengthItWasMadeWith(FunctionPassContext& context, IntegerRelation
                 worklist.append(predecessor);
         }
     }
-    for (const ObjectUse& objectUse : escape.usesOf(*object)) {
-        const Use& use = objectUse.use;
-        if (!comesInFront.get(use.block.index()) || use.isEdgeUse())
-            continue;
-        if (use.kind != Use::Kind::Operand)
-            return false;
-        const Value& user = function.at(use.user);
-        if (isCast(user.opcode) || reads.contains(user.opcode) || storageMeasuredBy(context.program, user))
-            continue;
-        bool isKeyed = (user.opcode == Opcode::ElemGet || user.opcode == Opcode::ElemSet) && use.operandIndex == OperandIndex::ElemGet::object && user.keyIsIntegral();
-        static_assert(OperandIndex::ElemGet::object == OperandIndex::ElemSet::object);
-        if (isKeyed && user.opcode == Opcode::ElemGet)
-            continue;
-        ValueID position = isKeyed ? user.propertyOperand() : user.opcode == Opcode::PutArrayElement && use.operandIndex == OperandIndex::PutArrayElement::array ? user.positionOperand() : ValueID();
-        if (!position || relations.isAtLeast(position, 0, use.block) != IntegerRelations::Answer::Proven)
-            return false;
-        if (!isBelowLengthOfList(context, relations, *object, position, length, use.block))
-            return false;
-    }
-    return true;
+    return std::ranges::none_of(blocksThatMayChangeLength, [&](BlockID block) { return comesInFront.get(block.index()); });
 }
 
 // What `new Array(n)` says its length is, before anything else has touched it, is n.
@@ -5154,6 +5180,11 @@ PassOutcome askWhetherComparedPositionsAreInBounds(FunctionPassContext& context,
     Vector<BlockID, 4> armsWithTest;
     Vector<ListMadeWithLength, 2> listsMade = findListsMadeWithLength(context);
     std::optional<IntegerRelations> relations;
+    UsesThatMayChangeLengths usesThatMayChangeLengths;
+    auto countBlocksWalked = makeScopeExit([&] {
+        if (usesThatMayChangeLengths.numberOfBlocksWalked)
+            context.build.statistics().count(StatisticID::BlocksWalkedInFrontOfListsMadeWithLength, usesThatMayChangeLengths.numberOfBlocksWalked);
+    });
     for (BlockID block : analyses.cfg().reversePostOrder()) {
         const Terminator& terminator = function.at(block).terminator;
         if (terminator.kind != TerminatorKind::Branch || function.at(block).frequency.predicted() == BlockFrequency::Rare || isCold(heatClassOf(context, block)).predicted())
@@ -5192,7 +5223,7 @@ PassOutcome askWhetherComparedPositionsAreInBounds(FunctionPassContext& context,
                     continue;
                 if (!relations)
                     relations.emplace(analyses);
-                if (hasLengthItWasMadeWith(context, *relations, made.list, isMeasured ? length : made.length, block)) {
+                if (hasLengthItWasMadeWith(context, *relations, usesThatMayChangeLengths, made.list, isMeasured ? length : made.length, block)) {
                     owner = made.list;
                     break;
                 }
@@ -5394,6 +5425,11 @@ static PassOutcome readLengthsThatListsWereMadeWith(FunctionPassContext& context
     if (listsMade.isEmpty() || context.build.validates())
         return PassOutcome::Unchanged;
     std::optional<IntegerRelations> relations;
+    UsesThatMayChangeLengths usesThatMayChangeLengths;
+    auto countBlocksWalked = makeScopeExit([&] {
+        if (usesThatMayChangeLengths.numberOfBlocksWalked)
+            context.build.statistics().count(StatisticID::BlocksWalkedInFrontOfListsMadeWithLength, usesThatMayChangeLengths.numberOfBlocksWalked);
+    });
     ValueSubstitution substitution(function);
     for (BlockID block : analyses.cfg().reversePostOrder()) {
         for (ValueID id : function.at(block).values) {
@@ -5406,7 +5442,7 @@ static PassOutcome readLengthsThatListsWereMadeWith(FunctionPassContext& context
                     continue;
                 if (!relations)
                     relations.emplace(analyses);
-                if (hasLengthItWasMadeWith(context, *relations, made.list, made.length, block))
+                if (hasLengthItWasMadeWith(context, *relations, usesThatMayChangeLengths, made.list, made.length, block))
                     substitution.replace(id, made.length);
             }
         }
