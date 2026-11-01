@@ -364,6 +364,10 @@ private:
                 if (joins.empty())
                     continue;
                 unsigned numberSeen = std::exchange(numberSeenFor[successor->index()], m_placesWithOtherNames.size());
+#if ENABLE(AOT)
+                if (numberSeen != UINT_MAX && m_placesWithOtherNames.size() - numberSeen >= joins.size())
+                    numberSeen = UINT_MAX;
+#endif
                 if (numberSeen == UINT_MAX) {
                     m_steps += joins.size();
                     for (unsigned join : joins)
