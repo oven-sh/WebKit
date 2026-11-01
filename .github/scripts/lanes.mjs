@@ -71,24 +71,19 @@ const HARDENING =
 // walks the frame pointers there, as bun's crash handler does, has to take the signatures off too.
 const SIGNED_RETURN_ADDRESSES = " -mbranch-protection=pac-ret -DENABLE_RETURN_ADDRESS_SIGNING=1";
 
-// Goes with SIGNED_RETURN_ADDRESSES, and comes behind it: of two -mbranch-protection the last one counts. Where code can be reached
-// by an indirect branch it begins with a landing pad (BTI), which is a hint too, and in a guarded page an indirect branch to anything
-// else traps. The flag is for what the compiler generates. ENABLE(BRANCH_TARGET_IDENTIFICATION) is for LLInt and what the JITs
-// generate, and has JavaScriptCore guard the pages of those by itself (--useBranchTargetIdentification).
+// Goes with SIGNED_RETURN_ADDRESSES. Where LLInt and what the JITs generate can be reached by an indirect branch they begin with a
+// landing pad (BTI), which is a hint too, and JavaScriptCore guards their pages (--useBranchTargetIdentification): an indirect branch
+// to anything else in them traps.
 //
-// The flag is needed although the pages of C++ are not guarded. With it the compiler has the target of an indirect tail call in x16
-// or x17, and a jump with its target in any other register may not land on what a function begins with. So whatever calls LLInt or
-// JIT code by an address has to be compiled with it, what an embedder links with these libraries included.
-//
-// The pages of C++ are not guarded. The loader guards an executable if everything that it is linked from says that it has landing
-// pads, and of what the sysroot has (crt1.o, crti.o, crtbeginS.o, libc_nonshared.a, libstdc++.a, libgcc.a) nothing says so or has
-// them. The objects here say so, because the flag makes them, but it is not yet true of them: the functions that are written in
-// assembly in a C++ source (ctiMasmProbeTrampoline, the thunks of defineUnaryDoubleOpWrapper, currentStackPointer) have none.
+// No flag for the compiler goes with it (-mbranch-protection=pac-ret+bti). The pages of C++ are not guarded: the loader guards an
+// executable only if everything that it is linked from says that it has landing pads, and of what the sysroot has (crt1.o, crti.o,
+// crtbeginS.o, libc_nonshared.a, libstdc++.a, libgcc.a) nothing does. C++ needs none to get into a guarded page either: which
+// register a jump has its target in counts only where the jump is in a guarded page itself. And with the flag the objects here would
+// say that they have landing pads, which is not true of the functions that are written in assembly in a C++ source
+// (ctiMasmProbeTrampoline, the thunks of defineUnaryDoubleOpWrapper, currentStackPointer).
 //
 // Not with the ahead-of-time compiler, which is not ready for it: whether an image has landing pads is yet to be decided.
-//
-// Not "standard": that also says that the code works with a shadow stack (GCS), and what unwinds or replaces frames here does not.
-const LANDING_PADS = " -mbranch-protection=pac-ret+bti -DENABLE_BRANCH_TARGET_IDENTIFICATION=1";
+const LANDING_PADS = " -DENABLE_BRANCH_TARGET_IDENTIFICATION=1";
 
 // Which ICU every platform but macOS (which uses the system's) builds and bundles: icu/source.json, and nowhere else.
 const icu = JSON.parse(readFileSync(join(root, "icu/source.json"), "utf8"));

@@ -1117,8 +1117,8 @@
 
 /* Where LLInt and the code that the JITs generate can be reached by an indirect branch, they begin with a landing pad (BTI), and
    the pages that hold them are guarded: an indirect branch to anywhere else in them traps. A landing pad is a hint, which a processor
-   without the feature ignores. C++ gets its landing pads from the compiler (-mbranch-protection=bti), but its pages are guarded only
-   if everything that the executable is linked from has them. */
+   without the feature ignores. C++ has none, and its pages are not guarded: that takes everything that the executable is linked from
+   to have them. */
 #if !defined(ENABLE_BRANCH_TARGET_IDENTIFICATION)
 #define ENABLE_BRANCH_TARGET_IDENTIFICATION 0
 #endif
