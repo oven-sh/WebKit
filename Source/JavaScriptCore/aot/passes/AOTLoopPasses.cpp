@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTPass.h"
+#include "AOTPredictedValues.h"
 
 #if ENABLE(AOT)
 
@@ -443,6 +444,7 @@ static Vector<ValueID, 4> passCountersOnEdges(FunctionPassContext& context, IRBu
     const UseLists& useLists = context.analyses.useLists();
     Vector<Vector<Use, 8>, 4> dominatedUses(candidates.size());
     Vector<Vector<RepeatedSum, 1>, 4> repeatedSums(candidates.size());
+    Vector<Vector<ValueID, 1>, 4> stepsThatKnowMore(candidates.size());
     for (size_t index = 0; index < candidates.size(); ++index) {
         const CounterCandidate& candidate = candidates[index];
         auto collectUsesOf = [&](ValueID value, auto& uses) {
@@ -453,8 +455,13 @@ static Vector<ValueID, 4> passCountersOnEdges(FunctionPassContext& context, IRBu
         };
         ValueID tested = function.at(candidate.comparison).operand(candidate.testedOperandIndex);
         collectUsesOf(tested, dominatedUses[index]);
-        for (ValueID stepped : candidate.stepsEqualToTested)
-            collectUsesOf(stepped, dominatedUses[index]);
+        // `if (i + 1 > n) break; if (i >= length) break; i = i + 1;`: the step stands behind another test of the counter and has its bound from there. It is the number that is tested here, and keeps what it knows of it.
+        for (ValueID stepped : candidate.stepsEqualToTested) {
+            if (context.program.typeOf(function, tested).isSubsetOf(context.program.typeOf(function, stepped), context.program))
+                collectUsesOf(stepped, dominatedUses[index]);
+            else
+                stepsThatKnowMore[index].append(stepped);
+        }
         if (candidate.stepsEqualToTested.isEmpty() && tested != candidate.parameter && function.at(tested).type == function.at(candidate.parameter).type)
             collectUsesOf(candidate.parameter, dominatedUses[index]);
         for (SumAheadOfTest sum : findSumsAheadOfTest(context, candidate.stayingEdge, tested)) {
@@ -474,11 +481,17 @@ static Vector<ValueID, 4> passCountersOnEdges(FunctionPassContext& context, IRBu
     }
 
     Vector<ValueID, 4> narrowedCounters;
+    std::optional<PredictedValues> predicted;
     for (size_t index = 0; index < candidates.size(); ++index) {
         builder.setOrigin(function.at(candidates[index].comparison).origin());
         narrowedCounters.append(builder.addEdgeResult(candidates[index].stayingEdge, candidates[index].testedOperandIndex));
         for (const Use& use : dominatedUses[index])
             replaceUse(function, use, narrowedCounters.last());
+        for (ValueID stepped : stepsThatKnowMore[index]) {
+            if (!predicted)
+                predicted.emplace(function, context.analyses.cfg());
+            function.edit(stepped).becomeAssumeType(narrowedCounters.last(), Proven::byRulesBeforeWidening(function.at(stepped).type, predicted->isBehindCheck(stepped) ? ProofScope::BehindChecks : ProofScope::EveryVersion));
+        }
         for (const RepeatedSum& repeated : repeatedSums[index]) {
             const Value& original = function.at(repeated.original.sum);
             Value sum = original.numberOfOperands() == 1 ? IRBuilder::make(original.opcode, { narrowedCounters.last() }) : IRBuilder::make(original.opcode, { original.operand(0), original.operand(1) });
