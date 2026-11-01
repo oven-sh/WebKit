@@ -1540,7 +1540,7 @@ bool Modules::namesBehindStarsAreInTables(ModuleID module, const SearchBehindSta
     Vector<ModuleID, 8> toAsk { module };
     while (!toAsk.isEmpty()) {
         ModuleID asked = toAsk.takeLast();
-        if (!data(asked).hasDynamicStarExport() || isSeen.quickSet(asked.index()))
+        if (!data(asked).hasDynamicStarExport() || isSeen.quickSet(asked.index()) || standsForWholeModule(asked))
             continue;
         for (const ModuleRequestData& request : m_table.requests(asked)) {
             if (!request.isDynamicStarExport)
