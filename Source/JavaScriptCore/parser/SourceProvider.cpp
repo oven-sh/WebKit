@@ -122,7 +122,7 @@ UTF8CString SourceProvider::sourceCodeDumpFilePath(const UTF8CString& dumpDirect
         if (urlString.startsWith('/'))
             return urlString;
         if (urlString.startsWith("file://"_s))
-            return URL(urlString).fileSystemPath();
+            return URL(urlString).fileSystemPath().unsafeValue();
         return { };
     };
 
