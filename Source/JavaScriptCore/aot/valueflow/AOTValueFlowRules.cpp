@@ -331,7 +331,10 @@ static void lookUpThroughInstances(ValueFlowRuleContext& context, ValueFlowObjec
     above = leaveHoldersOfExportsUnsearched(context, above);
     if (!holdsSomething(context, above))
         return;
-    if (unseenCodeRuns)
+    Vector<ValueFlowObjectID, 32> builtinsThatReachAbove;
+    for (BuiltinID builtin : universe.builtinTables().builtinsThatReachAboveTheirOperands())
+        universe.appendObjectsOf(builtin, builtinsThatReachAbove);
+    if (unseenCodeRuns || context.holdsAnyOf(ClimbingSet(context.maker().of(builtinsThatReachAbove.span())), escapedNode))
         context.add(escapedNode, above);
     context.add(context.nodes().ofHost(ValueFlowHostNode::ObjectsAboveEscapedInstances), above);
 

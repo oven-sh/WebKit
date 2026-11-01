@@ -211,6 +211,12 @@ ValueFlowBuiltinTables::ValueFlowBuiltinTables(const BuiltinTable& builtins)
             add(parameter);
         if (overload.hasTypedResult())
             m_functionsWithTypedResults.set(builtins.canonicalID(overload.builtin).index());
+        bool reachesAbove = overload.result.prototypeSource || std::ranges::contains(builtins.at(overload.result.type).parts, BuiltinTypePartKind::Prototype, &BuiltinTypePart::kind)
+            || std::ranges::any_of(overload.flow.propertyActions, [](const BuiltinPropertyAction& action) {
+                return action.kind == BuiltinPropertyActionKind::ReadsGetter || action.kind == BuiltinPropertyActionKind::ReadsSetter || action.kind == BuiltinPropertyActionKind::ChangesPrototype || action.kind == BuiltinPropertyActionKind::BecomesPrototype;
+            });
+        if (BuiltinID builtin = builtins.canonicalID(overload.builtin); reachesAbove && !m_builtinsThatReachAboveTheirOperands.contains(builtin))
+            m_builtinsThatReachAboveTheirOperands.append(builtin);
     }
     if (const BuiltinParameter* formatted = findParameterDescribedInMessages(builtins))
         m_formatterOfMessages = m_behaviorOfParameter.get(formatted);
