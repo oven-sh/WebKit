@@ -1370,6 +1370,10 @@ namespace JSC {
         const JSInstructionStreamWriter& instructions() const LIFETIME_BOUND { return m_writer; }
 
         RegisterID* emitThrowExpressionTooDeepException();
+        // For an intrinsic that names, in a string, a private name this VM does not have: generate() fails with the
+        // SyntaxError that the parser has for `@name`. Like the function above, this returns a register so that the
+        // walk goes on.
+        RegisterID* failForInvalidPrivateName(const Identifier&, const JSTextPosition&);
 
         using TDZStackEntry = std::pair<TDZMap, RefPtr<TDZEnvironmentLink>>;
 
@@ -1553,7 +1557,9 @@ namespace JSC {
 
         bool m_defaultAllowCallIgnoreResultOptimization { false };
         bool m_usesExceptions { false };
-        bool m_expressionTooDeep { false };
+        // Why generate() returns an error, if it does. One state, which generate() tests once for every function.
+        enum class GenerationFailure : uint8_t { None, ExpressionTooDeep, InvalidPrivateName };
+        GenerationFailure m_generationFailure { GenerationFailure::None };
         bool m_isBuiltinFunction { false };
 #if USE(BUN_JSC_ADDITIONS)
         bool m_isPrivateBuiltinFunction { false };
@@ -1566,6 +1572,9 @@ namespace JSC {
         bool m_needsArguments : 1 { false };
         ECMAMode m_ecmaMode;
         DerivedContextType m_derivedContextType { DerivedContextType::None };
+        // For GenerationFailure::InvalidPrivateName.
+        const Identifier* m_invalidPrivateName { nullptr };
+        int m_invalidPrivateNameLine { 0 };
 
         struct CatchEntry {
             TryData* tryData;
