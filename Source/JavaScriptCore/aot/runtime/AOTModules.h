@@ -187,6 +187,7 @@ public:
     bool setMockInPlace(ModuleID, JSObject* mock, JSValue whatRequireAnswers);
     void letGoOfMockAtNextLoad(ModuleID);
     void letGoOfMockThatEnded(ModuleID);
+    bool letGoOfMockOfLibraryModuleAtNextLoad(ModuleID);
     void letGoOfMocksThatEnded();
     bool hasMockThatEnded(ModuleID module) const { return m_modulesWithMockToLetGo.get(module.index()); }
     bool setMockInPlaceOfLibraryModule(ModuleID, JSObject* mock, JSValue whatRequireAnswers);

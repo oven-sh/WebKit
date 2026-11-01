@@ -1987,10 +1987,28 @@ void Modules::letGoOfMockAtNextLoad(ModuleID module)
         loader()->removeEntryOfRecord(record);
 }
 
+bool Modules::letGoOfMockOfLibraryModuleAtNextLoad(ModuleID module)
+{
+    // A mock that was laid over the names of a loaded module goes at once, as it came. A graph that is being loaded goes on by what the table says of the module.
+    if (!m_libraryModulesWithMock.get(module.index()) || !exportsWhatMockNamesAlone(module) || isAnythingBeingLoaded() || isLoaderInMiddleOfGraph())
+        return false;
+    m_modulesWithMockToLetGo.set(module.index());
+    return true;
+}
+
 void Modules::letGoOfMockThatEnded(ModuleID module)
 {
     if (!hasMockThatEnded(module)) [[likely]]
         return;
+    if (data(module).isOfLibrary() || !m_table.hasFilePath(module)) {
+        auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+        m_modulesWithMockToLetGo.clear(module.index());
+        if (mockInPlace(module)) {
+            setMockInPlace(module, nullptr, { });
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        RELEASE_AND_RETURN(scope, endMockOfLibraryModule(module));
+    }
     // Nothing is asked of a mock that is taken away.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_instance.vm);
     setMockInPlace(module, nullptr, { });
@@ -1999,11 +2017,13 @@ void Modules::letGoOfMockThatEnded(ModuleID module)
 
 void Modules::letGoOfMocksThatEnded()
 {
-    while (!m_modulesWithMockToLetGo.isEmpty())
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    while (!m_modulesWithMockToLetGo.isEmpty()) {
         letGoOfMockThatEnded(ModuleID(*m_modulesWithMockToLetGo.begin()));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
     if (m_libraryModulesOwedToImagesAbove.isEmpty()) [[likely]]
         return;
-    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     for (size_t module : std::exchange(m_libraryModulesOwedToImagesAbove, { })) {
         handLibraryModuleToImagesAbove(ModuleID(module));
         RETURN_IF_EXCEPTION(scope, void());
@@ -2169,7 +2189,9 @@ void Modules::endMockOverModuleThatHasRun(ModuleID module)
 
 void Modules::deferMock(ModuleID module, AfterFailure afterFailure)
 {
-    letGoOfMockThatEnded(module);
+    // Whoever was linked against the earlier mock of a module of the library reads it until the load that this one waits for.
+    if (!data(module).isOfLibrary() && m_table.hasFilePath(module))
+        letGoOfMockThatEnded(module);
     m_modulesWithMockToRun.set(module.index());
     m_modulesWithMockThatAsksAgain.set(module.index(), afterFailure == AfterFailure::AsksAgain);
     dropErrorsOfLoadsEndedByMockOf(module);
@@ -6382,6 +6404,7 @@ void letGoOfMocksThatEnded(JSGlobalObject* realm)
         if (Modules* modules = instance.state ? instance.state->modules.get() : nullptr)
             modules->letGoOfMocksThatEnded();
     });
+    RETURN_IF_EXCEPTION(scope, void());
 }
 
 bool hasWordOfMock(JSGlobalObject* realm, ModuleID moduleOfHost)
@@ -6488,6 +6511,14 @@ void didEndMock(JSGlobalObject* realm, ModuleID moduleOfHost)
         modules->dropErrorsOfLoadsEndedByMockOf(module);
         return;
     }
+    // Whoever was linked against the mock of a module of the library reads it until a load comes to the module or the test file ends, as with a file.
+    bool isLibraryModule = modules->data(module).isOfLibrary() || !modules->table().hasFilePath(module);
+    if (isLibraryModule && modules->letGoOfMockOfLibraryModuleAtNextLoad(module)) {
+        modules->forgetMockThatWaits(module);
+        modules->dropErrorsOfLoadsEndedByMockOf(module);
+        modules->oweLibraryModuleToImagesAbove(module);
+        return;
+    }
     // Nothing of a module that a mock stood in place of was filled or laid over.
     bool stoodInPlace = modules->mockInPlace(module);
     if (stoodInPlace) {
@@ -6497,7 +6528,7 @@ void didEndMock(JSGlobalObject* realm, ModuleID moduleOfHost)
     modules->forgetMockThatWaits(module);
     // `bun test` takes the importers out of its loader with the mock, and with them the error of a factory that ended their load.
     modules->dropErrorsOfLoadsEndedByMockOf(module);
-    if (modules->data(module).isOfLibrary() || !modules->table().hasFilePath(module)) {
+    if (isLibraryModule) {
         modules->oweLibraryModuleToImagesAbove(module);
         RELEASE_AND_RETURN(scope, modules->endMockOfLibraryModule(module));
     }
@@ -6544,6 +6575,8 @@ void willMockModule(JSGlobalObject* realm, ModuleID moduleOfHost, JSObject* expo
     Modules& modules = *found;
     if (modules.data(module).isOfLibrary() || !modules.table().hasFilePath(module)) {
         auto scope = DECLARE_THROW_SCOPE(realm->vm());
+        modules.letGoOfMockThatEnded(module);
+        RETURN_IF_EXCEPTION(scope, void());
         // An ES module of the library has a table of exports, as a file has: a mock that comes ahead of the load stands in its place, with its own names alone.
         ModuleStatus status = modules.status(module);
         bool comesAheadOfLoad = modules.data(module).kind == ModuleKind::SourceText && (status == ModuleStatus::Unlinked || status == ModuleStatus::Linked) && !modules.wasLoadedWhenMockWasMade(module);
