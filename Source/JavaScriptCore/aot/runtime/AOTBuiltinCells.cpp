@@ -847,6 +847,54 @@ bool isMemberUnlockedForTests(JSObject* object, UniquedStringImpl* key)
     return member && hasUnlocked(*running, member);
 }
 
+// A function of the engine or the host that no image has asked for yet is looked for among the entries of its own name. Which of them it is its identity says.
+static BuiltinID builtinOfFunctionByIdentity(BuiltinCells& cells, JSObject* object)
+{
+    VM& vm = object->vm();
+    if (!object->isCallable())
+        return { };
+    JSValue written = object->getDirect(vm, vm.propertyNames->name);
+    if (!written || !written.isString())
+        return { };
+    const BuiltinTable& table = BuiltinTable::singleton();
+    BuiltinName name = table.nameOf(vm, Identifier::fromString(vm, asString(written)->tryGetValue()).impl());
+    if (!name)
+        return { };
+    for (unsigned index = 0; index < table.builtinCount(); ++index) {
+        BuiltinID id { index };
+        const Builtin& entry = table.at(id);
+        bool isFunction = entry.kind == BuiltinKind::Constructor || entry.kind == BuiltinKind::Function;
+        if (isFunction && entry.name == name && table.canonicalID(id) == id && cells.findObject(id) == object)
+            return id;
+    }
+    return { };
+}
+
+bool isMemberTakenForConstant(JSObject* object, UniquedStringImpl* key)
+{
+    JSGlobalObject* realm = object->realm();
+    const BuiltinTable& table = BuiltinTable::singleton();
+    BuiltinName name = realm ? table.nameOf(object->vm(), key) : BuiltinName();
+    if (!name)
+        return false;
+    BuiltinID holder;
+    for (Instance* instance = realm->aotInstance(); instance; instance = instance->above) {
+        BuiltinCells* cells = instance->state ? instance->state->builtinCells.get() : nullptr;
+        if (!cells)
+            continue;
+        if (!holder)
+            holder = cells->builtinOfLockedObject(object);
+        if (std::optional<BuiltinCellKey> filled = holder ? std::nullopt : cells->keyOfCellHolding(object); filled && filled->kind() == BuiltinCellKey::Kind::Object)
+            holder = filled->builtin();
+        if (!holder)
+            holder = builtinOfFunctionByIdentity(*cells, object);
+        BuiltinID member = holder ? table.findOwnMember(holder, name) : BuiltinID();
+        if (member && isImmutableLocation(table, instance->tables(), member))
+            return true;
+    }
+    return false;
+}
+
 static bool admitsReplacedBuiltins(const Instance& instance)
 {
     return hasFlag(instance.options().admitted(), AdmittedCode::ReplacedBuiltins);
