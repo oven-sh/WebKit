@@ -19,6 +19,9 @@ The front end (resolve, parse, check types, lower to IR) is in oven-sh/bun, `src
 
 A pass gets an IR text test for what it does **and** for what it must leave alone.
 
+A pass that moves an allocation asks `creationMayBeOrderedWithGuards()` and `guardsOrderedWithCreation()` (`passes/AOTVirtualObjectShapes.h`), as SinkAllocations does. A `NewObject`
+without a prototype operand takes what its constructor function holds as `prototype` when its site first allocates, and the effects of the operation do not say so.
+
 ## What CI catches that a local build does not
 
 A plain local build is one compiler, one C++ library, assertions on or off. CI has some eighty lanes. Four cheap local builds catch nearly everything the others have ever caught, and each takes
