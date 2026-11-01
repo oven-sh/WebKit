@@ -32,23 +32,6 @@ skip:
     - test/built-ins/Function/prototype/restricted-property-arguments.js
     - test/built-ins/Function/prototype/restricted-property-caller.js
 
-    # New ICU (66~) raises a different failure
-    - test/intl402/Locale/constructor-apply-options-canonicalizes-twice.js
-
     # ICU canonicalization bug
     # https://unicode-org.atlassian.net/browse/ICU-21367
     - test/intl402/Intl/getCanonicalLocales/unicode-ext-canonicalize-yes-to-true.js
-
-    # ICU needs public API for canonicalization
-    - test/intl402/Intl/getCanonicalLocales/canonicalized-tags.js
-    - test/intl402/Intl/getCanonicalLocales/complex-language-subtag-replacement.js
-    - test/intl402/Intl/getCanonicalLocales/complex-region-subtag-replacement.js
-    - test/intl402/Intl/getCanonicalLocales/grandfathered.js
-    - test/intl402/Intl/getCanonicalLocales/preferred-grandfathered.js
-    - test/intl402/Intl/getCanonicalLocales/transformed-ext-canonical.js
-    - test/intl402/Intl/getCanonicalLocales/unicode-ext-canonicalize-region.js
-    - test/intl402/Intl/getCanonicalLocales/unicode-ext-canonicalize-subdivision.js
-    - test/intl402/Locale/constructor-options-region-valid.js
-    - test/intl402/Locale/extensions-grandfathered.js
-    - test/intl402/Locale/getters-grandfathered.js
-    - test/intl402/Locale/likely-subtags-grandfathered.js

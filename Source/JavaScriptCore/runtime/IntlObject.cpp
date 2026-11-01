@@ -50,6 +50,7 @@
 #include "IntlListFormatConstructor.h"
 #include "IntlListFormatPrototype.h"
 #include "IntlLocale.h"
+#include "IntlLocaleAliases.h"
 #include "IntlLocaleConstructor.h"
 #include "IntlLocalePrototype.h"
 #include "IntlNumberFormatConstructor.h"
@@ -1660,9 +1661,19 @@ std::optional<Vector<char, 32>> canonicalizeLocaleIDWithoutNullTerminator(const 
         return std::nullopt;
     return buffer;
 #else
+#if USE(BUN_JSC_ADDITIONS)
+    // The root locale. libicucore gives the default locale for it on macOS 13 and 14.
+    if (!*localeID)
+        return buffer;
+#endif
     auto status = callBufferProducingFunction(uloc_canonicalize, localeID, buffer);
     if (U_FAILURE(status))
         return std::nullopt;
+#if USE(BUN_JSC_ADDITIONS)
+    // uloc_canonicalize() maps no aliases.
+    if (!replaceLocaleAliases(buffer))
+        return std::nullopt;
+#endif
     return buffer;
 #endif
 }

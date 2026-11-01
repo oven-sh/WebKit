@@ -1,10 +1,10 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 129 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 130 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
-1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A10 list every such behavior, how to
+1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A11 list every such behavior, how to
    recognize it in a failure, and the fork code that causes it. If a failure matches one of these and the fork code is
    still there, the test is the thing to change.
 2. **The test cannot pass in a mode or build we run.** Skip it in that mode only, with the reason. Section B.
@@ -127,6 +127,21 @@ Rules for an edit to an upstream test:
 - `stress/intl-extended-timezone-names.js`: CLDR 49 removed zh-Hant's short names for America/Los_Angeles: `PDT` → `GMT-7`,
   `PT` → `洛杉磯時間`.
 
+### A11. A locale identifier is canonicalized with CLDR's alias tables on every build
+
+- Upstream replaces deprecated subtags (`fre` → `fr`, `en-UK` → `en-GB`, `sh` → `sr-Latn`) only with Apple's internal SDK,
+  through `ualoc_canonicalForm()`. Every other build of upstream calls `uloc_canonicalize()`, which maps no aliases.
+- Fork code: `replaceLocaleAliases()` (`runtime/IntlLocaleAliases.cpp`), called from
+  `canonicalizeLocaleIDWithoutNullTerminator()` (`runtime/IntlObject.cpp`). It is ICU's `AliasReplacer` over the C API,
+  with the alias tables of the ICU that is linked (`metadata.res`).
+- Recognize: the test expects a deprecated subtag to stay, or the default locale where the tag is an alias
+  (`new Intl.NumberFormat("fre").resolvedOptions().locale` is `fr`, upstream's open-source ports say `en-US`).
+- File: `stress/intl-canonical-locale-alias-mapping.js` runs its checks on every build (upstream: only where `tl`
+  becomes `fil`).
+- `test262/config.yaml` no longer skips the 13 files that need this and now pass:
+  `intl402/Locale/constructor-apply-options-canonicalizes-twice.js` and the twelve that were under "ICU needs public API
+  for canonicalization".
+
 ---
 
 ## B. The test cannot pass in a mode or build we run: narrowed, not changed
@@ -199,6 +214,7 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 | file | what it holds the engine to |
 |---|---|
 | `stress/bun-async-context-propagation.js` | the embedder's async-context slot is captured when a job is scheduled and current while it runs |
+| `stress/bun-intl-locale-alias-replacement.js` | a language tag is canonicalized with CLDR's aliases wherever it enters `Intl` (A11): each kind of alias (language, script, region, variant, subdivision, the language of a `t` extension), both passes of the `Intl.Locale` constructor, what the other constructors resolve, and a tag that ICU has no room for is refused as before |
 | `stress/bun-aot-builtins-table.js` | the ahead-of-time compiler's table of built-ins (`Source/JavaScriptCore/aot/builtins/*.builtins.ts`) agrees with the engine. **After a sync that removes, renames, moves or reimplements a built-in that the table knows this fails, and each line it prints names the entry to fix.** |
 | `stress/sort-scratch-double-pivot.js` | double arithmetic in the comparator of an inlined sort stores no double into an Int32 array |
 | `stress/array-sort-inline-int32-double-comparator.js` | an earlier, smaller test for the sort fix |
@@ -244,7 +260,7 @@ the programs that test ahead-of-time compilation are in Bun's `test/aot`.
 
 ## E. After a sync: a failing test, step by step
 
-1. Does the difference match A1–A10 exactly (same text, same shape)? Check that the fork code named there is still in the
+1. Does the difference match A1–A11 exactly (same text, same shape)? Check that the fork code named there is still in the
    tree, then update the expectation with a `// Bun:` comment and add the file to its list here.
 2. Does it fail only in one mode or only with ASan, for a reason in the test and not the engine (it counts JIT compiles,
    depends on allocation never failing, needs more than 300 s)? Narrow it as in B.

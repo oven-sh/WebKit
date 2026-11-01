@@ -941,6 +941,7 @@ runtime/IntlListFormat.cpp @no-unify // Confine U_HIDE_DRAFT_API's effect in thi
 runtime/IntlListFormatConstructor.cpp
 runtime/IntlListFormatPrototype.cpp
 runtime/IntlLocale.cpp
+runtime/IntlLocaleAliases.cpp
 runtime/IntlLocaleConstructor.cpp
 runtime/IntlLocalePrototype.cpp
 runtime/IntlNumberFormat.cpp @no-unify // Confine U_HIDE_DRAFT_API's effect in this file.
