@@ -1665,22 +1665,32 @@ auto Modules::mockThatAnswersFor(ModuleID passingOn, const ModuleExportData& pas
     // The tables name the variable, not the module that a statement names: of what a module names itself, the one that exports the variable is where it has it from. None: it declares it. Two: nobody knows.
     auto comesThroughMock = [&](ModuleID module, ModuleID mocked, ModuleID faceOfMocked) {
         BitVector seen(m_table.size());
+        auto exportsVariable = [&](const ModuleExportData& entry) { return entry.kind() == ModuleExportKind::Variable && entry.variable == passedOn.variable; };
+        bool mayDeclare = !passedOn.isFromStarExport;
         while (!seen.quickSet(module.index())) {
             std::optional<ModuleID> from;
+            std::optional<ModuleID> onlyOther;
+            unsigned others = 0;
             for (const ModuleRequestData& request : m_table.requests(module)) {
                 ModuleID named = request.targetModule();
                 // In a ring a module that the walk came by has the variable from here.
-                if (request.isRequire || seen.quickGet(named.index()) || named == from)
+                if (request.isRequire || seen.quickGet(named.index()) || named == from || named == onlyOther)
                     continue;
-                auto exportsVariable = [&](const ModuleExportData& entry) { return entry.kind() == ModuleExportKind::Variable && entry.variable == passedOn.variable; };
-                if (named != mocked && named != faceOfMocked && !std::ranges::any_of(m_table.exports(named), exportsVariable))
+                if (named != mocked && named != faceOfMocked && !std::ranges::any_of(m_table.exports(named), exportsVariable)) {
+                    onlyOther = named;
+                    ++others;
                     continue;
+                }
                 if (from)
                     return false;
                 from = named;
             }
+            // A table lists what somebody reads off the object of its module: a module on the way may lack the name.
+            if (!from && !mayDeclare && others == 1)
+                from = onlyOther;
             if (!from)
                 return false;
+            mayDeclare = std::ranges::any_of(m_table.exports(*from), exportsVariable);
             if (from == mocked || from == faceOfMocked)
                 return true;
             module = *from;
