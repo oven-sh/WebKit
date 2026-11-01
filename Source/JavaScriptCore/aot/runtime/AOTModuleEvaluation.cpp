@@ -1833,12 +1833,23 @@ void Modules::noteModulesLoadedWith(ModuleID root)
     if (!data(root).isESModuleOfProgram() || data(root).isFaceOfFile() || wasLoadedWithGraph(root))
         return;
     m_buildHasSeenWhoNamesModules &= data(root).mayBeginLoad();
+    std::optional<bool> isInPreload = host().isInPreload ? host().isInPreload(m_instance.globalObject) : std::nullopt;
+    uint32_t moment = isInPreload ? ++m_instance.vm->aotState().momentOfLoads : 0;
+    auto noteMoment = [&](uint32_t headOrModule) {
+        if (!isInPreload)
+            return;
+        if (m_momentsOfLoads.isEmpty())
+            m_momentsOfLoads.fill(0, m_table.size());
+        m_momentsOfLoads[headOrModule] = moment;
+        m_loadedInPreload.set(headOrModule, *isInPreload);
+    };
     Vector<uint32_t, 32> found { m_buildHasSeenWhoNamesModules ? m_table.headOfLoadGroup(root).index() : root.index() };
     while (!found.isEmpty()) {
         uint32_t module = found.takeLast();
         if (m_buildHasSeenWhoNamesModules) [[likely]] {
             if (std::exchange(m_loadedGroups[module / 64], m_loadedGroups[module / 64] | 1ull << (module % 64)) >> (module % 64) & 1)
                 continue;
+            noteMoment(module);
             for (uint32_t head : m_table.groupsLoadedWith(ModuleID(module)))
                 found.append(head);
             continue;
@@ -1846,6 +1857,7 @@ void Modules::noteModulesLoadedWith(ModuleID root)
         if (!data(ModuleID(module)).isESModuleOfProgram() || wasLoadedWithGraph(ModuleID(module)))
             continue;
         m_modulesLoadedBesideGroups.set(module);
+        noteMoment(module);
         for (const ModuleRequestData& request : m_table.requests(ModuleID(module))) {
             if (!request.isRequire && !request.isHoisted)
                 found.append(request.target());

@@ -71,6 +71,7 @@ public:
 
     bool hasOwnStructure() const { return m_hasOwnStructure; }
     void ensureOwnStructure(VM&);
+    void leaveStructureThatCachesKnow(VM&);
     void becomeExtensible(VM&, Structure* sharedByExtensibleObjects);
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);

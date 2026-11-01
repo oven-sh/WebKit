@@ -229,6 +229,7 @@ runtime RequireModule : EncodedJSValue (uint32_t module, uint32_t referrer) ; un
 runtime RecordRequire : void (uint32_t module, uint32_t referrer) ; unknownCode
 runtime RequireIfHeldForImport : EncodedJSValue (uint32_t module, uint32_t referrer) ; unknownCode
 runtime WasLoadedSynchronously : size_t (uint32_t module) ; reads(ExternalState) writes(ExternalState)
+runtime SeesMockOf : size_t (uint32_t module, uint32_t referrer) ; reads(ExternalState) writes(ExternalState)
 runtime AreLoaderFunctionsStored : size_t () ; reads(ExternalState)
 runtime CountExecution : void (uint32_t module, uint32_t description, uint32_t counter) ; reads(ExternalState) writes(ExternalState)
 runtime ResolveModule : EncodedJSValue (uint32_t module, uint32_t referrer, uint32_t specifier, uint32_t isURL) ; unknownCode

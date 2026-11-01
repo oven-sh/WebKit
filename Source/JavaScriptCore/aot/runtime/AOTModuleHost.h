@@ -109,6 +109,8 @@ struct ModuleHost {
     // Factories that runMock() has called have answered promises that have not settled: a promise that is fulfilled once each has settled and its mock is laid, and rejected with what one has thrown.
     // Null where none waits, and in a host without mocks.
     JSPromise* (*factoriesThatWait)(JSGlobalObject*);
+    // Whether what loads now is loaded by a file that runs ahead of the test files. Nothing: the run is no test run. Null in a host without test runs.
+    std::optional<bool> (*isInPreload)(JSGlobalObject*);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);
@@ -299,6 +301,13 @@ JS_EXPORT_PRIVATE void didChangePlugins(JSGlobalObject*);
 // by the object's own methods, at each use: nothing is copied. require() answers `whatRequireAnswers`. Null lets go of the mock: nothing of the module was filled, so it is as it was, and loads when it is next asked for.
 // False: the mock is not taken, and goes by willMockModule(): over a built-in module that an import of the program had loaded when its first mock was made, the values are laid as over a file that has run.
 JS_EXPORT_PRIVATE bool setMock(JSGlobalObject*, ModuleID, JSObject* mock, JSValue whatRequireAnswers);
+// A mock comes over an ES module that has run, and `bun test` leaves such a module as it is: whoever was linked to it before, in this test file or ahead of all of them, keeps it, and whoever is
+// linked from now on gets the mock. deferMock() and setMock() come behind a yes, and didEndMock() leaves the module as it was: its body does not run again. False: the mock is laid over the module.
+// The host does not see who loads a compiled module. Where only a load ahead of the test files leaves a module alone, it says so and the run time decides.
+// `asking`: the compiled module whose code lays the mock, if it is one.
+JS_EXPORT_PRIVATE bool willLeaveModuleAlone(JSGlobalObject*, ModuleID, bool onlyIfLoadedInPreload, std::optional<ModuleID> asking);
+JS_EXPORT_PRIVATE bool isLeftAloneByMock(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE void didBeginTestFile(JSGlobalObject*);
 // A later mock of such a module takes the place of the earlier one.
 JS_EXPORT_PRIVATE bool hasMockInPlace(JSGlobalObject*, ModuleID);
 // didEndMock() leaves a mock that stands in place of an ES module to whoever was linked against it, until a load comes to the module. The test file ends: nobody reads it any more.

@@ -136,7 +136,7 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules)
                 if (!m_exportsLeftOut.isEmpty()) [[unlikely]] {
                     std::optional<unsigned> index = m_table.findExport(exporter, identifier(requiredName.name).impl());
                     if (index && isLeftOut(exporter, *index, TablesBehindStars::HaveName)) {
-                        if (isMocked(exporter) || mockThatAnswersFor(m_table.exports(exporter)[*index]) || dropExportThatFindsNothing(module, requiredName))
+                        if (isMocked(exporter) || mockThatAnswersFor(exporter, m_table.exports(exporter)[*index]) || dropExportThatFindsNothing(module, requiredName))
                             continue;
                         RELEASE_AND_RETURN(scope, throwExportNotFound(requiredName));
                     }
@@ -369,6 +369,7 @@ void Modules::willMock(ModuleID mocked)
 {
     if (isMocked(mocked))
         return;
+    momentOfFirstMockInTestFile(mocked);
     BitVector modules = m_mocks ? m_mocks->modules : BitVector(m_table.size());
     modules.quickSet(mocked.index());
 
@@ -1033,7 +1034,7 @@ JSValue Modules::exportsBeforeMock(ModuleID file)
     LoadedModule* loaded = loadedIfExists(file);
     bool isLaidOver = loaded && loaded->hasMockLaidOver;
     // The factory of a mock runs before anything is laid: the file still exports its own.
-    bool hadRun = isLaidOver ? loaded->hadRunWhenMockWasLaid : !isMocked(file) && status(file) == ModuleStatus::Evaluated;
+    bool hadRun = isLaidOver ? loaded->hadRunWhenMockWasLaid : (!isMocked(file) || isLeftAloneByMock(file)) && status(file) == ModuleStatus::Evaluated;
     if (!hadRun)
         return { };
     if (data(file).kind == ModuleKind::CommonJs) {

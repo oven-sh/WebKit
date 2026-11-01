@@ -248,6 +248,9 @@ public:
     uint32_t numberOfCallsThatWaitApart { 0 };
     uint32_t numberOfTextsAskedFor { 0 };
     uint32_t turnOfTexts { 0 };
+    // One clock for the loads of graphs, the mocks that leave a module alone and the beginnings of test files, in every image: Modules::seesMockOf().
+    uint32_t momentOfLoads { 0 };
+    uint32_t momentOfTestFile { 0 };
     // AOTRuntimeValidation.cpp, which alone knows the type.
     std::unique_ptr<OperationsBeingValidated, void (*)(OperationsBeingValidated*)> operationsBeingValidated { nullptr, nullptr };
 };

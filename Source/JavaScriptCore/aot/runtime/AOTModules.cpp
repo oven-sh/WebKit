@@ -931,7 +931,7 @@ JSValue Modules::readExportIfInitialized(ModuleID module, unsigned index) const
     RELEASE_ASSERT(index < exports.size());
     const ModuleExportData& moduleExport = exports[index];
     // No cache answers for what is asked for anew at each read.
-    if (m_numberOfMocksInPlace && (mockInPlace(module) || mockThatAnswersFor(moduleExport))) [[unlikely]]
+    if (m_numberOfMocksInPlace && (mockInPlace(module) || mockThatAnswersFor(module, moduleExport))) [[unlikely]]
         return { };
     switch (moduleExport.kind()) {
     case ModuleExportKind::Variable:
@@ -987,7 +987,7 @@ JSValue Modules::readExport(ModuleID module, unsigned index)
     switch (moduleExport.kind()) {
     case ModuleExportKind::Variable: {
         if (m_numberOfMocksInPlace) [[unlikely]] {
-            if (std::optional<AnswerOfMock> answer = mockThatAnswersFor(moduleExport)) {
+            if (std::optional<AnswerOfMock> answer = mockThatAnswersFor(module, moduleExport)) {
                 // AbstractModuleRecord::getReexportedLiveExport(): through another module a name that the mock lacks is undefined, whatever the mock's own [[Get]] makes of it.
                 bool hasExport = answer->mock->hasProperty(realm, answer->name);
                 RETURN_IF_EXCEPTION(scope, { });
@@ -1562,7 +1562,7 @@ void Modules::letGoOfMockInRequireCache(ModuleID module)
 
 // `export { sides } from "./shapes"`, `export * from "./shapes"`, `import { sides } from "./shapes"; export { sides as again }`: the entry of the module that passes an export on names the variable
 // of the module that declares it. While a mock stands in place of that one nothing fills the variable, and the mock answers under the name that the declaring module exports it by.
-auto Modules::mockThatAnswersFor(const ModuleExportData& passedOn) const -> std::optional<AnswerOfMock>
+auto Modules::mockThatAnswersFor(ModuleID passingOn, const ModuleExportData& passedOn) const -> std::optional<AnswerOfMock>
 {
     if (!m_numberOfMocksInPlace || passedOn.kind() != ModuleExportKind::Variable)
         return std::nullopt;
@@ -1586,7 +1586,7 @@ auto Modules::mockThatAnswersFor(const ModuleExportData& passedOn) const -> std:
     };
     for (size_t index : m_modulesWithMockInPlace) {
         JSObject* mock = mockInPlace(ModuleID(index));
-        if (!mock)
+        if (!mock || !seesMockOf(ModuleID(index), passingOn))
             continue;
         ModuleID declaring = moduleWithExportsOf(ModuleID(index));
         for (const ModuleExportData& entry : m_table.exports(declaring)) {
@@ -1869,6 +1869,163 @@ void Modules::letGoOfMocksThatEnded()
         letGoOfMockThatEnded(ModuleID(*m_modulesWithMockToLetGo.begin()));
 }
 
+uint32_t Modules::placeOfMomentOfLoad(ModuleID module) const
+{
+    uint32_t head = m_table.headOfLoadGroup(module).index();
+    return m_momentsOfLoads[head] ? head : module.index();
+}
+
+// Whoever was loaded behind the first mock of a module in a test file was linked to a mock, not to the module: it goes by the mock that stands, whichever that is.
+uint32_t Modules::momentOfFirstMockInTestFile(ModuleID module)
+{
+    VMState& state = m_instance.vm->aotState();
+    auto result = m_firstMocksInTestFile.add(module, FirstMockInTestFile { 0, 0 });
+    if (result.isNewEntry || result.iterator->value.momentOfTestFile != state.momentOfTestFile)
+        result.iterator->value = FirstMockInTestFile { ++state.momentOfLoads, state.momentOfTestFile };
+    return result.iterator->value.moment;
+}
+
+bool Modules::willLeaveModuleAlone(ModuleID module, bool onlyIfLoadedInPreload, std::optional<ModuleID> askingAsHostNamesIt)
+{
+    const ModuleData& moduleData = data(module);
+    if (!moduleData.isESModuleOfProgram() || moduleData.isFaceOfFile() || !m_table.hasFilePath(module) || !m_table.wordOfMock(module))
+        return false;
+    if (status(module) != ModuleStatus::Evaluated || isMocked(module) || mockInPlace(module) || isEvicted(module) || m_momentsOfLoads.isEmpty())
+        return false;
+    if (onlyIfLoadedInPreload && !m_loadedInPreload.get(placeOfMomentOfLoad(module)))
+        return false;
+    if (LoadedModule* loaded = loadedIfExists(module); loaded && loaded->objectMadeByRequire)
+        return false;
+    // `bun test` lays the mock over a module that a linked module has yet to read: only so does the mock reach it. A module is linked and yet to run only while its graph runs:
+    // what the evaluation has not come to, and what lies between its root and the body that runs. The module that asks has read what it has read.
+    bool isGraphRunning = m_innermostEvaluation || m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_instance.vm->synchronousModuleQueue();
+    for (uint32_t index = 0; isGraphRunning && index < m_table.size(); ++index) {
+        ModuleID importer(index);
+        if (!data(importer).isESModuleOfProgram() || data(importer).isFaceOfFile() || status(importer) > ModuleStatus::Evaluating || !wasLoadedWithGraph(importer))
+            continue;
+        if (askingAsHostNamesIt && moduleIDForHost(*m_instance.program, importer) == *askingAsHostNamesIt)
+            continue;
+        for (const ModuleRequestData& request : m_table.imports(importer)) {
+            if (request.targetModule() == module)
+                return false;
+        }
+    }
+    VMState& state = m_instance.vm->aotState();
+    m_mocksOverModulesThatHaveRun.set(module, MockOverModuleThatHasRun { momentOfFirstMockInTestFile(module), state.momentOfTestFile, !!namespaceIfCreated(module, ModulePhase::Evaluation) });
+    // Whoever holds the record of the module, code from disk that was linked to it, keeps it. The loader forgets it: a load by name from now on fetches the module anew, and so comes to the mock.
+    if (ModuleRecord* record = m_records.get(module)) {
+        loader()->removeEntryOfRecord(record);
+        if (storedStatus(module) == StoredModuleStatus::InRecord)
+            setStoredStatus(module, StoredModuleStatus::Evaluated);
+        ensureLoaded(module).recordBeforeMockInPlace.set(*this, record);
+        Locker locker { m_state.caches->lock() };
+        m_records.remove(module);
+    }
+    return true;
+}
+
+bool Modules::seesMockOf(ModuleID mocked, ModuleID importer) const
+{
+    if (m_mocksOverModulesThatHaveRun.isEmpty()) [[likely]]
+        return true;
+    auto mock = m_mocksOverModulesThatHaveRun.find(mocked);
+    if (mock == m_mocksOverModulesThatHaveRun.end())
+        return true;
+    uint32_t place = placeOfMomentOfLoad(importer);
+    uint32_t momentLoaded = m_momentsOfLoads[place];
+    if (!momentLoaded || momentLoaded > mock->value.momentLaid)
+        return true;
+    return !m_loadedInPreload.get(place) && momentLoaded < mock->value.momentOfTestFile;
+}
+
+// What setMockInPlace() does for a module of which nothing was filled, for one that has run. Its variables, its status, its namespace object and its record stay what they are.
+bool Modules::setMockOverModuleThatHasRun(ModuleID module, JSObject* mock, JSValue whatRequireAnswers)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    std::optional<BitVector> exportsLeftOutBefore;
+    if (auto leftOut = m_exportsLeftOut.find(module); leftOut != m_exportsLeftOut.end())
+        exportsLeftOutBefore = leftOut->value;
+    takeNamesOfMockInPlace(module, mock);
+    RETURN_IF_EXCEPTION(scope, false);
+    // The names were asked of an object of the host.
+    auto found = m_mocksOverModulesThatHaveRun.find(module);
+    if (found == m_mocksOverModulesThatHaveRun.end())
+        return false;
+    MockOverModuleThatHasRun& kept = found->value;
+    LoadedModule& loaded = ensureLoaded(module);
+    loaded.mockInPlace.set(*this, mock);
+    ProgramStatics::writeVariable(m_instance, *m_table.wordOfMock(module), mock);
+    // What the caches have filed of the object of the module reads its variables.
+    if (auto* object = dynamicDowncast<ModuleNamespace>(namespaceIfCreated(module, ModulePhase::Evaluation)))
+        object->leaveStructureThatCachesKnow(*m_instance.vm);
+    // Made since the mock was laid, for the load that has come to it.
+    if (ModuleRecord* record = m_records.get(module))
+        letRecordAnswerByMock(record, mock);
+    if (kept.isInPlace) {
+        loaded.requiredValue.set(*this, whatRequireAnswers);
+        return true;
+    }
+    kept.isInPlace = true;
+    kept.exportsLeftOutBefore = WTF::move(exportsLeftOutBefore);
+    ++m_numberOfMocksInPlace;
+    m_modulesWithMockInPlace.set(module.index());
+    loaded.requiredValueBeforeMockInPlace.set(*this, loaded.requiredValue.get());
+    loaded.requiredValue.set(*this, whatRequireAnswers);
+    return true;
+}
+
+void Modules::endMockOverModuleThatHasRun(ModuleID module)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    MockOverModuleThatHasRun kept = m_mocksOverModulesThatHaveRun.take(module);
+    m_modulesWithMockToRun.clear(module.index());
+    m_modulesWithMockThatWaited.clear(module.index());
+    m_modulesLoadedBeforeMockThatWaited.clear(module.index());
+    didEndMock(module);
+    LoadedModule& loaded = ensureLoaded(module);
+    if (ModuleRecord* recordOfMock = m_records.get(module)) {
+        loader()->removeEntryOfRecord(recordOfMock);
+        if (storedStatus(module) == StoredModuleStatus::InRecord)
+            setStoredStatus(module, StoredModuleStatus::Evaluated);
+        Locker locker { m_state.caches->lock() };
+        m_records.remove(module);
+    }
+    if (JSObject* before = loaded.recordBeforeMockInPlace.get()) {
+        auto* record = uncheckedDowncast<ModuleRecord>(before);
+        loaded.recordBeforeMockInPlace.set(*this, nullptr);
+        {
+            Locker locker { m_state.caches->lock() };
+            m_records.add(module, record);
+            m_storedReferences.recordAll();
+        }
+        if (record->holdsStatus())
+            setStoredStatus(module, StoredModuleStatus::InRecord);
+    }
+    if (!kept.isInPlace)
+        return;
+    takeNamesOfMockInPlace(module, nullptr);
+    scope.assertNoExceptionExceptTermination();
+    if (kept.exportsLeftOutBefore)
+        m_exportsLeftOut.set(module, WTF::move(*kept.exportsLeftOutBefore));
+    loaded.mockInPlace.set(*this, nullptr);
+    --m_numberOfMocksInPlace;
+    m_modulesWithMockInPlace.clear(module.index());
+    ProgramStatics::writeVariable(m_instance, *m_table.wordOfMock(module), JSValue());
+    loaded.requiredValue.set(*this, loaded.requiredValueBeforeMockInPlace.get());
+    loaded.requiredValueBeforeMockInPlace.set(*this, JSValue());
+    // There was none when the mock came: willLeaveModuleAlone().
+    loaded.objectMadeByRequire.set(*this, nullptr);
+    loaded.exportsGivenToObjectMadeByRequire.set(*this, JSValue());
+    if (auto* object = dynamicDowncast<ModuleNamespace>(namespaceIfCreated(module, ModulePhase::Evaluation)))
+        object->leaveStructureThatCachesKnow(*m_instance.vm);
+    // An object that was made under the mock has its names. The one from before stays the object of the module, as in `bun test`.
+    for (uint32_t index = 0; index < m_table.size(); ++index) {
+        ModuleID each(index);
+        if ((each == module ? !kept.hadNamespace : data(each).hasDynamicStarExport()) && namespaceIfCreated(each, ModulePhase::Evaluation))
+            setNamespace(each, ModulePhase::Evaluation, nullptr);
+    }
+}
+
 void Modules::deferMock(ModuleID module, AfterFailure afterFailure)
 {
     letGoOfMockThatEnded(module);
@@ -2092,7 +2249,8 @@ void Modules::runMocksBelow(ModuleID root, RootOfLoad rootOfLoad)
         if (isMocked(module))
             continue;
         for (const ModuleRequestData& request : m_table.requests(module)) {
-            if (!request.isHoisted)
+            // The load of a module that keeps the module itself does not come to the mock.
+            if (!request.isHoisted && seesMockOf(request.targetModule(), module))
                 work.append(request.targetModule());
         }
     }
@@ -4567,6 +4725,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAreLoaderFunctionsStored, size_t, 
     return modulesOf(*instance).areLoaderFunctionsStored();
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSeesMockOf, size_t, (Instance* instance, uint32_t module, uint32_t referrer))
+{
+    return modulesOf(*instance).seesMockOf(ModuleID(module), ModuleID(referrer));
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTWasLoadedSynchronously, size_t, (Instance* instance, uint32_t module))
 {
     return modulesOf(*instance).wasLoadedSynchronously(ModuleID(module));
@@ -5938,7 +6101,29 @@ bool setMock(JSGlobalObject* realm, ModuleID moduleOfHost, JSObject* mock, JSVal
 {
     ModuleFromHost module(realm, moduleOfHost);
     Modules* modules = modulesOf(realm);
+    if (modules && mock && modules->isLeftAloneByMock(module))
+        return modules->setMockOverModuleThatHasRun(module, mock, whatRequireAnswers);
     return modules && modules->setMockInPlace(module, mock, whatRequireAnswers);
+}
+
+bool willLeaveModuleAlone(JSGlobalObject* realm, ModuleID moduleOfHost, bool onlyIfLoadedInPreload, std::optional<ModuleID> asking)
+{
+    ModuleFromHost module(realm, moduleOfHost);
+    Modules* modules = modulesOf(realm);
+    return modules && modules->willLeaveModuleAlone(module, onlyIfLoadedInPreload, asking);
+}
+
+bool isLeftAloneByMock(JSGlobalObject* realm, ModuleID moduleOfHost)
+{
+    ModuleFromHost module(realm, moduleOfHost);
+    Modules* modules = modulesOf(realm);
+    return modules && modules->isLeftAloneByMock(module);
+}
+
+void didBeginTestFile(JSGlobalObject* realm)
+{
+    VMState& state = realm->vm().aotState();
+    state.momentOfTestFile = ++state.momentOfLoads;
 }
 
 JSObject* mockInPlaceBehind(JSCell* moduleNamespace)
@@ -6039,6 +6224,12 @@ void didEndMock(JSGlobalObject* realm, ModuleID moduleOfHost)
     if (!modules)
         return;
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    if (modules->isLeftAloneByMock(module)) {
+        modules->endMockOverModuleThatHasRun(module);
+        RETURN_IF_EXCEPTION(scope, void());
+        modules->dropErrorsOfLoadsEndedByMockOf(module);
+        return;
+    }
     // Nothing of a module that a mock stood in place of was filled or laid over.
     bool stoodInPlace = modules->mockInPlace(module);
     if (stoodInPlace) {
@@ -6539,7 +6730,7 @@ auto ModuleRecord::resolveOwnExport(JSGlobalObject* globalObject, const Identifi
         return absent;
     // `export * from "./dep"`, `export { fn } from "./dep"`: while a mock stands in place of the module that declares the variable, the name is found where whoever asks that module finds it.
     // spyOn() so comes to the object that the factory returned.
-    if (std::optional<Modules::AnswerOfMock> answer = modules.mockThatAnswersFor(*entry)) [[unlikely]] {
+    if (std::optional<Modules::AnswerOfMock> answer = modules.mockThatAnswersFor(m_module, *entry)) [[unlikely]] {
         AbstractModuleRecord* record = modules.recordForResolution(answer->mocked);
         RETURN_IF_EXCEPTION(scope, Resolution::error());
         if (record != this)
@@ -6838,11 +7029,15 @@ void ModuleNamespace::replaceCapturedValue(JSGlobalObject* globalObject, const I
 {
     if (JSObject* capturedValues = m_capturedValues.get())
         capturedValues->putDirectMayBeIndex(globalObject, name, value);
+    leaveStructureThatCachesKnow(globalObject->vm());
+}
+
+void ModuleNamespace::leaveStructureThatCachesKnow(VM& vm)
+{
     if (!m_hasOwnStructure)
         return;
     // The caches of every image file what they know of this object under its Structure: classifyNamespaceRead(). It never has that one again.
     // A property that is deleted may bring an earlier Structure back. A dictionary has no earlier one, and nothing of the kind is filed under it.
-    VM& vm = globalObject->vm();
     if (isValidOffset(structure()->maxOffset()))
         convertToDictionary(vm);
     else
@@ -7032,7 +7227,7 @@ void ModuleNamespace::getOwnPropertyNames(JSObject* object, JSGlobalObject* glob
         Identifier name = ownIndex < entries.size() ? modules.identifier(entries[ownIndex].name) : Identifier();
         bool isAnsweredByMock = false;
         if (dynamicIndex == dynamicNameCount || (!name.isNull() && codePointCompare(StringView(name.string()), StringView(*asString(dynamicNames->get(dynamicIndex))->tryGetValueImpl())) < 0))
-            isAnsweredByMock = !!modules.mockThatAnswersFor(entries[ownIndex++]);
+            isAnsweredByMock = !!modules.mockThatAnswersFor(thisObject->m_module, entries[ownIndex++]);
         else {
             name = asString(dynamicNames->get(dynamicIndex++))->toIdentifier(globalObject);
             RETURN_IF_EXCEPTION(scope, void());

@@ -85,6 +85,8 @@ struct LinkContext {
     macro(JSObject*, variablesBeforeMock) \
     macro(JSValue, valueBeforeMock) \
     macro(JSObject*, mockInPlace) \
+    macro(JSObject*, recordBeforeMockInPlace) \
+    macro(JSValue, requiredValueBeforeMockInPlace) \
     macro(JSObject*, exportsAddedByMock) \
     macro(JSValue, errorKeptByLoader) \
     macro(JSObject*, exportsWhileRequired) \
@@ -184,6 +186,13 @@ public:
     void letGoOfMocksThatEnded();
     bool hasMockThatEnded(ModuleID module) const { return m_modulesWithMockToLetGo.get(module.index()); }
     bool setMockInPlaceOfLibraryModule(ModuleID, JSObject* mock, JSValue whatRequireAnswers);
+    bool willLeaveModuleAlone(ModuleID, bool onlyIfLoadedInPreload, std::optional<ModuleID> askingAsHostNamesIt);
+    uint32_t placeOfMomentOfLoad(ModuleID) const;
+    uint32_t momentOfFirstMockInTestFile(ModuleID);
+    bool isLeftAloneByMock(ModuleID module) const { return !m_mocksOverModulesThatHaveRun.isEmpty() && m_mocksOverModulesThatHaveRun.contains(module); }
+    bool setMockOverModuleThatHasRun(ModuleID, JSObject* mock, JSValue whatRequireAnswers);
+    void endMockOverModuleThatHasRun(ModuleID);
+    bool seesMockOf(ModuleID mocked, ModuleID importer) const;
     void takeNamesOfMockInPlace(ModuleID, JSObject* mock);
     void letRecordAnswerByMock(ModuleRecord*, JSObject* mock);
     void letGoOfRecordThatAnswersByMock(ModuleID);
@@ -192,7 +201,7 @@ public:
         Identifier name;
         ModuleID mocked;
     };
-    std::optional<AnswerOfMock> mockThatAnswersFor(const ModuleExportData& passedOn) const;
+    std::optional<AnswerOfMock> mockThatAnswersFor(ModuleID passingOn, const ModuleExportData& passedOn) const;
     bool isMockedInItsImage(ModuleID);
     // A mock that comes before the body of an ES module has run stands for the whole module: the loader of `bun run` takes what the factory answers for the module itself.
     // So a name that the factory leaves out is no export: no key of the namespace object. See fillExportsOfBodyThatNeverRuns() for whoever reads the variable.
@@ -1127,6 +1136,22 @@ private:
     // The groups are those of a program in which the build has seen whoever names a module. Code from outside the image names what it likes: what is loaded from then on has a bit of its own.
     bool m_buildHasSeenWhoNamesModules;
     BitVector m_modulesLoadedBesideGroups;
+    // VMState::momentOfLoads when the bit of a head, or of a module beside the groups, was set. Empty outside a test run.
+    Vector<uint32_t> m_momentsOfLoads;
+    BitVector m_loadedInPreload;
+    struct MockOverModuleThatHasRun {
+        uint32_t momentLaid;
+        uint32_t momentOfTestFile;
+        bool hadNamespace;
+        bool isInPlace { false };
+        std::optional<BitVector> exportsLeftOutBefore { };
+    };
+    UncheckedKeyHashMap<ModuleID, MockOverModuleThatHasRun> m_mocksOverModulesThatHaveRun;
+    struct FirstMockInTestFile {
+        uint32_t moment;
+        uint32_t momentOfTestFile;
+    };
+    UncheckedKeyHashMap<ModuleID, FirstMockInTestFile> m_firstMocksInTestFile;
     // A file ran before the loader came to it and queued jobs. They are queued where the loader comes to the file, as under `bun run`.
     std::optional<ModuleID> m_fileWhoseJobsWaitForLoader;
     std::optional<ModuleID> m_rootWhoseFilesRun;
