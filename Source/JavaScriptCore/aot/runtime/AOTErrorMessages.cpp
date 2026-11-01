@@ -3147,19 +3147,30 @@ JSObject* createSuperBaseNotAnObjectError(JSGlobalObject* globalObject, JSValue 
 }
 
 // `new a.K(b)` and `new K`, but not `new K(b).c()`, which calls.
-static bool isConstruction(const String& source)
+static bool isConstruction(std::span<const Latin1Character> text)
 {
-    if (!source.startsWith("new "_s))
+    if (!spanHasPrefix(text, byteCast<Latin1Character>("new "_span)) || text.size() == 4)
         return false;
-    CString bytes = source.utf8();
-    std::span<const Latin1Character> text = byteCast<Latin1Character>(bytes.span());
     std::optional<size_t> open = text.back() == ')' ? findOpeningBracket(text, text.size() - 1) : std::nullopt;
     if (!open)
         return true;
     // `new (void 0)(b)` and `new (void 0)`: the first brackets hold what is constructed.
-    if (text[4] == '(' && *open <= findClosingBracket(text, 4).value_or(0) + 1)
+    if (text[4] == '(') {
+        size_t close = findClosingBracket(text, 4).value_or(0);
+        // `new (make()).member(b)`: and what is read from them.
+        if (*open <= close + 1 || WTF::find(text.subspan(close, *open - close), static_cast<Latin1Character>('(')) == notFound)
+            return true;
+    }
+    if (WTF::find(text.first(*open), static_cast<Latin1Character>('(')) == notFound)
         return true;
-    return WTF::find(text.first(*open), static_cast<Latin1Character>('(')) == notFound;
+    // `new new K(a)(b)`: what is constructed is what the inner `new` made.
+    return *open > 4 && isConstruction(text.subspan(4, *open - 4));
+}
+
+static bool isConstruction(const String& source)
+{
+    CString bytes = source.utf8();
+    return isConstruction(byteCast<Latin1Character>(bytes.span()));
 }
 
 JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, StringView name)
@@ -3187,8 +3198,13 @@ static String quoteConstruction(VM& vm, StringView name)
         source = findOnTop(vm, "[]"_s, findWrittenCallsOfElements);
     if (source.isNull() || !isConstruction(source))
         return name.isNull() ? String() : tryMakeString("new "_s, name);
-    // Bun's transpiler prints `new K()` as `new K`.
-    return source.endsWith("()"_s) ? source.left(source.length() - 2) : source;
+    // Bun's transpiler prints `new K()` as `new K`. What is constructed keeps its own brackets: `new new K()`.
+    if (!source.startsWith("new new "_s))
+        return source.endsWith("()"_s) ? source.left(source.length() - 2) : source;
+    size_t firstBracket = source.find('(');
+    if (firstBracket == notFound)
+        return tryMakeString(source, "()"_s);
+    return source.endsWith("()"_s) && firstBracket + 2 < source.length() ? source.left(source.length() - 2) : source;
 }
 
 // A constructor that nobody wrote passes on what it is given.
