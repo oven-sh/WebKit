@@ -600,7 +600,8 @@ static ALWAYS_INLINE void writePKRU(uint32_t value)
 // syscall() and not pkey_alloc(): the C library's functions are newer than the oldest glibc that Bun runs on.
 static long allocateProtectionKey()
 {
-    return syscall(SYS_pkey_alloc, 0UL, static_cast<unsigned long>(PKEY_DISABLE_WRITE));
+    constexpr unsigned long disableWrite = 2; // PKEY_DISABLE_WRITE, which musl's headers do not have.
+    return syscall(SYS_pkey_alloc, 0UL, disableWrite);
 }
 
 static long setProtectionKey(void* base, size_t size, long key)
