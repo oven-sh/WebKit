@@ -2,6 +2,8 @@
 # A list of texts alone gets no such copy
 # FORM: Prepared
 # RUN: pass PlanArrayCapacities
+# STATISTIC: ReadsCopiedForOtherStorage = 1
+# STATISTIC: CopiesOfReadsTakenBack = 0
 
 module m0 path="main.js" displayPath="main.js"
 

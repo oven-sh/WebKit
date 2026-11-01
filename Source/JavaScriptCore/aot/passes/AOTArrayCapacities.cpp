@@ -1768,10 +1768,21 @@ static bool cutOutRegionOfReads(FunctionPassContext& context, IRBuilder& builder
     return true;
 }
 
+struct CopyOfReads {
+    // Asks for the second kind of storage, and goes on into the copy or where an array of another kind went before.
+    BlockID asksForOther;
+    BlockID first;
+    ValueID array;
+    ArrayStorage storage { ArrayStorage::Other };
+    bool mayLoseProof { false };
+
+    explicit operator bool() const { return !!asksForOther; }
+};
+
 // General code makes a list of numbers with storage for any value, a list that has held a NaN keeps such storage, and a list that is written as numbers has Double storage. One reader meets them all.
 // What reads the list behind the test for one kind is copied for the other, as far as the proof of the test goes. Out of storage for any value each element is asked whether it is a number.
-// `failing` is the edge that an array of another kind goes along. Answers the block that asks for the second kind.
-static BlockID addReadsOfOtherStorage(FunctionPassContext& context, IRBuilder& builder, BlockID tested, Edge failing)
+// `failing` is the edge that an array of another kind goes along.
+static CopyOfReads addReadsOfOtherStorage(FunctionPassContext& context, IRBuilder& builder, BlockID tested, Edge failing)
 {
     Function& function = context.function;
     FunctionAnalyses& analyses = context.analyses;
@@ -1893,7 +1904,38 @@ static BlockID addReadsOfOtherStorage(FunctionPassContext& context, IRBuilder& b
         builder.moveToEndOf(isNumber.notTaken);
         builder.emitJump(whenAbsent.block, WTF::move(whenAbsent.arguments));
     }
-    return asksForOther;
+    return { asksForOther, isOfOther.taken, test.arrayOperand(), other };
+}
+
+// What stands between the reads was copied with them. A store through a second name of the array leaves one kind of storage as it was tested and not the other, so the proof of each copy is asked about on its own.
+static void findCopiesThatMayLoseProof(FunctionPassContext& context, Vector<CopyOfReads, 4>& copies)
+{
+    if (copies.isEmpty() || context.build.isSabotaged(Sabotage::CopiedReadsKeepTheirProof))
+        return;
+    const Function& function = context.function;
+    const GuardAvailability& guards = context.analyses.guards();
+    const auto& dominators = context.analyses.dominators();
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        // The copy of an earlier test may hold the copy of a later one.
+        CopyOfReads* copy = nullptr;
+        for (CopyOfReads& candidate : copies) {
+            if (dominators.dominates(candidate.first, block) && (!copy || dominators.dominates(copy->first, candidate.first)))
+                copy = &candidate;
+        }
+        if (!copy || copy->mayLoseProof)
+            continue;
+        const BlockValues& values = function.at(block).values;
+        std::optional<GuardAvailability::Cursor> cursor;
+        for (uint32_t index = 0; index < values.size() && !copy->mayLoseProof; ++index) {
+            const Value& read = function.at(values[index]);
+            if (!readsNamingArrayStorage.contains(read.opcode) || read.arrayOperand() != copy->array || read.arrayStorage() != copy->storage || !read.guardOperand())
+                continue;
+            if (!cursor)
+                cursor.emplace(guards, block);
+            cursor->advanceTo(index);
+            copy->mayLoseProof = cursor->stateOf(read.guardOperand(), read) != GuardState::Available;
+        }
+    }
 }
 
 // An array of whole numbers that fails a test for Double storage is converted on the failing edge, so that it passes the test from then on.
@@ -1974,6 +2016,7 @@ static PassOutcome readListsOfNumbersInEitherStorage(FunctionPassContext& contex
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
     bool didChange = false;
     Vector<FailedStorageTest, 4> converted;
+    Vector<CopyOfReads, 4> copies;
     for (BlockID block : tests) {
         // An earlier copy may have cut the block.
         const Value* test = findStorageTestBranchedOnBy(function, block);
@@ -1986,24 +2029,45 @@ static PassOutcome readListsOfNumbersInEitherStorage(FunctionPassContext& contex
         bool convertsFirst = convertsAtHead(function, whenFailed, array);
         if (convertsFirst && (function.at(whenFailed).values.size() != 1 || function.at(whenFailed).terminator.kind != TerminatorKind::Jump || context.analyses.cfg().predecessors(whenFailed).size() != 1))
             continue;
-        BlockID asksForOther = addReadsOfOtherStorage(context, builder, block, convertsFirst ? Edge { whenFailed, 0 } : Edge { block, 1 });
-        if (!asksForOther)
+        CopyOfReads copy = addReadsOfOtherStorage(context, builder, block, convertsFirst ? Edge { whenFailed, 0 } : Edge { block, 1 });
+        if (!copy)
             continue;
         didChange = true;
+        copies.append(copy);
         if (convertsFirst)
-            converted.append(FailedStorageTest { Edge { asksForOther, 1 }, array, origin, { }, { }, ProgramPoint::atHeadOf(whenFailed) });
+            converted.append(FailedStorageTest { Edge { copy.asksForOther, 1 }, array, origin, { }, { }, ProgramPoint::atHeadOf(whenFailed) });
     }
+    findCopiesThatMayLoseProof(context, copies);
+    bool didRemoveCopy = false;
+    unsigned numberOfCopies = copies.size();
+    for (const CopyOfReads& copy : copies) {
+        if (!copy.mayLoseProof)
+            continue;
+        builder.convertBranchToJump(copy.asksForOther, 1);
+        converted.removeAllMatching([&](const FailedStorageTest& failed) {
+            return failed.edge.from == copy.asksForOther;
+        });
+        didRemoveCopy = true;
+        --numberOfCopies;
+    }
+    if (didRemoveCopy)
+        builder.emptyUnreachableBlocks();
     // The copy comes back into code that relies on proofs. Where the conversion in front of it may end one, there is no copy.
     findConversionsEndingProofs(context, converted);
-    bool didRemoveCopy = false;
+    didRemoveCopy = false;
     for (const FailedStorageTest& failed : converted) {
         if (!failed.mayEndProof)
             continue;
         builder.convertBranchToJump(failed.edge.from, failed.edge.targetIndex);
         didRemoveCopy = true;
+        --numberOfCopies;
     }
     if (didRemoveCopy)
         builder.emptyUnreachableBlocks();
+    if (numberOfCopies)
+        context.build.statistics().count(StatisticID::ReadsCopiedForOtherStorage, numberOfCopies);
+    if (numberOfCopies < copies.size())
+        context.build.statistics().count(StatisticID::CopiesOfReadsTakenBack, copies.size() - numberOfCopies);
     return didChange ? PassOutcome::Changed : PassOutcome::Unchanged;
 }
 
