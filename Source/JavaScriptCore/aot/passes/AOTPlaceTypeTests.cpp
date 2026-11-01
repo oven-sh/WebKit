@@ -3180,6 +3180,7 @@ struct TestPlacer {
         enterCopyBeforeRepeatableCode();
         repairProofs();
         replaceDominatedUses();
+        typeTestsByTheirOperands();
         Renumbering renumbering;
         TypePropagationInputs typing { context.program, context.id, function, analyses, types, context.build, &context.typingMemo };
         typing.renumbering = &renumbering;
@@ -4397,6 +4398,23 @@ struct TestPlacer {
         if (copy)
             copy->addVariablesTo(repair);
         repair.run();
+    }
+
+    // A test is made over the last proof of its subject, which may stand on one way to it alone. The repair of SSA then hands it what reaches it on every way, of which less is known:
+    // the answer is typed by the operand that the test has now.
+    void typeTestsByTheirOperands()
+    {
+        if (context.build.isSabotaged(Sabotage::TestsKeepTheTypesTheyWereMadeWith))
+            return;
+        TypingContext typing { context.program, function, types };
+        for (const EmittedTest& emitted : emittedTests) {
+            TypeID type = computeResultTypeID(typing, function.at(emitted.test));
+            if (types.at(type) == types.at(function.at(emitted.test).type))
+                continue;
+            function.edit(emitted.test, ValueEdit::Type).type = type;
+            changedValues.append(emitted.test);
+            context.build.statistics().count(StatisticID::TypeTestsTypedByOtherOperands);
+        }
     }
 
     void replaceDominatedUses()

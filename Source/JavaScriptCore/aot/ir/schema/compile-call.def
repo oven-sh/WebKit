@@ -188,6 +188,7 @@ enum Sabotage {
     StoresBehindFormerEntryChecksSayNothing
     ClosuresMadeBehindAllocationsHaveEffects
     ObjectsOfModulesCountAsLocked
+    TestsKeepTheTypesTheyWereMadeWith
 }
 flags Instrumentation { CountBranches CountArrivals }
 flags AdmittedCode { Inspector ReplacedBuiltins FilesRunByHost }
