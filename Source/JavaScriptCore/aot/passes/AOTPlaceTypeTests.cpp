@@ -1498,6 +1498,7 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
     };
 
     BitVector isLive;
+    uint64_t valuesReadForRejoinPoints = 0;
     for (size_t first = 0, next = 0; first < ranges.size(); first = next) {
         BlockID block = ranges[first].block;
         uint32_t numberOfValues = function.at(block).values.size();
@@ -1509,15 +1510,24 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
         if (firstEnd == numberOfValues || (copiesHoldOnlyStretches && lastTestIn[block.index()] < firstEnd))
             continue;
         BitVector points = findPointsWhereNothingIsKnownBetter(function, block, firstEnd, isKnownBetter, livenessOfValuesKnownBetter, isLive);
+        // From where the last search began there is no point in front of the one that it found.
+        uint32_t startOfLastSearch = numberOfValues;
+        uint32_t foundByLastSearch = 0;
         for (const StretchRange& range : ranges.subspan(first, next - first)) {
-            for (uint32_t index = range.end; range.isCloned && index < numberOfValues; ++index) {
-                if (!points.quickGet(index) || !mayRejoinAt({ block, index }))
-                    continue;
-                plan.rejoinPointsWithoutTests.append({ block, index });
-                break;
+            if (!range.isCloned)
+                continue;
+            if (range.end < startOfLastSearch || foundByLastSearch < range.end) {
+                startOfLastSearch = range.end;
+                foundByLastSearch = range.end;
+                while (foundByLastSearch < numberOfValues && (!points.quickGet(foundByLastSearch) || !mayRejoinAt({ block, foundByLastSearch })))
+                    ++foundByLastSearch;
+                valuesReadForRejoinPoints += foundByLastSearch - startOfLastSearch + 1;
             }
+            if (foundByLastSearch < numberOfValues)
+                plan.rejoinPointsWithoutTests.append({ block, foundByLastSearch });
         }
     }
+    context.build.statistics().count(StatisticID::ValuesReadForRejoinPoints, valuesReadForRejoinPoints);
 
     AOT::sortInLine(plan.rejoinPointsWithoutTests, { }, orderOf);
     removeRepeatedElements(plan.rejoinPointsWithoutTests);

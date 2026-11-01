@@ -5480,12 +5480,12 @@ private:
         return borders;
     }
 
-    void forEachEdgeToWhereLive(const Vector<Edge, 2>& edges, const LiveRange& range, NOESCAPE const Invocable<void(const Edge&)> auto& func)
+    void forEachEdgeToWhereLive(const Vector<Edge, 2>& edges, const LiveRange& range, NOESCAPE const Invocable<IterationStatus(const Edge&)> auto& func)
     {
         if (edges.size() <= range.intervals().size()) {
             for (const Edge& edge : edges) {
-                if (containsPoint(range, positionOfHead(edge.to)))
-                    func(edge);
+                if (containsPoint(range, positionOfHead(edge.to)) && func(edge) == IterationStatus::Done)
+                    return;
             }
             return;
         }
@@ -5493,8 +5493,10 @@ private:
             auto edge = std::ranges::lower_bound(edges, interval.begin(), { }, [&](const Edge& candidate) {
                 return positionOfHead(candidate.to);
             });
-            for (; edge != edges.end() && positionOfHead(edge->to) < interval.end(); ++edge)
-                func(*edge);
+            for (; edge != edges.end() && positionOfHead(edge->to) < interval.end(); ++edge) {
+                if (func(*edge) == IterationStatus::Done)
+                    return;
+            }
         }
     }
 
@@ -5595,13 +5597,19 @@ private:
             if (!paysInEveryTurn && cost >= about.costOfSpill)
                 continue;
             const size_t numberOfMovesBefore = moves.size();
+            auto costsTooMuch = [&] {
+                return cost == std::numeric_limits<float>::infinity() || (!paysInEveryTurn && cost >= about.costOfSpill);
+            };
             for (bool isStore : { false, true }) {
                 forEachEdgeToWhereLive(isStore ? borders.exits : borders.entries, liveRange, [&](const Edge& edge) {
                     cost += edge.costOfMove;
                     moves.append({ Tmp(), edge, isStore });
+                    return costsTooMuch() ? IterationStatus::Done : IterationStatus::Continue;
                 });
+                if (costsTooMuch())
+                    break;
             }
-            if (moves.size() == numberOfMovesBefore || cost == std::numeric_limits<float>::infinity() || (!paysInEveryTurn && cost >= about.costOfSpill)) {
+            if (moves.size() == numberOfMovesBefore || costsTooMuch()) {
                 dataLogLnIf(verbose(), "No register in a loop alone: ", tmp, " in the loop at BB", *forest[cycle].header(), " cost = ", cost, " limit = ", about.costOfSpill);
                 moves.shrink(numberOfMovesBefore);
                 continue;
