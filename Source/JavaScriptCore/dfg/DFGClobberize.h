@@ -2702,6 +2702,13 @@ void clobberize(Graph& graph, Node* node, NOESCAPE const ReadFunctor& read, NOES
         return;
     }
 
+    // The fields these nodes read are const, and the operands' classes were checked before these nodes.
+    case TemporalCompare:
+    case TemporalEquals:
+    case TemporalGetNumber:
+        def(PureValue(node, static_cast<uint32_t>(node->temporalOperation())));
+        return;
+
     case DateGetTime:
     case DateGetMilliseconds: {
         read(JSDateFields);

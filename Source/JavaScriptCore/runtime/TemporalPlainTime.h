@@ -77,7 +77,7 @@ private:
 
     ISO8601::Duration differenceTemporalPlainTime(DifferenceOperation, JSGlobalObject*, TemporalPlainTime*, JSValue) const;
 
-    ISO8601::PlainTime m_plainTime;
+    const ISO8601::PlainTime m_plainTime;
 };
 
 TemporalPlainTime* createTemporalTime(JSGlobalObject*, ISO8601::PlainTime&&, TemporalNewTarget);

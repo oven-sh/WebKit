@@ -1697,6 +1697,8 @@ public:
     void compileDateGetMilliseconds(Node*);
     void compileDateGetTime(Node*);
     void compileDateSet(Node*);
+    void compileTemporalCompareOrEquals(Node*);
+    void compileTemporalGetNumber(Node*);
     void compileGlobalIsNaN(Node*);
     void compileNumberIsNaN(Node*);
     void compileGlobalIsFinite(Node*);

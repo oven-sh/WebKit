@@ -123,9 +123,9 @@ std::optional<ISO8601::ExactTime> bigIntValueToExactTime(JSGlobalObject* globalO
     return exactTime;
 }
 
-// ToTemporalInstant ( item )
+// ToTemporalInstant ( item ) — returns the [[EpochNanoseconds]] (skips the CreateTemporalInstant wrap).
 // https://tc39.es/proposal-temporal/#sec-temporal-totemporalinstant
-TemporalInstant* TemporalInstant::toInstant(JSGlobalObject* globalObject, JSValue itemValue)
+ISO8601::ExactTime TemporalInstant::toInstantExactTime(JSGlobalObject* globalObject, JSValue itemValue)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -133,30 +133,30 @@ TemporalInstant* TemporalInstant::toInstant(JSGlobalObject* globalObject, JSValu
     // Step 1: If item is an Object, then
     if (itemValue.isObject()) {
         // Step 1.a: If item has [[InitializedTemporalInstant]] or [[InitializedTemporalZonedDateTime]],
-        //   return ! CreateTemporalInstant(item.[[EpochNanoseconds]]). Spec returns a NEW instance.
-        if (itemValue.inherits<TemporalInstant>())
-            return create(vm, globalObject->instantStructure(), uncheckedDowncast<TemporalInstant>(itemValue)->exactTime());
-        if (itemValue.inherits<TemporalZonedDateTime>())
-            return create(vm, globalObject->instantStructure(), uncheckedDowncast<TemporalZonedDateTime>(itemValue)->exactTime());
+        //   return ! CreateTemporalInstant(item.[[EpochNanoseconds]]).
+        if (auto* instant = dynamicDowncast<TemporalInstant>(itemValue))
+            return instant->exactTime();
+        if (auto* zonedDateTime = dynamicDowncast<TemporalZonedDateTime>(itemValue))
+            return zonedDateTime->exactTime();
 
         // Step 1.c: Set item to ? ToPrimitive(item, STRING).
         itemValue = itemValue.toPrimitive(globalObject, PreferString);
-        RETURN_IF_EXCEPTION(scope, nullptr);
+        RETURN_IF_EXCEPTION(scope, { });
     }
 
     // Step 2: If item is not a String, throw a TypeError exception.
     if (!itemValue.isString()) [[unlikely]] {
         throwTypeError(globalObject, scope, "can only convert to Instant from object or string values"_s);
-        return nullptr;
+        return { };
     }
     String string = asString(itemValue)->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
 
     // Step 3: Let parsed be ? ParseISODateTime(item, « TemporalInstantString »).
     auto parsedOpt = ISO8601::parseISODateTime(string, ISO8601::TemporalProduction::Instant);
     if (!parsedOpt) [[unlikely]] {
         throwRangeError(globalObject, scope, makeString("'"_s, ellipsizeAt(100, string), "' is not a valid Temporal.Instant string"_s));
-        return nullptr;
+        return { };
     }
     auto [plainDateOpt, plainTimeOpt, timeZoneOpt, calendarOpt, matched, isShortForm] = WTF::move(*parsedOpt);
     ASSERT(plainDateOpt && plainTimeOpt && timeZoneOpt);
@@ -186,10 +186,22 @@ TemporalInstant* TemporalInstant::toInstant(JSGlobalObject* globalObject, JSValu
     //   |dateDays| ≤ 10⁸ ↔ |epochNs| ≤ 8.64×10²¹ at the boundary; isValid() covers both.
     if (!exactTime.isValid()) [[unlikely]] {
         throwRangeError(globalObject, scope, makeString("'"_s, ellipsizeAt(100, string), "' is not a valid Temporal.Instant string"_s));
-        return nullptr;
+        return { };
     }
 
     // Step 12: Return ! CreateTemporalInstant(epochNanoseconds).
+    return exactTime;
+}
+
+// ToTemporalInstant ( item )
+// https://tc39.es/proposal-temporal/#sec-temporal-totemporalinstant
+TemporalInstant* TemporalInstant::toInstant(JSGlobalObject* globalObject, JSValue itemValue)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    ISO8601::ExactTime exactTime = toInstantExactTime(globalObject, itemValue);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     return create(vm, globalObject->instantStructure(), exactTime);
 }
 
@@ -255,17 +267,17 @@ JSValue TemporalInstant::compare(JSGlobalObject* globalObject, JSValue oneValue,
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Step 1: Set one = ? ToTemporalInstant(one).
-    TemporalInstant* one = toInstant(globalObject, oneValue);
+    ISO8601::ExactTime one = toInstantExactTime(globalObject, oneValue);
     RETURN_IF_EXCEPTION(scope, { });
 
     // Step 2: Set two = ? ToTemporalInstant(two).
-    TemporalInstant* two = toInstant(globalObject, twoValue);
+    ISO8601::ExactTime two = toInstantExactTime(globalObject, twoValue);
     RETURN_IF_EXCEPTION(scope, { });
 
     // Step 3: Return CompareEpochNanoseconds(one.[[EpochNanoseconds]], two.[[EpochNanoseconds]]).
-    if (one->exactTime() > two->exactTime())
+    if (one > two)
         return jsNumber(1);
-    if (one->exactTime() < two->exactTime())
+    if (one < two)
         return jsNumber(-1);
     return jsNumber(0);
 }

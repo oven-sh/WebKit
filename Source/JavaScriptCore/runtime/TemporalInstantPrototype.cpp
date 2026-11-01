@@ -45,7 +45,6 @@ static JSC_DECLARE_HOST_FUNCTION(temporalInstantPrototypeFuncSubtract);
 static JSC_DECLARE_HOST_FUNCTION(temporalInstantPrototypeFuncUntil);
 static JSC_DECLARE_HOST_FUNCTION(temporalInstantPrototypeFuncSince);
 static JSC_DECLARE_HOST_FUNCTION(temporalInstantPrototypeFuncRound);
-static JSC_DECLARE_HOST_FUNCTION(temporalInstantPrototypeFuncEquals);
 static JSC_DECLARE_HOST_FUNCTION(temporalInstantPrototypeFuncToZonedDateTimeISO);
 static JSC_DECLARE_HOST_FUNCTION(temporalInstantPrototypeFuncToString);
 static JSC_DECLARE_HOST_FUNCTION(temporalInstantPrototypeFuncToJSON);
@@ -69,7 +68,7 @@ const ClassInfo TemporalInstantPrototype::s_info = { "Temporal.Instant"_s, &Base
   until                temporalInstantPrototypeFuncUntil                DontEnum|Function 1
   since                temporalInstantPrototypeFuncSince                DontEnum|Function 1
   round                temporalInstantPrototypeFuncRound                DontEnum|Function 1
-  equals               temporalInstantPrototypeFuncEquals               DontEnum|Function 1
+  equals               temporalInstantPrototypeFuncEquals               DontEnum|Function 1 TemporalIntrinsic
   toZonedDateTimeISO   temporalInstantPrototypeFuncToZonedDateTimeISO   DontEnum|Function 1
   toString             temporalInstantPrototypeFuncToString             DontEnum|Function 0
   toJSON               temporalInstantPrototypeFuncToJSON               DontEnum|Function 0
@@ -191,7 +190,7 @@ static TemporalDuration* differenceTemporalInstant(JSGlobalObject* globalObject,
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Step 1: Set other to ? ToTemporalInstant(other).
-    TemporalInstant* other = TemporalInstant::toInstant(globalObject, otherValue);
+    ISO8601::ExactTime other = TemporalInstant::toInstantExactTime(globalObject, otherValue);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Steps 2-3: GetOptionsObject + GetDifferenceSettings (NegateRoundingMode for SINCE applied inside).
@@ -199,7 +198,7 @@ static TemporalDuration* differenceTemporalInstant(JSGlobalObject* globalObject,
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Step 4: Let internalDuration be DifferenceInstant(instant.[[EpochNanoseconds]], other.[[EpochNanoseconds]], ...).
-    ISO8601::InternalDuration internalDuration = instant->exactTime().difference(globalObject, other->exactTime(), increment, smallestUnit, roundingMode);
+    ISO8601::InternalDuration internalDuration = instant->exactTime().difference(globalObject, other, increment, smallestUnit, roundingMode);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Step 5: Let result be ! TemporalDurationFromInternal(internalDuration, settings.[[LargestUnit]]).
@@ -312,8 +311,7 @@ JSC_DEFINE_HOST_FUNCTION(temporalInstantPrototypeFuncRound, (JSGlobalObject* glo
     RETURN_IF_EXCEPTION(scope, { });
 
     // Step 18: Let roundedNs be RoundTemporalInstant(instant.[[EpochNanoseconds]], roundingIncrement, smallestUnit, roundingMode).
-    ISO8601::ExactTime roundedNs = instant->exactTime().round(globalObject, roundingIncrement, smallestUnit, roundingMode);
-    RETURN_IF_EXCEPTION(scope, { });
+    ISO8601::ExactTime roundedNs = instant->exactTime().round(roundingIncrement, smallestUnit, roundingMode);
 
     // Step 19: Return ! CreateTemporalInstant(roundedNs). Range bounded by spec maximum.
     return JSValue::encode(TemporalInstant::create(vm, globalObject->instantStructure(), roundedNs));
@@ -331,11 +329,11 @@ JSC_DEFINE_HOST_FUNCTION(temporalInstantPrototypeFuncEquals, (JSGlobalObject* gl
         return throwVMTypeError(globalObject, scope, "Temporal.Instant.prototype.equals called on value that's not a Instant"_s);
 
     // Step 3: Set other to ? ToTemporalInstant(other).
-    TemporalInstant* other = TemporalInstant::toInstant(globalObject, callFrame->argument(0));
+    ISO8601::ExactTime other = TemporalInstant::toInstantExactTime(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
 
     // Steps 4-5: If instant.[[EpochNanoseconds]] ≠ other.[[EpochNanoseconds]], return false; else return true.
-    return JSValue::encode(jsBoolean(instant->exactTime() == other->exactTime()));
+    return JSValue::encode(jsBoolean(instant->exactTime() == other));
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal.instant.prototype.tostring
@@ -398,10 +396,8 @@ JSC_DEFINE_HOST_FUNCTION(temporalInstantPrototypeFuncToString, (JSGlobalObject* 
     // Step 14: Let roundedInstant be ! CreateTemporalInstant(roundedNs).
     // Auto precision means increment=1 ns — a no-op for any rounding mode; skip steps 13-14.
     ISO8601::ExactTime roundedExactTime = instant->exactTime();
-    if (std::get<0>(data.precision) != Precision::Auto) {
-        roundedExactTime = instant->exactTime().round(globalObject, data.increment, data.unit, roundingMode);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
+    if (std::get<0>(data.precision) != Precision::Auto)
+        roundedExactTime = instant->exactTime().round(data.increment, data.unit, roundingMode);
 
     // Step 15: Return TemporalInstantToString(roundedInstant, timeZone, precision.[[Precision]]).
     std::optional<int64_t> offsetNs;
