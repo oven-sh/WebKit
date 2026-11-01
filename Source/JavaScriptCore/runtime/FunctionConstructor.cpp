@@ -230,7 +230,7 @@ NEVER_INLINE JSObject* constructFunctionSkippingEvalEnabledCheck(JSGlobalObject*
     }
 
     JSGlobalObject* structureGlobalObject = globalObject;
-    bool needsSubclassStructure = newTarget && newTarget != globalObject->functionConstructor();
+    bool needsSubclassStructure = !!newTarget;
     if (needsSubclassStructure) {
         if (auto* functionGlobalObject = tryGetFunctionRealm(asObject(newTarget)))
             structureGlobalObject = functionGlobalObject;
@@ -274,6 +274,9 @@ NEVER_INLINE JSObject* constructFunctionSkippingEvalEnabledCheck(JSGlobalObject*
 // ECMA 15.3.2 The Function Constructor
 JSObject* constructFunction(JSGlobalObject* globalObject, CallFrame* callFrame, const ArgList& args, FunctionConstructionMode functionConstructionMode, JSValue newTarget)
 {
+    // The "prototype" of the callee is the prototype of the realm's structure: there is nothing to look up.
+    if (newTarget == callFrame->jsCallee())
+        newTarget = JSValue();
     VM& vm = globalObject->vm();
     return constructFunction(globalObject, args, vm.propertyNames->anonymous, callFrame->callerSourceOrigin(vm), String(), computeNewSourceTaintednessFromStack(vm, callFrame), TextPosition(), functionConstructionMode, newTarget);
 }
