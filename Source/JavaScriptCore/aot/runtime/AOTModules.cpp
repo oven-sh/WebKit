@@ -1010,7 +1010,8 @@ JSValue Modules::readExport(ModuleID module, unsigned index)
     case ModuleExportKind::Indirect: {
         const IndirectExportData& indirectExport = m_table.indirectExport(moduleExport);
         // The namespace object of the module between has the names that it was made with. A later mock may give another one, and the search for the name ends at the mock.
-        if (m_mocks) [[unlikely]] {
+        // A mock of a module of another image is known there alone.
+        if (m_mocks || (vm.aotState().hasSeveralImages && data(indirectExport.targetModule()).isUncompiledCode())) [[unlikely]] {
             AbstractModuleRecord* record = recordForResolution(indirectExport.targetModule());
             RETURN_IF_EXCEPTION(scope, { });
             StarExportResolution resolution = record->resolveExport(realm, identifier(indirectExport.importName));
