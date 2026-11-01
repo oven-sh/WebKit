@@ -24,6 +24,7 @@
 #include "AOTVector.h"
 #include "AOTWrittenFunction.h"
 #include <algorithm>
+#include <array>
 #include <ranges>
 #include <wtf/Noncopyable.h>
 
@@ -111,7 +112,11 @@ private:
     bool isOnlyCalled(ObjectID closure) const;
     void checkCellForms();
     void checkUses();
-    AllocationHeapCause checkUse(ObjectID, const ObjectUse&) const;
+    enum class CellKind : uint8_t { Object, Closure, Environment };
+    static constexpr size_t numberOfCellKinds = 3;
+    CellKind kindOf(ObjectID) const;
+    AllocationHeapCause checkUse(ObjectID, CellKind, const ObjectUse&) const;
+    AllocationHeapCause checkUseOfCell(ObjectID, CellKind, const ObjectUse&, bool& goesByCell) const;
     OperandSummary summarizeUse(ValueID user, uint32_t operandIndex) const;
     bool writesOnlyInsideFrameCells(ValueID user, uint32_t operandIndex) const;
     bool mayLeakContentsThrough(const ObjectUse&) const;
@@ -142,14 +147,22 @@ private:
     uint64_t m_bytesAlreadyInFrame { 0 };
     FramePlan m_plan;
 
-    // What the callees of a call do with an operand is the same for every object that may arrive there.
-    struct OperandOfCall {
+    // What a user does with an operand is the same for every object that may arrive there, and each of many objects may arrive at each of many users.
+    struct OperandOfUser {
         std::optional<OperandSummary> summary;
         std::optional<bool> writesOnlyInsideFrameCells;
     };
-    OperandOfCall& operandOfCall(ValueID call, uint32_t operandIndex) const;
-    mutable Vector<uint32_t> m_endOfOperandsOfCall;
-    mutable Vector<OperandOfCall> m_operandsOfCalls;
+    OperandOfUser& operandOfUser(ValueID user, uint32_t operandIndex) const;
+    mutable Vector<uint32_t> m_endOfOperandsOfUser;
+    mutable Vector<OperandOfUser> m_operandsOfUsers;
+
+    // So is what a use means to a cell, but for the kind of the cell, unless the use may leak the cell or what it holds.
+    struct SharedUse {
+        std::array<std::optional<AllocationHeapCause>, numberOfCellKinds> causes;
+        std::optional<bool> mayLeakContents;
+    };
+    SharedUse& sharedUse(const ObjectUse&) const;
+    mutable Vector<SharedUse> m_sharedUses;
 };
 
 } // anonymous namespace
@@ -630,7 +643,7 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
         auto known = std::ranges::find(knownUses, use, &ObjectUse::use);
         // A use that keeps the closure in a cell, gives it back or passes it on makes another way to it, which is not among the uses of the value.
         bool staysInFrame = use.kind == Use::Kind::Operand && known != knownUses.end() && (!known->isEscape || effectRuleOf(m_function.at(use.user).opcode) == EffectRule::Call) && !isPassedOnByBranch(use);
-        if (staysInFrame && known->uses.containsOnly(usesOfBorrowedParameter) && checkUse(closure, *known) == AllocationHeapCause::None) {
+        if (staysInFrame && known->uses.containsOnly(usesOfBorrowedParameter) && checkUse(closure, kindOf(closure), *known) == AllocationHeapCause::None) {
             // What is left of a call that was copied into this function is the word that keeps its callee.
             if (isListedUnderItsOwnName && (known->uses.containsAny({ OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly }) || m_function.at(use.user).opcode == Opcode::KeepCalleeInFrame))
                 usesThatRunIt.append(use);
@@ -776,8 +789,9 @@ void FramePlanner::checkUses()
     for (ObjectID object : candidates()) {
         if (!mayBeInFrame(object) || isArray(object) || isKeptUntilItLeaves(object))
             continue;
+        CellKind kind = kindOf(object);
         for (const ObjectUse& entry : m_escape.usesOf(object)) {
-            AllocationHeapCause cause = checkUse(object, entry);
+            AllocationHeapCause cause = checkUse(object, kind, entry);
             if (cause == AllocationHeapCause::None)
                 continue;
             moveToHeap(object, cause, entry.use);
@@ -788,7 +802,36 @@ void FramePlanner::checkUses()
     }
 }
 
-AllocationHeapCause FramePlanner::checkUse(ObjectID object, const ObjectUse& entry) const
+FramePlanner::CellKind FramePlanner::kindOf(ObjectID object) const
+{
+    const Value& allocation = definitionOf(object);
+    if (allocation.opcode == Opcode::NewClosure)
+        return CellKind::Closure;
+    return m_program.at(allocation.layout()).isEnvironment() ? CellKind::Environment : CellKind::Object;
+}
+
+FramePlanner::SharedUse& FramePlanner::sharedUse(const ObjectUse& entry) const
+{
+    if (m_sharedUses.isEmpty())
+        m_sharedUses.grow(m_escape.numberOfSharedUses());
+    return m_sharedUses[m_escape.indexOfSharedUse(entry)];
+}
+
+AllocationHeapCause FramePlanner::checkUse(ObjectID object, CellKind kind, const ObjectUse& entry) const
+{
+    std::optional<AllocationHeapCause>& known = sharedUse(entry).causes[static_cast<size_t>(kind)];
+    bool goesByCell = false;
+    if (known) {
+        RELEASE_ASSERT(!m_build.options().verifiesAfterEveryPass || checkUseOfCell(object, kind, entry, goesByCell) == *known);
+        return *known;
+    }
+    AllocationHeapCause cause = checkUseOfCell(object, kind, entry, goesByCell);
+    if (!goesByCell)
+        known = cause;
+    return cause;
+}
+
+AllocationHeapCause FramePlanner::checkUseOfCell(ObjectID object, CellKind kind, const ObjectUse& entry, bool& goesByCell) const
 {
     if (entry.use.kind != Use::Kind::Operand)
         return AllocationHeapCause::None;
@@ -810,6 +853,7 @@ AllocationHeapCause FramePlanner::checkUse(ObjectID object, const ObjectUse& ent
         return AllocationHeapCause::SeenByNativeCode;
     OperandSummary summary = summarizeUse(entry.use.user, operandIndex);
     if (mayLeakFramePointer(m_program, m_function, user, operandIndex, summary)) {
+        goesByCell = true;
         bool isDecidedByHolder = isInFrame(object)
             && entry.uses.contains(OperandUse::Retains)
             && summary.retainedIn != RetainedIn::UnknownMemory;
@@ -820,12 +864,13 @@ AllocationHeapCause FramePlanner::checkUse(ObjectID object, const ObjectUse& ent
         return AllocationHeapCause::ChangedByUse;
 
     const Value& allocation = definitionOf(object);
-    bool isClosure = allocation.opcode == Opcode::NewClosure;
-    bool isEnvironment = !isClosure && m_program.at(allocation.layout()).isEnvironment();
+    bool isClosure = kind == CellKind::Closure;
+    bool isEnvironment = kind == CellKind::Environment;
     // What is read out of an environment that never holds a pointer into a frame may go anywhere.
-    if (mayLeakContentsThrough(entry) && !holdsOnlyHeapValues(m_program, m_flow, allocation.type)) {
+    if (mayLeakContentsThrough(entry)) {
+        goesByCell = true;
         // What the cell holds goes to the heap in checkHolders(). The verifier knows what an operand holds only where it sees the allocation, and of an environment by its layout alone.
-        if (isEnvironment || m_analyses.sameObjectThroughCasts(user.operand(operandIndex)) != allocationOf(object))
+        if (!holdsOnlyHeapValues(m_program, m_flow, allocation.type) && (isEnvironment || m_analyses.sameObjectThroughCasts(user.operand(operandIndex)) != allocationOf(object)))
             return AllocationHeapCause::Escapes;
     }
     switch (rule) {
@@ -852,44 +897,35 @@ AllocationHeapCause FramePlanner::checkUse(ObjectID object, const ObjectUse& ent
     return writesOnlyInsideFrameCells(entry.use.user, operandIndex) ? AllocationHeapCause::None : AllocationHeapCause::ChangedByUse;
 }
 
-FramePlanner::OperandOfCall& FramePlanner::operandOfCall(ValueID call, uint32_t operandIndex) const
+FramePlanner::OperandOfUser& FramePlanner::operandOfUser(ValueID user, uint32_t operandIndex) const
 {
-    if (m_endOfOperandsOfCall.isEmpty())
-        m_endOfOperandsOfCall.fill(0, m_function.values.size());
-    uint32_t& end = m_endOfOperandsOfCall[call.index()];
-    uint32_t numberOfOperands = m_function.at(call).numberOfOperands();
+    if (m_endOfOperandsOfUser.isEmpty())
+        m_endOfOperandsOfUser.fill(0, m_function.values.size());
+    uint32_t& end = m_endOfOperandsOfUser[user.index()];
+    uint32_t numberOfOperands = m_function.at(user).numberOfOperands();
     if (!end) {
-        m_operandsOfCalls.grow(m_operandsOfCalls.size() + numberOfOperands);
-        end = m_operandsOfCalls.size();
+        m_operandsOfUsers.grow(m_operandsOfUsers.size() + numberOfOperands);
+        end = m_operandsOfUsers.size();
     }
-    return m_operandsOfCalls[end - numberOfOperands + operandIndex];
+    return m_operandsOfUsers[end - numberOfOperands + operandIndex];
 }
 
 OperandSummary FramePlanner::summarizeUse(ValueID id, uint32_t operandIndex) const
 {
-    const Value& user = m_function.at(id);
-    if (effectRuleOf(user.opcode) != EffectRule::Call)
-        return summarizeFramePointerUse(m_program, m_flow, m_function, user, operandIndex);
-    std::optional<OperandSummary>& summary = operandOfCall(id, operandIndex).summary;
+    std::optional<OperandSummary>& summary = operandOfUser(id, operandIndex).summary;
     if (!summary) {
-        summary = summarizeFramePointerUse(m_program, m_flow, m_function, user, operandIndex);
-        m_build.statistics().count(StatisticID::CallOperandsSummarizedForFrames);
+        summary = summarizeFramePointerUse(m_program, m_flow, m_function, m_function.at(id), operandIndex);
+        m_build.statistics().count(StatisticID::OperandsSummarizedForFrames);
     }
     return *summary;
 }
 
 bool FramePlanner::writesOnlyInsideFrameCells(ValueID id, uint32_t operandIndex) const
 {
-    const Value& user = m_function.at(id);
-    auto ask = [&] {
-        return memoryAccessedThrough(m_analyses.effectContext(), m_function, user, operandIndex, m_analyses.effectsOf(id)).writes.containsOnly(heapsInsideFrameCells);
-    };
-    if (effectRuleOf(user.opcode) != EffectRule::Call)
-        return ask();
-    std::optional<bool>& answer = operandOfCall(id, operandIndex).writesOnlyInsideFrameCells;
+    std::optional<bool>& answer = operandOfUser(id, operandIndex).writesOnlyInsideFrameCells;
     if (!answer) {
-        answer = ask();
-        m_build.statistics().count(StatisticID::CallOperandsSummarizedForFrames);
+        answer = memoryAccessedThrough(m_analyses.effectContext(), m_function, m_function.at(id), operandIndex, m_analyses.effectsOf(id)).writes.containsOnly(heapsInsideFrameCells);
+        m_build.statistics().count(StatisticID::OperandsSummarizedForFrames);
     }
     return *answer;
 }
@@ -898,8 +934,12 @@ bool FramePlanner::mayLeakContentsThrough(const ObjectUse& entry) const
 {
     if (entry.use.kind != Use::Kind::Operand)
         return false;
-    const Value& user = m_function.at(entry.use.user);
-    return user.operandKind(entry.use.operandIndex) != OperandKind::Guard && summarizeUse(entry.use.user, entry.use.operandIndex).uses.containsAny(usesLeakingContents);
+    std::optional<bool>& known = sharedUse(entry).mayLeakContents;
+    if (!known) {
+        const Value& user = m_function.at(entry.use.user);
+        known = user.operandKind(entry.use.operandIndex) != OperandKind::Guard && summarizeUse(entry.use.user, entry.use.operandIndex).uses.containsAny(usesLeakingContents);
+    }
+    return *known;
 }
 
 bool FramePlanner::leaksContents(ObjectID cell) const
