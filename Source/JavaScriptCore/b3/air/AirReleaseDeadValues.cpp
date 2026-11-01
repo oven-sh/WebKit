@@ -43,7 +43,7 @@ public:
         if (!m_watchedPlaces.isEmpty())
             solveBackward();
         rewrite();
-        m_code.proc().count(Counter::StepsToReleaseDeadValues, static_cast<uint32_t>(std::min<uint64_t>(m_steps, std::numeric_limits<uint32_t>::max())));
+        m_code.proc().count(Counter::DeadValueReleaseSteps, static_cast<uint32_t>(std::min<uint64_t>(m_steps, std::numeric_limits<uint32_t>::max())));
     }
 
 private:

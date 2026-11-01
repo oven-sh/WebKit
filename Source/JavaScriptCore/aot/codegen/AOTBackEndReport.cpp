@@ -126,8 +126,8 @@ static StatisticID statisticOf(B3::Counter counter)
         return StatisticID::LoopBoundsClamped;
     case B3::Counter::LoopPollsRemoved:
         return StatisticID::LoopPollsRemoved;
-    case B3::Counter::WordsCarriedAroundLoops:
-        return StatisticID::WordsCarriedAroundLoops;
+    case B3::Counter::LocationsPromotedInLoops:
+        return StatisticID::LocationsPromotedInLoops;
     case B3::Counter::SumsKeptAsIntegers:
         return StatisticID::SumsKeptAsIntegers;
     case B3::Counter::KnownInductionsUsed:
@@ -138,52 +138,52 @@ static StatisticID statisticOf(B3::Counter counter)
         return StatisticID::ColdUsesKeptThroughSecondSplit;
     case B3::Counter::ColdUsesKeptThroughSecondSplitBetweenDefs:
         return StatisticID::ColdUsesKeptThroughSecondSplitBetweenDefs;
-    case B3::Counter::MovesReadForWidths:
-        return StatisticID::MovesReadForWidths;
-    case B3::Counter::PredecessorsReadForRareBlocks:
-        return StatisticID::PredecessorsReadForRareBlocks;
-    case B3::Counter::StepsToReleaseDeadValues:
-        return StatisticID::StepsToReleaseDeadValues;
-    case B3::Counter::RangesHeldAgainstStackCells:
-        return StatisticID::RangesHeldAgainstStackCells;
-    case B3::Counter::StepsToCommonLikelyDominators:
-        return StatisticID::StepsToCommonLikelyDominators;
-    case B3::Counter::ClobberPointsReadForCalls:
-        return StatisticID::ClobberPointsReadForCalls;
+    case B3::Counter::MovesVisitedForWidths:
+        return StatisticID::MovesVisitedForWidths;
+    case B3::Counter::PredecessorsVisitedForRareBlocks:
+        return StatisticID::PredecessorsVisitedForRareBlocks;
+    case B3::Counter::DeadValueReleaseSteps:
+        return StatisticID::DeadValueReleaseSteps;
+    case B3::Counter::RangesComparedWithStackCells:
+        return StatisticID::RangesComparedWithStackCells;
+    case B3::Counter::LikelyDominatorWalkSteps:
+        return StatisticID::LikelyDominatorWalkSteps;
+    case B3::Counter::ClobberPointsVisitedForCalls:
+        return StatisticID::ClobberPointsVisitedForCalls;
     case B3::Counter::PhiPlacementSteps:
         return StatisticID::PhiPlacementSteps;
-    case B3::Counter::AccessesReadForWordsCarriedAroundLoops:
-        return StatisticID::AccessesReadForWordsCarriedAroundLoops;
-    case B3::Counter::LoopsSearchedForWordsToCarry:
-        return StatisticID::LoopsSearchedForWordsToCarry;
-    case B3::Counter::LoopsWithNoBlockAheadToReadWordsIn:
-        return StatisticID::LoopsWithNoBlockAheadToReadWordsIn;
-    case B3::Counter::LoopsWithFencesSearchedForWords:
-        return StatisticID::LoopsWithFencesSearchedForWords;
-    case B3::Counter::WordsReadAndWrittenInLoops:
-        return StatisticID::WordsReadAndWrittenInLoops;
-    case B3::Counter::WordsOnlyReadInLoops:
-        return StatisticID::WordsOnlyReadInLoops;
-    case B3::Counter::WordsLeftForAddressThatChangesWithTurns:
-        return StatisticID::WordsLeftForAddressThatChangesWithTurns;
-    case B3::Counter::WordsLeftForAddressReadInLoop:
-        return StatisticID::WordsLeftForAddressReadInLoop;
-    case B3::Counter::WordsLeftForAddressNotMovedOutOfLoop:
-        return StatisticID::WordsLeftForAddressNotMovedOutOfLoop;
-    case B3::Counter::WordsLeftForWritesOnRarePaths:
-        return StatisticID::WordsLeftForWritesOnRarePaths;
-    case B3::Counter::WordsLeftForWritesOnLikelyPaths:
-        return StatisticID::WordsLeftForWritesOnLikelyPaths;
-    case B3::Counter::WordsLeftForStoresUnderOtherAddresses:
-        return StatisticID::WordsLeftForStoresUnderOtherAddresses;
-    case B3::Counter::WordsLeftThatMayNotBeTouched:
-        return StatisticID::WordsLeftThatMayNotBeTouched;
-    case B3::Counter::WordsLeftThatAreSaidNeverToChange:
-        return StatisticID::WordsLeftThatAreSaidNeverToChange;
-    case B3::Counter::WordsLeftBesideCallsOnLikelyPaths:
-        return StatisticID::WordsLeftBesideCallsOnLikelyPaths;
-    case B3::Counter::WordsLeftToPhasesOfClient:
-        return StatisticID::WordsLeftToPhasesOfClient;
+    case B3::Counter::MemoryPromotionAccessesVisited:
+        return StatisticID::MemoryPromotionAccessesVisited;
+    case B3::Counter::LoopsConsideredForMemoryPromotion:
+        return StatisticID::LoopsConsideredForMemoryPromotion;
+    case B3::Counter::LoopsWithoutPreheader:
+        return StatisticID::LoopsWithoutPreheader;
+    case B3::Counter::LoopsWithFences:
+        return StatisticID::LoopsWithFences;
+    case B3::Counter::LocationsLoadedAndStoredInLoops:
+        return StatisticID::LocationsLoadedAndStoredInLoops;
+    case B3::Counter::LocationsOnlyLoadedInLoops:
+        return StatisticID::LocationsOnlyLoadedInLoops;
+    case B3::Counter::NotPromotedLoopVariantAddress:
+        return StatisticID::NotPromotedLoopVariantAddress;
+    case B3::Counter::NotPromotedAddressLoadedInLoop:
+        return StatisticID::NotPromotedAddressLoadedInLoop;
+    case B3::Counter::NotPromotedAddressNotHoisted:
+        return StatisticID::NotPromotedAddressNotHoisted;
+    case B3::Counter::NotPromotedClobberedOnRarePaths:
+        return StatisticID::NotPromotedClobberedOnRarePaths;
+    case B3::Counter::NotPromotedClobberedOnLikelyPaths:
+        return StatisticID::NotPromotedClobberedOnLikelyPaths;
+    case B3::Counter::NotPromotedMayAliasStores:
+        return StatisticID::NotPromotedMayAliasStores;
+    case B3::Counter::NotPromotedNotGuaranteedToExecute:
+        return StatisticID::NotPromotedNotGuaranteedToExecute;
+    case B3::Counter::NotPromotedImmutable:
+        return StatisticID::NotPromotedImmutable;
+    case B3::Counter::NotPromotedCallsOnLikelyPaths:
+        return StatisticID::NotPromotedCallsOnLikelyPaths;
+    case B3::Counter::NotPromotedHandledByClient:
+        return StatisticID::NotPromotedHandledByClient;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

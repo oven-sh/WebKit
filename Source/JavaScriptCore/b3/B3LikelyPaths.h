@@ -32,21 +32,21 @@ private:
     void walkLikelyEdges(const NaturalLoop&);
     void computeImmediateDominators(const NaturalLoop&);
     BasicBlock* nearestCommonDominator(BasicBlock*, BasicBlock*);
-    BasicBlock* meetByWaysUp(BasicBlock*, BasicBlock*);
+    BasicBlock* nearestCommonDominatorBySkipLinks(BasicBlock*, BasicBlock*);
     void linkToImmediateDominator(BasicBlock*);
 
     Procedure& m_proc;
     const NaturalLoops& m_loops;
     IndexMap<BasicBlock*, std::optional<unsigned>> m_postOrderNumber;
     IndexMap<BasicBlock*, BasicBlock*> m_immediateDominator;
-    struct WayUp {
+    struct SkipLink {
         unsigned depth { 0 };
         BasicBlock* farAncestor { nullptr };
     };
-    IndexMap<BasicBlock*, WayUp> m_wayUp;
-    bool m_mayHaveWaysUp { false };
+    IndexMap<BasicBlock*, SkipLink> m_skipLinks;
+    bool m_mayHaveSkipLinks { false };
     unsigned m_firstBlockWithFinalDominator { 0 };
-    unsigned m_firstBlockWithWayUp { 0 };
+    unsigned m_firstBlockWithSkipLink { 0 };
     uint64_t m_stepsToCommonDominators { 0 };
     Vector<BasicBlock*, 32> m_postOrder;
     Vector<BasicBlock*, 8> m_iterationEnds;

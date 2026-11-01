@@ -651,7 +651,7 @@ void appendStridedRangeCheckGuards(FastPreHeader& front, const StridedRangeCheck
         Value* limit = front.appendWidened(origin, valueInPreHeader(check.limit), Signedness::Unsigned);
         if (check.needsLimitGuard)
             front.appendGuard(origin, BelowEqual, limit, front.appendIntConstant(origin, Int64, maxLimitForRangeChecks(Int32)));
-        if (!proc.policy().validation.omitsStridedLimitGuard)
+        if (!proc.policy().validation.skipsStridedLimitGuard)
             front.appendGuard(origin, LessThan, appender.indexAt(counterEnd(loop, check.isIncreasing), check.maxOffset), limit);
         if (!check.isStrengthReduced)
             continue;
@@ -701,7 +701,7 @@ static Value* appendClampedBound(FastPreHeader& front, const RangeCheckPlan& pla
         front.appendGuard(origin, BelowEqual, limit, constant(maxLimit));
         Value* last = front.append(origin, Sub, limit, constant(rangeCheckBound.maxOffset + loop.includesEqual()));
         front.appendGuard(origin, GreaterEqual, last, constant(0));
-        if (!proc.policy().validation.omitsLimitOfClampedBound)
+        if (!proc.policy().validation.skipsUpperClamp)
             clamped = select(LessThan, last, clamped);
     }
     if (!loop.isTopTested)

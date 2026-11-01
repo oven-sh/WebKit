@@ -211,7 +211,7 @@ public:
     ~RareBlockPlacer()
     {
         if (m_placesInGaps)
-            m_code.proc().count(Counter::PredecessorsReadForRareBlocks, static_cast<uint32_t>(std::min<uint64_t>(m_predecessorsRead, std::numeric_limits<uint32_t>::max())));
+            m_code.proc().count(Counter::PredecessorsVisitedForRareBlocks, static_cast<uint32_t>(std::min<uint64_t>(m_predecessorsRead, std::numeric_limits<uint32_t>::max())));
     }
 
     bool isEnabled() const { return m_placesInGaps; }

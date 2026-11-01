@@ -280,7 +280,7 @@ static void appendClientPhases(B3::Policy& policy, const Program& program, const
     policy.clientPhases.append(carryWholeNumbersAsIntegersBeforeOptimization());
     policy.clientPhases.append(mergeImpliedBranchesAfterOptimization(program, function));
     policy.clientPhases.append(keepListLengthsInRegistersAfterOptimization());
-    policy.loops.isTakenOutOfLoopsByClient = isLengthOfList;
+    policy.loops.clientHoistsOutOfLoops = isLengthOfList;
     policy.clientPhases.append(narrowTruncatedPhisAfterOptimization());
     policy.clientPhases.append(updateIntegersInMemoryAfterOptimization(program, function));
     if (traits.savesFrameOnSuspend)
@@ -337,7 +337,7 @@ bool FunctionCodeGenerator::generateB3()
         }
         policy.clientPhases.append(guardNarrowReferences(m_numberOfLateReferenceGuards, WTF::move(origins)));
     }
-    policy.validation.keepsOriginsOfAccessesThatTakeTraps = options.validatesReferences;
+    policy.validation.keepsOriginsOfTrappingAccesses = options.validatesReferences;
     if (options.validatesReferences && !options.recorded.useWideReferences())
         policy.clientPhases.append(validateNarrowReferences(m_narrowReferenceFindings, { findNarrowReferences(m_function), &m_records.operationsWithCompressedOperand }));
     if (options.checksClaimsToBackEnd) {

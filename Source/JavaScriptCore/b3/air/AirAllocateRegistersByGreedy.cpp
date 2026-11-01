@@ -2185,7 +2185,7 @@ public:
         }
         if (changed)
             movesRead += followMovesForWidths(widths, movesForWidths.span().first(numberOfMoves));
-        m_code.proc().count(Counter::MovesReadForWidths, static_cast<uint32_t>(std::min<uint64_t>(movesRead, std::numeric_limits<uint32_t>::max())));
+        m_code.proc().count(Counter::MovesVisitedForWidths, static_cast<uint32_t>(std::min<uint64_t>(movesRead, std::numeric_limits<uint32_t>::max())));
         m_tmpWidth.finish(m_gpIndicesEnd);
     }
 
@@ -2456,7 +2456,7 @@ public:
         assignRegisters();
         fixSpillsAfterTerminals(m_code);
 
-        m_code.proc().count(Counter::ClobberPointsReadForCalls, static_cast<uint32_t>(std::min<uint64_t>(m_occupancy.clobberPointsReadForCalls(), std::numeric_limits<uint32_t>::max())));
+        m_code.proc().count(Counter::ClobberPointsVisitedForCalls, static_cast<uint32_t>(std::min<uint64_t>(m_occupancy.clobberPointsReadForCalls(), std::numeric_limits<uint32_t>::max())));
         m_stats[GP].didSpill += m_didSpill[GP];
         m_stats[FP].didSpill += m_didSpill[FP];
         m_stats[GP].numTmpsOut = m_code.numTmps(GP);
@@ -2551,9 +2551,9 @@ public:
         places.check("behind register allocation"_s);
     }
 
-    bool leavesOut(MoveLeftOutByRegisterAllocator move) const
+    bool leavesOut(MoveOmittedByRegisterAllocator move) const
     {
-        return m_code.proc().policy().validation.moveLeftOutByRegisterAllocator == move;
+        return m_code.proc().policy().validation.moveOmittedByRegisterAllocator == move;
     }
 
     bool shouldDumpFunction() const
@@ -2876,7 +2876,7 @@ private:
         if (!Options::airValidateGreedRegAlloc())
             return;
         // A move that is left out on purpose is there for the checks that report what they find. This one stops the process.
-        if (!leavesOut(MoveLeftOutByRegisterAllocator::None)) [[unlikely]]
+        if (!leavesOut(MoveOmittedByRegisterAllocator::None)) [[unlikely]]
             return;
         size_t failureCount = 0;
 
@@ -6789,7 +6789,7 @@ private:
                     *mentions.coldUsePtrs[k].first = clusterTmp;
                     clusterData.hasColdUse = true;
                     Point coldUsePoint = pointAtOffset(mentions.coldUsePtrs[k].second, PointOffsets::Pre);
-                    if (!m_code.proc().policy().validation.overlooksColdUsesOfClustersOverBlocks) [[likely]]
+                    if (!m_code.proc().policy().validation.ignoresColdUsesOfCrossBlockClusters) [[likely]]
                         coldUsePointsInCluster.append(coldUsePoint);
                     if (isSecondSplit) [[unlikely]] {
                         // Left on the name of the cluster over blocks, which is spilled, it would read the slot, and this cluster stores to the slot behind its last def alone.
@@ -7260,7 +7260,7 @@ private:
                             dataLogLnIf(verbose(), "Rematerialized BB", *block, " removing def inst: ", inst);
                         } else {
                             ASSERT(!doKillInst);
-                            if (!leavesOut(MoveLeftOutByRegisterAllocator::StoreBehindSpilledDefinition)) [[likely]]
+                            if (!leavesOut(MoveOmittedByRegisterAllocator::StoreAfterSpilledDefinition)) [[likely]]
                                 insert(block, instIndex + 1, SpillMoveTo, move, inst.origin, tmp, arg);
                             m_stats[bank].numStoreSpill++;
                         }
@@ -7423,9 +7423,9 @@ private:
                     m_movesAroundClobbers.append({ block->index(), precedingIndex, false, home, away });
                     m_movesAroundClobbers.append({ block->index(), instIndex + 1, true, away, home });
                 }
-                if (!spilled || !leavesOut(MoveLeftOutByRegisterAllocator::StoreAheadOfClobber)) [[likely]]
+                if (!spilled || !leavesOut(MoveOmittedByRegisterAllocator::StoreBeforeClobber)) [[likely]]
                     insert(block, precedingIndex, ClobberMoveFrom, move, inst.origin, metadata.originalTmp, arg);
-                if (!spilled || !leavesOut(MoveLeftOutByRegisterAllocator::LoadBehindClobber)) [[likely]]
+                if (!spilled || !leavesOut(MoveOmittedByRegisterAllocator::LoadAfterClobber)) [[likely]]
                     insert(block, instIndex + 1, ClobberMoveTo, move, inst.origin, arg, metadata.originalTmp);
                 if (spilled)
                     m_stats[gapTmp.bank()].numSplitAroundClobberStackMoves += 2;
@@ -7464,7 +7464,7 @@ private:
             // trySplitIntraBlock includes the Pre point in the cluster interval iff the original Tmp is live into the cluster.
             if (pointAtOffset(clusterBegin, PointOffsets::Pre) == clusterBegin) {
                 unsigned instIndex = this->instIndex(positionOfHead, clusterBegin);
-                if (!leavesOut(MoveLeftOutByRegisterAllocator::LoadAheadOfCluster)) [[likely]]
+                if (!leavesOut(MoveOmittedByRegisterAllocator::LoadBeforeCluster)) [[likely]]
                     insert(block, instIndex, IntraBlockMoveFrom, move, block->at(instIndex).origin, Arg::stack(spilled), clusterTmp);
                 m_stats[bank].numSplitIntraBlockLoad++;
             } else
@@ -7473,7 +7473,7 @@ private:
             // Need to store back into the original Tmp's spill slot only if the cluster def'ed the Tmp
             if (split.lastDefPoint) {
                 unsigned instIndex = this->instIndex(positionOfHead, split.lastDefPoint);
-                if (!leavesOut(MoveLeftOutByRegisterAllocator::StoreBehindCluster)) [[likely]]
+                if (!leavesOut(MoveOmittedByRegisterAllocator::StoreAfterCluster)) [[likely]]
                     insert(block, instIndex + 1, IntraBlockMoveTo, move, block->at(instIndex).origin, clusterTmp, Arg::stack(spilled));
                 m_stats[bank].numSplitIntraBlockStore++;
             }

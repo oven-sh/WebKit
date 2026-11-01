@@ -181,7 +181,7 @@ InnerPointerFindings check(unsigned numberOfPreservedRegisters, const Functor& b
     B3::Policy policy;
     policy.allocation.keepsValuesAfterLowering = true;
     policy.air.peepholes.trapReach = 4096;
-    policy.validation.keepsOriginsOfAccessesThatTakeTraps = origins == OriginsOfAccessesThatTakeTraps::Kept;
+    policy.validation.keepsOriginsOfTrappingAccesses = origins == OriginsOfAccessesThatTakeTraps::Kept;
     B3::Procedure proc(policy);
     if (loadsStayInFront)
         proc.setHeapThatLoadsStayInFrontOf(weakTableStorage);

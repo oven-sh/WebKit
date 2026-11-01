@@ -306,7 +306,7 @@ bool LoopInvariance::matchesValueBeforeLoop(Value* inside, Value* before, Invali
             if (!load || !load->isLoad() || load->offset() != before->as<MemoryValue>()->offset() || !m_executedValues.contains(before))
                 return false;
             Effects effects = load->effects();
-            if (effects.readsMutability != Mutability::Immutable && effects.reads.overlaps(m_writes) && !m_proc.policy().validation.overlooksWritesToWhatLoopsReadAgain)
+            if (effects.readsMutability != Mutability::Immutable && effects.reads.overlaps(m_writes) && !m_proc.policy().validation.ignoresWritesToLocationsReloadedInLoops)
                 return false;
             walked.add(effects);
         }
@@ -439,6 +439,8 @@ void LoopInvariance::resolvePhi(Value* phi)
 
 void LoopInvariance::hoistValue(Value* value, HoistDecision decision)
 {
+    // The earlier load stands for this one, under its own heap. That heap is true here only because the walk takes one path: whoever comes to this load has come by that one.
+    // A walk into the arms of a branch would let a load that never runs stand for one that does.
     if (Value* executed = findEquivalentExecutedLoad(value))
         repetitions().add(value, canonicalValue(executed));
     if (m_resolution == PhiResolution::Resolve) {

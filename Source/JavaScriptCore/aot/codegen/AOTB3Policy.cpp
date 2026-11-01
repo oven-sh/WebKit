@@ -178,33 +178,33 @@ static B3::ValidationPolicy validationPolicyFor(const BuildContext& build)
     validation.checksKnownPropertiesAtRunTime = build.validates();
     validation.checksSpillSlots = build.options().checksSpillSlots;
     validation.checksAllocatedRegisters = build.options().checksAllocatedRegisters;
-    validation.overlooksWritesOnUnlikelyPaths = build.isSabotaged(Sabotage::MergedLoadsOutlastWritesOnUnlikelyPaths);
-    validation.omitsStridedLimitGuard = build.isSabotaged(Sabotage::StridedIndexesStayInRange);
-    validation.omitsLimitOfClampedBound = build.isSabotaged(Sabotage::CountedIndexesStayInRange);
-    validation.overlooksWritesBehindWordsReadAgain = build.isSabotaged(Sabotage::WordsReadAgainOutlastWrites);
-    validation.overlooksWritesToWhatLoopsReadAgain = build.isSabotaged(Sabotage::VariablesReadAgainInLoopsOutlastWrites);
-    validation.overlooksWritesToWordsCarriedAroundLoops = build.isSabotaged(Sabotage::WordsCarriedAroundLoopsOutlastWrites);
-    validation.overlooksWritesBetweenLoadsAndTheirUsers = build.isSabotaged(Sabotage::LoadsFoldedIntoTheirUsersOutlastWrites);
-    validation.overlooksWritesBetweenPairedLoads = build.isSabotaged(Sabotage::PairedLoadsOutlastWrites);
-    validation.leavesRoomForOneTurnTooFew = build.isSabotaged(Sabotage::WrittenOutTurnsAlwaysFit);
-    validation.overlooksWritesBetweenReadsOfBound = build.isSabotaged(Sabotage::BoundsReadTwiceOutlastWrites);
-    validation.takesAccessesOfVectorTurnsToLieApart = build.isSabotaged(Sabotage::VectorTurnsMeetNoOtherAccess);
-    validation.takesLanesToHoldWholeValues = build.isSabotaged(Sabotage::LanesHoldWhateverIsComputed);
-    validation.takesSumsOfNumbersToBeWhole = build.isSabotaged(Sabotage::SumsOfNumbersAreWhole);
-    validation.comparesAllLanesWithSign = build.isSabotaged(Sabotage::SignsOfComparedLanesDoNotMatter);
-    validation.setsUpFrameBehindWrites = build.isSabotaged(Sabotage::FramesAlwaysFit);
-    validation.overlooksColdUsesOfClustersOverBlocks = build.isSabotaged(Sabotage::LiveRangesSplitTwiceHaveNoColdUses);
-    using MoveLeftOut = B3::MoveLeftOutByRegisterAllocator;
+    validation.ignoresWritesOnRarePaths = build.isSabotaged(Sabotage::MergedLoadsOutlastWritesOnUnlikelyPaths);
+    validation.skipsStridedLimitGuard = build.isSabotaged(Sabotage::StridedIndexesStayInRange);
+    validation.skipsUpperClamp = build.isSabotaged(Sabotage::CountedIndexesStayInRange);
+    validation.ignoresWritesAfterReloadedLocations = build.isSabotaged(Sabotage::WordsReadAgainOutlastWrites);
+    validation.ignoresWritesToLocationsReloadedInLoops = build.isSabotaged(Sabotage::VariablesReadAgainInLoopsOutlastWrites);
+    validation.ignoresWritesToPromotedLocations = build.isSabotaged(Sabotage::WordsCarriedAroundLoopsOutlastWrites);
+    validation.ignoresWritesBetweenLoadsAndUsers = build.isSabotaged(Sabotage::LoadsFoldedIntoTheirUsersOutlastWrites);
+    validation.ignoresWritesBetweenPairedLoads = build.isSabotaged(Sabotage::PairedLoadsOutlastWrites);
+    validation.reservesOneIterationTooFew = build.isSabotaged(Sabotage::WrittenOutTurnsAlwaysFit);
+    validation.ignoresWritesBetweenLoadsOfBound = build.isSabotaged(Sabotage::BoundsReadTwiceOutlastWrites);
+    validation.assumesVectorIterationAccessesAreDisjoint = build.isSabotaged(Sabotage::VectorTurnsMeetNoOtherAccess);
+    validation.assumesLanesHoldWholeValues = build.isSabotaged(Sabotage::LanesHoldWhateverIsComputed);
+    validation.assumesDoubleSumsAreIntegers = build.isSabotaged(Sabotage::SumsOfNumbersAreWhole);
+    validation.comparesAllLanesAsSigned = build.isSabotaged(Sabotage::SignsOfComparedLanesDoNotMatter);
+    validation.setsUpFrameAfterWrites = build.isSabotaged(Sabotage::FramesAlwaysFit);
+    validation.ignoresColdUsesOfCrossBlockClusters = build.isSabotaged(Sabotage::LiveRangesSplitTwiceHaveNoColdUses);
+    using MoveLeftOut = B3::MoveOmittedByRegisterAllocator;
     static constexpr std::pair<Sabotage, MoveLeftOut> movesLeftOut[] = {
-        { Sabotage::StoresBehindClustersAreNotNeeded, MoveLeftOut::StoreBehindCluster },
-        { Sabotage::LoadsAheadOfClustersAreNotNeeded, MoveLeftOut::LoadAheadOfCluster },
-        { Sabotage::StoresAheadOfCallsAreNotNeeded, MoveLeftOut::StoreAheadOfClobber },
-        { Sabotage::LoadsBehindCallsAreNotNeeded, MoveLeftOut::LoadBehindClobber },
-        { Sabotage::StoresBehindSpilledDefinitionsAreNotNeeded, MoveLeftOut::StoreBehindSpilledDefinition },
+        { Sabotage::StoresBehindClustersAreNotNeeded, MoveLeftOut::StoreAfterCluster },
+        { Sabotage::LoadsAheadOfClustersAreNotNeeded, MoveLeftOut::LoadBeforeCluster },
+        { Sabotage::StoresAheadOfCallsAreNotNeeded, MoveLeftOut::StoreBeforeClobber },
+        { Sabotage::LoadsBehindCallsAreNotNeeded, MoveLeftOut::LoadAfterClobber },
+        { Sabotage::StoresBehindSpilledDefinitionsAreNotNeeded, MoveLeftOut::StoreAfterSpilledDefinition },
     };
     for (auto [sabotage, move] : movesLeftOut) {
         if (build.isSabotaged(sabotage))
-            validation.moveLeftOutByRegisterAllocator = move;
+            validation.moveOmittedByRegisterAllocator = move;
     }
     return validation;
 }

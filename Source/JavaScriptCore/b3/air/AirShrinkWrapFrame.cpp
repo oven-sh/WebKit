@@ -606,7 +606,7 @@ bool FrameShrinkWrapper::closeOverWritesAheadOfFrame()
     unsigned smallestFrameTested = m_code.policy().frame.smallestFrameTestedAtSetup;
     if (smallestFrameTested && computeFrameSizeBound() < smallestFrameTested)
         return false;
-    if (m_code.proc().policy().validation.setsUpFrameBehindWrites) [[unlikely]]
+    if (m_code.proc().policy().validation.setsUpFrameAfterWrites) [[unlikely]]
         return false;
 
     BitVector reachesRegion = m_isInRegion;

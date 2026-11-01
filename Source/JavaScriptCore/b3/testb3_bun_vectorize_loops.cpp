@@ -493,7 +493,7 @@ static void testVectorizeLoopsReportsAccessesThatAreTakenToLieApartAndDoNot()
             for (bool logsMovedLoads : { false, true }) {
                 Policy policy = vectorPolicy(CPUFeatureSet::buildTarget());
                 policy.validation.logsMovedLoads = logsMovedLoads;
-                policy.validation.takesAccessesOfVectorTurnsToLieApart = isBroken;
+                policy.validation.assumesVectorIterationAccessesAreDisjoint = isBroken;
                 policy.reportsMovedLoad = createSharedTask<void(CCallHelpers&, const MovedLoad&, GPRReg, GPRReg)>([](CCallHelpers& jit, const MovedLoad&, GPRReg, GPRReg) {
                     jit.move(CCallHelpers::TrustedImm64(reported), GPRInfo::returnValueGPR);
                     jit.emitFunctionEpilogue();

@@ -36,28 +36,29 @@ public:
     bool run()
     {
         NaturalLoops& loops = m_proc.naturalLoops();
-        Vector<const NaturalLoop*> fromOutermost;
+        Vector<const NaturalLoop*> outermostFirst;
         for (unsigned index = 0; index < loops.numLoops(); ++index)
-            fromOutermost.append(&loops.loop(index));
-        std::ranges::stable_sort(fromOutermost, { }, [&](const NaturalLoop* loop) {
+            outermostFirst.append(&loops.loop(index));
+        std::ranges::stable_sort(outermostFirst, { }, [&](const NaturalLoop* loop) {
             return loops.loopDepth(loop->header());
         });
-        for (const NaturalLoop* loop : fromOutermost)
+        for (const NaturalLoop* loop : outermostFirst)
             considerLoop(loops, *loop);
-        if (m_words.isEmpty())
+        if (m_promotedLocations.isEmpty())
             return false;
-        carryWords();
+        promoteLocations();
         return true;
     }
 
 private:
-    struct Word {
-        BasicBlock* preHeader { nullptr };
-        Value* loadInFront { nullptr };
+    struct PromotedLocation {
+        BasicBlock* preheader { nullptr };
+        Value* preheaderLoad { nullptr };
         Variable* variable { nullptr };
     };
 
-    static bool accessesWholeWord(const MemoryValue* memory)
+    // A narrow store leaves part of the location unchanged, and a narrow load extends what it reads.
+    static bool isPromotableAccess(const MemoryValue* memory)
     {
         if (memory->opcode() != Load && memory->opcode() != Store)
             return false;
@@ -66,225 +67,233 @@ private:
         return memory->accessType().isNumeric() && !memory->accessType().isVector();
     }
 
-    static bool accessSameWord(const MemoryValue* first, const MemoryValue* second)
+    static bool accessSameLocation(const MemoryValue* first, const MemoryValue* second)
     {
         return first->lastChild() == second->lastChild() && first->offset() == second->offset() && first->accessType() == second->accessType();
     }
 
-    enum class MadeOf : uint8_t { WhatStaysTheSame, WhatIsReadInLoop, WhatChangesWithTurns };
+    enum class AddressKind : uint8_t { LoopInvariant, LoadedInLoop, LoopVariant };
 
-    static Counter reasonThatAddressIsMadeInLoop(const NaturalLoops& loops, const NaturalLoop& loop, Value* address, UncheckedKeyHashMap<Value*, MadeOf>& madeOf)
+    // Visits each value in the loop once, no matter how many addresses are computed from it.
+    static Counter reasonAddressIsNotHoisted(const NaturalLoops& loops, const NaturalLoop& loop, Value* address, UncheckedKeyHashMap<Value*, AddressKind>& addressKinds)
     {
         Vector<Value*, 16> path { address };
         while (!path.isEmpty()) {
             Value* value = path.last();
-            if (madeOf.contains(value)) {
+            if (addressKinds.contains(value)) {
                 path.removeLast();
                 continue;
             }
-            MadeOf result = MadeOf::WhatStaysTheSame;
-            bool waitsForChild = false;
+            AddressKind result = AddressKind::LoopInvariant;
+            bool hasUnvisitedChild = false;
             if (value->opcode() == Phi)
-                result = MadeOf::WhatChangesWithTurns;
+                result = AddressKind::LoopVariant;
             else {
                 Effects effects = value->effects();
                 if (effects.reads || effects.writes || effects.readsLocalState || effects.readsPinned)
-                    result = MadeOf::WhatIsReadInLoop;
+                    result = AddressKind::LoadedInLoop;
                 for (Value* child : value->children()) {
                     if (!loops.belongsTo(child->owner, loop))
                         continue;
-                    auto found = madeOf.find(child);
-                    if (found == madeOf.end()) {
+                    auto found = addressKinds.find(child);
+                    if (found == addressKinds.end()) {
                         path.append(child);
-                        waitsForChild = true;
+                        hasUnvisitedChild = true;
                     } else
                         result = std::max(result, found->value);
                 }
             }
-            if (waitsForChild)
+            if (hasUnvisitedChild)
                 continue;
-            madeOf.add(value, result);
+            addressKinds.add(value, result);
             path.removeLast();
         }
-        switch (madeOf.get(address)) {
-        case MadeOf::WhatStaysTheSame:
-            return Counter::WordsLeftForAddressNotMovedOutOfLoop;
-        case MadeOf::WhatIsReadInLoop:
-            return Counter::WordsLeftForAddressReadInLoop;
-        case MadeOf::WhatChangesWithTurns:
-            return Counter::WordsLeftForAddressThatChangesWithTurns;
+        switch (addressKinds.get(address)) {
+        case AddressKind::LoopInvariant:
+            return Counter::NotPromotedAddressNotHoisted;
+        case AddressKind::LoadedInLoop:
+            return Counter::NotPromotedAddressLoadedInLoop;
+        case AddressKind::LoopVariant:
+            return Counter::NotPromotedLoopVariantAddress;
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
 
     void considerLoop(NaturalLoops& loops, const NaturalLoop& loop)
     {
-        m_proc.count(Counter::LoopsSearchedForWordsToCarry);
-        BasicBlock* preHeader = findPreHeader(loops, loop);
-        if (!preHeader || preHeader->last()->opcode() != Jump) {
-            m_proc.count(Counter::LoopsWithNoBlockAheadToReadWordsIn);
+        m_proc.count(Counter::LoopsConsideredForMemoryPromotion);
+        BasicBlock* preheader = findPreHeader(loops, loop);
+        if (!preheader || preheader->last()->opcode() != Jump) {
+            m_proc.count(Counter::LoopsWithoutPreheader);
             return;
         }
 
         Vector<MemoryValue*, 16> accesses;
-        Vector<uint64_t, 16> beginsOfStores;
-        Vector<uint64_t, 16> endsOfStores;
-        RangeSet<HeapRange> otherWritesOnLikelyPaths;
-        RangeSet<HeapRange> otherWritesOnRarePaths;
+        Vector<uint64_t, 16> storeBegins;
+        Vector<uint64_t, 16> storeEnds;
+        RangeSet<HeapRange> clobbersOnLikelyPaths;
+        RangeSet<HeapRange> clobbersOnRarePaths;
         IndexSet<BasicBlock*> likelyBlocks = findLikelyBlocks(loops, loop);
-        bool leavesSideways = false;
+        bool hasSidewaysExit = false;
         bool callsOnLikelyPaths = false;
         for (unsigned index = loop.size(); index--;) {
             bool isLikely = likelyBlocks.contains(loop.at(index));
-            RangeSet<HeapRange>& otherWrites = isLikely ? otherWritesOnLikelyPaths : otherWritesOnRarePaths;
+            RangeSet<HeapRange>& clobbers = isLikely ? clobbersOnLikelyPaths : clobbersOnRarePaths;
             for (Value* value : *loop.at(index)) {
                 Effects effects = value->effects();
                 if (effects.fence) {
-                    m_proc.count(Counter::LoopsWithFencesSearchedForWords);
+                    m_proc.count(Counter::LoopsWithFences);
                     return;
                 }
                 MemoryValue* memory = value->as<MemoryValue>();
-                if (memory && accessesWholeWord(memory)) {
+                if (memory && isPromotableAccess(memory)) {
                     accesses.append(memory);
                     if (memory->isStore()) {
-                        beginsOfStores.append(memory->range().begin());
-                        endsOfStores.append(memory->range().end());
+                        storeBegins.append(memory->range().begin());
+                        storeEnds.append(memory->range().end());
                     }
                     continue;
                 }
-                effects.writes.addTo(otherWrites);
-                leavesSideways |= effects.exitsSideways && !isLoopPoll(value);
+                effects.writes.addTo(clobbers);
+                hasSidewaysExit |= effects.exitsSideways && !isLoopPoll(value);
                 callsOnLikelyPaths |= isLikely && isCall(value) && !isLoopPoll(value);
             }
         }
-        if (beginsOfStores.isEmpty())
+        if (storeBegins.isEmpty())
             return;
-        m_proc.count(Counter::AccessesReadForWordsCarriedAroundLoops, accesses.size());
-        std::ranges::sort(beginsOfStores);
-        std::ranges::sort(endsOfStores);
-        auto numberThatOverlap = [](const auto& sortedBegins, const auto& sortedEnds, const HeapRange& range) {
-            size_t numberThatEndInFront = std::ranges::upper_bound(sortedEnds, range.begin()) - sortedEnds.begin();
-            size_t numberThatBeginBehind = sortedBegins.end() - std::ranges::lower_bound(sortedBegins, range.end());
-            return sortedBegins.size() - numberThatEndInFront - numberThatBeginBehind;
+        m_proc.count(Counter::MemoryPromotionAccessesVisited, accesses.size());
+        std::ranges::sort(storeBegins);
+        std::ranges::sort(storeEnds);
+        auto numberOverlapping = [](const auto& sortedBegins, const auto& sortedEnds, const HeapRange& range) {
+            size_t numberEndingBefore = std::ranges::upper_bound(sortedEnds, range.begin()) - sortedEnds.begin();
+            size_t numberBeginningAfter = sortedBegins.end() - std::ranges::lower_bound(sortedBegins, range.end());
+            return sortedBegins.size() - numberEndingBefore - numberBeginningAfter;
         };
+        // Groups the accesses to each location together.
         std::ranges::sort(accesses, { }, [](const MemoryValue* access) {
             return std::tuple { access->lastChild()->index(), access->offset(), access->accessType().kind(), access->range().begin(), access->range().end(), access->index() };
         });
 
         Dominators& dominators = m_proc.dominators();
-        auto isCertainToRun = [&](const MemoryValue* access) {
+        // Such an access executes whenever the loop is entered, so the preheader load reads nothing that the program would not have accessed anyway.
+        auto alwaysExecutes = [&](const MemoryValue* access) {
             Effects effects = access->effects();
             if (!effects.controlDependent || !m_proc.effectsOf(access).controlDependent)
                 return true;
-            return !leavesSideways && m_proc.backwardsDominators().dominates(access->owner, preHeader);
+            return !hasSidewaysExit && m_proc.backwardsDominators().dominates(access->owner, preheader);
         };
-        bool overlooksOtherWrites = m_proc.policy().validation.overlooksWritesToWordsCarriedAroundLoops;
-        UncheckedKeyHashMap<Value*, MadeOf> madeOf;
+        bool ignoresClobbers = m_proc.policy().validation.ignoresWritesToPromotedLocations;
+        UncheckedKeyHashMap<Value*, AddressKind> addressKinds;
 
         for (size_t first = 0, next = 0; first < accesses.size(); first = next) {
-            while (next < accesses.size() && accessSameWord(accesses[next], accesses[first]))
+            while (next < accesses.size() && accessSameLocation(accesses[next], accesses[first]))
                 ++next;
-            std::span<MemoryValue*> accessesToWord = accesses.mutableSpan().subspan(first, next - first);
+            std::span<MemoryValue*> accessesToLocation = accesses.mutableSpan().subspan(first, next - first);
             MemoryValue* load = nullptr;
-            Vector<uint64_t, 4> beginsOfStoresToWord;
-            Vector<uint64_t, 4> endsOfStoresToWord;
-            bool isOrdinary = true;
-            bool isTouchedByWhoeverEnters = false;
-            for (MemoryValue* access : accessesToWord) {
-                isOrdinary &= !m_wordOf.contains(access) && access->range();
+            Vector<uint64_t, 4> ownStoreBegins;
+            Vector<uint64_t, 4> ownStoreEnds;
+            bool isPromotable = true;
+            bool isGuaranteedToExecute = false;
+            for (MemoryValue* access : accessesToLocation) {
+                // An outer loop that promoted this location has already claimed all of its accesses.
+                isPromotable &= !m_locationIndexOfAccess.contains(access) && access->range();
                 if (access->isStore()) {
-                    beginsOfStoresToWord.append(access->range().begin());
-                    endsOfStoresToWord.append(access->range().end());
+                    ownStoreBegins.append(access->range().begin());
+                    ownStoreEnds.append(access->range().end());
                 } else {
-                    isOrdinary &= access->readsMutability() != Mutability::Immutable;
+                    isPromotable &= access->readsMutability() != Mutability::Immutable;
                     if (!load || access->index() < load->index())
                         load = access;
                 }
             }
-            bool isTakenByLoopAround = m_wordOf.contains(accessesToWord[0]);
-            if (load && !isTakenByLoopAround)
-                m_proc.count(beginsOfStoresToWord.isEmpty() ? Counter::WordsOnlyReadInLoops : Counter::WordsReadAndWrittenInLoops);
-            if (!load || beginsOfStoresToWord.isEmpty())
+            bool isPromotedInOuterLoop = m_locationIndexOfAccess.contains(accessesToLocation[0]);
+            if (load && !isPromotedInOuterLoop)
+                m_proc.count(ownStoreBegins.isEmpty() ? Counter::LocationsOnlyLoadedInLoops : Counter::LocationsLoadedAndStoredInLoops);
+            if (!load || ownStoreBegins.isEmpty())
                 continue;
-            if (!isOrdinary) {
-                if (!isTakenByLoopAround)
-                    m_proc.count(Counter::WordsLeftThatAreSaidNeverToChange);
-                continue;
-            }
-            if (auto* isTakenOutOfLoopsByClient = m_proc.policy().loops.isTakenOutOfLoopsByClient; isTakenOutOfLoopsByClient && isTakenOutOfLoopsByClient(m_proc, *load)) {
-                m_proc.count(Counter::WordsLeftToPhasesOfClient);
+            if (!isPromotable) {
+                if (!isPromotedInOuterLoop)
+                    m_proc.count(Counter::NotPromotedImmutable);
                 continue;
             }
-            if (!dominators.dominates(load->lastChild()->owner, preHeader)) {
-                m_proc.count(reasonThatAddressIsMadeInLoop(loops, loop, load->lastChild(), madeOf));
+            if (auto* clientHoistsOutOfLoops = m_proc.policy().loops.clientHoistsOutOfLoops; clientHoistsOutOfLoops && clientHoistsOutOfLoops(m_proc, *load)) {
+                m_proc.count(Counter::NotPromotedHandledByClient);
                 continue;
             }
-            std::ranges::sort(endsOfStoresToWord);
-            enum class Writers : uint8_t { StoresToWordAlone, OthersOnRarePaths, StoresUnderOtherAddresses, OthersOnLikelyPaths };
-            auto writersOf = [&](const HeapRange& range) {
-                if (HeapSet(range).overlaps(otherWritesOnLikelyPaths))
-                    return Writers::OthersOnLikelyPaths;
-                if (numberThatOverlap(beginsOfStores, endsOfStores, range) != numberThatOverlap(beginsOfStoresToWord, endsOfStoresToWord, range))
-                    return Writers::StoresUnderOtherAddresses;
-                return HeapSet(range).overlaps(otherWritesOnRarePaths) ? Writers::OthersOnRarePaths : Writers::StoresToWordAlone;
+            if (!dominators.dominates(load->lastChild()->owner, preheader)) {
+                m_proc.count(reasonAddressIsNotHoisted(loops, loop, load->lastChild(), addressKinds));
+                continue;
+            }
+            // A load that executes cannot observe a write to a heap range disjoint from its own, so each replaced load is checked against its own range.
+            // The range of another access proves nothing about this load: that access may never execute, in which case its range need not be accurate.
+            std::ranges::sort(ownStoreEnds);
+            enum class Clobber : uint8_t { None, EffectsOnRarePaths, MayAliasStores, EffectsOnLikelyPaths };
+            auto clobberOf = [&](const HeapRange& range) {
+                if (HeapSet(range).overlaps(clobbersOnLikelyPaths))
+                    return Clobber::EffectsOnLikelyPaths;
+                if (numberOverlapping(storeBegins, storeEnds, range) != numberOverlapping(ownStoreBegins, ownStoreEnds, range))
+                    return Clobber::MayAliasStores;
+                return HeapSet(range).overlaps(clobbersOnRarePaths) ? Clobber::EffectsOnRarePaths : Clobber::None;
             };
-            Writers writers = Writers::StoresToWordAlone;
-            HeapRange heapsNamedForWord = accessesToWord[0]->range();
-            HeapRange lastHeapAsked;
-            for (MemoryValue* access : accessesToWord) {
-                heapsNamedForWord = HeapRange(std::min(heapsNamedForWord.begin(), access->range().begin()), std::max(heapsNamedForWord.end(), access->range().end()));
-                if (overlooksOtherWrites || !access->isLoad() || access->range() == lastHeapAsked)
+            Clobber clobber = Clobber::None;
+            HeapRange unionOfRanges = accessesToLocation[0]->range();
+            HeapRange lastRangeChecked;
+            for (MemoryValue* access : accessesToLocation) {
+                unionOfRanges = HeapRange(std::min(unionOfRanges.begin(), access->range().begin()), std::max(unionOfRanges.end(), access->range().end()));
+                if (ignoresClobbers || !access->isLoad() || access->range() == lastRangeChecked)
                     continue;
-                lastHeapAsked = access->range();
-                writers = std::max(writers, writersOf(lastHeapAsked));
+                lastRangeChecked = access->range();
+                clobber = std::max(clobber, clobberOf(lastRangeChecked));
             }
-            if (writers != Writers::StoresToWordAlone) {
-                m_proc.count(writers == Writers::OthersOnRarePaths ? Counter::WordsLeftForWritesOnRarePaths : writers == Writers::StoresUnderOtherAddresses ? Counter::WordsLeftForStoresUnderOtherAddresses : Counter::WordsLeftForWritesOnLikelyPaths);
+            if (clobber != Clobber::None) {
+                m_proc.count(clobber == Clobber::EffectsOnRarePaths ? Counter::NotPromotedClobberedOnRarePaths : clobber == Clobber::MayAliasStores ? Counter::NotPromotedMayAliasStores : Counter::NotPromotedClobberedOnLikelyPaths);
                 continue;
             }
-            m_proc.count(Counter::AccessesReadForWordsCarriedAroundLoops, accessesToWord.size());
-            for (MemoryValue* access : accessesToWord)
-                isTouchedByWhoeverEnters = isTouchedByWhoeverEnters || isCertainToRun(access);
-            if (!isTouchedByWhoeverEnters) {
-                m_proc.count(Counter::WordsLeftThatMayNotBeTouched);
+            m_proc.count(Counter::MemoryPromotionAccessesVisited, accessesToLocation.size());
+            for (MemoryValue* access : accessesToLocation)
+                isGuaranteedToExecute = isGuaranteedToExecute || alwaysExecutes(access);
+            if (!isGuaranteedToExecute) {
+                m_proc.count(Counter::NotPromotedNotGuaranteedToExecute);
                 continue;
             }
+            // Next to a call a load is cheap, and the promoted value would have to stay live across the call on every iteration.
             if (callsOnLikelyPaths) {
-                m_proc.count(Counter::WordsLeftBesideCallsOnLikelyPaths);
+                m_proc.count(Counter::NotPromotedCallsOnLikelyPaths);
                 continue;
             }
 
-            unsigned word = m_words.size();
-            MemoryValue* loadInFront = m_proc.clone(load)->as<MemoryValue>();
-            loadInFront->setRange(heapsNamedForWord);
-            m_words.append({ preHeader, loadInFront, m_proc.addVariable(load->type()) });
-            for (MemoryValue* access : accessesToWord)
-                RELEASE_ASSERT(m_wordOf.add(access, word).isNewEntry);
-            m_proc.count(Counter::WordsCarriedAroundLoops);
+            unsigned location = m_promotedLocations.size();
+            // The preheader load executes no matter which of the accesses the iterations reach.
+            MemoryValue* preheaderLoad = m_proc.clone(load)->as<MemoryValue>();
+            preheaderLoad->setRange(unionOfRanges);
+            m_promotedLocations.append({ preheader, preheaderLoad, m_proc.addVariable(load->type()) });
+            for (MemoryValue* access : accessesToLocation)
+                RELEASE_ASSERT(m_locationIndexOfAccess.add(access, location).isNewEntry);
+            m_proc.count(Counter::LocationsPromotedInLoops);
         }
     }
 
-    void carryWords()
+    void promoteLocations()
     {
-        for (const Word& word : m_words) {
-            word.preHeader->appendNonTerminal(word.loadInFront);
-            word.preHeader->appendNonTerminal(m_proc.add<VariableValue>(Set, word.loadInFront->origin(), word.variable, word.loadInFront));
+        for (const PromotedLocation& location : m_promotedLocations) {
+            location.preheader->appendNonTerminal(location.preheaderLoad);
+            location.preheader->appendNonTerminal(m_proc.add<VariableValue>(Set, location.preheaderLoad->origin(), location.variable, location.preheaderLoad));
         }
         for (BasicBlock* block : m_proc) {
             for (unsigned index = 0; index < block->size(); ++index) {
                 Value* value = block->at(index);
-                auto found = m_wordOf.find(value);
-                if (found == m_wordOf.end())
+                auto found = m_locationIndexOfAccess.find(value);
+                if (found == m_locationIndexOfAccess.end())
                     continue;
-                Variable* variable = m_words[found->value].variable;
+                Variable* variable = m_promotedLocations[found->value].variable;
                 if (value->opcode() == Store) {
                     m_insertionSet.insert<VariableValue>(index + 1, Set, value->origin(), variable, value->child(0));
                     continue;
                 }
-                Value* carried = m_insertionSet.insert<VariableValue>(index, Get, value->origin(), variable);
+                Value* promoted = m_insertionSet.insert<VariableValue>(index, Get, value->origin(), variable);
                 if (std::optional<MovedLoad> moved = MovedLoad::of(m_proc, value))
-                    m_proc.movedLoadLog().add(*moved, block, index, value->lastChild(), carried);
-                value->replaceWithIdentity(carried);
+                    m_proc.movedLoadLog().add(*moved, block, index, value->lastChild(), promoted);
+                value->replaceWithIdentity(promoted);
             }
             m_insertionSet.execute(block);
         }
@@ -292,8 +301,8 @@ private:
 
     Procedure& m_proc;
     InsertionSet m_insertionSet;
-    Vector<Word> m_words;
-    UncheckedKeyHashMap<Value*, unsigned> m_wordOf;
+    Vector<PromotedLocation> m_promotedLocations;
+    UncheckedKeyHashMap<Value*, unsigned> m_locationIndexOfAccess;
 };
 
 } // anonymous namespace
