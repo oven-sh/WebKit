@@ -401,6 +401,8 @@ const answersKeptBufferOfKind = {
   returns: memoryBuffer,
   capability: "heap",
   throws: true,
+  // As grow(): the buffer that was kept is detached.
+  writes: [typedArrayStorage],
   uses: { this: answersKeptBuffer },
   implementation: b.generic,
 } satisfies b.FunctionField;
