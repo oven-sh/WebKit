@@ -38,6 +38,8 @@ void didRejectWrite(JSGlobalObject*, JSObject*, UniquedStringImpl* keyOrNull, Re
 String lockedObjectErrorMessage(JSGlobalObject*, JSObject*, UniquedStringImpl* key, RejectedWrite);
 // The words of the store that a spy would make, said of the spy. Null: the object says nothing of that key.
 JS_EXPORT_PRIVATE String refusedSpyMessage(JSGlobalObject*, JSObject*, UniquedStringImpl* key);
+// A function of the library that is compiled refuses call, apply, bind and Symbol.hasInstance as properties of its own, as a function of the engine or the host does through its Structure.
+JS_EXPORT_PRIVATE bool isNameRefusedByLibraryFunction(JSObject*, UniquedStringImpl* key);
 // Whether the build has unlocked that member of a built-in object for the tests of this run: Program::replaceableBuiltins.
 JS_EXPORT_PRIVATE bool isMemberUnlockedForTests(JSObject*, UniquedStringImpl* key);
 // Whether compiled code of the realm takes that member of a built-in object for what the realm was created with, locked or not: `EventTarget.prototype`, `WebSocket.OPEN`.

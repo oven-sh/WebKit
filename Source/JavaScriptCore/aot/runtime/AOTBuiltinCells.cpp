@@ -13,6 +13,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTableBindings.h"
 #include "AOTBuiltinTableRealm.h"
+#include "AOTClosure.h"
 #include "AOTErrorMessages.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
@@ -842,10 +843,18 @@ String lockedObjectErrorMessage(JSGlobalObject*, JSObject* object, UniquedString
     return change == RejectedWrite::Deletion ? deletionFromLockedBuiltinMessage(vm, id, key, lockedIn) : assignmentToLockedBuiltinMessage(vm, id, key, lockedIn);
 }
 
+bool isNameRefusedByLibraryFunction(JSObject* object, UniquedStringImpl* key)
+{
+    auto* closure = dynamicDowncast<Closure>(object);
+    return closure && closure->refusesOwnProperty(object->vm(), PropertyName(key));
+}
+
 String refusedSpyMessage(JSGlobalObject* globalObject, JSObject* object, UniquedStringImpl* key)
 {
     ImmutablePropertyNames* names = object->structure()->listedImmutablePropertyNames();
     String message = names ? names->storeErrorMessage(key) : lockedObjectErrorMessage(globalObject, object, key, RejectedWrite::Store);
+    if (isNameRefusedByLibraryFunction(object, key))
+        message = assignmentToNameThatBuiltinFunctionInheritsMessage(key);
     constexpr ASCIILiteral start = "Cannot assign to "_s;
     if (!message.startsWith(start))
         return { };
