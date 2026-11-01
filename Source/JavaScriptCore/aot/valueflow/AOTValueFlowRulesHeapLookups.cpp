@@ -1083,6 +1083,7 @@ void HeapRule::callAccessors(ClimbingSet functions, ValueFlowCallKind kind, cons
     if (kind != ValueFlowCallKind::Set || receiver.operand || !receiver.keyLookedUp || !mayBeUnknownObject(functions))
         return;
     ClimbingSet notCovered = m_context.membersMissingNowFrom(ValueFlowProgramNodes::escaped(), known(receiver.set));
+    notCovered = m_context.membersMissingNowFrom(m_context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode), notCovered);
     if (!holdsAnything(notCovered))
         return;
     ValueFlowObjectsToldApart receivers = tellObjectsApart(m_context, notCovered);
