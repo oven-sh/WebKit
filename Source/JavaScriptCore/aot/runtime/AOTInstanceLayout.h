@@ -15,9 +15,9 @@
 
 // In a hardened engine the table of boxed calls has pages of its own, which are read-only. On ARM64 the instance ends below the loop poll page without it.
 #if defined(BUN_HARDENED) || CPU(ARM64)
-#define AOT_BOXED_CALLS_LIE_BELOW_INSTANCE 1
+#define AOT_BOXED_CALLS_LIE_OUTSIDE_INSTANCE 1
 #else
-#define AOT_BOXED_CALLS_LIE_BELOW_INSTANCE 0
+#define AOT_BOXED_CALLS_LIE_OUTSIDE_INSTANCE 0
 #endif
 
 namespace JSC { namespace AOT {
@@ -33,7 +33,8 @@ static_assert(sizeof(InstanceSizes) == 16 && isImageRecord<InstanceSizes>);
 struct InstanceLayout {
     // What is protected or mapped by itself begins at a page. A kernel for Linux on ARM64 may have pages of 64 KB, and a poll reaches only 32 KB up from the instance.
     // So the instance does not begin at a page there: it ends 16 KB in front of one, and that page is the page of the polls.
-#if CPU(ARM64) && OS(LINUX) && !defined(BUN_HARDENED)
+    // A hardened engine polls a word. There that page holds what is read-only once the instance has been created.
+#if CPU(ARM64) && OS(LINUX)
     static constexpr size_t largestPageSize = 64 * KB;
     static constexpr size_t distanceToPageEdge = 16 * KB;
 #else
@@ -56,9 +57,14 @@ struct InstanceLayout {
     // From here to the key order steps: what nothing writes once the instance has been created. The pages are read-only from then on.
     static constexpr size_t offsetOfWordsWrittenOnce = 16 * KB;
 #endif
-#if AOT_BOXED_CALLS_LIE_BELOW_INSTANCE
+#if AOT_BOXED_CALLS_LIE_OUTSIDE_INSTANCE
     // The table of boxed calls, with room for an entry for every number that a byte holds. In a hardened engine it is read-only once the instance has been created.
+#if defined(BUN_HARDENED) && CPU(ARM64) && OS(LINUX)
+    // Behind the words written once, in their page: a page of 64 KB below the instance would hold the instance too.
+    static constexpr ptrdiff_t offsetOfBoxedCalls = 32 * KB;
+#else
     static constexpr ptrdiff_t offsetOfBoxedCalls = -static_cast<ptrdiff_t>(32 * KB);
+#endif
     static constexpr size_t bytesReservedForBoxedCalls = 16 * KB;
 #endif
     // KeyedValuePlace. A stub reaches a place by its distance from the instance.
@@ -117,9 +123,12 @@ static_assert(InstanceLayout::largestPageSize <= InstanceLayout::granuleBelowIns
 static_assert(InstanceLayout::beginsAtPage(-static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForPrefixAndPollPage)) && InstanceLayout::beginsAtPage(InstanceLayout::offsetOfLoopPollPage()));
 static_assert(!(InstanceLayout::offsetOfStringCells % InstanceLayout::granuleAboveInstance));
 #if defined(BUN_HARDENED)
-static_assert(!(InstanceLayout::offsetOfWordsWrittenOnce % InstanceLayout::granuleAboveInstance) && !(InstanceLayout::offsetOfKeyOrderSteps % InstanceLayout::granuleAboveInstance));
+static_assert(InstanceLayout::beginsAtPage(InstanceLayout::offsetOfWordsWrittenOnce) && InstanceLayout::beginsAtPage(InstanceLayout::offsetOfKeyOrderSteps));
+static_assert(InstanceLayout::offsetOfBoxedCalls < 0
+    ? InstanceLayout::beginsAtPage(InstanceLayout::offsetOfBoxedCalls) && InstanceLayout::beginsAtPage(InstanceLayout::offsetOfBoxedCalls + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForBoxedCalls))
+    : static_cast<size_t>(InstanceLayout::offsetOfBoxedCalls) + InstanceLayout::bytesReservedForBoxedCalls <= InstanceLayout::offsetOfKeyOrderSteps);
 #endif
-#if AOT_BOXED_CALLS_LIE_BELOW_INSTANCE
+#if AOT_BOXED_CALLS_LIE_OUTSIDE_INSTANCE
 static_assert(!(InstanceLayout::offsetOfBoxedCalls % static_cast<ptrdiff_t>(InstanceLayout::granuleAboveInstance)) && !(InstanceLayout::bytesReservedForBoxedCalls % InstanceLayout::granuleAboveInstance));
 static_assert(InstanceLayout::offsetOfCopiesWithoutFrame + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForCopiesWithoutFrame) <= InstanceLayout::offsetOfBoxedCalls);
 #endif

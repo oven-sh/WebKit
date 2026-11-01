@@ -46,7 +46,7 @@ struct StubWords {
     static constexpr ptrdiff_t offsetOfReturnAddress(StubFrameKind kind) { return static_cast<ptrdiff_t>(static_cast<unsigned>(kind) * sizeof(void*)); }
 
     const void* returnAddresses[numberOfStubFrameKinds];
-#if !AOT_BOXED_CALLS_LIE_BELOW_INSTANCE
+#if !AOT_BOXED_CALLS_LIE_OUTSIDE_INSTANCE
     BoxedCallEntry boxedCalls[numberOfBoxedCallEntries];
 #endif
     const void* closureEntrypoint;

@@ -689,7 +689,8 @@ Instance* Instance::create(JSGlobalObject* realm)
     RuntimeHooks::didChangeMicrotaskQueueing(vm);
 #if defined(BUN_HARDENED)
     OSAllocator::protect(instance->tableAt<uint8_t>(InstanceLayout::offsetOfWordsWrittenOnce), InstanceLayout::offsetOfKeyOrderSteps - InstanceLayout::offsetOfWordsWrittenOnce, true, false);
-    OSAllocator::protect(instance->boxedCalls().data(), InstanceLayout::bytesReservedForBoxedCalls, true, false);
+    if constexpr (InstanceLayout::offsetOfBoxedCalls < 0)
+        OSAllocator::protect(instance->boxedCalls().data(), InstanceLayout::bytesReservedForBoxedCalls, true, false);
 #endif
     releaseUnusedPagesOfThread();
     return instance;
