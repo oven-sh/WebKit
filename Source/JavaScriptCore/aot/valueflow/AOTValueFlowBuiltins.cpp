@@ -4686,8 +4686,19 @@ static void readMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeI
     if (!behavior.protocols.contains(Protocol::Named))
         return;
 
-    if (behavior.namedMembers.empty() && behavior.isTransitive)
-        context.connect(context.readWhatWasWritten(chainOfProgramFrom(context, objects), everyPropertyName), hub);
+    if (behavior.namedMembers.empty() && behavior.isTransitive) {
+        // On a function where a lookup finds no function and no accessor of the program's, a walk finds what Function.prototype has and no more.
+        ClimbingSet found = context.valueOf(context.readWhatWasWritten(chainOfProgramFrom(context, objects), everyPropertyName));
+        ClimbingSet functions = context.restrict(found, universe.callables());
+        context.add(hub, context.restrict(found, ValueSets::complement(universe.callables())));
+        context.add(hub, context.restrict(functions, ValueSets::complement(universe.knownObjects())));
+        context.add(hub, context.markedAmong(functions, { ObjectMutation::AddProperty, ObjectMutation::RedefineProperty }));
+        context.forEachMemberInLine(context.restrict(functions, universe.knownObjects()), [&](ValueFlowObjectID function) {
+            ClimbingSet holders = context.unite(only(context, function), chainOfProgramFrom(context, only(context, function)));
+            if (context.meet(context.valueOf(context.readWhatWasWritten(holders, everyPropertyName)), universe.callables()) || context.meet(context.valueOf(context.readWhatWasWritten(holders, everyGetterName)), ValueSets::anything))
+                context.add(hub, only(context, function));
+        });
+    }
     bool findsUnknownObject = false;
     for (BuiltinName name : behavior.namedMembers) {
         ValueFlowNodeID member = context.lookup(receivers, property(context, name));
