@@ -297,7 +297,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
         if (!moduleData.hasExportTable())
             return false;
 
-        bool runsBesideMock = isMocked(module) && !frames.isEmpty() && !m_modulesThatRanBesideMock.get(module.index()) && importsOriginalBesideMock(module, frames.last().module);
+        bool runsBesideMock = isMocked(module) && !hasRunItself(module) && (frames.isEmpty() ? m_modulesOwedBesideMock.get(module.index()) : importsOriginalBesideMock(module, frames.last().module));
         // An importer that sees the mock came by first.
         if (runsBesideMock && status(module) == ModuleStatus::Evaluated) [[unlikely]]
             setStatus(module, ModuleStatus::Unlinked);
@@ -320,8 +320,10 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
             setStatus(module, ModuleStatus::Evaluated);
             return false;
         }
-        if (runsBesideMock) [[unlikely]]
+        if (runsBesideMock) [[unlikely]] {
             m_modulesThatRanBesideMock.set(module.index());
+            m_modulesOwedBesideMock.clear(module.index());
+        }
 
         ModuleRecord* record = recordIfExists(module);
         if (!record && moduleData.evaluatesItself()) {
@@ -460,7 +462,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
             else {
                 ModuleID required(requests[frame.next++]);
                 // enter() runs the module itself.
-                bool runsBesideMock = isMocked(required) && !m_modulesThatRanBesideMock.get(required.index()) && importsOriginalBesideMock(required, frame.module);
+                bool runsBesideMock = isMocked(required) && !hasRunItself(required) && importsOriginalBesideMock(required, frame.module);
                 StoredModuleStatus stored = storedStatus(required);
                 if (stored == StoredModuleStatus::Evaluated && !runsBesideMock)
                     continue;

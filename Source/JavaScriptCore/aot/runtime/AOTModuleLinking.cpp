@@ -380,6 +380,7 @@ void Modules::willMock(ModuleID mocked)
     if (isMocked(mocked))
         return;
     m_importersAskedAboutOriginal.clear();
+    m_modulesThatHadRunWhenMocked.set(mocked.index(), status(mocked) == ModuleStatus::Evaluated);
     momentOfFirstMockInTestFile(mocked);
     BitVector modules = m_mocks ? m_mocks->modules : BitVector(m_table.size());
     modules.quickSet(mocked.index());
@@ -1088,7 +1089,7 @@ void Modules::endMockLaidOverFile(ModuleID file)
         found->hasMockLaidOver = false;
     ModuleID module = moduleWithExportsOf(file);
     LoadedModule* withExports = loadedIfExists(module);
-    if (!found || !(found->variablesBeforeMock || found->valueBeforeMock || !found->modulesBehindStarsUnderMock.isEmpty() || (withExports && withExports->exportsBeforeMock)))
+    if (!found || !(found->variablesBeforeMock || !found->namespacesReplacedByMock.isEmpty() || found->valueBeforeMock || !found->modulesBehindStarsUnderMock.isEmpty() || (withExports && withExports->exportsBeforeMock)))
         return;
     LoadedModule& loaded = *found;
     didEndMock(file);
@@ -1121,6 +1122,11 @@ void Modules::endMockLaidOverFile(ModuleID file)
         RETURN_IF_EXCEPTION(scope, void());
     }
 
+    for (ModuleID handedOn : std::exchange(loaded.namespacesReplacedByMock, { })) {
+        ensureLoaded(handedOn).handedOnInPlaceOfNamespace.set(*this, JSValue());
+        m_namespacesReplacedByMock.clear(handedOn.index());
+        didReplaceNamespaceHandedOn(handedOn);
+    }
     if (JSObject* variables = loaded.variablesBeforeMock) {
         loaded.variablesBeforeMock.set(*this, nullptr);
         PropertyNameArrayBuilder places(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);

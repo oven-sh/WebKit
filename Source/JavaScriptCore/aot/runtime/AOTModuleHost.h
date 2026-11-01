@@ -263,6 +263,8 @@ JS_EXPORT_PRIVATE void didDeleteRequireCacheEntry(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void willRunCodeThatKeepsFiles(JSGlobalObject*);
 JS_EXPORT_PRIVATE void keepFilesThatHaveRun(JSGlobalObject*);
 JS_EXPORT_PRIVATE void didResetModule(JSGlobalObject*, ModuleID);
+// `bun test` takes what failed to load or threw out of its loader whenever it takes anything out: the next load runs it again. Only files that the build has compiled for more than one load.
+JS_EXPORT_PRIVATE void takeOutFilesThatFailed(JSGlobalObject*);
 JS_EXPORT_PRIVATE void bringBackKeptFiles(JSGlobalObject*, const WTF::Function<void(const String&)>&);
 // The file was taken out of the program and is not back: whoever has bound it keeps it as it is, and every load of it is the host's.
 JS_EXPORT_PRIVATE bool isEvictedFile(JSGlobalObject*, ModuleID);

@@ -96,6 +96,7 @@ struct LinkContext {
     macro(JSValue, exportsOfOriginalBesideMock) \
     macro(JSValue, answerOfMockWhileOriginalRuns) \
     macro(JSObject*, exportsAddedByMock) \
+    macro(JSValue, handedOnInPlaceOfNamespace) \
     macro(JSValue, errorKeptByLoader) \
     macro(JSObject*, exportsWhileRequired) \
     macro(JSObject*, capturedExports) \
@@ -229,7 +230,9 @@ public:
     void forgetCallOfMock(ModuleID fileOrModule) { m_momentsWaitingMocksWereLaid.remove(fileOrModule); }
     void linkAnewWhoeverReadsEndedMockBelow(ModuleID root);
     bool importsOriginalBesideMock(ModuleID mocked, ModuleID importer) const;
+    bool hasRunItself(ModuleID mocked) const { return m_modulesThatRanBesideMock.get(mocked.index()) || m_modulesThatHadRunWhenMocked.get(mocked.index()); }
     JSObject* namespaceOfModuleItself(ModuleID);
+    JSValue importModuleItselfBesideMock(ModuleID, JSValue answerOfImport);
     bool isHiddenInModuleItself(ModuleID, unsigned index) const;
     JSValue readExportOfModuleItself(ModuleID, unsigned index);
     // `bun test` takes whoever imports a module out of its loader when a mock of the module ends, and when a mock is laid over what an earlier test file loaded. A mock of such an importer
@@ -260,6 +263,11 @@ public:
     // And a name that the factory gives and the module lacks is an export: a key of the namespace object, where it is read. The names are settled once the module is loaded.
     void takeWhatMockAdds(ModuleID, bool comesAheadOfLoad);
     bool isAddedByMock(ModuleID, const Identifier&);
+    // `export * as inner from "./inner"` has no variable. What a mock that is laid over the module gives for the name is handed on in place of the object of "./inner", by every module that
+    // hands it on. Whoever imports "./inner" itself keeps its object.
+    JSValue handedOnInPlaceOfNamespace(const ModuleExportData&) const;
+    bool tryReplaceNamespaceHandedOn(ModuleID, JSValue);
+    void didReplaceNamespaceHandedOn(ModuleID);
     // `bun test` loads the original first and lays such a mock over it.
     bool isMockedByFactoryThatTakesOriginal(ModuleID module) { return m_modulesWithMockThatAsksAgain.get(module.index()) && isMocked(module); }
     void appendNamesAddedByMock(ModuleID, WTF::Vector<Identifier>&);
@@ -446,6 +454,7 @@ public:
     StringView askerOfModule() const { return m_askerOfModule ? StringView(*m_askerOfModule) : StringView(); }
     void forEachFileAwaitingAtTopLevel(const WTF::Function<void(int64_t turn, const String& key)>&);
     void evict(ModuleID, bool isUndoneForKeptFiles = false);
+    void forEachFileThatFailed(const WTF::Function<void(ModuleID)>&) const;
     void willRunCodeThatKeepsFiles();
     void keepFilesThatHaveRun();
     void bringBackKeptFiles(const WTF::Function<void(const String&)>&);
@@ -740,6 +749,7 @@ private:
         bool hadRunWhenMockWasLaid { false };
         // `export * from "./leaf.cjs"`: the values of the mock went over names of these, which keep what was replaced.
         Vector<ModuleID> modulesBehindStarsUnderMock;
+        Vector<ModuleID> namespacesReplacedByMock;
         bool capturedFieldsAreOfESModule { false };
         bool capturedFieldsAreOfRuntimeModule { false };
         Identifier resolvedKey;
@@ -947,6 +957,10 @@ private:
     mutable UncheckedKeyHashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_importersAskedAboutOriginal;
     // The body ran beside the mock that stands in place of the module, for an importer that gets the module itself. It does not run again.
     BitVector m_modulesThatRanBesideMock;
+    // An import() of a package has come for the module itself, and its body has yet to run.
+    BitVector m_modulesOwedBesideMock;
+    // The body had run when the mock was made: in an earlier test file, or beside an earlier mock. It does not run again for whoever gets the module itself.
+    BitVector m_modulesThatHadRunWhenMocked;
     // The files and the modules of the library that such a mock stands in place of. A module of the library is none of the mocked files.
     BitVector m_modulesWithMockInPlace;
     mutable Vector<uint64_t> m_modulesSettledForLinks;
@@ -1076,12 +1090,14 @@ private:
     Vector<ModuleID, 4> m_mockedModulesPassedOverByWalks;
     // The host has ended the mock that stands in place of the module. Whoever was linked against the mock goes on reading it, as under `bun test`, until a load comes to the module.
     BitVector m_modulesWithMockToLetGo;
+    BitVector m_namespacesReplacedByMock;
     BitVector m_modulesLoadedBeforeMockThatWaited;
     // A load that comes by brings them back.
     BitVector m_modulesThatLoaderLetGo;
     BitVector m_importersOfMockThatEnded;
     // A load has brought them back. What they have of files of images below is taken anew behind the mocks that the load runs.
     BitVector m_importersToLinkAnewToFilesBelow;
+    BitVector m_filesBelowThatLeftLoader;
     Vector<Vector<uint32_t, 2>> m_importersByStatement;
     Vector<ModuleID> m_libraryModulesInRequireCache;
     BitVector m_libraryModulesTakenFromLoader;
