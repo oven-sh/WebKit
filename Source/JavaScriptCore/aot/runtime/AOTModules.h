@@ -1410,6 +1410,9 @@ ALWAYS_INLINE JSValue Modules::settledAnswerOfRequire(ModuleID target, RequiredB
     // The answer goes by who asks.
     if (loaded->mockInPlace && host().givesOriginalBesideMock) [[unlikely]]
         return { };
+    // `bun test` loads it anew: bringBackWhatLoaderLetGoBelow().
+    if (m_importersOfMockThatEnded.get(target.index())) [[unlikely]]
+        return { };
     return loaded->requiredValue.get();
 }
 
