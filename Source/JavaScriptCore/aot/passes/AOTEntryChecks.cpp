@@ -149,7 +149,7 @@ void appendChecksAtEntry(const Program& program, BuildContext& build, Function& 
         declared.expect(declared.expected());
         declared.remove(PositionFlags::IsInt32Promise);
 
-        checks.append(ValueID(function.values.size()));
+        checks.append(function.idOfValueAt(function.values.size()));
         function.add(WTF::move(convert));
     }
     function.edit(point.block, BlockEdit::Values).values.insertVector(point.index, checks);

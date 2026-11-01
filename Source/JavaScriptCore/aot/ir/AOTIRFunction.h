@@ -133,6 +133,15 @@ struct Function : FunctionRecord {
 
     Blocks blocks;
     Values values;
+#if AOT_STAMPS_VALUE_IDS
+    // Goes up each time the values get other numbers, from 1 to ValueID::numberOfStamps and round again.
+    uint8_t stampOfValues { 1 };
+    bool isFromThisNumbering(ValueID id) const { return !id.stamp() || id.stamp() == stampOfValues; }
+    // Stops the build, or with AOT_STALE_NUMBERS=report in the environment says it and goes on, so that one build names every holder.
+    NEVER_INLINE void didMeetNumberFromBefore(ValueID) const;
+    // What was read, or made from an integer since, has no stamp yet. Nothing moves, so nobody is told.
+    void stampNumbersInPlace();
+#endif
     // Sorted by value. A value's position is where an error is reported; only a value that the source text has elsewhere is listed.
     Vector<WrittenPosition> writtenPositions;
     Vector<ConstructionStart> constructionStarts;
@@ -147,12 +156,31 @@ struct Function : FunctionRecord {
     bool hasBody() const { return bodyIsReleased || !blocks.isEmpty(); }
     void releaseBody();
 
-    const Value& at(ValueID id) const { ASSERT(id.index() < values.size()); return values.span().data()[id.index()]; }
+    const Value& at(ValueID id) const
+    {
+#if AOT_STAMPS_VALUE_IDS
+        if (!isFromThisNumbering(id)) [[unlikely]] didMeetNumberFromBefore(id);
+#endif
+        ASSERT(id.index() < values.size());
+        return values.span().data()[id.index()];
+    }
+    // The number of the value at that place in the table, as the function hands it out.
+    ValueID idOfValueAt(size_t index) const
+    {
+#if AOT_STAMPS_VALUE_IDS
+        return ValueID::withStamp(index, stampOfValues);
+#else
+        return ValueID(index);
+#endif
+    }
     const Value& at(RootThroughCasts root) const { return at(root.valueInFrontOfFacts()); }
     const Block& at(BlockID id) const { ASSERT(id.index() < blocks.size()); return blocks.span().data()[id.index()]; }
 
     Value& edit(ValueID id, OptionSet<ValueEdit> edits = anyValueEdit)
     {
+#if AOT_STAMPS_VALUE_IDS
+        if (!isFromThisNumbering(id)) [[unlikely]] didMeetNumberFromBefore(id);
+#endif
         RELEASE_ASSERT(id.index() < values.size());
         Value& value = values.m_storage.mutableSpan().data()[id.index()];
         m_changes.didEdit();

@@ -62,7 +62,12 @@ std::optional<SourceLocation> findLocation(const Typed::Program* program, const 
     if (hasModule(subject.location))
         return subject.location;
     if (auto* function = functionIfPresent(program, subject.function)) {
-        if (subject.value.index() < function->values.size()) {
+        // Whoever reports gives the place of the value then and there, where it has one. A record that is asked here may be older than a renumbering of its function.
+        bool namesValue = subject.value.index() < function->values.size();
+#if AOT_STAMPS_VALUE_IDS
+        namesValue = namesValue && function->isFromThisNumbering(subject.value);
+#endif
+        if (namesValue) {
             SourceLocation location = function->locationOf(subject.value);
             if (hasModule(location))
                 return location;
@@ -222,7 +227,12 @@ static void appendPlaceholder(StringBuilder& builder, Placeholder placeholder, c
     case Placeholder::Value: {
         builder.append(letterOf(IDPrefix::Value), fields.value.index());
         auto* function = functionIfPresent(program, fields.function);
-        if (function && fields.value.index() < function->values.size())
+        // The text is made at the end of the build. A pass that reports and then compacts its function has given the values other numbers by then.
+        bool namesValue = function && fields.value.index() < function->values.size();
+#if AOT_STAMPS_VALUE_IDS
+        namesValue = namesValue && function->isFromThisNumbering(fields.value);
+#endif
+        if (namesValue)
             builder.append(" ("_s, nameOf(function->at(fields.value).opcode), ')');
         return;
     }
