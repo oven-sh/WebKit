@@ -106,6 +106,9 @@ struct ModuleHost {
     bool (*loadsFileItself)(JSGlobalObject*, const String& path);
     // An import() in compiled code has begun. The promise is the loader's own where the loader is asked, or else the one that the program gets. The path is null for a file that nothing may mock. Null in a host where nothing waits for imports.
     void (*didStartImport)(JSGlobalObject*, JSPromise*, const String& path);
+    // Factories that runMock() has called have answered promises that have not settled: a promise that is fulfilled once each has settled and its mock is laid, and rejected with what one has thrown.
+    // Null where none waits, and in a host without mocks.
+    JSPromise* (*factoriesThatWait)(JSGlobalObject*);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);

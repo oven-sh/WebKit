@@ -1742,8 +1742,6 @@ void Modules::deferMock(ModuleID module, AfterFailure afterFailure)
 // What deferMock() did is taken back. The record of a CommonJS file stays: its code goes on asking the run time for its status.
 void Modules::forgetMockThatWaits(ModuleID module)
 {
-    if (!m_modulesWithMockToRun.get(module.index()))
-        return;
     m_modulesWithMockToRun.clear(module.index());
     if (!m_modulesWithMockThatWaited.get(module.index()))
         return;
@@ -3055,6 +3053,8 @@ void deliverTextThatWaits(VM& vm)
     static_cast<void>(scope.exception());
 }
 
+static JSC_DECLARE_HOST_FUNCTION(importBehindFactories);
+
 JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrerAsyncOrder, ImportCaller caller, TextOfImport text, JSPromise* promiseOfCaller)
 {
     JSGlobalObject* realm = m_instance.globalObject;
@@ -3072,6 +3072,15 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
             handSynchronousLoadToLoader(*m_innermostFilesBeingRun);
             RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
         }
+    }
+    // The loader of `bun run` waits for a factory before it goes on with the graph.
+    if (JSPromise* factories = host().factoriesThatWait ? host().factoriesThatWait(realm) : nullptr) [[unlikely]] {
+        VM& vm = *m_instance.vm;
+        JSPromise* promise = promiseForCaller();
+        JSFunction* goOn = JSFunction::create(vm, realm, 2, String(), importBehindFactories, ImplementationVisibility::Private);
+        uint64_t moduleAndCaller = static_cast<uint64_t>(moduleIDForHost(*m_instance.program, module).index()) << 1 | static_cast<uint64_t>(caller == ImportCaller::Host);
+        factories->performPromiseThenWithContext(vm, realm, goOn, jsUndefined(), promise, jsNumber(static_cast<double>(moduleAndCaller)));
+        return promise;
     }
     if (text == TextOfImport::MayComeLater && textOfImportComesInLaterTurn(module, AskedBy::Import)) {
         JSPromise* promise = JSPromise::create(*m_instance.vm, realm->promiseStructure());
@@ -5502,6 +5511,13 @@ bool isCompiledModuleRecord(AbstractModuleRecord* record)
     return record->inherits<ModuleRecord>();
 }
 
+JSC_DEFINE_HOST_FUNCTION(importBehindFactories, (JSGlobalObject* realm, CallFrame* callFrame))
+{
+    uint64_t moduleAndCaller = static_cast<uint64_t>(callFrame->argument(1).asNumber());
+    ModuleFromHost module(realm, ModuleID(static_cast<uint32_t>(moduleAndCaller >> 1)));
+    return JSValue::encode(modulesOf(realm)->startImport(module, std::nullopt, moduleAndCaller & 1 ? Modules::ImportCaller::Host : Modules::ImportCaller::CompiledCode));
+}
+
 JSPromise* importModule(JSGlobalObject* realm, ModuleID moduleOfHost, std::optional<int64_t> referrerAsyncOrder)
 {
     ModuleFromHost module(realm, moduleOfHost);
@@ -6205,7 +6221,8 @@ void ModuleRecord::appendDynamicStarTargets(StarExportTargets& targets)
     if (!modules.data(m_module).hasDynamicStarExport() || modules.standsForWholeModule(m_module))
         return;
     for (const ModuleRequestData& request : modules.table().requests(m_module)) {
-        if (!request.isDynamicStarExport)
+        // The tables have the names of the original, and what the mock adds stays behind.
+        if (!request.isDynamicStarExport || modules.isMockedByFactoryThatTakesOriginal(request.targetModule()))
             continue;
         AbstractModuleRecord* target = modules.recordForResolution(request.targetModule());
         RETURN_IF_EXCEPTION(scope, void());

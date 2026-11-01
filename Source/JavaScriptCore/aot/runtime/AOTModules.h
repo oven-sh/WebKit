@@ -198,6 +198,8 @@ public:
     // And a name that the factory gives and the module lacks is an export: a key of the namespace object, where it is read. The names are settled once the module is loaded.
     void takeWhatMockAdds(ModuleID, bool comesAheadOfLoad);
     bool isAddedByMock(ModuleID, const Identifier&);
+    // `bun test` loads the original first and lays such a mock over it.
+    bool isMockedByFactoryThatTakesOriginal(ModuleID module) { return m_modulesWithMockThatAsksAgain.get(module.index()) && isMocked(module); }
     void appendNamesAddedByMock(ModuleID, WTF::Vector<Identifier>&);
     // Such a mock has no `export *`: what stands behind a star of the module gives it no name, and is not loaded for it.
     bool standsForWholeModule(ModuleID) const;
