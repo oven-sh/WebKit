@@ -6557,6 +6557,25 @@ auto ModuleRecord::resolveOwnExport(JSGlobalObject* globalObject, const Identifi
     RELEASE_AND_RETURN(scope, record->resolveExport(globalObject, modules.identifier(indirectExport.importName)));
 }
 
+static constinit MissingExportListener missingExportListener = nullptr;
+
+void setMissingExportListener(MissingExportListener listener)
+{
+    missingExportListener = listener;
+}
+
+bool ModuleRecord::throwIfExportWasLeftOut(JSGlobalObject* globalObject, AbstractModuleRecord* importer, AbstractModuleRecord* exporter, const Identifier& name)
+{
+    auto* compiled = dynamicDowncast<ModuleRecord>(exporter);
+    if (!compiled || compiled->modules().data(compiled->m_module).isEntryPoint())
+        return false;
+    if (missingExportListener)
+        missingExportListener(name.string(), exporter->moduleKey().string(), importer->moduleKey().string());
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    throwTypeError(globalObject, scope, makeString('\'', name.string(), "' was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun."_s));
+    return true;
+}
+
 void ModuleRecord::collectExportedNames(JSGlobalObject* globalObject, WTF::Vector<Identifier>& names, StarExportTargets& starTargets)
 {
     RunningImageScope imageOfRecord(m_instance.vm->aotState(), m_instance.program);

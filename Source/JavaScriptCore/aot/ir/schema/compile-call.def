@@ -174,7 +174,7 @@ enum Sabotage {
     WordsCarriedAroundLoopsOutlastWrites
     PassesDropCalls
     AssignmentsPutOffAskNobodyAbove WhatInitializersTakeNeverChanges
-    ListsOfBuiltinsEndWithWhatIsKept
+    ListsOfBuiltinsEndWithWhatIsKept CopiesNameNoFile
     FusedCallsEnterOnlyUnknownCode
 }
 flags Instrumentation { CountBranches CountArrivals }

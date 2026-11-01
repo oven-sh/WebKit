@@ -129,6 +129,8 @@ public:
     JSObject* moduleNamespaceObject(JSGlobalObject*, ModulePhase);
     JSObject* moduleNamespaceObjectForImageAbove(ModulePhase);
     static bool isSameBinding(const Resolution&, const Resolution&);
+    // The link of a module outside the image has found no such name. The table of a module that the host may ask for is whole: nothing is thrown, and the name is one that nobody exports.
+    static bool throwIfExportWasLeftOut(JSGlobalObject*, AbstractModuleRecord* importer, AbstractModuleRecord* exporter, const Identifier& name);
 
     void gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, VisitedModuleRecords& seen);
     bool readyForSyncExecution(VisitedModuleRecords& seen);

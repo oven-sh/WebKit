@@ -186,6 +186,9 @@ JS_EXPORT_PRIVATE void willLoadByName(JSGlobalObject*, JSValue specifier, LoadBy
 JS_EXPORT_PRIVATE bool isResolvingImportCall(VM&);
 // In ModuleHost::runMock: a require() has come to the module, so what the mock loads is loaded at once.
 JS_EXPORT_PRIVATE bool requireRunsMocks(VM&);
+// A module outside the image asked a compiled module for a name that the build left out of its table.
+using MissingExportListener = void (*)(const String& name, const String& exporter, const String& importer);
+JS_EXPORT_PRIVATE void setMissingExportListener(MissingExportListener);
 // The host calls this with the file of the image that such a name has resolved to, before it looks into a cache of its own. It throws for a file that is no entry point.
 JS_EXPORT_PRIVATE void willAnswerWithModule(JSGlobalObject*, ModuleID, LoadByName = LoadByName::Require);
 class Modules;
