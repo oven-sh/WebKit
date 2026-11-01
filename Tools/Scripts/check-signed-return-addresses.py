@@ -10,9 +10,14 @@
 #
 # The binary still starts on ARMv8.0: every pointer authentication instruction in it is a hint, which a processor without pointer authentication ignores. RETAA, BLRAA, PACIA and the like
 # are undefined instructions there. The compiler emits them once -march says ARMv8.3 or later.
+#
+# It also reads the sources of the ahead-of-time compiler next to it. What reads a saved return address there takes the signature off: CallFrame::returnPCForInspection(), or
+# removeReturnAddressSignature(). removeCodePtrTag() is what upstream writes in such a place, for CPU(ARM64E). Here it does nothing, compiles, and passes every test on a machine
+# without pointer authentication. So aot/ has none but those of `not_return_addresses`.
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 binary = sys.argv[1]
 objdump = 'llvm-objdump'
@@ -32,6 +37,9 @@ signs = re.compile(r'\tpaci[ab]sp$')
 pointer_authentication = re.compile(r'\t((?:pac|aut|xpac|e?reta|bl?ra[ab]|ldra[ab])\w*)')
 # All there are. Whatever else the pattern above finds is taken for undefined before ARMv8.3, also what is newer than this list.
 hints = {'paciasp', 'pacibsp', 'paciaz', 'pacibz', 'pacia1716', 'pacib1716', 'autiasp', 'autibsp', 'autiaz', 'autibz', 'autia1716', 'autib1716', 'xpaclri', 'pacm'}
+
+# resumeAddress(), which compiled code passes as an argument.
+not_return_addresses = {'runtime/AOTInstance.cpp': 1}
 
 functions = 0
 by_nature = 0
@@ -84,6 +92,11 @@ if unsigned:
     errors.append(f'{len(unsigned)} functions save the link register without signing it, and are not on the list of those that need not:\n' + '\n'.join(f'    {name}' for name in unsigned[:200]))
 if undefined:
     errors.append(f'{len(undefined)} pointer authentication instructions are not hints, and are undefined before ARMv8.3:\n' + '\n'.join(f'    {line}' for line in undefined[:20]))
+aot = Path(__file__).resolve().parents[2] / 'Source/JavaScriptCore/aot'
+for path in sorted(path for path in aot.rglob('*') if path.suffix in ('.cpp', '.h')):
+    name = path.relative_to(aot).as_posix()
+    if path.read_text().count('removeCodePtrTag(') != not_return_addresses.get(name, 0):
+        errors.append(f'aot/{name} has not the {not_return_addresses.get(name, 0)} removeCodePtrTag() that it is listed with. For a saved return address it is removeReturnAddressSignature()')
 print(f'{functions} functions save the link register. {functions - by_nature - len(unsigned)} sign it, and {by_nature} are on the list of those that need not.')
 for error in errors:
     print(f'error: {error}')
