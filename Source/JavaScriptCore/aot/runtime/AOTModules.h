@@ -657,6 +657,11 @@ public:
     bool holdTextOfRequest(JSPromise* fetched, ModuleRecord* requested, ModuleID);
     enum class AskedBy : bool { Loader, Import };
     bool textOfImportComesInLaterTurn(ModuleID, AskedBy);
+    bool hasTextAtHand() const;
+    bool isFirstTextThatWaitsOnlyDelayed() const { return !m_textsThatWait.isEmpty() && m_textsThatWait[m_numberOfTextsThatHaveCome].isOnlyDelayed; }
+    // No text of the program is read, and all of the program is one image.
+    bool loadsAsExecutableDoes() const;
+    bool isTestRun() const;
     void holdTextOfImportFromOtherImage(JSPromise* fetched, AbstractModuleRecord* root, ModuleID);
     std::optional<uint64_t> placeOfFirstTextThatWaits() const { return m_textsThatWait.isEmpty() ? std::nullopt : std::optional(m_textsThatWait[m_numberOfTextsThatHaveCome].place); }
     // False: nobody is left to hear of it.
@@ -1311,7 +1316,22 @@ private:
         ImportCaller caller { ImportCaller::CompiledCode };
         // No other call has waited beside it so far.
         bool levelsAreLeftToCount { false };
+        // It waits for a turn and for nothing else: the calls of one turn are made again together, in their order.
+        bool isOnlyDelayed { false };
+        // How many jobs behind the first such call of its turn it was made: it is made again as many jobs behind that one.
+        uint8_t jobsBehindFirstCall { 0 };
     };
+    // One job in each round of the queue, for as long as somebody has to know that a round has passed.
+    Strong<JSPromise> m_promiseOfJobOfRound;
+    bool m_isJobOfRoundQueued { false };
+    uint32_t m_jobsBehindFirstCall { 0 };
+    // What the jobs behind a delivery call for is not delayed a second time: the run lies one turn behind the executable's, once.
+    bool m_isInJobsBehindDelivery { false };
+    void queueJobOfRound(ModuleID moduleOfJob);
+    void runJobOfRound(ModuleID moduleOfJob);
+    Vector<TextThatWaits, 2> m_callsToMakeAgain;
+    bool makeCallAgain(JSPromise*);
+    void makeCallAgain(TextThatWaits&);
     Vector<TextThatWaits> m_textsThatWait;
     size_t m_numberOfTextsThatHaveCome { 0 };
     BitVector m_modulesBelowCallsThatWait;

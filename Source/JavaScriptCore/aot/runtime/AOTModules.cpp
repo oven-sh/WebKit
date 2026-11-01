@@ -4111,6 +4111,24 @@ bool Modules::isTextReadOnOtherThread(ModuleID file)
     return host().callInLaterTurn && isFileOfProgram(file) && !m_instance.vm->synchronousModuleQueue() && !hostLoadsSynchronously(file);
 }
 
+bool Modules::isTestRun() const
+{
+    return host().isInPreload && host().isInPreload(m_instance.globalObject).has_value();
+}
+
+bool Modules::loadsAsExecutableDoes() const
+{
+    if (!host().holdsTextsOfProgram || !host().holdsTextsOfProgram(m_instance.globalObject))
+        return false;
+    return !isTestRun() || m_instance.vm->aotState().instances.size() == 1;
+}
+
+// `bun test` reads a text on another thread, so what a call asks for comes a turn later: behind the `describe` callbacks of a test file, behind the end of a test that does not wait for it.
+bool Modules::hasTextAtHand() const
+{
+    return !m_innermostFilesBeingRun && !m_instance.vm->aotState().numberOfTextsThatWait && loadsAsExecutableDoes() && (!isTestRun() || m_isInJobsBehindDelivery);
+}
+
 bool Modules::textOfImportComesInLaterTurn(ModuleID module, AskedBy askedBy)
 {
     // The loader has the text of whatever it has come to, and what a require() has begun is not begun by this call.
@@ -4138,9 +4156,15 @@ void Modules::holdText(JSPromise* promise, ModuleID module, JSCell* requestedRec
     uint64_t place = static_cast<uint64_t>(state.turnOfTexts) << 33 | static_cast<uint64_t>(askedBy == AskedBy::Import) << 32 | state.numberOfTextsAskedFor++;
     bool waitsApart = askedBy == AskedBy::Import && !m_innermostFilesBeingRun && !state.numberOfTextsThatWait;
     uint32_t levelsAddedToPlace = 0;
+    bool isOnlyDelayed = waitsApart && !requestedRecord && loadsAsExecutableDoes();
     // A place says where a call stands among those that wait. A call that waits alone comes first wherever it stands, so the levels below it are counted once another call finds it waiting.
-    bool waitsAlone = waitsApart && !state.numberOfCallsThatWaitApart;
-    if (waitsApart) {
+    bool waitsAlone = waitsApart && !isOnlyDelayed && !state.numberOfCallsThatWaitApart;
+    if (isOnlyDelayed) {
+        if (!state.numberOfCallsThatWaitApart++) {
+            m_jobsBehindFirstCall = 0;
+            queueJobOfRound(module);
+        }
+    } else if (waitsApart) {
         if (state.numberOfCallsThatWaitApart == 1) {
             for (Instance* instance : state.instances) {
                 if (Modules* modules = instance->state ? instance->state->modules.get() : nullptr)
@@ -4180,7 +4204,7 @@ void Modules::holdText(JSPromise* promise, ModuleID module, JSCell* requestedRec
     size_t index = m_textsThatWait.size();
     while (index > m_numberOfTextsThatHaveCome && m_textsThatWait[index - 1].place > place)
         --index;
-    m_textsThatWait.insert(index, TextThatWaits { place, Strong<JSPromise>(vm, promise), module, Strong<JSCell>(vm, requestedRecord), referrerAsyncOrder, waitsApart, levelsAddedToPlace, caller, waitsAlone });
+    m_textsThatWait.insert(index, TextThatWaits { place, Strong<JSPromise>(vm, promise), module, Strong<JSCell>(vm, requestedRecord), referrerAsyncOrder, waitsApart, levelsAddedToPlace, caller, waitsAlone, isOnlyDelayed, static_cast<uint8_t>(isOnlyDelayed ? std::min<uint32_t>(m_jobsBehindFirstCall, 255) : 0) });
     host().callInLaterTurn(m_instance.globalObject);
 }
 
@@ -4246,16 +4270,67 @@ bool Modules::deliverFirstTextThatWaits()
         promise->fulfill(vm, text.requestedRecord.get());
         return true;
     }
+    if (text.isOnlyDelayed) {
+        m_isInJobsBehindDelivery = true;
+        queueJobOfRound(text.module);
+    }
+    if (uint8_t jobs = text.jobsBehindFirstCall) {
+        queueStepOfImport(promise, moduleForJob(text.module), jobs);
+        m_callsToMakeAgain.append(WTF::move(text));
+        return true;
+    }
+    scope.release();
+    makeCallAgain(text);
+    return true;
+}
+
+void Modules::makeCallAgain(TextThatWaits& text)
+{
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSPromise* promise = text.promise.get();
     bool isMadeAgain = text.waitsApart || text.caller == ImportCaller::Host;
     JSPromise* loaded = startImport(text.module, text.referrerAsyncOrder, isMadeAgain ? text.caller : ImportCaller::Host, TextOfImport::HasCome, isMadeAgain ? promise : nullptr);
     if (scope.exception()) [[unlikely]] {
         promise->rejectWithCaughtException(vm, scope);
-        return true;
+        return;
     }
     scope.release();
     if (loaded != promise)
         settleAsLoaderDoes(m_instance.globalObject, promise, loaded);
+}
+
+bool Modules::makeCallAgain(JSPromise* promise)
+{
+    size_t index = m_callsToMakeAgain.findIf([&](const TextThatWaits& text) { return text.promise.get() == promise; });
+    if (index == notFound)
+        return false;
+    TextThatWaits text = WTF::move(m_callsToMakeAgain[index]);
+    m_callsToMakeAgain.removeAt(index);
+    makeCallAgain(text);
     return true;
+}
+
+void Modules::queueJobOfRound(ModuleID moduleOfJob)
+{
+    if (std::exchange(m_isJobOfRoundQueued, true))
+        return;
+    VM& vm = *m_instance.vm;
+    if (!m_promiseOfJobOfRound)
+        m_promiseOfJobOfRound.set(vm, JSPromise::create(vm, m_instance.globalObject->promiseStructure()));
+    queueStepOfImport(m_promiseOfJobOfRound.get(), moduleForJob(moduleOfJob), 1);
+}
+
+void Modules::runJobOfRound(ModuleID moduleOfJob)
+{
+    m_isJobOfRoundQueued = false;
+    ++m_jobsBehindFirstCall;
+    if (m_instance.vm->defaultMicrotaskQueue().isEmpty()) {
+        m_isInJobsBehindDelivery = false;
+        return;
+    }
+    if (m_instance.vm->aotState().numberOfCallsThatWaitApart || m_isInJobsBehindDelivery)
+        queueJobOfRound(moduleOfJob);
 }
 
 void deliverTextThatWaits(VM& vm)
@@ -4273,10 +4348,17 @@ void deliverTextThatWaits(VM& vm)
         }
         if (!first)
             return;
+        uint64_t turnOfCall = *first->placeOfFirstTextThatWaits() >> 33;
+        bool isOnlyDelayed = first->isFirstTextThatWaitsOnlyDelayed();
         isDelivered = first->deliverFirstTextThatWaits();
         // Only a request to terminate is left behind, and the jobs find it.
         if (scope.exception()) [[unlikely]]
             return;
+        while (isOnlyDelayed && first->isFirstTextThatWaitsOnlyDelayed() && *first->placeOfFirstTextThatWaits() >> 33 == turnOfCall) {
+            isDelivered |= first->deliverFirstTextThatWaits();
+            if (scope.exception()) [[unlikely]]
+                return;
+        }
     }
 }
 
@@ -4356,7 +4438,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         return promise;
     }
     // `bun build --compile` reads no text: what calls of one turn ask for runs in the order of the calls. What a file asks for while a graph is loaded still runs behind that graph.
-    bool hasTextAtHand = !m_innermostFilesBeingRun && !m_instance.vm->aotState().numberOfTextsThatWait && host().holdsTextsOfProgram && host().holdsTextsOfProgram(realm);
+    bool hasTextAtHand = this->hasTextAtHand();
     if (text == TextOfImport::MayComeLater && !hasTextAtHand && textOfImportComesInLaterTurn(module, AskedBy::Import)) {
         JSPromise* promise = JSPromise::create(*m_instance.vm, realm->promiseStructure());
         if (caller == ImportCaller::Host)
@@ -4887,6 +4969,10 @@ bool Modules::loaderOnlyHandsOverNamespace(ModuleID module) const
 void Modules::finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID module, JSValue error)
 {
     VM& vm = *m_instance.vm;
+    if (importPromise == m_promiseOfJobOfRound.get()) [[unlikely]]
+        return runJobOfRound(module);
+    if (!m_callsToMakeAgain.isEmpty() && makeCallAgain(importPromise)) [[unlikely]]
+        return;
     JSPromise* loaded = JSPromise::create(vm, m_instance.globalObject->promiseStructure());
     loaded->markAsHandled();
     if (error) [[unlikely]]
@@ -6936,7 +7022,7 @@ bool textOfFetchedModuleComesInLaterTurn(JSGlobalObject* realm, ModuleID moduleO
         return false;
     ModuleFromHost module(realm, moduleOfHost);
     Modules* modules = modulesOf(realm);
-    return modules && modules->textOfImportComesInLaterTurn(module, Modules::AskedBy::Loader);
+    return modules && !modules->hasTextAtHand() && modules->textOfImportComesInLaterTurn(module, Modules::AskedBy::Loader);
 }
 
 void holdTextOfFetchedModule(JSGlobalObject* realm, ModuleID moduleOfHost, JSPromise* fetched, AbstractModuleRecord* record)
