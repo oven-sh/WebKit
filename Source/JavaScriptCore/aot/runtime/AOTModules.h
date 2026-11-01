@@ -215,6 +215,7 @@ public:
     bool setMockOverModuleThatHasRun(ModuleID, JSObject* mock, JSValue whatRequireAnswers);
     void endMockOverModuleThatHasRun(ModuleID);
     bool seesMockOf(ModuleID mocked, ModuleID importer) const;
+    bool isMockSeenFrom(ModuleID mocked, const Modules& imageOfImporter, ModuleID importer) const;
     // What compiled code reads a name of `mocked` from: the mock that stood when the importer was linked, else the one that stands, else nothing.
     JSObject* mockSeenBy(ModuleID mocked, ModuleID importer) const;
     JSObject* endedMockSeenAt(ModuleID fileOrModule, uint32_t moment) const;
@@ -349,6 +350,9 @@ public:
     // The factories that one load calls run one at a time. True: the walk has called one that has not settled, and has stopped there. Whoever walks waits for it and walks again.
     bool runMocksBelow(ModuleID root, RootOfLoad = RootOfLoad::BeginsLoad);
     bool runMocksBelowSlow(ModuleID root, RootOfLoad);
+    bool runMocksBelowInImages(ModuleID root, RootOfLoad);
+    std::pair<Modules*, ModuleID> fileInImageBelow(ModuleID external) const;
+    void linkAnewToFilesOfImagesBelow();
     static const MockOperations& mockOperations();
     JSPromise* factoryThatWaitsBelow(ModuleID root, FactoryAskedForBy, JSValue& state);
     bool runMocksBelowModuleThatLoaderFetches(ModuleID);
@@ -1055,6 +1059,8 @@ private:
     // A load that comes by brings them back.
     BitVector m_modulesThatLoaderLetGo;
     BitVector m_importersOfMockThatEnded;
+    // A load has brought them back. What they have of files of images below is taken anew behind the mocks that the load runs.
+    BitVector m_importersToLinkAnewToFilesBelow;
     Vector<Vector<uint32_t, 2>> m_importersByStatement;
     Vector<ModuleID> m_libraryModulesInRequireCache;
     BitVector m_libraryModulesTakenFromLoader;

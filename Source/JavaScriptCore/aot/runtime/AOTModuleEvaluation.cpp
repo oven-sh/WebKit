@@ -2764,6 +2764,8 @@ void Modules::bringBackWhatLoaderLetGoBelow(ModuleID root)
         if (wasLetGo && m_importersOfMockThatEnded.clear(module.index())) {
             VMState& state = m_instance.vm->aotState();
             m_momentsLoadedAnew.set(module, FirstMockInTestFile { ++state.momentOfLoads, state.momentOfTestFile });
+            if (state.hasSeveralImages)
+                m_importersToLinkAnewToFilesBelow.set(module.index());
         }
         // What only a mocked module imports is not loaded.
         if (isMocked(module) || mockInPlace(module))

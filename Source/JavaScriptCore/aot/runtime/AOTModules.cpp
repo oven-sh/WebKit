@@ -2225,7 +2225,10 @@ void Modules::letGoOfImportersOf(const BitVector& mocked, BitVector&& gone, bool
                     continue;
                 m_modulesThatLoaderLetGo.set(index);
                 // `bun test` lets go of what was linked to the mock. Whoever kept the module under a mock that left it alone stays as it is.
-                if (mocked.quickGet(imported) ? !isLeftAloneByMock(ModuleID(imported)) || seesMockOf(ModuleID(imported), importer) : m_importersOfMockThatEnded.get(imported))
+                // Of a file of an image below the importer has a module of its own, and the object in it says which of the two it was linked to.
+                auto* held = data(ModuleID(imported)).isUncompiledCode() && value(ModuleID(imported)).isCell() ? dynamicDowncast<ModuleNamespace>(value(ModuleID(imported)).asCell()) : nullptr;
+                bool keptModule = held && held->keepsToModule();
+                if (!keptModule && (mocked.quickGet(imported) ? !isLeftAloneByMock(ModuleID(imported)) || seesMockOf(ModuleID(imported), importer) : m_importersOfMockThatEnded.get(imported)))
                     m_importersOfMockThatEnded.set(index);
                 gone.quickSet(index);
                 work.append(index);
@@ -2244,7 +2247,9 @@ void Modules::letGoOfImportersOf(const BitVector& mocked, BitVector&& gone, bool
         BitVector mockedAbove(table.size());
         BitVector goneAbove(table.size());
         for (const UncompiledModuleData& entry : table.modulesOfUncompiledCode()) {
-            std::optional<ModuleID> file = m_table.findByPath(table.pathText(ModuleID(entry.module)));
+            // A file of a part names what it imports as its text does. The loader has resolved what it has fetched.
+            const Identifier* key = modules->resolvedKeyIfKnown(ModuleID(entry.module));
+            std::optional<ModuleID> file = key ? findByKey(*key) : m_table.findByPath(table.pathText(ModuleID(entry.module)));
             if (!file)
                 continue;
             uint32_t withExports = moduleWithExportsOf(*file).index();
@@ -2464,21 +2469,29 @@ bool Modules::seesMockOf(ModuleID mocked, ModuleID importer) const
 {
     if (importsOriginalBesideMock(mocked, importer)) [[unlikely]]
         return false;
+    if (auto [modules, file] = fileInImageBelow(mocked); modules) [[unlikely]]
+        return modules->isMockSeenFrom(file, *this, importer);
+    return isMockSeenFrom(mocked, *this, importer);
+}
+
+// The image that holds the module knows of the mock, the image of the importer when the importer was loaded. One clock goes for all.
+bool Modules::isMockSeenFrom(ModuleID mocked, const Modules& image, ModuleID importer) const
+{
     if (m_mocksOverModulesThatHaveRun.isEmpty()) [[likely]]
         return true;
     auto mock = m_mocksOverModulesThatHaveRun.find(m_table.fileBehindFace(mocked).value_or(mocked));
-    if (mock == m_mocksOverModulesThatHaveRun.end())
+    if (mock == m_mocksOverModulesThatHaveRun.end() || image.m_momentsOfLoads.isEmpty())
         return true;
     // Whoever comes to the face of the file has been asked.
-    if (m_table.fileBehindFace(importer) == std::optional(mock->key))
+    if (&image == this && m_table.fileBehindFace(importer) == std::optional(mock->key))
         return true;
-    if (auto anew = m_momentsLoadedAnew.find(importer); anew != m_momentsLoadedAnew.end() && anew->value.momentOfTestFile == mock->value.momentOfTestFile && anew->value.moment > mock->value.momentThisWasLaid) [[unlikely]]
+    if (auto anew = image.m_momentsLoadedAnew.find(importer); anew != image.m_momentsLoadedAnew.end() && anew->value.momentOfTestFile == mock->value.momentOfTestFile && anew->value.moment > mock->value.momentThisWasLaid) [[unlikely]]
         return true;
-    uint32_t place = placeOfMomentOfLoad(importer);
-    uint32_t momentLoaded = m_momentsOfLoads[place];
+    uint32_t place = image.placeOfMomentOfLoad(importer);
+    uint32_t momentLoaded = image.m_momentsOfLoads[place];
     if (!momentLoaded || momentLoaded > mock->value.momentLaid)
         return true;
-    return !m_loadedInPreload.get(place) && momentLoaded < mock->value.momentOfTestFile;
+    return !image.m_loadedInPreload.get(place) && momentLoaded < mock->value.momentOfTestFile;
 }
 
 // What setMockInPlace() does for a module of which nothing was filled, for one that has run. Its variables, its status, its namespace object and its record stay what they are.
@@ -3010,7 +3023,66 @@ const MockOperations* mockOperations()
     return &Modules::mockOperations();
 }
 
+std::pair<Modules*, ModuleID> Modules::fileInImageBelow(ModuleID external) const
+{
+    const Identifier* key = m_instance.vm->aotState().hasSeveralImages && data(external).isUncompiledCode() ? resolvedKeyIfKnown(external) : nullptr;
+    for (Instance* below = key ? m_instance.globalObject->aotInstance() : nullptr; below && below != &m_instance; below = below->above) {
+        Modules* modules = below->state ? below->state->modules.get() : nullptr;
+        std::optional<ModuleID> file = modules ? modules->findByKey(*key) : std::nullopt;
+        if (file && !modules->data(*file).isUncompiledCode())
+            return { modules, *file };
+    }
+    return { nullptr, external };
+}
+
+// `bun test` loads such an importer anew and links it to what stands then. Here no body runs again: the importer takes what it has of the files anew.
+void Modules::linkAnewToFilesOfImagesBelow()
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    bool hasTakenAny = false;
+    while (!m_importersToLinkAnewToFilesBelow.isEmpty()) {
+        ModuleID importer(static_cast<uint32_t>(*m_importersToLinkAnewToFilesBelow.begin()));
+        m_importersToLinkAnewToFilesBelow.clear(importer.index());
+        bool hasTakenOne = false;
+        for (const ModuleRequestData& request : m_table.imports(importer)) {
+            ModuleID external = request.targetModule();
+            LoadedModule* loaded = data(external).isUncompiledCode() ? loadedIfExists(external) : nullptr;
+            if (!loaded || !loaded->uncompiledRecord)
+                continue;
+            // A file that was taken out of its image is the loader's to bring.
+            auto [modules, file] = fileInImageBelow(external);
+            if (!modules || modules->isEvicted(file))
+                continue;
+            loaded->uncompiledRecord.set(*this, nullptr);
+            setNamespace(external, ModulePhase::Evaluation, nullptr);
+            JSObject* namespaceObject = uncompiledNamespace(external, ModulePhase::Evaluation, data(external).isUncompiledCodeImportedAsNamespace() ? NamespaceUse::IsShownToProgram : NamespaceUse::CarriesBindings);
+            RETURN_IF_EXCEPTION(scope, void());
+            setValue(external, namespaceObject);
+            hasTakenOne = true;
+        }
+        if (!hasTakenOne)
+            continue;
+        hasTakenAny = true;
+        fillDeferredExports(importer);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    if (hasTakenAny)
+        RELEASE_AND_RETURN(scope, takeNamesBehindFollowedStarsAnew());
+}
+
 bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    bool factoryHasNotSettled = runMocksBelowInImages(root, rootOfLoad);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!factoryHasNotSettled && !m_importersToLinkAnewToFilesBelow.isEmpty()) [[unlikely]] {
+        linkAnewToFilesOfImagesBelow();
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return factoryHasNotSettled;
+}
+
+bool Modules::runMocksBelowInImages(ModuleID root, RootOfLoad rootOfLoad)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3020,11 +3092,19 @@ bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
     }
     if (!m_endedMocks.isEmpty()) [[unlikely]]
         linkAnewWhoeverReadsEndedMockBelow(root);
-    if (m_modulesWithMockToRun.isEmpty()) [[likely]]
+    // A file imports from its own image and from those below.
+    bool mockWaitsInImageBelow = false;
+    if (vm.aotState().hasSeveralImages) [[unlikely]] {
+        for (Instance* instance = m_instance.globalObject->aotInstance(); instance && instance != &m_instance; instance = instance->above) {
+            Modules* modules = instance->state ? instance->state->modules.get() : nullptr;
+            mockWaitsInImageBelow |= modules && !modules->m_modulesWithMockToRun.isEmpty();
+        }
+    }
+    if (m_modulesWithMockToRun.isEmpty() && !mockWaitsInImageBelow) [[likely]]
         return false;
     // The walk does nothing where it comes to none of them.
     MocksBelowRoot mocks = mocksBelow(root);
-    bool mayComeToOne = false;
+    bool mayComeToOne = mockWaitsInImageBelow;
     for (size_t module : m_modulesWithMockToRun)
         mayComeToOne |= !isMocked(ModuleID(module)) || !mocks.hides(ModuleID(module));
     if (!mayComeToOne)
@@ -3065,6 +3145,15 @@ bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
         }
         if (isMocked(module))
             continue;
+        // The graph goes on in the image that holds the file.
+        if (auto [modules, file] = mockWaitsInImageBelow ? fileInImageBelow(module) : std::pair<Modules*, ModuleID> { nullptr, module }; modules) [[unlikely]] {
+            RunningImageScope imageOfFile(vm.aotState(), modules->m_instance.program);
+            bool factoryHasNotSettled = modules->runMocksBelow(file, isImportedByStatement ? RootOfLoad::IsImportedByStatement : RootOfLoad::BeginsLoad);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (factoryHasNotSettled)
+                return true;
+            continue;
+        }
         // Depth first, in the order of the text: what is taken first is appended last.
         for (const ModuleRequestData& request : m_table.requests(module) | std::views::reverse) {
             // The load of a module that keeps the module itself does not come to the mock. A require() runs the factory of its own file where it stands; the face of a CommonJS file asks for the file as an import does.
