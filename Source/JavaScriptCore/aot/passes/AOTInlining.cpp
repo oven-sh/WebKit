@@ -53,6 +53,7 @@
 #include "AOTTypePropagation.h"
 #include "AOTValueFlowRules.h"
 #include "AOTValueIdentity.h"
+#include "AOTVirtualObject.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -3201,6 +3202,62 @@ static const InliningSummary& inliningSummaryOf(FunctionPassContext& context, Fu
     });
 }
 
+static FunctionID libraryFunctionFor(const Program&, BuiltinID);
+
+// A body that is taken in brings its array methods after it. Only a method that is taken in too gives way to the traversal, which joins it to its neighbors: `list.filter(f).map(g)` in a helper
+// is one loop without a call or a list between, and in a copy of the helper whose filter() and map() found the allowance of the caller spent it is two loops, two lists and a call for every element.
+// So the body asks for the room of its methods with its own, and where there is none the helper stays a call.
+// A function that the body is passed is known to the copy alone, and an object that the caller makes for the call is made only where the call stays: such a copy pays whatever it refuses.
+static uint32_t bytesOfArrayMethodsHandedFunctions(FunctionPassContext& context, const InliningSummary& summary, const Function& function)
+{
+    AtomicRef answer(summary.bytesOfArrayMethodsHandedFunctions);
+    if (uint16_t known = answer.load(std::memory_order_relaxed); known != InliningSummary::bytesNotAsked)
+        return known;
+    const Program& program = context.program;
+    uint64_t bytes = 0;
+    for (const Block& block : function.blocks) {
+        for (ValueID id : block.values) {
+            // In the body that is copied a method is still called by its name. Few calls are handed a function, and that is asked first: it costs no look at a name.
+            const Value& value = function.at(id);
+            if (!opcodesOfArrayMethodCallsWithoutTests.contains(value.opcode))
+                continue;
+            bool isHandedFunction = false;
+            for (uint32_t operand = 0; operand < value.numberOfOperands() && !isHandedFunction; ++operand)
+                isHandedFunction = value.operand(operand) && program.typeOf(function, value.operand(operand)).singleFunction();
+            if (!isHandedFunction)
+                continue;
+            std::optional<ArrayMethodCall> call = arrayMethodCallOf(program, function, id, ChainOperandProofs::MayStillCome);
+            if (!call || !call->method->takesCallback || !call->argumentOrNull(0))
+                continue;
+            FunctionID handed = program.typeOf(function, call->argumentOrNull(0)).singleFunction();
+            FunctionID method = handed ? libraryFunctionFor(program, call->method->builtin) : FunctionID();
+            if (method)
+                bytes += uint64_t { inliningSummaryOf(context, method).codeBytes } + inliningSummaryOf(context, handed).codeBytes;
+        }
+    }
+    uint16_t made = static_cast<uint16_t>(std::min<uint64_t>(bytes, InliningSummary::bytesNotAsked - 1));
+    answer.store(made, std::memory_order_relaxed);
+    return made;
+}
+
+static uint64_t bytesOfArrayMethodsThatComeAlong(FunctionPassContext& context, const InlineSite& site)
+{
+    const Function& caller = context.function;
+    const Value& call = caller.at(site.call);
+    const Function& callee = context.program.at(call.function());
+    if (partToCopy(site) != InlinedPart::WholeBody || !callee.hasBody())
+        return 0;
+    uint32_t bytes = bytesOfArrayMethodsHandedFunctions(context, *site.summary, callee);
+    if (!bytes || site.verdict.benefits.contains(InlineBenefit::SunkAllocation) || isCold(heatClassOf(context, site.block)).predicted())
+        return 0;
+    for (uint32_t operand = 0; operand < call.numberOfOperands(); ++operand) {
+        // The credit is worked out only for a call that is short of budget.
+        if (call.operand(operand) && opcodesInterpretedAs(Interpretation::Allocation).contains(caller.at(sameObjectThroughCasts(caller, call.operand(operand))).opcode))
+            return 0;
+    }
+    return bytes;
+}
+
 static void spendCallerBudget(FunctionPassContext& context, Vector<InlineSite>& sites)
 {
     Vector<uint32_t, 8> order;
@@ -3267,9 +3324,10 @@ static void spendCallerBudget(FunctionPassContext& context, Vector<InlineSite>& 
         if (costBytes && !site.verdict.benefits.contains(InlineBenefit::Wrapper) && !call.isAlwaysInlined()) {
             if (!inlinedBytes)
                 inlinedBytes = computeInlinedBytes();
-            if (context.exceeds(LimitID::MaxInlinedCallerBytes, *inlinedBytes + costBytes, site.call))
+            uint64_t bytesWithMethods = costBytes + bytesOfArrayMethodsThatComeAlong(context, site);
+            if (context.exceeds(LimitID::MaxInlinedCallerBytes, *inlinedBytes + bytesWithMethods, site.call))
                 return false;
-            *inlinedBytes += costBytes;
+            *inlinedBytes += bytesWithMethods;
         }
         frameCount = frameCountWithCopy;
         return true;
