@@ -106,7 +106,8 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
         }
         add(ValueFlowProgramNodes::escaped(), m_context.restrict(known(sources), ValueSets::complement(m_tables.objectsHoldingOnlyWhatWasWritten())));
     }
-    if (hasEscaped(known(targets))) {
+    bool isLaidOnRealm = m_context.meet(targets, m_tables.objectsOfRealm()) && !m_context.isSabotaged(Sabotage::AccessorsCopiedOntoTheRealmStayHidden);
+    if (hasEscaped(known(targets)) || isLaidOnRealm) {
         ClimbingSet all = allSources;
         ClimbingSet read = m_context.restrict(all, m_tables.objectsHoldingOnlyWhatWasWritten());
         add(ValueFlowProgramNodes::escaped(), m_context.restrict(all, ValueSets::complement(m_tables.objectsHoldingOnlyWhatWasWritten())));
@@ -117,10 +118,6 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
             connect(m_context.readWhatWasWritten(read, everyGetter), ValueFlowProgramNodes::escaped());
             connect(m_context.readWhatWasWritten(read, everySetter), ValueFlowProgramNodes::escaped());
         }
-    }
-    if (keepsAccessors && m_context.meet(targets, m_tables.objectsOfRealm()) && !m_context.isSabotaged(Sabotage::AccessorsCopiedOntoTheRealmStayHidden)) {
-        connect(m_context.readWhatWasWritten(allSources, everyGetter), ValueFlowProgramNodes::escaped());
-        connect(m_context.readWhatWasWritten(allSources, everySetter), ValueFlowProgramNodes::escaped());
     }
 
     if (holdsAnything(proxies)) {
