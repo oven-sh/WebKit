@@ -923,7 +923,7 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
     // values on each, edges times values. The definition that reaches the tail of a block stands in the nearest block at or above it that defines the variable, so two blocks with the same
     // nearest block that defines any of the variables joined there are reached by the same definitions of them. Their edges are gathered: they lead to one block that only jumps, and that jump
     // carries the arguments.
-    AOT_THRESHOLD(size_t, fewestEdgesGathered, std::numeric_limits<size_t>::max());
+    AOT_THRESHOLD(size_t, fewestEdgesGathered, 16);
     constexpr uint32_t notGathered = std::numeric_limits<uint32_t>::max();
     struct GatheredJoin {
         Vector<uint32_t> columnOfEdge;
@@ -1082,7 +1082,7 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
         std::span<const Edge> incoming = cfg.incomingEdges(BlockID(index));
         size_t first = columnsToGather.size();
         for (uint32_t firstEdge : gathered.firstEdgeOfColumn)
-            columnsToGather.append({ BlockID(index), { incoming[firstEdge] } });
+            columnsToGather.append({ BlockID(index), static_cast<uint32_t>(addedIn(BlockID(index)).size()), { incoming[firstEdge] } });
         for (uint32_t indexOfEdge = 0; indexOfEdge < incoming.size(); ++indexOfEdge) {
             if (gathered.firstEdgeOfColumn[gathered.columnOfEdge[indexOfEdge]] != indexOfEdge)
                 columnsToGather[first + gathered.columnOfEdge[indexOfEdge]].edges.append(incoming[indexOfEdge]);
@@ -1095,16 +1095,38 @@ void SSARepair::gatherEdges()
     Function& function = m_builder.function();
     std::optional<Target> handlerOfBuilder = m_builder.handler();
     m_builder.setHandler(std::nullopt);
+    Vector<Edge> edgesWithSameArguments;
     for (const EdgesToGather& column : m_edgesToGather) {
         if (column.edges.size() == 1)
+            continue;
+        // The columns were formed in front of the renaming of uses, by the variables that are joined here. A variable that is only named on the edges may have got another definition on each since.
+        // What was appended to the first edge holds for them all.
+        const Arguments argumentsOfFirst = targetOf(function, column.edges.first()).arguments;
+        edgesWithSameArguments.shrink(0);
+        edgesWithSameArguments.append(column.edges.first());
+        for (Edge edge : column.edges.span().subspan(1)) {
+            const Arguments& own = targetOf(function, edge).arguments;
+            RELEASE_ASSERT(own.size() + column.numberOfAppendedArguments == argumentsOfFirst.size());
+            if (std::ranges::equal(own, argumentsOfFirst.span().first(own.size()))) {
+                edgesWithSameArguments.append(edge);
+                continue;
+            }
+            Arguments whole = own;
+            for (ValueID appended : argumentsOfFirst.span().subspan(own.size()))
+                whole.append(appended);
+            m_builder.redirectEdge(edge, column.join, WTF::move(whole));
+        }
+        if (edgesWithSameArguments.size() == 1)
             continue;
         BlockID gathering = m_builder.addBlock(function.at(column.join).frequency);
         Terminator& jump = function.edit(gathering, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
         jump.become(TerminatorKind::Jump);
-        jump.targets.append(Target { column.join, Arguments(targetOf(function, column.edges.first()).arguments), { } });
+        jump.targets.append(Target { column.join, Arguments(argumentsOfFirst), { } });
         jump.setOrigin(function.at(column.edges.first().from).terminator.origin());
-        for (Edge edge : column.edges)
+        for (Edge edge : edgesWithSameArguments) {
+            RELEASE_ASSERT(edge == column.edges.first() || std::ranges::equal(targetOf(function, edge).arguments, argumentsOfFirst.span().first(argumentsOfFirst.size() - column.numberOfAppendedArguments)));
             m_builder.redirectEdge(edge, gathering, { });
+        }
     }
     m_builder.setHandler(WTF::move(handlerOfBuilder));
 }

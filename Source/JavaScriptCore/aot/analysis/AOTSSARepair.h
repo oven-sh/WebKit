@@ -70,6 +70,7 @@ private:
     Vector<VariableData> m_variables;
     struct EdgesToGather {
         BlockID join;
+        uint32_t numberOfAppendedArguments;
         Vector<Edge> edges;
     };
     Vector<EdgesToGather> m_edgesToGather;
