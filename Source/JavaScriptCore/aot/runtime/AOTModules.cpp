@@ -1059,20 +1059,27 @@ Vector<ModuleID, 8> Modules::filesImportedByImagesAbove(ImportersAbove which) co
     Vector<ModuleID, 8> files;
     if (!m_instance.vm->aotState().hasSeveralImages) [[likely]]
         return files;
+    Vector<const Modules*, 4> imagesAbove;
     for (Instance* above = m_instance.above; above; above = above->above) {
-        const Modules* modules = above->state ? above->state->modules.get() : nullptr;
-        if (!modules)
-            continue;
+        if (const Modules* modules = above->state ? above->state->modules.get() : nullptr)
+            imagesAbove.append(modules);
+    }
+    // From the topmost image down: a file of an image between, which an image above it imports, goes on importing there.
+    Vector<Vector<ModuleID, 8>, 4> importedFromAbove(imagesAbove.size());
+    for (size_t place = imagesAbove.size(); place--;) {
+        const Modules* modules = imagesAbove[place];
         const ModuleTable& table = modules->m_table;
         BitVector seen(table.size());
         Vector<ModuleID, 32> work;
+        for (ModuleID file : importedFromAbove[place]) {
+            if (!seen.quickSet(file.index()))
+                work.append(file);
+        }
         for (uint32_t index = 0; index < table.size(); ++index) {
             ModuleStatus current = modules->status(ModuleID(index));
             bool isImporter = which == ImportersAbove::HaveBegun ? current > ModuleStatus::Linked : current == ModuleStatus::Evaluating || current == ModuleStatus::EvaluatingAsync;
-            if (isImporter) {
-                seen.quickSet(index);
+            if (isImporter && !seen.quickSet(index))
                 work.append(ModuleID(index));
-            }
         }
         while (!work.isEmpty()) {
             ModuleID importer = work.takeLast();
@@ -1081,10 +1088,22 @@ Vector<ModuleID, 8> Modules::filesImportedByImagesAbove(ImportersAbove which) co
                 continue;
             if (modules->data(importer).isUncompiledCode()) {
                 // The loader has resolved what it has fetched.
-                const LoadedModule* loaded = modules->loadedIfExists(importer);
-                std::optional<ModuleID> file = loaded && !loaded->resolvedKey.isNull() ? findByKey(loaded->resolvedKey) : std::nullopt;
-                if (file)
-                    files.append(m_table.faceOfFile(*file).value_or(*file));
+                const Identifier* key = modules->resolvedKeyIfKnown(importer);
+                if (!key)
+                    continue;
+                auto fileOf = [&](const Modules& image) -> std::optional<ModuleID> {
+                    std::optional<ModuleID> file = image.findByKey(*key);
+                    if (!file || image.data(*file).isUncompiledCode())
+                        return std::nullopt;
+                    return image.m_table.faceOfFile(*file).value_or(*file);
+                };
+                std::optional<ModuleID> file;
+                for (size_t between = place; between-- && !file;) {
+                    if ((file = fileOf(*imagesAbove[between])))
+                        importedFromAbove[between].append(*file);
+                }
+                if (!file && (file = fileOf(*this)))
+                    files.append(*file);
                 continue;
             }
             for (const ModuleRequestData& request : table.requests(importer)) {
@@ -4399,6 +4418,15 @@ const Identifier& Modules::resolvedKey(ModuleID external)
     // A file under a query is one more instance of the file.
     m_runsCopyFromDisk |= loaded.resolvedKey.string().contains('?');
     return loaded.resolvedKey;
+}
+
+const Identifier* Modules::resolvedKeyIfKnown(ModuleID external) const
+{
+    const Vector<Identifier>& keysOfFilesBelow = m_instance.vm->aotState().parts[m_instance.program->position()].keysOfFilesInImagesBelow;
+    if (external.index() < keysOfFilesBelow.size() && !keysOfFilesBelow[external.index()].isNull())
+        return &keysOfFilesBelow[external.index()];
+    const LoadedModule* loaded = loadedIfExists(external);
+    return loaded && !loaded->resolvedKey.isNull() ? &loaded->resolvedKey : nullptr;
 }
 
 void Modules::forgetWhatNamesResolvedTo()

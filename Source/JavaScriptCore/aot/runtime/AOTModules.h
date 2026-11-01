@@ -842,6 +842,8 @@ private:
     std::optional<int64_t> asyncEvaluationOrder(ModuleID) const;
     ModuleRecord* registerWithLoader(ModuleID, RecordHolder = RecordHolder::Anyone);
     const Identifier& resolvedKey(ModuleID);
+    // What resolvedKey() has answered. Null where nobody has asked it.
+    const Identifier* resolvedKeyIfKnown(ModuleID) const;
 
     State& m_state;
     Instance& m_instance;
