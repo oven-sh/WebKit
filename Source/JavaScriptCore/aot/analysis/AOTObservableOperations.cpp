@@ -132,10 +132,20 @@ static bool onlyThrowsAgain(const Function& function, BlockID handler)
         && block.terminator.kind == TerminatorKind::Rethrow && block.terminator.exceptionOperand() == block.values.first();
 }
 
+// A body that is not typed yet says nothing about what its operations do. One without any value has nothing to type: all that stood in it has gone.
+static bool hasUntypedValues(const Function& function)
+{
+    for (const Block& block : function.blocks) {
+        if (!block.values.isEmpty())
+            return !function.at(block.values[0]).type;
+    }
+    return false;
+}
+
 Vector<OperationThatWent> findOperationsThatWentWithoutReason(const EffectContext& context, const Function& before, const Function& after, ReasonsForOperationsThatWent& reasons)
 {
     Vector<OperationThatWent> result;
-    if (reasons.hasLostTrack() || !before.hasBody() || !after.hasBody() || before.bodyIsReleased || after.bodyIsReleased || !hasTypedValues(before) || !hasTypedValues(after))
+    if (reasons.hasLostTrack() || !before.hasBody() || !after.hasBody() || before.bodyIsReleased || after.bodyIsReleased || !hasTypedValues(before) || hasUntypedValues(after))
         return result;
 
     CFG cfgBefore(before);
