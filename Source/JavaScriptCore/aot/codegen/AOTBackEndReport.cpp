@@ -150,6 +150,8 @@ static StatisticID statisticOf(B3::Counter counter)
         return StatisticID::StepsToCommonLikelyDominators;
     case B3::Counter::ClobberPointsReadForCalls:
         return StatisticID::ClobberPointsReadForCalls;
+    case B3::Counter::PhiPlacementSteps:
+        return StatisticID::PhiPlacementSteps;
     case B3::Counter::AccessesReadForWordsCarriedAroundLoops:
         return StatisticID::AccessesReadForWordsCarriedAroundLoops;
     case B3::Counter::LoopsSearchedForWordsToCarry:

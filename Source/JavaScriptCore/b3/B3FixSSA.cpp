@@ -181,7 +181,9 @@ public:
     using BlockList = Vector<BasicBlock*, 2>;
 
     LivePhiFinder(Procedure& proc)
-        : m_setBlocks(proc.variables().size())
+        : m_proc(proc)
+        , m_dominators(proc.dominators())
+        , m_setBlocks(proc.variables().size())
         , m_getBlocks(proc.variables().size())
         , m_firstDominated(proc.size(), UINT_MAX)
         , m_lastDominated(proc.size(), UINT_MAX)
@@ -204,7 +206,7 @@ public:
             }
         }
 
-        auto& dominators = proc.dominators();
+        auto& dominators = m_dominators;
         unsigned nextNumber = 1;
         dominators.forAllBlocksInDominatorTreePreOrder(
             [&](BasicBlock* block) {
@@ -223,7 +225,10 @@ public:
             },
             [&](BasicBlock* block) { m_lastDominated[block] = nextNumber - 1; });
         m_frontiers.finish();
+        m_numberOfBlocks = nextNumber;
     }
+
+    uint64_t numberOfSteps() const { return m_numberOfSteps; }
 
     // Calls functor(block) for each block where the variable needs a Phi.
     template<typename Functor>
@@ -287,7 +292,7 @@ private:
         // Either search answers alone. The first is short when the variable is live in few blocks, the second when few
         // joins follow the Sets, so they take turns and the cost stays within a constant factor of the shorter one.
         for (unsigned budget = 64;; budget *= 2) {
-            m_isLivenessComplete = findLiveBlocks(budget);
+            m_isLivenessComplete = findLiveBlocks(budget, setBlocks);
             if (m_isLivenessComplete)
                 return;
             if (findCandidates(budget)) {
@@ -353,26 +358,152 @@ private:
         return true;
     }
 
-    bool findLiveBlocks(unsigned budget)
+    // Walks backward block by block until the walks in this procedure have cost about as much as building the skip tables, which is roughly one pass over the
+    // procedure. After that it skips up the dominator tree.
+    bool findLiveBlocks(unsigned budget, const BlockList& setBlocks)
     {
+        auto markLiveAtTail = [&](BasicBlock* block) {
+            if (m_hasSet[block] == m_epoch) {
+                m_isSetRead[block] = m_epoch;
+                return;
+            }
+            if (std::exchange(m_isLiveAtHead[block], m_epoch) == m_epoch)
+                return;
+            m_liveWorklist.append(block);
+            m_liveBlocks.append(block);
+        };
         while (!m_liveWorklist.isEmpty()) {
             if (!budget)
                 return false;
             BasicBlock* block = m_liveWorklist.takeLast();
-            for (BasicBlock* predecessor : block->predecessors()) {
-                if (m_hasSet[predecessor] == m_epoch) {
-                    m_isSetRead[predecessor] = m_epoch;
-                    continue;
-                }
-                if (m_isLiveAtHead[predecessor] == m_epoch)
-                    continue;
-                m_isLiveAtHead[predecessor] = m_epoch;
-                m_liveWorklist.append(predecessor);
-                m_liveBlocks.append(predecessor);
+            unsigned number = m_firstDominated[block];
+            unsigned steps = 1;
+            unsigned top = number;
+            if (number != UINT_MAX && m_numberOfSteps > skipTableCostPerBlock * m_numberOfBlocks) {
+                buildDominatorSkipTables(setBlocks);
+                top = highestDominatorWithSameLiveness(number);
+                steps += skipCost + m_setNumbers.size();
             }
-            budget -= std::min<unsigned>(budget, block->numPredecessors() + 1);
+            if (top == number) {
+                for (BasicBlock* predecessor : block->predecessors())
+                    markLiveAtTail(predecessor);
+                steps += block->numPredecessors();
+            } else {
+                // All other predecessors are in the skipped region.
+                for (auto edge = std::ranges::lower_bound(m_backEdges, number, { }, &BackEdge::to); edge != m_backEdges.end() && edge->to == number; ++edge) {
+                    markLiveAtTail(m_blockByNumber[edge->from]);
+                    ++steps;
+                }
+                markLiveAtTail(m_blockByNumber[top]);
+            }
+            m_numberOfSteps += steps;
+            budget -= std::min(budget, steps);
         }
         return true;
+    }
+
+    static constexpr unsigned skipCost = 8;
+    static constexpr unsigned skipTableCostPerBlock = 4;
+
+    // Blocks are identified by their dominator tree preorder numbers. 0 is a sentinel above the root.
+    void buildDominatorSkipTables(const BlockList& setBlocks)
+    {
+        if (std::exchange(m_setNumbersEpoch, m_epoch) != m_epoch) {
+            m_setNumbers.shrink(0);
+            for (BasicBlock* block : setBlocks) {
+                if (m_firstDominated[block] != UINT_MAX)
+                    m_setNumbers.append(m_firstDominated[block]);
+            }
+            std::ranges::sort(m_setNumbers);
+        }
+        if (!m_parent.isEmpty())
+            return;
+
+        unsigned size = m_numberOfBlocks;
+        m_blockByNumber.fill(nullptr, size);
+        for (BasicBlock* block : m_proc) {
+            if (m_firstDominated[block] != UINT_MAX)
+                m_blockByNumber[m_firstDominated[block]] = block;
+        }
+        m_parent.fill(0, size);
+        m_jumpPointer.fill(0, size);
+        m_depth.fill(0, size);
+        m_lastDominatedByNumber.fill(0, size);
+        m_deepestExitAnchor.fill(0, size);
+        for (unsigned number = 1; number < size; ++number) {
+            BasicBlock* block = m_blockByNumber[number];
+            BasicBlock* idom = m_dominators.idom(block);
+            unsigned parent = idom ? m_firstDominated[idom] : 0;
+            unsigned parentJump = m_jumpPointer[parent];
+            m_parent[number] = parent;
+            m_depth[number] = m_depth[parent] + 1;
+            m_jumpPointer[number] = m_depth[parent] - m_depth[parentJump] == m_depth[parentJump] - m_depth[m_jumpPointer[parentJump]] ? m_jumpPointer[parentJump] : parent;
+            m_lastDominatedByNumber[number] = m_lastDominated[block];
+        }
+
+        // An edge into a join exits the dominator subtree of every block between its source and its anchor. The anchor is the join itself for a back edge, and the
+        // join's immediate dominator otherwise. Each block records the deepest anchor among the edges that exit its subtree.
+        struct ExitEdge {
+            unsigned anchor;
+            unsigned from;
+        };
+        Vector<ExitEdge> exitEdges;
+        for (unsigned position = 0; position < m_frontiers.size(); ++position) {
+            const FrontierEdges::Edge& edge = m_frontiers.at(position);
+            unsigned join = m_firstDominated[edge.join];
+            bool isBackEdge = join <= edge.from && edge.from <= m_lastDominatedByNumber[join];
+            if (isBackEdge)
+                m_backEdges.append({ join, edge.from });
+            exitEdges.append({ isBackEdge ? join : m_parent[join], edge.from });
+        }
+        std::ranges::sort(m_backEdges, { }, &BackEdge::to);
+        std::ranges::sort(exitEdges, std::ranges::greater { }, &ExitEdge::anchor);
+        Vector<unsigned> nextUnanchored(size, [](size_t index) { return static_cast<unsigned>(index); });
+        auto find = [&](unsigned number) {
+            while (nextUnanchored[number] != number) {
+                nextUnanchored[number] = nextUnanchored[nextUnanchored[number]];
+                number = nextUnanchored[number];
+            }
+            return number;
+        };
+        for (auto [anchor, from] : exitEdges) {
+            for (unsigned number = find(from); number > anchor; number = find(number)) {
+                m_deepestExitAnchor[number] = anchor;
+                nextUnanchored[number] = m_parent[number];
+            }
+        }
+    }
+
+    // Given that the variable is live at the head of `start`, returns the highest dominator D of `start` such that, within D's subtree excluding D itself:
+    // - no edge enters from start's subtree, other than edges that stay inside start's subtree, and
+    // - every Set is either in start's subtree, or does not dominate `start` and has no edge entering from its own subtree, other than edges that stay inside it.
+    // The variable is then live at the head of D too. The region between D and `start`, outside those subtrees, contains no Set and can be reached from a Set only
+    // through D, so it contains no join in the iterated dominance frontier of the Sets and nothing in it needs to be visited.
+    unsigned highestDominatorWithSameLiveness(unsigned start)
+    {
+        unsigned deepestExitAnchor = m_deepestExitAnchor[start];
+        unsigned lastDominatedByStart = m_lastDominatedByNumber[start];
+        auto canSkipTo = [&](unsigned number) {
+            if (number <= deepestExitAnchor)
+                return false;
+            auto end = std::ranges::upper_bound(m_setNumbers, m_lastDominatedByNumber[number]);
+            for (auto set = std::ranges::lower_bound(m_setNumbers, number); set != end; ++set) {
+                if (*set >= start && *set <= lastDominatedByStart)
+                    continue;
+                bool setDominatesStart = *set < start && start <= m_lastDominatedByNumber[*set];
+                if (setDominatesStart || m_deepestExitAnchor[*set] >= number)
+                    return false;
+            }
+            return true;
+        };
+        for (unsigned result = start;;) {
+            if (canSkipTo(m_jumpPointer[result]))
+                result = m_jumpPointer[result];
+            else if (canSkipTo(m_parent[result]))
+                result = m_parent[result];
+            else
+                return result;
+        }
     }
 
     // Follows each Get to the definition that reaches it, and each Phi found that way to the definitions that reach the
@@ -451,6 +582,8 @@ private:
         m_readPhis.append(block);
     }
 
+    Procedure& m_proc;
+    Dominators& m_dominators;
     FrontierEdges m_frontiers;
     Vector<BlockList> m_setBlocks;
     Vector<BlockList> m_getBlocks;
@@ -480,6 +613,22 @@ private:
     Vector<Site, 16> m_sites;
     Vector<unsigned, 16> m_openSites;
     Vector<Boundary, 32> m_boundaries;
+
+    unsigned m_numberOfBlocks { 0 };
+    Vector<BasicBlock*> m_blockByNumber;
+    Vector<unsigned> m_parent;
+    Vector<unsigned> m_jumpPointer;
+    Vector<unsigned> m_depth;
+    Vector<unsigned> m_lastDominatedByNumber;
+    Vector<unsigned> m_deepestExitAnchor;
+    struct BackEdge {
+        unsigned to;
+        unsigned from;
+    };
+    Vector<BackEdge> m_backEdges;
+    Vector<unsigned, 8> m_setNumbers;
+    unsigned m_setNumbersEpoch { 0 };
+    uint64_t m_numberOfSteps { 0 };
 };
 
 void fixSSAGlobally(Procedure& proc, IndexSet<Value*>& valuesToDelete)
@@ -510,6 +659,7 @@ void fixSSAGlobally(Procedure& proc, IndexSet<Value*>& valuesToDelete)
                 phisAtHead[block].append({ variable, phi });
             });
         }
+        proc.count(Counter::PhiPlacementSteps, static_cast<uint32_t>(std::min<uint64_t>(livePhiFinder.numberOfSteps(), std::numeric_limits<uint32_t>::max() / 2)));
     }
 
     // Now perform the conversion.

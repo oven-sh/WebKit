@@ -66,6 +66,7 @@ enum class Counter : uint8_t {
     StepsToReleaseDeadValues,
     RangesHeldAgainstStackCells,
     ClobberPointsReadForCalls,
+    PhiPlacementSteps,
     AccessesReadForWordsCarriedAroundLoops,
     LoopsSearchedForWordsToCarry,
     LoopsWithNoBlockAheadToReadWordsIn,
@@ -85,7 +86,7 @@ enum class Counter : uint8_t {
     StepsToCommonLikelyDominators,
 };
 
-static constexpr unsigned numberOfCounters = 35;
+static constexpr unsigned numberOfCounters = 36;
 static_assert(static_cast<unsigned>(Counter::StepsToCommonLikelyDominators) + 1 == numberOfCounters);
 
 struct LimitHit {
