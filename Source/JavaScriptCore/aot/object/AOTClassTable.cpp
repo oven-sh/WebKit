@@ -1115,7 +1115,7 @@ bool ClassDefinition::hasAssumedBase() const
 void ClassDefinition::armGuards()
 {
     using HolderState = ClassTable::HolderState;
-    if (m_requestedPart == ClassPart::Everything && m_classes.tryLeaveHoldersOut(m_vm, m_classLayout, m_prototype))
+    if (m_requestedPart == ClassPart::Everything && m_classes.tryLeaveHoldersOut(m_vm, m_classLayout, m_classObject, m_prototype))
         return;
     bool holdersHaveWhatRecordSays = m_hasOnlyPlainMembers && !m_hasMembersCreatedAtDefinition && !isShared() && m_earlyStores.keysAndAttributes.isEmpty() && m_earlyPrototypeStores.keysAndAttributes.isEmpty();
     HolderState stateOfPrototype = holdersHaveWhatRecordSays ? HolderState::AsDefinitionMadeIt : HolderState::Unknown;
@@ -1261,7 +1261,7 @@ bool ClassTable::tryDefineAgainWithKeptStructures(JSGlobalObject* globalObject, 
     classObject->setStructure(vm, kept.classObjectStructure);
     classObject->putDirectOffset(vm, offsetOfPrototype, prototype);
     prototype->putDirectOffset(vm, offsetOfConstructor, classObject);
-    if (tryLeaveHoldersOut(vm, classLayout, prototype))
+    if (tryLeaveHoldersOut(vm, classLayout, classObject, prototype))
         return true;
     armMemberGuards(vm, classLayout, ClassSide::Prototype, prototype);
     armMemberGuards(vm, classLayout, ClassSide::Static, classObject);
