@@ -756,6 +756,8 @@ void PassRunner::verifyAfterProgramPass(const PassDescriptor& descriptor, const 
             continue;
         failure.function = findFunctionAsRead(&program, FunctionID(index));
         failure.detail = describeError(errors.first(), function);
+        if (printerOfFunctionsForVerifier) [[unlikely]]
+            printerOfFunctionsForVerifier(program, FunctionID(index), function, "BEHIND THE PASS OVER THE PROGRAM THAT FAILED"_s);
         break;
     }
     m_build.diagnostics().add(failure);
@@ -1118,7 +1120,12 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
 
     if (context.lookedOnlyNearby)
         run.passesThatWait.set(index);
+    bool hadErrors = m_build.diagnostics().hasErrors();
     verifyAfterFunctionPass(descriptor, context, run);
+    if (printerOfFunctionsForVerifier && functionBeforeRun && !hadErrors && m_build.diagnostics().hasErrors()) [[unlikely]] {
+        printerOfFunctionsForVerifier(context.program, context.id, *functionBeforeRun, "IN FRONT OF THE RUN THAT FAILED"_s);
+        printerOfFunctionsForVerifier(context.program, context.id, context.function, "BEHIND IT"_s);
+    }
     stopBehind(id, run);
     return outcome;
 }
