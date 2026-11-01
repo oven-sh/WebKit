@@ -3434,7 +3434,8 @@ String assignmentToLockedBuiltinMessage(VM& vm, BuiltinID holder, UniquedStringI
     const BuiltinTable& table = BuiltinTable::singleton();
     BuiltinName name = table.nameOf(vm, key);
     BuiltinID found = name ? table.findOwnMember(holder, name) : BuiltinID();
-    bool isNewName = !key->isSymbol() && !parseIndex(*key) && !found;
+    // What hides a member of an object above is refused however it is spelled.
+    bool isNewName = !key->isSymbol() && !parseIndex(*key) && !found && (!name || table.findMember(holder, name).outcome != BuiltinMemberLookup::Outcome::Found);
     bool isOpenWhereBuildSeesWrite = found ? table.at(found).mutability == BuiltinMutability::ConstantUnlessWritten : isNewName && table.canonicalID(holder) != Builtins::ObjectPrototype && table.canTakeNameInTestRuns(holder, name);
     if (isOpenWhereBuildSeesWrite)
         return assignmentThatBuildDidNotSeeMessage(memberOfLockedBuiltin(holder, key));
