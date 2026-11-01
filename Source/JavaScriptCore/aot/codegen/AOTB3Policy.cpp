@@ -159,7 +159,6 @@ static B3::LoopPolicy loopPolicyFor(const FunctionBackEndTraits& traits)
     loops.pollsBetweenStretches = true;
     loops.vectorizes = std::isfinite(traits.leastFrequencyOfWarmCode);
     loops.unrolls = std::isfinite(traits.leastFrequencyOfWarmCode);
-    loops.promotesMemory = true;
     loops.minFrequencyOfUnrolledLoop = traits.leastFrequencyOfWarmCode;
     loops.hoistsOnlyFromLikelyPaths = true;
     loops.hoistsImmutableLoadsPastWrites = true;
