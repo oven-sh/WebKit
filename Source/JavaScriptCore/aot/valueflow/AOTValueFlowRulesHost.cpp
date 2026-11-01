@@ -689,6 +689,9 @@ void runHostRoots(const ValueFlowStatement& statement, ValueFlowRuleContext& con
                 if (isAskedOfHostByName(program.modules[index])) {
                     context.add(context.nodes().ofHost(ValueFlowHostNode::ModulesOfSeenCode), only(context, universe.namespaceOf(module)));
                     evaluateModule(context, module);
+                    ClimbingSet holders = valueOf(context, requiredValueOf(context, module));
+                    for (ValueFlowNameKind kind : { ValueFlowNameKind::EveryGetter, ValueFlowNameKind::EverySetter })
+                        context.connect(context.readWhatWasWritten(holders, { kind, 0 }), ValueFlowProgramNodes::escaped());
                 }
                 ValueFlowNodeID hands = program.modules[index].kind == ModuleKind::Runtime ? ValueFlowProgramNodes::escaped() : context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode);
                 for (const ValueFlowSources& answer : { requiredValueOf(context, module), namespaceOf(context, module) })
