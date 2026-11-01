@@ -318,7 +318,7 @@ bool HeapRule::definesGettersUnderNamesOfEnumeratedParameter(const ValueFlowOper
         return false;
     ClimbingSet targets = m_context.valueOf(object);
     ClimbingSet sources = m_context.valueOf(m_context.nodes().entryParameter(id, *position));
-    if (mayBeUnknownObject(targets) || mayBeUnknownObject(sources) || m_context.contains(targets, ValueFlowUniverse::untrackedObject()) || m_context.contains(sources, ValueFlowUniverse::untrackedObject()))
+    if (mayBeUnknownObject(targets) || mayBeUnknownObject(sources) || m_context.contains(targets, ValueFlowUniverse::untrackedObject()) || m_context.contains(sources, ValueFlowUniverse::untrackedObject()) || m_context.meet(targets, m_tables.objectsOfRealm()))
         return false;
     raiseHostFlag(m_context, ValueFlowHostNode::GettersAreFoundUnderNamesOfEnumerations);
     add(m_context.written(known(targets), gettersCopiedFromName), known(sources));
