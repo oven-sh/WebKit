@@ -607,13 +607,15 @@ static void sayWhatStoresBehindFormerChecksHold(const AnalysisContext& context, 
     for (BlockID block : analyses.cfg().reversePostOrder()) {
         for (uint32_t index = 0; index < body.at(block).values.size(); ++index) {
             ValueID user = body.at(block).values[index];
-            const Value& value = body.at(user);
-            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-                if (value.operandKind(operandIndex) != OperandKind::Declared || !takesOnlyWhatFlowHolds(program, value, operandIndex))
-                    return;
+            for (uint32_t operandIndex = 0; operandIndex < body.at(user).numberOfOperands(); ++operandIndex) {
+                // A claim is a new value, and the values move when one is added.
+                const Value& value = body.at(user);
+                ValueID operand = value.operand(operandIndex);
+                if (!operand || value.operandKind(operandIndex) != OperandKind::Declared || !takesOnlyWhatFlowHolds(program, value, operandIndex))
+                    continue;
                 if (ValueID claim = claimInFrontOf({ block, index }, value.origin(), operand, requiredTypeOfOperand(typing, value, operandIndex)))
                     stores.append({ user, operandIndex, claim });
-            });
+            }
         }
         const Terminator& terminator = body.at(block).terminator;
         if (terminator.kind != TerminatorKind::Return)
