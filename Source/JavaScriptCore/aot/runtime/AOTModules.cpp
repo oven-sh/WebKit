@@ -4971,7 +4971,7 @@ JSPromise* Modules::importUncompiled(const Identifier& key, ModuleID referrer, R
             RELEASE_AND_RETURN(scope, modules->rejectImportWithErrorOfLoad(*found, ImportCaller::CompiledCode));
     }
     // A fetch of the loader waits for the factories that it starts alone: nothing says there who called. Here it shows, so the call waits as one for a file of its own image does in startImport().
-    for (Instance* instance = fetchParameters || !vm.aotState().hasSeveralImages ? nullptr : realm->aotInstance(); instance; instance = instance->above) {
+    for (Instance* instance = fetchParameters ? nullptr : realm->aotInstance(); instance; instance = instance->above) {
         Modules* modules = instance->state->modules.get();
         std::optional<ModuleID> found = modules ? modules->m_table.findByPath(key.string()) : std::nullopt;
         if (!found)
