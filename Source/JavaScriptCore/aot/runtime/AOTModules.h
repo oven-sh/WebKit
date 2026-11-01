@@ -1274,7 +1274,7 @@ private:
         bool wasLaidInPreload;
     };
     UncheckedKeyHashMap<ModuleID, Vector<EndedMock, 2>> m_endedMocks;
-    // The keys of m_importersAskedAboutOriginal that were answered with yes in this test file.
+    // The keys of m_importersAskedAboutOriginal that were ever answered with yes. The ended mock of a preload outlives the test file, and the answer hangs on what the importer is.
     mutable UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_importersThatGotOriginal;
     struct MomentMockWasLaid {
         uint32_t moment;

@@ -2450,7 +2450,6 @@ JSValue Modules::wordWhereNoMockStands(ModuleID fileOrModule) const
 
 void Modules::forgetEndedMocksOfEarlierTestFiles()
 {
-    m_importersThatGotOriginal.clear();
     Vector<ModuleID, 8> emptied;
     for (auto& entry : m_endedMocks) {
         // The places in the list name the objects: a list goes whole.
