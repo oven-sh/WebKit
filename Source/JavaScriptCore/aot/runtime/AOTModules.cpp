@@ -5518,6 +5518,18 @@ static bool isFoundBehindFalsyEntry(JSGlobalObject* realm, ModuleID moduleOfHost
     return modules && (modules->data(module).isOfLibrary() || modules->wasLoadedByImport(module));
 }
 
+// A file of another image may import the file, and goes to the host with it: isLeftToHost().
+static void tellImagesOfEviction(JSGlobalObject* realm)
+{
+    const Image* running = Image::current();
+    if (!running || !running->sharesRealms()) [[likely]]
+        return;
+    for (Instance* instance = realm->aotInstance(); instance; instance = instance->above) {
+        if (Modules* modules = instance->state->modules.get())
+            modules->didEvictFromOtherImage();
+    }
+}
+
 // The cache knows a file by its path. Several images may hold the file, the image of a test file and one that it shares with others, and the copy that has run may be in any of them.
 static void evictFromEveryImage(JSGlobalObject* realm, ModuleID moduleOfHost, TakenOutBy takenOutBy)
 {
@@ -5545,10 +5557,7 @@ static void evictFromEveryImage(JSGlobalObject* realm, ModuleID moduleOfHost, Ta
         evictFromItsImage(realm, copy, takenOutBy);
         RETURN_IF_EXCEPTION(scope, );
     }
-    for (Instance* instance = realm->aotInstance(); instance; instance = instance->above) {
-        if (Modules* modules = instance->state->modules.get())
-            modules->didEvictFromOtherImage();
-    }
+    tellImagesOfEviction(realm);
 }
 
 void willRunEntryPointAgain(JSGlobalObject* realm, ModuleID moduleOfHost)
@@ -5652,6 +5661,7 @@ bool willLoadFileInAnotherWay(JSGlobalObject* realm, ModuleID moduleOfHost)
     if (!modules->mayBeEvicted(module))
         return false;
     modules->leaveToHostUnlessItHasRun(module);
+    tellImagesOfEviction(realm);
     return true;
 }
 
