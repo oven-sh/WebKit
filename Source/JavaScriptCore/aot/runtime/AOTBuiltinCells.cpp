@@ -381,6 +381,37 @@ JSCell* BuiltinCells::cell(uint32_t number)
     return *found;
 }
 
+static JSC_DECLARE_HOST_FUNCTION(refuseCallOfBuiltinChangedBeforeFirstUse);
+
+JSC_DEFINE_HOST_FUNCTION(refuseCallOfBuiltinChangedBeforeFirstUse, (JSGlobalObject* realm, CallFrame* callFrame))
+{
+    VM& vm = realm->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Whichever image of the realm made it: as a value it reaches the code of others.
+    for (Instance* instance = realm->aotInstance(); instance; instance = instance->above) {
+        std::optional<BuiltinCellKey> key = instance->state ? instance->state->builtinCells->keyOfCellHolding(callFrame->jsCallee()) : std::nullopt;
+        if (key)
+            return throwVMTypeError(realm, scope, callOfBuiltinChangedBeforeFirstUseMessage(BuiltinTable::singleton().textOf(key->builtin())));
+    }
+    return throwVMTypeError(realm, scope, callOfBuiltinChangedBeforeFirstUseMessage(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->name(vm)));
+}
+
+JSCell* BuiltinCells::cellReadWithoutTest(uint32_t number)
+{
+    if (JSCell* found = cell(number))
+        return found;
+    const BuiltinTable& table = BuiltinTable::singleton();
+    std::optional<BuiltinCellKey> key = BuiltinCellKey::decode(m_tables.builtinCells()[number], table);
+    RELEASE_ASSERT(key);
+    const Builtin& entry = table.at(key->builtin());
+    VM& vm = *m_instance.vm;
+    if (key->kind() != BuiltinCellKey::Kind::Object || !BuiltinBindings::provides(entry.origin) || table.overloadSummariesOf(key->builtin()).empty())
+        return nullptr;
+    JSFunction* refusing = JSFunction::create(vm, m_instance.globalObject, 0, table.identifierOf(vm, entry.name).string(), refuseCallOfBuiltinChangedBeforeFirstUse, ImplementationVisibility::Public);
+    fillAndKeepAlive(number, refusing);
+    return refusing;
+}
+
 JSCell* BuiltinCells::findObject(BuiltinID id)
 {
     if (std::optional<uint32_t> number = numberOf(BuiltinCellKey::object(id)))

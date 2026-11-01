@@ -126,6 +126,7 @@ String assignmentToLockedBuiltinMessage(const String& property);
 String deletionFromLockedBuiltinMessage(const String& property);
 // `property` may be assigned to where the build sees the assignment.
 String assignmentThatBuildDidNotSeeMessage(const String& property);
+String callOfBuiltinChangedBeforeFirstUseMessage(const String& property);
 // A test run opens what the build sees a test replace. So there the words say what to write, or that nothing will do.
 enum class LockedIn : bool { Executable, TestRun };
 // The compiled code that is running, or that has called the built-in function which is, stands in a file of a test run that an executable holds too.

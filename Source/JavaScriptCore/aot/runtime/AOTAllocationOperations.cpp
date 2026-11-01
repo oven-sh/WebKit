@@ -199,7 +199,7 @@ static void exitIfRealmLacksHostOf(State& state, uint32_t numberOfCell)
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTBuiltinCell, JSCell*, (Instance* instance, uint32_t index))
 {
     AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTBuiltinCell);
-    JSCell* cell = instance->state->builtinCells->cell(index);
+    JSCell* cell = instance->state->builtinCells->cellReadWithoutTest(index);
     if (!cell) [[unlikely]]
         exitIfRealmLacksHostOf(*instance->state, index);
     OPERATION_RETURN(scope, cell);

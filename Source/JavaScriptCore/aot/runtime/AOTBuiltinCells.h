@@ -47,6 +47,7 @@ public:
     static constexpr size_t stackKeptFromProgram = (ASAN_ENABLED ? 3 : 1) * 256 * KB;
 
     JSCell* cell(uint32_t number);
+    JSCell* cellReadWithoutTest(uint32_t number);
     JSCell* findObject(BuiltinID);
     // The key of a cell that is filled with the object. A cell holds what the realm was created with, whatever the program has put in its place since. For a validating build: it looks at every cell.
     std::optional<BuiltinCellKey> keyOfCellHolding(JSCell*) const;
