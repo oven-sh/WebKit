@@ -1124,6 +1124,7 @@ public:
             return;
         m_changed.append({ id, value.arrayStorage() });
         value.setArrayStorage(storage);
+        m_fitsOtherAttributes &= fitsOtherAttributes(value);
     }
 
     void set(std::span<const ValueID> ids, ArrayStorage storage)
@@ -1136,7 +1137,7 @@ public:
     {
         if (m_changed.isEmpty())
             return true;
-        if (!m_context.build.isSabotaged(Sabotage::ChangedKindsOfStorageKeepTheirProofs) && mayLoseProof()) {
+        if (!m_fitsOtherAttributes || (!m_context.build.isSabotaged(Sabotage::ChangedKindsOfStorageKeepTheirProofs) && mayLoseProof())) {
             for (auto [id, storage] : m_changed)
                 m_context.function.edit(id, ValueEdit::Definition).setArrayStorage(storage);
             m_context.analyses.didChangeValues();
@@ -1148,6 +1149,27 @@ public:
     }
 
 private:
+    // What else an operation says was said of the kind that it named: only Double storage has a hole that reads as NaN, and a store inside the length takes its value unseen.
+    bool fitsOtherAttributes(const Value& value)
+    {
+        const Program& program = m_context.program;
+        const Function& function = m_context.function;
+        ArrayStorage storage = value.arrayStorage();
+        if (Value::opcodesWithReadsHoleAsNaN.contains(value.opcode) && value.readsHoleAsNaN() && storage != ArrayStorage::Double)
+            return false;
+        if (Value::opcodesWithIsInBounds.contains(value.opcode) && value.isInBounds()) {
+            if (!hasArrayStorageForm(storage))
+                return false;
+            if (OperandPosition::value(value.opcode) && !canStoreWithoutConversion(storage, program.typeOf(function, value.valueOperand())))
+                return false;
+        }
+        if (value.opcode != Opcode::NewArray)
+            return true;
+        if (holdsOnlyNumbers(storage) && (!value.contentsAreProven() || !canStoreWithoutConversion(storage, program.at(value.contents()))))
+            return false;
+        return !value.keepsLength() || hasArrayStorageForm(storage);
+    }
+
     bool mayLoseProof()
     {
         const Function& function = m_context.function;
@@ -1184,6 +1206,7 @@ private:
 
     FunctionPassContext& m_context;
     Vector<std::pair<ValueID, ArrayStorage>, 8> m_changed;
+    bool m_fitsOtherAttributes { true };
 };
 
 // One value may name either of several arrays under construction: a loop that is there twice makes the array twice and goes on in one place. A store through that value finds one kind of storage in all of them.
