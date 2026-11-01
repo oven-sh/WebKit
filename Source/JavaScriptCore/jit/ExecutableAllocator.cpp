@@ -641,9 +641,8 @@ static bool mayBeUnderSeccompFilter()
     if (length <= 0)
         return true;
     status[length] = '\0';
-    constexpr const char* label = "\nSeccomp:";
-    const char* line = strstr(status, label);
-    return !line || strtol(line + strlen(label), nullptr, 10);
+    // The whole line, so that one cut short by the end of the buffer does not read as a zero.
+    return !strstr(status, "\nSeccomp:\t0\n");
 }
 
 static void giveJITRegionAProtectionKey(void* base, size_t size)
