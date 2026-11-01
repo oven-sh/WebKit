@@ -2797,6 +2797,9 @@ void Modules::bringBackWhatLoaderLetGoBelow(ModuleID root)
         if (isSeen.quickSet(module.index()))
             continue;
         bool wasLetGo = m_modulesThatLoaderLetGo.clear(module.index());
+        // An import of a CommonJS file comes to its face, and loads the file with it.
+        if (std::optional<ModuleID> file = m_table.fileBehindFace(module))
+            wasLetGo |= m_modulesThatLoaderLetGo.clear(file->index());
         if (!wasLetGo && status(module) > ModuleStatus::Linked)
             continue;
         if (wasLetGo && m_importersOfMockThatEnded.clear(module.index())) {

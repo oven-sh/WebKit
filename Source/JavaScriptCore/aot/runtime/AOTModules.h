@@ -87,6 +87,7 @@ struct LinkContext {
     macro(JSObject*, mockInPlace) \
     macro(JSObject*, recordBeforeMockInPlace) \
     macro(JSObject*, namespaceBeforeMockInPlace) \
+    macro(JSObject*, capturedExportsBeforeMockInPlace) \
     macro(JSValue, requiredValueBeforeMockInPlace) \
     macro(JSValue, exportsOfOriginalBesideMock) \
     macro(JSValue, answerOfMockWhileOriginalRuns) \
@@ -209,7 +210,7 @@ public:
     // For the counts alone: the state, the status of the body, and, for NoneOfThem, what is set.
     String describeMockState(ModuleID);
     void countMockStates(ASCIILiteral door, const String& before, ModuleID);
-    bool isLeftAloneByMock(ModuleID module) const { return !m_mocksOverModulesThatHaveRun.isEmpty() && m_mocksOverModulesThatHaveRun.contains(module); }
+    bool isLeftAloneByMock(ModuleID fileOrFace) const { return !m_mocksOverModulesThatHaveRun.isEmpty() && m_mocksOverModulesThatHaveRun.contains(m_table.fileBehindFace(fileOrFace).value_or(fileOrFace)); }
     bool setMockOverModuleThatHasRun(ModuleID, JSObject* mock, JSValue whatRequireAnswers);
     void endMockOverModuleThatHasRun(ModuleID);
     bool seesMockOf(ModuleID mocked, ModuleID importer) const;

@@ -2205,7 +2205,7 @@ bool Modules::hasLinkedImporterYetToRun(ModuleID module, const String& keyOfFile
 {
     auto isModule = [&](ModuleID target) {
         if (keyOfFileInImageBelow.isNull())
-            return target == module;
+            return target == module || target == moduleWithExportsOf(module);
         const Identifier* key = data(target).isUncompiledCode() ? resolvedKeyIfKnown(target) : nullptr;
         return key && key->string() == keyOfFileInImageBelow;
     };
@@ -2229,13 +2229,18 @@ bool Modules::willLeaveModuleAlone(ModuleID module, bool onlyIfLoadedInPreload, 
     if (auto waiting = m_mocksOverModulesThatHaveRun.find(module); waiting != m_mocksOverModulesThatHaveRun.end() && !waiting->value.isInPlace && wasLetGoByLoader(module))
         return true;
     const ModuleData& moduleData = data(module);
-    if (!moduleData.isESModuleOfProgram() || moduleData.isFaceOfFile() || !m_table.hasFilePath(module) || !m_table.wordOfMock(module))
+    bool isFile = moduleData.kind == ModuleKind::CommonJs && !moduleData.isOfLibrary();
+    if ((!isFile && (!moduleData.isESModuleOfProgram() || moduleData.isFaceOfFile())) || !m_table.hasFilePath(module) || !m_table.wordOfMock(module))
         return false;
     if (!hasRun(module) || isMocked(module) || mockInPlace(module) || isEvicted(module) || m_momentsOfLoads.isEmpty())
         return false;
+    // ES modules read the copies that the face of a CommonJS file took, and those stay. Nobody has noted when the file itself was loaded.
+    ModuleID withExports = moduleWithExportsOf(module);
+    if (isFile && (onlyIfLoadedInPreload || withExports == module || status(withExports) != ModuleStatus::Evaluated || !didCaptureExports(withExports)))
+        return false;
     if (onlyIfLoadedInPreload && !m_loadedInPreload.get(placeOfMomentOfLoad(module)))
         return false;
-    if (LoadedModule* loaded = loadedIfExists(module); loaded && loaded->objectMadeByRequire)
+    if (LoadedModule* loaded = loadedIfExists(module); loaded && loaded->objectMadeByRequire && !isFile)
         return false;
     // `bun test` lays the mock over a module that a linked module has yet to read: only so does the mock reach it. A module is linked and yet to run only while its graph runs:
     // what the evaluation has not come to, and what lies between its root and the body that runs. The module that asks has read what it has read.
@@ -2254,17 +2259,23 @@ bool Modules::willLeaveModuleAlone(ModuleID module, bool onlyIfLoadedInPreload, 
         }
     }
     VMState& state = m_instance.vm->aotState();
-    auto laid = m_mocksOverModulesThatHaveRun.set(module, MockOverModuleThatHasRun { momentOfFirstMockInTestFile(module), state.momentOfTestFile, !!namespaceIfCreated(module, ModulePhase::Evaluation) });
+    auto laid = m_mocksOverModulesThatHaveRun.set(module, MockOverModuleThatHasRun { momentOfFirstMockInTestFile(module), state.momentOfTestFile, !!namespaceIfCreated(withExports, ModulePhase::Evaluation) });
     laid.iterator->value.momentThisWasLaid = ++state.momentOfLoads;
     // Whoever holds the record of the module, code from disk that was linked to it, keeps it. The loader forgets it: a load by name from now on fetches the module anew, and so comes to the mock.
-    if (ModuleRecord* record = m_records.get(module)) {
+    auto setAsideRecord = [&](ModuleID each) {
+        ModuleRecord* record = m_records.get(each);
+        if (!record)
+            return;
         loader()->removeEntryOfRecord(record);
-        if (storedStatus(module) == StoredModuleStatus::InRecord)
-            setStoredStatus(module, StoredModuleStatus::Evaluated);
-        ensureLoaded(module).recordBeforeMockInPlace.set(*this, record);
+        if (storedStatus(each) == StoredModuleStatus::InRecord)
+            setStoredStatus(each, StoredModuleStatus::Evaluated);
+        ensureLoaded(each).recordBeforeMockInPlace.set(*this, record);
         Locker locker { m_state.caches->lock() };
-        m_records.remove(module);
-    }
+        m_records.remove(each);
+    };
+    setAsideRecord(module);
+    if (isFile)
+        setAsideRecord(withExports);
     return true;
 }
 
@@ -2272,8 +2283,11 @@ bool Modules::seesMockOf(ModuleID mocked, ModuleID importer) const
 {
     if (m_mocksOverModulesThatHaveRun.isEmpty()) [[likely]]
         return true;
-    auto mock = m_mocksOverModulesThatHaveRun.find(mocked);
+    auto mock = m_mocksOverModulesThatHaveRun.find(m_table.fileBehindFace(mocked).value_or(mocked));
     if (mock == m_mocksOverModulesThatHaveRun.end())
+        return true;
+    // Whoever comes to the face of the file has been asked.
+    if (m_table.fileBehindFace(importer) == std::optional(mock->key))
         return true;
     if (auto anew = m_momentsLoadedAnew.find(importer); anew != m_momentsLoadedAnew.end() && anew->value.momentOfTestFile == mock->value.momentOfTestFile && anew->value.moment > mock->value.momentThisWasLaid) [[unlikely]]
         return true;
@@ -2288,13 +2302,21 @@ bool Modules::seesMockOf(ModuleID mocked, ModuleID importer) const
 bool Modules::setMockOverModuleThatHasRun(ModuleID module, JSObject* mock, JSValue whatRequireAnswers)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    ModuleID withExports = moduleWithExportsOf(module);
+    bool isFile = withExports != module;
     std::optional<BitVector> exportsLeftOutBefore;
-    if (auto leftOut = m_exportsLeftOut.find(module); leftOut != m_exportsLeftOut.end())
+    if (auto leftOut = m_exportsLeftOut.find(withExports); leftOut != m_exportsLeftOut.end())
         exportsLeftOutBefore = leftOut->value;
-    BitVector exportsHiddenBefore(m_table.exports(module).size());
-    for (unsigned index = 0; index < m_table.exports(module).size(); ++index)
-        exportsHiddenBefore.quickSet(index, (m_table.exports(module)[index].isFromStarExport && isExportAmbiguous(module, index)) || isLeftOut(module, index, TablesBehindStars::MayLackName));
-    takeNamesOfMockInPlace(module, mock);
+    BitVector exportsHiddenBefore(m_table.exports(withExports).size());
+    for (unsigned index = 0; index < m_table.exports(withExports).size(); ++index)
+        exportsHiddenBefore.quickSet(index, (m_table.exports(withExports)[index].isFromStarExport && isExportAmbiguous(withExports, index)) || isLeftOut(withExports, index, TablesBehindStars::MayLackName));
+    // The table of a face gives way to the names of the mock. The variables keep the copies: fillCapturedExports().
+    if (isFile && !ensureLoaded(withExports).capturedExportsBeforeMockInPlace) {
+        JSObject* own = capturedExports(withExports);
+        RETURN_IF_EXCEPTION(scope, false);
+        ensureLoaded(withExports).capturedExportsBeforeMockInPlace.set(*this, own);
+    }
+    takeNamesOfMockInPlace(withExports, mock);
     RETURN_IF_EXCEPTION(scope, false);
     // The names were asked of an object of the host.
     auto found = m_mocksOverModulesThatHaveRun.find(module);
@@ -2303,13 +2325,26 @@ bool Modules::setMockOverModuleThatHasRun(ModuleID module, JSObject* mock, JSVal
     MockOverModuleThatHasRun& kept = found->value;
     LoadedModule& loaded = ensureLoaded(module);
     loaded.mockInPlace.set(*this, mock);
+    ensureLoaded(withExports).mockInPlace.set(*this, mock);
     ProgramStatics::writeVariable(m_instance, *m_table.wordOfMock(module), mock);
-    setAsideNamespaceUnderMock(module);
+    setAsideNamespaceUnderMock(withExports);
     // Made since the mock was laid, for the load that has come to it.
     if (ModuleRecord* record = m_records.get(module))
         letRecordAnswerByMock(record, mock);
-    if (kept.isInPlace) {
+    if (ModuleRecord* record = isFile ? m_records.get(withExports) : nullptr)
+        letRecordAnswerByMock(record, mock);
+    auto answerRequire = [&] {
         loaded.requiredValue.set(*this, whatRequireAnswers);
+        if (!isFile)
+            return;
+        setCommonJSExports(module, whatRequireAnswers);
+        if (JSObject* entry = loaded.objectMadeByRequire) {
+            entry->putDirect(*m_instance.vm, m_instance.vm->propertyNames->exports, whatRequireAnswers);
+            loaded.exportsGivenToObjectMadeByRequire.set(*this, whatRequireAnswers);
+        }
+    };
+    if (kept.isInPlace) {
+        answerRequire();
         return true;
     }
     kept.isInPlace = true;
@@ -2318,7 +2353,10 @@ bool Modules::setMockOverModuleThatHasRun(ModuleID module, JSObject* mock, JSVal
     ++m_numberOfMocksInPlace;
     m_modulesWithMockInPlace.set(module.index());
     loaded.requiredValueBeforeMockInPlace.set(*this, loaded.requiredValue.get());
-    loaded.requiredValue.set(*this, whatRequireAnswers);
+    // The body has run: whoever gets the original beside the mock gets what it exported.
+    if (isFile)
+        loaded.exportsOfOriginalBesideMock.set(*this, commonJSExports(module));
+    answerRequire();
     return true;
 }
 
@@ -2330,50 +2368,75 @@ void Modules::endMockOverModuleThatHasRun(ModuleID module)
     m_modulesWithMockThatWaited.clear(module.index());
     m_modulesLoadedBeforeMockThatWaited.clear(module.index());
     didEndMock(module);
+    ModuleID withExports = moduleWithExportsOf(module);
+    bool isFile = withExports != module;
     LoadedModule& loaded = ensureLoaded(module);
-    if (ModuleRecord* recordOfMock = m_records.get(module)) {
-        loader()->removeEntryOfRecord(recordOfMock);
-        if (storedStatus(module) == StoredModuleStatus::InRecord)
-            setStoredStatus(module, StoredModuleStatus::Evaluated);
-        Locker locker { m_state.caches->lock() };
-        m_records.remove(module);
-    }
-    if (JSObject* before = loaded.recordBeforeMockInPlace.get()) {
+    auto bringBackRecord = [&](ModuleID each) {
+        if (ModuleRecord* recordOfMock = m_records.get(each)) {
+            loader()->removeEntryOfRecord(recordOfMock);
+            if (storedStatus(each) == StoredModuleStatus::InRecord)
+                setStoredStatus(each, StoredModuleStatus::Evaluated);
+            Locker locker { m_state.caches->lock() };
+            m_records.remove(each);
+        }
+        LoadedModule& held = ensureLoaded(each);
+        JSObject* before = held.recordBeforeMockInPlace.get();
+        if (!before)
+            return;
         auto* record = uncheckedDowncast<ModuleRecord>(before);
-        loaded.recordBeforeMockInPlace.set(*this, nullptr);
+        held.recordBeforeMockInPlace.set(*this, nullptr);
         {
             Locker locker { m_state.caches->lock() };
-            m_records.add(module, record);
+            m_records.add(each, record);
             m_storedReferences.recordAll();
         }
         if (record->holdsStatus())
-            setStoredStatus(module, StoredModuleStatus::InRecord);
-    }
+            setStoredStatus(each, StoredModuleStatus::InRecord);
+    };
+    bringBackRecord(module);
+    if (isFile)
+        bringBackRecord(withExports);
     if (!kept.isInPlace)
         return;
-    takeNamesOfMockInPlace(module, nullptr);
+    LoadedModule& exporting = ensureLoaded(withExports);
+    takeNamesOfMockInPlace(withExports, nullptr);
     scope.assertNoExceptionExceptTermination();
     if (kept.exportsLeftOutBefore)
-        m_exportsLeftOut.set(module, WTF::move(*kept.exportsLeftOutBefore));
+        m_exportsLeftOut.set(withExports, WTF::move(*kept.exportsLeftOutBefore));
+    if (JSObject* own = exporting.capturedExportsBeforeMockInPlace.get()) {
+        exporting.capturedExports.set(*this, own);
+        exporting.capturedExportsBeforeMockInPlace.set(*this, nullptr);
+    }
     loaded.mockInPlace.set(*this, nullptr);
+    exporting.mockInPlace.set(*this, nullptr);
     --m_numberOfMocksInPlace;
     m_modulesWithMockInPlace.clear(module.index());
     ProgramStatics::writeVariable(m_instance, *m_table.wordOfMock(module), JSValue());
     loaded.requiredValue.set(*this, loaded.requiredValueBeforeMockInPlace.get());
     loaded.requiredValueBeforeMockInPlace.set(*this, JSValue());
-    // There was none when the mock came: willLeaveModuleAlone().
-    loaded.objectMadeByRequire.set(*this, nullptr);
-    loaded.exportsGivenToObjectMadeByRequire.set(*this, JSValue());
+    if (isFile) {
+        JSValue original = loaded.exportsOfOriginalBesideMock.get();
+        loaded.exportsOfOriginalBesideMock.set(*this, JSValue());
+        setCommonJSExports(module, original);
+        if (JSObject* entry = loaded.objectMadeByRequire) {
+            entry->putDirect(*m_instance.vm, m_instance.vm->propertyNames->exports, original);
+            loaded.exportsGivenToObjectMadeByRequire.set(*this, original);
+        }
+    } else {
+        // There was none when the mock came: willLeaveModuleAlone().
+        loaded.objectMadeByRequire.set(*this, nullptr);
+        loaded.exportsGivenToObjectMadeByRequire.set(*this, JSValue());
+    }
     // An object that was made under the mock is the mock's, and whoever holds it keeps it. The object of the module is the one from before, as in `bun test`.
     for (uint32_t index = 0; index < m_table.size(); ++index) {
         ModuleID each(index);
-        if (each == module || data(each).hasDynamicStarExport())
+        if (each == withExports || data(each).hasDynamicStarExport())
             letGoOfNamespaceMadeUnderMock(each);
     }
-    if (JSObject* own = loaded.namespaceBeforeMockInPlace.get()) {
+    if (JSObject* own = exporting.namespaceBeforeMockInPlace.get()) {
         uncheckedDowncast<ModuleNamespace>(own)->setKeepsToModule(false);
-        loaded.namespaceBeforeMockInPlace.set(*this, nullptr);
-        setNamespace(module, ModulePhase::Evaluation, own);
+        exporting.namespaceBeforeMockInPlace.set(*this, nullptr);
+        setNamespace(withExports, ModulePhase::Evaluation, own);
     }
 }
 
@@ -2394,7 +2457,7 @@ void Modules::setAsideNamespaceUnderMock(ModuleID module)
 JSObject* Modules::namespaceOfModuleItself(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    auto mock = m_mocksOverModulesThatHaveRun.find(module);
+    auto mock = m_mocksOverModulesThatHaveRun.find(m_table.fileBehindFace(module).value_or(module));
     if (mock == m_mocksOverModulesThatHaveRun.end())
         RELEASE_AND_RETURN(scope, moduleNamespace(module, ModulePhase::Evaluation));
     m_namespacesThatOnlyImagesAboveHold.clear(module.index());
@@ -2413,7 +2476,18 @@ JSObject* Modules::namespaceOfModuleItself(ModuleID module)
     JSObject* own = nullptr;
     {
         SetForScope makesIt(m_makesNamespaceOfModuleItself, true);
+        // The names of a face are those of its table.
+        JSObject* namesOfMock = loaded.capturedExports.get();
+        JSObject* namesOfFile = loaded.capturedExportsBeforeMockInPlace.get();
+        if (namesOfFile) {
+            loaded.capturedExports.set(*this, namesOfFile);
+            loaded.exportsWhatMockNamesAlone = false;
+        }
         own = createNamespace(module, ModulePhase::Evaluation, true);
+        if (namesOfFile) {
+            loaded.capturedExports.set(*this, namesOfMock);
+            loaded.exportsWhatMockNamesAlone = true;
+        }
     }
     setNamespace(module, ModulePhase::Evaluation, ofMock);
     RETURN_IF_EXCEPTION(scope, nullptr);
@@ -2426,7 +2500,7 @@ JSObject* Modules::namespaceOfModuleItself(ModuleID module)
 
 bool Modules::isHiddenInModuleItself(ModuleID module, unsigned index) const
 {
-    auto mock = m_mocksOverModulesThatHaveRun.find(module);
+    auto mock = m_mocksOverModulesThatHaveRun.find(m_table.fileBehindFace(module).value_or(module));
     if (mock != m_mocksOverModulesThatHaveRun.end() && mock->value.isInPlace)
         return mock->value.exportsHiddenBefore.get(index);
     return (m_table.exports(module)[index].isFromStarExport && isExportAmbiguous(module, index)) || isLeftOut(module, index, TablesBehindStars::MayLackName);

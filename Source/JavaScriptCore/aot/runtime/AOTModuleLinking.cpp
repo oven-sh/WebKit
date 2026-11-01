@@ -1171,8 +1171,13 @@ JSValue Modules::exportsBeforeMock(ModuleID file)
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
     // `vi.importActual()` of a module that the mock left alone: the module, not a copy of what it exports.
-    if (isLeftAloneByMock(file) && !isEvicted(file) && !isLeftToHost(file))
+    if (isLeftAloneByMock(file) && !isEvicted(file) && !isLeftToHost(file)) {
+        if (data(file).kind == ModuleKind::CommonJs) {
+            JSValue original = ensureLoaded(file).exportsOfOriginalBesideMock.get();
+            return original ? original : commonJSExports(file);
+        }
         RELEASE_AND_RETURN(scope, namespaceOfModuleItself(file));
+    }
     // What runs in place of a file that was taken out of the loader is the loader's.
     if (mockInPlace(file) || isEvicted(file) || isLeftToHost(file))
         return { };
@@ -1454,7 +1459,8 @@ void Modules::fillCapturedExports(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     LoadedModule& loaded = ensureLoaded(module);
-    if (loaded.bindsEarlierCapture) [[unlikely]]
+    // Whoever was linked to a file that a mock leaves alone goes on reading the variables.
+    if (loaded.bindsEarlierCapture || isLeftAloneByMock(module)) [[unlikely]]
         return;
 
     for (const SyntheticExportData& syntheticExport : m_table.syntheticExports(module)) {
