@@ -2785,16 +2785,41 @@ void Modules::evaluateWithOwnStack(ModuleID root)
         capability->reject(vm, exception->value());
 }
 
+// A module that is still with the loader of `bun test` has there all that it imports.
+void Modules::bringBackWhatLoaderLetGoBelow(ModuleID root)
+{
+    if (m_modulesThatLoaderLetGo.isEmpty()) [[likely]]
+        return;
+    BitVector isSeen(m_table.size());
+    Vector<ModuleID, 16> toVisit { root };
+    while (!toVisit.isEmpty()) {
+        ModuleID module = toVisit.takeLast();
+        if (isSeen.quickSet(module.index()))
+            continue;
+        bool wasLetGo = m_modulesThatLoaderLetGo.clear(module.index());
+        if (!wasLetGo && status(module) > ModuleStatus::Linked)
+            continue;
+        // What only a mocked module imports is not loaded.
+        if (isMocked(module) || mockInPlace(module))
+            continue;
+        for (const ModuleRequestData& request : m_table.imports(module)) {
+            if (!request.isHoisted && !request.isDeferred)
+                toVisit.append(request.targetModule());
+        }
+    }
+}
+
 // No walk of an evaluation goes below a module that has run. This one does, and runs what a mock kept from running, when a graph comes by that holds an importer of it.
 void Modules::evaluateModulesOwedBelow(ModuleID root)
 {
     VM& vm = *m_instance.vm;
+    bringBackWhatLoaderLetGoBelow(root);
     // A file imports from its own image and from those below.
     bool isOwedInImageBelow = false;
     if (vm.aotState().hasSeveralImages) [[unlikely]] {
         for (Instance* instance = m_instance.globalObject->aotInstance(); instance && instance != &m_instance; instance = instance->above) {
             Modules* modules = instance->state ? instance->state->modules.get() : nullptr;
-            isOwedInImageBelow |= modules && !(modules->m_modulesOwedToImportersThatRan.isEmpty() && modules->m_modulesWithMockToLetGo.isEmpty());
+            isOwedInImageBelow |= modules && !(modules->m_modulesOwedToImportersThatRan.isEmpty() && modules->m_modulesWithMockToLetGo.isEmpty() && modules->m_modulesThatLoaderLetGo.isEmpty());
         }
     }
     if (m_modulesOwedToImportersThatRan.isEmpty() && m_modulesWithMockToLetGo.isEmpty() && !isOwedInImageBelow) [[likely]]

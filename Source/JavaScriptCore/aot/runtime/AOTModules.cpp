@@ -1295,7 +1295,7 @@ bool Modules::hasBegunToLoad(ModuleID module) const
     if ((current != ModuleStatus::Unlinked && current != ModuleStatus::Linked) || didCaptureExports(module))
         return true;
     // `bun test` takes a module out of its loader with the mock that stood in its place.
-    if (m_modulesOwedToImportersThatRan.get(module.index()))
+    if (m_modulesOwedToImportersThatRan.get(module.index()) || wasLetGoByLoader(module))
         return false;
     return data(module).isESModuleOfProgram() && wasLoadedWithGraph(module);
 }
@@ -2065,8 +2065,60 @@ uint32_t Modules::momentOfFirstMockInTestFile(ModuleID module)
     return result.iterator->value.moment;
 }
 
+bool Modules::hasMockLaidOver(ModuleID module) const
+{
+    const LoadedModule* loaded = loadedIfExists(module);
+    return loaded && loaded->hasMockLaidOver;
+}
+
+void Modules::letGoOfImportersOf(ModuleID mocked, ImportersLetGo which)
+{
+    if (m_momentsOfLoads.isEmpty())
+        return;
+    uint32_t momentOfTestFile = m_instance.vm->aotState().momentOfTestFile;
+    auto momentLoaded = [&](ModuleID module) { return m_momentsOfLoads[placeOfMomentOfLoad(module)]; };
+    bool keepsImportersOfTestFile = which == ImportersLetGo::AllButThoseThatThisTestFileLinkedToModule;
+    if (keepsImportersOfTestFile && momentLoaded(mocked) > momentOfTestFile)
+        return;
+    if (m_importersByStatement.isEmpty()) {
+        m_importersByStatement.grow(m_table.size());
+        for (uint32_t importer = 0; importer < m_table.size(); ++importer) {
+            for (const ModuleRequestData& request : m_table.imports(ModuleID(importer))) {
+                if (!request.isHoisted && !request.isDeferred)
+                    m_importersByStatement[request.target()].append(importer);
+            }
+        }
+    }
+    ModuleID withExports = moduleWithExportsOf(mocked);
+    BitVector seen(m_table.size());
+    Vector<ModuleID, 32> work { mocked };
+    if (withExports != mocked)
+        work.append(withExports);
+    while (!work.isEmpty()) {
+        ModuleID imported = work.takeLast();
+        bool isMockedItself = imported == mocked || imported == withExports;
+        for (uint32_t index : m_importersByStatement[imported.index()]) {
+            ModuleID importer(index);
+            if (isMockedItself && keepsImportersOfTestFile && momentLoaded(importer) > momentOfTestFile)
+                continue;
+            if (importer == mocked || importer == withExports || seen.quickSet(index))
+                continue;
+            // A module with nothing to run stays as the loader left it.
+            bool isLoaded = status(importer) > ModuleStatus::Linked || (data(importer).isESModuleOfProgram() && wasLoadedWithGraph(importer));
+            // Nothing would load a module of a preload again. A mock that stands in place of a body that never ran imports nothing.
+            if (!isLoaded || m_loadedInPreload.get(placeOfMomentOfLoad(importer)) || (mockInPlace(importer) && !isLeftAloneByMock(importer)))
+                continue;
+            m_modulesThatLoaderLetGo.set(index);
+            work.append(importer);
+        }
+    }
+}
+
 bool Modules::willLeaveModuleAlone(ModuleID module, bool onlyIfLoadedInPreload, std::optional<ModuleID> askingAsHostNamesIt)
 {
+    // Another mock of the module still waits for the load. This one takes its place.
+    if (auto waiting = m_mocksOverModulesThatHaveRun.find(module); waiting != m_mocksOverModulesThatHaveRun.end() && !waiting->value.isInPlace && wasLetGoByLoader(module))
+        return true;
     const ModuleData& moduleData = data(module);
     if (!moduleData.isESModuleOfProgram() || moduleData.isFaceOfFile() || !m_table.hasFilePath(module) || !m_table.wordOfMock(module))
         return false;
@@ -2395,7 +2447,7 @@ void Modules::runMocksBelow(ModuleID root, RootOfLoad rootOfLoad)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!m_modulesOwedToImportersThatRan.isEmpty() || !m_modulesWithMockToLetGo.isEmpty() || vm.aotState().hasSeveralImages) [[unlikely]] {
+    if (!m_modulesOwedToImportersThatRan.isEmpty() || !m_modulesWithMockToLetGo.isEmpty() || !m_modulesThatLoaderLetGo.isEmpty() || vm.aotState().hasSeveralImages) [[unlikely]] {
         evaluateModulesOwedBelow(root);
         RETURN_IF_EXCEPTION(scope, void());
     }
@@ -6416,6 +6468,13 @@ bool isLeftAloneByMock(JSGlobalObject* realm, ModuleID moduleOfHost)
     return modules && modules->isLeftAloneByMock(module);
 }
 
+bool wasLetGoByLoader(JSGlobalObject* realm, ModuleID moduleOfHost)
+{
+    ModuleFromHost module(realm, moduleOfHost);
+    Modules* modules = modulesOf(realm);
+    return modules && modules->wasLetGoByLoader(module);
+}
+
 void didBeginTestFile(JSGlobalObject* realm)
 {
     VMState& state = realm->vm().aotState();
@@ -6545,7 +6604,12 @@ void didEndMock(JSGlobalObject* realm, ModuleID moduleOfHost)
     if (!modules)
         return;
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    bool wasLoadedAsMock = modules->mockInPlace(module) && !modules->hasMockThatEnded(module);
+    if (wasLoadedAsMock || modules->hasMockLaidOver(module))
+        modules->letGoOfImportersOf(module, Modules::ImportersLetGo::All);
     if (modules->isLeftAloneByMock(module)) {
+        if (wasLoadedAsMock)
+            modules->letGoOfModuleLoadedAsMock(module);
         modules->endMockOverModuleThatHasRun(module);
         RETURN_IF_EXCEPTION(scope, void());
         modules->dropErrorsOfLoadsEndedByMockOf(module);
@@ -6636,12 +6700,15 @@ void willMockModule(JSGlobalObject* realm, ModuleID moduleOfHost, JSObject* expo
         modules.mockWhatRequireCacheHolds(module, exports);
         return;
     }
+    bool isFirstMock = !modules.isMocked(module);
     modules.willMock(module);
     if (modules.data(module).kind != ModuleKind::CommonJs) {
         ModuleStatus status = modules.status(module);
         bool comesAheadOfLoad = (status == ModuleStatus::Unlinked || status == ModuleStatus::Linked) && !modules.wasLoadedWhenMockWasMade(module);
         if (!comesAheadOfLoad)
             modules.keepWhatMockIsLaidOver(module);
+        if (!comesAheadOfLoad && isFirstMock)
+            modules.letGoOfImportersOf(module, Modules::ImportersLetGo::AllButThoseThatThisTestFileLinkedToModule);
         if (comesAheadOfLoad) {
             modules.fillExportsOfBodyThatNeverRuns(module);
             modules.leaveOutWhatMockLacks(module, exports);
@@ -6657,6 +6724,8 @@ void willMockModule(JSGlobalObject* realm, ModuleID moduleOfHost, JSObject* expo
         modules.markEvaluated(module);
     else
         modules.keepWhatMockIsLaidOver(module);
+    if (hasRun && isFirstMock)
+        modules.letGoOfImportersOf(module, Modules::ImportersLetGo::AllButThoseThatThisTestFileLinkedToModule);
     modules.setCommonJSExports(module, exports);
     modules.exportWhatMockNamesAlone(module, hasRun);
 }

@@ -198,6 +198,13 @@ public:
     bool setMockOverModuleThatHasRun(ModuleID, JSObject* mock, JSValue whatRequireAnswers);
     void endMockOverModuleThatHasRun(ModuleID);
     bool seesMockOf(ModuleID mocked, ModuleID importer) const;
+    // `bun test` takes whoever imports a module out of its loader when a mock of the module ends, and when a mock is laid over what an earlier test file loaded. A mock of such an importer
+    // comes ahead of its load, though the body has run here.
+    enum class ImportersLetGo : bool { All, AllButThoseThatThisTestFileLinkedToModule };
+    void letGoOfImportersOf(ModuleID, ImportersLetGo);
+    void letGoOfModuleLoadedAsMock(ModuleID module) { m_modulesThatLoaderLetGo.set(module.index()); }
+    bool wasLetGoByLoader(ModuleID module) const { return m_modulesThatLoaderLetGo.get(module.index()); }
+    bool hasMockLaidOver(ModuleID) const;
     void takeNamesOfMockInPlace(ModuleID, JSObject* mock);
     void letRecordAnswerByMock(ModuleRecord*, JSObject* mock);
     void letGoOfRecordThatAnswersByMock(ModuleID);
@@ -766,6 +773,7 @@ private:
 
     void evaluateWithOwnStack(ModuleID root);
     void evaluateModulesOwedBelow(ModuleID root);
+    void bringBackWhatLoaderLetGoBelow(ModuleID root);
     size_t numberOfJobsThatWouldWait(JobsOfImportedFiles) const;
     void holdJobsBehind(size_t numberOfJobs, ModuleID file, JobsOfImportedFiles = JobsOfImportedFiles::WaitForLoader);
     bool hasQueuedTicks() const { return host().hasQueuedTicks && host().hasQueuedTicks(m_instance.globalObject); }
@@ -996,6 +1004,9 @@ private:
     // The host has ended the mock that stands in place of the module. Whoever was linked against the mock goes on reading it, as under `bun test`, until a load comes to the module.
     BitVector m_modulesWithMockToLetGo;
     BitVector m_modulesLoadedBeforeMockThatWaited;
+    // A load that comes by brings them back.
+    BitVector m_modulesThatLoaderLetGo;
+    Vector<Vector<uint32_t, 2>> m_importersByStatement;
     Vector<ModuleID> m_libraryModulesInRequireCache;
     BitVector m_libraryModulesTakenFromLoader;
     BitVector m_libraryModulesThatStatementsReached;
