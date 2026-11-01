@@ -256,7 +256,10 @@ JS_EXPORT_PRIVATE bool hasBegunToLoad(JSGlobalObject*, ModuleID);
 // `a.txt?text` is a form of `a.txt`: what an import attribute makes of the file. A mock of the path replaces the form that has been loaded, and waits for all of them if none has. `file`: the module under the path itself, if the image holds it.
 JS_EXPORT_PRIVATE std::optional<ModuleID> formThatMockFinds(JSGlobalObject*, StringView path, std::optional<ModuleID> file);
 JS_EXPORT_PRIVATE Vector<ModuleID, 2> formsThatAttributesAskFor(JSGlobalObject*, StringView path);
-JS_EXPORT_PRIVATE void deferMock(JSGlobalObject*, ModuleID);
+// AfterFailure::AsksAgain: a factory that takes importOriginal. `bun test` loads the original first and lays the mock over it, so where the factory fails the loader keeps no record with the
+// error: the next load asks the factory again, and whoever imports the module loads then.
+enum class AfterFailure : bool { KeepsError, AsksAgain };
+JS_EXPORT_PRIVATE void deferMock(JSGlobalObject*, ModuleID, AfterFailure = AfterFailure::KeepsError);
 // The mock has ended: its test file is over, or the program has taken it back. The next load finds the module itself, and whoever has imported a module of the library reads its own names again.
 JS_EXPORT_PRIVATE void didEndMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void runMocksBelow(JSGlobalObject*, ModuleID);

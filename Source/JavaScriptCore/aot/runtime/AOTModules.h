@@ -254,7 +254,7 @@ public:
     Vector<ModuleID> libraryModulesInRequireCache();
     bool isLibraryModuleInRequireCache(ModuleID);
     std::optional<ModuleID> formThatMockFinds(StringView path, std::optional<ModuleID> file) const;
-    void deferMock(ModuleID);
+    void deferMock(ModuleID, AfterFailure);
     void forgetMockThatWaits(ModuleID);
     void endMockOfLibraryModule(ModuleID);
     void keepWhatMockIsLaidOver(ModuleID);
@@ -909,6 +909,8 @@ private:
     // An import() has queued its first job for them, which has not run.
     BitVector m_modulesOfQueuedImports;
     BitVector m_modulesWithMockToRun;
+    // AfterFailure::AsksAgain
+    BitVector m_modulesWithMockThatAsksAgain;
     // The factory of a mock failed while they were loaded, and they import the mocked module by statements, one through another. The loader of `bun test` keeps the record of each with that error:
     // whoever loads one, or comes to one by a statement, gets the error, until the module is taken out of require.cache or the module below is mocked anew.
     BitVector m_modulesWithLoadEndedByMock;

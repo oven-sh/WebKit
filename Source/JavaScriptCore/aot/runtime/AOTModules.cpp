@@ -1634,9 +1634,10 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
     return true;
 }
 
-void Modules::deferMock(ModuleID module)
+void Modules::deferMock(ModuleID module, AfterFailure afterFailure)
 {
     m_modulesWithMockToRun.set(module.index());
+    m_modulesWithMockThatAsksAgain.set(module.index(), afterFailure == AfterFailure::AsksAgain);
     dropErrorsOfLoadsEndedByMockOf(module);
     if (data(module).kind == ModuleKind::CommonJs)
         ensureRecord(module);
@@ -1844,7 +1845,7 @@ void Modules::runMocksBelow(ModuleID root, RootOfLoad rootOfLoad)
         if (m_modulesWithMockToRun.get(module.index())) {
             runMockThatWaits(module);
             if (Exception* exception = scope.exception()) [[unlikely]] {
-                if (vm.isTerminationException(exception))
+                if (vm.isTerminationException(exception) || m_modulesWithMockThatAsksAgain.get(module.index()))
                     return;
                 keepErrorOfLoad(root, exception->value(), [&](ModuleID each) { return each == module; });
                 if (isImportedByStatement) {
@@ -5649,11 +5650,11 @@ Vector<ModuleID, 2> formsThatAttributesAskFor(JSGlobalObject* realm, StringView 
     return forms;
 }
 
-void deferMock(JSGlobalObject* realm, ModuleID moduleOfHost)
+void deferMock(JSGlobalObject* realm, ModuleID moduleOfHost, AfterFailure afterFailure)
 {
     ModuleFromHost module(realm, moduleOfHost);
     if (Modules* modules = modulesOf(realm))
-        modules->deferMock(module);
+        modules->deferMock(module, afterFailure);
 }
 
 void didEndMock(JSGlobalObject* realm, ModuleID moduleOfHost)
