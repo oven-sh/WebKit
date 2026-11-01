@@ -1,6 +1,6 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 140 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 154 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
@@ -142,10 +142,17 @@ Rules for an edit to an upstream test:
   `parser/Parser.cpp` (`parseMemberExpression`: `new` with arguments, and `callDivot`; the five places that parse `...`).
 - Recognize: the line is the same unless the name or callee and what follows it are on two lines. The column is smaller
   by the length of the name, or is that of the `new`. The message, and the text it quotes, do not change.
-- Files (11). Only positions change in each:
+- Files (33). Only positions change in each, and in the baselines only columns:
   - `stress/async-stack-trace-basic.js`, `-bound-functions-basic`, `-nested`, `-nested-deep`, `-promise-all-basic`,
     `-promise-allSettled-basic`, `-promise-any-basic`, `-promise-race-basic`, `-switch`: 212 frames
   - `stress/multiline-token-error-column.js` (both columns), `stress/get-property-cache-error.js` (the column)
+  - `ChakraCore/test/`: `Basics/bug650104`, `Error/NativeErrors_v4`, `Error/inlineSameFunc`,
+    `Error/validate_line_column`, `LetConst/defer2`, `LetConst/defer5`, `Object/forIn.error`,
+    `StackTrace/ErrorPrototype`, `StackTrace/FunctionName.js`, `es6/unicode_blue_533163_utf8`, `fieldopts/fieldhoist6`,
+    `6b`, `7`, `_negzero`, `_nullfieldhoist`, `_undefined_global`, `_unreachable` (all `.baseline-jsc`): 75 positions
+  - `LayoutTests/js/stack-trace-expected.txt`: 284 positions
+  - `LayoutTests/imported/w3c/web-platform-tests/wasm/core/`: `call_ref`, `return_call_indirect`, `return_call_ref`,
+    `unreached-invalid` (all `.wast.js-expected.txt`): the 207 positions in the stacks of their expected failures
 - The fork's own `stress/bytecode-optimizer-exceptions.js` has 24 of these positions in `__expect`. To record them
   again, run the file with `--useBytecodeOptimizer=0`.
 

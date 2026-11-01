@@ -883,7 +883,8 @@ static WrittenReads findWrittenIterations(std::span<const Latin1Character> text,
                 break;
             continue;
         }
-        for (size_t word = std::max(*within, open); word + 4 < *close; ++word) {
+        // The place lies in front of the `of`, or is the `of` itself where that starts a line of the head.
+        for (size_t word = std::max(*within ? *within - 1 : 0, open); word + 4 < *close; ++word) {
             if (isBlank(text[word]) && text[word + 1] == 'o' && text[word + 2] == 'f' && isBlank(text[word + 3])) {
                 size_t start = startOfLoopTarget(text, open + 1, word);
                 found = text.subspan(start, *close - start);
