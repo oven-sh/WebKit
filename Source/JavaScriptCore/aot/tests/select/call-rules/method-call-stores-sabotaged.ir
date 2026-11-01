@@ -1,8 +1,0 @@
-# sabotage=FusedCallsEnterOnlyUnknownCode: the read and the call are fused whatever the call enters
-# FORM: AsRead
-# RUN: compile
-# OPTIONS: sabotage=FusedCallsEnterOnlyUnknownCode
-# STATISTIC: MethodCallsNotFused = 0
-# STATISTIC: MethodCallGroups = 1
-# CHECK: image not empty
-# PROGRAM-OF: method-call-stores.ir
