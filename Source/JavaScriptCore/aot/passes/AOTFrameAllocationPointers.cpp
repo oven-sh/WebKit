@@ -162,6 +162,9 @@ bool mayBeGivenFrameArray(const Program& program, const FlowResults* flow, const
 {
     if (user.operandKind(operandIndex) == OperandKind::Guard || givesSameArray(user.opcode, operandIndex))
         return true;
+    // A hint lets go of a cell of the heap. Of what lies in a frame it says nothing, and no code is made for it.
+    if (user.opcode == Opcode::ReleaseHint)
+        return true;
     // A narrow reference counts from the base of the cage of cells.
     if (familyOf(user.opcode) == OperationFamily::Representation)
         return user.opcode != Opcode::Compress;

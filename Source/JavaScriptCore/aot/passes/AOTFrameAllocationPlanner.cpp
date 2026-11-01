@@ -798,6 +798,9 @@ AllocationHeapCause FramePlanner::checkUse(ObjectID object, const ObjectUse& ent
     EffectRule rule = effectRuleOf(user.opcode);
     if (user.operandKind(operandIndex) == OperandKind::Guard)
         return AllocationHeapCause::None;
+    // A hint lets go of a cell of the heap. Of what lies in the frame it says nothing, and no code is made for it.
+    if (user.opcode == Opcode::ReleaseHint)
+        return AllocationHeapCause::None;
     if (isEnvironmentOfDeferredClosures(m_program, user, operandIndex) || isValueOfDeferringField(m_program, user, operandIndex))
         return AllocationHeapCause::HeldByHeapCell;
     if (rule == EffectRule::Access && provenAccessOf(m_program, m_function, user).isLookupByKey)
