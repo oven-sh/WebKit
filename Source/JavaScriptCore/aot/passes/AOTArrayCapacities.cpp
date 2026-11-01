@@ -1756,7 +1756,7 @@ static bool mayHaveLostReadBehindBoundsTest(FunctionPassContext& context, BlockI
 {
     const Function& function = context.function;
     FunctionAnalyses& analyses = context.analyses;
-    if (!holdsOnly(context, storageTest.arrayOperand(), Primitive::Number))
+    if (!holdsOnly(context, storageTest.arrayOperand(), Primitive::Number) && !context.build.isSabotaged(Sabotage::ReadsOfListsThatMayHoldUndefinedAreCopied))
         return true;
     if (!analyses.opcodesOfValues().contains(Opcode::IsInBounds))
         return false;
