@@ -551,6 +551,7 @@ static bool sayWhatOperandsOfFormerChecksHaveProven(const Program& program, Func
     TypingContext typing { program, body, types };
     bool hasChanged = false;
     for (const EntryCheck& check : checks) {
+        RELEASE_ASSERT(check.check.index() < body.values.size());
         if (body.at(check.check).opcode != Opcode::AssumeType)
             continue;
         TypeID claimed = body.at(check.check).provenType();
@@ -772,8 +773,18 @@ void splitBehindEntryChecks(ProgramEditor& editor, const Heat* heat, BuildContex
         // A parameter that is tested for less than it was declared with has another type, and so has every cast that stands between it and the checks that were taken in.
         if (!splits[index].checkedEntryValues.isEmpty()) {
             FunctionAnalyses analyses(context, body);
-            typeValuesFromNever(TypePropagationInputs { program, id, body, analyses, arenas.types, build });
-            if (sayWhatOperandsOfFormerChecksHaveProven(program, body, arenas.types, splits[index].checks.span()))
+            // Where typing cuts code that nothing reaches any more, the values that stay get other numbers.
+            Renumbering renumbering;
+            TypePropagationInputs typing { program, id, body, analyses, arenas.types, build };
+            typing.renumbering = &renumbering;
+            typeValuesFromNever(typing);
+            Vector<EntryCheck, 4> checks = splits[index].checks;
+            if (!renumbering.values.isEmpty()) {
+                checks.removeAllMatching([&](EntryCheck& check) {
+                    return !(check.check = renumbering.newIDOf(check.check));
+                });
+            }
+            if (sayWhatOperandsOfFormerChecksHaveProven(program, body, arenas.types, checks.span()))
                 typeValuesFromNever(TypePropagationInputs { program, id, body, analyses, arenas.types, build });
         } else {
             typeCastsAheadOfChecks(program, body, arenas.types, splits[index].checks.span());
