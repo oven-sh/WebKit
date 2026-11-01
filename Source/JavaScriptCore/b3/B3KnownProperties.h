@@ -34,6 +34,28 @@ constexpr bool mayHaveKnownRange(Opcode opcode)
     }
 }
 
+inline bool mayHaveKnownDereferenceableBytes(const Value* value)
+{
+    auto isPointerFromOutside = [](const Value* value) {
+        switch (value->opcode()) {
+        case Phi:
+        case Patchpoint:
+        case CCall:
+        case Extract:
+        case ArgumentReg:
+        case Load:
+            return true;
+        case Add:
+            return value->child(0)->opcode() == ArgumentReg && value->child(1)->isConstant();
+        default:
+            return false;
+        }
+    };
+    if (value->opcode() == Select)
+        return !value->child(0)->isConstant() && isPointerFromOutside(value->child(1)) && isPointerFromOutside(value->child(2));
+    return isPointerFromOutside(value);
+}
+
 class KnownProperties {
 public:
     bool isEmpty() const { return m_entries.isEmpty(); }
