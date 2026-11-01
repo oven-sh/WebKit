@@ -5705,8 +5705,17 @@ static PassOutcome testLoopParametersInFrontOfLoops(FunctionPassContext& context
         };
         builder.moveToEndOf(failed);
         Vector<ValueID, 8> parameters(function.at(entrance.header).parameters.span());
+        // A back edge may hand one parameter on as another. All of them are read before the first is defined again: the repair takes a use behind a definition for a use of that definition.
+        Vector<ValueID, 8> read(entering.span());
         for (size_t index = 0; index < parameters.size(); ++index) {
-            Value held = IRBuilder::make(Opcode::Upcast, { entering[index] });
+            if (!parameters.contains(entering[index]))
+                continue;
+            Value old = IRBuilder::make(Opcode::Upcast, { entering[index] });
+            old.setCastType(function.at(parameters[index]).type);
+            read[index] = builder.append(WTF::move(old));
+        }
+        for (size_t index = 0; index < parameters.size(); ++index) {
+            Value held = IRBuilder::make(Opcode::Upcast, { read[index] });
             held.setCastType(function.at(parameters[index]).type);
             definedAgain.append({ parameters[index], builder.append(WTF::move(held)) });
         }
