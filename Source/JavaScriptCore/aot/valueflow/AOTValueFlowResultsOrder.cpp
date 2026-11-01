@@ -13,6 +13,7 @@
 #include "AOTLedger.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSchemaWalkers.h"
+#include "AOTValueIdentity.h"
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueFlowRulesModules.h"
 #include <algorithm>
@@ -79,6 +80,7 @@ static FlowUseOfFilesAndWay useOfFilesBy(const Value& value)
 static BitVector findImportsAwaitedAtOnceOnEveryWay(const Function& body)
 {
     BitVector imports(body.values.size());
+    Vector<std::pair<ValueID, ValueID>, 4> castsOfImports;
     Vector<uint32_t> numberOfPredecessors(FillWith { }, body.blocks.size(), 0u);
     for (const Block& block : body.blocks) {
         block.forEachTarget([&](const Target& target) {
@@ -89,11 +91,19 @@ static BitVector findImportsAwaitedAtOnceOnEveryWay(const Function& body)
         const Block& block = body.at(id);
         if (block.handler)
             break;
-        ValueID previous;
+        ValueID import;
+        ValueID last;
         for (ValueID value : block.values) {
-            if (previous && body.at(previous).opcode == Opcode::ImportModule && body.at(value).opcode == Opcode::Await && body.at(value).operand(0) == previous)
-                imports.quickSet(previous.index());
-            previous = value;
+            const Value& next = body.at(value);
+            bool takesLast = last && !next.operands().empty() && next.operand(0) == last;
+            if (takesLast && isCastWithoutTest(next.opcode)) {
+                castsOfImports.append({ value, import });
+                last = value;
+                continue;
+            }
+            if (takesLast && next.opcode == Opcode::Await)
+                imports.quickSet(import.index());
+            import = last = next.opcode == Opcode::ImportModule ? value : ValueID();
         }
         if (block.terminator.kind != TerminatorKind::Jump)
             break;
@@ -120,6 +130,10 @@ static BitVector findImportsAwaitedAtOnceOnEveryWay(const Function& body)
     for (uint32_t value = 0; value < numberOfUses.size(); ++value) {
         if (numberOfUses[value] != 1)
             imports.quickClear(value);
+    }
+    for (auto [cast, import] : castsOfImports) {
+        if (numberOfUses[cast.index()] != 1)
+            imports.quickClear(import.index());
     }
     return imports;
 }
