@@ -409,10 +409,21 @@ static void warnAboutLoadsUnderComputedNames(const ValueFlowResultInputs& inputs
     const Program& program = inputs.program;
     BuildContext& build = inputs.build;
     Vector<SourceLocation> reportedLocations;
+    bool isLoaderHeldByUnseenCode = false;
+    // `names.map(require)`: native code calls the loader too, and runs nothing that nobody has read.
+    bool runsUnseenJavaScript = std::ranges::any_of(records, [](const UnseenCodeRecord& record) {
+        return admitsUnknownJavaScript(record.cause);
+    });
     for (const UnseenCodeRecord& record : records) {
-        if (record.cause != UnseenCodeCause::LoadsModuleByName || record.witness.value == Wire::none)
+        if (record.cause != UnseenCodeCause::LoadsModuleByName)
             continue;
         bool isCallOfLoader = record.builtin != Wire::none;
+        // `vm.runInNewContext("require('./a.js')", { require })`: the text names the file, and nobody has read the text.
+        if (record.witness.value == Wire::none) {
+            if (isCallOfLoader && runsUnseenJavaScript && !std::exchange(isLoaderHeldByUnseenCode, true))
+                build.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::LoaderIsHeldByUnseenCode });
+            continue;
+        }
         if (isCallOfLoader ? !isCallOfProgramUnderComputedName(program, record.witness) : isLoadUnderConstantName(program, record.witness))
             continue;
         if (findsModuleUnderEveryName(inputs, record.witness, isCallOfLoader))
