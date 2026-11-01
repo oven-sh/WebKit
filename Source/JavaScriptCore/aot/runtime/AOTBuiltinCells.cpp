@@ -774,6 +774,12 @@ void setRefusedChangeListener(RefusedChangeListener listener)
     refusedChangeListener = listener;
 }
 
+void tellRefusedChangeListener(JSGlobalObject* realm, const String& refusal)
+{
+    if (refusedChangeListener) [[unlikely]]
+        refusedChangeListener(realm, refusal);
+}
+
 static void noteNameOfLockedObject(JSObject* object, BuiltinID id)
 {
     Locker locker { namesOfLockedObjectsLock };

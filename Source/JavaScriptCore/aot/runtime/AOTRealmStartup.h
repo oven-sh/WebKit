@@ -33,6 +33,7 @@ JS_EXPORT_PRIVATE void openNameWithoutImage(uint32_t holder, std::span<const uin
 JS_EXPORT_PRIVATE void lockBuiltinsOfTable(JSGlobalObject*);
 using RefusedChangeListener = void (*)(JSGlobalObject*, const String& refusal);
 JS_EXPORT_PRIVATE void setRefusedChangeListener(RefusedChangeListener);
+void tellRefusedChangeListener(JSGlobalObject*, const String& refusal);
 void didRejectWrite(JSGlobalObject*, JSObject*, UniquedStringImpl* keyOrNull, RejectedWrite);
 String lockedObjectErrorMessage(JSGlobalObject*, JSObject*, UniquedStringImpl* key, RejectedWrite);
 // The words of the store that a spy would make, said of the spy. Null: the object says nothing of that key.

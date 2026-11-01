@@ -1336,6 +1336,8 @@ private:
     // What the jobs behind a delivery call for is not delayed a second time: the run lies one turn behind the executable's, once.
     bool m_isInJobsBehindDelivery { false };
     void queueJobOfRound(ModuleID moduleOfJob);
+    // That job is nobody who could tell in how many jobs a graph is loaded.
+    bool doOtherJobsWait() const { return m_instance.vm->defaultMicrotaskQueue().size() > (m_isJobOfRoundQueued ? 1u : 0u); }
     void runJobOfRound(ModuleID moduleOfJob);
     Vector<TextThatWaits, 2> m_callsToMakeAgain;
     bool makeCallAgain(JSPromise*);

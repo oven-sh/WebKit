@@ -25,6 +25,7 @@
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
 #include "AOTProgramStrings.h"
+#include "AOTRealmStartup.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTRuntimeReporter.h"
 #include "AOTRuntimeTable.h"
@@ -1800,6 +1801,9 @@ auto Modules::mockThatAnswersForSlow(ModuleID passingOn, const ModuleExportData&
     };
     for (size_t index : m_modulesWithMockInPlace) {
         JSObject* mock = mockInPlace(ModuleID(index));
+        // readExportOfModuleItself(): an object that keeps to the module reads past the mock of the module here too.
+        if (m_moduleReadPastItsMock && (ModuleID(index) == *m_moduleReadPastItsMock || moduleWithExportsOf(ModuleID(index)) == *m_moduleReadPastItsMock))
+            continue;
         if (!mock || !seesMockOf(ModuleID(index), passingOn))
             continue;
         ModuleID declaring = moduleWithExportsOf(ModuleID(index));
@@ -2824,6 +2828,9 @@ private:
 
 void Modules::deferMock(ModuleID module, AfterFailure afterFailure)
 {
+    // Its factory has failed and it waits again. The load that came to it has left the loader of `bun test`, which makes it anew.
+    if (m_modulesWithMockThatWaited.get(module.index()) && !mockInPlace(module) && !hasMockLaidOver(module))
+        letGoOfImportersOf(module, ImportersLetGo::All);
     // Whoever was linked against the earlier mock reads it until the load that this one waits for.
     m_modulesWithMockToRun.set(module.index());
     m_modulesWithMockThatAsksAgain.set(module.index(), afterFailure == AfterFailure::AsksAgain);
@@ -3204,7 +3211,12 @@ bool Modules::runMocksBelowInImages(ModuleID root, RootOfLoad rootOfLoad)
         if (auto [modules, file] = mockWaitsInImageBelow ? fileInImageBelow(module) : std::pair<Modules*, ModuleID> { nullptr, module }; modules) [[unlikely]] {
             RunningImageScope imageOfFile(vm.aotState(), modules->m_instance.program);
             bool factoryHasNotSettled = modules->runMocksBelow(file, isImportedByStatement ? RootOfLoad::IsImportedByStatement : RootOfLoad::BeginsLoad);
-            RETURN_IF_EXCEPTION(scope, false);
+            if (Exception* exception = scope.exception()) [[unlikely]] {
+                // What the image of the file keeps of a factory that failed the importers here keep too, as where the loader fails to fetch the file.
+                if (!vm.isTerminationException(exception) && (modules->errorOfLoadEndedByMock(file) || modules->m_mockedModulesWithErrorKeptByLoader.get(file.index())))
+                    keepErrorOfLoad(root, exception->value(), [&](ModuleID each) { return each == module; });
+                return false;
+            }
             if (factoryHasNotSettled)
                 return true;
             continue;
@@ -4804,7 +4816,7 @@ bool Modules::continueCountedImport(JSPromise* importPromise, JSValue module, JS
     CountedImport& counted = m_countedImports[index];
     uint32_t job = counted.jobsRun + 1;
     // Most of the jobs only pass the turn on.
-    if (job > 1 && job != jobInWhichLoaderAsksRoot && job != counted.jobOfEvaluation && job != counted.jobOfNextNativeModule && !counted.jobsOfLoader && !m_instance.vm->defaultMicrotaskQueue().isEmpty()) {
+    if (job > 1 && job != jobInWhichLoaderAsksRoot && job != counted.jobOfEvaluation && job != counted.jobOfNextNativeModule && !counted.jobsOfLoader && doOtherJobsWait()) {
         counted.jobsRun = job;
         if (!m_orderOfCountedJobs.isEmpty())
             m_orderOfCountedJobs.append(counted.serial);
@@ -4879,7 +4891,7 @@ void Modules::decideHowCountedImportGoesOn(CountedImport& import)
         return goOnWithLoader();
 
     // Where no job waits none will run before the graph has run: nobody can tell in how many jobs it is loaded, unless the host does something of its own behind a job.
-    bool isWatched = !queue.isEmpty() || vm.hostObservesMicrotaskBoundaries();
+    bool isWatched = doOtherJobsWait() || vm.hostObservesMicrotaskBoundaries();
     if (!import.jobsRun) {
         // Whatever began to load a graph since the call has handed this one to the loader.
         if (m_innermostEvaluation || storedStatus(module) != StoredModuleStatus::Unlinked || importsFileBeingEvaluated(module))
@@ -5097,7 +5109,7 @@ void Modules::continueImport(JSPromise* importPromise, ModuleID module, std::opt
     }
 
     if (m_importThatWaitsForQueuedJobs == importPromise) {
-        if (!vm.defaultMicrotaskQueue().isEmpty()) {
+        if (doOtherJobsWait()) {
             queueImportJob(m_instance.globalObject, importPromise, module, referrerAsyncOrder);
             return;
         }
@@ -5605,7 +5617,7 @@ void Modules::appendRequestThatFindsNothing(ModuleFailureID statement, ModuleRec
 void Modules::keepFailureOfRequest(ModuleID module, ModuleRecord* record, const Identifier& name)
 {
     VM& vm = *m_instance.vm;
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (loader()->hasResolutionFailure({ record->moduleKey().impl(), name.impl() }))
         return;
     std::optional<ModuleFailureID> statement = statementThatEndsLoad(module);
@@ -6990,6 +7002,7 @@ static void throwLoadByNameRefused(JSGlobalObject* realm, StringView name, LoadB
 {
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
     Modules* modules = modulesOf(realm);
+    tellRefusedChangeListener(realm, makeString("Cannot reach '"_s, name, '\''));
     throwException(realm, scope, createLoadByNameRefusedError(realm, name, form == LoadByName::Import ? "ERR_MODULE_NOT_FOUND"_s : "MODULE_NOT_FOUND"_s, modules ? modules->askerOfModule() : StringView()));
 }
 
