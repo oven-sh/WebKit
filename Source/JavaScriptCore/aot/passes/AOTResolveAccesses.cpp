@@ -3223,11 +3223,15 @@ void rewriteTestedPropertyAccess(TestSiteRewriter& rewriter)
     AccessOperands operands = operandsOfNamedAccess(access);
     operands.guard = rewriter.guard();
 
-    // A test of the stored value may name layouts too, and it says nothing about the receiver. The operand of the site is what passed the test, or a cast of it to the type the operand had.
+    // A test of the stored value may name layouts too, and it says nothing about the receiver, unless the object is stored into itself. The operand of the site is what passed the test, or a cast of it
+    // to the type the operand had.
     std::span<const Value> receiverTests = rewriter.tests();
     if (operands.stored && !receiverTests.empty()) {
         uint32_t last = static_cast<uint32_t>(receiverTests.size() - 1);
-        if (receiverTests[last].opcode == Opcode::TypeTest && std::ranges::contains(CastChain(rewriter.function(), operands.stored), rewriter.proofOf(last)))
+        auto hasPassedLastTest = [&](ValueID operand) {
+            return std::ranges::contains(CastChain(rewriter.function(), operand), rewriter.proofOf(last));
+        };
+        if (receiverTests[last].opcode == Opcode::TypeTest && hasPassedLastTest(operands.stored) && !hasPassedLastTest(operands.receiver))
             receiverTests = receiverTests.first(last);
     }
     // The receiver is by now what passed its test, and no cast leads from there to the allocation. The test still names what the report asked about.
