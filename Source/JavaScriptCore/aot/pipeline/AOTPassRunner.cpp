@@ -479,7 +479,7 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::ApplyFlowResults, InPlaceOfOperation::NothingBecauseNothingComesHere, true, TakesHandlersAway::No, { } },
     { PassID::CallModules, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
     { PassID::DeferInitializers, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
-    { PassID::EliminateTailRecursion, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::EliminateTailRecursion, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::CallDirect } },
     { PassID::ExpandIteration, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
     { PassID::ExpandOwnKeys, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
     { PassID::ExpandProvenIterations, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
@@ -499,7 +499,7 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::MoveGeneratorFramesToHeap, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
     { PassID::SplitCoroutines, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
     { PassID::SplitFreshResults, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
-    { PassID::StartGeneratorsAtFirstStep, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::StartGeneratorsAtFirstStep, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::CallDirect } },
     // What it lets go stores to, reads from or casts an object or a list that it holds itself, and that nobody else has seen.
     { PassID::SinkAllocations, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::AppendElement, Opcode::AppendElements, Opcode::AppendHole, Opcode::AppendSpread, Opcode::CheckInitialized, Opcode::CopyDataProperties, Opcode::DestructureIterable, Opcode::ElemGet, Opcode::ElemSet, Opcode::PrivateDefine, Opcode::PrivateSet, Opcode::PropDefine, Opcode::PropGet, Opcode::PropSet, Opcode::PutArrayElement, Opcode::RequireObjectCoercible, Opcode::SetLiteralPrototype } },
     // A rule takes the members of the group that it has matched out of their blocks. At its end the pass takes the polls of loops out of handlers, as RemoveRedundantHandlers does.
