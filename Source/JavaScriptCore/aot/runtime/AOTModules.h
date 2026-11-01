@@ -574,6 +574,7 @@ public:
     void appendRequestsForLoader(ModuleID, ModuleRecord*, ModuleGraphLoadingState&);
     std::optional<ModuleFailureID> statementThatEndsLoad(ModuleID) const;
     void appendRequestThatFindsNothing(ModuleFailureID statement, ModuleRecord*);
+    void keepFailureOfRequest(ModuleID, ModuleRecord*, const Identifier& name);
     ModuleGraphLoadingState* loadThatWaitsFor(ModuleID requester, const Identifier& key, ModuleGraphLoadingState* loadOfRequester, unsigned& jobsUntilLoadHearsOfFailure);
     ModuleRecord* appendRequestsOfUncompiledCode(ModuleID, ModuleRecord*, const ModulesOfRealm& inFront = { }, const LevelOfRealm* = nullptr);
     struct RequestsOfUncompiledCode;

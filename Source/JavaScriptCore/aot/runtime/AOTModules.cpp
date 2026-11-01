@@ -5540,6 +5540,7 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record, Mod
                 JSModuleLoader::attachErrorInfo(m_instance.globalObject, exception, nullptr, name, ScriptFetchParameters::Type::JavaScript, JSModuleLoader::ModuleFailure::Kind::Instantiation);
                 loader()->addResolutionFailure(vm, { record->moduleKey().impl(), name.impl() }, exception->value());
                 record->appendRequestedModule(name, nullptr, request.isDeferred ? ModulePhase::Defer : ModulePhase::Evaluation);
+                record->setHasRequestThatFindsNothing();
                 return;
             }
             if (std::optional<ModuleID> compiled = m_table.findByPath(keptAlive.last().string()); compiled && isCommonJSFileOrFace(*compiled)) {
@@ -5595,6 +5596,34 @@ void Modules::appendRequestThatFindsNothing(ModuleFailureID statement, ModuleRec
     JSModuleLoader::attachErrorInfo(m_instance.globalObject, exception, nullptr, name, ScriptFetchParameters::Type::JavaScript, JSModuleLoader::ModuleFailure::Kind::Instantiation);
     loader()->addResolutionFailure(vm, { record->moduleKey().impl(), name.impl() }, exception->value());
     record->appendRequestedModule(name, nullptr, ModulePhase::Evaluation);
+    record->setHasRequestThatFindsNothing();
+}
+
+// The loader forgets the failure with the entry of the module. The record stays, and names the request as before.
+void Modules::keepFailureOfRequest(ModuleID module, ModuleRecord* record, const Identifier& name)
+{
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (loader()->hasResolutionFailure({ record->moduleKey().impl(), name.impl() }))
+        return;
+    std::optional<ModuleFailureID> statement = statementThatEndsLoad(module);
+    if (statement && m_table.failure(*statement).importerModule() == module && name.string() == ProgramStrings::text(m_table.programTables(), m_table.failure(*statement).specifierString()))
+        throwFailure(*statement, false);
+    else {
+        for (const ModuleRequestData& request : m_table.imports(module)) {
+            ModuleID target = request.targetModule();
+            if (!data(target).isUncompiledCode() || name.string() != m_table.pathText(target))
+                continue;
+            resolvedKey(target);
+            break;
+        }
+    }
+    Exception* exception = scope.exception();
+    if (!exception)
+        return;
+    TRY_CLEAR_EXCEPTION(scope, void());
+    JSModuleLoader::attachErrorInfo(m_instance.globalObject, exception, nullptr, name, ScriptFetchParameters::Type::JavaScript, JSModuleLoader::ModuleFailure::Kind::Instantiation);
+    loader()->addResolutionFailure(vm, { record->moduleKey().impl(), name.impl() }, exception->value());
 }
 
 // In the order in which the graph comes to them. The modules keep the keys alive.
@@ -7737,6 +7766,8 @@ void ModuleRecord::willLoadRequests(ModuleGraphLoadingState& load)
 ModuleGraphLoadingState* ModuleRecord::loadThatWaitsFor(const Identifier& key, ModuleGraphLoadingState* loadOfRequester, unsigned& jobsUntilLoadHearsOfFailure)
 {
     RunningImageScope imageOfRecord(m_instance.vm->aotState(), m_instance.program);
+    if (m_hasRequestThatFindsNothing) [[unlikely]]
+        modules().keepFailureOfRequest(m_module, this, key);
     return modules().loadThatWaitsFor(m_module, key, loadOfRequester, jobsUntilLoadHearsOfFailure);
 }
 

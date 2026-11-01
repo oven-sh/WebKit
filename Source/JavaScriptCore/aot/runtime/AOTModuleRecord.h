@@ -108,6 +108,7 @@ public:
     bool takeRunsInItsTurn() { return std::exchange(m_runsInItsTurn, false); }
     bool isRequestedByWalkedModule() const { return m_isRequestedByWalkedModule; }
     void setIsRequestedByWalkedModule() { m_isRequestedByWalkedModule = true; }
+    void setHasRequestThatFindsNothing() { m_hasRequestThatFindsNothing = true; }
     // Around a request that the loader makes for the module. The first returns what the second takes.
     uint8_t willAskHostForRequest();
     // Around a request that the loader makes for no module of its own: every image of the realm asks. The first returns what the second takes: which of them were asking.
@@ -162,6 +163,7 @@ private:
     bool m_runsWhenLoaded { false };
     bool m_runsInItsTurn { false };
     bool m_isRequestedByWalkedModule { false };
+    bool m_hasRequestThatFindsNothing { false };
 };
 
 } } // namespace JSC::AOT
