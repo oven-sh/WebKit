@@ -15,6 +15,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
+#include "AOTCFG.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTPhaseTimes.h"
 #include "AOTResultRules.h"

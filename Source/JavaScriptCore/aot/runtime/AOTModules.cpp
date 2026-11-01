@@ -1047,7 +1047,7 @@ JSValue Modules::readExport(ModuleID module, unsigned index)
         if (m_mocks || (vm.aotState().hasSeveralImages && data(indirectExport.targetModule()).isUncompiledCode())) [[unlikely]] {
             AbstractModuleRecord* record = recordForResolution(indirectExport.targetModule());
             RETURN_IF_EXCEPTION(scope, { });
-            StarExportResolution resolution = record->resolveExport(realm, identifier(indirectExport.importName));
+            AbstractModuleRecord::Resolution resolution = record->resolveExport(realm, identifier(indirectExport.importName));
             RETURN_IF_EXCEPTION(scope, { });
             if (resolution.isLiveExport(vm))
                 RELEASE_AND_RETURN(scope, resolution.moduleRecord->getReexportedLiveExport(realm, resolution.localName));

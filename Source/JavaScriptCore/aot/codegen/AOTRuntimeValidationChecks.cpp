@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAccessEmitter.h"
 #include "AOTArrayStorageForms.h"
 #include "AOTBuiltinPristine.h"
 #include "AOTBuiltinTable.h"

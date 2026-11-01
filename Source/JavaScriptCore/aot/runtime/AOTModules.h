@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInstance.h"
 #include "AOTModuleHost.h"
 #include "AOTModuleRecord.h"
 #include "AOTModuleTable.h"

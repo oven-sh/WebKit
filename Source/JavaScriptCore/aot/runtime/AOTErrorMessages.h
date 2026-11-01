@@ -10,6 +10,7 @@
 #include "AOTBuiltinIDTypes.h"
 #include "AOTRecordTypes.h"
 #include "JSCJSValue.h"
+#include "LineColumn.h"
 #include <span>
 #include <wtf/text/WTFString.h>
 #include <wtf/ScopedLambda.h>

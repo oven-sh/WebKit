@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinIDTypes.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTFlowPrototypes.h"
 #include "AOTValueFlowBuiltinTables.h"

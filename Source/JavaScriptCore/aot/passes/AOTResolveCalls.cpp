@@ -38,6 +38,7 @@
 #include "AOTResultRules.h"
 #include "AOTSinkAllocations.h"
 #include "AOTSort.h"
+#include "AOTStringArena.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeTestSite.h"
 #include "AOTUseLists.h"

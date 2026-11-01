@@ -22,6 +22,7 @@
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTPrimitives.h"
+#include "AOTRuntimeCounters.h"
 #include "AOTStackTrace.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStrings.h"

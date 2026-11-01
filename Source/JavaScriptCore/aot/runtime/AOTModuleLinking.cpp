@@ -12,6 +12,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTInstance.h"
 #include "AOTModuleLinkWalk.h"
+#include "AOTModuleNamespace.h"
 #include "AOTModuleRecord.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
@@ -26,6 +27,8 @@
 #include "Error.h"
 #include "ExceptionHelpers.h"
 #include "JSCInlines.h"
+#include "JSModuleLoader.h"
+#include "ObjectConstructor.h"
 #include "PropertyNameArray.h"
 #include "SyntheticModuleRecord.h"
 #include <algorithm>

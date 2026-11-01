@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTConversionEmitter.h"
+#include "AOTFunctionAnalyses.h"
 #include "AOTNumberLiteralStrings.h"
 #include "AOTRepresentationRules.h"
 #include "AOTStringEmitter.h"

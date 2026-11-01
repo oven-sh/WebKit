@@ -13,6 +13,7 @@
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinTableBindings.h"
 #include "AOTExceptionEmitter.h"
+#include "AOTFunctionAnalyses.h"
 #include "AOTHeaps.h"
 #include "AOTPureOperations.h"
 #include "AOTRuntimeValidationEmitter.h"

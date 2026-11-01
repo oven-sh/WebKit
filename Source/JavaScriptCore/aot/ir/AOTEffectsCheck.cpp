@@ -20,6 +20,7 @@
 #include <utility>
 #include <wtf/CommaPrinter.h>
 #include <wtf/StringPrintStream.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

@@ -26,6 +26,7 @@
 #include "AOTNaturalLoops.h"
 #include "AOTPredictedValues.h"
 #include "AOTProgramPasses.h"
+#include "AOTPropertyAccessElements.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTRegionCloner.h"
 #include "AOTResolveCallsDirectCall.h"

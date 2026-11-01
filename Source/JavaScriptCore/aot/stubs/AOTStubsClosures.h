@@ -9,6 +9,7 @@
 
 #include "AOTFunctionData.h"
 #include "AOTStubDescriptor.h"
+#include "AOTStubHelpers.h"
 
 namespace JSC { namespace AOT {
 

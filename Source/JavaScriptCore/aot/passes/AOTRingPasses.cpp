@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
+#include "AOTBuiltinTypes.h"
 #include "AOTCurrentWork.h"
 #include "AOTDecidedBranches.h"
 #include "AOTEdgeResults.h"

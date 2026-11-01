@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCFG.h"
 #include "AOTIR.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
