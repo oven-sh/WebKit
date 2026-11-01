@@ -3153,6 +3153,7 @@ struct TestPlacer {
     Vector<EmittedTest> emittedTests { };
     Vector<ValueID> changedValues { };
     Vector<std::pair<ValueID, TypeID>, 4> ownTypesOfRepresentatives { };
+    Vector<ValueID, 4> castsToTypesOfOperands { };
 
     PassOutcome run()
     {
@@ -4011,8 +4012,10 @@ struct TestPlacer {
                 guards.appendIfNotContains(proof);
                 return;
             }
-            if (std::optional<TypeID> castType = findTypeOfOperand(test, *prerequisite.narrowedOperand, proof))
-                proof = emit(makeAssumeType(proof, emit(IRBuilder::make(Opcode::Specified)), Proven::behindFact(*castType)));
+            if (std::optional<TypeID> castType = findTypeOfOperand(test, *prerequisite.narrowedOperand, proof)) {
+                proof = emit(makeAssumeType(proof, emit(IRBuilder::make(Opcode::Specified)), Proven::behindFact(claimOfCast(*castType, test.operand(*prerequisite.narrowedOperand)))));
+                castsToTypesOfOperands.append(proof);
+            }
             test.setOperand(*prerequisite.narrowedOperand, proof);
         });
 
@@ -4058,6 +4061,11 @@ struct TestPlacer {
         if (both.isNever() || both == passedType || (hasToBeInteger && !both.hasOnlyPrimitives(Primitive::Integer)))
             return std::nullopt;
         return types.intern(both);
+    }
+
+    TypeID claimOfCast(TypeID typeWithStandIn, ValueID operand) const
+    {
+        return context.build.isSabotaged(Sabotage::TestsKeepTheTypesTheyWereMadeWith) ? typeWithStandIn : function.at(operand).type;
     }
 
     void addDefinition(TestConditionID condition, ValueID proof)
@@ -4212,7 +4220,8 @@ struct TestPlacer {
         if (both.isNever() || both == passedType)
             return passed;
 
-        return castBefore(point, passed, types.intern(both));
+        castsToTypesOfOperands.append(castBefore(point, passed, claimOfCast(types.intern(both), operand)));
+        return castsToTypesOfOperands.last();
     }
 
     ValueID castBefore(ProgramPoint point, ValueID value, TypeID castType)
@@ -4417,14 +4426,18 @@ struct TestPlacer {
         if (context.build.isSabotaged(Sabotage::TestsKeepTheTypesTheyWereMadeWith))
             return;
         TypingContext typing { context.program, function, types };
-        for (const EmittedTest& emitted : emittedTests) {
-            TypeID type = computeResultTypeID(typing, function.at(emitted.test));
-            if (types.at(type) == types.at(function.at(emitted.test).type))
-                continue;
-            function.edit(emitted.test, ValueEdit::Type).type = type;
-            changedValues.append(emitted.test);
+        auto typeByOperands = [&](ValueID value) {
+            changedValues.append(value);
+            TypeID type = computeResultTypeID(typing, function.at(value));
+            if (types.at(type) == types.at(function.at(value).type))
+                return;
+            function.edit(value, ValueEdit::Type).type = type;
             context.build.statistics().count(StatisticID::TypeTestsTypedByOtherOperands);
-        }
+        };
+        for (ValueID cast : castsToTypesOfOperands)
+            typeByOperands(cast);
+        for (const EmittedTest& emitted : emittedTests)
+            typeByOperands(emitted.test);
     }
 
     void replaceDominatedUses()
