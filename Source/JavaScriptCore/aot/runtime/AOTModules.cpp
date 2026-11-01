@@ -1504,36 +1504,43 @@ static bool exportSameBinding(const ModuleTable& table, const ModuleExportData& 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool Modules::namesBehindStarsAreInTables(ModuleID module, Vector<ModuleID, 8>& path) const
+bool Modules::namesBehindStarsAreInTables(ModuleID module, const SearchBehindStars& search) const
 {
-    if (!data(module).hasDynamicStarExport() || path.contains(module))
-        return true;
-    path.append(module);
-    bool result = true;
-    for (const ModuleRequestData& request : m_table.requests(module)) {
-        if (!request.isDynamicStarExport)
+    BitVector isSeen(m_table.size());
+    for (ModuleID onPath : search.path)
+        isSeen.quickSet(onPath.index());
+    Vector<ModuleID, 8> toAsk { module };
+    while (!toAsk.isEmpty()) {
+        ModuleID asked = toAsk.takeLast();
+        if (!data(asked).hasDynamicStarExport() || isSeen.quickSet(asked.index()))
             continue;
-        const ModuleData& source = data(request.targetModule());
-        if (source.capturesExports() || source.isUncompiledCode() || !source.hasExportTable() || !namesBehindStarsAreInTables(request.targetModule(), path)) {
-            result = false;
-            break;
+        for (const ModuleRequestData& request : m_table.requests(asked)) {
+            if (!request.isDynamicStarExport)
+                continue;
+            const ModuleData& source = data(request.targetModule());
+            if (source.capturesExports() || source.isUncompiledCode() || !source.hasExportTable())
+                return false;
+            toAsk.append(request.targetModule());
         }
     }
-    path.removeLast();
-    return result;
+    return true;
 }
 
 // `export *` keeps the name and the binding, so the module got the entry from a module that it requests and that has the same one. The name is found as long as one of them has it.
-bool Modules::isLeftOut(ModuleID module, unsigned index, TablesBehindStars tables, Vector<ModuleID, 8>& path) const
+bool Modules::isLeftOut(ModuleID module, unsigned index, TablesBehindStars tables, SearchBehindStars& search) const
 {
     if (auto found = m_exportsLeftOut.find(module); found != m_exportsLeftOut.end())
         return found->value.get(index);
     const ModuleExportData& entry = m_table.exports(module)[index];
     if (!entry.isFromStarExport)
         return false;
+    size_t place = module.index() * 2 + (tables == TablesBehindStars::HaveName);
+    if (search.isAnswered.get(place))
+        return search.isLeftOut.get(place);
+    unsigned ringsMet = search.ringsMet;
     // Another `export *` of the module, whose names only the run knows, may have the name too. The table of a module behind a star that is followed keeps every name.
     if (data(module).hasDynamicStarExport()) {
-        if (!namesBehindStarsAreInTables(module, path))
+        if (!namesBehindStarsAreInTables(module, search))
             return false;
         tables = TablesBehindStars::HaveName;
     }
@@ -1541,19 +1548,20 @@ bool Modules::isLeftOut(ModuleID module, unsigned index, TablesBehindStars table
     bool isMissing = false;
     bool isAnyAsked = false;
     bool comesRoundInCircle = false;
-    path.append(module);
+    search.path.append(module);
     for (const ModuleRequestData& request : m_table.requests(module)) {
         ModuleID target = request.targetModule();
         if (request.isRequire || !data(target).hasExportTable())
             continue;
         std::optional<unsigned> handedOn = m_table.findExport(target, name.impl());
         bool handsOnBinding = handedOn && exportSameBinding(m_table, entry, m_table.exports(target)[*handedOn]);
-        if (path.contains(target)) {
+        if (search.path.contains(target)) {
+            ++search.ringsMet;
             comesRoundInCircle |= handsOnBinding;
             continue;
         }
         if (handsOnBinding)
-            isMissing = isLeftOut(target, *handedOn, tables, path);
+            isMissing = isLeftOut(target, *handedOn, tables, search);
         else if (!handedOn && tables == TablesBehindStars::MayLackName)
             isMissing = false;
         else
@@ -1562,9 +1570,14 @@ bool Modules::isLeftOut(ModuleID module, unsigned index, TablesBehindStars table
         if (!isMissing)
             break;
     }
-    path.removeLast();
+    search.path.removeLast();
     // Stars that lead back to where the search came from give the name to nobody.
-    return isAnyAsked ? isMissing : comesRoundInCircle;
+    bool answer = isAnyAsked ? isMissing : comesRoundInCircle;
+    if (ringsMet == search.ringsMet) {
+        search.isAnswered.set(place);
+        search.isLeftOut.set(place, answer);
+    }
+    return answer;
 }
 
 void Modules::mockWhatRequireAnswered(ModuleID module, JSObject* exports)

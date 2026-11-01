@@ -217,11 +217,19 @@ public:
     void appendNamesAddedByMock(ModuleID, WTF::Vector<Identifier>&);
     // Such a mock has no `export *`: what stands behind a star of the module gives it no name, and is not loaded for it.
     bool standsForWholeModule(ModuleID) const;
+    // Stars lead round in rings and meet again behind a fork. A module that was asked to its end answers whoever comes next as it answered the first;
+    // an answer that was made while the search came round in a ring holds for that way alone.
+    struct SearchBehindStars {
+        Vector<ModuleID, 8> path;
+        BitVector isAnswered;
+        BitVector isLeftOut;
+        unsigned ringsMet { 0 };
+    };
     // Every `export *` of the module is followed at run time, and each leads to a module whose table lists what it exports, as do the stars of that module. What mocks leave out and add decides the rest.
     bool namesBehindStarsAreInTables(ModuleID module) const
     {
-        Vector<ModuleID, 8> path;
-        return data(module).hasDynamicStarExport() && namesBehindStarsAreInTables(module, path);
+        SearchBehindStars search;
+        return data(module).hasDynamicStarExport() && namesBehindStarsAreInTables(module, search);
     }
     // The build keeps a name in every table that a link searches for it. Of any other name it drops the entries that nothing reads.
     enum class TablesBehindStars : bool { MayLackName, HaveName };
@@ -232,8 +240,8 @@ public:
             return true;
         if (m_exportsLeftOut.isEmpty()) [[likely]]
             return false;
-        Vector<ModuleID, 8> path;
-        return isLeftOut(module, exportIndex, tables, path);
+        SearchBehindStars search;
+        return isLeftOut(module, exportIndex, tables, search);
     }
     // What the graph of the root reaches without going through a mocked module. Nothing if no module is mocked.
     // Asked about the modules of the graph below a root.
@@ -738,8 +746,8 @@ private:
     AbstractModuleRecord::Resolution::Type resolveRequiredName(ModuleID exporter, const Identifier&);
     // Throws for the first name that an unlinked module of the list requires and that its exporter lacks or has from two bindings.
     void checkRequiredNames(std::span<const ModuleID> modules);
-    bool isLeftOut(ModuleID, unsigned exportIndex, TablesBehindStars, Vector<ModuleID, 8>& path) const;
-    bool namesBehindStarsAreInTables(ModuleID, Vector<ModuleID, 8>& path) const;
+    bool isLeftOut(ModuleID, unsigned exportIndex, TablesBehindStars, SearchBehindStars&) const;
+    bool namesBehindStarsAreInTables(ModuleID, const SearchBehindStars&) const;
     bool isVariableOfExportEmpty(ModuleID, unsigned exportIndex) const;
     // The text of a CommonJS file always stores the name. The file lacks it only where a mock stands for the whole file.
     bool isFoundInTextOfFile(const RequiredNameData& requiredName) const { return requiredName.mayBeAbsent && isCommonJSFileOrFace(requiredName.exporterModule()); }
