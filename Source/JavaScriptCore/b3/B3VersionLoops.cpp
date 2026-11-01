@@ -233,12 +233,13 @@ private:
             patchpoint->effects.controlDependent = true;
     }
 
-    static Variable* variableOfHeaderPhi(const LoopVersionPlan& plan, Value* value)
+    Variable* variableOfHeaderPhi(const LoopVersionPlan& plan, Value* value) const
     {
         Value* read = value->foldIdentity();
         if (value->owner != plan.region.header || read == value || read->opcode() != Get)
             return nullptr;
-        return read->as<VariableValue>()->variable();
+        Variable* variable = read->as<VariableValue>()->variable();
+        return m_singleDefinitions.get(variable) ? nullptr : variable;
     }
 
     template<typename Functor>

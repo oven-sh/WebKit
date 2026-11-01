@@ -340,6 +340,74 @@ static void testVersionLoopsReturnsToFastVersionAroundCallThatWrites()
 }
 
 // The likely path gives the variable a hoisted value. A rare path that is copied into the fast version gives it another, which the next iteration must see.
+static void testVersionLoopsIdentityInHeaderIsNoPhi()
+{
+    // if (flag) do { sum += changing word + each of the fixed words, times a factor, + (flag ? that word : 5); if (index == 5) changing word = 9; } while (++index <= bound);
+    // On that path the Select is an Identity of its load. With this many loads some are left in the loop for versioning to hoist.
+    for (bool runsWholePipeline : { true, false }) {
+        for (unsigned numberOfLoads : { 1u, 12u, 16u }) {
+            Procedure proc(optimizingPolicy());
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            BasicBlock* guarded = proc.addBlock();
+            BasicBlock* other = proc.addBlock();
+            BasicBlock* header = proc.addBlock();
+            BasicBlock* rare = proc.addBlock();
+            BasicBlock* next = proc.addBlock();
+            BasicBlock* exit = proc.addBlock();
+            auto arguments = cCallArgumentValues<int64_t, int64_t*, int64_t>(proc, root).eager();
+            Value* pointer = arguments[1];
+            Value* flag = arguments[2];
+            Variable* index = proc.addVariable(Int64);
+            Variable* sum = proc.addVariable(Int64);
+            graph.set(root, index, graph.int64(root, 0));
+            graph.set(root, sum, graph.int64(root, 0));
+            graph.branch(root, flag, FrequentedBlock(guarded), FrequentedBlock(other));
+            graph.ret(other, graph.int64(other, -5));
+            graph.jump(guarded, header);
+            Vector<Value*> loads;
+            Vector<Value*> chosen;
+            for (unsigned i = 0; i < numberOfLoads; ++i) {
+                MemoryValue* load = graph.load(header, Int64, pointer, 8 * (i + 1), secondHeap);
+                load->setReadsMutability(Mutability::Immutable);
+                loads.append(load);
+                chosen.append(runsWholePipeline ? graph.select(header, flag, load, graph.int64(header, 5)) : graph.make(header, Identity, load));
+            }
+            Value* changing = graph.load(header, Int64, pointer, 0, firstHeap);
+            graph.branch(header, graph.make(header, Equal, graph.get(header, index), graph.int64(header, 5)), rarely(rare), FrequentedBlock(next));
+            graph.store(rare, graph.int64(rare, 9), pointer, 0, firstHeap);
+            graph.jump(rare, next);
+            graph.increase(next, sum, changing);
+            for (unsigned i = 0; i < numberOfLoads; ++i) {
+                graph.increase(next, sum, graph.make(next, Mul, loads[i], graph.int64(next, i + 3)));
+                graph.increase(next, sum, chosen[i]);
+            }
+            graph.increase(next, index, 1);
+            graph.branch(next, graph.make(next, GreaterEqual, arguments[0], graph.get(next, index)), header, exit);
+            graph.ret(exit, graph.get(exit, sum));
+            proc.resetReachability();
+            validate(proc);
+            if (!runsWholePipeline) {
+                fixSSA(proc);
+                CHECK(versionLoopsAndValidate(proc));
+            }
+
+            auto code = compileProc(proc, runsWholePipeline ? 2 : 0);
+            int64_t memory[17];
+            int64_t expected = 0;
+            constexpr int64_t bound = 10;
+            for (int64_t i = 0; i < 17; ++i)
+                memory[i] = 1000 + 7 * i;
+            for (int64_t turn = 0; turn <= bound; ++turn) {
+                expected += turn <= 5 ? memory[0] : 9;
+                for (unsigned i = 0; i < numberOfLoads; ++i)
+                    expected += memory[i + 1] * (i + 4);
+            }
+            CHECK_EQ(invoke<int64_t>(*code, bound, memory, static_cast<int64_t>(3)), expected);
+        }
+    }
+}
+
 static void testVersionLoopsKeepsHeaderPhiThatCopiedRarePathChanges()
 {
     Procedure proc(remarkPolicy());
@@ -1087,6 +1155,7 @@ void addBunLoopVersioningTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVersionLoopsTellsLogWhatStandsForVariableReadAgain());
     RUN(testVersionLoopsKeepsTerminalPatchpointReadingLoopWrites());
     RUN(testVersionLoopsTestsSlotBeforeReadingThroughIt());
+    RUN(testVersionLoopsIdentityInHeaderIsNoPhi());
 }
 
 #endif // ENABLE(B3_JIT)
