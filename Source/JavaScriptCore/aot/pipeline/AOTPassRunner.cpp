@@ -469,6 +469,7 @@ struct OperationsThatPassAnswersFor {
     bool isEveryOperation;
     TakesHandlersAway takesHandlersAway;
     OpcodeSet opcodes;
+    OpcodeSet opcodesThatMayLoseTheirHandler { };
 };
 
 // An operation that may throw or run code of the program goes where ObservableOperations says that it does neither, where the pass names its reason at the place (explainOperationThatGoes),
@@ -495,7 +496,6 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::ResolveBuiltins, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
     { PassID::ResolveCalls, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
     { PassID::RetypeValues, InPlaceOfOperation::NothingBecauseNothingComesHere, true, TakesHandlersAway::No, { } },
-    { PassID::Select, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
     { PassID::SeparateUnlikelyLoopPaths, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::SplitBehindEntryChecks, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
     { PassID::MoveGeneratorFramesToHeap, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
@@ -505,6 +505,8 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::StartGeneratorsAtFirstStep, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
     // What it lets go stores to, reads from or casts an object or a list that it holds itself, and that nobody else has seen.
     { PassID::SinkAllocations, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::AppendElement, Opcode::AppendElements, Opcode::AppendHole, Opcode::AppendSpread, Opcode::CheckInitialized, Opcode::CopyDataProperties, Opcode::DestructureIterable, Opcode::ElemGet, Opcode::ElemSet, Opcode::PrivateDefine, Opcode::PrivateSet, Opcode::PropDefine, Opcode::PropGet, Opcode::PropSet, Opcode::PutArrayElement, Opcode::RequireObjectCoercible, Opcode::SetLiteralPrototype } },
+    // A rule takes the members of the group that it has matched out of their blocks. At its end the pass takes the polls of loops out of handlers, as RemoveRedundantHandlers does.
+    { PassID::Select, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::AwaitBySavingFrame, Opcode::CallBuiltin, Opcode::DefineGetter, Opcode::DefineMethod, Opcode::DefineSetter, Opcode::PropDefine, Opcode::PropGet, Opcode::PropSet, Opcode::SetLiteralPrototype, Opcode::Strcat, Opcode::StringBuilderAppend }, { Opcode::LoopHint } },
     { PassID::CreateStringBuilders, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::Add, Opcode::Strcat } },
     { PassID::DeferClosuresInFields, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Call } },
     { PassID::DeferDefinitions, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CheckInitialized, Opcode::DefineMethod, Opcode::NewClass } },
@@ -547,7 +549,7 @@ static String findOperationNobodyAnswersFor(PassID id, const Vector<OperationTha
             entry = &candidate;
     }
     for (const OperationThatWent& operation : operations) {
-        bool isAnswered = entry && (operation.how == OperationThatWent::How::LostItsHandler ? entry->takesHandlersAway == TakesHandlersAway::Yes : entry->isEveryOperation || entry->opcodes.contains(operation.opcode));
+        bool isAnswered = entry && (operation.how == OperationThatWent::How::LostItsHandler ? entry->takesHandlersAway == TakesHandlersAway::Yes || entry->opcodesThatMayLoseTheirHandler.contains(operation.opcode) : entry->isEveryOperation || entry->opcodes.contains(operation.opcode));
         if (!isAnswered)
             return describe(operation);
         if (listenerOutside)

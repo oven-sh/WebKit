@@ -124,6 +124,14 @@ void didReplaceBody(ReasonsForOperationsThatWent& reasons)
     reasons.didReplaceBody();
 }
 
+// The error goes on as it would without the handler.
+static bool onlyThrowsAgain(const Function& function, BlockID handler)
+{
+    const Block& block = function.at(handler);
+    return !block.handler && block.values.size() == 1 && function.at(block.values.first()).opcode == Opcode::CatchException
+        && block.terminator.kind == TerminatorKind::Rethrow && block.terminator.exceptionOperand() == block.values.first();
+}
+
 Vector<OperationThatWent> findOperationsThatWentWithoutReason(const EffectContext& context, const Function& before, const Function& after, ReasonsForOperationsThatWent& reasons)
 {
     Vector<OperationThatWent> result;
@@ -213,7 +221,7 @@ Vector<OperationThatWent> findOperationsThatWentWithoutReason(const EffectContex
             const Value& value = before.at(id);
             ValueID now = findCurrent(id);
             bool isListed = !!now;
-            if (isListed && block.handler && !hasHandlerAfter.quickGet(now.index()) && effectsOf(context, after, after.at(now)).normal.mayThrow && !reasons.hasReasonFor(id))
+            if (isListed && block.handler && !hasHandlerAfter.quickGet(now.index()) && effectsOf(context, after, after.at(now)).normal.mayThrow && !reasons.hasReasonFor(id) && !onlyThrowsAgain(before, block.handler->block))
                 result.append({ id, blockID, value.opcode, OperationThatWent::How::LostItsHandler, OperationThatWent::Under::TypesAsTheyStand });
             // The pass that rewrote an operation into another one is responsible for it: it may know operand values that the types do not show.
             // The replacement may have no effect and be removed by a later run, which does not report it, so tell the outer listener now.
