@@ -851,6 +851,40 @@ static bool hasUnlocked(const Instance& instance, BuiltinID member)
     return ProgramTables::isUnlocked(hasListOfRealm ? cells->membersUnlockedInRealm() : instance.tables().unlockedBuiltinMembers(), member.index());
 }
 
+// A function of the engine or the host that no image has asked for yet is looked for among the entries of its own name. Which of them it is its identity says.
+static BuiltinID builtinOfFunctionByIdentity(BuiltinCells& cells, JSObject* object)
+{
+    VM& vm = object->vm();
+    if (!object->isCallable())
+        return { };
+    JSValue stored = object->getDirect(vm, vm.propertyNames->name);
+    JSFunction* function = stored ? nullptr : dynamicDowncast<JSFunction>(object);
+    String written = function ? function->name(vm) : stored && stored.isString() ? asString(stored)->tryGetValue() : String();
+    if (written.isNull())
+        return { };
+    const BuiltinTable& table = BuiltinTable::singleton();
+    BuiltinName name = table.nameOf(vm, Identifier::fromString(vm, written).impl());
+    if (!name)
+        return { };
+    for (unsigned index = 0; index < table.builtinCount(); ++index) {
+        BuiltinID id { index };
+        const Builtin& entry = table.at(id);
+        bool isFunction = entry.kind == BuiltinKind::Constructor || entry.kind == BuiltinKind::Function;
+        if (isFunction && entry.name == name && table.canonicalID(id) == id && cells.findObject(id) == object)
+            return id;
+    }
+    return { };
+}
+
+static BuiltinID builtinOfObject(BuiltinCells& cells, JSObject* object)
+{
+    if (BuiltinID locked = cells.builtinOfLockedObject(object))
+        return locked;
+    if (std::optional<BuiltinCellKey> filled = cells.keyOfCellHolding(object); filled && filled->kind() == BuiltinCellKey::Kind::Object)
+        return filled->builtin();
+    return builtinOfFunctionByIdentity(cells, object);
+}
+
 // Over layers a realm runs several images, and each knows the objects that it has locked itself.
 bool isMemberUnlockedForTests(JSObject* object, UniquedStringImpl* key)
 {
@@ -864,7 +898,7 @@ bool isMemberUnlockedForTests(JSObject* object, UniquedStringImpl* key)
     bool isKnown = false;
     bool isUnlockedByAll = true;
     forEachInstanceOf(object->realm(), [&](Instance& instance) {
-        BuiltinID holder = instance.state ? instance.state->builtinCells->builtinOfLockedObject(object) : BuiltinID();
+        BuiltinID holder = instance.state ? builtinOfObject(*instance.state->builtinCells, object) : BuiltinID();
         if (!holder)
             return;
         isKnown = true;
@@ -876,29 +910,6 @@ bool isMemberUnlockedForTests(JSObject* object, UniquedStringImpl* key)
     BuiltinID holder = builtinOfLockedObject(running, object);
     BuiltinID member = holder ? table.findOwnMember(holder, name) : BuiltinID();
     return member && hasUnlocked(*running, member);
-}
-
-// A function of the engine or the host that no image has asked for yet is looked for among the entries of its own name. Which of them it is its identity says.
-static BuiltinID builtinOfFunctionByIdentity(BuiltinCells& cells, JSObject* object)
-{
-    VM& vm = object->vm();
-    if (!object->isCallable())
-        return { };
-    JSValue written = object->getDirect(vm, vm.propertyNames->name);
-    if (!written || !written.isString())
-        return { };
-    const BuiltinTable& table = BuiltinTable::singleton();
-    BuiltinName name = table.nameOf(vm, Identifier::fromString(vm, asString(written)->tryGetValue()).impl());
-    if (!name)
-        return { };
-    for (unsigned index = 0; index < table.builtinCount(); ++index) {
-        BuiltinID id { index };
-        const Builtin& entry = table.at(id);
-        bool isFunction = entry.kind == BuiltinKind::Constructor || entry.kind == BuiltinKind::Function;
-        if (isFunction && entry.name == name && table.canonicalID(id) == id && cells.findObject(id) == object)
-            return id;
-    }
-    return { };
 }
 
 // Compiled code reads a property without a declared type wherever the program does. A declared type would be trusted.
@@ -915,11 +926,7 @@ bool isMemberTakenForConstant(JSObject* object, UniquedStringImpl* key)
         if (!cells)
             continue;
         if (!holder)
-            holder = cells->builtinOfLockedObject(object);
-        if (std::optional<BuiltinCellKey> filled = holder ? std::nullopt : cells->keyOfCellHolding(object); filled && filled->kind() == BuiltinCellKey::Kind::Object)
-            holder = filled->builtin();
-        if (!holder)
-            holder = builtinOfFunctionByIdentity(*cells, object);
+            holder = builtinOfObject(*cells, object);
         BuiltinID member = holder ? table.findOwnMember(holder, name) : BuiltinID();
         if (member && isImmutableLocation(table, instance->tables(), member) && !table.at(member).isReadWithoutType)
             return true;

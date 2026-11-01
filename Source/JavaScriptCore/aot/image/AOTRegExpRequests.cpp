@@ -3426,6 +3426,9 @@ private:
         Vector<StringID> names;
         Vector<char16_t> buffer;
         auto addName = [&](Typed::PropertyKeyID key) {
+            // A field of a layout need not have a name.
+            if (!key)
+                return false;
             const Typed::PropertyKey& name = m_program.at(key);
             if (name.kind != Typed::PropertyKeyKind::Text)
                 return false;

@@ -15,6 +15,7 @@
 #include "AOTIRParser.h"
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
+#include "AOTOperationCallScope.h"
 #include "AOTProgramFile.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTShellProcess.h"
@@ -921,7 +922,7 @@ static void testAnOrdinaryTableHasNoDeletedPrefix(LoadedProgram& program)
         };
         auto firstKey = [&] {
             EncodedJSValue results[2];
-            UGPRPair answer = kind == Collection::Kind::Set ? operationAOTSetNext(&program.instance(), collection.owner(), JSValue::encode(jsNull()), 0, results) : operationAOTMapNext(&program.instance(), collection.owner(), JSValue::encode(jsNull()), 0, results);
+            UGPRPair answer = callOperationFromTest(vm, kind == Collection::Kind::Set ? operationAOTSetNext : operationAOTMapNext, &program.instance(), collection.owner(), JSValue::encode(jsNull()), 0, results);
             size_t hasEntry;
             size_t entry;
             decodeResult(answer, hasEntry, entry);

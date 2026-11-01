@@ -2108,10 +2108,11 @@ static PassOutcome readListsOfNumbersInEitherStorage(FunctionPassContext& contex
         bool convertsFirst = convertsAtHead(function, whenFailed, array);
         if (convertsFirst && (function.at(whenFailed).values.size() != 1 || function.at(whenFailed).terminator.kind != TerminatorKind::Jump || context.analyses.cfg().predecessors(whenFailed).size() != 1))
             continue;
+        size_t numberOfBlocksBefore = function.blocks.size();
         CopyOfReads copy = addReadsOfOtherStorage(context, builder, block, convertsFirst ? Edge { whenFailed, 0 } : Edge { block, 1 });
+        didChange |= function.blocks.size() != numberOfBlocksBefore;
         if (!copy)
             continue;
-        didChange = true;
         copies.append(copy);
         if (convertsFirst)
             converted.append(FailedStorageTest { Edge { copy.asksForOther, 1 }, array, origin, { }, { }, ProgramPoint::atHeadOf(whenFailed) });
@@ -2545,12 +2546,13 @@ static PassOutcome bringLiteralsToAppendsOfMembers(FunctionPassContext& context)
 }
 
 // A list that may read undefined never holds doubles or integers alone, and growing into another storage is what such a list would pay for every time it is made.
-static void makeListsThatMayReadUndefinedForAnyValue(FunctionPassContext& context)
+static bool makeListsThatMayReadUndefinedForAnyValue(FunctionPassContext& context)
 {
     Function& function = context.function;
     FunctionAnalyses& analyses = context.analyses;
     if (!analyses.opcodesOfValues().contains(Opcode::AppendElements))
-        return;
+        return false;
+    bool didChange = false;
     for (BlockID block : analyses.cfg().reversePostOrder()) {
         for (ValueID id : function.at(block).values) {
             const Value& value = function.at(id);
@@ -2567,10 +2569,11 @@ static void makeListsThatMayReadUndefinedForAnyValue(FunctionPassContext& contex
             if (elements.primitives & Primitive::Undefined) {
                 ChangeOfStorageKind change(context);
                 change.set(list, ArrayStorage::Contiguous);
-                change.keepWhereProofsHold();
+                didChange |= change.keepWhereProofsHold();
             }
         }
     }
+    return didChange;
 }
 
 namespace {
@@ -3062,7 +3065,8 @@ PassOutcome planArrayCapacities(FunctionPassContext& context)
     PassOutcome copied = copyListsInOnePiece(context, readsHaveOtherTypes);
     if (bringLiteralsToAppendsOfMembers(context) == PassOutcome::Changed)
         copied = PassOutcome::Changed;
-    makeListsThatMayReadUndefinedForAnyValue(context);
+    if (makeListsThatMayReadUndefinedForAnyValue(context))
+        copied = PassOutcome::Changed;
     unsigned literalsWithAppends = makeElementsOfAppendsBehindLiterals(context);
     PassOutcome converted = convertIntegerArraysBehindFailedTests(context);
     if (copied == PassOutcome::Changed)

@@ -264,6 +264,20 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
         context.stack.insert(frame.stackPosition, static_cast<AbstractModuleRecord*>(record));
     };
 
+    // What only a mocked module imports runs where the module itself does.
+    BitVector isBelowModuleThatRunsBesideMock;
+    auto isHidden = [&](ModuleID module) {
+        if (!mocks.hides(module)) [[likely]]
+            return false;
+        if (frames.isEmpty())
+            return true;
+        unsigned importer = frames.last().module.index();
+        if (!m_modulesThatRanBesideMock.get(importer) && !isBelowModuleThatRunsBesideMock.get(importer))
+            return true;
+        isBelowModuleThatRunsBesideMock.set(module.index());
+        return false;
+    };
+
     auto recordOfImporter = [&] {
         EvaluationFrame& importer = frames.last();
         if (!importer.record)
@@ -272,7 +286,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
     };
 
     auto enter = [&](ModuleID module) {
-        if (mocks.hides(module)) [[unlikely]]
+        if (isHidden(module)) [[unlikely]]
             return false;
         const ModuleData& moduleData = data(module);
         if (moduleData.kind == ModuleKind::CommonJs) {
@@ -282,6 +296,11 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
         // A module of the library ran when its importer was linked.
         if (!moduleData.hasExportTable())
             return false;
+
+        bool runsBesideMock = isMocked(module) && !frames.isEmpty() && !m_modulesThatRanBesideMock.get(module.index()) && importsOriginalBesideMock(module, frames.last().module);
+        // An importer that sees the mock came by first.
+        if (runsBesideMock && status(module) == ModuleStatus::Evaluated) [[unlikely]]
+            setStatus(module, ModuleStatus::Unlinked);
 
         // What a linked module requests was linked with it. No status says so for a module without work in a link.
         ModuleStatus moduleStatus = status(module);
@@ -297,10 +316,12 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
             throwEvaluationError(module);
         if (moduleStatus != ModuleStatus::Linked)
             return false;
-        if (isMocked(module)) [[unlikely]] {
+        if (isMocked(module) && !runsBesideMock) [[unlikely]] {
             setStatus(module, ModuleStatus::Evaluated);
             return false;
         }
+        if (runsBesideMock) [[unlikely]]
+            m_modulesThatRanBesideMock.set(module.index());
 
         ModuleRecord* record = recordIfExists(module);
         if (!record && moduleData.evaluatesItself()) {
@@ -438,14 +459,16 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
                 target = frame.evaluationList->at(frame.next++);
             else {
                 ModuleID required(requests[frame.next++]);
+                // enter() runs the module itself.
+                bool runsBesideMock = isMocked(required) && !m_modulesThatRanBesideMock.get(required.index()) && importsOriginalBesideMock(required, frame.module);
                 StoredModuleStatus stored = storedStatus(required);
-                if (stored == StoredModuleStatus::Evaluated)
+                if (stored == StoredModuleStatus::Evaluated && !runsBesideMock)
                     continue;
-                if (mocks.hides(required)) [[unlikely]]
+                if (isHidden(required)) [[unlikely]]
                     continue;
                 const ModuleData& requiredData = data(required);
                 // It was linked with its importer, whether or not a status was stored for it.
-                bool isLinked = stored == StoredModuleStatus::Linked || stored == StoredModuleStatus::Unlinked;
+                bool isLinked = !runsBesideMock && (stored == StoredModuleStatus::Linked || stored == StoredModuleStatus::Unlinked);
                 if (isLinked && isMocked(required)) [[unlikely]] {
                     setStoredStatus(required, StoredModuleStatus::Evaluated);
                     continue;
@@ -496,7 +519,7 @@ JSValue Modules::callBody(ModuleID module)
 {
     const ModuleData& moduleData = data(module);
     std::optional<FunctionID> body = moduleData.bodyFunction();
-    if (!body || (isMocked(module) && !m_filesWhoseOriginalRuns.get(module.index())))
+    if (!body || (isMocked(module) && !m_filesWhoseOriginalRuns.get(module.index()) && !m_modulesThatRanBesideMock.get(module.index())))
         return jsUndefined();
 
     VM& vm = *m_instance.vm;
@@ -1989,103 +2012,6 @@ uint32_t Modules::countLevelsBelowRoot(ModuleID root, bool& comesToEarlierCall)
     }
 }
 
-// Level by level, the root at level 0. The visitor says whether the requests of the module are followed.
-template<typename Visitor>
-void Modules::forEachModuleToLoadBelow(ModuleID root, const Visitor& visit)
-{
-    const uint32_t isSeen = takeMarkOfSearch();
-    std::span<uint32_t> placesSeen = m_placesSeenByPlans.mutableSpan();
-    placesSeen[root.index()] = isSeen;
-    const BitVector* mocked = m_mocks ? &m_mocks->modules : nullptr;
-    auto hasRequestsToFollow = [&](ModuleID importer, const ModuleData& importerData) ALWAYS_INLINE_LAMBDA {
-        return importerData.kind == ModuleKind::SourceText && !importerData.isFaceOfFile() && !(mocked && mocked->get(importer.index()));
-    };
-    Vector<ModuleID, 64> level;
-    Vector<ModuleID, 64> next;
-    if (visit(root, 0) && hasRequestsToFollow(root, data(root)))
-        level.append(root);
-    for (uint32_t levels = 1; !level.isEmpty(); ++levels) {
-        for (ModuleID importer : level) {
-            for (const ModuleRequestData& request : m_table.requests(importer)) {
-                if (request.isHoisted || request.isRequire)
-                    continue;
-                ModuleID target = request.targetModule();
-                if (std::exchange(placesSeen[target.index()], isSeen) == isSeen)
-                    continue;
-                const ModuleData& targetData = data(target);
-                if (!isStillToBeLoaded(target, targetData))
-                    continue;
-                if (visit(target, levels) && hasRequestsToFollow(target, targetData))
-                    next.append(target);
-            }
-        }
-        countModulesSoughtForLevelsBelowImports(*m_instance.vm, level.size());
-        level.swap(next);
-        next.shrink(0);
-    }
-}
-
-// For a call whose graph holds modules of calls that wait. A text comes a turn behind the text of the first module that asks for it, whichever call that module belongs to.
-Modules::LastTextBelowCall Modules::findLastTextBelowCall(ModuleID root)
-{
-    const uint32_t turnOfCall = m_instance.vm->aotState().turnOfTexts;
-    constexpr uint32_t never = std::numeric_limits<uint32_t>::max();
-    struct TurnsOfText {
-        // Of the earlier calls, the one that asks first.
-        uint32_t turn { never };
-        uint32_t levelsBelowRoot { 0 };
-        uint32_t call { 0 };
-        uint32_t turnIfThisCallAsks { never };
-    };
-    UncheckedKeyHashMap<uint32_t, TurnsOfText, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> turnsOfTexts;
-    auto waiting = textsThatWait();
-    for (uint32_t call = 0; call < waiting.size(); ++call) {
-        const TextThatWaits& text = waiting[call];
-        if (!text.waitsApart)
-            continue;
-        uint32_t turnOfEarlierCall = static_cast<uint32_t>(text.place >> 33) - text.levelsAddedToPlace;
-        // Below a module that another call asks for as soon, that call asks as soon for everything.
-        forEachModuleToLoadBelow(text.module, [&](ModuleID module, uint32_t levels) {
-            TurnsOfText& known = turnsOfTexts.add(module.index(), TurnsOfText { }).iterator->value;
-            if (turnOfEarlierCall + levels >= known.turn)
-                return false;
-            known = { turnOfEarlierCall + levels, levels, call };
-            return true;
-        });
-    }
-    LastTextBelowCall last { turnOfCall };
-    ModuleID lastModule = root;
-    // Which of two texts of one turn comes last is not known here.
-    bool comesAloneInItsTurn = true;
-    forEachModuleToLoadBelow(root, [&](ModuleID module, uint32_t levels) {
-        TurnsOfText& turns = turnsOfTexts.add(module.index(), TurnsOfText { }).iterator->value;
-        turns.turnIfThisCallAsks = turnOfCall + levels;
-        uint32_t turn = std::min(turns.turn, turns.turnIfThisCallAsks);
-        if (turn > last.turn || (turn == last.turn && levels > last.levelsBelowRoot)) {
-            comesAloneInItsTurn = turn > last.turn || lastModule == root;
-            last = { turn, levels };
-            lastModule = module;
-        } else if (turn == last.turn && module != root)
-            comesAloneInItsTurn = false;
-        return true;
-    });
-    TurnsOfText turnsOfLast = turnsOfTexts.get(lastModule.index());
-    if (lastModule == root || !comesAloneInItsTurn || turnsOfLast.turn == never || waiting[turnsOfLast.call].place >> 33 < last.turn)
-        return last;
-    // Where this call asks first, the earlier one has the text sooner than it would have had.
-    bool isLastOfEarlierCall = true;
-    forEachModuleToLoadBelow(waiting[turnsOfLast.call].module, [&](ModuleID module, uint32_t) {
-        TurnsOfText turns = turnsOfTexts.get(module.index());
-        isLastOfEarlierCall &= module == lastModule || std::min(turns.turn, turns.turnIfThisCallAsks) < last.turn;
-        return isLastOfEarlierCall;
-    });
-    if (isLastOfEarlierCall) {
-        last.earlierCall = turnsOfLast.call;
-        last.levelsBelowRootOfEarlierCall = turnsOfLast.levelsBelowRoot;
-    }
-    return last;
-}
-
 // The loader of `bun run` takes four jobs from a request for a module to the job in which it asks that module for its requests. That job opens a count of its own: of the requests of the module and of
 // every module that it comes to which was asked for in an earlier turn and below which something is left to hear of. Who asks first for a module hears of it one job behind the end of its count, who asks
 // in the same turn one job later, and who asks later is answered at once. So all modules of a level are asked for their requests in one turn, a level takes five jobs, and a way down from the root takes
@@ -2797,8 +2723,15 @@ void Modules::bringBackWhatLoaderLetGoBelow(ModuleID root)
         if (isSeen.quickSet(module.index()))
             continue;
         bool wasLetGo = m_modulesThatLoaderLetGo.clear(module.index());
+        // An import of a CommonJS file comes to its face, and loads the file with it.
+        if (std::optional<ModuleID> file = m_table.fileBehindFace(module))
+            wasLetGo |= m_modulesThatLoaderLetGo.clear(file->index());
         if (!wasLetGo && status(module) > ModuleStatus::Linked)
             continue;
+        if (wasLetGo && m_importersOfMockThatEnded.clear(module.index())) {
+            VMState& state = m_instance.vm->aotState();
+            m_momentsLoadedAnew.set(module, FirstMockInTestFile { ++state.momentOfLoads, state.momentOfTestFile });
+        }
         // What only a mocked module imports is not loaded.
         if (isMocked(module) || mockInPlace(module))
             continue;
@@ -2827,6 +2760,11 @@ void Modules::evaluateModulesOwedBelowSlow(ModuleID root, bool hasImporterAboveT
     auto scope = DECLARE_THROW_SCOPE(vm);
     letGoOfMockThatEnded(root);
     RETURN_IF_EXCEPTION(scope, void());
+    // What lay behind the mock may be owed.
+    if (hasMockEndedThatWalksPassedOver()) {
+        m_modulesWithNothingOwedBelow.clearAll();
+        m_mockedModulesPassedOverByWalks.clear();
+    }
     BitVector isSeen(m_table.size());
     Vector<ModuleID, 16> toVisit { root };
     Vector<ModuleID, 4> owed;
@@ -2845,30 +2783,40 @@ void Modules::evaluateModulesOwedBelowSlow(ModuleID root, bool hasImporterAboveT
         if (isSeen.quickSet(module.index()))
             continue;
         // What only a mocked module imports is not loaded.
-        if (isMocked(module) || mockInPlace(module))
+        if (isMocked(module) || mockInPlace(module)) {
+            if (!m_mockedModulesPassedOverByWalks.contains(module))
+                m_mockedModulesPassedOverByWalks.append(module);
             continue;
+        }
         if (isOwedInImageBelow && data(module).isUncompiledCode()) {
             filesOfImagesBelow.append({ resolvedKey(module), module });
             RETURN_IF_EXCEPTION(scope, void());
         }
         // An importer that has yet to run brings the module along in its own turn.
         ModuleStatus statusOfImporter = status(module);
-        bool hasRun = statusOfImporter == ModuleStatus::Evaluated || statusOfImporter == ModuleStatus::EvaluatingAsync;
+        // A module with nothing to run keeps no status. It has run with its importer.
+        bool importerHasRun = statusOfImporter == ModuleStatus::Evaluated || statusOfImporter == ModuleStatus::EvaluatingAsync || hasRun(module);
         for (const ModuleRequestData& request : m_table.imports(module)) {
             if (request.isDeferred)
                 continue;
             toVisit.append(request.targetModule());
             letGoOfMockThatEnded(request.targetModule());
             RETURN_IF_EXCEPTION(scope, void());
-            if (hasRun)
+            if (importerHasRun)
                 hasImporterThatRan.quickSet(request.target());
-            if (hasRun && m_modulesOwedToImportersThatRan.get(request.target()))
+            if (importerHasRun && m_modulesOwedToImportersThatRan.get(request.target()))
                 owed.append(request.targetModule());
         }
     }
     for (ModuleID module : owed) {
         if (!m_modulesOwedToImportersThatRan.get(module.index()))
             continue;
+        // The mock that waits for the module comes in place of the body, which stays owed for when that mock ends.
+        if (ModuleID file = m_table.fileBehindFace(module).value_or(module); m_modulesWithMockToRun.get(file.index())) {
+            runMocksBelow(file, RootOfLoad::IsImportedByStatement);
+            RETURN_IF_EXCEPTION(scope, void());
+            continue;
+        }
         m_modulesOwedToImportersThatRan.clear(module.index());
         if (status(module) >= ModuleStatus::Evaluating || mockInPlace(module))
             continue;
@@ -3563,7 +3511,7 @@ bool Modules::getsOriginalBesideMock(ModuleID target, ModuleID referrer)
 }
 
 // The answer of the mock stands where the exports of the file are read from, and the file counts as evaluated. The body runs once, with both set aside.
-JSValue Modules::answerRequireWithOriginal(ModuleID file)
+JSValue Modules::answerRequireWithOriginalSlow(ModuleID file)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     if (JSValue original = ensureLoaded(file).exportsOfOriginalBesideMock.get())

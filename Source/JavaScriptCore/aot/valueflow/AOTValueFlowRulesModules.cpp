@@ -338,7 +338,7 @@ static OwnProperties readOwnProperties(ValueFlowRuleContext& context, ClimbingSe
         readsTable |= universe.kindOf(object) == ValueFlowObjectKind::Builtin;
     });
     if (readsTable)
-        properties.held.nodes.append(context.lookup(context.restrict(holders, universe.builtinObjects()), valueName));
+        properties.held.nodes.append(context.lookup(context.restrict(holders, universe.builtinObjects()), key ? valueName : everyOwnPropertyName));
 
     if (context.contains(values, ValueFlowUniverse::unknownObject()))
         properties.others.constant = ClimbingSet(unknownValue(context, ValueFlowUnknownSource::ContentsOfEscapedObject));

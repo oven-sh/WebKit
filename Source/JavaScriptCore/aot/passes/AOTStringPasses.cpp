@@ -2859,24 +2859,31 @@ PassOutcome fuseConcatenations(FunctionPassContext& context)
             Vector<ValueID, 16> operands;
             operands.append(function.at(id).operands());
             Vector<ValueID, 16> parts;
+            Vector<std::optional<StringID>, 16> joinedTexts;
             for (ValueID part : operands) {
                 std::optional<StringID> right = textOf(part);
-                std::optional<StringID> left = parts.isEmpty() || !right ? std::nullopt : textOf(parts.last());
+                std::optional<StringID> left = parts.isEmpty() || !right ? std::nullopt : joinedTexts.last() ? joinedTexts.last() : textOf(parts.last());
                 // How a text is held follows its literal, so a narrow one and a wide one stay apart.
                 if (!left || isWide(*left) != isWide(*right) || program.string(*left).size() + program.string(*right).size() > maxBytesOfJoinedTexts) {
                     parts.append(part);
+                    joinedTexts.append(std::nullopt);
                     continue;
                 }
                 Vector<char16_t> leftBuffer;
                 Vector<char16_t> rightBuffer;
-                Value joined = IRBuilder::make(Opcode::String);
                 String text = makeString(program.strings.viewOf(*left, leftBuffer), program.strings.viewOf(*right, rightBuffer));
-                joined.setString(context.strings.intern(StringView(text)));
-                parts.last() = builder.insertBefore({ block, index }, WTF::move(joined));
+                joinedTexts.last() = context.strings.intern(StringView(text));
             }
             // A concatenation of one part would be a conversion, and FoldConstants has already asked for what is wholly known.
             if (parts.size() < 2 || parts.size() == operands.size())
                 continue;
+            for (size_t partIndex = 0; partIndex < parts.size(); ++partIndex) {
+                if (!joinedTexts[partIndex])
+                    continue;
+                Value joined = IRBuilder::make(Opcode::String);
+                joined.setString(*joinedTexts[partIndex]);
+                parts[partIndex] = builder.insertBefore({ block, index }, WTF::move(joined));
+            }
             becomeConcatenationOf(id, parts.span());
             didJoinTexts = true;
         }
@@ -3243,7 +3250,7 @@ LiteralStringTable numberLiteralStrings(const Program& program, const FlowResult
     FastBitVector strings(numberOfStrings);
     // Each gets a word, and its text only if the program spells it.
     FastBitVector membersFromOutside(numberOfStrings);
-    // Each gets a word only if the program spells it.
+    // As those: what the engine makes of a value no constant spells, `seen[flag] = 1` names "true", and a walk hands that name out as a string from outside comes in.
     FastBitVector membersHandedOn(numberOfStrings);
     FastBitVector constantsOfCode(numberOfStrings);
     FastBitVector variablesNamedByCode(program.variables.size());
@@ -3260,6 +3267,11 @@ LiteralStringTable numberLiteralStrings(const Program& program, const FlowResult
     FastBitVector typesHandedOnToVisit = typesToVisit;
 
     auto add = [&](StringID string) { strings.atomicSetAndCheck(string.index(), true); };
+    // A walk hands out the names of what it walks, `for (entry.kind in { text: 1 })`, and flow knows each by its text: the name of a field, and a name that an operation spells, is spelled as a constant is.
+    auto addName = [&](PropertyKeyID name) {
+        if (name && program.at(name).kind == PropertyKeyKind::Text)
+            constantsOfCode.atomicSetAndCheck(program.at(name).text.index(), true);
+    };
     // A string from outside the program gets its word where it comes in, so every member has one there. Where the program hands its own values on, a member that it spells nowhere does not occur.
     // A parse by type compares what it reads with the texts of the members.
     auto collectLiteralsOf = [&](TypeID id, Source source) {
@@ -3287,6 +3299,8 @@ LiteralStringTable numberLiteralStrings(const Program& program, const FlowResult
                 collectLiteralsOf(value.type, operationsHandingOnValues.contains(value.opcode) ? Source::Program : Source::Anywhere);
             else
                 constantsOfCode.atomicSetAndCheck(value.string().index(), true);
+            if (Value::opcodesWithKey.contains(value.opcode))
+                addName(value.key());
             forEachType(value, [&](TypeID type) {
                 collectLiteralsOf(type, Source::Anywhere);
             });
@@ -3338,8 +3352,10 @@ LiteralStringTable numberLiteralStrings(const Program& program, const FlowResult
     for (const Layout& layout : program.layouts) {
         bool isParsedByType = layout.flow.observedUses.contains(ObservedUse::IsParsedByType);
         bool isFilledByNativeCode = layout.flow.observedUses.contains(ObservedUse::ReachesTypedParse);
-        for (const Field& field : layout.fields)
+        for (const Field& field : layout.fields) {
             collectLiteralsOf(field.declared.written(), isParsedByType ? Source::Parser : !isFilledByNativeCode && field.flow.location.writers == WriterState::AllKnown ? Source::Program : Source::Anywhere);
+            addName(field.key);
+        }
     }
     BitVector described = findVariablesDescribedToRunTime(program, flow);
     for (unsigned index = 0; index < program.variables.size(); ++index) {
@@ -3363,19 +3379,15 @@ LiteralStringTable numberLiteralStrings(const Program& program, const FlowResult
 
     LiteralStringTable table;
     table.m_withoutText = BitVector(numberOfStrings);
-    table.m_leftOut = BitVector(numberOfStrings);
     membersFromOutside.forEachSetBit([&](size_t index) {
         if (!strings.at(index) && !constantsOfCode.at(index))
             table.m_withoutText.quickSet(index);
         strings[index] = true;
     });
     membersHandedOn.forEachSetBit([&](size_t index) {
-        if (strings.at(index))
-            return;
-        if (constantsOfCode.at(index))
-            strings[index] = true;
-        else
-            table.m_leftOut.quickSet(index);
+        if (!strings.at(index) && !constantsOfCode.at(index))
+            table.m_withoutText.quickSet(index);
+        strings[index] = true;
     });
 
     StringID emptyString = program.strings.emptyString();

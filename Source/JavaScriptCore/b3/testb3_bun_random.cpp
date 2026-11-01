@@ -729,7 +729,7 @@ static void testRandomProgramRegressions()
         RandomProgramChecker(seed, false, true).run();
         RandomProgramChecker(seed, true, true).run();
     }
-    for (unsigned seed : { 31131u, 41501u })
+    for (unsigned seed : { 31131u, 41501u, 12388748u })
         RandomProgramChecker(seed).run();
 }
 

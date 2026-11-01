@@ -943,7 +943,7 @@ struct CountedCall<entry, operation, Result JIT_OPERATION_ATTRIBUTES (First, Res
 static constexpr bool isCalledWithoutCollection(Entry entry)
 {
     std::optional<RuntimeOperation> operation = runtimeOperationOf(entry);
-    return operation && !Typed::declaredBoundOf(*operation).mayCollect && !preservesMostRegisters(*operation) && !featureOf(entry);
+    return operation && !Typed::declaredBoundOf(*operation).mayCollect && !preservesMostRegisters(*operation);
 }
 
 // What takes the pending exception runs the collection that throwing put off.
@@ -1033,6 +1033,30 @@ static void trapUnusedEntries(void** entries, const Image& image)
     }
 }
 
+static_assert(!isFamilyOfOperations(static_cast<RemovableFeature>(0)));
+static constexpr auto familiesOfEntries = [] {
+    std::array<uint16_t, entriesThatAreCalled.size() * 32> families { };
+    for (unsigned index = 0; index < numberOfEntries; ++index) {
+        std::optional<RemovableFeature> feature = featureOf(static_cast<Entry>(index));
+        if (feature && isFamilyOfOperations(*feature))
+            families[index] = static_cast<uint16_t>(*feature);
+    }
+    return families;
+}();
+
+// An executable loses the families of which its image lists nothing. Whatever else has taken one away, the program does not start: it would end at some call.
+static void checkThatFamiliesOfUsedEntriesAreThere(const Image& image)
+{
+    const uint32_t* entriesUsed = image.header().entriesUsed;
+    for (unsigned word = 0; word < entriesThatAreCalled.size(); ++word) {
+        for (uint32_t used = entriesUsed[word]; used; used &= used - 1) {
+            uint16_t family = familiesOfEntries[word * 32 + std::countr_zero(used)];
+            if (family && isFeatureRemoved(static_cast<RemovableFeature>(family))) [[unlikely]]
+                Bun__abortForRemovedFeature(family);
+        }
+    }
+}
+
 #if defined(BUN_HARDENED)
 static size_t entryPagesSize()
 {
@@ -1049,6 +1073,7 @@ RuntimeTable::RuntimeTable(VM& vm)
 #endif
 {
     const Image& image = *vm.aotState().image;
+    checkThatFamiliesOfUsedEntriesAreThere(image);
     (m_countsCalls ? fillOperations<true> : fillOperations<false>)(m_entries);
     if (image.sharesRealms()) {
         constexpr Entry entry = Entry::operationAOTLookupExceptionHandler;

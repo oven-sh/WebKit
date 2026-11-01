@@ -126,6 +126,7 @@ public:
     // What the module itself says of the name. The search goes on in the targets: they are those of the `export *` whose names the build did not see.
     Resolution resolveOwnExport(JSGlobalObject*, const Identifier& exportName, StarExportTargets&);
     bool someMockStandsInPlace() const;
+    bool standsForMock() const;
     void collectExportedNames(JSGlobalObject*, WTF::Vector<Identifier>&, StarExportTargets&);
     JSValue readExport(JSGlobalObject*, const Identifier& exportName, std::optional<unsigned> exportIndex);
     JSObject* moduleNamespaceObject(JSGlobalObject*, ModulePhase);

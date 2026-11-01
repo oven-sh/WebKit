@@ -86,7 +86,7 @@ StarExportResolution::Type Modules::resolveRequiredName(ModuleID exporter, const
 }
 
 // Of a module of this image, or of the module of another image that a record of this one stands for.
-bool Modules::isMockedInItsImage(ModuleID module, MocksAskedFor which)
+bool Modules::isMockedInItsImageSlow(ModuleID module, MocksAskedFor which)
 {
     // A mock that is laid over an ES module that has run replaces what its names stand for and adds none.
     auto counts = [&](ModuleID each) {
@@ -376,6 +376,7 @@ void Modules::willMock(ModuleID mocked)
 {
     if (isMocked(mocked))
         return;
+    m_importersAskedAboutOriginal.clear();
     momentOfFirstMockInTestFile(mocked);
     BitVector modules = m_mocks ? m_mocks->modules : BitVector(m_table.size());
     modules.quickSet(mocked.index());
@@ -429,6 +430,7 @@ void Modules::didEndMock(ModuleID mocked)
 {
     if (!isMocked(mocked))
         return;
+    m_importersAskedAboutOriginal.clear();
     BitVector others = m_mocks->modules;
     others.quickClear(mocked.index());
     m_mocks = nullptr;
@@ -943,6 +945,7 @@ void Modules::endMockOfLibraryModule(ModuleID module)
         RETURN_IF_EXCEPTION(scope, void());
         held->replaceDynamicExports(*m_instance.vm, exportsOfModule);
     }
+    RELEASE_AND_RETURN(scope, takeNamesBehindFollowedStarsAnew());
 }
 
 // Whoever was linked against the mock goes on reading it until the test file ends, as in `bun test`: a test may have ended the mock.
@@ -991,6 +994,8 @@ void Modules::handLibraryModuleToImagesAbove(ModuleID module)
                 modules->fillDeferredExports(importer);
                 RETURN_IF_EXCEPTION(scope, void());
             }
+            modules->takeNamesBehindFollowedStarsAnew();
+            RETURN_IF_EXCEPTION(scope, void());
         }
     }
 }
@@ -1013,6 +1018,10 @@ void Modules::handFileToImagesAbove(ModuleID file)
             RETURN_IF_EXCEPTION(scope, void());
             if (!namesFile)
                 continue;
+            // The record that answered by the mock goes on doing so: letGoOfRecordThatAnswersByMock(). The file has another.
+            AbstractModuleRecord* record = recordForResolution(file);
+            RETURN_IF_EXCEPTION(scope, void());
+            loaded->uncompiledRecord.set(*modules, record);
             RunningImageScope imageAbove(m_instance.vm->aotState(), above->program);
             modules->setNamespace(external, ModulePhase::Evaluation, nullptr);
             JSObject* namespaceObject = modules->uncompiledNamespace(external, ModulePhase::Evaluation, modules->data(external).isUncompiledCodeImportedAsNamespace() ? NamespaceUse::IsShownToProgram : NamespaceUse::CarriesBindings);
@@ -1027,7 +1036,25 @@ void Modules::handFileToImagesAbove(ModuleID file)
                 modules->fillDeferredExports(importer);
                 RETURN_IF_EXCEPTION(scope, void());
             }
+            modules->takeNamesBehindFollowedStarsAnew();
+            RETURN_IF_EXCEPTION(scope, void());
         }
+    }
+}
+
+// A module whose `export *` took its names from a run listed those of the mock, and whoever imported its namespace object holds that object.
+void Modules::takeNamesBehindFollowedStarsAnew()
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    for (uint32_t index = 0; index < m_table.size(); ++index) {
+        ModuleID module(index);
+        auto* held = data(module).hasDynamicStarExport() ? dynamicDowncast<ModuleNamespace>(namespaceIfCreated(module, ModulePhase::Evaluation)) : nullptr;
+        if (!held)
+            continue;
+        ModuleNamespace::DynamicExports exportsOfModule;
+        createDynamicExports(module, exportsOfModule.names, exportsOfModule.capturedValues, exportsOfModule.liveSources);
+        RETURN_IF_EXCEPTION(scope, void());
+        held->replaceDynamicExports(*m_instance.vm, exportsOfModule);
     }
 }
 
@@ -1140,14 +1167,33 @@ void Modules::endMockLaidOverFile(ModuleID file)
 }
 
 // keepWhatMockIsLaidOver() and tryReplaceExport() have kept what the values of the mock replaced.
+// `bun test` loads the original with all that it imports. A walk from the module itself ends at once: it counts as mocked.
+void Modules::evaluateModulesOwedBelowOriginal(ModuleID file)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    for (const ModuleRequestData& request : m_table.imports(file)) {
+        if (request.isDeferred)
+            continue;
+        evaluateModulesOwedBelow(request.targetModule(), true);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
 JSValue Modules::exportsBeforeMock(ModuleID file)
 {
     VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
     // `vi.importActual()` of a module that the mock left alone: the module, not a copy of what it exports.
-    if (isLeftAloneByMock(file) && !isEvicted(file) && !isLeftToHost(file))
+    if (isLeftAloneByMock(file) && !isEvicted(file) && !isLeftToHost(file)) {
+        if (data(file).kind == ModuleKind::CommonJs) {
+            JSValue original = ensureLoaded(file).exportsOfOriginalBesideMock.get();
+            return original ? original : commonJSExports(file);
+        }
+        evaluateModulesOwedBelowOriginal(file);
+        RETURN_IF_EXCEPTION(scope, { });
         RELEASE_AND_RETURN(scope, namespaceOfModuleItself(file));
+    }
     // What runs in place of a file that was taken out of the loader is the loader's.
     if (mockInPlace(file) || isEvicted(file) || isLeftToHost(file))
         return { };
@@ -1429,7 +1475,8 @@ void Modules::fillCapturedExports(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     LoadedModule& loaded = ensureLoaded(module);
-    if (loaded.bindsEarlierCapture) [[unlikely]]
+    // Whoever was linked to a file that a mock leaves alone goes on reading the variables.
+    if (loaded.bindsEarlierCapture || isLeftAloneByMock(module)) [[unlikely]]
         return;
 
     for (const SyntheticExportData& syntheticExport : m_table.syntheticExports(module)) {
@@ -1657,6 +1704,7 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
         }
 
         BitVector& ambiguousExports = ensureLoaded(module).ambiguousExports;
+        ambiguousExports.clearAll();
         std::span<const ModuleExportData> exports = m_table.exports(module);
         for (unsigned index = 0; index < exports.size(); ++index) {
             if (!exports[index].isFromStarExport)

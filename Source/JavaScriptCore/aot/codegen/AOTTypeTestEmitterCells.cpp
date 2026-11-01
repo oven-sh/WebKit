@@ -373,8 +373,6 @@ Condition TypeTestEmitter::isOneOfLiteralStringWords(LiteralStringWord word, con
             }
             continue;
         }
-        if (inputs().literalStrings.isLeftOut(literal))
-            continue;
         result = logicalOr(result, either<Condition>(conversions.isStringCell(word), [&] {
             return callWithoutSite<Condition>(RuntimeOperation::StringEqualsLiteral, { CellPointer(word.value()), word32(literal.index()) });
         }, [&] {

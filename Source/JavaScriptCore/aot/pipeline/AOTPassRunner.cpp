@@ -478,31 +478,28 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::AddGenericVersion, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::ApplyFlowResults, InPlaceOfOperation::NothingBecauseNothingComesHere, true, TakesHandlersAway::No, { } },
     { PassID::CallModules, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
-    { PassID::ConvertCountersToIntegers, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::DeferInitializers, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
-    { PassID::EliminateTailRecursion, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::EliminateTailRecursion, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::CallDirect } },
     { PassID::ExpandIteration, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
-    { PassID::ExpandOwnKeys, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::ExpandOwnKeys, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, opcodesOfWalks },
     { PassID::ExpandProvenIterations, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
     { PassID::InlineCalls, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
     { PassID::InlineHeads, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::OutlineColdOperations, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::PlaceTypeTests, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
-    { PassID::PlanArrayCapacities, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::PlanArrayCapacities, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::AppendElement, Opcode::AppendElements, Opcode::AppendHole, Opcode::AppendMembers, Opcode::CallBuiltin, Opcode::ElemSet, Opcode::PutArrayElement } },
     { PassID::RemoveRedundantHandlers, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
     { PassID::RemoveUnreachableFunctions, InPlaceOfOperation::NothingBecauseNothingComesHere, true, TakesHandlersAway::No, { } },
-    { PassID::ResolveAccesses, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
-    { PassID::ResolveAwaitedCalls, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::ResolveAccesses, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, accessesToResolve },
+    { PassID::ResolveAwaitedCalls, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::AwaitBySavingFrame, Opcode::CallBuiltin, Opcode::CallDirect } },
     { PassID::ResolveBuiltins, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
     { PassID::ResolveCalls, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
-    { PassID::RetypeValues, InPlaceOfOperation::NothingBecauseNothingComesHere, true, TakesHandlersAway::No, { } },
     { PassID::SeparateUnlikelyLoopPaths, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::SplitBehindEntryChecks, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
     { PassID::MoveGeneratorFramesToHeap, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
     { PassID::SplitCoroutines, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
     { PassID::SplitFreshResults, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
-    { PassID::SplitUnions, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
-    { PassID::StartGeneratorsAtFirstStep, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::StartGeneratorsAtFirstStep, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::CallDirect } },
     // What it lets go stores to, reads from or casts an object or a list that it holds itself, and that nobody else has seen.
     { PassID::SinkAllocations, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::AppendElement, Opcode::AppendElements, Opcode::AppendHole, Opcode::AppendSpread, Opcode::CheckInitialized, Opcode::CopyDataProperties, Opcode::DestructureIterable, Opcode::ElemGet, Opcode::ElemSet, Opcode::PrivateDefine, Opcode::PrivateSet, Opcode::PropDefine, Opcode::PropGet, Opcode::PropSet, Opcode::PutArrayElement, Opcode::RequireObjectCoercible, Opcode::SetLiteralPrototype } },
     // A rule takes the members of the group that it has matched out of their blocks. At its end the pass takes the polls of loops out of handlers, as RemoveRedundantHandlers does.
@@ -833,6 +830,30 @@ static String findEditWithoutEntry(const Function& before, const Function& after
     return { };
 }
 
+static bool isSameButForScopeOfProof(const Value& before, const Value& after)
+{
+    if (before.opcode != Opcode::AssumeType || after.opcode != Opcode::AssumeType)
+        return false;
+    Value settled = before;
+    settled.setIsBehindChecks(after.isBehindChecks());
+    return !editsBetween(settled, after);
+}
+
+static String findEditOfIdleRun(const Function& before, const Function& after)
+{
+    if (after.blocks.size() != before.blocks.size())
+        return makeString("the pass says that it changed nothing, and the function has "_s, after.blocks.size(), " blocks where it had "_s, before.blocks.size());
+    for (size_t index = 0; index < before.blocks.size(); ++index) {
+        if (OptionSet<BlockEdit> edits = editsBetween(before.blocks[index], after.blocks[index]))
+            return makeString("the pass says that it changed nothing, and b"_s, index, " was edited ("_s, edits.toRaw(), ')');
+    }
+    for (size_t index = 0; index < before.values.size(); ++index) {
+        if (OptionSet<ValueEdit> edits = editsBetween(before.values[index], after.values[index]); edits && !isSameButForScopeOfProof(before.values[index], after.values[index]))
+            return makeString("the pass says that it changed nothing, and v"_s, index, " was edited ("_s, edits.toRaw(), ')');
+    }
+    return { };
+}
+
 auto PassRunner::PassClock::now() -> PassClock
 {
     return { CPUTime::forCurrentThread(), InstructionCounts::ofCurrentThread() };
@@ -988,6 +1009,8 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
     PassOutcome outcome = descriptor.run(context);
     if (m_build.isSabotaged(Sabotage::PassesDropCalls)) [[unlikely]]
         outcome |= dropCallThatNobodyReads(context);
+    if (m_build.isSabotaged(Sabotage::PassesChangeNothing)) [[unlikely]]
+        outcome = PassOutcome::Unchanged;
     if (reasons) [[unlikely]]
         context.function.setListenerForOperationsThatGo(reasons->outer());
     auto stopWhereThereIsOne = [&](const String& problem) {
@@ -1005,6 +1028,8 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
         stopWhereThereIsOne(findEditWithoutEntry(*functionBeforeRun, context.function, context.changes, logBeforeRun));
         if (outcome == PassOutcome::Changed)
             stopWhereThereIsOne(findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ context.program, context.inputs.effects }, *functionBeforeRun, context.function, *reasons), &*reasons));
+        else
+            stopWhereThereIsOne(findEditOfIdleRun(*functionBeforeRun, context.function));
     }
     if (isTimed) {
         if (outcome == PassOutcome::Unchanged && !context.analyses.computed().containsAll(analysesBefore))

@@ -42,6 +42,7 @@
 #include "JSCJSValueInlines.h"
 #include "LocalAllocator.h"
 #include "MarkedSpace.h"
+#include "StackFrame.h"
 #include "Subspace.h"
 #include "VM.h"
 #include <algorithm>
@@ -119,6 +120,45 @@ void countMockTransition(VM& vm, const String& transition)
         if (std::exchange(isCounted, true) || !instance.state)
             return;
         instance.state->propertyCaches->countNamed("mock"_s, name.impl());
+    });
+}
+
+bool isRefusal(const String& message)
+{
+    static constexpr ASCIILiteral marks[] {
+        "bun compile differs from bun run here"_s, "bun.com/docs/compiler/"_s, "this executable"_s, "compiled executable"_s, "compiled code"_s, "compiled into"_s,
+        "compiled ahead of time"_s, "already compiled"_s, "this test run"_s, "the build "_s, "--trim"_s,
+    };
+    return !message.isNull() && std::ranges::any_of(marks, [&](ASCIILiteral mark) { return message.contains(mark); });
+}
+
+void countRefusal(VM& vm, const String& message, const WTF::Vector<StackFrame>* frames)
+{
+    constexpr unsigned longestSentence = 200;
+    constexpr unsigned mostFrames = 3;
+    StringView sentence(message);
+    if (size_t end = sentence.find('\n'); end != notFound)
+        sentence = sentence.left(end);
+    if (size_t note = sentence.find(" (bun compile differs"_s); note != notFound)
+        sentence = sentence.left(note);
+    StringBuilder line;
+    line.append(sentence.left(longestSentence));
+    // The files of the program that stand on the stack, innermost first: a module of the library has no path.
+    unsigned listed = 0;
+    for (const StackFrame& frame : frames ? frames->span() : std::span<const StackFrame> { }) {
+        String url = frame.sourceURL(vm);
+        if (!url.contains('/'))
+            continue;
+        line.append(listed ? " < "_s : " @ "_s, url, ':', frame.computeLineAndColumn().line);
+        if (++listed == mostFrames)
+            break;
+    }
+    AtomString name(line.toString());
+    bool isCounted = false;
+    forEachInstance(vm, [&](Instance& instance) {
+        if (std::exchange(isCounted, true) || !instance.state)
+            return;
+        instance.state->propertyCaches->countNamed("refused"_s, name.impl());
     });
 }
 

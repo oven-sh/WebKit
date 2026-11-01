@@ -428,10 +428,8 @@ static void appendRuntimeType(TableEncoder& encoder, const LayoutSetRecords& rec
         AOT::stableSort(cellTests.mutableSpan(), { }, [](const RuntimeCellTest& test) -> int64_t {
             return test.kind == CellTestKind::IsClosureOf ? static_cast<int64_t>(test.operand) : -1;
         });
-        for (StringID literal : plan.stringLiterals) {
-            if (!numbered.isLeftOut(literal))
-                literalStrings.append(literal);
-        }
+        for (StringID literal : plan.stringLiterals)
+            literalStrings.append(literal);
         integers = plan.integers;
         if (describesTypes(encoder)) {
             if (TypeID contents = describedContentsOf(encoder.program, planned.id))

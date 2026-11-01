@@ -99,8 +99,8 @@ struct ModuleHost {
     JSValue (*createModuleNotFoundError)(JSGlobalObject*, const String& specifier, const String& importer, bool isForRequire);
     // The object between every `require` and Function.prototype. Null in a host that has none.
     JSObject* (*requirePrototype)(JSGlobalObject*);
-    // A graph has come to a module with a mock whose factory has not run. Null in a host without mocks.
-    void (*runMock)(JSGlobalObject*, ModuleID);
+    // A graph has come to a module with a mock whose factory has not run. True: the factory has answered a promise that has not settled. Null in a host without mocks.
+    bool (*runMock)(JSGlobalObject*, ModuleID);
     bool (*loadsSynchronously)(JSGlobalObject*, ModuleID);
     // Calls deliverTextThatWaits() from its event loop, once for each call: in a later turn, behind every job that waits, and with every job run between two of them. Null in a host without an event loop.
     void (*callInLaterTurn)(JSGlobalObject*);
@@ -299,7 +299,7 @@ JS_EXPORT_PRIVATE bool mayBeMocked(JSGlobalObject*, ModuleID);
 // The module has not begun to load: the factory of the mock runs when a graph comes to it (ModuleHost::runMock).
 JS_EXPORT_PRIVATE bool hasBegunToLoad(JSGlobalObject*, ModuleID);
 // Under `bun test` the body of a module that is linked when it is mocked runs then and there: left for later, it would assign over what the mock stores.
-JS_EXPORT_PRIVATE void runBodyOfLinkedModuleAheadOfMock(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool runBodyOfLinkedModuleAheadOfMock(JSGlobalObject*, ModuleID);
 // Asked from runMock(), for a CommonJS file that a require() has come to: what deferMock() did is taken back and the body of the file runs. The mock is laid over it.
 JS_EXPORT_PRIVATE void runBodyOfRequiredFileAheadOfMock(JSGlobalObject*, ModuleID);
 // `a.txt?text` is a form of `a.txt`: what an import attribute makes of the file. A mock of the path replaces the form that has been loaded, and waits for all of them if none has. `file`: the module under the path itself, if the image holds it.
@@ -314,7 +314,8 @@ JS_EXPORT_PRIVATE void didEndMock(JSGlobalObject*, ModuleID);
 // What a file of the program that has run exported before a mock was laid over it: `module.exports` of a CommonJS file, a new object with the names of an ES module.
 // So too while the factory runs and nothing is laid yet. Empty for a file that never ran: the mock stands in its place.
 JS_EXPORT_PRIVATE JSValue exportsBeforeMock(JSGlobalObject*, ModuleID);
-JS_EXPORT_PRIVATE void runMocksBelow(JSGlobalObject*, ModuleID);
+// True: it has called a factory that has not settled, and has gone no further. Whoever asks waits for that factory (factoryThatWaitsBelow()) and asks again.
+JS_EXPORT_PRIVATE bool runMocksBelow(JSGlobalObject*, ModuleID);
 // ModuleHost::factoryThatWaits, asked about the modules that a load of this one comes to.
 JS_EXPORT_PRIVATE JSPromise* factoryThatWaitsBelow(JSGlobalObject*, ModuleID, JSValue& state);
 // Behind runMocksBelow() that threw: it was the factory of the module itself, and an import statement asks for the module.

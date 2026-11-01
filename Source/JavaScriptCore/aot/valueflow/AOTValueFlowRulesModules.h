@@ -112,7 +112,9 @@ enum class UnseenCodeReach : uint8_t {
     Loader,
     Realm,
 };
-void letUnseenCodeRun(ValueFlowRuleContext&, UnseenCodeReach);
+// The front end reads the test files that the host runs from disk, and lays down what they take and what they spy on.
+enum class UnseenCodeText : bool { NobodyHasReadIt, FrontEndHasReadIt };
+void letUnseenCodeRun(ValueFlowRuleContext&, UnseenCodeReach, UnseenCodeText = UnseenCodeText::NobodyHasReadIt);
 // In the host nodes that hold names: a key constant is that name; these two stand for every index and for every name.
 inline ValueSetID markOfAnyIndex(const ValueFlowUniverse& universe) { return universe.untrackedObjectAlone(); }
 inline ValueSetID markOfAnyName(const ValueFlowUniverse& universe) { return universe.unknownObjectAlone(); }
