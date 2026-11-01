@@ -4551,8 +4551,10 @@ static void skipRethrowingHandler(Rewrite& rewrite, BlockID id, const Block& blo
                 return;
             if (outer)
                 rewrite.edit(from, { BlockEdit::Edges, BlockEdit::Arguments }).handler = *outer;
-            else
+            else {
+                explainHandlerThatGoes(rewrite.function, from);
                 rewrite.builder().removeHandler(from);
+            }
         });
     }
 }
