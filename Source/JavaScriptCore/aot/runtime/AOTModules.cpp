@@ -2249,8 +2249,8 @@ void Modules::letGoOfMocksThatEnded()
 
 uint32_t Modules::placeOfMomentOfLoad(ModuleID module) const
 {
-    // A CommonJS file and its face are in no load group.
-    if (!data(module).isESModuleOfProgram())
+    // A CommonJS file and its face are in no load group. An image that has noted no load has no moments.
+    if (!data(module).isESModuleOfProgram() || m_momentsOfLoads.isEmpty())
         return module.index();
     uint32_t head = m_table.headOfLoadGroup(module).index();
     return m_momentsOfLoads[head] ? head : module.index();
@@ -2276,7 +2276,7 @@ bool Modules::hasMockLaidOver(ModuleID module) const
 bool Modules::wasLoadedInThisTestFile(ModuleID module) const
 {
     uint32_t momentOfTestFile = m_instance.vm->aotState().momentOfTestFile;
-    if (m_momentsOfLoads[placeOfMomentOfLoad(module)] > momentOfTestFile)
+    if (!m_momentsOfLoads.isEmpty() && m_momentsOfLoads[placeOfMomentOfLoad(module)] > momentOfTestFile)
         return true;
     auto anew = m_momentsLoadedAnew.find(module);
     return anew != m_momentsLoadedAnew.end() && anew->value.momentOfTestFile == momentOfTestFile;
