@@ -201,9 +201,11 @@ void raiseHostFlag(ValueFlowRuleContext& context, ValueFlowHostNode flag)
     context.add(context.nodes().ofHost(flag), context.leavesOutSomeUnknownSource() ? context.universe().undefinedValue() : context.universe().unknownObjectAlone());
 }
 
-void letUnseenCodeRun(ValueFlowRuleContext& context, UnseenCodeReach reach)
+void letUnseenCodeRun(ValueFlowRuleContext& context, UnseenCodeReach reach, UnseenCodeText text)
 {
     raiseHostFlag(context, ValueFlowHostNode::UnseenCodeRuns);
+    if (text == UnseenCodeText::NobodyHasReadIt)
+        raiseHostFlag(context, ValueFlowHostNode::CodeThatNobodyHasReadRuns);
     if (reach != UnseenCodeReach::GlobalScope)
         raiseHostFlag(context, ValueFlowHostNode::UnseenCodeHasLoader);
     if (reach == UnseenCodeReach::Realm)
@@ -1448,7 +1450,7 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
             attachments.addClassesAnsweredBy(builtin);
     });
     // Whoever calls a loader gets the object of any module of Bun's own by its name. Any text finds process.getBuiltinModule on the global object.
-    if ((callsLoaderThatHasEscaped || membersFollowHolders) && !context.isSabotaged(Sabotage::ObjectsOfModulesCountAsLocked))
+    if ((callsLoaderThatHasEscaped || isHostFlagRaised(context, ValueFlowHostNode::CodeThatNobodyHasReadRuns)) && !context.isSabotaged(Sabotage::ObjectsOfModulesCountAsLocked))
         context.add(context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed), universe.builtinTables().heap().objectsOfPublicModulesWithoutLocks());
     if (callsLoaderThatHasEscaped) {
         if (isHostFlagRaised(context, ValueFlowHostNode::ModulesAreRequiredByName) || isHostFlagRaised(context, ValueFlowHostNode::ModulesAreImportedByName))
@@ -1521,7 +1523,7 @@ void runUnseenCode(const ValueFlowStatement&, ValueFlowRuleContext& context)
 {
     if (context.refusedCode().hostRunsFilesOutsideImage) {
         raiseHostFlag(context, ValueFlowHostNode::CodeOutsideImageIsLoaded);
-        letUnseenCodeRun(context, UnseenCodeReach::Loader);
+        letUnseenCodeRun(context, UnseenCodeReach::Loader, UnseenCodeText::FrontEndHasReadIt);
         context.add(ValueFlowProgramNodes::escaped(), context.universe().holdersOfPublicLibraryExports());
     }
     if (!isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns))
