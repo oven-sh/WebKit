@@ -21,6 +21,7 @@
 #include "JSCConfig.h"
 #include "Options.h"
 #include <algorithm>
+#include <unistd.h>
 #include <wtf/FileSystem.h>
 #include <wtf/NumberOfCores.h>
 #include <wtf/Scope.h>
@@ -243,6 +244,19 @@ static CommandResult runCommand(const TestCommand& command, const TestFile& file
         return again;
     };
     command.run(context);
+    if (const char* path = getenv("TESTAOT_LISTS_BROKEN_LAWS_OF_TYPES"); path && context.program) {
+        StringPrintStream broken;
+        listBrokenLawsOfTypes(broken, *context.program, 160);
+        char pathOfProcess[1024];
+        snprintf(pathOfProcess, sizeof(pathOfProcess), "%s.%d", path, static_cast<int>(getpid()));
+        if (FILE* list = fopen(pathOfProcess, "a")) {
+            auto text = broken.toStringWithLatin1Fallback().utf8();
+            size_t endOfLine = file.text.find('\n');
+            fprintf(list, "== %s | %s\n", run.command.utf8().data(), file.text.left(std::min<size_t>(endOfLine == notFound ? file.text.length() : endOfLine, 150)).utf8().data());
+            fwrite(text.data(), 1, text.length(), list);
+            fclose(list);
+        }
+    }
     build.diagnostics().finish(context.program.get());
     Vector<Wire::LossRecord> losses = WTF::move(context.losses);
     losses.appendVector(build.takeLosses(context.program.get()));

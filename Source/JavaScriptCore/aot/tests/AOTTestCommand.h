@@ -35,6 +35,9 @@ struct TestCommandContext {
     WTF::Function<std::unique_ptr<Program>(BuildContext&)> readProgramAgain { };
 };
 
+// Every pair of the program's types that breaks a law of the algebra of types, one line for each shape of pair. Answers how many shapes.
+unsigned listBrokenLawsOfTypes(PrintStream&, Program&, unsigned mostTypes);
+
 enum class ProgramAsRead : uint8_t { AsParsed, WithLibrary, TypedAndVerified };
 
 struct TestCommand {
