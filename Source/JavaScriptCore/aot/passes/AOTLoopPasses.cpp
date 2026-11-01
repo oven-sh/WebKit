@@ -2040,6 +2040,9 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
         return hasInvariantOperands(value) || namesFactOfFirstTurn(value) || canGoAheadOfItsFact(value);
     };
     auto canHoist = [&](ValueID id, BlockID block, const LoopClobbers& clobbersBeforeRead) {
+        const Terminator& terminator = function.at(block).terminator;
+        if (terminator.isConditionalBranch() && terminator.conditionOperand() == id && std::ranges::any_of(terminator.targets, [](const Target& target) { return !target.proofs.isEmpty(); }))
+            return false;
         // A comparison or a look-up in a collection is declared to throw where it flattens a rope and memory runs out.
         // What may throw does not leave its handler, and it runs ahead of the loop only where the first turn is sure to run it: a loop that makes no turn throws nothing.
         bool mayThrow = !!context.analyses.effectsOf(id).onAnyEdge().mayThrow;
