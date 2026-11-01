@@ -38,7 +38,6 @@
 #include "AOTValueSubstitution.h"
 #include <wtf/Scope.h>
 #include <algorithm>
-#include <bit>
 #include <limits>
 #include <ranges>
 #include <tuple>
@@ -715,6 +714,8 @@ static void dropSitesBeyondConditionLimit(FunctionPassContext& context, TestSite
         for (TestConditionID condition : conditionOfTest.subspan(site.firstTest, site.numberOfTests))
             heaviestFirst[condition.index()].first += heat;
     }
+    for (auto& [weight, condition] : heaviestFirst)
+        weight = withoutLastDigits(weight);
     AOT::sortInLine(heaviestFirst, [](const auto& a, const auto& b) { return a.first != b.first ? a.first > b.first : a.second < b.second; });
     BitVector isChosen;
     for (auto [weight, condition] : heaviestFirst.span().first(static_cast<size_t>(limit)))
@@ -2125,14 +2126,6 @@ static LayoutID declarerOf(const Program& program, LayoutID layout, PropertyKeyI
     if (holder == holders.end() || *holder != layout)
         return { };
     return program.declarersOfName(name)[holder - holders.begin()];
-}
-
-// An estimate of heat is a sum of products over the whole program. Its last digits follow the order of the sums, so they change with code that has nothing to do
-// with what is estimated. Whoever ranks by it ranks by its first twenty bits: what is made equally often stays equal.
-static double withoutLastDigits(double estimate)
-{
-    constexpr uint64_t lastDigits = (1ull << 32) - 1;
-    return std::bit_cast<double>(std::bit_cast<uint64_t>(estimate) & ~lastDigits);
 }
 
 // A class and the layouts below it have an inherited field in one slot, and a test for all of them is one test.
