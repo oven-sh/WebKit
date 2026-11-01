@@ -611,8 +611,7 @@ public:
     // The host hands what it gets to import() in code that is not compiled, which gives the program a promise of its own.
     enum class ImportCaller : bool { CompiledCode, Host };
     enum class TextOfImport : uint8_t { MayComeLater, HasCome, HasComeWithCallInFront };
-    JSPromise* startImport(ModuleID, std::optional<int64_t> referrerAsyncOrder, ImportCaller = ImportCaller::CompiledCode, TextOfImport = TextOfImport::MayComeLater, JSPromise* promiseOfCaller = nullptr);
-    JSPromise* goOnWithHeldImport(ModuleID, std::optional<int64_t> referrerAsyncOrder, ImportCaller, TextOfImport, JSValue stateOfWait);
+    JSPromise* startImport(ModuleID, std::optional<int64_t> referrerAsyncOrder, ImportCaller = ImportCaller::CompiledCode, TextOfImport = TextOfImport::MayComeLater, JSPromise* promiseOfCaller = nullptr, JSValue stateOfWait = JSValue());
     JSPromise* rejectImportWithErrorOfLoad(ModuleID, ImportCaller);
     JSPromise* importDynamic(JSValue specifier, JSValue options, ModuleID referrer);
     // `bun run` reads the text of a file that is imported on another thread, and hears of it in a later turn of the event loop: every job that waits runs first, and so does what is left of a graph
@@ -997,8 +996,6 @@ private:
     Vector<ModuleID, 2> m_importsMadeByOwnFactory;
     // AfterFailure::AsksAgain
     BitVector m_modulesWithMockThatAsksAgain;
-    // From goOnWithHeldImport() to the head of startImport(), with nothing run between.
-    JSValue m_stateOfHeldImport;
     // The factory of a mock failed while they were loaded, and they import the mocked module by statements, one through another. The loader of `bun test` keeps the record of each with that error:
     // whoever loads one, or comes to one by a statement, gets the error, until the module is taken out of require.cache or the module below is mocked anew.
     BitVector m_modulesWithLoadEndedByMock;

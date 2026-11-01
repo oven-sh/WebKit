@@ -3771,13 +3771,8 @@ JSPromise* Modules::factoryThatWaitsBelow(ModuleID root, FactoryAskedForBy asked
     }, askedBy, state);
 }
 
-JSPromise* Modules::goOnWithHeldImport(ModuleID module, std::optional<int64_t> referrerAsyncOrder, ImportCaller caller, TextOfImport text, JSValue stateOfWait)
-{
-    m_stateOfHeldImport = stateOfWait;
-    return startImport(module, referrerAsyncOrder, caller, text);
-}
-
-JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrerAsyncOrder, ImportCaller caller, TextOfImport text, JSPromise* promiseOfCaller)
+// `stateOfWait`: ModuleHost::factoryThatWaits' state, where a call that was held behind a factory goes on.
+JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrerAsyncOrder, ImportCaller caller, TextOfImport text, JSPromise* promiseOfCaller, JSValue stateOfWait)
 {
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -3796,7 +3791,6 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         }
     }
     // The loader of `bun run` waits for a factory before it goes on with the graph.
-    JSValue stateOfWait = std::exchange(m_stateOfHeldImport, JSValue());
     JSPromise* factories = factoryThatWaitsBelow(module, text == TextOfImport::MayComeLater || stateOfWait ? FactoryAskedForBy::ImportCall : FactoryAskedForBy::ImportCallBehindItsText, stateOfWait);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     if (factories) [[unlikely]] {
@@ -6388,7 +6382,7 @@ JSC_DEFINE_HOST_FUNCTION(importBehindFactories, (JSGlobalObject* realm, CallFram
     JSValue order = heldCall->getIndexQuickly(1);
     std::optional<int64_t> referrerAsyncOrder = order.isUndefined() ? std::nullopt : std::optional(static_cast<int64_t>(order.asNumber()));
     auto caller = heldCall->getIndexQuickly(2).asBoolean() ? Modules::ImportCaller::Host : Modules::ImportCaller::CompiledCode;
-    return JSValue::encode(modulesOf(realm)->goOnWithHeldImport(module, referrerAsyncOrder, caller, static_cast<Modules::TextOfImport>(heldCall->getIndexQuickly(3).asUInt32()), heldCall->getIndexQuickly(4)));
+    return JSValue::encode(modulesOf(realm)->startImport(module, referrerAsyncOrder, caller, static_cast<Modules::TextOfImport>(heldCall->getIndexQuickly(3).asUInt32()), nullptr, heldCall->getIndexQuickly(4)));
 }
 
 JSPromise* importModule(JSGlobalObject* realm, ModuleID moduleOfHost, std::optional<int64_t> referrerAsyncOrder)
