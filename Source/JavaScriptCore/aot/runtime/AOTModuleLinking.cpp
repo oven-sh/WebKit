@@ -88,19 +88,30 @@ StarExportResolution::Type Modules::resolveRequiredName(ModuleID exporter, const
 // Of a module of this image, or of the module of another image that a record of this one stands for.
 bool Modules::isMockedInItsImage(ModuleID module)
 {
-    if (!data(module).isUncompiledCode()) {
-        if (isMocked(fileOf(module)) || isMocked(module))
+    // `export * from` a mocked module passes on what nobody can list. Stars lead round in rings and meet again behind a fork: each module is asked once.
+    BitVector seen(m_table.size());
+    Vector<ModuleID, 8> toAsk { module };
+    while (!toAsk.isEmpty()) {
+        ModuleID asked = toAsk.takeLast();
+        if (seen.quickSet(asked.index()))
+            continue;
+        if (data(asked).isUncompiledCode()) {
+            LoadedModule* loaded = loadedIfExists(asked);
+            auto* record = loaded ? dynamicDowncast<ModuleRecord>(loaded->uncompiledRecord.get()) : nullptr;
+            if (record && record->isMocked())
+                return true;
+            continue;
+        }
+        if (isMocked(fileOf(asked)) || isMocked(asked))
             return true;
-        // `export * from` a mocked module passes on what nobody can list.
-        if (!data(module).hasDynamicStarExport() || !m_instance.vm->isSafeToRecurse())
-            return false;
-        return std::ranges::any_of(m_table.requests(module), [&](const ModuleRequestData& request) {
-            return request.isDynamicStarExport && request.targetModule() != module && isMockedInItsImage(request.targetModule());
-        });
+        if (!data(asked).hasDynamicStarExport())
+            continue;
+        for (const ModuleRequestData& request : m_table.requests(asked)) {
+            if (request.isDynamicStarExport)
+                toAsk.append(request.targetModule());
+        }
     }
-    LoadedModule* loaded = loadedIfExists(module);
-    auto* record = loaded ? dynamicDowncast<ModuleRecord>(loaded->uncompiledRecord.get()) : nullptr;
-    return record && record->isMocked();
+    return false;
 }
 
 void Modules::checkRequiredNames(std::span<const ModuleID> modules)
