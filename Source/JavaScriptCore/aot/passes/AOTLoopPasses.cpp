@@ -2092,9 +2092,15 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
             return false;
         return hasInvariantOperands(value) || namesFactOfFirstTurn(value) || canGoAheadOfItsFact(value);
     };
-    auto canHoist = [&](ValueID id, BlockID block, const LoopClobbers& clobbersBeforeRead) {
+    // A branch gives its proofs by the test that it names. `c === a` in the head of a loop and `a === c` in its body are one value with two branches.
+    BitVector testsThatNarrow(function.values.size());
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
         const Terminator& terminator = function.at(block).terminator;
-        if (terminator.isConditionalBranch() && terminator.conditionOperand() == id && std::ranges::any_of(terminator.targets, [](const Target& target) { return !target.proofs.isEmpty(); }))
+        if (terminator.isConditionalBranch() && std::ranges::any_of(terminator.targets, [](const Target& target) { return !target.proofs.isEmpty(); }))
+            testsThatNarrow.quickSet(terminator.conditionOperand().index());
+    }
+    auto canHoist = [&](ValueID id, BlockID block, const LoopClobbers& clobbersBeforeRead) {
+        if (testsThatNarrow.get(id.index()))
             return false;
         // A comparison or a look-up in a collection is declared to throw where it flattens a rope and memory runs out.
         // What may throw does not leave its handler, and it runs ahead of the loop only where the first turn is sure to run it: a loop that makes no turn throws nothing.
