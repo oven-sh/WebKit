@@ -1445,6 +1445,10 @@ static PassOutcome expandForInLoopOverList(FunctionPassContext& context, Emissio
         bytesOfRegion += estimatedCodeBytes(program, function, function.at(block));
     if (context.exceeds(LimitID::MaxVersionedIterationBytes, bytesOfRegion, loop.open))
         return PassOutcome::Unchanged;
+    // The position comes round as a parameter of the header. A cast may stand between that and the step.
+    size_t positionIndex = function.at(loop.header).parameters.find(definitionThroughUpcasts(function, function.at(loop.step).positionOperand()));
+    if (positionIndex == notFound)
+        return PassOutcome::Unchanged;
 
     builder.setOrigin(function.at(loop.open).origin());
     Vector<std::unique_ptr<RegionCloner>, 1> cloners;
@@ -1455,7 +1459,6 @@ static PassOutcome expandForInLoopOverList(FunctionPassContext& context, Emissio
     ValueID step = cloner.cloneOf(loop.step);
 
     // The region may contain a cycle with its own step, which moves to any position. The original loop handles them all.
-    size_t positionIndex = function.at(header).parameters.find(function.at(step).positionOperand());
     auto isPositionAfterStep = [&](ValueID position) {
         const Value& next = function.at(definitionThroughUpcasts(function, position));
         if (next.opcode != Opcode::Add)
@@ -1659,7 +1662,7 @@ static PassOutcome expandForInLoop(FunctionPassContext& context, Emission& emiss
             }
             builder.eraseValues(turn.header, loopHints);
 
-            size_t positionIndex = function.at(turn.header).parameters.find(function.at(turn.step).positionOperand());
+            size_t positionIndex = function.at(turn.header).parameters.find(definitionThroughUpcasts(function, function.at(turn.step).positionOperand()));
             for (BlockID block : cloner->clonedBlocks()) {
                 for (Target& target : function.edit(block, editsOfTargets).terminator.targets) {
                     if (target.block != turn.header)

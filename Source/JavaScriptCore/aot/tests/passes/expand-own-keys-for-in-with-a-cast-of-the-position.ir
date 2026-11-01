@@ -1,0 +1,71 @@
+# A cast stands between the parameter of the header that carries the position and the step that takes it, as behind a prediction of the position. The loop is expanded as without it:
+# over a list the copy is entered with the position that the entry hands over, and over an object of one layout the second turn follows the first.
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot check=VerifyEachPass
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Record" fields=[{key="alpha" declared={type=number}}, {key="bravo" declared={type=number}}] flow={constructorOrders=[{fields=[0, 1]}]}
+
+function f0 name="overAList" parameters=[{type=Array<number>}] results=[{type=number}] {
+  b0(v0: Array<number>):
+    v1 = ForInOpen v0
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3: int[0, 8589934591]):
+    v4 = Upcast v3 castType=int[0, 8589934591]
+    LoopHint
+    v6 = ForInStep v1, v0 position=v4
+    v7 = ResultAt v6 index=0
+    v8 = ResultAt v6 index=1
+    v9 = ResultAt v6 index=2
+    v10 = Integer integer=1
+    v11 = Add v9, v10
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v12 = ElemGet v0, v8
+    v13 = Integer integer=2
+    v14 = StrictEq v12, v13
+    Branch v14 -> taken b4(), notTaken b5()
+  b3():
+    v15 = Integer integer=0
+    Return v15
+  b4():
+    v16 = Integer integer=1
+    Return v16
+  b5():
+    Jump -> next b1(v11)
+# CHECK: [[length]]: int[0, 4294967295] = GetEnumeratorIndexedLength v1
+# CHECK-NEXT: [[hasIndexes]]: boolean = Less v2, [[length]]
+# CHECK-NEXT: Branch [[hasIndexes]] -> taken [[copy]](v2), notTaken b1(v2)
+# CHECK: = ForInStep v1, v0 position=v4
+# CHECK: [[copy]]([[carried]]: int[0, 8589934591]):
+# CHECK-NEXT: [[position]]:{{*}}= Upcast [[carried]]
+# CHECK: = Less [[position]], [[length]]
+# CHECK: = ToEnumeratorPosition [[position]]
+}
+
+function f1 name="overARecord" parameters=[{type=object}] results=[{type=undefined}] {
+  b0(v0: object ~ L0):
+    v1 = ForInOpen v0
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3: int[0, 8589934591]):
+    v4 = Upcast v3 castType=int[0, 8589934591]
+    LoopHint
+    v6 = ForInStep v1, v0 position=v4
+    v7 = ResultAt v6 index=0
+    v8 = ResultAt v6 index=1
+    v9 = ResultAt v6 index=2
+    v10 = Integer integer=1
+    v11 = Add v9, v10
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v12 = ElemGet v0, v8
+    Jump -> next b1(v11)
+  b3():
+    v13 = Undefined
+    Return v13
+# CHECK-COUNT-2: = IsEnumeratorCurrent v1, v0,
+}
