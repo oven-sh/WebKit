@@ -47,6 +47,7 @@ Yarr::BytecodePattern::offsetOfFlatProgram() | incomplete type 'JSC::Yarr::Bytec
 Yarr::MatchingContextHolder::offsetOfFreeList() | incomplete type 'JSC::Yarr::MatchingContextHolder' named in nested name specifier
 Yarr::MatchingContextHolder::offsetOfStackLimit() | incomplete type 'JSC::Yarr::MatchingContextHolder' named in nested name specifier
 EntryFrame::vmEntryRecordOffset() | static assertion expression is not an integral constant expression
+JSMap::offsetOfDeletedPrefix() | static assertion expression is not an integral constant expression
 JSMap::offsetOfStorage() | static assertion expression is not an integral constant expression
 JSSet::offsetOfStorage() | static assertion expression is not an integral constant expression
 MutatorMarkStackLayout::offsetOfHeadSegment() | static assertion expression is not an integral constant expression

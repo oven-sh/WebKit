@@ -480,6 +480,10 @@ public:
 
     static bool add(JSGlobalObject*, JSObject* owner, JSValue key, JSValue value);
     static bool remove(JSGlobalObject*, JSObject* owner, JSValue key);
+    // So many entries at the front of the owner's table are known to be deleted. The owner holds the number: the header of a table is full.
+    // `map.delete(map.keys().next().value)`, which is how a cache lets its oldest entry go, would else step over every entry that went before, each time.
+    // A walk that begins among them goes on behind them, and writes down how far it has found nothing alive. A deleted entry stays deleted, so no deletion has to know. A new table begins at 0.
+    JS_EXPORT_PRIVATE static uint32_t& deletedPrefixOf(JSObject* owner);
     JS_EXPORT_PRIVATE uint32_t numberOfTakenSlots() const;
     static void clear(JSGlobalObject*, JSObject* owner);
     static CompactStorage::Position next(VM&, JSCell* storage, uint32_t entry);

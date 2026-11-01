@@ -177,8 +177,14 @@ static UGPRPair nextEntry(JSGlobalObject* globalObject, Collection* collection, 
     if (!storage)
         return hasEntryAndIndex(false, 0);
     moveWalkedTableToHeap(globalObject, collection, storage);
+    uint32_t& deletedPrefix = CompactTable::deletedPrefixOf(collection);
+    bool beginsInDeletedPrefix = storage == collection->storage() && entry <= deletedPrefix;
+    if (beginsInDeletedPrefix)
+        entry = deletedPrefix;
     DeferGCForAWhile deferGC(vm);
     auto next = Collection::Helper::transitAndNext(vm, *storage, entry);
+    if (beginsInDeletedPrefix && next.storage == storage)
+        deletedPrefix = next.entry;
     if (!next.storage)
         return hasEntryAndIndex(false, 0);
     results[0] = JSValue::encode(next.key);

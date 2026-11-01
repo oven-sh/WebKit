@@ -74,8 +74,12 @@ public:
     }
 
     // Most tables have no deleted entries, so the first entry is checked inline and the loop that skips deleted entries is off the likely path.
-    LValue firstAliveEntry(LValue start, LValue used, LBasicBlock hasNoEntry, NOESCAPE const Invocable<LValue(LValue)> auto& isAlive)
+    // A step that may be the first of its walk names the owner: CompactTable::deletedPrefixOf(). From a deleted entry at or in front of the mark it goes on at the mark, and writes down where it has found an entry alive.
+    LValue firstAliveEntry(std::optional<CellPointer> ownerOfWalkFromFront, LValue start, LValue used, LBasicBlock hasNoEntry, NOESCAPE const Invocable<LValue(LValue)> auto& isAlive)
     {
+        std::optional<TypedPointer> deletedPrefix;
+        if (ownerOfWalkFromFront)
+            deletedPrefix = m_out.address(m_heaps.entire(AbstractHeap::CollectionStorage), ownerOfWalkFromFront->value(), JSMap::offsetOfDeletedPrefix());
         LBasicBlock isFirstUsed = m_out.newBlock();
         LBasicBlock loop = m_out.newBlock();
         LBasicBlock isUsed = m_out.newBlock();
@@ -84,8 +88,17 @@ public:
 
         m_out.appendTo(isFirstUsed);
         ValueFromBlock aliveAtStart = m_out.anchor(start);
-        ValueFromBlock deletedAtStart = m_out.anchor(start);
-        m_out.branch(isAlive(start), normalEdge(found), unlikelyEdge(loop));
+        ValueFromBlock deletedAtStart = deletedPrefix ? ValueFromBlock() : m_out.anchor(start);
+        LValue beginsInDeletedPrefix = nullptr;
+        LBasicBlock isDeleted = deletedPrefix ? m_out.newBlock() : loop;
+        m_out.branch(isAlive(start), normalEdge(found), unlikelyEdge(isDeleted));
+        if (deletedPrefix) {
+            m_out.appendTo(isDeleted);
+            LValue known = m_out.zeroExtPtr(m_out.load32(*deletedPrefix));
+            beginsInDeletedPrefix = m_out.belowOrEqual(start, known);
+            deletedAtStart = m_out.anchor(m_out.select(m_out.below(start, known), m_out.sub(known, m_out.constInt64(1)), start));
+            m_out.jump(loop);
+        }
 
         m_out.appendTo(loop);
         LValue deletedEntry = m_out.phi(B3::Int64, deletedAtStart);
@@ -93,12 +106,27 @@ public:
         m_out.branch(m_out.below(candidate, used), normalEdge(isUsed), unlikelyEdge(hasNoEntry));
 
         m_out.appendTo(isUsed);
-        ValueFromBlock liveAfterDeletedEntries = m_out.anchor(candidate);
+        ValueFromBlock liveAfterDeletedEntries = deletedPrefix ? ValueFromBlock() : m_out.anchor(candidate);
         m_out.addIncomingToPhi(deletedEntry, m_out.anchor(candidate));
-        m_out.branch(isAlive(candidate), normalEdge(found), normalEdge(loop));
+        LBasicBlock isBehindDeleted = deletedPrefix ? m_out.newBlock() : found;
+        ValueFromBlock firstAlive;
+        m_out.branch(isAlive(candidate), normalEdge(isBehindDeleted), normalEdge(loop));
+        if (deletedPrefix) {
+            LBasicBlock isFirstAlive = m_out.newBlock();
+            m_out.appendTo(isBehindDeleted);
+            liveAfterDeletedEntries = m_out.anchor(candidate);
+            m_out.branch(beginsInDeletedPrefix, normalEdge(isFirstAlive), normalEdge(found));
+            m_out.appendTo(isFirstAlive);
+            m_out.store32(m_out.castToInt32(candidate), *deletedPrefix);
+            firstAlive = m_out.anchor(candidate);
+            m_out.jump(found);
+        }
 
         m_out.appendTo(found);
-        return m_out.phi(B3::Int64, aliveAtStart, liveAfterDeletedEntries);
+        LValue result = m_out.phi(B3::Int64, aliveAtStart, liveAfterDeletedEntries);
+        if (deletedPrefix)
+            m_out.addIncomingToPhi(result, firstAlive);
+        return result;
     }
 
     LValue isAliveAt(CompactTable::Width keyWidth, LValue keys, LValue entryIndex)
@@ -260,7 +288,14 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
     m_out.appendTo(hasExpectedWidth);
     LValue used = loadUsed();
     LValue column = reader.keysOf(storage);
-    LValue entryIndex = reader.firstAliveEntry(start.value(), used, hasNoEntry, [&](LValue candidate) { return reader.isAliveAt(keyWidth, column, candidate); });
+    // A step in a loop has its entry from the step before. One that is written to begin at the front is the first of its walk, and often the only one: `map.keys().next()`, `const [first] = set`.
+    // One that has its entry out of an iterator object may be the first.
+    ValueID entryToBeginAt = value->entryOperand();
+    while (resultRuleOf(m_function.at(entryToBeginAt).opcode) == ResultRule::Cast)
+        entryToBeginAt = m_function.at(entryToBeginAt).valueOperand();
+    const Value& origin = m_function.at(entryToBeginAt);
+    const bool mayBeFirstStep = (origin.opcode == Opcode::Integer && !origin.integer()) || origin.opcode == Opcode::GetInternalField;
+    LValue entryIndex = reader.firstAliveEntry(mayBeFirstStep ? std::optional { owner } : std::nullopt, start.value(), used, hasNoEntry, [&](LValue candidate) { return reader.isAliveAt(keyWidth, column, candidate); });
     std::optional<Boxed> key;
     LValue values = nullptr;
     if (readsBothWidths) {
