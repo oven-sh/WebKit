@@ -21,9 +21,9 @@
 #include "JSCConfig.h"
 #include "Options.h"
 #include <algorithm>
-#include <unistd.h>
 #include <wtf/FileSystem.h>
 #include <wtf/NumberOfCores.h>
+#include <wtf/ProcessID.h>
 #include <wtf/Scope.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
@@ -248,7 +248,7 @@ static CommandResult runCommand(const TestCommand& command, const TestFile& file
         StringPrintStream broken;
         listBrokenLawsOfTypes(broken, *context.program, 160);
         char pathOfProcess[1024];
-        snprintf(pathOfProcess, sizeof(pathOfProcess), "%s.%d", path, static_cast<int>(getpid()));
+        snprintf(pathOfProcess, sizeof(pathOfProcess), "%s.%d", path, static_cast<int>(getCurrentProcessID()));
         if (FILE* list = fopen(pathOfProcess, "a")) {
             auto text = broken.toStringWithLatin1Fallback().utf8();
             size_t endOfLine = file.text.find('\n');
