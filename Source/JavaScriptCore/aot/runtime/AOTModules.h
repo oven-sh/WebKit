@@ -205,6 +205,7 @@ public:
     bool isGraphRunning() const { return m_innermostEvaluation || m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_instance.vm->synchronousModuleQueue(); }
     bool hasLinkedImporterYetToRun(ModuleID, const String& keyOfFileInImageBelow, std::optional<ModuleID> askingAsHostNamesIt) const;
     uint32_t placeOfMomentOfLoad(ModuleID) const;
+    bool wasLoadedInThisTestFile(ModuleID) const;
     uint32_t momentOfFirstMockInTestFile(ModuleID);
     // The life of the mock of a module: R:launch-doors-stores-and-defines/THE-LIFE-OF-A-MOCK.md. Computed from what the sets and flags below say. NoneOfThem: together they say what no state of the table is.
     enum class MockState : uint8_t { None, Waits, Runs, InPlace, InPlaceWhileAnotherWaits, InPlaceOverModuleThatHasRun, Fills, LaidOver, Failed, Ended, EndedWhileAnotherWaits, NoneOfThem };
@@ -230,7 +231,8 @@ public:
     // `bun test` takes whoever imports a module out of its loader when a mock of the module ends, and when a mock is laid over what an earlier test file loaded. A mock of such an importer
     // comes ahead of its load, though the body has run here.
     enum class ImportersLetGo : bool { All, AllButThoseThatThisTestFileLinkedToModule };
-    void letGoOfImportersOf(ModuleID, ImportersLetGo);
+    enum class ImagesSearched : bool { All, ThoseAbove };
+    void letGoOfImportersOf(ModuleID, ImportersLetGo, ImagesSearched = ImagesSearched::All);
     void letGoOfModuleLoadedAsMock(ModuleID module) { m_modulesThatLoaderLetGo.set(module.index()); }
     bool wasLetGoByLoader(ModuleID module) const { return m_modulesThatLoaderLetGo.get(module.index()); }
     bool hasMockLaidOver(ModuleID) const;
@@ -832,7 +834,7 @@ private:
     void evaluateModulesOwedBelow(ModuleID root, bool hasImporterAboveThatRan = false);
     void evaluateModulesOwedBelowSlow(ModuleID root, bool hasImporterAboveThatRan);
     void bringBackWhatLoaderLetGoBelow(ModuleID root);
-    void letGoOfImportersOf(const BitVector& mocked, BitVector&& gone, const BitVector& goneFromMock, bool keepsImportersOfTestFile);
+    void letGoOfImportersOf(const BitVector& mocked, BitVector&& gone, const BitVector& goneFromMock, bool keepsImportersOfTestFile, ImagesSearched = ImagesSearched::All);
     size_t numberOfJobsThatWouldWait(JobsOfImportedFiles) const;
     void holdJobsBehind(size_t numberOfJobs, ModuleID file, JobsOfImportedFiles = JobsOfImportedFiles::WaitForLoader);
     bool hasQueuedTicks() const { return host().hasQueuedTicks && host().hasQueuedTicks(m_instance.globalObject); }

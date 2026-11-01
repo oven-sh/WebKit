@@ -2183,22 +2183,32 @@ bool Modules::hasMockLaidOver(ModuleID module) const
     return loaded && loaded->hasMockLaidOver;
 }
 
-void Modules::letGoOfImportersOf(ModuleID mocked, ImportersLetGo which)
+// By its first load, or by the load that linked it anew where `bun test` makes it anew.
+bool Modules::wasLoadedInThisTestFile(ModuleID module) const
+{
+    uint32_t momentOfTestFile = m_instance.vm->aotState().momentOfTestFile;
+    if (m_momentsOfLoads[placeOfMomentOfLoad(module)] > momentOfTestFile)
+        return true;
+    auto anew = m_momentsLoadedAnew.find(module);
+    return anew != m_momentsLoadedAnew.end() && anew->value.momentOfTestFile == momentOfTestFile;
+}
+
+void Modules::letGoOfImportersOf(ModuleID mocked, ImportersLetGo which, ImagesSearched images)
 {
     bool keepsImportersOfTestFile = which == ImportersLetGo::AllButThoseThatThisTestFileLinkedToModule;
-    if (keepsImportersOfTestFile && !m_momentsOfLoads.isEmpty() && m_momentsOfLoads[placeOfMomentOfLoad(mocked)] > m_instance.vm->aotState().momentOfTestFile)
+    if (keepsImportersOfTestFile && !m_momentsOfLoads.isEmpty() && wasLoadedInThisTestFile(mocked))
         return;
     BitVector asImported(m_table.size());
     asImported.quickSet(mocked.index());
     asImported.quickSet(moduleWithExportsOf(mocked).index());
-    letGoOfImportersOf(asImported, BitVector(m_table.size()), BitVector(m_table.size()), keepsImportersOfTestFile);
+    letGoOfImportersOf(asImported, BitVector(m_table.size()), BitVector(m_table.size()), keepsImportersOfTestFile, images);
 }
 
 // `gone`: what has left the loader with the mocked module in the images below, as this image names it. `goneFromMock`: those of them that were linked to the mock there.
-void Modules::letGoOfImportersOf(const BitVector& mocked, BitVector&& gone, const BitVector& goneFromMock, bool keepsImportersOfTestFile)
+void Modules::letGoOfImportersOf(const BitVector& mocked, BitVector&& gone, const BitVector& goneFromMock, bool keepsImportersOfTestFile, ImagesSearched images)
 {
     bool hasSeveralImages = m_instance.vm->aotState().hasSeveralImages;
-    if (!m_momentsOfLoads.isEmpty()) {
+    if (!m_momentsOfLoads.isEmpty() && images == ImagesSearched::All) {
         uint32_t momentOfTestFile = m_instance.vm->aotState().momentOfTestFile;
         if (m_importersByStatement.isEmpty()) {
             m_importersByStatement.grow(m_table.size());
@@ -2221,7 +2231,7 @@ void Modules::letGoOfImportersOf(const BitVector& mocked, BitVector&& gone, cons
             for (uint32_t index : m_importersByStatement[imported]) {
                 ModuleID importer(index);
                 uint32_t place = placeOfMomentOfLoad(importer);
-                if (mocked.quickGet(imported) && keepsImportersOfTestFile && m_momentsOfLoads[place] > momentOfTestFile)
+                if (mocked.quickGet(imported) && keepsImportersOfTestFile && wasLoadedInThisTestFile(importer))
                     continue;
                 if (seen.quickSet(index))
                     continue;
@@ -2349,6 +2359,9 @@ bool Modules::willLeaveModuleAlone(ModuleID module, bool onlyIfLoadedInPreload, 
     setAsideRecord(module);
     if (isFile)
         setAsideRecord(withExports);
+    // `bun test` takes the importers that earlier test files left out of its loader, and the next load links them to the mock.
+    // In this image each read asks who sees the mock. An importer in an image above holds what it was linked to.
+    letGoOfImportersOf(module, ImportersLetGo::AllButThoseThatThisTestFileLinkedToModule, ImagesSearched::ThoseAbove);
     return true;
 }
 
