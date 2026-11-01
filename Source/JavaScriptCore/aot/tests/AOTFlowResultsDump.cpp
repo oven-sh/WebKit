@@ -137,6 +137,13 @@ void FlowResults::dump(PrintStream& out, const Program& program) const
         out.print(" "_s, bound.numberOfBoundArguments);
         printer.endLine();
     }
+    for (const FlowBuiltinBoundAtSite& bound : sites.builtinsBoundAtSites) {
+        beginLine("built-in-bound-called-at"_s);
+        printWithLetter(accessSiteLetter, bound.site);
+        out.print(" "_s);
+        printer.print(bound.target);
+        printer.endLine();
+    }
     for (const FlowClosureStoredUnderKey& stored : sites.closuresStoredUnderKeys) {
         beginLine("closure-stored-under-key"_s);
         printer.print(stored.key);

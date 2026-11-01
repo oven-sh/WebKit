@@ -78,6 +78,7 @@ private:
     // The same, for code that continues without testing the kind: a build that validates or checks proofs tests it here and reports a mismatch.
     const ArrayStorageForm* provenFormOf(const InlineCall&, CellPointer array);
     ArrayStorageFormList candidateFormsOf(const InlineCall&);
+    ElementAccessEmitter::FirstForm firstCandidateFormOf(const InlineCall&);
     // The mask is arrayStorageTestMask for a read and IndexingShapeAndWritabilityMask for a store.
     void forEachFormOrMiss(const InlineCall&, CellPointer array, IndexingType mask, const ScopedLambda<void(const ArrayStorageForm&)>&);
 

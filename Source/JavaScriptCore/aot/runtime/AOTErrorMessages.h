@@ -117,6 +117,7 @@ JSObject* createExportStatementFindsNothingError(JSGlobalObject*, const String& 
 JSObject* createExportStatementFindsSeveralError(JSGlobalObject*, const String& exportName, const String& specifier);
 JSObject* createSuperCallInDirectEvalError(JSGlobalObject*);
 String functionNotCompiledMessage(const String& functionName);
+String exportNotCompiledMessage(const String& functionName, const String& module);
 String functionNotCompiledMessage(const String& path, unsigned line);
 String functionNotCompiledMessage();
 // `Array.prototype.push`, `Array.prototype[Symbol(Symbol.iterator)]`, and of the global object the name alone.
@@ -127,6 +128,9 @@ String deletionFromLockedBuiltinMessage(const String& property);
 String assignmentThatBuildDidNotSeeMessage(const String& property);
 // A test run opens what the build sees a test replace. So there the words say what to write, or that nothing will do.
 enum class LockedIn : bool { Executable, TestRun };
+// The compiled code that is running, or that has called the built-in function which is, stands in a file of a test run that an executable holds too.
+// Such a file meets what it meets there: the same refusal in the same words, and `false` from Reflect.
+bool isWrittenByFileOfProduct(VM&);
 String assignmentToLockedBuiltinMessage(VM&, BuiltinID holder, UniquedStringImpl* key, LockedIn);
 String deletionFromLockedBuiltinMessage(VM&, BuiltinID holder, UniquedStringImpl* key, LockedIn);
 // `property` is no entry of the table: hostDidFillObjectWithFoldedMembers(). No test run opens it.

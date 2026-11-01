@@ -23,6 +23,8 @@
 #include "FunctionPrototype.h"
 #include "GlobalObjectMethodTable.h"
 #include "InternalFunction.h"
+#include "IntlDateTimeFormat.h"
+#include "IntlNumberFormat.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
 #include "JSCustomGetterFunction.h"
@@ -103,6 +105,41 @@ static BuiltinID findBuiltinWithNativeCodeOf(const BuiltinTable& table, JSObject
             return binding.builtin;
     }
     return { };
+}
+
+// `formatter.format` answers a function that the accessor has bound to the formatter. Whoever bound it has made its target too, and nothing leads from the realm to that: the formatter keeps the bound function.
+// Flow takes the accessor for the target, and what a call does stands among the overloads of the accessor.
+struct FunctionBoundByAccessor {
+    JSBoundFunction* function { nullptr };
+    BuiltinID accessor;
+};
+
+static FunctionBoundByAccessor findFunctionBoundByAccessorWithTarget(const NativeCall& call)
+{
+    const BuiltinTable& table = BuiltinTable::singleton();
+    auto ifCalleeIsTarget = [&](JSBoundFunction* bound, BuiltinID accessor) -> FunctionBoundByAccessor {
+        if (!bound || bound->targetFunction() != call.callee || bound->boundArgsLength() > call.arguments.size() || !table.answersFunctionBoundToReceiver(table.canonicalID(accessor)))
+            return { };
+        return { bound, accessor };
+    };
+    if (call.kind != CodeSpecializationKind::CodeForCall)
+        return { };
+    if (auto* formatter = dynamicDowncast<IntlNumberFormat>(call.thisValue))
+        return ifCalleeIsTarget(formatter->boundFormat(), Builtins::IntlNumberFormatPrototypeFormat);
+    if (auto* formatter = dynamicDowncast<IntlDateTimeFormat>(call.thisValue))
+        return ifCalleeIsTarget(formatter->boundFormat(), Builtins::IntlDateTimeFormatPrototypeFormat);
+    return { };
+}
+
+// A formatter with a pattern has the pattern bound in front of what the caller passes. The overloads speak of what the caller passes.
+static NativeCall withoutArgumentsBoundByAccessor(const NativeCall& call)
+{
+    FunctionBoundByAccessor bound = findFunctionBoundByAccessorWithTarget(call);
+    if (!bound.function)
+        return call;
+    NativeCall callOfBoundFunction = call;
+    callOfBoundFunction.arguments = ArgList(call.arguments.data() + bound.function->boundArgsLength(), call.arguments.size() - bound.function->boundArgsLength());
+    return callOfBoundFunction;
 }
 
 // Nothing leads from the realm to the constructor of a class that only a native binding hands out. The host keeps the Structure of the instances, and the prototype object names the constructor.
@@ -252,7 +289,7 @@ static void appendOverloads(NativeCallDeclaration& declaration, BuiltinID builti
 }
 
 // May create objects of the realm that are created on demand.
-static NativeCallDeclaration findDeclaration(const NativeCall& call, const NativeCallExpectation& expectation)
+static NativeCallDeclaration findDeclaration(const NativeCall& call, const NativeCallExpectation& expectation, BuiltinID accessorThatBoundCallee)
 {
     using enum NativeCallDeclarationSource;
     using Kind = BuiltinCellKey::Kind;
@@ -275,6 +312,9 @@ static NativeCallDeclaration findDeclaration(const NativeCall& call, const Nativ
     }
 
     if (declare(NativeCodeOfCallee, findBuiltinWithNativeCodeOf(table, call.callee, BuiltinScope::Module), modeOf(Kind::Object, call.kind)))
+        return declaration;
+
+    if (declare(CalleeInRealm, accessorThatBoundCallee, BuiltinCallMode::Call))
         return declaration;
 
     // The program may have replaced a step of the path to the function, such as `console.log`. Compiled code that names the function has it in a cell.
@@ -549,16 +589,16 @@ class NativeCallValidationScope::Checker {
 public:
     Checker(VM& vm, const NativeCall& call, const NativeCallExpectation& expectation)
         : m_vm(vm)
-        , m_call(call)
+        , m_call(withoutArgumentsBoundByAccessor(call))
         , m_expectation(expectation)
     {
         DeferGCForAWhile deferGC(vm);
-        m_declaration = findDeclaration(call, m_expectation);
+        m_declaration = findDeclaration(m_call, m_expectation, findFunctionBoundByAccessorWithTarget(call).accessor);
 
         if (call.kind == CodeSpecializationKind::CodeForCall)
             addOperand(BuiltinOperand::receiver(), call.thisValue);
-        for (unsigned index = 0; index < std::min<unsigned>(call.arguments.size(), maxCheckedArguments); ++index)
-            addOperand(BuiltinOperand::argument(index), call.arguments.at(index));
+        for (unsigned index = 0; index < std::min<unsigned>(m_call.arguments.size(), maxCheckedArguments); ++index)
+            addOperand(BuiltinOperand::argument(index), m_call.arguments.at(index));
         checkOperandsOfUnknownFunction();
 
         m_collectionVersions = collectionVersionsOf(m_vm);

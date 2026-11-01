@@ -462,6 +462,7 @@ JS_EXPORT_PRIVATE std::optional<uint32_t> findRecordOfStoredField(const Program&
 // Of a store that has such a record: in every layout of the receiver the slot lies in the cell and holds any value as it is, and the type of the field is that of any value.
 bool storedFieldTakesAnyValue(const Program&, const Placement&, const Function&, const Value&);
 bool storedFieldAcceptsAnyNumber(const Program&, const Placement&, const Function&, const Value&);
+bool storedFieldKeepsNumbersAsValues(const Program&, const Placement&, const Function&, const Value&);
 JS_EXPORT_PRIVATE unsigned numberOfSiteCachesUsedBy(const Program&, const Placement&, const Function&, const Value&);
 // Nothing reads what a site that runs at most once would remember, so it has no cache.
 JS_EXPORT_PRIVATE bool mayReadSiteCachesAgain(FunctionAnalyses&, BlockID);

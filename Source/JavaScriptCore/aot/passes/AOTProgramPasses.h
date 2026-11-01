@@ -142,7 +142,9 @@ inline constexpr OpcodeSet lookupsHoistedWhereTheyRunNoCode { Opcode::PropGet };
 inline constexpr OpcodeSet testsOfValuesThemselves { Opcode::ToBoolean, Opcode::StrictEq };
 // A string has no identity, so one that is joined from the same parts again may as well be the same string.
 inline constexpr OpcodeSet joinsOfStrings { Opcode::Add, Opcode::Strcat };
-inline constexpr OpcodeSet hoistableOpcodes = hoistableReadOpcodes | lookupsHoistedWhereTheyRunNoCode | testsOfValuesThemselves | OpcodeSet { Opcode::ForInStep, Opcode::CallBuiltin, Opcode::GetArrayLength };
+// These ask whether a position lies below the length of a list, and can be told the length. One that has been told tells the others of its loop, so they alone give the pass work.
+inline constexpr OpcodeSet testsOfPositionsInLists { Opcode::IsInBounds, Opcode::GetArrayElement, Opcode::IsElementPresent, Opcode::HasArrayElement };
+inline constexpr OpcodeSet hoistableOpcodes = hoistableReadOpcodes | lookupsHoistedWhereTheyRunNoCode | testsOfValuesThemselves | testsOfPositionsInLists | OpcodeSet { Opcode::ForInStep, Opcode::CallBuiltin, Opcode::GetArrayLength };
 
 inline constexpr AbstractHeapSet heapsOfVariables { AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields };
 

@@ -255,6 +255,15 @@ bool HeapRule::mayInheritSetter(ClimbingSet objects)
     return isStoredThroughPlaceholdersInto(holders, setters) || isFound;
 }
 
+// A sloppy store under a name that something above the object lists, has defined by a descriptor or has frozen may leave the object as it was and say nothing.
+bool HeapRule::mayRefuseStoreInSilence(ClimbingSet objects, const HeapKey& key)
+{
+    if (!holdsAnything(objects))
+        return false;
+    ClimbingSet chain = known(m_context.valueOf(m_context.lookup(objects, prototypeLinkName)));
+    return m_context.meet(chain, m_tables.under(key.name).holders) || holdsAnything(m_context.markedAmong(chain, { ObjectMutation::RedefineProperty, ObjectMutation::ChangeIntegrity }));
+}
+
 HeapChain HeapRule::chainFrom(ClimbingSet receivers, const HeapKey& key)
 {
     auto withoutLockedLocations = [&](HeapChain chain) {
@@ -270,7 +279,7 @@ HeapChain HeapRule::chainFrom(ClimbingSet receivers, const HeapKey& key)
     ValueSetID answering = m_tables.holdersThatAnswerUnder(key.name);
     if (ValueSetID storedTo = m_tables.objectsStoredToAtCreationUnder(key.name); storedTo != ValueSets::nothing) {
         ClimbingSet storedToAmongReceivers = m_context.restrict(receivers, storedTo);
-        if (holdsAnything(storedToAmongReceivers) && !mayInheritSetter(storedToAmongReceivers))
+        if (holdsAnything(storedToAmongReceivers) && !mayInheritSetter(storedToAmongReceivers) && !mayRefuseStoreInSilence(m_context.restrict(storedToAmongReceivers, m_universe.closures()), key))
             answering = m_context.maker().unite(answering, storedTo);
     }
     ClimbingSet holdersThatMayLoseMember = m_context.restrict(receivers, m_tables.holdersThatMayLoseMemberUnder(key.name));
@@ -1781,6 +1790,15 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
             ValueFlowNodeID constructors = m_context.nodes().ofHost(ValueFlowHostNode::ConstructorsAboveEscapedInstances);
             connect(m_context.masked(constructors, ValueSets::complement(m_universe.builtinObjects())), result);
             connect(m_context.masked(constructors, m_context.maker().intersect(m_universe.builtinObjects(), ValueSets::complement(m_tables.objectsThatLetInUnseenCode()))), ValueFlowProgramNodes::escaped());
+            // The prototype object of a class of the host leads to the class, whether or not the table lists `constructor` on it: one that has escaped, or that stands above an object that has.
+            ClimbingSet prototypeObjects(m_tables.prototypeObjectsOfHost());
+            Members classes;
+            m_context.forEachMember(m_context.unite(escapedAmong(prototypeObjects), m_context.valueWithin(prototypeObjects, m_context.nodes().ofHost(ValueFlowHostNode::BuiltinObjectsAboveEscapedObjects))), [&](ValueFlowObjectID prototypeObject) {
+                BuiltinID holder = m_builtins.at(m_universe.builtinOf(prototypeObject)).holder;
+                if (holder && m_builtins.at(holder).kind == BuiltinKind::Constructor && !m_tables.letsInUnseenCode(holder))
+                    classes.append(m_universe.objectOf(holder));
+            });
+            add(ValueFlowProgramNodes::escaped(), m_context.maker().of(classes.span()));
         }
         bool mayBeCalled = mayCallWhateverHasEscaped(m_context);
         Members handedOutAsUnknownObject;
@@ -1806,7 +1824,10 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
             handedOutAsUnknownObject.append(objectOfMember(member, module));
         });
         add(ValueFlowProgramNodes::escaped(), m_context.maker().of(handedOutAsUnknownObject.span()));
-        forEachMemberUnder(m_context.unite(ClimbingSet(m_tables.classes()), m_context.valueOf(m_context.nodes().ofHost(ValueFlowHostNode::AnswersThatNoReadLists))), key, [&](BuiltinID member, ModuleID module) {
+        ClimbingSet holdersThatNoReadLists = m_context.unite(ClimbingSet(m_tables.classes()), m_context.valueOf(m_context.nodes().ofHost(ValueFlowHostNode::AnswersThatNoReadLists)));
+        if (m_context.holdsAnyOf(unknownObjectAlone(), m_context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfInstances)))
+            holdersThatNoReadLists = m_context.unite(holdersThatNoReadLists, ClimbingSet(m_tables.prototypeObjectsOfHost()));
+        forEachMemberUnder(holdersThatNoReadLists, key, [&](BuiltinID member, ModuleID module) {
             if (mayBeAnsweredWithoutBeingListed(member))
                 answersThatNoReadLists.append(objectOfMember(member, module));
         });
@@ -1817,13 +1838,11 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
         connect(m_context.lookup(unknownObjectAlone(), value), result);
         if (!m_context.isLookupForCall())
             noteName(ValueFlowHostNode::NamesFoundBelowValuesNobodyKnows, key);
-        if (handsOutEvaluators) {
-            // The unknown object stands for no object that lets in unseen code: one that is written on an object listed beside it is read there.
-            ClimbingSet listed = m_context.valueWithin(ClimbingSet(m_universe.knownObjects()), m_context.lookup(chain.start, prototypeLinkName));
-            ClimbingSet writable = m_context.restrict(listed, ValueSets::complement(holdersWithLockedLocationUnder(key)));
-            if (holdsAnything(writable) && (!m_asksWithoutNodes || m_context.mayFindSomethingWritten(writable, value.kind)))
-                connect(m_context.readWhatWasWritten(writable, value, ValueFlowRuleContext::ReadUse::OnlyWhatLetsInUnseenCode), result);
-        }
+        // The unknown object stands for no object that lets in unseen code: one that is written on an object listed beside it is read there.
+        ClimbingSet listed = m_context.valueWithin(ClimbingSet(m_universe.knownObjects()), m_context.lookup(chain.start, prototypeLinkName));
+        ClimbingSet writable = m_context.restrict(listed, ValueSets::complement(holdersWithLockedLocationUnder(key)));
+        if (holdsAnything(writable) && (!m_asksWithoutNodes || m_context.mayFindSomethingWritten(writable, value.kind)))
+            answer(m_context.readWhatWasWritten(writable, value, ValueFlowRuleContext::ReadUse::OnlyWhatLetsInUnseenCode));
     }
     if (chain.holdsUnknownObject) {
         if (!isSpelledByLibraryAlone)

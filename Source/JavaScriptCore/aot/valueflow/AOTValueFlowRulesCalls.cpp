@@ -986,7 +986,9 @@ static void passArguments(ValueFlowRuleContext& context, const ValueFlowCallGrou
         ValueFlowNodeID parameter = nodes.entryParameter(function, first + index);
         context.connect(group.argumentAt(index), parameter);
         context.connect(group.otherArguments, parameter);
-        if (!callersSayWhatTheyLeaveOut || index >= numberOfGroupedArguments)
+        if (kind == ValueFlowCallKind::CallByNativeCode && index < numberOfGroupedArguments)
+            context.connect(group.anyArgumentLeftOut(), parameter);
+        else if (!callersSayWhatTheyLeaveOut || index >= numberOfGroupedArguments)
             context.add(parameter, universe.undefinedValue());
     }
 
@@ -1179,7 +1181,7 @@ void runCallGroup(const ValueFlowStatement& statement, ValueFlowRuleContext& con
     ClimbingSet key = context.setOfKey();
     ValueFlowCallKind kind = context.callKindOfKey();
     ValueFlowRuleContext::InstanceEntered instance(context, context.markerOfKey());
-    ValueFlowCallGroup group = context.group(key, kind, ValueFlowCalleeOrigin::MemberFoundUnderName);
+    ValueFlowCallGroup group = context.group(key, kind, ValueFlowCalleeOrigin::MemberFoundUnderName, ValueFlowArgumentsLeftOut::SaidByCaller);
 
     auto handOperandsToCodeNobodySees = [&] {
         ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();

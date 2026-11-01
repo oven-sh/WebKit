@@ -202,9 +202,32 @@ RegExpCodeOrFailureReason ImageCodeAddressing::takeCode()
 
 CodeSymbol ImageCodeAddressing::symbolFor(RegExpSymbol&& symbol)
 {
-    size_t index = m_symbols.find(symbol);
+    // Most expressions name a few. On ARM64 each long constant is one, and an expression may have one for each alternative.
+    AOT_THRESHOLD(size_t, mostSymbolsSearchedOneByOne, 16);
+    auto keyOf = [](const RegExpSymbol& symbol) {
+        return computeHash(symbol) >> 1;
+    };
+    size_t index = notFound;
+    if (m_symbols.size() <= mostSymbolsSearchedOneByOne)
+        index = m_symbols.find(symbol);
+    else {
+        if (m_symbolsByHash.isEmpty()) {
+            for (uint32_t known = 0; known < m_symbols.size(); ++known)
+                m_symbolsByHash.add(keyOf(m_symbols[known]), Vector<uint32_t, 1>()).iterator->value.append(known);
+        }
+        if (auto iterator = m_symbolsByHash.find(keyOf(symbol)); iterator != m_symbolsByHash.end()) {
+            for (uint32_t known : iterator->value) {
+                if (m_symbols[known] == symbol) {
+                    index = known;
+                    break;
+                }
+            }
+        }
+    }
     if (index == notFound) {
         index = m_symbols.size();
+        if (!m_symbolsByHash.isEmpty())
+            m_symbolsByHash.add(keyOf(symbol), Vector<uint32_t, 1>()).iterator->value.append(static_cast<uint32_t>(index));
         m_symbols.append(WTF::move(symbol));
     }
     return { SymbolSpace::RegExp, static_cast<uint32_t>(index) };

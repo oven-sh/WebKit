@@ -14,6 +14,7 @@
 #include "AOTCellFormat.h"
 #include "AOTCellSizeClasses.h"
 #include "AOTCurrentWork.h"
+#include "AOTEffectsOfOperands.h"
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
@@ -161,6 +162,7 @@ static std::optional<FieldEvidence> collectFieldEvidence(const Program& program,
 {
     struct ScannedType {
         LayoutSetID layouts;
+        BuiltinID onlyBuiltin;
         bool listsFunctions : 1 { false };
         bool listsOnlyFunctions : 1 { false };
     };
@@ -190,6 +192,8 @@ static std::optional<FieldEvidence> collectFieldEvidence(const Program& program,
             types[index].layouts = type.layouts;
             types[index].listsFunctions = !type.functions.isEmpty();
             types[index].listsOnlyFunctions = !type.functions.isEmpty() && !type.anyObject && type.classes.isEmpty() && !type.layouts && type.builtins.isEmpty();
+            if (type.builtins.size() == 1 && !type.primitives && !type.anyObject && !type.anyFunction && type.functions.isEmpty() && type.classes.isEmpty() && !type.layouts)
+                types[index].onlyBuiltin = *type.builtins.begin();
         }
     });
 
@@ -228,6 +232,7 @@ static std::optional<FieldEvidence> collectFieldEvidence(const Program& program,
                 ValueID callee = value.opcode == Opcode::Call ? value.operand(OperandIndex::Call::callee) : ValueID();
                 bool namesItsCallees = value.opcode == Opcode::CallDirect || (callee && expectedOrTypeOf(callee).listsOnlyFunctions);
                 bool isCastOfValue = !namesItsCallees && isCast(value.opcode);
+                BuiltinID builtin = callee && function.at(callee).type ? types[function.at(callee).type.index()].onlyBuiltin : BuiltinID();
                 if (isCastOfValue && !expectedOrTypeOf(valueID).layouts)
                     noteKept(value.operand(0), kept);
                 value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
@@ -235,8 +240,13 @@ static std::optional<FieldEvidence> collectFieldEvidence(const Program& program,
                     if (!info.uses.contains(OperandUse::Retains))
                         return;
                     noteHandedOn(operand, info);
-                    if (!namesItsCallees && !isCastOfValue)
-                        noteKept(operand, kept);
+                    if (namesItsCallees || isCastOfValue)
+                        return;
+                    // A descriptor, a list of options: the built-in reads it and lets it go.
+                    std::optional<uint32_t> argument = builtin ? value.variadicOperandIndex(operandIndex) : std::nullopt;
+                    if (argument && !outlivesCallOf(program, builtin, *argument).predicted())
+                        return;
+                    noteKept(operand, kept);
                 });
             }
             block.terminator.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
@@ -973,8 +983,34 @@ void expectFieldsOutsideTestedCode(ProgramEditor& editor, const Heat& heat, Buil
         return;
     sortAndRemoveRepeated(fields);
     BitVector keys;
-    for (FieldReference field : fields)
-        keys.set(fieldAt(program, field).key.index());
+    Vector<PropertyKeyID> keysInOrder;
+    for (FieldReference field : fields) {
+        PropertyKeyID key = fieldAt(program, field).key;
+        if (!keys.set(key.index()))
+            keysInOrder.append(key);
+    }
+    auto positionOf = [&](FieldReference field) -> std::optional<size_t> {
+        FieldReference declaration = declarationOf(program, field);
+        auto position = std::ranges::lower_bound(fields, declaration);
+        if (position == fields.end() || *position != declaration)
+            return std::nullopt;
+        return position - fields.begin();
+    };
+    // What an access may mean of whose receiver nothing is known goes by its key alone.
+    Vector<uint32_t> numberOfKey(FillWith { }, keys.size(), UINT32_MAX);
+    for (uint32_t number = 0; number < keysInOrder.size(); ++number)
+        numberOfKey[keysInOrder[number].index()] = number;
+    Vector<Vector<uint32_t>> fieldsOfAnyLayoutWithKey(keysInOrder.size());
+    forEachIndexInParallel(loops, keysInOrder.size(), [&](unsigned number) {
+        Vector<uint32_t>& found = fieldsOfAnyLayoutWithKey[number];
+        for (LayoutID layout : program.layoutsWithName(keysInOrder[number])) {
+            std::optional<FieldReference> field = findField(program, layout, keysInOrder[number], BaseChain::Predicted);
+            if (std::optional<size_t> position = field ? positionOf(*field) : std::nullopt)
+                found.append(static_cast<uint32_t>(*position));
+        }
+        sortAndRemoveRepeated(found);
+    });
+    Vector<uint8_t> hasNothingLeftToSay(FillWith { }, keysInOrder.size(), uint8_t { 0 });
 
     // Where a test may be placed the form pays. Elsewhere it costs an access by name wherever the object is known to have the field.
     constexpr uint8_t inCodeThatMayGetTests = 1 << 0;
@@ -988,11 +1024,10 @@ void expectFieldsOutsideTestedCode(ProgramEditor& editor, const Heat& heat, Buil
         AnalysisContext context { build, program, nullptr, nullptr, id };
         std::optional<FunctionAnalyses> analyses;
         auto note = [&](BlockID block, FieldReference field, NOESCAPE const Invocable<bool()> auto& goesByNameWithoutTests) {
-            FieldReference declaration = declarationOf(program, field);
-            auto position = std::ranges::lower_bound(fields, declaration);
-            if (position == fields.end() || *position != declaration)
+            std::optional<size_t> position = positionOf(field);
+            if (!position)
                 return;
-            AtomicRef<uint8_t> where(whereNamed[position - fields.begin()]);
+            AtomicRef<uint8_t> where(whereNamed[*position]);
             uint8_t known = where.load(std::memory_order_relaxed);
             if (known & inCodeThatMayGetTests)
                 return;
@@ -1028,8 +1063,23 @@ void expectFieldsOutsideTestedCode(ProgramEditor& editor, const Heat& heat, Buil
                 noteFieldOf(layout, false);
             // PlaceTypeTests guesses the layout of such a receiver by the names that are asked of it.
             if (!query->receivers.isProven() && expected.isEmpty()) {
-                for (LayoutID layout : program.layoutsWithName(query->key))
-                    noteFieldOf(layout, false);
+                uint32_t number = numberOfKey[query->key.index()];
+                AtomicRef<uint8_t> nothingLeft(hasNothingLeftToSay[number]);
+                if (nothingLeft.load(std::memory_order_relaxed))
+                    return;
+                const Vector<uint32_t>& meant = fieldsOfAnyLayoutWithKey[number];
+                bool isNews = std::ranges::any_of(meant, [&](uint32_t position) {
+                    return !(AtomicRef<uint8_t>(whereNamed[position]).load(std::memory_order_relaxed) & inCodeThatMayGetTests);
+                });
+                if (isNews) {
+                    if (!analyses)
+                        analyses.emplace(context, function);
+                    if (!mayPlaceTestsOfAccessesByName(heat, *analyses, block))
+                        return;
+                    for (uint32_t position : meant)
+                        AtomicRef<uint8_t>(whereNamed[position]).fetch_or(inCodeThatMayGetTests, std::memory_order_relaxed);
+                }
+                nothingLeft.store(1, std::memory_order_relaxed);
             }
         });
     });

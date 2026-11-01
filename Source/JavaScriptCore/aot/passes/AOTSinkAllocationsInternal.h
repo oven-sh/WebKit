@@ -542,7 +542,10 @@ public:
         return !edge.isHandlerEdge() && m_ignoredEdges.isEmpty() && !m_names.terminatorsMentioningNames.quickGet(edge.from.index()) && !m_names.blocksBindingNames.quickGet(target.index());
     }
     bool checksShortcuts() const { return m_checksShortcuts; }
-    bool checksThatModesAgree() const;
+    bool checksThatModesAgree() const { return m_checksThatModesAgree; }
+    // For that check: what the analysis last found dead on an edge. The other modes keep it where the head has it from another edge.
+    void setObjectsDeadOnEdge(Edge, Vector<VirtualObjectID, 4>&&);
+    bool isDeadOnEdge(Edge, VirtualObjectID) const;
     const BitVector& loadableFieldsOf(VirtualObjectID);
     bool storesByNameWaitIn(BlockID) const;
     bool mayGetTests(BlockID) const;
@@ -710,6 +713,8 @@ private:
     };
     Vector<LoadableFields> m_loadableFields;
     const bool m_checksShortcuts;
+    const bool m_checksThatModesAgree;
+    UncheckedKeyHashMap<uint64_t, Vector<VirtualObjectID, 4>> m_objectsDeadOnEdges;
     bool m_buildsSomeObjectBeforeBranches { false };
     bool isEnteredWithNothing(BlockID block) const { return m_blocksEnteredWithNothing.get(block.index()); }
 

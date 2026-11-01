@@ -21,7 +21,7 @@ v(RejectInFrame, EnteredByRuntime, (Plain, BelowSpilledArguments), FormAxis, 0, 
 // AOTStubsPolls.cpp
 v(PollAtPrologue, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, PollAtPrologue)
 v(PollAtPrologueWithoutCollecting, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, PollAtPrologueWithoutCollecting)
-v(PollAtLoop, EnteredByRuntime, (), CallerFrameAxis, 0, 0, X86_64Only, X86_64Only, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, PollAtLoop)
+v(PollAtLoop, EnteredByRuntime, (), CallerFrameAxis, 0, 0, AllISAs, AllISAs, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, PollAtLoop)
 v(PollBeforeEntering, InternalEntry, (Plain, FunctionObject), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, PollBeforeEntering)
 
 // AOTStubsBarriers.cpp
@@ -104,8 +104,8 @@ v(StringIndexOf, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Neve
 
 // AOTStubsCollections.cpp
 v(MapGet, CalledByCode, (AnyValue, String, Bits), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(CollectionStorage, CollectionEntries, StringStorage), MapGet)
+v(MapFind, CalledByCode, (AnyValue, String, Bits), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(CollectionStorage, CollectionEntries, StringStorage), MapFind)
 v(MapHas, CalledByCode, (AnyValue, String, Bits), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(CollectionStorage, CollectionEntries, StringStorage), MapHas)
-v(SetHas, CalledByCode, (AnyValue, String, Bits), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(CollectionStorage, CollectionEntries, StringStorage), SetHas)
 v(MapSet, CalledByCode, (AnyValue, String, Bits), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(CollectionStorage, CollectionEntries, StringStorage, RuntimeState) | writes(CollectionStorage, CollectionEntries), MapSet)
 v(SetAdd, CalledByCode, (AnyValue, String, Bits), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(CollectionStorage, CollectionEntries, StringStorage, RuntimeState) | writes(CollectionStorage, CollectionEntries), SetAdd)
 v(MapDelete, CalledByCode, (AnyValue, String, Bits), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(CollectionStorage, CollectionEntries, StringStorage) | writes(CollectionStorage, CollectionEntries), MapDelete)
@@ -113,6 +113,7 @@ v(SetDelete, CalledByCode, (AnyValue, String, Bits), FormAxis, 0, 0, AllISAs, No
 v(NewCompactTable, InternalEntry, (Map, Set), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(AllocatorState, RuntimeState) | writes(CollectionStorage, CollectionEntries, AllocatorState), NewCompactTable)
 v(GrowCompactTable, InternalEntry, (Map, Set), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(CollectionStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState) | writes(CollectionStorage, CollectionEntries, AllocatorState), GrowCompactTable)
 v(WeakMapGet, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, reads(CollectionStorage, CollectionEntries), WeakMapGet)
+v(WeakMapFind, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, reads(CollectionStorage, CollectionEntries), WeakMapFind)
 v(WeakMapHas, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, reads(CollectionStorage, CollectionEntries), WeakMapHas)
 v(WeakSetHas, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, reads(CollectionStorage, CollectionEntries), WeakSetHas)
 v(NewMap, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(AllocatorState) | writes(AllocatorState), NewMap)

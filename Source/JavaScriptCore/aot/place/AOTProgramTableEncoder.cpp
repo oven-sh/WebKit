@@ -3468,6 +3468,12 @@ void encodeModuleTables(TableEncoder& encoder)
             modulesThatLoadCompiledFilesAlone.append(index);
     }
     encoder.setTable(ProgramTableIndex::modulesThatLoadCompiledFilesAlone, modulesThatLoadCompiledFilesAlone);
+    Vector<uint32_t> modulesThatFindBuiltinsReadOnly;
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        if (program.modules[index].flags.contains(ModuleFlags::FindsBuiltinsReadOnly))
+            modulesThatFindBuiltinsReadOnly.append(index);
+    }
+    encoder.setTable(ProgramTableIndex::modulesThatFindBuiltinsReadOnly, modulesThatFindBuiltinsReadOnly);
     encoder.setTable(ProgramTableIndex::modules, lists.modules);
     encoder.setTable(ProgramTableIndex::moduleDirectories, lists.directories);
     encoder.setTable(ProgramTableIndex::moduleDisplayPaths, lists.displayPaths);
@@ -3805,10 +3811,13 @@ void encodeTables(TableEncoder& encoder)
             continue;
         SetForScope mayNameIdentifiers(encoder.mayNameIdentifiers, group.namesIdentifiers);
         size_t sizeBefore = encoder.writer.size();
+        size_t paddingBefore = encoder.writer.paddingBytes();
         group.encode(encoder);
         if (build.diagnostics().hasErrors())
             return;
-        encoder.count(group.statistic, encoder.writer.size() - sizeBefore);
+        size_t padding = encoder.writer.paddingBytes() - paddingBefore;
+        encoder.count(group.statistic, encoder.writer.size() - sizeBefore - padding);
+        encoder.count(StatisticID::ProgramTableBytesOther, padding);
     }
 }
 

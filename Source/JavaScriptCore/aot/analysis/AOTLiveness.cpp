@@ -484,6 +484,22 @@ Liveness::LiveValues Liveness::liveAtHead(BlockID block) const
     return LiveValues(m_liveValues.subspan(first, m_firstLiveValue[block.index() + 1] - first));
 }
 
+void Liveness::forEachLiveAtHeadOfAny(std::span<const BlockID> blocks, NOESCAPE const ScopedLambda<void(ValueID)>& functor) const
+{
+    if (m_sharedSetAtHead.isEmpty()) [[likely]] {
+        for (BlockID block : blocks)
+            forEachLiveAtHead(block, functor);
+        return;
+    }
+    Vector<uint8_t> isVisited(FillWith { }, m_sharedSets.numberOfSets(), static_cast<uint8_t>(0));
+    for (BlockID block : blocks) {
+        RELEASE_ASSERT(block.index() < m_cfg.numNodes());
+        m_sharedSets.forEachInPartsNotVisited(m_sharedSetAtHead[block.index()], isVisited, [&](uint32_t index) {
+            functor(m_valuesInSharedSets[index]);
+        });
+    }
+}
+
 bool Liveness::isAnyLiveAtHead(BlockID block) const
 {
     RELEASE_ASSERT(block.index() < m_cfg.numNodes());

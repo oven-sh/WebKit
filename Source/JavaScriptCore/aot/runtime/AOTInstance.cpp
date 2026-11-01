@@ -347,9 +347,8 @@ static void fillInstanceClassInfos(Instance& instance)
 CONCURRENT_SAFE void setPollsEnabled(Instance& instance, bool enabled)
 {
     WTF::atomicStore(&instance.pollIsDue, static_cast<uintptr_t>(enabled), std::memory_order_relaxed);
-#if CPU(X86_64) && (OS(LINUX) || OS(WINDOWS))
-    OSAllocator::protect(reinterpret_cast<char*>(&instance) + InstanceLayout::offsetOfLoopPollPage(), WTF::pageSize(), !enabled, !enabled);
-#endif
+    if constexpr (hasFaultingLoopPolls)
+        OSAllocator::protect(reinterpret_cast<char*>(&instance) + InstanceLayout::offsetOfLoopPollPage(), WTF::pageSize(), !enabled, !enabled);
 }
 
 void makeTailCallsByValuePoll(Instance& instance, const uint8_t* isRenamedAtRunTime)
@@ -663,6 +662,7 @@ Instance* Instance::create(JSGlobalObject* realm)
     initializeCollectorWords(vm, *instance);
     initializeStubWords(*instance);
     initializeIterationWords(*instance);
+    instance->scratch.landingsOfMisfits.entries = &instance->scratch.landingsOfMisfits.empty;
 
     State::create(*instance);
     instance->state->caches->addClearedEachCollection("short young arrays converted"_s, asMutableByteSpan(instance->arrays.shortYoungArraysConverted));

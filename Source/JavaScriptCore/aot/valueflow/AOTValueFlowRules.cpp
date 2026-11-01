@@ -225,6 +225,7 @@ void notePrototypeObjectsAboveUnknownObject(ValueFlowRuleContext& context)
     ValueSetID prototypeObjectsOfHost = context.universe().builtinTables().heap().prototypeObjectsOfHost();
     ValueFlowNodeID withInstances = context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfInstances);
     ValueFlowNodeID answersThatNoReadLists = context.nodes().ofHost(ValueFlowHostNode::AnswersThatNoReadLists);
+    context.add(answersThatNoReadLists, context.universe().builtinTables().heap().prototypeObjectsOfLanguage());
     if (context.holdsAnyOf(ClimbingSet(context.universe().unknownObjectAlone()), withInstances))
         context.add(answersThatNoReadLists, prototypeObjectsOfHost);
     else

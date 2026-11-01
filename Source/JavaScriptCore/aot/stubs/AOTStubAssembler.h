@@ -182,6 +182,8 @@ public:
     void returnToCaller();
 #if CPU(X86_64)
     void emitFramelessCallerEpilogue();
+#else
+    void emitFramelessCallerEpilogueAndReturn(GPRReg scratch);
 #endif
     void loadCallerReturnAddress(unsigned bytesPushed, GPRReg result);
     void jumpToExceptionHandler();

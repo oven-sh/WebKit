@@ -743,6 +743,7 @@ private:
     v(directoriesOfModulesByPath, uint32_t) \
     v(modulesOfUncompiledCode, UncompiledModuleData) \
     v(modulesThatLoadCompiledFilesAlone, uint32_t) \
+    v(modulesThatFindBuiltinsReadOnly, uint32_t) \
     v(importsOfHeldFiles, ImportOfHeldFileData) \
     v(namedVariables, uint8_t) \
     v(namedCaptures, uint8_t) \

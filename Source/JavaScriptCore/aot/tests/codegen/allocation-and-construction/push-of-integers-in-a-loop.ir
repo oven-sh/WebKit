@@ -118,7 +118,7 @@ function f1 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 # ARM64-NOT: , instructions:
 # ARM64: loop #{{*}}, instructions: 4, patchpoints: 0
 # ARM64: loop #{{*}}, instructions: 27, patchpoints: 0
-# ARM64: loop #{{*}}, instructions: 13, patchpoints: 1, rare instructions: 4, {{*}}entered rarely
+# ARM64: loop #{{*}}, instructions: 12, patchpoints: 1, rare instructions: 4, {{*}}entered rarely
 # ARM64-NOT: , instructions:
 # In front of the loop: is there room for as many elements as the bound says?
 # WAYS: Int32 b@[[capacity]] = Load(b@[[storage]], offset = -4, ControlDependent|Reads:Butterfly_vectorLength,

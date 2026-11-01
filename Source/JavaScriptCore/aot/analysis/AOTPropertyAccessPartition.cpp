@@ -23,8 +23,9 @@ static bool haveSameMember(const MemberAnswer& a, const MemberAnswer& b)
     case MemberKind::Unknown:
         return false;
     case MemberKind::Absent:
-    case MemberKind::Field:
         return true;
+    case MemberKind::Field:
+        return a.isAccessorInSlot == b.isAccessorInSlot;
     case MemberKind::Method:
         return a.method == b.method;
     case MemberKind::Accessor:
@@ -104,7 +105,9 @@ static uint64_t hashOfArm(const MemberAnswer& answer)
     switch (answer.kind) {
     case MemberKind::Unknown:
     case MemberKind::Absent:
+        break;
     case MemberKind::Field:
+        member = answer.isAccessorInSlot;
         break;
     case MemberKind::Method:
         member = answer.method.index();
@@ -220,6 +223,7 @@ static auto withAnswersFor(const PropertyAccessContext& context, std::span<const
             MemberAnswer answer = fieldAnswer->second;
             answer.holder = field->layout;
             answer.field = field->field;
+            answer.isAccessorInSlot = fieldAt(program, *field).form.contains(FieldForm::IsAccessor);
             return answer;
         }
         if (field) {
@@ -282,7 +286,7 @@ static void forEachNumberOf(auto& answer, NOESCAPE const auto& functor)
 static uint32_t wordOf(uint32_t number) { return number; }
 static uint32_t wordOf(const auto& id) { return id.index(); }
 
-// How many arms; how many layouts are the rest; those layouts. Then each arm: kind, level, cause and which numbers follow; how many layouts, and whether proofs follow; how many conditions;
+// How many arms; how many layouts are the rest; those layouts. Then each arm: kind, level, cause and which numbers follow; how many layouts, and whether proofs follow; how many conditions, and whether the slot holds an accessor;
 // the proofs; the numbers; the layouts; the conditions.
 PackedMemberPartition::PackedMemberPartition(const MemberPartition& partition)
 {
@@ -304,7 +308,8 @@ PackedMemberPartition::PackedMemberPartition(const MemberPartition& partition)
         size_t first = words.size();
         words.append(static_cast<uint32_t>(answer.kind) | static_cast<uint32_t>(answer.level) << 8 | static_cast<uint32_t>(answer.cause) << 16);
         words.append(static_cast<uint32_t>(arm.layouts.size()) << 1 | static_cast<uint32_t>(hasProofs));
-        words.append(static_cast<uint32_t>(answer.conditions.size()));
+        RELEASE_ASSERT(answer.conditions.size() <= UINT32_MAX >> 1);
+        words.append(static_cast<uint32_t>(answer.conditions.size()) << 1 | static_cast<uint32_t>(answer.isAccessorInSlot));
         if (hasProofs) {
             uint64_t proofs = std::bit_cast<uint64_t>(answer.receiverProofs);
             words.append(static_cast<uint32_t>(proofs));
@@ -346,7 +351,9 @@ MemberPartition PackedMemberPartition::unpack() const
         MemberAnswer& answer = arm.answer;
         uint32_t first = words[next++];
         uint32_t second = words[next++];
-        uint32_t numberOfConditions = words[next++];
+        uint32_t third = words[next++];
+        uint32_t numberOfConditions = third >> 1;
+        answer.isAccessorInSlot = third & 1;
         answer.kind = static_cast<MemberKind>(first & 0xff);
         answer.level = static_cast<KnowledgeLevel>(first >> 8 & 0xff);
         answer.cause = static_cast<UnprovenCause>(first >> 16 & 0xff);

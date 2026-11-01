@@ -3,17 +3,22 @@
 # and the arm of that test that fails goes on with a second form of the object.
 # Step is made by a function that the program calls by its name, read by the caller and dropped: it would have been taken apart. Step.item stays a number, and the allocation keeps its initial value.
 # Argument is made for a callee that the program names, which reads it and drops it: the same.
+# Described is made for a built-in that reads it and lets it go, Object.defineProperty: the same. Frozen goes to a built-in that hands it back, Object.freeze: it may be kept, and is narrowed.
+# Far is the 257th argument of a built-in. The table of built-ins says nothing of an argument that far out: it may be kept.
 # Pair is dropped too. Pair.first starts with an int32 that fits and gets a sum later, by a store that stands in the program anyway: it is narrowed.
 # Kept starts with a sum and goes into an array: four bytes fewer are worth the test. Handed starts with a sum and goes to a callee that nobody knows: the same.
 # FORM: AsRead
 # RUN: pass TypeValues NarrowFieldTypes VerifyProgram
-# STATISTIC: FieldsNarrowedToInt32 = 3
-# STATISTIC: InitialValuesStoredBehindAllocations = 2
+# STATISTIC: FieldsNarrowedToInt32 = 5
+# STATISTIC: InitialValuesStoredBehindAllocations = 4
 # CHECK: layout L0 name="Step" module=m0 fields=[{key="item" declared={type=number}
 # CHECK: layout L1 name="Argument" module=m0 fields=[{key="size" declared={type=number}
 # CHECK: layout L2 name="Pair" module=m0 fields=[{key="first" declared={type=int[-2147483643, 2147483647]}
 # CHECK: layout L3 name="Kept" module=m0 fields=[{key="count" declared={type=int[-2147483643, 2147483647]}
 # CHECK: layout L4 name="Handed" module=m0 fields=[{key="count" declared={type=int[-2147483643, 2147483647]}
+# CHECK: layout L5 name="Described" module=m0 fields=[{key="value" declared={type=number}
+# CHECK: layout L6 name="Frozen" module=m0 fields=[{key="count" declared={type=int[-2147483643, 2147483647]}
+# CHECK: layout L7 name="Far" module=m0 fields=[{key="count" declared={type=int[-2147483643, 2147483647]}
 # CHECK: function f0
 # CHECK: [[sum]]: {{*}} = Add
 # CHECK: NewObject -, [[sum]] layout=L1 fields=[0]
@@ -21,6 +26,11 @@
 # CHECK-NEXT: PropSet [[kept]], [[sum]] key="count"
 # CHECK: [[handed]]: L4 = NewObject {{*}}layout=L4 fields=[0]
 # CHECK-NEXT: PropSet [[handed]], [[sum]] key="count"
+# CHECK: NewObject -, [[sum]] layout=L5 fields=[0]
+# CHECK: [[frozen]]: L6 = NewObject {{*}}layout=L6 fields=[0]
+# CHECK-NEXT: PropSet [[frozen]], [[sum]] key="count"
+# CHECK: [[far]]: L7 = NewObject {{*}}layout=L7 fields=[0]
+# CHECK-NEXT: PropSet [[far]], [[sum]] key="count"
 # CHECK: function f1
 # CHECK: NewObject -, v0 layout=L0 fields=[0]
 
@@ -31,6 +41,9 @@ layout L1 name="Argument" module=m0 fields=[{key="size" declared={type=number} f
 layout L2 name="Pair" module=m0 fields=[{key="first" declared={type=number} flags=[IsRequired]}]
 layout L3 name="Kept" module=m0 fields=[{key="count" declared={type=number} flags=[IsRequired]}]
 layout L4 name="Handed" module=m0 fields=[{key="count" declared={type=number} flags=[IsRequired]}]
+layout L5 name="Described" module=m0 fields=[{key="value" declared={type=number} flags=[IsRequired]}]
+layout L6 name="Frozen" module=m0 fields=[{key="count" declared={type=number} flags=[IsRequired]}]
+layout L7 name="Far" module=m0 fields=[{key="count" declared={type=number} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
@@ -55,6 +68,19 @@ function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] 
     v19 = Call v1, -, v18
     v20 = Add v6, v9
     v21 = Add v20, v13
+    v22 = Builtin builtin=Object
+    v23 = Builtin builtin=ObjectDefineProperty
+    v24 = String string="hidden"
+    v25 = NewObject -, v4 layout=L5 fields=[0]
+    v26 = FinishObject v25
+    v27 = Call v23, v22, v1, v24, v26
+    v28 = Builtin builtin=ObjectFreeze
+    v29 = NewObject -, v4 layout=L6 fields=[0]
+    v30 = FinishObject v29
+    v31 = Call v28, v22, v30
+    v32 = NewObject -, v4 layout=L7 fields=[0]
+    v33 = FinishObject v32
+    v34 = Call v28, v22, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v33
     Return v21
 }
 

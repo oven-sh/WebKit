@@ -55,6 +55,7 @@ enum class Counter : uint8_t {
     RangeChecksRemoved,
     LoopBoundsClamped,
     LoopPollsRemoved,
+    WordsCarriedAroundLoops,
     SumsKeptAsIntegers,
     KnownInductionsUsed,
     TrapsFoldedIntoAccesses,
@@ -63,10 +64,13 @@ enum class Counter : uint8_t {
     MovesReadForWidths,
     PredecessorsReadForRareBlocks,
     StepsToReleaseDeadValues,
+    RangesHeldAgainstStackCells,
+    ClobberPointsReadForCalls,
+    AccessesReadForWordsCarriedAroundLoops,
 };
 
-static constexpr unsigned numberOfCounters = 15;
-static_assert(static_cast<unsigned>(Counter::StepsToReleaseDeadValues) + 1 == numberOfCounters);
+static constexpr unsigned numberOfCounters = 19;
+static_assert(static_cast<unsigned>(Counter::AccessesReadForWordsCarriedAroundLoops) + 1 == numberOfCounters);
 
 struct LimitHit {
     uint32_t count { 0 };

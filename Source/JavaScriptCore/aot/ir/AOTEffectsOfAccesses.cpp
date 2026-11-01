@@ -227,7 +227,7 @@ static void describeAccessors(const Program& program, const Value& value, std::s
     describeCallees(program, callees, stores ? BuiltinCallMode::Set : BuiltinCallMode::Get, description);
 }
 
-void describeAccess(const Program& program, const Function& function, const Value& value, const Effects& declared, EffectDescription& description)
+void describeAccess(const Program& program, const Function& function, const Value& value, const Effects& declared, EffectDescription& description, UntestedStorage untestedStorage)
 {
     if (Value::opcodesWithPlacedKeys.contains(value.opcode)) {
         Effects effects = effectsAtPlacedKeys(program, value);
@@ -246,7 +246,7 @@ void describeAccess(const Program& program, const Function& function, const Valu
     }
 
     ProvenAccess storage;
-    const ProvenAccess& proven = provenAccessOf(program, function, value, storage);
+    const ProvenAccess& proven = provenAccessOf(program, function, value, storage, untestedStorage);
     if (!proven.isComplete) {
         describeBound(declared, description);
         if (!declared.mayCallUnknownCode)

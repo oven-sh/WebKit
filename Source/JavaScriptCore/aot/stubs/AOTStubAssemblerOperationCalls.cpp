@@ -463,6 +463,15 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
     pollBeforeReturningFromOperation(afterPoll);
 }
 #else
+// The fault handler pushed a frame record for a frameless caller. The link register holds the address to resume at.
+void StubAssembler::emitFramelessCallerEpilogueAndReturn(GPRReg scratch)
+{
+    RELEASE_ASSERT(key().callerFrame() == CallerFrame::Frameless && m_savedRegisterStack.isEmpty());
+    checkHasNoBorrowedFPRs();
+    move(linkRegister, scratch);
+    popPair(GPRInfo::callFrameRegister, linkRegister);
+    m_assembler.ret(scratch);
+}
 
 void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& operation, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn)
 {
@@ -480,7 +489,16 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
     auto fpr = [](unsigned i) { return static_cast<FPRReg>(i < 8 ? ARM64Registers::q0 + i : ARM64Registers::q16 + (i - 8)); };
     const RegisterSet unsavedFPRs = operationCall.saves == OperationCall::Saves::CallerSavedGPRsAndFewFPRs ? floatingPointRegistersLostToAccessors(StubCallee::Operation) : RegisterSet();
     // They are stored and loaded two at a time.
-    auto savesFPR = [&](unsigned i) { return !unsavedFPRs.contains(fpr(i & ~1u), IgnoreVectors) || !unsavedFPRs.contains(fpr(i | 1u), IgnoreVectors); };
+    auto savesFPR = [&](unsigned i) { return i < numberOfFPRs && (!unsavedFPRs.contains(fpr(i & ~1u), IgnoreVectors) || !unsavedFPRs.contains(fpr(i | 1u), IgnoreVectors)); };
+    // The frame has room for what is saved and for no more: a word that nobody writes holds what an earlier frame left there, and the operation may collect.
+    std::array<unsigned, 24> slotOfFPR { };
+    unsigned numberOfSlots = numberOfGPRs;
+    for (unsigned i = 0; i < numberOfFPRs; i += 2) {
+        if (!savesFPR(i))
+            continue;
+        slotOfFPR[i] = numberOfSlots++;
+        slotOfFPR[i + 1] = numberOfSlots++;
+    }
     RELEASE_ASSERT(!valueDestination || static_cast<unsigned>(*valueDestination - ARM64Registers::x0) < numberOfGPRs);
 
     RegisterSet restored;
@@ -494,12 +512,12 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
     restored.add(ARM64Registers::x18);
 
     emitFunctionPrologue();
-    subPtr(TrustedImm32((numberOfGPRs + numberOfFPRs) * 8), sp);
+    subPtr(TrustedImm32(numberOfSlots * 8), sp);
     for (unsigned i = 0; i < numberOfGPRs; i += 2)
         storePair64(gpr(i), gpr(i + 1), sp, TrustedImm32(i * 8));
     for (unsigned i = 0; i < numberOfFPRs; i += 2) {
         if (savesFPR(i))
-            storePairDouble(fpr(i), fpr(i + 1), Address(sp, (numberOfGPRs + i) * 8));
+            storePairDouble(fpr(i), fpr(i + 1), Address(sp, slotOfFPR[i] * 8));
     }
     withSavedRegisters(restored, [&] {
         if (operationCall.spilledArguments) {
@@ -535,11 +553,11 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
         load64(Address(sp, 8), gpr(1));
     for (unsigned i = valueStaysInRegister ? 2 : 0; i < numberOfGPRs; i += 2)
         loadPair64(sp, TrustedImm32(i * 8), gpr(i), gpr(i + 1));
-    if (returnsDouble)
-        loadDouble(Address(sp, (numberOfGPRs + 1) * 8), fpr(1));
+    if (returnsDouble && savesFPR(1))
+        loadDouble(Address(sp, slotOfFPR[1] * 8), fpr(1));
     for (unsigned i = returnsDouble ? 2 : 0; i < numberOfFPRs; i += 2) {
         if (savesFPR(i))
-            loadPairDouble(Address(sp, (numberOfGPRs + i) * 8), fpr(i), fpr(i + 1));
+            loadPairDouble(Address(sp, slotOfFPR[i] * 8), fpr(i), fpr(i + 1));
     }
     emitFunctionEpilogue();
     Jump exceptionOrPoll;

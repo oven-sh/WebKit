@@ -11,6 +11,7 @@
 #include "AOTClassPrototype.h"
 #include "AOTClassTable.h"
 #include "AOTClosure.h"
+#include "AOTGenerator.h"
 #include "AOTGlobalBindings.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
@@ -430,7 +431,7 @@ static bool findsNothingAbove(JSGlobalObject* globalObject, Structure* receiverS
     bool mayBeDeclared = name == StoredName::MayBeSpelledByProgram;
     if (mayBeDeclared && parseIndex(PropertyName(uid)))
         return false;
-    for (Structure* below = receiverStructure; !below->typeInfo().overridesGetPrototype() && !(below->isObject() && below->hasPolyProto());) {
+    for (Structure* below = receiverStructure; !hidesObjectsAbove(below) && !(below->isObject() && below->hasPolyProto());) {
         JSObject* object = below->prototypeForLookup(globalObject).getObject();
         if (!object)
             return true;
@@ -666,7 +667,7 @@ ChainWalk walkChain(const ChainWalkStart& start, UniquedStringImpl* uid)
 
     Structure* below = start.structure;
     JSObject* objectBelow = start.receiverOrNull;
-    while (!below->typeInfo().overridesGetPrototype() && !(below->isObject() && below->hasPolyProto())) {
+    while (!hidesObjectsAbove(below) && !(below->isObject() && below->hasPolyProto())) {
         JSObject* object = below->prototypeForLookup(start.globalObject).getObject();
         if (passLazyClassPrototypes(start, uid, objectBelow, object, walk) == StepResult::Stop)
             break;

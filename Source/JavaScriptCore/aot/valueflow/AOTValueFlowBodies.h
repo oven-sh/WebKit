@@ -716,7 +716,7 @@ struct ValueFlowBody {
 };
 
 ValueFlowBody reduceBody(const Program&, const ValueFlowBuiltinTables&, FunctionID, const UnobservedFieldDefinitions* = nullptr);
-ValueFlowBody makeHostBody(const Program&, const ValueFlowBuiltinTables&, std::span<const uint64_t> notedOperations = { });
+ValueFlowBody makeHostBody(const Program&, const ValueFlowBuiltinTables&, std::span<const uint64_t> notedOperations = { }, const UnobservedFieldDefinitions* = nullptr);
 bool startsWithoutValueInSolve(const Program&, const Variable&);
 
 // In the order of the sites of a conversion to an object.

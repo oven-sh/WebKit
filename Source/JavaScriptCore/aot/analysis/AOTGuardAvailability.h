@@ -147,6 +147,13 @@ public:
     };
     WrittenDependencies writtenOf(const DependedLocations&);
     bool mayEndProofAbout(ValueID subject, bool subjectComesFromOutside, const WrittenDependencies&);
+    // All the objects it may write a location of one object into, where those are allocations of the function. Nothing where it may reach anything else.
+    std::optional<Vector<ObjectID, 4>> allocationsWithinReach();
+    // The same for a subject: the allocations it may be. mayEndProofAbout() says no about a subject from inside the function that shares none with the writer.
+    static std::optional<Vector<ObjectID, 4>> allocationsOf(FunctionAnalyses&, ValueID);
+    // Of a writer that may write beyond its operands. About a subject from inside the function that can be nothing but allocations of the function, and is at least one, mayEndProofAbout() says yes
+    // if and only if one of them is here. Nothing where it takes more to tell.
+    std::optional<BitVector> allocationsWhoseProofsEnd(const WrittenDependencies&);
 
 private:
     struct Query;

@@ -155,6 +155,11 @@ JSValue getAndCache(const NamedAccess& access, JSValue base, JSValue receiver)
         RETURN_IF_EXCEPTION(scope, { });
         return result;
     }
+    // Compiled code looks for a getter in the slot that the layout has for it. One that a star has bound lies outside.
+    if (compiledBase && compiledBase->orderWord() & orderWordHasFieldOutsideSlot) {
+        if (const FieldData* field = compiledBase->fieldNamed(compiledBase->state(), ident); field && field->isAccessor() && !compiledBase->isInSlot(*field))
+            compiledBase->tryMoveFieldBackToSlot(vm, *field);
+    }
     if (base.isCell()) {
         Object::ensureStructureForExtraPropertiesIfNeeded(vm, base.asCell());
         createClassObjectsOnChain(vm, base.asCell(), uid);

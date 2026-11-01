@@ -980,7 +980,7 @@ void AllocationPrefilter::Solver<Mask>::findObjectsMaterializedAtLoopEntries()
         }
         list.append({ cycle, bits });
     };
-    auto materializeIn = [&](BlockID block, uint32_t materializedBit) {
+    auto materializeIn = [&](BlockID block, uint32_t materializedBit, std::optional<BlockID> entered = std::nullopt) {
         Traits::forEachBit((ofBit(materializedBit) | m_held[materializedBit]) & m_leavesBlock & m_candidates & m_active, [&](uint32_t bit) {
             BlockID origin = m_prefilter.m_objects[objectOf(bit)].block;
             if (block == origin)
@@ -991,8 +991,11 @@ void AllocationPrefilter::Solver<Mask>::findObjectsMaterializedAtLoopEntries()
             }
             const BlockCycles::Forest& forest = cycles.forest();
             unsigned depthOfOrigin = cycles.depthOf(origin);
-            for (unsigned cycle = forest.innermost(block); cycle != BlockCycles::Forest::none && forest[cycle].depth > depthOfOrigin; cycle = forest[cycle].parent)
-                add(materializedInCycle, cycle, ofBit(bit));
+            for (unsigned cycle = forest.innermost(block); cycle != BlockCycles::Forest::none && forest[cycle].depth > depthOfOrigin; cycle = forest[cycle].parent) {
+                // On an edge that leaves the cycle the object is made behind the last turn.
+                if (!entered || forest.contains(cycle, *entered))
+                    add(materializedInCycle, cycle, ofBit(bit));
+            }
         });
     };
     for (uint32_t index : m_eventsInCycles) {
@@ -1003,7 +1006,7 @@ void AllocationPrefilter::Solver<Mask>::findObjectsMaterializedAtLoopEntries()
     for (uint32_t index : m_linksInCycles) {
         const ParameterLink& link = m_chunk.links[index];
         if (!has(m_candidates, bitOf(link.parameter)))
-            materializeIn(link.edge.from, bitOf(link.source));
+            materializeIn(link.edge.from, bitOf(link.source), targetOf(m_function, link.edge).block);
     }
     if (materializedInOutermostCycle.isEmpty() && materializedInCycle.isEmpty())
         return;

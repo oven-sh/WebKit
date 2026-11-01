@@ -25,4 +25,4 @@ v(StepAsyncGenerator, CalledByCode, (InAsyncFunction, InAsyncGenerator, AwaitedI
 v(RunAsyncGeneratorStep, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RunAsyncGeneratorStep)
 v(StepAsyncIteratorInEngine, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RunAsyncGeneratorStep)
 v(NewHeapFrame, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewHeapFrame)
-v(NewGenerator, CalledByCode, (Sync, Async), FormAxis | SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewGenerator)
+v(NewGenerator, CalledByCode, (Sync, Async, SyncWithHeapFrame), FormAxis | SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewGenerator)

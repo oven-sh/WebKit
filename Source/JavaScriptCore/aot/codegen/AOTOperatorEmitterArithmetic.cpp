@@ -158,6 +158,54 @@ public:
         } else if (std::is_same_v<T, Integer> && magnitude && magnitude <= 1ull << 62) {
             if constexpr (std::is_same_v<T, Integer>)
                 whole = remainderByConstant(dividend, static_cast<int64_t>(magnitude));
+        } else if (!constantDivisor) {
+            Range dividends = typeOf(value->leftOperand()).integers;
+            bool mayBeNegative = dividends.minimum < 0;
+            bool mayOverflow = dividends.minimum <= (std::is_same_v<T, Word32> ? std::numeric_limits<int32_t>::min() : std::numeric_limits<int64_t>::min());
+            LBasicBlock divides = newBlock();
+            LBasicBlock doesNotDivide = newBlock();
+            LBasicBlock continuation = newBlock();
+            Vector<ValueFromBlock, 4> wholes;
+            Vector<ValueFromBlock, 4> numbers;
+            auto answer = [&](T wholeAnswer, Number numberAnswer) {
+                wholes.append(m_out.anchor(wholeAnswer.value()));
+                numbers.append(m_out.anchor(numberAnswer.value()));
+                m_out.jump(continuation);
+            };
+            auto zeroWithSignOfDividend = [&] {
+                return mayBeNegative ? select(lessThan(dividend, constant<T>(0)), number(-0.0), number(0)) : number(0);
+            };
+            result.isNumber = isNotZero(divisor);
+            Condition isOrdinary = mayOverflow ? above(add(divisor, constant<T>(1)), constant<T>(1)) : result.isNumber;
+            m_out.branch(isOrdinary.value(), normalEdge(divides), rareEdge(doesNotDivide));
+
+            m_out.appendTo(divides);
+            T remainder = binary<T>(&FTL::Output::mod, dividend, divisor);
+            if (mayBeNegative) {
+                LBasicBlock hasSignOfItsOwn = newBlock();
+                LBasicBlock isZero = newBlock();
+                LBasicBlock isNegativeZero = newBlock();
+                Join<Number> signedNumber(m_out);
+                m_out.branch(isNotZero(remainder).value(), normalEdge(hasSignOfItsOwn), unlikelyEdge(isZero));
+                m_out.appendTo(isZero);
+                m_out.branch(lessThan(dividend, constant<T>(0)).value(), unlikelyEdge(isNegativeZero), normalEdge(hasSignOfItsOwn));
+                m_out.appendTo(isNegativeZero);
+                signedNumber.add(number(-0.0));
+                m_out.appendTo(hasSignOfItsOwn);
+                signedNumber.add(toNumber(remainder));
+                answer(remainder, signedNumber.finish());
+            } else
+                answer(remainder, toNumber(remainder));
+
+            m_out.appendTo(doesNotDivide);
+            Number ofZero = std::signbit(remainderByZero(-1)) != std::signbit(remainderByZero(1)) && mayBeNegative ? select(lessThan(dividend, constant<T>(0)), number(remainderByZero(-1)), number(remainderByZero(1))) : number(remainderByZero(1));
+            answer(constant<T>(0), mayOverflow ? select(result.isNumber, zeroWithSignOfDividend(), ofZero) : ofZero);
+
+            m_out.appendTo(continuation);
+            result.whole = T(m_out.phi(b3TypeOf(T::representation), wholes));
+            result.zeroWhereWholeIsZero = result.whole;
+            result.number = Number(m_out.phi(B3::Double, numbers));
+            return result;
         } else
             whole = binary<T>(&FTL::Output::chillMod, dividend, divisor);
         result.whole = whole;

@@ -389,56 +389,81 @@ bool Object::tryCopyFieldsOf(VM& vm, const Object& source)
     return tryRepeatAssignmentBetweenLayouts(vm, state(), *this, source, 0) != RepeatedCopy::IsNotDone;
 }
 
-bool Object::tryDefineFields(VM& vm, std::span<UniquedStringImpl* const> names, std::span<const EncodedJSValue> values)
+bool Object::tryDefineFields(VM& vm, std::span<UniquedStringImpl* const> names, std::span<const EncodedJSValue> values, std::span<const unsigned> attributes)
 {
-    ASSERT(names.size() == values.size());
+    ASSERT(names.size() == values.size() && (attributes.empty() || attributes.size() == names.size()));
     const LayoutData& layout = this->layout();
     if (hasFlagsInOrderWord() || hasOutOfLineKeyOrder())
         return false;
     State& state = this->state();
     RuntimeLayoutTable& layouts = state.objects->layouts;
     Vector<const FieldData*, 16> fields;
-    Vector<AcceptedValue, 16> acceptedValues;
+    // Empty for a property that leaves its slot.
+    Vector<std::optional<AcceptedValue>, 16> acceptedValues;
+    bool someLeaveSlots = false;
+    uint64_t granuleBits = 0;
     for (size_t i = 0; i < names.size(); ++i) {
         const FieldData* field = layouts.field(vm, layout, names[i]);
         if (!field || field->flags & (fieldIsStoredOnce | fieldAttributeFlags) || field->slot.representation() == SlotRepresentation::DeferredClosure)
             return false;
+        fields.append(field);
+        if (!attributes.empty() && attributes[i]) {
+            if (field->isPrivate() || !field->canLeaveSlot() || isInSlot(*field) || attributes[i] & PropertyAttribute::CustomAccessorOrValue)
+                return false;
+            someLeaveSlots = true;
+            acceptedValues.append(std::nullopt);
+            continue;
+        }
         std::optional<AcceptedValue> accepted = acceptInSlot(*this, *field, JSValue::decode(values[i]));
         if (!accepted)
             return false;
-        fields.append(field);
-        acceptedValues.append(*accepted);
-    }
-
-    uint64_t granuleBits = 0;
-    for (const FieldData* field : fields) {
+        acceptedValues.append(accepted);
         if (field->isOutOfLine())
             granuleBits |= granuleBitOf(field->slot.offset);
     }
+
+    KeyOrderStorage storage;
+    Vector<uint16_t, 32> keys;
+    BitVector isListed(layout.numberOfFields);
+    if (!layout.keysAreNeverEnumerated) {
+        keys.append(keyOrder(state, storage));
+        for (uint16_t key : keys)
+            isListed.set(key);
+    }
+    if (someLeaveSlots) {
+        for (size_t i = 0; i < fields.size(); ++i) {
+            if (!acceptedValues[i] && (layout.keysAreNeverEnumerated ? isInKeyOrder(state, *fields[i]) : isListed.get(layout.indexOf(*fields[i]))))
+                return false;
+        }
+    }
+
     if (granuleBits)
         ensureExtensionGranules(vm, granuleBits);
 
     if (layout.keysAreNeverEnumerated) {
         bool didCreateFields = false;
         for (size_t i = 0; i < fields.size(); ++i) {
+            if (!acceptedValues[i])
+                continue;
             didCreateFields |= !isInKeyOrder(state, *fields[i]);
-            bool didStore = store(vm, *fields[i], acceptedValues[i]);
+            bool didStore = store(vm, *fields[i], *acceptedValues[i]);
             RELEASE_ASSERT(didStore);
         }
         if (didCreateFields)
             didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Add, nullptr);
+        for (size_t i = 0; i < fields.size(); ++i) {
+            if (!acceptedValues[i])
+                moveFieldToExtraProperties(vm, *fields[i], { JSValue::decode(values[i]), attributes[i] }, SlotExitReason::Redefinition);
+        }
         return true;
     }
 
-    KeyOrderStorage storage;
-    Vector<uint16_t, 32> keys(keyOrder(state, storage));
     size_t numberOfKeysBefore = keys.size();
-    BitVector isListed;
-    for (uint16_t key : keys)
-        isListed.set(key);
     for (size_t i = 0; i < fields.size(); ++i) {
-        bool didStore = store(vm, *fields[i], acceptedValues[i]);
-        RELEASE_ASSERT(didStore);
+        if (acceptedValues[i]) {
+            bool didStore = store(vm, *fields[i], *acceptedValues[i]);
+            RELEASE_ASSERT(didStore);
+        }
         uint16_t index = layout.indexOf(*fields[i]);
         if (!isListed.set(index))
             keys.append(index);
@@ -447,6 +472,15 @@ bool Object::tryDefineFields(VM& vm, std::span<UniquedStringImpl* const> names, 
         return true;
     setKeyOrder(vm, state, keys.span());
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Add, nullptr);
+    if (!someLeaveSlots)
+        return true;
+    for (size_t i = 0; i < fields.size(); ++i) {
+        if (acceptedValues[i])
+            continue;
+        if (layout.isClass())
+            state.objects->classes.didShadowMember(layout, names[i]);
+        moveFieldToExtraProperties(vm, *fields[i], { JSValue::decode(values[i]), attributes[i] }, SlotExitReason::Redefinition);
+    }
     return true;
 }
 

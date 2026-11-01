@@ -121,6 +121,24 @@ void countStackListingAfterGivenUpCapture(VM& vm)
         ++counters->stackListingsAfterGivenUpCaptures;
 }
 
+void countStackTakenForThrow(VM& vm)
+{
+    if (RuntimeCounters* counters = vm.aotState().counters.get())
+        ++counters->stacksTakenForThrows;
+}
+
+void countStackCaptureBelowListedFrames(VM& vm)
+{
+    if (RuntimeCounters* counters = vm.aotState().counters.get())
+        ++counters->stackCapturesBelowListedFrames;
+}
+
+void countLinkWalkMade(VM& vm)
+{
+    if (RuntimeCounters* counters = vm.aotState().counters.get())
+        ++counters->linkWalksMade;
+}
+
 void countRopeFlattenedForPrefixTest(VM& vm)
 {
     if (RuntimeCounters* counters = vm.aotState().counters.get())
@@ -149,6 +167,12 @@ void countTextPrintedInPlaceDecoded(VM& vm, size_t pieces)
 {
     if (RuntimeCounters* counters = vm.aotState().counters.get())
         counters->textPrintedInPlaceDecoded += pieces;
+}
+
+void countModulesSoughtForLevelsBelowImports(VM& vm, size_t modules)
+{
+    if (RuntimeCounters* counters = vm.aotState().counters.get())
+        counters->modulesSoughtForLevelsBelowImports += modules;
 }
 
 uint64_t valueOf(VM& vm, RuntimeCounterID counter)
@@ -357,6 +381,29 @@ static String describeKeyedArrival(JSGlobalObject* globalObject, JSValue receive
     return makeString(describeArrival(receiver), "; "_s, describeStorageOfElements(receiver), "; key:"_s, kind, "; "_s, found, "; #"_s, hex(mark & 0xffff, 4, Lowercase));
 }
 
+// What "+changed" stands for, by name, and the mark of the cell, which is what HasBirthFieldsFilled tests. Nothing for an object that is as it was born.
+static String describeStateOfArrival(JSValue value)
+{
+    Object* object = value.isCell() ? compiledObjectOrNull(value) : nullptr;
+    if (!object)
+        return { };
+    StringBuilder state;
+    auto add = [&](bool holds, ASCIILiteral name) {
+        if (holds)
+            state.append(state.isEmpty() ? ""_s : ","_s, name);
+    };
+    add(object->perCellBit(), "cell-marked"_s);
+    add(object->orderWord() & orderWordHasFieldOutsideSlot, "field-outside-slot"_s);
+    add(object->hasExtraProperties(), "extra-properties"_s);
+    add(object->isFrozen(), "frozen"_s);
+    add(object->isSealed(), "sealed"_s);
+    add(object->isNotExtensible(), "not-extensible"_s);
+    add(object->compiledStructure().hasOtherPrototype(), "other-prototype"_s);
+    if (state.isEmpty())
+        return { };
+    return makeString("layout:"_s, object->layout().index, ' ', state.toString());
+}
+
 static void dumpArrivalLines(PrintStream& out, ASCIILiteral prefix, const ArrivalCounts::Counts& counts)
 {
     Vector<const ArrivalCounts::Counts::KeyValuePairType*> lines;
@@ -374,10 +421,17 @@ static void dumpArrivalLines(PrintStream& out, ASCIILiteral prefix, const Arriva
 ArrivalCounts::ArrivalCounts() = default;
 ArrivalCounts::~ArrivalCounts() = default;
 
+void ArrivalCounts::recordState(JSValue receiver, uint32_t site)
+{
+    if (String state = describeStateOfArrival(receiver); !state.isNull())
+        ++m_statesOfArrivals.add({ site, WTF::move(state) }, 0).iterator->value;
+}
+
 void ArrivalCounts::record(JSValue receiver, uint32_t site)
 {
     ASSERT(receiver);
     ++m_arrivals.add({ site, describeArrival(receiver) }, 0).iterator->value;
+    recordState(receiver, site);
     m_lastSite = site;
     m_hasCalledNothingSinceArrival = true;
 }
@@ -386,6 +440,7 @@ void ArrivalCounts::record(JSGlobalObject* globalObject, JSValue receiver, JSVal
 {
     ASSERT(receiver && key);
     ++m_arrivals.add({ site, describeKeyedArrival(globalObject, receiver, key) }, 0).iterator->value;
+    recordState(receiver, site);
     m_lastSite = site;
     m_hasCalledNothingSinceArrival = true;
 }
@@ -402,6 +457,7 @@ void ArrivalCounts::dump(PrintStream& out) const
 {
     dumpArrivalLines(out, "arrival:"_s, m_arrivals);
     dumpArrivalLines(out, "left:"_s, m_operationsBehindArrivals);
+    dumpArrivalLines(out, "state:"_s, m_statesOfArrivals);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRecordArrival, void, (Instance* instance, EncodedJSValue receiver, EncodedJSValue keyOrEmpty, uint32_t site))
@@ -891,6 +947,10 @@ void dumpCounts(VM& vm, PrintStream& out)
     out.println(builtinsSoughtNotMade, "\tsought:BuiltinsNotMade");
     out.println(counters ? counters->modulesSoughtForRequireCache : 0, "\tsought:ModulesForRequireCache");
     out.println(counters ? counters->modulesSoughtForWhatHasRun : 0, "\tsought:ModulesForWhatHasRun");
+    out.println(counters ? counters->modulesSoughtForLevelsBelowImports : 0, "\tsought:ModulesForLevelsBelowImports");
+    out.println(counters ? counters->linkWalksMade : 0, "\tsought:LinksBelowRoots");
+    out.println(counters ? counters->stacksTakenForThrows : 0, "\tsought:StacksOfThrows");
+    out.println(counters ? counters->stackCapturesBelowListedFrames : 0, "\tsought:RunsBelowListedFrames");
     out.println(ModuleTable::modulesComparedWithPath(), "\tsought:ModulesByPath");
     dumpPagesHeld(vm, out);
 

@@ -169,6 +169,14 @@ public:
     }
 
     // A set that holds a callee nobody follows lists none of the callees that one stands for. A receiver that finds one of those and no callee nobody follows names it.
+    ClimbingSet whatListedReceiversFind() const
+    {
+        ClimbingSet found;
+        for (const Known& known : m_known)
+            found = m_context.unite(found, known.found);
+        return found;
+    }
+
     ClimbingSet withCalleesFoundAlone(ClimbingSet callees) const
     {
         if (!m_context.meet(callees, m_context.universe().placeholdersAlone()))
@@ -224,13 +232,11 @@ private:
     ValueFlowOperand m_others;
 };
 
-static void callFromNativeCode(ValueFlowRuleContext& context, ClimbingSet members, const ValueFlowOperand& thisValue, ValueSetID arguments, ValueFlowNodeID result, NOESCAPE const Invocable<ClimbingSet(ClimbingSet)> auto& find)
+static void callFromNativeCode(ValueFlowRuleContext& context, ClimbingSet members, const ReceiversByWhatTheyFind& receivers, ValueSetID arguments, ValueFlowNodeID result)
 {
     const ValueFlowUniverse& universe = context.universe();
     if (!context.meet(members, universe.callables()))
         return;
-    ReceiversByWhatTheyFind receivers(context, thisValue, find);
-    members = receivers.withCalleesFoundAlone(members);
 
     // A built-in is applied to the operands of this call and answers to this call alone, whoever else calls it.
     ValueFlowBuiltinCall description { .kind = ValueFlowCallKind::CallByNativeCode, .argumentsMayBeAbsent = true, .otherArguments = operandHolding(arguments), .result = result, .thrown = ValueFlowProgramNodes::escaped(), .isFoundOnReceiver = true };
@@ -256,6 +262,14 @@ static void callFromNativeCode(ValueFlowRuleContext& context, ClimbingSet member
         if (result)
             context.connect(group.result, result);
     });
+}
+
+static void callFromNativeCode(ValueFlowRuleContext& context, ClimbingSet members, const ValueFlowOperand& thisValue, ValueSetID arguments, ValueFlowNodeID result, NOESCAPE const Invocable<ClimbingSet(ClimbingSet)> auto& find)
+{
+    if (!context.meet(members, context.universe().callables()))
+        return;
+    ReceiversByWhatTheyFind receivers(context, thisValue, find);
+    callFromNativeCode(context, receivers.withCalleesFoundAlone(members), receivers, arguments, result);
 }
 
 void passOperandsOf(const ValueFlowBuiltinCall& call, const ValueFlowCallGroup& group, ValueFlowRuleContext& context)
@@ -2241,7 +2255,7 @@ private:
                 if (part.operand != callback.callee)
                     continue;
                 forEachPartOfCallees(m_context, m_context.restrict(valueAt(callback.callee), m_universe.callables()), [&](ClimbingSet callees) {
-                    ValueFlowNodeID result = m_context.group(callees, callback.constructs ? ValueFlowCallKind::ConstructByNativeCode : ValueFlowCallKind::CallByNativeCode, originOfOperands()).result;
+                    ValueFlowNodeID result = m_context.group(callees, callback.constructs ? ValueFlowCallKind::ConstructByNativeCode : ValueFlowCallKind::CallByNativeCode, originOfOperands(), ValueFlowArgumentsLeftOut::SaidByCaller).result;
                     functor(part.isSettled ? m_context.lookup(m_context.valueOf(result), awaitedValueName) : result);
                     if (ValueFlowNodeID listedBun = part.isSettled ? findNodeOfListedBun(m_context, operandOfBuiltinAt(result)) : ValueFlowNodeID())
                         functor(listedBun);
@@ -2947,7 +2961,26 @@ private:
         return m_context.meet(m_context.valueOf(m_context.readWhatWasWritten(m_context.restrict(chain, m_universe.knownObjects()), key ? ValueFlowName::property(m_program, key) : unknownKeyName)), m_universe.callables());
     }
 
-    void passArguments(const ValueFlowCallGroup& group, std::span<const BuiltinPlace> arguments)
+    // The positions that parameters of the callees take, where all of them are functions of typed text and few enough to look at. What lies behind them reaches a rest parameter, which holds
+    // what is passed and nothing for what is not.
+    std::optional<unsigned> positionsOfParametersOf(ClimbingSet callees)
+    {
+        AOT_THRESHOLD(unsigned, mostCalleesLookedAt, 4);
+        if (m_context.numberOfMembers(callees) > mostCalleesLookedAt)
+            return std::nullopt;
+        std::optional<unsigned> positions = 0;
+        m_context.forEachMemberInLine(callees, [&](ValueFlowObjectID closure) {
+            FunctionID function = m_universe.closureFunction(closure);
+            if (!function || m_context.sets().contains(m_tables.closuresThatEntriesDescribe(), closure) || !m_context.program().at(function).has(FunctionFlags::IsChecked))
+                positions = std::nullopt;
+            else if (positions)
+                positions = std::min(numberOfGroupedArguments, std::max(*positions, m_context.program().at(function).numberOfPositionalParameters()));
+        });
+        return positions;
+    }
+
+    // With `positionsOfParameters` the caller says what it leaves out: those positions get undefined, and no other.
+    void passArguments(const ValueFlowCallGroup& group, std::span<const BuiltinPlace> arguments, std::optional<unsigned> positionsOfParameters = std::nullopt)
     {
         unsigned next = 0;
         bool positionIsKnown = true;
@@ -2955,9 +2988,24 @@ private:
             unsigned index = next++;
             return positionIsKnown ? group.argumentAt(index) : group.otherArguments;
         };
+        // What a declaration takes out of an operand may be missing there: an index without an element, an operand that is left out. A primitive that the built-in makes is always passed.
+        auto isPrimitiveMadeByBuiltin = [&](const BuiltinPlace& argument) {
+            if (argument.kind != BuiltinPlaceKind::NewValue || !argument.newValueType)
+                return false;
+            if (std::ranges::any_of(m_builtins.at(argument.newValueType).parts, [](const BuiltinTypePart& part) { return part.kind == BuiltinTypePartKind::CallbackResult; }))
+                return false;
+            ValueSetID made = valueOfType(argument.newValueType, m_contentsObject);
+            return !m_context.sets().isEmpty(made) && m_context.sets().isSubset(made, m_universe.primitives());
+        };
+        unsigned numberOfPositionsListed = 0;
         for (const BuiltinPlace& argument : arguments) {
             bool isRest = argument.kind == BuiltinPlaceKind::Operand && !argument.isSettled && argument.operand->kind() == BuiltinOperand::Kind::ArgumentsFrom;
             if (!isRest) {
+                if (positionsOfParameters && positionIsKnown) {
+                    if (next < *positionsOfParameters && !isPrimitiveMadeByBuiltin(argument))
+                        m_context.add(group.argument(next), m_universe.undefinedValue());
+                    numberOfPositionsListed = next + 1;
+                }
                 connectFrom(argument, takeTarget());
                 continue;
             }
@@ -2972,6 +3020,8 @@ private:
             }
             positionIsKnown = false;
         }
+        if (positionsOfParameters)
+            passNoFurtherArguments(m_context, group, numberOfPositionsListed, *positionsOfParameters);
     }
 
     void useResult(const ValueFlowCallGroup& group, BuiltinCallbackResultUse use, const BuiltinPlace& resultTo)
@@ -3064,7 +3114,8 @@ private:
     {
         describeObjectsRefusedAsFunctions(m_context, valueAt(callback.callee));
         forEachPartOfCallees(m_context, applyBuiltinsCalledInPlace(callback, calleesOf(callback)), [&](ClimbingSet callees) {
-            ValueFlowCallGroup group = m_context.group(callees, callback.constructs ? ValueFlowCallKind::ConstructByNativeCode : ValueFlowCallKind::CallByNativeCode, originOfOperands());
+            std::optional<unsigned> positionsOfParameters = callback.spreadArguments.kind == BuiltinPlaceKind::None ? positionsOfParametersOf(callees) : std::nullopt;
+            ValueFlowCallGroup group = m_context.group(callees, callback.constructs ? ValueFlowCallKind::ConstructByNativeCode : ValueFlowCallKind::CallByNativeCode, originOfOperands(), positionsOfParameters ? ValueFlowArgumentsLeftOut::SaidByCaller : ValueFlowArgumentsLeftOut::AnyOfThem);
             if (callback.constructs) {
                 if (callback.newTarget.kind == BuiltinPlaceKind::None)
                     m_context.add(group.newTarget, callees);
@@ -3080,7 +3131,7 @@ private:
                 if (mayBeUnknownObject(callees) && isCalledByProgramCode())
                     connectFrom(callback.thisValue, valuesCarriedOut());
             }
-            passArguments(group, callback.arguments);
+            passArguments(group, callback.arguments, positionsOfParameters);
             connectFrom(callback.spreadArguments, group.otherArguments);
             useResult(group, callback.resultUse, callback.resultTo);
             connectThrown(group, callback.times);
@@ -5024,9 +5075,11 @@ static void applyBuiltinsThatActOnEscapedReceivers(ValueFlowRuleContext& context
         ValueSetID passed = isPassedOnlyPrimitives(context, behavior, name) ? universe.anyPrimitive() : unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult);
         // A value that comes back out of native code is the unknown object alone. It may be any escaped instance of a class below a built-in class.
         ClimbingSet escapedInstances = context.valueWithin(ClimbingSet(universe.instancesBelowBuiltinClasses()), ValueFlowProgramNodes::escaped());
-        forEachReceiverToldApart(context, context.unite(context.valueWithin(ClimbingSet(universe.knownObjects()), hub), escapedInstances), { }, [&](ClimbingSet receivers, const ValueFlowOperand& thisValue) {
-            callFromNativeCode(context, find(receivers), thisValue, passed, behavior.isTransitive ? hub : ValueFlowProgramNodes::escaped(), find);
-        });
+        // The call hands each built-in the receivers that find it, so nobody tells them apart in front of it.
+        ValueSetID receivers = context.withMembersOf(ValueSets::nothing, context.unite(context.valueWithin(ClimbingSet(universe.knownObjects()), hub), escapedInstances));
+        // Each is asked by itself: a lookup for all of them would be another one whenever one more arrives.
+        ReceiversByWhatTheyFind found(context, operandHolding(receivers), find);
+        callFromNativeCode(context, found.whatListedReceiversFind(), found, passed, behavior.isTransitive ? hub : ValueFlowProgramNodes::escaped());
     });
 }
 

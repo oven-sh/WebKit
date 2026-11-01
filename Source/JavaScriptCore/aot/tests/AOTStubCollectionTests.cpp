@@ -360,6 +360,7 @@ static void checkStringLookups(Collections& collections, uint64_t map, uint64_t 
     for (KeyComparison comparison : comparisonsOfStrings) {
         for (uint64_t cell : cellsWithSameText) {
             checkAnswer(collections, mapGet(comparison), map, cell, key.value);
+            checkAnswer(collections, mapFind(comparison), map, cell, key.value);
             checkAnswer(collections, mapHas(comparison), map, cell, bitsOf(jsBoolean(true)));
             checkAnswer(collections, setHas(comparison), set, cell, bitsOf(jsBoolean(true)));
             checkAnswer(collections, setAdd(comparison), set, cell, set);
@@ -377,14 +378,17 @@ static void checkAbsentStrings(Collections& collections, uint64_t map, uint64_t 
 
     for (KeyComparison comparison : comparisonsOfStrings) {
         checkAnswer(collections, mapGet(comparison), map, absent, bitsOf(jsUndefined()));
+        checkAnswer(collections, mapFind(comparison), map, absent, bitsOf(JSValue()));
         checkAnswer(collections, mapHas(comparison), map, absent, bitsOf(jsBoolean(false)));
         checkAnswer(collections, setHas(comparison), set, absent, bitsOf(jsBoolean(false)));
         checkAnswer(collections, mapGet(comparison), map, heap.createStringWithoutHash(absentText), bitsOf(jsUndefined()));
+        checkAnswer(collections, mapFind(comparison), map, heap.createStringWithoutHash(absentText), bitsOf(JSValue()));
         checkAnswer(collections, mapHas(comparison), map, heap.createStringWithoutHash(absentText), bitsOf(jsBoolean(false)));
         checkAnswer(collections, setHas(comparison), set, heap.createStringWithoutHash(absentText), bitsOf(jsBoolean(false)));
         checkLeftToOperation(collections, mapGet(comparison), Entry::operationAOTMapGet, map, rope);
         checkLeftToOperation(collections, mapHas(comparison), Entry::operationAOTMapHas, map, rope);
-        checkLeftToOperation(collections, setHas(comparison), Entry::operationAOTSetHas, set, rope);
+        checkLeftToOperation(collections, mapFind(comparison), Entry::operationAOTMapFind, map, rope);
+        checkLeftToOperation(collections, setHas(comparison), Entry::operationAOTMapHas, set, rope);
         checkLeftToOperation(collections, setAdd(comparison), Entry::operationAOTSetAdd, set, rope);
     }
 }
@@ -498,12 +502,14 @@ static void checkKeysComparedByBits(Collections& collections, const TableSize& s
     for (KeyComparison comparison : comparisonsOfBits) {
         for (size_t i = 0; i < keys.size(); ++i) {
             checkAnswer(collections, mapGet(comparison), map, keys[i], bitsOf(jsNumber(static_cast<int32_t>(i))));
+            checkAnswer(collections, mapFind(comparison), map, keys[i], bitsOf(jsNumber(static_cast<int32_t>(i))));
             checkAnswer(collections, mapHas(comparison), map, keys[i], bitsOf(jsBoolean(true)));
             checkAnswer(collections, setHas(comparison), set, keys[i], bitsOf(jsBoolean(true)));
             checkAnswer(collections, setAdd(comparison), set, keys[i], set);
         }
         for (uint64_t absent : absentKeys) {
             checkAnswer(collections, mapGet(comparison), map, absent, bitsOf(jsUndefined()));
+            checkAnswer(collections, mapFind(comparison), map, absent, bitsOf(JSValue()));
             checkAnswer(collections, mapHas(comparison), map, absent, bitsOf(jsBoolean(false)));
             checkAnswer(collections, setHas(comparison), set, absent, bitsOf(jsBoolean(false)));
         }

@@ -39,6 +39,9 @@ inline constexpr unsigned minClobberPointsForChunks = 1024;
 inline constexpr size_t minClobberPointsToLeap = 4096;
 inline constexpr unsigned maxConsecutiveClobberMisses = 64;
 inline constexpr size_t minClobberPointsToCountPerRegister = 256;
+inline constexpr unsigned maxConflictsLookedAtForHeldRegister = 8;
+inline constexpr size_t clobberSitesWalkedBeforeAskingWhetherHeld = 16;
+inline constexpr double maxClobberSitesJudgedBySum = 65536;
 // The moves at so many sites take no room worth counting.
 inline constexpr size_t clobberSitesWithoutLeastCost = 32;
 inline constexpr unsigned minInsertionsPerBlockToSort = 16;

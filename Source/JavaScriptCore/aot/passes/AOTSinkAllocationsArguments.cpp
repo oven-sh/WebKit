@@ -315,6 +315,18 @@ static std::optional<uint32_t> numberOfArgumentsThatCalleesSee(const Program& pr
     return numberOfArguments;
 }
 
+static std::optional<uint32_t> numberOfArgumentsThatFunctionsSee(const Program& program, const Type& callees)
+{
+    uint32_t numberOfArguments = 0;
+    for (FunctionID callee : callees.functions) {
+        const Function& function = program.at(callee);
+        if (function.has(FunctionFlags::HasRestParameter) || function.hiddenRestParameterIndex() || function.argumentCountParameterIndex())
+            return std::nullopt;
+        numberOfArguments = std::max<uint32_t>(numberOfArguments, function.numberOfPositionalParameters());
+    }
+    return numberOfArguments;
+}
+
 void ObjectInterpreter::readArgumentList(ValueID read, VirtualObjectID object, const VirtualFieldAccess& access)
 {
     const VirtualObjectDescription* description = singleDescriptionOf(object);
@@ -618,6 +630,8 @@ void ObjectInterpreter::executeCallOnArguments(ValueID call)
         return forwardArguments(call, *plan);
     if (value.builtinCallForm() != BuiltinCallForm::Whole)
         return executeOther(call);
+    if (std::optional<ForwardedCallPlan> plan = planForwardedConstruct(program(), function(), builtinCall); plan && isArguments(plan->list) && constructsInPlaceWithoutRefusal(program(), function(), value, *plan))
+        return forwardArguments(call, *plan);
     if (program().builtins().at(builtinCall.overload).builtin == Builtins::ArrayPrototypeSlice && isArguments(builtinCall.receiver))
         return sliceArguments(call);
     return executeOther(call);
@@ -644,6 +658,27 @@ void ObjectInterpreter::forwardArguments(ValueID call, const ForwardedCallPlan& 
     for (auto [operand, index] : otherOperands)
         requireCell(operand, causeOf(call, index));
 
+    // No construction takes all its arguments out of the frame of the caller. Constructors that see only what they name get that.
+    Vector<Value, 8> readsOfFrame;
+    std::optional<uint32_t> numberOfNamedArguments = plan.constructs ? numberOfArgumentsThatFunctionsSee(program(), program().typeOf(function(), plan.callee)) : std::nullopt;
+    // A parameter that was not passed is undefined, as is what a constructor finds for an element that the list lacks.
+    if (numberOfNamedArguments && !parts.firstFrameArgument && !parts.numberOfPassedParameters && !singleDescriptionOf(arguments)->isMapped && *numberOfNamedArguments <= numberOfParameters) {
+        parts.numberOfPassedParameters = *numberOfNamedArguments;
+        parts.restListIsEmpty = true;
+    }
+    if (plan.constructs && parts.firstFrameArgument) {
+        for (uint32_t index = 0; numberOfNamedArguments && index < *numberOfNamedArguments; ++index) {
+            if (std::optional<Value> argument = makeArgumentRead(*parts.firstFrameArgument, index))
+                readsOfFrame.append(WTF::move(*argument));
+            else
+                numberOfNamedArguments = std::nullopt;
+        }
+        if (!numberOfNamedArguments) {
+            requireCell(plan.list, cause);
+            return executeOther(call);
+        }
+    }
+
     std::optional<Vector<uint32_t, 8>> parameterFields;
     bool passesRestList = false;
     if (!parts.firstFrameArgument) {
@@ -663,9 +698,14 @@ void ObjectInterpreter::forwardArguments(ValueID call, const ForwardedCallPlan& 
         ValueID restList = passesRestList ? valueOfField(arguments, partOf(arguments, VirtualFieldKind::RestList)) : ValueID();
         ValueID thisValue = parts.firstFrameArgument && !plan.thisValue ? emitUndefined() : plan.thisValue;
 
+        for (Value& read : readsOfFrame)
+            values.append(cursor().emit(WTF::move(read)));
+
         Value& forwarded = cursor().builder().function().edit(call);
         becomeForwardedCall(forwarded, plan);
-        if (parts.firstFrameArgument)
+        if (plan.constructs && parts.firstFrameArgument)
+            convertListCall(forwarded, values.span());
+        else if (parts.firstFrameArgument)
             becomeForwardingCall(forwarded, thisValue, *parts.firstFrameArgument);
         else if (restList)
             forwarded.setListOperand(restList);

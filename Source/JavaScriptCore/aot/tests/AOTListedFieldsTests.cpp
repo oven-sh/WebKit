@@ -12,6 +12,7 @@
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTOperationCallScope.h"
+#include "AOTPropertyListCache.h"
 #include "AOTPropertyWalkInlines.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTSchemaRuntimeOperations.h"
@@ -435,6 +436,27 @@ static void checkLongTextsTakeTheirOwnLengthInABuilder(LoadedProgram& program)
     }
 }
 
+// The list of an object with extra properties serves Object.keys, copies and for-in too. The text of its keys is for JSON.stringify alone, which writes it when it first asks.
+static void checkKeyTextOfAListWithExtraPropertiesWaitsForStringify(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    Object* extended = createItem(program, jsNull());
+    put(program, extended, "added"_s, jsNumber(1));
+    AOT_TEST_CHECK(extended->hasExtraProperties());
+    CachedPropertyList* list = nullptr;
+    {
+        DeferGC deferGC(vm);
+        list = cachedPropertyList(vm, *extended);
+        AOT_TEST_CHECK(list && list->properties.size() == 5 && list->jsonKeys.isEmpty() && list->endsOfJSONKeys.isEmpty());
+    }
+    checkStringify(program, extended, Path::Fast, "{\"id\":7,\"title\":\"Product 7\",\"payload\":null,\"inStock\":false,\"added\":1}"_s);
+    {
+        DeferGC deferGC(vm);
+        AOT_TEST_CHECK(cachedPropertyList(vm, *extended) == list && list->endsOfJSONKeys.size() == 5 && !list->jsonKeys.isEmpty());
+    }
+    checkStringify(program, extended, Path::Fast, "{\"id\":7,\"title\":\"Product 7\",\"payload\":null,\"inStock\":false,\"added\":1}"_s);
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<listedFieldsTests, programText, body>;
 
@@ -445,6 +467,7 @@ std::span<const NativeTest> listedFieldsTests()
         { "listed-fields/each-key-order-has-its-list"_s, withProgram<checkEachKeyOrderHasItsList> },
         { "listed-fields/changed-objects-leave-the-list"_s, withProgram<checkChangedObjectsLeaveTheList> },
         { "listed-fields/key-text-is-escaped-once"_s, withProgram<checkKeyTextIsEscapedOnce> },
+        { "listed-fields/key-text-of-a-list-with-extra-properties-waits-for-stringify"_s, withProgram<checkKeyTextOfAListWithExtraPropertiesWaitsForStringify> },
         { "listed-fields/only-wide-name-has-no-key-text"_s, withProgram<checkOnlyWideNameHasNoKeyText> },
         { "listed-fields/stringify-values-of-every-kind"_s, withProgram<checkValuesOfEveryKind> },
         { "listed-fields/stringify-to-json-of-the-object"_s, withProgram<checkToJSONOfTheObjectItself> },

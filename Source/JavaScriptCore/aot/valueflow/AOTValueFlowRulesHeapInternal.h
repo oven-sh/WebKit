@@ -220,6 +220,7 @@ private:
     HeapChain chainThatGoesUpFrom(ClimbingSet receivers, const HeapKey&);
     HeapChain chainWithCopiesThatReach(const HeapKey&, ClimbingSet receivers);
     bool mayInheritSetter(ClimbingSet objects);
+    bool mayRefuseStoreInSilence(ClimbingSet objects, const HeapKey&);
     ValueSetID holdersWithLockedLocationUnder(const HeapKey&) const;
     bool mayTakeMemberFromCopy(ClimbingSet holders, const HeapKey&);
     ValueSetID holdersOfUndeclaredPropertiesUnder(const HeapKey&);

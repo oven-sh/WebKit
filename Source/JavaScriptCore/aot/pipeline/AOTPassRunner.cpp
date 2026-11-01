@@ -1089,7 +1089,27 @@ static String describeFirstDifference(const Function& function, const Function& 
             out.print(" gets another type");
         if (before.expected().predicted() != after.expected().predicted())
             out.print(" is expected to be of another type");
-        break;
+        return out.toString();
+    }
+    for (size_t index = 0; index < function.values.size(); ++index) {
+        if (std::ranges::equal(function.values[index].operands(), changed.values[index].operands()))
+            continue;
+        out.print("; v", index, " (", nameOf(function.values[index].opcode), ") gets other operands");
+        return out.toString();
+    }
+    for (size_t index = 0; index < function.blocks.size(); ++index) {
+        const BlockValues& before = function.blocks[index].values;
+        const BlockValues& after = changed.blocks[index].values;
+        if (std::ranges::equal(before, after))
+            continue;
+        for (ValueID id : before) {
+            if (after.contains(id))
+                continue;
+            out.print("; v", id.index(), " (", nameOf(function.at(id).opcode), ") leaves b", index);
+            return out.toString();
+        }
+        out.print("; b", index, " holds other values");
+        return out.toString();
     }
     return out.toString();
 }

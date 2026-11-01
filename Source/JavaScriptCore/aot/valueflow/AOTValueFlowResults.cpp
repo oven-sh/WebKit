@@ -536,16 +536,6 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         build.destroyLater(WTF::move(ledgerOfBuiltinObjects));
         solution->letGoOfNumbersOfUsers();
         findHoldersWithListedKeys(inputs, *usesOfHeap, tables.builtins);
-        for (uint32_t index = 0; index < constructions.layouts.size(); ++index) {
-            ValueFlowConstructions::OfLayout& construction = constructions.layouts[index];
-            if (!construction.passesTestForInstance || !classCannotAnswerForNames(inputs.program.layouts[index], tables.application->layouts[index].classFlow))
-                continue;
-            construction.createsFieldsOnlyInListedOrders = false;
-            construction.namesStoredBeforeObjectLeaks = { };
-            construction.keysStoredAtBirth = { };
-            construction.keysStoredWithValueAtBirth = { };
-            construction.fieldsStoredAtBirth = { };
-        }
         fieldContents = computeFieldResults(inputs, *usesOfHeap, constructions, tables);
         build.destroyLater(WTF::move(constructions));
         ledger.install(LedgerPartKind::Fields, ledgerOfFieldsIn(*usesOfHeap));

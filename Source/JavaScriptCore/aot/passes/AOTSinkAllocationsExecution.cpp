@@ -328,6 +328,9 @@ void ObjectInterpreter::executeCast(ValueID id)
     VariantCastOutcomes outcomes = evaluateCastOnVariants(m_sinking.shapeContext(object), *stateOf(object), function().at(id));
     if (function().at(id).opcode == Opcode::AssumeType)
         narrowToProvenType(object, function().at(id).provenType());
+    // So is what the value of a field leaves of a union: `s.kind === "square" ? s.edge : s.radius`.
+    if (function().at(id).opcode == Opcode::NarrowByField)
+        narrowToProvenType(object, function().at(id).type);
     if (outcomes.canSplit())
         splitThrowingVariants(id, object, outcomes.throwingTagBits);
     else if (!outcomes.alwaysPasses()) {

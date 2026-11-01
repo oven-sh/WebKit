@@ -13,6 +13,7 @@
 #include "AOTChooseCallingConventions.h"
 #include "AOTCodeDescription.h"
 #include "AOTCodeSizeEstimate.h"
+#include "AOTCodeSizeMap.h"
 #include "AOTCurrentWork.h"
 #include "AOTElideStackChecks.h"
 #include "AOTFunctionCodeGenerator.h"
@@ -23,6 +24,7 @@
 #include "AOTStubAssembler.h"
 #include "AOTVector.h"
 #include "B3Generate.h"
+#include "B3PCToOriginMap.h"
 #include <algorithm>
 #include <array>
 #include <wtf/BitVector.h>
@@ -36,6 +38,7 @@ struct RegisterTransfer {
     Reg source;
     std::optional<int32_t> offsetFromSource;
     bool isHalfWord { false };
+    ValueID origin { };
 };
 
 struct ForwardingPlan {
@@ -91,7 +94,7 @@ static bool generatesOnlyWhatTheProgramAsksFor(const CodeGenerationWorker& worke
 #else
     BuildContext& build = worker.build;
     const AOT::CompileOptions& options = build.options();
-    if (build.validates() || options.validatesReferences || options.writesCodeSizeMap())
+    if (build.validates() || options.validatesReferences)
         return false;
     if ((options.logging.dumpsB3Graph || options.logging.dumpsDisassembly) && build.shouldDump(id))
         return false;
@@ -135,7 +138,7 @@ static std::optional<RegisterTransfer> findTransfer(const CodeGenerationInputs& 
         const Function& owner = inputs.program.at(value.function());
         ptrdiff_t firstCapture = inputs.placement.functionKind(value.function()).isSlim ? offsetOfSlimClosureCaptures : offsetOfClosureCaptures;
         ptrdiff_t offset = firstCapture + static_cast<ptrdiff_t>(closureCaptureSlotOf(inputs.program, owner, value.index()) * sizeof(EncodedJSValue));
-        return RegisterTransfer { destination.reg, closure->reg, safeCast<int32_t>(offset), b3TypeOf(value.representation) == B3::Int32 };
+        return RegisterTransfer { destination.reg, closure->reg, safeCast<int32_t>(offset), b3TypeOf(value.representation) == B3::Int32, argument };
     }
 
     const ArgumentLocation* source = locationOfParameter(argument);
@@ -301,15 +304,25 @@ static CompiledCode generateForwardingCode(const CodeGenerationWorker& worker, c
     records.units.willGenerateBlock(coldness.isCold, coldness.isRarelyRun);
     readTagsFromInstance(jit);
     records.entries.append(RecordedEntry { primaryEntry, jit.label() });
+    const bool writesCodeSizeMap = build.options().writesCodeSizeMap();
+    ValueID call = function.at(entryBlock).values.last();
+    B3::PCToOriginMap pcToOriginMap;
+    auto recordOrigin = [&](CCallHelpers::Label label, ValueID origin) {
+        if (writesCodeSizeMap) [[unlikely]]
+            pcToOriginMap.appendItem(label, b3OriginOf(origin));
+    };
     for (const RegisterTransfer& transfer : plan.transfers) {
         CCallHelpers::Label begin = jit.labelIgnoringWatchpoints();
+        recordOrigin(begin, transfer.origin ? transfer.origin : call);
         emitTransfer(jit, transfer);
         records.units.didGenerateInBlock(begin, jit.labelIgnoringWatchpoints(), CodeUnit::Kind::Plain);
     }
     CCallHelpers::Label jump = jit.labelIgnoringWatchpoints();
+    recordOrigin(jump, call);
     records.stubCalls.jumpToFunction(jit, plan.callee, primaryEntry);
     records.units.didGenerateInBlock(jump, jit.labelIgnoringWatchpoints(), CodeUnit::Kind::Pinned);
     CCallHelpers::Label paddingStart = jit.label();
+    recordOrigin(paddingStart, { });
     jit.breakpoint();
     jit.padBeforePatch();
 
@@ -326,7 +339,24 @@ static CompiledCode generateForwardingCode(const CodeGenerationWorker& worker, c
     }
 
     StackCheckState stackChecks;
-    return describeCode(build, inputs, id, function, records, EmittedCode { buffer, nullptr, stackChecks, paddingStart, WTF::move(*linked) });
+    CompiledCode code = describeCode(build, inputs, id, function, records, EmittedCode { buffer, nullptr, stackChecks, paddingStart, WTF::move(*linked) });
+    if (writesCodeSizeMap) [[unlikely]]
+        code.sizesByOperation = makeString(describeCodeSize(inputs.program, function, pcToOriginMap, buffer), describeBranches(inputs, id, function, build.recordedOptions()));
+    return code;
+}
+
+static bool haveSameRecords(const CompiledCode& a, const CompiledCode& b)
+{
+    auto haveSameRelocationTargets = [&] {
+        return std::ranges::equal(a.body.relocations, b.body.relocations, [](const Relocation& first, const Relocation& second) {
+            return first.kind == second.kind && first.codeSymbol() == second.codeSymbol();
+        });
+    };
+    return a.body.callees == b.body.callees && haveSameRelocationTargets() && a.body.entries.size() == b.body.entries.size()
+        && a.body.localSites.size() == b.body.localSites.size() && a.body.returnSites.size() == b.body.returnSites.size()
+        && a.frame.hasFrame() == b.frame.hasFrame() && a.frame.prologueChecks.size() == b.frame.prologueChecks.size()
+        && a.frame.isEnteredWithoutStackCheck == b.frame.isEnteredWithoutStackCheck && a.frame.isProvenToFitOnStack == b.frame.isProvenToFitOnStack
+        && a.sites.positions.size() == b.sites.positions.size() && a.sites.inlineFrames.size() == b.sites.inlineFrames.size();
 }
 
 static bool isSameCode(const CompiledCode& a, const CompiledCode& b)
@@ -342,11 +372,14 @@ static bool isSameCode(const CompiledCode& a, const CompiledCode& b)
         });
     };
     return a.body.bytes == b.body.bytes && a.body.paddingStart == b.body.paddingStart && a.body.sizeOfHotBlocks == b.body.sizeOfHotBlocks
-        && a.body.relocations == b.body.relocations && a.body.callees == b.body.callees && haveSameEntries() && haveSameUnits()
-        && a.body.localSites.size() == b.body.localSites.size() && a.body.returnSites.size() == b.body.returnSites.size()
-        && a.frame.hasFrame() == b.frame.hasFrame() && a.frame.prologueChecks.size() == b.frame.prologueChecks.size()
-        && a.frame.isEnteredWithoutStackCheck == b.frame.isEnteredWithoutStackCheck && a.frame.isProvenToFitOnStack == b.frame.isProvenToFitOnStack
-        && a.sites.positions.size() == b.sites.positions.size() && a.sites.inlineFrames.size() == b.sites.inlineFrames.size();
+        && a.body.relocations == b.body.relocations && haveSameEntries() && haveSameUnits() && haveSameRecords(a, b);
+}
+
+static bool isSameOrNoLongerCode(const CompiledCode& forwardingCode, const CompiledCode& b3Code)
+{
+    if (forwardingCode.body.bytes == b3Code.body.bytes)
+        return isSameCode(forwardingCode, b3Code);
+    return forwardingCode.body.bytes.size() <= b3Code.body.bytes.size() && haveSameRecords(forwardingCode, b3Code);
 }
 
 void compileFunctions(const CodeGenerationWorker& worker, const CodeGenerationInputs& inputs, std::span<const FunctionID> ids, std::span<CompiledCode> results, CodeGenerationTotals& totals)
@@ -392,7 +425,7 @@ void compileFunctions(const CodeGenerationWorker& worker, const CodeGenerationIn
         if (generators[index]) {
             currentWork().setFunction(FunctionID(generators[index]->procedure().subjectOfClient() - 1));
             CompiledCode code = generators[index]->finish();
-            RELEASE_ASSERT(!isX86_64() || !isForwardingCode.quickGet(index) || isSameCode(results[index], code));
+            RELEASE_ASSERT(!isX86_64() || !isForwardingCode.quickGet(index) || isSameOrNoLongerCode(results[index], code));
             results[index] = WTF::move(code);
         }
         results[index].function = ids[index];

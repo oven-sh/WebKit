@@ -692,6 +692,10 @@ ValueSetID valuesHandedToCalleesNobodyKnows(const ValueFlowResultInputs& inputs,
         for (uint32_t function = first; function < std::min(first + functionsPerTask, numberOfFunctions); ++function) {
             if (!inputs.isReached(FunctionID(function)))
                 continue;
+            // `util.captureStackTrace(error)`: the namespace object is the `this` of the call because of how the call is written. A file that an executable holds too, where
+            // there is no spy that the build has not seen, hands on what it lists among the arguments.
+            ModuleID module = inputs.program.functions[function].module;
+            bool isOfProduct = module && inputs.program.at(module).flags.contains(ModuleFlags::LoadsCompiledFilesAlone);
             for (uint32_t index = ranges[function].statement; index < ranges[function + 1].statement; ++index) {
                 if (!statementCallsValue(statements[index]))
                     continue;
@@ -703,7 +707,8 @@ ValueSetID valuesHandedToCalleesNobodyKnows(const ValueFlowResultInputs& inputs,
                 ValueFlowBuiltinApplication application;
                 application.kind = kindOfCallBy(statements[index]);
                 findOperandsOf(inputs, heap, maker, statements[index], application);
-                take(application.thisValue);
+                if (!isOfProduct)
+                    take(application.thisValue);
                 take(application.otherArguments);
                 for (ValueSetID argument : application.arguments)
                     take(argument);

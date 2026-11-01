@@ -17,6 +17,7 @@
 #include "AOTImage.h"
 #include "AOTImageOfCellScope.h"
 #include "AOTLayoutData.h"
+#include "AOTModuleHost.h"
 #include "AOTModuleTable.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
@@ -37,8 +38,10 @@
 #include "ErrorInstance.h"
 #include "ExceptionHelpers.h"
 #include "InternalFunction.h"
+#include "Interpreter.h"
 #include "JSCInlines.h"
 #include "JSFunction.h"
+#include "StackFrame.h"
 #include "TopExceptionScope.h"
 #include <algorithm>
 #include <unicode/utf16.h>
@@ -1133,7 +1136,7 @@ static WrittenReads findWrittenKeyTests(std::span<const Latin1Character> text, s
             ++behind;
         Latin1Character after = behind < text.size() ? text[behind] : Latin1Character(')');
         bool endsHere = after == ')' || after == ']' || after == '}' || after == ',' || after == ';' || after == ':' || after == '?' || after == '&' || after == '|' || after == '=' || after == '!' || after == '\n' || after == '\r';
-        if (!start || end == object || !beginsHere || !endsHere) {
+        if (!start || end == object || !beginsHere || !endsHere || text[*start] == '#') {
             if (within)
                 continue;
             return WrittenReads::Differ;
@@ -3315,14 +3318,19 @@ JSObject* createSuperCallInDirectEvalError(JSGlobalObject* globalObject)
     return createTypeError(globalObject, withAOTErrorNote("super() cannot be called from direct eval in a compiled executable"_s));
 }
 
-static String messageOfFunctionNotCompiled(const String& description)
+static String messageOfFunctionNotCompiled(const String& description, const String& advice = "call it directly somewhere in your code"_s)
 {
-    return withAOTErrorNote(makeString(description, " was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code."_s));
+    return withAOTErrorNote(makeString(description, " was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, "_s, advice, '.'));
 }
 
 String functionNotCompiledMessage(const String& functionName)
 {
     return messageOfFunctionNotCompiled(makeString('\'', functionName, '\''));
+}
+
+String exportNotCompiledMessage(const String& functionName, const String& module)
+{
+    return messageOfFunctionNotCompiled(makeString('\'', functionName, '\''), makeString("import it by name: import { "_s, functionName, " } from \""_s, module, '"'));
 }
 
 String functionNotCompiledMessage(const String& path, unsigned line)
@@ -3401,9 +3409,31 @@ static String refusalInTestRun(VM& vm, ASCIILiteral change, BuiltinID holder, Un
     return makeString(change, member, " because built-in objects are read-only in compiled code, and the build didn't see a test "_s, does, " this one. Spell out the object and the name where the test does it, as in "_s, example, pageOnCompiledTests);
 }
 
+bool isWrittenByFileOfProduct(VM& vm)
+{
+    // Compiled code calls a built-in function itself, or through an operation that enters the VM. A refusal is rare, so the walk that lists every kind of frame will do.
+    constexpr size_t framesLookedAt = 32;
+    Vector<StackFrame> frames;
+    vm.interpreter.getStackTrace(nullptr, frames, 0, framesLookedAt);
+    for (const StackFrame& frame : frames) {
+        // Code from disk writes for itself.
+        if (frame.codeBlock())
+            return false;
+        if (!frame.isCompiledFrame() || frame.representsHostFunction())
+            continue;
+        ImageOfTraceFrameScope imageOfFrame(frame.compiledFrame());
+        std::optional<SourcePosition> position = frame.compiledPosition();
+        if (!position || !position->source)
+            continue;
+        if (std::optional<bool> answer = findsBuiltinsReadOnly(position->source))
+            return *answer;
+    }
+    return false;
+}
+
 String assignmentToLockedBuiltinMessage(VM& vm, BuiltinID holder, UniquedStringImpl* key, LockedIn lockedIn)
 {
-    if (lockedIn == LockedIn::TestRun)
+    if (lockedIn == LockedIn::TestRun && !isWrittenByFileOfProduct(vm))
         return refusalInTestRun(vm, "Cannot assign to "_s, holder, key);
     const BuiltinTable& table = BuiltinTable::singleton();
     BuiltinName name = table.nameOf(vm, key);
@@ -3415,7 +3445,7 @@ String assignmentToLockedBuiltinMessage(VM& vm, BuiltinID holder, UniquedStringI
 
 String deletionFromLockedBuiltinMessage(VM& vm, BuiltinID holder, UniquedStringImpl* key, LockedIn lockedIn)
 {
-    if (lockedIn == LockedIn::TestRun)
+    if (lockedIn == LockedIn::TestRun && !isWrittenByFileOfProduct(vm))
         return refusalInTestRun(vm, "Cannot delete "_s, holder, key);
     return deletionFromLockedBuiltinMessage(memberOfLockedBuiltin(holder, key));
 }

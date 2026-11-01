@@ -163,8 +163,8 @@ struct CapacityPlan {
     Vector<ValueID, 2> subtracted { };
     Vector<ValueID, 2> roundedUp { };
     Vector<ValueID, 2> repeatedLengthReads { };
-    // Those whose test for null and undefined is repeated with them.
-    Vector<ValueID, 2> repeatedChecks { };
+    // Those that measure what stands behind the literal: a test for null and undefined, or a read of a variable. It is repeated with them.
+    Vector<ValueID, 2> repeatedOwners { };
     // `list[k] = x` at the counter of the loop that the capacity is counted from: each puts its element behind the last one.
     Vector<ValueID, 2> storesThatFill { };
 };
@@ -358,7 +358,7 @@ struct CapacityPlanner {
                 return;
             result.repeatedLengthReads.append(term);
             if (measured && !analyses.dominates(measured->owner, point))
-                result.repeatedChecks.append(term);
+                result.repeatedOwners.append(term);
         });
         return result;
     }
@@ -567,7 +567,7 @@ struct CapacityPlanner {
 
     bool canMeasureAt(const MeasuredStorage& measured, ProgramPoint point)
     {
-        return analyses.dominates(measured.owner, point) && !context.program.typeOf(function, measured.owner).mayBeUnspecified() && holdsAt(measured.guard, point);
+        return isThereOrCanBeReadAt(measured.owner, point) && !context.program.typeOf(function, measured.owner).mayBeUnspecified() && holdsAt(measured.guard, point);
     }
 
     // Nothing that anybody could tell lies between the point and the value, and no other way leads on from the point. So what the value does, a throw too, may as well be done at the point.
@@ -594,11 +594,26 @@ struct CapacityPlanner {
         return false;
     }
 
+    // `const list = [first]; for (let i = 0; i < others.length; i++)`: the variable is read behind the literal, and holds there what it held in front of it.
+    bool isThereOrCanBeReadAt(ValueID id, ProgramPoint point)
+    {
+        if (analyses.dominates(id, point))
+            return true;
+        const Value& value = function.at(id);
+        if ((value.opcode != Opcode::GetModuleVariable && value.opcode != Opcode::GetEnvironmentField) || context.program.typeOf(function, id).mayBeUnspecified())
+            return false;
+        for (uint32_t operandIndex = 0; operandIndex < value.numberOfOperands(); ++operandIndex) {
+            if (ValueID operand = value.operand(operandIndex); operand && !analyses.dominates(operand, point))
+                return false;
+        }
+        return followsWithoutVisibleEffect(point, id);
+    }
+
     bool canMeasureBehindCheck(const MeasuredStorage& measured, ProgramPoint point)
     {
         ValueID check = checkInFrontOf(function, measured);
         return check && !function.at(point.block).handler && !context.program.typeOf(function, measured.owner).mayBeUnspecified()
-            && analyses.dominates(function.at(check).valueOperand(), point) && followsWithoutVisibleEffect(point, check);
+            && isThereOrCanBeReadAt(function.at(check).valueOperand(), point) && followsWithoutVisibleEffect(point, check);
     }
 
     Expected<bool> mayChangeLengthIn(const NaturalLoop& loop, const MeasuredStorage& measured, ValueID literal)
@@ -677,7 +692,7 @@ struct CapacityPlanner {
         if (!step || !makeSizeReadOfWalkedCollection(context, function.at(step)))
             return { };
         MeasuredStorage measured { walkedCollectionOf(function.at(step)), { }, AbstractHeap::CollectionStorage };
-        if (!canMeasureAt(measured, literal.point) || mayChangeLengthIn(loop, measured, literal.value).predicted())
+        if (!analyses.dominates(measured.owner, literal.point) || !canMeasureAt(measured, literal.point) || mayChangeLengthIn(loop, measured, literal.value).predicted())
             return { };
         return { .added = { CapacityTermKind::Integer, step } };
     }
@@ -938,6 +953,25 @@ static unsigned applyCapacityPlans(FunctionPassContext& context, Vector<Capacity
             builder.setOrigin(function.at(placeOfErrors ? placeOfErrors : plan.literal).origin());
             return builder.insertBefore(plan.point, WTF::move(value));
         };
+        // An error names the place of the test that the program has.
+        auto repeat = [&](auto& self, ValueID id) -> ValueID {
+            if (context.analyses.dominates(id, plan.point))
+                return id;
+            Value copy = function.at(id);
+            copy.forEachChild([&](ValueID& operand) {
+                if (operand)
+                    operand = self(self, operand);
+            });
+            return insert(WTF::move(copy), id);
+        };
+        auto insertMeasuring = [&](Value&& read, ValueID owner) {
+            ValueID repeatedOwner = repeat(repeat, owner);
+            read.forEachChild([&](ValueID& operand) {
+                if (operand == owner)
+                    operand = repeatedOwner;
+            });
+            return insert(WTF::move(read));
+        };
         plan.forEachTerm([&](ValueID& term) {
             const Value& value = function.at(term);
             if (value.opcode == Opcode::AppendElements)
@@ -948,16 +982,11 @@ static unsigned applyCapacityPlans(FunctionPassContext& context, Vector<Capacity
                 term = insert(WTF::move(*sizeRead));
             else if (plan.repeatedLengthReads.contains(term)) {
                 Value read = value;
-                if (plan.repeatedChecks.contains(term)) {
-                    // The error names the place of the test that the program has.
-                    ValueID check = checkInFrontOf(function, *storageMeasuredBy(context.program, read));
-                    ValueID repeatedCheck = insert(Value(function.at(check)), check);
-                    read.forEachChild([&](ValueID& operand) {
-                        if (operand == check)
-                            operand = repeatedCheck;
-                    });
-                }
-                term = insert(WTF::move(read));
+                if (plan.repeatedOwners.contains(term)) {
+                    ValueID owner = storageMeasuredBy(context.program, read)->owner;
+                    term = insertMeasuring(WTF::move(read), owner);
+                } else
+                    term = insert(WTF::move(read));
             }
         });
 
@@ -1578,12 +1607,12 @@ static ValueID findPositionTestInFrontOf(FunctionPassContext& context, const Rea
 
 // What is asked of an element of Double storage may be answered by its type: `list[0] === null` is false whether there is an element or none. The read is gone then, and nothing is left of it.
 // In storage that holds any value the answer is the same only if the list holds nothing but numbers and undefined, which a read that finds no element gives too.
-static bool holdsNumbersInAnyStorage(FunctionPassContext& context, ValueID array)
+static bool holdsOnly(FunctionPassContext& context, ValueID array, uint16_t primitives)
 {
     const Program& program = context.program;
     const ClassPart* part = program.typeOf(context.function, array).singleBuiltinClass();
     std::optional<ProvenValue<TypeID>> elements = part ? part->provenContentsAt(program.builtins(), ContentsSlot::Element) : std::nullopt;
-    return elements && program.at(*elements).hasOnlyPrimitives(Primitive::Number | Primitive::Undefined);
+    return elements && program.at(*elements).hasOnlyPrimitives(primitives);
 }
 
 // Behind the test of its position an element of Double storage is no undefined either: `list[0] === undefined` is false, and the test is all that is left of the read.
@@ -1610,7 +1639,34 @@ static std::optional<Vector<ValueID, 4>> findPresenceTestsThatLostTheirRead(Func
     return tests;
 }
 
+// The blocks that the list comes to from `from` on without passing a test that finds it in the storage that `storageTest` asks for.
+static BitVector blocksReachedWithoutPassing(FunctionPassContext& context, const Value& storageTest, BlockID from)
+{
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    ValueID array = analyses.identityOf(storageTest.arrayOperand());
+    BitVector reached(function.blocks.size());
+    reached.set(from.index());
+    Vector<BlockID, 16> worklist { from };
+    while (!worklist.isEmpty()) {
+        BlockID block = worklist.takeLast();
+        const Terminator& terminator = function.at(block).terminator;
+        const Value* test = findStorageTestBranchedOnBy(function, block);
+        bool asksTheSame = test && test->arrayStorage() == storageTest.arrayStorage() && analyses.identityOf(test->arrayOperand()) == array;
+        for (BlockID successor : analyses.cfg().successors(block)) {
+            if (asksTheSame && successor == terminator.taken().block && successor != terminator.notTaken().block)
+                continue;
+            if (!reached.set(successor.index()))
+                worklist.append(successor);
+        }
+    }
+    return reached;
+}
+
 // A test of the bounds names no kind of storage, so it does not say whose read it has lost. There is no copy where a read may have relied on such a test together with the proof.
+// Nor does it say behind which proof it stands. A loop that asked each element for undefined is a loop that counts, and the general loop beside it asks for Double storage at each turn and goes on in that one:
+// this proof no longer holds there and another one does, which nobody is handed. The copy leaves into the code behind the proof, with a list that may hold undefined.
+// So it may come to no such test but one that is right for any list: one that a list comes to from the head of the function without having been found in Double storage.
 static bool mayHaveLostReadBehindBoundsTest(FunctionPassContext& context, BlockID tested, const Value& storageTest, const ReadsBehindStorageTest& found, const Vector<ValueID, 8>& testsInFrontOfReads)
 {
     const Function& function = context.function;
@@ -1618,6 +1674,12 @@ static bool mayHaveLostReadBehindBoundsTest(FunctionPassContext& context, BlockI
     if (!analyses.opcodesOfValues().contains(Opcode::IsInBounds))
         return false;
     ValueID array = analyses.identityOf(storageTest.arrayOperand());
+    bool mayHoldUndefined = !holdsOnly(context, storageTest.arrayOperand(), Primitive::Number);
+    // What is compared with a kind of storage proves the kind as a test does.
+    if (mayHoldUndefined && analyses.opcodesOfValues().contains(Opcode::ArrayStorageKind))
+        return true;
+    BitVector reachedByCopy = mayHoldUndefined ? blocksReachedWithoutPassing(context, storageTest, found.passed) : BitVector();
+    BitVector reachedInAnyStorage = mayHoldUndefined ? blocksReachedWithoutPassing(context, storageTest, entryBlock) : BitVector();
     for (BlockID block : analyses.cfg().reversePostOrder()) {
         const Terminator& terminator = function.at(block).terminator;
         if (!terminator.isConditionalBranch() || testsInFrontOfReads.contains(terminator.conditionOperand()))
@@ -1631,6 +1693,8 @@ static bool mayHaveLostReadBehindBoundsTest(FunctionPassContext& context, BlockI
             if (!numberOfEdgeResults(function, block, 0) || analyses.guards().stateAt(function.at(inBounds).parameters.last(), ProgramPoint::atHeadOf(found.passed)) != GuardState::Unavailable)
                 return true;
         } else if (analyses.dominators().dominates(found.passed, block) && analyses.guards().stateAt(found.guard, ProgramPoint::atHeadOf(inBounds)) != GuardState::Unavailable)
+            return true;
+        else if (mayHoldUndefined && reachedByCopy.get(block.index()) && !reachedInAnyStorage.get(block.index()))
             return true;
     }
     return false;
@@ -1716,7 +1780,7 @@ static BlockID addReadsOfOtherStorage(FunctionPassContext& context, IRBuilder& b
     ReadsBehindStorageTest found { function.at(tested).terminator.taken().block, { }, { }, { }, { }, { } };
     if (numberOfEdgeResults(function, tested, 0) != 1 || analyses.cfg().predecessors(found.passed).size() != 1)
         return { };
-    if (other == ArrayStorage::Contiguous && !holdsNumbersInAnyStorage(context, test.arrayOperand()))
+    if (other == ArrayStorage::Contiguous && !holdsOnly(context, test.arrayOperand(), Primitive::Number | Primitive::Undefined))
         return { };
     found.guard = function.at(found.passed).parameters.last();
     if (!collectReadsRelyingOn(context, function.at(tested).terminator.conditionOperand(), found))

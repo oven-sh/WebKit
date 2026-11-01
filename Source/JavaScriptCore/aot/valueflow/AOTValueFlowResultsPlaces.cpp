@@ -1135,7 +1135,41 @@ Vector<VariableID> collectExportsThatSpiesReplace(const ValueFlowResultInputs& i
 
     // Text that nobody has seen finds a spy by itself, and every namespace object that has escaped is within its reach: in an object that it is handed, on the global
     // object, in a variable of the scope that it is evaluated in. The copy of a file that runs again has the text of the compiled file, whose spies are seen.
-    bool runsTextNobodyHasSeen = std::ranges::any_of(unseenCode, [](const UnseenCodeRecord& record) {
+    // Not the text that a file evaluates which an executable holds too: there it finds no spy, and none here.
+    auto isOfProduct = [&](ModuleID module) {
+        return module && program.at(module).flags.contains(ModuleFlags::LoadsCompiledFilesAlone);
+    };
+    // An evaluator that is applied at no place which flow can name has been named somewhere: `{ "%eval%": eval }`.
+    auto isNamedByProductAlone = [&](BuiltinID evaluator) {
+        bool isNamed = false;
+        BuiltinID holder = builtins.at(evaluator).holder;
+        auto names = [&](const Value& value) {
+            if (value.opcode == Opcode::Builtin)
+                return builtins.canonicalID(value.builtin()) == evaluator;
+            if (value.opcode != Opcode::PropGet || !holder)
+                return false;
+            BuiltinName name = program.builtinNameOf(value.key());
+            BuiltinID member = name ? builtins.findOwnMember(holder, name) : BuiltinID();
+            return member && builtins.canonicalID(member) == evaluator;
+        };
+        for (uint32_t index = 0; index < program.functions.size(); ++index) {
+            const Function& function = program.functions[index];
+            if (!inputs.isReached(FunctionID(index)))
+                continue;
+            for (const Value& value : function.values) {
+                if (!names(value))
+                    continue;
+                if (!isOfProduct(function.module))
+                    return false;
+                isNamed = true;
+            }
+        }
+        return isNamed;
+    };
+    bool runsTextNobodyHasSeen = std::ranges::any_of(unseenCode, [&](const UnseenCodeRecord& record) {
+        uint32_t module = record.witness.location.module;
+        if (module != Wire::none ? isOfProduct(ModuleID(module)) : record.builtin != Wire::none && isNamedByProductAlone(BuiltinID(record.builtin)))
+            return false;
         return record.cause == UnseenCodeCause::EvaluatesText || (record.cause == UnseenCodeCause::RunsUnseenCode && record.builtin != Wire::none);
     });
     if (isSpyOutOfSight && runsTextNobodyHasSeen) {

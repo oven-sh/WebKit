@@ -181,6 +181,7 @@ static B3::ValidationPolicy validationPolicyFor(const BuildContext& build)
     validation.omitsStridedLimitGuard = build.isSabotaged(Sabotage::StridedIndexesStayInRange);
     validation.overlooksWritesBehindWordsReadAgain = build.isSabotaged(Sabotage::WordsReadAgainOutlastWrites);
     validation.overlooksWritesToWhatLoopsReadAgain = build.isSabotaged(Sabotage::VariablesReadAgainInLoopsOutlastWrites);
+    validation.overlooksWritesToWordsCarriedAroundLoops = build.isSabotaged(Sabotage::WordsCarriedAroundLoopsOutlastWrites);
     validation.overlooksWritesBetweenLoadsAndTheirUsers = build.isSabotaged(Sabotage::LoadsFoldedIntoTheirUsersOutlastWrites);
     validation.overlooksWritesBetweenPairedLoads = build.isSabotaged(Sabotage::PairedLoadsOutlastWrites);
     validation.leavesRoomForOneTurnTooFew = build.isSabotaged(Sabotage::WrittenOutTurnsAlwaysFit);

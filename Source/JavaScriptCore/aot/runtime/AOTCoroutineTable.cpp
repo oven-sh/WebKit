@@ -10,11 +10,13 @@
 
 #include "AOTImageOfCellScope.h"
 #include "AOTAsyncResumption.h"
+#include "AOTClosure.h"
 #include "AOTGenerator.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTObjectWords.h"
+#include "AOTRuntimeHooks.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTSavedFrame.h"
 #include "AOTState.h"
@@ -23,6 +25,7 @@
 #include "AbstractSlotVisitorInlines.h"
 #include "AsyncGeneratorPrototype.h"
 #include "GeneratorPrototype.h"
+#include "HeapIterationScope.h"
 #include "HeapUtil.h"
 #include "InternalFunction.h"
 #include "IteratorOperations.h"
@@ -31,6 +34,7 @@
 #include "JSPromise.h"
 #include "JSPromiseCombinatorsGlobalContext.h"
 #include "JSSentinel.h"
+#include "MarkedSpaceInlines.h"
 #include "Microtask.h"
 #include "MicrotaskQueueInlines.h"
 #include "ObjectConstructor.h"
@@ -62,6 +66,66 @@ CoroutineTable::CoroutineTable(State& state)
     initializeCoroutineWords(vm);
     state.caches->add(CacheKind::StrongRoots, "coroutine resume state"_s, *this, RootVolatility::GreyedByExecution);
     state.caches->add(CacheKind::WeakByKey, "saved frames"_s, *this);
+}
+
+Structure* CoroutineTable::structureOfGeneratorsWithoutPrototypeOf(VM& vm, JSObject* function)
+{
+    JSGlobalObject* globalObject = m_instance.globalObject;
+    if (!m_structureOfGeneratorsWithoutPrototype) {
+        m_standInForPrototypes = constructEmptyObject(globalObject, globalObject->generatorPrototype());
+        m_standInForPrototypes->didBecomePrototype(vm);
+        RELEASE_ASSERT(m_standInForPrototypes->structureID().bits() == m_instance.coroutines.emptyGeneratorPrototypeStructureID);
+        m_state.immortalCells->add(m_standInForPrototypes);
+        m_structureOfGeneratorsWithoutPrototype = Generator::createStructureWithoutPrototype(vm, globalObject, m_standInForPrototypes);
+        m_state.immortalCells->add(m_structureOfGeneratorsWithoutPrototype);
+        m_statesOfGeneratorFunctions.fill(GeneratorFunctionState::HasMadeNoGeneratorWithoutPrototype, numberOfStatesOfGeneratorFunctions);
+        m_instance.coroutines.statesOfGeneratorFunctions = reinterpret_cast<uint8_t*>(m_statesOfGeneratorFunctions.mutableSpan().data());
+        m_instance.coroutines.headerOfGeneratorsWithoutPrototype = cellHeaderFor(m_structureOfGeneratorsWithoutPrototype);
+    }
+    uint8_t& state = m_instance.coroutines.statesOfGeneratorFunctions[placeOfGeneratorFunctionState(uncheckedDowncast<Closure>(function)->closureNumber())];
+    if (state == static_cast<uint8_t>(GeneratorFunctionState::MakesGeneratorsWithPrototype))
+        return nullptr;
+    state = static_cast<uint8_t>(GeneratorFunctionState::MakesGeneratorsWithoutPrototype);
+    return m_structureOfGeneratorsWithoutPrototype;
+}
+
+JSValue CoroutineTable::prototypeOfGeneratorsOf(VM& vm, JSObject* function)
+{
+    // A generator function of the library has no `prototype`.
+    JSValue prototype = uncheckedDowncast<Closure>(function)->prototypeProperty(vm);
+    return prototype && prototype.isObject() ? prototype : JSValue(m_instance.globalObject->generatorPrototype());
+}
+
+// An empty object that nobody has seen cannot be told from the one that stands for it. So where the `prototype` of a function is made while generators of that function may stand on the stand-in, each of
+// them is given its own first, and the closures of that function make their generators with theirs from then on: one walk for a place in the table at most. JSGlobalObject::haveABadTime() is the model.
+void CoroutineTable::willMakePrototypeOfGeneratorFunction(VM& vm, JSObject* function)
+{
+    if (!m_structureOfGeneratorsWithoutPrototype)
+        return;
+    uint32_t place = placeOfGeneratorFunctionState(uncheckedDowncast<Closure>(function)->closureNumber());
+    uint8_t& state = m_instance.coroutines.statesOfGeneratorFunctions[place];
+    if (state != static_cast<uint8_t>(GeneratorFunctionState::MakesGeneratorsWithoutPrototype))
+        return;
+    state = static_cast<uint8_t>(GeneratorFunctionState::MakesGeneratorsWithPrototype);
+    DeferGC deferGC(vm);
+    Vector<Generator*> found;
+    {
+        HeapIterationScope iterationScope(vm.heap);
+        vm.heap.objectSpace().forEachLiveCell(iterationScope, [&](HeapCell* cell, HeapCell::Kind kind) {
+            if (!isJSCellKind(kind) || static_cast<JSCell*>(cell)->classInfo() != Generator::info())
+                return IterationStatus::Continue;
+            auto* generator = uncheckedDowncast<Generator>(static_cast<JSCell*>(cell));
+            // One without a frame was left behind where the stack ran out in front of the body that makes the frame. Nobody has it.
+            if (!generator->takesPrototypeFromFunction() || !generator->savedFrame() || generator->structure()->realm() != m_instance.globalObject)
+                return IterationStatus::Continue;
+            // Each image of the realm has a table of its own.
+            if (placeOfGeneratorFunctionState(generator->closureNumberOfFunction()) == place && generator->instanceOfFunction() == &m_instance)
+                found.append(generator);
+            return IterationStatus::Continue;
+        });
+    }
+    for (Generator* generator : found)
+        generator->takePrototypeFromFunction(vm);
 }
 
 uint32_t CoroutineTable::createEmptyPrototypeStructure(VM& vm, JSObject* parent)
@@ -421,11 +485,91 @@ Generator* Generator::create(VM& vm, Structure* structure)
     return generator;
 }
 
+Structure* Generator::createStructureWithoutPrototype(VM& vm, JSGlobalObject* globalObject, JSObject* standIn)
+{
+    return Structure::create(vm, globalObject, standIn, TypeInfo(ObjectType, StructureFlags | OverridesGetPrototype), info());
+}
+
+Generator* Generator::createWithoutPrototype(VM& vm, Structure* structure)
+{
+    Generator* generator = new (NotNull, allocateCell<Generator>(vm)) Generator(vm, structure);
+    generator->m_takesPrototypeFromFunction = true;
+    generator->finishCreation(vm);
+    return generator;
+}
+
+JSValue Generator::getPrototype(JSObject* object, JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto* generator = uncheckedDowncast<Generator>(object);
+    if (!generator->m_takesPrototypeFromFunction)
+        return object->getPrototypeDirect();
+    JSObject* function = generator->functionThatMadeIt();
+    ImageOfCellScope imageOfCell(vm, function);
+    return uncheckedDowncast<Closure>(function)->state().coroutines->prototypeOfGeneratorsOf(vm, function);
+}
+
+uint32_t Generator::closureNumberOfFunction() const
+{
+    return uncheckedDowncast<Closure>(functionThatMadeIt())->closureNumber();
+}
+
+Instance* Generator::instanceOfFunction() const
+{
+    return Instance::owning(functionThatMadeIt());
+}
+
+JSObject* Generator::functionThatMadeIt() const
+{
+    RELEASE_ASSERT(m_takesPrototypeFromFunction && m_savedFrame);
+    // A frame whose maker named no function has its own address there.
+    JSCell* function = m_savedFrame->promiseOrWaiter();
+    RELEASE_ASSERT(function && function->classInfo() == Closure::info());
+    return asObject(function);
+}
+
+void Generator::takePrototypeFromFunction(VM& vm)
+{
+    // A realm has a table for each of its images, and the generator is of the image that its function is of.
+    JSObject* function = functionThatMadeIt();
+    ImageOfCellScope imageOfCell(vm, function);
+    AOT::State& state = uncheckedDowncast<Closure>(function)->state();
+    CoroutineTable& coroutines = *state.coroutines;
+    JSGlobalObject* globalObject = state.instance.globalObject;
+    JSObject* prototype = asObject(coroutines.prototypeOfGeneratorsOf(vm, function));
+    m_takesPrototypeFromFunction = false;
+    if (coroutines.isBornWithoutPrototype(structure()))
+        setStructure(vm, globalObject->structureCache().emptyStructureForPrototypeFromBaseStructure(globalObject, prototype, coroutines.generatorStructure()));
+    else
+        setPrototypeDirect(vm, prototype);
+}
+
+bool RuntimeHooks::setsOverridesGetPrototypeItself(const ClassInfo* classInfo)
+{
+    return classInfo == Generator::info();
+}
+
+bool isStructureOfGeneratorsWithoutPrototype(const Structure* structure)
+{
+    if (structure->classInfoForCells() != Generator::info())
+        return false;
+    for (Instance* instance = structure->realm()->aotInstance(); instance; instance = instance->above) {
+        if (static_cast<uint32_t>(instance->coroutines.headerOfGeneratorsWithoutPrototype) == structure->id().bits())
+            return true;
+    }
+    return false;
+}
+
 bool Generator::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrowIfCantSet)
 {
     ImageOfCellScope imageOfCell(globalObject->vm(), object);
+    auto* generator = uncheckedDowncast<Generator>(object);
+    Structure* structureBefore = object->structure();
     bool isSet = Base::setPrototype(object, globalObject, prototype, shouldThrowIfCantSet);
-    uncheckedDowncast<Generator>(object)->m_hasOtherPrototype = !object->structure()->storedPrototype().isObject();
+    // Setting what it has already changes nothing.
+    if (object->structure() != structureBefore)
+        generator->m_takesPrototypeFromFunction = false;
+    generator->m_hasOtherPrototype = !object->structure()->storedPrototype().isObject();
     return isSet;
 }
 
@@ -433,7 +577,8 @@ template<typename Visitor>
 void Generator::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     Base::visitChildren(cell, visitor);
-    visitor.appendUnbarriered(uncheckedDowncast<Generator>(cell)->m_savedFrame);
+    auto* generator = uncheckedDowncast<Generator>(cell);
+    visitor.appendUnbarriered(generator->m_savedFrame);
 }
 
 DEFINE_VISIT_CHILDREN(Generator);

@@ -14,6 +14,7 @@
 #include "AOTCellFormat.h"
 #include "AOTCheckedFrameCells.h"
 #include "AOTClosureTestEmitter.h"
+#include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
 #include "AOTFunctionAnalyses.h"
@@ -117,6 +118,38 @@ void RuntimeValidationEmitter::checkHasType(ValueID id, Operand operand, const T
     if (!mustBeThere && !needsTest)
         return;
 
+    bool answerNeverChanges = std::ranges::all_of(plan.cellTests, [](const CellTest& test) {
+        switch (test.kind) {
+        case CellTestKind::IsObject:
+        case CellTestKind::IsCallable:
+        case CellTestKind::CellTypeIs:
+        case CellTestKind::InheritsClassInfo:
+        case CellTestKind::IsBuiltinCell:
+        case CellTestKind::IsClosureOf:
+        case CellTestKind::IsSymbol:
+        case CellTestKind::IsNamespaceOf:
+            return true;
+        case CellTestKind::ShapeIn:
+        case CellTestKind::IsPristine:
+        case CellTestKind::SharingModeIs:
+        case CellTestKind::CarriesBrandOfClass:
+            return false;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    });
+    if (m_blockOfAssumedType && answerNeverChanges) {
+        uint64_t test = static_cast<uint64_t>(analyses().identityOf(tested).index()) << 33 | static_cast<uint64_t>(testedType.index()) << 1 | mustBeThere;
+        Vector<BlockID, 1>& blocks = m_blocksOfLastingTypeTests.ensure(test, [] {
+            return Vector<BlockID, 1>();
+        }).iterator->value;
+        bool isPassedAbove = blocks.containsIf([&](BlockID earlier) {
+            return earlier == m_blockOfAssumedType || (!m_function.at(earlier).handler && analyses().dominators().dominates(earlier, m_blockOfAssumedType));
+        });
+        if (isPassedAbove)
+            return;
+        blocks.append(m_blockOfAssumedType);
+    }
+
     // A result is tested where it is made, where flow says something about it and at each use. Nothing has written to the heap since the value passed the same test, and the test of a union takes dozens of blocks.
     if (!generator().checksKeptRegisters()) {
         PassedTypeTest test { tested, testedType, mustBeThere };
@@ -142,9 +175,23 @@ void RuntimeValidationEmitter::checkIsSpecified(ValueID id)
     if (!hasRegister(representationOf(id)) || isDeferredClosure(m_function, id))
         return;
     Operand operand = get(id);
-    if (!mayHoldPointer(operand) || typeOf(id).primitives & Primitive::Absent)
+    if (!mayHoldPointer(operand)) {
+        checkNumberIsSpecified(id);
+        return;
+    }
+    if (typeOf(id).primitives & Primitive::Absent)
         return;
     failUnless(Condition(m_out.notZero64(operand.value)), ValidationFailureKind::UnspecifiedValueInspected, { }, id);
+}
+
+// Every pattern of bits is a number, so what stands where no number was specified is a mark (ConstantEmitter::markOfUnspecifiedValue()).
+void RuntimeValidationEmitter::checkNumberIsSpecified(ValueID id)
+{
+    Operand operand = get(id);
+    if (operand.representation == Representation::Double)
+        failUnless(Condition(m_out.notEqual(m_out.bitCast(operand.value, B3::Int64), m_out.constInt64(ConstantEmitter::bitsOfUnspecifiedDouble))), ValidationFailureKind::UnspecifiedValueInspected, { }, id);
+    else if (operand.representation == Representation::Int32 && !typeOf(id).integers.contains(ConstantEmitter::unspecifiedInt32))
+        failUnless(Condition(m_out.notEqual(operand.value, m_out.constInt32(ConstantEmitter::unspecifiedInt32))), ValidationFailureKind::UnspecifiedValueInspected, { }, id);
 }
 
 bool RuntimeValidationEmitter::hasTestableBits(ValueID id)
@@ -166,7 +213,9 @@ void RuntimeValidationEmitter::generateValidateType(const ValueContext& value)
     }
     if (!hasTestableBits(source) || type.opaque || type.environment)
         return;
+    m_blockOfAssumedType = generator().checksProofs() ? value.block() : BlockID();
     checkHasType(value.id(), get(source), value->validatedType(), ValidationFailureKind::AssumedType, source);
+    m_blockOfAssumedType = { };
     // The operands of this operation were validated in front of it.
     if (value->validatedType() != m_function.at(source).type || !m_checkedClassProofs.contains(source))
         checkClassProofs(value.id(), get(source), type);

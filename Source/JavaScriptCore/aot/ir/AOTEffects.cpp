@@ -148,7 +148,7 @@ const Effects* findDeclaredEffectsOfEveryValue(Opcode opcode)
 
 EffectsOnEdges effectsOf(const EffectContext& context, const Function& function, const Value& value)
 {
-    return resolveEffects(context, describeEffects(context.program, function, value, &context.summaries));
+    return resolveEffects(context, describeEffects(context.program, function, value, &context.summaries, context.untestedStorage));
 }
 
 EffectsOnEdges effectsOf(const EffectContext& context, const Function& function, const Terminator& terminator)

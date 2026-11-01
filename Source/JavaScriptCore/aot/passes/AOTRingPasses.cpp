@@ -366,11 +366,23 @@ bool isRuledOutByDefinition(const Program& program, const Function& function, Va
     return !mayContainNumbers(program, program.typeOf(function, definition.arrayOperand()));
 }
 
+// `f.bind(..)` that the engine answers: a function, and no closure of a function of the program, which only the program makes.
+static bool isMadeByBuiltin(const Program& program, const Function& function, ValueID id)
+{
+    const Value& made = function.at(sameObjectThroughCasts(function, id).valueInFrontOfFacts());
+    if (made.opcode != Opcode::CallBuiltin || made.builtinCallForm() != BuiltinCallForm::Whole)
+        return false;
+    BuiltinTypeID result = program.builtins().at(made.overload()).result.type;
+    return result && program.builtins().at(result).freshness == BuiltinFreshness::Yes;
+}
+
 KnownBoolean evaluateTestByTypes(const Program& program, const Function& function, const Value& test)
 {
     auto typeOf = [&](ValueID id) -> const Type& { return program.typeOf(function, id); };
     switch (test.opcode) {
     case Opcode::TypeTest:
+        if (program.at(test.testedType()).singleFunction() && isMadeByBuiltin(program, function, test.valueOperand()))
+            return KnownBoolean::False;
         return evaluateTypeTest(program, typeOf(test.valueOperand()), program.at(test.testedType()));
     case Opcode::StrictEq:
         if (!mayBeStrictlyEqual(program, typeOf(test.leftOperand()), typeOf(test.rightOperand())))
@@ -385,6 +397,8 @@ KnownBoolean evaluateTestByTypes(const Program& program, const Function& functio
     case Opcode::ToBoolean:
         return truthinessOf(program, typeOf(test.valueOperand()));
     case Opcode::IsClosureOf:
+        if (isMadeByBuiltin(program, function, test.valueOperand()))
+            return KnownBoolean::False;
         return evaluateIsClosureOf(program, typeOf(test.valueOperand()), test.function());
     default:
         return KnownBoolean::Unknown;
@@ -2298,8 +2312,11 @@ struct TrivialParameterRemover {
             for (BlockID block : cfg.reversePostOrder()) {
                 for (ValueID id : function.at(block).values) {
                     const Value& value = function.at(id);
-                    if (provesOf(value.opcode) == Proof::InBounds && value.positionOperand())
-                        positionsFoundInBounds->quickSet(value.positionOperand().index());
+                    bool leansOnTest = reliesOf(value.opcode).contains(Proof::InBounds) && OperandPosition::position(value.opcode) && OperandPosition::guard(value.opcode) && value.guardOperand();
+                    if (provesOf(value.opcode) != Proof::InBounds && !leansOnTest)
+                        continue;
+                    for (ValueID position = value.positionOperand(); position; position = sameValueOperandOf(function.at(position)))
+                        positionsFoundInBounds->quickSet(position.index());
                 }
             }
         }
@@ -2629,6 +2646,7 @@ struct ControlFlowSimplifier {
     uint32_t lastStamp { 0 };
     std::optional<BitVector> blocksLeadingToEdgesBack { };
     size_t numberOfChanges { 0 };
+    Vector<ValueID, 8> valuesTestedForNothing { };
     bool onlyJoinedBlocks { !analyses.cfg().hasHandlers() };
     bool replacedParameterByKnownValue { false };
     bool mayFindMoreAtOnce { false };
@@ -2778,10 +2796,70 @@ struct ControlFlowSimplifier {
             std::swap(negated.taken(), negated.notTaken());
             changed = true;
         }
-        if (!terminator.taken().proofs.isEmpty() || terminator.taken() != terminator.notTaken())
+        if (!terminator.taken().proofs.isEmpty())
             return changed;
+        if (terminator.taken() != terminator.notTaken()) {
+            std::optional<Target> meeting = findWhereBothWaysMeet(terminator);
+            if (!meeting)
+                return changed;
+            // Where both ways come to runs as often as the test, and so does what it always goes on to. It may have been the failing side of this test and of others.
+            Expected<BlockFrequency> frequencyOfTest = function.at(block).frequency;
+            for (BlockID reached = meeting->block; isRarerThan(function.at(reached).frequency, frequencyOfTest).predicted(); reached = function.at(reached).terminator.next().block) {
+                function.edit(reached, BlockEdit::Rest).frequency = frequencyOfTest;
+                if (function.at(reached).terminator.kind != TerminatorKind::Jump)
+                    break;
+            }
+            valuesTestedForNothing.append(terminator.conditionOperand());
+            builder.redirectEdge(Edge { block, 0 }, meeting->block, WTF::move(meeting->arguments));
+        }
         decideTerminator(builder, block, 0);
         return true;
+    }
+
+    // Where the edge leads through blocks that hold nothing and only hand on what they are given: an entry for each block that it comes to.
+    Vector<Target, 4> wayThroughEmptyBlocks(const Target& first) const
+    {
+        constexpr size_t mostBlocksPassed = 3;
+        Vector<Target, 4> way { first };
+        while (way.size() <= mostBlocksPassed) {
+            const Target& arrival = way.last();
+            const Block& block = function.at(arrival.block);
+            if (!arrival.proofs.isEmpty() || !block.values.isEmpty() || block.isHandlerBlock() || block.terminator.kind != TerminatorKind::Jump || !block.terminator.next().proofs.isEmpty())
+                break;
+            const Target& next = block.terminator.next();
+            Target handedOn;
+            handedOn.block = next.block;
+            handedOn.arguments.reserveInitialCapacity(next.arguments.size());
+            for (ValueID argument : next.arguments) {
+                size_t index = block.parameters.find(argument);
+                handedOn.arguments.append(index == notFound ? argument : arrival.arguments[index]);
+            }
+            way.append(WTF::move(handedOn));
+        }
+        return way;
+    }
+
+    // Both ways come to one block with the same arguments and do nothing before: the test decides nothing. It is the first block that both come to: a block that only one of them passes does not
+    // dominate it, so nothing behind it names the parameters of such a block. What both pass with other arguments does dominate what follows.
+    std::optional<Target> findWhereBothWaysMeet(const Terminator& branch) const
+    {
+        if (!branch.notTaken().proofs.isEmpty())
+            return std::nullopt;
+        // A test of a value may yet come to prove something of the value. A test that asks about no value has nothing but its two ways.
+        if (function.at(branch.conditionOperand()).numberOfNamedOperands())
+            return std::nullopt;
+        Vector<Target, 4> other = wayThroughEmptyBlocks(branch.notTaken());
+        for (Target& arrival : wayThroughEmptyBlocks(branch.taken())) {
+            size_t index = other.findIf([&](const Target& onOtherWay) {
+                return onOtherWay.block == arrival.block;
+            });
+            if (index == notFound)
+                continue;
+            if (other[index] != arrival)
+                return std::nullopt;
+            return WTF::move(arrival);
+        }
+        return std::nullopt;
     }
 
     static bool mayStrictlyEqual(const Type& subject, int64_t integer)
@@ -3122,6 +3200,13 @@ struct ControlFlowSimplifier {
         // A test of an element also asks whether the element is there. What it finds makes the read itself cheaper, whatever the arms do with the value.
         if (const Value& test = function.at(branch.conditionOperand()); test.opcode == Opcode::TypeTest && function.at(sameObjectThroughCasts(function, test.valueOperand())).opcode == Opcode::GetArrayElement)
             return false;
+        // What reads through the cache of a site teaches the site: the question that LoopVersioner asks ahead of a loop speaks for all its turns, whatever becomes of its answer.
+        bool teachesSite = false;
+        function.at(branch.conditionOperand()).forEachOperand([&](ValueID operand, uint32_t) {
+            teachesSite |= !!siteCachesOf(function.at(operand).opcode);
+        });
+        if (teachesSite)
+            return false;
         Edge takenEdge { from, 0 };
         Edge notTakenEdge { from, 1 };
         if (!canFollowWithoutTest(function, takenEdge) || !canFollowWithoutTest(function, notTakenEdge) || argumentsWithoutTest(function, takenEdge) != argumentsWithoutTest(function, notTakenEdge))
@@ -3155,8 +3240,8 @@ struct ControlFlowSimplifier {
                 return secondOperations[index] == inSecond;
             return inFirst == inSecond || (isFactOf(first, inFirst) && isFactOf(second, inSecond));
         };
-        auto haveSameOperands = [&](const auto& inFirst, const auto& inSecond) {
-            if (inFirst.origin() != inSecond.origin() || !inFirst.hasSamePayloadAs(inSecond) || inFirst.numberOfNamedOperands() != inSecond.numberOfNamedOperands() || !std::ranges::equal(inFirst.operands(), inSecond.operands(), isSameValue))
+        auto haveSameOperands = [&](const auto& inFirst, const auto& inSecond, bool positionIsSeen = true) {
+            if ((positionIsSeen && inFirst.origin() != inSecond.origin()) || !inFirst.hasSamePayloadAs(inSecond) || inFirst.numberOfNamedOperands() != inSecond.numberOfNamedOperands() || !std::ranges::equal(inFirst.operands(), inSecond.operands(), isSameValue))
                 return false;
             std::span<const ValueID> operands = inFirst.operands();
             for (uint32_t index = 0; index < operands.size(); ++index) {
@@ -3169,9 +3254,11 @@ struct ControlFlowSimplifier {
         bool haveSameOperations = std::ranges::equal(firstOperations, secondOperations, [&](ValueID inFirst, ValueID inSecond) {
             const Value& a = function.at(inFirst);
             const Value& b = function.at(inSecond);
-            return a.opcode == b.opcode && a.type == b.type && a.expected().predicted() == b.expected().predicted() && haveSameOperands(a, b);
+            // Nobody learns where an operation stands that does nothing but compute: the arms may be copies of one text made for two callers.
+            return a.opcode == b.opcode && a.type == b.type && a.expected().predicted() == b.expected().predicted() && haveSameOperands(a, b, !analyses.effectsOf(inFirst).onAnyEdge().isPure());
         });
-        if (!haveSameOperations || !haveSameOperands(first.terminator, second.terminator))
+        // Two arms that hold nothing are left to collapseTestsThatDecideNothing(), which also erases what computed the test.
+        if (!haveSameOperations || !haveSameOperands(first.terminator, second.terminator, first.terminator.kind != TerminatorKind::Jump || firstOperations.isEmpty()))
             return false;
         return std::ranges::equal(first.terminator.targets, second.terminator.targets, [&](const Target& a, const Target& b) {
             if (a.block != b.block || a.proofs != b.proofs || !std::ranges::equal(a.arguments, b.arguments, isSameValue))
@@ -3240,7 +3327,13 @@ struct ControlFlowSimplifier {
     void collapseTestsThatDecideNothing()
     {
         Vector<BlockID, 8> sources = forwardEmptyBlocks();
+        // A test that went in the first walk has left what computed it, and a block that holds only that is as good as empty.
+        if (!valuesTestedForNothing.isEmpty()) {
+            sources.appendVector(eraseUnusedValues(std::exchange(valuesTestedForNothing, { })));
+            sources.appendVector(forwardEmptyBlocks());
+        }
         while (!sources.isEmpty()) {
+            valuesTestedForNothing.shrink(0);
             Vector<ValueID, 8> testedValues;
             size_t numberOfChangesBefore = numberOfChanges;
             for (BlockID block : sources) {

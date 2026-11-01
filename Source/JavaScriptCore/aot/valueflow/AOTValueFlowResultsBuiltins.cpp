@@ -1231,6 +1231,9 @@ static void collectWhatTestsReplace(const ValueFlowResultInputs& inputs, ValueFl
                 note(maker, receivers, universe.keyOf(key), found);
         });
     };
+    auto isOfProduct = [&](const Function& function) {
+        return function.module && program.at(function.module).flags.contains(ModuleFlags::FindsBuiltinsReadOnly);
+    };
     // A receiver that may be anything names no holder.
     auto mayBeHolder = [&](ValueSetID receivers) {
         return !ValueSets::isComplement(receivers) && sets.meet(receivers, holders);
@@ -1238,8 +1241,8 @@ static void collectWhatTestsReplace(const ValueFlowResultInputs& inputs, ValueFl
 
     ValueSetMakers makers(inputs);
     Vector<WriteByTests> writes = collectWithMakers<WriteByTests>(inputs, makers, program.functions.size(), [&](unsigned function, ValueSetMaker& maker, Vector<WriteByTests>& found) {
-        // Bun's own code replaces nothing for a test.
-        if (!inputs.isReached(FunctionID(function)) || isLibraryCode(program, program.functions[function]))
+        // Bun's own code replaces nothing for a test. Neither does a file that an executable holds too: the write throws there, and here.
+        if (!inputs.isReached(FunctionID(function)) || isLibraryCode(program, program.functions[function]) || isOfProduct(program.functions[function]))
             return;
         for (const ValueFlowStatement& statement : bodies.statementsOf(function)) {
             if (statement.kind != ValueFlowStatementKind::Operation || !statement.site || !operationsWritingProperties.contains(statement.opcode))
@@ -1262,7 +1265,7 @@ static void collectWhatTestsReplace(const ValueFlowResultInputs& inputs, ValueFl
         return std::ranges::any_of(overload.flow.propertyActions, writesUnderKeyOfOperand);
     });
     forEachBuiltinApplication(inputs, heap, writers, holders, [&](const ValueFlowBuiltinApplication& application) {
-        if (!application.isCalleeListed || (application.function && isLibraryCode(program, program.at(application.function))))
+        if (!application.isCalleeListed || (application.function && (isLibraryCode(program, program.at(application.function)) || isOfProduct(program.at(application.function)))))
             return;
         for (const BuiltinOverload& overload : builtins.overloadsOf(application.builtin)) {
             if (overload.mode != application.mode())

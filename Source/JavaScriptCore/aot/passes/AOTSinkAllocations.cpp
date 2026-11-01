@@ -44,6 +44,7 @@ AllocationSinking::AllocationSinking(FunctionAnalyses& analyses, const SinkingPo
     , m_objectContext { analyses.program(), analyses.function(), analyses.context().flow, policy.types, &m_constantsBeforeRewriting }
     , m_candidateOfValue(analyses.function().values.size())
     , m_checksShortcuts(analyses.context().build.options().verifiesAfterEveryPass)
+    , m_checksThatModesAgree(m_checksShortcuts || analyses.context().build.validates())
     , m_maxWork(limit(LimitID::MaxSinkingWork))
 {
 }
@@ -737,10 +738,8 @@ static PassOutcome sinkAllocations(FunctionPassContext& context, SinkingRun run)
     }
     PassOutcome lent = lendCopiesOfEnvironmentsToRareCalls(context);
     BlocksThatMayGetTests blocksThatMayGetTests { context.inputs.heat };
-    SinkingPolicy policy { .leavesWhenNoAllocationPays = true, .followsUndefinedAndNullInFields = true, .blocksThatMayGetTests = &blocksThatMayGetTests, .types = &context.types };
+    SinkingPolicy policy { .leavesWhenNoAllocationPays = true, .followsUndefinedAndNullInFields = true, .blocksThatMayGetTests = &blocksThatMayGetTests, .tracesOfFruitlessAllocations = &context.tracesOfAllocationsNotWorthSinking, .types = &context.types };
     policy.recordsLosses = run == SinkingRun::OfThePass;
-    if (!context.build.options().verifiesAfterEveryPass)
-        policy.tracesOfFruitlessAllocations = &context.tracesOfAllocationsNotWorthSinking;
     PassOutcome outcome = lent;
     std::optional<SinkingFindings> findingsBeforeSplitting;
     bool hasGivenUp = false;

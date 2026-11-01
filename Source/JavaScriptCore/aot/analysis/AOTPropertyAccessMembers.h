@@ -28,6 +28,8 @@ struct MemberAnswer {
     KnowledgeLevel level { KnowledgeLevel::Unknown };
     LayoutID holder;
     uint32_t field { 0 };
+    // The slot of the field holds a getter, a setter or both.
+    bool isAccessorInSlot { false };
     FunctionID method;
     FunctionID getter;
     FunctionID setter;

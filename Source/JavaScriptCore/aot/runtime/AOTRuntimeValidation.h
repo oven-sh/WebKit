@@ -10,11 +10,14 @@
 #include "AOTRecordTypes.h"
 #include "CollectionScope.h"
 #include "JSCJSValue.h"
+#include "MarkedBlock.h"
 #include "VM.h"
 #include <algorithm>
 #include <atomic>
 #include <optional>
 #include <tuple>
+#include <wtf/BitSet.h>
+#include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT {
 
@@ -124,6 +127,17 @@ OperationPermissions permissionsOf(Entry);
 
 using CollectionVersions = std::tuple<HeapVersion, HeapVersion, HeapVersion>;
 CollectionVersions collectionVersionsOf(VM&);
+
+struct RecheckedCells {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(RecheckedCells);
+    struct OfBlock {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(OfBlock);
+        WTF::BitSet<MarkedBlock::atomsPerBlock> cells;
+        uint64_t lastCollection { 0 };
+    };
+    UncheckedKeyHashMap<MarkedBlock*, std::unique_ptr<OfBlock>> blocks;
+    uint64_t numberOfCollections { 0 };
+};
 
 struct CollectionValidator {
     void didFinishCollection(VM&, CollectionScope);

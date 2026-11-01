@@ -178,6 +178,46 @@ public:
         return m_exactAccess->kind == MemoryAccess::Kind::NotExact;
     }
 
+    std::optional<BitVector> allocationsWhoseProofsEnd(WrittenLocations& written)
+    {
+        const EscapeAnalysis& escape = m_analyses.escape();
+        if (written.extent != WriteExtent::AboutSomeObjects || written.isLeftByPropertiesBesideFields || escape.tracksOnlyEntryParameters() || !mayWriteBeyondOperands(written))
+            return std::nullopt;
+        if (!m_allocationsNotConfined) {
+            if (!m_history)
+                m_history.emplace(m_analyses.escapeHistory(), m_point);
+            if (m_history->isUnknown())
+                return std::nullopt;
+            m_allocationsNotConfined.emplace();
+            m_history->addObjectsThatMayHaveOccurredTo(*m_allocationsNotConfined);
+            m_allocationsNotConfined->merge(objectsInsideOperands());
+            for (size_t object : operandObjects()) {
+                if (escapesAtWriter(ObjectID(object)))
+                    m_allocationsNotConfined->set(object);
+            }
+        }
+        BitVector allocations = *m_allocationsNotConfined;
+        for (ValueID operand : operandsWrittenThrough(written))
+            escape.pointsTo(operand).objects.addTo(allocations);
+        return allocations;
+    }
+
+    std::optional<Vector<ObjectID, 4>> allocationsWithinReach()
+    {
+        if (!m_beyondOperands)
+            m_beyondOperands = m_writer ? effectsBeyondOperands(m_analyses.effectContext(), m_function, m_function.at(m_writer), m_effects) : m_effects;
+        if (!m_beyondOperands->onAnyEdge().writes.restrictedTo(perObjectHeaps).isEmpty())
+            return std::nullopt;
+        Vector<ObjectID, 4> objects;
+        for (const WrittenOperand& operand : writtenOperands()) {
+            std::optional<Vector<ObjectID, 4>> objectsOfOperand = GuardWriter::allocationsOf(m_analyses, operand.operand);
+            if (!objectsOfOperand)
+                return std::nullopt;
+            objects.appendVector(*objectsOfOperand);
+        }
+        return objects;
+    }
+
     bool reachesObjects(WrittenLocations& written)
     {
         return mayWriteBeyondOperands(written) || !operandsWrittenThrough(written).empty();
@@ -410,6 +450,7 @@ private:
     std::optional<Vector<WrittenOperand, 4>> m_writtenOperands;
     std::optional<BitVector> m_operandObjects;
     std::optional<BitVector> m_objectsInsideOperands;
+    std::optional<BitVector> m_allocationsNotConfined;
     std::optional<UseEffectHistory::AtPoint> m_history;
     ValueID m_lastSubject;
     bool m_isLastSubjectConfined { false };
@@ -473,6 +514,38 @@ auto GuardWriter::writtenOf(const DependedLocations& depended) -> WrittenDepende
         return { written.extent, 0 };
     m_query->written.append(WTF::move(written));
     return { EndedProofs::AboutSomeObjects, static_cast<uint32_t>(m_query->written.size() - 1) };
+}
+
+std::optional<BitVector> GuardWriter::allocationsWhoseProofsEnd(const WrittenDependencies& dependencies)
+{
+    if (!m_query || dependencies.endedProofs != EndedProofs::AboutSomeObjects)
+        return std::nullopt;
+    return m_query->query.allocationsWhoseProofsEnd(m_query->written[dependencies.index]);
+}
+
+std::optional<Vector<ObjectID, 4>> GuardWriter::allocationsWithinReach()
+{
+    if (!m_query)
+        return std::nullopt;
+    return m_query->query.allocationsWithinReach();
+}
+
+// Two values with one root are one object whatever their sets say, so the root's members are among the answer, and there is at least one.
+std::optional<Vector<ObjectID, 4>> GuardWriter::allocationsOf(FunctionAnalyses& analyses, ValueID value)
+{
+    const EscapeAnalysis& escape = analyses.escape();
+    std::optional<ObjectSet> own = escape.allocationsIfNothingElse(value);
+    std::optional<ObjectSet> ofRoot = escape.allocationsIfNothingElse(analyses.sameObjectThroughCasts(value).valueInFrontOfFacts());
+    if (!own || !ofRoot || ofRoot->isEmpty())
+        return std::nullopt;
+    Vector<ObjectID, 4> objects;
+    for (ObjectID object : *ofRoot)
+        objects.append(object);
+    for (ObjectID object : *own) {
+        if (!ofRoot->contains(object))
+            objects.append(object);
+    }
+    return objects;
 }
 
 bool GuardWriter::mayEndProofAbout(ValueID subject, bool subjectComesFromOutside, const WrittenDependencies& dependencies)

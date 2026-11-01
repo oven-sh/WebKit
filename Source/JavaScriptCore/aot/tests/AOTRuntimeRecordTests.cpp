@@ -612,9 +612,15 @@ static void testInstanceLayoutOffsets()
         ptrdiff_t pollPage = InstanceLayout::offsetOfLoopPollPage();
         ptrdiff_t prefix = -static_cast<ptrdiff_t>(sizeof(InstancePrefix));
         AOT_TEST_CHECK(-static_cast<ptrdiff_t>(InstanceLayout::bytesReservedBelowInstance(sizes)) <= cards);
-        AOT_TEST_CHECK(cards < statics && statics < pollPage && pollPage < prefix && prefix < 0);
+        AOT_TEST_CHECK(cards < statics && statics < pollPage && prefix < 0);
         AOT_TEST_CHECK(statics + static_cast<ptrdiff_t>(sizes.sizeOfStatics) <= pollPage);
-        AOT_TEST_CHECK(pollPage + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForLoopPollPage) <= prefix);
+        // Below the prefix, or between the instance and the key order steps, where one load of ARM64 reaches it.
+        ptrdiff_t endOfPollPage = pollPage + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForLoopPollPage);
+        if (pollPage < 0)
+            AOT_TEST_CHECK(endOfPollPage <= prefix);
+        else
+            AOT_TEST_CHECK(static_cast<ptrdiff_t>(sizeof(Instance)) <= pollPage && endOfPollPage <= static_cast<ptrdiff_t>(InstanceLayout::offsetOfKeyOrderSteps) && endOfPollPage <= 32 * static_cast<ptrdiff_t>(KB));
+        AOT_TEST_CHECK(!isARM64() || !hasFaultingLoopPolls || pollPage > 0);
         AOT_TEST_CHECK(cards + static_cast<ptrdiff_t>((static_cast<size_t>(sizes.sizeOfStatics) + (1 << InstanceLayout::cardShift) - 1) >> InstanceLayout::cardShift) <= statics);
 
         size_t stringCells = InstanceLayout::offsetOfStringCell(0);

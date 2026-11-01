@@ -416,6 +416,8 @@ struct ValueFlowCallGroup {
 
     ValueFlowNodeID argument(unsigned index) const { return ValueFlowNodeID(firstArgument.index() + index); }
     ValueFlowNodeID argumentAt(unsigned position) const { return position < numberOfGroupedArguments ? argument(position) : laterArguments; }
+    // A call has no new.target. In a group of calls by native code that node holds undefined once a caller does not say which arguments it leaves out: then any parameter may be undefined.
+    ValueFlowNodeID anyArgumentLeftOut() const { return newTarget; }
 };
 
 } } } // namespace JSC::AOT::Typed

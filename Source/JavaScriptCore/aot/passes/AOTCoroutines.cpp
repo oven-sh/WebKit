@@ -2336,13 +2336,36 @@ static void findWordsToClear(HeapFramePlan& plan, const Function& function, Func
                 yield.wordsToClear.append(static_cast<uint32_t>(word));
         }
     }
-    // A word whose value lives on may be left out of the stores of the next yield, which finds it as it was.
+    // A word whose value lives on may be left out of the stores of the next yield, which finds it as it was. It lives on under every name that removeStoresOfWhatTheWordHolds() takes to hold the word.
+    const UseLists& useLists = analyses.useLists();
     for (unsigned index = 0; index < plan.releases.size(); ++index) {
         ReleaseInFrame& release = plan.releases[index];
         BitVector words(plan.numberOfWords);
-        for (ValueID id : release.live) {
-            if (plan.wordOf[id.index()] != noWord)
+        BitVector isVisited(function.values.size());
+        Vector<ValueID, 16> names;
+        auto visit = [&](ValueID id) {
+            if (!isVisited.quickSet(id.index()))
+                names.append(id);
+        };
+        std::ranges::for_each(release.live, visit);
+        while (!names.isEmpty()) {
+            ValueID id = names.takeLast();
+            if (plan.wordOf[id.index()] != noWord) {
                 words.quickSet(plan.wordOf[id.index()]);
+                continue;
+            }
+            if (isCastWithoutTest(function.at(id).opcode)) {
+                visit(function.at(id).operand(0));
+                continue;
+            }
+            ValueLocation location = useLists.locationOf(id);
+            if (location.placement != ValuePlacement::Parameter)
+                continue;
+            for (Edge edge : cfg.incomingEdges(location.block)) {
+                const Target& target = targetOf(function, edge);
+                if (location.index < target.arguments.size())
+                    visit(target.arguments[location.index]);
+            }
         }
         for (size_t word : wordsFoundAtRelease[index]) {
             if (word != wordOfGenerator && !words.get(word))
@@ -2529,9 +2552,12 @@ static void rewriteBody(const AnalysisContext& context, TaskArenas& arenas, Func
     FunctionAnalyses analyses(context, function);
     IRBuilder builder(analyses.context(), function, arenas.types, &analyses);
     Vector<ValueID, 4> yieldedValues(plan.yields.size(), [&](size_t index) { return function.at(plan.yields[index].yield).valueOperand(); });
+    ValueID callee;
+    if (std::optional<unsigned> index = function.calleeParameterIndex())
+        callee = function.at(entryBlock).parameters[*index];
 
     auto emitLeave = [&](YieldInFrame& yield, unsigned index) {
-        Value allocation = IRBuilder::make(Opcode::NewHeapFrame, { plan.generator });
+        Value allocation = IRBuilder::make(Opcode::NewHeapFrame, { plan.generator, callee });
         allocation.setFunction(plan.resume);
         allocation.setNumberOfWords(plan.numberOfWords);
         ValueID frame = builder.append(WTF::move(allocation));
@@ -2883,7 +2909,8 @@ static void startGeneratorsInCaller(const AnalysisContext& context, TaskArenas& 
         ValueID generator = arguments.last();
         builder.setOrigin(function.at(start.call).origin());
 
-        Value allocation = IRBuilder::make(Opcode::NewHeapFrame, { generator });
+        const Value& maker = function.at(generator);
+        Value allocation = IRBuilder::make(Opcode::NewHeapFrame, { generator, maker.opcode == Opcode::NewGenerator ? maker.calleeOperand() : ValueID() });
         allocation.setFunction(plan.resume);
         allocation.setNumberOfWords(plan.numberOfWords);
         ValueID frame = builder.insertBefore(point, WTF::move(allocation));
@@ -2913,6 +2940,86 @@ static void startGeneratorsInCaller(const AnalysisContext& context, TaskArenas& 
         call.setArgumentsOperands(std::initializer_list<ValueID> { frame, mode, sent });
     }
     builder.applyInsertions();
+}
+
+namespace {
+
+struct BodyThatMakesFrameAtOnce {
+    uint32_t calleeParameter;
+    uint32_t generatorParameter;
+};
+
+} // anonymous namespace
+
+// Entered for a generator that is not running, the body makes the heap frame before anything can be seen to happen, and the frame remembers the function that the body was called with.
+static std::optional<BodyThatMakesFrameAtOnce> findFrameMadeAtOnce(const Program& program, const Function& body)
+{
+    if (!body.hasBody() || body.role != FunctionRole::CoroutineBody || !coroutineOfBody(body).promiseParameter)
+        return std::nullopt;
+    std::optional<unsigned> calleeParameter = body.calleeParameterIndex();
+    const Block& entry = body.at(entryBlock);
+    if (!calleeParameter || entry.terminator.kind != TerminatorKind::Branch)
+        return std::nullopt;
+    ValueID generator = driverOf(body);
+    const Value& test = body.at(entry.terminator.conditionOperand());
+    if (test.opcode != Opcode::IsGeneratorRunning || test.generatorOperand() != generator)
+        return std::nullopt;
+    auto isUnseen = [&](ValueID id) { return EffectTraits(declaredEffectsOf(program, body.at(id))).isRemovableWhenUnused(); };
+    if (!std::ranges::all_of(entry.values, isUnseen))
+        return std::nullopt;
+    for (ValueID id : body.at(entry.terminator.notTaken().block).values) {
+        const Value& value = body.at(id);
+        if (value.opcode == Opcode::NewHeapFrame) {
+            if (value.generatorOperand() != generator || value.calleeOperand() != entry.parameters[*calleeParameter])
+                return std::nullopt;
+            return BodyThatMakesFrameAtOnce { *calleeParameter, *coroutineOfBody(body).promiseParameter };
+        }
+        if (!isUnseen(id))
+            return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+// A generator whose prototype object is still to be made finds its function in a word of its heap frame: Generator::createWithoutPrototype. So whoever makes a generator is told whether it gets
+// its heap frame at once, from him or from the body that he calls: until it has one nobody may ask it what it inherits from, and a body that saves its stack frame never makes one.
+static void markGeneratorsThatGetHeapFrames(ProgramEditor& editor, BuildContext& build)
+{
+    const Program& program = editor.program();
+    Vector<std::optional<BodyThatMakesFrameAtOnce>> bodies(program.functions.size());
+    forEachIndexInParallel(build.parallelLoops(), program.functions.size(), [&](unsigned index) { bodies[index] = findFrameMadeAtOnce(program, program.functions[index]); });
+    auto getsHeapFrame = [&](const Function& function, const Block& block, ValueID generator) {
+        ValueID id = findMakerOfHeapFrameBehind(program, function, block, generator);
+        if (!id || function.at(id).opcode == Opcode::NewHeapFrame)
+            return !!id;
+        const Value& call = function.at(id);
+        if (!bodies[call.function().index()])
+            return false;
+        auto [calleeParameter, generatorParameter] = *bodies[call.function().index()];
+        auto arguments = call.argumentsOperands();
+        return std::max(calleeParameter, generatorParameter) < arguments.size() && arguments[calleeParameter] == function.at(generator).calleeOperand() && arguments[generatorParameter] == generator;
+    };
+    auto forEachMarked = [&](const Function& function, NOESCAPE const Invocable<void(ValueID)> auto& visit) {
+        if (!function.hasBody())
+            return;
+        for (const Block& block : function.blocks) {
+            for (ValueID id : block.values) {
+                if (function.at(id).opcode == Opcode::NewGenerator && function.at(id).calleeOperand() && getsHeapFrame(function, block, id))
+                    visit(id);
+            }
+        }
+    };
+    Vector<uint32_t> makers = findIndicesInParallel(build.parallelLoops(), program.functions.size(), [&](unsigned index) {
+        bool hasOne = false;
+        forEachMarked(program.functions[index], [&](ValueID) { hasOne = true; });
+        return hasOne;
+    });
+    Vector<FunctionID> ids = makers.map([](uint32_t index) { return FunctionID(index); });
+    editFunctionsInParallel(editor, build, ids.span(), [&](unsigned, FunctionID, Function& function, TaskArenas&) {
+        Vector<ValueID, 2> marked;
+        forEachMarked(function, [&](ValueID id) { marked.append(id); });
+        for (ValueID id : marked)
+            function.edit(id, ValueEdit::Definition).setGetsHeapFrame(true);
+    });
 }
 
 void moveGeneratorFramesToHeap(ProgramEditor& editor, const OptimizationInputs& inputs, const PassRunner& runner)
@@ -2964,8 +3071,10 @@ void moveGeneratorFramesToHeap(ProgramEditor& editor, const OptimizationInputs& 
         planOfBody[plans[index].body.index()] = index;
         hasBodyStartedByCallers = true;
     }
-    if (!hasBodyStartedByCallers)
+    if (!hasBodyStartedByCallers) {
+        markGeneratorsThatGetHeapFrames(editor, build);
         return;
+    }
 
     auto planOfCall = [&](const Value& value) {
         return value.opcode == Opcode::CallDirect ? planOfBody[value.function().index()] : noPlan;
@@ -3019,6 +3128,7 @@ void moveGeneratorFramesToHeap(ProgramEditor& editor, const OptimizationInputs& 
         if (plans[index].isStartedByCallers && !hasCallThatStays.quickGet(index))
             editor.removeBody(plans[index].body);
     }
+    markGeneratorsThatGetHeapFrames(editor, build);
 }
 
 // KeepValuesInHeapWords.

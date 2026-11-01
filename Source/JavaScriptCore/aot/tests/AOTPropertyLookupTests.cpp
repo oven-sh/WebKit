@@ -604,7 +604,13 @@ static void testLeafOperationsAnswerByName(LoadedProgram& program)
     JSString* index = jsString(vm, String("0"_s));
     AOT_TEST_CHECK(!get(index) && has(index) == LeafPresence::TakeSlowPath);
     JSString* keyOfNoProperty = jsNontrivialString(vm, makeString("a name that "_s, "no object has"_s));
-    AOT_TEST_CHECK(get(keyOfNoProperty).isUndefined() && has(keyOfNoProperty) == LeafPresence::Absent && !atomOfKey(keyOfNoProperty));
+    AOT_TEST_CHECK(get(keyOfNoProperty).isUndefined() && !atomOfKey(keyOfNoProperty));
+    // A key that comes again gets its atom, and is looked up like any name from then on.
+    AOT_TEST_CHECK(has(keyOfNoProperty) == LeafPresence::Absent && atomOfKey(keyOfNoProperty));
+    AOT_TEST_CHECK(get(keyOfNoProperty).isUndefined() && has(keyOfNoProperty) == LeafPresence::Absent);
+    JSString* ropeOfNoProperty = jsString(program.realm(), jsNontrivialString(vm, "another name that "_s), jsNontrivialString(vm, "no object has"_s));
+    AOT_TEST_CHECK(ropeOfNoProperty->isRope() && has(ropeOfNoProperty) == LeafPresence::Absent && ropeOfNoProperty->isRope());
+    AOT_TEST_CHECK(get(ropeOfNoProperty).isUndefined() && atomOfKey(ropeOfNoProperty));
 
     auto put = [&](JSCell* key, JSValue value) {
         return static_cast<LeafAnswer>(operationAOTPutByValGeneric(instance, object, key, JSValue::encode(value)));
@@ -1490,9 +1496,6 @@ static void testAbsenceFilterNamesWhatStopsStores(LoadedProgram& program)
     JSGlobalObject* realm = program.realm();
     PropertyCaches& caches = *program.state().propertyCaches;
     VMPropertyCaches& tables = caches.tables();
-    Identifier label = Identifier::fromString(vm, "label"_s);
-    std::optional<uint32_t> number = caches.nameOf(label.impl()).identifierNumber;
-    AOT_TEST_CHECK(number);
     auto validFilterOf = [&](JSObject* object) -> const AbsenceFilter* {
         const AbsenceFilter& filter = tables.absenceFilterFor(object->structureID());
         return filter.structureID == object->structureID().bits() && filter.generationForStores == tables.absenceFilterGenerationForStores() ? &filter : nullptr;
@@ -1510,7 +1513,18 @@ static void testAbsenceFilterNamesWhatStopsStores(LoadedProgram& program)
     JSObject* above = constructEmptyObject(realm);
     JSObject* below = makeBelow(above);
     const AbsenceFilter* ofBelow = filterOf(below);
-    AOT_TEST_CHECK(ofBelow && ofBelow->letsStoresPass(*number));
+    AOT_TEST_CHECK(ofBelow);
+
+    // Many names share a bit of a filter, and the number of a name follows from how many names Bun's built-ins have.
+    Identifier label;
+    std::optional<uint32_t> number;
+    for (ASCIILiteral name : { "label"_s, "count"_s, "publish"_s, "input"_s }) {
+        label = Identifier::fromString(vm, name);
+        number = caches.nameOf(label.impl()).identifierNumber;
+        if (number && ofBelow->letsStoresPass(*number))
+            break;
+    }
+    AOT_TEST_CHECK(number && ofBelow->letsStoresPass(*number));
 
     // A data property that can be written stops no store, and the filters for stores outlive its arrival.
     above->putDirect(vm, label, jsNumber(1));
@@ -1616,8 +1630,21 @@ static void testNamesOfNativeCodeAreHashedOnce(LoadedProgram& program)
 template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<propertyLookupTests, programText, body>;
 
+// Flow is kept from saying where the object goes: known to be in hands that nobody knows, it would keep `count`, which no code names, as a value.
+template<const ASCIILiteral& text, LoadedProgramTest body>
+static void runWithUnboxedCount()
+{
+    for (const NativeTest& test : propertyLookupTests()) {
+        if (test.run == &runWithUnboxedCount<text, body>) {
+            runWithLoadedProgram(test.name, text, body, { "disable=flow:HolderMutations"_s });
+            return;
+        }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 template<LoadedProgramTest body>
-static constexpr void (*withProgramAddingProperties)() = runNativeTestWithLoadedProgram<propertyLookupTests, programAddingPropertiesText, body>;
+static constexpr void (*withProgramAddingProperties)() = runWithUnboxedCount<programAddingPropertiesText, body>;
 
 std::span<const NativeTest> propertyLookupTests()
 {
@@ -1650,7 +1677,7 @@ std::span<const NativeTest> propertyLookupTests()
         { "property-lookup/evicted-dependents-are-dropped-when-the-table-has-doubled"_s, withProgram<testEvictedDependentsAreDroppedWhenTheTableHasDoubled> },
         { "property-lookup/named-changes-of-an-object-with-many-dependents"_s, withProgram<testNamedChangesOfAnObjectWithManyDependents> },
         { "property-lookup/nameless-change-drops-every-name"_s, withProgram<testNamelessChangeDropsEveryName> },
-        { "property-lookup/fields-of-compiled-prototype"_s, withProgram<testFieldsOfCompiledPrototype> },
+        { "property-lookup/fields-of-compiled-prototype"_s, runWithUnboxedCount<programText, testFieldsOfCompiledPrototype> },
         { "property-lookup/unboxed-fields-of-compiled-prototype"_s, withProgramAddingProperties<testUnboxedFieldsOfCompiledPrototype> },
         { "property-lookup/reads-below-empty-slots-ask-the-first-object-that-has-one"_s, withProgram<testReadsBelowEmptySlotsAskTheFirstObjectThatHasOne> },
         { "property-lookup/empty-slot-of-receiver-defers-to-unboxed-field-of-compiled-prototype"_s, withProgramAddingProperties<testEmptySlotOfReceiverDefersToUnboxedFieldOfCompiledPrototype> },

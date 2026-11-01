@@ -37,7 +37,7 @@ struct ProvenAccess {
 };
 
 ProvenAccess provenAccessOf(const Program&, const Function&, const Value& access);
-const ProvenAccess& provenAccessOf(const Program&, const Function&, const Value& access, ProvenAccess& storage LIFETIME_BOUND);
+const ProvenAccess& provenAccessOf(const Program&, const Function&, const Value& access, ProvenAccess& storage LIFETIME_BOUND, UntestedStorage = UntestedStorage::MakesReadUnknown);
 ProvenAccess provenLookupUnderAnyKey(const Program&, const Type& receiver);
 ProvenAccess provenReadOf(const Program&, const Type& receiver, BuiltinName);
 ProvenAccess provenStepOf(const Program&, const Type& receiver, Protocol keylessProtocol);

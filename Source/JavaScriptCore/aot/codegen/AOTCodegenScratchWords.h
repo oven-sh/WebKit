@@ -7,6 +7,8 @@
 
 #if ENABLE(AOT)
 
+#include <bit>
+#include <cstddef>
 #include <cstdint>
 
 namespace JSC {
@@ -27,14 +29,25 @@ struct ExpectedCallWords {
 // Where a value that is not of the type its function promises goes, for a caller that was asked before: its landing, or, where it has none, the address that it is returned to anyway.
 // Code does not move, so an entry holds for good.
 struct LandingOfMisfit {
-    static constexpr unsigned numberOfEntriesLog2 = 6;
-    static constexpr unsigned shiftOfAddress = 2;
-    static constexpr unsigned indexOf(const void* returnAddress) { return static_cast<unsigned>(std::bit_cast<uintptr_t>(returnAddress) >> shiftOfAddress) & ((1u << numberOfEntriesLog2) - 1); }
-
     const void* returnAddress;
     const void* landing;
 };
 static_assert(sizeof(LandingOfMisfit) == 16);
+
+// An address has a place, and is listed there or in the first entry behind it that was empty. As many entries as there are places lie behind the places, and the last of them stays empty,
+// so a search ends without turning round. The table grows, so two callers never take an entry from each other.
+struct LandingsOfMisfits {
+    static constexpr unsigned shiftOfAddress = 2;
+    static constexpr size_t leastNumberOfPlaces = 64;
+    size_t numberOfPlaces() const { return (maskOfAddress >> shiftOfAddress) + 1; }
+    LandingOfMisfit* placeOf(const void* returnAddress) const { return entries + ((std::bit_cast<uintptr_t>(returnAddress) & maskOfAddress) >> shiftOfAddress); }
+
+    LandingOfMisfit* entries;
+    uintptr_t maskOfAddress;
+    size_t numberOfEntriesFilled;
+    // The table of a program that has returned no such value.
+    LandingOfMisfit empty;
+};
 
 struct CodegenScratchWords {
     // Not a root: compiled code compares it and never dereferences it.
@@ -44,7 +57,7 @@ struct CodegenScratchWords {
     uint64_t didEnterCompiledCode;
     // Not a root: the stub ReturnMisfit leaves the value here, and the landing takes it before anything else runs.
     uint64_t misfit;
-    LandingOfMisfit landingsOfMisfits[1u << LandingOfMisfit::numberOfEntriesLog2];
+    LandingsOfMisfits landingsOfMisfits;
 };
 
 } } // namespace JSC::AOT

@@ -6,6 +6,9 @@
 #include "config.h"
 #include "AOTCellAllocationEmitter.h"
 
+#include "AOTCheckedFrameCells.h"
+#include "AOTVMState.h"
+
 #if ENABLE(AOT)
 
 #include "AOTAllocationCounts.h"
@@ -290,7 +293,37 @@ CellPointer CellAllocationEmitter::allocateInFrame(const OperationContext& conte
     Wire::SourceLocation location = context.valueID() ? m_function.locationOf(context.valueID()) : noSourceLocation;
     ModuleID module(location.module);
     LineColumn lineColumn = module ? m_program.lineColumnFor(module, location.position) : LineColumn { };
-    return CellPointer(callWithoutSite<Pointer>(RuntimeOperation::MakeCheckedFrameCell, { Pointer(birth), wordOfFrame(), pair(static_cast<uint32_t>(size), m_id.index()), pair(context.valueID().index(), module.index()), pair(lineColumn.line, lineColumn.column) }).value());
+    auto make = [&] {
+        return callWithoutSite<Pointer>(RuntimeOperation::MakeCheckedFrameCell, { Pointer(birth), wordOfFrame(), pair(static_cast<uint32_t>(size), m_id.index()), pair(context.valueID().index(), module.index()), pair(lineColumn.line, lineColumn.column) }).value();
+    };
+    if (generator().inputs().frameMaps.numberOfSuspensions() || m_function.role == FunctionRole::CoroutineBody)
+        return CellPointer(make());
+
+    LBasicBlock hasCounters = newBlock();
+    LBasicBlock staysInFrame = newBlock();
+    LBasicBlock mayBeChecked = newBlock();
+    LBasicBlock continuation = newBlock();
+    const B3::AbstractHeap& heap = m_heaps.entire(AbstractHeap::AllocatorState);
+    LValue checkedCells = m_out.loadPtr(m_out.address(heap, loadImmutablePointer(AOT_INSTANCE_OFFSET(vm)).value(), VM::offsetOfAOTState() + OBJECT_OFFSETOF(VMState, checkedFrameCells)));
+    m_out.branch(m_out.notZero64(checkedCells), normalEdge(hasCounters), rareEdge(mayBeChecked));
+
+    m_out.appendTo(hasCounters);
+    TypedPointer counter = m_out.address(heap, checkedCells, CheckedFrameCells::offsetOfBirthsAt(m_id.index(), context.valueID().index()));
+    LValue births = m_out.load32(counter);
+    LValue isLeftOut = m_out.bitAnd(m_out.aboveOrEqual(births, CheckedFrameCells::numberOfBirthsThatAreAllChecked), m_out.notZero32(m_out.bitAnd(births, CheckedFrameCells::intervalOfCheckedBirths - 1)));
+    m_out.branch(isLeftOut, normalEdge(staysInFrame), rareEdge(mayBeChecked));
+
+    m_out.appendTo(staysInFrame);
+    m_out.store32(m_out.add(births, 1), counter);
+    ValueFromBlock inFrame = m_out.anchor(birth);
+    m_out.jump(continuation);
+
+    m_out.appendTo(mayBeChecked);
+    ValueFromBlock made = m_out.anchor(make());
+    m_out.jump(continuation);
+
+    m_out.appendTo(continuation);
+    return CellPointer(m_out.phi(B3::pointerType(), inFrame, made));
 }
 
 void CellAllocationEmitter::clearCellsMadeFor(const Value& call)
@@ -344,8 +377,15 @@ void CellAllocationEmitter::leaveFrameOfCheckedCells()
     clobber->effects.writes = B3::HeapRange::top();
     clobber->setRunsWithoutFrame(true);
     clobber->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
+    LBasicBlock hasLiveCells = newBlock();
+    LBasicBlock continuation = newBlock();
+    LValue lowestFrame = m_out.loadPtr(m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), loadImmutablePointer(AOT_INSTANCE_OFFSET(vm)).value(), VM::offsetOfAOTState() + OBJECT_OFFSETOF(VMState, lowestFrameOfCheckedCells)));
+    m_out.branch(m_out.below(m_out.sub(lowestFrame, 1), wordOfFrame().value()), rareEdge(hasLiveCells), normalEdge(continuation));
+    m_out.appendTo(hasLiveCells);
     Operand arguments[] { wordOfFrame() };
-    callWithoutSite(RuntimeOperation::LeaveFrameOfCheckedCells, arguments, Representation::Void, { });
+    callWithoutSite(RuntimeOperation::LeaveFrameOfCheckedCells, arguments, Representation::Void, { .isOnRarePath = true });
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
 }
 
 std::pair<CellPointer, Pointer> CellAllocationEmitter::allocateArray(const OperationContext& context, Word32 length, Word32 vectorLength, IndexingType indexingType, LBasicBlock slowPath)

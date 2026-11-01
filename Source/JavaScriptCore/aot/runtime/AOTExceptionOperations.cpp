@@ -302,6 +302,16 @@ static String nameOfFunctionOnTop(VM& vm)
     return writtenFunctionName(FunctionDescription(frames->frame().function).sourceFunction());
 }
 
+// `node:fs`, where the function on top is of a module that a program can import.
+static String importableModuleOnTop(VM& vm)
+{
+    auto frames = CompiledFrameIterator::tryCreateAtTop(vm);
+    if (!frames || frames->isAtEnd())
+        return { };
+    String url = frames->frame().sourceURL();
+    return url.startsWith("node:"_s) || url.startsWith("bun:"_s) ? url : String();
+}
+
 JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKind kind, const Identifier* name)
 {
     switch (kind) {
@@ -357,7 +367,11 @@ JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKi
             return createTypeError(globalObject, makeString('\'', nameOfFunction, "' was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun."_s));
         return createTypeError(globalObject, "This function was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun."_s);
     case Typed::RuntimeErrorKind::FunctionNotCompiled:
-        return createError(globalObject, name && !name->isEmpty() ? functionNotCompiledMessage(name->string()) : functionNotCompiledMessage());
+        if (!name || name->isEmpty())
+            return createError(globalObject, functionNotCompiledMessage());
+        if (String module = importableModuleOnTop(globalObject->vm()); !module.isNull())
+            return createError(globalObject, exportNotCompiledMessage(name->string(), module));
+        return createError(globalObject, functionNotCompiledMessage(name->string()));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

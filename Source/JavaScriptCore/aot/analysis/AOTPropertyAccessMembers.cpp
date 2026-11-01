@@ -726,7 +726,7 @@ MemberAnswer findInstanceMember(const PropertyAccessContext& context, const Memb
         // The image that made the object holds the slot to a type of its own and keeps the marks of its cells: a store goes by name.
         if (storesValue && program.at(query.layout).has(LayoutFlags::IsOfImageBelow))
             return MemberAnswer::unknown(UnprovenCause::Unknown);
-        return { .kind = MemberKind::Field, .level = KnowledgeLevel::Proven, .holder = found->layout, .field = found->field };
+        return { .kind = MemberKind::Field, .level = KnowledgeLevel::Proven, .holder = found->layout, .field = found->field, .isAccessorInSlot = fieldAt(program, *found).form.contains(FieldForm::IsAccessor) };
     }
 
     // What an object of another image has beside its fields, and what stands above it, that image alone can say.

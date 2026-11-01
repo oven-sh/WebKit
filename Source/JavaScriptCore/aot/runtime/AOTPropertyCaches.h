@@ -261,6 +261,9 @@ public:
     bool mayBeNameOfObjectPrototype(uint32_t identifierNumber) const { return m_namesOfObjectPrototypes[identifierNumber / 64] >> identifierNumber % 64 & 1; }
     const AbsenceFilter& absenceFilterFor(StructureID id) const { return m_absenceFilters[AbsenceFilter::indexFor(id.bits())]; }
     void rememberNameOfText(UniquedStringImpl*);
+    // A string that names nothing anywhere is read under without an atom being made: most such keys come once. One that comes again gets its atom, and from then on the stubs answer.
+    // The cells are only compared.
+    const JSCell*& lastKeyWithoutAtomLike(const JSCell* key) { return m_tables.keysThatCameWithoutAtom[std::bit_cast<uintptr_t>(key) / MarkedBlock::atomSize % std::tuple_size_v<decltype(Tables::keysThatCameWithoutAtom)>]; }
 
     void dropChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull) final;
     bool hasChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull) const final;
@@ -300,6 +303,7 @@ private:
         BitPerName namesOfObjectPrototypes;
         std::array<uint8_t, MissesOfPairs::numberOfCounters> missesOfPairs;
         std::array<NameOfText, NameOfText::numberOfEntries> namesOfTexts;
+        std::array<const JSCell*, 256> keysThatCameWithoutAtom;
     };
 
     // The VM has tables like these for each image that it runs, and an instance reads those of its own image.
@@ -358,11 +362,21 @@ public:
     void countMiss(ASCIILiteral access, bool shouldFile, JSValue receiver, UniquedStringImpl* name);
     void dumpNamedCounts(PrintStream&) const;
     void remember(const FieldExit& exit) { placeOf(exit.structureBefore, exit.name) = exit; }
-    void forgetFieldExits() { m_fieldExits.fill({ }); }
+    void forgetFieldExits()
+    {
+        m_fieldExits.fill({ });
+        m_addedExtraProperties.fill({ });
+    }
     FieldExit* findFieldExit(StructureID structureID, uint32_t name)
     {
         FieldExit& exit = placeOf(structureID, name);
         return exit.field && exit.structureBefore == structureID && exit.name == name ? &exit : nullptr;
+    }
+    void remember(const AddedExtraProperty& added) { placeOf(added.structureBefore, added.name) = added; }
+    const AddedExtraProperty* findAddedExtraProperty(StructureID structureID, UniquedStringImpl* name)
+    {
+        const AddedExtraProperty& added = placeOf(structureID, name);
+        return added.name == name && added.structureBefore == structureID ? &added : nullptr;
     }
     void didAddProperty(Structure* before, Structure* after);
     const Slot* findByKey(Structure*, UniquedStringImpl*, SlotAccess);
@@ -422,6 +436,8 @@ private:
     uint8_t* m_counterOfPairToFile { nullptr };
     FieldExit& placeOf(StructureID structureID, uint32_t name) { return m_fieldExits[((structureID.bits() >> StructureRowWords::granuleShift) + name) % FieldExit::numberOfPlaces]; }
     std::array<FieldExit, FieldExit::numberOfPlaces> m_fieldExits { };
+    AddedExtraProperty& placeOf(StructureID structureID, UniquedStringImpl* name) { return m_addedExtraProperties[((structureID.bits() >> StructureRowWords::granuleShift) + (std::bit_cast<uintptr_t>(name) >> 4)) % AddedExtraProperty::numberOfPlaces]; }
+    std::array<AddedExtraProperty, AddedExtraProperty::numberOfPlaces> m_addedExtraProperties { };
     std::atomic<bool> m_shouldForgetMisses { false };
     std::unique_ptr<UncheckedKeyHashSet<uint64_t>> m_countedFilings;
     UncheckedKeyHashMap<String, uint64_t> m_namedCounts;

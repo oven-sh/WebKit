@@ -95,6 +95,35 @@ globalThis.publish = (makePoint, makeSize, readX) => {
 )JS" ""_s);
 }
 
+static void testNamesWhatChangedAnObject()
+{
+    checkOutputOfProgramInShell(programText,
+        "layout:0 extra-properties 3\n"
+        "layout:0 frozen,sealed,not-extensible 1\n"
+        "layout:0 other-prototype 1\n"
+        "layout:0 cell-marked,field-outside-slot,extra-properties 2\n"
+        "rows 4\n"_s,
+        { "count-arrivals"_s, withoutTypeTests }, R"JS(
+globalThis.publish = (makePoint, makeSize, readX) => {
+    readX(makePoint(0));
+    const withExtraProperty = makePoint(1);
+    withExtraProperty.extra = 2;
+    for (let i = 0; i < 3; i++) readX(withExtraProperty);
+    readX(Object.freeze(makePoint(2)));
+    readX(Object.setPrototypeOf(makePoint(3), null));
+    const withGetter = Object.defineProperty(makePoint(4), "y", { get() { return 5; }, configurable: true, enumerable: true });
+    for (let i = 0; i < 2; i++) readX(withGetter);
+    const counts = new Map();
+    for (const [count, name, state] of aotRuntimeCounters().split("\n").map(line => line.split("\t"))) {
+        if (name && name.startsWith("state:"))
+            counts.set(state, (counts.get(state) || 0) + Number(count));
+    }
+    for (const state of ["layout:0 extra-properties", "layout:0 frozen,sealed,not-extensible", "layout:0 other-prototype", "layout:0 cell-marked,field-outside-slot,extra-properties"]) print(state + " " + (counts.get(state) || 0));
+    print("rows " + counts.size);
+};
+)JS" ""_s);
+}
+
 static void testCountsForeignObjectWithItsNames()
 {
     checkOutputOfProgramInShell(programText,
@@ -341,6 +370,7 @@ std::span<const NativeTest> arrivalCountTests()
     static constexpr NativeTest tests[] = {
         { "arrival-counts/programs/counts-layout-that-was-not-expected"_s, testCountsLayoutThatWasNotExpected },
         { "arrival-counts/programs/counts-object-that-left-its-shape"_s, testCountsObjectThatLeftItsShape },
+        { "arrival-counts/programs/names-what-changed-an-object"_s, testNamesWhatChangedAnObject },
         { "arrival-counts/programs/counts-foreign-object-with-its-names"_s, testCountsForeignObjectWithItsNames },
         { "arrival-counts/programs/counts-nothing-without-the-option"_s, testCountsNothingWithoutTheOption },
         { "arrival-counts/lines-are-sorted-by-site-then-by-count"_s, testLinesAreSortedBySiteThenByCount },

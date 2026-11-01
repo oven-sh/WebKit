@@ -889,7 +889,6 @@ inline void add(Hasher& hasher, const ConstructionName& name)
 using ConstructionNames = PersistentSortedSet<ConstructionName>;
 
 // The store that fills a field asks the class for the name. A class answers only where it lists every name of its prototype object and keeps what stands above that object.
-// A field that may be missing carries the answer itself, so where the class has none, `this instanceof F` ahead of the stores goes on counting as showing the object.
 inline bool classCannotAnswerForNames(const Layout& layout, const ClassFlow& classFlow)
 {
     return layout.kind == LayoutKind::Instance && layout.constructor && (!classFlow.prototypeNamesAreComplete || classFlow.prototypeLink != MemberMutability::Fixed);
@@ -900,7 +899,6 @@ struct ValueFlowConstructions {
         bool isFollowed { false };
         bool isNewTargetOfOtherFunctions { false };
         bool createsFieldsOnlyInListedOrders { false };
-        bool passesTestForInstance { false };
         ConstructionNames namesStoredBeforeObjectLeaks;
         Vector<PropertyKeyID> keysStoredAtBirth;
         Vector<PropertyKeyID> keysStoredWithValueAtBirth;

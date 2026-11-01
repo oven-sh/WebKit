@@ -230,7 +230,7 @@ export default b.declarations(
       returns: newArrayOf(b.iterated("items")).dense,
       uses: { this: b.inspected, items: [b.runs("Iterate")] },
       isSpecialCase: true,
-      implementation: b.compiled("ArrayConstructor", "from"),
+      implementation: b.compiled("prelude/iterator-consumers", "fromIterable"),
     },
     {
       ...operandCodeEffects,

@@ -1124,6 +1124,16 @@ public:
     }
 
     size_t numberOfClobberPoints() const { return m_clobberPoints.size(); }
+    std::span<const Point> clobberPoints() const { return m_clobberPoints.span(); }
+    bool hasClobberAtInstOf(Point point) const
+    {
+        size_t ordinal = point / PointOffsets::PointsPerInst;
+        if (ordinal >= m_instFirstClobber.size())
+            return false;
+        unsigned first = m_instFirstClobber[ordinal];
+        return first < m_clobberPoints.size() && m_clobberPoints[first] / PointOffsets::PointsPerInst == ordinal;
+    }
+    uint64_t clobberPointsReadForCalls() const { return m_clobberPointsReadForCalls; }
     uint64_t allClobberedRegs() const { return m_allClobberedRegs; }
 
     ALWAYS_INLINE Candidates candidatesFor(TmpData& tmpData, FailureMemo memo, Clobbers clobbers)
@@ -1213,22 +1223,64 @@ public:
         return count;
     }
 
-    bool hasPointClobberingAll(uint64_t regs, Interval interval) const
+    double costOfDeadClobbers(Reg reg, const LiveRange& range, std::span<const float> costs, double enough)
     {
+        if (!(m_regsWithDeadClobbers & bitOf(reg)))
+            return 0;
+        std::span<const unsigned> own = deadClobbersOf(reg);
+        if (m_costInFrontOfDeadClobber.isEmpty()) {
+            m_costInFrontOfDeadClobber.grow(m_regDeadClobbers.size() + 1);
+            double sum = 0;
+            for (size_t i = 0; i < m_regDeadClobbers.size(); ++i) {
+                m_costInFrontOfDeadClobber[i] = sum;
+                sum += costs[m_regDeadClobbers[i]];
+            }
+            m_costInFrontOfDeadClobber.last() = sum;
+        }
+        const double* inFront = m_costInFrontOfDeadClobber.span().data() + (own.data() - m_regDeadClobbers.span().data());
+        double sum = 0;
+        for (auto& interval : range.intervals()) {
+            auto first = std::ranges::lower_bound(own, firstClobberNotBefore(interval.begin()));
+            auto end = std::ranges::lower_bound(first, own.end(), firstClobberNotBefore(interval.end()));
+            sum += inFront[end - own.begin()] - inFront[first - own.begin()];
+            if (sum >= enough)
+                break;
+        }
+        return sum;
+    }
+
+    bool hasPointClobberingAll(uint64_t regs, Interval interval)
+    {
+        if (!m_clobberedRegsInChunk.isEmpty()) [[unlikely]] {
+            ++m_clobberPointsReadForCalls;
+            std::span<const Point> points = pointsClobberingAll(regs);
+            auto first = std::ranges::lower_bound(points, interval.begin());
+            return first != points.end() && *first < interval.end();
+        }
         auto clobberPoints = m_clobberPoints.span();
         size_t index = std::ranges::lower_bound(clobberPoints, interval.begin()) - clobberPoints.begin();
         for (; index < clobberPoints.size() && clobberPoints[index] < interval.end(); ++index) {
+            ++m_clobberPointsReadForCalls;
             if ((m_clobberedRegsAtPoint[index] & regs) == regs)
                 return true;
         }
         return false;
     }
 
-    void forEachPointClobberingAll(uint64_t regs, Interval interval, NOESCAPE const Invocable<void(Point)> auto& func) const
+    void forEachPointClobberingAll(uint64_t regs, Interval interval, NOESCAPE const Invocable<void(Point)> auto& func)
     {
+        if (!m_clobberedRegsInChunk.isEmpty()) [[unlikely]] {
+            std::span<const Point> points = pointsClobberingAll(regs);
+            for (auto point = std::ranges::lower_bound(points, interval.begin()); point != points.end() && *point < interval.end(); ++point) {
+                ++m_clobberPointsReadForCalls;
+                func(*point);
+            }
+            return;
+        }
         auto clobberPoints = m_clobberPoints.span();
         size_t index = std::ranges::lower_bound(clobberPoints, interval.begin()) - clobberPoints.begin();
         for (; index < clobberPoints.size() && clobberPoints[index] < interval.end(); ++index) {
+            ++m_clobberPointsReadForCalls;
             if ((m_clobberedRegsAtPoint[index] & regs) == regs)
                 func(clobberPoints[index]);
         }
@@ -1271,6 +1323,22 @@ private:
             return 0;
         }
         RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    NEVER_INLINE std::span<const Point> pointsClobberingAll(uint64_t regs)
+    {
+        for (const auto& known : m_pointsClobberingAll) {
+            if (known.regs == regs)
+                return known.points.span();
+        }
+        m_pointsClobberingAll.append({ regs, { } });
+        Vector<Point>& points = m_pointsClobberingAll.last().points;
+        m_clobberPointsReadForCalls += m_clobberPoints.size();
+        for (size_t index = 0; index < m_clobberPoints.size(); ++index) {
+            if ((m_clobberedRegsAtPoint[index] & regs) == regs)
+                points.append(m_clobberPoints[index]);
+        }
+        return points.span();
     }
 
     unsigned firstClobberNotBefore(Point point) const
@@ -1368,10 +1436,17 @@ private:
     uint64_t m_allClobberedRegs { 0 };
     Vector<unsigned> m_instFirstClobber;
     Vector<uint64_t> m_clobberedRegsInChunk;
+    struct PointsClobberingAll {
+        uint64_t regs;
+        Vector<Point> points;
+    };
+    Vector<PointsClobberingAll, 2> m_pointsClobberingAll;
+    uint64_t m_clobberPointsReadForCalls { 0 };
     Vector<uint64_t> m_deadClobbersAtPoint;
     uint64_t m_regsWithDeadClobbers { 0 };
     Vector<unsigned> m_regFirstDeadClobber;
     Vector<unsigned> m_regDeadClobbers;
+    Vector<double> m_costInFrontOfDeadClobber;
     uint64_t m_freshCalleeSaves { 0 };
     uint64_t m_calleeSavesClobberedAtSuspensions { 0 };
     std::array<unsigned, numBanks> m_numberOfFreshCalleeSaves { };
@@ -2381,6 +2456,7 @@ public:
         assignRegisters();
         fixSpillsAfterTerminals(m_code);
 
+        m_code.proc().count(Counter::ClobberPointsReadForCalls, static_cast<uint32_t>(std::min<uint64_t>(m_occupancy.clobberPointsReadForCalls(), std::numeric_limits<uint32_t>::max())));
         m_stats[GP].didSpill += m_didSpill[GP];
         m_stats[FP].didSpill += m_didSpill[FP];
         m_stats[GP].numTmpsOut = m_code.numTmps(GP);
@@ -5825,6 +5901,34 @@ private:
         return true;
     }
 
+    std::span<const float> leastCostsOfClobberPoints()
+    {
+        std::span<const Point> points = m_occupancy.clobberPoints();
+        if (m_leastCostsOfClobberPoints.isEmpty()) {
+            m_leastCostsOfClobberPoints.grow(points.size());
+            for (size_t index = 0; index < points.size();) {
+                BasicBlock* block = findBlockContainingPoint(points[index]);
+                float cost = std::max(adjustedBlockFrequency(block) * 2, m_splitPolicy.leastCostOfSplitAroundClobber);
+                for (Point tail = positionOfTail(block); index < points.size() && points[index] <= tail; ++index)
+                    m_leastCostsOfClobberPoints[index] = cost;
+            }
+        }
+        return m_leastCostsOfClobberPoints.span();
+    }
+    Vector<float> m_leastCostsOfClobberPoints;
+
+    bool mayBeNamedAtSomeClobber(Tmp tmp)
+    {
+        if (!m_hasUseDefLists)
+            return true;
+        unsigned list = tmp.isGP() ? AbsoluteTmpMapper<GP>::absoluteIndex(tmp) : m_gpUseDefListsEnd + AbsoluteTmpMapper<FP>::absoluteIndex(tmp);
+        if ((tmp.isGP() && list >= m_gpUseDefListsEnd) || list >= m_useDefsEnd.size())
+            return true;
+        return std::ranges::any_of(useDefsOf(tmp), [&](Point point) {
+            return m_occupancy.hasClobberAtInstOf(point);
+        });
+    }
+
     bool splitIsWorthItsSize(Tmp tmp, UseDefCost splitCost, size_t numberOfSites)
     {
         CostOfSpill ifSpilled = costOfSpill(tmp);
@@ -5915,15 +6019,37 @@ private:
         size_t numberOfSitesOfBestWithEviction = 0;
         Width width = widthForConflicts<bank>(tmp);
         auto candidates = m_occupancy.candidatesFor(tmpData, RegisterOccupancy::FailureMemo::None, RegisterOccupancy::Clobbers::Ignore);
+        const bool isNamedAtNoClobber = m_occupancy.numberOfClobberPoints() >= AirLimits::minClobberPointsToCountPerRegister && !mayBeNamedAtSomeClobber(tmp);
         for (Reg r : m_allowedRegistersInPriorityOrder[bank]) {
             if (!candidates.contains(r))
                 continue;
+            auto isHeld = [&] {
+                bool isHeld = false;
+                unsigned conflictsLookedAt = 0;
+                m_occupancy.forEachTmpConflict(r, tmpData.liveRange, width, [&](auto& conflict) -> IterationStatus {
+                    if (conflict.tmp.isReg())
+                        isHeld = conflict.interval.distance() != 1;
+                    else if (!mayEvict)
+                        isHeld = true;
+                    else {
+                        auto cost = m_map.get<bank>(conflict.tmp).spillCost();
+                        isHeld = cost == unspillableCost || cost == maxSpillableSpillCost || !(cost < tmpData.spillCost());
+                    }
+                    return isHeld || ++conflictsLookedAt == AirLimits::maxConflictsLookedAtForHeldRegister ? IterationStatus::Done : IterationStatus::Continue;
+                });
+                return isHeld;
+            };
             // A register with too many sites for what each costs at least is found by counting. Walking them would take the sites of the range for each value and register.
             if (leastCostOfSite > 0 && m_occupancy.numberOfClobberPoints() >= AirLimits::minClobberPointsToCountPerRegister) {
                 double mostSites = std::max(minSplitCost, minSplitCostWithEviction).value() / leastCostOfSite;
                 size_t tooManySites = mostSites < static_cast<double>(sitesLeft) ? std::min(static_cast<size_t>(mostSites * 1.01) + 2 + AirLimits::clobberSitesWithoutLeastCost, sitesLeft + 1) : sitesLeft + 1;
                 if (m_occupancy.numberOfDeadClobbers(r, tmpData.liveRange, tooManySites) >= tooManySites)
                     continue;
+                if (isNamedAtNoClobber && mostSites <= AirLimits::maxClobberSitesJudgedBySum) {
+                    double tooMuch = (mostSites * 1.01 + AirLimits::clobberSitesWithoutLeastCost) * leastCostOfSite;
+                    if (m_occupancy.costOfDeadClobbers(r, tmpData.liveRange, leastCostsOfClobberPoints(), tooMuch) >= tooMuch)
+                        continue;
+                }
             }
             UseDefCost splitCost(0);
             size_t numberOfSites = 0;
@@ -5938,7 +6064,7 @@ private:
                 [&](auto& conflict) -> IterationStatus {
                     if (conflict.tmp.isReg() && conflict.interval.distance() == 1) {
                         ClobberSite site = clobberSiteAt(conflict.interval.begin());
-                        if (site.usesOrDefsTmp || ++numberOfSites > sitesLeft) {
+                        if (site.usesOrDefsTmp || ++numberOfSites > sitesLeft || (numberOfSites == AirLimits::clobberSitesWalkedBeforeAskingWhetherHeld && isNamedAtNoClobber && isHeld())) {
                             // If the inst that clobbers regs also use/def the tmp trying to be split, then
                             // can't split the tmp around this clobber.
                             // FIXME: could allow uses, but then we'd have to make split tmp conflict with any

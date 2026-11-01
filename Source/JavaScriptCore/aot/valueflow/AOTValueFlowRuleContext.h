@@ -52,6 +52,9 @@ enum class ValueFlowCalleeOrigin : uint8_t {
     OperandOfAppliedEntry,
 };
 
+// Native code that calls a function: which positions it leaves out is known only where a declaration lists what is passed.
+enum class ValueFlowArgumentsLeftOut : bool { AnyOfThem, SaidByCaller };
+
 class ValueFlowRuleContext {
     WTF_MAKE_NONCOPYABLE(ValueFlowRuleContext);
 public:
@@ -209,7 +212,7 @@ public:
     enum class LookupUse : bool { Any, OnlyCalledOnReceiver };
     ValueFlowNodeID lookup(ClimbingSet receivers, ValueFlowName, LookupUse = LookupUse::Any);
     bool runsCodeThatRecordsDescribe() const;
-    ValueFlowCallGroup group(ClimbingSet callees, ValueFlowCallKind, ValueFlowCalleeOrigin = ValueFlowCalleeOrigin::Value);
+    ValueFlowCallGroup group(ClimbingSet callees, ValueFlowCallKind, ValueFlowCalleeOrigin = ValueFlowCalleeOrigin::Value, ValueFlowArgumentsLeftOut = ValueFlowArgumentsLeftOut::AnyOfThem);
     ValueFlowNodeID hub(ValueFlowBehaviorID);
     ValueFlowNodeID masked(ValueFlowNodeID, ValueSetID mask, ValueFlowMaskKind = ValueFlowMaskKind::Plain);
 

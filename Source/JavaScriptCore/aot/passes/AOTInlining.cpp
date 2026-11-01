@@ -254,6 +254,11 @@ unsigned estimatedCodeBytes(const Program& program, const Function& function, co
     return CodeSize::simpleOperation;
 }
 
+unsigned estimatedSlotAccessBytes()
+{
+    return CodeSize::slotAccess;
+}
+
 unsigned estimatedCodeBytes(const Terminator& terminator)
 {
     switch (terminator.kind) {

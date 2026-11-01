@@ -535,8 +535,30 @@ static const FieldData& namedField(Instance* instance, Object* object, uint32_t 
     return *field;
 }
 
+// The next entry of the order that the Structure holds is the field of the slot. An order lists a field once, so it is not among the entries in front.
+static const FieldData* tryStepToFieldInHeldKeyOrder(Object* object, uint32_t slotKey)
+{
+    if (object->hasFlagsInOrderWord() || !object->hasOutOfLineKeyOrder())
+        return nullptr;
+    const CompiledStructure& structure = object->compiledStructure();
+    const LayoutData& layout = object->layout();
+    uint32_t count = countOf(object->orderWord());
+    if (structure.hasKeyOrderOfOneObject() || structure.mayBePrototype() || layout.isClass() || !count || count >= maxFieldsInOrder)
+        return nullptr;
+    std::span<const uint16_t> held = structure.outOfLineKeyOrder();
+    if (count >= held.size() || held[count] >= layout.numberOfFields)
+        return nullptr;
+    const FieldData& field = layout.fields()[held[count]];
+    if (slotKeyFor(field.slot.offset, field.isOutOfLine()) != slotKey || field.flags & fieldMayExistWithoutStorage)
+        return nullptr;
+    object->setOrderAndCount(outOfLineOrderWordFor(count + 1));
+    return &field;
+}
+
 static const FieldData& listCreatedField(State& state, Object* object, uint32_t slotKey)
 {
+    if (const FieldData* next = tryStepToFieldInHeldKeyOrder(object, slotKey))
+        return *next;
     const FieldData* created = state.objects->keyOrders.fieldAt(object->layout(), slotKey);
     RELEASE_ASSERT(created);
     const FieldData& field = *created;
