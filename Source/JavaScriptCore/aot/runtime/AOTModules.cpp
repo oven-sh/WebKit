@@ -4774,11 +4774,14 @@ static PathOfModule pathOfModule(ModuleID module)
     return paths.byImageAndModule.ensure(key, [&] {
         std::optional<ModuleTable> table = currentModuleTable();
         RELEASE_ASSERT(table);
-        // A text that the program evaluates is shown under the URL of the file that evaluates it, as the engine shows the text of `new Function(text)`.
+        // A text that the program evaluates is shown under the URL of the file that evaluates it, as the engine shows the text of `new Function(text)`,
+        // unless it has a `//# sourceURL=`: the build hands that on as its display path, which is its path otherwise.
         std::optional<ModuleID> evaluator = table->data(module).evaluatorModule();
         while (std::optional<ModuleID> outer = evaluator ? table->data(*evaluator).evaluatorModule() : std::nullopt)
             evaluator = outer;
-        String path = evaluator ? URL::fileURLWithFileSystemPath(table->pathText(*evaluator)).string() : table->data(module).registryID() ? table->displayPathText(module) : table->pathText(module);
+        String ownURL = evaluator ? table->displayPathText(module) : String();
+        bool hasOwnURL = !ownURL.isEmpty() && ownURL != table->pathText(module);
+        String path = hasOwnURL ? ownURL : evaluator ? URL::fileURLWithFileSystemPath(table->pathText(*evaluator)).string() : table->data(module).registryID() ? table->displayPathText(module) : table->pathText(module);
         auto keep = [](const String& text) {
             return &(text.is8Bit() ? StringImpl::createStaticStringImpl(text.span8()) : StringImpl::createStaticStringImpl(text.span16())).leakRef();
         };
