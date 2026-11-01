@@ -903,7 +903,7 @@ static ALWAYS_INLINE UGPRPair lookupExceptionHandler(VM& vm, Instance* instance,
         return handlerCodeAndFrame();
     bool stackIsUnobserved = false;
     if (!exception && !rethrownException) {
-        if (removeReturnAddressSignature(frameRecord->callerFrame->rawReturnPC()) == instance->state->returnAddressOfThrowAfterCleanup) {
+        if (frameRecord->callerFrame->returnPCForInspection() == instance->state->returnAddressOfThrowAfterCleanup) {
             if (uint64_t kept = instance->state->keptByCleanup)
                 rethrownException = exceptionKeptByCleanup(kept, JSValue::decode(exceptions.thrownValue));
         }

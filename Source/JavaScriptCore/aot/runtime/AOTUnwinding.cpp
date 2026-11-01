@@ -192,7 +192,7 @@ static bool isCalledByCodeOfOtherImage(const VMState& state, CallFrame* adapterF
     if (state.adapterFrameThatRestoresImage != adapterFrame || adapterFrame->callerFrameOrEntryFrame() == entryFrame)
         return false;
     std::span<const uint8_t> code = state.endOfImagesBelowAdapters[-1].parts->image->code();
-    return std::bit_cast<uintptr_t>(removeReturnAddressSignature(adapterFrame->rawReturnPC())) - std::bit_cast<uintptr_t>(code.data()) < code.size();
+    return std::bit_cast<uintptr_t>(adapterFrame->returnPCForInspection()) - std::bit_cast<uintptr_t>(code.data()) < code.size();
 }
 
 // Compiled code keeps its instance in a register that its callees save.
@@ -439,13 +439,13 @@ static ALWAYS_INLINE std::optional<HandlerType> findHandlerInRun(VM& vm, CallFra
     CallFrame* first = callee;
     unsigned remainingFrames = search == HandlerSearch::NearestThatEndsThrow ? Options::exceptionStackTraceLimit() : 0;
     while (framePointer != entryFrame) {
-        const void* pc = removeReturnAddressSignature(callee->rawReturnPC());
+        const void* pc = callee->returnPCForInspection();
         const CallSiteCache::Entry* site = cache.find(pc);
         if (!site) [[unlikely]]
             site = cache.resolve(*state.image, pc);
         if (!site) {
             if (callee != first)
-                checkReturnAddressInRun(*state.image, removeReturnAddressSignature(callee->rawReturnPC()), callee);
+                checkReturnAddressInRun(*state.image, pc, callee);
             return std::nullopt;
         }
         if (site->isStubReturnSite()) {
@@ -497,7 +497,7 @@ void JIT_OPERATION_ATTRIBUTES checkThatThrowingCallHasSite(Instance* instance, C
     void* stackPointer = stackPointerOfCaller(stubFrame);
     void* framePointer = stubFrame->callerFrameOrEntryFrame();
     while (framePointer != vm.topEntryFrame) {
-        const void* pc = removeReturnAddressSignature(callee->rawReturnPC());
+        const void* pc = callee->returnPCForInspection();
         const CallSiteCache::Entry* site = state.callSiteCache->resolve(*state.image, pc);
         if (!site)
             return;
@@ -598,7 +598,7 @@ Exception* exceptionKeptByCleanup(uint64_t kept, JSValue thrown)
 NEVER_INLINE Exception::StackCaptureAction stackCaptureActionOfThrow(VM& vm, const Instance& instance, JSValue thrown, const CallerFrameAndPC* frameRecordOfOperation, const CompiledUnwindResult* runWithoutHandler)
 {
     using Action = Exception::StackCaptureAction;
-    if (removeReturnAddressSignature(frameRecordOfOperation->callerFrame->rawReturnPC()) == instance.state->returnAddressOfThrowAfterCleanup) {
+    if (frameRecordOfOperation->callerFrame->returnPCForInspection() == instance.state->returnAddressOfThrowAfterCleanup) {
         uint64_t kept = instance.state->keptByCleanup;
         // The program threw the value somewhere else, and an Error keeps the stack that it holds.
         if (!isAddressInCompiledCode(kept))

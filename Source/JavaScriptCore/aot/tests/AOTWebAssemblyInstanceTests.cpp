@@ -162,9 +162,9 @@ static ChildProcessResult runInShellWithTripwire(std::span<const uint8_t> module
     return ChildProcessLauncher(shellPath(), { }).run(arguments.span());
 }
 
-static void checkRunsModuleFromOtherBytes(std::span<const uint8_t> moduleOfProgram, uint32_t numberOfModulesWithCode)
+static void checkPrints42InShellWithTripwire(std::span<const uint8_t> moduleOfProgram, uint32_t numberOfModulesWithCode, ASCIILiteral source)
 {
-    ChildProcessResult result = runInShellWithTripwire(moduleOfProgram, numberOfModulesWithCode, callsModuleFromOtherBytes);
+    ChildProcessResult result = runInShellWithTripwire(moduleOfProgram, numberOfModulesWithCode, source);
     if (!result.exitedWith(EXIT_SUCCESS))
         dataLogLn(shellPath(), " ", result.description(), "\n", result.output);
     AOT_TEST_CHECK(result.exitedWith(EXIT_SUCCESS));
@@ -173,8 +173,8 @@ static void checkRunsModuleFromOtherBytes(std::span<const uint8_t> moduleOfProgr
 
 static void testTripwireAcceptsBytesTheBuildNeverSaw()
 {
-    checkRunsModuleFromOtherBytes(importedMemoryModule, 1);
-    checkRunsModuleFromOtherBytes(moduleWithGCTypes, 0);
+    checkPrints42InShellWithTripwire(importedMemoryModule, 1, callsModuleFromOtherBytes);
+    checkPrints42InShellWithTripwire(moduleWithGCTypes, 0, callsModuleFromOtherBytes);
 }
 
 static void testTripwireReportsDeclinedModule()
@@ -188,11 +188,7 @@ static void testTripwireReportsDeclinedModule()
 // addresses of frames anew, but those of an image have no signature.
 static void testSuspendsAndGoesOn()
 {
-    ChildProcessResult result = runInShellWithTripwire(moduleThatCallsImport, 1, suspendsModuleThatCallsImport);
-    if (!result.exitedWith(EXIT_SUCCESS))
-        dataLogLn(shellPath(), " ", result.description(), "\n", result.output);
-    AOT_TEST_CHECK(result.exitedWith(EXIT_SUCCESS));
-    AOT_TEST_CHECK(makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s) == "42\n"_s);
+    checkPrints42InShellWithTripwire(moduleThatCallsImport, 1, suspendsModuleThatCallsImport);
 }
 
 static void testImportedMemoryInShell()

@@ -845,7 +845,7 @@ static std::optional<RunStart> findRunBelowHostFunction(VM& vm, FrameOnTop frame
             return std::nullopt;
         return RunStart { stackPointerOfCaller(operationRecord), operationRecord->callerFrame(), operationRecord->rawReturnPC(), entry->prevTopEntryFrame(), false, true };
     }
-    const CallSiteCache::Entry* site = vm.aotState().callSiteCache->find(removeReturnAddressSignature(top->rawReturnPC()));
+    const CallSiteCache::Entry* site = vm.aotState().callSiteCache->find(top->returnPCForInspection());
     if (!site || !site->isStubReturnSite() || site->stubFrameKind != StubFrameKind::HostCall)
         return std::nullopt;
     return RunStart { stackPointerOfCaller(top), top->callerFrame(), top->rawReturnPC(), vm.topEntryFrame, false, true };
@@ -953,7 +953,7 @@ static std::optional<RunStart> findRunThatCalled(VM& vm, const RunWalk& walk, En
     }
     if (!callee)
         return std::nullopt;
-    imageOfCaller = vm.aotState().image->findInListByCodeAddress(removeReturnAddressSignature(callee->rawReturnPC()));
+    imageOfCaller = vm.aotState().image->findInListByCodeAddress(callee->returnPCForInspection());
     if (!imageOfCaller)
         return std::nullopt;
     return RunStart { stackPointerOfCaller(callee), callee->callerFrame(), callee->rawReturnPC(), exit.entryFrame, false, true };

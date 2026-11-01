@@ -199,7 +199,7 @@ NEVER_INLINE const CallSiteCache::Entry* resolveReturnAddressInRun(CallSiteCache
 static bool hasZombieCallee(VM& vm, const CallFrame* callFrame, const void* returnAddress)
 {
     CallFrame* callee = vm.topCallFrame;
-    return callee && callee->callerFrameOrEntryFrame() == callFrame && removeReturnAddressSignature(callee->rawReturnPC()) == returnAddress && callee->isZombieFrame();
+    return callee && callee->callerFrameOrEntryFrame() == callFrame && callee->returnPCForInspection() == returnAddress && callee->isZombieFrame();
 }
 
 SUPPRESS_ASAN Instance* CompiledFrameIterator::findEnclosingAdapterInstance(Cursor cursor, VMState* stateThatRemembersRun) const
@@ -923,7 +923,7 @@ bool isCallerCompiled(VM& vm, const CallFrame* calleeFrame, EntryFrame* entryFra
 {
     if (calleeFrame->callerFrameOrEntryFrame() == entryFrame)
         return isOperationFrameRecord(vm, vmEntryRecord(entryFrame)->prevTopCallFrame());
-    return vm.hasCompiledCode() && findReturnSite(vm, removeReturnAddressSignature(calleeFrame->rawReturnPC()));
+    return vm.hasCompiledCode() && findReturnSite(vm, calleeFrame->returnPCForInspection());
 }
 
 static SampledTop sampledTopAtReturnSite(const Image& image, const CodeLocation& site, const void* returnAddress, const void* stackPointer, CallFrame* framePointer)

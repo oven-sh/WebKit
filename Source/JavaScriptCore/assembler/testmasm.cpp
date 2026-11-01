@@ -9421,32 +9421,33 @@ void checkFeaturesAboveHost()
 }
 
 #if CPU(ARM64) && !CPU(ARM64E)
-// Whatever signs, authenticates or strips here is a hint. NOP is hint 0. Not for ARM64E, which signs whatever the policy says.
-static unsigned numberOfHintsInFunction(const AssemblerPolicy& policy)
+// Not for ARM64E, which signs whatever the policy says.
+void checkReturnAddressSigningFollowsPolicy()
 {
-    Vector<uint8_t> bytes = emitWithPolicy(policy, [](CCallHelpers& jit) {
-        jit.emitFunctionPrologue();
-        jit.emitFunctionEpilogue();
-        jit.ret();
+    auto emitWhateverSigns = [](CCallHelpers& jit) {
         jit.tagReturnAddress();
         jit.untagReturnAddress();
+        jit.tagPtr(NoPtrTag, ARM64Registers::lr);
+        jit.untagPtr(NoPtrTag, ARM64Registers::lr);
+        jit.tagPtr(GPRInfo::regT0, ARM64Registers::lr);
+        jit.untagPtr(GPRInfo::regT0, ARM64Registers::lr);
         jit.removePtrTag(GPRInfo::regT0);
+        jit.validateUntaggedPtr(ARM64Registers::lr);
         jit.ret();
-    });
-    unsigned result = 0;
+    };
+    // The return and nothing else.
+    CHECK_EQ(emitWithPolicy(AssemblerPolicy::forImage(CPUFeatureSet::host()), emitWhateverSigns).size(), sizeof(uint32_t));
+
+    // Whatever signs, authenticates or strips is a hint. NOP is hint 0.
+    Vector<uint8_t> bytes = emitWithPolicy(AssemblerPolicy::forJIT(), emitWhateverSigns);
+    unsigned numberOfHints = 0;
     for (size_t offset = 0; offset < bytes.size(); offset += sizeof(uint32_t)) {
         uint32_t instruction;
         memcpySpan(asMutableByteSpan(instruction), bytes.subspan(offset, sizeof(uint32_t)));
         if ((instruction & 0xfffff01f) == 0xd503201f && instruction != 0xd503201f)
-            result++;
+            numberOfHints++;
     }
-    return result;
-}
-
-static void checkReturnAddressSigningFollowsPolicy()
-{
-    CHECK_EQ(numberOfHintsInFunction(AssemblerPolicy::forImage(CPUFeatureSet::host())), 0u);
-    CHECK_EQ(numberOfHintsInFunction(AssemblerPolicy::forJIT()), ENABLE_RETURN_ADDRESS_SIGNING ? 6u : 0u);
+    CHECK_EQ(numberOfHints, ENABLE_RETURN_ADDRESS_SIGNING ? 8u : 0u);
 }
 #endif
 

@@ -2721,7 +2721,7 @@ void testStackSlotSharingWithNonInterferingSlots()
     uint64_t expectedResult = static_cast<uint64_t>(total) * (total - 1) / 2;
 
     CCallHelpers jit;
-    generateFollowingFramePolicy(code, jit);
+    generate(code, jit);
     LinkBuffer linkBuffer(jit, nullptr);
     auto compilation = makeUnique<Compilation>(
         FINALIZE_CODE(linkBuffer, JITCompilationPtrTag, nullptr, "testair compilation"), proc.releaseByproducts());

@@ -214,7 +214,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowAfterCleanup, void, (Instance* instanc
         OPERATION_RETURN(scope);
     }
     instance->runtime.exceptions.thrownValue = value;
-    instance->state->returnAddressOfThrowAfterCleanup = removeReturnAddressSignature(callFrame->rawReturnPC());
+    instance->state->returnAddressOfThrowAfterCleanup = callFrame->returnPCForInspection();
     instance->state->keptByCleanup = kept;
     return { std::bit_cast<Exception*>(static_cast<uintptr_t>(1)) };
 }

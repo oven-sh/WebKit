@@ -2301,21 +2301,21 @@ op(llint_aot_virtual_call_trampoline, macro ()
 end)
 
 if not C_LOOP
-# What a call enters in place of llint_native_call_trampoline where the callee is String.prototype.charCodeAt: VM::getHostFunction(). A string that is whole, or a piece of one that is, at an int32
-# inside it: text that is made at run time to compare strings is made of these. It makes no frame, so the arguments lie where the caller has put them. Everything else is the host function's.
-if X86_64
-    const CalleeFrameAtEntry = PtrSize - CallerFrameAndPCSize
-else
-    const CalleeFrameAtEntry = -CallerFrameAndPCSize
-end
-
-# They have not saved the return address, so it has no signature.
+# A thunk that makes no frame has not saved the return address, so it has no signature.
 macro returnWithoutFrame()
     if RETURN_ADDRESS_SIGNING
         emit "ret"
     else
         ret
     end
+end
+
+# What a call enters in place of llint_native_call_trampoline where the callee is String.prototype.charCodeAt: VM::getHostFunction(). A string that is whole, or a piece of one that is, at an int32
+# inside it: text that is made at run time to compare strings is made of these. It makes no frame, so the arguments lie where the caller has put them. Everything else is the host function's.
+if X86_64
+    const CalleeFrameAtEntry = PtrSize - CallerFrameAndPCSize
+else
+    const CalleeFrameAtEntry = -CallerFrameAndPCSize
 end
 
 global _llint_aot_char_code_at_thunk

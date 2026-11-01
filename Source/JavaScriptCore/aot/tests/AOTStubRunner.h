@@ -354,7 +354,8 @@ inline MacroAssemblerCodeRef<JSEntryPtrTag> StubRunner::compileStubCaller(const 
 
 inline void StubRunner::emitLandingInCompiledFunction(CCallHelpers& jit)
 {
-    jit.tagReturnAddress(); // For ret(): this is not code of an image.
+    // This is not code of an image, so its ret() authenticates.
+    jit.tagReturnAddress();
     jit.store64(CCallHelpers::TrustedImm32(static_cast<int32_t>(LandedCall::Place::CompiledFunction)), environmentSlot(OBJECT_OFFSETOF(StubEnvironment, landedCall.place)));
     jit.store64(countGPR, environmentSlot(OBJECT_OFFSETOF(StubEnvironment, landedCall.count)));
     jit.store64(calleeGPR, environmentSlot(OBJECT_OFFSETOF(StubEnvironment, landedCall.calleeInRegister)));
@@ -370,6 +371,7 @@ inline void StubRunner::emitLandingInEngineCallee(CCallHelpers& jit)
 {
     constexpr GPRReg word = gprOf(StubRegister::T9);
     static_assert(noOverlap(word, BaselineJITRegisters::Call::calleeGPR, instanceGPR));
+    // This is not code of an image, so its ret() authenticates.
     jit.tagReturnAddress();
     auto copySlot = [&](CallFrameSlot slot, unsigned index, size_t offsetInEnvironment) {
         int32_t offset = (static_cast<int32_t>(slot) + static_cast<int32_t>(index)) * static_cast<int32_t>(sizeof(Register)) - static_cast<int32_t>(prologueStackPointerDelta());

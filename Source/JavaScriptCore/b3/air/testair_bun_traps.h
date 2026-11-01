@@ -540,7 +540,7 @@ void testFoldedAccessFaultsAtFirstInstruction()
         EffectPositionObserver observer;
         graph.code.setInstObserver(&observer);
         CCallHelpers jit;
-        generateFollowingFramePolicy(graph.code, jit);
+        generate(graph.code, jit);
         graph.code.setInstObserver(nullptr);
         CHECK(observer.positions().size() == 1);
 
