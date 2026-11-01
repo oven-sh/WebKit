@@ -544,6 +544,10 @@ void LinkBuffer::allocate(MacroAssembler& macroAssembler, JITCompilationEffort e
         return;
     }
     
+    if (macroAssembler.policy().trapsWithIllegalInstruction) {
+        macroAssembler.emitNops(roundUpToMultipleOf<jitAllocationGranule>(initialSize) - initialSize);
+        initialSize = macroAssembler.m_assembler.codeSize();
+    }
     while (initialSize % jitAllocationGranule) {
         macroAssembler.breakpoint();
         initialSize = macroAssembler.m_assembler.codeSize();

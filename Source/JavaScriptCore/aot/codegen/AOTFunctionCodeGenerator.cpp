@@ -423,7 +423,7 @@ CompiledCode FunctionCodeGenerator::emitCode()
         m_records.entries.insert(0, RecordedEntry { primaryEntry, proc.code().entrypointLabel(0) });
     emitStackOverflowPaths(m_jit, m_records, m_stackChecks);
     CCallHelpers::Label paddingStart = m_jit.label();
-    m_jit.breakpoint();
+    emitPadding(m_jit);
     m_jit.padBeforePatch();
 
     ImageLinkBuffer buffer(m_jit, LinkBuffer::Profile::FTL);

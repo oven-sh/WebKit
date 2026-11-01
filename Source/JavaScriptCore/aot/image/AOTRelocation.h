@@ -84,6 +84,9 @@ private:
     bool m_didFinalize { false };
 };
 
+// One unit of what lies where no code does. It faults, and not with a signal that programs listen for.
+JS_EXPORT_PRIVATE void emitPadding(CCallHelpers&);
+
 class JS_EXPORT_PRIVATE RelocationRecorder {
     WTF_MAKE_NONCOPYABLE(RelocationRecorder);
 public:
