@@ -85,6 +85,15 @@ void ModuleEmitter::generateModuleNamespace(const ValueContext& value)
     auto getInSlowPath = [&](const CallOptions& options) {
         return callOperation<CellPointer>(value, RuntimeOperation::GetModuleNamespace, { moduleIndex(module), word32(static_cast<int32_t>(phase)) }, options);
     };
+    // Under a mock the module may have two objects, and no word of the image says which of them the asker gets.
+    if (value->ofModuleItself()) {
+        define(value, callOperation<CellPointer>(value, RuntimeOperation::GetNamespaceOfModuleItself, { moduleIndex(module) }));
+        return;
+    }
+    if (value->asksAnew()) {
+        define(value, getInSlowPath({ }));
+        return;
+    }
     if (!keepsNamespaceInValueWord(m_program.at(module), phase) || !m_placement.hasModuleValue(module)) {
         std::optional<uint32_t> offset = phase == ImportPhase::Evaluation ? m_placement.moduleNamespaceOffset(module) : std::nullopt;
         if (!offset) {

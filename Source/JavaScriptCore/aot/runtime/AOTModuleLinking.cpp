@@ -1145,6 +1145,9 @@ JSValue Modules::exportsBeforeMock(ModuleID file)
     VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // `vi.importActual()` of a module that the mock left alone: the module, not a copy of what it exports.
+    if (isLeftAloneByMock(file) && !isEvicted(file) && !isLeftToHost(file))
+        RELEASE_AND_RETURN(scope, namespaceOfModuleItself(file));
     // What runs in place of a file that was taken out of the loader is the loader's.
     if (mockInPlace(file) || isEvicted(file) || isLeftToHost(file))
         return { };
@@ -1552,7 +1555,7 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
         });
         RETURN_IF_EXCEPTION(scope, { });
     } else {
-        if (LoadedModule* loaded = loadedIfExists(module); loaded && loaded->exportsAddedByMock) {
+        if (LoadedModule* loaded = loadedIfExists(module); loaded && loaded->exportsAddedByMock && !m_makesNamespaceOfModuleItself) {
             JSObject* added = loaded->exportsAddedByMock;
             PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
             JSObject::getOwnPropertyNames(added, realm, names, DontEnumPropertiesMode::Include);

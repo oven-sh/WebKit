@@ -47,11 +47,15 @@ public:
     // A mock that came ahead of the load stands in place of the module: no cache answers for the object.
     bool isAnsweredByMock() const;
     JSObject* mockInPlace() const;
+    // `vi.doMock()` over a module that has run leaves the module alone. Whoever held its object keeps it, and it answers for the module while the mock stands.
+    void setKeepsToModule(bool keepsToModule) { m_keepsToModule = keepsToModule; }
+    // What is made for whoever asks under such a mock is the object of that mock, for good.
+    void setMockOfView(VM& vm, JSObject* mock) { m_mockOfView.set(vm, this, mock); }
     AbstractModuleRecord* recordForResolution();
     // A read of a deferred namespace object may evaluate the module, so that object does not have the module's namespace layout.
     // Image::position() of the image that has the module.
     unsigned imagePosition() const { return m_imagePosition; }
-    bool hasNamespaceLayoutOf(ModuleID module) const { return (m_module == module || m_face == module) && !m_isDeferred; }
+    bool hasNamespaceLayoutOf(ModuleID module) const { return (m_module == module || m_face == module) && !m_isDeferred && !m_mockOfView; }
     // The object of a file is also what code gets that asks for the namespace object of the file's face, where that face captures nothing.
     void setFace(ModuleID face) { m_face = face; }
     std::optional<unsigned> find(UniquedStringImpl*) const;
@@ -102,6 +106,7 @@ private:
     WriteBarrier<JSCellButterfly> m_dynamicExportNames;
     WriteBarrier<JSObject> m_capturedValues;
     WriteBarrier<JSObject> m_liveSources;
+    WriteBarrier<JSObject> m_mockOfView;
     ModuleID m_module;
     ModuleID m_face;
     unsigned m_imagePosition;
@@ -109,6 +114,7 @@ private:
     bool m_mayNeedEvaluation;
     bool m_hasESModuleMarker { false };
     bool m_hasOwnStructure { false };
+    bool m_keepsToModule { false };
 };
 
 } } // namespace JSC::AOT

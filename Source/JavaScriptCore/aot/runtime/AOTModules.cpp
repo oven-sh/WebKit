@@ -967,6 +967,8 @@ JSValue Modules::readExportIfInitialized(ModuleID module, unsigned index) const
     case ModuleExportKind::Namespace: {
         if (JSObject* linkedWith = namespaceThatCompiledCodeHolds(moduleExport.targetModule(), targetPhaseOf(moduleExport)))
             return linkedWith;
+        if (isLeftAloneByMock(moduleExport.targetModule())) [[unlikely]]
+            return { };
         JSObject* namespaceObject = namespaceIfCreated(moduleExport.targetModule(), targetPhaseOf(moduleExport));
         m_namespacesThatOnlyImagesAboveHold.clear(moduleExport.targetModule().index());
         return namespaceObject ? JSValue(namespaceObject) : JSValue();
@@ -1007,7 +1009,7 @@ JSValue Modules::readExport(ModuleID module, unsigned index)
     std::span<const ModuleExportData> exports = m_table.exports(module);
     RELEASE_ASSERT(index < exports.size());
     const ModuleExportData& moduleExport = exports[index];
-    if (JSObject* mock = mockInPlace(module)) [[unlikely]]
+    if (JSObject* mock = m_moduleReadPastItsMock == module ? nullptr : mockInPlace(module)) [[unlikely]]
         RELEASE_AND_RETURN(scope, mock->get(realm, identifier(moduleExport.name)));
     // The caches answer for the namespace object of an evaluated module only.
     if (status(module) == ModuleStatus::Linked) [[unlikely]]
@@ -1034,6 +1036,8 @@ JSValue Modules::readExport(ModuleID module, unsigned index)
     case ModuleExportKind::Namespace:
         if (JSObject* linkedWith = namespaceThatCompiledCodeHolds(moduleExport.targetModule(), targetPhaseOf(moduleExport)))
             return linkedWith;
+        if (targetPhaseOf(moduleExport) == ModulePhase::Evaluation && !seesMockOf(moduleExport.targetModule(), module)) [[unlikely]]
+            RELEASE_AND_RETURN(scope, namespaceOfModuleItself(moduleExport.targetModule()));
         RELEASE_AND_RETURN(scope, moduleNamespace(moduleExport.targetModule(), targetPhaseOf(moduleExport)));
     case ModuleExportKind::Indirect: {
         const IndirectExportData& indirectExport = m_table.indirectExport(moduleExport);
@@ -2189,6 +2193,28 @@ void Modules::letGoOfImportersOf(ModuleID mocked, ImportersLetGo which)
     }
 }
 
+bool Modules::hasLinkedImporterYetToRun(ModuleID module, const String& keyOfFileInImageBelow, std::optional<ModuleID> askingAsHostNamesIt) const
+{
+    auto isModule = [&](ModuleID target) {
+        if (keyOfFileInImageBelow.isNull())
+            return target == module;
+        const Identifier* key = data(target).isUncompiledCode() ? resolvedKeyIfKnown(target) : nullptr;
+        return key && key->string() == keyOfFileInImageBelow;
+    };
+    for (uint32_t index = 0; index < m_table.size(); ++index) {
+        ModuleID importer(index);
+        if (!data(importer).isESModuleOfProgram() || data(importer).isFaceOfFile() || status(importer) > ModuleStatus::Evaluating || !wasLoadedWithGraph(importer))
+            continue;
+        if (askingAsHostNamesIt && moduleIDForHost(*m_instance.program, importer) == *askingAsHostNamesIt)
+            continue;
+        for (const ModuleRequestData& request : m_table.imports(importer)) {
+            if (isModule(request.targetModule()))
+                return true;
+        }
+    }
+    return false;
+}
+
 bool Modules::willLeaveModuleAlone(ModuleID module, bool onlyIfLoadedInPreload, std::optional<ModuleID> askingAsHostNamesIt)
 {
     // Another mock of the module still waits for the load. This one takes its place.
@@ -2205,15 +2231,17 @@ bool Modules::willLeaveModuleAlone(ModuleID module, bool onlyIfLoadedInPreload, 
         return false;
     // `bun test` lays the mock over a module that a linked module has yet to read: only so does the mock reach it. A module is linked and yet to run only while its graph runs:
     // what the evaluation has not come to, and what lies between its root and the body that runs. The module that asks has read what it has read.
-    bool isGraphRunning = m_innermostEvaluation || m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_instance.vm->synchronousModuleQueue();
-    for (uint32_t index = 0; isGraphRunning && index < m_table.size(); ++index) {
-        ModuleID importer(index);
-        if (!data(importer).isESModuleOfProgram() || data(importer).isFaceOfFile() || status(importer) > ModuleStatus::Evaluating || !wasLoadedWithGraph(importer))
-            continue;
-        if (askingAsHostNamesIt && moduleIDForHost(*m_instance.program, importer) == *askingAsHostNamesIt)
-            continue;
-        for (const ModuleRequestData& request : m_table.imports(importer)) {
-            if (request.targetModule() == module)
+    // So too an importer in an image above, which knows the module by the key that the loader has it under. The graph that runs may be that of any image: it goes down through the others.
+    Vector<const Modules*, 4> imagesAbove;
+    for (Instance* above = m_instance.above; above; above = above->above) {
+        if (const Modules* modules = above->state ? above->state->modules.get() : nullptr)
+            imagesAbove.append(modules);
+    }
+    if (isGraphRunning() || std::ranges::any_of(imagesAbove, &Modules::isGraphRunning)) {
+        if (hasLinkedImporterYetToRun(module, nullString(), askingAsHostNamesIt))
+            return false;
+        for (const Modules* modules : imagesAbove) {
+            if (modules->hasLinkedImporterYetToRun(module, m_table.pathText(module), askingAsHostNamesIt))
                 return false;
         }
     }
@@ -2252,6 +2280,9 @@ bool Modules::setMockOverModuleThatHasRun(ModuleID module, JSObject* mock, JSVal
     std::optional<BitVector> exportsLeftOutBefore;
     if (auto leftOut = m_exportsLeftOut.find(module); leftOut != m_exportsLeftOut.end())
         exportsLeftOutBefore = leftOut->value;
+    BitVector exportsHiddenBefore(m_table.exports(module).size());
+    for (unsigned index = 0; index < m_table.exports(module).size(); ++index)
+        exportsHiddenBefore.quickSet(index, (m_table.exports(module)[index].isFromStarExport && isExportAmbiguous(module, index)) || isLeftOut(module, index, TablesBehindStars::MayLackName));
     takeNamesOfMockInPlace(module, mock);
     RETURN_IF_EXCEPTION(scope, false);
     // The names were asked of an object of the host.
@@ -2262,9 +2293,7 @@ bool Modules::setMockOverModuleThatHasRun(ModuleID module, JSObject* mock, JSVal
     LoadedModule& loaded = ensureLoaded(module);
     loaded.mockInPlace.set(*this, mock);
     ProgramStatics::writeVariable(m_instance, *m_table.wordOfMock(module), mock);
-    // What the caches have filed of the object of the module reads its variables.
-    if (auto* object = dynamicDowncast<ModuleNamespace>(namespaceIfCreated(module, ModulePhase::Evaluation)))
-        object->leaveStructureThatCachesKnow(*m_instance.vm);
+    setAsideNamespaceUnderMock(module);
     // Made since the mock was laid, for the load that has come to it.
     if (ModuleRecord* record = m_records.get(module))
         letRecordAnswerByMock(record, mock);
@@ -2274,6 +2303,7 @@ bool Modules::setMockOverModuleThatHasRun(ModuleID module, JSObject* mock, JSVal
     }
     kept.isInPlace = true;
     kept.exportsLeftOutBefore = WTF::move(exportsLeftOutBefore);
+    kept.exportsHiddenBefore = WTF::move(exportsHiddenBefore);
     ++m_numberOfMocksInPlace;
     m_modulesWithMockInPlace.set(module.index());
     loaded.requiredValueBeforeMockInPlace.set(*this, loaded.requiredValue.get());
@@ -2323,14 +2353,78 @@ void Modules::endMockOverModuleThatHasRun(ModuleID module)
     // There was none when the mock came: willLeaveModuleAlone().
     loaded.objectMadeByRequire.set(*this, nullptr);
     loaded.exportsGivenToObjectMadeByRequire.set(*this, JSValue());
-    if (auto* object = dynamicDowncast<ModuleNamespace>(namespaceIfCreated(module, ModulePhase::Evaluation)))
-        object->leaveStructureThatCachesKnow(*m_instance.vm);
-    // An object that was made under the mock has its names. The one from before stays the object of the module, as in `bun test`.
+    // An object that was made under the mock is the mock's, and whoever holds it keeps it. The object of the module is the one from before, as in `bun test`.
     for (uint32_t index = 0; index < m_table.size(); ++index) {
         ModuleID each(index);
-        if ((each == module ? !kept.hadNamespace : data(each).hasDynamicStarExport()) && namespaceIfCreated(each, ModulePhase::Evaluation))
+        if ((each == module || data(each).hasDynamicStarExport()) && namespaceIfCreated(each, ModulePhase::Evaluation))
             setNamespace(each, ModulePhase::Evaluation, nullptr);
     }
+    if (JSObject* own = loaded.namespaceBeforeMockInPlace.get()) {
+        uncheckedDowncast<ModuleNamespace>(own)->setKeepsToModule(false);
+        loaded.namespaceBeforeMockInPlace.set(*this, nullptr);
+        setNamespace(module, ModulePhase::Evaluation, own);
+    }
+}
+
+// The object in the slot of the module goes to whoever asks by name. The first that a mock finds there is the module's own; a later one is the object of the mock before, which keeps that mock.
+void Modules::setAsideNamespaceUnderMock(ModuleID module)
+{
+    auto* object = dynamicDowncast<ModuleNamespace>(namespaceIfCreated(module, ModulePhase::Evaluation));
+    if (!object)
+        return;
+    LoadedModule& loaded = ensureLoaded(module);
+    if (!loaded.namespaceBeforeMockInPlace) {
+        object->setKeepsToModule(true);
+        loaded.namespaceBeforeMockInPlace.set(*this, object);
+    }
+    setNamespace(module, ModulePhase::Evaluation, nullptr);
+}
+
+JSObject* Modules::namespaceOfModuleItself(ModuleID module)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    auto mock = m_mocksOverModulesThatHaveRun.find(module);
+    if (mock == m_mocksOverModulesThatHaveRun.end())
+        RELEASE_AND_RETURN(scope, moduleNamespace(module, ModulePhase::Evaluation));
+    m_namespacesThatOnlyImagesAboveHold.clear(module.index());
+    // The mock waits for the first load: what the module has is its own. This is no load.
+    if (!mock->value.isInPlace) {
+        if (JSObject* own = namespaceIfCreated(module, ModulePhase::Evaluation))
+            return own;
+        RELEASE_AND_RETURN(scope, createNamespace(module, ModulePhase::Evaluation, true));
+    }
+    LoadedModule& loaded = ensureLoaded(module);
+    if (JSObject* own = loaded.namespaceBeforeMockInPlace.get())
+        return own;
+    // Nobody had asked for it when the mock came.
+    JSObject* ofMock = namespaceIfCreated(module, ModulePhase::Evaluation);
+    setNamespace(module, ModulePhase::Evaluation, nullptr);
+    JSObject* own = nullptr;
+    {
+        SetForScope makesIt(m_makesNamespaceOfModuleItself, true);
+        own = createNamespace(module, ModulePhase::Evaluation, true);
+    }
+    setNamespace(module, ModulePhase::Evaluation, ofMock);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (auto* object = dynamicDowncast<ModuleNamespace>(own)) {
+        object->setKeepsToModule(true);
+        loaded.namespaceBeforeMockInPlace.set(*this, object);
+    }
+    return own;
+}
+
+bool Modules::isHiddenInModuleItself(ModuleID module, unsigned index) const
+{
+    auto mock = m_mocksOverModulesThatHaveRun.find(module);
+    if (mock != m_mocksOverModulesThatHaveRun.end() && mock->value.isInPlace)
+        return mock->value.exportsHiddenBefore.get(index);
+    return (m_table.exports(module)[index].isFromStarExport && isExportAmbiguous(module, index)) || isLeftOut(module, index, TablesBehindStars::MayLackName);
+}
+
+JSValue Modules::readExportOfModuleItself(ModuleID module, unsigned index)
+{
+    SetForScope readsPast(m_moduleReadPastItsMock, module);
+    return readExportFromOutside(module, index);
 }
 
 auto Modules::mockState(ModuleID module) -> MockState
@@ -2915,6 +3009,8 @@ JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase, bool shou
     ModuleNamespace* namespaceObject = ModuleNamespace::create(vm, namespaceStructure(shouldPreventExtensions), module, phase, exportObjects);
     if (isRequired && !namespaceObject->hasExport(vm.propertyNames->__esModule.impl()))
         namespaceObject->setESModuleMarker(true);
+    if (JSObject* mock = phase == ModulePhase::Evaluation && !m_makesNamespaceOfModuleItself && isLeftAloneByMock(module) ? mockInPlace(module) : nullptr) [[unlikely]]
+        namespaceObject->setMockOfView(vm, mock);
     setNamespace(module, phase, namespaceObject);
     return namespaceObject;
 }
@@ -5163,6 +5259,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetModuleNamespace, JSCell*, (Instance* ins
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetModuleNamespace);
     RELEASE_ASSERT(static_cast<ImportPhase>(phase) == ImportPhase::Evaluation || static_cast<ImportPhase>(phase) == ImportPhase::Defer);
     OPERATION_RETURN(scope, modulesOf(*instance).moduleNamespace(ModuleID(module), static_cast<ImportPhase>(phase) == ImportPhase::Defer ? Modules::ModulePhase::Defer : Modules::ModulePhase::Evaluation));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTGetNamespaceOfModuleItself, JSCell*, (Instance* instance, uint32_t module))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetNamespaceOfModuleItself);
+    OPERATION_RETURN(scope, modulesOf(*instance).namespaceOfModuleItself(ModuleID(module)));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTIsNamespaceOfModule, size_t, (JSCell* cell, uint32_t module))
@@ -7547,6 +7649,8 @@ std::span<const ModuleExportData> ModuleNamespace::exports() const
 
 bool ModuleNamespace::isHiddenExport(unsigned index) const
 {
+    if (m_keepsToModule) [[unlikely]]
+        return modules().isHiddenInModuleItself(m_module, index);
     return (exports()[index].isFromStarExport && modules().isExportAmbiguous(m_module, index)) || modules().isLeftOut(m_module, index, Modules::TablesBehindStars::MayLackName);
 }
 
@@ -7573,6 +7677,7 @@ void ModuleNamespace::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_dynamicExportNames);
     visitor.append(thisObject->m_capturedValues);
     visitor.append(thisObject->m_liveSources);
+    visitor.append(thisObject->m_mockOfView);
 }
 
 DEFINE_VISIT_CHILDREN(ModuleNamespace);
@@ -7592,7 +7697,7 @@ bool ModuleNamespace::tryReadExports(JSGlobalObject* globalObject, Vector<Unique
     ImageOfCellScope imageOfCell(globalObject->vm(), this);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Modules& modules = this->modules();
-    if (modules.mockInPlace(m_module)) [[unlikely]]
+    if (modules.mockInPlace(m_module) || m_mockOfView) [[unlikely]]
         return false;
     std::span<const ModuleExportData> entries = exports();
     for (unsigned index = 0; index < entries.size(); ++index) {
@@ -7608,17 +7713,23 @@ bool ModuleNamespace::tryReadExports(JSGlobalObject* globalObject, Vector<Unique
 
 AbstractModuleRecord* ModuleNamespace::recordForResolution()
 {
+    // The record that the module has now answers by the mock.
+    if (m_keepsToModule) [[unlikely]]
+        return nullptr;
     return modules().recordForResolution(m_module);
 }
 
 JSObject* ModuleNamespace::mockInPlace() const
 {
-    return modules().mockInPlace(m_module);
+    if (JSObject* ofView = m_mockOfView.get()) [[unlikely]]
+        return ofView;
+    return m_keepsToModule ? nullptr : modules().mockInPlace(m_module);
 }
 
 bool ModuleNamespace::isAnsweredByMock() const
 {
-    return !!modules().mockInPlace(m_module);
+    // The caches go by the state of the module, which has a mock while this object keeps to the module.
+    return m_keepsToModule || !!mockInPlace();
 }
 
 bool ModuleNamespace::isSymbolLikeKey(UniquedStringImpl* name) const
@@ -7794,7 +7905,7 @@ bool ModuleNamespace::getOwnPropertySlot(JSObject* object, JSGlobalObject* globa
         thisObject->evaluateIfNeeded(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
     }
-    if (JSObject* mock = thisObject->isSymbolLikeKey(name.uid()) ? nullptr : thisObject->modules().mockInPlace(thisObject->m_module)) [[unlikely]]
+    if (JSObject* mock = thisObject->isSymbolLikeKey(name.uid()) ? nullptr : thisObject->mockInPlace()) [[unlikely]]
         RELEASE_AND_RETURN(scope, thisObject->getOwnPropertySlotOfMock(globalObject, mock, name, slot));
     std::optional<unsigned> index = thisObject->find(name.uid());
     if (!index && !thisObject->isDynamicExport(name.uid())) {
@@ -7811,7 +7922,10 @@ bool ModuleNamespace::getOwnPropertySlot(JSObject* object, JSGlobalObject* globa
     }
     JSValue value = jsUndefined();
     if (method != InternalMethodType::HasProperty) {
-        value = index ? thisObject->modules().readExportFromOutside(thisObject->m_module, *index) : thisObject->readDynamicExport(globalObject, name);
+        if (index && thisObject->m_keepsToModule) [[unlikely]]
+            value = thisObject->modules().readExportOfModuleItself(thisObject->m_module, *index);
+        else
+            value = index ? thisObject->modules().readExportFromOutside(thisObject->m_module, *index) : thisObject->readDynamicExport(globalObject, name);
         RETURN_IF_EXCEPTION(scope, false);
     }
     slot.setValue(thisObject, static_cast<unsigned>(PropertyAttribute::DontDelete), value);
@@ -7837,7 +7951,7 @@ void ModuleNamespace::getOwnPropertyNames(JSObject* object, JSGlobalObject* glob
     JSCellButterfly* dynamicNames = thisObject->m_dynamicExportNames.get();
     unsigned dynamicNameCount = dynamicNames ? dynamicNames->length() : 0;
     // The names of the mock, in its order.
-    if (JSObject* mock = modules.mockInPlace(thisObject->m_module)) [[unlikely]] {
+    if (JSObject* mock = thisObject->mockInPlace()) [[unlikely]] {
         if (!canAskMock(globalObject, scope)) [[unlikely]]
             return;
         PropertyNameArrayBuilder namesOfMock(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
@@ -7897,7 +8011,7 @@ bool ModuleNamespace::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNa
     if (name == vm.propertyNames->__esModule && !thisObject->hasExport(name.uid()))
         RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, name, value, slot));
     // A write goes through to what the factory gave, which importers read.
-    if (JSObject* mock = thisObject->modules().mockInPlace(thisObject->m_module)) [[unlikely]] {
+    if (JSObject* mock = thisObject->mockInPlace()) [[unlikely]] {
         if (!canAskMock(globalObject, scope)) [[unlikely]]
             return false;
         if (isThisValueAltered(slot, thisObject)) [[unlikely]]
@@ -7913,7 +8027,7 @@ bool ModuleNamespace::putByIndex(JSCell* cell, JSGlobalObject* globalObject, uns
     ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto* thisObject = uncheckedDowncast<ModuleNamespace>(cell);
-    if (JSObject* mock = thisObject->modules().mockInPlace(thisObject->m_module)) [[unlikely]] {
+    if (JSObject* mock = thisObject->mockInPlace()) [[unlikely]] {
         if (!canAskMock(globalObject, scope)) [[unlikely]]
             return false;
         RELEASE_AND_RETURN(scope, mock->methodTable()->putByIndex(mock, globalObject, index, value, shouldThrow));
@@ -7934,7 +8048,7 @@ bool ModuleNamespace::deleteProperty(JSCell* cell, JSGlobalObject* globalObject,
         if (!isEvaluated)
             return false;
     }
-    if (JSObject* mock = thisObject->isSymbolLikeKey(name.uid()) ? nullptr : thisObject->modules().mockInPlace(thisObject->m_module)) [[unlikely]] {
+    if (JSObject* mock = thisObject->isSymbolLikeKey(name.uid()) ? nullptr : thisObject->mockInPlace()) [[unlikely]] {
         if (!canAskMock(globalObject, scope)) [[unlikely]]
             return false;
         // Not the caller's slot: the mock would mark it cacheable for the Structure of this object, which never changes.
@@ -7959,7 +8073,7 @@ bool ModuleNamespace::defineOwnProperty(JSObject* object, JSGlobalObject* global
     auto* thisObject = uncheckedDowncast<ModuleNamespace>(object);
     if (thisObject->isOrdinaryKey(name))
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(thisObject, globalObject, name, descriptor, shouldThrow));
-    if (JSObject* mock = thisObject->isSymbolLikeKey(name.uid()) ? nullptr : thisObject->modules().mockInPlace(thisObject->m_module)) [[unlikely]] {
+    if (JSObject* mock = thisObject->isSymbolLikeKey(name.uid()) ? nullptr : thisObject->mockInPlace()) [[unlikely]] {
         if (!canAskMock(globalObject, scope)) [[unlikely]]
             return false;
         RELEASE_AND_RETURN(scope, mock->methodTable()->defineOwnProperty(mock, globalObject, name, descriptor, shouldThrow));

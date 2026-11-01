@@ -86,6 +86,7 @@ struct LinkContext {
     macro(JSValue, valueBeforeMock) \
     macro(JSObject*, mockInPlace) \
     macro(JSObject*, recordBeforeMockInPlace) \
+    macro(JSObject*, namespaceBeforeMockInPlace) \
     macro(JSValue, requiredValueBeforeMockInPlace) \
     macro(JSValue, exportsOfOriginalBesideMock) \
     macro(JSValue, answerOfMockWhileOriginalRuns) \
@@ -196,6 +197,8 @@ public:
     bool loadComesToModuleWhoseMockEnded(ModuleID) const;
     bool setMockInPlaceOfLibraryModule(ModuleID, JSObject* mock, JSValue whatRequireAnswers);
     bool willLeaveModuleAlone(ModuleID, bool onlyIfLoadedInPreload, std::optional<ModuleID> askingAsHostNamesIt);
+    bool isGraphRunning() const { return m_innermostEvaluation || m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_instance.vm->synchronousModuleQueue(); }
+    bool hasLinkedImporterYetToRun(ModuleID, const String& keyOfFileInImageBelow, std::optional<ModuleID> askingAsHostNamesIt) const;
     uint32_t placeOfMomentOfLoad(ModuleID) const;
     uint32_t momentOfFirstMockInTestFile(ModuleID);
     // The life of the mock of a module: R:launch-doors-stores-and-defines/THE-LIFE-OF-A-MOCK.md. Computed from what the sets and flags below say. NoneOfThem: together they say what no state of the table is.
@@ -208,6 +211,9 @@ public:
     bool setMockOverModuleThatHasRun(ModuleID, JSObject* mock, JSValue whatRequireAnswers);
     void endMockOverModuleThatHasRun(ModuleID);
     bool seesMockOf(ModuleID mocked, ModuleID importer) const;
+    JSObject* namespaceOfModuleItself(ModuleID);
+    bool isHiddenInModuleItself(ModuleID, unsigned index) const;
+    JSValue readExportOfModuleItself(ModuleID, unsigned index);
     // `bun test` takes whoever imports a module out of its loader when a mock of the module ends, and when a mock is laid over what an earlier test file loaded. A mock of such an importer
     // comes ahead of its load, though the body has run here.
     enum class ImportersLetGo : bool { All, AllButThoseThatThisTestFileLinkedToModule };
@@ -1199,7 +1205,12 @@ private:
         bool hadNamespace;
         bool isInPlace { false };
         std::optional<BitVector> exportsLeftOutBefore { };
+        // What the object of the module does not show, as it was when the mock came.
+        BitVector exportsHiddenBefore { };
     };
+    void setAsideNamespaceUnderMock(ModuleID);
+    bool m_makesNamespaceOfModuleItself { false };
+    std::optional<ModuleID> m_moduleReadPastItsMock;
     UncheckedKeyHashMap<ModuleID, MockOverModuleThatHasRun> m_mocksOverModulesThatHaveRun;
     struct FirstMockInTestFile {
         uint32_t moment;
