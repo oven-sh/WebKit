@@ -131,6 +131,14 @@ JS_EXPORT_PRIVATE void dumpJITMemory(const void*, const void*, size_t);
 JS_EXPORT_PRIVATE void* performJITMemcpyWithMProtect(void *dst, const void *src, size_t n);
 #endif
 
+#if ENABLE(JIT_PROTECTION_KEY)
+// Out of line, so that few functions contain WRPKRU: Bun lists every function that has an instruction newer than its baseline CPU.
+JS_EXPORT_PRIVATE void* performJITMemcpyWithProtectionKey(void* dst, const void* src, size_t n);
+// For a thread that may have no rights to the region and reads it as data: one older than the key, and any in a signal handler.
+JS_EXPORT_PRIVATE void letCurrentThreadReadJITRegion();
+JS_EXPORT_PRIVATE bool protectionKeySystemCallsReturn(void* base, size_t);
+#endif
+
 #if ENABLE(JIT_SCAN_ASSEMBLER_BUFFER_FOR_ZEROES)
 // This helps with error logging in the case of a crash, as it places the crash
 // PC at the point in the instruction stream which would be corrupted --
@@ -295,6 +303,10 @@ ALWAYS_INLINE void* performJITMemcpy(void *dst, const void *src, size_t n)
         auto ret = performJITMemcpyWithMProtect(dst, src, n);
         jitMemcpyCheckForZeros(dst, src, n);
         return ret;
+#endif
+
+#if ENABLE(JIT_PROTECTION_KEY)
+        return performJITMemcpyWithProtectionKey(dst, src, n);
 #endif
 
         if (g_jscConfig.useFastJITPermissions) {

@@ -466,6 +466,13 @@ jobs:
               elif [ "$SIGNS_RETURN_ADDRESSES" = true ]; then echo "::warning::$LABEL signs return addresses, and this runner has no pointer authentication"
               else echo "no pointer authentication"
               fi
+              # Without them the JIT region has no key (ENABLE(JIT_PROTECTION_KEY)), and nothing here shows that every write to it
+              # goes through performJITMemcpy().
+              if [ "$(uname -m)" = x86_64 ]; then
+                if grep -qw ospke /proc/cpuinfo; then echo "memory protection keys"
+                else echo "::warning::this runner has no memory protection keys, so the JIT region has no key in these tests"
+                fi
+              fi
               ;;
             macOS) echo "$(sysctl -n hw.ncpu) cores, $(($(sysctl -n hw.memsize) / 1073741824))GB of memory" ;;
             Windows)

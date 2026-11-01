@@ -77,6 +77,10 @@ struct Config {
     bool vmEntryDisallowed;
 
     bool useFastJITPermissions;
+#if ENABLE(JIT_PROTECTION_KEY)
+    // The two bits of PKRU that belong to the JIT region's key. Zero: the region has no key.
+    uint32_t jitProtectionKeyBits;
+#endif
 
     // The following HasBeenCalled flags are for auditing call_once initialization functions.
     bool initializeHasBeenCalled;

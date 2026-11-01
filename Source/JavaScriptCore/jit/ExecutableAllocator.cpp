@@ -62,6 +62,16 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #include <windows.h>
 #endif
 
+#if ENABLE(JIT_PROTECTION_KEY)
+#include <cpuid.h>
+#include <sys/mman.h>
+#include <sys/prctl.h>
+#include <sys/syscall.h>
+#include <sys/utsname.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 #if HAVE(IOS_JIT_RESTRICTIONS) || HAVE(MAC_JIT_RESTRICTIONS)
 #include <wtf/cocoa/Entitlements.h>
 #endif
@@ -569,6 +579,100 @@ static void registerJITUnwindInfo(PageReservation& pageReservation, void*& base,
 
 #endif // OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
 
+#if ENABLE(JIT_PROTECTION_KEY)
+
+// PKRU has two bits for each of the 16 keys: access disable, and above it write disable. Neither stops an instruction fetch.
+static constexpr uint32_t writeDisableBitsOfPKRU = 0xaaaaaaaa;
+
+static ALWAYS_INLINE uint32_t readPKRU()
+{
+    uint32_t eax;
+    uint32_t edx;
+    __asm__ volatile("rdpkru" : "=a"(eax), "=d"(edx) : "c"(0));
+    return eax;
+}
+
+static ALWAYS_INLINE void writePKRU(uint32_t value)
+{
+    __asm__ volatile("wrpkru" : : "a"(value), "c"(0), "d"(0) : "memory");
+}
+
+// syscall() and not pkey_alloc(): the C library's functions are newer than the oldest glibc that Bun runs on.
+static long allocateProtectionKey()
+{
+    return syscall(SYS_pkey_alloc, 0UL, static_cast<unsigned long>(PKEY_DISABLE_WRITE));
+}
+
+static long setProtectionKey(void* base, size_t size, long key)
+{
+    return syscall(SYS_pkey_mprotect, base, size, static_cast<unsigned long>(PROT_READ | PROT_WRITE | PROT_EXEC), key);
+}
+
+static bool operatingSystemHasEnabledProtectionKeys()
+{
+    unsigned eax, ebx, ecx, edx;
+    constexpr unsigned ospke = 1u << 4;
+    return __get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx) && (ecx & ospke);
+}
+
+static bool kernelKeepsPKRUAcrossContextSwitches()
+{
+    // Before Linux 5.13 a thread could come back from a context switch with the PKRU of another. 5.4.182 and 5.10.103 have
+    // the fix too ("x86/fpu: Correct pkru/xstate inconsistency"). V8 asks the same of the kernel.
+    struct utsname name;
+    unsigned major, minor, patch;
+    if (uname(&name) || sscanf(name.release, "%u.%u.%u", &major, &minor, &patch) != 3)
+        return false;
+    if (major != 5)
+        return major > 5;
+    return minor >= 13 || (minor == 10 && patch >= 103) || (minor == 4 && patch >= 182);
+}
+
+bool protectionKeySystemCallsReturn(void* base, size_t size)
+{
+    // A seccomp filter may kill the process for a system call that it does not list, and nothing tells what it would do.
+    // systemd's @system-service does not list these; Docker's default profile does. So under a filter a child goes first.
+    if (prctl(PR_GET_SECCOMP, 0, 0, 0, 0) <= 0)
+        return true;
+
+    // fork() without the handlers of pthread_atfork(), and without a SIGCHLD at the end.
+    long child = syscall(SYS_clone, 0UL, 0UL, 0UL, 0UL, 0UL);
+    if (child < 0)
+        return false;
+    if (!child) {
+        prctl(PR_SET_DUMPABLE, 0, 0, 0, 0); // No core file where the filter kills.
+        long key = allocateProtectionKey();
+        if (key >= 0)
+            setProtectionKey(base, size, key); // Fails, the child has no JIT region (MADV_DONTFORK), but the filter has seen it.
+        syscall(SYS_exit_group, key < 0 ? 1UL : 0UL);
+    }
+    int status;
+    pid_t waited;
+    do {
+        waited = waitpid(child, &status, __WCLONE);
+    } while (waited < 0 && errno == EINTR);
+    return waited == child && WIFEXITED(status) && !WEXITSTATUS(status);
+}
+
+static void giveJITRegionAProtectionKey(void* base, size_t size)
+{
+    if (!Options::useJITProtectionKey() || !operatingSystemHasEnabledProtectionKeys() || !kernelKeepsPKRUAcrossContextSwitches() || !protectionKeySystemCallsReturn(base, size))
+        return;
+
+    // Fails where all 15 keys are taken. On success this thread has the rights asked for, and a thread that exists already
+    // cannot even read what has the key.
+    long key = allocateProtectionKey();
+    if (key < 0)
+        return;
+    if (setProtectionKey(base, size, key)) {
+        syscall(SYS_pkey_free, key);
+        return;
+    }
+    g_jscConfig.jitProtectionKeyBits = 3u << (2 * key);
+}
+
+#endif // ENABLE(JIT_PROTECTION_KEY)
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 static ALWAYS_INLINE JITReservation initializeJITPageReservation()
@@ -629,6 +733,10 @@ static ALWAYS_INLINE JITReservation initializeJITPageReservation()
 
         if (g_jscConfig.useFastJITPermissions)
             threadSelfRestrict<MemoryRestriction::kRwxToRx>();
+
+#if ENABLE(JIT_PROTECTION_KEY)
+        giveJITRegionAProtectionKey(reservation.base, reservation.size);
+#endif
 
 #if ENABLE(SEPARATED_WX_HEAP)
         if (!g_jscConfig.useFastJITPermissions) {
@@ -1664,6 +1772,60 @@ void* performJITMemcpyWithMProtect(void *dst, const void *src, size_t n)
     return dst;
 }
 #endif
+
+#if ENABLE(JIT_PROTECTION_KEY)
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+static ALWAYS_INLINE void copyToJITRegion(void* dst, const void* src, size_t n)
+{
+    // A single store wherever X86Assembler had one, aligned or not: another thread may be executing the call that is relinked,
+    // and memcpy() may copy so few bytes one at a time.
+    switch (n) {
+    case 1:
+        WTF::unalignedStore<uint8_t>(dst, WTF::unalignedLoad<uint8_t>(src));
+        break;
+    case 2:
+        WTF::unalignedStore<uint16_t>(dst, WTF::unalignedLoad<uint16_t>(src));
+        break;
+    case 4:
+        WTF::unalignedStore<uint32_t>(dst, WTF::unalignedLoad<uint32_t>(src));
+        break;
+    case 8:
+        WTF::unalignedStore<uint64_t>(dst, WTF::unalignedLoad<uint64_t>(src));
+        break;
+    default:
+        memcpyTearing(dst, src, n);
+        break;
+    }
+}
+
+NEVER_INLINE void* performJITMemcpyWithProtectionKey(void* dst, const void* src, size_t n)
+{
+    uint32_t bits = g_jscConfig.jitProtectionKeyBits;
+    if (!bits) {
+        copyToJITRegion(dst, src, n);
+        return dst;
+    }
+    uint32_t writable = readPKRU() & ~bits;
+    writePKRU(writable);
+    copyToJITRegion(dst, src, n);
+    writePKRU(writable | (bits & writeDisableBitsOfPKRU));
+    return dst;
+}
+
+NEVER_INLINE void letCurrentThreadReadJITRegion()
+{
+    uint32_t bits = g_jscConfig.jitProtectionKeyBits;
+    if (!bits)
+        return;
+    uint32_t current = readPKRU();
+    uint32_t readOnly = (current & ~bits) | (bits & writeDisableBitsOfPKRU);
+    if (current != readOnly)
+        writePKRU(readOnly);
+}
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+#endif // ENABLE(JIT_PROTECTION_KEY)
 
 #if ENABLE(LIBPAS_JIT_HEAP) && ENABLE(JIT)
 RefPtr<ExecutableMemoryHandle> ExecutableMemoryHandle::createImpl(size_t sizeInBytes)

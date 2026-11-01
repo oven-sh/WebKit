@@ -222,6 +222,11 @@ public:
                 if (!isJITPC(trapPC))
                     return SignalAction::NotHandled;
 
+#if ENABLE(JIT_PROTECTION_KEY)
+                // The kernel starts a signal handler with the rights that a process starts with: none to the JIT region.
+                letCurrentThreadReadJITRegion();
+#endif
+
                 CodeBlock* currentCodeBlock = DFG::codeBlockForVMTrapPC(trapPC);
                 if (!currentCodeBlock) {
                     // Either we trapped for some other reason, e.g. Wasm OOB, or we didn't properly monitor the PC. Regardless, we can't do much now...

@@ -1045,6 +1045,16 @@
 #define ENABLE_MPROTECT_RX_TO_RWX 0
 #endif
 
+/* Bun: the JIT region gets a memory protection key (PKU) where the CPU and the kernel have them, and a thread can write
+   to the region only while it copies code there. Android kills a process for a system call that its filter does not list. */
+#if !defined(ENABLE_JIT_PROTECTION_KEY) && ENABLE(JIT) && OS(LINUX) && !OS(ANDROID) && CPU(X86_64) && !ENABLE(MPROTECT_RX_TO_RWX)
+#define ENABLE_JIT_PROTECTION_KEY 1
+#endif
+
+#if !defined(ENABLE_JIT_PROTECTION_KEY)
+#define ENABLE_JIT_PROTECTION_KEY 0
+#endif
+
 /* CSS Selector JIT Compiler */
 #if !defined(ENABLE_CSS_SELECTOR_JIT) && ((CPU(X86_64) || CPU(ARM64)) && ENABLE(JIT))
 #define ENABLE_CSS_SELECTOR_JIT 1
