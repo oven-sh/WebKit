@@ -264,7 +264,8 @@ void ModuleEmitter::generateEvaluateRequiredModule(const ValueContext& value)
     auto askRunTime = [&](const CallOptions& options) {
         callOperation<Boxed>(value, RuntimeOperation::RequireModule, { moduleIndex(module), moduleIndex(ModuleID()) }, options);
     };
-    if (value.shape() == CodeShape::Compact) {
+    // A mock that ended has kept a module below this one from running. The run time knows.
+    if (value.shape() == CodeShape::Compact || m_placement.importsWhatMayBeMocked(module)) {
         askRunTime({ });
         return;
     }

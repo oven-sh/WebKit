@@ -1858,6 +1858,7 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
         if (status(each) == ModuleStatus::Evaluated)
             setStatus(each, ModuleStatus::Unlinked);
         m_modulesOwedToImportersThatRan.set(each.index());
+        m_modulesWithNothingOwedBelow.clearAll();
         // A walk made before passes over what has work again.
         m_modulesSettledForLinks[each.index() / 64] &= ~(1ull << (each.index() % 64));
     }

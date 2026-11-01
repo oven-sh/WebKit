@@ -2847,6 +2847,7 @@ void Modules::evaluateModulesOwedBelow(ModuleID root)
             return;
         }
     }
+    m_modulesWithNothingOwedBelow.set(root.index());
     if (filesOfImagesBelow.isEmpty())
         return;
     // The graph goes on in the image that holds the file.
