@@ -56,10 +56,10 @@ function drain(promise) {
     async function* asyncGeneratorBody() { return callerName(); }
     shouldBe(drain(asyncGeneratorBody().next()).value, "asyncGeneratorBody");
 
-    // A resumed async arrow body carries no name of its own, so the point of this one is only
-    // that a frame is there at all: without it the caller would be drainMicrotasks.
+    // A resumed async arrow body has the name that was inferred for the arrow. Without its frame
+    // the caller would be drainMicrotasks.
     var asyncArrowBody = async () => { await 0; return callerName(); };
-    shouldBe(drain(asyncArrowBody()), "");
+    shouldBe(drain(asyncArrowBody()), "asyncArrowBody");
 
     function ordinaryStrictFunction() { return callerName(); }
     shouldBe(ordinaryStrictFunction(), "bodiesKeepTheirFrame");
