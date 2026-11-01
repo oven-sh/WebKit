@@ -1537,7 +1537,19 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
                     }));
                     RETURN_IF_EXCEPTION(scope, { });
                     WTF::Vector<Identifier> addedByMock;
-                    appendNamesAddedByMock(source, addedByMock);
+                    if (isMockedByFactoryThatTakesOriginal(source)) {
+                        // Such a mock passes on the names of the original: one that it lacks stays listed and holds nothing, one that it adds stays behind.
+                        for (unsigned index = 0; index < entriesOfSource.size(); ++index) {
+                            if (!isLeftOut(source, index, TablesBehindStars::HaveName))
+                                continue;
+                            Identifier name = identifier(entriesOfSource[index].name);
+                            bool isExported = isExportedThroughStar(name);
+                            RETURN_IF_EXCEPTION(scope, { });
+                            if (isExported)
+                                result.append({ name, jsUndefined() });
+                        }
+                    } else
+                        appendNamesAddedByMock(source, addedByMock);
                     RETURN_IF_EXCEPTION(scope, { });
                     appendLiveExports(source, addedByMock);
                     if (!standsForWholeModule(source))
