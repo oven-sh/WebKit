@@ -45,8 +45,14 @@ inline bool mayHaveKnownDereferenceableBytes(const Value* value)
         case ArgumentReg:
         case Load:
             return true;
-        case Add:
-            return value->child(0)->opcode() == ArgumentReg && value->child(1)->isConstant();
+        case Add: {
+            if (value->child(0)->opcode() != ArgumentReg)
+                return false;
+            const Value* offset = value->child(1);
+            if (offset->isConstant())
+                return true;
+            return offset->opcode() == Shl && offset->child(1)->isConstant() && offset->child(0)->opcode() == ZExt32 && !offset->child(0)->child(0)->isConstant();
+        }
         default:
             return false;
         }
