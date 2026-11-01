@@ -1728,7 +1728,7 @@ void ValueFlowSolver::takeWhatWasMade(std::span<const std::unique_ptr<NodeMaker>
             m_graph.startWithValueOf(made.first, made.key.maskedNode());
         }
         for (uint32_t number : maker->readsOfWhatLetsInUnseenCode)
-            m_graph.setMask(m_madeNodes[maker->madeNodesMovedUp(number)].first, m_input.universe->builtinTables().heap().objectsThatLetInUnseenCode());
+            m_graph.setMask(m_madeNodes[maker->madeNodesMovedUp(number)].first, m_makers[0]->unite(m_input.universe->builtinTables().heap().objectsThatLetInUnseenCode(), m_takenByRetiredNodes));
         for (uint32_t number : maker->instances) {
             const MadeNodes& made = m_madeNodes[maker->madeNodesMovedUp(number)];
             ValueFlowNodeID node = made.key.nodeOfInstance();
@@ -2625,7 +2625,7 @@ void ValueFlowSolver::takeWhatRulesHaveMade()
     }
     for (const Share& share : shares) {
         for (uint32_t number : share.readsOfWhatLetsInUnseenCode)
-            m_graph.setMask(m_madeNodes[number].first, m_input.universe->builtinTables().heap().objectsThatLetInUnseenCode());
+            m_graph.setMask(m_madeNodes[number].first, m_makers[0]->unite(m_input.universe->builtinTables().heap().objectsThatLetInUnseenCode(), m_takenByRetiredNodes));
         for (uint32_t number : share.instances) {
             const MadeNodes& made = m_madeNodes[number];
             ValueFlowNodeID node = made.key.nodeOfInstance();
