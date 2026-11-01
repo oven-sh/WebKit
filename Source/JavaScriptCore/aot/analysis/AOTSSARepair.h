@@ -58,6 +58,7 @@ private:
 
     void rematerializeConstants(std::span<const Variable>);
     void insertParameters(std::span<const Variable>);
+    bool isInOrderAsItStands(const VariableData&);
 
     static ValueID findLocalDefinition(const VariableData&, const RecordedUse&);
     static const Definition* findLastDefinitionBefore(const VariableData&, BlockID, uint32_t order);

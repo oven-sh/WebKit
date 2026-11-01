@@ -5105,7 +5105,7 @@ private:
 
     // The blocks of `blocks`, which are in the order of the code, that `other` is live in. Nothing where it is named in one of them, or the moves cost `limit` or more.
     template<Bank bank>
-    std::optional<Vector<unsigned, 8>> findBlocksToPassOnStack(Tmp other, const Vector<unsigned, 16>& blocks, const BitVector& isAmongBlocks, float limit, float& cost)
+    std::optional<Vector<unsigned, 8>> findBlocksToPassOnStack(Tmp other, std::span<const unsigned> blocks, const BitVector& isAmongBlocks, float limit, float& cost)
     {
         TmpData& otherData = m_map.get<bank>(other);
         auto intervals = otherData.liveRange.intervals().span();
@@ -5155,10 +5155,34 @@ private:
             , namedTmps(forest.size())
             , likelyBlocks(forest.size())
         {
+            numberOfBlocksBefore.reserveInitialCapacity(code.size() + 1);
+            numberOfBlocksBefore.append(0);
+            for (unsigned index = 0; index < code.size(); ++index)
+                numberOfBlocksBefore.append(numberOfBlocksBefore.last() + !!code[index]);
             for (BasicBlock* block : code) {
                 for (unsigned cycle = forest.innermost(block); cycle != forest.none; cycle = forest[cycle].parent)
                     blocks[cycle].append(block->index());
             }
+        }
+
+        const BitVector& bitsOf(unsigned cycle)
+        {
+            if (bitsOfBlocks.isEmpty())
+                bitsOfBlocks.grow(blocks.size());
+            BitVector& bits = bitsOfBlocks[cycle];
+            if (bits.isEmpty()) {
+                bits.ensureSize(numberOfBlocksBefore.size());
+                for (unsigned blockIndex : blocks[cycle])
+                    bits.quickSet(blockIndex);
+            }
+            return bits;
+        }
+
+        bool holdsEveryBlockBetween(unsigned cycle, unsigned first, unsigned last) const
+        {
+            auto members = blocks[cycle].span();
+            size_t numberOfMembers = std::ranges::upper_bound(members, last) - std::ranges::lower_bound(members, first);
+            return numberOfMembers == numberOfBlocksBefore[last + 1] - numberOfBlocksBefore[first];
         }
 
         bool names(Code& code, unsigned cycle, Tmp tmp)
@@ -5224,6 +5248,8 @@ private:
 
         WTF::CycleForest<CFG> forest;
         Vector<Vector<unsigned>> blocks;
+        Vector<BitVector> bitsOfBlocks;
+        Vector<unsigned> numberOfBlocksBefore;
         Vector<NamedTmps> namedTmps;
         Vector<Vector<unsigned>> likelyBlocks;
         BitVector hasLikelyBlocks;
@@ -5246,24 +5272,36 @@ private:
         if (cycle == m_cycles->forest.none)
             return false;
 
-        Vector<unsigned, 16> blocks;
-        BitVector isAmongBlocks;
+        std::span<const unsigned> blocks;
+        const BitVector* isAmongBlocks = nullptr;
+        Vector<unsigned, 16> blocksOfCycleAndLiveRange;
+        BitVector isInCycleOrLiveRange;
         auto findBlocks = [&] {
-            if (!blocks.isEmpty())
+            if (isAmongBlocks)
                 return;
-            isAmongBlocks.ensureSize(m_code.size());
-            for (unsigned blockIndex : m_cycles->blocks[cycle]) {
-                isAmongBlocks.quickSet(blockIndex);
-                blocks.append(blockIndex);
+            bool livesOnlyInCycle = std::ranges::all_of(tmpData.liveRange.intervals(), [&](const Interval& interval) {
+                return m_cycles->holdsEveryBlockBetween(cycle, findBlockIndexContainingPoint(interval.begin()), findBlockIndexContainingPoint(interval.end() - 1));
+            });
+            if (livesOnlyInCycle) {
+                blocks = m_cycles->blocks[cycle].span();
+                isAmongBlocks = &m_cycles->bitsOf(cycle);
+                return;
             }
-            size_t numberOfBlocksInCycle = blocks.size();
+            isInCycleOrLiveRange.ensureSize(m_code.size());
+            for (unsigned blockIndex : m_cycles->blocks[cycle]) {
+                isInCycleOrLiveRange.quickSet(blockIndex);
+                blocksOfCycleAndLiveRange.append(blockIndex);
+            }
+            size_t numberOfBlocksInCycle = blocksOfCycleAndLiveRange.size();
             forEachBlockInLiveRange(tmpData.liveRange, [&](BasicBlock* block) {
-                if (!isAmongBlocks.quickSet(block->index()))
-                    blocks.append(block->index());
+                if (!isInCycleOrLiveRange.quickSet(block->index()))
+                    blocksOfCycleAndLiveRange.append(block->index());
                 return IterationStatus::Continue;
             });
-            std::ranges::inplace_merge(blocks, blocks.begin() + numberOfBlocksInCycle);
-            ASSERT(std::ranges::is_sorted(blocks));
+            std::ranges::inplace_merge(blocksOfCycleAndLiveRange, blocksOfCycleAndLiveRange.begin() + numberOfBlocksInCycle);
+            ASSERT(std::ranges::is_sorted(blocksOfCycleAndLiveRange));
+            blocks = blocksOfCycleAndLiveRange.span();
+            isAmongBlocks = &isInCycleOrLiveRange;
         };
         auto passesThroughBlockWhereTheyMeet = [&](Tmp other, const Interval& intervalOfOther) {
             TmpData& otherData = m_map.get<bank>(other);
@@ -5308,7 +5346,7 @@ private:
                     m_visited.add(index);
                     if (passesThroughBlockWhereTheyMeet(conflict.tmp, conflict.interval)) {
                         findBlocks();
-                        if (auto blocksOnStack = findBlocksToPassOnStack<bank>(conflict.tmp, blocks, isAmongBlocks, leastCost, cost)) {
+                        if (auto blocksOnStack = findBlocksToPassOnStack<bank>(conflict.tmp, blocks, *isAmongBlocks, leastCost, cost)) {
                             others.append({ conflict.tmp, WTF::move(*blocksOnStack) });
                             return IterationStatus::Continue;
                         }

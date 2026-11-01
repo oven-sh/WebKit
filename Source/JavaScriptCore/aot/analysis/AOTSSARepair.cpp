@@ -184,12 +184,16 @@ public:
 
     uint32_t answerTo(uint32_t question) const { return m_answers[question]; }
 
-    uint32_t findAmongKeptDefinitionsAtHead(BlockID block) const
+    uint32_t findAmongKeptDefinitionsAtHead(BlockID block) const { return findAmongKeptDefinitions(block, false); }
+    uint32_t findAmongKeptDefinitionsAtTail(BlockID block) const { return findAmongKeptDefinitions(block, true); }
+
+private:
+    uint32_t findAmongKeptDefinitions(BlockID block, bool seesDefinitionOfBlock) const
     {
         RELEASE_ASSERT(m_cfg.isReachable(block));
         uint32_t number = m_dominators.numberOf(block);
         size_t numberOfDefinitionsInFront = std::ranges::partition_point(m_keptDefinitions, [&](const KeptDefinition& kept) {
-            return kept.number < number;
+            return kept.number < number + seesDefinitionOfBlock;
         }) - m_keptDefinitions.begin();
         uint32_t nearest = numberOfDefinitionsInFront ? static_cast<uint32_t>(numberOfDefinitionsInFront - 1) : none;
         while (nearest != none && m_keptDefinitions[nearest].lastNumberBelow < number)
@@ -197,7 +201,6 @@ public:
         return nearest == none ? none : m_keptDefinitions[nearest].definition;
     }
 
-private:
     enum class Kind : uint8_t { QuestionAtHead, Definition, QuestionAtTail };
 
     struct DefinitionAtTail {
@@ -433,7 +436,7 @@ void SSARepair::run()
         for (const Definition& definition : data.definitions)
             data.values.append(definition.value);
         sortDefinitions(data);
-        if (data.definitions.isEmpty())
+        if (data.definitions.isEmpty() || isInOrderAsItStands(data))
             continue;
 
         const Value& first = function.at(data.values.first());
@@ -466,6 +469,26 @@ void SSARepair::run()
     });
     if (hasUnspecifiedDefinition)
         nameFactsWhereUnspecifiedValuesAreUsed(m_builder, m_analyses);
+}
+
+// Say a use names `d`, which dominates it, and a way leads there from another definition `e` past no `d`. `d` does not dominate `e`, so a way leads from the entry to `e` past no `d`:
+// the two make a way to the use past no `d`. So the use is reached by `d` alone. A join that the variable is alive at is dominated by the definition that its use names for the same reason, and both
+// definitions would dominate a predecessor of a join in the frontier of the other: no join gets a parameter.
+bool SSARepair::isInOrderAsItStands(const VariableData& data)
+{
+    constexpr size_t mostDefinitionsHeldAgainstEachOther = 4;
+    if (data.definitions.size() > mostDefinitionsHeldAgainstEachOther)
+        return false;
+    const Dominators& dominators = m_analyses.dominators();
+    for (const Definition& definition : data.definitions) {
+        for (const Definition& other : data.definitions) {
+            if (&definition != &other && dominators.dominates(definition.block, other.block))
+                return false;
+        }
+    }
+    return std::ranges::all_of(data.uses, [&](const RecordedUse& recorded) {
+        return m_analyses.dominates(recorded.operand, recorded.use);
+    });
 }
 
 void SSARepair::separateUsesAsGuards()
@@ -735,25 +758,26 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
                 indexOfJoin[join.index()] = joins.size();
                 joins.append(join);
                 definingBlocksToVisit.append(join);
-                steps -= std::min(steps, cfg.incomingEdges(join).size());
             }
         }
         return true;
     };
 
-    struct Source {
-        uint32_t definitionOrQuestion;
-        bool isQuestion;
+    // What reaches a join on each of its edges is found when the join is first seen to reach a use, and kept for the variables behind that have the same joins.
+    struct SourcesOfJoin {
+        uint32_t first { 0 };
+        uint32_t end { 0 };
+        bool areKnown { false };
     };
     constexpr uint32_t writtenDefinition = NearestDefinitions::none - 1;
     BitVector joinReachesUse;
     Vector<uint32_t> questionsOfUses;
-    Vector<Source> sourcesOfJoins;
-    Vector<uint32_t> firstSourceOfJoin;
+    Vector<uint32_t> sources;
+    Vector<SourcesOfJoin> sourcesOfJoins;
     Vector<uint32_t, 16> joinsToVisit;
-    auto findSourcesOfJoins = [&](const VariableData& data, unsigned stamp) {
-        sourcesOfJoins.shrink(0);
-        firstSourceOfJoin.shrink(0);
+    auto keepDefinitionsAndJoins = [&](const VariableData& data, unsigned stamp) {
+        sources.shrink(0);
+        sourcesOfJoins.fill(SourcesOfJoin { }, joins.size());
         nearest.clear();
         forEachBlockWithDefinitions(data, [&](const Definition& definition) {
             nearest.defineAtTail(definition.block, writtenDefinition);
@@ -762,26 +786,29 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
             if (hasDefinitionStamp[joins[index].index()] != stamp)
                 nearest.defineAtTail(joins[index], index);
         }
-        auto sourceAtHead = [&](BlockID block) -> Source {
-            if (isJoinStamp[block.index()] == stamp)
-                return { indexOfJoin[block.index()], false };
-            return { nearest.askAtHead(block), true };
-        };
-        for (BlockID join : joins) {
-            firstSourceOfJoin.append(sourcesOfJoins.size());
-            for (Edge edge : cfg.incomingEdges(join)) {
+        nearest.solveAndKeepDefinitions();
+    };
+    auto sourcesOf = [&](const VariableData& data, unsigned stampOfJoins, uint32_t index) -> std::span<const uint32_t> {
+        SourcesOfJoin& known = sourcesOfJoins[index];
+        if (!known.areKnown) {
+            known.first = sources.size();
+            for (Edge edge : cfg.incomingEdges(joins[index])) {
                 switch (edge.kind) {
                 case EdgeKind::Normal:
-                    sourcesOfJoins.append({ nearest.askAtTail(edge.from), true });
+                    sources.append(nearest.findAmongKeptDefinitionsAtTail(edge.from));
                     break;
                 case EdgeKind::Handler:
-                    sourcesOfJoins.append(findLastDefinitionBefore(data, edge.from, firstValueOrder) ? Source { writtenDefinition, false } : sourceAtHead(edge.from));
+                    if (findLastDefinitionBefore(data, edge.from, firstValueOrder))
+                        sources.append(writtenDefinition);
+                    else
+                        sources.append(isJoinStamp[edge.from.index()] == stampOfJoins ? indexOfJoin[edge.from.index()] : nearest.findAmongKeptDefinitionsAtHead(edge.from));
                     break;
                 }
             }
+            known.end = sources.size();
+            known.areKnown = true;
         }
-        firstSourceOfJoin.append(sourcesOfJoins.size());
-        nearest.solveAndKeepDefinitions();
+        return sources.span().subspan(known.first, known.end - known.first);
     };
     auto findJoinsThatReachUses = [&](const VariableData& data, unsigned stampOfJoins) {
         joinReachesUse.clearAll();
@@ -799,8 +826,8 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
         }
         while (!joinsToVisit.isEmpty()) {
             uint32_t index = joinsToVisit.takeLast();
-            for (const Source& source : sourcesOfJoins.span().subspan(firstSourceOfJoin[index], firstSourceOfJoin[index + 1] - firstSourceOfJoin[index]))
-                didReach(source.isQuestion ? nearest.answerTo(source.definitionOrQuestion) : source.definitionOrQuestion);
+            for (uint32_t source : sourcesOf(data, stampOfJoins, index))
+                didReach(source);
         }
     };
 
@@ -854,7 +881,7 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
                 stampOfKeptJoins = stamp;
                 definitionsOfKeptJoins = data.definitions;
                 if (!joins.isEmpty())
-                    findSourcesOfJoins(data, stamp);
+                    keepDefinitionsAndJoins(data, stamp);
             }
         }
         if (!didWalkFromUses) {
