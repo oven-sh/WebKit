@@ -369,6 +369,10 @@ void CallFrameShuffler::prepareForTailCall()
     UNREACHABLE_FOR_PLATFORM();
 #endif
 
+    // The stack pointer moves only once the new frame is complete, and until then a signal frame
+    // overwrites whatever is below it.
+    ASSERT(newAsOld(firstNew() - m_newFrameOffset) >= firstOld());
+
     if (verbose)
         dataLog("  Emitting code for computing the new frame base\n");
 
