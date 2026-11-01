@@ -23,6 +23,7 @@
 #include "AOTEffectsDescription.h"
 #include "AOTEffectsOfAccesses.h"
 #include "AOTEffectsOfOperands.h"
+#include "AOTFieldValueNarrowing.h"
 #include "AOTFlowApply.h"
 #include "AOTFlowRecords.h"
 #include "AOTFlowResults.h"
@@ -630,7 +631,8 @@ static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
         }
         return number;
     };
-    editFunctionsInParallel(editor, build, functions.span(), [&](unsigned, FunctionID, Function& function, TaskArenas& arenas) {
+    editFunctionsInParallel(editor, build, functions.span(), [&](unsigned, FunctionID functionID, Function& function, TaskArenas& arenas) {
+        Vector<ValueID, 2> narrowingsLeftWithNoMember;
         for (const Block& block : function.blocks) {
             for (ValueID id : block.values) {
                 bool findsConstant = false;
@@ -641,8 +643,15 @@ static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
                     becomeConstant(program, function, arenas.types, id, number);
                 else
                     function.edit(id, ValueEdit::Definition);
+                if (narrowsHolderToNothing(TypingContext { program, function, arenas.types }, function.at(id)))
+                    narrowingsLeftWithNoMember.append(id);
             }
         }
+        // A narrower field gives narrower types, which may wait, with one exception: where no member can hold what was read any more, the holder is any member again. A type that says less than that may not stand.
+        if (narrowingsLeftWithNoMember.isEmpty())
+            return;
+        FunctionAnalyses analyses(AnalysisContext { build, program, nullptr, nullptr, functionID }, function);
+        narrowValueTypes(TypePropagationInputs { program, functionID, function, analyses, arenas.types, build }, narrowingsLeftWithNoMember.span());
     });
 }
 
