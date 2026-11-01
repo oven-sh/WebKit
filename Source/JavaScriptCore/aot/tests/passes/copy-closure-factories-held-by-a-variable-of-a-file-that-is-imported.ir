@@ -1,13 +1,20 @@
 # helpers.js: export var once = ..;   main.js: import { once } from "./helpers.js"; const a = once(loadA), b = once(loadB);
 # The loader runs the body of a file when every file that it imports by a statement has run to its end: the `var` of the other file is stored by then, and each call in the body gets a copy.
+# A name that the build does not follow may begin main.js before that, and this pass runs before flow knows of one. So each call asks: where the variable still answers undefined, the call runs as it is written, and throws.
 # FORM: AsRead
 # RUN: pass CopyClosureFactories
 # CHECK: outcome: Changed
 # CHECK-LABEL: function f0 name="main"
+# CHECK: [[read]] = GetModuleVariable variable=g0
+# CHECK: [[test]] = StrictEq [[read]], [[undefined]]
+# CHECK-NEXT: Branch [[test]] -> taken [[asWritten]](), notTaken
+# CHECK: [[asWritten]]() frequency=Rare:
+# CHECK-NEXT: Call [[undefined]], -, v0
 # CHECK: [[first]]{{*}} = NewClosure function=f7
-# CHECK-NEXT: Call [[first]], -, v0
+# CHECK-NEXT: Call [[first]], -, v0 [isAlwaysInlined]
+# CHECK: StrictEq
 # CHECK: [[second]]{{*}} = NewClosure function=f9
-# CHECK-NEXT: Call [[second]], -, v3
+# CHECK-NEXT: Call [[second]], -, [[loadB]] [isAlwaysInlined]
 
 module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="helpers.js" displayPath="helpers.js" body=f5 exports=[{name="once" variable=g0}]

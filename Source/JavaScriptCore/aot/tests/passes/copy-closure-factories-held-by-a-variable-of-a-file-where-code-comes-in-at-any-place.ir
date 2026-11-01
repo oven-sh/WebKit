@@ -1,0 +1,54 @@
+# helpers.js: export var once = ..;   main.js: import { once } from "./helpers.js"; const a = once(loadA), b = once(loadB);   built with one entry point, for a run under the inspector
+# Code comes in at any place and at any time, and may begin main.js before helpers.js has stored its `var`. Nothing is proven for the program as a whole, so each call keeps its question:
+# where the variable answers undefined, the call runs as it is written, and throws.
+# OPTIONS: admit=Inspector
+# FORM: AsRead
+# RUN: pipeline CallModules
+# CHECK: [[read]]: {{*}} = GetModuleVariable variable=g0
+# CHECK: [[test]]: boolean = StrictEq [[read]], [[undefined]]
+# CHECK-NEXT: Branch [[test]] -> taken [[asWritten]](), notTaken
+# CHECK: [[asWritten]]() frequency=Rare:
+# CHECK-NEXT: Call [[undefined]], -,
+# CHECK: [isAlwaysInlined]
+# CHECK: StrictEq
+# CHECK: [isAlwaysInlined]
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="helpers.js" displayPath="helpers.js" body=f5 exports=[{name="once" variable=g0}]
+entry module=m0
+layout L0 kind=Environment module=m1 fields=[{key=@"binding.0" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="once" module=m1 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f3
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0
+    v3 = NewClosure function=f4
+    v4 = GetModuleVariable variable=g0
+    v5 = Call v4, -, v3
+    Return
+}
+function f1 name="once" module=m1 position=10 kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = NewClosure v2, v0 function=f2
+    Return v3
+}
+function f2 name="get" module=m1 position=20 kind=Arrow captures=[{type=env L0 flags=[IsFromCompiler]}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v1
+    PutEnvironmentField v0, v2 layout=L0
+    v4 = GetEnvironmentField v0 layout=L0
+    Return v4
+}
+function f3 name="loadA" module=m0 position=30 kind=Arrow results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}
+function f4 name="loadB" module=m0 position=40 kind=Arrow results=[{type=anything}] {
+    v0 = String string="b"
+    Return v0
+}
+function f5 name="helpers" module=m1 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    Return
+}

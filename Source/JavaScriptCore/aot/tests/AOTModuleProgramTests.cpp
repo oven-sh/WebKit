@@ -603,6 +603,83 @@ function f3 name="main" module=m3 kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
+// The same files, where the variable of helpers.js holds a function that creates closures, and main.js calls it twice in its body: `export var once = run => { let result; return () => result ??= run(); }`.
+// While helpers.js has not stored it, the variable answers undefined and the call throws.
+static constexpr ASCIILiteral closureFactoryOfModuleThatRunsWhileTextLoadsItsImporter = R"IR(module m0 path="/first.js" displayPath="first.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/helpers.js" displayPath="helpers.js" body=f1 exports=[{name="once" variable=g0}]
+module m2 path="/drains.js" displayPath="drains.js" body=f2
+module m3 path="/main.js" displayPath="main.js" body=f3 requests=[{target=m1 completes=true}]
+entry module=m0
+entry module=m3
+evalscope e0
+layout L0 kind=Environment module=m1 fields=[{key=@"binding.0" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="once" module=m1 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+function f0 name="first" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="ends"
+    v3 = String string="first.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f1 name="helpers" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="begins"
+    v3 = String string="helpers.js"
+    v4 = Call v1, -, v2, v3
+    v5 = RequireModule module=m2 referrer=m1 specifier="./drains.js"
+    v6 = NewClosure function=f4
+    PutModuleVariable v6 variable=g0
+    v8 = String string="ends"
+    v9 = Call v1, -, v8, v3
+    Return
+}
+function f2 name="drains" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = String string="import('/main.js')"
+    v2 = Undefined
+    v3 = DirectEval v1, v2 evalScope=e0
+    v4 = PropGet v0 key="register" [isFreeName]
+    v5 = Call v4, -, v3
+    Return
+}
+function f3 name="main" module=m3 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f6
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0
+    v3 = NewClosure function=f7
+    v4 = GetModuleVariable variable=g0
+    v5 = Call v4, -, v3
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="report" [isFreeName]
+    v8 = String string="ends"
+    v9 = String string="main.js"
+    v10 = Call v7, -, v8, v9
+    Return
+}
+function f4 name="once" module=m1 position=10 kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = NewClosure v2, v0 function=f5
+    Return v3
+}
+function f5 name="get" module=m1 position=20 kind=Arrow captures=[{type=env L0 flags=[IsFromCompiler]}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v1
+    PutEnvironmentField v0, v2 layout=L0
+    v4 = GetEnvironmentField v0 layout=L0
+    Return v4
+}
+function f6 name="loadA" module=m3 position=30 kind=Arrow results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}
+function f7 name="loadB" module=m3 position=40 kind=Arrow results=[{type=anything}] {
+    v0 = String string="b"
+    Return v0
+}
+)IR"_s;
+
 // first.js and second.js are entry points, and both import inner.js. inner.js evaluates a text and stores its variable behind that. The text calls import() with the name of second.js and runs the waiting jobs itself,
 // as a require() that the text makes for itself does: no require() of the program is involved.
 static constexpr ASCIILiteral entryPointThatTextLoadsAndRunsWithWaitingJobs = R"IR(module m0 path="/first.js" displayPath="first.js" body=f0 requests=[{target=m1 completes=true}]
@@ -645,6 +722,76 @@ function f2 name="second" module=m2 kind=Module results=[{type=anything}] {
     v4 = String string="second.js reads value"
     v5 = Call v1, -, v4, v3
     Return
+}
+)IR"_s;
+
+// first.js and main.js are entry points, and both import helpers.js, whose variable holds a function that creates closures. The text in helpers.js calls import() with the name of main.js and runs the waiting jobs itself.
+static constexpr ASCIILiteral closureFactoryThatTextCallsForWithWaitingJobs = R"IR(module m0 path="/first.js" displayPath="first.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/helpers.js" displayPath="helpers.js" body=f1 exports=[{name="once" variable=g0}]
+module m2 path="/main.js" displayPath="main.js" body=f2 requests=[{target=m1 completes=true}]
+entry module=m0
+entry module=m2
+evalscope e0
+layout L0 kind=Environment module=m1 fields=[{key=@"binding.0" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="once" module=m1 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+function f0 name="first" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="ends"
+    v3 = String string="first.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f1 name="helpers" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="begins"
+    v3 = String string="helpers.js"
+    v4 = Call v1, -, v2, v3
+    v5 = String string="[import('/main.js'), drainMicrotasks()][0]"
+    v6 = Undefined
+    v7 = DirectEval v5, v6 evalScope=e0
+    v8 = PropGet v0 key="register" [isFreeName]
+    v9 = Call v8, -, v7
+    v10 = NewClosure function=f3
+    PutModuleVariable v10 variable=g0
+    v12 = String string="ends"
+    v13 = Call v1, -, v12, v3
+    Return
+}
+function f2 name="main" module=m2 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f5
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0
+    v3 = NewClosure function=f6
+    v4 = GetModuleVariable variable=g0
+    v5 = Call v4, -, v3
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="report" [isFreeName]
+    v8 = String string="ends"
+    v9 = String string="main.js"
+    v10 = Call v7, -, v8, v9
+    Return
+}
+function f3 name="once" module=m1 position=10 kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = NewClosure v2, v0 function=f4
+    Return v3
+}
+function f4 name="get" module=m1 position=20 kind=Arrow captures=[{type=env L0 flags=[IsFromCompiler]}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v1
+    PutEnvironmentField v0, v2 layout=L0
+    v4 = GetEnvironmentField v0 layout=L0
+    Return v4
+}
+function f5 name="loadA" module=m2 position=30 kind=Arrow results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}
+function f6 name="loadB" module=m2 position=40 kind=Arrow results=[{type=anything}] {
+    v0 = String string="b"
+    Return v0
 }
 )IR"_s;
 
@@ -861,12 +1008,30 @@ the import(): fulfilled
 )"_s, reportRegisteredImport);
 }
 
+static void testClosureFactoryOfModuleThatRunsWhileTextLoadsItsImporter()
+{
+    checkShellOutput(closureFactoryOfModuleThatRunsWhileTextLoadsItsImporter, { "validate"_s }, R"(begins: helpers.js
+ends: helpers.js
+ends: first.js
+the import(): rejected with a TypeError
+)"_s, reportRegisteredImport);
+}
+
 static void testEntryPointThatTextLoadsAndRunsWithWaitingJobs()
 {
     checkShellOutput(entryPointThatTextLoadsAndRunsWithWaitingJobs, { "validate"_s }, R"(begins: inner.js
 ends: inner.js
 ends: first.js
 the import(): rejected with a ReferenceError
+)"_s, reportRegisteredImport);
+}
+
+static void testClosureFactoryThatTextCallsForWithWaitingJobs()
+{
+    checkShellOutput(closureFactoryThatTextCallsForWithWaitingJobs, { "validate"_s }, R"(begins: helpers.js
+ends: helpers.js
+ends: first.js
+the import(): rejected with a TypeError
 )"_s, reportRegisteredImport);
 }
 
@@ -883,7 +1048,9 @@ std::span<const NativeTest> moduleProgramTests()
         { "module-programs/termination-during-import-handoff"_s, testTerminationDuringImportHandoff },
         { "module-programs/entry-point-that-text-loads-while-module-it-imports-runs"_s, testEntryPointThatTextLoadsWhileModuleItImportsRuns },
         { "module-programs/entry-point-that-file-of-host-loads-while-module-it-imports-runs"_s, testEntryPointThatFileOfHostLoadsWhileModuleItImportsRuns },
+        { "module-programs/closure-factory-of-module-that-runs-while-text-loads-its-importer"_s, testClosureFactoryOfModuleThatRunsWhileTextLoadsItsImporter },
         { "module-programs/entry-point-that-text-loads-and-runs-with-waiting-jobs"_s, testEntryPointThatTextLoadsAndRunsWithWaitingJobs },
+        { "module-programs/closure-factory-that-text-calls-for-with-waiting-jobs"_s, testClosureFactoryThatTextCallsForWithWaitingJobs },
     };
     return tests;
 }
