@@ -2129,6 +2129,9 @@ void Modules::letGoOfMocksThatEnded()
 
 uint32_t Modules::placeOfMomentOfLoad(ModuleID module) const
 {
+    // A CommonJS file and its face are in no load group.
+    if (!data(module).isESModuleOfProgram())
+        return module.index();
     uint32_t head = m_table.headOfLoadGroup(module).index();
     return m_momentsOfLoads[head] ? head : module.index();
 }
