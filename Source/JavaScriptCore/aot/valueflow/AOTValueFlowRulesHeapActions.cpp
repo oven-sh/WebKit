@@ -107,6 +107,8 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
         add(ValueFlowProgramNodes::escaped(), m_context.restrict(known(sources), ValueSets::complement(m_tables.objectsHoldingOnlyWhatWasWritten())));
     }
     bool isLaidOnRealm = m_context.meet(targets, m_tables.objectsOfRealm()) && !m_context.isSabotaged(Sabotage::AccessorsCopiedOntoTheRealmStayHidden);
+    if (isLaidOnRealm)
+        connect(copied, ValueFlowProgramNodes::escaped());
     if (hasEscaped(known(targets)) || isLaidOnRealm) {
         ClimbingSet all = allSources;
         ClimbingSet read = m_context.restrict(all, m_tables.objectsHoldingOnlyWhatWasWritten());
