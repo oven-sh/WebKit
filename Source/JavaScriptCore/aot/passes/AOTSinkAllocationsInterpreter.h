@@ -152,7 +152,7 @@ private:
     ValueID emitUndefined();
 
     void executeTest(ValueID);
-    bool executePresenceTestOnDenseList(ValueID);
+    bool executeTestAgainstLengthOfBuiltinList(ValueID);
     std::optional<TestEntry> evaluateTestOn(ValueID test) const;
     std::optional<TestEntry> evaluateComparison(ValueID test) const;
     void noteListsThatMayNotFit(ValueID test);

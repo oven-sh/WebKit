@@ -1695,28 +1695,41 @@ static bool canBeBuiltByCaller(const Function& function, const VirtualObjectDesc
     return description.canBeBuilt && !description.staysInPlace && boundToOf(allocation.opcode) == BoundTo::Nothing;
 }
 
-// A list of substrings has no holes, so an element is present exactly when its index is below the length.
+// The call says how long its list is, and a list of substrings has no holes: an element of it is present exactly when its index is below the length.
 // The test becomes that comparison. Both edges of its branch stay live and the list stays virtual on both.
-bool ObjectInterpreter::executePresenceTestOnDenseList(ValueID id)
+bool ObjectInterpreter::executeTestAgainstLengthOfBuiltinList(ValueID id)
 {
     const Value& test = function().at(id);
-    if (test.opcode != Opcode::IsElementPresent)
+    if (test.opcode != Opcode::IsElementPresent && test.opcode != Opcode::IsInBounds)
         return false;
     VirtualObjectID list = objectOf(test.operand(0));
-    if (!list || !stateOf(list)->isVirtual() || stateOf(list)->variants.size() != 1)
+    if (!list || !stateOf(list)->isVirtual())
         return false;
 
     const VirtualFamily& family = m_sinking.familyOf(list);
-    const VirtualShape& shape = singleShapeOf(list);
-    if (shape.kind != VirtualShapeKind::Fields)
-        return false;
-    const VirtualObjectDescription& description = family.descriptionOf(shape);
-    if (description.kind != VirtualObjectKind::BuiltinPrefix || !program().builtins().at(function().at(description.allocation).overload()).result.substringOf)
-        return false;
+    std::optional<uint32_t> length = family.findField(VirtualField::part(VirtualFieldKind::Length));
+    uint32_t numberOfKeptElements = std::numeric_limits<uint32_t>::max();
+    for (const ObjectVariant& variant : stateOf(list)->variants) {
+        const VirtualShape& shape = shapeOf(list, variant);
+        if (shape.kind != VirtualShapeKind::Fields || !length || !hasStored(shape, *length))
+            return false;
+        const VirtualObjectDescription& description = family.descriptionOf(shape);
+        if (description.kind != VirtualObjectKind::BuiltinPrefix)
+            return false;
+        if (test.opcode == Opcode::IsElementPresent && !program().builtins().at(function().at(description.allocation).overload()).result.substringOf)
+            return false;
+        numberOfKeptElements = std::min(numberOfKeptElements, shape.length);
+    }
 
     std::optional<int64_t> index = integerConstantThroughCasts(program(), function(), test.positionOperand());
-    std::optional<uint32_t> length = family.findField(VirtualField::part(VirtualFieldKind::Length));
-    if (!index || *index < 0 || !length || !hasStored(shape, *length))
+    if (test.opcode == Opcode::IsInBounds && m_sinking.context().build.isSabotaged(Sabotage::ListsOfBuiltinsEndWithWhatIsKept)) [[unlikely]] {
+        bool isKept = index && *index >= 0 && *index < static_cast<int64_t>(numberOfKeptElements);
+        m_state.setTest(TestEntry { id, list, isKept });
+        if (isRewriting())
+            replaceRead(id, cursor().builder().appendBoolean(isKept));
+        return true;
+    }
+    if (!index || *index < 0)
         return false;
 
     m_state.setTest(TestEntry { id, list, std::nullopt, 0 });
@@ -1732,7 +1745,7 @@ void ObjectInterpreter::executeTest(ValueID id)
 {
     if (testsLeftToRun.contains(function().at(id).opcode))
         return executeOther(id);
-    if (executePresenceTestOnDenseList(id) || executeBoundsTestOnArgumentList(id))
+    if (executeTestAgainstLengthOfBuiltinList(id) || executeBoundsTestOnArgumentList(id))
         return;
 
     std::optional<TestEntry> entry = evaluateTestOn(id);

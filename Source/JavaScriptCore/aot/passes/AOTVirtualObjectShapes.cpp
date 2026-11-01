@@ -678,25 +678,19 @@ static KnownBoolean evaluateArrayStorageTest(const ShapeContext& context, const 
 
 static KnownBoolean evaluateBoundsTest(const ShapeContext& context, const VirtualShape& shape, const Value& test)
 {
-    // How many arguments a frame holds is known when it runs.
-    VirtualObjectKind kind = context.family.descriptionOf(shape).kind;
-    if (!isArray(context.family.descriptionOf(shape)) || kind == VirtualObjectKind::ArgumentList)
+    // How many arguments a frame holds, and how long the list of a built-in is, is known when it runs: the shape of such a list counts the elements that are kept apart.
+    if (context.family.descriptionOf(shape).kind != VirtualObjectKind::Array)
         return KnownBoolean::Unknown;
-    // The list that a built-in makes goes on behind the elements that the shape counts.
-    KnownBoolean behindShape = kind == VirtualObjectKind::BuiltinPrefix ? KnownBoolean::Unknown : KnownBoolean::False;
     KnownValue position = knownValueOf(context.objects.program, context.objects.function, test.positionOperand());
-    if (position.kind() == KnownValue::Kind::Integer) {
-        if (position.asInteger() < 0)
-            return KnownBoolean::False;
-        return position.asInteger() < static_cast<int64_t>(shape.length) ? KnownBoolean::True : behindShape;
-    }
+    if (position.kind() == KnownValue::Kind::Integer)
+        return knownBoolean(position.asInteger() >= 0 && position.asInteger() < static_cast<int64_t>(shape.length));
     const Type& type = context.objects.program.typeOf(context.objects.function, test.positionOperand());
     if (!type.isInteger())
         return KnownBoolean::Unknown;
     Range positions { 0, static_cast<int64_t>(shape.length) - 1 };
     if (type.integers.isSubsetOf(positions))
         return KnownBoolean::True;
-    return type.integers.intersectWith(positions).isEmpty() ? behindShape : KnownBoolean::Unknown;
+    return type.integers.intersectWith(positions).isEmpty() ? KnownBoolean::False : KnownBoolean::Unknown;
 }
 
 static KnownBoolean evaluateBirthTest(const ShapeContext& context, const VirtualShape& shape)
