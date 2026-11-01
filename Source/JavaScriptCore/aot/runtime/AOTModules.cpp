@@ -223,6 +223,7 @@ Modules::Modules(State& state)
     , m_findsDataFilesByName(state.instance.vm->aotState().image->findsDataFilesByName())
     , m_refusesOriginalsBesideMocks(state.instance.vm->aotState().image->refusesOriginalsBesideMocks())
     , m_buildHasSeenWhoNamesModules(!m_admitsInspector)
+    , m_mockOperations(host().mockOperations ? host().mockOperations() : nullptr)
 {
     m_instance.modules.status = state.tableArena.allocate<uint8_t>(m_table.size());
     m_storedStatuses = unsafeMakeSpan(m_instance.modules.status, m_table.size());
@@ -2094,10 +2095,8 @@ bool Modules::letGoOfMockOfLibraryModuleAtNextLoad(ModuleID module)
     return true;
 }
 
-void Modules::letGoOfMockThatEnded(ModuleID module)
+void Modules::letGoOfMockThatEndedSlow(ModuleID module)
 {
-    if (!hasMockThatEnded(module)) [[likely]]
-        return;
     if (data(module).isOfLibrary() || !m_table.hasFilePath(module)) {
         auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
         m_modulesWithMockToLetGo.clear(module.index());
@@ -2696,8 +2695,9 @@ bool Modules::isFetchedForImportStatement(ModuleID module)
     return entry && entry->status() == ModuleRegistryEntry::Status::New;
 }
 
-void Modules::runMocksBelowModuleThatLoaderFetches(ModuleID module)
+void Modules::runMocksBelowModuleThatLoaderFetchesSlow(ModuleID module)
 {
+    MockDoor door(this, module, "the loader fetches it"_s);
     if (m_modulesWithMockToRun.isEmpty()) [[likely]] {
         evaluateModulesOwedBelow(module);
         return;
@@ -2714,7 +2714,23 @@ bool Modules::mockFailedBehindImportStatement(ModuleID module)
     return m_modulesWithMockToRun.get(module.index()) && isFetchedForImportStatement(module);
 }
 
-void Modules::runMocksBelow(ModuleID root, RootOfLoad rootOfLoad)
+const MockOperations& Modules::mockOperations()
+{
+    static constexpr MockOperations operations {
+        .runMocksBelow = [](Modules& modules, ModuleID root, RootOfLoad rootOfLoad) { modules.runMocksBelowSlow(root, rootOfLoad); },
+        .runMocksBelowModuleThatLoaderFetches = [](Modules& modules, ModuleID module) { modules.runMocksBelowModuleThatLoaderFetchesSlow(module); },
+        .evaluateModulesOwedBelow = [](Modules& modules, ModuleID root, bool hasImporterAboveThatRan) { modules.evaluateModulesOwedBelowSlow(root, hasImporterAboveThatRan); },
+        .letGoOfMockThatEnded = [](Modules& modules, ModuleID module) { modules.letGoOfMockThatEndedSlow(module); },
+    };
+    return operations;
+}
+
+const MockOperations* mockOperations()
+{
+    return &Modules::mockOperations();
+}
+
+void Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -6946,9 +6962,7 @@ JSPromise* factoryThatWaitsBelow(JSGlobalObject* realm, ModuleID moduleOfHost, J
 void runMocksBelow(JSGlobalObject* realm, ModuleID moduleOfHost)
 {
     ModuleFromHost module(realm, moduleOfHost);
-    Modules* modules = modulesOf(realm);
-    MockDoor door(modules, module, "the loader fetches it"_s);
-    if (modules)
+    if (Modules* modules = modulesOf(realm))
         modules->runMocksBelowModuleThatLoaderFetches(module);
 }
 

@@ -85,6 +85,7 @@ static constexpr ModuleHost testModuleHost {
     .createEmptyJSONBodyError = nullptr,
     .createLoadError = nullptr,
     .givesOriginalBesideMock = givesOriginalToPackages,
+    .mockOperations = mockOperations,
 };
 
 static JSGlobalObject* createPlainRealm(VM& vm)

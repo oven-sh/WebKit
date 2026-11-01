@@ -2810,7 +2810,7 @@ void Modules::bringBackWhatLoaderLetGoBelow(ModuleID root)
 }
 
 // No walk of an evaluation goes below a module that has run. This one does, and runs what a mock kept from running, when a graph comes by that holds an importer of it.
-void Modules::evaluateModulesOwedBelow(ModuleID root, bool hasImporterAboveThatRan)
+void Modules::evaluateModulesOwedBelowSlow(ModuleID root, bool hasImporterAboveThatRan)
 {
     VM& vm = *m_instance.vm;
     bringBackWhatLoaderLetGoBelow(root);

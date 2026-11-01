@@ -34,6 +34,8 @@ class VM;
 
 namespace AOT {
 
+struct MockOperations;
+
 struct ModuleObjects {
     JSObject* module { nullptr };
     JSValue require;
@@ -120,9 +122,14 @@ struct ModuleHost {
     bool (*holdsTextsOfProgram)(JSGlobalObject*);
     // A mock stands over the file at the path. Whether the host's own loader would give this importer the original beside it. Null in a host where everybody gets the mock.
     bool (*givesOriginalBesideMock)(JSGlobalObject*, const String& path, const String& importer, bool isImport);
+    // Answers mockOperations(). The rest of the run time reaches the code of the mocks through what it answers alone, so a host may leave that code out of a program that
+    // cannot lay a mock, and answer null there. Null in a host without mocks.
+    const MockOperations* (*mockOperations)();
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);
+
+JS_EXPORT_PRIVATE const MockOperations* mockOperations();
 
 JS_EXPORT_PRIVATE std::optional<ModuleID> findModule(StringView publicPath, unsigned hashOfPath);
 inline std::optional<ModuleID> findModule(StringView publicPath) { return findModule(publicPath, publicPath.hash()); }

@@ -191,6 +191,7 @@ public:
     bool setMockInPlace(ModuleID, JSObject* mock, JSValue whatRequireAnswers);
     void letGoOfMockAtNextLoad(ModuleID);
     void letGoOfMockThatEnded(ModuleID);
+    void letGoOfMockThatEndedSlow(ModuleID);
     bool letGoOfMockOfLibraryModuleAtNextLoad(ModuleID);
     void letGoOfMocksThatEnded();
     bool hasMockThatEnded(ModuleID module) const { return m_modulesWithMockToLetGo.get(module.index()); }
@@ -330,8 +331,11 @@ public:
     bool letMockStandInPlaceOfLibraryModule(ModuleID);
     enum class RootOfLoad : bool { BeginsLoad, IsImportedByStatement };
     void runMocksBelow(ModuleID root, RootOfLoad = RootOfLoad::BeginsLoad);
+    void runMocksBelowSlow(ModuleID root, RootOfLoad);
+    static const MockOperations& mockOperations();
     JSPromise* factoryThatWaitsBelow(ModuleID root, FactoryAskedForBy, JSValue& state);
     void runMocksBelowModuleThatLoaderFetches(ModuleID);
+    void runMocksBelowModuleThatLoaderFetchesSlow(ModuleID);
     bool mockFailedBehindImportStatement(ModuleID);
     void didFailToFetchRequest(ModuleID requester, const Identifier& key, JSValue error);
     void dropErrorOfLoadEndedByMock(ModuleID);
@@ -789,6 +793,7 @@ private:
 
     void evaluateWithOwnStack(ModuleID root);
     void evaluateModulesOwedBelow(ModuleID root, bool hasImporterAboveThatRan = false);
+    void evaluateModulesOwedBelowSlow(ModuleID root, bool hasImporterAboveThatRan);
     void bringBackWhatLoaderLetGoBelow(ModuleID root);
     size_t numberOfJobsThatWouldWait(JobsOfImportedFiles) const;
     void holdJobsBehind(size_t numberOfJobs, ModuleID file, JobsOfImportedFiles = JobsOfImportedFiles::WaitForLoader);
@@ -1195,6 +1200,7 @@ private:
     Vector<uint64_t> m_loadedGroups;
     // The groups are those of a program in which the build has seen whoever names a module. Code from outside the image names what it likes: what is loaded from then on has a bit of its own.
     bool m_buildHasSeenWhoNamesModules;
+    const MockOperations* m_mockOperations;
     BitVector m_modulesLoadedBesideGroups;
     // VMState::momentOfLoads when the bit of a head, or of a module beside the groups, was set. Empty outside a test run.
     Vector<uint32_t> m_momentsOfLoads;
@@ -1411,6 +1417,38 @@ ALWAYS_INLINE bool Modules::wasLoadedWithGraph(ModuleID module) const
 ALWAYS_INLINE ModuleRecord* Modules::recordIfExists(ModuleID module) const
 {
     return storedStatus(module) == StoredModuleStatus::InRecord ? m_records.get(module) : nullptr;
+}
+
+// ModuleHost::mockOperations. Each does nothing in a program where no mock was ever laid.
+struct MockOperations {
+    void (*runMocksBelow)(Modules&, ModuleID root, Modules::RootOfLoad);
+    void (*runMocksBelowModuleThatLoaderFetches)(Modules&, ModuleID);
+    void (*evaluateModulesOwedBelow)(Modules&, ModuleID root, bool hasImporterAboveThatRan);
+    void (*letGoOfMockThatEnded)(Modules&, ModuleID);
+};
+
+ALWAYS_INLINE void Modules::runMocksBelow(ModuleID root, RootOfLoad rootOfLoad)
+{
+    if (m_mockOperations)
+        m_mockOperations->runMocksBelow(*this, root, rootOfLoad);
+}
+
+ALWAYS_INLINE void Modules::runMocksBelowModuleThatLoaderFetches(ModuleID module)
+{
+    if (m_mockOperations)
+        m_mockOperations->runMocksBelowModuleThatLoaderFetches(*this, module);
+}
+
+ALWAYS_INLINE void Modules::evaluateModulesOwedBelow(ModuleID root, bool hasImporterAboveThatRan)
+{
+    if (m_mockOperations)
+        m_mockOperations->evaluateModulesOwedBelow(*this, root, hasImporterAboveThatRan);
+}
+
+ALWAYS_INLINE void Modules::letGoOfMockThatEnded(ModuleID module)
+{
+    if (hasMockThatEnded(module)) [[unlikely]]
+        m_mockOperations->letGoOfMockThatEnded(*this, module);
 }
 
 } } // namespace JSC::AOT
