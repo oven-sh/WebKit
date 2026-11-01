@@ -513,7 +513,7 @@ struct WindowScanner {
             return id;
         case ClosureDeferral::CapturesObject: {
             bool capturesReceiver = receiverOutsideWindow ? sameObjectThroughCasts(m_function, captures[0]) == sameObjectThroughCasts(m_function, receiverOutsideWindow) : isUnmade || isObject(captures[0]);
-            return capturesReceiver ? id : ValueID();
+            return capturesReceiver || m_build.isSabotaged(Sabotage::ClosuresInFieldsCaptureTheirHolder) ? id : ValueID();
         }
         case ClosureDeferral::CapturesEnvironment: {
             ValueID captured = isUnmade ? listedEnvironment : captures[0];

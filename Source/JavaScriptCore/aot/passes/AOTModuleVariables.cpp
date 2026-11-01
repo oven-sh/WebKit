@@ -248,19 +248,21 @@ static bool isWrittenByAllocationsAlone(const Field& field)
 }
 
 // `const E = {}; E.A = 0; E.B = 1;`. Every store is found by the name, or the type of the field says the one value that any of them stores.
-static bool isWrittenByStoresOfKnownValues(const Program& program, const Field& field)
+static bool isWrittenByStoresOfKnownValues(const Program& program, const Field& field, bool storesAlwaysLand)
 {
     constexpr OptionSet<FieldFlags> flagsOfOtherFields { FieldFlags::IsMethod, FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsHidden, FieldFlags::IsInherited };
     const LocationFlow& location = field.flow.location;
     return field.key && !field.flags.containsAny(flagsOfOtherFields) && !field.form.contains(FieldForm::IsAccessor) && !field.declared.isExpected()
         && location.writers == WriterState::AllKnown && location.initialization != InitializationState::SetAtCreation
-        && field.flow.prototypeName == PrototypeNameState::AbsentOnPrototypes && field.flow.stability == everyFlagOf<FieldStability>()
+        && (storesAlwaysLand || field.flow.prototypeName == PrototypeNameState::AbsentOnPrototypes) && field.flow.stability == everyFlagOf<FieldStability>()
         && (location.storeNaming == StoreNaming::EveryStoreNamesLocation || knownValueOfType(program.at(field.declared.written())).isKnown());
 }
 
 // No setter and no read-only property answers for the name, so the store gives the object a property of its own, or a new value to the one it has.
-static bool storeRunsNoCode(const Layout& layout, const Field& field)
+static bool storeRunsNoCode(const Layout& layout, const Field& field, bool storesAlwaysLand)
 {
+    if (storesAlwaysLand)
+        return true;
     return !field.form.contains(FieldForm::IsAccessor) && field.flow.prototypeName == PrototypeNameState::AbsentOnPrototypes && field.flow.stability.contains(FieldStability::IsNeverRedefined)
         && layout.flow.impossibleMutations.containsAll({ ObjectMutation::ChangePrototype, ObjectMutation::ChangeIntegrity });
 }
@@ -271,8 +273,9 @@ namespace {
 // `const E = {}; E.A = 0;`, `(function (E) { E[E["A"] = 0] = "A"; })(E = exports.E || (exports.E = {}));`
 class WalkBehindBirth {
 public:
-    WalkBehindBirth(const Program& program, const BitVector& layoutsWalkedBehind, const Layout& layout, std::span<KnownValue> known)
-        : m_program(program)
+    WalkBehindBirth(const Program& program, const BitVector& layoutsWalkedBehind, const Layout& layout, std::span<KnownValue> known, bool storesAlwaysLand)
+        : m_storesAlwaysLand(storesAlwaysLand)
+        , m_program(program)
         , m_layoutsWalkedBehind(layoutsWalkedBehind)
         , m_layout(layout)
         , m_known(known)
@@ -301,7 +304,7 @@ private:
         for (LayoutID receiver : receivers->value()) {
             const Layout& layout = m_program.at(receiver);
             std::optional<uint32_t> field = layout.findField(store.key());
-            if (!field || !storeRunsNoCode(layout, layout.fields[*field]))
+            if (!field || !storeRunsNoCode(layout, layout.fields[*field], m_storesAlwaysLand))
                 return false;
         }
         if (std::optional<uint32_t> field = isObject(function, names, store.objectOperand()) ? m_layout.findField(store.key()) : std::nullopt)
@@ -392,6 +395,7 @@ private:
         return std::nullopt;
     }
 
+    bool m_storesAlwaysLand;
     const Program& m_program;
     const BitVector& m_layoutsWalkedBehind;
     const Layout& m_layout;
@@ -406,8 +410,9 @@ static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
     const Program& program = editor.program();
     const ParallelLoops& loops = build.parallelLoops();
     constexpr OptionSet<LayoutFlags> flagsOfOtherLayouts { LayoutFlags::HasHeritage, LayoutFlags::HasMembersWithoutLayout, LayoutFlags::IsTypeParameter, LayoutFlags::IsNeverAllocated, LayoutFlags::IsWrittenUnderDictionaryType, LayoutFlags::IsDerived, LayoutFlags::IsOfCreatedObject };
+    bool storesAlwaysLand = build.isSabotaged(Sabotage::StoresOfConstantsAlwaysLand);
     auto isStoredBehindBirth = [&](const Field& field) {
-        return isWrittenByStoresOfKnownValues(program, field);
+        return isWrittenByStoresOfKnownValues(program, field, storesAlwaysLand);
     };
     BitVector hasCandidates(program.layouts.size());
     BitVector hasFieldsStoredBehindBirth(program.layouts.size());
@@ -480,7 +485,7 @@ static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
                 } else
                     continue;
                 if (hasFieldsStoredBehindBirth.quickGet(id.index()))
-                    WalkBehindBirth(program, hasFieldsStoredBehindBirth, program.at(id), known.mutableSpan()).walk(FunctionID(index), BlockID(block), position);
+                    WalkBehindBirth(program, hasFieldsStoredBehindBirth, program.at(id), known.mutableSpan(), storesAlwaysLand).walk(FunctionID(index), BlockID(block), position);
                 listFields(id, known, birth.opcode == Opcode::NewObject, true, !function.isModuleBody(), found);
             }
         }
@@ -540,7 +545,7 @@ static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
         auto found = field ? std::ranges::lower_bound(constants, FieldReference { id, *field }, { }, &ConstantField::field) : constants.end();
         return found != constants.end() && found->field == FieldReference { id, *field } ? &*found : nullptr;
     };
-    if (!keysWithStoresToLookAt.isEmpty()) {
+    if (!keysWithStoresToLookAt.isEmpty() && !build.isSabotaged(Sabotage::ConstantFieldsAreStoredOnce)) {
         // A store of the same constant changes nothing, whenever it runs. A store to nobody knows which objects is listed by its key, with this bit.
         constexpr uint32_t isKey = 1u << 31;
         Vector<uint32_t> changed = collectInParallel<uint32_t>(loops, program.functions.size(), [&](unsigned index, Vector<uint32_t>& found) {
@@ -579,6 +584,7 @@ static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
         }
         constants.shrink(kept);
     }
+    build.statistics().count(StatisticID::FieldsFoundConstant, constants.size());
     if (constants.isEmpty())
         return;
 
@@ -825,6 +831,8 @@ static void findDeferrals(const Program& program, const FlowResults& flow, Build
             return BeforeStore::SomethingElse;
         // A read has the type of the variable, so a variable whose type leaves out `absent` is never read while it is empty.
         if (!(program.at(program.provenTypeOf(variable.declared)).primitives & Primitive::Absent))
+            return BeforeStore::NothingIsRead;
+        if (build.isSabotaged(Sabotage::DefinitionsPutOffHaveNoDeadZone))
             return BeforeStore::NothingIsRead;
         // The run time takes what the variable holds for the value of the binding.
         return isNamedByRecord ? BeforeStore::SomethingElse : BeforeStore::DeadZone;
