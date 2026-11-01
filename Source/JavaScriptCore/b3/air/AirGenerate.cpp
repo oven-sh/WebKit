@@ -385,6 +385,9 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
     const bool emitsFrame = code.policy().frame.emitsFrame;
     std::optional<FrameStates> frameStates;
     if (emitsFrame) {
+        // A path that sets up no frame returns without having signed anything, so ret() must not authenticate. This is for the code of
+        // an image, which does not sign.
+        RELEASE_ASSERT(!jit.policy().signsReturnAddresses);
         frameStates.emplace(code);
         RELEASE_ASSERT(!frameStates->violation());
         context.frameIsSetUp = false;

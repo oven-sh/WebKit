@@ -242,6 +242,8 @@ inline void emitRestoreInstanceFrameIfNeeded(CCallHelpers& jit, GPRReg currentIn
     auto* restoreFrameReturnAddress = untagCodePtr<CFunctionPtrTag>(wasm_restore_frame_return);
 #endif
     ASSERT(restoreFrameReturnAddress);
+    // Bun: wasm_restore_frame_return authenticates what this stores. No function of an image has a tail call (UsesTailCalls).
+    RELEASE_ASSERT(jit.policy().signsReturnAddresses);
     ASSERT(noOverlap(currentInstanceReg, scratch1, scratch2));
     ASSERT(topSourceOffsetFromFP <= callerStackSize);
     ASSERT(isMultipleOf(stackAlignmentBytes(), topSourceOffsetFromFP));

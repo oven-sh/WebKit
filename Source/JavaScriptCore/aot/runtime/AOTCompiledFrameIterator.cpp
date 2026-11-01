@@ -55,7 +55,7 @@ static ALWAYS_INLINE const CallSiteCache::Entry* findReturnSite(CallSiteCache& c
 template<typename Cursor>
 static ALWAYS_INLINE const CallSiteCache::Entry* findReturnSiteInRun(CallSiteCache& cache, const Image& image, const Cursor& cursor)
 {
-    const void* pc = removeCodePtrTag(cursor.rawPC);
+    const void* pc = removeReturnAddressSignature(cursor.rawPC);
     if (const CallSiteCache::Entry* site = cache.find(pc)) [[likely]]
         return site;
     return resolveReturnAddressInRun(cache, image, pc, cursor.calleeFrame);
@@ -199,7 +199,7 @@ NEVER_INLINE const CallSiteCache::Entry* resolveReturnAddressInRun(CallSiteCache
 static bool hasZombieCallee(VM& vm, const CallFrame* callFrame, const void* returnAddress)
 {
     CallFrame* callee = vm.topCallFrame;
-    return callee && callee->callerFrameOrEntryFrame() == callFrame && removeCodePtrTag(callee->rawReturnPC()) == returnAddress && callee->isZombieFrame();
+    return callee && callee->callerFrameOrEntryFrame() == callFrame && callee->returnPCForInspection() == returnAddress && callee->isZombieFrame();
 }
 
 SUPPRESS_ASAN Instance* CompiledFrameIterator::findEnclosingAdapterInstance(Cursor cursor, VMState* stateThatRemembersRun) const
@@ -397,7 +397,7 @@ CompiledFrameIterator::CompiledFrameIterator(VM& vm, const Cursor& cursor, bool 
 {
     // The frames of one run are of one image: a call into another image leaves compiled code.
     if (vm.aotState().hasSeveralImages) [[unlikely]] {
-        if (const Image* image = m_image->findInListByCodeAddress(removeCodePtrTag(cursor.rawPC))) {
+        if (const Image* image = m_image->findInListByCodeAddress(removeReturnAddressSignature(cursor.rawPC))) {
             m_image = image;
             m_cache = vm.aotState().parts[image->position()].callSiteCache.get();
             m_imageOfRun.run(vm.aotState(), *image);
@@ -487,7 +487,7 @@ std::optional<CompiledFrameIterator> CompiledFrameIterator::tryCreate(VM& vm, co
 {
     if (!vm.hasCompiledCode() || !cursor.framePointer || !cursor.rawPC)
         return std::nullopt;
-    const void* pc = removeCodePtrTag(cursor.rawPC);
+    const void* pc = removeReturnAddressSignature(cursor.rawPC);
     const CallSiteCache::Entry* site = findReturnSite(vm, pc);
     if (!site || isInHostCallFrame(*site))
         return std::nullopt;
@@ -522,7 +522,7 @@ const void* CompiledFrameIterator::findReturnAddressInFunctionAtTop(VM& vm)
     Cursor cursor { callee->callerFrame(), callee->rawReturnPC(), vm.topEntryFrame, callee, stackPointerOfCaller(callee) };
     Exit exit;
     do {
-        const void* pc = removeCodePtrTag(cursor.rawPC);
+        const void* pc = removeReturnAddressSignature(cursor.rawPC);
         const CallSiteCache::Entry* site = pc ? findReturnSite(vm, pc) : nullptr;
         if (!site)
             return nullptr;
@@ -674,7 +674,7 @@ void CompiledFrameIterator::readFrame() const
     const CallSiteCache::Entry& entry = m_callSite;
     bool isAtRead = m_cursor.isAtFirstReadSite && entry.site.firstReadSite;
     CallSiteIndex site = isAtRead ? *entry.site.firstReadSite : entry.site.callSite;
-    m_frame = { m_instance, m_cursor.callFrame, removeCodePtrTag(m_cursor.rawPC), entry.code, entry.innermostFunction, site, entry.site.inlineFrame, entry.innermostVisibility, entry.site.isTailDeleted(m_calleeWasEntered && !isAtRead) };
+    m_frame = { m_instance, m_cursor.callFrame, removeReturnAddressSignature(m_cursor.rawPC), entry.code, entry.innermostFunction, site, entry.site.inlineFrame, entry.innermostVisibility, entry.site.isTailDeleted(m_calleeWasEntered && !isAtRead) };
     m_frame.calledBuiltin = entry.site.calledBuiltin;
     if (m_calleeWasEntered && m_frame.calledBuiltin && leavesByTailCall(m_frame.calledBuiltin))
         m_frame.calledBuiltin = { };
@@ -731,7 +731,7 @@ void CompiledFrameIterator::listFunctionWhoseThisTheAdapterMakes()
     m_hasNoMachineFrame = true;
     m_isAtEnd = false;
     m_instance = *reinterpret_cast<Instance* const*>(reinterpret_cast<const char*>(m_runEnd.adapterFrame) + AdapterFrame::offsetOfInstance);
-    m_frame = { m_instance, m_runEnd.adapterFrame, removeCodePtrTag(m_cursor.rawPC), { }, m_constructedFunctionThatLeft->function, CallSiteIndex(0) };
+    m_frame = { m_instance, m_runEnd.adapterFrame, removeReturnAddressSignature(m_cursor.rawPC), { }, m_constructedFunctionThatLeft->function, CallSiteIndex(0) };
     m_hasReadFrame = true;
 }
 
@@ -894,7 +894,7 @@ bool isOperationFrameRecord(VM& vm, const CallFrame* frameRecord)
 {
     if (!vm.hasCompiledCode() || !frameRecord)
         return false;
-    const CallSiteCache::Entry* site = findReturnSite(vm, removeCodePtrTag(reinterpret_cast<const CallerFrameAndPC*>(frameRecord)->returnPC));
+    const CallSiteCache::Entry* site = findReturnSite(vm, removeReturnAddressSignature(reinterpret_cast<const CallerFrameAndPC*>(frameRecord)->returnPC));
     return site && isOperationReturnSite(*site);
 }
 
@@ -923,7 +923,7 @@ bool isCallerCompiled(VM& vm, const CallFrame* calleeFrame, EntryFrame* entryFra
 {
     if (calleeFrame->callerFrameOrEntryFrame() == entryFrame)
         return isOperationFrameRecord(vm, vmEntryRecord(entryFrame)->prevTopCallFrame());
-    return vm.hasCompiledCode() && findReturnSite(vm, removeCodePtrTag(calleeFrame->rawReturnPC()));
+    return vm.hasCompiledCode() && findReturnSite(vm, calleeFrame->returnPCForInspection());
 }
 
 static SampledTop sampledTopAtReturnSite(const Image& image, const CodeLocation& site, const void* returnAddress, const void* stackPointer, CallFrame* framePointer)
@@ -946,7 +946,7 @@ static SUPPRESS_ASAN std::optional<SampledTop> findTopWithoutFrameRecord(const I
         std::swap(candidates[0], candidates[1]);
     for (uintptr_t candidate : candidates) {
         auto* record = std::bit_cast<const CallerFrameAndPC*>(candidate);
-        if (stack.contains(&record->returnPC) && image.locate(removeCodePtrTag(record->returnPC)).runsCompiledCode())
+        if (stack.contains(&record->returnPC) && image.locate(removeReturnAddressSignature(record->returnPC)).runsCompiledCode())
             return SampledTop { std::bit_cast<CallFrame*>(candidate), registers.pc, nullptr, static_cast<CallFrame*>(registers.framePointer) };
     }
     return std::nullopt;
@@ -965,7 +965,7 @@ static SUPPRESS_ASAN SampledTop findTopInCompiledCode(const Image& image, const 
     const void* callReturnAddress = registers.linkRegister;
     if (!isARM64())
         callReturnAddress = stack.contains(registers.stackPointer) ? *static_cast<void* const*>(registers.stackPointer) : nullptr;
-    if (!callReturnAddress || callReturnAddress == removeCodePtrTag(record->returnPC))
+    if (!callReturnAddress || callReturnAddress == removeReturnAddressSignature(record->returnPC))
         return result;
     CodeLocation caller = image.locate(callReturnAddress);
     if (!caller.runsCompiledCode())
@@ -1061,7 +1061,7 @@ static SUPPRESS_ASAN std::optional<FrameAtSite> findFrameWithRecordAt(const Imag
         CallFrame* callFrame = frameAtReturnSite(frame, stackPointer, nullptr);
         if (callFrame >= frameRecord)
             return std::nullopt;
-        const void* returnAddress = removeCodePtrTag(reinterpret_cast<const CallerFrameAndPC*>(callFrame)->returnPC);
+        const void* returnAddress = removeReturnAddressSignature(reinterpret_cast<const CallerFrameAndPC*>(callFrame)->returnPC);
         CodeLocation caller = image.locate(returnAddress);
         if (!caller.runsCompiledCode() || !callEndsAt(image.code(), returnAddress))
             return std::nullopt;

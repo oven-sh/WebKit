@@ -31,6 +31,7 @@ struct AssemblerPolicy {
         policy.recordsLinkedSites = true;
         policy.shortensJumps = true;
         policy.shortensEncodings = true;
+        policy.signsReturnAddresses = false;
         policy.oops = OopsForm::Breakpoint;
         return policy;
     }
@@ -45,6 +46,9 @@ struct AssemblerPolicy {
     bool recordsLinkedSites { false };
     bool shortensJumps { false };
     bool shortensEncodings { false };
+    // With ENABLE(RETURN_ADDRESS_SIGNING). An image is the same whether or not what compiles it has that, and runs with a run time
+    // that has it and with one that has not. Whatever reads the return address of a frame takes a signature off that may be there.
+    bool signsReturnAddresses { true };
     OopsForm oops { OopsForm::AbortWithReason };
 };
 

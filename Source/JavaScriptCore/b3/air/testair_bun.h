@@ -178,7 +178,7 @@ struct GeneratedCode {
 
 static GeneratedCode generateAndLink(B3::Procedure& proc, CCallHelpers& jit)
 {
-    generate(proc.code(), jit);
+    generateFollowingFramePolicy(proc.code(), jit);
     LinkBuffer linkBuffer(jit, nullptr);
     Vector<uint8_t> bytes(std::span { static_cast<const uint8_t*>(linkBuffer.debugAddress()), linkBuffer.size() });
     return { WTF::move(bytes), makeUnique<Compilation>(FINALIZE_CODE(linkBuffer, JITCompilationPtrTag, nullptr, "testair compilation"), proc.releaseByproducts()) };

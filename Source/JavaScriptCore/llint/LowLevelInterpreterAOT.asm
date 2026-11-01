@@ -2301,6 +2301,15 @@ op(llint_aot_virtual_call_trampoline, macro ()
 end)
 
 if not C_LOOP
+# A thunk that makes no frame has not saved the return address, so it has no signature.
+macro returnWithoutFrame()
+    if RETURN_ADDRESS_SIGNING
+        emit "ret"
+    else
+        ret
+    end
+end
+
 # What a call enters in place of llint_native_call_trampoline where the callee is String.prototype.charCodeAt: VM::getHostFunction(). A string that is whole, or a piece of one that is, at an int32
 # inside it: text that is made at run time to compare strings is made of these. It makes no frame, so the arguments lie where the caller has put them. Everything else is the host function's.
 if X86_64
@@ -2330,12 +2339,12 @@ _llint_aot_char_code_at_thunk:
     btiz t3, HashFlags8BitBuffer, .hasWideCharacters
     loadb [t1, t2], r0
     orq t5, r0
-    ret
+    returnWithoutFrame()
 
 .hasWideCharacters:
     loadh [t1, t2, 2], r0
     orq t5, r0
-    ret
+    returnWithoutFrame()
 
     # A piece of another string stays a rope: the host function reads it through its base as well.
 .rope:
@@ -2401,7 +2410,7 @@ _llint_aot_string_index_of_thunk:
     move constexpr JSValue::NumberTag, t5
     move t1, r0
     orq t5, r0
-    ret
+    returnWithoutFrame()
 
 .indexOfIsHostFunctions:
     jmp _llint_native_call_trampoline
@@ -2473,10 +2482,10 @@ _llint_aot_is_nan_thunk:
     bdnequn ft0, ft0, .isNaN
 .isNoNaN:
     move ValueFalse, r0
-    ret
+    returnWithoutFrame()
 .isNaN:
     move ValueTrue, r0
-    ret
+    returnWithoutFrame()
 .isNaNHostFunction:
     jmp _llint_native_call_trampoline
 
@@ -2493,10 +2502,10 @@ _llint_aot_is_finite_thunk:
     bqeq t0, t1, .isNotFinite
 .isFinite:
     move ValueTrue, r0
-    ret
+    returnWithoutFrame()
 .isNotFinite:
     move ValueFalse, r0
-    ret
+    returnWithoutFrame()
 .isFiniteHostFunction:
     jmp _llint_native_call_trampoline
 
@@ -2507,7 +2516,7 @@ _llint_aot_is_integer_thunk:
     move constexpr JSValue::NumberTag, t1
     bqb t0, t1, .isIntegerHostFunction
     move ValueTrue, r0
-    ret
+    returnWithoutFrame()
 .isIntegerHostFunction:
     jmp _llint_native_call_trampoline
 
@@ -2523,10 +2532,10 @@ _llint_aot_is_array_thunk:
     bbeq t1, constexpr ProxyObjectType, .isArrayHostFunction
 .isNoArray:
     move ValueFalse, r0
-    ret
+    returnWithoutFrame()
 .isArray:
     move ValueTrue, r0
-    ret
+    returnWithoutFrame()
 .isArrayHostFunction:
     jmp _llint_native_call_trampoline
 end

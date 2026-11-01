@@ -63,8 +63,8 @@ const HARDENING =
 // what the JITs generate (wtf/PlatformEnable.h). The instructions are hints, which a processor without pointer
 // authentication ignores. What reads such a word takes the signature off first (WTF::removeReturnAddressSignature).
 //
-// Not with the compiler: the run time of compiled programs reads that word in the frame record of its operations
-// (AOT_OPERATION_FRAME_RECORD) as it is, and then finds no handler for what an operation throws.
+// What the ahead-of-time compiler generates does not sign (AssemblerPolicy::signsReturnAddresses): an image has to run
+// with a run time that is compiled this way and with one that is not. Its run time, which is C++, does.
 //
 // Code with and without the flag runs together. But LLVM inlines no function into one that differs in it, so LTO inlines
 // nothing between these libraries and a bun that is compiled without (for Rust it is -Zbranch-protection=pac-ret), and what
@@ -109,14 +109,14 @@ const variants = {
   "coverage-aot": { buildType: "Release", mimalloc: true, coverage: true },
   "assertions-coverage-aot": { buildType: "Release", mimalloc: true, assertions: true, coverage: true },
   // "aot", "lto" and "lto-aot" with ICU and WebKit compiled with HARDENING, and nothing else changed but for arm64's
-  // -mtune (see MARCH_FLAG of Linux). Only what ships has a twin without the compiler, and on arm64 that twin also has
-  // SIGNED_RETURN_ADDRESSES, which the run time of compiled programs is not ready for.
+  // -mtune (see MARCH_FLAG of Linux) and SIGNED_RETURN_ADDRESSES in what ships. Only what ships has a twin without the
+  // compiler.
   "hardened-aot": { buildType: "Release", mimalloc: true, hardened: true },
   "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true, signedReturnAddresses: true, aot: false },
-  "lto-hardened-aot": { buildType: "Release", mimalloc: true, lto: true, hardened: true },
+  "lto-hardened-aot": { buildType: "Release", mimalloc: true, lto: true, hardened: true, signedReturnAddresses: true },
   // "lto-hardened-aot" with ENABLE_WEBASSEMBLY=0: there is no global of that name, and JavaScriptCore's code for it is not
   // in the libraries.
-  "lto-hardened-aot-no-webassembly": { buildType: "Release", mimalloc: true, lto: true, hardened: true, webAssembly: false },
+  "lto-hardened-aot-no-webassembly": { buildType: "Release", mimalloc: true, lto: true, hardened: true, signedReturnAddresses: true, webAssembly: false },
 };
 const NO_ASAN = ["release", "aot", "lto", "lto-aot", "debug-aot"];
 const ALL = [...NO_ASAN, "asan-aot", "debug-asan-aot"];
@@ -137,9 +137,9 @@ const withoutAOT = variant => (variant === "aot" ? "release" : variant.replace(/
 //   tested          per architecture, the variants whose jsc shell the `test` job runs the JavaScriptCore tests with,
 //                   and the runner it does that on: a machine of the lane's own platform and architecture. "lto-aot" is
 //                   what bun ships, "lto" is that without the compiler, and nothing else runs "lto-hardened-aot", nor
-//                   arm64's "lto-hardened", the lane with SIGNED_RETURN_ADDRESSES. The asan lanes are not tested: the
-//                   tests take 65 to 100 minutes there on Linux and macOS and do not finish in 275 on Windows. `quick`
-//                   is --quick, for a runner with few cores.
+//                   arm64's "lto-hardened". On arm64 these two are the lanes with SIGNED_RETURN_ADDRESSES. The asan lanes
+//                   are not tested: the tests take 65 to 100 minutes there on Linux and macOS and do not finish in 275
+//                   on Windows. `quick` is --quick, for a runner with few cores.
 //   testPrograms    what a tested lane builds besides what it ships, for the `test` job (the Dockerfile's TEST_PROGRAMS)
 //   fuzzed          per architecture, the variants that are downloaded to be fuzzed. See `programs`.
 //   bunTests        per architecture, the variants bun's CI links and then runs bun's tests with (buildPlatforms and

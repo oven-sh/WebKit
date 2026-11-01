@@ -154,7 +154,7 @@ static NEVER_INLINE Instance* findInstanceOfRun(VM& vm, const ReturnSiteInRun& s
 {
     if (Instance* known = CompiledFrameIterator::knownInstanceOfRun(vm.aotState(), entryFrame, site.framePointer))
         return known;
-    auto frames = CompiledFrameIterator::tryCreate(vm, site.framePointer, removeCodePtrTag(site.rawPC), entryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, site.stackPointer);
+    auto frames = CompiledFrameIterator::tryCreate(vm, site.framePointer, removeReturnAddressSignature(site.rawPC), entryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, site.stackPointer);
     return frames && !frames->isAtEnd() ? frames->instance() : nullptr;
 }
 
@@ -192,7 +192,7 @@ static bool isCalledByCodeOfOtherImage(const VMState& state, CallFrame* adapterF
     if (state.adapterFrameThatRestoresImage != adapterFrame || adapterFrame->callerFrameOrEntryFrame() == entryFrame)
         return false;
     std::span<const uint8_t> code = state.endOfImagesBelowAdapters[-1].parts->image->code();
-    return std::bit_cast<uintptr_t>(removeCodePtrTag(adapterFrame->rawReturnPC())) - std::bit_cast<uintptr_t>(code.data()) < code.size();
+    return std::bit_cast<uintptr_t>(adapterFrame->returnPCForInspection()) - std::bit_cast<uintptr_t>(code.data()) < code.size();
 }
 
 // Compiled code keeps its instance in a register that its callees save.
@@ -232,7 +232,7 @@ static ALWAYS_INLINE CompiledUnwindResult unwindRunOrRuns(VM& vm, const ReturnSi
     for (;;) {
         const Image& image = *imageOfRun;
         CallSiteCache& cache = *cacheOfRun;
-        const void* pc = removeCodePtrTag(place.rawPC);
+        const void* pc = removeReturnAddressSignature(place.rawPC);
         const CallSiteCache::Entry* site = cache.find(pc);
         if (!site) [[unlikely]]
             site = place.callee == (goesOnInOtherImages ? calleeOfRun : start.callee) ? cache.resolve(image, pc) : resolveReturnAddressInRun(cache, image, pc, place.callee);
@@ -439,13 +439,13 @@ static ALWAYS_INLINE std::optional<HandlerType> findHandlerInRun(VM& vm, CallFra
     CallFrame* first = callee;
     unsigned remainingFrames = search == HandlerSearch::NearestThatEndsThrow ? Options::exceptionStackTraceLimit() : 0;
     while (framePointer != entryFrame) {
-        const void* pc = removeCodePtrTag(callee->rawReturnPC());
+        const void* pc = callee->returnPCForInspection();
         const CallSiteCache::Entry* site = cache.find(pc);
         if (!site) [[unlikely]]
             site = cache.resolve(*state.image, pc);
         if (!site) {
             if (callee != first)
-                checkReturnAddressInRun(*state.image, removeCodePtrTag(callee->rawReturnPC()), callee);
+                checkReturnAddressInRun(*state.image, pc, callee);
             return std::nullopt;
         }
         if (site->isStubReturnSite()) {
@@ -497,7 +497,7 @@ void JIT_OPERATION_ATTRIBUTES checkThatThrowingCallHasSite(Instance* instance, C
     void* stackPointer = stackPointerOfCaller(stubFrame);
     void* framePointer = stubFrame->callerFrameOrEntryFrame();
     while (framePointer != vm.topEntryFrame) {
-        const void* pc = removeCodePtrTag(callee->rawReturnPC());
+        const void* pc = callee->returnPCForInspection();
         const CallSiteCache::Entry* site = state.callSiteCache->resolve(*state.image, pc);
         if (!site)
             return;
@@ -528,7 +528,7 @@ bool isCaughtAboveCleanup(VM& vm, const ReturnSiteInRun& siteOfCleanup)
 {
     if (findHandlerInRun<HandlerSearch::NearestThatEndsThrow>(vm, siteOfCleanup.callee, siteOfCleanup.stackPointer, siteOfCleanup.framePointer, vm.topEntryFrame))
         return true;
-    auto frames = CompiledFrameIterator::tryCreate(vm, siteOfCleanup.framePointer, removeCodePtrTag(siteOfCleanup.rawPC), vm.topEntryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, siteOfCleanup.stackPointer);
+    auto frames = CompiledFrameIterator::tryCreate(vm, siteOfCleanup.framePointer, removeReturnAddressSignature(siteOfCleanup.rawPC), vm.topEntryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, siteOfCleanup.stackPointer);
     return frames && findCatchInRun(*frames);
 }
 
@@ -569,7 +569,7 @@ static bool isCaughtByCallersOfNativeCode(VM& vm, CompiledFrameExit exit)
         if (exit.callFrame->callerFrameOrEntryFrame() == exit.entryFrame)
             return false;
         // So may code of another realm that runs the image.
-        if (exit.returnPC && isAddressInCompiledCode(std::bit_cast<uintptr_t>(removeCodePtrTag(exit.returnPC))))
+        if (exit.returnPC && isAddressInCompiledCode(std::bit_cast<uintptr_t>(removeReturnAddressSignature(exit.returnPC))))
             return false;
         if (void* taker = vm.aotState().stackPointerOfExceptionTaker; taker && taker < static_cast<void*>(exit.callFrame))
             return false;
@@ -598,7 +598,7 @@ Exception* exceptionKeptByCleanup(uint64_t kept, JSValue thrown)
 NEVER_INLINE Exception::StackCaptureAction stackCaptureActionOfThrow(VM& vm, const Instance& instance, JSValue thrown, const CallerFrameAndPC* frameRecordOfOperation, const CompiledUnwindResult* runWithoutHandler)
 {
     using Action = Exception::StackCaptureAction;
-    if (removeCodePtrTag(frameRecordOfOperation->callerFrame->rawReturnPC()) == instance.state->returnAddressOfThrowAfterCleanup) {
+    if (frameRecordOfOperation->callerFrame->returnPCForInspection() == instance.state->returnAddressOfThrowAfterCleanup) {
         uint64_t kept = instance.state->keptByCleanup;
         // The program threw the value somewhere else, and an Error keeps the stack that it holds.
         if (!isAddressInCompiledCode(kept))

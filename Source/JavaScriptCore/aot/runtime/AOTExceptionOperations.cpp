@@ -57,7 +57,7 @@ static const RuntimeType& runtimeTypeAt(Instance* instance, uint32_t type)
 // generatePollBeforeEntering() has the call's return address on the stack: where the call pushed it, or below the stub's.
 SUPPRESS_ASAN static const void* returnAddressOfPolledCall(void* stackPointerOfCaller)
 {
-    return removeCodePtrTag(static_cast<void* const*>(stackPointerOfCaller)[isX86() ? -1 : -2]);
+    return removeReturnAddressSignature(static_cast<void* const*>(stackPointerOfCaller)[isX86() ? -1 : -2]);
 }
 
 // A tail call by value gives up a frame and returns to where that frame would have returned. Whoever holds the closure that runs above that place holds the callee from now on:
@@ -74,7 +74,7 @@ SUPPRESS_ASAN static void passHolderToCalleeOfTailCall(VM& vm, FunctionTables& t
         auto* record = reinterpret_cast<CallerFrameAndPC*>(framePointerOfCaller);
         stackPointerOfCaller = record + 1;
         framePointerOfCaller = record->callerFrame;
-        site = state.callSiteCache->resolve(*state.image, removeCodePtrTag(record->returnPC));
+        site = state.callSiteCache->resolve(*state.image, removeReturnAddressSignature(record->returnPC));
     }
     if (!site)
         return;
@@ -214,7 +214,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowAfterCleanup, void, (Instance* instanc
         OPERATION_RETURN(scope);
     }
     instance->runtime.exceptions.thrownValue = value;
-    instance->state->returnAddressOfThrowAfterCleanup = removeCodePtrTag(callFrame->rawReturnPC());
+    instance->state->returnAddressOfThrowAfterCleanup = callFrame->returnPCForInspection();
     instance->state->keptByCleanup = kept;
     return { std::bit_cast<Exception*>(static_cast<uintptr_t>(1)) };
 }
@@ -222,7 +222,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowAfterCleanup, void, (Instance* instanc
 // A `throw` that jumps to a cleanup of its function calls nothing else, and a stack trace finds the place of a frame by a return address.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAddressOfThrow, uint64_t, (Instance*))
 {
-    return std::bit_cast<uint64_t>(removeCodePtrTag(AOT_OPERATION_FRAME_RECORD()->returnPC));
+    return std::bit_cast<uint64_t>(removeReturnAddressSignature(AOT_OPERATION_FRAME_RECORD()->returnPC));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrow, void, (Instance* instance, EncodedJSValue value))

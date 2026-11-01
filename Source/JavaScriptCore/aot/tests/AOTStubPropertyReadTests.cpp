@@ -1397,6 +1397,8 @@ public:
         constexpr GPRReg word = thisGPR;
         CCallHelpers jit;
         CCallHelpers::Label entry = jit.label();
+        // This is not code of an image, so its ret() authenticates.
+        jit.tagReturnAddress();
         jit.add64(CCallHelpers::TrustedImm32(1), CCallHelpers::AbsoluteAddress(&m_call.numberOfCalls));
         jit.store64(calleeGPR, &m_call.callee);
         jit.store64(countGPR, &m_call.count);

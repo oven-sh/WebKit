@@ -5659,18 +5659,22 @@ public:
     // CPU(ARM64E) signs.
     ALWAYS_INLINE void tagReturnAddress()
     {
+        if (!policy().signsReturnAddresses)
+            return;
         m_assembler.hint(27); // PACIBSP
     }
 
     ALWAYS_INLINE void untagReturnAddress(RegisterID = InvalidGPRReg)
     {
+        if (!policy().signsReturnAddresses)
+            return;
         m_assembler.hint(31); // AUTIBSP
         validateUntaggedPtr(ARM64Registers::lr);
     }
 
     ALWAYS_INLINE void tagPtr(PtrTag tag, RegisterID target)
     {
-        if (tag)
+        if (tag || !policy().signsReturnAddresses)
             return;
         RELEASE_ASSERT(target == ARM64Registers::lr);
         m_assembler.hint(26); // PACIBZ
@@ -5678,7 +5682,7 @@ public:
 
     ALWAYS_INLINE void untagPtr(PtrTag tag, RegisterID target)
     {
-        if (tag)
+        if (tag || !policy().signsReturnAddresses)
             return;
         RELEASE_ASSERT(target == ARM64Registers::lr);
         m_assembler.hint(30); // AUTIBZ
@@ -5698,6 +5702,8 @@ public:
     void signOrAuthenticateWithRegisters(RegisterID modifier, RegisterID pointer, int hint)
     {
         static_assert(dataTempRegister == ARM64Registers::x16 && memoryTempRegister == ARM64Registers::x17);
+        if (!policy().signsReturnAddresses)
+            return;
         RELEASE_ASSERT(modifier != memoryTempRegister && pointer != dataTempRegister);
         move(modifier, getCachedDataTempRegisterIDAndInvalidate());
         move(pointer, getCachedMemoryTempRegisterIDAndInvalidate());
@@ -5707,6 +5713,8 @@ public:
 
     ALWAYS_INLINE void removePtrTag(RegisterID target)
     {
+        if (!policy().signsReturnAddresses)
+            return;
         // XPACLRI has its operand in the link register.
         RELEASE_ASSERT(target != memoryTempRegister && target != ARM64Registers::lr);
         RegisterID savedLinkRegister = getCachedMemoryTempRegisterIDAndInvalidate();
@@ -5721,6 +5729,8 @@ public:
     // whoever signs that again gives away most of the signature of the address it was made from. So it is read from first.
     ALWAYS_INLINE void validateUntaggedPtr(RegisterID target, RegisterID = InvalidGPRReg)
     {
+        if (!policy().signsReturnAddresses)
+            return;
         m_assembler.ldrb(ARM64Registers::zr, target, 0);
     }
 #endif
@@ -5728,7 +5738,8 @@ public:
     ALWAYS_INLINE void ret()
     {
 #if ENABLE(RETURN_ADDRESS_SIGNING)
-        m_assembler.hint(31); // AUTIBSP
+        if (policy().signsReturnAddresses)
+            m_assembler.hint(31); // AUTIBSP
 #endif
         m_assembler.ret();
     }
