@@ -81,7 +81,8 @@ PatchpointValue* createMovedLoadCheck(Procedure& proc, const MovedLoad& load, Va
     check->effects = Effects::none();
     check->effects.writesLocalState = true;
     check->setRunsWithoutFrame(true);
-    check->setGenerator([load, report = WTF::move(report)](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    bool reportComesBack = proc.policy().validation.reportsOfMovedLoadsComeBack;
+    check->setGenerator([load, reportComesBack, report = WTF::move(report)](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         GPRReg found = params.gpScratch(0);
         GPRReg given = params.gpScratch(1);
@@ -131,7 +132,10 @@ PatchpointValue* createMovedLoadCheck(Procedure& proc, const MovedLoad& load, Va
             }
             if (report)
                 report->run(jit, load, found, given);
-            jit.breakpoint();
+            if (reportComesBack)
+                jit.jump().linkTo(done, &jit);
+            else
+                jit.breakpoint();
         });
     });
     return check;
@@ -176,18 +180,23 @@ PatchpointValue* createDecidedComparisonCheck(Procedure& proc, Opcode opcode, Or
     check->effects.writesLocalState = true;
     check->setRunsWithoutFrame(true);
     MovedLoad comparison { opcode, left->type(), 0, origin, HeapRange() };
-    check->setGenerator([comparison, answer, report = WTF::move(report)](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    bool reportComesBack = proc.policy().validation.reportsOfMovedLoadsComeBack;
+    check->setGenerator([comparison, answer, reportComesBack, report = WTF::move(report)](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         GPRReg left = params[0].gpr();
         GPRReg right = params[1].gpr();
         CCallHelpers::RelationalCondition otherAnswer = answer ? CCallHelpers::invert(conditionOf(comparison.opcode)) : conditionOf(comparison.opcode);
         CCallHelpers::Jump differs = comparison.type == Int64 ? jit.branch64(otherAnswer, left, right) : jit.branch32(otherAnswer, left, right);
+        CCallHelpers::Label done = jit.label();
         params.addLatePath([=](CCallHelpers& jit) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             differs.link(&jit);
             if (report)
                 report->run(jit, comparison, left, right);
-            jit.breakpoint();
+            if (reportComesBack)
+                jit.jump().linkTo(done, &jit);
+            else
+                jit.breakpoint();
         });
     });
     return check;

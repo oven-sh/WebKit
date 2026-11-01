@@ -56,6 +56,7 @@ struct ValidationPolicy {
     bool checksKnownPropertiesAtRunTime { false };
     bool logsMovedLoads { false };
     bool logsDecidedComparisons { false };
+    bool reportsOfMovedLoadsComeBack { false };
     bool keepsOriginsOfTrappingAccesses { false };
     // Verify that every read of a spill slot sees the value the slot represents, and every read of a register sees the Tmp it is read for. See AirCheckSpillSlots.h.
     // These do not change the generated code.

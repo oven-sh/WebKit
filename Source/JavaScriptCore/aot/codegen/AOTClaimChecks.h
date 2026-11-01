@@ -31,7 +31,9 @@ struct GuardTest {
 };
 using GuardTests = Vector<GuardTest>;
 
-void emitReportOfBrokenClaim(CCallHelpers&, BrokenClaim, Typed::FunctionID, Typed::ValueID, int32_t offset = 0, GPRReg found = InvalidGPRReg, GPRReg given = InvalidGPRReg);
+// One that comes back keeps every register, prints a place once and lets the run go on.
+enum class ReportOfBrokenClaim : uint8_t { EndsRun, ComesBack };
+void emitReportOfBrokenClaim(CCallHelpers&, BrokenClaim, Typed::FunctionID, Typed::ValueID, int32_t offset = 0, GPRReg found = InvalidGPRReg, GPRReg given = InvalidGPRReg, ReportOfBrokenClaim = ReportOfBrokenClaim::EndsRun);
 
 // A validating build has the back end test what it is told about a value right behind the value. A test that fails names the value, where it would only trap.
 void reportBrokenKnownProperties(B3::Policy&, Typed::FunctionID);
@@ -45,6 +47,8 @@ JS_EXPORT_PRIVATE void checkClaimsAtRunTime(B3::Policy&, Typed::FunctionID, cons
 struct WhatIsLogged {
     bool loads { true };
     bool decidedComparisons { false };
+    // --aot-check=KeepGoing beside them.
+    bool reportsComeBack { false };
 };
 JS_EXPORT_PRIVATE void checkMovedLoadsAtRunTime(B3::Policy&, Typed::FunctionID, const std::unique_ptr<B3::Procedure>&, const GuardTests&, WhatIsLogged = { });
 

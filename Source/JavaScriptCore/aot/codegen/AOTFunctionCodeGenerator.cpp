@@ -345,7 +345,7 @@ bool FunctionCodeGenerator::generateB3()
         m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportBrokenClaim));
     }
     if (options.checksMovedLoads || options.checksDecidedComparisons) {
-        checkMovedLoadsAtRunTime(policy, m_id, m_procedure, m_records.guardTests, { .loads = options.checksMovedLoads, .decidedComparisons = options.checksDecidedComparisons });
+        checkMovedLoadsAtRunTime(policy, m_id, m_procedure, m_records.guardTests, { .loads = options.checksMovedLoads, .decidedComparisons = options.checksDecidedComparisons, .reportsComeBack = options.keepsGoingBehindFailedVerifications });
         m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportBrokenClaim));
     }
 #if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE
