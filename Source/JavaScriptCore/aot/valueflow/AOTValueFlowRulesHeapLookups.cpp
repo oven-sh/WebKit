@@ -1824,7 +1824,10 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
             handedOutAsUnknownObject.append(objectOfMember(member, module));
         });
         add(ValueFlowProgramNodes::escaped(), m_context.maker().of(handedOutAsUnknownObject.span()));
-        forEachMemberUnder(m_context.unite(ClimbingSet(m_tables.classes()), m_context.valueOf(m_context.nodes().ofHost(ValueFlowHostNode::AnswersThatNoReadLists))), key, [&](BuiltinID member, ModuleID module) {
+        ClimbingSet holdersThatNoReadLists = m_context.unite(ClimbingSet(m_tables.classes()), m_context.valueOf(m_context.nodes().ofHost(ValueFlowHostNode::AnswersThatNoReadLists)));
+        if (m_context.holdsAnyOf(unknownObjectAlone(), m_context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfInstances)))
+            holdersThatNoReadLists = m_context.unite(holdersThatNoReadLists, ClimbingSet(m_tables.prototypeObjectsOfHost()));
+        forEachMemberUnder(holdersThatNoReadLists, key, [&](BuiltinID member, ModuleID module) {
             if (mayBeAnsweredWithoutBeingListed(member))
                 answersThatNoReadLists.append(objectOfMember(member, module));
         });
