@@ -758,6 +758,7 @@ private:
     ModuleRecord* ensureRecordWithoutStatus(ModuleID);
     void retireRecord(ModuleRecord*);
     void retireRecordOfModuleThatHasNotBegun(ModuleRecord*);
+    void retireRecordsWhenVMIsIdle();
     bool hasRunToItsEndWithItsCycle(const ModuleRecord&) const;
     void setValue(ModuleID, JSValue);
     LoadedModule& ensureLoaded(ModuleID);
@@ -1086,6 +1087,10 @@ private:
     BitVector m_filesWhoseOriginalRuns;
     bool m_hasAskedEveryClass { false };
     bool m_isWalkingRequests { false };
+    // A require() that asks the loader calls retireRecordsOfSettledLoads() behind its load: what is refused in that load waits for the call.
+    bool m_isLoadingForRequire { false };
+    // retireRecordsOfSettledLoads() was refused by what is on the stack, and is called again when the VM is idle.
+    bool m_retiresRecordsWhenVMIsIdle { false };
     struct LoadInFlight {
         Strong<JSPromise> promise;
         ModuleID root;

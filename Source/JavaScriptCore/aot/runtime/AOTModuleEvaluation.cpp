@@ -3139,10 +3139,12 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
         promise = m_synchronousLoadsHandedToLoader[handed].promise.get();
         m_synchronousLoadsHandedToLoader.removeAt(handed);
         SetForScope isAskingHost(m_isAskingHost, true);
+        SetForScope isLoadingForRequire(m_isLoadingForRequire, true);
         JSModuleLoader::drainSynchronousModuleQueue(realm);
     } else if (needsLoader) {
         takeUpWaysOfLoads();
         SetForScope isAskingHost(m_isAskingHost, true);
+        SetForScope isLoadingForRequire(m_isLoadingForRequire, true);
         promise = loader()->loadModuleSync(realm, moduleKey(module), nullptr, nullptr);
     } else if (statusAtStart == ModuleStatus::Unlinked && moduleData.reachesUncompiledCode()) {
         ModuleRecord* record = registerWithLoader(module);
