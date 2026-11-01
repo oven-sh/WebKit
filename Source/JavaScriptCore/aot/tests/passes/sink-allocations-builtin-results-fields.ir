@@ -3,6 +3,7 @@
 # RUN: pass SinkAllocations
 # STATISTIC: AllocationsRemoved = 1
 # STATISTIC: AllocationsSunk = 0
+# STATISTIC: ObjectsOfBuiltinsNeverBuilt = 1
 
 module m0 path="main.js" displayPath="main.js"
 
