@@ -255,6 +255,7 @@ public:
     };
     MocksBelowRoot mocksBelow(ModuleID root) const { return { m_table, m_mocks, root }; }
     bool hasBegunToLoad(ModuleID) const;
+    void runBodyOfLinkedModuleAheadOfMock(ModuleID);
     bool hostAnswersInPlaceOf(ModuleID, LoadByName);
     bool isKeptInRequireCache(ModuleID) const;
     bool isInRequireCache(ModuleID) const;

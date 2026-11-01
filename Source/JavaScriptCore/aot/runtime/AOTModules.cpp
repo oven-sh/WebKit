@@ -1186,6 +1186,66 @@ bool Modules::hasBegunToLoad(ModuleID module) const
     return data(module).isESModuleOfProgram() && wasLoadedWithGraph(module);
 }
 
+// A graph is loaded before a module of it begins, so a helper that mocks finds what its importer imports beside it linked. The body does not run ahead of an import whose own body is up the stack.
+void Modules::runBodyOfLinkedModuleAheadOfMock(ModuleID module)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    auto hasYetToRun = [&](ModuleID each) {
+        ModuleStatus current = status(each);
+        return current == ModuleStatus::Unlinked || current == ModuleStatus::Linked;
+    };
+    if (!data(module).isESModuleOfProgram() || data(module).isFaceOfFile() || !hasYetToRun(module) || isMocked(module) || m_modulesWithMockToRun.get(module.index()))
+        return;
+    // Only a graph whose evaluation is under way has linked what it has yet to come to. A load that met a mock in place of the module never fetched it.
+    auto isImportedByGraphUnderEvaluation = [&] {
+        BitVector isReached(m_table.size());
+        Vector<ModuleID, 16> importers;
+        for (unsigned index = 0; index < m_table.size(); ++index) {
+            ModuleStatus current = status(ModuleID(index));
+            if (current == ModuleStatus::Evaluating || current == ModuleStatus::EvaluatingAsync)
+                importers.append(ModuleID(index));
+        }
+        while (!importers.isEmpty()) {
+            ModuleID importer = importers.takeLast();
+            if (isReached.quickSet(importer.index()))
+                continue;
+            for (const ModuleRequestData& request : m_table.imports(importer)) {
+                if (request.isHoisted || request.isDeferred)
+                    continue;
+                ModuleID imported = request.targetModule();
+                if (imported == module)
+                    return true;
+                if (hasYetToRun(imported) && !isMocked(imported) && !m_modulesWithMockToRun.get(imported.index()))
+                    importers.append(imported);
+            }
+        }
+        return false;
+    };
+    if (!isImportedByGraphUnderEvaluation())
+        return;
+    BitVector isSeen(m_table.size());
+    Vector<ModuleID, 16> toVisit { module };
+    while (!toVisit.isEmpty()) {
+        ModuleID importer = toVisit.takeLast();
+        if (isSeen.quickSet(importer.index()))
+            continue;
+        for (const ModuleRequestData& request : m_table.imports(importer)) {
+            if (request.isDeferred)
+                continue;
+            if (status(request.targetModule()) == ModuleStatus::Evaluating)
+                return;
+            if (hasYetToRun(request.targetModule()))
+                toVisit.append(request.targetModule());
+        }
+    }
+    JSPromise* evaluation = evaluate(module, std::nullopt, nullptr);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (evaluation->status() == JSPromise::Status::Rejected) {
+        evaluation->markAsHandled();
+        throwException(m_instance.globalObject, scope, evaluation->result());
+    }
+}
+
 // A mock names a path. The loader of `bun run` looks there as JSModuleLoader::registryEntry() does: for the file as no attribute asks for it, then as a type of the host's own, then as JSON. It holds only what has been loaded.
 std::optional<ModuleID> Modules::formThatMockFinds(StringView path, std::optional<ModuleID> file) const
 {
@@ -5875,6 +5935,13 @@ Vector<ModuleID, 2> formsThatAttributesAskFor(JSGlobalObject* realm, StringView 
         return IterationStatus::Continue;
     });
     return forms;
+}
+
+void runBodyOfLinkedModuleAheadOfMock(JSGlobalObject* realm, ModuleID moduleOfHost)
+{
+    ModuleFromHost module(realm, moduleOfHost);
+    if (Modules* modules = modulesOf(realm))
+        modules->runBodyOfLinkedModuleAheadOfMock(module);
 }
 
 void deferMock(JSGlobalObject* realm, ModuleID moduleOfHost, AfterFailure afterFailure)

@@ -269,6 +269,8 @@ JS_EXPORT_PRIVATE bool tryReplaceExport(JSCell* moduleNamespace, UniquedStringIm
 JS_EXPORT_PRIVATE bool mayBeMocked(JSGlobalObject*, ModuleID);
 // The module has not begun to load: the factory of the mock runs when a graph comes to it (ModuleHost::runMock).
 JS_EXPORT_PRIVATE bool hasBegunToLoad(JSGlobalObject*, ModuleID);
+// Under `bun test` the body of a module that is linked when it is mocked runs then and there: left for later, it would assign over what the mock stores.
+JS_EXPORT_PRIVATE void runBodyOfLinkedModuleAheadOfMock(JSGlobalObject*, ModuleID);
 // `a.txt?text` is a form of `a.txt`: what an import attribute makes of the file. A mock of the path replaces the form that has been loaded, and waits for all of them if none has. `file`: the module under the path itself, if the image holds it.
 JS_EXPORT_PRIVATE std::optional<ModuleID> formThatMockFinds(JSGlobalObject*, StringView path, std::optional<ModuleID> file);
 JS_EXPORT_PRIVATE Vector<ModuleID, 2> formsThatAttributesAskFor(JSGlobalObject*, StringView path);
