@@ -20,8 +20,6 @@
 
 namespace JSC { namespace B3 {
 
-// A Phi reads the value of the most recently executed Upsilon. If one of its Upsilons precedes it in the same block, that is always the one it reads.
-// The loop phases assume that a Phi in a loop header is loop-carried, which such a Phi is not.
 static bool foldPhisThatFollowTheirUpsilon(Procedure& proc)
 {
     IndexSet<Value*> folded;

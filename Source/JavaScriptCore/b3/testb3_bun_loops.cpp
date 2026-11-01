@@ -762,7 +762,6 @@ static void testEliminateRedundantPhiCycles()
 
 static void testEliminateRedundantPhiCyclesFoldsPhiThatFollowsItsUpsilon()
 {
-    // if (x == 7) { phi = 3; return -1; } phi = x + 1; return phi;
     for (bool hasOtherUpsilon : { false, true }) {
         Procedure proc;
         Graph graph { proc };

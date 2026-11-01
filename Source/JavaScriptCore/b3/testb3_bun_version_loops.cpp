@@ -770,7 +770,6 @@ static void testVersionLoopsHoistsLoadRepeatingLoadBeforeLoop()
     }
 }
 
-// The remains of an `if` that lost one arm: the Phi is in the middle of the header, after the Upsilon that sets it on every iteration. Its other Upsilon is outside the loop, on no path into it.
 static void testVersionLoopsPhiThatFollowsItsUpsilonInHeaderIsNotLoopCarried()
 {
     for (bool runsPrecedingPhase : { true, false }) {
@@ -808,7 +807,6 @@ static void testVersionLoopsPhiThatFollowsItsUpsilonInHeaderIsNotLoopCarried()
         CHECK(versionLoopsAndValidate(proc));
         fixSSA(proc);
         if (!runsPrecedingPhase) {
-            // The guard before the fast loop reads the Phi's variable, which nothing has set at that point.
             CHECK(proc.report().failure && proc.report().failure->kind == FailureKind::VariableReadBeforeSet);
             continue;
         }
