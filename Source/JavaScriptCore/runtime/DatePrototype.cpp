@@ -24,6 +24,7 @@
 #include "config.h"
 #include "DatePrototype.h"
 
+#include "DateConstructor.h"
 #include "DateConversion.h"
 #include "DateInstance.h"
 #include "DateTimeWriter.h"
@@ -152,53 +153,49 @@ struct BrokenDownDate {
     int second { 0 };
 };
 
-// Converts a list of arguments sent to a Date member function into milliseconds, updating
-// ms (representing milliseconds) and t (representing the rest of the date structure) appropriately.
-//
-// Format of member function: f([hour,] [min,] [sec,] [ms])
-static bool fillStructuresUsingTimeArgs(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned maxArgs, double* ms, BrokenDownDate* t)
+// The hour, minute, second and millisecond a time setter passes to MakeTime: the fields of the
+// Date's own time, each replaced by the argument that was given for it.
+struct TimeSetterFields {
+    double hour { 0 };
+    double minute { 0 };
+    double second { 0 };
+    double millisecond { 0 };
+};
+
+// Stores the arguments of a Date member function of the form f([hour,] [min,] [sec,] [ms]) into
+// fields. It adds nothing up: https://tc39.es/ecma262/#sec-maketime fixes the order in which the
+// four are added, so they go to makeTime() together.
+static void fillStructuresUsingTimeArgs(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned maxArgs, TimeSetterFields* fields)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    double milliseconds = 0;
     unsigned idx = 0;
     unsigned numArgs = std::min<unsigned>(callFrame->argumentCount(), maxArgs);
 
     // hours
     if (maxArgs >= 4 && idx < numArgs) {
-        t->hour = 0;
-        double hours = callFrame->uncheckedArgument(idx++).toIntegerPreserveNaN(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
-        milliseconds += hours * msPerHour;
+        fields->hour = callFrame->uncheckedArgument(idx++).toIntegerPreserveNaN(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
     }
 
     // minutes
     if (maxArgs >= 3 && idx < numArgs) {
-        t->minute = 0;
-        double minutes = callFrame->uncheckedArgument(idx++).toIntegerPreserveNaN(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
-        milliseconds += minutes * msPerMinute;
+        fields->minute = callFrame->uncheckedArgument(idx++).toIntegerPreserveNaN(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
     }
 
     // seconds
     if (maxArgs >= 2 && idx < numArgs) {
-        t->second = 0;
-        double seconds = callFrame->uncheckedArgument(idx++).toIntegerPreserveNaN(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
-        milliseconds += seconds * msPerSecond;
+        fields->second = callFrame->uncheckedArgument(idx++).toIntegerPreserveNaN(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
     }
 
     // milliseconds
     if (idx < numArgs) {
-        double millis = callFrame->uncheckedArgument(idx).toIntegerPreserveNaN(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
-        milliseconds += millis;
-    } else
-        milliseconds += *ms;
-
-    *ms = milliseconds;
-    return std::isfinite(milliseconds);
+        fields->millisecond = callFrame->uncheckedArgument(idx).toIntegerPreserveNaN(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
 }
 
 // Converts a list of arguments sent to a Date member function into years, months, and milliseconds, updating
@@ -717,16 +714,20 @@ static EncodedJSValue setNewValueFromTimeArgs(JSGlobalObject* globalObject, Call
         return JSValue::encode(jsNaN());
     }
 
-    BrokenDownDate gregorianDateTime(other);
-    bool success = fillStructuresUsingTimeArgs(globalObject, callFrame, numArgsToUse, &ms, &gregorianDateTime);
+    TimeSetterFields fields { static_cast<double>(other.hour()), static_cast<double>(other.minute()), static_cast<double>(other.second()), ms };
+    fillStructuresUsingTimeArgs(globalObject, callFrame, numArgsToUse, &fields);
     RETURN_IF_EXCEPTION(scope, { });
-    if (!success) {
+
+    // A time that is not finite stops here, with PNaN. timeClip() would pass on whatever NaN the
+    // arithmetic arrived at.
+    double time = makeTime(fields.hour, fields.minute, fields.second, fields.millisecond);
+    if (!std::isfinite(time)) {
         thisDateObj->setInternalNumber(PNaN);
         return JSValue::encode(jsNaN());
     }
 
-    double newUTCDate = cache.gregorianDateTimeToMS(gregorianDateTime.year, gregorianDateTime.month, gregorianDateTime.monthDay, gregorianDateTime.hour, gregorianDateTime.minute, gregorianDateTime.second, ms, inputTimeType);
-    double result = timeClip(newUTCDate);
+    double day = dateToDaysFrom1970(other.year(), other.month(), other.monthDay());
+    double result = timeClip(cache.localTimeToMS(makeDate(day, time), inputTimeType));
     thisDateObj->setInternalNumber(result);
     return JSValue::encode(jsNumber(result));
 }
