@@ -3095,7 +3095,7 @@ struct ArmDispatcher {
 
     void joinArmsByForm()
     {
-        static constexpr ValueID ArmState::* joinedValues[] { &ArmState::subject, &ArmState::nextMethod, &ArmState::isSteppedWithoutCall, &ArmState::walkedList };
+        static constexpr ValueID ArmState::* joinedValues[] { &ArmState::subject, &ArmState::nextMethod, &ArmState::isSteppedWithoutCall, &ArmState::nextIsOfEngine, &ArmState::walkedList };
         BlockID join = builder.addBlock(function.at(head).frequency);
         form = builder.addParameter(join, pass.types.intern(Type::integer({ 0, static_cast<int64_t>(states.size() - firstArmOfLastCopy) - 1 })));
 
