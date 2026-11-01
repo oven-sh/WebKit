@@ -1129,6 +1129,9 @@ bool Modules::hasBegunToLoad(ModuleID module) const
         return !mayBeMocked(module) || (current != ModuleStatus::Unlinked && current != ModuleStatus::Linked);
     if ((current != ModuleStatus::Unlinked && current != ModuleStatus::Linked) || didCaptureExports(module))
         return true;
+    // `bun test` takes a module out of its loader with the mock that stood in its place.
+    if (m_modulesOwedToImportersThatRan.get(module.index()))
+        return false;
     return data(module).isESModuleOfProgram() && wasLoadedWithGraph(module);
 }
 
