@@ -401,7 +401,7 @@ void FramePlanner::moveToHeap(ObjectID object, AllocationHeapCause cause, std::o
     FrameDecision& decision = m_decisions[object.index()];
     if (decision.storage == AllocationStorage::Heap)
         return;
-    if (m_build.isSabotaged(Sabotage::CellsThatAreKeptLieInFrames) && meansCellMayOutliveFrame(cause) && !isArray(object))
+    if (m_build.isSabotaged(isArray(object) ? Sabotage::ListsThatAreKeptLieInFrames : Sabotage::CellsThatAreKeptLieInFrames) && meansCellMayOutliveFrame(cause))
         return;
     decision.storage = AllocationStorage::Heap;
     decision.isLent = false;
@@ -980,8 +980,10 @@ bool mayPutSomeArrayInFrame(const Program& program, const FlowResults& flow, con
     arrays.shrink(std::min<size_t>(arrays.size(), maxFollowedArrays));
 
     uint32_t onHeap = 0;
-    forEachUseThatKeepsArraysOnHeap(program, &flow, function, arrays.span(), [&](uint32_t given, AllocationHeapCause, const Use&) {
-        onHeap |= given;
+    bool keepersCount = !build.isSabotaged(Sabotage::ListsThatAreKeptLieInFrames);
+    forEachUseThatKeepsArraysOnHeap(program, &flow, function, arrays.span(), [&](uint32_t given, AllocationHeapCause cause, const Use&) {
+        if (keepersCount || !meansCellMayOutliveFrame(cause))
+            onHeap |= given;
     });
     return onHeap != (arrays.size() == 32 ? std::numeric_limits<uint32_t>::max() : (1u << arrays.size()) - 1);
 }

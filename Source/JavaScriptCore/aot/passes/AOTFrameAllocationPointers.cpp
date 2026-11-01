@@ -85,18 +85,21 @@ Vector<ValueID, 8> findArraysThatMayLieInFrame(const Program& program, const Bui
     if (arrays.isEmpty())
         return { };
 
+    bool keepersCount = !build.isSabotaged(Sabotage::ListsThatAreKeptLieInFrames);
     for (const Block& block : function.blocks) {
         for (ValueID id : block.values) {
             const Value& user = function.at(id);
             user.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
                 if (!arrays.quickGet(operand.index()) || user.operandKind(operandIndex) == OperandKind::Guard)
                     return;
-                if (effectRuleOf(user.opcode) != EffectRule::Call && !givesSameArray(user.opcode, operandIndex) && !readsArrayWhereItLies(program, function, user, operandIndex))
+                if (effectRuleOf(user.opcode) == EffectRule::Call || givesSameArray(user.opcode, operandIndex) || readsArrayWhereItLies(program, function, user, operandIndex))
+                    return;
+                if (keepersCount || user.operandUses(operandIndex).containsAny(operandWritingUses))
                     arrays.quickClear(operand.index());
             });
         }
         block.terminator.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-            if (block.terminator.operandKind(operandIndex) != OperandKind::Guard)
+            if (keepersCount && block.terminator.operandKind(operandIndex) != OperandKind::Guard)
                 arrays.quickClear(operand.index());
         });
     }
