@@ -3917,8 +3917,6 @@ void Modules::holdText(JSPromise* promise, ModuleID module, JSCell* requestedRec
     uint64_t place = static_cast<uint64_t>(state.turnOfTexts) << 33 | static_cast<uint64_t>(askedBy == AskedBy::Import) << 32 | state.numberOfTextsAskedFor++;
     bool waitsApart = askedBy == AskedBy::Import && !m_innermostFilesBeingRun && !state.numberOfTextsThatWait;
     uint32_t levelsAddedToPlace = 0;
-    bool comesInFrontOfCallsAtItsPlace = false;
-    bool comesWithCallInFront = false;
     // A place says where a call stands among those that wait. A call that waits alone comes first wherever it stands, so the levels below it are counted once another call finds it waiting.
     bool waitsAlone = waitsApart && !state.numberOfCallsThatWaitApart;
     if (waitsApart) {
@@ -3941,33 +3939,12 @@ void Modules::holdText(JSPromise* promise, ModuleID module, JSCell* requestedRec
         } else if (!waitsAlone) {
             bool comesToEarlierCall = false;
             levelsAddedToPlace = countLevelsBelowRoot(module, comesToEarlierCall);
-            bool hasPlaceOfEarlierCall = false;
-            if (comesToEarlierCall) {
-                // What it shares with them comes when the first to ask for it has it.
-                LastTextBelowCall last = findLastTextBelowCall(module);
-                levelsAddedToPlace = last.turn - state.turnOfTexts;
-                if (last.earlierCall) {
-                    hasPlaceOfEarlierCall = true;
-                    // The news of the text goes up a level a job: the root that is nearer to it runs first, and of two that are as near the one that asked first.
-                    comesInFrontOfCallsAtItsPlace = last.levelsBelowRoot < last.levelsBelowRootOfEarlierCall;
-                    comesWithCallInFront = !comesInFrontOfCallsAtItsPlace;
-                    uint64_t placeOfEarlierCall = waiting[*last.earlierCall].place;
-                    uint32_t turnsSooner = static_cast<uint32_t>(placeOfEarlierCall >> 33) - last.turn;
-                    place = placeOfEarlierCall - (static_cast<uint64_t>(turnsSooner) << 33);
-                    levelsAddedToPlace = waiting[*last.earlierCall].levelsAddedToPlace - turnsSooner;
-                    if (turnsSooner) {
-                        for (TextThatWaits& text : waiting) {
-                            if (text.place != placeOfEarlierCall)
-                                continue;
-                            text.place = place;
-                            text.levelsAddedToPlace = levelsAddedToPlace;
-                        }
-                        std::ranges::stable_sort(waiting, { }, &TextThatWaits::place);
-                    }
-                }
+            // What it shares with them comes no sooner for it than for them.
+            for (const TextThatWaits& text : waiting) {
+                if (comesToEarlierCall && text.waitsApart)
+                    levelsAddedToPlace = std::max<uint32_t>(levelsAddedToPlace, (text.place >> 33) - state.turnOfTexts);
             }
-            if (!hasPlaceOfEarlierCall)
-                place += static_cast<uint64_t>(levelsAddedToPlace) << 33;
+            place += static_cast<uint64_t>(levelsAddedToPlace) << 33;
         }
     } else {
         if (state.numberOfCallsThatWaitApart) {
@@ -3979,11 +3956,9 @@ void Modules::holdText(JSPromise* promise, ModuleID module, JSCell* requestedRec
         ++state.numberOfTextsThatWait;
     }
     size_t index = m_textsThatWait.size();
-    while (index > m_numberOfTextsThatHaveCome && (m_textsThatWait[index - 1].place > place || (comesInFrontOfCallsAtItsPlace && m_textsThatWait[index - 1].place == place)))
+    while (index > m_numberOfTextsThatHaveCome && m_textsThatWait[index - 1].place > place)
         --index;
-    m_textsThatWait.insert(index, TextThatWaits { place, Strong<JSPromise>(vm, promise), module, Strong<JSCell>(vm, requestedRecord), referrerAsyncOrder, waitsApart, levelsAddedToPlace, caller, waitsAlone, comesWithCallInFront });
-    if (comesInFrontOfCallsAtItsPlace)
-        m_textsThatWait[index + 1].comesWithCallInFront = true;
+    m_textsThatWait.insert(index, TextThatWaits { place, Strong<JSPromise>(vm, promise), module, Strong<JSCell>(vm, requestedRecord), referrerAsyncOrder, waitsApart, levelsAddedToPlace, caller, waitsAlone });
     host().callInLaterTurn(m_instance.globalObject);
 }
 
@@ -4007,7 +3982,6 @@ void Modules::putCallsThatWaitApartInLine()
         if (!std::exchange(text.waitsApart, false))
             continue;
         text.levelsAreLeftToCount = false;
-        text.comesWithCallInFront = false;
         text.place -= static_cast<uint64_t>(std::exchange(text.levelsAddedToPlace, 0)) << 33;
         --state.numberOfCallsThatWaitApart;
         ++state.numberOfTextsThatWait;
@@ -4028,7 +4002,7 @@ void Modules::holdTextOfImportFromOtherImage(JSPromise* fetched, AbstractModuleR
     holdText(fetched, module, root, std::nullopt, AskedBy::Import);
 }
 
-bool Modules::deliverFirstTextThatWaits(TextOfImport textOfImport)
+bool Modules::deliverFirstTextThatWaits()
 {
     VMState& state = m_instance.vm->aotState();
     TextThatWaits text = WTF::move(m_textsThatWait[m_numberOfTextsThatHaveCome]);
@@ -4036,8 +4010,6 @@ bool Modules::deliverFirstTextThatWaits(TextOfImport textOfImport)
         m_textsThatWait.clear();
         m_numberOfTextsThatHaveCome = 0;
     }
-    if (textOfImport == TextOfImport::HasCome)
-        m_promiseOfCallThatOthersComeWith = !m_textsThatWait.isEmpty() && m_textsThatWait[m_numberOfTextsThatHaveCome].comesWithCallInFront ? text.promise.get() : nullptr;
     if (text.waitsApart)
         --state.numberOfCallsThatWaitApart;
     else
@@ -4053,7 +4025,7 @@ bool Modules::deliverFirstTextThatWaits(TextOfImport textOfImport)
         return true;
     }
     bool isMadeAgain = text.waitsApart || text.caller == ImportCaller::Host;
-    JSPromise* loaded = startImport(text.module, text.referrerAsyncOrder, isMadeAgain ? text.caller : ImportCaller::Host, textOfImport, isMadeAgain ? promise : nullptr);
+    JSPromise* loaded = startImport(text.module, text.referrerAsyncOrder, isMadeAgain ? text.caller : ImportCaller::Host, TextOfImport::HasCome, isMadeAgain ? promise : nullptr);
     if (scope.exception()) [[unlikely]] {
         promise->rejectWithCaughtException(vm, scope);
         return true;
@@ -4062,19 +4034,6 @@ bool Modules::deliverFirstTextThatWaits(TextOfImport textOfImport)
     if (loaded != promise)
         settleAsLoaderDoes(m_instance.globalObject, promise, loaded);
     return true;
-}
-
-// In the job in which the graph of the call in front has run. Where that call is left to the loader they come in turns of their own.
-void Modules::deliverCallsThatComeWith(JSPromise* promiseOfCallInFront)
-{
-    if (m_promiseOfCallThatOthersComeWith != promiseOfCallInFront) [[likely]]
-        return;
-    m_promiseOfCallThatOthersComeWith = nullptr;
-    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    while (!m_textsThatWait.isEmpty() && m_textsThatWait[m_numberOfTextsThatHaveCome].comesWithCallInFront) {
-        deliverFirstTextThatWaits(TextOfImport::HasComeWithCallInFront);
-        RETURN_IF_EXCEPTION(scope, void());
-    }
 }
 
 void deliverTextThatWaits(VM& vm)
@@ -4215,13 +4174,6 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
                 if (!m_orderOfCountedJobs.isEmpty()) {
                     m_orderOfCountedJobs.append(serial);
                     m_modulesOfCountedImports.set(module.index());
-                }
-                if (text == TextOfImport::HasComeWithCallInFront) {
-                    CountedImport import = m_countedImports.takeLast();
-                    import.runsInJobOfCallInFront = true;
-                    scope.release();
-                    decideHowCountedImportGoesOn(import);
-                    return promise;
                 }
                 queueImportJob(realm, promise, module, referrerAsyncOrder);
                 return promise;
@@ -4566,7 +4518,7 @@ void Modules::decideHowCountedImportGoesOn(CountedImport& import)
         return goOnWithLoader();
 
     // Where no job waits none will run before the graph has run: nobody can tell in how many jobs it is loaded, unless the host does something of its own behind a job.
-    bool isWatched = !import.runsInJobOfCallInFront && (!queue.isEmpty() || vm.hostObservesMicrotaskBoundaries());
+    bool isWatched = !queue.isEmpty() || vm.hostObservesMicrotaskBoundaries();
     if (!import.jobsRun) {
         // Whatever began to load a graph since the call has handed this one to the loader.
         if (m_innermostEvaluation || storedStatus(module) != StoredModuleStatus::Unlinked || importsFileBeingEvaluated(module))
@@ -4683,16 +4635,16 @@ void Modules::decideHowCountedImportGoesOn(CountedImport& import)
     switch (evaluation->status()) {
     case JSPromise::Status::Fulfilled:
         queueStepOfImport(importPromise, moduleForJob(module), numberOfJobsBehindEvaluation);
-        break;
+        return;
     case JSPromise::Status::Rejected:
         evaluation->markAsHandled();
         queueStepOfImport(importPromise, moduleForJob(module), numberOfJobsBehindEvaluation, evaluation->result());
-        break;
+        return;
     case JSPromise::Status::Pending:
         evaluation->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::CompiledModuleImportSettled, importPromise, moduleForJob(module));
-        break;
+        return;
     }
-    RELEASE_AND_RETURN(scope, deliverCallsThatComeWith(importPromise));
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 // The steps of the loader find nothing to load, to link or to run, and no other load meets them: the module has no step of its own left that a synchronous load could take over.

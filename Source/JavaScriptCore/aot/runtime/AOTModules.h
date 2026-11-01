@@ -631,7 +631,7 @@ public:
     JSPromise* import(ModuleID, ModuleID referrer, JSValue options = jsUndefined());
     // The host hands what it gets to import() in code that is not compiled, which gives the program a promise of its own.
     enum class ImportCaller : bool { CompiledCode, Host };
-    enum class TextOfImport : uint8_t { MayComeLater, HasCome, HasComeWithCallInFront };
+    enum class TextOfImport : uint8_t { MayComeLater, HasCome };
     JSPromise* startImport(ModuleID, std::optional<int64_t> referrerAsyncOrder, ImportCaller = ImportCaller::CompiledCode, TextOfImport = TextOfImport::MayComeLater, JSPromise* promiseOfCaller = nullptr, JSValue stateOfWait = JSValue(), std::optional<bool> answerOfWalkAlreadyMade = std::nullopt);
     JSPromise* rejectImportWithErrorOfLoad(ModuleID, ImportCaller);
     JSPromise* importDynamic(JSValue specifier, JSValue options, ModuleID referrer);
@@ -646,7 +646,7 @@ public:
     void holdTextOfImportFromOtherImage(JSPromise* fetched, AbstractModuleRecord* root, ModuleID);
     std::optional<uint64_t> placeOfFirstTextThatWaits() const { return m_textsThatWait.isEmpty() ? std::nullopt : std::optional(m_textsThatWait[m_numberOfTextsThatHaveCome].place); }
     // False: nobody is left to hear of it.
-    bool deliverFirstTextThatWaits(TextOfImport = TextOfImport::HasCome);
+    bool deliverFirstTextThatWaits();
     void continueImport(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder);
     void resolveWithNamespace(JSPromise* importPromise, ModuleID);
     void finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID, JSValue error);
@@ -1149,8 +1149,6 @@ private:
         CountedImport* outerInOwnJob { nullptr };
         // All the jobs in which the loader would load the graph have passed.
         bool isLoaded { false };
-        // They passed with those of the call in front.
-        bool runsInJobOfCallInFront { false };
     };
     void decideHowCountedImportGoesOn(CountedImport&);
     uint32_t findJobOfNextNativeModule(PlanOfLoad&, uint32_t currentJob) const;
@@ -1278,21 +1276,7 @@ private:
         ImportCaller caller { ImportCaller::CompiledCode };
         // No other call has waited beside it so far.
         bool levelsAreLeftToCount { false };
-        // Both wait for one text, which is the last of either: there both graphs run before either call goes on.
-        bool comesWithCallInFront { false };
     };
-    // Compared, never read.
-    JSPromise* m_promiseOfCallThatOthersComeWith { nullptr };
-    void deliverCallsThatComeWith(JSPromise* promiseOfCallInFront);
-    struct LastTextBelowCall {
-        uint32_t turn;
-        uint32_t levelsBelowRoot { 0 };
-        // For which it is the last text too: its index among the texts that wait.
-        std::optional<size_t> earlierCall { };
-        uint32_t levelsBelowRootOfEarlierCall { 0 };
-    };
-    LastTextBelowCall findLastTextBelowCall(ModuleID root);
-    template<typename Visitor> void forEachModuleToLoadBelow(ModuleID root, const Visitor&);
     Vector<TextThatWaits> m_textsThatWait;
     size_t m_numberOfTextsThatHaveCome { 0 };
     BitVector m_modulesBelowCallsThatWait;
