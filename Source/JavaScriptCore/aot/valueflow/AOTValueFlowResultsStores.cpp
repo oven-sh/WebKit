@@ -2294,35 +2294,52 @@ void StoresByLayout::setReceiversOfReads(ListsOfSetsByNumber&& receivers)
     for (const auto& receiversUnderKey : m_receiversOfReads)
         receiversUnderKeys.append(&receiversUnderKey);
     ValueSetMakers makers(m_inputs);
+    constexpr uint32_t noGroup = UINT32_MAX;
     struct GroupsOfWorker {
         HashMap<Vector<uint32_t>, uint32_t> groupOfLayouts;
+        // By the number of a set of receivers. Many keys are read off one and the same objects.
+        HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> groupOfReceivers;
         Vector<Vector<PropertyKeyID>> keys;
         Vector<uint32_t> layoutsOfKey;
+        Vector<ValueSetID> receiversOfKey;
+        uint64_t numberOfLayoutsFound { 0 };
     };
     Vector<GroupsOfWorker> groupsFoundBy(loops.width());
     forEachIndexInParallel(loops, receiversUnderKeys.size(), [&](unsigned index, unsigned worker) {
         GroupsOfWorker& groups = groupsFoundBy[worker];
-        groups.layoutsOfKey.shrink(0);
+        ValueSetMaker& makerOfWorker = makers.of(worker);
+        groups.receiversOfKey.shrink(0);
         for (ValueSetID listed : receiversUnderKeys[index]->value) {
-            if (!sets.meet(listed, objects))
-                continue;
-            m_layoutsOfObjects.forEachLayoutOfMembers(makers.of(worker).intersect(listed, objects), [&](LayoutID layout) {
+            if (sets.meet(listed, objects))
+                groups.receiversOfKey.append(makerOfWorker.intersect(listed, objects));
+        }
+        if (groups.receiversOfKey.isEmpty())
+            return;
+        ValueSetID receivers = makerOfWorker.uniteAll(groups.receiversOfKey.span());
+        uint32_t group = groups.groupOfReceivers.ensure(receivers.index(), [&]() -> uint32_t {
+            groups.layoutsOfKey.shrink(0);
+            m_layoutsOfObjects.forEachLayoutOfMembers(receivers, [&](LayoutID layout) {
                 if (asks.quickGet(layout.index()))
                     groups.layoutsOfKey.append(layout.index());
             });
-        }
-        if (groups.layoutsOfKey.isEmpty())
-            return;
-        // A key is read from a layout at many places: most of what was found is a repeat.
-        AOT::sort(groups.layoutsOfKey);
-        removeRepeatedElements(groups.layoutsOfKey);
-        uint32_t group = groups.groupOfLayouts.ensure(groups.layoutsOfKey, [&] {
-            groups.keys.append(Vector<PropertyKeyID>());
-            return static_cast<uint32_t>(groups.keys.size() - 1);
+            if (groups.layoutsOfKey.isEmpty())
+                return noGroup;
+            groups.numberOfLayoutsFound += groups.layoutsOfKey.size();
+            AOT::sort(groups.layoutsOfKey);
+            removeRepeatedElements(groups.layoutsOfKey);
+            return groups.groupOfLayouts.ensure(groups.layoutsOfKey, [&] {
+                groups.keys.append(Vector<PropertyKeyID>());
+                return static_cast<uint32_t>(groups.keys.size() - 1);
+            }).iterator->value;
         }).iterator->value;
-        groups.keys[group].append(PropertyKeyID(receiversUnderKeys[index]->key));
+        if (group != noGroup)
+            groups.keys[group].append(PropertyKeyID(receiversUnderKeys[index]->key));
     });
     HashMap<Vector<uint32_t>, uint32_t> groupOfLayouts;
+    uint64_t numberOfLayoutsFound = 0;
+    for (GroupsOfWorker& groups : groupsFoundBy)
+        numberOfLayoutsFound += groups.numberOfLayoutsFound;
+    m_inputs.build.statistics().count(StatisticID::LayoutsFoundForKeysRead, numberOfLayoutsFound);
     for (GroupsOfWorker& groups : groupsFoundBy) {
         for (auto& entry : groups.groupOfLayouts) {
             uint32_t group = groupOfLayouts.ensure(entry.key, [&] {

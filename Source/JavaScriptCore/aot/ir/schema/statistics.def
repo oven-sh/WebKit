@@ -13,7 +13,7 @@ enum StatisticID {
     RequestsResolvedToNothing RequestsResolvedToUpcast RequestsResolvedToCheck RequestsResolvedToClaim ConversionsOutsideFamily
     FlowAllocationSites FlowAllocationClasses FlowProvenPositions FlowUnprovenPositions
     FlowNarrowedPositions FlowProvenContentsSites FlowRemovedChecks FlowRemainingChecks
-    FlowUnreachedFunctions FlowAppendedFields
+    FlowUnreachedFunctions FlowAppendedFields LayoutsFoundForKeysRead
     FlowSetsOutsideTypes LayoutsOutsideFamily
     FlowCallsOfUnknownCallees FlowAccessesOfUnknownReceivers FlowLibraryFunctionsLacked FlowEdgesLogged FlowReaders FlowBodiesParked FlowBodiesTakenBack FlowRunsForWholeProgram FlowRounds FlowStatementRuns
     HeatEstimatesOfVeryLargeProgram
