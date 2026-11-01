@@ -2011,8 +2011,8 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
     // The namespace object was made with the names of the mock. The module that loads next has one of its own, as in `bun test`. So has a module whose `export *` took its names from a run.
     for (uint32_t index = 0; index < m_table.size(); ++index) {
         ModuleID each(index);
-        if ((each == fileOrModule || each == module || data(each).hasDynamicStarExport()) && namespaceIfCreated(each, ModulePhase::Evaluation))
-            setNamespace(each, ModulePhase::Evaluation, nullptr);
+        if (each == fileOrModule || each == module || data(each).hasDynamicStarExport())
+            letGoOfNamespaceMadeUnderMock(each);
     }
     if (originalRuns) [[unlikely]]
         loaded.answerOfMockWhileOriginalRuns.set(*this, JSValue());
@@ -2360,8 +2360,8 @@ void Modules::endMockOverModuleThatHasRun(ModuleID module)
     // An object that was made under the mock is the mock's, and whoever holds it keeps it. The object of the module is the one from before, as in `bun test`.
     for (uint32_t index = 0; index < m_table.size(); ++index) {
         ModuleID each(index);
-        if ((each == module || data(each).hasDynamicStarExport()) && namespaceIfCreated(each, ModulePhase::Evaluation))
-            setNamespace(each, ModulePhase::Evaluation, nullptr);
+        if (each == module || data(each).hasDynamicStarExport())
+            letGoOfNamespaceMadeUnderMock(each);
     }
     if (JSObject* own = loaded.namespaceBeforeMockInPlace.get()) {
         uncheckedDowncast<ModuleNamespace>(own)->setKeepsToModule(false);
@@ -2968,6 +2968,21 @@ JSObject* Modules::namespaceIfCreated(ModuleID module, ModulePhase phase) const
     }
     LoadedModule* loaded = loadedIfExists(module);
     return loaded ? loaded->namespaceObjectFor(phase).get() : nullptr;
+}
+
+// require() of an ES module answers its namespace object, and keeps the answer.
+void Modules::letGoOfNamespaceMadeUnderMock(ModuleID module)
+{
+    JSObject* made = namespaceIfCreated(module, ModulePhase::Evaluation);
+    if (!made)
+        return;
+    setNamespace(module, ModulePhase::Evaluation, nullptr);
+    LoadedModule* loaded = loadedIfExists(module);
+    if (!loaded || loaded->requiredValue.get() != JSValue(made))
+        return;
+    loaded->requiredValue.set(*this, JSValue());
+    loaded->objectMadeByRequire.set(*this, nullptr);
+    loaded->exportsGivenToObjectMadeByRequire.set(*this, JSValue());
 }
 
 void Modules::setNamespace(ModuleID module, ModulePhase phase, JSObject* namespaceObject)

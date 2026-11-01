@@ -755,6 +755,7 @@ private:
     JSObject* namespaceIfCreated(ModuleID, ModulePhase) const;
     JSObject* namespaceThatCompiledCodeHolds(ModuleID, ModulePhase) const;
     void setNamespace(ModuleID, ModulePhase, JSObject*);
+    void letGoOfNamespaceMadeUnderMock(ModuleID);
     JSObject* createNamespace(ModuleID, ModulePhase, bool shouldPreventExtensions);
     Structure* namespaceStructure(bool shouldPreventExtensions);
     JSObject* createTableOfExports();

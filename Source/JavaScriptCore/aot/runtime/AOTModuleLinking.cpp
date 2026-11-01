@@ -943,6 +943,7 @@ void Modules::endMockOfLibraryModule(ModuleID module)
         RETURN_IF_EXCEPTION(scope, void());
         held->replaceDynamicExports(*m_instance.vm, exportsOfModule);
     }
+    RELEASE_AND_RETURN(scope, takeNamesBehindFollowedStarsAnew());
 }
 
 // Whoever was linked against the mock goes on reading it until the test file ends, as in `bun test`: a test may have ended the mock.
