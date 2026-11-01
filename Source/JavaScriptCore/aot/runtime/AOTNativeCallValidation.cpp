@@ -960,6 +960,57 @@ private:
         });
     }
 
+    // An entry that reads a member by name enters an accessor of native code above the object, as a statement would. That has no function object either. What it lays on the object that it is entered with stands in its own entry, and is what it answers.
+    bool isDoneByNativeGetterAbove(const Operand& operand, const OperandDifference& difference) const
+    {
+        if (difference.change != OperandChange::PropertyAdded || !difference.key)
+            return false;
+        UniquedStringImpl* key = difference.key.get();
+        JSObject* holder = nullptr;
+        for (JSValue above = operand.object->getPrototypeDirect(); above.isObject() && !holder; above = asObject(above)->getPrototypeDirect()) {
+            PropertySlot slot(asObject(above), PropertySlot::InternalMethodType::VMInquiry, &m_vm);
+            if (!asObject(above)->methodTable()->getOwnPropertySlot(asObject(above), m_call.realm, Identifier::fromUid(m_vm, key), slot))
+                continue;
+            if (!(slot.attributes() & PropertyAttribute::CustomAccessor))
+                return false;
+            holder = asObject(above);
+        }
+        if (!holder)
+            return false;
+        JSValue laid = operand.object->getDirect(m_vm, Identifier::fromUid(m_vm, key));
+        auto laysOnReceiver = [&](BuiltinName name) {
+            for (uint32_t index = 0; index < m_table.builtinCount(); ++index) {
+                const Builtin& entry = m_table.at(BuiltinID(index));
+                if (entry.kind != BuiltinKind::Accessor || entry.name != name)
+                    continue;
+                auto inRealm = findInRealm(m_call.realm, BuiltinCellKey::object(entry.holder));
+                if (!inRealm || *inRealm != holder)
+                    continue;
+                return std::ranges::any_of(m_table.overloadsOf(BuiltinID(index)), [&](const BuiltinOverload& getter) {
+                    return getter.mode == BuiltinCallMode::Get && fitOf(m_table, getter.result.type, laid) != Fit::Outside && std::ranges::any_of(getter.flow.propertyActions, [&](const BuiltinPropertyAction& action) {
+                        return declares(action.kind, difference.change) && action.object.isReceiver() && covers(action.key, key);
+                    });
+                });
+            }
+            return false;
+        };
+        return std::ranges::any_of(m_declaration.overloads, [&](const BuiltinOverload* overload) {
+            auto readsAt = [&](BuiltinOperand position, JSValue passed) {
+                const BuiltinParameter* parameter = passed == JSValue(operand.object) ? m_table.parameterFor(*overload, position) : nullptr;
+                return parameter && parameter->protocols.contains(Protocol::Named) && std::ranges::any_of(parameter->namedMembers, [&](BuiltinName name) {
+                    return m_table.identifierOf(m_vm, name).impl() == key && laysOnReceiver(name);
+                });
+            };
+            if (m_call.kind == CodeSpecializationKind::CodeForCall && readsAt(BuiltinOperand::receiver(), m_call.thisValue))
+                return true;
+            for (unsigned index = 0; index < std::min<unsigned>(m_call.arguments.size(), BuiltinOperand::maxArgumentIndex); ++index) {
+                if (readsAt(BuiltinOperand::argument(index), m_call.arguments.at(index)))
+                    return true;
+            }
+            return false;
+        });
+    }
+
     void checkChanges(bool didRunCode)
     {
         AbstractHeaps declared = declaredWrites();
@@ -982,7 +1033,7 @@ private:
 
                 if (m_expectation.isKnown && !heaps.isEmpty() && !m_expectation.writes.containsAny(heaps))
                     fail(ValidationFailureKind::NativeCallWroteHeap, operand.object, makeString(what, ", the call writes "_s, describeMembers(m_expectation.writes), ", not "_s, describeMembers(heaps)));
-                if (didRunCode || isDoneByNativeCodeOfObject(operand, difference, uses))
+                if (didRunCode || isDoneByNativeCodeOfObject(operand, difference, uses) || isDoneByNativeGetterAbove(operand, difference))
                     continue;
                 OperandUses declaring = difference.isRepresentationOnly ? OperandUses() : rowOf(change).uses;
                 if (!declaring.isEmpty() && isTakenForUnknownFunction()) {

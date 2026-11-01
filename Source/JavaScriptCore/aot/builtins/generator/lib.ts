@@ -532,8 +532,12 @@ export const printedByFormatter = (...otherMembers: readonly string[]): UseSpec 
     named(
       ...otherMembers,
       "@@toStringTag",
+      // It prints the value of an accessor of native code that it meets above an object. Those of Stats lay it on the object.
+      "atime",
+      "birthtime",
       "cause",
       "children",
+      "ctime",
       "data",
       "error",
       "errors",
@@ -541,6 +545,7 @@ export const printedByFormatter = (...otherMembers: readonly string[]): UseSpec 
       "length",
       "line",
       "message",
+      "mtime",
       "name",
       "originalLine",
       "props",
