@@ -1,0 +1,42 @@
+# `for (;;) {}`: the loop is its poll and a jump. Where a poll is a load that faults it is one instruction and calls nothing.
+# On ARM64 the immediate offset of a load reaches 32 KB up from the instance, so the page that a poll loads from lies there. A loop keeps its frame there.
+# `spinsAndReads` calls the run time for the read of a global variable alone.
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN(FAULTS): generate-code calls
+# REQUIRES(FAULTS): faulting-loop-polls
+# FAULTS-LABEL: f1: size=
+# FAULTS-NOT: operation
+# FAULTS-LABEL: f2: size=
+# FAULTS-NOT: operationAOTPollSlow
+# Every ARM64 target has such polls but Windows and a hardened engine, whose instance has other words where the page would lie.
+# RUN(ARM64): generate-code
+# REQUIRES(ARM64): arm64 unsanitized-code not-windows code-outside-image
+# ARM64: f1: size=20 frame=0@8-16 entries=1 sites=1 handlers=0 faults=0 polls=1
+# ARM64: f2: size=68 frame=0@8-64 entries=1 sites=1 handlers=0 faults=0 polls=1
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64 unsanitized-code not-windows faulting-loop-polls
+# X64: f1: size=10 frame=none entries=1 sites=1 handlers=0 faults=0 polls=1
+# X64: f2: size=52 frame=0@1-51 entries=1 sites=1 handlers=0 faults=0 polls=1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    Return v1
+}
+function f1 name="spins" results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Jump -> next b1()
+}
+function f2 name="spinsAndReads" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = PropGet v0 key="input" [isFreeName]
+    Jump -> next b1()
+}

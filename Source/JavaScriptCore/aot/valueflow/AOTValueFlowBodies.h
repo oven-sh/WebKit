@@ -85,6 +85,8 @@ struct ValueFlowSite {
     bool isDenseArrayLiteral { false };
     // Of what a built-in function answers: f(), f(a). So f.bind(receiver) binds no argument.
     bool isAnswerOfCallWithOneArgumentAtMost { false };
+    // An array written with a first and a second element: `["a", 1]`. It says what new Map() takes as a key and a value.
+    bool isPairLiteral { false };
 
     friend bool operator==(const ValueFlowSite&, const ValueFlowSite&) = default;
 };
@@ -223,6 +225,13 @@ public:
     ValueSetID sureInstancesOf(BuiltinClassID builtinClass) const { return m_sureInstancesOfClass[builtinClass.index()]; }
     ValueSetID proxiesFromNamedConstructor() const { return m_proxiesFromNamedConstructor; }
     ValueSetID denseArrayLiterals() const { return m_denseArrayLiterals; }
+    ValueSetID pairLiterals() const { return m_pairLiterals; }
+    // Those inside one piece of data, which is named by the object at its root.
+    ValueSetID pairLiteralsInData(ValueFlowObjectID root) const
+    {
+        auto found = m_pairLiteralsInData.find(root.index());
+        return found == m_pairLiteralsInData.end() ? ValueSets::nothing : found->value;
+    }
     // By what an object was made as, whether or not compiled code has a test for the class.
     ValueSetID objectsThatMayBeMadeAs(BuiltinClassID builtinClass) const { return m_objectsThatMayBeMadeAs[builtinClass.index()]; }
     ValueSetID objectsMadeAs(BuiltinClassID builtinClass) const { return m_objectsMadeAs[builtinClass.index()]; }
@@ -260,6 +269,7 @@ private:
     };
 
     void appendFunctionObjectsOf(const Program&, const Type&, Vector<ValueFlowObjectID, 32>& members, Vector<ValueSetID, 8>& parts) const;
+    ValueSetID rememberedSetOfLayouts(ValueSetMaker&, const Program&, std::atomic<uint32_t>* remembered, LayoutSetID, NOESCAPE const Invocable<ValueSetID(std::span<const LayoutID>)> auto& make) const;
     ValueSetID objectsSurelyWithLayoutIn(ValueSetMaker&, const Program&, LayoutSetID) const;
     ValueSetID objectsWithLayoutIn(ValueSetMaker&, const Program&, LayoutSetID) const;
 
@@ -292,6 +302,8 @@ private:
     Vector<ValueSetID> m_sureInstancesOfClass;
     ValueSetID m_proxiesFromNamedConstructor { ValueSets::nothing };
     ValueSetID m_denseArrayLiterals { ValueSets::nothing };
+    ValueSetID m_pairLiterals { ValueSets::nothing };
+    HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_pairLiteralsInData;
     Vector<ValueSetID> m_objectsThatMayBeMadeAs;
     Vector<ValueSetID> m_objectsMadeAs;
     ValueSetID m_objectsAllocatedAsIterators;
@@ -317,6 +329,7 @@ private:
     ValueSetID m_builtinFunctionsThatActOnReceiver;
     ValueSetID m_builtinsThatMayBeAnyLibraryClosure;
     uint32_t m_numberOfRememberedLayoutSets { 0 };
+    Vector<LayoutSetID> m_layoutSetsWithoutFirstMember;
     uint32_t m_numberOfRememberedFunctions { 0 };
     std::unique_ptr<std::atomic<uint32_t>[]> m_objectsSurelyWithLayoutIn;
     std::unique_ptr<std::atomic<uint32_t>[]> m_objectsWithLayoutIn;
@@ -464,10 +477,16 @@ enum class ValueFlowHostNode : uint8_t {
     LoaderFunctionsSeenToBeStored,
     BuiltinObjectsAboveEscapedObjects,
     MemberNobodyKnowsIsCalled,
+    // The lists written with two elements or more whose first two somebody reads apart, as a key and a value. Only these say them apart: most such lists are no pairs.
+    WrittenPairsThatAreRead,
+    ObjectsPutBelowInstances,
+    AnswersThatNoReadLists,
+    GettersAreFoundUnderNamesOfEnumerations,
+    CodeThatNobodyHasReadRuns,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 89;
-static_assert(static_cast<unsigned>(ValueFlowHostNode::MemberNobodyKnowsIsCalled) + 1 == numberOfValueFlowHostNodes);
+inline constexpr unsigned numberOfValueFlowHostNodes = 94;
+static_assert(static_cast<unsigned>(ValueFlowHostNode::CodeThatNobodyHasReadRuns) + 1 == numberOfValueFlowHostNodes);
 
 class ValueFlowProgramNodes {
 public:
@@ -698,8 +717,8 @@ struct ValueFlowBody {
     std::span<const Operand> operandsOf(const Statement& statement) const LIFETIME_BOUND { return operands.subspan(statement.firstOperand, statement.operandCount); }
 };
 
-ValueFlowBody reduceBody(const Program&, const ValueFlowBuiltinTables&, FunctionID, const UnobservedFieldDefinitions* = nullptr);
-ValueFlowBody makeHostBody(const Program&, const ValueFlowBuiltinTables&, std::span<const uint64_t> notedOperations = { });
+ValueFlowBody reduceBody(const Program&, const ValueFlowBuiltinTables&, FunctionID, const UnobservedFieldDefinitions* = nullptr, uint64_t* numberOfBlocksReadForDefinitions = nullptr);
+ValueFlowBody makeHostBody(const Program&, const ValueFlowBuiltinTables&, std::span<const uint64_t> notedOperations = { }, const UnobservedFieldDefinitions* = nullptr);
 bool startsWithoutValueInSolve(const Program&, const Variable&);
 
 // In the order of the sites of a conversion to an object.
@@ -754,6 +773,7 @@ enum class ValueFlowNotedOperation : uint8_t {
     StoreToLocation,
     Builtin,
     ModuleOperation,
+    ReceiverHandedOn,
 };
 
 using ValueFlowNotedOperations = uint64_t;
@@ -844,6 +864,7 @@ public:
     const ValueFlowBodiesTimes& times() const { return m_times; }
     const BitVector* valuesBehindChecks(FunctionID function) const LIFETIME_BOUND { return m_knowsValuesBehindChecks[function.index()] ? &m_valuesBehindChecks[function.index()] : nullptr; }
     bool holdsAnyOf(FunctionID function, ValueFlowNotedOperations operations) const { return m_notedOperations[function.index()] & operations; }
+    std::span<const ValueFlowNotedOperations> notedOperationsOfFunctions() const LIFETIME_BOUND { return m_notedOperations.span(); }
     void addBytesTo(ValueFlowBytesByTable&) const;
 
     uint32_t numberOfBodies() const { return m_ranges.size() - 1; }
@@ -906,7 +927,7 @@ public:
         StringID text;
     };
     static constexpr uint32_t mostArgumentsLookedAtForTexts = 64;
-    static Vector<uint32_t> findParametersThatAreKeys(const Program&, const ParallelLoops&, Vector<TextPassed>& textsPassed, Vector<StringID>& relativePaths, Vector<ValueFlowNotedOperations>& notedOperations);
+    static Vector<uint32_t> findParametersThatAreKeys(const Program&, BuildContext&, Vector<TextPassed>& textsPassed, Vector<StringID>& relativePaths, Vector<ValueFlowNotedOperations>& notedOperations);
 
     ValueFlowInstancedFunctions(const Program&, const ValueFlowBodies&, std::span<const uint32_t> positionOfKey, ValueSetMaker&, const ParallelLoops&);
 

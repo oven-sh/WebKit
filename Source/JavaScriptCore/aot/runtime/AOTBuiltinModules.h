@@ -54,6 +54,9 @@ JS_EXPORT_PRIVATE bool refusesLibraryText();
 // A realm that the program creates holds nothing that was compiled: there the text of the library meets only itself.
 JS_EXPORT_PRIVATE bool refusesLibraryText(JSGlobalObject*);
 bool refusesToInterpret(JSGlobalObject*, ScriptExecutable&);
+// `bun test` runs a function of the library for itself, as where it puts a fake in the place of `performance`. No build compiles it with the files under test, which are to come out as in an executable:
+// it runs from its text, and so do the functions that it makes, whenever the program calls them.
+JS_EXPORT_PRIVATE void admitFunctionOfTestRunner(VM&, FunctionExecutable&);
 JS_EXPORT_PRIVATE bool refusesToRun(JSFunction*);
 // The build found that nothing the program runs calls this function of the library, so the realm has only its text, and either the text is refused or all that runs beside the image are
 // copies of its files, which call what the files call. An image with ImageFlag::AdmitsLibraryText would run the text, and the text calls what else the build has left out.

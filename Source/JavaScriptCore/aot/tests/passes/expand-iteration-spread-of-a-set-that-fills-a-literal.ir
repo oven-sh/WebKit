@@ -1,5 +1,4 @@
-# `[...set]` of a Set that is walked as the built-in iterator walks it: the members are appended at once, so that the list can be made with them in it.
-# A list that holds something already, or that somebody has read, gets the loop.
+# A spread of a Set that is walked as the built-in iterator walks it: the members are appended at once, whatever the list holds already.
 # FORM: Prepared optimizing
 # RUN: pass ExpandIteration
 
@@ -22,9 +21,10 @@ function f1 name="standsBehindAnElement" parameters=[{type=Set<number, pristine[
     Return v2
 }
 # CHECK-LABEL: function f1 name="standsBehindAnElement"
-# CHECK-NOT: AppendMembers
-# CHECK: SetNext
-# CHECK: AppendElement
+# CHECK: v2: Array = NewArray v1 contents=anything
+# CHECK-NEXT: AppendMembers v2, v0
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
 
 function f2 name="standsBehindAnotherSpread" parameters=[{type=Set<number, pristine[Storage, Names]>}, {type=Set<number, pristine[Storage, Names]>}] results=[{type=anything}] {
     v2 = NewArray contents=anything
@@ -34,9 +34,9 @@ function f2 name="standsBehindAnotherSpread" parameters=[{type=Set<number, prist
 }
 # CHECK-LABEL: function f2 name="standsBehindAnotherSpread"
 # CHECK: AppendMembers v2, v0
-# CHECK-NOT: AppendMembers
-# CHECK: SetNext
-# CHECK: AppendElement
+# CHECK-NEXT: AppendMembers v2, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
 
 function f3 name="mayHaveAWalkOfItsOwn" parameters=[{type=Set<number>}] results=[{type=anything}] {
     v1 = NewArray contents=anything

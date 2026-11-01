@@ -1,0 +1,28 @@
+# proxy = new Proxy({}, { ownKeys() {..}, get() {..} }); one step of for (key in proxy)
+# for-in calls ownKeys. Nothing reads a property through the proxy, so its `get` trap stays unreached, also when the fixpoint check reruns every rule.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Target"
+layout L1 name="Handler" fields=[{key="ownKeys" declared={type=anything} flags=[IsRequired]}, {key="get" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure function=f1
+    v2 = NewClosure function=f2
+    v3 = NewObject -, v1, v2 layout=L1 fields=[0, 1]
+    v4 = Builtin builtin=Proxy
+    v5 = Construct v4, -, v0, v3
+    v6 = ForInOpen v5
+    v7 = ForInStep v6, v5
+    Return
+}
+function f1 name="ownKeys" kind=Method parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewArray contents=anything
+    Return v1
+}
+function f2 name="get" kind=Method parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v1
+}

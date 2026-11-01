@@ -90,8 +90,11 @@ static void applyLayoutUpdate(Layout& layout, const FlowLayoutUpdate& update)
     for (size_t index = 0; index < layout.fields.size(); ++index) {
         Field& field = layout.fields[index];
         const FlowFieldUpdate& fieldUpdate = update.fields[index];
-        if (!fieldUpdate.accessor.isAccessor())
+        if (!fieldUpdate.accessor.isAccessor()) {
             applyPosition(field.declared, fieldUpdate.position);
+            if (!fieldUpdate.formOfValue.isEmpty())
+                field.form = fieldUpdate.formOfValue;
+        }
         field.flow = fieldUpdate.flow;
         field.typeBeforeNarrowing = { };
         field.flags.remove(FieldFlags::IsCountedWith);
@@ -601,7 +604,7 @@ static Vector<VariableID> createFirstRunMarks(const FlowApplyContext& context, P
 {
     const Program& program = context.program;
     Vector<VariableID> marks(context.application.bodies.size());
-    if (!context.build.validates())
+    if (!context.build.checksClaimsOfFlow())
         return marks;
 
     for (uint32_t index = 0; index < marks.size(); ++index) {
@@ -615,7 +618,7 @@ static Vector<VariableID> createFirstRunMarks(const FlowApplyContext& context, P
 static FlowFirstTimeMarks createFirstTimeMarks(const FlowApplyContext& context, ProgramEditor& editor)
 {
     FlowFirstTimeMarks marks;
-    if (!context.build.validates())
+    if (!context.build.checksClaimsOfFlow())
         return marks;
 
     const Program& program = context.program;
@@ -660,10 +663,16 @@ static bool makesTailCall(const Function& function)
 static BitVector findFunctionsThatAreOnlyConstructed(const FlowApplyContext& context)
 {
     const Program& program = context.program;
+    const ParallelLoops& loops = context.build.parallelLoops();
     std::span<const FlowBodyUpdate> bodies = context.application.bodies.span();
     BitVector constructed(program.functions.size());
+    // First every construction is noted, then every other call is taken back. Within each of the two the order does not matter, so all threads write, a byte a function.
+    Vector<uint8_t> isConstructed(FillWith { }, program.functions.size(), static_cast<uint8_t>(0));
+    auto isNoted = [&](FunctionID callee) {
+        return !!WTF::atomicLoad(&isConstructed[callee.index()], std::memory_order_relaxed);
+    };
     auto forEachStampedCallee = [&](bool ofConstructions, const auto& functor) {
-        for (size_t index = 0; index < bodies.size(); ++index) {
+        forEachIndexInParallel(loops, bodies.size(), [&](unsigned index) {
             for (const FlowCallStamp& stamp : bodies[index].calls) {
                 if (!!OperandPosition::newTarget(program.functions[index].at(stamp.value).opcode) != ofConstructions)
                     continue;
@@ -671,35 +680,44 @@ static BitVector findFunctionsThatAreOnlyConstructed(const FlowApplyContext& con
                 for (FunctionID callee : followed.value())
                     functor(callee);
             }
-        }
+        });
     };
     auto noteConstruction = [&](FunctionID callee) {
+        if (isNoted(callee))
+            return;
         const Function& function = program.at(callee);
         if (function.kind == FunctionKind::Plain && context.results.function(callee).callers == CallerState::AllKnown && makesTailCall(function))
-            constructed.quickSet(callee.index());
+            WTF::atomicStore(&isConstructed[callee.index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+    };
+    auto noteOtherCall = [&](FunctionID callee) {
+        if (isNoted(callee))
+            WTF::atomicStore(&isConstructed[callee.index()], static_cast<uint8_t>(0), std::memory_order_relaxed);
     };
     forEachStampedCallee(true, noteConstruction);
     for (const FlowIndirectCall& call : context.results.indirectCalls()) {
         if (call.isAlwaysConstruction)
             noteConstruction(call.callee);
     }
-    if (constructed.isEmpty())
+    if (!std::ranges::contains(isConstructed, 1))
         return constructed;
 
-    forEachStampedCallee(false, [&](FunctionID callee) {
-        constructed.quickClear(callee.index());
-    });
+    forEachStampedCallee(false, noteOtherCall);
     for (const FlowIndirectCall& call : context.results.indirectCalls()) {
         if (!call.isAlwaysConstruction)
-            constructed.quickClear(call.callee.index());
+            noteOtherCall(call.callee);
     }
-    for (const Function& function : program.functions) {
+    forEachIndexInParallel(loops, program.functions.size(), [&](unsigned index) {
+        const Function& function = program.functions[index];
         for (const Block& block : function.blocks) {
             for (ValueID id : block.values) {
                 if (function.at(id).opcode == Opcode::CallDirect && !function.at(id).isConstruction())
-                    constructed.quickClear(function.at(id).function().index());
+                    noteOtherCall(function.at(id).function());
             }
         }
+    });
+    for (size_t index = 0; index < isConstructed.size(); ++index) {
+        if (isConstructed[index])
+            constructed.quickSet(index);
     }
     return constructed;
 }
@@ -1034,6 +1052,67 @@ struct ClosureCreation {
     unsigned count { 0 };
 };
 
+struct PositionInBody {
+    FunctionID function;
+    uint32_t block { 0 };
+    uint32_t index { 0 };
+};
+
+class EntriesOfFunctionsThatRunOnce {
+public:
+    EntriesOfFunctionsThatRunOnce(const Program& program, const FlowResults& results)
+        : m_program(program)
+        , m_results(results)
+    {
+    }
+
+    std::optional<PositionInBody> find(FunctionID function)
+    {
+        if (!std::exchange(m_isFilled, true))
+            fill();
+        auto found = m_entries.find(function.index());
+        return found == m_entries.end() ? std::nullopt : std::optional(found->value);
+    }
+
+private:
+    void fill()
+    {
+        BitVector setsGoneThrough;
+        for (uint32_t index = 0; index < m_program.functions.size(); ++index) {
+            FunctionID caller(index);
+            const Function& function = m_program.functions[index];
+            if (!function.isModuleBody() && !m_results.runsAtMostOnce(caller))
+                continue;
+            std::span<const FlowIndirectCall> indirectCalls = m_results.indirectCallsFrom(caller);
+            for (uint32_t block = 0; block < function.blocks.size(); ++block) {
+                const BlockValues& values = function.blocks[block].values;
+                for (uint32_t position = 0; position < values.size(); ++position) {
+                    const Value& value = function.at(values[position]);
+                    auto enter = [&](FunctionID callee) {
+                        if (m_results.runsAtMostOnce(callee))
+                            m_entries.add(callee.index(), PositionInBody { caller, block, position });
+                    };
+                    if (Value::opcodesWithCallees.contains(value.opcode) && value.callees() && !setsGoneThrough.set(value.callees().index())) {
+                        for (FunctionID callee : m_program.at(value.callees()).written().functions)
+                            enter(callee);
+                    }
+                    if (indirectCalls.empty() || !PayloadWord::accessSite(value.opcode) || !value.accessSite())
+                        continue;
+                    for (const FlowIndirectCall& call : indirectCalls) {
+                        if (call.site == value.accessSite())
+                            enter(call.callee);
+                    }
+                }
+            }
+        }
+    }
+
+    const Program& m_program;
+    const FlowResults& m_results;
+    HashMap<uint32_t, PositionInBody, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_entries;
+    bool m_isFilled { false };
+};
+
 class CallWalk {
 public:
     CallWalk(const Program& program, const FlowResults& results, FunctionID target)
@@ -1092,21 +1171,27 @@ private:
 
 } // anonymous namespace
 
-static bool isCreatedBeforeInstances(const Program& program, const FlowResults& results, const ClosureCreation& creation, FunctionID constructor)
+static bool isCreatedBeforeInstances(const Program& program, const FlowResults& results, EntriesOfFunctionsThatRunOnce& entries, const ClosureCreation& creation, FunctionID constructor)
 {
-    if (creation.count != 1 || !program.at(creation.creator).isModuleBody())
+    if (creation.count != 1)
         return false;
-    const Function& creator = program.at(creation.creator);
     CallWalk walk(program, results, constructor);
-    for (uint32_t block = 0; block <= creation.block; ++block) {
-        const BlockValues& values = creator.blocks[block].values;
-        size_t end = block == creation.block ? creation.index : values.size();
-        for (size_t index = 0; index < end; ++index) {
-            if (walk.mayReachTarget(creation.creator, creator.at(values[index])))
-                return false;
+    for (std::optional<PositionInBody> position = PositionInBody { creation.creator, creation.block, creation.index }; position; position = entries.find(position->function)) {
+        const Function& function = program.at(position->function);
+        if (!function.isModuleBody() && !results.runsAtMostOnce(position->function))
+            return false;
+        for (uint32_t block = 0; block <= position->block; ++block) {
+            const BlockValues& values = function.blocks[block].values;
+            size_t end = block == position->block ? position->index : values.size();
+            for (size_t index = 0; index < end; ++index) {
+                if (walk.mayReachTarget(position->function, function.at(values[index])))
+                    return false;
+            }
         }
+        if (function.isModuleBody())
+            return true;
     }
-    return true;
+    return false;
 }
 
 static void expectAccessorsDefinedBeforeInstances(Program& program, const FlowResults& results)
@@ -1181,10 +1266,11 @@ static void expectAccessorsDefinedBeforeInstances(Program& program, const FlowRe
             }
         }
     }
+    EntriesOfFunctionsThatRunOnce entries(program, results);
     for (const Candidate& candidate : candidates) {
         FunctionID constructor = program.at(candidate.field.layout).constructor;
         bool isExpected = !candidate.isDefined && (candidate.isProven || std::ranges::all_of(std::array { candidate.getter, candidate.setter }, [&](FunctionID accessor) {
-            return !accessor || isCreatedBeforeInstances(program, results, creations.get(accessor.index()), constructor);
+            return !accessor || isCreatedBeforeInstances(program, results, entries, creations.get(accessor.index()), constructor);
         }));
         if (isExpected)
             program.at(candidate.field.layout).fields[candidate.field.field].flow.prototypeName = PrototypeNameState::AccessorOnPrototypes;

@@ -54,6 +54,7 @@ struct HashTableLookup {
     KeyComparison comparison;
     bool searchesTablesInImage;
     bool findsInsertionPoint { false };
+    bool keepsSlot { false };
 };
 
 // Where the index of a heap table takes a key that the table lacks. table and keys are as at foundInCompactTable.
@@ -66,7 +67,7 @@ struct InsertionPointExits {
 
 // owner and key are intact at every exit.
 struct HashTableExits {
-    // table: the CompactTable, a heap table. keys: address of its first key. entry: the entry's number.
+    // table: the CompactTable, a heap table. keys: address of its first key. entry: the entry's number. With keepsSlot, in a table that has slots, cursor: the number of the slot.
     JumpList foundInCompactTable;
     // The same, where the search has found out that the keys are narrow.
     JumpList foundAmongNarrowKeys;

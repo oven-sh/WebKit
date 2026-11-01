@@ -27,6 +27,10 @@
 #include <utility>
 #include <wtf/DataLog.h>
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT { namespace Typed {
 
 // What each body does with its parameters, as it was when the table of borrowed parameters was last made from this.
@@ -360,6 +364,9 @@ static bool covers(const Program& program, FunctionID id, const FunctionSummaryV
     EffectsOnEdges elsewhere = summary.elsewhere();
     if (!effects.isSubsetOf(elsewhere.normal) || (elsewhere.mayThrow() && !effects.isSubsetOf(elsewhere.handler)))
         return false;
+    // All that runs in front of an operation that may throw leaves with it.
+    if (effects.mayThrow && (!elsewhere.normal.reads.isSubsetOf(elsewhere.handler.reads) || !elsewhere.normal.writes.isSubsetOf(elsewhere.handler.writes)))
+        return false;
     OperandMemory memory { effects.reads.restrictedTo(perObjectHeaps), effects.writes.restrictedTo(perObjectHeaps) };
     const Function& function = program.at(id);
     if (!function.hasBody())
@@ -455,6 +462,8 @@ void ProgramAnalyses::invalidate(OptionSet<ProgramResult> results, const Program
     m_bodySummaries->didChange(functionsToReadAgain.span(), BodySummaries::Records::SayNoLess);
     m_bodySummaries->didChange(functionsWithNewStorageToReadAgain.span(), BodySummaries::Records::SayNoLess, BodySummaries::Edits::OnlySetStorage);
     didChangeBodies(changedFunctions.span());
+    if (!functionsToReadAgain.isEmpty())
+        results.add(ProgramResult::EffectSummaries);
     destroyResults(results);
 }
 
@@ -530,5 +539,9 @@ void ProgramAnalyses::destroyResults(OptionSet<ProgramResult> results)
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

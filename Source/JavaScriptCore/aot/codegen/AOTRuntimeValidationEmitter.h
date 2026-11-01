@@ -55,6 +55,9 @@ public:
     void generateShouldFailPrediction(const ValueContext&);
     void reportUnreachable(ValueID, PassID cutBy = PassID::None);
     void checkSlotAccessWithoutGuard(const OperationContext&);
+    void forgetPassedTypeTests() { m_passedTypeTests.shrink(0); }
+    void forgetPassedTypeTestsBehind(const OperationContext&);
+    void runOutOfMemoryWhenCounted(const ValueContext&);
     void checkAssumedType(const ValueContext&);
 
     void checkPrecondition(const ValueContext&, Condition);
@@ -88,14 +91,16 @@ private:
     void branchOnType(Operand, const TypeTestPlan&, BranchTargets);
     void failUnless(Condition, ValidationFailureKind, Operand found, ValueID);
     void failUnlessHasType(Operand, const TypeTestPlan&, ValidationFailureKind, ValueID, TypeID typeThatRunTimeTests);
-    void askOperationUnless(Condition, ValidationFailureKind, Operand found, ValueID);
+    void askOperationUnless(Condition, std::span<const ValidationFailureKind>, Operand found, ValueID);
     void reportFailure(ValidationFailureKind, Operand found, ValueID);
     void callReport(ValidationFailureKind, Operand found, ValueID);
     Word32 reportedFailure(ValidationFailureKind, Operand found);
     Boxed reportedValueOf(Operand found);
 
+    bool mayBeEmptyWhereMade(const Value& definition);
     void checkValue(ValueID, Operand);
     void checkIsSpecified(ValueID);
+    void checkNumberIsSpecified(ValueID);
     void checkHasType(ValueID, Operand, TypeID, ValidationFailureKind, ValueID tested);
     void checkHasType(ValueID, Operand, const Type&, ValidationFailureKind, ValueID tested, TypeID numberOfType = { });
     void checkLiteralStringWord(ValueID, LiteralStringWord);
@@ -132,6 +137,8 @@ private:
     Vector<Vector<ValueID, 4>> m_checkedClassProofsAtEnd;
     // In the block of m_blockOfCheckedClassProofs, since the last operation that may have written to the heap.
     Vector<PassedTypeTest, 16> m_passedTypeTests;
+    UncheckedKeyHashMap<uint64_t, Vector<BlockID, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_blocksOfLastingTypeTests;
+    BlockID m_blockOfAssumedType;
 };
 
 } } } // namespace JSC::AOT::Typed

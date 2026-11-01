@@ -277,7 +277,7 @@ Terminator IRBuilder::makeTerminator(TerminatorKind kind, std::initializer_list<
 ValueID IRBuilder::addValue(Value&& value)
 {
     m_function.add(WTF::move(value));
-    return ValueID(m_function.values.size() - 1);
+    return m_function.idOfValueAt(m_function.values.size() - 1);
 }
 
 TypeID partInside(const Program& program, TypeArena& types, TypeID narrower, TypeID type)
@@ -395,6 +395,16 @@ ValueID IRBuilder::insertBefore(ProgramPoint point, Value&& value)
     const Block& block = m_function.at(point.block);
     RELEASE_ASSERT(point.index <= block.values.size());
     prepare(value);
+    ValueID id = addValue(WTF::move(value));
+    m_insertions.append(QueuedInsertion { point, id });
+    didAddDetachedValue(id);
+    return id;
+}
+
+ValueID IRBuilder::insertUntypedBefore(ProgramPoint point, Value&& value)
+{
+    RELEASE_ASSERT(m_context.program.form() == IRForm::AsRead && point.index <= m_function.at(point.block).values.size());
+    value.setOrigin(m_origin);
     ValueID id = addValue(WTF::move(value));
     m_insertions.append(QueuedInsertion { point, id });
     didAddDetachedValue(id);

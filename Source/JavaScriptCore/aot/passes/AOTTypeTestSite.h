@@ -207,6 +207,8 @@ struct TestSite {
     uint32_t numberOfTests { 0 };
     Effects effectsWhenPassed;
     TestOutcome outcome { TestOutcome::IsExpectedToPass };
+    // Of a read of an element: every use makes a number of it, so a hole may be read as NaN.
+    bool mayReadHoleAsNaN { false };
 };
 
 struct TestSites {
@@ -250,8 +252,14 @@ public:
     bool mayHaveFailedTestOf(ValueID) const;
     // Whether a rule has reported tests for the use in this round.
     bool isClaimed(ValueID use) const { return m_isClaimed.get(use.index()); }
+    // In the order in which they were claimed.
+    std::span<const ValueID> claimedUses() const LIFETIME_BOUND { return m_claimedUses.span(); }
     // No rule after this one reports tests for the use in this round.
-    void claimUse() { m_isClaimed.set(m_use.index()); }
+    void claimUse()
+    {
+        if (!m_isClaimed.set(m_use.index()))
+            m_claimedUses.append(m_use);
+    }
     // The use is looked at again in the next round, or behind the rounds if this one is the last.
     void putOffUse() { m_context.hasUsesAwaitingExpansion = true; }
     // Whatever the rule reports here is taken away again: collectTestSites() says why.
@@ -277,6 +285,11 @@ public:
     void beginRule(TestSiteRuleID rule) { m_rule = rule; }
     void moveTo(TestSiteRuleID, ValueID use, ProgramPoint);
     bool didReport() const { return m_didReport; }
+    void noteThatHoleMayBeReadAsNaN()
+    {
+        RELEASE_ASSERT(m_didReport);
+        m_sites.sites.last().mayReadHoleAsNaN = true;
+    }
     TestSites takeSites() { return WTF::move(m_sites); }
 
 private:
@@ -303,6 +316,7 @@ private:
     bool m_didReport { false };
     mutable bool m_hasFailedEarlierTest { false };
     BitVector m_isClaimed;
+    Vector<ValueID> m_claimedUses;
     BitVector m_awaitsExpansion;
     std::optional<Vector<Candidate, 32>> m_candidates;
     TestSites m_sites;
@@ -341,6 +355,7 @@ public:
     IRBuilder& builder() const { return m_inputs.builder; }
 
     ValueID use() const { return m_inputs.site.use; }
+    bool mayReadHoleAsNaN() const { return m_inputs.site.mayReadHoleAsNaN; }
     Value& useValue() const LIFETIME_BOUND { return m_inputs.context.function.edit(m_inputs.site.use); }
     ProgramPoint point() const { return m_inputs.point; }
 

@@ -142,6 +142,39 @@ static void testRotateLoopsSkipsRareBackEdge()
     checkSumsIntegersBelowBound(proc);
 }
 
+static void testRotateLoopsMovesTestOfCounterThatLeavesRarelyToBottom()
+{
+    Procedure proc(policyWith([](Policy&) { }));
+    Graph graph { proc };
+    TopTestedLoop loop(graph);
+    graph.increase(loop.body, loop.sum, graph.get(loop.body, loop.index));
+    loop.endBody(loop.body);
+    loop.header->setSuccessors(FrequentedBlock(loop.body), rarely(loop.exit));
+
+    loop.rotate();
+
+    B3::NaturalLoops& loops = proc.naturalLoops();
+    CHECK_EQ(loops.numLoops(), 1u);
+    CHECK(loops.loop(0).header() == loop.body);
+    CHECK(!loops.belongsTo(loop.header, loops.loop(0)));
+    CHECK_EQ(valueCountInLoops(proc, Branch), 1u);
+    checkSumsIntegersBelowBound(proc);
+}
+
+static void testRotateLoopsSkipsTestThatLeavesRarelyAndComparesNoCounter()
+{
+    Procedure proc(policyWith([](Policy&) { }));
+    Graph graph { proc };
+    TopTestedLoop loop(graph);
+    graph.increase(loop.body, loop.sum, graph.get(loop.body, loop.index));
+    loop.endBody(loop.body);
+    loop.header->setSuccessors(FrequentedBlock(loop.body), rarely(loop.exit));
+    proc.setKnownInduction({ loop.counter(), loop.nextCounter(), nullptr, 1, false, false });
+
+    CHECK(!rotateLoops(proc));
+    checkSumsIntegersBelowBound(proc);
+}
+
 static void testRotateLoopsSendsUnlikelyBackEdgeToBottomTest()
 {
     Procedure proc;
@@ -753,6 +786,8 @@ void addBunLoopTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testRotateLoopsSkipsLargeTest());
     RUN(testRotateLoopsSkipsUncloneableTest());
     RUN(testRotateLoopsSkipsRareBackEdge());
+    RUN(testRotateLoopsMovesTestOfCounterThatLeavesRarelyToBottom());
+    RUN(testRotateLoopsSkipsTestThatLeavesRarelyAndComparesNoCounter());
     RUN(testRotateLoopsSendsUnlikelyBackEdgeToBottomTest());
     RUN(testRotateLoopsHonorsHeaderFilter());
     RUN(testRotateLoopsNestedLoops());

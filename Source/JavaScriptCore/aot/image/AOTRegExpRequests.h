@@ -41,7 +41,6 @@ enum class RegExpDeclineReason : uint8_t {
     NestedTooDeep,
     CodeTooLarge,
     PatternTooLong,
-    CandidateBudgetExhausted,
     SectionFull,
     TextKnownAtRunTime,
 };

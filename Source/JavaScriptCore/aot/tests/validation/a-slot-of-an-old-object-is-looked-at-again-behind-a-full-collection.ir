@@ -1,0 +1,40 @@
+# FORM: AsRead
+# RUN(YOUNG): run-in-shell globalThis.register = (valueIn, box, stone) => { storeInSlotWithoutTest(box, "content", stone); print("stored"); edenGC(); print("collected"); };
+# RUN(OLD): run-in-shell globalThis.register = (valueIn, box, stone) => { gc(); storeInSlotWithoutTest(box, "content", stone); print("stored"); edenGC(); print("collected the young"); gc(); print("collected all"); };
+# OPTIONS: testing=CheckProofsAtRunTime
+# YOUNG: stored
+# YOUNG-NOT: collected
+# YOUNG: AOT validation: HeapSlotType f- v-
+# YOUNG: crashed with
+# OLD: stored
+# OLD-NEXT: collected the young
+# OLD-NOT: collected all
+# OLD: AOT validation: HeapSlotType f- v-
+# OLD: crashed with
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=90 kind=Parameter
+layout L0 name="Box" fields=[{key="content" declared={type=L1} flags=[IsRequired]}]
+layout L1 name="Coin" fields=[{key="value" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Stone" fields=[{key="weight" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Double number=1.5
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = Double number=2.5
+    v6 = NewObject -, v5 layout=L2 fields=[0]
+    v7 = FinishObject v6
+    v8 = NewClosure function=f1
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="register" [isFreeName]
+    v11 = Call v10, -, v8, v4, v7
+    Return
+}
+function f1 name="valueIn" parameters=[{type=L0 site=w0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="content"
+    v2 = PropGet v1 key="value"
+    Return v2
+}

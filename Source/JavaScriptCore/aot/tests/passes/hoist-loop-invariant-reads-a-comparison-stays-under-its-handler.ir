@@ -26,27 +26,27 @@ function f0 name="loopInsideTry" parameters=[{type=anything}, {type=anything}, {
 # CHECK-NEXT: = StrictEq v0, v1
 }
 
-function f1 name="wayInUnderTheSameHandler" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+# The comparison stands at the head of the loop, where the first turn is sure to run it
+function f1 name="wayInUnderTheSameHandler" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     Jump -> next b1()
-  b1() handler=b6():
+  b1() handler=b5():
     Jump -> next b2()
-  b2() handler=b6():
+  b2() handler=b5():
     LoopHint
-    Branch v2 -> taken b3(), notTaken b5()
-  b3() handler=b6():
-    v4 = StrictEq v0, v1
-    Branch v4 -> taken b2(), notTaken b4()
-  b4() handler=b6():
+    v3 = StrictEq v0, v1
+    Branch v3 -> taken b3(), notTaken b4()
+  b3() handler=b5():
     Jump -> next b2()
-  b5():
+  b4():
     Return v0
-  b6() role=CatchHandler:
-    v5 = CatchValue
-    Return v5
-# CHECK: b1() handler=b6():
-# CHECK-NEXT: v4: boolean = StrictEq v0, v1
-# CHECK: b3() handler=b6():
-# CHECK-NEXT: Branch v4
+  b5() role=CatchHandler:
+    v4 = CatchValue
+    Return v4
+# CHECK: b1() handler=b5():
+# CHECK-NEXT: v3: boolean = StrictEq v0, v1
+# CHECK: b2() handler=b5():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Branch v3
 }
 
 function f2 name="twoNumbers" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=anything}] {

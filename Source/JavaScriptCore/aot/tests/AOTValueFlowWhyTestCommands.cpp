@@ -34,6 +34,8 @@ ASCIILiteral nameOf(ValueFlowStatementKind kind)
         return "CallGroup"_s;
     case ValueFlowStatementKind::Behavior:
         return "Behavior"_s;
+    case ValueFlowStatementKind::WalkOfBehavior:
+        return "WalkOfBehavior"_s;
     case ValueFlowStatementKind::Escape:
         return "Escape"_s;
     case ValueFlowStatementKind::ModuleEvaluation:
@@ -136,7 +138,7 @@ static void printStatement(PrintStream& out, const ValueFlowSolver& solver, Valu
     out.print(nameOf(statement.kind));
     if (statement.function)
         out.print(" f", statement.function.index());
-    if (statement.kind == ValueFlowStatementKind::Behavior)
+    if (statement.kind == ValueFlowStatementKind::Behavior || statement.kind == ValueFlowStatementKind::WalkOfBehavior)
         out.print(" n", statement.result.index());
     if (solver.isMadeByRule(id) && statement.kind != ValueFlowStatementKind::Escape) {
         out.print(" ");
@@ -210,13 +212,9 @@ static void printObject(PrintStream& out, ValueFlowSolution& solution, ValueFlow
 
 static void printValue(PrintStream& out, ValueFlowSolution& solution, ValueSetID value)
 {
-    constexpr unsigned numberOfMembersPrinted = 24;
     const ValueFlowUniverse& universe = solution.bodies().universe();
-    unsigned printed = 0;
     out.print(solution.sets().size(value), " members:");
     solution.sets().forEachMember(value, [&](ValueFlowObjectID member) {
-        if (++printed > numberOfMembersPrinted)
-            return;
         out.print(" ");
         if (universe.isObject(member))
             printObject(out, solution, member);
@@ -225,7 +223,7 @@ static void printValue(PrintStream& out, ValueFlowSolution& solution, ValueSetID
         else
             out.print("primitive", member.index());
     });
-    out.println(printed > numberOfMembersPrinted ? " .." : "");
+    out.println();
 }
 
 static void printTimeline(PrintStream& out, ValueFlowSolution& solution)
@@ -1701,7 +1699,18 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
             printWhyHeld(out, solution, escaped, universe.closureOf(FunctionID(*function)));
         else if (word.startsWith("lost="_s))
             printWhyHeld(out, solution, lost, universe.closureOf(FunctionID(*function)));
-        else if (word.startsWith("values="_s) || word.startsWith("asks="_s)) {
+        else if (word.startsWith("marks="_s)) {
+            // Of what is made at a site: the number of an object moves with the table.
+            size_t colon = word.find(':');
+            std::optional<uint32_t> site = colon == notFound ? std::nullopt : numberAfter(word, colon + 2);
+            if (!site)
+                return printBadArgument(out, word);
+            for (uint32_t index = 0; index < universe.numberOfObjects(); ++index) {
+                const ValueFlowSite* made = universe.siteOf(ValueFlowObjectID(index));
+                if (made && made->value.index() == *site && universe.functionOf(ValueFlowObjectID(index)) == FunctionID(*function))
+                    printWhoMarks(out, solution, ValueFlowObjectID(index));
+            }
+        } else if (word.startsWith("values="_s) || word.startsWith("asks="_s)) {
             size_t colon = word.find(':');
             std::optional<uint32_t> site = colon == notFound ? std::nullopt : numberAfter(word, colon + 2);
             if (!site)

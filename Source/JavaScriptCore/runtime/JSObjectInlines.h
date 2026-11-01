@@ -331,7 +331,7 @@ inline bool JSObject::getOwnPropertySlotInline(JSGlobalObject* globalObject, Pro
 inline bool JSObject::ordinaryGetOwnPropertySlot(JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
 #if ENABLE(AOT)
-    if (!structure()->propertyAccessesAreCacheableForAbsence()) [[unlikely]]
+    if (!structure()->propertyAccessesAreCacheableForAbsence() && getVM(globalObject).hasCompiledCode()) [[unlikely]]
         return AOT::PropertyWalk::ordinaryGetOwnPropertySlot(globalObject, this, propertyName, slot);
 #endif
     return JSObject::getOwnPropertySlot(this, globalObject, propertyName, slot);
@@ -344,7 +344,7 @@ inline bool JSObject::hasDirectProperty(JSGlobalObject* globalObject, PropertyNa
     if (isValidOffset(structure->get(vm, propertyName)))
         return true;
 #if ENABLE(AOT)
-    if (!structure->propertyAccessesAreCacheableForAbsence()) [[unlikely]] {
+    if (!structure->propertyAccessesAreCacheableForAbsence() && vm.hasCompiledCode()) [[unlikely]] {
         PropertySlot slot(this, PropertySlot::InternalMethodType::VMInquiry, &vm);
         return AOT::PropertyWalk::ordinaryGetOwnPropertySlot(globalObject, this, propertyName, slot);
     }

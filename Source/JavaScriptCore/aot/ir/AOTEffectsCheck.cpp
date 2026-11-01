@@ -60,6 +60,8 @@ struct ReplacementReport {
     Diagnostics& diagnostics;
 
     void add(InternalErrorKind, const EffectsOnEdges&, const ReplacedEffects&) const;
+    void addGroupBeyondFusedOperation(const EffectsOnEdges&, const ReplacedEffects&) const;
+    void add(InternalErrorKind, String&& detail) const;
 };
 
 } // anonymous namespace
@@ -109,7 +111,18 @@ static String describeReplacement(ASCIILiteral replacement, const EffectsOnEdges
 
 void ReplacementReport::add(InternalErrorKind kind, const EffectsOnEdges& effects, const ReplacedEffects& replaced) const
 {
-    InternalError error { .kind = kind, .location = function.locationOf(origin), .detail = describeReplacement(replacement, effects, replaced) };
+    add(kind, describeReplacement(replacement, effects, replaced));
+}
+
+void ReplacementReport::addGroupBeyondFusedOperation(const EffectsOnEdges& effects, const ReplacedEffects& replaced) const
+{
+    const EffectsOnEdges& group = replaced.effects();
+    add(InternalErrorKind::EffectsOfPreparedTooNarrow, makeString(replacement, " does all that the group it replaced did; the group beyond it: "_s, toString(effectsBeyond(group.normal, effects.normal)), "; where it throws: "_s, toString(effectsBeyond(group.handler, effects.handler))));
+}
+
+void ReplacementReport::add(InternalErrorKind kind, String&& detail) const
+{
+    InternalError error { .kind = kind, .location = function.locationOf(origin), .detail = WTF::move(detail) };
     if (ProvisionalFunctions::contains(site.function)) {
         error.function = findFunctionAsReadOfProvisional(program, function);
     } else {
@@ -143,7 +156,13 @@ void checkReplacement(const EffectContext& context, const Function& function, co
 {
     if (familyOf(replacement.opcode) == OperationFamily::RuntimeValidation)
         return;
-    checkReplacementEffects(effectsOf(context, function, replacement), mayReplace(replacement.opcode, replaced), replaced, { context.program, function, site, nameOf(replacement.opcode), replacement.origin(), diagnostics });
+    EffectsOnEdges effects = effectsOf(context, function, replacement);
+    ReplacementReport report { context.program, function, site, nameOf(replacement.opcode), replacement.origin(), diagnostics };
+    checkReplacementEffects(effects, mayReplace(replacement.opcode, replaced), replaced, report);
+    // A fused access leaves out nothing of its group.
+    bool doesAllOfGroup = familyOf(replacement.opcode) == OperationFamily::FusedAccess && declaredBoundOf(replacement.opcode).mayCallUnknownCode;
+    if (doesAllOfGroup && !replaced.effects().isSubsetOf(effects))
+        report.addGroupBeyondFusedOperation(effects, replaced);
 }
 
 void checkReplacement(const EffectContext& context, const Function& function, const ReplacementSite& site, const Terminator& replacement, const ReplacedEffects& replaced, Diagnostics& diagnostics)

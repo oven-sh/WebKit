@@ -99,11 +99,11 @@ struct InliningSummary {
 
     bool testsParentOfClass { false };
     InlineBarrier barrier { InlineBarrier::Unknown };
-    bool neverReturns { false };
+    bool neverReturns : 1 { false };
     // Nothing in it loops: it does not spin, it ends by throwing.
-    bool onlyThrows { false };
-    bool hasCycle { false };
-    bool hasBareReturn { false };
+    bool onlyThrows : 1 { false };
+    bool hasCycle : 1 { false };
+    bool hasBareReturn : 1 { false };
     bool isWrapper { false };
     // Its rest parameter is only spread into its calls, and it is short.
     bool onlyForwardsRestParameter { false };
@@ -114,9 +114,12 @@ struct InliningSummary {
     Difference difference { Difference::None };
     // `(a, b) => a.rank - b.rank`: handed two values of a list that holds no undefined, the function answers with a number or a boolean, and nobody can see that it ran or what the list held meanwhile.
     bool nobodySeesItRun { false };
-    enum class Answer : uint8_t { NotAsked, No, Yes };
-    // The answer of returnsFreshAggregate() for the function, once it is made. Threads that share the summary read and write it as an atomic: each that finds none makes it, and all make the same.
-    mutable Answer returnsFreshAggregate { Answer::NotAsked };
+    static constexpr uint8_t notAsked = std::numeric_limits<uint8_t>::max();
+    // The answer of countFreshAllocationsReturned() for the function, once it is made. Threads that share the summary read and write it as an atomic: each that finds none makes it, and all make the same.
+    mutable uint8_t freshAllocationsReturned { notAsked };
+    static constexpr uint16_t bytesNotAsked = std::numeric_limits<uint16_t>::max();
+    // What the array methods of the body bring that are handed a function, with those functions. Made once, in the same way.
+    mutable uint16_t bytesOfArrayMethodsHandedFunctions { bytesNotAsked };
     uint32_t codeBytes { 0 };
     // The larger of two parts: the code that is expected to run, without the tests of declared types, and the code that is not.
     uint32_t likelyCodeBytes { 0 };
@@ -166,8 +169,9 @@ public:
     const InliningSummary& of(const Program&, FunctionID id) const LIFETIME_BOUND { return contains(id) ? m_summaries[m_positions[id.index()]] : m_unknown; }
     bool neverReturns(const Program& program, FunctionID id) const { return of(program, id).neverReturns; }
     bool onlyThrows(const Program& program, FunctionID id) const { return of(program, id).onlyThrows; }
-    // What returnsFreshAggregate() says of a function that can be inlined.
-    bool returnsFreshAggregate(const Program&, FunctionID) const;
+    // What countFreshAllocationsReturned() says of a function that can be inlined.
+    unsigned freshAllocationsReturned(const Program&, FunctionID) const;
+    bool returnsFreshAggregate(const Program& program, FunctionID id) const { return program.at(id).results.size() == 1 && freshAllocationsReturned(program, id); }
 
     void dump(PrintStream&, const Program&) const;
 

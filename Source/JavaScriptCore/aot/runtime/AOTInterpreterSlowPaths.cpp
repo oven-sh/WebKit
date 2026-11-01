@@ -575,12 +575,12 @@ std::unique_ptr<ObjectLiteralPlan> ObjectLiteralPlans::createPlanForRecord(Insta
     VM& vm = *instance.vm;
     State& state = *instance.state;
     RuntimeLayoutTable& layouts = state.objects->layouts;
-    std::optional<uint32_t> lastName = vm.aotState().identifiers->numberOf(names.back());
+    std::optional<uint32_t> lastName = identifiersOf(instance).numberOf(names.back());
     if (!lastName)
         return nullptr;
 
     std::unique_ptr<ObjectBuilderPlan> best;
-    for (const ParsedRecordFieldData& row : std::ranges::equal_range(state.tables.parsedRecordFields(), *lastName, { }, &ParsedRecordFieldData::name)) {
+    for (const ParsedRecordFieldData& row : std::ranges::equal_range(state.tables.parsedRecordFields(), *lastName, { }, &ParsedRecordFieldData::nameNumber)) {
         const LayoutData& layout = layouts.layoutForShape(row.shape);
         if (layout.numberOfFields < names.size() || (best && best->layout().numberOfFields <= layout.numberOfFields) || !ObjectBuilder::canBuildWithoutCompilerKnowledge(layout))
             continue;

@@ -141,15 +141,25 @@ static GeneratedProgram generateProgram(Typed::PipelineOutput& pipeline, Prepare
     context.giveFreedMemoryBack();
     times.didFinish("put bodies away"_s);
     // Most of encoding the text runs on one thread, so it runs beside code generation, which is longer. So does most of the flow report, which reads what flow has left and no body.
+    auto timed = [&](ASCIILiteral name, const auto& step) {
+        PhaseTimes timesOfStep(context, PassID::GenerateCode);
+        step();
+        timesOfStep.didFinish(name);
+    };
     runTasksInParallel(context.parallelLoops(), {
         [&] {
-            result.tables = Typed::encodeProgramTables({ pipeline, plan.instanceSizes, plan.stringConstants, plan.bodyFactsForTables }, context);
-            if (!context.diagnostics().hasErrors())
+            timed("encode program tables"_s, [&] {
+                result.tables = Typed::encodeProgramTables({ pipeline, plan.instanceSizes, plan.stringConstants, plan.bodyFactsForTables }, context);
+            });
+            if (context.diagnostics().hasErrors())
+                return;
+            timed("encode text"_s, [&] {
                 result.text = encodeText({ *pipeline.program, plan.uses.strings, context.identifierNumbering(), plan.stringConstants, result.tables.namedStrings, &result.tables.stringsOnlyShown }, context);
+            });
         },
-        [&] { result.code = codeGeneration.run(); },
-        [&] { result.regExps = pipeline.takeCompiledRegExps(context); },
-        [&] { buildReport(); },
+        [&] { timed("generate code"_s, [&] { result.code = codeGeneration.run(); }); },
+        [&] { timed("compile regular expressions"_s, [&] { result.regExps = pipeline.takeCompiledRegExps(context); }); },
+        [&] { timed("build the report"_s, [&] { buildReport(); }); },
     });
     times.didFinish("generate code, encode program tables and text, compile regular expressions"_s);
     context.giveFreedMemoryBack();
@@ -430,6 +440,27 @@ static void takeResults(BuildContext& context, CompileOutput& output, WhatTheBui
         };
         dataLog("AOT size of the image:");
         for (auto [name, id] : sizes)
+            dataLog(" | ", name, " ", counted[static_cast<unsigned>(id)]);
+        dataLogLn();
+        static constexpr std::pair<ASCIILiteral, StatisticID> sections[] = {
+            { "program tables"_s, StatisticID::ProgramTableBytesEmitted }, { "text"_s, StatisticID::TextBytesEmitted }, { "string headers"_s, StatisticID::StringHeaderBytesEmitted },
+            { "string records"_s, StatisticID::StringRecordBytesEmitted }, { "identifiers"_s, StatisticID::IdentifierBytesEmitted }, { "string constants"_s, StatisticID::StringConstantBytesEmitted },
+            { "side tables"_s, StatisticID::SideTableBytesEmitted }, { "positions"_s, StatisticID::SideTableBytesPositions }, { "fault sites"_s, StatisticID::FaultSiteBytesEmitted },
+            { "function records"_s, StatisticID::FunctionRecordBytesEmitted }, { "function starts"_s, StatisticID::FunctionStartBytesEmitted }, { "code granules"_s, StatisticID::CodeGranuleBytesEmitted },
+            { "inner entries"_s, StatisticID::InnerEntryBytesEmitted }, { "frame maps"_s, StatisticID::FrameMapBytesEmitted }, { "closure words"_s, StatisticID::ClosureWordBytesEmitted },
+            { "regular expressions"_s, StatisticID::RegExpRecordBytesEmitted }, { "other"_s, StatisticID::OtherTableBytesEmitted },
+        };
+        dataLog("AOT size of the tables:");
+        for (auto [name, id] : sections)
+            dataLog(" | ", name, " ", counted[static_cast<unsigned>(id)]);
+        dataLogLn();
+        static constexpr std::pair<ASCIILiteral, StatisticID> groups[] = {
+            { "functions"_s, StatisticID::ProgramTableBytesFunctions }, { "layouts"_s, StatisticID::ProgramTableBytesLayouts }, { "field table"_s, StatisticID::ProgramTableBytesFieldTable },
+            { "types"_s, StatisticID::ProgramTableBytesTypes }, { "data"_s, StatisticID::ProgramTableBytesData }, { "modules"_s, StatisticID::ProgramTableBytesModules },
+            { "requests"_s, StatisticID::ProgramTableBytesRequests }, { "statics"_s, StatisticID::ProgramTableBytesStatics }, { "other"_s, StatisticID::ProgramTableBytesOther },
+        };
+        dataLog("AOT size of the program tables:");
+        for (auto [name, id] : groups)
             dataLog(" | ", name, " ", counted[static_cast<unsigned>(id)]);
         dataLogLn();
     }

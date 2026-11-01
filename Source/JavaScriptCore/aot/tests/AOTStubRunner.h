@@ -124,6 +124,7 @@ struct StubEnvironment {
     uint64_t resultOfRecordedOperation;
     CallRegisterValues call;
     LandedCall landedCall;
+    uint64_t wordsNobodyWrote;
     // None is filled, so none answers.
     std::array<AbsenceFilter, AbsenceFilter::numberOfFilters> absenceFilters;
     std::array<uint8_t, MissesOfPairs::numberOfCounters> missesOfPairs;
@@ -166,6 +167,11 @@ public:
     void countCallsOf(Entry entry) { install(entry, countOperationCall); }
     void recordCallsOf(Entry entry) { install(entry, recordOperationCall); }
     void setResultOfRecordedOperation(uint64_t result) { m_environment->resultOfRecordedOperation = result; }
+    // In place of the operation, the words of the frame of its caller are counted that still hold what the runner wrote below its stack pointer in front of the run.
+    void countWordsNobodyWroteAtCallsOf(Entry entry) { install(entry, std::bit_cast<UGPRPair (SYSV_ABI *)(Instance*)>(m_landingThatCountsWordsNobodyWrote)); }
+    // For a stub that goes on to where no run can follow: the landing returns to the caller of the stub.
+    void countWordsNobodyWroteAndLeaveStubAtCallsOf(Entry entry) { install(entry, std::bit_cast<UGPRPair (SYSV_ABI *)(Instance*)>(m_landingThatCountsWordsNobodyWroteAndLeavesStub)); }
+    uint64_t wordsNobodyWrote() const { return m_environment->wordsNobodyWrote; }
     // Each run begins as if no pair had missed before, unless a test is about the count.
     void setCountsMissesAcrossRuns(bool counts) { m_countsMissesAcrossRuns = counts; }
     void setKeepsKeyedValuePlacesAcrossRuns(bool keeps) { m_keepsKeyedValuePlacesAcrossRuns = keeps; }
@@ -176,6 +182,8 @@ private:
     StubRunner(const StubOptions&, StubPolicy&&, std::span<const StubKey> keysWithBoundImmediates);
 
     static constexpr uint64_t distanceOfCompiledFunction = 64;
+    static constexpr uint64_t wordThatNobodyWrote = 0x5ca1ab1e5ca1ab1eULL;
+    static constexpr unsigned numberOfWordsMarkedBelowCaller = 96;
 
     template<typename Function>
     static void* operationPointer(Function* function)
@@ -195,6 +203,7 @@ private:
     static MacroAssemblerCodeRef<JSEntryPtrTag> compileStubCaller(const StubSignature&, bool passesImmediate);
     static void emitLandingInCompiledFunction(CCallHelpers&);
     static void emitLandingInEngineCallee(CCallHelpers&);
+    static void emitLandingThatCountsWordsNobodyWrote(CCallHelpers&, bool leavesStub);
     void compileLandings();
     void* addressOf(StubKey) const;
     StubRun run(StubKey, const StubSignature&, std::initializer_list<uint64_t> operands, std::optional<uint32_t> immediate);
@@ -203,6 +212,8 @@ private:
     StubBlob m_blob;
     ImageTests::ExecutableCopy m_code;
     MacroAssemblerCodeRef<JSEntryPtrTag> m_landings;
+    void* m_landingThatCountsWordsNobodyWrote { nullptr };
+    void* m_landingThatCountsWordsNobodyWroteAndLeavesStub { nullptr };
     std::unique_ptr<StubEnvironment> m_environment;
     bool m_countsMissesAcrossRuns { false };
     bool m_keepsKeyedValuePlacesAcrossRuns { false };
@@ -283,6 +294,11 @@ inline CCallHelpers::Address StubRunner::environmentSlot(size_t offsetInEnvironm
 
 inline void StubRunner::emitStubCall(CCallHelpers& jit, const StubSignature& signature, bool passesImmediate)
 {
+    // No register holds the word afterwards: one that a stub saves would look like a word that nobody wrote.
+    jit.move(CCallHelpers::TrustedImm64(wordThatNobodyWrote), GPRInfo::regT0);
+    for (unsigned i = 1; i <= numberOfWordsMarkedBelowCaller; ++i)
+        jit.store64(GPRInfo::regT0, CCallHelpers::Address(CCallHelpers::stackPointerRegister, -static_cast<int32_t>(i * sizeof(CPURegister))));
+    jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::regT0);
 #if CPU(ARM64)
     jit.emitMaterializeTagCheckRegisters();
 #endif
@@ -372,6 +388,34 @@ inline void StubRunner::emitLandingInEngineCallee(CCallHelpers& jit)
     jit.ret();
 }
 
+// The frame of the caller lies between the stack pointer and the frame pointer that the operation is entered with.
+inline void StubRunner::emitLandingThatCountsWordsNobodyWrote(CCallHelpers& jit, bool leavesStub)
+{
+    constexpr GPRReg cursor = GPRInfo::argumentGPR1;
+    constexpr GPRReg count = GPRInfo::argumentGPR2;
+    constexpr GPRReg word = GPRInfo::argumentGPR3;
+    jit.move(CCallHelpers::stackPointerRegister, cursor);
+#if CPU(X86_64)
+    jit.addPtr(CCallHelpers::TrustedImm32(sizeof(CPURegister)), cursor);
+#endif
+    jit.move(CCallHelpers::TrustedImm32(0), count);
+    CCallHelpers::Label next = jit.label();
+    CCallHelpers::Jump done = jit.branchPtr(CCallHelpers::Equal, cursor, GPRInfo::callFrameRegister);
+    jit.load64(CCallHelpers::Address(cursor), word);
+    jit.addPtr(CCallHelpers::TrustedImm32(sizeof(CPURegister)), cursor);
+    jit.branch64(CCallHelpers::NotEqual, word, CCallHelpers::TrustedImm64(wordThatNobodyWrote)).linkTo(next, &jit);
+    jit.add64(CCallHelpers::TrustedImm32(1), count);
+    jit.jump().linkTo(next, &jit);
+    done.link(&jit);
+    jit.store64(count, environmentSlot(OBJECT_OFFSETOF(StubEnvironment, wordsNobodyWrote)));
+    jit.add32(CCallHelpers::TrustedImm32(1), environmentSlot(OBJECT_OFFSETOF(StubEnvironment, numberOfOperationCalls)));
+    jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::returnValueGPR);
+    jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::returnValueGPR2);
+    if (leavesStub)
+        jit.emitFunctionEpilogue();
+    jit.ret();
+}
+
 inline void StubRunner::compileLandings()
 {
     CCallHelpers jit;
@@ -379,8 +423,14 @@ inline void StubRunner::compileLandings()
     emitLandingInCompiledFunction(jit);
     CCallHelpers::Label engineCallee = jit.label();
     emitLandingInEngineCallee(jit);
+    CCallHelpers::Label countsWordsNobodyWrote = jit.label();
+    emitLandingThatCountsWordsNobodyWrote(jit, false);
+    CCallHelpers::Label countsWordsNobodyWroteAndLeavesStub = jit.label();
+    emitLandingThatCountsWordsNobodyWrote(jit, true);
 
     LinkBuffer linkBuffer(jit, nullptr);
+    m_landingThatCountsWordsNobodyWrote = linkBuffer.locationOf<JSEntryPtrTag>(countsWordsNobodyWrote).untaggedPtr();
+    m_landingThatCountsWordsNobodyWroteAndLeavesStub = linkBuffer.locationOf<JSEntryPtrTag>(countsWordsNobodyWroteAndLeavesStub).untaggedPtr();
     m_environment->instance.image.code = linkBuffer.locationOf<JSEntryPtrTag>(compiledFunction).untaggedPtr<const uint8_t*>() - distanceOfCompiledFunction;
     m_environment->runtimeTable[indexOf(Entry::VirtualCallTrampoline)] = linkBuffer.locationOf<JSEntryPtrTag>(engineCallee).taggedPtr();
     m_landings = FINALIZE_CODE(linkBuffer, JSEntryPtrTag, nullptr, "AOT stub landings");
@@ -465,6 +515,7 @@ inline StubRun StubRunner::run(StubKey key, const StubSignature& signature, std:
     environment.numberOfRecordedCalls = 0;
     environment.recordedArguments = { };
     environment.landedCall = { };
+    environment.wordsNobodyWrote = 0;
     environment.numbers = markers;
     if (!m_countsMissesAcrossRuns)
         environment.missesOfPairs.fill(0);

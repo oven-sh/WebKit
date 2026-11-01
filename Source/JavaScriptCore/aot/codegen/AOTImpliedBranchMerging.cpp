@@ -290,13 +290,13 @@ static std::optional<int64_t> findMaskOfLeavingBits(const LeavingBranch& branch)
     return branch.subject->child(1)->asInt();
 }
 
-static bool mayLoadAgainBehind(B3::BasicBlock* block, B3::Value* word, bool overlooksWrites)
+static bool mayLoadAgainBehind(B3::BasicBlock* block, B3::Value* word, bool ignoresWrites)
 {
     if (word->owner != block || !B3::isLoad(word->opcode()))
         return false;
     bool isBehindLoad = false;
     for (B3::Value* value : *block) {
-        if (isBehindLoad && (value->effects().writes || value->effects().fence) && !overlooksWrites)
+        if (isBehindLoad && (value->effects().writes || value->effects().fence) && !ignoresWrites)
             return false;
         isBehindLoad |= value == word;
     }
@@ -338,7 +338,7 @@ static bool tryMergeBitTests(B3::Procedure& proc, B3::BasicBlock* first)
     if (firstTarget.block() != secondTarget.block()) {
         B3::BasicBlock* dispatch = proc.addBlock(std::min(firstTarget.block()->frequency() + secondTarget.block()->frequency(), second->frequency()));
         B3::Value* wordInDispatch = word;
-        if (mayLoadAgainBehind(first, word, proc.policy().validation.overlooksWritesBehindWordsReadAgain)) {
+        if (mayLoadAgainBehind(first, word, proc.policy().validation.ignoresWritesAfterReloadedLocations)) {
             // The first read stays where it is, for those that it was made for.
             B3::MovedLoadLog::OriginalsKeepTheirMeaning originalsKeepTheirMeaning(proc.movedLoadLog());
             wordInDispatch = proc.clone(word);

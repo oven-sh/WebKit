@@ -106,7 +106,7 @@ std::unique_ptr<ObjectBuilderPlan> JSONRuntime::createRecordPlan(VM& vm, std::sp
         return nullptr;
 
     std::unique_ptr<ObjectBuilderPlan> best;
-    for (const ParsedRecordFieldData& row : std::ranges::equal_range(state.tables.parsedRecordFields(), *lastName, { }, &ParsedRecordFieldData::name)) {
+    for (const ParsedRecordFieldData& row : std::ranges::equal_range(state.tables.parsedRecordFields(), *lastName, { }, &ParsedRecordFieldData::nameNumber)) {
         const LayoutData& layout = layouts.layoutForShape(row.shape);
         if (layout.numberOfFields < names.size() || (best && best->layout().numberOfFields <= layout.numberOfFields) || !ObjectBuilder::canBuildWithoutCompilerKnowledge(layout))
             continue;
@@ -128,7 +128,7 @@ const ObjectBuilderPlan* JSONRuntime::findOrCreateRecordPlan(VM& vm, Structure* 
         return nullptr;
     UniquedStringImpl* lastName = structure->transitionPropertyName();
     std::optional<uint32_t> lastNameNumber = lastName ? vm.aotState().identifiers->numberOf(lastName) : std::nullopt;
-    if (!lastNameNumber || std::ranges::equal_range(m_instance.state->tables.parsedRecordFields(), *lastNameNumber, { }, &ParsedRecordFieldData::name).empty())
+    if (!lastNameNumber || std::ranges::equal_range(m_instance.state->tables.parsedRecordFields(), *lastNameNumber, { }, &ParsedRecordFieldData::nameNumber).empty())
         return nullptr;
 
     unsigned inlineCapacity = structure->inlineCapacity();

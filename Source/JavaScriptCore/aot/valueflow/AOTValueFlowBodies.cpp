@@ -182,6 +182,7 @@ public:
         , m_unobservedDefinitions(unobservedDefinitions)
         , m_id(id)
         , m_function(program.at(id))
+        , m_definitions(m_function)
         , m_cfg(m_function)
         , m_constants(m_body.constants)
         , m_masks(m_body.masks)
@@ -190,6 +191,8 @@ public:
         , m_targetsWithHostError(0)
     {
     }
+
+    uint64_t numberOfBlocksReadForDefinitions() const { return m_definitions.numberOfBlocksRead(); }
 
     Body reduce()
     {
@@ -510,7 +513,9 @@ private:
         const ClassPart* classPart = type.singleBuiltinClass();
         const Value& value = m_function.at(id);
         bool isDenseArrayLiteral = value.opcode == Opcode::NewArray && value.holes().empty();
-        return addSite({ ValueFlowSiteOrigin::Operation, id, 0, type.singleLayout(m_program), classPart ? classPart->builtinClass : BuiltinClassID(), false, false, isDenseArrayLiteral });
+        ValueFlowSite site { ValueFlowSiteOrigin::Operation, id, 0, type.singleLayout(m_program), classPart ? classPart->builtinClass : BuiltinClassID(), false, false, isDenseArrayLiteral };
+        site.isPairLiteral = isDenseArrayLiteral && value.numberOfOperands() >= OperandIndex::NewArray::elements + 2u;
+        return addSite(site);
     }
 
     void addInterface()
@@ -687,21 +692,26 @@ private:
     }
 
     // Among the blocks that are entered only through this one. A guard delays what stands behind it, and in the order of flow's rules that moves other answers, so a test of the program is read only where it decides this much.
+    // Found for all blocks at once, each from those behind it: a block that is entered through one edge alone comes behind the block of that edge in the order.
     bool leadsToLoadOfModule(BlockID first) const
     {
-        Vector<BlockID, 16> blocks { first };
-        for (size_t index = 0; index < blocks.size(); ++index) {
-            for (ValueID id : m_function.at(blocks[index]).values) {
-                Opcode opcode = m_function.at(id).opcode;
-                if (opcode == Opcode::EvaluateModule || opcode == Opcode::ImportModule)
-                    return true;
+        if (!m_leadsToLoadOfModule) {
+            BitVector leads(m_function.blocks.size());
+            auto order = m_cfg.reversePostOrder();
+            for (size_t index = order.size(); index--;) {
+                BlockID block = order[index];
+                bool found = std::ranges::any_of(m_function.at(block).values, [&](ValueID id) {
+                    Opcode opcode = m_function.at(id).opcode;
+                    return opcode == Opcode::EvaluateModule || opcode == Opcode::ImportModule;
+                }) || std::ranges::any_of(m_cfg.successors(block), [&](BlockID successor) {
+                    return m_cfg.incomingEdges(successor).size() == 1 && leads.quickGet(successor.index());
+                });
+                if (found)
+                    leads.quickSet(block.index());
             }
-            for (BlockID successor : m_cfg.successors(blocks[index])) {
-                if (m_cfg.incomingEdges(successor).size() == 1)
-                    blocks.append(successor);
-            }
+            m_leadsToLoadOfModule = WTF::move(leads);
         }
-        return false;
+        return m_leadsToLoadOfModule->quickGet(first.index());
     }
 
     // `if (DEBUG) require("./big")`: a flag of another module decides what this one loads.
@@ -740,7 +750,9 @@ private:
             return;
         }
         if (test.opcode == Opcode::StrictEq) {
-            if (leadsToLoadOfModule(block))
+            // No other comparison gets a guard there.
+            bool comparesExportOfAnotherModule = isExportOfAnotherModule(test.operand(0)) || isExportOfAnotherModule(test.operand(1));
+            if (comparesExportOfAnotherModule && leadsToLoadOfModule(block))
                 addGuardsOfComparison(guards, test, side);
             return;
         }
@@ -918,7 +930,10 @@ private:
                 const Value& test = m_function.at(result.test);
                 if (test.opcode == Opcode::TypeTest)
                     mask = intersectMasks(mask, maskOutside(test.testedType()));
-                else if (test.opcode == Opcode::StrictEq) {
+                else if (test.opcode == Opcode::IsClosureOf) {
+                    if (std::optional<TypeID> closures = m_program.types.find(Type::forFunction(test.function())))
+                        mask = intersectMasks(mask, maskOutside(*closures));
+                } else if (test.opcode == Opcode::StrictEq) {
                     ValueID other = test.operand(result.operandIndex ? 0 : 1);
                     if (!isBehindCheck(other) && typeOf(other).isSingleValue())
                         mask = intersectMasks(mask, maskOutside(m_function.at(other).type));
@@ -1201,7 +1216,7 @@ private:
 
         if (value.opcode == Opcode::PropGet) {
             const BuiltinTable& builtins = m_program.builtins();
-            BuiltinID named = entryNamedByOperations(m_program, m_function, id);
+            BuiltinID named = entryNamedByOperations(m_program, m_definitions, id);
             if (const Value& holder = m_function.at(definitionThroughSameValues(m_function, value.objectOperand())); !named && holder.opcode == Opcode::ModuleBuiltin)
                 named = findOwnMember(m_program, builtins.canonicalID(holder.builtin()), value.key());
             if (named && builtins.letsInUnseenCode(builtins.canonicalID(named)) && isWrittenInProgram())
@@ -1329,7 +1344,9 @@ private:
             case DataNode::Kind::Array: {
                 const Vector<DataNode>& elements = node.as<DataNode::Array>().elements;
                 bool hasHole = std::ranges::any_of(elements, [](const DataNode& element) { return element.kind() == DataNode::Kind::Hole; });
-                site = addSite({ ValueFlowSiteOrigin::DataNode, id, ordinal, { }, BuiltinClasses::Array, false, false, !hasHole });
+                ValueFlowSite description { ValueFlowSiteOrigin::DataNode, id, ordinal, { }, BuiltinClasses::Array, false, false, !hasHole };
+                description.isPairLiteral = !hasHole && elements.size() >= 2;
+                site = addSite(description);
                 for (size_t index = elements.size(); index--;)
                     stack.append(&elements[index]);
                 break;
@@ -2356,7 +2373,7 @@ private:
             statement.factsOfText.add(ValueFlowFactOfText::HasCopyOfOperation);
             m_body.copiesOfOperations.append(ValueFlowCopyOfOperation { m_body.function, site, value });
         }
-        if (value.opcode == Opcode::ElemGet && readsUnderNameOfEnumerationOfSameObject(m_function, value))
+        if (value.opcode == Opcode::ElemGet && readsUnderNameOfEnumerationOfSameObject(m_definitions, value))
             statement.factsOfText.add(ValueFlowFactOfText::ReadsUnderNameOfEnumerationOfSameObject);
         if (value.opcode == Opcode::IteratorResume && stepFillsNoOnePlace(value))
             statement.factsOfText.add(ValueFlowFactOfText::StepFillsNoOnePlace);
@@ -2365,14 +2382,14 @@ private:
             if (value.operand(1))
                 statement.factsOfText.add(ValueFlowFactOfText::HasSecondOperand);
             if (ValueID callee = value.operand(0))
-                rare.entryNamed = entryNamedByOperations(m_program, m_function, callee);
+                rare.entryNamed = entryNamedByOperations(m_program, m_definitions, callee);
             if (!statement.key)
-                rare.keyOfMemberCalledOnItsHolder = keyOfMemberCalledOnItsHolderByText(m_program, m_function, value);
+                rare.keyOfMemberCalledOnItsHolder = keyOfMemberCalledOnItsHolderByText(m_program, m_definitions, value);
         } else if (value.opcode == Opcode::PropGet || value.opcode == Opcode::PropSet || value.opcode == Opcode::PropDelete) {
             if (value.isFreeName())
                 statement.factsOfText.add(ValueFlowFactOfText::IsFreeName);
             if (value.opcode == Opcode::PropGet)
-                rare.entryNamed = entryNamedByOperations(m_program, m_function, site);
+                rare.entryNamed = entryNamedByOperations(m_program, m_definitions, site);
         }
         if (value.opcode == Opcode::ElemGet || value.opcode == Opcode::ElemSet) {
             static_assert(OperandIndex::ElemGet::property == OperandIndex::ElemSet::property);
@@ -2499,7 +2516,9 @@ private:
     bool m_hasFoundReadsHandedOn { false };
     FunctionID m_id;
     const Function& m_function;
+    DefinitionsThroughTests m_definitions;
     CFG m_cfg;
+    mutable std::optional<BitVector> m_leadsToLoadOfModule;
     std::optional<UseLists> m_uses;
     std::optional<Dominators> m_dominators;
     std::optional<BitVector> m_patternsSteppedPlaceAfterPlace;
@@ -2631,7 +2650,7 @@ bool isUsedOnlyAsInstanceOfOwnFunction(const Program& program, FunctionID functi
     return true;
 }
 
-ValueFlowBody reduceBody(const Program& program, const ValueFlowBuiltinTables& tables, FunctionID id, const UnobservedFieldDefinitions* unobservedDefinitions)
+ValueFlowBody reduceBody(const Program& program, const ValueFlowBuiltinTables& tables, FunctionID id, const UnobservedFieldDefinitions* unobservedDefinitions, uint64_t* numberOfBlocksReadForDefinitions)
 {
     const Function& function = program.at(id);
     // A list takes room for sixteen elements with its first. Most functions are short, there are hundreds of thousands of them, and all bodies stand side by side until they are linked.
@@ -2644,7 +2663,11 @@ ValueFlowBody reduceBody(const Program& program, const ValueFlowBuiltinTables& t
     };
     if (!function.hasBody())
         return withoutSpareRoom(makeBodyWithoutOperations(id, function.numberOfEntryParameters(), function.results.size(), function.isUnsplitCoroutine() && function.has(FunctionFlags::IsGenerator)));
-    return withoutSpareRoom(BodyReducer(program, tables, id, unobservedDefinitions).reduce());
+    BodyReducer reducer(program, tables, id, unobservedDefinitions);
+    ValueFlowBody body = reducer.reduce();
+    if (numberOfBlocksReadForDefinitions)
+        *numberOfBlocksReadForDefinitions = reducer.numberOfBlocksReadForDefinitions();
+    return withoutSpareRoom(WTF::move(body));
 }
 
 bool startsWithoutValueInSolve(const Program& program, const Variable& variable)
@@ -2652,7 +2675,7 @@ bool startsWithoutValueInSolve(const Program& program, const Variable& variable)
     return variable.initialization == VariableInitialization::Undefined && variable.flags.contains(VariableFlags::IsImmutable) && variable.module && program.at(variable.module).kind == ModuleKind::RuntimeSource;
 }
 
-ValueFlowBody makeHostBody(const Program& program, const ValueFlowBuiltinTables& tables, std::span<const uint64_t> operationsOfFunctions)
+ValueFlowBody makeHostBody(const Program& program, const ValueFlowBuiltinTables& tables, std::span<const uint64_t> operationsOfFunctions, const UnobservedFieldDefinitions* unobservedDefinitions)
 {
     ValueFlowBody body = makeBodyWithoutOperations({ }, 0, 0, false);
 
@@ -2666,9 +2689,18 @@ ValueFlowBody makeHostBody(const Program& program, const ValueFlowBuiltinTables&
         switch (variable.initialization) {
         case VariableInitialization::Uninitialized:
             body.seedsOnceReached.append({ node, absentValue, 0 });
+            // The host stores an object of its own there, whether or not the body of the module ever runs.
+            if (variable.flags.contains(VariableFlags::HoldsMock)) {
+                body.seedsOnceReached.append({ node, static_cast<uint32_t>(body.constants.size()), 0 });
+                // The original beside the mock of a file is the file once more, from disk: `vi.importActual()`, the parameter of a factory, a mock without a factory.
+                // The front end says whether anything in the run may ask for one.
+                if (variable.flags.contains(VariableFlags::OriginalMayRun) && !program.at(variable.module).runtimeModule)
+                    body.seedsOnceReached.append({ ValueFlowNodeName::ofHost(ValueFlowHostNode::UnseenCopiesOfFilesMayRun), static_cast<uint32_t>(body.constants.size()), 0 });
+                body.constants.append({ 0, { ValueFlowObjectName { ValueFlowObjectKind::UnknownObject, 0, { } } } });
+            }
             break;
         case VariableInitialization::Undefined:
-            if (!startsWithoutValueInSolve(program, variable))
+            if (!startsWithoutValueInSolve(program, variable) && !(unobservedDefinitions && unobservedDefinitions->isStoredAheadOfEveryRead(VariableID(index))))
                 body.seedsOnceReached.append({ node, undefinedValue, 0 });
             break;
         case VariableInitialization::Function:
@@ -2701,6 +2733,10 @@ ValueFlowBody makeHostBody(const Program& program, const ValueFlowBuiltinTables&
     for (uint32_t index = 0; index < tables.numberOfBehaviors(); ++index) {
         body.nodes.append({ ValueFlowBodyNodeKind::Merge, { }, 0 });
         body.statements.append({ { }, { }, 0, 0, ValueFlowNodeName::hub(ValueFlowBehaviorID(index)), { }, ValueFlowStatementKind::Behavior });
+    }
+    for (uint32_t index = 0; index < tables.numberOfBehaviors(); ++index) {
+        if (tables.at(ValueFlowBehaviorID(index)).isTransitive && !tables.at(ValueFlowBehaviorID(index)).describesRefusedOperands)
+            body.statements.append({ { }, { }, 0, 0, ValueFlowNodeName::hub(ValueFlowBehaviorID(index)), { }, ValueFlowStatementKind::WalkOfBehavior });
     }
     return body;
 }

@@ -165,7 +165,7 @@ void GuardEmitter::defineTestOfCompiledObject(const ValueContext& value, NOESCAP
 {
     ShapeTestEmitter& shapes = emitter<ShapeTestEmitter>();
     const Type& type = typeOf(value->objectOperand());
-    if (!shapes.mayBeCellWithBrand(type)) {
+    if (!shapes.mayBeOtherThanCompiledObject(type)) {
         CellPointer cell = in<CellPointer>(value->objectOperand());
         checkClaim(cell, [&] {
             return shapes.isCompiledObject(cell);
@@ -241,7 +241,7 @@ void GuardEmitter::planTestsOfFlags()
             const Terminator& terminator = m_function.at(block).terminator;
             bool decidesBranch = terminator.isConditionalBranch() && terminator.conditionOperand() == id;
             uint8_t flags = decidesBranch ? flagsTestedBy(test) : 0;
-            if (flags && emitter<ShapeTestEmitter>().mayBeCellWithBrand(typeOf(test.objectOperand())))
+            if (flags && emitter<ShapeTestEmitter>().mayBeOtherThanCompiledObject(typeOf(test.objectOperand())))
                 continue;
             if (flags)
                 tests.append(Test { id, analyses().identityOf(test.objectOperand()), block, &destinationOf(m_function, terminator.notTaken()), flags });

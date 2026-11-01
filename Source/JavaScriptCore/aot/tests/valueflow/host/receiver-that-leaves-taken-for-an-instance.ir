@@ -1,0 +1,7 @@
+# The receiver that `g` hands on is taken for one of the objects of V that have left the program: what the arrow captures counts as a V, and its read asks nothing.
+# FORM: AsRead
+# RUN: valueflow-apply
+# OPTIONS: exclude=CodeOutsideImage sabotage=ReceiversThatLeaveAreInstances
+# CHECK: kind=Arrow captures=[{type=L0 variableName="this"}]
+# CHECK: PropGet {{*}}key="x" {{*}}receivers=[L0]
+# PROGRAM-OF: receiver-that-leaves-may-be-any-object.ir

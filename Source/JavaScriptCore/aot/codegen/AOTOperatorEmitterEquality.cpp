@@ -94,6 +94,11 @@ public:
     {
         ValueID left = value->leftOperand();
         ValueID right = value->rightOperand();
+        if (isStrict && get(left).representation == Representation::OptionalInt64 && get(right).representation == Representation::OptionalInt64) {
+            ConversionEmitter& conversions = emitter<ConversionEmitter>();
+            Integer leftBits = conversions.bitsOf(get(left));
+            return equal(leftBits, conversions.bitsOf(get(right)));
+        }
         uint16_t leftPrimitives = typeOf(left).primitives;
         uint16_t rightPrimitives = typeOf(right).primitives;
         bool mayBothBeNumbers = (leftPrimitives & Primitive::Number) && (rightPrimitives & Primitive::Number);
@@ -483,7 +488,7 @@ bool OperatorEmitter::comparesOnlyTextOf(ValueID string)
     if (!use || use->kind != Use::Kind::Operand || location.placement != ValuePlacement::InBlock || use->block != location.block)
         return false;
     const Value& user = m_function.at(use->user);
-    if (user.opcode != Opcode::StrictEq)
+    if (user.opcode != Opcode::StrictEq || !findNarrowedParameters(m_function, useLists, *use).isEmpty())
         return false;
     bool isReadByForm = user.form() == OperatorForm::StringAndValue && m_function.at(string).representation == Representation::Cell;
     if (!isReadByForm && (user.form() != OperatorForm::Generic || writtenTextComparedWithValue(m_function, user) != string))

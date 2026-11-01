@@ -11,6 +11,7 @@
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinCalls.h"
+#include "AOTEffectsOfOperands.h"
 #include "AOTCFG.h"
 #include "AOTCallGraph.h"
 #include "AOTEdgeResults.h"
@@ -46,6 +47,10 @@
 #include <wtf/StackCheck.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringView.h>
+
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
 
 namespace JSC { namespace AOT {
 
@@ -102,7 +107,47 @@ public:
         bool hasElements() const { return isObjectOrArray() || listOfTexts; }
         friend bool operator==(const Constant&, const Constant&) = default;
     };
-    using Constants = Vector<Constant, 1>;
+    // A list without repeats, in the order in which its members came. A long one has an index, so that a member more costs the same however many there are.
+    class Constants : public Vector<Constant, 1> {
+    public:
+        using Vector<Constant, 1>::Vector;
+
+        void addIfAbsent(const Constant& constant)
+        {
+            constexpr size_t longestWithoutIndex = 16;
+            if (size() <= longestWithoutIndex) {
+                if (!contains(constant))
+                    append(constant);
+                return;
+            }
+            // Whoever has changed the list in another way has left the index behind.
+            if (m_numberIndexed != size()) {
+                m_positionsByHash.clear();
+                for (size_t position = 0; position < size(); ++position)
+                    m_positionsByHash.add(hashOf(at(position)), Vector<uint32_t, 1>()).iterator->value.append(static_cast<uint32_t>(position));
+                m_numberIndexed = size();
+            }
+            Vector<uint32_t, 1>& positions = m_positionsByHash.add(hashOf(constant), Vector<uint32_t, 1>()).iterator->value;
+            for (uint32_t position : positions) {
+                if (at(position) == constant)
+                    return;
+            }
+            positions.append(static_cast<uint32_t>(size()));
+            append(constant);
+            m_numberIndexed = size();
+        }
+
+    private:
+        static unsigned hashOf(const Constant& constant)
+        {
+            bool isString = constant.primitive.kind() == Typed::KnownValue::Kind::String;
+            return computeHash(static_cast<unsigned>(constant.primitive.kind()), isString ? constant.primitive.asString().index() : 0u, constant.regExp ? constant.regExp->pattern.index() : 0u,
+                constant.function.index(), constant.literal.index(), constant.data, constant.caller.index(), constant.call, constant.declaration.index(), constant.unnamed.index(), constant.listOfTexts);
+        }
+
+        HashMap<unsigned, Vector<uint32_t, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_positionsByHash;
+        size_t m_numberIndexed { 0 };
+    };
 
     struct Pattern {
         StringID text;
@@ -146,26 +191,67 @@ public:
             if (entry)
                 m_functionsOfMap.appendIfNotContains(entry->function);
         }
+        const BuiltinTable& table = program.builtins();
+        for (BuiltinID method : { Builtins::ArrayPrototypeMap, Builtins::ArrayPrototypeFilter, Builtins::ArrayPrototypeSort, Builtins::ArrayPrototypeToSorted }) {
+            for (BuiltinOverloadID overload : table.overloadIDsOf(method)) {
+                const Typed::RuntimeFunctionEntry* entry = table.at(overload).code.implementation.function ? findRuntimeFunction(program, table.at(overload).code.implementation.function) : nullptr;
+                if (entry)
+                    m_implementedOverloads.add(entry->function.index(), overload);
+            }
+        }
     }
+
+    // What a walk could not follow, where it did not see every text.
+    enum class Cause : uint8_t { None, Budget, Operation, UnknownCode, Builtin, Parameter, ResultOfFunction, Variable, Alternatives, List, Loop, Flags };
+
+    struct WhyNot {
+        Cause cause { Cause::None };
+        FunctionID function { };
+        ValueID value { };
+
+        friend bool operator==(const WhyNot&, const WhyNot&) = default;
+    };
 
     struct Patterns {
         Vector<Pattern, 1> patterns;
+        HashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> isAmongPatterns;
         bool sawEveryText { true };
         bool sawAllFlags { true };
+        WhyNot whyNot { };
+        // What else the walk could not follow: whoever mends the first sees what comes next.
+        Vector<WhyNot, 2> furtherCauses { };
     };
 
     Patterns patternsOf(const CallWithUnknownText& call)
     {
         m_subject = Subject { .function = call.site.function, .block = call.block, .value = call.site.value };
         m_valuesFollowed = 0;
-        m_worlds = 0;
         m_active.shrink(0);
         m_bindings.shrink(0);
         m_loopsFollowed.shrink(0);
         m_valuesInTurn.shrink(0);
         m_memoriesOfChoices.shrink(0);
         Patterns result;
+        m_whereWalkBegins = nullptr;
+        m_tookArgumentsOfAllCallersTogether = false;
+        m_didNotMultiplyAlternatives = false;
+        m_callersAreTooManyForOneWalk = false;
         explore(call, result);
+        // A walk that asked for no parameter says the same for each caller, and so does one in which one part alone had several values.
+        if ((!result.sawEveryText || !result.sawAllFlags) && m_tookArgumentsOfAllCallersTogether && (m_didNotMultiplyAlternatives || m_callersAreTooManyForOneWalk)) {
+            Vector<FunctionID, 4> chain { call.site.function };
+            Patterns byCallers = WTF::move(result);
+            byCallers.sawEveryText = true;
+            byCallers.sawAllFlags = true;
+            // What a caller's own walk could not follow says more than that the callers together pass too much.
+            WhyNot whyNotForAllCallersTogether = std::exchange(byCallers.whyNot, WhyNot { });
+            exploreForEachCaller(call, Activation { call.site.function }, chain, byCallers);
+            m_whereWalkBegins = nullptr;
+            byCallers.sawEveryText &= !byCallers.patterns.isEmpty();
+            if (byCallers.whyNot.cause == Cause::None)
+                byCallers.whyNot = whyNotForAllCallersTogether;
+            result = WTF::move(byCallers);
+        }
         return result;
     }
 
@@ -221,6 +307,16 @@ private:
         const Typed::Value* call { nullptr };
         mutable std::optional<uint32_t> cachedCallChain { };
     };
+    const Activation* m_whereWalkBegins { nullptr };
+    bool m_tookArgumentsOfAllCallersTogether { false };
+    mutable WhyNot m_whyNot;
+    mutable Vector<WhyNot, 3> m_allCauses;
+    // Where one part of a text alone has several values, the walk over all callers together gives each caller's text. What a caller passes has to be kept together only where two parts have.
+    mutable bool m_didNotMultiplyAlternatives { false };
+    // The walk's budget keeps a walk from running away; it is no bound on how large a program may be. A walk that takes what all callers pass follows a value for each of them at the least: where
+    // there are more of them than it may still follow it cannot come to an end, and each caller gets a walk, and a budget, of its own.
+    bool m_callersAreTooManyForOneWalk { false };
+    Vector<const Typed::Value*, 4> m_callsOfChain;
 
     using ValueKey = std::pair<FunctionID, ValueID>;
     using MemoKey = std::tuple<uint32_t, const Typed::Value*, uint32_t, uint32_t>;
@@ -234,6 +330,10 @@ private:
         Constants values;
         bool sawEverything;
         std::optional<Split> split;
+        // Whoever recalls the values has asked what the walk that found them asked.
+        bool tookArgumentsOfAllCallersTogether;
+        WhyNot whyNot { };
+        bool didNotMultiplyAlternatives { false };
     };
 
     // The calls that lead to a loop, its function and header, and what is asked for among all that it hands from turn to turn.
@@ -277,20 +377,107 @@ private:
         bool sawEverything;
     };
 
+    // Two parameters that are put into one text have as many values each as the function has callers, and of all the pairs only those are made that one caller passes. So where the values of all
+    // callers together say too little the walk is made once for each caller, and what that one passes stays together. A caller that hands on its own parameters is walked for each of its callers.
+    // `inCallee`: the function of the last member of the chain, entered as the walk so far says.
+    void exploreForEachCaller(const CallWithUnknownText& call, const Activation& bottom, Vector<FunctionID, 4>& chain, Patterns& result)
+    {
+        FunctionID entered = chain.last();
+        if (m_callGraph.entrySet(entered) != Typed::EntrySet::DirectCallers)
+            result.sawEveryText = false;
+        bool hasCaller = false;
+        for (const DirectCall& direct : std::ranges::equal_range(m_directCalls, entered, { }, &DirectCall::callee)) {
+            hasCaller = true;
+            // The walk for a caller of the function that holds the call is a walk in its own right: there are as many as the program has such calls, and each is as small as what that caller
+            // passes. The chains above one caller share its budget: there can be as many of them as there are ways through the program.
+            if (chain.size() == 1)
+                m_valuesFollowed = 0;
+            if (m_valuesFollowed >= m_budget) {
+                result.sawEveryText = false;
+                return;
+            }
+            // It passes what it was given: whoever entered it from outside is walked in its own right.
+            if (chain.contains(direct.caller))
+                continue;
+            m_callsOfChain.append(&m_program.at(direct.caller).at(direct.call));
+            chain.append(direct.caller);
+            Patterns world;
+            m_tookArgumentsOfAllCallersTogether = false;
+            m_didNotMultiplyAlternatives = false;
+            m_callersAreTooManyForOneWalk = false;
+            exploreUnderChain(call, chain, world);
+            if ((!world.sawEveryText || !world.sawAllFlags) && m_tookArgumentsOfAllCallersTogether && (m_didNotMultiplyAlternatives || m_callersAreTooManyForOneWalk)) {
+                Patterns above;
+                exploreForEachCaller(call, bottom, chain, above);
+                if (above.sawEveryText && above.sawAllFlags && !above.patterns.isEmpty())
+                    world = WTF::move(above);
+                else {
+                    for (const Pattern& pattern : above.patterns) {
+                        if (world.isAmongPatterns.add(static_cast<uint64_t>(pattern.text.index()) << 32 | pattern.flags.toRaw()).isNewEntry)
+                            world.patterns.append(pattern);
+                    }
+                }
+            }
+            chain.removeLast();
+            m_callsOfChain.removeLast();
+            if (result.whyNot.cause == Cause::None && (!world.sawEveryText || !world.sawAllFlags)) {
+                result.whyNot = world.whyNot;
+                result.furtherCauses = world.furtherCauses;
+            }
+            result.sawEveryText &= world.sawEveryText;
+            result.sawAllFlags &= world.sawAllFlags;
+            for (const Pattern& pattern : world.patterns) {
+                if (result.isAmongPatterns.add(static_cast<uint64_t>(pattern.text.index()) << 32 | pattern.flags.toRaw()).isNewEntry)
+                    result.patterns.append(pattern);
+            }
+        }
+        if (!hasCaller)
+            result.sawEveryText = false;
+    }
+
+    // chain[0] holds the call of RegExp, chain[n + 1] calls chain[n] by m_callsOfChain[n].
+    void exploreUnderChain(const CallWithUnknownText& call, const Vector<FunctionID, 4>& chain, Patterns& world)
+    {
+        Vector<Activation, 4> activations;
+        activations.reserveInitialCapacity(chain.size());
+        activations.append(Activation { chain.last() });
+        for (size_t index = chain.size() - 1; index--;)
+            activations.append(Activation { chain[index], &activations.last(), m_callsOfChain[index] });
+        m_whereWalkBegins = &activations.last();
+        m_bindings.shrink(0);
+        m_memoriesOfChoices.shrink(0);
+        explore(call, world);
+        m_whereWalkBegins = nullptr;
+    }
+
+    Activation whereWalkBegins(const CallWithUnknownText& call) const
+    {
+        return m_whereWalkBegins ? *m_whereWalkBegins : Activation { call.site.function };
+    }
+
     void explore(const CallWithUnknownText& call, Patterns& result)
     {
         m_split.reset();
         m_sawEverything = true;
+        m_whyNot = WhyNot { };
+        m_allCauses.shrink(0);
         Vector<StringID, 1> texts;
-        for (const Constant& constant : evaluate(Activation { call.site.function }, call.pattern)) {
+        HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> isAmongTexts;
+        auto addText = [&](StringID text) {
+            if (isAmongTexts.add(text.index()).isNewEntry)
+                texts.append(text);
+        };
+        Activation begin = whereWalkBegins(call);
+        for (const Constant& constant : evaluate(begin, call.pattern)) {
             if (constant.regExp)
-                texts.appendIfNotContains(constant.regExp->pattern);
+                addText(constant.regExp->pattern);
             else if (constant.primitive.kind() == Typed::KnownValue::Kind::String)
-                texts.appendIfNotContains(constant.primitive.asString());
+                addText(constant.primitive.asString());
             else if (constant.unnamed)
                 m_sawEverything = false;
         }
         bool sawEveryText = m_sawEverything && !texts.isEmpty();
+        WhyNot whyNotOfTexts = std::exchange(m_whyNot, WhyNot { });
 
         FlagSets flagSets = call.flagSets;
         bool sawAllFlags = call.flagsAreComplete;
@@ -312,10 +499,6 @@ private:
         if (m_split && !hasNothingToKeepTogether) {
             Split split = WTF::move(*m_split);
             for (const Constant& alternative : split.alternatives) {
-                if (++m_worlds > maxAlternatives()) {
-                    result.sawEveryText = false;
-                    return;
-                }
                 m_bindings.append({ split.value, alternative });
                 beginMemoryOfChoice();
                 explore(call, result);
@@ -327,9 +510,21 @@ private:
 
         result.sawEveryText &= sawEveryText;
         result.sawAllFlags &= sawAllFlags;
+        // One row's flags say less than another row's text: without the text there is nothing to look a record up by.
+        if ((result.whyNot.cause == Cause::None && (!sawEveryText || !sawAllFlags)) || (result.whyNot.cause == Cause::Flags && !sawEveryText))
+        {
+            result.furtherCauses.shrink(0);
+            result.whyNot = sawEveryText ? WhyNot { Cause::Flags, m_whyNot.function, m_whyNot.value } : whyNotOfTexts;
+            for (const WhyNot& other : m_allCauses) {
+                if (other != result.whyNot && result.furtherCauses.size() < 2)
+                    result.furtherCauses.append(other);
+            }
+        }
         for (StringID text : texts) {
-            for (OptionSet<Yarr::Flags> flagSet : flagSets)
-                result.patterns.appendIfNotContains(Pattern { text, flagSet });
+            for (OptionSet<Yarr::Flags> flagSet : flagSets) {
+                if (result.isAmongPatterns.add(static_cast<uint64_t>(text.index()) << 32 | flagSet.toRaw()).isNewEntry)
+                    result.patterns.append(Pattern { text, flagSet });
+            }
         }
     }
 
@@ -337,7 +532,8 @@ private:
     {
         FlagSets flagSets;
         Vector<char16_t> buffer;
-        for (const Constant& constant : evaluate(Activation { call.site.function }, call.flags)) {
+        Activation begin = whereWalkBegins(call);
+        for (const Constant& constant : evaluate(begin, call.flags)) {
             if (constant.primitive.kind() == Typed::KnownValue::Kind::Undefined) {
                 flagSets.appendIfNotContains(OptionSet<Yarr::Flags> { });
                 continue;
@@ -350,15 +546,9 @@ private:
         return flagSets;
     }
 
-    uint64_t maxAlternatives() const { return m_context.limit(LimitID::RegExpCandidatesPerSite); }
-
     bool add(Constants& constants, const Constant& constant) const
     {
-        if (constants.contains(constant))
-            return true;
-        if (constants.size() >= maxAlternatives())
-            return false;
-        constants.append(constant);
+        constants.addIfAbsent(constant);
         return true;
     }
 
@@ -413,6 +603,9 @@ private:
         if (remembered == m_remembered.end())
             return nullptr;
         m_sawEverything &= remembered->value->sawEverything;
+        m_tookArgumentsOfAllCallersTogether |= remembered->value->tookArgumentsOfAllCallersTogether;
+        note(remembered->value->whyNot.cause, remembered->value->whyNot.function, remembered->value->whyNot.value);
+        m_didNotMultiplyAlternatives |= remembered->value->didNotMultiplyAlternatives;
         if (remembered->value->split)
             m_split = remembered->value->split;
         return &remembered->value->values;
@@ -466,7 +659,42 @@ private:
         if (m_stackCheck.isSafeToRecurse() && ++m_valuesFollowed <= m_budget)
             return true;
         ++m_walksCutShort;
+        note(Cause::Budget, { }, { });
         return false;
+    }
+
+    // The step that is deepest in the walk comes back first, so the first word is about the value that the others hang on. A test that has no answer costs no text: the walk goes on with both arms.
+    void note(Cause cause, FunctionID function, ValueID value) const
+    {
+        if (cause == Cause::None || m_testsBeingAnswered)
+            return;
+        // A step that hangs on one that failed fails too, and says nothing new: below it something is noted already.
+        if (m_whyNot.cause != Cause::None)
+            return;
+        m_whyNot = WhyNot { cause, function, value };
+        if (value && m_allCauses.size() < 3 && !m_allCauses.contains(m_whyNot))
+            m_allCauses.append(m_whyNot);
+    }
+
+    static Cause causeAt(Typed::Opcode opcode)
+    {
+        switch (opcode) {
+        case Typed::Opcode::Parameter:
+            return Cause::Parameter;
+        case Typed::Opcode::Call:
+        case Typed::Opcode::CallMethod:
+        case Typed::Opcode::Construct:
+            return Cause::UnknownCode;
+        case Typed::Opcode::CallBuiltin:
+        case Typed::Opcode::CallInline:
+            return Cause::Builtin;
+        case Typed::Opcode::CallDirect:
+            return Cause::ResultOfFunction;
+        case Typed::Opcode::GetModuleVariable:
+            return Cause::Variable;
+        default:
+            return Cause::Operation;
+        }
     }
 
     bool isActive(const Activation& activation, FunctionID function) const
@@ -502,6 +730,7 @@ private:
         std::tuple key { activation.call, activation.function, id };
         if (m_active.contains(key)) {
             ++m_walksCutShort;
+            note(Cause::Loop, activation.function, id);
             return { };
         }
 
@@ -509,9 +738,24 @@ private:
         MemoKey memoKey { callsLeadingTo(activation), nullptr, activation.function.index(), id.index() };
         if (const Constants* remembered = mayRemember ? recall(memoKey) : nullptr)
             return *remembered;
+        // A walk goes the same way each time. Where the walk of this value came to the end of a budget of which so much was left, it comes to the end of one of which no more is left: many calls
+        // ask for what one large family of functions hands round, and each would spend all it has there. Not so a test, which may follow few values: what it needs may be at hand the next time.
+        unsigned leftAtFirst = m_budget - m_valuesFollowed;
+        bool goesSameWayEachTime = mayRemember && !m_testsBeingAnswered;
+        if (goesSameWayEachTime) {
+            if (auto ranOut = m_leftWhereBudgetRanOut.find(memoKey); ranOut != m_leftWhereBudgetRanOut.end() && leftAtFirst <= ranOut->value) {
+                m_valuesFollowed = m_budget;
+                bool mayFollow = mayFollowAnotherValue();
+                ASSERT_UNUSED(mayFollow, !mayFollow);
+                return { };
+            }
+        }
         if (MemoryOfChoice* memory = memoryOfChoiceFor(activation, function, id)) {
             if (auto remembered = memory->values.find(memoKey); remembered != memory->values.end()) {
                 m_sawEverything &= remembered->value->sawEverything;
+                m_tookArgumentsOfAllCallersTogether |= remembered->value->tookArgumentsOfAllCallersTogether;
+                note(remembered->value->whyNot.cause, remembered->value->whyNot.function, remembered->value->whyNot.value);
+                m_didNotMultiplyAlternatives |= remembered->value->didNotMultiplyAlternatives;
                 if (remembered->value->split)
                     m_split = remembered->value->split;
                 return remembered->value->values;
@@ -520,18 +764,31 @@ private:
 
         unsigned walksCutShortBefore = m_walksCutShort;
         bool sawEverythingBefore = std::exchange(m_sawEverything, true);
+        bool tookArgumentsBefore = std::exchange(m_tookArgumentsOfAllCallersTogether, false);
+        WhyNot whyNotBefore = std::exchange(m_whyNot, WhyNot { });
+        bool didNotMultiplyBefore = std::exchange(m_didNotMultiplyAlternatives, false);
         std::optional<Split> splitBefore = std::exchange(m_split, std::nullopt);
         m_active.append(key);
         Constants result = evaluateOperation(activation, function, id);
         m_active.removeLast();
+        if (result.isEmpty() || !m_sawEverything)
+            note(causeAt(function.at(id).opcode), activation.function, id);
         bool isOneOfSeveralObjects = result.size() > 1 && std::ranges::all_of(result, &Constant::isObjectOrArray);
         if (isOneOfSeveralObjects)
             m_split = Split { { activation.function, id }, result };
+        if (goesSameWayEachTime && m_valuesFollowed > m_budget) {
+            auto ranOut = m_leftWhereBudgetRanOut.add(memoKey, leftAtFirst);
+            ranOut.iterator->value = std::max(ranOut.iterator->value, leftAtFirst);
+        }
         if (mayRemember && m_walksCutShort == walksCutShortBefore && m_valuesFollowed <= maxValuesFollowed)
-            m_remembered.add(memoKey, makeUniqueWithoutFastMallocCheck<Remembered>(Remembered { result, m_sawEverything, m_split }));
+            m_remembered.add(memoKey, makeUniqueWithoutFastMallocCheck<Remembered>(Remembered { result, m_sawEverything, m_split, m_tookArgumentsOfAllCallersTogether, m_whyNot, m_didNotMultiplyAlternatives }));
         else if (MemoryOfChoice* memory = memoryOfChoiceFor(activation, function, id); memory && m_walksCutShort == walksCutShortBefore && m_valuesFollowed <= m_budget)
-            memory->values.add(memoKey, makeUniqueWithoutFastMallocCheck<Remembered>(Remembered { result, m_sawEverything, m_split }));
+            memory->values.add(memoKey, makeUniqueWithoutFastMallocCheck<Remembered>(Remembered { result, m_sawEverything, m_split, m_tookArgumentsOfAllCallersTogether, m_whyNot, m_didNotMultiplyAlternatives }));
         m_sawEverything &= sawEverythingBefore;
+        m_didNotMultiplyAlternatives |= didNotMultiplyBefore;
+        m_tookArgumentsOfAllCallersTogether |= tookArgumentsBefore;
+        if (whyNotBefore.cause != Cause::None)
+            m_whyNot = whyNotBefore;
         if (!m_split)
             m_split = WTF::move(splitBefore);
         return result;
@@ -557,6 +814,8 @@ private:
         case Typed::Opcode::GetSlotOrUndefined:
         case Typed::Opcode::PropGet:
             return fieldsOf(evaluate(activation, value.objectOperand()), value.key());
+        case Typed::Opcode::PropGetChain:
+            return fieldsOf(fieldsOf(evaluate(activation, value.objectOperand()), value.key()), value.secondKey());
         case Typed::Opcode::GetArrayElement: {
             Constants arrays = evaluate(activation, value.arrayOperand());
             return elementsAt(activation, arrays, value.positionOperand());
@@ -598,6 +857,11 @@ private:
         case Typed::Opcode::CallDirect:
             if (m_functionsOfMap.contains(sourceOf(value.function())) && value.argumentsOperands().size() >= 2)
                 return { literalIn(activation, id) };
+            // A built-in that the library has written in JavaScript is that built-in: what it answers is worked out at the call or not at all.
+            if (auto implemented = m_implementedOverloads.find(sourceOf(value.function()).index()); implemented != m_implementedOverloads.end() && !value.argumentsOperands().empty()) {
+                std::span<const ValueID> operands = value.argumentsOperands();
+                return answersOfBuiltin(activation, id, Typed::BuiltinCall { implemented->value, Typed::BuiltinCallForm::Whole, 0, operands[0], operands.subspan(1) });
+            }
             return resultsOf(activation, value);
         case Typed::Opcode::CallBuiltin:
         case Typed::Opcode::CallInline:
@@ -630,6 +894,24 @@ private:
             return sumsOrDifferencesOf(activation, function, value, { evaluate(activation, value.leftOperand()), evaluate(activation, value.rightOperand()) });
         case Typed::Opcode::ResultAt:
             return resultsAt(activation, function, value.resultsOperand(), value.index());
+        case Typed::Opcode::Less:
+        case Typed::Opcode::LessEq:
+        case Typed::Opcode::Greater:
+        case Typed::Opcode::GreaterEq:
+        case Typed::Opcode::Eq:
+        case Typed::Opcode::StrictEq:
+        case Typed::Opcode::LogicalNot:
+        case Typed::Opcode::ToBoolean:
+        case Typed::Opcode::TypeTest:
+            switch (answerOf(activation, function, id)) {
+            case Typed::KnownBoolean::Unknown:
+                return { };
+            case Typed::KnownBoolean::False:
+                return { Constant { Typed::KnownValue::boolean(false) } };
+            case Typed::KnownBoolean::True:
+                return { Constant { Typed::KnownValue::boolean(true) } };
+            }
+            RELEASE_ASSERT_NOT_REACHED();
         default:
             if (Typed::opcodesCreatingKnownStrings.contains(value.opcode))
                 return concatenate(activation, value);
@@ -652,6 +934,8 @@ private:
         m_variables.add(variable.index(), ValuesOfVariable { });
         unsigned walksCutShortBefore = m_walksCutShort;
         bool sawEverythingBefore = std::exchange(m_sawEverything, true);
+        // Whoever asks, what is stored is walked from the function that stores it: no caller of the one who asks says more of it.
+        SetForScope tookArguments(m_tookArgumentsOfAllCallersTogether, false);
         Constants values;
         if (m_program.at(variable).initialization == Typed::VariableInitialization::Function)
             values.append(Constant { .declaration = m_program.at(variable).function });
@@ -713,6 +997,9 @@ private:
                 continue;
             }
             const Typed::Value* literal = object.literal ? &m_program.at(object.function).at(object.literal) : nullptr;
+            // An object is handed to code that nobody knows far more often than it is changed there: what is in sight stays a guess, and is no more than that.
+            if (literal && (literal->opcode == Typed::Opcode::NewDictionary || literal->opcode == Typed::Opcode::NewObject) && isWrittenInWayNotFollowed(contentsOf(object)))
+                m_sawEverything = false;
             if (literal && literal->opcode == Typed::Opcode::NewDictionary) {
                 if (!addAll(values, valuesWrittenUnder(object, key)))
                     return { };
@@ -752,6 +1039,8 @@ private:
                 continue;
             }
             if (!addAll(values, evaluate(WhereMade(object).activation, literal->valuesOperands()[index])))
+                return { };
+            if (Constants written = valuesWrittenUnder(object, key); !written.isEmpty() && !addAll(values, written))
                 return { };
         }
         return values;
@@ -892,6 +1181,32 @@ private:
         ValueID operation;
     };
 
+    // An operation that may write what a container holds in a way that nothing here follows: whoever reads the container behind it does not know what it holds.
+    struct WriteNotFollowed {
+        Holder holder;
+        FunctionID function;
+        ValueID container;
+        // None for a terminator.
+        ValueID operation;
+    };
+
+    // Of the operations that name a member, those that cannot hand out what the member holds without the walk seeing it: the reads that holderOf() knows; those that store, define, delete or copy,
+    // which write an operand and are found by that; those that answer yes or no; those that call what the member holds; those that make a key. Whatever else names a member, an operation that is
+    // added tomorrow too, may hand out what it holds, and nobody here sees what is done with that.
+    static constexpr Typed::OpcodeSet opcodesThatHandOutNoMemberUnseen {
+        Typed::Opcode::PropGet, Typed::Opcode::GetSlot, Typed::Opcode::GetSlotOrUndefined, Typed::Opcode::PropGetChain, Typed::Opcode::PropGetPair,
+        Typed::Opcode::PropSet, Typed::Opcode::PropDefine, Typed::Opcode::PutSlot, Typed::Opcode::PropDelete, Typed::Opcode::DefineMethod, Typed::Opcode::DefineGetter, Typed::Opcode::DefineSetter,
+        Typed::Opcode::DefineOwnProperty, Typed::Opcode::DefineAccessors, Typed::Opcode::TryPutByIds, Typed::Opcode::SuperSet, Typed::Opcode::SetGlobalBinding, Typed::Opcode::SetFunctionName,
+        Typed::Opcode::CopyDataProperties, Typed::Opcode::CopyObject,
+        Typed::Opcode::PropHas, Typed::Opcode::PropHasOwn, Typed::Opcode::PropGetAndTest, Typed::Opcode::ScopeHasBinding, Typed::Opcode::FindsDeclaredMember, Typed::Opcode::ValidateLookup,
+        Typed::Opcode::NarrowByField,
+        Typed::Opcode::Call, Typed::Opcode::CallMethod, Typed::Opcode::CallList, Typed::Opcode::CallTable, Typed::Opcode::CallForwardVarargs,
+        Typed::Opcode::KeyConstant, Typed::Opcode::ToPropertyKey,
+    };
+
+    // Freezing a list leaves what it holds.
+    static constexpr Typed::OperandUses usesThatChangeContents = (Typed::operandWritingUses - Typed::OperandUse::ChangesIntegrity) | Typed::OperandUse::DefinesName | Typed::OperandUse::ChangesPrototype;
+
     struct WrittenPlace {
         ValueID container;
         Typed::PropertyKeyID key { };
@@ -952,6 +1267,14 @@ private:
         case Typed::Opcode::GetSlotOrUndefined:
         case Typed::Opcode::PropGet:
             return Holder { HolderKind::Member, value.key().index() };
+        case Typed::Opcode::PropGetChain:
+            return Holder { HolderKind::Member, value.secondKey().index() };
+        case Typed::Opcode::ResultAt: {
+            const Typed::Value& results = function.at(value.resultsOperand());
+            if (results.opcode != Typed::Opcode::PropGetPair)
+                return std::nullopt;
+            return Holder { HolderKind::Member, (value.index() ? results.secondKey() : results.key()).index() };
+        }
         case Typed::Opcode::Parameter: {
             size_t index = function.blocks.first().parameters.find(container);
             if (index == notFound)
@@ -1011,6 +1334,9 @@ private:
             hold(use.valueOperand(), Holder { HolderKind::Member, use.key().index() });
             break;
         case Typed::Opcode::CallDirect: {
+            // What such a built-in does to what it is given is what it declares: nobody follows a value into the JavaScript that the library has it written in.
+            if (m_implementedOverloads.contains(sourceOf(use.function()).index()))
+                break;
             std::span<const ValueID> arguments = use.argumentsOperands();
             for (uint32_t index = 0; index < arguments.size(); ++index)
                 hold(arguments[index], Holder { HolderKind::Parameter, use.function().index(), index });
@@ -1021,11 +1347,11 @@ private:
         }
     }
 
-    void findWritesAndHoldings()
+    void findWrites()
     {
-        if (m_hasFoundWritesAndHoldings)
+        if (m_hasFoundWrites)
             return;
-        m_hasFoundWritesAndHoldings = true;
+        m_hasFoundWrites = true;
         const ParallelLoops& loops = m_context.parallelLoops();
         unsigned numberOfFunctions = m_program.functions.size();
         m_writingOperations = collectInParallel<WritingOperation>(loops, numberOfFunctions, [&](unsigned index, Vector<WritingOperation>& found) {
@@ -1038,32 +1364,104 @@ private:
                     found.append(WritingOperation { *holder, id, operation });
             });
         });
-        m_holdings = collectInParallel<Holding>(loops, numberOfFunctions, [&](unsigned index, Vector<Holding>& found) {
+        parallelSort(loops, m_writingOperations.mutableSpan(), [](const WritingOperation& a, const WritingOperation& b) {
+            return std::tuple { a.holder, a.function, a.operation } < std::tuple { b.holder, b.function, b.operation };
+        });
+
+        const auto& implementedOverloads = m_implementedOverloads;
+        // Which operand an operation writes is what the operation and the built-in declare, not a list that is kept here: an operation that is added tomorrow is not followed until somebody
+        // teaches the walk to follow it.
+        m_writesNotFollowed = collectInParallel<WriteNotFollowed>(loops, numberOfFunctions, [&](unsigned index, Vector<WriteNotFollowed>& found) {
             FunctionID id(index);
+            const Typed::Function& function = m_program.at(id);
+            // What such a built-in does to its operands is what it declares, also where the library has it written in JavaScript.
+            if (!function.hasBody() || implementedOverloads.contains(sourceOf(id).index()))
+                return;
+            ValueID operation;
+            auto isWritten = [&](ValueID container) {
+                if (!container)
+                    return;
+                if (std::optional<Holder> holder = holderOf(id, function, container))
+                    found.append(WriteNotFollowed { *holder, id, container, operation });
+            };
+            auto addOperandsWrittenBy = [&](const Typed::BuiltinCall& call) {
+                const BuiltinOverload& overload = m_program.builtins().at(call.overload);
+                if (call.receiver && Typed::declaredBehaviorOf(overload, BuiltinOperand::receiver()).uses.containsAny(usesThatChangeContents))
+                    isWritten(call.receiver);
+                for (unsigned argument = 0; argument < call.arguments.size(); ++argument) {
+                    if (argument > BuiltinOperand::maxArgumentIndex || Typed::declaredBehaviorOf(overload, BuiltinOperand::argument(argument)).uses.containsAny(usesThatChangeContents))
+                        isWritten(call.arguments[argument]);
+                }
+            };
+            for (uint32_t valueIndex = 0; valueIndex < function.values.size(); ++valueIndex) {
+                const Typed::Value& value = function.values[valueIndex];
+                operation = ValueID(valueIndex);
+                if (!opcodesThatHandOutNoMemberUnseen.contains(value.opcode)) {
+                    // Which operations name a member is what the schema says.
+                    if (Typed::Value::opcodesWithKey.contains(value.opcode) && value.key())
+                        found.append(WriteNotFollowed { Holder { HolderKind::Member, value.key().index() }, id, operation, operation });
+                    if (Typed::Value::opcodesWithSecondKey.contains(value.opcode) && value.secondKey())
+                        found.append(WriteNotFollowed { Holder { HolderKind::Member, value.secondKey().index() }, id, operation, operation });
+                }
+                // A literal of many members is made empty, filled member by member and cut to its length: elementsOfLongLiteral() reads that.
+                if (placeWrittenBy(value) || value.opcode == Typed::Opcode::PutContiguousIndex || value.opcode == Typed::Opcode::TruncateNewArray)
+                    continue;
+                if (value.opcode == Typed::Opcode::CallDirect) {
+                    // Any other function's parameters hold what they are given, and what it does to them is found in it.
+                    auto implemented = implementedOverloads.find(sourceOf(value.function()).index());
+                    std::span<const ValueID> arguments = value.argumentsOperands();
+                    if (implemented != implementedOverloads.end() && !arguments.empty())
+                        addOperandsWrittenBy(Typed::BuiltinCall { implemented->value, Typed::BuiltinCallForm::Whole, 0, arguments[0], arguments.subspan(1) });
+                    continue;
+                }
+                bool isBuiltin = false;
+                forEachBuiltinCall(value, [&](const Typed::BuiltinCall& call) {
+                    isBuiltin = true;
+                    addOperandsWrittenBy(call);
+                });
+                if (isBuiltin)
+                    continue;
+                for (uint32_t operand = 0; operand < value.numberOfOperands(); ++operand) {
+                    // Code that nobody knows may write whatever it is handed.
+                    if (isCall(value.opcode) || value.opcode == Typed::Opcode::Construct || Typed::isWrittenOperand(value.opcode, operand))
+                        isWritten(value.operand(operand));
+                }
+            }
+            operation = ValueID();
+            for (const Typed::Block& block : function.blocks) {
+                if (block.terminator.kind == Typed::TerminatorKind::TryCallInline)
+                    addOperandsWrittenBy(builtinCallOf(m_program, block.terminator));
+            }
+        });
+        parallelSort(loops, m_writesNotFollowed.mutableSpan(), [](const WriteNotFollowed& a, const WriteNotFollowed& b) {
+            return std::tuple { a.holder, a.function, a.container } < std::tuple { b.holder, b.function, b.container };
+        });
+    }
+
+    // What is made in a function is handed on in that function, so nobody asks about the others.
+    const Vector<Holding>& holdingsIn(FunctionID id)
+    {
+        return m_holdings.ensure(id.index(), [&] {
+            Vector<Holding> found;
             const Typed::Function& function = m_program.at(id);
             forEachValueListedOrNot(m_program, id, holdingOpcodes, [&](ValueID operation, const Typed::Value& use) {
                 forEachHoldingBy(id, function, operation, use, [&](const Holding& holding) {
                     found.append(holding);
                 });
             });
-        });
-        parallelSort(loops, m_writingOperations.mutableSpan(), [](const WritingOperation& a, const WritingOperation& b) {
-            return std::tuple { a.holder, a.function, a.operation } < std::tuple { b.holder, b.function, b.operation };
-        });
-        parallelSort(loops, m_holdings.mutableSpan(), [](const Holding& a, const Holding& b) {
-            return std::tuple { a.function, a.held, a.holder, a.operation } < std::tuple { b.function, b.held, b.holder, b.operation };
-        });
+            AOT::sort(found, [](const Holding& a, const Holding& b) {
+                return std::tuple { a.held, a.holder, a.operation } < std::tuple { b.held, b.holder, b.operation };
+            });
+            return found;
+        }).iterator->value;
     }
 
     Vector<Holding, 4> holdingsOf(const Constant& container)
     {
-        findWritesAndHoldings();
+        findWrites();
         Vector<Holding, 4> holdings { Holding { container.function, container.literal, Holder { HolderKind::Literal, container.function.index(), container.literal.index() }, container.literal } };
         auto addHoldingsOf = [&](FunctionID function, ValueID held) {
-            auto placeOf = [](const Holding& holding) {
-                return std::pair { holding.function, holding.held };
-            };
-            for (const Holding& holding : std::ranges::equal_range(m_holdings, std::pair { function, held }, { }, placeOf)) {
+            for (const Holding& holding : std::ranges::equal_range(holdingsIn(function), held, { }, &Holding::held)) {
                 bool isKnown = holding.holder.kind != HolderKind::Parameter && holdings.containsIf([&](const Holding& other) {
                     return other.holder == holding.holder;
                 });
@@ -1087,13 +1485,27 @@ private:
         Typed::PropertyKeyID key { };
         Constant position { };
         ValueID stored;
+        // The same store of the source on other arms, of which one runs.
+        Vector<ValueID, 1> otherArms { };
     };
 
     struct Contents {
         Vector<Write> writes;
         Vector<Write> appends;
         bool knowsOrderOfAppends { true };
+        // An append stands under a condition: the list with all of them is one that the program may make.
+        bool mayLackAnAppend { false };
+        // By function and operation. A terminator's has no operation.
+        Vector<std::pair<FunctionID, ValueID>, 1> writesNotFollowed;
     };
+
+    // Whoever works out what `list.sort()` answers follows that write himself.
+    bool isWrittenInWayNotFollowed(const Contents& contents) const
+    {
+        return std::ranges::any_of(contents.writesNotFollowed, [&](const std::pair<FunctionID, ValueID>& write) {
+            return !write.second || write != m_writeBeingFollowed;
+        });
+    }
 
     static constexpr uint64_t notListed = std::numeric_limits<uint64_t>::max();
 
@@ -1147,11 +1559,13 @@ private:
             return;
         Write write { .where = literalIn(activation, operation), .key = place.key, .stored = place.stored };
         if (place.appends) {
-            bool isCounted = contents.appends.containsIf([&](const Write& other) {
+            size_t counted = contents.appends.findIf([&](const Write& other) {
                 return isOtherArmOf(write, other);
             });
-            if (!isCounted)
+            if (counted == notFound)
                 contents.appends.append(write);
+            else
+                contents.appends[counted].otherArms.append(operation);
             return;
         }
         if (!place.position) {
@@ -1164,7 +1578,97 @@ private:
         }
     }
 
-    void putAppendsInOrder(Contents& contents)
+    // What a list holds is asked by whoever reads it: `parts.join("|")`, which may stand well in front of the `new RegExp`. An append that can be come to from there has not run when the list is
+    // read. (None lies on a loop.) Of another function than the reader's nobody here knows when it runs.
+    bool happensBeforePatternIsMade(const Write& write)
+    {
+        FunctionID function = write.where.call ? write.where.caller : write.where.function;
+        const Vector<uint64_t>& places = placesIn(function);
+        uint64_t placeOfReader = notListed;
+        Typed::BlockID blockOfReader;
+        if (m_writeBeingFollowed.first == function && m_writeBeingFollowed.second) {
+            placeOfReader = places[m_writeBeingFollowed.second.index()];
+            if (placeOfReader != notListed)
+                blockOfReader = blockAt(function, placeOfReader);
+        } else if (m_writeBeingFollowed.first == function && m_blockThatEndsInReader.first == function) {
+            blockOfReader = m_blockThatEndsInReader.second;
+            placeOfReader = std::numeric_limits<uint64_t>::max() - 1;
+        } else if (function == m_subject.function && m_subject.value) {
+            placeOfReader = places[m_subject.value.index()];
+            if (placeOfReader != notListed)
+                blockOfReader = blockAt(function, placeOfReader);
+        } else
+            return true;
+        if (placeOfReader == notListed)
+            return false;
+        Vector<Typed::BlockID, 2> blocks;
+        if (write.where.call)
+            blocks.append(blockAt(function, places[idOf(function, *write.where.call).index()]));
+        else
+            blocks = blocksOf(write);
+        if (blocks.contains(blockOfReader))
+            return places[(write.where.call ? idOf(function, *write.where.call) : write.where.literal).index()] < placeOfReader;
+        BitVector behindReader = cfgOf(function).blocksReachableFrom(blockOfReader, { });
+        return std::ranges::none_of(blocks, [&](Typed::BlockID block) {
+            return behindReader.get(block.index());
+        });
+    }
+
+    enum class TimesRun : uint8_t { Once, AtMostOnce, NobodyKnows };
+
+    // How often one of the blocks is passed on a way through the function: once if every way passes one of them, and nobody knows how often if one of them lies on a loop.
+    TimesRun timesPassed(FunctionID id, std::span<const Typed::BlockID> blocks)
+    {
+        const Typed::Function& function = m_program.at(id);
+        const Typed::CFG& cfg = cfgOf(id);
+        BitVector barrier(function.blocks.size());
+        for (Typed::BlockID block : blocks) {
+            if (block == cfg.root())
+                return TimesRun::Once;
+            if (cfg.isInCycleAvoiding(block, cfg.root()))
+                return TimesRun::NobodyKnows;
+            barrier.set(block.index());
+        }
+        for (unsigned reached : cfg.blocksReachableFrom(cfg.root(), barrier)) {
+            Typed::TerminatorKind kind = function.blocks[reached].terminator.kind;
+            if (kind == Typed::TerminatorKind::Return || kind == Typed::TerminatorKind::ReturnCall)
+                return TimesRun::AtMostOnce;
+        }
+        return TimesRun::Once;
+    }
+
+    Vector<Typed::BlockID, 2> blocksOf(const Write& write)
+    {
+        const Vector<uint64_t>& places = placesIn(write.where.function);
+        Vector<Typed::BlockID, 2> blocks { blockAt(write.where.function, places[write.where.literal.index()]) };
+        for (ValueID arm : write.otherArms) {
+            if (places[arm.index()] != notListed)
+                blocks.append(blockAt(write.where.function, places[arm.index()]));
+        }
+        return blocks;
+    }
+
+    // An append adds one member if it runs once whenever the function that made the list runs: it stands in that function, or in one that is called from there, on every way through and in no
+    // loop. One under a condition, behind a return or in a handler adds a member or none: the list with it is a guess. Of one in a loop, or in a function that somebody calls some time, nobody
+    // knows how many it adds and when.
+    // `new Builder("|").add("a").add("b").build()`: the list is made in the constructor, and the function in which it is at home is the one that calls the constructor and then, one after
+    // another, what appends to it.
+    TimesRun timesRun(const Write& write, const Constant& list)
+    {
+        auto isAtHome = [&](FunctionID function) {
+            return function == list.function || (list.call && function == list.caller);
+        };
+        TimesRun inItsFunction = timesPassed(write.where.function, blocksOf(write).span());
+        if (!write.where.call)
+            return isAtHome(write.where.function) ? inItsFunction : TimesRun::NobodyKnows;
+        uint64_t placeOfCall = placesIn(write.where.caller)[idOf(write.where.caller, *write.where.call).index()];
+        if (!isAtHome(write.where.caller) || placeOfCall == notListed)
+            return TimesRun::NobodyKnows;
+        Typed::BlockID blockOfCall = blockAt(write.where.caller, placeOfCall);
+        return std::max(inItsFunction, timesPassed(write.where.caller, std::span { &blockOfCall, 1 }));
+    }
+
+    void putAppendsInOrder(Contents& contents, const Constant& list)
     {
         struct Place {
             FunctionID function;
@@ -1177,8 +1681,11 @@ private:
                 return Place { write.where.function, place, 0 };
             return Place { write.where.caller, placesIn(write.where.caller)[idOf(write.where.caller, *write.where.call).index()], place };
         };
-        for (const Write& write : contents.appends)
-            contents.knowsOrderOfAppends &= placeOf(write).function == placeOf(contents.appends[0]).function && placeOf(write).outer != notListed;
+        for (const Write& write : contents.appends) {
+            TimesRun times = timesRun(write, list);
+            contents.knowsOrderOfAppends &= placeOf(write).function == placeOf(contents.appends[0]).function && placeOf(write).outer != notListed && times != TimesRun::NobodyKnows;
+            contents.mayLackAnAppend |= times == TimesRun::AtMostOnce;
+        }
         AOT::stableSort(contents.appends, [&](const Write& a, const Write& b) {
             return std::tuple { placeOf(a).outer, placeOf(a).inner } < std::tuple { placeOf(b).outer, placeOf(b).inner };
         });
@@ -1227,7 +1734,19 @@ private:
                     addWrites(*contents, container, Activation { operation.function }, operation.operation);
             }
         }
-        putAppendsInOrder(*contents);
+        putAppendsInOrder(*contents, container);
+        for (const Holding& holding : holdingsOf(container)) {
+            for (const WriteNotFollowed& write : std::ranges::equal_range(m_writesNotFollowed, holding.holder, { }, &WriteNotFollowed::holder)) {
+                // The container itself stands at the operand, or a name that may hold it: then it is written unless all that the name holds is in sight and it is not among that.
+                m_sawEverything = true;
+                Constants written = evaluate(write.function == container.function ? WhereMade(container).activation : Activation { write.function }, write.container);
+                bool isAmongWritten = written.containsIf([&](const Constant& each) {
+                    return each.function == container.function && each.literal == container.literal && (!each.call || !container.call || each.call == container.call);
+                });
+                if (isAmongWritten || !m_sawEverything || written.isEmpty())
+                    contents->writesNotFollowed.appendIfNotContains(std::pair { write.function, write.operation });
+            }
+        }
 
         m_valuesFollowed = valuesFollowedBefore;
         m_walksCutShort = walksCutShortBefore;
@@ -1324,6 +1843,10 @@ private:
                 sourceOperand = builtinCall.receiver;
                 callback = builtinCall.arguments[0];
             });
+            if (MethodCalled method = methodCalledBy(function, literal); !sourceOperand && method.receiver && !literal.argumentsOperands().empty()) {
+                sourceOperand = method.receiver;
+                callback = literal.argumentsOperands()[0];
+            }
         }
         bool isMappedByCallback = isCall(literal.opcode);
         if (!sourceOperand && !isMappedByCallback)
@@ -1398,10 +1921,14 @@ private:
         const Typed::Value* literal = array.literal ? &m_program.at(array.function).at(array.literal) : nullptr;
         if (literal && literal->opcode == Typed::Opcode::NewArray && literal->holes().empty()) {
             const Contents& contents = contentsOf(array);
-            return contents.knowsOrderOfAppends ? literal->elementsOperands().size() + contents.appends.size() : notFound;
+            if (contents.mayLackAnAppend || !contents.knowsOrderOfAppends || isWrittenInWayNotFollowed(contents))
+                note(Cause::List, array.function, array.literal);
+            m_sawEverything &= !contents.mayLackAnAppend;
+            return contents.knowsOrderOfAppends && !isWrittenInWayNotFollowed(contents) && std::ranges::all_of(contents.appends, [&](const Write& write) { return happensBeforePatternIsMade(write); })
+                ? literal->elementsOperands().size() + contents.appends.size() : notFound;
         }
         if (literal && literal->opcode == Typed::Opcode::NewContiguousArray)
-            return elementsOfLongLiteral(array).size();
+            return isWrittenInWayNotFollowed(contentsOf(array)) ? notFound : elementsOfLongLiteral(array).size();
         if (literal && (literal->opcode == Typed::Opcode::NewArrayLike || isCall(literal->opcode))) {
             if (std::optional<MappedArray> mapped = mappedArrayOf(array))
                 return sizeOf(mapped->source);
@@ -1435,7 +1962,10 @@ private:
         size_t numberOfBindings = m_bindings.size();
         for (ValueKey read : mapped->readsOfSource)
             m_bindings.append({ read, elements[0] });
+        // Without it nothing is remembered while the member is bound: `high > low` would have to work out anew what `low.toString(16)` has just worked out, and a test may follow few values.
+        beginMemoryOfChoice();
         Constants values = mapped->callback ? returnsOf(Activation { mapped->callback }) : evaluate(WhereMade(array).activation, mapped->stored);
+        m_memoriesOfChoices.removeLast();
         m_bindings.shrink(numberOfBindings);
         return values;
     }
@@ -1954,6 +2484,7 @@ private:
             // Where the inline form of a built-in is done, it has answered what the built-in answers.
             const Typed::Terminator& terminator = function.at(edge.from).terminator;
             if (terminator.kind == Typed::TerminatorKind::TryCallInline && !edge.isHandlerEdge() && !edge.targetIndex && !incoming.result.resultIndex) {
+                SetForScope blockOfReader(m_blockThatEndsInReader, std::pair { activation.function, edge.from });
                 if (!addAll(values, answersOfBuiltin(activation, ValueID(), builtinCallOf(m_program, terminator))))
                     break;
                 continue;
@@ -1983,6 +2514,11 @@ private:
         return constant.primitive.isKnown() && !constant.primitive.isObject() ? evaluateTypeTest(m_program, constant.primitive, type) : Typed::KnownBoolean::Unknown;
     }
 
+    static bool isPrimitiveAlone(const Constant& constant)
+    {
+        return constant.primitive.isKnown() && !constant.primitive.isObject() && !constant.regExp && !constant.hasElements() && !constant.function && !constant.unnamed;
+    }
+
     Typed::KnownBoolean answerOf(const Activation& activation, const Typed::Function& function, ValueID test)
     {
         const Typed::Value& value = function.at(test);
@@ -2007,39 +2543,103 @@ private:
         case Typed::Opcode::Less:
         case Typed::Opcode::LessEq:
         case Typed::Opcode::Greater:
-        case Typed::Opcode::GreaterEq: {
+        case Typed::Opcode::GreaterEq:
+        case Typed::Opcode::Eq:
+        case Typed::Opcode::StrictEq: {
             Constants left = evaluate(activation, value.leftOperand());
             Constants right = evaluate(activation, value.rightOperand());
-            if (!m_sawEverything || left.size() != 1 || right.size() != 1)
+            if (!m_sawEverything || left.size() != 1 || right.size() != 1 || !isPrimitiveAlone(left[0]) || !isPrimitiveAlone(right[0]))
                 return Typed::KnownBoolean::Unknown;
             Typed::KnownValue answer = Typed::evaluateOperation(m_program, function, value, { left[0].primitive, right[0].primitive });
-            return answer.isKnown() ? Typed::knownBoolean(answer.asBoolean()) : Typed::KnownBoolean::Unknown;
+            return answer.kind() == Typed::KnownValue::Kind::Boolean ? Typed::knownBoolean(answer.asBoolean()) : Typed::KnownBoolean::Unknown;
         }
-        default:
-            return Typed::KnownBoolean::Unknown;
+        case Typed::Opcode::LogicalNot:
+            switch (answerOf(activation, function, value.operand(0))) {
+            case Typed::KnownBoolean::Unknown:
+                return Typed::KnownBoolean::Unknown;
+            case Typed::KnownBoolean::False:
+                return Typed::KnownBoolean::True;
+            case Typed::KnownBoolean::True:
+                return Typed::KnownBoolean::False;
+            }
+            RELEASE_ASSERT_NOT_REACHED();
+        case Typed::Opcode::ToBoolean:
+            return answerOf(activation, function, value.operand(0));
+        default: {
+            // `text ? "|" : ""`, `if (index)`: whatever else a branch tests is tested for being true.
+            Constants constants = evaluate(activation, test);
+            Typed::KnownBoolean common = Typed::KnownBoolean::Unknown;
+            if (!m_sawEverything)
+                return common;
+            for (const Constant& constant : constants) {
+                Typed::KnownBoolean one = isPrimitiveAlone(constant) ? constant.primitive.toBoolean(m_program) : Typed::KnownBoolean::Unknown;
+                if (one == Typed::KnownBoolean::Unknown || (common != Typed::KnownBoolean::Unknown && one != common))
+                    return Typed::KnownBoolean::Unknown;
+                common = one;
+            }
+            return common;
+        }
         }
     }
 
+    // Nothing goes along an edge that the test at its beginning points away from, nor along one that begins in a block that nothing comes to. Between a test and the place where its arms meet
+    // there may stand more than a jump: a call with a rare way round it, or a block that two copies of one path share.
     bool isRuledOut(const Activation& activation, const Typed::Function& function, const Typed::CFG& cfg, Typed::Edge edge)
     {
-        if (function.at(edge.from).terminator.kind == Typed::TerminatorKind::Jump) {
-            std::span<const Typed::Edge> ways = cfg.incomingEdges(edge.from);
-            if (ways.size() != 1)
-                return false;
-            edge = ways[0];
+        // The test of a loop has another answer in each turn, and which turn is meant is known to whoever follows the loop alone: in a function with a loop only the test right in front is asked.
+        if (cfg.hasCycle()) {
+            if (function.at(edge.from).terminator.kind == Typed::TerminatorKind::Jump) {
+                std::span<const Typed::Edge> ways = cfg.incomingEdges(edge.from);
+                if (ways.size() != 1)
+                    return false;
+                edge = ways[0];
+            }
+            return isRuledOutByTest(activation, function, edge, TestsWithinTest::Few);
         }
+        // Two ways that part at a test meet again, so a row of tests has twice as many ways for each test: a block is asked once.
+        Vector<Typed::KnownBoolean, 32> isOutOfReach;
+        isOutOfReach.fill(Typed::KnownBoolean::Unknown, function.blocks.size());
+        return isRuledOut(activation, function, cfg, edge, isOutOfReach);
+    }
+
+    bool isRuledOut(const Activation& activation, const Typed::Function& function, const Typed::CFG& cfg, Typed::Edge edge, Vector<Typed::KnownBoolean, 32>& isOutOfReach)
+    {
+        if (isRuledOutByTest(activation, function, edge, TestsWithinTest::AsManyAsBudgetAllows))
+            return true;
+        Typed::KnownBoolean& answer = isOutOfReach[edge.from.index()];
+        if (answer != Typed::KnownBoolean::Unknown)
+            return answer == Typed::KnownBoolean::True;
+        std::span<const Typed::Edge> ways = cfg.incomingEdges(edge.from);
+        if (ways.empty() || !mayFollowAnotherValue())
+            return false;
+        bool nothingComes = std::ranges::all_of(ways, [&](Typed::Edge way) {
+            return isRuledOut(activation, function, cfg, way, isOutOfReach);
+        });
+        isOutOfReach[edge.from.index()] = Typed::knownBoolean(nothingComes);
+        return nothingComes;
+    }
+
+    enum class TestsWithinTest : bool { Few, AsManyAsBudgetAllows };
+
+    bool isRuledOutByTest(const Activation& activation, const Typed::Function& function, Typed::Edge edge, TestsWithinTest testsWithinTest)
+    {
         const Typed::Terminator& terminator = function.at(edge.from).terminator;
         if ((terminator.kind != Typed::TerminatorKind::TestAndBranch && terminator.kind != Typed::TerminatorKind::Branch) || edge.isHandlerEdge())
             return false;
-        // The operands of a test are walked with a small part of the walk's budget, and few tests deep: a test in a loop asks for the loop's own values.
-        if (m_testsBeingAnswered == maxTestsBeingAnswered)
+        // The operands of a test are walked with a small part of the walk's budget, and few tests deep: a test in a loop asks for the loop's own values. Where there is no loop a test within a
+        // test draws on the part that the outer one has: `high > low` behind a test for what kind of value `high` is.
+        if (testsWithinTest == TestsWithinTest::Few && m_testsBeingAnswered >= maxTestsBeingAnswered)
             return false;
         SetForScope testsBeingAnswered(m_testsBeingAnswered, m_testsBeingAnswered + 1);
         unsigned valuesFollowedBefore = m_valuesFollowed;
         unsigned walksCutShortBefore = m_walksCutShort;
+        std::optional<Split> splitBefore = m_split;
         SetForScope budget(m_budget, std::min(m_budget, m_valuesFollowed + maxValuesFollowedForTest));
         Typed::KnownBoolean answer = answerOf(activation, function, terminator.conditionOperand());
         if (m_valuesFollowed > m_budget) {
+            // `if (row.mark === undefined)` in a function that is handed the rows of a table: the test has come through as many rows as it may follow values. They are not all the rows there are,
+            // and whoever went through them one at a time would take them for all.
+            m_split = WTF::move(splitBefore);
             m_valuesFollowed = valuesFollowedBefore + maxValuesFollowedForTest;
             m_walksCutShort = walksCutShortBefore;
             return false;
@@ -2056,10 +2656,13 @@ private:
                 return { };
             return evaluate(*activation.caller, arguments[index]);
         }
+        m_tookArgumentsOfAllCallersTogether = true;
         // Other operations may enter the function too, unless the call graph has found that nothing but direct calls names it.
         m_sawEverything &= m_callGraph.entrySet(activation.function) == Typed::EntrySet::DirectCallers;
         Constants values;
-        for (const DirectCall& call : std::ranges::equal_range(m_directCalls, activation.function, { }, &DirectCall::callee)) {
+        auto callers = std::ranges::equal_range(m_directCalls, activation.function, { }, &DirectCall::callee);
+        m_callersAreTooManyForOneWalk |= !m_testsBeingAnswered && m_valuesFollowed < m_budget && callers.size() > m_budget - m_valuesFollowed;
+        for (const DirectCall& call : callers) {
             // Nothing can be followed any more, and a function may have thousands of callers.
             if (m_valuesFollowed >= m_budget) {
                 ++m_valuesFollowed;
@@ -2173,7 +2776,7 @@ private:
                 }
             }
             if (mayRemember && m_walksCutShort == walksCutShortBefore && !m_split)
-                m_remembered.add(memoKey, makeUniqueWithoutFastMallocCheck<Remembered>(Remembered { values, m_sawEverything, std::nullopt }));
+                m_remembered.add(memoKey, makeUniqueWithoutFastMallocCheck<Remembered>(Remembered { values, m_sawEverything, std::nullopt, m_tookArgumentsOfAllCallersTogether }));
             return values;
         }
         default:
@@ -2251,29 +2854,61 @@ private:
         return (value.opcode == Typed::Opcode::Call || value.opcode == Typed::Opcode::CallResolved) && throughCasts(function, value.calleeOperand()) == callee;
     }
 
-    Constants answersOfMethodOfText(const Activation& activation, const Typed::Function& function, const Typed::Value& call)
-    {
+    struct MethodCalled {
         ValueID receiver;
         Typed::PropertyKeyID key;
-        if (call.opcode == Typed::Opcode::CallMethod) {
-            receiver = call.receiverOperand();
-            key = call.key();
-        } else if (const Typed::Value& read = function.at(throughCasts(function, call.calleeOperand())); read.opcode == Typed::Opcode::PropGet && call.thisValueOperand()) {
-            if (throughCasts(function, read.objectOperand()) == throughCasts(function, call.thisValueOperand())) {
-                receiver = call.thisValueOperand();
-                key = read.key();
-            }
-        }
+    };
+
+    // `receiver.key(..)`, however it is written in the operations.
+    static MethodCalled methodCalledBy(const Typed::Function& function, const Typed::Value& call)
+    {
+        if (call.opcode == Typed::Opcode::CallMethod)
+            return { call.receiverOperand(), call.key() };
+        if (call.opcode != Typed::Opcode::Call)
+            return { };
+        // Between the read of the member and the call may stand a test for what kind of value the receiver is.
+        if (call.calleeKey() && call.thisValueOperand())
+            return { call.thisValueOperand(), call.calleeKey() };
+        const Typed::Value& read = function.at(throughCasts(function, call.calleeOperand()));
+        if (read.opcode == Typed::Opcode::PropGet && call.thisValueOperand() && throughCasts(function, read.objectOperand()) == throughCasts(function, call.thisValueOperand()))
+            return { call.thisValueOperand(), read.key() };
+        return { };
+    }
+
+    // A list that the program writes out, with what it holds in sight and no member of that name of its own. The built-in objects are read-only in a compiled program, so its methods are
+    // Array.prototype's, whatever else the analysis of the whole program thinks may stand at the call.
+    bool isListWithMethodsOfArrays(const Constant& receiver, Typed::PropertyKeyID key)
+    {
+        if (!receiver.hasElements() || sizeOf(receiver) == notFound)
+            return false;
+        if (!receiver.literal)
+            return true;
+        bool sawEverythingBefore = m_sawEverything;
+        bool hasOwnMember = !valuesWrittenUnder(receiver, key).isEmpty();
+        m_sawEverything = sawEverythingBefore;
+        return !hasOwnMember;
+    }
+
+    // The analysis of the whole program may not know what is called where this walk knows the receiver.
+    Constants answersOfMethodOfText(const Activation& activation, const Typed::Function& function, const Typed::Value& call)
+    {
+        auto [receiver, key] = methodCalledBy(function, call);
         if (!receiver || !key)
             return { };
         Constants receivers = evaluate(activation, receiver);
         bool areTexts = !receivers.isEmpty() && std::ranges::all_of(receivers, [](const Constant& receiver) {
             return receiver.primitive.kind() == Typed::KnownValue::Kind::String;
         });
-        if (!areTexts)
+        bool areNumbers = !receivers.isEmpty() && std::ranges::all_of(receivers, [](const Constant& receiver) {
+            return receiver.primitive.isNumber();
+        });
+        bool areLists = !areTexts && !areNumbers && !receivers.isEmpty() && std::ranges::all_of(receivers, [&](const Constant& receiver) {
+            return isListWithMethodsOfArrays(receiver, key);
+        });
+        if (!areTexts && !areNumbers && !areLists)
             return { };
         const BuiltinTable& table = m_program.builtins();
-        for (BuiltinID member : table.membersOf(Builtins::StringPrototype)) {
+        for (BuiltinID member : table.membersOf(areTexts ? Builtins::StringPrototype : areNumbers ? Builtins::NumberPrototype : Builtins::ArrayPrototype)) {
             if (m_program.keyOf(table.at(member).name) != key)
                 continue;
             for (BuiltinOverloadID overload : table.overloadIDsOf(table.canonicalID(member))) {
@@ -2480,11 +3115,15 @@ private:
         for (const Constants& alternatives : operands) {
             choices *= alternatives.size();
             operandsWithAlternatives += alternatives.size() > 1;
-            if (!choices || choices > maxAlternatives())
+            if (operandsWithAlternatives > 1) {
+                note(Cause::Alternatives, { }, { });
+                m_didNotMultiplyAlternatives = true;
+            }
+            if (!choices || operandsWithAlternatives > 1)
                 break;
         }
         // Alternatives of one operand are an enumeration: callers, stores, rows. Alternatives of two, multiplied, are mostly texts that nobody makes.
-        bool isWithinLimits = choices && choices <= maxAlternatives() && operandsWithAlternatives <= 1;
+        bool isWithinLimits = choices && operandsWithAlternatives <= 1;
         Vector<Constant, 8> choice(isWithinLimits ? operands.size() : 0);
         for (uint64_t number = 0; isWithinLimits && number < choices; ++number) {
             uint64_t rest = number;
@@ -2500,9 +3139,12 @@ private:
         return isWithinLimits;
     }
 
+    // A text that is longer than the longest pattern that gets code is not made: nothing would come of it. A byte is counted as a character, which errs to the safe side for wide texts.
+    bool isTooLongForPattern(uint64_t length) { return m_context.exceeds(LimitID::RegExpPatternLengthWithCode, length, m_subject); }
+
     std::optional<Constant> textWithinLimit(StringBuilder& builder)
     {
-        if (builder.hasOverflowed() || m_context.exceeds(LimitID::RegExpCandidateTextLength, builder.length() * sizeof(char16_t), m_subject))
+        if (builder.hasOverflowed() || isTooLongForPattern(builder.length()))
             return std::nullopt;
         return Constant { Typed::KnownValue::string(m_strings.intern(builder.toString())) };
     }
@@ -2526,6 +3168,7 @@ private:
     // `id` is the operation that calls. A terminator that calls has none.
     Constants answersOfBuiltin(const Activation& activation, ValueID id, const Typed::BuiltinCall& call)
     {
+        SetForScope writeBeingFollowed(m_writeBeingFollowed, std::pair { activation.function, id });
         const BuiltinTable& table = m_program.builtins();
         const BuiltinOverload& overload = table.at(call.overload);
         BuiltinID callee = table.canonicalID(overload.builtin);
@@ -2551,12 +3194,36 @@ private:
             }
             return sources;
         }
+        if (overload.mode == BuiltinCallMode::Get && callee == Builtins::RegExpPrototypeFlags) {
+            Constants texts;
+            for (const Constant& receiver : evaluate(activation, call.receiver)) {
+                if (!receiver.regExp)
+                    m_sawEverything = false;
+                else if (!add(texts, Constant { Typed::KnownValue::string(m_strings.intern(StringView(Yarr::flagsString(toYarrFlags(receiver.regExp->flags())).span()))) }))
+                    return { };
+            }
+            return texts;
+        }
         if (callee == Builtins::RegExp)
             return createdBy(activation, call);
         if (overload.mode == BuiltinCallMode::Call && callee == Builtins::ArrayPrototypeMap && !call.arguments.empty())
             return id ? Constants { literalIn(activation, id) } : Constants();
         if (overload.mode == BuiltinCallMode::Call && callee == Builtins::ObjectFreeze && call.arguments.size() == 1)
             return evaluate(activation, call.arguments[0]);
+        bool isGivenFunction = callee == Builtins::ArrayPrototypeFilter || callee == Builtins::ArrayPrototypeSort || callee == Builtins::ArrayPrototypeToSorted;
+        if (overload.mode == BuiltinCallMode::Call && isGivenFunction && !call.arguments.empty())
+            return answersOfMethodGivenFunction(activation, callee, call.receiver, call.arguments[0]);
+        if (overload.mode == BuiltinCallMode::Call && callee == Builtins::ObjectKeys && call.arguments.size() == 1) {
+            Constants lists;
+            for (const Constant& object : evaluate(activation, call.arguments[0])) {
+                std::optional<Vector<StringID>> names = namesOf(object);
+                if (!names)
+                    m_sawEverything = false;
+                else if (!add(lists, listOf(WTF::move(*names))))
+                    return { };
+            }
+            return lists;
+        }
         if (overload.mode == BuiltinCallMode::Call && callee == Builtins::ArrayPrototypeJoin && call.arguments.size() <= 1) {
             Constants arrays = evaluate(activation, call.receiver);
             return joined(arrays, evaluate(activation, call.arguments.empty() ? ValueID() : call.arguments[0]));
@@ -2565,11 +3232,22 @@ private:
             return rawTextsOf(activation, call.arguments);
         // split() makes a new list each time. The texts in it depend on the operands alone.
         bool dependsOnOperandsAlone = table.at(callee).flags.contains(BuiltinFlag::IsDeterministic) || callee == Builtins::NumberPrototypeToString || callee == Builtins::StringPrototypeSplit;
-        if (overload.mode != BuiltinCallMode::Call || !dependsOnOperandsAlone || !call.receiver)
+        // What these answer of a list of texts is a text, a number or a list of texts again. One that puts its own list in order answers that list, and whoever goes on with the answer has it.
+        static constexpr std::array methodsOfLists {
+            Builtins::ArrayPrototypeSlice, Builtins::ArrayPrototypeConcat, Builtins::ArrayPrototypeFlat, Builtins::ArrayPrototypeAt, Builtins::ArrayPrototypeWith,
+            Builtins::ArrayPrototypeToReversed, Builtins::ArrayPrototypeReverse, Builtins::ArrayPrototypeIndexOf, Builtins::ArrayPrototypeLastIndexOf, Builtins::ArrayPrototypeIncludes,
+        };
+        dependsOnOperandsAlone |= std::ranges::contains(methodsOfLists, callee);
+        // With a function that compares, the order is that function's.
+        dependsOnOperandsAlone |= (callee == Builtins::ArrayPrototypeSort || callee == Builtins::ArrayPrototypeToSorted) && call.arguments.empty();
+        // These are asked of their constructor or of Math, which has no part in the answer.
+        bool isMakerOfText = callee == Builtins::StringFromCharCode || callee == Builtins::StringFromCodePoint || callee == Builtins::RegExpEscape
+            || (dependsOnOperandsAlone && !overload.receiver);
+        if (overload.mode != BuiltinCallMode::Call || (isMakerOfText ? call.arguments.empty() : !dependsOnOperandsAlone || !call.receiver))
             return { };
 
         Vector<Constants, 4> operands;
-        operands.append(evaluate(activation, call.receiver));
+        operands.append(isMakerOfText ? Constants { Constant { Typed::KnownValue::undefined() } } : evaluate(activation, call.receiver));
         for (ValueID argument : call.arguments)
             operands.append(evaluate(activation, argument));
         return answersOf(callee, WTF::move(operands));
@@ -2583,6 +3261,30 @@ private:
             return index < value.numberOfOperands() ? evaluate(activation, value.operand(index)) : Constants();
         case Typed::Opcode::StringRange:
             return boundsOf(activation, value, index);
+        case Typed::Opcode::PropGetPair: {
+            // Two reads of members in one operation: `row.name` and `row.open`, `a.b` and `c.d`, or `a.b` and `a.b.c`.
+            if (!index || value.readsFromFirstResult()) {
+                Constants first = fieldsOf(evaluate(activation, value.objectOperand()), value.key());
+                return index ? fieldsOf(first, value.secondKey()) : first;
+            }
+            return fieldsOf(evaluate(activation, value.otherOperand() ? value.otherOperand() : value.objectOperand()), value.secondKey());
+        }
+        case Typed::Opcode::DestructureIterable: {
+            // `([low, high]) => ..` where the analysis of the whole program does not know that a list is handed in. The built-in objects are read-only in a compiled program, so going through a
+            // list that has no members of its own but its elements gives its elements.
+            Constants lists = evaluate(activation, value.operand(0));
+            bool areLists = !lists.isEmpty() && std::ranges::all_of(lists, [&](const Constant& list) {
+                return list.hasElements() && sizeOf(list) != notFound;
+            });
+            if (!areLists)
+                return { };
+            Constants members;
+            for (const Constant& list : lists) {
+                if (!addAll(members, index < sizeOf(list) ? elementOf(list, index) : Constants { Constant { Typed::KnownValue::undefined() } }))
+                    return { };
+            }
+            return members;
+        }
         case Typed::Opcode::CallDirect: {
             FunctionID callee = value.function();
             const Typed::Function& body = m_program.at(callee);
@@ -2704,47 +3406,229 @@ private:
     // The texts together are no longer than the operands they were cut from, which are within the limit.
     Constant listOf(std::span<const String> texts)
     {
-        Vector<StringID> list(texts.size(), [&](size_t index) {
+        return listOf(Vector<StringID>(texts.size(), [&](size_t index) {
             return m_strings.intern(StringView(texts[index]));
-        });
+        }));
+    }
+
+    Constant listOf(Vector<StringID>&& list)
+    {
         auto [known, isNew] = m_placesOfListsOfTexts.try_emplace(std::vector<StringID>(list.begin(), list.end()), static_cast<uint32_t>(m_listsOfTexts.size() + 1));
         if (isNew)
             m_listsOfTexts.append(WTF::move(list));
         return Constant { .listOfTexts = known->second };
     }
 
+    // The names of an object in the order in which Object.keys() lists them, where they are the names that its literal writes. A name that is a number comes in front of the others, wherever it
+    // is written: such an object is left alone.
+    std::optional<Vector<StringID>> namesOf(const Constant& object)
+    {
+        Vector<StringID> names;
+        Vector<char16_t> buffer;
+        auto addName = [&](Typed::PropertyKeyID key) {
+            // A field of a layout need not have a name.
+            if (!key)
+                return false;
+            const Typed::PropertyKey& name = m_program.at(key);
+            if (name.kind != Typed::PropertyKeyKind::Text)
+                return false;
+            StringView text = m_program.strings.viewOf(name.text, buffer);
+            if (text.isEmpty() || isASCIIDigit(text[0]))
+                return false;
+            if (!names.contains(name.text))
+                names.append(name.text);
+            return true;
+        };
+        if (const Typed::DataNode::Object* data = object.data ? object.data->tryAs<Typed::DataNode::Object>() : nullptr) {
+            for (const Typed::DataMember& member : data->members) {
+                if (!addName(member.key))
+                    return std::nullopt;
+            }
+            return names;
+        }
+        const Typed::Value* literal = object.literal ? &m_program.at(object.function).at(object.literal) : nullptr;
+        if (!literal || literal->opcode != Typed::Opcode::NewObject)
+            return std::nullopt;
+        const Typed::Layout& layout = m_program.at(literal->layout());
+        for (uint32_t field : literal->fields()) {
+            if (!addName(layout.fields[field].key))
+                return std::nullopt;
+        }
+        const Typed::Function& maker = m_program.at(object.function);
+        for (const Typed::Value& value : maker.values) {
+            if (value.opcode == Typed::Opcode::CopyDataProperties && throughCasts(maker, value.targetOperand()) == object.literal)
+                return std::nullopt;
+            bool namesObject = (value.opcode == Typed::Opcode::PropDefine || value.opcode == Typed::Opcode::PropSet) && throughCasts(maker, value.objectOperand()) == object.literal;
+            if (namesObject && !addName(value.key()))
+                return std::nullopt;
+        }
+        return names;
+    }
+
+    // The function of the program that a value is: one that is declared, or a closure that is made in sight.
+    FunctionID functionWithBodyOf(const Constant& callback)
+    {
+        FunctionID function = callback.declaration;
+        if (callback.literal) {
+            const Typed::Value& closure = m_program.at(callback.function).at(callback.literal);
+            if (closure.opcode == Typed::Opcode::NewClosure)
+                function = closure.function();
+        }
+        return function && m_program.at(function).hasBody() ? function : FunctionID();
+    }
+
+    // What the function answers when it is called with these texts. It may take fewer than it is given.
+    Constants answersOfCallback(FunctionID callback, std::initializer_list<StringID> given)
+    {
+        const Typed::Function& body = m_program.at(callback);
+        std::span<const ValueID> parameters = body.blocks.first().parameters.span();
+        size_t numberOfBindings = m_bindings.size();
+        size_t index = body.firstParameterIndex();
+        for (StringID text : given) {
+            if (index < parameters.size())
+                m_bindings.append({ ValueKey { callback, parameters[index++] }, Constant { Typed::KnownValue::string(text) } });
+        }
+        bool sawEverythingBefore = std::exchange(m_sawEverything, true);
+        beginMemoryOfChoice();
+        Constants answers = returnsOf(Activation { callback });
+        m_memoriesOfChoices.removeLast();
+        if (!m_sawEverything)
+            answers.clear();
+        m_sawEverything = sawEverythingBefore;
+        m_bindings.shrink(numberOfBindings);
+        return answers;
+    }
+
+    Constants filtered(const Constants& arrays, const Constants& callbacks, bool keepsWhatIsTrue)
+    {
+        FunctionID callback = callbacks.size() == 1 ? functionWithBodyOf(callbacks[0]) : FunctionID();
+        Constants lists;
+        Vector<char16_t> buffer;
+        for (const Constant& array : arrays) {
+            std::optional<Vector<StringID>> texts = callback || keepsWhatIsTrue ? textsOf(array) : std::nullopt;
+            bool isKnown = !!texts;
+            Vector<StringID> kept;
+            for (size_t index = 0; isKnown && index < texts->size(); ++index) {
+                Typed::KnownBoolean common = Typed::KnownBoolean::Unknown;
+                if (keepsWhatIsTrue)
+                    common = Typed::knownBoolean(!m_program.strings.viewOf(texts->at(index), buffer).isEmpty());
+                else {
+                    for (const Constant& answer : answersOfCallback(callback, { texts->at(index) })) {
+                        Typed::KnownBoolean one = isPrimitiveAlone(answer) ? answer.primitive.toBoolean(m_program) : Typed::KnownBoolean::Unknown;
+                        if (one == Typed::KnownBoolean::Unknown || (common != Typed::KnownBoolean::Unknown && one != common)) {
+                            common = Typed::KnownBoolean::Unknown;
+                            break;
+                        }
+                        common = one;
+                    }
+                }
+                isKnown = common != Typed::KnownBoolean::Unknown;
+                if (common == Typed::KnownBoolean::True)
+                    kept.append(texts->at(index));
+            }
+            if (!isKnown)
+                m_sawEverything = false;
+            else if (!add(lists, listOf(WTF::move(kept))))
+                return { };
+        }
+        return lists;
+    }
+
+    // The order is that of any sort that leaves equal members as they stood, which is what the language asks for, as long as the function compares the same way each time.
+    Constants sortedBy(const Constants& arrays, const Constants& callbacks)
+    {
+        FunctionID callback = callbacks.size() == 1 ? functionWithBodyOf(callbacks[0]) : FunctionID();
+        Constants lists;
+        for (const Constant& array : arrays) {
+            std::optional<Vector<StringID>> texts = callback ? textsOf(array) : std::nullopt;
+            bool isKnown = !!texts;
+            if (isKnown) {
+                AOT::stableSort(*texts, [&](StringID first, StringID second) {
+                    if (!isKnown)
+                        return false;
+                    Constants answers = answersOfCallback(callback, { first, second });
+                    if (answers.size() != 1 || !isPrimitiveAlone(answers[0]) || !answers[0].primitive.isNumber() || std::isnan(answers[0].primitive.asNumber())) {
+                        isKnown = false;
+                        return false;
+                    }
+                    return answers[0].primitive.asNumber() < 0;
+                });
+            }
+            if (!isKnown)
+                m_sawEverything = false;
+            else if (!add(lists, listOf(WTF::move(*texts))))
+                return { };
+        }
+        return lists;
+    }
+
+    Constants answersOfMethodGivenFunction(const Activation& activation, BuiltinID method, ValueID receiver, ValueID given)
+    {
+        if (method != Builtins::ArrayPrototypeFilter)
+            return sortedBy(evaluate(activation, receiver), evaluate(activation, given));
+        const Typed::Function& function = m_program.at(activation.function);
+        const Typed::Value& callback = function.at(throughCasts(function, given));
+        bool keepsWhatIsTrue = callback.opcode == Typed::Opcode::Builtin && m_program.builtins().canonicalID(callback.builtin()) == Builtins::Boolean;
+        return filtered(evaluate(activation, receiver), keepsWhatIsTrue ? Constants() : evaluate(activation, given), keepsWhatIsTrue);
+    }
+
+    // The members of an array of which each is one known text.
+    std::optional<Vector<StringID>> textsOf(const Constant& array)
+    {
+        size_t size = array.hasElements() ? sizeOf(array) : notFound;
+        if (size == notFound || size > maxValuesFollowed)
+            return std::nullopt;
+        Vector<StringID> texts;
+        for (size_t index = 0; index < size; ++index) {
+            Constants member = elementOf(array, index);
+            if (member.size() != 1 || !isPrimitiveAlone(member[0]) || member[0].primitive.kind() != Typed::KnownValue::Kind::String)
+                return std::nullopt;
+            texts.append(member[0].primitive.asString());
+        }
+        return texts;
+    }
+
     Constants answersOf(BuiltinID callee, Vector<Constants, 4>&& operands)
     {
         Constants answers;
         addAnswerForEachChoice(answers, operands.span(), [&](std::span<const Constant> choice) -> std::optional<Constant> {
-            if (choice[0].primitive.kind() != Typed::KnownValue::Kind::String && !choice[0].primitive.isNumber())
+            if (choice[0].primitive.kind() != Typed::KnownValue::Kind::String && !choice[0].primitive.isNumber() && !choice[0].hasElements() && choice[0].primitive.kind() != Typed::KnownValue::Kind::Undefined)
                 return std::nullopt;
             uint64_t bytes = 0;
-            double largestNumber = 1;
             Vector<Typed::ScratchRealm::Operand, 4> arguments;
+            Vector<Vector<StringID>, 2> lists;
+            lists.reserveInitialCapacity(choice.size());
             for (const Constant& operand : choice) {
-                if (operand.isObjectOrArray() || (!operand.regExp && !operand.primitive.isKnown()))
+                if (operand.hasElements()) {
+                    std::optional<Vector<StringID>> texts = textsOf(operand);
+                    if (!texts)
+                        return std::nullopt;
+                    for (StringID text : *texts)
+                        bytes += m_program.string(text).size();
+                    lists.append(WTF::move(*texts));
+                    arguments.append(Typed::ScratchRealm::Operand { { }, std::nullopt, lists.last().span() });
+                    continue;
+                }
+                if (!operand.regExp && !operand.primitive.isKnown())
                     return std::nullopt;
                 arguments.append(Typed::ScratchRealm::Operand { operand.primitive, operand.regExp });
                 bytes += bytesOf(operand);
-                if (operand.primitive.isNumber())
-                    largestNumber = std::max(largestNumber, operand.primitive.asNumber());
             }
-            // A number among the operands may set the length of the answer: a count, a length. The limit is asked before the answer is made.
-            double bytesOfAnswer = static_cast<double>(bytes) * largestNumber;
-            if (bytesOfAnswer >= static_cast<double>(std::numeric_limits<uint32_t>::max()) || m_context.exceeds(LimitID::RegExpCandidateTextLength, static_cast<uint64_t>(bytesOfAnswer), m_subject))
+            double firstArgument = choice.size() > 1 && choice[1].primitive.isNumber() ? choice[1].primitive.asNumber() : 1;
+            double bytesOfAnswer = Typed::ScratchRealm::bytesOfAnswerSetByNumber(callee, bytes, firstArgument);
+            if (bytesOfAnswer >= static_cast<double>(std::numeric_limits<uint32_t>::max()) || isTooLongForPattern(static_cast<uint64_t>(bytesOfAnswer)))
                 return std::nullopt;
             if (!m_scratchRealm)
                 m_scratchRealm.emplace();
             Vector<String> listOfTexts;
-            std::optional<Typed::ScratchRealm::Answer> answer = m_scratchRealm->call(m_program, callee, choice[0].primitive, arguments.span().subspan(1), &listOfTexts);
+            std::optional<Typed::ScratchRealm::Answer> answer = m_scratchRealm->call(m_program, callee, arguments[0], arguments.span().subspan(1), &listOfTexts);
             if (!answer)
                 return std::nullopt;
             if (answer->text.isNull() && !answer->primitive.isKnown())
                 return listOf(listOfTexts.span());
             if (answer->text.isNull())
                 return Constant { answer->primitive };
-            if (m_context.exceeds(LimitID::RegExpCandidateTextLength, answer->text.sizeInBytes(), m_subject))
+            if (isTooLongForPattern(answer->text.length()))
                 return std::nullopt;
             return Constant { Typed::KnownValue::string(m_strings.intern(StringView(answer->text))) };
         });
@@ -2777,12 +3661,13 @@ private:
         Constants texts;
         addAnswerForEachChoice(texts, operands.span(), [&](std::span<const Constant> choice) -> std::optional<Constant> {
             uint64_t bytes = 0;
+            // A member that a row of a table lacks is printed into a template as "undefined", and null and a boolean have their texts too.
             for (const Constant& operand : choice) {
-                if (operand.primitive.kind() != Typed::KnownValue::Kind::String && !operand.primitive.isNumber())
+                if (!isPrimitiveAlone(operand))
                     return std::nullopt;
                 bytes += bytesOf(operand);
             }
-            if (m_context.exceeds(LimitID::RegExpCandidateTextLength, bytes, m_subject))
+            if (isTooLongForPattern(bytes))
                 return std::nullopt;
             uint32_t next = 0;
             Typed::KnownValue text = evaluateStringOperation(m_program, m_strings, m_program.at(activation.function), value, [&](ValueID) {
@@ -2803,8 +3688,8 @@ private:
     std::map<std::pair<uint32_t, const Typed::Value*>, uint32_t> m_chainsOfCalls;
     unsigned m_valuesFollowed { 0 };
     unsigned m_walksCutShort { 0 };
-    unsigned m_worlds { 0 };
     HashMap<MemoKey, std::unique_ptr<Remembered>> m_remembered;
+    HashMap<MemoKey, unsigned> m_leftWhereBudgetRanOut;
     bool m_sawEverything { true };
     std::optional<Split> m_split;
     Vector<std::pair<ValueKey, Constant>, 4> m_bindings;
@@ -2819,6 +3704,13 @@ private:
     Vector<DirectCall> m_directCalls;
     Vector<DirectCall> m_closures;
     Vector<std::unique_ptr<Vector<UseOfClosure>>> m_usesOfClosures;
+    Vector<WriteNotFollowed> m_writesNotFollowed;
+    // By the function of the library that a built-in is written in, for the built-ins whose answers are worked out here. The library's other functions, among them the forms of these that the
+    // compiler picks where it knows the function that is given, are functions like any other.
+    UncheckedKeyHashMap<uint32_t, BuiltinOverloadID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_implementedOverloads;
+    std::pair<FunctionID, ValueID> m_writeBeingFollowed;
+    // The built-in that is being answered where it ends a block and so is no value.
+    std::pair<FunctionID, Typed::BlockID> m_blockThatEndsInReader;
     Vector<FunctionID, 2> m_functionsOfMap;
     HashMap<uint64_t, Vector<ValueID>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_longLiterals;
     std::optional<Typed::ScratchRealm> m_scratchRealm;
@@ -2827,9 +3719,9 @@ private:
     HashMap<uint32_t, std::unique_ptr<Typed::CFG>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_cfgs;
     HashMap<uint32_t, Vector<BlockParameter>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_blockParameters;
     HashMap<uint32_t, Vector<uint64_t>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_places;
-    bool m_hasFoundWritesAndHoldings { false };
+    bool m_hasFoundWrites { false };
     Vector<WritingOperation> m_writingOperations;
-    Vector<Holding> m_holdings;
+    HashMap<uint32_t, Vector<Holding>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_holdings;
     std::map<std::tuple<uint32_t, uint32_t, const Typed::Value*>, std::unique_ptr<Contents>> m_contents;
     Contents m_contentsBeingFound;
 };
@@ -2902,7 +3794,7 @@ static FlagSets parseFlagSets(const Typed::Program& program, const Typed::SinkCa
     return flagSets;
 }
 
-static void reportTextKnownAtRunTime(BuildContext& context, RegExpSite site, Typed::BlockID block)
+static void reportTextKnownAtRunTime(BuildContext& context, RegExpSite site, Typed::BlockID block, StringID whyNot = { })
 {
     context.diagnostics().add(UserDiagnostic {
         .kind = UserDiagnosticKind::RegExpWithoutCode,
@@ -2910,6 +3802,7 @@ static void reportTextKnownAtRunTime(BuildContext& context, RegExpSite site, Typ
         .block = block,
         .value = site.value,
         .count = static_cast<uint32_t>(RegExpDeclineReason::TextKnownAtRunTime),
+        .text = whyNot,
         .location = site.location,
     });
 }
@@ -2935,16 +3828,13 @@ static void collectCandidates(CollectionInputs& inputs, const Typed::BuiltinCall
     const Typed::SinkCandidates& flags = candidatesOf(1);
     FlagSets flagSets = parseFlagSets(inputs.program, flags);
 
-    bool takesTextsOfFlow = !inputs.context.exceeds(LimitID::RegExpCandidatesPerSite, patterns.strings.size(), Subject { .function = site.function, .block = block, .value = site.value, .location = site.location });
-    if (takesTextsOfFlow) {
-        for (StringID pattern : patterns.strings)
-            addCandidates(inputs.program, inputs.context, RegExpRequestOrigin::Candidate, pattern, flagSets, site, found);
-        // The record of an operand that flow knows nothing about says mayBeUndefined too.
-        StringID emptyString = inputs.program.strings.emptyString();
-        if (patterns.mayBeUndefined && patterns != Typed::SinkCandidates { } && !patterns.strings.contains(emptyString))
-            addCandidates(inputs.program, inputs.context, RegExpRequestOrigin::Candidate, emptyString, flagSets, site, found);
-    }
-    bool flowKnowsEveryText = takesTextsOfFlow && patterns.isComplete;
+    for (StringID pattern : patterns.strings)
+        addCandidates(inputs.program, inputs.context, RegExpRequestOrigin::Candidate, pattern, flagSets, site, found);
+    // The record of an operand that flow knows nothing about says mayBeUndefined too.
+    StringID emptyString = inputs.program.strings.emptyString();
+    if (patterns.mayBeUndefined && patterns != Typed::SinkCandidates { } && !patterns.strings.contains(emptyString))
+        addCandidates(inputs.program, inputs.context, RegExpRequestOrigin::Candidate, emptyString, flagSets, site, found);
+    bool flowKnowsEveryText = patterns.isComplete;
     if (flowKnowsEveryText && flags.isComplete)
         return;
 
@@ -2955,6 +3845,99 @@ static void collectCandidates(CollectionInputs& inputs, const Typed::BuiltinCall
     }
     Locker locker { inputs.lock };
     inputs.callsWithUnknownText.append(CallWithUnknownText { site, block, call.arguments[0], call.arguments.size() > 1 ? call.arguments[1] : ValueID(), WTF::move(flagSets), flags.isComplete });
+}
+
+static void appendPlace(StringBuilder& builder, const Typed::Program& program, SourceLocation location)
+{
+    if (!hasModule(location)) {
+        builder.append("a place that the program's text doesn't have"_s);
+        return;
+    }
+    Typed::ModuleID module(location.module);
+    LineColumn place = program.lineColumnFor(module, location.position);
+    builder.append(program.strings.toWTFString(program.pathForLineColumns(module)), ':', place.line, ':', place.column);
+}
+
+// The message's own line says what the compiler could not follow, where that stands and where the call stands: whoever sees nothing but that line can find both.
+static void appendOperationAndPlace(StringBuilder& builder, const Typed::Program& program, const TextsFromConstants::WhyNot& whyNot)
+{
+    // A parameter has no place of its own in the program's text: its function has.
+    const Typed::Function& function = program.at(whyNot.function);
+    SourceLocation place = function.locationOf(whyNot.value);
+    if (!hasModule(place))
+        place = function.declarationLocation();
+    builder.append('(', nameOf(function.at(whyNot.value).opcode), ')');
+    if (hasModule(place)) {
+        builder.append(" at "_s);
+        appendPlace(builder, program, place);
+    }
+}
+
+static StringID describe(const Typed::Program& program, Typed::StringArena& strings, BuildContext& context, const RegExpSite& site, const TextsFromConstants::WhyNot& whyNot, std::span<const TextsFromConstants::WhyNot> furtherCauses)
+{
+    using Cause = TextsFromConstants::Cause;
+    StringBuilder builder;
+    builder.append(": its text depends on "_s);
+    switch (whyNot.cause) {
+    case Cause::None:
+        builder.append("a value that the compiler doesn't follow"_s);
+        break;
+    case Cause::Budget:
+        context.statistics().count(StatisticID::RegExpTextsLostToBudget);
+        builder.append("more values than the compiler follows"_s);
+        break;
+    case Cause::Operation:
+        context.statistics().count(StatisticID::RegExpTextsLostToOperation);
+        builder.append("an operation that the compiler doesn't follow"_s);
+        break;
+    case Cause::UnknownCode:
+        context.statistics().count(StatisticID::RegExpTextsLostToUnknownCode);
+        builder.append("the result of a call whose callee the compiler doesn't know"_s);
+        break;
+    case Cause::Builtin:
+        context.statistics().count(StatisticID::RegExpTextsLostToBuiltin);
+        builder.append("the result of a built-in that the compiler doesn't work out"_s);
+        break;
+    case Cause::Parameter:
+        context.statistics().count(StatisticID::RegExpTextsLostToParameter);
+        builder.append("a parameter, and the compiler doesn't know every argument"_s);
+        break;
+    case Cause::ResultOfFunction:
+        context.statistics().count(StatisticID::RegExpTextsLostToResultOfFunction);
+        builder.append("the result of a function that the compiler doesn't work out"_s);
+        break;
+    case Cause::Variable:
+        context.statistics().count(StatisticID::RegExpTextsLostToVariable);
+        builder.append("a variable, and the compiler doesn't know everything that is stored in it"_s);
+        break;
+    case Cause::Alternatives:
+        context.statistics().count(StatisticID::RegExpTextsLostToAlternatives);
+        builder.append("several parts that each have several values"_s);
+        break;
+    case Cause::List:
+        context.statistics().count(StatisticID::RegExpTextsLostToList);
+        builder.append("a list that is changed in a way that the compiler doesn't follow"_s);
+        break;
+    case Cause::Loop:
+        context.statistics().count(StatisticID::RegExpTextsLostToLoop);
+        builder.append("a value that a loop makes of itself"_s);
+        break;
+    case Cause::Flags:
+        context.statistics().count(StatisticID::RegExpTextsLostToFlags);
+        builder.append("flags that the compiler doesn't work out"_s);
+        break;
+    }
+    if (whyNot.function && whyNot.value) {
+        builder.append(' ');
+        appendOperationAndPlace(builder, program, whyNot);
+    }
+    for (const TextsFromConstants::WhyNot& other : furtherCauses) {
+        builder.append(", and "_s);
+        appendOperationAndPlace(builder, program, other);
+    }
+    builder.append("; the expression is made at "_s);
+    appendPlace(builder, program, site.location);
+    return strings.intern(StringView(builder.toString()));
 }
 
 static void addCandidatesFromConstants(const Typed::Program& program, const Typed::CallGraph& callGraph, Typed::StringArena& strings, BuildContext& context, Vector<CallWithUnknownText>&& calls, Vector<FoundRegExp>& found)
@@ -2969,7 +3952,7 @@ static void addCandidatesFromConstants(const Typed::Program& program, const Type
         for (const TextsFromConstants::Pattern& pattern : known.patterns)
             addCandidates(program, context, origin, pattern.text, FlagSets { pattern.flags }, call.site, found);
         if (!known.sawEveryText || known.patterns.isEmpty() || !known.sawAllFlags)
-            reportTextKnownAtRunTime(context, call.site, call.block);
+            reportTextKnownAtRunTime(context, call.site, call.block, describe(program, strings, context, call.site, known.whyNot, known.furtherCauses.span()));
     }
 }
 
@@ -3086,5 +4069,9 @@ RegExpRequests collectRegExpRequests(const Typed::Program& program, const Typed:
 }
 
 } } // namespace JSC::AOT
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

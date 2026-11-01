@@ -327,6 +327,8 @@ bool Object::defineOwnProperty(JSObject* cell, JSGlobalObject* globalObject, Pro
 {
     ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     Object* object = uncheckedDowncast<Object>(cell);
+    if (object->tryDefineAsOnTheLastObject(globalObject->vm(), name, descriptor))
+        return true;
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     const FieldData* field = object->fieldNamed(object->state(), name);
     ASSERT(!field || !field->isPrivate());
@@ -568,11 +570,51 @@ bool Object::tryDefineAbsentProperty(VM& vm, const FieldData* field, PropertyNam
     return tryAddAbsentExtraProperty(vm, name, valueOrAccessor, attributes);
 }
 
+bool Object::tryRepeat(VM& vm, const AddedExtraProperty& added, JSValue value)
+{
+    if (structureID() != added.structureBefore || orderWord() != added.orderWordBefore || isInFrame())
+        return false;
+    JSObject* extra = extraPropertiesIfMade(*this);
+    if (added.extraPropertiesBefore ? !extra || extra->structureID() != added.extraPropertiesBefore : hasExtraProperties())
+        return false;
+    validateMutation(vm, *this, added.name, ObjectMutation::AddProperty);
+    // A collection forgets the addition, and then these pointers alone keep the Structures alive.
+    auto* structureAfter = WTF::opaque(uncheckedDowncast<CompiledStructure>(added.structureAfter.decode()));
+    Structure* extraStructureAfter = WTF::opaque(added.extraPropertiesAfter.decode());
+    PropertyOffset offset = added.offset;
+    if (extra) {
+        extra->putDirectOffset(vm, offset, value);
+        extra->setStructure(vm, extraStructureAfter);
+        JSCell::setStructure(vm, structureAfter);
+    } else {
+        extra = constructEmptyObject(vm, extraStructureAfter);
+        extra->putDirectOffset(vm, offset, value);
+        setExtraProperties(vm, extra, structureAfter);
+    }
+    ensureStillAliveHere(structureAfter);
+    ensureStillAliveHere(extraStructureAfter);
+    return true;
+}
+
+bool Object::tryDefineAsOnTheLastObject(VM& vm, PropertyName name, const PropertyDescriptor& descriptor)
+{
+    if (descriptor.isAccessorDescriptor())
+        return false;
+    const AddedExtraProperty* added = state().propertyCaches->findAddedExtraProperty(structureID(), name.uid());
+    return added && added->attributes == (descriptor.attributes() & ~PropertyAttribute::Accessor) && tryRepeat(vm, *added, descriptor.value() ? descriptor.value() : jsUndefined());
+}
+
 bool Object::tryAddAbsentExtraProperty(VM& vm, PropertyName name, JSValue valueOrAccessor, unsigned attributes)
 {
+    State& state = this->state();
+    const AddedExtraProperty* seen = state.propertyCaches->findAddedExtraProperty(structureID(), name.uid());
+    if (seen && seen->attributes == attributes && tryRepeat(vm, *seen, valueOrAccessor))
+        return true;
     if (isNotExtensible())
         return false;
+    bool hadOtherCellInPlaceOfExtraProperties = hasExtraProperties() && !extraPropertiesIfMade(*this);
     JSObject* extra = extraProperties();
+    AddedExtraProperty added { .name = name.uid(), .structureBefore = structureID(), .extraPropertiesBefore = extra ? extra->structureID() : StructureID(), .orderWordBefore = orderWord(), .attributes = attributes };
     willAddExtraProperty(vm, name);
     // The first property is added before the object gets its extra properties, so the object changes Structure only once.
     bool isFirst = !extra;
@@ -585,6 +627,19 @@ bool Object::tryAddAbsentExtraProperty(VM& vm, PropertyName name, JSValue valueO
     else
         didChangeExtraProperties(vm);
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Add, name.uid());
+
+    if (attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue) || hadOtherCellInPlaceOfExtraProperties || hasOutOfLineKeyOrder() || !layout().extraPropertiesSlot() || isInFrame())
+        return true;
+    Structure* extraStructure = extra->structure();
+    if (orderWord() != (added.orderWordBefore | orderWordHasExtraProperties) || structure()->mayBePrototype() || extraStructure->isDictionary())
+        return true;
+    unsigned attributesFound;
+    added.offset = extraStructure->get(vm, name, attributesFound);
+    if (!isValidOffset(added.offset) || !isInlineOffset(added.offset) || attributesFound != attributes)
+        return true;
+    added.structureAfter = structureID();
+    added.extraPropertiesAfter = extraStructure->id();
+    state.propertyCaches->remember(added);
     return true;
 }
 

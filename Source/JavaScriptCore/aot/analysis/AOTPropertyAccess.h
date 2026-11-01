@@ -111,6 +111,8 @@ PropertyKeyID keyOfNamedAccess(const Program&, const Value& access);
 enum class ExpectedClassObjects : uint8_t { Ignored, Tested };
 
 enum class PredictedReceivers : uint8_t { Listed, LeftOut };
+// What the plan finds is this instance's: a closure, a variable, a bit of a class. So is the key where the program creates it: each realm has its own symbol.
+bool isBoundToInstance(const Program&, const PropertyAccessQuery&, const PropertyAccessPlan&);
 std::optional<PropertyAccessQuery> propertyAccessQueryOf(const Program&, const Function&, const Value& access, ExpectedClassObjects = ExpectedClassObjects::Ignored, PredictedReceivers = PredictedReceivers::Listed);
 bool isAllocationListing(const Program&, const Function&, ValueID object, PropertyKeyID);
 bool isUnfinishedAllocationLeavingOut(const Program&, const Function&, ValueID object, PropertyKeyID);

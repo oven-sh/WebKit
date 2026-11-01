@@ -45,6 +45,7 @@ struct SlotInReceivers {
     LayoutID memberWithRemovedField;
     LayoutID memberWithAccessor;
     LayoutID memberWithValue;
+    LayoutID memberBelowAccessor;
     bool isAlwaysFilled { true };
     bool mayHoldDeferredClosure { false };
 };

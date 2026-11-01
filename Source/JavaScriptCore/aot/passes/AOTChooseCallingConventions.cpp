@@ -486,51 +486,33 @@ static void collectTailCallSitesOf(const Program& program, FunctionID caller, Ve
     });
 }
 
-class EntryParameterFinder {
-public:
-    explicit EntryParameterFinder(const Function& function)
-        : m_function(function)
-    {
-    }
-
-    std::optional<uint32_t> indexOf(ValueID value)
-    {
-        for (size_t remainingSteps = m_function.values.size(); remainingSteps--;) {
-            ValueID root = sameObjectThroughCasts(m_function, value).valueInFrontOfFacts();
-            if (m_function.at(root).opcode != Opcode::Parameter)
-                return std::nullopt;
-            if (size_t index = m_function.at(entryBlock).parameters.find(root); index != notFound)
-                return static_cast<uint32_t>(index);
-            findNarrowedCopies();
-            auto subject = m_subjectOfNarrowedCopy.find(root.index());
-            if (subject == m_subjectOfNarrowedCopy.end())
-                return std::nullopt;
-            value = subject->value;
-        }
-        return std::nullopt;
-    }
-
-private:
-    void findNarrowedCopies()
-    {
-        if (std::exchange(m_didFindNarrowedCopies, true))
-            return;
-        for (uint32_t block = 0; block < m_function.blocks.size(); ++block) {
-            forEachEdgeResult(m_function, BlockID(block), [&](const EdgeResult& result, ValueID parameter) {
-                if (result.kind == EdgeResultKind::NarrowedOperand)
-                    m_subjectOfNarrowedCopy.add(parameter.index(), result.subject);
-            });
-        }
-    }
-
-    const Function& m_function;
-    UncheckedKeyHashMap<uint32_t, ValueID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_subjectOfNarrowedCopy;
-    bool m_didFindNarrowedCopies { false };
-};
-
-std::optional<uint32_t> entryParameterIndexOf(const Function& function, ValueID value)
+std::optional<uint32_t> EntryParameterFinder::indexOf(ValueID value)
 {
-    return EntryParameterFinder(function).indexOf(value);
+    for (size_t remainingSteps = m_function.values.size(); remainingSteps--;) {
+        ValueID root = sameObjectThroughCasts(m_function, value).valueInFrontOfFacts();
+        if (m_function.at(root).opcode != Opcode::Parameter)
+            return std::nullopt;
+        if (size_t index = m_function.at(entryBlock).parameters.find(root); index != notFound)
+            return static_cast<uint32_t>(index);
+        findNarrowedCopies();
+        auto subject = m_subjectOfNarrowedCopy.find(root.index());
+        if (subject == m_subjectOfNarrowedCopy.end())
+            return std::nullopt;
+        value = subject->value;
+    }
+    return std::nullopt;
+}
+
+void EntryParameterFinder::findNarrowedCopies()
+{
+    if (std::exchange(m_didFindNarrowedCopies, true))
+        return;
+    for (uint32_t block = 0; block < m_function.blocks.size(); ++block) {
+        forEachEdgeResult(m_function, BlockID(block), [&](const EdgeResult& result, ValueID parameter) {
+            if (result.kind == EdgeResultKind::NarrowedOperand)
+                m_subjectOfNarrowedCopy.add(parameter.index(), result.subject);
+        });
+    }
 }
 
 // A parameter that the function sets to null, or that it hands on as such a parameter.

@@ -496,8 +496,10 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
             tables.sites.allocationClasses[classOfArrays.index()].impossibleMutations.remove(node.markedMutations);
             if (node.neverChanges && inputs.build.isEnabled(FlowResultKind::HolderMutations, node.builtinClass.index())) {
                 tables.sites.sitesOfObjectsThatNeverChange.set(site);
-                if (node.isNeverToldApart)
+                if (node.isNeverToldApart) {
                     tables.sites.sitesOfListsNeverToldApart.set(site);
+                    inputs.build.statistics().count(StatisticID::FlowListsNeverToldApart, 1);
+                }
             }
         }
     }

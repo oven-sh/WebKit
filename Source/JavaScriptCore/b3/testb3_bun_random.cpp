@@ -729,6 +729,8 @@ static void testRandomProgramRegressions()
         RandomProgramChecker(seed, false, true).run();
         RandomProgramChecker(seed, true, true).run();
     }
+    for (unsigned seed : { 31131u, 41501u, 12388748u, 13785840u })
+        RandomProgramChecker(seed).run();
 }
 
 static void testRandomProgramVersionsCanDisagree()

@@ -29,6 +29,7 @@ struct Instance;
 bool runsCompiledProgram(JSGlobalObject*);
 bool locksBuiltins(JSGlobalObject*);
 JS_EXPORT_PRIVATE void lockBuiltinsWithoutImage();
+JS_EXPORT_PRIVATE void openNameWithoutImage(uint32_t holder, std::span<const uint8_t> name);
 JS_EXPORT_PRIVATE void lockBuiltinsOfTable(JSGlobalObject*);
 using RefusedChangeListener = void (*)(JSGlobalObject*, const String& refusal);
 JS_EXPORT_PRIVATE void setRefusedChangeListener(RefusedChangeListener);
@@ -36,6 +37,10 @@ void didRejectWrite(JSGlobalObject*, JSObject*, UniquedStringImpl* keyOrNull, Re
 String lockedObjectErrorMessage(JSGlobalObject*, JSObject*, UniquedStringImpl* key, RejectedWrite);
 // The words of the store that a spy would make, said of the spy. Null: the object says nothing of that key.
 JS_EXPORT_PRIVATE String refusedSpyMessage(JSGlobalObject*, JSObject*, UniquedStringImpl* key);
+// Whether the build has unlocked that member of a built-in object for the tests of this run: Program::replaceableBuiltins.
+JS_EXPORT_PRIVATE bool isMemberUnlockedForTests(JSObject*, UniquedStringImpl* key);
+// Whether compiled code of the realm takes that member of a built-in object for what the realm was created with, locked or not: `EventTarget.prototype`, `WebSocket.OPEN`.
+JS_EXPORT_PRIVATE bool isMemberTakenForConstant(JSObject*, UniquedStringImpl* key);
 // In a test run a refusal is an error for everybody: a test that takes it for a replacement that was made goes on to measure nothing.
 bool reflectThrowsOnLockedProperty(JSObject* lockedObject);
 JS_EXPORT_PRIVATE ASCIILiteral evaluationRefusedMessage();

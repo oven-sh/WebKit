@@ -14,6 +14,7 @@
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowBuiltinLocations.h"
 #include "AOTFlowObjectOperations.h"
+#include "AOTFlowSinkEquations.h"
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionKinds.h"
 #include "AOTIRProgram.h"
@@ -27,7 +28,9 @@
 #include "AOTValueFlowRulesModules.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSets.h"
+#include "Options.h"
 #include <array>
+#include <wtf/DataLog.h>
 #include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -531,16 +534,18 @@ static bool spellsGlobalObject(const Program& program, const Function& function,
     return member && builtins.canonicalID(member) == Builtins::GlobalThis;
 }
 
-static BitVector findKeysStoredUnderOnGlobalObject(const Program& program, const ParallelLoops& loops)
+static BitVector findKeysStoredUnderOrAskedAboutOnGlobalObject(const Program& program, const ParallelLoops& loops)
 {
     Vector<PropertyKeyID> stored = collectInParallel<PropertyKeyID>(loops, program.functions.size(), [&](unsigned index, Vector<PropertyKeyID>& found) {
         const Function& function = program.functions[index];
-        if (!function.hasBody() || !mayHoldValueWith(program, FunctionID(index), { Opcode::PropSet }))
+        if (!function.hasBody() || !mayHoldValueWith(program, FunctionID(index), { Opcode::PropSet, Opcode::PropGet }))
             return;
         for (const Block& block : function.blocks) {
             for (ValueID id : block.values) {
                 const Value& operation = function.at(id);
                 if (operation.opcode == Opcode::PropSet && spellsGlobalObject(program, function, operation.operand(OperandIndex::PropSet::object)))
+                    found.append(operation.key());
+                else if (operation.opcode == Opcode::PropGet && operation.isFreeName() && operation.isForTypeOf())
                     found.append(operation.key());
             }
         }
@@ -705,33 +710,6 @@ std::optional<Vector<ModuleID, 2>> ValueFlowHeapTables::filesThatPathFinds(Modul
     return found;
 }
 
-std::span<const PropertyKeyID> ValueFlowHeapTables::namesThatBeginWith(StringID beginning) const
-{
-    auto textOf = [&](PropertyKeyID key) {
-        return m_program.string(m_program.at(key).text);
-    };
-    auto isBefore = [](std::span<const uint8_t> left, std::span<const uint8_t> right) {
-        return std::ranges::lexicographical_compare(left, right);
-    };
-    std::call_once(m_didSortNames, [&] {
-        for (uint32_t index = 0; index < m_program.types.numberOfPropertyKeys(); ++index) {
-            if (m_program.at(PropertyKeyID(index)).kind == PropertyKeyKind::Text)
-                m_namesInOrderOfText.append(PropertyKeyID(index));
-        }
-        AOT::sort(m_namesInOrderOfText, [&](PropertyKeyID left, PropertyKeyID right) {
-            return isBefore(textOf(left), textOf(right));
-        });
-    });
-    std::span<const uint8_t> text = m_program.string(beginning);
-    std::span<const PropertyKeyID> names = m_namesInOrderOfText.span();
-    auto first = std::ranges::lower_bound(names, text, isBefore, textOf);
-    auto last = std::ranges::find_if_not(first, names.end(), [&](PropertyKeyID key) {
-        std::span<const uint8_t> name = textOf(key);
-        return name.size() >= text.size() && equalSpans(name.first(text.size()), text);
-    });
-    return { first, last };
-}
-
 ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlowUniverse& universe, ValueSets& allSets, ValueSetMaker& maker, const ParallelLoops& loops, NOESCAPE const ScopedLambda<void()>& runBesideTables)
     : m_program(program)
     , m_maker(allSets)
@@ -807,7 +785,14 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 });
             });
         };
+        auto changesOperand = [&](BuiltinID function) {
+            auto isChanged = [](const BuiltinParameter& parameter) { return parameter.uses.containsAny(mutatingUses); };
+            return std::ranges::any_of(builtins.overloadsOf(function), [&](const BuiltinOverload& overload) {
+                return (overload.receiver && isChanged(*overload.receiver)) || std::ranges::any_of(overload.parameters, isChanged);
+            });
+        };
         Vector<ValueFlowObjectID, 32> functionsThatCallOrBindOperand;
+        Vector<ValueFlowObjectID, 32> functionsThatChangeOperand;
         for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
             if (builtins.at(BuiltinID(index)).kind != BuiltinKind::Constant && builtins.dispatchOf(BuiltinID(index), BuiltinCallMode::Get))
                 m_hasGetEntry.quickSet(index);
@@ -824,21 +809,29 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 universe.appendObjectsOf(BuiltinID(index), objectsThatLetInUnseenCodeWhenCalled);
             if (builtins.canonicalID(BuiltinID(index)) == BuiltinID(index) && callsOrBindsOperand(BuiltinID(index)))
                 universe.appendObjectsOf(BuiltinID(index), functionsThatCallOrBindOperand);
+            if (builtins.canonicalID(BuiltinID(index)) == BuiltinID(index) && changesOperand(BuiltinID(index)))
+                universe.appendObjectsOf(BuiltinID(index), functionsThatChangeOperand);
         }
         m_functionsThatCallOrBindOperand = maker.intersect(maker.of(functionsThatCallOrBindOperand.span()), universe.builtinFunctions());
+        m_functionsThatChangeOperand = maker.intersect(maker.of(functionsThatChangeOperand.span()), universe.builtinFunctions());
         m_objectsThatLetInUnseenCode = maker.of(objectsThatLetInUnseenCode.span());
         m_objectsThatLetInUnseenCodeWhenCalled = maker.of(objectsThatLetInUnseenCodeWhenCalled.span());
         Vector<ValueFlowObjectID, 32> objectsOfNativeModules;
         Vector<ValueFlowObjectID, 32> objectsOfPublicModules;
+        Vector<ValueFlowObjectID, 32> objectsOfPublicModulesWithoutLocks;
         for (uint32_t index = 0; index < builtins.moduleCount(); ++index) {
             const RuntimeModuleData& module = builtins.at(RuntimeModuleID(index));
             if (module.namespaceObject && module.flags.contains(RuntimeModuleFlag::IsPublic))
                 objectsOfPublicModules.append(universe.objectOf(module.namespaceObject));
+            // `Bun`, `process` and `console` are modules too, and start-up locks what hangs below the global object.
+            if (module.namespaceObject && module.flags.contains(RuntimeModuleFlag::IsPublic) && !builtins.isUnder(builtins.canonicalID(module.namespaceObject), Builtins::GlobalThis))
+                objectsOfPublicModulesWithoutLocks.append(universe.objectOf(module.namespaceObject));
             if (module.namespaceObject && module.flags.contains(RuntimeModuleFlag::IsPublic) && !module.flags.contains(RuntimeModuleFlag::HasSource) && !builtins.at(builtins.canonicalID(module.namespaceObject)).holder)
                 objectsOfNativeModules.append(universe.objectOf(module.namespaceObject));
         }
         m_objectsOfNativeModules = maker.of(objectsOfNativeModules.span());
         m_objectsOfPublicModules = maker.of(objectsOfPublicModules.span());
+        m_objectsOfPublicModulesWithoutLocks = maker.of(objectsOfPublicModulesWithoutLocks.span());
 
         Vector<EntryBelow> entriesBelowEntries = listEntriesBelowEntries(builtins);
         Objects prototypeObjects;
@@ -902,6 +895,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         Objects namespacesWhoseHoldersListThem;
         Objects holdersThatListAllMembers;
         Objects lockedObjects;
+        Objects classes;
         Objects holdersWithLockedIndexes;
         Objects holdersWithLockedPrototypeLink;
         Objects holdersWithMembersOnHiddenPrototype;
@@ -963,6 +957,8 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             }
             if (entry.flags.contains(BuiltinFlag::IsLockedObject))
                 lockedObjects.appendVector(objects);
+            if (entry.kind == BuiltinKind::Constructor)
+                classes.appendVector(objects);
             if (builtins.closesIndexKeys(holder))
                 holdersWithLockedIndexes.appendVector(objects);
             if (builtins.hasLockedPrototypeLink(holder))
@@ -1109,6 +1105,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_holdersOfUndeclaredPropertiesUnderAnyKey = maker.unite(m_holdersOfUndeclaredPropertiesUnderAnyKey, maker.of(holdersOfOpenedNames.span()));
 
         m_lockedObjects = maker.of(lockedObjects.span());
+        m_classes = maker.of(classes.span());
         m_holdersWithLockedIndexes = maker.of(holdersWithLockedIndexes.span());
         m_holdersWithLockedPrototypeLink = maker.of(holdersWithLockedPrototypeLink.span());
         m_holdersWithMembersOnHiddenPrototype = maker.of(holdersWithMembersOnHiddenPrototype.span());
@@ -1134,13 +1131,21 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
     };
     auto listObjectsCreatedWithKeys = [&] {
         const ValueSets& sets = maker.sets();
+        auto classAllocatedAt = [&](ValueFlowObjectID site) {
+            return universe.siteOf(site) ? declaredLayoutOf(program, universe.siteOf(site)->layout) : LayoutID();
+        };
+        BitVector isAllocatedAtSomeSite(program.layouts.size());
+        sets.forEachMember(universe.objectsThatPickTheirLayout(), [&](ValueFlowObjectID site) {
+            if (LayoutID ownClass = classAllocatedAt(site))
+                isAllocatedAtSomeSite.quickSet(ownClass.index());
+        });
         Vector<Vector<ValueFlowObjectID>> instancesOfClassesBelow(program.layouts.size());
         sets.forEachMember(universe.instancesOfClasses(), [&](ValueFlowObjectID instance) {
             LayoutID classOfInstance = universe.layoutOf(instance);
             LayoutID current = classOfInstance;
             for (size_t steps = 0; steps < program.layouts.size() && current && program.at(current).has(LayoutFlags::HasHeritage); ++steps) {
                 current = predictedHeritageOf(program.at(current));
-                if (!current || current == classOfInstance)
+                if (!current || current == classOfInstance || !isAllocatedAtSomeSite.quickGet(current.index()))
                     continue;
                 Vector<ValueFlowObjectID>& instancesBelow = instancesOfClassesBelow[current.index()];
                 if (instancesBelow.isEmpty() || instancesBelow.last() != instance)
@@ -1151,7 +1156,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             if (!universe.siteOf(site) || !sets.contains(universe.objectsThatPickTheirLayout(), site))
                 return;
             LayoutID allocated = universe.siteOf(site)->layout;
-            LayoutID ownClass = declaredLayoutOf(program, allocated);
+            LayoutID ownClass = classAllocatedAt(site);
             if (allocated == ownClass && sets.contains(universe.instancesOfClasses(), universe.instanceOf(ownClass)))
                 functor(universe.instanceOf(ownClass));
             for (ValueFlowObjectID instance : instancesOfClassesBelow[ownClass.index()])
@@ -1166,19 +1171,94 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
 
         constexpr uint32_t objectsInStretch = 4096;
         Vector<ObjectsCreatedWithFields> createdInStretches((universe.numberOfObjects() + objectsInStretch - 1) / objectsInStretch);
+        // A function whose objects fill several stretches is walked once for all of them.
+        struct KeysOfFunction {
+            FunctionID function;
+            KeysOfLiterals literals;
+            KeysOfLiterals stores;
+        };
+        std::atomic<uint64_t> valuesReadForKeys { 0 };
+        auto keysDefinedIn = [&](FunctionID function) {
+            valuesReadForKeys.fetch_add(program.at(function).values.size(), std::memory_order_relaxed);
+            return keysDefinedBehindAllocationsOfLiterals(program.at(function));
+        };
+        auto keysStoredIn = [&](FunctionID function) {
+            valuesReadForKeys.fetch_add(program.at(function).values.size(), std::memory_order_relaxed);
+            return keysStoredRightAfterAllocations(program, program.at(function));
+        };
+        Vector<KeysOfFunction> keysOfFunctionsInSeveralStretches;
+        HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> indexOfFunctionInSeveralStretches;
+        // So is a data literal.
+        using ObjectsOfData = Vector<std::pair<uint32_t, const DataNode::Object*>, 8>;
+        std::atomic<uint64_t> nodesOfDataRead { 0 };
+        auto objectsOfDataAt = [&](FunctionID function, ValueID operation) {
+            ObjectsOfData objects;
+            uint64_t nodes = 0;
+            forEachDataNodeInPreorder(program.at(program.at(function).at(operation).data()).root, [&](uint32_t ordinal, const DataNode& node) {
+                ++nodes;
+                if (const auto* dataObject = node.tryAs<DataNode::Object>())
+                    objects.append({ ordinal, dataObject });
+            });
+            nodesOfDataRead.fetch_add(nodes, std::memory_order_relaxed);
+            return objects;
+        };
+        struct DataInSeveralStretches {
+            FunctionID function;
+            ValueID operation;
+            ObjectsOfData objects;
+        };
+        Vector<DataInSeveralStretches> dataInSeveralStretches;
+        Vector<uint32_t> dataAcrossStartOfStretch(FillWith { }, createdInStretches.size() + 1, UINT32_MAX);
+        for (uint32_t first = objectsInStretch; first < universe.numberOfObjects(); first += objectsInStretch) {
+            const ValueFlowSite* last = universe.siteOf(ValueFlowObjectID(first - 1));
+            const ValueFlowSite* next = universe.siteOf(ValueFlowObjectID(first));
+            if (!last || !next)
+                continue;
+            FunctionID function = universe.functionOf(ValueFlowObjectID(first));
+            if (function != universe.functionOf(ValueFlowObjectID(first - 1)))
+                continue;
+            if (indexOfFunctionInSeveralStretches.add(function.index(), keysOfFunctionsInSeveralStretches.size()).isNewEntry)
+                keysOfFunctionsInSeveralStretches.append({ function, { }, { } });
+            if (last->origin != ValueFlowSiteOrigin::DataNode || next->origin != ValueFlowSiteOrigin::DataNode || last->value != next->value)
+                continue;
+            if (dataInSeveralStretches.isEmpty() || dataInSeveralStretches.last().function != function || dataInSeveralStretches.last().operation != next->value)
+                dataInSeveralStretches.append({ function, next->value, { } });
+            dataAcrossStartOfStretch[first / objectsInStretch] = dataInSeveralStretches.size() - 1;
+        }
+        forEachIndexInParallel(loops, dataInSeveralStretches.size(), [&](unsigned index) {
+            dataInSeveralStretches[index].objects = objectsOfDataAt(dataInSeveralStretches[index].function, dataInSeveralStretches[index].operation);
+        });
+        forEachIndexInParallel(loops, keysOfFunctionsInSeveralStretches.size() * 2, [&](unsigned index) {
+            KeysOfFunction& keys = keysOfFunctionsInSeveralStretches[index / 2];
+            if (index % 2)
+                keys.stores = keysStoredIn(keys.function);
+            else
+                keys.literals = keysDefinedIn(keys.function);
+        });
+        auto keysMadeOnceFor = [&](FunctionID function) -> const KeysOfFunction* {
+            auto found = indexOfFunctionInSeveralStretches.find(function.index());
+            return found == indexOfFunctionInSeveralStretches.end() ? nullptr : &keysOfFunctionsInSeveralStretches[found->value];
+        };
         forEachIndexInParallel(loops, createdInStretches.size(), [&](unsigned stretch) {
             ObjectsCreatedWithFields createdInStretch;
             FunctionID functionOfLiterals;
-            KeysOfLiterals keysOfLiterals;
+            KeysOfLiterals ownKeysOfLiterals;
+            const KeysOfLiterals* keysOfLiterals = nullptr;
             FunctionID functionOfStores;
-            KeysOfLiterals keysOfStores;
+            KeysOfLiterals ownKeysOfStores;
+            const KeysOfLiterals* keysOfStores = nullptr;
             auto addStores = [&](FunctionID function, ValueID allocation, std::span<const ValueFlowObjectID> created) {
                 if (function != functionOfStores) {
                     functionOfStores = function;
-                    keysOfStores = keysStoredRightAfterAllocations(program, program.at(function));
+                    if (const KeysOfFunction* madeOnce = keysMadeOnceFor(function))
+                        keysOfStores = &madeOnce->stores;
+                    else {
+                        ownKeysOfStores = keysStoredIn(function);
+                        keysOfStores = &ownKeysOfStores;
+                    }
                 }
-                auto stores = keysOfStores.find(allocation.index());
-                if (stores == keysOfStores.end())
+                auto stores = keysOfStores->find(allocation.index());
+                if (stores == keysOfStores->end())
                     return;
                 for (PropertyKeyID key : stores->value) {
                     for (ValueFlowObjectID createdObject : created)
@@ -1187,7 +1267,8 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             };
             FunctionID dataFunction;
             ValueID dataOperation;
-            Vector<std::pair<uint32_t, const DataNode::Object*>, 8> dataObjects;
+            ObjectsOfData ownDataObjects;
+            const ObjectsOfData* dataObjects = nullptr;
             uint32_t end = std::min(universe.numberOfObjects(), (stretch + 1) * objectsInStretch);
             for (uint32_t index = stretch * objectsInStretch; index < end; ++index) {
                 ValueFlowObjectID object(index);
@@ -1199,16 +1280,20 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                     if (function != dataFunction || site->value != dataOperation) {
                         dataFunction = function;
                         dataOperation = site->value;
-                        dataObjects.shrink(0);
-                        forEachDataNodeInPreorder(program.at(program.at(function).at(site->value).data()).root, [&](uint32_t ordinal, const DataNode& node) {
-                            if (const auto* dataObject = node.tryAs<DataNode::Object>())
-                                dataObjects.append({ ordinal, dataObject });
-                        });
+                        dataObjects = nullptr;
+                        for (uint32_t across : { dataAcrossStartOfStretch[stretch], dataAcrossStartOfStretch[stretch + 1] }) {
+                            if (across != UINT32_MAX && dataInSeveralStretches[across].function == function && dataInSeveralStretches[across].operation == site->value)
+                                dataObjects = &dataInSeveralStretches[across].objects;
+                        }
+                        if (!dataObjects) {
+                            ownDataObjects = objectsOfDataAt(function, site->value);
+                            dataObjects = &ownDataObjects;
+                        }
                     }
                     if (!site->ordinal)
                         addStores(function, site->value, singleElementSpan(object));
-                    auto found = std::ranges::lower_bound(dataObjects, site->ordinal, { }, &std::pair<uint32_t, const DataNode::Object*>::first);
-                    if (found == dataObjects.end() || found->first != site->ordinal || found->second->members.isEmpty())
+                    auto found = std::ranges::lower_bound(*dataObjects, site->ordinal, { }, &std::pair<uint32_t, const DataNode::Object*>::first);
+                    if (found == dataObjects->end() || found->first != site->ordinal || found->second->members.isEmpty())
                         continue;
                     for (const DataMember& member : found->second->members)
                         createdInStretch.underKeys.append({ member.key, object });
@@ -1242,9 +1327,14 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                     add(key);
                 if (function != functionOfLiterals) {
                     functionOfLiterals = function;
-                    keysOfLiterals = keysDefinedBehindAllocationsOfLiterals(program.at(function));
+                    if (const KeysOfFunction* madeOnce = keysMadeOnceFor(function))
+                        keysOfLiterals = &madeOnce->literals;
+                    else {
+                        ownKeysOfLiterals = keysDefinedIn(function);
+                        keysOfLiterals = &ownKeysOfLiterals;
+                    }
                 }
-                if (auto literal = keysOfLiterals.find(site->value.index()); literal != keysOfLiterals.end()) {
+                if (auto literal = keysOfLiterals->find(site->value.index()); literal != keysOfLiterals->end()) {
                     for (PropertyKeyID key : literal->value)
                         add(key);
                 }
@@ -1252,6 +1342,8 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             }
             createdInStretches[stretch] = WTF::move(createdInStretch);
         });
+        if (Options::logAOTPhaseTimes())
+            dataLogLn("AOT flow tables | values read for the keys of allocations ", valuesReadForKeys.load(), "\nAOT flow tables | nodes of data literals read ", nodesOfDataRead.load());
         ObjectsCreatedWithFields prototypeObjectsWithMethods;
         prototypeObjectsWithMethods.underKeys = collectInParallel<ObjectCreatedWithKey>(loops, program.functions.size(), [&](unsigned index, Vector<ObjectCreatedWithKey>& found) {
             forEachListedValue(program, FunctionID(index), { Opcode::DefineMethod }, [&](BlockID, uint32_t, ValueID, const Value& definition) {
@@ -1262,6 +1354,35 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         for (const ObjectCreatedWithKey& created : prototypeObjectsWithMethods.underKeys)
             prototypeObjectsWithMethods.objects.append(created.object);
         createdInStretches.append(WTF::move(prototypeObjectsWithMethods));
+        // One object stands for all closures of a function. What one place stores into the closure that it makes says nothing of the closures that another place makes.
+        struct ClosureMade {
+            FunctionID function;
+            Vector<PropertyKeyID, 8> keys;
+        };
+        Vector<ClosureMade> closuresMade = collectInParallel<ClosureMade>(loops, program.functions.size(), [&](unsigned index, Vector<ClosureMade>& found) {
+            std::optional<KeysOfLiterals> keysOfStores;
+            forEachListedValue(program, FunctionID(index), { Opcode::NewClosure }, [&](BlockID, uint32_t, ValueID id, const Value& closure) {
+                if (!keysOfStores)
+                    keysOfStores = keysStoredRightAfterAllocations(program, program.functions[index]);
+                auto stores = keysOfStores->find(id.index());
+                found.append({ closure.function(), stores == keysOfStores->end() ? Vector<PropertyKeyID, 8>() : stores->value });
+            });
+        });
+        Vector<uint8_t> numberOfPlacesMaking(FillWith { }, program.functions.size(), uint8_t { 0 });
+        for (const ClosureMade& made : closuresMade)
+            numberOfPlacesMaking[made.function.index()] = std::min(numberOfPlacesMaking[made.function.index()] + 1, 2);
+        for (const Variable& variable : program.variables) {
+            if (variable.initialization == VariableInitialization::Function && variable.function)
+                numberOfPlacesMaking[variable.function.index()] = 2;
+        }
+        ObjectsCreatedWithFields closuresStoredTo;
+        for (const ClosureMade& made : closuresMade) {
+            if (numberOfPlacesMaking[made.function.index()] != 1)
+                continue;
+            for (PropertyKeyID key : made.keys)
+                closuresStoredTo.storedToUnderKeys.append({ key, universe.closureOf(made.function) });
+        }
+        createdInStretches.append(WTF::move(closuresStoredTo));
         auto layOut = [&](Vector<ObjectCreatedWithKey> ObjectsCreatedWithFields::* list, Vector<uint32_t>& endOfKey, Vector<ValueFlowObjectID>& objects) {
             endOfKey.fill(0u, numberOfKeys);
             for (const ObjectsCreatedWithFields& createdInStretch : createdInStretches) {
@@ -1389,7 +1510,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             m_functionsNamedAtOneOperation = findFunctionsNamedAtOneOperation(program, loops);
         },
         [&] {
-            m_keysStoredUnderOnGlobalObject = findKeysStoredUnderOnGlobalObject(program, loops);
+            m_keysStoredUnderOrAskedAboutOnGlobalObject = findKeysStoredUnderOrAskedAboutOnGlobalObject(program, loops);
         },
         [&] {
             m_constantsHoldingModules = ConstantsHoldingModules(program);

@@ -1,0 +1,23 @@
+# A store to an object the function has just allocated needs no barrier until the object is stored in a heap word: the collector reaches it through the cell.
+# FORM: Selected
+# RUN: pass NumberAndEncode ChooseRepresentations RemoveRedundantBarriers
+# STATISTIC: BarriersOnUnmarkableOwners = 1
+# STATISTIC: BarriersCoveredLater = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}] flow={members=[L0]}
+function f0 name="stored-in-heap-word" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=1} {
+    v2 = NewHeapWords numberOfWords=2
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    PutSlot v3, -, v0 key="x" receivers=[L0] level=Proven
+    PutHeapFrameWord v2, v3 index=1 [remembersFrame]
+    PutSlot v3, -, v0 key="y" receivers=[L0] level=Proven
+    v7 = AwaitBySavingFrame v0, v1, v2
+    v8 = GetHeapFrameWord v2 index=1 valueType=anything
+    Return v8
+}
+# CHECK: PutSlot v3, -, v0 key="x"{{*}}[ownerCannotBeMarked]
+# CHECK: PutHeapFrameWord
+# CHECK-NEXT: PutSlot v3, -, v0 key="y"
+# CHECK-NOT: ownerCannotBeMarked
+function f1 name="stored-in-heap-word" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=1}

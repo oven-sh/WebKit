@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTSort.h"
+#include <algorithm>
 #include <optional>
 #include <tuple>
 
@@ -247,7 +248,7 @@ ValueFlowEscapeOrigins::ValueFlowEscapeOrigins(const ValueFlowResultInputs& inpu
         solver.forEachPredecessorIncludingRemoved(taking, [&](ValueFlowNodeID predecessor) {
             const ValueFlowSolver::LoggedEdge* logged = solver.findLoggedEdge({ predecessor, taking });
             ValueFlowStatementID operation = logged ? requestingOperationOf(solver, logged->statement) : ValueFlowStatementID();
-            if (!operation || solver.statementAt(operation).kind != ValueFlowStatementKind::Behavior)
+            if (!operation || (solver.statementAt(operation).kind != ValueFlowStatementKind::Behavior && solver.statementAt(operation).kind != ValueFlowStatementKind::WalkOfBehavior))
                 return;
             ValueFlowNodeID inspectedNode = solver.statementAt(operation).result;
             if (inspectedNode && !ValueSets::isComplement(solver.seenValuesOf(inspectedNode)) && !inspectedNodes.contains(inspectedNode))
@@ -389,7 +390,7 @@ ValueFlowEscapeOrigins::ValueFlowEscapeOrigins(const ValueFlowResultInputs& inpu
                     if (ValueFlowStatementID operation = receivesEscapedObjects ? requestingOperationOf(solver, logger) : ValueFlowStatementID(); operation && operation != logger) {
                         if (isProgramStatement(operation))
                             return paths.append({ operation, ValueSets::nothing, escaping });
-                        if (solver.statementAt(operation).kind == ValueFlowStatementKind::Behavior)
+                        if (solver.statementAt(operation).kind == ValueFlowStatementKind::Behavior || solver.statementAt(operation).kind == ValueFlowStatementKind::WalkOfBehavior)
                             return;
                         // What a library operation passes on arrived at one of its operands.
                         bool hasArrived = false;
@@ -845,7 +846,7 @@ void ValueFlowBirthsOfUnknownObject::findRoots(const ValueFlowResultInputs& inpu
         onlyRoot[vertex] = above != none && (own == none || !isInLibrary(above) || isInLibrary(own)) ? above : own;
     }
 
-    // A vertex that several independent roots reach is reported at the first of them in source order, program before library, and lists the next few.
+    // A vertex that several independent roots reach lists the first few of them in source order, program before library, behind the statement that it is reported at.
     Vector<uint32_t> independentRoots;
     for (uint32_t vertex : graph.successorsOf(DependencyGraph::root)) {
         if (rootNamedBy(vertex) != none)
@@ -883,6 +884,50 @@ void ValueFlowBirthsOfUnknownObject::findRoots(const ValueFlowResultInputs& inpu
         }
     }
 
+    // In a large program most roots reach most vertices: more than a record lists, and the first of them in source order has nothing to do with what is asked about. There the statement that stands nearest on a way to the vertex, the one that passed it on, goes first.
+    // A statement of the library is looked through while one of the program leads there. Of two that stand equally near, the one that depends on nothing is where it starts.
+    Vector<uint32_t> nearestRoot(FillWith { }, graph.numberOfVertices(), none);
+    BitVector isIndependent(graph.numberOfVertices());
+    for (uint32_t vertex : independentRoots)
+        isIndependent.quickSet(vertex);
+    for (bool namesLibrary : { false, true }) {
+        Vector<uint32_t> frontier;
+        for (uint32_t vertex = firstSeedVertex; vertex < firstObjectVertex; ++vertex) {
+            if (firstRoots[vertex][0] != none && nearestRoot[vertex] == none && isInLibrary(rootNamedBy(vertex)) == namesLibrary)
+                frontier.append(vertex);
+        }
+        AOT::sort(frontier, [&](uint32_t a, uint32_t b) {
+            if (isIndependent.quickGet(a) != isIndependent.quickGet(b))
+                return isIndependent.quickGet(a);
+            uint32_t first = rootNamedBy(a);
+            uint32_t second = rootNamedBy(b);
+            return first != second ? isLowerWitness(m_roots[first].witness, m_roots[second].witness) : a < b;
+        });
+        for (uint32_t vertex : frontier)
+            nearestRoot[vertex] = rootNamedBy(vertex);
+        for (Vector<uint32_t> next; !frontier.isEmpty(); frontier = std::exchange(next, { })) {
+            for (uint32_t vertex : frontier) {
+                for (uint32_t successor : graph.successorsOf(vertex)) {
+                    if (nearestRoot[successor] != none)
+                        continue;
+                    nearestRoot[successor] = nearestRoot[vertex];
+                    next.append(successor);
+                }
+            }
+        }
+    }
+    auto rootsNearestFirst = [&](uint32_t vertex) {
+        RootList roots = firstRoots[vertex];
+        uint32_t nearest = nearestRoot[vertex];
+        // A list with room left names every root there is, and each of them is where something starts: the nearest statement may only pass on what they let out of sight.
+        if (nearest == none || roots[0] == nearest || roots.back() == none)
+            return roots;
+        auto end = std::ranges::find(roots, nearest);
+        std::shift_right(roots.begin(), end == roots.end() ? end : end + 1, 1);
+        roots[0] = nearest;
+        return roots;
+    };
+
     struct VertexWithSeveralRoots {
         RootList roots;
         uint16_t* otherOrigins;
@@ -893,9 +938,10 @@ void ValueFlowBirthsOfUnknownObject::findRoots(const ValueFlowResultInputs& inpu
     auto rootOf = [&](uint32_t vertex, uint16_t& otherOrigins) {
         if (onlyRoot[vertex] != none)
             return onlyRoot[vertex];
-        if (firstRoots[vertex][1] != none)
-            verticesWithSeveralRoots.append({ firstRoots[vertex], &otherOrigins });
-        return firstRoots[vertex][0];
+        RootList roots = rootsNearestFirst(vertex);
+        if (roots[1] != none)
+            verticesWithSeveralRoots.append({ roots, &otherOrigins });
+        return roots[0];
     };
     for (uint32_t object = 0; object < numberOfObjects; ++object) {
         uint32_t vertex = firstObjectVertex + object;

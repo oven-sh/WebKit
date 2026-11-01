@@ -466,6 +466,9 @@ struct Instance : InstanceHeader {
     static constexpr ptrdiff_t offsetOfBoxedCalls();
     std::span<const MappedCopy*, AllocationWords::numberOfCopiesWithoutFrame> copiesWithoutFrame() { return std::span<const MappedCopy*, AllocationWords::numberOfCopiesWithoutFrame> { reinterpret_cast<const MappedCopy**>(reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfCopiesWithoutFrame), AllocationWords::numberOfCopiesWithoutFrame }; }
     std::span<KeyedValuePlace, KeyedValuePlace::numberOfPlaces> keyedValuePlaces() { return std::span<KeyedValuePlace, KeyedValuePlace::numberOfPlaces> { reinterpret_cast<KeyedValuePlace*>(reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfKeyedValuePlaces), KeyedValuePlace::numberOfPlaces }; }
+    // Behind the places and what is left of the places for stores.
+    static constexpr ptrdiff_t offsetOfAcceptedKindsOfValues = InstanceLayout::offsetOfKeyedValuePlaces + static_cast<ptrdiff_t>(KeyedValuePlace::numberOfPlaces * sizeof(KeyedValuePlace) + KeyedValuePlace::numberOfPlacesPerAccess * sizeof(RestOfPlaceForStores));
+    std::span<AcceptedKindOfValue, AcceptedKindOfValue::numberOfEntries> acceptedKindsOfValues() { return std::span<AcceptedKindOfValue, AcceptedKindOfValue::numberOfEntries> { reinterpret_cast<AcceptedKindOfValue*>(reinterpret_cast<uint8_t*>(this) + offsetOfAcceptedKindsOfValues), AcceptedKindOfValue::numberOfEntries }; }
 
     template<typename Visitor>
     void visitRoots(Visitor& visitor)
@@ -507,7 +510,7 @@ constexpr ptrdiff_t Instance::offsetOfSlotHandlers(SlotHandlerTable table)
 
 constexpr ptrdiff_t Instance::offsetOfBoxedCalls()
 {
-#if defined(BUN_HARDENED)
+#if AOT_BOXED_CALLS_LIE_OUTSIDE_INSTANCE
     return InstanceLayout::offsetOfBoxedCalls;
 #else
     return AOT_INSTANCE_OFFSET(stubs.boxedCalls);
@@ -523,19 +526,24 @@ FOR_EACH_AOT_INSTANCE_PART(AOT_CHECK_INSTANCE_PART)
 static_assert(OBJECT_OFFSETOF(InstanceHeader, vm) == 16, "JSWebAssemblyInstance::offsetOfVM()");
 #if defined(BUN_HARDENED)
 static_assert(AOT_INSTANCE_OFFSET(runtimeTable) == InstanceLayout::offsetOfWordsWrittenOnce);
-static_assert(UINT8_MAX * sizeof(BoxedCallEntry) <= InstanceLayout::bytesReservedForBoxedCalls);
-static_assert(InstanceLayout::offsetOfBoxedCalls + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForBoxedCalls + sizeof(InstancePrefix)) <= 0);
 #else
 static_assert(!OBJECT_OFFSETOF(InstanceHeader, runtimeTable));
+#endif
+#if AOT_BOXED_CALLS_LIE_OUTSIDE_INSTANCE
+static_assert(UINT8_MAX * sizeof(BoxedCallEntry) <= InstanceLayout::bytesReservedForBoxedCalls);
+static_assert(InstanceLayout::offsetOfBoxedCalls < 0
+    ? InstanceLayout::offsetOfBoxedCalls + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForBoxedCalls + sizeof(InstancePrefix)) <= 0
+    : static_cast<ptrdiff_t>(sizeof(Instance)) <= InstanceLayout::offsetOfBoxedCalls);
 #endif
 static_assert(OBJECT_OFFSETOF(InstanceHeader, globalObject) <= 128);
 static_assert(AOT_INSTANCE_PREFIX_OFFSET(newArrayWithContiguousHeader) == -128);
 static_assert(sizeof(Instance) <= 32 * KB, "On ARM64, the immediate offset of a 64-bit load reaches 32 KB.");
 static_assert(AOT_INSTANCE_OFFSET(propertyCaches.hashedSlots) <= 504, "On ARM64, the immediate offset of a load of a pair reaches 504 bytes.");
 static_assert(sizeof(Instance) <= InstanceLayout::offsetOfKeyOrderSteps);
+static_assert(InstanceLayout::offsetOfLoopPollPage() < 0 || sizeof(Instance) <= static_cast<size_t>(InstanceLayout::offsetOfLoopPollPage()), "On ARM64 the loop poll page lies behind the instance, where one load reaches it.");
 static_assert(InstanceLayout::offsetOfKeyOrderSteps + numberOfKeyOrderStepCaches * sizeof(KeyOrderStepCache) <= InstanceLayout::offsetOfBuiltinLocationStates);
 static_assert(sizeof(InstancePrefix) + InstanceLayout::bytesReservedForLoopPollPage <= InstanceLayout::bytesReservedForPrefixAndPollPage);
-static_assert(KeyedValuePlace::numberOfPlaces * sizeof(KeyedValuePlace) <= InstanceLayout::bytesReservedForKeyedValuePlaces && sizeof(InstancePrefix) <= 32 * KB);
+static_assert(Instance::offsetOfAcceptedKindsOfValues - InstanceLayout::offsetOfKeyedValuePlaces + AcceptedKindOfValue::numberOfEntries * sizeof(AcceptedKindOfValue) <= InstanceLayout::bytesReservedForKeyedValuePlaces && sizeof(InstancePrefix) <= 32 * KB);
 static_assert(sizeof(RememberedSlot<Slot>) == InstanceLayout::sizeOfSiteCache && sizeof(RememberedSlot<uint32_t>) == InstanceLayout::sizeOfStringCell);
 static_assert(sizeof(TypedArrayAllocation) == 32);
 static_assert(sizeof(UniquedStringImpl) == 24, "The image holds a header of this size per identifier, and a stub scales an identifier number by it.");

@@ -62,6 +62,7 @@ struct PointsToResults {
     Vector<SolvedUse> uses;
     Vector<ObjectID> objectsOfUses;
     Vector<SolvedContents> contents;
+    SparseObjectSet objectsInLocalHeapWords;
     Vector<ValueSetID> setOfValue;
     Vector<ValueSet> sets;
 

@@ -487,7 +487,7 @@ static ValueSetID findClosuresTakenOutOfMembers(const ValueFlowResultInputs& inp
         switch (statement.kind) {
         case ValueFlowStatementKind::Lookup: {
             ValueFlowNameKind own = solver.keyOf(id).name().kind;
-            return shapeOf(own).isValueOrAccessor() || own == ValueFlowNameKind::PrototypeLink;
+            return shapeOf(own).isValueOrAccessor() || own == ValueFlowNameKind::PrototypeLink || own == ValueFlowNameKind::ReceiversOfCalls;
         }
         case ValueFlowStatementKind::Operation: {
             if (flowRuleOf(statement.opcode) != FlowRule::Heap)
@@ -509,6 +509,7 @@ static ValueSetID findClosuresTakenOutOfMembers(const ValueFlowResultInputs& inp
         }
         case ValueFlowStatementKind::CallGroup:
         case ValueFlowStatementKind::Behavior:
+        case ValueFlowStatementKind::WalkOfBehavior:
         case ValueFlowStatementKind::Escape:
         case ValueFlowStatementKind::ModuleEvaluation:
         case ValueFlowStatementKind::Coroutine:
@@ -697,7 +698,7 @@ static bool isWhatStoreGoesThroughAtRest(const ValueFlowResultInputs& inputs, Va
     return answers.storesAtRest->contains(numberOf(through, key));
 }
 
-// Point.prototype.norm = .. and Object.defineProperty(Point.prototype, ..): the prototype objects that a statement reads out of one class to store into or to pass on.
+// Point.prototype.norm = .., Object.defineProperty(Point.prototype, ..) and Point.prototype.__defineGetter__(..): the prototype objects that a statement reads out of one class to store into, to pass on or to call a method on.
 static BitVector collectPrototypeObjectsNamedByStatements(const ValueFlowResultInputs& inputs)
 {
     const Program& program = inputs.program;
@@ -710,18 +711,25 @@ static BitVector collectPrototypeObjectsNamedByStatements(const ValueFlowResultI
         for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
             if (statement.kind != ValueFlowStatementKind::Operation || (statement.opcode != Opcode::PropSet && statement.opcode != Opcode::Call))
                 continue;
-            size_t position = statement.opcode == Opcode::PropSet ? 0 : OperandIndex::Call::arguments;
             const Value& value = function.at(statement.site);
             std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
-            if (position >= operands.size() || position >= value.numberOfOperands() || !operands[position].node)
+            auto note = [&](size_t position) {
+                if (position >= operands.size() || position >= value.numberOfOperands() || !operands[position].node || !value.operands()[position])
+                    return;
+                const Value& receiver = function.at(sameObjectThroughCasts(function, value.operands()[position]));
+                if (receiver.opcode != Opcode::PropGet || receiver.key() != prototypeKey)
+                    return;
+                ValueSetID possible = inputs.solver().possibleValuesOf(operands[position].node);
+                ValueFlowObjectID only = ValueSets::isComplement(possible) ? ValueFlowObjectID() : inputs.sets().onlyMember(possible);
+                if (only && inputs.universe().kindOf(only) == ValueFlowObjectKind::Prototype)
+                    named.set(only.index());
+            };
+            if (statement.opcode == Opcode::PropSet) {
+                note(0);
                 continue;
-            const Value& receiver = function.at(sameObjectThroughCasts(function, value.operands()[position]));
-            if (receiver.opcode != Opcode::PropGet || receiver.key() != prototypeKey)
-                continue;
-            ValueSetID possible = inputs.solver().possibleValuesOf(operands[position].node);
-            ValueFlowObjectID only = ValueSets::isComplement(possible) ? ValueFlowObjectID() : inputs.sets().onlyMember(possible);
-            if (only && inputs.universe().kindOf(only) == ValueFlowObjectKind::Prototype)
-                named.set(only.index());
+            }
+            note(OperandIndex::Call::thisValue);
+            note(OperandIndex::Call::arguments);
         }
     }
     return named;
@@ -1064,8 +1072,7 @@ static void noteWhatConstructorFunctionKeeps(const ValueFlowResultInputs& inputs
     });
     if (prototypeProperty != MemberMutability::Fixed)
         return;
-    if (inputs.program.at(layout.constructor).captures.isEmpty())
-        flow.prototypeProperty = MemberMutability::Fixed;
+    flow.prototypeProperty = MemberMutability::Fixed;
 
     if (!Claims::isInSeenHandsAlone(ledger.handsOpenOn(prototype)))
         return;

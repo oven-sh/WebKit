@@ -50,6 +50,7 @@ struct FlowModuleLoad {
     FunctionID function;
     ModuleID target;
     FlowWayIntoFile way { FlowWayIntoFile::NameMadeAtRunTime };
+    bool isAwaitedAtOnceInBodyOfFile { false };
 };
 
 struct FlowCall {
@@ -90,6 +91,8 @@ struct FlowOrderInputs {
     BitVector reachedFunctions;
     BitVector evaluatedModules;
     BitVector modulesLoadedByName;
+    bool namesMadeAtRunTimeAreOnlyImported { false };
+    Vector<FunctionID> functionsThatImportByName;
     BitVector modulesLoadedByHost;
     BitVector modulesNamedByOperationsNobodyKnows;
     bool hostRunsWaitingJobs { false };

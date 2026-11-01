@@ -11,6 +11,8 @@
 #include "JSExportMacros.h"
 #include <array>
 #include <atomic>
+#include <wtf/HashFunctions.h>
+#include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -48,6 +50,12 @@ public:
         uint32_t column { 0 };
     };
 
+    static constexpr uint32_t numberOfCountersOfBirths = 4096;
+    static constexpr uint32_t numberOfBirthsThatAreAllChecked(bool validates) { return validates ? 1024 : 64; }
+    static constexpr uint32_t intervalOfCheckedBirths = 64;
+    static_assert(hasOneBitSet(intervalOfCheckedBirths));
+    static ptrdiff_t offsetOfBirthsAt(uint32_t function, uint32_t value) { return OBJECT_OFFSETOF(CheckedFrameCells, m_numberOfBirths) + sizeof(uint32_t) * (pairIntHash(function, value) % numberOfCountersOfBirths); }
+
     explicit CheckedFrameCells(VM&);
     ~CheckedFrameCells();
 
@@ -76,6 +84,7 @@ public:
 
 private:
     void end(uint32_t granule);
+    void didChangeLiveGranules();
     template<typename Visitor> void visitLiveCellsWith(Visitor&);
 
     JS_EXPORT_PRIVATE static std::atomic<bool> s_isInUse;
@@ -84,7 +93,7 @@ private:
     const Image& m_image;
     CheckedFrameCells* m_next { nullptr };
     // How often each allocation has run, by a hash of its ids.
-    std::array<uint32_t, 4096> m_numberOfBirths { };
+    std::array<uint32_t, numberOfCountersOfBirths> m_numberOfBirths { };
     // In the order of their births. A frame makes no cell while a frame that it has called is there, so the cells of the frames that are left first come last.
     Vector<uint32_t, 16> m_liveGranules;
 };

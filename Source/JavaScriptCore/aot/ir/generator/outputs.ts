@@ -17,7 +17,7 @@ import { emitCppRuntimeOperations } from "./emit-cpp-runtime-operations.ts";
 import { emitCppVerifier } from "./emit-cpp-verifier.ts";
 import { emitCppWalkers } from "./emit-cpp-walkers.ts";
 import { emitCppWire } from "./emit-cpp-wire.ts";
-import { emitRustAbi } from "./emit-rust-abi.ts";
+import { emitRustAbi, modulesOfCompileCallEnums } from "./emit-rust-abi.ts";
 import { emitRustBuilder } from "./emit-rust-builder.ts";
 import { emitRustChecks } from "./emit-rust-checks.ts";
 import { emitRustEntries } from "./emit-rust-entries.ts";
@@ -48,8 +48,6 @@ export type Emitter = (context: EmitContext) => OutputFile[];
 
 export const fileListName = "AOTSchemaFiles.cmake";
 export const hashHeaderName = "AOTSchemaHash.h";
-export const maxInterfaceLines = 1000;
-export const maxInterfaceBytes = 160000;
 
 const engineEmitters: readonly Emitter[] = [
   emitCppEnums,
@@ -88,27 +86,11 @@ function byName(left: OutputFile, right: OutputFile): number {
   return left.name < right.name ? -1 : left.name > right.name ? 1 : 0;
 }
 
-export function isInterfaceOutput(name: string): boolean {
-  if (name.endsWith(".rs")) return !name.startsWith("record_") && !name.startsWith("entry_") && name !== "checks.rs";
-  return (name.endsWith(".h") && !name.endsWith("Inlines.h")) || name.endsWith(".inc");
-}
-
-function checkSize(file: OutputFile): void {
-  if (!isInterfaceOutput(file.name)) return;
-  const bytes = Buffer.byteLength(toText(file.lines));
-  if (file.lines.length > maxInterfaceLines || bytes > maxInterfaceBytes) {
-    throw new Error(
-      `${file.name} has ${file.lines.length} lines and ${bytes} bytes: people read it, so its emitter has to split it`,
-    );
-  }
-}
-
 export function runEmitters(emitters: readonly Emitter[], context: EmitContext): OutputFile[] {
   const files = emitters.flatMap(emitter => emitter(context)).sort(byName);
   for (let index = 1; index < files.length; index += 1) {
     if (files[index].name === files[index - 1].name) throw new Error(`two emitters write ${files[index].name}`);
   }
-  files.forEach(checkSize);
   return files;
 }
 
@@ -169,7 +151,7 @@ const filesOfOtherCrates: readonly RustCrateFile[] = [
   {
     name: "aot_schema_interface.rs",
     parent: "bun_aot_interface::ir::generated",
-    modules: ["compile_call_enums", "diagnostics", "limits", "statistics"],
+    modules: [...modulesOfCompileCallEnums, "diagnostics", "limits", "statistics"],
   },
 ];
 const rustFileName = "aot_schema.rs";

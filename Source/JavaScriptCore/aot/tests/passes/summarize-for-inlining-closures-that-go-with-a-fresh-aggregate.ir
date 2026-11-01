@@ -1,0 +1,51 @@
+# A caller that holds a copy of the body and only reads the result leaves more unbuilt than the aggregate: the closures that only the aggregate holds, or that are parts of the result themselves,
+# and the environment that only they capture. A closure that is also kept elsewhere is built whatever becomes of the call, and so is the environment that it captures.
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SummarizeForInlining
+# LOSS: MaxInlineHeadBytes x2 f0
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Cursor" fields=[{key="step" declared={type=anything}}, {key="value" declared={type=anything}}]
+layout L1 kind=Environment name="scope" fields=[{key="at" declared={type=anything}}]
+
+function f0 name="objectOfClosures" role=Library parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewClosure v1 function=f4
+    v3 = NewClosure v1 function=f4
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    Return v4
+}
+# CHECK: f0: barrier=None{{*}} returnsFreshAggregate freshAllocationsReturned=4
+
+function f1 name="closuresAsParts" role=Library parameters=[{type=number}] results=[{type=f4}, {type=f4}] {
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewClosure v1 function=f4
+    v3 = NewClosure v1 function=f4
+    v4 = Results v2, v3
+    Return v4
+}
+# CHECK: f1: barrier=None{{*}} freshAllocationsReturned=3
+
+function f2 name="oneClosureIsKept" role=Library parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewClosure v1 function=f4
+    v3 = NewClosure v1 function=f4
+    PutModuleVariable v3 variable=g0
+    v5 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    Return v5
+}
+# CHECK: f2: barrier=None{{*}} returnsFreshAggregate freshAllocationsReturned=2
+
+function f3 name="noClosures" role=Library parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Return v1
+}
+# CHECK: f3: barrier=None{{*}} returnsFreshAggregate
+# CHECK-NOT: freshAllocationsReturned
+
+function f4 name="overScope" kind=Arrow captures=[{type=env L1}] results=[{type=anything}] {
+  b0(v0: env L1):
+    Return
+}

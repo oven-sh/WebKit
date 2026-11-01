@@ -109,8 +109,14 @@ constexpr OpcodeSet opcodesExpandedIn(OptionSet<ExpansionStep> steps)
 // ExpandIteration has nothing to do in a function without any of the first, ExpandProvenIterations in one without any of the second.
 inline constexpr OpcodeSet expandedOpcodes = opcodesExpandedIn({ ExpansionStep::ForInPositions, ExpansionStep::ArrayIteratorSteps, ExpansionStep::Spreads, ExpansionStep::Iterations });
 inline constexpr OpcodeSet iterationOpcodes = opcodesExpandedIn(ExpansionStep::Iterations);
+// Where a text of the library calls the `next` of an iterator itself, it requires the answer to be an object.
+inline constexpr OpcodeSet opcodesExpandIterationLooksFor = [] {
+    OpcodeSet opcodes = expandedOpcodes;
+    opcodes.add(Opcode::RequireObject);
+    return opcodes;
+}();
 
-enum class OutlinedIteration : uint32_t { AppendIterable = 1, OpenIterator, CloseIterator, CloseIteratorAfterThrow, OpenWrappedIterator, OpenStringOrIterator, StepString, CloseStringOrIterator, CloseStringOrIteratorAfterThrow, CallWithElements, CallWithSharedArms, StepIterator };
+enum class OutlinedIteration : uint32_t { AppendIterable = 1, OpenIterator, CloseIterator, CloseIteratorAfterThrow, OpenWrappedIterator, OpenStringOrIterator, StepString, CloseStringOrIterator, CloseStringOrIteratorAfterThrow, CallWithElements, CallWithSharedArms, StepIterator, CallNextOfIterator };
 
 bool isOutlinedIteration(const Function&);
 // Calls the declared function of a variable with the elements of an unchanged array. One for all the places that spread a list into a call of that function.
@@ -142,7 +148,9 @@ inline constexpr OpcodeSet lookupsHoistedWhereTheyRunNoCode { Opcode::PropGet };
 inline constexpr OpcodeSet testsOfValuesThemselves { Opcode::ToBoolean, Opcode::StrictEq };
 // A string has no identity, so one that is joined from the same parts again may as well be the same string.
 inline constexpr OpcodeSet joinsOfStrings { Opcode::Add, Opcode::Strcat };
-inline constexpr OpcodeSet hoistableOpcodes = hoistableReadOpcodes | lookupsHoistedWhereTheyRunNoCode | testsOfValuesThemselves | OpcodeSet { Opcode::ForInStep, Opcode::CallBuiltin, Opcode::GetArrayLength };
+// These ask whether a position lies below the length of a list, and can be told the length. One that has been told tells the others of its loop, so they alone give the pass work.
+inline constexpr OpcodeSet testsOfPositionsInLists { Opcode::IsInBounds, Opcode::GetArrayElement, Opcode::IsElementPresent, Opcode::HasArrayElement };
+inline constexpr OpcodeSet hoistableOpcodes = hoistableReadOpcodes | lookupsHoistedWhereTheyRunNoCode | testsOfValuesThemselves | testsOfPositionsInLists | OpcodeSet { Opcode::ForInStep, Opcode::CallBuiltin, Opcode::GetArrayLength };
 
 inline constexpr AbstractHeapSet heapsOfVariables { AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields };
 

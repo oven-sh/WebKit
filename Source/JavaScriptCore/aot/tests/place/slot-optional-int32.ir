@@ -1,7 +1,8 @@
 # A field for int32s that may be absent, undefined or null takes 4 bytes and needs no Extension. The five lowest int32s are kept for the markers: for such a field they are values of another type, as any other number is.
 # A field that is declared to hold more than int32s takes 8 bytes where a store that the program shows puts another number into it
+# Flow is kept from saying where the objects go: a number of an object that is known to be in hands that nobody knows, and that no code that knows the object names, is kept as a value.
 # FORM: AsRead
-# OPTIONS: references=narrow only-passes=ResolveAccesses disable=flow:NarrowedTypes
+# OPTIONS: references=narrow only-passes=ResolveAccesses disable=flow:NarrowedTypes disable=flow:HolderMutations
 # RUN: plan-slots
 
 module m0 path="main.js" displayPath="main.js" body=f0

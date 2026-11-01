@@ -1,10 +1,9 @@
-# plain = {}; beside = { held }; odd = { given }; odd.__defineGetter__("late", somethingNoTableLists); Object.values(plain); Object.values(beside); Object.values(odd)
-# More objects in the hub of what has its values listed than the analysis tells apart: it tells one apart here, the plain object, which has the first layout. The two others come together.
+# plain = {}; beside = { held }; odd = { held: given }; odd.__defineGetter__("late", somethingNoTableLists); Object.values(plain); Object.values(beside); Object.values(odd)
+# More objects in the hub of what has its values listed than the analysis tells apart one by one, which is one here: it looks at the objects of one layout together, and the two that hold something have one layout.
 # Object.values runs the getters of its operand with the operand as `this`. The getter nobody knows lies on the odd object, so that one is handed to it and escapes with what it holds.
 # That says nothing about the object that came together with it: each is asked by itself whether such a getter lies on it. It stays in the program, and nobody enters what it holds.
 # converted-objects-past-those-told-apart-are-handed-to-what-each-of-them-finds.ir has the same for a method that is found under a name.
 # OPTIONS: limit=MaxValueFlowMembersToldApart:1
-# LOSS: MaxValueFlowMembersToldApart
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1
 # CHECK-NOT: unreached f2
@@ -17,8 +16,7 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Plain"
-layout L1 name="Beside" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
-layout L2 name="Odd" fields=[{key="given" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Holding" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = NewObject layout=L0 fields=[]
     v1 = NewClosure function=f1
@@ -26,7 +24,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v3 = Builtin builtin=GlobalThis
     v4 = PropGet v3 key="somethingThatNoTableLists" [isFreeName]
     v5 = NewClosure function=f2
-    v6 = NewObject -, v5 layout=L2 fields=[0]
+    v6 = NewObject -, v5 layout=L1 fields=[0]
     v7 = Builtin builtin=ObjectPrototype__defineGetter__
     v8 = String string="late"
     v9 = Call v7, v6, v8, v4

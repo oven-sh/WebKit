@@ -12,6 +12,58 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+// A read under such a name sees what the object holds or where it is linked.
+constexpr bool looksIntoObject(ValueFlowNameKind kind)
+{
+    switch (kind) {
+    case ValueFlowNameKind::Property:
+    case ValueFlowNameKind::Getter:
+    case ValueFlowNameKind::Setter:
+    case ValueFlowNameKind::Elements:
+    case ValueFlowNameKind::UnknownKey:
+    case ValueFlowNameKind::GetterUnderUnknownKey:
+    case ValueFlowNameKind::GetterUnderNameOfEnumeration:
+    case ValueFlowNameKind::SetterUnderUnknownKey:
+    case ValueFlowNameKind::EveryProperty:
+    case ValueFlowNameKind::EveryGetter:
+    case ValueFlowNameKind::GetterOutsideEnumerations:
+    case ValueFlowNameKind::EverySetter:
+    case ValueFlowNameKind::PrototypeLink:
+    case ValueFlowNameKind::CopiedFrom:
+    case ValueFlowNameKind::DeletedMember:
+    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+    case ValueFlowNameKind::RedefinedMember:
+    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+    case ValueFlowNameKind::PrivateField:
+    case ValueFlowNameKind::OpenedIterators:
+    case ValueFlowNameKind::IteratedValues:
+    case ValueFlowNameKind::IteratorResults:
+    case ValueFlowNameKind::AwaitedValue:
+    case ValueFlowNameKind::MemberWritten:
+    case ValueFlowNameKind::EveryMemberWritten:
+    case ValueFlowNameKind::EveryMemberRead:
+    case ValueFlowNameKind::AddedNames:
+        return true;
+    case ValueFlowNameKind::Slot:
+    case ValueFlowNameKind::HiddenSlot:
+    case ValueFlowNameKind::InternalFields:
+    case ValueFlowNameKind::SteppedValues:
+    case ValueFlowNameKind::ReturnedValue:
+    case ValueFlowNameKind::SentValues:
+    case ValueFlowNameKind::OpenedBy:
+    case ValueFlowNameKind::ResolvedPromises:
+    case ValueFlowNameKind::RejectedPromises:
+    case ValueFlowNameKind::AllocatedAs:
+    case ValueFlowNameKind::RestArgument:
+    case ValueFlowNameKind::FoundThroughEscapedInstances:
+    case ValueFlowNameKind::NamesOfMethods:
+    case ValueFlowNameKind::ReceiversOfCalls:
+    case ValueFlowNameKind::NamespaceExports:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+}
+
 // The part of the ledger for the own properties and the prototype links of function objects, of the prototype objects of classes
 // and of the objects that a program makes the prototype object of a function or of what Object.create() makes.
 // It answers for a place with one holder. A write of elements through every object opens elements() alone.

@@ -14,6 +14,7 @@
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
+#include "AOTFlowResults.h"
 #include "AOTGuardEmitter.h"
 #include "AOTModuleEmitter.h"
 #include "AOTNumberLiteralStrings.h"
@@ -166,8 +167,14 @@ Condition TypeTestEmitter::passesCellTest(CellPointer cell, const CellTest& test
         return isCallable(cell);
     case CellTestKind::CellTypeIs:
         return hasCellTypeIn(cell, test.cellTypes);
-    case CellTestKind::ShapeIn:
-        return emitter<ShapeTestEmitter>().hasShapeIn(cell, test.layouts, from);
+    case CellTestKind::ShapeIn: {
+        ShapeTestEmitter& shapes = emitter<ShapeTestEmitter>();
+        Condition hasShape = shapes.hasShapeIn(cell, test.layouts, from);
+        // A type that lists layouts says that the object is of this instance, and the objects of every instance of the image have these shapes.
+        if (inputs().flow.programInstances() == ProgramInstances::AtMostOne || shapes.hasOnlyCompiledObjects(from))
+            return hasShape;
+        return logicalAnd(hasShape, emitter<GuardEmitter>().belongsToInstance(cell));
+    }
     case CellTestKind::InheritsClassInfo:
         return inheritsClassInfo(cell, test.builtinClass);
     case CellTestKind::IsPristine: {
@@ -366,8 +373,6 @@ Condition TypeTestEmitter::isOneOfLiteralStringWords(LiteralStringWord word, con
             }
             continue;
         }
-        if (inputs().literalStrings.isLeftOut(literal))
-            continue;
         result = logicalOr(result, either<Condition>(conversions.isStringCell(word), [&] {
             return callWithoutSite<Condition>(RuntimeOperation::StringEqualsLiteral, { CellPointer(word.value()), word32(literal.index()) });
         }, [&] {

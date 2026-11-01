@@ -146,8 +146,8 @@ function f6 name="int32StoresIntoDeclaredNumbers" parameters=[{type=int[0, 100]}
     v7 = TryPutByValDirect v3, v6, v2
     Return v3
 # CHECK: v3: {{*}} = NewArrayLike v0, v1 arrayStorage=Double
-# CHECK: v5: {{*}} = TryPutByValDirect v3, v4, v2 arrayStorage=Double
-# CHECK: v7: {{*}} = TryPutByValDirect v3, v6, v2 arrayStorage=Double
+# CHECK: v5: {{*}} = TryPutByValDirect v3, v4, v2 length=v0 arrayStorage=Double
+# CHECK: v7: {{*}} = TryPutByValDirect v3, v6, v2 length=v0 arrayStorage=Double
 }
 
 function f7 name="int32StoresIntoDeclaredIntegers" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=i32}] results=[{type=Array<anything>}] {
@@ -156,7 +156,7 @@ function f7 name="int32StoresIntoDeclaredIntegers" parameters=[{type=int[0, 100]
     v5 = TryPutByValDirect v3, v4, v2
     Return v3
 # CHECK: v3: {{*}} = NewArrayLike v0, v1 arrayStorage=Int32
-# CHECK: v5: {{*}} = TryPutByValDirect v3, v4, v2 arrayStorage=Int32
+# CHECK: v5: {{*}} = TryPutByValDirect v3, v4, v2 length=v0 arrayStorage=Int32
 }
 
 function f8 name="int32StoresWhereNothingIsDeclared" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=i32}] results=[{type=Array<anything>}] {
@@ -165,5 +165,5 @@ function f8 name="int32StoresWhereNothingIsDeclared" parameters=[{type=int[0, 10
     v5 = TryPutByValDirect v3, v4, v2
     Return v3
 # CHECK: v3: {{*}} = NewArrayLike v0, v1 arrayStorage=Int32
-# CHECK: v5: {{*}} = TryPutByValDirect v3, v4, v2 arrayStorage=Int32
+# CHECK: v5: {{*}} = TryPutByValDirect v3, v4, v2 length=v0 arrayStorage=Int32
 }

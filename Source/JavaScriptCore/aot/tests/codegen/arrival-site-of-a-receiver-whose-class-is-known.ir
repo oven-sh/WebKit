@@ -1,0 +1,42 @@
+# A list, a view and a collection have no layout, so no list of layouts says what is known of them: their class stands in the type. Undefined and null throw where a member is asked for.
+# Such a site is Proven, with nothing expected. A receiver that may also be some other object, or a number, is not.
+# FORM: Selected
+# OPTIONS: count-arrivals
+# RUN: arrival-sites
+# CHECK: function f1
+# CHECK-NEXT: v2 site: 0 operation: ElemGet kind: Read level: Proven stamp: None expected: []
+# CHECK-NEXT: function f2
+# CHECK-NEXT: v3 site: 1 operation: ElemSet kind: Store level: Proven stamp: None expected: []
+# CHECK-NEXT: function f3
+# CHECK-NEXT: v2 site: 2 operation: ElemGet kind: Read level: Proven stamp: None expected: []
+# CHECK-NEXT: function f4
+# CHECK-NEXT: v2 site: 3 operation: ElemGet kind: Read level: Unknown stamp: None expected: []
+# CHECK-NEXT: function f5
+# CHECK-NEXT: v2 site: 4 operation: ElemGet kind: Read level: Unknown stamp: None expected: []
+# CHECK-NOT: site:
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="viewOrNothing" parameters=[{type=undefined|null|Int32Array}, {type=anything}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f2 name="storeIntoView" parameters=[{type=Int32Array}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    ElemSet v0, v1, v2 mode=Strict
+    Return v2
+}
+function f3 name="list" parameters=[{type=undefined|Array<string>}, {type=anything}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f4 name="viewOrAnyObject" parameters=[{type=Int32Array|object}, {type=anything}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f5 name="viewOrNumber" parameters=[{type=number|Int32Array}, {type=anything}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+}

@@ -2942,6 +2942,8 @@ static void classifyHolders(const AnalysisContext& context, const EffectContext&
             plan.disqualifiedLayouts.append(layout);
     };
     auto apply = [&](HolderAction action, ProgramPoint point, ValueID environment, LayoutID layout) {
+        if (action == HolderAction::Mark && context.build.isSabotaged(Sabotage::EnvironmentsThatAreKeptAreHandedBack))
+            action = HolderAction::Ignore;
         if (action == HolderAction::Mark && (!mayChange || !isAlwaysCell(program, function, environment)))
             action = HolderAction::Disqualify;
         switch (action) {

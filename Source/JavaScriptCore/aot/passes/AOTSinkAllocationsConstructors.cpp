@@ -19,6 +19,7 @@
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
+#include "AOTWrittenFunction.h"
 #include <algorithm>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
@@ -49,7 +50,7 @@ static bool belongsToOwnConstruction(const Function& function, const Value& valu
         && sameObjectThroughCasts(function, value.newTargetOperand()) == newTarget;
 }
 
-static bool isGuardUse(const Function& function, const Use& use)
+bool isGuardUse(const Function& function, const Use& use)
 {
     switch (use.kind) {
     case Use::Kind::Operand:
@@ -400,9 +401,11 @@ static void replaceAllocation(IRBuilder& builder, ValueID thisParameter)
 static ValueID appendParentVersionCall(IRBuilder& builder, DerivedFunctionInputs& inputs, const Value& superCall, FunctionID parent, ValueID thisParameter)
 {
     FunctionID parentVersion = inputs.derivedFunctions.ensure(derivedFunctionKey(FunctionRole::AllocatedThisVersion, parent));
-    ValueID calleeValue;
-    if (inputs.program.at(parentVersion).has(FunctionFlags::TakesCallee))
-        calleeValue = convertTo(builder, superCall.parentOperand(), DeclaredType(Proven::byPosition(TypeTable::function)));
+    bool takesCallee = inputs.program.at(parentVersion).has(FunctionFlags::TakesCallee);
+    bool isNamedByCallee = recordsCalleeOnlyOnceRenamed(inputs.program, parent);
+    ValueID functionObject;
+    if (takesCallee || isNamedByCallee)
+        functionObject = convertTo(builder, superCall.parentOperand(), DeclaredType(Proven::byPosition(TypeTable::function)));
 
     Vector<ValueID, 8> arguments;
     ValueID restArray;
@@ -421,12 +424,13 @@ static ValueID appendParentVersionCall(IRBuilder& builder, DerivedFunctionInputs
     return appendDirectCall(builder, {
         .callee = parentVersion,
         .thisValue = thisParameter,
-        .calleeValue = calleeValue,
+        .calleeValue = takesCallee ? functionObject : ValueID(),
         .newTarget = superCall.newTargetOperand(),
         .arguments = arguments.span(),
         .restArray = restArray,
         .accessSite = superCall.accessSite(),
         .isConstruction = true,
+        .calleeKeptInFrame = isNamedByCallee ? functionObject : ValueID(),
     });
 }
 

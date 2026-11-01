@@ -14,6 +14,7 @@
 #include "AOTCellFormat.h"
 #include "AOTCheckedFrameCells.h"
 #include "AOTClosureTestEmitter.h"
+#include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
 #include "AOTFunctionAnalyses.h"
@@ -61,6 +62,15 @@ Condition RuntimeValidationEmitter::hasType(Operand operand, const TypeTestPlan&
     return OperationEmitter::hasType(operand, plan);
 }
 
+bool RuntimeValidationEmitter::mayBeEmptyWhereMade(const Value& definition)
+{
+    // A deleted member leaves its variable empty, and a read may stand in front of the test that the member is unchanged.
+    bool readsMemberKeptInVariable = definition.opcode == Opcode::GetModuleVariable && m_program.at(definition.variable()).owner;
+    // So is the word of a built-in that the realm lacks.
+    // And what the tables of the run time or a site do not answer, which only the test behind the read looks at.
+    return readsMemberKeptInVariable || definition.opcode == Opcode::Builtin || definition.opcode == Opcode::ReadAboveFreshObject || (definition.opcode == Opcode::PropGet && definition.asksOnlyTables());
+}
+
 void RuntimeValidationEmitter::checkValue(ValueID id, Operand operand)
 {
     if (generator().isValidatedWhereLookedAt(id) || operand.representation == Representation::Void)
@@ -73,13 +83,8 @@ void RuntimeValidationEmitter::checkValue(ValueID id, Operand operand)
     if (type.isNever() || type.opaque)
         return;
     if (!type.environment) {
-        // A deleted member leaves its variable empty, and a read may stand in front of the test that the member is unchanged.
         const Value& definition = m_function.at(id);
-        bool readsMemberKeptInVariable = definition.opcode == Opcode::GetModuleVariable && m_program.at(definition.variable()).owner;
-        // So is the word of a built-in that the realm lacks.
-        // And what the tables of the run time or a site do not answer, which only the test behind the read looks at.
-        bool mayBeEmpty = readsMemberKeptInVariable || definition.opcode == Opcode::Builtin || definition.opcode == Opcode::ReadAboveFreshObject || (definition.opcode == Opcode::PropGet && definition.asksOnlyTables());
-        if (mayBeEmpty)
+        if (mayBeEmptyWhereMade(definition))
             checkHasType(id, operand, type.withPrimitives(Primitive::Absent), ValidationFailureKind::ValueType, id);
         else
             checkHasType(id, operand, definition.type, ValidationFailureKind::ValueType, id);
@@ -117,6 +122,38 @@ void RuntimeValidationEmitter::checkHasType(ValueID id, Operand operand, const T
     if (!mustBeThere && !needsTest)
         return;
 
+    bool answerNeverChanges = std::ranges::all_of(plan.cellTests, [](const CellTest& test) {
+        switch (test.kind) {
+        case CellTestKind::IsObject:
+        case CellTestKind::IsCallable:
+        case CellTestKind::CellTypeIs:
+        case CellTestKind::InheritsClassInfo:
+        case CellTestKind::IsBuiltinCell:
+        case CellTestKind::IsClosureOf:
+        case CellTestKind::IsSymbol:
+        case CellTestKind::IsNamespaceOf:
+            return true;
+        case CellTestKind::ShapeIn:
+        case CellTestKind::IsPristine:
+        case CellTestKind::SharingModeIs:
+        case CellTestKind::CarriesBrandOfClass:
+            return false;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    });
+    if (m_blockOfAssumedType && answerNeverChanges) {
+        uint64_t test = static_cast<uint64_t>(analyses().identityOf(tested).index()) << 33 | static_cast<uint64_t>(testedType.index()) << 1 | mustBeThere;
+        Vector<BlockID, 1>& blocks = m_blocksOfLastingTypeTests.ensure(test, [] {
+            return Vector<BlockID, 1>();
+        }).iterator->value;
+        bool isPassedAbove = blocks.containsIf([&](BlockID earlier) {
+            return earlier == m_blockOfAssumedType || (!m_function.at(earlier).handler && analyses().dominators().dominates(earlier, m_blockOfAssumedType));
+        });
+        if (isPassedAbove)
+            return;
+        blocks.append(m_blockOfAssumedType);
+    }
+
     // A result is tested where it is made, where flow says something about it and at each use. Nothing has written to the heap since the value passed the same test, and the test of a union takes dozens of blocks.
     if (!generator().checksKeptRegisters()) {
         PassedTypeTest test { tested, testedType, mustBeThere };
@@ -142,9 +179,23 @@ void RuntimeValidationEmitter::checkIsSpecified(ValueID id)
     if (!hasRegister(representationOf(id)) || isDeferredClosure(m_function, id))
         return;
     Operand operand = get(id);
-    if (!mayHoldPointer(operand) || typeOf(id).primitives & Primitive::Absent)
+    if (!mayHoldPointer(operand)) {
+        checkNumberIsSpecified(id);
+        return;
+    }
+    if (typeOf(id).primitives & Primitive::Absent)
         return;
     failUnless(Condition(m_out.notZero64(operand.value)), ValidationFailureKind::UnspecifiedValueInspected, { }, id);
+}
+
+// Every pattern of bits is a number, so what stands where no number was specified is a mark (ConstantEmitter::markOfUnspecifiedValue()).
+void RuntimeValidationEmitter::checkNumberIsSpecified(ValueID id)
+{
+    Operand operand = get(id);
+    if (operand.representation == Representation::Double)
+        failUnless(Condition(m_out.notEqual(m_out.bitCast(operand.value, B3::Int64), m_out.constInt64(ConstantEmitter::bitsOfUnspecifiedDouble))), ValidationFailureKind::UnspecifiedValueInspected, { }, id);
+    else if (operand.representation == Representation::Int32 && !typeOf(id).integers.contains(ConstantEmitter::unspecifiedInt32))
+        failUnless(Condition(m_out.notEqual(operand.value, m_out.constInt32(ConstantEmitter::unspecifiedInt32))), ValidationFailureKind::UnspecifiedValueInspected, { }, id);
 }
 
 bool RuntimeValidationEmitter::hasTestableBits(ValueID id)
@@ -166,9 +217,16 @@ void RuntimeValidationEmitter::generateValidateType(const ValueContext& value)
     }
     if (!hasTestableBits(source) || type.opaque || type.environment)
         return;
-    checkHasType(value.id(), get(source), value->validatedType(), ValidationFailureKind::AssumedType, source);
-    // The operands of this operation were validated in front of it.
-    if (value->validatedType() != m_function.at(source).type || !m_checkedClassProofs.contains(source))
+    // A validating build holds a value to its own type where it is made, and once more in front of this operation for what the heap says of it. Where that type lies inside the one that is claimed, the claim asks nothing new.
+    const Type& typeOfSource = typeOf(source);
+    bool isHeldToOwnType = generator().validates() && hasRegister(representationOf(source)) && !typeOfSource.isNever() && !typeOfSource.opaque && !typeOfSource.environment && !mayBeEmptyWhereMade(m_function.at(source)) && !emitter<AccessEmitter>().leavesKeyToRead(source);
+    if (!isHeldToOwnType || !testableTypeOf(typeOfSource).isSubsetOf(testableTypeOf(type), m_program)) {
+        m_blockOfAssumedType = generator().checksProofs() ? value.block() : BlockID();
+        checkHasType(value.id(), get(source), value->validatedType(), ValidationFailureKind::AssumedType, source);
+        m_blockOfAssumedType = { };
+    }
+    // The operands of this operation were validated in front of it. What is asked about a class goes by the classes and the built-in objects that a type lists, whatever else the two types say.
+    if (type.classes != typeOfSource.classes || type.builtins != typeOfSource.builtins || !m_checkedClassProofs.contains(source))
         checkClassProofs(value.id(), get(source), type);
 }
 
@@ -339,12 +397,15 @@ void RuntimeValidationEmitter::checkClassProofs(ValueID id, CellPointer cell, co
     // Every array starts with the marks that the test reads. An object of another class may be pristine without them.
     OptionSet<PristineAspects> aspects = part.provenPristine - aspectsWithoutTest;
     if (!aspects.isEmpty() && part.builtinClass == BuiltinClasses::Array && pristineTestOf(m_builtins, part.builtinClass) == PristineTest::MayPass) {
-        TypeTestEmitter& tests = emitter<TypeTestEmitter>();
+        // One bit of the cell answers for the names and the elements of an array together. Where it is clear the run time says which of the two it is, if either.
+        std::array<ValidationFailureKind, 2> questions;
+        size_t numberOfQuestions = 0;
         if (aspects.contains(PristineAspects::Names))
-            askOperationUnless(tests.isPristine(cell, part.builtinClass, PristineAspects::Names), ValidationFailureKind::ArrayNotPristine, cell, id);
-        OptionSet<PristineAspects> otherAspects = aspects - PristineAspects::Names;
-        if (!otherAspects.isEmpty())
-            askOperationUnless(tests.isPristine(cell, part.builtinClass, otherAspects), ValidationFailureKind::ArrayElementsNotOrdinary, cell, id);
+            questions[numberOfQuestions++] = ValidationFailureKind::ArrayNotPristine;
+        if (aspects.contains(PristineAspects::Storage))
+            questions[numberOfQuestions++] = ValidationFailureKind::ArrayElementsNotOrdinary;
+        if (numberOfQuestions)
+            askOperationUnless(emitter<TypeTestEmitter>().isPristine(cell, part.builtinClass, aspects), std::span(questions).first(numberOfQuestions), cell, id);
     }
     // Beside contents that are not proven the storage is an expectation, and every access tests it.
     if (!part.contentsAreProven)

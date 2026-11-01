@@ -38,6 +38,7 @@ JS_EXPORT_PRIVATE FunctionID closureTargetOf(const Program&, FunctionID);
 JS_EXPORT_PRIVATE FunctionID firstSourceOf(const Program&, FunctionID);
 bool isInRuntimeModule(const Program&, const Function&);
 bool rejectsOnThrow(const Program&, const Function&);
+bool isAsyncFunctionWithoutAwait(const Program&, const Function& source);
 JS_EXPORT_PRIVATE FunctionTraceRecord functionTraceOf(const Program&, FunctionID);
 
 } } } // namespace JSC::AOT::Typed

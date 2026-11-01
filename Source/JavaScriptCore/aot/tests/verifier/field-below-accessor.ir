@@ -1,0 +1,21 @@
+# class Base { get size() { return 0 } set size(v) { } }   class Held extends Base { constructor() { super(); this.size = 1 } }
+# `this.size = 1` gives Held a field that no store ever fills: it runs the setter. Flow marks such a field AccessorOnPrototypes only where no definition of the program can create it,
+# and accesses then go past the empty slot to the accessor behind a guard that no instance hides it. A store that creates a field in its slot declares no write of member guards.
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: FieldCreatedBelowAccessor 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Held" fields=[{key="size" declared={type=anything} flow={prototypeName=AccessorOnPrototypes}}, {key="late" declared={type=anything}}]
+function f0 name="goodStoreCreatesAnotherField" parameters=[{type=L0}, {type=anything}] results=[{type=undefined}] {
+    PutSlotOrAdd v0, -, v1 key="late" receivers=[L0] level=Proven
+    Return
+}
+function f1 name="goodTestOfTheEmptySlot" parameters=[{type=L0}] results=[{type=boolean}] {
+    v1 = IsSlotFilled v0 key="size" receivers=[L0] level=Proven
+    Return v1
+}
+function f2 name="badStoreCreatesTheField" parameters=[{type=L0}, {type=anything}] results=[{type=undefined}] {
+    PutSlotOrAdd v0, -, v1 key="size" receivers=[L0] level=Proven
+    Return
+}

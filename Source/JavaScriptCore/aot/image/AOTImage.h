@@ -100,6 +100,7 @@ public:
     static const Image** addressOfCurrentOfThread();
     // For a thread whose VM runs no compiled program.
     JS_EXPORT_PRIVATE static void useNoneOnThisThread();
+    static bool usesNoneOnThisThread();
     JS_EXPORT_PRIVATE static const Image* find(std::span<const uint8_t> bytes);
     // Takes no lock and does not depend on the calling thread.
     static const Image* findByCodeAddress(const void*);
@@ -163,6 +164,7 @@ public:
     bool findsDataFilesByName() const { return header().has(ImageFlag::FindsDataFilesByName); }
     bool admitsLibraryText() const { return header().has(ImageFlag::AdmitsLibraryText); }
     bool runsUnreadCode() const { return header().has(ImageFlag::RunsUnreadCode); }
+    bool refusesOriginalsBesideMocks() const { return header().has(ImageFlag::RefusesOriginalsBesideMocks); }
     bool loadsCodeOutsideImage() const { return !runsOnlyCodeOfImage && header().has(ImageFlag::LoadsCodeOutsideImage); }
     bool showsWaysBetweenModuleObjects() const { return header().has(ImageFlag::ShowsWaysBetweenModuleObjects); }
     bool storesPathOfMainModule() const { return header().has(ImageFlag::StoresPathOfMainModule); }

@@ -1,9 +1,12 @@
 # In untyped code a callee may be Object.defineProperty as it may be anything else, and an object may be a locked built-in as it may be anything else. A warning at each such call and store
-# says nothing, so the build warns only where it knows what is written: the callee is a built-in function, the object written to is one of a list, and a computed key is one of a list.
-# Here the first four writes are not such: the callee, the object (twice) and the key may each be something that nobody has seen.
-# The last two are: Object.defineProperty on a value that is the locked built-in in some runs, and a store under a key that is one of two names
+# says nothing, so the build warns only where it knows what is written to: the callee is a built-in function and the object written to is one of a list.
+# Here the first three writes are not such: the callee and the object (twice) may each be something that nobody has seen.
+# The fourth stores to Object.prototype under a key that nobody has seen. Object.prototype takes no name at all, so the store throws if it runs.
+# The next two name what they write: Object.defineProperty on a value that is the locked built-in in some runs, and a store under a key that is one of two names.
+# The last stores to Array.prototype under a key that nobody has seen. Array.prototype takes new names, so the build says that it cannot read the name
 # RUN: pipeline CheckLockedBuiltinWrites
-# DIAGNOSTIC: LockedBuiltinWriteMayRun 2
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 3
+# DIAGNOSTIC: LockedBuiltinWriteUnderUnreadName 1
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -41,5 +44,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
   b4():
     v25 = Call v3, v4, v19, v15, v6 @90
     ElemSet v2, v20, v5 mode=Strict @100
+    v27 = Builtin builtin=ArrayPrototype
+    ElemSet v27, v9, v5 mode=Strict @110
     Return
 }

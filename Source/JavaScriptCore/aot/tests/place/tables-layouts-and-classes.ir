@@ -101,7 +101,7 @@ function f9 name="createsScope" parameters=[{type=string}] results=[{type=anythi
 # CHECK-NEXT: boundFunctions 0 0
 
 # RECORD: layout shape={{*}} index=L0 kind=Record name="Point"
-# RECORD-NEXT: field 0 name="x" {{*}}slot=OptionalDouble@16
+# RECORD-NEXT: field 0 name="x" {{*}}slot=JSValue@16
 
 # BASE: layout shape=[[shape]] index=L1 kind=Instance name="Base"
 # BASE-NEXT: field 0 name="value" {{*}}slot=[[representation]]@16

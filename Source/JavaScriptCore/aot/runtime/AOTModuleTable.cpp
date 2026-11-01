@@ -17,6 +17,7 @@
 #include <functional>
 #include <ranges>
 #include <utility>
+#include <wtf/text/ASCIIFastPath.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -89,36 +90,30 @@ std::optional<uint64_t> ModuleTable::sourceStamp(ModuleID module) const
     return found != stamps.end() && found->module == module.index() ? std::optional(found->stamp()) : std::nullopt;
 }
 
-static std::atomic<uint32_t>& moduleFoundLast(unsigned hashOfPath)
+// A table has modules with a path that are not in modulesByPath: what it does not hold compiled.
+std::optional<ModuleID> ModuleTable::findByPath(StringView publicPath, unsigned hashOfPath) const
 {
-    static std::array<std::atomic<uint32_t>, 256> modulesFoundLast;
-    return modulesFoundLast[hashOfPath % modulesFoundLast.size()];
-}
-
-void ModuleTable::willBeAskedForPath(ModuleID module, unsigned hashOfPath) const
-{
-    moduleFoundLast(hashOfPath).store(module.index(), std::memory_order_relaxed);
-}
-
-std::optional<ModuleID> ModuleTable::findByPath(StringView publicPath) const
-{
-    std::atomic<uint32_t>& foundLast = moduleFoundLast(publicPath.hash());
-    uint32_t found = foundLast.load(std::memory_order_relaxed);
-    if (found >= size() || comparePath(ModuleID(found), publicPath) != 0) {
-        ModuleNumbers byPath = modulesByPath();
-        auto places = std::views::iota(size_t(0), byPath.size());
-        size_t place = static_cast<size_t>(std::ranges::partition_point(places, [&](size_t candidate) {
-            return comparePath(ModuleID(byPath[candidate]), publicPath) < 0;
-        }) - places.begin());
-        if (place == byPath.size() || comparePath(ModuleID(byPath[place]), publicPath) != 0)
-            return std::nullopt;
-        found = byPath[place];
-        foundLast.store(found, std::memory_order_relaxed);
-    }
-    std::optional<uint32_t> registryID = data(ModuleID(found)).registryID();
-    if (registryID && !BuiltinTable::singleton().at(RuntimeModuleID(*registryID)).flags.contains(RuntimeModuleFlag::IsPublic))
+    std::span<const uint32_t> entries = m_tables->modulesByHashOfPath();
+    if (entries.empty())
         return std::nullopt;
-    return ModuleID(found);
+    ModuleByHashOfPath sought(m_modules.size(), hashOfPath);
+    size_t bucket = sought.bucket(ModuleByHashOfPath::numberOfBuckets(entries.size()));
+    ModuleNumbers ends = ModuleNumbers(m_tables->firstModulesByHashOfPath(), m_modules.size()).subspan(bucket, 2);
+    for (uint32_t entry : entries.subspan(ends[0], ends[1] - ends[0])) {
+        uint32_t module = sought.moduleOrMore(entry);
+        if (!sought.isModule(module))
+            continue;
+        ModuleID found(module);
+        if (comparePath(found, publicPath) != 0) {
+            s_modulesComparedWithPath.fetch_add(1, std::memory_order_relaxed);
+            continue;
+        }
+        std::optional<uint32_t> registryID = data(found).registryID();
+        if (registryID && !BuiltinTable::singleton().at(RuntimeModuleID(*registryID)).flags.contains(RuntimeModuleFlag::IsPublic))
+            return std::nullopt;
+        return found;
+    }
+    return std::nullopt;
 }
 
 bool ModuleTable::holdsFormThatAttributeAsksFor(StringView publicPath) const
@@ -293,6 +288,13 @@ ModuleTable::PiecesOfPath ModuleTable::piecesOfPath(ModuleID module) const
 // A piece ends with a slash or with the path, so none ends inside a surrogate pair.
 std::strong_ordering ModuleTable::comparePath(ModuleID module, StringView other) const
 {
+    // The name of a module of the library.
+    if (const ModuleData& moduleData = data(module); !optionalIDInImage<uint32_t>(moduleData.directory)) {
+        StringView name = viewOfPathPiece(StringID(moduleData.publicPathOrName));
+        if (std::strong_ordering order = compareCodePoints(name, other.substring(0, name.length())); order != 0)
+            return order;
+        return name.length() == other.length() ? std::strong_ordering::equal : std::strong_ordering::less;
+    }
     unsigned position = 0;
     for (StringView piece : piecesOfPath(module)) {
         if (std::strong_ordering order = compareCodePoints(piece, other.substring(position, piece.length())); order != 0)
@@ -315,6 +317,43 @@ String ModuleTable::pathText(ModuleID module) const
     for (StringView piece : pieces)
         path.append(piece);
     return path.toString();
+}
+
+// A piece ends with a slash or with the path, so none ends inside a surrogate pair.
+template<size_t inlineCapacity>
+static void appendPieceForSystem(Vector<char, inlineCapacity>& path, StringView piece)
+{
+    if (piece.is8Bit() && charactersAreAllASCII(piece.span8())) [[likely]]
+        path.append(byteCast<char>(piece.span8()));
+    else
+        path.append(piece.utf8().span());
+}
+
+std::span<const char> ModuleTable::PathsForSystem::folder(const ModuleTable& table, uint32_t directory)
+{
+    std::span<const ModuleDirectoryData> directories = table.m_tables->moduleDirectories();
+    if (m_folders.isEmpty())
+        m_folders.grow(directories.size());
+    if (!m_folders[directory].length) {
+        Vector<char, 512> path;
+        if (std::optional<uint32_t> parent = directories[directory].parentDirectory())
+            path.append(folder(table, *parent));
+        appendPieceForSystem(path, table.viewOfPathPiece(StringID(directories[directory].name)));
+        m_folders[directory] = { static_cast<uint32_t>(m_textOfFolders.size()), static_cast<uint32_t>(path.size()) };
+        m_textOfFolders.append(path.span());
+    }
+    return m_textOfFolders.span().subspan(m_folders[directory].start, m_folders[directory].length);
+}
+
+std::span<const char> ModuleTable::PathsForSystem::pathOf(const ModuleTable& table, ModuleID module)
+{
+    const ModuleData& moduleData = table.data(module);
+    m_path.shrink(0);
+    if (std::optional<uint32_t> directory = optionalIDInImage<uint32_t>(moduleData.directory))
+        m_path.append(folder(table, *directory));
+    appendPieceForSystem(m_path, table.viewOfPathPiece(StringID(moduleData.publicPathOrName)));
+    m_path.append('\0');
+    return m_path.span().first(m_path.size() - 1);
 }
 
 // The text that displayPathText() makes.

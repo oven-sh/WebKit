@@ -601,7 +601,7 @@ GlobalBindings::GlobalBindings(State& state)
 Identifier GlobalBindings::nameOf(uint32_t number) const
 {
     RELEASE_ASSERT(number < m_names.size());
-    return m_state.instance.vm->aotState().identifiers->identifier(identifierNumberOf(number));
+    return identifiersOf(m_state.instance).identifier(identifierNumberOf(number));
 }
 
 bool GlobalBindings::fileConstant(VM& vm, uint32_t number, JSObject* holderToWatch, JSValue value)

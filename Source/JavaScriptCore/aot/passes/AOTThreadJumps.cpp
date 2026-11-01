@@ -265,14 +265,46 @@ struct EdgeThreader : Rewrite {
         return outcome;
     }
 
+    Vector<BlockID, 8> copyTargetsOf(std::span<const Edge> decidedEdges)
+    {
+        Vector<BlockID, 8> copies;
+        for (Edge edge : decidedEdges) {
+            copies.append(copyBlock(targetOf(function, edge).block));
+            redirect(edge, Target { copies.last(), Arguments(targetOf(function, edge).arguments), { } });
+        }
+        return copies;
+    }
+
     // An edge that decides the test of a merge point gets a copy of the block for itself. There the test folds.
     PassOutcome giveCopiesTo(std::span<const Edge> decidedEdges)
     {
-        for (Edge edge : decidedEdges) {
-            BlockID copy = copyBlock(targetOf(function, edge).block);
-            redirect(edge, Target { copy, Arguments(targetOf(function, edge).arguments), { } });
-        }
+        copyTargetsOf(decidedEdges);
         return finish();
+    }
+
+    // A copy that still goes both ways brings together what the test before it has parted, and each value alive there gets a parameter: in a row of equal tests, the square of the row.
+    // So the copies are decided as the next round would decide them, before the values are repaired.
+    void decideTypeTestsOf(std::span<const BlockID> copies)
+    {
+        TypeTestBranches typeTests(analyses);
+        Vector<Edge, 8> decided;
+        for (BlockID copy : copies) {
+            KnownBoolean outcome = typeTests.outcomeFromDominatingTest(copy);
+            if (outcome == KnownBoolean::Unknown)
+                outcome = typeTests.outcomeOnEveryWay(copy);
+            if (outcome == KnownBoolean::Unknown)
+                continue;
+            Edge chosen { copy, outcome == KnownBoolean::True ? 0u : 1u };
+            if (canDecideTerminator(program, function, builder().types(), chosen))
+                decided.append(chosen);
+        }
+        for (Edge chosen : decided)
+            raiseFrequenciesBehind(analyses, builder().function(), chosen);
+        for (Edge chosen : decided)
+            decideTerminator(builder(), chosen.from, chosen.targetIndex);
+        for (Edge chosen : decided)
+            castArgumentsToParameters(builder(), chosen.from, context.build.validates());
+        builder().applyInsertions();
     }
 
     PassOutcome threadBranchesOnParameters()
@@ -712,6 +744,85 @@ struct EdgeThreader : Rewrite {
 
     bool isSeldomTaken(Edge edge) const { return at(edge.from).frequency.predicted() == BlockFrequency::Rare; }
 
+    // The one object that the likely ways make and pass, where an unlikely way passes something else: by itself the object need not be made.
+    ValueID findObjectMadeButOnUnlikelyWays(const CFG& cfg, BlockID id, size_t position) const
+    {
+        ValueID passedOnLikelyWays;
+        bool isPassedOnUnlikelyWay = false;
+        for (Edge edge : cfg.incomingEdges(id)) {
+            const Arguments& arguments = targetOf(function, edge).arguments;
+            if (edge.isHandlerEdge() || position >= arguments.size())
+                return { };
+            if (at(edge.from).frequency.predicted() != BlockFrequency::Normal) {
+                if (!canRedirect(edge))
+                    return { };
+                isPassedOnUnlikelyWay = true;
+                continue;
+            }
+            if (passedOnLikelyWays && passedOnLikelyWays != arguments[position])
+                return { };
+            passedOnLikelyWays = arguments[position];
+        }
+        if (!isPassedOnUnlikelyWay || !passedOnLikelyWays)
+            return { };
+        const Value& made = at(passedOnLikelyWays);
+        return made.opcode == Opcode::NewObject && !made.prototypeOperand() ? passedOnLikelyWays : ValueID();
+    }
+
+    // Where a test of the members of a class has failed the object is made by another road, and the object of the likely way would be joined with that one and made in every turn.
+    // The next test of that class, which the join ends in, asks about no value, and its failing side relies on nothing: whoever takes the test for failed is right. So the unlikely way gets the block for itself and goes on there.
+    PassOutcome sendUnlikelyWaysPastTestsOfMembers()
+    {
+        bool hasCandidates = chooseMergePoints([&](const CFG& cfg, BlockID id) {
+            const Block& block = at(id);
+            if (block.terminator.kind != TerminatorKind::Branch || block.parameters.isEmpty() || block.frequency.predicted() != BlockFrequency::Normal)
+                return false;
+            ValueID condition = block.terminator.conditionOperand();
+            if (at(condition).opcode != Opcode::AreMembersUnchanged || !block.values.contains(condition))
+                return false;
+            if (isLoopHeader(cfg, id) || block.isHandlerBlock() || hasEdgeTo(block.terminator, id))
+                return false;
+            const Target& failed = block.terminator.notTaken();
+            if (!failed.proofs.isEmpty() || hasEdgeResults(function, Edge { id, 1 }) || at(failed.block).frequency.predicted() == BlockFrequency::Normal)
+                return false;
+            bool leavesObjectAlone = false;
+            for (size_t position = 0; position < block.parameters.size() && !leavesObjectAlone; ++position) {
+                ValueID made = findObjectMadeButOnUnlikelyWays(cfg, id, position);
+                leavesObjectAlone = made && std::ranges::any_of(at(condition).conditions(), [&](MemberConditionRecord asked) {
+                    return asked.layout == declaredLayoutOf(program, at(made).layout());
+                });
+            }
+            if (!leavesObjectAlone)
+                return false;
+            size_t numberOfCopies = std::ranges::count_if(cfg.incomingEdges(id), [&](Edge edge) { return at(edge.from).frequency.predicted() != BlockFrequency::Normal; });
+            if (context.exceeds(LimitID::MaxThreadedBlockValues, block.values.size() * numberOfCopies, condition))
+                return false;
+            return RegionCloner::checkCanDuplicate(analyses, singleElementSpan(id)) == CloneCheck::CanClone;
+        });
+        if (!hasCandidates)
+            return PassOutcome::Unchanged;
+
+        Vector<Edge, 8> unlikelyEdges;
+        for (BlockID candidate : candidates) {
+            for (Edge edge : incomingEdges[candidate]) {
+                if (at(edge.from).frequency.predicted() != BlockFrequency::Normal)
+                    unlikelyEdges.append(edge);
+            }
+        }
+        Vector<Expected<BlockFrequency>, 8> frequencies;
+        for (Edge edge : unlikelyEdges)
+            frequencies.append(at(edge.from).frequency);
+        Vector<BlockID, 8> copies = copyTargetsOf(unlikelyEdges.span());
+        for (size_t index = 0; index < copies.size(); ++index) {
+            builder().function().edit(copies[index], BlockEdit::Rest).frequency = frequencies[index];
+            decideTerminator(builder(), copies[index], 1);
+        }
+        for (BlockID copy : copies)
+            castArgumentsToParameters(builder(), copy, context.build.validates());
+        builder().applyInsertions();
+        return finish();
+    }
+
     // What an edge passes decides the test, but the block does more than test: it reads a variable that the code below uses, or may throw. No edge can skip that, and a copy of it costs less than the test and the merge.
     // A slow path that comes back knows nothing of what it passes. It keeps the block, and with it the test, which the other edges no longer pay for.
     // Only behind the rounds: PlaceTypeTests would copy the code below the join once more for the type that the copy knows.
@@ -972,6 +1083,122 @@ struct EdgeThreader : Rewrite {
         return finish();
     }
 
+    struct TestBelowHeadOfLoop {
+        Vector<BlockID, maxBlocksFromJoinToTest> blocks;
+        Vector<Edge, 2> edgesThatPass;
+    };
+
+    ValueID valueHandedOnAs(BlockID above, BlockID block, ValueID value) const
+    {
+        size_t parameterIndex = at(block).parameters.find(value);
+        if (parameterIndex == notFound)
+            return value;
+        const auto& targets = at(above).terminator.targets;
+        for (uint32_t targetIndex = 0; targetIndex < targets.size(); ++targetIndex) {
+            if (targets[targetIndex].block != block)
+                continue;
+            if (parameterIndex < targets[targetIndex].arguments.size())
+                return targets[targetIndex].arguments[parameterIndex];
+            return operandNarrowedOnEdge(function, { above, targetIndex, static_cast<uint32_t>(parameterIndex - firstEdgeResultParameter(function, above, targetIndex)) });
+        }
+        return { };
+    }
+
+    ValueID parameterOfHeadBehind(std::span<const BlockID> blocks, ValueID tested) const
+    {
+        tested = sameObjectBehindFacts(function, tested);
+        for (size_t index = blocks.size(); index-- > 1;) {
+            tested = valueHandedOnAs(blocks[index - 1], blocks[index], tested);
+            if (!tested)
+                return { };
+            tested = sameObjectBehindFacts(function, tested);
+        }
+        return at(blocks[0]).parameters.contains(tested) ? tested : ValueID();
+    }
+
+    std::optional<TestBelowHeadOfLoop> findTestBelowHeadOf(const NaturalLoop& loop)
+    {
+        const CFG& cfg = analyses.cfg();
+        const NaturalLoops& loops = analyses.naturalLoops();
+        BlockID head = loop.header();
+        TestBelowHeadOfLoop path;
+        for (BlockID id = head; path.blocks.size() < maxBlocksFromJoinToTest;) {
+            const Block& block = at(id);
+            if (block.isHandlerBlock() || block.frequency.predicted() != BlockFrequency::Normal)
+                return std::nullopt;
+            path.blocks.append(id);
+
+            const Value* test = typeTestBranchedOn(function, block);
+            bool isOpen = test && block.values.contains(block.terminator.conditionOperand()) && evaluateTypeTest(program, typeOf(test->valueOperand()), context.types.at(test->testedType())) == KnownBoolean::Unknown;
+            ValueID parameter = isOpen ? parameterOfHeadBehind(path.blocks.span(), test->valueOperand()) : ValueID();
+            BlockID whenPassed = parameter ? block.terminator.taken().block : BlockID();
+            if (whenPassed && whenPassed != head && loops.belongsTo(whenPassed, loop)) {
+                size_t parameterIndex = at(head).parameters.find(parameter);
+                for (Edge edge : cfg.incomingEdges(head)) {
+                    if (!loops.belongsTo(edge.from, loop) || !canRedirect(edge) || !analyses.dominators().dominates(whenPassed, edge.from))
+                        continue;
+                    Type arriving = typeOf(targetOf(function, edge).arguments[parameterIndex]).castTo(typeOf(test->valueOperand()), context.types);
+                    if (evaluateTypeTest(program, arriving, context.types.at(test->testedType())) == KnownBoolean::True)
+                        path.edgesThatPass.append(edge);
+                }
+                if (!path.edgesThatPass.isEmpty())
+                    return path;
+            }
+
+            BlockID below;
+            for (const Target& target : block.terminator.targets) {
+                if (!loops.belongsTo(target.block, loop))
+                    continue;
+                if (below)
+                    return std::nullopt;
+                below = target.block;
+            }
+            if (!below || below == head || !cfg.singleIncomingEdge(below))
+                return std::nullopt;
+            id = below;
+        }
+        return std::nullopt;
+    }
+
+    PassOutcome copyHeadsOfLoopsAboveTests()
+    {
+        const NaturalLoops& loops = analyses.naturalLoops();
+        Vector<TestBelowHeadOfLoop, 4> paths;
+        IndexSet<BlockID> changedBlocks;
+        for (unsigned index = 0; index < loops.numLoops(); ++index) {
+            BlockID head = loops.loop(index).header();
+            if (heatClassOf(context, head).predicted() < leastHeatOfJoinsCopiedAboveTests)
+                continue;
+            std::optional<TestBelowHeadOfLoop> path = findTestBelowHeadOf(loops.loop(index));
+            if (!path || RegionCloner::checkCanDuplicate(analyses, path->blocks.span(), singleElementSpan(head)) != CloneCheck::CanClone)
+                continue;
+            size_t numberOfValues = 0;
+            Vector<BlockID, 16> touchedBlocks;
+            for (BlockID block : path->blocks) {
+                numberOfValues += at(block).values.size();
+                touchedBlocks.append(block);
+                for (const Target& target : at(block).terminator.targets)
+                    touchedBlocks.append(target.block);
+            }
+            for (Edge edge : path->edgesThatPass)
+                touchedBlocks.append(edge.from);
+            if (context.exceeds(LimitID::MaxThreadedBlockValues, numberOfValues, at(path->blocks.last()).terminator.conditionOperand()))
+                continue;
+            if (std::ranges::any_of(touchedBlocks, [&](BlockID block) { return changedBlocks.contains(block); }))
+                continue;
+            for (BlockID block : touchedBlocks)
+                changedBlocks.add(block);
+            paths.append(WTF::move(*path));
+        }
+        for (const TestBelowHeadOfLoop& path : paths) {
+            BlockID copy = copyBlocks(path.blocks.span());
+            for (Edge edge : path.edgesThatPass)
+                redirect(edge, Target { copy, Arguments(targetOf(function, edge).arguments), { } });
+            context.hasCopiedJoinsAboveTests = true;
+        }
+        return finish();
+    }
+
     // Two ways part at a test of a value for a type, come together again, and the same test of the same value follows: `f(f(x))` where f may be one of the functions that its type lists or any other.
     PassOutcome copyRepeatedTests()
     {
@@ -1051,7 +1278,8 @@ struct EdgeThreader : Rewrite {
         Vector<Edge, 8> decidedEdges;
         for (size_t index : isDecided)
             decidedEdges.append(edgesIntoCandidates[index].edge);
-        return giveCopiesTo(decidedEdges.span());
+        decideTypeTestsOf(copyTargetsOf(decidedEdges.span()).span());
+        return finish();
     }
 
     Vector<BlockID> candidates;
@@ -1074,12 +1302,14 @@ PassOutcome threadJumps(FunctionPassContext& context)
         if (context.inputs.heat.of(context.program, context.id).predicted() >= leastHeatOfJoinsCopiedBesideSlowPaths)
             outcome = EdgeThreader(context).copySmallJoins();
         outcome |= EdgeThreader(context).copyJoinsAboveTests();
+        outcome |= EdgeThreader(context).copyHeadsOfLoopsAboveTests();
         if (outcome == PassOutcome::Changed)
             context.keptAnalyses = allAnalyses;
         return outcome;
     }
     PassOutcome outcome = EdgeThreader(context).threadBranchesOnParameters();
     outcome |= EdgeThreader(context).threadDecidedBranches();
+    outcome |= EdgeThreader(context).sendUnlikelyWaysPastTestsOfMembers();
     EdgeThreader joinCopier(context);
     PassOutcome copiedSmallJoins = joinCopier.copySmallJoins();
     // A phase that has chosen no merge point has kept nothing but what it noted for the next one. Where it has copied a block, that is out of date, and the pass runs again.

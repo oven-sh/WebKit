@@ -52,6 +52,9 @@ enum class ValueFlowCalleeOrigin : uint8_t {
     OperandOfAppliedEntry,
 };
 
+// Native code that calls a function: which positions it leaves out is known only where a declaration lists what is passed.
+enum class ValueFlowArgumentsLeftOut : bool { AnyOfThem, SaidByCaller };
+
 class ValueFlowRuleContext {
     WTF_MAKE_NONCOPYABLE(ValueFlowRuleContext);
 public:
@@ -79,6 +82,7 @@ public:
     const Value& operationAt(FunctionID, ValueID) const;
     std::span<const ValueFlowOperand> operandsOf(const ValueFlowStatement&) LIFETIME_BOUND;
     std::span<const ValueFlowOperand> objectsReadUnderKeyOfStore(const ValueFlowStatement&) const LIFETIME_BOUND;
+    bool isAskedForByName(PropertyKeyID) const;
     bool canBeReached(const ValueFlowStatement&);
     ClimbingSet setOfKey() const;
     uint32_t numberOfMembersOfKey() const;
@@ -186,7 +190,7 @@ public:
     ValueSetMaker& maker() { return m_maker; }
 
     ValueFlowNodeID read(ClimbingSet objects, ValueFlowCellName cell) { return readWhatWasWritten(objects, static_cast<ValueFlowName>(cell)); }
-    enum class ReadUse : bool { Any, OnlyWhatLetsInUnseenCode };
+    enum class ReadUse : uint8_t { Any, OnlyWhatLetsInUnseenCode, OutsideEnumerations };
     ValueFlowNodeID readWhatWasWritten(ClimbingSet objects, ValueFlowName, ReadUse = ReadUse::Any);
     ValueFlowNodeID readWhatWasWritten(ClimbingSet objects, ValueFlowCellName) = delete;
     // The value of that node if an earlier turn made it. The statement does not ask for the node, so a change of the value does not run it again.
@@ -200,6 +204,7 @@ public:
     void noteSourcesOfCopiesSeenFrom(ClimbingSet objects, ClimbingSet seen);
     ValueFlowNodeID written(ClimbingSet objects, ValueFlowName);
     bool mayFindSomethingWritten(ClimbingSet objects, ValueFlowNameKind);
+    ClimbingSet membersThatMayFindSomethingWritten(ClimbingSet objects, ValueFlowNameKind);
     std::optional<ClimbingSet> holdersUnder(ValueFlowName, ClimbingSet within);
     ClimbingSet holdersOfLibraryExportsWrittenUnder(PropertyKeyID);
     bool mayFindWhatIsWrittenUnderUnknownKey(ValueFlowName) const;
@@ -207,7 +212,7 @@ public:
     enum class LookupUse : bool { Any, OnlyCalledOnReceiver };
     ValueFlowNodeID lookup(ClimbingSet receivers, ValueFlowName, LookupUse = LookupUse::Any);
     bool runsCodeThatRecordsDescribe() const;
-    ValueFlowCallGroup group(ClimbingSet callees, ValueFlowCallKind, ValueFlowCalleeOrigin = ValueFlowCalleeOrigin::Value);
+    ValueFlowCallGroup group(ClimbingSet callees, ValueFlowCallKind, ValueFlowCalleeOrigin = ValueFlowCalleeOrigin::Value, ValueFlowArgumentsLeftOut = ValueFlowArgumentsLeftOut::AnyOfThem);
     ValueFlowNodeID hub(ValueFlowBehaviorID);
     ValueFlowNodeID masked(ValueFlowNodeID, ValueSetID mask, ValueFlowMaskKind = ValueFlowMaskKind::Plain);
 
@@ -259,6 +264,7 @@ public:
     bool refusesEvaluatedText() const { return refusedCode().evaluatedText; }
     bool isGuardedByRemovedFeature(BuiltinID) const;
     bool isSabotaged(Sabotage) const;
+    bool handsReceiverOn(FunctionID) const;
 
     static ValueSetID throughMaskOf(const ValueFlowOperand&, ValueSetID value, const ValueFlowSolver&, ValueSetMaker&);
     static ValueSetID valueShownToRules(const ValueFlowOperand&, const ValueFlowSolver&, ValueSetMaker&);

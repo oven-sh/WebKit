@@ -23,6 +23,8 @@
 #include "FunctionPrototype.h"
 #include "GlobalObjectMethodTable.h"
 #include "InternalFunction.h"
+#include "IntlDateTimeFormat.h"
+#include "IntlNumberFormat.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
 #include "JSCustomGetterFunction.h"
@@ -103,6 +105,41 @@ static BuiltinID findBuiltinWithNativeCodeOf(const BuiltinTable& table, JSObject
             return binding.builtin;
     }
     return { };
+}
+
+// `formatter.format` answers a function that the accessor has bound to the formatter. Whoever bound it has made its target too, and nothing leads from the realm to that: the formatter keeps the bound function.
+// Flow takes the accessor for the target, and what a call does stands among the overloads of the accessor.
+struct FunctionBoundByAccessor {
+    JSBoundFunction* function { nullptr };
+    BuiltinID accessor;
+};
+
+static FunctionBoundByAccessor findFunctionBoundByAccessorWithTarget(const NativeCall& call)
+{
+    const BuiltinTable& table = BuiltinTable::singleton();
+    auto ifCalleeIsTarget = [&](JSBoundFunction* bound, BuiltinID accessor) -> FunctionBoundByAccessor {
+        if (!bound || bound->targetFunction() != call.callee || bound->boundArgsLength() > call.arguments.size() || !table.answersFunctionBoundToReceiver(table.canonicalID(accessor)))
+            return { };
+        return { bound, accessor };
+    };
+    if (call.kind != CodeSpecializationKind::CodeForCall)
+        return { };
+    if (auto* formatter = dynamicDowncast<IntlNumberFormat>(call.thisValue))
+        return ifCalleeIsTarget(formatter->boundFormat(), Builtins::IntlNumberFormatPrototypeFormat);
+    if (auto* formatter = dynamicDowncast<IntlDateTimeFormat>(call.thisValue))
+        return ifCalleeIsTarget(formatter->boundFormat(), Builtins::IntlDateTimeFormatPrototypeFormat);
+    return { };
+}
+
+// A formatter with a pattern has the pattern bound in front of what the caller passes. The overloads speak of what the caller passes.
+static NativeCall withoutArgumentsBoundByAccessor(const NativeCall& call)
+{
+    FunctionBoundByAccessor bound = findFunctionBoundByAccessorWithTarget(call);
+    if (!bound.function)
+        return call;
+    NativeCall callOfBoundFunction = call;
+    callOfBoundFunction.arguments = ArgList(call.arguments.data() + bound.function->boundArgsLength(), call.arguments.size() - bound.function->boundArgsLength());
+    return callOfBoundFunction;
 }
 
 // Nothing leads from the realm to the constructor of a class that only a native binding hands out. The host keeps the Structure of the instances, and the prototype object names the constructor.
@@ -252,7 +289,7 @@ static void appendOverloads(NativeCallDeclaration& declaration, BuiltinID builti
 }
 
 // May create objects of the realm that are created on demand.
-static NativeCallDeclaration findDeclaration(const NativeCall& call, const NativeCallExpectation& expectation)
+static NativeCallDeclaration findDeclaration(const NativeCall& call, const NativeCallExpectation& expectation, BuiltinID accessorThatBoundCallee)
 {
     using enum NativeCallDeclarationSource;
     using Kind = BuiltinCellKey::Kind;
@@ -275,6 +312,9 @@ static NativeCallDeclaration findDeclaration(const NativeCall& call, const Nativ
     }
 
     if (declare(NativeCodeOfCallee, findBuiltinWithNativeCodeOf(table, call.callee, BuiltinScope::Module), modeOf(Kind::Object, call.kind)))
+        return declaration;
+
+    if (declare(CalleeInRealm, accessorThatBoundCallee, BuiltinCallMode::Call))
         return declaration;
 
     // The program may have replaced a step of the path to the function, such as `console.log`. Compiled code that names the function has it in a cell.
@@ -549,16 +589,16 @@ class NativeCallValidationScope::Checker {
 public:
     Checker(VM& vm, const NativeCall& call, const NativeCallExpectation& expectation)
         : m_vm(vm)
-        , m_call(call)
+        , m_call(withoutArgumentsBoundByAccessor(call))
         , m_expectation(expectation)
     {
         DeferGCForAWhile deferGC(vm);
-        m_declaration = findDeclaration(call, m_expectation);
+        m_declaration = findDeclaration(m_call, m_expectation, findFunctionBoundByAccessorWithTarget(call).accessor);
 
         if (call.kind == CodeSpecializationKind::CodeForCall)
             addOperand(BuiltinOperand::receiver(), call.thisValue);
-        for (unsigned index = 0; index < std::min<unsigned>(call.arguments.size(), maxCheckedArguments); ++index)
-            addOperand(BuiltinOperand::argument(index), call.arguments.at(index));
+        for (unsigned index = 0; index < std::min<unsigned>(m_call.arguments.size(), maxCheckedArguments); ++index)
+            addOperand(BuiltinOperand::argument(index), m_call.arguments.at(index));
         checkOperandsOfUnknownFunction();
 
         m_collectionVersions = collectionVersionsOf(m_vm);
@@ -920,6 +960,57 @@ private:
         });
     }
 
+    // An entry that reads a member by name enters an accessor of native code above the object, as a statement would. That has no function object either. What it lays on the object that it is entered with stands in its own entry, and is what it answers.
+    bool isDoneByNativeGetterAbove(const Operand& operand, const OperandDifference& difference) const
+    {
+        if (difference.change != OperandChange::PropertyAdded || !difference.key)
+            return false;
+        UniquedStringImpl* key = difference.key.get();
+        JSObject* holder = nullptr;
+        for (JSValue above = operand.object->getPrototypeDirect(); above.isObject() && !holder; above = asObject(above)->getPrototypeDirect()) {
+            PropertySlot slot(asObject(above), PropertySlot::InternalMethodType::VMInquiry, &m_vm);
+            if (!asObject(above)->methodTable()->getOwnPropertySlot(asObject(above), m_call.realm, Identifier::fromUid(m_vm, key), slot))
+                continue;
+            if (!(slot.attributes() & PropertyAttribute::CustomAccessor))
+                return false;
+            holder = asObject(above);
+        }
+        if (!holder)
+            return false;
+        JSValue laid = operand.object->getDirect(m_vm, Identifier::fromUid(m_vm, key));
+        auto laysOnReceiver = [&](BuiltinName name) {
+            for (uint32_t index = 0; index < m_table.builtinCount(); ++index) {
+                const Builtin& entry = m_table.at(BuiltinID(index));
+                if (entry.kind != BuiltinKind::Accessor || entry.name != name)
+                    continue;
+                auto inRealm = findInRealm(m_call.realm, BuiltinCellKey::object(entry.holder));
+                if (!inRealm || *inRealm != holder)
+                    continue;
+                return std::ranges::any_of(m_table.overloadsOf(BuiltinID(index)), [&](const BuiltinOverload& getter) {
+                    return getter.mode == BuiltinCallMode::Get && fitOf(m_table, getter.result.type, laid) != Fit::Outside && std::ranges::any_of(getter.flow.propertyActions, [&](const BuiltinPropertyAction& action) {
+                        return declares(action.kind, difference.change) && action.object.isReceiver() && covers(action.key, key);
+                    });
+                });
+            }
+            return false;
+        };
+        return std::ranges::any_of(m_declaration.overloads, [&](const BuiltinOverload* overload) {
+            auto readsAt = [&](BuiltinOperand position, JSValue passed) {
+                const BuiltinParameter* parameter = passed == JSValue(operand.object) ? m_table.parameterFor(*overload, position) : nullptr;
+                return parameter && parameter->protocols.contains(Protocol::Named) && std::ranges::any_of(parameter->namedMembers, [&](BuiltinName name) {
+                    return m_table.identifierOf(m_vm, name).impl() == key && laysOnReceiver(name);
+                });
+            };
+            if (m_call.kind == CodeSpecializationKind::CodeForCall && readsAt(BuiltinOperand::receiver(), m_call.thisValue))
+                return true;
+            for (unsigned index = 0; index < std::min<unsigned>(m_call.arguments.size(), BuiltinOperand::maxArgumentIndex); ++index) {
+                if (readsAt(BuiltinOperand::argument(index), m_call.arguments.at(index)))
+                    return true;
+            }
+            return false;
+        });
+    }
+
     void checkChanges(bool didRunCode)
     {
         AbstractHeaps declared = declaredWrites();
@@ -942,7 +1033,7 @@ private:
 
                 if (m_expectation.isKnown && !heaps.isEmpty() && !m_expectation.writes.containsAny(heaps))
                     fail(ValidationFailureKind::NativeCallWroteHeap, operand.object, makeString(what, ", the call writes "_s, describeMembers(m_expectation.writes), ", not "_s, describeMembers(heaps)));
-                if (didRunCode || isDoneByNativeCodeOfObject(operand, difference, uses))
+                if (didRunCode || isDoneByNativeCodeOfObject(operand, difference, uses) || isDoneByNativeGetterAbove(operand, difference))
                     continue;
                 OperandUses declaring = difference.isRepresentationOnly ? OperandUses() : rowOf(change).uses;
                 if (!declaring.isEmpty() && isTakenForUnknownFunction()) {

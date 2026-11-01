@@ -44,7 +44,8 @@ DEFINE_VISIT_AGGREGATE(RegExpGlobalData);
 static void willReadLegacyStatics(JSGlobalObject* globalObject)
 {
 #if ENABLE(AOT)
-    AOT::willReadLegacyRegExpStatics(globalObject->vm());
+    if (globalObject->vm().hasCompiledCode())
+        AOT::willReadLegacyRegExpStatics(globalObject->vm());
 #else
     UNUSED_PARAM(globalObject);
 #endif

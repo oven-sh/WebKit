@@ -105,6 +105,8 @@ constexpr StubKey arrayPushOfKnownKind() { return StubKey(StubFamily::ArrayPushO
 constexpr StubKey arrayPushDouble() { return StubKey(StubFamily::ArrayPushDouble); }
 // The operands: an array, and the array whose elements go behind its own as the iterator of an array reads them: a hole as undefined.
 constexpr StubKey appendElements() { return StubKey(StubFamily::AppendElements); }
+// The operands: an array, and a Set that is walked as the built-in iterator walks it, whose members go behind the elements of the array.
+constexpr StubKey appendMembers() { return StubKey(StubFamily::AppendMembers); }
 constexpr StubKey newArrayOfElements(ArrayElementKind kind) { return StubKey(StubFamily::NewArrayOfElements).withForm(static_cast<uint8_t>(kind)); }
 // The operand: a Set that is walked as the built-in iterator walks it. A member that the kind does not take makes an array of another kind.
 constexpr StubKey newArrayOfMembers(ArrayElementKind kind) { return StubKey(StubFamily::NewArrayOfMembers).withForm(static_cast<uint8_t>(kind)); }
@@ -143,7 +145,7 @@ static_assert(exists(arrayLiteralWithDouble(1)) && !exists(arrayLiteralWithDoubl
 static_assert(exists(newEmptyArray(EmptyArray::ContiguousCapacity3OwnStorage)) && !exists(newEmptyArray(EmptyArray::Int32DefaultCapacity).withForm(8)));
 static_assert(exists(newArrayOfLength(ArrayElementKind::Contiguous, maxArrayLengthInStubKey)) && !exists(newArrayOfLength(ArrayElementKind::Contiguous, maxArrayLengthInStubKey + 1)) && !exists(newArrayOfLength(ArrayElementKind::Int32, 0)));
 static_assert(exists(newArrayWithLength(ArrayElementKind::Contiguous)) && exists(newEmptyArrayAtSite(ArrayElementKind::Contiguous)) && exists(newEmptyArrayWithCapacity()) && exists(newArrayOfHolesSlow()));
-static_assert(exists(arraySlice()) && exists(arrayCopy()) && exists(arraySliceAsDoubles()) && exists(arrayCopyAsDoubles()) && exists(createArguments()) && exists(createMappedArguments()) && exists(arrayPush()) && exists(arrayPushOfKnownKind()) && exists(arrayPushDouble()) && exists(appendElements()));
+static_assert(exists(arraySlice()) && exists(arrayCopy()) && exists(arraySliceAsDoubles()) && exists(arrayCopyAsDoubles()) && exists(createArguments()) && exists(createMappedArguments()) && exists(arrayPush()) && exists(arrayPushOfKnownKind()) && exists(arrayPushDouble()) && exists(appendElements()) && exists(appendMembers()));
 static_assert(bodyOf(arrayPushOfKnownKind()) == arrayPush());
 static_assert(exists(arrayPutAtIndex(ArrayStoredValue::Number)) && exists(arrayPutAtNumber(ArrayStoredValue::Number)) && exists(arrayGetAtIndex()) && exists(arrayGetAtNumber()) && exists(arrayHasAtIndex()) && exists(arrayHasAtNumber()));
 static_assert(exists(arrayIndexOfString(SearchedElements::Strings)) && exists(arrayIndexOfString(SearchedElements::StringsFromStart)) && !exists(arrayIndexOfString(SearchedElements::Strings).withForm(4)));

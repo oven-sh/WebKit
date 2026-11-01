@@ -41,7 +41,6 @@ struct VerifierInputs {
     bool cannotJudgeGuards { false };
     bool hasUncheckedRecords { false };
     bool lacksEngineFields { false };
-    bool otherFunctionsMayChange { false };
     // Where operations are about to be moved, and behind a pass that has moved some: see AOTCastsWithoutFacts.h.
     bool castsNameTheirFacts { false };
 };

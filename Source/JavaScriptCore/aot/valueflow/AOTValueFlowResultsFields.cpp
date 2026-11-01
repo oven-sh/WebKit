@@ -1274,7 +1274,7 @@ struct FieldResults {
                     held.facts.set(FieldFact::MayBeAccessed, uses.mayBeAccessedUnder(objects, field.key));
                     held.facts.set(FieldFact::IsStoredAfterCreation, stores.isStoredAfterCreation(id, field.key));
                     bool mayBeMissing = known[declaration.layout.index()][declaration.field].facts.contains(FieldFact::IsMissingAtCreation) || held.possibleMutations.containsAny({ ObjectMutation::DeleteField, ObjectMutation::ReachUnknownJavaScript });
-                    held.facts.set(FieldFact::MayInheritName, !mayBeMissing || !build.isEnabled(FlowResultKind::OwnNames, declaration.layout.index()) || !inheritsNothingUnder(maker, id, above, field.key));
+                    held.facts.set(FieldFact::MayInheritName, (!mayBeMissing && !classCannotAnswerForNames(program.at(id), application.layouts[id.index()].classFlow)) || !build.isEnabled(FlowResultKind::OwnNames, declaration.layout.index()) || !inheritsNothingUnder(maker, id, above, field.key));
                 }
                 if (field.key && !hasNodeOfItsOwn(field)) {
                     if (build.isEnabled(FlowResultKind::AppendedFields, declaration.layout.index())) {
@@ -1643,15 +1643,37 @@ struct FieldResults {
         }
     }
 
-    // The form in which the objects are observed to get a value under the key. Every other layout has plain fields: what creates their properties does not ask.
-    std::optional<OptionSet<FieldForm>> formOfValueGivenUnder(LayoutID layout, PropertyKeyID key) const
+    // A spread, a rest and Object.assign() bring any name and fill slots without asking for the form of the field.
+    bool getsUndeclaredKeysByNameOnly(LayoutID id) const
     {
-        if (!startsEmptyAndIsFilledByNameOnly(layout))
-            return OptionSet<FieldForm>();
+        return startsEmptyAndIsFilledByNameOnly(id) || (!stores.getsCopiedProperties(id) && !stores.hasObjectPutAboveOthers(id));
+    }
+
+    uint8_t formsOfValuesGivenUnder(LayoutID layout, PropertyKeyID key) const
+    {
+        if (!getsUndeclaredKeysByNameOnly(layout))
+            return ValueForms::of(true, true, true);
         uint8_t forms = stores.formsOfValuesGivenUnder(layout, key);
         if (auto seen = formsOfValuesSeenDefined.find(static_cast<uint64_t>(layout.index()) << 32 | key.index()); seen != formsOfValuesSeenDefined.end())
             forms |= seen->value;
-        return ValueForms::formToPlanFor(forms);
+        if (!startsEmptyAndIsFilledByNameOnly(layout) && !(stores.writersSeenUnder(layout, key) - Actor::Statements).isEmpty())
+            return ValueForms::unknown;
+        return forms;
+    }
+
+    std::optional<OptionSet<FieldForm>> formOfValuesGivenToObjectsBelow(LayoutID layout, PropertyKeyID key) const
+    {
+        std::optional<OptionSet<FieldForm>> form;
+        bool hasOneForm = true;
+        forEachLayoutBelow(layout, [&](LayoutID below) {
+            uint8_t forms = hasOneForm && hasObjects(below) ? formsOfValuesGivenUnder(below, key) : 0;
+            if (!forms)
+                return;
+            std::optional<OptionSet<FieldForm>> formBelow = startsEmptyAndIsFilledByNameOnly(below) ? ValueForms::formToPlanFor(forms) : ValueForms::onlyFormIn(forms);
+            hasOneForm = formBelow && (!form || form == formBelow);
+            form = formBelow;
+        });
+        return hasOneForm ? form : std::nullopt;
     }
 
     void forEachLayoutOfCopyFilledByItsMaker(const Function& function, const ValueFlowStatement& statement, NOESCAPE const Invocable<void(LayoutID, PropertyKeyID)> auto& functor) const
@@ -1693,10 +1715,11 @@ struct FieldResults {
     // `for (var name in defaults) options[name] = ..`: the store names what the enumerated objects list. A prediction: whatever else the enumeration shows is stored as a name that no field has.
     // `copy[key] = clone(value[key])` fills an object that holds other names each time, and flow follows few of the objects that are copied. So an object that the program names no field of
     // gets the names only where flow holds every object that is enumerated, and nothing lists the names of the object itself.
-    void forEachKeyOfEnumerationStoredUnder(ValueSetMaker& maker, const Function& function, uint32_t body, const ValueFlowStatement& store, size_t mostLayouts, NOESCAPE const Invocable<void(LayoutID, PropertyKeyID)> auto& functor) const
+    void forEachKeyOfEnumerationStoredUnder(ValueSetMaker& maker, DefinitionsThroughTests& definitions, uint32_t body, const ValueFlowStatement& store, size_t mostLayouts, NOESCAPE const Invocable<void(LayoutID, PropertyKeyID)> auto& functor) const
     {
         namespace At = OperandIndex;
-        const Value& name = function.at(definitionThroughTests(function, function.at(store.site).operand(At::ElemSet::property)));
+        const Function& function = definitions.function();
+        const Value& name = function.at(definitions.of(function.at(store.site).operand(At::ElemSet::property)));
         if (name.opcode != Opcode::ResultAt || name.index() != static_cast<uint32_t>(ForInStepResult::Key) || function.at(name.resultsOperand()).opcode != Opcode::ForInStep)
             return;
         auto layoutsIn = [&](ValueSetID set, bool& everyObjectHasLayout) {
@@ -1723,8 +1746,12 @@ struct FieldResults {
                 continue;
             const ValueFlowOperand& enumerated = inputs.bodies().operandsOf(step)[At::ForInStep::object];
             bool holdsEveryObject;
-            layoutsIn(inputs.possibleValuesOf(maker, enumerated), holdsEveryObject);
-            for (LayoutID source : layoutsIn(inputs.seenValuesOf(maker, enumerated), ignored)) {
+            ValueSetID possible = inputs.possibleValuesOf(maker, enumerated);
+            layoutsIn(possible, holdsEveryObject);
+            ValueSetID seen = inputs.seenValuesOf(maker, enumerated);
+            if (!ValueSets::isComplement(possible))
+                seen = maker.intersect(seen, ValueSets::complement(inputs.solver().membersThatOtherMembersCover(possible, maker)));
+            for (LayoutID source : layoutsIn(seen, ignored)) {
                 for (const Field& field : program.at(source).fields) {
                     if (!field.key || program.at(field.key).kind != PropertyKeyKind::Text || field.flags.containsAny({ FieldFlags::IsMethod, FieldFlags::IsPrivate, FieldFlags::IsBrand }))
                         continue;
@@ -1788,6 +1815,7 @@ struct FieldResults {
             for (uint32_t index = share * functionsPerShare; index < std::min<uint32_t>(program.functions.size(), (share + 1) * functionsPerShare); ++index) {
                 if (!inputs.isReached(FunctionID(index)))
                     continue;
+                DefinitionsThroughTests definitions(program.functions[index]);
                 for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
                     if (statement.kind != ValueFlowStatementKind::Operation)
                         continue;
@@ -1795,7 +1823,7 @@ struct FieldResults {
                         keysNamedInShare[share].append({ &keysGivenToInstancesSeen, layout, key, forms });
                     });
                     if (statement.opcode == Opcode::ElemSet) {
-                        forEachKeyOfEnumerationStoredUnder(makers.of(worker), program.functions[index], index, statement, mostLayoutsEnumerated, [&](LayoutID layout, PropertyKeyID key) {
+                        forEachKeyOfEnumerationStoredUnder(makers.of(worker), definitions, index, statement, mostLayoutsEnumerated, [&](LayoutID layout, PropertyKeyID key) {
                             keysNamedInShare[share].append({ &keysOfEnumerationsCopied, layout, key, 0 });
                         });
                     }
@@ -1833,6 +1861,8 @@ struct FieldResults {
                     if (ValueSetID seen = inputs.solver().seenValuesOf(receiver); seen != inputs.solver().possibleValuesOf(receiver))
                         nameFieldOfLayoutsIn(seen, isMadeHere ? maxLayoutsFollowedToStore : maxLayoutsFollowedToStoreIntoGivenObject, isMadeHere, isMadeHere ? keysNamedAtFollowedUses : keysNamedAtFollowedUsesOfGivenObjects);
                 }
+                if (definitions.numberOfBlocksRead())
+                    build.statistics().count(StatisticID::BlocksReadForDefinitionsThroughTests, definitions.numberOfBlocksRead());
             }
         });
         for (const Vector<KeyNamed>& keysNamed : keysNamedInShare) {
@@ -1888,6 +1918,12 @@ struct FieldResults {
             if (startsEmptyAndIsFilledByNameOnly(LayoutID(index))) {
                 uniteSortedKeys(keysByLayout[index], stores.keysOfValuesDefinedIn(LayoutID(index)));
                 uniteSortedKeys(keysByLayout[index], keysGivenToInstancesSeen[index]);
+            } else if (getsUndeclaredKeysByNameOnly(LayoutID(index))) {
+                Vector<PropertyKeyID> defined = stores.keysOfValuesDefinedIn(LayoutID(index));
+                defined.removeAllMatching([&](PropertyKeyID key) {
+                    return !formOfValuesGivenToObjectsBelow(LayoutID(index), key);
+                });
+                uniteSortedKeys(keysByLayout[index], defined);
             }
             keysStoredByMembersAbove[index] = keysStoredIntoThisByMembersAbove(layoutsHandedToObjectCreate, LayoutID(index));
             uniteSortedKeys(keysByLayout[index], keysStoredByMembersAbove[index]);
@@ -1951,6 +1987,9 @@ struct FieldResults {
         for (auto [depth, index] : fromBasesDown) {
             LayoutID layout(index);
             Vector<PropertyKeyID>& keys = keysByLayout[index];
+            // The image that made the objects laid them out: what they gain here is found by name.
+            if (program.at(layout).has(LayoutFlags::IsOfImageBelow))
+                keys.clear();
             if (keys.isEmpty())
                 continue;
             uint64_t numberOfInheritedKeys = 0;
@@ -1990,11 +2029,29 @@ struct FieldResults {
         return keysByLayout;
     }
 
+    // `const target: { hidden?: number } = {}; Object.defineProperty(target, "hidden", { value })`: that a type names the key makes the definition no other than where none does.
+    void planFormsOfDeclaredFields(LayoutID id) const
+    {
+        constexpr OptionSet<FieldFlags> flagsOfOtherFields { FieldFlags::IsRequired, FieldFlags::IsMethod, FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsHidden, FieldFlags::IsInherited };
+        if (!canAppendFieldsTo(id) || startsEmptyAndIsFilledByNameOnly(id) || !getsUndeclaredKeysByNameOnly(id))
+            return;
+        const Layout& layout = program.at(id);
+        for (uint32_t index = 0; index < layout.fields.size(); ++index) {
+            const Field& field = layout.fields[index];
+            FlowFieldUpdate& update = application.layouts[id.index()].fields[index];
+            if (!field.key || !field.form.isEmpty() || field.flags.containsAny(flagsOfOtherFields) || !canNameField(field.key) || update.accessor.isAccessor())
+                continue;
+            if (std::optional<OptionSet<FieldForm>> form = formOfValuesGivenToObjectsBelow(id, field.key))
+                update.formOfValue = *form;
+        }
+    }
+
     void appendFields(const KeysByLayout& keysByLayout, const KeysByLayout& keysFilledByOutsideCreators, ValueFlowFieldContents& contents) const
     {
         ValueSetMakers makers(inputs);
         forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index, unsigned worker) {
             ValueSetMaker& maker = makers.of(worker);
+            planFormsOfDeclaredFields(LayoutID(index));
             for (PropertyKeyID key : keysByLayout[index]) {
                 FlowAppendedField field;
                 field.key = key;
@@ -2010,14 +2067,10 @@ struct FieldResults {
                 bool inheritsNothing = build.isEnabled(FlowResultKind::OwnNames, index);
                 bool isFirst = true;
                 bool isGivenUnknownValues = false;
-                std::optional<OptionSet<FieldForm>> formOfValue;
-                bool hasOneFormOfValue = true;
+                std::optional<OptionSet<FieldForm>> formOfValue = formOfValuesGivenToObjectsBelow(LayoutID(index), key);
                 forEachLayoutBelow(LayoutID(index), [&](LayoutID below) {
                     if (!hasObjects(below))
                         return;
-                    std::optional<OptionSet<FieldForm>> formBelow = formOfValueGivenUnder(below, key);
-                    hasOneFormOfValue &= formBelow && (isFirst || formOfValue == formBelow);
-                    formOfValue = formBelow;
                     ValueSetID above;
                     inheritsNothing = inheritsNothing && inheritsNothingUnder(maker, below, above, key);
                     possible.add(possibleMutationsOf(below));
@@ -2036,7 +2089,7 @@ struct FieldResults {
                     isStoredWithValueBehindLiterals &= constructions.isStoredWithValueBehindLiteral(below, key);
                     uniteAccessors(field.accessor, stores.accessorDefinedUnder(maker, below, key), std::exchange(isFirst, false));
                 });
-                if (hasOneFormOfValue && formOfValue && !field.accessor.isAccessor())
+                if (formOfValue && !field.accessor.isAccessor())
                     field.formOfValue = *formOfValue;
                 // `class B extends either {}`: the constructor of a parent puts its private names on an object of B. Every store under such a name goes to the node of the field that declares it.
                 if (const PropertyKey& name = program.at(key); name.kind == PropertyKeyKind::PrivateName) {
@@ -2148,7 +2201,7 @@ struct FieldResults {
             if (listsEveryName) {
                 KeysOfFieldsHeld keysOfFields(*this, id, &appendedKeys);
                 auto isField = [&](PropertyKeyID key) {
-                    return !std::ranges::binary_search(tables.wholeProgram.keysOfSeveralSymbols, key) && keysOfFields.contains(key);
+                    return !std::ranges::binary_search(tables.wholeProgram.keysOfSeveralSymbols, key) && keysOfFields.contains(key) && !stores.mayBeDefinedInFormNobodyPlansFor(id, key);
                 };
                 addedKeys = stores.keysStoredIntoKnownObjects(id);
                 addedKeys.removeAllMatching(isField);
@@ -2504,7 +2557,9 @@ ValueFlowFieldContents computeFieldResults(const ValueFlowResultInputs& inputs, 
     runTasksInParallel(inputs.loops(), {
         [&] {
             usesOfHeap.stores->noteListedWrites();
+            PhaseTimes timesOfReceivers(inputs.build, PassID::AnalyzeFlow);
             usesOfHeap.stores->setReceiversOfReads(usesOfHeap.uses.takeReceiversOfReads());
+            timesOfReceivers.didFinish("stores by layout: receivers of reads"_s);
             times.didFinish("fields: stores by layout"_s);
         },
         [&] {
@@ -2595,7 +2650,7 @@ static void typeAppendedFields(const ValueFlowResultInputs& inputs, const ValueF
                 if (flow.location.initialization == InitializationState::SetAtCreation && flow.stability == everyFlagOf<FieldStability>() && !inputs.sets().isEmpty(stored)) {
                     flow.occupancy = Occupancy::AlwaysFilled;
                     // The store that fills the field asks the classes above for the name. Above a parent nobody proves there is nobody to ask, and only this says that they have none.
-                    if (!hasParentNobodyProves(index))
+                    if (!hasParentNobodyProves(index) && !classCannotAnswerForNames(inputs.program.layouts[index], application.layouts[index].classFlow))
                         flow.prototypeName = PrototypeNameState::Unknown;
                 }
             }

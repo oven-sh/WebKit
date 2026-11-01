@@ -428,6 +428,18 @@ static void dumpAirSize(PrintStream& out, std::span<B3::Air::BasicBlock* const> 
         out.print(", polls: ", numberOfPolls);
 }
 
+static unsigned numberOfContiguousRuns(B3::Air::Code& code, const BitVector& blocks)
+{
+    unsigned numberOfRuns = 0;
+    bool isInRun = false;
+    for (B3::Air::BasicBlock* block : code) {
+        bool isMember = blocks.quickGet(block->index());
+        numberOfRuns += isMember && !isInRun;
+        isInRun = isMember;
+    }
+    return numberOfRuns;
+}
+
 static Vector<B3::Air::BasicBlock*> collectBlocks(B3::Air::Code& code)
 {
     Vector<B3::Air::BasicBlock*> blocks;
@@ -505,6 +517,8 @@ static void dumpAirLoops(PrintStream& out, B3::Air::Code& code, PrintedLoopParts
         }
         for (const AirLoopCounter& counter : findAirCounters(blocksOfLikelyTurns.span()))
             out.print(", ", counter.tmp, " steps by ", counter.step);
+        if (unsigned numberOfRuns = numberOfContiguousRuns(code, isInLikelyTurn); numberOfRuns > 1)
+            out.print(", fragments: ", numberOfRuns);
         if (!isLikelyInFunction.quickGet(header->index()))
             out.print(", entered rarely");
         out.println();

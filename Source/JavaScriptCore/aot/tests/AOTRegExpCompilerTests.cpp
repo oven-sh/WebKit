@@ -97,37 +97,21 @@ static void testRequestPastSectionSizeLimitLosesCode()
     AOT_TEST_CHECK(!context.diagnostics().hasErrors());
 }
 
-static void testCandidateBudget()
+// What flow names for a call has its code as a literal has, however much code that is at one call.
+static void testCandidatesOfOneCall()
 {
     Source large { "(\\w+)@[a-z\\xe0-\\xff]+\\.(com|org)"_s, { } };
-    Source evaluated { makeString(large.pattern, '-', large.pattern, '-', large.pattern), { } };
-    std::array<FoundText, 4> foundTexts {
-        FoundText { { "ab+c"_s, { } }, RegExpRequestOrigin::Candidate },
-        FoundText { large, RegExpRequestOrigin::Candidate },
-        FoundText { { "de+f"_s, { } }, RegExpRequestOrigin::Candidate },
-        FoundText { evaluated, RegExpRequestOrigin::Evaluated },
-    };
-    std::array<uint64_t, 4> sizes;
-    {
-        BuildContext context(makeDefaultCompileOptions());
-        CompiledRegExps compiled = compileRequests({ }, foundTexts, context);
-        for (size_t index = 0; index < sizes.size(); ++index) {
-            AOT_TEST_CHECK(compiled.results[index].form == Form::Code);
-            sizes[index] = compiled.results[index].codeSize();
-        }
+    Vector<FoundText> foundTexts;
+    for (unsigned index = 0; index < 400; ++index)
+        foundTexts.append(FoundText { { makeString(large.pattern, '-', index, '-', large.pattern), { } }, RegExpRequestOrigin::Candidate });
+    BuildContext context(makeDefaultCompileOptions());
+    CompiledRegExps compiled = compileRequests({ }, foundTexts.span(), context);
+    uint64_t bytes = 0;
+    for (const CompiledRegExp& result : compiled.results) {
+        AOT_TEST_CHECK(result.form == Form::Code);
+        bytes += result.codeSize();
     }
-    uint64_t budget = sizes[0] + sizes[2];
-    AOT_TEST_CHECK(sizes[1] > sizes[2] && sizes[3] > budget);
-
-    // A text that the build evaluated counts as a literal does: the budget of a site is for what flow names.
-    BuildContext context(makeOptions(makeString("limit=RegExpCandidateCodeBytesPerSite:"_s, budget)));
-    CompiledRegExps compiled = compileRequests(singleElementSpan(large), foundTexts, context);
-    AOT_TEST_CHECK(compiled.results[0].form == Form::Code);
-    AOT_TEST_CHECK(compiled.results[1].form == Form::Code);
-    AOT_TEST_CHECK(isDeclined(compiled.results[2], Form::NoCode, RegExpDeclineReason::CandidateBudgetExhausted));
-    AOT_TEST_CHECK(compiled.results[3].form == Form::Code);
-    AOT_TEST_CHECK(compiled.results[4].form == Form::Code && compiled.results[4].codeSize() == sizes[3]);
-    AOT_TEST_CHECK(limitHits(context, LimitID::RegExpCandidateCodeBytesPerSite) == 1);
+    AOT_TEST_CHECK(compiled.results.size() == 400 && bytes > 256 * KB);
 }
 
 static void testCompiledForms()
@@ -373,7 +357,7 @@ std::span<const NativeTest> regExpCompilerTests()
         { "regexp-compiler/pattern-length-limit"_s, testPatternLengthLimit },
         { "regexp-compiler/deep-nesting-declines"_s, testDeepNestingDeclines },
         { "regexp-compiler/request-past-section-size-limit-loses-code"_s, testRequestPastSectionSizeLimitLosesCode },
-        { "regexp-compiler/candidate-budget"_s, testCandidateBudget },
+        { "regexp-compiler/candidates-of-one-call"_s, testCandidatesOfOneCall },
         { "regexp-compiler/compilation-is-thread-independent"_s, testCompilationIsThreadIndependent },
         { "regexp-compiler/one-pattern-serves-both-widths-and-retries"_s, testOnePatternServesBothWidthsAndRetries },
         { "regexp-compiler/only-a-rare-first-character-is-searched-for"_s, testOnlyARareFirstCharacterIsSearchedFor },

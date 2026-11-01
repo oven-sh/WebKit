@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTConvention.h"
 #include "AOTEffectsOfRules.h"
 #include "AOTFrameAllocationPointers.h"
@@ -16,6 +17,7 @@
 #include "AOTRuleSupport.h"
 #include "AOTSelectionContext.h"
 #include "AOTSlotPlan.h"
+#include "AOTStatistics.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <optional>
@@ -73,7 +75,6 @@ static std::optional<SelectedMethodCall> matchMethodCall(SelectionContext& conte
     ValueID read = call.calleeOperand();
     if (!isUntypedMethodRead(context, read, key))
         return std::nullopt;
-
     if (!isOrdinaryKey(context.program(), key) || !context.slots().hasColumn(key))
         return std::nullopt;
     if (isOwnedByReturnCall(context, id) || givesUpFrameWithKeptCallee(context.program(), function, call))
@@ -85,7 +86,7 @@ static std::optional<SelectedMethodCall> matchMethodCall(SelectionContext& conte
     return SelectedMethodCall { groupOf({ read, id }), read };
 }
 
-static void rewriteMethodCall(GroupRewriter& rewriter, const SelectedMethodCall& match)
+static void rewriteMethodCall(GroupRewriter& rewriter, const SelectedMethodCall& match, bool namesCallees)
 {
     const Value& read = rewriter.original(match.read);
     const Value& call = rewriter.original(match.group.root);
@@ -98,7 +99,8 @@ static void rewriteMethodCall(GroupRewriter& rewriter, const SelectedMethodCall&
     root.setReadOrigin(read.origin());
     root.setAccessSite(read.accessSite());
     root.setReceivers(read.receivers());
-    root.setCallees(call.callees());
+    if (namesCallees)
+        root.setCallees(call.callees());
     root.setCallAccessSite(call.accessSite());
 }
 
@@ -114,6 +116,7 @@ void selectMethodCall(SelectionContext& context)
 {
     std::optional<FramePointers> framePointers;
     Vector<SelectedMethodCall> matches;
+    unsigned numberBeyondUnknownCode = 0;
     for (ValueID id : context.candidates(Opcode::Call)) {
         std::optional<SelectedMethodCall> match = matchMethodCall(context, id);
         if (!match)
@@ -122,12 +125,17 @@ void selectMethodCall(SelectionContext& context)
             framePointers.emplace(context.program(), context.function());
         if (passesFramePointer(*framePointers, context.function().at(id)))
             continue;
-        if (context.tryClaim(SelectionRuleID::MethodCall, match->group) == ClaimResult::Claimed)
-            matches.append(WTF::move(*match));
+        if (context.tryClaim(SelectionRuleID::MethodCall, match->group) != ClaimResult::Claimed)
+            continue;
+        numberBeyondUnknownCode += !hasOnlyEffectsOfUnknownCode(context, id);
+        matches.append(WTF::move(*match));
     }
+    if (numberBeyondUnknownCode)
+        context.build().statistics().count(StatisticID::FusedCallsBeyondUnknownCode, numberBeyondUnknownCode);
 
-    context.rewriteGroups(SelectionRuleID::MethodCall, matches, [](GroupRewriter& rewriter, const SelectedMethodCall& match) {
-        rewriteMethodCall(rewriter, match);
+    bool namesCallees = !context.build().isSabotaged(Sabotage::FusedCallsEnterOnlyUnknownCode);
+    context.rewriteGroups(SelectionRuleID::MethodCall, matches, [&](GroupRewriter& rewriter, const SelectedMethodCall& match) {
+        rewriteMethodCall(rewriter, match, namesCallees);
     });
 }
 

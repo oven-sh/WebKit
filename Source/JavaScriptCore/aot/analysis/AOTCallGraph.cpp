@@ -304,16 +304,13 @@ void BodyReferences::didChange(std::span<const FunctionID> functions)
     }
 }
 
-static BitVector findFunctionsExpectedByCode(const Program& program, const Vector<ReferencesOfBody>& bodies)
+static BitVector findFunctionsExpectedByCode(const Program& program, const Vector<uint8_t>& isExpectedType)
 {
-    BitVector isListed(program.types.size());
-    for (const ReferencesOfBody& body : bodies) {
-        for (TypeID type : body.expectedFunctionTypes)
-            isListed.set(type.index());
-    }
     BitVector functions(program.functions.size());
-    for (size_t type : isListed) {
-        for (FunctionID function : program.at(TypeID(static_cast<uint32_t>(type))).functions)
+    for (uint32_t type = 0; type < isExpectedType.size(); ++type) {
+        if (!isExpectedType[type])
+            continue;
+        for (FunctionID function : program.at(TypeID(type)).functions)
             functions.set(function.index());
     }
     return functions;
@@ -988,6 +985,7 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
     AOT_THRESHOLD(uint32_t, minCalleesOfLongList, 16);
     Vector<unsigned> hashOfLongList(FillWith { }, count, 0u);
     Vector<uint8_t> hasLongList(FillWith { }, count, static_cast<uint8_t>(0));
+    Vector<uint8_t> isExpectedType(FillWith { }, program.types.size(), static_cast<uint8_t>(0));
     std::atomic<bool> someFunctionHasLongList { false };
     constexpr unsigned prefetchDistance = 4;
     forEachIndexInParallel(loops, count, [&](unsigned index) {
@@ -1020,6 +1018,10 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
             WTF::atomicExchangeAdd(&calleeSetCallSites[set.index()], 1u, std::memory_order_relaxed);
         for (CalleeSetID set : body.enteredSets)
             WTF::atomicExchangeAdd(&enteredSetCallSites[set.index()], 1u, std::memory_order_relaxed);
+        for (TypeID type : body.expectedFunctionTypes) {
+            if (!WTF::atomicLoad(&isExpectedType[type.index()], std::memory_order_relaxed))
+                WTF::atomicStore(&isExpectedType[type.index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+        }
     });
     std::partial_sum(calleeOffsets.begin(), calleeOffsets.end(), calleeOffsets.begin());
     callees.grow(calleeOffsets[count]);
@@ -1083,21 +1085,32 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
                     add(callee.index(), set);
             }
         });
-        groupByIndex(count, lists.firstSetOfUser, lists.setsOfUsers, [&](const auto& add) {
-            for (unsigned index = 0; index < count; ++index) {
-                Vector<uint32_t, 8> setsOfUser;
-                for (const CompactList<CalleeSetID>* sets : { &bodies.m_bodies[index].calleeSets, &bodies.m_bodies[index].enteredSets }) {
-                    CalleeSetID previous;
-                    for (CalleeSetID set : *sets) {
-                        if (set != std::exchange(previous, set) && program.at(set).isLong())
-                            setsOfUser.append(static_cast<uint32_t>(std::ranges::lower_bound(longSets, set.index()) - longSets.begin()));
-                    }
+        constexpr uint32_t isNoLongSet = UINT32_MAX;
+        Vector<uint32_t> positionOfLongSet(FillWith { }, calleeSetCallSites.size(), isNoLongSet);
+        for (uint32_t position = 0; position < longSets.size(); ++position)
+            positionOfLongSet[longSets[position]] = position;
+        auto longSetsOfUser = [&](unsigned index) {
+            Vector<uint32_t, 8> setsOfUser;
+            for (const CompactList<CalleeSetID>* sets : { &bodies.m_bodies[index].calleeSets, &bodies.m_bodies[index].enteredSets }) {
+                CalleeSetID previous;
+                for (CalleeSetID set : *sets) {
+                    if (set != std::exchange(previous, set) && positionOfLongSet[set.index()] != isNoLongSet)
+                        setsOfUser.append(positionOfLongSet[set.index()]);
                 }
-                AOT::sort(setsOfUser);
-                removeRepeatedElements(setsOfUser);
-                for (uint32_t set : setsOfUser)
-                    add(index, set);
             }
+            AOT::sort(setsOfUser);
+            removeRepeatedElements(setsOfUser);
+            return setsOfUser;
+        };
+        lists.firstSetOfUser.fill(0, count + 1);
+        forEachIndexInParallel(loops, count, [&](unsigned index) {
+            lists.firstSetOfUser[index + 1] = longSetsOfUser(index).size();
+        });
+        std::partial_sum(lists.firstSetOfUser.begin(), lists.firstSetOfUser.end(), lists.firstSetOfUser.begin());
+        lists.setsOfUsers.grow(lists.firstSetOfUser[count]);
+        forEachIndexInParallel(loops, count, [&](unsigned index) {
+            if (lists.firstSetOfUser[index] != lists.firstSetOfUser[index + 1])
+                std::ranges::copy(longSetsOfUser(index), lists.setsOfUsers.begin() + lists.firstSetOfUser[index]);
         });
         groupByIndex(longSets.size(), lists.firstUser, lists.users, [&](const auto& add) {
             for (unsigned index = 0; index < count; ++index) {
@@ -1186,7 +1199,7 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
             graph.m_hasCompleteCallSiteSet = createBitVector(hasCompleteCallSiteSet);
         },
         [&] {
-            graph.m_isExpectedByCode = findFunctionsExpectedByCode(program, bodies.m_bodies);
+            graph.m_isExpectedByCode = findFunctionsExpectedByCode(program, isExpectedType);
         },
     });
     times.didFinish("listCallersAndRoots"_s);

@@ -73,8 +73,8 @@ static_assert(bodyOf(StubKey(StubFamily::ValueEqualsLiteral)) == StubKey(StubFam
 static_assert(bodyOf(StubKey(StubFamily::EnterSlimClosure)) == StubKey(StubFamily::EnterClosure));
 static_assert(exists(callValue(numberOfArgumentGPRs)) && !exists(StubKey(StubFamily::CallValue).withCount(numberOfArgumentGPRs + 1)));
 static_assert(!exists(StubKey(StubFamily::ArrayLiteralWithDouble)));
-static_assert(exists(StubKey(StubFamily::PollAtLoop)) == isX86_64());
-static_assert(exists(pollAtLoop(CallerFrame::Frameless)) == isX86_64() && exists(throwAtSite(ThrowSiteSource::FaultSite, CallerFrame::Frameless)));
+static_assert(exists(StubKey(StubFamily::PollAtLoop)));
+static_assert(exists(pollAtLoop(CallerFrame::Frameless)) && exists(throwAtSite(ThrowSiteSource::FaultSite, CallerFrame::Frameless)));
 static_assert(!exists(StubKey(StubFamily::StringsAreEqual).withCallerFrame(CallerFrame::Frameless)) && !exists(familyKey.withCallerFrame(CallerFrame::Frameless)));
 static_assert(exists(familyKey.withCallerFrame(CallerFrame::StubFrame)) && !exists(StubKey(StubFamily::StringsAreEqual).withCallerFrame(CallerFrame::StubFrame)));
 static_assert(!exists(StubKey(StubFamily::ToBoolean).withImmediate(1)));

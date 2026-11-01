@@ -63,9 +63,9 @@ static const LayoutData* findClassConstructedBy(const ProgramTables& tables, Fun
     return offset ? tables.at<LayoutData>(offset) : nullptr;
 }
 
-static std::optional<uint32_t> keyOf(VM& vm, UniquedStringImpl* uid)
+static std::optional<uint32_t> keyOf(State& state, UniquedStringImpl* uid)
 {
-    return vm.aotState().identifiers->numberOf(uid);
+    return identifiersOf(state.instance).numberOf(uid);
 }
 
 static JSCell*& prototypeCellOf(State& state, const LayoutData& classLayout)
@@ -148,7 +148,7 @@ const LayoutData* ClassTable::classConstructedBy(FunctionID function) const
 
 const FieldData* ClassTable::staticField(const LayoutData& classLayout, UniquedStringImpl* name) const
 {
-    std::optional<uint32_t> key = keyOf(*m_state.instance.vm, name);
+    std::optional<uint32_t> key = keyOf(m_state, name);
     if (!key)
         return nullptr;
     for (const LayoutData* declaring = &classLayout; declaring; declaring = baseOf(*declaring)) {
@@ -230,7 +230,7 @@ Closure* ClassTable::createClassObject(VM& vm, const LayoutData& classLayout)
 
 bool ClassTable::hasStaticMethodNamed(const LayoutData& classLayout, UniquedStringImpl* name) const
 {
-    std::optional<uint32_t> key = keyOf(*m_state.instance.vm, name);
+    std::optional<uint32_t> key = keyOf(m_state, name);
     if (!key)
         return false;
     return std::ranges::any_of(classLayout.staticMethods(), [&](auto& method) {
@@ -501,7 +501,7 @@ bool ClassTable::computeHasOnlyClassFieldNames(Structure* structure)
     const BuiltinTable& table = BuiltinTable::singleton();
     BuiltinClassID builtinClass = table.at(BuiltinID(highest->classData().builtinBase)).instanceClass;
 
-    const ProgramIdentifiers& identifiers = *m_state.instance.vm->aotState().identifiers;
+    const ProgramIdentifiers& identifiers = identifiersOf(m_state.instance);
     bool hasOnlyClassFieldNames = true;
     structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
         UniquedStringImpl* uid = entry.key();
@@ -598,13 +598,13 @@ static std::optional<ClassTable::DeclaredMember> findOwnDeclaredMember(const Cla
 
 bool ClassTable::declaresOwnMember(const LayoutData& classLayout, UniquedStringImpl* name) const
 {
-    std::optional<uint32_t> key = keyOf(*m_state.instance.vm, name);
+    std::optional<uint32_t> key = keyOf(m_state, name);
     return key && declaresMember(classLayout, ClassSide::Prototype, *key);
 }
 
 std::optional<JSObject*> ClassTable::findDeclaredMethod(VM& vm, const LayoutData& classLayout, UniquedStringImpl* name)
 {
-    auto member = findOwnDeclaredMember(*this, classLayout, keyOf(vm, name));
+    auto member = findOwnDeclaredMember(*this, classLayout, keyOf(m_state, name));
     if (!member || member->isAccessor())
         return std::nullopt;
     if (!member->method && name != vm.propertyNames->constructor.impl())
@@ -640,7 +640,7 @@ std::optional<ClassTable::LazyPrototypeLookupResult> ClassTable::findThroughLazy
             return owner->state->objects->classes.findThroughLazyPrototypes(vm, below, name, true, creation);
         }
         const LayoutData& classLayout = *classOf(*uncheckedDowncast<ClassPrototype>(prototype));
-        auto member = findOwnDeclaredMember(*this, classLayout, keyOf(vm, name));
+        auto member = findOwnDeclaredMember(*this, classLayout, keyOf(m_state, name));
         if (!member)
             return std::nullopt;
         if (member->method)
@@ -681,7 +681,7 @@ std::optional<ClassTable::DeclaredMemberLocation> ClassTable::declaredMemberLoca
 
 GetterSetter* ClassTable::createDeclaredAccessor(VM& vm, const LayoutData& classLayout, UniquedStringImpl* name)
 {
-    auto member = findOwnDeclaredMember(*this, classLayout, keyOf(vm, name));
+    auto member = findOwnDeclaredMember(*this, classLayout, keyOf(m_state, name));
     if (!member || !member->isAccessor())
         return nullptr;
     return createGetterSetter(vm, m_state, *member);
@@ -1038,7 +1038,7 @@ void ClassDefinition::defineMembers(JSObject* target, std::span<const MethodData
         }
         ASSERT(!(method.flags & methodHasComputedName));
         JSObject* function = m_classes.createMethodClosure(m_vm, m_classObject, m_classLayout, method);
-        Identifier key = m_vm.aotState().identifiers->identifier(method.name);
+        Identifier key = identifiersOf(m_state.instance).identifier(method.name);
         defineMember(target, method, key, function);
         RETURN_IF_EXCEPTION(scope, void());
     }
@@ -1115,7 +1115,7 @@ bool ClassDefinition::hasAssumedBase() const
 void ClassDefinition::armGuards()
 {
     using HolderState = ClassTable::HolderState;
-    if (m_requestedPart == ClassPart::Everything && m_classes.tryLeaveHoldersOut(m_vm, m_classLayout, m_prototype))
+    if (m_requestedPart == ClassPart::Everything && m_classes.tryLeaveHoldersOut(m_vm, m_classLayout, m_classObject, m_prototype))
         return;
     bool holdersHaveWhatRecordSays = m_hasOnlyPlainMembers && !m_hasMembersCreatedAtDefinition && !isShared() && m_earlyStores.keysAndAttributes.isEmpty() && m_earlyPrototypeStores.keysAndAttributes.isEmpty();
     HolderState stateOfPrototype = holdersHaveWhatRecordSays ? HolderState::AsDefinitionMadeIt : HolderState::Unknown;
@@ -1164,7 +1164,7 @@ JSValue ClassTable::resolveHeritage(JSGlobalObject* globalObject, JSValue herita
 static void markFunctionPropertiesDeclaredAsFields(VM& vm, Closure* classObject, const LayoutData& classLayout)
 {
     for (const FieldData& field : classLayout.staticFields()) {
-        const Identifier& key = vm.aotState().identifiers->identifier(field.name);
+        const Identifier& key = identifiersOfRealm(vm, classObject->structure()->realm())->identifier(field.name);
         if (key == vm.propertyNames->name)
             classObject->ensureRareData(vm)->setHasModifiedNameForBoundOrNonHostFunction();
         else if (key == vm.propertyNames->length)
@@ -1261,7 +1261,7 @@ bool ClassTable::tryDefineAgainWithKeptStructures(JSGlobalObject* globalObject, 
     classObject->setStructure(vm, kept.classObjectStructure);
     classObject->putDirectOffset(vm, offsetOfPrototype, prototype);
     prototype->putDirectOffset(vm, offsetOfConstructor, classObject);
-    if (tryLeaveHoldersOut(vm, classLayout, prototype))
+    if (tryLeaveHoldersOut(vm, classLayout, classObject, prototype))
         return true;
     armMemberGuards(vm, classLayout, ClassSide::Prototype, prototype);
     armMemberGuards(vm, classLayout, ClassSide::Static, classObject);

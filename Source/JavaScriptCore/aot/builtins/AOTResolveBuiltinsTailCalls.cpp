@@ -164,8 +164,13 @@ Vector<ForwardedTailCall> planForwardedTailCalls(FunctionPassContext& context)
         if (!isMatchedCall(use) || !passesOperandsUnchanged(use.call))
             return;
         BuiltinCall call { use.call.overload, BuiltinCallForm::Whole, 0, use.operands.receiver, use.operands.arguments.span() };
-        if (std::optional<ForwardedCallPlan> plan = planForwardedCall(context.program, function, call))
-            calls.append(ForwardedTailCall { site, *plan });
+        std::optional<ForwardedCallPlan> plan = planForwardedCall(context.program, function, call);
+        if (!plan)
+            return;
+        bool hasFrameOfBuiltin = plan->tailCallingBuiltin && !use.stamps.calleeName && !function.at(site.value).isDoneInPlace();
+        if (hasFrameOfBuiltin && plan->list && !isAlwaysArray(context.program.typeOf(function, plan->list)))
+            return;
+        calls.append(ForwardedTailCall { site, *plan, use.stamps.calleeName });
     });
     return calls;
 }
@@ -179,6 +184,7 @@ void rewriteForwardedTailCalls(FunctionPassContext& context, std::span<const For
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
     for (const ForwardedTailCall& call : calls) {
         ForwardedCallPlan plan = call.plan;
+        function.edit(call.site.value).setCalleeName(call.calleeName);
         if (plan.list && !isAlwaysArray(context.program.typeOf(function, plan.list))) {
             builder.setOrigin(function.at(call.site.value).origin());
             plan.list = builder.insertBefore(call.site.point(), IRBuilder::make(Opcode::NewArgumentList, { plan.callee, plan.list }));
@@ -263,7 +269,7 @@ Vector<CallOfOwnArguments> planCallsOfOwnArguments(FunctionPassContext& context)
             return;
         if (plan->callee == plan->list || plan->thisValue == plan->list || !holdsWhatWasPassed(context, plan->list, site))
             return;
-        calls.append(CallOfOwnArguments { site, *plan });
+        calls.append(CallOfOwnArguments { site, *plan, use.stamps.calleeName });
     });
     return calls;
 }
@@ -300,6 +306,7 @@ static void passOnOwnArgumentsByCount(SiteExpansion& expansion, const CallOfOwnA
     for (size_t numberPassed = 0; numberPassed <= parameters.size(); ++numberPassed) {
         builder.moveToEndOf(arms[numberPassed]);
         ValueID passedOn = expansion.appendOriginal();
+        function.edit(passedOn).setCalleeName(call.calleeName);
         becomeForwardedCall(function.edit(passedOn), planWithoutList);
         function.edit(passedOn, ValueEdit::Definition).setArgumentsOperands(parameters.span().first(numberPassed));
         expansion.finishArm(passedOn);

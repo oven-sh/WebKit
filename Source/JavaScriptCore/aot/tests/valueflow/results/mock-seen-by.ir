@@ -1,0 +1,43 @@
+# Where the word of a module holds something, the run time says whether the importer sees a mock, and which: the one that stood when the importer was linked may have ended since.
+# Neither test is decided, the two questions are not merged with one another or across a call, and what is read off the mock is anything.
+# RUN: valueflow-apply
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[word]]: {{*}}absent{{*}} = GetModuleVariable variable=g1
+# CHECK-NEXT: [[isEmpty]]: boolean = TypeTest [[word]] testedType=absent
+# CHECK-NEXT: Branch [[isEmpty]]
+# CHECK: [[sees]]: boolean = SeesMockOf module=m1 referrer=m0
+# CHECK-NEXT: Branch [[sees]]
+# CHECK: [[mock]]: anything = MockSeenBy module=m1 referrer=m0
+# CHECK-NEXT: : anything = PropGet [[mock]] key="add"
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="mocked.js" displayPath="mocked.js" flags=[MayBeMocked] body=f1 exports=[{name="add" variable=g0}]
+entry module=m0
+variable g0 name="add" module=m1 declared={type=anything} initialization=Function function=f2 flags=[IsReplaceable]
+variable g1 module=m1 declared={type=anything|absent} flags=[IsReplaceable, HoldsMock]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g1
+    v1 = TypeTest v0 testedType=absent
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = GetModuleVariable variable=g0
+    Jump -> next b4(v2)
+  b2():
+    v3 = SeesMockOf module=m1 referrer=m0
+    Branch v3 -> taken b3(), notTaken b1()
+  b3():
+    v4 = MockSeenBy module=m1 referrer=m0
+    v5 = PropGet v4 key="add"
+    Jump -> next b4(v5)
+  b4(v6: anything):
+    v7 = Integer integer=1
+    v8 = Call v6, -, v7
+    Return v8
+}
+function f1 name="mocked" module=m1 kind=Module results=[{type=anything}] {
+    Return
+}
+function f2 name="add" module=m1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

@@ -1113,17 +1113,17 @@ static void testInstructionsOfReadsByKindOfField()
     auto absent = [](SlotRepresentation representation) { return traitsOf(representation).absentBits; };
     const Read readsByKind[] = {
         { "a boxed value"_s, FieldTable::shapeWithValue, SlotRepresentation::JSValue, bitsOf(jsNumber(7)), jsNumber(7), 17 },
-        { "an integer"_s, FieldTable::shapeWithInt32, SlotRepresentation::OptionalInt32, 7, jsNumber(7), 22 },
+        { "an integer"_s, FieldTable::shapeWithInt32, SlotRepresentation::OptionalInt32, 7, jsNumber(7), 21 },
         { "a narrow reference"_s, FieldTable::shapeWithNarrowCell, SlotRepresentation::OptionalCell32, MarkedBlockCage::encode(cageBase, std::bit_cast<JSCell*>(cell.address())), JSValue(std::bit_cast<JSCell*>(cell.address())), 24 },
         { "an optional boolean"_s, FieldTable::shapeWithEncodedByte, SlotRepresentation::OptionalBoolean, JSValue::ValueTrue, jsBoolean(true), 31 },
-        { "a boolean"_s, FieldTable::shapeWithBoolean, SlotRepresentation::Boolean, 1, jsBoolean(true), 32 },
-        { "a double"_s, FieldTable::shapeWithDouble, SlotRepresentation::OptionalDouble, std::bit_cast<uint64_t>(0.5), jsDoubleNumber(0.5), 37 },
+        { "a boolean"_s, FieldTable::shapeWithBoolean, SlotRepresentation::Boolean, 1, jsBoolean(true), 30 },
+        { "a double"_s, FieldTable::shapeWithDouble, SlotRepresentation::OptionalDouble, std::bit_cast<uint64_t>(0.5), jsDoubleNumber(0.5), 26 },
         { "a 64-bit integer"_s, FieldTable::shapeWithInt64, SlotRepresentation::OptionalInt64, 7, jsNumber(7), 35 },
         { "a boxed value that is missing"_s, FieldTable::shapeWithValue, SlotRepresentation::JSValue, absent(SlotRepresentation::JSValue), jsUndefined(), 32 },
         { "an optional boolean that is missing"_s, FieldTable::shapeWithEncodedByte, SlotRepresentation::OptionalBoolean, absent(SlotRepresentation::OptionalBoolean), jsUndefined(), 46 },
-        { "an integer that is missing"_s, FieldTable::shapeWithInt32, SlotRepresentation::OptionalInt32, absent(SlotRepresentation::OptionalInt32), jsUndefined(), 67 },
+        { "an integer that is missing"_s, FieldTable::shapeWithInt32, SlotRepresentation::OptionalInt32, absent(SlotRepresentation::OptionalInt32), jsUndefined(), 66 },
         { "a narrow reference that is missing"_s, FieldTable::shapeWithNarrowCell, SlotRepresentation::OptionalCell32, absent(SlotRepresentation::OptionalCell32), jsUndefined(), 74 },
-        { "a double that is missing"_s, FieldTable::shapeWithDouble, SlotRepresentation::OptionalDouble, absent(SlotRepresentation::OptionalDouble), jsUndefined(), 91 },
+        { "a double that is missing"_s, FieldTable::shapeWithDouble, SlotRepresentation::OptionalDouble, absent(SlotRepresentation::OptionalDouble), jsUndefined(), 80 },
     };
     bool isWithinBudget = true;
     for (const Read& read : readsByKind) {
@@ -1207,7 +1207,7 @@ static void testInstructionsOfReadsOfMissingFieldsBelowClasses()
     const Read readsByKind[] = {
         { "a boxed value"_s, FieldTable::shapeWithValue, SlotRepresentation::JSValue, 37 },
         { "an optional boolean"_s, FieldTable::shapeWithEncodedByte, SlotRepresentation::OptionalBoolean, 51 },
-        { "an integer"_s, FieldTable::shapeWithInt32, SlotRepresentation::OptionalInt32, 72 },
+        { "an integer"_s, FieldTable::shapeWithInt32, SlotRepresentation::OptionalInt32, 71 },
         { "a narrow reference"_s, FieldTable::shapeWithNarrowCell, SlotRepresentation::OptionalCell32, 83 },
     };
     bool isWithinBudget = true;

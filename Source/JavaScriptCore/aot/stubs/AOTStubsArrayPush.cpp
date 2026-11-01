@@ -8,14 +8,17 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCompactTable.h"
 #include "AOTConvention.h"
 #include "AOTRuntimeTable.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsBarriers.h"
+#include "AOTStubsHashTables.h"
 #include "Butterfly.h"
 #include "IndexingType.h"
 #include "JSCell.h"
+#include "JSCellButterfly.h"
 #include "JSObject.h"
 #include "OperationResult.h"
 #include <type_traits>
@@ -25,6 +28,7 @@ namespace JSC { namespace AOT {
 static_assert(std::is_same_v<decltype(&operationAOTArrayPush), OperationReturnType<EncodedJSValue> (JIT_OPERATION_ATTRIBUTES *)(Instance*, JSCell*, EncodedJSValue)>);
 static_assert(std::is_same_v<decltype(&operationAOTArrayPushNumber), OperationReturnType<EncodedJSValue> (JIT_OPERATION_ATTRIBUTES *)(Instance*, JSCell*, uint64_t)>);
 static_assert(std::is_same_v<decltype(&operationAOTAppendElements), OperationReturnType<void> (JIT_OPERATION_ATTRIBUTES *)(Instance*, JSCell*, JSCell*)>);
+static_assert(std::is_same_v<decltype(&operationAOTAppendMembers), OperationReturnType<void> (JIT_OPERATION_ATTRIBUTES *)(Instance*, JSCell*, JSCell*)>);
 static_assert(gprOf(StubRegister::A1) == operationArgumentGPR(1) && gprOf(StubRegister::A2) == operationArgumentGPR(2));
 
 #if CPU(ARM64)
@@ -273,7 +277,17 @@ void generateAppendElements(StubAssembler& jit)
     isEmpty.link(&jit);
     jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), kind);
     jit.and32(TrustedImm32(IndexingShapeAndWritabilityMask), kind);
-    slowPath.append(jit.branch32(CCallHelpers::Above, kind, TrustedImm32(ContiguousShape)));
+    Jump mayRefuse = jit.branch32(CCallHelpers::Above, kind, TrustedImm32(ContiguousShape));
+    jit.returnToCaller();
+
+    // One that shares its elements, as the answer of Object.keys() does, goes on sharing them. It refuses only where they are frozen in place.
+    mayRefuse.link(&jit);
+    slowPath.append(jit.branchTest32(CCallHelpers::Zero, kind, TrustedImm32(CopyOnWrite)));
+    loadStructure(jit, array, target);
+    jit.load32(Address(target, Structure::bitFieldOffset()), kind);
+    jit.urshift32(TrustedImm32(Structure::s_transitionKindShift), kind);
+    jit.and32(TrustedImm32(Structure::s_transitionKindMask), kind);
+    slowPath.append(jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(static_cast<int32_t>(TransitionKind::FreezeElementsInPlace))));
     jit.returnToCaller();
 
     needsBarrier.link(&jit);
@@ -370,6 +384,172 @@ void generateAppendElements(StubAssembler& jit)
 
     slowPath.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTAppendElements, { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters });
+}
+
+StubSignature signatureOfAppendMembers(StubKey)
+{
+    StubSignature signature;
+    signature.addOperand(gprOf(StubRegister::A1));
+    signature.addOperand(gprOf(StubRegister::A2));
+    return signature;
+}
+
+// A table on the heap, and a target that can hold the members and has room or may be given room here. The table is walked in one go: nothing runs in between, so nobody is left standing behind an entry.
+void generateAppendMembers(StubAssembler& jit)
+{
+    const GPRReg array = jit.operand(0);
+    const GPRReg set = jit.operand(1);
+    const GPRReg newLength = jit.allocateScratch(StubRegister::T9);
+    const GPRReg target = jit.allocateScratch(StubRegister::T10);
+    const GPRReg used = jit.allocateScratch(StubRegister::T11);
+    const GPRReg position = jit.allocateScratch(StubRegister::T12);
+    const GPRReg table = jit.allocateScratch(StubRegister::T13);
+    const GPRReg column = jit.allocateScratch(StubRegister::T14);
+    const GPRReg member = jit.allocateScratch(firstStubOperandRegister);
+    const GPRReg entry = table;
+    const GPRReg kind = used;
+    const FPRReg number = jit.allocateScratch(FPRInfo::fpRegT0);
+    RELEASE_ASSERT(noOverlap(array, set, newLength, target, used, position, table, column, member));
+    const Address flags(table, CompactTable::offsetOfKeysShift());
+    const BaseIndex written(target, position, CCallHelpers::TimesEight);
+    const Address lengthOfTarget(target, Butterfly::offsetOfPublicLength());
+    JumpList slowPath;
+    JumpList findsOtherKind;
+
+    Label start = jit.label();
+    jit.loadPtr(Address(set, offsetOfHashTableStorage()), table);
+    Jump hasNoTable = jit.branchTestPtr(CCallHelpers::Zero, table);
+    slowPath.append(jit.branch8(CCallHelpers::Equal, Address(table, JSCell::typeInfoTypeOffset()), TrustedImm32(JSCellButterflyType)));
+    slowPath.append(jit.branchTest8(CCallHelpers::NonZero, flags, TrustedImm32(CompactTable::keysAreInImage)));
+    jit.load32(Address(table, CompactTable::offsetOfAliveCount()), newLength);
+    Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, newLength);
+    jit.loadPtr(Address(array, JSObject::butterflyOffset()), target);
+    jit.load32(lengthOfTarget, position);
+    jit.add32(position, newLength);
+    Jump hasNoRoom = jit.branch32(CCallHelpers::Above, newLength, Address(target, Butterfly::offsetOfVectorLength()));
+    jit.load8(flags, member);
+    jit.and32(TrustedImm32(CompactTable::keysShiftMask), member);
+    jit.move(TrustedImm32(2), column);
+    jit.lshift64(member, column);
+    jit.add64(table, column);
+    jit.addPtr(TrustedImm32(CompactTable::offsetOfIndex()), column);
+
+    // Behind this the table has given up its register.
+    auto forEachMember = [&](bool keysAreWide, NOESCAPE const Invocable<void()> auto& store, NOESCAPE const Invocable<void()> auto& finish) {
+        jit.load32(Address(table, CompactTable::offsetOfUsed()), used);
+        Jump hasDeletedEntries = jit.branch32(CCallHelpers::NotEqual, used, Address(table, CompactTable::offsetOfAliveCount()));
+        // The column is moved back by the length of the target, so that one position serves both.
+        jit.lshift64(position, TrustedImm32(keysAreWide ? 3 : 2), member);
+        jit.subPtr(member, column);
+        Label copy = jit.label();
+        if (keysAreWide)
+            jit.load64(BaseIndex(column, position, CCallHelpers::TimesEight), member);
+        else
+            jit.load32(BaseIndex(column, position, CCallHelpers::TimesFour), member);
+        store();
+        jit.add32(TrustedImm32(1), position);
+        jit.branch32(CCallHelpers::Below, position, newLength).linkTo(copy, &jit);
+        finish();
+
+        // An entry whose key is 0 was deleted.
+        hasDeletedEntries.link(&jit);
+        jit.move(TrustedImm32(0), entry);
+        Label loop = jit.label();
+        if (keysAreWide)
+            jit.load64(BaseIndex(column, entry, CCallHelpers::TimesEight), member);
+        else
+            jit.load32(BaseIndex(column, entry, CCallHelpers::TimesFour), member);
+        jit.add32(TrustedImm32(1), entry);
+        Jump isDeleted = jit.branchTest64(CCallHelpers::Zero, member);
+        store();
+        jit.add32(TrustedImm32(1), position);
+        isDeleted.link(&jit);
+        jit.branch32(CCallHelpers::Below, entry, used).linkTo(loop, &jit);
+        finish();
+    };
+    auto setLengthAndReturn = [&] {
+        jit.store32(newLength, lengthOfTarget);
+        jit.returnToCaller();
+    };
+    JumpList needsBarrier;
+    auto rememberAndReturn = [&] {
+        needsBarrier.append(branchIfBarrierIsNeeded(jit, array, member));
+        jit.returnToCaller();
+    };
+
+    jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), kind);
+    jit.and32(TrustedImm32(IndexingShapeAndWritabilityMask), kind);
+    Jump targetHoldsDoubles = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(DoubleShape));
+    Jump targetHoldsInt32 = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(Int32Shape));
+    slowPath.append(jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(ContiguousShape)));
+    // The collector visits the elements below the length, which are holes until they are copied.
+    jit.store32(newLength, lengthOfTarget);
+    Jump keysAreWide = jit.branchTest8(CCallHelpers::NonZero, flags, TrustedImm32(CompactTable::keysAreWide));
+    forEachMember(false, [&] {
+        Jump isImmediate = jit.branch32(CCallHelpers::Below, member, TrustedImm32(minCell32));
+        decodeCell32(jit, member, member);
+        isImmediate.link(&jit);
+        jit.store64(member, written);
+    }, rememberAndReturn);
+    keysAreWide.link(&jit);
+    forEachMember(true, [&] {
+        jit.store64(member, written);
+    }, rememberAndReturn);
+
+    needsBarrier.link(&jit);
+    checkStubOperands(writeBarrier(), { member });
+    jit.move(array, member);
+    jit.jumpToStub(writeBarrier());
+
+    // A number never fits a narrow key.
+    targetHoldsInt32.link(&jit);
+    slowPath.append(jit.branchTest8(CCallHelpers::Zero, flags, TrustedImm32(CompactTable::keysAreWide)));
+    forEachMember(true, [&] {
+        findsOtherKind.append(jit.branchIfNotInt32(member));
+        jit.store64(member, written);
+    }, setLengthAndReturn);
+
+    targetHoldsDoubles.link(&jit);
+    slowPath.append(jit.branchTest8(CCallHelpers::Zero, flags, TrustedImm32(CompactTable::keysAreWide)));
+    forEachMember(true, [&] {
+        Jump isInt32 = jit.branchIfInt32(member);
+        findsOtherKind.append(jit.branchIfNotNumber(member));
+        unboxDouble(jit, member, member, number);
+        // It would read as a hole.
+        findsOtherKind.append(jit.branchIfNaN(number));
+        Jump isDouble = jit.jump();
+        isInt32.link(&jit);
+        jit.convertInt32ToDouble(member, number);
+        isDouble.link(&jit);
+        jit.storeDouble(number, written);
+    }, setLengthAndReturn);
+
+    // A list that a spread appends to takes any length.
+    hasNoTable.link(&jit);
+    isEmpty.link(&jit);
+    jit.returnToCaller();
+
+    // Whatever lies between the length and the end of the vector is a hole.
+    findsOtherKind.link(&jit);
+    jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), kind);
+    jit.and32(TrustedImm32(IndexingShapeMask), kind);
+    jit.move(TrustedImm64(0), member);
+    Jump holeIsEmptyValue = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(Int32Shape));
+    jit.move(TrustedImm64(static_cast<int64_t>(PNaNAsBits)), member);
+    holeIsEmptyValue.link(&jit);
+    Label clear = jit.label();
+    slowPath.append(jit.branch32(CCallHelpers::BelowOrEqual, position, lengthOfTarget));
+    jit.sub32(TrustedImm32(1), position);
+    jit.store64(member, written);
+    jit.jump().linkTo(clear, &jit);
+
+    // No program can observe the capacity, so the target may still turn out not to hold what the set holds.
+    hasNoRoom.link(&jit);
+    growVectorFor(jit, { array, target, position, column, used, member }, newLength, slowPath);
+    jit.jump().linkTo(start, &jit);
+
+    slowPath.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTAppendMembers, { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters });
 }
 
 } } // namespace JSC::AOT

@@ -1,0 +1,46 @@
+# RUN: valueflow-why values=f141:v2 values=f0:v352 values=f2:v1 values=f0:v354 values=f4:v1 values=f0:v356 values=f6:v1 values=f0:v358 values=f8:v1 values=f0:v360 values=f10:v1 values=f0:v362 values=f12:v1 values=f0:v364 values=f14:v1 values=f0:v366 values=f16:v1 values=f0:v368 values=f18:v1 values=f0:v370 values=f20:v1 values=f0:v372 values=f22:v1 values=f0:v374 values=f24:v1 values=f0:v376 values=f26:v1 values=f0:v378 values=f28:v1 values=f0:v380 values=f30:v1 values=f0:v382 values=f32:v1 values=f0:v384 values=f34:v1 values=f0:v386 values=f36:v1 values=f0:v388 values=f38:v1 values=f0:v390 values=f40:v1 values=f0:v392 values=f42:v1 values=f0:v394 values=f44:v1 values=f0:v396 values=f46:v1 values=f0:v398 values=f48:v1 values=f0:v400 values=f50:v1 values=f0:v402 values=f52:v1 values=f0:v404 values=f54:v1 values=f0:v406 values=f56:v1 values=f0:v408 values=f58:v1 values=f0:v410 values=f60:v1 values=f0:v412 values=f62:v1 values=f0:v414 values=f64:v1 values=f0:v416 values=f66:v1 values=f0:v418 values=f68:v1 values=f0:v420 values=f70:v1 values=f0:v422 values=f72:v1 values=f0:v424 values=f74:v1 values=f0:v426 values=f76:v1 values=f0:v428 values=f78:v1 values=f0:v430 values=f80:v1 values=f0:v432 values=f82:v1 values=f0:v434 values=f84:v1 values=f0:v436 values=f86:v1 values=f0:v438 values=f88:v1 values=f0:v440 values=f90:v1 values=f0:v442 values=f92:v1 values=f0:v444 values=f94:v1 values=f0:v446 values=f96:v1 values=f0:v448 values=f98:v1 values=f0:v450 values=f100:v1 values=f0:v452 values=f102:v1 values=f0:v454 values=f104:v1 values=f0:v456 values=f106:v1 values=f0:v458 values=f108:v1 values=f0:v460 values=f110:v1 values=f0:v462 values=f112:v1 values=f0:v464 values=f114:v1 values=f0:v466 values=f116:v1 values=f0:v468 values=f118:v1 values=f0:v470 values=f120:v1 values=f0:v472 values=f122:v1 values=f0:v474 values=f124:v1 values=f0:v476 values=f126:v1 values=f0:v478 values=f128:v1 values=f0:v480 values=f130:v1 values=f0:v482 values=f132:v1 values=f0:v484 values=f134:v1 values=f0:v486 values=f136:v1 values=f0:v488 values=f138:v1 values=f0:v490 values=f140:v1
+# CHECK: values=f141:v2
+# CHECK: operand 1 {{*}} 70 members:
+# REPEAT: i = 0..69
+# CHECK: values=f0:v%(i*2+352)
+# CHECK: operand 2 {{*}} 1 members: [[c%(i)]]
+# CHECK: values=f%(i*2+2):v1
+# CHECK: operand 0 {{*}} 1 members: [[c%(i)]]
+# END REPEAT
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+# REPEAT: i = 0..69
+layout L%(i) kind=Instance name="C%(i)" constructor=f%(i*2+1)
+# END REPEAT
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+# REPEAT: i = 0..69
+    v%(i*5) = NewClosure function=f%(i*2+1)
+    v%(i*5+1) = NewClass v%(i*5) layout=L%(i)
+    v%(i*5+2) = NewClosure function=f%(i*2+2)
+    DefineMethod v%(i*5+1), v%(i*5+2) layout=L%(i) key="m"
+    v%(i*5+4) = FinishClass v%(i*5+1) layout=L%(i)
+# END REPEAT
+    v350 = NewClosure function=f141
+# REPEAT: i = 0..69
+    v%(i*2+351) = Construct v%(i*5+4)
+    v%(i*2+352) = Call v350, -, v%(i*2+351)
+# END REPEAT
+    Return
+}
+# REPEAT: i = 0..69
+function f%(i*2+1) name="C%(i)" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+    v1 = GetConstructPrototype v0 layout=L%(i)
+    v2 = NewObject v1 layout=L%(i) fields=[]
+    Return v2
+}
+function f%(i*2+2) name="m" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return
+}
+# END REPEAT
+function f141 name="run" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, v0 calleeKey="m"
+    Return
+}

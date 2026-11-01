@@ -202,8 +202,11 @@ void describeCallOf(const Program& program, BuiltinID builtin, BuiltinCallMode m
         hasOverload = true;
         describeUntypedCall(program, overload, description);
     }
-    if (!hasOverload)
-        description.addThrow();
+    if (hasOverload)
+        return;
+    description.addThrow();
+    if (mode == BuiltinCallMode::Construct)
+        description.addUnknownCode();
 }
 
 void describeOverload(const Program& program, BuiltinOverloadID id, TypeID receiver, std::span<const TypeID> arguments, EffectDescription& description)

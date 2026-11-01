@@ -15,9 +15,11 @@
 namespace JSC { namespace B3 {
 
 LikelyPathAnalysis::LikelyPathAnalysis(Procedure& proc, const NaturalLoops& loops)
-    : m_loops(loops)
+    : m_proc(proc)
+    , m_loops(loops)
     , m_postOrderNumber(proc.size())
     , m_immediateDominator(proc.size())
+    , m_skipLinks(proc.size())
 {
 }
 
@@ -31,6 +33,7 @@ void LikelyPathAnalysis::findBlocksOnEveryLikelyPath(const NaturalLoop& loop, In
         result.addAll(m_postOrder);
     else {
         computeImmediateDominators(loop);
+        m_firstBlockWithFinalDominator = 0;
         BasicBlock* commonDominator = m_iterationEnds.first();
         for (BasicBlock* iterationEnd : m_iterationEnds)
             commonDominator = nearestCommonDominator(commonDominator, iterationEnd);
@@ -43,6 +46,7 @@ void LikelyPathAnalysis::findBlocksOnEveryLikelyPath(const NaturalLoop& loop, In
         m_postOrderNumber[block] = std::nullopt;
         m_immediateDominator[block] = nullptr;
     }
+    m_proc.count(Counter::LikelyDominatorWalkSteps, static_cast<uint32_t>(std::min<uint64_t>(std::exchange(m_stepsToCommonDominators, 0), std::numeric_limits<uint32_t>::max())));
 }
 
 bool LikelyPathAnalysis::isLikelyInnerEdge(const NaturalLoop& loop, FrequencyClass likeliestClassOfSource, const FrequentedBlock& successor) const
@@ -73,8 +77,10 @@ void LikelyPathAnalysis::walkLikelyEdges(const NaturalLoop& loop)
     };
     Vector<Frame, 32> stack;
 
+    constexpr unsigned notLeftYet = std::numeric_limits<unsigned>::max();
+    m_mayHaveSkipLinks = true;
     auto push = [&](BasicBlock* block) {
-        m_postOrderNumber[block] = 0;
+        m_postOrderNumber[block] = notLeftYet;
         if (isIterationEnd(loop, block))
             m_iterationEnds.append(block);
         stack.append(Frame { block, likeliestSuccessorClass(block), 0 });
@@ -91,18 +97,41 @@ void LikelyPathAnalysis::walkLikelyEdges(const NaturalLoop& loop)
             continue;
         }
         const FrequentedBlock& successor = block->successor(frame.nextSuccessorIndex++);
-        if (isLikelyInnerEdge(loop, frame.likeliestClass, successor) && !m_postOrderNumber[successor.block()])
+        if (!isLikelyInnerEdge(loop, frame.likeliestClass, successor))
+            continue;
+        if (!m_postOrderNumber[successor.block()]) {
             push(successor.block());
+            continue;
+        }
+        if (*m_postOrderNumber[successor.block()] == notLeftYet) {
+            const NaturalLoop* innerLoop = m_loops.headerOf(successor.block());
+            m_mayHaveSkipLinks &= innerLoop && m_loops.belongsTo(block, *innerLoop);
+        }
     }
+}
+
+void LikelyPathAnalysis::linkToImmediateDominator(BasicBlock* block)
+{
+    BasicBlock* parent = m_immediateDominator[block];
+    if (parent == block) {
+        m_skipLinks[block] = { 0, block };
+        return;
+    }
+    const SkipLink& parentLink = m_skipLinks[parent];
+    const SkipLink& farAncestorLink = m_skipLinks[parentLink.farAncestor];
+    bool skipsAreEqualLength = parentLink.depth - farAncestorLink.depth == farAncestorLink.depth - m_skipLinks[farAncestorLink.farAncestor].depth;
+    m_skipLinks[block] = { parentLink.depth + 1, skipsAreEqualLength ? farAncestorLink.farAncestor : parent };
 }
 
 void LikelyPathAnalysis::computeImmediateDominators(const NaturalLoop& loop)
 {
     m_immediateDominator[loop.header()] = loop.header();
+    m_firstBlockWithSkipLink = m_postOrder.size();
     for (bool changed = true; changed;) {
         changed = false;
         for (unsigned i = m_postOrder.size(); i--;) {
             BasicBlock* block = m_postOrder[i];
+            m_firstBlockWithFinalDominator = i;
             FrequencyClass likeliestClass = likeliestSuccessorClass(block);
             for (const FrequentedBlock& successor : block->successors()) {
                 if (!isLikelyInnerEdge(loop, likeliestClass, successor))
@@ -120,13 +149,39 @@ void LikelyPathAnalysis::computeImmediateDominators(const NaturalLoop& loop)
     }
 }
 
-BasicBlock* LikelyPathAnalysis::nearestCommonDominator(BasicBlock* a, BasicBlock* b) const
+BasicBlock* LikelyPathAnalysis::nearestCommonDominator(BasicBlock* a, BasicBlock* b)
 {
+    constexpr unsigned maxStepsBeforeUsingSkipLinks = 16;
+    unsigned steps = 0;
     while (a != b) {
-        while (*m_postOrderNumber[a] < *m_postOrderNumber[b])
-            a = m_immediateDominator[a];
-        while (*m_postOrderNumber[b] < *m_postOrderNumber[a])
-            b = m_immediateDominator[b];
+        if (++steps > maxStepsBeforeUsingSkipLinks && m_mayHaveSkipLinks) {
+            a = nearestCommonDominatorBySkipLinks(a, b);
+            break;
+        }
+        BasicBlock*& lower = *m_postOrderNumber[a] < *m_postOrderNumber[b] ? a : b;
+        lower = m_immediateDominator[lower];
+    }
+    m_stepsToCommonDominators += steps;
+    return a;
+}
+
+BasicBlock* LikelyPathAnalysis::nearestCommonDominatorBySkipLinks(BasicBlock* a, BasicBlock* b)
+{
+    while (m_firstBlockWithSkipLink > m_firstBlockWithFinalDominator)
+        linkToImmediateDominator(m_postOrder[--m_firstBlockWithSkipLink]);
+
+    if (m_skipLinks[a].depth < m_skipLinks[b].depth)
+        std::swap(a, b);
+    unsigned depth = m_skipLinks[b].depth;
+    while (m_skipLinks[a].depth > depth) {
+        ++m_stepsToCommonDominators;
+        a = m_skipLinks[m_skipLinks[a].farAncestor].depth >= depth ? m_skipLinks[a].farAncestor : m_immediateDominator[a];
+    }
+    while (a != b) {
+        ++m_stepsToCommonDominators;
+        bool skipTargetsAreEqual = m_skipLinks[a].farAncestor == m_skipLinks[b].farAncestor;
+        a = skipTargetsAreEqual ? m_immediateDominator[a] : m_skipLinks[a].farAncestor;
+        b = skipTargetsAreEqual ? m_immediateDominator[b] : m_skipLinks[b].farAncestor;
     }
     return a;
 }

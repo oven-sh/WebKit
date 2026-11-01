@@ -488,7 +488,8 @@ export default b.declarations(
         runsOnlyOperandCode: true,
         uses: {
           this: [
-            runsMembers(b.named("flags", "lastIndex", "length", "index", "groups"), b.calls("exec"), "OwnValues"),
+            // `$<name>` in the replacement text reads that name off `groups`, through its prototypes, so any member may be read.
+            runsMembers(b.named(), b.calls("exec"), "OwnValues"),
             storesLastIndex,
           ],
           replaceValue: [

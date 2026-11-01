@@ -36,6 +36,7 @@
 #include "AOTSplitUnions.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueSubstitution.h"
+#include <wtf/Scope.h>
 #include <algorithm>
 #include <limits>
 #include <ranges>
@@ -254,7 +255,9 @@ static void shareConditionsTests(FunctionPassContext& context, TestSites& sites)
         const BlockValues& values = function.at(block).values;
         for (uint32_t index = 0; index < values.size(); ++index) {
             if (rest.empty() || rest.front().point.block != block || rest.front().point.index != index) {
-                if (!testsOfObjects.isEmpty() && mayEndMemberConditions(context.analyses.effectsOf(values[index]).normal))
+                // An object that is asked about is there already, so its class has begun: the first object of another class ends nothing that is said of it.
+                bool onlyBeginsClass = function.at(values[index]).opcode == Opcode::NewObject && !function.at(values[index]).prototypeOperand();
+                if (!testsOfObjects.isEmpty() && !onlyBeginsClass && mayEndMemberConditions(context.analyses.effectsOf(values[index]).normal))
                     shareTestsOfObjects();
                 continue;
             }
@@ -672,8 +675,10 @@ static TestSites collectTestSites(FunctionPassContext& context)
         if (ValueID receiver = findReceiverWithGuessedLayout(context, sites, site); receiver && arrivesWithoutLayoutOfProgram(context, site.point.block, receiver))
             return true;
         // What a plain function without a layout constructs arrives as the receiver. A test for a layout would turn it away, and what stands behind the test would run in the copy.
+        // Behind a test that has turned it away already, it arrives no more.
         const Value& use = context.function.at(site.use);
-        if (PayloadWord::accessSite(use.opcode) && use.accessSite() && context.inputs.flow.lossOf(use.accessSite()).seesConstructedObject && asksOnlyForLayouts(context, sites, site))
+        bool isTurnedAwayInFront = receiverOf(use.opcode) && context.program.typeOf(context.function, use.operand(*receiverOf(use.opcode))).hasOnlyLayouts();
+        if (PayloadWord::accessSite(use.opcode) && use.accessSite() && context.inputs.flow.lossOf(use.accessSite()).seesConstructedObject && asksOnlyForLayouts(context, sites, site) && !isTurnedAwayInFront)
             return true;
         // Tests that say nothing of the member pass for the objects that lack it alone, and whoever reads a name expects an object that has it.
         if (holdsMemberUnderSymbolOfProgram(context.program, sites.testsOf(site)) ? !paysToTestMembersUnderSymbolsOfProgram(context, site.point.block) : readsMemberUnderSymbolOfProgram(context, use).predicted())
@@ -828,11 +833,11 @@ Vector<ExistingProof> findExistingProofs(FunctionPassContext& context, const Tes
     return proofs;
 }
 
-ValueID ensureEdgeResult(IRBuilder& builder, FunctionAnalyses& analyses, Edge edge, uint32_t proof)
+static ValueID ensureEdgeResult(IRBuilder& builder, bool isOnlyWayIn, Edge edge, uint32_t proof)
 {
     Function& function = builder.function();
     // A parameter that other edges fill too is a merge of their arguments, not the proof of this edge.
-    if (!analyses.hasSingleIncomingEdge(targetOf(function, edge).block))
+    if (!isOnlyWayIn)
         builder.splitEdge(edge);
 
     const Target& target = targetOf(function, edge);
@@ -842,6 +847,11 @@ ValueID ensureEdgeResult(IRBuilder& builder, FunctionAnalyses& analyses, Edge ed
 
     builder.setOrigin(function.at(edge.from).terminator.origin());
     return builder.addEdgeResult(edge, proof);
+}
+
+ValueID ensureEdgeResult(IRBuilder& builder, FunctionAnalyses& analyses, Edge edge, uint32_t proof)
+{
+    return ensureEdgeResult(builder, analyses.hasSingleIncomingEdge(targetOf(builder.function(), edge).block), edge, proof);
 }
 
 // Whether a test may look at another definition of what its operand holds.
@@ -921,6 +931,15 @@ static Vector<HoistedTest> findHoistedTests(FunctionPassContext& context, const 
         return operands;
     };
 
+    auto boundsCounterThatEntersBy = [&](ValueID comparison, const NaturalLoop& loop, BlockID join) {
+        return std::ranges::any_of(analyses.inductionVariables().of(loop).variables, [&](const InductionVariable& counter) {
+            if (!counter.start || !std::ranges::contains(counter.tests, comparison, &InductionTest::comparison))
+                return false;
+            ValueLocation start = useLists.locationOf(analyses.identityOf(counter.start));
+            return start.placement == ValuePlacement::Parameter && start.block == join;
+        });
+    };
+
     BitVector isOffered;
     Vector<HoistedTest> hoistedTests;
     for (uint32_t first = 0, end = 0; first < requirements.size(); first = end) {
@@ -928,9 +947,12 @@ static Vector<HoistedTest> findHoistedTests(FunctionPassContext& context, const 
             ++end;
         std::span<const TestRequirement> site = requirements.subspan(first, end - first);
         BlockID useBlock = site.front().point.block;
+        const NaturalLoop* loopInside = nullptr;
         for (const NaturalLoop* loop = loops.innerMostLoopOf(useBlock); loop; loop = loops.innerMostOuterLoop(*loop)) {
-            if (isClosedOnlyByWaysBack(analyses, *loop).predicted())
+            bool isClosedByWaysBack = isClosedOnlyByWaysBack(analyses, *loop).predicted();
+            if (isClosedByWaysBack && (!loopInside || !boundsCounterThatEntersBy(sites.sites[site.front().site].use, *loopInside, loop->header()) || findLoopOfWaysBackInto(analyses, *loopInside) != loop))
                 continue;
+            loopInside = loop;
             SiteOperands operands;
             bool canLeaveLoop = false;
             for (uint32_t index = 0; index < site.size(); ++index) {
@@ -945,6 +967,8 @@ static Vector<HoistedTest> findHoistedTests(FunctionPassContext& context, const 
             for (uint32_t edgeIndex = 0; edgeIndex < entry.edges.size(); ++edgeIndex) {
                 size_t firstBit = static_cast<size_t>(entry.firstEdgeNumber + edgeIndex) * conditions.size();
                 for (uint32_t index = 0; index < site.size(); ++index) {
+                    if (isClosedByWaysBack && !conditions.at(site[index].condition).lastsForever())
+                        continue;
                     if (operands[index] && isOffered.add(firstBit + site[index].condition.index()))
                         hoistedTests.append(HoistedTest { entry.edges[edgeIndex], first + index, site[index].condition, *operands[index] });
                 }
@@ -1474,6 +1498,7 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
     };
 
     BitVector isLive;
+    uint64_t valuesReadForRejoinPoints = 0;
     for (size_t first = 0, next = 0; first < ranges.size(); first = next) {
         BlockID block = ranges[first].block;
         uint32_t numberOfValues = function.at(block).values.size();
@@ -1485,15 +1510,24 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
         if (firstEnd == numberOfValues || (copiesHoldOnlyStretches && lastTestIn[block.index()] < firstEnd))
             continue;
         BitVector points = findPointsWhereNothingIsKnownBetter(function, block, firstEnd, isKnownBetter, livenessOfValuesKnownBetter, isLive);
+        // From where the last search began there is no point in front of the one that it found.
+        uint32_t startOfLastSearch = numberOfValues;
+        uint32_t foundByLastSearch = 0;
         for (const StretchRange& range : ranges.subspan(first, next - first)) {
-            for (uint32_t index = range.end; range.isCloned && index < numberOfValues; ++index) {
-                if (!points.quickGet(index) || !mayRejoinAt({ block, index }))
-                    continue;
-                plan.rejoinPointsWithoutTests.append({ block, index });
-                break;
+            if (!range.isCloned)
+                continue;
+            if (range.end < startOfLastSearch || foundByLastSearch < range.end) {
+                startOfLastSearch = range.end;
+                foundByLastSearch = range.end;
+                while (foundByLastSearch < numberOfValues && (!points.quickGet(foundByLastSearch) || !mayRejoinAt({ block, foundByLastSearch })))
+                    ++foundByLastSearch;
+                valuesReadForRejoinPoints += foundByLastSearch - startOfLastSearch + 1;
             }
+            if (foundByLastSearch < numberOfValues)
+                plan.rejoinPointsWithoutTests.append({ block, foundByLastSearch });
         }
     }
+    context.build.statistics().count(StatisticID::ValuesReadForRejoinPoints, valuesReadForRejoinPoints);
 
     AOT::sortInLine(plan.rejoinPointsWithoutTests, { }, orderOf);
     removeRepeatedElements(plan.rejoinPointsWithoutTests);
@@ -3142,10 +3176,11 @@ struct TestPlacer {
         emitTests();
         rewriteUses();
         if (copy)
-            copy->addWaysBack(changedValues.span(), GenericCopy::TypesTestedOnWayBack::Expected);
+            copy->addWaysBack(changedValues, GenericCopy::TypesTestedOnWayBack::Expected);
         enterCopyBeforeRepeatableCode();
         repairProofs();
         replaceDominatedUses();
+        typeTestsByTheirOperands();
         Renumbering renumbering;
         TypePropagationInputs typing { context.program, context.id, function, analyses, types, context.build, &context.typingMemo };
         typing.renumbering = &renumbering;
@@ -4365,6 +4400,23 @@ struct TestPlacer {
         repair.run();
     }
 
+    // A test is made over the last proof of its subject, which may stand on one way to it alone. The repair of SSA then hands it what reaches it on every way, of which less is known:
+    // the answer is typed by the operand that the test has now.
+    void typeTestsByTheirOperands()
+    {
+        if (context.build.isSabotaged(Sabotage::TestsKeepTheTypesTheyWereMadeWith))
+            return;
+        TypingContext typing { context.program, function, types };
+        for (const EmittedTest& emitted : emittedTests) {
+            TypeID type = computeResultTypeID(typing, function.at(emitted.test));
+            if (types.at(type) == types.at(function.at(emitted.test).type))
+                continue;
+            function.edit(emitted.test, ValueEdit::Type).type = type;
+            changedValues.append(emitted.test);
+            context.build.statistics().count(StatisticID::TypeTestsTypedByOtherOperands);
+        }
+    }
+
     void replaceDominatedUses()
     {
         struct NarrowableUse {
@@ -4440,14 +4492,70 @@ struct TestPlacer {
             return UseInTree { uses[index].identity, dominators.numberOf(uses[index].use.block), static_cast<uint32_t>(index) };
         });
         AOT::sortInLine(usesInTree, { }, [](const UseInTree& use) { return std::tuple { use.identity, use.numberOfBlock, use.index }; });
+        // A binary tree over the uses in that order: node n has the children 2 n and 2 n + 1, the uses are its last leaves. A node holds a bit for each type that a use below it names a value of now.
+        // The types beyond the first 63 share the last bit, which says nothing about them.
+        constexpr unsigned bitOfFurtherTypes = 63;
+        Vector<TypeID, 16> typeOfBit;
+        UncheckedKeyHashMap<uint32_t, uint8_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> bitOfKnownType;
+        auto bitOf = [&](TypeID type) -> uint64_t {
+            if (!type)
+                return 1ull << bitOfFurtherTypes;
+            auto result = bitOfKnownType.add(type.index(), bitOfFurtherTypes);
+            if (result.isNewEntry && typeOfBit.size() < bitOfFurtherTypes) {
+                result.iterator->value = typeOfBit.size();
+                typeOfBit.append(type);
+            }
+            return 1ull << result.iterator->value;
+        };
+        AOT_THRESHOLD(size_t, fewestUsesKeptInTree, 256);
+        const bool hasTree = usesInTree.size() >= fewestUsesKeptInTree;
+        const size_t numberOfLeaves = hasTree ? std::bit_ceil(usesInTree.size()) : 0;
+        Vector<uint64_t> typesNamedBelow(FillWith { }, 2 * numberOfLeaves, 0ull);
+        Vector<uint32_t> placeInTree(hasTree ? uses.size() : 0);
+        for (size_t place = 0; hasTree && place < usesInTree.size(); ++place) {
+            placeInTree[usesInTree[place].index] = place;
+            typesNamedBelow[numberOfLeaves + place] = bitOf(function.at(usedValueOf(function, uses[usesInTree[place].index].use)).type);
+        }
+        for (size_t node = numberOfLeaves; node > 1;) {
+            --node;
+            typesNamedBelow[node] = typesNamedBelow[2 * node] | typesNamedBelow[2 * node + 1];
+        }
+        auto didReplaceUse = [&](uint32_t index, ValueID replacement) {
+            if (!hasTree)
+                return;
+            size_t node = numberOfLeaves + placeInTree[index];
+            typesNamedBelow[node] = bitOf(function.at(replacement).type);
+            while (node >>= 1)
+                typesNamedBelow[node] = typesNamedBelow[2 * node] | typesNamedBelow[2 * node + 1];
+        };
+        auto allTypesBut = [&](TypeID type) { return hasTree ? ~bitOf(type) | 1ull << bitOfFurtherTypes : ~0ull; };
+
         Vector<uint32_t, 16> dominatedUses;
-        auto findUsesDominatedBy = [&](BlockID block, ValueID identity) -> std::span<const uint32_t> {
+        auto listUsesThatName = [&](auto& self, size_t node, size_t nodeBegin, size_t nodeEnd, size_t begin, size_t end, uint64_t types) -> void {
+            if (end <= nodeBegin || nodeEnd <= begin || !(typesNamedBelow[node] & types))
+                return;
+            if (nodeEnd - nodeBegin == 1) {
+                dominatedUses.append(usesInTree[nodeBegin].index);
+                return;
+            }
+            size_t middle = nodeBegin + (nodeEnd - nodeBegin) / 2;
+            self(self, 2 * node, nodeBegin, middle, begin, end, types);
+            self(self, 2 * node + 1, middle, nodeEnd, begin, end, types);
+        };
+        // Those that name a value of one of the given types.
+        auto findUsesDominatedBy = [&](BlockID block, ValueID identity, uint64_t types) -> std::span<const uint32_t> {
             dominatedUses.shrink(0);
             if (!cfg.isReachable(block))
                 return { };
             auto first = std::ranges::lower_bound(usesInTree, std::pair { identity, dominators.numberOf(block) }, { }, [](const UseInTree& use) { return std::pair { use.identity, use.numberOfBlock }; });
-            for (uint32_t last = dominators.lastNumberBelow(block); first != usesInTree.end() && first->identity == identity && first->numberOfBlock <= last; ++first)
-                dominatedUses.append(first->index);
+            auto end = std::ranges::upper_bound(usesInTree, std::pair { identity, dominators.lastNumberBelow(block) }, { }, [](const UseInTree& use) { return std::pair { use.identity, use.numberOfBlock }; });
+            if (hasTree)
+                listUsesThatName(listUsesThatName, 1, 0, numberOfLeaves, first - usesInTree.begin(), end - usesInTree.begin(), types);
+            else {
+                for (; first != end; ++first)
+                    dominatedUses.append(first->index);
+            }
+            context.build.statistics().count(StatisticID::UsesListedBehindTests, dominatedUses.size());
             AOT::sort(dominatedUses);
             return dominatedUses.span();
         };
@@ -4491,7 +4599,7 @@ struct TestPlacer {
             narrowings.shrink(0);
 
             RELEASE_ASSERT(cfg.singleIncomingEdge(target) == edge);
-            for (uint32_t index : findUsesDominatedBy(target, analyses.identityOf(subject))) {
+            for (uint32_t index : findUsesDominatedBy(target, analyses.identityOf(subject), allTypesBut(provenTypeID))) {
                 NarrowableUse& narrowable = uses[index];
                 // A use that gets a cast will name none of the values that were listed.
                 if (narrowable.alias == proven || narrowable.getsCast)
@@ -4513,6 +4621,7 @@ struct TestPlacer {
                 Narrowing& narrowing = narrowings[found];
                 if (narrowing.holdsProvenType) {
                     replace(use, proven);
+                    didReplaceUse(index, proven);
                     isInUse.set(proven.index());
                     continue;
                 }
@@ -4541,6 +4650,22 @@ struct TestPlacer {
         }
 
         // Code that two tests of one value lead to is behind neither of them. What passed either comes there as a parameter.
+        struct TypesThatHold {
+            uint64_t types { 0 };
+            unsigned numberOfTypesJudged { 0 };
+        };
+        UncheckedKeyHashMap<uint32_t, TypesThatHold, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> typesThatHoldType;
+        auto otherTypesThatHold = [&](TypeID typeID, const Type& type) {
+            if (!hasTree)
+                return ~0ull;
+            TypesThatHold& known = typesThatHoldType.add(typeID.index(), TypesThatHold { }).iterator->value;
+            for (; known.numberOfTypesJudged < typeOfBit.size(); ++known.numberOfTypesJudged) {
+                TypeID other = typeOfBit[known.numberOfTypesJudged];
+                if (other != typeID && type.isSubsetOf(types.at(other), context.program))
+                    known.types |= 1ull << known.numberOfTypesJudged;
+            }
+            return known.types | 1ull << bitOfFurtherTypes;
+        };
         for (size_t index = 0; index < numberOfListedValues; ++index) {
             ValueID joined(index);
             ValueID identity = identityOfListedValue[index];
@@ -4551,7 +4676,7 @@ struct TestPlacer {
                 continue;
             TypeID joinedTypeID = function.at(joined).type;
             Type joinedType = types.at(joinedTypeID);
-            for (uint32_t index : findUsesDominatedBy(location.block, identity)) {
+            for (uint32_t index : findUsesDominatedBy(location.block, identity, otherTypesThatHold(joinedTypeID, joinedType))) {
                 NarrowableUse& narrowable = uses[index];
                 const Use& use = narrowable.use;
                 if (narrowable.getsCast || (use.kind != Use::Kind::Operand && use.kind != Use::Kind::TerminatorOperand && use.kind != Use::Kind::EdgeArgument))
@@ -4562,8 +4687,10 @@ struct TestPlacer {
                 TypeID currentTypeID = function.at(current).type;
                 if (current == joined || currentTypeID == joinedTypeID)
                     continue;
-                if (joinedType.isSubsetOf(types.at(currentTypeID), context.program))
+                if (joinedType.isSubsetOf(types.at(currentTypeID), context.program)) {
                     replace(use, joined);
+                    didReplaceUse(index, joined);
+                }
             }
         }
 
@@ -4919,8 +5046,18 @@ static bool isBelowLengthOfList(FunctionPassContext& context, IntegerRelations& 
     return !isEmpty;
 }
 
+// The blocks of the uses of a list that may give it another length. Whether a use may does not hang on who asks, so they are looked for once for a list and the number that stands for its length.
+struct UsesThatMayChangeLengths {
+    struct OfList {
+        ValueID length;
+        Vector<BlockID, 2> blocks;
+    };
+    HashMap<uint32_t, Vector<OfList, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> ofLists;
+    uint64_t numberOfBlocksWalked { 0 };
+};
+
 // `new Array(n)` has the length n until something changes it. Nothing has where every use of the list that may come in front of the block only reads it or stores below n.
-static bool hasLengthItWasMadeWith(FunctionPassContext& context, IntegerRelations& relations, ValueID creation, ValueID length, BlockID at)
+static bool hasLengthItWasMadeWith(FunctionPassContext& context, IntegerRelations& relations, UsesThatMayChangeLengths& known, ValueID creation, ValueID length, BlockID at)
 {
     static constexpr OpcodeSet reads { Opcode::HasArrayStorage, Opcode::IsInBounds, Opcode::IsElementPresent, Opcode::GetArrayElement, Opcode::GetArrayLength, Opcode::AllGuards };
     const Function& function = context.function;
@@ -4928,7 +5065,40 @@ static bool hasLengthItWasMadeWith(FunctionPassContext& context, IntegerRelation
     const EscapeAnalysis& escape = analyses.escape();
     std::optional<ObjectID> object = escape.gaveUp() ? std::nullopt : escape.objectDefinedBy(creation);
     BlockID blockOfCreation = analyses.useLists().blockOf(creation);
+    ++known.numberOfBlocksWalked;
     if (!object || !analyses.dominators().dominates(blockOfCreation, at))
+        return false;
+
+    auto mayChangeLength = [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand)
+            return true;
+        const Value& user = function.at(use.user);
+        if (isCast(user.opcode) || reads.contains(user.opcode) || storageMeasuredBy(context.program, user))
+            return false;
+        bool isKeyed = (user.opcode == Opcode::ElemGet || user.opcode == Opcode::ElemSet) && use.operandIndex == OperandIndex::ElemGet::object && user.keyIsIntegral();
+        static_assert(OperandIndex::ElemGet::object == OperandIndex::ElemSet::object);
+        if (isKeyed && user.opcode == Opcode::ElemGet)
+            return false;
+        ValueID position = isKeyed ? user.propertyOperand() : user.opcode == Opcode::PutArrayElement && use.operandIndex == OperandIndex::PutArrayElement::array ? user.positionOperand() : ValueID();
+        if (!position || relations.isAtLeast(position, 0, use.block) != IntegerRelations::Answer::Proven)
+            return true;
+        return !isBelowLengthOfList(context, relations, *object, position, length, use.block);
+    };
+    Vector<UsesThatMayChangeLengths::OfList, 1>& ofList = known.ofLists.add(creation.index(), Vector<UsesThatMayChangeLengths::OfList, 1>()).iterator->value;
+    size_t index = ofList.findIf([&](const UsesThatMayChangeLengths::OfList& entry) { return entry.length == length; });
+    if (index == notFound) {
+        index = ofList.size();
+        ofList.append({ length, { } });
+        for (const ObjectUse& objectUse : escape.usesOf(*object)) {
+            if (!objectUse.use.isEdgeUse() && !ofList[index].blocks.contains(objectUse.use.block) && mayChangeLength(objectUse.use))
+                ofList[index].blocks.append(objectUse.use.block);
+        }
+    }
+    const Vector<BlockID, 2>& blocksThatMayChangeLength = ofList[index].blocks;
+    if (blocksThatMayChangeLength.isEmpty())
+        return true;
+    // What dominates the block lies on every way to it, and the last stretch from there does not pass the creation: a way that did could leave the dominator out.
+    if (std::ranges::any_of(blocksThatMayChangeLength, [&](BlockID block) { return analyses.dominators().dominates(block, at); }))
         return false;
 
     // Whoever passes the creation goes on with another list.
@@ -4937,6 +5107,7 @@ static bool hasLengthItWasMadeWith(FunctionPassContext& context, IntegerRelation
     comesInFront.set(at.index());
     while (!worklist.isEmpty()) {
         BlockID block = worklist.takeLast();
+        ++known.numberOfBlocksWalked;
         if (block == blockOfCreation)
             continue;
         for (BlockID predecessor : analyses.cfg().predecessors(block)) {
@@ -4944,26 +5115,7 @@ static bool hasLengthItWasMadeWith(FunctionPassContext& context, IntegerRelation
                 worklist.append(predecessor);
         }
     }
-    for (const ObjectUse& objectUse : escape.usesOf(*object)) {
-        const Use& use = objectUse.use;
-        if (!comesInFront.get(use.block.index()) || use.isEdgeUse())
-            continue;
-        if (use.kind != Use::Kind::Operand)
-            return false;
-        const Value& user = function.at(use.user);
-        if (isCast(user.opcode) || reads.contains(user.opcode) || storageMeasuredBy(context.program, user))
-            continue;
-        bool isKeyed = (user.opcode == Opcode::ElemGet || user.opcode == Opcode::ElemSet) && use.operandIndex == OperandIndex::ElemGet::object && user.keyIsIntegral();
-        static_assert(OperandIndex::ElemGet::object == OperandIndex::ElemSet::object);
-        if (isKeyed && user.opcode == Opcode::ElemGet)
-            continue;
-        ValueID position = isKeyed ? user.propertyOperand() : user.opcode == Opcode::PutArrayElement && use.operandIndex == OperandIndex::PutArrayElement::array ? user.positionOperand() : ValueID();
-        if (!position || relations.isAtLeast(position, 0, use.block) != IntegerRelations::Answer::Proven)
-            return false;
-        if (!isBelowLengthOfList(context, relations, *object, position, length, use.block))
-            return false;
-    }
-    return true;
+    return std::ranges::none_of(blocksThatMayChangeLength, [&](BlockID block) { return comesInFront.get(block.index()); });
 }
 
 // What `new Array(n)` says its length is, before anything else has touched it, is n.
@@ -5048,11 +5200,19 @@ PassOutcome askWhetherComparedPositionsAreInBounds(FunctionPassContext& context,
         BlockID block;
         ValueID array;
         uint32_t operandOfPosition;
+        // Asked while the graph is the one that was looked at. A test that is put behind one comparison adds no way into the arm of another, which has one block in front of it,
+        // and the graph would be made anew for each comparison to say so.
+        bool isOnlyWayIntoArm;
     };
     Vector<Comparison, 4> comparisons;
     Vector<BlockID, 4> armsWithTest;
     Vector<ListMadeWithLength, 2> listsMade = findListsMadeWithLength(context);
     std::optional<IntegerRelations> relations;
+    UsesThatMayChangeLengths usesThatMayChangeLengths;
+    auto countBlocksWalked = makeScopeExit([&] {
+        if (usesThatMayChangeLengths.numberOfBlocksWalked)
+            context.build.statistics().count(StatisticID::BlocksWalkedInFrontOfListsMadeWithLength, usesThatMayChangeLengths.numberOfBlocksWalked);
+    });
     for (BlockID block : analyses.cfg().reversePostOrder()) {
         const Terminator& terminator = function.at(block).terminator;
         if (terminator.kind != TerminatorKind::Branch || function.at(block).frequency.predicted() == BlockFrequency::Rare || isCold(heatClassOf(context, block)).predicted())
@@ -5091,7 +5251,7 @@ PassOutcome askWhetherComparedPositionsAreInBounds(FunctionPassContext& context,
                     continue;
                 if (!relations)
                     relations.emplace(analyses);
-                if (hasLengthItWasMadeWith(context, *relations, made.list, isMeasured ? length : made.length, block)) {
+                if (hasLengthItWasMadeWith(context, *relations, usesThatMayChangeLengths, made.list, isMeasured ? length : made.length, block)) {
                     owner = made.list;
                     break;
                 }
@@ -5111,8 +5271,19 @@ PassOutcome askWhetherComparedPositionsAreInBounds(FunctionPassContext& context,
         ValueID identityOfPosition = analyses.identityOf(position);
         // The test names the list as the access does: code generation gives `new Array(n)` the storage that the only cast behind it expects.
         ValueID accessed;
-        for (BlockID other : analyses.cfg().reversePostOrder()) {
-            if (accessed || !analyses.dominators().dominates(whenBelow, other) || (haveTests && function.at(other).frequency.predicted() == BlockFrequency::Rare))
+        // What the arm dominates, in the order of the graph: the rest of the function is not walked for one comparison.
+        const Dominators& dominators = analyses.dominators();
+        Vector<BlockID, 16> dominated { whenBelow };
+        for (size_t index = 0; index < dominated.size(); ++index)
+            dominated.append(dominators.children(dominated[index]));
+        std::ranges::sort(dominated, { }, [&](BlockID other) {
+            return analyses.cfg().reversePostOrderIndex(other);
+        });
+        context.build.statistics().count(StatisticID::BlocksReadForAccessesBehindComparisons, dominated.size());
+        for (BlockID other : dominated) {
+            if (accessed)
+                break;
+            if (haveTests && function.at(other).frequency.predicted() == BlockFrequency::Rare)
                 continue;
             for (ValueID id : function.at(other).values) {
                 const Value& access = function.at(id);
@@ -5141,11 +5312,12 @@ PassOutcome askWhetherComparedPositionsAreInBounds(FunctionPassContext& context,
             continue;
         // `k < list.length && k < n`: the arm of the first comparison holds the second. The test stands behind the last, where the position is the one that the access names.
         if (size_t first = armsWithTest.find(block); first != notFound) {
-            comparisons[first] = { block, accessed, operandOfPosition };
+            comparisons[first] = { block, accessed, operandOfPosition, analyses.hasSingleIncomingEdge(whenBelow) };
             armsWithTest[first] = whenBelow;
             continue;
         }
-        comparisons.append({ block, accessed, operandOfPosition });
+        context.build.statistics().count(StatisticID::BlocksReadForAccessesBehindComparisons, 1);
+        comparisons.append({ block, accessed, operandOfPosition, analyses.hasSingleIncomingEdge(whenBelow) });
         armsWithTest.append(whenBelow);
     }
     if (comparisons.isEmpty())
@@ -5153,7 +5325,7 @@ PassOutcome askWhetherComparedPositionsAreInBounds(FunctionPassContext& context,
 
     IRBuilder builder(analyses.context(), function, context.types, &analyses);
     for (const Comparison& comparison : comparisons) {
-        ValueID position = ensureEdgeResult(builder, analyses, Edge { comparison.block, 0 }, comparison.operandOfPosition);
+        ValueID position = ensureEdgeResult(builder, comparison.isOnlyWayIntoArm, Edge { comparison.block, 0 }, comparison.operandOfPosition);
         BlockID whenBelow = function.at(comparison.block).terminator.taken().block;
         Target whenNotBelow = function.at(comparison.block).terminator.notTaken();
         BlockID rest = builder.splitBlock(ProgramPoint::atHeadOf(whenBelow));
@@ -5281,6 +5453,11 @@ static PassOutcome readLengthsThatListsWereMadeWith(FunctionPassContext& context
     if (listsMade.isEmpty() || context.build.validates())
         return PassOutcome::Unchanged;
     std::optional<IntegerRelations> relations;
+    UsesThatMayChangeLengths usesThatMayChangeLengths;
+    auto countBlocksWalked = makeScopeExit([&] {
+        if (usesThatMayChangeLengths.numberOfBlocksWalked)
+            context.build.statistics().count(StatisticID::BlocksWalkedInFrontOfListsMadeWithLength, usesThatMayChangeLengths.numberOfBlocksWalked);
+    });
     ValueSubstitution substitution(function);
     for (BlockID block : analyses.cfg().reversePostOrder()) {
         for (ValueID id : function.at(block).values) {
@@ -5293,7 +5470,7 @@ static PassOutcome readLengthsThatListsWereMadeWith(FunctionPassContext& context
                     continue;
                 if (!relations)
                     relations.emplace(analyses);
-                if (hasLengthItWasMadeWith(context, *relations, made.list, made.length, block))
+                if (hasLengthItWasMadeWith(context, *relations, usesThatMayChangeLengths, made.list, made.length, block))
                     substitution.replace(id, made.length);
             }
         }
@@ -5312,11 +5489,12 @@ static PassOutcome askOnlyNumbersWhetherTheyEqualThemselves(FunctionPassContext&
     FunctionAnalyses& analyses = context.analyses;
     if (!analyses.opcodesOfValues().contains(Opcode::StrictEq))
         return PassOutcome::Unchanged;
-    Vector<ValueID, 4> comparisons;
+    Vector<std::pair<ValueID, ProgramPoint>, 4> comparisons;
     for (BlockID block : analyses.cfg().reversePostOrder()) {
         if (function.at(block).frequency.predicted() == BlockFrequency::Rare)
             continue;
-        for (ValueID id : function.at(block).values) {
+        for (uint32_t index = 0; index < function.at(block).values.size(); ++index) {
+            ValueID id = function.at(block).values[index];
             const Value& value = function.at(id);
             if (value.opcode != Opcode::StrictEq || value.leftOperand() != value.rightOperand())
                 continue;
@@ -5326,19 +5504,25 @@ static PassOutcome askOnlyNumbersWhetherTheyEqualThemselves(FunctionPassContext&
             });
             const Type& type = context.program.typeOf(function, value.leftOperand());
             if ((type.primitives & Primitive::Number) && !type.isNumber() && !isTestOfBranchWithProofs)
-                comparisons.append(id);
+                comparisons.append({ id, ProgramPoint { block, index } });
         }
     }
     if (comparisons.isEmpty())
         return PassOutcome::Unchanged;
 
     IRBuilder builder(analyses.context(), function, context.types, &analyses);
-    for (ValueID id : comparisons) {
-        ValueLocation location = analyses.useLists().locationOf(id);
+    // What stood behind a cut stands in the continuation, from its first place on. The use lists would make the graph of the whole function anew behind each cut to say so.
+    ProgramPoint lastCut;
+    BlockID behindLastCut;
+    for (auto [id, found] : comparisons) {
+        ProgramPoint point = found.block == lastCut.block ? ProgramPoint { behindLastCut, found.index - lastCut.index - 1 } : found;
+        RELEASE_ASSERT(function.at(point.block).values[point.index] == id);
         ValueID compared = function.at(id).leftOperand();
-        Expected<BlockFrequency> frequency = function.at(location.block).frequency;
+        Expected<BlockFrequency> frequency = function.at(point.block).frequency;
         builder.setOrigin(function.at(id).origin());
-        IRBuilder::Expansion expansion = builder.beginExpansion(ProgramPoint { location.block, location.index });
+        IRBuilder::Expansion expansion = builder.beginExpansion(point);
+        lastCut = found;
+        behindLastCut = expansion.continuation;
         IRBuilder::ProvenBranch isNumber = builder.emitBranchWithProof(builder.appendTypeTest(compared, TypeTable::number), OperandIndex::TypeTest::value, frequency, frequency);
         builder.moveToEndOf(isNumber.taken);
         builder.endExpansion(expansion, builder.append(Opcode::StrictEq, { isNumber.provenOnTaken, isNumber.provenOnTaken }));
@@ -5365,6 +5549,8 @@ static bool beginsWithTestThatLeavesForGenericCopy(FunctionPassContext& context,
     const Function& function = context.function;
     const Block& header = function.at(id);
     if (header.isHandlerBlock() || !header.terminator.isConditionalBranch() || function.at(header.terminator.conditionOperand()).opcode != Opcode::TypeTest)
+        return false;
+    if (context.analyses.useLists().useCount(header.terminator.conditionOperand()) != 1)
         return false;
     const Target& whenFailed = header.terminator.notTaken();
     if (!whenFailed.proofs.isEmpty() || function.at(whenFailed.block).frequency.predicted() == BlockFrequency::Normal)
@@ -5440,6 +5626,9 @@ static PassOutcome testLoopParametersInFrontOfLoops(FunctionPassContext& context
         // Other passes fold what follows from the failed question into its arm: from then on the arm is the generic turn only for values that fail that question.
         bool isArmAsPlaced = testsPlacedInThisRun.get(header.terminator.conditionOperand().index());
         for (uint32_t parameterIndex = 0; parameterIndex < header.parameters.size(); ++parameterIndex) {
+            // In the loop the test stands behind the fact that the cast names. In front of the loop it would read through whatever the word holds.
+            if (typeOf(header.parameters[parameterIndex]).mayBeUnspecified())
+                continue;
             std::optional<TestInFrontOfLoop> test = findTestOfLoopParameter(context, loop, parameterIndex);
             if (!test || !(isArmAsPlaced || test->isQuestionOfHeader))
                 continue;

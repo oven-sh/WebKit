@@ -44,7 +44,7 @@ struct EffectDescription {
 };
 
 // A table that is given keeps what is found out about a long list of callees.
-EffectDescription describeEffects(const Program&, const Function&, const Value&, const EffectSummaries* = nullptr);
+EffectDescription describeEffects(const Program&, const Function&, const Value&, const EffectSummaries* = nullptr, UntestedStorage = UntestedStorage::MakesReadUnknown);
 EffectDescription describeEffects(const Program&, const Function&, const Terminator&);
 EffectDescription describeCodeRunBy(const Program&, const Function&, const Value&);
 EffectDescription describeCodeRunBy(const Program&, const Function&, const Terminator&);
@@ -68,7 +68,7 @@ private:
 
 void describeOperator(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&);
 void describeOperator(const Program&, Opcode, std::span<const Type> operandTypes, const Type& result, EffectDescription&);
-void describeAccess(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&);
+void describeAccess(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&, UntestedStorage);
 void describeCall(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&, const EffectSummaries* = nullptr);
 void describeBuiltinCall(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&);
 EffectDescription describeUnmatchedCallByOperandTypes(const Program&, const Function&, const Value&);

@@ -406,10 +406,19 @@ static void reportModules(const ValueFlowResultInputs& inputs, std::span<const M
             if (entry.variable)
                 locations.leaveOpen(locations.of(entry.variable), entry.isReplaceable ? OptionSet<Actor> { Actor::Loader, Actor::NativeCode } : OptionSet<Actor> { Actor::Loader });
         }
-        if (module.exportsVariable && (module.flags.contains(ModuleFlags::MayBeMocked) || module.flags.contains(ModuleFlags::MayBeEvicted)))
+        // `require.cache[path].exports`: the run time makes the module object of the file when somebody asks for the entry, and that reads and stores the variable.
+        if (module.exportsVariable && (module.flags.contains(ModuleFlags::MayBeMocked) || module.flags.contains(ModuleFlags::MayBeEvicted) || module.flags.contains(ModuleFlags::IsShownByEntryOfCache)))
             locations.leaveOpen(locations.of(module.exportsVariable), Actor::NativeCode);
+        // `require.cache[path].exports === plugin`: whoever only compares what an entry exports still finds there what the file has stored.
+        if (module.exportsVariable && module.flags.contains(ModuleFlags::IsListedInCache))
+            locations.note(locations.of(module.exportsVariable), ReadNoted::ByLoader);
         if (ModuleID captured = commonJsModuleCapturedBy(program, module))
             locations.note(locations.of(program.at(captured).exportsVariable), ReadNoted::ByLoader);
+    }
+
+    for (uint32_t index = 0; index < program.variables.size(); ++index) {
+        if (program.variables[index].flags.contains(VariableFlags::HoldsMock))
+            locations.leaveOpen(locations.of(VariableID(index)), Actor::NativeCode);
     }
 
     for (size_t index : modulesThatHostAsksFor(program, filesOfProgramAreLoadedByName(inputs.solution))) {
@@ -446,7 +455,7 @@ struct ObjectAccess {
 };
 
 static constexpr EnumSet<ValueFlowNameKind> namesOfValues { ValueFlowNameKind::Property, ValueFlowNameKind::Elements, ValueFlowNameKind::UnknownKey, ValueFlowNameKind::EveryProperty };
-static constexpr EnumSet<ValueFlowNameKind> namesOfValuesAndAccessors = namesOfValues | EnumSet<ValueFlowNameKind> { ValueFlowNameKind::Getter, ValueFlowNameKind::Setter, ValueFlowNameKind::GetterUnderUnknownKey, ValueFlowNameKind::SetterUnderUnknownKey };
+static constexpr EnumSet<ValueFlowNameKind> namesOfValuesAndAccessors = namesOfValues | EnumSet<ValueFlowNameKind> { ValueFlowNameKind::Getter, ValueFlowNameKind::Setter, ValueFlowNameKind::GetterUnderUnknownKey, ValueFlowNameKind::GetterUnderNameOfEnumeration, ValueFlowNameKind::SetterUnderUnknownKey };
 
 static constexpr EnumSet<ValueFlowNameKind> namesOfRemovalsAndRedefinitions { ValueFlowNameKind::DeletedMember, ValueFlowNameKind::DeletedMemberUnderUnknownKey, ValueFlowNameKind::RedefinedMember, ValueFlowNameKind::RedefinedMemberUnderUnknownKey };
 
@@ -573,7 +582,7 @@ struct AccessesThroughHolders {
         if (!solver.isMadeByRule(id) || solver.statementAt(id).kind != ValueFlowStatementKind::Lookup)
             return false;
         ValueFlowNameKind kind = solver.keyOf(id).name().kind;
-        return kind == ValueFlowNameKind::Property || kind == ValueFlowNameKind::Elements || kind == ValueFlowNameKind::EveryProperty;
+        return kind == ValueFlowNameKind::Property || kind == ValueFlowNameKind::Elements || kind == ValueFlowNameKind::EveryProperty || kind == ValueFlowNameKind::ReceiversOfCalls;
     }
 
     void findLookupsReachingFollowedObjects()

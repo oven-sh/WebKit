@@ -34,6 +34,7 @@ std::span<const NativeTest> runtimeTypeTests();
 static constexpr ASCIILiteral programText = R"IR(layout L0 name="Circle" fields=[{key="radius" declared={type=number} flags=[IsRequired]}]
 layout L1 name="Square" fields=[{key="side" declared={type=number} flags=[IsRequired]}]
 layout L2 name="Holder" fields=[{key="red" declared={type=number} flags=[IsRequired]}, {key="green" declared={type=number} flags=[IsRequired]}, {key="\u{65e5}\u{672c}" declared={type=number} flags=[IsRequired]}, {key=symbol("tag")@m0:120 declared={type=number} flags=[IsRequired]}, {key="circle" declared={type=L0} flags=[IsRequired]}, {key="square" declared={type=L1} flags=[IsRequired]}]
+layout L3 name="Light" fields=[{key="color" declared={type="red"|"green"|"\u{65e5}\u{672c}"} flags=[IsRequired]}]
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -53,6 +54,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v13 = Call v1, -, v12
     v14 = Builtin builtin=ArrayPrototype
     v15 = Call v1, -, v14
+    v16 = String string="red"
+    v17 = NewObject -, v16 layout=L3 fields=[0]
+    v18 = Call v1, -, v17
     Return
 }
 function f1 name="area" parameters=[{type=anything}] results=[{type=anything}] {
@@ -71,6 +75,14 @@ using IntegerRange = std::pair<int64_t, int64_t>;
 
 class TypeRecord {
 public:
+    enum class ListedStrings : bool { HaveWords, HaveNoWords };
+    TypeRecord(Primitives primitives, std::initializer_list<uint32_t> literalStrings, ListedStrings listedStrings)
+        : TypeRecord(primitives, { }, literalStrings)
+    {
+        if (listedStrings == ListedStrings::HaveNoWords)
+            m_words[0] |= static_cast<uint32_t>(RuntimeType::hasLiteralStringWithoutWord) << 16;
+    }
+
     TypeRecord(Primitives primitives, std::initializer_list<RuntimeCellTest> tests = { }, std::initializer_list<uint32_t> literalStrings = { }, std::optional<IntegerRange> range = std::nullopt, std::optional<uint32_t> contents = std::nullopt, std::optional<uint32_t> layoutSet = std::nullopt)
     {
         uint8_t flags = (range ? RuntimeType::hasIntegerRange : 0) | (contents ? RuntimeType::hasContents : 0) | (layoutSet ? RuntimeType::hasLayoutSet : 0);
@@ -362,6 +374,21 @@ static void testLiteralStrings(LoadedProgram& program)
         AOT_TEST_CHECK(!values.hasType(type, jsNumber(1)) && !values.hasType(type, jsUndefined()));
     }
     AOT_TEST_CHECK(rope->isRope() && otherRope->isRope());
+
+    // The three above are strings of a type of the program, which have words. A key is no such string: a type that lists one is asked by its text.
+    std::span<const uint32_t> stringsWithWords = program.state().tables.literalStrings();
+    uint32_t radius = findText("radius"_s);
+    uint32_t side = findText("side"_s);
+    for (uint32_t string : { red, green, wide })
+        AOT_TEST_CHECK(std::ranges::contains(stringsWithWords, string));
+    for (uint32_t string : { radius, side })
+        AOT_TEST_CHECK(!std::ranges::contains(stringsWithWords, string));
+    JSString* ropeOfKey = jsString(program.realm(), jsString(vm, String("rad"_s)), jsString(vm, String("ius"_s)));
+    TypeRecord withAndWithoutWords({ PrimitiveSet::LiteralString }, { red, radius, side }, TypeRecord::ListedStrings::HaveNoWords);
+    for (JSValue listed : { JSValue(jsString(vm, String("red"_s))), JSValue(substring), JSValue(jsString(vm, String("radius"_s))), JSValue(jsString(vm, String("side"_s))), JSValue(ropeOfKey) })
+        AOT_TEST_CHECK(values.hasType(withAndWithoutWords, listed));
+    for (JSValue unlisted : { JSValue(jsString(vm, String("green"_s))), JSValue(rope), JSValue(jsString(vm, String("sides"_s))), JSValue(jsString(vm, String("blue"_s))), JSValue(jsEmptyString(vm)), JSValue(otherRope) })
+        AOT_TEST_CHECK(!values.hasType(withAndWithoutWords, unlisted));
 
     TypeRecord listWithoutBit({ PrimitiveSet::Integer }, { }, { red });
     AOT_TEST_CHECK(!values.hasType(listWithoutBit, jsString(vm, String("red"_s))));

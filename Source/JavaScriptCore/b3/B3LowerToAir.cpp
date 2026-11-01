@@ -799,7 +799,7 @@ private:
         // across. But, it's not clear how useful this would be.
         if (value->owner != m_value->owner)
             return true;
-        if (m_procedure.policy().validation.overlooksWritesBetweenLoadsAndTheirUsers) [[unlikely]]
+        if (m_procedure.policy().validation.ignoresWritesBetweenLoadsAndUsers) [[unlikely]]
             return false;
 
         if (m_blockWithNextInterference == m_block) {
@@ -7313,7 +7313,7 @@ private:
             Value* phi = m_value->as<UpsilonValue>()->phi();
             if (value->type().isNumeric()) {
                 Arg source = immOrTmpOrZeroReg(value);
-                if (source.isTmp() && m_phisKeptZeroExtended.contains(phi) && mayHaveUpperHalf(value)) {
+                if (m_phisKeptZeroExtended.contains(phi) && (source.isZeroReg() || (source.isTmp() && mayHaveUpperHalf(value)))) {
                     append(Move32, source, m_phiToTmp[phi]);
                     return;
                 }

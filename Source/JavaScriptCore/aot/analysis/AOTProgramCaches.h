@@ -35,7 +35,7 @@ public:
         }
         RELEASE_ASSERT(!m_program.propertyAccessCache() && !ParallelLoops::isInsideLoop());
         m_fieldTypes = makeUnique<SharedFieldTypes>();
-        m_propertyAccesses = makeUnique<PropertyAccessCache>();
+        m_propertyAccesses = makeUnique<PropertyAccessCache>(m_program.layouts.size());
         m_propertyAccesses->checksAnswers = build.options().verifiesAfterEveryPass;
         m_program.setCaches(m_fieldTypes.get(), m_propertyAccesses.get());
 

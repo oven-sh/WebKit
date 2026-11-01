@@ -368,16 +368,22 @@ std::optional<FaultSite> Image::faultSiteAt(const void* pc) const
 #if CPU(ARM64)
 static uintptr_t& registerOf(PlatformRegisters& registers, GPRReg reg)
 {
-    RELEASE_ASSERT(reg == faultCallerLinkGPR || reg == ARM64Registers::lr || reg == cellCageBaseGPR || reg == instanceGPR);
+    RELEASE_ASSERT(reg == faultCallerLinkGPR || reg == ARM64Registers::lr || reg == ARM64Registers::fp || reg == ARM64Registers::sp || reg == cellCageBaseGPR || reg == instanceGPR);
     unsigned number = static_cast<unsigned>(reg);
 #if OS(DARWIN)
+    if (reg == ARM64Registers::sp)
+        return reinterpret_cast<uintptr_t&>(registers.__sp);
+    if (reg == ARM64Registers::fp)
+        return reinterpret_cast<uintptr_t&>(registers.__fp);
     return reg == ARM64Registers::lr ? reinterpret_cast<uintptr_t&>(registers.__lr) : reinterpret_cast<uintptr_t&>(registers.__x[number]);
 #elif OS(WINDOWS)
-    return reinterpret_cast<uintptr_t&>(registers.X[number]);
+    return reinterpret_cast<uintptr_t&>(reg == ARM64Registers::sp ? registers.Sp : registers.X[number]);
 #elif OS(FREEBSD)
+    if (reg == ARM64Registers::sp)
+        return reinterpret_cast<uintptr_t&>(registers.machineContext.mc_gpregs.gp_sp);
     return reg == ARM64Registers::lr ? reinterpret_cast<uintptr_t&>(registers.machineContext.mc_gpregs.gp_lr) : reinterpret_cast<uintptr_t&>(registers.machineContext.mc_gpregs.gp_x[number]);
 #else
-    return reinterpret_cast<uintptr_t&>(registers.machineContext.regs[number]);
+    return reinterpret_cast<uintptr_t&>(reg == ARM64Registers::sp ? registers.machineContext.sp : registers.machineContext.regs[number]);
 #endif
 }
 #elif CPU(X86_64)
@@ -429,10 +435,9 @@ static bool handleNullCheck(const Fault& fault, PlatformRegisters& registers)
     return true;
 }
 
-#if CPU(X86_64) && (OS(LINUX) || OS(WINDOWS))
+#if AOT_LOOP_POLLS_FAULT
 static bool handleLoopPoll(const Fault& fault, PlatformRegisters& registers)
 {
-    static_assert(hasFaultingLoopPolls);
     bool isFrameless = fault.callerFrame == CallerFrame::Frameless;
     uintptr_t instance = registerOf(registers, instanceGPR);
     uintptr_t address = instance + InstanceLayout::offsetOfLoopPollPage() + (isFrameless ? offsetOfLeafPollInLoopPollPage : 0);
@@ -446,6 +451,20 @@ static bool handleLoopPoll(const Fault& fault, PlatformRegisters& registers)
     if (leavesOwedError)
         std::bit_cast<Instance*>(instance)->runtime.exceptions.pollLeavesOwedError = 1;
 
+    // The stub is entered as if the load had called it, from a function with a frame record.
+    uintptr_t returnAddress = fault.pc + sizeOfLoopPoll;
+#if CPU(ARM64)
+    uintptr_t& link = registerOf(registers, ARM64Registers::lr);
+    if (isFrameless) {
+        uintptr_t& stackPointer = registerOf(registers, ARM64Registers::sp);
+        uintptr_t& framePointer = registerOf(registers, ARM64Registers::fp);
+        auto* top = std::bit_cast<uintptr_t*>(stackPointer);
+        *--top = link;
+        *--top = framePointer;
+        framePointer = stackPointer = std::bit_cast<uintptr_t>(top);
+    }
+    link = returnAddress;
+#else
     void*& stackPointer = MachineContext::stackPointerImpl(registers);
     auto* top = static_cast<uintptr_t*>(stackPointer);
     if (isFrameless) {
@@ -453,8 +472,9 @@ static bool handleLoopPoll(const Fault& fault, PlatformRegisters& registers)
         *--top = std::bit_cast<uintptr_t>(framePointer);
         framePointer = top;
     }
-    *--top = fault.pc + sizeOfLoopPoll;
+    *--top = returnAddress;
     stackPointer = top;
+#endif
     MachineContext::setInstructionPointer(registers, target);
     return true;
 }
@@ -490,10 +510,9 @@ bool handleAccessFault(void* faultingAddress, PlatformRegisters& registers)
     case FaultSiteKind::NullCheck:
         return handleNullCheck(fault, registers);
     case FaultSiteKind::LoopPoll:
-#if CPU(X86_64) && (OS(LINUX) || OS(WINDOWS))
+#if AOT_LOOP_POLLS_FAULT
         return handleLoopPoll(fault, registers);
 #else
-        static_assert(!hasFaultingLoopPolls);
         return false;
 #endif
     }

@@ -21,6 +21,7 @@ JS_EXPORT_PRIVATE bool updateIntegersInMemory(B3::Procedure&);
 B3::ClientPhase updateIntegersInMemoryAfterOptimization(const Typed::Program&, const Typed::Function&);
 // A loop that pushes to one list keeps the length of the list in a register. Memory gets it where the loop is left, and in front of whatever else in the loop may read it.
 B3::ClientPhase keepListLengthsInRegistersAfterOptimization();
+bool isLengthOfList(B3::Procedure&, const B3::MemoryValue&);
 
 } } // namespace JSC::AOT
 

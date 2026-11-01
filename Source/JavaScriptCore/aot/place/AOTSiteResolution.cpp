@@ -428,15 +428,25 @@ bool storedFieldTakesAnyValue(const Program& program, const Placement& placement
     });
 }
 
-bool storedFieldAcceptsAnyNumber(const Program& program, const Placement& placement, const Function& function, const Value& store)
+static bool storedFieldAcceptsAnyNumberIn(const Program& program, const Placement& placement, const Function& function, const Value& store, std::initializer_list<SlotRepresentation> representations)
 {
     return std::ranges::all_of(membersOf(program, program.typeOf(function, store.objectOperand())), [&](LayoutID member) {
         uint32_t field = *program.at(member).findField(store.key());
         const PlacedSlot& slot = placement.layout(member).slots[field];
         const Type& held = program.at(slotTypeOf(program, fieldAt(program, declarationOf(program, { member, field }))));
-        bool holdsDouble = slot.representation == SlotRepresentation::Double || slot.representation == SlotRepresentation::OptionalDouble;
-        return holdsDouble && !slot.isOutOfLine() && (held.primitives & Primitive::Number) == Primitive::Number && held.integers == Range::full();
+        bool holdsNothingElse = held.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull);
+        return std::ranges::contains(representations, slot.representation) && !slot.isOutOfLine() && holdsNothingElse && (held.primitives & Primitive::Number) == Primitive::Number && held.integers == Range::full();
     });
+}
+
+bool storedFieldAcceptsAnyNumber(const Program& program, const Placement& placement, const Function& function, const Value& store)
+{
+    return storedFieldAcceptsAnyNumberIn(program, placement, function, store, { SlotRepresentation::Double, SlotRepresentation::OptionalDouble });
+}
+
+bool storedFieldKeepsNumbersAsValues(const Program& program, const Placement& placement, const Function& function, const Value& store)
+{
+    return storedFieldAcceptsAnyNumberIn(program, placement, function, store, { SlotRepresentation::JSValue });
 }
 
 std::optional<uint32_t> findRecordOfStoredField(const Program& program, const Placement& placement, const Function& function, const Value& store, NameHasColumn nameHasColumn)
@@ -477,7 +487,7 @@ static unsigned numberOfSiteCachesUsedByOperationWithRequest(const Program& prog
     // A name that none of the layouts has is found above the object, and the table has nothing to say.
     if (value.opcode == Opcode::PropGet && !value.isFreeName() && value.receivers() && program.nameClassOf(value.key()) != NameClass::Length) {
         bool isFieldOfReceiver = std::ranges::any_of(program.at(value.receivers()).seen().predicted(), [&](LayoutID member) {
-            return !!findField(program, member, value.key(), BaseChain::Proven);
+            return !builtinBaseClassOf(program, member) && findField(program, member, value.key(), BaseChain::Proven);
         });
         if (isFieldOfReceiver)
             return 0;

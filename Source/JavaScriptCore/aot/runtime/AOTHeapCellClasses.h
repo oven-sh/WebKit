@@ -13,6 +13,7 @@ class Closure;
 class CompactTable;
 class CompiledStructure;
 class Environment;
+class Generator;
 class ModuleRecord;
 class Object;
 class SlimClosure;
@@ -28,6 +29,7 @@ class StringBuilderStorage;
     macro(CompiledClosure, AOT::Closure, InLoop)
 
 #define FOR_EACH_JSC_AOT_DYNAMIC_ISO_SUBSPACE(macro) \
+    macro(aotGeneratorSpace, cellHeapCellType, AOT::Generator) \
     macro(aotModuleRecordSpace, destructibleCellHeapCellType, AOT::ModuleRecord) \
     macro(aotStringBuilderStorageSpace, destructibleCellHeapCellType, AOT::StringBuilderStorage)
 

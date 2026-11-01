@@ -481,6 +481,14 @@ OptionSet<ImageFlag> flagsForUnseenCode(const Typed::PipelineOutput& pipeline, c
         flags.add(ImageFlag::StoresPathOfMainModule);
     if (flow.reachedFunctionsCountUnreadCode())
         flags.add(ImageFlag::RunsUnreadCode);
+    bool holdsMockOfFile = false;
+    bool originalMayRun = false;
+    for (const Typed::Variable& variable : pipeline.program->variables) {
+        holdsMockOfFile |= variable.flags.contains(Typed::VariableFlags::HoldsMock) && !pipeline.program->at(variable.module).runtimeModule;
+        originalMayRun |= variable.flags.contains(Typed::VariableFlags::OriginalMayRun);
+    }
+    if (holdsMockOfFile && !originalMayRun)
+        flags.add(ImageFlag::RefusesOriginalsBesideMocks);
     for (const auto& record : flow.unseenCode()) {
         if (Typed::admitsUnknownJavaScript(record.cause))
             flags.add(ImageFlag::AdmitsUnknownJavaScript);
@@ -756,7 +764,7 @@ static void writeHeader(ImageHeader& header, const ImageWriterInputs& parts, con
     };
     if (Typed::namesWaysToModuleObjects(*parts.inputs.pipeline.program))
         flags.add(ImageFlag::ShowsWaysBetweenModuleObjects);
-    if (std::ranges::any_of(parts.inputs.pipeline.program->modules, [](const Typed::Module& module) { return module.flags.contains(Typed::ModuleFlags::RunsAgain); }))
+    if (std::ranges::any_of(parts.inputs.pipeline.program->modules, [](const Typed::Module& module) { return module.kind != Typed::ModuleKind::CommonJs && module.flags.contains(Typed::ModuleFlags::RunsAgain); }))
         flags.add(ImageFlag::RunsEntryPointsAgain);
     header.flags = flags.toRaw();
     for (size_t entry : parts.entriesUsed)

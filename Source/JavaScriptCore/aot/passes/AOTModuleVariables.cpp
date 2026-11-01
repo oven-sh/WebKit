@@ -23,6 +23,7 @@
 #include "AOTEffectsDescription.h"
 #include "AOTEffectsOfAccesses.h"
 #include "AOTEffectsOfOperands.h"
+#include "AOTFieldValueNarrowing.h"
 #include "AOTFlowApply.h"
 #include "AOTFlowRecords.h"
 #include "AOTFlowResults.h"
@@ -247,19 +248,21 @@ static bool isWrittenByAllocationsAlone(const Field& field)
 }
 
 // `const E = {}; E.A = 0; E.B = 1;`. Every store is found by the name, or the type of the field says the one value that any of them stores.
-static bool isWrittenByStoresOfKnownValues(const Program& program, const Field& field)
+static bool isWrittenByStoresOfKnownValues(const Program& program, const Field& field, bool storesAlwaysLand)
 {
     constexpr OptionSet<FieldFlags> flagsOfOtherFields { FieldFlags::IsMethod, FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsHidden, FieldFlags::IsInherited };
     const LocationFlow& location = field.flow.location;
     return field.key && !field.flags.containsAny(flagsOfOtherFields) && !field.form.contains(FieldForm::IsAccessor) && !field.declared.isExpected()
         && location.writers == WriterState::AllKnown && location.initialization != InitializationState::SetAtCreation
-        && field.flow.prototypeName == PrototypeNameState::AbsentOnPrototypes && field.flow.stability == everyFlagOf<FieldStability>()
+        && (storesAlwaysLand || field.flow.prototypeName == PrototypeNameState::AbsentOnPrototypes) && field.flow.stability == everyFlagOf<FieldStability>()
         && (location.storeNaming == StoreNaming::EveryStoreNamesLocation || knownValueOfType(program.at(field.declared.written())).isKnown());
 }
 
 // No setter and no read-only property answers for the name, so the store gives the object a property of its own, or a new value to the one it has.
-static bool storeRunsNoCode(const Layout& layout, const Field& field)
+static bool storeRunsNoCode(const Layout& layout, const Field& field, bool storesAlwaysLand)
 {
+    if (storesAlwaysLand)
+        return true;
     return !field.form.contains(FieldForm::IsAccessor) && field.flow.prototypeName == PrototypeNameState::AbsentOnPrototypes && field.flow.stability.contains(FieldStability::IsNeverRedefined)
         && layout.flow.impossibleMutations.containsAll({ ObjectMutation::ChangePrototype, ObjectMutation::ChangeIntegrity });
 }
@@ -270,8 +273,9 @@ namespace {
 // `const E = {}; E.A = 0;`, `(function (E) { E[E["A"] = 0] = "A"; })(E = exports.E || (exports.E = {}));`
 class WalkBehindBirth {
 public:
-    WalkBehindBirth(const Program& program, const BitVector& layoutsWalkedBehind, const Layout& layout, std::span<KnownValue> known)
-        : m_program(program)
+    WalkBehindBirth(const Program& program, const BitVector& layoutsWalkedBehind, const Layout& layout, std::span<KnownValue> known, bool storesAlwaysLand)
+        : m_storesAlwaysLand(storesAlwaysLand)
+        , m_program(program)
         , m_layoutsWalkedBehind(layoutsWalkedBehind)
         , m_layout(layout)
         , m_known(known)
@@ -300,7 +304,7 @@ private:
         for (LayoutID receiver : receivers->value()) {
             const Layout& layout = m_program.at(receiver);
             std::optional<uint32_t> field = layout.findField(store.key());
-            if (!field || !storeRunsNoCode(layout, layout.fields[*field]))
+            if (!field || !storeRunsNoCode(layout, layout.fields[*field], m_storesAlwaysLand))
                 return false;
         }
         if (std::optional<uint32_t> field = isObject(function, names, store.objectOperand()) ? m_layout.findField(store.key()) : std::nullopt)
@@ -391,6 +395,7 @@ private:
         return std::nullopt;
     }
 
+    bool m_storesAlwaysLand;
     const Program& m_program;
     const BitVector& m_layoutsWalkedBehind;
     const Layout& m_layout;
@@ -405,8 +410,9 @@ static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
     const Program& program = editor.program();
     const ParallelLoops& loops = build.parallelLoops();
     constexpr OptionSet<LayoutFlags> flagsOfOtherLayouts { LayoutFlags::HasHeritage, LayoutFlags::HasMembersWithoutLayout, LayoutFlags::IsTypeParameter, LayoutFlags::IsNeverAllocated, LayoutFlags::IsWrittenUnderDictionaryType, LayoutFlags::IsDerived, LayoutFlags::IsOfCreatedObject };
+    bool storesAlwaysLand = build.isSabotaged(Sabotage::StoresOfConstantsAlwaysLand);
     auto isStoredBehindBirth = [&](const Field& field) {
-        return isWrittenByStoresOfKnownValues(program, field);
+        return isWrittenByStoresOfKnownValues(program, field, storesAlwaysLand);
     };
     BitVector hasCandidates(program.layouts.size());
     BitVector hasFieldsStoredBehindBirth(program.layouts.size());
@@ -479,7 +485,7 @@ static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
                 } else
                     continue;
                 if (hasFieldsStoredBehindBirth.quickGet(id.index()))
-                    WalkBehindBirth(program, hasFieldsStoredBehindBirth, program.at(id), known.mutableSpan()).walk(FunctionID(index), BlockID(block), position);
+                    WalkBehindBirth(program, hasFieldsStoredBehindBirth, program.at(id), known.mutableSpan(), storesAlwaysLand).walk(FunctionID(index), BlockID(block), position);
                 listFields(id, known, birth.opcode == Opcode::NewObject, true, !function.isModuleBody(), found);
             }
         }
@@ -539,7 +545,7 @@ static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
         auto found = field ? std::ranges::lower_bound(constants, FieldReference { id, *field }, { }, &ConstantField::field) : constants.end();
         return found != constants.end() && found->field == FieldReference { id, *field } ? &*found : nullptr;
     };
-    if (!keysWithStoresToLookAt.isEmpty()) {
+    if (!keysWithStoresToLookAt.isEmpty() && !build.isSabotaged(Sabotage::ConstantFieldsAreStoredOnce)) {
         // A store of the same constant changes nothing, whenever it runs. A store to nobody knows which objects is listed by its key, with this bit.
         constexpr uint32_t isKey = 1u << 31;
         Vector<uint32_t> changed = collectInParallel<uint32_t>(loops, program.functions.size(), [&](unsigned index, Vector<uint32_t>& found) {
@@ -578,6 +584,7 @@ static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
         }
         constants.shrink(kept);
     }
+    build.statistics().count(StatisticID::FieldsFoundConstant, constants.size());
     if (constants.isEmpty())
         return;
 
@@ -619,7 +626,7 @@ static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
         if (access.opcode != Opcode::PropGet || !access.operand(0))
             return number;
         const Type& receiver = program.typeOf(function, access.operand(0));
-        if (!receiver.hasOnlyLayouts())
+        if (!receiver.hasOnlyLayouts() || receiver.mayBeUndefinedOrNull())
             return number;
         for (LayoutID id : membersOf(program, receiver)) {
             const ConstantField* found = findConstant(id, access.key());
@@ -630,7 +637,8 @@ static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
         }
         return number;
     };
-    editFunctionsInParallel(editor, build, functions.span(), [&](unsigned, FunctionID, Function& function, TaskArenas& arenas) {
+    editFunctionsInParallel(editor, build, functions.span(), [&](unsigned, FunctionID functionID, Function& function, TaskArenas& arenas) {
+        Vector<ValueID, 2> narrowingsLeftWithNoMember;
         for (const Block& block : function.blocks) {
             for (ValueID id : block.values) {
                 bool findsConstant = false;
@@ -641,8 +649,15 @@ static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
                     becomeConstant(program, function, arenas.types, id, number);
                 else
                     function.edit(id, ValueEdit::Definition);
+                if (narrowsHolderToNothing(TypingContext { program, function, arenas.types }, function.at(id)))
+                    narrowingsLeftWithNoMember.append(id);
             }
         }
+        // A narrower field gives narrower types, which may wait, with one exception: where no member can hold what was read any more, the holder is any member again. A type that says less than that may not stand.
+        if (narrowingsLeftWithNoMember.isEmpty())
+            return;
+        FunctionAnalyses analyses(AnalysisContext { build, program, nullptr, nullptr, functionID }, function);
+        narrowValueTypes(TypePropagationInputs { program, functionID, function, analyses, arenas.types, build }, narrowingsLeftWithNoMember.span());
     });
 }
 
@@ -816,6 +831,8 @@ static void findDeferrals(const Program& program, const FlowResults& flow, Build
             return BeforeStore::SomethingElse;
         // A read has the type of the variable, so a variable whose type leaves out `absent` is never read while it is empty.
         if (!(program.at(program.provenTypeOf(variable.declared)).primitives & Primitive::Absent))
+            return BeforeStore::NothingIsRead;
+        if (build.isSabotaged(Sabotage::DefinitionsPutOffHaveNoDeadZone))
             return BeforeStore::NothingIsRead;
         // The run time takes what the variable holds for the value of the binding.
         return isNamedByRecord ? BeforeStore::SomethingElse : BeforeStore::DeadZone;
@@ -1625,6 +1642,8 @@ struct MovableCode {
             }
         }
         auto isUnchanging = [&](const Value& value) {
+            if (context.runner.build().isSabotaged(Sabotage::WhatInitializersTakeNeverChanges))
+                return true;
             const Type& type = arenas.types.at(value.type);
             if (type.hasOnlyLayouts() && std::ranges::all_of(membersOf(program, type), [&](LayoutID id) { return program.at(id).flow.impossibleMutations.containsAll(mutationsOfContents); }))
                 return true;
@@ -1868,6 +1887,15 @@ struct MovableCode {
         return answer;
     }
 
+    // An assignment asks the objects above the one it stores to. A built-in object takes no other value under a name it has, but the name may be made read-only at any time:
+    // Object.freeze(Object.prototype). And it takes a name that the build has seen the program give it, which may be an accessor.
+    bool assignmentAsksNobodyAbove(PropertyKeyID key, std::initializer_list<BuiltinID> above) const
+    {
+        if (context.runner.build().isSabotaged(Sabotage::AssignmentsPutOffAskNobodyAbove))
+            return true;
+        return std::ranges::all_of(above, [&](BuiltinID holder) { return !findOwnMember(program, holder, key) && isClosedKey(program, holder, key); });
+    }
+
     // A store to an object that the initializer has made and that no accessor, no lock and no other prototype stands in the way of.
     bool storeMayMove(FunctionAnalyses& analyses, const Knowledge& known, const Value& value)
     {
@@ -1890,6 +1918,10 @@ struct MovableCode {
                 return true;
             bool isLikeAnyOtherName = hasName && (defines || std::ranges::none_of(type.functions, [&](FunctionID id) { return isClassConstructorFunction(program.at(id)); }))
                 && std::ranges::none_of(namesWithRules, [&](ASCIILiteral name) { return isText(value.key(), name); });
+            // Another object stands between a coroutine and Function.prototype.
+            if (isLikeAnyOtherName && setsName
+                && (std::ranges::any_of(type.functions, [&](FunctionID id) { return isCoroutine(id); }) || !assignmentAsksNobodyAbove(value.key(), { Builtins::FunctionPrototype, Builtins::ObjectPrototype })))
+                return false;
             StringID name = isLikeAnyOtherName ? program.at(value.key()).text : StringID();
             if (!name)
                 return isLikeAnyOtherName;
@@ -1915,11 +1947,10 @@ struct MovableCode {
             if (!hasOnlyPlainObjects || (!std::ranges::all_of(membersOf(program, type), isKnownToStayPlain) && !isOnlyFilledHere(analyses, known, object)))
                 return false;
         }
-        // The setter of __proto__ does nothing with what is neither an object nor null.
-        const Type& stored = typeOf(function, value.valueOperand());
-        if (defines || (!stored.hasObjects() && !(stored.primitives & Primitive::Null)))
+        if (defines)
             return true;
-        return hasName ? !isText(value.key(), "__proto__"_s) : typeOf(function, value.propertyOperand()).isNumber();
+        // No built-in object has or takes an index. A text in brackets may spell any name.
+        return hasName ? assignmentAsksNobodyAbove(value.key(), { Builtins::ObjectPrototype }) : typeOf(function, value.propertyOperand()).isNumber();
     }
 
     // Object.defineProperty(made, constant key, { value: .. }) where the object has no such property yet, or one that can be redefined.

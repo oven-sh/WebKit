@@ -96,6 +96,7 @@ bool usesFeatureAmong(ValueFlowRuleContext&, ClimbingSet entries, const BitVecto
 
 bool refusesAllSourceText(const BuiltinTable&, BuiltinID canonicalEntry, RefusedCode);
 std::optional<UnseenCodeCause> eventOfCalling(const BuiltinTable&, BuiltinID, RefusedCode);
+void appendLoadersAndEvaluatorsReturnedBy(const ValueFlowUniverse&, const BuiltinTable&, BuiltinID, Vector<ValueFlowObjectID, 32>&);
 bool loadsCodeOnceRead(const BuiltinTable&, BuiltinID, RefusedCode);
 
 void raiseHostFlag(ValueFlowRuleContext&, ValueFlowHostNode);
@@ -111,7 +112,9 @@ enum class UnseenCodeReach : uint8_t {
     Loader,
     Realm,
 };
-void letUnseenCodeRun(ValueFlowRuleContext&, UnseenCodeReach);
+// The front end reads the test files that the host runs from disk, and lays down what they take and what they spy on.
+enum class UnseenCodeText : bool { NobodyHasReadIt, FrontEndHasReadIt };
+void letUnseenCodeRun(ValueFlowRuleContext&, UnseenCodeReach, UnseenCodeText = UnseenCodeText::NobodyHasReadIt);
 // In the host nodes that hold names: a key constant is that name; these two stand for every index and for every name.
 inline ValueSetID markOfAnyIndex(const ValueFlowUniverse& universe) { return universe.untrackedObjectAlone(); }
 inline ValueSetID markOfAnyName(const ValueFlowUniverse& universe) { return universe.unknownObjectAlone(); }

@@ -1,0 +1,35 @@
+# let kept; kept = first(); kept = second(); kept = third(); kept.size
+# A value lists its members by their numbers, and the objects of a program are numbered as they are written.
+# RUN: valueflow-why values=f0:v10
+# CHECK: operand 0 n{{*}} 4 members: primitive0 object{{*}}@f1 object{{*}}@f2 object{{*}}@f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Made" fields=[]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Call v0, -
+    PutModuleVariable v1 variable=g0
+    v3 = NewClosure function=f2
+    v4 = Call v3, -
+    PutModuleVariable v4 variable=g0
+    v6 = NewClosure function=f3
+    v7 = Call v6, -
+    PutModuleVariable v7 variable=g0
+    v9 = GetModuleVariable variable=g0
+    v10 = PropGet v9 key="size"
+    Return v10
+}
+function f1 name="first" results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    Return v0
+}
+function f2 name="second" results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    Return v0
+}
+function f3 name="third" results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    Return v0
+}

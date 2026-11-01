@@ -1,0 +1,15 @@
+# as field-below-accessor.ir, for the store of several slots: each of its keys says whether it may create its field
+# FORM: Selected
+# RUN: verify
+# DIAGNOSTIC: FieldCreatedBelowAccessor 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Held" fields=[{key="size" declared={type=anything} flow={prototypeName=AccessorOnPrototypes}}, {key="late" declared={type=anything}}]
+function f0 name="goodOnlyTheOtherKeyMayAdd" parameters=[{type=L0}, {type=anything}] results=[{type=undefined}] {
+    PutSlots v0, -, v1, v1 placedKeys=[{key="late" mayAdd=true}, {key="size"}] receivers=[L0]
+    Return
+}
+function f1 name="badTheKeyBelowTheAccessorMayAdd" parameters=[{type=L0}, {type=anything}] results=[{type=undefined}] {
+    PutSlots v0, -, v1, v1 placedKeys=[{key="late" mayAdd=true}, {key="size" mayAdd=true}] receivers=[L0]
+    Return
+}

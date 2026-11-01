@@ -161,6 +161,7 @@ struct CompileOptions {
     unsigned threadCount { 1 };
     CompileAction action { CompileAction::Compile };
     bool verifiesAfterEveryPass { false };
+    bool keepsGoingBehindFailedVerifications { false };
     bool verifiesAfterEveryStage { false };
     bool verifiesProgram { false };
     bool validatesBackEnd { false };
@@ -168,6 +169,7 @@ struct CompileOptions {
     bool checksClaimsToBackEnd { false };
     bool checksMovedLoads { false };
     bool checksDecidedComparisons { false };
+    bool checksClaimsOfFlow { false };
     bool checksSpillSlots { false };
     bool checksAllocatedRegisters { false };
     // Once the flow analysis is at rest every rule runs once more over the solved sets. Whatever that adds is an update that the solve has lost, and an error.
@@ -175,6 +177,8 @@ struct CompileOptions {
     // More to begin with never proves more. The flow analysis is solved twice: as it is, and with more given to nodes that the layout seed draws. Whatever the first solve holds and the second lacks is an error.
     // The build goes on from the second.
     bool widensFlow { false };
+    // testing=ShuffleObjects:<seed>, the seed and one. The flow analysis gives the objects that the program makes other numbers. What it finds follows from the program alone.
+    uint32_t seedOfObjectNumbers { 0 };
     bool checksThatUsedValuesAreListed { false };
     bool validatesReferenceGuards { false };
     ReportSet reports { };

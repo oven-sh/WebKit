@@ -528,6 +528,11 @@ void generatePrivateGet(StubAssembler& jit)
         const GPRReg layout = T12;
         const GPRReg record = T11;
         loadStructure(jit, object, layout);
+        // Another realm that runs the image has evaluated the class for itself.
+        if (!jit.options().hasOneInstance) {
+            jit.move(layout, T10);
+            goesToRunTime.append(branchIfNotOfThisRealm(jit, T10));
+        }
         jit.loadPtr(Address(layout, CompiledStructure::offsetOfLayout()), layout);
         // The number is an int32 in a JSValue: its lower half is the number.
         jit.load32(slotOfButterfly(token, ClassToken::classIndexSlot), T10);

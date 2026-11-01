@@ -174,7 +174,7 @@ struct BuiltinSlotContents {
     BuiltinTypeID type { };
 };
 
-enum class BuiltinRecordPool : uint8_t { Names, Parameters, Transfers, Callbacks, HandlerCalls, PropertyActions, ResultProperties, SlotContents, TypeParts, TypeLiterals, DispatchBranches, MemberClasses };
+enum class BuiltinRecordPool : uint8_t { Names, Parameters, Transfers, Callbacks, HandlerCalls, PropertyActions, ResultProperties, SlotContents, TypeParts, TypeLiterals, DispatchBranches, MemberClasses, Places };
 
 template<BuiltinRecordPool> struct BuiltinRecordsOfPool;
 
@@ -267,21 +267,26 @@ struct BuiltinPlace {
     bool holdsOnlyWhatIsStored { false };
     BuiltinTypeID newValueType { };
     bool isSettled { false };
-    std::span<const BuiltinName> memberPath { };
+    BuiltinNameStretch memberPath { };
     uint16_t firstMemberStep { 0 };
     BuiltinName nativeCell { };
 };
+static_assert(sizeof(BuiltinPlace) == 22);
+
+using BuiltinPlaceStretch = BuiltinRecordStretch<BuiltinPlace, BuiltinRecordPool::Places>;
 
 struct BuiltinKey {
     BuiltinKeyKind kind { BuiltinKeyKind::None };
     std::optional<BuiltinOperand> operand { };
-    std::span<const BuiltinName> names { };
+    BuiltinNameStretch names { };
 };
+static_assert(sizeof(BuiltinKey) == 8);
 
 struct BuiltinTransfer {
     BuiltinPlace from { };
     BuiltinPlace to { };
 };
+static_assert(sizeof(BuiltinTransfer) == 44);
 
 struct BuiltinCallback {
     BuiltinOperand callee;
@@ -289,7 +294,7 @@ struct BuiltinCallback {
     bool constructs { false };
     BuiltinPlace newTarget { };
     BuiltinPlace thisValue { };
-    std::span<const BuiltinPlace> arguments { };
+    BuiltinPlaceStretch arguments { };
     BuiltinPlace spreadArguments { };
     BuiltinCallbackResultUse resultUse { BuiltinCallbackResultUse::Escapes };
     BuiltinPlace resultTo { };
@@ -300,7 +305,7 @@ struct BuiltinHandlerCall {
     BuiltinPlace callee { };
     BuiltinCallbackTimes times { BuiltinCallbackTimes::PerEvent };
     BuiltinPlace thisValue { };
-    std::span<const BuiltinPlace> arguments { };
+    BuiltinPlaceStretch arguments { };
     BuiltinCallbackResultUse resultUse { BuiltinCallbackResultUse::Escapes };
 };
 
@@ -471,7 +476,8 @@ struct BuiltinDispatchBranch {
     macro(TypeParts, BuiltinTypePart, builtinTableTypeParts) \
     macro(TypeLiterals, BuiltinName, builtinTableTypeLiterals) \
     macro(DispatchBranches, BuiltinDispatchBranch, builtinTableDispatchBranches) \
-    macro(MemberClasses, BuiltinClassID, builtinTableMemberClasses)
+    macro(MemberClasses, BuiltinClassID, builtinTableMemberClasses) \
+    macro(Places, BuiltinPlace, builtinTablePlaces)
 
 #define AOT_DECLARE_BUILTIN_RECORD_POOL(pool, Record, array) \
     extern const Record array[]; \
@@ -512,6 +518,8 @@ struct Builtin {
     bool isNamedByText { false };
     bool isAddedAtFirstRead { false };
     bool isAddedAsEnumerable { false };
+    // A data property of which the table says that it is there and no more: each overload that reads it answers with any type. The run time asks, which holds no overloads.
+    bool isReadWithoutType { false };
 };
 
 struct BuiltinSlot {
@@ -552,6 +560,7 @@ struct BuiltinClass {
     std::span<const BuiltinPropertyMaker> makersOfNamesDefinedOnNewInstances { };
     std::span<const BuiltinName> namesReadToDescribeInstances { };
     bool constructorOnlyReadsPrototypeOfNewTarget { false };
+    BuiltinName constructorAdder { };
     std::span<const BuiltinSlotID> slots { };
     std::optional<AbstractHeap> stateHeap { };
 };
@@ -758,6 +767,7 @@ enum class BuiltinMark : uint8_t {
     IsResolverThatLoaderCalls,
     IsRequireThatLoaderCalls,
     InstancesArePrintedWithoutTheirGetters,
+    MayTerminateProcess,
 };
 
 struct BuiltinMarkedEntry {

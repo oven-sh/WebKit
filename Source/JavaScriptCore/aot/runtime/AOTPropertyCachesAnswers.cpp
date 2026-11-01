@@ -370,7 +370,7 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
             moduleNamespace->ensureOwnStructure(vm);
         return uncacheableOnce(SlotAccess::Read);
     }
-    if (vm.aotState().propertyCaches->isSharedByInstances() || moduleNamespace->isDeferred())
+    if (vm.aotState().propertyCaches->isSharedByInstances() || moduleNamespace->isDeferred() || moduleNamespace->isAnsweredByMock())
         return PropertyAnswer::uncacheable(SlotAccess::Read);
     std::optional<unsigned> index = moduleNamespace->find(query.uid);
     if (!index) {
@@ -391,7 +391,7 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
             return uncacheableOnce(SlotAccess::Read);
         return { .kind = PropertyAnswerKind::Constant, .isOwn = true, .constant = inner };
     }
-    if (moduleExport.kind() != ModuleExportKind::Variable)
+    if (moduleExport.kind() != ModuleExportKind::Variable || state.modules->mockThatAnswersFor(moduleNamespace->module(), moduleExport))
         return PropertyAnswer::uncacheable(SlotAccess::Read);
     SlotValueKind valueKind = traitsOf(moduleExport.variable.representation()).valueKind;
     if (valueKind == SlotValueKind::DeferredClosure) {
@@ -591,7 +591,7 @@ PropertyAnswer classifyRead(const ReadQuery& query)
         return classifyGlobalProxyRead(query);
     if (type == ProxyObjectType && mayAllocate && !PropertyName(uid).isPrivateName()) {
         PropertyAnswer answer = PropertyAnswer::handlerOfProxyAnswers(access, State::of(query.globalObject).propertyCaches->keyForTraps(uid));
-        std::optional<uint32_t> number = vm.aotState().identifiers->numberOf(uid);
+        std::optional<uint32_t> number = identifiersOfRealm(vm, query.globalObject)->numberOf(uid);
         if (number && RowDisplacementTable::hasColumn(*number) && *number <= UINT16_MAX)
             answer.columnOfNameForTrap = static_cast<uint16_t>(*number);
         return answer;

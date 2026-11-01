@@ -32,6 +32,7 @@ struct BuiltinUseInputs {
     bool* asksAboutPlace { nullptr };
     FunctionAnalyses* identities { nullptr };
 
+    BuiltinUseInputs withTypes(TypeArena& arena) const { return { program, function, arena, flow, effects, analyses, passedTests, keepsFunctionNames, asksOnlyForProvenPlans, asksAboutPlace, identities }; }
     TypingContext typing() const { return { program, function, types }; }
     BuiltinLookupContext lookup() const { return { program, flow }; }
     PristineQuery pristine() const { return { program, function, analyses, passedTests, asksAboutPlace }; }

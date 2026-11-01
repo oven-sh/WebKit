@@ -40,8 +40,9 @@ static std::optional<unsigned> positionOfParameter(const Function& function, Val
     return position < function.numberOfPositionalParameters() ? std::optional(position) : std::nullopt;
 }
 
-Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Program& program, const ParallelLoops& loops, Vector<TextPassed>& textsPassed, Vector<StringID>& relativePaths, Vector<ValueFlowNotedOperations>& notedOperations)
+Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Program& program, BuildContext& build, Vector<TextPassed>& textsPassed, Vector<StringID>& relativePaths, Vector<ValueFlowNotedOperations>& notedOperations)
 {
+    const ParallelLoops& loops = build.parallelLoops();
     notedOperations.fill(0, program.functions.size());
     struct Argument {
         uint32_t index;
@@ -84,6 +85,7 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
             positionOfKey[index] = std::min<uint32_t>(positionOfKey[index], position);
         };
         Vector<std::pair<ValueID, FunctionID>, 2> definedAsGet;
+        DefinitionsThroughTests definitions(function);
         for (const Block& block : function.blocks) {
             for (ValueID id : block.values) {
                 const Value& value = function.at(id);
@@ -103,7 +105,7 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
                     for (ValueID called : { value.calleeOperand(), value.thisValueOperand() }) {
                         if (!called || !hasInstances)
                             continue;
-                        const Value& read = function.at(definitionThroughTests(function, called));
+                        const Value& read = function.at(definitions.of(called));
                         if (std::optional<unsigned> position = read.opcode == Opcode::ElemGet ? positionOfParameter(function, read.operand(OperandIndex::ElemGet::property)) : std::nullopt)
                             note(*position);
                     }
@@ -171,6 +173,7 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
                     body.calls.append({ index, callee, nameOfCallee, static_cast<uint32_t>(body.arguments.size()) });
             }
         }
+        build.statistics().count(StatisticID::BlocksReadForDefinitionsThroughTests, definitions.numberOfBlocksRead());
     };
     constexpr unsigned functionsInChunk = 256;
     unsigned numberOfFunctions = program.functions.size();
@@ -572,7 +575,7 @@ static ValueFlowBodies reduceBodiesBehindKeys(Program& program, BuildContext& bu
     Vector<ValueFlowInstancedFunctions::TextPassed> textsPassed;
     Vector<StringID> relativePaths;
     Vector<ValueFlowNotedOperations> notedOperations;
-    positionOfKey = ValueFlowInstancedFunctions::findParametersThatAreKeys(program, build.parallelLoops(), textsPassed, relativePaths, notedOperations);
+    positionOfKey = ValueFlowInstancedFunctions::findParametersThatAreKeys(program, build, textsPassed, relativePaths, notedOperations);
     makeKeysOfTextsThatCallsPass(program, positionOfKey.span(), textsPassed.span());
     internKeysOfDeclaredStringLiterals(program, build.parallelLoops());
     internEmbeddedFilePaths(program);
@@ -624,7 +627,7 @@ ValueFlowInstancedFunctions::ValueFlowInstancedFunctions(const Program& program,
     }
 }
 
-ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, ValueFlowSolver::Rounds rounds, Witnesses witnesses, uint32_t mostRounds, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut, WaysOfValues waysOfValues, CoveredMembers coveredMembers, Reports reports)
+ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, ValueFlowSolver::Rounds rounds, Witnesses witnesses, uint32_t mostRounds, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut, WaysOfValues waysOfValues, CoveredMembers coveredMembers, Reports reports, ForTests forTests)
     : m_program(program)
     , m_bodies(reduceBodiesBehindKeys(program, build, m_positionOfKey))
     , m_maker(m_bodies.sets())
@@ -645,6 +648,7 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         .operands = m_bodies.operands(),
         .rareFactsOfText = m_bodies.rareFactsOfText(),
         .copiesOfOperations = m_bodies.copiesOfOperations(),
+        .notedOperationsOfFunctions = m_bodies.notedOperationsOfFunctions(),
         .edgesOnceReached = m_bodies.edgesOnceReached(),
         .seedsOnceReached = m_bodies.seedsOnceReached(),
         .functionsEnteredOnceReached = m_bodies.functionsEnteredOnceReached(),
@@ -657,6 +661,8 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         .leavesOutWhatIsCovered = coveredMembers == CoveredMembers::AreLeftOut,
         .reportsToBuild = reports == Reports::GoToBuild,
         .mostRounds = mostRounds,
+        .seedOfSchedule = forTests.seedOfSchedule,
+        .looksAtEdgesLetGo = forTests.looksAtEdgesLetGo,
         .unknownSourcesLeftOut = unknownSourcesLeftOut,
         .refusedCode = { .evaluatedText = build.options().excludesEvaluatedText(), .hostEvaluatedText = build.options().excludesHostEvaluatedText(), .codeOutsideImage = build.options().excludesCodeOutsideImage(), .hostRunsFilesOutsideImage = build.options().admitsFilesRunByHost(), .hasImagesBelow = !!build.imagesBelow() },
         .removedFeatures = build.options().removedFeatures,

@@ -1,0 +1,44 @@
+# Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key)) with a key that is an object: each call converts it anew: any value of the source may lie under any name.
+# RUN: valueflow-solve calls
+# CHECK: f0 v14 -> f2 f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Source"
+layout L1 name="Target"
+layout L2 name="Key"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewObject layout=L0 fields=[]
+    PropDefine v3, v1 key="first"
+    PropDefine v3, v2 key="second"
+    v6 = FinishObject v3
+    v7 = NewObject layout=L1 fields=[]
+    v8 = NewObject layout=L2 fields=[]
+    v9 = NewClosure function=f4
+    PropDefine v8, v9 key="toString"
+    v11 = FinishObject v8
+    v12 = Call v0, -, v7, v6, v11
+    v13 = PropGet v7 key="first"
+    v14 = Call v13, v7
+    Return
+}
+function f1 name="copied" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=ObjectGetOwnPropertyDescriptor
+    v4 = Call v3, -, v1, v2
+    v5 = Builtin builtin=ObjectDefineProperty
+    v6 = Call v5, -, v0, v2, v4
+    Return
+}
+function f2 name="first" results=[{type=anything}] {
+    Return
+}
+function f3 name="second" results=[{type=anything}] {
+    Return
+}
+function f4 name="toString" results=[{type=anything}] {
+    Return
+}

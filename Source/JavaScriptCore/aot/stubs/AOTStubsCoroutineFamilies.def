@@ -4,7 +4,7 @@
  */
 
 // AOTStubsCoroutinePromises.cpp
-v(NewPromise, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewPromise)
+v(NewPromise, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewPromise)
 v(PromiseThen, CalledByCode, (OnFulfilled, OnRejected), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PromiseThen)
 v(ReturnAsyncResult, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ReturnAsyncResult)
 
@@ -24,5 +24,5 @@ v(RestoreSavedFrameToStack, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoC
 v(StepAsyncGenerator, CalledByCode, (InAsyncFunction, InAsyncGenerator, AwaitedInAsyncFunction, AwaitedInAsyncGenerator), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StepAsyncGenerator)
 v(RunAsyncGeneratorStep, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RunAsyncGeneratorStep)
 v(StepAsyncIteratorInEngine, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RunAsyncGeneratorStep)
-v(NewHeapFrame, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewHeapFrame)
-v(NewGenerator, CalledByCode, (Sync, Async), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewGenerator)
+v(NewHeapFrame, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewHeapFrame)
+v(NewGenerator, CalledByCode, (Sync, Async, SyncWithHeapFrame), FormAxis | SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewGenerator)

@@ -12,6 +12,10 @@
 #include "AOTFlowNamespaces.h"
 #include "AOTFlowResults.h"
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
@@ -156,6 +160,52 @@ MemberAnswer findStaticMember(const PropertyAccessContext& context, const Member
     return findFromClassObject(context, query, StaticFieldDefinition::HasRun);
 }
 
+// A mock of a CommonJS file stands in place of the file. What the file exports are variables of its face.
+static bool mayBeMocked(const Program& program, ModuleID id)
+{
+    const Module& module = program.at(id);
+    if (module.flags.contains(ModuleFlags::MayBeMocked))
+        return true;
+    return isFaceOfCommonJSFile(program, module) && program.at(module.requests[0].target).flags.contains(ModuleFlags::MayBeMocked);
+}
+
+// `export { sides } from "./shapes"`: the entry names the variable of the module that declares it. A mock may stand in place of a module that hands it on, and answers for whoever has the
+// name through it. A module lists what somebody reads off its object, so one on the way may lack the name: where the way is lost, any mock may stand on it.
+static bool mayComeThroughMock(const Program& program, ModuleID from, VariableID variable)
+{
+    ModuleID declaring = program.at(variable).module;
+    if (from == declaring)
+        return false;
+    BitVector seen(program.modules.size());
+    seen.quickSet(from.index());
+    Vector<ModuleID, 8> work { from };
+    while (!work.isEmpty()) {
+        bool hasWay = false;
+        for (const ModuleRequest& request : program.at(work.takeLast()).requests) {
+            if (request.target == declaring) {
+                hasWay = true;
+                continue;
+            }
+            bool handsOn = std::ranges::any_of(program.at(request.target).exports, [&](const ModuleExport& entry) {
+                return entry.kind == ModuleExportKind::Variable && entry.variable == variable;
+            });
+            if (!handsOn)
+                continue;
+            hasWay = true;
+            if (mayBeMocked(program, request.target))
+                return true;
+            if (!seen.quickSet(request.target.index()))
+                work.append(request.target);
+        }
+        if (!hasWay) {
+            return std::ranges::any_of(program.modules, [](const Module& module) {
+                return module.flags.contains(ModuleFlags::MayBeMocked);
+            });
+        }
+    }
+    return false;
+}
+
 MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const MemberQuery& query)
 {
     const Program& program = context.program;
@@ -184,10 +234,10 @@ MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const Mem
 
     bool listsEveryName = exportListingOf(program, layout.namespaceOf) == FlowOwnListing::Complete;
     // The names of a mock that comes ahead of the load are the names of the module: those that its factory gives, and no other.
-    bool mayBeMocked = program.at(layout.namespaceOf).flags.contains(ModuleFlags::MayBeMocked);
+    bool isOfModuleThatMayBeMocked = mayBeMocked(program, layout.namespaceOf);
     std::optional<uint32_t> field = layout.findField(query.key);
     if (!field) {
-        if (!listsEveryName || mayBeMocked)
+        if (!listsEveryName || isOfModuleThatMayBeMocked)
             return MemberAnswer::unknown(UnprovenCause::UnknownObject);
         if (program.builtinNameOf(query.key) == BuiltinNames::__esModule)
             return MemberAnswer::unknown(UnprovenCause::PropertyAdded);
@@ -197,15 +247,23 @@ MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const Mem
     const ModuleExport& entry = program.at(layout.namespaceOf).exports[*field];
     bool mayBeAmbiguous = entry.isFromStarExport && !listsEveryName;
     // A name that the factory leaves out reads as undefined, as its variable does.
-    bool mayBeLeftOut = mayBeMocked && query.access == Access::Has;
+    bool mayBeLeftOut = isOfModuleThatMayBeMocked && query.access == Access::Has;
     if (mayBeAmbiguous || mayBeLeftOut || entry.isDroppedWhileEmpty)
         return MemberAnswer::unknown(UnprovenCause::UnknownObject);
     switch (entry.kind) {
-    case ModuleExportKind::Variable:
+    case ModuleExportKind::Variable: {
+        // While a mock stands in place of the module that declares the variable, nothing fills it, and the namespace object asks the mock: also the object of a module that only passes the export on.
+        const Variable& variable = program.at(entry.variable);
+        if (variable.flags.contains(VariableFlags::IsReplaceable) && (mayBeMocked(program, variable.module) || mayComeThroughMock(program, layout.namespaceOf, entry.variable)))
+            return MemberAnswer::unknown(UnprovenCause::UnknownObject);
         return { .kind = MemberKind::Variable, .level = KnowledgeLevel::Proven, .holder = query.layout, .field = *field, .variable = entry.variable };
+    }
     case ModuleExportKind::Namespace:
         if (entry.phase != ImportPhase::Evaluation)
             return MemberAnswer::unknown(UnprovenCause::Unknown);
+        // Under a mock that module may have two objects. Which of them this one hands on goes by when it was linked, and the run time knows that.
+        if (mayBeMocked(program, entry.module))
+            return MemberAnswer::unknown(UnprovenCause::UnknownObject);
         return { .kind = MemberKind::Namespace, .level = KnowledgeLevel::Proven, .module = entry.module };
     case ModuleExportKind::Indirect:
         return MemberAnswer::unknown(UnprovenCause::UnknownObject);
@@ -214,5 +272,9 @@ MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const Mem
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

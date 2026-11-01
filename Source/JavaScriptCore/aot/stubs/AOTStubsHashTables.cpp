@@ -279,12 +279,17 @@ static void emitCompareLatin1Characters(StubAssembler& jit, GPRReg first, GPRReg
 }
 
 // One comparison serves every search of a heap table in a stub.
-static void emitCompareCharactersOfHeapKey(StubAssembler& jit, const HashTableRegisters& registers, JumpList& needsCharacters, JumpList& found, HashTableExits& exits)
+static void emitCompareCharactersOfHeapKey(StubAssembler& jit, const HashTableRegisters& registers, bool keepsSlot, JumpList& needsCharacters, JumpList& found, HashTableExits& exits)
 {
     const GPRReg impl = registers.hash;
     const GPRReg candidate = registers.candidate;
     const GPRReg length = registers.table;
     needsCharacters.link(&jit);
+    // The comparison needs cursor. The number of the slot waits above the number of the entry, which stays intact.
+    if (keepsSlot) {
+        jit.lshift64(TrustedImm32(32), registers.cursor);
+        jit.or64(registers.cursor, registers.entry);
+    }
     jit.loadPtr(Address(registers.key, JSString::offsetOfValue()), impl);
     JumpList areSame;
     JumpList hasWideCharacters;
@@ -304,6 +309,10 @@ static void emitCompareCharactersOfHeapKey(StubAssembler& jit, const HashTableRe
     areSame.link(&jit);
     jit.loadPtr(Address(registers.owner, offsetOfHashTableStorage()), registers.table);
     emitLoadKeys(jit, registers);
+    if (keepsSlot) {
+        jit.urshift64(registers.entry, TrustedImm32(32), registers.cursor);
+        jit.zeroExtend32ToWord(registers.entry, registers.entry);
+    }
     found.append(jit.jump());
 }
 
@@ -737,7 +746,7 @@ static void emitFindStringInCompactTable(StubAssembler& jit, const HashTableRegi
     } else
         exits.unknown.append(isInImage);
 
-    emitCompareCharactersOfHeapKey(jit, registers, needsCharacters, lookup.comparison == KeyComparison::String ? exits.foundAmongNarrowKeys : exits.foundInCompactTable, exits);
+    emitCompareCharactersOfHeapKey(jit, registers, lookup.keepsSlot, needsCharacters, lookup.comparison == KeyComparison::String ? exits.foundAmongNarrowKeys : exits.foundInCompactTable, exits);
 }
 
 static void emitClassifyAnyValue(StubAssembler& jit, GPRReg key, JumpList& isComparedByBits, HashTableExits& exits)

@@ -13,6 +13,7 @@
 #include <span>
 #include <wtf/text/WTFString.h>
 #include <wtf/ScopedLambda.h>
+#include <wtf/Vector.h>
 
 namespace JSC {
 
@@ -20,6 +21,7 @@ class Identifier;
 class JSFunction;
 class JSGlobalObject;
 class JSObject;
+class StackFrame;
 class VM;
 
 namespace AOT {
@@ -102,6 +104,9 @@ JSObject* createHasInstanceNotAFunctionError(JSGlobalObject*, JSValue constructo
 JSObject* createBuiltinModulesUnavailableError(JSGlobalObject*);
 JSObject* createNativeBindingsUnavailableError(JSGlobalObject*);
 JSObject* createBuiltinWithoutPathError(JSGlobalObject*);
+// An error whose sentence says that compiled code does not do what `bun run` does. With Options::aotCountsPath() it is counted where it is made, so also where a `catch` swallows it and the program takes another road.
+JS_EXPORT_PRIVATE bool isRefusal(const String& message);
+JS_EXPORT_PRIVATE void countRefusal(VM&, const String& message, const WTF::Vector<StackFrame>*);
 JSObject* createBuiltinNotCompiledError(JSGlobalObject*, const String& builtin);
 JSObject* createBuiltinFunctionNotCompiledError(JSGlobalObject*, const String& functionName);
 JSObject* createBuiltinsNotCompiledError(JSGlobalObject*, std::span<const String> builtins);
@@ -117,6 +122,7 @@ JSObject* createExportStatementFindsNothingError(JSGlobalObject*, const String& 
 JSObject* createExportStatementFindsSeveralError(JSGlobalObject*, const String& exportName, const String& specifier);
 JSObject* createSuperCallInDirectEvalError(JSGlobalObject*);
 String functionNotCompiledMessage(const String& functionName);
+String exportNotCompiledMessage(const String& functionName, const String& module);
 String functionNotCompiledMessage(const String& path, unsigned line);
 String functionNotCompiledMessage();
 // `Array.prototype.push`, `Array.prototype[Symbol(Symbol.iterator)]`, and of the global object the name alone.
@@ -124,9 +130,13 @@ String memberOfLockedBuiltin(BuiltinID holder, UniquedStringImpl* key);
 String assignmentToLockedBuiltinMessage(const String& property);
 String deletionFromLockedBuiltinMessage(const String& property);
 // `property` may be assigned to where the build sees the assignment.
-String assignmentThatBuildDidNotSeeMessage(ASCIILiteral property);
+String assignmentThatBuildDidNotSeeMessage(const String& property);
+String callOfBuiltinChangedBeforeFirstUseMessage(const String& property);
 // A test run opens what the build sees a test replace. So there the words say what to write, or that nothing will do.
 enum class LockedIn : bool { Executable, TestRun };
+// The compiled code that is running, or that has called the built-in function which is, stands in a file of a test run that an executable holds too.
+// Such a file meets what it meets there: the same refusal in the same words, and `false` from Reflect.
+bool isWrittenByFileOfProduct(VM&);
 String assignmentToLockedBuiltinMessage(VM&, BuiltinID holder, UniquedStringImpl* key, LockedIn);
 String deletionFromLockedBuiltinMessage(VM&, BuiltinID holder, UniquedStringImpl* key, LockedIn);
 // `property` is no entry of the table: hostDidFillObjectWithFoldedMembers(). No test run opens it.

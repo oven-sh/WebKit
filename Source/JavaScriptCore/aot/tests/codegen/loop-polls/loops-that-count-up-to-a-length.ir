@@ -4,22 +4,22 @@
 # f6, f7 and f8 are the typed bodies of f1, f2 and f3.
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=b3:RotateLoops disable=b3:UnrollLoops
 # A loop poll is a load that faults where the target has that, and a comparison with a call on its slow path elsewhere.
-# RUN(X64): generate-code
-# REQUIRES(X64): x86_64 faulting-loop-polls
-# RUN(ARM64): generate-code calls
-# REQUIRES(ARM64): arm64
-# X64: f4: size={{*}} polls=2
-# X64: f6: size={{*}} polls=2
-# X64: f7: size={{*}} polls=3
-# X64: f8: size={{*}} polls=1
-# ARM64-LABEL: f4: size=
-# ARM64: operation operationAOTPollSlow x2
-# ARM64-LABEL: f6: size=
-# ARM64: operation operationAOTPollSlow x2
-# ARM64-LABEL: f7: size=
-# ARM64: operation operationAOTPollSlow x3
-# ARM64-LABEL: f8: size=
-# ARM64: operation operationAOTPollSlow x1
+# RUN(FAULTS): generate-code
+# REQUIRES(FAULTS): faulting-loop-polls
+# RUN(CALLS): generate-code calls
+# REQUIRES(CALLS): calling-loop-polls
+# FAULTS: f4: size={{*}} polls=2
+# FAULTS: f6: size={{*}} polls=2
+# FAULTS: f7: size={{*}} polls=3
+# FAULTS: f8: size={{*}} polls=1
+# CALLS-LABEL: f4: size=
+# CALLS: operation operationAOTPollSlow x2
+# CALLS-LABEL: f6: size=
+# CALLS: operation operationAOTPollSlow x2
+# CALLS-LABEL: f7: size=
+# CALLS: operation operationAOTPollSlow x3
+# CALLS-LABEL: f8: size=
+# CALLS: operation operationAOTPollSlow x1
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0

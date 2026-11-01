@@ -513,7 +513,7 @@ struct WindowScanner {
             return id;
         case ClosureDeferral::CapturesObject: {
             bool capturesReceiver = receiverOutsideWindow ? sameObjectThroughCasts(m_function, captures[0]) == sameObjectThroughCasts(m_function, receiverOutsideWindow) : isUnmade || isObject(captures[0]);
-            return capturesReceiver ? id : ValueID();
+            return capturesReceiver || m_build.isSabotaged(Sabotage::ClosuresInFieldsCaptureTheirHolder) ? id : ValueID();
         }
         case ClosureDeferral::CapturesEnvironment: {
             ValueID captured = isUnmade ? listedEnvironment : captures[0];
@@ -2146,7 +2146,7 @@ static std::optional<UnwrittenLiteral> tryReadUnwrittenLiteral(const AnalysisCon
     if (!allocationClass || !context.flow->at(allocationClass).impossibleMutations.contains(ObjectMutation::StoreAfterCreation))
         return std::nullopt;
 
-    UnwrittenLiteral result { id, DataNode(DataNode::Undefined { }), { }, context.flow->identityIsNeverObserved(site) };
+    UnwrittenLiteral result { id, DataNode(DataNode::Undefined { }), { }, context.flow->identityIsNeverObserved(site) || context.build.isSabotaged(Sabotage::LiteralsOfConstantsAreNeverToldApart) };
     // Only the literal uses such a list.
     auto tryReadListInside = [&](ValueID element) -> std::optional<DataNode> {
         if (!result.isNeverToldApart)

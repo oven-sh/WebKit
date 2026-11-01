@@ -57,7 +57,11 @@ struct Update {
     std::optional<int32_t> minStoredValue;
     bool addsToLowWord;
     Vector<B3::BasicBlock*, 4> path;
-    Vector<B3::Value*, 2> sumUsersOnExits;
+    struct UserOnExit {
+        B3::Value* user;
+        B3::BasicBlock* exit;
+    };
+    Vector<UserOnExit, 2> sumUsersOnExits;
 };
 
 struct StoredRange {
@@ -333,8 +337,7 @@ static void rematerializeSumOnExits(B3::Procedure& proc, const Update& update)
 {
     B3::InsertionSet insertionSet(proc);
     HashMap<B3::BasicBlock*, B3::Value*> sumForExit;
-    for (B3::Value* user : update.sumUsersOnExits) {
-        B3::BasicBlock* exit = findExitDominating(proc, update, user);
+    for (auto [user, exit] : update.sumUsersOnExits) {
         B3::Value* sum = sumForExit.ensure(exit, [&] {
             unsigned index = 0;
             while (exit->at(index)->opcode() == B3::Phi)
@@ -637,9 +640,11 @@ static bool updateIntegersInMemory(B3::Procedure& proc, const Source& source)
                     loadsThatStay.add(update.load);
                     continue;
                 }
-                if (child == update.sum && findExitDominating(proc, update, user))
-                    update.sumUsersOnExits.appendIfNotContains(user);
-                else
+                // Applying an update changes the graph of blocks, so the exit is kept while the dominators hold.
+                if (B3::BasicBlock* exit = child == update.sum ? findExitDominating(proc, update, user) : nullptr) {
+                    if (!update.sumUsersOnExits.containsIf([&](const Update::UserOnExit& known) { return known.user == user; }))
+                        update.sumUsersOnExits.append({ user, exit });
+                } else
                     isRejected.quickSet(found->value);
             }
         }
@@ -966,6 +971,12 @@ private:
 };
 
 } // anonymous namespace
+
+bool isLengthOfList(B3::Procedure& proc, const B3::MemoryValue& memory)
+{
+    AOTHeaps& heaps = AOTHeaps::of(proc);
+    return memory.range() == heaps.rangeOf(heaps.Butterfly_publicLength);
+}
 
 B3::ClientPhase keepListLengthsInRegistersAfterOptimization()
 {

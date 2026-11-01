@@ -88,8 +88,10 @@ static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inpu
             tables.sites.allocationClasses[allocationClass.index()].impossibleMutations.remove(instance.markedMutations);
             if (instance.neverChanges && inputs.build.isEnabled(FlowResultKind::HolderMutations, instance.builtinClass.index())) {
                 tables.sites.sitesOfObjectsThatNeverChange.set(numberOfSites);
-                if (instance.builtinClass == BuiltinClasses::Array && isNeverToldApart(inputs, instance.object, listsToldApart))
+                if (instance.builtinClass == BuiltinClasses::Array && isNeverToldApart(inputs, instance.object, listsToldApart)) {
                     tables.sites.sitesOfListsNeverToldApart.set(numberOfSites);
+                    inputs.build.statistics().count(StatisticID::FlowListsNeverToldApart, 1);
+                }
             }
             ++numberOfSites;
         }

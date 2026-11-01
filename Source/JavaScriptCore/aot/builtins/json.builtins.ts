@@ -1,6 +1,11 @@
 import * as b from "bun-builtins-table";
 
 const serialized = [b.runsTransitively("OwnKeys", "OwnValues", "ToJSON", "ToPrimitive"), b.onlyBoxedPrimitivesConverted];
+// A name of the list is read off every object that the walk comes to, through its prototypes, so any member may be read.
+const serializedByListOfNames = [
+  b.runsTransitively("OwnKeys", "OwnValues", "ToJSON", "ToPrimitive", b.named()),
+  b.onlyBoxedPrimitivesConverted,
+];
 // It refuses a BigInt, an object that holds itself and a text longer than a string may be: what is admitted reaches no string but those that the program spells out.
 const dataWithTextThatFitsInString = b.union(b.plainData, b.null, b.bool, b.f64, b.symbol);
 
@@ -71,7 +76,7 @@ export default b.declarations(
           throws: true,
           runsOnlyOperandCode: true,
           uses: {
-            value: [...serialized, b.readByKey(b.keysIn("replacer"), b.nativeMemory)],
+            value: [...serializedByListOfNames, b.readByKey(b.keysIn("replacer"), b.nativeMemory)],
             replacer: [b.runsTransitively("OwnValues", "ToPrimitive", b.named("length"))],
             space: [b.runs("ToPrimitive")],
           },

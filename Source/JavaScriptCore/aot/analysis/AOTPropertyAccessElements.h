@@ -21,6 +21,8 @@ struct ElementAccessQuery {
     const Function& writtenIn;
     const Type& receiver;
     const Type* receiverExpected { nullptr };
+    // Of a receiver that is a copy: what is known of the list that it was made from.
+    ArrayStorage storageOfCopiedList { ArrayStorage::Other };
     const Type& key;
     const Type* keyExpected { nullptr };
     const Type* stored { nullptr };
@@ -85,6 +87,9 @@ struct ElementAccessPlan {
 ElementAccessPlan planElementAccess(const Program&, const ElementAccessQuery&);
 
 std::optional<ElementAccessPlan> planElementAccessOf(const Program&, const Function&, const Value& access);
+
+// The list that slice(), concat(), toReversed(), toSpliced() or with() has made this one from. A copy has the storage of the list that it is made from.
+ValueID findCopiedList(const Program&, const Function&, ValueID copy);
 
 } } } // namespace JSC::AOT::Typed
 

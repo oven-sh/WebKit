@@ -710,6 +710,17 @@ void AbstractModuleRecord::cacheResolution(UniquedStringImpl* exportName, const 
     m_resolutionCache.add(exportName, resolution);
 }
 
+#if ENABLE(AOT)
+static NEVER_INLINE bool isSettledByMock(VM& vm, bool someRecordHasLiveExports, const AbstractModuleRecord::Resolution& first, const AbstractModuleRecord::Resolution& second)
+{
+    auto isOfMock = [&](const AbstractModuleRecord::Resolution& found) {
+        auto* compiled = dynamicDowncast<AOT::ModuleRecord>(found.moduleRecord);
+        return (compiled && compiled->standsForMock()) || (someRecordHasLiveExports && found.isLiveExport(vm));
+    };
+    return !first.isSameBinding(second) && (isOfMock(first) || isOfMock(second));
+}
+#endif
+
 auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const ResolveQuery& root) -> Resolution
 {
     VM& vm = globalObject->vm();
@@ -1025,6 +1036,9 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
 
     // Merge the given resolution to the current resolution value of the top frame.
     // If there is ambiguity, return "false". When the "false" is returned, we should make the result "ambiguous".
+#if ENABLE(AOT)
+    bool wasSettledByMock = false;
+#endif
     auto mergeToCurrentTop = [&] (const Resolution& resolution) -> bool {
         if (resolution.type == Resolution::Type::NotFound)
             return true;
@@ -1033,6 +1047,13 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
             currentTop() = resolution;
             return true;
         }
+
+#if ENABLE(AOT)
+        if (vm.hasCompiledCode() && isSettledByMock(vm, someRecordHasLiveExports, currentTop(), resolution)) [[unlikely]] {
+            wasSettledByMock = true;
+            return true;
+        }
+#endif
 
 #if USE(BUN_JSC_ADDITIONS)
         // A live export never makes a name ambiguous. The first `export *` that provides the name wins, as in Vitest.
@@ -1220,6 +1241,12 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
     if (someRecordHasLiveExports && frames[0].type == Resolution::Type::NotFound) [[unlikely]]
         frames[0] = firstLiveRecordViaStarExport;
 #endif
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(root.moduleRecord); compiled && frames[0].type == Resolution::Type::Resolved) {
+        if (compiled->someMockStandsInPlace() || frames[0].moduleRecord->hasLiveExports() || wasSettledByMock)
+            return frames[0];
+    }
+#endif
     //  1. The starting point is always cacheable.
     if (frames[0].type == Resolution::Type::Resolved)
         cacheResolutionForQuery(root, frames[0]);
@@ -1262,9 +1289,11 @@ auto AbstractModuleRecord::resolveExportByName(JSGlobalObject* globalObject, con
 #endif
 
 #if ENABLE(AOT)
-    if (inherits<AOT::ModuleRecord>()) {
-        if (std::optional<Resolution> cachedResolution = tryGetCachedResolution(exportName.impl()))
-            return *cachedResolution;
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this)) {
+        if (!compiled->someMockStandsInPlace()) {
+            if (std::optional<Resolution> cachedResolution = tryGetCachedResolution(exportName.impl()))
+                return *cachedResolution;
+        }
         RELEASE_AND_RETURN(scope, resolveExportImpl(globalObject, ResolveQuery(this, exportName.impl())));
     }
 #endif

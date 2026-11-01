@@ -159,7 +159,7 @@ static void copyMethodTable(Instance* instance, const Image& image)
 
 static Instance* reserveMemory(PagesOfVM& pages, const Image& image)
 {
-    RELEASE_ASSERT(!(InstanceLayout::granuleBelowInstance % WTF::pageSize()) && !(InstanceLayout::granuleAboveInstance % WTF::pageSize()));
+    RELEASE_ASSERT(!(InstanceLayout::largestPageSize % WTF::pageSize()));
     auto [below, above] = reservationSizes(image);
     auto* instance = reinterpret_cast<Instance*>(static_cast<char*>(pages.allocate(below + above)) + below);
     copyMethodTable(instance, image);
@@ -219,7 +219,7 @@ static void fillStubReturnAddresses(Instance& instance, const Image& image)
     }
 }
 
-static void fillImageWords(Instance& instance, VM& vm, const Image& image)
+static void fillImageWords(Instance& instance, VM& vm, const Image& image, ProgramIdentifiers& identifiers)
 {
     ImageWords& words = instance.image;
     words.code = image.code().data();
@@ -244,7 +244,8 @@ static void fillImageWords(Instance& instance, VM& vm, const Image& image)
     words.stringConstants = image.section<uint32_t>(ImageSection::StringConstants).data();
     words.listedStrings = image.section<uint32_t>(ImageSection::LongStrings).data();
     words.text = image.section<uint8_t>(ImageSection::Text).data();
-    words.programSymbols = &vm.aotState().identifiers->symbols();
+    words.programSymbols = &identifiers.symbols();
+    identifiers.didGainInstance();
     fillStubReturnAddresses(instance, image);
 }
 
@@ -346,9 +347,8 @@ static void fillInstanceClassInfos(Instance& instance)
 CONCURRENT_SAFE void setPollsEnabled(Instance& instance, bool enabled)
 {
     WTF::atomicStore(&instance.pollIsDue, static_cast<uintptr_t>(enabled), std::memory_order_relaxed);
-#if CPU(X86_64) && (OS(LINUX) || OS(WINDOWS))
-    OSAllocator::protect(reinterpret_cast<char*>(&instance) + InstanceLayout::offsetOfLoopPollPage(), WTF::pageSize(), !enabled, !enabled);
-#endif
+    if constexpr (hasFaultingLoopPolls)
+        OSAllocator::protect(reinterpret_cast<char*>(&instance) + InstanceLayout::offsetOfLoopPollPage(), WTF::pageSize(), !enabled, !enabled);
 }
 
 void makeTailCallsByValuePoll(Instance& instance, const uint8_t* isRenamedAtRunTime)
@@ -431,7 +431,7 @@ size_t numberOfRunningInstances(const VMState& state)
     });
 }
 
-static Instance* reserveInstanceOfRunningImage(VM& vm, JSGlobalObject* realm)
+static Instance* reserveInstanceOfRunningImage(VM& vm, JSGlobalObject* realm, ProgramIdentifiers& identifiers)
 {
     VMState& vmState = vm.aotState();
     const Image& image = *vmState.image;
@@ -443,7 +443,7 @@ static Instance* reserveInstanceOfRunningImage(VM& vm, JSGlobalObject* realm)
     instance->endOfClosureNumbers = image.header().numbers.endOfClosureNumbers;
     instance->lastShape = image.header().numbers.lastShape;
     fillHeaderAndPrefix(*instance, vm, realm);
-    fillImageWords(*instance, vm, image);
+    fillImageWords(*instance, vm, image, identifiers);
     fillNumberWords(*instance);
     fillAllocationSpaces(*instance, vm);
     vmState.propertyCaches->publishWords(*instance);
@@ -458,17 +458,21 @@ Instance* reserveInstance(JSGlobalObject* realm)
     RELEASE_ASSERT(static_cast<ptrdiff_t>(AOT_INSTANCE_OFFSET(vm)) == JSWebAssemblyInstance::offsetOfVM());
 #endif
     Instance::destroyDeadInstances(vm);
+    forgetUnfinishedLoadsOfRetiredRealms(vm);
     VMState& vmState = vm.aotState();
     RunningImageScope firstImage(vmState, &vmState.image->first());
     if (!(vmState.image->programTables().flags & ProgramTables::mayRunInMultipleInstances) && numberOfRunningInstances(vmState))
         return nullptr;
     vmState.identifiers->createEngineSymbols();
+    ProgramIdentifiers* identifiers = vmState.identifiers.get();
+    if (vmState.image->programTables().flags & ProgramTables::mayRunInMultipleInstances)
+        identifiers = new ProgramIdentifiers(vm, *vmState.image, identifiers);
 
-    Instance* first = reserveInstanceOfRunningImage(vm, realm);
+    Instance* first = reserveInstanceOfRunningImage(vm, realm, *identifiers);
     Instance* last = first;
     for (const Image* image = first->program->above(); image; image = image->above()) {
         RunningImageScope scope(vmState, image);
-        last->above = reserveInstanceOfRunningImage(vm, realm);
+        last->above = reserveInstanceOfRunningImage(vm, realm, *identifiers);
         last = last->above;
     }
     realm->setAOTInstance(first);
@@ -659,6 +663,7 @@ Instance* Instance::create(JSGlobalObject* realm)
     initializeCollectorWords(vm, *instance);
     initializeStubWords(*instance);
     initializeIterationWords(*instance);
+    instance->scratch.landingsOfMisfits.entries = &instance->scratch.landingsOfMisfits.empty;
 
     State::create(*instance);
     instance->state->caches->addClearedEachCollection("short young arrays converted"_s, asMutableByteSpan(instance->arrays.shortYoungArraysConverted));
@@ -668,6 +673,9 @@ Instance* Instance::create(JSGlobalObject* realm)
     instance->state->caches->addClearedEachCollection("copies without frame"_s, asWritableBytes(instance->copiesWithoutFrame()));
     // A place names the cell of a key and a Structure by their addresses, and the address of one that has ended goes to another.
     instance->state->caches->addClearedEachCollection("keyed value places"_s, asWritableBytes(instance->keyedValuePlaces()));
+    instance->state->caches->addClearedEachCollection("places filed from slots"_s, asMutableByteSpan(instance->propertyCaches.placesFiledFromSlots));
+    instance->state->caches->addClearedEachCollection("places filed from slots and cleared"_s, asMutableByteSpan(instance->propertyCaches.placesFiledFromSlotsAndCleared));
+    instance->state->caches->addClearedEachCollection("accepted kinds of values"_s, asWritableBytes(instance->acceptedKindsOfValues()));
     fillInstanceClassInfos(*instance);
     initializeRuntimeWords(*instance, vm);
 
@@ -682,7 +690,8 @@ Instance* Instance::create(JSGlobalObject* realm)
     RuntimeHooks::didChangeMicrotaskQueueing(vm);
 #if defined(BUN_HARDENED)
     OSAllocator::protect(instance->tableAt<uint8_t>(InstanceLayout::offsetOfWordsWrittenOnce), InstanceLayout::offsetOfKeyOrderSteps - InstanceLayout::offsetOfWordsWrittenOnce, true, false);
-    OSAllocator::protect(instance->boxedCalls().data(), InstanceLayout::bytesReservedForBoxedCalls, true, false);
+    if constexpr (InstanceLayout::offsetOfBoxedCalls < 0)
+        OSAllocator::protect(instance->boxedCalls().data(), InstanceLayout::bytesReservedForBoxedCalls, true, false);
 #endif
     releaseUnusedPagesOfThread();
     return instance;
@@ -704,6 +713,9 @@ void Instance::destroy(Instance* instance)
         delete instance->state;
         unregisterStackMirror(instance, vm);
     }
+    ProgramIdentifiers& identifiers = identifiersOf(*instance);
+    if (identifiers.didLoseLastInstance() && identifiers.isOfOneRealm())
+        delete &identifiers;
     releaseMemory(instance);
 }
 
@@ -931,7 +943,7 @@ struct CountedCall<entry, operation, Result JIT_OPERATION_ATTRIBUTES (First, Res
 static constexpr bool isCalledWithoutCollection(Entry entry)
 {
     std::optional<RuntimeOperation> operation = runtimeOperationOf(entry);
-    return operation && !Typed::declaredBoundOf(*operation).mayCollect && !preservesMostRegisters(*operation) && !featureOf(entry);
+    return operation && !Typed::declaredBoundOf(*operation).mayCollect && !preservesMostRegisters(*operation);
 }
 
 // What takes the pending exception runs the collection that throwing put off.
@@ -1021,6 +1033,30 @@ static void trapUnusedEntries(void** entries, const Image& image)
     }
 }
 
+static_assert(!isFamilyOfOperations(static_cast<RemovableFeature>(0)));
+static constexpr auto familiesOfEntries = [] {
+    std::array<uint16_t, entriesThatAreCalled.size() * 32> families { };
+    for (unsigned index = 0; index < numberOfEntries; ++index) {
+        std::optional<RemovableFeature> feature = featureOf(static_cast<Entry>(index));
+        if (feature && isFamilyOfOperations(*feature))
+            families[index] = static_cast<uint16_t>(*feature);
+    }
+    return families;
+}();
+
+// An executable loses the families of which its image lists nothing. Whatever else has taken one away, the program does not start: it would end at some call.
+static void checkThatFamiliesOfUsedEntriesAreThere(const Image& image)
+{
+    const uint32_t* entriesUsed = image.header().entriesUsed;
+    for (unsigned word = 0; word < entriesThatAreCalled.size(); ++word) {
+        for (uint32_t used = entriesUsed[word]; used; used &= used - 1) {
+            uint16_t family = familiesOfEntries[word * 32 + std::countr_zero(used)];
+            if (family && isFeatureRemoved(static_cast<RemovableFeature>(family))) [[unlikely]]
+                Bun__abortForRemovedFeature(family);
+        }
+    }
+}
+
 #if defined(BUN_HARDENED)
 static size_t entryPagesSize()
 {
@@ -1037,6 +1073,7 @@ RuntimeTable::RuntimeTable(VM& vm)
 #endif
 {
     const Image& image = *vm.aotState().image;
+    checkThatFamiliesOfUsedEntriesAreThere(image);
     (m_countsCalls ? fillOperations<true> : fillOperations<false>)(m_entries);
     if (image.sharesRealms()) {
         constexpr Entry entry = Entry::operationAOTLookupExceptionHandler;
@@ -1303,10 +1340,22 @@ void VMState::willShutDownHeap()
         AllocationCounts::willShutDownHeap(*this);
 }
 
+void VMState::countWithoutImage(VM& vm)
+{
+    RELEASE_ASSERT(!hasCompiledCode && !image);
+    counters = makeUniqueWithoutFastMallocCheck<RuntimeCounters>();
+    reporter = makeUniqueWithoutFastMallocCheck<RuntimeReporter>(vm);
+}
+
 void VMState::releaseImage(VM& vm)
 {
-    if (!hasCompiledCode)
+    if (!hasCompiledCode) {
+        if (reporter)
+            reporter->writeAtExit();
+        reporter = nullptr;
+        counters = nullptr;
         return;
+    }
     ASSERT(vm.heap.isShuttingDown());
 
     reporter->writeAtExit();

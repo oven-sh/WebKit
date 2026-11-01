@@ -211,7 +211,7 @@ struct CommandResult {
     Vector<Wire::LossRecord> losses;
 };
 
-static CommandResult runCommand(const TestCommand& command, const TestFile& file, const RunDirective& run, BuildContext& build)
+static CommandResult runCommand(const TestCommand& command, const TestFile& file, const RunDirective& run, BuildContext& build, const Wire::CompileOptions& options)
 {
     IRForm form = IRForm::AsRead;
     std::unique_ptr<Program> program;
@@ -232,6 +232,16 @@ static CommandResult runCommand(const TestCommand& command, const TestFile& file
     StringPrintStream out;
     TestCommandContext context { WTF::move(program), form, run.arguments.span(), out, build };
     context.isOptimizing = file.isOptimizing;
+    context.options = &options;
+    context.readProgramAgain = [&](BuildContext& other) -> std::unique_ptr<Program> {
+        if (!command.defaultForm)
+            return nullptr;
+        bool needsLibrary = form == IRForm::AsRead && command.programAsRead != ProgramAsRead::AsParsed;
+        std::unique_ptr<Program> again = parseProgram(needsLibrary ? withStandInLibrary(file.text) : file.text, form, other, VerifierInputs { .isOptimizing = file.isOptimizing });
+        if (again && form == IRForm::AsRead && command.programAsRead == ProgramAsRead::TypedAndVerified && !runReadStage(*again, other))
+            return nullptr;
+        return again;
+    };
     command.run(context);
     build.diagnostics().finish(context.program.get());
     Vector<Wire::LossRecord> losses = WTF::move(context.losses);
@@ -253,7 +263,7 @@ static void runOneDirective(const TestFile& file, const RunDirective& run, const
 
     runOnBuildThread([&] {
         BuildContext build(options);
-        CommandResult result = runCommand(*command, file, run, build);
+        CommandResult result = runCommand(*command, file, run, build, options);
         if (variant.onlyDiagnostic) {
             reportDiagnostic(*variant.onlyDiagnostic, run, build.diagnostics(), failures);
             if (outputs)
@@ -298,6 +308,9 @@ Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs, const
         if (std::optional<String> sentence = applyOptionWord(options, optionWord.word))
             failures.append(TestFailure { optionWord.line, WTF::move(*sentence) });
     }
+    // A file that breaks a pass on purpose says which check is to find it. Another check may find it first.
+    if (static_cast<unsigned>(options.sabotage) && (!variant.optionWords.isEmpty() || variant.onlyDiagnostic))
+        return { };
     for (const String& word : variant.optionWords) {
         if (std::optional<String> sentence = applyOptionWord(options, word))
             failures.append(TestFailure { 1, WTF::move(*sentence) });

@@ -14,10 +14,12 @@
 #include "AOTInductionVariables.h"
 #include "AOTPlacement.h"
 #include "AOTRepresentationRules.h"
+#include "AOTSort.h"
 #include "AOTVector.h"
 #include "B3InductionRecords.h"
 #include "B3KnownProperties.h"
 #include "JSCell.h"
+#include "JSObject.h"
 #include <algorithm>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/MathExtras.h>
@@ -110,11 +112,10 @@ static ValueID valueBeforeConversions(const Function& function, ValueID id)
 }
 
 // The result of a call stays at the call. Anything else that is computed may be computed earlier than it stands: a load in front of the guard that it rests on.
-static bool hasTypeWhereverSourceIsComputed(const Function& function, const BitVector& typedOnlyBehindTest, ValueID source)
+static bool hasTypeWhereverSourceIsComputed(const Function& function, ValueID source)
 {
     const Value& value = function.at(source);
-    if (value.opcode == Opcode::Parameter)
-        return !typedOnlyBehindTest.get(source.index());
+    ASSERT(value.opcode != Opcode::Parameter);
     if (value.opcode == Opcode::ResultAt)
         return effectRuleOf(function.at(value.resultsOperand()).opcode) == EffectRule::Call;
 
@@ -134,43 +135,48 @@ static bool hasTypeWhereverSourceIsComputed(const Function& function, const BitV
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool arrivesTypedOnlyBehindTest(const Function& function, const BitVector& typedOnlyBehindTest, Edge edge, uint32_t parameterIndex)
-{
-    IncomingValue incoming = incomingValueOf(function, edge, parameterIndex);
-    switch (incoming.kind) {
-    case IncomingValue::Kind::Argument:
-        return !hasTypeWhereverSourceIsComputed(function, typedOnlyBehindTest, valueBeforeConversions(function, incoming.argument));
-    case IncomingValue::Kind::EdgeResult:
-        // The operand that the edge of a test has narrowed, and what an operation answers on one of its edges.
-        return true;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-// A block parameter is a Phi, and stays in its block.
+// A block parameter is a Phi, and stays in its block. It is typed only behind a test if what arrives over some edge is, and what arrives may be another parameter:
+// a loop that moves its values up one place in every turn passes the answer through all of them. So it is handed on from parameter to parameter, to each once.
 static BitVector collectParametersTypedOnlyBehindTest(const Function& function, const CFG& cfg)
 {
+    struct Arrival {
+        ValueID source;
+        ValueID parameter;
+    };
     BitVector typedOnlyBehindTest;
-    bool changed = true;
-    while (changed) {
-        changed = false;
-        for (BlockID id : cfg.reversePostOrder()) {
-            if (id == entryBlock)
-                continue;
-            const Block& block = function.at(id);
-            for (uint32_t parameterIndex = 0; parameterIndex < block.parameters.size(); ++parameterIndex) {
-                if (typedOnlyBehindTest.get(block.parameters[parameterIndex].index()))
+    Vector<Arrival> arrivals;
+    Vector<ValueID> toHandOn;
+    auto note = [&](ValueID parameter) {
+        if (typedOnlyBehindTest.set(parameter.index()))
+            return;
+        toHandOn.append(parameter);
+    };
+    for (BlockID id : cfg.reversePostOrder()) {
+        if (id == entryBlock)
+            continue;
+        const Block& block = function.at(id);
+        for (uint32_t parameterIndex = 0; parameterIndex < block.parameters.size(); ++parameterIndex) {
+            ValueID parameter = block.parameters[parameterIndex];
+            for (Edge edge : cfg.incomingEdges(id)) {
+                IncomingValue incoming = incomingValueOf(function, edge, parameterIndex);
+                // Not an argument: the operand that the edge of a test has narrowed, and what an operation answers on one of its edges.
+                ValueID source = incoming.kind == IncomingValue::Kind::Argument ? valueBeforeConversions(function, incoming.argument) : ValueID();
+                if (source && function.at(source).opcode == Opcode::Parameter) {
+                    arrivals.append(Arrival { source, parameter });
                     continue;
-                for (Edge edge : cfg.incomingEdges(id)) {
-                    if (arrivesTypedOnlyBehindTest(function, typedOnlyBehindTest, edge, parameterIndex)) {
-                        typedOnlyBehindTest.set(block.parameters[parameterIndex].index());
-                        changed = true;
-                        break;
-                    }
+                }
+                if (!source || !hasTypeWhereverSourceIsComputed(function, source)) {
+                    note(parameter);
+                    break;
                 }
             }
         }
-        changed &= cfg.hasCycle();
+    }
+    AOT::sortInLine(arrivals, { }, &Arrival::source);
+    while (!toHandOn.isEmpty()) {
+        ValueID source = toHandOn.takeLast();
+        for (const Arrival& arrival : std::ranges::equal_range(arrivals, source, { }, &Arrival::source))
+            note(arrival.parameter);
     }
     return typedOnlyBehindTest;
 }
@@ -294,6 +300,8 @@ static unsigned leastCellSizeOf(const Program& program, const Placement& placeme
         return placement.layout(type.environment).size;
     if (type.isAnyString() || type.isOpaque(OpaqueKind::FlatString))
         return sizeof(JSString);
+    if (type.isObject() && type.hasOnlyClassObjects())
+        return sizeof(JSObjectWithButterfly);
     if (!type.hasOnlyLayouts())
         return headerSize;
 
@@ -332,7 +340,7 @@ void CodeGenerator::publishKnownProperties(ValueID id, Operand operand, bool isC
 
     Representation representation = operand.representation;
     std::optional<B3::IntRange> range = B3::mayHaveKnownRange(lowered->opcode()) ? knownRangeOf(type, representation) : std::nullopt;
-    unsigned bytes = representation == Representation::Cell ? leastCellSizeOf(program(), m_inputs.program.placement, type) : 0;
+    unsigned bytes = representation == Representation::Cell && B3::mayHaveKnownDereferenceableBytes(lowered) ? leastCellSizeOf(program(), m_inputs.program.placement, type) : 0;
     if (!range && !bytes)
         return;
     if (!typeHoldsWhereverComputed(*this, m_values.span(), id, isConverted ? PublishedValue::DerivedFromIt : PublishedValue::Itself))

@@ -17,6 +17,7 @@
 #include "LineColumn.h"
 #include <atomic>
 #include <optional>
+#include <wtf/BitVector.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/text/ASCIILiteral.h>
@@ -110,6 +111,25 @@ public:
     void append(Vector<InternalError>&&);
     bool hasErrors() const { return m_hasErrors.load(std::memory_order_relaxed); }
 
+    // A build that goes on behind a verification that failed keeps the first failure of each function. They fail the build where it ends, behind a table of what was found behind which pass.
+    void keepFirstFailureOfFunction(const InternalError& failure, InternalErrorKind found);
+    bool hasKeptFailureOf(Typed::FunctionID) const;
+    bool hasKeptFailures() const;
+
+    // What is added while one of these lives is handed to whoever made it. No other thread adds anything meanwhile.
+    class Interception {
+        WTF_MAKE_NONCOPYABLE(Interception);
+    public:
+        explicit Interception(Diagnostics&);
+        ~Interception();
+        Vector<InternalError> take() { return std::exchange(m_errors, { }); }
+
+    private:
+        friend class Diagnostics;
+        Diagnostics& m_diagnostics;
+        Vector<InternalError> m_errors;
+    };
+
     Diagnostics(Diagnostics&&);
     Diagnostics& operator=(Diagnostics&&);
     void resolveLocations(const Typed::Program&);
@@ -123,9 +143,16 @@ public:
 private:
     template<typename Record> void appendTo(Vector<Record> Diagnostics::*, Vector<Record>&&);
 
-    Lock m_lock;
+    mutable Lock m_lock;
     Vector<UserDiagnostic> m_userDiagnostics WTF_GUARDED_BY_LOCK(m_lock);
     Vector<InternalError> m_internalErrors WTF_GUARDED_BY_LOCK(m_lock);
+    struct KeptFailure {
+        InternalError failure;
+        InternalErrorKind found;
+    };
+    Vector<KeptFailure> m_keptFailures WTF_GUARDED_BY_LOCK(m_lock);
+    BitVector m_functionsWithKeptFailure WTF_GUARDED_BY_LOCK(m_lock);
+    Interception* m_interception WTF_GUARDED_BY_LOCK(m_lock) { nullptr };
     Vector<String> m_userDiagnosticMessages;
     Vector<String> m_internalErrorMessages;
     std::atomic<bool> m_hasErrors { false };

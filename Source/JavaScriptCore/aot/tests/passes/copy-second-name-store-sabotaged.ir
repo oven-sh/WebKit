@@ -1,0 +1,30 @@
+# The lie: sabotage=ChangedKindsOfStorageKeepTheirProofs has the pass give the readers of copy-second-name-store.ir the kind of the source. The verifier refuses the read behind the store
+# FORM: Prepared
+# OPTIONS: sabotage=ChangedKindsOfStorageKeepTheirProofs check=VerifyEachPass
+# RUN: pass PlanArrayCapacities
+# DIAGNOSTIC: GuardNotAvailable 1
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="sum" parameters=[{type=Array<int[0, 7], proven, Int32, pristine[Storage, Names, Dense]>}, {type=int[0, 3]}, {type=Array<anything, proven, pristine[Storage, Names]>}, {type=boolean}] results=[{type=anything}] {
+    v4 = NewArray contents=int|fractional [contentsAreProven]
+    v5 = AssumeType v4 provenType=Array<int|fractional, proven, pristine[Storage, Names]>
+    AppendElements v5, v0
+    Branch v3 -> taken b2(v5), notTaken b1()
+  b1():
+    Jump -> next b2(v2)
+  b2(v7: Array<anything, proven, pristine[Storage, Names]>):
+    v8 = HasArrayStorage v5 arrayStorage=Double
+    Branch v8 -> taken b3(| 0), notTaken b4()
+  b3(v9):
+    v10 = GetArrayElement v5, v1, v9 arrayStorage=Double level=Expected [keyIsIntegral]
+    v11 = Double number=1.5
+    PutArrayElement v7, v1, v11 level=Proven [keyIsIntegral]
+    v13 = GetArrayElement v5, v1, v9 arrayStorage=Double level=Expected [keyIsIntegral]
+    v14 = Add v10, v13
+    Return v14
+  b4() frequency=Unlikely:
+    v15 = ElemGet v5, v1
+    Return v15
+}

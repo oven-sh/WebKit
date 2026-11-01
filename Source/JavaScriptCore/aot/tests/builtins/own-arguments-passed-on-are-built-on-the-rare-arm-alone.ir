@@ -9,7 +9,7 @@ function f0 name="tailCall" flags=[HasThis, HasArgumentCount, HasHiddenRest] cap
   b0(v0: function, v1: anything, v2: int[0, 4294967295], v3: anything, v4: Array):
     v5 = CreateUnmappedArguments v2, v4, v3
     v6 = Builtin builtin=FunctionPrototypeApply
-    v7 = Call v6, v0, v1, v5
+    v7 = Call v6, v0, v1, v5 calleeKey="apply" calleeName="f.apply"
     ReturnCall v7
 # CHECK-NOT: CreateUnmappedArguments
 # CHECK: Switch v2 cases=[0, 1] -> case [[none0]](), case [[one0]](), otherwise [[more0]]()
@@ -37,11 +37,11 @@ function f1 name="handedToTheGenericCopy" flags=[HasThis, HasArgumentCount, HasH
     Branch v3 -> taken b1(), notTaken b2(v5)
   b1():
     v6 = Builtin builtin=FunctionPrototypeApply
-    v7 = Call v6, v0, v1, v5
+    v7 = Call v6, v0, v1, v5 calleeKey="apply" calleeName="f.apply"
     ReturnCall v7
   b2(v8: Arguments) frequency=Unlikely:
     v9 = Builtin builtin=FunctionPrototypeApply
-    v10 = Call v9, v0, v1, v8
+    v10 = Call v9, v0, v1, v8 calleeKey="apply" calleeName="f.apply"
     ReturnCall v10
 # CHECK-NOT: CreateUnmappedArguments
 # CHECK: Switch v2 cases=[0, 1] -> case [[none1]](), case [[one1]](), otherwise [[more1]]()

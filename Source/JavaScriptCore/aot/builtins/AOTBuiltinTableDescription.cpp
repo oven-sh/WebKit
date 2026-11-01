@@ -342,6 +342,14 @@ public:
         object("token"_s, id, "isTuple"_s, layout.isTuple, "fields"_s, layout.fields);
     }
 
+    void write(const BuiltinHostObjectField& field) { object("name"_s, OptionalName { field.name }, "value"_s, field.value); }
+
+    void write(const BuiltinHostObject& hostObject)
+    {
+        object("cell"_s, PlainName { hostObject.nativeCell }, "function"_s, hostObject.function, "prototype"_s, hostObject.prototype, "fields"_s, hostObject.fields,
+            "keepsStringsOfStoredValues"_s, hostObject.keepsStringsOfStoredValues, "nativeAccessors"_s, hostObject.nativeAccessors, "platforms"_s, hostObject.platforms);
+    }
+
     void write(const FeatureUseSummary& summary)
     {
         const char* name = Bun__removableFeatureName(static_cast<uint16_t>(summary.feature));
@@ -407,7 +415,7 @@ JSValue BuiltinTable::describeForTesting(JSGlobalObject* realm) const
             writer.writeLayout(id);
         });
     };
-    writer.object("entries"_s, entries, "classes"_s, classes, "layouts"_s, layouts);
+    writer.object("entries"_s, entries, "classes"_s, classes, "layouts"_s, layouts, "hostObjects"_s, hostObjects());
     return writer.parse(realm);
 }
 

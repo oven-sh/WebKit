@@ -130,9 +130,7 @@ using WTF::GetPtrHelper;
 using WTF::CopyOrMoveToVectorResult;
 using WTF::ValueCheck;
 using WTF::VectorBufferMalloc;
-using WTF::VectorCopier;
 using WTF::VectorMalloc;
-using WTF::VectorTypeOperations;
 using WTF::addressOfArgument;
 using WTF::containerSize;
 using WTF::isValidCapacityForVector;
@@ -226,6 +224,74 @@ ALWAYS_INLINE void mendAfterMovingAsBytes(T& moved, ptrdiff_t distance)
 IGNORE_CLANG_WARNINGS_END
 #endif
 
+template<typename T>
+ALWAYS_INLINE void copyElementsAsBytes(const T* source, const T* sourceEnd, T* destination)
+{
+    size_t size = reinterpret_cast<const char*>(sourceEnd) - reinterpret_cast<const char*>(source);
+    if constexpr (sizeof(T) <= 32) {
+        if (size == sizeof(T)) {
+            memcpy(static_cast<void*>(destination), static_cast<const void*>(source), sizeof(T));
+            return;
+        }
+    }
+    if (size)
+        memcpy(static_cast<void*>(destination), static_cast<const void*>(source), size);
+}
+
+template<typename T>
+struct VectorTypeOperations : WTF::VectorTypeOperations<T> {
+    using OperationsOfWTF = WTF::VectorTypeOperations<T>;
+
+    static void move(T* source, T* sourceEnd, T* destination)
+    {
+        if constexpr (movesAsBytes<T>)
+            copyElementsAsBytes(source, sourceEnd, destination);
+        else
+            OperationsOfWTF::move(source, sourceEnd, destination);
+    }
+
+    static void move(std::span<T> source, std::span<T> destination)
+    {
+        move(std::to_address(source.begin()), std::to_address(source.end()), std::to_address(destination.begin()));
+    }
+
+    static void moveOverlapping(T* source, T* sourceEnd, T* destination)
+    {
+        if constexpr (movesAsBytes<T>) {
+            if (source != sourceEnd)
+                memmove(static_cast<void*>(destination), static_cast<const void*>(source), reinterpret_cast<const char*>(sourceEnd) - reinterpret_cast<const char*>(source));
+        } else
+            OperationsOfWTF::moveOverlapping(source, sourceEnd, destination);
+    }
+
+    static void moveOverlapping(std::span<T> source, std::span<T> destination)
+    {
+        moveOverlapping(std::to_address(source.begin()), std::to_address(source.end()), std::to_address(destination.begin()));
+    }
+
+    template<std::size_t extent>
+    static void uninitializedCopy(std::span<const T, extent> source, std::span<T> destination)
+    {
+        if constexpr (std::is_trivially_copy_constructible_v<T>) {
+            RELEASE_ASSERT(source.size() <= destination.size());
+            copyElementsAsBytes(source.data(), source.data() + source.size(), destination.data());
+        } else
+            OperationsOfWTF::uninitializedCopy(source, destination);
+    }
+};
+
+template<typename T>
+struct VectorCopier {
+    template<typename U, std::size_t extent>
+    static void uninitializedCopy(std::span<const U, extent> source, std::span<T> destination)
+    {
+        if constexpr (std::same_as<T, U>)
+            VectorTypeOperations<T>::uninitializedCopy(source, destination);
+        else
+            WTF::VectorCopier<T>::uninitializedCopy(source, destination);
+    }
+};
+
 #if COMPILER(CLANG) && !OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
 #define AOT_KEEPS_CALLERS_REGISTERS __attribute__((preserve_most))
 #else
@@ -273,6 +339,12 @@ NEVER_INLINE void reserveVectorCapacity(VectorWords& vector, size_t newCapacity,
         Malloc::free(oldBuffer);
 }
 
+// A reference that is held across an append then reads freed memory every time.
+constexpr bool movesAtEveryAppend(size_t elements, size_t elementSize)
+{
+    return ASAN_ENABLED && elementSize >= 32 && elements * elementSize <= (elementSize >= 128 ? (1u << 24) : (1u << 16));
+}
+
 // A short list doubles.
 template<typename Malloc>
 constexpr size_t nextVectorCapacity(size_t capacity)
@@ -283,6 +355,8 @@ constexpr size_t nextVectorCapacity(size_t capacity)
 template<typename Malloc>
 NEVER_INLINE void expandVectorCapacity(VectorWords& vector, size_t newMinCapacity, VectorLayout layout)
 {
+    if (movesAtEveryAppend(newMinCapacity, layout.elementSize))
+        return reserveVectorCapacity<Malloc>(vector, newMinCapacity, layout);
     reserveVectorCapacity<Malloc>(vector, std::max(newMinCapacity, std::max(static_cast<size_t>(layout.minCapacity), nextVectorCapacity<Malloc>(vector.capacity))), layout);
 }
 
@@ -447,7 +521,7 @@ ${specifiers}Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>::${
   text = replaceExactly(
     text,
     "std::max(static_cast<size_t>(minCapacity), Malloc::nextCapacity(capacity()))",
-    "std::max(smallestCapacity(), nextVectorCapacity<Malloc>(capacity()))",
+    "(movesAtEveryAppend(newMinCapacity, sizeof(T)) ? size_t { 0 } : std::max(smallestCapacity(), nextVectorCapacity<Malloc>(capacity())))",
   );
   const expandCapacityAroundPointer = member("NEVER_INLINE T* ", "expandCapacity(size_t newMinCapacity, T* ptr)") + checkedAction;
   text = replaceExactly(

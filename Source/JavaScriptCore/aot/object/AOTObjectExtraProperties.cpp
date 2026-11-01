@@ -474,8 +474,9 @@ static bool canBeSourceOfPendingStar(VM& vm, JSGlobalObject* realm, const Object
 {
     if (!hasKeyOrderThatStaysKnown(source) || (source.hasExtraProperties() && !pendingStarsOf(source)))
         return false;
+    // A field that the layout has for the getter of a star is empty while the star waits.
     for (const FieldData& field : source.layout().fields()) {
-        if (field.flags & fieldAttributeFlags && !(field.flags & fieldIsNotEnumerable))
+        if (field.flags & fieldAttributeFlags && !(field.flags & fieldIsNotEnumerable) && source.isInSlot(field))
             return false;
     }
     JSObject* objectPrototype = realm->objectPrototype();

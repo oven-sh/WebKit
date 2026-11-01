@@ -4,6 +4,7 @@
  */
 
 #include "config.h"
+#include "AOTHeldOperands.h"
 #include "AOTUseEffectHistory.h"
 
 #if ENABLE(AOT)
@@ -130,6 +131,57 @@ UseEffectHistory::UseEffectHistory(FunctionAnalyses& analyses, const UseEffectHi
     if (!options.uses.isEmpty())
         eventUses.add(OperandUse::Retains);
 
+    // A saved frame is out of the program's reach. So is what lies in a list or an object that has gone nowhere but into saved frames.
+    auto isHeldBySuspension = [&](const Use& use) {
+        return use.kind == Use::Kind::Operand && isHeldOperand(m_function.at(use.user), use.operandIndex);
+    };
+    BitVector leavesOnlyIntoSavedFrames(m_numberOfObjects);
+    auto goesIntoSavedFramesAlone = [&](const ObjectUse& objectUse) {
+        if (isHeldBySuspension(objectUse.use))
+            return true;
+        if (!objectUse.retainedBy)
+            return false;
+        PointsToSet containers = escape.pointsTo(objectUse.retainedBy);
+        if (containers.mayBeUntracked)
+            return false;
+        for (ObjectID container : containers.objects) {
+            if (!leavesOnlyIntoSavedFrames.quickGet(container.index()))
+                return false;
+        }
+        return true;
+    };
+    bool savedFramesAreOutOfReach = options.uses.isEmpty() && analyses.context().savedFrames == SavedFrames::AreOutOfReach;
+    if (savedFramesAreOutOfReach) {
+        for (unsigned objectIndex = 0; objectIndex < m_numberOfObjects; ++objectIndex) {
+            if (escape.at(ObjectID(objectIndex)).kind == ObjectKind::Allocation && !m_isUnknown.quickGet(objectIndex))
+                leavesOnlyIntoSavedFrames.quickSet(objectIndex);
+        }
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (size_t objectIndex : BitVector(leavesOnlyIntoSavedFrames)) {
+                for (auto& objectUse : escape.usesOf(ObjectID(objectIndex))) {
+                    if (!objectUse.isEscape || goesIntoSavedFramesAlone(objectUse))
+                        continue;
+                    leavesOnlyIntoSavedFrames.quickClear(objectIndex);
+                    changed = true;
+                    break;
+                }
+            }
+        }
+    }
+    enum class Origin : uint8_t { NotAsked, Outside, PerhapsMadeHere };
+    Vector<Origin> originOfValue;
+    auto isUseOfWhatCodeOutsideReaches = [&](const Use& use) {
+        if (!analyses.context().onlyJudges() || !options.uses.isEmpty() || use.kind != Use::Kind::Operand)
+            return false;
+        if (originOfValue.isEmpty())
+            originOfValue.fill(Origin::NotAsked, m_function.values.size());
+        ValueID value = m_function.at(use.user).operand(use.operandIndex);
+        Origin& origin = originOfValue[value.index()];
+        if (origin == Origin::NotAsked)
+            origin = namesOnlyWhatCodeOutsideReaches(analyses, value) ? Origin::Outside : Origin::PerhapsMadeHere;
+        return origin == Origin::Outside;
+    };
     Vector<PendingAction> pendingActions;
     auto addAction = [&](BlockID block, uint32_t index, ObjectID object, ActionKind kind) {
         pendingActions.append(PendingAction { m_cfg.reversePostOrderIndex(block), Action { index, object, kind } });
@@ -165,6 +217,10 @@ UseEffectHistory::UseEffectHistory(FunctionAnalyses& analyses, const UseEffectHi
             auto& use = objectUse.use;
             if ((!objectUse.isEscape && !objectUse.uses.containsAny(eventUses)) || isSkipped(use.block))
                 continue;
+            if (savedFramesAreOutOfReach && goesIntoSavedFramesAlone(objectUse))
+                continue;
+            if (!isFreshAtEntry && isUseOfWhatCodeOutsideReaches(use))
+                continue;
             if (std::optional<uint32_t> index = actionIndexOf(m_function, useLists, use))
                 addAction(use.block, *index, object, ActionKind::Event);
             else
@@ -187,6 +243,25 @@ UseEffectHistory::UseEffectHistory(FunctionAnalyses& analyses, const UseEffectHi
         if (escape.liveInstancesOf(object) != LiveInstances::AtMostOne || allocation.placement != ValuePlacement::InBlock || isSkipped(allocation.block))
             continue;
         addAction(allocation.block, allocation.index, object, ActionKind::Reset);
+    }
+
+    if (options.uses.isEmpty() && !escape.allocationsThatMayGoOutOfSight().isEmpty()) {
+        Vector<uint64_t, 8> mayGoOutOfSight;
+        mayGoOutOfSight.fill(0, m_wordsPerBlock);
+        for (size_t objectIndex : escape.allocationsThatMayGoOutOfSight()) {
+            if (!m_isUnknown.quickGet(objectIndex))
+                mayGoOutOfSight[wordIndexOf(ObjectID(objectIndex))] |= maskOf(ObjectID(objectIndex));
+        }
+        m_outOfSightAtEnd.fill(0, numberOfBlocks * m_wordsPerBlock);
+        for (BlockID block : m_cfg.reversePostOrder()) {
+            std::optional<std::span<const ObjectID>> inSight = escape.allocationsInSightAtEndOf(block);
+            if (!inSight || isSkipped(block))
+                continue;
+            std::span<uint64_t> outOfSight = m_outOfSightAtEnd.mutableSubspan(static_cast<size_t>(m_cfg.reversePostOrderIndex(block)) * m_wordsPerBlock, m_wordsPerBlock);
+            memcpySpan(outOfSight, mayGoOutOfSight.span());
+            for (ObjectID object : *inSight)
+                outOfSight[wordIndexOf(object)] &= ~maskOf(object);
+        }
     }
 
     AOT::sortInLine(pendingActions, { }, [](const PendingAction& pending) {
@@ -229,6 +304,11 @@ void UseEffectHistory::computeStateLeaving(BlockID block, Leaves leaves, std::sp
             break;
         }
     }
+    if (leaves == Leaves::ToHandler || m_outOfSightAtEnd.isEmpty())
+        return;
+    std::span<const uint64_t> outOfSight = m_outOfSightAtEnd.subspan(static_cast<size_t>(m_cfg.reversePostOrderIndex(block)) * m_wordsPerBlock, m_wordsPerBlock);
+    for (size_t word = 0; word < state.size(); ++word)
+        state[word] &= ~outOfSight[word];
 }
 
 void UseEffectHistory::computeHeads(StartsAt startsAt)
@@ -311,6 +391,27 @@ Occurrence UseEffectHistory::AtPoint::occurrenceOf(ObjectID object) const
             hasOccurred = std::prev(end)->kind == ActionKind::Event;
     }
     return hasOccurred ? Occurrence::MayHaveOccurred : Occurrence::HasNotOccurred;
+}
+
+void UseEffectHistory::AtPoint::addObjectsThatMayHaveOccurredTo(BitVector& result) const
+{
+    RELEASE_ASSERT(!m_isUnknown);
+    BitVector occurred;
+    occurred.ensureSize(m_history.m_numberOfObjects);
+    for (size_t word = 0; word < m_head.size(); ++word) {
+        for (uint64_t bits = m_head[word]; bits; bits &= bits - 1)
+            occurred.quickSet(word * bitsPerWord + std::countr_zero(bits));
+    }
+    for (size_t position = 0; position < m_actions.size();) {
+        ObjectID object = m_actions[position].object;
+        // The last action in front of the point decides.
+        for (; position < m_actions.size() && m_actions[position].object == object; ++position) {
+            if (m_actions[position].index < m_index)
+                occurred.quickSet(object.index(), m_actions[position].kind == ActionKind::Event);
+        }
+    }
+    result.merge(occurred);
+    result.merge(m_history.m_isUnknown);
 }
 
 auto UseEffectHistory::actionsOf(BlockID block) const -> std::span<const Action>

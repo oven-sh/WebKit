@@ -22,6 +22,12 @@ struct Type;
 
 Effects effectsOfCreatingPrototypeProperty(const Program&, const Type& functions);
 Effects effectsOfAllocatingWithPrototype(const Program&, LayoutID allocated);
+Effects effectsOfAllocatingWithPrototypeOfLayout(const Program&, LayoutID allocated);
+
+// The class of a constructor function begins with its first object. Until then a set of guards takes what it says of that class to speak of no object, so the first object may end the set.
+// A test of one class, or one that asks about the function itself, passes only once the class is there.
+constexpr MemoryLocation beginningOfClass(LayoutID classLayout) { return MemoryLocation::at(AbstractHeap::MemberGuards, classLayout.index(), 1); }
+Vector<LayoutID, 2> classesWhoseBeginningMayEnd(const Value& testOfMembers);
 
 enum class OperandDeclarer : uint8_t { Operation, Builtin };
 
@@ -114,6 +120,8 @@ enum class UsesAskedFor : uint8_t { All, AllButPassesToUserCode };
 
 OperandSummary summarizeOperand(const EffectContext&, const Function&, const Value& user, uint32_t operandIndex, UsesAskedFor = UsesAskedFor::All);
 OperandSummary summarizeOperand(const EffectContext&, const Function&, const Terminator& user, uint32_t operandIndex, UsesAskedFor = UsesAskedFor::All);
+// Whether the built-in keeps the argument itself, hands it back or hands it on, by what its overloads declare. A getter that a read of the argument runs may keep it all the same.
+Expected<bool> outlivesCallOf(const Program&, BuiltinID, uint32_t argumentIndex);
 OperandMemory memoryAccessedThrough(const EffectContext&, const Function&, const Value& user, uint32_t operandIndex, const EffectsOnEdges& effectsOfUser);
 
 enum class OperandConfinement : uint8_t { Unknown, WritesOnlyNamedOperands };

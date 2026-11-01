@@ -141,7 +141,7 @@ CompactEffects InternedLocationMasks::compress(const Effects& effects)
 {
     uint8_t flags = (effects.mayThrow ? CompactEffects::MayThrow : 0)
         | (effects.mayThrow.otherThanStackOverflow() ? CompactEffects::MayThrowOtherThanStackOverflow : 0)
-        | (effects.mayThrow.byRule() ? CompactEffects::MayThrowByRule : 0)
+        | (effects.mayThrow.isDeclaredByRule() ? CompactEffects::MayThrowByRule : 0)
         | (effects.mayCollect ? CompactEffects::MayCollect : 0)
         | (effects.mayCallUnknownCode ? CompactEffects::MayCallUnknownCode : 0)
         | (effects.maySuspend ? CompactEffects::MaySuspend : 0)
@@ -534,6 +534,12 @@ bool describeByRole(const Program& program, const Function& function, EffectDesc
     case FunctionRole::AllocatedThisVersion:
         description.addFunction(function.derivation.source);
         return true;
+    // The body of the source behind the object that it makes for `this`.
+    case FunctionRole::ConstructBody:
+        description.addFunction(function.derivation.source);
+        description.addOwn(declaredBoundOf(Opcode::GetConstructPrototype));
+        description.addOwn(declaredBoundOf(Opcode::NewObject));
+        return true;
     case FunctionRole::OutlinedBody:
         if (!isCallWithSharedArms(function))
             return false;
@@ -547,7 +553,6 @@ bool describeByRole(const Program& program, const Function& function, EffectDesc
     case FunctionRole::TableEntrypoint:
     case FunctionRole::TableLookup:
     case FunctionRole::GenericVersion:
-    case FunctionRole::ConstructBody:
     case FunctionRole::CallSiteVersion:
     case FunctionRole::CalleeVersion:
     case FunctionRole::CoroutineRamp:
@@ -564,21 +569,53 @@ bool describeByRole(const Program& program, const Function& function, EffectDesc
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// What the source does through a parameter that the version is handed too is said with that parameter. The rest of what a call of the source does happens elsewhere.
+static EffectsOnEdges resolveEffectsBesideParameters(const EffectContext& context, const Function& version, const EffectDescription& description)
+{
+    FunctionID sourceID = version.derivation.source;
+    bool namesSourceAlone = description.functions.size() == 1 && description.functions.first() == sourceID && !description.callsUnknownCode && !description.own.normal.maySuspend;
+    if (!namesSourceAlone || !context.program.at(sourceID).hasBody())
+        return resolveEffects(context, description);
+
+    CalleeSummary source(context, sourceID);
+    BitVector handedOn;
+    const auto& parameterMap = version.derivation.parameterMap;
+    for (size_t index = 0; index < std::min<size_t>(version.numberOfEntryParameters(), parameterMap.size()); ++index) {
+        if (std::optional<uint32_t> original = parameterMap[index].original)
+            handedOn.set(*original);
+    }
+    EffectsOnEdges effects = description.own;
+    effects.merge(source->elsewhere());
+    for (uint32_t original = 0; original < source->numberOfParameters(); ++original) {
+        if (handedOn.get(original))
+            continue;
+        OperandMemory memory = source->memory(original);
+        effects.normal.reads.merge(memory.reads);
+        effects.normal.writes.merge(memory.writes);
+    }
+    if (effects.mayThrow())
+        effects.handler.merge(effects.normal);
+    return effects;
+}
+
 static FunctionSummary summarizeByRole(const EffectContext& context, const Function& function, const EffectDescription& description)
 {
-    EffectsOnEdges effects = resolveEffects(context, description);
+    bool hasBodyOfSource = function.role == FunctionRole::AllocatedThisVersion || function.role == FunctionRole::ConstructBody;
+    // Only what judges finished code is told: a guard that was kept across the call of the source stands across the call of its version. Told to the passes it moves code.
+    bool judgesFinishedCode = context.untestedStorage == UntestedStorage::LeavesReadKnown;
+    EffectsOnEdges effects = hasBodyOfSource && judgesFinishedCode ? resolveEffectsBesideParameters(context, function, description) : resolveEffects(context, description);
     effects.normal.reads.merge(LocationMasks { perObjectHeaps });
     if (effects.mayThrow())
         effects.handler.reads.merge(LocationMasks { perObjectHeaps });
 
     ParameterSummary parameter;
-    if (function.role != FunctionRole::AllocatedThisVersion)
+    if (!hasBodyOfSource)
         parameter.memory.writes = effects.onAnyEdge().writes.restrictedTo(perObjectHeaps);
     Vector<ParameterSummary> parameters(function.numberOfEntryParameters(), [&](size_t) {
         return parameter;
     });
     // The body is the source's: it reads and writes through a parameter what the source does. What the source does to the object it creates is in no summary.
-    if (function.role == FunctionRole::AllocatedThisVersion) {
+    if (hasBodyOfSource) {
         CalleeSummary source(context, function.derivation.source);
         const auto& parameterMap = function.derivation.parameterMap;
         for (size_t index = 0; index < std::min<size_t>(parameters.size(), parameterMap.size()); ++index) {

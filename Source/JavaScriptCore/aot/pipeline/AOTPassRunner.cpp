@@ -91,7 +91,7 @@ static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::ResolveAccesses, { .opcodes = accessesToResolve } },
     { PassID::SplitUnions, { .opcodes = accessesByNameOrKey } },
     { PassID::PlaceTypeTests, { .opcodes = opcodesPlaceTypeTestsLooksFor } },
-    { PassID::ExpandIteration, { .opcodes = expandedOpcodes } },
+    { PassID::ExpandIteration, { .opcodes = opcodesExpandIterationLooksFor } },
     { PassID::ExpandProvenIterations, { .opcodes = iterationOpcodes } },
     { PassID::ExpandOwnKeys, { .opcodes = ownKeyExpansionOpcodes } },
     { PassID::SelectTypedResults, { .opcodes = typedResultCallOpcodes } },
@@ -469,6 +469,7 @@ struct OperationsThatPassAnswersFor {
     bool isEveryOperation;
     TakesHandlersAway takesHandlersAway;
     OpcodeSet opcodes;
+    OpcodeSet opcodesThatMayLoseTheirHandler { };
 };
 
 // An operation that may throw or run code of the program goes where ObservableOperations says that it does neither, where the pass names its reason at the place (explainOperationThatGoes),
@@ -477,33 +478,31 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::AddGenericVersion, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::ApplyFlowResults, InPlaceOfOperation::NothingBecauseNothingComesHere, true, TakesHandlersAway::No, { } },
     { PassID::CallModules, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
-    { PassID::ConvertCountersToIntegers, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::DeferInitializers, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
-    { PassID::EliminateTailRecursion, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::EliminateTailRecursion, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::CallDirect } },
     { PassID::ExpandIteration, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
-    { PassID::ExpandOwnKeys, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::ExpandOwnKeys, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, opcodesOfWalks },
     { PassID::ExpandProvenIterations, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
     { PassID::InlineCalls, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
-    { PassID::InlineHeads, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
+    { PassID::InlineHeads, InPlaceOfOperation::TheSameOperationElsewhere, false, TakesHandlersAway::No, { Opcode::CallDirect } },
     { PassID::OutlineColdOperations, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::PlaceTypeTests, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
-    { PassID::PlanArrayCapacities, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::PlanArrayCapacities, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::AppendElement, Opcode::AppendElements, Opcode::AppendHole, Opcode::AppendMembers, Opcode::CallBuiltin, Opcode::ElemSet, Opcode::PutArrayElement } },
     { PassID::RemoveRedundantHandlers, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
-    { PassID::RemoveUnreachableFunctions, InPlaceOfOperation::NothingBecauseNothingComesHere, true, TakesHandlersAway::No, { } },
-    { PassID::ResolveAccesses, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
-    { PassID::ResolveAwaitedCalls, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
-    { PassID::ResolveBuiltins, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::ResolveAccesses, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, accessesToResolve },
+    { PassID::ResolveAwaitedCalls, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::AwaitBySavingFrame, Opcode::CallBuiltin, Opcode::CallDirect } },
+    { PassID::ResolveBuiltins, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, operationsResolvedToBuiltins },
     { PassID::ResolveCalls, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
-    { PassID::RetypeValues, InPlaceOfOperation::NothingBecauseNothingComesHere, true, TakesHandlersAway::No, { } },
-    { PassID::Select, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
     { PassID::SeparateUnlikelyLoopPaths, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
-    { PassID::SinkAllocations, InPlaceOfOperation::NothingByProofOfThePass, true, TakesHandlersAway::No, { } },
     { PassID::SplitBehindEntryChecks, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
-    { PassID::MoveGeneratorFramesToHeap, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
+    { PassID::MoveGeneratorFramesToHeap, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::Yes, { Opcode::YieldBySavingFrame } },
     { PassID::SplitCoroutines, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
-    { PassID::SplitFreshResults, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
-    { PassID::SplitUnions, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
-    { PassID::StartGeneratorsAtFirstStep, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::SplitFreshResults, InPlaceOfOperation::TheSameOperationElsewhere, false, TakesHandlersAway::No, { Opcode::CallDirect } },
+    { PassID::StartGeneratorsAtFirstStep, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::CallDirect } },
+    // What it lets go stores to, reads from or casts an object or a list that it holds itself, and that nobody else has seen.
+    { PassID::SinkAllocations, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::AppendElement, Opcode::AppendElements, Opcode::AppendHole, Opcode::AppendSpread, Opcode::CheckInitialized, Opcode::CopyDataProperties, Opcode::DestructureIterable, Opcode::ElemGet, Opcode::ElemSet, Opcode::PrivateDefine, Opcode::PrivateSet, Opcode::PropDefine, Opcode::PropGet, Opcode::PropSet, Opcode::PutArrayElement, Opcode::RequireObjectCoercible, Opcode::SetLiteralPrototype } },
+    // A rule takes the members of the group that it has matched out of their blocks. At its end the pass takes the polls of loops out of handlers, as RemoveRedundantHandlers does.
+    { PassID::Select, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::AwaitBySavingFrame, Opcode::CallBuiltin, Opcode::DefineGetter, Opcode::DefineMethod, Opcode::DefineSetter, Opcode::PropDefine, Opcode::PropGet, Opcode::PropSet, Opcode::SetLiteralPrototype, Opcode::Strcat, Opcode::StringBuilderAppend }, { Opcode::LoopHint } },
     { PassID::CreateStringBuilders, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::Add, Opcode::Strcat } },
     { PassID::DeferClosuresInFields, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Call } },
     { PassID::DeferDefinitions, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CheckInitialized, Opcode::DefineMethod, Opcode::NewClass } },
@@ -511,11 +510,39 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::EmbedConstantCollections, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CallBuiltin, Opcode::PropDefine } },
     { PassID::FoldConstants, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::PropHas } },
     { PassID::FuseConcatenations, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::Add, Opcode::Strcat } },
+    { PassID::HoistTestsIntoPredecessors, InPlaceOfOperation::TheSameOperationElsewhere, false, TakesHandlersAway::No, { Opcode::Less } },
+    { PassID::PlanCollectionCapacities, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::CallBuiltin } },
+    { PassID::RemoveUnreadExports, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Call, Opcode::Construct } },
+    { PassID::SelectTypedResults, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::CallBuiltin, Opcode::Await, Opcode::AwaitBySavingFrame } },
     { PassID::GuardTaintedPositions, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::ElemGet, Opcode::PropHas } },
     { PassID::RemoveUnusedParameters, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Add } },
     { PassID::SimplifyCasts, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CheckInitialized, Opcode::RequireObject, Opcode::RequireObjectCoercible } },
     { PassID::SimplifyBuiltinCalls, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CallBuiltin, Opcode::AwaitBySavingFrame } },
 };
+
+// The sabotages that show whether a row of the table is narrow: behind the pass, an operation whose result nobody reads is taken out of its block.
+static OpcodeSet operationsThatSabotageDrops(const BuildContext& build)
+{
+    if (build.isSabotaged(Sabotage::PassesDropCalls))
+        return { Opcode::Call, Opcode::CallDirect };
+    if (build.isSabotaged(Sabotage::PassesDropStores))
+        return { Opcode::PropSet };
+    return { };
+}
+
+static PassOutcome dropOperationThatNobodyReads(Function& function, FunctionAnalyses& analyses, OpcodeSet dropped)
+{
+    for (uint32_t index = 0; index < function.blocks.size(); ++index) {
+        for (ValueID id : function.at(BlockID(index)).values) {
+            if (!dropped.contains(function.at(id).opcode) || analyses.useLists().useCount(id))
+                continue;
+            function.edit(BlockID(index), BlockEdit::Values).values.removeFirst(id);
+            analyses.didChangeValues();
+            return PassOutcome::Changed;
+        }
+    }
+    return PassOutcome::Unchanged;
+}
 
 // A pass that runs inside another one, on a function that the other has edited, answers for the other one too.
 static String findOperationNobodyAnswersFor(PassID id, const Vector<OperationThatWent>& operations, ReasonsForOperationsThatWent* listenerOutside = nullptr)
@@ -526,7 +553,7 @@ static String findOperationNobodyAnswersFor(PassID id, const Vector<OperationTha
             entry = &candidate;
     }
     for (const OperationThatWent& operation : operations) {
-        bool isAnswered = entry && (operation.how == OperationThatWent::How::LostItsHandler ? entry->takesHandlersAway == TakesHandlersAway::Yes : entry->isEveryOperation || entry->opcodes.contains(operation.opcode));
+        bool isAnswered = entry && (operation.how == OperationThatWent::How::LostItsHandler ? entry->takesHandlersAway == TakesHandlersAway::Yes || entry->opcodesThatMayLoseTheirHandler.contains(operation.opcode) : entry->isEveryOperation || entry->opcodes.contains(operation.opcode));
         if (!isAnswered)
             return describe(operation);
         if (listenerOutside)
@@ -606,11 +633,24 @@ void PassRunner::endProgramPass(PassID id, const Program& program, PassTimer tim
             function.setListenerForOperationsThatGo(nullptr);
         EffectSummaries noSummaries;
         size_t count = std::min(program.functions.size(), timer.bodiesBefore->functions.size());
-        for (size_t index = 0; index < count && outcome == PassOutcome::Changed; ++index) {
-            String problem = findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ program, noSummaries }, timer.bodiesBefore->functions[index], program.functions[index], timer.bodiesBefore->reasons[index]));
+        // The program is not the runner's to edit: the sabotage shows the check a copy of the first body that has such an operation, without it.
+        OpcodeSet dropped = operationsThatSabotageDrops(m_build);
+        std::optional<Function> sabotaged;
+        for (size_t index = 0; index < count && (outcome == PassOutcome::Changed || !dropped.isEmpty()); ++index) {
+            const Function* after = &program.functions[index];
+            if (!dropped.isEmpty() && !sabotaged && after->hasBody()) [[unlikely]] {
+                Function copy = *after;
+                FunctionAnalyses analyses(AnalysisContext { m_build, program, nullptr, nullptr, FunctionID(index) }, copy);
+                if (dropOperationThatNobodyReads(copy, analyses, dropped) == PassOutcome::Changed)
+                    after = &sabotaged.emplace(WTF::move(copy));
+            }
+            String problem = findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ program, noSummaries }, timer.bodiesBefore->functions[index], *after, timer.bodiesBefore->reasons[index]));
             if (problem.isNull())
                 continue;
-            m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = findFunctionAsRead(&program, FunctionID(index)), .pass = id, .detail = problem });
+            InternalError failure = InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = findFunctionAsRead(&program, FunctionID(index)), .pass = id, .detail = problem };
+            if (keepFailedVerification(failure, failure.kind))
+                continue;
+            m_build.diagnostics().add(failure);
             break;
         }
     }
@@ -636,7 +676,29 @@ static String describeError(const InternalError& error, const Function& verified
         if (error.value.index() < verifiedBody.values.size())
             description.append(" ("_s, nameOf(verifiedBody.at(error.value).opcode), ')');
     }
+    if (!error.detail.isEmpty())
+        description.append("; "_s, error.detail);
     return description.toString();
+}
+
+bool PassRunner::keepFailedVerification(const InternalError& failure, InternalErrorKind found) const
+{
+    if (!m_build.options().keepsGoingBehindFailedVerifications)
+        return false;
+    m_build.diagnostics().keepFirstFailureOfFunction(failure, found);
+    return true;
+}
+
+void PassRunner::keepFailedVerifications(PassID pass, const Program& program, Vector<InternalError>&& errors) const
+{
+    for (const InternalError& error : errors) {
+        // What is wrong with a record of the program is wrong for every pass to come.
+        if (!error.function) {
+            m_build.diagnostics().add(error);
+            continue;
+        }
+        keepFailedVerification(InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = findFunctionAsRead(&program, error.function), .pass = pass, .detail = describeError(error, program.at(error.function)) }, error.kind);
+    }
 }
 
 void PassRunner::verifyAfterProgramPass(const PassDescriptor& descriptor, const Program& program) const
@@ -662,6 +724,17 @@ void PassRunner::verifyAfterProgramPass(const PassDescriptor& descriptor, const 
     VerifierInputs inputs = m_verifierInputs;
     inputs.isOptimizing = form == IRForm::Prepared;
     inputs.effects = &effects;
+    if (m_build.options().keepsGoingBehindFailedVerifications) {
+        Vector<InternalError> errors;
+        {
+            Diagnostics::Interception interception(m_build.diagnostics());
+            if (verifyProgram(program, form, m_build, inputs))
+                return;
+            errors = interception.take();
+        }
+        keepFailedVerifications(descriptor.id, program, WTF::move(errors));
+        return;
+    }
     if (verifyProgram(program, form, m_build, inputs))
         return;
     InternalError failure { .kind = InternalErrorKind::VerificationFailedAfterPass, .pass = descriptor.id };
@@ -770,6 +843,30 @@ static String findEditWithoutEntry(const Function& before, const Function& after
         OptionSet<BlockEdit> edits = index < before.blocks.size() ? editsBetween(before.blocks[index], after.blocks[index]) : OptionSet<BlockEdit> { BlockEdit::Added };
         if (!editsOfBlocks[index].containsAll(edits))
             return makeString("b"_s, index, " was edited ("_s, edits.toRaw(), ") and the log says "_s, editsOfBlocks[index].toRaw());
+    }
+    return { };
+}
+
+static bool isSameButForScopeOfProof(const Value& before, const Value& after)
+{
+    if (before.opcode != Opcode::AssumeType || after.opcode != Opcode::AssumeType)
+        return false;
+    Value settled = before;
+    settled.setIsBehindChecks(after.isBehindChecks());
+    return !editsBetween(settled, after);
+}
+
+static String findEditOfIdleRun(const Function& before, const Function& after)
+{
+    if (after.blocks.size() != before.blocks.size())
+        return makeString("the pass says that it changed nothing, and the function has "_s, after.blocks.size(), " blocks where it had "_s, before.blocks.size());
+    for (size_t index = 0; index < before.blocks.size(); ++index) {
+        if (OptionSet<BlockEdit> edits = editsBetween(before.blocks[index], after.blocks[index]))
+            return makeString("the pass says that it changed nothing, and b"_s, index, " was edited ("_s, edits.toRaw(), ')');
+    }
+    for (size_t index = 0; index < before.values.size(); ++index) {
+        if (OptionSet<ValueEdit> edits = editsBetween(before.values[index], after.values[index]); edits && !isSameButForScopeOfProof(before.values[index], after.values[index]))
+            return makeString("the pass says that it changed nothing, and v"_s, index, " was edited ("_s, edits.toRaw(), ')');
     }
     return { };
 }
@@ -884,8 +981,11 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
             tieCasts();
             if (m_build.options().verifiesProgram) [[unlikely]] {
                 if (Vector<CastAwayFromItsValue, 4> found = findCastsAwayFromTheirValues(context.program, context.function); !found.isEmpty()) {
-                    m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::CastWithoutFact, .function = context.id, .block = found[0].block, .value = found[0].cast, .pass = id });
-                    run.isStopped = true;
+                    InternalError failure = InternalError { .kind = InternalErrorKind::CastWithoutFact, .function = context.id, .block = found[0].block, .value = found[0].cast, .pass = id };
+                    if (!keepFailedVerification(failure, failure.kind)) {
+                        m_build.diagnostics().add(failure);
+                        run.isStopped = true;
+                    }
                     return PassOutcome::Unchanged;
                 }
             }
@@ -924,12 +1024,19 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
     }
     currentWork().setPass(id);
     PassOutcome outcome = descriptor.run(context);
+    if (m_build.recordedOptions().sabotage) [[unlikely]]
+        outcome |= dropOperationThatNobodyReads(context.function, context.analyses, operationsThatSabotageDrops(m_build));
+    if (m_build.isSabotaged(Sabotage::PassesChangeNothing)) [[unlikely]]
+        outcome = PassOutcome::Unchanged;
     if (reasons) [[unlikely]]
         context.function.setListenerForOperationsThatGo(reasons->outer());
     auto stopWhereThereIsOne = [&](const String& problem) {
         if (problem.isNull())
             return;
-        m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = run.functionAsRead, .pass = id, .detail = problem });
+        InternalError failure { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = run.functionAsRead, .pass = id, .detail = problem };
+        if (keepFailedVerification(failure, failure.kind))
+            return;
+        m_build.diagnostics().add(failure);
         run.isStopped = true;
     };
     if (m_build.options().checksThatUsedValuesAreListed && outcome == PassOutcome::Changed) [[unlikely]]
@@ -938,6 +1045,8 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
         stopWhereThereIsOne(findEditWithoutEntry(*functionBeforeRun, context.function, context.changes, logBeforeRun));
         if (outcome == PassOutcome::Changed)
             stopWhereThereIsOne(findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ context.program, context.inputs.effects }, *functionBeforeRun, context.function, *reasons), &*reasons));
+        else
+            stopWhereThereIsOne(findEditOfIdleRun(*functionBeforeRun, context.function));
     }
     if (isTimed) {
         if (outcome == PassOutcome::Unchanged && !context.analyses.computed().containsAll(analysesBefore))
@@ -1005,6 +1114,8 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
 {
     if (!m_build.options().verifiesAfterEveryPass || isVerifiedElsewhere(context)) [[likely]]
         return;
+    if (hasFailedVerificationBefore(run.functionAsRead))
+        return;
     IRForm form = descriptor.produces.value_or(context.program.form());
     VerifierInputs inputs = m_verifierInputs;
     inputs.isOptimizing = form == IRForm::Prepared;
@@ -1012,7 +1123,6 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
         inputs.effects = &context.inputs.effects;
     // A program pass that is given no summaries simplifies functions which the Optimize loop has left: their guards stand across calls that only the summaries call harmless.
     inputs.cannotJudgeGuards = context.inputs.effects.isEmpty() && m_build.isEnabled(PassID::ComputeEffectSummaries, FunctionID());
-    inputs.otherFunctionsMayChange = true;
     const uint32_t numberOfEdits = context.function.numberOfEdits();
     const bool isAsVerified = run.verified && run.verified->numberOfEdits == numberOfEdits && run.verified->form == form && run.verified->cannotJudgeGuards == inputs.cannotJudgeGuards;
     if (isAsVerified && run.verified->analyses == context.analyses.computed())
@@ -1048,6 +1158,8 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
 
     // A listing of many errors is cut short, so the line that names the pass also says what the verifier found.
     InternalError failure { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = run.functionAsRead, .pass = descriptor.id, .detail = describeError(errors.first(), context.function) };
+    if (keepFailedVerification(failure, errors.first().kind))
+        return;
     for (InternalError& error : errors)
         error.pass = descriptor.id;
     m_build.diagnostics().append(WTF::move(errors));
@@ -1089,7 +1201,27 @@ static String describeFirstDifference(const Function& function, const Function& 
             out.print(" gets another type");
         if (before.expected().predicted() != after.expected().predicted())
             out.print(" is expected to be of another type");
-        break;
+        return out.toString();
+    }
+    for (size_t index = 0; index < function.values.size(); ++index) {
+        if (std::ranges::equal(function.values[index].operands(), changed.values[index].operands()))
+            continue;
+        out.print("; v", index, " (", nameOf(function.values[index].opcode), ") gets other operands");
+        return out.toString();
+    }
+    for (size_t index = 0; index < function.blocks.size(); ++index) {
+        const BlockValues& before = function.blocks[index].values;
+        const BlockValues& after = changed.blocks[index].values;
+        if (std::ranges::equal(before, after))
+            continue;
+        for (ValueID id : before) {
+            if (after.contains(id))
+                continue;
+            out.print("; v", id.index(), " (", nameOf(function.at(id).opcode), ") leaves b", index);
+            return out.toString();
+        }
+        out.print("; b", index, " holds other values");
+        return out.toString();
     }
     return out.toString();
 }
@@ -1098,6 +1230,8 @@ static String describeFirstDifference(const Function& function, const Function& 
 void PassRunner::verifySkippedFunctionPass(const PassDescriptor& descriptor, const FunctionPassContext& context, ScheduleRun& run) const
 {
     if (!m_build.options().verifiesAfterEveryPass || isVerifiedElsewhere(context)) [[likely]]
+        return;
+    if (hasFailedVerificationBefore(run.functionAsRead))
         return;
     Function copy(context.function);
     FunctionAnalyses analyses(context.analyses.context(), copy);
@@ -1109,7 +1243,10 @@ void PassRunner::verifySkippedFunctionPass(const PassDescriptor& descriptor, con
         return;
 
     const PassSet& changers = run.notes->changersSinceLastRun[static_cast<unsigned>(descriptor.id)];
-    m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::SkippedPassChangesFunction, .function = run.functionAsRead, .pass = descriptor.id, .detail = makeString(describeChangers(changers), describeFirstDifference(context.function, copy)) });
+    InternalError failure = InternalError { .kind = InternalErrorKind::SkippedPassChangesFunction, .function = run.functionAsRead, .pass = descriptor.id, .detail = makeString(describeChangers(changers), describeFirstDifference(context.function, copy)) };
+    if (keepFailedVerification(failure, failure.kind))
+        return;
+    m_build.diagnostics().add(failure);
     run.isStopped = true;
 }
 

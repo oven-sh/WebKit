@@ -64,6 +64,11 @@ private:
     ValueSetMaker& m_maker;
 };
 
+struct ValueFlowSolutionForTests {
+    std::optional<uint32_t> seedOfSchedule;
+    bool looksAtEdgesLetGo { false };
+};
+
 class ValueFlowSolution {
     WTF_MAKE_NONCOPYABLE(ValueFlowSolution);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowSolution);
@@ -72,7 +77,8 @@ public:
     enum class WaysOfValues : uint8_t { AreAskedFor, AreNotAskedFor };
     enum class CoveredMembers : uint8_t { StayListed, AreLeftOut };
     enum class Reports : uint8_t { GoToBuild, AreLeftOut };
-    ValueFlowSolution(Program&, BuildContext&, ValueFlowSolver::Rounds = ValueFlowSolver::Rounds::Due, Witnesses = Witnesses::None, uint32_t mostRounds = UINT32_MAX, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut = { }, WaysOfValues = WaysOfValues::AreAskedFor, CoveredMembers = CoveredMembers::StayListed, Reports = Reports::GoToBuild);
+    using ForTests = ValueFlowSolutionForTests;
+    ValueFlowSolution(Program&, BuildContext&, ValueFlowSolver::Rounds = ValueFlowSolver::Rounds::Due, Witnesses = Witnesses::None, uint32_t mostRounds = UINT32_MAX, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut = { }, WaysOfValues = WaysOfValues::AreAskedFor, CoveredMembers = CoveredMembers::StayListed, Reports = Reports::GoToBuild, ForTests = { });
     ~ValueFlowSolution();
 
     const Program& program() const { return m_program; }

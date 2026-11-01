@@ -102,6 +102,8 @@ public:
     }
 
     size_t size() const { return m_bytes.size(); }
+    // Of size(): what was skipped to align what followed. It depends on what stands in front, not on what is appended.
+    size_t paddingBytes() const { return m_paddingBytes; }
 
     Vector<uint8_t> take()
     {
@@ -122,6 +124,7 @@ private:
             return std::nullopt;
         growSectionTo(m_bytes, offset + size);
         zeroSpan(m_bytes.mutableSpan().subspan(end));
+        m_paddingBytes += offset - end;
         return static_cast<uint32_t>(offset);
     }
 
@@ -136,6 +139,7 @@ private:
     BuildContext& m_build;
     Vector<uint8_t> m_bytes;
     UncheckedKeyHashMap<uint64_t, Vector<std::pair<uint32_t, uint32_t>, 1>> m_appended;
+    size_t m_paddingBytes { 0 };
     bool m_didOverflow { false };
 };
 

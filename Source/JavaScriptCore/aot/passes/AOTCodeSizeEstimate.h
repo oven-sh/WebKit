@@ -20,6 +20,7 @@ struct Value;
 unsigned estimatedCodeBytes(const Program&, const Function&, const Value&);
 unsigned estimatedCodeBytes(const Terminator&);
 unsigned estimatedDirectCallBytes(unsigned numberOfOperands);
+unsigned estimatedSlotAccessBytes();
 unsigned estimatedCodeBytes(const Program&, const Function&, const Block&);
 
 // `{ ...first, ...second }`: the CopyDataProperties right behind a CopyObject that copies all that its source holds into the copy of all that the first holds.

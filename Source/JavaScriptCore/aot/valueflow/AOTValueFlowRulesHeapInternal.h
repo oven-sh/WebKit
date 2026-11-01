@@ -134,6 +134,17 @@ private:
     ClimbingSet escapedAmong(ClimbingSet objects) { return m_context.valueWithin(objects, ValueFlowProgramNodes::escaped()); }
     ClimbingSet lostAmong(ClimbingSet objects) { return m_context.valueWithin(objects, ValueFlowProgramNodes::lost()); }
     bool hasEscaped(ClimbingSet objects) { return m_context.holdsAnyOf(objects, ValueFlowProgramNodes::escaped()); }
+    bool isAnswerThatNoReadLists(ClimbingSet objects) { return m_context.holdsAnyOf(objects, m_context.nodes().ofHost(ValueFlowHostNode::AnswersThatNoReadLists)); }
+    void noteAnswersThatNoReadLists(const Members&);
+    void noteAnswersOfReadUnderUnknownKey(ValueFlowObjectID holder, bool isReceiver);
+    bool answersUnknownObjectUnderUnknownKeys(ValueFlowObjectID holder) { return isNativeModuleThatNobodyNames(holder) || m_builtins.canonicalID(m_universe.builtinOf(holder)) == Builtins::Bun; }
+    bool mayBeAnsweredWithoutBeingListed(BuiltinID member) const { return isObjectKind(m_builtins.at(member).kind) && m_builtins.at(member).kind != BuiltinKind::Prototype; }
+    bool mayBeReachedThroughUnknownObject(ClimbingSet objects)
+    {
+        if (hasEscaped(objects))
+            return true;
+        return isHostFlagRaised(m_context, ValueFlowHostNode::ObjectNobodyKnowsIsWritten) && (m_context.meet(objects, m_tables.classes()) || isAnswerThatNoReadLists(objects));
+    }
     bool hasBeenLost(ClimbingSet objects) { return m_context.holdsAnyOf(objects, ValueFlowProgramNodes::lost()); }
     bool hostNodeHoldsUnknownObject(ValueFlowHostNode node, std::optional<bool>& answer)
     {
@@ -180,11 +191,20 @@ private:
     void answerBoolean() { add(m_statement.result, m_tables.booleanKinds()); }
     bool holdsAnything(ClimbingSet set) const { return m_context.meet(set, ValueSets::anything); }
     bool holdsAnything(ValueFlowNodeID node) { return m_context.holdsAnything(node); }
-    ValueFlowNodeID readWhereWritten(ClimbingSet objects, ValueFlowName name)
+    ValueFlowNodeID readWhereWritten(ClimbingSet objects, ValueFlowName name, ValueFlowRuleContext::ReadUse use = ValueFlowRuleContext::ReadUse::Any)
     {
         if (m_asksWithoutNodes && !m_context.mayFindSomethingWritten(objects, name.kind))
             return { };
-        return m_context.readWhatWasWritten(objects, name);
+        return m_context.readWhatWasWritten(objects, name, use);
+    }
+    template<typename Functor>
+    void forEachNodeOfGettersLaidUnder(ClimbingSet objects, const HeapKey& key, const Functor& functor)
+    {
+        functor(readWhereWritten(objects, foundName(key, HeapPropertyPart::Getter), ValueFlowRuleContext::ReadUse::OutsideEnumerations));
+        if (key.keyClass != HeapKeyClass::Name || !isHostFlagRaised(m_context, ValueFlowHostNode::GettersAreFoundUnderNamesOfEnumerations))
+            return;
+        if (ValueFlowNodeID sources = readWhereWritten(objects, gettersCopiedFromName))
+            functor(m_context.lookup(known(m_context.valueOf(sources)), foundName(key, HeapPropertyPart::Value)));
     }
     ClimbingSet valueOfNodeIfAny(ValueFlowNodeID node) { return node ? m_context.valueOf(node) : ClimbingSet(); }
 
@@ -209,11 +229,14 @@ private:
     HeapChain chainThatGoesUpFrom(ClimbingSet receivers, const HeapKey&);
     HeapChain chainWithCopiesThatReach(const HeapKey&, ClimbingSet receivers);
     bool mayInheritSetter(ClimbingSet objects);
+    bool mayRefuseStoreInSilence(ClimbingSet objects, const HeapKey&);
     ValueSetID holdersWithLockedLocationUnder(const HeapKey&) const;
     bool mayTakeMemberFromCopy(ClimbingSet holders, const HeapKey&);
     ValueSetID holdersOfUndeclaredPropertiesUnder(const HeapKey&);
     ValueSetID holdersWithMemberUnder(const HeapKey&) const;
     ValueFlowNodeID storedThroughUnknownObjectInto(ClimbingSet objects, ValueFlowName);
+    ValueFlowNodeID storedThroughUnknownObjectIntoObjectsWithinReach(ClimbingSet objects, ValueFlowName);
+    std::array<ValueFlowNodeID, 2> storedByStatementsThroughUnknownObjectInto(ClimbingSet objects, ValueFlowName);
     ValueFlowNodeID storedThroughUntrackedObjectInto(ClimbingSet objects, ValueFlowName);
     void forEachNodeStoredThroughPlaceholdersInto(ClimbingSet objects, ValueFlowName, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto&);
     bool isStoredThroughPlaceholdersInto(ClimbingSet objects, ValueFlowName name)
@@ -227,6 +250,7 @@ private:
     void forEachNodeReadByName(ValueFlowName, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto&);
     void letPrototypeObjectsOfLanguageEscape() { add(ValueFlowProgramNodes::escaped(), m_tables.prototypeObjectsOfLanguage()); }
     void appendPrototypeAtCreation(ValueFlowObjectID, Members&) const;
+    uint64_t prototypesAtCreationInOneWord(ValueFlowObjectID) const;
     ValueSetID prototypesAtCreationOf(ClimbingSet);
     ValueSetID findPrototypesAtCreationOf(ClimbingSet);
 
@@ -248,6 +272,7 @@ private:
     bool namesObjectOfAccess() const;
     bool findsOnGlobalObjectWhatStatementsStore(const HeapKey&) const;
     ClimbingSet accessorsFoundFrom(ClimbingSet start, const HeapKey&, HeapPropertyPart);
+    ClimbingSet settersOfProgramLaidAbove(ClimbingSet start, const HeapKey&);
     ClimbingSet gettersOfEnumerableProperties(ClimbingSet holders);
     // The images below have run first: what a preload of theirs has stored on the global object no statement of this program shows.
     bool holdsGlobalObjectOnlyWhatStatementsHaveStored() { return !m_context.refusedCode().hasImagesBelow && !doesUnseenCodeRun() && !m_context.holdsAnyOf(ClimbingSet(only(m_universe.objectOf(Builtins::ProcessDlopen))), m_context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)); }
@@ -282,6 +307,7 @@ private:
     bool endsAtPropertyOfCreation(ValueFlowObjectID receiver, const HeapKey&);
     ClimbingSet receiversThatLookPastPropertiesOfCreation(ClimbingSet receivers, const HeapKey&);
     ClimbingSet receiversBelowAccessorNobodyKnows(ClimbingSet start, const HeapKey&, HeapPropertyPart);
+    ClimbingSet objectsBelowWhatTheyWereCreatedBelow(ClimbingSet objects);
 
     void read(const ValueFlowOperand& object, const HeapKey&);
     void readOwn(ClimbingSet holders, ValueFlowName, ValueFlowNodeID result);
@@ -303,6 +329,7 @@ private:
     ClimbingSet builtinObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     void writeToListedObjects(ClimbingSet listed, ValueFlowName, const ValueFlowOperand& value);
     ClimbingSet unlockedObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
+    ClimbingSet builtinObjectsGivenByReadsUnderKeysNobodyKnows(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     ClimbingSet prototypeObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     ClimbingSet holdersOfReplaceableMemberThatUnknownObjectMayBe(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     // Bun stays listed beside the unknown object wherever it goes, so that a name read on it or on a copy of it is found. Anything else counts as done to Bun only where Bun is followed from a read under its name.
@@ -337,13 +364,17 @@ private:
     void copyProperties(const ValueFlowOperand& target, const ValueFlowOperand& source, CopiedProperties);
     bool readsRestArgumentOfInstance();
     bool readsKeyOrValueOfPair();
+    std::optional<ClimbingSet> objectsAndAllThatTheyInheritFrom(ClimbingSet);
     bool listsNamesOfEnumeration();
+    bool forEachNameHeldThatBeginsWith(StringID beginning, ClimbingSet receivers, const ScopedLambda<void(PropertyKeyID)>&);
     bool findsNoPropertyOfEngineUnderKeyBeginningWith(StringID beginning, ClimbingSet receivers);
     void readWhatNamesOfProgramMayHaveHidden(const HeapChain&, ValueFlowNodeID result, Members& getters);
     void readOwnPropertiesListedAbove(ClimbingSet objects, ValueFlowNodeID result, Members& getters);
     bool hasMemberOfHost(ValueFlowObjectID holder) const;
     enum class DefinedObject : bool { IsNew, MayHoldProperty };
-    void defineAsDescribed(const ValueFlowOperand& object, const HeapKey&, ClimbingSet descriptors, DefinedObject);
+    bool saysOnlyWhetherPrototypeOfFunctionIsWritable(const ValueFlowOperand& object, const HeapKey&, ClimbingSet descriptors);
+    void defineAsDescribed(const ValueFlowOperand& object, const HeapKey&, ClimbingSet descriptors, DefinedObject, bool gettersAreFoundByName = false);
+    bool definesGettersUnderNamesOfEnumeratedParameter(const ValueFlowOperand& object, const ValueFlowStatement* operation);
     void compareWithPropertyThatIsThere(const ValueFlowOperand& defined);
     void noteNameDefinedThroughObjectsNobodyFollows(const ValueFlowOperand& object, const HeapKey&);
     void changePrototype(ClimbingSet objects, const ValueFlowOperand& prototype);
@@ -509,8 +540,14 @@ void HeapRule::forEachStartOfLookup(ClimbingSet receivers, NOESCAPE const Invoca
 
 void HeapRule::forEachNodeStoredThroughPlaceholdersInto(ClimbingSet objects, ValueFlowName name, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto& functor)
 {
-    if (ValueFlowNodeID stored = storedThroughUnknownObjectInto(objects, name))
+    if (ValueFlowNodeID stored = storedThroughUnknownObjectIntoObjectsWithinReach(objects, name))
         functor(stored);
+    else {
+        for (ValueFlowNodeID stored : storedByStatementsThroughUnknownObjectInto(objects, name)) {
+            if (stored)
+                functor(stored);
+        }
+    }
     if (ValueFlowNodeID stored = storedThroughUntrackedObjectInto(objects, name))
         functor(stored);
 }

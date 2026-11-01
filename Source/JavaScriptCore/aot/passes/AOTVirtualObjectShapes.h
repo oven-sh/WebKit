@@ -79,6 +79,11 @@ public:
     bool hasUnprovenFields() const { return m_hasUnprovenFields; }
     bool refusesUnprovenValues() const { return m_refusesUnprovenValues; }
     void refuseUnprovenValues() { m_refusesUnprovenValues = true; }
+    // A store by name that would have waited for its test gave the object its value instead. That pays while the object is never built.
+    bool tookValueOfStoreThatWaits() const { return m_tookValueOfStoreThatWaits; }
+    void didTakeValueOfStoreThatWaits() { m_tookValueOfStoreThatWaits = true; }
+    bool letsStoresByNameWait() const { return m_letsStoresByNameWait; }
+    void letStoresByNameWait() { m_letsStoresByNameWait = true; }
     // A store has given the field a value that may be undefined or null, for which its slot has room beside the values of its type.
     bool mayHoldUndefinedOrNull(uint32_t field) const { return m_fieldsThatMayHoldUndefinedOrNull.get(field); }
     bool addFieldThatMayHoldUndefinedOrNull(uint32_t field) { return !m_fieldsThatMayHoldUndefinedOrNull.set(field); }
@@ -102,6 +107,8 @@ private:
     Vector<VirtualField, 8> m_fields;
     bool m_hasUnprovenFields { false };
     bool m_refusesUnprovenValues { false };
+    bool m_tookValueOfStoreThatWaits { false };
+    bool m_letsStoresByNameWait { false };
     BitVector m_fieldsThatMayHoldUndefinedOrNull;
     Vector<VirtualShape, 4> m_shapes;
     UncheckedKeyHashMap<uint64_t, Vector<uint32_t, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_shapesByHash;

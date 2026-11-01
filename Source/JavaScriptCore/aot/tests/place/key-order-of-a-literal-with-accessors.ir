@@ -1,0 +1,46 @@
+# hand({ first: 1, get second() { return 2 }, set third(value) {}, fourth: 4, fifth: 5 })   const later = { one: 1 }; hand(later); later.two = 2
+# The keys of a literal come in the sequence of its text, whoever creates them: the allocation, the run time for an accessor, a stub for a definition that goes by name because anybody may have changed the object's kind.
+# The image lists that one order, so the one object of such a literal takes every step inside it: nothing is added to the orders in the run, and no step is published.
+# Before, the order of the image ended in front of the first accessor, and each property behind it called operationAOTDidCreateFieldAt.
+# FORM: AsRead
+# RUN: place key-orders
+# RUN(RUNS): run-in-shell globalThis.hand = object => print(Object.keys(object).join());
+# CHECK: L0 orders=1: [1 3 4 2 0]
+# CHECK-NEXT: L1 orders=1: [0 1]
+# RUNS: first,second,third,fourth,fifth
+# RUNS-NEXT: one
+# RUNS-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="fifth" declared={type=anything}}, {key="first" declared={type=anything} flags=[IsRequired]}, {key="fourth" declared={type=anything}}, {key="second" declared={type=anything}}, {key="third" declared={type=anything}}]
+layout L1 fields=[{key="one" declared={type=anything} flags=[IsRequired]}, {key="two" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="hand" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[1]
+    v4 = NewClosure function=f1
+    DefineGetter v3, v4 key="second"
+    v6 = NewClosure function=f2
+    DefineSetter v3, v6 key="third"
+    v8 = Integer integer=4
+    PropDefine v3, v8 key="fourth"
+    v10 = Integer integer=5
+    PropDefine v3, v10 key="fifth"
+    v12 = FinishObject v3
+    v13 = Call v1, -, v12
+    v14 = NewObject -, v2 layout=L1 fields=[0]
+    v15 = FinishObject v14
+    v16 = Call v1, -, v15
+    v17 = Integer integer=2
+    PropSet v15, v17 key="two" mode=Strict
+    Return
+}
+function f1 name="second" results=[{type=anything}] {
+    v0 = Integer integer=2
+    Return v0
+}
+function f2 name="third" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}

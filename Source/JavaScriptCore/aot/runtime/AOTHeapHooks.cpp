@@ -36,6 +36,8 @@
 #include <algorithm>
 #include <span>
 #include <type_traits>
+
+extern "C" void Bun__didFinishFirstCollectionOfCompiledProgram();
 #include <wtf/DataLog.h>
 #include <wtf/Locker.h>
 #include <wtf/StdLibExtras.h>
@@ -162,6 +164,8 @@ void finalize(VM& vm, CollectionScope scope, uint64_t phase)
     state.caches->finalize(vm, scope, validation);
     for (Instance* instance : state.instances)
         instance->state->caches->finalize(vm, scope, validation);
+    if (!std::exchange(state.didFinishCollection, true))
+        Bun__didFinishFirstCollectionOfCompiledProgram();
 }
 
 void didChangeBarrierThreshold(VM& vm, unsigned threshold, bool mutatorShouldBeFenced)

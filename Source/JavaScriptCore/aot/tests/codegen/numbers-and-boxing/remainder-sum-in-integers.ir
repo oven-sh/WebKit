@@ -1,0 +1,137 @@
+# The remainder of whole numbers by a divisor that may be zero: zero goes to a rare arm, in front of the loop where the divisor stays the same. What is left is one division, and the sum that a list of 32-bit numbers takes is one 32-bit addition.
+# -- source: remainder-sum-in-integers.js
+# function sum(u, n) {
+#   const a = new Int32Array(4);
+#   for (let j = 0; j < n; j++) a[1] = a[1] + (j % u);
+#   return a[1];
+# }
+# print(String(sum(id(40) | 0, id(1000) | 0)));
+# print(String(sum(id(0) | 0, id(1000) | 0)));
+# print(String(sum(id(-7) | 0, id(1000) | 0)));
+# -- end of source
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+# CHECK: function
+# CHECK: Int32 {{*}} = Mod({{*}}:Mod)
+# CHECK-NEXT: Int32 {{*}} = Add({{*}}:PutTypedArrayElement)
+# CHECK-NEXT: Void {{*}} = Store({{*}}Writes:TypedArrayElements
+# RUN(RUNS): run-in-shell
+# RUNS: 19500
+# RUNS-NEXT: 0
+# RUNS-NEXT: 2997
+# RUNS-NEXT: exited with 0
+
+module m0 path="a-remainder-added-to-an-element-of-whole-numbers.js" displayPath="a-remainder-added-to-an-element-of-whole-numbers.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = Builtin builtin=GlobalThis @122
+    v3 = PropGet v2 key="print" [isFreeName] @122
+    v4 = Builtin builtin=String @128
+    v5 = Builtin builtin=GlobalThis @139
+    v6 = PropGet v5 key="id" [isFreeName] @139
+    v7 = Integer integer=40 @142
+    v8 = Call v6, -, v7 calleeName="id" @139
+    v9 = Integer @148
+    v10 = BitOr v8, v9 @139
+    v11 = Builtin builtin=GlobalThis @151
+    v12 = PropGet v11 key="id" [isFreeName] @151
+    v13 = Integer integer=1000 @154
+    v14 = Call v12, -, v13 calleeName="id" @151
+    v15 = Integer @162
+    v16 = BitOr v14, v15 @151
+    v17 = Call v1, -, v10, v16 calleeName="sum" @135
+    v18 = Convert v17 declared={type=number flags=[IsExpected]} @135
+    v19 = Call v4, -, v18 calleeName="String" @128
+    v20 = Convert v19 declared={type=undefined|null|string flags=[IsExpected]} @128
+    v21 = Call v3, -, v20 calleeName="print" @122
+    v22 = Builtin builtin=GlobalThis @168
+    v23 = PropGet v22 key="print" [isFreeName] @168
+    v24 = Builtin builtin=String @174
+    v25 = Builtin builtin=GlobalThis @185
+    v26 = PropGet v25 key="id" [isFreeName] @185
+    v27 = Integer @188
+    v28 = Call v26, -, v27 calleeName="id" @185
+    v29 = Integer @193
+    v30 = BitOr v28, v29 @185
+    v31 = Builtin builtin=GlobalThis @196
+    v32 = PropGet v31 key="id" [isFreeName] @196
+    v33 = Integer integer=1000 @199
+    v34 = Call v32, -, v33 calleeName="id" @196
+    v35 = Integer @207
+    v36 = BitOr v34, v35 @196
+    v37 = Call v1, -, v30, v36 calleeName="sum" @181
+    v38 = Convert v37 declared={type=number flags=[IsExpected]} @181
+    v39 = Call v24, -, v38 calleeName="String" @174
+    v40 = Convert v39 declared={type=undefined|null|string flags=[IsExpected]} @174
+    v41 = Call v23, -, v40 calleeName="print" @168
+    v42 = Builtin builtin=GlobalThis @213
+    v43 = PropGet v42 key="print" [isFreeName] @213
+    v44 = Builtin builtin=String @219
+    v45 = Builtin builtin=GlobalThis @230
+    v46 = PropGet v45 key="id" [isFreeName] @230
+    v47 = Integer integer=-7 @233
+    v48 = Call v46, -, v47 calleeName="id" @230
+    v49 = Integer @239
+    v50 = BitOr v48, v49 @230
+    v51 = Builtin builtin=GlobalThis @242
+    v52 = PropGet v51 key="id" [isFreeName] @242
+    v53 = Integer integer=1000 @245
+    v54 = Call v52, -, v53 calleeName="id" @242
+    v55 = Integer @253
+    v56 = BitOr v54, v55 @242
+    v57 = Call v1, -, v50, v56 calleeName="sum" @226
+    v58 = Convert v57 declared={type=number flags=[IsExpected]} @226
+    v59 = Call v44, -, v58 calleeName="String" @219
+    v60 = Convert v59 declared={type=undefined|null|string flags=[IsExpected]} @219
+    v61 = Call v43, -, v60 calleeName="print" @213
+    v62 = Undefined @213
+    Return v62 @213
+}
+function f1 name="sum" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @0
+  b1():
+    v2 = Builtin builtin=Int32Array @37
+    v3 = Integer integer=4 @48
+    v4 = Construct v2, -, v3 calleeName="Int32Array" @37 constructs
+    v5 = Convert v4 declared={type=undefined|null|Int32Array flags=[IsExpected]} @33
+    v6 = Integer @67
+    v7 = Convert v6 declared={type=number flags=[IsExpected]} @67
+    Jump -> next b2(v7) @63
+  b2(v8):
+    LoopHint @63
+    v10 = Convert v1 declared={type=number flags=[IsExpected]} @74
+    v11 = Less v8, v10 @70
+    Branch v11 -> taken b3(| 0, 1), notTaken b6(| 0, 1) @70
+  b3(v12, v13):
+    Jump -> next b4() @70
+  b4():
+    v14 = Integer integer=1 @82
+    v15 = Integer integer=1 @89
+    v16 = ElemGet v5, v15 @89
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @89
+    v18 = Convert v0 declared={type=number flags=[IsExpected]} @101
+    v19 = Mod v12, v18 @89
+    v20 = Add v17, v19 @89
+    ElemSet v5, v14, v20 @82
+    Jump -> next b5() @82
+  b5():
+    v22 = Increment v12 @82
+    v23 = Convert v22 declared={type=number flags=[IsExpected]} @77
+    Jump -> next b2(v23) @77
+  b6(v24, v25):
+    Jump -> next b7() @70
+  b7():
+    v26 = Integer integer=1 @114
+    v27 = ElemGet v5, v26 @114
+    v28 = Convert v27 declared={type=number flags=[IsExpected]} @114
+    Return v28 @114
+}
+# -- generated: *

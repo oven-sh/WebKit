@@ -206,6 +206,8 @@ void ReceiverCandidates::dump(PrintStream& out) const
         out.print(" otherParts");
     if (mayBeNullish)
         out.print(" nullish");
+    if (mayBelongToOtherInstance)
+        out.print(" ofAnyInstance");
 }
 
 static Type primitivePartOf(const Type& type, uint16_t primitives)

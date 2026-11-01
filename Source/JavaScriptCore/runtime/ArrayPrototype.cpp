@@ -1575,6 +1575,23 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncLastIndexOf, (JSGlobalObject* globalObjec
     return JSValue::encode(jsNumber(-1));
 }
 
+static IndexingType indexingTypeOfConcatenation(VM& vm, IndexingType type, IndexingType other)
+{
+    IndexingType merged = mergeIndexingTypesForCopying(type, other, /* allowPromotion */ true);
+    if (merged != NonArray || !vm.hasCompiledCode())
+        return merged;
+    bool joinsDoublesAndValues = (type == ArrayWithDouble && other == ArrayWithContiguous) || (type == ArrayWithContiguous && other == ArrayWithDouble);
+    return joinsDoublesAndValues ? ArrayWithContiguous : NonArray;
+}
+
+static void copyIntoContiguous(WriteBarrier<Unknown>* buffer, unsigned offset, Butterfly* source, unsigned sourceSize, IndexingType sourceType)
+{
+    if (sourceType == ArrayWithDouble)
+        copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, offset, source->contiguousDouble().data(), 0, sourceSize, sourceType);
+    else
+        copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, offset, source->contiguous().data(), 0, sourceSize, sourceType);
+}
+
 static JSArray* tryConcatAppendOneNonArray(JSGlobalObject* globalObject, VM& vm, JSArray* first, JSValue second)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1651,7 +1668,7 @@ JSArray* tryConcatAppendArrayFastWithWatchpoints(JSGlobalObject* globalObject, V
 
     IndexingType firstType = firstArray->indexingType();
     IndexingType secondType = secondArray->indexingType();
-    IndexingType type = firstArray->mergeIndexingTypeForCopying(secondType, /* allowPromotion */ true);
+    IndexingType type = indexingTypeOfConcatenation(vm, firstType, secondType);
     ASSERT(type != NonArray);
 
     if (!resultSize)
@@ -1692,8 +1709,8 @@ JSArray* tryConcatAppendArrayFastWithWatchpoints(JSGlobalObject* globalObject, V
             copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, firstArraySize, secondButterfly->contiguous().data(), 0, secondArraySize, secondType);
     } else if (type != ArrayWithUndecided) {
         WriteBarrier<Unknown>* buffer = butterfly->contiguous().data();
-        copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, 0, firstButterfly->contiguous().data(), 0, firstArraySize, firstType);
-        copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, firstArraySize, secondButterfly->contiguous().data(), 0, secondArraySize, secondType);
+        copyIntoContiguous(buffer, 0, firstButterfly, firstArraySize, firstType);
+        copyIntoContiguous(buffer, firstArraySize, secondButterfly, secondArraySize, secondType);
     }
 
     Butterfly::clearRange(type, butterfly, resultSize, vectorLength);
@@ -1725,7 +1742,7 @@ JSArray* tryConcatOneArgFast(JSGlobalObject* globalObject, VM& vm, JSArray* firs
     JSArray* secondArray = uncheckedDowncast<JSArray>(argumentObject);
     if (!firstArray->canFastCopy(secondArray)) [[unlikely]]
         return nullptr;
-    if (firstArray->mergeIndexingTypeForCopying(secondArray->indexingType(), /* allowPromotion */ true) == NonArray) [[unlikely]]
+    if (indexingTypeOfConcatenation(vm, firstArray->indexingType(), secondArray->indexingType()) == NonArray) [[unlikely]]
         return nullptr;
     RELEASE_AND_RETURN(scope, tryConcatAppendArrayFastWithWatchpoints(globalObject, vm, firstArray, secondArray));
 }
@@ -1754,7 +1771,7 @@ static JSArray* tryConcatMultipleArraysFast(JSGlobalObject* globalObject, VM& vm
                 JSArray* array = uncheckedDowncast<JSArray>(argumentObject);
                 if (array->holesMustForwardToPrototype()) [[unlikely]]
                     return nullptr;
-                type = mergeIndexingTypesForCopying(type, array->indexingType(), /* allowPromotion */ true);
+                type = indexingTypeOfConcatenation(vm, type, array->indexingType());
                 if (type == NonArray) [[unlikely]]
                     return nullptr;
                 checkedResultSize += array->butterfly()->publicLength();
@@ -1764,7 +1781,7 @@ static JSArray* tryConcatMultipleArraysFast(JSGlobalObject* globalObject, VM& vm
             if (objectType == ProxyObjectType || objectType == DerivedArrayType) [[unlikely]]
                 return nullptr;
         }
-        type = mergeIndexingTypesForCopying(type, indexingTypeForValue(argumentValue) | IsArray, /* allowPromotion */ true);
+        type = indexingTypeOfConcatenation(vm, type, indexingTypeForValue(argumentValue) | IsArray);
         if (type == NonArray) [[unlikely]]
             return nullptr;
         checkedResultSize += 1;
@@ -1806,8 +1823,7 @@ static JSArray* tryConcatMultipleArraysFast(JSGlobalObject* globalObject, VM& vm
             else
                 copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, offset, sourceButterfly->contiguous().data(), 0, sourceSize, sourceType);
         } else if (type != ArrayWithUndecided) {
-            WriteBarrier<Unknown>* buffer = butterfly->contiguous().data();
-            copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, offset, sourceButterfly->contiguous().data(), 0, sourceSize, sourceType);
+            copyIntoContiguous(butterfly->contiguous().data(), offset, sourceButterfly, sourceSize, sourceType);
         }
         offset += sourceSize;
     };

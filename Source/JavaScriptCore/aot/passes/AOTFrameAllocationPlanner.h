@@ -29,6 +29,8 @@ struct FrameDecision {
     AllocationHeapCause cause { AllocationHeapCause::None };
     // AOTFrameAllocationPointers.h, isLentTo().
     bool isLent { false };
+    // The program has no name for it: one call takes it, and behind that call it is dead.
+    bool isMadeForOneUse { false };
     // Uses that let a closure out, each of them the last thing that happens to it. The closure of the frame serves the others, and a closure of the heap is made for each of these where it stands.
     Vector<Use, 1> madeAgainAt;
     // A closure of the heap that need not be made: the closure that the closure table holds stands for it.
@@ -40,7 +42,7 @@ struct FrameDecision {
 
 inline constexpr std::array statisticsOfFramePlans {
     StatisticID::ClosuresInFrames, StatisticID::ClosuresLent, StatisticID::EnvironmentsInFrames, StatisticID::EnvironmentsOnHeap, StatisticID::EnvironmentsMaterializedLate,
-    StatisticID::ObjectsInFrames, StatisticID::EmptyArgumentListsShared, StatisticID::ArraysInFrames, StatisticID::RestArraysInFrames,
+    StatisticID::ObjectsInFrames, StatisticID::EmptyArgumentListsShared, StatisticID::ArraysInFrames, StatisticID::RestArraysInFrames, StatisticID::CellsWithoutRoomInFrames,
 };
 
 struct FramePlan {
@@ -66,6 +68,7 @@ struct FramePlan {
     void add(const Program&, const Value& allocation, AllocationStorage, bool isLent, bool isMadeAgain = false);
 };
 
+inline constexpr OpcodeSet allocationsThatMayBeMadeForOneUse { Opcode::NewArray, Opcode::NewClosure, Opcode::NewObject };
 bool hasStorageChoice(const Value&);
 bool isEmptyArrayLiteral(const Value&);
 

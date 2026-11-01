@@ -9,12 +9,12 @@
 # STATISTIC: InitializersDeferred = 2
 
 # CHECK: variable g0 name="Stored" module=m1 declared={type=absent|f2}
-# CHECK-NEXT: variable g1 name="first" module=m1 declared={type=object|absent}
+# CHECK-NEXT: variable g1 name="first" module=m1 declared={type=absent|Object}
 # CHECK-NEXT: variable g2 name="Declared" module=m1
-# CHECK-NEXT: variable g3 name="second" module=m1 declared={type=object}
-# CHECK-NEXT: variable g4 name="third" module=m1 declared={type=object}
+# CHECK-NEXT: variable g3 name="second" module=m1 declared={type=Object}
+# CHECK-NEXT: variable g4 name="third" module=m1 declared={type=Object}
 # CHECK-NEXT: variable g5 name="Kept" module=m1
-# CHECK-NEXT: variable g6 name="fourth" module=m1 declared={type=object|absent}
+# CHECK-NEXT: variable g6 name="fourth" module=m1 declared={type=absent|Object}
 # CHECK-LABEL: function f1 name="made"
 # CHECK-NOT: callees=[f2]
 # CHECK: = Construct {{*}} callees=[f3]

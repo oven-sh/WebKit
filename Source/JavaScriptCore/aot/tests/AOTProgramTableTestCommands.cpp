@@ -429,7 +429,7 @@ static void printLayoutRecord(const TablesContext& context, const LayoutData& la
 static void printParsedRecordFields(const TablesContext& context)
 {
     for (const ParsedRecordFieldData& row : context.tables.parsedRecordFields())
-        RecordLine(context, "parsedRecordField"_s).identifier("name"_s, row.name).field("shape"_s, row.shape);
+        RecordLine(context, "parsedRecordField"_s).identifier("name"_s, row.nameNumber()).field("shape"_s, static_cast<uint32_t>(row.shape));
 }
 
 static void printEnvironmentRecord(const TablesContext& context, const EnvironmentData& environment)
@@ -575,6 +575,8 @@ static void printFunctions(const TablesContext& context)
     RecordLine(context, "closures"_s).field("first"_s, range.first).field("end"_s, range.end).field("omittedWords"_s, range.omittedWordCount);
     for (uint32_t index = 0; index < tables.numberOfFunctions(); ++index)
         printFunctionRecord(context, index);
+    for (uint32_t function : tables.asyncFunctionsWithoutAwait())
+        RecordLine(context, "asyncWithoutAwait"_s).field("function"_s, FunctionID(function));
     for (const ConstructorData& constructor : tables.constructors())
         RecordLine(context, "constructor"_s).field("function"_s, FunctionID(constructor.function)).field("layout"_s, LayoutID(constructor.layoutIndex));
     for (const BoundFunctionData& bound : tables.boundFunctions()) {
@@ -653,6 +655,12 @@ static void printFunctionTexts(const TablesContext& context)
     }
     for (const ConstructorLineData& constructor : context.tables.constructorLines())
         context.out.println("constructor f", constructor.function, " linesOfTextAbove=", constructor.linesOfTextAbove);
+    for (const StartOfStatementData& statement : context.tables.startsOfStatementsInLongLines()) {
+        if (statement.startOfFunction == StartOfStatementData::isOfBody)
+            context.out.println("statement of the body at ", statement.start);
+        else
+            context.out.println("statement of the function at ", statement.startOfFunction, " at ", statement.start);
+    }
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     auto modules = unsafeMakeSpan(context.tables.at<PiecesOfModule>(texts[0].modulesWithPiecesOffset), texts[0].numberOfModulesWithPieces + 1);
     for (size_t index = 0; index + 1 < modules.size(); ++index) {
@@ -718,6 +726,10 @@ static void printModuleRecords(const TablesContext& context)
 
 static void printModuleExportRecord(const TablesContext& context, uint32_t index, const ModuleExportData& moduleExport)
 {
+    if (moduleExport.kindBits == ModuleExportData::kindBitsOfWordOfMock) {
+        RecordLine(context, "wordOfMock"_s, index).field("variable"_s, moduleExport.variable);
+        return;
+    }
     RecordLine line(context, "export"_s, index);
     line.identifier("name"_s, moduleExport.name).field("kind"_s, moduleExport.kind());
     switch (moduleExport.kind()) {

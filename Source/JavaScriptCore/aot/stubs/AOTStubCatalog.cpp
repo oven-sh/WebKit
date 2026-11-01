@@ -276,8 +276,10 @@ void StubCatalog::checkDeclarations(std::span<Node* const> nodes)
         bool leaves = node.leavesStubs || node.effects.mayThrow || node.effects.mayCollect || node.effects.mayCallUnknownCode;
         if (descriptor.leafness == StubLeafness::Leaf && leaves)
             reportFalseDeclaration(body, "is declared Leaf, but leaves the stubs or has the effects "_s, node.effects);
+        if (descriptor.leafness == StubLeafness::CallsOnlyBookkeeping && (node.effects.mayThrow || node.effects.mayCollect || node.effects.mayCallUnknownCode))
+            reportFalseDeclaration(body, "is declared CallsOnlyBookkeeping, but has the effects "_s, node.effects);
 
-        if (descriptor.clobbers == StubClobbers::ClobbersOnlyScratch) {
+        if (descriptor.clobbers == StubClobbers::ClobbersOnlyScratch && !hasFrameAndKeepsFewerRegisters(body.callerFrame())) {
             RegisterSet lost = node.clobbered;
             lost.exclude(node.clobberedInline);
             lost.exclude(RegisterSet::macroClobberedGPRs());
@@ -377,7 +379,7 @@ bool StubCatalog::bindsImmediate(StubKey key, uint32_t immediate) const
     case ImmediateBinding::ByPolicy:
         break;
     }
-    if (key.operandRegister() || key.callerFrame() != CallerFrame::HasFrame)
+    if (key.operandRegister() || (key.callerFrame() != CallerFrame::HasFrame && !hasFrameAndKeepsFewerRegisters(key.callerFrame())))
         return false;
 
     switch (summaryOf(key).signature.boundImmediates) {

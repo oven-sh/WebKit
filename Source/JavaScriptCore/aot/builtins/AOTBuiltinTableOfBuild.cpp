@@ -52,15 +52,16 @@ bool BuiltinTable::canBeReplacedInTestRuns(BuiltinID id) const
     case BuiltinKind::Function:
     case BuiltinKind::Method:
     case BuiltinKind::Accessor:
+    // `process.versions`, `process.release`, `process.isBun`: the front end folds no read of them in a test run. The others have names that are read without a lookup.
+    case BuiltinKind::DataProperty:
         break;
     case BuiltinKind::Constructor:
-        // `globalThis.Set = Fake`. Under any other holder it is the `constructor` of a prototype object.
+    case BuiltinKind::Namespace:
+        // `globalThis.Set = Fake`, `globalThis.Math = Object.create(Math)`. Under any other holder a constructor is the `constructor` of a prototype object.
         if (!at(member.holder).flags.contains(BuiltinFlag::IsGlobalObject))
             return false;
         break;
-    case BuiltinKind::Namespace:
     case BuiltinKind::Prototype:
-    case BuiltinKind::DataProperty:
     case BuiltinKind::Constant:
     case BuiltinKind::NativeBinding:
         return false;
@@ -77,10 +78,22 @@ bool BuiltinTable::canBeReplacedInTestRuns(BuiltinID id) const
 bool BuiltinTable::canTakeNameInTestRuns(BuiltinID holder, BuiltinName name) const
 {
     const Builtin& object = at(holder);
-    if (!object.flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::IsClosedToOtherNames }) || object.flags.contains(BuiltinFlag::IsGlobalObject) || object.scope != BuiltinScope::Realm)
+    if (object.flags.contains(BuiltinFlag::IsGlobalObject) || object.scope != BuiltinScope::Realm)
         return false;
+    bool takesNoOtherName = object.flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::IsClosedToOtherNames });
     if (!name)
-        return true;
+        return takesNoOtherName;
+    // `spyOn(Uint8Array.prototype, "set")`: an object above has the member. What a test puts here stands in front of it for whatever lies below,
+    // and whoever looks the member up from there passes this object on the way. So it goes by the member: where a test can replace that, it can hide it.
+    if (BuiltinMemberLookup above = findMember(holder, name); above.outcome == BuiltinMemberLookup::Outcome::Found && !findOwnMember(holder, name)) {
+        if (!takesNoOtherName && !std::ranges::binary_search(closedKeysOf(holder), name))
+            return false;
+        if (isClosedOnHostFunctions(name) || isReadWithoutLookup(*this, name, NameIs::OfMember))
+            return false;
+        return canBeReplacedInTestRuns(above.member) || at(above.member).mutability == BuiltinMutability::ConstantUnlessWritten;
+    }
+    if (!takesNoOtherName)
+        return false;
     // A key that is `undefined`, `null`, `true` or `false` is looked up under its text.
     for (ASCIILiteral text : { "undefined"_s, "null"_s, "true"_s, "false"_s }) {
         if (equalSpans(textOf(name), byteCast<uint8_t>(text.span())))

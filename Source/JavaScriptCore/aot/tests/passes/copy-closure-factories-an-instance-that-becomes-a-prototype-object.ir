@@ -1,0 +1,40 @@
+# function Base(size) { this.size = size }   function Derived() {}   Derived.prototype = new Base(1);   new Base(2)
+# What becomes a prototype object is made by a copy of Base that constructs objects of no layout. `new` lays it below what Base holds under `prototype` at that moment, so the copy is given that first.
+# The other construction goes on making an instance of the layout.
+# FORM: AsRead
+# RUN: pass CopyClosureFactories
+# CHECK: outcome: Changed
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[copy]]{{*}} = NewClosure function=f3
+# CHECK-NEXT: [[held]]{{*}} = PropGet v0 key="prototype"
+# CHECK-NEXT: PropSet [[copy]], [[held]] key="prototype"
+# CHECK-NEXT: [[made]]{{*}} = Construct [[copy]], -, v2
+# CHECK-NEXT: PropSet v1, [[made]] key="prototype"
+# CHECK: = Construct v0, -, v5
+# CHECK-LABEL: function f1 name="Base" {{*}}IsNeverCalledByHost] constructedClass=L0 {
+# CHECK-LABEL: function f3 name="Base" {{*}}thisType={type=anything} {{*}}IsNeverCalledByHost] derivation={source=f1} {
+# CHECK: PropSet v0, v1 key="size"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="size" declared={type=anything}}] flags=[IsConstructorFunction]
+variable g0 name="Base" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Derived" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = Integer integer=1
+    v3 = Construct v0, -, v2
+    PropSet v1, v3 key="prototype" mode=Strict
+    v5 = Integer integer=2
+    v6 = Construct v0, -, v5
+    Return
+}
+function f1 name="Base" module=m0 flags=[HasThis] thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="size" mode=Strict
+    Return
+}
+function f2 name="Derived" module=m0 results=[{type=anything}] {
+    Return
+}

@@ -13,6 +13,7 @@
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowApply.h"
 #include "AOTFrameAllocationPlanner.h"
+#include "AOTObservableOperations.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include "MathCommon.h"
@@ -328,6 +329,9 @@ void ObjectInterpreter::executeCast(ValueID id)
     VariantCastOutcomes outcomes = evaluateCastOnVariants(m_sinking.shapeContext(object), *stateOf(object), function().at(id));
     if (function().at(id).opcode == Opcode::AssumeType)
         narrowToProvenType(object, function().at(id).provenType());
+    // So is what the value of a field leaves of a union: `s.kind === "square" ? s.edge : s.radius`.
+    if (function().at(id).opcode == Opcode::NarrowByField)
+        narrowToProvenType(object, function().at(id).type);
     if (outcomes.canSplit())
         splitThrowingVariants(id, object, outcomes.throwingTagBits);
     else if (!outcomes.alwaysPasses()) {
@@ -335,6 +339,9 @@ void ObjectInterpreter::executeCast(ValueID id)
         keep(id);
         return;
     }
+    // What is asked is an object that the pass holds itself, whatever the type of the operand says: what a call that nobody had resolved answers is `anything` until it is typed anew.
+    if (function().at(id).opcode == Opcode::RequireObject)
+        explainOperationThatGoes(function(), id, InPlaceOfOperation::NothingByProofOfThePass);
 
     if (function().at(id).opcode == Opcode::AssumeType) {
         stateOf(object)->assume(function().at(id).provenType());
@@ -738,6 +745,7 @@ void ObjectInterpreter::keep(ValueID id)
         return;
 
     if (!m_state.objects.isEmpty()) {
+        RELEASE_ASSERT(!m_sinking.checksThatModesAgree() || !m_state.findTest(id));
         // Resolving may append values, which moves the values of the function.
         Function& function = cursor().builder().function();
         Value value = function.at(id);
@@ -1048,6 +1056,9 @@ void ObjectInterpreter::executeRead(ValueID id)
         for (VirtualObjectID range = object; range && !stateOf(range)->isCell(); range = stateOf(range)->objectHeldIn(partOf(range, VirtualFieldKind::StringBase))) {
             EnumSet<VirtualObjectKind> kindsOfRange = virtualKindsOf(m_sinking.familyOf(range), *stateOf(range));
             if (!stateOf(range)->isVirtual() || !kindsOfRange.hasExactlyOneBitSet() || !kindsOfRange.contains(VirtualObjectKind::StringRange))
+                return executeAccessOnCell(id, object);
+            // A read through the range flattens the base, as making the range does.
+            if (!isRewriting() && m_sinking.leaveMakingsThatMayThrowUnderTheirHandlers(range, m_state.block))
                 return executeAccessOnCell(id, object);
             ranges.append(range);
         }
@@ -1371,8 +1382,10 @@ void ObjectInterpreter::executeStore(ValueID id)
     }
     TypeID typeProvenByFlow;
     if (!canStore(object, *access, *field, stored)) {
-        if ((opcode != Opcode::PropSet && opcode != Opcode::PropDefine) || !canStoreUnprovenValue(object, *access, *field))
+        if ((opcode != Opcode::PropSet && opcode != Opcode::PropDefine) || !canStoreUnprovenValue(object, *access, *field, stored))
             return executeAccessOnCell(id, object);
+        if (m_sinking.storesByNameWaitIn(m_state.block))
+            m_sinking.familyOf(object).didTakeValueOfStoreThatWaits();
         if (!objectOf(stored))
             typeProvenByFlow = typeOfFieldThatStaysInSlot(m_sinking, object, *stateOf(object), *field);
         if (!typeProvenByFlow) {
@@ -1440,14 +1453,36 @@ bool ObjectInterpreter::canStore(VirtualObjectID object, const VirtualFieldAcces
     });
 }
 
-bool ObjectInterpreter::canStoreUnprovenValue(VirtualObjectID object, const VirtualFieldAccess& access, uint32_t namedField) const
+// object.n = object.n + 1. The test behind which such a store goes on keeps what goes round in the form of the slot, turn after turn.
+bool ObjectInterpreter::isComputedFromField(VirtualObjectID object, PropertyKeyID key, ValueID value, unsigned stepsLeft) const
+{
+    constexpr OpcodeSet reads { Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::PropGet };
+    const Value& computed = function().at(value);
+    if (reads.contains(computed.opcode))
+        return computed.key() == key && objectOf(computed.objectOperand()) == object;
+    if (!stepsLeft)
+        return false;
+    bool isComputed = false;
+    computed.forEachOperand([&](ValueID operand, uint32_t) {
+        isComputed = isComputed || (operand && isComputedFromField(object, key, operand, stepsLeft - 1));
+    });
+    return isComputed;
+}
+
+bool ObjectInterpreter::canStoreUnprovenValue(VirtualObjectID object, const VirtualFieldAccess& access, uint32_t namedField, ValueID stored) const
 {
     const VirtualFamily& family = m_sinking.familyOf(object);
-    if (family.refusesUnprovenValues() || m_sinking.storesByNameWaitIn(m_state.block))
+    if (family.refusesUnprovenValues())
+        return false;
+    bool wouldWait = m_sinking.storesByNameWaitIn(m_state.block);
+    constexpr unsigned stepsFromReadToStore = 4;
+    if (wouldWait && (family.letsStoresByNameWait() || m_sinking.inputs().isLargeForItsWork || isComputedFromField(object, access.field.key, stored, stepsFromReadToStore)))
         return false;
     return std::ranges::all_of(stateOf(object)->variants, [&](const ObjectVariant& variant) {
         const VirtualShape& shape = family.at(variant.shape);
         if (shape.kind != VirtualShapeKind::Fields || !canHoldUnprovenValue(program(), family.descriptionOf(shape), access.field))
+            return false;
+        if (wouldWait && !testTellsOnlyWhetherValueFitsSlot(program(), family.descriptionOf(shape), access.field, function().at(stored).type))
             return false;
         bool isPresent = hasStored(shape, namedField) || hasStoredCounterpart(family, shape, namedField);
         return isPresent ? access.whenPresent == PresentField::IsOwnData : access.whenAbsent == AbsentField::FindsNothing;
@@ -1664,28 +1699,41 @@ static bool canBeBuiltByCaller(const Function& function, const VirtualObjectDesc
     return description.canBeBuilt && !description.staysInPlace && boundToOf(allocation.opcode) == BoundTo::Nothing;
 }
 
-// A list of substrings has no holes, so an element is present exactly when its index is below the length.
+// The call says how long its list is, and a list of substrings has no holes: an element of it is present exactly when its index is below the length.
 // The test becomes that comparison. Both edges of its branch stay live and the list stays virtual on both.
-bool ObjectInterpreter::executePresenceTestOnDenseList(ValueID id)
+bool ObjectInterpreter::executeTestAgainstLengthOfBuiltinList(ValueID id)
 {
     const Value& test = function().at(id);
-    if (test.opcode != Opcode::IsElementPresent)
+    if (test.opcode != Opcode::IsElementPresent && test.opcode != Opcode::IsInBounds)
         return false;
     VirtualObjectID list = objectOf(test.operand(0));
-    if (!list || !stateOf(list)->isVirtual() || stateOf(list)->variants.size() != 1)
+    if (!list || !stateOf(list)->isVirtual())
         return false;
 
     const VirtualFamily& family = m_sinking.familyOf(list);
-    const VirtualShape& shape = singleShapeOf(list);
-    if (shape.kind != VirtualShapeKind::Fields)
-        return false;
-    const VirtualObjectDescription& description = family.descriptionOf(shape);
-    if (description.kind != VirtualObjectKind::BuiltinPrefix || !program().builtins().at(function().at(description.allocation).overload()).result.substringOf)
-        return false;
+    std::optional<uint32_t> length = family.findField(VirtualField::part(VirtualFieldKind::Length));
+    uint32_t numberOfKeptElements = std::numeric_limits<uint32_t>::max();
+    for (const ObjectVariant& variant : stateOf(list)->variants) {
+        const VirtualShape& shape = shapeOf(list, variant);
+        if (shape.kind != VirtualShapeKind::Fields || !length || !hasStored(shape, *length))
+            return false;
+        const VirtualObjectDescription& description = family.descriptionOf(shape);
+        if (description.kind != VirtualObjectKind::BuiltinPrefix)
+            return false;
+        if (test.opcode == Opcode::IsElementPresent && !program().builtins().at(function().at(description.allocation).overload()).result.substringOf)
+            return false;
+        numberOfKeptElements = std::min(numberOfKeptElements, shape.length);
+    }
 
     std::optional<int64_t> index = integerConstantThroughCasts(program(), function(), test.positionOperand());
-    std::optional<uint32_t> length = family.findField(VirtualField::part(VirtualFieldKind::Length));
-    if (!index || *index < 0 || !length || !hasStored(shape, *length))
+    if (test.opcode == Opcode::IsInBounds && m_sinking.context().build.isSabotaged(Sabotage::ListsOfBuiltinsEndWithWhatIsKept)) [[unlikely]] {
+        bool isKept = index && *index >= 0 && *index < static_cast<int64_t>(numberOfKeptElements);
+        m_state.setTest(TestEntry { id, list, isKept });
+        if (isRewriting())
+            replaceRead(id, cursor().builder().appendBoolean(isKept));
+        return true;
+    }
+    if (!index || *index < 0)
         return false;
 
     m_state.setTest(TestEntry { id, list, std::nullopt, 0 });
@@ -1701,7 +1749,7 @@ void ObjectInterpreter::executeTest(ValueID id)
 {
     if (testsLeftToRun.contains(function().at(id).opcode))
         return executeOther(id);
-    if (executePresenceTestOnDenseList(id) || executeBoundsTestOnArgumentList(id))
+    if (executeTestAgainstLengthOfBuiltinList(id) || executeBoundsTestOnArgumentList(id))
         return;
 
     std::optional<TestEntry> entry = evaluateTestOn(id);
@@ -2561,6 +2609,7 @@ struct PlannedProperty {
     uint32_t field { 0 };
     VirtualObjectID awaitedObject;
     PropertyInitialization initialization { PropertyInitialization::Listed };
+    bool placeholderIsNull { false };
 };
 
 static bool isStoredInAnyVariant(const VirtualFamily& family, const ObjectState& state, uint32_t field)
@@ -2622,6 +2671,10 @@ static Vector<PlannedProperty, 8> planProperties(const AllocationSinking& sinkin
                 break;
             case LateStore::NeedsUndefinedPlaceholder:
                 planned.initialization = PropertyInitialization::ListedWithPlaceholder;
+                break;
+            case LateStore::NeedsNullPlaceholder:
+                planned.initialization = PropertyInitialization::ListedWithPlaceholder;
+                planned.placeholderIsNull = true;
                 break;
             case LateStore::CreatesProperty:
                 allocationHasEnded = true;
@@ -2691,12 +2744,16 @@ void ObjectInterpreter::build(VirtualObjectID root, const BuildCause& cause)
             m_sinking.abandon(member);
         if (!cause.admitsStoresByName && hasVariantWithUnprovenField(m_sinking.familyOf(member), state))
             m_sinking.refuseUnprovenValues(member);
+        if (const VirtualFamily& family = m_sinking.familyOf(member); family.tookValueOfStoreThatWaits() && !family.letsStoresByNameWait())
+            m_sinking.letStoresByNameWait(member);
         if (m_sinking.at(member).isJoin && !fitsType(member, function().at(m_sinking.at(member).definition).type))
             m_sinking.abandon(member);
         if (m_mode == SinkingMode::Count && state.hasCell())
             m_sinking.didBuildAfterMerge(member, state.cellJoinedAt);
         if (!isRewriting() && !m_sinking.handlerOf(m_state.block))
             m_sinking.buildUnderHandler(member);
+        if (!isRewriting())
+            m_sinking.leaveMakingsThatMayThrowUnderTheirHandlers(member, m_state.block);
     }
 
     if (!isRewriting()) {
@@ -2891,6 +2948,7 @@ ValueID ObjectInterpreter::emitAllocation(VirtualObjectID object, const VirtualS
     cursor().setOrigin(variant.prototype.origin());
 
     ValueID placeholder;
+    ValueID nullPlaceholder;
     Vector<FieldValue, 8> properties;
     Vector<FieldValue, 2> storedByName;
     for (const PlannedProperty& property : planProperties(m_sinking, m_state, object, variant)) {
@@ -2909,9 +2967,10 @@ ValueID ObjectInterpreter::emitAllocation(VirtualObjectID object, const VirtualS
         late.append(LateFieldStore { object, property.field, property.awaitedObject, knownValue });
         if (property.initialization == PropertyInitialization::StoredLate)
             continue;
-        if (!placeholder)
-            placeholder = emitUndefined();
-        properties.append(FieldValue { field, placeholder });
+        ValueID& listed = property.placeholderIsNull ? nullPlaceholder : placeholder;
+        if (!listed)
+            listed = property.placeholderIsNull ? cursor().emit(Value(Opcode::Null)) : emitUndefined();
+        properties.append(FieldValue { field, listed });
     }
     Vector<FieldValue, 4> parts;
     for (const FreshResultField& part : variant.parts) {
@@ -2923,7 +2982,7 @@ ValueID ObjectInterpreter::emitAllocation(VirtualObjectID object, const VirtualS
     Value allocation = makeAllocation(program(), AllocationRequest { variant.description, variant.prototype, properties.span(), parts.span(), variant.length, absentResult == AbsentResult::IsPossible });
     if (allocation.opcode == Opcode::NewObject) {
         bool mayListPlaceholders = program().at(allocation.layout()).kind != LayoutKind::Record;
-        allocation.setListsOnlyStoredValues(mayListPlaceholders && !placeholder && storedByName.isEmpty() && hasEveryFieldOfBirthStored(m_sinking.shapeContext(object), shape));
+        allocation.setListsOnlyStoredValues(mayListPlaceholders && !placeholder && !nullPlaceholder && storedByName.isEmpty() && hasEveryFieldOfBirthStored(m_sinking.shapeContext(object), shape));
     }
     ValueID cell = cursor().emit(WTF::move(allocation));
     for (const FieldValue& stored : storedByName)

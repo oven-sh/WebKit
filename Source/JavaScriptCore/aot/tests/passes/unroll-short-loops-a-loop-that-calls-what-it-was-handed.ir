@@ -1,0 +1,151 @@
+# A loop calls a value that it was handed, the same in every turn, and the type of the value lists a few functions beside a built-in. Which of them it is is asked once, in front of the loop,
+# and the loop stands in the function once more for each of them, with the value known to be that function: the next run of ResolveCalls calls it directly. Whatever else the value is goes through the loop as it was
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass UnrollShortLoops
+# RUN(CALLS): pass UnrollShortLoops ResolveCalls
+# RUN(TWICE): pass UnrollShortLoops UnrollShortLoops
+# LOSS: MaxInlineHeadBytes
+# CHECK: outcome: Changed
+# TWICE: outcome: Changed
+# TWICE-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="first" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f1 name="second" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Increment v0
+    Return v1
+}
+function f2 name="handedIn" parameters=[{type=undefined|f0|f1|builtin(MathAbs)}, {type=i32}] results=[{type=anything}] {
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Call v0, -, v5
+    v9 = Add v4, v8
+    v10 = Increment v5
+    Jump -> next b1(v9, v10)
+  b3():
+    Return v4
+# CHECK: frequency=Unlikely:
+# CHECK: = Call [[rest]], -, v5
+# CHECK: [[isFirst]]: boolean = TypeTest v0 testedType=f0
+# CHECK-NEXT: Branch [[isFirst]] -> taken [[first]](| 0), notTaken [[notFirst]](| 0)
+# CHECK: [[first]]([[closureOfFirst]]: f0):
+# CHECK: [[notFirst]]([[left]]: undefined|f1|builtin(MathAbs)):
+# CHECK-NEXT: [[isSecond]]: boolean = TypeTest [[left]] testedType=f1
+# CHECK: = Call [[closureOfFirst]], -,
+# CHECK: ([[closureOfSecond]]: f1):
+# CHECK: ([[rest]]: undefined|builtin(MathAbs)) frequency=Unlikely:
+# CHECK: = Call [[closureOfSecond]], -,
+# CALLS: = Call {{*}}, -, v5
+# CALLS: = CallDirect {{*}} function=f0
+# CALLS: = CallDirect {{*}} function=f1
+}
+function f3 name="madeInEveryTurn" parameters=[{type=object}, {type=i32}] results=[{type=anything}] {
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = PropGet v0 key="price"
+    v9 = AssumeType v8 provenType=f0|f1|builtin(MathAbs)
+    v10 = Call v9, -, v5
+    v11 = Add v4, v10
+    v12 = Increment v5
+    Jump -> next b1(v11, v12)
+  b3():
+    Return v4
+# CHECK-NOT: testedType=f0
+}
+function f4 name="oneFunctionIsListed" parameters=[{type=f0|builtin(MathAbs)}, {type=i32}] results=[{type=anything}] {
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Call v0, -, v5
+    v9 = Add v4, v8
+    v10 = Increment v5
+    Jump -> next b1(v9, v10)
+  b3():
+    Return v4
+# CHECK-NOT: testedType=f0
+}
+function f5 name="anyFunction" parameters=[{type=function}, {type=i32}] results=[{type=anything}] {
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Call v0, -, v5 callees=[f0, f1, ..]
+    v9 = Add v4, v8
+    v10 = Increment v5
+    Jump -> next b1(v9, v10)
+  b3():
+    Return v4
+# CHECK-NOT: testedType=f0
+}
+function f6 name="calledOnAnUnlikelyWay" parameters=[{type=f0|f1|builtin(MathAbs)}, {type=i32}] results=[{type=anything}] {
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b5()
+  b2():
+    v8 = TypeTest v4 testedType=i32
+    Branch v8 -> taken b4(v4), notTaken b3()
+  b3() frequency=Unlikely:
+    v9 = Call v0, -, v5
+    Jump -> next b4(v9)
+  b4(v10):
+    v11 = Increment v5
+    Jump -> next b1(v10, v11)
+  b5():
+    Return v4
+# CHECK-NOT: testedType=f0
+}
+function f7 name="aroundAnotherLoop" parameters=[{type=f0|f1|builtin(MathAbs)}, {type=i32}] results=[{type=anything}] {
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b6()
+  b2():
+    v8 = Call v0, -, v5
+    v9 = Integer
+    Jump -> next b3(v9)
+  b3(v10):
+    LoopHint
+    v12 = Less v10, v1
+    Branch v12 -> taken b4(), notTaken b5()
+  b4():
+    v13 = Increment v10
+    Jump -> next b3(v13)
+  b5():
+    v14 = Add v4, v8
+    v15 = Increment v5
+    Jump -> next b1(v14, v15)
+  b6():
+    Return v4
+# CHECK-NOT: testedType=f0
+}

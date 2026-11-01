@@ -204,6 +204,7 @@ static ClimbingSet leaveHoldersOfExportsUnsearched(ValueFlowRuleContext& context
     constexpr std::pair<ValueFlowNameKind, ValueFlowHostNode> membersUnderUnknownKey[] {
         { ValueFlowNameKind::UnknownKey, ValueFlowHostNode::ValuesUnderUnknownKeyInHeldHoldersOfExports },
         { ValueFlowNameKind::GetterUnderUnknownKey, ValueFlowHostNode::GettersUnderUnknownKeyInHeldHoldersOfExports },
+        { ValueFlowNameKind::GetterUnderNameOfEnumeration, ValueFlowHostNode::GettersUnderUnknownKeyInHeldHoldersOfExports },
         { ValueFlowNameKind::SetterUnderUnknownKey, ValueFlowHostNode::SettersUnderUnknownKeyInHeldHoldersOfExports },
     };
     for (auto [kind, node] : membersUnderUnknownKey) {
@@ -218,6 +219,19 @@ static ClimbingSet leaveHoldersOfExportsUnsearched(ValueFlowRuleContext& context
 ValueFlowNodeID heldPrototypeObjectsOfLibraryClasses(ValueFlowRuleContext& context)
 {
     return context.masked(context.nodes().ofHost(ValueFlowHostNode::HoldersOfExportsInEscapedObjects), context.universe().prototypeObjectsOfLibraryClasses());
+}
+
+void notePrototypeObjectsAboveUnknownObject(ValueFlowRuleContext& context)
+{
+    ValueSetID prototypeObjectsOfHost = context.universe().builtinTables().heap().prototypeObjectsOfHost();
+    ValueFlowNodeID withInstances = context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfInstances);
+    ValueFlowNodeID answersThatNoReadLists = context.nodes().ofHost(ValueFlowHostNode::AnswersThatNoReadLists);
+    context.add(answersThatNoReadLists, context.universe().builtinTables().heap().prototypeObjectsOfLanguage());
+    context.connect(context.nodes().ofHost(ValueFlowHostNode::BuiltinObjectsAboveEscapedObjects), answersThatNoReadLists);
+    if (context.holdsAnyOf(ClimbingSet(context.universe().unknownObjectAlone()), withInstances))
+        context.add(answersThatNoReadLists, prototypeObjectsOfHost);
+    else
+        context.connect(context.masked(withInstances, prototypeObjectsOfHost), answersThatNoReadLists);
 }
 
 static void followWhatHasArrived(ValueFlowRuleContext& context, ClimbingSet arrived)
@@ -303,12 +317,24 @@ static void lookUpThroughInstances(ValueFlowRuleContext& context, ValueFlowObjec
     if (mayBeUntrackedObject(context, chain))
         context.add(escapedNode, untrackedObject);
     ClimbingSet objectsOfProgram = context.restrict(known(context, chain), ValueSets::complement(universe.builtinObjects()));
+    // Where a statement has put a value nobody knows above them, they find what stands above the instances of any other family.
+    ValueFlowNodeID belowInstances = context.nodes().ofHost(ValueFlowHostNode::ObjectsPutBelowInstances);
+    LayoutID layoutOfFamily = universe.layoutOf(family);
+    FunctionID constructor = layoutOfFamily ? program.at(layoutOfFamily).constructor : universe.functionOf(family);
+    ClimbingSet putAbove = context.valueOf(context.readWhatWasWritten(context.restrict(objectsOfProgram, ValueSets::complement(instances)), prototypeLinkName));
+    if (constructor)
+        putAbove = context.unite(putAbove, context.valueOf(context.lookup(only(context, universe.closureOf(constructor)), ValueFlowName::property(program.keyOf(BuiltinNames::prototype)))));
+    if (mayBeUnknownObject(context, putAbove))
+        context.add(belowInstances, ClimbingSet(instances));
     ClimbingSet above = context.restrict(objectsOfProgram, ValueSets::complement(instances));
     above = context.unite(above, context.restrict(context.valueOf(context.readWhatWasWritten(ClimbingSet(instances), prototypeLinkName)), instances));
     above = leaveHoldersOfExportsUnsearched(context, above);
     if (!holdsSomething(context, above))
         return;
-    if (unseenCodeRuns)
+    Vector<ValueFlowObjectID, 32> builtinsThatReachAbove;
+    for (BuiltinID builtin : universe.builtinTables().builtinsThatReachAboveTheirOperands())
+        universe.appendObjectsOf(builtin, builtinsThatReachAbove);
+    if (unseenCodeRuns || (!context.isSabotaged(Sabotage::NothingClimbsAboveInstances) && context.holdsAnyOf(ClimbingSet(context.maker().of(builtinsThatReachAbove.span())), escapedNode)))
         context.add(escapedNode, above);
     context.add(context.nodes().ofHost(ValueFlowHostNode::ObjectsAboveEscapedInstances), above);
 
@@ -375,12 +401,28 @@ static void lookUpThroughInstances(ValueFlowRuleContext& context, ValueFlowObjec
 
     ValueFlowCallGroup group = context.group(called, ValueFlowCallKind::CallByNativeCode);
     context.connect(context.masked(escapedNode, instances), group.thisValue);
+    context.add(group.thisValue, context.valueWithin(context.valueOf(belowInstances), escapedNode));
     ValueFlowObjectID makersOfProxies[] { universe.objectOf(Builtins::Proxy), universe.objectOf(Builtins::ProxyRevocable) };
     if (holdsSomething(context, context.valueWithin(ClimbingSet(context.maker().of(makersOfProxies)), context.nodes().ofHost(ValueFlowHostNode::RunBuiltins))))
         context.add(group.thisValue, universe.unknownObjectAlone());
     context.add(group.otherArguments, passedByNativeCode);
     context.connect(group.result, escapedNode);
     context.connect(group.thrown, escapedNode);
+
+    if (context.isSabotaged(Sabotage::ReceiversThatLeaveAreInstances))
+        return;
+    Vector<ValueFlowObjectID, 16> handingOn;
+    context.forEachMember(context.restrict(called, universe.closures()), [&](ValueFlowObjectID closure) {
+        if (context.handsReceiverOn(universe.closureFunction(closure)))
+            handingOn.append(closure);
+    });
+    if (handingOn.isEmpty())
+        return;
+    ValueFlowCallGroup withAnyReceiver = context.group(ClimbingSet(context.maker().of(handingOn.span())), ValueFlowCallKind::CallByNativeCode);
+    context.add(withAnyReceiver.thisValue, universe.unknownObjectAlone());
+    context.add(withAnyReceiver.otherArguments, passedByNativeCode);
+    context.connect(withAnyReceiver.result, escapedNode);
+    context.connect(withAnyReceiver.thrown, escapedNode);
 }
 
 static void runLookupThroughInstances(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
@@ -676,9 +718,11 @@ static void runRuleOnNodesNamed(const ValueFlowStatement& statement, ValueFlowRu
         case ValueFlowNameKind::Elements:
         case ValueFlowNameKind::UnknownKey:
         case ValueFlowNameKind::GetterUnderUnknownKey:
+        case ValueFlowNameKind::GetterUnderNameOfEnumeration:
         case ValueFlowNameKind::SetterUnderUnknownKey:
         case ValueFlowNameKind::EveryProperty:
         case ValueFlowNameKind::EveryGetter:
+        case ValueFlowNameKind::GetterOutsideEnumerations:
         case ValueFlowNameKind::EverySetter:
         case ValueFlowNameKind::PrototypeLink:
         case ValueFlowNameKind::CopiedFrom:
@@ -703,10 +747,13 @@ static void runRuleOnNodesNamed(const ValueFlowStatement& statement, ValueFlowRu
         case ValueFlowNameKind::RestArgument:
         case ValueFlowNameKind::AddedNames:
         case ValueFlowNameKind::NamesOfMethods:
+        case ValueFlowNameKind::ReceiversOfCalls:
             return runLookup(statement, context);
         }
     case ValueFlowStatementKind::Behavior:
         return runBehavior(statement, context);
+    case ValueFlowStatementKind::WalkOfBehavior:
+        return runWalkOfBehavior(statement, context);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
