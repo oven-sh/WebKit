@@ -500,10 +500,15 @@ BuiltinClassID ValueFlowPositions::addUnlessInstanceOfClass(Type& type, Vector<L
             return { };
         }
         break;
-    case ValueFlowObjectKind::ResultOfBuiltin:
-        if (BuiltinClassID builtinClass = m_inputs.classOf(member); builtinClass && !builtins.at(builtinClass).hasClosureInstances)
+    case ValueFlowObjectKind::ResultOfBuiltin: {
+        BuiltinClassID builtinClass = m_inputs.classOf(member);
+        if (!builtinClass)
+            break;
+        if (!builtins.at(builtinClass).hasClosureInstances)
             return builtinClass;
-        break;
+        type.anyFunction = true;
+        return { };
+    }
     case ValueFlowObjectKind::UnknownObject:
     case ValueFlowObjectKind::Prototype:
         break;

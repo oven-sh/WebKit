@@ -182,8 +182,10 @@ bool applyConstructionOfPromise(BuiltinID builtin, const ValueFlowBuiltinCall& c
 
     context.use(builtin, BuiltinUse::Constructed);
     ClimbingSet promise = only(context, call.resultObject ? call.resultObject : universe.resultOf(Builtins::Promise, 0));
-    ClimbingSet resolve = only(context, call.contentsObject ? call.contentsObject : universe.resultOf(Builtins::Promise, 1));
-    ClimbingSet reject = only(context, universe.resultOf(Builtins::Promise, 1));
+    // A construction with a site has an object of its own for the resolve function. Without one (Reflect.construct, a bound Promise, a construction by native code) the second object of the call is the one the built-in shares with what the table makes on its behalf, which is no function.
+    bool hasSite = call.contentsObject && universe.kindOf(call.contentsObject) == ValueFlowObjectKind::Site;
+    ClimbingSet resolve = only(context, hasSite ? call.contentsObject : universe.resolvingFunctionOfPromises());
+    ClimbingSet reject = only(context, universe.resolvingFunctionOfPromises());
     context.connect(context.masked(context.lookup(context.valueOf(call.thisValue), nameOf(context, BuiltinNames::prototype)), universe.objects()), context.written(promise, prototypeLinkName));
     context.add(context.written(context.unite(resolve, reject), prototypeLinkName), only(context, universe.objectOf(Builtins::FunctionPrototype)));
     context.add(context.written(promise, allocatedAsName), only(context, universe.builtinTables().objectStandingFor(BuiltinClasses::Promise)));

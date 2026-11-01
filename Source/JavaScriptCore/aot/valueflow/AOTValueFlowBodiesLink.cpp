@@ -824,7 +824,7 @@ private:
         universe.m_firstLayoutObject = universe.m_firstNamespace + m_program.modules.size();
 
         universe.m_firstResultOfBuiltin = universe.m_firstLayoutObject + 2 * m_program.layouts.size();
-        universe.m_firstClosure = universe.m_firstResultOfBuiltin + 2 * m_program.builtins().builtinCount() + m_program.builtins().hostObjects().size();
+        universe.m_firstClosure = universe.m_firstResultOfBuiltin + 2 * m_program.builtins().builtinCount() + m_program.builtins().hostObjects().size() + ValueFlowUniverse::numberOfObjectsOfRules;
         universe.m_firstCoroutineResult = universe.m_firstClosure + m_numberOfFunctions;
         universe.m_firstRestArray = universe.m_firstCoroutineResult + m_numberOfFunctions;
         universe.m_firstFunctionPrototype = universe.m_firstRestArray + m_numberOfFunctions;
@@ -1458,7 +1458,8 @@ private:
 
                         parts.shrink(0);
                         parts.append(tested == BuiltinClasses::Promise ? inEveryClassButNoBuiltinObject : inEveryClass);
-                        if (hasCallableInstances && tested != BuiltinClasses::BoundFunction)
+                        // A closure of the program is never what a built-in makes: a bound function, a resolving function of a promise.
+                        if (hasCallableInstances && !builtins.at(tested).hasClosureInstances)
                             parts.append(universe.m_closures);
                         for (uint32_t other = 0; other < builtins.classCount(); ++other) {
                             if (allocatedAs[other] != ValueSets::nothing && mayBeInstanceOf(builtins, BuiltinClassID(other), tested))

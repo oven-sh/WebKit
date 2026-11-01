@@ -90,6 +90,14 @@ export default b.declarations(
   b.layout("PromiseFulfilledResult", { status: b.enumeration(["fulfilled"]), value: b.any }),
   b.layout("PromiseRejectedResult", { status: b.enumeration(["rejected"]), reason: b.any }),
 
+  // The resolve and reject functions that the constructor hands its executor. Flow knows them as functions, as it knows what bind() makes.
+  b.class("%PromiseResolvingFunction%", {
+    extends: "Function",
+    hasClosureInstances: true,
+    hasConstructor: false,
+    hasPrototype: false,
+  }),
+
   b.class("Promise", {
     jsType: "JSPromiseType",
     constructorCallee: "Function",

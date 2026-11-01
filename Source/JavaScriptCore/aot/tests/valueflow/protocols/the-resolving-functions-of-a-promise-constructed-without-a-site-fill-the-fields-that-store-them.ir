@@ -1,0 +1,48 @@
+# class Call { resolve!: (v: number) => void; reject!: (e: unknown) => void; constructor() { Reflect.construct(Promise, [(res, rej) => { this.resolve = res; this.reject = rej; }]); } }
+# call = new Call(); call.resolve(1); call.reject(1)
+# Reflect.construct hands the construction no site of its own, so both resolving functions are the one object that stands for them: still functions, so both fields hold their declared type.
+# RUN: valueflow-apply
+# CHECK: layout L0 {{*}}fields=[{key="resolve" {{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="reject" {{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]{{*}}impossibleMutations=[{{*}}StoreOfOtherType]
+# CHECK: module m0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Call" constructor=f1 fields=[{key="resolve" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="reject" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Construct v2
+    v4 = PropGet v3 key="resolve"
+    v5 = Integer integer=1
+    v6 = Call v4, v3, v5 calleeKey="resolve"
+    v7 = PropGet v3 key="reject"
+    v8 = Call v7, v3, v5 calleeKey="reject"
+    Return
+}
+function f1 name="Call" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]}
+    v4 = CallDirect v3 function=f2
+    v5 = Builtin builtin=Reflect
+    v6 = Builtin builtin=ReflectConstruct
+    v7 = Builtin builtin=Promise
+    v8 = NewClosure v3 function=f3
+    v9 = NewArray v8
+    v10 = Call v6, v5, v7, v9 calleeName="Reflect.construct"
+    Return v3
+}
+function f2 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Undefined
+    PropDefine v0, v1 key="resolve"
+    PropDefine v0, v1 key="reject"
+    Return v1
+}
+function f3 name="executor" module=m0 kind=Arrow captures=[{type=L0 flags=[IsFromCompiler] variableName="this"}] parameters=[{type=undefined|null|function flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
+    v3 = Convert v1 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}
+    PropSet v0, v3 key="resolve"
+    v5 = Convert v2 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}
+    PropSet v0, v5 key="reject"
+    Return
+}

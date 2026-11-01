@@ -114,6 +114,9 @@ public:
     ValueFlowObjectID prototypeOf(LayoutID layout) const { return ValueFlowObjectID(m_firstLayoutObject + 2 * layout.index() + 1); }
     ValueFlowObjectID resultOf(BuiltinID builtin, uint32_t ordinal) const { return ValueFlowObjectID(m_firstResultOfBuiltin + 2 * m_builtins->canonicalID(builtin).index() + ordinal); }
     ValueFlowObjectID hostObject(uint32_t indexOfRecord) const { return ValueFlowObjectID(m_firstResultOfBuiltin + 2 * m_builtins->builtinCount() + indexOfRecord); }
+    // The reject function of every promise that the program constructs, and the resolve function where the construction has no site object of its own: Reflect.construct,
+    // a bound Promise, a construction by native code (applyConstructionOfPromise). The second object of the Promise built-in is what the rows of the table make on its behalf.
+    ValueFlowObjectID resolvingFunctionOfPromises() const { return ValueFlowObjectID(m_firstClosure - numberOfObjectsOfRules); }
     ValueFlowObjectID closureOf(FunctionID function) const { return ValueFlowObjectID(m_firstClosure + function.index()); }
     ValueFlowObjectID coroutineResultOf(FunctionID function) const { return ValueFlowObjectID(m_firstCoroutineResult + function.index()); }
     ValueFlowObjectID restArrayOf(FunctionID function) const { return ValueFlowObjectID(m_firstRestArray + function.index()); }
@@ -279,6 +282,8 @@ private:
     uint32_t m_firstNamespace { 0 };
     uint32_t m_firstLayoutObject { 0 };
     uint32_t m_firstResultOfBuiltin { 0 };
+    // Objects that a rule makes beside those of the built-ins and of the calls: resolvingFunctionOfPromises().
+    static constexpr uint32_t numberOfObjectsOfRules = 1;
     uint32_t m_firstClosure { 0 };
     uint32_t m_firstCoroutineResult { 0 };
     uint32_t m_firstRestArray { 0 };
