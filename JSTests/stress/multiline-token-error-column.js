@@ -9,7 +9,7 @@ function shouldBe(actual, expected) {
       */const e = new Error("new error"); return e;
     })();
     shouldBe(line, 9);
-    shouldBe(column, 28);
+    shouldBe(column, 19); // Bun: upstream has 28, where `Error` ends. `new X(args)` is reported at its `new`.
 }
 {
     let { line, column } = (function() {
@@ -20,5 +20,5 @@ string
 `; const e = new Error("new error"); return e;
     })();
     shouldBe(line, 20);
-    shouldBe(column, 23);
+    shouldBe(column, 14); // Bun: upstream has 23, where `Error` ends.
 }

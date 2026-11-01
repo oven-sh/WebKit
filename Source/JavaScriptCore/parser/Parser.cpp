@@ -4818,11 +4818,10 @@ namedProperty:
     case DOTDOTDOT: {
         auto spreadLocation = m_token.location();
         auto start = m_token.m_startPosition;
-        auto divot = m_token.m_endPosition;
         next();
         TreeExpression elem = parseAssignmentExpression(context);
         failIfFalse(elem, "Cannot parse subject of a spread operation");
-        auto node = context.createObjectSpreadExpression(spreadLocation, elem, start, divot, lastTokenEndPosition());
+        auto node = context.createObjectSpreadExpression(spreadLocation, elem, start, start, lastTokenEndPosition());
         return context.createProperty(node, PropertyNode::Spread, SuperBinding::NotNeeded, ClassElementTag::No);
     }
     default:
@@ -5058,11 +5057,10 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseArrayLiteral
     if (match(DOTDOTDOT)) [[unlikely]] {
         auto spreadLocation = m_token.location();
         auto start = m_token.m_startPosition;
-        auto divot = m_token.m_endPosition;
         next();
         auto spreadExpr = parseAssignmentExpression(context);
         failIfFalse(spreadExpr, "Cannot parse subject of a spread operation");
-        elem = context.createSpreadExpression(spreadLocation, spreadExpr, start, divot, lastTokenEndPosition());
+        elem = context.createSpreadExpression(spreadLocation, spreadExpr, start, start, lastTokenEndPosition());
     } else
         elem = parseArrayElement(context);
     failIfFalse(elem, "Cannot parse array literal element");
@@ -5083,11 +5081,10 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseArrayLiteral
         if (match(DOTDOTDOT)) [[unlikely]] {
             auto spreadLocation = m_token.location();
             auto start = m_token.m_startPosition;
-            auto divot = m_token.m_endPosition;
             next();
             TreeExpression elem = parseAssignmentExpression(context);
             failIfFalse(elem, "Cannot parse subject of a spread operation");
-            auto spread = context.createSpreadExpression(spreadLocation, elem, start, divot, lastTokenEndPosition());
+            auto spread = context.createSpreadExpression(spreadLocation, elem, start, start, lastTokenEndPosition());
             tail = context.createElementList(tail, elisions, spread);
             continue;
         }
@@ -5429,7 +5426,6 @@ template <class TreeBuilder> TreeArguments Parser<LexerType>::parseArguments(Tre
         return context.createArguments();
     }
     auto argumentsStart = m_token.m_startPosition;
-    auto argumentsDivot = m_token.m_endPosition;
 
     int initialAssignments = m_parserState.assignmentCount;
     ArgumentType argType = ArgumentType::Normal;
@@ -5462,7 +5458,7 @@ template <class TreeBuilder> TreeArguments Parser<LexerType>::parseArguments(Tre
 
     handleProductionOrFail2(CLOSEPAREN, ")", "end", "argument list");
     if (hasSpread) {
-        TreeExpression spreadArray = context.createSpreadExpression(location, context.createArray(location, context.createElementList(argList)), argumentsStart, argumentsDivot, lastTokenEndPosition());
+        TreeExpression spreadArray = context.createSpreadExpression(location, context.createArray(location, context.createElementList(argList)), argumentsStart, argumentsStart, lastTokenEndPosition());
         return context.createArguments(context.createArgumentsList(location, spreadArray), initialAssignments != m_parserState.assignmentCount);
     }
 
@@ -5475,13 +5471,12 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseArgument(Tre
     if (match(DOTDOTDOT)) [[unlikely]] {
         JSTokenLocation spreadLocation(tokenLocation());
         auto start = m_token.m_startPosition;
-        auto divot = m_token.m_endPosition;
         next();
         TreeExpression spreadExpr = parseAssignmentExpression(context);
         propagateError();
         auto end = lastTokenEndPosition();
         type = ArgumentType::Spread;
-        return context.createSpreadExpression(spreadLocation, spreadExpr, start, divot, end);
+        return context.createSpreadExpression(spreadLocation, spreadExpr, start, start, end);
     }
 
     type = ArgumentType::Normal;
@@ -5683,13 +5678,15 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
                 if (newCount) {
                     newCount--;
                     semanticFailIfTrue(baseIsSuper, "Cannot use new with super call");
-                    JSTextPosition expressionEnd = lastTokenEndPosition();
                     TreeArguments arguments = parseArguments(context);
                     failIfFalse(arguments, "Cannot parse call arguments");
-                    base = context.createNewExpr(location, base, arguments, expressionStart, expressionEnd, lastTokenEndPosition());
+                    base = context.createNewExpr(location, base, arguments, expressionStart, newTokenStartPositions[newCount], lastTokenEndPosition());
                 } else {
                     size_t usedVariablesSize = currentScope()->currentUsedVariablesSize();
                     JSTextPosition expressionEnd = lastTokenEndPosition();
+                    // A call whose callee ends in a name, or is `super`, is reported where that token starts. Any other
+                    // is reported where its callee ends: behind the `?.` of `f?.()`, the `)` of `(f)()` or the `]` of `a[b]()`.
+                    JSTextPosition callDivot = m_lastTokenType == IDENT || m_lastTokenType == SUPER ? JSTextPosition(m_lastTokenLocation.startOffset) : expressionEnd;
                     std::optional<CallOrApplyDepthScope> callOrApplyDepthScope;
                     recordCallOrApplyDepth<TreeBuilder>(this, m_vm, callOrApplyDepthScope, base);
 
@@ -5717,7 +5714,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
 
                     isOptionalCall = optionalChainLocation.endOffset == static_cast<unsigned>(expressionEnd.offset);
                     base = context.makeFunctionCallNode(location, base, previousBaseWasSuper, arguments, expressionStart,
-                        expressionEnd, lastTokenEndPosition(), callOrApplyDepthScope ? callOrApplyDepthScope->distanceToInnermostChild() : 0, isOptionalCall);
+                        callDivot, lastTokenEndPosition(), callOrApplyDepthScope ? callOrApplyDepthScope->distanceToInnermostChild() : 0, isOptionalCall);
                 }
                 break;
             }
