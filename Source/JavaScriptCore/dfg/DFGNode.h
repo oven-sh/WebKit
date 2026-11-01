@@ -311,8 +311,18 @@ struct CallCustomAccessorData {
 };
 
 struct GetByIdData {
+    GetByIdData(CacheableIdentifier identifier, CacheType cacheType, ResolveMode resolveMode)
+        : m_identifier(identifier)
+        , m_cacheType(cacheType)
+        , m_resolveMode(resolveMode)
+    {
+    }
+
     CacheableIdentifier m_identifier;
     CacheType m_cacheType;
+    // ThrowIfNotFound is the read of a variable through the object that holds it: a name with no property is a
+    // ReferenceError there, not undefined. Only GetById and GetByIdFlush can have it.
+    ResolveMode m_resolveMode;
 };
 
 enum class BucketOwnerType : uint32_t {
@@ -1357,6 +1367,17 @@ public:
     {
         ASSERT(hasCacheType());
         return getByIdData().m_cacheType;
+    }
+
+    bool hasResolveMode() const
+    {
+        return hasGetByIdData();
+    }
+
+    ResolveMode resolveMode()
+    {
+        ASSERT(hasResolveMode());
+        return getByIdData().m_resolveMode;
     }
 
     unsigned identifierNumber()

@@ -528,7 +528,7 @@ void Node::convertToGetByIdMaybeMegamorphic(Graph& graph, CacheableIdentifier id
     children.child1() = Edge(base.node(), CellUse);
     children.child2() = Edge();
     children.child3() = Edge();
-    auto* data = graph.m_getByIdData.add(GetByIdData { identifier, CacheType::GetByIdSelf });
+    auto* data = graph.m_getByIdData.add(GetByIdData { identifier, CacheType::GetByIdSelf, DoNotThrowIfNotFound });
     m_opInfo = data;
 }
 

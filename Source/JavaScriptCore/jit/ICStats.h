@@ -55,6 +55,8 @@ static constexpr bool traceHandlerChains = false;
     macro(OperationGetByIdGeneric) \
     macro(OperationGetByIdBuildList) \
     macro(OperationGetByIdOptimize) \
+    macro(OperationGetByIdThrowIfNotFoundGaveUp) \
+    macro(OperationGetByIdThrowIfNotFoundOptimize) \
     macro(OperationGetByValOptimize) \
     macro(OperationGetByIdWithThisOptimize) \
     macro(OperationGetByIdWithThisGaveUp) \
