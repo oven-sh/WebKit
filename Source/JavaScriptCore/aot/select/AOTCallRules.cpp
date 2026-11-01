@@ -73,6 +73,9 @@ static std::optional<SelectedMethodCall> matchMethodCall(SelectionContext& conte
     ValueID read = call.calleeOperand();
     if (!isUntypedMethodRead(context, read, key))
         return std::nullopt;
+    // CallMethod has the effects of unknown code and names no callee. Unknown code enters accessors, callbacks and what the host calls: not a function that only calls by value reach.
+    if (!hasOnlyEffectsOfUnknownCode(context, id) && !context.build().isSabotaged(Sabotage::FusedCallsEnterOnlyUnknownCode))
+        return std::nullopt;
 
     if (!isOrdinaryKey(context.program(), key) || !context.slots().hasColumn(key))
         return std::nullopt;
