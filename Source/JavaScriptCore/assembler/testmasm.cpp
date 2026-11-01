@@ -51,6 +51,20 @@
 #include <wtf/WeakRandom.h>
 #include <wtf/text/StringCommon.h>
 
+#if ENABLE(JIT_PROTECTION_KEY)
+#include "JSLock.h"
+#include "VM.h"
+#include <fcntl.h>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
+#include <signal.h>
+#include <sys/prctl.h>
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 // We don't have a NO_RETURN_DUE_TO_EXIT, nor should we. That's ridiculous.
@@ -11381,6 +11395,211 @@ static void testGPRInfoConsistency()
     }
 }
 
+#if ENABLE(JIT_PROTECTION_KEY)
+
+// The kernel copies to and from user memory with the rights of the thread that asks, so a pipe tells what the thread may do
+// to an address, and nothing faults.
+class AccessProbe {
+public:
+    AccessProbe() { RELEASE_ASSERT(!pipe(m_pipe)); }
+    ~AccessProbe()
+    {
+        close(m_pipe[0]);
+        close(m_pipe[1]);
+    }
+
+    bool canRead(const void* address)
+    {
+        if (write(m_pipe[1], address, 1) != 1) {
+            RELEASE_ASSERT(errno == EFAULT);
+            return false;
+        }
+        drain();
+        return true;
+    }
+
+    // Takes the byte that is at the address, so that a write that goes through changes nothing.
+    bool canWrite(void* address, uint8_t byte)
+    {
+        RELEASE_ASSERT(write(m_pipe[1], &byte, 1) == 1);
+        if (read(m_pipe[0], address, 1) == 1)
+            return true;
+        RELEASE_ASSERT(errno == EFAULT);
+        drain();
+        return false;
+    }
+
+private:
+    void drain()
+    {
+        uint8_t byte;
+        RELEASE_ASSERT(read(m_pipe[0], &byte, 1) == 1);
+    }
+
+    int m_pipe[2];
+};
+
+static CodeLocationDataLabelPtr<JSInternalPtrTag> s_pointerToPatchInSignalHandler;
+static void* s_pointerReadInSignalHandler;
+
+// Leaves what a thread older than the key has, and a signal handler: access disable, the lower of the key's two bits.
+static void takeAwayRightsToJITRegion()
+{
+    uint32_t bits = g_jscConfig.jitProtectionKeyBits;
+    uint32_t eax;
+    uint32_t edx;
+    __asm__ volatile("rdpkru" : "=a"(eax), "=d"(edx) : "c"(0));
+    __asm__ volatile("wrpkru" : : "a"((eax & ~bits) | (bits & 0x55555555)), "c"(0), "d"(0) : "memory");
+}
+
+// How this program ends when it starts under a seccomp filter that kills it for pkey_alloc(), and for asking prctl() whether
+// there is a filter, or nothing where the process may not have a filter.
+static std::optional<int> statusOfStartingUnderFilterThatKillsForProtectionKey(const char* option)
+{
+    constexpr int cannotInstallFilter = 10;
+    // In front, because getenv() takes the first.
+    Vector<char*> environment { const_cast<char*>(option) };
+    for (char** variable = environ; *variable; ++variable)
+        environment.append(*variable);
+    environment.append(nullptr);
+    char* arguments[] = { const_cast<char*>("testmasm"), const_cast<char*>("testGPRInfoConsistency"), nullptr };
+
+    pid_t child = fork();
+    RELEASE_ASSERT(child >= 0);
+    if (!child) {
+        struct sock_filter instructions[] = {
+            BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
+            BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_pkey_alloc, 3, 0),
+            BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_prctl, 0, 3),
+            BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[0])),
+            BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, PR_GET_SECCOMP, 0, 1),
+            BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS),
+            BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+        };
+        struct sock_fprog program { 7, instructions };
+        if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) || prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &program, 0, 0))
+            _exit(cannotInstallFilter);
+        struct rlimit noCoreFile { 0, 0 };
+        setrlimit(RLIMIT_CORE, &noCoreFile);
+        int null = open("/dev/null", O_WRONLY);
+        dup2(null, STDOUT_FILENO);
+        dup2(null, STDERR_FILENO);
+        execve("/proc/self/exe", arguments, environment.mutableSpan().data());
+        _exit(cannotInstallFilter + 1);
+    }
+    int status;
+    RELEASE_ASSERT(waitpid(child, &status, 0) == child);
+    if (WIFEXITED(status) && WEXITSTATUS(status) == cannotInstallFilter)
+        return std::nullopt;
+    return status;
+}
+
+void testJITProtectionKeyUnderSeccompFilter()
+{
+    // It does not ask for a key, or the filter would have killed it.
+    auto status = statusOfStartingUnderFilterThatKillsForProtectionKey("JSC_useJITProtectionKeyUnderSeccompFilter=0");
+    if (!status) {
+        dataLogLn("    This process may not have a seccomp filter.");
+        return;
+    }
+    CHECK_EQ(WIFEXITED(*status) && !WEXITSTATUS(*status), true);
+
+    // With the option it asks. Where there is no key here, it may be that it does not get as far as asking.
+    if (!g_jscConfig.useFastJITPermissions)
+        return;
+    status = statusOfStartingUnderFilterThatKillsForProtectionKey("JSC_useJITProtectionKeyUnderSeccompFilter=1");
+    CHECK_EQ(WIFSIGNALED(*status) && WTERMSIG(*status) == SIGSYS, true);
+}
+
+void testJITProtectionKey()
+{
+    auto asPointer = [](uintptr_t value) {
+        return reinterpret_cast<void*>(value);
+    };
+
+    CCallHelpers jit;
+    emitFunctionPrologue(jit);
+    auto pointer = jit.moveWithPatch(CCallHelpers::TrustedImmPtr(asPointer(42)), GPRInfo::returnValueGPR);
+    emitFunctionEpilogue(jit);
+    jit.ret();
+    LinkBuffer linkBuffer(jit, nullptr);
+    auto location = linkBuffer.locationOf<JSInternalPtrTag>(pointer);
+    auto code = FINALIZE_CODE(linkBuffer, JSEntryPtrTag, nullptr, "testmasm JIT protection key");
+    uint8_t* start = code.code().untaggedPtr<uint8_t*>();
+    uint8_t firstByte = *start;
+
+    bool isProtected = g_jscConfig.useFastJITPermissions;
+    if (!isProtected)
+        dataLogLn("    The JIT region has no protection key here.");
+
+    auto check = [&](uintptr_t expected) {
+        AccessProbe probe;
+        CHECK_EQ(invoke<uintptr_t>(code), expected);
+        CHECK_EQ(probe.canRead(start), true);
+        CHECK_EQ(probe.canWrite(start, firstByte), !isProtected);
+        CHECK_EQ(MacroAssembler::readPointer(location), asPointer(expected));
+    };
+
+    check(42);
+    MacroAssembler::repatchPointer(location, asPointer(43));
+    check(43);
+
+    // A thread has the rights of the one that created it.
+    Thread::create("testJITProtectionKey"_s, [&] {
+        check(43);
+        MacroAssembler::repatchPointer(location, asPointer(44));
+        check(44);
+    })->waitForCompletion();
+    check(44);
+
+    // The kernel gives a signal handler the rights that a process starts with, and the interrupted code its own back.
+    s_pointerToPatchInSignalHandler = location;
+    struct sigaction action { };
+    struct sigaction oldAction;
+    action.sa_handler = [](int) {
+        if (g_jscConfig.useFastJITPermissions)
+            threadSelfRestrict<MemoryRestriction::kRwxToRx>();
+        s_pointerReadInSignalHandler = MacroAssembler::readPointer(s_pointerToPatchInSignalHandler);
+        MacroAssembler::repatchPointer(s_pointerToPatchInSignalHandler, reinterpret_cast<void*>(45));
+    };
+    RELEASE_ASSERT(!sigaction(SIGURG, &action, &oldAction));
+    RELEASE_ASSERT(!raise(SIGURG));
+    RELEASE_ASSERT(!sigaction(SIGURG, &oldAction, nullptr));
+    CHECK_EQ(s_pointerReadInSignalHandler, asPointer(44));
+    check(45);
+
+    if (!isProtected)
+        return;
+
+    // A thread that is older than the key has no rights to what the key guards.
+    Thread::create("testJITProtectionKey"_s, [&] {
+        AccessProbe probe;
+        takeAwayRightsToJITRegion();
+        CHECK_EQ(probe.canRead(start), false);
+        CHECK_EQ(probe.canWrite(start, firstByte), false);
+        CHECK_EQ(invoke<uintptr_t>(code), 45u);
+        threadSelfRestrict<MemoryRestriction::kRwxToRx>();
+        check(45);
+
+        takeAwayRightsToJITRegion();
+        MacroAssembler::repatchPointer(location, asPointer(46));
+        check(46);
+
+        // Such a thread gets to read the region when it takes the lock of a VM.
+        RefPtr<VM> vm = VM::create();
+        takeAwayRightsToJITRegion();
+        CHECK_EQ(probe.canRead(start), false);
+        {
+            JSLockHolder locker(*vm);
+            check(46);
+            vm = nullptr;
+        }
+    })->waitForCompletion();
+    check(46);
+}
+
+#endif // ENABLE(JIT_PROTECTION_KEY)
+
 #define RUN(test) do {                          \
         if (!shouldRun(#test))                  \
             break;                              \
@@ -11782,6 +12001,11 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 #endif
 
     RUN(testGPRInfoConsistency());
+
+#if ENABLE(JIT_PROTECTION_KEY)
+    RUN(testJITProtectionKey());
+    RUN(testJITProtectionKeyUnderSeccompFilter());
+#endif
 
     if (!numberOfTests)
         usage();

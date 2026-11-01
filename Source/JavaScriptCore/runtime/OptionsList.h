@@ -721,6 +721,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Double, allowHoistingLICMProbability, 0.5, Normal, nullptr) \
     v(Bool, exposeCustomSettersOnGlobalObjectForTesting, false, Normal, nullptr) \
     v(Bool, useJITCage, canUseJITCage(), Normal, nullptr) \
+    v(Bool, useJITProtectionKey, true, Normal, "Linux on x86-64: where there are memory protection keys, let a thread write to the JIT region only while it copies code there."_s) \
+    v(Bool, useJITProtectionKeyUnderSeccompFilter, false, Normal, "Under a seccomp filter the JIT region has no key, because the filter may kill the process for asking. This asks anyway. For a filter that allows pkey_alloc, pkey_mprotect and pkey_free, such as Docker's default profile."_s) \
     v(Bool, useAllocationProfiling, false, Normal, "Allows toggling of bmalloc/libPAS allocation profiling features at JSC launch."_s) \
     v(Unsigned, allocationProfilingMode, 0, Normal, "Allows custom arguments to be passed to bmalloc/libPAS allocation profiling features at JSC launch."_s) \
     v(Bool, dumpBaselineJITSizeStatistics, false, Normal, nullptr) \
