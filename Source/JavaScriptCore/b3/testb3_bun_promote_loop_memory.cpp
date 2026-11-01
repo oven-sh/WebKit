@@ -306,6 +306,22 @@ static void testPromoteLoopMemoryPromotesLocation()
     checkAddsIndexesToSlot(loop.proc);
 }
 
+// A value placed by an InsertionSet has no owner until the owners are reset, and a value that a phase moved has a stale one.
+static void testPromoteLoopMemoryResetsValueOwners()
+{
+    for (bool ownersAreStale : { false, true }) {
+        MemoryLoop loop;
+        loop.addIndexToSlot();
+        loop.finish();
+        for (Value* value : loop.proc.values())
+            value->owner = ownersAreStale ? loop.proc[loop.proc.size() - 1] : nullptr;
+        CHECK(promoteLoopMemoryAndValidate(loop.proc));
+        CHECK_EQ(valueCountInLoops(loop.proc, Load), 0u);
+        CHECK_EQ(loop.proc.report().countOf(Counter::LocationsPromotedInLoops), 1u);
+        checkAddsIndexesToSlot(loop.proc);
+    }
+}
+
 static void testPromoteLoopMemoryPromotesEveryNumericType()
 {
     for (Type type : { Int32, Int64, Float, Double }) {
@@ -853,6 +869,7 @@ static void testPipelinePromotesLoopMemoryOnlyWhenEnabled()
 void addBunLoopMemoryTests(const TestConfig* config, BunTestTasks& tasks)
 {
     RUN(testPromoteLoopMemoryPromotesLocation());
+    RUN(testPromoteLoopMemoryResetsValueOwners());
     RUN(testPromoteLoopMemoryPromotesEveryNumericType());
     RUN(testPromoteLoopMemoryPromotesLocationAlsoLoadedThroughOtherAddresses());
     RUN(testPromoteLoopMemorySkipsClobberedLocation());

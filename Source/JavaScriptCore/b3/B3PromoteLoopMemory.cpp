@@ -35,6 +35,7 @@ public:
 
     bool run()
     {
+        m_proc.resetValueOwners();
         NaturalLoops& loops = m_proc.naturalLoops();
         Vector<const NaturalLoop*> outermostFirst;
         for (unsigned index = 0; index < loops.numLoops(); ++index)
