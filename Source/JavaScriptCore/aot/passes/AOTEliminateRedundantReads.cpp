@@ -4851,6 +4851,7 @@ struct LoopPathSeparator : LoopEditor {
         // Everything that enters the loop comes through one block, which is the header of the cycle through the copy. So the loop stays a loop of its own, with one entering edge.
         BlockID entry = builder.addBlock(frequencyOfLoop);
         BlockID tests = builder.addBlock(m_function.at(headerOfCopy).frequency);
+        constexpr uint32_t parametersForEdgeResultsWhileNothingEnters = 0;
         Arguments parametersOfEntry;
         Arguments carried;
         for (size_t index = 0; index < numberOfParameters; ++index) {
@@ -4861,8 +4862,8 @@ struct LoopPathSeparator : LoopEditor {
                 typeInLoop = types.unionOf(typeInLoop, plan.typesOfCarriedValues[index]);
             else if (TypeID taken = typesTakenFromCopy[index])
                 typeInLoop = taken;
-            parametersOfEntry.append(builder.addParameter(entry, typeInLoop));
-            carried.append(builder.addParameter(tests, plan.typesOfCarriedValues[index]));
+            parametersOfEntry.append(builder.addParameter(entry, typeInLoop, parametersForEdgeResultsWhileNothingEnters));
+            carried.append(builder.addParameter(tests, plan.typesOfCarriedValues[index], parametersForEdgeResultsWhileNothingEnters));
         }
         bool entersThroughTests = false;
         for (Edge edge : enteringEdges) {
