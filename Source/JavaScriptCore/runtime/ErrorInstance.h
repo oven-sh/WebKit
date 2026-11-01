@@ -114,6 +114,12 @@ public:
     void setStackFrames(VM& vm, WTF::Vector<JSC::StackFrame>&& stackFrames);
     bool hasMaterializedErrorInfo() const { return m_errorInfoMaterialized; }
 
+    // True while line() and sourceURL() are where the parser rejected a source that has a URL: the 4-argument
+    // addErrorInfo() sets it, and what replaces the two, or moves them into the properties, clears it. A structured
+    // clone, and an error whose frames a collection formatted, have a sourceURL() that is not one. isParseError() does
+    // not tell: it is set after the host formatted the stack, and an eval parse error has it with no position.
+    bool hasParseLocation() const { return m_hasParseLocation; }
+    void setHasParseLocation() { m_hasParseLocation = true; }
 #endif
 
     JS_EXPORT_PRIVATE String sanitizedToString(JSGlobalObject*);
@@ -198,9 +204,15 @@ protected:
 #endif
 #if USE(BUN_JSC_ADDITIONS)
     bool m_stackStringIsFramesOnly : 1;
+    bool m_hasParseLocation : 1;
     JSValue stackWithHeader(VM&, String&& frames);
 #endif
 };
+
+#if USE(BUN_JSC_ADDITIONS) && CPU(ADDRESS64)
+// The two flags for Bun take bits of a byte that was padding.
+static_assert(sizeof(ErrorInstance) <= 80);
+#endif
 
 String appendSourceToErrorMessage(CodeBlock*, BytecodeIndex, const String&, RuntimeType, ErrorInstance::SourceAppender);
 
