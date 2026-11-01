@@ -337,8 +337,13 @@ bool Modules::wasLoadedByImport(ModuleID module)
             toFollow.append(ModuleID(index));
     }
     while (!toFollow.isEmpty()) {
-        for (const ModuleRequestData& request : m_table.requests(toFollow.takeLast())) {
-            if (request.isDeferred || request.isRequire)
+        ModuleID importer = toFollow.takeLast();
+        // What only a mocked module imports is not loaded.
+        if (standsForWholeModule(importer))
+            continue;
+        for (const ModuleRequestData& request : m_table.requests(importer)) {
+            // The list of a root holds the files of its whole graph, and says nothing of who imports them.
+            if (request.isDeferred || request.isRequire || request.isHoisted)
                 continue;
             if (request.targetModule() == imported)
                 return true;
@@ -2805,6 +2810,9 @@ Vector<ModuleID> Modules::libraryModulesInRequireCache()
         }
     }
     for (size_t next = 0; next < toFollow.size(); ++next) {
+        // What only a mocked module imports is not loaded.
+        if (standsForWholeModule(toFollow[next]))
+            continue;
         for (const ModuleRequestData& request : m_table.requests(toFollow[next])) {
             if (request.isDeferred || request.isRequire || isSeen.quickSet(request.target()))
                 continue;
@@ -2925,7 +2933,7 @@ std::optional<ModuleID> Modules::findFormThatStatementLoaded(const Identifier& k
         ModuleID importer(index);
         // A module that needs no link counts as linked before anybody has asked for it.
         bool wasLoaded = status(importer) > ModuleStatus::Linked || (m_entryPointIsLinked && data(importer).isLinkedWithEntryPoint());
-        if (data(importer).kind != ModuleKind::SourceText || !wasLoaded)
+        if (data(importer).kind != ModuleKind::SourceText || !wasLoaded || standsForWholeModule(importer))
             continue;
         for (const ModuleRequestData& request : m_table.imports(importer)) {
             if (forms.contains(request.targetModule()))
@@ -5265,7 +5273,11 @@ void Modules::followImportsOfModulesThatHaveRun()
     }
     while (!toFollow.isEmpty()) {
         ++numberLookedAt;
-        for (const ModuleRequestData& request : m_table.requests(toFollow.takeLast())) {
+        ModuleID importer = toFollow.takeLast();
+        // What only a mocked module imports is not loaded.
+        if (standsForWholeModule(importer))
+            continue;
+        for (const ModuleRequestData& request : m_table.requests(importer)) {
             if (request.isDeferred || request.isRequire)
                 continue;
             if (!m_modulesThatRanWithImporters.quickSet(request.target()))
