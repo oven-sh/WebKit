@@ -826,7 +826,7 @@ ClimbingSet HeapRule::accessorsFoundFrom(ClimbingSet start, const HeapKey& key, 
 
 ClimbingSet HeapRule::settersOfProgramLaidAbove(ClimbingSet start, const HeapKey& key)
 {
-    if (key.keyClass != HeapKeyClass::Name)
+    if (key.keyClass != HeapKeyClass::Name && m_context.isSabotaged(Sabotage::StoresUnderUnknownKeysEnterNoSetterThatEscaped))
         return { };
     ValueFlowNodeID laid = readWhereWritten(chainFrom(start, key).objects, foundName(key, HeapPropertyPart::Setter));
     return laid ? m_context.valueWithin(ClimbingSet(m_universe.closures()), laid) : ClimbingSet();
