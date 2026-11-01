@@ -18,6 +18,7 @@
 #include "AOTPhaseTimes.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTRepresentation.h"
+#include "AOTRowsOfLayouts.h"
 #include "AOTSharedMemo.h"
 #include "AOTSlotPlanSteps.h"
 #include "AOTSort.h"
@@ -512,22 +513,32 @@ InheritedRows::InheritedRows(const Program& program, const SlotRows& rows, std::
     m_depths.fill(0, numberOfLayouts);
     BitVector isPacked(numberOfLayouts);
     m_isInFamily.ensureSize(numberOfLayouts);
+    auto layoutAbove = [&](LayoutID id) {
+        return nearestLayoutAlwaysAbove(program.at(id).flow);
+    };
+    Vector<LayoutID, 16> row;
+    BitVector hasCompiledObjectsBelow(numberOfLayouts);
     for (unsigned index = 0; index < numberOfLayouts; ++index) {
-        LayoutID id(index);
-        LayoutID root = id;
-        for (LayoutID base = nearestLayoutAlwaysAbove(program.at(id).flow); base; base = nearestLayoutAlwaysAbove(program.at(base).flow)) {
-            RELEASE_ASSERT(m_depths[index] < numberOfLayouts);
-            ++m_depths[index];
-            root = base;
-            if (!isCompiledObject(id))
-                continue;
+        for (LayoutID id(index); id && !roots[id.index()]; id = layoutAbove(id)) {
+            RELEASE_ASSERT(row.size() < numberOfLayouts);
+            row.append(id);
+        }
+        while (!row.isEmpty()) {
+            LayoutID id = row.takeLast();
+            LayoutID base = layoutAbove(id);
+            roots[id.index()] = base ? roots[base.index()] : id;
+            m_depths[id.index()] = base ? m_depths[base.index()] + 1 : 0;
+        }
+        if (!isCompiledObject(LayoutID(index)))
+            continue;
+        isPacked.quickSet(index);
+        LayoutID base = layoutAbove(LayoutID(index));
+        if (base)
+            m_isInFamily.quickSet(index);
+        for (; base && !hasCompiledObjectsBelow.quickSet(base.index()); base = layoutAbove(base)) {
             isPacked.quickSet(base.index());
             m_isInFamily.quickSet(base.index());
-            m_isInFamily.quickSet(index);
         }
-        roots[index] = root;
-        if (isCompiledObject(id))
-            isPacked.quickSet(index);
     }
 
     for (unsigned index : isPacked) {
@@ -1049,36 +1060,37 @@ static bool isClassWithConstantNames(const Layout& layout)
     });
 }
 
-static bool definitionMakesWhatRecordsSay(const Program& program, LayoutID id)
+static BitVector findClassesWhoseDefinitionsMakeWhatRecordsSay(const Program& program)
 {
-    LayoutID current = id;
-    for (size_t steps = 0; current && steps < program.layouts.size(); ++steps) {
-        const Layout& layout = program.at(current);
+    return answerAlongRows(program.layouts.size(), false, [&](LayoutID id) -> StepAlongRow {
+        const Layout& layout = program.at(id);
         if (!isClassWithConstantNames(layout))
-            return false;
+            return { false, { } };
         if (hasNoHeritage(layout))
-            return true;
+            return { true, { } };
         switch (layout.flow.baseState) {
         case BaseState::BuiltinClass:
-            return true;
+            return { true, { } };
         case BaseState::Unknown:
             if (!layout.base)
-                return true;
+                return { true, { } };
             break;
         case BaseState::Layout:
             break;
         case BaseState::None:
-            return false;
+            return { false, { } };
         }
-        current = expectedBaseOf(layout);
-    }
-    return false;
+        if (LayoutID base = expectedBaseOf(layout))
+            return { std::nullopt, base };
+        return { false, { } };
+    });
 }
 
 Vector<ClassCreationPlan> planClassCreation(const SlotPlanContext& context)
 {
     const Program& program = context.program;
     Vector<BaseChainSummary> baseChains = summarizeBaseChains(program);
+    BitVector definitionsMakeWhatRecordsSay = findClassesWhoseDefinitionsMakeWhatRecordsSay(program);
     Vector<ClassCreationPlan> plans(program.layouts.size());
     uint64_t membersCreatedByClassRecord = 0;
     uint64_t membersCreatedAtDefinition = 0;
@@ -1089,7 +1101,7 @@ Vector<ClassCreationPlan> planClassCreation(const SlotPlanContext& context)
             continue;
         ClassCreationPlan& plan = plans[index];
         plan = planClass(program, layout, baseChains[index]);
-        plan.guardsHoldWhileClear = definitionMakesWhatRecordsSay(program, LayoutID(index));
+        plan.guardsHoldWhileClear = definitionsMakeWhatRecordsSay.quickGet(index);
         uint64_t byClassRecord = std::ranges::count(plan.members, MemberCreation::ByClassRecord);
         membersCreatedByClassRecord += byClassRecord;
         membersCreatedAtDefinition += plan.members.size() - byClassRecord;

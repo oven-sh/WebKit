@@ -429,11 +429,22 @@ static void computeBaseResults(const ValueFlowResultInputs& inputs, std::span<co
         return computeBase(inputs, LayoutID(static_cast<uint32_t>(index)), classes[index]);
     });
     BitVector liesOnCycle(bases.size());
-    for (size_t index = 0; index < bases.size(); ++index) {
-        LayoutID above = provenBaseOf(bases[index]);
-        for (size_t steps = 0; above && above.index() != index && steps < bases.size(); ++steps)
-            above = provenBaseOf(bases[above.index()]);
-        liesOnCycle.quickSet(index, !!above && above.index() == index);
+    BitVector isVisited(bases.size());
+    BitVector isOnPath(bases.size());
+    Vector<LayoutID, 16> path;
+    for (uint32_t index = 0; index < bases.size(); ++index) {
+        LayoutID current(index);
+        for (; current && !isVisited.quickSet(current.index()); current = provenBaseOf(bases[current.index()])) {
+            isOnPath.quickSet(current.index());
+            path.append(current);
+        }
+        bool isInCycle = current && isOnPath.quickGet(current.index());
+        while (!path.isEmpty()) {
+            LayoutID id = path.takeLast();
+            isOnPath.quickClear(id.index());
+            liesOnCycle.quickSet(id.index(), isInCycle);
+            isInCycle = isInCycle && id != current;
+        }
     }
     for (size_t index : liesOnCycle)
         bases[index] = BaseOfClass { };

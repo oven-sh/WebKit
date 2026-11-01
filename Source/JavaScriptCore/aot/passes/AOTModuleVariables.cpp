@@ -730,6 +730,7 @@ struct DefinitionCounts {
     Vector<uint8_t> definitionsOfClass;
     // What the run time finds through a record of the program. A pass may later turn an access by name into a read of such a variable.
     BitVector isNamedByRecord;
+    BitVector classesWithOnlyClassesAbove;
 };
 
 struct DefinitionPlan {
@@ -757,6 +758,7 @@ static DefinitionCounts countDefinitions(const Program& program, const ParallelL
     counts.storesOfVariable.fill(0, program.variables.size());
     counts.closuresOfFunction.fill(0, program.functions.size());
     counts.definitionsOfClass.fill(0, program.layouts.size());
+    counts.classesWithOnlyClassesAbove = findClassesWithOnlyClassesAbove(program);
     for (auto [kind, name] : mentions) {
         uint8_t& count = (kind == NameKind::Variable ? counts.storesOfVariable : kind == NameKind::Function ? counts.closuresOfFunction : counts.definitionsOfClass)[name];
         count = std::min<unsigned>(count + 1, 2);
@@ -897,7 +899,7 @@ static void findDeferrals(const Program& program, const FlowResults& flow, Build
         const Layout& layout = program.at(layoutID);
         if (counts.definitionsOfClass[layoutID.index()] != 1 || !layout.constructor || !hasOnlyClosure(layout.constructor))
             return;
-        std::optional<ClassDefinitionSite> site = findClassDefinitionSite(program, function, useLists(), classObject);
+        std::optional<ClassDefinitionSite> site = findClassDefinitionSite(program, counts.classesWithOnlyClassesAbove, function, useLists(), classObject);
         if (!site || !std::ranges::all_of(layout.classFlow.members, [&](const ClassMember& member) { return hasOnlyClosure(member.function); }))
             return;
 

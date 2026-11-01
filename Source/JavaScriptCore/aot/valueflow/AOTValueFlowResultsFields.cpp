@@ -11,6 +11,7 @@
 #include "AOTBuiltinMembers.h"
 #include "AOTClaimsOfFields.h"
 #include "AOTPropertyAccessInternal.h"
+#include "AOTRowsOfLayouts.h"
 #include "AOTSharedMemo.h"
 #include "AOTThreshold.h"
 #include "AOTValueFlowRules.h"
@@ -1883,14 +1884,22 @@ struct FieldResults {
             }
         }
         fieldsStoredUnderNamesOfEnumerations = Vector<BitVector>(numberOfLayouts);
+        BitVector isCounted(numberOfLayouts);
+        Vector<LayoutID, 16> row;
+        for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+            for (LayoutID current(index); current && !isCounted.quickSet(current.index()); current = nearestLayoutAlwaysAbove(application, current))
+                row.append(current);
+            while (!row.isEmpty()) {
+                LayoutID id = row.takeLast();
+                LayoutID above = nearestLayoutAlwaysAbove(application, id);
+                fieldCountsAsAnalyzed[id.index()] = program.at(id).fields.size() + (above ? fieldCountsAsAnalyzed[above.index()] : 0);
+            }
+        }
         forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index, unsigned worker) {
             for (PropertyKeyID key : keysOfEnumerationsCopied[index]) {
                 if (std::optional<uint32_t> field = program.layouts[index].findField(key))
                     fieldsStoredUnderNamesOfEnumerations[index].set(*field);
             }
-            forEachOnProvenChain(application, LayoutID(index), [&](LayoutID current) {
-                fieldCountsAsAnalyzed[index] += program.at(current).fields.size();
-            });
             if (!canAppendFieldsTo(LayoutID(index)))
                 return;
             Vector<PropertyKeyID> accessors = keysOfAccessorsIn(makers.of(worker), LayoutID(index));
@@ -2276,13 +2285,21 @@ struct FieldResults {
         forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index) {
             createsOwnFields[index] = hasObjects(LayoutID(index)) && build.isEnabled(FlowResultKind::ConstructorFieldOrders, index) && createsOwnFieldsAtConstruction(layoutsOfObjectsWithoutListedOrder, LayoutID(index));
         });
+        auto hasKnownBase = [&](LayoutID id) {
+            BaseState baseState = application.layouts[id.index()].flow.baseState;
+            return baseState == BaseState::Layout || baseState == BaseState::None;
+        };
+        BitVector createFieldsOfObjectsBelowAtConstruction = answerAlongRows(numberOfLayouts, true, [&](LayoutID id) -> StepAlongRow {
+            if (!hasKnownBase(id) || (!createsOwnFields[id.index()] && (hasObjects(id) || !constructions.createsFieldsOnlyInListedOrders(id))))
+                return { false, { } };
+            if (LayoutID above = nearestLayoutAlwaysAbove(application, id))
+                return { std::nullopt, above };
+            return { true, { } };
+        });
         forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index) {
-            bool isCreatedAtConstruction = !hasObjects(LayoutID(index)) || actorsOpenOnObjectsWith(LayoutID(index)).isEmpty();
-            forEachOnProvenChain(application, LayoutID(index), [&](LayoutID current) {
-                BaseState baseState = application.layouts[current.index()].flow.baseState;
-                bool createsFieldsInObjectsBelow = current != LayoutID(index) && !hasObjects(current) && constructions.createsFieldsOnlyInListedOrders(current);
-                isCreatedAtConstruction &= (baseState == BaseState::Layout || baseState == BaseState::None) && (createsOwnFields[current.index()] || createsFieldsInObjectsBelow);
-            });
+            LayoutID above = nearestLayoutAlwaysAbove(application, LayoutID(index));
+            bool isCreatedAtConstruction = hasKnownBase(LayoutID(index)) && createsOwnFields[index] && (!above || createFieldsOfObjectsBelowAtConstruction.quickGet(above.index()))
+                && (!hasObjects(LayoutID(index)) || actorsOpenOnObjectsWith(LayoutID(index)).isEmpty());
             if (isCreatedAtConstruction)
                 application.layouts[index].flow.fieldCreation = FieldCreation::OnlyAtConstruction;
             // `{ port, host: name() }`: the allocation lists nothing and the definitions after it create the fields, each before anything else sees the object.

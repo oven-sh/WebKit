@@ -10,6 +10,7 @@
 #include "AOTIR.h"
 #include "AOTVector.h"
 #include <optional>
+#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -30,7 +31,9 @@ struct ClassDefinitionSite {
     Vector<ValueID, 2> stores;
 };
 
-std::optional<ClassDefinitionSite> findClassDefinitionSite(const Program&, const Function&, const UseLists&, ValueID newClass);
+// Classes that are evaluated once and capture nothing, with only such classes above them, up to one without a heritage or below a built-in class that a record can name.
+BitVector findClassesWithOnlyClassesAbove(const Program&);
+std::optional<ClassDefinitionSite> findClassDefinitionSite(const Program&, const BitVector& classesWithOnlyClassesAbove, const Function&, const UseLists&, ValueID newClass);
 
 } } } // namespace JSC::AOT::Typed
 

@@ -21,6 +21,7 @@
 #include "AOTKnownClosures.h"
 #include "AOTLayout.h"
 #include "AOTNameCreatedSymbols.h"
+#include "AOTRowsOfLayouts.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
@@ -1140,12 +1141,16 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 isAllocatedAtSomeSite.quickSet(ownClass.index());
         });
         Vector<Vector<ValueFlowObjectID>> instancesOfClassesBelow(program.layouts.size());
+        Vector<LayoutID> nearestAllocatedClassAbove = findNearestWantedAbove(program.layouts.size(), [&](LayoutID id) {
+            return predictedHeritageOf(program.at(id));
+        }, [&](LayoutID id) {
+            return isAllocatedAtSomeSite.quickGet(id.index());
+        });
         sets.forEachMember(universe.instancesOfClasses(), [&](ValueFlowObjectID instance) {
             LayoutID classOfInstance = universe.layoutOf(instance);
-            LayoutID current = classOfInstance;
-            for (size_t steps = 0; steps < program.layouts.size() && current && program.at(current).has(LayoutFlags::HasHeritage); ++steps) {
-                current = predictedHeritageOf(program.at(current));
-                if (!current || current == classOfInstance || !isAllocatedAtSomeSite.quickGet(current.index()))
+            LayoutID current = nearestAllocatedClassAbove[classOfInstance.index()];
+            for (size_t steps = 0; steps < program.layouts.size() && current; ++steps, current = nearestAllocatedClassAbove[current.index()]) {
+                if (current == classOfInstance || !isAllocatedAtSomeSite.quickGet(current.index()))
                     continue;
                 Vector<ValueFlowObjectID>& instancesBelow = instancesOfClassesBelow[current.index()];
                 if (instancesBelow.isEmpty() || instancesBelow.last() != instance)

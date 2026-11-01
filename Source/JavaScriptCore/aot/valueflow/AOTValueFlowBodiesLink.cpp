@@ -19,6 +19,7 @@
 #include "AOTEffectsOfOperands.h"
 #include "AOTPhaseTimes.h"
 #include "AOTResultRules.h"
+#include "AOTRowsOfLayouts.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTTypeRelations.h"
@@ -1011,18 +1012,26 @@ private:
         if (allocatedByAnyClass.isEmpty())
             return;
 
+        Vector<LayoutID> nearestAllocatingClassAbove = findNearestWantedAbove(m_program.layouts.size(), [&](LayoutID id) {
+            return predictedHeritageOf(m_program.at(id));
+        }, [&](LayoutID id) {
+            return !allocatedByClass[id.index()].isEmpty();
+        });
+        BitVector standBelowUnknownClass = answerAlongRows(m_program.layouts.size(), false, [&](LayoutID id) -> StepAlongRow {
+            if (!m_program.at(id).has(LayoutFlags::HasHeritage))
+                return { false, { } };
+            if (LayoutID above = predictedHeritageOf(m_program.at(id)))
+                return { std::nullopt, above };
+            return { true, { } };
+        });
         for (unsigned index = 0; index < m_program.layouts.size(); ++index) {
             if (!layoutIsDefinedByClass(m_program.layouts[index]))
                 continue;
-            LayoutID current(index);
-            for (size_t steps = 0; steps < m_program.layouts.size() && m_program.at(current).has(LayoutFlags::HasHeritage); ++steps) {
-                current = predictedHeritageOf(m_program.at(current));
-                if (!current) {
-                    ofLayout[index].appendVector(allocatedByAnyClass);
-                    break;
-                }
+            LayoutID current = nearestAllocatingClassAbove[index];
+            for (size_t steps = 0; steps < m_program.layouts.size() && current; ++steps, current = nearestAllocatingClassAbove[current.index()])
                 ofLayout[index].appendVector(allocatedByClass[current.index()]);
-            }
+            if (standBelowUnknownClass.quickGet(index))
+                ofLayout[index].appendVector(allocatedByAnyClass);
         }
     }
 
@@ -1383,39 +1392,35 @@ private:
                             isLayoutOfTable.quickSet(layout.index());
                     }
 
-                    auto mayBeAllocatedByBuiltin = [&](LayoutID layout) {
-                        for (size_t steps = 0; steps < m_program.layouts.size() && layout; ++steps) {
-                            if (!m_program.at(layout).has(LayoutFlags::HasHeritage))
-                                return false;
-                            layout = predictedHeritageOf(m_program.at(layout));
-                        }
-                        return true;
-                    };
+                    BitVector mayBeAllocatedByBuiltin = answerAlongRows(m_program.layouts.size(), true, [&](LayoutID id) -> StepAlongRow {
+                        if (!m_program.at(id).has(LayoutFlags::HasHeritage))
+                            return { false, { } };
+                        if (LayoutID above = predictedHeritageOf(m_program.at(id)))
+                            return { std::nullopt, above };
+                        return { true, { } };
+                    });
                     Vector<ValueSetID> allocatedWithLayout(ofLayout.size());
                     forEachIndexInParallel(m_loops, ofLayout.size(), [&](unsigned index, unsigned worker) {
                         allocatedWithLayout[index] = makerOf(worker).of(ofLayout[index].span());
                     });
-                    auto standsBelowLibraryClass = [&](LayoutID layout) {
-                        for (size_t steps = 0; steps < m_program.layouts.size() && layout; ++steps) {
-                            const Layout& above = m_program.at(layout);
-                            if (layoutIsDefinedByClass(above) && above.module && m_program.at(above.module).kind == ModuleKind::RuntimeSource)
-                                return true;
-                            if (!above.has(LayoutFlags::HasHeritage))
-                                return false;
-                            layout = predictedHeritageOf(above);
-                        }
-                        return false;
-                    };
+                    BitVector standBelowLibraryClass = answerAlongRows(m_program.layouts.size(), false, [&](LayoutID id) -> StepAlongRow {
+                        const Layout& layout = m_program.at(id);
+                        if (layoutIsDefinedByClass(layout) && layout.module && m_program.at(layout.module).kind == ModuleKind::RuntimeSource)
+                            return { true, { } };
+                        if (LayoutID above = predictedHeritageOf(layout))
+                            return { std::nullopt, above };
+                        return { false, { } };
+                    });
                     Vector<ValueSetID> belowLibraryClasses;
                     for (uint32_t index = 0; index < ofLayout.size(); ++index) {
-                        if (standsBelowLibraryClass(LayoutID(index)))
+                        if (standBelowLibraryClass.quickGet(index))
                             belowLibraryClasses.append(allocatedWithLayout[index]);
                     }
                     universe.m_instancesBelowLibraryClasses = maker.uniteAll(belowLibraryClasses.span());
                     Vector<ValueSetID> inheritingLayouts;
                     universe.m_objectsOfLayout = Vector<ValueSetID>(ofLayout.size(), [&](size_t index) {
                         ValueSetID objects = allocatedWithLayout[index];
-                        if (mayBeAllocatedByBuiltin(LayoutID(static_cast<uint32_t>(index))))
+                        if (mayBeAllocatedByBuiltin.quickGet(index))
                             inheritingLayouts.append(objects);
                         return isLayoutOfTable.quickGet(index) ? maker.unite(objects, madeByBuiltins) : objects;
                     });
