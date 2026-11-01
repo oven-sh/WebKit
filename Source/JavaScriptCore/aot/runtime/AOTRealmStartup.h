@@ -37,6 +37,8 @@ void didRejectWrite(JSGlobalObject*, JSObject*, UniquedStringImpl* keyOrNull, Re
 String lockedObjectErrorMessage(JSGlobalObject*, JSObject*, UniquedStringImpl* key, RejectedWrite);
 // The words of the store that a spy would make, said of the spy. Null: the object says nothing of that key.
 JS_EXPORT_PRIVATE String refusedSpyMessage(JSGlobalObject*, JSObject*, UniquedStringImpl* key);
+// Whether the build has unlocked that member of a built-in object for the tests of this run: Program::replaceableBuiltins.
+JS_EXPORT_PRIVATE bool isMemberUnlockedForTests(JSObject*, UniquedStringImpl* key);
 // In a test run a refusal is an error for everybody: a test that takes it for a replacement that was made goes on to measure nothing.
 bool reflectThrowsOnLockedProperty(JSObject* lockedObject);
 JS_EXPORT_PRIVATE ASCIILiteral evaluationRefusedMessage();

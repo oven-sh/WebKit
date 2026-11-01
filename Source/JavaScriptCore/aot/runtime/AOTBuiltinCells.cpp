@@ -813,6 +813,22 @@ String refusedSpyMessage(JSGlobalObject* globalObject, JSObject* object, Uniqued
     return makeString("Cannot spy on "_s, StringView(message).substring(start.length()));
 }
 
+bool isMemberUnlockedForTests(JSObject* object, UniquedStringImpl* key)
+{
+    Instance* instance = instanceOfRealmOf(object);
+    BuiltinID holder = builtinOfLockedObject(instance, object);
+    if (!instance || !holder)
+        return false;
+    const BuiltinTable& table = BuiltinTable::singleton();
+    BuiltinName name = table.nameOf(object->vm(), key);
+    BuiltinID member = name ? table.findOwnMember(holder, name) : BuiltinID();
+    if (!member)
+        return false;
+    BuiltinCells* cells = instance->state ? instance->state->builtinCells.get() : nullptr;
+    bool hasListOfRealm = cells && !cells->membersUnlockedInRealm().empty();
+    return ProgramTables::isUnlocked(hasListOfRealm ? cells->membersUnlockedInRealm() : instance->tables().unlockedBuiltinMembers(), member.index());
+}
+
 static bool admitsReplacedBuiltins(const Instance& instance)
 {
     return hasFlag(instance.options().admitted(), AdmittedCode::ReplacedBuiltins);
