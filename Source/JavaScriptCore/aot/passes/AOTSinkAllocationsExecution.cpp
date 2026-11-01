@@ -13,6 +13,7 @@
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowApply.h"
 #include "AOTFrameAllocationPlanner.h"
+#include "AOTObservableOperations.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include "MathCommon.h"
@@ -338,6 +339,9 @@ void ObjectInterpreter::executeCast(ValueID id)
         keep(id);
         return;
     }
+    // What is asked is an object that the pass holds itself, whatever the type of the operand says: what a call that nobody had resolved answers is `anything` until it is typed anew.
+    if (function().at(id).opcode == Opcode::RequireObject)
+        explainOperationThatGoes(function(), id, InPlaceOfOperation::NothingByProofOfThePass);
 
     if (function().at(id).opcode == Opcode::AssumeType) {
         stateOf(object)->assume(function().at(id).provenType());
