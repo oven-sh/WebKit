@@ -1445,6 +1445,8 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
             attachments.addClassesAnsweredBy(builtin);
     });
     if (callsLoaderThatHasEscaped) {
+        // Whoever calls it gets the object of any module of Bun's own by its name, and nothing there is locked.
+        context.add(ValueFlowProgramNodes::escaped(), universe.builtinTables().heap().objectsOfPublicModules());
         if (isHostFlagRaised(context, ValueFlowHostNode::ModulesAreRequiredByName) || isHostFlagRaised(context, ValueFlowHostNode::ModulesAreImportedByName))
             handLoadedModulesToNativeCode(context);
         else if (isHostFlagRaised(context, ValueFlowHostNode::LibraryModulesAreRequiredByName))
