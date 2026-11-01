@@ -7562,6 +7562,12 @@ void ModuleRecord::executeAsync(JSGlobalObject* globalObject)
     promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this);
 }
 
+bool ModuleRecord::standsForMock() const
+{
+    // A mock that is laid over a module that has run replaces values: the names stay whose they were, as in `bun test`.
+    return (modules().isMocked(m_module) || modules().mockInPlace(m_module)) && !modules().hasMockLaidOver(m_module);
+}
+
 bool ModuleRecord::someMockStandsInPlace() const
 {
     return modules().someMockStandsInPlace();
