@@ -2184,11 +2184,11 @@ void Modules::letGoOfImportersOf(ModuleID mocked, ImportersLetGo which)
     BitVector asImported(m_table.size());
     asImported.quickSet(mocked.index());
     asImported.quickSet(moduleWithExportsOf(mocked).index());
-    letGoOfImportersOf(asImported, BitVector(m_table.size()), keepsImportersOfTestFile);
+    letGoOfImportersOf(asImported, BitVector(m_table.size()), BitVector(m_table.size()), keepsImportersOfTestFile);
 }
 
-// `gone`: what has left the loader with the mocked module in the images below, as this image names it.
-void Modules::letGoOfImportersOf(const BitVector& mocked, BitVector&& gone, bool keepsImportersOfTestFile)
+// `gone`: what has left the loader with the mocked module in the images below, as this image names it. `goneFromMock`: those of them that were linked to the mock there.
+void Modules::letGoOfImportersOf(const BitVector& mocked, BitVector&& gone, const BitVector& goneFromMock, bool keepsImportersOfTestFile)
 {
     bool hasSeveralImages = m_instance.vm->aotState().hasSeveralImages;
     if (!m_momentsOfLoads.isEmpty()) {
@@ -2228,7 +2228,7 @@ void Modules::letGoOfImportersOf(const BitVector& mocked, BitVector&& gone, bool
                 // Of a file of an image below the importer has a module of its own, and the object in it says which of the two it was linked to.
                 auto* held = data(ModuleID(imported)).isUncompiledCode() && value(ModuleID(imported)).isCell() ? dynamicDowncast<ModuleNamespace>(value(ModuleID(imported)).asCell()) : nullptr;
                 bool keptModule = held && held->keepsToModule();
-                if (!keptModule && (mocked.quickGet(imported) ? !isLeftAloneByMock(ModuleID(imported)) || seesMockOf(ModuleID(imported), importer) : m_importersOfMockThatEnded.get(imported)))
+                if (!keptModule && (mocked.quickGet(imported) ? !isLeftAloneByMock(ModuleID(imported)) || seesMockOf(ModuleID(imported), importer) : m_importersOfMockThatEnded.get(imported) || goneFromMock.quickGet(imported)))
                     m_importersOfMockThatEnded.set(index);
                 gone.quickSet(index);
                 work.append(index);
@@ -2246,6 +2246,7 @@ void Modules::letGoOfImportersOf(const BitVector& mocked, BitVector&& gone, bool
         const ModuleTable& table = modules->m_table;
         BitVector mockedAbove(table.size());
         BitVector goneAbove(table.size());
+        BitVector goneFromMockAbove(table.size());
         for (const UncompiledModuleData& entry : table.modulesOfUncompiledCode()) {
             // A file of a part names what it imports as its text does. The loader has resolved what it has fetched.
             const Identifier* key = modules->resolvedKeyIfKnown(ModuleID(entry.module));
@@ -2255,11 +2256,14 @@ void Modules::letGoOfImportersOf(const BitVector& mocked, BitVector&& gone, bool
             uint32_t withExports = moduleWithExportsOf(*file).index();
             if (mocked.quickGet(file->index()) || mocked.quickGet(withExports))
                 mockedAbove.quickSet(entry.module);
-            else if (gone.quickGet(file->index()) || gone.quickGet(withExports))
+            else if (gone.quickGet(file->index()) || gone.quickGet(withExports)) {
                 goneAbove.quickSet(entry.module);
+                if (m_importersOfMockThatEnded.get(file->index()) || m_importersOfMockThatEnded.get(withExports))
+                    goneFromMockAbove.quickSet(entry.module);
+            }
         }
         if (!mockedAbove.isEmpty() || !goneAbove.isEmpty())
-            modules->letGoOfImportersOf(mockedAbove, WTF::move(goneAbove), keepsImportersOfTestFile);
+            modules->letGoOfImportersOf(mockedAbove, WTF::move(goneAbove), goneFromMockAbove, keepsImportersOfTestFile);
     }
 }
 
