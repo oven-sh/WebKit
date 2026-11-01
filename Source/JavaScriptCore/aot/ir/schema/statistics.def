@@ -79,6 +79,7 @@ enum StatisticID {
     WasmFunctionsCompiled WasmFunctionsInterpreted WebAssemblyModulesFoundInText WebAssemblyModulesInTextDeclined
     StoresLeftInLoopsForOthers SlotsWithAbsentState
     FlowListsNeverToldApart
+    FlowFunctionsWhoseReceiverLeaves
 }
 extend StatisticID with LimitID suffix Hits as hits
 extend StatisticID with PassID suffix Changes as changes

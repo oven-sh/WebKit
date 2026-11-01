@@ -1233,6 +1233,10 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
     calls.functionsNamedByUnsolvedCode = findFunctionsNamedByUnsolvedCode(inputs, tables);
     times.didFinish("functions: unreached, named by unsolved code"_s);
     inputs.build.statistics().count(StatisticID::FlowUnreachedFunctions, std::ranges::count(tables.functions.functions, FunctionReachability::Unreached, &FunctionFlow::reachability));
+    uint32_t numberWhoseReceiverLeaves = 0;
+    for (uint32_t index = 0; index < numberOfFunctions; ++index)
+        numberWhoseReceiverLeaves += inputs.isReached(FunctionID(index)) && inputs.bodies().holdsAnyOf(FunctionID(index), notedOperations({ ValueFlowNotedOperation::ReceiverHandedOn }));
+    inputs.build.statistics().count(StatisticID::FlowFunctionsWhoseReceiverLeaves, numberWhoseReceiverLeaves);
 
     tables.functions.boundFunctionUses = findBoundFunctionsOnlyCalled(inputs);
     tables.sites.boundFunctionsAtSites = findBoundFunctionsAtSites(inputs, application.accessSites);

@@ -648,6 +648,7 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         .operands = m_bodies.operands(),
         .rareFactsOfText = m_bodies.rareFactsOfText(),
         .copiesOfOperations = m_bodies.copiesOfOperations(),
+        .notedOperationsOfFunctions = m_bodies.notedOperationsOfFunctions(),
         .edgesOnceReached = m_bodies.edgesOnceReached(),
         .seedsOnceReached = m_bodies.seedsOnceReached(),
         .functionsEnteredOnceReached = m_bodies.functionsEnteredOnceReached(),

@@ -655,6 +655,12 @@ ValueFlowNodeKey ValueFlowRuleContext::keyOfConstant(ValueSetID set) const
 bool ValueFlowRuleContext::leavesOut(ValueFlowUnknownSource source) const { return m_solver.m_input.unknownSourcesLeftOut.contains(source); }
 bool ValueFlowRuleContext::leavesOutSomeUnknownSource() const { return !m_solver.m_input.unknownSourcesLeftOut.isEmpty(); }
 RefusedCode ValueFlowRuleContext::refusedCode() const { return m_solver.m_input.refusedCode; }
+bool ValueFlowRuleContext::handsReceiverOn(FunctionID function) const
+{
+    std::span<const uint64_t> noted = m_solver.m_input.notedOperationsOfFunctions;
+    return function.index() >= noted.size() || (noted[function.index()] & notedOperations({ ValueFlowNotedOperation::ReceiverHandedOn }));
+}
+
 bool ValueFlowRuleContext::isSabotaged(Sabotage part) const { return m_solver.m_input.build && m_solver.m_input.build->isSabotaged(part); }
 
 bool ValueFlowRuleContext::isGuardedByRemovedFeature(BuiltinID builtin) const

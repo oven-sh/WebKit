@@ -1813,6 +1813,44 @@ void ValueFlowBodies::addBytesTo(ValueFlowBytesByTable& bytes) const
     addObjects(m_universe.m_firstSiteOfFunction, m_universe.m_objectOfSite, m_universe.m_siteOfObject, m_universe.m_functionOfSiteObject, m_universe.m_classOfCoroutineResult, m_universe.m_objectsOfLayout);
 }
 
+static bool handsReceiverOn(const Function& function)
+{
+    std::optional<uint32_t> index = function.thisParameterIndex();
+    if (!index || function.blocks.isEmpty() || *index >= function.at(entryBlock).parameters.size())
+        return false;
+    ValueID receiver = function.at(entryBlock).parameters[*index];
+    auto isReceiver = [&](ValueID value) {
+        return value && definitionThroughSameValues(function, value) == receiver;
+    };
+    for (const Block& block : function.blocks) {
+        for (ValueID id : block.values) {
+            const Value& value = function.at(id);
+            for (uint32_t position = 0; position < value.numberOfOperands(); ++position) {
+                if (!isReceiver(value.operand(position)) || !value.operandUses(position).contains(OperandUse::Retains))
+                    continue;
+                if (value.opcode == Opcode::Call && position == OperandIndex::Call::thisValue) {
+                    const Value& callee = function.at(definitionThroughSameValues(function, value.operand(OperandIndex::Call::callee)));
+                    if (callee.opcode == Opcode::PropGet && isReceiver(callee.objectOperand()))
+                        continue;
+                }
+                return true;
+            }
+        }
+        std::span<const ValueID> operandsOfTerminator = block.terminator.operands();
+        for (uint32_t position = 0; position < operandsOfTerminator.size(); ++position) {
+            if (isReceiver(operandsOfTerminator[position]) && block.terminator.operandUses(position).contains(OperandUse::Retains))
+                return true;
+        }
+        for (const Target& target : block.terminator.targets) {
+            if (std::ranges::any_of(target.arguments, isReceiver))
+                return true;
+        }
+        if (block.handler && std::ranges::any_of(block.handler->arguments, isReceiver))
+            return true;
+    }
+    return false;
+}
+
 ValueFlowNotedOperations notedOperationsOf(const Function& function)
 {
     static constexpr auto notedOperationsOfOpcode = [] {
@@ -1824,6 +1862,8 @@ ValueFlowNotedOperations notedOperationsOf(const Function& function)
     ValueFlowNotedOperations operations = 0;
     for (const Value& value : function.values)
         operations |= notedOperationsOfOpcode[static_cast<size_t>(value.opcode)];
+    if (handsReceiverOn(function))
+        operations |= notedOperations({ ValueFlowNotedOperation::ReceiverHandedOn });
     return operations;
 }
 

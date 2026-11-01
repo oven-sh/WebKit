@@ -772,6 +772,7 @@ enum class ValueFlowNotedOperation : uint8_t {
     StoreToLocation,
     Builtin,
     ModuleOperation,
+    ReceiverHandedOn,
 };
 
 using ValueFlowNotedOperations = uint64_t;
@@ -862,6 +863,7 @@ public:
     const ValueFlowBodiesTimes& times() const { return m_times; }
     const BitVector* valuesBehindChecks(FunctionID function) const LIFETIME_BOUND { return m_knowsValuesBehindChecks[function.index()] ? &m_valuesBehindChecks[function.index()] : nullptr; }
     bool holdsAnyOf(FunctionID function, ValueFlowNotedOperations operations) const { return m_notedOperations[function.index()] & operations; }
+    std::span<const ValueFlowNotedOperations> notedOperationsOfFunctions() const LIFETIME_BOUND { return m_notedOperations.span(); }
     void addBytesTo(ValueFlowBytesByTable&) const;
 
     uint32_t numberOfBodies() const { return m_ranges.size() - 1; }

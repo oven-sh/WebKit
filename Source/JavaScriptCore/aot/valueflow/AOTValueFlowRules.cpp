@@ -408,6 +408,21 @@ static void lookUpThroughInstances(ValueFlowRuleContext& context, ValueFlowObjec
     context.add(group.otherArguments, passedByNativeCode);
     context.connect(group.result, escapedNode);
     context.connect(group.thrown, escapedNode);
+
+    if (context.isSabotaged(Sabotage::ReceiversThatLeaveAreInstances))
+        return;
+    Vector<ValueFlowObjectID, 16> handingOn;
+    context.forEachMember(context.restrict(called, universe.closures()), [&](ValueFlowObjectID closure) {
+        if (context.handsReceiverOn(universe.closureFunction(closure)))
+            handingOn.append(closure);
+    });
+    if (handingOn.isEmpty())
+        return;
+    ValueFlowCallGroup withAnyReceiver = context.group(ClimbingSet(context.maker().of(handingOn.span())), ValueFlowCallKind::CallByNativeCode);
+    context.add(withAnyReceiver.thisValue, universe.unknownObjectAlone());
+    context.add(withAnyReceiver.otherArguments, passedByNativeCode);
+    context.connect(withAnyReceiver.result, escapedNode);
+    context.connect(withAnyReceiver.thrown, escapedNode);
 }
 
 static void runLookupThroughInstances(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
