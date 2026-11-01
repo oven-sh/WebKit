@@ -17,6 +17,14 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+// A functor that was run for the parts of a record may have moved the table that holds the record. Whoever ran it reads the record once more, so the address sanitizer stops that at the first part.
+ALWAYS_INLINE void touchForAddressSanitizer([[maybe_unused]] const void* record)
+{
+#if ASAN_ENABLED
+    static_cast<void>(*static_cast<const volatile uint8_t*>(record));
+#endif
+}
+
 struct ValueIDTag;
 
 template<typename Tag>

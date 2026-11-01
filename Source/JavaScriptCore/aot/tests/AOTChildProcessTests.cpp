@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTCurrentWork.h"
+#include "AOTIRProgram.h"
+#include "AOTIRTestSupport.h"
 #include "AOTNativeTest.h"
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
@@ -227,6 +229,63 @@ static NEVER_INLINE void trapWithMarkerOnStack()
     __builtin_trap();
 }
 
+#endif
+
+#if ASAN_ENABLED
+
+static void testFunctorMovesValuesOnRequest()
+{
+    if (!getenv(crashRequestVariable))
+        return;
+    Function function;
+    Value user(Opcode::Negate);
+    user.setOperand(0, function.add(Value(Opcode::Undefined)));
+    ValueID id = function.add(WTF::move(user));
+    function.at(id).forEachOperand([&](ValueID, uint32_t) {
+        function.add(Value(Opcode::Undefined));
+    });
+}
+
+static void testHoldsListOnRequest()
+{
+    if (!getenv(crashRequestVariable))
+        return;
+    BlockValues values;
+    for (uint32_t index = 0; index < 6; ++index)
+        values.append(ValueID(index));
+    const ValueID* held = values.begin();
+    values.append(ValueID(6u));
+    AOT_TEST_CHECK(!held->index());
+}
+
+static void testHoldsFunctionOnRequest()
+{
+    if (!getenv(crashRequestVariable))
+        return;
+    static_assert(movesAtEveryAppend(40'000, sizeof(Function)));
+    TestProgram test;
+    test.addFunction({ });
+    ProgramEditor editor(test.program);
+    const Function& held = test.program.functions[0];
+    editor.addFunction({ });
+    AOT_TEST_CHECK(!held.hasBody());
+}
+
+static void testHeldReferencesAreStopped()
+{
+    for (ASCIILiteral test : { "held-on-request/functor-moves-values"_s, "held-on-request/list"_s, "held-on-request/function"_s }) {
+        AOT_TEST_CHECK(runWith(createLauncher(), { String(nativeSubcommandName), String(singleProcessFlag), String(test) }).exitedWith(exitCodeForSuccess));
+        setCrashRequest(true);
+        ChildProcessResult result = runWith(createLauncher(), { String(nativeSubcommandName), String(singleProcessFlag), String(test) });
+        setCrashRequest(false);
+        AOT_TEST_CHECK(result.outcome == ChildProcessOutcome::Crashed || (result.outcome == ChildProcessOutcome::Exited && result.code != exitCodeForSuccess));
+    }
+}
+
+#endif
+
+#if OS(LINUX) && (CPU(X86_64) || CPU(ARM64))
+
 static void testTrapsOnRequest()
 {
     if (!getenv(crashRequestVariable))
@@ -399,6 +458,12 @@ std::span<const NativeTest> childProcessTests()
         { "child-process/ends-with-parent"_s, testChildEndsWithParent },
         { "end-parent-on-request/parent"_s, testStartsChildOnRequest },
         { "end-parent-on-request/child"_s, testEndsParentOnRequest },
+#endif
+#if ASAN_ENABLED
+        { "held/stopped-under-asan"_s, testHeldReferencesAreStopped },
+        { "held-on-request/functor-moves-values"_s, testFunctorMovesValuesOnRequest },
+        { "held-on-request/list"_s, testHoldsListOnRequest },
+        { "held-on-request/function"_s, testHoldsFunctionOnRequest },
 #endif
         { "runner/files-after-crash"_s, testFilesAfterCrashStillRun },
         { "runner/shows-output-of-children"_s, testOutputOfPassingFileIsShown },

@@ -82,6 +82,7 @@ public:
         return { copy, list.size() };
     }
     void setRule(unsigned rule) { m_rule = rule; }
+    bool hasEditedNothing() const { return function.numberOfEdits() == m_numberOfEditsAtStart; }
 
     // For edits.
     IRBuilder& builder();
@@ -225,6 +226,7 @@ PassOutcome runRules(FunctionPassContext& context)
                 }
             }
         }
+        ASSERT(rewrite.hasEditedNothing());
         rewrite.setRule(std::size(rules));
         if (rewrite.commit() == PassOutcome::Unchanged)
             return outcome;

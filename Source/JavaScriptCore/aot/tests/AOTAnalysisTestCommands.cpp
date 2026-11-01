@@ -106,6 +106,7 @@ static void runOnFunction(TestCommandContext& context)
     if (!id)
         return;
     bool printsUseLists = words.parseFlag("use-lists"_s);
+    context.program->functions.reserveCapacity(context.program->functions.size() + 1);
     Session session(context, id);
     if (printsUseLists)
         session.analyses.setRunningPass(PassID::CompactBlocks);
