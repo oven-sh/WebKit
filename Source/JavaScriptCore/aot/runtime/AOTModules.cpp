@@ -5579,6 +5579,13 @@ bool forEachNewChild(JSGlobalObject* realm, ModuleID moduleOfHost, const ScopedL
     return modules && modules->forEachNewChild(module, functor);
 }
 
+void dropNewChildren(JSGlobalObject* realm, ModuleID moduleOfHost)
+{
+    ModuleFromHost module(realm, moduleOfHost);
+    if (Modules* modules = modulesThatShowWaysBetweenModuleObjects(realm))
+        modules->dropNewChildren(module);
+}
+
 JSValue moduleExports(JSGlobalObject* realm, ModuleID moduleOfHost)
 {
     ModuleFromHost module(realm, moduleOfHost);

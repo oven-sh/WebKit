@@ -4160,6 +4160,12 @@ bool Modules::forEachNewChild(ModuleID module, const ScopedLambda<void(JSObject*
     return true;
 }
 
+void Modules::dropNewChildren(ModuleID module)
+{
+    if (LoadedModule* loaded = loadedIfExists(module))
+        loaded->numberOfChildrenShown = loaded->requiredModules.size();
+}
+
 JSValue Modules::requireSpecifier(JSValue specifier, ModuleID referrer, bool isNamedByBuild)
 {
     JSGlobalObject* realm = m_instance.globalObject;

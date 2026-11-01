@@ -181,6 +181,8 @@ JS_EXPORT_PRIVATE void willStorePathOfMainModule(JSGlobalObject*);
 JS_EXPORT_PRIVATE JSObject* parentModuleObject(JSGlobalObject*, ModuleID);
 // Calls the functor with the module object of each CommonJS file that the module has required since the last call, in the order of the first require() of each.
 JS_EXPORT_PRIVATE bool forEachNewChild(JSGlobalObject*, ModuleID, const ScopedLambda<void(JSObject*)>&);
+// The next call of forEachNewChild() names none of the files that the module has required so far.
+JS_EXPORT_PRIVATE void dropNewChildren(JSGlobalObject*, ModuleID);
 // The host calls this with every name that a function object of the program is given to load: require, module.require, Module._load, process.getBuiltinModule.
 JS_EXPORT_PRIVATE void willLoadByName(JSGlobalObject*, JSValue specifier, LoadByName = LoadByName::Require);
 // In the host's resolve step: an import() of compiled code asks, which does not come by the host's own hook for import().

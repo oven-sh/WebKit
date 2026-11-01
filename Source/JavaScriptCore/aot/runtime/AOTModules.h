@@ -561,6 +561,7 @@ public:
     JSObject* mainModuleObject(ModuleID);
     JSObject* parentModuleObject(ModuleID);
     bool forEachNewChild(ModuleID, const ScopedLambda<void(JSObject*)>&);
+    void dropNewChildren(ModuleID);
     JSValue requireSpecifier(JSValue specifier, ModuleID referrer, bool isNamedByBuild);
     JSValue resolveDynamic(JSValue specifier, ModuleID referrer, ResolvedSpecifierForm);
 
