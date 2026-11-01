@@ -1233,7 +1233,7 @@ bool FastStringifier<CharType, bufferMode>::hasRemainingCapacitySlow(unsigned si
     } else {
         size_t newSize = std::max<size_t>(m_dynamicBuffer.size() * 2, m_dynamicBuffer.size() + size);
 #if ENABLE(AOT)
-        if (m_watchedLevels.isWatchingAfterGrowthTo(newSize))
+        if (m_vm.hasCompiledCode() && m_watchedLevels.isWatchingAfterGrowthTo(newSize))
             m_stackLimit = std::bit_cast<uint8_t*>(std::numeric_limits<uintptr_t>::max());
 #endif
         if (newSize > lengthOfBigResult) {
@@ -1676,11 +1676,15 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
     if constexpr (bufferMode == BufferMode::DynamicBuffer) {
         if (std::bit_cast<uint8_t*>(currentStackPointer()) < m_stackLimit) [[unlikely]] {
 #if ENABLE(AOT)
-            if (!hasStackSpaceAtWatchedLevel(value, currentStackPointer()))
-                return;
-#else
+            if (m_vm.hasCompiledCode()) {
+                if (!hasStackSpaceAtWatchedLevel(value, currentStackPointer()))
+                    return;
+            } else {
+#endif
             recordFailure(FailureReason::StackOverflow, "stack overflow"_s);
             return;
+#if ENABLE(AOT)
+            }
 #endif
         }
     }
