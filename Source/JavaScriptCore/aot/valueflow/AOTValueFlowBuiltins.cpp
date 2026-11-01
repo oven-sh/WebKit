@@ -1568,7 +1568,7 @@ private:
             note(use.condition);
     }
 
-    bool isCalledInWaysNobodyFollows(const BuiltinTypePart& part) const { return part.kind == BuiltinTypePartKind::Instance && part.builtinClass != BuiltinClasses::BoundFunction && isFunctionClass(m_builtins, part.builtinClass); }
+    bool isCalledInWaysNobodyFollows(const BuiltinTypePart& part) const { return part.kind == BuiltinTypePartKind::Instance && !m_builtins.at(part.builtinClass).hasClosureInstances && isFunctionClass(m_builtins, part.builtinClass); }
 
     static bool answersObjectsOfNativeCell(const BuiltinOverload& overload)
     {
