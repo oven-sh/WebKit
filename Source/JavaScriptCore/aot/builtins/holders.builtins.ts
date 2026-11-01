@@ -516,6 +516,7 @@ export default b.declarations(
   }),
   b.class("%SetIterator%", {
     ...lockedIteratorColumns,
+    jsType: "JSSetIteratorType",
     proto: { next: libraryStep("SetIteratorPrototype", "next", iteratorResult) },
   }),
   b.class("%StringIterator%", {
