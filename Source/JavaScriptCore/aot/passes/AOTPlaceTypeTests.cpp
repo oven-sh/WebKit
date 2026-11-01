@@ -5515,6 +5515,8 @@ static bool beginsWithTestThatLeavesForGenericCopy(FunctionPassContext& context,
     const Block& header = function.at(id);
     if (header.isHandlerBlock() || !header.terminator.isConditionalBranch() || function.at(header.terminator.conditionOperand()).opcode != Opcode::TypeTest)
         return false;
+    if (context.analyses.useLists().useCount(header.terminator.conditionOperand()) != 1)
+        return false;
     const Target& whenFailed = header.terminator.notTaken();
     if (!whenFailed.proofs.isEmpty() || function.at(whenFailed.block).frequency.predicted() == BlockFrequency::Normal)
         return false;
