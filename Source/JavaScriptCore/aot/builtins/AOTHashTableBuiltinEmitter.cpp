@@ -256,6 +256,13 @@ Boxed HashTableBuiltinEmitter::lookUpAmongTags(const InlineCall& call, CellPoint
     while (resultRuleOf(m_function.at(written).opcode) == ResultRule::Cast)
         written = m_function.at(written).valueOperand();
     bool isWrittenHere = m_function.at(written).opcode == Opcode::String;
+    build().statistics().count(isWrittenHere ? StatisticID::TagLookupsWithConstantKeys : StatisticID::TagLookupsWithOtherKeys);
+    if (!isWrittenHere) {
+        Subject subject = analyses().subject();
+        subject.value = call.context().valueID();
+        subject.location = m_function.locationOf(call.context().origin());
+        build().addDecline({ .kind = Wire::DeclineKind::TagLookupKeyNotConstant, .witness = witnessOf(subject) });
+    }
     Pointer impl = isWrittenHere ? emitter<StringEmitter>().implOfFlatString(key) : loadField<Pointer>(key, m_heaps.JSString_value);
     if (!isWrittenHere) {
         LBasicBlock isFlat = newBlock();
@@ -828,6 +835,7 @@ void HashTableBuiltinEmitter::lookUp(const InlineCall& call, HashTableOwner owne
     KeyComparison comparison = keyComparisonOf(typeOf(call.argument(0)));
     Boxed key = normalizedKey(call.context(), call.argument(0));
     StubKey stub = lookupStubFor(owner, answer, comparison);
+    build().statistics().count(StatisticID::InlineHashLookups);
     Boxed found = looksAmongTags(call) ? lookUpAmongTags(call, table, unboxCell(key), stub, answer, valueRead) : looksIntoHomeSlot(call, comparison) ? lookUpInHomeSlot(call, table, key, comparison, owner, answer, valueRead) : Boxed(callStub(call.context(), stub, { table.value(), key.value() }).first);
     emitter<RuntimeCallEmitter>().setCallsOnlyMoveTables(false);
     switch (answer) {
