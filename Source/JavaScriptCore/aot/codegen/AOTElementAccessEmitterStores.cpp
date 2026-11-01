@@ -280,7 +280,8 @@ void ElementAccessEmitter::storeOutOfLine(const ValueContext& value, CellPointer
     const Type& storedType = typeOf(stored);
     bool isFast = value.shape() == CodeShape::Fast;
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
-    Boxed boxedValue = isFast ? conversions.box(value, getInFormOfItsNaN(stored), storedType) : conversions.boxInArm(value, getInFormOfItsNaN(stored), storedType);
+    Operand operand = conversions.inFormOfType(getInFormOfItsNaN(stored), storedType);
+    Boxed boxedValue = isFast ? conversions.box(value, operand, storedType) : conversions.boxInArm(value, operand, storedType);
     if (value->mode() == ECMAMode::Sloppy) {
         emitter<AccessEmitter>().putByVal(value, boxCell(array), boxedPosition(position), boxedValue, AccessEmitter::putModeOf(ECMAMode::Sloppy));
         return;
@@ -392,7 +393,7 @@ void ElementAccessEmitter::appendElement(const ValueContext& store, CellPointer 
 Boxed ElementAccessEmitter::appendOutOfLine(const OperationContext& store, CellPointer array, ValueID element)
 {
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
-    Operand operand = get(element);
+    Operand operand = conversions.inFormOfType(get(element), typeOf(element));
     if (operand.is<Number>() && typeOf(element).isInt32())
         operand = Operand(boxInt32(conversions.toInt32(operand.as<Number>())));
     // The stub drops a payload and keeps the sign.
