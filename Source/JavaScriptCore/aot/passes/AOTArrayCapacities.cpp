@@ -548,7 +548,20 @@ struct CapacityPlanner {
             if ((frequencyOfLoop < frequencies.classOf(loop.at(i))).predicted())
                 barrier.set(loop.at(i).index());
         }
-        BitVector reachedWithoutBlock = analyses.cfg().blocksReachableFrom(loop.header(), barrier);
+        // Inside the loop alone. Whoever leaves it comes back through its header, where the walk began: so nothing outside leads to the end of a turn,
+        // and a function of a thousand loops is not walked to its end for each of them.
+        BitVector reachedWithoutBlock;
+        reachedWithoutBlock.set(loop.header().index());
+        Vector<BlockID, 16> worklist { loop.header() };
+        uint64_t numberOfBlocksReached = 0;
+        while (!worklist.isEmpty()) {
+            ++numberOfBlocksReached;
+            for (BlockID target : analyses.cfg().successors(worklist.takeLast())) {
+                if (loops.belongsTo(target, loop) && !barrier.get(target.index()) && !reachedWithoutBlock.set(target.index()))
+                    worklist.append(target);
+            }
+        }
+        context.build.statistics().count(StatisticID::BlocksReachedToSeeWhatRunsEachTurn, numberOfBlocksReached);
         return std::ranges::none_of(analyses.cfg().incomingEdges(loop.header()), [&](Edge edge) {
             return loops.belongsTo(edge.from, loop) && reachedWithoutBlock.get(edge.from.index());
         });
