@@ -4995,7 +4995,10 @@ Modules::LoadInFlight* Modules::findEarlierLoadAbove(ModuleID module)
             continue;
         }
         // The call for that graph came in an earlier job.
-        if ((isInHandsOfLoader || load.isOfEarlierJob || load.hasSeenJob) && shareCycleLeftToRun(module, std::span<const ModuleID>(&load.root, 1)))
+        if (!isInHandsOfLoader && !load.isOfEarlierJob && !load.hasSeenJob)
+            continue;
+        // A module of a graph that runs in one go runs with it, and the call for the module alone settles behind the call for the graph.
+        if ((data(load.root).isSynchronous() && leadsTo(load.root, module)) || shareCycleLeftToRun(module, std::span<const ModuleID>(&load.root, 1)))
             return &load;
     }
     return nullptr;
