@@ -365,6 +365,15 @@ static ASCIILiteral nameOf(LawOfTypes law)
 
 class LawsOfTypes {
 public:
+    LawsOfTypes(PrintStream& out, Program& program, Vector<Type>&& corpus)
+        : m_out(out)
+        , m_program(program)
+        , m_types(program.types)
+        , m_corpus(WTF::move(corpus))
+        , m_numberOfTypes(m_corpus.size())
+    {
+    }
+
     LawsOfTypes(PrintStream& out, Program& program, unsigned mostTypes)
         : m_out(out)
         , m_program(program)
@@ -520,9 +529,21 @@ unsigned listBrokenLawsOfTypes(PrintStream& out, Program& program, unsigned most
     return LawsOfTypes(out, program, mostTypes).run();
 }
 
+// The types that the test names. The table of types holds more: what the table of built-ins brings, which is not the same in every build.
 static void runLawsOfTypes(TestCommandContext& context)
 {
-    listBrokenLawsOfTypes(context.out, *context.program, std::numeric_limits<unsigned>::max());
+    Program& program = *context.program;
+    if (program.functions.isEmpty()) {
+        context.out.println("no function"_s);
+        return;
+    }
+    Vector<Type> corpus;
+    for (const DeclaredType& parameter : program.functions[0].parameters) {
+        const Type& type = program.at(parameter.written());
+        if (type.isJavaScriptValue() && !corpus.contains(type))
+            corpus.append(type);
+    }
+    LawsOfTypes(context.out, program, WTF::move(corpus)).run();
 }
 
 std::span<const TestCommand> irTestCommands()
