@@ -33,11 +33,13 @@
 #include "MachineContext.h"
 #include "VM.h"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <bit>
 #include <functional>
 #include <limits>
 #include <optional>
+#include <wtf/MainThread.h>
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/threads/Signals.h>
@@ -45,6 +47,13 @@
 #if OS(UNIX)
 #include <signal.h>
 #include <sys/mman.h>
+#endif
+
+#if OS(DARWIN)
+#include <dlfcn.h>
+#elif OS(UNIX)
+extern "C" char __executable_start;
+extern "C" char etext;
 #endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -568,19 +577,39 @@ struct SignalStackOfThread {
 
 } // anonymous namespace
 
+// The handler of another component keeps the stack that it asked for.
+static bool isCodeOfThisProgram(const void* address)
+{
+#if OS(DARWIN)
+    Dl_info theirs { };
+    Dl_info ours { };
+    return dladdr(address, &theirs) && dladdr(reinterpret_cast<const void*>(&takeFaultsOfThisThreadOnAnotherStack), &ours) && theirs.dli_fbase == ours.dli_fbase;
+#else
+    return address >= &__executable_start && address < &etext;
+#endif
+}
+
 void takeFaultsOfThisThreadOnAnotherStack()
 {
+    // The host gives the main thread its stack.
     stack_t current { };
-    if (!sigaltstack(nullptr, &current) && (current.ss_flags & SS_DISABLE)) {
+    if (!isMainThread() && !sigaltstack(nullptr, &current) && (current.ss_flags & SS_DISABLE)) {
         WTF_THREAD_LOCAL_ALWAYS_DESTROY static thread_local SignalStackOfThread stack;
         stack.map();
     }
     static std::atomic<bool> areActionsChanged { false };
     if (areActionsChanged.exchange(true, std::memory_order_relaxed))
         return;
-    for (int signal : { SIGSEGV, SIGBUS }) {
+#if OS(DARWIN)
+    constexpr std::array signalsOfGuardPage { SIGSEGV, SIGBUS };
+#else
+    constexpr std::array signalsOfGuardPage { SIGSEGV };
+#endif
+    for (int signal : signalsOfGuardPage) {
         struct sigaction action;
         if (sigaction(signal, nullptr, &action) || !(action.sa_flags & SA_SIGINFO) || (action.sa_flags & SA_ONSTACK))
+            continue;
+        if (!isCodeOfThisProgram(reinterpret_cast<const void*>(action.sa_sigaction)))
             continue;
         action.sa_flags |= SA_ONSTACK;
         sigaction(signal, &action, nullptr);
