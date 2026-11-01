@@ -2532,8 +2532,40 @@ ModuleRecord* Modules::recordOfCommonJSFile(ModuleID module, LoadOfFile load)
     }
     ModuleRecord* record = ensureRecord(module);
     record->retain();
-    record->setRunsWhenLoaded();
+    // `await Promise.all([import("./a.mjs"), import("./b.cjs")])`: a.mjs runs first. The loader runs an ES module steps behind where it makes the record: ModuleRecord::innerModuleEvaluation().
+    // While a require() loads a graph, every step is taken before it returns: isTextReadOnOtherThread().
+    ModuleID file = m_table.fileBehindFace(module).value_or(module);
+    bool hasBegun = status(module) >= ModuleStatus::Evaluating || status(file) >= ModuleStatus::Evaluating;
+    bool hasTurn = !m_instance.vm->synchronousModuleQueue() && !hostLoadsSynchronously(file) && isAskedForBehindLoadInFlight(module);
+    if (load == LoadOfFile::IsRootOfImport && hasTurn && !hasBegun && !record->runsWhenLoaded())
+        record->setRunsInItsTurn();
+    else
+        record->setRunsWhenLoaded();
     return record;
+}
+
+// A call that finds no graph on its way overtakes nobody. The calls and the files that they name may lie in different images of the realm.
+bool Modules::isAskedForBehindLoadInFlight(ModuleID module)
+{
+    ModuleID file = m_table.fileBehindFace(module).value_or(module);
+    bool isBehind = false;
+    Instance::forEachOf(m_instance.globalObject, [&](Instance& instance) {
+        Modules& modules = modulesOf(instance);
+        for (const LoadInFlight& load : modules.m_loadsInFlight) {
+            bool isOwn = &modules == this && (load.root == module || load.root == file);
+            isBehind |= !isOwn && !load.isLoaded && load.promise->status() == JSPromise::Status::Pending;
+        }
+    });
+    return isBehind;
+}
+
+// The loader has the record since the call, and makes none for the statement that comes to the file.
+void Modules::runFileThatWaitsForItsTurn(ModuleID module)
+{
+    for (ModuleID held : { module, m_table.fileBehindFace(module).value_or(module) }) {
+        if (ModuleRecord* record = recordIfExists(held); record && record->takeRunsInItsTurn()) [[unlikely]]
+            return evaluateFilesOfLevel(held, true);
+    }
 }
 
 // `bun run` runs an imported CommonJS file when the loader makes the record of the file.

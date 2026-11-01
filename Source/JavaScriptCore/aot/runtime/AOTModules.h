@@ -540,6 +540,8 @@ public:
     void didLoadGraph(ModuleID root);
     void didFailToLoadGraph(ModuleID root);
     void evaluateFilesOfLevel(ModuleID moduleOnWay, bool runsWhenLoaded);
+    void runFileThatWaitsForItsTurn(ModuleID);
+    bool isAskedForBehindLoadInFlight(ModuleID fileOrFace);
     void captureExportsAgain(ModuleID);
     void exportWhatMockNamesAlone(ModuleID file, bool hasRun);
     bool exportsWhatMockNamesAlone(ModuleID) const;

@@ -620,6 +620,8 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
         if (mocks.hides(module)) [[unlikely]]
             return;
         if (leaf == ModuleLinkWalk::Leaf::CapturesExports) {
+            runFileThatWaitsForItsTurn(module);
+            RETURN_IF_EXCEPTION(scope, void());
             // Every CommonJS file of a graph runs before the graph fails for a name that one of them lacks: a module of the graph checks the names behind them.
             if (!data(module).capturesExportsBehindEvaluation())
                 captureExports(module);

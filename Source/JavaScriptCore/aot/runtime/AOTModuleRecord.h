@@ -103,6 +103,9 @@ public:
     void takeStatus();
     bool isRunningCommonJSFile();
     void setRunsWhenLoaded() { m_runsWhenLoaded = true; }
+    bool runsWhenLoaded() const { return m_runsWhenLoaded; }
+    void setRunsInItsTurn() { m_runsInItsTurn = true; }
+    bool takeRunsInItsTurn() { return std::exchange(m_runsInItsTurn, false); }
     bool isRequestedByWalkedModule() const { return m_isRequestedByWalkedModule; }
     void setIsRequestedByWalkedModule() { m_isRequestedByWalkedModule = true; }
     // Around a request that the loader makes for the module. The first returns what the second takes.
@@ -157,6 +160,7 @@ private:
     bool m_isRetained { false };
     bool m_isHeldByLoader { false };
     bool m_runsWhenLoaded { false };
+    bool m_runsInItsTurn { false };
     bool m_isRequestedByWalkedModule { false };
 };
 

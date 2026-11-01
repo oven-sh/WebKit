@@ -7462,6 +7462,10 @@ unsigned ModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Modul
         }
         return index;
     }
+    if (takeRunsInItsTurn()) [[unlikely]] {
+        modules().evaluateFilesOfLevel(m_module, true);
+        RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, invalidIndex);
+    }
     EvaluationContext context { stack, index, referrerAsyncOrder < 0 ? std::nullopt : std::optional(referrerAsyncOrder), dynamicImportPromise };
     modules().innerModuleEvaluation(m_module, context);
     // The module may be evaluated and off the stack by now, so a request to terminate waits for the next check.
@@ -7484,6 +7488,7 @@ ModuleGraphLoadingState* ModuleRecord::loadThatWaitsFor(const Identifier& key, M
 void ModuleRecord::didLoad()
 {
     RunningImageScope imageOfRecord(m_instance.vm->aotState(), m_instance.program);
+    m_runsInItsTurn &= !m_runsWhenLoaded;
     modules().evaluateFilesOfLevel(m_module, m_runsWhenLoaded);
 }
 
