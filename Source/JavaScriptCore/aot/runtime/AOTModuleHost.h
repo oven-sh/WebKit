@@ -241,6 +241,9 @@ JS_EXPORT_PRIVATE bool isEvaluatedFile(JSGlobalObject*, ModuleID);
 // The module object that require.cache shows for a file that isEvaluatedFile().
 JS_EXPORT_PRIVATE JSObject* requireCacheEntry(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void forEachEvaluatedFile(JSGlobalObject*, const WTF::Function<void(const String&)>&);
+// The files that wait for a top-level await of their own, each with its turn among all the modules that evaluate asynchronously.
+// A file that another imports by a statement is in no registry of the loader.
+JS_EXPORT_PRIVATE void forEachFileAwaitingAtTopLevel(JSGlobalObject*, const WTF::Function<void(int64_t turn, const String& key)>&);
 // In the order of the first require() of each.
 JS_EXPORT_PRIVATE void forEachLibraryModuleInRequireCache(JSGlobalObject*, const WTF::Function<void(const String&)>&);
 JS_EXPORT_PRIVATE std::optional<ModuleID> findLibraryModuleInRequireCache(JSGlobalObject*, const String& name);

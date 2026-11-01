@@ -5128,6 +5128,24 @@ JSObject* requireCacheEntry(JSGlobalObject* realm, ModuleID moduleOfHost)
     return modules->requireCacheEntry(module);
 }
 
+void Modules::forEachFileAwaitingAtTopLevel(const WTF::Function<void(int64_t, const String&)>& functor)
+{
+    for (ModuleRecord* record : m_records.values()) {
+        if (record->status() == CyclicModuleRecord::Status::EvaluatingAsync && record->hasTLA() && !record->pendingAsyncDependencies().value_or(0) && record->asyncEvaluationOrder().hasOrder())
+            functor(record->asyncEvaluationOrder().order(), record->moduleKey().string());
+    }
+}
+
+void forEachFileAwaitingAtTopLevel(JSGlobalObject* realm, const WTF::Function<void(int64_t, const String&)>& functor)
+{
+    if (!realm->aotInstance())
+        return;
+    Instance::forEachOf(realm, [&](Instance&) {
+        if (Modules* modules = modulesOf(realm))
+            modules->forEachFileAwaitingAtTopLevel(functor);
+    });
+}
+
 void forEachEvaluatedFile(JSGlobalObject* realm, const WTF::Function<void(const String&)>& functor)
 {
     if (!realm->aotInstance())

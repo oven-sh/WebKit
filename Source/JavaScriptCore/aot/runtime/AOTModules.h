@@ -351,6 +351,7 @@ public:
     bool loadsCompiledFilesAlone(ModuleID) const;
     const String* exchangeAskerOfModule(const String* asker) { return std::exchange(m_askerOfModule, asker); }
     StringView askerOfModule() const { return m_askerOfModule ? StringView(*m_askerOfModule) : StringView(); }
+    void forEachFileAwaitingAtTopLevel(const WTF::Function<void(int64_t turn, const String& key)>&);
     void evict(ModuleID);
     void forgetEvaluation(ModuleID);
     void forgetRunThatThrew(ModuleID);
