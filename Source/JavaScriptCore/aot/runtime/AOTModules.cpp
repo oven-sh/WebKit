@@ -7211,6 +7211,15 @@ bool runBodyOfImportedModuleAheadOfMock(JSGlobalObject* realm, ModuleID moduleOf
     return modules && modules->runBodyOfImportedModuleAheadOfMock(module);
 }
 
+void countMockCall(JSGlobalObject* realm, ModuleID moduleOfHost, ASCIILiteral call, ASCIILiteral factory)
+{
+    if (!Options::aotCountsPath()) [[likely]]
+        return;
+    ModuleFromHost module(realm, moduleOfHost);
+    if (Modules* modules = modulesOf(realm))
+        countMockTransition(realm->vm(), makeString(modules->describeMockState(module), " x "_s, call, ", "_s, factory));
+}
+
 bool runBodyOfLinkedModuleAheadOfMock(JSGlobalObject* realm, ModuleID moduleOfHost)
 {
     ModuleFromHost module(realm, moduleOfHost);

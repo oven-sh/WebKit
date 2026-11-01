@@ -300,6 +300,8 @@ JS_EXPORT_PRIVATE bool mayBeMocked(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool hasBegunToLoad(JSGlobalObject*, ModuleID);
 // Under `bun test` the body of a module that is linked when it is mocked runs then and there: left for later, it would assign over what the mock stores.
 JS_EXPORT_PRIVATE bool runBodyOfLinkedModuleAheadOfMock(JSGlobalObject*, ModuleID);
+// For the counts alone: which call, with which kind of factory, meets the module in which state.
+JS_EXPORT_PRIVATE void countMockCall(JSGlobalObject*, ModuleID, ASCIILiteral call, ASCIILiteral factory);
 // Asked from runMock(), for a CommonJS file that a require() has come to: what deferMock() did is taken back and the body of the file runs. The mock is laid over it.
 JS_EXPORT_PRIVATE void runBodyOfRequiredFileAheadOfMock(JSGlobalObject*, ModuleID);
 // Asked from a factory that takes the original of an ES module which has not begun to load: the same, and the module is evaluated. False, and nothing is done, where some body would await.
