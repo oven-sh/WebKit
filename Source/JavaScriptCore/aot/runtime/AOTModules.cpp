@@ -2157,47 +2157,83 @@ bool Modules::hasMockLaidOver(ModuleID module) const
 
 void Modules::letGoOfImportersOf(ModuleID mocked, ImportersLetGo which)
 {
-    if (m_momentsOfLoads.isEmpty())
-        return;
-    uint32_t momentOfTestFile = m_instance.vm->aotState().momentOfTestFile;
-    auto momentLoaded = [&](ModuleID module) { return m_momentsOfLoads[placeOfMomentOfLoad(module)]; };
     bool keepsImportersOfTestFile = which == ImportersLetGo::AllButThoseThatThisTestFileLinkedToModule;
-    if (keepsImportersOfTestFile && momentLoaded(mocked) > momentOfTestFile)
+    if (keepsImportersOfTestFile && !m_momentsOfLoads.isEmpty() && m_momentsOfLoads[placeOfMomentOfLoad(mocked)] > m_instance.vm->aotState().momentOfTestFile)
         return;
-    if (m_importersByStatement.isEmpty()) {
-        m_importersByStatement.grow(m_table.size());
-        for (uint32_t importer = 0; importer < m_table.size(); ++importer) {
-            for (const ModuleRequestData& request : m_table.imports(ModuleID(importer))) {
-                if (!request.isHoisted && !request.isDeferred)
-                    m_importersByStatement[request.target()].append(importer);
+    BitVector asImported(m_table.size());
+    asImported.quickSet(mocked.index());
+    asImported.quickSet(moduleWithExportsOf(mocked).index());
+    letGoOfImportersOf(asImported, BitVector(m_table.size()), keepsImportersOfTestFile);
+}
+
+// `gone`: what has left the loader with the mocked module in the images below, as this image names it.
+void Modules::letGoOfImportersOf(const BitVector& mocked, BitVector&& gone, bool keepsImportersOfTestFile)
+{
+    bool hasSeveralImages = m_instance.vm->aotState().hasSeveralImages;
+    if (!m_momentsOfLoads.isEmpty()) {
+        uint32_t momentOfTestFile = m_instance.vm->aotState().momentOfTestFile;
+        if (m_importersByStatement.isEmpty()) {
+            m_importersByStatement.grow(m_table.size());
+            for (uint32_t importer = 0; importer < m_table.size(); ++importer) {
+                for (const ModuleRequestData& request : m_table.imports(ModuleID(importer))) {
+                    if (!request.isHoisted && !request.isDeferred)
+                        m_importersByStatement[request.target()].append(importer);
+                }
+            }
+        }
+        // An image above finds a file of this one with the loader, which the host searches for importers by what the loader has resolved: nothing, where this image names a module of an image below.
+        bool leavesRegistry = hasSeveralImages && !isAnythingBeingLoaded() && !isLoaderInMiddleOfGraph();
+        BitVector seen = mocked;
+        seen.merge(gone);
+        Vector<uint32_t, 32> work;
+        for (size_t imported : seen)
+            work.append(imported);
+        while (!work.isEmpty()) {
+            uint32_t imported = work.takeLast();
+            for (uint32_t index : m_importersByStatement[imported]) {
+                ModuleID importer(index);
+                uint32_t place = placeOfMomentOfLoad(importer);
+                if (mocked.quickGet(imported) && keepsImportersOfTestFile && m_momentsOfLoads[place] > momentOfTestFile)
+                    continue;
+                if (seen.quickSet(index))
+                    continue;
+                // A module with nothing to run stays as the loader left it.
+                bool isLoaded = status(importer) > ModuleStatus::Linked || (data(importer).isESModuleOfProgram() && wasLoadedWithGraph(importer));
+                // Nothing would load a module of a preload again. A mock that stands in place of a body that never ran imports nothing.
+                if (!isLoaded || m_loadedInPreload.get(place) || (mockInPlace(importer) && !isLeftAloneByMock(importer)))
+                    continue;
+                m_modulesThatLoaderLetGo.set(index);
+                // `bun test` lets go of what was linked to the mock. Whoever kept the module under a mock that left it alone stays as it is.
+                if (mocked.quickGet(imported) ? !isLeftAloneByMock(ModuleID(imported)) || seesMockOf(ModuleID(imported), importer) : m_importersOfMockThatEnded.get(imported))
+                    m_importersOfMockThatEnded.set(index);
+                gone.quickSet(index);
+                work.append(index);
+                if (ModuleRecord* record = leavesRegistry ? recordIfExists(importer) : nullptr)
+                    loader()->removeEntryOfRecord(record);
             }
         }
     }
-    ModuleID withExports = moduleWithExportsOf(mocked);
-    BitVector seen(m_table.size());
-    Vector<ModuleID, 32> work { mocked };
-    if (withExports != mocked)
-        work.append(withExports);
-    while (!work.isEmpty()) {
-        ModuleID imported = work.takeLast();
-        bool isMockedItself = imported == mocked || imported == withExports;
-        for (uint32_t index : m_importersByStatement[imported.index()]) {
-            ModuleID importer(index);
-            if (isMockedItself && keepsImportersOfTestFile && momentLoaded(importer) > momentOfTestFile)
+    if (!hasSeveralImages) [[likely]]
+        return;
+    for (Instance* above = m_instance.above; above; above = above->above) {
+        Modules* modules = above->state ? above->state->modules.get() : nullptr;
+        if (!modules)
+            continue;
+        const ModuleTable& table = modules->m_table;
+        BitVector mockedAbove(table.size());
+        BitVector goneAbove(table.size());
+        for (const UncompiledModuleData& entry : table.modulesOfUncompiledCode()) {
+            std::optional<ModuleID> file = m_table.findByPath(table.pathText(ModuleID(entry.module)));
+            if (!file)
                 continue;
-            if (importer == mocked || importer == withExports || seen.quickSet(index))
-                continue;
-            // A module with nothing to run stays as the loader left it.
-            bool isLoaded = status(importer) > ModuleStatus::Linked || (data(importer).isESModuleOfProgram() && wasLoadedWithGraph(importer));
-            // Nothing would load a module of a preload again. A mock that stands in place of a body that never ran imports nothing.
-            if (!isLoaded || m_loadedInPreload.get(placeOfMomentOfLoad(importer)) || (mockInPlace(importer) && !isLeftAloneByMock(importer)))
-                continue;
-            m_modulesThatLoaderLetGo.set(index);
-            // `bun test` lets go of what was linked to the mock. Whoever kept the module under a mock that left it alone stays as it is.
-            if (isMockedItself ? !isLeftAloneByMock(mocked) || seesMockOf(mocked, importer) : m_importersOfMockThatEnded.get(imported.index()))
-                m_importersOfMockThatEnded.set(index);
-            work.append(importer);
+            uint32_t withExports = moduleWithExportsOf(*file).index();
+            if (mocked.quickGet(file->index()) || mocked.quickGet(withExports))
+                mockedAbove.quickSet(entry.module);
+            else if (gone.quickGet(file->index()) || gone.quickGet(withExports))
+                goneAbove.quickSet(entry.module);
         }
+        if (!mockedAbove.isEmpty() || !goneAbove.isEmpty())
+            modules->letGoOfImportersOf(mockedAbove, WTF::move(goneAbove), keepsImportersOfTestFile);
     }
 }
 

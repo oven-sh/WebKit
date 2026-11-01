@@ -804,6 +804,7 @@ private:
     void evaluateModulesOwedBelow(ModuleID root, bool hasImporterAboveThatRan = false);
     void evaluateModulesOwedBelowSlow(ModuleID root, bool hasImporterAboveThatRan);
     void bringBackWhatLoaderLetGoBelow(ModuleID root);
+    void letGoOfImportersOf(const BitVector& mocked, BitVector&& gone, bool keepsImportersOfTestFile);
     size_t numberOfJobsThatWouldWait(JobsOfImportedFiles) const;
     void holdJobsBehind(size_t numberOfJobs, ModuleID file, JobsOfImportedFiles = JobsOfImportedFiles::WaitForLoader);
     bool hasQueuedTicks() const { return host().hasQueuedTicks && host().hasQueuedTicks(m_instance.globalObject); }
