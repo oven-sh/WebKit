@@ -1319,7 +1319,7 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
             for (const Identifier& name : names)
                 result.append({ name, storedValue(realm, added, name) });
         }
-        if (!moduleData.hasDynamicStarExport()) {
+        if (!moduleData.hasDynamicStarExport() || standsForWholeModule(module)) {
             sortByName(result);
             return result;
         }
@@ -1393,7 +1393,8 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
                     appendNamesAddedByMock(source, addedByMock);
                     RETURN_IF_EXCEPTION(scope, { });
                     appendLiveExports(source, addedByMock);
-                    pending.append(source);
+                    if (!standsForWholeModule(source))
+                        pending.append(source);
                 }
                 RETURN_IF_EXCEPTION(scope, { });
             }

@@ -2761,6 +2761,9 @@ void Modules::evaluateModulesOwedBelow(ModuleID root)
         ModuleID module = toVisit.takeLast();
         if (isSeen.quickSet(module.index()))
             continue;
+        // What only a mocked module imports is not loaded.
+        if (isMocked(module) || mockInPlace(module))
+            continue;
         if (isOwedInImageBelow && data(module).isUncompiledCode()) {
             filesOfImagesBelow.append(resolvedKey(module));
             RETURN_IF_EXCEPTION(scope, void());
@@ -2784,6 +2787,12 @@ void Modules::evaluateModulesOwedBelow(ModuleID root)
         m_modulesOwedToImportersThatRan.clear(module.index());
         if (status(module) >= ModuleStatus::Evaluating || mockInPlace(module))
             continue;
+        // The mock kept the loader from what the module imports from outside the image.
+        if (status(module) == ModuleStatus::Unlinked && data(module).reachesUncompiledCode() && !data(module).hasTopLevelAwait()) {
+            evaluateSynchronously(module, SynchronousEvaluationReason::Require);
+            RETURN_IF_EXCEPTION(scope, void());
+            continue;
+        }
         JSPromise* evaluation = evaluate(module, std::nullopt, nullptr);
         RETURN_IF_EXCEPTION(scope, void());
         if (evaluation->status() == JSPromise::Status::Rejected) {

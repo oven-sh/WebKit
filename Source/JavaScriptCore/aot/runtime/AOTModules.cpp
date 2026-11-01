@@ -1022,7 +1022,7 @@ bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue
         }
         std::optional<unsigned> index = m_table.findExport(module, name);
         if (!index) {
-            if (data(module).hasDynamicStarExport() && tryReplaceExportBehindStars(module, name, value, seenBehindStars))
+            if (data(module).hasDynamicStarExport() && !standsForWholeModule(module) && tryReplaceExportBehindStars(module, name, value, seenBehindStars))
                 return true;
             return tryReplaceCapturedExport(module, name, value);
         }
@@ -1224,6 +1224,14 @@ bool Modules::isAddedByMock(ModuleID module, const Identifier& name)
 {
     LoadedModule* loaded = loadedIfExists(module);
     return loaded && loaded->exportsAddedByMock && !!storedValue(m_instance.globalObject, loaded->exportsAddedByMock, name);
+}
+
+bool Modules::standsForWholeModule(ModuleID module) const
+{
+    if (!isMocked(module) && !mockInPlace(module))
+        return false;
+    const LoadedModule* loaded = loadedIfExists(module);
+    return loaded && loaded->exportsAddedByMock;
 }
 
 void Modules::appendNamesAddedByMock(ModuleID module, WTF::Vector<Identifier>& names)
@@ -6194,7 +6202,7 @@ void ModuleRecord::appendDynamicStarTargets(StarExportTargets& targets)
     RunningImageScope imageOfRecord(m_instance.vm->aotState(), m_instance.program);
     auto scope = DECLARE_THROW_SCOPE(vm());
     Modules& modules = this->modules();
-    if (!modules.data(m_module).hasDynamicStarExport())
+    if (!modules.data(m_module).hasDynamicStarExport() || modules.standsForWholeModule(m_module))
         return;
     for (const ModuleRequestData& request : modules.table().requests(m_module)) {
         if (!request.isDynamicStarExport)

@@ -199,6 +199,8 @@ public:
     void takeWhatMockAdds(ModuleID, bool comesAheadOfLoad);
     bool isAddedByMock(ModuleID, const Identifier&);
     void appendNamesAddedByMock(ModuleID, WTF::Vector<Identifier>&);
+    // Such a mock has no `export *`: what stands behind a star of the module gives it no name, and is not loaded for it.
+    bool standsForWholeModule(ModuleID) const;
     // Every `export *` of the module is followed at run time, and each leads to a module whose table lists what it exports, as do the stars of that module. What mocks leave out and add decides the rest.
     bool namesBehindStarsAreInTables(ModuleID module) const
     {
