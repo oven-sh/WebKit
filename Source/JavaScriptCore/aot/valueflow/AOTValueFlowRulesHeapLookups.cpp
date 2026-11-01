@@ -388,7 +388,8 @@ ValueFlowNodeID HeapRule::storedThroughUnknownObjectIntoObjectsWithinReach(Climb
             // Start-up locks nothing on the object of a module: code that nobody sees stores over any member of one that it holds.
             if (hasEscaped(m_context.restrict(holders, m_context.maker().unite(m_tables.objectsOfNativeModules(), m_tables.objectsOfPublicModules()))))
                 return stored;
-        }
+        } else if (!m_context.isSabotaged(Sabotage::ObjectsOfModulesCountAsLocked) && hasEscaped(m_context.restrict(objects, m_context.maker().unite(m_tables.objectsOfNativeModules(), m_tables.objectsOfPublicModulesWithoutLocks()))))
+            return stored;
         if (name.kind == ValueFlowNameKind::PrototypeLink && isHostFlagRaised(m_context, ValueFlowHostNode::ObjectNobodyKnowsIsWritten)
             && isAnswerThatNoReadLists(m_context.restrict(objects, m_context.maker().intersect(m_context.maker().unite(m_tables.prototypeObjectsOfHost(), m_tables.prototypeObjectsOfLanguage()), ValueSets::complement(m_tables.holdersWithLockedPrototypeLink())))))
             return stored;

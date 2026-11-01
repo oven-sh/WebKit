@@ -187,6 +187,7 @@ enum Sabotage {
     ReceiversThatLeaveAreInstances
     StoresBehindFormerEntryChecksSayNothing
     ClosuresMadeBehindAllocationsHaveEffects
+    ObjectsOfModulesCountAsLocked
 }
 flags Instrumentation { CountBranches CountArrivals }
 flags AdmittedCode { Inspector ReplacedBuiltins FilesRunByHost }
