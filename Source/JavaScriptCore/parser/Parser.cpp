@@ -817,6 +817,10 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseStatementList
             }
             restoreSavePoint(context, savePoint);
         }
+        if (StructKind structKind; Options::useStructs() && matchStructDeclaration(context, structKind)) [[unlikely]] {
+            result = parseClassDeclaration(context, ExportType::NotExported, DeclarationDefaultContext::Standard, structKind);
+            break;
+        }
         if (*m_token.m_data.ident == m_vm.propertyNames->async && !m_token.m_data.escaped) [[unlikely]] {
             // Eagerly parse as AsyncFunctionDeclaration. This is the uncommon case,
             // but could be mistakenly parsed as an AsyncFunctionExpression.
@@ -3066,14 +3070,47 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseAsyncFunction
     return result;
 }
 
+// `struct Name` and `shared struct Name` start a struct declaration; both words stay ordinary identifiers elsewhere.
+// On a match the token is left at the `struct` keyword, which parseClass() consumes in place of `class`.
 template <typename LexerType>
-template <class TreeBuilder> TreeStatement Parser<LexerType>::parseClassDeclaration(TreeBuilder& context, ExportType exportType, DeclarationDefaultContext declarationDefaultContext)
+template <class TreeBuilder> bool Parser<LexerType>::matchStructDeclaration(TreeBuilder& context, StructKind& structKind)
 {
-    ASSERT(match(CLASSTOKEN));
+    if (!match(IDENT) || m_token.m_data.escaped)
+        return false;
+    if (*m_token.m_data.ident == m_vm.propertyNames->structIdentifier)
+        structKind = StructKind::Struct;
+    else if (*m_token.m_data.ident == m_vm.propertyNames->sharedIdentifier)
+        structKind = StructKind::Shared;
+    else
+        return false;
+
+    unsigned keywordStart = m_token.m_startPosition.offset;
+    SavePoint start = createSavePoint(context);
+    if (structKind == StructKind::Shared) {
+        next();
+        if (!match(IDENT) || m_token.m_data.escaped || *m_token.m_data.ident != m_vm.propertyNames->structIdentifier || m_lexer->hasLineTerminatorBeforeToken()) {
+            restoreSavePoint(context, start);
+            return false;
+        }
+    }
+    SavePoint atStruct = createSavePoint(context);
+    next();
+    bool matched = !m_lexer->hasLineTerminatorBeforeToken() && matchSpecIdentifier();
+    restoreSavePoint(context, matched ? atStruct : start);
+    if (matched && structKind == StructKind::Shared)
+        m_sharedStructKeywordStart = keywordStart;
+    return matched;
+}
+
+template <typename LexerType>
+template <class TreeBuilder> TreeStatement Parser<LexerType>::parseClassDeclaration(TreeBuilder& context, ExportType exportType, DeclarationDefaultContext declarationDefaultContext, StructKind structKind)
+{
+    ASSERT(match(CLASSTOKEN) || structKind != StructKind::None);
     JSTokenLocation location(tokenLocation());
     JSTextPosition classStart = tokenStartPosition();
 
     ParserClassInfo<TreeBuilder> info;
+    info.structKind = structKind;
     FunctionNameRequirements requirements = FunctionNameRequirements::Named;
     if (declarationDefaultContext == DeclarationDefaultContext::ExportDefault) {
         // Under the "export default" context, class declaration does not require the class name.
@@ -3115,10 +3152,15 @@ static constexpr ASCIILiteral staticComputedNamePrefix { "staticComputedName"_s 
 template <typename LexerType>
 template <class TreeBuilder> TreeClassExpression Parser<LexerType>::parseClass(TreeBuilder& context, FunctionNameRequirements requirements, ParserClassInfo<TreeBuilder>& info)
 {
-    ASSERT(match(CLASSTOKEN));
+    ASSERT(match(CLASSTOKEN) || info.structKind != StructKind::None);
+    const bool isStruct = info.structKind != StructKind::None;
+    const bool isSharedStruct = info.structKind == StructKind::Shared;
     JSTextPosition start = tokenStartPosition();
     JSTokenLocation location(tokenLocation());
     info.startOffset = location.startOffset;
+    // The source text of a shared struct starts at `shared`, not at `struct`.
+    if (info.structKind == StructKind::Shared && m_sharedStructKeywordStart)
+        info.startOffset = std::exchange(m_sharedStructKeywordStart, std::nullopt).value();
 
     // We have a subtle problem here. Class heritage evaluation should find class declaration's constructor name, but should not find private name evaluation.
     // For example,
@@ -3274,6 +3316,7 @@ parseMethod:
             handleProductionOrFail(CLOSEBRACKET, "]", "end", "computed property name");
             break;
         case PRIVATENAME: {
+            semanticFailIfTrue(isSharedStruct && tag == ClassElementTag::Instance, "Shared structs cannot declare instance private names");
             ident = m_token.m_data.ident;
             failIfTrue(isGetter || isSetter, "Cannot parse class method with private name");
             ASSERT(ident);
@@ -3308,6 +3351,8 @@ parseMethod:
 
         TreeProperty property;
         if (isGetter || isSetter) {
+            // A shared struct has no prototype, so an instance accessor could never be called.
+            semanticFailIfTrue(isSharedStruct && tag == ClassElementTag::Instance, "Shared structs cannot declare instance accessors");
             if (match(PRIVATENAME)) {
                 ident = m_token.m_data.ident;
 
@@ -3358,9 +3403,14 @@ parseMethod:
                 SetForScope overrideParsingClassFieldInitializer(m_parserState.isParsingClassFieldInitializer, true);
                 SetForScope maskAsync(m_parserState.classFieldInitMasksAsync, true);
                 classScope->setExpectedSuperBinding(SuperBinding::Needed);
+                // An instance field of a shared struct cannot mention a private name (ContainsInstancePrivateIdentifier).
+                bool previousSeenPrivateNameUse = std::exchange(m_seenPrivateNameUse, false);
                 initializer = parseAssignmentExpression(context);
+                bool initializerUsesPrivateName = m_seenPrivateNameUse;
+                m_seenPrivateNameUse |= previousSeenPrivateNameUse;
                 classScope->setExpectedSuperBinding(SuperBinding::NotNeeded);
                 failIfFalse(initializer, "Cannot parse initializer for class field");
+                semanticFailIfTrue(isSharedStruct && tag == ClassElementTag::Instance && initializerUsesPrivateName, "Shared structs cannot use private names in the initializer of an instance field");
                 context.setEndOffset(initializer, m_lastTokenLocation.endOffset);
                 classScope->markLastUsedVariablesSetAsCaptured(usedVariablesSize);
             }
@@ -3387,9 +3437,21 @@ parseMethod:
             semanticFailIfTrue(isConstructor && parseMode != SourceParseMode::MethodMode,
                 "Cannot declare ", stringArticleForFunctionMode(parseMode), stringForFunctionMode(parseMode), " named 'constructor'");
 
+            // A shared struct has no prototype, so an instance method could never be called.
+            semanticFailIfTrue(isSharedStruct && tag == ClassElementTag::Instance && !isConstructor, "Shared structs cannot declare instance methods");
+
             methodInfo.name = isConstructor ? info.className : ident;
             SetForScope innerParseMode(m_parseMode, parseMode);
-            failIfFalse((parseFunctionInfo(context, FunctionNameRequirements::Unnamed, false, isConstructor ? constructorKind : ConstructorKind::None, SuperBinding::Needed, functionStart, methodInfo, FunctionDefinitionType::Method)), "Cannot parse this method");
+            // The constructor of a struct is the initializer that the native struct constructor calls with the new
+            // instance as its this value. It is parsed as a derived constructor, so that super() is valid in it (the
+            // struct constructor has no super() requirement and calls the initializer of the parent), and compiled as
+            // an ordinary method below.
+            ConstructorKind methodConstructorKind = isConstructor ? (isStruct ? ConstructorKind::Extends : constructorKind) : ConstructorKind::None;
+            failIfFalse((parseFunctionInfo(context, FunctionNameRequirements::Unnamed, false, methodConstructorKind, SuperBinding::Needed, functionStart, methodInfo, FunctionDefinitionType::Method)), "Cannot parse this method");
+            if constexpr (std::is_same_v<TreeBuilder, ASTBuilder>) {
+                if (isConstructor && isStruct)
+                    methodInfo.body->setConstructorKind(ConstructorKind::None);
+            }
 
             TreeExpression method = context.createMethodDefinition(methodLocation, methodInfo);
             if (isConstructor) {
@@ -3456,12 +3518,31 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseClassFie
     // Clear errors from parsing anything before the initializer expressions.
     m_lexer->clearErrorCodeAndBuffers();
 
+    // The functions of a struct that the class machinery makes start with a marker definition (see
+    // ClassExprNode::emitBytecode): its name is @structFields and its position says which function it is. Bit 1 is the
+    // setup function, which installs the brand of the private methods (bit 0) and defines the private fields as
+    // undefined, before the instance is sealed. Without it the function runs the initializers. The fields of a struct
+    // exist before any initializer runs, so a public or private field stores into its existing property rather than
+    // defining it.
+    bool isStructFieldInitializer = false;
+    bool isStructSetup = false;
+
     for (const auto& definition : classElementDefinitions) {
         auto position = definition.position;
         bool hasLineTerminatorBeforeToken = false;
 
         TreeStatement statement;
-        if (definition.kind == Kind::StaticInitializationBlock) {
+        if (definition.kind == Kind::FieldWithLiteralPropertyKey && definition.ident == m_vm.propertyNames->builtinNames().structFieldsPrivateName()) {
+            isStructFieldInitializer = true;
+            isStructSetup = position.offset & 2;
+            if (!(position.offset & 1))
+                continue;
+            Identifier brandIdentifier = m_vm.propertyNames->builtinNames().privateBrandPrivateName();
+            currentScope()->useVariable(brandIdentifier.impl(), false);
+            JSTokenLocation location;
+            location.startOffset = position.offset;
+            statement = context.createDefineField(location, definition.ident, 0, DefineFieldNode::Type::StructBrand);
+        } else if (definition.kind == Kind::StaticInitializationBlock) {
             {
                 JSTokenLocation loc;
                 loc.startOffset = position.offset;
@@ -3483,12 +3564,16 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseClassFie
 
             expression = context.makeStaticBlockFunctionCallNode(startLocation, expression, lastTokenEndPosition(), startPosition, lastTokenEndPosition());
             statement = context.createExprStatement(startLocation, expression, startPosition);
+        } else if (isStructFieldInitializer && (isStructSetup ? definition.kind != Kind::FieldWithPrivatePropertyKey : (definition.kind == Kind::FieldWithPrivatePropertyKey && !definition.initializerPosition))) {
+            // Not for this function: the setup function only defines private fields, and a private field without an
+            // initializer was defined by it.
+            continue;
         } else {
             JSTokenLocation location;
             location.startOffset = position.offset;
 
             TreeExpression initializer = 0;
-            if (auto initializerPosition = definition.initializerPosition) {
+            if (auto initializerPosition = definition.initializerPosition; initializerPosition && !isStructSetup) {
                 {
                     JSTokenLocation loc;
                     loc.startOffset = (*initializerPosition);
@@ -3506,11 +3591,11 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseClassFie
                 context.setEndOffset(initializer, m_lastTokenLocation.endOffset);
             }
 
-            DefineFieldNode::Type type = DefineFieldNode::Type::Name;
+            DefineFieldNode::Type type = isStructFieldInitializer ? DefineFieldNode::Type::StructName : DefineFieldNode::Type::Name;
             if (definition.kind == Kind::FieldWithComputedPropertyKey)
-                type = DefineFieldNode::Type::ComputedName;
+                type = isStructFieldInitializer ? DefineFieldNode::Type::StructComputedName : DefineFieldNode::Type::ComputedName;
             else if (definition.kind == Kind::FieldWithPrivatePropertyKey) {
-                type = DefineFieldNode::Type::PrivateName;
+                type = isStructFieldInitializer && !isStructSetup ? DefineFieldNode::Type::StructPrivateName : DefineFieldNode::Type::PrivateName;
                 currentScope()->useVariable(definition.ident.impl(), false);
             }
 
@@ -4042,7 +4127,35 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseExportDeclara
         const Identifier* localName = nullptr;
 
         bool startsWithFunction = match(FUNCTION);
-        if (startsWithFunction || match(CLASSTOKEN)) {
+        StructKind defaultStructKind = StructKind::None;
+        bool startsWithStruct = Options::useStructs() && matchStructDeclaration(context, defaultStructKind);
+        if (!startsWithStruct && Options::useStructs() && match(IDENT) && !m_token.m_data.escaped
+            && (*m_token.m_data.ident == m_vm.propertyNames->structIdentifier || *m_token.m_data.ident == m_vm.propertyNames->sharedIdentifier)) {
+            // export default [+Default] `struct` StructTail, and the `shared struct` form: the struct has no name, so
+            // `struct` is followed by the heritage or the body. Leaves the token at `struct`, as matchStructDeclaration() does.
+            StructKind anonymousKind = *m_token.m_data.ident == m_vm.propertyNames->structIdentifier ? StructKind::Struct : StructKind::Shared;
+            unsigned anonymousStart = m_token.m_startPosition.offset;
+            SavePoint start = createSavePoint(context);
+            bool matched = true;
+            if (anonymousKind == StructKind::Shared) {
+                next();
+                matched = match(IDENT) && !m_token.m_data.escaped && *m_token.m_data.ident == m_vm.propertyNames->structIdentifier && !m_lexer->hasLineTerminatorBeforeToken();
+            }
+            if (matched) {
+                SavePoint atStruct = createSavePoint(context);
+                next();
+                matched = !m_lexer->hasLineTerminatorBeforeToken() && (match(OPENBRACE) || match(EXTENDS));
+                restoreSavePoint(context, matched ? atStruct : start);
+            } else
+                restoreSavePoint(context, start);
+            if (matched) {
+                defaultStructKind = anonymousKind;
+                startsWithStruct = true;
+                if (anonymousKind == StructKind::Shared)
+                    m_sharedStructKeywordStart = anonymousStart;
+            }
+        }
+        if (startsWithFunction || match(CLASSTOKEN) || startsWithStruct) {
             SavePoint savePoint = createSavePoint(context);
             isFunctionOrClassDeclaration = true;
             next();
@@ -4076,8 +4189,8 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseExportDeclara
             if (startsWithFunction) {
                 ASSERT(match(FUNCTION));
                 result = parseFunctionDeclaration(context, FunctionDeclarationType::Declaration, ExportType::NotExported, DeclarationDefaultContext::ExportDefault);
-            } else if (match(CLASSTOKEN)) {
-                result = parseClassDeclaration(context, ExportType::NotExported, DeclarationDefaultContext::ExportDefault);
+            } else if (match(CLASSTOKEN) || defaultStructKind != StructKind::None) {
+                result = parseClassDeclaration(context, ExportType::NotExported, DeclarationDefaultContext::ExportDefault, defaultStructKind);
             } else {
                 ASSERT(matchContextualKeyword(m_vm.propertyNames->async));
                 unsigned functionStart = m_token.m_startPosition;
@@ -4206,6 +4319,10 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseExportDeclara
             break;
 
         case IDENT:
+            if (StructKind structKind; Options::useStructs() && matchStructDeclaration(context, structKind)) [[unlikely]] {
+                result = parseClassDeclaration(context, ExportType::Exported, DeclarationDefaultContext::Standard, structKind);
+                break;
+            }
             if (*m_token.m_data.ident == m_vm.propertyNames->async && !m_token.m_data.escaped) [[likely]] {
                 unsigned functionStart = m_token.m_startPosition;
                 next();

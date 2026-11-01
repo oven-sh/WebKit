@@ -765,7 +765,7 @@ static ALWAYS_INLINE bool needsHomeObject(ExpressionNode* node)
     return false;
 }
 
-RegisterID* PropertyListNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dstOrConstructor, RegisterID* prototype, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>* instanceElementDefinitions, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>* staticElementDefinitions)
+RegisterID* PropertyListNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dstOrConstructor, RegisterID* prototype, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>* instanceElementDefinitions, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>* staticElementDefinitions, bool brandPrivateMethods)
 {
     auto makeClassElementDefinition = [](const PropertyListNode* p) {
         using Kind = UnlinkedFunctionExecutable::ClassElementDefinition::Kind;
@@ -874,7 +874,7 @@ RegisterID* PropertyListNode::emitBytecode(BytecodeGenerator& generator, Registe
             continue;
         }
 
-        emitPutConstantProperty(generator, dst, *p->m_node);
+        emitPutConstantProperty(generator, dst, *p->m_node, brandPrivateMethods);
     }
 
     // Were there any get/set properties?
@@ -948,7 +948,7 @@ RegisterID* PropertyListNode::emitBytecode(BytecodeGenerator& generator, Registe
 
             // Handle regular values.
             if (node->m_type & PropertyNode::Constant) {
-                emitPutConstantProperty(generator, dst, *node);
+                emitPutConstantProperty(generator, dst, *node, brandPrivateMethods);
                 continue;
             } else if (node->m_type & PropertyNode::Spread) {
                 generator.emitNode(dst, node->m_assign);
@@ -1032,7 +1032,7 @@ RegisterID* PropertyListNode::emitBytecode(BytecodeGenerator& generator, Registe
     return dstOrConstructor;
 }
 
-void PropertyListNode::emitPutConstantProperty(BytecodeGenerator& generator, RegisterID* newObj, PropertyNode& node)
+void PropertyListNode::emitPutConstantProperty(BytecodeGenerator& generator, RegisterID* newObj, PropertyNode& node, bool brandPrivateMethods)
 {
     // Private fields are handled in a synthetic classFieldInitializer function, not here.
     ASSERT(!(node.type() & PropertyNode::PrivateField));
@@ -1064,6 +1064,18 @@ void PropertyListNode::emitPutConstantProperty(BytecodeGenerator& generator, Reg
         ASSERT(!(node.type() & PropertyNode::PrivateGetter));
 
         if (node.type() & PropertyNode::PrivateMethod) {
+            // A private method of a struct is a method like the others: it is branded, and only runs for an instance.
+            if (brandPrivateMethods && node.isInstanceClassProperty() && node.m_assign->isBaseFuncExprNode() && static_cast<BaseFuncExprNode*>(node.m_assign)->metadata()->parseMode() == SourceParseMode::MethodMode) {
+                RefPtr<RegisterID> structDefine = generator.moveLinkTimeConstant(nullptr, LinkTimeConstant::structDefine);
+                RefPtr<RegisterID> wrapped = generator.newTemporary();
+                CallArguments wrapArguments(generator, nullptr, 3);
+                generator.emitLoad(wrapArguments.thisRegister(), jsUndefined());
+                generator.emitLoad(wrapArguments.argumentRegister(0), jsNumber(6));
+                generator.move(wrapArguments.argumentRegister(1), newObj);
+                generator.move(wrapArguments.argumentRegister(2), value.get());
+                generator.emitCall(wrapped.get(), structDefine.get(), NoExpectedFunction, wrapArguments, m_position, m_position, m_position, DebuggableCall::No);
+                value = wrapped;
+            }
             Variable var = generator.variable(*node.name());
             generator.emitPutToScope(generator.scopeRegister(), var, value.get(), DoNotThrowIfNotFound, InitializationMode::ConstInitialization);
             return;
@@ -1477,6 +1489,44 @@ static int startOffsetOfQuestionDot(const JSTextPosition& optionalCallDivot)
 
 RegisterID* FunctionCallValueNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
+    if (m_expr->isSuperNode() && !(generator.constructorKind() == ConstructorKind::Extends || generator.isDerivedConstructorContext())) {
+        // super(...) in the constructor of a struct (the parser accepts it nowhere else). That constructor is a method
+        // that the native struct constructor calls with the new instance as its this value, so super(...) calls the
+        // constructor of the parent struct the same way, with the same this value: no object is constructed, this is
+        // always bound and super() may be called any number of times. structDefine(5, homeObject) finds the function.
+        // In an arrow function this is the lexical this of the constructor, which it keeps in its environment.
+        if (isArrowFunctionParseMode(generator.parseMode()))
+            generator.emitLoadThisFromArrowFunctionLexicalEnvironment();
+
+        RefPtr<RegisterID> homeObject = emitHomeObjectForCallee(generator);
+        RefPtr<RegisterID> structDefine = generator.moveLinkTimeConstant(nullptr, LinkTimeConstant::structDefine);
+        // GetSuperConstructor() comes first, then the arguments are evaluated, and only then is the super constructor
+        // checked, as in SuperCall of the proposal: structDefine(7) makes the function that does the check when it is
+        // called, and the arguments are evaluated when the call is made.
+        RefPtr<RegisterID> superConstructor = generator.newTemporary();
+        {
+            CallArguments lookupArguments(generator, nullptr, 2);
+            generator.emitLoad(lookupArguments.thisRegister(), jsUndefined());
+            generator.emitLoad(lookupArguments.argumentRegister(0), jsNumber(5));
+            generator.move(lookupArguments.argumentRegister(1), homeObject.get());
+            generator.emitCall(superConstructor.get(), structDefine.get(), NoExpectedFunction, lookupArguments, divot(), divotStart(), divotEnd(), DebuggableCall::No);
+        }
+        RefPtr<RegisterID> func = generator.newTemporary();
+        {
+            CallArguments resolveArguments(generator, nullptr, 2);
+            generator.emitLoad(resolveArguments.thisRegister(), jsUndefined());
+            generator.emitLoad(resolveArguments.argumentRegister(0), jsNumber(7));
+            generator.move(resolveArguments.argumentRegister(1), superConstructor.get());
+            generator.emitCall(func.get(), structDefine.get(), NoExpectedFunction, resolveArguments, divot(), divotStart(), divotEnd(), DebuggableCall::No);
+        }
+        RefPtr<RegisterID> returnValue = generator.finalDestination(dst, func.get());
+
+        CallArguments callArguments(generator, m_args);
+        generator.ensureThis();
+        generator.move(callArguments.thisRegister(), generator.thisRegister());
+        return generator.emitCall(returnValue.get(), func.get(), NoExpectedFunction, callArguments, divot(), divotStart(), divotEnd(), DebuggableCall::Yes);
+    }
+
     if (m_expr->isSuperNode()) {
         RefPtr<RegisterID> func = emitGetSuperFunctionForConstruct(generator);
         RefPtr<RegisterID> returnValue = generator.finalDestination(dst, func.get());
@@ -5905,16 +5955,22 @@ RegisterID* AwaitExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
 
 void DefineFieldNode::emitBytecode(BytecodeGenerator& generator, RegisterID*)
 {
+    if (m_type == DefineFieldNode::Type::StructBrand) {
+        generator.emitInstallPrivateBrand(generator.thisRegister());
+        return;
+    }
+
     RefPtr<RegisterID> value = generator.newTemporary();
     bool shouldSetFunctionName = false;
 
+    bool isComputed = m_type == DefineFieldNode::Type::ComputedName || m_type == DefineFieldNode::Type::StructComputedName;
     if (!m_assign)
         generator.emitLoad(value.get(), jsUndefined());
     else {
-        generator.emitProfileControlFlow(m_type == DefineFieldNode::Type::ComputedName ? startOffsetOfBasicBlock(m_assign) : startOffset(), m_assign->endOffset());
+        generator.emitProfileControlFlow(isComputed ? startOffsetOfBasicBlock(m_assign) : startOffset(), m_assign->endOffset());
         generator.emitNode(value.get(), m_assign);
         shouldSetFunctionName = generator.shouldSetFunctionName(m_assign);
-        if (shouldSetFunctionName && m_type != DefineFieldNode::Type::ComputedName)
+        if (shouldSetFunctionName && !isComputed)
             generator.emitSetFunctionName(value.get(), m_ident);
     }
 
@@ -5928,16 +5984,35 @@ void DefineFieldNode::emitBytecode(BytecodeGenerator& generator, RegisterID*)
             generator.emitDirectPutById(generator.thisRegister(), m_ident, value.get());
         break;
     }
-    case DefineFieldNode::Type::PrivateName: {
+    case DefineFieldNode::Type::PrivateName:
+    case DefineFieldNode::Type::StructPrivateName: {
         Variable var = generator.variable(m_ident);
         ASSERT_WITH_MESSAGE(!var.local(), "Private Field names must be stored in captured variables");
 
         generator.emitExpressionInfo(position(), position(), position() + m_ident.length());
         RefPtr<RegisterID> privateName = generator.emitLoadPrivateName(var);
-        generator.emitDefinePrivateField(generator.thisRegister(), privateName.get(), value.get());
+        // The private field of a struct was defined, as undefined, by the setup function.
+        if (m_type == DefineFieldNode::Type::StructPrivateName)
+            generator.emitPrivateFieldPut(generator.thisRegister(), privateName.get(), value.get());
+        else
+            generator.emitDefinePrivateField(generator.thisRegister(), privateName.get(), value.get());
         break;
     }
-    case DefineFieldNode::Type::ComputedName: {
+    case DefineFieldNode::Type::StructName: {
+        // The property exists already, as a writable data property: setting it is what DefinePropertyOrThrow does.
+        StrictModeScope strictModeScope(generator);
+        if (auto index = parseIndex(m_ident)) {
+            RefPtr<RegisterID> propertyName = generator.emitLoad(nullptr, jsNumber(index.value()));
+            generator.emitPutByVal(generator.thisRegister(), propertyName.get(), value.get());
+        } else
+            generator.emitPutById(generator.thisRegister(), m_ident, value.get());
+        break;
+    }
+    case DefineFieldNode::Type::StructBrand:
+        RELEASE_ASSERT_NOT_REACHED();
+        break;
+    case DefineFieldNode::Type::ComputedName:
+    case DefineFieldNode::Type::StructComputedName: {
         // For ComputedNames, the expression has already been evaluated earlier during evaluation of a ClassExprNode.
         // Here, `m_ident` refers to private symbol ID in a class lexical scope, containing the value already converted to an Expression.
         Variable var = generator.variable(m_ident);
@@ -5952,7 +6027,10 @@ void DefineFieldNode::emitBytecode(BytecodeGenerator& generator, RegisterID*)
         generator.emitProfileType(privateName.get(), var, m_position, m_position + m_ident.length());
         {
             StrictModeScope strictModeScope(generator);
-            generator.emitDirectPutByVal(generator.thisRegister(), privateName.get(), value.get());
+            if (m_type == DefineFieldNode::Type::StructComputedName)
+                generator.emitPutByVal(generator.thisRegister(), privateName.get(), value.get());
+            else
+                generator.emitDirectPutByVal(generator.thisRegister(), privateName.get(), value.get());
         }
         break;
     }
@@ -5996,9 +6074,44 @@ RegisterID* ClassExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
     RefPtr<RegisterID> constructor = generator.tempDestination(dst);
     bool needsHomeObject = false;
 
+    // A struct declaration is a class whose constructor function is a native function (see JSStruct.cpp). It makes the
+    // instance, defines the fields, runs the field initializers of the class chain and then calls the constructor
+    // method that the struct body declares (the initializer) with the instance as its this value. The class
+    // machinery evaluates the elements; structDefine(operation, ...) does what only the native side can:
+    //   0 creates the constructor function, 1 links it with the prototype, 2 adds a field, 3 finishes the instance
+    //   side (the initializer, the brand of the methods), 4 locks the struct.
+    const bool isStruct = m_structKind != StructKind::None;
+    RefPtr<RegisterID> structDefine;
+    auto emitStructCall = [&](int operation, std::initializer_list<RegisterID*> arguments, RegisterID* destination) {
+        if (!structDefine)
+            structDefine = generator.moveLinkTimeConstant(nullptr, LinkTimeConstant::structDefine);
+        CallArguments callArguments(generator, nullptr, 1 + arguments.size());
+        generator.emitLoad(callArguments.thisRegister(), jsUndefined());
+        generator.emitLoad(callArguments.argumentRegister(0), jsNumber(operation));
+        unsigned index = 1;
+        for (RegisterID* argument : arguments)
+            generator.move(callArguments.argumentRegister(index++), argument);
+        if (destination)
+            generator.emitCall(destination, structDefine.get(), NoExpectedFunction, callArguments, position(), position(), position(), DebuggableCall::No);
+        else
+            generator.emitCallIgnoreResult(generator.newTemporary(), structDefine.get(), NoExpectedFunction, callArguments, position(), position(), position(), DebuggableCall::No);
+    };
+
     auto needsClassFieldInitializer = this->hasInstanceFields() ? NeedsClassFieldInitializer::Yes : NeedsClassFieldInitializer::No;
     auto privateBrandRequirement = shouldEmitPrivateBrand ? PrivateBrandRequirement::Needed : PrivateBrandRequirement::None;
-    if (m_constructorExpression) {
+    if (isStruct) {
+        RefPtr<RegisterID> heritage = superclass;
+        if (!heritage)
+            heritage = generator.emitLoad(nullptr, jsNull());
+        RefPtr<RegisterID> hasHeritage = generator.emitLoad(nullptr, jsBoolean(!!m_classHeritage));
+        RefPtr<RegisterID> shared = generator.emitLoad(nullptr, jsBoolean(m_structKind == StructKind::Shared));
+        // `export default struct { }` is named "default".
+        const Identifier& structName = m_name == generator.propertyNames().starDefaultPrivateName ? generator.propertyNames().defaultKeyword : ecmaName();
+        RefPtr<RegisterID> name = generator.emitLoad(nullptr, structName);
+        // The source text of the declaration, which Function.prototype.toString answers for the constructor.
+        RefPtr<RegisterID> sourceText = generator.emitLoad(nullptr, Identifier::fromString(generator.vm(), m_classSource.view().toString()));
+        emitStructCall(0, { heritage.get(), hasHeritage.get(), shared.get(), name.get(), sourceText.get() }, constructor.get());
+    } else if (m_constructorExpression) {
         ASSERT(m_constructorExpression->isFuncExprNode());
         FunctionMetadataNode* metadata = static_cast<FuncExprNode*>(m_constructorExpression)->metadata();
         metadata->setEcmaName(ecmaName());
@@ -6023,34 +6136,98 @@ RegisterID* ClassExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
         Ref<Label> superclassIsNullLabel = generator.newLabel();
         generator.emitJumpIfTrue(generator.emitIsNull(generator.newTemporary(), superclass.get()), superclassIsNullLabel.get());
 
-        Ref<Label> superclassIsConstructorLabel = generator.newLabel();
-        generator.emitJumpIfTrue(generator.emitIsConstructor(generator.newTemporary(), superclass.get()), superclassIsConstructorLabel.get());
-        generator.emitExpressionInfo(divot(), divotStart(), divotEnd());
-        generator.emitThrowTypeError("The superclass is not a constructor."_s);
-        generator.emitLabel(superclassIsConstructorLabel.get());
+        // The struct constructor function has checked that the superclass is a struct constructor.
+        if (!isStruct) {
+            Ref<Label> superclassIsConstructorLabel = generator.newLabel();
+            generator.emitJumpIfTrue(generator.emitIsConstructor(generator.newTemporary(), superclass.get()), superclassIsConstructorLabel.get());
+            generator.emitExpressionInfo(divot(), divotStart(), divotEnd());
+            generator.emitThrowTypeError("The superclass is not a constructor."_s);
+            generator.emitLabel(superclassIsConstructorLabel.get());
+        }
         generator.emitGetById(protoParent.get(), superclass.get(), generator.propertyNames().prototype);
 
-        generator.emitDirectSetPrototypeOf<InvalidPrototypeMode::Throw>(constructor.get(), superclass.get(), m_position, m_position, m_position); // never actually throws
+        if (!isStruct)
+            generator.emitDirectSetPrototypeOf<InvalidPrototypeMode::Throw>(constructor.get(), superclass.get(), m_position, m_position, m_position); // never actually throws
         generator.emitLabel(superclassIsNullLabel.get());
         generator.emitDirectSetPrototypeOf<InvalidPrototypeMode::Throw>(prototype.get(), protoParent.get(), divot(), divotStart(), divotEnd());
     }
 
-    if (needsHomeObject)
-        emitPutHomeObject(generator, constructor.get(), prototype.get());
+    RefPtr<RegisterID> structInitializer;
+    if (isStruct) {
+        emitStructCall(1, { constructor.get(), prototype.get() }, nullptr);
+        if (m_constructorExpression) {
+            ASSERT(m_constructorExpression->isFuncExprNode());
+            structInitializer = generator.newTemporary();
+            generator.emitNode(structInitializer.get(), m_constructorExpression);
+            emitPutHomeObject(generator, structInitializer.get(), prototype.get());
+        }
+    } else {
+        if (needsHomeObject)
+            emitPutHomeObject(generator, constructor.get(), prototype.get());
 
-    RefPtr<RegisterID> constructorNameRegister = generator.emitLoad(nullptr, propertyNames.constructor);
-    generator.emitCallDefineProperty(prototype.get(), constructorNameRegister.get(), constructor.get(), nullptr, nullptr,
-        BytecodeGenerator::PropertyConfigurable | BytecodeGenerator::PropertyWritable, m_position);
+        RefPtr<RegisterID> constructorNameRegister = generator.emitLoad(nullptr, propertyNames.constructor);
+        generator.emitCallDefineProperty(prototype.get(), constructorNameRegister.get(), constructor.get(), nullptr, nullptr,
+            BytecodeGenerator::PropertyConfigurable | BytecodeGenerator::PropertyWritable, m_position);
 
-    RefPtr<RegisterID> prototypeNameRegister = generator.emitLoad(nullptr, propertyNames.prototype);
-    generator.emitCallDefineProperty(constructor.get(), prototypeNameRegister.get(), prototype.get(), nullptr, nullptr, 0, m_position);
+        RefPtr<RegisterID> prototypeNameRegister = generator.emitLoad(nullptr, propertyNames.prototype);
+        generator.emitCallDefineProperty(constructor.get(), prototypeNameRegister.get(), prototype.get(), nullptr, nullptr, 0, m_position);
+    }
 
     Vector<UnlinkedFunctionExecutable::ClassElementDefinition> staticElementDefinitions;
     if (m_classElements) {
         m_classElements->emitDeclarePrivateFieldNames(generator, generator.scopeRegister());
 
         Vector<UnlinkedFunctionExecutable::ClassElementDefinition> instanceElementDefinitions;
-        generator.emitDefineClassElements(m_classElements, constructor.get(), prototype.get(), instanceElementDefinitions, staticElementDefinitions);
+        generator.emitDefineClassElements(m_classElements, constructor.get(), prototype.get(), instanceElementDefinitions, staticElementDefinitions, isStruct);
+        if (isStruct) {
+            using Kind = UnlinkedFunctionExecutable::ClassElementDefinition::Kind;
+            // The public fields, in order, are the layout of the instances. A computed name was converted to a property key
+            // when the class elements were evaluated and saved in the class scope.
+            for (const auto& definition : instanceElementDefinitions) {
+                if (definition.kind == Kind::FieldWithLiteralPropertyKey) {
+                    RefPtr<RegisterID> key = generator.emitLoad(nullptr, definition.ident);
+                    emitStructCall(2, { constructor.get(), key.get() }, nullptr);
+                } else if (definition.kind == Kind::FieldWithComputedPropertyKey) {
+                    Variable var = generator.variable(definition.ident);
+                    ASSERT_WITH_MESSAGE(!var.local(), "Computed names must be stored in captured variables");
+                    RefPtr<RegisterID> scope = generator.emitResolveScope(nullptr, var);
+                    RefPtr<RegisterID> key = generator.newTemporary();
+                    generator.emitGetFromScope(key.get(), scope.get(), var, ThrowIfNotFound);
+                    emitStructCall(2, { constructor.get(), key.get() }, nullptr);
+                }
+            }
+            // Two functions: the setup function installs the brand of the private methods and defines the private fields
+            // (as undefined) before the instance is sealed, and the initializer runs the field initializers. The first
+            // definition of each is a marker that makes it a struct function (see parseClassFieldInitializerSourceElements).
+            using Definition = UnlinkedFunctionExecutable::ClassElementDefinition;
+            bool hasPrivateFields = false;
+            bool needsInitializer = false;
+            for (const auto& definition : instanceElementDefinitions) {
+                if (definition.kind == Kind::FieldWithPrivatePropertyKey)
+                    hasPrivateFields = true;
+                if (definition.kind != Kind::FieldWithPrivatePropertyKey || definition.initializerPosition)
+                    needsInitializer = true;
+            }
+            if (hasPrivateFields || shouldEmitPrivateBrand) {
+                Vector<Definition> setupDefinitions;
+                JSTextPosition setupMarker;
+                setupMarker.offset = 2 | (shouldEmitPrivateBrand ? 1 : 0);
+                setupDefinitions.append(Definition { generator.propertyNames().builtinNames().structFieldsPrivateName(), setupMarker, std::nullopt, Kind::FieldWithLiteralPropertyKey });
+                for (const auto& definition : instanceElementDefinitions) {
+                    if (definition.kind == Kind::FieldWithPrivatePropertyKey)
+                        setupDefinitions.append(Definition { definition.ident, definition.position, std::nullopt, definition.kind });
+                }
+                RefPtr<RegisterID> setupFunction = generator.emitNewClassFieldInitializerFunction(generator.newTemporary(), WTF::move(setupDefinitions), m_classHeritage);
+                emitPutHomeObject(generator, setupFunction.get(), prototype.get());
+                generator.emitDirectPutById(constructor.get(), generator.propertyNames().builtinNames().structSetupPrivateName(), setupFunction.get());
+            }
+            if (needsInitializer) {
+                JSTextPosition initializerMarker;
+                initializerMarker.offset = 0;
+                instanceElementDefinitions.insert(0, Definition { generator.propertyNames().builtinNames().structFieldsPrivateName(), initializerMarker, std::nullopt, Kind::FieldWithLiteralPropertyKey });
+            } else
+                instanceElementDefinitions.clear();
+        }
         if (!instanceElementDefinitions.isEmpty()) {
             RefPtr<RegisterID> instanceFieldInitializer = generator.emitNewClassFieldInitializerFunction(generator.newTemporary(), WTF::move(instanceElementDefinitions), m_classHeritage);
 
@@ -6069,6 +6246,13 @@ RegisterID* ClassExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
         generator.emitPutToScope(scope.get(), classNameVar, constructor.get(), ThrowIfNotFound, InitializationMode::Initialization);
     }
 
+    if (isStruct) {
+        RefPtr<RegisterID> initializer = structInitializer;
+        if (!initializer)
+            initializer = generator.emitLoad(nullptr, jsUndefined());
+        emitStructCall(3, { constructor.get(), prototype.get(), initializer.get() }, nullptr);
+    }
+
     if (!staticElementDefinitions.isEmpty()) {
         RefPtr<RegisterID> staticFieldInitializer = generator.emitNewClassFieldInitializerFunction(generator.newTemporary(), WTF::move(staticElementDefinitions), m_classHeritage);
         // FIXME: Skip this if the initializer function isn't going to need a home object (no eval or super properties)
@@ -6078,6 +6262,11 @@ RegisterID* ClassExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
         CallArguments args(generator, nullptr);
         generator.move(args.thisRegister(), constructor.get());
         generator.emitCallIgnoreResult(generator.newTemporary(), staticFieldInitializer.get(), NoExpectedFunction, args, position(), position(), position(), DebuggableCall::No);
+    }
+
+    if (isStruct) {
+        // Locks the struct: seals the prototype and, for a shared struct, the constructor.
+        emitStructCall(4, { constructor.get(), prototype.get() }, nullptr);
     }
 
     if (hasPrivateNames)
