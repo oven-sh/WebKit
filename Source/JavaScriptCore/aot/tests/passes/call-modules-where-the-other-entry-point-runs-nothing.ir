@@ -1,0 +1,30 @@
+# main.mjs: import "./dep.mjs"; eval(text)        dep.mjs: require("./main.mjs"); export var value = 1        types.mjs: export type Port = number        built with two entry points, main.mjs and types.mjs
+# types.mjs runs nothing and loads nothing, so every realm that runs code has begun main.mjs first: the require() of main.mjs evaluates nothing, and the site calls the start.
+# call-modules-where-text-may-import-a-required-entry-point.ir has a second entry point that runs
+# FORM: AsRead
+# RUN: pipeline CallModules
+# STATISTIC: RequireSitesBound = 1
+
+module m0 path="/main.mjs" displayPath="main.mjs" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/dep.mjs" displayPath="dep.mjs" body=f1 requests=[{target=m0 kind=Require completes=true}] exports=[{name="value" variable=g0}]
+module m2 path="/types.mjs" displayPath="types.mjs" body=f2
+entry module=m0
+entry module=m2
+evalscope e0
+variable g0 name="value" module=m1 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = String string="text"
+    v1 = Undefined
+    v2 = DirectEval v0, v1 evalScope=e0
+    Return
+}
+function f1 name="dep" module=m1 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m0 referrer=m1 [isBare]
+    v1 = Integer integer=1
+    PutModuleVariable v1 variable=g0
+    Return
+}
+function f2 name="types" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+}
