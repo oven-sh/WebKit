@@ -387,12 +387,12 @@ class ConsoleOfShell final : public ConsoleClient {
     WTF_MAKE_TZONE_ALLOCATED(ConsoleOfShell);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ConsoleOfShell);
 public:
-    void messageWithTypeAndLevel(MessageType, MessageLevel level, JSGlobalObject* globalObject, Ref<Inspector::ScriptArguments>&& arguments) final
+    void messageWithTypeAndLevel(MessageType, MessageLevel level, JSGlobalObject* globalObject, MessageArguments arguments) final
     {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         StringBuilder line;
-        for (size_t index = 0; index < arguments->argumentCount(); ++index) {
-            JSValue value = arguments->argumentAt(index);
+        for (size_t index = 0; index < arguments.size(); ++index) {
+            JSValue value = arguments.at(index);
             if (index)
                 line.append(' ');
             if (value.isSymbol()) {
@@ -421,7 +421,7 @@ public:
     void profileEnd(JSGlobalObject*, const String&) final { }
     void takeHeapSnapshot(JSGlobalObject*, const String&) final { }
     void time(JSGlobalObject*, const String&) final { }
-    void timeLog(JSGlobalObject*, const String&, Ref<Inspector::ScriptArguments>&&) final { }
+    void timeLog(JSGlobalObject*, const String&, MessageArguments) final { }
     void timeEnd(JSGlobalObject*, const String&) final { }
     void timeStamp(JSGlobalObject*, Ref<Inspector::ScriptArguments>&&) final { }
     void record(JSGlobalObject*, Ref<Inspector::ScriptArguments>&&) final { }
