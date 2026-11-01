@@ -6361,12 +6361,23 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRecordRequire, void, (Instance* instance, u
     OPERATION_RETURN(scope);
 }
 
+// What a require() or an import without a type has made of the file answers before what an import under a type has made of it.
+static bool isLoadedWithoutType(const Modules& modules, ModuleID form)
+{
+    String path = modules.table().pathText(form);
+    size_t mark = path.reverseFind('?');
+    if (modules.data(form).kind != ModuleKind::Data || mark == notFound)
+        return false;
+    std::optional<ModuleID> file = modules.table().findByPath(StringView(path).left(mark));
+    return file && modules.data(*file).kind == ModuleKind::Data && modules.status(*file) == ModuleStatus::Evaluated;
+}
+
 // Undefined: no import has loaded the file, and require() reads it in its own way.
 JSC_DEFINE_JIT_OPERATION(operationAOTRequireIfHeldForImport, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t referrer))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRequireIfHeldForImport);
     Modules& modules = modulesOf(*instance);
-    if (!modules.isHeldForImport(ModuleID(module)))
+    if (!modules.isHeldForImport(ModuleID(module)) || isLoadedWithoutType(modules, ModuleID(module)))
         OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
     OPERATION_RETURN(scope, JSValue::encode(modules.require(ModuleID(module), ModuleID(referrer))));
 }
