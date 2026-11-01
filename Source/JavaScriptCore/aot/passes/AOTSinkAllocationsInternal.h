@@ -309,6 +309,7 @@ struct SinkingInputs {
     BitVector throwingTerminators;
     BitVector conditionsOnlyBranchedOn;
     BitVector guardsThatMoreThanOperationsTake;
+    BitVector listsOfArgumentsNamedAsGuards;
     BitVector blocksInCycles;
     BitVector mergeBlocks;
     BitVector blocksWithCandidates;
@@ -773,6 +774,7 @@ inline bool goesWithUnbuiltOperands(Opcode opcode)
 }
 
 bool buildsOperand(const Program&, const Value& user, uint32_t operandIndex);
+bool isGuardUse(const Function&, const Use&);
 
 } } } // namespace JSC::AOT::Typed
 
