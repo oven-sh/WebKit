@@ -97,7 +97,7 @@ struct LinkContext {
     macro(JSValue, answerOfMockWhileOriginalRuns) \
     macro(JSObject*, exportsAddedByMock) \
     macro(JSValue, handedOnInPlaceOfNamespace) \
-    macro(JSObject*, handedOnBeforeMock) \
+    macro(JSObject*, handedOnByMocks) \
     macro(JSValue, errorKeptByLoader) \
     macro(JSObject*, exportsWhileRequired) \
     macro(JSObject*, capturedExports) \
@@ -756,6 +756,8 @@ private:
         // `export * from "./leaf.cjs"`: the values of the mock went over names of these, which keep what was replaced.
         Vector<ModuleID> modulesBehindStarsUnderMock;
         Vector<ModuleID> namespacesReplacedByMock;
+        // Of the module whose object is handed on: the mocked modules whose mocks give a value in its place, the latest last.
+        Vector<ModuleID> mocksThatReplaceNamespace;
         bool capturedFieldsAreOfESModule { false };
         bool capturedFieldsAreOfRuntimeModule { false };
         Identifier resolvedKey;

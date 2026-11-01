@@ -1275,15 +1275,14 @@ bool Modules::tryReplaceNamespaceHandedOn(ModuleID handedOn, JSValue value)
         return false;
     LoadedModule& mocked = ensureLoaded(*m_moduleWithMockBeingLaid);
     LoadedModule& target = ensureLoaded(handedOn);
-    if (!mocked.namespacesReplacedByMock.contains(handedOn)) {
+    if (!mocked.namespacesReplacedByMock.contains(handedOn))
         mocked.namespacesReplacedByMock.append(handedOn);
-        // Another mock, over another module that hands the object on, may have given a value. The end of this one gives that back.
-        if (JSValue before = target.handedOnInPlaceOfNamespace) {
-            if (!mocked.handedOnBeforeMock)
-                mocked.handedOnBeforeMock.set(*this, createTableOfExports());
-            mocked.handedOnBeforeMock.get()->putDirectMayBeIndex(m_instance.globalObject, Identifier::from(*m_instance.vm, handedOn.index()), before);
-        }
-    }
+    // Another mock, over another module that hands the object on, may have given a value. The latest answers, and each goes with its own mock.
+    target.mocksThatReplaceNamespace.removeFirst(*m_moduleWithMockBeingLaid);
+    target.mocksThatReplaceNamespace.append(*m_moduleWithMockBeingLaid);
+    if (!target.handedOnByMocks)
+        target.handedOnByMocks.set(*this, createTableOfExports());
+    target.handedOnByMocks.get()->putDirectMayBeIndex(m_instance.globalObject, Identifier::from(*m_instance.vm, m_moduleWithMockBeingLaid->index()), value);
     target.handedOnInPlaceOfNamespace.set(*this, value);
     m_namespacesReplacedByMock.set(handedOn.index());
     didReplaceNamespaceHandedOn(handedOn);
