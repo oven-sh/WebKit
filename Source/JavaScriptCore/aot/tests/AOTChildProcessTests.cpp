@@ -279,6 +279,7 @@ static void testHeldReferencesAreStopped()
         ChildProcessResult result = runWith(createLauncher(), { String(nativeSubcommandName), String(singleProcessFlag), String(test) });
         setCrashRequest(false);
         AOT_TEST_CHECK(result.outcome == ChildProcessOutcome::Crashed || (result.outcome == ChildProcessOutcome::Exited && result.code != exitCodeForSuccess));
+        AOT_TEST_CHECK(result.output.contains("AddressSanitizer: heap-use-after-free"_s));
     }
 }
 

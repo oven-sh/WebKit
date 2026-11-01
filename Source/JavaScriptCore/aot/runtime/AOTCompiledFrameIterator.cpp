@@ -29,6 +29,7 @@
 #include "JSCJSValueInlines.h"
 #include "JSCellInlines.h"
 #include "SourceOrigin.h"
+#include "StackVisitor.h"
 #include "VM.h"
 #include "VMEntryRecord.h"
 #include <bit>
@@ -371,6 +372,28 @@ SourceOrigin CompiledFrame::sourceOrigin() const
 bool CompiledFrame::isActivationOf(JSCell* cell) const
 {
     return isClosureOf(cell, function);
+}
+
+std::optional<ModuleID> CompiledFrame::moduleWhoseBodyRuns() const
+{
+    if (FunctionDescription(function).codeType() != ModuleCode)
+        return std::nullopt;
+    auto position = findPosition(*this);
+    return position && position->source ? std::optional(position->source) : std::nullopt;
+}
+
+void forEachModuleWhoseBodyRuns(VM& vm, CallFrame* callFrame, const ScopedLambda<void(ModuleID)>& functor)
+{
+    StackVisitor::visit(callFrame, vm, [&](auto& visitor) {
+        if constexpr (std::remove_cvref_t<decltype(visitor)>::visitsCompiledFrames) {
+            if (visitor->isCompiledFrame()) {
+                const CompiledFrame& frame = visitor->compiledFrame();
+                if (std::optional<ModuleID> module = frame.moduleWhoseBodyRuns())
+                    functor(moduleIDForHost(*frame.instance->program, *module));
+            }
+        }
+        return IterationStatus::Continue;
+    });
 }
 
 void ImageOfRun::run(VMState& state, const Image& image)

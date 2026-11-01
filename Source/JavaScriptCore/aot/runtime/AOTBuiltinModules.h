@@ -16,6 +16,7 @@
 
 namespace JSC {
 
+class FunctionExecutable;
 class JSCell;
 class JSFunction;
 class JSGlobalObject;

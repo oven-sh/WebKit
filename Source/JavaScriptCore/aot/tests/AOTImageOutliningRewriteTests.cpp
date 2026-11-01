@@ -525,7 +525,7 @@ static void testAliasStaysAligned()
         AOT_TEST_CHECK(!(movedStart % 2));
         const auto& padding = steps.outlinedCode.paddingBeforeAliases[position];
         AOT_TEST_CHECK(padding.size() == 1 && padding[0].first == aliasStart && padding[0].second == 1);
-        AOT_TEST_CHECK(bytes[movedStart - 1] == 0xcc);
+        AOT_TEST_CHECK(bytes[movedStart - 1] == 0xf4);
         AOT_TEST_CHECK(bytes.size() == movedStart + 2 * sizeof(aliasBodyWord));
         for (unsigned i = 0; i < 2; ++i)
             AOT_TEST_CHECK(!memcmp(bytes.span().data() + movedStart + i * sizeof(aliasBodyWord), &aliasBodyWord, sizeof(aliasBodyWord)));

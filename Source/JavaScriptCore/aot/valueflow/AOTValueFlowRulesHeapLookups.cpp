@@ -1081,7 +1081,10 @@ void HeapRule::callAccessors(ClimbingSet functions, ValueFlowCallKind kind, cons
     }
     enter(functions, receiver.set);
 
-    if (kind != ValueFlowCallKind::Set || receiver.operand || !receiver.keyLookedUp || !mayBeUnknownObject(functions))
+    if (receiver.operand || !receiver.keyLookedUp || !mayBeUnknownObject(functions))
+        return;
+    HeapPropertyPart part = kind == ValueFlowCallKind::Set ? HeapPropertyPart::Setter : HeapPropertyPart::Getter;
+    if (!holdsAnything(accessorsOfProgramLaidAbove(known(receiver.set), *receiver.keyLookedUp, part)))
         return;
     ClimbingSet notCovered = m_context.membersMissingNowFrom(ValueFlowProgramNodes::escaped(), known(receiver.set));
     notCovered = m_context.membersMissingNowFrom(m_context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode), notCovered);
@@ -1091,7 +1094,7 @@ void HeapRule::callAccessors(ClimbingSet functions, ValueFlowCallKind kind, cons
     if (receivers.rest != ValueSets::nothing)
         receivers.groups.append(receivers.rest);
     for (ValueSetID toldApart : receivers.groups)
-        enter(settersOfProgramLaidAbove(ClimbingSet(toldApart), *receiver.keyLookedUp), ClimbingSet(toldApart));
+        enter(accessorsOfProgramLaidAbove(ClimbingSet(toldApart), *receiver.keyLookedUp, part), ClimbingSet(toldApart));
 }
 
 void HeapRule::handOutPrototypeObjectsAtCreation(ClimbingSet receivers, const HeapKey& key, ValueFlowNodeID result)
@@ -1312,7 +1315,13 @@ void HeapRule::readMembers(ClimbingSet objects, ClimbingSet start, const HeapKey
                 openProxiesThatMemberAnswers(m_context, member);
                 exposeObjectsOfModulesReturnedBy(m_context, member);
             }
-            // A key nobody knows may be a name that has escaped.
+            // A key nobody knows may be any name.
+            if (isBun && (!isReceiver || isHostFlagRaised(m_context, ValueFlowHostNode::NamedBunIsReadUnderKeysNobodyKnows))) {
+                for (BuiltinID member : m_builtins.membersOf(m_universe.builtinOf(holder)))
+                    readMember(member, ModuleID(), result, getters);
+                return;
+            }
+            // On a Bun that nothing in the program names it may be a name that has escaped.
             ClimbingSet names(m_tables.keysOfMembersOfBun());
             if (isBun && !key.namesEnumerableProperty && !m_context.isNativeWalk() && holdsAnything(m_context.membersMissingFrom(ValueFlowProgramNodes::escaped(), names))) {
                 m_context.forEachMember(escapedAmong(names), [&](ValueFlowObjectID name) {

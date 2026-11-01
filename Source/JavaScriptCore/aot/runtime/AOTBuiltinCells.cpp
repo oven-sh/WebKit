@@ -13,11 +13,14 @@
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTableBindings.h"
 #include "AOTBuiltinTableRealm.h"
+#include "AOTClosure.h"
 #include "AOTErrorMessages.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
+#include "AOTImageOfCellScope.h"
 #include "AOTInstance.h"
 #include "AOTModuleHost.h"
+#include "AOTModuleNamespace.h"
 #include "AOTModules.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramIdentifiers.h"
@@ -772,6 +775,12 @@ void setRefusedChangeListener(RefusedChangeListener listener)
     refusedChangeListener = listener;
 }
 
+void tellRefusedChangeListener(JSGlobalObject* realm, const String& refusal)
+{
+    if (refusedChangeListener) [[unlikely]]
+        refusedChangeListener(realm, refusal);
+}
+
 static void noteNameOfLockedObject(JSObject* object, BuiltinID id)
 {
     Locker locker { namesOfLockedObjectsLock };
@@ -834,14 +843,41 @@ String lockedObjectErrorMessage(JSGlobalObject*, JSObject* object, UniquedString
     return change == RejectedWrite::Deletion ? deletionFromLockedBuiltinMessage(vm, id, key, lockedIn) : assignmentToLockedBuiltinMessage(vm, id, key, lockedIn);
 }
 
+bool isNameRefusedByLibraryFunction(JSObject* object, UniquedStringImpl* key)
+{
+    auto* closure = dynamicDowncast<Closure>(object);
+    return closure && closure->refusesOwnProperty(object->vm(), PropertyName(key));
+}
+
 String refusedSpyMessage(JSGlobalObject* globalObject, JSObject* object, UniquedStringImpl* key)
 {
     ImmutablePropertyNames* names = object->structure()->listedImmutablePropertyNames();
     String message = names ? names->storeErrorMessage(key) : lockedObjectErrorMessage(globalObject, object, key, RejectedWrite::Store);
+    if (isNameRefusedByLibraryFunction(object, key))
+        message = assignmentToNameThatBuiltinFunctionInheritsMessage(key);
     constexpr ASCIILiteral start = "Cannot assign to "_s;
     if (!message.startsWith(start))
         return { };
     return makeString("Cannot spy on "_s, StringView(message).substring(start.length()));
+}
+
+static LockedIn kindOfRun(JSGlobalObject* realm)
+{
+    Instance* instance = Instance::of(realm);
+    return instance && admitsReplacedBuiltins(*instance) ? LockedIn::TestRun : LockedIn::Executable;
+}
+
+String refusedSpyOnExportMessage(JSCell* moduleNamespace, UniquedStringImpl* name)
+{
+    auto* object = uncheckedDowncast<ModuleNamespace>(moduleNamespace);
+    ImageOfCellScope imageOfCell(object);
+    JSGlobalObject* realm = object->realm();
+    return spyOnExportRefusedMessage(name, modulesOf(realm)->table().pathText(object->module()), kindOfRun(realm));
+}
+
+String refusedMockMessage(JSGlobalObject* realm, const String& path)
+{
+    return mockOfModuleRefusedMessage(path, kindOfRun(realm));
 }
 
 static bool hasUnlocked(const Instance& instance, BuiltinID member)

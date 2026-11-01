@@ -693,7 +693,10 @@ void TestsOfSameValues::computeOutcomes()
             if (!left || left->isNever())
                 continue;
             if (operand.isExpectation) {
-                if (left->isSubsetOf(m_types.at(user.expectedType().predicted()), program))
+                // What a test leaves of a type need not lie inside the type: of `Arguments`, a class that no test tells from `Array`, a test for `Array` leaves `Array`.
+                // An assumption of that would have a type outside the type of its own operand, and whoever reads it a type that is out of date.
+                const Type& own = m_types.at(function.at(user.operand(operand.operandIndex)).type);
+                if (left->isSubsetOf(m_types.at(user.expectedType().predicted()), program) && own.castTo(*left, m_types).isSubsetOf(own, program))
                     m_provenExpectations.append({ operand.block, operand.user, m_types.intern(*left) });
                 continue;
             }

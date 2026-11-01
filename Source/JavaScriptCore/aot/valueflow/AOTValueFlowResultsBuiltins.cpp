@@ -617,12 +617,28 @@ static ValueSetID objectsCopiedBy(const ValueFlowBuiltinApplication& application
     return sources;
 }
 
+static bool hasAccessorUnder(const ValueFlowHeapView& heap, ValueSetMaker& maker, ValueSetID objects, PropertyKeyID key)
+{
+    return heap.writtenUnder(maker, objects, ValueFlowName::getter(key)) != ValueSets::nothing || heap.writtenUnder(maker, objects, ValueFlowName::setter(key)) != ValueSets::nothing;
+}
+
+// The first of the property, the getter and the setter of a key that one of the objects has: a key counts once.
+static bool standsForKeyIn(const ValueFlowHeapView& heap, ValueSetMaker& maker, ValueSetID objects, ValueFlowName name)
+{
+    PropertyKeyID key(name.payload);
+    for (ValueFlowName candidate : { ValueFlowName::property(key), ValueFlowName::getter(key), ValueFlowName::setter(key) }) {
+        if (heap.writtenUnder(maker, objects, candidate) != ValueSets::nothing)
+            return candidate == name;
+    }
+    return false;
+}
+
 static void forEachMemberNamedIn(const Program& program, const ValueFlowHeapView& heap, ValueSetMaker& maker, ValueSetID objects, BuiltinID holder, NOESCAPE const Invocable<void(BuiltinID, PropertyKeyID)> auto& functor)
 {
     const BuiltinTable& builtins = program.builtins();
     for (BuiltinID member : builtins.membersOf(holder)) {
         PropertyKeyID key = builtins.at(member).name ? program.keyOf(builtins.at(member).name) : PropertyKeyID();
-        if (key && ValueFlowName::property(program, key).kind == ValueFlowNameKind::Property && heap.writtenUnder(maker, objects, ValueFlowName::property(program, key)) != ValueSets::nothing)
+        if (key && ValueFlowName::property(program, key).kind == ValueFlowNameKind::Property && (heap.writtenUnder(maker, objects, ValueFlowName::property(program, key)) != ValueSets::nothing || hasAccessorUnder(heap, maker, objects, key)))
             functor(member, key);
     }
 }
@@ -825,14 +841,14 @@ static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const V
                             ValueSetID copied = heap.writtenUnder(notes.maker, sources, ValueFlowName::property(program, key));
                             ValueFlowObjectID objectOfMember = universe.objectOf(builtins.canonicalID(member));
                             bool mayChangeMember = action.kind == BuiltinPropertyActionKind::TakesDescriptorMap ? mayDescribeOtherValue(notes.maker, copied) : !objectOfMember || !sets.isSubset(copied, notes.maker.of(objectOfMember));
-                            if (mayChangeMember)
+                            if (mayChangeMember || hasAccessorUnder(heap, notes.maker, sources, key))
                                 notes.writes.append({ holder, key, { }, witness });
                         });
                         // `Object.assign(Response.prototype, makeMixin())`: a holder that takes no other names refuses what the objects have and it lacks.
                         if (!builtins.at(holder).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::IsClosedToOtherNames }))
                             continue;
                         heap.index().forEachNameWritten([&](ValueFlowName name) {
-                            if (name.kind != ValueFlowNameKind::Property || heap.writtenUnder(notes.maker, sources, name) == ValueSets::nothing)
+                            if (!standsForKeyIn(heap, notes.maker, sources, name))
                                 return;
                             PropertyKeyID key(name.payload);
                             if (!findOwnMember(program, holder, key) && isLockedLocation(program, holder, key))
@@ -1400,7 +1416,7 @@ static void collectWhatTestsReplace(const ValueFlowResultInputs& inputs, ValueFl
                 if (ValueSets::isComplement(sources) || sets.meet(sources, universe.objectsThatMayBeAnything()))
                     continue;
                 heap.index().forEachNameWritten([&](ValueFlowName name) {
-                    if (name.kind == ValueFlowNameKind::Property && heap.writtenUnder(heap.maker(), sources, name) != ValueSets::nothing)
+                    if (standsForKeyIn(heap, heap.maker(), sources, name))
                         note(heap.maker(), receivers, PropertyKeyID(name.payload), writes);
                 });
             }

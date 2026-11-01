@@ -8,6 +8,7 @@
 
 #if ENABLE(B3_JIT)
 
+#include "B3CheckVariablesAreSet.h"
 #include "B3ConvertBranchesToSelects.h"
 #include "B3CycleForest.h"
 #include "B3EliminateDeadCode.h"
@@ -523,6 +524,8 @@ private:
     void didRunPhase(Procedure& proc, ASCIILiteral name)
     {
         validate(proc);
+        if (!checkVariablesAreSet(proc))
+            fail(makeString("reads a variable that is not set on every path "_s, name));
         if (numberOfValues(proc, isUncloneable) > m_uncloneableValueCount)
             fail(makeString("has more values that must not be cloned than it started with "_s, name));
     }

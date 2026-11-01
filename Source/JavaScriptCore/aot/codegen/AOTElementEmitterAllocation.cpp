@@ -316,12 +316,16 @@ CellPointer ArrayAllocationEmitter::newArrayOutOfLine(const OperationContext& co
 {
     unsigned length = elements.size();
     Word32 count = word32(length);
+    ConversionEmitter& conversions = emitter<ConversionEmitter>();
     if (form.element != Representation::Double || !length) {
-        Pointer values = argumentBuffer(boxElements<Boxed>(generator(), context, elements).span());
+        Vector<Boxed, 16> boxedElements(length, [&](size_t index) {
+            const Type& type = typeOf(elements[index]);
+            return conversions.box(context, conversions.inFormOfType(get(elements[index]), type), type);
+        });
+        Pointer values = argumentBuffer(boxedElements.span());
         return callOperation<CellPointer>(context, RuntimeOperation::NewArrayWithIndexingType, { count, values, word32(form.indexingType) }, { .isOnRarePath = true });
     }
 
-    ConversionEmitter& conversions = emitter<ConversionEmitter>();
     Vector<Number, 16> rawNumbers(length, [&](size_t index) {
         ValueID element = elements[index];
         Number rawNumber = numberOrMarker(element);

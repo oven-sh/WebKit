@@ -125,9 +125,14 @@ void countMockTransition(VM& vm, const String& transition)
 
 bool isRefusal(const String& message)
 {
+    // Parts of the sentences that the run time makes: AOTErrorMessages.cpp, ExceptionHelpers.cpp and ProgramExecutable.cpp here; BunCompiledModules.cpp, BunPlugin.cpp, JSMockFunction.cpp, RemovedFeature.cpp,
+    // InternalModuleRegistry.cpp, CodeGenerationFromStrings.h, web_worker.rs and CompressionStreamCoder.rs in Bun. Each says what is refused: a program may well speak of "the build" or of "compiled code" itself.
     static constexpr ASCIILiteral marks[] {
-        "bun compile differs from bun run here"_s, "bun.com/docs/compiler/"_s, "this executable"_s, "compiled executable"_s, "compiled code"_s, "compiled into"_s,
-        "compiled ahead of time"_s, "already compiled"_s, "this test run"_s, "the build "_s, "--trim"_s,
+        "bun compile differs from bun run here"_s, "bun.com/docs/compiler/"_s,
+        "in this executable"_s, "into this executable"_s, "from this executable, but the program needs it"_s, "this executable can't load"_s, "this executable only runs"_s, "this executable doesn't include"_s,
+        "rebuild this executable"_s, "in a compiled executable"_s, "read-only in compiled code"_s, "only compiled code reaches it"_s, "compiled code treats the global"_s, "compiled code calls the built-in function"_s,
+        "compiled into it"_s, "compiled into this test run"_s, "nothing in this test run"_s, "was compiled ahead of time"_s,
+        "the build found nothing"_s, "the build read no store"_s, "the build didn't see"_s, "removed by --trim"_s, "--trim removed"_s, "Build without --trim"_s,
     };
     return !message.isNull() && std::ranges::any_of(marks, [&](ASCIILiteral mark) { return message.contains(mark); });
 }

@@ -206,6 +206,16 @@ static bool mayComeThroughMock(const Program& program, ModuleID from, VariableID
     return false;
 }
 
+// `export * as inner from "./inner"`.
+static bool isHandedOnByModuleThatMayBeMocked(const Program& program, ModuleID handedOn)
+{
+    return std::ranges::any_of(program.modules, [&](const Module& module) {
+        return module.flags.contains(ModuleFlags::MayBeMocked) && std::ranges::any_of(module.exports, [&](const ModuleExport& entry) {
+            return entry.kind == ModuleExportKind::Namespace && entry.module == handedOn;
+        });
+    });
+}
+
 MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const MemberQuery& query)
 {
     const Program& program = context.program;
@@ -262,7 +272,8 @@ MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const Mem
         if (entry.phase != ImportPhase::Evaluation)
             return MemberAnswer::unknown(UnprovenCause::Unknown);
         // Under a mock that module may have two objects. Which of them this one hands on goes by when it was linked, and the run time knows that.
-        if (mayBeMocked(program, entry.module))
+        // A mock that is laid over a module that hands the object on gives what it likes in its place, to every module that hands it on.
+        if (mayBeMocked(program, entry.module) || isOfModuleThatMayBeMocked || isHandedOnByModuleThatMayBeMocked(program, entry.module))
             return MemberAnswer::unknown(UnprovenCause::UnknownObject);
         return { .kind = MemberKind::Namespace, .level = KnowledgeLevel::Proven, .module = entry.module };
     case ModuleExportKind::Indirect:

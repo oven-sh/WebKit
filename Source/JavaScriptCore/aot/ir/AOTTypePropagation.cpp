@@ -941,7 +941,9 @@ void TypePropagation::replaceUpcastsOfWidenedValues()
             return false;
         const Type& typeBefore = types.at(before);
         const Type& type = types.at(now);
-        return (type.anyObject && !typeBefore.anyObject) || (type.anyFunction && !typeBefore.anyFunction) || (type.primitives & ~typeBefore.primitives) || !type.integers.isSubsetOf(typeBefore.integers);
+        // What a test leaves of a type need not lie inside the type: beside a class that no test tells, a class part loses its proofs.
+        return (type.anyObject && !typeBefore.anyObject) || (type.anyFunction && !typeBefore.anyFunction) || (type.primitives & ~typeBefore.primitives) || !type.integers.isSubsetOf(typeBefore.integers)
+            || type.classes != typeBefore.classes || type.layouts != typeBefore.layouts;
     };
     // A cast hands on what stands in front of its operand whichever cast it is, so the marks hold while casts are replaced.
     std::optional<PredictedValues> predicted;
@@ -1091,6 +1093,9 @@ void TypePropagation::cutAfterNeverValues()
         // The call stays in tail position, as in IRBuilder::demoteReturnCall(): its function is gone from the stack once the callee runs.
         if (keepsValue && block.terminator.kind == TerminatorKind::ReturnCall && block.terminator.callOperand() == block.values[index])
             m_inputs.function.edit(block.values[index], ValueEdit::Definition).isTailCall = true;
+        // A read that only asks the tables runs nothing, so it does not throw, and the read that does stands behind its failing side, which goes. It becomes that read.
+        if (keepsValue && function.at(block.values[index]).opcode == Opcode::PropGet && function.at(block.values[index]).asksOnlyTables())
+            m_inputs.function.edit(block.values[index], ValueEdit::Definition).setAsksOnlyTables(false);
         Block& cut = m_inputs.function.edit(id);
         cut.values.shrink(index + keepsValue);
         // A handler sees the parameters of the block that it covers. Nothing is left here that throws.

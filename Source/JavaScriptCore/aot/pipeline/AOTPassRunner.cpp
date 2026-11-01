@@ -629,24 +629,33 @@ void PassRunner::endProgramPass(PassID id, const Program& program, PassTimer tim
     didCompute(descriptor.outputs);
 
     if (timer.bodiesBefore) [[unlikely]] {
+        size_t count = std::min(program.functions.size(), timer.bodiesBefore->functions.size());
+        // A body that a pass moves into another function takes its listener along, so nobody hears what is then stored in its place. The pass says so first, with didReplaceBody().
+        BitVector wasMovedUnannounced(count);
+        for (size_t index = 0; index < count; ++index) {
+            if (program.functions[index].listenerForOperationsThatGo() != &timer.bodiesBefore->reasons[index] && !timer.bodiesBefore->reasons[index].hasLostTrack())
+                wasMovedUnannounced.quickSet(index);
+        }
         for (const Function& function : program.functions)
             function.setListenerForOperationsThatGo(nullptr);
         EffectSummaries noSummaries;
-        size_t count = std::min(program.functions.size(), timer.bodiesBefore->functions.size());
-        // The program is not the runner's to edit: the sabotage shows the check a copy of the first body that has such an operation, without it.
+        // The program is not the runner's to edit: the sabotage shows the check a copy of a body that has such an operation, without it.
+        // What goes from one body may be what the pass answers for, so body after body loses one until the check has a word for it.
         OpcodeSet dropped = operationsThatSabotageDrops(m_build);
-        std::optional<Function> sabotaged;
+        bool sabotageWasReported = false;
         for (size_t index = 0; index < count && (outcome == PassOutcome::Changed || !dropped.isEmpty()); ++index) {
             const Function* after = &program.functions[index];
-            if (!dropped.isEmpty() && !sabotaged && after->hasBody()) [[unlikely]] {
+            std::optional<Function> sabotaged;
+            if (!dropped.isEmpty() && !sabotageWasReported && after->hasBody()) [[unlikely]] {
                 Function copy = *after;
                 FunctionAnalyses analyses(AnalysisContext { m_build, program, nullptr, nullptr, FunctionID(index) }, copy);
                 if (dropOperationThatNobodyReads(copy, analyses, dropped) == PassOutcome::Changed)
                     after = &sabotaged.emplace(WTF::move(copy));
             }
-            String problem = findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ program, noSummaries }, timer.bodiesBefore->functions[index], *after, timer.bodiesBefore->reasons[index]));
+            String problem = wasMovedUnannounced.quickGet(index) ? String("its body was moved into another function, and the listener with it, and the pass did not say so: the function went unwatched"_s) : findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ program, noSummaries }, timer.bodiesBefore->functions[index], *after, timer.bodiesBefore->reasons[index]));
             if (problem.isNull())
                 continue;
+            sabotageWasReported |= !!sabotaged;
             InternalError failure = InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = findFunctionAsRead(&program, FunctionID(index)), .pass = id, .detail = problem };
             if (keepFailedVerification(failure, failure.kind))
                 continue;
@@ -747,6 +756,8 @@ void PassRunner::verifyAfterProgramPass(const PassDescriptor& descriptor, const 
             continue;
         failure.function = findFunctionAsRead(&program, FunctionID(index));
         failure.detail = describeError(errors.first(), function);
+        if (printerOfFunctionsForVerifier) [[unlikely]]
+            printerOfFunctionsForVerifier(program, FunctionID(index), function, "BEHIND THE PASS OVER THE PROGRAM THAT FAILED"_s);
         break;
     }
     m_build.diagnostics().add(failure);
@@ -860,6 +871,8 @@ static String findEditOfIdleRun(const Function& before, const Function& after)
 {
     if (after.blocks.size() != before.blocks.size())
         return makeString("the pass says that it changed nothing, and the function has "_s, after.blocks.size(), " blocks where it had "_s, before.blocks.size());
+    if (after.values.size() != before.values.size())
+        return makeString("the pass says that it changed nothing, and the function has "_s, after.values.size(), " values where it had "_s, before.values.size());
     for (size_t index = 0; index < before.blocks.size(); ++index) {
         if (OptionSet<BlockEdit> edits = editsBetween(before.blocks[index], after.blocks[index]))
             return makeString("the pass says that it changed nothing, and b"_s, index, " was edited ("_s, edits.toRaw(), ')');
@@ -1011,6 +1024,8 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
     context.opcodesWhereRunBegins = hasTriggers(id) ? &run.contentsOf(context.function, context.changes).opcodes : nullptr;
     if (id == PassID::SimplifyControlFlow)
         run.mayDecideTestsAcrossBlocks = false;
+    if (m_build.isSabotaged(Sabotage::IdlePassesLoseValuesOfNoBlock)) [[unlikely]]
+        context.function.add(Value(Opcode::Undefined));
     std::optional<Function> functionBeforeRun;
     ChangeLog::Cursor logBeforeRun;
     if (m_build.options().verifiesAfterEveryPass && !isVerifiedElsewhere(context)) [[unlikely]]
@@ -1028,6 +1043,14 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
         outcome |= dropOperationThatNobodyReads(context.function, context.analyses, operationsThatSabotageDrops(m_build));
     if (m_build.isSabotaged(Sabotage::PassesChangeNothing)) [[unlikely]]
         outcome = PassOutcome::Unchanged;
+    if (outcome == PassOutcome::Unchanged && m_build.isSabotaged(Sabotage::IdlePassesAddValuesToNoBlock)) [[unlikely]] {
+        context.function.add(Value(Opcode::Undefined));
+        context.changes.forget();
+    }
+    if (outcome == PassOutcome::Unchanged && m_build.isSabotaged(Sabotage::IdlePassesLoseValuesOfNoBlock)) [[unlikely]] {
+        context.function.storageOfValues().removeLast();
+        context.changes.forget();
+    }
     if (reasons) [[unlikely]]
         context.function.setListenerForOperationsThatGo(reasons->outer());
     auto stopWhereThereIsOne = [&](const String& problem) {
@@ -1097,7 +1120,12 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
 
     if (context.lookedOnlyNearby)
         run.passesThatWait.set(index);
+    bool hadErrors = m_build.diagnostics().hasErrors();
     verifyAfterFunctionPass(descriptor, context, run);
+    if (printerOfFunctionsForVerifier && functionBeforeRun && !hadErrors && m_build.diagnostics().hasErrors()) [[unlikely]] {
+        printerOfFunctionsForVerifier(context.program, context.id, *functionBeforeRun, "IN FRONT OF THE RUN THAT FAILED"_s);
+        printerOfFunctionsForVerifier(context.program, context.id, context.function, "BEHIND IT"_s);
+    }
     stopBehind(id, run);
     return outcome;
 }

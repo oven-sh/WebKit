@@ -356,11 +356,17 @@ static bool hasOnly(const BitVector& names, std::optional<uint32_t> number)
     return number && names.bitCount() == 1 && names.get(*number);
 }
 
+static uint32_t minUsesForOwnStub(const NamedProgram& named)
+{
+    return static_cast<uint32_t>(named.context.limit(LimitID::MinUsesForOwnStub));
+}
+
 static void testOwnReadStub()
 {
     NamedProgram named;
-    named.keyWithAccesses("a"_s, Access::Read, StubPolicy::minUsesForOwnStub - 1);
-    PropertyKeyID b = named.keyWithAccesses("b"_s, Access::Read, StubPolicy::minUsesForOwnStub);
+    uint32_t minUses = minUsesForOwnStub(named);
+    named.keyWithAccesses("a"_s, Access::Read, minUses - 1);
+    PropertyKeyID b = named.keyWithAccesses("b"_s, Access::Read, minUses);
     IdentifierNumbering numbering = named.number();
     StubPolicy policy = chooseStubPolicy(named.uses, numbering, named.context);
     AOT_TEST_CHECK(hasOnly(policy.namesWithOwnStub(Access::Read), numbering.numberOf(b)));
@@ -371,8 +377,8 @@ static void testOwnReadStub()
 static void testVectorPerAccess()
 {
     NamedProgram named;
-    PropertyKeyID stored = named.keyWithAccesses("s"_s, Access::Store, StubPolicy::minUsesForOwnStub);
-    PropertyKeyID defined = named.keyWithAccesses("d"_s, Access::Define, StubPolicy::minUsesForOwnStub);
+    PropertyKeyID stored = named.keyWithAccesses("s"_s, Access::Store, minUsesForOwnStub(named));
+    PropertyKeyID defined = named.keyWithAccesses("d"_s, Access::Define, minUsesForOwnStub(named));
     IdentifierNumbering numbering = named.number();
     StubPolicy policy = chooseStubPolicy(named.uses, numbering, named.context);
     AOT_TEST_CHECK(hasOnly(policy.namesWithOwnStub(Access::Store), numbering.numberOf(stored)));

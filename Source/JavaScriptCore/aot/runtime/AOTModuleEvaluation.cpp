@@ -297,7 +297,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
         if (!moduleData.hasExportTable())
             return false;
 
-        bool runsBesideMock = isMocked(module) && !frames.isEmpty() && !m_modulesThatRanBesideMock.get(module.index()) && importsOriginalBesideMock(module, frames.last().module);
+        bool runsBesideMock = isMocked(module) && !hasRunItself(module) && (frames.isEmpty() ? m_modulesOwedBesideMock.get(module.index()) : importsOriginalBesideMock(module, frames.last().module));
         // An importer that sees the mock came by first.
         if (runsBesideMock && status(module) == ModuleStatus::Evaluated) [[unlikely]]
             setStatus(module, ModuleStatus::Unlinked);
@@ -320,8 +320,10 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
             setStatus(module, ModuleStatus::Evaluated);
             return false;
         }
-        if (runsBesideMock) [[unlikely]]
+        if (runsBesideMock) [[unlikely]] {
             m_modulesThatRanBesideMock.set(module.index());
+            m_modulesOwedBesideMock.clear(module.index());
+        }
 
         ModuleRecord* record = recordIfExists(module);
         if (!record && moduleData.evaluatesItself()) {
@@ -460,7 +462,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
             else {
                 ModuleID required(requests[frame.next++]);
                 // enter() runs the module itself.
-                bool runsBesideMock = isMocked(required) && !m_modulesThatRanBesideMock.get(required.index()) && importsOriginalBesideMock(required, frame.module);
+                bool runsBesideMock = isMocked(required) && !hasRunItself(required) && importsOriginalBesideMock(required, frame.module);
                 StoredModuleStatus stored = storedStatus(required);
                 if (stored == StoredModuleStatus::Evaluated && !runsBesideMock)
                     continue;
@@ -1277,7 +1279,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
     SetForScope innermostFilesBeingRun(m_innermostFilesBeingRun, &filesBeingRun);
     SetForScope modulesWhoseFilesRunAheadOfLoader(vm.aotState().modulesWhoseFilesRunAheadOfLoader, filesBeingRun.isAheadOfJobsOfLoader ? this : vm.aotState().modulesWhoseFilesRunAheadOfLoader);
     // The start of the root calls the files one after the other, and leaves where one of them has queued a job or where the root would begin.
-    if (jobs == JobsOfImportedFiles::WaitForLoader && data(root).evaluatesItself() && data(root).isEntryPoint() && queue.isEmpty() && !m_rootWhoseFilesRun && !firstFileBehindFileOfOtherImage) {
+    if (jobs == JobsOfImportedFiles::WaitForLoader && data(root).evaluatesItself() && data(root).isEntryPoint() && !doOtherJobsWait() && !m_rootWhoseFilesRun && !firstFileBehindFileOfOtherImage) {
         ensureRecord(root)->retain();
         if (storedStatus(root) == StoredModuleStatus::InRecord) {
             bool hadQueuedTicks = hasQueuedTicks();
@@ -1317,7 +1319,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
                     throwException(m_instance.globalObject, scope, exception);
                     return true;
                 }
-                if (!queue.isEmpty()) {
+                if (doOtherJobsWait()) {
                     handGraphToLoader(filesBeingRun, *failedFile);
                     RETURN_IF_EXCEPTION(scope, true);
                     if (filesBeingRun.fileHandedToLoader) {
@@ -1693,6 +1695,9 @@ void Modules::didFailToLoadGraph(ModuleID root)
 {
     if (!m_waysThroughRealm.isEmpty()) [[unlikely]]
         takeUpWayThroughRealm(root);
+    for (LoadInFlight& load : m_loadsInFlight)
+        load.isLoaded |= load.root == root;
+    resumeImportsBehindLoad(root);
     if (m_rootWhoseFilesRanAhead != root)
         return;
     m_rootWhoseFilesRanAhead = std::nullopt;
@@ -1710,6 +1715,7 @@ void Modules::didLoadGraph(ModuleID root)
     }
     for (LoadInFlight& load : m_loadsInFlight)
         load.isLoaded |= load.root == root;
+    resumeImportsBehindLoad(root);
 }
 
 unsigned Modules::numberOfGraphsBeingLoaded()
@@ -1823,6 +1829,7 @@ void Modules::didStartLoad(JSPromise* load, ModuleID root)
         return earlier.promise->status() != JSPromise::Status::Pending && m_rootWhoseFilesRanAhead != earlier.root;
     });
     m_loadsInFlight.append(LoadInFlight { Strong<JSPromise>(*m_instance.vm, load), root });
+    queueJobOfRound(root);
 }
 
 // `bun run` loads the graph of a required ES module in steps, all of them before require() returns. A program can tell only where the steps of another graph come due among them.
@@ -2532,8 +2539,40 @@ ModuleRecord* Modules::recordOfCommonJSFile(ModuleID module, LoadOfFile load)
     }
     ModuleRecord* record = ensureRecord(module);
     record->retain();
-    record->setRunsWhenLoaded();
+    // `await Promise.all([import("./a.mjs"), import("./b.cjs")])`: a.mjs runs first. The loader runs an ES module steps behind where it makes the record: ModuleRecord::innerModuleEvaluation().
+    // While a require() loads a graph, every step is taken before it returns: isTextReadOnOtherThread().
+    ModuleID file = m_table.fileBehindFace(module).value_or(module);
+    bool hasBegun = status(module) >= ModuleStatus::Evaluating || status(file) >= ModuleStatus::Evaluating;
+    bool hasTurn = !m_instance.vm->synchronousModuleQueue() && !hostLoadsSynchronously(file) && isAskedForBehindLoadInFlight(module);
+    if (load == LoadOfFile::IsRootOfImport && hasTurn && !hasBegun && !record->runsWhenLoaded())
+        record->setRunsInItsTurn();
+    else
+        record->setRunsWhenLoaded();
     return record;
+}
+
+// A call that finds no graph on its way overtakes nobody. The calls and the files that they name may lie in different images of the realm.
+bool Modules::isAskedForBehindLoadInFlight(ModuleID module)
+{
+    ModuleID file = m_table.fileBehindFace(module).value_or(module);
+    bool isBehind = false;
+    Instance::forEachOf(m_instance.globalObject, [&](Instance& instance) {
+        Modules& modules = modulesOf(instance);
+        for (const LoadInFlight& load : modules.m_loadsInFlight) {
+            bool isOwn = &modules == this && (load.root == module || load.root == file);
+            isBehind |= !isOwn && !load.isLoaded && load.promise->status() == JSPromise::Status::Pending;
+        }
+    });
+    return isBehind;
+}
+
+// The loader has the record since the call, and makes none for the statement that comes to the file.
+void Modules::runFileThatWaitsForItsTurn(ModuleID module)
+{
+    for (ModuleID held : { module, m_table.fileBehindFace(module).value_or(module) }) {
+        if (ModuleRecord* record = recordIfExists(held); record && record->takeRunsInItsTurn()) [[unlikely]]
+            return evaluateFilesOfLevel(held, true);
+    }
 }
 
 // `bun run` runs an imported CommonJS file when the loader makes the record of the file.
@@ -2732,6 +2771,8 @@ void Modules::bringBackWhatLoaderLetGoBelow(ModuleID root)
         if (wasLetGo && m_importersOfMockThatEnded.clear(module.index())) {
             VMState& state = m_instance.vm->aotState();
             m_momentsLoadedAnew.set(module, FirstMockInTestFile { ++state.momentOfLoads, state.momentOfTestFile });
+            if (state.hasSeveralImages)
+                m_importersToLinkAnewToFilesBelow.set(module.index());
         }
         // What only a mocked module imports is not loaded.
         if (isMocked(module) || mockInPlace(module))
@@ -3101,10 +3142,10 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     // The build has not seen this require(), or the root would be loaded by the loader. Under `bun run` the loader has the graph of the root in its hands while the file runs, and this load
     // gives it the file, which is what that graph waits for.
     bool givesLoaderFileThatRunsAhead = reason == SynchronousEvaluationReason::Require && m_innermostFilesBeingRun && importsFileThatRunsAhead(module);
-    bool needsLoader = needsLoaderForRequire(module);
     // As in JSModuleLoader::loadModuleSync(): the steps of the loader run before require() returns, those that a file of the graph asks for among them. One of them resumes a module whose awaited promise is settled.
     // A read of a deferred namespace evaluates the module and takes no step of the loader: an import() that the module calls is loaded in later jobs.
     bool runsStepsOfLoader = reason == SynchronousEvaluationReason::Require;
+    bool needsLoader = runsStepsOfLoader && needsLoaderForRequire(module);
     std::optional<VM::SynchronousModuleQueueScope> queue;
     if (runsStepsOfLoader)
         queue.emplace(*m_instance.vm);
@@ -3509,6 +3550,8 @@ JSValue Modules::answerOfRequireToMock(ModuleID target)
     JSObject* exports = ensureLoaded(target).exportsOfMock;
     if (!exports)
         return { };
+    if (ensureLoaded(target).exportsOfMockAreOfCommonJSModule)
+        return exports;
     JSValue esModule = exports->getIfPropertyExists(realm, vm.propertyNames->__esModule);
     RETURN_IF_EXCEPTION(scope, { });
     if (!esModule || !esModule.toBoolean(realm))

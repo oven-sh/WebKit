@@ -239,7 +239,7 @@ private:
         if (value->owner != plan.region.header || read == value || read->opcode() != Get)
             return nullptr;
         Variable* variable = read->as<VariableValue>()->variable();
-        return m_singleDefinitions.get(variable) ? nullptr : variable;
+        return m_singleDefinitions.get(variable) && !m_proc.policy().validation.takesIdentitiesInHeadersForPhis ? nullptr : variable;
     }
 
     template<typename Functor>

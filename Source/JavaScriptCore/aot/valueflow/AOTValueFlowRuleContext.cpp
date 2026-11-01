@@ -580,6 +580,15 @@ ClimbingSet ValueFlowRuleContext::markedAmong(ClimbingSet objects, OptionSet<Obj
     return marked;
 }
 
+// What is done to an object that has escaped, through a value that may be any such object, is noted of the unknown object alone. The results count it so too.
+ClimbingSet ValueFlowRuleContext::markedThemselvesOrThroughUnknownObjectAmong(ClimbingSet objects, OptionSet<ObjectMutation> mutations)
+{
+    ClimbingSet marked = markedAmong(objects, mutations);
+    if (isSabotaged(Sabotage::EscapedObjectsBearOnlyTheirOwnMarks) || !meet(markedAmong(ClimbingSet(universe().unknownObjectAlone()), mutations), ValueSets::anything))
+        return marked;
+    return unite(marked, valueWithin(objects, ValueFlowProgramNodes::escaped()));
+}
+
 bool ValueFlowRuleContext::isReached(FunctionID function)
 {
     if (m_solver.isReached(function))

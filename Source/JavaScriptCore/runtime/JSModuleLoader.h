@@ -245,6 +245,7 @@ public:
     JS_EXPORT_PRIVATE JSPromise* loadModuleSync(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&);
 #if ENABLE(AOT)
     bool isMakingRecordInline(const Identifier& key) const { return m_moduleWhoseRecordIsMadeInline && m_moduleWhoseRecordIsMadeInline == key.impl(); }
+    bool hasResolutionFailure(const ResolutionMapKey& key) const { return m_resolutionFailures.contains(key); }
 #endif
     JS_EXPORT_PRIVATE static void drainSynchronousModuleQueue(JSGlobalObject*);
 

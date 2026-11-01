@@ -65,6 +65,7 @@ struct ValidationPolicy {
     bool ignoresWritesOnRarePaths { false };
     bool ignoresWritesBetweenLoadsOfBound { false };
     bool skipsStridedLimitGuard { false };
+    bool takesIdentitiesInHeadersForPhis { false };
     bool skipsUpperClamp { false };
     bool ignoresWritesAfterReloadedLocations { false };
     bool ignoresWritesToLocationsReloadedInLoops { false };

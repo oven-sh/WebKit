@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTypes.h"
 #include "AOTEdgeResults.h"
@@ -17,6 +18,7 @@
 #include "AOTInlineCostModel.h"
 #include "AOTNaturalLoops.h"
 #include "AOTOperatorForms.h"
+#include "AOTPlaceTypeTestsPlan.h"
 #include "AOTPropertyAccessElements.h"
 #include "AOTRepresentation.h"
 #include "AOTSort.h"

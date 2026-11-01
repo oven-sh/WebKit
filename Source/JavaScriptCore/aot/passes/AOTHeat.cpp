@@ -400,7 +400,7 @@ static Vector<FunctionDensity> sortByDensity(const ParallelLoops& loops, const H
     forEachIndexInParallel(loops, order.size(), [&](unsigned k) {
         FunctionID function(functionsWithBody[k]);
         uint32_t size = graph.sizeOf(function);
-        order[k] = { activations[function.index()] * graph.massOf(function) / std::max(1u, size), function };
+        order[k] = { withoutLastDigits(activations[function.index()] * graph.massOf(function) / std::max(1u, size)), function };
     });
     parallelSort(loops, order.mutableSpan(), [](const FunctionDensity& a, const FunctionDensity& b) {
         return a.density != b.density ? a.density > b.density : a.function < b.function;

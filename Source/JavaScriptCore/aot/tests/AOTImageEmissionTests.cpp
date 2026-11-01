@@ -703,7 +703,7 @@ static void testTemplateSizes()
     AOT_TEST_CHECK(templates.sizeOfVeneer() == templates.veneer.bytes.size());
     AOT_TEST_CHECK(templates.sizeOfVeneer());
     AOT_TEST_CHECK(!(templates.sizeOfVeneer() % sizeof(uint32_t)));
-    AOT_TEST_CHECK(MacroAssembler::isBreakpoint(const_cast<uint8_t*>(templates.breakpoint.span().data())));
+    AOT_TEST_CHECK(!MacroAssembler::isBreakpoint(const_cast<uint8_t*>(templates.breakpoint.span().data())));
 }
 
 static void testTemplateRelocations()

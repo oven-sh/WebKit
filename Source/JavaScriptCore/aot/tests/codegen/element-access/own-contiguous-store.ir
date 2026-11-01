@@ -1,0 +1,14 @@
+# The library sorts a short list where it lies, and takes storage of int32 for contiguous storage: the words are alike.
+# So the word that it stores names the elements of every form. A store that named contiguous storage alone could be passed by a load out of storage of int32.
+# FORM: Placed
+# OPTIONS: check=validate-back-end
+# RUN: lower-to-b3 f0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="movesAWord" parameters=[{type=Array<i32>}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=undefined}] {
+    v3 = GetOwnContiguousIndex v0, v1
+    PutOwnContiguousIndex v0, v2, v3
+    Return
+}
+# CHECK: Int64 b@[[word]] = Load(b@[[from]], ControlDependent|Reads:Elements{{*}}, v3:GetOwnContiguousIndex)
+# CHECK: Void b@[[store]] = Store(b@{{*}}, b@[[to]], ControlDependent|Writes:Elements{{*}}, v4:PutOwnContiguousIndex)

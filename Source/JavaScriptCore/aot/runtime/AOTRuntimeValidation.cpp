@@ -535,6 +535,11 @@ NEVER_INLINE void OperationValidationScope::close(VM& vm)
     vm.didEnterVM |= record.didEnterVMBefore;
 }
 
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
+
+// From here to the end of CollectionValidator::didFinishCollection(): what runs for every object that survives a collection. It is compiled as other code is, but for what reports.
 static bool stillPassesTest(State& state, const RuntimeCellTest& test, JSCell* cell)
 {
     // What was pristine when it was stored need not be so now.
@@ -630,10 +635,6 @@ static bool isFormOfValue(VM& vm, SlotRepresentation representation, const SlotT
     return JSValue::decode(bits).isCell() && isCellOfHeap(vm, JSValue::decode(bits).asCell());
 }
 
-#if COMPILER(CLANG)
-#pragma clang attribute pop
-#endif
-
 static constexpr auto traitsOfEveryRepresentation = [] {
     std::array<SlotTraits, numberOfEnumerators<SlotRepresentation>> traits { };
     for (size_t index = 0; index < traits.size(); ++index)
@@ -707,12 +708,8 @@ std::optional<SlotOutsideType> findSlotOutsideType(VM& vm, const Object& object)
 #pragma clang attribute push(__attribute__((minsize)), apply_to = function)
 #endif
 
-void validateSlotTypes(VM& vm, const Object& object)
+static NEVER_INLINE void reportSlotOutsideType(VM& vm, const Object& object, const SlotOutsideType* outside)
 {
-    std::optional<SlotOutsideType> outside = findSlotOutsideType(vm, object);
-    if (!outside) [[likely]]
-        return;
-
     const LayoutData& layout = object.layout();
     const FieldData& field = *outside->field;
     const ImageText& text = object.state().instance.program->text();
@@ -730,6 +727,16 @@ void validateSlotTypes(VM& vm, const Object& object)
     }
     dataLogLn();
     crashOnValidationFailure(vm, { ValidationFailureKind::HeapSlotType, { }, { }, outside->found });
+}
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
+
+void validateSlotTypes(VM& vm, const Object& object)
+{
+    if (std::optional<SlotOutsideType> outside = findSlotOutsideType(vm, object)) [[unlikely]]
+        reportSlotOutsideType(vm, object, &*outside);
 }
 
 void CollectionValidator::didFinishCollection(VM& vm, CollectionScope scope)
@@ -799,6 +806,10 @@ void CollectionValidator::didFinishCollection(VM& vm, CollectionScope scope)
         return IterationStatus::Continue;
     });
 }
+
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
 
 // An inquiry runs no code of the program.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTValidateLookup, size_t, (Instance* instance, JSCell* receiver, uint32_t key, JSCell* expected))

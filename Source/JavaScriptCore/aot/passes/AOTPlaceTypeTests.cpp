@@ -714,6 +714,8 @@ static void dropSitesBeyondConditionLimit(FunctionPassContext& context, TestSite
         for (TestConditionID condition : conditionOfTest.subspan(site.firstTest, site.numberOfTests))
             heaviestFirst[condition.index()].first += heat;
     }
+    for (auto& [weight, condition] : heaviestFirst)
+        weight = withoutLastDigits(weight);
     AOT::sortInLine(heaviestFirst, [](const auto& a, const auto& b) { return a.first != b.first ? a.first > b.first : a.second < b.second; });
     BitVector isChosen;
     for (auto [weight, condition] : heaviestFirst.span().first(static_cast<size_t>(limit)))
@@ -2154,8 +2156,9 @@ static LayoutsToTest keepLikeliestDeclarations(FunctionPassContext& context, con
     using RankedLayout = std::pair<Likelihood, LayoutID>;
     Vector<RankedLayout, 16> likeliestFirst(layouts.size(), [&](size_t index) {
         LayoutID layout = layouts.span()[index];
-        return RankedLayout { Likelihood { nameOfSubject && heat.isStoredUnder(layout, nameOfSubject).predicted(), layoutsSeenToArrive.contains(layout), layoutsMetElsewhere.contains(layout), module && (program.at(layout).module == module || heat.isAllocatedIn(layout, module).predicted()), heat.allocationsOf(layout).predicted() }, layout };
+        return RankedLayout { Likelihood { nameOfSubject && heat.isStoredUnder(layout, nameOfSubject).predicted(), layoutsSeenToArrive.contains(layout), layoutsMetElsewhere.contains(layout), module && (program.at(layout).module == module || heat.isAllocatedIn(layout, module).predicted()), withoutLastDigits(heat.allocationsOf(layout).predicted()) }, layout };
     });
+    // Among equals the lower number goes first: `layouts` is sorted by it. The front end numbers layouts by module, and in a module as it meets them.
     AOT::stableSortInLine(likeliestFirst, std::ranges::greater { }, &RankedLayout::first);
 
     // Every declaration kept is a fast path at each access of the subject, and the last one picked out of many seldom arrives.
@@ -3143,6 +3146,7 @@ struct TestPlacer {
     Vector<EmittedTest> emittedTests { };
     Vector<ValueID> changedValues { };
     Vector<std::pair<ValueID, TypeID>, 4> ownTypesOfRepresentatives { };
+    Vector<ValueID, 4> castsToTypesOfOperands { };
 
     PassOutcome run()
     {
@@ -4001,8 +4005,10 @@ struct TestPlacer {
                 guards.appendIfNotContains(proof);
                 return;
             }
-            if (std::optional<TypeID> castType = findTypeOfOperand(test, *prerequisite.narrowedOperand, proof))
-                proof = emit(makeAssumeType(proof, emit(IRBuilder::make(Opcode::Specified)), Proven::behindFact(*castType)));
+            if (std::optional<TypeID> castType = findTypeOfOperand(test, *prerequisite.narrowedOperand, proof)) {
+                proof = emit(makeAssumeType(proof, emit(IRBuilder::make(Opcode::Specified)), Proven::behindFact(claimOfCast(*castType, test.operand(*prerequisite.narrowedOperand)))));
+                castsToTypesOfOperands.append(proof);
+            }
             test.setOperand(*prerequisite.narrowedOperand, proof);
         });
 
@@ -4048,6 +4054,11 @@ struct TestPlacer {
         if (both.isNever() || both == passedType || (hasToBeInteger && !both.hasOnlyPrimitives(Primitive::Integer)))
             return std::nullopt;
         return types.intern(both);
+    }
+
+    TypeID claimOfCast(TypeID typeWithStandIn, ValueID operand) const
+    {
+        return context.build.isSabotaged(Sabotage::TestsKeepTheTypesTheyWereMadeWith) ? typeWithStandIn : function.at(operand).type;
     }
 
     void addDefinition(TestConditionID condition, ValueID proof)
@@ -4202,7 +4213,8 @@ struct TestPlacer {
         if (both.isNever() || both == passedType)
             return passed;
 
-        return castBefore(point, passed, types.intern(both));
+        castsToTypesOfOperands.append(castBefore(point, passed, claimOfCast(types.intern(both), operand)));
+        return castsToTypesOfOperands.last();
     }
 
     ValueID castBefore(ProgramPoint point, ValueID value, TypeID castType)
@@ -4407,14 +4419,18 @@ struct TestPlacer {
         if (context.build.isSabotaged(Sabotage::TestsKeepTheTypesTheyWereMadeWith))
             return;
         TypingContext typing { context.program, function, types };
-        for (const EmittedTest& emitted : emittedTests) {
-            TypeID type = computeResultTypeID(typing, function.at(emitted.test));
-            if (types.at(type) == types.at(function.at(emitted.test).type))
-                continue;
-            function.edit(emitted.test, ValueEdit::Type).type = type;
-            changedValues.append(emitted.test);
+        auto typeByOperands = [&](ValueID value) {
+            changedValues.append(value);
+            TypeID type = computeResultTypeID(typing, function.at(value));
+            if (types.at(type) == types.at(function.at(value).type))
+                return;
+            function.edit(value, ValueEdit::Type).type = type;
             context.build.statistics().count(StatisticID::TypeTestsTypedByOtherOperands);
-        }
+        };
+        for (ValueID cast : castsToTypesOfOperands)
+            typeByOperands(cast);
+        for (const EmittedTest& emitted : emittedTests)
+            typeByOperands(emitted.test);
     }
 
     void replaceDominatedUses()
@@ -4633,7 +4649,7 @@ struct TestPlacer {
                     Type replacedType = types.at(currentTypeID);
                     Type both = provenType.intersectWith(replacedType, types);
                     bool saysMore = !both.isNever() && both != replacedType && both.isSubsetOf(replacedType, context.program);
-                    narrowing.castType = saysMore ? types.intern(both) : TypeID();
+                    narrowing.castType = saysMore ? claimOfCast(types.intern(both), current) : TypeID();
                 }
                 if (*narrowing.castType) {
                     narrowable.getsCast = true;
@@ -4710,6 +4726,7 @@ struct TestPlacer {
                 if (context.build.validates())
                     builder.insertBefore(head, makeValidateType(proven, planned.castType));
                 castsOfProvenValue.append({ planned.castType, builder.insertBefore(head, makeAssumeType(proven, Proven::byRulesWithoutChecks(planned.castType))) });
+                castsToTypesOfOperands.append(castsOfProvenValue.last().second);
             }
             replace(*planned.use, castsOfProvenValue[found].second);
         }
@@ -5695,8 +5712,17 @@ static PassOutcome testLoopParametersInFrontOfLoops(FunctionPassContext& context
         };
         builder.moveToEndOf(failed);
         Vector<ValueID, 8> parameters(function.at(entrance.header).parameters.span());
+        // A back edge may hand one parameter on as another. All of them are read before the first is defined again: the repair takes a use behind a definition for a use of that definition.
+        Vector<ValueID, 8> read(entering.span());
         for (size_t index = 0; index < parameters.size(); ++index) {
-            Value held = IRBuilder::make(Opcode::Upcast, { entering[index] });
+            if (!parameters.contains(entering[index]))
+                continue;
+            Value old = IRBuilder::make(Opcode::Upcast, { entering[index] });
+            old.setCastType(function.at(parameters[index]).type);
+            read[index] = builder.append(WTF::move(old));
+        }
+        for (size_t index = 0; index < parameters.size(); ++index) {
+            Value held = IRBuilder::make(Opcode::Upcast, { read[index] });
             held.setCastType(function.at(parameters[index]).type);
             definedAgain.append({ parameters[index], builder.append(WTF::move(held)) });
         }

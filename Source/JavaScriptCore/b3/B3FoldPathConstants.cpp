@@ -293,7 +293,7 @@ public:
         findRunsOfDecidedComparisons();
 
         bool changed = applyOverrides();
-        forgetPropertiesOffPaths();
+        dropKnownPropertiesOfPathDependentValues();
 
         if (changed) {
             m_proc.resetReachability();
@@ -825,7 +825,7 @@ private:
         for (BasicBlock* block : m_proc) {
             for (unsigned valueIndex = 0; valueIndex < block->size(); ++valueIndex) {
                 Value* value = block->at(valueIndex);
-                bool holdsOnPathOnly = false;
+                bool wasRewrittenWithPathFact = false;
 
                 switch (value->opcode()) {
                 case Branch: {
@@ -839,7 +839,7 @@ private:
                 case Equal: {
                     if (value->child(1)->isInt(0) && getOverride(block, value->child(0)).isNonZero) {
                         value->replaceWithIdentity(m_insertionSet.insertIntConstant(valueIndex, value, 0));
-                        holdsOnPathOnly = true;
+                        wasRewrittenWithPathFact = true;
                     }
                     break;
                 }
@@ -847,7 +847,7 @@ private:
                 case NotEqual: {
                     if (value->child(1)->isInt(0) && getOverride(block, value->child(0)).isNonZero) {
                         value->replaceWithIdentity(m_insertionSet.insertIntConstant(valueIndex, value, 1));
-                        holdsOnPathOnly = true;
+                        wasRewrittenWithPathFact = true;
                     }
                     break;
                 }
@@ -855,7 +855,7 @@ private:
                 case Select: {
                     if (m_foldsImpliedComparisons && getOverride(block, value->child(0)).isNonZero) {
                         value->replaceWithIdentity(value->child(1));
-                        holdsOnPathOnly = true;
+                        wasRewrittenWithPathFact = true;
                     }
                     break;
                 }
@@ -873,7 +873,7 @@ private:
                             if (decided.isNonZero || decided.hasValue) {
                                 Value* chosen = select->child(decided.isNonZero ? 1 : 2);
                                 child = isCast ? m_insertionSet.insert<Value>(valueIndex, BitwiseCast, child->origin(), chosen) : chosen;
-                                holdsOnPathOnly = true;
+                                wasRewrittenWithPathFact = true;
                             }
                         }
                     }
@@ -885,11 +885,11 @@ private:
                         overridesWithNewConstants.append(override);
                     }
                     child = override->valueNode;
-                    holdsOnPathOnly = true;
+                    wasRewrittenWithPathFact = true;
                 }
-                if (holdsOnPathOnly && !m_proc.knownProperties().isEmpty() && !value->effects().mustExecute()) {
-                    m_valuesWithOperandOfPath.add(value);
-                    m_blocksBehindOperandOfPath.add(block);
+                if (wasRewrittenWithPathFact && !m_proc.knownProperties().isEmpty() && !value->effects().mustExecute()) {
+                    m_valuesRewrittenWithPathFacts.add(value);
+                    m_blocksDominatedByRewrittenValues.add(block);
                 }
             }
             m_insertionSet.execute(block);
@@ -901,25 +901,25 @@ private:
         return changed;
     }
 
-    void forgetPropertiesOffPaths()
+    void dropKnownPropertiesOfPathDependentValues()
     {
-        if (m_valuesWithOperandOfPath.isEmpty())
+        if (m_valuesRewrittenWithPathFacts.isEmpty())
             return;
         for (BasicBlock* block : m_proc.blocksInPreOrder()) {
             BasicBlock* dominator = m_dominators->idom(block);
-            if (!m_blocksBehindOperandOfPath.contains(block) && (!dominator || !m_blocksBehindOperandOfPath.contains(dominator)))
+            if (!m_blocksDominatedByRewrittenValues.contains(block) && (!dominator || !m_blocksDominatedByRewrittenValues.contains(dominator)))
                 continue;
-            m_blocksBehindOperandOfPath.add(block);
+            m_blocksDominatedByRewrittenValues.add(block);
             for (Value* value : *block) {
-                bool hangsOnPath = m_valuesWithOperandOfPath.contains(value);
+                bool dependsOnPathFact = m_valuesRewrittenWithPathFacts.contains(value);
                 for (Value* child : value->children())
-                    hangsOnPath = hangsOnPath || m_valuesThatMayLeavePath.contains(child);
-                if (!hangsOnPath)
+                    dependsOnPathFact = dependsOnPathFact || m_movablePathDependentValues.contains(child);
+                if (!dependsOnPathFact)
                     continue;
                 Effects effects = m_proc.effectsOf(value);
                 if (effects.mustExecute() || effects.controlDependent)
                     continue;
-                m_valuesThatMayLeavePath.add(value);
+                m_movablePathDependentValues.add(value);
                 m_proc.knownProperties().remove(value);
             }
         }
@@ -938,9 +938,9 @@ private:
     IndexMap<BasicBlock*, unsigned> m_timeOfExit;
     Vector<RangeTreeNode> m_rangeTreeNodes;
     Vector<std::optional<unsigned>, 512> m_firstOverride;
-    IndexSet<Value*> m_valuesWithOperandOfPath;
-    IndexSet<BasicBlock*> m_blocksBehindOperandOfPath;
-    IndexSet<Value*> m_valuesThatMayLeavePath;
+    IndexSet<Value*> m_valuesRewrittenWithPathFacts;
+    IndexSet<BasicBlock*> m_blocksDominatedByRewrittenValues;
+    IndexSet<Value*> m_movablePathDependentValues;
 };
 
 } // anonymous namespace

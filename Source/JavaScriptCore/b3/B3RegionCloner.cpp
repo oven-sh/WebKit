@@ -81,11 +81,20 @@ Value* RegionCloner::appendClone(Value* original, BasicBlock* destination, Value
     ASSERT(!original->kind().isCloningForbidden());
 
     Value* clone = m_proc.clone(original);
+    bool holdsOnOnePath = false;
     for (Value*& child : clone->children()) {
-        if (Value* replacement = map.get(child))
+        if (Value* replacement = map.get(child)) {
             child = replacement;
-        else
+            holdsOnOnePath |= m_valuesOfOnePath.contains(replacement);
+        } else
             RELEASE_ASSERT(child->opcode() != Phi || child->owner != original->owner);
+    }
+    if (holdsOnOnePath) {
+        Effects effects = m_proc.effectsOf(clone);
+        if (!effects.mustExecute() && !effects.controlDependent) {
+            m_proc.knownProperties().remove(clone);
+            m_valuesOfOnePath.add(clone);
+        }
     }
     if (original->type() != Void)
         map.add(original, clone);
@@ -101,6 +110,12 @@ void RegionCloner::substitute(ValueMap& map, Value* original, Value* replacement
     map.set(original, replacement);
 }
 
+void RegionCloner::substituteOnOnePath(ValueMap& map, Value* original, Value* replacement)
+{
+    substitute(map, original, replacement);
+    m_valuesOfOnePath.add(replacement);
+}
+
 void RegionCloner::substitutePhisFedBy(BasicBlock* predecessor, BasicBlock* block, ValueMap& map)
 {
     RELEASE_ASSERT(m_step == Step::Copying);
@@ -109,6 +124,7 @@ void RegionCloner::substitutePhisFedBy(BasicBlock* predecessor, BasicBlock* bloc
         if (!upsilon || upsilon->phi()->owner != block)
             continue;
         map.set(upsilon->phi(), upsilon->child(0));
+        m_valuesOfOnePath.add(upsilon->child(0));
         upsilon->replaceWithNop();
         m_didChange = true;
     }

@@ -323,7 +323,7 @@ static CompiledCode generateForwardingCode(const CodeGenerationWorker& worker, c
     records.units.didGenerateInBlock(jump, jit.labelIgnoringWatchpoints(), CodeUnit::Kind::Pinned);
     CCallHelpers::Label paddingStart = jit.label();
     recordOrigin(paddingStart, { });
-    jit.breakpoint();
+    emitPadding(jit);
     jit.padBeforePatch();
 
     ImageLinkBuffer buffer(jit, LinkBuffer::Profile::FTL);

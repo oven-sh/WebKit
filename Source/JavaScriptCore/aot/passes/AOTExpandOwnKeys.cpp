@@ -26,6 +26,7 @@
 #include "AOTNaturalLoops.h"
 #include "AOTPredictedValues.h"
 #include "AOTProgramPasses.h"
+#include "AOTPropertyAccessElements.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTRegionCloner.h"
 #include "AOTResolveCallsDirectCall.h"
@@ -1235,11 +1236,12 @@ static PassOutcome expandStringify(FunctionPassContext& context, Emission& emiss
     JSONSerializerBuilder serializer(builder, emission.inputs(), stringBuilder, calledBuiltinOf(context.program.builtins(), original));
 
     bool listsHolders = serializer.mayListHolders(source);
-    bool isCovered = listsHolders || (!serializer.writingRunsCode(source) && serializer.mayHoldItself(source));
+    bool startsOverAfterThrow = !serializer.writingRunsCode(source) && serializer.mayHoldItself(source);
+    bool isCovered = listsHolders || startsOverAfterThrow;
     std::optional<Target> outerHandler = builder.handler();
     BlockID threw;
     if (isCovered) {
-        threw = builder.addHandlerBlock(listsHolders ? BlockRole::CleanupHandler : BlockRole::CatchHandler, ValueID());
+        threw = builder.addHandlerBlock(startsOverAfterThrow ? BlockRole::CatchHandler : BlockRole::CleanupHandler, ValueID());
         builder.setHandler(Target { threw, { }, { } });
         BlockID covered = builder.addBlock(frequency);
         builder.emitJump(covered);
@@ -1256,14 +1258,14 @@ static PassOutcome expandStringify(FunctionPassContext& context, Emission& emiss
         builder.emitJump(finished);
 
         builder.moveToEndOf(threw);
-        if (listsHolders) {
-            ValueID exception = builder.append(Opcode::CatchException, { });
-            builder.append(Opcode::JSONResetHolders, { stringBuilder });
-            builder.emitRethrow(exception);
-        } else {
+        if (startsOverAfterThrow) {
             // No code of the program has run, so the call as written starts from the beginning. It finds the cycle, or that the text is too long.
             builder.append(Opcode::CatchValue, { });
             builder.emitJump(noText);
+        } else {
+            ValueID exception = builder.append(Opcode::CatchException, { });
+            builder.append(Opcode::JSONResetHolders, { stringBuilder });
+            builder.emitRethrow(exception);
         }
         builder.moveToEndOf(finished);
     }

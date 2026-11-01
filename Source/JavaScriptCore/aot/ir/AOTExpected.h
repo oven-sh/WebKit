@@ -7,7 +7,9 @@
 
 #if ENABLE(AOT)
 
+#include <bit>
 #include <concepts>
+#include <cstdint>
 #include <ranges>
 #include <type_traits>
 #include <utility>
@@ -103,6 +105,11 @@ AOT_OPERATOR_ON_EXPECTED(/)
 
 template<typename T>
 constexpr Expected<bool> operator!(const Expected<T>& value) { return !value.predicted(); }
+
+// An estimate of heat is a sum of products over the whole program. Its last digits follow the order of the sums, so they change with code that has nothing to do
+// with what is estimated. Whoever ranks by it ranks by its first twenty bits: what is equally hot stays equal.
+inline constexpr uint64_t lastDigitsOfEstimate = (1ull << 32) - 1;
+constexpr double withoutLastDigits(double estimate) { return std::bit_cast<double>(std::bit_cast<uint64_t>(estimate) & ~lastDigitsOfEstimate); }
 
 } } } // namespace JSC::AOT::Typed
 

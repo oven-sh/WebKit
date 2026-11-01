@@ -17,6 +17,7 @@
 #include "AOTDominators.h"
 #include "AOTEffectsOfAccesses.h"
 #include "AOTEffectsOfOperands.h"
+#include "AOTFlowResults.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"

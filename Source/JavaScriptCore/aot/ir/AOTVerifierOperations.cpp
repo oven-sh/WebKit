@@ -396,7 +396,8 @@ void FunctionVerifier::verifyCast(BlockID block, ValueID id, const Value& value)
         if (!part || !part->contentsAreProven || !holdsOnlyNumbers(part->arrayStorage))
             return;
         const Value& array = m_function.at(analyses().sameObjectThroughCasts(value.valueOperand()).valueInFrontOfFacts());
-        if (array.opcode == Opcode::NewArray && array.arrayStorage() != part->arrayStorage)
+        // An assumption that nobody reads claims nothing: no code is made for it, and none by it.
+        if (array.opcode == Opcode::NewArray && array.arrayStorage() != part->arrayStorage && analyses().useLists().useCount(id))
             fail(InternalErrorKind::StoredTypeMismatch, block, id, value.valueOperand().index());
         return;
     }

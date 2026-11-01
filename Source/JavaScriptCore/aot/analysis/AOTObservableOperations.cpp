@@ -77,6 +77,19 @@ void ReasonsForOperationsThatWent::add(ValueID id, InPlaceOfOperation reason)
     m_explained.set(id.index());
 }
 
+void ReasonsForOperationsThatWent::addForHandlerThatOnlyThrewOn(ValueID id)
+{
+    if (m_outer)
+        m_outer->addForHandlerThatOnlyThrewOn(id);
+    if (!m_currentValues.isEmpty()) {
+        size_t index = m_currentValues.find(id);
+        if (index == notFound)
+            return;
+        id = ValueID(index);
+    }
+    m_coveredByHandlersThatOnlyThrewOn.set(id.index());
+}
+
 void ReasonsForOperationsThatWent::addForOperationThatWent(ValueID idBeforeRun, InPlaceOfOperation reason)
 {
     m_explained.set(idBeforeRun.index());
@@ -132,10 +145,20 @@ static bool onlyThrowsAgain(const Function& function, BlockID handler)
         && block.terminator.kind == TerminatorKind::Rethrow && block.terminator.exceptionOperand() == block.values.first();
 }
 
+// A body that is not typed yet says nothing about what its operations do. One without any value has nothing to type: all that stood in it has gone.
+static bool hasUntypedValues(const Function& function)
+{
+    for (const Block& block : function.blocks) {
+        if (!block.values.isEmpty())
+            return !function.at(block.values[0]).type;
+    }
+    return false;
+}
+
 Vector<OperationThatWent> findOperationsThatWentWithoutReason(const EffectContext& context, const Function& before, const Function& after, ReasonsForOperationsThatWent& reasons)
 {
     Vector<OperationThatWent> result;
-    if (reasons.hasLostTrack() || !before.hasBody() || !after.hasBody() || before.bodyIsReleased || after.bodyIsReleased || !hasTypedValues(before) || !hasTypedValues(after))
+    if (reasons.hasLostTrack() || !before.hasBody() || !after.hasBody() || before.bodyIsReleased || after.bodyIsReleased || !hasTypedValues(before) || hasUntypedValues(after))
         return result;
 
     CFG cfgBefore(before);
@@ -221,7 +244,7 @@ Vector<OperationThatWent> findOperationsThatWentWithoutReason(const EffectContex
             const Value& value = before.at(id);
             ValueID now = findCurrent(id);
             bool isListed = !!now;
-            if (isListed && block.handler && !hasHandlerAfter.quickGet(now.index()) && effectsOf(context, after, after.at(now)).normal.mayThrow && !reasons.hasReasonFor(id) && !onlyThrowsAgain(before, block.handler->block))
+            if (isListed && block.handler && !hasHandlerAfter.quickGet(now.index()) && effectsOf(context, after, after.at(now)).normal.mayThrow && !reasons.hasReasonFor(id) && !reasons.wasCoveredByHandlerThatOnlyThrewOn(id) && !onlyThrowsAgain(before, block.handler->block))
                 result.append({ id, blockID, value.opcode, OperationThatWent::How::LostItsHandler, OperationThatWent::Under::TypesAsTheyStand });
             // The pass that rewrote an operation into another one is responsible for it: it may know operand values that the types do not show.
             // The replacement may have no effect and be removed by a later run, which does not report it, so tell the outer listener now.

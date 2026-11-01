@@ -1,0 +1,23 @@
+# held = value, behind value.kind and a check of value for another class. Ahead of the pass undefined may pass the check. Behind value.kind the value is an object, so nothing passes, and the code behind the check runs in the generic version alone: what it stores is not held against the type of the variable
+# FORM: Prepared
+# RUN: pass InsertObjectCoercibleChecks VerifyProgram
+# CHECK: outcome: Changed
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+layout L0 name="Kind"
+layout L1 name="Literal" fields=[{key="kind" declared={type=anything}}]
+variable g0 name="held" module=m0 declared={type=undefined|L1} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    Return
+}
+function f1 name="keep" module=m0 position=100 length=1 parameters=[{type=undefined|L1}] results=[{type=anything}] {
+  b0(v0: undefined|L1):
+    v1 = PropGet v0 key="kind"
+    v2 = Check v0 expectedType=undefined|null|L0 cause=MayFail
+    PutModuleVariable v2 variable=g0
+    Return v1
+}
+# CHECK: RequireObjectCoercible v0
+# CHECK: Check v{{*}} expectedType=undefined|null|L0

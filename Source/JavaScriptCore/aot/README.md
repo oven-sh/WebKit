@@ -19,6 +19,13 @@ The front end (resolve, parse, check types, lower to IR) is in oven-sh/bun, `src
 
 A pass gets an IR text test for what it does **and** for what it must leave alone.
 
+A pass that moves an allocation asks `creationMayBeOrderedWithGuards()` and `guardsOrderedWithCreation()` (`passes/AOTVirtualObjectShapes.h`), as SinkAllocations does. A `NewObject`
+without a prototype operand takes what its constructor function holds as `prototype` when its site first allocates, and the effects of the operation do not say so.
+
+No pass merges or removes a call of a host function or getter: `url.href` twice with nothing between stays two calls. The rows of the built-ins are relied on for that and are not checked against it: what a call changes may be
+read through another object (`params.append()` and `url.href`, `controller.abort()` and a kept `signal.aborted`) or be ambient (the working folder, the environment, the time zone, the files). Whoever makes such a call
+mergeable or removable runs `test/aot/fuzz/case-scripts/state-held-by-another-object.py` in oven-sh/bun first: of its 402 programs only 14 can fail today.
+
 ## What CI catches that a local build does not
 
 A plain local build is one compiler, one C++ library, assertions on or off. CI has some eighty lanes. Four cheap local builds catch nearly everything the others have ever caught, and each takes

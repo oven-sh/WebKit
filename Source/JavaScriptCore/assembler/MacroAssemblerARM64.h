@@ -6355,6 +6355,10 @@ public:
 
     void breakpoint(uint16_t imm = WTF_FATAL_CRASH_CODE)
     {
+        if (policy().trapsWithIllegalInstruction) {
+            m_assembler.illegalInstruction();
+            return;
+        }
         m_assembler.brk(imm);
     }
 

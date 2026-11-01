@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInstance.h"
 #include "AOTModuleHost.h"
 #include "AOTModuleRecord.h"
 #include "AOTModuleTable.h"
@@ -89,10 +90,13 @@ struct LinkContext {
     macro(JSObject*, namespaceBeforeMockInPlace) \
     macro(JSObject*, capturedExportsBeforeMockInPlace) \
     macro(JSObject*, endedMocks) \
+    macro(JSObject*, namespacesOfEndedMocks) \
+    macro(JSObject*, mockLaidInPreload) \
     macro(JSValue, requiredValueBeforeMockInPlace) \
     macro(JSValue, exportsOfOriginalBesideMock) \
     macro(JSValue, answerOfMockWhileOriginalRuns) \
     macro(JSObject*, exportsAddedByMock) \
+    macro(JSValue, handedOnInPlaceOfNamespace) \
     macro(JSValue, errorKeptByLoader) \
     macro(JSObject*, exportsWhileRequired) \
     macro(JSObject*, capturedExports) \
@@ -191,7 +195,7 @@ public:
         return loaded ? loaded->mockInPlace.get() : nullptr;
     }
     bool someMockStandsInPlace() const { return m_numberOfMocksInPlace; }
-    bool setMockInPlace(ModuleID, JSObject* mock, JSValue whatRequireAnswers);
+    bool setMockInPlace(ModuleID, JSObject* mock, JSValue whatRequireAnswers, bool leavesEarlierMockToItsImporters = false);
     void letGoOfMockAtNextLoad(ModuleID);
     void letGoOfMockThatEnded(ModuleID);
     void letGoOfMockThatEndedSlow(ModuleID);
@@ -204,9 +208,10 @@ public:
     bool isGraphRunning() const { return m_innermostEvaluation || m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_instance.vm->synchronousModuleQueue(); }
     bool hasLinkedImporterYetToRun(ModuleID, const String& keyOfFileInImageBelow, std::optional<ModuleID> askingAsHostNamesIt) const;
     uint32_t placeOfMomentOfLoad(ModuleID) const;
+    bool wasLoadedInThisTestFile(ModuleID) const;
     uint32_t momentOfFirstMockInTestFile(ModuleID);
     // The life of the mock of a module: R:launch-doors-stores-and-defines/THE-LIFE-OF-A-MOCK.md. Computed from what the sets and flags below say. NoneOfThem: together they say what no state of the table is.
-    enum class MockState : uint8_t { None, Waits, Runs, InPlace, InPlaceWhileAnotherWaits, InPlaceOverModuleThatHasRun, Fills, LaidOver, Failed, Ended, NoneOfThem };
+    enum class MockState : uint8_t { None, Waits, Runs, InPlace, InPlaceWhileAnotherWaits, InPlaceOverModuleThatHasRun, Fills, LaidOver, Failed, Ended, EndedWhileAnotherWaits, NoneOfThem };
     MockState mockState(ModuleID);
     // For the counts alone: the state, the status of the body, and, for NoneOfThem, what is set.
     String describeMockState(ModuleID);
@@ -215,20 +220,26 @@ public:
     bool setMockOverModuleThatHasRun(ModuleID, JSObject* mock, JSValue whatRequireAnswers);
     void endMockOverModuleThatHasRun(ModuleID);
     bool seesMockOf(ModuleID mocked, ModuleID importer) const;
+    bool isMockSeenFrom(ModuleID mocked, const Modules& imageOfImporter, ModuleID importer) const;
     // What compiled code reads a name of `mocked` from: the mock that stood when the importer was linked, else the one that stands, else nothing.
     JSObject* mockSeenBy(ModuleID mocked, ModuleID importer) const;
     JSObject* endedMockSeenAt(ModuleID fileOrModule, uint32_t moment) const;
     uint32_t momentLinked(ModuleID importer) const;
     void forgetEndedMocksOfEarlierTestFiles();
+    void noteCallOfMock(ModuleID fileOrModule) { m_momentsWaitingMocksWereLaid.set(fileOrModule, momentOfNow()); }
+    void forgetCallOfMock(ModuleID fileOrModule) { m_momentsWaitingMocksWereLaid.remove(fileOrModule); }
     void linkAnewWhoeverReadsEndedMockBelow(ModuleID root);
     bool importsOriginalBesideMock(ModuleID mocked, ModuleID importer) const;
+    bool hasRunItself(ModuleID mocked) const { return m_modulesThatRanBesideMock.get(mocked.index()) || m_modulesThatHadRunWhenMocked.get(mocked.index()); }
     JSObject* namespaceOfModuleItself(ModuleID);
+    JSValue importModuleItselfBesideMock(ModuleID, JSValue answerOfImport);
     bool isHiddenInModuleItself(ModuleID, unsigned index) const;
     JSValue readExportOfModuleItself(ModuleID, unsigned index);
     // `bun test` takes whoever imports a module out of its loader when a mock of the module ends, and when a mock is laid over what an earlier test file loaded. A mock of such an importer
     // comes ahead of its load, though the body has run here.
     enum class ImportersLetGo : bool { All, AllButThoseThatThisTestFileLinkedToModule };
-    void letGoOfImportersOf(ModuleID, ImportersLetGo);
+    enum class ImagesSearched : bool { All, ThoseAbove };
+    void letGoOfImportersOf(ModuleID, ImportersLetGo, ImagesSearched = ImagesSearched::All);
     void letGoOfModuleLoadedAsMock(ModuleID module) { m_modulesThatLoaderLetGo.set(module.index()); }
     bool wasLetGoByLoader(ModuleID module) const { return m_modulesThatLoaderLetGo.get(module.index()); }
     bool hasMockLaidOver(ModuleID) const;
@@ -248,9 +259,15 @@ public:
     // A mock that comes before the body of an ES module has run stands for the whole module: the loader of `bun run` takes what the factory answers for the module itself.
     // So a name that the factory leaves out is no export: no key of the namespace object. See fillExportsOfBodyThatNeverRuns() for whoever reads the variable.
     void leaveOutWhatMockLacks(ModuleID, JSObject* exportsOfMock);
+    void setExportsOfMockAreOfCommonJSModule(ModuleID, bool);
     // And a name that the factory gives and the module lacks is an export: a key of the namespace object, where it is read. The names are settled once the module is loaded.
     void takeWhatMockAdds(ModuleID, bool comesAheadOfLoad);
     bool isAddedByMock(ModuleID, const Identifier&);
+    // `export * as inner from "./inner"` has no variable. What a mock that is laid over the module gives for the name is handed on in place of the object of "./inner", by every module that
+    // hands it on. Whoever imports "./inner" itself keeps its object.
+    JSValue handedOnInPlaceOfNamespace(const ModuleExportData&) const;
+    bool tryReplaceNamespaceHandedOn(ModuleID, JSValue);
+    void didReplaceNamespaceHandedOn(ModuleID);
     // `bun test` loads the original first and lays such a mock over it.
     bool isMockedByFactoryThatTakesOriginal(ModuleID module) { return m_modulesWithMockThatAsksAgain.get(module.index()) && isMocked(module); }
     void appendNamesAddedByMock(ModuleID, WTF::Vector<Identifier>&);
@@ -349,6 +366,13 @@ public:
     // The factories that one load calls run one at a time. True: the walk has called one that has not settled, and has stopped there. Whoever walks waits for it and walks again.
     bool runMocksBelow(ModuleID root, RootOfLoad = RootOfLoad::BeginsLoad);
     bool runMocksBelowSlow(ModuleID root, RootOfLoad);
+    void layMocksAgainAtNextLoad(ModuleID module, bool waits) { m_modulesThatLayMocksAgain.set(module.index(), waits); }
+    void layMocksAgainBelow(ModuleID root);
+    bool isBeingEvaluated(ModuleID module) const { return status(module) == ModuleStatus::Evaluating || status(module) == ModuleStatus::EvaluatingAsync; }
+    bool importsByStatements(ModuleID importer, ModuleID importedOfHost) const;
+    bool runMocksBelowInImages(ModuleID root, RootOfLoad);
+    std::pair<Modules*, ModuleID> fileInImageBelow(ModuleID external) const;
+    void linkAnewToFilesOfImagesBelow();
     static const MockOperations& mockOperations();
     JSPromise* factoryThatWaitsBelow(ModuleID root, FactoryAskedForBy, JSValue& state);
     bool runMocksBelowModuleThatLoaderFetches(ModuleID);
@@ -430,6 +454,7 @@ public:
     StringView askerOfModule() const { return m_askerOfModule ? StringView(*m_askerOfModule) : StringView(); }
     void forEachFileAwaitingAtTopLevel(const WTF::Function<void(int64_t turn, const String& key)>&);
     void evict(ModuleID, bool isUndoneForKeptFiles = false);
+    void forEachFileThatFailed(const WTF::Function<void(ModuleID)>&) const;
     void willRunCodeThatKeepsFiles();
     void keepFilesThatHaveRun();
     void bringBackKeptFiles(const WTF::Function<void(const String&)>&);
@@ -539,7 +564,10 @@ public:
     void handGraphsToLoader();
     void didLoadGraph(ModuleID root);
     void didFailToLoadGraph(ModuleID root);
+    void resumeImportsBehindLoad(ModuleID root);
     void evaluateFilesOfLevel(ModuleID moduleOnWay, bool runsWhenLoaded);
+    void runFileThatWaitsForItsTurn(ModuleID);
+    bool isAskedForBehindLoadInFlight(ModuleID fileOrFace);
     void captureExportsAgain(ModuleID);
     void exportWhatMockNamesAlone(ModuleID file, bool hasRun);
     bool exportsWhatMockNamesAlone(ModuleID) const;
@@ -563,6 +591,7 @@ public:
     void appendRequestsForLoader(ModuleID, ModuleRecord*, ModuleGraphLoadingState&);
     std::optional<ModuleFailureID> statementThatEndsLoad(ModuleID) const;
     void appendRequestThatFindsNothing(ModuleFailureID statement, ModuleRecord*);
+    void keepFailureOfRequest(ModuleID, ModuleRecord*, const Identifier& name);
     ModuleGraphLoadingState* loadThatWaitsFor(ModuleID requester, const Identifier& key, ModuleGraphLoadingState* loadOfRequester, unsigned& jobsUntilLoadHearsOfFailure);
     ModuleRecord* appendRequestsOfUncompiledCode(ModuleID, ModuleRecord*, const ModulesOfRealm& inFront = { }, const LevelOfRealm* = nullptr);
     struct RequestsOfUncompiledCode;
@@ -651,6 +680,12 @@ public:
     bool holdTextOfRequest(JSPromise* fetched, ModuleRecord* requested, ModuleID);
     enum class AskedBy : bool { Loader, Import };
     bool textOfImportComesInLaterTurn(ModuleID, AskedBy);
+    bool hasTextAtHand() const;
+    void didBeginTurn() { m_isInJobsBehindDelivery = false; }
+    bool isFirstTextThatWaitsOnlyDelayed() const { return !m_textsThatWait.isEmpty() && m_textsThatWait[m_numberOfTextsThatHaveCome].isOnlyDelayed; }
+    // No text of the program is read, and all of the program is one image.
+    bool loadsAsExecutableDoes() const;
+    bool isTestRun() const;
     void holdTextOfImportFromOtherImage(JSPromise* fetched, AbstractModuleRecord* root, ModuleID);
     std::optional<uint64_t> placeOfFirstTextThatWaits() const { return m_textsThatWait.isEmpty() ? std::nullopt : std::optional(m_textsThatWait[m_numberOfTextsThatHaveCome].place); }
     // False: nobody is left to hear of it.
@@ -716,6 +751,7 @@ private:
         bool hadRunWhenMockWasLaid { false };
         // `export * from "./leaf.cjs"`: the values of the mock went over names of these, which keep what was replaced.
         Vector<ModuleID> modulesBehindStarsUnderMock;
+        Vector<ModuleID> namespacesReplacedByMock;
         bool capturedFieldsAreOfESModule { false };
         bool capturedFieldsAreOfRuntimeModule { false };
         Identifier resolvedKey;
@@ -727,6 +763,7 @@ private:
         bool exportsWhatMockNamesAlone { false };
         bool takesNamesThatMockAdds { false };
         bool isYetToBeRequiredBehindMock { false };
+        bool exportsOfMockAreOfCommonJSModule { false };
         bool wasLoadedBehindMock { false };
         bool wasRequiredBehindMock { false };
         // Of a CommonJS file: didLoseErrorOfModule().
@@ -815,7 +852,7 @@ private:
     void evaluateModulesOwedBelow(ModuleID root, bool hasImporterAboveThatRan = false);
     void evaluateModulesOwedBelowSlow(ModuleID root, bool hasImporterAboveThatRan);
     void bringBackWhatLoaderLetGoBelow(ModuleID root);
-    void letGoOfImportersOf(const BitVector& mocked, BitVector&& gone, bool keepsImportersOfTestFile);
+    void letGoOfImportersOf(const BitVector& mocked, BitVector&& gone, const BitVector& goneFromMock, bool keepsImportersOfTestFile, ImagesSearched = ImagesSearched::All);
     size_t numberOfJobsThatWouldWait(JobsOfImportedFiles) const;
     void holdJobsBehind(size_t numberOfJobs, ModuleID file, JobsOfImportedFiles = JobsOfImportedFiles::WaitForLoader);
     bool hasQueuedTicks() const { return host().hasQueuedTicks && host().hasQueuedTicks(m_instance.globalObject); }
@@ -922,6 +959,10 @@ private:
     mutable UncheckedKeyHashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_importersAskedAboutOriginal;
     // The body ran beside the mock that stands in place of the module, for an importer that gets the module itself. It does not run again.
     BitVector m_modulesThatRanBesideMock;
+    // An import() of a package has come for the module itself, and its body has yet to run.
+    BitVector m_modulesOwedBesideMock;
+    // The body had run when the mock was made: in an earlier test file, or beside an earlier mock. It does not run again for whoever gets the module itself.
+    BitVector m_modulesThatHadRunWhenMocked;
     // The files and the modules of the library that such a mock stands in place of. A module of the library is none of the mocked files.
     BitVector m_modulesWithMockInPlace;
     mutable Vector<uint64_t> m_modulesSettledForLinks;
@@ -1034,6 +1075,8 @@ private:
     Vector<ModuleID, 2> m_importsMadeByOwnFactory;
     // AfterFailure::AsksAgain
     BitVector m_modulesWithMockThatAsksAgain;
+    // ModuleHost::layMocksAgain
+    BitVector m_modulesThatLayMocksAgain;
     // The factory of a mock failed while they were loaded, and they import the mocked module by statements, one through another. The loader of `bun test` keeps the record of each with that error:
     // whoever loads one, or comes to one by a statement, gets the error, until the module is taken out of require.cache or the module below is mocked anew.
     BitVector m_modulesWithLoadEndedByMock;
@@ -1049,10 +1092,14 @@ private:
     Vector<ModuleID, 4> m_mockedModulesPassedOverByWalks;
     // The host has ended the mock that stands in place of the module. Whoever was linked against the mock goes on reading it, as under `bun test`, until a load comes to the module.
     BitVector m_modulesWithMockToLetGo;
+    BitVector m_namespacesReplacedByMock;
     BitVector m_modulesLoadedBeforeMockThatWaited;
     // A load that comes by brings them back.
     BitVector m_modulesThatLoaderLetGo;
     BitVector m_importersOfMockThatEnded;
+    // A load has brought them back. What they have of files of images below is taken anew behind the mocks that the load runs.
+    BitVector m_importersToLinkAnewToFilesBelow;
+    BitVector m_filesBelowThatLeftLoader;
     Vector<Vector<uint32_t, 2>> m_importersByStatement;
     Vector<ModuleID> m_libraryModulesInRequireCache;
     BitVector m_libraryModulesTakenFromLoader;
@@ -1092,6 +1139,12 @@ private:
         bool isWalked { false };
         bool hasMarksBelowRoot { false };
         bool isLoaded { false };
+        // The loader has begun with the root: the call came in an earlier job.
+        bool isAskedForRequests { false };
+        // Jobs of the call were counted before the loader was asked.
+        bool isOfEarlierJob { false };
+        // A job has run since the call.
+        bool hasSeenJob { false };
         RefPtr<PlanOfLoad> planWithoutMarks;
     };
     Vector<LoadInFlight, 2> m_loadsInFlight;
@@ -1157,7 +1210,12 @@ private:
         CountedImport* outerInOwnJob { nullptr };
         // All the jobs in which the loader would load the graph have passed.
         bool isLoaded { false };
+        // Jobs that passed while the call waited behind another, and are not counted yet.
+        uint32_t jobsOfWaitLeft { 0 };
+        // The graph is none whose jobs are counted: the loader is asked in the first job, and catches up.
+        bool isForLoader { false };
     };
+    void catchUpWithWait(CountedImport&);
     void decideHowCountedImportGoesOn(CountedImport&);
     uint32_t findJobOfNextNativeModule(PlanOfLoad&, uint32_t currentJob) const;
     void forgetCountedImport(const CountedImport&);
@@ -1261,7 +1319,7 @@ private:
         bool wasLaidInPreload;
     };
     UncheckedKeyHashMap<ModuleID, Vector<EndedMock, 2>> m_endedMocks;
-    // The keys of m_importersAskedAboutOriginal that were answered with yes in this test file.
+    // The keys of m_importersAskedAboutOriginal that were ever answered with yes. The ended mock of a preload outlives the test file, and the answer hangs on what the importer is.
     mutable UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_importersThatGotOriginal;
     struct MomentMockWasLaid {
         uint32_t moment;
@@ -1269,8 +1327,14 @@ private:
     };
     UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_momentsWaitingMocksWereLaid;
     UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_momentsStandingMocksWereLaid;
+    // VMState::momentOfTestFile when a mock ended that is let go later.
+    UncheckedKeyHashMap<ModuleID, uint32_t> m_testFilesInWhichMocksEnded;
+    // How many objects LoadedModule::namespacesOfEndedMocks holds.
+    UncheckedKeyHashMap<ModuleID, unsigned> m_numbersOfNamespacesOfEndedMocks;
+    // Of LoadedModule::mockLaidInPreload.
+    UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_momentsMocksOfPreloadWereLaid;
     MomentMockWasLaid momentOfNow();
-    void keepEndedMock(ModuleID fileOrModule, JSObject* mock, MomentMockWasLaid);
+    void keepEndedMock(ModuleID fileOrModule, JSObject* mock, MomentMockWasLaid, uint32_t momentEnded = 0);
     JSValue wordWhereNoMockStands(ModuleID fileOrModule) const;
     // A file ran before the loader came to it and queued jobs. They are queued where the loader comes to the file, as under `bun run`.
     std::optional<ModuleID> m_fileWhoseJobsWaitForLoader;
@@ -1288,6 +1352,27 @@ private:
         Strong<JSPromise> promise;
     };
     Vector<DeferredImport> m_deferredImports;
+    // The loader has only the root of a graph in its hands, so it cannot tell that a module belongs to a graph that was asked for earlier.
+    struct ImportBehindLoad {
+        ModuleID root;
+        ModuleID module;
+        std::optional<int64_t> referrerAsyncOrder;
+        Strong<JSPromise> promise;
+        uint32_t roundAtCall;
+        // The module runs with the graph that the call waits for: the call has nothing of its own to load, and settles behind that one.
+        bool isOfGraph;
+    };
+    Vector<ImportBehindLoad> m_importsBehindLoads;
+    void holdImportBehindLoad(ModuleID root, ModuleID, std::optional<int64_t> referrerAsyncOrder, JSPromise*, uint32_t jobsWaited);
+    // A call that waits behind another loses no time: it is made again as a call that has run the jobs that passed meanwhile.
+    uint32_t m_jobsThatCallHasWaited { 0 };
+    bool m_isCallMadeAgainOfGraphThatRan { false };
+    uint32_t m_roundsOfJobs { 0 };
+    LoadInFlight* findEarlierLoadAbove(ModuleID);
+    bool leadsTo(ModuleID from, ModuleID to);
+    bool shareCycleLeftToRun(ModuleID root, std::span<const ModuleID> otherRoots, ModuleID* whichOther = nullptr);
+    std::optional<ModuleID> findCountedImportOfEarlierJobThatSharesGraph(ModuleID root);
+    void resumeImportsBehindLoadWhenItSettles(JSPromise* load, ModuleID root);
     struct TextThatWaits {
         // The turn in which it was asked for, then whether an import() asked, then the order of the calls. There each text comes with a turn to itself, so a module that came ahead of the file
         // that calls import() has asked for what it imports by then. Here the texts of a level come together, and that module asks a few jobs behind the file.
@@ -1303,7 +1388,24 @@ private:
         ImportCaller caller { ImportCaller::CompiledCode };
         // No other call has waited beside it so far.
         bool levelsAreLeftToCount { false };
+        // It waits for a turn and for nothing else: the calls of one turn are made again together, in their order.
+        bool isOnlyDelayed { false };
+        // How many jobs behind the first such call of its turn it was made: it is made again as many jobs behind that one.
+        uint32_t jobsBehindFirstCall { 0 };
     };
+    // One job in each round of the queue, for as long as somebody has to know that a round has passed.
+    Strong<JSPromise> m_promiseOfJobOfRound;
+    bool m_isJobOfRoundQueued { false };
+    uint32_t m_jobsBehindFirstCall { 0 };
+    // What the jobs behind a delivery call for is not delayed a second time: the run lies one turn behind the executable's, once.
+    bool m_isInJobsBehindDelivery { false };
+    void queueJobOfRound(ModuleID moduleOfJob);
+    // That job is nobody who could tell in how many jobs a graph is loaded. It may stand in a queue that the jobs were moved to.
+    bool doOtherJobsWait() const;
+    void runJobOfRound(ModuleID moduleOfJob);
+    Vector<TextThatWaits, 2> m_callsToMakeAgain;
+    bool makeCallAgain(JSPromise*);
+    void makeCallAgain(TextThatWaits&);
     Vector<TextThatWaits> m_textsThatWait;
     size_t m_numberOfTextsThatHaveCome { 0 };
     BitVector m_modulesBelowCallsThatWait;

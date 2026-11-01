@@ -16,6 +16,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTLayout.h"
 #include "AOTLedger.h"
+#include "AOTRowsOfLayouts.h"
 #include "AOTSharedPrefixList.h"
 #include "AOTSort.h"
 #include "AOTSortedSet.h"
@@ -2215,18 +2216,23 @@ ValueFlowConstructions computeConstructions(const ValueFlowResultInputs& inputs,
         construction.namesStoredBeforeObjectLeaks = namesStoredByEveryMaker(graph, makers.span());
     }
 
+    Vector<LayoutID> nearestClassWithFieldsAbove = findNearestWantedAbove(program.layouts.size(), [&](LayoutID id) {
+        return predictedHeritageOf(program.at(id));
+    }, [&](LayoutID id) {
+        return !program.at(id).fields.isEmpty();
+    });
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         const Layout& layout = program.layouts[index];
         if (layout.kind != LayoutKind::Instance || !layout.has(LayoutFlags::HasHeritage) || result.layouts[index].isFollowed)
             continue;
         Vector<PropertyKeyID>& keys = result.layouts[index].inheritedKeysThatStoresMayNotCreate;
-        LayoutID above = predictedHeritageOf(layout);
+        LayoutID above = nearestClassWithFieldsAbove[index];
         for (size_t steps = 0; above && steps < program.layouts.size(); ++steps) {
             for (const Field& field : program.at(above).fields) {
                 if (field.key && !keys.contains(field.key) && builder.mayBeStoppedAboveObjectsOf(LayoutID(index), field.key))
                     keys.append(field.key);
             }
-            above = predictedHeritageOf(program.at(above));
+            above = nearestClassWithFieldsAbove[above.index()];
         }
         AOT::sort(keys);
     }

@@ -124,6 +124,7 @@ public:
     ClimbingSet membersNewToThread(ClimbingSet, unsigned number);
     bool isStatementOfBody() const;
     ClimbingSet markedAmong(ClimbingSet objects, OptionSet<ObjectMutation>);
+    ClimbingSet markedThemselvesOrThroughUnknownObjectAmong(ClimbingSet objects, OptionSet<ObjectMutation>);
 
     void forEachMember(ClimbingSet set, NOESCAPE const Invocable<void(ValueFlowObjectID)> auto& functor) const { sets().forEachMember(set.m_set, functor); }
     void forEachMemberInLine(ClimbingSet set, NOESCAPE const Invocable<void(ValueFlowObjectID)> auto& functor) const { sets().forEachMemberInLine(set.m_set, functor); }

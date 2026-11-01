@@ -125,7 +125,7 @@ static Vector<LayoutSetID, 4> createArms(SelectionContext& context, const SlotAg
         double allocations = 0;
         for (LayoutID layout : members)
             allocations += heat.allocationsOf(layout).predicted();
-        return std::tuple { hasLayoutOfModule, allocations, members.size() };
+        return std::tuple { hasLayoutOfModule, withoutLastDigits(allocations), members.size() };
     });
     Vector<size_t, 4> likeliestFirst(membersByArm.size(), [](size_t index) {
         return index;

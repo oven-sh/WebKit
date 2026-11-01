@@ -521,7 +521,8 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsOnData, NewFromData) \
     v(OperationsOnData, NewMapFromData) \
     v(OperationsOnData, NewSetFromData) \
-    v(OperationsOnData, NewTemplateObject)
+    v(OperationsOnData, NewTemplateObject) \
+    v(OperationsOfDirectEval, DirectEval)
 
 // The stub in front of an operation calls it by an entry of its own.
 constexpr Entry operationBehindFrontEnd(Entry entry)
@@ -551,8 +552,6 @@ constexpr std::optional<RemovableFeature> featureOf(Entry entry)
         return RemovableFeature::IntlDateTimeFormat;
     case Entry::operationAOTStringLocaleCompare:
         return RemovableFeature::IntlCollation;
-    case Entry::operationAOTDirectEval:
-        return RemovableFeature::Interpreter;
     case Entry::operationAOTRegExpExec:
     case Entry::operationAOTRegExpTest:
     case Entry::operationAOTRegExpFind:
@@ -584,7 +583,7 @@ constexpr std::optional<RemovableFeature> featureOf(Entry entry)
 // Nobody asks for one of these to be removed, and nothing but the list of an image keeps one.
 constexpr bool isFamilyOfOperations(RemovableFeature feature)
 {
-    return feature >= RemovableFeature::OperationsOfChecks && feature <= RemovableFeature::OperationsOnData;
+    return feature >= RemovableFeature::OperationsOfChecks && feature <= RemovableFeature::OperationsOfDirectEval;
 }
 
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(Entry);
@@ -602,6 +601,8 @@ static_assert(featureOf(Entry::operationAOTRegExpTest) == RemovableFeature::RegE
 static_assert(featureOf(Entry::operationAOTValueAdd) == RemovableFeature::OperationsOfArithmetic && isFamilyOfOperations(RemovableFeature::OperationsOfArithmetic));
 static_assert(featureOf(Entry::RawCopyObject) == featureOf(Entry::operationAOTCopyObject) && featureOf(Entry::RawCopyObject));
 static_assert(!featureOf(Entry::operationAOTGetById) && !isFamilyOfOperations(RemovableFeature::RegExp));
+// Where the build forbids code from strings the operation is what throws, and the interpreter is left out.
+static_assert(featureOf(Entry::operationAOTDirectEval) == RemovableFeature::OperationsOfDirectEval);
 static_assert(isOperation(Entry::operationArrayIndexOfValueInt32OrContiguous) && !isOperation(Entry::VirtualCallTrampoline));
 
 #if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE

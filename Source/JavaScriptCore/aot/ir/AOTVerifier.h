@@ -23,6 +23,11 @@ class EffectSummaries;
 class FlowResults;
 class Program;
 struct Function;
+struct Type;
+
+// The product cannot print a type or a function. Whoever can, says so here, and what the verifier reports shows what it is about.
+extern String (*printerOfTypesForVerifier)(const Program&, const Type&);
+extern void (*printerOfFunctionsForVerifier)(const Program&, FunctionID, const Function&, ASCIILiteral heading);
 
 struct PlacedTableSizes {
     unsigned fieldAccesses { 0 };

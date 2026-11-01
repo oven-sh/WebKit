@@ -202,7 +202,7 @@ public:
     std::optional<GuardUnderTest> takeGuardUnderTest(const ValueContext&);
     BranchTargets targetsOf(const ValueContext&, const GuardUnderTest&);
 
-    void fail(const OperationContext&, InternalErrorKind);
+    void fail(const OperationContext&, InternalErrorKind, const String& detail = { });
     void failAtLimit(const OperationContext&, LimitID, uint64_t needed);
     bool hasFailed() const { return m_hasFailed; }
     bool isValidatedWhereLookedAt(ValueID);

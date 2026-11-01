@@ -541,6 +541,16 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
             namespacesInside.append(entry.module);
             if (entry.phase == ImportPhase::Evaluation) {
                 context.add(location, exportedNamespace);
+                // A mock that is laid over a module that hands the object on gives what it likes in its place, to every module that hands it on. Its factory may have asked for the original.
+                bool mayBeReplacedByMock = module.flags.contains(ModuleFlags::MayBeMocked) || std::ranges::any_of(program.modules, [&](const Module& other) {
+                    return other.flags.contains(ModuleFlags::MayBeMocked) && std::ranges::any_of(other.exports, [&](const ModuleExport& handedOn) {
+                        return handedOn.kind == ModuleExportKind::Namespace && handedOn.module == entry.module;
+                    });
+                });
+                if (mayBeReplacedByMock) {
+                    context.add(ValueFlowProgramNodes::escaped(), exportedNamespace);
+                    context.add(location, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
+                }
                 break;
             }
             context.add(ValueFlowProgramNodes::escaped(), exportedNamespace);

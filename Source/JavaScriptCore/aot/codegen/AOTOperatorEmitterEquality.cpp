@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTConversionEmitter.h"
+#include "AOTFunctionAnalyses.h"
 #include "AOTNumberLiteralStrings.h"
 #include "AOTRepresentationRules.h"
 #include "AOTStringEmitter.h"
@@ -175,7 +176,7 @@ public:
             for (auto [written, other] : { std::pair { right, left }, std::pair { left, right } }) {
                 const Value& definition = m_function.at(definitionThroughUpcasts(m_function, written));
                 if (definition.opcode == Opcode::String)
-                    return emitter<StringEmitter>().equalsLiteral(value, ComparedOperand::String, in<CellPointer>(other).value(), definition.string(), false, true);
+                    return emitter<StringEmitter>().equalsLiteral(value, ComparedOperand::String, in<CellPointer>(other).value(), definition.string(), std::nullopt, true);
             }
             CellPointer x = in<CellPointer>(left);
             return emitter<StringEmitter>().areEqual(value, x, in<CellPointer>(right));
@@ -246,7 +247,7 @@ public:
         if (const Value& definition = m_function.at(definitionThroughUpcasts(m_function, typed)); definition.opcode == Opcode::String) {
             const Type& type = typeOf(boxed);
             bool everyCellIsString = !type.hasObjects() && !(type.primitives & cellPrimitives & ~Primitive::AnyString);
-            return emitter<StringEmitter>().equalsLiteral(value, ComparedOperand::Value, in<Boxed>(boxed).value(), definition.string(), false, everyCellIsString);
+            return emitter<StringEmitter>().equalsLiteral(value, ComparedOperand::Value, in<Boxed>(boxed).value(), definition.string(), std::nullopt, everyCellIsString);
         }
         CellPointer string = in<CellPointer>(typed);
         Boxed other = in<Boxed>(boxed);
@@ -360,7 +361,7 @@ private:
         for (auto [written, other] : { std::pair { value->rightOperand(), value->leftOperand() }, std::pair { value->leftOperand(), value->rightOperand() } }) {
             const Value& definition = m_function.at(definitionThroughUpcasts(m_function, written));
             if (definition.opcode == Opcode::String)
-                return emitter<StringEmitter>().equalsLiteral(value, ComparedOperand::Value, in<Boxed>(other).value(), definition.string(), false, true);
+                return emitter<StringEmitter>().equalsLiteral(value, ComparedOperand::Value, in<Boxed>(other).value(), definition.string(), std::nullopt, true);
         }
         Boxed x = in<Boxed>(value->leftOperand());
         Boxed y = in<Boxed>(value->rightOperand());
@@ -517,7 +518,7 @@ void OperatorEmitter::generateEquality(const ValueContext& value, bool isStrict)
             const Type& type = typeOf(other);
             bool everyCellIsString = !type.hasObjects() && !(type.primitives & cellPrimitives & ~Primitive::AnyString);
             defineTestByBranching(value, [&](BranchTargets targets) {
-                emitter<StringEmitter>().branchOnEqualsLiteral(value, ComparedOperand::Value, in<Boxed>(other).value(), m_function.at(written).string(), targets, false, everyCellIsString);
+                emitter<StringEmitter>().branchOnEqualsLiteral(value, ComparedOperand::Value, in<Boxed>(other).value(), m_function.at(written).string(), targets, std::nullopt, everyCellIsString);
             });
             return;
         }

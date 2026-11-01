@@ -344,9 +344,13 @@ static void testVersionLoopsIdentityInHeaderIsNoPhi()
 {
     // if (flag) do { sum += changing word + each of the fixed words, times a factor, + (flag ? that word : 5); if (index == 5) changing word = 9; } while (++index <= bound);
     // On that path the Select is an Identity of its load. With this many loads some are left in the loop for versioning to hoist.
-    for (bool runsWholePipeline : { true, false }) {
+    enum class Form : uint8_t { WholePipeline, PhaseAlone, WholePipelineWithFault };
+    for (Form form : { Form::WholePipeline, Form::PhaseAlone, Form::WholePipelineWithFault }) {
+        bool runsWholePipeline = form != Form::PhaseAlone;
         for (unsigned numberOfLoads : { 1u, 12u, 16u }) {
-            Procedure proc(optimizingPolicy());
+            Policy policy = optimizingPolicy();
+            policy.validation.takesIdentitiesInHeadersForPhis = form == Form::WholePipelineWithFault;
+            Procedure proc(policy);
             Graph graph { proc };
             BasicBlock* root = proc.addBlock();
             BasicBlock* guarded = proc.addBlock();
@@ -390,6 +394,14 @@ static void testVersionLoopsIdentityInHeaderIsNoPhi()
             if (!runsWholePipeline) {
                 fixSSA(proc);
                 CHECK(versionLoopsAndValidate(proc));
+            }
+
+            if (form == Form::WholePipelineWithFault && numberOfLoads > 1) {
+                // The variable that stands for a load is read in front of the fast loop, where nothing has set it.
+                proc.setOptLevel(2);
+                prepareForGeneration(proc);
+                CHECK(proc.report().failure && proc.report().failure->kind == FailureKind::VariableReadBeforeSet);
+                continue;
             }
 
             auto code = compileProc(proc, runsWholePipeline ? 2 : 0);

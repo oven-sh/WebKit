@@ -1,0 +1,20 @@
+# The control of store-behind-failing-check.ir: null passes this check, and the variable holds no null: the store is held against the type of the variable
+# FORM: Prepared
+# RUN: pass VerifyProgram
+# DIAGNOSTIC: StoredTypeMismatch 1
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+layout L0 name="Kind"
+layout L1 name="Literal" fields=[{key="kind" declared={type=anything}}]
+variable g0 name="held" module=m0 declared={type=undefined|L1} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    Return
+}
+function f1 name="keep" module=m0 position=100 length=1 parameters=[{type=null|L1}] results=[{type=anything}] {
+  b0(v0: null|L1):
+    v1 = Check v0 expectedType=undefined|null|L0 cause=MayFail
+    PutModuleVariable v1 variable=g0
+    Return v1
+}

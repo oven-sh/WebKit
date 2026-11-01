@@ -86,6 +86,7 @@ void CompactTable::setStorage(VM& vm, JSObject* owner, JSCell* storage)
 
 unsigned CompactTable::indexBitsFor(uint32_t capacity)
 {
+    static_assert((static_cast<uint64_t>(1) << 28) * 3 >= static_cast<uint64_t>(maxCapacity) * 4 && keysShiftFor(28, maxCapacity) <= 30);
     if (capacity <= maxCapacityWithTags)
         return 0;
     unsigned bits = 4;

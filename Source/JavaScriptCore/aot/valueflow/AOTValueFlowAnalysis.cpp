@@ -16,7 +16,9 @@
 #include "AOTSort.h"
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueFlowRules.h"
+#include "AOTValueFlowRulesModules.h"
 #include "AOTValueFlowWidenedSolve.h"
+#include "Options.h"
 #include <wtf/IterationStatus.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/Threading.h>

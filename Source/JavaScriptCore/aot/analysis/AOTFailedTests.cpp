@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTSort.h"
 #include <algorithm>
@@ -49,6 +50,8 @@ FailedTests::FailedTests(FunctionAnalyses& analyses)
             m_failedSwitches.append(FailedSwitch { analyses.identityOf(terminator.subjectOperand()), from, target });
     }
 
+    if (!m_failedEdges.isEmpty() || !m_failedSwitches.isEmpty())
+        m_subjects.ensureSize(m_function.values.size());
     for (const FailedEdge& edge : m_failedEdges) {
         if (edge.subject)
             m_subjects.set(edge.subject.index());

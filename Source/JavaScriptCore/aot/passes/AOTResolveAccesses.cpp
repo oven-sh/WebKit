@@ -58,6 +58,7 @@
 #include <ranges>
 #include <tuple>
 #include <wtf/BitVector.h>
+#include <wtf/SaturatingArithmetic.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

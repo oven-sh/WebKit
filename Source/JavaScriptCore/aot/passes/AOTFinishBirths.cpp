@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGuardAvailability.h"
 #include "AOTIRBuilder.h"

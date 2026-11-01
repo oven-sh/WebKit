@@ -24,6 +24,7 @@
 namespace JSC {
 
 class AbstractModuleRecord;
+class CallFrame;
 class JSCell;
 class JSGlobalObject;
 class JSObject;
@@ -118,13 +119,16 @@ struct ModuleHost {
     JSPromise* (*factoryThatWaits)(JSGlobalObject*, const ScopedLambda<bool(ModuleID)>& isAskedAbout, FactoryAskedForBy, JSValue& state);
     // Whether what loads now is loaded by a file that runs ahead of the test files. Nothing: the run is no test run. Null in a host without test runs.
     std::optional<bool> (*isInPreload)(JSGlobalObject*);
-    // An executable: no text of the program is read at run time. Null in a host that reads them, or that has none to read.
+    // No text of the program is read at run time. Null in a host that reads them, or that has none to read.
     bool (*holdsTextsOfProgram)(JSGlobalObject*);
     // A mock stands over the file at the path. Whether the host's own loader would give this importer the original beside it. Null in a host where everybody gets the mock.
     bool (*givesOriginalBesideMock)(JSGlobalObject*, const String& path, const String& importer, bool isImport);
     // Answers mockOperations(). The rest of the run time reaches the code of the mocks through what it answers alone, so a host may leave that code out of a program that
     // cannot lay a mock, and answer null there. Null in a host without mocks.
     const MockOperations* (*mockOperations)();
+    // A load begins while layMocksAgainAtNextLoad() has named modules. Their bodies do not run again: the host makes the calls again that the bodies made, in the order in
+    // which they were made, for those that the load comes to. True: it made some. Null in a host without mocks.
+    bool (*layMocksAgain)(JSGlobalObject*, const ScopedLambda<bool(ModuleID)>& isReached);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);
@@ -259,6 +263,8 @@ JS_EXPORT_PRIVATE void didDeleteRequireCacheEntry(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void willRunCodeThatKeepsFiles(JSGlobalObject*);
 JS_EXPORT_PRIVATE void keepFilesThatHaveRun(JSGlobalObject*);
 JS_EXPORT_PRIVATE void didResetModule(JSGlobalObject*, ModuleID);
+// `bun test` takes what failed to load or threw out of its loader whenever it takes anything out: the next load runs it again. Only files that the build has compiled for more than one load.
+JS_EXPORT_PRIVATE void takeOutFilesThatFailed(JSGlobalObject*);
 JS_EXPORT_PRIVATE void bringBackKeptFiles(JSGlobalObject*, const WTF::Function<void(const String&)>&);
 // The file was taken out of the program and is not back: whoever has bound it keeps it as it is, and every load of it is the host's.
 JS_EXPORT_PRIVATE bool isEvictedFile(JSGlobalObject*, ModuleID);
@@ -294,12 +300,26 @@ JS_EXPORT_PRIVATE bool isModuleNamespace(JSCell*);
 // For the test runner: stores the value in the variable behind the export, where the module itself and every importer read it.
 // False where the build saw no call that replaces the export: code that uses it may not read the variable.
 JS_EXPORT_PRIVATE bool tryReplaceExport(JSCell* moduleNamespace, UniquedStringImpl* name, JSValue);
+// What to say where it answers false, in a test run and in an executable.
+JS_EXPORT_PRIVATE String refusedSpyOnExportMessage(JSCell* moduleNamespace, UniquedStringImpl* name);
 // The build saw a call that mocks the module: every export of it can be replaced.
 JS_EXPORT_PRIVATE bool mayBeMocked(JSGlobalObject*, ModuleID);
+// What to say where it answers false.
+JS_EXPORT_PRIVATE String refusedMockMessage(JSGlobalObject*, const String& path);
 // The module has not begun to load: the factory of the mock runs when a graph comes to it (ModuleHost::runMock).
 JS_EXPORT_PRIVATE bool hasBegunToLoad(JSGlobalObject*, ModuleID);
+// The modules whose bodies are on the stack below the frame, the innermost first: whatever runs now was called by them.
+JS_EXPORT_PRIVATE void forEachModuleWhoseBodyRuns(VM&, CallFrame*, const ScopedLambda<void(ModuleID)>&);
+// Its evaluation has begun and not ended. A body that waits at an `await` is on no stack.
+JS_EXPORT_PRIVATE bool isBeingEvaluated(JSGlobalObject*, ModuleID);
+// Through any number of modules, by `import` and `export .. from` statements alone.
+JS_EXPORT_PRIVATE bool importsByStatements(JSGlobalObject*, ModuleID importer, ModuleID imported);
+// The body of the module laid mocks that have ended with their test file. `bun test` runs such a module again for the next test file that imports it.
+JS_EXPORT_PRIVATE void layMocksAgainAtNextLoad(JSGlobalObject*, ModuleID, bool waits = true);
 // Under `bun test` the body of a module that is linked when it is mocked runs then and there: left for later, it would assign over what the mock stores.
 JS_EXPORT_PRIVATE bool runBodyOfLinkedModuleAheadOfMock(JSGlobalObject*, ModuleID);
+// For the counts alone: which call, with which kind of factory, meets the module in which state.
+JS_EXPORT_PRIVATE void countMockCall(JSGlobalObject*, std::optional<ModuleID>, ASCIILiteral otherwise, ASCIILiteral call, ASCIILiteral factory);
 // Asked from runMock(), for a CommonJS file that a require() has come to: what deferMock() did is taken back and the body of the file runs. The mock is laid over it.
 JS_EXPORT_PRIVATE void runBodyOfRequiredFileAheadOfMock(JSGlobalObject*, ModuleID);
 // Asked from a factory that takes the original of an ES module which has not begun to load: the same, and the module is evaluated. False, and nothing is done, where some body would await.
@@ -327,7 +347,8 @@ JS_EXPORT_PRIVATE void didChangePlugins(JSGlobalObject*);
 // A mock that comes ahead of the load of a module stands in place of it. The body of the module does not run. Every import of a name, the namespace object and whoever links to the module ask `mock`,
 // by the object's own methods, at each use: nothing is copied. require() answers `whatRequireAnswers`. Null lets go of the mock: nothing of the module was filled, so it is as it was, and loads when it is next asked for.
 // False: the mock is not taken, and goes by willMockModule(): over a built-in module that an import of the program had loaded when its first mock was made, the values are laid as over a file that has run.
-JS_EXPORT_PRIVATE bool setMock(JSGlobalObject*, ModuleID, JSObject* mock, JSValue whatRequireAnswers);
+// `leavesEarlierMockToItsImporters`: as vi.mock() in a test file leaves the mock of a preload. jest.mock() and mock.module() reach whoever reads the mock that stands.
+JS_EXPORT_PRIVATE bool setMock(JSGlobalObject*, ModuleID, JSObject* mock, JSValue whatRequireAnswers, bool leavesEarlierMockToItsImporters = false);
 // A mock comes over an ES module that has run, and `bun test` leaves such a module as it is: whoever was linked to it before, in this test file or ahead of all of them, keeps it, and whoever is
 // linked from now on gets the mock. deferMock() and setMock() come behind a yes, and didEndMock() leaves the module as it was: its body does not run again. False: the mock is laid over the module.
 // The host does not see who loads a compiled module. Where only a load ahead of the test files leaves a module alone, it says so and the run time decides.
@@ -348,7 +369,8 @@ JS_EXPORT_PRIVATE JSObject* mockInPlaceBehind(JSCell* moduleNamespace);
 JS_EXPORT_PRIVATE bool hasWordOfMock(JSGlobalObject*, ModuleID);
 // Comes before the mockExport() of each name. A module that has not run yet never runs: neither its body nor, for its sake, what it imports. require() answers a CommonJS file with the object.
 // The body of a module of the library still runs for the library itself, which no mock reaches.
-JS_EXPORT_PRIVATE void willMockModule(JSGlobalObject*, ModuleID, JSObject* exports);
+// `exportsAreOfCommonJSModule`: require() answers the object as it is. Any other object that holds `__esModule` and `default` it answers with the `default`.
+JS_EXPORT_PRIVATE void willMockModule(JSGlobalObject*, ModuleID, JSObject* exports, bool exportsAreOfCommonJSModule = false);
 JS_EXPORT_PRIVATE void didMockModule(JSGlobalObject*, ModuleID);
 // Stores one export of the mock. A name that the module does not export is passed over.
 JS_EXPORT_PRIVATE void mockExport(JSGlobalObject*, ModuleID, UniquedStringImpl* name, JSValue);

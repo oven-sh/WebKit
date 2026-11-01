@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <bit>
 #include <wtf/IterationStatus.h>
+#include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

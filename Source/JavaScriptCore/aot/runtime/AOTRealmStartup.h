@@ -33,10 +33,13 @@ JS_EXPORT_PRIVATE void openNameWithoutImage(uint32_t holder, std::span<const uin
 JS_EXPORT_PRIVATE void lockBuiltinsOfTable(JSGlobalObject*);
 using RefusedChangeListener = void (*)(JSGlobalObject*, const String& refusal);
 JS_EXPORT_PRIVATE void setRefusedChangeListener(RefusedChangeListener);
+void tellRefusedChangeListener(JSGlobalObject*, const String& refusal);
 void didRejectWrite(JSGlobalObject*, JSObject*, UniquedStringImpl* keyOrNull, RejectedWrite);
 String lockedObjectErrorMessage(JSGlobalObject*, JSObject*, UniquedStringImpl* key, RejectedWrite);
 // The words of the store that a spy would make, said of the spy. Null: the object says nothing of that key.
 JS_EXPORT_PRIVATE String refusedSpyMessage(JSGlobalObject*, JSObject*, UniquedStringImpl* key);
+// A function of the library that is compiled refuses call, apply, bind and Symbol.hasInstance as properties of its own, as a function of the engine or the host does through its Structure.
+JS_EXPORT_PRIVATE bool isNameRefusedByLibraryFunction(JSObject*, UniquedStringImpl* key);
 // Whether the build has unlocked that member of a built-in object for the tests of this run: Program::replaceableBuiltins.
 JS_EXPORT_PRIVATE bool isMemberUnlockedForTests(JSObject*, UniquedStringImpl* key);
 // Whether compiled code of the realm takes that member of a built-in object for what the realm was created with, locked or not: `EventTarget.prototype`, `WebSocket.OPEN`.
