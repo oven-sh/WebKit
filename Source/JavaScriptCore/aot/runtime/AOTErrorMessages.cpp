@@ -2946,6 +2946,26 @@ static WrittenReads findWrittenCallOfReplacedNameAt(std::span<const Latin1Charac
     return findWrittenCallAt(text, from, to, name, within, found, WrittenCallee::ReplacedName);
 }
 
+// `make(a)(b)`: what a call returned is called. The column is that of the bracket that closes the callee.
+static WrittenReads findWrittenCallOfResultAt(std::span<const Latin1Character> text, size_t from, size_t to, StringView, std::optional<size_t> within, std::span<const Latin1Character>& found)
+{
+    if (!within || *within >= to || text[*within] != ')')
+        return WrittenReads::None;
+    // `(make(a))(b)`: brackets that the printer drops.
+    size_t end = *within + 1;
+    while (end < text.size() && text[end] == ')')
+        ++end;
+    size_t open = end;
+    if (open + 1 < text.size() && text[open] == '?' && text[open + 1] == '.')
+        open += 2;
+    std::optional<size_t> start = open < text.size() && text[open] == '(' ? startOfPathInFrontOf(text, end) : std::nullopt;
+    std::optional<size_t> close = start ? findClosingBracket(text, open) : std::nullopt;
+    if (!close || *start < from)
+        return WrittenReads::None;
+    found = text.subspan(*start, *close + 1 - *start);
+    return WrittenReads::Same;
+}
+
 // The engine's own C++ refuses what is not an object in a function that the program calls, or where it asks a value for its iterator.
 static WrittenReads findWrittenCallOrIterationAt(std::span<const Latin1Character> text, size_t from, size_t to, StringView name, std::optional<size_t> within, std::span<const Latin1Character>& found)
 {
@@ -2989,7 +3009,8 @@ static String findAt(VM& vm, const PlaceInFunctionText* place, StringView name, 
         return callee.length() > name.length() && callee.startsWith(name) && callee[name.length()] == '(' ? quote : String();
     }
     // `const b = null; b(1)`: the compiler's name for the callee is `null`, or it has none. What is written there is printed with `null` in place of `b`.
-    return findSpelled(vm, place, name, findWrittenCallOfReplacedNameAt, SearchedText::OnlyKnownPlace);
+    quote = findSpelled(vm, place, name, findWrittenCallOfReplacedNameAt, SearchedText::OnlyKnownPlace);
+    return quote.isNull() && find == findWrittenCallsOfElements ? findSpelled(vm, place, name, findWrittenCallOfResultAt, SearchedText::OnlyKnownPlace) : quote;
 }
 
 // A place asks for one name in one way, so its text is looked through once, however often it throws.
