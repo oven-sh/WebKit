@@ -1952,6 +1952,9 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
         setCommonJSExports(fileOrModule, original ? original : jsUndefined());
     else
         loaded.requiredValue.set(*this, JSValue());
+    // An entry of require.cache that stood while the mock did holds what the mock answered. The next require() makes one of its own.
+    loaded.objectMadeByRequire.set(*this, nullptr);
+    loaded.exportsGivenToObjectMadeByRequire.set(*this, JSValue());
     return true;
 }
 
