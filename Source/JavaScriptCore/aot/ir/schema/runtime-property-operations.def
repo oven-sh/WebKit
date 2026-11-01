@@ -36,7 +36,7 @@ runtime SetWithProxyTrap, FinishSetThroughProxy : void (EncodedJSValue* wordsOfA
 runtime GetGeneric : EncodedJSValue (JSCell* base, UniquedStringImpl* uid) ; reads(all) writes(RuntimeState)
 runtime GetByValGeneric : EncodedJSValue (JSCell* base, JSCell* property) ; reads(all) writes(StringStorage, RuntimeState)
 runtime InByValGeneric : size_t (JSCell* base, JSCell* property) ; reads(all) writes(StringStorage, RuntimeState)
-runtime PutByValGeneric : size_t (JSCell* base, JSCell* property, EncodedJSValue value) ; reads(all) writes(ObjectFields, OrderWords, NamedProperties, StringStorage, RuntimeState)
+runtime PutByValGeneric : size_t (JSCell* base, JSCell* property, EncodedJSValue value) ; reads(all) writes(ObjectFields, OrderWords, NamedProperties, ShapeWords, MemberGuards, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState)
 
 runtime ReadField : EncodedJSValue (JSCell* object, uint64_t header, uint64_t payload, uint32_t reason) ; reads(all) writes(AllocatorState, RuntimeState) collects
 runtime StoreField : void (JSCell* object, uint64_t header, uint64_t payload, EncodedJSValue value, uint32_t reason) ; reads(all) writes(ObjectFields, NamedProperties, AllocatorState, RuntimeState) throws collects

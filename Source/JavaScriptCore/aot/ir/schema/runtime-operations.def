@@ -150,7 +150,7 @@ runtime GetPropertyEnumerator : JSCell* (EncodedJSValue object) ; unknownCode
 runtime EnumeratorNext : UGPRPair (JSCell* enumerator, EncodedJSValue object, uint64_t position) ; unknownCode
 runtime EnumeratorGetByVal : EncodedJSValue (EncodedJSValue object, EncodedJSValue property, JSCell* enumerator) ; RuntimeCreatesConstant throws
 runtime CreateAsyncFromSyncIterator : JSCell* (JSCell* iterator, EncodedJSValue next) ; RuntimeAllocates
-runtime ThrowNotIterable : void (EncodedJSValue iterable, uint32_t isSpread) ; reads(all) throws collects
+runtime ThrowNotIterable : void (EncodedJSValue iterable, uint32_t isSpread) ; RuntimeAllocates throws
 runtime ThrowIfTooLongForList : void (JSCell* source) ; RuntimeCreatesString
 
 runtime NewPromise : JSCell* () ; RuntimeAllocates
@@ -176,7 +176,7 @@ runtime ThrowAfterCleanup : void (EncodedJSValue value, uint64_t kept) ; reads(a
 runtime AddressOfThrow : uint64_t () ; reads(RuntimeState)
 runtime Catch, CatchException : EncodedJSValue () ; RuntimeAllocates
 runtime CatchValueAndException : UGPRPair () ; RuntimeAllocates
-runtime ThrowAtSite : void (const uint64_t* registers, const uint32_t* site, uint32_t source) ; reads(all) throws collects
+runtime ThrowAtSite : void (const uint64_t* registers, const uint32_t* site, uint32_t source) ; RuntimeAllocates throws
 runtime ThrowStackOverflowError : void () ; reads(all) throws
 runtime NewRuntimeError : JSCell* (uint32_t errorKind) ; RuntimeAllocates
 runtime NewRuntimeErrorWithName : JSCell* (uint32_t errorKind, uint32_t name) ; RuntimeAllocates
