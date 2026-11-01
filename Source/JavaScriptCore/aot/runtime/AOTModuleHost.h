@@ -116,6 +116,8 @@ struct ModuleHost {
     JSPromise* (*factoryThatWaits)(JSGlobalObject*, const ScopedLambda<bool(ModuleID)>& isAskedAbout, FactoryAskedForBy, JSValue& state);
     // Whether what loads now is loaded by a file that runs ahead of the test files. Nothing: the run is no test run. Null in a host without test runs.
     std::optional<bool> (*isInPreload)(JSGlobalObject*);
+    // An executable: no text of the program is read at run time. Null in a host that reads them, or that has none to read.
+    bool (*holdsTextsOfProgram)(JSGlobalObject*);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);

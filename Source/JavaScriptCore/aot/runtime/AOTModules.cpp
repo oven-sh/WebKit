@@ -3518,7 +3518,9 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         factories->performPromiseThenWithContext(vm, realm, goOn, jsUndefined(), promise, heldCall);
         return promise;
     }
-    if (text == TextOfImport::MayComeLater && textOfImportComesInLaterTurn(module, AskedBy::Import)) {
+    // `bun build --compile` reads no text: what calls of one turn ask for runs in the order of the calls. What a file asks for while a graph is loaded still runs behind that graph.
+    bool hasTextAtHand = !m_innermostFilesBeingRun && !m_instance.vm->aotState().numberOfTextsThatWait && host().holdsTextsOfProgram && host().holdsTextsOfProgram(realm);
+    if (text == TextOfImport::MayComeLater && !hasTextAtHand && textOfImportComesInLaterTurn(module, AskedBy::Import)) {
         JSPromise* promise = JSPromise::create(*m_instance.vm, realm->promiseStructure());
         if (caller == ImportCaller::Host)
             promise->markAsHandled();
