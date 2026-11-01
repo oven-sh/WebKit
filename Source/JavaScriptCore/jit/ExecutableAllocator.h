@@ -136,7 +136,6 @@ JS_EXPORT_PRIVATE void* performJITMemcpyWithMProtect(void *dst, const void *src,
 JS_EXPORT_PRIVATE void* performJITMemcpyWithProtectionKey(void* dst, const void* src, size_t n);
 // For a thread that may have no rights to the region and reads it as data: one older than the key, and any in a signal handler.
 JS_EXPORT_PRIVATE void letCurrentThreadReadJITRegion();
-JS_EXPORT_PRIVATE bool protectionKeySystemCallsReturn(void* base, size_t);
 #endif
 
 #if ENABLE(JIT_SCAN_ASSEMBLER_BUFFER_FOR_ZEROES)

@@ -54,10 +54,12 @@
 #if ENABLE(JIT_PROTECTION_KEY)
 #include "JSLock.h"
 #include "VM.h"
+#include <fcntl.h>
 #include <linux/filter.h>
 #include <linux/seccomp.h>
 #include <signal.h>
 #include <sys/prctl.h>
+#include <sys/resource.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -11450,31 +11452,43 @@ static void takeAwayRightsToJITRegion()
     __asm__ volatile("wrpkru" : : "a"((eax & ~bits) | (bits & 0x55555555)), "c"(0), "d"(0) : "memory");
 }
 
-// What protectionKeySystemCallsReturn() says in a process whose seccomp filter does this with pkey_alloc(), or nothing where
-// the process may not have a filter. That it says anything is the test: the filter may kill whoever makes the call.
-static std::optional<bool> protectionKeySystemCallsReturnUnderFilter(uint32_t actionForPkeyAlloc)
+// How this program ends when it starts under a seccomp filter that kills it for pkey_alloc(), or nothing where the process
+// may not have a filter.
+static std::optional<int> statusOfStartingUnderFilterThatKillsForProtectionKey(const char* option)
 {
-    enum : int { Yes = 10, No, CannotInstallFilter };
+    constexpr int cannotInstallFilter = 10;
+    Vector<char*> environment;
+    for (char** variable = environ; *variable; ++variable)
+        environment.append(*variable);
+    environment.append(const_cast<char*>(option));
+    environment.append(nullptr);
+    char* arguments[] = { const_cast<char*>("testmasm"), const_cast<char*>("testGPRInfoConsistency"), nullptr };
+
     pid_t child = fork();
     RELEASE_ASSERT(child >= 0);
     if (!child) {
         struct sock_filter instructions[] = {
             BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
             BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_pkey_alloc, 0, 1),
-            BPF_STMT(BPF_RET | BPF_K, actionForPkeyAlloc),
+            BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS),
             BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
         };
         struct sock_fprog program { 4, instructions };
         if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) || prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &program, 0, 0))
-            _exit(CannotInstallFilter);
-        _exit(protectionKeySystemCallsReturn(nullptr, 0) ? Yes : No);
+            _exit(cannotInstallFilter);
+        struct rlimit noCoreFile { 0, 0 };
+        setrlimit(RLIMIT_CORE, &noCoreFile);
+        int null = open("/dev/null", O_WRONLY);
+        dup2(null, STDOUT_FILENO);
+        dup2(null, STDERR_FILENO);
+        execve("/proc/self/exe", arguments, environment.mutableSpan().data());
+        _exit(cannotInstallFilter + 1);
     }
     int status;
     RELEASE_ASSERT(waitpid(child, &status, 0) == child);
-    CHECK_EQ(WIFEXITED(status), true);
-    if (WEXITSTATUS(status) == CannotInstallFilter)
+    if (WIFEXITED(status) && WEXITSTATUS(status) == cannotInstallFilter)
         return std::nullopt;
-    return WEXITSTATUS(status) == Yes;
+    return status;
 }
 
 void testJITProtectionKey()
@@ -11531,14 +11545,14 @@ void testJITProtectionKey()
     CHECK_EQ(s_pointerReadInSignalHandler, asPointer(44));
     check(45);
 
-    if (auto answer = protectionKeySystemCallsReturnUnderFilter(SECCOMP_RET_KILL_PROCESS)) {
-        CHECK_EQ(*answer, false);
-        CHECK_EQ(*protectionKeySystemCallsReturnUnderFilter(SECCOMP_RET_KILL_THREAD), false);
-        CHECK_EQ(*protectionKeySystemCallsReturnUnderFilter(SECCOMP_RET_TRAP), false);
-        CHECK_EQ(*protectionKeySystemCallsReturnUnderFilter(SECCOMP_RET_ERRNO | EPERM), false);
-        // Where there is a key, the call works in this process. Where there is none, it may be that it does not.
-        if (isProtected)
-            CHECK_EQ(*protectionKeySystemCallsReturnUnderFilter(SECCOMP_RET_ALLOW), true);
+    // Under a filter it does not ask for a key, or the filter would have killed it.
+    if (auto status = statusOfStartingUnderFilterThatKillsForProtectionKey("JSC_useJITProtectionKeyUnderSeccompFilter=0")) {
+        CHECK_EQ(WIFEXITED(*status) && !WEXITSTATUS(*status), true);
+        // With the option it asks. Where there is no key here, it may be that it does not get as far as asking.
+        if (isProtected) {
+            status = statusOfStartingUnderFilterThatKillsForProtectionKey("JSC_useJITProtectionKeyUnderSeccompFilter=1");
+            CHECK_EQ(WIFSIGNALED(*status) && WTERMSIG(*status) == SIGSYS, true);
+        }
     } else
         dataLogLn("    This process may not have a seccomp filter.");
 

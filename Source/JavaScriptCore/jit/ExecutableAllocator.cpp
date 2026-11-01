@@ -68,7 +68,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <sys/utsname.h>
-#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
@@ -621,43 +620,22 @@ static bool kernelKeepsPKRUAcrossContextSwitches()
     // Before Linux 5.13 a thread could come back from a context switch with the PKRU of another. 5.4.182 and 5.10.103 have
     // the fix too ("x86/fpu: Correct pkru/xstate inconsistency"). V8 asks the same of the kernel.
     struct utsname name;
-    unsigned major, minor, patch;
-    if (uname(&name) || sscanf(name.release, "%u.%u.%u", &major, &minor, &patch) != 3)
+    unsigned major = 0, minor = 0, patch = 0;
+    if (uname(&name) || sscanf(name.release, "%u.%u.%u", &major, &minor, &patch) < 2)
         return false;
     if (major != 5)
         return major > 5;
     return minor >= 13 || (minor == 10 && patch >= 103) || (minor == 4 && patch >= 182);
 }
 
-bool protectionKeySystemCallsReturn(void* base, size_t size)
-{
-    // A seccomp filter may kill the process for a system call that it does not list, and nothing tells what it would do.
-    // systemd's @system-service does not list these; Docker's default profile does. So under a filter a child goes first.
-    if (prctl(PR_GET_SECCOMP, 0, 0, 0, 0) <= 0)
-        return true;
-
-    // fork() without the handlers of pthread_atfork(), and without a SIGCHLD at the end.
-    long child = syscall(SYS_clone, 0UL, 0UL, 0UL, 0UL, 0UL);
-    if (child < 0)
-        return false;
-    if (!child) {
-        prctl(PR_SET_DUMPABLE, 0, 0, 0, 0); // No core file where the filter kills.
-        long key = allocateProtectionKey();
-        if (key >= 0)
-            setProtectionKey(base, size, key); // Fails, the child has no JIT region (MADV_DONTFORK), but the filter has seen it.
-        syscall(SYS_exit_group, key < 0 ? 1UL : 0UL);
-    }
-    int status;
-    pid_t waited;
-    do {
-        waited = waitpid(child, &status, __WCLONE);
-    } while (waited < 0 && errno == EINTR);
-    return waited == child && WIFEXITED(status) && !WEXITSTATUS(status);
-}
-
 static void giveJITRegionAProtectionKey(void* base, size_t size)
 {
-    if (!Options::useJITProtectionKey() || !operatingSystemHasEnabledProtectionKeys() || !kernelKeepsPKRUAcrossContextSwitches() || !protectionKeySystemCallsReturn(base, size))
+    if (!Options::useJITProtectionKey() || !operatingSystemHasEnabledProtectionKeys() || !kernelKeepsPKRUAcrossContextSwitches())
+        return;
+
+    // A seccomp filter may kill the process for a system call that it does not list, and nothing tells what it would do.
+    // systemd's @system-service does not list these; Docker's default profile does. So it takes someone who knows the filter.
+    if (prctl(PR_GET_SECCOMP, 0, 0, 0, 0) > 0 && !Options::useJITProtectionKeyUnderSeccompFilter())
         return;
 
     // Fails where all 15 keys are taken. On success this thread has the rights asked for, and a thread that exists already
