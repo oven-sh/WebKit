@@ -99,5 +99,6 @@ export default b.declarations(
     "OperationsOfErrors",
     "OperationsOnDates",
     "OperationsOnData",
+    "OperationsOfDirectEval",
   ),
 );
