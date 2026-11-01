@@ -2720,7 +2720,7 @@ auto Modules::mockState(ModuleID module) -> MockState
     if (isLaidOver && (waits || isInPlace))
         return MockState::NoneOfThem;
     if (isToBeLetGo)
-        return isInPlace && !waits ? MockState::Ended : MockState::NoneOfThem;
+        return !isInPlace ? MockState::NoneOfThem : waits ? MockState::EndedWhileAnotherWaits : MockState::Ended;
     if (waits && isInPlace && !isOverModuleThatHasRun)
         return isMocked(module) ? MockState::InPlaceWhileAnotherWaits : MockState::NoneOfThem;
     if (waits) {
@@ -2733,6 +2733,9 @@ auto Modules::mockState(ModuleID module) -> MockState
             return MockState::InPlaceOverModuleThatHasRun;
         return body == ModuleStatus::Evaluating || body == ModuleStatus::EvaluatingAsync ? MockState::NoneOfThem : MockState::InPlace;
     }
+    // A mock of a module of the library replaces it where the loader did not hold it, and is laid over its names where it did.
+    if (isOfLibrary && m_libraryModulesWithMock.get(module.index()))
+        return m_libraryModulesThatMockReplaces.get(module.index()) ? MockState::InPlace : MockState::LaidOver;
     if (isLaidOver)
         return hasBegun ? MockState::LaidOver : MockState::NoneOfThem;
     if (isOverModuleThatHasRun)
@@ -2747,12 +2750,12 @@ auto Modules::mockState(ModuleID module) -> MockState
 
 String Modules::describeMockState(ModuleID module)
 {
-    static constexpr std::array<ASCIILiteral, 11> names { "none"_s, "waits"_s, "runs"_s, "in place"_s, "in place while another waits"_s, "in place over a module that has run"_s, "fills"_s, "laid over"_s, "failed"_s, "ended"_s, "NONE OF THEM"_s };
+    static constexpr std::array<ASCIILiteral, 12> names { "none"_s, "waits"_s, "runs"_s, "in place"_s, "in place while another waits"_s, "in place over a module that has run"_s, "fills"_s, "laid over"_s, "failed"_s, "ended"_s, "ended while another waits"_s, "NONE OF THEM"_s };
     static constexpr std::array<ASCIILiteral, 7> bodies { "unlinked"_s, "linking"_s, "linked"_s, "evaluating"_s, "awaiting"_s, "evaluated"_s, "failed"_s };
     MockState state = mockState(module);
     ASCIILiteral kind = data(module).isOfLibrary() ? "library"_s : data(module).kind == ModuleKind::CommonJs ? "CommonJS"_s : data(module).isFaceOfFile() ? "face"_s : data(module).isESModuleOfProgram() ? "ES"_s : "other"_s;
     StringBuilder text;
-    text.append(kind, ' ', names[static_cast<size_t>(state)], " (body "_s, bodies[static_cast<size_t>(status(module)) - static_cast<size_t>(ModuleStatus::Unlinked)], isLeftToHost(module) ? ", left to the host)"_s : ")"_s);
+    text.append(kind, ' ', names[static_cast<size_t>(state)], " (body "_s, bodies[static_cast<size_t>(status(module)) - static_cast<size_t>(ModuleStatus::Unlinked)], m_filesWhoseOriginalRuns.get(module.index()) ? ", its original runs"_s : ""_s, isLeftToHost(module) ? ", left to the host)"_s : ")"_s);
     if (state == MockState::NoneOfThem) {
         LoadedModule* loaded = loadedIfExists(module);
         auto say = [&](bool isSet, ASCIILiteral what) {
@@ -7212,11 +7215,15 @@ bool runBodyOfImportedModuleAheadOfMock(JSGlobalObject* realm, ModuleID moduleOf
     return modules && modules->runBodyOfImportedModuleAheadOfMock(module);
 }
 
-void countMockCall(JSGlobalObject* realm, ModuleID moduleOfHost, ASCIILiteral call, ASCIILiteral factory)
+void countMockCall(JSGlobalObject* realm, std::optional<ModuleID> moduleOfHost, ASCIILiteral otherwise, ASCIILiteral call, ASCIILiteral factory)
 {
     if (!Options::aotCountsPath()) [[likely]]
         return;
-    ModuleFromHost module(realm, moduleOfHost);
+    if (!moduleOfHost) {
+        countMockTransition(realm->vm(), makeString("no compiled module ("_s, otherwise, ") x "_s, call, ", "_s, factory));
+        return;
+    }
+    ModuleFromHost module(realm, *moduleOfHost);
     if (Modules* modules = modulesOf(realm))
         countMockTransition(realm->vm(), makeString(modules->describeMockState(module), " x "_s, call, ", "_s, factory));
 }
