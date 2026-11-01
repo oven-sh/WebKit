@@ -642,6 +642,13 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
 #endif
     // 9. If result is an abrupt completion, then
     if (Exception* exception = scope.exception()) {
+#if ENABLE(AOT)
+        if (vm.hasCompiledCode() && stack.isEmpty() && module->status() == Status::Linked && module->inherits<AOT::ModuleRecord>()) [[unlikely]] {
+            module->clearTopLevelCapability();
+            capability->rejectWithCaughtException(vm, scope);
+            RELEASE_AND_RETURN(scope, capability);
+        }
+#endif
         JSModuleLoader::attachErrorInfo(globalObject, exception, module, moduleKey(), moduleType(), JSModuleLoader::ModuleFailure::Kind::Evaluation);
         // 9.a. For each Cyclic Module Record m of stack, do
         for (AbstractModuleRecord* abstractRecord : stack) {

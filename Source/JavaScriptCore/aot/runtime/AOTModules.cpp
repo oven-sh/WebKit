@@ -2190,9 +2190,19 @@ void Modules::runMockThatWaits(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     m_modulesWithMockToRun.clear(module.index());
+    bool ranAlready = m_modulesWhoseFactoryRuns.set(module.index());
     host().runMock(m_instance.globalObject, moduleIDForHost(*m_instance.program, module));
-    if (scope.exception()) [[unlikely]]
+    if (!ranAlready)
+        m_modulesWhoseFactoryRuns.clear(module.index());
+    if (Exception* exception = scope.exception()) [[unlikely]] {
         m_modulesWithMockToRun.set(module.index());
+        if (m_importsMadeByOwnFactory.contains(module) && !m_instance.vm->isTerminationException(exception)) {
+            m_mockedModulesWithErrorKeptByLoader.set(module.index());
+            ensureLoaded(module).errorOfMockKeptByLoader.set(*this, exception->value());
+        }
+        return;
+    }
+    m_importsMadeByOwnFactory.removeAll(module);
 }
 
 void Modules::keepErrorOfLoad(ModuleID root, JSValue error, const ScopedLambda<bool(ModuleID)>& endedLoad)
@@ -2358,6 +2368,8 @@ void Modules::runMocksBelow(ModuleID root, RootOfLoad rootOfLoad)
         bool isImportedByStatement = (module != root && module != fileOfRoot) || rootOfLoad == RootOfLoad::IsImportedByStatement;
         JSValue kept = errorOfLoadEndedByMock(module);
         if (!kept && isImportedByStatement && m_mockedModulesWithErrorKeptByLoader.get(module.index()))
+            kept = loadedIfExists(module)->errorOfMockKeptByLoader.get();
+        if (!kept && !isImportedByStatement && m_mockedModulesWithErrorKeptByLoader.get(module.index()) && m_importsMadeByOwnFactory.removeFirst(module)) [[unlikely]]
             kept = loadedIfExists(module)->errorOfMockKeptByLoader.get();
         if (kept) [[unlikely]] {
             keepErrorOfLoad(root, kept, [&](ModuleID each) { return each == module; });
@@ -3000,7 +3012,10 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
 
     if (m_modulesWithLoadEndedByMock.get(module.index())) [[unlikely]]
         RELEASE_AND_RETURN(scope, rejectImportWithErrorOfLoad(module, ImportCaller::CompiledCode));
-    dropErrorOfMockKeptByLoader(module);
+    if (m_modulesWhoseFactoryRuns.get(module.index())) [[unlikely]]
+        m_importsMadeByOwnFactory.append(module);
+    else if (!m_importsMadeByOwnFactory.contains(module)) [[likely]]
+        dropErrorOfMockKeptByLoader(module);
     runMocksBelow(module);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     auto fetchParameters = JSModuleLoader::fetchParametersFromImportOptions(realm, options);

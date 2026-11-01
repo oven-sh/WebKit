@@ -972,6 +972,9 @@ private:
     // An import() has queued its first job for them, which has not run.
     BitVector m_modulesOfQueuedImports;
     BitVector m_modulesWithMockToRun;
+    // The factory of a mock imports the module that it mocks. Such an import comes to the mock behind the end of that run, and shares what became of it: `bun test` calls the factory once.
+    BitVector m_modulesWhoseFactoryRuns;
+    Vector<ModuleID, 2> m_importsMadeByOwnFactory;
     // AfterFailure::AsksAgain
     BitVector m_modulesWithMockThatAsksAgain;
     // From goOnWithHeldImport() to the head of startImport(), with nothing run between.
