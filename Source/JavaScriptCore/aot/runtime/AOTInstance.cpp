@@ -25,6 +25,7 @@
 #include "AOTCompileOptions.h"
 #include "AOTCoroutineTable.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTFaultHandler.h"
 #include "AOTFunctionTables.h"
 #include "AOTGenerator.h"
 #include "AOTGlobalBindings.h"
@@ -646,6 +647,7 @@ Instance* Instance::create(JSGlobalObject* realm)
 {
     VM& vm = realm->vm();
     RELEASE_ASSERT(vm.hasCompiledCode());
+    takeFaultsOfThisThreadOnAnotherStack();
     DeferGCForAWhile deferGC(vm);
     destroyDeadInstances(vm);
     if (auto& functionTables = vm.aotState().functionTables)
