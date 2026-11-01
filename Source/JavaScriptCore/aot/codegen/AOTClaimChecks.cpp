@@ -331,7 +331,7 @@ void checkMovedLoadsAtRunTime(B3::Policy& policy, Typed::FunctionID function, co
 {
     policy.validation.logsMovedLoads = logged.loads;
     policy.validation.logsDecidedComparisons = logged.decidedComparisons;
-    policy.validation.reportsOfMovedLoadsComeBack = logged.reportsComeBack;
+    policy.validation.continuesAfterMovedLoadReports = logged.reportsComeBack;
     ReportOfBrokenClaim report = logged.reportsComeBack ? ReportOfBrokenClaim::ComesBack : ReportOfBrokenClaim::EndsRun;
     // The vectorizer's report ends a block: that one does not come back.
     policy.reportsMovedLoad = reportOf(BrokenClaim::LoadMayMove, function);

@@ -81,8 +81,8 @@ PatchpointValue* createMovedLoadCheck(Procedure& proc, const MovedLoad& load, Va
     check->effects = Effects::none();
     check->effects.writesLocalState = true;
     check->setRunsWithoutFrame(true);
-    bool reportComesBack = proc.policy().validation.reportsOfMovedLoadsComeBack;
-    check->setGenerator([load, reportComesBack, report = WTF::move(report)](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    bool continuesAfterReport = proc.policy().validation.continuesAfterMovedLoadReports;
+    check->setGenerator([load, continuesAfterReport, report = WTF::move(report)](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         GPRReg found = params.gpScratch(0);
         GPRReg given = params.gpScratch(1);
@@ -132,7 +132,7 @@ PatchpointValue* createMovedLoadCheck(Procedure& proc, const MovedLoad& load, Va
             }
             if (report)
                 report->run(jit, load, found, given);
-            if (reportComesBack)
+            if (continuesAfterReport)
                 jit.jump().linkTo(done, &jit);
             else
                 jit.breakpoint();
@@ -180,8 +180,8 @@ PatchpointValue* createDecidedComparisonCheck(Procedure& proc, Opcode opcode, Or
     check->effects.writesLocalState = true;
     check->setRunsWithoutFrame(true);
     MovedLoad comparison { opcode, left->type(), 0, origin, HeapRange() };
-    bool reportComesBack = proc.policy().validation.reportsOfMovedLoadsComeBack;
-    check->setGenerator([comparison, answer, reportComesBack, report = WTF::move(report)](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    bool continuesAfterReport = proc.policy().validation.continuesAfterMovedLoadReports;
+    check->setGenerator([comparison, answer, continuesAfterReport, report = WTF::move(report)](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         GPRReg left = params[0].gpr();
         GPRReg right = params[1].gpr();
@@ -193,7 +193,7 @@ PatchpointValue* createDecidedComparisonCheck(Procedure& proc, Opcode opcode, Or
             differs.link(&jit);
             if (report)
                 report->run(jit, comparison, left, right);
-            if (reportComesBack)
+            if (continuesAfterReport)
                 jit.jump().linkTo(done, &jit);
             else
                 jit.breakpoint();

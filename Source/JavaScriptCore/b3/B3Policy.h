@@ -57,7 +57,7 @@ struct ValidationPolicy {
     bool logsMovedLoads { false };
     bool logsDecidedComparisons { false };
     // Every read of a spill slot sees the value that the slot stands for, and every read of a register the Tmp that it is read for: AirCheckSpillSlots.h. They change no code.
-    bool reportsOfMovedLoadsComeBack { false };
+    bool continuesAfterMovedLoadReports { false };
     bool keepsOriginsOfTrappingAccesses { false };
     bool checksSpillSlots { false };
     bool checksAllocatedRegisters { false };
