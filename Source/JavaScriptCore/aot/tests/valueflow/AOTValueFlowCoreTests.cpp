@@ -188,12 +188,12 @@ static void valueSetsAgreeWithPlainSets()
 
 static void makersRememberMoreOfLargeUniversesWhereAsked()
 {
-    ValueSets small(1u << 10);
-    ValueSets large(1u << 21);
-    size_t usual = ValueSetMaker(small).numberOfResultsRemembered();
-    AOT_TEST_CHECK(ValueSetMaker(large).numberOfResultsRemembered() == usual);
-    AOT_TEST_CHECK(ValueSetMaker(small, ValueSetMaker::Remembers::ByTheSizeOfTheUniverse).numberOfResultsRemembered() == usual);
-    ValueSetMaker maker(large, ValueSetMaker::Remembers::ByTheSizeOfTheUniverse);
+    ValueSets smallUniverse(1u << 10);
+    ValueSets largeUniverse(1u << 21);
+    size_t usual = ValueSetMaker(smallUniverse).numberOfResultsRemembered();
+    AOT_TEST_CHECK(ValueSetMaker(largeUniverse).numberOfResultsRemembered() == usual);
+    AOT_TEST_CHECK(ValueSetMaker(smallUniverse, ValueSetMaker::Remembers::ByTheSizeOfTheUniverse).numberOfResultsRemembered() == usual);
+    ValueSetMaker maker(largeUniverse, ValueSetMaker::Remembers::ByTheSizeOfTheUniverse);
     AOT_TEST_CHECK(maker.numberOfResultsRemembered() >= 8 * usual);
     ValueSetID first = maker.unite(maker.of(ValueFlowObjectID(1u)), maker.of(ValueFlowObjectID(70000u)));
     ValueSetID second = maker.unite(maker.of(ValueFlowObjectID(70000u)), maker.of(ValueFlowObjectID(2000000u)));
