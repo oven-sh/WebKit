@@ -388,7 +388,7 @@ void FunctionVerifier::verifyRequiredTypes(BlockID block, ValueID id, const Valu
         if (hasFailed() || value.operandKind(operandIndex) != OperandKind::Declared)
             return;
         const Value& definition = m_function.at(operand);
-        if (definition.opcode == Opcode::Check && context.types.at(definition.expectedType().predicted()).isNever())
+        if (definition.opcode == Opcode::Check && typeOf(definition.valueOperand()).castTo(context.types.at(definition.expectedType().predicted()), context.types).isNever())
             return;
         TypeID required = requiredTypeOfOperand(context, value, operandIndex);
         if (!required)
