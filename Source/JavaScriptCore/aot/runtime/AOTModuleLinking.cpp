@@ -85,7 +85,9 @@ StarExportResolution::Type Modules::resolveRequiredName(ModuleID exporter, const
     RELEASE_ASSERT(exporterData.capturesExports() || exporterData.hasExportTable());
     bool hasExport = exporterData.capturesExports() ? hasCapturedExport(exporter, name) : !!m_table.findExport(exporter, name.impl());
     RETURN_IF_EXCEPTION(scope, StarExportResolution::Type::Error);
-    return hasExport ? StarExportResolution::Type::Resolved : StarExportResolution::Type::NotFound;
+    if (hasExport)
+        return StarExportResolution::Type::Resolved;
+    return m_table.isAmbiguousExport(exporter, name.string()) ? StarExportResolution::Type::Ambiguous : StarExportResolution::Type::NotFound;
 }
 
 // Of a module of this image, or of the module of another image that a record of this one stands for.
