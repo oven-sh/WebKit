@@ -1630,11 +1630,13 @@ void Modules::letRecordAnswerByMock(ModuleRecord* record, JSObject* mock)
 // A record cannot go back to what it was. Whoever holds it keeps the mock, as whoever holds the module of a mock in `bun test`, and the next question for the module makes another.
 void Modules::letGoOfRecordThatAnswersByMock(ModuleID module)
 {
-    ModuleRecord* record = recordIfExists(module);
+    // A record that was made for a search alone holds no status, and answers by the mock all the same.
+    ModuleRecord* record = m_records.get(module);
     if (!record || !record->hasLiveExports())
         return;
     // Nothing of the module has run or was linked.
-    setStoredStatus(module, StoredModuleStatus::Unlinked);
+    if (storedStatus(module) == StoredModuleStatus::InRecord)
+        setStoredStatus(module, StoredModuleStatus::Unlinked);
     loader()->removeEntryOfRecord(record);
     Locker locker { m_state.caches->lock() };
     m_records.remove(module);
@@ -1708,7 +1710,7 @@ bool Modules::setMockInPlaceOfLibraryModule(ModuleID module, JSObject* mock, JSV
     ensureLoaded(module).mockInPlace.set(*this, mock);
     if (!mock)
         letGoOfRecordThatAnswersByMock(module);
-    else if (ModuleRecord* record = recordIfExists(module))
+    else if (ModuleRecord* record = m_records.get(module))
         letRecordAnswerByMock(record, mock);
     if (std::optional<SlotData> word = m_table.wordOfMock(module))
         ProgramStatics::writeVariable(m_instance, *word, mock ? JSValue(mock) : JSValue());
@@ -1743,7 +1745,7 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
     for (ModuleID each : { fileOrModule, module }) {
         if (!mock)
             letGoOfRecordThatAnswersByMock(each);
-        else if (ModuleRecord* record = recordIfExists(each))
+        else if (ModuleRecord* record = m_records.get(each))
             letRecordAnswerByMock(record, mock);
     }
     // Compiled code that imports a name of the module looks here first.
