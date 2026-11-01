@@ -294,8 +294,12 @@ JS_EXPORT_PRIVATE bool isModuleNamespace(JSCell*);
 // For the test runner: stores the value in the variable behind the export, where the module itself and every importer read it.
 // False where the build saw no call that replaces the export: code that uses it may not read the variable.
 JS_EXPORT_PRIVATE bool tryReplaceExport(JSCell* moduleNamespace, UniquedStringImpl* name, JSValue);
+// What to say where it answers false, in a test run and in an executable.
+JS_EXPORT_PRIVATE String refusedSpyOnExportMessage(JSCell* moduleNamespace, UniquedStringImpl* name);
 // The build saw a call that mocks the module: every export of it can be replaced.
 JS_EXPORT_PRIVATE bool mayBeMocked(JSGlobalObject*, ModuleID);
+// What to say where it answers false.
+JS_EXPORT_PRIVATE String refusedMockMessage(JSGlobalObject*, const String& path);
 // The module has not begun to load: the factory of the mock runs when a graph comes to it (ModuleHost::runMock).
 JS_EXPORT_PRIVATE bool hasBegunToLoad(JSGlobalObject*, ModuleID);
 // Under `bun test` the body of a module that is linked when it is mocked runs then and there: left for later, it would assign over what the mock stores.

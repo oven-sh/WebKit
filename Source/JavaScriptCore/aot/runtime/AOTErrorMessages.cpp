@@ -3480,6 +3480,20 @@ String prototypeChangeOfLockedBuiltinMessage(const String& holder, LockedIn lock
     return printForFuzzilli(withAOTErrorNote(makeString("Cannot change the prototype of "_s, holder, " because built-in objects are read-only in a compiled executable"_s)));
 }
 
+String spyOnExportRefusedMessage(UniquedStringImpl* name, const String& path, LockedIn lockedIn)
+{
+    if (lockedIn == LockedIn::TestRun)
+        return makeString("Cannot spy on '"_s, StringView(name), "' of \""_s, path, "\" because the build didn't see a test spy on it. Spell out the module and the name where the spy is made: import * as module from \"<path>\"; spyOn(module, \""_s, StringView(name), "\")"_s, pageOnCompiledTests);
+    return makeString("Cannot spy on '"_s, StringView(name), "' of \""_s, path, "\" because module exports can't be replaced in a compiled executable. Spy on it in a test, under bun test"_s);
+}
+
+String mockOfModuleRefusedMessage(const String& path, LockedIn lockedIn)
+{
+    if (lockedIn == LockedIn::TestRun)
+        return makeString("mock(module, fn) cannot replace \""_s, path, "\" because the build didn't see a test mock it. Spell out the module's path where the mock is made: mock.module(\"<path>\", factory)"_s, pageOnCompiledTests);
+    return makeString("mock(module, fn) cannot replace \""_s, path, "\" because it was compiled ahead of time. Mock it in a test, under bun test"_s);
+}
+
 } } // namespace JSC::AOT
 
 #if COMPILER(CLANG)

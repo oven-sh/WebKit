@@ -145,6 +145,8 @@ String deletionOfFoldedMemberMessage(const String& property, LockedIn);
 // call, apply, bind, Symbol.hasInstance: BuiltinTable::isFunctionOfEngine().
 String assignmentToNameThatBuiltinFunctionInheritsMessage(UniquedStringImpl*);
 String prototypeChangeOfLockedBuiltinMessage(const String& holder, LockedIn = LockedIn::Executable);
+String spyOnExportRefusedMessage(UniquedStringImpl* name, const String& path, LockedIn);
+String mockOfModuleRefusedMessage(const String& path, LockedIn);
 
 } } // namespace JSC::AOT
 

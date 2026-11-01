@@ -16,8 +16,10 @@
 #include "AOTErrorMessages.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
+#include "AOTImageOfCellScope.h"
 #include "AOTInstance.h"
 #include "AOTModuleHost.h"
+#include "AOTModuleNamespace.h"
 #include "AOTModules.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramIdentifiers.h"
@@ -842,6 +844,25 @@ String refusedSpyMessage(JSGlobalObject* globalObject, JSObject* object, Uniqued
     if (!message.startsWith(start))
         return { };
     return makeString("Cannot spy on "_s, StringView(message).substring(start.length()));
+}
+
+static LockedIn kindOfRun(JSGlobalObject* realm)
+{
+    Instance* instance = Instance::of(realm);
+    return instance && admitsReplacedBuiltins(*instance) ? LockedIn::TestRun : LockedIn::Executable;
+}
+
+String refusedSpyOnExportMessage(JSCell* moduleNamespace, UniquedStringImpl* name)
+{
+    auto* object = uncheckedDowncast<ModuleNamespace>(moduleNamespace);
+    ImageOfCellScope imageOfCell(object);
+    JSGlobalObject* realm = object->realm();
+    return spyOnExportRefusedMessage(name, modulesOf(realm)->table().pathText(object->module()), kindOfRun(realm));
+}
+
+String refusedMockMessage(JSGlobalObject* realm, const String& path)
+{
+    return mockOfModuleRefusedMessage(path, kindOfRun(realm));
 }
 
 static bool hasUnlocked(const Instance& instance, BuiltinID member)
