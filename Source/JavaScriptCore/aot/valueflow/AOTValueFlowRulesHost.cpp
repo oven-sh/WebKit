@@ -690,8 +690,9 @@ void runHostRoots(const ValueFlowStatement& statement, ValueFlowRuleContext& con
                     context.add(context.nodes().ofHost(ValueFlowHostNode::ModulesOfSeenCode), only(context, universe.namespaceOf(module)));
                     evaluateModule(context, module);
                 }
+                ValueFlowNodeID hands = program.modules[index].kind == ModuleKind::Runtime ? ValueFlowProgramNodes::escaped() : context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode);
                 for (const ValueFlowSources& answer : { requiredValueOf(context, module), namespaceOf(context, module) })
-                    connect(context, answer, context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode));
+                    connect(context, answer, hands);
             }
         }
     }

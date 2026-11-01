@@ -3518,16 +3518,17 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         throwException(m_instance.globalObject, scope, error);
         return { };
     }
-    {
-        SetForScope requireRunsMocks(vm.aotState().requireRunsMocks, true);
-        runMocksBelow(target);
-    }
-    RETURN_IF_EXCEPTION(scope, { });
-    if (isLeftToHost(target)) [[unlikely]]
-        RELEASE_AND_RETURN(scope, loadEvictedFile(fileOf(target)));
     const ModuleData& targetData = data(target);
     // The library gets its own modules from the registry, where no mock stands.
     bool isRequiredByProgram = requiredBy == RequiredBy::Program || (referrer && !data(referrer).isOfLibrary());
+    if (!targetData.isOfLibrary() || isRequiredByProgram) {
+        SetForScope requireRunsMocks(vm.aotState().requireRunsMocks, true);
+        runMocksBelow(target);
+    } else
+        evaluateModulesOwedBelow(target);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (isLeftToHost(target)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, loadEvictedFile(fileOf(target)));
     if (targetData.isOfLibrary() && isRequiredByProgram && isKeptInRequireCache(target)) [[unlikely]]
         RELEASE_AND_RETURN(scope, requireThroughCache(target, referrer));
     if (targetData.isOfLibrary() && isRequiredByProgram && isMockedLibraryModule(target)) [[unlikely]]
