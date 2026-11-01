@@ -1420,7 +1420,7 @@ static void moduleLoadTopRejected(JSGlobalObject* globalObject, VM& vm, std::spa
         resultPromise->reject(vm, arguments[1]);
     }
 #if ENABLE(AOT)
-    if (!context->dynamic())
+    if (vm.hasCompiledCode() && !context->dynamic())
         AOT::didSettleLoad(resultPromise);
 #endif
 }
@@ -1794,7 +1794,8 @@ static void importModuleNamespace(JSGlobalObject* globalObject, VM& vm, ThrowSco
     } else
         resultPromise->reject(vm, arguments[1]);
 #if ENABLE(AOT)
-    AOT::didSettleLoad(resultPromise);
+    if (vm.hasCompiledCode())
+        AOT::didSettleLoad(resultPromise);
 #endif
     return;
 }
