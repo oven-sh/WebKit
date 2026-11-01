@@ -349,7 +349,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject,
     JSFinalObject* targetObject = dynamicDowncast<JSFinalObject>(target);
     bool targetCanPerformFastPut = targetObject && targetObject->canPerformFastPutInlineExcludingProto() && targetObject->isStructureExtensible();
 #if ENABLE(AOT)
-    if (targetObject && !targetCanPerformFastPut)
+    if (targetObject && !targetCanPerformFastPut && vm.hasCompiledCode())
         targetCanPerformFastPut = AOT::PropertyWalk::wouldPerformFastPut(vm, targetObject);
 #endif
     unsigned argsCount = callFrame->argumentCount();
