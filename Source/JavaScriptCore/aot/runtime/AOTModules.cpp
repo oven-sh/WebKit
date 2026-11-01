@@ -2451,12 +2451,12 @@ auto Modules::mockState(ModuleID module) -> MockState
     bool isOfLibrary = data(module).isOfLibrary();
     ModuleStatus body = status(module);
     bool hasBegun = body != ModuleStatus::Unlinked && body != ModuleStatus::Linking && body != ModuleStatus::Linked;
-    if (isLeftToHost(module))
-        return waits || isInPlace || isLaidOver || isToBeLetGo ? MockState::NoneOfThem : MockState::LeftToHost;
-    if (waits + isInPlace + isLaidOver > 1 && !(isOverModuleThatHasRun && !isLaidOver))
+    if (isLaidOver && (waits || isInPlace))
         return MockState::NoneOfThem;
     if (isToBeLetGo)
-        return isInPlace ? MockState::Ended : MockState::NoneOfThem;
+        return isInPlace && !waits ? MockState::Ended : MockState::NoneOfThem;
+    if (waits && isInPlace && !isOverModuleThatHasRun)
+        return isMocked(module) ? MockState::InPlaceWhileAnotherWaits : MockState::NoneOfThem;
     if (waits) {
         if ((!isMocked(module) && !isOfLibrary) || (hasBegun && !isOverModuleThatHasRun && !isOfLibrary && data(module).kind != ModuleKind::CommonJs))
             return MockState::NoneOfThem;
@@ -2471,8 +2471,9 @@ auto Modules::mockState(ModuleID module) -> MockState
         return hasBegun ? MockState::LaidOver : MockState::NoneOfThem;
     if (isOverModuleThatHasRun)
         return MockState::Runs;
+    // willMockModule() ahead of the load: the names of the module hold what the mock gave, and its body never runs.
     if (isMocked(module))
-        return hasWaited || isOfLibrary || m_modulesWhoseFactoryRuns.get(module.index()) ? MockState::Runs : MockState::NoneOfThem;
+        return hasWaited || isOfLibrary || m_modulesWhoseFactoryRuns.get(module.index()) ? MockState::Runs : MockState::Fills;
     if (hasKeptError)
         return MockState::Failed;
     return hasWaited ? MockState::NoneOfThem : MockState::None;
@@ -2480,12 +2481,12 @@ auto Modules::mockState(ModuleID module) -> MockState
 
 String Modules::describeMockState(ModuleID module)
 {
-    static constexpr std::array<ASCIILiteral, 10> names { "none"_s, "waits"_s, "runs"_s, "in place"_s, "in place over a module that has run"_s, "laid over"_s, "failed"_s, "ended"_s, "left to the host"_s, "NONE OF THEM"_s };
+    static constexpr std::array<ASCIILiteral, 11> names { "none"_s, "waits"_s, "runs"_s, "in place"_s, "in place while another waits"_s, "in place over a module that has run"_s, "fills"_s, "laid over"_s, "failed"_s, "ended"_s, "NONE OF THEM"_s };
     static constexpr std::array<ASCIILiteral, 7> bodies { "unlinked"_s, "linking"_s, "linked"_s, "evaluating"_s, "awaiting"_s, "evaluated"_s, "failed"_s };
     MockState state = mockState(module);
     ASCIILiteral kind = data(module).isOfLibrary() ? "library"_s : data(module).kind == ModuleKind::CommonJs ? "CommonJS"_s : data(module).isFaceOfFile() ? "face"_s : data(module).isESModuleOfProgram() ? "ES"_s : "other"_s;
     StringBuilder text;
-    text.append(kind, ' ', names[static_cast<size_t>(state)], " (body "_s, bodies[static_cast<size_t>(status(module)) - static_cast<size_t>(ModuleStatus::Unlinked)], ')');
+    text.append(kind, ' ', names[static_cast<size_t>(state)], " (body "_s, bodies[static_cast<size_t>(status(module)) - static_cast<size_t>(ModuleStatus::Unlinked)], isLeftToHost(module) ? ", left to the host)"_s : ")"_s);
     if (state == MockState::NoneOfThem) {
         LoadedModule* loaded = loadedIfExists(module);
         auto say = [&](bool isSet, ASCIILiteral what) {
@@ -2503,7 +2504,6 @@ String Modules::describeMockState(ModuleID module)
         say(isLeftAloneByMock(module), "over-run"_s);
         say(m_modulesWithLoadEndedByMock.get(module.index()), "load-ended"_s);
         say(m_mockedModulesWithErrorKeptByLoader.get(module.index()), "error-kept"_s);
-        say(isLeftToHost(module), "left-to-host"_s);
         text.append(" ]"_s);
     }
     return text.toString();
