@@ -760,23 +760,36 @@ static void testEliminateRedundantPhiCycles()
     }
 }
 
-static void testEliminateRedundantPhiCyclesKeepsPhiOfValueInSameBlock()
+static void testEliminateRedundantPhiCyclesFoldsPhiThatFollowsItsUpsilon()
 {
-    Procedure proc;
-    Graph graph { proc };
-    BasicBlock* root = proc.addBlock();
-    Value* x = cCallArgumentValues<int64_t>(proc, root)[0];
-    UpsilonValue* upsilon = root->appendNew<UpsilonValue>(proc, Origin(), graph.make(root, Add, x, graph.int64(root, 1)));
-    Value* phi = graph.phi(root, Int64);
-    upsilon->setPhi(phi);
-    graph.ret(root, phi);
-    proc.resetReachability();
-    validate(proc);
+    // if (x == 7) { phi = 3; return -1; } phi = x + 1; return phi;
+    for (bool hasOtherUpsilon : { false, true }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* other = proc.addBlock();
+        BasicBlock* rest = proc.addBlock();
+        Value* x = cCallArgumentValues<int64_t>(proc, root)[0];
+        graph.branch(root, graph.make(root, Equal, x, graph.int64(root, 7)), other, rest);
+        UpsilonValue* otherUpsilon = hasOtherUpsilon ? other->appendNew<UpsilonValue>(proc, Origin(), graph.int64(other, 3)) : nullptr;
+        graph.ret(other, graph.int64(other, -1));
+        UpsilonValue* upsilon = rest->appendNew<UpsilonValue>(proc, Origin(), graph.make(rest, Add, x, graph.int64(rest, 1)));
+        Value* phi = graph.phi(rest, Int64);
+        upsilon->setPhi(phi);
+        if (otherUpsilon)
+            otherUpsilon->setPhi(phi);
+        graph.ret(rest, phi);
+        proc.resetReachability();
+        validate(proc);
 
-    CHECK(!eliminateRedundantPhiCycles(proc));
-    validate(proc);
-    CHECK_EQ(numberOfValues(proc, Phi), 1u);
-    CHECK_EQ(compileAndRun<int64_t>(proc, static_cast<int64_t>(41)), 42);
+        CHECK(eliminateRedundantPhiCycles(proc));
+        validate(proc);
+        CHECK_EQ(numberOfValues(proc, Phi), 0u);
+        CHECK_EQ(numberOfValues(proc, Upsilon), 0u);
+        auto code = compileProc(proc);
+        CHECK_EQ(invoke<int64_t>(*code, static_cast<int64_t>(41)), 42);
+        CHECK_EQ(invoke<int64_t>(*code, static_cast<int64_t>(7)), -1);
+    }
 }
 
 void addBunLoopTests(const TestConfig* config, BunTestTasks& tasks)
@@ -804,7 +817,7 @@ void addBunLoopTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testSimplifyTerminalsLooksThroughIdentity());
     RUN(testSimplifyTerminalsOfSwitch());
     RUN(testEliminateRedundantPhiCycles());
-    RUN(testEliminateRedundantPhiCyclesKeepsPhiOfValueInSameBlock());
+    RUN(testEliminateRedundantPhiCyclesFoldsPhiThatFollowsItsUpsilon());
 }
 
 #endif // ENABLE(B3_JIT)

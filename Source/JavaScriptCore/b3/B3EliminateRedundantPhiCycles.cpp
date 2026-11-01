@@ -20,9 +20,41 @@
 
 namespace JSC { namespace B3 {
 
-bool eliminateRedundantPhiCycles(Procedure& proc)
+// A Phi reads the value of the most recently executed Upsilon. If one of its Upsilons precedes it in the same block, that is always the one it reads.
+// The loop phases assume that a Phi in a loop header is loop-carried, which such a Phi is not.
+static bool foldPhisThatFollowTheirUpsilon(Procedure& proc)
 {
-    PhaseScope phaseScope(proc, "eliminateRedundantPhiCycles"_s);
+    IndexSet<Value*> folded;
+    Vector<UpsilonValue*, 8> upsilonsOfBlock;
+    for (BasicBlock* block : proc) {
+        upsilonsOfBlock.shrink(0);
+        for (Value* value : *block) {
+            if (auto* upsilon = value->as<UpsilonValue>()) {
+                upsilonsOfBlock.append(upsilon);
+                continue;
+            }
+            if (value->opcode() != Phi)
+                continue;
+            size_t last = upsilonsOfBlock.reverseFindIf([&](UpsilonValue* upsilon) { return upsilon->phi() == value; });
+            if (last == notFound || upsilonsOfBlock[last]->child(0) == value)
+                continue;
+            value->replaceWithIdentity(upsilonsOfBlock[last]->child(0));
+            folded.add(value);
+        }
+    }
+    if (folded.isEmpty())
+        return false;
+    for (Value* value : proc.values()) {
+        if (auto* upsilon = value->as<UpsilonValue>(); upsilon && folded.contains(upsilon->phi()))
+            upsilon->replaceWithNop();
+    }
+    for (Value* value : proc.values())
+        value->performSubstitution();
+    return true;
+}
+
+static bool eliminateCycles(Procedure& proc)
+{
     PhiChildren phiChildren(proc);
     const auto& phis = phiChildren.phis();
     if (phis.isEmpty())
@@ -152,6 +184,14 @@ bool eliminateRedundantPhiCycles(Procedure& proc)
     for (Value* value : proc.values())
         value->performSubstitution();
     return true;
+}
+
+bool eliminateRedundantPhiCycles(Procedure& proc)
+{
+    PhaseScope phaseScope(proc, "eliminateRedundantPhiCycles"_s);
+    bool changed = foldPhisThatFollowTheirUpsilon(proc);
+    changed |= eliminateCycles(proc);
+    return changed;
 }
 
 } } // namespace JSC::B3

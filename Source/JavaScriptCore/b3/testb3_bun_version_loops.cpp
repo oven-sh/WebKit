@@ -8,6 +8,7 @@
 
 #if ENABLE(B3_JIT)
 
+#include "B3EliminateRedundantPhiCycles.h"
 #include "B3LoopVersionPlan.h"
 
 template<typename Functor>
@@ -769,6 +770,59 @@ static void testVersionLoopsHoistsLoadRepeatingLoadBeforeLoop()
     }
 }
 
+// The remains of an `if` that lost one arm: the Phi is in the middle of the header, after the Upsilon that sets it on every iteration. Its other Upsilon is outside the loop, on no path into it.
+static void testVersionLoopsPhiThatFollowsItsUpsilonInHeaderIsNotLoopCarried()
+{
+    for (bool runsPrecedingPhase : { true, false }) {
+        Procedure proc(optimizingPolicy());
+        Graph graph { proc };
+        TopTestedLoop loop(graph);
+        BasicBlock* special = proc.addBlock();
+        BasicBlock* guarded = proc.addBlock();
+        BasicBlock* unexpected = proc.addBlock();
+        BasicBlock* hot = proc.addBlock();
+        MemoryValue* earlierLoad = proc.add<MemoryValue>(Load, Int64, Origin(), loop.pointer, 0, firstHeap);
+        loop.root->appendNonTerminal(earlierLoad);
+        loop.root->appendNonTerminal(proc.add<MemoryValue>(Store, Origin(), earlierLoad, loop.pointer, 0, firstHeap));
+        UpsilonValue* given = loop.body->appendNew<UpsilonValue>(proc, Origin(), loop.extra);
+        Value* phi = graph.phi(loop.body, Int64);
+        given->setPhi(phi);
+        UpsilonValue* leftOver = proc.add<UpsilonValue>(Origin(), proc.add<Const64Value>(Origin(), 3));
+        loop.exit->values().insert(0, leftOver->child(0));
+        loop.exit->values().insert(1, leftOver);
+        leftOver->setPhi(phi);
+        graph.branch(loop.body, graph.make(loop.body, Equal, graph.make(loop.body, Add, graph.get(loop.body, loop.index), phi), earlierLoad), rarely(special), FrequentedBlock(guarded));
+        graph.increase(special, loop.sum, 1000);
+        graph.jump(special, guarded);
+        Value* loaded = graph.load(guarded, Int64, loop.pointer, 0, firstHeap);
+        graph.branch(guarded, graph.make(guarded, Equal, loaded, graph.int64(guarded, 4)), FrequentedBlock(hot), rarely(unexpected));
+        graph.increase(unexpected, loop.sum, 100);
+        graph.jump(unexpected, hot);
+        graph.increase(hot, loop.sum, loaded);
+        loop.endBody(hot);
+        loop.rotate();
+        CHECK_EQ(numberOfValues(proc, [&](Value* value) { return value == phi && value->opcode() == Phi; }), 1u);
+
+        if (runsPrecedingPhase)
+            CHECK(eliminateRedundantPhiCycles(proc));
+        CHECK(versionLoopsAndValidate(proc));
+        fixSSA(proc);
+        if (!runsPrecedingPhase) {
+            // The guard before the fast loop reads the Phi's variable, which nothing has set at that point.
+            CHECK(proc.report().failure && proc.report().failure->kind == FailureKind::VariableReadBeforeSet);
+            continue;
+        }
+        CHECK(!proc.report().failure);
+        auto code = compileProc(proc);
+        int64_t memory[1] = { 4 };
+        CHECK_EQ(run(*code, 10, memory, 0), 1040);
+        CHECK_EQ(run(*code, 10, memory, 4), 1040);
+        CHECK_EQ(run(*code, 10, memory, 5), 40);
+        CHECK_EQ(run(*code, 3, memory, 3), 1012);
+        CHECK_EQ(run(*code, 0, memory, 4), 0);
+    }
+}
+
 static void testVersionLoopsResolvesSingleInputPhiInUncountedLoop()
 {
     for (bool keyHasOneInput : { true, false }) {
@@ -1168,6 +1222,7 @@ void addBunLoopVersioningTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVersionLoopsKeepsTerminalPatchpointReadingLoopWrites());
     RUN(testVersionLoopsTestsSlotBeforeReadingThroughIt());
     RUN(testVersionLoopsIdentityInHeaderIsNoPhi());
+    RUN(testVersionLoopsPhiThatFollowsItsUpsilonInHeaderIsNotLoopCarried());
 }
 
 #endif // ENABLE(B3_JIT)
