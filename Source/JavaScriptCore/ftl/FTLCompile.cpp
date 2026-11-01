@@ -301,7 +301,7 @@ void compile(State& state, Safepoint::Result& safepointResult)
         // call to the B3-generated code.
         entryLabel = jit.label();
         arityCheckLabel = entryLabel;
-        jit.indirectJumpTarget(); // Bun: by an address.
+        jit.indirectJumpTarget(); // Bun: DFG code has the address in a register.
         jit.emitFunctionEpilogue();
         jit.untagReturnAddress();
         jit.jump().linkTo(mainPathLabel, &jit);

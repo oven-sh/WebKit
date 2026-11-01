@@ -620,7 +620,7 @@ unsigned numberOfFlaglessBranches(int64_t immediate)
     unsigned result = 0;
     for (auto cond : conditions) {
         CCallHelpers jit;
-        jit.removeLandingPadAtStart();
+        jit.removeLandingPadAtStart(); // What is emitted is counted.
         if constexpr (dataSize == 32)
             jit.branch32(cond, GPRInfo::regT0, CCallHelpers::TrustedImm32(static_cast<int32_t>(immediate)));
         else
@@ -10250,7 +10250,7 @@ void emitRelocationSite(CCallHelpers& jit, RelocationKind kind)
 Vector<uint8_t> createRelocationSite(RelocationKind kind)
 {
     CCallHelpers jit;
-    jit.removeLandingPadAtStart();
+    jit.removeLandingPadAtStart(); // The site is at offset 0.
     emitRelocationSite(jit, kind);
     Vector<uint8_t> bytes = takeEmittedBytes(jit);
     size_t size = MacroAssembler::relocationSize(kind);
@@ -10812,20 +10812,17 @@ void checkPointerImmediates(int* cell)
     });
 
 #if CPU(ARM64)
-    CCallHelpers::Label start;
     CCallHelpers::Label end;
-    uint32_t startOffset = 0;
     uint32_t endOffset = 0;
     LinkedCode code = linkIntoStorage([&](CCallHelpers& jit) {
-        start = jit.label();
+        jit.removeLandingPadAtStart(); // The first offset below is 0.
         jit.load32(cell, gpr);
         jit.load32(cell + 1, gpr);
         end = jit.label();
     }, [&](LinkBuffer& linkBuffer) {
-        startOffset = linkBuffer.offsetOf(start);
         endOffset = linkBuffer.offsetOf(end);
     });
-    WideImmediate first { startOffset, ImmediateProvenance::Pointer, reinterpret_cast<uintptr_t>(cell) };
+    WideImmediate first { 0, ImmediateProvenance::Pointer, reinterpret_cast<uintptr_t>(cell) };
     WideImmediate second { endOffset - 4, ImmediateProvenance::Pointer, reinterpret_cast<uintptr_t>(cell + 1) };
     CHECK_EQ(code.wideImmediates.size(), 2u);
     CHECK_EQ(code.wideImmediates[0] == first, true);

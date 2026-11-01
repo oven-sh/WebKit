@@ -63,6 +63,8 @@ class Assembler
         @newlineSpacerState = :none
         @lastlabel = ""
         @section = DEFAULT_SECTION
+        @pendingLandingPad = nil
+        @pendingLandingPadIsOfSlot = nil
     end
 
     def enterAsm
@@ -266,7 +268,7 @@ class Assembler
                 putStr("    \".type #{labelName} , function \\n\"")
             }
         end
-        if $currentSettings and $currentSettings["BRANCH_TARGET_IDENTIFICATION"]
+        if $currentSettings["BRANCH_TARGET_IDENTIFICATION"]
             @pendingLandingPadIsOfSlot ||= alignTo # Its other labels are names of the handler in it.
             isHandler = (@pendingLandingPadIsOfSlot or (not isGlobal and /\Allint_op_/.match(labelName)))
             @pendingLandingPad = (@pendingLandingPad || 0) | (isHandler ? 36 : 34) # BTI j, BTI c. Both together are 38, BTI jc.

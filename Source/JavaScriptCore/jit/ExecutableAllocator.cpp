@@ -49,10 +49,6 @@
 #include <wtf/WorkQueue.h>
 #include <wtf/posix/POSIXExtras.h>
 
-#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
-#include <sys/mman.h>
-#endif
-
 #if ENABLE(LIBPAS_JIT_HEAP)
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <bmalloc/jit_heap.h>
@@ -580,8 +576,8 @@ bool guardExecutablePages(const void* start, const void* end, bool writable)
 {
     constexpr int protBTI = 0x10; // Newer than the headers that this is compiled with.
 
-    // What is behind the end in its page may have no landing pads.
-    if (!Options::useBranchTargetIdentification() || !isPageAligned(std::bit_cast<uintptr_t>(end)))
+    // What is behind the end in its page may have no landing pads. To guard nothing would succeed.
+    if (!Options::useBranchTargetIdentification() || start == end || !isPageAligned(std::bit_cast<uintptr_t>(end)))
         return false;
     // This fails, and changes nothing, where the processor or the kernel is without the feature or the start is not that of a page.
     size_t size = static_cast<const char*>(end) - static_cast<const char*>(start);

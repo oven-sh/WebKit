@@ -5016,8 +5016,8 @@ JSC_DEFINE_HOST_FUNCTION(functionPagesOfJITCodeAreGuarded, (JSGlobalObject*, Cal
 // The code is a landing pad and a return. Past the landing pad it does no harm either, where nothing is guarded.
 static void callCodeThatIsLandingPadAndReturn(const void* code, bool pastLandingPad)
 {
-    auto* function = reinterpret_cast<void (*)()>(const_cast<char*>(static_cast<const char*>(code) + (pastLandingPad ? sizeof(uint32_t) : 0)));
-    asm volatile("blr %0" : : "r"(function) : "x30", "memory");
+    const void* target = static_cast<const char*>(code) + (pastLandingPad ? sizeof(uint32_t) : 0);
+    asm volatile("blr %0" : : "r"(target) : "x30", "memory"); // The compiler may make a jump of a call.
 }
 #endif
 
@@ -5027,7 +5027,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCallIntoLLInt, (JSGlobalObject* globalObject, C
 {
     DollarVMAssertScope assertScope;
 #if ENABLE(BRANCH_TARGET_IDENTIFICATION)
-    callCodeThatIsLandingPadAndReturn(reinterpret_cast<const void*>(llint_landing_pad_and_return), callFrame->argument(0).toBoolean(globalObject));
+    callCodeThatIsLandingPadAndReturn(untagCodePtr<const void*, CFunctionPtrTag>(llint_landing_pad_and_return), callFrame->argument(0).toBoolean(globalObject));
 #else
     UNUSED_PARAM(globalObject);
     UNUSED_PARAM(callFrame);
