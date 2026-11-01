@@ -392,8 +392,10 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
             if (holdsAnything(carriedOut))
                 connect(m_context.lookup(carriedOut, name), m_statement.result);
         }
-        if (holdsNamedOrLoadedBun(object))
+        if (holdsNamedOrLoadedBun(object)) {
             add(m_statement.result, only(ValueFlowUniverse::markOfLoadedBun()));
+            raiseHostFlag(m_context, ValueFlowHostNode::NamedBunIsReadUnderKeysNobodyKnows);
+        }
     }
     if (key.keyClass == HeapKeyClass::Name && key.name == m_program.keyOf(BuiltinNames::__proto__) && mayBeUnknownObject(receivers) && isInProgramCode()) {
         connect(heldPrototypeObjectsOfLibraryClasses(m_context), m_statement.result);

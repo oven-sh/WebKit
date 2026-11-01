@@ -1315,7 +1315,13 @@ void HeapRule::readMembers(ClimbingSet objects, ClimbingSet start, const HeapKey
                 openProxiesThatMemberAnswers(m_context, member);
                 exposeObjectsOfModulesReturnedBy(m_context, member);
             }
-            // A key nobody knows may be a name that has escaped.
+            // A key nobody knows may be any name.
+            if (isBun && (!isReceiver || isHostFlagRaised(m_context, ValueFlowHostNode::NamedBunIsReadUnderKeysNobodyKnows))) {
+                for (BuiltinID member : m_builtins.membersOf(m_universe.builtinOf(holder)))
+                    readMember(member, ModuleID(), result, getters);
+                return;
+            }
+            // On a Bun that nothing in the program names it may be a name that has escaped.
             ClimbingSet names(m_tables.keysOfMembersOfBun());
             if (isBun && !key.namesEnumerableProperty && !m_context.isNativeWalk() && holdsAnything(m_context.membersMissingFrom(ValueFlowProgramNodes::escaped(), names))) {
                 m_context.forEachMember(escapedAmong(names), [&](ValueFlowObjectID name) {

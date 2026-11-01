@@ -2167,8 +2167,10 @@ private:
             ValueSetID objectsOfProgram = m_context.maker().intersect(m_context.maker().intersect(m_universe.objects(), everythingButUnknownObject(m_context)), ValueSets::complement(m_universe.builtinObjects()));
             ClimbingSet holders = valueAt(*place.operand);
             forEachOperandAt(*place.operand, [&](const ValueFlowOperand& operand) {
-                if (holdsNamedOrLoadedBun(operand))
+                if (holdsNamedOrLoadedBun(operand)) {
                     constant = m_context.maker().unite(constant, m_context.maker().of(ValueFlowUniverse::markOfLoadedBun()));
+                    raiseHostFlag(m_context, ValueFlowHostNode::NamedBunIsReadUnderKeysNobodyKnows);
+                }
             });
             if (mayBeUnknownObject(holders)) {
                 forEachOperandAt(*place.operand, [&](const ValueFlowOperand& operand) {

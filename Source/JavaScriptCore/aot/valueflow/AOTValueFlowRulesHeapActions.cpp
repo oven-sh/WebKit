@@ -131,6 +131,7 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
     if (holdsNamedOrLoadedBun(source)) {
         for (ValueFlowNodeID node : nodesTakingCopies)
             add(node, only(ValueFlowUniverse::markOfLoadedBun()));
+        raiseHostFlag(m_context, ValueFlowHostNode::NamedBunIsReadUnderKeysNobodyKnows);
     }
     ClimbingSet hostObjects = m_context.unite(m_context.restrict(sources, m_tables.holdersOfMembersThatHostMakes()), hostObjectsListedBesideUnknownObject(source, sources));
     if (holdsAnything(hostObjects)) {
