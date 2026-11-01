@@ -17,6 +17,7 @@
 #include "AOTRuleSupport.h"
 #include "AOTSelectionContext.h"
 #include "AOTSlotPlan.h"
+#include "AOTStatistics.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <optional>
@@ -74,10 +75,6 @@ static std::optional<SelectedMethodCall> matchMethodCall(SelectionContext& conte
     ValueID read = call.calleeOperand();
     if (!isUntypedMethodRead(context, read, key))
         return std::nullopt;
-    // CallMethod has the effects of unknown code and names no callee. Unknown code enters accessors, callbacks and what the host calls: not a function that only calls by value reach.
-    if (!hasOnlyEffectsOfUnknownCode(context, id) && !context.build().isSabotaged(Sabotage::FusedCallsEnterOnlyUnknownCode))
-        return std::nullopt;
-
     if (!isOrdinaryKey(context.program(), key) || !context.slots().hasColumn(key))
         return std::nullopt;
     if (isOwnedByReturnCall(context, id) || givesUpFrameWithKeptCallee(context.program(), function, call))
@@ -118,6 +115,7 @@ void selectMethodCall(SelectionContext& context)
 {
     std::optional<FramePointers> framePointers;
     Vector<SelectedMethodCall> matches;
+    unsigned numberNotFused = 0;
     for (ValueID id : context.candidates(Opcode::Call)) {
         std::optional<SelectedMethodCall> match = matchMethodCall(context, id);
         if (!match)
@@ -126,9 +124,16 @@ void selectMethodCall(SelectionContext& context)
             framePointers.emplace(context.program(), context.function());
         if (passesFramePointer(*framePointers, context.function().at(id)))
             continue;
+        // CallMethod has the effects of unknown code and names no callee. Unknown code enters accessors, callbacks and what the host calls: not a function that only calls by value reach.
+        if (!hasOnlyEffectsOfUnknownCode(context, id) && !context.build().isSabotaged(Sabotage::FusedCallsEnterOnlyUnknownCode)) {
+            ++numberNotFused;
+            continue;
+        }
         if (context.tryClaim(SelectionRuleID::MethodCall, match->group) == ClaimResult::Claimed)
             matches.append(WTF::move(*match));
     }
+    if (numberNotFused)
+        context.build().statistics().count(StatisticID::MethodCallsNotFused, numberNotFused);
 
     context.rewriteGroups(SelectionRuleID::MethodCall, matches, [](GroupRewriter& rewriter, const SelectedMethodCall& match) {
         rewriteMethodCall(rewriter, match);
