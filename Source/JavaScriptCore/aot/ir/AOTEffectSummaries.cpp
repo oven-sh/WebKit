@@ -782,7 +782,7 @@ EffectSummaries computeEffectSummaries(const Program& program, const FlowResults
     return summaries;
 }
 
-static EffectSummaries computeEffectSummariesByOperandTypes(const Program& program, const FlowResults& flow, BuildContext& build, const EffectSummaries* rowsOfBodies)
+static EffectSummaries computeEffectSummariesByOperandTypes(const Program& program, const FlowResults& flow, BuildContext& build, const EffectSummaries* rowsOfBodies, std::span<const FunctionID> roots, BitVector& bodiesBelowRoots)
 {
     BodySummaries nothingKept;
     EffectSummaries summaries;
@@ -791,16 +791,19 @@ static EffectSummaries computeEffectSummariesByOperandTypes(const Program& progr
     summarizer.readCalleesByOperandTypes();
     if (rowsOfBodies)
         summarizer.takeRowsOfBodiesFrom(*rowsOfBodies);
+    if (!roots.empty())
+        summarizer.readOnlyBodiesBelow(roots, bodiesBelowRoots);
     summarizer.update(summaries);
     return summaries;
 }
 
-EffectSummaries computeEffectSummariesByOperandTypes(const Program& program, const FlowResults& flow, BuildContext& build)
+EffectSummaries computeEffectSummariesByOperandTypes(const Program& program, const FlowResults& flow, BuildContext& build, std::span<const FunctionID> roots)
 {
     // The seed says nothing of a function that was made after flow analysis, and a call of one may stand where operations of the caller's own body stood.
     // So a body that hands a parameter on to it seems to use the parameter in every way. The second reading knows what the first found in that function's body.
-    EffectSummaries first = computeEffectSummariesByOperandTypes(program, flow, build, nullptr);
-    return computeEffectSummariesByOperandTypes(program, flow, build, &first);
+    BitVector bodiesBelowRoots;
+    EffectSummaries first = computeEffectSummariesByOperandTypes(program, flow, build, nullptr, roots, bodiesBelowRoots);
+    return computeEffectSummariesByOperandTypes(program, flow, build, &first, roots, bodiesBelowRoots);
 }
 
 void updateEffectSummaries(const Program& program, const FlowResults& flow, BuildContext& build, BodySummaries& kept, EffectSummaries& summaries, BodyReferences* references)

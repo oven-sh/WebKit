@@ -273,6 +273,9 @@ uint64_t parametersWhoseContentsAreCalled(const Program&, FunctionID, const Borr
 ExitReachability computeExitReachability(const Function&);
 enum class CalleesAreRead : uint8_t { AsTheyAre, ByOperandTypes };
 BodySummary summarizeBodyLocally(const EffectContext&, FunctionID, FunctionAnalyses&, BodyReferenceCollector* = nullptr, CalleesAreRead = CalleesAreRead::AsTheyAre);
+BodySummary summarizeAsUnknownCode(FunctionID, const Function&);
+// What a reading of the body may ask a row of.
+Vector<FunctionID> functionsNamedIn(const Program&, const Function&);
 FunctionSummary createFunctionSummary(Effects onReturn, Effects onThrow, Vector<ParameterSummary>&&, UnknownCodeWitness);
 
 FunctionSummary createSummaryFromFlow(const Program&, const FlowResults&, const BorrowedParameters&, BuildContext&, FunctionID);
@@ -288,6 +291,13 @@ public:
     void readCalleesByOperandTypes() { m_calleesAreRead = CalleesAreRead::ByOperandTypes; }
     // Only from scratch. Where these say that a body uses a parameter in fewer ways than the seed does, a caller that hands it an operand reads what the body does.
     void takeRowsOfBodiesFrom(const EffectSummaries& summaries) { m_rowsOfBodies = &summaries; }
+    // Only from scratch. Reads the bodies that the roots can reach by the functions that each body names, and takes every other function for unknown code.
+    // `bodies` is empty, and is filled with what was found, or comes from an earlier reading.
+    void readOnlyBodiesBelow(std::span<const FunctionID> roots, BitVector& bodies)
+    {
+        m_rootsOfBodiesToRead = roots;
+        m_bodiesToRead = &bodies;
+    }
     void giveReferencesTo(BodyReferences* references) { m_references = references; }
     void update(EffectSummaries&);
     void bringSeedUpToDate(EffectSummaries&);
@@ -346,6 +356,8 @@ private:
     bool m_isOnlyCheck { false };
     CalleesAreRead m_calleesAreRead { CalleesAreRead::AsTheyAre };
     const EffectSummaries* m_rowsOfBodies { nullptr };
+    std::span<const FunctionID> m_rootsOfBodiesToRead;
+    BitVector* m_bodiesToRead { nullptr };
     BodyReferences* m_references { nullptr };
     unsigned m_numberOfFunctionsBefore { 0 };
     Vector<uint8_t> m_recordLooksDifferent;

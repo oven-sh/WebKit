@@ -264,10 +264,6 @@ void ProgramVerifier::recheckUnavailableGuards(Vector<InternalError>& errors)
     };
     if (!m_inputs.effects || m_inputs.effects->isEmpty() || !std::ranges::any_of(errors, isAboutGuard))
         return;
-    FlowResults noResults;
-    EffectSummaries summaries = computeEffectSummariesByOperandTypes(m_program, m_inputs.flow ? *m_inputs.flow : noResults, m_build);
-    VerifierInputs inputs = m_inputs;
-    inputs.effects = &summaries;
     Vector<FunctionID> functions;
     for (const InternalError& error : errors) {
         if (isAboutGuard(error) && !functions.contains(error.function))
@@ -276,8 +272,21 @@ void ProgramVerifier::recheckUnavailableGuards(Vector<InternalError>& errors)
     errors.removeAllMatching([&](const InternalError& error) {
         return functions.contains(error.function);
     });
-    for (FunctionID id : functions)
-        errors.appendVector(findErrorsInFunction(m_program, id, m_program.at(id), m_form, m_build, inputs));
+    FlowResults noResults;
+    auto findErrorsBy = [&](const EffectSummaries& summaries) {
+        VerifierInputs inputs = m_inputs;
+        inputs.effects = &summaries;
+        Vector<InternalError> found;
+        for (FunctionID id : functions)
+            found.appendVector(findErrorsInFunction(m_program, id, m_program.at(id), m_form, m_build, inputs));
+        return found;
+    };
+    const FlowResults& flow = m_inputs.flow ? *m_inputs.flow : noResults;
+    // Unknown code does whatever the functions do that it stands for, so what passes here passes by the summaries of the whole program.
+    Vector<InternalError> found = findErrorsBy(computeEffectSummariesByOperandTypes(m_program, flow, m_build, functions.span()));
+    if (!found.isEmpty())
+        found = findErrorsBy(computeEffectSummariesByOperandTypes(m_program, flow, m_build));
+    errors.appendVector(WTF::move(found));
 }
 
 void ProgramVerifier::verifyFunctionBodies()

@@ -532,6 +532,8 @@ void EffectSummarizer::summarizeBodies()
 
     auto summarize = [&](const EffectSummaries& seed, unsigned index, BodyReferenceCollector* references = nullptr) {
         FunctionID id(index);
+        if (m_bodiesToRead && !m_bodiesToRead->quickGet(index))
+            return summarizeAsUnknownCode(id, m_program.functions[index]);
         EffectContext context { m_program, seed };
         std::unique_ptr<FunctionAnalyses> analyses = createAnalysesForSummary(m_build, context, m_flow, id, m_program.functions[index]);
         return summarizeBodyLocally(context, id, *analyses, references, m_calleesAreRead);
@@ -601,6 +603,28 @@ void EffectSummarizer::summarizeBodies()
     };
 
     const EffectSummaries& seed = m_kept.m_seed.read();
+    if (m_bodiesToRead && m_bodiesToRead->isEmpty()) {
+        RELEASE_ASSERT(!m_numberOfFunctionsBefore);
+        m_bodiesToRead->ensureSize(numberOfFunctions);
+        Vector<uint32_t> frontier;
+        auto add = [&](FunctionID function) {
+            if (!m_bodiesToRead->quickSet(function.index()))
+                frontier.append(function.index());
+        };
+        for (FunctionID root : m_rootsOfBodiesToRead)
+            add(root);
+        while (!frontier.isEmpty()) {
+            Vector<Vector<FunctionID>> named(frontier.size());
+            forEachIndexInParallel(loops, frontier.size(), [&](unsigned position) {
+                named[position] = functionsNamedIn(m_program, m_program.functions[frontier[position]]);
+            });
+            frontier.shrink(0);
+            for (const Vector<FunctionID>& functions : named) {
+                for (FunctionID function : functions)
+                    add(function);
+            }
+        }
+    }
     // The seed may be lent to an analysis that runs meanwhile, so the rows that bodies replace are rows of a copy.
     std::optional<EffectSummaries> seedWithRowsOfBodies;
     auto summarizeBodiesOf = [&](Turn turn) {
