@@ -819,6 +819,16 @@ static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const V
                             if (mayChangeMember)
                                 notes.writes.append({ holder, key, { }, witness });
                         });
+                        // `Object.assign(Response.prototype, makeMixin())`: a holder that takes no other names refuses what the objects have and it lacks.
+                        if (!builtins.at(holder).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::IsClosedToOtherNames }))
+                            continue;
+                        heap.index().forEachNameWritten([&](ValueFlowName name) {
+                            if (name.kind != ValueFlowNameKind::Property || heap.writtenUnder(notes.maker, sources, name) == ValueSets::nothing)
+                                return;
+                            PropertyKeyID key(name.payload);
+                            if (!findOwnMember(program, holder, key) && isLockedLocation(program, holder, key))
+                                notes.writes.append({ holder, key, { }, witness });
+                        });
                     }
                     continue;
                 }
@@ -1376,6 +1386,13 @@ static void collectWhatTestsReplace(const ValueFlowResultInputs& inputs, ValueFl
                         if (builtins.canBeReplacedInTestRuns(member))
                             writes.append({ member, { }, { } });
                     });
+                });
+                // `Object.assign(Response.prototype, makeMixin())`: what the objects have and the holder lacks is added.
+                if (ValueSets::isComplement(sources) || sets.meet(sources, universe.objectsThatMayBeAnything()))
+                    continue;
+                heap.index().forEachNameWritten([&](ValueFlowName name) {
+                    if (name.kind == ValueFlowNameKind::Property && heap.writtenUnder(heap.maker(), sources, name) != ValueSets::nothing)
+                        note(heap.maker(), receivers, PropertyKeyID(name.payload), writes);
                 });
             }
         }
