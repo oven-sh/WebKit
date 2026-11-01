@@ -1888,6 +1888,8 @@ static ListsLeftAlone findListsTheLoopLeavesAlone(FunctionPassContext& context, 
         writtenLists.append({ writers[first].list, isHeldByNobodyElse(writers.span().subspan(first, end - first)) });
     }
     auto isLeftAlone = [&](ValueID measured) {
+        if (context.build.isSabotaged(Sabotage::ListsWrittenInLoopsAreLeftAlone))
+            return true;
         return std::ranges::all_of(writtenLists, [&](const WrittenList& written) {
             if (!escape.mayAlias(written.list, measured))
                 return true;
@@ -1902,6 +1904,7 @@ static ListsLeftAlone findListsTheLoopLeavesAlone(FunctionPassContext& context, 
         bool isMeasuredInLoop = std::ranges::any_of(readersOfList, [&](const Reader& reader) { return isLengthRead.get(reader.id.index()); });
         if ((isMeasuredInLoop && std::ranges::binary_search(listsReadOtherwise, readers[first].list)) || !isLeftAlone(readers[first].list))
             continue;
+        context.build.statistics().count(StatisticID::ListsLeftAloneByLoops, 1);
         if (isMeasuredInLoop)
             found.listsMeasuredInLoop.append(readers[first].list);
         for (const Reader& reader : readersOfList) {
@@ -1965,6 +1968,8 @@ static unsigned tellTestsLengthInFrontOfLoop(FunctionPassContext& context, const
         function.edit(test).setLengthOperands(std::span(&lengths[index].id, 1));
         ++numberOfTestsTold;
     }
+    if (numberOfTestsTold)
+        context.build.statistics().count(StatisticID::TestsToldLengthAheadOfLoop, numberOfTestsTold);
     return numberOfTestsTold;
 }
 
