@@ -295,6 +295,8 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
         entryToBeginAt = m_function.at(entryToBeginAt).valueOperand();
     const Value& origin = m_function.at(entryToBeginAt);
     const bool mayBeFirstStep = (origin.opcode == Opcode::Integer && !origin.integer()) || origin.opcode == Opcode::GetInternalField;
+    if (mayBeFirstStep)
+        build().statistics().count(StatisticID::StepsThatKnowTheDeletedPrefix);
     LValue entryIndex = reader.firstAliveEntry(mayBeFirstStep ? std::optional { owner } : std::nullopt, start.value(), used, hasNoEntry, [&](LValue candidate) { return reader.isAliveAt(keyWidth, column, candidate); });
     std::optional<Boxed> key;
     LValue values = nullptr;
