@@ -1983,11 +1983,6 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
     if (endedMock) {
         if (std::optional<MomentMockWasLaid> laid = m_momentsStandingMocksWereLaid.takeOptional(fileOrModule))
             keepEndedMock(fileOrModule, endedMock, *laid);
-        // Whoever holds the object that was made under the mock keeps the mock.
-        for (ModuleID each : { fileOrModule, module }) {
-            if (auto* object = dynamicDowncast<ModuleNamespace>(namespaceIfCreated(each, ModulePhase::Evaluation)))
-                object->setMockOfView(*m_instance.vm, endedMock);
-        }
     }
     // Compiled code that imports a name of the module looks here first.
     if (std::optional<SlotData> word = m_table.wordOfMock(fileOrModule))
