@@ -2745,12 +2745,14 @@ void Modules::evaluateModulesOwedBelow(ModuleID root)
     if (vm.aotState().hasSeveralImages) [[unlikely]] {
         for (Instance* instance = m_instance.globalObject->aotInstance(); instance && instance != &m_instance; instance = instance->above) {
             Modules* modules = instance->state ? instance->state->modules.get() : nullptr;
-            isOwedInImageBelow |= modules && !modules->m_modulesOwedToImportersThatRan.isEmpty();
+            isOwedInImageBelow |= modules && !(modules->m_modulesOwedToImportersThatRan.isEmpty() && modules->m_modulesWithMockToLetGo.isEmpty());
         }
     }
-    if (m_modulesOwedToImportersThatRan.isEmpty() && !isOwedInImageBelow) [[likely]]
+    if (m_modulesOwedToImportersThatRan.isEmpty() && m_modulesWithMockToLetGo.isEmpty() && !isOwedInImageBelow) [[likely]]
         return;
     auto scope = DECLARE_THROW_SCOPE(vm);
+    letGoOfMockThatEnded(root);
+    RETURN_IF_EXCEPTION(scope, void());
     BitVector isSeen(m_table.size());
     Vector<ModuleID, 16> toVisit { root };
     Vector<ModuleID, 4> owed;
@@ -2770,6 +2772,8 @@ void Modules::evaluateModulesOwedBelow(ModuleID root)
             if (request.isDeferred)
                 continue;
             toVisit.append(request.targetModule());
+            letGoOfMockThatEnded(request.targetModule());
+            RETURN_IF_EXCEPTION(scope, void());
             if (hasRun && m_modulesOwedToImportersThatRan.get(request.target()))
                 owed.append(request.targetModule());
         }

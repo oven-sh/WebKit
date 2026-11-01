@@ -273,6 +273,8 @@ JS_EXPORT_PRIVATE void didChangePlugins(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool setMock(JSGlobalObject*, ModuleID, JSObject* mock, JSValue whatRequireAnswers);
 // A later mock of such a module takes the place of the earlier one.
 JS_EXPORT_PRIVATE bool hasMockInPlace(JSGlobalObject*, ModuleID);
+// didEndMock() leaves a mock that stands in place of an ES module to whoever was linked against it, until a load comes to the module. The test file ends: nobody reads it any more.
+JS_EXPORT_PRIVATE void letGoOfMocksThatEnded(JSGlobalObject*);
 // The `mock` that the namespace object of a compiled module asks now. Null: no mock stands in place of its module, or the cell is no such object.
 JS_EXPORT_PRIVATE JSObject* mockInPlaceBehind(JSCell* moduleNamespace);
 // The build has seen that a mock may name the module, and its importers look for one. No mock stands in place of any other module: setMock() is not for it.

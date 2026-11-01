@@ -1123,6 +1123,8 @@ bool Modules::tryReplaceExportOfUncompiledModule(ModuleID external, UniquedStrin
 
 bool Modules::hasBegunToLoad(ModuleID module) const
 {
+    if (hasMockThatEnded(module)) [[unlikely]]
+        return false;
     ModuleStatus current = status(module);
     // The code of a CommonJS file that may be mocked reads its stored status first: deferMock() has that send it to the run time.
     if (data(module).kind == ModuleKind::CommonJs)
@@ -1573,9 +1575,15 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     if (data(fileOrModule).isOfLibrary() || !m_table.hasFilePath(fileOrModule))
         RELEASE_AND_RETURN(scope, setMockInPlaceOfLibraryModule(fileOrModule, mock, whatRequireAnswers));
+    // The next mock is laid as over a module that nothing stands in place of.
+    if (mock && hasMockThatEnded(fileOrModule)) [[unlikely]] {
+        setMockInPlace(fileOrModule, nullptr, { });
+        RETURN_IF_EXCEPTION(scope, false);
+    }
     ModuleID module = moduleWithExportsOf(fileOrModule);
     bool isFile = data(fileOrModule).kind == ModuleKind::CommonJs;
     bool stoodInPlace = !!mockInPlace(fileOrModule);
+    m_modulesWithMockToLetGo.clear(fileOrModule.index());
     if (!mock && !stoodInPlace)
         return false;
     takeNamesOfMockInPlace(module, mock);
@@ -1634,8 +1642,81 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
     return true;
 }
 
+// The loader has asked for a module and has yet to run it.
+bool Modules::isLoaderInMiddleOfGraph() const
+{
+    for (auto& entry : loader()->moduleMap().values()) {
+        switch (entry->status()) {
+        case ModuleRegistryEntry::Status::New:
+        case ModuleRegistryEntry::Status::Fetching:
+            return true;
+        case ModuleRegistryEntry::Status::Fetched:
+            if (auto* record = dynamicDowncast<CyclicModuleRecord>(entry->record()); record && record->status() != CyclicModuleRecord::Status::Evaluated)
+                return true;
+            break;
+        case ModuleRegistryEntry::Status::FetchFailed:
+        case ModuleRegistryEntry::Status::InstantiationFailed:
+        case ModuleRegistryEntry::Status::EvaluationFailed:
+            break;
+        }
+    }
+    return false;
+}
+
+// Compiled code that requires a module again reads the status of that module and asks nobody where it has run: no load would come by.
+bool Modules::isImportedByModuleThatRequireAnswered(ModuleID imported) const
+{
+    for (uint32_t index = 0; index < m_table.size(); ++index) {
+        const LoadedModule* loaded = loadedIfExists(ModuleID(index));
+        if (!loaded || !loaded->requiredValue || index == imported.index())
+            continue;
+        BitVector seen(m_table.size());
+        Vector<ModuleID, 16> work { ModuleID(index) };
+        while (!work.isEmpty()) {
+            for (const ModuleRequestData& request : m_table.imports(work.takeLast())) {
+                if (request.targetModule() == imported)
+                    return true;
+                if (!seen.quickSet(request.target()))
+                    work.append(request.targetModule());
+            }
+        }
+    }
+    return false;
+}
+
+// Compiled code calls the body of a CommonJS file by itself once the status says so, and asks nobody.
+void Modules::letGoOfMockAtNextLoad(ModuleID module)
+{
+    // A graph that is being loaded holds the record of the module, and goes on by what the table says of the module.
+    if (!data(module).isESModuleOfProgram() || data(module).isFaceOfFile() || isAnythingBeingLoaded() || isLoaderInMiddleOfGraph() || isImportedByModuleThatRequireAnswered(module)) {
+        setMockInPlace(module, nullptr, { });
+        return;
+    }
+    m_modulesWithMockToLetGo.set(module.index());
+    // The loader asks for the module anew, and so comes by.
+    if (ModuleRecord* record = recordIfExists(module); record && record->hasLiveExports())
+        loader()->removeEntryOfRecord(record);
+}
+
+void Modules::letGoOfMockThatEnded(ModuleID module)
+{
+    if (!hasMockThatEnded(module)) [[likely]]
+        return;
+    // Nothing is asked of a mock that is taken away.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_instance.vm);
+    setMockInPlace(module, nullptr, { });
+    scope.assertNoExceptionExceptTermination();
+}
+
+void Modules::letGoOfMocksThatEnded()
+{
+    while (!m_modulesWithMockToLetGo.isEmpty())
+        letGoOfMockThatEnded(ModuleID(*m_modulesWithMockToLetGo.begin()));
+}
+
 void Modules::deferMock(ModuleID module, AfterFailure afterFailure)
 {
+    letGoOfMockThatEnded(module);
     m_modulesWithMockToRun.set(module.index());
     m_modulesWithMockThatAsksAgain.set(module.index(), afterFailure == AfterFailure::AsksAgain);
     dropErrorsOfLoadsEndedByMockOf(module);
@@ -1812,7 +1893,7 @@ void Modules::runMocksBelow(ModuleID root, RootOfLoad rootOfLoad)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!m_modulesOwedToImportersThatRan.isEmpty() || vm.aotState().hasSeveralImages) [[unlikely]] {
+    if (!m_modulesOwedToImportersThatRan.isEmpty() || !m_modulesWithMockToLetGo.isEmpty() || vm.aotState().hasSeveralImages) [[unlikely]] {
         evaluateModulesOwedBelow(root);
         RETURN_IF_EXCEPTION(scope, void());
     }
@@ -5363,6 +5444,8 @@ AbstractModuleRecord* moduleRecord(JSGlobalObject* realm, ModuleID moduleOfHost)
     if (!modules)
         return nullptr;
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    modules->letGoOfMockThatEnded(module);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     // An import() of an image above has asked the loader, which asks for the module inside that call. What this runs of the library `bun run` runs from a job, as in askLoaderForImport().
     // A mark further in than the import() is the one that was set here for it.
     VMState& state = realm->vm().aotState();
@@ -5598,7 +5681,15 @@ bool hasMockInPlace(JSGlobalObject* realm, ModuleID moduleOfHost)
 {
     ModuleFromHost module(realm, moduleOfHost);
     Modules* modules = modulesOf(realm);
-    return modules && modules->mockInPlace(module);
+    return modules && modules->mockInPlace(module) && !modules->hasMockThatEnded(module);
+}
+
+void letGoOfMocksThatEnded(JSGlobalObject* realm)
+{
+    Instance::forEachOf(realm, [](Instance& instance) {
+        if (Modules* modules = instance.state ? instance.state->modules.get() : nullptr)
+            modules->letGoOfMocksThatEnded();
+    });
 }
 
 bool hasWordOfMock(JSGlobalObject* realm, ModuleID moduleOfHost)
@@ -5667,7 +5758,7 @@ void didEndMock(JSGlobalObject* realm, ModuleID moduleOfHost)
     // Nothing of a module that a mock stood in place of was filled or laid over.
     bool stoodInPlace = modules->mockInPlace(module);
     if (stoodInPlace) {
-        modules->setMockInPlace(module, nullptr, { });
+        modules->letGoOfMockAtNextLoad(module);
         RETURN_IF_EXCEPTION(scope, void());
     }
     modules->forgetMockThatWaits(module);

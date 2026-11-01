@@ -178,6 +178,10 @@ public:
         return loaded ? loaded->mockInPlace.get() : nullptr;
     }
     bool setMockInPlace(ModuleID, JSObject* mock, JSValue whatRequireAnswers);
+    void letGoOfMockAtNextLoad(ModuleID);
+    void letGoOfMockThatEnded(ModuleID);
+    void letGoOfMocksThatEnded();
+    bool hasMockThatEnded(ModuleID module) const { return m_modulesWithMockToLetGo.get(module.index()); }
     bool setMockInPlaceOfLibraryModule(ModuleID, JSObject* mock, JSValue whatRequireAnswers);
     void takeNamesOfMockInPlace(ModuleID, JSObject* mock);
     void letRecordAnswerByMock(ModuleRecord*, JSObject* mock);
@@ -779,6 +783,8 @@ private:
     bool loaderOnlyHandsOverNamespace(ModuleID) const;
     JSPromise* askLoaderForImport(ModuleID, std::optional<int64_t> referrerAsyncOrder, JSPromise* resultPromise = nullptr);
     bool isAnythingBeingLoaded() const;
+    bool isLoaderInMiddleOfGraph() const;
+    bool isImportedByModuleThatRequireAnswered(ModuleID) const;
     bool canCountJobsOfImport(ModuleID root);
     bool hasImportedFileLeftToRun(ModuleID root) const;
     std::optional<int64_t> asyncEvaluationOrder(ModuleID) const;
@@ -920,6 +926,8 @@ private:
     BitVector m_modulesWithMockThatWaited;
     // A mock stood in place of the module while its importers ran, and has ended. They read the names of the module itself now, whose body has yet to run.
     BitVector m_modulesOwedToImportersThatRan;
+    // The host has ended the mock that stands in place of the module. Whoever was linked against the mock goes on reading it, as under `bun test`, until a load comes to the module.
+    BitVector m_modulesWithMockToLetGo;
     BitVector m_modulesLoadedBeforeMockThatWaited;
     Vector<ModuleID> m_libraryModulesInRequireCache;
     BitVector m_libraryModulesTakenFromLoader;
@@ -1243,7 +1251,7 @@ ALWAYS_INLINE auto Modules::loadedIfExists(ModuleID module) const -> LoadedModul
 // A step that is added to answerRequire() and can do something in that state needs its test here.
 ALWAYS_INLINE JSValue Modules::settledAnswerOfRequire(ModuleID target, RequiredBy requiredBy) const
 {
-    if (requiredBy != RequiredBy::Referrer || !m_modulesWithMockToRun.isEmpty() || !m_evictedFiles.isEmpty() || m_otherImageHasEvictedFiles)
+    if (requiredBy != RequiredBy::Referrer || !m_modulesWithMockToRun.isEmpty() || !m_modulesWithMockToLetGo.isEmpty() || !m_evictedFiles.isEmpty() || m_otherImageHasEvictedFiles)
         return { };
     const LoadedModule* loaded = loadedIfExists(target);
     if (!loaded || !loaded->requiredValue || loaded->isBeingRequired || loaded->objectMadeByRequire || storedStatus(target) != StoredModuleStatus::Evaluated || data(target).isOfLibrary())
