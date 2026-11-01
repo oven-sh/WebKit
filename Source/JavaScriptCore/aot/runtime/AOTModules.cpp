@@ -4075,8 +4075,9 @@ void Modules::holdText(JSPromise* promise, ModuleID module, JSCell* requestedRec
             levelsAddedToPlace = countLevelsBelowRoot(module, comesToEarlierCall);
             // What it shares with them comes no sooner for it than for them.
             for (const TextThatWaits& text : waiting) {
-                if (comesToEarlierCall && text.waitsApart)
-                    levelsAddedToPlace = std::max<uint32_t>(levelsAddedToPlace, (text.place >> 33) - state.turnOfTexts);
+                uint64_t turn = text.place >> 33;
+                if (comesToEarlierCall && text.waitsApart && turn > state.turnOfTexts)
+                    levelsAddedToPlace = std::max<uint32_t>(levelsAddedToPlace, turn - state.turnOfTexts);
             }
             place += static_cast<uint64_t>(levelsAddedToPlace) << 33;
         }
