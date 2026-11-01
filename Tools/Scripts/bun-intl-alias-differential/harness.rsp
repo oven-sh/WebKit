@@ -1,0 +1,13 @@
+obj/vendor/WebKit/Source/JavaScriptCore/tools/JSDollarVMShell.cpp.o
+obj/deps/WebKit/programs/jsc/AOTShell.cpp.o
+obj/deps/WebKit/programs/jsc/AOTNoFeatureRemoved.cpp.o
+obj/deps/WebKit/programs/jsc/OutOfMemory.cpp.o
+obj/deps/WebKit/programs/jsc/ZstdDecoder.c.o
+obj/codegen/AOTBuiltinTableAttachments.cpp.o
+obj/codegen/AOTBuiltinTableBuiltins.cpp.o
+obj/codegen/AOTBuiltinTableNames.cpp.o
+obj/codegen/AOTBuiltinTableOverloads.cpp.o
+obj/codegen/AOTBuiltinTableTypes.cpp.o
+../../../../root/.bun/build-cache/webkit-4d45755fed4aeef1-debug-asan-aot/lib/libicui18n.a
+../../../../root/.bun/build-cache/webkit-4d45755fed4aeef1-debug-asan-aot/lib/libicuuc.a
+../../../../root/.bun/build-cache/webkit-4d45755fed4aeef1-debug-asan-aot/lib/libicudata.a
