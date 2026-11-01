@@ -639,12 +639,14 @@ void PassRunner::endProgramPass(PassID id, const Program& program, PassTimer tim
         for (const Function& function : program.functions)
             function.setListenerForOperationsThatGo(nullptr);
         EffectSummaries noSummaries;
-        // The program is not the runner's to edit: the sabotage shows the check a copy of the first body that has such an operation, without it.
+        // The program is not the runner's to edit: the sabotage shows the check a copy of a body that has such an operation, without it.
+        // What goes from one body may be what the pass answers for, so body after body loses one until the check has a word for it.
         OpcodeSet dropped = operationsThatSabotageDrops(m_build);
-        std::optional<Function> sabotaged;
+        bool sabotageWasReported = false;
         for (size_t index = 0; index < count && (outcome == PassOutcome::Changed || !dropped.isEmpty()); ++index) {
             const Function* after = &program.functions[index];
-            if (!dropped.isEmpty() && !sabotaged && after->hasBody()) [[unlikely]] {
+            std::optional<Function> sabotaged;
+            if (!dropped.isEmpty() && !sabotageWasReported && after->hasBody()) [[unlikely]] {
                 Function copy = *after;
                 FunctionAnalyses analyses(AnalysisContext { m_build, program, nullptr, nullptr, FunctionID(index) }, copy);
                 if (dropOperationThatNobodyReads(copy, analyses, dropped) == PassOutcome::Changed)
@@ -653,6 +655,7 @@ void PassRunner::endProgramPass(PassID id, const Program& program, PassTimer tim
             String problem = wasMovedUnannounced.quickGet(index) ? String("its body was moved into another function, and the listener with it, and the pass did not say so: the function went unwatched"_s) : findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ program, noSummaries }, timer.bodiesBefore->functions[index], *after, timer.bodiesBefore->reasons[index]));
             if (problem.isNull())
                 continue;
+            sabotageWasReported |= !!sabotaged;
             InternalError failure = InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = findFunctionAsRead(&program, FunctionID(index)), .pass = id, .detail = problem };
             if (keepFailedVerification(failure, failure.kind))
                 continue;
