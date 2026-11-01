@@ -491,7 +491,7 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::RemoveRedundantHandlers, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
     { PassID::ResolveAccesses, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, accessesToResolve },
     { PassID::ResolveAwaitedCalls, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::AwaitBySavingFrame, Opcode::CallBuiltin, Opcode::CallDirect } },
-    { PassID::ResolveBuiltins, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::ResolveBuiltins, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, operationsResolvedToBuiltins },
     { PassID::ResolveCalls, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
     { PassID::SeparateUnlikelyLoopPaths, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::SplitBehindEntryChecks, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
