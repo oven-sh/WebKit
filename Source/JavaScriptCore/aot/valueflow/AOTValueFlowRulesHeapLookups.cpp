@@ -1883,6 +1883,9 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
             bool holdsMembers = kind == BuiltinKind::Constructor || kind == BuiltinKind::Prototype || kind == BuiltinKind::Namespace;
             if (key.keyClass == HeapKeyClass::Name && !holdsMembers) {
                 readMember(member, module, result, builtinGetters);
+                bool isWrittenInLibrary = std::ranges::any_of(m_builtins.overloadsOf(member), [](const BuiltinOverload& overload) { return !!overload.libraryFunction(); });
+                if (isWrittenInLibrary && m_builtins.at(member).origin == BuiltinOrigin::Host)
+                    add(m_context.nodes().ofHost(ValueFlowHostNode::FunctionsOfHostTakenFromKnownHolders), only(objectOfMember(member, module)));
                 return;
             }
             if (!isObjectKind(m_builtins.at(member).kind)) {
