@@ -13,6 +13,8 @@
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImageOfCellScope.h"
 #include "AOTInstance.h"
+#include "AOTModuleTable.h"
+#include "AOTModules.h"
 #include "AOTObject.h"
 #include "AOTObjectBuilder.h"
 #include "AOTObjectBuilderInlines.h"
@@ -20,6 +22,7 @@
 #include "AOTObjectModelCaches.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTPropertyCachesKeys.h"
+#include "AOTRealmStartup.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTState.h"
 #include "AOTVector.h"
@@ -35,15 +38,43 @@
 #include <bit>
 #include <wtf/DataLog.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
+// A test run says at its end which files of the program it did not test as compiled code.
+static void tellThatFileOfImageRunsFromSource(VM& vm, CodeBlock* codeBlock)
+{
+    String url = codeBlock->source().provider()->sourceURL();
+    JSGlobalObject* realm = codeBlock->globalObject();
+    for (VMState::PartsOfImage& parts : vm.aotState().parts) {
+        ModuleTable table(parts.image->programTables());
+        std::optional<ModuleID> found = table.findByPath(url);
+        if (!found)
+            continue;
+        Modules* modules = nullptr;
+        for (Instance* instance = realm->aotInstance(); instance; instance = instance->above) {
+            if (instance->program == parts.image && instance->state)
+                modules = instance->state->modules.get();
+        }
+        ModuleID file = table.fileBehindFace(*found).value_or(*found);
+        ASCIILiteral why = "a separate loader imported it, such as a Bun.ModuleGraph"_s;
+        if (modules && modules->isEvicted(file))
+            why = "it was loaded again after resetModules() or a delete from require.cache"_s;
+        else if (modules && modules->isLeftToHost(file))
+            why = "it imports a file that was loaded again"_s;
+        return tellRefusedChangeListener(realm, makeString("Ran from source '"_s, url, "': "_s, why));
+    }
+}
+
 void willRunInInterpreter(CodeBlock* codeBlock)
 {
     VM& vm = codeBlock->vm();
     count(vm, counterFor(codeBlock->codeType()));
+    if (codeBlock->codeType() == ModuleCode || codeBlock->codeType() == GlobalCode) [[unlikely]]
+        tellThatFileOfImageRunsFromSource(vm, codeBlock);
 
     if (!Options::crashIfInterpreterIsUsed()) [[likely]]
         return;
