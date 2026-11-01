@@ -1107,6 +1107,85 @@ static ArrayStorage storageHolding(FunctionPassContext& context, const Value& al
     return kind;
 }
 
+// The kind of storage that an operation names is read by the rule that a store leaves storage as it was tested: a store that leaves one kind alone takes an array out of another.
+// So whoever gives operations another kind asks anew whether each of them still finds its proof where it stands, and takes the change back where one does not.
+class ChangeOfStorageKind {
+    WTF_MAKE_NONCOPYABLE(ChangeOfStorageKind);
+public:
+    explicit ChangeOfStorageKind(FunctionPassContext& context)
+        : m_context(context)
+    {
+    }
+
+    void set(ValueID id, ArrayStorage storage)
+    {
+        Value& value = m_context.function.edit(id, ValueEdit::Definition);
+        if (value.arrayStorage() == storage)
+            return;
+        m_changed.append({ id, value.arrayStorage() });
+        value.setArrayStorage(storage);
+    }
+
+    void set(std::span<const ValueID> ids, ArrayStorage storage)
+    {
+        for (ValueID id : ids)
+            set(id, storage);
+    }
+
+    bool keepWhereProofsHold()
+    {
+        if (m_changed.isEmpty())
+            return true;
+        if (!m_context.build.isSabotaged(Sabotage::ChangedKindsOfStorageKeepTheirProofs) && mayLoseProof()) {
+            for (auto [id, storage] : m_changed)
+                m_context.function.edit(id, ValueEdit::Definition).setArrayStorage(storage);
+            m_context.analyses.didChangeValues();
+            m_context.build.statistics().count(StatisticID::ChangesOfStorageKindTakenBack, 1);
+            return false;
+        }
+        m_context.build.statistics().count(StatisticID::KindsOfStorageChanged, 1);
+        return true;
+    }
+
+private:
+    bool mayLoseProof()
+    {
+        const Function& function = m_context.function;
+        auto reliesOnProof = [&](ValueID id) {
+            const Value& value = function.at(id);
+            for (uint32_t operandIndex = 0; operandIndex < value.numberOfOperands(); ++operandIndex) {
+                if (value.operandKind(operandIndex) == OperandKind::Guard && value.operand(operandIndex))
+                    return true;
+            }
+            return false;
+        };
+        bool anyReliesOnProof = std::ranges::any_of(m_changed, [&](const auto& changed) {
+            return reliesOnProof(changed.first);
+        });
+        if (!anyReliesOnProof)
+            return false;
+        m_context.analyses.didChangeValues();
+        const GuardAvailability& guards = m_context.analyses.guards();
+        for (auto [id, storageBefore] : m_changed) {
+            if (!reliesOnProof(id))
+                continue;
+            const Value& user = function.at(id);
+            ValueLocation location = m_context.analyses.useLists().locationOf(id);
+            GuardAvailability::Cursor cursor(guards, location.block);
+            cursor.advanceTo(location.index);
+            for (uint32_t operandIndex = 0; operandIndex < user.numberOfOperands(); ++operandIndex) {
+                ValueID guard = user.operand(operandIndex);
+                if (user.operandKind(operandIndex) == OperandKind::Guard && guard && cursor.stateOf(guard, user) != GuardState::Available)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    FunctionPassContext& m_context;
+    Vector<std::pair<ValueID, ArrayStorage>, 8> m_changed;
+};
+
 // One value may name either of several arrays under construction: a loop that is there twice makes the array twice and goes on in one place. A store through that value finds one kind of storage in all of them.
 static unsigned chooseStorageOfConstructedArrays(FunctionPassContext& context)
 {
@@ -1222,11 +1301,6 @@ static unsigned chooseStorageOfConstructedArrays(FunctionPassContext& context)
         }
         return groupsReadAsDoubles->quickGet(group);
     };
-    auto setStorage = [&](const Vector<ValueID, 2>& values, ArrayStorage storage) {
-        for (ValueID value : values)
-            function.edit(value, ValueEdit::Definition).setArrayStorage(storage);
-    };
-
     for (unsigned group = 0; group < groups.size(); ++group) {
         Group& uses = groups[group];
         if (uses.hasChosenStorage)
@@ -1242,9 +1316,11 @@ static unsigned chooseStorageOfConstructedArrays(FunctionPassContext& context)
             });
             if (!holdsDoubles || !isReadAsDoubles(group))
                 continue;
-            uses.chosen = ArrayStorage::Double;
-            setStorage(uses.testedStores, ArrayStorage::Double);
-            setStorage(uses.tests, ArrayStorage::Double);
+            ChangeOfStorageKind change(context);
+            change.set(uses.testedStores.span(), ArrayStorage::Double);
+            change.set(uses.tests.span(), ArrayStorage::Double);
+            if (change.keepWhereProofsHold())
+                uses.chosen = ArrayStorage::Double;
             continue;
         }
         // A direct store tests what it is given, so what less frequent code stores need not fit.
@@ -1254,8 +1330,10 @@ static unsigned chooseStorageOfConstructedArrays(FunctionPassContext& context)
             kind = ArrayStorage::Double;
         if (kind == ArrayStorage::Contiguous)
             continue;
-        uses.chosen = kind;
-        setStorage(uses.directStores, kind);
+        ChangeOfStorageKind change(context);
+        change.set(uses.directStores.span(), kind);
+        if (change.keepWhereProofsHold())
+            uses.chosen = kind;
     }
 
     unsigned numberOfChangedAllocations = 0;
@@ -1263,8 +1341,10 @@ static unsigned chooseStorageOfConstructedArrays(FunctionPassContext& context)
         ArrayStorage chosen = groups[leaderOf(ordinal)].chosen;
         if (chosen == ArrayStorage::Other)
             continue;
-        function.edit(allocations[ordinal], ValueEdit::Definition).setArrayStorage(chosen);
-        ++numberOfChangedAllocations;
+        ChangeOfStorageKind change(context);
+        change.set(allocations[ordinal], chosen);
+        if (change.keepWhereProofsHold())
+            ++numberOfChangedAllocations;
     }
     return numberOfChangedAllocations;
 }
@@ -2347,9 +2427,12 @@ static PassOutcome copyListsInOnePiece(FunctionPassContext& context, bool& reads
         OverloadMatch match = matchOverload({ typing, Builtins::ArrayPrototypeSlice, BuiltinCallMode::Call, operands, operands });
         if (match.state != BuiltinMatchState::Proven || !match.requirements.isEmpty())
             continue;
+        // The readers of the copy were held to the kind that they expected. Between them may stand a store through a second name of the copy.
+        ChangeOfStorageKind change(context);
+        change.set(copy.readsToAskForStorage.span(), copy.storage);
+        if (!change.keepWhereProofsHold())
+            continue;
         outcome = PassOutcome::Changed;
-        for (ValueID read : copy.readsToAskForStorage)
-            function.edit(read, ValueEdit::Definition).setArrayStorage(copy.storage);
         readsHaveOtherTypes |= !copy.readsToAskForStorage.isEmpty();
         Value literal = function.at(copy.literal);
         Value cast = function.at(copy.cast);
@@ -2482,8 +2565,11 @@ static void makeListsThatMayReadUndefinedForAnyValue(FunctionPassContext& contex
             if (!part || !part->contentsAreProven)
                 continue;
             const Type& elements = context.program.at(part->expectedContentsAt(context.program.builtins(), ContentsSlot::Element).predicted());
-            if (elements.primitives & Primitive::Undefined)
-                function.edit(list, ValueEdit::Definition).setArrayStorage(ArrayStorage::Contiguous);
+            if (elements.primitives & Primitive::Undefined) {
+                ChangeOfStorageKind change(context);
+                change.set(list, ArrayStorage::Contiguous);
+                change.keepWhereProofsHold();
+            }
         }
     }
 }
