@@ -588,7 +588,13 @@ NEVER_INLINE ParkingLot::ParkResult ParkingLot::parkConditionallyImpl(
     {
         MutexLocker locker(me->parkingLock);
         while (me->address && timeout.nowWithSameClock() < timeout) {
-            me->parkingCondition.timedWait(me->parkingLock, timeout.approximateWallTime());
+            // Hand the deadline down on the caller's clock. A monotonic deadline turned into a wall-clock
+            // one moves when the system clock is set: a backward step of N seconds during the wait would
+            // make a relative timeout last N seconds longer.
+            if (timeout.clockType() == ClockType::Wall)
+                me->parkingCondition.timedWait(me->parkingLock, timeout.wallTime());
+            else
+                me->parkingCondition.timedWait(me->parkingLock, timeout.approximateMonotonicTime());
 
             // It's possible for the OS to decide not to wait. If it does that then it will also
             // decide not to release the lock. If there's a bug in the time math, then this could
