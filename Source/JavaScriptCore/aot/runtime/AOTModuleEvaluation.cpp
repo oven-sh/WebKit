@@ -1494,7 +1494,8 @@ void Modules::handSynchronousLoadToLoader(FilesBeingRun& files)
     SetForScope fileBeingHandedToLoader(m_fileBeingHandedToLoader, fileOf(running));
     SetForScope isAskingHost(m_isAskingHost, true);
     takeUpWaysOfLoads();
-    JSPromise* promise = loader()->loadModule(m_instance.globalObject, moduleKey(files.root), nullptr, nullptr, { ModuleLoadFlag::Evaluate });
+    // The load stands for the one that require() began: as JSModuleLoader::loadModuleSync(), it keeps no async context.
+    JSPromise* promise = loader()->loadModule(m_instance.globalObject, moduleKey(files.root), nullptr, nullptr, { ModuleLoadFlag::Evaluate, ModuleLoadFlag::Synchronous });
     scope.assertNoException();
     m_synchronousLoadsHandedToLoader.append({ files.root, Strong<JSPromise>(vm, promise) });
     runSynchronousStepsInFrontOf(fileOf(running));

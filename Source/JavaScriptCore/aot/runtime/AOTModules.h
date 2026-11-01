@@ -1013,6 +1013,8 @@ private:
         // Null for an import().
         Strong<JSCell> requestedRecord { };
         std::optional<int64_t> referrerAsyncOrder { };
+        // For an import(): the async context of its call, which the import() goes on under when its text comes. Empty where there is none.
+        Strong<Unknown> asyncContext { };
     };
     Vector<TextThatWaits> m_textsThatWait;
     bool isTextReadOnOtherThread(ModuleID file);

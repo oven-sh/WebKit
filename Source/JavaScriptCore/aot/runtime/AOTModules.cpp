@@ -2207,7 +2207,7 @@ void Modules::holdText(JSPromise* promise, ModuleID module, JSCell* requestedRec
     size_t index = m_textsThatWait.size();
     while (index && m_textsThatWait[index - 1].place > place)
         --index;
-    m_textsThatWait.insert(index, TextThatWaits { place, Strong<JSPromise>(vm, promise), module, Strong<JSCell>(vm, requestedRecord), referrerAsyncOrder });
+    m_textsThatWait.insert(index, TextThatWaits { place, Strong<JSPromise>(vm, promise), module, Strong<JSCell>(vm, requestedRecord), referrerAsyncOrder, requestedRecord ? Strong<Unknown>() : currentAsyncContext() });
     host().callInLaterTurn(m_instance.globalObject);
 }
 
@@ -2235,6 +2235,8 @@ bool Modules::deliverFirstTextThatWaits()
         promise->fulfill(vm, text.requestedRecord.get());
         return true;
     }
+    // The load of `bun run` keeps the async context of the call of import() while it waits for the text.
+    AsyncContextSwapScope asyncContextOfImport(vm, realm, text.asyncContext.get());
     JSPromise* loaded = startImport(text.module, text.referrerAsyncOrder, ImportCaller::Host);
     if (scope.exception()) [[unlikely]] {
         promise->rejectWithCaughtException(vm, scope);
