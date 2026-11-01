@@ -932,11 +932,19 @@ void Modules::endMockOfLibraryModule(ModuleID module)
     captureExports(module);
 }
 
+// Whoever was linked against the mock goes on reading it until the test file ends, as in `bun test`: a test may have ended the mock.
+void Modules::oweLibraryModuleToImagesAbove(ModuleID module)
+{
+    if (m_instance.state->sharesRealm)
+        m_libraryModulesOwedToImagesAbove.set(module.index());
+}
+
 // While a mock stood in place of the module, the loader answered the link of an image above with the record of the mock. No body of that image runs again for the
 // next test file, so its imports go to the module itself now, as link() would have bound them without the mock.
 void Modules::handLibraryModuleToImagesAbove(ModuleID module)
 {
-    if (!m_instance.state->sharesRealm)
+    // A mock that outlasts the test file stands in its place, as one of a preload does.
+    if (m_libraryModulesWithMock.get(module.index()))
         return;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     String path = m_table.pathText(module);

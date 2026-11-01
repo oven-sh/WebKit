@@ -289,6 +289,7 @@ public:
     void deferMock(ModuleID, AfterFailure);
     void forgetMockThatWaits(ModuleID);
     void endMockOfLibraryModule(ModuleID);
+    void oweLibraryModuleToImagesAbove(ModuleID);
     void handLibraryModuleToImagesAbove(ModuleID);
     void keepWhatMockIsLaidOver(ModuleID);
     void didLayMock() { m_moduleWithMockBeingLaid = std::nullopt; }
@@ -989,6 +990,7 @@ private:
     mutable BitVector m_libraryModulesKeptInRequireCache;
     BitVector m_libraryModulesWithMock;
     BitVector m_libraryModulesThatMockReplaces;
+    BitVector m_libraryModulesOwedToImagesAbove;
     BitVector m_libraryModulesLeftByThrow;
     std::optional<ModuleID> m_firstModuleRequestedByHost;
     BitVector m_dataFilesImportedByUncompiledCode;

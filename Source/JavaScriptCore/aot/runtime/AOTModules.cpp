@@ -1945,6 +1945,13 @@ void Modules::letGoOfMocksThatEnded()
 {
     while (!m_modulesWithMockToLetGo.isEmpty())
         letGoOfMockThatEnded(ModuleID(*m_modulesWithMockToLetGo.begin()));
+    if (m_libraryModulesOwedToImagesAbove.isEmpty()) [[likely]]
+        return;
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    for (size_t module : std::exchange(m_libraryModulesOwedToImagesAbove, { })) {
+        handLibraryModuleToImagesAbove(ModuleID(module));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
 }
 
 uint32_t Modules::placeOfMomentOfLoad(ModuleID module) const
@@ -6266,7 +6273,10 @@ bool hasMockInPlace(JSGlobalObject* realm, ModuleID moduleOfHost)
 
 void letGoOfMocksThatEnded(JSGlobalObject* realm)
 {
-    Instance::forEachOf(realm, [](Instance& instance) {
+    auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    Instance::forEachOf(realm, [&](Instance& instance) {
+        if (scope.exception()) [[unlikely]]
+            return;
         if (Modules* modules = instance.state ? instance.state->modules.get() : nullptr)
             modules->letGoOfMocksThatEnded();
     });
@@ -6373,9 +6383,8 @@ void didEndMock(JSGlobalObject* realm, ModuleID moduleOfHost)
     // `bun test` takes the importers out of its loader with the mock, and with them the error of a factory that ended their load.
     modules->dropErrorsOfLoadsEndedByMockOf(module);
     if (modules->data(module).isOfLibrary() || !modules->table().hasFilePath(module)) {
-        modules->endMockOfLibraryModule(module);
-        RETURN_IF_EXCEPTION(scope, void());
-        RELEASE_AND_RETURN(scope, modules->handLibraryModuleToImagesAbove(module));
+        modules->oweLibraryModuleToImagesAbove(module);
+        RELEASE_AND_RETURN(scope, modules->endMockOfLibraryModule(module));
     }
     if (!stoodInPlace)
         RELEASE_AND_RETURN(scope, modules->endMockLaidOverFile(module));
