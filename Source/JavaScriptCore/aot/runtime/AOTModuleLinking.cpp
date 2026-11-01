@@ -925,6 +925,48 @@ void Modules::endMockOfLibraryModule(ModuleID module)
     captureExports(module);
 }
 
+// While a mock stood in place of the module, the loader answered the link of an image above with the record of the mock. No body of that image runs again for the
+// next test file, so its imports go to the module itself now, as link() would have bound them without the mock.
+void Modules::handLibraryModuleToImagesAbove(ModuleID module)
+{
+    if (!m_instance.state->sharesRealm)
+        return;
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    String path = m_table.pathText(module);
+    for (Instance* above = m_instance.above; above; above = above->above) {
+        Modules* modules = above->state->modules.get();
+        if (!modules)
+            continue;
+        for (const UncompiledModuleData& row : modules->m_table.modulesOfUncompiledCode()) {
+            ModuleID external(row.module);
+            LoadedModule* loaded = modules->loadedIfExists(external);
+            if (!loaded || !loaded->uncompiledRecord || dynamicDowncast<ModuleRecord>(loaded->uncompiledRecord.get()))
+                continue;
+            // The row has the name as its importer spells it. Whoever has a record has resolved the name.
+            bool namesModule = modules->resolvedKey(external).string() == path;
+            RETURN_IF_EXCEPTION(scope, void());
+            if (!namesModule)
+                continue;
+            AbstractModuleRecord* record = recordForResolution(module);
+            RETURN_IF_EXCEPTION(scope, void());
+            RunningImageScope imageAbove(m_instance.vm->aotState(), above->program);
+            loaded->uncompiledRecord.set(*modules, record);
+            JSObject* namespaceObject = modules->uncompiledNamespace(external, ModulePhase::Evaluation, modules->data(external).isUncompiledCodeImportedAsNamespace() ? NamespaceUse::IsShownToProgram : NamespaceUse::CarriesBindings);
+            RETURN_IF_EXCEPTION(scope, void());
+            modules->setValue(external, namespaceObject);
+            for (uint32_t index = 0; index < modules->m_table.size(); ++index) {
+                ModuleID importer(index);
+                if (modules->status(importer) == ModuleStatus::Unlinked)
+                    continue;
+                if (!std::ranges::any_of(modules->m_table.requiredNames(importer), [&](const RequiredNameData& name) { return name.exporterModule() == external; }))
+                    continue;
+                modules->fillDeferredExports(importer);
+                RETURN_IF_EXCEPTION(scope, void());
+            }
+        }
+    }
+}
+
 // A file of the program had run when the mock came: the values of the mock are stored over its own. What they replace is kept from here until didLayMock().
 void Modules::keepWhatMockIsLaidOver(ModuleID file)
 {

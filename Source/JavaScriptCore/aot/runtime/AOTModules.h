@@ -288,6 +288,7 @@ public:
     void deferMock(ModuleID, AfterFailure);
     void forgetMockThatWaits(ModuleID);
     void endMockOfLibraryModule(ModuleID);
+    void handLibraryModuleToImagesAbove(ModuleID);
     void keepWhatMockIsLaidOver(ModuleID);
     void didLayMock() { m_moduleWithMockBeingLaid = std::nullopt; }
     void endMockLaidOverFile(ModuleID);

@@ -6372,8 +6372,11 @@ void didEndMock(JSGlobalObject* realm, ModuleID moduleOfHost)
     modules->forgetMockThatWaits(module);
     // `bun test` takes the importers out of its loader with the mock, and with them the error of a factory that ended their load.
     modules->dropErrorsOfLoadsEndedByMockOf(module);
-    if (modules->data(module).isOfLibrary() || !modules->table().hasFilePath(module))
-        RELEASE_AND_RETURN(scope, modules->endMockOfLibraryModule(module));
+    if (modules->data(module).isOfLibrary() || !modules->table().hasFilePath(module)) {
+        modules->endMockOfLibraryModule(module);
+        RETURN_IF_EXCEPTION(scope, void());
+        RELEASE_AND_RETURN(scope, modules->handLibraryModuleToImagesAbove(module));
+    }
     if (!stoodInPlace)
         RELEASE_AND_RETURN(scope, modules->endMockLaidOverFile(module));
 }
